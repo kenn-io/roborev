@@ -90,7 +90,8 @@ func TestCommentRebuttalRecordsBeforeClose(t *testing.T) {
 				require.Len(t, closes, 1)
 				assert.JSONEq(t, `{"event":"review_closed","properties":{"surface":"cli"}}`, closes[0])
 			} else {
-				assert.Empty(t, closes)
+				require.Len(t, closes, 1)
+				assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"cli","kind":"review_closed"}}`, closes[0])
 			}
 		})
 	}

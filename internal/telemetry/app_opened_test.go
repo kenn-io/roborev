@@ -401,7 +401,11 @@ func TestOutcomeCapture(t *testing.T) {
 	handler := (&AppOpenedLimiter{}).Handler(reporter)
 	for _, surface := range []string{"web", "tui", "cli"} {
 		for range 2 {
-			assert.Equal(t, http.StatusAccepted, postCaptureEvent(handler, `{"event":"search_empty","properties":{"surface":"`+surface+`","query":"private"}}`).Code)
+			status := http.StatusAccepted
+			if surface == "tui" {
+				status = http.StatusBadRequest
+			}
+			assert.Equal(t, status, postCaptureEvent(handler, `{"event":"search_empty","properties":{"surface":"`+surface+`","query":"private"}}`).Code)
 		}
 		for _, kind := range []string{"review_viewed", "finding_fixed", "review_closed", "private error"} {
 			assert.Equal(t, http.StatusAccepted, postCaptureEvent(handler, `{"event":"error_shown","properties":{"surface":"`+surface+`","kind":"`+kind+`","message":"private"}}`).Code)
@@ -422,14 +426,16 @@ func TestOutcomeCapture(t *testing.T) {
 	require.Error(t, reporter.Capture(EventSyncFailed, nil))
 	require.NoError(t, reporter.Close())
 	sent := messages()
-	require.Len(t, sent, 22)
-	for i, message := range sent {
+	require.Len(t, sent, 20)
+	otherKinds := 0
+	for _, message := range sent {
 		assert.NotContains(t, message.Properties, "query")
 		assert.NotContains(t, message.Properties, "message")
 		assert.NotContains(t, message.Properties, "url")
-		if i < 18 && i%6 == 5 {
-			assert.Equal(t, "other", message.Properties[PropertyKind])
+		if message.Event == EventErrorShown && message.Properties[PropertyKind] == "other" {
+			otherKinds++
 		}
 	}
-	assert.Equal(t, "other", sent[21].Properties[PropertyReason])
+	assert.Equal(t, 3, otherKinds)
+	assert.Equal(t, "other", sent[19].Properties[PropertyReason])
 }

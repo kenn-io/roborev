@@ -24,6 +24,7 @@ import (
 	"go.kenn.io/roborev/internal/prompt"
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/telemetry"
 	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
@@ -437,7 +438,9 @@ Examples:
 			// here so the user doesn't see "Error: exit code 1" after the
 			// review output is already on screen.
 			if wait {
-				return silenceIfExit(cmd, waitForJob(cmd, ep, job.ID, quiet))
+				waitErr := waitForJob(cmd, ep, job.ID, quiet)
+				reportCLIError(cmd, telemetry.EventReviewViewed, waitErr)
+				return silenceIfExit(cmd, waitErr)
 			}
 
 			return nil

@@ -43,7 +43,7 @@ export interface ReviewStoreOptions {
   runtime: AppRuntime;
   owner: string;
   onError?: (message: string, kind?: "review_viewed" | "review_closed") => void;
-  onErrorCleared?: () => void;
+  onErrorCleared?: (kind: "review_viewed" | "review_closed") => void;
   refreshJobs?: () => Effect.Effect<void, never, RoborevWorkflow>;
 }
 
@@ -153,6 +153,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
       responses = [...authority.responses];
       reviewNotFound = authority.reviewNotFound;
       storeError = null;
+      opts.onErrorCleared?.("review_viewed");
     });
 
   const reconcileReview = (jobId: number) =>
@@ -171,7 +172,6 @@ export function createReviewStore(opts: ReviewStoreOptions) {
             loading = true;
             reviewNotFound = false;
             storeError = null;
-            opts.onErrorCleared?.();
             review = null;
             selectedJob = null;
             responses = [];
@@ -256,6 +256,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
       opts.onError?.("Failed to close review", "review_closed");
       return;
     }
+    opts.onErrorCleared?.("review_closed");
     const closed = !review.closed;
     opts.runtime.runCommand(closeReviewEffect(jobId, closed), {
       operation: "close Roborev review",
@@ -372,6 +373,10 @@ export function createReviewStore(opts: ReviewStoreOptions) {
   }
 
   function setSelectedJobId(jobId: number | undefined): void {
+    if (selectedJobId !== jobId) {
+      opts.onErrorCleared?.("review_viewed");
+      opts.onErrorCleared?.("review_closed");
+    }
     selectedJobId = jobId;
     if (jobId === undefined) {
       review = null;

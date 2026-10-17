@@ -57,7 +57,8 @@
     navigate: router.navigateToReview,
     getCapabilities: () => capabilities,
     daemonInitiallyAvailable: true,
-    onErrorCleared: () => {
+    onErrorCleared: (kind) => {
+      if (actionErrorKind !== kind) return;
       actionError = null;
       errorReported = false;
     },

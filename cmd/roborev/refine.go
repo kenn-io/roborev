@@ -132,9 +132,6 @@ Use --all-branches to discover and refine all branches with failed reviews.`,
 				return runRefineList(cmd, opts)
 			}
 
-			defer func() {
-				reportCLIError(cmd, telemetry.EventFindingFixed, resultErr)
-			}()
 			if opts.allBranches {
 				return runRefineAllBranches(cmd, opts)
 			}
@@ -366,7 +363,16 @@ type RunContext struct {
 	PostCommitDelay time.Duration
 }
 
-func runRefine(runCtx RunContext, opts refineOptions) error {
+func runRefine(runCtx RunContext, opts refineOptions) (resultErr error) {
+	actionCmd := &cobra.Command{}
+	actionCmd.SetContext(runCtx.Context)
+	actionCmd.SetOut(os.Stdout)
+	started := false
+	defer func() {
+		if started {
+			reportCLIError(actionCmd, telemetry.EventFindingFixed, resultErr)
+		}
+	}()
 	ctx := runCtx.Context
 	if ctx == nil {
 		return fmt.Errorf("run refine: missing context")
@@ -637,6 +643,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 			planCmd := &cobra.Command{}
 			planCmd.SetContext(ctx)
 			planCmd.SetOut(os.Stdout)
+			started = true
 			addressPrompt, planErr = planFixAtRevision(ctx, planCmd, repoPath, headBefore, addressAgent, planningPrompt, addressPrompt, []int64{currentFailedReview.JobID}, fixOptions{quiet: opts.quiet}, cfg)
 			if planErr != nil {
 				fmt.Printf("Planning error: %v\n", planErr)
@@ -705,6 +712,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 			timer.startLive(fmt.Sprintf("Addressing review (job %d)...", currentFailedReview.JobID))
 		}
 		fixCtx, fixCancel := withAgentCallTimeout(ctx)
+		started = true
 		output, agentErr := addressAgent.Review(fixCtx, worktreePath, "HEAD", addressPrompt, agentOutput)
 		fixCancel()
 		if cleanupPrompt != nil {
@@ -759,9 +767,6 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 					return saveErr
 				}
 			}
-			actionCmd := &cobra.Command{}
-			actionCmd.SetContext(ctx)
-			actionCmd.SetOut(os.Stdout)
 			reportCLIError(actionCmd, telemetry.EventFindingFixed, agentErr)
 			fmt.Printf("Agent error: %v\n", agentErr)
 			fmt.Println("Will retry in next iteration")
@@ -834,9 +839,6 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 			return fmt.Errorf("failed to commit changes: %w", err)
 		}
 		fmt.Printf("Created commit %s\n", gitrepo.ShortSHA(newCommit))
-		actionCmd := &cobra.Command{}
-		actionCmd.SetContext(ctx)
-		actionCmd.SetOut(os.Stdout)
 		reportCLIAction(actionCmd, telemetry.EventFindingFixed)
 
 		// Add response recording what was done

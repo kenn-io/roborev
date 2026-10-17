@@ -964,6 +964,12 @@ func (s *Server) telemetryProperties(cfg *config.Config) map[string]any {
 func (s *Server) SetSyncWorker(sw *storage.SyncWorker) {
 	s.syncWorker = sw
 	sw.SetAfterPullWrite(s.afterSyncPullWrite)
+	sw.SetAfterFailure(func(reason string) {
+		if s.telemetry == nil || !s.telemetry.Enabled() {
+			return
+		}
+		_ = s.telemetry.Capture(telemetry.EventSyncFailed, map[string]any{telemetry.PropertyReason: reason})
+	})
 }
 
 func (s *Server) afterSyncPullWrite() {

@@ -112,7 +112,7 @@ func TestCoreActionRefineCommit(t *testing.T) {
 
 func TestCoreActionFixCommit(t *testing.T) {
 	for _, batch := range []bool{false, true} {
-		for _, outcome := range []string{"commit", "no change", "failure", "visible retry failure", "quiet retry failure", "visible recording failure", "quiet recording failure"} {
+		for _, outcome := range []string{"commit", "no change", "failure", "visible retry failure", "quiet retry failure", "visible recording failure", "quiet recording failure", "planning failure"} {
 			t.Run(map[bool]string{false: "single", true: "batch"}[batch]+"/"+outcome, func(t *testing.T) {
 				resetCLIUse(t)
 				cliOutputIsTerminal = func(io.Writer) bool { return true }
@@ -144,7 +144,7 @@ func TestCoreActionFixCommit(t *testing.T) {
 						}
 						return "pending changes", os.WriteFile(filepath.Join(dir, "pending.txt"), []byte(strconv.Itoa(calls)), 0o644)
 					}
-					if outcome == "failure" {
+					if outcome == "failure" || outcome == "planning failure" {
 						return "", errors.New("agent failed")
 					}
 					if outcome == "no change" || strings.Contains(outcome, "recording failure") {
@@ -166,7 +166,7 @@ func TestCoreActionFixCommit(t *testing.T) {
 				cmd, out := newTestCmd(t)
 				cmd.SetContext(t.Context())
 				tracker := &fixSessionTracker{base: fixAgent, out: io.Discard}
-				opts := fixOptions{agentName: "test", quiet: !strings.HasPrefix(outcome, "visible"), classify: agent.ClassifyLimit}
+				opts := fixOptions{agentName: "test", quiet: !strings.HasPrefix(outcome, "visible"), planOnly: outcome == "planning failure", classify: agent.ClassifyLimit}
 				var err error
 				if batch {
 					roots := currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}
@@ -174,7 +174,7 @@ func TestCoreActionFixCommit(t *testing.T) {
 				} else {
 					err = fixSingleJob(cmd, repo.Dir, 99, opts, tracker)
 				}
-				if outcome == "failure" && !batch {
+				if (outcome == "failure" && !batch) || outcome == "planning failure" {
 					require.Error(t, err)
 				} else {
 					require.NoError(t, err)
@@ -406,20 +406,30 @@ func TestOutcomeCLIErrorEligibility(t *testing.T) {
 		}{
 			{[]string{"show", "--job", "999"}, "review_viewed", 1, false},
 			{[]string{"close", "999"}, "review_closed", 1, false},
-			{[]string{"close", "999"}, "review_closed", 1, true},
+			{[]string{"fix", "999"}, "finding_fixed", 1, false},
+			{[]string{"fix", "999", "--plan-only"}, "", 0, false},
+			{[]string{"close", "999"}, "", 0, true},
 			{[]string{"wait", "--job", "999"}, "review_viewed", 1, false},
 			{[]string{"wait", "--job", "999", "1000"}, "review_viewed", 2, false},
 			{[]string{"wait", "--job", "999", "--quiet"}, "review_viewed", 1, false},
 			{[]string{"wait", "--job", "999", "1000", "--quiet"}, "review_viewed", 1, false},
 			{[]string{"show", "--job", "999", "--from-skill"}, "", 0, false},
+			{[]string{"close", "invalid"}, "", 0, false},
 			{[]string{"close", "invalid"}, "", 0, true},
+			{[]string{"show", "--job", "999"}, "", 0, true},
+			{[]string{"wait", "--job", "999"}, "", 0, true},
+			{[]string{"wait", "--job", "999", "1000"}, "", 0, true},
 		} {
 			unavailable = tc.unavailable
 			rec.reset()
 			result := runCLIFresh(t, true, append(tc.args, "--server", md.Server.URL)...)
 			require.Error(t, result.err)
-			if tc.args[1] == "invalid" {
-				require.ErrorContains(t, result.err, "invalid job_id")
+			if tc.args[0] == "close" && tc.args[1] == "invalid" {
+				if tc.unavailable {
+					require.ErrorContains(t, result.err, "daemon not running")
+				} else {
+					require.ErrorContains(t, result.err, "invalid job_id")
+				}
 			}
 			var errors []string
 			for _, post := range rec.telemetryPosts() {
@@ -462,4 +472,41 @@ func TestOutcomeReviewWaitFailure(t *testing.T) {
 	}
 	require.Len(t, shown, 1)
 	assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"cli","kind":"review_viewed"}}`, shown[0])
+}
+
+func TestOutcomeCLISetupExclusions(t *testing.T) {
+	resetCLIUse(t)
+	cliOutputIsTerminal = func(io.Writer) bool { return true }
+	md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
+	repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
+	outside := t.TempDir()
+	for _, tc := range []struct {
+		args      []string
+		dir, want string
+	}{
+		{[]string{"fix", "invalid"}, outside, "invalid job ID"},
+		{[]string{"fix", "invalid", "--batch"}, outside, "invalid job ID"},
+		{[]string{"fix", "--branch", "main", "99"}, repo.Dir, "--branch cannot be used"},
+		{[]string{"refine"}, outside, "git"},
+	} {
+		t.Run(strings.Join(tc.args, " ")+tc.dir, func(t *testing.T) {
+			t.Chdir(tc.dir)
+			rec.reset()
+			result := runCLIFresh(t, true, append(tc.args, "--server", md.Server.URL)...)
+			require.ErrorContains(t, result.err, tc.want)
+			assert.Empty(t, rec.telemetryPosts())
+		})
+	}
+}
+
+func TestOutcomeAnalyzeWaitExclusion(t *testing.T) {
+	resetCLIUse(t)
+	cliOutputIsTerminal = func(io.Writer) bool { return true }
+	md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
+	md.State.jobs[999] = &storage.ReviewJob{ID: 999, Status: storage.JobStatusFailed, Error: "analysis unavailable"}
+	cmd, _ := newTestCmd(t)
+	cmd.SetContext(t.Context())
+	err := runAnalyzeAndFix(cmd, getDaemonEndpoint(), t.TempDir(), 999, nil, analyzeOptions{})
+	require.ErrorContains(t, err, "analysis failed")
+	assert.Empty(t, rec.telemetryPosts())
 }

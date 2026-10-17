@@ -128,8 +128,6 @@ Examples:
 				sha = resolved
 			}
 
-			defer func() { reportCLIError(cmd, telemetry.EventReviewViewed, err) }()
-
 			// All local validation passed — now ensure daemon is running
 			if err := ensureDaemon(); err != nil {
 				return fmt.Errorf("daemon not running: %w", err)
@@ -156,6 +154,9 @@ Examples:
 
 			ep := getDaemonEndpoint()
 			waitErr := waitForJob(cmd, ep, jobID, quiet)
+			if !errors.Is(waitErr, ErrJobNotFound) {
+				reportCLIError(cmd, telemetry.EventReviewViewed, waitErr)
+			}
 			if waitErr != nil {
 				// Map ErrJobNotFound to exit 1 with a user-facing message
 				// (waitForJob returns a plain error to stay compatible with reviewCmd)
@@ -228,8 +229,6 @@ func waitMultiple(
 			}
 		}
 	}
-
-	defer func() { reportCLIError(cmd, telemetry.EventReviewViewed, resultErr) }()
 
 	// Phase 2: Ensure daemon is running.
 	if err := ensureDaemon(); err != nil {
@@ -314,6 +313,7 @@ func waitMultiple(
 					continue
 				}
 				if _, ok := errors.AsType[*exitError](r.err); !ok {
+					reportCLIError(cmd, telemetry.EventReviewViewed, r.err)
 					return r.err
 				}
 			}

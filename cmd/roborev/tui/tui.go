@@ -257,10 +257,8 @@ type model struct {
 	flashView      viewKind // View where flash was triggered (only show in same view)
 	flashWarning   bool
 
-	flashErrorKind     string
-	flashErrorReported uint64
-	flashGeneration    uint64
-	paneErrorReported  string
+	flashErrorKind    string
+	paneErrorReported string
 
 	// Track config reload notifications
 	lastConfigReloadCounter uint64                 // Last known ConfigReloadCounter from daemon status
@@ -1319,21 +1317,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	if rm, ok := result.(model); ok {
 		rm = rm.normalizeSplitState()
-		if rm.splitDetailErr == nil {
+		attempt := fmt.Sprintf("%d:%d:", rm.selectedJobID, rm.jobAttemptGen[rm.selectedJobID])
+		if rm.selectedReviewLoaded() || !rm.splitActive() || !strings.HasPrefix(rm.paneErrorReported, attempt) {
 			rm.paneErrorReported = ""
+		}
+		paneOccurrence := ""
+		if rm.splitDetailErr != nil {
+			paneOccurrence = attempt + rm.splitDetailErr.Error()
 		}
 		flashFailure := rm.flashErrorKind != "" && rm.renderFlash(rm.currentView) != "" &&
 			(rm.currentView == viewQueue || rm.currentView == viewReview || rm.currentView == viewTasks)
-		if flashFailure && rm.flashErrorReported != rm.flashGeneration {
+		if flashFailure {
 			cmd = tea.Batch(cmd, rm.reportAction(telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: rm.flashErrorKind}))
-			rm.flashErrorReported = rm.flashGeneration
 			if rm.flashErrorKind == telemetry.EventReviewViewed && rm.splitDetailErr != nil {
-				rm.paneErrorReported = rm.splitDetailErr.Error()
+				rm.paneErrorReported = paneOccurrence
 			}
+			rm.flashErrorKind = ""
 		}
-		if job, selected := rm.selectedJob(); selected && rm.splitActive() && job.Status == storage.JobStatusDone && !rm.selectedReviewLoaded() && rm.splitDetailErr != nil && rm.paneErrorReported != rm.splitDetailErr.Error() {
+		if job, selected := rm.selectedJob(); selected && rm.splitActive() && job.Status == storage.JobStatusDone && !rm.selectedReviewLoaded() && rm.splitDetailErr != nil && rm.paneErrorReported != paneOccurrence {
 			cmd = tea.Batch(cmd, rm.reportAction(telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: telemetry.EventReviewViewed}))
-			rm.paneErrorReported = rm.splitDetailErr.Error()
+			rm.paneErrorReported = paneOccurrence
 		}
 		failedOccurrence := ""
 		if (rm.currentView == viewReview || rm.splitActive()) && rm.selectedReviewLoaded() && rm.currentReview.Job != nil && rm.currentReview.Job.Status == storage.JobStatusFailed {
@@ -1343,7 +1346,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if failedOccurrence != "" && failedOccurrence != rm.failedReviewReported {
 			cmd = tea.Batch(cmd, rm.reportAction(telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: telemetry.EventReviewViewed}))
 		}
-		rm.failedReviewReported = failedOccurrence
+		// A cleared review can temporarily return to the queue while reloading.
+		leftReview := rm.currentView != viewReview && !rm.splitActive() &&
+			(rm.currentView != viewQueue || (m.currentView != viewQueue && m.currentReview != nil))
+		if failedOccurrence != "" {
+			rm.failedReviewReported = failedOccurrence
+		} else if job, selected := rm.selectedJob(); !selected || leftReview || job.Status != storage.JobStatusFailed || !strings.HasPrefix(rm.failedReviewReported, attempt) {
+			rm.failedReviewReported = ""
+		}
 		// Resume a tail paused by a resize that arrived while a transient
 		// view covered the split panes. splitReconcileDetail handles
 		// whatever the selected job's state is by now: restart the tail if

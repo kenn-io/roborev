@@ -61,6 +61,18 @@ func TestTelemetryCaptureRouteOnCoreMux(t *testing.T) {
 		wantBody   string
 	}{
 		{
+			name:       "visible error",
+			request:    newTelemetryCaptureRequest(http.MethodPost, []byte(`{"event":"error_shown","properties":{"surface":"cli","kind":"unknown"}}`)),
+			wantStatus: http.StatusAccepted,
+			wantBody:   `{"status":"disabled"}`,
+		},
+		{
+			name:       "client cannot report sync failure",
+			request:    newTelemetryCaptureRequest(http.MethodPost, []byte(`{"event":"sync_failed","properties":{"reason":"push"}}`)),
+			wantStatus: http.StatusBadRequest,
+			wantBody:   telemetry.ErrUnsupportedEvent.Error(),
+		},
+		{
 			name:       "allowed event",
 			request:    newTelemetryCaptureRequest(http.MethodPost, []byte(`{"event":"app_opened"}`)),
 			wantStatus: http.StatusAccepted,

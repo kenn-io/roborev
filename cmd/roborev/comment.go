@@ -198,6 +198,11 @@ func closeCmd() *cobra.Command {
 		Aliases: []string{"address"},
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) (resultErr error) {
+			// Ensure daemon is running
+			if err := ensureDaemon(); err != nil {
+				return fmt.Errorf("daemon not running: %w", err)
+			}
+
 			jobID, err := strconv.ParseInt(args[0], 10, 64)
 			if err != nil || jobID <= 0 {
 				return fmt.Errorf("invalid job_id: %s", args[0])
@@ -208,10 +213,6 @@ func closeCmd() *cobra.Command {
 					reportCLIError(cmd, telemetry.EventReviewClosed, resultErr)
 				}
 			}()
-			// Ensure daemon is running
-			if err := ensureDaemon(); err != nil {
-				return fmt.Errorf("daemon not running: %w", err)
-			}
 
 			closed := !reopen
 			reqBody, _ := json.Marshal(map[string]any{

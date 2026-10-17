@@ -93,7 +93,7 @@ Examples:
   roborev fix --list                     # List open jobs without fixing
 `,
 		Args: cobra.ArbitraryArgs,
-		RunE: func(cmd *cobra.Command, args []string) (resultErr error) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			// Migrate stale relative core.hooksPath to absolute
 			// so linked worktrees resolve hooks correctly. Best-
 			// effort: runs from a CLI path the user invokes
@@ -151,21 +151,6 @@ Examples:
 				)
 			}
 
-			// Parse job IDs
-			var jobIDs []int64
-			for _, arg := range args {
-				var id int64
-				if _, err := fmt.Sscanf(arg, "%d", &id); err != nil {
-					return fmt.Errorf("invalid job ID %q: must be a number", arg)
-				}
-				jobIDs = append(jobIDs, id)
-			}
-
-			defer func() {
-				if !planOnly {
-					reportCLIError(cmd, telemetry.EventFindingFixed, resultErr)
-				}
-			}()
 			opts := fixOptions{
 				agentName:   agentName,
 				model:       model,
@@ -189,6 +174,16 @@ Examples:
 			}
 
 			if batch || batchSize > 0 {
+				// Parse job IDs
+				var jobIDs []int64
+				for _, arg := range args {
+					var id int64
+					if _, err := fmt.Sscanf(arg, "%d", &id); err != nil {
+						return fmt.Errorf("invalid job ID %q: must be a number", arg)
+					}
+					jobIDs = append(jobIDs, id)
+				}
+
 				if len(jobIDs) > 0 && (branch != "" || allBranches || newestFirst) {
 					return usageErr(cmd, fmt.Errorf("--branch, --all-branches, and --newest-first cannot be used with explicit job IDs"))
 				}
@@ -210,6 +205,16 @@ Examples:
 					ctx, roots.worktreeRoot, branch, allBranches,
 				)
 				return runFixOpen(cmd, effectiveBranch, allBranches, branch != "", newestFirst, opts, tracker)
+			}
+
+			// Parse job IDs
+			var jobIDs []int64
+			for _, arg := range args {
+				var id int64
+				if _, err := fmt.Sscanf(arg, "%d", &id); err != nil {
+					return fmt.Errorf("invalid job ID %q: must be a number", arg)
+				}
+				jobIDs = append(jobIDs, id)
 			}
 
 			return runFix(cmd, jobIDs, opts, tracker)
@@ -561,6 +566,9 @@ func runFixWithSeen(cmd *cobra.Command, jobIDs []int64, opts fixOptions, seen ma
 
 		err := fixSingleJob(cmd, roots.worktreeRoot, jobID, opts, tracker)
 		if err != nil {
+			if !opts.planOnly {
+				reportCLIError(cmd, telemetry.EventFindingFixed, err)
+			}
 			if isConnectionError(err) {
 				return fmt.Errorf("daemon connection lost: %w", err)
 			}
@@ -579,7 +587,6 @@ func runFixWithSeen(cmd *cobra.Command, jobIDs []int64, opts fixOptions, seen ma
 			// planning snapshot. Explicit job IDs also return the error so
 			// the CLI exits non-zero.
 			if seen != nil && !opts.planOnly {
-				reportCLIError(cmd, telemetry.EventFindingFixed, err)
 				cmd.Printf("Warning: error fixing job %d: %v\n", jobID, err)
 				seen[jobID] = true
 				continue
@@ -1220,7 +1227,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		FixGuidelines: fixCfg.FixGuidelines,
 		Classify:      opts.classify,
 		OnWarning: func(err error) {
-			if !opts.quiet {
+			if !opts.quiet && !opts.planOnly {
 				reportCLIError(cmd, telemetry.EventFindingFixed, err)
 			}
 		},
@@ -1390,7 +1397,12 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 // processFixBatch fetches reviews for the given job IDs, splits them into
 // batches by prompt size and count, runs each batch as a single agent
 // invocation, and marks the jobs closed when done.
-func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoRoots, jobIDs []int64, batchSize int, opts fixOptions, tracker *fixSessionTracker) error {
+func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoRoots, jobIDs []int64, batchSize int, opts fixOptions, tracker *fixSessionTracker) (resultErr error) {
+	defer func() {
+		if !opts.planOnly {
+			reportCLIError(cmd, telemetry.EventFindingFixed, resultErr)
+		}
+	}()
 	if len(jobIDs) == 0 {
 		if !opts.quiet {
 			cmd.Println("No open jobs found.")
@@ -1591,7 +1603,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 			FixGuidelines: cfg.FixGuidelines,
 			Classify:      opts.classify,
 			OnWarning: func(err error) {
-				if !opts.quiet {
+				if !opts.quiet && !opts.planOnly {
 					reportCLIError(cmd, telemetry.EventFindingFixed, err)
 				}
 			},
@@ -1625,7 +1637,9 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 					)
 				}
 			}
-			reportCLIError(cmd, telemetry.EventFindingFixed, err)
+			if !opts.planOnly {
+				reportCLIError(cmd, telemetry.EventFindingFixed, err)
+			}
 			cmd.Printf("Warning: error in batch %d: %v\n", i+1, err)
 			continue
 		}

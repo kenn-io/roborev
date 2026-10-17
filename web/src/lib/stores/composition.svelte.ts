@@ -35,7 +35,7 @@ export interface ReviewStoreOptions {
   navigate: (jobId?: number) => void;
   getCapabilities: () => SessionCapabilities;
   onError?: (message: string, kind?: "review_viewed" | "review_closed") => void;
-  onErrorCleared?: () => void;
+  onErrorCleared?: (kind: "review_viewed" | "review_closed") => void;
   daemonInitiallyAvailable?: boolean;
 }
 

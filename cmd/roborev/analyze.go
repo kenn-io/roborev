@@ -602,10 +602,6 @@ func analysisWorkflow(label string) string {
 
 // runAnalyzeAndFix waits for analysis to complete, runs a fixer agent, then marks closed
 func runAnalyzeAndFix(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot string, jobID int64, analysisType *analyze.AnalysisType, opts analyzeOptions) (resultErr error) {
-	defer func() {
-		reportCLIError(cmd, telemetry.EventFindingFixed, resultErr)
-	}()
-
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
@@ -660,6 +656,10 @@ func runAnalyzeAndFix(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot str
 	headBefore, headErr := gitrepo.Resolve(ctx, repoRoot, "HEAD")
 	canVerifyCommits := headErr == nil
 
+	defer func() {
+		reportCLIError(cmd, telemetry.EventFindingFixed, resultErr)
+	}()
+
 	// Run the fix agent locally in agentic mode
 	if err := runFixAgent(cmd, repoRoot, fixAgentName, fixModel, opts.reasoning, fixPrompt, opts.quiet); err != nil {
 		return fmt.Errorf("fix agent failed: %w", err)
@@ -685,6 +685,7 @@ func runAnalyzeAndFix(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot str
 				commitPrompt := buildCommitPromptWithMetadata(analysisType, metadata)
 				if err := runFixAgent(cmd, repoRoot, fixAgentName, fixModel, opts.reasoning, commitPrompt, opts.quiet); err != nil {
 					if !opts.quiet {
+						reportCLIError(cmd, telemetry.EventFindingFixed, err)
 						cmd.Printf("\nWarning: commit agent failed: %v\n", err)
 					}
 				}
@@ -718,6 +719,7 @@ func runAnalyzeAndFix(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot str
 		reportCLIAction(cmd, telemetry.EventFindingFixed)
 		if head, err := gitrepo.Resolve(ctx, repoRoot, "HEAD"); err == nil {
 			if err := enqueueIfNeeded(ctx, ep.BaseURL(), repoRoot, head); err != nil && !opts.quiet {
+				reportCLIError(cmd, telemetry.EventFindingFixed, err)
 				cmd.Printf("Warning: could not enqueue review for fix commit: %v\n", err)
 			}
 		}
@@ -727,6 +729,7 @@ func runAnalyzeAndFix(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot str
 	if err := markJobClosed(ctx, ep.BaseURL(), jobID); err != nil {
 		// Non-fatal - the fixes were applied, just couldn't update status
 		if !opts.quiet {
+			reportCLIError(cmd, telemetry.EventFindingFixed, err)
 			cmd.Printf("\nWarning: could not close job: %v\n", err)
 		}
 	} else if !opts.quiet {

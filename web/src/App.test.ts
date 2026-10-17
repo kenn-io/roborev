@@ -397,6 +397,9 @@ describe("App", () => {
     let closed = false;
     let failed = false;
     let reviewLoads = 0;
+    let readFails = false;
+    let hidden = false;
+    vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
     const selectedJob = () => ({
       id: 42,
       agent: "test",
@@ -437,8 +440,10 @@ describe("App", () => {
             stats: { done: 0, closed: 0, open: 0 },
           });
         }
+        if (url.pathname === "/api/review/close") return response(500);
         if (url.pathname === "/api/review") {
           reviewLoads++;
+          if (readFails) return response(500);
           if (!completed || failed) return response(404);
           return response(200, {
             id: 7,
@@ -502,6 +507,91 @@ describe("App", () => {
       await screen.findByRole("button", { name: "Reopen" }),
     ).toBeInTheDocument();
 
+    hidden = true;
+    await fireEvent(document, new Event("visibilitychange"));
+    readFails = true;
+    eventStream!.error(new Error("read failure"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Failed to load review",
+    );
+    expect(appOpened.reportErrorShown).not.toHaveBeenCalled();
+    hidden = false;
+    await fireEvent(document, new Event("visibilitychange"));
+    expect(appOpened.reportErrorShown).toHaveBeenCalledTimes(1);
+    let previousReadLoads = reviewLoads;
+    eventStream!.error(new Error("same read failure"));
+    await vi.waitFor(
+      () => expect(reviewLoads).toBeGreaterThan(previousReadLoads),
+      { timeout: 5000 },
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Failed to load review",
+    );
+    expect(appOpened.reportErrorShown).toHaveBeenCalledTimes(1);
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Dismiss error" }),
+    );
+    previousReadLoads = reviewLoads;
+    eventStream!.error(new Error("read failure after dismissal"));
+    await vi.waitFor(
+      () => expect(reviewLoads).toBeGreaterThan(previousReadLoads),
+      { timeout: 5000 },
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Failed to load review",
+    );
+    expect(appOpened.reportErrorShown).toHaveBeenCalledTimes(2);
+    readFails = false;
+    eventStream!.error(new Error("recover read"));
+    await vi.waitFor(
+      () => expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+      { timeout: 5000 },
+    );
+    readFails = true;
+    eventStream!.error(new Error("new read failure"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Failed to load review",
+    );
+    expect(appOpened.reportErrorShown).toHaveBeenCalledTimes(3);
+    readFails = false;
+    eventStream!.error(new Error("recover before close"));
+    await vi.waitFor(
+      () => expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+      { timeout: 5000 },
+    );
+    appOpened.reportErrorShown.mockClear();
+    await fireEvent.click(screen.getByRole("button", { name: "Reopen" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Failed to close review",
+    );
+    expect(appOpened.reportErrorShown).toHaveBeenCalledExactlyOnceWith(
+      "review_closed",
+    );
+    previousReadLoads = reviewLoads;
+    eventStream!.error(new Error("refresh while close failure visible"));
+    await vi.waitFor(
+      () => expect(reviewLoads).toBeGreaterThan(previousReadLoads),
+      { timeout: 5000 },
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Failed to close review",
+    );
+    expect(appOpened.reportErrorShown).toHaveBeenCalledTimes(1);
+    await fireEvent.click(screen.getByRole("button", { name: "Reopen" }));
+    await vi.waitFor(() =>
+      expect(appOpened.reportErrorShown).toHaveBeenCalledTimes(2),
+    );
+    await fireEvent.click(
+      screen.getByRole("button", { name: "Close review details" }),
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    history.replaceState(null, "", "/reviews/42");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    expect(
+      await screen.findByRole("button", { name: "Reopen" }),
+    ).toBeInTheDocument();
+    appOpened.reportErrorShown.mockClear();
+
     failed = true;
     eventStream!.error(new Error("stream disconnected"));
     expect(await screen.findByText("Review failed")).toBeInTheDocument();
@@ -518,7 +608,7 @@ describe("App", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Log" }));
     await fireEvent.click(screen.getByRole("button", { name: "Review" }));
     expect(appOpened.reportErrorShown).toHaveBeenCalledTimes(2);
-  });
+  }, 20000);
 
   test("returns to session bootstrap when the current session is rejected", async () => {
     let statusCalls = 0;

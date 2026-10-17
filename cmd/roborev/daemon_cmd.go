@@ -369,16 +369,9 @@ func daemonRunCmd() *cobra.Command {
 				}
 
 				syncWorker = storage.NewSyncWorker(db, cfg.Sync)
-				syncWorker.SetAfterFailure(func(reason string) {
-					_ = telemetryReporter.Capture(telemetry.EventSyncFailed, map[string]any{telemetry.PropertyReason: reason})
-				})
 				search.reconciler.ShareVectors(syncWorker)
 				syncWorker.SetAfterReviewPush(search.reconciler.ReviewsPushed)
-				if err := syncWorker.Start(); err != nil {
-					log.Printf("Warning: failed to start sync worker: %v", err)
-				} else {
-					log.Printf("Sync worker started (interval: %s)", cfg.Sync.Interval)
-				}
+
 			}
 
 			// Create context for config watcher
@@ -395,6 +388,11 @@ func daemonRunCmd() *cobra.Command {
 			server.SetTelemetry(telemetryReporter)
 			if syncWorker != nil {
 				server.SetSyncWorker(syncWorker)
+				if err := syncWorker.Start(); err != nil {
+					log.Printf("Warning: failed to start sync worker: %v", err)
+				} else {
+					log.Printf("Sync worker started (interval: %s)", cfg.Sync.Interval)
+				}
 			}
 
 			// Start CI poller if enabled

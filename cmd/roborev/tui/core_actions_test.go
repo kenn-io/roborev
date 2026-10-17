@@ -279,6 +279,10 @@ func TestOutcomeVisibleTUIErrors(t *testing.T) {
 	f.m.splitDetailErr = nil
 	f.update(displayTickMsg{})
 	f.update(failure)
+	assert.Len(t, f.transport.events, 1)
+	f.update(f.review())
+	f.m.currentReview = nil
+	f.update(failure)
 	assert.Len(t, f.transport.events, 2)
 	// A superseded request cannot replace the visible error or report it again.
 	failure.fetchSeq++
@@ -329,6 +333,13 @@ func TestOutcomeFailedReviewLayouts(t *testing.T) {
 			assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"tui","kind":"review_viewed"}}`, f.transport.events[0])
 			f.update(displayTickMsg{})
 			assert.Len(t, f.transport.events, 1)
+			// A background job refresh can temporarily remove the cached review.
+			f.m.currentReview = nil
+			f.update(jobsMsg{jobs: f.m.jobs, seq: f.m.fetchSeq})
+			assert.Len(t, f.transport.events, 1)
+			collectMsgs(f.m.acceptSynthesizedFailure(job.ID, synthesizeFailedReview(job, nil)))
+			f.update(displayTickMsg{})
+			assert.Len(t, f.transport.events, 1)
 			f.m.currentView = viewReview
 			f.m.layout = splitlayout.Stacked
 			f.update(displayTickMsg{})
@@ -347,6 +358,14 @@ func TestOutcomeFailedReviewLayouts(t *testing.T) {
 			collectMsgs(f.m.acceptSynthesizedFailure(job.ID, synthesizeFailedReview(job, nil)))
 			f.update(displayTickMsg{})
 			assert.Len(t, f.transport.events, 2)
+			job.Status = storage.JobStatusDone
+			f.update(jobsMsg{jobs: f.m.jobs, seq: f.m.fetchSeq})
+			f.update(f.review())
+			job.Status = storage.JobStatusFailed
+			collectMsgs(f.m.acceptSynthesizedFailure(job.ID, synthesizeFailedReview(job, nil)))
+			f.m.currentView = viewReview
+			f.update(displayTickMsg{})
+			assert.Len(t, f.transport.events, 3)
 		})
 	}
 }
