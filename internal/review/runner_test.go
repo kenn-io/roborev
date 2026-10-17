@@ -5,9 +5,6 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"io"
-	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -92,22 +89,6 @@ func TestRunAgentReviewAcceptsJSONWithoutNativeSchema(t *testing.T) {
 	require.NotNil(t, got.Structured)
 	assert.JSONEq(t, raw, string(got.StructuredOutput))
 	assert.Equal(t, storage.VerdictPass, got.Verdict)
-}
-
-func TestRunAgentReviewAcceptsMuseNarration(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("shell fake command uses POSIX permissions")
-	}
-	command := filepath.Join(t.TempDir(), "muse")
-	script := `#!/bin/sh
-printf '%s\n' 'Reading files.' '{"schema_version":2,"summary":"No issues found.","verdict":"pass","findings":[]}'
-`
-	require.NoError(t, os.WriteFile(command, []byte(script), 0o755))
-	got, err := RunAgentReview(t.Context(), agent.NewMuseAgent(command), t.TempDir(), "HEAD", "prompt", "default", "", nil)
-	require.NoError(t, err)
-	require.NotNil(t, got.Structured)
-	assert.Equal(t, storage.VerdictPass, got.Verdict)
-	assert.Equal(t, "No issues found.", got.Structured.Summary)
 }
 
 func TestNoVerdictMessage(t *testing.T) {

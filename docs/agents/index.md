@@ -339,9 +339,9 @@ Reviews and planning pass `--trust-workspace` to load repository rules, plus
 `--yolo`. Setting `allow_unsafe_agents = true` also enables that mode for
 reviews.
 
-roborev passes `--contributor-mode off` and the standard `muse-spark-1.3` model
-unless a model is configured; naming a `-contributor` model opts in to
-Contributor mode.
+roborev always passes `--contributor-mode off`. It passes
+`--model muse-spark-1.3` when no model is configured. Otherwise, it passes the
+configured model with `--model`.
 
 Muse refuses to start when `TMPDIR` points inside the workspace. Use a temporary
 directory outside the repository.

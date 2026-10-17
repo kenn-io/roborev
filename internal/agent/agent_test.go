@@ -237,7 +237,7 @@ func TestCodexBuildArgsGPT56MaximumReasoning(t *testing.T) {
 	}
 }
 
-func TestClaudeEffortMapping(t *testing.T) {
+func TestReasoningEffortMapping(t *testing.T) {
 	tests := []struct {
 		level ReasoningLevel
 		want  string
@@ -254,10 +254,7 @@ func TestClaudeEffortMapping(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		a := NewClaudeAgent("").WithReasoning(tt.level)
-		claude, ok := a.(*ClaudeAgent)
-		require.True(t, ok, "expected ClaudeAgent, got %T", a)
-		assert.Equal(t, tt.want, claude.claudeEffort(), "claudeEffort(%q)", tt.level)
+		assert.Equal(t, tt.want, reasoningEffort(tt.level), "reasoningEffort(%q)", tt.level)
 	}
 }
 
@@ -271,40 +268,6 @@ func TestOtherReasoningEffortMappings(t *testing.T) {
 		mapEffort func(ReasoningLevel) string
 		levels    []effortCase
 	}{
-		{
-			name: "grok",
-			mapEffort: func(level ReasoningLevel) string {
-				return NewGrokAgent("").WithReasoning(level).(*GrokAgent).grokReasoningEffort()
-			},
-			levels: []effortCase{
-				{ReasoningMaximum, "max"},
-				{ReasoningThorough, "high"},
-				{ReasoningFast, "low"},
-				{ReasoningStandard, ""},
-				{ReasoningLow, "low"},
-				{ReasoningMedium, "medium"},
-				{ReasoningHigh, "high"},
-				{ReasoningXHigh, "xhigh"},
-				{ReasoningMax, "max"},
-			},
-		},
-		{
-			name: "muse",
-			mapEffort: func(level ReasoningLevel) string {
-				return NewMuseAgent("").WithReasoning(level).(*MuseAgent).museReasoningEffort()
-			},
-			levels: []effortCase{
-				{ReasoningMaximum, "max"},
-				{ReasoningThorough, "high"},
-				{ReasoningFast, "low"},
-				{ReasoningStandard, ""},
-				{ReasoningLow, "low"},
-				{ReasoningMedium, "medium"},
-				{ReasoningHigh, "high"},
-				{ReasoningXHigh, "xhigh"},
-				{ReasoningMax, "max"},
-			},
-		},
 		{
 			name: "droid",
 			mapEffort: func(level ReasoningLevel) string {

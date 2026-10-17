@@ -290,25 +290,6 @@ func (a *GrokAgent) WithSessionID(sessionID string) Agent {
 	return a.clone(withClonedSessionID(sessionID))
 }
 
-// grokReasoningEffort maps ReasoningLevel onto Grok's --reasoning-effort
-// values (none/minimal/low/medium/high/xhigh/max). Standard leaves Grok's default.
-func (a *GrokAgent) grokReasoningEffort() string {
-	switch a.Reasoning {
-	case ReasoningMaximum, ReasoningMax:
-		return "max"
-	case ReasoningXHigh:
-		return "xhigh"
-	case ReasoningThorough, ReasoningHigh:
-		return "high"
-	case ReasoningMedium:
-		return "medium"
-	case ReasoningFast, ReasoningLow:
-		return "low"
-	default:
-		return ""
-	}
-}
-
 func (a *GrokAgent) Name() string {
 	return defaultGrokName
 }
@@ -472,7 +453,7 @@ func (a *GrokAgent) buildArgsWithSafety(agenticMode, planning bool, promptFile s
 	if model := strings.TrimSpace(a.Model); model != "" {
 		args = append(args, "-m", model)
 	}
-	if effort := a.grokReasoningEffort(); effort != "" {
+	if effort := reasoningEffort(a.Reasoning); effort != "" {
 		args = append(args, "--reasoning-effort", effort)
 	}
 	if a.SessionID != "" {
@@ -633,7 +614,7 @@ func (a *GrokAgent) classifyArgs(schema jsontext.Value, promptFile string) []str
 	if model := strings.TrimSpace(a.Model); model != "" {
 		args = append(args, "-m", model)
 	}
-	if effort := a.grokReasoningEffort(); effort != "" {
+	if effort := reasoningEffort(a.Reasoning); effort != "" {
 		args = append(args, "--reasoning-effort", effort)
 	}
 	args = append(args, "--prompt-file", promptFile)
@@ -746,7 +727,7 @@ func (a *GrokAgent) reviewWithSchema(
 	if model := strings.TrimSpace(a.Model); model != "" {
 		args = append(args, "-m", model)
 	}
-	if effort := a.grokReasoningEffort(); effort != "" {
+	if effort := reasoningEffort(a.Reasoning); effort != "" {
 		args = append(args, "--reasoning-effort", effort)
 	}
 	if a.SessionID != "" {

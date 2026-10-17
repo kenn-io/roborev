@@ -48,30 +48,13 @@ func (a *MuseAgent) WithModel(model string) Agent {
 func (a *MuseAgent) Name() string        { return "muse" }
 func (a *MuseAgent) CommandName() string { return a.Command }
 
-func (a *MuseAgent) museReasoningEffort() string {
-	switch a.Reasoning {
-	case ReasoningMaximum, ReasoningMax:
-		return "max"
-	case ReasoningXHigh:
-		return "xhigh"
-	case ReasoningThorough, ReasoningHigh:
-		return "high"
-	case ReasoningMedium:
-		return "medium"
-	case ReasoningFast, ReasoningLow:
-		return "low"
-	default:
-		return ""
-	}
-}
-
 func (a *MuseAgent) buildArgs(agentic bool, promptFile string) []string {
 	model := a.Model
 	if model == "" {
 		model = museDefaultModel
 	}
 	args := []string{"exec", "--no-session-log", "--contributor-mode", "off", "--model", model}
-	if effort := a.museReasoningEffort(); effort != "" {
+	if effort := reasoningEffort(a.Reasoning); effort != "" {
 		args = append(args, "--reasoning-effort", effort)
 	}
 	if agentic {

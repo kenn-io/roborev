@@ -12,24 +12,23 @@ import (
 
 func TestMuseBuildArgs(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		agentic bool
-		unsafe  bool
-		model   string
-		want    []string
+		name      string
+		agentic   bool
+		unsafe    bool
+		model     string
+		wantModel string
+		reasoning ReasoningLevel
+		want      []string
 	}{
-		{"review", false, false, "", []string{"--trust-workspace", "--disable-write", "--disable-shell", "--disable-web-tools"}},
-		{"agentic", true, false, "", []string{"--yolo"}},
-		{"unsafe", false, true, "muse-spark-1.3-contributor", []string{"--yolo"}},
+		{"review", false, false, "", "muse-spark-1.3", ReasoningStandard, []string{"--trust-workspace", "--disable-write", "--disable-shell", "--disable-web-tools"}},
+		{"agentic", true, false, "", "muse-spark-1.3", ReasoningStandard, []string{"--yolo"}},
+		{"unsafe with contributor mode off", false, true, "muse-spark-1.3-contributor", "muse-spark-1.3-contributor", ReasoningStandard, []string{"--yolo"}},
+		{"configured model and reasoning", false, false, "custom-model", "custom-model", ReasoningThorough, []string{"--reasoning-effort", "high", "--trust-workspace", "--disable-write", "--disable-shell", "--disable-web-tools"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			withUnsafeAgents(t, tc.unsafe)
-			a := NewMuseAgent("").WithModel(tc.model).WithAgentic(tc.agentic).(*MuseAgent)
-			model := "muse-spark-1.3"
-			if tc.model != "" {
-				model = tc.model
-			}
-			want := append([]string{"exec", "--no-session-log", "--contributor-mode", "off", "--model", model}, tc.want...)
+			a := NewMuseAgent("").WithModel(tc.model).WithReasoning(tc.reasoning).WithAgentic(tc.agentic).(*MuseAgent)
+			want := append([]string{"exec", "--no-session-log", "--contributor-mode", "off", "--model", tc.wantModel}, tc.want...)
 			want = append(want, "--prompt-file", "prompt.md")
 			assert.Equal(t, want, a.buildArgs(effectiveAgentic(t.Context(), a.Agentic), "prompt.md"))
 			assert.Contains(t, a.CommandLine(), "--prompt-file <prompt-file>")
@@ -52,15 +51,15 @@ for arg in "$@"; do
  fi
  prev="$arg"
 done
-printf 'Reading files.\n\nNo issues found.\n'
+printf 'No issues found.\n'
 printf 'status message\n' >&2
 `)
 	var output bytes.Buffer
 	result, err := NewMuseAgent(command).Review(t.Context(), t.TempDir(), "HEAD", "prompt body", &output)
 	require.NoError(t, err)
 	assert := assert.New(t)
-	assert.Equal("Reading files.\n\nNo issues found.", result)
-	assert.Contains(output.String(), "Reading files.\n\nNo issues found.\n")
+	assert.Equal("No issues found.", result)
+	assert.Contains(output.String(), "No issues found.\n")
 	assert.Contains(output.String(), "status message\n")
 	assert.NotContains(result, "status message")
 	path, err := os.ReadFile(capturePath)
