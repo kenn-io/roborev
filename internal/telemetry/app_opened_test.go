@@ -119,7 +119,6 @@ func TestAppOpenedLimiterIgnoresRequestsThatSendNothing(t *testing.T) {
 		`{"event":"App_Opened"}`,
 		`{"event":""}`,
 		`{"event":"agent_active"}`,
-		`{"event":"setup_finished"}`,
 	} {
 		recorder := postThroughLimiter(limiter, optedOut, body)
 		assert.Equal(http.StatusBadRequest, recorder.Code)

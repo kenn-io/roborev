@@ -61,7 +61,7 @@ func setSyncState(ctx context.Context, store experimentStore, key, value string)
 }
 
 // ClaimSetupFinished claims the install's first readable review before
-// best-effort telemetry delivery. Hidden panel members do not count.
+// best-effort telemetry delivery.
 func (db *DB) ClaimSetupFinished() (bool, error) {
 	result, err := db.Exec(`
 		INSERT INTO sync_state (key, value)
@@ -69,7 +69,7 @@ func (db *DB) ClaimSetupFinished() (bool, error) {
 		WHERE EXISTS (
 			SELECT 1 FROM reviews rv JOIN review_jobs j ON j.id = rv.job_id
 			LEFT JOIN job_content jc ON jc.job_id = j.id
-			WHERE COALESCE(j.panel_role, '') != 'member'
+			WHERE 1 = 1
 			`+searchFeedEligibility+`
 		)
 		ON CONFLICT(key) DO NOTHING

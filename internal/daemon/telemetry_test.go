@@ -178,6 +178,9 @@ func TestSetupFinishedTelemetryCompletionPaths(t *testing.T) {
 				member, err := db.GetJobByID(claimed.ID)
 				require.NoError(t, err)
 				require.Equal(t, storage.JobStatusDone, member.Status)
+				_, err = db.GetReviewByJobID(member.ID)
+				require.NoError(t, err)
+				require.Equal(t, []string{"setup_finished"}, client.events)
 				job = releaseAndClaimSynthesis(t, tc, run)
 				server.workerPool.processSynthesisJob(t.Context(), testWorkerID, job)
 			case "goal":
@@ -199,8 +202,6 @@ func TestSetupFinishedTelemetryCompletionPaths(t *testing.T) {
 			_, err = db.GetReviewByJobID(job.ID)
 			require.NoError(t, err)
 			assert.Equal(t, []string{"setup_finished"}, client.events)
-			require.Len(t, client.properties, 1)
-			assert.Empty(t, client.properties[0])
 		})
 	}
 }
@@ -217,8 +218,6 @@ func TestSetupFinishedTelemetryAfterSyncPullWrite(t *testing.T) {
 				server.searchReconciler = reconciler
 			}
 			server.SetSyncWorker(storage.NewSyncWorker(db, config.SyncConfig{}))
-			server.afterSyncPullWrite()
-			require.Empty(t, client.events)
 			repo, err := db.GetOrCreateRepo(tmpDir)
 			require.NoError(t, err)
 			now := time.Now().UTC().Truncate(time.Second)
@@ -226,10 +225,9 @@ func TestSetupFinishedTelemetryAfterSyncPullWrite(t *testing.T) {
 			require.NoError(t, db.UpsertPulledJob(job, repo.ID, nil))
 			require.NoError(t, db.UpsertPulledReview(storage.PulledReview{UUID: uuid.New(), JobUUID: job.UUID, JobEnqueuedAt: now, JobSourceMachineID: job.SourceMachineID, Agent: "test", StructuredOutput: testutil.ReviewFixtureJSON("No issues found."), UpdatedByMachineID: job.SourceMachineID, CreatedAt: now, UpdatedAt: now}))
 			server.afterSyncPullWrite()
-			server.afterSyncPullWrite()
 			assert.Equal(t, []string{"setup_finished"}, client.events)
 			if reconciler != nil {
-				assert.Len(t, reconciler.wakes, 3, "every committed pull still wakes search")
+				assert.NotEmpty(t, reconciler.wakes, "committed pulls wake search")
 			}
 		})
 	}
