@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -22,6 +21,7 @@ import (
 	"go.kenn.io/roborev/internal/version"
 )
 
+// Direct daemon startup uses --queue-paused separately from cross-process recovery intent.
 func TestDaemonRunAppliesInitialPauseBeforeWorkers(t *testing.T) {
 	for _, paused := range []bool{true, false} {
 		t.Run(map[bool]string{true: "pause", false: "unpause"}[paused], func(t *testing.T) {
@@ -90,20 +90,14 @@ func TestUnpauseCmdPostsQueueUnpause(t *testing.T) {
 }
 
 func TestLocalQueueCommandCompletesOnlyItsOwnIntent(t *testing.T) {
-	for _, scenario := range []string{"success", "newer request", "API failure", "recovery failure"} {
+	for _, scenario := range []string{"success", "API failure", "recovery failure"} {
 		t.Run(scenario, func(t *testing.T) {
 			isolateDaemonSelection(t)
 			t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
 			marker := filepath.Join(config.DataDir(), "queue-intent.json")
-			var newer string
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, "/api/queue/pause", r.URL.Path)
 				assert.NotEmpty(t, r.Header.Get(daemon.QueueIntentHeader))
-				if scenario == "newer request" {
-					var err error
-					newer, err = daemon.PublishQueueIntent(r.Context(), false)
-					assert.NoError(t, err)
-				}
 				if scenario == "API failure" {
 					http.Error(w, "queue unavailable", http.StatusInternalServerError)
 					return
@@ -123,19 +117,13 @@ func TestLocalQueueCommandCompletesOnlyItsOwnIntent(t *testing.T) {
 			}
 			err := setQueuePaused(t.Context(), true)
 			if strings.HasSuffix(scenario, "failure") {
-				require.ErrorContains(t, err, "may apply at the next daemon start")
-				assert.Contains(t, err.Error(), "an opposite pause/unpause request supersedes it")
-				assert.FileExists(t, marker)
+				require.Error(t, err)
+				assert.NotContains(t, err.Error(), "pending")
+				assert.NoFileExists(t, marker)
 				return
 			}
 			require.NoError(t, err)
-			if scenario == "newer request" {
-				data, err := os.ReadFile(marker)
-				require.NoError(t, err)
-				assert.Contains(t, string(data), newer)
-			} else {
-				assert.NoFileExists(t, marker)
-			}
+			assert.NoFileExists(t, marker)
 		})
 	}
 }

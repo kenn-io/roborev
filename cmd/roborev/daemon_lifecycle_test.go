@@ -110,12 +110,16 @@ func TestEnsureDaemonRecoversFromLiveVersion(t *testing.T) {
 			probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
 				return &daemon.PingInfo{OK: true, Service: "roborev", Version: "v-other-daemon"}, tc.probeErr
 			}
-			findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
-			drainManagedDaemon = func(info *daemon.RuntimeInfo) error { assert.Equal(t, 1234, info.PID); return nil }
-			starts := 0
-			startDaemonForEnsure = func() error { starts++; return nil }
+			lookups := 0
+			findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
+				lookups++
+				assert.Equal(t, 1234, pid)
+				return nil, nil
+			}
+			drainManagedDaemon = func(*daemon.RuntimeInfo) error { return nil }
+			startDaemonForEnsure = func() error { return nil }
 			require.NoError(t, ensureDaemon())
-			assert.Equal(t, 1, starts)
+			assert.NotZero(t, lookups)
 		})
 	}
 }

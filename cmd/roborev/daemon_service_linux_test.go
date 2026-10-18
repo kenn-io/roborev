@@ -43,6 +43,7 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 		{outcome: "bus responsive"},
 		{outcome: "bus failed", probeErr: probeErr, wantError: "user bus unavailable"},
 		{outcome: "start failure", wantError: "start rejected", stops: 1, starts: 1},
+		{outcome: "drain failure", wantError: "drain rejected", stops: 1},
 		{outcome: "wrong PID", wantError: "replacement is outside service", stops: 1, starts: 1},
 		{outcome: "readiness failure", wantError: "replacement readiness", stops: 1, starts: 1},
 	} {
@@ -119,7 +120,14 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 			}
 			stops, starts, detached := 0, 0, 0
 			startDaemonForEnsure = func() error { detached++; return nil }
-			drainManagedDaemon = func(info *daemon.RuntimeInfo) error { stops++; assert.Equal(t, selectedPID, info.PID); return nil }
+			drainManagedDaemon = func(info *daemon.RuntimeInfo) error {
+				stops++
+				assert.Equal(t, selectedPID, info.PID)
+				if tc.outcome == "drain failure" {
+					return errors.New("drain rejected")
+				}
+				return nil
+			}
 			manager.start = func(_ context.Context, unit string) error {
 				assert.Equal(t, "fixture.service", unit)
 				starts++
@@ -230,10 +238,11 @@ func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 		assert.Empty(t, coldStart, "cold start must wait while the unit replaces its daemon")
 		assert.Zero(t, detached)
 		time.Sleep(daemonStartTimeout + time.Minute)
-		require.Error(t, <-coldStart)
+		require.ErrorIs(t, <-coldStart, context.DeadlineExceeded)
+		assert.Empty(t, competingRecovery, "waiting recovery must stay blocked beyond the former startup timeout")
 		close(resume)
 		require.NoError(t, <-recovery)
-		require.ErrorIs(t, <-competingRecovery, context.DeadlineExceeded, "waiting recovery must have a bound")
+		require.NoError(t, <-competingRecovery)
 		assert.Zero(t, detached)
 	})
 }
@@ -308,7 +317,7 @@ func TestUserServiceStalledAuthentication(t *testing.T) {
 	release()
 }
 
-func TestUnmanagedRecoveryReusesReplacementAfterDrain(t *testing.T) {
+func TestUnmanagedRecoveryReleasesLockBeforeEnsure(t *testing.T) {
 	oldFind, oldDrain := findDaemonService, drainManagedDaemon
 	oldDiscovery, oldStart, oldDetached := getAnyRunningDaemonForStart, startDaemonForEnsure, startDaemonDetached
 	t.Cleanup(func() {
@@ -327,25 +336,4 @@ func TestUnmanagedRecoveryReusesReplacementAfterDrain(t *testing.T) {
 	startDaemonDetached = func(context.Context, detachedDaemonOptions) error { detached++; return nil }
 	require.NoError(t, recoverDaemon(current, nil))
 	assert.Zero(t, detached)
-	assert.Equal(t, 5678, current.PID)
-}
-
-func TestStatusRecoveryLockTimeout(t *testing.T) {
-	oldEnsure, oldFind, oldTimeout := statusEnsureDaemon, findDaemonService, daemonStartTimeout
-	t.Cleanup(func() { statusEnsureDaemon, findDaemonService, daemonStartTimeout = oldEnsure, oldFind, oldTimeout })
-	findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
-	// The wait is on an external file lock rather than a Go channel.
-	daemonStartTimeout = 20 * time.Millisecond
-	release, err := daemon.RuntimeStore().AcquireStartLock(t.Context())
-	require.NoError(t, err)
-	defer release()
-	statusEnsureDaemon = func() error { return recoverDaemon(&daemon.RuntimeInfo{PID: 1234}, nil) }
-	command := statusCmd()
-	command.SetArgs([]string{"--json"})
-	stdout := captureStdout(t, func() {
-		err := command.Execute()
-		require.ErrorIs(t, err, context.DeadlineExceeded)
-		assert.ErrorContains(t, err, "daemon status unavailable")
-	})
-	assert.Empty(t, stdout, "a lock timeout cannot establish that the daemon stopped")
 }

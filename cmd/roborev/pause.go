@@ -39,7 +39,9 @@ func setQueuePaused(ctx context.Context, paused bool) (err error) {
 		}
 		defer func() {
 			if err != nil {
-				err = fmt.Errorf("%w; this queue request may apply at the next daemon start; an opposite pause/unpause request supersedes it", err)
+				if cleanupErr := daemon.CompleteQueueIntent(context.WithoutCancel(ctx), token); cleanupErr != nil {
+					err = fmt.Errorf("%w; clear failed queue request: %w; it may remain pending", err, cleanupErr)
+				}
 			}
 		}()
 	}

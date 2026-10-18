@@ -40,7 +40,6 @@ var (
 	drainManagedDaemon = daemon.KillDaemon
 	// errUserBusUnavailable leaves a responsive daemon in use without recovery.
 	errUserBusUnavailable = errors.New("user bus unavailable")
-	errRecoveryPending    = errors.New("daemon recovery is still pending")
 )
 
 func (s *daemonService) sameInstallation() (bool, error) {
@@ -56,7 +55,7 @@ func (s *daemonService) sameInstallation() (bool, error) {
 	return os.SameFile(selected, cli) || filepath.Clean(s.executable) == filepath.Clean(cliPath), nil
 }
 
-// acquireRecoveryLock bounds callers waiting behind an unlimited review drain.
+// acquireRecoveryLock lets waiting commands share the active review drain.
 func acquireRecoveryLock() (func(), error) {
 	store := daemon.RuntimeStore()
 	release, acquired, err := store.TryAcquireStartLock(context.Background())
@@ -64,9 +63,7 @@ func acquireRecoveryLock() (func(), error) {
 		return release, err
 	}
 	fmt.Fprintln(lifecycleOut, "Waiting for daemon recovery lock; another command may be waiting for running reviews to finish...")
-	ctx, cancel := context.WithTimeout(context.Background(), daemonStartTimeout)
-	defer cancel()
-	return store.AcquireStartLock(ctx)
+	return store.AcquireStartLock(context.Background())
 }
 
 func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
@@ -78,7 +75,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 	}
 	release, err := acquireRecoveryLock()
 	if err != nil {
-		return fmt.Errorf("%w: %w", errRecoveryPending, err)
+		return err
 	}
 	defer func() {
 		if release != nil {

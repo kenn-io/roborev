@@ -34,11 +34,18 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 	buildDir := t.TempDir()
 	oldBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-old", "v-old")
 	newBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-new", "v-new")
-	for _, scenario := range []string{"shared", "pause", "remain after exit", "daemon start", "simple", "exec", "transient", "missing bus environment", "foreign", "selection advances", "unrelated ancestor", "wrapper", "tui launcher"} {
+	for _, scenario := range []string{"shared", "pause", "remain after exit", "daemon start", "simple", "exec", "transient", "missing bus environment", "bus alternatives", "foreign", "selection advances", "unrelated ancestor", "wrapper", "tui launcher"} {
 		t.Run(scenario, func(t *testing.T) {
 			dataDir := t.TempDir()
 			t.Setenv("ROBOREV_DATA_DIR", dataDir)
 			t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
+			if scenario == "bus alternatives" {
+				address := os.Getenv("DBUS_SESSION_BUS_ADDRESS")
+				if address == "" {
+					address = "unix:path=" + filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "bus")
+				}
+				t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path="+filepath.Join(dataDir, "missing-bus")+";"+address)
+			}
 			link := filepath.Join(dataDir, "roborev")
 			require.NoError(t, os.Symlink(oldBinary, link))
 			script := writeSlowUpdateAgent(t, dataDir)

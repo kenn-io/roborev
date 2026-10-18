@@ -37,44 +37,60 @@ func dialUserService(ctx context.Context) (userServiceConnection, error) {
 		}
 		address = "unix:path=" + filepath.Join(runtimeDir, "bus")
 	}
-	var path string
-	for field := range strings.SplitSeq(strings.TrimPrefix(address, "unix:"), ",") {
-		if value, ok := strings.CutPrefix(field, "path="); ok {
-			path, _ = url.PathUnescape(value)
-		} else if value, ok := strings.CutPrefix(field, "abstract="); ok {
-			path, _ = url.PathUnescape(value)
-			path = "@" + path
-		}
-	}
-	if !strings.HasPrefix(address, "unix:") || path == "" {
-		return userServiceConnection{}, fmt.Errorf("user bus requires a Unix socket address")
-	}
 	// Socket deadlines cover authentication, Hello, and signal registration.
 	var sockets []net.Conn
 	var method *dbus.Conn
 	conn, err := systemdbus.NewConnection(func() (*dbus.Conn, error) {
-		raw, err := (&net.Dialer{}).DialContext(ctx, "unix", path)
-		if err != nil {
-			return nil, err
+		lastErr := fmt.Errorf("user bus requires a Unix socket address")
+		for alternative := range strings.SplitSeq(address, ";") {
+			fields, unixAddress := strings.CutPrefix(alternative, "unix:")
+			if !unixAddress {
+				continue
+			}
+			var path string
+			for field := range strings.SplitSeq(fields, ",") {
+				if value, ok := strings.CutPrefix(field, "path="); ok {
+					path, _ = url.PathUnescape(value)
+				} else if value, ok := strings.CutPrefix(field, "abstract="); ok {
+					path, _ = url.PathUnescape(value)
+					path = "@" + path
+				}
+			}
+			if path == "" {
+				continue
+			}
+			raw, err := (&net.Dialer{}).DialContext(ctx, "unix", path)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			if err := raw.SetDeadline(deadline); err != nil {
+				_ = raw.Close()
+				lastErr = err
+				continue
+			}
+			bus, err := dbus.NewConn(raw)
+			if err == nil {
+				err = bus.Auth([]dbus.Auth{dbus.AuthExternal(strconv.Itoa(os.Getuid()))})
+			}
+			if err == nil {
+				err = bus.Hello()
+			}
+			if err != nil {
+				if bus != nil {
+					_ = bus.Close()
+				}
+				_ = raw.Close()
+				lastErr = err
+				continue
+			}
+			sockets = append(sockets, raw)
+			if method == nil {
+				method = bus
+			}
+			return bus, nil
 		}
-		sockets = append(sockets, raw)
-		if err := raw.SetDeadline(deadline); err != nil {
-			return nil, err
-		}
-		bus, err := dbus.NewConn(raw)
-		if err == nil {
-			err = bus.Auth([]dbus.Auth{dbus.AuthExternal(strconv.Itoa(os.Getuid()))})
-		}
-		if err == nil {
-			err = bus.Hello()
-		}
-		if method == nil {
-			method = bus
-		}
-		if err != nil && bus != nil {
-			_ = bus.Close()
-		}
-		return bus, err
+		return nil, lastErr
 	})
 	if err == nil && !conn.Connected() {
 		err = fmt.Errorf("user bus setup did not complete")
