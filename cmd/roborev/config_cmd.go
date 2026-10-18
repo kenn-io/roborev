@@ -171,6 +171,7 @@ func getValueForScope(resolver RepoResolver, key string, scope configScope) (str
 		if err != nil {
 			return "", fmt.Errorf("load global config: %w", err)
 		}
+		warnDaemonConfig(cfg)
 		val, err := config.GetConfigValue(cfg, key)
 		if err != nil {
 			return "", err
@@ -245,6 +246,7 @@ func getValueForScope(resolver RepoResolver, key string, scope configScope) (str
 		if err != nil {
 			return "", fmt.Errorf("load global config: %w", err)
 		}
+		warnDaemonConfig(cfg)
 		parts := strings.SplitN(key, ".", 3)
 		if (len(parts) == 3 && parts[0] == "acp") || strings.HasPrefix(key, "budget.agent_costs.") {
 			raw, err := config.LoadRawGlobal()
@@ -468,11 +470,18 @@ func configListCmd() *cobra.Command {
 	return cmd
 }
 
+func warnDaemonConfig(cfg *config.Config) {
+	for _, err := range cfg.DaemonConfigWarnings() {
+		fmt.Fprintf(os.Stderr, "Warning: ignoring invalid daemon config %v\n", err)
+	}
+}
+
 func listGlobalConfig() error {
 	cfg, err := config.LoadGlobal()
 	if err != nil {
 		return fmt.Errorf("load global config: %w", err)
 	}
+	warnDaemonConfig(cfg)
 	raw, err := config.LoadRawGlobal()
 	if err != nil {
 		return fmt.Errorf("load global config: %w", err)
@@ -506,6 +515,7 @@ func listMergedConfig(resolver RepoResolver, showOrigin bool) error {
 	if err != nil {
 		return fmt.Errorf("load global config: %w", err)
 	}
+	warnDaemonConfig(cfg)
 	rawGlobal, _ := config.LoadRawGlobal()
 
 	var repoCfg *config.RepoConfig

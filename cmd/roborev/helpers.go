@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 	gitrepo "go.kenn.io/kit/git/repo"
 
-	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/githook"
 	"go.kenn.io/roborev/internal/storage"
@@ -145,15 +144,4 @@ func autoInstallHooks(ctx context.Context, repoPath string) {
 			}
 		}
 	}
-}
-
-// loadGlobalConfigOrWarn keeps best-effort helpers from silently dropping
-// configured values when a workflow-level load fails. Root command parsing
-// already rejects malformed TOML before these helpers are reached.
-func loadGlobalConfigOrWarn() *config.Config {
-	cfg, err := config.LoadGlobal()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: load global config: %v (using defaults)\n", err)
-	}
-	return cfg
 }

@@ -10,8 +10,6 @@ import (
 	_ "time/tzdata"
 
 	"github.com/spf13/cobra"
-
-	"go.kenn.io/roborev/internal/config"
 )
 
 var (
@@ -53,19 +51,6 @@ func newRootCmd() *cobra.Command {
 			// errors from RunE just get a plain "Error: ..." line without
 			// the usage wall.
 			cmd.SilenceUsage = true
-			// Daemon run may use --config; doctor reports strict validation in
-			// its own structured checks. Other commands parse the global file
-			// before any work, including paths that otherwise ignore load errors.
-			daemonRun := cmd.Name() == "run" && cmd.Parent() != nil && cmd.Parent().Name() == "daemon"
-			if cmd.Name() != "doctor" && !daemonRun {
-				cfg, err := config.ParseGlobalFrom(config.GlobalConfigPath())
-				if err != nil {
-					return err
-				}
-				for _, warning := range cfg.DaemonConfigWarnings() {
-					cmd.PrintErrf("Warning: invalid daemon configuration %v\n", warning)
-				}
-			}
 			armCLIUse(cmd)
 			return nil
 		},

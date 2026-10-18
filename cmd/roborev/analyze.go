@@ -302,7 +302,7 @@ func runAnalysis(cmd *cobra.Command, typeName string, filePatterns []string, opt
 	}
 
 	// Load config and resolve max prompt size once for all analysis modes
-	cfg := loadGlobalConfigOrWarn()
+	cfg, _ := config.LoadGlobal()
 	maxPromptSize := config.ResolveMaxPromptSize(repoRoot, cfg)
 
 	ep := getDaemonEndpoint()
@@ -628,7 +628,7 @@ func runAnalyzeAndFix(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot str
 		cmd.Println()
 	}
 
-	cfg := loadGlobalConfigOrWarn()
+	cfg, _ := config.LoadGlobal()
 	metadata, err := config.ResolveFixCommitMetadata(repoRoot, cfg)
 	if err != nil {
 		return fmt.Errorf("resolve fix commit metadata: %w", err)

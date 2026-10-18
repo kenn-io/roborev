@@ -1055,7 +1055,7 @@ func GlobalConfigPath() string {
 
 // LoadGlobal loads client/workflow configuration from the default path.
 // Daemon-only sections are retained without requiring this process to serve
-// them. CLI entry points report DaemonConfigWarnings; daemon and diagnostic
+// them. Config inspection commands report DaemonConfigWarnings; daemon and diagnostic
 // callers must use the strict LoadGlobalFrom loader.
 func LoadGlobal() (*Config, error) {
 	return LoadGlobalClientFrom(GlobalConfigPath())
@@ -1064,7 +1064,7 @@ func LoadGlobal() (*Config, error) {
 // LoadGlobalClientFrom loads workflow settings without rejecting unrelated
 // daemon sections. The caller can report DaemonConfigWarnings separately.
 func LoadGlobalClientFrom(path string) (*Config, error) {
-	cfg, err := ParseGlobalFrom(path)
+	cfg, err := parseGlobalFrom(path)
 	if err != nil {
 		return nil, err
 	}
@@ -1077,21 +1077,18 @@ func LoadGlobalClientFrom(path string) (*Config, error) {
 // LoadGlobalFrom loads and validates global configuration for a daemon or
 // whole-file diagnostic. Unlike LoadGlobal, it validates daemon-only sections.
 func LoadGlobalFrom(path string) (*Config, error) {
-	cfg, err := LoadGlobalClientFrom(path)
+	cfg, err := parseGlobalFrom(path)
 	if err != nil {
 		return nil, err
 	}
-	if err := cfg.ValidateDaemon(); err != nil {
+	if err := normalizeGlobalConfig(cfg); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
 	return cfg, nil
 }
 
-// ParseGlobalFrom decodes the entire global file and migrates deprecated keys.
-// Syntax and TOML type errors are always fatal. Semantic checks belong to the
-// consuming workflow or daemon; lightweight CLI entry points can use this to
-// report unused-section warnings without requiring workflow settings to work.
-func ParseGlobalFrom(path string) (*Config, error) {
+// parseGlobalFrom decodes the global file and migrates deprecated keys.
+func parseGlobalFrom(path string) (*Config, error) {
 	cfg := DefaultConfig()
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return cfg, nil
@@ -1111,7 +1108,7 @@ func normalizeGlobalConfig(cfg *Config) error {
 	if err := normalizeClientConfig(cfg); err != nil {
 		return err
 	}
-	return cfg.ValidateDaemon()
+	return errors.Join(cfg.daemonConfigErrors()...)
 }
 
 func normalizeClientConfig(cfg *Config) error {
@@ -1122,13 +1119,6 @@ func normalizeClientConfig(cfg *Config) error {
 		return err
 	}
 	return nil
-}
-
-// ValidateDaemon validates and normalizes the sections served by the daemon.
-// Sync retains its existing warning-only validation; MCP currently has only
-// an enabled switch and no semantic constraints beyond TOML decoding.
-func (c *Config) ValidateDaemon() error {
-	return errors.Join(c.daemonConfigErrors()...)
 }
 
 // DaemonConfigWarnings diagnoses unused daemon sections without changing the

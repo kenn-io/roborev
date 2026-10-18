@@ -902,3 +902,33 @@ func TestGetBudgetPriceRequiresConfiguredEntry(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigGetWithInvalidDaemonConfig(t *testing.T) {
+	for _, tc := range []struct{ name, contents, wantError string }{
+		{"missing token", "[web]\nauth_token_file = 'missing-token'\n", ""},
+		{"malformed TOML", "[web\n", "invalid global config TOML"},
+		{"wrong type", "[web]\nenabled = 'yes'\n", "incompatible types"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupConfigEnv(t, "hook_timeout_seconds = 17\n"+tc.contents, "")
+			cmd := configGetCmd()
+			cmd.SetArgs([]string{"hook_timeout_seconds", "--global"})
+			stdout, stderr := captureStdoutStderr(t, func() {
+				err := cmd.Execute()
+				if tc.wantError != "" {
+					require.ErrorContains(t, err, tc.wantError)
+					return
+				}
+				require.NoError(t, err)
+			})
+			if tc.wantError == "" {
+				assert.Equal(t, "17\n", stdout)
+				assert.Contains(t, stderr, "Warning: ignoring invalid daemon config [web]")
+				assert.Equal(t, 1, strings.Count(stderr, "Warning:"))
+			}
+			validate := configValidateCmd()
+			validate.SetArgs([]string{"--global"})
+			require.Error(t, validate.Execute())
+		})
+	}
+}
