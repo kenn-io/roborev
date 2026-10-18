@@ -23,7 +23,7 @@ import (
 
 func TestEnsureDaemonServiceRecovery(t *testing.T) {
 	for _, trigger := range []string{"mismatch", "unknown", "failed"} {
-		for _, installation := range []string{"shared", "foreign", "unmanaged", "uncertain", "unreadable"} {
+		for _, installation := range []string{"shared", "foreign", "foreign quiet", "unmanaged", "uncertain", "unreadable"} {
 			t.Run(trigger+"/"+installation, func(t *testing.T) {
 				t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
 				var warning bytes.Buffer
@@ -36,6 +36,9 @@ func TestEnsureDaemonServiceRecovery(t *testing.T) {
 					restartDaemonForEnsure, lifecycleOut = oldRestart, oldOut
 				})
 				lifecycleOut = &warning
+				oldVerbose := verbose
+				verbose = installation == "foreign"
+				t.Cleanup(func() { verbose = oldVerbose })
 				calls := []string{}
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					assert.Equal(t, "/api/ping", r.URL.Path)
@@ -111,14 +114,18 @@ func TestEnsureDaemonServiceRecovery(t *testing.T) {
 				case "unmanaged":
 					require.NoError(t, err)
 					assert.Equal(t, []string{"detached"}, calls)
-				case "foreign":
+				case "foreign", "foreign quiet":
 					if trigger == "failed" {
 						require.Error(t, err)
 					} else {
 						require.NoError(t, err)
-						assert.Contains(t, warning.String(), "fixture.service")
-						assert.Contains(t, warning.String(), selected)
-						assert.Contains(t, warning.String(), os.Args[0])
+						if installation == "foreign" {
+							assert.Contains(t, warning.String(), "fixture.service")
+							assert.Contains(t, warning.String(), selected)
+							assert.Contains(t, warning.String(), os.Args[0])
+						} else {
+							assert.Empty(t, warning.String())
+						}
 					}
 					assert.Empty(t, calls)
 				default:
@@ -210,6 +217,10 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 
 func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+		oldOut := lifecycleOut
+		var progress bytes.Buffer
+		lifecycleOut = &progress
+		t.Cleanup(func() { lifecycleOut = oldOut })
 		oldFind, oldRun, oldDrain := findDaemonService, runDaemonService, drainManagedDaemon
 		oldDiscovery, oldDetached := getAnyRunningDaemonForStart, startDaemonDetached
 		t.Cleanup(func() {
@@ -220,6 +231,7 @@ func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 		var current atomic.Pointer[daemon.RuntimeInfo]
 		current.Store(old)
 		drained, resume := make(chan struct{}), make(chan struct{})
+		finishDrain := make(chan struct{})
 		findDaemonService = func(context.Context, int) (*daemonService, error) {
 			return &daemonService{"fixture.service", "/proc/self/exe"}, nil
 		}
@@ -229,7 +241,12 @@ func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 			}
 			return current.Load(), nil
 		}
-		drainManagedDaemon = func(*daemon.RuntimeInfo) error { current.Store(nil); close(drained); return nil }
+		drainManagedDaemon = func(*daemon.RuntimeInfo) error {
+			current.Store(nil)
+			close(drained)
+			<-finishDrain
+			return nil
+		}
 		runDaemonService = func(context.Context, string) error {
 			<-resume
 			current.Store(&daemon.RuntimeInfo{PID: 5678})
@@ -240,6 +257,10 @@ func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 		recovery, coldStart := make(chan error, 1), make(chan error, 1)
 		go func() { recovery <- recoverDaemon(old, nil) }()
 		<-drained
+		synctest.Wait()
+		assert.Contains(t, progress.String(), "Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...\n")
+		assert.Empty(t, recovery, "shutdown notice must be visible while reviews drain")
+		close(finishDrain)
 		go func() { coldStart <- startDaemon() }()
 		synctest.Wait()
 		assert.Empty(t, coldStart, "cold start must wait while the unit replaces its daemon")

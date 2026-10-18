@@ -48,8 +48,13 @@ func lookupDaemonService(ctx context.Context, pid int) (*daemonService, error) {
 	if err != nil {
 		return fail(err)
 	}
-	if service["MainPID"] != uint32(pid) {
-		return fail(fmt.Errorf("service MainPID differs from daemon PID %d", pid))
+	mainPID, ok := service["MainPID"].(uint32)
+	if !ok {
+		return fail(fmt.Errorf("service MainPID unavailable"))
+	}
+	if mainPID != uint32(pid) {
+		// A detached daemon can inherit the launching service's cgroup.
+		return nil, nil
 	}
 	// ExecStart is a(ssbttttuii), including execution timestamps and exit status.
 	var commands []struct {
@@ -64,7 +69,7 @@ func lookupDaemonService(ctx context.Context, pid int) (*daemonService, error) {
 		return fail(fmt.Errorf("read ExecStart: %w", err))
 	}
 	if len(commands) != 1 || len(commands[0].Args) < 3 || commands[0].Args[1] != "daemon" || commands[0].Args[2] != "run" {
-		return fail(fmt.Errorf("ExecStart must directly execute roborev daemon run"))
+		return nil, nil
 	}
 	return &daemonService{unit: unit, executable: commands[0].Path}, nil
 }

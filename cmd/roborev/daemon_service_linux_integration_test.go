@@ -33,7 +33,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 	buildDir := t.TempDir()
 	oldBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-old", "v-old")
 	newBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-new", "v-new")
-	for _, scenario := range []string{"shared", "foreign", "selection advances"} {
+	for _, scenario := range []string{"shared", "foreign", "selection advances", "unrelated ancestor", "wrapper"} {
 		t.Run(scenario, func(t *testing.T) {
 			dataDir := t.TempDir()
 			t.Setenv("ROBOREV_DATA_DIR", dataDir)
@@ -47,7 +47,18 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			require.True(t, filepath.IsAbs(unitDir))
 			require.NoError(t, os.MkdirAll(unitDir, 0o700))
 			unitPath := filepath.Join(unitDir, unit)
-			body := fmt.Sprintf("[Service]\nType=exec\nEnvironment=%s\nEnvironment=%s\nEnvironment=GIT_CONFIG_NOSYSTEM=1\nExecStart=%s daemon run --addr 127.0.0.1:0\n", strconv.Quote("ROBOREV_DATA_DIR="+dataDir), strconv.Quote("GIT_CONFIG_GLOBAL="+os.Getenv("GIT_CONFIG_GLOBAL")), strconv.Quote(link))
+			unmanaged := scenario == "unrelated ancestor" || scenario == "wrapper"
+			start := strconv.Quote(link) + " daemon run --addr 127.0.0.1:0"
+			if unmanaged {
+				wrapper := filepath.Join(dataDir, "start-service")
+				body := "#!/bin/sh\nexec " + start + "\n"
+				if scenario == "unrelated ancestor" {
+					body = "#!/bin/sh\n" + strconv.Quote(link) + " daemon start\nexec sleep infinity\n"
+				}
+				require.NoError(t, os.WriteFile(wrapper, []byte(body), 0o700))
+				start = strconv.Quote(wrapper)
+			}
+			body := fmt.Sprintf("[Service]\nType=exec\nEnvironment=%s\nEnvironment=%s\nEnvironment=GIT_CONFIG_NOSYSTEM=1\nExecStart=%s\n", strconv.Quote("ROBOREV_DATA_DIR="+dataDir), strconv.Quote("GIT_CONFIG_GLOBAL="+os.Getenv("GIT_CONFIG_GLOBAL")), start)
 			require.NoError(t, os.WriteFile(unitPath, []byte(body), 0o600))
 			t.Cleanup(func() {
 				output, err := exec.Command("systemctl", "--user", "stop", unit).CombinedOutput()
@@ -68,8 +79,12 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			}, 15*time.Second, 50*time.Millisecond)
 			owner, err := lookupDaemonService(context.Background(), original.PID)
 			require.NoError(t, err)
-			require.NotNil(t, owner)
-			assert.Equal(t, unit, owner.unit)
+			if unmanaged {
+				require.Nil(t, owner)
+			} else {
+				require.NotNil(t, owner)
+				assert.Equal(t, unit, owner.unit)
+			}
 			var active storage.ReviewJob
 			if scenario == "selection advances" {
 				repo := testutil.NewGitRepo(t)
@@ -83,6 +98,9 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				require.NoError(t, os.Rename(next, link))
 			}
 			cli := exec.Command(newBinary, "status", "--json")
+			if scenario == "foreign" {
+				cli.Args = append(cli.Args, "--verbose")
+			}
 			var stdout, stderr bytes.Buffer
 			cli.Stdout, cli.Stderr = &stdout, &stderr
 			if scenario == "selection advances" {
@@ -114,20 +132,27 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			require.NoError(t, err)
 			owner, err = lookupDaemonService(context.Background(), replacement.PID)
 			require.NoError(t, err)
-			require.NotNil(t, owner)
-			assert.Equal(t, unit, owner.unit)
+			if unmanaged {
+				require.Nil(t, owner)
+			} else {
+				require.NotNil(t, owner)
+				assert.Equal(t, unit, owner.unit)
+			}
 			if scenario == "foreign" {
 				assert.Equal(t, original.PID, replacement.PID)
 			} else {
 				assert.NotEqual(t, original.PID, replacement.PID)
 			}
 			expectedVersion := "v-new"
-			if scenario != "shared" {
+			if scenario == "foreign" || scenario == "selection advances" {
 				expectedVersion = "v-old"
 			}
 			assertDaemonUpdateVersion(t, replacement.Endpoint(), expectedVersion)
 			if scenario == "selection advances" {
 				waitForUpdateJobStatus(t, replacement.Endpoint(), active.ID, storage.JobStatusDone, time.Second)
+			}
+			if unmanaged {
+				return
 			}
 			output, err = exec.Command("systemctl", "--user", "start", unit).CombinedOutput()
 			require.NoError(t, err, "%s", output)

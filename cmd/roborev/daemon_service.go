@@ -62,8 +62,10 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 		if probeErr != nil {
 			return fail(fmt.Errorf("installation %s requires attention: %w", owner.executable, probeErr))
 		}
-		cliPath, _ := os.Readlink("/proc/self/exe")
-		fmt.Fprintf(lifecycleOut, "Warning: systemd service %s uses %s; CLI image %s is a different installation. Using the responding daemon; its version differs or cannot be verified.\n", owner.unit, owner.executable, cliPath)
+		if verbose {
+			cliPath, _ := os.Readlink("/proc/self/exe")
+			fmt.Fprintf(lifecycleOut, "Warning: systemd service %s uses %s; CLI image %s is a different installation. Using the responding daemon; its version differs or cannot be verified.\n", owner.unit, owner.executable, cliPath)
+		}
 		return nil
 	}
 	release, err := daemon.RuntimeStore().AcquireStartLock(ctx)
@@ -95,6 +97,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 	if !same {
 		return fail(fmt.Errorf("service executable changed before recovery"))
 	}
+	fmt.Fprintln(lifecycleOut, "Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...")
 	if err := drainManagedDaemon(current); err != nil {
 		return fail(err)
 	}
