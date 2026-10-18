@@ -44,16 +44,18 @@ func TestCaptureDaemonStartedTelemetry(t *testing.T) {
 		_, err := db.GetOrCreateRepo(filepath.Join(tmpDir, fmt.Sprintf("repo-%d", i)))
 		require.NoError(err)
 	}
-	job, err := db.EnqueueJob(storage.EnqueueOpts{
-		RepoID:  repo.ID,
-		GitRef:  "abc123",
-		Agent:   "codex",
-		JobType: storage.JobTypeReview,
-	})
-	require.NoError(err)
-	_, err = db.Exec(`UPDATE review_jobs SET status = 'running' WHERE id = ?`, job.ID)
-	require.NoError(err)
-	require.NoError(testutil.CompleteReviewFixture(db, job.ID, "codex", "prompt", "No issues found."))
+	for range 6 {
+		job, err := db.EnqueueJob(storage.EnqueueOpts{
+			RepoID:  repo.ID,
+			GitRef:  "abc123",
+			Agent:   "codex",
+			JobType: storage.JobTypeReview,
+		})
+		require.NoError(err)
+		_, err = db.Exec(`UPDATE review_jobs SET status = 'running' WHERE id = ?`, job.ID)
+		require.NoError(err)
+		require.NoError(testutil.CompleteReviewFixture(db, job.ID, "codex", "prompt", "No issues found."))
+	}
 
 	cfg := config.DefaultConfig()
 	cfg.MaxWorkers = 4
@@ -67,7 +69,7 @@ func TestCaptureDaemonStartedTelemetry(t *testing.T) {
 	require.Len(client.properties, 1)
 	assert.Equal("daemon_started", client.events[0])
 	assert.Equal("21-100", client.properties[0]["repo_count"])
-	assert.Equal("0-5", client.properties[0]["review_count"])
+	assert.Equal("6-20", client.properties[0]["review_count"])
 	assert.Equal(true, client.properties[0]["sync_enabled"])
 	assert.Equal(true, client.properties[0]["ci_enabled"])
 	assert.Equal(true, client.properties[0]["auto_design_enabled"])
