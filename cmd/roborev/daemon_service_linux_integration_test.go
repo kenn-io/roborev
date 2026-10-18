@@ -42,7 +42,11 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			if scenario == "bus alternatives" {
 				address := os.Getenv("DBUS_SESSION_BUS_ADDRESS")
 				if address == "" {
-					address = "unix:path=" + filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "bus")
+					runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
+					if runtimeDir == "" {
+						runtimeDir = filepath.Join("/run/user", strconv.Itoa(os.Getuid()))
+					}
+					address = "unix:path=" + filepath.Join(runtimeDir, "bus")
 				}
 				t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path="+filepath.Join(dataDir, "missing-bus")+";"+address)
 			}
