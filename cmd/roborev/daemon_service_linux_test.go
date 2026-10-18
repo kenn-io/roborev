@@ -5,8 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,8 +32,8 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 	}{
 		{outcome: "replacement current"},
 		{outcome: "replacement outdated", stops: 1, starts: 1},
-		{outcome: "missing PID", wantError: "cannot determine owner"},
-		{outcome: "pause rejected", wantError: "pause queue before recovery"},
+		{outcome: "missing PID"},
+		{outcome: "vanished owned", starts: 1},
 		{outcome: "mismatch", stops: 1, starts: 1},
 		{outcome: "failed", probeErr: probeErr, stops: 1, starts: 1},
 		{outcome: "foreign failed", probeErr: probeErr, wantError: "probe failed"},
@@ -47,13 +46,15 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 		{outcome: "readiness failure", wantError: "replacement readiness", stops: 1, starts: 1},
 	} {
 		t.Run(tc.outcome, func(t *testing.T) {
+			oldOut, oldVerbose := lifecycleOut, verbose
+			var progress bytes.Buffer
+			lifecycleOut, verbose = &progress, tc.outcome == "bus responsive"
+			t.Cleanup(func() { lifecycleOut, verbose = oldOut, oldVerbose })
 			oldFind, oldDrain, oldRead := findDaemonService, drainManagedDaemon, readServiceProcessFile
-			oldDiscovery, oldRestart := getAnyRunningDaemonForStart, restartDaemonForEnsure
-			oldPause := pendingStartPause
+			oldDiscovery, oldRestart := getAnyRunningDaemonForStart, startDaemonForEnsure
 			t.Cleanup(func() {
 				findDaemonService, drainManagedDaemon, readServiceProcessFile = oldFind, oldDrain, oldRead
-				getAnyRunningDaemonForStart, restartDaemonForEnsure = oldDiscovery, oldRestart
-				pendingStartPause = oldPause
+				getAnyRunningDaemonForStart, startDaemonForEnsure = oldDiscovery, oldRestart
 			})
 			original := &daemon.RuntimeInfo{PID: 1234, Version: version.Version}
 			current := original
@@ -64,16 +65,6 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 				}
 			}
 			selectedPID := current.PID
-			if tc.outcome == "pause rejected" {
-				pendingStartPause = new(true)
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					assert.Equal(t, "POST", r.Method)
-					assert.Equal(t, "/api/queue/pause", r.URL.Path)
-					w.WriteHeader(http.StatusConflict)
-				}))
-				defer server.Close()
-				current.Address = strings.TrimPrefix(server.URL, "http://")
-			}
 			executable := "/proc/self/exe"
 			if strings.HasPrefix(tc.outcome, "foreign") {
 				executable = filepath.Join(t.TempDir(), "roborev")
@@ -96,7 +87,18 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 				}
 				return &daemonService{unit: "fixture.service", executable: executable, mainPID: pid, manager: manager}, nil
 			}
-			findDaemonService = manager.lookup
+			lookups := 0
+			findDaemonService = func(ctx context.Context, pid int) (*daemonService, error) {
+				lookups++
+				if lookups == 1 {
+					assert.Equal(t, original.PID, pid)
+					return &daemonService{unit: "fixture.service", executable: executable, mainPID: pid, manager: manager}, nil
+				}
+				if tc.outcome == "vanished owned" {
+					return nil, os.ErrNotExist
+				}
+				return manager.lookup(ctx, pid)
+			}
 			if tc.outcome == "missing PID" {
 				findDaemonService = lookupDaemonService
 				readServiceProcessFile = func(path string) ([]byte, error) {
@@ -105,13 +107,13 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 				}
 			}
 			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
-				if !started && tc.probeErr != nil || tc.outcome == "missing PID" || started && tc.outcome == "readiness failure" {
+				if !started && tc.probeErr != nil || (tc.outcome == "missing PID" || tc.outcome == "vanished owned") && !started || started && tc.outcome == "readiness failure" {
 					return nil, os.ErrNotExist
 				}
 				return current, nil
 			}
 			stops, starts, detached := 0, 0, 0
-			restartDaemonForEnsure = func() error { detached++; return nil }
+			startDaemonForEnsure = func() error { detached++; return nil }
 			drainManagedDaemon = func(info *daemon.RuntimeInfo) error { stops++; assert.Equal(t, selectedPID, info.PID); return nil }
 			manager.start = func(_ context.Context, unit string) error {
 				assert.Equal(t, "fixture.service", unit)
@@ -139,7 +141,14 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 			}
 			assert.Equal(t, tc.stops, stops)
 			assert.Equal(t, tc.starts, starts)
-			assert.Zero(t, detached)
+			if tc.outcome == "bus responsive" {
+				assert.Contains(t, progress.String(), "Daemon recovery skipped; user bus unavailable")
+			}
+			if tc.outcome == "missing PID" {
+				assert.Equal(t, 1, detached)
+			} else {
+				assert.Zero(t, detached)
+			}
 		})
 	}
 }
@@ -219,7 +228,7 @@ func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 		require.Error(t, <-coldStart)
 		close(resume)
 		require.NoError(t, <-recovery)
-		require.NoError(t, <-competingRecovery, "automatic recovery must wait through the active review drain")
+		require.ErrorIs(t, <-competingRecovery, context.DeadlineExceeded, "waiting recovery must have a bound")
 		assert.Zero(t, detached)
 	})
 }
@@ -268,4 +277,59 @@ func TestDaemonServiceSamePathReplacement(t *testing.T) {
 	cmd.Env = append(os.Environ(), "ROBOREV_TEST_EXECUTABLE_REPLACEMENT=1")
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "%s", output)
+}
+
+func TestUserServiceStalledAuthentication(t *testing.T) {
+	listener, err := net.Listen("unix", filepath.Join(t.TempDir(), "bus"))
+	require.NoError(t, err)
+	defer listener.Close()
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path="+listener.Addr().String())
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	oldRead, oldDiscovery, oldBudget := readServiceProcessFile, getAnyRunningDaemonForStart, daemonStartTimeout
+	t.Cleanup(func() {
+		readServiceProcessFile, getAnyRunningDaemonForStart, daemonStartTimeout = oldRead, oldDiscovery, oldBudget
+	})
+	readServiceProcessFile = func(string) ([]byte, error) {
+		return []byte(fmt.Sprintf("0::/user.slice/user-%d.slice/user@%d.service/app.slice/fixture.service\n", os.Getuid(), os.Getuid())), nil
+	}
+	getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
+	daemonStartTimeout = 30 * time.Millisecond
+	// The Unix socket accepts connections but supplies no authentication response.
+	err = recoverDaemon(&daemon.RuntimeInfo{PID: 1234}, errors.New("probe failed"))
+	require.ErrorIs(t, err, errUserBusUnavailable)
+	release, acquired, err := daemon.RuntimeStore().TryAcquireStartLock(t.Context())
+	require.NoError(t, err)
+	require.True(t, acquired)
+	release()
+}
+
+func TestUnmanagedRecoveryReusesReplacementAfterDrain(t *testing.T) {
+	oldFind, oldDrain := findDaemonService, drainManagedDaemon
+	oldDiscovery, oldStart, oldDetached := getAnyRunningDaemonForStart, startDaemonForEnsure, startDaemonDetached
+	t.Cleanup(func() {
+		findDaemonService, drainManagedDaemon = oldFind, oldDrain
+		getAnyRunningDaemonForStart, startDaemonForEnsure, startDaemonDetached = oldDiscovery, oldStart, oldDetached
+	})
+	current := &daemon.RuntimeInfo{PID: 1234}
+	findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
+	getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return current, nil }
+	drainManagedDaemon = func(info *daemon.RuntimeInfo) error {
+		assert.Equal(t, 1234, info.PID)
+		release, acquired, err := daemon.RuntimeStore().TryAcquireStartLock(t.Context())
+		require.NoError(t, err)
+		if acquired {
+			release()
+		}
+		assert.False(t, acquired, "the exact PID drains while recovery owns the lock")
+		return nil
+	}
+	startDaemonForEnsure = func() error {
+		current = &daemon.RuntimeInfo{PID: 5678, Version: version.Version}
+		return startDaemon()
+	}
+	detached := 0
+	startDaemonDetached = func(context.Context, detachedDaemonOptions) error { detached++; return nil }
+	require.NoError(t, recoverDaemon(current, nil))
+	assert.Zero(t, detached)
+	assert.Equal(t, 5678, current.PID)
 }

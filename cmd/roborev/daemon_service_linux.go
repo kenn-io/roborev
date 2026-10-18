@@ -3,9 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	systemdbus "github.com/coreos/go-systemd/v22/dbus"
 	"github.com/godbus/dbus/v5"
@@ -21,16 +26,73 @@ type userServiceConnection struct {
 
 // dialUserService keeps the method connection available for unit references.
 func dialUserService(ctx context.Context) (userServiceConnection, error) {
-	// NewConnection dials method calls first, then signals.
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	deadline, _ := ctx.Deadline()
+	address := os.Getenv("DBUS_SESSION_BUS_ADDRESS")
+	if address == "" {
+		runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
+		if runtimeDir == "" {
+			runtimeDir = filepath.Join("/run/user", strconv.Itoa(os.Getuid()))
+		}
+		address = "unix:path=" + filepath.Join(runtimeDir, "bus")
+	}
+	var path string
+	for field := range strings.SplitSeq(strings.TrimPrefix(address, "unix:"), ",") {
+		if value, ok := strings.CutPrefix(field, "path="); ok {
+			path, _ = url.PathUnescape(value)
+		} else if value, ok := strings.CutPrefix(field, "abstract="); ok {
+			path, _ = url.PathUnescape(value)
+			path = "@" + path
+		}
+	}
+	if !strings.HasPrefix(address, "unix:") || path == "" {
+		return userServiceConnection{}, fmt.Errorf("user bus requires a Unix socket address")
+	}
+	// Socket deadlines cover authentication, Hello, and signal registration.
+	var sockets []net.Conn
 	var method *dbus.Conn
 	conn, err := systemdbus.NewConnection(func() (*dbus.Conn, error) {
-		bus, err := dbus.ConnectSessionBus(dbus.WithContext(ctx), dbus.WithAuth(dbus.AuthExternal(strconv.Itoa(os.Getuid()))))
+		raw, err := (&net.Dialer{}).DialContext(ctx, "unix", path)
+		if err != nil {
+			return nil, err
+		}
+		sockets = append(sockets, raw)
+		if err := raw.SetDeadline(deadline); err != nil {
+			return nil, err
+		}
+		bus, err := dbus.NewConn(raw)
+		if err == nil {
+			err = bus.Auth([]dbus.Auth{dbus.AuthExternal(strconv.Itoa(os.Getuid()))})
+		}
+		if err == nil {
+			err = bus.Hello()
+		}
 		if method == nil {
 			method = bus
 		}
+		if err != nil && bus != nil {
+			_ = bus.Close()
+		}
 		return bus, err
 	})
+	if err == nil && !conn.Connected() {
+		err = fmt.Errorf("user bus setup did not complete")
+	}
+	if err == nil {
+		for _, raw := range sockets {
+			if err = raw.SetDeadline(time.Time{}); err != nil {
+				break
+			}
+		}
+	}
 	if err != nil {
+		if conn != nil {
+			conn.Close()
+		}
+		for _, raw := range sockets {
+			_ = raw.Close()
+		}
 		return userServiceConnection{}, err
 	}
 	return userServiceConnection{conn, method.Object("org.freedesktop.systemd1", "/org/freedesktop/systemd1")}, nil
@@ -38,8 +100,8 @@ func dialUserService(ctx context.Context) (userServiceConnection, error) {
 
 // hold looks up the daemon's service and references it so a transient unit
 // survives its main process exiting until recovery closes the connection.
-func (conn userServiceConnection) hold(ctx context.Context, pid int) (*daemonService, error) {
-	owner, err := conn.lookup(ctx, pid)
+func (conn userServiceConnection) hold(ctx context.Context, pid int, unit string) (*daemonService, error) {
+	owner, err := conn.lookupUnit(ctx, pid, unit)
 	if owner == nil || err != nil {
 		return owner, err
 	}
@@ -75,11 +137,11 @@ func lookupDaemonService(ctx context.Context, pid int) (*daemonService, error) {
 		return nil, err
 	}
 	// The connection lasts until manager.close, across recovery's fresh budgets.
-	conn, err := dialUserService(context.WithoutCancel(ctx))
+	conn, err := dialUserService(ctx)
 	if err != nil {
 		return nil, &managedRecoveryError{unit, fmt.Errorf("%w: %w", errUserBusUnavailable, err)}
 	}
-	owner, err := conn.hold(ctx, pid)
+	owner, err := conn.hold(ctx, pid, unit)
 	if owner == nil || err != nil {
 		conn.Close()
 	}
@@ -91,6 +153,10 @@ func (conn userServiceConnection) lookup(ctx context.Context, pid int) (*daemonS
 	if err != nil || unit == "" {
 		return nil, err
 	}
+	return conn.lookupUnit(ctx, pid, unit)
+}
+
+func (conn userServiceConnection) lookupUnit(ctx context.Context, pid int, unit string) (*daemonService, error) {
 	fail := func(err error) (*daemonService, error) { return nil, &managedRecoveryError{unit, err} }
 	service, err := conn.GetUnitTypePropertiesContext(ctx, unit, "Service")
 	if err != nil {
@@ -119,6 +185,10 @@ func (conn userServiceConnection) lookup(ctx context.Context, pid int) (*daemonS
 		if int64(parent) != int64(mainPID) {
 			return nil, nil
 		}
+		data, err := readServiceProcessFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+		if err != nil || !daemonRunArgs(strings.Split(strings.TrimRight(string(data), "\x00"), "\x00")) {
+			return fail(fmt.Errorf("service child must run daemon run: %v", err))
+		}
 	}
 	// ExecStart is a(ssbttttuii), including execution timestamps and exit status.
 	var commands []struct {
@@ -135,12 +205,30 @@ func (conn userServiceConnection) lookup(ctx context.Context, pid int) (*daemonS
 	if len(commands) != 1 {
 		return fail(fmt.Errorf("ExecStart must select one executable"))
 	}
+	serviceType, _ := service["Type"].(string)
+	if !slices.Contains([]string{"simple", "exec", "notify"}, serviceType) {
+		return fail(fmt.Errorf("unsupported service Type=%s", serviceType))
+	}
+	if _, ok := service["RemainAfterExit"].(bool); !ok {
+		return fail(fmt.Errorf("service RemainAfterExit unavailable"))
+	}
+	if int64(mainPID) == int64(pid) && !daemonRunArgs(commands[0].Args) {
+		return fail(fmt.Errorf("service must launch daemon run directly"))
+	}
 	return &daemonService{unit: unit, executable: commands[0].Path, mainPID: int(mainPID), manager: &daemonServiceManager{conn.lookup, conn.start, conn.Close}}, nil
+}
+
+func daemonRunArgs(args []string) bool {
+	if len(args) < 3 {
+		return false
+	}
+	i := slices.Index(args[1:], "daemon") + 1
+	return i > 0 && i+1 < len(args) && args[i+1] == "run"
 }
 
 func (conn userServiceConnection) start(ctx context.Context, unit string) error {
 	result := make(chan string, 1)
-	if _, err := conn.StartUnitContext(ctx, unit, "replace", result); err != nil {
+	if _, err := conn.RestartUnitContext(ctx, unit, "replace", result); err != nil {
 		return err
 	}
 	select {

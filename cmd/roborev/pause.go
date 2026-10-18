@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	"github.com/spf13/cobra"
+
+	"go.kenn.io/roborev/internal/daemon"
 )
 
 func pauseCmd() *cobra.Command {
@@ -28,14 +31,13 @@ func unpauseCmd() *cobra.Command {
 }
 
 func setQueuePaused(ctx context.Context, paused bool) error {
-	// For a local daemon, carry the desired pause state into daemon startup so a
-	// replacement is paused before its workers can claim jobs. Detached startup
-	// passes the flag to the new daemon; managed recovery persists a pause through
-	// the running daemon before draining it. A healthy, current-version
-	// daemon is left running and picks up the state from the POST below instead.
+	var token string
 	if serverAddr == "" {
-		pendingStartPause = &paused
-		defer func() { pendingStartPause = nil }()
+		var err error
+		token, err = daemon.PublishQueueIntent(ctx, paused)
+		if err != nil {
+			return err
+		}
 	}
 	if err := ensureDaemon(); err != nil {
 		return err
@@ -47,7 +49,12 @@ func setQueuePaused(ctx context.Context, paused bool) error {
 	if paused {
 		update = api.PauseQueue
 	}
-	result, err := update(ctx)
+	result, err := update(ctx, func(_ context.Context, req *http.Request) error {
+		if token != "" {
+			req.Header.Set(daemon.QueueIntentHeader, token)
+		}
+		return nil
+	})
 	if err != nil {
 		return daemonRequestError("update queue pause state", err)
 	}
@@ -59,6 +66,3 @@ func setQueuePaused(ctx context.Context, paused bool) error {
 	}
 	return nil
 }
-
-// pendingStartPause carries queue-pause intent into detached startup and managed recovery.
-var pendingStartPause *bool

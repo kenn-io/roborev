@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,7 +33,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 	buildDir := t.TempDir()
 	oldBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-old", "v-old")
 	newBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-new", "v-new")
-	for _, scenario := range []string{"shared", "pause", "simple", "exec", "transient", "missing bus environment", "foreign", "selection advances", "unrelated ancestor", "wrapper"} {
+	for _, scenario := range []string{"shared", "pause", "remain after exit", "daemon start", "vanished", "simple", "exec", "transient", "missing bus environment", "foreign", "selection advances", "unrelated ancestor", "wrapper"} {
 		t.Run(scenario, func(t *testing.T) {
 			dataDir := t.TempDir()
 			t.Setenv("ROBOREV_DATA_DIR", dataDir)
@@ -74,6 +73,13 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			}
 			if scenario == "exec" {
 				serviceType = "Type=exec\n"
+			}
+			if scenario == "remain after exit" {
+				serviceType = "Type=exec\nRemainAfterExit=yes\n"
+			}
+			if scenario == "daemon start" {
+				serviceType = "Type=forking\n"
+				start = strconv.Quote(link) + " daemon start"
 			}
 			if unmanaged || scenario == "wrapper" {
 				serviceType = "Type=exec\n"
@@ -123,9 +129,6 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				require.NoError(t, os.Rename(next, link))
 			}
 			cli := exec.Command(newBinary, "status", "--json")
-			if scenario == "pause" {
-				cli = exec.Command(newBinary, "pause")
-			}
 			if scenario == "missing bus environment" {
 				for _, entry := range os.Environ() {
 					if !strings.HasPrefix(entry, "DBUS_SESSION_BUS_ADDRESS=") && !strings.HasPrefix(entry, "XDG_RUNTIME_DIR=") {
@@ -133,8 +136,17 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 					}
 				}
 			}
-			var stdout, stderr bytes.Buffer
+			var stdout bytes.Buffer
+			var stderr syncBuffer
 			cli.Stdout, cli.Stderr = &stdout, &stderr
+			if scenario == "daemon start" {
+				require.Error(t, cli.Run())
+				assert.Contains(t, stderr.String(), "unsupported service Type=forking")
+				current, err := daemon.GetAnyRunningDaemon()
+				require.NoError(t, err)
+				assert.Equal(t, original.PID, current.PID)
+				return
+			}
 			if scenario == "wrapper" {
 				assert := assert.New(t)
 				require.NoError(t, cli.Run(), "%s", stderr.String())
@@ -152,27 +164,40 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				require.NoError(t, exec.Command("systemctl", "--user", "is-active", unit).Run())
 				return
 			}
-			if scenario == "pause" {
+			if scenario == "vanished" {
+				release, err := daemon.RuntimeStore().AcquireStartLock(context.Background())
+				require.NoError(t, err)
+				t.Cleanup(func() {
+					if release != nil {
+						release()
+					}
+				})
 				require.NoError(t, cli.Start())
-				// The original process must persist pause while its review blocks drain.
-				require.Eventually(t, func() bool {
-					status, err := original.Endpoint().APIClient(time.Second).GetStatus(context.Background())
-					return err == nil && status.QueuePaused
-				}, 10*time.Second, 10*time.Millisecond)
-				assert.Equal(t, storage.JobStatusQueued, getUpdateJob(t, original.Endpoint(), queued.ID).Status)
+				// The CLI snapshots the unit before its external start-lock wait.
+				require.Eventually(t, func() bool { return strings.Contains(stderr.String(), "Waiting for daemon recovery lock") }, 10*time.Second, 10*time.Millisecond)
+				require.NoError(t, daemon.KillDaemon(original))
+				release()
+				release = nil
+				require.NoError(t, cli.Wait(), "%s", stderr.String())
+			} else if scenario == "pause" {
+				require.NoError(t, cli.Start())
+				defer cli.Process.Kill()
+				// Observe the separate status process holding recovery during the review.
+				require.Eventually(t, func() bool { return strings.Contains(stderr.String(), "Waiting for daemon shutdown") }, 10*time.Second, 10*time.Millisecond)
+				pause := exec.Command(newBinary, "pause")
+				var pauseOutput syncBuffer
+				pause.Stdout, pause.Stderr = &pauseOutput, &pauseOutput
+				require.NoError(t, pause.Start())
+				defer pause.Process.Kill()
+				// The pause CLI must publish intent before waiting on status's recovery.
+				require.Eventually(t, func() bool { return strings.Contains(pauseOutput.String(), "Waiting for daemon recovery lock") }, 10*time.Second, 10*time.Millisecond)
 				require.NoError(t, os.WriteFile(releaseReview, nil, 0o600))
 				require.NoError(t, cli.Wait(), "%s", stderr.String())
+				require.NoError(t, pause.Wait(), "%s", pauseOutput.String())
 			} else if scenario == "selection advances" {
 				// Observe graceful shutdown before advancing the shared selection again.
 				require.NoError(t, cli.Start())
-				require.Eventually(t, func() bool {
-					resp, err := original.Endpoint().APIClient(time.Second).PauseQueueRaw(context.Background())
-					if err != nil {
-						return false
-					}
-					defer resp.Body.Close()
-					return resp.StatusCode == http.StatusConflict
-				}, 10*time.Second, 10*time.Millisecond)
+				require.Eventually(t, func() bool { return strings.Contains(stderr.String(), "Waiting for daemon shutdown") }, 10*time.Second, 10*time.Millisecond)
 				second := exec.Command(newBinary, "status", "--json")
 				require.NoError(t, second.Start())
 				defer second.Process.Kill()

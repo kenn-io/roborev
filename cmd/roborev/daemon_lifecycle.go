@@ -328,20 +328,20 @@ func ensureDaemon() error {
 					return fmt.Errorf("probe daemon: %w", err)
 				}
 				if verbose {
-					fmt.Fprintf(lifecycleOut, "Daemon probe failed, restarting...\n")
+					fmt.Fprintf(lifecycleOut, "Daemon probe failed; checking service ownership...\n")
 				}
 				return recoverDaemon(info, err)
 			}
 			daemonVersion := probe.Version
 			if daemonVersion == "" {
 				if verbose {
-					fmt.Fprintf(lifecycleOut, "Daemon version unknown, restarting...\n")
+					fmt.Fprintf(lifecycleOut, "Daemon version unknown; checking service ownership...\n")
 				}
 				return recoverDaemon(info, nil)
 			}
 			if daemonVersion != version.Version {
 				if verbose {
-					fmt.Fprintf(lifecycleOut, "Daemon version mismatch (daemon: %s, cli: %s), restarting...\n", daemonVersion, version.Version)
+					fmt.Fprintf(lifecycleOut, "Daemon version mismatch (daemon: %s, cli: %s); checking service ownership...\n", daemonVersion, version.Version)
 				}
 				return recoverDaemon(info, nil)
 			}
@@ -397,9 +397,6 @@ func startDaemon() error {
 				return fmt.Errorf("locate daemon startup log: %w", err)
 			}
 			args := []string{"daemon", "run"}
-			if pendingStartPause != nil {
-				args = append(args, fmt.Sprintf("--queue-paused=%t", *pendingStartPause))
-			}
 			if err := startDaemonDetached(ctx, detachedDaemonOptions{
 				Executable:      exe,
 				Args:            args,

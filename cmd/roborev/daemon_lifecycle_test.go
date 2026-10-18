@@ -108,7 +108,8 @@ func TestEnsureDaemonPrefersLiveDaemonVersionOverRuntimeMetadata(t *testing.T) {
 	defer server.Close()
 
 	origGetAnyRunningDaemon := getAnyRunningDaemon
-	origRestartDaemon := restartDaemonForEnsure
+	origStartDaemon, origDrain := startDaemonForEnsure, drainManagedDaemon
+	drainManagedDaemon = func(info *daemon.RuntimeInfo) error { assert.Equal(t, 1234, info.PID); return nil }
 	origFindDaemonService := findDaemonService
 	findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
@@ -119,13 +120,13 @@ func TestEnsureDaemonPrefersLiveDaemonVersionOverRuntimeMetadata(t *testing.T) {
 		}, nil
 	}
 	restartCalls := 0
-	restartDaemonForEnsure = func() error {
+	startDaemonForEnsure = func() error {
 		restartCalls++
 		return nil
 	}
 	t.Cleanup(func() {
 		getAnyRunningDaemon = origGetAnyRunningDaemon
-		restartDaemonForEnsure = origRestartDaemon
+		startDaemonForEnsure, drainManagedDaemon = origStartDaemon, origDrain
 		findDaemonService = origFindDaemonService
 	})
 
@@ -139,7 +140,8 @@ func TestEnsureDaemonRestartsWhenLiveProbeFailsDespiteRuntimeVersion(t *testing.
 	t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
 
 	origGetAnyRunningDaemon := getAnyRunningDaemon
-	origRestartDaemon := restartDaemonForEnsure
+	origStartDaemon, origDrain := startDaemonForEnsure, drainManagedDaemon
+	drainManagedDaemon = func(info *daemon.RuntimeInfo) error { assert.Equal(t, 1234, info.PID); return nil }
 	origFindDaemonService := findDaemonService
 	findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
 	origRetryDelay := ensureProbeRetryDelay
@@ -152,13 +154,13 @@ func TestEnsureDaemonRestartsWhenLiveProbeFailsDespiteRuntimeVersion(t *testing.
 		}, nil
 	}
 	restartCalls := 0
-	restartDaemonForEnsure = func() error {
+	startDaemonForEnsure = func() error {
 		restartCalls++
 		return nil
 	}
 	t.Cleanup(func() {
 		getAnyRunningDaemon = origGetAnyRunningDaemon
-		restartDaemonForEnsure = origRestartDaemon
+		startDaemonForEnsure, drainManagedDaemon = origStartDaemon, origDrain
 		findDaemonService = origFindDaemonService
 		ensureProbeRetryDelay = origRetryDelay
 	})

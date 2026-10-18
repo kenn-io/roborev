@@ -55,7 +55,7 @@ func (s *daemonService) sameInstallation() (bool, error) {
 	return os.SameFile(selected, cli) || filepath.Clean(s.executable) == filepath.Clean(cliPath), nil
 }
 
-// acquireRecoveryLock waits for any active recovery, including its review drain.
+// acquireRecoveryLock bounds callers waiting behind an unlimited review drain.
 func acquireRecoveryLock() (func(), error) {
 	store := daemon.RuntimeStore()
 	release, acquired, err := store.TryAcquireStartLock(context.Background())
@@ -63,10 +63,18 @@ func acquireRecoveryLock() (func(), error) {
 		return release, err
 	}
 	fmt.Fprintln(lifecycleOut, "Waiting for daemon recovery lock; another command may be waiting for running reviews to finish...")
-	return store.AcquireStartLock(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), daemonStartTimeout)
+	defer cancel()
+	return store.AcquireStartLock(ctx)
 }
 
 func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
+	ctx, cancel := context.WithTimeout(context.Background(), daemonStartTimeout)
+	snapshot, snapshotErr := findDaemonService(ctx, info.PID)
+	cancel()
+	if snapshot != nil {
+		defer snapshot.manager.close()
+	}
 	release, err := acquireRecoveryLock()
 	if err != nil {
 		return err
@@ -76,8 +84,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 			release()
 		}
 	}()
-	// Rediscover under the lock before selecting a process or its owner.
-	ctx, cancel := context.WithTimeout(context.Background(), daemonStartTimeout)
+	ctx, cancel = context.WithTimeout(context.Background(), daemonStartTimeout)
 	defer cancel()
 	current, err := findDaemonForStart(ctx)
 	if err != nil {
@@ -93,19 +100,38 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 		}
 	}
 	owner, err := findDaemonService(ctx, current.PID)
-	if probeErr == nil && errors.Is(err, errUserBusUnavailable) {
+	vanished := !responsive && errors.Is(err, os.ErrNotExist)
+	if vanished {
+		owner, err = snapshot, snapshotErr
+		if errors.Is(err, os.ErrNotExist) {
+			err = nil
+		}
+	}
+	if responsive && errors.Is(err, errUserBusUnavailable) {
+		if verbose {
+			fmt.Fprintf(lifecycleOut, "Daemon recovery skipped; user bus unavailable: %v\n", err)
+		}
 		return nil
 	}
 	if err != nil {
 		return err
 	}
+	if owner != nil && owner != snapshot {
+		defer owner.manager.close()
+	}
+	if responsive && current.PID != info.PID && current.Version == version.Version {
+		return nil
+	}
 	if owner == nil {
-		// Detached startup acquires the same lock itself.
+		if !vanished {
+			if err := drainManagedDaemon(current); err != nil {
+				return err
+			}
+		}
 		release()
 		release = nil
-		return restartDaemonForEnsure()
+		return startDaemonForEnsure()
 	}
-	defer owner.manager.close()
 	fail := func(err error) error { return &managedRecoveryError{owner.unit, err} }
 	same, err := owner.sameInstallation()
 	if err != nil {
@@ -117,17 +143,11 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 		}
 		return nil
 	}
-	if responsive && current.PID != info.PID && current.Version == version.Version {
-		return nil
-	}
-	if pendingStartPause != nil && *pendingStartPause {
-		if _, err := current.Endpoint().APIClient(0).PauseQueue(ctx); err != nil {
-			return fail(fmt.Errorf("pause queue before recovery: %w", err))
+	if !vanished {
+		fmt.Fprintln(lifecycleOut, "Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...")
+		if err := drainManagedDaemon(current); err != nil {
+			return fail(err)
 		}
-	}
-	fmt.Fprintln(lifecycleOut, "Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...")
-	if err := drainManagedDaemon(current); err != nil {
-		return fail(err)
 	}
 	// Reviews may take longer than startup. Give the replacement a fresh budget.
 	readyCtx, readyCancel := context.WithTimeout(context.Background(), daemonStartTimeout)

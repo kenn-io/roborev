@@ -577,8 +577,10 @@ type ReleaseUpdateOutput struct {
 	}
 }
 
-// QueuePauseInput is an empty input for queue pause/unpause endpoints.
-type QueuePauseInput struct{}
+// QueuePauseInput carries the local CLI's recovery handoff token.
+type QueuePauseInput struct {
+	Token string `header:"X-Roborev-Queue-Intent" hidden:"true"`
+}
 
 // QueuePauseOutput is the response for queue pause/unpause endpoints.
 type QueuePauseOutput struct {
