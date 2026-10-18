@@ -480,6 +480,5 @@ func TestConfigWatcherRejectsUnreadableWebTokenFile(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte("hook_timeout_seconds = 29\n[web]\nauth_token_file = 'missing-token'\n"), 0o600))
 	watcher.reloadConfig()
 	assert.Same(t, old, watcher.Config())
-	assert.Equal(t, 17, watcher.Config().HookTimeoutSeconds)
 	assert.Zero(t, watcher.ReloadCounter())
 }

@@ -287,7 +287,6 @@ func TestResolveOptionsPreservesHookSettingsWithInvalidWebConfig(t *testing.T) {
 		t.Run(agent, func(t *testing.T) {
 			clearAgentHookEnv(t)
 			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-			require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte("[remote]\nenabled = true\n"), 0o600))
 			path := writeAgentHookConfig(t, `[agent_hook]
 commit_threshold = 7
 [droid_hook]

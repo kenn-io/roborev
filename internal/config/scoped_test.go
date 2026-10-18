@@ -20,7 +20,7 @@ func TestLoadGlobalPreservesClientSettingsWithInvalidDaemonConfig(t *testing.T) 
 		{"budget", "[budget]\nenabled = true\n", nil},
 		{"ci", "[ci.github_app_installations]\nExample = 1\nexample = 2\n", nil},
 	} {
-		t.Run(tc.contents, func(t *testing.T) {
+		t.Run(tc.section, func(t *testing.T) {
 			assert := assert.New(t)
 			dir := t.TempDir()
 			t.Setenv("ROBOREV_DATA_DIR", dir)

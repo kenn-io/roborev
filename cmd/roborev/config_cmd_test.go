@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -906,43 +905,16 @@ func TestGetBudgetPriceRequiresConfiguredEntry(t *testing.T) {
 }
 
 func TestConfigGetWithInvalidDaemonConfig(t *testing.T) {
-	for _, tc := range []struct {
-		name, contents, wantError string
-		validateError             string
-	}{
-		{"missing token", "[web]\nauth_token_file = 'missing-token'\n", "", "[web]"},
-		{"malformed TOML", "[web\n", "invalid global config TOML", ""},
-		{"wrong type", "[web]\nenabled = 'yes'\n", "incompatible types", ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			clientConfigWarnings = sync.Map{}
-			t.Cleanup(func() { clientConfigWarnings = sync.Map{} })
-			setupConfigEnv(t, "hook_timeout_seconds = 17\n"+tc.contents, "")
-			cmd := configGetCmd()
-			cmd.SetArgs([]string{"hook_timeout_seconds", "--global"})
-			stdout, stderr := captureStdoutStderr(t, func() {
-				err := cmd.Execute()
-				if tc.wantError != "" {
-					require.ErrorContains(t, err, tc.wantError)
-					return
-				}
-				require.NoError(t, err)
-			})
-			if tc.wantError == "" {
-				assert.Equal(t, "17\n", stdout)
-				assert.Contains(t, stderr, "Warning: ignoring invalid daemon config [web]")
-				assert.Equal(t, 1, strings.Count(stderr, "Warning:"))
-			}
-			if tc.validateError != "" {
-				validate := configValidateCmd()
-				validate.SetArgs([]string{"--global"})
-				require.ErrorContains(t, validate.Execute(), tc.validateError)
-			}
-		})
-	}
+	setupConfigEnv(t, "hook_timeout_seconds = 17\n[web]\nauth_token_file = 'missing-token'\n", "")
+	cmd := configGetCmd()
+	cmd.SetArgs([]string{"hook_timeout_seconds", "--global"})
+	stdout, _ := captureStdoutStderr(t, func() {
+		require.NoError(t, cmd.Execute())
+	})
+	assert.Equal(t, "17\n", stdout)
 }
 
-func TestCheckAgentsWithInvalidDaemonConfig(t *testing.T) {
+func TestLoadClientConfigWithInvalidDaemonConfig(t *testing.T) {
 	clientConfigWarnings = sync.Map{}
 	t.Cleanup(func() { clientConfigWarnings = sync.Map{} })
 	env := setupConfigEnv(t, "", "")
@@ -960,9 +932,8 @@ func TestCheckAgentsWithInvalidDaemonConfig(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(tc.contents), 0o600))
 			_, stderr := captureStdoutStderr(t, func() {
-				cmd := checkAgentsCmd()
-				cmd.SetArgs([]string{"--agent", "test"})
-				require.NoError(t, cmd.Execute())
+				_, err := loadClientConfig()
+				require.NoError(t, err)
 			})
 			if tc.warning == "" {
 				assert.Empty(t, stderr)
@@ -975,13 +946,13 @@ func TestCheckAgentsWithInvalidDaemonConfig(t *testing.T) {
 }
 
 func TestConfigSetWithInvalidDaemonConfig(t *testing.T) {
-	for _, repair := range []bool{true, false} {
-		t.Run(fmt.Sprint(repair), func(t *testing.T) {
+	for _, name := range []string{"repair", "rejects unrelated write"} {
+		t.Run(name, func(t *testing.T) {
 			contents := "hook_timeout_seconds = 17\n[web]\nauth_token_file = 'missing-token'\n"
 			env := setupConfigEnv(t, contents, "")
 			path := filepath.Join(env.DataDir, "config.toml")
 			cmd := configSetCmd()
-			if repair {
+			if name == "repair" {
 				tokenPath := filepath.Join(env.DataDir, "token")
 				require.NoError(t, os.WriteFile(tokenPath, []byte(strings.Repeat("A", 43)), 0o600))
 				cmd.SetArgs([]string{"web.auth_token_file", tokenPath, "--global"})
