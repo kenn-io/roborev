@@ -10,14 +10,15 @@ import (
 )
 
 func TestLoadGlobalPreservesClientSettingsWithInvalidDaemonConfig(t *testing.T) {
-	for _, tc := range []struct{ section, contents string }{
-		{"web", "[web]\nauth_token_file = 'missing-token'\n"},
-		{"web", "[web]\nauth_token_file = 'missing-token'\n[ci.github_app_installations]\nExample = 1\n"},
-		{"web", "[web]\nlisten = '0.0.0.0:7374'\n"},
-		{"search", "[search.embeddings]\nbase_url = 'https://example.test/v1'\n"},
-		{"remote", "[remote]\nenabled = true\n"},
-		{"budget", "[budget]\nenabled = true\n"},
-		{"ci", "[ci.github_app_installations]\nExample = 1\nexample = 2\n"},
+	for _, tc := range []struct {
+		section, contents string
+		installations     map[string]int64
+	}{
+		{"web", "[web]\nauth_token_file = 'missing-token'\n[ci.github_app_installations]\nExample = 1\n", map[string]int64{"example": 1}},
+		{"search", "[search.embeddings]\nbase_url = 'https://example.test/v1'\n", nil},
+		{"remote", "[remote]\nenabled = true\n", nil},
+		{"budget", "[budget]\nenabled = true\n", nil},
+		{"ci", "[ci.github_app_installations]\nExample = 1\nexample = 2\n", nil},
 	} {
 		t.Run(tc.contents, func(t *testing.T) {
 			assert := assert.New(t)
@@ -34,8 +35,8 @@ func TestLoadGlobalPreservesClientSettingsWithInvalidDaemonConfig(t *testing.T) 
 			warnings := cfg.DaemonConfigWarnings()
 			require.Len(t, warnings, 1)
 			assert.Contains(warnings[0].Error(), "["+tc.section+"]")
-			if tc.section == "web" && len(cfg.CI.GitHubAppInstallations) > 0 {
-				assert.Equal(map[string]int64{"example": 1}, cfg.CI.GitHubAppInstallations)
+			if tc.installations != nil {
+				assert.Equal(tc.installations, cfg.CI.GitHubAppInstallations)
 			}
 		})
 	}

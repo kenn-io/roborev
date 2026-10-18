@@ -91,9 +91,6 @@ func agentHookRunCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			for _, warning := range resolved.ConfigWarnings {
-				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: ignoring invalid daemon config %v\n", warning)
-			}
 			if selected, ok := agenthook.LocalProfile(rawAgent); ok {
 				return runLocalAgentHook(selected, resolved, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 			}

@@ -16,16 +16,17 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
-var clientConfigWarningsOnce sync.Once
+var clientConfigWarnings sync.Map
 
 func loadClientConfig() (*config.Config, error) {
 	cfg, err := config.LoadGlobal()
 	if err == nil {
-		clientConfigWarningsOnce.Do(func() {
-			for _, warning := range cfg.DaemonConfigWarnings() {
-				fmt.Fprintf(os.Stderr, "Warning: ignoring invalid daemon config %v\n", warning)
+		for _, warning := range cfg.DaemonConfigWarnings() {
+			message := fmt.Sprintf("Warning: ignoring invalid daemon config %v\n", warning)
+			if _, loaded := clientConfigWarnings.LoadOrStore(message, struct{}{}); !loaded {
+				fmt.Fprint(os.Stderr, message)
 			}
-		})
+		}
 	}
 	return cfg, err
 }

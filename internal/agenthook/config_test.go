@@ -298,9 +298,6 @@ auth_token_file = "missing-token"
 			opts, err := ResolveOptionsForAgent(agent, Options{ConfigPath: path}, map[string]bool{"config": true})
 			require.NoError(t, err)
 			assert.Equal(t, 7, opts.CommitThreshold)
-			require.Len(t, opts.ConfigWarnings, 2)
-			assert.ErrorContains(t, opts.ConfigWarnings[0], "[web]")
-			assert.ErrorContains(t, opts.ConfigWarnings[1], "[remote]")
 		})
 	}
 }

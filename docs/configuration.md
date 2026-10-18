@@ -20,7 +20,7 @@ Client commands retain their configured workflow settings when an unrelated
 `[web]`, `[remote]`, `[search]`, `[budget]`, or CI installation setting is
 invalid. Commands that read settings print a warning naming each invalid
 daemon section on stderr once per run. Shell completion, the post-commit
-hook, and the TUI stay silent. For example, an unavailable
+hook, agent hooks, and the TUI stay silent. For example, an unavailable
 `web.auth_token_file` does not prevent
 `roborev config get hook_timeout_seconds --global` from returning its value.
 Malformed TOML and values with the wrong TOML type still fail to load.
