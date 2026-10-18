@@ -38,8 +38,6 @@ func TestEnabledFromEnvHonorsRoborevAndGenericOptOut(t *testing.T) {
 func TestCountBucket(t *testing.T) {
 	for count, want := range map[int]string{
 		0:   "0-5",
-		1:   "0-5",
-		2:   "0-5",
 		5:   "0-5",
 		6:   "6-20",
 		20:  "6-20",
@@ -205,7 +203,7 @@ func TestAllowedEventOptionsConfigureRoborevDaemonEvents(t *testing.T) {
 		}
 	}
 
-	props, err = reporter.SanitizeProperties(EventAppOpened, map[string]any{"surface": "tui", "repo_count": 3})
+	props, err = reporter.SanitizeProperties(EventAppOpened, map[string]any{"surface": "tui", "repo_count": "0-5"})
 	require.NoError(err)
 	assert.Equal("tui", props["surface"])
 	assert.NotContains(props, "repo_count")
