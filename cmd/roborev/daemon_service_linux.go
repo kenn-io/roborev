@@ -69,7 +69,7 @@ func lookupDaemonService(ctx context.Context, pid int) (*daemonService, error) {
 		return fail(fmt.Errorf("read ExecStart: %w", err))
 	}
 	if len(commands) != 1 || len(commands[0].Args) < 3 || commands[0].Args[1] != "daemon" || commands[0].Args[2] != "run" {
-		return nil, nil
+		return fail(fmt.Errorf("ExecStart must directly execute roborev daemon run"))
 	}
 	return &daemonService{unit: unit, executable: commands[0].Path}, nil
 }

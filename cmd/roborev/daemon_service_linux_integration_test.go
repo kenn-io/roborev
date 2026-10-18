@@ -47,9 +47,9 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			require.True(t, filepath.IsAbs(unitDir))
 			require.NoError(t, os.MkdirAll(unitDir, 0o700))
 			unitPath := filepath.Join(unitDir, unit)
-			unmanaged := scenario == "unrelated ancestor" || scenario == "wrapper"
+			unmanaged := scenario == "unrelated ancestor"
 			start := strconv.Quote(link) + " daemon run --addr 127.0.0.1:0"
-			if unmanaged {
+			if unmanaged || scenario == "wrapper" {
 				wrapper := filepath.Join(dataDir, "start-service")
 				body := "#!/bin/sh\nexec " + start + "\n"
 				if scenario == "unrelated ancestor" {
@@ -77,13 +77,15 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				original, err = daemon.GetAnyRunningDaemon()
 				return err == nil
 			}, 15*time.Second, 50*time.Millisecond)
-			owner, err := lookupDaemonService(context.Background(), original.PID)
-			require.NoError(t, err)
-			if unmanaged {
-				require.Nil(t, owner)
-			} else {
-				require.NotNil(t, owner)
-				assert.Equal(t, unit, owner.unit)
+			if scenario != "wrapper" {
+				owner, err := lookupDaemonService(context.Background(), original.PID)
+				require.NoError(t, err)
+				if unmanaged {
+					require.Nil(t, owner)
+				} else {
+					require.NotNil(t, owner)
+					assert.Equal(t, unit, owner.unit)
+				}
 			}
 			var active storage.ReviewJob
 			if scenario == "selection advances" {
@@ -103,6 +105,23 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			}
 			var stdout, stderr bytes.Buffer
 			cli.Stdout, cli.Stderr = &stdout, &stderr
+			if scenario == "wrapper" {
+				assert := assert.New(t)
+				assert.Error(cli.Run())
+				assert.Empty(stdout.String())
+				assert.Contains(stderr.String(), "ExecStart must directly execute roborev daemon run")
+				current, err := daemon.GetAnyRunningDaemon()
+				require.NoError(t, err)
+				assert.Equal(original.PID, current.PID)
+				assertDaemonUpdateVersion(t, current.Endpoint(), "v-old")
+				runtimes, err := daemon.ListAllRuntimes()
+				require.NoError(t, err)
+				assert.Len(runtimes, 1)
+				output, err = exec.Command("systemctl", "--user", "show", "--property=MainPID", "--value", unit).CombinedOutput()
+				require.NoError(t, err)
+				assert.Equal(strconv.Itoa(original.PID), strings.TrimSpace(string(output)))
+				return
+			}
 			if scenario == "selection advances" {
 				// Observe graceful shutdown before advancing the shared selection again.
 				require.NoError(t, cli.Start())
@@ -130,7 +149,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			assert.True(t, result.Running)
 			replacement, err := daemon.GetAnyRunningDaemon()
 			require.NoError(t, err)
-			owner, err = lookupDaemonService(context.Background(), replacement.PID)
+			owner, err := lookupDaemonService(context.Background(), replacement.PID)
 			require.NoError(t, err)
 			if unmanaged {
 				require.Nil(t, owner)
