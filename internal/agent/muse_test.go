@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"testing/synctest"
 
 	"github.com/gofrs/flock"
 	"github.com/stretchr/testify/assert"
@@ -125,6 +124,7 @@ func TestPrepareMuseRunIsolatesConfigAndData(t *testing.T) {
 		{"xdg", "mcpServers", "concurrent", "concurrent"},
 		{"xdg", "mcpServers", "locked", "example"},
 		{"xdg", "mcpServers", "unwritable", "example"},
+		{"xdg", "mcpServers", "symlinked", "renewed"},
 	} {
 		t.Run(tc.source+"/"+tc.key+"/"+tc.auth, func(t *testing.T) {
 			configHome := t.TempDir()
@@ -147,6 +147,13 @@ func TestPrepareMuseRunIsolatesConfigAndData(t *testing.T) {
 				".auth.json.lock": "",
 			} {
 				require.NoError(t, os.WriteFile(filepath.Join(museConfig, name), []byte(data), 0o600))
+			}
+			userAuth := filepath.Join(museConfig, "auth.json")
+			if tc.auth == "symlinked" {
+				// Dotfile managers often link auth.json to a file elsewhere.
+				target := filepath.Join(t.TempDir(), "auth.json")
+				require.NoError(t, os.Rename(userAuth, target))
+				require.NoError(t, os.Symlink(target, userAuth))
 			}
 			lockPath := filepath.Join(museConfig, ".auth.json.lock")
 			lock := flock.New(lockPath, flock.SetPermissions(0o600))
@@ -188,6 +195,10 @@ func TestPrepareMuseRunIsolatesConfigAndData(t *testing.T) {
 				assert.Equal(filepath.Join(home, "data"), privateEnv["XDG_DATA_HOME"])
 				assert.Equal(filepath.Join(home, "cache"), privateEnv["XDG_CACHE_HOME"])
 				assert.DirExists(privateEnv["XDG_CACHE_HOME"])
+				for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
+					assert.Equal(filepath.Join(home, "tmp"), privateEnv[key], key)
+				}
+				assert.DirExists(privateEnv["TMPDIR"])
 				assert.Equal(tmp, filepath.Dir(home))
 				assert.NoFileExists(filepath.Join(privateConfig, "trust.json"))
 				assert.NoFileExists(filepath.Join(privateConfig, "plugins.json"))
@@ -206,15 +217,20 @@ func TestPrepareMuseRunIsolatesConfigAndData(t *testing.T) {
 					require.NoError(t, os.WriteFile(filepath.Join(museConfig, "auth.json"), []byte(`{"token":"concurrent"}`), 0o600))
 				}
 			}
-			synctest.Test(t, func(t *testing.T) { cleanup() })
+			cleanup()
 			if tc.auth == "locked" || tc.auth == "unwritable" {
 				assert.Contains(t, logs.String(), "muse: could not save renewed login")
 			} else {
 				assert.Empty(t, logs.String())
 			}
-			auth, err := os.ReadFile(filepath.Join(museConfig, "auth.json"))
+			auth, err := os.ReadFile(userAuth)
 			require.NoError(t, err)
 			assert.JSONEq(t, fmt.Sprintf(`{"token":%q}`, tc.user), string(auth))
+			if tc.auth == "symlinked" {
+				info, err := os.Lstat(userAuth)
+				require.NoError(t, err)
+				assert.Equal(t, os.ModeSymlink, info.Mode().Type(), "saving a renewal must keep the user's link")
+			}
 		})
 	}
 }
@@ -326,11 +342,8 @@ func TestMuseNativeEcho(t *testing.T) {
 			require.NoError(t, os.WriteFile(filepath.Join(config, "muse", "settings.json"), []byte(fmt.Sprintf(museSettingsWithMCP, "mcpServers")), 0o600))
 			t.Setenv("XDG_CONFIG_HOME", config)
 			t.Setenv("MUSE_BINARY", muse)
-			// Muse's runtime temp directory must sit outside the planning worktree's ancestor.
-			t.Setenv("MUSE_RUNTIME_TMP", t.TempDir())
 			command := writeTempCommand(t, `#!/bin/sh
 case "$1" in *etxtbsy*) exit 0;; esac
-export TMPDIR="$MUSE_RUNTIME_TMP"
 exec "$MUSE_BINARY" "$@" --provider echo
 `)
 			tmp := t.TempDir()

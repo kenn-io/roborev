@@ -346,15 +346,17 @@ start MCP servers. Fix and refine pass `--yolo`. Setting
 uses the read-only allowlist. Reviews and planning also pass `-c 'hooks={}'` and
 `-c managed_hooks_path=null` to clear user and managed hooks for the run.
 Reviews and planning set `HOME` and `USERPROFILE` to one temporary home, with
-private `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, and `XDG_CACHE_HOME` directories
-under it. Muse's `auth.json` is copied, and a login Muse renews during the run
-is saved back if the original credentials are unchanged. Its `settings.json` is
-copied with `mcpServers` and `mcp_servers` removed; only settings schema version
-1 is accepted. Saved workspace trust and installed user plugins are excluded, so
-trusted project `.muse/hooks.json` hooks and user plugin hooks don't run. The
-`--no-foreign-personal-context` flag also excludes foreign personal rules and
-skills, including configured foreign roots. Muse's bundled plugins remain
-available. Agentic runs inherit your environment and plugins.
+private `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME`, and temp
+(`TMPDIR`, `TMP`, `TEMP`) directories under it. Muse's `auth.json` is copied,
+and a login Muse renews during the run is saved back if the original credentials
+are unchanged and no other Muse process holds the login lock. Its
+`settings.json` is copied with `mcpServers` and `mcp_servers` removed; only
+settings schema version 1 is accepted. Saved workspace trust and installed user
+plugins are excluded, so trusted project `.muse/hooks.json` hooks and user
+plugin hooks don't run. The `--no-foreign-personal-context` flag also excludes
+foreign personal rules and skills, including configured foreign roots. Muse's
+bundled plugins remain available. Agentic runs inherit your environment and
+plugins.
 
 The private home has only been verified on Linux; macOS Muse normally stores
 login credentials in Keychain. If a macOS review can't find saved credentials,

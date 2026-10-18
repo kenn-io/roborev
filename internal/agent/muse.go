@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/gofrs/flock"
 	"go.kenn.io/kit/atomicfile"
@@ -111,8 +110,10 @@ func (a *MuseAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 }
 
 // prepareMuseRun writes the prompt file. Non-agentic runs also get a private
-// home holding only the Muse login and settings, plus empty data and cache
-// directories, to exclude saved workspace trust and installed user plugins.
+// home holding only the Muse login and settings, plus empty data, cache, and
+// temp directories, to exclude saved workspace trust and installed user
+// plugins. The private temp directory keeps Muse's runtime files out of the
+// system temp directory that holds planning worktrees.
 func prepareMuseRun(prompt string, agentic bool) (string, []string, func(), error) {
 	promptPath, cleanupPrompt, err := createPromptFile("muse", prompt)
 	if err != nil || agentic {
@@ -137,7 +138,8 @@ func prepareMuseRun(prompt string, agentic bool) (string, []string, func(), erro
 	configDir := filepath.Join(dir, ".config")
 	dataDir := filepath.Join(dir, "data")
 	cacheDir := filepath.Join(dir, "cache")
-	for _, path := range []string{configDir, dataDir, cacheDir} {
+	tmpDir := filepath.Join(dir, "tmp")
+	for _, path := range []string{configDir, dataDir, cacheDir, tmpDir} {
 		if err := os.Mkdir(path, 0o700); err != nil {
 			cleanup()
 			return "", nil, nil, fmt.Errorf("create muse private directory: %w", err)
@@ -164,7 +166,7 @@ func prepareMuseRun(prompt string, agentic bool) (string, []string, func(), erro
 		cleanup()
 		return "", nil, nil, fmt.Errorf("copy muse config: %w", err)
 	}
-	return promptPath, append(os.Environ(), "HOME="+dir, "USERPROFILE="+dir, "XDG_CONFIG_HOME="+configDir, "XDG_DATA_HOME="+dataDir, "XDG_CACHE_HOME="+cacheDir), cleanup, nil
+	return promptPath, append(os.Environ(), "HOME="+dir, "USERPROFILE="+dir, "XDG_CONFIG_HOME="+configDir, "XDG_DATA_HOME="+dataDir, "XDG_CACHE_HOME="+cacheDir, "TMPDIR="+tmpDir, "TMP="+tmpDir, "TEMP="+tmpDir), cleanup, nil
 }
 
 // writeBackMuseAuth saves a login Muse renewed in the private home, unless
@@ -196,23 +198,18 @@ func replaceMuseAuthIfUnchanged(userPath string, original, updated []byte) error
 	if err != nil || !bytes.Equal(current, original) {
 		return err
 	}
-	return atomicfile.WriteFile(userPath, updated, atomicfile.WithPrivate())
+	return atomicfile.WriteFile(userPath, updated, atomicfile.WithPrivate(), atomicfile.WithFollowLink())
 }
 
-const (
-	museAuthLockTimeout    = 3 * time.Second
-	museAuthLockRetryDelay = 10 * time.Millisecond
-)
-
-// lockMuseAuth takes the lock Muse holds while it writes auth.json.
+// lockMuseAuth takes the lock Muse holds while it writes auth.json. It does
+// not wait for another holder, so a renewal that meets a concurrent Muse login
+// or run is reported and dropped instead of raced.
 func lockMuseAuth(userPath string) (func(), error) {
 	lockPath := filepath.Join(filepath.Dir(userPath), ".auth.json.lock")
 	lock := flock.New(lockPath, flock.SetPermissions(0o600))
-	ctx, cancel := context.WithTimeout(context.Background(), museAuthLockTimeout)
-	defer cancel()
-	locked, err := lock.TryLockContext(ctx, museAuthLockRetryDelay)
+	locked, err := lock.TryLock()
 	if err == nil && !locked {
-		err = ctx.Err()
+		err = errors.New("held by another process")
 	}
 	if err != nil {
 		_ = lock.Close()
