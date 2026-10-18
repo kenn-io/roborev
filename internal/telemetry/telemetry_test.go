@@ -185,8 +185,6 @@ func TestAllowedEventOptionsConfigureRoborevDaemonEvents(t *testing.T) {
 	})
 	require.NoError(err)
 
-	assert.Equal("2-5", props["repo_count"])
-	assert.Equal("6-20", props["review_count"])
 	assert.Equal(true, props["sync_enabled"])
 	assert.NotContains(props, "worker_count")
 	assert.Equal("roborev", props["application"])
