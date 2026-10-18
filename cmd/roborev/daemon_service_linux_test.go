@@ -215,6 +215,7 @@ func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 		detached := 0
 		startDaemonDetached = func(context.Context, detachedDaemonOptions) error { detached++; return nil }
 		recovery, coldStart := make(chan error, 1), make(chan error, 1)
+		competingRecovery := make(chan error, 1)
 		go func() { recovery <- recoverDaemon(old, nil) }()
 		<-drained
 		synctest.Wait()
@@ -222,6 +223,7 @@ func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 		assert.Empty(t, recovery, "shutdown notice must be visible while reviews drain")
 		close(finishDrain)
 		go func() { coldStart <- startDaemon() }()
+		go func() { competingRecovery <- recoverDaemon(old, nil) }()
 		synctest.Wait()
 		assert.Empty(t, coldStart, "cold start must wait while the unit replaces its daemon")
 		assert.Zero(t, detached)
@@ -229,6 +231,7 @@ func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 		require.Error(t, <-coldStart)
 		close(resume)
 		require.NoError(t, <-recovery)
+		require.NoError(t, <-competingRecovery, "automatic recovery must wait through the active review drain")
 		assert.Zero(t, detached)
 	})
 }
@@ -276,4 +279,28 @@ func TestDaemonServiceSamePathReplacement(t *testing.T) {
 	cmd.Env = append(os.Environ(), "ROBOREV_TEST_EXECUTABLE_REPLACEMENT=1")
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "%s", output)
+}
+
+func TestManagedRecoveryUnavailableBus(t *testing.T) {
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path="+filepath.Join(t.TempDir(), "missing-bus"))
+	oldRead, oldRestart, oldDrain := readServiceProcessFile, restartDaemonForEnsure, drainManagedDaemon
+	t.Cleanup(func() {
+		readServiceProcessFile, restartDaemonForEnsure, drainManagedDaemon = oldRead, oldRestart, oldDrain
+	})
+	readServiceProcessFile = func(string) ([]byte, error) {
+		return fmt.Appendf(nil, "0::/user.slice/user-%d.slice/user@%d.service/app.slice/fixture.service\n", os.Getuid(), os.Getuid()), nil
+	}
+	changes := 0
+	restartDaemonForEnsure = func() error { changes++; return nil }
+	drainManagedDaemon = func(*daemon.RuntimeInfo) error { changes++; return nil }
+	for _, probeErr := range []error{nil, errors.New("probe failed")} {
+		err := recoverDaemon(&daemon.RuntimeInfo{PID: 1234}, probeErr)
+		if probeErr == nil {
+			require.NoError(t, err, "a responsive daemon remains usable without its user bus")
+		} else {
+			var managed *managedRecoveryError
+			require.ErrorAs(t, err, &managed)
+		}
+		assert.Zero(t, changes, "unavailable ownership lookup must leave the daemon alone")
+	}
 }

@@ -1,4 +1,4 @@
-//go:build integration
+//go:build linux && integration
 
 package main
 
@@ -34,7 +34,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 	buildDir := t.TempDir()
 	oldBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-old", "v-old")
 	newBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-new", "v-new")
-	for _, scenario := range []string{"shared", "foreign", "selection advances", "global flag", "unrelated ancestor", "wrapper"} {
+	for _, scenario := range []string{"shared", "simple", "foreign", "selection advances", "global flag", "unrelated ancestor", "wrapper"} {
 		t.Run(scenario, func(t *testing.T) {
 			dataDir := t.TempDir()
 			t.Setenv("ROBOREV_DATA_DIR", dataDir)
@@ -59,14 +59,17 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				require.NoError(t, os.WriteFile(wrapper, []byte(body), 0o700))
 				start = strconv.Quote(wrapper)
 			}
-			serviceType := "notify"
+			serviceType := "Type=notify\n"
+			if scenario == "simple" {
+				serviceType = ""
+			}
 			if unmanaged || scenario == "wrapper" {
-				serviceType = "exec"
+				serviceType = "Type=exec\n"
 			}
 			if scenario == "global flag" {
 				start = strconv.Quote(link) + " --verbose daemon run --addr 127.0.0.1:0"
 			}
-			body := fmt.Sprintf("[Service]\nType=%s\nEnvironment=%s\nEnvironment=%s\nEnvironment=GIT_CONFIG_NOSYSTEM=1\nExecStart=%s\n", serviceType, strconv.Quote("ROBOREV_DATA_DIR="+dataDir), strconv.Quote("GIT_CONFIG_GLOBAL="+os.Getenv("GIT_CONFIG_GLOBAL")), start)
+			body := fmt.Sprintf("[Service]\n%sEnvironment=%s\nEnvironment=%s\nEnvironment=GIT_CONFIG_NOSYSTEM=1\nExecStart=%s\n", serviceType, strconv.Quote("ROBOREV_DATA_DIR="+dataDir), strconv.Quote("GIT_CONFIG_GLOBAL="+os.Getenv("GIT_CONFIG_GLOBAL")), start)
 			require.NoError(t, os.WriteFile(unitPath, []byte(body), 0o600))
 			t.Cleanup(func() {
 				output, err := exec.Command("systemctl", "--user", "stop", unit).CombinedOutput()

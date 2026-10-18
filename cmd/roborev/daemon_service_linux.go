@@ -37,9 +37,10 @@ func lookupDaemonService(ctx context.Context, pid int) (*daemonService, error) {
 	if unit == "" {
 		return nil, nil
 	}
-	conn, err := systemdbus.NewUserConnectionContext(ctx)
+	// The connection lasts until manager.close, across recovery's fresh budgets.
+	conn, err := systemdbus.NewUserConnectionContext(context.WithoutCancel(ctx))
 	if err != nil {
-		return nil, &managedRecoveryError{unit, err}
+		return nil, &managedRecoveryError{unit, fmt.Errorf("%w: %w", errUserBusUnavailable, err)}
 	}
 	manager := userServiceConnection{conn}
 	owner, err := manager.lookup(ctx, pid)
@@ -98,7 +99,7 @@ func (conn userServiceConnection) lookup(ctx context.Context, pid int) (*daemonS
 	if len(commands) != 1 {
 		return fail(fmt.Errorf("ExecStart must select one executable"))
 	}
-	return &daemonService{unit: unit, executable: commands[0].Path, mainPID: int(mainPID), manager: &daemonServiceManager{conn.lookup, conn.start, conn.Close}}, nil
+	return &daemonService{unit: unit, executable: commands[0].Path, mainPID: int(mainPID), simple: service["Type"] == "simple", manager: &daemonServiceManager{conn.lookup, conn.start, conn.Close}}, nil
 }
 
 func (conn userServiceConnection) start(ctx context.Context, unit string) error {

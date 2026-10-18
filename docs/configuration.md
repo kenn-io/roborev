@@ -1774,20 +1774,30 @@ matches the service's `MainPID`, even if the selected version changes again.
 
 A service from a separate installation keeps running. If it responds, the CLI
 uses it. If it doesn't respond, the command reports which service installation
-needs attention. An unavailable user manager, uncertain ownership, unreadable
-executable, or failed service start produces an error. Recovery keeps service
-ownership and waits for systemd readiness before releasing concurrent starts.
-Concurrent starts wait through the drain and fail if their own two-minute
-startup budget expires.
+needs attention. If the CLI cannot connect to the user bus, it keeps using a
+responsive daemon without changing it and reports an error only when the daemon
+doesn't respond. Uncertain ownership, an unreadable executable, or a failed
+service start produces an error. Recovery keeps service ownership and holds the
+start lock until the replacement is ready:
 
-Automatic recovery supports direct user services with `Type=notify`. If a
-wrapper keeps the daemon as a child, the CLI treats the wrapper as another
-installation and uses the daemon only while it responds. System services,
-another user's services, and unrelated service ancestors use ordinary recovery.
-The file comparison accepts the running CLI image or its cleaned executable
-path, including an atomic replacement at that path while the command runs.
-Explicit `daemon restart` and the restart after `roborev update` are separate
-workflows that still use detached startup.
+- Another automatic recovery waits as long as the active recovery takes,
+    including its review drain, then uses the replacement if it responds.
+- A cold start waits through the drain and fails if its own two-minute startup
+    budget expires.
+- Ownership checks and replacement startup each get a fresh two-minute budget
+    after the lock wait and after the drain.
+
+Automatic recovery supports direct user services with `Type=notify` or the
+default `Type=simple`. A `Type=notify` replacement is checked once systemd
+reports the unit started. A `Type=simple` unit reports started before the daemon
+responds, so the CLI polls until a responsive daemon is the unit's `MainPID` or
+the startup budget expires. If a wrapper keeps the daemon as a child, the CLI
+treats the wrapper as another installation and uses the daemon only while it
+responds. System services, another user's services, and unrelated service
+ancestors use ordinary recovery. The file comparison accepts the running CLI
+image or its cleaned executable path, including an atomic replacement at that
+path while the command runs. Explicit `daemon restart` and the restart after
+`roborev update` are separate workflows that still use detached startup.
 
 For on-demand startup via socket activation, enable the socket unit instead. The
 daemon starts automatically when a client connects and uses `Type=notify` to
