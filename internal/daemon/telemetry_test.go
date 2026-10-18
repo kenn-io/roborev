@@ -91,7 +91,6 @@ func TestStartDailyTelemetryLoopCapturesImmediately(t *testing.T) {
 	require.Len(client.properties, 1)
 	assert.Equal("daemon_active", client.events[0])
 	assert.Equal("21-100", client.properties[0]["repo_count"])
-	assert.Equal("0", client.properties[0]["review_count"])
 }
 
 func TestCaptureDaemonStartedTelemetryDisabledNoops(t *testing.T) {

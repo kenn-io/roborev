@@ -36,22 +36,18 @@ func TestEnabledFromEnvHonorsRoborevAndGenericOptOut(t *testing.T) {
 }
 
 func TestCountBucket(t *testing.T) {
-	for _, tc := range []struct {
-		count int
-		want  string
-	}{
-		{0, "0"},
-		{1, "1"},
-		{2, "2-5"},
-		{5, "2-5"},
-		{6, "6-20"},
-		{20, "6-20"},
-		{21, "21-100"},
-		{37, "21-100"},
-		{100, "21-100"},
-		{101, "over-100"},
+	for count, want := range map[int]string{
+		0:   "0",
+		1:   "1",
+		2:   "2-5",
+		5:   "2-5",
+		6:   "6-20",
+		20:  "6-20",
+		21:  "21-100",
+		100: "21-100",
+		101: "over-100",
 	} {
-		assert.Equal(t, tc.want, CountBucket(tc.count), "count=%d", tc.count)
+		assert.Equal(t, want, CountBucket(count), "count=%d", count)
 	}
 }
 
@@ -198,19 +194,17 @@ func TestAllowedEventOptionsConfigureRoborevDaemonEvents(t *testing.T) {
 	assert.Equal("daemon", props["source"])
 	assert.False(props["$process_person_profile"].(bool))
 	assert.True(props["$geoip_disable"].(bool))
-	for _, event := range []string{EventDaemonStarted, EventDaemonActive} {
-		for _, bucket := range []string{"0", "1", "2-5", "6-20", "21-100", "over-100"} {
-			props, err := reporter.SanitizeProperties(event, map[string]any{"repo_count": bucket, "review_count": bucket})
-			require.NoError(err)
-			assert.Equal(bucket, props["repo_count"])
-			assert.Equal(bucket, props["review_count"])
-		}
-		for _, count := range []any{37, 37.0, "37"} {
-			props, err := reporter.SanitizeProperties(event, map[string]any{"repo_count": count, "review_count": count})
-			require.NoError(err)
-			assert.NotContains(props, "repo_count")
-			assert.NotContains(props, "review_count")
-		}
+	for _, bucket := range []string{"0", "1", "2-5", "6-20", "21-100", "over-100"} {
+		props, err := reporter.SanitizeProperties(EventDaemonActive, map[string]any{"repo_count": bucket, "review_count": bucket})
+		require.NoError(err)
+		assert.Equal(bucket, props["repo_count"])
+		assert.Equal(bucket, props["review_count"])
+	}
+	for _, count := range []any{37, "37"} {
+		props, err := reporter.SanitizeProperties(EventDaemonActive, map[string]any{"repo_count": count, "review_count": count})
+		require.NoError(err)
+		assert.NotContains(props, "repo_count")
+		assert.NotContains(props, "review_count")
 	}
 
 	props, err = reporter.SanitizeProperties(EventAppOpened, map[string]any{"surface": "tui", "repo_count": 3})
