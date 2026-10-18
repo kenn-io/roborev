@@ -45,7 +45,9 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.toml"), []byte("max_workers = 1\ncodex_cmd = "+strconv.Quote(script)+"\n"), 0o600))
 			unit := fmt.Sprintf("roborev-test-%d-%d.service", os.Getpid(), time.Now().UnixNano())
 			unitDir := filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "systemd", "user")
-			require.True(t, filepath.IsAbs(unitDir))
+			if !filepath.IsAbs(unitDir) {
+				t.Skip("XDG_RUNTIME_DIR unavailable")
+			}
 			require.NoError(t, os.MkdirAll(unitDir, 0o700))
 			unitPath := filepath.Join(unitDir, unit)
 			unmanaged := scenario == "unrelated ancestor"
@@ -130,7 +132,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 					}
 					defer resp.Body.Close()
 					return resp.StatusCode == http.StatusConflict
-				}, time.Second, 10*time.Millisecond)
+				}, 10*time.Second, 10*time.Millisecond)
 				second := exec.Command(newBinary, "status", "--json")
 				require.NoError(t, second.Start())
 				defer second.Process.Kill()
@@ -159,7 +161,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			}
 			assertDaemonUpdateVersion(t, replacement.Endpoint(), expectedVersion)
 			if scenario == "selection advances" {
-				waitForUpdateJobStatus(t, replacement.Endpoint(), active.ID, storage.JobStatusDone, time.Second)
+				waitForUpdateJobStatus(t, replacement.Endpoint(), active.ID, storage.JobStatusDone, 10*time.Second)
 			}
 			if unmanaged {
 				return

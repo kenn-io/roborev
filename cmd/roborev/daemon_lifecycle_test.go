@@ -109,6 +109,8 @@ func TestEnsureDaemonPrefersLiveDaemonVersionOverRuntimeMetadata(t *testing.T) {
 
 	origGetAnyRunningDaemon := getAnyRunningDaemon
 	origRestartDaemon := restartDaemonForEnsure
+	origFindDaemonService := findDaemonService
+	findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		return &daemon.RuntimeInfo{
 			PID:     1234,
@@ -124,6 +126,7 @@ func TestEnsureDaemonPrefersLiveDaemonVersionOverRuntimeMetadata(t *testing.T) {
 	t.Cleanup(func() {
 		getAnyRunningDaemon = origGetAnyRunningDaemon
 		restartDaemonForEnsure = origRestartDaemon
+		findDaemonService = origFindDaemonService
 	})
 
 	if err := ensureDaemon(); err != nil {
@@ -137,6 +140,8 @@ func TestEnsureDaemonRestartsWhenLiveProbeFailsDespiteRuntimeVersion(t *testing.
 
 	origGetAnyRunningDaemon := getAnyRunningDaemon
 	origRestartDaemon := restartDaemonForEnsure
+	origFindDaemonService := findDaemonService
+	findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
 	origRetryDelay := ensureProbeRetryDelay
 	ensureProbeRetryDelay = time.Millisecond
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
@@ -154,6 +159,7 @@ func TestEnsureDaemonRestartsWhenLiveProbeFailsDespiteRuntimeVersion(t *testing.
 	t.Cleanup(func() {
 		getAnyRunningDaemon = origGetAnyRunningDaemon
 		restartDaemonForEnsure = origRestartDaemon
+		findDaemonService = origFindDaemonService
 		ensureProbeRetryDelay = origRetryDelay
 	})
 

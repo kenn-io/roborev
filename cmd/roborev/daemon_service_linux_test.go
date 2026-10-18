@@ -21,20 +21,20 @@ import (
 )
 
 func TestEnsureDaemonServiceRecovery(t *testing.T) {
-	for _, scenario := range []string{"mismatch/shared", "unknown/shared", "failed/shared", "mismatch/foreign", "failed/foreign", "mismatch/unmanaged", "mismatch/uncertain", "mismatch/unreadable"} {
-		trigger, installation, _ := strings.Cut(scenario, "/")
-		t.Run(scenario, func(t *testing.T) {
+	for _, trigger := range []string{"mismatch", "unknown", "failed"} {
+		t.Run(trigger+"/shared", func(t *testing.T) {
 			t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
 			oldFind, oldDrain := findDaemonService, drainManagedDaemon
+			oldRestart := restartDaemonForEnsure
 			manager := &daemonServiceManager{close: func() {}}
 			oldProbe, oldStartDiscovery, oldDiscovery := probeDaemonForEnsure, getAnyRunningDaemonForStart, getAnyRunningDaemon
-			oldRestart := restartDaemonForEnsure
 			t.Cleanup(func() {
 				findDaemonService, drainManagedDaemon = oldFind, oldDrain
-				probeDaemonForEnsure, getAnyRunningDaemonForStart, getAnyRunningDaemon = oldProbe, oldStartDiscovery, oldDiscovery
 				restartDaemonForEnsure = oldRestart
+				probeDaemonForEnsure, getAnyRunningDaemonForStart, getAnyRunningDaemon = oldProbe, oldStartDiscovery, oldDiscovery
 			})
 			calls := []string{}
+			restartDaemonForEnsure = func() error { calls = append(calls, "detached"); return nil }
 			probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
 				if trigger == "failed" {
 					return nil, errors.New("probe failed")
@@ -52,108 +52,123 @@ func TestEnsureDaemonServiceRecovery(t *testing.T) {
 				}
 				return info, nil
 			}
-			selected := filepath.Join(t.TempDir(), "roborev")
-			if installation == "shared" {
-				require.NoError(t, os.Symlink("/proc/self/exe", selected))
-			} else if installation != "unreadable" {
-				require.NoError(t, os.WriteFile(selected, []byte("different executable with the same name"), 0o700))
-			}
 			manager.lookup = func(_ context.Context, pid int) (*daemonService, error) {
 				assert.Equal(t, info.PID, pid)
-				if installation == "unmanaged" {
-					return nil, nil
-				}
-				if installation == "uncertain" {
-					return nil, &managedRecoveryError{"fixture.service", errors.New("manager unavailable")}
-				}
-				return &daemonService{unit: "fixture.service", executable: selected, mainPID: pid, manager: manager}, nil
+				return &daemonService{unit: "fixture.service", executable: "/proc/self/exe", mainPID: pid, manager: manager}, nil
 			}
 			findDaemonService = manager.lookup
-			restartDaemonForEnsure = func() error { calls = append(calls, "detached"); return nil }
 			drainManagedDaemon = func(got *daemon.RuntimeInfo) error {
 				assert.Equal(t, 1234, got.PID)
 				calls = append(calls, "drain")
 				return nil
 			}
 			manager.start = func(_ context.Context, unit string) error {
+				assert.Equal(t, "fixture.service", unit)
 				calls = append(calls, "unit start")
 				info = &daemon.RuntimeInfo{PID: 5678}
 				return nil
 			}
-			err := ensureDaemon()
-			switch installation {
-			case "shared":
-				require.NoError(t, err)
-				assert.Equal(t, []string{"drain", "unit start"}, calls)
-			case "unmanaged":
-				require.NoError(t, err)
-				assert.Equal(t, []string{"detached"}, calls)
-			case "foreign":
-				if trigger == "failed" {
-					require.Error(t, err)
-				} else {
-					require.NoError(t, err)
-				}
-				assert.Empty(t, calls)
-			default:
-				require.Error(t, err)
-				assert.Empty(t, calls)
-			}
+			require.NoError(t, ensureDaemon())
+			assert.Equal(t, []string{"drain", "unit start"}, calls)
 		})
 	}
 }
 
 func TestManagedRecoveryFailuresAndReplacement(t *testing.T) {
-	for _, outcome := range []string{"start failure", "wrong PID", "readiness failure", "already replaced"} {
-		t.Run(outcome, func(t *testing.T) {
+	probeErr := errors.New("probe failed")
+	for _, tc := range []struct {
+		outcome       string
+		probeErr      error
+		wantError     string
+		stops, starts int
+	}{
+		{outcome: "foreign responsive"},
+		{outcome: "foreign failed", probeErr: probeErr, wantError: "probe failed"},
+		{outcome: "uncertain", wantError: "properties unavailable"},
+		{outcome: "unreadable", wantError: "cannot confirm executable"},
+		{outcome: "bus responsive"},
+		{outcome: "bus failed", probeErr: probeErr, wantError: "user bus unavailable"},
+		{outcome: "start failure", wantError: "start rejected", stops: 1, starts: 1},
+		{outcome: "wrong PID", wantError: "replacement is outside service", stops: 1, starts: 1},
+		{outcome: "readiness failure", wantError: "replacement readiness", stops: 1, starts: 1},
+		{outcome: "already replaced"},
+	} {
+		t.Run(tc.outcome, func(t *testing.T) {
 			oldFind, oldDrain := findDaemonService, drainManagedDaemon
 			manager := &daemonServiceManager{close: func() {}}
-			oldDiscovery := getAnyRunningDaemonForStart
+			oldDiscovery, oldRestart := getAnyRunningDaemonForStart, restartDaemonForEnsure
 			t.Cleanup(func() {
 				findDaemonService, drainManagedDaemon = oldFind, oldDrain
-				getAnyRunningDaemonForStart = oldDiscovery
+				getAnyRunningDaemonForStart, restartDaemonForEnsure = oldDiscovery, oldRestart
 			})
 			old := &daemon.RuntimeInfo{PID: 1234}
 			current := old
-			if outcome == "already replaced" {
+			if tc.outcome == "already replaced" {
 				current = &daemon.RuntimeInfo{PID: 5678}
 			}
+			executable := "/proc/self/exe"
+			if strings.HasPrefix(tc.outcome, "foreign") {
+				executable = filepath.Join(t.TempDir(), "roborev")
+				require.NoError(t, os.WriteFile(executable, []byte("another installation"), 0o700))
+			} else if tc.outcome == "unreadable" {
+				executable = filepath.Join(t.TempDir(), "missing")
+			}
 			started := false
+			lookups := 0
 			manager.lookup = func(_ context.Context, pid int) (*daemonService, error) {
-				if started && outcome == "wrong PID" {
+				wantPID := current.PID
+				if lookups == 0 {
+					wantPID = old.PID
+				}
+				assert.Equal(t, wantPID, pid)
+				lookups++
+				if strings.HasPrefix(tc.outcome, "bus") {
+					return nil, &managedRecoveryError{"fixture.service", errUserBusUnavailable}
+				}
+				if tc.outcome == "uncertain" {
+					return nil, &managedRecoveryError{"fixture.service", errors.New("properties unavailable")}
+				}
+				if started && tc.outcome == "wrong PID" {
 					return &daemonService{unit: "fixture.service", mainPID: 9999}, nil
 				}
-				return &daemonService{unit: "fixture.service", executable: "/proc/self/exe", mainPID: pid, manager: manager}, nil
+				return &daemonService{unit: "fixture.service", executable: executable, mainPID: pid, manager: manager}, nil
 			}
 			findDaemonService = manager.lookup
 			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
-				if started && outcome == "readiness failure" {
+				if started && tc.outcome == "readiness failure" {
 					return nil, os.ErrNotExist
 				}
 				return current, nil
 			}
-			stops, starts := 0, 0
+			stops, starts, detached := 0, 0, 0
+			restartDaemonForEnsure = func() error { detached++; return nil }
 			drainManagedDaemon = func(info *daemon.RuntimeInfo) error { stops++; assert.Same(t, old, info); return nil }
 			manager.start = func(_ context.Context, unit string) error {
+				assert.Equal(t, "fixture.service", unit)
 				starts++
 				started = true
-				if outcome == "start failure" {
+				current = &daemon.RuntimeInfo{PID: 5678}
+				if tc.outcome == "start failure" {
 					return errors.New("start rejected")
 				}
 				return nil
 			}
-			err := recoverDaemon(old, nil)
-			if outcome == "already replaced" {
+			err := recoverDaemon(old, tc.probeErr)
+			if tc.wantError == "" {
 				require.NoError(t, err)
-				assert.Zero(t, stops)
-				assert.Zero(t, starts)
 			} else {
-				var managed *managedRecoveryError
-				require.ErrorAs(t, err, &managed)
-				assert.Equal(t, "fixture.service", managed.unit)
-				assert.Equal(t, 1, stops)
-				assert.Equal(t, 1, starts)
+				require.ErrorContains(t, err, tc.wantError)
+				if tc.outcome == "foreign failed" {
+					require.ErrorIs(t, err, probeErr)
+				} else {
+					var managed *managedRecoveryError
+					require.ErrorAs(t, err, &managed)
+					assert.Equal(t, "fixture.service", managed.unit)
+				}
 			}
+			assert.Equal(t, tc.stops, stops)
+			assert.Equal(t, tc.starts, starts)
+			assert.Zero(t, detached)
 		})
 	}
 }
@@ -220,7 +235,7 @@ func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 		<-drained
 		synctest.Wait()
 		assert.Contains(t, progress.String(), "Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...\n")
-		assert.Empty(t, recovery, "shutdown notice must be visible while reviews drain")
+		assert.Empty(t, recovery, "recovery must remain blocked while reviews drain")
 		close(finishDrain)
 		go func() { coldStart <- startDaemon() }()
 		go func() { competingRecovery <- recoverDaemon(old, nil) }()
@@ -250,6 +265,7 @@ func TestDaemonServiceCgroupManager(t *testing.T) {
 			owner, err := lookupDaemonService(context.Background(), 1234)
 			assert.Nil(t, owner)
 			if strings.Contains(path, fmt.Sprintf("/user@%d.service/", os.Getuid())) {
+				require.ErrorIs(t, err, errUserBusUnavailable)
 				var managed *managedRecoveryError
 				require.ErrorAs(t, err, &managed)
 				assert.Equal(t, "fixture.service", managed.unit)
@@ -279,28 +295,4 @@ func TestDaemonServiceSamePathReplacement(t *testing.T) {
 	cmd.Env = append(os.Environ(), "ROBOREV_TEST_EXECUTABLE_REPLACEMENT=1")
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "%s", output)
-}
-
-func TestManagedRecoveryUnavailableBus(t *testing.T) {
-	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path="+filepath.Join(t.TempDir(), "missing-bus"))
-	oldRead, oldRestart, oldDrain := readServiceProcessFile, restartDaemonForEnsure, drainManagedDaemon
-	t.Cleanup(func() {
-		readServiceProcessFile, restartDaemonForEnsure, drainManagedDaemon = oldRead, oldRestart, oldDrain
-	})
-	readServiceProcessFile = func(string) ([]byte, error) {
-		return fmt.Appendf(nil, "0::/user.slice/user-%d.slice/user@%d.service/app.slice/fixture.service\n", os.Getuid(), os.Getuid()), nil
-	}
-	changes := 0
-	restartDaemonForEnsure = func() error { changes++; return nil }
-	drainManagedDaemon = func(*daemon.RuntimeInfo) error { changes++; return nil }
-	for _, probeErr := range []error{nil, errors.New("probe failed")} {
-		err := recoverDaemon(&daemon.RuntimeInfo{PID: 1234}, probeErr)
-		if probeErr == nil {
-			require.NoError(t, err, "a responsive daemon remains usable without its user bus")
-		} else {
-			var managed *managedRecoveryError
-			require.ErrorAs(t, err, &managed)
-		}
-		assert.Zero(t, changes, "unavailable ownership lookup must leave the daemon alone")
-	}
 }
