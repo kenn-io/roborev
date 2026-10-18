@@ -58,11 +58,8 @@ var (
 	listAllRuntimes             = daemon.ListAllRuntimes
 	cleanupZombieDaemons        = daemon.CleanupZombieDaemons
 	isPIDAliveForUpdate         = isPIDAliveForUpdateDefault
-	restartDaemonForEnsure      = restartDaemon
 	startDaemonForEnsure        = startDaemon
 	startDaemonDetached         = startDetachedDaemon
-	stopDaemonForRestart        = stopDaemon
-	startDaemonAfterRestart     = startDaemon
 	stopDaemonForUpdate         = stopDaemon
 	startUpdatedDaemon          = func(binDir string) error {
 		newBinary := filepath.Join(binDir, "roborev")
@@ -529,14 +526,4 @@ func stopDaemon() error {
 	}
 
 	return lastErr
-}
-
-// restartDaemon stops the running daemon and starts a new one
-func restartDaemon() error {
-	if err := stopDaemonForRestart(); err != nil &&
-		!errors.Is(err, ErrDaemonNotRunning) {
-		return err
-	}
-
-	return startDaemonAfterRestart()
 }

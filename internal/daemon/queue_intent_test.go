@@ -53,6 +53,9 @@ func TestQueueIntentSupersededAndConsumed(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, paused)
 	assert.NoFileExists(t, queueIntentPath())
+	draining, err := db.IsShutdownDraining()
+	require.NoError(t, err)
+	assert.True(t, draining)
 }
 
 func TestQueueIntentAtServerStartup(t *testing.T) {

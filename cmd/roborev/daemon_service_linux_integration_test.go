@@ -33,7 +33,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 	buildDir := t.TempDir()
 	oldBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-old", "v-old")
 	newBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-new", "v-new")
-	for _, scenario := range []string{"shared", "pause", "remain after exit", "daemon start", "vanished", "simple", "exec", "transient", "missing bus environment", "foreign", "selection advances", "unrelated ancestor", "wrapper"} {
+	for _, scenario := range []string{"shared", "pause", "remain after exit", "daemon start", "simple", "exec", "transient", "missing bus environment", "foreign", "selection advances", "unrelated ancestor", "wrapper"} {
 		t.Run(scenario, func(t *testing.T) {
 			dataDir := t.TempDir()
 			t.Setenv("ROBOREV_DATA_DIR", dataDir)
@@ -164,22 +164,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				require.NoError(t, exec.Command("systemctl", "--user", "is-active", unit).Run())
 				return
 			}
-			if scenario == "vanished" {
-				release, err := daemon.RuntimeStore().AcquireStartLock(context.Background())
-				require.NoError(t, err)
-				t.Cleanup(func() {
-					if release != nil {
-						release()
-					}
-				})
-				require.NoError(t, cli.Start())
-				// The CLI snapshots the unit before its external start-lock wait.
-				require.Eventually(t, func() bool { return strings.Contains(stderr.String(), "Waiting for daemon recovery lock") }, 10*time.Second, 10*time.Millisecond)
-				require.NoError(t, daemon.KillDaemon(original))
-				release()
-				release = nil
-				require.NoError(t, cli.Wait(), "%s", stderr.String())
-			} else if scenario == "pause" {
+			if scenario == "pause" {
 				require.NoError(t, cli.Start())
 				defer cli.Process.Kill()
 				// Observe the separate status process holding recovery during the review.

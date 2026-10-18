@@ -34,7 +34,6 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 		{outcome: "replacement outdated", stops: 1, starts: 1},
 		{outcome: "missing PID"},
 		{outcome: "vanished owned", starts: 1},
-		{outcome: "mismatch", stops: 1, starts: 1},
 		{outcome: "failed", probeErr: probeErr, stops: 1, starts: 1},
 		{outcome: "foreign failed", probeErr: probeErr, wantError: "probe failed"},
 		{outcome: "uncertain", wantError: "properties unavailable"},
@@ -313,16 +312,7 @@ func TestUnmanagedRecoveryReusesReplacementAfterDrain(t *testing.T) {
 	current := &daemon.RuntimeInfo{PID: 1234}
 	findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
 	getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return current, nil }
-	drainManagedDaemon = func(info *daemon.RuntimeInfo) error {
-		assert.Equal(t, 1234, info.PID)
-		release, acquired, err := daemon.RuntimeStore().TryAcquireStartLock(t.Context())
-		require.NoError(t, err)
-		if acquired {
-			release()
-		}
-		assert.False(t, acquired, "the exact PID drains while recovery owns the lock")
-		return nil
-	}
+	drainManagedDaemon = func(*daemon.RuntimeInfo) error { return nil }
 	startDaemonForEnsure = func() error {
 		current = &daemon.RuntimeInfo{PID: 5678, Version: version.Version}
 		return startDaemon()

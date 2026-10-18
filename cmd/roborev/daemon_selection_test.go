@@ -27,14 +27,14 @@ func isolateDaemonSelection(t *testing.T) {
 	testenv.SetDataDir(t)
 	oldAddr, oldParsed := serverAddr, parsedServerEndpoint
 	oldDiscover, oldProbe := getAnyRunningDaemon, probeDaemonForEnsure
-	oldCleanup, oldStart, oldRestart := cleanupZombieDaemons, startDaemonForEnsure, restartDaemonForEnsure
+	oldCleanup, oldStart := cleanupZombieDaemons, startDaemonForEnsure
 	oldService := findDaemonService
 	serverAddr, parsedServerEndpoint = "", nil
 	findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
 	t.Cleanup(func() {
 		serverAddr, parsedServerEndpoint = oldAddr, oldParsed
 		getAnyRunningDaemon, probeDaemonForEnsure = oldDiscover, oldProbe
-		cleanupZombieDaemons, startDaemonForEnsure, restartDaemonForEnsure = oldCleanup, oldStart, oldRestart
+		cleanupZombieDaemons, startDaemonForEnsure = oldCleanup, oldStart
 		findDaemonService = oldService
 	})
 }
@@ -45,18 +45,16 @@ func TestEnsureDaemonDoesNotAdoptUnpublishedDefaultDaemon(t *testing.T) {
 			isolateDaemonSelection(t)
 			t.Setenv("ROBOREV_SKIP_VERSION_CHECK", skip)
 			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
-			var probes, starts, restarts int
+			var probes, starts int
 			probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
 				probes++
 				return &daemon.PingInfo{OK: true, Service: "roborev", Version: version.Version}, nil
 			}
 			cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { return 0 }
 			startDaemonForEnsure = func() error { starts++; return nil }
-			restartDaemonForEnsure = func() error { restarts++; return nil }
 			require.NoError(t, ensureDaemon())
 			assert.Zero(t, probes)
 			assert.Equal(t, 1, starts)
-			assert.Zero(t, restarts)
 		})
 	}
 }

@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -15,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -90,85 +88,36 @@ func TestGetDaemonEndpointIgnoresCachedDefaultFromEmptyServerFlagInTests(t *test
 	assert.Equal(t, "127.0.0.1:1", got.Address)
 }
 
-func TestEnsureDaemonPrefersLiveDaemonVersionOverRuntimeMetadata(t *testing.T) {
-	t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/ping":
-			_ = json.NewEncoder(w).Encode(daemon.PingInfo{
-				OK:      true,
-				Service: "roborev",
-				Version: "v-other-daemon",
+func TestEnsureDaemonRecoversFromLiveVersion(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		probeErr error
+	}{
+		{name: "live version mismatch"},
+		{name: "probe failure", probeErr: errors.New("connection refused")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
+			origGet, origProbe := getAnyRunningDaemon, probeDaemonForEnsure
+			origStart, origDrain, origService := startDaemonForEnsure, drainManagedDaemon, findDaemonService
+			t.Cleanup(func() {
+				getAnyRunningDaemon, probeDaemonForEnsure = origGet, origProbe
+				startDaemonForEnsure, drainManagedDaemon, findDaemonService = origStart, origDrain, origService
 			})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
-	origGetAnyRunningDaemon := getAnyRunningDaemon
-	origStartDaemon, origDrain := startDaemonForEnsure, drainManagedDaemon
-	drainManagedDaemon = func(info *daemon.RuntimeInfo) error { assert.Equal(t, 1234, info.PID); return nil }
-	origFindDaemonService := findDaemonService
-	findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		return &daemon.RuntimeInfo{
-			PID:     1234,
-			Address: strings.TrimPrefix(server.URL, "http://"),
-			Version: version.Version,
-		}, nil
+			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+				return &daemon.RuntimeInfo{PID: 1234, Version: version.Version}, nil
+			}
+			probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
+				return &daemon.PingInfo{OK: true, Service: "roborev", Version: "v-other-daemon"}, tc.probeErr
+			}
+			findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
+			drainManagedDaemon = func(info *daemon.RuntimeInfo) error { assert.Equal(t, 1234, info.PID); return nil }
+			starts := 0
+			startDaemonForEnsure = func() error { starts++; return nil }
+			require.NoError(t, ensureDaemon())
+			assert.Equal(t, 1, starts)
+		})
 	}
-	restartCalls := 0
-	startDaemonForEnsure = func() error {
-		restartCalls++
-		return nil
-	}
-	t.Cleanup(func() {
-		getAnyRunningDaemon = origGetAnyRunningDaemon
-		startDaemonForEnsure, drainManagedDaemon = origStartDaemon, origDrain
-		findDaemonService = origFindDaemonService
-	})
-
-	if err := ensureDaemon(); err != nil {
-		require.NoError(t, err, "ensureDaemon returned error: %v")
-	}
-	assert.Equal(t, 1, restartCalls)
-}
-
-func TestEnsureDaemonRestartsWhenLiveProbeFailsDespiteRuntimeVersion(t *testing.T) {
-	t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
-
-	origGetAnyRunningDaemon := getAnyRunningDaemon
-	origStartDaemon, origDrain := startDaemonForEnsure, drainManagedDaemon
-	drainManagedDaemon = func(info *daemon.RuntimeInfo) error { assert.Equal(t, 1234, info.PID); return nil }
-	origFindDaemonService := findDaemonService
-	findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
-	origRetryDelay := ensureProbeRetryDelay
-	ensureProbeRetryDelay = time.Millisecond
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		return &daemon.RuntimeInfo{
-			PID:     1234,
-			Address: "127.0.0.1:1",
-			Version: version.Version,
-		}, nil
-	}
-	restartCalls := 0
-	startDaemonForEnsure = func() error {
-		restartCalls++
-		return nil
-	}
-	t.Cleanup(func() {
-		getAnyRunningDaemon = origGetAnyRunningDaemon
-		startDaemonForEnsure, drainManagedDaemon = origStartDaemon, origDrain
-		findDaemonService = origFindDaemonService
-		ensureProbeRetryDelay = origRetryDelay
-	})
-
-	if err := ensureDaemon(); err != nil {
-		require.NoError(t, err, "ensureDaemon returned error: %v")
-	}
-	assert.Equal(t, 1, restartCalls)
 }
 
 func TestEnsureDaemonCleansZombiesBeforeColdStart(t *testing.T) {
@@ -215,24 +164,24 @@ func TestEnsureDaemonDoesNotRecoverFromAccessDeniedDiscovery(t *testing.T) {
 	origGet := getAnyRunningDaemon
 	origProbe := probeDaemonForEnsure
 	origCleanup := cleanupZombieDaemons
-	origRestart := restartDaemonForEnsure
+	origService := findDaemonService
 	origStart := startDaemonForEnsure
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		return nil, daemon.ErrDaemonAccessDenied
 	}
-	probeCalls, cleanupCalls, restartCalls, startCalls := 0, 0, 0, 0
+	probeCalls, cleanupCalls, serviceCalls, startCalls := 0, 0, 0, 0
 	probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
 		probeCalls++
 		return nil, nil
 	}
 	cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { cleanupCalls++; return 0 }
-	restartDaemonForEnsure = func() error { restartCalls++; return nil }
+	findDaemonService = func(context.Context, int) (*daemonService, error) { serviceCalls++; return nil, nil }
 	startDaemonForEnsure = func() error { startCalls++; return nil }
 	t.Cleanup(func() {
 		getAnyRunningDaemon = origGet
 		probeDaemonForEnsure = origProbe
 		cleanupZombieDaemons = origCleanup
-		restartDaemonForEnsure = origRestart
+		findDaemonService = origService
 		startDaemonForEnsure = origStart
 	})
 
@@ -240,7 +189,7 @@ func TestEnsureDaemonDoesNotRecoverFromAccessDeniedDiscovery(t *testing.T) {
 	require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
 	assert.Zero(t, probeCalls)
 	assert.Zero(t, cleanupCalls)
-	assert.Zero(t, restartCalls)
+	assert.Zero(t, serviceCalls)
 	assert.Zero(t, startCalls)
 }
 
@@ -249,7 +198,7 @@ func TestEnsureDaemonDoesNotRestartAfterAccessDeniedVersionProbe(t *testing.T) {
 
 	origGet := getAnyRunningDaemon
 	origProbe := probeDaemonForEnsure
-	origRestart := restartDaemonForEnsure
+	origService := findDaemonService
 	origStart := startDaemonForEnsure
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		return &daemon.RuntimeInfo{Network: "tcp", Address: "127.0.0.1:7373"}, nil
@@ -257,19 +206,19 @@ func TestEnsureDaemonDoesNotRestartAfterAccessDeniedVersionProbe(t *testing.T) {
 	probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
 		return nil, &net.OpError{Op: "dial", Net: "tcp", Err: syscall.EPERM}
 	}
-	restartCalls, startCalls := 0, 0
-	restartDaemonForEnsure = func() error { restartCalls++; return nil }
+	serviceCalls, startCalls := 0, 0
+	findDaemonService = func(context.Context, int) (*daemonService, error) { serviceCalls++; return nil, nil }
 	startDaemonForEnsure = func() error { startCalls++; return nil }
 	t.Cleanup(func() {
 		getAnyRunningDaemon = origGet
 		probeDaemonForEnsure = origProbe
-		restartDaemonForEnsure = origRestart
+		findDaemonService = origService
 		startDaemonForEnsure = origStart
 	})
 
 	err := ensureDaemon()
 	require.True(t, daemon.IsDaemonAccessError(err))
-	assert.Zero(t, restartCalls)
+	assert.Zero(t, serviceCalls)
 	assert.Zero(t, startCalls)
 }
 
@@ -359,28 +308,6 @@ func TestStartDaemonUsesAlternateAwareDiscoveryInsideStartLock(t *testing.T) {
 	t.Cleanup(func() { getAnyRunningDaemonForStart = origGet })
 
 	require.NoError(t, startDaemon())
-}
-
-func TestRestartDaemonDoesNotStartAfterGracefulStopFailure(t *testing.T) {
-	origStop := stopDaemonForRestart
-	origStart := startDaemonAfterRestart
-	t.Cleanup(func() {
-		stopDaemonForRestart = origStop
-		startDaemonAfterRestart = origStart
-	})
-
-	stopErr := errors.New("graceful shutdown unavailable")
-	stopDaemonForRestart = func() error { return stopErr }
-	startCalls := 0
-	startDaemonAfterRestart = func() error {
-		startCalls++
-		return nil
-	}
-
-	err := restartDaemon()
-
-	require.ErrorIs(t, err, stopErr)
-	assert.Zero(t, startCalls)
 }
 
 func TestStartDaemonDoesNotSpawnAfterAccessDeniedDiscoveryInsideStartLock(t *testing.T) {
