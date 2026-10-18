@@ -216,6 +216,7 @@ func newServerWithLogs(
 		shutdownCh:         make(chan struct{}),
 	}
 	s.updateCoordinator = &updateDrainCoordinator{server: s, now: time.Now}
+	s.workerPool.captureSetupFinished = s.captureSetupFinishedTelemetry
 	s.agentHookState, s.agentHookStateErr = agenthook.LoadState(
 		daemonAgentHookSource{db: db, errorLog: errorLog},
 	)
@@ -870,6 +871,23 @@ func (s *Server) SetTelemetry(client telemetry.Client) {
 
 func (s *Server) captureDaemonStartedTelemetry(cfg *config.Config) {
 	s.captureTelemetryEvent(telemetry.EventDaemonStarted, cfg)
+	s.captureSetupFinishedTelemetry()
+}
+
+func (s *Server) captureSetupFinishedTelemetry() {
+	if s.telemetry == nil || !s.telemetry.Enabled() {
+		return
+	}
+	claimed, err := s.db.ClaimSetupFinished()
+	if err != nil {
+		log.Printf("Warning: claim setup finished telemetry: %v", err)
+		return
+	}
+	if claimed {
+		if err := s.telemetry.Capture(telemetry.EventSetupFinished, nil); err != nil {
+			log.Printf("Warning: capture setup finished telemetry: %v", err)
+		}
+	}
 }
 
 func (s *Server) startDailyTelemetryLoop(ctx context.Context, cfg *config.Config) {
@@ -945,6 +963,14 @@ func (s *Server) telemetryProperties(cfg *config.Config) map[string]any {
 // SetSyncWorker sets the sync worker for triggering manual syncs
 func (s *Server) SetSyncWorker(sw *storage.SyncWorker) {
 	s.syncWorker = sw
+	sw.SetAfterPullWrite(s.afterSyncPullWrite)
+}
+
+func (s *Server) afterSyncPullWrite() {
+	if s.searchReconciler != nil {
+		s.searchReconciler.Wake()
+	}
+	s.captureSetupFinishedTelemetry()
 }
 
 // SetCIPoller sets the CI poller for status reporting and wires up

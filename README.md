@@ -477,11 +477,21 @@ and `daemon_active` with `repo_count` and `review_count` as buckets: `0-5`,
 `6-20`, `21-100`, or `over-100`. These events also include sync enabled,
 CI enabled, and auto-design enabled, plus `application=roborev`, version, OS/arch,
 `$process_person_profile=false`, `$geoip_disable=true`, and an anonymous install
-ID. Closing a browser tab, leaving it hidden for 30 minutes, or exiting the TUI
+ID.
+
+The daemon sends `setup_finished` once per install the first time it finds a
+finished review: one that ran locally, arrived through sync, or already existed
+when the daemon started. Panel member reviews count. The event has no
+properties. Its timestamp records when the daemon noticed the review, so it can
+come after an upgrade or after telemetry is turned on. If sending fails, the
+daemon does not retry.
+
+Closing a browser tab, leaving it hidden for 30 minutes, or exiting the TUI
 reports one `session_ended` with `surface` and `duration_bucket`: `under_1m`,
 `1_to_5m`, `5_to_30m`, or `over_30m`. Each browser session adds up visible time
 across tab switches and excludes hidden time. A browser session is lost when the
 browser quits, crashes, or discards the tab before the page closes normally.
+
 The web UI also asks the daemon to report an `app_opened` event when it loads
 and on the first window focus of each later UTC day, and `roborev tui` asks each
 time it starts. CLI commands that work through the daemon ask after their first

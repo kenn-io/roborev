@@ -23,6 +23,7 @@ const (
 	SyncStateLastResponseID                 = "last_response_id"   // inserted_at/id cursor of last synced response
 	SyncStateSyncTargetID                   = "sync_target_id"     // Database ID of last synced Postgres
 	SyncStateDatabaseID                     = "database_id"        // Stable identity of this local SQLite database
+	SyncStateSetupFinished                  = "telemetry.setup_finished"
 )
 
 // GetSyncState retrieves a value from the sync_state table.
@@ -57,6 +58,30 @@ func setSyncState(ctx context.Context, store experimentStore, key, value string)
 		return fmt.Errorf("set sync state %s: %w", key, err)
 	}
 	return nil
+}
+
+// ClaimSetupFinished claims the install's first readable review before
+// best-effort telemetry delivery.
+func (db *DB) ClaimSetupFinished() (bool, error) {
+	result, err := db.Exec(`
+		INSERT INTO sync_state (key, value)
+		SELECT ?, '1'
+		WHERE EXISTS (
+			SELECT 1 FROM reviews rv JOIN review_jobs j ON j.id = rv.job_id
+			LEFT JOIN job_content jc ON jc.job_id = j.id
+			WHERE 1 = 1
+			`+searchFeedEligibility+`
+		)
+		ON CONFLICT(key) DO NOTHING
+	`, SyncStateSetupFinished)
+	if err != nil {
+		return false, fmt.Errorf("claim setup finished: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("claim setup finished: %w", err)
+	}
+	return rows == 1, nil
 }
 
 // GetOrCreateSyncStateValue returns a durable key/value entry, creating it when absent.

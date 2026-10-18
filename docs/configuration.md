@@ -1819,6 +1819,13 @@ roborev sends limited anonymous telemetry when the daemon starts and once every
 whether CI is enabled, whether auto design review is enabled, roborev version,
 OS, architecture, and an anonymous install ID stored in the local database.
 
+The daemon sends `setup_finished` once per install the first time it finds a
+finished review: one that ran locally, arrived through sync, or already existed
+when the daemon started. Panel member reviews count. The event has no
+properties. Its timestamp records when the daemon noticed the review, so it can
+come after an upgrade or after telemetry is turned on. If sending fails, the
+daemon does not retry.
+
 Closing a browser tab, leaving it hidden for 30 minutes, or exiting the TUI
 reports one `session_ended` with `surface` and `duration_bucket`: `under_1m`,
 `1_to_5m`, `5_to_30m`, or `over_30m`. Each browser session adds up visible time
