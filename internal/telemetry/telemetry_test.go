@@ -175,8 +175,6 @@ func TestAllowedEventOptionsConfigureRoborevDaemonEvents(t *testing.T) {
 	assert.False(reporter.EventAllowed("repo_opened"))
 
 	props, err := reporter.SanitizeProperties(EventDaemonActive, map[string]any{
-		"repo_count":              "2-5",
-		"review_count":            "6-20",
 		"sync_enabled":            true,
 		"worker_count":            4,
 		"$process_person_profile": true,
