@@ -1787,17 +1787,18 @@ start lock until the replacement is ready:
 - Ownership checks and replacement startup each get a fresh two-minute budget
     after the lock wait and after the drain.
 
-Automatic recovery supports direct user services with `Type=notify` or the
-default `Type=simple`. A `Type=notify` replacement is checked once systemd
-reports the unit started. A `Type=simple` unit reports started before the daemon
-responds, so the CLI polls until a responsive daemon is the unit's `MainPID` or
-the startup budget expires. If a wrapper keeps the daemon as a child, the CLI
-treats the wrapper as another installation and uses the daemon only while it
-responds. System services, another user's services, and unrelated service
-ancestors use ordinary recovery. The file comparison accepts the running CLI
-image or its cleaned executable path, including an atomic replacement at that
-path while the command runs. Explicit `daemon restart` and the restart after
-`roborev update` are separate workflows that still use detached startup.
+Automatic recovery supports direct user services, including `Type=notify`,
+`Type=exec`, and the default `Type=simple`. After systemd reports the unit
+started, the CLI polls until a responsive daemon is the unit's `MainPID` or the
+startup budget expires. It holds a reference to the unit during recovery so
+transient units remain available after shutdown. If a wrapper keeps the daemon
+as a child, the CLI treats the wrapper as another installation and uses the
+daemon only while it responds. System services, another user's services, and
+unrelated service ancestors use ordinary recovery. The file comparison accepts
+the running CLI image or its cleaned executable path, including an atomic
+replacement at that path while the command runs. Explicit `daemon restart` and
+the restart after `roborev update` are separate workflows that still use
+detached startup.
 
 For on-demand startup via socket activation, enable the socket unit instead. The
 daemon starts automatically when a client connects and uses `Type=notify` to

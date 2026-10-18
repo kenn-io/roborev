@@ -34,7 +34,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 	buildDir := t.TempDir()
 	oldBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-old", "v-old")
 	newBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-new", "v-new")
-	for _, scenario := range []string{"shared", "simple", "foreign", "selection advances", "global flag", "unrelated ancestor", "wrapper"} {
+	for _, scenario := range []string{"shared", "simple", "exec", "transient", "missing bus environment", "foreign", "selection advances", "global flag", "unrelated ancestor", "wrapper"} {
 		t.Run(scenario, func(t *testing.T) {
 			dataDir := t.TempDir()
 			t.Setenv("ROBOREV_DATA_DIR", dataDir)
@@ -65,6 +65,9 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			if scenario == "simple" {
 				serviceType = ""
 			}
+			if scenario == "exec" {
+				serviceType = "Type=exec\n"
+			}
 			if unmanaged || scenario == "wrapper" {
 				serviceType = "Type=exec\n"
 			}
@@ -72,18 +75,26 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				start = strconv.Quote(link) + " --verbose daemon run --addr 127.0.0.1:0"
 			}
 			body := fmt.Sprintf("[Service]\n%sEnvironment=%s\nEnvironment=%s\nEnvironment=GIT_CONFIG_NOSYSTEM=1\nExecStart=%s\n", serviceType, strconv.Quote("ROBOREV_DATA_DIR="+dataDir), strconv.Quote("GIT_CONFIG_GLOBAL="+os.Getenv("GIT_CONFIG_GLOBAL")), start)
-			require.NoError(t, os.WriteFile(unitPath, []byte(body), 0o600))
+			if scenario != "transient" {
+				require.NoError(t, os.WriteFile(unitPath, []byte(body), 0o600))
+			}
 			t.Cleanup(func() {
 				output, err := exec.Command("systemctl", "--user", "stop", unit).CombinedOutput()
 				assert.NoError(t, err, "%s", output)
 				if info, err := daemon.GetAnyRunningDaemon(); err == nil {
 					assert.NoError(t, daemon.KillDaemon(info))
 				}
-				assert.NoError(t, os.Remove(unitPath))
+				if scenario != "transient" {
+					assert.NoError(t, os.Remove(unitPath))
+				}
 				assert.NoError(t, exec.Command("systemctl", "--user", "daemon-reload").Run())
 			})
 			require.NoError(t, exec.Command("systemctl", "--user", "daemon-reload").Run())
-			output, err := exec.Command("systemctl", "--user", "start", unit).CombinedOutput()
+			starter := exec.Command("systemctl", "--user", "start", unit)
+			if scenario == "transient" {
+				starter = exec.Command("systemd-run", "--user", "--unit="+unit, "--property=Type=notify", "--setenv=ROBOREV_DATA_DIR="+dataDir, "--setenv=GIT_CONFIG_NOSYSTEM=1", "--setenv=GIT_CONFIG_GLOBAL="+os.Getenv("GIT_CONFIG_GLOBAL"), link, "daemon", "run", "--addr", "127.0.0.1:0")
+			}
+			output, err := starter.CombinedOutput()
 			require.NoError(t, err, "%s", output)
 			var original *daemon.RuntimeInfo
 			require.Eventually(t, func() bool {
@@ -103,6 +114,13 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				require.NoError(t, os.Rename(next, link))
 			}
 			cli := exec.Command(newBinary, "status", "--json")
+			if scenario == "missing bus environment" {
+				for _, entry := range os.Environ() {
+					if !strings.HasPrefix(entry, "DBUS_SESSION_BUS_ADDRESS=") && !strings.HasPrefix(entry, "XDG_RUNTIME_DIR=") {
+						cli.Env = append(cli.Env, entry)
+					}
+				}
+			}
 			var stdout, stderr bytes.Buffer
 			cli.Stdout, cli.Stderr = &stdout, &stderr
 			if scenario == "wrapper" {

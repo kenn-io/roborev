@@ -281,7 +281,8 @@ func stubStartupSeams(t *testing.T) *startupSeamCounts {
 	t.Helper()
 	counts := &startupSeamCounts{}
 	origGetAny, origProbe, origCleanup := getAnyRunningDaemon, probeDaemonForEnsure, cleanupZombieDaemons
-	origRestart, origStart := restartDaemonForEnsure, startDaemonForEnsure
+	origRestart, origStart, origService := restartDaemonForEnsure, startDaemonForEnsure, findDaemonService
+	findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		counts.getAny.Add(1)
 		return nil, os.ErrNotExist
@@ -304,7 +305,7 @@ func stubStartupSeams(t *testing.T) *startupSeamCounts {
 	}
 	t.Cleanup(func() {
 		getAnyRunningDaemon, probeDaemonForEnsure, cleanupZombieDaemons = origGetAny, origProbe, origCleanup
-		restartDaemonForEnsure, startDaemonForEnsure = origRestart, origStart
+		restartDaemonForEnsure, startDaemonForEnsure, findDaemonService = origRestart, origStart, origService
 	})
 	return counts
 }

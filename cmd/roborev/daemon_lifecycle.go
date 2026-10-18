@@ -475,14 +475,8 @@ func findDaemonForStart(ctx context.Context) (*daemon.RuntimeInfo, error) {
 }
 
 func discoverDaemonForStart(ctx context.Context) (bool, error) {
-	_, err := getAnyRunningDaemonForStart(ctx)
-	if err == nil {
-		return true, nil
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return false, err
-	}
-	return false, nil
+	info, err := findDaemonForStart(ctx)
+	return info != nil, err
 }
 
 func openDetachedDaemonLogs() (*os.File, *os.File, func(), error) {

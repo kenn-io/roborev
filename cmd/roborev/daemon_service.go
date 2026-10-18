@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/cenkalti/backoff/v7"
@@ -17,7 +16,6 @@ import (
 type daemonService struct {
 	unit, executable string
 	mainPID          int
-	simple           bool
 	manager          *daemonServiceManager
 }
 
@@ -52,8 +50,19 @@ func (s *daemonService) sameInstallation() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	cliPath, err := os.Readlink("/proc/self/exe")
-	return os.SameFile(selected, cli) || err == nil && filepath.Clean(s.executable) == filepath.Clean(strings.TrimSuffix(cliPath, " (deleted)")), nil
+	cliPath, _ := os.Executable()
+	return os.SameFile(selected, cli) || filepath.Clean(s.executable) == filepath.Clean(cliPath), nil
+}
+
+// acquireRecoveryLock waits for any active recovery, including its review drain.
+func acquireRecoveryLock() (func(), error) {
+	store := daemon.RuntimeStore()
+	release, acquired, err := store.TryAcquireStartLock(context.Background())
+	if err != nil || acquired {
+		return release, err
+	}
+	fmt.Fprintln(lifecycleOut, "Waiting for daemon recovery lock; another command may be waiting for running reviews to finish...")
+	return store.AcquireStartLock(context.Background())
 }
 
 func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
@@ -81,9 +90,8 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 		}
 		return nil
 	}
-	// Wait for any active recovery, including its review drain, then give
-	// rediscovery a fresh budget.
-	release, err := daemon.RuntimeStore().AcquireStartLock(context.Background())
+	// Rediscovery gets a fresh budget after the lock wait.
+	release, err := acquireRecoveryLock()
 	if err != nil {
 		return fail(err)
 	}
@@ -130,13 +138,9 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 	return nil
 }
 
-// awaitReplacement confirms a responsive daemon is the unit's main process.
-// Type=simple units report started before the daemon responds, so poll them.
+// awaitReplacement polls until a responsive daemon is the unit's main process.
+// Unit startup can precede runtime publication.
 func (s *daemonService) awaitReplacement(ctx context.Context) error {
-	tries := uint(1)
-	if s.simple {
-		tries = 0
-	}
 	_, err := backoff.Retry(ctx, func() (struct{}, error) {
 		replacement, err := getAnyRunningDaemonForStart(ctx)
 		if err != nil {
@@ -158,7 +162,7 @@ func (s *daemonService) awaitReplacement(ctx context.Context) error {
 		}
 		return struct{}{}, nil
 	}, backoff.WithBackOff(backoff.NewConstantBackOff(50*time.Millisecond)),
-		backoff.WithMaxTries(tries), backoff.WithMaxElapsedTime(0))
+		backoff.WithMaxElapsedTime(0))
 	if err != nil {
 		return backoff.AsRetryError(err).LastErr
 	}

@@ -13,7 +13,41 @@ import (
 
 var readServiceProcessFile = os.ReadFile
 
-type userServiceConnection struct{ *systemdbus.Conn }
+type userServiceConnection struct {
+	*systemdbus.Conn
+	// systemd calls RefUnit on the method connection; Close releases the reference.
+	systemd dbus.BusObject
+}
+
+// dialUserService keeps the method connection available for unit references.
+func dialUserService(ctx context.Context) (userServiceConnection, error) {
+	// NewConnection dials method calls first, then signals.
+	var method *dbus.Conn
+	conn, err := systemdbus.NewConnection(func() (*dbus.Conn, error) {
+		bus, err := dbus.ConnectSessionBus(dbus.WithContext(ctx), dbus.WithAuth(dbus.AuthExternal(strconv.Itoa(os.Getuid()))))
+		if method == nil {
+			method = bus
+		}
+		return bus, err
+	})
+	if err != nil {
+		return userServiceConnection{}, err
+	}
+	return userServiceConnection{conn, method.Object("org.freedesktop.systemd1", "/org/freedesktop/systemd1")}, nil
+}
+
+// hold looks up the daemon's service and references it so a transient unit
+// survives its main process exiting until recovery closes the connection.
+func (conn userServiceConnection) hold(ctx context.Context, pid int) (*daemonService, error) {
+	owner, err := conn.lookup(ctx, pid)
+	if owner == nil || err != nil {
+		return owner, err
+	}
+	if err := conn.systemd.CallWithContext(ctx, "org.freedesktop.systemd1.Manager.RefUnit", 0, owner.unit).Store(); err != nil {
+		return nil, &managedRecoveryError{owner.unit, fmt.Errorf("reference unit: %w", err)}
+	}
+	return owner, nil
+}
 
 func serviceCgroup(pid int) string {
 	data, _ := readServiceProcessFile(fmt.Sprintf("/proc/%d/cgroup", pid))
@@ -38,12 +72,11 @@ func lookupDaemonService(ctx context.Context, pid int) (*daemonService, error) {
 		return nil, nil
 	}
 	// The connection lasts until manager.close, across recovery's fresh budgets.
-	conn, err := systemdbus.NewUserConnectionContext(context.WithoutCancel(ctx))
+	conn, err := dialUserService(context.WithoutCancel(ctx))
 	if err != nil {
 		return nil, &managedRecoveryError{unit, fmt.Errorf("%w: %w", errUserBusUnavailable, err)}
 	}
-	manager := userServiceConnection{conn}
-	owner, err := manager.lookup(ctx, pid)
+	owner, err := conn.hold(ctx, pid)
 	if owner == nil || err != nil {
 		conn.Close()
 	}
@@ -99,7 +132,7 @@ func (conn userServiceConnection) lookup(ctx context.Context, pid int) (*daemonS
 	if len(commands) != 1 {
 		return fail(fmt.Errorf("ExecStart must select one executable"))
 	}
-	return &daemonService{unit: unit, executable: commands[0].Path, mainPID: int(mainPID), simple: service["Type"] == "simple", manager: &daemonServiceManager{conn.lookup, conn.start, conn.Close}}, nil
+	return &daemonService{unit: unit, executable: commands[0].Path, mainPID: int(mainPID), manager: &daemonServiceManager{conn.lookup, conn.start, conn.Close}}, nil
 }
 
 func (conn userServiceConnection) start(ctx context.Context, unit string) error {

@@ -153,7 +153,9 @@ func TestManagedRecoveryFailuresAndReplacement(t *testing.T) {
 				}
 				return nil
 			}
-			err := recoverDaemon(old, tc.probeErr)
+			var err error
+			// Readiness polls until its startup budget expires.
+			synctest.Test(t, func(*testing.T) { err = recoverDaemon(old, tc.probeErr) })
 			if tc.wantError == "" {
 				require.NoError(t, err)
 			} else {
@@ -238,8 +240,10 @@ func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 		assert.Empty(t, recovery, "recovery must remain blocked while reviews drain")
 		close(finishDrain)
 		go func() { coldStart <- startDaemon() }()
+		progress.Reset()
 		go func() { competingRecovery <- recoverDaemon(old, nil) }()
 		synctest.Wait()
+		assert.Contains(t, progress.String(), "Waiting for daemon recovery lock; another command may be waiting for running reviews to finish...\n")
 		assert.Empty(t, coldStart, "cold start must wait while the unit replaces its daemon")
 		assert.Zero(t, detached)
 		time.Sleep(daemonStartTimeout + time.Minute)
