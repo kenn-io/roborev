@@ -119,7 +119,7 @@ func TestEnsureDaemonRecoversFromLiveVersion(t *testing.T) {
 			drainManagedDaemon = func(*daemon.RuntimeInfo) error { return nil }
 			startDaemonForEnsure = func() error { return nil }
 			require.NoError(t, ensureDaemon())
-			assert.NotZero(t, lookups)
+			assert.Equal(t, 2, lookups)
 		})
 	}
 }

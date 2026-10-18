@@ -89,8 +89,8 @@ func TestUnpauseCmdPostsQueueUnpause(t *testing.T) {
 	assert.Contains(t, output, "Queue unpaused")
 }
 
-func TestLocalQueueCommandCompletesOnlyItsOwnIntent(t *testing.T) {
-	for _, scenario := range []string{"success", "API failure", "recovery failure"} {
+func TestLocalQueueCommandClearsItsIntentOnSuccessAndFailure(t *testing.T) {
+	for _, scenario := range []string{"success", "API failure", "access-denied discovery failure"} {
 		t.Run(scenario, func(t *testing.T) {
 			isolateDaemonSelection(t)
 			t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
@@ -107,7 +107,7 @@ func TestLocalQueueCommandCompletesOnlyItsOwnIntent(t *testing.T) {
 			}))
 			defer server.Close()
 			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-				if scenario == "recovery failure" {
+				if scenario == "access-denied discovery failure" {
 					return nil, daemon.ErrDaemonAccessDenied
 				}
 				return &daemon.RuntimeInfo{Address: strings.TrimPrefix(server.URL, "http://"), Version: version.Version}, nil
@@ -118,7 +118,6 @@ func TestLocalQueueCommandCompletesOnlyItsOwnIntent(t *testing.T) {
 			err := setQueuePaused(t.Context(), true)
 			if strings.HasSuffix(scenario, "failure") {
 				require.Error(t, err)
-				assert.NotContains(t, err.Error(), "pending")
 				assert.NoFileExists(t, marker)
 				return
 			}

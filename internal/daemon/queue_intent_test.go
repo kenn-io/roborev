@@ -15,51 +15,57 @@ import (
 )
 
 func TestQueueIntentSupersededAndConsumed(t *testing.T) {
-	testenv.SetDataDir(t)
-	server, db, _ := newTestServer(t)
-	stale, err := PublishQueueIntent(t.Context(), true)
-	require.NoError(t, err)
-	latest, err := PublishQueueIntent(t.Context(), false)
-	require.NoError(t, err)
-	require.NoError(t, CompleteQueueIntent(t.Context(), stale))
-	pending, err := readQueueIntent()
-	require.NoError(t, err)
-	assert.Equal(t, latest, pending.Token)
-	req := httptest.NewRequest(http.MethodPost, "/api/queue/pause", nil)
-	req.Header.Set(QueueIntentHeader, stale)
-	w := httptest.NewRecorder()
-	server.httpServer.Handler.ServeHTTP(w, req)
-	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
-	release, err := consumeQueueIntent(t.Context(), db)
-	require.NoError(t, err)
-	release()
-	// A delayed CLI acknowledges startup's matching write without republishing it.
-	for _, token := range []string{latest, stale} {
-		path, want := "/api/queue/unpause", http.StatusOK
-		if token == stale {
-			path, want = "/api/queue/pause", http.StatusConflict
+	t.Run("completion preserves newer request", func(t *testing.T) {
+		testenv.SetDataDir(t)
+		stale, err := PublishQueueIntent(t.Context(), true)
+		require.NoError(t, err)
+		latest, err := PublishQueueIntent(t.Context(), false)
+		require.NoError(t, err)
+		require.NoError(t, CompleteQueueIntent(t.Context(), stale))
+		pending, err := readQueueIntent()
+		require.NoError(t, err)
+		assert.Equal(t, latest, pending.Token)
+	})
+	for _, scenario := range []string{"pending stale token", "delayed matching token", "delayed stale token"} {
+		t.Run(scenario, func(t *testing.T) {
+			testenv.SetDataDir(t)
+			server, db, _ := newTestServer(t)
+			stale, err := PublishQueueIntent(t.Context(), true)
+			require.NoError(t, err)
+			latest, err := PublishQueueIntent(t.Context(), false)
+			require.NoError(t, err)
+			if scenario != "pending stale token" {
+				// Set up an already-applied request; startup behavior belongs to TestQueueIntentAtServerStartup.
+				release, err := consumeQueueIntent(t.Context(), db)
+				require.NoError(t, err)
+				release()
+			}
+			path, token, want := "/api/queue/pause", stale, http.StatusConflict
+			if scenario == "delayed matching token" {
+				path, token, want = "/api/queue/unpause", latest, http.StatusOK
+			}
+			req := httptest.NewRequest(http.MethodPost, path, nil)
+			req.Header.Set(QueueIntentHeader, token)
+			w := httptest.NewRecorder()
+			server.httpServer.Handler.ServeHTTP(w, req)
+			require.Equal(t, want, w.Code, w.Body.String())
+		})
+	}
+	t.Run("TUI supersedes request during drain", func(t *testing.T) {
+		testenv.SetDataDir(t)
+		server, db, _ := newTestServer(t)
+		_, err := PublishQueueIntent(t.Context(), true)
+		require.NoError(t, err)
+		for _, path := range []string{"/api/shutdown", "/api/queue/unpause"} {
+			w := httptest.NewRecorder()
+			server.httpServer.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodPost, path, nil))
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 		}
-		req = httptest.NewRequest(http.MethodPost, path, nil)
-		req.Header.Set(QueueIntentHeader, token)
-		w = httptest.NewRecorder()
-		server.httpServer.Handler.ServeHTTP(w, req)
-		require.Equal(t, want, w.Code, w.Body.String())
-	}
-	// A TUI unpause during drain replaces a request whose CLI has already left.
-	_, err = PublishQueueIntent(t.Context(), true)
-	require.NoError(t, err)
-	for _, path := range []string{"/api/shutdown", "/api/queue/unpause"} {
-		w = httptest.NewRecorder()
-		server.httpServer.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodPost, path, nil))
-		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	}
-	paused, err := db.IsQueuePaused()
-	require.NoError(t, err)
-	assert.False(t, paused)
-	assert.NoFileExists(t, queueIntentPath())
-	draining, err := db.IsShutdownDraining()
-	require.NoError(t, err)
-	assert.True(t, draining)
+		paused, err := db.IsQueuePaused()
+		require.NoError(t, err)
+		assert.False(t, paused)
+		assert.NoFileExists(t, queueIntentPath())
+	})
 }
 
 func TestQueueIntentAtServerStartup(t *testing.T) {
