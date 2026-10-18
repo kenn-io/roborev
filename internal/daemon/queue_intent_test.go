@@ -59,18 +59,27 @@ func TestQueueIntentSupersededAndConsumed(t *testing.T) {
 }
 
 func TestQueueIntentAtServerStartup(t *testing.T) {
-	for _, scenario := range []string{"pause", "malformed", "unreadable", "database failure"} {
+	for _, scenario := range []string{"pause", "malformed", "unreadable", "unsupported version", "database failure"} {
 		t.Run(scenario, func(t *testing.T) {
 			testenv.SetDataDir(t)
 			server, db, _ := newTestServer(t)
 			_, err := PublishQueueIntent(t.Context(), true)
 			require.NoError(t, err)
-			if scenario == "malformed" {
-				require.NoError(t, os.WriteFile(queueIntentPath(), []byte(`{"paused":true}`), 0o600))
-			} else if scenario == "unreadable" {
+			switch scenario {
+			case "malformed":
+				require.NoError(t, os.WriteFile(queueIntentPath(), []byte(`{"version":1,"paused":true}`), 0o600))
+			case "unsupported version":
+				require.NoError(t, os.WriteFile(queueIntentPath(), []byte(`{"version":2,"token":"future-request","paused":{"future":"format"}}`), 0o600))
+				require.ErrorContains(t, server.Start(t.Context()), "unsupported queue request version: 2")
+				paused, err := db.IsQueuePaused()
+				require.NoError(t, err)
+				assert.False(t, paused)
+				assert.FileExists(t, queueIntentPath())
+				return
+			case "unreadable":
 				require.NoError(t, os.Remove(queueIntentPath()))
 				require.NoError(t, os.Mkdir(queueIntentPath(), 0o700))
-			} else if scenario == "database failure" {
+			case "database failure":
 				_, err := db.Exec(`CREATE TRIGGER reject_pause BEFORE INSERT ON daemon_state WHEN NEW.key = 'queue_paused' BEGIN SELECT RAISE(FAIL, 'queue write rejected'); END`)
 				require.NoError(t, err)
 				ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
@@ -89,7 +98,19 @@ func TestQueueIntentAtServerStartup(t *testing.T) {
 			paused, err := db.IsQueuePaused()
 			require.NoError(t, err)
 			assert.Equal(t, scenario == "pause", paused)
+			assert.NoFileExists(t, queueIntentPath())
 			stopTestServer(t, server, errCh)
 		})
 	}
+}
+
+func TestQueueIntentFailedTokenlessWriteIsDiscarded(t *testing.T) {
+	testenv.SetDataDir(t)
+	server, db, _ := newTestServer(t)
+	_, err := db.Exec(`CREATE TRIGGER reject_pause BEFORE INSERT ON daemon_state WHEN NEW.key = 'queue_paused' BEGIN SELECT RAISE(FAIL, 'queue write rejected'); END`)
+	require.NoError(t, err)
+	w := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/queue/pause", nil))
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.NoFileExists(t, queueIntentPath())
 }

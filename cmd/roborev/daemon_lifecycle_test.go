@@ -365,15 +365,15 @@ func TestStartDaemonUsesAlternateAwareDiscoveryWhileWaiting(t *testing.T) {
 	assert.Equal(t, 1, spawnCalls)
 }
 
-func TestDiscoverDaemonForStartHonorsCanceledContext(t *testing.T) {
+func TestFindDaemonForStartHonorsCanceledContext(t *testing.T) {
 	testenv.SetDataDir(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	ready, err := discoverDaemonForStart(ctx)
+	ready, err := findDaemonForStart(ctx)
 
 	require.ErrorIs(t, err, context.Canceled)
-	assert.False(t, ready)
+	assert.Nil(t, ready)
 }
 
 func TestStartDaemonReportsStartupProgress(t *testing.T) {

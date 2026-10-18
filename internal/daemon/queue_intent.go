@@ -20,11 +20,15 @@ import (
 
 const QueueIntentHeader = "X-Roborev-Queue-Intent"
 
-var ErrQueueIntentSuperseded = errors.New("queue request superseded by a newer request")
+var (
+	ErrQueueIntentSuperseded = errors.New("queue request superseded by a newer request")
+	errQueueIntentVersion    = errors.New("unsupported queue request version")
+)
 
 type queueIntent struct {
-	Token  string `json:"token"`
-	Paused *bool  `json:"paused"`
+	Version int    `json:"version"`
+	Token   string `json:"token"`
+	Paused  *bool  `json:"paused"`
 }
 
 func queueIntentPath() string { return filepath.Join(config.DataDir(), "queue-intent.json") }
@@ -46,6 +50,18 @@ func readQueueIntent() (queueIntent, error) {
 	var request queueIntent
 	data, err := os.ReadFile(queueIntentPath())
 	if err == nil {
+		var format struct {
+			Version *int `json:"version"`
+		}
+		if err = json.Unmarshal(data, &format); err != nil {
+			return request, err
+		}
+		if format.Version == nil {
+			return request, fmt.Errorf("queue request version missing")
+		}
+		if *format.Version != 1 {
+			return request, fmt.Errorf("%w: %d", errQueueIntentVersion, *format.Version)
+		}
 		err = json.Unmarshal(data, &request)
 		if err == nil && (request.Token == "" || request.Paused == nil) {
 			err = fmt.Errorf("incomplete queue request")
@@ -55,7 +71,7 @@ func readQueueIntent() (queueIntent, error) {
 }
 
 func writeQueueIntent(paused bool) (string, error) {
-	request := queueIntent{Token: uuid.New().String(), Paused: &paused}
+	request := queueIntent{Version: 1, Token: uuid.New().String(), Paused: &paused}
 	data, err := json.Marshal(request)
 	if err == nil {
 		err = atomicfile.WriteFile(queueIntentPath(), data)
@@ -71,6 +87,26 @@ func PublishQueueIntent(ctx context.Context, paused bool) (string, error) {
 	}
 	defer release()
 	return writeQueueIntent(paused)
+}
+
+// CompleteQueueIntent removes only the successful CLI request, preserving newer choices.
+func CompleteQueueIntent(ctx context.Context, token string) error {
+	release, err := lockQueueIntent(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	request, err := readQueueIntent()
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if request.Token != token {
+		return nil
+	}
+	return os.Remove(queueIntentPath())
 }
 
 func updateQueueIntent(ctx context.Context, db *storage.DB, paused bool, token string) error {
@@ -100,6 +136,11 @@ func updateQueueIntent(ctx context.Context, db *storage.DB, paused bool, token s
 		}
 	}
 	if err := db.SetQueuePaused(paused); err != nil {
+		if token == "" {
+			if removeErr := os.Remove(queueIntentPath()); removeErr != nil {
+				return fmt.Errorf("%w; remove failed queue request: %w", err, removeErr)
+			}
+		}
 		return err
 	}
 	return os.Remove(queueIntentPath())
@@ -113,8 +154,15 @@ func consumeQueueIntent(ctx context.Context, db *storage.DB) (func(), error) {
 	}
 	request, err := readQueueIntent()
 	if err != nil {
+		if errors.Is(err, errQueueIntentVersion) {
+			release()
+			return nil, err
+		}
 		if !errors.Is(err, os.ErrNotExist) {
 			log.Printf("Ignoring queue request: %v", err)
+			if removeErr := os.Remove(queueIntentPath()); removeErr != nil {
+				log.Printf("Remove invalid queue request: %v", removeErr)
+			}
 		}
 		return release, nil
 	}

@@ -30,14 +30,18 @@ func unpauseCmd() *cobra.Command {
 	}
 }
 
-func setQueuePaused(ctx context.Context, paused bool) error {
+func setQueuePaused(ctx context.Context, paused bool) (err error) {
 	var token string
 	if serverAddr == "" {
-		var err error
 		token, err = daemon.PublishQueueIntent(ctx, paused)
 		if err != nil {
 			return err
 		}
+		defer func() {
+			if err != nil {
+				err = fmt.Errorf("%w; this queue request may apply at the next daemon start; an opposite pause/unpause request supersedes it", err)
+			}
+		}()
 	}
 	if err := ensureDaemon(); err != nil {
 		return err
@@ -57,6 +61,12 @@ func setQueuePaused(ctx context.Context, paused bool) error {
 	})
 	if err != nil {
 		return daemonRequestError("update queue pause state", err)
+	}
+
+	if token != "" {
+		if err := daemon.CompleteQueueIntent(ctx, token); err != nil {
+			return fmt.Errorf("clear completed queue request: %w", err)
+		}
 	}
 
 	if result.QueuePaused {

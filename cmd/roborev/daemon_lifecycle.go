@@ -410,11 +410,11 @@ func startDaemon() error {
 			defer progress.Stop()
 
 			for {
-				ready, err := discoverDaemonForStart(ctx)
+				ready, err := findDaemonForStart(ctx)
 				if err != nil {
 					return err
 				}
-				if ready {
+				if ready != nil {
 					return nil
 				}
 				select {
@@ -466,11 +466,6 @@ func findDaemonForStart(ctx context.Context) (*daemon.RuntimeInfo, error) {
 		return nil, nil
 	}
 	return info, err
-}
-
-func discoverDaemonForStart(ctx context.Context) (bool, error) {
-	info, err := findDaemonForStart(ctx)
-	return info != nil, err
 }
 
 func openDetachedDaemonLogs() (*os.File, *os.File, func(), error) {

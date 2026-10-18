@@ -21,6 +21,7 @@ import (
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
+	"golang.org/x/sys/unix"
 )
 
 func TestSystemdCLIRecoveryIntegration(t *testing.T) {
@@ -33,7 +34,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 	buildDir := t.TempDir()
 	oldBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-old", "v-old")
 	newBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-new", "v-new")
-	for _, scenario := range []string{"shared", "pause", "remain after exit", "daemon start", "simple", "exec", "transient", "missing bus environment", "foreign", "selection advances", "unrelated ancestor", "wrapper"} {
+	for _, scenario := range []string{"shared", "pause", "remain after exit", "daemon start", "simple", "exec", "transient", "missing bus environment", "foreign", "selection advances", "unrelated ancestor", "wrapper", "tui launcher"} {
 		t.Run(scenario, func(t *testing.T) {
 			dataDir := t.TempDir()
 			t.Setenv("ROBOREV_DATA_DIR", dataDir)
@@ -48,7 +49,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				body = []byte(strings.Replace(string(body), "sleep 2", "while [ ! -f "+strconv.Quote(releaseReview)+" ]; do sleep 0.05; done", 1))
 				require.NoError(t, os.WriteFile(script, body, 0o700))
 			}
-			require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.toml"), []byte("max_workers = 1\ncodex_cmd = "+strconv.Quote(script)+"\n"), 0o600))
+			require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.toml"), []byte("server_addr = \"127.0.0.1:0\"\nmax_workers = 1\ncodex_cmd = "+strconv.Quote(script)+"\n"), 0o600))
 			unit := fmt.Sprintf("roborev-test-%d-%d.service", os.Getpid(), time.Now().UnixNano())
 			unitDir := filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "systemd", "user")
 			if !filepath.IsAbs(unitDir) {
@@ -84,7 +85,19 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			if unmanaged || scenario == "wrapper" {
 				serviceType = "Type=exec\n"
 			}
-			body := fmt.Sprintf("[Service]\n%sEnvironment=%s\nEnvironment=%s\nEnvironment=GIT_CONFIG_NOSYSTEM=1\nExecStart=%s\n", serviceType, strconv.Quote("ROBOREV_DATA_DIR="+dataDir), strconv.Quote("GIT_CONFIG_GLOBAL="+os.Getenv("GIT_CONFIG_GLOBAL")), start)
+			terminal := ""
+			if scenario == "tui launcher" {
+				master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|syscall.O_NOCTTY, 0)
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, master.Close()) })
+				require.NoError(t, unix.IoctlSetPointerInt(int(master.Fd()), unix.TIOCSPTLCK, 0))
+				number, err := unix.IoctlGetInt(int(master.Fd()), unix.TIOCGPTN)
+				require.NoError(t, err)
+				terminal = fmt.Sprintf("StandardInput=tty\nTTYPath=/dev/pts/%d\nStandardOutput=null\nStandardError=null\n", number)
+				serviceType = "Type=exec\n"
+				start = strconv.Quote(link) + " tui --no-quit"
+			}
+			body := fmt.Sprintf("[Service]\n%sEnvironment=%s\nEnvironment=%s\nEnvironment=GIT_CONFIG_NOSYSTEM=1\nExecStart=%s\n", serviceType+terminal, strconv.Quote("ROBOREV_DATA_DIR="+dataDir), strconv.Quote("GIT_CONFIG_GLOBAL="+os.Getenv("GIT_CONFIG_GLOBAL")), start)
 			if scenario != "transient" {
 				require.NoError(t, os.WriteFile(unitPath, []byte(body), 0o600))
 			}
@@ -147,7 +160,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				assert.Equal(t, original.PID, current.PID)
 				return
 			}
-			if scenario == "wrapper" {
+			if scenario == "wrapper" || scenario == "tui launcher" {
 				assert := assert.New(t)
 				require.NoError(t, cli.Run(), "%s", stderr.String())
 				process, err := os.FindProcess(original.PID)

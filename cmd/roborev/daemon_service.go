@@ -40,6 +40,7 @@ var (
 	drainManagedDaemon = daemon.KillDaemon
 	// errUserBusUnavailable leaves a responsive daemon in use without recovery.
 	errUserBusUnavailable = errors.New("user bus unavailable")
+	errRecoveryPending    = errors.New("daemon recovery is still pending")
 )
 
 func (s *daemonService) sameInstallation() (bool, error) {
@@ -77,7 +78,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 	}
 	release, err := acquireRecoveryLock()
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errRecoveryPending, err)
 	}
 	defer func() {
 		if release != nil {
@@ -133,6 +134,12 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 		return startDaemonForEnsure()
 	}
 	fail := func(err error) error { return &managedRecoveryError{owner.unit, err} }
+	if owner.mainPID != current.PID {
+		if responsive {
+			return nil
+		}
+		return fail(fmt.Errorf("service child requires attention: %w", probeErr))
+	}
 	same, err := owner.sameInstallation()
 	if err != nil {
 		return fail(fmt.Errorf("cannot confirm executable %s: %w", owner.executable, err))

@@ -186,8 +186,11 @@ func (conn userServiceConnection) lookupUnit(ctx context.Context, pid int, unit 
 			return nil, nil
 		}
 		data, err := readServiceProcessFile(fmt.Sprintf("/proc/%d/cmdline", pid))
-		if err != nil || !daemonRunArgs(strings.Split(strings.TrimRight(string(data), "\x00"), "\x00")) {
-			return fail(fmt.Errorf("service child must run daemon run: %v", err))
+		if err != nil {
+			return fail(fmt.Errorf("read service child command: %w", err))
+		}
+		if !daemonRunArgs(strings.Split(strings.TrimRight(string(data), "\x00"), "\x00")) {
+			return fail(fmt.Errorf("service child must run daemon run"))
 		}
 	}
 	// ExecStart is a(ssbttttuii), including execution timestamps and exit status.
@@ -208,9 +211,6 @@ func (conn userServiceConnection) lookupUnit(ctx context.Context, pid int, unit 
 	serviceType, _ := service["Type"].(string)
 	if !slices.Contains([]string{"simple", "exec", "notify"}, serviceType) {
 		return fail(fmt.Errorf("unsupported service Type=%s", serviceType))
-	}
-	if _, ok := service["RemainAfterExit"].(bool); !ok {
-		return fail(fmt.Errorf("service RemainAfterExit unavailable"))
 	}
 	if int64(mainPID) == int64(pid) && !daemonRunArgs(commands[0].Args) {
 		return fail(fmt.Errorf("service must launch daemon run directly"))

@@ -31,6 +31,8 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 		stops, starts int
 	}{
 		{outcome: "replacement current"},
+		{outcome: "child responsive"},
+		{outcome: "child failed", probeErr: probeErr, wantError: "service child requires attention"},
 		{outcome: "replacement outdated", stops: 1, starts: 1},
 		{outcome: "missing PID"},
 		{outcome: "vanished owned", starts: 1},
@@ -84,7 +86,11 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 				if started && tc.outcome == "wrong PID" {
 					return &daemonService{unit: "fixture.service", mainPID: 9999}, nil
 				}
-				return &daemonService{unit: "fixture.service", executable: executable, mainPID: pid, manager: manager}, nil
+				mainPID := pid
+				if strings.HasPrefix(tc.outcome, "child") {
+					mainPID = 9999
+				}
+				return &daemonService{unit: "fixture.service", executable: executable, mainPID: mainPID, manager: manager}, nil
 			}
 			lookups := 0
 			findDaemonService = func(ctx context.Context, pid int) (*daemonService, error) {
@@ -322,4 +328,24 @@ func TestUnmanagedRecoveryReusesReplacementAfterDrain(t *testing.T) {
 	require.NoError(t, recoverDaemon(current, nil))
 	assert.Zero(t, detached)
 	assert.Equal(t, 5678, current.PID)
+}
+
+func TestStatusRecoveryLockTimeout(t *testing.T) {
+	oldEnsure, oldFind, oldTimeout := statusEnsureDaemon, findDaemonService, daemonStartTimeout
+	t.Cleanup(func() { statusEnsureDaemon, findDaemonService, daemonStartTimeout = oldEnsure, oldFind, oldTimeout })
+	findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
+	// The wait is on an external file lock rather than a Go channel.
+	daemonStartTimeout = 20 * time.Millisecond
+	release, err := daemon.RuntimeStore().AcquireStartLock(t.Context())
+	require.NoError(t, err)
+	defer release()
+	statusEnsureDaemon = func() error { return recoverDaemon(&daemon.RuntimeInfo{PID: 1234}, nil) }
+	command := statusCmd()
+	command.SetArgs([]string{"--json"})
+	stdout := captureStdout(t, func() {
+		err := command.Execute()
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.ErrorContains(t, err, "daemon status unavailable")
+	})
+	assert.Empty(t, stdout, "a lock timeout cannot establish that the daemon stopped")
 }
