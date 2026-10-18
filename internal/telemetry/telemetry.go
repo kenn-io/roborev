@@ -44,6 +44,10 @@ const (
 	Duration1To5m          = "1_to_5m"
 	Duration5To30m         = "5_to_30m"
 	DurationOver30m        = "over_30m"
+	Count0To5              = "0-5"
+	Count6To20             = "6-20"
+	Count21To100           = "21-100"
+	CountOver100           = "over-100"
 	SurfaceWeb             = "web"
 	SurfaceTUI             = "tui"
 	SurfaceCLI             = "cli"
@@ -115,9 +119,8 @@ func NewReporterOrDisabled(opts Options) *Reporter {
 	return reporter
 }
 
-var countBuckets = []string{"0", "1", "2-5", "6-20", "21-100", "over-100"}
-
 func allowedEventOptions() []posthog.Option {
+	countBuckets := []string{Count0To5, Count6To20, Count21To100, CountOver100}
 	daemonProperties := []posthog.AllowedProperty{
 		posthog.AllowProperty("repo_count", posthog.AllowStringValues(countBuckets...)),
 		posthog.AllowProperty("review_count", posthog.AllowStringValues(countBuckets...)),
@@ -152,18 +155,14 @@ func allowedEventOptions() []posthog.Option {
 // CountBucket groups totals without sending an exact count.
 func CountBucket(count int) string {
 	switch {
-	case count == 0:
-		return countBuckets[0]
-	case count == 1:
-		return countBuckets[1]
 	case count <= 5:
-		return countBuckets[2]
+		return Count0To5
 	case count <= 20:
-		return countBuckets[3]
+		return Count6To20
 	case count <= 100:
-		return countBuckets[4]
+		return Count21To100
 	default:
-		return countBuckets[5]
+		return CountOver100
 	}
 }
 
