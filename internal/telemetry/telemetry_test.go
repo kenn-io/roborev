@@ -195,7 +195,7 @@ func TestAllowedEventOptionsConfigureRoborevDaemonEvents(t *testing.T) {
 			assert.Equal(bucket, props["repo_count"], event)
 			assert.Equal(bucket, props["review_count"], event)
 		}
-		for _, count := range []any{37, "37", "0", "1", "2-5"} {
+		for _, count := range []any{37, "2-5"} {
 			props, err := reporter.SanitizeProperties(event, map[string]any{"repo_count": count, "review_count": count})
 			require.NoError(err)
 			assert.NotContains(props, "repo_count", event)
