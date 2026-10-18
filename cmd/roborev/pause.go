@@ -29,9 +29,9 @@ func unpauseCmd() *cobra.Command {
 
 func setQueuePaused(ctx context.Context, paused bool) error {
 	// For a local daemon, carry the desired pause state into daemon startup so a
-	// cold-started or restarted daemon comes up with the flag already applied,
-	// before its workers can claim jobs. startDaemon passes it to the new
-	// daemon, which persists it before workers start. A healthy, current-version
+	// replacement is paused before its workers can claim jobs. Detached startup
+	// passes the flag to the new daemon; managed recovery persists a pause through
+	// the running daemon before draining it. A healthy, current-version
 	// daemon is left running and picks up the state from the POST below instead.
 	if serverAddr == "" {
 		pendingStartPause = &paused
@@ -60,6 +60,5 @@ func setQueuePaused(ctx context.Context, paused bool) error {
 	return nil
 }
 
-// pendingStartPause carries queue-pause intent into the daemon run arguments.
-// Only the new daemon persists the flag, before workers can claim jobs.
+// pendingStartPause carries queue-pause intent into detached startup and managed recovery.
 var pendingStartPause *bool

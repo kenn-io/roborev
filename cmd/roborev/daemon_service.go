@@ -11,6 +11,7 @@ import (
 	"github.com/cenkalti/backoff/v7"
 
 	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/version"
 )
 
 type daemonService struct {
@@ -66,9 +67,32 @@ func acquireRecoveryLock() (func(), error) {
 }
 
 func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
+	release, err := acquireRecoveryLock()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if release != nil {
+			release()
+		}
+	}()
+	// Rediscover under the lock before selecting a process or its owner.
 	ctx, cancel := context.WithTimeout(context.Background(), daemonStartTimeout)
 	defer cancel()
-	owner, err := findDaemonService(ctx, info.PID)
+	current, err := findDaemonForStart(ctx)
+	if err != nil {
+		return fmt.Errorf("rediscover daemon: %w", err)
+	}
+	responsive := current != nil
+	if responsive {
+		probeErr = nil
+	} else {
+		current = info
+		if probeErr == nil {
+			probeErr = os.ErrNotExist
+		}
+	}
+	owner, err := findDaemonService(ctx, current.PID)
 	if probeErr == nil && errors.Is(err, errUserBusUnavailable) {
 		return nil
 	}
@@ -76,6 +100,9 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 		return err
 	}
 	if owner == nil {
+		// Detached startup acquires the same lock itself.
+		release()
+		release = nil
 		return restartDaemonForEnsure()
 	}
 	defer owner.manager.close()
@@ -90,37 +117,13 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 		}
 		return nil
 	}
-	// Rediscovery gets a fresh budget after the lock wait.
-	release, err := acquireRecoveryLock()
-	if err != nil {
-		return fail(err)
-	}
-	defer release()
-	ctx, cancel = context.WithTimeout(context.Background(), daemonStartTimeout)
-	defer cancel()
-	current, err := findDaemonForStart(ctx)
-	if err != nil {
-		return fail(fmt.Errorf("rediscover daemon: %w", err))
-	}
-	if current == nil {
-		current = info
-	}
-	selected, err := owner.manager.lookup(ctx, current.PID)
-	if err != nil {
-		return err
-	}
-	if selected == nil || selected.unit != owner.unit {
-		return fail(fmt.Errorf("daemon owner changed before recovery"))
-	}
-	if current.PID != info.PID {
+	if responsive && current.PID != info.PID && current.Version == version.Version {
 		return nil
 	}
-	same, err = selected.sameInstallation()
-	if err != nil {
-		return fail(err)
-	}
-	if !same {
-		return fail(fmt.Errorf("service executable changed before recovery"))
+	if pendingStartPause != nil && *pendingStartPause {
+		if _, err := current.Endpoint().APIClient(0).PauseQueue(ctx); err != nil {
+			return fail(fmt.Errorf("pause queue before recovery: %w", err))
+		}
 	}
 	fmt.Fprintln(lifecycleOut, "Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...")
 	if err := drainManagedDaemon(current); err != nil {

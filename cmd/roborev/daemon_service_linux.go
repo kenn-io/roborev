@@ -49,8 +49,11 @@ func (conn userServiceConnection) hold(ctx context.Context, pid int) (*daemonSer
 	return owner, nil
 }
 
-func serviceCgroup(pid int) string {
-	data, _ := readServiceProcessFile(fmt.Sprintf("/proc/%d/cgroup", pid))
+func serviceCgroup(pid int) (string, error) {
+	data, err := readServiceProcessFile(fmt.Sprintf("/proc/%d/cgroup", pid))
+	if err != nil {
+		return "", &managedRecoveryError{"unknown", fmt.Errorf("cannot determine owner of daemon PID %d: %w", pid, err)}
+	}
 	for line := range strings.SplitSeq(string(data), "\n") {
 		fields := strings.SplitN(line, ":", 3)
 		if len(fields) != 3 {
@@ -59,17 +62,17 @@ func serviceCgroup(pid int) string {
 		_, belowUser, _ := strings.Cut(fields[2], fmt.Sprintf("/user@%d.service/", os.Getuid()))
 		for part := range strings.SplitSeq(belowUser, "/") {
 			if strings.HasSuffix(part, ".service") {
-				return part
+				return part, nil
 			}
 		}
 	}
-	return ""
+	return "", nil
 }
 
 func lookupDaemonService(ctx context.Context, pid int) (*daemonService, error) {
-	unit := serviceCgroup(pid)
-	if unit == "" {
-		return nil, nil
+	unit, err := serviceCgroup(pid)
+	if err != nil || unit == "" {
+		return nil, err
 	}
 	// The connection lasts until manager.close, across recovery's fresh budgets.
 	conn, err := dialUserService(context.WithoutCancel(ctx))
@@ -84,9 +87,9 @@ func lookupDaemonService(ctx context.Context, pid int) (*daemonService, error) {
 }
 
 func (conn userServiceConnection) lookup(ctx context.Context, pid int) (*daemonService, error) {
-	unit := serviceCgroup(pid)
-	if unit == "" {
-		return nil, nil
+	unit, err := serviceCgroup(pid)
+	if err != nil || unit == "" {
+		return nil, err
 	}
 	fail := func(err error) (*daemonService, error) { return nil, &managedRecoveryError{unit, err} }
 	service, err := conn.GetUnitTypePropertiesContext(ctx, unit, "Service")
@@ -97,9 +100,9 @@ func (conn userServiceConnection) lookup(ctx context.Context, pid int) (*daemonS
 	if !ok {
 		return fail(fmt.Errorf("service MainPID unavailable"))
 	}
-	if mainPID != uint32(pid) {
+	if int64(mainPID) != int64(pid) {
 		parent := pid
-		for parent > 1 && uint32(parent) != mainPID {
+		for parent > 1 && int64(parent) != int64(mainPID) {
 			data, err := readServiceProcessFile(fmt.Sprintf("/proc/%d/stat", parent))
 			if err != nil {
 				return fail(fmt.Errorf("read daemon parent: %w", err))
@@ -113,7 +116,7 @@ func (conn userServiceConnection) lookup(ctx context.Context, pid int) (*daemonS
 				return fail(err)
 			}
 		}
-		if uint32(parent) != mainPID {
+		if int64(parent) != int64(mainPID) {
 			return nil, nil
 		}
 	}

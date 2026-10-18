@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,63 +20,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/version"
 )
 
 func TestEnsureDaemonServiceRecovery(t *testing.T) {
-	for _, trigger := range []string{"mismatch", "unknown", "failed"} {
-		t.Run(trigger+"/shared", func(t *testing.T) {
-			t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
-			oldFind, oldDrain := findDaemonService, drainManagedDaemon
-			oldRestart := restartDaemonForEnsure
-			manager := &daemonServiceManager{close: func() {}}
-			oldProbe, oldStartDiscovery, oldDiscovery := probeDaemonForEnsure, getAnyRunningDaemonForStart, getAnyRunningDaemon
-			t.Cleanup(func() {
-				findDaemonService, drainManagedDaemon = oldFind, oldDrain
-				restartDaemonForEnsure = oldRestart
-				probeDaemonForEnsure, getAnyRunningDaemonForStart, getAnyRunningDaemon = oldProbe, oldStartDiscovery, oldDiscovery
-			})
-			calls := []string{}
-			restartDaemonForEnsure = func() error { calls = append(calls, "detached"); return nil }
-			probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
-				if trigger == "failed" {
-					return nil, errors.New("probe failed")
-				}
-				if trigger == "unknown" {
-					return &daemon.PingInfo{}, nil
-				}
-				return &daemon.PingInfo{Version: "v-old"}, nil
-			}
-			info := &daemon.RuntimeInfo{PID: 1234}
-			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return info, nil }
-			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
-				if trigger == "failed" && info.PID == 1234 {
-					return nil, os.ErrNotExist
-				}
-				return info, nil
-			}
-			manager.lookup = func(_ context.Context, pid int) (*daemonService, error) {
-				assert.Equal(t, info.PID, pid)
-				return &daemonService{unit: "fixture.service", executable: "/proc/self/exe", mainPID: pid, manager: manager}, nil
-			}
-			findDaemonService = manager.lookup
-			drainManagedDaemon = func(got *daemon.RuntimeInfo) error {
-				assert.Equal(t, 1234, got.PID)
-				calls = append(calls, "drain")
-				return nil
-			}
-			manager.start = func(_ context.Context, unit string) error {
-				assert.Equal(t, "fixture.service", unit)
-				calls = append(calls, "unit start")
-				info = &daemon.RuntimeInfo{PID: 5678}
-				return nil
-			}
-			require.NoError(t, ensureDaemon())
-			assert.Equal(t, []string{"drain", "unit start"}, calls)
-		})
-	}
-}
-
-func TestManagedRecoveryFailuresAndReplacement(t *testing.T) {
 	probeErr := errors.New("probe failed")
 	for _, tc := range []struct {
 		outcome       string
@@ -82,6 +31,13 @@ func TestManagedRecoveryFailuresAndReplacement(t *testing.T) {
 		wantError     string
 		stops, starts int
 	}{
+		{outcome: "replacement current"},
+		{outcome: "replacement outdated", stops: 1, starts: 1},
+		{outcome: "missing PID", wantError: "cannot determine owner"},
+		{outcome: "pause rejected", wantError: "pause queue before recovery"},
+		{outcome: "mismatch", stops: 1, starts: 1},
+		{outcome: "unknown", stops: 1, starts: 1},
+		{outcome: "failed", probeErr: probeErr, stops: 1, starts: 1},
 		{outcome: "foreign responsive"},
 		{outcome: "foreign failed", probeErr: probeErr, wantError: "probe failed"},
 		{outcome: "uncertain", wantError: "properties unavailable"},
@@ -91,20 +47,42 @@ func TestManagedRecoveryFailuresAndReplacement(t *testing.T) {
 		{outcome: "start failure", wantError: "start rejected", stops: 1, starts: 1},
 		{outcome: "wrong PID", wantError: "replacement is outside service", stops: 1, starts: 1},
 		{outcome: "readiness failure", wantError: "replacement readiness", stops: 1, starts: 1},
-		{outcome: "already replaced"},
 	} {
 		t.Run(tc.outcome, func(t *testing.T) {
-			oldFind, oldDrain := findDaemonService, drainManagedDaemon
-			manager := &daemonServiceManager{close: func() {}}
+			t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
+			oldFind, oldDrain, oldRead := findDaemonService, drainManagedDaemon, readServiceProcessFile
 			oldDiscovery, oldRestart := getAnyRunningDaemonForStart, restartDaemonForEnsure
+			oldProbe, oldInitial, oldPause := probeDaemonForEnsure, getAnyRunningDaemon, pendingStartPause
 			t.Cleanup(func() {
-				findDaemonService, drainManagedDaemon = oldFind, oldDrain
+				findDaemonService, drainManagedDaemon, readServiceProcessFile = oldFind, oldDrain, oldRead
 				getAnyRunningDaemonForStart, restartDaemonForEnsure = oldDiscovery, oldRestart
+				probeDaemonForEnsure, getAnyRunningDaemon, pendingStartPause = oldProbe, oldInitial, oldPause
 			})
-			old := &daemon.RuntimeInfo{PID: 1234}
-			current := old
-			if tc.outcome == "already replaced" {
-				current = &daemon.RuntimeInfo{PID: 5678}
+			original := &daemon.RuntimeInfo{PID: 1234, Version: version.Version}
+			current := original
+			if strings.HasPrefix(tc.outcome, "replacement") {
+				current = &daemon.RuntimeInfo{PID: 5678, Version: "v-old"}
+				if tc.outcome == "replacement current" {
+					current.Version = version.Version
+				}
+			}
+			selectedPID := current.PID
+			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return original, nil }
+			probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
+				if tc.outcome == "unknown" {
+					return &daemon.PingInfo{}, nil
+				}
+				return &daemon.PingInfo{Version: "v-old"}, tc.probeErr
+			}
+			if tc.outcome == "pause rejected" {
+				pendingStartPause = new(true)
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					assert.Equal(t, "POST", r.Method)
+					assert.Equal(t, "/api/queue/pause", r.URL.Path)
+					w.WriteHeader(http.StatusConflict)
+				}))
+				defer server.Close()
+				current.Address = strings.TrimPrefix(server.URL, "http://")
 			}
 			executable := "/proc/self/exe"
 			if strings.HasPrefix(tc.outcome, "foreign") {
@@ -114,14 +92,12 @@ func TestManagedRecoveryFailuresAndReplacement(t *testing.T) {
 				executable = filepath.Join(t.TempDir(), "missing")
 			}
 			started := false
-			lookups := 0
+			manager := &daemonServiceManager{close: func() {}}
 			manager.lookup = func(_ context.Context, pid int) (*daemonService, error) {
-				wantPID := current.PID
-				if lookups == 0 {
-					wantPID = old.PID
+				assert.Equal(t, current.PID, pid, "ownership must use the daemon discovered under the lock")
+				if pid == original.PID && selectedPID != original.PID {
+					return nil, nil // The original process has already exited.
 				}
-				assert.Equal(t, wantPID, pid)
-				lookups++
 				if strings.HasPrefix(tc.outcome, "bus") {
 					return nil, &managedRecoveryError{"fixture.service", errUserBusUnavailable}
 				}
@@ -134,39 +110,45 @@ func TestManagedRecoveryFailuresAndReplacement(t *testing.T) {
 				return &daemonService{unit: "fixture.service", executable: executable, mainPID: pid, manager: manager}, nil
 			}
 			findDaemonService = manager.lookup
+			if tc.outcome == "missing PID" {
+				findDaemonService = lookupDaemonService
+				readServiceProcessFile = func(path string) ([]byte, error) {
+					assert.Equal(t, "/proc/1234/cgroup", path)
+					return nil, os.ErrNotExist
+				}
+			}
 			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
-				if started && tc.outcome == "readiness failure" {
+				if !started && tc.probeErr != nil || tc.outcome == "missing PID" || started && tc.outcome == "readiness failure" {
 					return nil, os.ErrNotExist
 				}
 				return current, nil
 			}
 			stops, starts, detached := 0, 0, 0
 			restartDaemonForEnsure = func() error { detached++; return nil }
-			drainManagedDaemon = func(info *daemon.RuntimeInfo) error { stops++; assert.Same(t, old, info); return nil }
+			drainManagedDaemon = func(info *daemon.RuntimeInfo) error { stops++; assert.Equal(t, selectedPID, info.PID); return nil }
 			manager.start = func(_ context.Context, unit string) error {
 				assert.Equal(t, "fixture.service", unit)
 				starts++
 				started = true
-				current = &daemon.RuntimeInfo{PID: 5678}
+				current = &daemon.RuntimeInfo{PID: 9012}
 				if tc.outcome == "start failure" {
 					return errors.New("start rejected")
 				}
 				return nil
 			}
 			var err error
-			// Readiness polls until its startup budget expires.
-			synctest.Test(t, func(*testing.T) { err = recoverDaemon(old, tc.probeErr) })
+			if tc.outcome == "readiness failure" || tc.outcome == "wrong PID" {
+				// Readiness polls until its startup budget expires.
+				synctest.Test(t, func(*testing.T) { err = ensureDaemon() })
+			} else {
+				err = ensureDaemon()
+			}
 			if tc.wantError == "" {
 				require.NoError(t, err)
 			} else {
 				require.ErrorContains(t, err, tc.wantError)
-				if tc.outcome == "foreign failed" {
-					require.ErrorIs(t, err, probeErr)
-				} else {
-					var managed *managedRecoveryError
-					require.ErrorAs(t, err, &managed)
-					assert.Equal(t, "fixture.service", managed.unit)
-				}
+				var managed *managedRecoveryError
+				require.ErrorAs(t, err, &managed)
 			}
 			assert.Equal(t, tc.stops, stops)
 			assert.Equal(t, tc.starts, starts)
@@ -226,7 +208,7 @@ func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 		manager.start = func(ctx context.Context, _ string) error {
 			require.NoError(t, ctx.Err(), "startup gets a fresh budget after draining")
 			<-resume
-			current.Store(&daemon.RuntimeInfo{PID: 5678})
+			current.Store(&daemon.RuntimeInfo{PID: 5678, Version: version.Version})
 			return nil
 		}
 		detached := 0

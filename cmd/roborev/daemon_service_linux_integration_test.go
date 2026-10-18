@@ -34,7 +34,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 	buildDir := t.TempDir()
 	oldBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-old", "v-old")
 	newBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-new", "v-new")
-	for _, scenario := range []string{"shared", "simple", "exec", "transient", "missing bus environment", "foreign", "selection advances", "global flag", "unrelated ancestor", "wrapper"} {
+	for _, scenario := range []string{"shared", "pause", "simple", "exec", "transient", "missing bus environment", "foreign", "selection advances", "global flag", "unrelated ancestor", "wrapper"} {
 		t.Run(scenario, func(t *testing.T) {
 			dataDir := t.TempDir()
 			t.Setenv("ROBOREV_DATA_DIR", dataDir)
@@ -42,6 +42,13 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			link := filepath.Join(dataDir, "roborev")
 			require.NoError(t, os.Symlink(oldBinary, link))
 			script := writeSlowUpdateAgent(t, dataDir)
+			releaseReview := filepath.Join(dataDir, "finish-review")
+			if scenario == "pause" {
+				body, err := os.ReadFile(script)
+				require.NoError(t, err)
+				body = []byte(strings.Replace(string(body), "sleep 2", "while [ ! -f "+strconv.Quote(releaseReview)+" ]; do sleep 0.05; done", 1))
+				require.NoError(t, os.WriteFile(script, body, 0o700))
+			}
 			require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.toml"), []byte("max_workers = 1\ncodex_cmd = "+strconv.Quote(script)+"\n"), 0o600))
 			unit := fmt.Sprintf("roborev-test-%d-%d.service", os.Getpid(), time.Now().UnixNano())
 			unitDir := filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "systemd", "user")
@@ -79,6 +86,8 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				require.NoError(t, os.WriteFile(unitPath, []byte(body), 0o600))
 			}
 			t.Cleanup(func() {
+				// Release our test agent before asking its service to drain.
+				assert.NoError(t, os.WriteFile(releaseReview, nil, 0o600))
 				output, err := exec.Command("systemctl", "--user", "stop", unit).CombinedOutput()
 				assert.NoError(t, err, "%s", output)
 				if info, err := daemon.GetAnyRunningDaemon(); err == nil {
@@ -101,12 +110,15 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				original, err = daemon.GetAnyRunningDaemon()
 				return err == nil
 			}, 15*time.Second, 50*time.Millisecond)
-			var active storage.ReviewJob
-			if scenario == "selection advances" {
+			var active, queued storage.ReviewJob
+			if scenario == "selection advances" || scenario == "pause" {
 				repo := testutil.NewGitRepo(t)
 				sha := repo.CommitFile("first.txt", "first\n", "first")
 				active = enqueueUpdateJob(t, original.Endpoint(), repo.Path(), sha)
 				waitForUpdateJobStatus(t, original.Endpoint(), active.ID, storage.JobStatusRunning, 10*time.Second)
+				if scenario == "pause" {
+					queued = enqueueUpdateJob(t, original.Endpoint(), repo.Path(), repo.CommitFile("second.txt", "second\n", "second"))
+				}
 			}
 			if scenario != "foreign" {
 				next := link + ".next"
@@ -114,6 +126,9 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				require.NoError(t, os.Rename(next, link))
 			}
 			cli := exec.Command(newBinary, "status", "--json")
+			if scenario == "pause" {
+				cli = exec.Command(newBinary, "pause")
+			}
 			if scenario == "missing bus environment" {
 				for _, entry := range os.Environ() {
 					if !strings.HasPrefix(entry, "DBUS_SESSION_BUS_ADDRESS=") && !strings.HasPrefix(entry, "XDG_RUNTIME_DIR=") {
@@ -140,7 +155,17 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				require.NoError(t, exec.Command("systemctl", "--user", "is-active", unit).Run())
 				return
 			}
-			if scenario == "selection advances" {
+			if scenario == "pause" {
+				require.NoError(t, cli.Start())
+				// The original process must persist pause while its review blocks drain.
+				require.Eventually(t, func() bool {
+					status, err := original.Endpoint().APIClient(time.Second).GetStatus(context.Background())
+					return err == nil && status.QueuePaused
+				}, 10*time.Second, 10*time.Millisecond)
+				assert.Equal(t, storage.JobStatusQueued, getUpdateJob(t, original.Endpoint(), queued.ID).Status)
+				require.NoError(t, os.WriteFile(releaseReview, nil, 0o600))
+				require.NoError(t, cli.Wait(), "%s", stderr.String())
+			} else if scenario == "selection advances" {
 				// Observe graceful shutdown before advancing the shared selection again.
 				require.NoError(t, cli.Start())
 				require.Eventually(t, func() bool {
@@ -163,9 +188,11 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				err = cli.Run()
 				require.NoError(t, err, "%s", stderr.String())
 			}
-			var result statusJSONOutput
-			require.NoError(t, json.Unmarshal(stdout.Bytes(), &result))
-			assert.True(t, result.Running)
+			if scenario != "pause" {
+				var result statusJSONOutput
+				require.NoError(t, json.Unmarshal(stdout.Bytes(), &result))
+				assert.True(t, result.Running)
+			}
 			replacement, err := daemon.GetAnyRunningDaemon()
 			require.NoError(t, err)
 			if scenario == "foreign" {
@@ -178,6 +205,15 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				expectedVersion = "v-old"
 			}
 			assertDaemonUpdateVersion(t, replacement.Endpoint(), expectedVersion)
+			if scenario == "pause" {
+				status, err := replacement.Endpoint().APIClient(time.Second).GetStatus(context.Background())
+				require.NoError(t, err)
+				assert.True(t, status.QueuePaused)
+				assert.Equal(t, storage.JobStatusQueued, getUpdateJob(t, replacement.Endpoint(), queued.ID).Status)
+				output, err := exec.Command(newBinary, "unpause").CombinedOutput()
+				require.NoError(t, err, "%s", output)
+				waitForUpdateJobStatus(t, replacement.Endpoint(), queued.ID, storage.JobStatusDone, 10*time.Second)
+			}
 			if scenario == "selection advances" {
 				waitForUpdateJobStatus(t, replacement.Endpoint(), active.ID, storage.JobStatusDone, 10*time.Second)
 			}

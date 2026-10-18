@@ -1781,11 +1781,19 @@ service start produces an error. Recovery keeps service ownership and holds the
 start lock until the replacement is ready:
 
 - Another automatic recovery waits as long as the active recovery takes,
-    including its review drain, then uses the replacement if it responds.
+    including its review drain, then rediscovers the daemon before selecting its
+    service. It reuses a responsive replacement with the CLI's version and
+    recovers an outdated replacement through its current service.
 - A cold start waits through the drain and fails if its own two-minute startup
     budget expires.
 - Ownership checks and replacement startup each get a fresh two-minute budget
     after the lock wait and after the drain.
+
+When `roborev pause` triggers managed recovery, the running daemon persists the
+pause before reviews drain. Replacement workers read that state before claiming
+jobs. A failed pause request leaves the existing service running. If the
+original PID disappears and no replacement responds, recovery reports an
+ownership error. A missing process alone cannot establish detached ownership.
 
 Automatic recovery supports direct user services, including `Type=notify`,
 `Type=exec`, and the default `Type=simple`. After systemd reports the unit
