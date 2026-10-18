@@ -234,15 +234,14 @@ input_type_mode = "none"
 document_prefix = "title: none | text: "
 query_prefix = "task: search result | query: "
 batch_size = 4
-timeout_seconds = 120
 ```
 
 The alias is an operator convention, not proof that HTTP has verified the
 checkpoint or serving settings. Change the alias or existing `fingerprint_salt`
 when weights, tokenizer, pooling, precision, quantization, or other settings
 change the vectors. Restart the daemon after changing embedding configuration.
-Either prefix change starts a replacement generation; prefixed inputs cannot
-reuse vectors stored by releases without prefix support.
+Changing a prefix or suffix starts a replacement generation; prefixed inputs
+cannot reuse vectors stored by releases without prefix support.
 
 Keep the trailing spaces in both prefixes. Roborev adds each prefix once to
 plain review chunks or queries. Configure the server to accept already prompted
@@ -261,12 +260,18 @@ rune-based chunks do not count model tokens. `model_context_tokens` and
 `max_batch_tokens` pack batches using an operator-supplied conservative bound;
 they do not tokenize or enforce per-input admission.
 
-`batch_size = 4` and `timeout_seconds = 120` are CPU starting settings, not a
-tested performance guarantee. Search query embeddings have a separate, unchanged
-**three-second deadline**. Raising the provider timeout does not extend it. A
-slow query makes explicit semantic/hybrid search unavailable and `auto` falls
-back to lexical results. Choose a deployment that can answer within that query
-budget.
+`batch_size = 4` is a CPU starting point, not a tested performance guarantee.
+Two fixed deadlines apply, and raising `timeout_seconds` extends neither:
+
+- Indexing: each background pass stops after **30 seconds**. A batch that takes
+    longer fails on every pass, so the replacement generation never activates
+    and `auto` stays on lexical search. Lower `batch_size` until one batch
+    finishes well within 30 seconds.
+- Search queries: each query embedding must return within **three seconds**. A
+    slow query makes explicit semantic and hybrid search unavailable, and `auto`
+    falls back to lexical results.
+
+Choose a deployment that meets both budgets.
 
 Leave `request_dimensions` unset: Roborev then sends no `dimensions` request
 parameter, and it never slices returned vectors. Changing `dims` only changes

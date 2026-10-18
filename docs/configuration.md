@@ -1191,7 +1191,7 @@ timeout_seconds = 30
 | `batch_size` | `32` | Maximum inputs per provider request |
 | `model_context_tokens` | - | Operator-supplied conservative per-input token bound for packing batches; set together with `max_batch_tokens`. Does not tokenize or enforce input admission |
 | `max_batch_tokens` | - | Provider's aggregate input-token cap per request; set together with `model_context_tokens` |
-| `timeout_seconds` | `30` | Provider request timeout in seconds; search query embeddings retain an independent three-second deadline |
+| `timeout_seconds` | `30` | Provider request timeout in seconds; it cannot extend the 30-second indexing pass or the three-second search query deadline |
 | `trust_private_network` | `false` | Allow plain HTTP to a private-network endpoint (a private, link-local, or carrier-grade NAT address, or a host name) |
 
 These are the standard embedding keys shared by Kenn tools, so the same block
