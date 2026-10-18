@@ -82,6 +82,9 @@ type Server struct {
 	telemetry               telemetry.Client
 	telemetryOnce           sync.Once
 	telemetryStop           chan struct{}
+	setupFinishedMu         sync.Mutex
+	setupFinishedLoaded     bool
+	setupFinishedClaimed    bool
 	appOpened               telemetry.AppOpenedLimiter // daily product-event limits; outlives each capture handler
 	agentActivityGate       chan struct{}
 	agentActivityNow        func() time.Time
@@ -216,6 +219,9 @@ func newServerWithLogs(
 		shutdownCh:         make(chan struct{}),
 	}
 	s.updateCoordinator = &updateDrainCoordinator{server: s, now: time.Now}
+	marker, markerErr := db.GetSyncState(storage.SyncStateSetupFinished)
+	s.setupFinishedLoaded = markerErr == nil
+	s.setupFinishedClaimed = marker != ""
 	s.workerPool.captureSetupFinished = s.captureSetupFinishedTelemetry
 	s.agentHookState, s.agentHookStateErr = agenthook.LoadState(
 		daemonAgentHookSource{db: db, errorLog: errorLog},
@@ -878,7 +884,26 @@ func (s *Server) captureSetupFinishedTelemetry() {
 	if s.telemetry == nil || !s.telemetry.Enabled() {
 		return
 	}
+	s.setupFinishedMu.Lock()
+	if !s.setupFinishedLoaded {
+		marker, err := s.db.GetSyncState(storage.SyncStateSetupFinished)
+		if err != nil {
+			s.setupFinishedMu.Unlock()
+			log.Printf("Warning: read setup finished telemetry: %v", err)
+			return
+		}
+		s.setupFinishedLoaded = true
+		s.setupFinishedClaimed = marker != ""
+	}
+	if s.setupFinishedClaimed {
+		s.setupFinishedMu.Unlock()
+		return
+	}
 	claimed, err := s.db.ClaimSetupFinished()
+	if claimed {
+		s.setupFinishedClaimed = true
+	}
+	s.setupFinishedMu.Unlock()
 	if err != nil {
 		log.Printf("Warning: claim setup finished telemetry: %v", err)
 		return

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 	"uuid"
@@ -138,6 +139,8 @@ func TestSetupFinishedTelemetryClaimAndDelivery(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tc.wantClaim, state)
 			if tc.client != nil {
+				_, err = db.Exec(`DELETE FROM sync_state WHERE key = ?`, storage.SyncStateSetupFinished)
+				require.NoError(t, err)
 				server.captureSetupFinishedTelemetry()
 				assert.Equal(t, tc.wantEvents, tc.client.events)
 				if !tc.client.enabled {
@@ -149,6 +152,86 @@ func TestSetupFinishedTelemetryClaimAndDelivery(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSetupFinishedTelemetrySkipsLaterClaims(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	client := &fakeTelemetryClient{enabled: true}
+	server.SetTelemetry(client)
+	repo, err := db.GetOrCreateRepo(tmpDir)
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, GitRef: "abc123", Agent: "test"})
+	require.NoError(t, err)
+	_, err = db.ClaimJob("worker")
+	require.NoError(t, err)
+	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", "", "No issues found."))
+	_, err = db.Exec(`CREATE TABLE setup_claim_attempts (value TEXT);
+		CREATE TRIGGER count_setup_claim BEFORE INSERT ON sync_state
+		WHEN NEW.key = 'telemetry.setup_finished'
+		BEGIN INSERT INTO setup_claim_attempts VALUES (NEW.value); END`)
+	require.NoError(t, err)
+	var callers sync.WaitGroup
+	start := make(chan struct{})
+	for range 8 {
+		callers.Go(func() {
+			<-start
+			server.captureSetupFinishedTelemetry()
+		})
+	}
+	close(start)
+	callers.Wait()
+	var attempts int
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM setup_claim_attempts`).Scan(&attempts))
+	assert.Equal(t, 1, attempts)
+	assert.Equal(t, []string{"setup_finished"}, client.events)
+	for _, restart := range []bool{false, true} {
+		if restart {
+			require.NoError(t, db.SetSyncState(storage.SyncStateSetupFinished, "1"))
+			server = newServerWithLogs(db, config.DefaultConfig(), "", newTestErrorLog(), newTestActivityLog())
+			t.Cleanup(func() { _ = server.Close() })
+			server.SetTelemetry(client)
+		}
+		_, err = db.Exec(`DELETE FROM sync_state WHERE key = ?`, storage.SyncStateSetupFinished)
+		require.NoError(t, err)
+		_, err = db.Exec(`DELETE FROM setup_claim_attempts`)
+		require.NoError(t, err)
+		server.afterSyncPullWrite()
+		server.workerPool.captureSetupFinished()
+		var attempts int
+		require.NoError(t, db.QueryRow(`SELECT count(*) FROM setup_claim_attempts`).Scan(&attempts))
+		assert.Zero(t, attempts)
+		assert.Equal(t, []string{"setup_finished"}, client.events)
+	}
+}
+
+func TestSetupFinishedTelemetryRetriesStartupRead(t *testing.T) {
+	_, db, tmpDir := newTestServer(t)
+	repo, err := db.GetOrCreateRepo(tmpDir)
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, GitRef: "abc123", Agent: "test"})
+	require.NoError(t, err)
+	_, err = db.ClaimJob("worker")
+	require.NoError(t, err)
+	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", "", "No issues found."))
+	require.NoError(t, db.SetSyncState(storage.SyncStateSetupFinished, "1"))
+	_, err = db.Exec(`ALTER TABLE sync_state RENAME TO saved_sync_state`)
+	require.NoError(t, err)
+	server := newServerWithLogs(db, config.DefaultConfig(), "", newTestErrorLog(), newTestActivityLog())
+	t.Cleanup(func() { _ = server.Close() })
+	client := &fakeTelemetryClient{enabled: true}
+	server.SetTelemetry(client)
+	server.captureSetupFinishedTelemetry()
+	_, err = db.Exec(`ALTER TABLE saved_sync_state RENAME TO sync_state`)
+	require.NoError(t, err)
+	server.captureSetupFinishedTelemetry()
+	_, err = db.Exec(`DELETE FROM sync_state WHERE key = ?`, storage.SyncStateSetupFinished)
+	require.NoError(t, err)
+	server.afterSyncPullWrite()
+	server.workerPool.captureSetupFinished()
+	marker, err := db.GetSyncState(storage.SyncStateSetupFinished)
+	require.NoError(t, err)
+	assert.Empty(t, marker)
+	assert.Empty(t, client.events)
 }
 
 func TestSetupFinishedTelemetryCompletionPaths(t *testing.T) {
