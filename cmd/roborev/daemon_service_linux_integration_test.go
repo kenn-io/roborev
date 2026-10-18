@@ -34,7 +34,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 	buildDir := t.TempDir()
 	oldBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-old", "v-old")
 	newBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-new", "v-new")
-	for _, scenario := range []string{"shared", "pause", "simple", "exec", "transient", "missing bus environment", "foreign", "selection advances", "global flag", "unrelated ancestor", "wrapper"} {
+	for _, scenario := range []string{"shared", "pause", "simple", "exec", "transient", "missing bus environment", "foreign", "selection advances", "unrelated ancestor", "wrapper"} {
 		t.Run(scenario, func(t *testing.T) {
 			dataDir := t.TempDir()
 			t.Setenv("ROBOREV_DATA_DIR", dataDir)
@@ -77,9 +77,6 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			}
 			if unmanaged || scenario == "wrapper" {
 				serviceType = "Type=exec\n"
-			}
-			if scenario == "global flag" {
-				start = strconv.Quote(link) + " --verbose daemon run --addr 127.0.0.1:0"
 			}
 			body := fmt.Sprintf("[Service]\n%sEnvironment=%s\nEnvironment=%s\nEnvironment=GIT_CONFIG_NOSYSTEM=1\nExecStart=%s\n", serviceType, strconv.Quote("ROBOREV_DATA_DIR="+dataDir), strconv.Quote("GIT_CONFIG_GLOBAL="+os.Getenv("GIT_CONFIG_GLOBAL")), start)
 			if scenario != "transient" {

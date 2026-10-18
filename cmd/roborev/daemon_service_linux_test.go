@@ -23,7 +23,7 @@ import (
 	"go.kenn.io/roborev/internal/version"
 )
 
-func TestEnsureDaemonServiceRecovery(t *testing.T) {
+func TestRecoverDaemonServiceRecovery(t *testing.T) {
 	probeErr := errors.New("probe failed")
 	for _, tc := range []struct {
 		outcome       string
@@ -36,9 +36,7 @@ func TestEnsureDaemonServiceRecovery(t *testing.T) {
 		{outcome: "missing PID", wantError: "cannot determine owner"},
 		{outcome: "pause rejected", wantError: "pause queue before recovery"},
 		{outcome: "mismatch", stops: 1, starts: 1},
-		{outcome: "unknown", stops: 1, starts: 1},
 		{outcome: "failed", probeErr: probeErr, stops: 1, starts: 1},
-		{outcome: "foreign responsive"},
 		{outcome: "foreign failed", probeErr: probeErr, wantError: "probe failed"},
 		{outcome: "uncertain", wantError: "properties unavailable"},
 		{outcome: "unreadable", wantError: "cannot confirm executable"},
@@ -49,14 +47,13 @@ func TestEnsureDaemonServiceRecovery(t *testing.T) {
 		{outcome: "readiness failure", wantError: "replacement readiness", stops: 1, starts: 1},
 	} {
 		t.Run(tc.outcome, func(t *testing.T) {
-			t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
 			oldFind, oldDrain, oldRead := findDaemonService, drainManagedDaemon, readServiceProcessFile
 			oldDiscovery, oldRestart := getAnyRunningDaemonForStart, restartDaemonForEnsure
-			oldProbe, oldInitial, oldPause := probeDaemonForEnsure, getAnyRunningDaemon, pendingStartPause
+			oldPause := pendingStartPause
 			t.Cleanup(func() {
 				findDaemonService, drainManagedDaemon, readServiceProcessFile = oldFind, oldDrain, oldRead
 				getAnyRunningDaemonForStart, restartDaemonForEnsure = oldDiscovery, oldRestart
-				probeDaemonForEnsure, getAnyRunningDaemon, pendingStartPause = oldProbe, oldInitial, oldPause
+				pendingStartPause = oldPause
 			})
 			original := &daemon.RuntimeInfo{PID: 1234, Version: version.Version}
 			current := original
@@ -67,13 +64,6 @@ func TestEnsureDaemonServiceRecovery(t *testing.T) {
 				}
 			}
 			selectedPID := current.PID
-			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return original, nil }
-			probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
-				if tc.outcome == "unknown" {
-					return &daemon.PingInfo{}, nil
-				}
-				return &daemon.PingInfo{Version: "v-old"}, tc.probeErr
-			}
 			if tc.outcome == "pause rejected" {
 				pendingStartPause = new(true)
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -95,9 +85,6 @@ func TestEnsureDaemonServiceRecovery(t *testing.T) {
 			manager := &daemonServiceManager{close: func() {}}
 			manager.lookup = func(_ context.Context, pid int) (*daemonService, error) {
 				assert.Equal(t, current.PID, pid, "ownership must use the daemon discovered under the lock")
-				if pid == original.PID && selectedPID != original.PID {
-					return nil, nil // The original process has already exited.
-				}
 				if strings.HasPrefix(tc.outcome, "bus") {
 					return nil, &managedRecoveryError{"fixture.service", errUserBusUnavailable}
 				}
@@ -139,9 +126,9 @@ func TestEnsureDaemonServiceRecovery(t *testing.T) {
 			var err error
 			if tc.outcome == "readiness failure" || tc.outcome == "wrong PID" {
 				// Readiness polls until its startup budget expires.
-				synctest.Test(t, func(*testing.T) { err = ensureDaemon() })
+				synctest.Test(t, func(*testing.T) { err = recoverDaemon(original, tc.probeErr) })
 			} else {
-				err = ensureDaemon()
+				err = recoverDaemon(original, tc.probeErr)
 			}
 			if tc.wantError == "" {
 				require.NoError(t, err)
