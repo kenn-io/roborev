@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 	"uuid"
 
@@ -139,8 +140,6 @@ func TestSetupFinishedTelemetryClaimAndDelivery(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tc.wantClaim, state)
 			if tc.client != nil {
-				_, err = db.Exec(`DELETE FROM sync_state WHERE key = ?`, storage.SyncStateSetupFinished)
-				require.NoError(t, err)
 				server.captureSetupFinishedTelemetry()
 				assert.Equal(t, tc.wantEvents, tc.client.events)
 				if !tc.client.enabled {
@@ -190,12 +189,13 @@ func TestSetupFinishedTelemetrySkipsLaterClaims(t *testing.T) {
 			server = newServerWithLogs(db, config.DefaultConfig(), "", newTestErrorLog(), newTestActivityLog())
 			t.Cleanup(func() { _ = server.Close() })
 			server.SetTelemetry(client)
+			server.captureSetupFinishedTelemetry()
 		}
 		_, err = db.Exec(`DELETE FROM sync_state WHERE key = ?`, storage.SyncStateSetupFinished)
 		require.NoError(t, err)
 		_, err = db.Exec(`DELETE FROM setup_claim_attempts`)
 		require.NoError(t, err)
-		server.afterSyncPullWrite()
+		server.captureSetupFinishedTelemetry()
 		server.workerPool.captureSetupFinished()
 		var attempts int
 		require.NoError(t, db.QueryRow(`SELECT count(*) FROM setup_claim_attempts`).Scan(&attempts))
@@ -226,12 +226,68 @@ func TestSetupFinishedTelemetryRetriesStartupRead(t *testing.T) {
 	server.captureSetupFinishedTelemetry()
 	_, err = db.Exec(`DELETE FROM sync_state WHERE key = ?`, storage.SyncStateSetupFinished)
 	require.NoError(t, err)
-	server.afterSyncPullWrite()
+	server.captureSetupFinishedTelemetry()
 	server.workerPool.captureSetupFinished()
 	marker, err := db.GetSyncState(storage.SyncStateSetupFinished)
 	require.NoError(t, err)
 	assert.Empty(t, marker)
 	assert.Empty(t, client.events)
+}
+
+func TestSetupFinishedTelemetryGateDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		client := &fakeTelemetryClient{enabled: true}
+		server := &Server{telemetry: client, setupFinishedGate: make(chan struct{}, 1)}
+		server.setupFinishedGate <- struct{}{}
+		start := time.Now()
+		server.captureSetupFinishedTelemetry()
+		assert.Equal(t, 50*time.Millisecond, time.Since(start))
+		assert.Empty(t, client.events)
+	})
+}
+
+func TestSetupFinishedTelemetryBusyWriterRetries(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	client := &fakeTelemetryClient{enabled: true}
+	server.SetTelemetry(client)
+	server.captureSetupFinishedTelemetry()
+	assert.Empty(t, client.events, "no eligible review remains retryable")
+	repo, err := db.GetOrCreateRepo(tmpDir)
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, GitRef: "abc123", Agent: "test"})
+	require.NoError(t, err)
+	_, err = db.ClaimJob("worker")
+	require.NoError(t, err)
+	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", "", "No issues found."))
+	writer, err := db.Begin()
+	require.NoError(t, err)
+	defer func() { _ = writer.Rollback() }()
+	_, err = writer.Exec(`INSERT INTO sync_state (key, value) VALUES ('writer-lock', 'held')`)
+	require.NoError(t, err)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		server.captureSetupFinishedTelemetry()
+	}()
+	// Wall-clock wait: SQLite busy handling runs outside synctest.
+	require.Eventually(t, func() bool {
+		select {
+		case <-done:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, time.Millisecond)
+	assert.Empty(t, client.events)
+	marker, err := db.GetSyncState(storage.SyncStateSetupFinished)
+	require.NoError(t, err)
+	assert.Empty(t, marker)
+	var busyTimeout int
+	require.NoError(t, db.QueryRow(`PRAGMA busy_timeout`).Scan(&busyTimeout))
+	assert.Equal(t, 30000, busyTimeout)
+	require.NoError(t, writer.Rollback())
+	server.captureSetupFinishedTelemetry()
+	assert.Equal(t, []string{"setup_finished"}, client.events)
 }
 
 func TestSetupFinishedTelemetryCompletionPaths(t *testing.T) {
@@ -243,6 +299,11 @@ func TestSetupFinishedTelemetryCompletionPaths(t *testing.T) {
 			require.NoError(t, err)
 			client := &fakeTelemetryClient{enabled: true}
 			server.SetTelemetry(client)
+			server.workerPool.captureSetupFinished = func() {
+				require.True(t, server.workerPool.attemptTransitionsMu.TryLock(), "setup capture must follow the attempt transition")
+				server.workerPool.attemptTransitionsMu.Unlock()
+				server.captureSetupFinishedTelemetry()
+			}
 			var job *storage.ReviewJob
 			switch path {
 			case "review":
@@ -311,6 +372,8 @@ func TestSetupFinishedTelemetryAfterSyncPullWrite(t *testing.T) {
 			require.NoError(t, db.UpsertPulledJob(job, repo.ID, nil))
 			require.NoError(t, db.UpsertPulledReview(storage.PulledReview{UUID: uuid.New(), JobUUID: job.UUID, JobEnqueuedAt: now, JobSourceMachineID: job.SourceMachineID, Agent: "test", StructuredOutput: testutil.ReviewFixtureJSON("No issues found."), UpdatedByMachineID: job.SourceMachineID, CreatedAt: now, UpdatedAt: now}))
 			server.afterSyncPullWrite()
+			require.Empty(t, client.events, "per-row search wake leaves setup checking to the pull boundary")
+			server.captureSetupFinishedTelemetry()
 			assert.Equal(t, []string{"setup_finished"}, client.events)
 			if reconciler != nil {
 				assert.NotEmpty(t, reconciler.wakes, "committed pulls wake search")

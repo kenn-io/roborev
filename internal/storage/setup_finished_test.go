@@ -26,9 +26,9 @@ func TestClaimSetupFinishedRequiresReadableReview(t *testing.T) {
 			db := openTestDB(t)
 			t.Cleanup(func() { require.NoError(t, db.Close()) })
 			if tc.name == "done" {
-				claimed, err := db.ClaimSetupFinished()
+				claimed, err := db.ClaimSetupFinished(t.Context())
 				require.NoError(t, err)
-				require.False(t, claimed, "an empty install has no review")
+				require.Equal(t, SetupFinishedIneligible, claimed, "an empty install has no review")
 			}
 			repoID, commitID := seedSearchFeedBase(t, db)
 			reviewID := seedSearchFeedReview(t, db, repoID, commitID, 1, tc.fixture)
@@ -41,10 +41,10 @@ func TestClaimSetupFinishedRequiresReadableReview(t *testing.T) {
 			require.NoError(t, err)
 			if tc.name == "done" {
 				var wg sync.WaitGroup
-				results := make(chan bool, 8)
+				results := make(chan SetupFinishedClaim, 8)
 				for range 8 {
 					wg.Go(func() {
-						claimed, err := db.ClaimSetupFinished()
+						claimed, err := db.ClaimSetupFinished(t.Context())
 						assert.NoError(t, err)
 						results <- claimed
 					})
@@ -53,15 +53,15 @@ func TestClaimSetupFinishedRequiresReadableReview(t *testing.T) {
 				close(results)
 				winners := 0
 				for claimed := range results {
-					if claimed {
+					if claimed == SetupFinishedNewClaim {
 						winners++
 					}
 				}
 				assert.Equal(t, 1, winners)
 			} else {
-				claimed, err := db.ClaimSetupFinished()
+				claimed, err := db.ClaimSetupFinished(t.Context())
 				require.NoError(t, err)
-				assert.Equal(t, tc.want, claimed)
+				assert.Equal(t, tc.want, claimed == SetupFinishedNewClaim)
 			}
 			marker, err := db.GetSyncState(SyncStateSetupFinished)
 			require.NoError(t, err)
@@ -70,9 +70,13 @@ func TestClaimSetupFinishedRequiresReadableReview(t *testing.T) {
 			} else {
 				assert.Empty(t, marker)
 			}
-			claimed, err := db.ClaimSetupFinished()
+			claimed, err := db.ClaimSetupFinished(t.Context())
 			require.NoError(t, err)
-			assert.False(t, claimed, "replay cannot claim again")
+			if tc.want {
+				assert.Equal(t, SetupFinishedExisting, claimed)
+			} else {
+				assert.Equal(t, SetupFinishedIneligible, claimed)
+			}
 		})
 	}
 }

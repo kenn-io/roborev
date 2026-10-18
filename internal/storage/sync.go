@@ -60,10 +60,37 @@ func setSyncState(ctx context.Context, store experimentStore, key, value string)
 	return nil
 }
 
+// SetupFinishedClaim distinguishes a new claim from a saved marker or an
+// install that still has no readable review.
+type SetupFinishedClaim uint8
+
+const (
+	SetupFinishedIneligible SetupFinishedClaim = iota
+	SetupFinishedExisting
+	SetupFinishedNewClaim
+)
+
 // ClaimSetupFinished claims the install's first readable review before
-// best-effort telemetry delivery.
-func (db *DB) ClaimSetupFinished() (bool, error) {
-	result, err := db.Exec(`
+// best-effort telemetry delivery, within the caller's deadline.
+func (db *DB) ClaimSetupFinished(ctx context.Context) (SetupFinishedClaim, error) {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return SetupFinishedIneligible, err
+	}
+	defer func() { _ = conn.Close() }()
+	restore, err := limitSQLiteBusyTimeout(ctx, conn)
+	if err != nil {
+		return SetupFinishedIneligible, err
+	}
+	defer restore()
+	marker, err := getSyncState(ctx, conn, SyncStateSetupFinished)
+	if err != nil {
+		return SetupFinishedIneligible, err
+	}
+	if marker != "" {
+		return SetupFinishedExisting, nil
+	}
+	result, err := conn.ExecContext(ctx, `
 		INSERT INTO sync_state (key, value)
 		SELECT ?, '1'
 		WHERE EXISTS (
@@ -75,13 +102,20 @@ func (db *DB) ClaimSetupFinished() (bool, error) {
 		ON CONFLICT(key) DO NOTHING
 	`, SyncStateSetupFinished)
 	if err != nil {
-		return false, fmt.Errorf("claim setup finished: %w", err)
+		return SetupFinishedIneligible, fmt.Errorf("claim setup finished: %w", err)
 	}
 	rows, err := result.RowsAffected()
 	if err != nil {
-		return false, fmt.Errorf("claim setup finished: %w", err)
+		return SetupFinishedIneligible, fmt.Errorf("claim setup finished: %w", err)
 	}
-	return rows == 1, nil
+	if rows == 1 {
+		return SetupFinishedNewClaim, nil
+	}
+	marker, err = getSyncState(ctx, conn, SyncStateSetupFinished)
+	if marker != "" {
+		return SetupFinishedExisting, err
+	}
+	return SetupFinishedIneligible, err
 }
 
 // GetOrCreateSyncStateValue returns a durable key/value entry, creating it when absent.

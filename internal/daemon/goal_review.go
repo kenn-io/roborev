@@ -198,6 +198,7 @@ func (wp *WorkerPool) processGoalReview(ctx context.Context, workerID string, jo
 		fail(err)
 		return
 	}
+	completed := false
 	wp.runAttemptTransition(workerID, job, func() {
 		if err := wp.db.CompleteJobResult(job.ID, a.Name(), storage.ReviewCompletion{Output: output, Verdict: storage.VerdictFromPassed(len(findings) == 0), StructuredOutput: jsontext.Value(raw)}); err != nil {
 			log.Printf("[%s] store goal review: %v", workerID, err)
@@ -207,9 +208,7 @@ func (wp *WorkerPool) processGoalReview(ctx context.Context, workerID string, jo
 		if err != nil || current.Status != storage.JobStatusDone {
 			return
 		}
-		if wp.captureSetupFinished != nil {
-			wp.captureSetupFinished()
-		}
+		completed = true
 		verdict := storage.ParseVerdict(output)
 		wp.autoClosePassingReview(workerID, job, verdict)
 		event.Type = "goal_review.completed"
@@ -218,6 +217,9 @@ func (wp *WorkerPool) processGoalReview(ctx context.Context, workerID string, jo
 		event.Findings = output
 		wp.broadcaster.Broadcast(event)
 	})
+	if completed && wp.captureSetupFinished != nil {
+		wp.captureSetupFinished()
+	}
 }
 
 // Goal reviewers disable session persistence, so their own output is the

@@ -656,7 +656,14 @@ func TestIntegration_SearchWakeKeepsEarlierCommittedWritesWhenReviewPullFails(t 
 	var wakes atomic.Int64
 	target.SetAfterPullWrite(func() { wakes.Add(1) })
 
+	var pulls int
+	target.SetAfterPull(func() {
+		pulls++
+		require.True(t, target.syncMu.TryLock(), "partial pulls notify after releasing syncMu")
+		target.syncMu.Unlock()
+	})
 	stats, err := target.SyncNow()
+	require.Equal(t, 1, pulls)
 	require.ErrorContains(t, err, "injected pulled review failure")
 	assert.Nil(t, stats)
 	assert.Equal(t, int64(2), wakes.Load(), "committed commit and job writes must notify before review failure")
@@ -1915,4 +1922,60 @@ func TestIntegration_TickerSync(t *testing.T) { //nolint:paralleltest // shares 
 
 	env.assertPgCount("review_jobs", 2)
 	env.assertPgCount("reviews", 2)
+}
+
+func TestIntegration_SetupClaimAfterFreshBulkPull(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL schema
+	env := newIntegrationEnv(t)
+	const identity = "https://github.com/example/setup-pull.git"
+	source := env.setupNode("setup-source", identity, "1h")
+	targetDB := env.openDB("setup-target.db")
+	target := startSyncWorkerNoSync(t, targetDB, env.pgURL, "setup-target", "1h")
+	for i := range 500 {
+		createCompletedReview(t, source.DB, source.Repo.ID, fmt.Sprintf("%040x", i+1), "Test", "Synced review", "prompt", "No issues found.")
+	}
+	_, err := source.Worker.SyncNow()
+	require.NoError(t, err)
+	_, err = targetDB.Exec(`CREATE TABLE setup_claim_attempts (value TEXT);
+		CREATE TRIGGER count_setup_claim BEFORE INSERT ON sync_state
+		WHEN NEW.key = 'telemetry.setup_finished'
+		BEGIN INSERT INTO setup_claim_attempts VALUES (NEW.value); END`)
+	require.NoError(t, err)
+	var pulls, writes int
+	target.SetAfterPullWrite(func() { writes++ })
+	target.SetAfterPull(func() {
+		pulls++
+		require.True(t, target.syncMu.TryLock(), "setup claim must follow syncMu release")
+		target.syncMu.Unlock()
+		var reviews int
+		require.NoError(t, targetDB.QueryRow(`SELECT count(*) FROM reviews`).Scan(&reviews))
+		assert.Equal(t, 499+pulls, reviews, "claim follows the job and review phases")
+		claim, err := targetDB.ClaimSetupFinished(t.Context())
+		require.NoError(t, err)
+		if pulls == 1 {
+			assert.Equal(t, SetupFinishedNewClaim, claim)
+		} else {
+			assert.Equal(t, SetupFinishedExisting, claim)
+		}
+	})
+	stats, err := target.SyncNow()
+	require.NoError(t, err)
+	assert.Equal(t, 500, stats.PulledJobs)
+	assert.Equal(t, 500, stats.PulledReviews)
+	assert.Equal(t, 1, pulls)
+	assert.Greater(t, writes, 500, "per-row search wakes remain")
+	var attempts int
+	require.NoError(t, targetDB.QueryRow(`SELECT count(*) FROM setup_claim_attempts`).Scan(&attempts))
+	assert.Equal(t, 1, attempts)
+	require.NoError(t, target.doSync())
+	assert.Equal(t, 1, pulls, "empty background pulls do not notify")
+	_, err = target.SyncNow()
+	require.NoError(t, err)
+	assert.Equal(t, 1, pulls, "unchanged lookback rows do not notify")
+	createCompletedReview(t, source.DB, source.Repo.ID, fmt.Sprintf("%040x", 501), "Test", "Later review", "prompt", "No issues found.")
+	_, err = source.Worker.SyncNow()
+	require.NoError(t, err)
+	require.NoError(t, target.doSync())
+	assert.Equal(t, 2, pulls, "background sync also notifies after releasing syncMu")
+	require.NoError(t, targetDB.QueryRow(`SELECT count(*) FROM setup_claim_attempts`).Scan(&attempts))
+	assert.Equal(t, 1, attempts, "an existing marker needs no new claim statement")
 }

@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"uuid"
 
@@ -82,9 +83,8 @@ type Server struct {
 	telemetry               telemetry.Client
 	telemetryOnce           sync.Once
 	telemetryStop           chan struct{}
-	setupFinishedMu         sync.Mutex
-	setupFinishedLoaded     bool
-	setupFinishedClaimed    bool
+	setupFinishedGate       chan struct{}
+	setupFinishedClaimed    atomic.Bool
 	appOpened               telemetry.AppOpenedLimiter // daily product-event limits; outlives each capture handler
 	agentActivityGate       chan struct{}
 	agentActivityNow        func() time.Time
@@ -214,14 +214,12 @@ func newServerWithLogs(
 		releaseNotesNow:    time.Now,
 		searchNow:          time.Now,
 		telemetryStop:      make(chan struct{}),
+		setupFinishedGate:  make(chan struct{}, 1),
 		agentActivityGate:  make(chan struct{}, 1),
 		startTime:          time.Now(),
 		shutdownCh:         make(chan struct{}),
 	}
 	s.updateCoordinator = &updateDrainCoordinator{server: s, now: time.Now}
-	marker, markerErr := db.GetSyncState(storage.SyncStateSetupFinished)
-	s.setupFinishedLoaded = markerErr == nil
-	s.setupFinishedClaimed = marker != ""
 	s.workerPool.captureSetupFinished = s.captureSetupFinishedTelemetry
 	s.agentHookState, s.agentHookStateErr = agenthook.LoadState(
 		daemonAgentHookSource{db: db, errorLog: errorLog},
@@ -881,34 +879,30 @@ func (s *Server) captureDaemonStartedTelemetry(cfg *config.Config) {
 }
 
 func (s *Server) captureSetupFinishedTelemetry() {
-	if s.telemetry == nil || !s.telemetry.Enabled() {
+	if s.telemetry == nil || !s.telemetry.Enabled() || s.setupFinishedClaimed.Load() {
 		return
 	}
-	s.setupFinishedMu.Lock()
-	if !s.setupFinishedLoaded {
-		marker, err := s.db.GetSyncState(storage.SyncStateSetupFinished)
-		if err != nil {
-			s.setupFinishedMu.Unlock()
-			log.Printf("Warning: read setup finished telemetry: %v", err)
-			return
-		}
-		s.setupFinishedLoaded = true
-		s.setupFinishedClaimed = marker != ""
-	}
-	if s.setupFinishedClaimed {
-		s.setupFinishedMu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	select {
+	case s.setupFinishedGate <- struct{}{}:
+	case <-ctx.Done():
 		return
 	}
-	claimed, err := s.db.ClaimSetupFinished()
-	if claimed {
-		s.setupFinishedClaimed = true
+	if s.setupFinishedClaimed.Load() {
+		<-s.setupFinishedGate
+		return
 	}
-	s.setupFinishedMu.Unlock()
+	claim, err := s.db.ClaimSetupFinished(ctx)
+	if err == nil && claim != storage.SetupFinishedIneligible {
+		s.setupFinishedClaimed.Store(true)
+	}
+	<-s.setupFinishedGate
 	if err != nil {
 		log.Printf("Warning: claim setup finished telemetry: %v", err)
 		return
 	}
-	if claimed {
+	if claim == storage.SetupFinishedNewClaim {
 		if err := s.telemetry.Capture(telemetry.EventSetupFinished, nil); err != nil {
 			log.Printf("Warning: capture setup finished telemetry: %v", err)
 		}
@@ -989,13 +983,13 @@ func (s *Server) telemetryProperties(cfg *config.Config) map[string]any {
 func (s *Server) SetSyncWorker(sw *storage.SyncWorker) {
 	s.syncWorker = sw
 	sw.SetAfterPullWrite(s.afterSyncPullWrite)
+	sw.SetAfterPull(s.captureSetupFinishedTelemetry)
 }
 
 func (s *Server) afterSyncPullWrite() {
 	if s.searchReconciler != nil {
 		s.searchReconciler.Wake()
 	}
-	s.captureSetupFinishedTelemetry()
 }
 
 // SetCIPoller sets the CI poller for status reporting and wires up
