@@ -63,9 +63,11 @@ func TestCoreActionDailyClaims(t *testing.T) {
 	assert.Equal(t, http.StatusAccepted, post(`{"event":"screen_viewed","properties":{"screen":"review","surface":"tui"}}`).Code)
 	require.NoError(t, reporter.Close())
 	sent := messages()
-	require.Len(t, sent, 14)
-	assert.Equal(t, []string{"review_viewed:web", "review_viewed:tui", "review_viewed:cli"}, surfacesOf(sent[:3]))
-	assert.Equal(t, []string{"finding_fixed:tui", "finding_fixed:tui", "finding_fixed:cli", "finding_fixed:cli"}, surfacesOf(sent[3:7]))
-	assert.Equal(t, []string{"review_closed:web", "review_closed:web", "review_closed:tui", "review_closed:tui", "review_closed:cli", "review_closed:cli"}, surfacesOf(sent[7:13]))
-	assert.Equal(t, "screen_viewed:tui", surfacesOf(sent[13:])[0])
+	require.Len(t, sent, 9)
+	assert.Equal(t, []string{
+		"review_viewed:web", "review_viewed:tui", "review_viewed:cli",
+		"finding_fixed:tui", "finding_fixed:cli",
+		"review_closed:web", "review_closed:tui", "review_closed:cli",
+		"screen_viewed:tui",
+	}, surfacesOf(sent))
 }

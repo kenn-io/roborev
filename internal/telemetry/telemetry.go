@@ -97,6 +97,8 @@ func NewReporter(opts Options) (*Reporter, error) {
 	}, append(allowedEventOptions(),
 		posthog.WithDailyEvent(EventScreenViewed, PropertyScreen, claims),
 		posthog.WithDailyEvent(EventReviewViewed, PropertySurface, claims),
+		posthog.WithDailyEvent(EventFindingFixed, PropertySurface, claims),
+		posthog.WithDailyEvent(EventReviewClosed, PropertySurface, claims),
 	)...)
 }
 

@@ -1108,7 +1108,6 @@ func (m model) handleReviewFollowErrMsg(msg reviewFollowErrMsg) (tea.Model, tea.
 	if msg.fetchSeq != m.reviewFetchSeq {
 		return m, nil
 	}
-	m.reviewInputJobID = 0
 	m.splitDetailErr = msg.err
 	// Deliberately does NOT clear paneReviewSeenNonTerminal: a fresh
 	// attempt was genuinely observed and this fetch failed to pick it up,
@@ -1295,7 +1294,6 @@ func (m model) handleReviewErrMsg(msg reviewErrMsg) (tea.Model, tea.Cmd) {
 	// errMsg handling (handleErrMsg) so the global error field and
 	// connection-error/reconnect detection still apply even though this
 	// failure is typed.
-	m.reviewInputJobID = 0
 	m.err = msg.err
 	reconnectCmd := m.handleConnectionError(msg.err)
 

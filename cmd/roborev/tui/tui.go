@@ -144,8 +144,7 @@ type model struct {
 	expandedPanels       map[uuid.UUID]bool                // panel_run_uuid -> expanded
 	panelMembers         map[uuid.UUID][]storage.ReviewJob // panel_run_uuid -> side-fetched members
 	currentView          viewKind
-	reviewInputJobID     int64 // opening input survives only for the matching job, view, fetch, and UTC day
-	reviewReadSent       bool
+	reviewReadSent       bool     // review_viewed issued on screenDay
 	screenDay            string   // UTC day that screensSent covers
 	screensSent          []string // screen requests issued on screenDay
 	rerunAgentJobID      int64
@@ -1145,7 +1144,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	today := time.Now().UTC().Format(time.DateOnly)
 	if m.screenDay != today {
 		m.screenDay, m.screensSent = today, nil
-		m.reviewReadSent, m.reviewInputJobID = false, 0
+		m.reviewReadSent = false
 	}
 
 	// Signal that the event loop is running (once). The control
@@ -1158,7 +1157,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	inputAttempt := m.jobAttemptGen[m.selectedJobID]
 	var result tea.Model
 	var cmd tea.Cmd
 
@@ -1183,16 +1181,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			result = m
 		}
 	case tea.KeyMsg:
-		if m.currentView == viewReview || m.splitActive() {
-			m.reviewInputJobID = m.selectedJobID
-		}
 		result, cmd = m.handleKeyMsg(msg)
 	case tea.MouseMsg:
 		if !m.mouseEnabled {
 			return m, nil
-		}
-		if m.currentView == viewReview || m.splitActive() {
-			m.reviewInputJobID = m.selectedJobID
 		}
 		result, cmd = m.handleMouseMsg(msg)
 	case tea.WindowSizeMsg:
@@ -1334,26 +1326,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		_, key := msg.(tea.KeyMsg)
+		input, key := msg.(tea.KeyMsg)
 		_, mouse := msg.(tea.MouseMsg)
-		reviewVisible := rm.currentView == viewReview || rm.splitActive()
-		reviewPending := rm.pendingReviewOpenJobID != 0 && rm.pendingReviewOpenJobID == rm.selectedJobID && rm.pendingReviewOpenOrigin == rm.currentView
-		if (key || mouse) && (rm.reviewInputJobID != 0 || reviewPending && rm.pendingReviewOpenSeq != m.pendingReviewOpenSeq) {
-			rm.reviewInputJobID = rm.selectedJobID
-		}
-		if !reviewVisible && !reviewPending || rm.reviewInputJobID != rm.selectedJobID || rm.selectedJobID == m.selectedJobID && rm.jobAttemptGen[rm.selectedJobID] != inputAttempt {
-			rm.reviewInputJobID = 0
-		}
-		quit := false
-		if input, ok := msg.(tea.KeyMsg); ok && (input.String() == "ctrl+c" || input.String() == "ctrl+d") {
-			quit = true
-			rm.reviewInputJobID = 0
-		}
-		read := !quit && (key || mouse) && (m.currentView == viewReview || m.splitActive()) && m.selectedReviewLoaded() && m.currentReview.ID != 0 && m.currentReview.Job != nil && m.currentReview.Job.IsReadableReview()
-		if rm.reviewInputJobID != 0 && reviewVisible && rm.selectedReviewLoaded() && rm.currentReview.ID != 0 {
-			read = read || rm.currentReview.Job != nil && rm.currentReview.Job.IsReadableReview()
-			rm.reviewInputJobID = 0
-		}
+		// A read is input while a loaded review is on screen; quitting is not reading.
+		quit := key && (input.String() == "ctrl+c" || input.String() == "ctrl+d")
+		read := (key || mouse) && !quit && (m.currentView == viewReview || m.splitActive()) &&
+			m.selectedReviewLoaded() && m.currentReview.ID != 0 &&
+			m.currentReview.Job != nil && m.currentReview.Job.IsReadableReview()
 		if read && !rm.reviewReadSent {
 			rm.reviewReadSent = true
 			cmd = tea.Batch(cmd, rm.reportAction(telemetry.EventReviewViewed))

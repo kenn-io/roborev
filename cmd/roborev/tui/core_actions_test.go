@@ -118,59 +118,43 @@ func TestCoreActionReviewReconnectResumesReports(t *testing.T) {
 }
 
 //nolint:paralleltest // telemetry environment variables
-func TestCoreActionPendingReviewOpen(t *testing.T) {
+func TestCoreActionOpenedReviewCountsOnNextInput(t *testing.T) {
 	enableTelemetryEnv(t)
-	for _, outcome := range []string{"queue", "tasks", "loaded queue", "loaded tasks", "rerun destination", "fix output", "next day"} {
-		t.Run(outcome, func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				f := newCoreActionReviewVisitFixture(t)
-				f.m.layout = splitlayout.Stacked
-				f.m.currentView = viewQueue
-				f.m.tasksEnabled = true
-				f.m.api = newDaemonAPI(f.m.endpoint, f.m.client)
-				origin := viewQueue
-				key := tea.KeyPressMsg{Code: tea.KeyEnter}
-				if outcome == "tasks" || outcome == "loaded tasks" || outcome == "rerun destination" || outcome == "fix output" {
-					origin = viewTasks
-					f.m.currentView = viewTasks
-					f.m.fixJobs = []storage.ReviewJob{{ID: 9, Status: storage.JobStatusDone, JobType: storage.JobTypeFix, ParentJobID: new(int64(42))}}
-					if outcome != "fix output" {
-						key = tea.KeyPressMsg{Code: 'P'}
-					}
-					if outcome == "rerun destination" {
-						f.m.selectedJobID = 43
-						f.m.jobAttemptGen = map[int64]uint64{42: 1}
-					}
-					f.m.fixSelectedIdx = 0
+	for _, tc := range []struct {
+		name  string
+		count int
+	}{
+		{name: "queue", count: 1},
+		{name: "parent from tasks", count: 1},
+		{name: "fix output"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCoreActionReviewVisitFixture(t)
+			f.m.layout = splitlayout.Stacked
+			f.m.currentView = viewQueue
+			f.m.tasksEnabled = true
+			origin := viewQueue
+			key := tea.KeyPressMsg{Code: tea.KeyEnter}
+			if tc.name != "queue" {
+				origin = viewTasks
+				f.m.currentView = viewTasks
+				f.m.fixJobs = []storage.ReviewJob{{ID: 9, Status: storage.JobStatusDone, JobType: storage.JobTypeFix, ParentJobID: new(int64(42))}}
+				f.m.fixSelectedIdx = 0
+				if tc.name == "parent from tasks" {
+					key = tea.KeyPressMsg{Code: 'P'}
 				}
-				result, cmd := f.m.Update(key)
-				f.m = result.(model)
-				require.NotNil(t, cmd)
-				if outcome == "tasks" || outcome == "loaded tasks" {
-					require.Equal(t, int64(42), f.m.selectedJobID)
-				}
-				response := f.review()
-				response.follow, response.dispatchedFrom = false, origin
-				if outcome == "fix output" {
-					response.review.Job.JobType = storage.JobTypeFix
-				}
-				if outcome != "loaded queue" && outcome != "loaded tasks" {
-					f.update(tea.KeyPressMsg{Code: 'q'})
-				}
-				if outcome == "next day" {
-					time.Sleep(24 * time.Hour)
-				}
-				f.update(response)
-				if outcome == "loaded queue" || outcome == "loaded tasks" {
-					require.Equal(t, viewReview, f.m.currentView)
-					f.update(tea.KeyPressMsg{Code: 'q'})
-				}
-				count := 1
-				if outcome == "fix output" || outcome == "next day" {
-					count = 0
-				}
-				assert.Len(t, f.transport.events, count)
-			})
+			}
+			f.update(key)
+			response := f.review()
+			response.follow, response.dispatchedFrom = false, origin
+			if tc.name == "fix output" {
+				response.review.Job.JobType = storage.JobTypeFix
+			}
+			f.update(response)
+			require.Equal(t, viewReview, f.m.currentView)
+			assert.Empty(t, f.transport.events, "opening and loading are not a read")
+			f.update(tea.KeyPressMsg{Code: 'j'})
+			assert.Len(t, f.transport.events, tc.count)
 		})
 	}
 }
@@ -251,44 +235,23 @@ func TestCoreActionCommittedPatch(t *testing.T) {
 }
 
 //nolint:paralleltest // telemetry environment variables
-func TestCoreActionAbandonedLoad(t *testing.T) {
+func TestCoreActionUnreadReviews(t *testing.T) {
 	enableTelemetryEnv(t)
-	for _, outcome := range []string{"ordinary error", "follow error", "rerun", "quit after input", "view change", "quit after load: ctrl+c", "quit after load: ctrl+d"} {
+	for _, outcome := range []string{"load failed", "quit: ctrl+c", "quit: ctrl+d"} {
 		t.Run(outcome, func(t *testing.T) {
 			f := newCoreActionReviewVisitFixture(t)
-			loaded := outcome == "quit after load: ctrl+c" || outcome == "quit after load: ctrl+d"
-			if loaded {
-				f.update(f.review())
-			} else if outcome == "view change" {
-				f.m.layout, f.m.currentView = splitlayout.Stacked, viewQueue
-				f.m.tasksEnabled = true
-				result, cmd := f.m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-				f.m = result.(model)
-				require.NotNil(t, cmd)
-			} else {
-				f.update(tea.KeyPressMsg{Code: '0'})
-			}
 			response := f.review()
 			switch outcome {
-			case "ordinary error":
+			case "load failed":
+				f.update(tea.KeyPressMsg{Code: '0'})
 				f.update(reviewErrMsg{jobID: response.jobID, gen: response.gen, fetchSeq: response.fetchSeq, attempt: response.attempt, err: errors.New("load failed")})
-			case "follow error":
-				f.update(reviewFollowErrMsg{jobID: response.jobID, gen: response.gen, fetchSeq: response.fetchSeq, attempt: response.attempt, err: errors.New("load failed")})
-			case "rerun":
-				f.update(rerunResultMsg{jobID: response.jobID})
-			case "view change":
-				response.follow, response.dispatchedFrom = false, viewQueue
-				f.update(tea.KeyPressMsg{Code: 'T'})
-			case "quit after input", "quit after load: ctrl+c":
-				f.update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
-			case "quit after load: ctrl+d":
-				f.update(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
-			}
-			if !loaded {
-				if outcome != "view change" {
-					response = f.review()
-				}
+				f.update(tea.KeyPressMsg{Code: '0'})
+			case "quit: ctrl+c":
 				f.update(response)
+				f.update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+			case "quit: ctrl+d":
+				f.update(response)
+				f.update(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
 			}
 			assert.Empty(t, f.transport.events)
 		})

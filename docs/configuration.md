@@ -1853,22 +1853,27 @@ Delivery is best effort; failed delivery isn't retried. Both opt-out variables
 apply. CLI and stdio MCP notifications use the existing CLI reporting timeout
 and never start a daemon just for telemetry.
 
-Core actions report `review_viewed` once per installation, surface, and UTC day,
-`finding_fixed` after each committed fix, and `review_closed` after each
-explicit close. All carry `surface`. Reads and closes support web, TUI and CLI;
-fixes support TUI and CLI. Reads include review, synthesis and compact output.
-The TUI requires key or mouse input before counting loaded content. Quit keys
-`ctrl+c` and `ctrl+d` stay silent; `q` after loading a review counts. A
-transport error or successful daemon reconnect allows another report on later
-input. The browser reports a rendered Review tab on load and when focus or
-visibility returns, with one request in flight at a time. The daemon owns daily
-deduplication. CLI reads include `show`, `wait`, `review --wait`,
-`compact --wait`, and nonquiet `fix` output. CLI actions require terminal output
-and exclude agents and `--from-skill`. CLI fixes from `fix`, `refine`, and
-`analyze --fix` report `finding_fixed` when they commit. Reopens, automatic
-closes, prompt reads, and analysis reads stay silent. With a remote `--server`,
-CLI events use an already-running local daemon and its installation ID. Without
-a local daemon, events are dropped. Reporting never starts a daemon.
+Core actions report `review_viewed`, `finding_fixed`, and `review_closed`, each
+at most once per installation, surface, and UTC day. All carry `surface`. Reads
+and closes support web, TUI and CLI; fixes support TUI and CLI. Reads include
+review, synthesis and compact output.
+
+- The TUI counts a read on key or mouse input while a loaded review is visible.
+    Opening a review isn't a read until the next input. Quit keys `ctrl+c` and
+    `ctrl+d` stay silent; `q` on a loaded review counts. A transport error or
+    successful daemon reconnect allows another report on later input.
+- The browser reports a rendered Review tab on load and when focus or visibility
+    returns, with one request in flight at a time.
+- CLI reads include `show`, `wait`, `review --wait`, `compact --wait`, and
+    nonquiet `fix` output. CLI fixes from `fix`, `refine`, and `analyze --fix`
+    report `finding_fixed` when they commit. CLI actions require terminal output
+    and exclude agents and `--from-skill`.
+- Reopens, automatic closes, prompt reads, and analysis reads stay silent.
+- With a remote `--server`, CLI events use an already-running local daemon and
+    its installation ID. Without a local daemon, events are dropped. Reporting
+    never starts a daemon.
+
+The daemon owns daily deduplication, so clients may repeat a report.
 
 The browser and TUI also report `screen_viewed` with a fixed `screen` name and
 `surface` of `web` or `tui`. Browser screens are `reviews` and `analytics`. TUI
@@ -1879,8 +1884,8 @@ day across interfaces, including daemon restarts. Screen names contain no paths,
 job IDs, filter text or review contents. Daily screen claims live in
 `telemetry-daily.json` beside the daemon database, wherever `--db` points, with
 a `telemetry-daily.json.lock` sidecar. An unreadable or newer-version claims
-file makes `screen_viewed` and `review_viewed` reports fail until it's removed.
-Stop the daemon before deleting it. Deletion resets file claims; existing SQLite
+file makes `screen_viewed` and core action reports fail until it's removed. Stop
+the daemon before deleting it. Deletion resets file claims; existing SQLite
 claims remain effective through their recorded UTC dates. Counts mean the report
 was queued, not confirmed delivered to PostHog. The TUI retries a failed screen
 report on the next key or mouse input while that screen is showing. The browser
