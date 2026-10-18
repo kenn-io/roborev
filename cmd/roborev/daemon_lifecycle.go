@@ -330,20 +330,20 @@ func ensureDaemon() error {
 				if verbose {
 					fmt.Fprintf(lifecycleOut, "Daemon probe failed, restarting...\n")
 				}
-				return restartDaemonForEnsure()
+				return recoverDaemon(info, err)
 			}
 			daemonVersion := probe.Version
 			if daemonVersion == "" {
 				if verbose {
 					fmt.Fprintf(lifecycleOut, "Daemon version unknown, restarting...\n")
 				}
-				return restartDaemonForEnsure()
+				return recoverDaemon(info, nil)
 			}
 			if daemonVersion != version.Version {
 				if verbose {
 					fmt.Fprintf(lifecycleOut, "Daemon version mismatch (daemon: %s, cli: %s), restarting...\n", daemonVersion, version.Version)
 				}
-				return restartDaemonForEnsure()
+				return recoverDaemon(info, nil)
 			}
 		}
 

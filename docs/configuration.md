@@ -1763,6 +1763,20 @@ files, enable the user-level service:
 systemctl --user enable --now roborev
 ```
 
+When an ordinary CLI command finds an outdated or unresponsive service daemon,
+it lets the user service replace that process after active reviews finish.
+Recovery requires the unit's direct `ExecStart` executable to resolve to the
+same installed file as the CLI. This also covers a shared symlink updated to a
+new binary. The replacement is ready when it responds and its runtime PID
+matches the service's `MainPID`, even if the selected version changes again.
+
+A service from a separate installation keeps running. If it responds, the CLI
+uses it and warns on stderr that its version differs or cannot be verified. If
+it doesn't respond, the command reports which service installation needs
+attention. An unavailable user manager, uncertain ownership, unreadable
+executable, or failed service start produces an error. Recovery keeps service
+ownership and waits for systemd readiness before releasing concurrent starts.
+
 For on-demand startup via socket activation, enable the socket unit instead. The
 daemon starts automatically when a client connects and uses `Type=notify` to
 signal readiness back to systemd:
