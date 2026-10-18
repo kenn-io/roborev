@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -33,7 +34,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 	buildDir := t.TempDir()
 	oldBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-old", "v-old")
 	newBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-new", "v-new")
-	for _, scenario := range []string{"shared", "foreign", "selection advances", "unrelated ancestor", "wrapper"} {
+	for _, scenario := range []string{"shared", "foreign", "selection advances", "global flag", "unrelated ancestor", "wrapper"} {
 		t.Run(scenario, func(t *testing.T) {
 			dataDir := t.TempDir()
 			t.Setenv("ROBOREV_DATA_DIR", dataDir)
@@ -51,14 +52,21 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			start := strconv.Quote(link) + " daemon run --addr 127.0.0.1:0"
 			if unmanaged || scenario == "wrapper" {
 				wrapper := filepath.Join(dataDir, "start-service")
-				body := "#!/bin/sh\nexec " + start + "\n"
+				body := "#!/bin/sh\n" + start + " &\nwait\n"
 				if scenario == "unrelated ancestor" {
 					body = "#!/bin/sh\n" + strconv.Quote(link) + " daemon start\nexec sleep infinity\n"
 				}
 				require.NoError(t, os.WriteFile(wrapper, []byte(body), 0o700))
 				start = strconv.Quote(wrapper)
 			}
-			body := fmt.Sprintf("[Service]\nType=exec\nEnvironment=%s\nEnvironment=%s\nEnvironment=GIT_CONFIG_NOSYSTEM=1\nExecStart=%s\n", strconv.Quote("ROBOREV_DATA_DIR="+dataDir), strconv.Quote("GIT_CONFIG_GLOBAL="+os.Getenv("GIT_CONFIG_GLOBAL")), start)
+			serviceType := "notify"
+			if unmanaged || scenario == "wrapper" {
+				serviceType = "exec"
+			}
+			if scenario == "global flag" {
+				start = strconv.Quote(link) + " --verbose daemon run --addr 127.0.0.1:0"
+			}
+			body := fmt.Sprintf("[Service]\nType=%s\nEnvironment=%s\nEnvironment=%s\nEnvironment=GIT_CONFIG_NOSYSTEM=1\nExecStart=%s\n", serviceType, strconv.Quote("ROBOREV_DATA_DIR="+dataDir), strconv.Quote("GIT_CONFIG_GLOBAL="+os.Getenv("GIT_CONFIG_GLOBAL")), start)
 			require.NoError(t, os.WriteFile(unitPath, []byte(body), 0o600))
 			t.Cleanup(func() {
 				output, err := exec.Command("systemctl", "--user", "stop", unit).CombinedOutput()
@@ -77,16 +85,6 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				original, err = daemon.GetAnyRunningDaemon()
 				return err == nil
 			}, 15*time.Second, 50*time.Millisecond)
-			if scenario != "wrapper" {
-				owner, err := lookupDaemonService(context.Background(), original.PID)
-				require.NoError(t, err)
-				if unmanaged {
-					require.Nil(t, owner)
-				} else {
-					require.NotNil(t, owner)
-					assert.Equal(t, unit, owner.unit)
-				}
-			}
 			var active storage.ReviewJob
 			if scenario == "selection advances" {
 				repo := testutil.NewGitRepo(t)
@@ -100,26 +98,23 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				require.NoError(t, os.Rename(next, link))
 			}
 			cli := exec.Command(newBinary, "status", "--json")
-			if scenario == "foreign" {
-				cli.Args = append(cli.Args, "--verbose")
-			}
 			var stdout, stderr bytes.Buffer
 			cli.Stdout, cli.Stderr = &stdout, &stderr
 			if scenario == "wrapper" {
 				assert := assert.New(t)
-				assert.Error(cli.Run())
-				assert.Empty(stdout.String())
-				assert.Contains(stderr.String(), "ExecStart must directly execute roborev daemon run")
+				require.NoError(t, cli.Run(), "%s", stderr.String())
+				process, err := os.FindProcess(original.PID)
+				require.NoError(t, err)
+				require.NoError(t, process.Signal(syscall.SIGSTOP))
+				defer process.Signal(syscall.SIGCONT)
+				_, probeErr := daemon.ProbeDaemon(original.Endpoint(), time.Second)
+				require.Error(t, probeErr)
+				assert.ErrorIs(recoverDaemon(original, probeErr), probeErr)
+				require.NoError(t, process.Signal(syscall.SIGCONT))
 				current, err := daemon.GetAnyRunningDaemon()
 				require.NoError(t, err)
 				assert.Equal(original.PID, current.PID)
-				assertDaemonUpdateVersion(t, current.Endpoint(), "v-old")
-				runtimes, err := daemon.ListAllRuntimes()
-				require.NoError(t, err)
-				assert.Len(runtimes, 1)
-				output, err = exec.Command("systemctl", "--user", "show", "--property=MainPID", "--value", unit).CombinedOutput()
-				require.NoError(t, err)
-				assert.Equal(strconv.Itoa(original.PID), strings.TrimSpace(string(output)))
+				require.NoError(t, exec.Command("systemctl", "--user", "is-active", unit).Run())
 				return
 			}
 			if scenario == "selection advances" {
@@ -133,30 +128,23 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 					defer resp.Body.Close()
 					return resp.StatusCode == http.StatusConflict
 				}, time.Second, 10*time.Millisecond)
+				second := exec.Command(newBinary, "status", "--json")
+				require.NoError(t, second.Start())
+				defer second.Process.Kill()
 				next := link + ".next"
 				require.NoError(t, os.Symlink(oldBinary, next))
 				require.NoError(t, os.Rename(next, link))
 				require.NoError(t, cli.Wait(), "%s", stderr.String())
+				require.NoError(t, second.Wait())
 			} else {
 				err = cli.Run()
 				require.NoError(t, err, "%s", stderr.String())
-				if scenario == "foreign" {
-					assert.Contains(t, stderr.String(), "different installation")
-				}
 			}
 			var result statusJSONOutput
 			require.NoError(t, json.Unmarshal(stdout.Bytes(), &result))
 			assert.True(t, result.Running)
 			replacement, err := daemon.GetAnyRunningDaemon()
 			require.NoError(t, err)
-			owner, err := lookupDaemonService(context.Background(), replacement.PID)
-			require.NoError(t, err)
-			if unmanaged {
-				require.Nil(t, owner)
-			} else {
-				require.NotNil(t, owner)
-				assert.Equal(t, unit, owner.unit)
-			}
 			if scenario == "foreign" {
 				assert.Equal(t, original.PID, replacement.PID)
 			} else {

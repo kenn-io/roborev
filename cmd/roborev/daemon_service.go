@@ -2,18 +2,24 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
-	"time"
-
-	"github.com/cenkalti/backoff/v7"
+	"path/filepath"
+	"strings"
 
 	"go.kenn.io/roborev/internal/daemon"
 )
 
 type daemonService struct {
 	unit, executable string
+	mainPID          int
+	manager          *daemonServiceManager
+}
+
+type daemonServiceManager struct {
+	lookup func(context.Context, int) (*daemonService, error)
+	start  func(context.Context, string) error
+	close  func()
 }
 type managedRecoveryError struct {
 	unit  string
@@ -27,7 +33,6 @@ func (e *managedRecoveryError) Unwrap() error { return e.cause }
 
 var (
 	findDaemonService  = lookupDaemonService
-	runDaemonService   = startDaemonService
 	drainManagedDaemon = daemon.KillDaemon
 )
 
@@ -40,7 +45,8 @@ func (s *daemonService) sameInstallation() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return os.SameFile(selected, cli), nil
+	cliPath, err := os.Readlink("/proc/self/exe")
+	return os.SameFile(selected, cli) || err == nil && filepath.Clean(s.executable) == filepath.Clean(strings.TrimSuffix(cliPath, " (deleted)")), nil
 }
 
 func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
@@ -53,6 +59,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 	if owner == nil {
 		return restartDaemonForEnsure()
 	}
+	defer owner.manager.close()
 	fail := func(err error) error { return &managedRecoveryError{owner.unit, err} }
 	same, err := owner.sameInstallation()
 	if err != nil {
@@ -62,10 +69,6 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 		if probeErr != nil {
 			return fail(fmt.Errorf("installation %s requires attention: %w", owner.executable, probeErr))
 		}
-		if verbose {
-			cliPath, _ := os.Readlink("/proc/self/exe")
-			fmt.Fprintf(lifecycleOut, "Warning: systemd service %s uses %s; CLI image %s is a different installation. Using the responding daemon; its version differs or cannot be verified.\n", owner.unit, owner.executable, cliPath)
-		}
 		return nil
 	}
 	release, err := daemon.RuntimeStore().AcquireStartLock(ctx)
@@ -73,14 +76,14 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 		return fail(err)
 	}
 	defer release()
-	current, err := getAnyRunningDaemonForStart(ctx)
-	if errors.Is(err, os.ErrNotExist) {
-		current, err = info, nil
-	}
+	current, err := findDaemonForStart(ctx)
 	if err != nil {
 		return fail(fmt.Errorf("rediscover daemon: %w", err))
 	}
-	selected, err := findDaemonService(ctx, current.PID)
+	if current == nil {
+		current = info
+	}
+	selected, err := owner.manager.lookup(ctx, current.PID)
 	if err != nil {
 		return err
 	}
@@ -104,25 +107,19 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 	// Reviews may take longer than startup. Give the replacement a fresh budget.
 	readyCtx, readyCancel := context.WithTimeout(context.Background(), daemonStartTimeout)
 	defer readyCancel()
-	if err := runDaemonService(readyCtx, owner.unit); err != nil {
+	if err := owner.manager.start(readyCtx, owner.unit); err != nil {
 		return fail(err)
 	}
-	_, err = backoff.Retry(readyCtx, func() (bool, error) {
-		replacement, err := getAnyRunningDaemonForStart(readyCtx)
-		if err != nil {
-			return false, err
-		}
-		service, err := findDaemonService(readyCtx, replacement.PID)
-		if err != nil {
-			return false, err
-		}
-		if service == nil || service.unit != owner.unit {
-			return false, fmt.Errorf("replacement is outside service %s", owner.unit)
-		}
-		return true, nil
-	}, backoff.WithBackOff(backoff.NewConstantBackOff(50*time.Millisecond)), backoff.WithMaxElapsedTime(0))
+	replacement, err := getAnyRunningDaemonForStart(readyCtx)
 	if err != nil {
-		return fail(backoff.AsRetryError(err).LastErr)
+		return fail(fmt.Errorf("replacement readiness: %w", err))
+	}
+	service, err := owner.manager.lookup(readyCtx, replacement.PID)
+	if err != nil {
+		return fail(err)
+	}
+	if service == nil || service.unit != owner.unit || service.mainPID != replacement.PID {
+		return fail(fmt.Errorf("replacement is outside service %s", owner.unit))
 	}
 	return nil
 }

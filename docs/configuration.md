@@ -1773,12 +1773,21 @@ new binary. The replacement is ready when it responds and its runtime PID
 matches the service's `MainPID`, even if the selected version changes again.
 
 A service from a separate installation keeps running. If it responds, the CLI
-uses it and, with `--verbose`, warns on stderr that its version differs or
-cannot be verified. If it doesn't respond, the command reports which service
-installation needs attention. An unavailable user manager, uncertain ownership,
-unreadable executable, or failed service start produces an error. Recovery keeps
-service ownership and waits for systemd readiness before releasing concurrent
-starts.
+uses it. If it doesn't respond, the command reports which service installation
+needs attention. An unavailable user manager, uncertain ownership, unreadable
+executable, or failed service start produces an error. Recovery keeps service
+ownership and waits for systemd readiness before releasing concurrent starts.
+Concurrent starts wait through the drain and fail if their own two-minute
+startup budget expires.
+
+Automatic recovery supports direct user services with `Type=notify`. If a
+wrapper keeps the daemon as a child, the CLI treats the wrapper as another
+installation and uses the daemon only while it responds. System services,
+another user's services, and unrelated service ancestors use ordinary recovery.
+The file comparison accepts the running CLI image or its cleaned executable
+path, including an atomic replacement at that path while the command runs.
+Explicit `daemon restart` and the restart after `roborev update` are separate
+workflows that still use detached startup.
 
 For on-demand startup via socket activation, enable the socket unit instead. The
 daemon starts automatically when a client connects and uses `Type=notify` to

@@ -370,12 +370,12 @@ func startDaemon() error {
 	manager := kitdaemon.Manager{
 		Store: daemon.RuntimeStore(),
 		FindFunc: func(ctx context.Context) (kitdaemon.RuntimeRecord, kitdaemon.PingInfo, bool, error) {
-			info, err := getAnyRunningDaemonForStart(ctx)
-			if errors.Is(err, os.ErrNotExist) {
-				return kitdaemon.RuntimeRecord{}, kitdaemon.PingInfo{}, false, nil
-			}
+			info, err := findDaemonForStart(ctx)
 			if err != nil {
 				return kitdaemon.RuntimeRecord{}, kitdaemon.PingInfo{}, false, err
+			}
+			if info == nil {
+				return kitdaemon.RuntimeRecord{}, kitdaemon.PingInfo{}, false, nil
 			}
 			return kitdaemon.RuntimeRecord{
 				PID: info.PID, Network: info.Network, Address: info.Address,
@@ -464,6 +464,14 @@ func daemonStartupLogSummary(path string, offset int64) string {
 		summary += "\nLatest startup message: " + last[strings.LastIndexByte(last, '\n')+1:]
 	}
 	return summary
+}
+
+func findDaemonForStart(ctx context.Context) (*daemon.RuntimeInfo, error) {
+	info, err := getAnyRunningDaemonForStart(ctx)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	return info, err
 }
 
 func discoverDaemonForStart(ctx context.Context) (bool, error) {

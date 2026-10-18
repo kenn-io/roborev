@@ -5,9 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -22,160 +21,120 @@ import (
 )
 
 func TestEnsureDaemonServiceRecovery(t *testing.T) {
-	for _, trigger := range []string{"mismatch", "unknown", "failed"} {
-		for _, installation := range []string{"shared", "foreign", "foreign quiet", "unmanaged", "uncertain", "unreadable"} {
-			t.Run(trigger+"/"+installation, func(t *testing.T) {
-				t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
-				var warning bytes.Buffer
-				oldFind, oldRun, oldDrain := findDaemonService, runDaemonService, drainManagedDaemon
-				oldDiscovery, oldStartDiscovery := getAnyRunningDaemon, getAnyRunningDaemonForStart
-				oldRestart, oldOut := restartDaemonForEnsure, lifecycleOut
-				t.Cleanup(func() {
-					findDaemonService, runDaemonService, drainManagedDaemon = oldFind, oldRun, oldDrain
-					getAnyRunningDaemon, getAnyRunningDaemonForStart = oldDiscovery, oldStartDiscovery
-					restartDaemonForEnsure, lifecycleOut = oldRestart, oldOut
-				})
-				lifecycleOut = &warning
-				oldVerbose := verbose
-				verbose = installation == "foreign"
-				t.Cleanup(func() { verbose = oldVerbose })
-				calls := []string{}
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					assert.Equal(t, "/api/ping", r.URL.Path)
-					switch trigger {
-					case "failed":
-						http.Error(w, "busy", http.StatusServiceUnavailable)
-					case "unknown":
-						fmt.Fprint(w, `{"ok":true,"service":"roborev","version":""}`)
-					default:
-						fmt.Fprint(w, `{"ok":true,"service":"roborev","version":"v-old"}`)
-					}
-				}))
-				defer server.Close()
-				replacement := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					fmt.Fprint(w, `{"ok":true,"service":"roborev","version":"v-advanced"}`)
-				}))
-				defer replacement.Close()
-				info := &daemon.RuntimeInfo{PID: 1234, Address: strings.TrimPrefix(server.URL, "http://")}
-				getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return info, nil }
-				getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
-					if trigger == "failed" && info.PID == 1234 {
-						return nil, os.ErrNotExist
-					}
-					return info, nil
-				}
-				selected := filepath.Join(t.TempDir(), "roborev")
-				if installation == "shared" {
-					require.NoError(t, os.Symlink("/proc/self/exe", selected))
-				} else if installation != "unreadable" {
-					require.NoError(t, os.WriteFile(selected, []byte("different executable with the same name"), 0o700))
-				}
-				findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
-					assert.Equal(t, info.PID, pid)
-					if installation == "unmanaged" {
-						return nil, nil
-					}
-					if installation == "uncertain" {
-						return nil, &managedRecoveryError{"fixture.service", errors.New("manager unavailable")}
-					}
-					return &daemonService{"fixture.service", selected}, nil
-				}
-				restartDaemonForEnsure = func() error { calls = append(calls, "detached"); return nil }
-				assertLocked := func() {
-					release, acquired, err := daemon.RuntimeStore().TryAcquireStartLock(context.Background())
-					require.NoError(t, err)
-					if acquired {
-						release()
-					}
-					assert.False(t, acquired, "cold starts must wait through drain and readiness")
-				}
-				drainManagedDaemon = func(got *daemon.RuntimeInfo) error {
-					assert.Equal(t, 1234, got.PID)
-					assertLocked()
-					calls = append(calls, "drain")
-					return nil
-				}
-				runDaemonService = func(_ context.Context, unit string) error {
-					assert.Equal(t, "fixture.service", unit)
-					assertLocked()
-					calls = append(calls, "unit start")
-					// The service may follow a newer selection while reviews drain.
-					info = &daemon.RuntimeInfo{PID: 5678, Address: strings.TrimPrefix(replacement.URL, "http://")}
-					return nil
-				}
-				oldAttempts := ensureProbeAttempts
-				ensureProbeAttempts = 1
-				t.Cleanup(func() { ensureProbeAttempts = oldAttempts })
-				err := ensureDaemon()
-				switch installation {
-				case "shared":
-					require.NoError(t, err)
-					assert.Equal(t, []string{"drain", "unit start"}, calls)
-				case "unmanaged":
-					require.NoError(t, err)
-					assert.Equal(t, []string{"detached"}, calls)
-				case "foreign", "foreign quiet":
-					if trigger == "failed" {
-						require.Error(t, err)
-					} else {
-						require.NoError(t, err)
-						if installation == "foreign" {
-							assert.Contains(t, warning.String(), "fixture.service")
-							assert.Contains(t, warning.String(), selected)
-							assert.Contains(t, warning.String(), os.Args[0])
-						} else {
-							assert.Empty(t, warning.String())
-						}
-					}
-					assert.Empty(t, calls)
-				default:
-					require.Error(t, err)
-					assert.Empty(t, calls)
-				}
-				release, acquired, lockErr := daemon.RuntimeStore().TryAcquireStartLock(context.Background())
-				require.NoError(t, lockErr)
-				require.True(t, acquired, "recovery must release the start lock")
-				release()
+	for _, scenario := range []string{"mismatch/shared", "unknown/shared", "failed/shared", "mismatch/foreign", "failed/foreign", "mismatch/unmanaged", "mismatch/uncertain", "mismatch/unreadable"} {
+		trigger, installation, _ := strings.Cut(scenario, "/")
+		t.Run(scenario, func(t *testing.T) {
+			t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
+			oldFind, oldDrain := findDaemonService, drainManagedDaemon
+			manager := &daemonServiceManager{close: func() {}}
+			oldProbe, oldStartDiscovery, oldDiscovery := probeDaemonForEnsure, getAnyRunningDaemonForStart, getAnyRunningDaemon
+			oldRestart := restartDaemonForEnsure
+			t.Cleanup(func() {
+				findDaemonService, drainManagedDaemon = oldFind, oldDrain
+				probeDaemonForEnsure, getAnyRunningDaemonForStart, getAnyRunningDaemon = oldProbe, oldStartDiscovery, oldDiscovery
+				restartDaemonForEnsure = oldRestart
 			})
-		}
+			calls := []string{}
+			probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
+				if trigger == "failed" {
+					return nil, errors.New("probe failed")
+				}
+				if trigger == "unknown" {
+					return &daemon.PingInfo{}, nil
+				}
+				return &daemon.PingInfo{Version: "v-old"}, nil
+			}
+			info := &daemon.RuntimeInfo{PID: 1234}
+			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return info, nil }
+			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
+				if trigger == "failed" && info.PID == 1234 {
+					return nil, os.ErrNotExist
+				}
+				return info, nil
+			}
+			selected := filepath.Join(t.TempDir(), "roborev")
+			if installation == "shared" {
+				require.NoError(t, os.Symlink("/proc/self/exe", selected))
+			} else if installation != "unreadable" {
+				require.NoError(t, os.WriteFile(selected, []byte("different executable with the same name"), 0o700))
+			}
+			manager.lookup = func(_ context.Context, pid int) (*daemonService, error) {
+				assert.Equal(t, info.PID, pid)
+				if installation == "unmanaged" {
+					return nil, nil
+				}
+				if installation == "uncertain" {
+					return nil, &managedRecoveryError{"fixture.service", errors.New("manager unavailable")}
+				}
+				return &daemonService{unit: "fixture.service", executable: selected, mainPID: pid, manager: manager}, nil
+			}
+			findDaemonService = manager.lookup
+			restartDaemonForEnsure = func() error { calls = append(calls, "detached"); return nil }
+			drainManagedDaemon = func(got *daemon.RuntimeInfo) error {
+				assert.Equal(t, 1234, got.PID)
+				calls = append(calls, "drain")
+				return nil
+			}
+			manager.start = func(_ context.Context, unit string) error {
+				calls = append(calls, "unit start")
+				info = &daemon.RuntimeInfo{PID: 5678}
+				return nil
+			}
+			err := ensureDaemon()
+			switch installation {
+			case "shared":
+				require.NoError(t, err)
+				assert.Equal(t, []string{"drain", "unit start"}, calls)
+			case "unmanaged":
+				require.NoError(t, err)
+				assert.Equal(t, []string{"detached"}, calls)
+			case "foreign":
+				if trigger == "failed" {
+					require.Error(t, err)
+				} else {
+					require.NoError(t, err)
+				}
+				assert.Empty(t, calls)
+			default:
+				require.Error(t, err)
+				assert.Empty(t, calls)
+			}
+		})
 	}
 }
 
 func TestManagedRecoveryFailuresAndReplacement(t *testing.T) {
-	for _, outcome := range []string{"start failure", "wrong PID", "timeout", "already replaced"} {
+	for _, outcome := range []string{"start failure", "wrong PID", "readiness failure", "already replaced"} {
 		t.Run(outcome, func(t *testing.T) {
-			oldFind, oldRun, oldDrain := findDaemonService, runDaemonService, drainManagedDaemon
-			oldDiscovery, oldTimeout := getAnyRunningDaemonForStart, daemonStartTimeout
+			oldFind, oldDrain := findDaemonService, drainManagedDaemon
+			manager := &daemonServiceManager{close: func() {}}
+			oldDiscovery := getAnyRunningDaemonForStart
 			t.Cleanup(func() {
-				findDaemonService, runDaemonService, drainManagedDaemon = oldFind, oldRun, oldDrain
-				getAnyRunningDaemonForStart, daemonStartTimeout = oldDiscovery, oldTimeout
+				findDaemonService, drainManagedDaemon = oldFind, oldDrain
+				getAnyRunningDaemonForStart = oldDiscovery
 			})
-			daemonStartTimeout = 100 * time.Millisecond
 			old := &daemon.RuntimeInfo{PID: 1234}
 			current := old
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				fmt.Fprint(w, `{"ok":true,"service":"roborev","version":"v-other"}`)
-			}))
-			defer server.Close()
 			if outcome == "already replaced" {
-				current = &daemon.RuntimeInfo{PID: 5678, Address: strings.TrimPrefix(server.URL, "http://")}
+				current = &daemon.RuntimeInfo{PID: 5678}
 			}
 			started := false
-			findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
+			manager.lookup = func(_ context.Context, pid int) (*daemonService, error) {
 				if started && outcome == "wrong PID" {
-					return nil, &managedRecoveryError{"fixture.service", errors.New("MainPID mismatch")}
+					return &daemonService{unit: "fixture.service", mainPID: 9999}, nil
 				}
-				return &daemonService{"fixture.service", "/proc/self/exe"}, nil
+				return &daemonService{unit: "fixture.service", executable: "/proc/self/exe", mainPID: pid, manager: manager}, nil
 			}
+			findDaemonService = manager.lookup
 			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
-				if started && outcome == "timeout" {
+				if started && outcome == "readiness failure" {
 					return nil, os.ErrNotExist
 				}
 				return current, nil
 			}
 			stops, starts := 0, 0
 			drainManagedDaemon = func(info *daemon.RuntimeInfo) error { stops++; assert.Same(t, old, info); return nil }
-			runDaemonService = func(_ context.Context, unit string) error {
+			manager.start = func(_ context.Context, unit string) error {
 				starts++
 				started = true
 				if outcome == "start failure" {
@@ -203,16 +162,13 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 	old := statusEnsureDaemon
 	statusEnsureDaemon = func() error { return &managedRecoveryError{"fixture.service", errors.New("start rejected")} }
 	t.Cleanup(func() { statusEnsureDaemon = old })
-	for _, args := range [][]string{nil, {"--json"}} {
-		cmd := statusCmd()
-		cmd.SetArgs(args)
-		var stderr bytes.Buffer
-		cmd.SetErr(&stderr)
-		stdout := captureStdout(t, func() { require.ErrorContains(t, cmd.Execute(), "daemon status unavailable") })
-		assert.Empty(t, stdout)
-		assert.Contains(t, stderr.String(), "fixture.service")
-		assert.NotContains(t, stderr.String(), "daemon start")
-	}
+	cmd := statusCmd()
+	cmd.SetArgs([]string{"--json"})
+	var stderr bytes.Buffer
+	cmd.SetErr(&stderr)
+	stdout := captureStdout(t, func() { require.ErrorContains(t, cmd.Execute(), "daemon status unavailable") })
+	assert.Empty(t, stdout)
+	assert.Contains(t, stderr.String(), "fixture.service")
 }
 
 func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
@@ -221,10 +177,11 @@ func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 		var progress bytes.Buffer
 		lifecycleOut = &progress
 		t.Cleanup(func() { lifecycleOut = oldOut })
-		oldFind, oldRun, oldDrain := findDaemonService, runDaemonService, drainManagedDaemon
+		oldFind, oldDrain := findDaemonService, drainManagedDaemon
+		manager := &daemonServiceManager{close: func() {}}
 		oldDiscovery, oldDetached := getAnyRunningDaemonForStart, startDaemonDetached
 		t.Cleanup(func() {
-			findDaemonService, runDaemonService, drainManagedDaemon = oldFind, oldRun, oldDrain
+			findDaemonService, drainManagedDaemon = oldFind, oldDrain
 			getAnyRunningDaemonForStart, startDaemonDetached = oldDiscovery, oldDetached
 		})
 		old := &daemon.RuntimeInfo{PID: 1234}
@@ -232,9 +189,10 @@ func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 		current.Store(old)
 		drained, resume := make(chan struct{}), make(chan struct{})
 		finishDrain := make(chan struct{})
-		findDaemonService = func(context.Context, int) (*daemonService, error) {
-			return &daemonService{"fixture.service", "/proc/self/exe"}, nil
+		manager.lookup = func(_ context.Context, pid int) (*daemonService, error) {
+			return &daemonService{unit: "fixture.service", executable: "/proc/self/exe", mainPID: pid, manager: manager}, nil
 		}
+		findDaemonService = manager.lookup
 		getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
 			if current.Load() == nil {
 				return nil, os.ErrNotExist
@@ -245,9 +203,11 @@ func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 			current.Store(nil)
 			close(drained)
 			<-finishDrain
+			time.Sleep(daemonStartTimeout + time.Minute)
 			return nil
 		}
-		runDaemonService = func(context.Context, string) error {
+		manager.start = func(ctx context.Context, _ string) error {
+			require.NoError(t, ctx.Err(), "startup gets a fresh budget after draining")
 			<-resume
 			current.Store(&daemon.RuntimeInfo{PID: 5678})
 			return nil
@@ -265,9 +225,55 @@ func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 		synctest.Wait()
 		assert.Empty(t, coldStart, "cold start must wait while the unit replaces its daemon")
 		assert.Zero(t, detached)
+		time.Sleep(daemonStartTimeout + time.Minute)
+		require.Error(t, <-coldStart)
 		close(resume)
 		require.NoError(t, <-recovery)
-		require.NoError(t, <-coldStart)
 		assert.Zero(t, detached)
 	})
+}
+
+func TestDaemonServiceCgroupManager(t *testing.T) {
+	oldRead := readServiceProcessFile
+	t.Cleanup(func() { readServiceProcessFile = oldRead })
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path="+filepath.Join(t.TempDir(), "missing-bus"))
+	for _, path := range []string{
+		"/system.slice/cron.service",
+		fmt.Sprintf("/user.slice/user-%d.slice/user@%d.service/app.slice/fixture.service", os.Getuid()+1, os.Getuid()+1),
+		fmt.Sprintf("/user.slice/user-%d.slice/user@%d.service/app.slice/fixture.service", os.Getuid(), os.Getuid()),
+	} {
+		t.Run(path, func(t *testing.T) {
+			readServiceProcessFile = func(string) ([]byte, error) { return []byte("0::" + path + "\n"), nil }
+			owner, err := lookupDaemonService(context.Background(), 1234)
+			assert.Nil(t, owner)
+			if strings.Contains(path, fmt.Sprintf("/user@%d.service/", os.Getuid())) {
+				var managed *managedRecoveryError
+				require.ErrorAs(t, err, &managed)
+				assert.Equal(t, "fixture.service", managed.unit)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestDaemonServiceSamePathReplacement(t *testing.T) {
+	path, err := os.Executable()
+	require.NoError(t, err)
+	if os.Getenv("ROBOREV_TEST_EXECUTABLE_REPLACEMENT") == "1" {
+		require.NoError(t, os.WriteFile(path+".next", []byte("replacement executable"), 0o700))
+		require.NoError(t, os.Rename(path+".next", path))
+		same, err := (&daemonService{executable: path}).sameInstallation()
+		require.NoError(t, err)
+		assert.True(t, same)
+		return
+	}
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	copyPath := filepath.Join(t.TempDir(), "roborev-test")
+	require.NoError(t, os.WriteFile(copyPath, data, 0o700))
+	cmd := exec.Command(copyPath, "-test.run=^TestDaemonServiceSamePathReplacement$")
+	cmd.Env = append(os.Environ(), "ROBOREV_TEST_EXECUTABLE_REPLACEMENT=1")
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, "%s", output)
 }

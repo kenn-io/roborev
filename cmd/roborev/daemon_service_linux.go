@@ -4,21 +4,27 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	systemdbus "github.com/coreos/go-systemd/v22/dbus"
 	"github.com/godbus/dbus/v5"
 )
 
+var readServiceProcessFile = os.ReadFile
+
+type userServiceConnection struct{ *systemdbus.Conn }
+
 func serviceCgroup(pid int) string {
-	data, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cgroup", pid))
+	data, _ := readServiceProcessFile(fmt.Sprintf("/proc/%d/cgroup", pid))
 	for line := range strings.SplitSeq(string(data), "\n") {
 		fields := strings.SplitN(line, ":", 3)
 		if len(fields) != 3 {
 			continue
 		}
-		for part := range strings.SplitSeq(fields[2], "/") {
-			if strings.HasSuffix(part, ".service") && !strings.HasPrefix(part, "user@") {
+		_, belowUser, _ := strings.Cut(fields[2], fmt.Sprintf("/user@%d.service/", os.Getuid()))
+		for part := range strings.SplitSeq(belowUser, "/") {
+			if strings.HasSuffix(part, ".service") {
 				return part
 			}
 		}
@@ -31,19 +37,24 @@ func lookupDaemonService(ctx context.Context, pid int) (*daemonService, error) {
 	if unit == "" {
 		return nil, nil
 	}
-	fail := func(err error) (*daemonService, error) { return nil, &managedRecoveryError{unit, err} }
 	conn, err := systemdbus.NewUserConnectionContext(ctx)
 	if err != nil {
-		return fail(err)
+		return nil, &managedRecoveryError{unit, err}
 	}
-	defer conn.Close()
-	path, err := conn.GetUnitByPID(ctx, uint32(pid))
-	if err != nil {
-		return fail(err)
+	manager := userServiceConnection{conn}
+	owner, err := manager.lookup(ctx, pid)
+	if owner == nil || err != nil {
+		conn.Close()
 	}
-	if path != dbus.ObjectPath("/org/freedesktop/systemd1/unit/"+systemdbus.PathBusEscape(unit)) {
-		return fail(fmt.Errorf("inconsistent service ownership"))
+	return owner, err
+}
+
+func (conn userServiceConnection) lookup(ctx context.Context, pid int) (*daemonService, error) {
+	unit := serviceCgroup(pid)
+	if unit == "" {
+		return nil, nil
 	}
+	fail := func(err error) (*daemonService, error) { return nil, &managedRecoveryError{unit, err} }
 	service, err := conn.GetUnitTypePropertiesContext(ctx, unit, "Service")
 	if err != nil {
 		return fail(err)
@@ -53,8 +64,24 @@ func lookupDaemonService(ctx context.Context, pid int) (*daemonService, error) {
 		return fail(fmt.Errorf("service MainPID unavailable"))
 	}
 	if mainPID != uint32(pid) {
-		// A detached daemon can inherit the launching service's cgroup.
-		return nil, nil
+		parent := pid
+		for parent > 1 && uint32(parent) != mainPID {
+			data, err := readServiceProcessFile(fmt.Sprintf("/proc/%d/stat", parent))
+			if err != nil {
+				return fail(fmt.Errorf("read daemon parent: %w", err))
+			}
+			fields := strings.Fields(string(data)[strings.LastIndexByte(string(data), ')')+1:])
+			if len(fields) < 2 {
+				return fail(fmt.Errorf("daemon parent unavailable"))
+			}
+			parent, err = strconv.Atoi(fields[1])
+			if err != nil {
+				return fail(err)
+			}
+		}
+		if uint32(parent) != mainPID {
+			return nil, nil
+		}
 	}
 	// ExecStart is a(ssbttttuii), including execution timestamps and exit status.
 	var commands []struct {
@@ -68,18 +95,13 @@ func lookupDaemonService(ctx context.Context, pid int) (*daemonService, error) {
 	if err := dbus.Store([]any{service["ExecStart"]}, &commands); err != nil {
 		return fail(fmt.Errorf("read ExecStart: %w", err))
 	}
-	if len(commands) != 1 || len(commands[0].Args) < 3 || commands[0].Args[1] != "daemon" || commands[0].Args[2] != "run" {
-		return fail(fmt.Errorf("ExecStart must directly execute roborev daemon run"))
+	if len(commands) != 1 {
+		return fail(fmt.Errorf("ExecStart must select one executable"))
 	}
-	return &daemonService{unit: unit, executable: commands[0].Path}, nil
+	return &daemonService{unit: unit, executable: commands[0].Path, mainPID: int(mainPID), manager: &daemonServiceManager{conn.lookup, conn.start, conn.Close}}, nil
 }
 
-func startDaemonService(ctx context.Context, unit string) error {
-	conn, err := systemdbus.NewUserConnectionContext(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
+func (conn userServiceConnection) start(ctx context.Context, unit string) error {
 	result := make(chan string, 1)
 	if _, err := conn.StartUnitContext(ctx, unit, "replace", result); err != nil {
 		return err
