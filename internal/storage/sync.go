@@ -90,7 +90,17 @@ func (db *DB) ClaimSetupFinished(ctx context.Context) (SetupFinishedClaim, error
 	if marker != "" {
 		return SetupFinishedExisting, nil
 	}
-	result, err := conn.ExecContext(ctx, `
+	// Refresh the busy limit after the marker read, then let SQLite report
+	// the autocommit result without a cancellation racing SQLITE_DONE.
+	restoreWrite, err := limitSQLiteBusyTimeout(ctx, conn)
+	if err != nil {
+		return SetupFinishedIneligible, err
+	}
+	defer restoreWrite()
+	if err := ctx.Err(); err != nil {
+		return SetupFinishedIneligible, err
+	}
+	result, err := conn.ExecContext(context.WithoutCancel(ctx), `
 		INSERT INTO sync_state (key, value)
 		SELECT ?, '1'
 		WHERE EXISTS (
@@ -111,7 +121,7 @@ func (db *DB) ClaimSetupFinished(ctx context.Context) (SetupFinishedClaim, error
 	if rows == 1 {
 		return SetupFinishedNewClaim, nil
 	}
-	marker, err = getSyncState(ctx, conn, SyncStateSetupFinished)
+	marker, err = getSyncState(context.WithoutCancel(ctx), conn, SyncStateSetupFinished)
 	if marker != "" {
 		return SetupFinishedExisting, err
 	}

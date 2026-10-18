@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/cenkalti/backoff/v7"
@@ -29,7 +28,7 @@ type SyncWorker struct {
 	skipInitialSync bool // when true, skip the immediate doSync on connect
 	afterPullWrite  func()
 	afterPull       func()
-	pullWrites      atomic.Uint64
+	pullWrote       bool // protected by syncMu
 	afterReviewPush func([]string)
 }
 
@@ -43,7 +42,7 @@ func (w *SyncWorker) SetAfterPullWrite(fn func()) {
 }
 
 func (w *SyncWorker) notifyAfterPullWrite() {
-	w.pullWrites.Add(1)
+	w.pullWrote = true
 	w.mu.Lock()
 	fn := w.afterPullWrite
 	w.mu.Unlock()
@@ -61,8 +60,8 @@ func (w *SyncWorker) SetAfterPull(fn func()) {
 	w.mu.Unlock()
 }
 
-func (w *SyncWorker) finishSync(pullWritesBefore uint64) {
-	wrote := w.pullWrites.Load() != pullWritesBefore
+func (w *SyncWorker) finishSync() {
+	wrote := w.pullWrote
 	w.syncMu.Unlock()
 	w.mu.Lock()
 	fn := w.afterPull
@@ -336,7 +335,8 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (*S
 
 	// Serialize with other sync operations
 	w.syncMu.Lock()
-	defer w.finishSync(w.pullWrites.Load())
+	w.pullWrote = false
+	defer w.finishSync()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -625,7 +625,8 @@ func (w *SyncWorker) syncLoop(stopCh <-chan struct{}, interval time.Duration, do
 // Loops until all pending items are pushed.
 func (w *SyncWorker) doSync() error {
 	w.syncMu.Lock()
-	defer w.finishSync(w.pullWrites.Load())
+	w.pullWrote = false
+	defer w.finishSync()
 
 	w.mu.Lock()
 	pool := w.pgPool

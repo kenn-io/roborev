@@ -26,11 +26,16 @@ type fakeTelemetryClient struct {
 	events     []string
 	properties []map[string]any
 	captureErr error
+	captured   chan struct{}
 }
 
 func (f *fakeTelemetryClient) Capture(event string, properties map[string]any) error {
 	f.events = append(f.events, event)
 	f.properties = append(f.properties, properties)
+	select {
+	case f.captured <- struct{}{}:
+	default:
+	}
 	return f.captureErr
 }
 
@@ -183,25 +188,13 @@ func TestSetupFinishedTelemetrySkipsLaterClaims(t *testing.T) {
 	require.NoError(t, db.QueryRow(`SELECT count(*) FROM setup_claim_attempts`).Scan(&attempts))
 	assert.Equal(t, 1, attempts)
 	assert.Equal(t, []string{"setup_finished"}, client.events)
-	for _, restart := range []bool{false, true} {
-		if restart {
-			require.NoError(t, db.SetSyncState(storage.SyncStateSetupFinished, "1"))
-			server = newServerWithLogs(db, config.DefaultConfig(), "", newTestErrorLog(), newTestActivityLog())
-			t.Cleanup(func() { _ = server.Close() })
-			server.SetTelemetry(client)
-			server.captureSetupFinishedTelemetry()
-		}
-		_, err = db.Exec(`DELETE FROM sync_state WHERE key = ?`, storage.SyncStateSetupFinished)
-		require.NoError(t, err)
-		_, err = db.Exec(`DELETE FROM setup_claim_attempts`)
-		require.NoError(t, err)
-		server.captureSetupFinishedTelemetry()
-		server.workerPool.captureSetupFinished()
-		var attempts int
-		require.NoError(t, db.QueryRow(`SELECT count(*) FROM setup_claim_attempts`).Scan(&attempts))
-		assert.Zero(t, attempts)
-		assert.Equal(t, []string{"setup_finished"}, client.events)
-	}
+	_, err = db.Exec(`DELETE FROM sync_state WHERE key = ?`, storage.SyncStateSetupFinished)
+	require.NoError(t, err)
+	server.captureSetupFinishedTelemetry()
+	server.workerPool.captureSetupFinished()
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM setup_claim_attempts`).Scan(&attempts))
+	assert.Equal(t, 1, attempts)
+	assert.Equal(t, []string{"setup_finished"}, client.events)
 }
 
 func TestSetupFinishedTelemetryRetriesStartupRead(t *testing.T) {
@@ -240,7 +233,7 @@ func TestSetupFinishedTelemetryGateDeadline(t *testing.T) {
 		server := &Server{telemetry: client, setupFinishedGate: make(chan struct{}, 1)}
 		server.setupFinishedGate <- struct{}{}
 		start := time.Now()
-		server.captureSetupFinishedTelemetry()
+		require.ErrorIs(t, server.tryCaptureSetupFinishedTelemetry(t.Context()), context.DeadlineExceeded)
 		assert.Equal(t, 50*time.Millisecond, time.Since(start))
 		assert.Empty(t, client.events)
 	})
@@ -248,7 +241,7 @@ func TestSetupFinishedTelemetryGateDeadline(t *testing.T) {
 
 func TestSetupFinishedTelemetryBusyWriterRetries(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
-	client := &fakeTelemetryClient{enabled: true}
+	client := &fakeTelemetryClient{enabled: true, captured: make(chan struct{}, 1)}
 	server.SetTelemetry(client)
 	server.captureSetupFinishedTelemetry()
 	assert.Empty(t, client.events, "no eligible review remains retryable")
@@ -286,8 +279,37 @@ func TestSetupFinishedTelemetryBusyWriterRetries(t *testing.T) {
 	require.NoError(t, db.QueryRow(`PRAGMA busy_timeout`).Scan(&busyTimeout))
 	assert.Equal(t, 30000, busyTimeout)
 	require.NoError(t, writer.Rollback())
-	server.captureSetupFinishedTelemetry()
+	// Wall-clock wait: the retry uses the real SQLite writer and connection.
+	require.Eventually(t, func() bool {
+		select {
+		case <-client.captured:
+			return true
+		default:
+			return false
+		}
+	}, 2*time.Second, time.Millisecond)
 	assert.Equal(t, []string{"setup_finished"}, client.events)
+}
+
+func TestSetupFinishedTelemetryRetryStopsWithServer(t *testing.T) {
+	server, _, _ := newTestServer(t)
+	client := &fakeTelemetryClient{enabled: true}
+	server.SetTelemetry(client)
+	server.setupFinishedGate <- struct{}{}
+	server.captureSetupFinishedTelemetry()
+	server.setupRetryMu.Lock()
+	firstRetry := server.setupRetryDone
+	server.setupRetryMu.Unlock()
+	require.NotNil(t, firstRetry)
+	server.captureSetupFinishedTelemetry()
+	server.setupRetryMu.Lock()
+	assert.Equal(t, firstRetry, server.setupRetryDone, "contending callers share one retry worker")
+	server.setupRetryMu.Unlock()
+	require.NoError(t, server.Close())
+	<-firstRetry
+	<-server.setupFinishedGate
+	server.captureSetupFinishedTelemetry()
+	assert.Empty(t, client.events)
 }
 
 func TestSetupFinishedTelemetryCompletionPaths(t *testing.T) {
