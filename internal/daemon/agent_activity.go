@@ -35,7 +35,7 @@ func (s *Server) recordAgentCall(ctx context.Context) {
 	case 11:
 		event, bucket = telemetry.EventAgentCallCount, "11-100"
 	case 101:
-		event, bucket = telemetry.EventAgentCallCount, "over-100"
+		event, bucket = telemetry.EventAgentCallCount, telemetry.CountOver100
 	default:
 		return
 	}

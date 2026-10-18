@@ -137,7 +137,7 @@ func allowedEventOptions() []posthog.Option {
 		posthog.WithAllowedEvent(EventAgentActive,
 			posthog.AllowProperty(PropertyCallCountBucket, posthog.AllowStringValues("1-10"))),
 		posthog.WithAllowedEvent(EventAgentCallCount,
-			posthog.AllowProperty(PropertyCallCountBucket, posthog.AllowStringValues("11-100", "over-100"))),
+			posthog.AllowProperty(PropertyCallCountBucket, posthog.AllowStringValues("11-100", CountOver100))),
 		posthog.WithAllowedEvent(EventDaemonStarted, daemonProperties...),
 		posthog.WithAllowedEvent(EventDaemonActive, daemonProperties...),
 		posthog.WithAllowedEvent(EventScreenViewed,
