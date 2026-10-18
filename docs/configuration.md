@@ -1814,9 +1814,11 @@ systemctl --user enable --now roborev
 
 roborev sends limited anonymous telemetry when the daemon starts and once every
 24 hours while it remains running. Events are `daemon_started` and
-`daemon_active`, with repo count, review count, whether sync is enabled, whether
-CI is enabled, whether auto design review is enabled, roborev version, OS,
-architecture, and an anonymous install ID stored in the local database.
+`daemon_active`, with `repo_count` and `review_count` as buckets: `0`, `1`,
+`2-5`, `6-20`, `21-100`, or `over-100`. These events also include whether sync
+is enabled, whether CI is enabled, whether auto design review is enabled,
+roborev version, OS, architecture, and an anonymous install ID stored in the
+local database.
 
 Closing a browser tab, leaving it hidden for 30 minutes, or exiting the TUI
 reports one `session_ended` with `surface` and `duration_bucket`: `under_1m`,

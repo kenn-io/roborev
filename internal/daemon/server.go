@@ -930,8 +930,8 @@ func (s *Server) telemetryProperties(cfg *config.Config) map[string]any {
 	}
 
 	props := map[string]any{
-		"repo_count":   repoCount,
-		"review_count": reviewCount,
+		"repo_count":   telemetry.CountBucket(repoCount),
+		"review_count": telemetry.CountBucket(reviewCount),
 	}
 	if cfg != nil {
 		props["sync_enabled"] = cfg.Sync.Enabled

@@ -473,8 +473,9 @@ from the operator's shell).
 
 roborev sends limited anonymous telemetry to PostHog when the daemon starts
 and once every 24 hours while the daemon remains running: `daemon_started`
-and `daemon_active` with repo count, review count, sync enabled, CI
-enabled, and auto-design enabled, plus `application=roborev`, version, OS/arch,
+and `daemon_active` with `repo_count` and `review_count` as buckets: `0`, `1`,
+`2-5`, `6-20`, `21-100`, or `over-100`. These events also include sync enabled,
+CI enabled, and auto-design enabled, plus `application=roborev`, version, OS/arch,
 `$process_person_profile=false`, `$geoip_disable=true`, and an anonymous install
 ID. Closing a browser tab, leaving it hidden for 30 minutes, or exiting the TUI
 reports one `session_ended` with `surface` and `duration_bucket`: `under_1m`,

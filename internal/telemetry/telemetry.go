@@ -117,8 +117,8 @@ func NewReporterOrDisabled(opts Options) *Reporter {
 
 func allowedEventOptions() []posthog.Option {
 	daemonProperties := []posthog.AllowedProperty{
-		posthog.AllowProperty("repo_count", posthog.AllowNumber),
-		posthog.AllowProperty("review_count", posthog.AllowNumber),
+		posthog.AllowProperty("repo_count", posthog.AllowStringValues("0", "1", "2-5", "6-20", "21-100", "over-100")),
+		posthog.AllowProperty("review_count", posthog.AllowStringValues("0", "1", "2-5", "6-20", "21-100", "over-100")),
 		posthog.AllowProperty("sync_enabled", posthog.AllowBool),
 		posthog.AllowProperty("ci_enabled", posthog.AllowBool),
 		posthog.AllowProperty("auto_design_enabled", posthog.AllowBool),
@@ -144,6 +144,24 @@ func allowedEventOptions() []posthog.Option {
 		posthog.WithAllowedEvent(EventSessionEnded,
 			posthog.AllowProperty(PropertySurface, posthog.AllowStringValues(SurfaceWeb, SurfaceTUI)),
 			posthog.AllowProperty(PropertyDurationBucket, posthog.AllowStringValues(DurationUnder1m, Duration1To5m, Duration5To30m, DurationOver30m))),
+	}
+}
+
+// CountBucket groups totals without sending an exact count.
+func CountBucket(count int) string {
+	switch {
+	case count == 0:
+		return "0"
+	case count == 1:
+		return "1"
+	case count <= 5:
+		return "2-5"
+	case count <= 20:
+		return "6-20"
+	case count <= 100:
+		return "21-100"
+	default:
+		return "over-100"
 	}
 }
 
