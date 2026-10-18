@@ -15,7 +15,7 @@ func checkDoctorGlobalConfig(env *doctorEnv) []doctorCheck {
 	switch {
 	case env.globalErr != nil:
 		c.Status = doctorFail
-		c.Summary = "global config does not load; roborev falls back to defaults or refuses to run"
+		c.Summary = "global config is rejected; the daemon will not start or reload it"
 		c.Details = []string{env.globalPath, env.globalErr.Error()}
 		c.Fix = "fix the error, then run 'roborev config validate --global'"
 		return []doctorCheck{c}

@@ -18,16 +18,18 @@ roborev uses a layered configuration system. Settings are resolved in this order
 
 Client commands retain their configured workflow settings when an unrelated
 `[web]`, `[remote]`, `[search]`, `[budget]`, or CI installation setting is
-invalid. `roborev config get` and `roborev config list` print a warning naming
-each invalid daemon section on stderr. For example, an unavailable
+invalid. Commands that read settings print a warning naming each invalid
+daemon section on stderr once per run. Shell completion, the post-commit
+hook, and the TUI stay silent. For example, an unavailable
 `web.auth_token_file` does not prevent
 `roborev config get hook_timeout_seconds --global` from returning its value.
 Malformed TOML and values with the wrong TOML type still fail to load.
 
 Daemon startup, configuration reloads, `roborev doctor`,
-`roborev config validate --global`, and `roborev config set --global` still
-reject invalid daemon settings. A failed reload keeps the previous
-configuration.
+and `roborev config validate --global` still reject invalid daemon settings.
+A failed reload keeps the previous configuration. `roborev config set --global`
+can repair an invalid setting, but rejects a write that leaves any daemon
+section invalid and keeps the file unchanged.
 
 ## The `config` Command
 

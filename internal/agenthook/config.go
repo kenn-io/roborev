@@ -33,6 +33,7 @@ const (
 type Options struct {
 	MCP                   bool
 	ConfigPath            string
+	ConfigWarnings        []error
 	TurnThreshold         int
 	CommitThreshold       int
 	FailedReviewThreshold int
@@ -82,6 +83,7 @@ func ResolveOptionsForAgent(agent string, cli Options, changed map[string]bool) 
 		return Options{}, fmt.Errorf("load roborev config %s: %w", config.GlobalConfigPath(), err)
 	}
 	opts.FixGuidelines = cfg.FixGuidelines
+	opts.ConfigWarnings = append(opts.ConfigWarnings, cfg.DaemonConfigWarnings()...)
 	return opts, nil
 }
 
@@ -162,6 +164,7 @@ func applyConfig(opts *Options) error {
 	if err != nil {
 		return fmt.Errorf("load roborev config %s: %w", opts.ConfigPath, err)
 	}
+	opts.ConfigWarnings = append(opts.ConfigWarnings, cfg.DaemonConfigWarnings()...)
 	opts.TurnThreshold = cfg.AgentHook.TurnThreshold
 	opts.CommitThreshold = cfg.AgentHook.CommitThreshold
 	opts.FailedReviewThreshold = cfg.AgentHook.FailedReviewThreshold
@@ -179,6 +182,7 @@ func applyDroidConfig(opts *Options) error {
 	if err != nil {
 		return fmt.Errorf("load roborev config %s: %w", opts.ConfigPath, err)
 	}
+	opts.ConfigWarnings = append(opts.ConfigWarnings, cfg.DaemonConfigWarnings()...)
 	opts.TurnThreshold = cfg.DroidHook.TurnThreshold
 	opts.CommitThreshold = cfg.DroidHook.CommitThreshold
 	opts.FailedReviewThreshold = cfg.DroidHook.FailedReviewThreshold

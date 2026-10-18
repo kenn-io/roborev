@@ -1,7 +1,6 @@
 package config
 
 import (
-	"maps"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,6 +12,7 @@ import (
 func TestLoadGlobalPreservesClientSettingsWithInvalidDaemonConfig(t *testing.T) {
 	for _, tc := range []struct{ section, contents string }{
 		{"web", "[web]\nauth_token_file = 'missing-token'\n"},
+		{"web", "[web]\nauth_token_file = 'missing-token'\n[ci.github_app_installations]\nExample = 1\n"},
 		{"web", "[web]\nlisten = '0.0.0.0:7374'\n"},
 		{"search", "[search.embeddings]\nbase_url = 'https://example.test/v1'\n"},
 		{"remote", "[remote]\nenabled = true\n"},
@@ -31,15 +31,12 @@ func TestLoadGlobalPreservesClientSettingsWithInvalidDaemonConfig(t *testing.T) 
 			_, err = LoadGlobalFrom(path)
 			require.ErrorContains(t, err, "["+tc.section+"]")
 
-			if tc.section != "ci" {
-				cfg.CI.GitHubAppInstallations = map[string]int64{"Example": 1}
-			}
-			before := *cfg
-			before.CI.GitHubAppInstallations = maps.Clone(cfg.CI.GitHubAppInstallations)
 			warnings := cfg.DaemonConfigWarnings()
 			require.Len(t, warnings, 1)
 			assert.Contains(warnings[0].Error(), "["+tc.section+"]")
-			assert.Equal(before, *cfg)
+			if tc.section == "web" && len(cfg.CI.GitHubAppInstallations) > 0 {
+				assert.Equal(map[string]int64{"example": 1}, cfg.CI.GitHubAppInstallations)
+			}
 		})
 	}
 }

@@ -471,7 +471,7 @@ func loadCIGlobalConfig(root string) *config.Config {
 				"trusted (using defaults)", path)
 		return nil
 	}
-	cfg, err := config.LoadGlobal()
+	cfg, err := loadClientConfig()
 	if err != nil {
 		log.Printf(
 			"ci review: load global config: %v (using defaults)", err)

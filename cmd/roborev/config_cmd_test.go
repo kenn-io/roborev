@@ -2,10 +2,12 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/BurntSushi/toml"
@@ -910,6 +912,8 @@ func TestConfigGetWithInvalidDaemonConfig(t *testing.T) {
 		{"wrong type", "[web]\nenabled = 'yes'\n", "incompatible types"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			clientConfigWarningsOnce = sync.Once{}
+			t.Cleanup(func() { clientConfigWarningsOnce = sync.Once{} })
 			setupConfigEnv(t, "hook_timeout_seconds = 17\n"+tc.contents, "")
 			cmd := configGetCmd()
 			cmd.SetArgs([]string{"hook_timeout_seconds", "--global"})
@@ -926,9 +930,53 @@ func TestConfigGetWithInvalidDaemonConfig(t *testing.T) {
 				assert.Contains(t, stderr, "Warning: ignoring invalid daemon config [web]")
 				assert.Equal(t, 1, strings.Count(stderr, "Warning:"))
 			}
-			validate := configValidateCmd()
-			validate.SetArgs([]string{"--global"})
-			require.Error(t, validate.Execute())
+			if tc.name == "missing token" {
+				validate := configValidateCmd()
+				validate.SetArgs([]string{"--global"})
+				require.Error(t, validate.Execute())
+			}
+		})
+	}
+}
+
+func TestCheckAgentsWithInvalidDaemonConfig(t *testing.T) {
+	clientConfigWarningsOnce = sync.Once{}
+	t.Cleanup(func() { clientConfigWarningsOnce = sync.Once{} })
+	env := setupConfigEnv(t, "[web]\nauth_token_file = 'missing-token'\n", "")
+	t.Chdir(env.RepoDir)
+	_, stderr := captureStdoutStderr(t, func() {
+		for range 2 {
+			cmd := checkAgentsCmd()
+			cmd.SetArgs([]string{"--agent", "test"})
+			require.NoError(t, cmd.Execute())
+		}
+	})
+	assert.Contains(t, stderr, "Warning: ignoring invalid daemon config [web]")
+	assert.Equal(t, 1, strings.Count(stderr, "Warning:"))
+}
+
+func TestConfigSetWithInvalidDaemonConfig(t *testing.T) {
+	for _, repair := range []bool{true, false} {
+		t.Run(fmt.Sprint(repair), func(t *testing.T) {
+			contents := "hook_timeout_seconds = 17\n[web]\nauth_token_file = 'missing-token'\n"
+			env := setupConfigEnv(t, contents, "")
+			path := filepath.Join(env.DataDir, "config.toml")
+			cmd := configSetCmd()
+			if repair {
+				tokenPath := filepath.Join(env.DataDir, "token")
+				require.NoError(t, os.WriteFile(tokenPath, []byte(strings.Repeat("A", 43)), 0o600))
+				cmd.SetArgs([]string{"web.auth_token_file", tokenPath, "--global"})
+				require.NoError(t, cmd.Execute())
+				cfg, err := config.LoadGlobalFrom(path)
+				require.NoError(t, err)
+				assert.Equal(t, tokenPath, cfg.Web.AuthTokenFile)
+			} else {
+				cmd.SetArgs([]string{"hook_timeout_seconds", "20", "--global"})
+				require.ErrorContains(t, cmd.Execute(), "[web]")
+				got, err := os.ReadFile(path)
+				require.NoError(t, err)
+				assert.Equal(t, contents, string(got))
+			}
 		})
 	}
 }

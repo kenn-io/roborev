@@ -286,6 +286,8 @@ func TestResolveOptionsPreservesHookSettingsWithInvalidWebConfig(t *testing.T) {
 	for _, agent := range []string{"claude", "droid"} {
 		t.Run(agent, func(t *testing.T) {
 			clearAgentHookEnv(t)
+			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+			require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte("[remote]\nenabled = true\n"), 0o600))
 			path := writeAgentHookConfig(t, `[agent_hook]
 commit_threshold = 7
 [droid_hook]
@@ -296,6 +298,9 @@ auth_token_file = "missing-token"
 			opts, err := ResolveOptionsForAgent(agent, Options{ConfigPath: path}, map[string]bool{"config": true})
 			require.NoError(t, err)
 			assert.Equal(t, 7, opts.CommitThreshold)
+			require.Len(t, opts.ConfigWarnings, 2)
+			assert.ErrorContains(t, opts.ConfigWarnings[0], "[web]")
+			assert.ErrorContains(t, opts.ConfigWarnings[1], "[remote]")
 		})
 	}
 }

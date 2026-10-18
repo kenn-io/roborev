@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/roborev/internal/agent"
-	"go.kenn.io/roborev/internal/config"
 )
 
 func checkAgentsCmd() *cobra.Command {
@@ -34,7 +33,7 @@ Examples:
   roborev check-agents --timeout 30     # 30 second timeout per agent
   roborev check-agents --large-prompt   # Test with 33KB+ prompt (Windows limit check)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.LoadGlobal()
+			cfg, err := loadClientConfig()
 			if err != nil {
 				return fmt.Errorf("load global config: %w", err)
 			}

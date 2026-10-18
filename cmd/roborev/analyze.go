@@ -302,7 +302,7 @@ func runAnalysis(cmd *cobra.Command, typeName string, filePatterns []string, opt
 	}
 
 	// Load config and resolve max prompt size once for all analysis modes
-	cfg, _ := config.LoadGlobal()
+	cfg, _ := loadClientConfig()
 	maxPromptSize := config.ResolveMaxPromptSize(repoRoot, cfg)
 
 	ep := getDaemonEndpoint()
@@ -534,7 +534,7 @@ func enqueueAnalysisJob(ctx context.Context, ep daemon.DaemonEndpoint, repoRoot,
 	}
 
 	reviewType := analysisReviewType(label)
-	cfg, err := config.LoadGlobal()
+	cfg, err := loadClientConfig()
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
@@ -628,7 +628,7 @@ func runAnalyzeAndFix(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot str
 		cmd.Println()
 	}
 
-	cfg, _ := config.LoadGlobal()
+	cfg, _ := loadClientConfig()
 	metadata, err := config.ResolveFixCommitMetadata(repoRoot, cfg)
 	if err != nil {
 		return fmt.Errorf("resolve fix commit metadata: %w", err)
@@ -826,7 +826,7 @@ func buildCommitPromptWithMetadata(
 // runFixAgent runs an agent locally in agentic mode to apply fixes
 func runFixAgent(cmd *cobra.Command, repoPath, agentName, model, reasoning, prompt string, quiet bool) error {
 	// Load config
-	cfg, err := config.LoadGlobal()
+	cfg, err := loadClientConfig()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}

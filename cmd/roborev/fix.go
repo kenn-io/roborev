@@ -490,7 +490,7 @@ func resolveFixModel(
 
 // resolveFixAgent resolves and configures the agent for fix operations.
 func resolveFixAgent(repoPath string, opts fixOptions) (agent.Agent, error) {
-	cfg, err := config.LoadGlobal()
+	cfg, err := loadClientConfig()
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
@@ -1116,7 +1116,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	// Resolve minimum severity filter (only for review-type jobs;
 	// task/analyze jobs have free-form output without severity labels)
 	var minSev string
-	fixCfg, err := config.LoadGlobal()
+	fixCfg, err := loadClientConfig()
 	if err != nil {
 		return fmt.Errorf("load config %s: %w", config.GlobalConfigPath(), err)
 	}
@@ -1462,7 +1462,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 		return nil
 	}
 
-	cfg, err := config.LoadGlobal()
+	cfg, err := loadClientConfig()
 	if err != nil {
 		return fmt.Errorf("load config %s: %w", config.GlobalConfigPath(), err)
 	}

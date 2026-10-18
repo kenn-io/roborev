@@ -234,7 +234,8 @@ func (c CostConfig) ResolvedTimeout() time.Duration {
 // Config holds the daemon configuration
 type Config struct {
 	// project holds the remote-specific defaults selected by ForRepo.
-	project ProjectConfig
+	project    ProjectConfig
+	daemonErrs []error
 
 	Projects                   map[string]ProjectConfig        `toml:"projects"`
 	AuthKey                    string                          `toml:"auth_key" json:"-" sensitive:"true" comment:"Shared key for daemon API access: 64 lowercase hex characters from openssl rand -hex 32. Empty disables authentication. Requires daemon restart."`
@@ -1055,7 +1056,7 @@ func GlobalConfigPath() string {
 
 // LoadGlobal loads client/workflow configuration from the default path.
 // Daemon-only sections are retained without requiring this process to serve
-// them. Config inspection commands report DaemonConfigWarnings; daemon and diagnostic
+// them. Callers can report DaemonConfigWarnings; daemon and diagnostic
 // callers must use the strict LoadGlobalFrom loader.
 func LoadGlobal() (*Config, error) {
 	return LoadGlobalClientFrom(GlobalConfigPath())
@@ -1071,17 +1072,18 @@ func LoadGlobalClientFrom(path string) (*Config, error) {
 	if err := normalizeClientConfig(cfg); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
+	cfg.daemonErrs = applyDaemonSections(cfg)
 	return cfg, nil
 }
 
 // LoadGlobalFrom loads and validates global configuration for a daemon or
 // whole-file diagnostic. Unlike LoadGlobal, it validates daemon-only sections.
 func LoadGlobalFrom(path string) (*Config, error) {
-	cfg, err := parseGlobalFrom(path)
+	cfg, err := LoadGlobalClientFrom(path)
 	if err != nil {
 		return nil, err
 	}
-	if err := normalizeGlobalConfig(cfg); err != nil {
+	if err := errors.Join(cfg.daemonErrs...); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
 	return cfg, nil
@@ -1108,7 +1110,8 @@ func normalizeGlobalConfig(cfg *Config) error {
 	if err := normalizeClientConfig(cfg); err != nil {
 		return err
 	}
-	return errors.Join(cfg.daemonConfigErrors()...)
+	cfg.daemonErrs = applyDaemonSections(cfg)
+	return errors.Join(cfg.daemonErrs...)
 }
 
 func normalizeClientConfig(cfg *Config) error {
@@ -1121,20 +1124,12 @@ func normalizeClientConfig(cfg *Config) error {
 	return nil
 }
 
-// DaemonConfigWarnings diagnoses unused daemon sections without changing the
-// client's decoded configuration or replacing invalid values with defaults.
+// DaemonConfigWarnings returns daemon-section errors collected during loading.
 func (c *Config) DaemonConfigWarnings() []error {
-	if c == nil {
-		return nil
-	}
-	copy := *c
-	return copy.daemonConfigErrors()
+	return c.daemonErrs
 }
 
-func (c *Config) daemonConfigErrors() []error {
-	if c == nil {
-		return nil
-	}
+func applyDaemonSections(c *Config) []error {
 	var errs []error
 	for _, section := range []struct {
 		name     string
