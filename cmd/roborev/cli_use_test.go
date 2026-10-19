@@ -258,44 +258,15 @@ func TestCLIUseLeavesOutputAndExitUnchanged(t *testing.T) {
 	require.Contains(t, off.stdout, "Daemon: running")
 	assert.Empty(rec.telemetryPosts())
 
-	clearCLIUseState()
-	cliTelemetryEnabled = func() bool { return true }
-	root := newRootCmd()
-	var outBuf, errBuf bytes.Buffer
-	root.SetOut(&outBuf)
-	root.SetErr(&errBuf)
-	root.SetArgs([]string{"status", "--server", md.Server.URL})
-	var hang cliRun
-	var elapsed time.Duration
-	done := make(chan struct{})
-	hang.stdout, hang.stderr = captureStdoutStderr(t, func() {
-		go func() {
-			started := time.Now()
-			hang.err = root.Execute()
-			waitCLIUse()
-			elapsed = time.Since(started)
-			close(done)
-		}()
-		defer func() { <-done }()
-		// Command and telemetry requests cross the mock daemon's loopback TCP socket.
-		require.Eventually(t, func() bool { return len(entered) == 1 }, 5*time.Second, 10*time.Millisecond)
-		// Wait for command completion independently of telemetry receipt across the socket.
-		require.Eventually(t, func() bool {
-			select {
-			case <-done:
-				return true
-			default:
-				return false
-			}
-		}, 5*time.Second, 10*time.Millisecond)
-		<-done
-	})
-	hang.stdout += outBuf.String()
-	hang.stderr += errBuf.String()
+	started := time.Now()
+	hang := runCLIFresh(t, true, "status", "--server", md.Server.URL)
+	elapsed := time.Since(started)
 	require.NoError(t, hang.err)
 	assert.Less(elapsed, 500*time.Millisecond)
 	assert.Equal(off.stdout, hang.stdout)
 	assert.Equal(off.stderr, hang.stderr)
+	// Telemetry receipt across the socket can happen before or after command completion.
+	require.Eventually(t, func() bool { return len(entered) == 1 }, 5*time.Second, 10*time.Millisecond)
 	assert.Len(rec.telemetryPosts(), 1)
 
 	mode.Store("404")
