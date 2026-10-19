@@ -142,31 +142,19 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 		// The snapshot identifies the unit only when no daemon replaced this one.
 		owner, err = snapshot, snapshotErr
 	}
-	if responsive && errors.Is(err, errUserManagerUnavailable) {
-		if verbose {
-			fmt.Fprintf(lifecycleOut, "Daemon recovery skipped; %v\n", err)
-		}
-		return nil
-	}
 	if err != nil {
+		if responsive {
+			fmt.Fprintf(lifecycleOut, "Daemon recovery skipped; %v\n", err)
+			return nil
+		}
 		return err
 	}
 	if responsive && current.PID != info.PID && current.Version == version.Version {
 		return nil
 	}
 	if owner == nil {
-		runtimes, err := listAllRuntimes()
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("list unmanaged daemon runtimes: %w", err)
-		}
-		var lastErr error
-		for _, runtime := range runtimes {
-			if err := drainManagedDaemon(runtime); err != nil {
-				lastErr = err
-			}
-		}
-		if lastErr != nil {
-			return lastErr
+		if err := stopDaemonRuntimes(listAllRuntimes, drainManagedDaemon, lifecycleOut); err != nil && !errors.Is(err, ErrDaemonNotRunning) {
+			return err
 		}
 		release()
 		release = nil
@@ -176,6 +164,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 	if owner.mainPID != current.PID {
 		// A wrapper child stays in use; systemd cannot replace it directly.
 		if responsive {
+			fmt.Fprintf(lifecycleOut, "Daemon recovery skipped; systemd service %s runs the daemon as a child process\n", owner.unit)
 			return nil
 		}
 		return fail(fmt.Errorf("service child requires attention: %w", probeErr))
@@ -183,6 +172,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 	same, err := owner.sameInstallation()
 	if err != nil {
 		if responsive {
+			fmt.Fprintf(lifecycleOut, "Daemon recovery skipped; systemd service %s: cannot confirm executable %s: %v\n", owner.unit, owner.executable, err)
 			return nil
 		}
 		return fail(fmt.Errorf("cannot confirm executable %s: %w", owner.executable, err))
@@ -191,6 +181,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 		if probeErr != nil {
 			return fail(fmt.Errorf("installation %s requires attention: %w", owner.executable, probeErr))
 		}
+		fmt.Fprintf(lifecycleOut, "Daemon recovery skipped; systemd service %s uses another installation (%s)\n", owner.unit, owner.executable)
 		return nil
 	}
 	if err := owner.supported(); err != nil {

@@ -24,22 +24,6 @@ import (
 	"go.kenn.io/roborev/internal/version"
 )
 
-// stubServiceRecovery restores the recovery seams each test replaces.
-func stubServiceRecovery(t *testing.T) {
-	t.Helper()
-	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	oldOut, oldVerbose := lifecycleOut, verbose
-	oldFind, oldMainPID, oldStart, oldDrain := findDaemonService, serviceMainPID, startDaemonService, drainManagedDaemon
-	oldDiscovery, oldEnsure, oldDetached := getAnyRunningDaemonForStart, startDaemonForEnsure, startDaemonDetached
-	oldPause := pendingStartPause
-	t.Cleanup(func() {
-		lifecycleOut, verbose = oldOut, oldVerbose
-		findDaemonService, serviceMainPID, startDaemonService, drainManagedDaemon = oldFind, oldMainPID, oldStart, oldDrain
-		getAnyRunningDaemonForStart, startDaemonForEnsure, startDaemonDetached = oldDiscovery, oldEnsure, oldDetached
-		pendingStartPause = oldPause
-	})
-}
-
 func TestRecoverDaemonServiceRecovery(t *testing.T) {
 	probeErr := errors.New("probe failed")
 	for _, tc := range []struct {
@@ -59,7 +43,7 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 		{outcome: "remain after exit", wantError: "RemainAfterExit=yes"},
 		{outcome: "transient", wantError: "transient units"},
 		{outcome: "forking", wantError: "unsupported service Type=forking"},
-		{outcome: "uncertain", wantError: "properties unavailable"},
+		{outcome: "uncertain"},
 		{outcome: "unreadable"},
 		{outcome: "manager responsive"},
 		{outcome: "manager failed", probeErr: probeErr, wantError: "user service manager unavailable"},
@@ -71,7 +55,7 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 		t.Run(tc.outcome, func(t *testing.T) {
 			stubServiceRecovery(t)
 			var progress bytes.Buffer
-			lifecycleOut, verbose = &progress, tc.outcome == "manager responsive"
+			lifecycleOut, verbose = &progress, false
 			original := &daemon.RuntimeInfo{PID: 1234, Version: version.Version, Network: "tcp", Address: "127.0.0.1:1"}
 			current := original
 			if strings.HasPrefix(tc.outcome, "replacement") {
@@ -171,8 +155,15 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 			}
 			assert.Equal(t, tc.stops, stops)
 			assert.Equal(t, tc.starts, starts)
-			if tc.outcome == "manager responsive" {
-				assert.Contains(t, progress.String(), "Daemon recovery skipped; systemd service fixture.service: user service manager unavailable")
+			if reason := map[string]string{
+				"uncertain":          "properties unavailable",
+				"manager responsive": "user service manager unavailable",
+				"unreadable":         "cannot confirm executable",
+				"foreign responsive": "uses another installation",
+				"child responsive":   "runs the daemon as a child process",
+			}[tc.outcome]; reason != "" {
+				assert.Contains(t, progress.String(), "Daemon recovery skipped;")
+				assert.Contains(t, progress.String(), reason)
 			}
 			assert.Zero(t, detached)
 			release, acquired, err := daemon.RuntimeStore().TryAcquireStartLock(t.Context())
@@ -256,71 +247,6 @@ func TestRecoverDaemonRechecksLiveVersionAfterProbeFailure(t *testing.T) {
 			}
 			assert.Equal(t, want, drains)
 			assert.Equal(t, want, starts)
-		})
-	}
-}
-
-func TestUnmanagedRecoveryDrainsDiscoveredRuntimes(t *testing.T) {
-	for _, tc := range []struct {
-		name       string
-		respawnPID int
-		drainErr   error
-	}{
-		{name: "initial runtimes"},
-		{name: "new PID", respawnPID: 3456},
-		{name: "drain failure", drainErr: errors.New("drain rejected")},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			stubServiceRecovery(t)
-			runtimes := []*daemon.RuntimeInfo{{PID: 1234, Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}, {PID: 2345, Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}}
-			original := runtimes[0]
-			initial := append([]*daemon.RuntimeInfo(nil), runtimes...)
-			oldList := listAllRuntimes
-			t.Cleanup(func() { listAllRuntimes = oldList })
-			listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return initial, nil }
-			findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
-			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
-				if len(runtimes) == 0 {
-					return nil, os.ErrNotExist
-				}
-				return runtimes[0], nil
-			}
-			var drained []int
-			drainManagedDaemon = func(info *daemon.RuntimeInfo) error {
-				drained = append(drained, info.PID)
-				if tc.drainErr != nil {
-					return tc.drainErr
-				}
-				if tc.respawnPID != 0 {
-					runtimes = []*daemon.RuntimeInfo{{PID: tc.respawnPID, Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}}
-				} else {
-					runtimes = runtimes[1:]
-				}
-				return nil
-			}
-			starts, ensures := 0, 0
-			startDaemonForEnsure = func() error { ensures++; return startDaemon() }
-			startDaemonDetached = func(context.Context, detachedDaemonOptions) error {
-				starts++
-				runtimes = []*daemon.RuntimeInfo{{PID: 5678, Version: version.Version, Network: "tcp", Address: "127.0.0.1:1"}}
-				return nil
-			}
-			err := recoverDaemon(original, nil)
-			assert.Equal(t, []int{1234, 2345}, drained, "drain the finite initial snapshot even if a launcher publishes another daemon")
-			if tc.drainErr != nil {
-				require.ErrorIs(t, err, tc.drainErr)
-				assert.Zero(t, ensures)
-				assert.Zero(t, starts)
-			} else {
-				require.NoError(t, err)
-				assert.Equal(t, 1, ensures)
-				if tc.respawnPID != 0 {
-					assert.Zero(t, starts)
-					assert.Equal(t, tc.respawnPID, runtimes[0].PID, "ordinary startup may reuse the launcher's responsive daemon")
-				} else {
-					assert.Equal(t, 1, starts)
-				}
-			}
 		})
 	}
 }

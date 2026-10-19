@@ -495,7 +495,11 @@ func openDetachedDaemonLogs() (*os.File, *os.File, func(), error) {
 // stopDaemon stops any running daemons.
 // Returns ErrDaemonNotRunning if no daemon runtime files are found.
 func stopDaemon() error {
-	runtimes, err := daemon.ListAllRuntimes()
+	return stopDaemonRuntimes(daemon.ListAllRuntimes, daemon.KillDaemon, os.Stderr)
+}
+
+func stopDaemonRuntimes(list func() ([]*daemon.RuntimeInfo, error), drain func(*daemon.RuntimeInfo) error, out io.Writer) error {
+	runtimes, err := list()
 	if err != nil {
 		// Check if it's just a "not exist" type error
 		if os.IsNotExist(err) {
@@ -512,10 +516,10 @@ func stopDaemon() error {
 	var lastErr error
 	for _, info := range runtimes {
 		fmt.Fprintln(
-			os.Stderr,
+			out,
 			"Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...",
 		)
-		if err := daemon.KillDaemon(info); err != nil {
+		if err := drain(info); err != nil {
 			lastErr = fmt.Errorf("failed to stop daemon (pid %d): %w", info.PID, err)
 			if errors.Is(err, daemon.ErrDaemonAccessDenied) {
 				lastErr = fmt.Errorf("%w; restore the daemon's startup auth_key or stop PID %d manually", lastErr, info.PID)

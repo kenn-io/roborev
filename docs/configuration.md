@@ -1792,7 +1792,9 @@ and its configured `ExecStart` path points to the CLI's executable file or has
 the same path. A stable symlink still identifies the installation after an
 upgrade retargets it and removes the old binary; atomic package replacements
 also retain their identity. Recovery refuses `RemainAfterExit=yes`, transient
-units, and other service types before shutdown; restart those through systemd.
+units, and other service types before shutdown. Commands that need the daemon
+return the service error until you restart the unit through systemd; `status`
+reports unavailable.
 
 These daemons stay in use while they respond and report an error otherwise:
 
