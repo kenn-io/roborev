@@ -14,7 +14,6 @@ import (
 
 var (
 	readServiceProcessFile = os.ReadFile
-	readServiceExecutable  = os.Readlink
 	runSystemctl           = runUserSystemctl
 )
 
@@ -91,7 +90,7 @@ func lookupDaemonService(ctx context.Context, pid int) (*daemonService, error) {
 		return nil, err
 	}
 	fail := func(err error) (*daemonService, error) { return nil, &managedRecoveryError{unit, err} }
-	values, err := showUserService(ctx, unit, "MainPID,Type,RemainAfterExit,Transient")
+	values, err := showUserService(ctx, unit, "MainPID,Type,RemainAfterExit,Transient,ExecStart")
 	if err != nil {
 		return fail(fmt.Errorf("%w: %w", errUserManagerUnavailable, err))
 	}
@@ -115,12 +114,15 @@ func lookupDaemonService(ctx context.Context, pid int) (*daemonService, error) {
 			return fail(err)
 		}
 	}
-	executable, err := readServiceExecutable(fmt.Sprintf("/proc/%d/exe", pid))
-	if err != nil {
-		return fail(fmt.Errorf("read daemon executable: %w", err))
+	// systemctl separates the configured path from argv with a structured
+	// delimiter, so spaces in the executable path remain part of the path.
+	command, ok := strings.CutPrefix(values["ExecStart"], "{ path=")
+	executable, _, complete := strings.Cut(command, " ; argv[]=")
+	if !ok || !complete || executable == "" {
+		return fail(errors.New("service ExecStart executable unavailable"))
 	}
 	return &daemonService{
-		unit: unit, executable: strings.TrimSuffix(executable, " (deleted)"), mainPID: mainPID,
+		unit: unit, executable: executable, mainPID: mainPID,
 		serviceType: values["Type"], remainAfterExit: values["RemainAfterExit"] == "yes", transient: values["Transient"] == "yes",
 	}, nil
 }

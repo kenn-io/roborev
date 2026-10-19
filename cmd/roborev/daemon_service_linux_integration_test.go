@@ -54,14 +54,24 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 	buildDir := t.TempDir()
 	oldBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-old", "v-old")
 	newBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-new", "v-new")
-	for _, scenario := range []string{"shared", "verbose flag", "pause", "remain after exit", "daemon start", "simple", "exec", "transient", "missing bus environment", "foreign", "selection advances", "unrelated ancestor", "wrapper", "tui launcher", "socket activating", "socket responsive"} {
+	for _, scenario := range []string{"shared", "path with spaces", "verbose flag", "pause", "remain after exit", "daemon start", "simple", "exec", "transient", "missing bus environment", "foreign", "selection advances", "unrelated ancestor", "wrapper", "tui launcher", "socket activating", "socket responsive"} {
 		t.Run(scenario, func(t *testing.T) {
 			dataDir := t.TempDir()
 			t.Setenv("ROBOREV_DATA_DIR", dataDir)
 			t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
 			socketActivated := strings.HasPrefix(scenario, "socket")
 			link := filepath.Join(dataDir, "roborev")
-			installRoborev(t, oldBinary, link)
+			if scenario == "path with spaces" {
+				link = filepath.Join(dataDir, "roborev current")
+			}
+			stableLink := scenario == "shared" || scenario == "path with spaces"
+			oldTarget := filepath.Join(dataDir, "roborev-old")
+			if stableLink {
+				installRoborev(t, oldBinary, oldTarget)
+				require.NoError(t, os.Symlink(oldTarget, link))
+			} else {
+				installRoborev(t, oldBinary, link)
+			}
 			script := writeSlowUpdateAgent(t, dataDir)
 			releaseReview := filepath.Join(dataDir, "finish-review")
 			if scenario == "pause" {
@@ -191,6 +201,13 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			cliBinary := link
 			if scenario == "foreign" {
 				cliBinary = newBinary
+			} else if stableLink {
+				require.NoError(t, os.Symlink(newBinary, link+".next"))
+				require.NoError(t, os.Rename(link+".next", link))
+				require.NoError(t, os.Remove(oldTarget))
+				output, err := exec.Command("systemctl", "--user", "show", "--property=ExecStart", unit).Output()
+				require.NoError(t, err)
+				assert.Contains(t, string(output), "ExecStart={ path="+link+" ; argv[]=", "systemd must retain the configured link after retargeting")
 			} else {
 				installRoborev(t, newBinary, link)
 			}

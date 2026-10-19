@@ -55,6 +55,7 @@ func (s *daemonService) supported() error {
 	return nil
 }
 
+// sameInstallation follows the configured ExecStart path to the installed binary.
 func (s *daemonService) sameInstallation() (bool, error) {
 	selected, err := os.Stat(s.executable)
 	if err != nil {

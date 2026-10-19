@@ -1776,8 +1776,10 @@ after discovery, through its owning user service after active reviews finish:
 
 Automatic replacement applies when the daemon is the main process of a
 non-transient user service with `Type=simple`, `Type=exec`, or `Type=notify`,
-and the daemon's executable file or path matches the CLI's, including after an
-atomic package replacement. Recovery refuses `RemainAfterExit=yes`, transient
+and its configured `ExecStart` path points to the CLI's executable file or has
+the same path. A stable symlink still identifies the installation after an
+upgrade retargets it and removes the old binary; atomic package replacements
+also retain their identity. Recovery refuses `RemainAfterExit=yes`, transient
 units, and other service types before shutdown; restart those through systemd.
 
 These daemons stay in use while they respond and report an error otherwise:

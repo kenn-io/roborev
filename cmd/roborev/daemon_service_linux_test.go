@@ -318,8 +318,8 @@ func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 // stubServiceProcesses serves /proc files and systemctl output for lookups.
 func stubServiceProcesses(t *testing.T, cgroup string, parents map[int]int, show string, showErr error) *[][]string {
 	t.Helper()
-	oldRead, oldExe, oldRun := readServiceProcessFile, readServiceExecutable, runSystemctl
-	t.Cleanup(func() { readServiceProcessFile, readServiceExecutable, runSystemctl = oldRead, oldExe, oldRun })
+	oldRead, oldRun := readServiceProcessFile, runSystemctl
+	t.Cleanup(func() { readServiceProcessFile, runSystemctl = oldRead, oldRun })
 	readServiceProcessFile = func(path string) ([]byte, error) {
 		var pid int
 		if _, err := fmt.Sscanf(path, "/proc/%d/cgroup", &pid); err == nil {
@@ -328,9 +328,6 @@ func stubServiceProcesses(t *testing.T, cgroup string, parents map[int]int, show
 		_, err := fmt.Sscanf(path, "/proc/%d/stat", &pid)
 		require.NoError(t, err, path)
 		return fmt.Appendf(nil, "%d (roborev daemon) S %d 1 1", pid, parents[pid]), nil
-	}
-	readServiceExecutable = func(path string) (string, error) {
-		return "/opt/roborev/bin/roborev (deleted)", nil
 	}
 	var calls [][]string
 	runSystemctl = func(_ context.Context, args ...string) ([]byte, error) {
@@ -377,16 +374,16 @@ func TestLookupDaemonService(t *testing.T) {
 	})
 	t.Run("direct", func(t *testing.T) {
 		assert := assert.New(t)
-		calls := stubServiceProcesses(t, userCgroup, nil, "MainPID=1234\nType=notify\nRemainAfterExit=yes\nTransient=no\n", nil)
+		calls := stubServiceProcesses(t, userCgroup, nil, "MainPID=1234\nType=notify\nRemainAfterExit=yes\nTransient=no\nExecStart={ path=/opt/roborev current/bin/roborev ; argv[]=/opt/roborev current/bin/roborev daemon run ; ignore_errors=no ; }\n", nil)
 		owner, err := lookupDaemonService(t.Context(), 1234)
 		require.NoError(t, err)
 		require.NotNil(t, owner)
-		assert.Equal([][]string{{"show", "--property=MainPID,Type,RemainAfterExit,Transient", "--", "fixture.service"}}, *calls)
-		assert.Equal(&daemonService{unit: "fixture.service", executable: "/opt/roborev/bin/roborev", mainPID: 1234, serviceType: "notify", remainAfterExit: true}, owner)
+		assert.Equal([][]string{{"show", "--property=MainPID,Type,RemainAfterExit,Transient,ExecStart", "--", "fixture.service"}}, *calls)
+		assert.Equal(&daemonService{unit: "fixture.service", executable: "/opt/roborev current/bin/roborev", mainPID: 1234, serviceType: "notify", remainAfterExit: true}, owner)
 		require.ErrorContains(t, owner.supported(), "RemainAfterExit=yes")
 	})
 	t.Run("wrapper child", func(t *testing.T) {
-		stubServiceProcesses(t, userCgroup, map[int]int{1234: 1200, 1200: 1100}, "MainPID=1100\nType=exec\nRemainAfterExit=no\nTransient=no\n", nil)
+		stubServiceProcesses(t, userCgroup, map[int]int{1234: 1200, 1200: 1100}, "MainPID=1100\nType=exec\nRemainAfterExit=no\nTransient=no\nExecStart={ path=/opt/roborev current/bin/roborev ; argv[]=/opt/roborev current/bin/roborev daemon run ; ignore_errors=no ; }\n", nil)
 		owner, err := lookupDaemonService(t.Context(), 1234)
 		require.NoError(t, err)
 		require.NotNil(t, owner)
@@ -394,7 +391,7 @@ func TestLookupDaemonService(t *testing.T) {
 		require.NoError(t, owner.supported())
 	})
 	t.Run("unrelated process in service cgroup", func(t *testing.T) {
-		stubServiceProcesses(t, userCgroup, map[int]int{1234: 900, 900: 1}, "MainPID=1100\nType=exec\nRemainAfterExit=no\nTransient=no\n", nil)
+		stubServiceProcesses(t, userCgroup, map[int]int{1234: 900, 900: 1}, "MainPID=1100\nType=exec\nRemainAfterExit=no\nTransient=no\nExecStart={ path=/opt/roborev current/bin/roborev ; argv[]=/opt/roborev current/bin/roborev daemon run ; ignore_errors=no ; }\n", nil)
 		owner, err := lookupDaemonService(t.Context(), 1234)
 		require.NoError(t, err)
 		assert.Nil(t, owner)
