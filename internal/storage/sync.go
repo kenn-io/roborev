@@ -100,7 +100,9 @@ func (db *DB) ClaimSetupFinished(ctx context.Context) (SetupFinishedClaim, error
 		return SetupFinishedIneligible, nil
 	}
 	// Only the marker write ignores cancellation, so a committed claim always
-	// reaches its caller. Bound its SQLite writer wait independently of scans.
+	// reaches its caller. Cancellation cannot interrupt that busy wait, so keep
+	// it short: daemon shutdown waits for this write, and the caller retries
+	// busy errors with backoff, so a short wait loses no claim.
 	writeCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
 	defer cancel()
 	restore, err := limitSQLiteBusyTimeout(writeCtx, conn)

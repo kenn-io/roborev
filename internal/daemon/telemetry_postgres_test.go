@@ -81,9 +81,15 @@ func TestIntegration_SetupFinishedAfterSyncPull(t *testing.T) { //nolint:paralle
 	returned := make(chan result, 1)
 	go func() { stats, err := worker.SyncNow(); returned <- result{stats, err} }()
 	// Wall-clock waits: SyncNow pulls PostgreSQL rows and setup writes SQLite.
+	// The setup check starts only after the whole pull, whose duration depends
+	// on the machine and -race, so only the test deadline bounds it.
+	pullWait := 10 * time.Minute
+	if deadline, ok := t.Deadline(); ok {
+		pullWait = time.Until(deadline)
+	}
 	require.Eventually(t, func() bool {
 		return claimDB.Stats().WaitCount == 1
-	}, 10*time.Second, time.Millisecond)
+	}, pullWait, time.Millisecond)
 	var got result
 	require.Eventually(t, func() bool {
 		select {
