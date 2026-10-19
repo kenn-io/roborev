@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
@@ -10,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -60,20 +63,32 @@ func TestEnsureDaemonDoesNotAdoptUnpublishedDefaultDaemon(t *testing.T) {
 }
 
 func TestEnsureDaemonPropagatesDiscoveryIOError(t *testing.T) {
-	isolateDaemonSelection(t)
-	wantErr := errors.New("runtime directory read failed")
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, wantErr }
-	var starts, probes, cleanups int
-	probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
-		probes++
-		return nil, os.ErrNotExist
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"runtime directory failure", errors.New("runtime directory read failed")},
+		{"access denied", &net.OpError{Op: "dial", Net: "tcp", Err: syscall.EACCES}},
+		{"certificate failure", &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateDaemonSelection(t)
+			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, tc.err }
+			var starts, probes, cleanups, services int
+			probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
+				probes++
+				return nil, os.ErrNotExist
+			}
+			startDaemonForEnsure = func() error { starts++; return nil }
+			cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { cleanups++; return 0 }
+			findDaemonService = func(context.Context, int) (*daemonService, error) { services++; return nil, nil }
+			require.ErrorIs(t, ensureDaemon(), tc.err)
+			assert.Zero(t, starts)
+			assert.Zero(t, probes)
+			assert.Zero(t, cleanups)
+			assert.Zero(t, services)
+		})
 	}
-	startDaemonForEnsure = func() error { starts++; return nil }
-	cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { cleanups++; return 0 }
-	require.ErrorIs(t, ensureDaemon(), wantErr)
-	assert.Zero(t, starts)
-	assert.Zero(t, probes)
-	assert.Zero(t, cleanups)
 }
 
 func TestEnsureDaemonPropagatesDiscoveryTLSConfigError(t *testing.T) {

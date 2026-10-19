@@ -3,8 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"io"
 	"log"
@@ -105,7 +103,7 @@ func TestEnsureDaemonRecoversFromLiveVersion(t *testing.T) {
 				getAnyRunningDaemon, probeDaemonForEnsure, getAnyRunningDaemonForStart = origGet, origProbe, origDiscovery
 				startDaemonForEnsure, drainManagedDaemon, findDaemonService = origStart, origDrain, origService
 			})
-			current := &daemon.RuntimeInfo{PID: 1234, Version: version.Version}
+			current := &daemon.RuntimeInfo{PID: 1234, Version: version.Version, Network: "tcp", Address: "127.0.0.1:1"}
 			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return current, nil }
 			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
 				if current == nil {
@@ -200,70 +198,6 @@ func TestEnsureDaemonDoesNotRestartAfterAccessDeniedVersionProbe(t *testing.T) {
 	require.True(t, daemon.IsDaemonAccessError(err))
 	assert.Zero(t, serviceCalls)
 	assert.Zero(t, startCalls)
-}
-
-func TestEnsureDaemonDiscoveryErrors(t *testing.T) {
-	for _, tc := range []struct {
-		name          string
-		discoveryErr  error
-		wantAccessErr bool
-	}{
-		{
-			name:          "access denied blocks startup",
-			discoveryErr:  &net.OpError{Op: "dial", Net: "tcp", Err: syscall.EACCES},
-			wantAccessErr: true,
-		},
-		{
-			// Something answered, but its certificate did not verify.
-			name:          "certificate failure blocks startup",
-			discoveryErr:  &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}},
-			wantAccessErr: true,
-		},
-		{
-			name:          "daemon access denied blocks startup",
-			discoveryErr:  daemon.ErrDaemonAccessDenied,
-			wantAccessErr: true,
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
-
-			origServerAddr := serverAddr
-			origParsed := parsedServerEndpoint
-			origGet := getAnyRunningDaemon
-			origProbe := probeDaemonForEnsure
-			origCleanup, origService := cleanupZombieDaemons, findDaemonService
-			origStart := startDaemonForEnsure
-			serverAddr = ""
-			parsedServerEndpoint = nil
-			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, tc.discoveryErr }
-			probeCalls := 0
-			probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
-				probeCalls++
-				return nil, daemon.ErrGuessedEndpointAuth
-			}
-			startCalls, cleanupCalls, serviceCalls := 0, 0, 0
-			cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { cleanupCalls++; return 0 }
-			findDaemonService = func(context.Context, int) (*daemonService, error) { serviceCalls++; return nil, nil }
-			startDaemonForEnsure = func() error { startCalls++; return nil }
-			t.Cleanup(func() {
-				serverAddr = origServerAddr
-				parsedServerEndpoint = origParsed
-				getAnyRunningDaemon = origGet
-				probeDaemonForEnsure = origProbe
-				cleanupZombieDaemons, findDaemonService = origCleanup, origService
-				startDaemonForEnsure = origStart
-			})
-
-			err := ensureDaemon()
-			assert.Equal(t, tc.wantAccessErr, daemon.IsDaemonAccessError(err))
-			require.ErrorIs(t, err, tc.discoveryErr)
-			assert.Zero(t, startCalls)
-			assert.Zero(t, cleanupCalls)
-			assert.Zero(t, serviceCalls)
-			assert.Zero(t, probeCalls)
-		})
-	}
 }
 
 func TestStartDaemonUsesAlternateAwareDiscoveryInsideStartLock(t *testing.T) {

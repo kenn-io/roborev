@@ -53,7 +53,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 	buildDir := t.TempDir()
 	oldBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-old", "v-old")
 	newBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-new", "v-new")
-	for _, scenario := range []string{"path with spaces", "pause", "pause after discovery failure", "restart gap", "remain after exit", "daemon start", "simple", "transient", "missing bus environment", "selection advances", "unrelated ancestor", "wrapper", "socket activating", "socket responsive"} {
+	for _, scenario := range []string{"path with spaces", "pause", "pause after discovery failure", "restart gap", "remain after exit", "daemon start", "simple", "transient", "missing bus environment", "selection advances", "unrelated ancestor", "wrapper", "socket responsive"} {
 		t.Run(scenario, func(t *testing.T) {
 			dataDir := t.TempDir()
 			t.Setenv("ROBOREV_DATA_DIR", dataDir)
@@ -180,7 +180,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				}
 			}
 			if socketActivated {
-				assertSocketReplacementKept(t, scenario, original, unit, listen, queued)
+				assertSocketReplacementKept(t, original, unit, listen, queued)
 				return
 			}
 			cliBinary := link
@@ -366,7 +366,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 
 // assertSocketReplacementKept triggers socket activation after the old daemon
 // exits and before recovery starts the unit.
-func assertSocketReplacementKept(t *testing.T, scenario string, original *daemon.RuntimeInfo, unit, listen string, queued storage.ReviewJob) {
+func assertSocketReplacementKept(t *testing.T, original *daemon.RuntimeInfo, unit, listen string, queued storage.ReviewJob) {
 	t.Helper()
 	// The test binary is not the service executable; accept its installation.
 	oldFind, oldDrain := findDaemonService, drainManagedDaemon
@@ -391,12 +391,10 @@ func assertSocketReplacementKept(t *testing.T, scenario string, original *daemon
 			activated = serviceMainPIDForTest(t, unit)
 			return activated != 0 && activated != original.PID
 		}, 15*time.Second, 10*time.Millisecond)
-		if scenario == "socket responsive" {
-			require.Eventually(t, func() bool {
-				current, err := daemon.GetAnyRunningDaemon()
-				return err == nil && current.PID == activated
-			}, 15*time.Second, 10*time.Millisecond)
-		}
+		require.Eventually(t, func() bool {
+			current, err := daemon.GetAnyRunningDaemon()
+			return err == nil && current.PID == activated
+		}, 15*time.Second, 10*time.Millisecond)
 		return nil
 	}
 	require.NoError(t, recoverDaemon(original, nil))
