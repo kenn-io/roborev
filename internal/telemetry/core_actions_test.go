@@ -61,9 +61,19 @@ func TestCoreActionDailyClaims(t *testing.T) {
 	}
 	// Review views and screen views have independent daily claims.
 	assert.Equal(t, http.StatusAccepted, post(`{"event":"screen_viewed","properties":{"screen":"review","surface":"tui"}}`).Code)
+	for range 2 {
+		assert.Equal(t, http.StatusAccepted, post(`{"event":"error_shown","properties":{"surface":"cli","kind":"review_closed"}}`).Code)
+	}
+	assert.Equal(t, http.StatusAccepted, post(`{"event":"error_shown","properties":{"surface":"web","kind":"unknown"}}`).Code)
+	assert.Equal(t, http.StatusBadRequest, post(`{"event":"sync_failed","properties":{"sync_source":"postgres","reason":"network"}}`).Code)
 	require.NoError(t, reporter.Close())
 	sent := messages()
-	require.Len(t, sent, 9)
+	require.Len(t, sent, 12)
+	assert.Equal(t, []string{"error_shown:cli", "error_shown:cli", "error_shown:web"}, surfacesOf(sent[9:]))
+	assert.Equal(t, "review_closed", sent[9].Properties["kind"])
+	assert.Equal(t, "review_closed", sent[10].Properties["kind"])
+	assert.Equal(t, "other", sent[11].Properties["kind"])
+	sent = sent[:9]
 	assert.Equal(t, []string{
 		"review_viewed:web", "review_viewed:tui", "review_viewed:cli",
 		"finding_fixed:tui", "finding_fixed:cli",

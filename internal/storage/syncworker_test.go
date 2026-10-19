@@ -1,11 +1,16 @@
 package storage
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -196,4 +201,61 @@ func TestSyncPullWriteCallbackIsRaceSafeNilSafeAndInvokedOutsideLock(t *testing.
 
 func testSyncConfig() config.SyncConfig {
 	return config.SyncConfig{Enabled: true, Interval: "1h"}
+}
+
+func TestSyncFailureOutages(t *testing.T) {
+	t.Parallel()
+	worker := NewSyncWorker(nil, config.SyncConfig{})
+	var reasons []string
+	worker.SetOnSyncFailed(func(reason string) { reasons = append(reasons, reason) })
+	worker.observeSync(errors.New("failed"))
+	worker.observeSync(errors.New("failed again"))
+	worker.observeSync(nil)
+	worker.observeSync(context.DeadlineExceeded)
+	assert.Equal(t, []string{"other", "timeout"}, reasons)
+}
+
+func TestSyncFailureReason(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{&pgconn.PgError{Code: "28P01"}, "auth"},
+		{&pgconn.PgError{Code: "42501"}, "auth"},
+		{&net.OpError{Op: "dial", Err: errors.New("connection refused")}, "network"},
+		{context.DeadlineExceeded, "timeout"},
+		{&net.DNSError{IsTimeout: true}, "timeout"},
+		{errors.New("failed"), "other"},
+	} {
+		assert.Equal(t, tc.want, syncFailureReason(fmt.Errorf("sync: %w", tc.err)))
+	}
+}
+
+func TestSyncConnectionFailureReportsOnce(t *testing.T) {
+	t.Parallel()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	address := listener.Addr().String()
+	require.NoError(t, listener.Close())
+	worker := NewSyncWorker(openTestDB(t), config.SyncConfig{
+		Enabled: true, PostgresURL: "postgres://test:test@" + address + "/test?sslmode=disable",
+	})
+	var count atomic.Int64
+	reported := make(chan string, 1)
+	worker.SetOnSyncFailed(func(reason string) {
+		count.Add(1)
+		reported <- reason
+	})
+	require.NoError(t, worker.Start())
+	t.Cleanup(worker.Stop)
+	// The worker's initial dial uses an OS socket outside synctest's virtual clock.
+	require.Eventually(t, func() bool { return count.Load() > 0 }, 5*time.Second, time.Millisecond)
+	assert.Equal(t, "network", <-reported)
+	for range 2 {
+		_, err := worker.SyncNow()
+		require.Error(t, err)
+	}
+	worker.Stop()
+	assert.Equal(t, int64(1), count.Load())
 }

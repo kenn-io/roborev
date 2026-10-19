@@ -164,3 +164,11 @@ export function reportCoreAction(
       if (event === "review_viewed") reviewPending = false;
     });
 }
+
+export function reportErrorShown(
+  kind: "review_viewed" | "review_closed",
+): void {
+  void postBoundedEvent("error_shown", { surface: "web", kind }).catch(
+    () => undefined,
+  );
+}

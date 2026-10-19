@@ -1893,7 +1893,22 @@ review, synthesis and compact output.
     its installation ID. Without a local daemon, events are dropped. Reporting
     never starts a daemon.
 
-The daemon owns daily deduplication, so clients may repeat a report.
+Each shown core action failure sends `error_shown` with `surface=web|tui|cli`
+and `kind=review_viewed|finding_fixed|review_closed`, without a daily limit. CLI
+failures count for `show`, `wait`, `compact`, `fix`, `refine`, `analyze`,
+`close`, and rebuttal closes. Usage errors, reopens, and missing reviews in
+`show` stay silent. CLI reporting requires a terminal and excludes agents and
+`--from-skill`.
+
+The daemon sends `sync_failed` once per PostgreSQL outage, with
+`sync_source=postgres` and `reason=auth|network|timeout|other`. A successful
+full sync pass allows the next outage to report. Outage state resets when the
+daemon restarts, so a continuing outage can count again. Unlisted `kind`,
+`reason`, and `sync_source` values become `other`. Neither event contains error
+text.
+
+The daemon deduplicates successful core action reports per day, so clients may
+repeat them.
 
 The browser and TUI also report `screen_viewed` with a fixed `screen` name and
 `surface` of `web` or `tui`. Browser screens are `reviews` and `analytics`. TUI

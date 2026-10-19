@@ -964,6 +964,17 @@ func (s *Server) telemetryProperties(cfg *config.Config) map[string]any {
 func (s *Server) SetSyncWorker(sw *storage.SyncWorker) {
 	s.syncWorker = sw
 	sw.SetAfterPullWrite(s.afterSyncPullWrite)
+	sw.SetOnSyncFailed(func(reason string) {
+		if s.telemetry == nil || !s.telemetry.Enabled() {
+			return
+		}
+		if err := s.telemetry.Capture(telemetry.EventSyncFailed, map[string]any{
+			telemetry.PropertySyncSource: telemetry.SyncSourcePostgres,
+			telemetry.PropertyReason:     reason,
+		}); err != nil {
+			log.Printf("Warning: capture sync failed telemetry: %v", err)
+		}
+	})
 }
 
 func (s *Server) afterSyncPullWrite() {

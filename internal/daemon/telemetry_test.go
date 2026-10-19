@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"path/filepath"
 	"testing"
 	"time"
@@ -234,4 +235,25 @@ func TestSetupFinishedTelemetryAfterSyncPullWrite(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSyncFailedTelemetry(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	client := &fakeTelemetryClient{enabled: true}
+	server.SetTelemetry(client)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	address := listener.Addr().String()
+	require.NoError(t, listener.Close())
+	worker := storage.NewSyncWorker(db, config.SyncConfig{
+		Enabled: true, PostgresURL: "postgres://test:test@" + address + "/test?sslmode=disable",
+	})
+	server.SetSyncWorker(worker)
+	require.NoError(t, worker.Start())
+	t.Cleanup(worker.Stop)
+	_, err = worker.SyncNow()
+	require.Error(t, err)
+	worker.Stop()
+	assert.Equal(t, []string{"sync_failed"}, client.events)
+	assert.Equal(t, []map[string]any{{"sync_source": "postgres", "reason": "network"}}, client.properties)
 }

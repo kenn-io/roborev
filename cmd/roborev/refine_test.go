@@ -1743,7 +1743,7 @@ func TestCoreActionRefineCommit(t *testing.T) {
 			assert.Equal(t, strconv.Itoa(expected), repo.Run("rev-list", "--count", head+"..HEAD"))
 			var fixes []string
 			for _, post := range rec.telemetryPosts() {
-				if strings.Contains(post.body, `"finding_fixed"`) {
+				if strings.Contains(post.body, `"event":"finding_fixed"`) {
 					fixes = append(fixes, post.body)
 				}
 			}

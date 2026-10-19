@@ -9,8 +9,12 @@ All notable changes to roborev, grouped by minor release.
 
 **Improvements**
 
+- Count shown core action failures and PostgreSQL sync outages in anonymous
+    telemetry using fixed action names and error classes.
+
 - Count review reads, committed fixes, and explicit closes in anonymous
     telemetry.
+
 - Report repository and review totals as ranges in anonymous daemon telemetry:
     `0-5`, `6-20`, `21-100`, or `over-100`.
 

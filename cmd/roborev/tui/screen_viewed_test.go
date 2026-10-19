@@ -19,6 +19,7 @@ import (
 )
 
 type screenRecordingTransport struct {
+	kinds   []string
 	events  []string
 	screens []string
 	fail    bool
@@ -38,6 +39,7 @@ func (s *screenRecordingTransport) RoundTrip(req *http.Request) (*http.Response,
 			s.screens = append(s.screens, event.Properties[telemetry.PropertyScreen])
 		} else {
 			s.events = append(s.events, event.Event)
+			s.kinds = append(s.kinds, event.Properties["kind"])
 		}
 	}
 	status := http.StatusAccepted

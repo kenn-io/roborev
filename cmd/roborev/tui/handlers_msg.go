@@ -1226,6 +1226,7 @@ func (m model) handleReviewFollowErrMsg(msg reviewFollowErrMsg) (tea.Model, tea.
 			fmt.Sprintf("Could not open review for job #%d: %v", msg.jobID, msg.err),
 			3*time.Second, origin,
 		)
+		return m, m.reportError(telemetry.EventReviewViewed)
 	}
 	return m, nil
 }
@@ -1317,6 +1318,7 @@ func (m model) handleReviewErrMsg(msg reviewErrMsg) (tea.Model, tea.Cmd) {
 			fmt.Sprintf("Could not open review for job #%d: %v", msg.jobID, msg.err),
 			3*time.Second, origin,
 		)
+		return m, tea.Batch(reconnectCmd, m.reportError(telemetry.EventReviewViewed))
 	}
 	return m, reconnectCmd
 }
@@ -1717,6 +1719,9 @@ func (m model) handleClosedResultMsg(msg closedResultMsg) (tea.Model, tea.Cmd) {
 
 	if msg.err != nil {
 		if isCurrentRequest {
+			if msg.newState && msg.fromKey {
+				actionCmd = m.reportError(telemetry.EventReviewClosed)
+			}
 			if msg.reviewView {
 				if m.currentReview != nil && m.currentReview.ID == msg.reviewID {
 					m.currentReview.Closed = msg.oldState
@@ -2555,6 +2560,7 @@ func (m model) handleApplyPatchResultMsg(
 		}
 		return m, tea.Batch(cmds...)
 	} else if msg.commitFailed {
+		actionCmd = m.reportError(telemetry.EventFindingFixed)
 		detail := fmt.Sprintf(
 			"Job #%d: %v", msg.jobID, msg.err,
 		)
@@ -2565,6 +2571,9 @@ func (m model) handleApplyPatchResultMsg(
 		}
 		m.setFlash(detail, 8*time.Second, viewTasks)
 	} else if msg.err != nil {
+		if !msg.success {
+			actionCmd = m.reportError(telemetry.EventFindingFixed)
+		}
 		m.setFlash(fmt.Sprintf(
 			"Apply failed: %v", msg.err,
 		), 3*time.Second, viewTasks)

@@ -5,11 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"os"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cenkalti/backoff/v7"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"go.kenn.io/roborev/internal/config"
 )
@@ -21,13 +25,53 @@ type SyncWorker struct {
 	pgPool          *PgPool
 	stopCh          chan struct{}
 	doneCh          chan struct{}
-	mu              sync.Mutex // protects running, pgPool, and afterPullWrite
+	mu              sync.Mutex // protects running, pgPool, and callbacks
 	syncMu          sync.Mutex // serializes sync operations (doSync, SyncNow, FinalPush)
 	connectMu       sync.Mutex // serializes connect operations
 	running         bool
 	skipInitialSync bool // when true, skip the immediate doSync on connect
+	failing         atomic.Bool
+	onSyncFailed    func(string)
 	afterPullWrite  func()
 	afterReviewPush func([]string)
+}
+
+// SetOnSyncFailed registers a callback for the first failure of each outage.
+func (w *SyncWorker) SetOnSyncFailed(fn func(string)) {
+	w.mu.Lock()
+	w.onSyncFailed = fn
+	w.mu.Unlock()
+}
+
+func (w *SyncWorker) observeSync(err error) {
+	if err == nil {
+		w.failing.Store(false)
+		return
+	}
+	if w.failing.Swap(true) {
+		return
+	}
+	w.mu.Lock()
+	fn := w.onSyncFailed
+	w.mu.Unlock()
+	if fn != nil {
+		fn(syncFailureReason(err))
+	}
+}
+
+func syncFailureReason(err error) string {
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok &&
+		(strings.HasPrefix(pgErr.Code, "28") || pgErr.Code == "42501") {
+		return "auth"
+	}
+	var netErr net.Error
+	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()) {
+		return "timeout"
+	}
+	if netErr != nil {
+		return "network"
+	}
+	return "other"
 }
 
 // SetAfterPullWrite registers a callback for successfully committed local
@@ -327,6 +371,7 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (*S
 	for batchNum < maxPushBatches {
 		pushed, err := w.pushChangesWithStats(ctx, pool)
 		if err != nil {
+			w.observeSync(err)
 			return nil, fmt.Errorf("push: %w", err)
 		}
 		stats.PushedJobs += pushed.Jobs
@@ -365,6 +410,7 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (*S
 	// Pull remote changes
 	pulled, err := w.pullChangesWithStats(ctx, pool)
 	if err != nil {
+		w.observeSync(err)
 		return nil, fmt.Errorf("pull: %w", err)
 	}
 	stats.PulledJobs = pulled.Jobs
@@ -389,6 +435,7 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (*S
 			stats.PulledJobs, stats.PulledReviews, stats.PulledResponses)
 	}
 
+	w.observeSync(nil)
 	return stats, nil
 }
 
@@ -458,9 +505,14 @@ func (w *SyncWorker) run(stopCh, doneCh chan struct{}, interval, connectTimeout 
 // connect establishes the PostgreSQL connection.
 // Serialized by connectMu to prevent concurrent connection attempts.
 // Returns (true, nil) if a new connection was made, (false, nil) if already connected.
-func (w *SyncWorker) connect(timeout time.Duration) (bool, error) {
+func (w *SyncWorker) connect(timeout time.Duration) (_ bool, err error) {
 	w.connectMu.Lock()
 	defer w.connectMu.Unlock()
+	defer func() {
+		if err != nil {
+			w.observeSync(err)
+		}
+	}()
 
 	// Check if already connected (another goroutine may have connected while we waited)
 	w.mu.Lock()
@@ -619,6 +671,7 @@ func (w *SyncWorker) doSync() error {
 	for {
 		stats, err := w.pushChangesWithStats(ctx, pool)
 		if err != nil {
+			w.observeSync(err)
 			return fmt.Errorf("push: %w", err)
 		}
 		if stats.Jobs == 0 && stats.Reviews == 0 && stats.Responses == 0 {
@@ -633,9 +686,11 @@ func (w *SyncWorker) doSync() error {
 
 	// Pull remote changes from PostgreSQL
 	if err := w.pullChanges(ctx, pool); err != nil {
+		w.observeSync(err)
 		return fmt.Errorf("pull: %w", err)
 	}
 
+	w.observeSync(nil)
 	return nil
 }
 

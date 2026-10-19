@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,6 +25,8 @@ import (
 	roborevclient "go.kenn.io/roborev/pkg/client"
 	"go.kenn.io/roborev/pkg/client/generated"
 )
+
+var errNoReviewFound = errors.New("no review found")
 
 // showPanelMember is one reviewer in the additive show --json panel block.
 type showPanelMember struct {
@@ -206,7 +209,7 @@ Examples:
 				fallback := showPrompt && jobIDForPromptFallback >= 0 &&
 					fetchQueuedJobPromptReview(client, addr, jobIDForPromptFallback, &review)
 				if !fallback {
-					return fmt.Errorf("no review found for %s", displayRef)
+					return fmt.Errorf("%w for %s", errNoReviewFound, displayRef)
 				}
 			} else if resp.StatusCode != http.StatusOK {
 				body, _ := io.ReadAll(resp.Body)

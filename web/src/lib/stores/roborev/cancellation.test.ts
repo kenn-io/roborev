@@ -6,7 +6,11 @@ import { createJobsStore } from "./jobs.svelte";
 import { createReviewStore } from "./review.svelte";
 
 const actionReports = vi.hoisted(() => vi.fn());
-vi.mock("../../utils/app-opened", () => ({ reportCoreAction: actionReports }));
+const errorReports = vi.hoisted(() => vi.fn());
+vi.mock("../../utils/app-opened", () => ({
+  reportCoreAction: actionReports,
+  reportErrorShown: errorReports,
+}));
 let runtime: OwnedAppRuntime | undefined;
 
 function reviewStore(
@@ -25,6 +29,7 @@ function reviewStore(
 
 beforeEach(() => {
   actionReports.mockReset();
+  errorReports.mockReset();
   runtime = makeTestAppRuntime();
 });
 
@@ -377,10 +382,10 @@ describe("Roborev request cancellation", () => {
 });
 
 describe("review close reporting", () => {
-  it.each(["close", "reopen", "failure"])(
-    "reports only a successful explicit close: %s",
+  it.each(["close", "reopen", "failure", "reopen failure"])(
+    "reports explicit close outcomes: %s",
     async (action) => {
-      let closed = action === "reopen";
+      let closed = action === "reopen" || action === "reopen failure";
       const getReview = vi.fn(async () => ({
         id: 1,
         job_id: 42,
@@ -392,7 +397,7 @@ describe("review close reporting", () => {
         getReviewProjection: vi.fn(async () => ({ responses: [] })),
         listJobs: vi.fn(async () => ({ jobs: [] })),
         closeReview: vi.fn(async (request: { closed: boolean }) => {
-          if (action === "failure") throw new Error("close failed");
+          if (action.includes("failure")) throw new Error("close failed");
           closed = request.closed;
           return { success: true };
         }),
@@ -411,6 +416,25 @@ describe("review close reporting", () => {
         await vi.waitFor(() => expect(getReview).toHaveBeenCalledTimes(2));
         expect(actionReports).not.toHaveBeenCalled();
       }
+      if (action === "failure")
+        expect(errorReports).toHaveBeenCalledExactlyOnceWith("review_closed");
+      else expect(errorReports).not.toHaveBeenCalled();
     },
   );
+});
+
+it("reports a shown review load failure once", async () => {
+  const store = reviewStore({
+    getReview: vi.fn(async () => {
+      throw new Error("load failed");
+    }),
+    getReviewProjection: vi.fn(async () => ({ responses: [] })),
+    listJobs: vi.fn(async () => ({ jobs: [] })),
+  } as never);
+  store.setSelectedJobId(42);
+  store.loadReview(42);
+  await vi.waitFor(() =>
+    expect(store.getError()).toBe("Failed to load review"),
+  );
+  expect(errorReports).toHaveBeenCalledExactlyOnceWith("review_viewed");
 });

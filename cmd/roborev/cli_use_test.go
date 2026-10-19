@@ -36,6 +36,7 @@ func clearCLIUseState() {
 	cliUseEndpoint.Store(nil)
 	cliActions = sync.WaitGroup{}
 	cliUseAgent = false
+	cliCommandStarted = false
 }
 
 // resetCLIUse gives a test a fresh CLI telemetry state with telemetry on and restores every seam afterwards.
@@ -201,7 +202,9 @@ func runCLI(t *testing.T, args ...string) cliRun {
 	root.SetArgs(args)
 	var run cliRun
 	stdout, stderr := captureStdoutStderr(t, func() {
-		run.err = root.Execute()
+		cmd, err := root.ExecuteC()
+		run.err = err
+		reportCLICommandError(cmd, err)
 		waitCLIUse()
 	})
 	run.stdout = stdout + outBuf.String()
@@ -948,4 +951,55 @@ func TestCoreActionDeliverySurvivesCommandReturn(t *testing.T) {
 	assert.Equal(t, int32(1), accepted.Load())
 	require.Len(t, bodies, 1)
 	assert.JSONEq(t, `{"event":"finding_fixed","properties":{"surface":"cli"}}`, <-bodies)
+}
+
+func TestCoreActionShownErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		kind string
+	}{
+		{"close", []string{"close", "1"}, "review_closed"},
+		{"reopen", []string{"close", "1", "--reopen"}, ""},
+		{"show", []string{"show", "--job", "1"}, "review_viewed"},
+		{"quiet wait", []string{"wait", "--job", "1", "--quiet"}, "review_viewed"},
+		{"missing review", []string{"show", "--job", "1"}, ""},
+		{"runtime usage", []string{"show", "--job"}, ""},
+		{"usage", []string{"close", "--unknown"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetCLIUse(t)
+			failure := func(w http.ResponseWriter, _ *http.Request, _ *mockRefineState) bool {
+				status := http.StatusInternalServerError
+				if tc.name == "missing review" {
+					status = http.StatusNotFound
+				}
+				http.Error(w, "action failed", status)
+				return true
+			}
+			md, rec := newCLIUseDaemon(t, MockRefineHooks{OnReview: failure, OnReviewClose: failure, OnGetJobs: failure}, nil)
+			original := getAnyRunningDaemonForStart
+			t.Cleanup(func() { getAnyRunningDaemonForStart = original })
+			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
+				return &daemon.RuntimeInfo{Network: "tcp", Address: strings.TrimPrefix(md.Server.URL, "http://")}, nil
+			}
+			cliOutputIsTerminal = func(w io.Writer) bool { return w == os.Stderr }
+			args := append([]string{"--server", md.Server.URL}, tc.args...)
+			run := runCLI(t, args...)
+			require.Error(t, run.err)
+			posts := rec.telemetryPosts()
+			var errors []recordedTelemetry
+			for _, post := range posts {
+				if strings.Contains(post.body, `"error_shown"`) {
+					errors = append(errors, post)
+				}
+			}
+			if tc.kind == "" {
+				assert.Empty(t, errors)
+				return
+			}
+			require.Len(t, errors, 1)
+			assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"cli","kind":"`+tc.kind+`"}}`, errors[0].body)
+		})
+	}
 }

@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
+	"os"
 	"sync"
 	"sync/atomic"
 
@@ -84,14 +86,15 @@ var (
 	cliTelemetryEnabled = telemetry.EnabledFromEnv
 	cliOutputIsTerminal = streamfmt.WriterIsTerminal
 	// A healthy local daemon answers in milliseconds; a hung one costs a command at most this, once.
-	cliUseTimeout  = telemetry.NotificationTimeout
-	cliUsePost     = telemetry.PostAppOpened
-	cliAgentPost   = telemetry.PostAgentCall
-	cliUseOnce     sync.Once
-	cliUseState    atomic.Pointer[cliUsePostState] // nil until a post starts
-	cliUseAgent    bool
-	cliUseEndpoint atomic.Pointer[daemon.DaemonEndpoint]
-	cliActions     sync.WaitGroup
+	cliUseTimeout     = telemetry.NotificationTimeout
+	cliUsePost        = telemetry.PostAppOpened
+	cliAgentPost      = telemetry.PostAgentCall
+	cliUseOnce        sync.Once
+	cliUseState       atomic.Pointer[cliUsePostState] // nil until a post starts
+	cliCommandStarted bool
+	cliUseAgent       bool
+	cliUseEndpoint    atomic.Pointer[daemon.DaemonEndpoint]
+	cliActions        sync.WaitGroup
 )
 
 type cliUsePostState struct{ ctx context.Context } // Done when the post returns or its deadline passes
@@ -150,11 +153,57 @@ func waitCLIUse() {
 
 // reportCLIActionOutput bounds best-effort reporting independently of the command's lifetime.
 func reportCLIActionOutput(out io.Writer, event string) {
+	reportCLIOutcome(out, event, "")
+}
+
+func reportCLIError(out io.Writer, kind string) {
+	reportCLIOutcome(out, telemetry.EventErrorShown, kind)
+}
+
+var cliErrorKinds = map[string]string{
+	"roborev show":    telemetry.EventReviewViewed,
+	"roborev wait":    telemetry.EventReviewViewed,
+	"roborev compact": telemetry.EventReviewViewed,
+	"roborev fix":     telemetry.EventFindingFixed,
+	"roborev refine":  telemetry.EventFindingFixed,
+	"roborev analyze": telemetry.EventFindingFixed,
+	"roborev close":   telemetry.EventReviewClosed,
+}
+
+func reportCLICommandError(cmd *cobra.Command, err error) {
+	if err == nil || !cliCommandStarted || cmd == nil || !cmd.SilenceUsage {
+		return
+	}
+	if _, ok := errors.AsType[*exitError](err); ok && cmd.SilenceErrors {
+		return
+	}
+	if errors.Is(err, errNoReviewFound) {
+		return
+	}
+	kind := cliErrorKinds[cmd.CommandPath()]
+	if cmd.CommandPath() == "roborev close" {
+		if reopen, _ := cmd.Flags().GetBool("reopen"); reopen {
+			return
+		}
+	}
+	if cmd.CommandPath() == "roborev comment" || cmd.CommandPath() == "roborev respond" {
+		rebuttal, _ := cmd.Flags().GetBool("rebuttal")
+		closeReview, _ := cmd.Flags().GetBool("close")
+		if rebuttal && closeReview {
+			kind = telemetry.EventReviewClosed
+		}
+	}
+	if kind != "" {
+		reportCLIError(os.Stderr, kind)
+	}
+}
+
+func reportCLIOutcome(out io.Writer, event, kind string) {
 	if fromSkill || cliUseAgent || !cliTelemetryEnabled() || !cliOutputIsTerminal(out) {
 		return
 	}
 	ep := cliUseEndpoint.Load()
-	if ep == nil && (parsedServerEndpoint == nil || !parsedServerEndpoint.IsRemote()) {
+	if ep == nil && kind == "" && (parsedServerEndpoint == nil || !parsedServerEndpoint.IsRemote()) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), cliUseTimeout)
@@ -167,6 +216,10 @@ func reportCLIActionOutput(out io.Writer, event string) {
 			}
 			ep = &daemon.DaemonEndpoint{Network: info.Network, Address: info.Address}
 		}
-		_, _ = telemetry.PostReviewEvent(ctx, ep.HTTPClient(0), ep.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceCLI)
+		if kind != "" {
+			_, _ = telemetry.PostErrorShown(ctx, ep.HTTPClient(0), ep.BaseURL()+daemon.TelemetryEventsPath, telemetry.SurfaceCLI, kind)
+		} else {
+			_, _ = telemetry.PostReviewEvent(ctx, ep.HTTPClient(0), ep.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceCLI)
+		}
 	})
 }

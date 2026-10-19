@@ -33,6 +33,12 @@ const (
 	EventReviewViewed       = "review_viewed"
 	EventFindingFixed       = "finding_fixed"
 	EventReviewClosed       = "review_closed"
+	EventErrorShown         = "error_shown"
+	EventSyncFailed         = "sync_failed"
+	PropertyKind            = "kind"
+	PropertyReason          = "reason"
+	PropertySyncSource      = "sync_source"
+	SyncSourcePostgres      = "postgres"
 	EventAgentActive        = "agent_active"
 	EventAgentCallCount     = "agent_call_count"
 	PropertyCallCountBucket = "call_count_bucket"
@@ -136,6 +142,11 @@ func allowedEventOptions() []posthog.Option {
 		posthog.WithAllowedEvent(EventReviewViewed, actionSurface),
 		posthog.WithAllowedEvent(EventFindingFixed, posthog.RequireProperty(PropertySurface, posthog.AllowStringValues(SurfaceTUI, SurfaceCLI))),
 		posthog.WithAllowedEvent(EventReviewClosed, actionSurface),
+		posthog.WithAllowedEvent(EventErrorShown, actionSurface,
+			posthog.RequireProperty(PropertyKind, outcomeValues(EventReviewViewed, EventFindingFixed, EventReviewClosed))),
+		posthog.WithAllowedEvent(EventSyncFailed,
+			posthog.RequireProperty(PropertySyncSource, outcomeValues(SyncSourcePostgres)),
+			posthog.RequireProperty(PropertyReason, outcomeValues("auth", "network", "timeout"))),
 		posthog.WithAllowedEvent(EventAgentActive,
 			posthog.AllowProperty(PropertyCallCountBucket, posthog.AllowStringValues("1-10"))),
 		posthog.WithAllowedEvent(EventAgentCallCount,
@@ -151,6 +162,16 @@ func allowedEventOptions() []posthog.Option {
 		posthog.WithAllowedEvent(EventSessionEnded,
 			posthog.AllowProperty(PropertySurface, posthog.AllowStringValues(SurfaceWeb, SurfaceTUI)),
 			posthog.AllowProperty(PropertyDurationBucket, posthog.AllowStringValues(DurationUnder1m, Duration1To5m, Duration5To30m, DurationOver30m))),
+	}
+}
+
+func outcomeValues(values ...string) posthog.PropertyFilter {
+	allowed := posthog.AllowStringValues(values...)
+	return func(value any) (any, bool) {
+		if value, ok := allowed(value); ok {
+			return value, true
+		}
+		return "other", true
 	}
 }
 

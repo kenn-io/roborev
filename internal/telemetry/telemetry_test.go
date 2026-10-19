@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -166,6 +167,37 @@ func TestAllowedEventOptionsConfigureRoborevDaemonEvents(t *testing.T) {
 	}, allowedEventOptions()...)
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(reporter.Close()) })
+
+	for _, tc := range []struct {
+		event, property string
+		values          []any
+		base            map[string]any
+	}{
+		{EventErrorShown, PropertyKind, []any{"review_viewed", "finding_fixed", "review_closed", "unknown", 42}, map[string]any{PropertySurface: "cli"}},
+		{EventSyncFailed, PropertyReason, []any{"auth", "network", "timeout", "unknown", 42}, map[string]any{PropertySyncSource: "postgres"}},
+		{EventSyncFailed, PropertySyncSource, []any{"postgres", "unknown", 42}, map[string]any{PropertyReason: "auth"}},
+	} {
+		_, err := reporter.SanitizeProperties(tc.event, tc.base)
+		require.Error(err)
+		for i, value := range tc.values {
+			properties := maps.Clone(tc.base)
+			properties[tc.property], properties["detail"] = value, "private error"
+			props, err := reporter.SanitizeProperties(tc.event, properties)
+			require.NoError(err)
+			want := value
+			if i >= len(tc.values)-2 {
+				want = "other"
+			}
+			assert.Equal(want, props[tc.property])
+			assert.NotContains(props, "detail")
+		}
+	}
+	for _, surface := range []any{nil, "unknown", 42} {
+		_, err := reporter.SanitizeProperties(EventErrorShown, map[string]any{PropertyKind: "review_viewed", PropertySurface: surface})
+		require.Error(err)
+	}
+	_, err = reporter.SanitizeProperties(EventErrorShown, map[string]any{PropertyKind: "review_viewed"})
+	require.Error(err)
 
 	assert.True(reporter.EventAllowed(EventDaemonStarted))
 	assert.True(reporter.EventAllowed(EventDaemonActive))

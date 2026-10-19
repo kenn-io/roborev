@@ -1620,6 +1620,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 				}
 			}
 			cmd.Printf("Warning: error in batch %d: %v\n", i+1, err)
+			reportCLIError(cmd.OutOrStdout(), telemetry.EventFindingFixed)
 			continue
 		}
 		tracker.Capture(capture.SessionID())

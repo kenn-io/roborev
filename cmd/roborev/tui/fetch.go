@@ -1541,3 +1541,15 @@ func (m model) reportAction(event string) tea.Cmd {
 		return nil
 	}
 }
+
+func (m model) reportError(kind string) tea.Cmd {
+	if !telemetry.EnabledFromEnv() {
+		return nil
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(m.apiContext(), telemetry.NotificationTimeout)
+		defer cancel()
+		_, _ = telemetry.PostErrorShown(ctx, m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath, telemetry.SurfaceTUI, kind)
+		return nil
+	}
+}

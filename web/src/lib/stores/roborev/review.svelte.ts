@@ -1,4 +1,4 @@
-import { reportCoreAction } from "../../utils/app-opened";
+import { reportCoreAction, reportErrorShown } from "../../utils/app-opened";
 import { Clipboard } from "@effect/platform-browser";
 import { Effect, Option } from "effect";
 import type { AppRuntime } from "../../runtime/runtime";
@@ -181,6 +181,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
             Effect.sync(() => {
               if (selectedJobId !== jobId) return;
               storeError = "Failed to load review";
+              reportErrorShown("review_viewed");
               opts.onError?.("Failed to load review");
             }),
           ),
@@ -257,10 +258,12 @@ export function createReviewStore(opts: ReviewStoreOptions) {
     opts.runtime.runCommand(closeReviewEffect(jobId, closed), {
       operation: "close Roborev review",
       safeContext: { job_id: jobId, owner: opts.owner },
-      onFailure: (failure) =>
+      onFailure: (failure) => {
+        if (closed) reportErrorShown("review_closed");
         opts.onError?.(
           roborevMutationFailureMessage("Failed to close review", failure),
-        ),
+        );
+      },
     });
   }
 

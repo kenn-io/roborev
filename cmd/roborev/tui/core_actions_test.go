@@ -171,11 +171,14 @@ func TestCoreActionExplicitClose(t *testing.T) {
 		{name: "key", result: closedResultMsg{newState: true, fromKey: true}, count: 1},
 		{name: "control socket", result: closedResultMsg{newState: true}},
 		{name: "reopen", result: closedResultMsg{fromKey: true}},
-		{name: "failure", result: closedResultMsg{newState: true, fromKey: true, err: errors.New("failed")}},
+		{name: "failure", result: closedResultMsg{newState: true, fromKey: true, err: errors.New("failed")}, count: 1},
+		{name: "reopen failure", result: closedResultMsg{fromKey: true, err: errors.New("failed")}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newCoreActionReviewVisitFixture(t)
-			if tc.name == "failure" {
+			if tc.result.err != nil {
+				tc.result.jobID, tc.result.seq = 42, 1
+				f.m.pendingClosed[42] = pendingState{seq: 1}
 				_, cmd := f.m.handleClosedResultMsg(tc.result)
 				collectMsgs(cmd)
 			} else {
@@ -204,7 +207,12 @@ func TestCoreActionExplicitClose(t *testing.T) {
 			}
 			require.Len(t, f.transport.events, tc.count)
 			if tc.count > 0 {
-				assert.Equal(t, "review_closed", f.transport.events[0])
+				if tc.result.err != nil {
+					assert.Equal(t, "error_shown", f.transport.events[0])
+					assert.Equal(t, "review_closed", f.transport.kinds[0])
+				} else {
+					assert.Equal(t, "review_closed", f.transport.events[0])
+				}
 			}
 		})
 	}
@@ -219,7 +227,8 @@ func TestCoreActionCommittedPatch(t *testing.T) {
 		count  int
 	}{
 		{name: "committed", result: applyPatchResultMsg{success: true}, count: 1},
-		{name: "commit failure", result: applyPatchResultMsg{success: true, commitFailed: true, err: errors.New("commit failed")}},
+		{name: "commit failure", result: applyPatchResultMsg{success: true, commitFailed: true, err: errors.New("commit failed")}, count: 1},
+		{name: "apply failure", result: applyPatchResultMsg{err: errors.New("apply failed")}, count: 1},
 		{name: "bookkeeping failure", result: applyPatchResultMsg{success: true, err: errors.New("mark failed")}, count: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -228,7 +237,12 @@ func TestCoreActionCommittedPatch(t *testing.T) {
 			collectMsgs(cmd)
 			require.Len(t, f.transport.events, tc.count)
 			if tc.count > 0 {
-				assert.Equal(t, "finding_fixed", f.transport.events[0])
+				if tc.result.commitFailed || !tc.result.success {
+					assert.Equal(t, "error_shown", f.transport.events[0])
+					assert.Equal(t, "finding_fixed", f.transport.kinds[0])
+				} else {
+					assert.Equal(t, "finding_fixed", f.transport.events[0])
+				}
 			}
 		})
 	}
@@ -256,4 +270,19 @@ func TestCoreActionUnreadReviews(t *testing.T) {
 			assert.Empty(t, f.transport.events)
 		})
 	}
+}
+
+//nolint:paralleltest // telemetry environment variables
+func TestCoreActionReviewOpenFailure(t *testing.T) {
+	enableTelemetryEnv(t)
+	f := newCoreActionReviewVisitFixture(t)
+	response := f.review()
+	f.m.pendingReviewOpenJobID = response.jobID
+	_, cmd := f.m.handleReviewErrMsg(reviewErrMsg{
+		jobID: response.jobID, gen: response.gen, fetchSeq: response.fetchSeq,
+		attempt: response.attempt, err: errors.New("load failed"),
+	})
+	collectMsgs(cmd)
+	assert.Equal(t, []string{"error_shown"}, f.transport.events)
+	assert.Equal(t, []string{"review_viewed"}, f.transport.kinds)
 }
