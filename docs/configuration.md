@@ -1805,7 +1805,7 @@ These daemons stay in use while they respond and report an error otherwise:
 A daemon that only shares a unit's cgroup, such as one started with
 `roborev daemon start` from a service script, uses ordinary detached recovery.
 If the user service manager is unavailable, a responsive daemon stays running;
-verbose output explains the skipped recovery.
+the command explains why recovery was skipped.
 
 Before managed recovery drains reviews or starts the service, local
 `roborev pause` must save the pause through the current daemon, even if the
