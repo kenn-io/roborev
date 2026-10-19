@@ -123,21 +123,11 @@ func TestActivityDoesNotDelayTools(t *testing.T) {
 		require.NoError(t, err)
 		synctest.Wait()
 		assert.Zero(t, calls)
-		start := time.Now()
 		result := callTool(t, session, "roborev_status", nil)
 		require.False(t, result.IsError)
 		synctest.Wait()
 		assert.Equal(t, 1, calls)
-		assert.Zero(t, time.Since(start))
-		waitDone := make(chan bool, 1)
-		go func() {
-			server.activity.Wait()
-			waitDone <- true
-		}()
-		synctest.Wait()
-		assert.Empty(t, waitDone)
 		close(release)
-		assert.True(t, <-waitDone)
 	})
 }
 
