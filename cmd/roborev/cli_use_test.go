@@ -35,7 +35,6 @@ func clearCLIUseState() {
 	daemon.SetClientResponseObserver(nil)
 	cliUseOnce = sync.Once{}
 	cliUseEndpoint.Store(nil)
-	cliSends = telemetry.SendGroup{}
 	cliUseAgent = false
 }
 
@@ -229,10 +228,11 @@ func TestCLIUseLeavesOutputAndExitUnchanged(t *testing.T) {
 	assert := assert.New(t)
 	resetCLIUse(t)
 	stubStatusWebRuntime(t)
-	// The post crosses the mock daemon's loopback TCP socket, so the deadline is a short real timer.
-	cliUseTimeout = 50 * time.Millisecond
+	cliUseTimeout = telemetry.NotificationTimeout
 
 	release := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	var handlerReturned atomic.Bool
 	mode := atomic.Value{}
 	mode.Store("hang")
 	md, rec := newCLIUseDaemon(t, MockRefineHooks{}, func(w http.ResponseWriter, _ *http.Request) {
@@ -240,7 +240,9 @@ func TestCLIUseLeavesOutputAndExitUnchanged(t *testing.T) {
 			http.NotFound(w, nil)
 			return
 		}
+		entered <- struct{}{}
 		<-release
+		handlerReturned.Store(true)
 	})
 	// Registered after the mock, so it runs first and lets the hanging handler return before the server closes.
 	t.Cleanup(func() { close(release) })
@@ -250,8 +252,14 @@ func TestCLIUseLeavesOutputAndExitUnchanged(t *testing.T) {
 	require.Contains(t, off.stdout, "Daemon: running")
 	assert.Empty(rec.telemetryPosts())
 
+	// Command and telemetry requests cross the mock daemon's loopback TCP socket.
+	started := time.Now()
 	hang := runCLIFresh(t, true, "status", "--server", md.Server.URL)
+	elapsed := time.Since(started)
+	<-entered
 	require.NoError(t, hang.err)
+	assert.Less(elapsed, 200*time.Millisecond)
+	assert.False(handlerReturned.Load())
 	assert.Equal(off.stdout, hang.stdout)
 	assert.Equal(off.stderr, hang.stderr)
 	assert.Len(rec.telemetryPosts(), 1)
@@ -847,10 +855,20 @@ func TestCoreActionRemoteLocalFallback(t *testing.T) {
 			cliTelemetryEnabled = func() bool { return mode != "opt-out" }
 			fromSkill = mode == "skill"
 			original := getAnyRunningDaemonForStart
-			t.Cleanup(func() { getAnyRunningDaemonForStart = original })
+			usesFallback := mode == "running" || mode == "missing" || mode == "timeout"
+			entered := make(chan struct{})
+			returned := make(chan struct{})
+			t.Cleanup(func() {
+				if usesFallback {
+					<-returned
+				}
+				getAnyRunningDaemonForStart = original
+			})
 			calls := 0
 			getAnyRunningDaemonForStart = func(ctx context.Context) (*daemon.RuntimeInfo, error) {
 				calls++
+				close(entered)
+				defer close(returned)
 				if mode == "timeout" {
 					<-ctx.Done()
 					return nil, ctx.Err()
@@ -875,6 +893,9 @@ func TestCoreActionRemoteLocalFallback(t *testing.T) {
 			}
 			reportCLIActionOutput(cmd.OutOrStdout(), "review_viewed")
 			waitCLIUse()
+			if usesFallback {
+				<-entered
+			}
 			if mode == "running" || mode == "latest observed" {
 				require.Len(t, rec.telemetryPosts(), 1)
 				assert.JSONEq(t, `{"event":"review_viewed","properties":{"surface":"cli"}}`, rec.telemetryPosts()[0].body)
