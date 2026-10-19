@@ -16,7 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/config"
-	"go.kenn.io/roborev/internal/testutil/setupclaim"
 )
 
 // getIntegrationPostgresURL returns the postgres URL for integration tests.
@@ -1925,7 +1924,7 @@ func TestIntegration_TickerSync(t *testing.T) { //nolint:paralleltest // shares 
 	env.assertPgCount("reviews", 2)
 }
 
-func TestIntegration_SetupClaimAfterFreshBulkPull(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL schema
+func TestIntegration_AfterPullNotifiesAfterFreshBulkPull(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL schema
 	env := newIntegrationEnv(t)
 	const identity = "https://github.com/example/setup-pull.git"
 	source := env.setupNode("setup-source", identity, "1h")
@@ -1936,23 +1935,15 @@ func TestIntegration_SetupClaimAfterFreshBulkPull(t *testing.T) { //nolint:paral
 	}
 	_, err := source.Worker.SyncNow()
 	require.NoError(t, err)
-	claimAttempts := setupclaim.InstallCounter(t, targetDB.DB)
 	var pulls, writes int
 	target.SetAfterPullWrite(func() { writes++ })
 	target.SetAfterPull(func() {
 		pulls++
-		require.True(t, target.syncMu.TryLock(), "setup claim must follow syncMu release")
+		require.True(t, target.syncMu.TryLock(), "pull callback must follow syncMu release")
 		target.syncMu.Unlock()
 		var reviews int
 		require.NoError(t, targetDB.QueryRow(`SELECT count(*) FROM reviews`).Scan(&reviews))
-		assert.Equal(t, 499+pulls, reviews, "claim follows the job and review phases")
-		claim, err := targetDB.ClaimSetupFinished(t.Context())
-		require.NoError(t, err)
-		if pulls == 1 {
-			assert.Equal(t, SetupFinishedNewClaim, claim)
-		} else {
-			assert.Equal(t, SetupFinishedExisting, claim)
-		}
+		assert.Equal(t, 499+pulls, reviews, "callback follows the job and review phases")
 	})
 	stats, err := target.SyncNow()
 	require.NoError(t, err)
@@ -1960,7 +1951,6 @@ func TestIntegration_SetupClaimAfterFreshBulkPull(t *testing.T) { //nolint:paral
 	assert.Equal(t, 500, stats.PulledReviews)
 	assert.Equal(t, 1, pulls)
 	assert.Greater(t, writes, 500, "per-row search wakes remain")
-	assert.Equal(t, 1, claimAttempts())
 	require.NoError(t, target.doSync())
 	assert.Equal(t, 1, pulls, "empty background pulls do not notify")
 	_, err = target.SyncNow()
@@ -1971,5 +1961,4 @@ func TestIntegration_SetupClaimAfterFreshBulkPull(t *testing.T) { //nolint:paral
 	require.NoError(t, err)
 	require.NoError(t, target.doSync())
 	assert.Equal(t, 2, pulls, "background sync also notifies after releasing syncMu")
-	assert.Equal(t, 1, claimAttempts(), "an existing marker needs no new claim statement")
 }

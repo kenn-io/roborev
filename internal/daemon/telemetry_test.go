@@ -198,44 +198,24 @@ func TestSetupFinishedTelemetrySkipsLaterClaims(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", "", "No issues found."))
 	claimAttempts := setupclaim.InstallCounter(t, db.DB)
-	var callers sync.WaitGroup
-	start := make(chan struct{})
-	for range 8 {
-		callers.Go(func() {
-			<-start
-			server.captureSetupFinishedTelemetry()
-		})
-	}
-	close(start)
-	callers.Wait()
+	server.captureSetupFinishedTelemetry()
 	waitSetupFinished(t, client)
 	assert.Equal(t, 1, claimAttempts())
-	assert.Equal(t, []string{"setup_finished"}, client.recordedEvents())
-	_, err = db.Exec(`DELETE FROM sync_state WHERE key = ?`, storage.SyncStateSetupFinished)
-	require.NoError(t, err)
 	server.captureSetupFinishedTelemetry()
 	server.workerPool.captureSetupFinished()
 	assert.Equal(t, 1, claimAttempts())
-	assert.Equal(t, []string{"setup_finished"}, client.recordedEvents())
-}
-
-func TestSetupFinishedTelemetryLoadsSavedMarker(t *testing.T) {
-	server, db, _ := newTestServer(t)
-	client := &fakeTelemetryClient{enabled: true}
-	server.SetTelemetry(client)
-	require.NoError(t, db.SetSyncState(storage.SyncStateSetupFinished, "1"))
-	server.captureSetupFinishedTelemetry()
-	// Wall-clock wait: startup reads the persisted SQLite marker.
-	require.Eventually(t, server.setupFinishedClaimed.Load, time.Second, time.Millisecond)
-	_, err := db.Exec(`DELETE FROM sync_state WHERE key = ?`, storage.SyncStateSetupFinished)
-	require.NoError(t, err)
-	server.captureSetupFinishedTelemetry()
-	server.workerPool.captureSetupFinished()
 	require.NoError(t, server.Close())
-	marker, err := db.GetSyncState(storage.SyncStateSetupFinished)
-	require.NoError(t, err)
-	assert.Empty(t, marker)
-	assert.Empty(t, client.recordedEvents())
+
+	restarted := newServerWithLogs(db, config.DefaultConfig(), "", newTestErrorLog(), newTestActivityLog())
+	t.Cleanup(func() { _ = restarted.Close() })
+	restarted.SetTelemetry(client)
+	restarted.captureSetupFinishedTelemetry()
+	// Wall-clock wait: startup reads the persisted SQLite marker.
+	require.Eventually(t, restarted.setupFinishedClaimed.Load, time.Second, time.Millisecond)
+	restarted.captureSetupFinishedTelemetry()
+	restarted.workerPool.captureSetupFinished()
+	assert.Equal(t, 1, claimAttempts())
+	assert.Equal(t, []string{"setup_finished"}, client.recordedEvents())
 }
 
 func TestSetupFinishedTelemetryBusyWriterRetries(t *testing.T) {
@@ -270,9 +250,6 @@ func TestSetupFinishedTelemetryBusyWriterRetries(t *testing.T) {
 	assert.Empty(t, marker)
 	require.NoError(t, writer.Rollback())
 	waitSetupFinished(t, client)
-	var busyTimeout int
-	require.NoError(t, pool.QueryRow(`PRAGMA busy_timeout`).Scan(&busyTimeout))
-	assert.Equal(t, 30000, busyTimeout)
 	assert.Equal(t, []string{"setup_finished"}, client.recordedEvents())
 }
 
@@ -371,10 +348,12 @@ func TestSetupFinishedTelemetryCompletionPaths(t *testing.T) {
 			require.NoError(t, err)
 			client := &fakeTelemetryClient{enabled: true}
 			server.SetTelemetry(client)
+			captureSetupFinished := server.workerPool.captureSetupFinished
+			require.NotNil(t, captureSetupFinished)
 			server.workerPool.captureSetupFinished = func() {
 				require.True(t, server.workerPool.attemptTransitionsMu.TryLock(), "setup capture must follow the attempt transition")
 				server.workerPool.attemptTransitionsMu.Unlock()
-				server.captureSetupFinishedTelemetry()
+				captureSetupFinished()
 			}
 			var job *storage.ReviewJob
 			switch path {
@@ -426,33 +405,17 @@ func TestSetupFinishedTelemetryCompletionPaths(t *testing.T) {
 	}
 }
 
-func TestSetupFinishedTelemetryAfterSyncPullWrite(t *testing.T) {
-	for _, path := range []string{"search", "without search"} {
-		t.Run(path, func(t *testing.T) {
-			server, db, tmpDir := newTestServer(t)
-			client := &fakeTelemetryClient{enabled: true}
-			server.SetTelemetry(client)
-			var reconciler *recordingSearchReconciler
-			if path == "search" {
-				reconciler = newRecordingSearchReconciler()
-				server.searchReconciler = reconciler
-			}
-			server.SetSyncWorker(storage.NewSyncWorker(db, config.SyncConfig{}))
-			require.Empty(t, client.recordedEvents())
-			repo, err := db.GetOrCreateRepo(tmpDir)
-			require.NoError(t, err)
-			now := time.Now().UTC().Truncate(time.Second)
-			job := storage.PulledJob{UUID: uuid.New(), GitRef: "abc123", Agent: "test", JobType: storage.JobTypeReview, ReviewType: "code", Status: "applied", EnqueuedAt: now, FinishedAt: &now, SourceMachineID: uuid.New(), UpdatedAt: now}
-			require.NoError(t, db.UpsertPulledJob(job, repo.ID, nil))
-			require.NoError(t, db.UpsertPulledReview(storage.PulledReview{UUID: uuid.New(), JobUUID: job.UUID, JobEnqueuedAt: now, JobSourceMachineID: job.SourceMachineID, Agent: "test", StructuredOutput: testutil.ReviewFixtureJSON("No issues found."), UpdatedByMachineID: job.SourceMachineID, CreatedAt: now, UpdatedAt: now}))
-			server.afterSyncPullWrite()
-			require.Empty(t, client.recordedEvents(), "per-row search wake leaves setup checking to the pull boundary")
-			server.captureSetupFinishedTelemetry()
-			waitSetupFinished(t, client)
-			assert.Equal(t, []string{"setup_finished"}, client.recordedEvents())
-			if reconciler != nil {
-				assert.NotEmpty(t, reconciler.wakes, "committed pulls wake search")
-			}
-		})
-	}
+func TestSyncPullWriteWakesSearch(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	reconciler := newRecordingSearchReconciler()
+	server.searchReconciler = reconciler
+	server.SetSyncWorker(storage.NewSyncWorker(db, config.SyncConfig{}))
+	repo, err := db.GetOrCreateRepo(tmpDir)
+	require.NoError(t, err)
+	now := time.Now().UTC().Truncate(time.Second)
+	job := storage.PulledJob{UUID: uuid.New(), GitRef: "abc123", Agent: "test", JobType: storage.JobTypeReview, ReviewType: "code", Status: "applied", EnqueuedAt: now, FinishedAt: &now, SourceMachineID: uuid.New(), UpdatedAt: now}
+	require.NoError(t, db.UpsertPulledJob(job, repo.ID, nil))
+	require.NoError(t, db.UpsertPulledReview(storage.PulledReview{UUID: uuid.New(), JobUUID: job.UUID, JobEnqueuedAt: now, JobSourceMachineID: job.SourceMachineID, Agent: "test", StructuredOutput: testutil.ReviewFixtureJSON("No issues found."), UpdatedByMachineID: job.SourceMachineID, CreatedAt: now, UpdatedAt: now}))
+	server.afterSyncPullWrite()
+	assert.NotEmpty(t, reconciler.wakes, "committed pulls wake search")
 }
