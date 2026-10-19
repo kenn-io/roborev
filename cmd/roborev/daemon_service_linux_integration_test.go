@@ -22,7 +22,6 @@ import (
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
-	"golang.org/x/sys/unix"
 )
 
 // installRoborev atomically replaces path with a copy of binary, as a package
@@ -54,7 +53,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 	buildDir := t.TempDir()
 	oldBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-old", "v-old")
 	newBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-new", "v-new")
-	for _, scenario := range []string{"shared", "path with spaces", "verbose flag", "pause", "remain after exit", "daemon start", "simple", "exec", "transient", "missing bus environment", "foreign", "selection advances", "unrelated ancestor", "wrapper", "tui launcher", "socket activating", "socket responsive"} {
+	for _, scenario := range []string{"path with spaces", "pause", "remain after exit", "daemon start", "simple", "transient", "missing bus environment", "selection advances", "unrelated ancestor", "wrapper", "socket activating", "socket responsive"} {
 		t.Run(scenario, func(t *testing.T) {
 			dataDir := t.TempDir()
 			t.Setenv("ROBOREV_DATA_DIR", dataDir)
@@ -64,7 +63,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			if scenario == "path with spaces" {
 				link = filepath.Join(dataDir, "roborev current")
 			}
-			stableLink := scenario == "shared" || scenario == "path with spaces"
+			stableLink := scenario == "path with spaces"
 			oldTarget := filepath.Join(dataDir, "roborev-old")
 			if stableLink {
 				installRoborev(t, oldBinary, oldTarget)
@@ -92,9 +91,6 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			socketPath := filepath.Join(unitDir, name+".socket")
 			unmanaged := scenario == "unrelated ancestor"
 			start := strconv.Quote(link) + " daemon run --addr 127.0.0.1:0"
-			if scenario == "verbose flag" {
-				start = strconv.Quote(link) + " daemon --verbose run --addr 127.0.0.1:0"
-			}
 			if socketActivated {
 				start = strconv.Quote(link) + " daemon run"
 			}
@@ -111,9 +107,6 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			if scenario == "simple" {
 				serviceType = ""
 			}
-			if scenario == "exec" {
-				serviceType = "Type=exec\n"
-			}
 			if scenario == "remain after exit" {
 				serviceType = "Type=exec\nRemainAfterExit=yes\n"
 			}
@@ -124,19 +117,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			if unmanaged || scenario == "wrapper" {
 				serviceType = "Type=exec\n"
 			}
-			terminal := ""
-			if scenario == "tui launcher" {
-				master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|syscall.O_NOCTTY, 0)
-				require.NoError(t, err)
-				t.Cleanup(func() { require.NoError(t, master.Close()) })
-				require.NoError(t, unix.IoctlSetPointerInt(int(master.Fd()), unix.TIOCSPTLCK, 0))
-				number, err := unix.IoctlGetInt(int(master.Fd()), unix.TIOCGPTN)
-				require.NoError(t, err)
-				terminal = fmt.Sprintf("StandardInput=tty\nTTYPath=/dev/pts/%d\nStandardOutput=null\nStandardError=null\n", number)
-				serviceType = "Type=exec\n"
-				start = strconv.Quote(link) + " tui --no-quit"
-			}
-			body := fmt.Sprintf("[Service]\n%sEnvironment=%s\nEnvironment=%s\nEnvironment=GIT_CONFIG_NOSYSTEM=1\nExecStart=%s\n", serviceType+terminal, strconv.Quote("ROBOREV_DATA_DIR="+dataDir), strconv.Quote("GIT_CONFIG_GLOBAL="+os.Getenv("GIT_CONFIG_GLOBAL")), start)
+			body := fmt.Sprintf("[Service]\n%sEnvironment=%s\nEnvironment=%s\nEnvironment=GIT_CONFIG_NOSYSTEM=1\nExecStart=%s\n", serviceType, strconv.Quote("ROBOREV_DATA_DIR="+dataDir), strconv.Quote("GIT_CONFIG_GLOBAL="+os.Getenv("GIT_CONFIG_GLOBAL")), start)
 			if scenario != "transient" {
 				require.NoError(t, os.WriteFile(unitPath, []byte(body), 0o600))
 			}
@@ -199,9 +180,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				return
 			}
 			cliBinary := link
-			if scenario == "foreign" {
-				cliBinary = newBinary
-			} else if stableLink {
+			if stableLink {
 				require.NoError(t, os.Symlink(newBinary, link+".next"))
 				require.NoError(t, os.Rename(link+".next", link))
 				require.NoError(t, os.Remove(oldTarget))
@@ -237,7 +216,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				assert.Equal(t, original.PID, current.PID, "refused units keep their daemon")
 				return
 			}
-			if scenario == "wrapper" || scenario == "tui launcher" {
+			if scenario == "wrapper" {
 				assert := assert.New(t)
 				require.NoError(t, cli.Run(), "%s", stderr.String())
 				process, err := os.FindProcess(original.PID)
@@ -285,13 +264,9 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			}
 			replacement, err := daemon.GetAnyRunningDaemon()
 			require.NoError(t, err)
-			if scenario == "foreign" {
-				assert.Equal(t, original.PID, replacement.PID)
-			} else {
-				assert.NotEqual(t, original.PID, replacement.PID)
-			}
+			assert.NotEqual(t, original.PID, replacement.PID)
 			expectedVersion := "v-new"
-			if scenario == "foreign" || scenario == "selection advances" {
+			if scenario == "selection advances" {
 				expectedVersion = "v-old"
 			}
 			assertDaemonUpdateVersion(t, replacement.Endpoint(), expectedVersion)

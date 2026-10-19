@@ -1793,12 +1793,14 @@ A daemon that only shares a unit's cgroup, such as one started with
 If the user service manager is unavailable, a responsive daemon stays running;
 verbose output explains the skipped recovery.
 
-When a local `roborev pause` replaces a service daemon that answered its version
-check, the command saves the pause through that daemon before reviews drain, so
-the replacement's workers do not claim queued jobs. If that request fails, the
-daemon keeps running. After a failed version check, and for `unpause`, the
-command applies its state after the replacement starts. A cold detached start
-applies the requested state before its workers start. Explicit `--server`
+When a local `roborev pause` replaces a service daemon that responds during
+rediscovery, the command saves the pause through that daemon before reviews
+drain, even if the initial version check failed. This keeps the replacement's
+workers from claiming queued jobs. If the pause write fails, the daemon keeps
+running. If recovery fails after saving the pause, the queue stays paused until
+`unpause`. Once a daemon is ready, the CLI applies the requested state through
+the API, including when a healthy current daemon stays running. A cold detached
+start applies the requested state before its workers start. Explicit `--server`
 requests stay API-only. Explicit `daemon restart` and the restart after
 `roborev update` keep their separate detached-start workflows.
 

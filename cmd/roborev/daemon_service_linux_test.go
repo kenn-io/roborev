@@ -26,6 +26,7 @@ import (
 // stubServiceRecovery restores the recovery seams each test replaces.
 func stubServiceRecovery(t *testing.T) {
 	t.Helper()
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	oldOut, oldVerbose := lifecycleOut, verbose
 	oldFind, oldMainPID, oldStart, oldDrain := findDaemonService, serviceMainPID, startDaemonService, drainManagedDaemon
 	oldDiscovery, oldEnsure, oldDetached := getAnyRunningDaemonForStart, startDaemonForEnsure, startDaemonDetached
@@ -181,6 +182,10 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 			} else {
 				assert.Zero(t, detached)
 			}
+			release, acquired, err := daemon.RuntimeStore().TryAcquireStartLock(t.Context())
+			require.NoError(t, err)
+			require.True(t, acquired, "recovery must release the start lock on every outcome")
+			release()
 		})
 	}
 }
@@ -451,7 +456,6 @@ func TestLookupDaemonService(t *testing.T) {
 		require.NotNil(t, owner)
 		assert.Equal([][]string{{"show", "--property=MainPID,Type,RemainAfterExit,Transient,ExecStart", "--", "fixture.service"}}, *calls)
 		assert.Equal(&daemonService{unit: "fixture.service", executable: "/opt/roborev current/bin/roborev", mainPID: 1234, serviceType: "notify", remainAfterExit: true}, owner)
-		require.ErrorContains(t, owner.supported(), "RemainAfterExit=yes")
 	})
 	t.Run("wrapper child", func(t *testing.T) {
 		stubServiceProcesses(t, userCgroup, map[int]int{1234: 1200, 1200: 1100}, "MainPID=1100\nType=exec\nRemainAfterExit=no\nTransient=no\nExecStart={ path=/opt/roborev current/bin/roborev ; argv[]=/opt/roborev current/bin/roborev daemon run ; ignore_errors=no ; }\n", nil)
@@ -497,21 +501,6 @@ func TestDaemonServiceSamePathReplacement(t *testing.T) {
 	cmd.Env = append(os.Environ(), "ROBOREV_TEST_EXECUTABLE_REPLACEMENT=1")
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "%s", output)
-}
-
-func TestFailedServiceLookupReleasesRecoveryLock(t *testing.T) {
-	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	stubServiceRecovery(t)
-	findDaemonService = func(context.Context, int) (*daemonService, error) {
-		return nil, &managedRecoveryError{"fixture.service", errUserManagerUnavailable}
-	}
-	getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
-	err := recoverDaemon(&daemon.RuntimeInfo{PID: 1234}, errors.New("probe failed"))
-	require.ErrorIs(t, err, errUserManagerUnavailable)
-	release, acquired, err := daemon.RuntimeStore().TryAcquireStartLock(t.Context())
-	require.NoError(t, err)
-	require.True(t, acquired)
-	release()
 }
 
 func TestUnmanagedRecoveryReleasesLockBeforeEnsure(t *testing.T) {

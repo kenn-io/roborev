@@ -97,29 +97,40 @@ func TestEnsureDaemonRecoversFromLiveVersion(t *testing.T) {
 		{name: "probe failure", probeErr: errors.New("connection refused")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 			t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
-			origGet, origProbe := getAnyRunningDaemon, probeDaemonForEnsure
+			origGet, origProbe, origDiscovery := getAnyRunningDaemon, probeDaemonForEnsure, getAnyRunningDaemonForStart
 			origStart, origDrain, origService := startDaemonForEnsure, drainManagedDaemon, findDaemonService
 			t.Cleanup(func() {
-				getAnyRunningDaemon, probeDaemonForEnsure = origGet, origProbe
+				getAnyRunningDaemon, probeDaemonForEnsure, getAnyRunningDaemonForStart = origGet, origProbe, origDiscovery
 				startDaemonForEnsure, drainManagedDaemon, findDaemonService = origStart, origDrain, origService
 			})
-			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-				return &daemon.RuntimeInfo{PID: 1234, Version: version.Version}, nil
+			current := &daemon.RuntimeInfo{PID: 1234, Version: version.Version}
+			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return current, nil }
+			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
+				if current == nil {
+					return nil, os.ErrNotExist
+				}
+				return current, nil
 			}
 			probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
-				return &daemon.PingInfo{OK: true, Service: "roborev", Version: "v-other-daemon"}, tc.probeErr
+				if tc.probeErr != nil {
+					return nil, tc.probeErr
+				}
+				return &daemon.PingInfo{OK: true, Service: "roborev", Version: "v-other-daemon"}, nil
 			}
-			lookups := 0
 			findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
-				lookups++
 				assert.Equal(t, 1234, pid)
 				return nil, nil
 			}
-			drainManagedDaemon = func(*daemon.RuntimeInfo) error { return nil }
-			startDaemonForEnsure = func() error { return nil }
+			drainManagedDaemon = func(*daemon.RuntimeInfo) error { current = nil; return nil }
+			starts := 0
+			startDaemonForEnsure = func() error {
+				starts++
+				return nil
+			}
 			require.NoError(t, ensureDaemon())
-			assert.Equal(t, 2, lookups)
+			assert.Equal(t, 1, starts, "the mismatch or failed probe must reach recovery")
 		})
 	}
 }
@@ -162,41 +173,6 @@ func TestEnsureDaemonCleansZombiesBeforeColdStart(t *testing.T) {
 	assert.Equal(t, []string{"cleanup:127.0.0.1:1", "start"}, calls)
 }
 
-func TestEnsureDaemonDoesNotRecoverFromAccessDeniedDiscovery(t *testing.T) {
-	t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
-
-	origGet := getAnyRunningDaemon
-	origProbe := probeDaemonForEnsure
-	origCleanup := cleanupZombieDaemons
-	origService := findDaemonService
-	origStart := startDaemonForEnsure
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		return nil, daemon.ErrDaemonAccessDenied
-	}
-	probeCalls, cleanupCalls, serviceCalls, startCalls := 0, 0, 0, 0
-	probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
-		probeCalls++
-		return nil, nil
-	}
-	cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { cleanupCalls++; return 0 }
-	findDaemonService = func(context.Context, int) (*daemonService, error) { serviceCalls++; return nil, nil }
-	startDaemonForEnsure = func() error { startCalls++; return nil }
-	t.Cleanup(func() {
-		getAnyRunningDaemon = origGet
-		probeDaemonForEnsure = origProbe
-		cleanupZombieDaemons = origCleanup
-		findDaemonService = origService
-		startDaemonForEnsure = origStart
-	})
-
-	err := ensureDaemon()
-	require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
-	assert.Zero(t, probeCalls)
-	assert.Zero(t, cleanupCalls)
-	assert.Zero(t, serviceCalls)
-	assert.Zero(t, startCalls)
-}
-
 func TestEnsureDaemonDoesNotRestartAfterAccessDeniedVersionProbe(t *testing.T) {
 	t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
 
@@ -231,7 +207,6 @@ func TestEnsureDaemonDiscoveryErrors(t *testing.T) {
 		name          string
 		discoveryErr  error
 		wantAccessErr bool
-		wantStarts    int
 	}{
 		{
 			name:          "access denied blocks startup",
@@ -245,9 +220,9 @@ func TestEnsureDaemonDiscoveryErrors(t *testing.T) {
 			wantAccessErr: true,
 		},
 		{
-			name:         "missing runtime starts a daemon",
-			discoveryErr: os.ErrNotExist,
-			wantStarts:   1,
+			name:          "daemon access denied blocks startup",
+			discoveryErr:  daemon.ErrDaemonAccessDenied,
+			wantAccessErr: true,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -257,7 +232,7 @@ func TestEnsureDaemonDiscoveryErrors(t *testing.T) {
 			origParsed := parsedServerEndpoint
 			origGet := getAnyRunningDaemon
 			origProbe := probeDaemonForEnsure
-			origCleanup := cleanupZombieDaemons
+			origCleanup, origService := cleanupZombieDaemons, findDaemonService
 			origStart := startDaemonForEnsure
 			serverAddr = ""
 			parsedServerEndpoint = nil
@@ -267,21 +242,25 @@ func TestEnsureDaemonDiscoveryErrors(t *testing.T) {
 				probeCalls++
 				return nil, daemon.ErrGuessedEndpointAuth
 			}
-			startCalls := 0
-			cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { return 0 }
+			startCalls, cleanupCalls, serviceCalls := 0, 0, 0
+			cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { cleanupCalls++; return 0 }
+			findDaemonService = func(context.Context, int) (*daemonService, error) { serviceCalls++; return nil, nil }
 			startDaemonForEnsure = func() error { startCalls++; return nil }
 			t.Cleanup(func() {
 				serverAddr = origServerAddr
 				parsedServerEndpoint = origParsed
 				getAnyRunningDaemon = origGet
 				probeDaemonForEnsure = origProbe
-				cleanupZombieDaemons = origCleanup
+				cleanupZombieDaemons, findDaemonService = origCleanup, origService
 				startDaemonForEnsure = origStart
 			})
 
 			err := ensureDaemon()
 			assert.Equal(t, tc.wantAccessErr, daemon.IsDaemonAccessError(err))
-			assert.Equal(t, tc.wantStarts, startCalls)
+			require.ErrorIs(t, err, tc.discoveryErr)
+			assert.Zero(t, startCalls)
+			assert.Zero(t, cleanupCalls)
+			assert.Zero(t, serviceCalls)
 			assert.Zero(t, probeCalls)
 		})
 	}
