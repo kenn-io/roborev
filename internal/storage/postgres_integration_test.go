@@ -490,6 +490,11 @@ func TestIntegration_SyncOutageFromSwallowedWrite(t *testing.T) { //nolint:paral
 				CREATE TRIGGER reject_job_write BEFORE INSERT OR UPDATE ON roborev.review_jobs
 				FOR EACH ROW EXECUTE FUNCTION roborev.reject_job_write()`)
 			require.NoError(t, err)
+			t.Cleanup(func() {
+				_, _ = env.Pool.pool.Exec(context.Background(), `
+					DROP TRIGGER IF EXISTS reject_job_write ON roborev.review_jobs;
+					DROP FUNCTION IF EXISTS roborev.reject_job_write()`)
+			})
 			for range 2 {
 				require.NoError(t, pass(), "row errors remain swallowed")
 				assert.Empty(t, reasons, "a constraint violation is not an outage")
