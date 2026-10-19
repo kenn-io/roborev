@@ -13,7 +13,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -403,19 +402,4 @@ func TestSetupFinishedTelemetryCompletionPaths(t *testing.T) {
 			assert.Equal(t, []string{"setup_finished"}, client.recordedEvents())
 		})
 	}
-}
-
-func TestSyncPullWriteWakesSearch(t *testing.T) {
-	server, db, tmpDir := newTestServer(t)
-	reconciler := newRecordingSearchReconciler()
-	server.searchReconciler = reconciler
-	server.SetSyncWorker(storage.NewSyncWorker(db, config.SyncConfig{}))
-	repo, err := db.GetOrCreateRepo(tmpDir)
-	require.NoError(t, err)
-	now := time.Now().UTC().Truncate(time.Second)
-	job := storage.PulledJob{UUID: uuid.New(), GitRef: "abc123", Agent: "test", JobType: storage.JobTypeReview, ReviewType: "code", Status: "applied", EnqueuedAt: now, FinishedAt: &now, SourceMachineID: uuid.New(), UpdatedAt: now}
-	require.NoError(t, db.UpsertPulledJob(job, repo.ID, nil))
-	require.NoError(t, db.UpsertPulledReview(storage.PulledReview{UUID: uuid.New(), JobUUID: job.UUID, JobEnqueuedAt: now, JobSourceMachineID: job.SourceMachineID, Agent: "test", StructuredOutput: testutil.ReviewFixtureJSON("No issues found."), UpdatedByMachineID: job.SourceMachineID, CreatedAt: now, UpdatedAt: now}))
-	server.afterSyncPullWrite()
-	assert.NotEmpty(t, reconciler.wakes, "committed pulls wake search")
 }

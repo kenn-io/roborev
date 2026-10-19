@@ -47,6 +47,8 @@ func TestIntegration_SetupFinishedAfterSyncPull(t *testing.T) { //nolint:paralle
 		}))
 	}
 	server, db, tmpDir := newTestServer(t)
+	reconciler := newRecordingSearchReconciler()
+	server.searchReconciler = reconciler
 	claimAttempts := setupclaim.InstallCounter(t, db.DB)
 	var path string
 	require.NoError(t, db.QueryRow(`SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&path))
@@ -94,6 +96,7 @@ func TestIntegration_SetupFinishedAfterSyncPull(t *testing.T) { //nolint:paralle
 	require.NoError(t, got.err)
 	assert.Equal(t, 500, got.stats.PulledJobs)
 	assert.Equal(t, 500, got.stats.PulledReviews)
+	assert.NotEmpty(t, reconciler.wakes, "SyncNow must wake search after committed pulls")
 	assert.Zero(t, claimDB.Stats().WaitDuration, "the original setup check must still be waiting for its connection")
 	require.NoError(t, pending.Close())
 	waitSetupFinished(t, client)

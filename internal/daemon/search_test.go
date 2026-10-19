@@ -125,7 +125,10 @@ func (r *recordingSearchReconciler) Run(ctx context.Context) error {
 }
 
 func (r *recordingSearchReconciler) Wake() {
-	r.wakes <- struct{}{}
+	select {
+	case r.wakes <- struct{}{}:
+	default:
+	}
 }
 
 func (r *recordingSearchReconciler) WakeJob(jobID int64) {
