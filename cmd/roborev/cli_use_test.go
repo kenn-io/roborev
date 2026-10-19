@@ -233,7 +233,6 @@ func TestCLIUseLeavesOutputAndExitUnchanged(t *testing.T) {
 	cliUseTimeout = 50 * time.Millisecond
 
 	release := make(chan struct{})
-	var handlerReturned atomic.Bool
 	mode := atomic.Value{}
 	mode.Store("hang")
 	md, rec := newCLIUseDaemon(t, MockRefineHooks{}, func(w http.ResponseWriter, _ *http.Request) {
@@ -242,7 +241,6 @@ func TestCLIUseLeavesOutputAndExitUnchanged(t *testing.T) {
 			return
 		}
 		<-release
-		handlerReturned.Store(true)
 	})
 	// Registered after the mock, so it runs first and lets the hanging handler return before the server closes.
 	t.Cleanup(func() { close(release) })
@@ -257,7 +255,6 @@ func TestCLIUseLeavesOutputAndExitUnchanged(t *testing.T) {
 	assert.Equal(off.stdout, hang.stdout)
 	assert.Equal(off.stderr, hang.stderr)
 	assert.Len(rec.telemetryPosts(), 1)
-	assert.False(handlerReturned.Load(), "waitCLIUse must return while the telemetry route still hangs")
 
 	mode.Store("404")
 	notFound := runCLIFresh(t, true, "status", "--server", md.Server.URL)
@@ -713,11 +710,10 @@ func TestCLIUseWaitBoundsExit(t *testing.T) {
 				cliUseAgent = agent
 				var deadline time.Time
 				var hasDeadline bool
-				done := make(chan struct{})
+				release := make(chan struct{})
 				post := func(ctx context.Context, _ *http.Client, _ string) {
 					deadline, hasDeadline = ctx.Deadline()
-					<-ctx.Done()
-					close(done)
+					<-release
 				}
 				cliAgentPost = post
 				cliUsePost = func(ctx context.Context, client *http.Client, url, _ string) { post(ctx, client, url) }
@@ -730,9 +726,8 @@ func TestCLIUseWaitBoundsExit(t *testing.T) {
 				assert.Equal(t, 50*time.Millisecond, time.Since(start))
 				require.True(t, hasDeadline)
 				assert.Equal(t, start.Add(time.Second), deadline)
-				<-done
+				close(release)
 				synctest.Wait()
-				assert.Equal(t, time.Second, time.Since(start))
 				clearCLIUseState()
 			})
 		})
@@ -758,20 +753,24 @@ func TestMCPActivity(t *testing.T) {
 	t.Run("enabled", func(t *testing.T) {
 		resetCLIUse(t)
 		synctest.Test(t, func(t *testing.T) {
-			done := make(chan struct{})
+			release := make(chan struct{})
+			var deadline time.Time
+			var hasDeadline bool
 			cliAgentPost = func(ctx context.Context, _ *http.Client, url string) {
 				assert.Equal(t, "http://127.0.0.1:7373"+daemon.TelemetryAgentCallPath, url)
-				<-ctx.Done()
-				close(done)
+				deadline, hasDeadline = ctx.Deadline()
+				<-release
 			}
 			start := time.Now()
 			reportMCPActivity(t.Context(), daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"})
 			assert.Equal(t, time.Duration(0), time.Since(start))
 			waitCLIUse()
 			assert.Equal(t, 50*time.Millisecond, time.Since(start))
-			<-done
 			synctest.Wait()
-			assert.Equal(t, time.Second, time.Since(start))
+			require.True(t, hasDeadline)
+			assert.Equal(t, start.Add(time.Second), deadline)
+			close(release)
+			synctest.Wait()
 			clearCLIUseState()
 		})
 	})

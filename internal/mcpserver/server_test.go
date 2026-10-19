@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/storage"
-	"go.kenn.io/roborev/internal/telemetry"
 )
 
 type fakeBackend struct {
@@ -114,11 +113,10 @@ func connectServer(t *testing.T, server *Server) *mcp.ClientSession {
 func TestActivityDoesNotDelayTools(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		calls := 0
-		server := New(&fakeBackend{}, "test", func(ctx context.Context) {
-			ctx, cancel := context.WithTimeout(ctx, telemetry.NotificationTimeout)
-			defer cancel()
+		release := make(chan struct{})
+		server := New(&fakeBackend{}, "test", func(context.Context) {
 			calls++
-			<-ctx.Done()
+			<-release
 		})
 		session := connectServer(t, server)
 		_, err := session.ListTools(t.Context(), nil)
@@ -131,8 +129,15 @@ func TestActivityDoesNotDelayTools(t *testing.T) {
 		synctest.Wait()
 		assert.Equal(t, 1, calls)
 		assert.Zero(t, time.Since(start))
-		server.activity.Wait()
-		assert.Equal(t, telemetry.NotificationTimeout, time.Since(start))
+		waitDone := make(chan bool, 1)
+		go func() {
+			server.activity.Wait()
+			waitDone <- true
+		}()
+		synctest.Wait()
+		assert.Empty(t, waitDone)
+		close(release)
+		assert.True(t, <-waitDone)
 	})
 }
 
