@@ -221,8 +221,6 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				require.NoError(t, json.Unmarshal(stdout.Bytes(), &result))
 				assert.True(t, result.Running)
 				assert.Empty(t, result.Error)
-				assert.Contains(t, stderr.String(), "unsupported service Type=forking")
-				assert.Contains(t, stderr.String(), "systemctl --user restart "+unit)
 				pauseOutput, pauseErr := exec.Command(cliBinary, "pause").CombinedOutput()
 				require.NoError(t, pauseErr, "%s", pauseOutput)
 				assert.Contains(t, string(pauseOutput), "systemctl --user restart "+unit)

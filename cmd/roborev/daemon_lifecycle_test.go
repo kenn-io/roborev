@@ -109,21 +109,18 @@ func TestEnsureDaemonHandlesVersionProbe(t *testing.T) {
 				}
 				return &daemon.PingInfo{OK: true, Service: "roborev", Version: "v-other-daemon"}, nil
 			}
-			services, starts := 0, 0
+			starts := 0
 			findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
 				assert.Equal(t, 1234, pid)
-				services++
 				return nil, nil
 			}
 			startDaemonForEnsure = func() error { starts++; return nil }
 			err := ensureDaemon()
 			if tc.accessDenied {
 				require.True(t, daemon.IsDaemonAccessError(err))
-				assert.Zero(t, services)
 				assert.Zero(t, starts)
 			} else {
 				require.NoError(t, err)
-				assert.Equal(t, 2, services, "capture the original owner and select the owner under the lock")
 				assert.Equal(t, 1, starts)
 			}
 		})

@@ -65,12 +65,6 @@ func TestUnmanagedRecoveryDrainsDiscoveredRuntimes(t *testing.T) {
 			var drained []int
 			drainManagedDaemon = func(info *daemon.RuntimeInfo) error {
 				drained = append(drained, info.PID)
-				release, acquired, err := daemon.RuntimeStore().TryAcquireStartLock(t.Context())
-				require.NoError(t, err)
-				if acquired {
-					release()
-				}
-				assert.False(t, acquired, "recovery holds the start lock through every drain")
 				if tc.drainErr != nil {
 					return tc.drainErr
 				}

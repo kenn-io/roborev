@@ -541,8 +541,7 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 		name                    string
 		responsive, lockTimeout bool
 	}{
-		{name: "responsive unsupported service", responsive: true},
-		{name: "absent rejected replacement"},
+		{name: "responsive after drain failure", responsive: true},
 		{name: "responsive during recovery lock wait", responsive: true, lockTimeout: true},
 		{name: "absent during recovery lock wait", lockTimeout: true},
 	} {
@@ -557,10 +556,7 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 				}
 				return nil, os.ErrNotExist
 			})
-			cause := "start rejected"
-			if tc.responsive {
-				cause = "unsupported service Type=forking"
-			}
+			cause := "drain rejected"
 			statusEnsureDaemon = func() error {
 				if tc.lockTimeout {
 					return fmt.Errorf("%w: %w", errRecoveryLock, context.DeadlineExceeded)
@@ -583,18 +579,20 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 			}
 			assert.Nil(t, result.Daemon)
 			assert.Empty(t, stderr.String())
+			textCmd := statusCmd()
+			var textErr error
+			output := captureStdout(t, func() { textErr = textCmd.Execute() })
+			require.NoError(t, textErr)
+			state := "not running"
+			if tc.responsive {
+				state = "running"
+			}
+			assert.Contains(t, output, "Daemon: "+state+"\n")
+			assert.Contains(t, output, "Status: unavailable: ")
 			if tc.lockTimeout {
-				textCmd := statusCmd()
-				var textErr error
-				output := captureStdout(t, func() { textErr = textCmd.Execute() })
-				require.NoError(t, textErr)
-				state := "not running"
-				if tc.responsive {
-					state = "running"
-				}
-				assert.Contains(t, output, "Daemon: "+state+"\n")
-				assert.Contains(t, output, "Status: unavailable: ")
 				assert.Contains(t, output, context.DeadlineExceeded.Error())
+			} else {
+				assert.Contains(t, output, cause)
 			}
 		})
 	}

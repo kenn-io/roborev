@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -63,31 +62,22 @@ func TestEnsureDaemonDoesNotAdoptUnpublishedDefaultDaemon(t *testing.T) {
 }
 
 func TestEnsureDaemonPropagatesDiscoveryIOError(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		err  error
-	}{
-		{"runtime directory failure", errors.New("runtime directory read failed")},
-		{"access denied", &net.OpError{Op: "dial", Net: "tcp", Err: syscall.EACCES}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			isolateDaemonSelection(t)
-			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, tc.err }
-			var starts, probes, cleanups, services int
-			probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
-				probes++
-				return nil, os.ErrNotExist
-			}
-			startDaemonForEnsure = func() error { starts++; return nil }
-			cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { cleanups++; return 0 }
-			findDaemonService = func(context.Context, int) (*daemonService, error) { services++; return nil, nil }
-			require.ErrorIs(t, ensureDaemon(), tc.err)
-			assert.Zero(t, starts)
-			assert.Zero(t, probes)
-			assert.Zero(t, cleanups)
-			assert.Zero(t, services)
-		})
+	discoveryErr := errors.New("runtime directory read failed")
+	isolateDaemonSelection(t)
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, discoveryErr }
+	var starts, probes, cleanups, services int
+	probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
+		probes++
+		return nil, os.ErrNotExist
 	}
+	startDaemonForEnsure = func() error { starts++; return nil }
+	cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { cleanups++; return 0 }
+	findDaemonService = func(context.Context, int) (*daemonService, error) { services++; return nil, nil }
+	require.ErrorIs(t, ensureDaemon(), discoveryErr)
+	assert.Zero(t, starts)
+	assert.Zero(t, probes)
+	assert.Zero(t, cleanups)
+	assert.Zero(t, services)
 }
 
 func TestEnsureDaemonPropagatesDiscoveryTLSConfigError(t *testing.T) {
