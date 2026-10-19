@@ -307,4 +307,4 @@ install-hooks:
 # CI target: run postgres tests without managing docker (assumes postgres is running)
 test-postgres-ci:
 	go test -tags=postgres -v ./internal/storage/... -run Integration
-	go test -tags=postgres -v ./internal/daemon/... -run Integration
+	go test -tags=postgres -v ./internal/daemon/... -run '^TestIntegration'

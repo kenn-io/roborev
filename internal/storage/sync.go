@@ -126,11 +126,7 @@ func (db *DB) ClaimSetupFinished(ctx context.Context) (SetupFinishedClaim, error
 	if rows == 1 {
 		return SetupFinishedNewClaim, nil
 	}
-	marker, err = getSyncState(context.WithoutCancel(ctx), conn, SyncStateSetupFinished)
-	if marker != "" {
-		return SetupFinishedExisting, err
-	}
-	return SetupFinishedIneligible, err
+	return SetupFinishedExisting, nil
 }
 
 // GetOrCreateSyncStateValue returns a durable key/value entry, creating it when absent.

@@ -55,13 +55,11 @@ func TestClaimSetupFinishedRequiresReadableReview(t *testing.T) {
 				}
 				wg.Wait()
 				close(results)
-				winners := 0
+				counts := make(map[SetupFinishedClaim]int)
 				for claimed := range results {
-					if claimed == SetupFinishedNewClaim {
-						winners++
-					}
+					counts[claimed]++
 				}
-				assert.Equal(t, 1, winners)
+				assert.Equal(t, map[SetupFinishedClaim]int{SetupFinishedNewClaim: 1, SetupFinishedExisting: 7}, counts)
 			} else {
 				claimed, err := db.ClaimSetupFinished(t.Context())
 				require.NoError(t, err)
