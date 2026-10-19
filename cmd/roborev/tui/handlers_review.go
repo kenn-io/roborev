@@ -126,7 +126,7 @@ func (m model) handleCloseKey() (tea.Model, tea.Cmd) {
 				}
 				restoreSelection = true
 			}
-			return m, m.closeReviewInBackground(job.ID, newState, oldState, seq, restoreSelection)
+			return m, m.closeReviewInBackground(closedResultMsg{jobID: job.ID, newState: newState, oldState: oldState, seq: seq, restoreSelection: restoreSelection, fromKey: true})
 		}
 	}
 	return m, nil

@@ -292,7 +292,7 @@ func (a *GeminiAgent) runAntigravity(ctx context.Context, repoPath, prompt strin
 		Output:       output,
 		StreamStderr: true,
 		Parse: func(r io.Reader, sw *syncWriter) (string, error) {
-			return parseAntigravityOutput(r, sw)
+			return parsePlainTextOutput(r, sw)
 		},
 	})
 	if runErr != nil {
@@ -465,16 +465,6 @@ func parseDotVersion(v string) ([3]int, bool) {
 		out[i] = n
 	}
 	return out, true
-}
-
-func parseAntigravityOutput(r io.Reader, sw *syncWriter) (string, error) {
-	var buf strings.Builder
-	if sw == nil {
-		_, err := io.Copy(&buf, r)
-		return strings.TrimSpace(buf.String()), err
-	}
-	_, err := io.Copy(io.MultiWriter(&buf, sw), r)
-	return strings.TrimSpace(buf.String()), err
 }
 
 // isModelNotFoundError returns true if stderr indicates the requested

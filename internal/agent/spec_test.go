@@ -27,7 +27,7 @@ func TestAgentSpecsResolveAliasesAndCanonicalNames(t *testing.T) {
 func TestAgentSpecsFallbackOrder(t *testing.T) {
 	t.Parallel()
 
-	assert.Equal(t, []string{"codex", "claude-code", "gemini", "copilot", "opencode", "cursor", "kiro", "kilo", "droid", "pi", "grok"}, fallbackAgentOrder)
+	assert.Equal(t, []string{"codex", "claude-code", "gemini", "copilot", "opencode", "cursor", "kiro", "kilo", "droid", "pi", "grok", "muse"}, fallbackAgentOrder)
 	assert.Equal(t, fallbackAgentOrder, installHintAgentNames())
 }
 
@@ -60,10 +60,24 @@ func TestAgentSpecsCommandOverrides(t *testing.T) {
 		PiCmd:         "custom-pi",
 		OpenCodeCmd:   "custom-opencode",
 		GrokCmd:       "custom-grok",
+		MuseCmd:       "custom-muse",
+	}
+	expectedOverrides := map[string]string{
+		"codex":       "custom-codex",
+		"claude-code": "custom-claude",
+		"gemini":      "custom-gemini",
+		"cursor":      "custom-cursor",
+		"pi":          "custom-pi",
+		"opencode":    "custom-opencode",
+		"grok":        "custom-grok",
+		"muse":        "custom-muse",
 	}
 
 	for _, spec := range allAgentSpecs {
 		t.Run(spec.Name, func(t *testing.T) {
+			if spec.CommandOverride != nil {
+				require.Contains(t, expectedOverrides, spec.Name, "command override needs an independent expected value")
+			}
 			agent, err := Get(spec.Name)
 			require.NoError(t, err)
 
@@ -76,7 +90,7 @@ func TestAgentSpecsCommandOverrides(t *testing.T) {
 
 			require.True(t, ok)
 			expectedCommand := spec.DefaultCommand
-			if override := commandOverrideForAgent(spec.Name, cfg); override != "" {
+			if override := expectedOverrides[spec.Name]; override != "" {
 				expectedCommand = override
 			}
 			assert.Equal(t, expectedCommand, commandAgent.CommandName())

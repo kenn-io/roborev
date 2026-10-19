@@ -31,6 +31,7 @@ import (
 	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
+	"go.kenn.io/roborev/internal/telemetry"
 	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
@@ -143,6 +144,7 @@ type model struct {
 	expandedPanels       map[uuid.UUID]bool                // panel_run_uuid -> expanded
 	panelMembers         map[uuid.UUID][]storage.ReviewJob // panel_run_uuid -> side-fetched members
 	currentView          viewKind
+	reviewReadSent       bool     // review_viewed issued on screenDay
 	screenDay            string   // UTC day that screensSent covers
 	screensSent          []string // screen requests issued on screenDay
 	rerunAgentJobID      int64
@@ -1139,6 +1141,12 @@ func mouseCaptureEnabled(v viewKind, mouseEnabled bool) bool {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	today := time.Now().UTC().Format(time.DateOnly)
+	if m.screenDay != today {
+		m.screenDay, m.screensSent = today, nil
+		m.reviewReadSent = false
+	}
+
 	// Signal that the event loop is running (once). The control
 	// listener waits on this before accepting connections.
 	if m.ready != nil {
@@ -1280,7 +1288,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		result = m
 	case screenDeliveryMsg:
 		if msg.day == m.screenDay && msg.err != nil {
-			m.screensSent = slices.DeleteFunc(m.screensSent, func(screen string) bool { return screen == msg.screen })
+			if msg.screen == "" {
+				m.reviewReadSent = false
+			} else {
+				m.screensSent = slices.DeleteFunc(m.screensSent, func(screen string) bool { return screen == msg.screen })
+			}
 		}
 		result = m
 	case controlSocketReadyMsg:
@@ -1313,11 +1325,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmd = tea.Batch(cmd, resumeCmd)
 			}
 		}
-		today := time.Now().UTC().Format(time.DateOnly)
-		_, key := msg.(tea.KeyMsg)
+
+		input, key := msg.(tea.KeyMsg)
 		_, mouse := msg.(tea.MouseMsg)
-		if rm.screenDay != today {
-			rm.screenDay, rm.screensSent = today, nil
+		// A read is input while a loaded review is on screen; quitting is not reading.
+		quit := key && (input.String() == "ctrl+c" || input.String() == "ctrl+d")
+		read := (key || mouse) && !quit && (m.currentView == viewReview || m.splitActive()) &&
+			m.selectedReviewLoaded() && m.currentReview.ID != 0 &&
+			m.currentReview.Job != nil && m.currentReview.Job.IsReadableReview()
+		if read && !rm.reviewReadSent {
+			rm.reviewReadSent = true
+			cmd = tea.Batch(cmd, rm.reportAction(telemetry.EventReviewViewed))
 		}
 		for _, screen := range rm.screensShown() {
 			if slices.Contains(rm.screensSent, screen) {

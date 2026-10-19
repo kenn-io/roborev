@@ -805,6 +805,7 @@ cursor_cmd = "/usr/local/bin/agent"
 opencode_cmd = "/usr/local/bin/opencode-wrapper"
 pi_cmd = "~/bin/pi"
 grok_cmd = "/opt/bin/grok"
+muse_cmd = "/opt/bin/muse"
 ```
 
 | Option | Default command |
@@ -816,6 +817,7 @@ grok_cmd = "/opt/bin/grok"
 | `opencode_cmd` | `opencode` |
 | `pi_cmd` | `pi` |
 | `grok_cmd` | `grok` |
+| `muse_cmd` | `muse` |
 
 These overrides affect both agent execution and availability detection. Without
 them, roborev only checks for the default command name when deciding whether an
@@ -1148,6 +1150,7 @@ filter_branch = false             # Show all branches on startup (default: curre
 | `opencode_cmd` | string | `opencode` | Custom path or name for the OpenCode binary | Yes |
 | `pi_cmd` | string | `pi` | Custom path or name for the Pi binary | Yes |
 | `grok_cmd` | string | `grok` | Custom path or name for the Grok Build binary | Yes |
+| `muse_cmd` | string | `muse` | Custom path or name for the Muse Code binary | Yes |
 | `exclude_patterns` | array | `[]` | Filenames or glob patterns to exclude from review diffs globally | Yes |
 | `default_max_prompt_size` | int | 204800 | Default inline prompt budget in bytes before file handoff | Yes |
 
@@ -1182,16 +1185,25 @@ timeout_seconds = 30
 | `dims` | - | Required positive response dimension |
 | `api_key` | - | The bearer key itself as a string, or `{ env = "NAME" }` or `{ file = "PATH" }` |
 | `input_type_mode` | `none` | `none` omits `input_type`; `retrieval` sends `document` for indexing and `query` for search |
+| `request_dimensions` | `false` | Send `dims` as the `dimensions` request field; enable only when the endpoint supports it |
+| `document_prefix` | empty | Literal prefix added once to each review chunk before embedding; whitespace is preserved |
+| `document_suffix` | empty | Literal suffix added once to each review chunk before embedding; whitespace is preserved |
+| `query_prefix` | empty | Literal prefix added once to each search query before embedding; whitespace is preserved |
+| `query_suffix` | empty | Literal suffix added once to each search query before embedding; whitespace is preserved |
 | `fingerprint_salt` | - | Optional operator-controlled generation invalidator |
 | `batch_size` | `32` | Maximum inputs per provider request |
-| `model_context_tokens` | - | Most tokens one input can hold; set together with `max_batch_tokens` to batch by tokens |
+| `model_context_tokens` | - | Operator-supplied conservative per-input token bound for packing batches; set together with `max_batch_tokens`. Does not tokenize or enforce input admission |
 | `max_batch_tokens` | - | Provider's aggregate input-token cap per request; set together with `model_context_tokens` |
-| `timeout_seconds` | `30` | Provider request timeout in seconds |
+| `timeout_seconds` | `30` | Provider request timeout in seconds; it cannot extend the 30-second indexing pass or the three-second search query deadline |
 | `trust_private_network` | `false` | Allow plain HTTP to a private-network endpoint (a private, link-local, or carrier-grade NAT address, or a host name) |
 
 These are the standard embedding keys shared by Kenn tools, so the same block
 works in any of them. `base_url`, `model`, and `dims` must be configured
-together.
+together, and every other key requires them. Changing a prefix, a suffix, or
+`request_dimensions` starts a replacement generation and prevents reuse of older
+vectors; leaving them unset keeps existing vectors. See the
+[EmbeddingGemma 2 text recipe](/docs/search/#configure-embeddinggemma-2-text-embeddings)
+for an optional local native-768 example and its serving requirements.
 
 When upgrading to 0.70.0, replace `api_key_env = "NAME"` with
 `api_key = { env = "NAME" }`. See
@@ -1852,9 +1864,17 @@ systemctl --user enable --now roborev
 
 roborev sends limited anonymous telemetry when the daemon starts and once every
 24 hours while it remains running. Events are `daemon_started` and
-`daemon_active`, with repo count, review count, whether sync is enabled, whether
-CI is enabled, whether auto design review is enabled, roborev version, OS,
-architecture, and an anonymous install ID stored in the local database.
+`daemon_active`, with `repo_count` and `review_count` as buckets: `0-5`, `6-20`,
+`21-100`, or `over-100`. These events also include whether sync is enabled,
+whether CI is enabled, whether auto design review is enabled, roborev version,
+OS, architecture, and an anonymous install ID stored in the local database.
+
+The daemon sends `setup_finished` once per install the first time it finds a
+finished review: one that ran locally, arrived through sync, or already existed
+when the daemon started. Panel member reviews count. The event has no
+properties. Its timestamp records when the daemon noticed the review, so it can
+come after an upgrade or after telemetry is turned on. If sending fails, the
+daemon does not retry.
 
 Closing a browser tab, leaving it hidden for 30 minutes, or exiting the TUI
 reports one `session_ended` with `surface` and `duration_bucket`: `under_1m`,
@@ -1894,6 +1914,28 @@ Delivery is best effort; failed delivery isn't retried. Both opt-out variables
 apply. CLI and stdio MCP notifications use the existing CLI reporting timeout
 and never start a daemon just for telemetry.
 
+Core actions report `review_viewed`, `finding_fixed`, and `review_closed`, each
+at most once per installation, surface, and UTC day. All carry `surface`. Reads
+and closes support web, TUI and CLI; fixes support TUI and CLI. Reads include
+review, synthesis and compact output.
+
+- The TUI counts a read on key or mouse input while a loaded review is visible.
+    Opening a review isn't a read until the next input. Quit keys `ctrl+c` and
+    `ctrl+d` stay silent; `q` on a loaded review counts. A transport error or
+    successful daemon reconnect allows another report on later input.
+- The browser reports a rendered Review tab on load and when focus or visibility
+    returns, with one request in flight at a time.
+- CLI reads include `show`, `wait`, `review --wait`, `compact --wait`, and
+    nonquiet `fix` output. CLI fixes from `fix`, `refine`, and `analyze --fix`
+    report `finding_fixed` when they commit. CLI actions require terminal output
+    and exclude agents and `--from-skill`.
+- Reopens, automatic closes, prompt reads, and analysis reads stay silent.
+- With a remote `--server`, CLI events use an already-running local daemon and
+    its installation ID. Without a local daemon, events are dropped. Reporting
+    never starts a daemon.
+
+The daemon owns daily deduplication, so clients may repeat a report.
+
 The browser and TUI also report `screen_viewed` with a fixed `screen` name and
 `surface` of `web` or `tui`. Browser screens are `reviews` and `analytics`. TUI
 screens are `queue`, `review`, `prompt`, `filter`, `comment`, `commit-msg`,
@@ -1903,13 +1945,13 @@ day across interfaces, including daemon restarts. Screen names contain no paths,
 job IDs, filter text or review contents. Daily screen claims live in
 `telemetry-daily.json` beside the daemon database, wherever `--db` points, with
 a `telemetry-daily.json.lock` sidecar. An unreadable or newer-version claims
-file makes screen reports fail until it's removed. Stop the daemon before
-deleting it. Deletion resets file claims; existing SQLite claims remain
-effective through their recorded UTC dates. Counts mean the report was queued,
-not confirmed delivered to PostHog. The TUI retries a failed screen report on
-the next key or mouse input while that screen is showing. The browser reports
-the visible screen on every window focus and page change, and the daemon counts
-it once per day.
+file makes `screen_viewed` and core action reports fail until it's removed. Stop
+the daemon before deleting it. Deletion resets file claims; existing SQLite
+claims remain effective through their recorded UTC dates. Counts mean the report
+was queued, not confirmed delivered to PostHog. The TUI retries a failed screen
+report on the next key or mouse input while that screen is showing. The browser
+reports the visible screen on every window focus and page change, and the daemon
+counts it once per day.
 
 Each event carries `install_age_hours`, the whole hours since the install ID was
 created, so short-lived installs such as test sandboxes can be filtered out.
@@ -2532,15 +2574,15 @@ agent-specific behavior.
 
 The legacy values keep their established per-agent behavior:
 
-| Legacy value | Codex | Claude | Grok | Droid | Kilo | Pi |
-|--------------|-------|--------|------|-------|------|----|
-| `fast` | `low` | `low` | `low` | `low` | `minimal` | `low` |
-| `standard` | default | default | default | default | default | `medium` |
-| `thorough` | `high` | `high` | `high` | `high` | `high` | `high` |
-| `maximum` | GPT-5.6 `sol`/`terra`/`luna`: `max`; otherwise `xhigh` | `max` | `max` | `high` | `high` | `high` |
+| Legacy value | Codex | Claude | Grok | Muse | Droid | Kilo | Pi |
+|--------------|-------|--------|------|------|-------|------|----|
+| `fast` | `low` | `low` | `low` | `low` | `low` | `minimal` | `low` |
+| `standard` | default | default | default | default | default | default | `medium` |
+| `thorough` | `high` | `high` | `high` | `high` | `high` | `high` | `high` |
+| `maximum` | GPT-5.6 `sol`/`terra`/`luna`: `max`; otherwise `xhigh` | `max` | `max` | `max` | `high` | `high` | `high` |
 
-Native support is agent-specific. Codex, Claude, Grok, and Pi accept all five
-exact values. Droid accepts `low`, `medium`, and `high`. Kilo passes exact
+Native support is agent-specific. Codex, Claude, Grok, Muse, and Pi accept all
+five exact values. Droid accepts `low`, `medium`, and `high`. Kilo passes exact
 values through as model variants, so availability depends on the selected
 provider and model. Agents without a reasoning flag ignore the level while
 workflow-specific agent and model routing still uses its exact name.

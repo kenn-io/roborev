@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	gitrepo "go.kenn.io/kit/git/repo"
 
+	"go.kenn.io/roborev/internal/telemetry"
 	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
@@ -227,6 +228,7 @@ func closeCmd() *cobra.Command {
 
 			if closed {
 				fmt.Printf("Job %d closed\n", jobID)
+				reportCLIActionOutput(os.Stdout, telemetry.EventReviewClosed)
 			} else {
 				fmt.Printf("Job %d reopened\n", jobID)
 			}

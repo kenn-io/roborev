@@ -170,6 +170,21 @@ var allAgentSpecs = []agentSpec{
 		},
 	},
 	{
+		Name:            "muse",
+		DefaultCommand:  "muse",
+		FallbackRank:    12,
+		CommandOverride: func(cfg *config.Config) string { return cfg.MuseCmd },
+		CloneWithCommand: func(a Agent, command string) Agent {
+			agent, ok := a.(*MuseAgent)
+			if !ok {
+				return a
+			}
+			clone := *agent
+			clone.Command = command
+			return &clone
+		},
+	},
+	{
 		Name:           defaultACPName,
 		DefaultCommand: defaultACPCommand,
 	},

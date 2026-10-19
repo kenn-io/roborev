@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os"
 	"os/exec"
 	"slices"
 	"strings"
@@ -290,25 +289,6 @@ func (a *GrokAgent) WithSessionID(sessionID string) Agent {
 	return a.clone(withClonedSessionID(sessionID))
 }
 
-// grokReasoningEffort maps ReasoningLevel onto Grok's --reasoning-effort
-// values (none/minimal/low/medium/high/xhigh/max). Standard leaves Grok's default.
-func (a *GrokAgent) grokReasoningEffort() string {
-	switch a.Reasoning {
-	case ReasoningMaximum, ReasoningMax:
-		return "max"
-	case ReasoningXHigh:
-		return "xhigh"
-	case ReasoningThorough, ReasoningHigh:
-		return "high"
-	case ReasoningMedium:
-		return "medium"
-	case ReasoningFast, ReasoningLow:
-		return "low"
-	default:
-		return ""
-	}
-}
-
 func (a *GrokAgent) Name() string {
 	return defaultGrokName
 }
@@ -472,7 +452,7 @@ func (a *GrokAgent) buildArgsWithSafety(agenticMode, planning bool, promptFile s
 	if model := strings.TrimSpace(a.Model); model != "" {
 		args = append(args, "-m", model)
 	}
-	if effort := a.grokReasoningEffort(); effort != "" {
+	if effort := reasoningEffort(a.Reasoning); effort != "" {
 		args = append(args, "--reasoning-effort", effort)
 	}
 	if a.SessionID != "" {
@@ -509,20 +489,11 @@ func (a *GrokAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 func (a *GrokAgent) run(ctx context.Context, repoPath, prompt string, output io.Writer) (string, error) {
 	// Grok headless does not read the prompt from stdin; use a temp file
 	// like Pi to avoid OS command-line length limits.
-	tmpFile, err := os.CreateTemp("", "roborev-grok-prompt-*.md")
+	promptPath, cleanup, err := createPromptFile("grok", prompt)
 	if err != nil {
-		return "", fmt.Errorf("create temp prompt file: %w", err)
+		return "", err
 	}
-	promptPath := tmpFile.Name()
-	defer os.Remove(promptPath)
-
-	if _, err := tmpFile.WriteString(prompt); err != nil {
-		tmpFile.Close()
-		return "", fmt.Errorf("write prompt to temp file: %w", err)
-	}
-	if err := tmpFile.Close(); err != nil {
-		return "", fmt.Errorf("close temp prompt file: %w", err)
-	}
+	defer cleanup()
 
 	var args []string
 	if planningReadOnly(ctx) {
@@ -642,7 +613,7 @@ func (a *GrokAgent) classifyArgs(schema jsontext.Value, promptFile string) []str
 	if model := strings.TrimSpace(a.Model); model != "" {
 		args = append(args, "-m", model)
 	}
-	if effort := a.grokReasoningEffort(); effort != "" {
+	if effort := reasoningEffort(a.Reasoning); effort != "" {
 		args = append(args, "--reasoning-effort", effort)
 	}
 	args = append(args, "--prompt-file", promptFile)
@@ -670,20 +641,11 @@ func (a *GrokAgent) classifyWithSchema(
 	schema jsontext.Value,
 	out io.Writer,
 ) (jsontext.Value, error) {
-	tmpFile, err := os.CreateTemp("", "roborev-grok-classify-*.md")
+	promptPath, cleanup, err := createPromptFile("grok-classify", prompt)
 	if err != nil {
-		return nil, fmt.Errorf("create temp classify prompt: %w", err)
+		return nil, err
 	}
-	promptPath := tmpFile.Name()
-	defer os.Remove(promptPath)
-
-	if _, err := tmpFile.WriteString(prompt); err != nil {
-		tmpFile.Close()
-		return nil, fmt.Errorf("write classify prompt: %w", err)
-	}
-	if err := tmpFile.Close(); err != nil {
-		return nil, fmt.Errorf("close classify prompt: %w", err)
-	}
+	defer cleanup()
 
 	args := a.classifyArgs(schema, promptPath)
 	cmd := exec.CommandContext(ctx, a.Command, args...)
@@ -733,19 +695,11 @@ func (a *GrokAgent) reviewWithSchema(
 	schema jsontext.Value,
 	out io.Writer,
 ) (jsontext.Value, error) {
-	tmpFile, err := os.CreateTemp("", "roborev-grok-review-*.md")
+	promptPath, cleanup, err := createPromptFile("grok-review", prompt)
 	if err != nil {
-		return nil, fmt.Errorf("create temp structured review prompt: %w", err)
+		return nil, err
 	}
-	promptPath := tmpFile.Name()
-	defer os.Remove(promptPath)
-	if _, err := tmpFile.WriteString(prompt); err != nil {
-		tmpFile.Close()
-		return nil, fmt.Errorf("write structured review prompt: %w", err)
-	}
-	if err := tmpFile.Close(); err != nil {
-		return nil, fmt.Errorf("close structured review prompt: %w", err)
-	}
+	defer cleanup()
 
 	args := []string{
 		"--no-auto-update",
@@ -755,7 +709,7 @@ func (a *GrokAgent) reviewWithSchema(
 	if model := strings.TrimSpace(a.Model); model != "" {
 		args = append(args, "-m", model)
 	}
-	if effort := a.grokReasoningEffort(); effort != "" {
+	if effort := reasoningEffort(a.Reasoning); effort != "" {
 		args = append(args, "--reasoning-effort", effort)
 	}
 	if a.SessionID != "" {

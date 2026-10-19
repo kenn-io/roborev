@@ -75,6 +75,25 @@ func ParseReasoningLevel(s string) ReasoningLevel {
 	}
 }
 
+// reasoningEffort maps levels to the effort values shared by Claude, Grok, and Muse.
+// An empty value leaves the agent's default in effect.
+func reasoningEffort(level ReasoningLevel) string {
+	switch level {
+	case ReasoningMaximum, ReasoningMax:
+		return "max"
+	case ReasoningXHigh:
+		return "xhigh"
+	case ReasoningThorough, ReasoningHigh:
+		return "high"
+	case ReasoningMedium:
+		return "medium"
+	case ReasoningFast, ReasoningLow:
+		return "low"
+	default:
+		return ""
+	}
+}
+
 // Agent defines the interface for code review agents
 type Agent interface {
 	// Name returns the agent identifier (e.g., "codex", "claude-code")

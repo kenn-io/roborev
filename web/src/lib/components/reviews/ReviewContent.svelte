@@ -9,6 +9,8 @@
     pending?: boolean;
   }>;
 
+  let { visibleJobId = $bindable<number | undefined>() } = $props();
+
   const stores = getReviewStores();
   const output = $derived(stores.roborevReview?.getOutput() ?? "");
   const selectedJob = $derived(stores.roborevReview?.getSelectedJob());
@@ -54,6 +56,18 @@
       void loadRichReviewContent();
     }, 0);
     return () => globalThis.clearTimeout(timeout);
+  });
+
+  // Effects run after the rich component has rendered into the DOM.
+  $effect(() => {
+    visibleJobId =
+      RichReviewContent &&
+      output &&
+      !stores.roborevReview?.isLoading() &&
+      !failed &&
+      !pending
+        ? stores.roborevReview?.getReview()?.job_id
+        : undefined;
   });
 
   $effect(() => {

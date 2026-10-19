@@ -377,20 +377,11 @@ func (a *PiAgent) Review(
 ) (string, error) {
 	// Write prompt to a temporary file to avoid command line length limits
 	// and to properly handle special characters.
-	tmpDir := os.TempDir()
-	tmpFile, err := os.CreateTemp(tmpDir, "roborev-pi-prompt-*.md")
+	promptPath, cleanup, err := createPromptFile("pi", prompt)
 	if err != nil {
-		return "", fmt.Errorf("create temp prompt file: %w", err)
+		return "", err
 	}
-	defer os.Remove(tmpFile.Name())
-
-	if _, err := tmpFile.WriteString(prompt); err != nil {
-		tmpFile.Close()
-		return "", fmt.Errorf("write prompt to temp file: %w", err)
-	}
-	if err := tmpFile.Close(); err != nil {
-		return "", fmt.Errorf("close temp prompt file: %w", err)
-	}
+	defer cleanup()
 
 	sessionPath := resolvePiSessionPath(a.SessionID)
 	if a.SessionID != "" && sessionPath == "" {
@@ -413,7 +404,7 @@ func (a *PiAgent) Review(
 	// But if the prompt is huge, we can't pass it as an argument.
 	// If we pass @file, pi loads the file.
 	// We might need to add a small trigger message like "Follow the instructions in the attached file."
-	args = append(args, "@"+tmpFile.Name(), "Please follow the instructions in the attached file to review the code.")
+	args = append(args, "@"+promptPath, "Please follow the instructions in the attached file to review the code.")
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath

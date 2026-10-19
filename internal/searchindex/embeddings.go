@@ -1,6 +1,7 @@
 package searchindex
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -32,8 +33,8 @@ type Embeddings struct {
 // the resolved API key. recipeVersion identifies how review documents are
 // rendered. Client retries stay off; the reconciler owns backoff between
 // turns.
-func NewEmbeddings(config embedconfig.Embedder, apiKey string, recipeVersion int) (*Embeddings, error) {
-	parts, err := config.Parts()
+func NewEmbeddings(settings embedconfig.Embedder, apiKey string, recipeVersion int) (*Embeddings, error) {
+	parts, err := settings.Parts()
 	if err != nil {
 		return nil, err
 	}
@@ -52,13 +53,17 @@ func NewEmbeddings(config embedconfig.Embedder, apiKey string, recipeVersion int
 	if err != nil {
 		return nil, err
 	}
-	legacy, err := legacyFingerprint(config, recipeVersion)
-	if err != nil {
-		return nil, err
-	}
 	space := embedmodel.Descriptor{
 		Model: parts.Model, Roles: parts.Roles, Deployment: parts.Deployment,
-		Legacy: []string{legacy},
+	}
+	// Earlier fingerprints predate role affixes and dimension requests. Only
+	// configurations those releases could express may reuse their generations.
+	if legacyCompatible(settings) {
+		legacy, err := legacyFingerprint(settings, recipeVersion)
+		if err != nil {
+			return nil, err
+		}
+		space.Legacy = []string{legacy}
 	}
 	if err := space.Validate(); err != nil {
 		return nil, err
@@ -66,9 +71,12 @@ func NewEmbeddings(config embedconfig.Embedder, apiKey string, recipeVersion int
 	return &Embeddings{client: client, space: space, batch: parts.Batch}, nil
 }
 
-// EncodeFunc sends texts for role unchanged.
+// EncodeFunc applies the configured role affixes once to rendered documents or
+// queries.
 func (e *Embeddings) EncodeFunc(role embedconfig.Role) vector.EncodeFunc {
-	return e.client.EncodeFunc(role)
+	return func(ctx context.Context, texts []string) ([][]float32, error) {
+		return e.client.EmbedTexts(ctx, role, texts)
+	}
 }
 
 // Space returns the vector-space descriptor.
@@ -76,6 +84,14 @@ func (e *Embeddings) Space() embedmodel.Descriptor { return e.space }
 
 // Batch returns the per-request input limits.
 func (e *Embeddings) Batch() embedconfig.Batch { return e.batch }
+
+// legacyCompatible reports whether settings leave every vector-identity key
+// added after the legacy fingerprint at its default.
+func legacyCompatible(settings embedconfig.Embedder) bool {
+	return settings.DocumentPrefix == "" && settings.DocumentSuffix == "" &&
+		settings.QueryPrefix == "" && settings.QuerySuffix == "" &&
+		!settings.RequestDimensions
+}
 
 // legacyFingerprint is the generation fingerprint that releases before the
 // kit client stored. Existing vectors keep serving under it.

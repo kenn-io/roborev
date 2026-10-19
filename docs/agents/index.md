@@ -21,6 +21,7 @@ installed.
 | Kiro | `kiro-cli` | See [kiro.dev](https://kiro.dev/) |
 | Pi | `pi` | `npm install -g @mariozechner/pi-coding-agent` |
 | Grok Build | `grok` | `curl -fsSL https://x.ai/cli/install.sh \| bash` ([x.ai/cli](https://x.ai/cli)) |
+| Muse Code | `muse` | `curl -fsSL https://dev.meta.ai/install.sh \| sh` ([Meta installation guide](https://dev.meta.ai/docs/overview)) |
 
 ## Auto-Detection
 
@@ -37,6 +38,7 @@ roborev auto-detects installed agents and falls back in this order:
 1. Droid
 1. Pi
 1. Grok Build
+1. Muse Code
 
 The first available agent is used unless you specify one explicitly.
 
@@ -89,6 +91,7 @@ roborev refine --model claude-sonnet-4-20250514
 | Kiro | Model name | (see Kiro docs) |
 | Pi | Model name | `claude-sonnet-4-20250514`, `gpt-4.1` |
 | Grok Build | xAI model ID | `grok-4.5` (see [x.ai/cli](https://x.ai/cli)) |
+| Muse Code | Meta model ID | `muse-spark-1.3` |
 
 ### Configuration
 
@@ -303,6 +306,7 @@ and commands):
 | Kiro | Full (uses `--trust-all-tools`) |
 | Pi | Full (agentic runs use Pi's default tools) |
 | Grok Build | Full (uses `--always-approve` in agentic mode; review uses layered read-only safety — see below) |
+| Muse Code | Full (uses `--yolo`; reviews and planning allow only `read_file` and `search`) |
 
 See [Custom Tasks & Agentic Mode](/docs/advanced/custom-tasks/) for details on
 review vs agentic modes.
@@ -323,6 +327,50 @@ use Pi's default tools, including `bash`, `edit`, and `write`.
 Roborev appends the managed allowlist after `[agent.pi].launch_args`, so a
 duplicate `--tools` option in global configuration does not replace the review
 restriction.
+
+## Muse Code
+
+[Muse Code](https://dev.meta.ai/docs/muse-code) runs headlessly with
+`muse exec`. Authenticate with `muse login` or set `META_API_KEY`. Set
+`muse_cmd` in global config to use a custom binary path. Auto-detection uses the
+bare `muse` binary name, so another program with that name on `PATH` can be
+selected.
+
+Requires Muse Code 1.4.10 or later; the flags were verified against 1.4.10.
+
+Reviews and planning pass `-c 'run.toolset=["read_file","search"]'` to allow
+only native file reads and searches, excluding write, shell, web, MCP, and
+workflow tools regardless of saved Muse permissions. Reviews and planning don't
+start MCP servers. Fix and refine pass `--yolo`. Setting
+`allow_unsafe_agents = true` also enables that mode for reviews. Planning always
+uses the read-only allowlist. Reviews and planning also pass `-c 'hooks={}'` and
+`-c managed_hooks_path=null` to clear user and managed hooks for the run.
+Reviews and planning set `HOME` and `USERPROFILE` to one temporary home, with
+private `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME`, and temp
+(`TMPDIR`, `TMP`, `TEMP`) directories under it. Muse's `auth.json` is copied,
+and a login Muse renews during the run is saved back if the original credentials
+are unchanged and no other Muse process holds the login lock. Its
+`settings.json` is copied with `mcpServers` and `mcp_servers` removed; only
+settings schema version 1 is accepted. Saved workspace trust and installed user
+plugins are excluded, so trusted project `.muse/hooks.json` hooks and user
+plugin hooks don't run. The `--no-foreign-personal-context` flag also excludes
+foreign personal rules and skills, including configured foreign roots. Muse's
+bundled plugins remain available. Agentic runs inherit your environment and
+plugins.
+
+The private home has only been verified on Linux; macOS Muse normally stores
+login credentials in Keychain. If a macOS review can't find saved credentials,
+set `META_API_KEY`, which reviews inherit.
+
+Muse has no session resume or rebuttal support. Muse has no structured-output
+(schema) review or classification support.
+
+roborev always passes `--contributor-mode off` to turn off Muse's subscription
+Contributor mode for the run. On pay-as-you-go, the tier follows the model name.
+Muse 1.4.10 defaults to `muse-spark-1.3-contributor`, so set
+`model = "muse-spark-1.3"` in roborev to keep pay-as-you-go reviews off that
+tier. roborev passes `--model` only when it has a model configured; otherwise,
+Muse uses its own model settings.
 
 ## Grok Build
 

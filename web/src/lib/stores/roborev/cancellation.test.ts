@@ -5,6 +5,8 @@ import { makeTestAppRuntime } from "../../testing/runtime";
 import { createJobsStore } from "./jobs.svelte";
 import { createReviewStore } from "./review.svelte";
 
+const actionReports = vi.hoisted(() => vi.fn());
+vi.mock("../../utils/app-opened", () => ({ reportCoreAction: actionReports }));
 let runtime: OwnedAppRuntime | undefined;
 
 function reviewStore(
@@ -22,6 +24,7 @@ function reviewStore(
 }
 
 beforeEach(() => {
+  actionReports.mockReset();
   runtime = makeTestAppRuntime();
 });
 
@@ -371,4 +374,43 @@ describe("Roborev request cancellation", () => {
     expect(addComment).toHaveBeenCalledTimes(1);
     expect(store.getResponses().map((response) => response.id)).toEqual([9]);
   });
+});
+
+describe("review close reporting", () => {
+  it.each(["close", "reopen", "failure"])(
+    "reports only a successful explicit close: %s",
+    async (action) => {
+      let closed = action === "reopen";
+      const getReview = vi.fn(async () => ({
+        id: 1,
+        job_id: 42,
+        output: "review",
+        closed,
+      }));
+      const store = reviewStore({
+        getReview,
+        getReviewProjection: vi.fn(async () => ({ responses: [] })),
+        listJobs: vi.fn(async () => ({ jobs: [] })),
+        closeReview: vi.fn(async (request: { closed: boolean }) => {
+          if (action === "failure") throw new Error("close failed");
+          closed = request.closed;
+          return { success: true };
+        }),
+      } as never);
+      store.setSelectedJobId(42);
+      store.loadReview(42);
+      await vi.waitFor(() => expect(store.getReview()?.job_id).toBe(42));
+      store.closeReview(42);
+      if (action === "close")
+        await vi.waitFor(() =>
+          expect(actionReports).toHaveBeenCalledExactlyOnceWith(
+            "review_closed",
+          ),
+        );
+      else {
+        await vi.waitFor(() => expect(getReview).toHaveBeenCalledTimes(2));
+        expect(actionReports).not.toHaveBeenCalled();
+      }
+    },
+  );
 });

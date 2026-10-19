@@ -26,9 +26,13 @@ const (
 
 	EventDaemonStarted      = "daemon_started"
 	EventDaemonActive       = "daemon_active"
+	EventSetupFinished      = "setup_finished"
 	EventAppOpened          = "app_opened"
 	EventSessionEnded       = "session_ended"
 	EventScreenViewed       = "screen_viewed"
+	EventReviewViewed       = "review_viewed"
+	EventFindingFixed       = "finding_fixed"
+	EventReviewClosed       = "review_closed"
 	EventAgentActive        = "agent_active"
 	EventAgentCallCount     = "agent_call_count"
 	PropertyCallCountBucket = "call_count_bucket"
@@ -41,6 +45,10 @@ const (
 	Duration1To5m          = "1_to_5m"
 	Duration5To30m         = "5_to_30m"
 	DurationOver30m        = "over_30m"
+	Count0To5              = "0-5"
+	Count6To20             = "6-20"
+	Count21To100           = "21-100"
+	CountOver100           = "over-100"
 	SurfaceWeb             = "web"
 	SurfaceTUI             = "tui"
 	SurfaceCLI             = "cli"
@@ -81,6 +89,7 @@ func NewReporter(opts Options) (*Reporter, error) {
 		return nil, err
 	}
 
+	claims := posthog.NewDailyClaims(opts.DailyClaimsPath)
 	return posthog.NewReporter(posthog.Options{
 		APIKey:      postHogAPIKey,
 		Endpoint:    opts.Endpoint,
@@ -90,7 +99,12 @@ func NewReporter(opts Options) (*Reporter, error) {
 		InstalledAt: installedAt,
 		Version:     opts.Version,
 		Source:      "daemon",
-	}, append(allowedEventOptions(), posthog.WithDailyEvent(EventScreenViewed, PropertyScreen, posthog.NewDailyClaims(opts.DailyClaimsPath)))...)
+	}, append(allowedEventOptions(),
+		posthog.WithDailyEvent(EventScreenViewed, PropertyScreen, claims),
+		posthog.WithDailyEvent(EventReviewViewed, PropertySurface, claims),
+		posthog.WithDailyEvent(EventFindingFixed, PropertySurface, claims),
+		posthog.WithDailyEvent(EventReviewClosed, PropertySurface, claims),
+	)...)
 }
 
 func DisabledReporter() *Reporter {
@@ -107,19 +121,25 @@ func NewReporterOrDisabled(opts Options) *Reporter {
 }
 
 func allowedEventOptions() []posthog.Option {
+	countBuckets := []string{Count0To5, Count6To20, Count21To100, CountOver100}
 	daemonProperties := []posthog.AllowedProperty{
-		posthog.AllowProperty("repo_count", posthog.AllowNumber),
-		posthog.AllowProperty("review_count", posthog.AllowNumber),
+		posthog.AllowProperty("repo_count", posthog.AllowStringValues(countBuckets...)),
+		posthog.AllowProperty("review_count", posthog.AllowStringValues(countBuckets...)),
 		posthog.AllowProperty("sync_enabled", posthog.AllowBool),
 		posthog.AllowProperty("ci_enabled", posthog.AllowBool),
 		posthog.AllowProperty("auto_design_enabled", posthog.AllowBool),
 	}
 
+	actionSurface := posthog.RequireProperty(PropertySurface, posthog.AllowStringValues(SurfaceWeb, SurfaceTUI, SurfaceCLI))
 	return []posthog.Option{
+		posthog.WithAllowedEvent(EventSetupFinished),
+		posthog.WithAllowedEvent(EventReviewViewed, actionSurface),
+		posthog.WithAllowedEvent(EventFindingFixed, posthog.RequireProperty(PropertySurface, posthog.AllowStringValues(SurfaceTUI, SurfaceCLI))),
+		posthog.WithAllowedEvent(EventReviewClosed, actionSurface),
 		posthog.WithAllowedEvent(EventAgentActive,
 			posthog.AllowProperty(PropertyCallCountBucket, posthog.AllowStringValues("1-10"))),
 		posthog.WithAllowedEvent(EventAgentCallCount,
-			posthog.AllowProperty(PropertyCallCountBucket, posthog.AllowStringValues("11-100", "over-100"))),
+			posthog.AllowProperty(PropertyCallCountBucket, posthog.AllowStringValues("11-100", CountOver100))),
 		posthog.WithAllowedEvent(EventDaemonStarted, daemonProperties...),
 		posthog.WithAllowedEvent(EventDaemonActive, daemonProperties...),
 		posthog.WithAllowedEvent(EventScreenViewed,
@@ -131,6 +151,20 @@ func allowedEventOptions() []posthog.Option {
 		posthog.WithAllowedEvent(EventSessionEnded,
 			posthog.AllowProperty(PropertySurface, posthog.AllowStringValues(SurfaceWeb, SurfaceTUI)),
 			posthog.AllowProperty(PropertyDurationBucket, posthog.AllowStringValues(DurationUnder1m, Duration1To5m, Duration5To30m, DurationOver30m))),
+	}
+}
+
+// CountBucket groups totals without sending an exact count.
+func CountBucket(count int) string {
+	switch {
+	case count <= 5:
+		return Count0To5
+	case count <= 20:
+		return Count6To20
+	case count <= 100:
+		return Count21To100
+	default:
+		return CountOver100
 	}
 }
 

@@ -48,7 +48,7 @@ func (j ReviewJob) HasFindingCountsOutput() bool {
 	if !j.HasViewableOutput() || j.Error != "" {
 		return false
 	}
-	return j.IsReviewJob() || j.JobType == JobTypeCompact || j.IsSynthesisJob()
+	return j.IsReadableReview()
 }
 
 func applyJobFindingCounts(job *ReviewJob, structuredOutput sql.NullString) {

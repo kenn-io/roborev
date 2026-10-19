@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,6 +26,8 @@ model_context_tokens = 512
 max_batch_tokens = 8192
 timeout_seconds = 9
 trust_private_network = true
+document_prefix = "title: none | text: "
+query_prefix = "task: search result | query: "
 `), 0o600))
 
 	cfg, err := LoadGlobalFrom(path)
@@ -42,6 +45,8 @@ trust_private_network = true
 		MaxBatchTokens:      8192,
 		TimeoutSeconds:      9,
 		TrustPrivateNetwork: true,
+		DocumentPrefix:      "title: none | text: ",
+		QueryPrefix:         "task: search result | query: ",
 	}, *cfg.Search.Embeddings)
 }
 
@@ -56,6 +61,23 @@ func TestSearchConfigRejectsAnInvalidEmbedderAtLoad(t *testing.T) {
 func TestSearchEmbeddingAPIKeyIsSensitive(t *testing.T) {
 	assert.True(t, IsSensitiveKey("search.embeddings.api_key"))
 	assert.False(t, IsSensitiveKey("search.embeddings.model"))
+}
+
+func TestSearchPrefixesAreLiteralGlobalConfigKeys(t *testing.T) {
+	assert := assert.New(t)
+	cfg := DefaultConfig()
+	cfg.Search.Embeddings = &embedconfig.Embedder{
+		BaseURL: "https://example.test/v1", Model: "test", Dims: 768,
+	}
+	for _, key := range []string{"search.embeddings.document_prefix", "search.embeddings.query_prefix"} {
+		assert.True(IsGlobalKey(key))
+		assert.False(hasLeafConfigKey(reflect.ValueOf(RepoConfig{}), key))
+		require.NoError(t, SetConfigValue(cfg, key, " "))
+		got, err := GetConfigValue(cfg, key)
+		require.NoError(t, err)
+		assert.Equal(" ", got)
+		assert.Contains(ListConfigKeys(cfg), KeyValue{Key: key, Value: " "})
+	}
 }
 
 func TestSearchEmbeddingAPIKeyIsOneConfigValue(t *testing.T) {

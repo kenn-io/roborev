@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import {
     BottomDock,
     Button,
@@ -10,6 +11,7 @@
   import CircleCheckIcon from "@lucide/svelte/icons/circle-check";
   import RefreshIcon from "@lucide/svelte/icons/refresh-cw";
   import Undo2Icon from "@lucide/svelte/icons/undo-2";
+  import { reportCoreAction } from "../../utils/app-opened";
   import { getReviewStores } from "../../stores/context";
   import StatusBadge from "./StatusBadge.svelte";
   import VerdictBadge from "./VerdictBadge.svelte";
@@ -49,6 +51,35 @@
   );
 
   const isOpen = $derived(stores.roborevJobs?.getSelectedJobId() !== undefined);
+
+  const selectedId = $derived(stores.roborevJobs?.getSelectedJobId());
+  const readable = $derived(selectedJob?.readable ?? false);
+  let visibleJobId = $state<number>();
+  let activity = $state(0);
+  onMount(() => {
+    function returned(): void {
+      if (!document.hidden) activity++;
+    }
+    globalThis.addEventListener("focus", returned);
+    document.addEventListener("visibilitychange", returned);
+    return () => {
+      globalThis.removeEventListener("focus", returned);
+      document.removeEventListener("visibilitychange", returned);
+    };
+  });
+  $effect(() => {
+    void activity;
+    if (
+      !document.hidden &&
+      isOpen &&
+      activeTab === "review" &&
+      visibleJobId !== undefined &&
+      visibleJobId === selectedId &&
+      readable
+    ) {
+      reportCoreAction("review_viewed");
+    }
+  });
 
   function close(): void {
     stores.roborevJobs?.deselectJob();
@@ -275,7 +306,7 @@
     {#if selectedJob?.status === "skipped" && selectedJob.skip_reason}
       <div class="skip-reason">Skipped: {selectedJob.skip_reason}</div>
     {/if}
-    <ReviewContent />
+    <ReviewContent bind:visibleJobId />
     <div class="responses-section">
       <ResponseList />
     </div>

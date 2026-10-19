@@ -35,6 +35,20 @@ func TestEnabledFromEnvHonorsRoborevAndGenericOptOut(t *testing.T) {
 	assert.False(t, EnabledFromEnv())
 }
 
+func TestCountBucket(t *testing.T) {
+	for count, want := range map[int]string{
+		0:   "0-5",
+		5:   "0-5",
+		6:   "6-20",
+		20:  "6-20",
+		21:  "21-100",
+		100: "21-100",
+		101: "over-100",
+	} {
+		assert.Equal(t, want, CountBucket(count), "count=%d", count)
+	}
+}
+
 func TestSessionEndedDurationBuckets(t *testing.T) {
 	data, err := os.ReadFile("../../web/src/lib/utils/duration-buckets.json")
 	require.NoError(t, err)
@@ -155,12 +169,15 @@ func TestAllowedEventOptionsConfigureRoborevDaemonEvents(t *testing.T) {
 
 	assert.True(reporter.EventAllowed(EventDaemonStarted))
 	assert.True(reporter.EventAllowed(EventDaemonActive))
+	assert.True(reporter.EventAllowed(EventSetupFinished))
+	setupProps, err := reporter.SanitizeProperties(EventSetupFinished, map[string]any{"surface": "cli", "repo_count": 3})
+	require.NoError(err)
+	assert.NotContains(setupProps, "surface")
+	assert.NotContains(setupProps, "repo_count")
 	assert.True(reporter.EventAllowed(EventAppOpened))
 	assert.False(reporter.EventAllowed("repo_opened"))
 
 	props, err := reporter.SanitizeProperties(EventDaemonActive, map[string]any{
-		"repo_count":              3,
-		"review_count":            7,
 		"sync_enabled":            true,
 		"worker_count":            4,
 		"$process_person_profile": true,
@@ -169,8 +186,6 @@ func TestAllowedEventOptionsConfigureRoborevDaemonEvents(t *testing.T) {
 	})
 	require.NoError(err)
 
-	assert.Equal(3, props["repo_count"])
-	assert.Equal(7, props["review_count"])
 	assert.Equal(true, props["sync_enabled"])
 	assert.NotContains(props, "worker_count")
 	assert.Equal("roborev", props["application"])
@@ -178,11 +193,36 @@ func TestAllowedEventOptionsConfigureRoborevDaemonEvents(t *testing.T) {
 	assert.Equal("daemon", props["source"])
 	assert.False(props["$process_person_profile"].(bool))
 	assert.True(props["$geoip_disable"].(bool))
+	for _, event := range []string{EventDaemonStarted, EventDaemonActive} {
+		for _, bucket := range []string{"0-5", "6-20", "21-100", "over-100"} {
+			props, err := reporter.SanitizeProperties(event, map[string]any{"repo_count": bucket, "review_count": bucket})
+			require.NoError(err)
+			assert.Equal(bucket, props["repo_count"], event)
+			assert.Equal(bucket, props["review_count"], event)
+		}
+		for _, count := range []any{37, "2-5"} {
+			props, err := reporter.SanitizeProperties(event, map[string]any{"repo_count": count, "review_count": count})
+			require.NoError(err)
+			assert.NotContains(props, "repo_count", event)
+			assert.NotContains(props, "review_count", event)
+		}
+	}
 
-	props, err = reporter.SanitizeProperties(EventAppOpened, map[string]any{"surface": "tui", "repo_count": 3})
+	props, err = reporter.SanitizeProperties(EventAppOpened, map[string]any{"surface": "tui", "repo_count": "0-5"})
 	require.NoError(err)
 	assert.Equal("tui", props["surface"])
 	assert.NotContains(props, "repo_count")
+	for _, event := range []string{EventReviewViewed, EventFindingFixed, EventReviewClosed} {
+		assert.True(reporter.EventAllowed(event))
+		props, err := reporter.SanitizeProperties(event, map[string]any{
+			PropertySurface: "tui", "job_id": 42, "output": "private review",
+		})
+		require.NoError(err)
+		assert.Equal("tui", props[PropertySurface])
+		assert.NotContains(props, "job_id")
+		assert.NotContains(props, "output")
+	}
+
 	for _, tc := range []struct{ event, bucket, want string }{
 		{EventAgentActive, "1-10", "1-10"},
 		{EventAgentCallCount, "11-100", "11-100"},
@@ -234,6 +274,24 @@ func TestAppOpenedSurfaceAcceptsOnlyFixedValues(t *testing.T) {
 		{name: "session numeric bucket", event: EventSessionEnded, property: PropertyDurationBucket, value: 120},
 		{name: "session rejects cli", event: EventSessionEnded, value: "cli"},
 	}
+	for _, event := range []string{EventReviewViewed, EventFindingFixed, EventReviewClosed} {
+		for _, surface := range []string{"web", "tui", "cli", "unknown"} {
+			t.Run(event+"/"+surface, func(t *testing.T) {
+				props, err := reporter.SanitizeProperties(event, map[string]any{PropertySurface: surface})
+				if surface == "unknown" || event == EventFindingFixed && surface == "web" {
+					require.Error(t, err)
+					return
+				}
+				require.NoError(t, err)
+				assert.Equal(t, surface, props[PropertySurface])
+			})
+		}
+		for _, properties := range []map[string]any{{}, {PropertySurface: 42}} {
+			_, err := reporter.SanitizeProperties(event, properties)
+			require.Error(t, err)
+		}
+	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			event, property := tt.event, tt.property

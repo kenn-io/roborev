@@ -16,6 +16,7 @@ import (
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
+	"go.kenn.io/roborev/internal/telemetry"
 	"go.kenn.io/roborev/internal/version"
 )
 
@@ -1694,6 +1695,10 @@ func (m model) handleCommitMsgMsg(
 
 // handleClosedResultMsg processes the result of a closed toggle API call.
 func (m model) handleClosedResultMsg(msg closedResultMsg) (tea.Model, tea.Cmd) {
+	var actionCmd tea.Cmd
+	if msg.err == nil && msg.newState && msg.fromKey {
+		actionCmd = m.reportAction(telemetry.EventReviewClosed)
+	}
 	// A failed close is rolled back by restoring the selection the
 	// optimistic path moved away from -- a selection change like any
 	// other, so it takes the shared detail-follow transition below.
@@ -1753,7 +1758,7 @@ func (m model) handleClosedResultMsg(msg closedResultMsg) (tea.Model, tea.Cmd) {
 			delete(m.pendingReviewClosed, msg.reviewID)
 		}
 	}
-	return m, followCmd
+	return m, tea.Batch(followCmd, actionCmd)
 }
 
 // handleClosedToggleMsg processes closed state toggle messages.
@@ -2207,6 +2212,7 @@ func (m model) handleReconnectMsg(msg reconnectMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	m.reviewReadSent = false
 	if msg.endpoint != m.endpoint {
 		m.endpoint = msg.endpoint
 		m.client = msg.endpoint.HTTPClient(10 * time.Second)
@@ -2528,6 +2534,10 @@ func (m model) handlePatchResultMsg(
 func (m model) handleApplyPatchResultMsg(
 	msg applyPatchResultMsg,
 ) (tea.Model, tea.Cmd) {
+	var actionCmd tea.Cmd
+	if msg.success && !msg.commitFailed {
+		actionCmd = m.reportAction(telemetry.EventFindingFixed)
+	}
 	if msg.needWorktree {
 		m.worktreeConfirmJobID = msg.jobID
 		m.worktreeConfirmBranch = msg.branch
@@ -2563,7 +2573,7 @@ func (m model) handleApplyPatchResultMsg(
 			"Patch from job #%d applied and committed",
 			msg.jobID,
 		), 3*time.Second, viewTasks)
-		cmds := []tea.Cmd{}
+		cmds := []tea.Cmd{actionCmd}
 		if cmd := m.requestFetchFixJobs(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -2575,5 +2585,5 @@ func (m model) handleApplyPatchResultMsg(
 		}
 		return m, tea.Batch(cmds...)
 	}
-	return m, nil
+	return m, actionCmd
 }

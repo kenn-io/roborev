@@ -5,6 +5,15 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
+## Unreleased
+
+**Improvements**
+
+- Count review reads, committed fixes, and explicit closes in anonymous
+    telemetry.
+- Report repository and review totals as ranges in anonymous daemon telemetry:
+    `0-5`, `6-20`, `21-100`, or `over-100`.
+
 ## 0.72.0
 
 <small>2026-10-16</small>

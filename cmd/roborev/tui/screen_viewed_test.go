@@ -19,33 +19,48 @@ import (
 )
 
 type screenRecordingTransport struct {
+	events  []string
 	screens []string
 	fail    bool
+	status  string
 }
 
 func (s *screenRecordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.URL.Path == "/api/telemetry/events" {
 		var event struct {
+			Event      string            `json:"event"`
 			Properties map[string]string `json:"properties"`
 		}
 		if err := json.NewDecoder(req.Body).Decode(&event); err != nil {
 			return nil, err
 		}
-		s.screens = append(s.screens, event.Properties[telemetry.PropertyScreen])
+		if event.Event == telemetry.EventScreenViewed {
+			s.screens = append(s.screens, event.Properties[telemetry.PropertyScreen])
+		} else {
+			s.events = append(s.events, event.Event)
+		}
 	}
 	status := http.StatusAccepted
+	if req.URL.Path == "/api/review/close" {
+		status = http.StatusOK
+	}
 	if s.fail {
 		status = http.StatusServiceUnavailable
 	}
-	return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(`{"status":"queued"}`)), Header: make(http.Header)}, nil
+	captureStatus := s.status
+	if captureStatus == "" {
+		captureStatus = "queued"
+	}
+	return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(`{"status":"` + captureStatus + `"}`)), Header: make(http.Header)}, nil
 }
 
 func updateScreenTestModel(m *model, msg tea.Msg) {
 	result, cmd := m.Update(msg)
 	*m = result.(model)
 	for _, msg := range collectMsgs(cmd) {
-		if delivery, ok := msg.(screenDeliveryMsg); ok {
-			result, _ = m.Update(delivery)
+		switch msg.(type) {
+		case screenDeliveryMsg:
+			result, _ = m.Update(msg)
 			*m = result.(model)
 		}
 	}

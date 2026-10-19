@@ -408,6 +408,7 @@ type Config struct {
 	CursorCmd     string `toml:"cursor_cmd"`
 	PiCmd         string `toml:"pi_cmd"`
 	OpenCodeCmd   string `toml:"opencode_cmd"`
+	MuseCmd       string `toml:"muse_cmd"`
 	GrokCmd       string `toml:"grok_cmd"`
 
 	// API keys (optional - agents use subscription auth by default)
@@ -1000,6 +1001,7 @@ func DefaultConfig() *Config {
 		CursorCmd:          "agent",
 		PiCmd:              "pi",
 		OpenCodeCmd:        "opencode",
+		MuseCmd:            "muse",
 		GrokCmd:            "grok",
 		MouseEnabled:       true,
 		Cost: CostConfig{

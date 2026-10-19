@@ -76,7 +76,7 @@ You can also choose the exact binary path with
   refactoring, test fixtures, dead code, security) that agents can fix
   automatically.
 - **Multi-Agent** - Works with Codex, Claude Code, Gemini, Copilot,
-  OpenCode, Cursor, Kiro, Kilo, Droid, and Pi.
+  OpenCode, Cursor, Kiro, Kilo, Droid, Pi, and Muse Code.
 - **Runs Locally** - No hosted service or additional infrastructure.
   Reviews are orchestrated on your machine using the coding agents
   you already have configured.
@@ -414,6 +414,7 @@ hook, so a configured integration never goes dark unnoticed.
 | Kilo | `npm install -g @kilocode/cli` |
 | Droid | [factory.ai](https://factory.ai/) |
 | Pi | [pi.dev](https://pi.dev/) |
+| Muse Code | [Meta installation guide](https://dev.meta.ai/docs/overview) |
 
 roborev auto-detects installed agents.
 
@@ -472,14 +473,25 @@ from the operator's shell).
 
 roborev sends limited anonymous telemetry to PostHog when the daemon starts
 and once every 24 hours while the daemon remains running: `daemon_started`
-and `daemon_active` with repo count, review count, sync enabled, CI
-enabled, and auto-design enabled, plus `application=roborev`, version, OS/arch,
+and `daemon_active` with `repo_count` and `review_count` as buckets: `0-5`,
+`6-20`, `21-100`, or `over-100`. These events also include sync enabled,
+CI enabled, and auto-design enabled, plus `application=roborev`, version, OS/arch,
 `$process_person_profile=false`, `$geoip_disable=true`, and an anonymous install
-ID. Closing a browser tab, leaving it hidden for 30 minutes, or exiting the TUI
+ID.
+
+The daemon sends `setup_finished` once per install the first time it finds a
+finished review: one that ran locally, arrived through sync, or already existed
+when the daemon started. Panel member reviews count. The event has no
+properties. Its timestamp records when the daemon noticed the review, so it can
+come after an upgrade or after telemetry is turned on. If sending fails, the
+daemon does not retry.
+
+Closing a browser tab, leaving it hidden for 30 minutes, or exiting the TUI
 reports one `session_ended` with `surface` and `duration_bucket`: `under_1m`,
 `1_to_5m`, `5_to_30m`, or `over_30m`. Each browser session adds up visible time
 across tab switches and excludes hidden time. A browser session is lost when the
 browser quits, crashes, or discards the tab before the page closes normally.
+
 The web UI also asks the daemon to report an `app_opened` event when it loads
 and on the first window focus of each later UTC day, and `roborev tui` asks each
 time it starts. CLI commands that work through the daemon ask after their first
@@ -497,10 +509,16 @@ TUI screens are `queue`, `review`, `prompt`, `filter`, `comment`,
 `column-options`, `release-notes` and `rerun-agent`. Each screen counts once
 per install per UTC day across interfaces, including daemon restarts. Screen
 names contain no paths, job IDs, filter text or review contents.
-Daily screen claims live in `telemetry-daily.json` beside the daemon database,
-wherever `--db` points, with a `telemetry-daily.json.lock` sidecar. Deleting the
-file resets its claims; existing SQLite claims remain effective through their
-recorded UTC dates. See [telemetry configuration](https://github.com/kenn-io/roborev/blob/main/docs/configuration.md#telemetry)
+`review_viewed` counts a rendered review read once per installation, surface,
+and UTC day. It carries `surface=web|tui|cli`; the TUI requires key or mouse
+input before counting loaded content. `finding_fixed` counts each committed fix
+with `surface=tui|cli`, and `review_closed` counts each successful explicit close
+with `surface=web|tui|cli`. CLI actions require terminal output and exclude agents
+and `--from-skill`. Reopens and automatic closes stay silent.
+Daily screen and `review_viewed` claims share `telemetry-daily.json` beside the
+daemon database, wherever `--db` points, with a `telemetry-daily.json.lock`
+sidecar. Deleting the file resets its claims; existing SQLite claims remain
+effective through their recorded UTC dates. See [telemetry configuration](https://github.com/kenn-io/roborev/blob/main/docs/configuration.md#telemetry)
 for recovery instructions.
 Counts mean the report was queued, not confirmed delivered to PostHog.
 The TUI retries a failed screen report on the next key or mouse input while

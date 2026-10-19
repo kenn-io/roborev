@@ -32,8 +32,8 @@ back to the thing that can fix it fastest.
 
 - **Trigger: commit.** A git post-commit hook queues the review and returns.
   No CI job, no bot install, nothing waits on the result.
-- **Agents: 11.** Codex, Claude Code, Gemini, Copilot, OpenCode, Cursor, Kiro,
-  Kilo, Droid, Pi, and Grok Build, auto-detected.
+- **Agents: 12.** Codex, Claude Code, Gemini, Copilot, OpenCode, Cursor, Kiro,
+  Kilo, Droid, Pi, Grok Build, and Muse Code, auto-detected.
 - **Hosted services: 0.** Reviews run through the agent CLIs already on your
   machine, on the subscriptions and keys you already pay for.
 - **Binary: 1.** Daemon, CLI, terminal UI, and browser UI in one Go binary.

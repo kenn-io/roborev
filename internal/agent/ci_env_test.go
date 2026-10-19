@@ -86,6 +86,7 @@ func TestCIReviewGitCapabilities(t *testing.T) {
 }
 
 func TestCIAgentEnvironment(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	skipIfWindows(t)
 	for _, factory := range []func(string) Agent{
 		func(p string) Agent { return NewCodexAgent(p) },
@@ -98,6 +99,7 @@ func TestCIAgentEnvironment(t *testing.T) {
 		func(p string) Agent { return NewKiloAgent(p) },
 		func(p string) Agent { return NewDroidAgent(p) },
 		func(p string) Agent { return NewGrokAgent(p) },
+		func(p string) Agent { return NewMuseAgent(p) },
 	} {
 		t.Run(factory("").Name(), func(t *testing.T) {
 			capture := filepath.Join(t.TempDir(), "env")
