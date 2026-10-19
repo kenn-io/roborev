@@ -16,6 +16,8 @@ import (
 var (
 	readServiceProcessFile = os.ReadFile
 	runSystemctl           = runUserSystemctl
+	// errUserManagerUnavailable leaves a responsive daemon in use without recovery.
+	errUserManagerUnavailable = errors.New("user service manager unavailable")
 )
 
 // runUserSystemctl runs a user-manager command bounded by ctx.

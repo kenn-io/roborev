@@ -39,8 +39,6 @@ var (
 	serviceMainPID     = userServiceMainPID
 	startDaemonService = startUserService
 	drainManagedDaemon = daemon.KillDaemon
-	// errUserManagerUnavailable leaves a responsive daemon in use without recovery.
-	errUserManagerUnavailable = errors.New("user service manager unavailable")
 )
 
 // supported reports unit settings that systemctl start cannot replace safely.
