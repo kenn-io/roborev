@@ -811,6 +811,8 @@ func TestCoreActionCloseOutputStream(t *testing.T) {
 	assert.Equal(t, "Job 1 closed\n", stdout)
 	assert.Empty(t, stderr)
 	waitCLIUse()
+	// Telemetry crosses a test-server socket and can outlive the exit wait.
+	require.Eventually(t, func() bool { return len(rec.telemetryPosts()) == 1 }, 5*time.Second, 10*time.Millisecond)
 	posts := rec.telemetryPosts()
 	require.Len(t, posts, 1)
 	assert.JSONEq(t, `{"event":"review_closed","properties":{"surface":"cli"}}`, posts[0].body)
@@ -839,6 +841,8 @@ func TestCoreActionDefaultOutputStreams(t *testing.T) {
 			if stdoutTerminal {
 				assert.Empty(t, rec.telemetryPosts())
 			} else {
+				// Telemetry crosses a test-server socket and can outlive the exit wait.
+				require.Eventually(t, func() bool { return len(rec.telemetryPosts()) == 1 }, 5*time.Second, 10*time.Millisecond)
 				require.Len(t, rec.telemetryPosts(), 1)
 				assert.Contains(t, rec.telemetryPosts()[0].body, `"review_viewed"`)
 			}
@@ -982,6 +986,8 @@ func TestCoreActionDeliverySurvivesCommandReturn(t *testing.T) {
 	require.ErrorIs(t, cmd.Context().Err(), context.Canceled)
 	releaseResponse()
 	waitCLIUse()
+	// The observer runs after the telemetry response crosses the test-server socket.
+	require.Eventually(t, func() bool { return accepted.Load() == 1 }, 5*time.Second, 10*time.Millisecond)
 	assert.Equal(t, int32(1), accepted.Load())
 	require.Len(t, bodies, 1)
 	assert.JSONEq(t, `{"event":"finding_fixed","properties":{"surface":"cli"}}`, <-bodies)
