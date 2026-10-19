@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -59,7 +60,7 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 		{outcome: "transient", wantError: "transient units"},
 		{outcome: "forking", wantError: "unsupported service Type=forking"},
 		{outcome: "uncertain", wantError: "properties unavailable"},
-		{outcome: "unreadable", wantError: "cannot confirm executable"},
+		{outcome: "unreadable"},
 		{outcome: "manager responsive"},
 		{outcome: "manager failed", probeErr: probeErr, wantError: "user service manager unavailable"},
 		{outcome: "start failure", wantError: "start rejected", stops: 1, starts: 1},
@@ -266,7 +267,6 @@ func TestUnmanagedRecoveryDrainsDiscoveredRuntimes(t *testing.T) {
 		drainErr   error
 	}{
 		{name: "initial runtimes"},
-		{name: "repeated PID", respawnPID: 1234},
 		{name: "new PID", respawnPID: 3456},
 		{name: "drain failure", drainErr: errors.New("drain rejected")},
 	} {
@@ -291,9 +291,6 @@ func TestUnmanagedRecoveryDrainsDiscoveredRuntimes(t *testing.T) {
 				if tc.drainErr != nil {
 					return tc.drainErr
 				}
-				if len(drained) > 2 {
-					return errors.New("test guard: recovery keeps draining a respawner")
-				}
 				if tc.respawnPID != 0 {
 					runtimes = []*daemon.RuntimeInfo{{PID: tc.respawnPID, Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}}
 				} else {
@@ -301,26 +298,28 @@ func TestUnmanagedRecoveryDrainsDiscoveredRuntimes(t *testing.T) {
 				}
 				return nil
 			}
-			starts := 0
-			startDaemonForEnsure = startDaemon
+			starts, ensures := 0, 0
+			startDaemonForEnsure = func() error { ensures++; return startDaemon() }
 			startDaemonDetached = func(context.Context, detachedDaemonOptions) error {
 				starts++
 				runtimes = []*daemon.RuntimeInfo{{PID: 5678, Version: version.Version, Network: "tcp", Address: "127.0.0.1:1"}}
 				return nil
 			}
 			err := recoverDaemon(original, nil)
+			assert.Equal(t, []int{1234, 2345}, drained, "drain the finite initial snapshot even if a launcher publishes another daemon")
 			if tc.drainErr != nil {
 				require.ErrorIs(t, err, tc.drainErr)
-				assert.Equal(t, []int{1234}, drained)
-				assert.Zero(t, starts)
-			} else if tc.respawnPID != 0 {
-				require.ErrorContains(t, err, "outdated unmanaged daemon")
-				assert.Equal(t, []int{1234}, drained)
+				assert.Zero(t, ensures)
 				assert.Zero(t, starts)
 			} else {
 				require.NoError(t, err)
-				assert.Equal(t, []int{1234, 2345}, drained)
-				assert.Equal(t, 1, starts, "Manager must start the replacement instead of reusing a second old daemon")
+				assert.Equal(t, 1, ensures)
+				if tc.respawnPID != 0 {
+					assert.Zero(t, starts)
+					assert.Equal(t, tc.respawnPID, runtimes[0].PID, "ordinary startup may reuse the launcher's responsive daemon")
+				} else {
+					assert.Equal(t, 1, starts)
+				}
 			}
 		})
 	}
@@ -403,9 +402,14 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 	cmd.SetArgs([]string{"--json"})
 	var stderr bytes.Buffer
 	cmd.SetErr(&stderr)
-	stdout := captureStdout(t, func() { require.ErrorContains(t, cmd.Execute(), "daemon status unavailable") })
-	assert.Empty(t, stdout)
-	assert.Contains(t, stderr.String(), "fixture.service")
+	stdout := captureStdout(t, func() { require.NoError(t, cmd.Execute()) })
+	var result statusJSONResult
+	require.NoError(t, json.Unmarshal([]byte(stdout), &result))
+	assert.True(t, result.Running)
+	assert.Contains(t, result.Error, "fixture.service")
+	assert.Contains(t, result.Error, "start rejected")
+	assert.Nil(t, result.Daemon)
+	assert.Empty(t, stderr.String())
 }
 
 func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {

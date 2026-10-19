@@ -65,6 +65,9 @@ func statusCmd() *cobra.Command {
 			// Ensure daemon is running (and restart if version mismatch)
 			if err := statusEnsureDaemon(); err != nil {
 				if _, managed := errors.AsType[*managedRecoveryError](err); managed {
+					if jsonOutput {
+						return writeStatusUnavailable(err)
+					}
 					return fmt.Errorf("daemon status unavailable: %w", err)
 				}
 				if errors.Is(err, daemon.ErrClientConfig) {

@@ -93,159 +93,136 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 			release()
 		}
 	}()
-	drainedUnmanaged := false
-	var unmanagedCandidates map[int]struct{}
-	for {
-		done, err := func() (bool, error) {
-			ctx, cancel := context.WithTimeout(context.Background(), daemonStartTimeout)
-			defer cancel()
-			current, err := findDaemonForStart(ctx)
+	ctx, cancel = context.WithTimeout(context.Background(), daemonStartTimeout)
+	defer cancel()
+	current, err := findDaemonForStart(ctx)
+	if err != nil {
+		return fmt.Errorf("rediscover daemon: %w", err)
+	}
+	if current == nil && errors.Is(snapshotErr, os.ErrNotExist) {
+		// The old PID disappeared before its owner could be captured.
+		// A user service may still be waiting for RestartSec to elapse.
+		current, err = backoff.Retry(ctx, func() (*daemon.RuntimeInfo, error) {
+			candidate, err := findDaemonForStart(ctx)
 			if err != nil {
-				return true, fmt.Errorf("rediscover daemon: %w", err)
+				return nil, backoff.Permanent(err)
 			}
-			if current == nil && errors.Is(snapshotErr, os.ErrNotExist) {
-				// The old PID disappeared before its owner could be captured.
-				// A user service may still be waiting for RestartSec to elapse.
-				current, err = backoff.Retry(ctx, func() (*daemon.RuntimeInfo, error) {
-					candidate, err := findDaemonForStart(ctx)
-					if err != nil {
-						return nil, backoff.Permanent(err)
-					}
-					if candidate == nil {
-						return nil, os.ErrNotExist
-					}
-					return candidate, nil
-				}, backoff.WithBackOff(backoff.NewConstantBackOff(50*time.Millisecond)), backoff.WithMaxElapsedTime(0))
-				if err != nil {
-					return true, &managedRecoveryError{"unknown", fmt.Errorf("daemon ownership uncertain after PID %d disappeared: %w", info.PID, err)}
-				}
+			if candidate == nil {
+				return nil, os.ErrNotExist
 			}
-			responsive := current != nil
-			if !responsive && drainedUnmanaged {
-				release()
-				release = nil
-				return true, startDaemonForEnsure()
-			}
-			if responsive && current.PID == info.PID && probeErr != nil {
-				// Discovery retains the runtime record's version. Confirm the live
-				// version before reusing a daemon whose earlier probe failed.
-				probe, err := probeDaemonForEnsure(current.Endpoint(), 2*time.Second)
-				if daemon.IsDaemonAccessError(err) {
-					return true, err
-				}
-				if err == nil && probe.Version == version.Version {
-					return true, nil
-				}
-			}
-			if responsive {
-				probeErr = nil
-			} else {
-				current = info
-				if probeErr == nil {
-					probeErr = os.ErrNotExist
-				}
-			}
-			owner, err := findDaemonService(ctx, current.PID)
-			vanished := !responsive && errors.Is(err, os.ErrNotExist)
-			if vanished {
-				// The snapshot identifies the unit only when no daemon replaced this one.
-				owner, err = snapshot, snapshotErr
-			}
-			if responsive && errors.Is(err, errUserManagerUnavailable) {
-				if verbose {
-					fmt.Fprintf(lifecycleOut, "Daemon recovery skipped; %v\n", err)
-				}
-				return true, nil
-			}
-			if err != nil {
-				return true, err
-			}
-			if responsive && current.PID != info.PID && current.Version == version.Version {
-				return true, nil
-			}
-			if owner == nil {
-				if !vanished {
-					if unmanagedCandidates == nil {
-						runtimes, err := listAllRuntimes()
-						if err != nil {
-							return true, fmt.Errorf("list unmanaged daemon runtimes: %w", err)
-						}
-						unmanagedCandidates = map[int]struct{}{current.PID: {}}
-						for _, runtime := range runtimes {
-							unmanagedCandidates[runtime.PID] = struct{}{}
-						}
-					}
-					// Drain only the initial runtime set once. A respawner can keep
-					// publishing old daemons indefinitely, including with new PIDs.
-					if _, pending := unmanagedCandidates[current.PID]; !pending {
-						return true, fmt.Errorf("outdated unmanaged daemon PID %d appeared during recovery; stop its launcher before retrying", current.PID)
-					}
-					delete(unmanagedCandidates, current.PID)
-					if err := drainManagedDaemon(current); err != nil {
-						return true, err
-					}
-					// Another runtime may now be selected. Check its ownership under
-					// the same lock before Manager can adopt it as a replacement.
-					drainedUnmanaged = true
-					return false, nil
-				}
-				release()
-				release = nil
-				return true, startDaemonForEnsure()
-			}
-			fail := func(err error) error { return &managedRecoveryError{owner.unit, err} }
-			if owner.mainPID != current.PID {
-				// A wrapper child stays in use; systemd cannot replace it directly.
-				if responsive {
-					return true, nil
-				}
-				return true, fail(fmt.Errorf("service child requires attention: %w", probeErr))
-			}
-			same, err := owner.sameInstallation()
-			if err != nil {
-				return true, fail(fmt.Errorf("cannot confirm executable %s: %w", owner.executable, err))
-			}
-			if !same {
-				if probeErr != nil {
-					return true, fail(fmt.Errorf("installation %s requires attention: %w", owner.executable, probeErr))
-				}
-				return true, nil
-			}
-			if err := owner.supported(); err != nil {
-				return true, fail(err)
-			}
-			// Discovery can miss a daemon that later answers shutdown retries.
-			// Persist pause before any drain or service start, or leave it alone.
-			if pendingStartPause != nil && *pendingStartPause {
-				if vanished {
-					return true, fail(fmt.Errorf("pause queue before shutdown: daemon PID %d has exited; retry after its service is running", current.PID))
-				}
-				if _, err := current.Endpoint().APIClient(0).PauseQueue(ctx); err != nil {
-					return true, fail(fmt.Errorf("pause queue before shutdown: %w", err))
-				}
-			}
-			if !vanished {
-				fmt.Fprintln(lifecycleOut, "Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...")
-				if err := drainManagedDaemon(current); err != nil {
-					return true, fail(err)
-				}
-			}
-			// Reviews may take longer than startup. Give the replacement a fresh budget.
-			readyCtx, readyCancel := context.WithTimeout(context.Background(), daemonStartTimeout)
-			defer readyCancel()
-			// Start leaves a socket-activated replacement running.
-			if err := startDaemonService(readyCtx, owner.unit); err != nil {
-				return true, fail(err)
-			}
-			if err := awaitServiceReplacement(readyCtx, owner.unit); err != nil {
-				return true, fail(err)
-			}
-			return true, nil
-		}()
-		if done {
-			return err
+			return candidate, nil
+		}, backoff.WithBackOff(backoff.NewConstantBackOff(50*time.Millisecond)), backoff.WithMaxElapsedTime(0))
+		if err != nil {
+			return &managedRecoveryError{"unknown", fmt.Errorf("daemon ownership uncertain after PID %d disappeared: %w", info.PID, err)}
 		}
 	}
+	responsive := current != nil
+	if responsive && current.PID == info.PID && probeErr != nil {
+		// Discovery retains the runtime record's version. Confirm the live
+		// version before reusing a daemon whose earlier probe failed.
+		probe, err := probeDaemonForEnsure(current.Endpoint(), 2*time.Second)
+		if daemon.IsDaemonAccessError(err) {
+			return err
+		}
+		if err == nil && probe.Version == version.Version {
+			return nil
+		}
+	}
+	if responsive {
+		probeErr = nil
+	} else {
+		current = info
+		if probeErr == nil {
+			probeErr = os.ErrNotExist
+		}
+	}
+	owner, err := findDaemonService(ctx, current.PID)
+	vanished := !responsive && errors.Is(err, os.ErrNotExist)
+	if vanished {
+		// The snapshot identifies the unit only when no daemon replaced this one.
+		owner, err = snapshot, snapshotErr
+	}
+	if responsive && errors.Is(err, errUserManagerUnavailable) {
+		if verbose {
+			fmt.Fprintf(lifecycleOut, "Daemon recovery skipped; %v\n", err)
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if responsive && current.PID != info.PID && current.Version == version.Version {
+		return nil
+	}
+	if owner == nil {
+		runtimes, err := listAllRuntimes()
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("list unmanaged daemon runtimes: %w", err)
+		}
+		var lastErr error
+		for _, runtime := range runtimes {
+			if err := drainManagedDaemon(runtime); err != nil {
+				lastErr = err
+			}
+		}
+		if lastErr != nil {
+			return lastErr
+		}
+		release()
+		release = nil
+		return startDaemonForEnsure()
+	}
+	fail := func(err error) error { return &managedRecoveryError{owner.unit, err} }
+	if owner.mainPID != current.PID {
+		// A wrapper child stays in use; systemd cannot replace it directly.
+		if responsive {
+			return nil
+		}
+		return fail(fmt.Errorf("service child requires attention: %w", probeErr))
+	}
+	same, err := owner.sameInstallation()
+	if err != nil {
+		if responsive {
+			return nil
+		}
+		return fail(fmt.Errorf("cannot confirm executable %s: %w", owner.executable, err))
+	}
+	if !same {
+		if probeErr != nil {
+			return fail(fmt.Errorf("installation %s requires attention: %w", owner.executable, probeErr))
+		}
+		return nil
+	}
+	if err := owner.supported(); err != nil {
+		return fail(err)
+	}
+	// Discovery can miss a daemon that later answers shutdown retries.
+	// Persist pause before any drain or service start, or leave it alone.
+	if pendingStartPause != nil && *pendingStartPause {
+		if vanished {
+			return fail(fmt.Errorf("pause queue before shutdown: daemon PID %d has exited; run systemctl --user start %s, then retry roborev pause", current.PID, owner.unit))
+		}
+		if _, err := current.Endpoint().APIClient(0).PauseQueue(ctx); err != nil {
+			return fail(fmt.Errorf("pause queue before shutdown: %w", err))
+		}
+	}
+	if !vanished {
+		fmt.Fprintln(lifecycleOut, "Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...")
+		if err := drainManagedDaemon(current); err != nil {
+			return fail(err)
+		}
+	}
+	// Reviews may take longer than startup. Give the replacement a fresh budget.
+	readyCtx, readyCancel := context.WithTimeout(context.Background(), daemonStartTimeout)
+	defer readyCancel()
+	// Start leaves a socket-activated replacement running.
+	if err := startDaemonService(readyCtx, owner.unit); err != nil {
+		return fail(err)
+	}
+	if err := awaitServiceReplacement(readyCtx, owner.unit); err != nil {
+		return fail(err)
+	}
+	return nil
 }
 
 // awaitServiceReplacement polls until a responsive daemon is the unit's main

@@ -244,8 +244,10 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				"remain after exit": "RemainAfterExit=yes",
 				"transient":         "transient units",
 			}[scenario]; refusal != "" {
-				require.Error(t, cli.Run())
-				assert.Contains(t, stderr.String(), refusal)
+				require.NoError(t, cli.Run())
+				var result statusJSONResult
+				require.NoError(t, json.Unmarshal(stdout.Bytes(), &result))
+				assert.Contains(t, result.Error, refusal)
 				current, err := daemon.GetAnyRunningDaemon()
 				require.NoError(t, err)
 				assert.Equal(t, original.PID, current.PID, "refused units keep their daemon")
@@ -396,7 +398,7 @@ func assertVanishedSocketPauseRefused(t *testing.T, original *daemon.RuntimeInfo
 	paused := true
 	pendingStartPause = &paused
 	err := recoverDaemon(original, nil)
-	assert.ErrorContains(t, err, "pause queue before shutdown")
+	assert.ErrorContains(t, err, "run systemctl --user start "+unit+", then retry roborev pause")
 	assert.Zero(t, serviceMainPIDForTest(t, unit), "failed pause must leave the activation socket untouched")
 	db, err := storage.OpenReadOnly(filepath.Join(dataDir, "reviews.db"))
 	require.NoError(t, err)
