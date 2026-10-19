@@ -194,6 +194,10 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 				var managed *managedRecoveryError
 				require.ErrorAs(t, err, &managed)
 			}
+			if tc.outcome == "readiness failure" {
+				require.ErrorIs(t, err, context.DeadlineExceeded)
+				require.ErrorIs(t, err, os.ErrNotExist)
+			}
 			if tc.queueCommand {
 				var want []string
 				if tc.paused {
@@ -352,6 +356,7 @@ func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 		require.NoError(t, <-recovery)
 		require.ErrorIs(t, competingErr, errRecoveryLock, "status must distinguish recovery still in progress from a missing daemon")
 		require.ErrorContains(t, competingErr, "retry this command after running reviews finish")
+		require.ErrorContains(t, competingErr, "2m0s")
 		assert.Zero(t, detached)
 	})
 }

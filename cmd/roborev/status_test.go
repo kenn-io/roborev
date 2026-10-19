@@ -5,10 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"os"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -538,28 +538,41 @@ func TestStatusCmdShowsMissingSearchCredential(t *testing.T) {
 
 func TestStatusManagedRecoveryFailure(t *testing.T) {
 	for _, tc := range []struct {
-		name                    string
-		responsive, lockTimeout bool
+		name                      string
+		responsive, lockTimeout   bool
+		webOrigin, disabledReason string
 	}{
-		{name: "responsive after drain failure", responsive: true},
-		{name: "responsive during recovery lock wait", responsive: true, lockTimeout: true},
+		{name: "responsive after drain failure", responsive: true, webOrigin: "https://reviews.example.com"},
+		{name: "responsive during recovery lock wait", responsive: true, lockTimeout: true, disabledReason: daemon.WebDisabledReasonConfig},
 		{name: "absent during recovery lock wait", lockTimeout: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+			stubServiceRecovery(t)
 			oldEnsure, oldAddr, oldParsed := statusEnsureDaemon, serverAddr, parsedServerEndpoint
 			serverAddr, parsedServerEndpoint = "", nil
 			t.Cleanup(func() { statusEnsureDaemon, serverAddr, parsedServerEndpoint = oldEnsure, oldAddr, oldParsed })
 			withStatusWebRuntime(t, func() (*daemon.RuntimeInfo, error) {
 				if tc.responsive {
-					return &daemon.RuntimeInfo{PID: 1234, Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}, nil
+					return &daemon.RuntimeInfo{PID: 1234, Version: "v-old", Network: "tcp", Address: "127.0.0.1:1", WebOrigin: tc.webOrigin, WebDisabledReason: tc.disabledReason}, nil
 				}
 				return nil, os.ErrNotExist
 			})
+			original := &daemon.RuntimeInfo{PID: 1234, Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}
+			findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
+			var recoveryErr error
+			if tc.lockTimeout {
+				synctest.Test(t, func(t *testing.T) {
+					release, acquired, err := daemon.RuntimeStore().TryAcquireStartLock(context.Background())
+					require.NoError(t, err)
+					require.True(t, acquired)
+					defer release()
+					recoveryErr = recoverDaemon(original, nil)
+				})
+			}
 			cause := "drain rejected"
 			statusEnsureDaemon = func() error {
 				if tc.lockTimeout {
-					return fmt.Errorf("%w: %w", errRecoveryLock, context.DeadlineExceeded)
+					return recoveryErr
 				}
 				return &managedRecoveryError{"fixture.service", errors.New(cause)}
 			}
@@ -573,10 +586,13 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 			assert.Equal(t, tc.responsive, result.Running, "running must reflect a daemon that still answers after recovery fails")
 			if tc.lockTimeout {
 				assert.Contains(t, result.Error, context.DeadlineExceeded.Error())
+				assert.Contains(t, result.Error, "2m0s")
 			} else {
 				assert.Contains(t, result.Error, "fixture.service")
 				assert.Contains(t, result.Error, cause)
 			}
+			assert.Equal(t, tc.webOrigin, result.WebURL)
+			assert.Equal(t, tc.disabledReason, result.WebDisabledReason)
 			assert.Nil(t, result.Daemon)
 			assert.Empty(t, stderr.String())
 			textCmd := statusCmd()
@@ -589,8 +605,15 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 			}
 			assert.Contains(t, output, "Daemon: "+state+"\n")
 			assert.Contains(t, output, "Status: unavailable: ")
+			if tc.webOrigin != "" {
+				assert.Contains(t, output, "Web UI: https://reviews.example.com\n")
+			}
+			if tc.disabledReason != "" {
+				assert.Contains(t, output, "Web UI: disabled ([web] enabled = false)\n")
+			}
 			if tc.lockTimeout {
 				assert.Contains(t, output, context.DeadlineExceeded.Error())
+				assert.Contains(t, output, "2m0s")
 			} else {
 				assert.Contains(t, output, cause)
 			}

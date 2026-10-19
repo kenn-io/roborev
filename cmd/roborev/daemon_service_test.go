@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -98,4 +99,18 @@ func TestUnmanagedRecoveryDrainsDiscoveredRuntimes(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRecoverDaemonLockFilesystemFailure(t *testing.T) {
+	stubServiceRecovery(t)
+	path := filepath.Join(t.TempDir(), "file")
+	require.NoError(t, os.WriteFile(path, nil, 0o600))
+	t.Setenv("ROBOREV_DATA_DIR", path)
+	findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
+	err := recoverDaemon(&daemon.RuntimeInfo{PID: 1234}, nil)
+	require.ErrorIs(t, err, errRecoveryLock)
+	var pathErr *os.PathError
+	require.ErrorAs(t, err, &pathErr)
+	assert.NotContains(t, err.Error(), "running reviews")
+	assert.NotContains(t, err.Error(), "2m0s")
 }

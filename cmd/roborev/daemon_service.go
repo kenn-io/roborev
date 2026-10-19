@@ -105,6 +105,13 @@ func acquireStartLockWithin(store kitdaemon.RuntimeStore, timeout time.Duration)
 	return store.AcquireStartLock(ctx)
 }
 
+func recoveryLockError(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("%w after %s: %w; retry this command after running reviews finish", errRecoveryLock, daemonStartTimeout, err)
+	}
+	return fmt.Errorf("%w: %w", errRecoveryLock, err)
+}
+
 // snapshotDaemonService treats a vanished PID as unmanaged when no user
 // manager could restart it, so recovery need not wait for a replacement.
 func snapshotDaemonService(ctx context.Context, pid int) (*daemonService, error) {
@@ -121,7 +128,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 	cancel()
 	release, err := acquireRecoveryLock()
 	if err != nil {
-		return fmt.Errorf("%w: %w; retry this command after running reviews finish", errRecoveryLock, err)
+		return recoveryLockError(err)
 	}
 	defer func() {
 		if release != nil {
@@ -273,8 +280,5 @@ func awaitServiceReplacement(ctx context.Context, unit string) error {
 		return struct{}{}, nil
 	}, backoff.WithBackOff(backoff.NewConstantBackOff(50*time.Millisecond)),
 		backoff.WithMaxElapsedTime(0))
-	if err != nil {
-		return backoff.AsRetryError(err).LastErr
-	}
-	return nil
+	return err
 }
