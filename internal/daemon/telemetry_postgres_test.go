@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
+	"go.kenn.io/roborev/internal/testutil/setupclaim"
 )
 
 func TestIntegration_SetupFinishedAfterSyncPull(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL schema
@@ -46,11 +47,7 @@ func TestIntegration_SetupFinishedAfterSyncPull(t *testing.T) { //nolint:paralle
 		}))
 	}
 	server, db, tmpDir := newTestServer(t)
-	_, err = db.Exec(`CREATE TABLE setup_claim_attempts (value TEXT);
-	CREATE TRIGGER count_setup_claim BEFORE INSERT ON sync_state
-	WHEN NEW.key = 'telemetry.setup_finished'
-	BEGIN INSERT INTO setup_claim_attempts VALUES (NEW.value); END`)
-	require.NoError(t, err)
+	claimAttempts := setupclaim.InstallCounter(t, db.DB)
 	var path string
 	require.NoError(t, db.QueryRow(`SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&path))
 	claimDB, err := storage.Open(path)
@@ -122,8 +119,6 @@ func TestIntegration_SetupFinishedAfterSyncPull(t *testing.T) { //nolint:paralle
 	// Wall-clock wait: restart loads the marker from SQLite.
 	require.Eventually(t, restarted.setupFinishedClaimed.Load, time.Second, time.Millisecond)
 	restarted.workerPool.captureSetupFinished()
-	var attempts int
-	require.NoError(t, db.QueryRow(`SELECT count(*) FROM setup_claim_attempts`).Scan(&attempts))
-	assert.Equal(t, 1, attempts)
+	assert.Equal(t, 1, claimAttempts())
 	assert.Equal(t, []string{"setup_finished"}, client.recordedEvents())
 }

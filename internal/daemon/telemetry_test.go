@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
+	"go.kenn.io/roborev/internal/testutil/setupclaim"
 )
 
 type fakeTelemetryClient struct {
@@ -196,11 +197,7 @@ func TestSetupFinishedTelemetrySkipsLaterClaims(t *testing.T) {
 	_, err = db.ClaimJob("worker")
 	require.NoError(t, err)
 	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", "", "No issues found."))
-	_, err = db.Exec(`CREATE TABLE setup_claim_attempts (value TEXT);
-		CREATE TRIGGER count_setup_claim BEFORE INSERT ON sync_state
-		WHEN NEW.key = 'telemetry.setup_finished'
-		BEGIN INSERT INTO setup_claim_attempts VALUES (NEW.value); END`)
-	require.NoError(t, err)
+	claimAttempts := setupclaim.InstallCounter(t, db.DB)
 	var callers sync.WaitGroup
 	start := make(chan struct{})
 	for range 8 {
@@ -212,16 +209,13 @@ func TestSetupFinishedTelemetrySkipsLaterClaims(t *testing.T) {
 	close(start)
 	callers.Wait()
 	waitSetupFinished(t, client)
-	var attempts int
-	require.NoError(t, db.QueryRow(`SELECT count(*) FROM setup_claim_attempts`).Scan(&attempts))
-	assert.Equal(t, 1, attempts)
+	assert.Equal(t, 1, claimAttempts())
 	assert.Equal(t, []string{"setup_finished"}, client.recordedEvents())
 	_, err = db.Exec(`DELETE FROM sync_state WHERE key = ?`, storage.SyncStateSetupFinished)
 	require.NoError(t, err)
 	server.captureSetupFinishedTelemetry()
 	server.workerPool.captureSetupFinished()
-	require.NoError(t, db.QueryRow(`SELECT count(*) FROM setup_claim_attempts`).Scan(&attempts))
-	assert.Equal(t, 1, attempts)
+	assert.Equal(t, 1, claimAttempts())
 	assert.Equal(t, []string{"setup_finished"}, client.recordedEvents())
 }
 

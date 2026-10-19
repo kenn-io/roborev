@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/testutil/setupclaim"
 )
 
 // getIntegrationPostgresURL returns the postgres URL for integration tests.
@@ -1935,11 +1936,7 @@ func TestIntegration_SetupClaimAfterFreshBulkPull(t *testing.T) { //nolint:paral
 	}
 	_, err := source.Worker.SyncNow()
 	require.NoError(t, err)
-	_, err = targetDB.Exec(`CREATE TABLE setup_claim_attempts (value TEXT);
-		CREATE TRIGGER count_setup_claim BEFORE INSERT ON sync_state
-		WHEN NEW.key = 'telemetry.setup_finished'
-		BEGIN INSERT INTO setup_claim_attempts VALUES (NEW.value); END`)
-	require.NoError(t, err)
+	claimAttempts := setupclaim.InstallCounter(t, targetDB.DB)
 	var pulls, writes int
 	target.SetAfterPullWrite(func() { writes++ })
 	target.SetAfterPull(func() {
@@ -1963,9 +1960,7 @@ func TestIntegration_SetupClaimAfterFreshBulkPull(t *testing.T) { //nolint:paral
 	assert.Equal(t, 500, stats.PulledReviews)
 	assert.Equal(t, 1, pulls)
 	assert.Greater(t, writes, 500, "per-row search wakes remain")
-	var attempts int
-	require.NoError(t, targetDB.QueryRow(`SELECT count(*) FROM setup_claim_attempts`).Scan(&attempts))
-	assert.Equal(t, 1, attempts)
+	assert.Equal(t, 1, claimAttempts())
 	require.NoError(t, target.doSync())
 	assert.Equal(t, 1, pulls, "empty background pulls do not notify")
 	_, err = target.SyncNow()
@@ -1976,6 +1971,5 @@ func TestIntegration_SetupClaimAfterFreshBulkPull(t *testing.T) { //nolint:paral
 	require.NoError(t, err)
 	require.NoError(t, target.doSync())
 	assert.Equal(t, 2, pulls, "background sync also notifies after releasing syncMu")
-	require.NoError(t, targetDB.QueryRow(`SELECT count(*) FROM setup_claim_attempts`).Scan(&attempts))
-	assert.Equal(t, 1, attempts, "an existing marker needs no new claim statement")
+	assert.Equal(t, 1, claimAttempts(), "an existing marker needs no new claim statement")
 }
