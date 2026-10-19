@@ -279,7 +279,7 @@ func TestCoreActionUnreadReviews(t *testing.T) {
 //nolint:paralleltest // telemetry environment variables
 func TestCoreActionReviewOpenFailure(t *testing.T) {
 	enableTelemetryEnv(t)
-	for _, follow := range []bool{false, true} {
+	for _, mode := range []string{"ordinary", "follow", "fix panel"} {
 		f := newCoreActionReviewVisitFixture(t)
 		response := f.review()
 		f.m.pendingReviewOpenJobID = response.jobID
@@ -288,8 +288,13 @@ func TestCoreActionReviewOpenFailure(t *testing.T) {
 			attempt: response.attempt, err: errors.New("load failed"),
 		}
 		var cmd tea.Cmd
-		if follow {
+		if mode != "ordinary" {
 			f.m.pendingReviewOpenRetried = true
+			if mode == "fix panel" {
+				f.m.reviewFixPanelPending = true
+				f.m.fixPromptJobID = response.jobID
+				f.m.fixPromptFollowRetried = true
+			}
 			_, cmd = f.m.handleReviewFollowErrMsg(reviewFollowErrMsg(msg))
 		} else {
 			_, cmd = f.m.handleReviewErrMsg(msg)

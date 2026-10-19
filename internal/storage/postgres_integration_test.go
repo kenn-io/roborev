@@ -486,9 +486,17 @@ func TestIntegration_SyncOutageFromSwallowedWrite(t *testing.T) { //nolint:paral
 			require.NoError(t, db.CancelJob(job.ID))
 			_, err = env.Pool.pool.Exec(env.Ctx, `
 				CREATE FUNCTION roborev.reject_job_write() RETURNS trigger LANGUAGE plpgsql AS $$
-				BEGIN RAISE EXCEPTION 'job writes denied' USING ERRCODE = '42501'; END $$;
+				BEGIN RAISE EXCEPTION 'invalid job row' USING ERRCODE = '23514'; END $$;
 				CREATE TRIGGER reject_job_write BEFORE INSERT OR UPDATE ON roborev.review_jobs
 				FOR EACH ROW EXECUTE FUNCTION roborev.reject_job_write()`)
+			require.NoError(t, err)
+			for range 2 {
+				require.NoError(t, pass(), "row errors remain swallowed")
+				assert.Empty(t, reasons, "a constraint violation is not an outage")
+			}
+			_, err = env.Pool.pool.Exec(env.Ctx, `
+				CREATE OR REPLACE FUNCTION roborev.reject_job_write() RETURNS trigger LANGUAGE plpgsql AS $$
+				BEGIN RAISE EXCEPTION 'job writes denied' USING ERRCODE = '42501'; END $$`)
 			require.NoError(t, err)
 			for range 2 {
 				require.NoError(t, pass(), "upload errors remain swallowed")

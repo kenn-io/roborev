@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import type { Component } from "svelte";
   import { getReviewStores } from "../../stores/context";
+  import { reportErrorShown } from "../../utils/app-opened";
 
   type RichReviewContentComponent = Component<{
     output: string;
@@ -26,12 +27,14 @@
   });
   let RichReviewContent = $state<RichReviewContentComponent>();
   let loadError = $state(false);
+  let loadErrorReported = false;
   let loadPromise: Promise<void> | undefined;
 
   async function loadRichReviewContent(): Promise<void> {
     if (RichReviewContent) return;
     if (loadPromise) return loadPromise;
     loadError = false;
+    loadErrorReported = false;
     loadPromise = import("@kenn-io/roborev-ui/review-content")
       .then((module) => {
         RichReviewContent = module.default;
@@ -72,6 +75,20 @@
 
   $effect(() => {
     if (output && !RichReviewContent) void loadRichReviewContent();
+  });
+
+  $effect(() => {
+    if (
+      loadError &&
+      output &&
+      !stores.roborevReview?.isLoading() &&
+      !failed &&
+      !RichReviewContent &&
+      !loadErrorReported
+    ) {
+      loadErrorReported = true;
+      reportErrorShown("review_viewed");
+    }
   });
 </script>
 

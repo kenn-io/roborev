@@ -382,12 +382,38 @@ describe("Roborev request cancellation", () => {
 });
 
 describe("review close reporting", () => {
-  it("reports a close that cannot find the selected review", () => {
-    const store = reviewStore({} as never);
-    store.closeReview(42);
-    expect(errorReports).toHaveBeenCalledExactlyOnceWith("review_closed");
-    expect(actionReports).not.toHaveBeenCalled();
-  });
+  it.each(["missing", "another job"])(
+    "keeps an unattempted close silent: %s",
+    async (reviewState) => {
+      const closeReview = vi.fn();
+      const onError = vi.fn();
+      const store = reviewStore(
+        {
+          closeReview,
+          getReview: vi.fn(async () => ({
+            id: 1,
+            job_id: 43,
+            output: "review",
+            closed: false,
+          })),
+          getReviewProjection: vi.fn(async () => ({ responses: [] })),
+          listJobs: vi.fn(async () => ({ jobs: [] })),
+        } as never,
+        onError,
+      );
+      if (reviewState === "another job") {
+        store.setSelectedJobId(43);
+        store.loadReview(43);
+        await vi.waitFor(() => expect(store.getReview()?.job_id).toBe(43));
+      }
+      store.setSelectedJobId(42);
+      store.closeReview(42);
+      expect(onError).toHaveBeenCalledExactlyOnceWith("Failed to close review");
+      expect(closeReview).not.toHaveBeenCalled();
+      expect(errorReports).not.toHaveBeenCalled();
+      expect(actionReports).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     "close",
@@ -437,11 +463,7 @@ describe("review close reporting", () => {
     if (action === "close" || action === "close refresh failure")
       expect(actionReports).toHaveBeenCalledExactlyOnceWith("review_closed");
     else expect(actionReports).not.toHaveBeenCalled();
-    if (
-      action === "failure" ||
-      action === "close refresh failure" ||
-      action === "close mismatch"
-    )
+    if (action === "failure" || action === "close refresh failure")
       expect(errorReports).toHaveBeenCalledExactlyOnceWith("review_closed");
     else expect(errorReports).not.toHaveBeenCalled();
   });

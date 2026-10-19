@@ -252,7 +252,6 @@ export function createReviewStore(opts: ReviewStoreOptions) {
 
   function closeReview(jobId: number): void {
     if (selectedJobId !== jobId || review?.job_id !== jobId) {
-      if (!review?.closed) reportErrorShown("review_closed");
       opts.onError?.("Failed to close review");
       return;
     }

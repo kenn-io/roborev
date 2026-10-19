@@ -10,6 +10,11 @@ const state = vi.hoisted(() => ({
   status: "done",
   error: "",
 }));
+const errorReports = vi.hoisted(() => vi.fn());
+
+vi.mock("../../utils/app-opened", () => ({
+  reportErrorShown: errorReports,
+}));
 
 vi.mock("../../stores/context", () => ({
   getReviewStores: () => ({
@@ -28,6 +33,8 @@ vi.mock("@kenn-io/roborev-ui/review-content", () => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
+  errorReports.mockReset();
   state.output = "## Review output";
   state.loading = false;
   state.notFound = false;
@@ -42,8 +49,20 @@ describe("ReviewContent", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Could not load the review renderer.",
     );
+    expect(errorReports).toHaveBeenCalledExactlyOnceWith("review_viewed");
     await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByRole("alert")).toBeInTheDocument();
+    await vi.waitFor(() => expect(errorReports).toHaveBeenCalledTimes(2));
+    expect(errorReports).toHaveBeenLastCalledWith("review_viewed");
+  });
+
+  it("keeps a renderer failure without output silent", async () => {
+    vi.useFakeTimers();
+    state.output = "";
+    render(ReviewContent);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(errorReports).not.toHaveBeenCalled();
   });
 
   it("shows why a failed review produced no output", () => {
@@ -59,6 +78,7 @@ describe("ReviewContent", () => {
       "agent process exited with status 1",
     );
     expect(screen.queryByText("Review in progress…")).toBeNull();
+    expect(errorReports).not.toHaveBeenCalled();
   });
 
   it("explains a failed review even when no reason was recorded", () => {

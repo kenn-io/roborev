@@ -748,7 +748,9 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 
 			pgRepoID, err := pool.GetOrCreateRepo(ctx, j.RepoIdentity)
 			if err != nil {
-				w.passError = &syncSourceError{err}
+				if syncFailureReason(err) != "other" {
+					w.passError = &syncSourceError{err}
+				}
 				log.Printf("Sync: failed to get/create repo for job %s: %v", j.UUID, err)
 				continue
 			}
@@ -757,7 +759,9 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 			if j.CommitSHA != "" {
 				id, err := pool.GetOrCreateCommit(ctx, pgRepoID, j.CommitSHA, j.CommitAuthor, j.CommitSubject, j.CommitTimestamp)
 				if err != nil {
-					w.passError = &syncSourceError{err}
+					if syncFailureReason(err) != "other" {
+						w.passError = &syncSourceError{err}
+					}
 					log.Printf("Sync: failed to get/create commit for job %s: %v", j.UUID, err)
 					continue
 				}
@@ -775,7 +779,9 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 		if len(preparedJobs) > 0 {
 			success, err := pool.BatchUpsertJobs(ctx, preparedJobs)
 			if err != nil {
-				w.passError = &syncSourceError{err}
+				if syncFailureReason(err) != "other" {
+					w.passError = &syncSourceError{err}
+				}
 				log.Printf("Sync: batch upsert jobs error: %v", err)
 			}
 
@@ -851,7 +857,9 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	if len(responses) > 0 {
 		success, err := pool.BatchInsertResponses(ctx, responses)
 		if err != nil {
-			w.passError = &syncSourceError{err}
+			if syncFailureReason(err) != "other" {
+				w.passError = &syncSourceError{err}
+			}
 			log.Printf("Sync: batch insert responses error: %v", err)
 		}
 

@@ -1169,6 +1169,7 @@ func (m model) handleReviewFollowErrMsg(msg reviewFollowErrMsg) (tea.Model, tea.
 			m.pendingReviewOpenOrigin = 0
 			m.pendingReviewOpenSeq = 0
 		}
+		return m, m.reportAction(telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: telemetry.EventReviewViewed})
 	}
 	// The plain "open the review" intent needs the same handling as the
 	// fix panel above: a follow failure resolves the freshest dispatch for
