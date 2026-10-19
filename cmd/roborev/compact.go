@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -289,9 +288,6 @@ func waitForConsolidation(ctx context.Context, cmd *cobra.Command, jobID int64, 
 
 	review, err := waitForJobCompletion(ctx, getDaemonEndpoint().BaseURL(), jobID, output)
 	if err != nil {
-		if _, requestFailed := errors.AsType[*jobRequestError](err); output != nil && requestFailed {
-			reportCLIError(output, telemetry.EventReviewViewed)
-		}
 		return fmt.Errorf("verification failed: %w", err)
 	}
 

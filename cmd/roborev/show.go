@@ -193,9 +193,6 @@ Examples:
 
 			resp, err := newDaemonAPI(addr, client).GetReviewRaw(ctx, nil, roborevclient.WithQuery(query))
 			if err != nil {
-				if !showPrompt {
-					reportCLIError(cmd.OutOrStdout(), telemetry.EventReviewViewed)
-				}
 				return fmt.Errorf("failed to connect to daemon (is it running?)")
 			}
 			defer resp.Body.Close()
@@ -213,14 +210,8 @@ Examples:
 				}
 			} else if resp.StatusCode != http.StatusOK {
 				body, _ := io.ReadAll(resp.Body)
-				if !showPrompt {
-					reportCLIError(cmd.OutOrStdout(), telemetry.EventReviewViewed)
-				}
 				return fmt.Errorf("daemon returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
 			} else if err := json.UnmarshalRead(resp.Body, &review); err != nil {
-				if !showPrompt {
-					reportCLIError(cmd.OutOrStdout(), telemetry.EventReviewViewed)
-				}
 				return fmt.Errorf("failed to parse response: %w", err)
 			}
 

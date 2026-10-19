@@ -27,14 +27,12 @@
   });
   let RichReviewContent = $state<RichReviewContentComponent>();
   let loadError = $state(false);
-  let loadErrorReported = false;
   let loadPromise: Promise<void> | undefined;
 
   async function loadRichReviewContent(): Promise<void> {
     if (RichReviewContent) return;
     if (loadPromise) return loadPromise;
     loadError = false;
-    loadErrorReported = false;
     loadPromise = import("@kenn-io/roborev-ui/review-content")
       .then((module) => {
         RichReviewContent = module.default;
@@ -76,20 +74,6 @@
   $effect(() => {
     if (output && !RichReviewContent) void loadRichReviewContent();
   });
-
-  $effect(() => {
-    if (
-      loadError &&
-      output &&
-      !stores.roborevReview?.isLoading() &&
-      !failed &&
-      !RichReviewContent &&
-      !loadErrorReported
-    ) {
-      loadErrorReported = true;
-      reportErrorShown("review_viewed");
-    }
-  });
 </script>
 
 {#if stores.roborevReview?.isLoading()}
@@ -112,7 +96,11 @@
     {pending}
   />
 {:else if loadError && output}
-  <div class="review-state" role="alert">
+  <div
+    class="review-state"
+    role="alert"
+    {@attach () => reportErrorShown("review_viewed")}
+  >
     <p>Could not load the review renderer.</p>
     <button type="button" onclick={() => void loadRichReviewContent()}>
       Retry

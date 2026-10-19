@@ -1698,7 +1698,7 @@ func TestRefineFlagValidation(t *testing.T) {
 }
 
 func TestCoreActionRefineCommit(t *testing.T) {
-	for _, mode := range []string{"terminal", "commit failure", "agent failure"} {
+	for _, mode := range []string{"terminal", "commit failure"} {
 		t.Run(mode, func(t *testing.T) {
 			resetCLIUse(t)
 			cliOutputIsTerminal = func(io.Writer) bool { return true }
@@ -1726,17 +1726,10 @@ func TestCoreActionRefineCommit(t *testing.T) {
 			}
 			name := "core-action-refine-test"
 			agent.RegisterForTest(t, &agent.FakeAgent{NameStr: name, ReviewFn: func(_ context.Context, dir, _, _ string, _ io.Writer) (string, error) {
-				if mode == "agent failure" {
-					return "", fmt.Errorf("agent failed")
-				}
 				require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n// fixed\n"), 0o644))
 				return "Fixed cancellation", nil
 			}})
-			iterations := "1"
-			if mode == "agent failure" {
-				iterations = "2"
-			}
-			args := []string{"refine", "--since", base, "--agent", name, "--max-iterations", iterations, "--quiet", "--server", md.Server.URL}
+			args := []string{"refine", "--since", base, "--agent", name, "--max-iterations", "1", "--quiet", "--server", md.Server.URL}
 			result := runCLI(t, args...)
 			if mode == "commit failure" {
 				require.ErrorContains(t, result.err, "failed to commit changes")
@@ -1750,29 +1743,11 @@ func TestCoreActionRefineCommit(t *testing.T) {
 			assert.Equal(t, strconv.Itoa(expected), repo.Run("rev-list", "--count", head+"..HEAD"))
 			var fixes []string
 			for _, post := range rec.telemetryPosts() {
-				if strings.Contains(post.body, `"event":"finding_fixed"`) {
+				if strings.Contains(post.body, `"finding_fixed"`) {
 					fixes = append(fixes, post.body)
 				}
 			}
 			require.Len(t, fixes, expected)
-			var failures []string
-			for _, post := range rec.telemetryPosts() {
-				if strings.Contains(post.body, `"event":"error_shown"`) {
-					failures = append(failures, post.body)
-				}
-			}
-			wantFailures := 0
-			switch mode {
-			case "commit failure":
-				wantFailures = 1
-			case "agent failure":
-				wantFailures = 2
-				assert.Equal(t, 2, strings.Count(result.stdout, "Agent error:"))
-			}
-			require.Len(t, failures, wantFailures)
-			for _, body := range failures {
-				assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"cli","kind":"finding_fixed"}}`, body)
-			}
 		})
 	}
 }

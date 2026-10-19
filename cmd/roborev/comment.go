@@ -217,14 +217,12 @@ func closeCmd() *cobra.Command {
 			ep := getDaemonEndpoint()
 			resp, err := ep.APIClient(5*time.Second).CloseReviewRaw(context.Background(), nil, roborevclient.WithBody(reqBody))
 			if err != nil {
-				reportCLIError(os.Stdout, telemetry.EventReviewClosed)
 				return fmt.Errorf("failed to connect to daemon: %w", err)
 			}
 			defer resp.Body.Close()
 
 			if resp.StatusCode != http.StatusOK {
 				body, _ := io.ReadAll(resp.Body)
-				reportCLIError(os.Stdout, telemetry.EventReviewClosed)
 				return fmt.Errorf("failed to mark review: %s", body)
 			}
 

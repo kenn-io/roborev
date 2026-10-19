@@ -516,8 +516,9 @@ with `surface=tui|cli`, and `review_closed` counts each successful explicit clos
 with `surface=web|tui|cli`. CLI actions require terminal output and exclude agents
 and `--from-skill`. Successful reopens and automatic closes stay silent.
 
-Anonymous telemetry also counts shown core action errors and PostgreSQL sync
-outages. Daemon-unreachable CLI errors can't be counted. See [telemetry configuration](https://github.com/kenn-io/roborev/blob/main/docs/configuration.md#telemetry)
+Anonymous telemetry also counts core action error banners and toasts in the web
+UI and TUI, and PostgreSQL sync outages. Failed closes and reopens both count.
+Daemon-unreachable errors can't be counted. See [telemetry configuration](https://github.com/kenn-io/roborev/blob/main/docs/configuration.md#telemetry)
 for event properties and reporting rules.
 
 Daily screen and `review_viewed` claims share `telemetry-daily.json` beside the

@@ -13,11 +13,6 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
-// jobRequestError identifies a failed daemon request while waiting for a job.
-type jobRequestError struct{ error }
-
-func (e *jobRequestError) Unwrap() error { return e.error }
-
 // waitForJobCompletion polls a job until it completes, streaming output if provided.
 // This consolidates polling logic used across compact, analyze, fix, and run commands.
 func waitForJobCompletion(ctx context.Context, serverAddr string, jobID int64, output io.Writer) (*storage.Review, error) {
@@ -42,10 +37,10 @@ func waitForJobCompletion(ctx context.Context, serverAddr string, jobID int64, o
 					api = newDaemonReviewAPI(serverAddr, getDaemonHTTPClientForURL(serverAddr, 30*time.Second))
 					continue
 				}
-				return nil, &jobRequestError{err}
+				return nil, err
 			}
 			if errors.Is(err, ErrJobNotFound) || daemon.IsDaemonAccessError(err) {
-				return nil, &jobRequestError{err}
+				return nil, err
 			}
 			continue
 		}
@@ -81,7 +76,7 @@ func waitForJobCompletion(ctx context.Context, serverAddr string, jobID int64, o
 		if output != nil && job.Status == storage.JobStatusRunning {
 			review, err := api.getReview(ctx, jobID, "review")
 			if daemon.IsDaemonAccessError(err) {
-				return nil, &jobRequestError{err}
+				return nil, err
 			}
 			if err == nil && len(review.Output) > lastOutputLen {
 				// First output - add newline after waiting dots
@@ -97,7 +92,7 @@ func waitForJobCompletion(ctx context.Context, serverAddr string, jobID int64, o
 		case storage.JobStatusDone:
 			review, err := api.getReview(ctx, jobID, "review")
 			if err != nil {
-				return nil, &jobRequestError{err}
+				return nil, err
 			}
 
 			// Print any remaining output

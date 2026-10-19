@@ -635,7 +635,6 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 			planCmd.SetOut(os.Stdout)
 			addressPrompt, planErr = planFixAtRevision(ctx, planCmd, repoPath, headBefore, addressAgent, planningPrompt, addressPrompt, []int64{currentFailedReview.JobID}, fixOptions{quiet: opts.quiet}, cfg)
 			if planErr != nil {
-				reportCLIError(os.Stdout, telemetry.EventFindingFixed)
 				fmt.Printf("Planning error: %v\n", planErr)
 				if _, stateChanged := errors.AsType[*planningStateError](planErr); stateChanged {
 					return fmt.Errorf("planning cannot continue: %w", planErr)
@@ -755,7 +754,6 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 					return saveErr
 				}
 			}
-			reportCLIError(os.Stdout, telemetry.EventFindingFixed)
 			fmt.Printf("Agent error: %v\n", agentErr)
 			fmt.Println("Will retry in next iteration")
 			continue
@@ -817,7 +815,6 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 		}
 		if err := gitworktree.ApplyPatch(ctx, repoPath, patch); err != nil {
 			_ = wt.Close(ctx)
-			reportCLIError(os.Stdout, telemetry.EventFindingFixed)
 			return fmt.Errorf("apply worktree patch: %w", err)
 		}
 		_ = wt.Close(ctx)
@@ -825,7 +822,6 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 		commitMsg := fmt.Sprintf("Address review findings (job %d)\n\n%s", currentFailedReview.JobID, summarizeAgentOutput(output))
 		newCommit, err := commitWithHookRetry(ctx, repoPath, commitMsg, addressAgent, opts.quiet, commitOpts)
 		if err != nil {
-			reportCLIError(os.Stdout, telemetry.EventFindingFixed)
 			return fmt.Errorf("failed to commit changes: %w", err)
 		}
 		fmt.Printf("Created commit %s\n", gitrepo.ShortSHA(newCommit))

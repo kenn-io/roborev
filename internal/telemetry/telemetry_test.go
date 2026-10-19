@@ -173,7 +173,7 @@ func TestAllowedEventOptionsConfigureRoborevDaemonEvents(t *testing.T) {
 		values          []any
 		base            map[string]any
 	}{
-		{EventErrorShown, PropertyKind, []any{"review_viewed", "finding_fixed", "review_closed", "unknown", 42}, map[string]any{PropertySurface: "cli"}},
+		{EventErrorShown, PropertyKind, []any{"review_viewed", "finding_fixed", "review_closed", "unknown", 42}, map[string]any{PropertySurface: "tui"}},
 		{EventSyncFailed, PropertyReason, []any{"auth", "network", "timeout", "unknown", 42}, map[string]any{PropertySyncSource: "postgres"}},
 		{EventSyncFailed, PropertySyncSource, []any{"postgres", "unknown", 42}, map[string]any{PropertyReason: "auth"}},
 	} {
@@ -192,7 +192,7 @@ func TestAllowedEventOptionsConfigureRoborevDaemonEvents(t *testing.T) {
 			assert.NotContains(props, "detail")
 		}
 	}
-	for _, surface := range []any{nil, "unknown", 42} {
+	for _, surface := range []any{nil, "cli", "unknown", 42} {
 		_, err := reporter.SanitizeProperties(EventErrorShown, map[string]any{PropertyKind: "review_viewed", PropertySurface: surface})
 		require.Error(err)
 	}

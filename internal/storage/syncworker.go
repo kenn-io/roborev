@@ -73,9 +73,13 @@ func syncDataError(err error) bool {
 }
 
 func syncFailureReason(err error) string {
-	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok &&
-		(strings.HasPrefix(pgErr.Code, "28") || pgErr.Code == "42501") {
-		return "auth"
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
+		switch {
+		case strings.HasPrefix(pgErr.Code, "28") || pgErr.Code == "42501":
+			return "auth"
+		case strings.HasPrefix(pgErr.Code, "08") || pgErr.Code == "57P01" || pgErr.Code == "53300":
+			return "network"
+		}
 	}
 	var netErr net.Error
 	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()) {

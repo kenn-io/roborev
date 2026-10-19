@@ -8,7 +8,6 @@ import (
 	"sync/atomic"
 
 	"github.com/spf13/cobra"
-	"go.kenn.io/kit/telemetry/posthog"
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/streamfmt"
@@ -151,22 +150,11 @@ func waitCLIUse() {
 
 // reportCLIActionOutput bounds best-effort reporting independently of the command's lifetime.
 func reportCLIActionOutput(out io.Writer, event string) {
-	reportCLIOutcome(out, event, nil)
-}
-
-func reportCLIError(out io.Writer, kind string) {
-	reportCLIOutcome(out, telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: kind})
-}
-
-func reportCLIOutcome(out io.Writer, event string, props map[string]any) {
 	if fromSkill || cliUseAgent || !cliTelemetryEnabled() || !cliOutputIsTerminal(out) {
 		return
 	}
 	ep := cliUseEndpoint.Load()
-	if ep == nil && event == telemetry.EventErrorShown && parsedServerEndpoint != nil && !parsedServerEndpoint.IsRemote() {
-		ep = parsedServerEndpoint
-	}
-	if ep == nil && event != telemetry.EventErrorShown && (parsedServerEndpoint == nil || !parsedServerEndpoint.IsRemote()) {
+	if ep == nil && (parsedServerEndpoint == nil || !parsedServerEndpoint.IsRemote()) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), cliUseTimeout)
@@ -179,10 +167,6 @@ func reportCLIOutcome(out io.Writer, event string, props map[string]any) {
 			}
 			ep = &daemon.DaemonEndpoint{Network: info.Network, Address: info.Address}
 		}
-		if props == nil {
-			props = make(map[string]any)
-		}
-		props[telemetry.PropertySurface] = telemetry.SurfaceCLI
-		_, _ = posthog.PostEvent(ctx, ep.HTTPClient(0), ep.BaseURL()+daemon.TelemetryEventsPath, event, props)
+		_, _ = telemetry.PostReviewEvent(ctx, ep.HTTPClient(0), ep.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceCLI)
 	})
 }

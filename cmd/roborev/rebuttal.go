@@ -95,7 +95,6 @@ func runCommentRebuttal(cmd *cobra.Command, jobID int64, commenter, message stri
 		if err := postRebuttalAPI(ctx, api.CloseReviewRaw, daemon.CloseReviewRequest{
 			JobID: jobID, Closed: true, ExpectedReviewUUID: job.OriginalReviewUUID,
 		}, nil); err != nil {
-			reportCLIError(cmd.OutOrStderr(), telemetry.EventReviewClosed)
 			return fmt.Errorf("rebuttal job %d recorded but close failed: %w", job.ID, err)
 		}
 		reportCLIActionOutput(cmd.OutOrStderr(), telemetry.EventReviewClosed)

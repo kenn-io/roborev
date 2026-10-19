@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -23,7 +22,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -826,14 +824,11 @@ func TestCoreActionDefaultOutputStreams(t *testing.T) {
 }
 
 func TestCoreActionRemoteLocalFallback(t *testing.T) {
-	for _, mode := range []string{"running", "missing", "timeout", "opt-out", "skill", "redirected", "latest observed", "unobserved local"} {
+	for _, mode := range []string{"running", "missing", "timeout", "opt-out", "skill", "redirected", "latest observed"} {
 		t.Run(mode, func(t *testing.T) {
 			resetCLIUse(t)
 			md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
 			parsedServerEndpoint = &daemon.DaemonEndpoint{Network: "https", Address: "remote.example.com"}
-			if mode == "unobserved local" {
-				parsedServerEndpoint = new(mustParseEndpoint(t, md.Server.URL))
-			}
 			cliTelemetryEnabled = func() bool { return mode != "opt-out" }
 			fromSkill = mode == "skill"
 			original := getAnyRunningDaemonForStart
@@ -871,7 +866,7 @@ func TestCoreActionRemoteLocalFallback(t *testing.T) {
 			} else {
 				assert.Empty(t, rec.telemetryPosts())
 			}
-			if mode == "latest observed" || mode == "opt-out" || mode == "skill" || mode == "redirected" || mode == "unobserved local" {
+			if mode == "latest observed" || mode == "opt-out" || mode == "skill" || mode == "redirected" {
 				assert.Zero(t, calls)
 			} else {
 				assert.Equal(t, 1, calls)
@@ -953,142 +948,4 @@ func TestCoreActionDeliverySurvivesCommandReturn(t *testing.T) {
 	assert.Equal(t, int32(1), accepted.Load())
 	require.Len(t, bodies, 1)
 	assert.JSONEq(t, `{"event":"finding_fixed","properties":{"surface":"cli"}}`, <-bodies)
-}
-
-func TestCoreActionShownErrors(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		args []string
-		kind string
-	}{
-		{"close", []string{"close", "1"}, "review_closed"},
-		{"outside repo", []string{"show"}, ""},
-		{"invalid ID", []string{"close", "garbage"}, ""},
-		{"prompt", []string{"show", "--job", "1", "--prompt"}, ""},
-		{"reopen", []string{"close", "1", "--reopen"}, "review_closed"},
-		{"show", []string{"show", "--job", "1"}, "review_viewed"},
-		{"discovered show", []string{"show", "--job", "1"}, "review_viewed"},
-		{"quiet wait", []string{"wait", "--job", "1", "--quiet"}, ""},
-		{"missing review", []string{"show", "--job", "1"}, ""},
-		{"runtime usage", []string{"show", "--job"}, ""},
-		{"usage", []string{"close", "--unknown"}, ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			resetCLIUse(t)
-			if tc.name == "outside repo" {
-				t.Chdir(t.TempDir())
-			}
-			failure := func(w http.ResponseWriter, _ *http.Request, _ *mockRefineState) bool {
-				status := http.StatusInternalServerError
-				if tc.name == "missing review" {
-					status = http.StatusNotFound
-				}
-				http.Error(w, "action failed", status)
-				return true
-			}
-			md, rec := newCLIUseDaemon(t, MockRefineHooks{OnReview: failure, OnReviewClose: failure, OnGetJobs: failure}, nil)
-			original := getAnyRunningDaemonForStart
-			t.Cleanup(func() { getAnyRunningDaemonForStart = original })
-			var discoveries atomic.Int32
-			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
-				discoveries.Add(1)
-				if tc.name == "discovered show" {
-					return &daemon.RuntimeInfo{Network: "tcp", Address: strings.TrimPrefix(md.Server.URL, "http://")}, nil
-				}
-				return nil, os.ErrNotExist
-			}
-			cliOutputIsTerminal = func(io.Writer) bool { return true }
-			args := append([]string{"--server", md.Server.URL}, tc.args...)
-			if tc.name == "discovered show" {
-				args = tc.args
-			}
-			run := runCLI(t, args...)
-			require.Error(t, run.err)
-			if tc.name == "discovered show" {
-				assert.Equal(t, int32(1), discoveries.Load())
-			} else {
-				assert.Zero(t, discoveries.Load(), "an explicit local server receives the failure event directly")
-			}
-			posts := rec.telemetryPosts()
-			var errors []recordedTelemetry
-			for _, post := range posts {
-				if strings.Contains(post.body, `"error_shown"`) {
-					errors = append(errors, post)
-				}
-			}
-			if tc.kind == "" {
-				assert.Empty(t, errors)
-				return
-			}
-			require.Len(t, errors, 1)
-			assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"cli","kind":"`+tc.kind+`"}}`, errors[0].body)
-		})
-	}
-}
-
-func TestCoreActionFailedFixLoops(t *testing.T) {
-	for _, mode := range []struct{ batch, quiet bool }{{}, {batch: true}, {quiet: true}, {batch: true, quiet: true}} {
-		t.Run(fmt.Sprintf("batch=%t/quiet=%t", mode.batch, mode.quiet), func(t *testing.T) {
-			resetCLIUse(t)
-			cliOutputIsTerminal = func(io.Writer) bool { return true }
-			repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
-			md, rec := newCLIUseDaemon(t, MockRefineHooks{
-				OnGetJobs: func(w http.ResponseWriter, _ *http.Request, _ *mockRefineState) bool {
-					writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{{ID: 42, Status: storage.JobStatusDone, Agent: "test"}}})
-					return true
-				},
-				OnReview: func(w http.ResponseWriter, _ *http.Request, _ *mockRefineState) bool {
-					writeJSON(w, storage.Review{JobID: 42, Output: "High: fix the failure", VerdictBool: new(0)})
-					return true
-				},
-			}, nil)
-			cliUseEndpoint.Store(new(mustParseEndpoint(t, md.Server.URL)))
-			tester := agent.NewTestAgent()
-			tester.Fail = true
-			tracker := &fixSessionTracker{base: tester, out: io.Discard}
-			out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-				if mode.batch {
-					return processFixBatch(t.Context(), cmd, currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}, []int64{42}, 0, fixOptions{agentName: "test", quiet: mode.quiet, classify: agent.ClassifyLimit}, tracker)
-				}
-				return runFixWithSeen(cmd, []int64{42}, fixOptions{agentName: "test", quiet: mode.quiet}, map[int64]bool{}, tracker)
-			})
-			require.NoError(t, err, out)
-			assert.Contains(t, out, "Warning: error")
-			waitCLIUse()
-			posts := rec.telemetryPosts()
-			require.Len(t, posts, 1)
-			assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"cli","kind":"finding_fixed"}}`, posts[0].body)
-		})
-	}
-}
-
-func TestCoreActionAnalyzeFixErrors(t *testing.T) {
-	for _, mode := range []string{"shown", "quiet", "validation"} {
-		t.Run(mode, func(t *testing.T) {
-			resetCLIUse(t)
-			cliOutputIsTerminal = func(io.Writer) bool { return true }
-			md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
-			cliUseEndpoint.Store(new(mustParseEndpoint(t, md.Server.URL)))
-			repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
-			name := "core-action-analyze-test"
-			agent.RegisterForTest(t, &agent.FakeAgent{NameStr: name, ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
-				return "", errors.New("agent failed")
-			}})
-			reasoning := "fast"
-			if mode == "validation" {
-				reasoning = "invalid"
-			}
-			cmd, _ := newTestCmd(t)
-			err := runFixAgent(cmd, repo.Dir, name, "", reasoning, "Fix the finding", mode == "quiet")
-			require.Error(t, err)
-			waitCLIUse()
-			if mode == "shown" {
-				posts := rec.telemetryPosts()
-				require.Len(t, posts, 1)
-				assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"cli","kind":"finding_fixed"}}`, posts[0].body)
-			} else {
-				assert.Empty(t, rec.telemetryPosts())
-			}
-		})
-	}
 }

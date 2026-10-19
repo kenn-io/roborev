@@ -153,6 +153,11 @@ func PostScreenViewed(ctx context.Context, client *http.Client, url, screen, sur
 	return err
 }
 
+// PostReviewEvent reports a completed review action through the daemon.
+func PostReviewEvent(ctx context.Context, client *http.Client, url, event, surface string) (posthog.Status, error) {
+	return posthog.PostEvent(ctx, client, url, event, map[string]any{PropertySurface: surface})
+}
+
 // PostAgentCall notifies the daemon of one call; callers gate on EnabledFromEnv.
 func PostAgentCall(ctx context.Context, client *http.Client, url string) {
 	postTelemetry(ctx, client, url, nil)

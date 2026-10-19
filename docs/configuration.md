@@ -1894,17 +1894,12 @@ review, synthesis and compact output.
     its installation ID. Without a local daemon, events are dropped. Reporting
     never starts a daemon.
 
-Shown core action failures send `error_shown` with `surface=web|tui|cli` and
-`kind=review_viewed|finding_fixed|review_closed`, without a daily limit. Failed
-closes and reopens both count as `review_closed`. The browser's failed-job alert
-counts as `review_viewed`; the TUI's failed-job pane stays silent. CLI `wait`,
-`review --wait`, and `compact --wait` count request and transport failures,
-while failed-job results stay silent. Errors shown inside continuing fix and
-refine loops count, including agent-failure warnings printed in quiet mode.
-Prompt reads, analysis without fixing, validation errors, and missing reviews in
-`show` stay silent. CLI reporting requires a terminal and excludes agents and
-`--from-skill`. Daemon-unreachable CLI errors can't be counted because reporting
-uses the daemon.
+Core action error banners and toasts in the web UI and TUI send `error_shown`
+with `surface=web|tui` and `kind=review_viewed|finding_fixed|review_closed`,
+without a daily limit. Failed closes and reopens both count as `review_closed`.
+The browser's failed-job alert counts as `review_viewed`; missing reviews and
+the TUI's failed-job pane stay silent. CLI errors stay silent.
+Daemon-unreachable errors can't be counted because reporting uses the daemon.
 
 The daemon sends `sync_failed` when a full sync pass fails after a successful
 pass in the same process, once per PostgreSQL outage, with

@@ -239,6 +239,9 @@ func TestSyncFailureReason(t *testing.T) {
 	}{
 		{&pgconn.PgError{Code: "28P01"}, "auth"},
 		{&pgconn.PgError{Code: "42501"}, "auth"},
+		{&pgconn.PgError{Code: "08006"}, "network"},
+		{&pgconn.PgError{Code: "57P01"}, "network"},
+		{&pgconn.PgError{Code: "53300"}, "network"},
 		{io.EOF, "network"},
 		{io.ErrUnexpectedEOF, "network"},
 		{net.ErrClosed, "network"},

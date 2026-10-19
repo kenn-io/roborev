@@ -9,8 +9,10 @@ All notable changes to roborev, grouped by minor release.
 
 **Improvements**
 
-- Count shown core action failures and PostgreSQL sync outages in anonymous
-    telemetry using fixed action names and error classes.
+- Count core action error banners and toasts in the web UI and TUI, and
+    PostgreSQL sync outages, in anonymous telemetry using fixed action names and
+    error classes. Failed closes and reopens both count. Missing reviews and TUI
+    failed-job panes stay silent. Daemon-unreachable errors can't be counted.
 - Count review reads, committed fixes, and explicit closes in anonymous
     telemetry.
 - Report repository and review totals as ranges in anonymous daemon telemetry:

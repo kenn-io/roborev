@@ -142,7 +142,7 @@ func allowedEventOptions() []posthog.Option {
 		posthog.WithAllowedEvent(EventReviewViewed, actionSurface),
 		posthog.WithAllowedEvent(EventFindingFixed, posthog.RequireProperty(PropertySurface, posthog.AllowStringValues(SurfaceTUI, SurfaceCLI))),
 		posthog.WithAllowedEvent(EventReviewClosed, actionSurface),
-		posthog.WithAllowedEvent(EventErrorShown, actionSurface,
+		posthog.WithAllowedEvent(EventErrorShown, posthog.RequireProperty(PropertySurface, posthog.AllowStringValues(SurfaceWeb, SurfaceTUI)),
 			posthog.RequireProperty(PropertyKind, outcomeValues(EventReviewViewed, EventFindingFixed, EventReviewClosed))),
 		posthog.WithAllowedEvent(EventSyncFailed,
 			posthog.RequireProperty(PropertySyncSource, outcomeValues(SyncSourcePostgres)),

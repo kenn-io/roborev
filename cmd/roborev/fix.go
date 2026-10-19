@@ -1168,9 +1168,6 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		}
 		implementationPrompt, planErr = planFix(ctx, cmd, repoRoot, tracker.base, planningPrompt, implementationPrompt, []int64{jobID}, opts, fixCfg)
 		if planErr != nil {
-			if !opts.quiet && !opts.planOnly {
-				reportCLIError(cmd.OutOrStderr(), telemetry.EventFindingFixed)
-			}
 			if opts.classify != nil {
 				classification := opts.classify(agent.CanonicalName(tracker.base.Name()), planErr.Error())
 				switch classification.Kind {
@@ -1228,7 +1225,6 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		fmtr.Flush()
 	}
 	if err != nil {
-		reportCLIError(cmd.OutOrStderr(), telemetry.EventFindingFixed)
 		tracker.Reset()
 		// fixJobDirect already returns *agentLimitError for retry-path
 		// quota/session aborts; preserve it instead of re-classifying
@@ -1551,9 +1547,6 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 			}
 			fixPrompt, planErr = planFix(ctx, cmd, roots.worktreeRoot, tracker.base, planningPrompt, fixPrompt, batchJobIDs, opts, cfg)
 			if planErr != nil {
-				if !opts.quiet && !opts.planOnly {
-					reportCLIError(cmd.OutOrStderr(), telemetry.EventFindingFixed)
-				}
 				if opts.classify != nil {
 					classification := opts.classify(agent.CanonicalName(tracker.base.Name()), planErr.Error())
 					switch classification.Kind {
@@ -1606,7 +1599,6 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 			fmtr.Flush()
 		}
 		if err != nil {
-			reportCLIError(cmd.OutOrStderr(), telemetry.EventFindingFixed)
 			tracker.Reset()
 			// Preserve a retry-path agentLimitError without
 			// re-classifying its user-facing message string.
