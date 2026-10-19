@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"mime"
 	"net/http"
 
@@ -25,13 +26,17 @@ func (s *Server) registerTelemetryCaptureRoute(mux *http.ServeMux) {
 			http.Error(w, "application/json is required", http.StatusUnsupportedMediaType)
 			return
 		}
-		s.recordAgentCall(r.Context())
+		// Clients stop waiting shortly after exit, so their disconnect must not drop the count.
+		s.recordAgentCall(context.WithoutCancel(r.Context()))
 		w.WriteHeader(http.StatusAccepted)
 	})
 }
 
 // handleTelemetryEvent reads the reporter per request because SetTelemetry runs after route registration.
+// Capture keeps its own deadline because CLI and TUI clients may exit before the daemon finishes.
 func (s *Server) handleTelemetryEvent(w http.ResponseWriter, r *http.Request) {
 	reporter, _ := s.telemetry.(*telemetry.Reporter)
-	s.appOpened.Handler(reporter).ServeHTTP(w, r)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), telemetry.NotificationTimeout)
+	defer cancel()
+	s.appOpened.Handler(reporter).ServeHTTP(w, r.WithContext(ctx))
 }
