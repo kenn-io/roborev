@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -31,19 +32,17 @@ const cliUseBody = `{"event":"app_opened","properties":{"surface":"cli"}}`
 
 // clearCLIUseState forgets the observer, the once and any started post, as a new process would.
 func clearCLIUseState() {
-	cliSends.Wait(cliUseTimeout)
+	drainCLIReports()
 	daemon.SetClientResponseObserver(nil)
 	cliUseOnce = sync.Once{}
 	cliUseEndpoint.Store(nil)
 	cliUseAgent = false
 }
 
-// drainCLIReports waits for scheduled sends independently of the production exit budget.
-func drainCLIReports(t *testing.T) {
-	t.Helper()
-	deadline, ok := t.Deadline()
-	require.True(t, ok, "telemetry completion requires a test deadline")
-	cliSends.Wait(time.Until(deadline))
+// drainCLIReports waits until every scheduled send has returned, unlike the production exit budget.
+// Each send ends by its request deadline; the go test timeout reports a send that never returns.
+func drainCLIReports() {
+	cliSends.Wait(math.MaxInt64)
 }
 
 // resetCLIUse gives a test a fresh CLI telemetry state with telemetry on and restores every seam afterwards.
@@ -834,7 +833,7 @@ func TestCoreActionDefaultOutputStreams(t *testing.T) {
 			assert.Empty(t, stdout)
 			assert.Contains(t, stderr, "Consolidated findings")
 			if stdoutTerminal {
-				drainCLIReports(t)
+				drainCLIReports()
 				assert.Empty(t, rec.telemetryPosts())
 			} else {
 				// Telemetry crosses a test-server socket and can outlive the exit wait.
@@ -855,20 +854,10 @@ func TestCoreActionRemoteLocalFallback(t *testing.T) {
 			cliTelemetryEnabled = func() bool { return mode != "opt-out" }
 			fromSkill = mode == "skill"
 			original := getAnyRunningDaemonForStart
-			usesFallback := mode == "running" || mode == "missing" || mode == "timeout"
-			entered := make(chan struct{})
-			returned := make(chan struct{})
-			t.Cleanup(func() {
-				if usesFallback {
-					<-returned
-				}
-				getAnyRunningDaemonForStart = original
-			})
+			t.Cleanup(func() { getAnyRunningDaemonForStart = original })
 			calls := 0
 			getAnyRunningDaemonForStart = func(ctx context.Context) (*daemon.RuntimeInfo, error) {
 				calls++
-				close(entered)
-				defer close(returned)
 				if mode == "timeout" {
 					<-ctx.Done()
 					return nil, ctx.Err()
@@ -892,12 +881,9 @@ func TestCoreActionRemoteLocalFallback(t *testing.T) {
 				rec = secondPosts
 			}
 			reportCLIActionOutput(cmd.OutOrStdout(), "review_viewed")
-			if usesFallback {
-				<-entered
-			}
+			drainCLIReports()
 			if mode == "running" || mode == "latest observed" {
-				// The telemetry request crosses the test-server socket.
-				require.Eventually(t, func() bool { return len(rec.telemetryPosts()) == 1 }, 5*time.Second, 10*time.Millisecond)
+				require.Len(t, rec.telemetryPosts(), 1)
 				assert.JSONEq(t, `{"event":"review_viewed","properties":{"surface":"cli"}}`, rec.telemetryPosts()[0].body)
 			} else {
 				assert.Empty(t, rec.telemetryPosts())
@@ -939,7 +925,7 @@ func TestCoreActionCompactWait(t *testing.T) {
 				require.Eventually(t, func() bool { return len(rec.telemetryPosts()) == 1 }, 5*time.Second, 10*time.Millisecond)
 				assert.JSONEq(t, `{"event":"review_viewed","properties":{"surface":"cli"}}`, rec.telemetryPosts()[0].body)
 			} else {
-				drainCLIReports(t)
+				drainCLIReports()
 				assert.Empty(t, rec.telemetryPosts())
 			}
 		})

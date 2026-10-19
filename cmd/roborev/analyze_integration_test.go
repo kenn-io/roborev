@@ -180,7 +180,7 @@ func TestRunAnalyzeAndFix_Integration(t *testing.T) {
 				require.Len(t, bodies, 1)
 				assert.JSONEq(t, `{"event":"finding_fixed","properties":{"surface":"cli"}}`, <-bodies)
 			} else {
-				drainCLIReports(t)
+				drainCLIReports()
 				assert.Empty(t, bodies)
 			}
 		})

@@ -1751,7 +1751,7 @@ func TestCoreActionRefineCommit(t *testing.T) {
 				return result
 			}
 			if expected == 0 {
-				drainCLIReports(t)
+				drainCLIReports()
 			} else {
 				// The fix report crosses the mock daemon socket.
 				require.Eventually(t, func() bool { return len(fixes()) == expected }, 5*time.Second, 10*time.Millisecond)

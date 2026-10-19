@@ -4894,7 +4894,7 @@ func TestCoreActionFixReadAndCommit(t *testing.T) {
 				if outcome == "quiet commit" {
 					assert.Empty(t, output)
 					assert.Empty(t, confirmation)
-					drainCLIReports(t)
+					drainCLIReports()
 					assert.Empty(t, rec.telemetryPosts())
 					return
 				}
@@ -4916,7 +4916,7 @@ func TestCoreActionFixReadAndCommit(t *testing.T) {
 					}
 				}
 				if len(events) == 0 {
-					drainCLIReports(t)
+					drainCLIReports()
 				} else {
 					// Action reports cross the mock daemon socket.
 					require.Eventually(t, func() bool { return len(rec.telemetryPosts()) == len(events) }, 5*time.Second, 10*time.Millisecond)

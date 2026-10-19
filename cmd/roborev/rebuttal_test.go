@@ -106,7 +106,7 @@ func TestCommentRebuttalRecordsBeforeClose(t *testing.T) {
 					return len(closes) == 1
 				}, 5*time.Second, 10*time.Millisecond)
 			} else {
-				drainCLIReports(t)
+				drainCLIReports()
 			}
 			mu.Lock()
 			defer mu.Unlock()
