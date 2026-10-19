@@ -379,14 +379,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	// Start worker pool before advertising availability.
-	releaseQueue, err := consumeQueueIntent(ctx, s.db)
-	if err != nil {
-		_ = listener.Close()
-		s.configWatcher.Stop()
-		return err
-	}
 	s.workerPool.Start()
-	releaseQueue()
 	s.startSearch(ctx)
 
 	ready, serveExited, err := waitForServerReady(ctx, ep, 2*time.Second, serveErrCh, s.startupAuth())
@@ -2341,10 +2334,12 @@ func (s *Server) humaGetStatus(
 func (s *Server) humaPauseQueue(
 	ctx context.Context, input *QueuePauseInput,
 ) (*QueuePauseOutput, error) {
-	if err := updateQueueIntent(ctx, s.db, true, input.Token); err != nil {
-		if errors.Is(err, ErrQueueIntentSuperseded) {
-			return nil, huma.Error409Conflict(err.Error())
-		}
+	s.shutdownDrainMu.Lock()
+	defer s.shutdownDrainMu.Unlock()
+	if s.shutdownDraining {
+		return nil, huma.Error409Conflict("daemon shutdown in progress")
+	}
+	if err := s.db.SetQueuePaused(true); err != nil {
 		return nil, huma.Error500InternalServerError(
 			fmt.Sprintf("pause queue: %v", err),
 		)
@@ -2357,10 +2352,12 @@ func (s *Server) humaPauseQueue(
 func (s *Server) humaUnpauseQueue(
 	ctx context.Context, input *QueuePauseInput,
 ) (*QueuePauseOutput, error) {
-	if err := updateQueueIntent(ctx, s.db, false, input.Token); err != nil {
-		if errors.Is(err, ErrQueueIntentSuperseded) {
-			return nil, huma.Error409Conflict(err.Error())
-		}
+	s.shutdownDrainMu.Lock()
+	defer s.shutdownDrainMu.Unlock()
+	if s.shutdownDraining {
+		return nil, huma.Error409Conflict("daemon shutdown in progress")
+	}
+	if err := s.db.SetQueuePaused(false); err != nil {
 		return nil, huma.Error500InternalServerError(
 			fmt.Sprintf("unpause queue: %v", err),
 		)

@@ -5,23 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/http/httptest"
-	"path/filepath"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"go.kenn.io/roborev/internal/config"
-	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/searchindex"
 	"go.kenn.io/roborev/internal/storage"
-	"go.kenn.io/roborev/internal/version"
 )
 
-// Direct daemon startup uses --queue-paused separately from cross-process recovery intent.
 func TestDaemonRunAppliesInitialPauseBeforeWorkers(t *testing.T) {
 	for _, paused := range []bool{true, false} {
 		t.Run(map[bool]string{true: "pause", false: "unpause"}[paused], func(t *testing.T) {
@@ -87,42 +79,4 @@ func TestUnpauseCmdPostsQueueUnpause(t *testing.T) {
 
 	assert.True(t, called)
 	assert.Contains(t, output, "Queue unpaused")
-}
-
-func TestLocalQueueCommandClearsItsIntentOnSuccessAndFailure(t *testing.T) {
-	for _, scenario := range []string{"success", "API failure", "access-denied discovery failure"} {
-		t.Run(scenario, func(t *testing.T) {
-			isolateDaemonSelection(t)
-			t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
-			marker := filepath.Join(config.DataDir(), "queue-intent.json")
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal(t, "/api/queue/pause", r.URL.Path)
-				assert.NotEmpty(t, r.Header.Get(daemon.QueueIntentHeader))
-				if scenario == "API failure" {
-					http.Error(w, "queue unavailable", http.StatusInternalServerError)
-					return
-				}
-				// Older daemons accept this update without consuming the token.
-				_, _ = w.Write([]byte(`{"queue_paused":true}`))
-			}))
-			defer server.Close()
-			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-				if scenario == "access-denied discovery failure" {
-					return nil, daemon.ErrDaemonAccessDenied
-				}
-				return &daemon.RuntimeInfo{Address: strings.TrimPrefix(server.URL, "http://"), Version: version.Version}, nil
-			}
-			probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
-				return &daemon.PingInfo{Version: version.Version}, nil
-			}
-			err := setQueuePaused(t.Context(), true)
-			if strings.HasSuffix(scenario, "failure") {
-				require.Error(t, err)
-				assert.NoFileExists(t, marker)
-				return
-			}
-			require.NoError(t, err)
-			assert.NoFileExists(t, marker)
-		})
-	}
 }

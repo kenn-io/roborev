@@ -90,6 +90,25 @@ func TestShutdownBlocksClaimsWithoutChangingQueuePause(t *testing.T) {
 	assert.False(t, draining)
 }
 
+func TestShutdownRejectsQueueMutationsWhileDraining(t *testing.T) {
+	server := setupTestServer(t)
+
+	shutdown := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(
+		shutdown, httptest.NewRequest(http.MethodPost, "/api/shutdown", nil),
+	)
+	require.Equal(t, http.StatusOK, shutdown.Code, shutdown.Body.String())
+
+	unpause := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(
+		unpause, httptest.NewRequest(http.MethodPost, "/api/queue/unpause", nil),
+	)
+	assert.Equal(t, http.StatusConflict, unpause.Code)
+	draining, err := server.db.IsShutdownDraining()
+	require.NoError(t, err)
+	assert.True(t, draining)
+}
+
 func TestStopRetriesDrainPreparationAfterTransientFailure(t *testing.T) {
 	server := setupTestServer(t)
 

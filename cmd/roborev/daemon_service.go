@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/cenkalti/backoff/v7"
@@ -17,14 +18,11 @@ import (
 type daemonService struct {
 	unit, executable string
 	mainPID          int
-	manager          *daemonServiceManager
+	// Recovery refuses these unit settings before draining.
+	serviceType                string
+	remainAfterExit, transient bool
 }
 
-type daemonServiceManager struct {
-	lookup func(context.Context, int) (*daemonService, error)
-	start  func(context.Context, string) error
-	close  func()
-}
 type managedRecoveryError struct {
 	unit  string
 	cause error
@@ -37,10 +35,25 @@ func (e *managedRecoveryError) Unwrap() error { return e.cause }
 
 var (
 	findDaemonService  = lookupDaemonService
+	serviceMainPID     = userServiceMainPID
+	startDaemonService = startUserService
 	drainManagedDaemon = daemon.KillDaemon
-	// errUserBusUnavailable leaves a responsive daemon in use without recovery.
-	errUserBusUnavailable = errors.New("user bus unavailable")
+	// errUserManagerUnavailable leaves a responsive daemon in use without recovery.
+	errUserManagerUnavailable = errors.New("user service manager unavailable")
 )
+
+// supported reports unit settings that systemctl start cannot replace safely.
+func (s *daemonService) supported() error {
+	switch {
+	case s.transient:
+		return errors.New("transient units require manual restart")
+	case s.remainAfterExit:
+		return errors.New("RemainAfterExit=yes requires manual restart")
+	case !slices.Contains([]string{"simple", "exec", "notify"}, s.serviceType):
+		return fmt.Errorf("unsupported service Type=%s", s.serviceType)
+	}
+	return nil
+}
 
 func (s *daemonService) sameInstallation() (bool, error) {
 	selected, err := os.Stat(s.executable)
@@ -67,12 +80,11 @@ func acquireRecoveryLock() (func(), error) {
 }
 
 func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
+	// Only a daemon that answered the version probe receives a pre-drain pause.
+	versionAnswered := probeErr == nil
 	ctx, cancel := context.WithTimeout(context.Background(), daemonStartTimeout)
 	snapshot, snapshotErr := findDaemonService(ctx, info.PID)
 	cancel()
-	if snapshot != nil {
-		defer snapshot.manager.close()
-	}
 	release, err := acquireRecoveryLock()
 	if err != nil {
 		return err
@@ -100,22 +112,20 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 	owner, err := findDaemonService(ctx, current.PID)
 	vanished := !responsive && errors.Is(err, os.ErrNotExist)
 	if vanished {
+		// The snapshot identifies the unit only when no daemon replaced this one.
 		owner, err = snapshot, snapshotErr
 		if errors.Is(err, os.ErrNotExist) {
 			err = nil
 		}
 	}
-	if responsive && errors.Is(err, errUserBusUnavailable) {
+	if responsive && errors.Is(err, errUserManagerUnavailable) {
 		if verbose {
-			fmt.Fprintf(lifecycleOut, "Daemon recovery skipped; user bus unavailable: %v\n", err)
+			fmt.Fprintf(lifecycleOut, "Daemon recovery skipped; %v\n", err)
 		}
 		return nil
 	}
 	if err != nil {
 		return err
-	}
-	if owner != nil && owner != snapshot {
-		defer owner.manager.close()
 	}
 	if responsive && current.PID != info.PID && current.Version == version.Version {
 		return nil
@@ -132,6 +142,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 	}
 	fail := func(err error) error { return &managedRecoveryError{owner.unit, err} }
 	if owner.mainPID != current.PID {
+		// A wrapper child stays in use; systemd cannot replace it directly.
 		if responsive {
 			return nil
 		}
@@ -147,7 +158,16 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 		}
 		return nil
 	}
+	if err := owner.supported(); err != nil {
+		return fail(err)
+	}
 	if !vanished {
+		// Replacement workers can start before a later API request reaches SQLite.
+		if pendingStartPause != nil && *pendingStartPause && versionAnswered && responsive {
+			if _, err := current.Endpoint().APIClient(0).PauseQueue(ctx); err != nil {
+				return fail(fmt.Errorf("pause queue before shutdown: %w", err))
+			}
+		}
 		fmt.Fprintln(lifecycleOut, "Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...")
 		if err := drainManagedDaemon(current); err != nil {
 			return fail(err)
@@ -156,18 +176,19 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 	// Reviews may take longer than startup. Give the replacement a fresh budget.
 	readyCtx, readyCancel := context.WithTimeout(context.Background(), daemonStartTimeout)
 	defer readyCancel()
-	if err := owner.manager.start(readyCtx, owner.unit); err != nil {
+	// Start leaves a socket-activated replacement running.
+	if err := startDaemonService(readyCtx, owner.unit); err != nil {
 		return fail(err)
 	}
-	if err := owner.awaitReplacement(readyCtx); err != nil {
+	if err := awaitServiceReplacement(readyCtx, owner.unit); err != nil {
 		return fail(err)
 	}
 	return nil
 }
 
-// awaitReplacement polls until a responsive daemon is the unit's main process.
-// Unit startup can precede runtime publication.
-func (s *daemonService) awaitReplacement(ctx context.Context) error {
+// awaitServiceReplacement polls until a responsive daemon is the unit's main
+// process. Unit startup can precede runtime publication.
+func awaitServiceReplacement(ctx context.Context, unit string) error {
 	_, err := backoff.Retry(ctx, func() (struct{}, error) {
 		replacement, err := getAnyRunningDaemonForStart(ctx)
 		if err != nil {
@@ -177,15 +198,12 @@ func (s *daemonService) awaitReplacement(ctx context.Context) error {
 			}
 			return struct{}{}, err
 		}
-		service, err := s.manager.lookup(ctx, replacement.PID)
+		mainPID, err := serviceMainPID(ctx, unit)
 		if err != nil {
 			return struct{}{}, backoff.Permanent(err)
 		}
-		if service == nil || service.unit != s.unit {
-			return struct{}{}, backoff.Permanent(fmt.Errorf("replacement is outside service %s", s.unit))
-		}
-		if service.mainPID != replacement.PID {
-			return struct{}{}, fmt.Errorf("replacement is outside service %s", s.unit)
+		if mainPID != replacement.PID {
+			return struct{}{}, fmt.Errorf("replacement is outside service %s", unit)
 		}
 		return struct{}{}, nil
 	}, backoff.WithBackOff(backoff.NewConstantBackOff(50*time.Millisecond)),

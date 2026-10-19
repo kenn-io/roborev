@@ -3,11 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
-	"net/http"
 
 	"github.com/spf13/cobra"
-
-	"go.kenn.io/roborev/internal/daemon"
 )
 
 func pauseCmd() *cobra.Command {
@@ -30,20 +27,16 @@ func unpauseCmd() *cobra.Command {
 	}
 }
 
-func setQueuePaused(ctx context.Context, paused bool) (err error) {
-	var token string
+func setQueuePaused(ctx context.Context, paused bool) error {
+	// For a local daemon, carry the desired pause state into daemon startup so a
+	// cold-started or restarted daemon comes up with the flag already applied,
+	// before its workers can claim jobs. startDaemon passes it to the new
+	// daemon, which persists it before workers start. Service recovery sends a
+	// pause to the old daemon before draining it. A healthy, current-version
+	// daemon is left running and picks up the state from the POST below instead.
 	if serverAddr == "" {
-		token, err = daemon.PublishQueueIntent(ctx, paused)
-		if err != nil {
-			return err
-		}
-		defer func() {
-			if err != nil {
-				if cleanupErr := daemon.CompleteQueueIntent(context.WithoutCancel(ctx), token); cleanupErr != nil {
-					err = fmt.Errorf("%w; clear failed queue request: %w; it may remain pending", err, cleanupErr)
-				}
-			}
-		}()
+		pendingStartPause = &paused
+		defer func() { pendingStartPause = nil }()
 	}
 	if err := ensureDaemon(); err != nil {
 		return err
@@ -55,20 +48,9 @@ func setQueuePaused(ctx context.Context, paused bool) (err error) {
 	if paused {
 		update = api.PauseQueue
 	}
-	result, err := update(ctx, func(_ context.Context, req *http.Request) error {
-		if token != "" {
-			req.Header.Set(daemon.QueueIntentHeader, token)
-		}
-		return nil
-	})
+	result, err := update(ctx)
 	if err != nil {
 		return daemonRequestError("update queue pause state", err)
-	}
-
-	if token != "" {
-		if err := daemon.CompleteQueueIntent(ctx, token); err != nil {
-			return fmt.Errorf("clear completed queue request: %w", err)
-		}
 	}
 
 	if result.QueuePaused {
@@ -78,3 +60,7 @@ func setQueuePaused(ctx context.Context, paused bool) (err error) {
 	}
 	return nil
 }
+
+// pendingStartPause carries queue-pause intent into the daemon run arguments.
+// Only the new daemon persists the flag, before workers can claim jobs.
+var pendingStartPause *bool

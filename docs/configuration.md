@@ -1764,36 +1764,41 @@ systemctl --user enable --now roborev
 ```
 
 Ordinary CLI commands replace an outdated daemon, or one that stops responding
-after discovery, through its owning user service after active reviews finish.
-Recovery saves service ownership before waiting for the start lock, then
-rediscovers the daemon. A responsive, current replacement is reused. A saved
-service can replace a process that exits during the wait; otherwise a vanished
-process uses ordinary startup. The active review drain has no time limit;
-waiting commands share that wait. Startup gets a fresh two-minute budget and
-waits until the responsive replacement is the service's `MainPID`.
+after discovery, through its owning user service after active reviews finish:
 
-Supported direct services launch `daemon run` with `Type=simple`, `Type=exec`,
-or `Type=notify`, including `RemainAfterExit=yes`. Other launch commands are
-refused before shutdown. Recovery retains transient units until replacement. Its
-`ExecStart` executable must match the CLI's installed file or executable path,
-including a shared symlink or atomic replacement. A separate installation or
-wrapper-owned daemon stays in use while responsive and reports an error
-otherwise. If the user bus is unavailable, a responsive daemon stays running;
-verbose output explains the skipped recovery. Uncertain ownership and failed
-startup report errors.
+1. Under the start lock, the command rediscovers the daemon and reuses a
+    responsive replacement already running this CLI's version.
+1. It waits for active reviews to drain. This wait has no time limit, and
+    waiting commands share it.
+1. It runs `systemctl --user start` for the unit and waits up to two minutes
+    until a responsive daemon is the unit's `MainPID`. If socket activation
+    already started a replacement, `start` leaves it running.
 
-Local `pause` and `unpause` commands publish `queue-intent.json` in the data
-directory before waiting for recovery. Startup persists the latest request
-before workers claim jobs, then removes it. Later CLI or TUI requests supersede
-earlier ones, including during review drain. Malformed or unreadable requests
-are logged and removed when possible; unsupported format versions prevent
-startup before workers claim jobs. Successful CLI updates clear their own
-request, including when an older daemon handles the API call. Failed local
-commands clear only their own request, preserving newer choices. If cleanup
-fails, the command explains that its request may remain pending. Failure to
-persist a valid request prevents worker startup. Explicit `--server` requests
-stay API-only. Explicit `daemon restart` and the restart after `roborev update`
-keep their separate detached-start workflows.
+Automatic replacement applies when the daemon is the main process of a
+non-transient user service with `Type=simple`, `Type=exec`, or `Type=notify`,
+and the daemon's executable file or path matches the CLI's, including after an
+atomic package replacement. Recovery refuses `RemainAfterExit=yes`, transient
+units, and other service types before shutdown; restart those through systemd.
+
+These daemons stay in use while they respond and report an error otherwise:
+
+- A daemon from another installation.
+- A daemon started as a child of the unit's main process, such as by a wrapper
+    script.
+
+A daemon that only shares a unit's cgroup, such as one started with
+`roborev daemon start` from a service script, uses ordinary detached recovery.
+If the user service manager is unavailable, a responsive daemon stays running;
+verbose output explains the skipped recovery.
+
+When a local `roborev pause` replaces a service daemon that answered its version
+check, the command saves the pause through that daemon before reviews drain, so
+the replacement's workers do not claim queued jobs. If that request fails, the
+daemon keeps running. After a failed version check, and for `unpause`, the
+command applies its state after the replacement starts. A cold detached start
+applies the requested state before its workers start. Explicit `--server`
+requests stay API-only. Explicit `daemon restart` and the restart after
+`roborev update` keep their separate detached-start workflows.
 
 For on-demand startup via socket activation, enable the socket unit instead. The
 daemon starts automatically when a client connects and uses `Type=notify` to

@@ -394,6 +394,9 @@ func startDaemon() error {
 				return fmt.Errorf("locate daemon startup log: %w", err)
 			}
 			args := []string{"daemon", "run"}
+			if pendingStartPause != nil {
+				args = append(args, fmt.Sprintf("--queue-paused=%t", *pendingStartPause))
+			}
 			if err := startDaemonDetached(ctx, detachedDaemonOptions{
 				Executable:      exe,
 				Args:            args,
