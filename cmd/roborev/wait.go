@@ -292,7 +292,9 @@ func waitMultiple(
 				cmd.Printf("Job %d: review has issues\n", r.jobID)
 			default:
 				cmd.Printf("Job %d: %v\n", r.jobID, r.err)
-				reportCLIError(cmd.OutOrStderr(), telemetry.EventReviewViewed)
+				if _, ok := errors.AsType[*jobRequestError](r.err); ok {
+					reportCLIError(cmd.OutOrStderr(), telemetry.EventReviewViewed)
+				}
 			}
 		}
 	}

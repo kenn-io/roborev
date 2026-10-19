@@ -389,45 +389,62 @@ describe("review close reporting", () => {
     expect(actionReports).not.toHaveBeenCalled();
   });
 
-  it.each(["close", "reopen", "failure", "reopen failure"])(
-    "reports explicit close outcomes: %s",
-    async (action) => {
-      let closed = action === "reopen" || action === "reopen failure";
-      const getReview = vi.fn(async () => ({
-        id: 1,
-        job_id: 42,
-        output: "review",
-        closed,
-      }));
-      const store = reviewStore({
+  it.each([
+    "close",
+    "reopen",
+    "failure",
+    "reopen failure",
+    "close refresh failure",
+    "reopen refresh failure",
+    "close mismatch",
+    "reopen mismatch",
+  ])("reports explicit close outcomes: %s", async (action) => {
+    let closed = action.startsWith("reopen");
+    let submitted = false;
+    const onError = vi.fn();
+    const getReview = vi.fn(async () => {
+      if (submitted && action.includes("refresh failure"))
+        throw new Error("refresh failed");
+      return { id: 1, job_id: 42, output: "review", closed };
+    });
+    const store = reviewStore(
+      {
         getReview,
         getReviewProjection: vi.fn(async () => ({ responses: [] })),
         listJobs: vi.fn(async () => ({ jobs: [] })),
         closeReview: vi.fn(async (request: { closed: boolean }) => {
-          if (action.includes("failure")) throw new Error("close failed");
+          if (action === "failure" || action === "reopen failure")
+            throw new Error("close failed");
+          submitted = true;
           closed = request.closed;
           return { success: true };
         }),
-      } as never);
-      store.setSelectedJobId(42);
-      store.loadReview(42);
-      await vi.waitFor(() => expect(store.getReview()?.job_id).toBe(42));
-      store.closeReview(42);
-      if (action === "close")
-        await vi.waitFor(() =>
-          expect(actionReports).toHaveBeenCalledExactlyOnceWith(
-            "review_closed",
-          ),
-        );
-      else {
-        await vi.waitFor(() => expect(getReview).toHaveBeenCalledTimes(2));
-        expect(actionReports).not.toHaveBeenCalled();
-      }
-      if (action === "failure")
-        expect(errorReports).toHaveBeenCalledExactlyOnceWith("review_closed");
-      else expect(errorReports).not.toHaveBeenCalled();
-    },
-  );
+      } as never,
+      onError,
+    );
+    store.setSelectedJobId(42);
+    store.loadReview(42);
+    await vi.waitFor(() => expect(store.getReview()?.job_id).toBe(42));
+    if (action.includes("mismatch")) store.setSelectedJobId(43);
+    store.closeReview(42);
+    if (action.includes("failure") || action.includes("mismatch"))
+      await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
+    else if (action === "close")
+      await vi.waitFor(() =>
+        expect(actionReports).toHaveBeenCalledExactlyOnceWith("review_closed"),
+      );
+    else await vi.waitFor(() => expect(getReview).toHaveBeenCalledTimes(2));
+    if (action === "close" || action === "close refresh failure")
+      expect(actionReports).toHaveBeenCalledExactlyOnceWith("review_closed");
+    else expect(actionReports).not.toHaveBeenCalled();
+    if (
+      action === "failure" ||
+      action === "close refresh failure" ||
+      action === "close mismatch"
+    )
+      expect(errorReports).toHaveBeenCalledExactlyOnceWith("review_closed");
+    else expect(errorReports).not.toHaveBeenCalled();
+  });
 });
 
 it("reports a shown review load failure once", async () => {

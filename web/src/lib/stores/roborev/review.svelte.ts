@@ -233,11 +233,12 @@ export function createReviewStore(opts: ReviewStoreOptions) {
               ),
             ),
           onAcknowledgedRefreshFailure: () =>
-            Effect.sync(() =>
+            Effect.sync(() => {
+              if (closed) reportErrorShown("review_closed");
               opts.onError?.(
                 "Review state changed, but the refreshed review is unavailable",
-              ),
-            ),
+              );
+            }),
         })
         .pipe(
           Effect.tap(() =>
@@ -251,7 +252,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
 
   function closeReview(jobId: number): void {
     if (selectedJobId !== jobId || review?.job_id !== jobId) {
-      reportErrorShown("review_closed");
+      if (!review?.closed) reportErrorShown("review_closed");
       opts.onError?.("Failed to close review");
       return;
     }

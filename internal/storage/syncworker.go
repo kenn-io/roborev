@@ -28,8 +28,9 @@ type SyncWorker struct {
 	syncMu          sync.Mutex // serializes sync operations (doSync, SyncNow, FinalPush)
 	connectMu       sync.Mutex // serializes connect operations
 	running         bool
-	skipInitialSync bool // when true, skip the immediate doSync on connect
-	working         bool // protected by syncMu; requires a completed push and pull
+	skipInitialSync bool  // when true, skip the immediate doSync on connect
+	working         bool  // protected by syncMu; requires a completed push and pull
+	passError       error // protected by syncMu; remote errors swallowed during push
 	onSyncFailed    func(string)
 	afterPullWrite  func()
 	afterReviewPush func([]string)
@@ -47,7 +48,7 @@ func (w *SyncWorker) observeSync(err error) {
 		w.working = true
 		return
 	}
-	if _, remote := errors.AsType[*syncSourceError](err); !remote || !w.working {
+	if _, remote := errors.AsType[*syncSourceError](err); !remote || errors.Is(err, errReviewAttemptPending) || !w.working {
 		return
 	}
 	w.working = false
@@ -367,6 +368,7 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (*S
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
+	w.passError = nil
 	stats := &SyncStats{}
 
 	// Push local changes (limited batches to ensure pull still runs)
@@ -419,7 +421,7 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (*S
 		w.observeSync(err)
 		return nil, fmt.Errorf("pull: %w", err)
 	}
-	w.observeSync(nil)
+	w.observeSync(w.passError)
 	stats.PulledJobs = pulled.Jobs
 	stats.PulledReviews = pulled.Reviews
 	stats.PulledResponses = pulled.Responses
@@ -667,6 +669,7 @@ func (w *SyncWorker) doSync() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
+	w.passError = nil
 	// Push all local changes to PostgreSQL (loop until no more pending)
 	var totalJobs, totalReviews, totalResponses int
 	for {
@@ -691,7 +694,7 @@ func (w *SyncWorker) doSync() error {
 		return fmt.Errorf("pull: %w", err)
 	}
 
-	w.observeSync(nil)
+	w.observeSync(w.passError)
 	return nil
 }
 
@@ -745,6 +748,7 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 
 			pgRepoID, err := pool.GetOrCreateRepo(ctx, j.RepoIdentity)
 			if err != nil {
+				w.passError = &syncSourceError{err}
 				log.Printf("Sync: failed to get/create repo for job %s: %v", j.UUID, err)
 				continue
 			}
@@ -753,6 +757,7 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 			if j.CommitSHA != "" {
 				id, err := pool.GetOrCreateCommit(ctx, pgRepoID, j.CommitSHA, j.CommitAuthor, j.CommitSubject, j.CommitTimestamp)
 				if err != nil {
+					w.passError = &syncSourceError{err}
 					log.Printf("Sync: failed to get/create commit for job %s: %v", j.UUID, err)
 					continue
 				}
@@ -770,6 +775,7 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 		if len(preparedJobs) > 0 {
 			success, err := pool.BatchUpsertJobs(ctx, preparedJobs)
 			if err != nil {
+				w.passError = &syncSourceError{err}
 				log.Printf("Sync: batch upsert jobs error: %v", err)
 			}
 
@@ -845,6 +851,7 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	if len(responses) > 0 {
 		success, err := pool.BatchInsertResponses(ctx, responses)
 		if err != nil {
+			w.passError = &syncSourceError{err}
 			log.Printf("Sync: batch insert responses error: %v", err)
 		}
 

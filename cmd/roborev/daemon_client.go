@@ -46,7 +46,7 @@ func waitForJob(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet
 			if !quiet {
 				reportCLIError(cmd.OutOrStderr(), telemetry.EventReviewViewed)
 			}
-			return fmt.Errorf("failed to check job status: %w", err)
+			return &jobRequestError{fmt.Errorf("failed to check job status: %w", err)}
 		}
 
 		switch job.Status {
@@ -116,7 +116,7 @@ func showReview(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet
 		if !quiet {
 			reportCLIError(cmd.OutOrStderr(), telemetry.EventReviewViewed)
 		}
-		return err
+		return &jobRequestError{err}
 	}
 
 	if !quiet {

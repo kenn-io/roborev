@@ -219,14 +219,16 @@ func TestCoreActionExplicitClose(t *testing.T) {
 }
 
 //nolint:paralleltest // telemetry environment variables
-func TestCoreActionCommittedPatch(t *testing.T) {
+func TestCoreActionFixOutcomes(t *testing.T) {
 	enableTelemetryEnv(t)
 	for _, tc := range []struct {
 		name   string
-		result applyPatchResultMsg
+		result tea.Msg
 		events []string
 		kinds  []string
 	}{
+		{name: "enqueue failure", result: fixTriggerResultMsg{err: errors.New("enqueue failed")}, events: []string{"error_shown"}, kinds: []string{"finding_fixed"}},
+		{name: "patch fetch failure", result: patchMsg{err: errors.New("fetch failed")}},
 		{name: "committed", result: applyPatchResultMsg{success: true}, events: []string{"finding_fixed"}, kinds: []string{""}},
 		{name: "commit failure", result: applyPatchResultMsg{success: true, commitFailed: true, err: errors.New("commit failed")}, events: []string{"error_shown"}, kinds: []string{"finding_fixed"}},
 		{name: "apply failure", result: applyPatchResultMsg{err: errors.New("apply failed")}, events: []string{"error_shown"}, kinds: []string{"finding_fixed"}},
@@ -234,7 +236,15 @@ func TestCoreActionCommittedPatch(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newCoreActionReviewVisitFixture(t)
-			_, cmd := f.m.handleApplyPatchResultMsg(tc.result)
+			var cmd tea.Cmd
+			switch result := tc.result.(type) {
+			case applyPatchResultMsg:
+				_, cmd = f.m.handleApplyPatchResultMsg(result)
+			case fixTriggerResultMsg:
+				_, cmd = f.m.handleFixTriggerResultMsg(result)
+			case patchMsg:
+				_, cmd = f.m.handlePatchResultMsg(result)
+			}
 			collectMsgs(cmd)
 			assert.Equal(t, tc.events, f.transport.events)
 			assert.Equal(t, tc.kinds, f.transport.kinds)

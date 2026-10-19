@@ -462,6 +462,55 @@ func TestIntegration_MigrationV6Idempotent(t *testing.T) { //nolint:paralleltest
 	}
 }
 
+func TestIntegration_SyncOutageFromSwallowedWrite(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
+	for _, mode := range []string{"background pass", "sync now"} {
+		t.Run(mode, func(t *testing.T) {
+			env := newIntegrationEnv(t)
+			db := env.openDB("outage.db")
+			worker := NewSyncWorker(db, config.SyncConfig{PostgresURL: env.pgURL, MachineName: "outage-test"})
+			_, err := worker.connect(5 * time.Second)
+			require.NoError(t, err)
+			t.Cleanup(worker.pgPool.Close)
+			worker.running = true
+			var reasons []string
+			worker.SetOnSyncFailed(func(reason string) { reasons = append(reasons, reason) })
+			pass := worker.doSync
+			if mode == "sync now" {
+				pass = func() error { _, err := worker.SyncNow(); return err }
+			}
+			require.NoError(t, pass())
+			repo, err := db.GetOrCreateRepo(env.TmpDir, "https://example.com/repo.git")
+			require.NoError(t, err)
+			job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "HEAD", Agent: "test"})
+			require.NoError(t, err)
+			require.NoError(t, db.CancelJob(job.ID))
+			_, err = env.Pool.pool.Exec(env.Ctx, `
+				CREATE FUNCTION roborev.reject_job_write() RETURNS trigger LANGUAGE plpgsql AS $$
+				BEGIN RAISE EXCEPTION 'job writes denied' USING ERRCODE = '42501'; END $$;
+				CREATE TRIGGER reject_job_write BEFORE INSERT OR UPDATE ON roborev.review_jobs
+				FOR EACH ROW EXECUTE FUNCTION roborev.reject_job_write()`)
+			require.NoError(t, err)
+			for range 2 {
+				require.NoError(t, pass(), "upload errors remain swallowed")
+				assert.Equal(t, []string{"auth"}, reasons)
+			}
+			env.assertPgCount("review_jobs", 0)
+			_, err = env.Pool.pool.Exec(env.Ctx, "ALTER TABLE roborev.review_jobs DISABLE TRIGGER reject_job_write")
+			require.NoError(t, err)
+			require.NoError(t, pass())
+			env.assertPgCount("review_jobs", 1)
+			assert.Equal(t, []string{"auth"}, reasons)
+			job, err = db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "HEAD", Agent: "test"})
+			require.NoError(t, err)
+			require.NoError(t, db.CancelJob(job.ID))
+			_, err = env.Pool.pool.Exec(env.Ctx, "ALTER TABLE roborev.review_jobs ENABLE TRIGGER reject_job_write")
+			require.NoError(t, err)
+			require.NoError(t, pass())
+			assert.Equal(t, []string{"auth", "auth"}, reasons)
+		})
+	}
+}
+
 func TestIntegration_SyncFullCycle(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	env := newIntegrationEnv(t)
 	db := env.openDB("test.db")

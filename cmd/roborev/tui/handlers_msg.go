@@ -2506,6 +2506,7 @@ func (m model) handleFixTriggerResultMsg(
 		m.setFlash(fmt.Sprintf(
 			"Fix failed: %v", msg.err,
 		), 3*time.Second, viewTasks)
+		return m, m.reportAction(telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: telemetry.EventFindingFixed})
 	} else if msg.warning != "" {
 		m.setFlash(msg.warning, 5*time.Second, viewTasks)
 		return m, m.requestFetchFixJobs()

@@ -516,22 +516,9 @@ with `surface=tui|cli`, and `review_closed` counts each successful explicit clos
 with `surface=web|tui|cli`. CLI actions require terminal output and exclude agents
 and `--from-skill`. Reopens and automatic closes stay silent.
 
-Each shown core action failure sends `error_shown` with `surface=web|tui|cli`
-and `kind=review_viewed|finding_fixed|review_closed`, without a daily limit.
-Failures use the same action and output gates as successful reports, including
-errors shown inside continuing fix and refine loops. Prompt reads, analysis
-without fixing, validation errors, reopens, and missing reviews in `show` stay
-silent. CLI reporting requires a terminal and excludes agents and
-`--from-skill`.
-
-The daemon sends `sync_failed` when a full sync pass fails after a successful
-pass in the same process, once per PostgreSQL outage, with
-`sync_source=postgres` and `reason=auth|network|timeout|other`. A successful full
-push and pull allows the next outage to report. Local SQLite and configuration
-errors stay silent and leave the source's state unchanged. Outage state resets
-when the daemon restarts; reporting resumes after a full pass succeeds.
-Unlisted `kind`, `reason`, and `sync_source` values become `other`. Neither
-event contains error text.
+Anonymous telemetry also counts shown core action errors and PostgreSQL sync
+outages. See [telemetry configuration](https://github.com/kenn-io/roborev/blob/main/docs/configuration.md#telemetry)
+for event properties and reporting rules.
 
 Daily screen and `review_viewed` claims share `telemetry-daily.json` beside the
 daemon database, wherever `--db` points, with a `telemetry-daily.json.lock`
