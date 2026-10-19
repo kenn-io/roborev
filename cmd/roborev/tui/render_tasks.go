@@ -168,6 +168,9 @@ func (m model) renderTasksView() string {
 
 	if len(m.fixJobs) == 0 {
 		b.WriteString("\n  No fix tasks. Press F on a review to trigger a background fix.\n")
+		if flash := m.renderFlash(viewTasks); flash != "" {
+			b.WriteString(flash)
+		}
 		b.WriteString("\n")
 		emptyHelp := []helplayout.HelpItem{{Key: "T", Description: "back to queue"}, {Key: "F", Description: "fix review"}}
 		if !m.noQuit {

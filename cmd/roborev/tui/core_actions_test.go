@@ -240,7 +240,9 @@ func TestCoreActionFixOutcomes(t *testing.T) {
 			case applyPatchResultMsg:
 				_, cmd = f.m.handleApplyPatchResultMsg(result)
 			case fixTriggerResultMsg:
-				_, cmd = f.m.handleFixTriggerResultMsg(result)
+				var updated tea.Model
+				updated, cmd = f.m.handleFixTriggerResultMsg(result)
+				assert.Contains(t, updated.(model).renderTasksView(), "Fix failed: enqueue failed")
 			}
 			collectMsgs(cmd)
 			assert.Equal(t, tc.events, f.transport.events)

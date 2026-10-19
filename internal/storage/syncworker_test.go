@@ -210,6 +210,7 @@ func TestSyncFailureOutages(t *testing.T) {
 	var reasons []string
 	worker.SetOnSyncFailed(func(reason string) { reasons = append(reasons, reason) })
 	remote := &syncSourceError{context.DeadlineExceeded}
+	worker.observeSync(&syncSourceError{&pgconn.PgError{Code: "23505"}})
 	worker.observeSync(remote) // No successful full pass yet.
 	assert.Empty(t, reasons)
 	worker.observeSync(nil)
@@ -220,6 +221,7 @@ func TestSyncFailureOutages(t *testing.T) {
 	worker.observeSync(remote)
 	worker.observeSync(remote)
 	assert.Equal(t, []string{"timeout"}, reasons)
+	worker.observeSync(&syncSourceError{&pgconn.PgError{Code: "22001"}})
 	worker.observeSync(errors.New("local SQLite failure"))
 	worker.observeSync(remote)
 	assert.Equal(t, []string{"timeout"}, reasons)
