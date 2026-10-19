@@ -17,7 +17,9 @@ import (
 
 const (
 	// NotificationTimeout shares the CLI's existing one-second bound with MCP database work.
-	NotificationTimeout  = time.Second
+	NotificationTimeout = time.Second
+	// ExitWaitLimit caps the CLI, MCP, and TUI exit wait for unfinished reports.
+	ExitWaitLimit        = 50 * time.Millisecond
 	EnabledEnv           = "ROBOREV_TELEMETRY_ENABLED"
 	GenericEnabledEnv    = posthog.GenericEnabledEnv
 	installIDMetadataKey = "telemetry.install_id"
@@ -55,6 +57,8 @@ const (
 )
 
 var ErrUnsupportedEvent = posthog.ErrUnsupportedEvent
+
+type SendGroup = posthog.SendGroup
 
 type Client = posthog.Client
 

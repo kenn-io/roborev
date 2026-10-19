@@ -24,17 +24,18 @@ import (
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/telemetry"
 )
 
 const cliUseBody = `{"event":"app_opened","properties":{"surface":"cli"}}`
 
 // clearCLIUseState forgets the observer, the once and any started post, as a new process would.
 func clearCLIUseState() {
+	cliSends.Wait(cliUseTimeout)
 	daemon.SetClientResponseObserver(nil)
 	cliUseOnce = sync.Once{}
-	cliUseState.Store(nil)
 	cliUseEndpoint.Store(nil)
-	cliActions = sync.WaitGroup{}
+	cliSends = telemetry.SendGroup{}
 	cliUseAgent = false
 }
 
@@ -375,7 +376,7 @@ func TestCLIUseWithoutDaemonStartsNothing(t *testing.T) {
 		assert.Equal(off.stdout, on.stdout)
 		assert.Equal(off.stderr, on.stderr)
 		assert.Equal(offCounts, counts.snapshot())
-		assert.Nil(cliUseState.Load(), "no post may start without an answering daemon")
+		assert.Nil(cliUseEndpoint.Load(), "no post may start without an answering daemon")
 	})
 }
 
@@ -531,7 +532,7 @@ func TestCLIUseReportsOnDaemonSuccessNotExit(t *testing.T) {
 		run := runCLI(t, "review", "--local", "--agent", "test", "--repo", repo.Dir, "--quiet", "--server", md.Server.URL)
 		require.NoError(t, run.err)
 		assert.Empty(t, rec.telemetryPosts())
-		assert.Nil(t, cliUseState.Load())
+		assert.Nil(t, cliUseEndpoint.Load())
 	})
 
 	t.Run("status with a failing status route sends nothing", func(t *testing.T) {
@@ -704,31 +705,38 @@ func TestCLIUseReportsAgentActivityForSkillMarkedCommands(t *testing.T) {
 	}
 }
 
-func TestCLIUseWaitSharesPostDeadline(t *testing.T) {
-	t.Run("hung post ends at the deadline", func(t *testing.T) {
-		resetCLIUse(t)
-		synctest.Test(t, func(t *testing.T) {
-			var deadline time.Time
-			var hasDeadline bool
-			cliUsePost = func(ctx context.Context, _ *http.Client, _, _ string) {
-				deadline, hasDeadline = ctx.Deadline()
-				<-ctx.Done()
-			}
-			start := time.Now()
-			ep := daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}
-			observeCLIUse(ep, httptest.NewRequest(http.MethodGet, "/api/status", nil), &http.Response{StatusCode: http.StatusOK})
-			waitCLIUse()
-			synctest.Wait()
+func TestCLIUseWaitBoundsExit(t *testing.T) {
+	for _, agent := range []bool{false, true} {
+		t.Run(strconv.FormatBool(agent), func(t *testing.T) {
+			resetCLIUse(t)
+			synctest.Test(t, func(t *testing.T) {
+				cliUseAgent = agent
+				var deadline time.Time
+				var hasDeadline bool
+				done := make(chan struct{})
+				post := func(ctx context.Context, _ *http.Client, _ string) {
+					deadline, hasDeadline = ctx.Deadline()
+					<-ctx.Done()
+					close(done)
+				}
+				cliAgentPost = post
+				cliUsePost = func(ctx context.Context, client *http.Client, url, _ string) { post(ctx, client, url) }
+				start := time.Now()
+				ep := daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}
+				observeCLIUse(ep, httptest.NewRequest(http.MethodGet, "/api/status", nil), &http.Response{StatusCode: http.StatusOK})
+				waitCLIUse()
+				synctest.Wait()
 
-			assert.Equal(t, time.Second, time.Since(start))
-			require.True(t, hasDeadline)
-			assert.Equal(t, start.Add(time.Second), deadline)
-			// The context belongs to this bubble; cleanup's waitCLIUse runs outside it.
-			cliUseState.Store(nil)
-			cliUseEndpoint.Store(nil)
-			cliActions = sync.WaitGroup{}
+				assert.Equal(t, 50*time.Millisecond, time.Since(start))
+				require.True(t, hasDeadline)
+				assert.Equal(t, start.Add(time.Second), deadline)
+				<-done
+				synctest.Wait()
+				assert.Equal(t, time.Second, time.Since(start))
+				clearCLIUseState()
+			})
 		})
-	})
+	}
 
 	t.Run("finished post ends the wait at once", func(t *testing.T) {
 		resetCLIUse(t)
@@ -737,12 +745,11 @@ func TestCLIUseWaitSharesPostDeadline(t *testing.T) {
 			start := time.Now()
 			ep := daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}
 			observeCLIUse(ep, httptest.NewRequest(http.MethodGet, "/api/status", nil), &http.Response{StatusCode: http.StatusOK})
+			synctest.Wait()
 			waitCLIUse()
 
 			assert.Equal(t, time.Duration(0), time.Since(start))
-			cliUseState.Store(nil)
-			cliUseEndpoint.Store(nil)
-			cliActions = sync.WaitGroup{}
+			clearCLIUseState()
 		})
 	})
 }
@@ -751,13 +758,21 @@ func TestMCPActivity(t *testing.T) {
 	t.Run("enabled", func(t *testing.T) {
 		resetCLIUse(t)
 		synctest.Test(t, func(t *testing.T) {
-			cliAgentPost = func(ctx context.Context, _ *http.Client, _ string) {
+			done := make(chan struct{})
+			cliAgentPost = func(ctx context.Context, _ *http.Client, url string) {
+				assert.Equal(t, "http://127.0.0.1:7373"+daemon.TelemetryAgentCallPath, url)
 				<-ctx.Done()
+				close(done)
 			}
 			start := time.Now()
 			reportMCPActivity(t.Context(), daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"})
+			assert.Equal(t, time.Duration(0), time.Since(start))
+			waitCLIUse()
+			assert.Equal(t, 50*time.Millisecond, time.Since(start))
+			<-done
 			synctest.Wait()
-			assert.Equal(t, cliUseTimeout, time.Since(start))
+			assert.Equal(t, time.Second, time.Since(start))
+			clearCLIUseState()
 		})
 	})
 	t.Run("opted out", func(t *testing.T) {
@@ -767,6 +782,7 @@ func TestMCPActivity(t *testing.T) {
 		calls := 0
 		cliAgentPost = func(context.Context, *http.Client, string) { calls++ }
 		reportMCPActivity(t.Context(), daemon.DaemonEndpoint{})
+		waitCLIUse()
 		assert.Zero(t, calls)
 		assert.Equal(t, [5]int32{}, counts.snapshot())
 	})
@@ -900,7 +916,8 @@ func TestCoreActionCompactWait(t *testing.T) {
 				assert.Equal(t, output, out.String())
 			}
 			if mode == "terminal" {
-				require.Len(t, rec.telemetryPosts(), 1)
+				// The report can outlive the exit wait and crosses a test-server socket.
+				require.Eventually(t, func() bool { return len(rec.telemetryPosts()) == 1 }, 5*time.Second, 10*time.Millisecond)
 				assert.JSONEq(t, `{"event":"review_viewed","properties":{"surface":"cli"}}`, rec.telemetryPosts()[0].body)
 			} else {
 				assert.Empty(t, rec.telemetryPosts())

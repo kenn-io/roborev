@@ -1869,9 +1869,11 @@ with `11-100` and `over-100`. Use the highest bucket observed per install and
 UTC day for volume. The local daily count survives daemon restarts in the
 existing database, without a schema migration. These events add no `app_opened`
 events. Each threshold claims one delivery attempt, even if capture fails.
-Delivery is best effort; failed delivery isn't retried. Both opt-out variables
-apply. CLI and stdio MCP notifications use the existing CLI reporting timeout
-and never start a daemon just for telemetry.
+Delivery is best effort and honors both opt-outs. Failed delivery isn't retried.
+CLI and stdio MCP notifications and TUI exit reports use a one-second request
+timeout. CLI commands, stdio MCP sessions, and the TUI wait up to 50 ms at exit
+for unfinished reports. Finished reports add no delay. An unfinished report may
+be lost when the process exits. Telemetry alone never starts a daemon.
 
 Core actions report `review_viewed`, `finding_fixed`, and `review_closed`, each
 at most once per installation, surface, and UTC day. All carry `surface`. Reads

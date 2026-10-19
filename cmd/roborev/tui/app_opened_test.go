@@ -36,7 +36,13 @@ func TestReportSessionEndedBoundsDelivery(t *testing.T) {
 		m.client.Transport = transport
 		started := time.Now()
 		m.reportSessionEnded(2 * time.Minute)
-		assert.Equal(t, time.Second, time.Since(started))
+		synctest.Wait()
+		assert.Equal(t, 50*time.Millisecond, time.Since(started))
+		assert.Equal(t, started.Add(time.Second), transport.deadline)
+		assert.Zero(t, transport.completed.Load())
+		time.Sleep(950 * time.Millisecond)
+		synctest.Wait()
+		assert.Equal(t, int32(1), transport.completed.Load())
 		assert.Equal(t, int32(1), transport.requests.Load())
 	})
 }
@@ -156,17 +162,21 @@ func TestReportAppOpenedIgnoresDaemonFailures(t *testing.T) {
 
 // stalledTransport never answers; it returns only when the request context ends.
 type stalledTransport struct {
-	hit      chan struct{}
-	requests atomic.Int32
+	hit       chan struct{}
+	requests  atomic.Int32
+	completed atomic.Int32
+	deadline  time.Time
 }
 
 func (s *stalledTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	s.requests.Add(1)
+	s.deadline, _ = req.Context().Deadline()
 	select {
 	case s.hit <- struct{}{}:
 	default:
 	}
 	<-req.Context().Done()
+	s.completed.Add(1)
 	return nil, req.Context().Err()
 }
 

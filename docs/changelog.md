@@ -9,6 +9,8 @@ All notable changes to roborev, grouped by minor release.
 
 **Improvements**
 
+- Cap telemetry waits at exit to 50 ms for CLI commands, stdio MCP sessions, and
+    the TUI.
 - Count review reads, committed fixes, and explicit closes in anonymous
     telemetry.
 - Report repository and review totals as ranges in anonymous daemon telemetry:

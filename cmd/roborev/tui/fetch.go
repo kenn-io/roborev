@@ -415,9 +415,13 @@ func (m model) reportSessionEnded(elapsed time.Duration) {
 	if !telemetry.EnabledFromEnv() {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	telemetry.PostSessionEnded(ctx, m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath, telemetry.SurfaceTUI, elapsed)
+	ctx, cancel := context.WithTimeout(context.Background(), telemetry.NotificationTimeout)
+	var sends telemetry.SendGroup
+	sends.Go(func() {
+		defer cancel()
+		telemetry.PostSessionEnded(ctx, m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath, telemetry.SurfaceTUI, elapsed)
+	})
+	sends.Wait(telemetry.ExitWaitLimit)
 }
 
 func (m model) reportScreenViewed() tea.Cmd {

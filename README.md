@@ -532,8 +532,11 @@ add nothing. The daemon emits `agent_active` once per install per UTC day with
 `call_count_bucket=1-10`, then `agent_call_count` only on calls 11 and 101 with
 `11-100` and `over-100`. The highest bucket observed that day represents its
 volume. Counts persist across restarts in the existing local database.
-Delivery is best effort, honors both opt-outs, and uses the CLI reporting
-timeout for notifications. Telemetry alone never starts a daemon.
+Delivery is best effort and honors both opt-outs.
+CLI and stdio MCP notifications and TUI exit reports use a one-second request
+timeout. CLI commands, stdio MCP sessions, and the TUI wait up to 50 ms at exit
+for unfinished reports. Finished reports add no delay. An unfinished report may
+be lost when the process exits. Telemetry alone never starts a daemon.
 Each event also carries `install_age_hours`, the whole hours since the install
 was created, so short-lived installs such as test sandboxes can be filtered out.
 It does not send repo names, paths, remotes, prompts, review output, provider
