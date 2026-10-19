@@ -217,6 +217,9 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 			// Discovery can miss a daemon that later answers shutdown retries.
 			// Persist pause before any drain or service start, or leave it alone.
 			if pendingStartPause != nil && *pendingStartPause {
+				if vanished {
+					return true, fail(fmt.Errorf("pause queue before shutdown: daemon PID %d has exited; retry after its service is running", current.PID))
+				}
 				if _, err := current.Endpoint().APIClient(0).PauseQueue(ctx); err != nil {
 					return true, fail(fmt.Errorf("pause queue before shutdown: %w", err))
 				}

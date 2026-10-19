@@ -53,7 +53,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 	buildDir := t.TempDir()
 	oldBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-old", "v-old")
 	newBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-new", "v-new")
-	for _, scenario := range []string{"path with spaces", "pause", "pause after discovery failure", "restart gap", "remain after exit", "daemon start", "simple", "transient", "missing bus environment", "selection advances", "unrelated ancestor", "wrapper", "socket responsive"} {
+	for _, scenario := range []string{"path with spaces", "pause", "pause after discovery failure", "restart gap", "remain after exit", "daemon start", "simple", "transient", "missing bus environment", "selection advances", "unrelated ancestor", "wrapper", "socket responsive", "socket vanished pause"} {
 		t.Run(scenario, func(t *testing.T) {
 			dataDir := t.TempDir()
 			t.Setenv("ROBOREV_DATA_DIR", dataDir)
@@ -180,7 +180,12 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				}
 			}
 			if socketActivated {
-				assertSocketReplacementKept(t, original, unit, listen, queued)
+				if scenario == "socket vanished pause" {
+					installRoborev(t, newBinary, link)
+					assertVanishedSocketPauseRefused(t, original, unit, dataDir, queued)
+				} else {
+					assertSocketReplacementKept(t, original, unit, listen, queued)
+				}
 				return
 			}
 			cliBinary := link
@@ -362,6 +367,43 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			assert.Equal(t, replacement.PID, serviceMainPIDForTest(t, unit))
 		})
 	}
+}
+
+func assertVanishedSocketPauseRefused(t *testing.T, original *daemon.RuntimeInfo, unit, dataDir string, queued storage.ReviewJob) {
+	t.Helper()
+	oldFind, oldDiscovery, oldPause := findDaemonService, getAnyRunningDaemonForStart, pendingStartPause
+	t.Cleanup(func() {
+		findDaemonService, getAnyRunningDaemonForStart, pendingStartPause = oldFind, oldDiscovery, oldPause
+	})
+	findDaemonService = func(ctx context.Context, pid int) (*daemonService, error) {
+		owner, err := lookupDaemonService(ctx, pid)
+		if owner != nil {
+			owner.executable = "/proc/self/exe"
+		}
+		return owner, err
+	}
+	missed := false
+	getAnyRunningDaemonForStart = func(ctx context.Context) (*daemon.RuntimeInfo, error) {
+		if !missed {
+			// The real daemon exits after ownership is captured. Its socket
+			// remains active, and its queued review has not been claimed.
+			require.NoError(t, daemon.KillDaemon(original))
+			missed = true
+			return nil, os.ErrNotExist
+		}
+		return daemon.GetAnyRunningDaemonContext(ctx)
+	}
+	paused := true
+	pendingStartPause = &paused
+	err := recoverDaemon(original, nil)
+	assert.ErrorContains(t, err, "pause queue before shutdown")
+	assert.Zero(t, serviceMainPIDForTest(t, unit), "failed pause must leave the activation socket untouched")
+	db, err := storage.OpenReadOnly(filepath.Join(dataDir, "reviews.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, db.Close()) })
+	job, err := db.GetJobByID(queued.ID)
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusQueued, job.Status, "pause failure must leave the queued review unclaimed")
 }
 
 // assertSocketReplacementKept triggers socket activation after the old daemon
