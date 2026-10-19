@@ -38,6 +38,14 @@ func clearCLIUseState() {
 	cliUseAgent = false
 }
 
+// drainCLIReports waits for scheduled sends independently of the production exit budget.
+func drainCLIReports(t *testing.T) {
+	t.Helper()
+	deadline, ok := t.Deadline()
+	require.True(t, ok, "telemetry completion requires a test deadline")
+	cliSends.Wait(time.Until(deadline))
+}
+
 // resetCLIUse gives a test a fresh CLI telemetry state with telemetry on and restores every seam afterwards.
 func resetCLIUse(t *testing.T) {
 	t.Helper()
@@ -231,7 +239,7 @@ func TestCLIUseLeavesOutputAndExitUnchanged(t *testing.T) {
 	cliUseTimeout = telemetry.NotificationTimeout
 
 	release := make(chan struct{})
-	events := make(chan string, 2)
+	entered := make(chan struct{}, 1)
 	mode := atomic.Value{}
 	mode.Store("hang")
 	md, rec := newCLIUseDaemon(t, MockRefineHooks{}, func(w http.ResponseWriter, _ *http.Request) {
@@ -239,7 +247,7 @@ func TestCLIUseLeavesOutputAndExitUnchanged(t *testing.T) {
 			http.NotFound(w, nil)
 			return
 		}
-		events <- "entered"
+		entered <- struct{}{}
 		<-release
 	})
 	// Registered after the mock, so it runs first and lets the hanging handler return before the server closes.
@@ -266,16 +274,20 @@ func TestCLIUseLeavesOutputAndExitUnchanged(t *testing.T) {
 			hang.err = root.Execute()
 			waitCLIUse()
 			elapsed = time.Since(started)
-			events <- "returned"
 			close(done)
 		}()
 		defer func() { <-done }()
 		// Command and telemetry requests cross the mock daemon's loopback TCP socket.
-		require.Eventually(t, func() bool { return len(events) > 0 }, 5*time.Second, 10*time.Millisecond)
-		require.Equal(t, "entered", <-events)
-		// The handler stays held until cleanup while the command finishes.
-		require.Eventually(t, func() bool { return len(events) > 0 }, 5*time.Second, 10*time.Millisecond)
-		require.Equal(t, "returned", <-events)
+		require.Eventually(t, func() bool { return len(entered) == 1 }, 5*time.Second, 10*time.Millisecond)
+		// Wait for command completion independently of telemetry receipt across the socket.
+		require.Eventually(t, func() bool {
+			select {
+			case <-done:
+				return true
+			default:
+				return false
+			}
+		}, 5*time.Second, 10*time.Millisecond)
 		<-done
 	})
 	hang.stdout += outBuf.String()
@@ -361,10 +373,12 @@ func TestCLIUseWithoutDaemonStartsNothing(t *testing.T) {
 
 		var mu sync.Mutex
 		var seen []string
+		received := make(chan struct{}, 1)
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			mu.Lock()
 			seen = append(seen, r.Method+" "+r.URL.Path)
 			mu.Unlock()
+			received <- struct{}{}
 			w.WriteHeader(http.StatusAccepted)
 		}))
 		t.Cleanup(srv.Close)
@@ -372,7 +386,8 @@ func TestCLIUseWithoutDaemonStartsNothing(t *testing.T) {
 		require.NoError(t, err)
 
 		observeCLIUse(ep, httptest.NewRequest(http.MethodGet, "/api/jobs", nil), &http.Response{StatusCode: http.StatusOK})
-		waitCLIUse()
+		// The activity post crosses the test-server socket.
+		require.Eventually(t, func() bool { return len(received) == 1 }, 5*time.Second, 10*time.Millisecond)
 		assert.Equal([5]int32{}, counts.snapshot())
 		mu.Lock()
 		assert.Equal([]string{"POST " + daemon.TelemetryEventsPath}, seen)
@@ -426,6 +441,8 @@ func TestCLIUseReportsAppOpenedAfterDaemonCommand(t *testing.T) {
 			run := runCLI(t, append(tc.args, "--server", md.Server.URL)...)
 			require.NoError(t, run.err)
 
+			// Activity reporting crosses the test-server socket.
+			require.Eventually(t, func() bool { return len(rec.telemetryPosts()) == 1 }, 5*time.Second, 10*time.Millisecond)
 			posts := rec.telemetryPosts()
 			require.Len(t, posts, 1)
 			assert.Equal(http.MethodPost, posts[0].method)
@@ -511,6 +528,8 @@ func TestCLIUseCommandSet(t *testing.T) {
 		run := runCLI(t, "post-commit", "--repo", repo.Dir, "--server", md.Server.URL)
 		require.NoError(t, run.err)
 		require.Contains(t, rec.businessPaths(), "POST /api/enqueue")
+		// Activity reporting crosses the test-server socket.
+		require.Eventually(t, func() bool { return len(rec.telemetryPosts()) == 1 }, 5*time.Second, 10*time.Millisecond)
 		require.Len(t, rec.telemetryPosts(), 1)
 		assert.Contains(rec.allPaths(), "POST "+daemon.TelemetryAgentCallPath)
 		assert.Empty(rec.telemetryPosts()[0].body)
@@ -548,6 +567,8 @@ func TestCLIUseReportsOnDaemonSuccessNotExit(t *testing.T) {
 		var exitErr *exitError
 		require.ErrorAs(t, run.err, &exitErr)
 		assert.Equal(t, 1, exitErr.code)
+		// Activity reporting crosses the test-server socket.
+		require.Eventually(t, func() bool { return posts.Load() == 1 }, 5*time.Second, 10*time.Millisecond)
 		assert.Equal(t, int32(1), posts.Load())
 	})
 
@@ -608,6 +629,8 @@ func TestCLIUseOncePerProcess(t *testing.T) {
 	paths := rec.businessPaths()
 	require.Contains(t, paths, "GET /api/status")
 	require.Contains(t, paths, "GET /api/jobs")
+	// Activity reporting crosses the test-server socket.
+	require.Eventually(t, func() bool { return len(rec.telemetryPosts()) == 1 }, 5*time.Second, 10*time.Millisecond)
 	assert.Len(t, rec.telemetryPosts(), 1)
 }
 
@@ -677,6 +700,8 @@ func TestCLIUseRecoveryShutdownDoesNotCount(t *testing.T) {
 		require.NoError(t, run.err)
 		assert.Equal([]string{"GET /api/ping", "POST /api/shutdown"}, recA.businessPaths())
 		assert.Empty(recA.telemetryPosts())
+		// Activity reporting crosses the test-server socket.
+		require.Eventually(t, func() bool { return len(recB.telemetryPosts()) == 1 }, 5*time.Second, 10*time.Millisecond)
 		assert.Len(recB.telemetryPosts(), 1)
 	})
 }
@@ -715,6 +740,8 @@ func TestCLIUseReportsAgentActivityForSkillMarkedCommands(t *testing.T) {
 			rec.reset()
 			marked := runCLIFresh(t, true, append(tc.marked, "--server", md.Server.URL)...)
 			markedBusiness := rec.businessPaths()
+			// Activity reporting crosses the test-server socket.
+			require.Eventually(t, func() bool { return len(rec.telemetryPosts()) == 1 }, 5*time.Second, 10*time.Millisecond)
 			require.Len(t, rec.telemetryPosts(), 1)
 			assert.Contains(rec.allPaths(), "POST "+daemon.TelemetryAgentCallPath)
 			assert.Empty(rec.telemetryPosts()[0].body)
@@ -723,6 +750,8 @@ func TestCLIUseReportsAgentActivityForSkillMarkedCommands(t *testing.T) {
 			plain := runCLIFresh(t, true, append(tc.plain, "--server", md.Server.URL)...)
 			require.NoError(t, marked.err)
 			require.NoError(t, plain.err)
+			// Activity reporting crosses the test-server socket.
+			require.Eventually(t, func() bool { return len(rec.telemetryPosts()) == 1 }, 5*time.Second, 10*time.Millisecond)
 			assert.Len(rec.telemetryPosts(), 1)
 			assert.Equal(plain.stdout, marked.stdout)
 			assert.Equal(plain.stderr, marked.stderr)
@@ -837,6 +866,7 @@ func TestCoreActionDefaultOutputStreams(t *testing.T) {
 			assert.Empty(t, stdout)
 			assert.Contains(t, stderr, "Consolidated findings")
 			if stdoutTerminal {
+				drainCLIReports(t)
 				assert.Empty(t, rec.telemetryPosts())
 			} else {
 				// Telemetry crosses a test-server socket and can outlive the exit wait.
@@ -941,6 +971,7 @@ func TestCoreActionCompactWait(t *testing.T) {
 				require.Eventually(t, func() bool { return len(rec.telemetryPosts()) == 1 }, 5*time.Second, 10*time.Millisecond)
 				assert.JSONEq(t, `{"event":"review_viewed","properties":{"surface":"cli"}}`, rec.telemetryPosts()[0].body)
 			} else {
+				drainCLIReports(t)
 				assert.Empty(t, rec.telemetryPosts())
 			}
 		})
