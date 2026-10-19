@@ -213,8 +213,8 @@ func TestSyncFailureOutages(t *testing.T) {
 	worker.observeSync(remote) // No successful full pass yet.
 	assert.Empty(t, reasons)
 	worker.observeSync(nil)
-	worker.observeSync(&syncSourceError{&pgconn.PgError{Code: "22001"}})
-	worker.observeSync(&syncSourceError{&pgconn.PgError{Code: "23505"}})
+	worker.observeSync(fmt.Errorf("push experiment definition example: %w", &syncSourceError{&pgconn.PgError{Code: "22001"}}))
+	worker.observeSync(fmt.Errorf("push experiment assignment job/example: %w", &syncSourceError{&pgconn.PgError{Code: "23505"}}))
 	assert.Empty(t, reasons)
 	worker.observeSync(errors.New("local SQLite failure"))
 	worker.observeSync(remote)

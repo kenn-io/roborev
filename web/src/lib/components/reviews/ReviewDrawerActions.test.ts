@@ -111,7 +111,6 @@ it("reports rendered review content after Retry and ignores job-list refreshes",
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Could not load the review renderer.",
   );
-  expect(events).toEqual([]);
   vi.doMock("@kenn-io/roborev-ui/review-content", (importOriginal) =>
     importOriginal(),
   );
@@ -121,6 +120,10 @@ it("reports rendered review content after Retry and ignores job-list refreshes",
   ).toBeVisible();
   await vi.waitFor(() =>
     expect(events).toEqual([
+      {
+        event: "error_shown",
+        properties: { kind: "review_viewed", surface: "web" },
+      },
       { event: "review_viewed", properties: { surface: "web" } },
     ]),
   );
@@ -129,5 +132,5 @@ it("reports rendered review content after Retry and ignores job-list refreshes",
     await load(stores.roborevJobs.loadJobsEffect());
     await tick();
   }
-  expect(events).toHaveLength(1);
+  expect(events).toHaveLength(2);
 });
