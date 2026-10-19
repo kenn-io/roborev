@@ -83,11 +83,11 @@ type Server struct {
 	telemetry               telemetry.Client
 	telemetryOnce           sync.Once
 	telemetryStop           chan struct{}
-	setupFinishedGate       chan struct{}
+	setupFinishedWake       chan struct{}
 	setupFinishedClaimed    atomic.Bool
-	setupRetryMu            sync.Mutex
-	setupRetryCancel        context.CancelFunc
-	setupRetryDone          chan struct{}
+	setupWorkerMu           sync.Mutex
+	setupWorkerCancel       context.CancelFunc
+	setupWorkerDone         chan struct{}
 	appOpened               telemetry.AppOpenedLimiter // daily product-event limits; outlives each capture handler
 	agentActivityGate       chan struct{}
 	agentActivityNow        func() time.Time
@@ -217,7 +217,7 @@ func newServerWithLogs(
 		releaseNotesNow:    time.Now,
 		searchNow:          time.Now,
 		telemetryStop:      make(chan struct{}),
-		setupFinishedGate:  make(chan struct{}, 1),
+		setupFinishedWake:  make(chan struct{}, 1),
 		agentActivityGate:  make(chan struct{}, 1),
 		startTime:          time.Now(),
 		shutdownCh:         make(chan struct{}),
@@ -704,14 +704,14 @@ func (s *Server) stopOnce0() error {
 	}
 	// Stop telemetry loop
 	close(s.telemetryStop)
-	s.setupRetryMu.Lock()
-	if s.setupRetryCancel != nil {
-		s.setupRetryCancel()
+	s.setupWorkerMu.Lock()
+	if s.setupWorkerCancel != nil {
+		s.setupWorkerCancel()
 	}
-	retryDone := s.setupRetryDone
-	s.setupRetryMu.Unlock()
-	if retryDone != nil {
-		<-retryDone
+	setupDone := s.setupWorkerDone
+	s.setupWorkerMu.Unlock()
+	if setupDone != nil {
+		<-setupDone
 	}
 
 	// Stop config watcher
@@ -891,89 +891,61 @@ func (s *Server) captureDaemonStartedTelemetry(cfg *config.Config) {
 }
 
 func (s *Server) captureSetupFinishedTelemetry() {
-	if err := s.tryCaptureSetupFinishedTelemetry(context.Background()); err != nil {
-		log.Printf("Warning: claim setup finished telemetry: %v", err)
-		if setupClaimContended(err) {
-			s.retrySetupFinishedTelemetry()
-		}
-	}
-}
-
-func setupClaimContended(err error) bool {
-	return storage.IsSQLiteBusy(err) || errors.Is(err, context.DeadlineExceeded)
-}
-
-func (s *Server) retrySetupFinishedTelemetry() {
-	s.setupRetryMu.Lock()
-	defer s.setupRetryMu.Unlock()
-	select {
-	case <-s.telemetryStop:
-		return
-	default:
-	}
-	if s.setupRetryDone != nil {
-		return
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	s.setupRetryCancel, s.setupRetryDone = cancel, done
-	go func() {
-		defer func() {
-			cancel()
-			s.setupRetryMu.Lock()
-			s.setupRetryCancel, s.setupRetryDone = nil, nil
-			close(done)
-			s.setupRetryMu.Unlock()
-		}()
-		_, _ = backoff.Retry(ctx, func() (struct{}, error) {
-			err := s.tryCaptureSetupFinishedTelemetry(ctx)
-			if err != nil && !setupClaimContended(err) {
-				return struct{}{}, backoff.Permanent(err)
-			}
-			return struct{}{}, err
-		}, backoff.WithMaxElapsedTime(0))
-	}()
-}
-
-func (s *Server) tryCaptureSetupFinishedTelemetry(parent context.Context) error {
 	if s.telemetry == nil || !s.telemetry.Enabled() || s.setupFinishedClaimed.Load() {
-		return nil
+		return
 	}
+	s.setupWorkerMu.Lock()
+	defer s.setupWorkerMu.Unlock()
 	select {
 	case <-s.telemetryStop:
-		return nil
+		return
 	default:
 	}
-	ctx, cancel := context.WithTimeout(parent, 50*time.Millisecond)
-	defer cancel()
+	if s.setupWorkerDone == nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		s.setupWorkerCancel = cancel
+		s.setupWorkerDone = make(chan struct{})
+		go s.runSetupFinishedTelemetry(ctx)
+	}
 	select {
-	case s.setupFinishedGate <- struct{}{}:
-	case <-ctx.Done():
-		return ctx.Err()
+	case s.setupFinishedWake <- struct{}{}:
+	default:
 	}
-	if s.setupFinishedClaimed.Load() {
-		<-s.setupFinishedGate
-		return nil
-	}
-	claim, err := s.db.ClaimSetupFinished(ctx)
-	if err == nil && claim != storage.SetupFinishedIneligible {
-		s.setupFinishedClaimed.Store(true)
-		s.setupRetryMu.Lock()
-		if s.setupRetryCancel != nil {
-			s.setupRetryCancel()
+}
+
+func (s *Server) runSetupFinishedTelemetry(ctx context.Context) {
+	defer close(s.setupWorkerDone)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.setupFinishedWake:
 		}
-		s.setupRetryMu.Unlock()
-	}
-	<-s.setupFinishedGate
-	if err != nil {
-		return err
-	}
-	if claim == storage.SetupFinishedNewClaim {
-		if err := s.telemetry.Capture(telemetry.EventSetupFinished, nil); err != nil {
-			log.Printf("Warning: capture setup finished telemetry: %v", err)
+		_, err := backoff.Retry(ctx, func() (struct{}, error) {
+			if s.setupFinishedClaimed.Load() {
+				return struct{}{}, nil
+			}
+			claim, err := s.db.ClaimSetupFinished(ctx)
+			if err != nil {
+				if !storage.IsSQLiteBusy(err) && !errors.Is(err, context.DeadlineExceeded) {
+					return struct{}{}, backoff.Permanent(err)
+				}
+				return struct{}{}, err
+			}
+			if claim != storage.SetupFinishedIneligible {
+				s.setupFinishedClaimed.Store(true)
+			}
+			if claim == storage.SetupFinishedNewClaim {
+				if err := s.telemetry.Capture(telemetry.EventSetupFinished, nil); err != nil {
+					log.Printf("Warning: capture setup finished telemetry: %v", err)
+				}
+			}
+			return struct{}{}, nil
+		}, backoff.WithMaxElapsedTime(0))
+		if err != nil && ctx.Err() == nil {
+			log.Printf("Warning: claim setup finished telemetry: %v", err)
 		}
 	}
-	return nil
 }
 
 func (s *Server) startDailyTelemetryLoop(ctx context.Context, cfg *config.Config) {

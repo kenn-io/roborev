@@ -71,18 +71,13 @@ const (
 )
 
 // ClaimSetupFinished claims the install's first readable review before
-// best-effort telemetry delivery, within the caller's deadline.
+// best-effort telemetry delivery. Eligibility reads honor caller cancellation.
 func (db *DB) ClaimSetupFinished(ctx context.Context) (SetupFinishedClaim, error) {
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		return SetupFinishedIneligible, err
 	}
 	defer func() { _ = conn.Close() }()
-	restore, err := limitSQLiteBusyTimeout(ctx, conn)
-	if err != nil {
-		return SetupFinishedIneligible, err
-	}
-	defer restore()
 	marker, err := getSyncState(ctx, conn, SyncStateSetupFinished)
 	if err != nil {
 		return SetupFinishedIneligible, err
@@ -90,25 +85,35 @@ func (db *DB) ClaimSetupFinished(ctx context.Context) (SetupFinishedClaim, error
 	if marker != "" {
 		return SetupFinishedExisting, nil
 	}
-	// Refresh the busy limit after the marker read, then let SQLite report
-	// the autocommit result without a cancellation racing SQLITE_DONE.
-	restoreWrite, err := limitSQLiteBusyTimeout(ctx, conn)
-	if err != nil {
-		return SetupFinishedIneligible, err
-	}
-	defer restoreWrite()
-	if err := ctx.Err(); err != nil {
-		return SetupFinishedIneligible, err
-	}
-	result, err := conn.ExecContext(context.WithoutCancel(ctx), `
-		INSERT INTO sync_state (key, value)
-		SELECT ?, '1'
-		WHERE EXISTS (
+	var eligible bool
+	if err := conn.QueryRowContext(ctx, `
+		SELECT EXISTS (
 			SELECT 1 FROM reviews rv JOIN review_jobs j ON j.id = rv.job_id
 			LEFT JOIN job_content jc ON jc.job_id = j.id
 			WHERE 1 = 1
 			`+searchFeedEligibility+`
 		)
+	`).Scan(&eligible); err != nil {
+		return SetupFinishedIneligible, fmt.Errorf("check setup eligibility: %w", err)
+	}
+	if !eligible {
+		return SetupFinishedIneligible, nil
+	}
+	// Only the marker write ignores cancellation, so a committed claim always
+	// reaches its caller. Bound its SQLite writer wait independently of scans.
+	writeCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	restore, err := limitSQLiteBusyTimeout(writeCtx, conn)
+	if err != nil {
+		return SetupFinishedIneligible, err
+	}
+	defer restore()
+	if err := ctx.Err(); err != nil {
+		return SetupFinishedIneligible, err
+	}
+	result, err := conn.ExecContext(context.WithoutCancel(ctx), `
+		INSERT INTO sync_state (key, value)
+		VALUES (?, '1')
 		ON CONFLICT(key) DO NOTHING
 	`, SyncStateSetupFinished)
 	if err != nil {
