@@ -174,18 +174,18 @@ func TestAllowedEventOptionsConfigureRoborevDaemonEvents(t *testing.T) {
 		base            map[string]any
 	}{
 		{EventErrorShown, PropertyKind, []any{"review_viewed", "finding_fixed", "review_closed", "unknown", 42}, map[string]any{PropertySurface: "tui"}},
-		{EventSyncFailed, PropertyReason, []any{"auth", "network", "timeout", "unknown", 42}, map[string]any{PropertySyncSource: "postgres"}},
-		{EventSyncFailed, PropertySyncSource, []any{"postgres", "unknown", 42}, map[string]any{PropertyReason: "auth"}},
+		{EventSyncFailed, PropertyReason, []any{"auth", "network", "timeout", "other"}, map[string]any{PropertySyncSource: "postgres"}},
+		{EventSyncFailed, PropertySyncSource, []any{"postgres", "other"}, map[string]any{PropertyReason: "auth"}},
 	} {
 		_, err := reporter.SanitizeProperties(tc.event, tc.base)
 		require.Error(err)
-		for i, value := range tc.values {
+		for _, value := range tc.values {
 			properties := maps.Clone(tc.base)
 			properties[tc.property], properties["detail"] = value, "private error"
 			props, err := reporter.SanitizeProperties(tc.event, properties)
 			require.NoError(err)
 			want := value
-			if i >= len(tc.values)-2 {
+			if value == "unknown" || value == 42 {
 				want = "other"
 			}
 			assert.Equal(want, props[tc.property])

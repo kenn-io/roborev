@@ -65,7 +65,7 @@ describe("ReviewContent", () => {
     expect(errorReports).not.toHaveBeenCalled();
   });
 
-  it("reports the failed review alert once even if the renderer fails", async () => {
+  it("shows why a failed review produced no output and reports the alert once", async () => {
     vi.useFakeTimers();
     state.output = "";
     state.notFound = true;

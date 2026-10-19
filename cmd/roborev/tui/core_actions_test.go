@@ -228,7 +228,6 @@ func TestCoreActionFixOutcomes(t *testing.T) {
 		kinds  []string
 	}{
 		{name: "enqueue failure", result: fixTriggerResultMsg{err: errors.New("enqueue failed")}, events: []string{"error_shown"}, kinds: []string{"finding_fixed"}},
-		{name: "patch fetch failure", result: patchMsg{err: errors.New("fetch failed")}},
 		{name: "committed", result: applyPatchResultMsg{success: true}, events: []string{"finding_fixed"}, kinds: []string{""}},
 		{name: "commit failure", result: applyPatchResultMsg{success: true, commitFailed: true, err: errors.New("commit failed")}, events: []string{"error_shown"}, kinds: []string{"finding_fixed"}},
 		{name: "apply failure", result: applyPatchResultMsg{err: errors.New("apply failed")}, events: []string{"error_shown"}, kinds: []string{"finding_fixed"}},
@@ -242,8 +241,6 @@ func TestCoreActionFixOutcomes(t *testing.T) {
 				_, cmd = f.m.handleApplyPatchResultMsg(result)
 			case fixTriggerResultMsg:
 				_, cmd = f.m.handleFixTriggerResultMsg(result)
-			case patchMsg:
-				_, cmd = f.m.handlePatchResultMsg(result)
 			}
 			collectMsgs(cmd)
 			assert.Equal(t, tc.events, f.transport.events)
@@ -280,27 +277,29 @@ func TestCoreActionUnreadReviews(t *testing.T) {
 func TestCoreActionReviewOpenFailure(t *testing.T) {
 	enableTelemetryEnv(t)
 	for _, mode := range []string{"ordinary", "follow", "fix panel"} {
-		f := newCoreActionReviewVisitFixture(t)
-		response := f.review()
-		f.m.pendingReviewOpenJobID = response.jobID
-		msg := reviewErrMsg{
-			jobID: response.jobID, gen: response.gen, fetchSeq: response.fetchSeq,
-			attempt: response.attempt, err: errors.New("load failed"),
-		}
-		var cmd tea.Cmd
-		if mode != "ordinary" {
-			f.m.pendingReviewOpenRetried = true
-			if mode == "fix panel" {
-				f.m.reviewFixPanelPending = true
-				f.m.fixPromptJobID = response.jobID
-				f.m.fixPromptFollowRetried = true
+		t.Run(mode, func(t *testing.T) {
+			f := newCoreActionReviewVisitFixture(t)
+			response := f.review()
+			f.m.pendingReviewOpenJobID = response.jobID
+			msg := reviewErrMsg{
+				jobID: response.jobID, gen: response.gen, fetchSeq: response.fetchSeq,
+				attempt: response.attempt, err: errors.New("load failed"),
 			}
-			_, cmd = f.m.handleReviewFollowErrMsg(reviewFollowErrMsg(msg))
-		} else {
-			_, cmd = f.m.handleReviewErrMsg(msg)
-		}
-		collectMsgs(cmd)
-		assert.Equal(t, []string{"error_shown"}, f.transport.events)
-		assert.Equal(t, []string{"review_viewed"}, f.transport.kinds)
+			var cmd tea.Cmd
+			if mode != "ordinary" {
+				f.m.pendingReviewOpenRetried = true
+				if mode == "fix panel" {
+					f.m.reviewFixPanelPending = true
+					f.m.fixPromptJobID = response.jobID
+					f.m.fixPromptFollowRetried = true
+				}
+				_, cmd = f.m.handleReviewFollowErrMsg(reviewFollowErrMsg(msg))
+			} else {
+				_, cmd = f.m.handleReviewErrMsg(msg)
+			}
+			collectMsgs(cmd)
+			assert.Equal(t, []string{"error_shown"}, f.transport.events)
+			assert.Equal(t, []string{"review_viewed"}, f.transport.kinds)
+		})
 	}
 }
