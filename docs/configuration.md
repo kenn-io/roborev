@@ -1791,10 +1791,11 @@ non-transient user service with `Type=simple`, `Type=exec`, or `Type=notify`,
 and its configured `ExecStart` path points to the CLI's executable file or has
 the same path. A stable symlink still identifies the installation after an
 upgrade retargets it and removes the old binary; atomic package replacements
-also retain their identity. Recovery refuses `RemainAfterExit=yes`, transient
-units, and other service types before shutdown. Commands that need the daemon
-return the service error until you restart the unit through systemd; `status`
-reports unavailable.
+also retain their identity. For `RemainAfterExit=yes`, transient units, and
+other unsupported service types, a responsive daemon stays usable and the
+command prints a manual restart command. If that daemon stops responding,
+commands report the service failure and restart guidance; `status` reports its
+current liveness and the failure.
 
 These daemons stay in use while they respond and report an error otherwise:
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -56,6 +57,22 @@ func (s *daemonService) supported() error {
 	return nil
 }
 
+func unsupportedServiceRecovery(err error, responsive bool) error {
+	if responsive {
+		fmt.Fprintf(lifecycleOut, "Daemon recovery skipped; %v\n", err)
+		return nil
+	}
+	return err
+}
+
+func pauseServiceBeforeRecovery(ctx context.Context, info *daemon.RuntimeInfo, unit string) error {
+	resp, err := info.Endpoint().APIClient(0).PauseQueueWithResponse(ctx)
+	if resp != nil && resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("daemon lacks queue-pause support; recovery stopped before shutdown; wait for active reviews to finish, then run systemctl --user restart %s and retry roborev pause", unit)
+	}
+	return err
+}
+
 // sameInstallation follows the configured ExecStart path to the installed binary.
 func (s *daemonService) sameInstallation() (bool, error) {
 	selected, err := os.Stat(s.executable)
@@ -104,7 +121,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 	cancel()
 	release, err := acquireRecoveryLock()
 	if err != nil {
-		return fmt.Errorf("%w: %w", errRecoveryLock, err)
+		return fmt.Errorf("%w: %w; retry this command after running reviews finish", errRecoveryLock, err)
 	}
 	defer func() {
 		if release != nil {
@@ -203,7 +220,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 		return nil
 	}
 	if err := owner.supported(); err != nil {
-		return fail(err)
+		return unsupportedServiceRecovery(fail(err), responsive)
 	}
 	// Discovery can miss a daemon that later answers shutdown retries.
 	// Persist pause before any drain or service start, or leave it alone.
@@ -211,7 +228,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 		if vanished {
 			return fail(fmt.Errorf("pause queue before shutdown: daemon PID %d has exited; run systemctl --user start %s, then retry roborev pause", current.PID, owner.unit))
 		}
-		if _, err := current.Endpoint().APIClient(0).PauseQueue(ctx); err != nil {
+		if err := pauseServiceBeforeRecovery(ctx, current, owner.unit); err != nil {
 			return fail(fmt.Errorf("pause queue before shutdown: %w", err))
 		}
 	}

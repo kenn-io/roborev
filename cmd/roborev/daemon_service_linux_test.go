@@ -33,12 +33,14 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 		queueCommand   bool
 		paused         bool
 		failPause      bool
+		pauseNotFound  bool
 		failDiscovery  bool
 		recheckCurrent bool
 	}{
 		{outcome: "replacement current"},
 		{outcome: "live current after probe failure", probeErr: probeErr, recheckCurrent: true},
 		{outcome: "pause write failure", queueCommand: true, paused: true, failPause: true, wantError: "pause queue before shutdown"},
+		{outcome: "pause unsupported by old daemon", queueCommand: true, paused: true, pauseNotFound: true, wantError: "daemon lacks queue-pause support; recovery stopped before shutdown; wait for active reviews to finish, then run systemctl --user restart fixture.service and retry roborev pause"},
 		{outcome: "failed version probe", queueCommand: true, paused: true, probeErr: probeErr, stops: 1, starts: 1},
 		{outcome: "failed rediscovery", queueCommand: true, paused: true, failDiscovery: true, stops: 1, starts: 1},
 		{outcome: "unpause", queueCommand: true, stops: 1, starts: 1},
@@ -49,9 +51,10 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 		{outcome: "failed", probeErr: probeErr, stops: 1, starts: 1},
 		{outcome: "foreign responsive"},
 		{outcome: "foreign failed", probeErr: probeErr, wantError: "probe failed; run systemctl --user restart fixture.service"},
-		{outcome: "remain after exit", wantError: "RemainAfterExit=yes requires manual restart; run systemctl --user restart fixture.service"},
-		{outcome: "transient", wantError: "transient units require manual restart; run systemctl --user restart fixture.service"},
-		{outcome: "forking", wantError: "unsupported service Type=forking; run systemctl --user restart fixture.service"},
+		{outcome: "remain after exit"},
+		{outcome: "transient"},
+		{outcome: "forking"},
+		{outcome: "forking failed", probeErr: probeErr, wantError: "unsupported service Type=forking; run systemctl --user restart fixture.service"},
 		{outcome: "uncertain"},
 		{outcome: "unreadable"},
 		{outcome: "uncertain failed", probeErr: probeErr, wantError: "properties unavailable"},
@@ -69,6 +72,10 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 			if tc.queueCommand {
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					events = append(events, r.URL.Path)
+					if tc.pauseNotFound {
+						http.NotFound(w, r)
+						return
+					}
 					if tc.failPause {
 						http.Error(w, "queue unavailable", http.StatusInternalServerError)
 						return
@@ -112,7 +119,7 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 					service.remainAfterExit = true
 				case "transient":
 					service.transient = true
-				case "forking":
+				case "forking", "forking failed":
 					service.serviceType = "forking"
 				}
 				if strings.HasPrefix(tc.outcome, "child") {
@@ -204,9 +211,15 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 				"unreadable":         "cannot confirm executable",
 				"foreign responsive": "uses another installation",
 				"child responsive":   "runs the daemon as a child process",
+				"remain after exit":  "RemainAfterExit=yes",
+				"transient":          "transient units",
+				"forking":            "unsupported service Type=forking",
 			}[tc.outcome]; reason != "" {
 				assert.Contains(t, progress.String(), "Daemon recovery skipped;")
 				assert.Contains(t, progress.String(), reason)
+			}
+			if tc.outcome == "remain after exit" || tc.outcome == "transient" || tc.outcome == "forking" {
+				assert.Contains(t, progress.String(), "systemctl --user restart fixture.service")
 			}
 			assert.Zero(t, detached)
 			release, acquired, err := daemon.RuntimeStore().TryAcquireStartLock(t.Context())
@@ -338,6 +351,7 @@ func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 		close(resume)
 		require.NoError(t, <-recovery)
 		require.ErrorIs(t, competingErr, errRecoveryLock, "status must distinguish recovery still in progress from a missing daemon")
+		require.ErrorContains(t, competingErr, "retry this command after running reviews finish")
 		assert.Zero(t, detached)
 	})
 }

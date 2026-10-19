@@ -583,6 +583,19 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 			}
 			assert.Nil(t, result.Daemon)
 			assert.Empty(t, stderr.String())
+			if tc.lockTimeout {
+				textCmd := statusCmd()
+				var textErr error
+				output := captureStdout(t, func() { textErr = textCmd.Execute() })
+				require.NoError(t, textErr)
+				state := "not running"
+				if tc.responsive {
+					state = "running"
+				}
+				assert.Contains(t, output, "Daemon: "+state+"\n")
+				assert.Contains(t, output, "Status: unavailable: ")
+				assert.Contains(t, output, context.DeadlineExceeded.Error())
+			}
 		})
 	}
 }

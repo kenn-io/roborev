@@ -46,6 +46,18 @@ func managedRecoveryStatus(err error, web webUIStatus) statusJSONResult {
 	}
 }
 
+func printRecoveryStatus(err error, web webUIStatus) error {
+	result := managedRecoveryStatus(err, web)
+	state := "not running"
+	if result.Running {
+		state = "running"
+	}
+	fmt.Printf("Daemon: %s\n", state)
+	fmt.Printf("Web UI: %s\n", displayWebUI(web))
+	fmt.Printf("Status: unavailable: %v\n", err)
+	return nil
+}
+
 func statusCmd() *cobra.Command {
 	var jsonOutput bool
 
@@ -79,7 +91,7 @@ func statusCmd() *cobra.Command {
 					if jsonOutput {
 						return writeJSONResult(managedRecoveryStatus(err, webStatus))
 					}
-					return fmt.Errorf("daemon status unavailable: %w", err)
+					return printRecoveryStatus(err, webStatus)
 				}
 				if errors.Is(err, daemon.ErrClientConfig) {
 					return err

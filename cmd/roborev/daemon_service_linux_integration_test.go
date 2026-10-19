@@ -219,13 +219,19 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				require.NoError(t, cli.Run())
 				var result statusJSONResult
 				require.NoError(t, json.Unmarshal(stdout.Bytes(), &result))
-				assert.Contains(t, result.Error, "unsupported service Type=forking")
+				assert.True(t, result.Running)
+				assert.Empty(t, result.Error)
+				assert.Contains(t, stderr.String(), "unsupported service Type=forking")
+				assert.Contains(t, stderr.String(), "systemctl --user restart "+unit)
 				pauseOutput, pauseErr := exec.Command(cliBinary, "pause").CombinedOutput()
-				require.Error(t, pauseErr)
-				assert.Contains(t, string(pauseOutput), "systemctl --user restart "+unit, "daemon-dependent command must explain how to recover an unsupported unit")
+				require.NoError(t, pauseErr, "%s", pauseOutput)
+				assert.Contains(t, string(pauseOutput), "systemctl --user restart "+unit)
 				current, err := daemon.GetAnyRunningDaemon()
 				require.NoError(t, err)
-				assert.Equal(t, original.PID, current.PID, "refused units keep their daemon")
+				assert.Equal(t, original.PID, current.PID, "unsupported responsive units keep their daemon")
+				status, err := current.Endpoint().APIClient(time.Second).GetStatus(t.Context())
+				require.NoError(t, err)
+				assert.True(t, status.QueuePaused)
 				return
 			}
 			if pausing {
