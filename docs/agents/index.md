@@ -23,6 +23,11 @@ installed.
 | Grok Build | `grok` | `curl -fsSL https://x.ai/cli/install.sh \| bash` ([x.ai/cli](https://x.ai/cli)) |
 | Muse Code | `muse` | `curl -fsSL https://dev.meta.ai/install.sh \| sh` ([Meta installation guide](https://dev.meta.ai/docs/overview)) |
 
+For Claude Code, Codex, and Copilot, roborev checks the resolved executable's
+path, size, and modification time before reusing cached CLI capabilities. When
+an upgrade changes any of these, the next capability check refreshes the
+supported flags without a daemon restart.
+
 ## Auto-Detection
 
 roborev auto-detects installed agents and falls back in this order:
