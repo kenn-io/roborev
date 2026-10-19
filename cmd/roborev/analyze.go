@@ -894,6 +894,9 @@ func runFixAgent(cmd *cobra.Command, repoPath, agentName, model, reasoning, prom
 		fmtr.Flush()
 	}
 	if err != nil {
+		if !quiet {
+			reportCLIError(cmd.OutOrStderr(), telemetry.EventFindingFixed)
+		}
 		return err
 	}
 

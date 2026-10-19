@@ -382,6 +382,13 @@ describe("Roborev request cancellation", () => {
 });
 
 describe("review close reporting", () => {
+  it("reports a close that cannot find the selected review", () => {
+    const store = reviewStore({} as never);
+    store.closeReview(42);
+    expect(errorReports).toHaveBeenCalledExactlyOnceWith("review_closed");
+    expect(actionReports).not.toHaveBeenCalled();
+  });
+
   it.each(["close", "reopen", "failure", "reopen failure"])(
     "reports explicit close outcomes: %s",
     async (action) => {

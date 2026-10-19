@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,8 +24,6 @@ import (
 	roborevclient "go.kenn.io/roborev/pkg/client"
 	"go.kenn.io/roborev/pkg/client/generated"
 )
-
-var errNoReviewFound = errors.New("no review found")
 
 // showPanelMember is one reviewer in the additive show --json panel block.
 type showPanelMember struct {
@@ -196,6 +193,9 @@ Examples:
 
 			resp, err := newDaemonAPI(addr, client).GetReviewRaw(ctx, nil, roborevclient.WithQuery(query))
 			if err != nil {
+				if !showPrompt {
+					reportCLIError(cmd.OutOrStdout(), telemetry.EventReviewViewed)
+				}
 				return fmt.Errorf("failed to connect to daemon (is it running?)")
 			}
 			defer resp.Body.Close()
@@ -209,12 +209,18 @@ Examples:
 				fallback := showPrompt && jobIDForPromptFallback >= 0 &&
 					fetchQueuedJobPromptReview(client, addr, jobIDForPromptFallback, &review)
 				if !fallback {
-					return fmt.Errorf("%w for %s", errNoReviewFound, displayRef)
+					return fmt.Errorf("no review found for %s", displayRef)
 				}
 			} else if resp.StatusCode != http.StatusOK {
 				body, _ := io.ReadAll(resp.Body)
+				if !showPrompt {
+					reportCLIError(cmd.OutOrStdout(), telemetry.EventReviewViewed)
+				}
 				return fmt.Errorf("daemon returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
 			} else if err := json.UnmarshalRead(resp.Body, &review); err != nil {
+				if !showPrompt {
+					reportCLIError(cmd.OutOrStdout(), telemetry.EventReviewViewed)
+				}
 				return fmt.Errorf("failed to parse response: %w", err)
 			}
 

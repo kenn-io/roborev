@@ -1527,6 +1527,14 @@ func (m *model) requestFetchFixJobs() tea.Cmd {
 }
 
 func (m model) reportAction(event string) tea.Cmd {
+	return m.reportOutcome(event, "")
+}
+
+func (m model) reportError(kind string) tea.Cmd {
+	return m.reportOutcome(telemetry.EventErrorShown, kind)
+}
+
+func (m model) reportOutcome(event, kind string) tea.Cmd {
 	if !telemetry.EnabledFromEnv() {
 		return nil
 	}
@@ -1534,22 +1542,15 @@ func (m model) reportAction(event string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(m.apiContext(), telemetry.NotificationTimeout)
 		defer cancel()
-		_, err := telemetry.PostReviewEvent(ctx, m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceTUI)
+		var err error
+		if kind != "" {
+			_, err = telemetry.PostErrorShown(ctx, m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath, telemetry.SurfaceTUI, kind)
+		} else {
+			_, err = telemetry.PostReviewEvent(ctx, m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceTUI)
+		}
 		if event == telemetry.EventReviewViewed {
 			return screenDeliveryMsg{day: day, err: err}
 		}
-		return nil
-	}
-}
-
-func (m model) reportError(kind string) tea.Cmd {
-	if !telemetry.EnabledFromEnv() {
-		return nil
-	}
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(m.apiContext(), telemetry.NotificationTimeout)
-		defer cancel()
-		_, _ = telemetry.PostErrorShown(ctx, m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath, telemetry.SurfaceTUI, kind)
 		return nil
 	}
 }

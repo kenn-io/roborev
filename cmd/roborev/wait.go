@@ -9,6 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 	gitrepo "go.kenn.io/kit/git/repo"
+
+	"go.kenn.io/roborev/internal/telemetry"
 )
 
 func waitCmd() *cobra.Command {
@@ -290,6 +292,7 @@ func waitMultiple(
 				cmd.Printf("Job %d: review has issues\n", r.jobID)
 			default:
 				cmd.Printf("Job %d: %v\n", r.jobID, r.err)
+				reportCLIError(cmd.OutOrStderr(), telemetry.EventReviewViewed)
 			}
 		}
 	}

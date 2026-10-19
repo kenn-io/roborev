@@ -518,16 +518,20 @@ and `--from-skill`. Reopens and automatic closes stay silent.
 
 Each shown core action failure sends `error_shown` with `surface=web|tui|cli`
 and `kind=review_viewed|finding_fixed|review_closed`, without a daily limit.
-CLI failures count for `show`, `wait`, `compact`, `fix`, `refine`, `analyze`,
-`close`, and rebuttal closes. Usage errors, reopens, and missing reviews in
-`show` stay silent. CLI reporting requires a terminal and excludes agents and
+Failures use the same action and output gates as successful reports, including
+errors shown inside continuing fix and refine loops. Prompt reads, analysis
+without fixing, validation errors, reopens, and missing reviews in `show` stay
+silent. CLI reporting requires a terminal and excludes agents and
 `--from-skill`.
 
-The daemon sends `sync_failed` once per PostgreSQL outage, with
+The daemon sends `sync_failed` when a full sync pass fails after a successful
+pass in the same process, once per PostgreSQL outage, with
 `sync_source=postgres` and `reason=auth|network|timeout|other`. A successful full
-sync pass allows the next outage to report. Outage state resets when the daemon
-restarts, so a continuing outage can count again. Unlisted `kind`, `reason`,
-and `sync_source` values become `other`. Neither event contains error text.
+push and pull allows the next outage to report. Local SQLite and configuration
+errors stay silent and leave the source's state unchanged. Outage state resets
+when the daemon restarts; reporting resumes after a full pass succeeds.
+Unlisted `kind`, `reason`, and `sync_source` values become `other`. Neither
+event contains error text.
 
 Daily screen and `review_viewed` claims share `telemetry-daily.json` beside the
 daemon database, wherever `--db` points, with a `telemetry-daily.json.lock`

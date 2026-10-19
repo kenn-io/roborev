@@ -286,3 +286,41 @@ func TestCoreActionReviewOpenFailure(t *testing.T) {
 	assert.Equal(t, []string{"error_shown"}, f.transport.events)
 	assert.Equal(t, []string{"review_viewed"}, f.transport.kinds)
 }
+
+//nolint:paralleltest // telemetry environment variables
+func TestCoreActionSelectedSplitLoadFailure(t *testing.T) {
+	enableTelemetryEnv(t)
+	for _, mode := range []string{"selected", "refresh", "fix output", "stale", "hidden"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newCoreActionReviewVisitFixture(t)
+			job, _ := f.m.selectedJob()
+			require.NotNil(t, job)
+			job.Status, job.JobType = storage.JobStatusDone, storage.JobTypeReview
+			if mode == "fix output" {
+				job.JobType = storage.JobTypeFix
+			}
+			if mode != "refresh" {
+				f.update(tea.KeyPressMsg{Code: '0'})
+			}
+			msg := reviewFollowErrMsg{
+				jobID: f.m.selectedJobID, gen: f.m.detailFollowGen,
+				fetchSeq: f.m.reviewFetchSeq, attempt: f.m.jobAttemptGen[f.m.selectedJobID], err: errors.New("load failed"),
+			}
+			if mode == "stale" {
+				msg.gen++
+			}
+			if mode == "hidden" {
+				f.m.currentView = viewHelp
+			}
+			f.update(msg)
+			if mode == "selected" {
+				assert.Equal(t, []string{"error_shown"}, f.transport.events)
+				f.update(displayTickMsg{})
+				f.update(tea.KeyPressMsg{Code: '0'})
+				assert.Equal(t, []string{"error_shown"}, f.transport.events)
+			} else {
+				assert.Empty(t, f.transport.events)
+			}
+		})
+	}
+}

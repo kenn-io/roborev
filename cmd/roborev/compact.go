@@ -288,6 +288,9 @@ func waitForConsolidation(ctx context.Context, cmd *cobra.Command, jobID int64, 
 
 	review, err := waitForJobCompletion(ctx, getDaemonEndpoint().BaseURL(), jobID, output)
 	if err != nil {
+		if output != nil {
+			reportCLIError(output, telemetry.EventReviewViewed)
+		}
 		return fmt.Errorf("verification failed: %w", err)
 	}
 

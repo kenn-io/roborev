@@ -19,8 +19,7 @@ var (
 )
 
 func main() {
-	cmd, err := newRootCmd().ExecuteC()
-	reportCLICommandError(cmd, err)
+	err := newRootCmd().Execute()
 	waitCLIUse()
 	if err != nil {
 		// exitError carries a specific exit code; the RunE that returned
@@ -34,7 +33,6 @@ func main() {
 }
 
 func newRootCmd() *cobra.Command {
-	cliCommandStarted = false
 	rootCmd := &cobra.Command{
 		Use:   "roborev",
 		Short: "Automatic code review for git commits",
@@ -54,7 +52,6 @@ func newRootCmd() *cobra.Command {
 			// the usage wall.
 			cmd.SilenceUsage = true
 			armCLIUse(cmd)
-			cliCommandStarted = true
 			return nil
 		},
 	}

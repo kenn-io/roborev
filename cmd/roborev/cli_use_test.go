@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -22,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -36,7 +38,6 @@ func clearCLIUseState() {
 	cliUseEndpoint.Store(nil)
 	cliActions = sync.WaitGroup{}
 	cliUseAgent = false
-	cliCommandStarted = false
 }
 
 // resetCLIUse gives a test a fresh CLI telemetry state with telemetry on and restores every seam afterwards.
@@ -202,9 +203,7 @@ func runCLI(t *testing.T, args ...string) cliRun {
 	root.SetArgs(args)
 	var run cliRun
 	stdout, stderr := captureStdoutStderr(t, func() {
-		cmd, err := root.ExecuteC()
-		run.err = err
-		reportCLICommandError(cmd, err)
+		run.err = root.Execute()
 		waitCLIUse()
 	})
 	run.stdout = stdout + outBuf.String()
@@ -960,15 +959,21 @@ func TestCoreActionShownErrors(t *testing.T) {
 		kind string
 	}{
 		{"close", []string{"close", "1"}, "review_closed"},
+		{"outside repo", []string{"show"}, ""},
+		{"invalid ID", []string{"close", "garbage"}, ""},
+		{"prompt", []string{"show", "--job", "1", "--prompt"}, ""},
 		{"reopen", []string{"close", "1", "--reopen"}, ""},
 		{"show", []string{"show", "--job", "1"}, "review_viewed"},
-		{"quiet wait", []string{"wait", "--job", "1", "--quiet"}, "review_viewed"},
+		{"quiet wait", []string{"wait", "--job", "1", "--quiet"}, ""},
 		{"missing review", []string{"show", "--job", "1"}, ""},
 		{"runtime usage", []string{"show", "--job"}, ""},
 		{"usage", []string{"close", "--unknown"}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resetCLIUse(t)
+			if tc.name == "outside repo" {
+				t.Chdir(t.TempDir())
+			}
 			failure := func(w http.ResponseWriter, _ *http.Request, _ *mockRefineState) bool {
 				status := http.StatusInternalServerError
 				if tc.name == "missing review" {
@@ -980,13 +985,16 @@ func TestCoreActionShownErrors(t *testing.T) {
 			md, rec := newCLIUseDaemon(t, MockRefineHooks{OnReview: failure, OnReviewClose: failure, OnGetJobs: failure}, nil)
 			original := getAnyRunningDaemonForStart
 			t.Cleanup(func() { getAnyRunningDaemonForStart = original })
+			var discoveries atomic.Int32
 			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
-				return &daemon.RuntimeInfo{Network: "tcp", Address: strings.TrimPrefix(md.Server.URL, "http://")}, nil
+				discoveries.Add(1)
+				return nil, os.ErrNotExist
 			}
-			cliOutputIsTerminal = func(w io.Writer) bool { return w == os.Stderr }
+			cliOutputIsTerminal = func(io.Writer) bool { return true }
 			args := append([]string{"--server", md.Server.URL}, tc.args...)
 			run := runCLI(t, args...)
 			require.Error(t, run.err)
+			assert.Zero(t, discoveries.Load(), "an explicit local server receives the failure event directly")
 			posts := rec.telemetryPosts()
 			var errors []recordedTelemetry
 			for _, post := range posts {
@@ -1000,6 +1008,73 @@ func TestCoreActionShownErrors(t *testing.T) {
 			}
 			require.Len(t, errors, 1)
 			assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"cli","kind":"`+tc.kind+`"}}`, errors[0].body)
+		})
+	}
+}
+
+func TestCoreActionFailedFixLoops(t *testing.T) {
+	for _, batch := range []bool{false, true} {
+		t.Run(fmt.Sprintf("batch=%t", batch), func(t *testing.T) {
+			resetCLIUse(t)
+			cliOutputIsTerminal = func(io.Writer) bool { return true }
+			repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
+			md, rec := newCLIUseDaemon(t, MockRefineHooks{
+				OnGetJobs: func(w http.ResponseWriter, _ *http.Request, _ *mockRefineState) bool {
+					writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{{ID: 42, Status: storage.JobStatusDone, Agent: "test"}}})
+					return true
+				},
+				OnReview: func(w http.ResponseWriter, _ *http.Request, _ *mockRefineState) bool {
+					writeJSON(w, storage.Review{JobID: 42, Output: "High: fix the failure", VerdictBool: new(0)})
+					return true
+				},
+			}, nil)
+			cliUseEndpoint.Store(new(mustParseEndpoint(t, md.Server.URL)))
+			tester := agent.NewTestAgent()
+			tester.Fail = true
+			tracker := &fixSessionTracker{base: tester, out: io.Discard}
+			out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+				if batch {
+					return processFixBatch(t.Context(), cmd, currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}, []int64{42}, 0, fixOptions{agentName: "test", classify: agent.ClassifyLimit}, tracker)
+				}
+				return runFixWithSeen(cmd, []int64{42}, fixOptions{agentName: "test"}, map[int64]bool{}, tracker)
+			})
+			require.NoError(t, err, out)
+			assert.Contains(t, out, "Warning: error")
+			waitCLIUse()
+			posts := rec.telemetryPosts()
+			require.Len(t, posts, 1)
+			assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"cli","kind":"finding_fixed"}}`, posts[0].body)
+		})
+	}
+}
+
+func TestCoreActionAnalyzeFixErrors(t *testing.T) {
+	for _, mode := range []string{"shown", "quiet", "validation"} {
+		t.Run(mode, func(t *testing.T) {
+			resetCLIUse(t)
+			cliOutputIsTerminal = func(io.Writer) bool { return true }
+			md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
+			cliUseEndpoint.Store(new(mustParseEndpoint(t, md.Server.URL)))
+			repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
+			name := "core-action-analyze-test"
+			agent.RegisterForTest(t, &agent.FakeAgent{NameStr: name, ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+				return "", errors.New("agent failed")
+			}})
+			reasoning := "fast"
+			if mode == "validation" {
+				reasoning = "invalid"
+			}
+			cmd, _ := newTestCmd(t)
+			err := runFixAgent(cmd, repo.Dir, name, "", reasoning, "Fix the finding", mode == "quiet")
+			require.Error(t, err)
+			waitCLIUse()
+			if mode == "shown" {
+				posts := rec.telemetryPosts()
+				require.Len(t, posts, 1)
+				assert.JSONEq(t, `{"event":"error_shown","properties":{"surface":"cli","kind":"finding_fixed"}}`, posts[0].body)
+			} else {
+				assert.Empty(t, rec.telemetryPosts())
+			}
 		})
 	}
 }

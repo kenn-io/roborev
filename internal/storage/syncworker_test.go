@@ -208,11 +208,20 @@ func TestSyncFailureOutages(t *testing.T) {
 	worker := NewSyncWorker(nil, config.SyncConfig{})
 	var reasons []string
 	worker.SetOnSyncFailed(func(reason string) { reasons = append(reasons, reason) })
-	worker.observeSync(errors.New("failed"))
-	worker.observeSync(errors.New("failed again"))
+	remote := &syncSourceError{context.DeadlineExceeded}
+	worker.observeSync(remote) // No successful full pass yet.
+	assert.Empty(t, reasons)
 	worker.observeSync(nil)
-	worker.observeSync(context.DeadlineExceeded)
-	assert.Equal(t, []string{"other", "timeout"}, reasons)
+	worker.observeSync(errors.New("local SQLite failure"))
+	worker.observeSync(remote)
+	worker.observeSync(remote)
+	assert.Equal(t, []string{"timeout"}, reasons)
+	worker.observeSync(errors.New("local SQLite failure"))
+	worker.observeSync(remote)
+	assert.Equal(t, []string{"timeout"}, reasons)
+	worker.observeSync(nil)
+	worker.observeSync(&syncSourceError{&pgconn.PgError{Code: "28P01"}})
+	assert.Equal(t, []string{"timeout", "auth"}, reasons)
 }
 
 func TestSyncFailureReason(t *testing.T) {
@@ -230,32 +239,4 @@ func TestSyncFailureReason(t *testing.T) {
 	} {
 		assert.Equal(t, tc.want, syncFailureReason(fmt.Errorf("sync: %w", tc.err)))
 	}
-}
-
-func TestSyncConnectionFailureReportsOnce(t *testing.T) {
-	t.Parallel()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	address := listener.Addr().String()
-	require.NoError(t, listener.Close())
-	worker := NewSyncWorker(openTestDB(t), config.SyncConfig{
-		Enabled: true, PostgresURL: "postgres://test:test@" + address + "/test?sslmode=disable",
-	})
-	var count atomic.Int64
-	reported := make(chan string, 1)
-	worker.SetOnSyncFailed(func(reason string) {
-		count.Add(1)
-		reported <- reason
-	})
-	require.NoError(t, worker.Start())
-	t.Cleanup(worker.Stop)
-	// The worker's initial dial uses an OS socket outside synctest's virtual clock.
-	require.Eventually(t, func() bool { return count.Load() > 0 }, 5*time.Second, time.Millisecond)
-	assert.Equal(t, "network", <-reported)
-	for range 2 {
-		_, err := worker.SyncNow()
-		require.Error(t, err)
-	}
-	worker.Stop()
-	assert.Equal(t, int64(1), count.Load())
 }

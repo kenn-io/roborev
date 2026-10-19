@@ -9,7 +9,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/cenkalti/backoff/v7"
@@ -30,7 +29,7 @@ type SyncWorker struct {
 	connectMu       sync.Mutex // serializes connect operations
 	running         bool
 	skipInitialSync bool // when true, skip the immediate doSync on connect
-	failing         atomic.Bool
+	working         bool // protected by syncMu; requires a completed push and pull
 	onSyncFailed    func(string)
 	afterPullWrite  func()
 	afterReviewPush func([]string)
@@ -45,12 +44,13 @@ func (w *SyncWorker) SetOnSyncFailed(fn func(string)) {
 
 func (w *SyncWorker) observeSync(err error) {
 	if err == nil {
-		w.failing.Store(false)
+		w.working = true
 		return
 	}
-	if w.failing.Swap(true) {
+	if _, remote := errors.AsType[*syncSourceError](err); !remote || !w.working {
 		return
 	}
+	w.working = false
 	w.mu.Lock()
 	fn := w.onSyncFailed
 	w.mu.Unlock()
@@ -58,6 +58,12 @@ func (w *SyncWorker) observeSync(err error) {
 		fn(syncFailureReason(err))
 	}
 }
+
+// syncSourceError distinguishes PostgreSQL operations from local SQLite work.
+type syncSourceError struct{ err error }
+
+func (e *syncSourceError) Error() string { return e.err.Error() }
+func (e *syncSourceError) Unwrap() error { return e.err }
 
 func syncFailureReason(err error) string {
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok &&
@@ -413,6 +419,7 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (*S
 		w.observeSync(err)
 		return nil, fmt.Errorf("pull: %w", err)
 	}
+	w.observeSync(nil)
 	stats.PulledJobs = pulled.Jobs
 	stats.PulledReviews = pulled.Reviews
 	stats.PulledResponses = pulled.Responses
@@ -435,7 +442,6 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (*S
 			stats.PulledJobs, stats.PulledReviews, stats.PulledResponses)
 	}
 
-	w.observeSync(nil)
 	return stats, nil
 }
 
@@ -505,14 +511,9 @@ func (w *SyncWorker) run(stopCh, doneCh chan struct{}, interval, connectTimeout 
 // connect establishes the PostgreSQL connection.
 // Serialized by connectMu to prevent concurrent connection attempts.
 // Returns (true, nil) if a new connection was made, (false, nil) if already connected.
-func (w *SyncWorker) connect(timeout time.Duration) (_ bool, err error) {
+func (w *SyncWorker) connect(timeout time.Duration) (bool, error) {
 	w.connectMu.Lock()
 	defer w.connectMu.Unlock()
-	defer func() {
-		if err != nil {
-			w.observeSync(err)
-		}
-	}()
 
 	// Check if already connected (another goroutine may have connected while we waited)
 	w.mu.Lock()
@@ -720,7 +721,7 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	}
 	for _, definition := range definitions {
 		if err := pool.UpsertExperimentDefinition(ctx, definition); err != nil {
-			return stats, fmt.Errorf("push experiment definition %s: %w", definition.ExperimentID, err)
+			return stats, fmt.Errorf("push experiment definition %s: %w", definition.ExperimentID, &syncSourceError{err})
 		}
 		if err := w.db.MarkExperimentDefinitionSynced(definition.ExperimentID); err != nil {
 			return stats, fmt.Errorf("mark experiment definition synced: %w", err)
@@ -798,7 +799,7 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	for _, assignment := range assignments {
 		if err := pool.UpsertExperimentAssignment(ctx, assignment); err != nil {
 			return stats, fmt.Errorf("push experiment assignment %s/%s: %w",
-				assignment.ReviewUnitKind, assignment.ReviewUnitUUID, err)
+				assignment.ReviewUnitKind, assignment.ReviewUnitUUID, &syncSourceError{err})
 		}
 		if err := w.db.MarkExperimentAssignmentSynced(assignment); err != nil {
 			return stats, fmt.Errorf("mark experiment assignment synced: %w", err)
@@ -814,7 +815,7 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	if len(reviews) > 0 {
 		success, err := pool.BatchUpsertReviews(ctx, reviews)
 		if err != nil {
-			return stats, fmt.Errorf("batch upsert reviews: %w", err)
+			return stats, fmt.Errorf("batch upsert reviews: %w", &syncSourceError{err})
 		}
 
 		// Only mark successfully synced reviews
@@ -882,7 +883,7 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 
 	definitions, err := pool.PullExperimentDefinitions(ctx, machineID)
 	if err != nil {
-		return stats, fmt.Errorf("pull experiment definitions: %w", err)
+		return stats, fmt.Errorf("pull experiment definitions: %w", &syncSourceError{err})
 	}
 	for _, definition := range definitions {
 		if err := w.db.UpsertPulledExperimentDefinition(definition); err != nil {
@@ -901,7 +902,7 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	for {
 		jobs, newCursor, err := pool.PullJobs(ctx, machineID, jobQueryCursor, 100)
 		if err != nil {
-			return stats, fmt.Errorf("pull jobs: %w", err)
+			return stats, fmt.Errorf("pull jobs: %w", &syncSourceError{err})
 		}
 		if len(jobs) == 0 {
 			break
@@ -937,7 +938,7 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 			ctx, machineID, assignmentQueryCursor, 100,
 		)
 		if err != nil {
-			return stats, fmt.Errorf("pull experiment assignments: %w", err)
+			return stats, fmt.Errorf("pull experiment assignments: %w", &syncSourceError{err})
 		}
 		if len(assignments) == 0 {
 			break
@@ -978,7 +979,7 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	for {
 		reviews, newCursor, err := pool.PullReviews(ctx, machineID, knownJobUUIDs, reviewQueryCursor, 100)
 		if err != nil {
-			return stats, fmt.Errorf("pull reviews: %w", err)
+			return stats, fmt.Errorf("pull reviews: %w", &syncSourceError{err})
 		}
 		if len(reviews) == 0 {
 			break
@@ -1014,7 +1015,7 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	for {
 		responses, newCursor, err := pool.PullResponses(ctx, machineID, responseQueryCursor, 100)
 		if err != nil {
-			return stats, fmt.Errorf("pull responses: %w", err)
+			return stats, fmt.Errorf("pull responses: %w", &syncSourceError{err})
 		}
 		if len(responses) == 0 {
 			break
