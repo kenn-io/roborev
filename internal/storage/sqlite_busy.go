@@ -2,7 +2,9 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -93,4 +95,25 @@ func retryOnSQLiteBusy[T any](
 		return zero, ctx.Err()
 	}
 	return zero, retryErr.LastErr
+}
+
+// limitSQLiteBusyTimeout caps a connection's busy wait at the context deadline.
+// SQLite can keep waiting for a writer after the context expires.
+func limitSQLiteBusyTimeout(ctx context.Context, conn *sql.Conn) (func(), error) {
+	var busyTimeout int
+	if err := conn.QueryRowContext(ctx, `PRAGMA busy_timeout`).Scan(&busyTimeout); err != nil {
+		return nil, err
+	}
+	restore := func() {
+		if _, err := conn.ExecContext(context.Background(), fmt.Sprintf("PRAGMA busy_timeout = %d", busyTimeout)); err != nil {
+			discardConn(conn)
+		}
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		if _, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA busy_timeout = %d", max(0, min(int(time.Until(deadline).Milliseconds()), busyTimeout)))); err != nil {
+			restore()
+			return nil, err
+		}
+	}
+	return restore, nil
 }

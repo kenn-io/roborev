@@ -34,6 +34,8 @@ type SyncWorker struct {
 	passError       error // protected by syncMu; remote errors swallowed during push
 	onSyncFailed    func(string)
 	afterPullWrite  func()
+	afterPull       func()
+	pullWrote       bool // protected by syncMu
 	afterReviewPush func([]string)
 }
 
@@ -101,10 +103,31 @@ func (w *SyncWorker) SetAfterPullWrite(fn func()) {
 }
 
 func (w *SyncWorker) notifyAfterPullWrite() {
+	w.pullWrote = true
 	w.mu.Lock()
 	fn := w.afterPullWrite
 	w.mu.Unlock()
 	if fn != nil {
+		fn()
+	}
+}
+
+// SetAfterPull registers one callback after a pull that changed local rows.
+// The callback runs after the sync operation releases its lock, including
+// when a later row failed to import.
+func (w *SyncWorker) SetAfterPull(fn func()) {
+	w.mu.Lock()
+	w.afterPull = fn
+	w.mu.Unlock()
+}
+
+func (w *SyncWorker) finishSync() {
+	wrote := w.pullWrote
+	w.syncMu.Unlock()
+	w.mu.Lock()
+	fn := w.afterPull
+	w.mu.Unlock()
+	if wrote && fn != nil {
 		fn()
 	}
 }
@@ -373,7 +396,8 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (*S
 
 	// Serialize with other sync operations
 	w.syncMu.Lock()
-	defer w.syncMu.Unlock()
+	w.pullWrote = false
+	defer w.finishSync()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -666,7 +690,8 @@ func (w *SyncWorker) syncLoop(stopCh <-chan struct{}, interval time.Duration, do
 // Loops until all pending items are pushed.
 func (w *SyncWorker) doSync() error {
 	w.syncMu.Lock()
-	defer w.syncMu.Unlock()
+	w.pullWrote = false
+	defer w.finishSync()
 
 	w.mu.Lock()
 	pool := w.pgPool

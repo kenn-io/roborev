@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/stretchr/testify/assert"
@@ -85,7 +86,6 @@ func TestCommentRebuttalRecordsBeforeClose(t *testing.T) {
 				cliOutputIsTerminal = func(out io.Writer) bool { return out == os.Stderr }
 				err = cmd.Execute()
 			})
-			waitCLIUse()
 			if tc.staleOriginalReview {
 				require.ErrorContains(t, err, "original review left open")
 				assert.Equal(t, []string{"rebuttal", "assessment"}, actions)
@@ -97,6 +97,16 @@ func TestCommentRebuttalRecordsBeforeClose(t *testing.T) {
 			} else {
 				require.Error(t, err)
 				assert.Equal(t, []string{"rebuttal"}, actions)
+			}
+			if valid && !tc.staleOriginalReview && !tc.closeFails {
+				// The close report crosses the mock daemon socket.
+				require.Eventually(t, func() bool {
+					mu.Lock()
+					defer mu.Unlock()
+					return len(closes) == 1
+				}, 5*time.Second, 10*time.Millisecond)
+			} else {
+				drainCLIReports()
 			}
 			mu.Lock()
 			defer mu.Unlock()

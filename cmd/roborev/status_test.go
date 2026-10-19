@@ -1,8 +1,13 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -529,4 +534,87 @@ func TestStatusCmdShowsMissingSearchCredential(t *testing.T) {
 	assert.Contains(t, output, "Health: OK")
 	assert.Contains(t, output, "Credential: missing (env:EMBEDDING_KEY)")
 	assert.Contains(t, output, "no embedding API key (env EMBEDDING_KEY is unset)")
+}
+
+func TestStatusManagedRecoveryFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name                      string
+		responsive, lockFailure   bool
+		webOrigin, disabledReason string
+	}{
+		{name: "responsive after drain failure", responsive: true, webOrigin: "https://reviews.example.com"},
+		{name: "responsive after recovery lock failure", responsive: true, lockFailure: true, disabledReason: daemon.WebDisabledReasonConfig},
+		{name: "absent after recovery lock failure", lockFailure: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stubServiceRecovery(t)
+			oldEnsure, oldAddr, oldParsed := statusEnsureDaemon, serverAddr, parsedServerEndpoint
+			serverAddr, parsedServerEndpoint = "", nil
+			t.Cleanup(func() { statusEnsureDaemon, serverAddr, parsedServerEndpoint = oldEnsure, oldAddr, oldParsed })
+			withStatusWebRuntime(t, func() (*daemon.RuntimeInfo, error) {
+				if tc.responsive {
+					return &daemon.RuntimeInfo{PID: 1234, Version: "v-old", Network: "tcp", Address: "127.0.0.1:1", WebOrigin: tc.webOrigin, WebDisabledReason: tc.disabledReason}, nil
+				}
+				return nil, os.ErrNotExist
+			})
+			original := &daemon.RuntimeInfo{PID: 1234, Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}
+			findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
+			var recoveryErr error
+			if tc.lockFailure {
+				// A data directory that is a file makes the start lock unusable.
+				dataDir := os.Getenv("ROBOREV_DATA_DIR")
+				blocked := filepath.Join(t.TempDir(), "file")
+				require.NoError(t, os.WriteFile(blocked, nil, 0o600))
+				t.Setenv("ROBOREV_DATA_DIR", blocked)
+				recoveryErr = recoverDaemon(original, nil, false)
+				t.Setenv("ROBOREV_DATA_DIR", dataDir)
+			}
+			cause := "drain rejected"
+			statusEnsureDaemon = func() error {
+				if tc.lockFailure {
+					return recoveryErr
+				}
+				return &managedRecoveryError{"fixture.service", errors.New(cause)}
+			}
+			cmd := statusCmd()
+			cmd.SetArgs([]string{"--json"})
+			var stderr bytes.Buffer
+			cmd.SetErr(&stderr)
+			stdout := captureStdout(t, func() { require.NoError(t, cmd.Execute()) })
+			var result statusJSONResult
+			require.NoError(t, json.Unmarshal([]byte(stdout), &result))
+			assert.Equal(t, tc.responsive, result.Running, "running must reflect a daemon that still answers after recovery fails")
+			if tc.lockFailure {
+				assert.Contains(t, result.Error, "wait for daemon recovery lock")
+			} else {
+				assert.Contains(t, result.Error, "fixture.service")
+				assert.Contains(t, result.Error, cause)
+			}
+			assert.Equal(t, tc.webOrigin, result.WebURL)
+			assert.Equal(t, tc.disabledReason, result.WebDisabledReason)
+			assert.Nil(t, result.Daemon)
+			assert.Empty(t, stderr.String())
+			textCmd := statusCmd()
+			var textErr error
+			output := captureStdout(t, func() { textErr = textCmd.Execute() })
+			require.NoError(t, textErr)
+			state := "not running"
+			if tc.responsive {
+				state = "running"
+			}
+			assert.Contains(t, output, "Daemon: "+state+"\n")
+			assert.Contains(t, output, "Status: unavailable: ")
+			if tc.webOrigin != "" {
+				assert.Contains(t, output, "Web UI: https://reviews.example.com\n")
+			}
+			if tc.disabledReason != "" {
+				assert.Contains(t, output, "Web UI: disabled ([web] enabled = false)\n")
+			}
+			if tc.lockFailure {
+				assert.Contains(t, output, "wait for daemon recovery lock")
+			} else {
+				assert.Contains(t, output, cause)
+			}
+		})
+	}
 }

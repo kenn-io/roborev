@@ -713,7 +713,14 @@ func TestIntegration_SearchWakeKeepsEarlierCommittedWritesWhenReviewPullFails(t 
 	var wakes atomic.Int64
 	target.SetAfterPullWrite(func() { wakes.Add(1) })
 
+	var pulls int
+	target.SetAfterPull(func() {
+		pulls++
+		require.True(t, target.syncMu.TryLock(), "partial pulls notify after releasing syncMu")
+		target.syncMu.Unlock()
+	})
 	stats, err := target.SyncNow()
+	require.Equal(t, 1, pulls)
 	require.ErrorContains(t, err, "injected pulled review failure")
 	assert.Nil(t, stats)
 	assert.Equal(t, int64(2), wakes.Load(), "committed commit and job writes must notify before review failure")
@@ -1972,4 +1979,43 @@ func TestIntegration_TickerSync(t *testing.T) { //nolint:paralleltest // shares 
 
 	env.assertPgCount("review_jobs", 2)
 	env.assertPgCount("reviews", 2)
+}
+
+func TestIntegration_AfterPullNotifiesAfterFreshBulkPull(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL schema
+	env := newIntegrationEnv(t)
+	const identity = "https://github.com/example/setup-pull.git"
+	source := env.setupNode("setup-source", identity, "1h")
+	targetDB := env.openDB("setup-target.db")
+	target := startSyncWorkerNoSync(t, targetDB, env.pgURL, "setup-target", "1h")
+	for i := range 500 {
+		createCompletedReview(t, source.DB, source.Repo.ID, fmt.Sprintf("%040x", i+1), "Test", "Synced review", "prompt", "No issues found.")
+	}
+	_, err := source.Worker.SyncNow()
+	require.NoError(t, err)
+	var pulls, writes int
+	target.SetAfterPullWrite(func() { writes++ })
+	target.SetAfterPull(func() {
+		pulls++
+		require.True(t, target.syncMu.TryLock(), "pull callback must follow syncMu release")
+		target.syncMu.Unlock()
+		var reviews int
+		require.NoError(t, targetDB.QueryRow(`SELECT count(*) FROM reviews`).Scan(&reviews))
+		assert.Equal(t, 499+pulls, reviews, "callback follows the job and review phases")
+	})
+	stats, err := target.SyncNow()
+	require.NoError(t, err)
+	assert.Equal(t, 500, stats.PulledJobs)
+	assert.Equal(t, 500, stats.PulledReviews)
+	assert.Equal(t, 1, pulls)
+	assert.Greater(t, writes, 500, "per-row search wakes remain")
+	require.NoError(t, target.doSync())
+	assert.Equal(t, 1, pulls, "empty background pulls do not notify")
+	_, err = target.SyncNow()
+	require.NoError(t, err)
+	assert.Equal(t, 1, pulls, "unchanged lookback rows do not notify")
+	createCompletedReview(t, source.DB, source.Repo.ID, fmt.Sprintf("%040x", 501), "Test", "Later review", "prompt", "No issues found.")
+	_, err = source.Worker.SyncNow()
+	require.NoError(t, err)
+	require.NoError(t, target.doSync())
+	assert.Equal(t, 2, pulls, "background sync also notifies after releasing syncMu")
 }

@@ -1516,6 +1516,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}
 	}
 
+	completed := false
 	wp.runAttemptTransition(workerID, job, func() {
 		// Store the result (use actual agent name, not requested).
 		// CompleteJob/CompleteFixJob is a no-op (returns nil) if the job was
@@ -1559,8 +1560,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			} else if j.Status != storage.JobStatusDone {
 				log.Printf("[%s] Job %d not completed (status=%s), skipping broadcast", workerID, job.ID, j.Status)
 				return
-			} else if wp.captureSetupFinished != nil {
-				wp.captureSetupFinished()
+			} else {
+				completed = true
 			}
 		}
 
@@ -1623,6 +1624,9 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			SuppressHooks: suppressJobHooks(job),
 		})
 	})
+	if completed && wp.captureSetupFinished != nil {
+		wp.captureSetupFinished()
+	}
 }
 
 // finishCanceledAttempt emits cancellation only for the claim that still owns

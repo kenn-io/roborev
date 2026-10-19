@@ -58,11 +58,8 @@ var (
 	listAllRuntimes             = daemon.ListAllRuntimes
 	cleanupZombieDaemons        = daemon.CleanupZombieDaemons
 	isPIDAliveForUpdate         = isPIDAliveForUpdateDefault
-	restartDaemonForEnsure      = restartDaemon
 	startDaemonForEnsure        = startDaemon
 	startDaemonDetached         = startDetachedDaemon
-	stopDaemonForRestart        = stopDaemon
-	startDaemonAfterRestart     = startDaemon
 	stopDaemonForUpdate         = stopDaemon
 	startUpdatedDaemon          = func(binDir string) error {
 		newBinary := filepath.Join(binDir, "roborev")
@@ -322,28 +319,30 @@ func ensureDaemon() error {
 	}
 	if discoveryErr == nil {
 		if !skipVersionCheck {
+			// The probe can outlast the daemon, so read its cgroup first.
+			outsideService := discoveredOutsideService(info.PID)
 			probe, err := probeDaemonForEnsure(info.Endpoint(), 2*time.Second)
 			if err != nil {
 				if daemon.IsDaemonAccessError(err) {
 					return fmt.Errorf("probe daemon: %w", err)
 				}
 				if verbose {
-					fmt.Fprintf(lifecycleOut, "Daemon probe failed, restarting...\n")
+					fmt.Fprintf(lifecycleOut, "Daemon probe failed; checking service ownership...\n")
 				}
-				return restartDaemonForEnsure()
+				return recoverDaemon(info, err, outsideService)
 			}
 			daemonVersion := probe.Version
 			if daemonVersion == "" {
 				if verbose {
-					fmt.Fprintf(lifecycleOut, "Daemon version unknown, restarting...\n")
+					fmt.Fprintf(lifecycleOut, "Daemon version unknown; checking service ownership...\n")
 				}
-				return restartDaemonForEnsure()
+				return recoverDaemon(info, nil, outsideService)
 			}
 			if daemonVersion != version.Version {
 				if verbose {
-					fmt.Fprintf(lifecycleOut, "Daemon version mismatch (daemon: %s, cli: %s), restarting...\n", daemonVersion, version.Version)
+					fmt.Fprintf(lifecycleOut, "Daemon version mismatch (daemon: %s, cli: %s); checking service ownership...\n", daemonVersion, version.Version)
 				}
-				return restartDaemonForEnsure()
+				return recoverDaemon(info, nil, outsideService)
 			}
 		}
 
@@ -370,12 +369,12 @@ func startDaemon() error {
 	manager := kitdaemon.Manager{
 		Store: daemon.RuntimeStore(),
 		FindFunc: func(ctx context.Context) (kitdaemon.RuntimeRecord, kitdaemon.PingInfo, bool, error) {
-			info, err := getAnyRunningDaemonForStart(ctx)
-			if errors.Is(err, os.ErrNotExist) {
-				return kitdaemon.RuntimeRecord{}, kitdaemon.PingInfo{}, false, nil
-			}
+			info, err := findDaemonForStart(ctx)
 			if err != nil {
 				return kitdaemon.RuntimeRecord{}, kitdaemon.PingInfo{}, false, err
+			}
+			if info == nil {
+				return kitdaemon.RuntimeRecord{}, kitdaemon.PingInfo{}, false, nil
 			}
 			return kitdaemon.RuntimeRecord{
 				PID: info.PID, Network: info.Network, Address: info.Address,
@@ -416,11 +415,11 @@ func startDaemon() error {
 			defer progress.Stop()
 
 			for {
-				ready, err := discoverDaemonForStart(ctx)
+				ready, err := findDaemonForStart(ctx)
 				if err != nil {
 					return err
 				}
-				if ready {
+				if ready != nil {
 					return nil
 				}
 				select {
@@ -466,15 +465,12 @@ func daemonStartupLogSummary(path string, offset int64) string {
 	return summary
 }
 
-func discoverDaemonForStart(ctx context.Context) (bool, error) {
-	_, err := getAnyRunningDaemonForStart(ctx)
-	if err == nil {
-		return true, nil
+func findDaemonForStart(ctx context.Context) (*daemon.RuntimeInfo, error) {
+	info, err := getAnyRunningDaemonForStart(ctx)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
 	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return false, err
-	}
-	return false, nil
+	return info, err
 }
 
 func openDetachedDaemonLogs() (*os.File, *os.File, func(), error) {
@@ -501,7 +497,11 @@ func openDetachedDaemonLogs() (*os.File, *os.File, func(), error) {
 // stopDaemon stops any running daemons.
 // Returns ErrDaemonNotRunning if no daemon runtime files are found.
 func stopDaemon() error {
-	runtimes, err := daemon.ListAllRuntimes()
+	return stopDaemonRuntimes(daemon.ListAllRuntimes, daemon.KillDaemon, os.Stderr)
+}
+
+func stopDaemonRuntimes(list func() ([]*daemon.RuntimeInfo, error), drain func(*daemon.RuntimeInfo) error, out io.Writer) error {
+	runtimes, err := list()
 	if err != nil {
 		// Check if it's just a "not exist" type error
 		if os.IsNotExist(err) {
@@ -518,10 +518,10 @@ func stopDaemon() error {
 	var lastErr error
 	for _, info := range runtimes {
 		fmt.Fprintln(
-			os.Stderr,
+			out,
 			"Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...",
 		)
-		if err := daemon.KillDaemon(info); err != nil {
+		if err := drain(info); err != nil {
 			lastErr = fmt.Errorf("failed to stop daemon (pid %d): %w", info.PID, err)
 			if errors.Is(err, daemon.ErrDaemonAccessDenied) {
 				lastErr = fmt.Errorf("%w; restore the daemon's startup auth_key or stop PID %d manually", lastErr, info.PID)
@@ -530,14 +530,4 @@ func stopDaemon() error {
 	}
 
 	return lastErr
-}
-
-// restartDaemon stops the running daemon and starts a new one
-func restartDaemon() error {
-	if err := stopDaemonForRestart(); err != nil &&
-		!errors.Is(err, ErrDaemonNotRunning) {
-		return err
-	}
-
-	return startDaemonAfterRestart()
 }

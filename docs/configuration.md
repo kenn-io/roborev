@@ -1775,6 +1775,65 @@ files, enable the user-level service:
 systemctl --user enable --now roborev
 ```
 
+Ordinary CLI commands replace an outdated daemon, or one that stops responding
+after discovery, through its owning user service after active reviews finish:
+
+1. Under the start lock, the command rediscovers the daemon and reuses a
+    responsive replacement already running this CLI's version.
+1. The command holding the lock waits for active reviews to drain with no time
+    limit. Competing commands wait for that drain, then reuse the replacement.
+1. It runs `systemctl --user start` for the unit and waits up to two minutes
+    until a responsive daemon is the unit's `MainPID`. If socket activation
+    already started a replacement, `start` leaves it running.
+
+Automatic replacement applies when the daemon is the main process of a
+non-transient user service with `Type=simple`, `Type=exec`, or `Type=notify`,
+and its configured `ExecStart` path resolves to the CLI's executable file. A CLI
+process whose binary was replaced after it started counts as another
+installation. A stable symlink still identifies the installation after an
+upgrade retargets it and removes the old binary; atomic package replacements
+also retain their identity. For `RemainAfterExit=yes`, transient units, and
+other unsupported service types, a responsive daemon stays usable and the
+command prints a manual restart command. If that daemon stops responding,
+commands report the service failure and restart guidance; `status` reports its
+current liveness and the failure.
+
+These daemons stay in use while they respond and report an error otherwise:
+
+- A daemon from another installation.
+- A daemon started as a child of the unit's main process, such as by a wrapper
+    script.
+
+A daemon that only shares a unit's cgroup uses ordinary detached recovery. For
+example, `roborev daemon start` in a `Type=oneshot` unit with
+`RemainAfterExit=yes` leaves a daemon that is not the unit's main process. With
+`Type=forking`, systemd tracks the forked daemon as the main process, so it
+counts as an unsupported service type. If the user service manager is
+unavailable, a responsive daemon stays running; the command explains why
+recovery was skipped. A responsive daemon that the service cannot replace stays
+in use without waiting for another command's recovery.
+
+Commands read the daemon's cgroup when they first find it. If the original PID
+disappears before ownership lookup and no replacement responds, recovery uses
+ordinary detached startup when the daemon ran outside every user service or the
+user manager cannot answer. Otherwise recovery waits up to two minutes for a
+managed replacement.
+
+Before managed recovery drains reviews or starts the service, local
+`roborev pause` must save the pause through the current daemon, even if the
+initial version check failed. If rediscovery misses the daemon, the command
+tries its last known runtime API unless ownership lookup confirms the process
+has exited. In that case, recovery returns an error without dialing an
+activation socket that could start unpaused workers. This keeps replacement
+workers from claiming queued jobs. If the pause write fails, recovery returns an
+error before draining reviews or starting the service. If recovery fails after
+saving the pause, the queue stays paused until `unpause`. Once a daemon is
+ready, the CLI applies the requested state through the API, including when a
+healthy current daemon stays running. A cold detached start applies the
+requested state before its workers start. Explicit `--server` requests stay
+API-only. Explicit `daemon restart` and the restart after `roborev update` keep
+their separate detached-start workflows.
+
 For on-demand startup via socket activation, enable the socket unit instead. The
 daemon starts automatically when a client connects and uses `Type=notify` to
 signal readiness back to systemd:
@@ -1869,9 +1928,11 @@ with `11-100` and `over-100`. Use the highest bucket observed per install and
 UTC day for volume. The local daily count survives daemon restarts in the
 existing database, without a schema migration. These events add no `app_opened`
 events. Each threshold claims one delivery attempt, even if capture fails.
-Delivery is best effort; failed delivery isn't retried. Both opt-out variables
-apply. CLI and stdio MCP notifications use the existing CLI reporting timeout
-and never start a daemon just for telemetry.
+Delivery is best effort and honors both opt-outs. Failed delivery isn't retried.
+CLI and stdio MCP notifications and TUI exit reports use a one-second request
+timeout. CLI commands, stdio MCP sessions, and the TUI wait up to 50 ms at exit
+for unfinished reports. Finished reports add no delay. An unfinished report may
+be lost when the process exits. Telemetry alone never starts a daemon.
 
 Core actions report `review_viewed`, `finding_fixed`, and `review_closed`, each
 at most once per installation, surface, and UTC day. All carry `surface`. Reads

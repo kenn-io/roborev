@@ -1,6 +1,7 @@
 package telemetry_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -35,9 +36,16 @@ func TestCoreActionDailyClaims(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, reporter.Close()) })
 	server.SetTelemetry(reporter)
 	handler := server.Handler()
+	// CLI clients stop waiting shortly after exit, so their reports arrive with the connection already closed.
+	disconnected, disconnect := context.WithCancel(t.Context())
+	disconnect()
 	post := func(body string) *httptest.ResponseRecorder {
 		recorder := httptest.NewRecorder()
-		request := httptest.NewRequest(http.MethodPost, daemon.TelemetryEventsPath, strings.NewReader(body))
+		ctx := t.Context()
+		if strings.Contains(body, `"surface":"cli"`) {
+			ctx = disconnected
+		}
+		request := httptest.NewRequestWithContext(ctx, http.MethodPost, daemon.TelemetryEventsPath, strings.NewReader(body))
 		request.Header.Set("Content-Type", "application/json")
 		handler.ServeHTTP(recorder, request)
 		return recorder

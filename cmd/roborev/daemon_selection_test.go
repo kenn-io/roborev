@@ -27,12 +27,16 @@ func isolateDaemonSelection(t *testing.T) {
 	testenv.SetDataDir(t)
 	oldAddr, oldParsed := serverAddr, parsedServerEndpoint
 	oldDiscover, oldProbe := getAnyRunningDaemon, probeDaemonForEnsure
-	oldCleanup, oldStart, oldRestart := cleanupZombieDaemons, startDaemonForEnsure, restartDaemonForEnsure
+	oldCleanup, oldStart := cleanupZombieDaemons, startDaemonForEnsure
+	oldService, oldCgroup := findDaemonService, daemonCgroupUnit
 	serverAddr, parsedServerEndpoint = "", nil
+	findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
+	daemonCgroupUnit = func(int) (string, error) { return "", nil }
 	t.Cleanup(func() {
 		serverAddr, parsedServerEndpoint = oldAddr, oldParsed
 		getAnyRunningDaemon, probeDaemonForEnsure = oldDiscover, oldProbe
-		cleanupZombieDaemons, startDaemonForEnsure, restartDaemonForEnsure = oldCleanup, oldStart, oldRestart
+		cleanupZombieDaemons, startDaemonForEnsure = oldCleanup, oldStart
+		findDaemonService, daemonCgroupUnit = oldService, oldCgroup
 	})
 }
 
@@ -42,37 +46,39 @@ func TestEnsureDaemonDoesNotAdoptUnpublishedDefaultDaemon(t *testing.T) {
 			isolateDaemonSelection(t)
 			t.Setenv("ROBOREV_SKIP_VERSION_CHECK", skip)
 			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
-			var probes, starts, restarts int
+			var probes, starts int
+			var events []string
 			probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
 				probes++
 				return &daemon.PingInfo{OK: true, Service: "roborev", Version: version.Version}, nil
 			}
-			cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { return 0 }
-			startDaemonForEnsure = func() error { starts++; return nil }
-			restartDaemonForEnsure = func() error { restarts++; return nil }
+			cleanupZombieDaemons = func(ep daemon.DaemonEndpoint) int { events = append(events, "cleanup:"+ep.Address); return 1 }
+			startDaemonForEnsure = func() error { starts++; events = append(events, "start"); return nil }
 			require.NoError(t, ensureDaemon())
 			assert.Zero(t, probes)
 			assert.Equal(t, 1, starts)
-			assert.Zero(t, restarts)
+			assert.Equal(t, []string{"cleanup:127.0.0.1:1", "start"}, events)
 		})
 	}
 }
 
 func TestEnsureDaemonPropagatesDiscoveryIOError(t *testing.T) {
+	discoveryErr := errors.New("runtime directory read failed")
 	isolateDaemonSelection(t)
-	wantErr := errors.New("runtime directory read failed")
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, wantErr }
-	var starts, probes, cleanups int
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, discoveryErr }
+	var starts, probes, cleanups, services int
 	probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
 		probes++
 		return nil, os.ErrNotExist
 	}
 	startDaemonForEnsure = func() error { starts++; return nil }
 	cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { cleanups++; return 0 }
-	require.ErrorIs(t, ensureDaemon(), wantErr)
+	findDaemonService = func(context.Context, int) (*daemonService, error) { services++; return nil, nil }
+	require.ErrorIs(t, ensureDaemon(), discoveryErr)
 	assert.Zero(t, starts)
 	assert.Zero(t, probes)
 	assert.Zero(t, cleanups)
+	assert.Zero(t, services)
 }
 
 func TestEnsureDaemonPropagatesDiscoveryTLSConfigError(t *testing.T) {

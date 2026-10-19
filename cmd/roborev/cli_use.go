@@ -83,18 +83,15 @@ var agentUseCommands = map[string]bool{
 var (
 	cliTelemetryEnabled = telemetry.EnabledFromEnv
 	cliOutputIsTerminal = streamfmt.WriterIsTerminal
-	// A healthy local daemon answers in milliseconds; a hung one costs a command at most this, once.
+	// Each notification retains its own request deadline.
 	cliUseTimeout  = telemetry.NotificationTimeout
 	cliUsePost     = telemetry.PostAppOpened
 	cliAgentPost   = telemetry.PostAgentCall
 	cliUseOnce     sync.Once
-	cliUseState    atomic.Pointer[cliUsePostState] // nil until a post starts
 	cliUseAgent    bool
 	cliUseEndpoint atomic.Pointer[daemon.DaemonEndpoint]
-	cliActions     sync.WaitGroup
+	cliSends       telemetry.SendGroup
 )
-
-type cliUsePostState struct{ ctx context.Context } // Done when the post returns or its deadline passes
 
 // armCLIUse selects human or agent activity for commands that work through the daemon.
 func armCLIUse(cmd *cobra.Command) {
@@ -119,15 +116,14 @@ func observeCLIUse(ep daemon.DaemonEndpoint, req *http.Request, resp *http.Respo
 	cliUseEndpoint.Store(&ep)
 	cliUseOnce.Do(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), cliUseTimeout)
-		cliUseState.Store(&cliUsePostState{ctx: ctx})
-		go func() {
+		cliSends.Go(func() {
 			defer cancel()
 			if cliUseAgent {
 				cliAgentPost(ctx, ep.HTTPClient(0), ep.BaseURL()+daemon.TelemetryAgentCallPath)
 			} else {
 				cliUsePost(ctx, ep.HTTPClient(0), ep.BaseURL()+daemon.TelemetryEventsPath, telemetry.SurfaceCLI)
 			}
-		}()
+		})
 	})
 }
 
@@ -136,16 +132,15 @@ func reportMCPActivity(ctx context.Context, ep daemon.DaemonEndpoint) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, cliUseTimeout)
-	defer cancel()
-	cliAgentPost(ctx, ep.HTTPClient(0), ep.BaseURL()+daemon.TelemetryAgentCallPath)
+	cliSends.Go(func() {
+		defer cancel()
+		cliAgentPost(ctx, ep.HTTPClient(0), ep.BaseURL()+daemon.TelemetryAgentCallPath)
+	})
 }
 
-// waitCLIUse waits for a started post to finish or reach its deadline.
+// waitCLIUse bounds the exit wait for all notifications still in flight.
 func waitCLIUse() {
-	cliActions.Wait()
-	if s := cliUseState.Load(); s != nil {
-		<-s.ctx.Done()
-	}
+	cliSends.Wait(telemetry.ExitWaitLimit)
 }
 
 // reportCLIActionOutput bounds best-effort reporting independently of the command's lifetime.
@@ -158,7 +153,7 @@ func reportCLIActionOutput(out io.Writer, event string) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), cliUseTimeout)
-	cliActions.Go(func() {
+	cliSends.Go(func() {
 		defer cancel()
 		if ep == nil {
 			info, err := getAnyRunningDaemonForStart(ctx)

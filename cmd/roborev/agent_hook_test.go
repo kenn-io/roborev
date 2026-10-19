@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/stretchr/testify/assert"
@@ -112,9 +113,10 @@ func TestRunAgentHookUsesConfiguredRegularDaemonEndpoint(t *testing.T) {
 	root.SetOut(&stdout)
 	root.SetErr(io.Discard)
 	err := root.Execute()
-	waitCLIUse()
 
 	require.NoError(t, err)
+	// Activity reporting crosses the mock daemon socket.
+	require.Eventually(t, func() bool { return len(rec.telemetryPosts()) == 1 }, 5*time.Second, 10*time.Millisecond)
 	assert.Equal(t, []string{"POST /api/agent-hook/event"}, rec.businessPaths())
 	assert.Equal(t, []recordedTelemetry{{method: http.MethodPost, contentType: "application/json"}}, rec.telemetryPosts())
 	executable, err := os.Executable()

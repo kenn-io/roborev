@@ -60,28 +60,75 @@ func setSyncState(ctx context.Context, store experimentStore, key, value string)
 	return nil
 }
 
+// SetupFinishedClaim distinguishes a new claim from a saved marker or an
+// install that still has no readable review.
+type SetupFinishedClaim uint8
+
+const (
+	SetupFinishedIneligible SetupFinishedClaim = iota
+	SetupFinishedExisting
+	SetupFinishedNewClaim
+)
+
 // ClaimSetupFinished claims the install's first readable review before
-// best-effort telemetry delivery.
-func (db *DB) ClaimSetupFinished() (bool, error) {
-	result, err := db.Exec(`
-		INSERT INTO sync_state (key, value)
-		SELECT ?, '1'
-		WHERE EXISTS (
+// best-effort telemetry delivery. Eligibility reads honor caller cancellation.
+func (db *DB) ClaimSetupFinished(ctx context.Context) (SetupFinishedClaim, error) {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return SetupFinishedIneligible, err
+	}
+	defer func() { _ = conn.Close() }()
+	marker, err := getSyncState(ctx, conn, SyncStateSetupFinished)
+	if err != nil {
+		return SetupFinishedIneligible, err
+	}
+	if marker != "" {
+		return SetupFinishedExisting, nil
+	}
+	var eligible bool
+	if err := conn.QueryRowContext(ctx, `
+		SELECT EXISTS (
 			SELECT 1 FROM reviews rv JOIN review_jobs j ON j.id = rv.job_id
 			LEFT JOIN job_content jc ON jc.job_id = j.id
 			WHERE 1 = 1
 			`+searchFeedEligibility+`
 		)
+	`).Scan(&eligible); err != nil {
+		return SetupFinishedIneligible, fmt.Errorf("check setup eligibility: %w", err)
+	}
+	if !eligible {
+		return SetupFinishedIneligible, nil
+	}
+	// Only the marker write ignores cancellation, so a committed claim always
+	// reaches its caller. Cancellation cannot interrupt that busy wait, so keep
+	// it short: daemon shutdown waits for this write, and the caller retries
+	// busy errors with backoff, so a short wait loses no claim.
+	writeCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	restore, err := limitSQLiteBusyTimeout(writeCtx, conn)
+	if err != nil {
+		return SetupFinishedIneligible, err
+	}
+	defer restore()
+	if err := ctx.Err(); err != nil {
+		return SetupFinishedIneligible, err
+	}
+	result, err := conn.ExecContext(context.WithoutCancel(ctx), `
+		INSERT INTO sync_state (key, value)
+		VALUES (?, '1')
 		ON CONFLICT(key) DO NOTHING
 	`, SyncStateSetupFinished)
 	if err != nil {
-		return false, fmt.Errorf("claim setup finished: %w", err)
+		return SetupFinishedIneligible, fmt.Errorf("claim setup finished: %w", err)
 	}
 	rows, err := result.RowsAffected()
 	if err != nil {
-		return false, fmt.Errorf("claim setup finished: %w", err)
+		return SetupFinishedIneligible, fmt.Errorf("claim setup finished: %w", err)
 	}
-	return rows == 1, nil
+	if rows == 1 {
+		return SetupFinishedNewClaim, nil
+	}
+	return SetupFinishedExisting, nil
 }
 
 // GetOrCreateSyncStateValue returns a durable key/value entry, creating it when absent.

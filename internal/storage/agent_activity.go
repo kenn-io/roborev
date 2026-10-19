@@ -3,8 +3,6 @@ package storage
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"time"
 )
 
 const agentActivityKey = "telemetry.agent_activity"
@@ -41,21 +39,11 @@ func (db *DB) RecordAgentCall(ctx context.Context, day string) (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	var busyTimeout int
-	if err := conn.QueryRowContext(ctx, `PRAGMA busy_timeout`).Scan(&busyTimeout); err != nil {
+	restore, err := limitSQLiteBusyTimeout(ctx, conn)
+	if err != nil {
 		return 0, err
 	}
-	defer func() {
-		if _, err := conn.ExecContext(context.Background(), fmt.Sprintf("PRAGMA busy_timeout = %d", busyTimeout)); err != nil {
-			discardConn(conn)
-		}
-	}()
-	// A contended SQLite writer ignored a one-second context; cap its busy wait at that deadline.
-	if deadline, ok := ctx.Deadline(); ok {
-		if _, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA busy_timeout = %d", max(0, min(int(time.Until(deadline).Milliseconds()), busyTimeout)))); err != nil {
-			return 0, err
-		}
-	}
+	defer restore()
 	err = setSyncState(ctx, conn, agentActivityKey, string(value))
 	if err != nil {
 		return 0, err

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -320,15 +321,17 @@ func TestRepoCommandExplicitServerDoesNotManageLocalDaemon(t *testing.T) {
 	http.DefaultTransport = server.Client().Transport
 	t.Cleanup(func() { http.DefaultTransport = origTransport })
 	patchServerAddr(t, "http://127.0.0.1:7373")
-	origGet, origStart, origRestart, origCleanup := getAnyRunningDaemon, startDaemonForEnsure, restartDaemonForEnsure, cleanupZombieDaemons
+	origGet, origStart, origCleanup := getAnyRunningDaemon, startDaemonForEnsure, cleanupZombieDaemons
+	origService := findDaemonService
 	t.Cleanup(func() {
-		getAnyRunningDaemon, startDaemonForEnsure, restartDaemonForEnsure, cleanupZombieDaemons = origGet, origStart, origRestart, origCleanup
+		getAnyRunningDaemon, startDaemonForEnsure, cleanupZombieDaemons = origGet, origStart, origCleanup
+		findDaemonService = origService
 	})
 	var localCalls int
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { localCalls++; return nil, ErrDaemonNotRunning }
 	startDaemonForEnsure = func() error { localCalls++; return nil }
-	restartDaemonForEnsure = func() error { localCalls++; return nil }
 	cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { localCalls++; return 0 }
+	findDaemonService = func(context.Context, int) (*daemonService, error) { localCalls++; return nil, nil }
 	command := repoCmd()
 	command.SetArgs([]string{"rename", "project-a", "friendly"})
 	command.SilenceUsage = true

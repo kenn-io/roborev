@@ -31,7 +31,8 @@ func setQueuePaused(ctx context.Context, paused bool) error {
 	// For a local daemon, carry the desired pause state into daemon startup so a
 	// cold-started or restarted daemon comes up with the flag already applied,
 	// before its workers can claim jobs. startDaemon passes it to the new
-	// daemon, which persists it before workers start. A healthy, current-version
+	// daemon, which persists it before workers start. Service recovery sends a
+	// pause to the old daemon before draining it. A healthy, current-version
 	// daemon is left running and picks up the state from the POST below instead.
 	if serverAddr == "" {
 		pendingStartPause = &paused

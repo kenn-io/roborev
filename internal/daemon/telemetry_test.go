@@ -2,12 +2,17 @@ package daemon
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
-	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,9 +22,11 @@ import (
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
+	"go.kenn.io/roborev/internal/testutil/setupclaim"
 )
 
 type fakeTelemetryClient struct {
+	mu         sync.Mutex
 	enabled    bool
 	events     []string
 	properties []map[string]any
@@ -27,9 +34,31 @@ type fakeTelemetryClient struct {
 }
 
 func (f *fakeTelemetryClient) Capture(event string, properties map[string]any) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.events = append(f.events, event)
 	f.properties = append(f.properties, properties)
 	return f.captureErr
+}
+
+func (f *fakeTelemetryClient) recordedEvents() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.events...)
+}
+
+func (f *fakeTelemetryClient) recordedProperties() []map[string]any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]map[string]any(nil), f.properties...)
+}
+
+func waitSetupFinished(t *testing.T, client *fakeTelemetryClient) {
+	t.Helper()
+	// Wall-clock wait: setup claims use real SQLite connections.
+	require.Eventually(t, func() bool {
+		return slices.Contains(client.recordedEvents(), "setup_finished")
+	}, 5*time.Second, time.Millisecond)
 }
 
 func (f *fakeTelemetryClient) Close() error { return nil }
@@ -68,14 +97,15 @@ func TestCaptureDaemonStartedTelemetry(t *testing.T) {
 	cfg.AutoDesignReview.Enabled = true
 
 	server.captureDaemonStartedTelemetry(cfg)
+	waitSetupFinished(t, client)
 
-	require.Equal([]string{"daemon_started", "setup_finished"}, client.events)
-	require.Len(client.properties, 2)
-	assert.Equal("21-100", client.properties[0]["repo_count"])
-	assert.Equal("0-5", client.properties[0]["review_count"])
-	assert.Equal(true, client.properties[0]["sync_enabled"])
-	assert.Equal(true, client.properties[0]["ci_enabled"])
-	assert.Equal(true, client.properties[0]["auto_design_enabled"])
+	require.Equal([]string{"daemon_started", "setup_finished"}, client.recordedEvents())
+	require.Len(client.recordedProperties(), 2)
+	assert.Equal("21-100", client.recordedProperties()[0]["repo_count"])
+	assert.Equal("0-5", client.recordedProperties()[0]["review_count"])
+	assert.Equal(true, client.recordedProperties()[0]["sync_enabled"])
+	assert.Equal(true, client.recordedProperties()[0]["ci_enabled"])
+	assert.Equal(true, client.recordedProperties()[0]["auto_design_enabled"])
 }
 
 func TestStartDailyTelemetryLoopCapturesImmediately(t *testing.T) {
@@ -91,9 +121,9 @@ func TestStartDailyTelemetryLoopCapturesImmediately(t *testing.T) {
 
 	server.startDailyTelemetryLoop(ctx, config.DefaultConfig())
 
-	require.Len(client.events, 1)
-	require.Len(client.properties, 1)
-	assert.Equal("daemon_active", client.events[0])
+	require.Len(client.recordedEvents(), 1)
+	require.Len(client.recordedProperties(), 1)
+	assert.Equal("daemon_active", client.recordedEvents()[0])
 }
 
 func TestCaptureDaemonStartedTelemetryDisabledNoops(t *testing.T) {
@@ -105,8 +135,8 @@ func TestCaptureDaemonStartedTelemetryDisabledNoops(t *testing.T) {
 
 	server.captureDaemonStartedTelemetry(config.DefaultConfig())
 
-	assert.Empty(client.events)
-	assert.Nil(client.properties)
+	assert.Empty(client.recordedEvents())
+	assert.Nil(client.recordedProperties())
 }
 
 func TestSetupFinishedTelemetryClaimAndDelivery(t *testing.T) {
@@ -134,19 +164,176 @@ func TestSetupFinishedTelemetryClaimAndDelivery(t *testing.T) {
 				server.SetTelemetry(tc.client)
 			}
 			server.captureSetupFinishedTelemetry()
+			if tc.wantClaim != "" {
+				waitSetupFinished(t, tc.client)
+			}
 			state, err := db.GetSyncState(storage.SyncStateSetupFinished)
 			require.NoError(t, err)
 			assert.Equal(t, tc.wantClaim, state)
 			if tc.client != nil {
 				server.captureSetupFinishedTelemetry()
-				assert.Equal(t, tc.wantEvents, tc.client.events)
+				assert.Equal(t, tc.wantEvents, tc.client.recordedEvents())
 				if !tc.client.enabled {
 					tc.client.enabled = true
 					server.captureSetupFinishedTelemetry()
 					server.captureSetupFinishedTelemetry()
-					assert.Equal(t, []string{"setup_finished"}, tc.client.events)
+					waitSetupFinished(t, tc.client)
+					assert.Equal(t, []string{"setup_finished"}, tc.client.recordedEvents())
 				}
 			}
+		})
+	}
+}
+
+func TestSetupFinishedTelemetrySkipsLaterClaims(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	client := &fakeTelemetryClient{enabled: true}
+	server.SetTelemetry(client)
+	repo, err := db.GetOrCreateRepo(tmpDir)
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, GitRef: "abc123", Agent: "test"})
+	require.NoError(t, err)
+	_, err = db.ClaimJob("worker")
+	require.NoError(t, err)
+	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", "", "No issues found."))
+	claimAttempts := setupclaim.InstallCounter(t, db.DB)
+	server.captureSetupFinishedTelemetry()
+	waitSetupFinished(t, client)
+	assert.Equal(t, 1, claimAttempts())
+	server.captureSetupFinishedTelemetry()
+	server.workerPool.captureSetupFinished()
+	assert.Equal(t, 1, claimAttempts())
+	require.NoError(t, server.Close())
+
+	restarted := newServerWithLogs(db, config.DefaultConfig(), "", newTestErrorLog(), newTestActivityLog())
+	t.Cleanup(func() { _ = restarted.Close() })
+	restarted.SetTelemetry(client)
+	restarted.captureSetupFinishedTelemetry()
+	// Wall-clock wait: startup reads the persisted SQLite marker.
+	require.Eventually(t, restarted.setupFinishedClaimed.Load, time.Second, time.Millisecond)
+	restarted.captureSetupFinishedTelemetry()
+	restarted.workerPool.captureSetupFinished()
+	assert.Equal(t, 1, claimAttempts())
+	assert.Equal(t, []string{"setup_finished"}, client.recordedEvents())
+}
+
+func TestSetupFinishedTelemetryBusyWriterRetries(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	client := &fakeTelemetryClient{enabled: true}
+	server.SetTelemetry(client)
+	repo, err := db.GetOrCreateRepo(tmpDir)
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, GitRef: "abc123", Agent: "test"})
+	require.NoError(t, err)
+	_, err = db.ClaimJob("worker")
+	require.NoError(t, err)
+	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", "", "No issues found."))
+	var path string
+	require.NoError(t, db.QueryRow(`SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&path))
+	connector := &setupQueryConnector{driver: db.Driver(), dsn: path + "?_pragma=busy_timeout(30000)", busy: make(chan struct{}, 1)}
+	pool := sql.OpenDB(connector)
+	pool.SetMaxOpenConns(1)
+	t.Cleanup(func() { require.NoError(t, pool.Close()) })
+	server.db = &storage.DB{DB: pool}
+	writer, err := db.Begin()
+	require.NoError(t, err)
+	defer func() { _ = writer.Rollback() }()
+	_, err = writer.Exec(`INSERT INTO sync_state (key, value) VALUES ('writer-lock', 'held')`)
+	require.NoError(t, err)
+	server.captureSetupFinishedTelemetry()
+	// Wall-clock wait: the SQLite marker write must report actual contention.
+	require.Eventually(t, func() bool { return len(connector.busy) == 1 }, time.Second, time.Millisecond)
+	assert.Empty(t, client.recordedEvents())
+	marker, err := db.GetSyncState(storage.SyncStateSetupFinished)
+	require.NoError(t, err)
+	assert.Empty(t, marker)
+	require.NoError(t, writer.Rollback())
+	waitSetupFinished(t, client)
+	assert.Equal(t, []string{"setup_finished"}, client.recordedEvents())
+}
+
+type setupQueryConnector struct {
+	driver  driver.Driver
+	dsn     string
+	started chan struct{}
+	release <-chan struct{}
+	checks  atomic.Int32
+	busy    chan struct{}
+}
+
+func (c *setupQueryConnector) Driver() driver.Driver { return c.driver }
+func (c *setupQueryConnector) Connect(context.Context) (driver.Conn, error) {
+	conn, err := c.driver.Open(c.dsn)
+	if err != nil {
+		return nil, err
+	}
+	return &setupQueryConn{Conn: conn, connector: c}, nil
+}
+
+type setupQueryConn struct {
+	driver.Conn
+	connector *setupQueryConnector
+}
+
+func (c *setupQueryConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	if c.connector.started != nil && strings.Contains(query, "SELECT EXISTS") {
+		c.connector.checks.Add(1)
+		c.connector.started <- struct{}{}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-c.connector.release:
+		}
+	}
+	return c.Conn.(driver.QueryerContext).QueryContext(ctx, query, args)
+}
+
+func (c *setupQueryConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	result, err := c.Conn.(driver.ExecerContext).ExecContext(ctx, query, args)
+	if c.connector.busy != nil && storage.IsSQLiteBusy(err) {
+		select {
+		case c.connector.busy <- struct{}{}:
+		default:
+		}
+	}
+	return result, err
+}
+
+func TestSetupFinishedTelemetryCoalescesAndStops(t *testing.T) {
+	for _, shutdown := range []bool{false, true} {
+		t.Run(fmt.Sprintf("shutdown=%t", shutdown), func(t *testing.T) {
+			server, db, _ := newTestServer(t)
+			client := &fakeTelemetryClient{enabled: true}
+			server.SetTelemetry(client)
+			var path string
+			require.NoError(t, db.QueryRow(`SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&path))
+			release := make(chan struct{})
+			connector := &setupQueryConnector{driver: db.Driver(), dsn: path, started: make(chan struct{}, 2), release: release}
+			pool := sql.OpenDB(connector)
+			t.Cleanup(func() { require.NoError(t, pool.Close()) })
+			// The server owns the wrapper; the fixture still owns the original pool.
+			server.db = &storage.DB{DB: pool}
+			server.captureSetupFinishedTelemetry()
+			// Wall-clock wait: the worker reaches the SQLite driver boundary.
+			require.Eventually(t, func() bool { return len(connector.started) == 1 }, time.Second, time.Millisecond)
+			<-connector.started
+			for range 100 {
+				server.captureSetupFinishedTelemetry()
+			}
+			if !shutdown {
+				close(release)
+				// Wall-clock wait: the queued check uses the real SQLite connection.
+				require.Eventually(t, func() bool { return len(connector.started) == 1 }, time.Second, time.Millisecond)
+				<-connector.started
+			}
+			require.NoError(t, server.Close())
+			<-server.setupWorkerDone
+			if shutdown {
+				assert.Equal(t, int32(1), connector.checks.Load())
+			} else {
+				assert.Equal(t, int32(2), connector.checks.Load())
+			}
+			assert.Empty(t, client.recordedEvents())
 		})
 	}
 }
@@ -160,6 +347,13 @@ func TestSetupFinishedTelemetryCompletionPaths(t *testing.T) {
 			require.NoError(t, err)
 			client := &fakeTelemetryClient{enabled: true}
 			server.SetTelemetry(client)
+			captureSetupFinished := server.workerPool.captureSetupFinished
+			require.NotNil(t, captureSetupFinished)
+			server.workerPool.captureSetupFinished = func() {
+				require.True(t, server.workerPool.attemptTransitionsMu.TryLock(), "setup capture must follow the attempt transition")
+				server.workerPool.attemptTransitionsMu.Unlock()
+				captureSetupFinished()
+			}
 			var job *storage.ReviewJob
 			switch path {
 			case "review":
@@ -182,7 +376,8 @@ func TestSetupFinishedTelemetryCompletionPaths(t *testing.T) {
 				require.Equal(t, storage.JobStatusDone, member.Status)
 				_, err = db.GetReviewByJobID(member.ID)
 				require.NoError(t, err)
-				require.Equal(t, []string{"setup_finished"}, client.events)
+				waitSetupFinished(t, client)
+				require.Equal(t, []string{"setup_finished"}, client.recordedEvents())
 				job = releaseAndClaimSynthesis(t, tc, run)
 				server.workerPool.processSynthesisJob(t.Context(), testWorkerID, job)
 			case "goal":
@@ -203,35 +398,8 @@ func TestSetupFinishedTelemetryCompletionPaths(t *testing.T) {
 			require.Equal(t, storage.JobStatusDone, stored.Status)
 			_, err = db.GetReviewByJobID(job.ID)
 			require.NoError(t, err)
-			assert.Equal(t, []string{"setup_finished"}, client.events)
-		})
-	}
-}
-
-func TestSetupFinishedTelemetryAfterSyncPullWrite(t *testing.T) {
-	for _, path := range []string{"search", "without search"} {
-		t.Run(path, func(t *testing.T) {
-			server, db, tmpDir := newTestServer(t)
-			client := &fakeTelemetryClient{enabled: true}
-			server.SetTelemetry(client)
-			var reconciler *recordingSearchReconciler
-			if path == "search" {
-				reconciler = newRecordingSearchReconciler()
-				server.searchReconciler = reconciler
-			}
-			server.SetSyncWorker(storage.NewSyncWorker(db, config.SyncConfig{}))
-			require.Empty(t, client.events)
-			repo, err := db.GetOrCreateRepo(tmpDir)
-			require.NoError(t, err)
-			now := time.Now().UTC().Truncate(time.Second)
-			job := storage.PulledJob{UUID: uuid.New(), GitRef: "abc123", Agent: "test", JobType: storage.JobTypeReview, ReviewType: "code", Status: "applied", EnqueuedAt: now, FinishedAt: &now, SourceMachineID: uuid.New(), UpdatedAt: now}
-			require.NoError(t, db.UpsertPulledJob(job, repo.ID, nil))
-			require.NoError(t, db.UpsertPulledReview(storage.PulledReview{UUID: uuid.New(), JobUUID: job.UUID, JobEnqueuedAt: now, JobSourceMachineID: job.SourceMachineID, Agent: "test", StructuredOutput: testutil.ReviewFixtureJSON("No issues found."), UpdatedByMachineID: job.SourceMachineID, CreatedAt: now, UpdatedAt: now}))
-			server.afterSyncPullWrite()
-			assert.Equal(t, []string{"setup_finished"}, client.events)
-			if reconciler != nil {
-				assert.NotEmpty(t, reconciler.wakes, "committed pulls wake search")
-			}
+			waitSetupFinished(t, client)
+			assert.Equal(t, []string{"setup_finished"}, client.recordedEvents())
 		})
 	}
 }

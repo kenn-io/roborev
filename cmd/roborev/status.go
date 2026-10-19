@@ -35,6 +35,22 @@ type statusJSONResult struct {
 	Error             string                `json:"error,omitempty"`
 }
 
+// managedRecoveryStatus keeps the service error and reports whether a daemon still answers.
+func managedRecoveryStatus(err error) statusJSONResult {
+	info, discoverErr := statusDiscover()
+	web := discoverWebUI(func() (*daemon.RuntimeInfo, error) { return info, discoverErr })
+	return unavailableStatus(err, discoverErr == nil, web)
+}
+
+func unavailableStatus(err error, running bool, web webUIStatus) statusJSONResult {
+	return statusJSONResult{
+		Running:           running,
+		WebURL:            web.url,
+		WebDisabledReason: web.disabledReason,
+		Error:             err.Error(),
+	}
+}
+
 func statusCmd() *cobra.Command {
 	var jsonOutput bool
 
@@ -47,23 +63,25 @@ func statusCmd() *cobra.Command {
 				enc := jsontext.NewEncoder(os.Stdout, jsontext.WithIndent("  "))
 				return json.MarshalEncode(enc, result)
 			}
-			writeStatusUnavailable := func(err error) error {
+			writeStatusUnavailable := func(result statusJSONResult) error {
 				if jsonOutput {
-					return writeJSONResult(statusJSONResult{
-						Running:           true,
-						WebURL:            webStatus.url,
-						WebDisabledReason: webStatus.disabledReason,
-						Error:             err.Error(),
-					})
+					return writeJSONResult(result)
 				}
-				fmt.Println("Daemon: running")
-				fmt.Printf("Web UI: %s\n", displayWebUI(webStatus))
-				fmt.Printf("Status: unavailable: %v\n", err)
+				state := "not running"
+				if result.Running {
+					state = "running"
+				}
+				fmt.Printf("Daemon: %s\n", state)
+				fmt.Printf("Web UI: %s\n", displayWebUI(webUIStatus{url: result.WebURL, disabledReason: result.WebDisabledReason}))
+				fmt.Printf("Status: unavailable: %s\n", result.Error)
 				return nil
 			}
 
 			// Ensure daemon is running (and restart if version mismatch)
 			if err := statusEnsureDaemon(); err != nil {
+				if _, managed := errors.AsType[*managedRecoveryError](err); managed || errors.Is(err, errRecoveryLock) {
+					return writeStatusUnavailable(managedRecoveryStatus(err))
+				}
 				if errors.Is(err, daemon.ErrClientConfig) {
 					return err
 				}
@@ -99,13 +117,11 @@ func statusCmd() *cobra.Command {
 			client := ep.APIClient(2 * time.Second)
 			resp, err := client.GetStatusRaw(cmd.Context())
 			if err != nil {
-				return writeStatusUnavailable(err)
+				return writeStatusUnavailable(unavailableStatus(err, true, webStatus))
 			}
 			defer resp.Body.Close()
 			if resp.StatusCode != http.StatusOK {
-				return writeStatusUnavailable(
-					fmt.Errorf("daemon returned %s", resp.Status),
-				)
+				return writeStatusUnavailable(unavailableStatus(fmt.Errorf("daemon returned %s", resp.Status), true, webStatus))
 			}
 
 			var status storage.DaemonStatus

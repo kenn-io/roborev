@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
-	"sync"
 )
 
 // CodexAgent runs code reviews using the Codex CLI
@@ -39,10 +38,10 @@ const (
 )
 
 var (
-	codexDangerousSupport        sync.Map
-	codexAutoApproveSupport      sync.Map
-	codexIgnoreUserConfigSupport sync.Map
-	codexThreadSourceSupport     sync.Map
+	codexDangerousSupport        capabilityCache
+	codexAutoApproveSupport      capabilityCache
+	codexIgnoreUserConfigSupport capabilityCache
+	codexThreadSourceSupport     capabilityCache
 )
 
 // errNoCodexJSON indicates no valid codex --json events were parsed.
@@ -323,11 +322,10 @@ func codexSupportsNonInteractive(ctx context.Context, command string, ignoreUser
 	return supported, nil
 }
 
-func codexSupportCacheKey(command string, ignoreUserConfig bool) string {
-	if !ignoreUserConfig {
-		return command
-	}
-	return command + "\x00" + codexIgnoreUserConfigFlag
+func codexSupportCacheKey(command string, ignoreUserConfig bool) capabilityProbeKey {
+	key := capabilityCacheKey(command)
+	key.ignoreUserConfig = ignoreUserConfig
+	return key
 }
 
 func codexExecHelpArgs(ignoreUserConfig bool) []string {
@@ -345,7 +343,8 @@ func codexExecHelpArgs(ignoreUserConfig bool) []string {
 // produce false positives if the flag is listed globally but rejected
 // in the exec subcommand.
 func codexSupportsIgnoreUserConfig(ctx context.Context, command string) (bool, error) {
-	if cached, ok := codexIgnoreUserConfigSupport.Load(command); ok {
+	cacheKey := capabilityCacheKey(command)
+	if cached, ok := codexIgnoreUserConfigSupport.Load(cacheKey); ok {
 		return cached.(bool), nil
 	}
 
@@ -356,11 +355,11 @@ func codexSupportsIgnoreUserConfig(ctx context.Context, command string) (bool, e
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return false, ctxErr
 		}
-		codexIgnoreUserConfigSupport.Store(command, false)
+		codexIgnoreUserConfigSupport.Store(cacheKey, false)
 		return false, nil
 	}
 	supported := strings.Contains(string(output), codexIgnoreUserConfigFlag)
-	codexIgnoreUserConfigSupport.Store(command, supported)
+	codexIgnoreUserConfigSupport.Store(cacheKey, supported)
 	return supported, nil
 }
 

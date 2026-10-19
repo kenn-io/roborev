@@ -13,6 +13,8 @@ All notable changes to roborev, grouped by minor release.
     PostgreSQL sync outages, in anonymous telemetry using fixed action names and
     error classes. Failed closes and reopens both count. Missing reviews and TUI
     failed-job panes stay silent. Daemon-unreachable errors can't be counted.
+- Cap telemetry waits at exit to 50 ms for CLI commands, stdio MCP sessions, and
+    the TUI.
 - Count review reads, committed fixes, and explicit closes in anonymous
     telemetry.
 - Report repository and review totals as ranges in anonymous daemon telemetry:

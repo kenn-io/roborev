@@ -32,11 +32,16 @@ func TestReportSessionEndedBoundsDelivery(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
 		close(m.ready)
-		transport := &stalledTransport{hit: make(chan struct{}, 1)}
+		release := make(chan struct{})
+		transport := &stalledTransport{hit: make(chan struct{}, 1), release: release}
 		m.client.Transport = transport
 		started := time.Now()
 		m.reportSessionEnded(2 * time.Minute)
-		assert.Equal(t, time.Second, time.Since(started))
+		synctest.Wait()
+		assert.Equal(t, 50*time.Millisecond, time.Since(started))
+		assert.Equal(t, started.Add(time.Second), transport.deadline)
+		close(release)
+		synctest.Wait()
 		assert.Equal(t, int32(1), transport.requests.Load())
 	})
 }
@@ -154,20 +159,27 @@ func TestReportAppOpenedIgnoresDaemonFailures(t *testing.T) {
 	}
 }
 
-// stalledTransport never answers; it returns only when the request context ends.
+// stalledTransport holds requests until their context ends or the test releases them.
 type stalledTransport struct {
 	hit      chan struct{}
+	release  <-chan struct{}
 	requests atomic.Int32
+	deadline time.Time
 }
 
 func (s *stalledTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	s.requests.Add(1)
+	s.deadline, _ = req.Context().Deadline()
 	select {
 	case s.hit <- struct{}{}:
 	default:
 	}
-	<-req.Context().Done()
-	return nil, req.Context().Err()
+	select {
+	case <-s.release:
+		return &http.Response{StatusCode: http.StatusAccepted, Body: http.NoBody}, nil
+	case <-req.Context().Done():
+		return nil, req.Context().Err()
+	}
 }
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables

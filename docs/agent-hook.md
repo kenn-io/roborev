@@ -196,7 +196,9 @@ shim does not change the version selected by that shim.
 
 A daemon restart is a separate operation. Agents must follow local approval
 rules before restarting an existing daemon. `roborev status` can automatically
-restart a daemon whose version differs from the CLI.
+replace an outdated daemon in a supported systemd user service. Responsive
+daemons in unsupported service modes stay in use with a manual restart command;
+follow local approval rules before running it.
 
 ### ZCode
 

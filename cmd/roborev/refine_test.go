@@ -1741,13 +1741,22 @@ func TestCoreActionRefineCommit(t *testing.T) {
 				expected = 1
 			}
 			assert.Equal(t, strconv.Itoa(expected), repo.Run("rev-list", "--count", head+"..HEAD"))
-			var fixes []string
-			for _, post := range rec.telemetryPosts() {
-				if strings.Contains(post.body, `"finding_fixed"`) {
-					fixes = append(fixes, post.body)
+			fixes := func() []string {
+				var result []string
+				for _, post := range rec.telemetryPosts() {
+					if strings.Contains(post.body, `"finding_fixed"`) {
+						result = append(result, post.body)
+					}
 				}
+				return result
 			}
-			require.Len(t, fixes, expected)
+			if expected == 0 {
+				drainCLIReports()
+			} else {
+				// The fix report crosses the mock daemon socket.
+				require.Eventually(t, func() bool { return len(fixes()) == expected }, 5*time.Second, 10*time.Millisecond)
+			}
+			require.Len(t, fixes(), expected)
 		})
 	}
 }

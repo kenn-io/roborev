@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -123,4 +124,17 @@ func TestAgentActivityCanceledWhileWaiting(t *testing.T) {
 		server.recordAgentCall(t.Context())
 		assert.Equal(t, []string{telemetry.EventAgentActive}, client.events)
 	})
+}
+
+func TestAgentActivityRouteCountsAfterClientDisconnect(t *testing.T) {
+	server, _, _ := newTestServer(t)
+	client := &fakeTelemetryClient{enabled: true}
+	server.SetTelemetry(client)
+	// CLI clients stop waiting shortly after exit, so the call arrives with the connection already closed.
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	req := httptest.NewRequestWithContext(ctx, http.MethodPost, TelemetryAgentCallPath, nil)
+	req.Header.Set("Content-Type", "application/json")
+	assert.Equal(t, http.StatusAccepted, serveTelemetryCapture(server.httpServer.Handler, req).Code)
+	assert.Equal(t, []string{telemetry.EventAgentActive}, client.events)
 }

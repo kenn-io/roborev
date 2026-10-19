@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -55,9 +56,18 @@ func TestSessionEndedCapturedThroughDaemonRoute(t *testing.T) {
 			server := daemon.NewServer(db, &config.Config{}, "")
 			t.Cleanup(func() { require.NoError(t, server.Close()) })
 			server.SetTelemetry(reporter)
-			srv := httptest.NewServer(server.Handler())
+			var completed atomic.Int32
+			handler := server.Handler()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				handler.ServeHTTP(w, r)
+				if r.URL.Path == daemon.TelemetryEventsPath {
+					completed.Add(1)
+				}
+			}))
 			t.Cleanup(srv.Close)
 			tt.send(t, srv.URL)
+			// Wait for the socket request to finish capture before closing the reporter.
+			require.Eventually(t, func() bool { return completed.Load() == 1 }, 5*time.Second, 10*time.Millisecond)
 			require.NoError(t, reporter.Close())
 			sent := messages()
 			require.Len(t, sent, 1)

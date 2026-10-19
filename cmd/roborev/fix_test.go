@@ -4891,12 +4891,11 @@ func TestCoreActionFixReadAndCommit(t *testing.T) {
 				if outcome != "no change" {
 					assert.NotEqual(t, before, repo.HeadSHA())
 				}
-				waitCLIUse()
-				posts := rec.telemetryPosts()
 				if outcome == "quiet commit" {
 					assert.Empty(t, output)
 					assert.Empty(t, confirmation)
-					assert.Empty(t, posts)
+					drainCLIReports()
+					assert.Empty(t, rec.telemetryPosts())
 					return
 				}
 				assert.Contains(t, output, "Finding")
@@ -4916,6 +4915,13 @@ func TestCoreActionFixReadAndCommit(t *testing.T) {
 						events = append(events, "finding_fixed")
 					}
 				}
+				if len(events) == 0 {
+					drainCLIReports()
+				} else {
+					// Action reports cross the mock daemon socket.
+					require.Eventually(t, func() bool { return len(rec.telemetryPosts()) == len(events) }, 5*time.Second, 10*time.Millisecond)
+				}
+				posts := rec.telemetryPosts()
 				require.Len(t, posts, len(events))
 				var actualEvents []string
 				for _, post := range posts {

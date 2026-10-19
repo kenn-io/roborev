@@ -174,11 +174,13 @@ func TestRunAnalyzeAndFix_Integration(t *testing.T) {
 				assert.Contains(t, confirmation, "CODE SMELLS")
 				assert.Regexp(t, regexp.MustCompile(`Analysis job \d+ closed`), confirmation)
 			}
-			waitCLIUse()
 			if outcome == "commit" {
+				// The action report crosses the mock daemon socket.
+				require.Eventually(t, func() bool { return len(bodies) == 1 }, 5*time.Second, 10*time.Millisecond)
 				require.Len(t, bodies, 1)
 				assert.JSONEq(t, `{"event":"finding_fixed","properties":{"surface":"cli"}}`, <-bodies)
 			} else {
+				drainCLIReports()
 				assert.Empty(t, bodies)
 			}
 		})
