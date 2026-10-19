@@ -199,7 +199,7 @@ func captureStdoutStderr(t *testing.T, fn func()) (string, string) {
 	return <-outCh, <-errCh
 }
 
-// runCLI runs the real root command the way main() does, waiting for the telemetry post after Execute.
+// runCLI runs the real root command the way main() does, applying the bounded exit wait after Execute.
 func runCLI(t *testing.T, args ...string) cliRun {
 	t.Helper()
 	root := newRootCmd()
