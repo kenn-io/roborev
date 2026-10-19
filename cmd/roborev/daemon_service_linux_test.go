@@ -185,17 +185,80 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 	}
 }
 
+func TestRecoverDaemonRechecksLiveVersionAfterProbeFailure(t *testing.T) {
+	for _, liveVersion := range []string{version.Version, "v-old"} {
+		t.Run(liveVersion, func(t *testing.T) {
+			stubServiceRecovery(t)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/api/ping", r.URL.Path)
+				_, _ = fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":1234,"version":%q}`, liveVersion)
+			}))
+			defer server.Close()
+			// Discovery returns the runtime record's version, which can disagree
+			// with the live API response that triggered recovery.
+			original := &daemon.RuntimeInfo{PID: 1234, Address: strings.TrimPrefix(server.URL, "http://"), Version: version.Version}
+			current := original
+			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return current, nil }
+			findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
+				return &daemonService{unit: "fixture.service", executable: "/proc/self/exe", mainPID: pid, serviceType: "notify"}, nil
+			}
+			drains, starts := 0, 0
+			drainManagedDaemon = func(*daemon.RuntimeInfo) error { drains++; return nil }
+			startDaemonService = func(context.Context, string) error {
+				starts++
+				current = &daemon.RuntimeInfo{PID: 5678, Version: version.Version}
+				return nil
+			}
+			serviceMainPID = func(context.Context, string) (int, error) { return current.PID, nil }
+			require.NoError(t, recoverDaemon(original, errors.New("earlier probe timed out")))
+			want := 1
+			if liveVersion == version.Version {
+				want = 0
+			}
+			assert.Equal(t, want, drains)
+			assert.Equal(t, want, starts)
+		})
+	}
+}
+
+func TestUnmanagedRecoveryDrainsDiscoveredRuntimes(t *testing.T) {
+	stubServiceRecovery(t)
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	runtimes := []*daemon.RuntimeInfo{{PID: 1234, Version: "v-old"}, {PID: 2345, Version: "v-old"}}
+	original := runtimes[0]
+	findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
+	getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
+		if len(runtimes) == 0 {
+			return nil, os.ErrNotExist
+		}
+		return runtimes[0], nil
+	}
+	var drained []int
+	drainManagedDaemon = func(info *daemon.RuntimeInfo) error {
+		drained = append(drained, info.PID)
+		runtimes = runtimes[1:]
+		return nil
+	}
+	starts := 0
+	startDaemonForEnsure = startDaemon
+	startDaemonDetached = func(context.Context, detachedDaemonOptions) error {
+		starts++
+		runtimes = []*daemon.RuntimeInfo{{PID: 5678, Version: version.Version}}
+		return nil
+	}
+	require.NoError(t, recoverDaemon(original, nil))
+	assert.Equal(t, []int{1234, 2345}, drained)
+	assert.Equal(t, 1, starts, "Manager must start the replacement instead of reusing a second old daemon")
+}
+
 func TestServiceRecoveryPersistsPauseBeforeDrain(t *testing.T) {
 	for _, tc := range []struct {
 		name               string
 		paused, failPause  bool
-		probeErr           error
 		wantPause, drained bool
 	}{
 		{name: "pause", paused: true, wantPause: true, drained: true},
 		{name: "pause write failure", paused: true, failPause: true, wantPause: true},
-		{name: "failed version probe", paused: true, probeErr: errors.New("probe failed"), wantPause: true, drained: true},
-		{name: "pause write failure after failed version probe", paused: true, failPause: true, probeErr: errors.New("probe failed"), wantPause: true},
 		{name: "unpause", drained: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -225,7 +288,7 @@ func TestServiceRecoveryPersistsPauseBeforeDrain(t *testing.T) {
 				current.Store(&daemon.RuntimeInfo{PID: 5678, Version: version.Version})
 				return nil
 			}
-			err := recoverDaemon(old, tc.probeErr)
+			err := recoverDaemon(old, nil)
 			var want []string
 			if tc.wantPause {
 				want = append(want, "/api/queue/pause")
@@ -455,7 +518,12 @@ func TestUnmanagedRecoveryReleasesLockBeforeEnsure(t *testing.T) {
 			current := &daemon.RuntimeInfo{PID: 1234}
 			findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
 			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return current, nil }
-			drainManagedDaemon = func(*daemon.RuntimeInfo) error { return drainErr }
+			drainManagedDaemon = func(*daemon.RuntimeInfo) error {
+				if drainErr == nil {
+					current = nil
+				}
+				return drainErr
+			}
 			starts := 0
 			startDaemonForEnsure = func() error {
 				starts++
