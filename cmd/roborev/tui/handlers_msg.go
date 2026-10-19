@@ -1720,7 +1720,7 @@ func (m model) handleClosedResultMsg(msg closedResultMsg) (tea.Model, tea.Cmd) {
 
 	if msg.err != nil {
 		if isCurrentRequest {
-			if msg.newState && msg.fromKey {
+			if msg.fromKey {
 				actionCmd = m.reportAction(telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: telemetry.EventReviewClosed})
 			}
 			if msg.reviewView {
@@ -2517,7 +2517,6 @@ func (m model) handleFixTriggerResultMsg(
 		), 3*time.Second, viewTasks)
 		return m, m.requestFetchFixJobs()
 	}
-	return m, nil
 }
 
 // handlePatchResultMsg processes patch fetch results.

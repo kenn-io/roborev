@@ -1888,27 +1888,33 @@ review, synthesis and compact output.
     nonquiet `fix` output. CLI fixes from `fix`, `refine`, and `analyze --fix`
     report `finding_fixed` when they commit. CLI actions require terminal output
     and exclude agents and `--from-skill`.
-- Reopens, automatic closes, prompt reads, and analysis reads stay silent.
+- Successful reopens, automatic closes, prompt reads, and analysis reads stay
+    silent.
 - With a remote `--server`, CLI events use an already-running local daemon and
     its installation ID. Without a local daemon, events are dropped. Reporting
     never starts a daemon.
 
-Each shown core action failure sends `error_shown` with `surface=web|tui|cli`
-and `kind=review_viewed|finding_fixed|review_closed`, without a daily limit.
-Failures use the same action and output gates as successful reports, including
-errors shown inside continuing fix and refine loops. Prompt reads, analysis
-without fixing, validation errors, reopens, and missing reviews in `show` stay
-silent. CLI reporting requires a terminal and excludes agents and
-`--from-skill`.
+Shown core action failures send `error_shown` with `surface=web|tui|cli` and
+`kind=review_viewed|finding_fixed|review_closed`, without a daily limit. Failed
+closes and reopens both count as `review_closed`. The browser's failed-job alert
+counts as `review_viewed`; the TUI's failed-job pane stays silent. CLI `wait`,
+`review --wait`, and `compact --wait` count request and transport failures,
+while failed-job results stay silent. Errors shown inside continuing fix and
+refine loops count, including agent-failure warnings printed in quiet mode.
+Prompt reads, analysis without fixing, validation errors, and missing reviews in
+`show` stay silent. CLI reporting requires a terminal and excludes agents and
+`--from-skill`. Daemon-unreachable CLI errors can't be counted because reporting
+uses the daemon.
 
 The daemon sends `sync_failed` when a full sync pass fails after a successful
 pass in the same process, once per PostgreSQL outage, with
 `sync_source=postgres` and `reason=auth|network|timeout|other`. A successful
-full push and pull allows the next outage to report. Local SQLite and
-configuration errors stay silent and leave the source's state unchanged. Outage
-state resets when the daemon restarts; reporting resumes after a full pass
-succeeds. Unlisted `kind`, `reason`, and `sync_source` values become `other`.
-Neither event contains error text.
+full push and pull allows the next outage to report. Row-specific PostgreSQL
+data errors with SQLSTATE class 22 or 23, local SQLite errors, and configuration
+errors stay silent and leave the source's state unchanged. Outage state resets
+when the daemon restarts; reporting resumes after a full pass succeeds. Unlisted
+`kind`, `reason`, and `sync_source` values become `other`. Neither event
+contains error text.
 
 The daemon deduplicates successful core action reports per day, so clients may
 repeat them.

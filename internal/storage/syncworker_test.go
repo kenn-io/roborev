@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -212,6 +213,9 @@ func TestSyncFailureOutages(t *testing.T) {
 	worker.observeSync(remote) // No successful full pass yet.
 	assert.Empty(t, reasons)
 	worker.observeSync(nil)
+	worker.observeSync(&syncSourceError{&pgconn.PgError{Code: "22001"}})
+	worker.observeSync(&syncSourceError{&pgconn.PgError{Code: "23505"}})
+	assert.Empty(t, reasons)
 	worker.observeSync(errors.New("local SQLite failure"))
 	worker.observeSync(remote)
 	worker.observeSync(remote)
@@ -222,6 +226,9 @@ func TestSyncFailureOutages(t *testing.T) {
 	worker.observeSync(nil)
 	worker.observeSync(&syncSourceError{&pgconn.PgError{Code: "28P01"}})
 	assert.Equal(t, []string{"timeout", "auth"}, reasons)
+	worker.observeSync(nil)
+	worker.observeSync(&syncSourceError{&pgconn.PgError{Code: "25006"}})
+	assert.Equal(t, []string{"timeout", "auth", "other"}, reasons)
 }
 
 func TestSyncFailureReason(t *testing.T) {
@@ -232,6 +239,10 @@ func TestSyncFailureReason(t *testing.T) {
 	}{
 		{&pgconn.PgError{Code: "28P01"}, "auth"},
 		{&pgconn.PgError{Code: "42501"}, "auth"},
+		{io.EOF, "network"},
+		{io.ErrUnexpectedEOF, "network"},
+		{net.ErrClosed, "network"},
+		{pgconn.ErrConnClosed, "network"},
 		{&net.OpError{Op: "dial", Err: errors.New("connection refused")}, "network"},
 		{context.DeadlineExceeded, "timeout"},
 		{&net.DNSError{IsTimeout: true}, "timeout"},

@@ -95,10 +95,16 @@
 {#if stores.roborevReview?.isLoading()}
   <div class="review-state">Loading review…</div>
 {:else if failed}
-  <div class="review-state review-failure" role="alert">
-    <strong>Review failed</strong>
-    <p>{failureReason}</p>
-  </div>
+  {#key selectedJob?.id}
+    <div
+      class="review-state review-failure"
+      role="alert"
+      {@attach () => reportErrorShown("review_viewed")}
+    >
+      <strong>Review failed</strong>
+      <p>{failureReason}</p>
+    </div>
+  {/key}
 {:else if RichReviewContent}
   <RichReviewContent
     {output}

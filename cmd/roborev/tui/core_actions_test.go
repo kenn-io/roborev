@@ -172,7 +172,7 @@ func TestCoreActionExplicitClose(t *testing.T) {
 		{name: "control socket", result: closedResultMsg{newState: true}},
 		{name: "reopen", result: closedResultMsg{fromKey: true}},
 		{name: "failure", result: closedResultMsg{newState: true, fromKey: true, err: errors.New("failed")}, count: 1},
-		{name: "reopen failure", result: closedResultMsg{fromKey: true, err: errors.New("failed")}},
+		{name: "reopen failure", result: closedResultMsg{fromKey: true, err: errors.New("failed")}, count: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newCoreActionReviewVisitFixture(t)

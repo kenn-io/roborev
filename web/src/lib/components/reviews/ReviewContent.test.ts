@@ -65,7 +65,8 @@ describe("ReviewContent", () => {
     expect(errorReports).not.toHaveBeenCalled();
   });
 
-  it("shows why a failed review produced no output", () => {
+  it("reports the failed review alert once even if the renderer fails", async () => {
+    vi.useFakeTimers();
     state.output = "";
     state.notFound = true;
     state.status = "failed";
@@ -78,7 +79,9 @@ describe("ReviewContent", () => {
       "agent process exited with status 1",
     );
     expect(screen.queryByText("Review in progress…")).toBeNull();
-    expect(errorReports).not.toHaveBeenCalled();
+    expect(errorReports).toHaveBeenCalledExactlyOnceWith("review_viewed");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(errorReports).toHaveBeenCalledExactlyOnceWith("review_viewed");
   });
 
   it("explains a failed review even when no reason was recorded", () => {

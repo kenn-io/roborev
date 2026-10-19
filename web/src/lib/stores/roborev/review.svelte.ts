@@ -234,7 +234,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
             ),
           onAcknowledgedRefreshFailure: () =>
             Effect.sync(() => {
-              if (closed) reportErrorShown("review_closed");
+              reportErrorShown("review_closed");
               opts.onError?.(
                 "Review state changed, but the refreshed review is unavailable",
               );
@@ -260,7 +260,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
       operation: "close Roborev review",
       safeContext: { job_id: jobId, owner: opts.owner },
       onFailure: (failure) => {
-        if (closed) reportErrorShown("review_closed");
+        reportErrorShown("review_closed");
         opts.onError?.(
           roborevMutationFailureMessage("Failed to close review", failure),
         );

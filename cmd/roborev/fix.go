@@ -1228,9 +1228,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		fmtr.Flush()
 	}
 	if err != nil {
-		if !opts.quiet {
-			reportCLIError(cmd.OutOrStderr(), telemetry.EventFindingFixed)
-		}
+		reportCLIError(cmd.OutOrStderr(), telemetry.EventFindingFixed)
 		tracker.Reset()
 		// fixJobDirect already returns *agentLimitError for retry-path
 		// quota/session aborts; preserve it instead of re-classifying
@@ -1608,9 +1606,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 			fmtr.Flush()
 		}
 		if err != nil {
-			if !opts.quiet {
-				reportCLIError(cmd.OutOrStderr(), telemetry.EventFindingFixed)
-			}
+			reportCLIError(cmd.OutOrStderr(), telemetry.EventFindingFixed)
 			tracker.Reset()
 			// Preserve a retry-path agentLimitError without
 			// re-classifying its user-facing message string.

@@ -965,7 +965,7 @@ func TestCoreActionShownErrors(t *testing.T) {
 		{"outside repo", []string{"show"}, ""},
 		{"invalid ID", []string{"close", "garbage"}, ""},
 		{"prompt", []string{"show", "--job", "1", "--prompt"}, ""},
-		{"reopen", []string{"close", "1", "--reopen"}, ""},
+		{"reopen", []string{"close", "1", "--reopen"}, "review_closed"},
 		{"show", []string{"show", "--job", "1"}, "review_viewed"},
 		{"discovered show", []string{"show", "--job", "1"}, "review_viewed"},
 		{"quiet wait", []string{"wait", "--job", "1", "--quiet"}, ""},
@@ -1027,8 +1027,8 @@ func TestCoreActionShownErrors(t *testing.T) {
 }
 
 func TestCoreActionFailedFixLoops(t *testing.T) {
-	for _, batch := range []bool{false, true} {
-		t.Run(fmt.Sprintf("batch=%t", batch), func(t *testing.T) {
+	for _, mode := range []struct{ batch, quiet bool }{{}, {batch: true}, {quiet: true}, {batch: true, quiet: true}} {
+		t.Run(fmt.Sprintf("batch=%t/quiet=%t", mode.batch, mode.quiet), func(t *testing.T) {
 			resetCLIUse(t)
 			cliOutputIsTerminal = func(io.Writer) bool { return true }
 			repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
@@ -1047,10 +1047,10 @@ func TestCoreActionFailedFixLoops(t *testing.T) {
 			tester.Fail = true
 			tracker := &fixSessionTracker{base: tester, out: io.Discard}
 			out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
-				if batch {
-					return processFixBatch(t.Context(), cmd, currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}, []int64{42}, 0, fixOptions{agentName: "test", classify: agent.ClassifyLimit}, tracker)
+				if mode.batch {
+					return processFixBatch(t.Context(), cmd, currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}, []int64{42}, 0, fixOptions{agentName: "test", quiet: mode.quiet, classify: agent.ClassifyLimit}, tracker)
 				}
-				return runFixWithSeen(cmd, []int64{42}, fixOptions{agentName: "test"}, map[int64]bool{}, tracker)
+				return runFixWithSeen(cmd, []int64{42}, fixOptions{agentName: "test", quiet: mode.quiet}, map[int64]bool{}, tracker)
 			})
 			require.NoError(t, err, out)
 			assert.Contains(t, out, "Warning: error")

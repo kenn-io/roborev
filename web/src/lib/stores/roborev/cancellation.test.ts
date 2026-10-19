@@ -463,7 +463,7 @@ describe("review close reporting", () => {
     if (action === "close" || action === "close refresh failure")
       expect(actionReports).toHaveBeenCalledExactlyOnceWith("review_closed");
     else expect(actionReports).not.toHaveBeenCalled();
-    if (action === "failure" || action === "close refresh failure")
+    if (action.includes("failure"))
       expect(errorReports).toHaveBeenCalledExactlyOnceWith("review_closed");
     else expect(errorReports).not.toHaveBeenCalled();
   });

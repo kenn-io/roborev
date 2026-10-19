@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -48,7 +49,7 @@ func (w *SyncWorker) observeSync(err error) {
 		w.working = true
 		return
 	}
-	if _, remote := errors.AsType[*syncSourceError](err); !remote || errors.Is(err, errReviewAttemptPending) || !w.working {
+	if _, remote := errors.AsType[*syncSourceError](err); !remote || syncDataError(err) || errors.Is(err, errReviewAttemptPending) || !w.working {
 		return
 	}
 	w.working = false
@@ -66,6 +67,11 @@ type syncSourceError struct{ err error }
 func (e *syncSourceError) Error() string { return e.err.Error() }
 func (e *syncSourceError) Unwrap() error { return e.err }
 
+func syncDataError(err error) bool {
+	pgErr, ok := errors.AsType[*pgconn.PgError](err)
+	return ok && (strings.HasPrefix(pgErr.Code, "22") || strings.HasPrefix(pgErr.Code, "23"))
+}
+
 func syncFailureReason(err error) string {
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok &&
 		(strings.HasPrefix(pgErr.Code, "28") || pgErr.Code == "42501") {
@@ -75,7 +81,7 @@ func syncFailureReason(err error) string {
 	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()) {
 		return "timeout"
 	}
-	if netErr != nil {
+	if netErr != nil || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, net.ErrClosed) || errors.Is(err, pgconn.ErrConnClosed) {
 		return "network"
 	}
 	return "other"
@@ -748,7 +754,7 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 
 			pgRepoID, err := pool.GetOrCreateRepo(ctx, j.RepoIdentity)
 			if err != nil {
-				if syncFailureReason(err) != "other" {
+				if !syncDataError(err) {
 					w.passError = &syncSourceError{err}
 				}
 				log.Printf("Sync: failed to get/create repo for job %s: %v", j.UUID, err)
@@ -759,7 +765,7 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 			if j.CommitSHA != "" {
 				id, err := pool.GetOrCreateCommit(ctx, pgRepoID, j.CommitSHA, j.CommitAuthor, j.CommitSubject, j.CommitTimestamp)
 				if err != nil {
-					if syncFailureReason(err) != "other" {
+					if !syncDataError(err) {
 						w.passError = &syncSourceError{err}
 					}
 					log.Printf("Sync: failed to get/create commit for job %s: %v", j.UUID, err)
@@ -779,7 +785,7 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 		if len(preparedJobs) > 0 {
 			success, err := pool.BatchUpsertJobs(ctx, preparedJobs)
 			if err != nil {
-				if syncFailureReason(err) != "other" {
+				if !syncDataError(err) {
 					w.passError = &syncSourceError{err}
 				}
 				log.Printf("Sync: batch upsert jobs error: %v", err)
@@ -857,7 +863,7 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	if len(responses) > 0 {
 		success, err := pool.BatchInsertResponses(ctx, responses)
 		if err != nil {
-			if syncFailureReason(err) != "other" {
+			if !syncDataError(err) {
 				w.passError = &syncSourceError{err}
 			}
 			log.Printf("Sync: batch insert responses error: %v", err)
