@@ -826,11 +826,14 @@ func TestCoreActionDefaultOutputStreams(t *testing.T) {
 }
 
 func TestCoreActionRemoteLocalFallback(t *testing.T) {
-	for _, mode := range []string{"running", "missing", "timeout", "opt-out", "skill", "redirected", "latest observed"} {
+	for _, mode := range []string{"running", "missing", "timeout", "opt-out", "skill", "redirected", "latest observed", "unobserved local"} {
 		t.Run(mode, func(t *testing.T) {
 			resetCLIUse(t)
 			md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
 			parsedServerEndpoint = &daemon.DaemonEndpoint{Network: "https", Address: "remote.example.com"}
+			if mode == "unobserved local" {
+				parsedServerEndpoint = new(mustParseEndpoint(t, md.Server.URL))
+			}
 			cliTelemetryEnabled = func() bool { return mode != "opt-out" }
 			fromSkill = mode == "skill"
 			original := getAnyRunningDaemonForStart
@@ -868,7 +871,7 @@ func TestCoreActionRemoteLocalFallback(t *testing.T) {
 			} else {
 				assert.Empty(t, rec.telemetryPosts())
 			}
-			if mode == "latest observed" || mode == "opt-out" || mode == "skill" || mode == "redirected" {
+			if mode == "latest observed" || mode == "opt-out" || mode == "skill" || mode == "redirected" || mode == "unobserved local" {
 				assert.Zero(t, calls)
 			} else {
 				assert.Equal(t, 1, calls)
@@ -964,6 +967,7 @@ func TestCoreActionShownErrors(t *testing.T) {
 		{"prompt", []string{"show", "--job", "1", "--prompt"}, ""},
 		{"reopen", []string{"close", "1", "--reopen"}, ""},
 		{"show", []string{"show", "--job", "1"}, "review_viewed"},
+		{"discovered show", []string{"show", "--job", "1"}, "review_viewed"},
 		{"quiet wait", []string{"wait", "--job", "1", "--quiet"}, ""},
 		{"missing review", []string{"show", "--job", "1"}, ""},
 		{"runtime usage", []string{"show", "--job"}, ""},
@@ -988,13 +992,23 @@ func TestCoreActionShownErrors(t *testing.T) {
 			var discoveries atomic.Int32
 			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
 				discoveries.Add(1)
+				if tc.name == "discovered show" {
+					return &daemon.RuntimeInfo{Network: "tcp", Address: strings.TrimPrefix(md.Server.URL, "http://")}, nil
+				}
 				return nil, os.ErrNotExist
 			}
 			cliOutputIsTerminal = func(io.Writer) bool { return true }
 			args := append([]string{"--server", md.Server.URL}, tc.args...)
+			if tc.name == "discovered show" {
+				args = tc.args
+			}
 			run := runCLI(t, args...)
 			require.Error(t, run.err)
-			assert.Zero(t, discoveries.Load(), "an explicit local server receives the failure event directly")
+			if tc.name == "discovered show" {
+				assert.Equal(t, int32(1), discoveries.Load())
+			} else {
+				assert.Zero(t, discoveries.Load(), "an explicit local server receives the failure event directly")
+			}
 			posts := rec.telemetryPosts()
 			var errors []recordedTelemetry
 			for _, post := range posts {

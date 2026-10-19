@@ -19,6 +19,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	gansi "charm.land/glamour/v2/ansi"
 	gitrepo "go.kenn.io/kit/git/repo"
+	"go.kenn.io/kit/telemetry/posthog"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
@@ -1526,15 +1527,7 @@ func (m *model) requestFetchFixJobs() tea.Cmd {
 	return m.fetchFixJobs()
 }
 
-func (m model) reportAction(event string) tea.Cmd {
-	return m.reportOutcome(event, "")
-}
-
-func (m model) reportError(kind string) tea.Cmd {
-	return m.reportOutcome(telemetry.EventErrorShown, kind)
-}
-
-func (m model) reportOutcome(event, kind string) tea.Cmd {
+func (m model) reportAction(event string, props map[string]any) tea.Cmd {
 	if !telemetry.EnabledFromEnv() {
 		return nil
 	}
@@ -1542,12 +1535,11 @@ func (m model) reportOutcome(event, kind string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(m.apiContext(), telemetry.NotificationTimeout)
 		defer cancel()
-		var err error
-		if kind != "" {
-			_, err = telemetry.PostErrorShown(ctx, m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath, telemetry.SurfaceTUI, kind)
-		} else {
-			_, err = telemetry.PostReviewEvent(ctx, m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceTUI)
+		if props == nil {
+			props = make(map[string]any)
 		}
+		props[telemetry.PropertySurface] = telemetry.SurfaceTUI
+		_, err := posthog.PostEvent(ctx, m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath, event, props)
 		if event == telemetry.EventReviewViewed {
 			return screenDeliveryMsg{day: day, err: err}
 		}

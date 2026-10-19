@@ -1226,7 +1226,7 @@ func (m model) handleReviewFollowErrMsg(msg reviewFollowErrMsg) (tea.Model, tea.
 			fmt.Sprintf("Could not open review for job #%d: %v", msg.jobID, msg.err),
 			3*time.Second, origin,
 		)
-		return m, m.reportError(telemetry.EventReviewViewed)
+		return m, m.reportAction(telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: telemetry.EventReviewViewed})
 	}
 	return m, nil
 }
@@ -1318,7 +1318,7 @@ func (m model) handleReviewErrMsg(msg reviewErrMsg) (tea.Model, tea.Cmd) {
 			fmt.Sprintf("Could not open review for job #%d: %v", msg.jobID, msg.err),
 			3*time.Second, origin,
 		)
-		return m, tea.Batch(reconnectCmd, m.reportError(telemetry.EventReviewViewed))
+		return m, tea.Batch(reconnectCmd, m.reportAction(telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: telemetry.EventReviewViewed}))
 	}
 	return m, reconnectCmd
 }
@@ -1699,7 +1699,7 @@ func (m model) handleCommitMsgMsg(
 func (m model) handleClosedResultMsg(msg closedResultMsg) (tea.Model, tea.Cmd) {
 	var actionCmd tea.Cmd
 	if msg.err == nil && msg.newState && msg.fromKey {
-		actionCmd = m.reportAction(telemetry.EventReviewClosed)
+		actionCmd = m.reportAction(telemetry.EventReviewClosed, nil)
 	}
 	// A failed close is rolled back by restoring the selection the
 	// optimistic path moved away from -- a selection change like any
@@ -1720,7 +1720,7 @@ func (m model) handleClosedResultMsg(msg closedResultMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		if isCurrentRequest {
 			if msg.newState && msg.fromKey {
-				actionCmd = m.reportError(telemetry.EventReviewClosed)
+				actionCmd = m.reportAction(telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: telemetry.EventReviewClosed})
 			}
 			if msg.reviewView {
 				if m.currentReview != nil && m.currentReview.ID == msg.reviewID {
@@ -2541,7 +2541,7 @@ func (m model) handleApplyPatchResultMsg(
 ) (tea.Model, tea.Cmd) {
 	var actionCmd tea.Cmd
 	if msg.success && !msg.commitFailed {
-		actionCmd = m.reportAction(telemetry.EventFindingFixed)
+		actionCmd = m.reportAction(telemetry.EventFindingFixed, nil)
 	}
 	if msg.needWorktree {
 		m.worktreeConfirmJobID = msg.jobID
@@ -2560,7 +2560,7 @@ func (m model) handleApplyPatchResultMsg(
 		}
 		return m, tea.Batch(cmds...)
 	} else if msg.commitFailed {
-		actionCmd = m.reportError(telemetry.EventFindingFixed)
+		actionCmd = m.reportAction(telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: telemetry.EventFindingFixed})
 		detail := fmt.Sprintf(
 			"Job #%d: %v", msg.jobID, msg.err,
 		)
@@ -2571,9 +2571,7 @@ func (m model) handleApplyPatchResultMsg(
 		}
 		m.setFlash(detail, 8*time.Second, viewTasks)
 	} else if msg.err != nil {
-		if !msg.success {
-			actionCmd = m.reportError(telemetry.EventFindingFixed)
-		}
+		actionCmd = tea.Batch(actionCmd, m.reportAction(telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: telemetry.EventFindingFixed}))
 		m.setFlash(fmt.Sprintf(
 			"Apply failed: %v", msg.err,
 		), 3*time.Second, viewTasks)

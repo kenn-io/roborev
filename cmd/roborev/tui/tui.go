@@ -678,8 +678,6 @@ type model struct {
 	// and this epoch orders the responses that are still for the current
 	// job/attempt.
 	reviewFetchSeq uint64
-	// Identifies a review load selected by input, until its outcome arrives.
-	splitReviewIntentJobID int64
 
 	// reconcileFetchJobID is the job ID of the outstanding review fetch
 	// dispatched by splitReconcileDetail's Done branch (0 = none). It is
@@ -1335,24 +1333,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		read := (key || mouse) && !quit && (m.currentView == viewReview || m.splitActive()) &&
 			m.selectedReviewLoaded() && m.currentReview.ID != 0 &&
 			m.currentReview.Job != nil && m.currentReview.Job.IsReadableReview()
-		if rm.splitReviewIntentJobID != rm.selectedJobID || rm.selectedReviewLoaded() {
-			rm.splitReviewIntentJobID = 0
-		}
-		if (key || mouse) && !quit && rm.splitActive() && !rm.selectedReviewLoaded() && rm.splitDetailErr == nil {
-			job, _ := rm.selectedJob()
-			if job != nil && job.Status == storage.JobStatusDone && job.IsReadableReview() {
-				rm.splitReviewIntentJobID = job.ID
-			}
-		}
-		if rm.splitReviewIntentJobID > 0 && rm.splitActive() && rm.splitDetailErr != nil {
-			if m.pendingReviewOpenJobID == 0 {
-				cmd = tea.Batch(cmd, rm.reportError(telemetry.EventReviewViewed))
-			}
-			rm.splitReviewIntentJobID = 0
-		}
 		if read && !rm.reviewReadSent {
 			rm.reviewReadSent = true
-			cmd = tea.Batch(cmd, rm.reportAction(telemetry.EventReviewViewed))
+			cmd = tea.Batch(cmd, rm.reportAction(telemetry.EventReviewViewed, nil))
 		}
 		for _, screen := range rm.screensShown() {
 			if slices.Contains(rm.screensSent, screen) {

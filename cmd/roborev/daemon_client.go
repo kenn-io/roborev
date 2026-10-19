@@ -60,14 +60,12 @@ func waitForJob(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet
 		case storage.JobStatusFailed:
 			if !quiet {
 				cmd.Printf(" failed!\n")
-				reportCLIError(cmd.OutOrStderr(), telemetry.EventReviewViewed)
 			}
 			return fmt.Errorf("review failed: %s", job.Error)
 
 		case storage.JobStatusCanceled:
 			if !quiet {
 				cmd.Printf(" canceled!\n")
-				reportCLIError(cmd.OutOrStderr(), telemetry.EventReviewViewed)
 			}
 			return fmt.Errorf("review was canceled")
 

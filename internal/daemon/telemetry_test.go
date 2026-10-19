@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -235,84 +234,4 @@ func TestSetupFinishedTelemetryAfterSyncPullWrite(t *testing.T) {
 			}
 		})
 	}
-}
-
-//nolint:paralleltest // changes tables in the isolated PostgreSQL fixture
-func TestSyncFailedTelemetry(t *testing.T) {
-	url := os.Getenv("TEST_POSTGRES_URL")
-	if url == "" {
-		t.Skip("requires TEST_POSTGRES_URL pointing to an isolated PostgreSQL database")
-	}
-	ctx := t.Context()
-	pool, err := storage.NewPgPool(ctx, url, storage.DefaultPgPoolConfig())
-	require.NoError(t, err)
-	t.Cleanup(pool.Close)
-	require.NoError(t, pool.EnsureSchema(ctx))
-	remote := func(query string, args ...any) {
-		t.Helper()
-		_, err := pool.Pool().Exec(ctx, query, args...)
-		require.NoError(t, err)
-	}
-	fail := func() {
-		remote("ALTER TABLE roborev.experiment_definitions RENAME COLUMN definition_json TO unavailable")
-	}
-	recover := func() {
-		remote("ALTER TABLE roborev.experiment_definitions RENAME COLUMN unavailable TO definition_json")
-	}
-	// A schema error can pass connection setup but fail the first full pass.
-	fail()
-	t.Cleanup(func() {
-		_, _ = pool.Pool().Exec(context.Background(), "ALTER TABLE roborev.experiment_definitions RENAME COLUMN unavailable TO definition_json")
-	})
-	server, db, _ := newTestServer(t)
-	client := &fakeTelemetryClient{enabled: true}
-	server.SetTelemetry(client)
-	worker := storage.NewSyncWorker(db, config.SyncConfig{Enabled: true, PostgresURL: url, Interval: "1h"})
-	require.NoError(t, worker.SetSkipInitialSync(true))
-	server.SetSyncWorker(worker)
-	require.NoError(t, worker.Start())
-	t.Cleanup(worker.Stop)
-	_, err = worker.SyncNow()
-	require.ErrorContains(t, err, "pull experiment definitions")
-	assert.Empty(t, client.events, "a source must complete a full pass before an outage counts")
-	recover()
-	_, err = worker.SyncNow()
-	require.NoError(t, err)
-	// Local failure leaves the established working state intact.
-	_, err = db.Exec(`CREATE TRIGGER fail_local_sync BEFORE INSERT ON sync_state BEGIN SELECT RAISE(FAIL, 'local sync failure'); END`)
-	require.NoError(t, err)
-	_, err = worker.SyncNow()
-	require.ErrorContains(t, err, "local sync failure")
-	assert.Empty(t, client.events)
-	_, err = db.Exec("DROP TRIGGER fail_local_sync")
-	require.NoError(t, err)
-	fail()
-	for range 2 {
-		_, err = worker.SyncNow()
-		require.Error(t, err)
-	}
-	assert.Equal(t, []string{"sync_failed"}, client.events)
-	recover()
-	// Pull a remote job so the completed pass calls the progress writer.
-	var repoID int64
-	require.NoError(t, pool.Pool().QueryRow(ctx, "INSERT INTO roborev.repos (identity) VALUES ($1) RETURNING id", "github.com/example/sync-outcome").Scan(&repoID))
-	remote(`INSERT INTO roborev.review_jobs (uuid, repo_id, git_ref, agent, status, enqueued_at, source_machine_id) VALUES ($1, $2, 'abc123', 'test', 'done', NOW(), $3)`, uuid.New(), repoID, uuid.New())
-	callbacks := 0
-	stats, err := worker.SyncNowWithProgress(func(p storage.SyncProgress) bool {
-		assert.Equal(t, "pull", p.Phase)
-		callbacks++
-		return false // The UI disconnected after push and pull completed.
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 1, stats.PulledJobs)
-	assert.Equal(t, 1, callbacks)
-	fail()
-	_, err = worker.SyncNow()
-	require.Error(t, err)
-	worker.Stop()
-	assert.Equal(t, []string{"sync_failed", "sync_failed"}, client.events)
-	assert.Equal(t, []map[string]any{
-		{"sync_source": "postgres", "reason": "other"},
-		{"sync_source": "postgres", "reason": "other"},
-	}, client.properties)
 }

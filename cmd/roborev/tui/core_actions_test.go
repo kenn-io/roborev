@@ -224,26 +224,20 @@ func TestCoreActionCommittedPatch(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		result applyPatchResultMsg
-		count  int
+		events []string
+		kinds  []string
 	}{
-		{name: "committed", result: applyPatchResultMsg{success: true}, count: 1},
-		{name: "commit failure", result: applyPatchResultMsg{success: true, commitFailed: true, err: errors.New("commit failed")}, count: 1},
-		{name: "apply failure", result: applyPatchResultMsg{err: errors.New("apply failed")}, count: 1},
-		{name: "bookkeeping failure", result: applyPatchResultMsg{success: true, err: errors.New("mark failed")}, count: 1},
+		{name: "committed", result: applyPatchResultMsg{success: true}, events: []string{"finding_fixed"}, kinds: []string{""}},
+		{name: "commit failure", result: applyPatchResultMsg{success: true, commitFailed: true, err: errors.New("commit failed")}, events: []string{"error_shown"}, kinds: []string{"finding_fixed"}},
+		{name: "apply failure", result: applyPatchResultMsg{err: errors.New("apply failed")}, events: []string{"error_shown"}, kinds: []string{"finding_fixed"}},
+		{name: "bookkeeping failure", result: applyPatchResultMsg{success: true, err: errors.New("mark failed")}, events: []string{"finding_fixed", "error_shown"}, kinds: []string{"", "finding_fixed"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newCoreActionReviewVisitFixture(t)
 			_, cmd := f.m.handleApplyPatchResultMsg(tc.result)
 			collectMsgs(cmd)
-			require.Len(t, f.transport.events, tc.count)
-			if tc.count > 0 {
-				if tc.result.commitFailed || !tc.result.success {
-					assert.Equal(t, "error_shown", f.transport.events[0])
-					assert.Equal(t, "finding_fixed", f.transport.kinds[0])
-				} else {
-					assert.Equal(t, "finding_fixed", f.transport.events[0])
-				}
-			}
+			assert.Equal(t, tc.events, f.transport.events)
+			assert.Equal(t, tc.kinds, f.transport.kinds)
 		})
 	}
 }
@@ -275,52 +269,23 @@ func TestCoreActionUnreadReviews(t *testing.T) {
 //nolint:paralleltest // telemetry environment variables
 func TestCoreActionReviewOpenFailure(t *testing.T) {
 	enableTelemetryEnv(t)
-	f := newCoreActionReviewVisitFixture(t)
-	response := f.review()
-	f.m.pendingReviewOpenJobID = response.jobID
-	_, cmd := f.m.handleReviewErrMsg(reviewErrMsg{
-		jobID: response.jobID, gen: response.gen, fetchSeq: response.fetchSeq,
-		attempt: response.attempt, err: errors.New("load failed"),
-	})
-	collectMsgs(cmd)
-	assert.Equal(t, []string{"error_shown"}, f.transport.events)
-	assert.Equal(t, []string{"review_viewed"}, f.transport.kinds)
-}
-
-//nolint:paralleltest // telemetry environment variables
-func TestCoreActionSelectedSplitLoadFailure(t *testing.T) {
-	enableTelemetryEnv(t)
-	for _, mode := range []string{"selected", "refresh", "fix output", "stale", "hidden"} {
-		t.Run(mode, func(t *testing.T) {
-			f := newCoreActionReviewVisitFixture(t)
-			job, _ := f.m.selectedJob()
-			require.NotNil(t, job)
-			job.Status, job.JobType = storage.JobStatusDone, storage.JobTypeReview
-			if mode == "fix output" {
-				job.JobType = storage.JobTypeFix
-			}
-			if mode != "refresh" {
-				f.update(tea.KeyPressMsg{Code: '0'})
-			}
-			msg := reviewFollowErrMsg{
-				jobID: f.m.selectedJobID, gen: f.m.detailFollowGen,
-				fetchSeq: f.m.reviewFetchSeq, attempt: f.m.jobAttemptGen[f.m.selectedJobID], err: errors.New("load failed"),
-			}
-			if mode == "stale" {
-				msg.gen++
-			}
-			if mode == "hidden" {
-				f.m.currentView = viewHelp
-			}
-			f.update(msg)
-			if mode == "selected" {
-				assert.Equal(t, []string{"error_shown"}, f.transport.events)
-				f.update(displayTickMsg{})
-				f.update(tea.KeyPressMsg{Code: '0'})
-				assert.Equal(t, []string{"error_shown"}, f.transport.events)
-			} else {
-				assert.Empty(t, f.transport.events)
-			}
-		})
+	for _, follow := range []bool{false, true} {
+		f := newCoreActionReviewVisitFixture(t)
+		response := f.review()
+		f.m.pendingReviewOpenJobID = response.jobID
+		msg := reviewErrMsg{
+			jobID: response.jobID, gen: response.gen, fetchSeq: response.fetchSeq,
+			attempt: response.attempt, err: errors.New("load failed"),
+		}
+		var cmd tea.Cmd
+		if follow {
+			f.m.pendingReviewOpenRetried = true
+			_, cmd = f.m.handleReviewFollowErrMsg(reviewFollowErrMsg(msg))
+		} else {
+			_, cmd = f.m.handleReviewErrMsg(msg)
+		}
+		collectMsgs(cmd)
+		assert.Equal(t, []string{"error_shown"}, f.transport.events)
+		assert.Equal(t, []string{"review_viewed"}, f.transport.kinds)
 	}
 }

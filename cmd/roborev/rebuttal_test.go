@@ -103,6 +103,9 @@ func TestCommentRebuttalRecordsBeforeClose(t *testing.T) {
 			if valid && !tc.staleOriginalReview && !tc.closeFails {
 				require.Len(t, closes, 1)
 				assert.JSONEq(t, `{"event":"review_closed","properties":{"surface":"cli"}}`, closes[0])
+			} else if tc.closeFails {
+				require.Len(t, closes, 1)
+				assert.JSONEq(t, `{"event":"error_shown","properties":{"kind":"review_closed","surface":"cli"}}`, closes[0])
 			} else {
 				assert.Empty(t, closes)
 			}
