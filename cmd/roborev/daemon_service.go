@@ -81,8 +81,6 @@ func acquireRecoveryLock() (func(), error) {
 }
 
 func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
-	// Only a daemon that answered the version probe receives a pre-drain pause.
-	versionAnswered := probeErr == nil
 	ctx, cancel := context.WithTimeout(context.Background(), daemonStartTimeout)
 	snapshot, snapshotErr := findDaemonService(ctx, info.PID)
 	cancel()
@@ -164,7 +162,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 	}
 	if !vanished {
 		// Replacement workers can start before a later API request reaches SQLite.
-		if pendingStartPause != nil && *pendingStartPause && versionAnswered && responsive {
+		if pendingStartPause != nil && *pendingStartPause && responsive {
 			if _, err := current.Endpoint().APIClient(0).PauseQueue(ctx); err != nil {
 				return fail(fmt.Errorf("pause queue before shutdown: %w", err))
 			}

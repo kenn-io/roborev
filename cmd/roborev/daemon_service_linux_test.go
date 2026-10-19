@@ -194,7 +194,8 @@ func TestServiceRecoveryPersistsPauseBeforeDrain(t *testing.T) {
 	}{
 		{name: "pause", paused: true, wantPause: true, drained: true},
 		{name: "pause write failure", paused: true, failPause: true, wantPause: true},
-		{name: "failed version probe", paused: true, probeErr: errors.New("probe failed"), drained: true},
+		{name: "failed version probe", paused: true, probeErr: errors.New("probe failed"), wantPause: true, drained: true},
+		{name: "pause write failure after failed version probe", paused: true, failPause: true, probeErr: errors.New("probe failed"), wantPause: true},
 		{name: "unpause", drained: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
