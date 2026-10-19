@@ -94,6 +94,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 		}
 	}()
 	drainedUnmanaged := false
+	var unmanagedCandidates map[int]struct{}
 	for {
 		done, err := func() (bool, error) {
 			ctx, cancel := context.WithTimeout(context.Background(), daemonStartTimeout)
@@ -101,6 +102,23 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 			current, err := findDaemonForStart(ctx)
 			if err != nil {
 				return true, fmt.Errorf("rediscover daemon: %w", err)
+			}
+			if current == nil && errors.Is(snapshotErr, os.ErrNotExist) {
+				// The old PID disappeared before its owner could be captured.
+				// A user service may still be waiting for RestartSec to elapse.
+				current, err = backoff.Retry(ctx, func() (*daemon.RuntimeInfo, error) {
+					candidate, err := findDaemonForStart(ctx)
+					if err != nil {
+						return nil, backoff.Permanent(err)
+					}
+					if candidate == nil {
+						return nil, os.ErrNotExist
+					}
+					return candidate, nil
+				}, backoff.WithBackOff(backoff.NewConstantBackOff(50*time.Millisecond)), backoff.WithMaxElapsedTime(0))
+				if err != nil {
+					return true, &managedRecoveryError{"unknown", fmt.Errorf("daemon ownership uncertain after PID %d disappeared: %w", info.PID, err)}
+				}
 			}
 			responsive := current != nil
 			if !responsive && drainedUnmanaged {
@@ -132,9 +150,6 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 			if vanished {
 				// The snapshot identifies the unit only when no daemon replaced this one.
 				owner, err = snapshot, snapshotErr
-				if errors.Is(err, os.ErrNotExist) {
-					err = nil
-				}
 			}
 			if responsive && errors.Is(err, errUserManagerUnavailable) {
 				if verbose {
@@ -150,6 +165,22 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 			}
 			if owner == nil {
 				if !vanished {
+					if unmanagedCandidates == nil {
+						runtimes, err := listAllRuntimes()
+						if err != nil {
+							return true, fmt.Errorf("list unmanaged daemon runtimes: %w", err)
+						}
+						unmanagedCandidates = map[int]struct{}{current.PID: {}}
+						for _, runtime := range runtimes {
+							unmanagedCandidates[runtime.PID] = struct{}{}
+						}
+					}
+					// Drain only the initial runtime set once. A respawner can keep
+					// publishing old daemons indefinitely, including with new PIDs.
+					if _, pending := unmanagedCandidates[current.PID]; !pending {
+						return true, fmt.Errorf("outdated unmanaged daemon PID %d appeared during recovery; stop its launcher before retrying", current.PID)
+					}
+					delete(unmanagedCandidates, current.PID)
 					if err := drainManagedDaemon(current); err != nil {
 						return true, err
 					}
@@ -183,13 +214,14 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 			if err := owner.supported(); err != nil {
 				return true, fail(err)
 			}
-			if !vanished {
-				// Replacement workers can start before a later API request reaches SQLite.
-				if pendingStartPause != nil && *pendingStartPause && responsive {
-					if _, err := current.Endpoint().APIClient(0).PauseQueue(ctx); err != nil {
-						return true, fail(fmt.Errorf("pause queue before shutdown: %w", err))
-					}
+			// Discovery can miss a daemon that later answers shutdown retries.
+			// Persist pause before any drain or service start, or leave it alone.
+			if pendingStartPause != nil && *pendingStartPause {
+				if _, err := current.Endpoint().APIClient(0).PauseQueue(ctx); err != nil {
+					return true, fail(fmt.Errorf("pause queue before shutdown: %w", err))
 				}
+			}
+			if !vanished {
 				fmt.Fprintln(lifecycleOut, "Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...")
 				if err := drainManagedDaemon(current); err != nil {
 					return true, fail(err)

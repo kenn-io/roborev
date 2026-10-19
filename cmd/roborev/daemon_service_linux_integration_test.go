@@ -53,11 +53,12 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 	buildDir := t.TempDir()
 	oldBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-old", "v-old")
 	newBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-new", "v-new")
-	for _, scenario := range []string{"path with spaces", "pause", "remain after exit", "daemon start", "simple", "transient", "missing bus environment", "selection advances", "unrelated ancestor", "wrapper", "socket activating", "socket responsive"} {
+	for _, scenario := range []string{"path with spaces", "pause", "pause after discovery failure", "restart gap", "remain after exit", "daemon start", "simple", "transient", "missing bus environment", "selection advances", "unrelated ancestor", "wrapper", "socket activating", "socket responsive"} {
 		t.Run(scenario, func(t *testing.T) {
 			dataDir := t.TempDir()
 			t.Setenv("ROBOREV_DATA_DIR", dataDir)
 			t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
+			pausing := strings.HasPrefix(scenario, "pause")
 			socketActivated := strings.HasPrefix(scenario, "socket")
 			link := filepath.Join(dataDir, "roborev")
 			if scenario == "path with spaces" {
@@ -73,7 +74,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			}
 			script := writeSlowUpdateAgent(t, dataDir)
 			releaseReview := filepath.Join(dataDir, "finish-review")
-			if scenario == "pause" {
+			if pausing {
 				body, err := os.ReadFile(script)
 				require.NoError(t, err)
 				body = []byte(strings.Replace(string(body), "sleep 2", "while [ ! -f "+strconv.Quote(releaseReview)+" ]; do sleep 0.05; done", 1))
@@ -104,6 +105,9 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				start = strconv.Quote(wrapper)
 			}
 			serviceType := "Type=notify\n"
+			if scenario == "restart gap" {
+				serviceType += "Restart=always\nRestartSec=1s\n"
+			}
 			if scenario == "simple" {
 				serviceType = ""
 			}
@@ -166,12 +170,12 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				return err == nil
 			}, 15*time.Second, 50*time.Millisecond)
 			var active, queued storage.ReviewJob
-			if scenario == "selection advances" || scenario == "pause" || socketActivated {
+			if scenario == "selection advances" || pausing || socketActivated {
 				repo := testutil.NewGitRepo(t)
 				sha := repo.CommitFile("first.txt", "first\n", "first")
 				active = enqueueUpdateJob(t, original.Endpoint(), repo.Path(), sha)
 				waitForUpdateJobStatus(t, original.Endpoint(), active.ID, storage.JobStatusRunning, 10*time.Second)
-				if scenario == "pause" || socketActivated {
+				if pausing || socketActivated {
 					queued = enqueueUpdateJob(t, original.Endpoint(), repo.Path(), repo.CommitFile("second.txt", "second\n", "second"))
 				}
 			}
@@ -190,8 +194,34 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			} else {
 				installRoborev(t, newBinary, link)
 			}
+			if scenario == "restart gap" {
+				command, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", original.PID))
+				require.NoError(t, err)
+				require.Contains(t, string(command), link)
+				process, err := os.FindProcess(original.PID)
+				require.NoError(t, err)
+				require.NoError(t, process.Kill())
+				// Wait for our unit to enter its real RestartSec gap and reap the old PID.
+				require.Eventually(t, func() bool {
+					state, err := exec.Command("systemctl", "--user", "show", "--property=SubState", "--value", unit).Output()
+					_, statErr := os.Stat(fmt.Sprintf("/proc/%d", original.PID))
+					return err == nil && strings.TrimSpace(string(state)) == "auto-restart" && os.IsNotExist(statErr)
+				}, time.Second, 10*time.Millisecond)
+				oldStart := startDaemonForEnsure
+				t.Cleanup(func() { startDaemonForEnsure = oldStart })
+				detached := 0
+				startDaemonForEnsure = func() error { detached++; return nil }
+				require.NoError(t, recoverDaemon(original, os.ErrNotExist))
+				assert.Zero(t, detached)
+				replacement, err := daemon.GetAnyRunningDaemon()
+				require.NoError(t, err)
+				assert.NotEqual(t, original.PID, replacement.PID)
+				assertDaemonUpdateVersion(t, replacement.Endpoint(), "v-new")
+				assert.Equal(t, replacement.PID, serviceMainPIDForTest(t, unit))
+				return
+			}
 			cli := exec.Command(cliBinary, "status", "--json")
-			if scenario == "pause" {
+			if pausing {
 				cli = exec.Command(cliBinary, "pause")
 			}
 			if scenario == "missing bus environment" {
@@ -233,16 +263,58 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				require.NoError(t, exec.Command("systemctl", "--user", "is-active", unit).Run())
 				return
 			}
-			if scenario == "pause" {
-				require.NoError(t, cli.Start())
-				defer cli.Process.Kill()
+			if pausing {
+				var recovery chan error
+				if scenario == "pause after discovery failure" {
+					oldFind, oldDiscovery := findDaemonService, getAnyRunningDaemonForStart
+					oldPause, oldOut := pendingStartPause, lifecycleOut
+					t.Cleanup(func() {
+						findDaemonService, getAnyRunningDaemonForStart = oldFind, oldDiscovery
+						pendingStartPause, lifecycleOut = oldPause, oldOut
+					})
+					findDaemonService = func(ctx context.Context, pid int) (*daemonService, error) {
+						owner, err := lookupDaemonService(ctx, pid)
+						if owner != nil {
+							// Recovery runs in the test executable; retain the real unit lookup.
+							owner.executable = "/proc/self/exe"
+						}
+						return owner, err
+					}
+					missed := false
+					getAnyRunningDaemonForStart = func(ctx context.Context) (*daemon.RuntimeInfo, error) {
+						if !missed {
+							missed = true
+							return nil, os.ErrNotExist
+						}
+						return daemon.GetAnyRunningDaemonContext(ctx)
+					}
+					paused := true
+					pendingStartPause, lifecycleOut = &paused, &stderr
+					recovery = make(chan error, 1)
+					go func() { recovery <- recoverDaemon(original, os.ErrNotExist) }()
+					defer func() {
+						if recovery != nil {
+							assert.NoError(t, os.WriteFile(releaseReview, nil, 0o600))
+							assert.NoError(t, <-recovery)
+						}
+					}()
+				} else {
+					require.NoError(t, cli.Start())
+					defer cli.Process.Kill()
+				}
 				// The pause CLI persists its state before the old daemon drains.
 				require.Eventually(t, func() bool { return strings.Contains(stderr.String(), "Waiting for daemon shutdown") }, 10*time.Second, 10*time.Millisecond)
 				status, err := original.Endpoint().APIClient(time.Second).GetStatus(context.Background())
 				require.NoError(t, err)
 				assert.True(t, status.QueuePaused)
 				require.NoError(t, os.WriteFile(releaseReview, nil, 0o600))
-				require.NoError(t, cli.Wait(), "%s", stderr.String())
+				if recovery != nil {
+					err := <-recovery
+					recovery = nil
+					require.NoError(t, err)
+				} else {
+					require.NoError(t, cli.Wait(), "%s", stderr.String())
+				}
 			} else if scenario == "selection advances" {
 				// Observe graceful shutdown before advancing the shared selection again.
 				require.NoError(t, cli.Start())
@@ -257,7 +329,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				err = cli.Run()
 				require.NoError(t, err, "%s", stderr.String())
 			}
-			if scenario != "pause" {
+			if !pausing {
 				var result statusJSONOutput
 				require.NoError(t, json.Unmarshal(stdout.Bytes(), &result))
 				assert.True(t, result.Running)
@@ -270,7 +342,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				expectedVersion = "v-old"
 			}
 			assertDaemonUpdateVersion(t, replacement.Endpoint(), expectedVersion)
-			if scenario == "pause" {
+			if pausing {
 				status, err := replacement.Endpoint().APIClient(time.Second).GetStatus(context.Background())
 				require.NoError(t, err)
 				assert.True(t, status.QueuePaused)

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,6 +9,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"go.kenn.io/roborev/internal/procutil"
 )
 
 var (
@@ -26,10 +27,7 @@ func runUserSystemctl(ctx context.Context, args ...string) ([]byte, error) {
 	}
 	output, err := cmd.Output()
 	if err != nil {
-		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok && len(exitErr.Stderr) > 0 {
-			err = fmt.Errorf("%w: %s", err, bytes.TrimSpace(exitErr.Stderr))
-		}
-		return nil, fmt.Errorf("systemctl %s: %w", strings.Join(args, " "), err)
+		return nil, fmt.Errorf("systemctl %s: %w", strings.Join(args, " "), procutil.WithStderr(err))
 	}
 	return output, nil
 }
