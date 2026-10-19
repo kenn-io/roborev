@@ -253,12 +253,13 @@ func TestUnmanagedRecoveryDrainsDiscoveredRuntimes(t *testing.T) {
 
 func TestServiceRecoveryPersistsPauseBeforeDrain(t *testing.T) {
 	for _, tc := range []struct {
-		name               string
-		paused, failPause  bool
-		wantPause, drained bool
+		name                       string
+		paused, failPause, drained bool
+		probeErr                   error
 	}{
-		{name: "pause", paused: true, wantPause: true, drained: true},
-		{name: "pause write failure", paused: true, failPause: true, wantPause: true},
+		{name: "pause", paused: true, drained: true},
+		{name: "pause write failure", paused: true, failPause: true},
+		{name: "failed version probe", paused: true, probeErr: errors.New("probe failed"), drained: true},
 		{name: "unpause", drained: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -275,6 +276,12 @@ func TestServiceRecoveryPersistsPauseBeforeDrain(t *testing.T) {
 			}))
 			defer server.Close()
 			old := &daemon.RuntimeInfo{PID: 1234, Address: strings.TrimPrefix(server.URL, "http://"), Version: "v-old"}
+			oldProbe := probeDaemonForEnsure
+			t.Cleanup(func() { probeDaemonForEnsure = oldProbe })
+			probeDaemonForEnsure = func(ep daemon.DaemonEndpoint, _ time.Duration) (*daemon.PingInfo, error) {
+				assert.Equal(t, old.Endpoint(), ep)
+				return &daemon.PingInfo{Version: "v-old"}, nil
+			}
 			var current atomic.Pointer[daemon.RuntimeInfo]
 			current.Store(old)
 			pendingStartPause = &tc.paused
@@ -288,9 +295,9 @@ func TestServiceRecoveryPersistsPauseBeforeDrain(t *testing.T) {
 				current.Store(&daemon.RuntimeInfo{PID: 5678, Version: version.Version})
 				return nil
 			}
-			err := recoverDaemon(old, nil)
+			err := recoverDaemon(old, tc.probeErr)
 			var want []string
-			if tc.wantPause {
+			if tc.paused {
 				want = append(want, "/api/queue/pause")
 			}
 			if tc.drained {
