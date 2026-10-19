@@ -1780,8 +1780,8 @@ after discovery, through its owning user service after active reviews finish:
 
 1. Under the start lock, the command rediscovers the daemon and reuses a
     responsive replacement already running this CLI's version.
-1. It waits for active reviews to drain. This wait has no time limit, and
-    waiting commands share it.
+1. The command holding the lock waits for active reviews to drain with no time
+    limit. Competing commands wait up to two minutes to acquire the lock.
 1. It runs `systemctl --user start` for the unit and waits up to two minutes
     until a responsive daemon is the unit's `MainPID`. If socket activation
     already started a replacement, `start` leaves it running.
@@ -1805,7 +1805,10 @@ These daemons stay in use while they respond and report an error otherwise:
 A daemon that only shares a unit's cgroup, such as one started with
 `roborev daemon start` from a service script, uses ordinary detached recovery.
 If the user service manager is unavailable, a responsive daemon stays running;
-the command explains why recovery was skipped.
+the command explains why recovery was skipped. If the original PID disappears
+before ownership lookup and no replacement responds, recovery uses ordinary
+detached startup when the user manager cannot answer. If the manager answers,
+recovery waits up to two minutes for a managed replacement.
 
 Before managed recovery drains reviews or starts the service, local
 `roborev pause` must save the pause through the current daemon, even if the

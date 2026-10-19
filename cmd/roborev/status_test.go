@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 
@@ -529,4 +533,38 @@ func TestStatusCmdShowsMissingSearchCredential(t *testing.T) {
 	assert.Contains(t, output, "Health: OK")
 	assert.Contains(t, output, "Credential: missing (env:EMBEDDING_KEY)")
 	assert.Contains(t, output, "no embedding API key (env EMBEDDING_KEY is unset)")
+}
+
+func TestStatusManagedRecoveryFailure(t *testing.T) {
+	for _, responsive := range []bool{true, false} {
+		t.Run(fmt.Sprintf("responsive=%t", responsive), func(t *testing.T) {
+			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+			oldEnsure, oldAddr, oldParsed := statusEnsureDaemon, serverAddr, parsedServerEndpoint
+			serverAddr, parsedServerEndpoint = "", nil
+			t.Cleanup(func() { statusEnsureDaemon, serverAddr, parsedServerEndpoint = oldEnsure, oldAddr, oldParsed })
+			withStatusWebRuntime(t, func() (*daemon.RuntimeInfo, error) {
+				if responsive {
+					return &daemon.RuntimeInfo{PID: 1234, Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}, nil
+				}
+				return nil, os.ErrNotExist
+			})
+			cause := "start rejected"
+			if responsive {
+				cause = "unsupported service Type=forking"
+			}
+			statusEnsureDaemon = func() error { return &managedRecoveryError{"fixture.service", errors.New(cause)} }
+			cmd := statusCmd()
+			cmd.SetArgs([]string{"--json"})
+			var stderr bytes.Buffer
+			cmd.SetErr(&stderr)
+			stdout := captureStdout(t, func() { require.NoError(t, cmd.Execute()) })
+			var result statusJSONResult
+			require.NoError(t, json.Unmarshal([]byte(stdout), &result))
+			assert.Equal(t, responsive, result.Running, "running must reflect a daemon that still answers after recovery fails")
+			assert.Contains(t, result.Error, "fixture.service")
+			assert.Contains(t, result.Error, cause)
+			assert.Nil(t, result.Daemon)
+			assert.Empty(t, stderr.String())
+		})
+	}
 }

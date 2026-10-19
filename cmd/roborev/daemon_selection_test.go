@@ -49,15 +49,17 @@ func TestEnsureDaemonDoesNotAdoptUnpublishedDefaultDaemon(t *testing.T) {
 			t.Setenv("ROBOREV_SKIP_VERSION_CHECK", skip)
 			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
 			var probes, starts int
+			var events []string
 			probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
 				probes++
 				return &daemon.PingInfo{OK: true, Service: "roborev", Version: version.Version}, nil
 			}
-			cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { return 0 }
-			startDaemonForEnsure = func() error { starts++; return nil }
+			cleanupZombieDaemons = func(ep daemon.DaemonEndpoint) int { events = append(events, "cleanup:"+ep.Address); return 1 }
+			startDaemonForEnsure = func() error { starts++; events = append(events, "start"); return nil }
 			require.NoError(t, ensureDaemon())
 			assert.Zero(t, probes)
 			assert.Equal(t, 1, starts)
+			assert.Equal(t, []string{"cleanup:127.0.0.1:1", "start"}, events)
 		})
 	}
 }

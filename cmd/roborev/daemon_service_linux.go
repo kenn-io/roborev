@@ -54,6 +54,12 @@ func userServiceMainPID(ctx context.Context, unit string) (int, error) {
 	return strconv.Atoi(values["MainPID"])
 }
 
+// userManagerAvailable reads a manager property; it never starts a unit.
+func userManagerAvailable(ctx context.Context) bool {
+	_, err := runSystemctl(ctx, "show", "--property=Version")
+	return err == nil
+}
+
 // startUserService leaves a starting or running unit alone.
 func startUserService(ctx context.Context, unit string) error {
 	_, err := runSystemctl(ctx, "start", "--", unit)

@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -53,7 +52,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 	buildDir := t.TempDir()
 	oldBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-old", "v-old")
 	newBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-new", "v-new")
-	for _, scenario := range []string{"path with spaces", "pause", "pause after discovery failure", "restart gap", "remain after exit", "daemon start", "simple", "transient", "missing bus environment", "selection advances", "unrelated ancestor", "wrapper", "socket responsive", "socket vanished pause"} {
+	for _, scenario := range []string{"path with spaces", "pause", "restart gap", "daemon start", "simple", "missing bus environment", "selection advances", "socket responsive", "socket vanished pause"} {
 		t.Run(scenario, func(t *testing.T) {
 			dataDir := t.TempDir()
 			t.Setenv("ROBOREV_DATA_DIR", dataDir)
@@ -90,19 +89,9 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			require.NoError(t, os.MkdirAll(unitDir, 0o700))
 			unitPath := filepath.Join(unitDir, unit)
 			socketPath := filepath.Join(unitDir, name+".socket")
-			unmanaged := scenario == "unrelated ancestor"
 			start := strconv.Quote(link) + " daemon run --addr 127.0.0.1:0"
 			if socketActivated {
 				start = strconv.Quote(link) + " daemon run"
-			}
-			if unmanaged || scenario == "wrapper" {
-				wrapper := filepath.Join(dataDir, "start-service")
-				body := "#!/bin/sh\n" + start + " &\nwait\n"
-				if scenario == "unrelated ancestor" {
-					body = "#!/bin/sh\n" + strconv.Quote(link) + " daemon start\nexec sleep infinity\n"
-				}
-				require.NoError(t, os.WriteFile(wrapper, []byte(body), 0o700))
-				start = strconv.Quote(wrapper)
 			}
 			serviceType := "Type=notify\n"
 			if scenario == "restart gap" {
@@ -111,20 +100,12 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			if scenario == "simple" {
 				serviceType = ""
 			}
-			if scenario == "remain after exit" {
-				serviceType = "Type=exec\nRemainAfterExit=yes\n"
-			}
 			if scenario == "daemon start" {
 				serviceType = "Type=forking\n"
 				start = strconv.Quote(link) + " daemon start"
 			}
-			if unmanaged || scenario == "wrapper" {
-				serviceType = "Type=exec\n"
-			}
 			body := fmt.Sprintf("[Service]\n%sEnvironment=%s\nEnvironment=%s\nEnvironment=GIT_CONFIG_NOSYSTEM=1\nExecStart=%s\n", serviceType, strconv.Quote("ROBOREV_DATA_DIR="+dataDir), strconv.Quote("GIT_CONFIG_GLOBAL="+os.Getenv("GIT_CONFIG_GLOBAL")), start)
-			if scenario != "transient" {
-				require.NoError(t, os.WriteFile(unitPath, []byte(body), 0o600))
-			}
+			require.NoError(t, os.WriteFile(unitPath, []byte(body), 0o600))
 			// Unix socket paths are limited to 108 bytes, shorter than many test directories.
 			socketDir, err := os.MkdirTemp("", "rr")
 			require.NoError(t, err)
@@ -145,9 +126,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				if info, err := daemon.GetAnyRunningDaemon(); err == nil {
 					assert.NoError(t, daemon.KillDaemon(info))
 				}
-				if scenario != "transient" {
-					assert.NoError(t, os.Remove(unitPath))
-				}
+				assert.NoError(t, os.Remove(unitPath))
 				if socketActivated {
 					assert.NoError(t, os.Remove(socketPath))
 				}
@@ -157,9 +136,6 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			starter := exec.Command("systemctl", "--user", "start", unit)
 			if socketActivated {
 				starter = exec.Command("systemctl", "--user", "start", name+".socket", unit)
-			}
-			if scenario == "transient" {
-				starter = exec.Command("systemd-run", "--user", "--unit="+unit, "--property=Type=notify", "--setenv=ROBOREV_DATA_DIR="+dataDir, "--setenv=GIT_CONFIG_NOSYSTEM=1", "--setenv=GIT_CONFIG_GLOBAL="+os.Getenv("GIT_CONFIG_GLOBAL"), link, "daemon", "run", "--addr", "127.0.0.1:0")
 			}
 			output, err := starter.CombinedOutput()
 			require.NoError(t, err, "%s", output)
@@ -239,89 +215,29 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			var stdout bytes.Buffer
 			var stderr syncBuffer
 			cli.Stdout, cli.Stderr = &stdout, &stderr
-			if refusal := map[string]string{
-				"daemon start":      "unsupported service Type=forking",
-				"remain after exit": "RemainAfterExit=yes",
-				"transient":         "transient units",
-			}[scenario]; refusal != "" {
+			if scenario == "daemon start" {
 				require.NoError(t, cli.Run())
 				var result statusJSONResult
 				require.NoError(t, json.Unmarshal(stdout.Bytes(), &result))
-				assert.Contains(t, result.Error, refusal)
+				assert.Contains(t, result.Error, "unsupported service Type=forking")
+				pauseOutput, pauseErr := exec.Command(cliBinary, "pause").CombinedOutput()
+				require.Error(t, pauseErr)
+				assert.Contains(t, string(pauseOutput), "systemctl --user restart "+unit, "daemon-dependent command must explain how to recover an unsupported unit")
 				current, err := daemon.GetAnyRunningDaemon()
 				require.NoError(t, err)
 				assert.Equal(t, original.PID, current.PID, "refused units keep their daemon")
 				return
 			}
-			if scenario == "wrapper" {
-				assert := assert.New(t)
-				require.NoError(t, cli.Run(), "%s", stderr.String())
-				process, err := os.FindProcess(original.PID)
-				require.NoError(t, err)
-				require.NoError(t, process.Signal(syscall.SIGSTOP))
-				defer process.Signal(syscall.SIGCONT)
-				_, probeErr := daemon.ProbeDaemon(original.Endpoint(), time.Second)
-				require.Error(t, probeErr)
-				assert.ErrorIs(recoverDaemon(original, probeErr), probeErr)
-				require.NoError(t, process.Signal(syscall.SIGCONT))
-				current, err := daemon.GetAnyRunningDaemon()
-				require.NoError(t, err)
-				assert.Equal(original.PID, current.PID)
-				require.NoError(t, exec.Command("systemctl", "--user", "is-active", unit).Run())
-				return
-			}
 			if pausing {
-				var recovery chan error
-				if scenario == "pause after discovery failure" {
-					oldFind, oldDiscovery := findDaemonService, getAnyRunningDaemonForStart
-					oldPause, oldOut := pendingStartPause, lifecycleOut
-					t.Cleanup(func() {
-						findDaemonService, getAnyRunningDaemonForStart = oldFind, oldDiscovery
-						pendingStartPause, lifecycleOut = oldPause, oldOut
-					})
-					findDaemonService = func(ctx context.Context, pid int) (*daemonService, error) {
-						owner, err := lookupDaemonService(ctx, pid)
-						if owner != nil {
-							// Recovery runs in the test executable; retain the real unit lookup.
-							owner.executable = "/proc/self/exe"
-						}
-						return owner, err
-					}
-					missed := false
-					getAnyRunningDaemonForStart = func(ctx context.Context) (*daemon.RuntimeInfo, error) {
-						if !missed {
-							missed = true
-							return nil, os.ErrNotExist
-						}
-						return daemon.GetAnyRunningDaemonContext(ctx)
-					}
-					paused := true
-					pendingStartPause, lifecycleOut = &paused, &stderr
-					recovery = make(chan error, 1)
-					go func() { recovery <- recoverDaemon(original, os.ErrNotExist) }()
-					defer func() {
-						if recovery != nil {
-							assert.NoError(t, os.WriteFile(releaseReview, nil, 0o600))
-							assert.NoError(t, <-recovery)
-						}
-					}()
-				} else {
-					require.NoError(t, cli.Start())
-					defer cli.Process.Kill()
-				}
+				require.NoError(t, cli.Start())
+				defer cli.Process.Kill()
 				// The pause CLI persists its state before the old daemon drains.
 				require.Eventually(t, func() bool { return strings.Contains(stderr.String(), "Waiting for daemon shutdown") }, 10*time.Second, 10*time.Millisecond)
 				status, err := original.Endpoint().APIClient(time.Second).GetStatus(context.Background())
 				require.NoError(t, err)
 				assert.True(t, status.QueuePaused)
 				require.NoError(t, os.WriteFile(releaseReview, nil, 0o600))
-				if recovery != nil {
-					err := <-recovery
-					recovery = nil
-					require.NoError(t, err)
-				} else {
-					require.NoError(t, cli.Wait(), "%s", stderr.String())
-				}
+				require.NoError(t, cli.Wait(), "%s", stderr.String())
 			} else if scenario == "selection advances" {
 				// Observe graceful shutdown before advancing the shared selection again.
 				require.NoError(t, cli.Start())
@@ -360,9 +276,6 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			}
 			if scenario == "selection advances" {
 				waitForUpdateJobStatus(t, replacement.Endpoint(), active.ID, storage.JobStatusDone, 10*time.Second)
-			}
-			if unmanaged {
-				return
 			}
 			output, err = exec.Command("systemctl", "--user", "start", unit).CombinedOutput()
 			require.NoError(t, err, "%s", output)

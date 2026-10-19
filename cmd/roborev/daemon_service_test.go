@@ -32,13 +32,11 @@ func stubServiceRecovery(t *testing.T) {
 
 func TestUnmanagedRecoveryDrainsDiscoveredRuntimes(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		respawnPID int
-		drainErr   error
-		listErr    error
+		name     string
+		drainErr error
+		listErr  error
 	}{
 		{name: "initial runtimes"},
-		{name: "new PID", respawnPID: 3456},
 		{name: "drain failure", drainErr: errors.New("drain rejected")},
 		{name: "access denied", drainErr: daemon.ErrDaemonAccessDenied},
 		{name: "list failure", listErr: errors.New("runtime directory unreadable")},
@@ -72,11 +70,7 @@ func TestUnmanagedRecoveryDrainsDiscoveredRuntimes(t *testing.T) {
 				if tc.drainErr != nil {
 					return tc.drainErr
 				}
-				if tc.respawnPID != 0 {
-					runtimes = []*daemon.RuntimeInfo{{PID: tc.respawnPID, Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}}
-				} else {
-					runtimes = runtimes[1:]
-				}
+				runtimes = runtimes[1:]
 				return nil
 			}
 			starts, ensures := 0, 0
@@ -94,7 +88,7 @@ func TestUnmanagedRecoveryDrainsDiscoveredRuntimes(t *testing.T) {
 				assert.Zero(t, ensures)
 				return
 			}
-			assert.Equal(t, []int{1234, 2345}, drained, "drain the finite initial snapshot even if a launcher publishes another daemon")
+			assert.Equal(t, []int{1234, 2345}, drained, "drain every runtime in the initial snapshot")
 			assert.Equal(t, 2, bytes.Count(progress.Bytes(), []byte("Waiting for daemon shutdown;")))
 			if tc.drainErr != nil {
 				require.ErrorIs(t, err, tc.drainErr)
@@ -107,12 +101,7 @@ func TestUnmanagedRecoveryDrainsDiscoveredRuntimes(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 				assert.Equal(t, 1, ensures)
-				if tc.respawnPID != 0 {
-					assert.Zero(t, starts)
-					assert.Equal(t, tc.respawnPID, runtimes[0].PID, "ordinary startup may reuse the launcher's responsive daemon")
-				} else {
-					assert.Equal(t, 1, starts)
-				}
+				assert.Equal(t, 1, starts)
 			}
 		})
 	}

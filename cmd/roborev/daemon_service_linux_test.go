@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -27,22 +26,33 @@ import (
 func TestRecoverDaemonServiceRecovery(t *testing.T) {
 	probeErr := errors.New("probe failed")
 	for _, tc := range []struct {
-		outcome       string
-		probeErr      error
-		wantError     string
-		stops, starts int
+		outcome        string
+		probeErr       error
+		wantError      string
+		stops, starts  int
+		queueCommand   bool
+		paused         bool
+		failPause      bool
+		failDiscovery  bool
+		recheckCurrent bool
 	}{
 		{outcome: "replacement current"},
+		{outcome: "live current after probe failure", probeErr: probeErr, recheckCurrent: true},
+		{outcome: "pause", queueCommand: true, paused: true, stops: 1, starts: 1},
+		{outcome: "pause write failure", queueCommand: true, paused: true, failPause: true, wantError: "pause queue before shutdown"},
+		{outcome: "failed version probe", queueCommand: true, paused: true, probeErr: probeErr, stops: 1, starts: 1},
+		{outcome: "failed rediscovery", queueCommand: true, paused: true, failDiscovery: true, stops: 1, starts: 1},
+		{outcome: "unpause", queueCommand: true, stops: 1, starts: 1},
 		{outcome: "child responsive"},
-		{outcome: "child failed", probeErr: probeErr, wantError: "service child requires attention"},
+		{outcome: "child failed", probeErr: probeErr, wantError: "service child requires attention: probe failed; run systemctl --user restart fixture.service"},
 		{outcome: "replacement outdated", stops: 1, starts: 1},
 		{outcome: "vanished owned", starts: 1},
 		{outcome: "failed", probeErr: probeErr, stops: 1, starts: 1},
 		{outcome: "foreign responsive"},
-		{outcome: "foreign failed", probeErr: probeErr, wantError: "probe failed"},
-		{outcome: "remain after exit", wantError: "RemainAfterExit=yes"},
-		{outcome: "transient", wantError: "transient units"},
-		{outcome: "forking", wantError: "unsupported service Type=forking"},
+		{outcome: "foreign failed", probeErr: probeErr, wantError: "probe failed; run systemctl --user restart fixture.service"},
+		{outcome: "remain after exit", wantError: "RemainAfterExit=yes requires manual restart; run systemctl --user restart fixture.service"},
+		{outcome: "transient", wantError: "transient units require manual restart; run systemctl --user restart fixture.service"},
+		{outcome: "forking", wantError: "unsupported service Type=forking; run systemctl --user restart fixture.service"},
 		{outcome: "uncertain"},
 		{outcome: "unreadable"},
 		{outcome: "manager responsive"},
@@ -57,6 +67,31 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 			var progress bytes.Buffer
 			lifecycleOut, verbose = &progress, false
 			original := &daemon.RuntimeInfo{PID: 1234, Version: version.Version, Network: "tcp", Address: "127.0.0.1:1"}
+			var events []string
+			if tc.queueCommand {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					events = append(events, r.URL.Path)
+					if tc.failPause {
+						http.Error(w, "queue unavailable", http.StatusInternalServerError)
+						return
+					}
+					_, _ = w.Write([]byte(`{"queue_paused":true}`))
+				}))
+				t.Cleanup(server.Close)
+				original.Address = strings.TrimPrefix(server.URL, "http://")
+				original.Version = "v-old"
+				pendingStartPause = &tc.paused
+			}
+			oldProbe := probeDaemonForEnsure
+			t.Cleanup(func() { probeDaemonForEnsure = oldProbe })
+			probeDaemonForEnsure = func(ep daemon.DaemonEndpoint, _ time.Duration) (*daemon.PingInfo, error) {
+				assert.Equal(t, original.Endpoint(), ep)
+				liveVersion := "v-old"
+				if tc.recheckCurrent {
+					liveVersion = version.Version
+				}
+				return &daemon.PingInfo{Version: liveVersion}, nil
+			}
 			current := original
 			if strings.HasPrefix(tc.outcome, "replacement") {
 				current = &daemon.RuntimeInfo{PID: 5678, Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}
@@ -107,7 +142,7 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 				return owner(pid), nil
 			}
 			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
-				if !started && tc.probeErr != nil || tc.outcome == "vanished owned" && !started || started && tc.outcome == "readiness failure" {
+				if !started && (tc.probeErr != nil && !tc.queueCommand && !tc.recheckCurrent || tc.failDiscovery || tc.outcome == "vanished owned") || started && tc.outcome == "readiness failure" {
 					return nil, os.ErrNotExist
 				}
 				return current, nil
@@ -123,6 +158,9 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 			startDaemonForEnsure = func() error { detached++; return nil }
 			drainManagedDaemon = func(info *daemon.RuntimeInfo) error {
 				stops++
+				if tc.queueCommand {
+					events = append(events, "drain")
+				}
 				assert.Equal(t, selectedPID, info.PID)
 				if tc.outcome == "drain failure" {
 					return errors.New("drain rejected")
@@ -153,6 +191,16 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 				var managed *managedRecoveryError
 				require.ErrorAs(t, err, &managed)
 			}
+			if tc.queueCommand {
+				var want []string
+				if tc.paused {
+					want = append(want, "/api/queue/pause")
+				}
+				if tc.stops != 0 {
+					want = append(want, "drain")
+				}
+				assert.Equal(t, want, events)
+			}
 			assert.Equal(t, tc.stops, stops)
 			assert.Equal(t, tc.starts, starts)
 			if reason := map[string]string{
@@ -175,10 +223,26 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 }
 
 func TestRecoverDaemonWaitsForVanishedOwner(t *testing.T) {
-	for _, replacementAppears := range []bool{true, false} {
-		t.Run(fmt.Sprintf("replacement=%t", replacementAppears), func(t *testing.T) {
+	for _, tc := range []struct {
+		name                                   string
+		replacementAppears, managerUnavailable bool
+	}{
+		{name: "replacement appears", replacementAppears: true},
+		{name: "replacement absent"},
+		{name: "manager unavailable", managerUnavailable: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				stubServiceRecovery(t)
+				oldRun := runSystemctl
+				t.Cleanup(func() { runSystemctl = oldRun })
+				runSystemctl = func(_ context.Context, args ...string) ([]byte, error) {
+					assert.Equal(t, []string{"show", "--property=Version"}, args)
+					if tc.managerUnavailable {
+						return nil, errors.New("user manager unavailable")
+					}
+					return nil, nil
+				}
 				original := &daemon.RuntimeInfo{PID: 1234, Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}
 				started := time.Now()
 				findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
@@ -190,7 +254,7 @@ func TestRecoverDaemonWaitsForVanishedOwner(t *testing.T) {
 				}
 				getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
 					// Model the user manager's RestartSec gap after the old PID exits.
-					if !replacementAppears || time.Since(started) < time.Second {
+					if !tc.replacementAppears || time.Since(started) < time.Second {
 						return nil, os.ErrNotExist
 					}
 					return &daemon.RuntimeInfo{PID: 5678, Version: version.Version, Network: "tcp", Address: "127.0.0.1:1"}, nil
@@ -200,142 +264,25 @@ func TestRecoverDaemonWaitsForVanishedOwner(t *testing.T) {
 				startDaemonService = func(context.Context, string) error { starts++; return nil }
 				drainManagedDaemon = func(*daemon.RuntimeInfo) error { drains++; return nil }
 				err := recoverDaemon(original, os.ErrNotExist)
-				if replacementAppears {
+				if tc.managerUnavailable {
+					require.NoError(t, err)
+					assert.Equal(t, 1, detached, "request ordinary startup without a user manager")
+					assert.Less(t, time.Since(started), daemonStartTimeout)
+				} else if tc.replacementAppears {
 					require.NoError(t, err)
 					assert.GreaterOrEqual(t, time.Since(started), time.Second)
 				} else {
 					require.ErrorContains(t, err, "ownership uncertain")
 					require.ErrorIs(t, err, context.DeadlineExceeded)
 				}
-				assert.Zero(t, detached)
+				if !tc.managerUnavailable {
+					assert.Zero(t, detached)
+				}
 				assert.Zero(t, starts)
 				assert.Zero(t, drains)
 			})
 		})
 	}
-}
-
-func TestRecoverDaemonRechecksLiveVersionAfterProbeFailure(t *testing.T) {
-	for _, liveVersion := range []string{version.Version, "v-old"} {
-		t.Run(liveVersion, func(t *testing.T) {
-			stubServiceRecovery(t)
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal(t, "/api/ping", r.URL.Path)
-				_, _ = fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":1234,"version":%q}`, liveVersion)
-			}))
-			defer server.Close()
-			// Discovery returns the runtime record's version, which can disagree
-			// with the live API response that triggered recovery.
-			original := &daemon.RuntimeInfo{PID: 1234, Address: strings.TrimPrefix(server.URL, "http://"), Version: version.Version}
-			current := original
-			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return current, nil }
-			findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
-				return &daemonService{unit: "fixture.service", executable: "/proc/self/exe", mainPID: pid, serviceType: "notify"}, nil
-			}
-			drains, starts := 0, 0
-			drainManagedDaemon = func(*daemon.RuntimeInfo) error { drains++; return nil }
-			startDaemonService = func(context.Context, string) error {
-				starts++
-				current = &daemon.RuntimeInfo{PID: 5678, Version: version.Version, Network: "tcp", Address: "127.0.0.1:1"}
-				return nil
-			}
-			serviceMainPID = func(context.Context, string) (int, error) { return current.PID, nil }
-			require.NoError(t, recoverDaemon(original, errors.New("earlier probe timed out")))
-			want := 1
-			if liveVersion == version.Version {
-				want = 0
-			}
-			assert.Equal(t, want, drains)
-			assert.Equal(t, want, starts)
-		})
-	}
-}
-
-func TestServiceRecoveryPersistsPauseBeforeDrain(t *testing.T) {
-	for _, tc := range []struct {
-		name                       string
-		paused, failPause, drained bool
-		failDiscovery              bool
-		probeErr                   error
-	}{
-		{name: "pause", paused: true, drained: true},
-		{name: "pause write failure", paused: true, failPause: true},
-		{name: "failed version probe", paused: true, probeErr: errors.New("probe failed"), drained: true},
-		{name: "failed rediscovery", paused: true, failDiscovery: true, drained: true},
-		{name: "unpause", drained: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			stubServiceRecovery(t)
-			lifecycleOut = &bytes.Buffer{}
-			var events []string
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				events = append(events, r.URL.Path)
-				if tc.failPause {
-					http.Error(w, "queue unavailable", http.StatusInternalServerError)
-					return
-				}
-				_, _ = w.Write([]byte(`{"queue_paused":true}`))
-			}))
-			defer server.Close()
-			old := &daemon.RuntimeInfo{PID: 1234, Address: strings.TrimPrefix(server.URL, "http://"), Version: "v-old"}
-			oldProbe := probeDaemonForEnsure
-			t.Cleanup(func() { probeDaemonForEnsure = oldProbe })
-			probeDaemonForEnsure = func(ep daemon.DaemonEndpoint, _ time.Duration) (*daemon.PingInfo, error) {
-				assert.Equal(t, old.Endpoint(), ep)
-				return &daemon.PingInfo{Version: "v-old"}, nil
-			}
-			var current atomic.Pointer[daemon.RuntimeInfo]
-			current.Store(old)
-			pendingStartPause = &tc.paused
-			findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
-				return &daemonService{unit: "fixture.service", executable: "/proc/self/exe", mainPID: pid, serviceType: "notify"}, nil
-			}
-			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
-				if tc.failDiscovery && current.Load() == old {
-					return nil, os.ErrNotExist
-				}
-				return current.Load(), nil
-			}
-			serviceMainPID = func(context.Context, string) (int, error) { return current.Load().PID, nil }
-			drainManagedDaemon = func(*daemon.RuntimeInfo) error { events = append(events, "drain"); return nil }
-			startDaemonService = func(context.Context, string) error {
-				current.Store(&daemon.RuntimeInfo{PID: 5678, Version: version.Version, Network: "tcp", Address: "127.0.0.1:1"})
-				return nil
-			}
-			err := recoverDaemon(old, tc.probeErr)
-			var want []string
-			if tc.paused {
-				want = append(want, "/api/queue/pause")
-			}
-			if tc.drained {
-				want = append(want, "drain")
-			}
-			assert.Equal(t, want, events)
-			if tc.failPause {
-				require.ErrorContains(t, err, "pause queue before shutdown")
-				return
-			}
-			require.NoError(t, err)
-		})
-	}
-}
-
-func TestStatusManagedRecoveryFailure(t *testing.T) {
-	old := statusEnsureDaemon
-	statusEnsureDaemon = func() error { return &managedRecoveryError{"fixture.service", errors.New("start rejected")} }
-	t.Cleanup(func() { statusEnsureDaemon = old })
-	cmd := statusCmd()
-	cmd.SetArgs([]string{"--json"})
-	var stderr bytes.Buffer
-	cmd.SetErr(&stderr)
-	stdout := captureStdout(t, func() { require.NoError(t, cmd.Execute()) })
-	var result statusJSONResult
-	require.NoError(t, json.Unmarshal([]byte(stdout), &result))
-	assert.True(t, result.Running)
-	assert.Contains(t, result.Error, "fixture.service")
-	assert.Contains(t, result.Error, "start rejected")
-	assert.Nil(t, result.Daemon)
-	assert.Empty(t, stderr.String())
 }
 
 func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
@@ -380,7 +327,6 @@ func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 		synctest.Wait()
 		assert.Contains(t, progress.String(), "Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...\n")
 		assert.Empty(t, recovery, "recovery must remain blocked while reviews drain")
-		close(finishDrain)
 		go func() { coldStart <- startDaemon() }()
 		progress.Reset()
 		go func() { competingRecovery <- recoverDaemon(old, nil) }()
@@ -390,10 +336,11 @@ func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 		assert.Zero(t, detached)
 		time.Sleep(daemonStartTimeout + time.Minute)
 		require.ErrorIs(t, <-coldStart, context.DeadlineExceeded)
-		assert.Empty(t, competingRecovery, "waiting recovery must stay blocked beyond the former startup timeout")
+		require.ErrorIs(t, <-competingRecovery, context.DeadlineExceeded)
+		assert.Empty(t, recovery, "the owning recovery must keep waiting for the active review")
+		close(finishDrain)
 		close(resume)
 		require.NoError(t, <-recovery)
-		require.NoError(t, <-competingRecovery)
 		assert.Zero(t, detached)
 	})
 }

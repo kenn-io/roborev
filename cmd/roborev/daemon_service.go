@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v7"
+	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/version"
@@ -46,11 +47,11 @@ var (
 func (s *daemonService) supported() error {
 	switch {
 	case s.transient:
-		return errors.New("transient units require manual restart")
+		return fmt.Errorf("transient units require manual restart; run systemctl --user restart %s", s.unit)
 	case s.remainAfterExit:
-		return errors.New("RemainAfterExit=yes requires manual restart")
+		return fmt.Errorf("RemainAfterExit=yes requires manual restart; run systemctl --user restart %s", s.unit)
 	case !slices.Contains([]string{"simple", "exec", "notify"}, s.serviceType):
-		return fmt.Errorf("unsupported service Type=%s", s.serviceType)
+		return fmt.Errorf("unsupported service Type=%s; run systemctl --user restart %s", s.serviceType, s.unit)
 	}
 	return nil
 }
@@ -77,12 +78,29 @@ func acquireRecoveryLock() (func(), error) {
 		return release, err
 	}
 	fmt.Fprintln(lifecycleOut, "Waiting for daemon recovery lock; another command may be waiting for running reviews to finish...")
-	return store.AcquireStartLock(context.Background())
+	return acquireStartLockWithin(store, daemonStartTimeout)
+}
+
+// acquireStartLockWithin bounds only the wait; the holder keeps no deadline.
+func acquireStartLockWithin(store kitdaemon.RuntimeStore, timeout time.Duration) (func(), error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return store.AcquireStartLock(ctx)
+}
+
+// snapshotDaemonService treats a vanished PID as unmanaged when no user
+// manager could restart it, so recovery need not wait for a replacement.
+func snapshotDaemonService(ctx context.Context, pid int) (*daemonService, error) {
+	owner, err := findDaemonService(ctx, pid)
+	if errors.Is(err, os.ErrNotExist) && !userManagerAvailable(ctx) {
+		return nil, nil
+	}
+	return owner, err
 }
 
 func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 	ctx, cancel := context.WithTimeout(context.Background(), daemonStartTimeout)
-	snapshot, snapshotErr := findDaemonService(ctx, info.PID)
+	snapshot, snapshotErr := snapshotDaemonService(ctx, info.PID)
 	cancel()
 	release, err := acquireRecoveryLock()
 	if err != nil {
@@ -167,7 +185,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 			fmt.Fprintf(lifecycleOut, "Daemon recovery skipped; systemd service %s runs the daemon as a child process\n", owner.unit)
 			return nil
 		}
-		return fail(fmt.Errorf("service child requires attention: %w", probeErr))
+		return fail(fmt.Errorf("service child requires attention: %w; run systemctl --user restart %s", probeErr, owner.unit))
 	}
 	same, err := owner.sameInstallation()
 	if err != nil {
@@ -179,7 +197,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 	}
 	if !same {
 		if probeErr != nil {
-			return fail(fmt.Errorf("installation %s requires attention: %w", owner.executable, probeErr))
+			return fail(fmt.Errorf("installation %s requires attention: %w; run systemctl --user restart %s", owner.executable, probeErr, owner.unit))
 		}
 		fmt.Fprintf(lifecycleOut, "Daemon recovery skipped; systemd service %s uses another installation (%s)\n", owner.unit, owner.executable)
 		return nil

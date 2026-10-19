@@ -35,6 +35,17 @@ type statusJSONResult struct {
 	Error             string                `json:"error,omitempty"`
 }
 
+// managedRecoveryStatus keeps the service error and reports whether a daemon still answers.
+func managedRecoveryStatus(err error, web webUIStatus) statusJSONResult {
+	_, discoverErr := statusDiscover()
+	return statusJSONResult{
+		Running:           discoverErr == nil,
+		WebURL:            web.url,
+		WebDisabledReason: web.disabledReason,
+		Error:             err.Error(),
+	}
+}
+
 func statusCmd() *cobra.Command {
 	var jsonOutput bool
 
@@ -66,7 +77,7 @@ func statusCmd() *cobra.Command {
 			if err := statusEnsureDaemon(); err != nil {
 				if _, managed := errors.AsType[*managedRecoveryError](err); managed {
 					if jsonOutput {
-						return writeStatusUnavailable(err)
+						return writeJSONResult(managedRecoveryStatus(err, webStatus))
 					}
 					return fmt.Errorf("daemon status unavailable: %w", err)
 				}
