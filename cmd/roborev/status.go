@@ -75,7 +75,7 @@ func statusCmd() *cobra.Command {
 
 			// Ensure daemon is running (and restart if version mismatch)
 			if err := statusEnsureDaemon(); err != nil {
-				if _, managed := errors.AsType[*managedRecoveryError](err); managed {
+				if _, managed := errors.AsType[*managedRecoveryError](err); managed || errors.Is(err, errRecoveryLock) {
 					if jsonOutput {
 						return writeJSONResult(managedRecoveryStatus(err, webStatus))
 					}

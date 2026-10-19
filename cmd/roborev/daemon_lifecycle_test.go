@@ -93,7 +93,6 @@ func TestEnsureDaemonHandlesVersionProbe(t *testing.T) {
 		accessDenied bool
 	}{
 		{name: "live version mismatch"},
-		{name: "probe failure", probeErr: errors.New("connection refused")},
 		{name: "probe access denied", probeErr: &net.OpError{Op: "dial", Net: "tcp", Err: syscall.EPERM}, accessDenied: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

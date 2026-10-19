@@ -35,6 +35,8 @@ func (e *managedRecoveryError) Error() string {
 func (e *managedRecoveryError) Unwrap() error { return e.cause }
 
 var (
+	errRecoveryLock = errors.New("wait for daemon recovery lock")
+
 	findDaemonService  = lookupDaemonService
 	serviceMainPID     = userServiceMainPID
 	startDaemonService = startUserService
@@ -102,7 +104,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 	cancel()
 	release, err := acquireRecoveryLock()
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errRecoveryLock, err)
 	}
 	defer func() {
 		if release != nil {

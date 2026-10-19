@@ -16,8 +16,6 @@ import (
 var (
 	readServiceProcessFile = os.ReadFile
 	runSystemctl           = runUserSystemctl
-	// errUserManagerUnavailable leaves a responsive daemon in use without recovery.
-	errUserManagerUnavailable = errors.New("user service manager unavailable")
 )
 
 // runUserSystemctl runs a user-manager command bounded by ctx.
@@ -98,7 +96,7 @@ func lookupDaemonService(ctx context.Context, pid int) (*daemonService, error) {
 	fail := func(err error) (*daemonService, error) { return nil, &managedRecoveryError{unit, err} }
 	values, err := showUserService(ctx, unit, "MainPID,Type,RemainAfterExit,Transient,ExecStart")
 	if err != nil {
-		return fail(fmt.Errorf("%w: %w", errUserManagerUnavailable, err))
+		return fail(err)
 	}
 	mainPID, err := strconv.Atoi(values["MainPID"])
 	if err != nil {

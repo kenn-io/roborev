@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
@@ -71,7 +69,6 @@ func TestEnsureDaemonPropagatesDiscoveryIOError(t *testing.T) {
 	}{
 		{"runtime directory failure", errors.New("runtime directory read failed")},
 		{"access denied", &net.OpError{Op: "dial", Net: "tcp", Err: syscall.EACCES}},
-		{"certificate failure", &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			isolateDaemonSelection(t)

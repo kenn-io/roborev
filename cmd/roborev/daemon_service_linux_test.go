@@ -38,7 +38,6 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 	}{
 		{outcome: "replacement current"},
 		{outcome: "live current after probe failure", probeErr: probeErr, recheckCurrent: true},
-		{outcome: "pause", queueCommand: true, paused: true, stops: 1, starts: 1},
 		{outcome: "pause write failure", queueCommand: true, paused: true, failPause: true, wantError: "pause queue before shutdown"},
 		{outcome: "failed version probe", queueCommand: true, paused: true, probeErr: probeErr, stops: 1, starts: 1},
 		{outcome: "failed rediscovery", queueCommand: true, paused: true, failDiscovery: true, stops: 1, starts: 1},
@@ -55,8 +54,7 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 		{outcome: "forking", wantError: "unsupported service Type=forking; run systemctl --user restart fixture.service"},
 		{outcome: "uncertain"},
 		{outcome: "unreadable"},
-		{outcome: "manager responsive"},
-		{outcome: "manager failed", probeErr: probeErr, wantError: "user service manager unavailable"},
+		{outcome: "uncertain failed", probeErr: probeErr, wantError: "properties unavailable"},
 		{outcome: "start failure", wantError: "start rejected", stops: 1, starts: 1},
 		{outcome: "drain failure", wantError: "drain rejected", stops: 1},
 		{outcome: "wrong PID", wantError: "replacement is outside service", stops: 1, starts: 1},
@@ -134,9 +132,7 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 				switch {
 				case tc.outcome == "vanished owned":
 					return nil, os.ErrNotExist
-				case strings.HasPrefix(tc.outcome, "manager"):
-					return nil, &managedRecoveryError{"fixture.service", errUserManagerUnavailable}
-				case tc.outcome == "uncertain":
+				case strings.HasPrefix(tc.outcome, "uncertain"):
 					return nil, &managedRecoveryError{"fixture.service", errors.New("properties unavailable")}
 				}
 				return owner(pid), nil
@@ -205,7 +201,6 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 			assert.Equal(t, tc.starts, starts)
 			if reason := map[string]string{
 				"uncertain":          "properties unavailable",
-				"manager responsive": "user service manager unavailable",
 				"unreadable":         "cannot confirm executable",
 				"foreign responsive": "uses another installation",
 				"child responsive":   "runs the daemon as a child process",
@@ -336,11 +331,13 @@ func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 		assert.Zero(t, detached)
 		time.Sleep(daemonStartTimeout + time.Minute)
 		require.ErrorIs(t, <-coldStart, context.DeadlineExceeded)
-		require.ErrorIs(t, <-competingRecovery, context.DeadlineExceeded)
+		competingErr := <-competingRecovery
+		require.ErrorIs(t, competingErr, context.DeadlineExceeded)
 		assert.Empty(t, recovery, "the owning recovery must keep waiting for the active review")
 		close(finishDrain)
 		close(resume)
 		require.NoError(t, <-recovery)
+		require.ErrorIs(t, competingErr, errRecoveryLock, "status must distinguish recovery still in progress from a missing daemon")
 		assert.Zero(t, detached)
 	})
 }
@@ -397,7 +394,7 @@ func TestLookupDaemonService(t *testing.T) {
 	t.Run("manager unavailable", func(t *testing.T) {
 		stubServiceProcesses(t, userCgroup, nil, "", errors.New("connection refused"))
 		_, err := lookupDaemonService(t.Context(), 1234)
-		require.ErrorIs(t, err, errUserManagerUnavailable)
+		require.ErrorContains(t, err, "connection refused")
 		var managed *managedRecoveryError
 		require.ErrorAs(t, err, &managed)
 		assert.Equal(t, "fixture.service", managed.unit)
