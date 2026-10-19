@@ -21,11 +21,13 @@ func stubServiceRecovery(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	oldOut, oldVerbose := lifecycleOut, verbose
 	oldFind, oldMainPID, oldStart, oldDrain := findDaemonService, serviceMainPID, startDaemonService, drainManagedDaemon
+	oldCgroup := daemonCgroupUnit
 	oldDiscovery, oldEnsure, oldDetached := getAnyRunningDaemonForStart, startDaemonForEnsure, startDaemonDetached
 	oldPause := pendingStartPause
 	t.Cleanup(func() {
 		lifecycleOut, verbose = oldOut, oldVerbose
 		findDaemonService, serviceMainPID, startDaemonService, drainManagedDaemon = oldFind, oldMainPID, oldStart, oldDrain
+		daemonCgroupUnit = oldCgroup
 		getAnyRunningDaemonForStart, startDaemonForEnsure, startDaemonDetached = oldDiscovery, oldEnsure, oldDetached
 		pendingStartPause = oldPause
 	})
@@ -79,7 +81,7 @@ func TestUnmanagedRecoveryDrainsDiscoveredRuntimes(t *testing.T) {
 				runtimes = []*daemon.RuntimeInfo{{PID: 5678, Version: version.Version, Network: "tcp", Address: "127.0.0.1:1"}}
 				return nil
 			}
-			err := recoverDaemon(original, nil)
+			err := recoverDaemon(original, nil, false)
 			if tc.listErr != nil {
 				require.ErrorIs(t, err, tc.listErr)
 				assert.Empty(t, drained)
@@ -107,7 +109,7 @@ func TestRecoverDaemonLockFilesystemFailure(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, nil, 0o600))
 	t.Setenv("ROBOREV_DATA_DIR", path)
 	findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
-	err := recoverDaemon(&daemon.RuntimeInfo{PID: 1234}, nil)
+	err := recoverDaemon(&daemon.RuntimeInfo{PID: 1234}, nil, false)
 	require.ErrorIs(t, err, errRecoveryLock)
 	var pathErr *os.PathError
 	require.ErrorAs(t, err, &pathErr)

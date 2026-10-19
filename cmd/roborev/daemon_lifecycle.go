@@ -319,6 +319,8 @@ func ensureDaemon() error {
 	}
 	if discoveryErr == nil {
 		if !skipVersionCheck {
+			// The probe can outlast the daemon, so read its cgroup first.
+			outsideService := discoveredOutsideService(info.PID)
 			probe, err := probeDaemonForEnsure(info.Endpoint(), 2*time.Second)
 			if err != nil {
 				if daemon.IsDaemonAccessError(err) {
@@ -327,20 +329,20 @@ func ensureDaemon() error {
 				if verbose {
 					fmt.Fprintf(lifecycleOut, "Daemon probe failed; checking service ownership...\n")
 				}
-				return recoverDaemon(info, err)
+				return recoverDaemon(info, err, outsideService)
 			}
 			daemonVersion := probe.Version
 			if daemonVersion == "" {
 				if verbose {
 					fmt.Fprintf(lifecycleOut, "Daemon version unknown; checking service ownership...\n")
 				}
-				return recoverDaemon(info, nil)
+				return recoverDaemon(info, nil, outsideService)
 			}
 			if daemonVersion != version.Version {
 				if verbose {
 					fmt.Fprintf(lifecycleOut, "Daemon version mismatch (daemon: %s, cli: %s); checking service ownership...\n", daemonVersion, version.Version)
 				}
-				return recoverDaemon(info, nil)
+				return recoverDaemon(info, nil, outsideService)
 			}
 		}
 

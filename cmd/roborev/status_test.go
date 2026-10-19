@@ -7,8 +7,8 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"path/filepath"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -539,12 +539,12 @@ func TestStatusCmdShowsMissingSearchCredential(t *testing.T) {
 func TestStatusManagedRecoveryFailure(t *testing.T) {
 	for _, tc := range []struct {
 		name                      string
-		responsive, lockTimeout   bool
+		responsive, lockFailure   bool
 		webOrigin, disabledReason string
 	}{
 		{name: "responsive after drain failure", responsive: true, webOrigin: "https://reviews.example.com"},
-		{name: "responsive during recovery lock wait", responsive: true, lockTimeout: true, disabledReason: daemon.WebDisabledReasonConfig},
-		{name: "absent during recovery lock wait", lockTimeout: true},
+		{name: "responsive after recovery lock failure", responsive: true, lockFailure: true, disabledReason: daemon.WebDisabledReasonConfig},
+		{name: "absent after recovery lock failure", lockFailure: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stubServiceRecovery(t)
@@ -560,18 +560,18 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 			original := &daemon.RuntimeInfo{PID: 1234, Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}
 			findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
 			var recoveryErr error
-			if tc.lockTimeout {
-				synctest.Test(t, func(t *testing.T) {
-					release, acquired, err := daemon.RuntimeStore().TryAcquireStartLock(context.Background())
-					require.NoError(t, err)
-					require.True(t, acquired)
-					defer release()
-					recoveryErr = recoverDaemon(original, nil)
-				})
+			if tc.lockFailure {
+				// A data directory that is a file makes the start lock unusable.
+				dataDir := os.Getenv("ROBOREV_DATA_DIR")
+				blocked := filepath.Join(t.TempDir(), "file")
+				require.NoError(t, os.WriteFile(blocked, nil, 0o600))
+				t.Setenv("ROBOREV_DATA_DIR", blocked)
+				recoveryErr = recoverDaemon(original, nil, false)
+				t.Setenv("ROBOREV_DATA_DIR", dataDir)
 			}
 			cause := "drain rejected"
 			statusEnsureDaemon = func() error {
-				if tc.lockTimeout {
+				if tc.lockFailure {
 					return recoveryErr
 				}
 				return &managedRecoveryError{"fixture.service", errors.New(cause)}
@@ -584,9 +584,8 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 			var result statusJSONResult
 			require.NoError(t, json.Unmarshal([]byte(stdout), &result))
 			assert.Equal(t, tc.responsive, result.Running, "running must reflect a daemon that still answers after recovery fails")
-			if tc.lockTimeout {
-				assert.Contains(t, result.Error, context.DeadlineExceeded.Error())
-				assert.Contains(t, result.Error, "2m0s")
+			if tc.lockFailure {
+				assert.Contains(t, result.Error, "wait for daemon recovery lock")
 			} else {
 				assert.Contains(t, result.Error, "fixture.service")
 				assert.Contains(t, result.Error, cause)
@@ -611,9 +610,8 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 			if tc.disabledReason != "" {
 				assert.Contains(t, output, "Web UI: disabled ([web] enabled = false)\n")
 			}
-			if tc.lockTimeout {
-				assert.Contains(t, output, context.DeadlineExceeded.Error())
-				assert.Contains(t, output, "2m0s")
+			if tc.lockFailure {
+				assert.Contains(t, output, "wait for daemon recovery lock")
 			} else {
 				assert.Contains(t, output, cause)
 			}

@@ -28,14 +28,15 @@ func isolateDaemonSelection(t *testing.T) {
 	oldAddr, oldParsed := serverAddr, parsedServerEndpoint
 	oldDiscover, oldProbe := getAnyRunningDaemon, probeDaemonForEnsure
 	oldCleanup, oldStart := cleanupZombieDaemons, startDaemonForEnsure
-	oldService := findDaemonService
+	oldService, oldCgroup := findDaemonService, daemonCgroupUnit
 	serverAddr, parsedServerEndpoint = "", nil
 	findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
+	daemonCgroupUnit = func(int) (string, error) { return "", nil }
 	t.Cleanup(func() {
 		serverAddr, parsedServerEndpoint = oldAddr, oldParsed
 		getAnyRunningDaemon, probeDaemonForEnsure = oldDiscover, oldProbe
 		cleanupZombieDaemons, startDaemonForEnsure = oldCleanup, oldStart
-		findDaemonService = oldService
+		findDaemonService, daemonCgroupUnit = oldService, oldCgroup
 	})
 }
 

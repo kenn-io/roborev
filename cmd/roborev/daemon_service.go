@@ -6,12 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"slices"
 	"time"
 
 	"github.com/cenkalti/backoff/v7"
-	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/version"
@@ -39,6 +37,7 @@ var (
 	errRecoveryLock = errors.New("wait for daemon recovery lock")
 
 	findDaemonService  = lookupDaemonService
+	daemonCgroupUnit   = serviceCgroup
 	serviceMainPID     = userServiceMainPID
 	startDaemonService = startUserService
 	drainManagedDaemon = daemon.KillDaemon
@@ -57,12 +56,24 @@ func (s *daemonService) supported() error {
 	return nil
 }
 
-func unsupportedServiceRecovery(err error, responsive bool) error {
-	if responsive {
-		fmt.Fprintf(lifecycleOut, "Daemon recovery skipped; %v\n", err)
-		return nil
+// keepReason explains why systemd cannot replace a responsive daemon in
+// place, or returns "" when it can.
+func (s *daemonService) keepReason(pid int) string {
+	if s.mainPID != pid {
+		// A wrapper child stays in use; systemd cannot replace it directly.
+		return fmt.Sprintf("systemd service %s runs the daemon as a child process", s.unit)
 	}
-	return err
+	same, err := s.sameInstallation()
+	if err != nil {
+		return fmt.Sprintf("systemd service %s: cannot confirm executable %s: %v", s.unit, s.executable, err)
+	}
+	if !same {
+		return fmt.Sprintf("systemd service %s uses another installation (%s)", s.unit, s.executable)
+	}
+	if err := s.supported(); err != nil {
+		return (&managedRecoveryError{s.unit, err}).Error()
+	}
+	return ""
 }
 
 func pauseServiceBeforeRecovery(ctx context.Context, info *daemon.RuntimeInfo, unit string) error {
@@ -83,11 +94,12 @@ func (s *daemonService) sameInstallation() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	cliPath, _ := os.Executable()
-	return os.SameFile(selected, cli) || filepath.Clean(s.executable) == filepath.Clean(cliPath), nil
+	return os.SameFile(selected, cli), nil
 }
 
 // acquireRecoveryLock lets waiting commands share the active review drain.
+// The holder drains without a deadline, so waiters wait as long as it does
+// and then reuse its replacement instead of failing mid-drain.
 func acquireRecoveryLock() (func(), error) {
 	store := daemon.RuntimeStore()
 	release, acquired, err := store.TryAcquireStartLock(context.Background())
@@ -95,40 +107,42 @@ func acquireRecoveryLock() (func(), error) {
 		return release, err
 	}
 	fmt.Fprintln(lifecycleOut, "Waiting for daemon recovery lock; another command may be waiting for running reviews to finish...")
-	return acquireStartLockWithin(store, daemonStartTimeout)
+	return store.AcquireStartLock(context.Background())
 }
 
-// acquireStartLockWithin bounds only the wait; the holder keeps no deadline.
-func acquireStartLockWithin(store kitdaemon.RuntimeStore, timeout time.Duration) (func(), error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	return store.AcquireStartLock(ctx)
-}
-
-func recoveryLockError(err error) error {
-	if errors.Is(err, context.DeadlineExceeded) {
-		return fmt.Errorf("%w after %s: %w; retry this command after running reviews finish", errRecoveryLock, daemonStartTimeout, err)
-	}
-	return fmt.Errorf("%w: %w", errRecoveryLock, err)
-}
-
-// snapshotDaemonService treats a vanished PID as unmanaged when no user
-// manager could restart it, so recovery need not wait for a replacement.
-func snapshotDaemonService(ctx context.Context, pid int) (*daemonService, error) {
+// snapshotDaemonService treats a vanished PID as unmanaged when it ran
+// outside every user service at discovery, or when no user manager could
+// restart it, so recovery need not wait for a replacement.
+func snapshotDaemonService(ctx context.Context, pid int, outsideService bool) (*daemonService, error) {
 	owner, err := findDaemonService(ctx, pid)
-	if errors.Is(err, os.ErrNotExist) && !userManagerAvailable(ctx) {
+	if errors.Is(err, os.ErrNotExist) && (outsideService || !userManagerAvailable(ctx)) {
 		return nil, nil
 	}
 	return owner, err
 }
 
-func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
+// discoveredOutsideService reports whether a just-discovered daemon PID runs
+// outside every user service. Callers read it before slow probes, while the
+// PID is known to be alive.
+func discoveredOutsideService(pid int) bool {
+	unit, err := daemonCgroupUnit(pid)
+	return err == nil && unit == ""
+}
+
+func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), daemonStartTimeout)
-	snapshot, snapshotErr := snapshotDaemonService(ctx, info.PID)
+	snapshot, snapshotErr := snapshotDaemonService(ctx, info.PID, outsideService)
 	cancel()
+	if probeErr == nil && snapshotErr == nil && snapshot != nil {
+		// Keeping a responsive daemon changes nothing, so it needs no lock.
+		if reason := snapshot.keepReason(info.PID); reason != "" {
+			fmt.Fprintf(lifecycleOut, "Daemon recovery skipped; %s\n", reason)
+			return nil
+		}
+	}
 	release, err := acquireRecoveryLock()
 	if err != nil {
-		return recoveryLockError(err)
+		return fmt.Errorf("%w: %w", errRecoveryLock, err)
 	}
 	defer func() {
 		if release != nil {
@@ -170,6 +184,9 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 			return nil
 		}
 	}
+	if responsive && current.PID != info.PID && current.Version == version.Version {
+		return nil
+	}
 	if responsive {
 		probeErr = nil
 	} else {
@@ -191,9 +208,6 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 		}
 		return err
 	}
-	if responsive && current.PID != info.PID && current.Version == version.Version {
-		return nil
-	}
 	if owner == nil {
 		if err := stopDaemonRuntimes(listAllRuntimes, drainManagedDaemon, lifecycleOut); err != nil && !errors.Is(err, ErrDaemonNotRunning) {
 			return err
@@ -203,31 +217,25 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error) error {
 		return startDaemonForEnsure()
 	}
 	fail := func(err error) error { return &managedRecoveryError{owner.unit, err} }
-	if owner.mainPID != current.PID {
-		// A wrapper child stays in use; systemd cannot replace it directly.
-		if responsive {
-			fmt.Fprintf(lifecycleOut, "Daemon recovery skipped; systemd service %s runs the daemon as a child process\n", owner.unit)
+	if responsive {
+		if reason := owner.keepReason(current.PID); reason != "" {
+			fmt.Fprintf(lifecycleOut, "Daemon recovery skipped; %s\n", reason)
 			return nil
 		}
-		return fail(fmt.Errorf("service child requires attention: %w; run systemctl --user restart %s", probeErr, owner.unit))
-	}
-	same, err := owner.sameInstallation()
-	if err != nil {
-		if responsive {
-			fmt.Fprintf(lifecycleOut, "Daemon recovery skipped; systemd service %s: cannot confirm executable %s: %v\n", owner.unit, owner.executable, err)
-			return nil
+	} else {
+		if owner.mainPID != current.PID {
+			return fail(fmt.Errorf("service child requires attention: %w; run systemctl --user restart %s", probeErr, owner.unit))
 		}
-		return fail(fmt.Errorf("cannot confirm executable %s: %w", owner.executable, err))
-	}
-	if !same {
-		if probeErr != nil {
+		same, err := owner.sameInstallation()
+		if err != nil {
+			return fail(fmt.Errorf("cannot confirm executable %s: %w", owner.executable, err))
+		}
+		if !same {
 			return fail(fmt.Errorf("installation %s requires attention: %w; run systemctl --user restart %s", owner.executable, probeErr, owner.unit))
 		}
-		fmt.Fprintf(lifecycleOut, "Daemon recovery skipped; systemd service %s uses another installation (%s)\n", owner.unit, owner.executable)
-		return nil
-	}
-	if err := owner.supported(); err != nil {
-		return unsupportedServiceRecovery(fail(err), responsive)
+		if err := owner.supported(); err != nil {
+			return fail(err)
+		}
 	}
 	// Discovery can miss a daemon that later answers shutdown retries.
 	// Persist pause before any drain or service start, or leave it alone.

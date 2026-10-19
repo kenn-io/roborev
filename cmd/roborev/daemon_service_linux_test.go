@@ -137,6 +137,8 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 				}
 				assert.Equal(t, current.PID, pid, "ownership must use the daemon discovered under the lock")
 				switch {
+				case tc.outcome == "replacement current":
+					return nil, errors.New("user manager unavailable")
 				case tc.outcome == "vanished owned":
 					return nil, os.ErrNotExist
 				case strings.HasPrefix(tc.outcome, "uncertain"):
@@ -183,9 +185,9 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 			var err error
 			if tc.outcome == "readiness failure" || tc.outcome == "wrong PID" {
 				// Readiness polls until its startup budget expires.
-				synctest.Test(t, func(*testing.T) { err = recoverDaemon(original, tc.probeErr) })
+				synctest.Test(t, func(*testing.T) { err = recoverDaemon(original, tc.probeErr, false) })
 			} else {
-				err = recoverDaemon(original, tc.probeErr)
+				err = recoverDaemon(original, tc.probeErr, false)
 			}
 			if tc.wantError == "" {
 				require.NoError(t, err)
@@ -222,6 +224,9 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 				assert.Contains(t, progress.String(), "Daemon recovery skipped;")
 				assert.Contains(t, progress.String(), reason)
 			}
+			if tc.outcome == "replacement current" {
+				assert.Empty(t, progress.String(), "a current replacement needs no ownership lookup or skip notice")
+			}
 			if tc.outcome == "remain after exit" || tc.outcome == "transient" || tc.outcome == "forking" {
 				assert.Contains(t, progress.String(), "systemctl --user restart fixture.service")
 			}
@@ -236,12 +241,13 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 
 func TestRecoverDaemonWaitsForVanishedOwner(t *testing.T) {
 	for _, tc := range []struct {
-		name                                   string
-		replacementAppears, managerUnavailable bool
+		name                                                   string
+		replacementAppears, managerUnavailable, outsideService bool
 	}{
 		{name: "replacement appears", replacementAppears: true},
 		{name: "replacement absent"},
 		{name: "manager unavailable", managerUnavailable: true},
+		{name: "outside service at discovery", outsideService: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
@@ -275,10 +281,10 @@ func TestRecoverDaemonWaitsForVanishedOwner(t *testing.T) {
 				startDaemonForEnsure = func() error { detached++; return nil }
 				startDaemonService = func(context.Context, string) error { starts++; return nil }
 				drainManagedDaemon = func(*daemon.RuntimeInfo) error { drains++; return nil }
-				err := recoverDaemon(original, os.ErrNotExist)
-				if tc.managerUnavailable {
+				err := recoverDaemon(original, os.ErrNotExist, tc.outsideService)
+				if tc.managerUnavailable || tc.outsideService {
 					require.NoError(t, err)
-					assert.Equal(t, 1, detached, "request ordinary startup without a user manager")
+					assert.Equal(t, 1, detached, "request ordinary startup for a daemon no user service could restart")
 					assert.Less(t, time.Since(started), daemonStartTimeout)
 				} else if tc.replacementAppears {
 					require.NoError(t, err)
@@ -287,7 +293,7 @@ func TestRecoverDaemonWaitsForVanishedOwner(t *testing.T) {
 					require.ErrorContains(t, err, "ownership uncertain")
 					require.ErrorIs(t, err, context.DeadlineExceeded)
 				}
-				if !tc.managerUnavailable {
+				if !tc.managerUnavailable && !tc.outsideService {
 					assert.Zero(t, detached)
 				}
 				assert.Zero(t, starts)
@@ -317,7 +323,9 @@ func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 			return current.Load(), nil
 		}
 		serviceMainPID = func(context.Context, string) (int, error) { return current.Load().PID, nil }
+		drains := 0
 		drainManagedDaemon = func(*daemon.RuntimeInfo) error {
+			drains++
 			current.Store(nil)
 			close(drained)
 			<-finishDrain
@@ -334,31 +342,90 @@ func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
 		startDaemonDetached = func(context.Context, detachedDaemonOptions) error { detached++; return nil }
 		recovery, coldStart := make(chan error, 1), make(chan error, 1)
 		competingRecovery := make(chan error, 1)
-		go func() { recovery <- recoverDaemon(old, nil) }()
+		go func() { recovery <- recoverDaemon(old, nil, false) }()
 		<-drained
 		synctest.Wait()
 		assert.Contains(t, progress.String(), "Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...\n")
 		assert.Empty(t, recovery, "recovery must remain blocked while reviews drain")
 		go func() { coldStart <- startDaemon() }()
 		progress.Reset()
-		go func() { competingRecovery <- recoverDaemon(old, nil) }()
+		go func() { competingRecovery <- recoverDaemon(old, nil, false) }()
 		synctest.Wait()
 		assert.Contains(t, progress.String(), "Waiting for daemon recovery lock; another command may be waiting for running reviews to finish...\n")
 		assert.Empty(t, coldStart, "cold start must wait while the unit replaces its daemon")
 		assert.Zero(t, detached)
 		time.Sleep(daemonStartTimeout + time.Minute)
 		require.ErrorIs(t, <-coldStart, context.DeadlineExceeded)
-		competingErr := <-competingRecovery
-		require.ErrorIs(t, competingErr, context.DeadlineExceeded)
+		synctest.Wait()
 		assert.Empty(t, recovery, "the owning recovery must keep waiting for the active review")
+		assert.Empty(t, competingRecovery, "a competing recovery waits for the active review instead of failing")
 		close(finishDrain)
 		close(resume)
 		require.NoError(t, <-recovery)
-		require.ErrorIs(t, competingErr, errRecoveryLock, "status must distinguish recovery still in progress from a missing daemon")
-		require.ErrorContains(t, competingErr, "retry this command after running reviews finish")
-		require.ErrorContains(t, competingErr, "2m0s")
+		require.NoError(t, <-competingRecovery, "a competing recovery reuses the replacement")
+		assert.Equal(t, 1, drains)
 		assert.Zero(t, detached)
 	})
+}
+
+func TestEnsureDaemonReadsOwnershipBeforeProbe(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		isolateDaemonSelection(t)
+		stubServiceRecovery(t)
+		t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
+		oldRun := runSystemctl
+		t.Cleanup(func() { runSystemctl = oldRun })
+		// The user manager answers, so only the earlier cgroup read can rule out a service.
+		runSystemctl = func(context.Context, ...string) ([]byte, error) { return nil, nil }
+		discovered := &daemon.RuntimeInfo{PID: 1234, Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}
+		getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return discovered, nil }
+		getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
+		var events []string
+		daemonCgroupUnit = func(pid int) (string, error) {
+			assert.Equal(t, discovered.PID, pid)
+			events = append(events, "cgroup")
+			return "", nil
+		}
+		probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
+			events = append(events, "probe")
+			return nil, errors.New("daemon exited")
+		}
+		// The PID is gone by the time recovery looks up its owner.
+		findDaemonService = func(context.Context, int) (*daemonService, error) {
+			return nil, &managedRecoveryError{"unknown", os.ErrNotExist}
+		}
+		detached := 0
+		startDaemonForEnsure = func() error { detached++; return nil }
+		started := time.Now()
+		require.NoError(t, ensureDaemon())
+		assert.Equal(t, []string{"cgroup", "probe"}, events)
+		assert.Equal(t, 1, detached)
+		assert.Less(t, time.Since(started), daemonStartTimeout, "an unmanaged daemon must not wait for a service replacement")
+	})
+}
+
+func TestRecoverDaemonKeepsUnreplaceableServiceWithoutLock(t *testing.T) {
+	stubServiceRecovery(t)
+	var progress bytes.Buffer
+	lifecycleOut = &progress
+	release, err := daemon.RuntimeStore().AcquireStartLock(t.Context())
+	require.NoError(t, err)
+	defer release()
+	foreign := filepath.Join(t.TempDir(), "roborev")
+	require.NoError(t, os.WriteFile(foreign, []byte("another installation"), 0o700))
+	findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
+		return &daemonService{unit: "fixture.service", executable: foreign, mainPID: pid, serviceType: "notify"}, nil
+	}
+	done := make(chan error, 1)
+	go func() { done <- recoverDaemon(&daemon.RuntimeInfo{PID: 1234, Version: "v-old"}, nil, false) }()
+	// Wall clock: a regression blocks on the start lock file, which synctest cannot observe.
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "recovery waited for the start lock to keep a daemon it cannot replace")
+	}
+	assert.Contains(t, progress.String(), "Daemon recovery skipped; systemd service fixture.service uses another installation")
 }
 
 // stubServiceProcesses serves /proc files and systemctl output for lookups.
@@ -452,22 +519,27 @@ func TestUserServiceCommandsNeverRestart(t *testing.T) {
 	assert.Equal(t, [][]string{{"start", "--", "fixture.service"}, {"show", "--property=MainPID", "--", "fixture.service"}}, *calls)
 }
 
-func TestDaemonServiceSamePathReplacement(t *testing.T) {
+// A CLI whose own binary was replaced after it started runs a different
+// version than the service would start, so it must not drain the daemon.
+func TestDaemonServiceReplacedCLIIsAnotherInstallation(t *testing.T) {
 	path, err := os.Executable()
 	require.NoError(t, err)
 	if os.Getenv("ROBOREV_TEST_EXECUTABLE_REPLACEMENT") == "1" {
-		require.NoError(t, os.WriteFile(path+".next", []byte("replacement executable"), 0o700))
-		require.NoError(t, os.Rename(path+".next", path))
 		same, err := (&daemonService{executable: path}).sameInstallation()
 		require.NoError(t, err)
-		assert.True(t, same)
+		require.True(t, same)
+		require.NoError(t, os.WriteFile(path+".next", []byte("replacement executable"), 0o700))
+		require.NoError(t, os.Rename(path+".next", path))
+		same, err = (&daemonService{executable: path}).sameInstallation()
+		require.NoError(t, err)
+		assert.False(t, same)
 		return
 	}
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	copyPath := filepath.Join(t.TempDir(), "roborev-test")
 	require.NoError(t, os.WriteFile(copyPath, data, 0o700))
-	cmd := exec.Command(copyPath, "-test.run=^TestDaemonServiceSamePathReplacement$")
+	cmd := exec.Command(copyPath, "-test.run=^TestDaemonServiceReplacedCLIIsAnotherInstallation$")
 	cmd.Env = append(os.Environ(), "ROBOREV_TEST_EXECUTABLE_REPLACEMENT=1")
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "%s", output)

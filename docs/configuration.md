@@ -1781,15 +1781,16 @@ after discovery, through its owning user service after active reviews finish:
 1. Under the start lock, the command rediscovers the daemon and reuses a
     responsive replacement already running this CLI's version.
 1. The command holding the lock waits for active reviews to drain with no time
-    limit. Competing commands wait up to two minutes to acquire the lock.
+    limit. Competing commands wait for that drain, then reuse the replacement.
 1. It runs `systemctl --user start` for the unit and waits up to two minutes
     until a responsive daemon is the unit's `MainPID`. If socket activation
     already started a replacement, `start` leaves it running.
 
 Automatic replacement applies when the daemon is the main process of a
 non-transient user service with `Type=simple`, `Type=exec`, or `Type=notify`,
-and its configured `ExecStart` path points to the CLI's executable file or has
-the same path. A stable symlink still identifies the installation after an
+and its configured `ExecStart` path resolves to the CLI's executable file. A CLI
+process whose binary was replaced after it started counts as another
+installation. A stable symlink still identifies the installation after an
 upgrade retargets it and removes the old binary; atomic package replacements
 also retain their identity. For `RemainAfterExit=yes`, transient units, and
 other unsupported service types, a responsive daemon stays usable and the
@@ -1803,13 +1804,20 @@ These daemons stay in use while they respond and report an error otherwise:
 - A daemon started as a child of the unit's main process, such as by a wrapper
     script.
 
-A daemon that only shares a unit's cgroup, such as one started with
-`roborev daemon start` from a service script, uses ordinary detached recovery.
-If the user service manager is unavailable, a responsive daemon stays running;
-the command explains why recovery was skipped. If the original PID disappears
-before ownership lookup and no replacement responds, recovery uses ordinary
-detached startup when the user manager cannot answer. If the manager answers,
-recovery waits up to two minutes for a managed replacement.
+A daemon that only shares a unit's cgroup uses ordinary detached recovery. For
+example, `roborev daemon start` in a `Type=oneshot` unit with
+`RemainAfterExit=yes` leaves a daemon that is not the unit's main process. With
+`Type=forking`, systemd tracks the forked daemon as the main process, so it
+counts as an unsupported service type. If the user service manager is
+unavailable, a responsive daemon stays running; the command explains why
+recovery was skipped. A responsive daemon that the service cannot replace stays
+in use without waiting for another command's recovery.
+
+Commands read the daemon's cgroup when they first find it. If the original PID
+disappears before ownership lookup and no replacement responds, recovery uses
+ordinary detached startup when the daemon ran outside every user service or the
+user manager cannot answer. Otherwise recovery waits up to two minutes for a
+managed replacement.
 
 Before managed recovery drains reviews or starts the service, local
 `roborev pause` must save the pause through the current daemon, even if the

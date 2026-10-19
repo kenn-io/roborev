@@ -192,7 +192,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				t.Cleanup(func() { startDaemonForEnsure = oldStart })
 				detached := 0
 				startDaemonForEnsure = func() error { detached++; return nil }
-				require.NoError(t, recoverDaemon(original, os.ErrNotExist))
+				require.NoError(t, recoverDaemon(original, os.ErrNotExist, false))
 				assert.Zero(t, detached)
 				replacement, err := daemon.GetAnyRunningDaemon()
 				require.NoError(t, err)
@@ -314,7 +314,7 @@ func assertVanishedSocketPauseRefused(t *testing.T, original *daemon.RuntimeInfo
 	}
 	paused := true
 	pendingStartPause = &paused
-	err := recoverDaemon(original, nil)
+	err := recoverDaemon(original, nil, false)
 	assert.ErrorContains(t, err, "run systemctl --user start "+unit+", then retry roborev pause")
 	assert.Zero(t, serviceMainPIDForTest(t, unit), "failed pause must leave the activation socket untouched")
 	db, err := storage.OpenReadOnly(filepath.Join(dataDir, "reviews.db"))
@@ -358,7 +358,7 @@ func assertSocketReplacementKept(t *testing.T, original *daemon.RuntimeInfo, uni
 		}, 15*time.Second, 10*time.Millisecond)
 		return nil
 	}
-	require.NoError(t, recoverDaemon(original, nil))
+	require.NoError(t, recoverDaemon(original, nil, false))
 	assert.Equal(t, activated, serviceMainPIDForTest(t, unit), "recovery must keep the activated replacement")
 	replacement, err := daemon.GetAnyRunningDaemon()
 	require.NoError(t, err)
