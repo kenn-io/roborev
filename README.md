@@ -523,7 +523,9 @@ for recovery instructions.
 Counts mean the report was queued, not confirmed delivered to PostHog.
 The CLI and TUI send one `app_opened` check per daemon per UTC day and send
 nothing more to a daemon that answers `disabled`. The TUI retries failed screen
-reports on later input after backoff, until the daemon settles one for the day.
+reports on later input after backoff, until the daemon settles one for the day
+or the check receives six answers without a receipt. That limit stops checks
+and dependent reports until the next UTC day.
 The browser sends each screen once per day per browser profile.
 Agent activity counts each MCP `tools/call`, including tool errors, and each
 invocation of `agent-hook run`, `agent-hook fix-done`, `post-commit`, `enqueue`,

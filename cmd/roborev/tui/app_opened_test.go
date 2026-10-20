@@ -352,8 +352,12 @@ func TestTUIProgramStartsAndExitsWhileAppOpenedHangs(t *testing.T) {
 		<-release
 		w.WriteHeader(http.StatusAccepted)
 	})
-	// Registered after the server's cleanup, so it runs first and the held handler can return.
-	t.Cleanup(func() { close(release) })
+	m := newModel(testEndpointFromURL(ts.URL), withExternalIODisabled())
+	// Release the handler and join the client's receipt write before fixture cleanup.
+	t.Cleanup(func() {
+		close(release)
+		m.probeTelemetry()
+	})
 
 	isClosed := func(ch chan struct{}) bool {
 		select {
@@ -364,19 +368,14 @@ func TestTUIProgramStartsAndExitsWhileAppOpenedHangs(t *testing.T) {
 		}
 	}
 
-	p, runDone := startHeadlessProgram(t, newModel(testEndpointFromURL(ts.URL), withExternalIODisabled()))
-
-	// Waits on socket work in the fake daemon, so wall-clock polling is required.
-	require.Eventually(t, func() bool { return isClosed(entered) }, 5*time.Second, 10*time.Millisecond)
+	p, runDone := startHeadlessProgram(t, m)
 
 	// The startup fetch must run while telemetry is held. A refresh tick can be
 	// skipped until that fetch completes, so it cannot signal startup here.
 	// Waits on socket work in the fake daemon, so wall-clock polling is required.
-	require.Eventually(t, func() bool {
-		return d.jobFetches.Load() > 0 && !isClosed(release)
-	}, 5*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool { return isClosed(entered) && d.jobFetches.Load() > 0 }, 5*time.Second, 10*time.Millisecond)
 
 	p.Quit()
 	// Waits on socket work in the fake daemon, so wall-clock polling is required.
-	require.Eventually(t, func() bool { return isClosed(runDone) && !isClosed(release) }, 5*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool { return isClosed(runDone) }, 5*time.Second, 10*time.Millisecond)
 }

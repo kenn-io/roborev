@@ -118,22 +118,21 @@ func TestClientGateDisabledReplyToAnyRouteIsSaved(t *testing.T) {
 	assert.Equal(t, []string{EventAppOpened, EventReviewViewed}, s.seen())
 }
 
-func TestClientGateConcurrentAgentCallsShareDisabledReceipt(t *testing.T) {
-	testenv.SetDataDir(t)
-	s := newReceiptServer(t, "disabled")
-	start := make(chan struct{})
-	var calls sync.WaitGroup
-	for range 100 {
-		g := &ClientGate{}
-		g.Load(t.Context())
-		calls.Go(func() {
-			<-start
-			post(g, s, "daemon", EventAgentActive, "")
-		})
-	}
-	close(start)
-	calls.Wait()
-	assert.Equal(t, []string{EventAgentActive}, s.seen(), "concurrent agent calls share the first disabled receipt")
+func TestClientGateAgentCallsKeepOnlyDisabledOnDisk(t *testing.T) {
+	dir := testenv.SetDataDir(t)
+	s := newReceiptServer(t, "queued")
+	probe(&ClientGate{}, s, "daemon", SurfaceCLI)
+	post(&ClientGate{}, s, "daemon", EventAgentActive, "")
+	post(&ClientGate{}, s, "daemon", EventAgentActive, "")
+	data, err := os.ReadFile(filepath.Join(dir, clientStateFile))
+	require.NoError(t, err)
+	var file clientState
+	require.NoError(t, json.Unmarshal(data, &file))
+	assert.NotContains(t, file.Endpoints["daemon"].Probes, "agent")
+	s.status.Store("disabled")
+	post(&ClientGate{}, s, "daemon", EventAgentActive, "")
+	post(&ClientGate{}, s, "daemon", EventAgentActive, "")
+	assert.Len(t, s.seen(), 4, "a fresh process honors the saved disabled receipt")
 }
 
 func TestClientGateProbeBackoffPersistsStopsAtSixAnswersAndResetsDaily(t *testing.T) {
@@ -159,11 +158,11 @@ func TestClientGateProbeBackoffPersistsStopsAtSixAnswersAndResetsDaily(t *testin
 
 			s.status.Store("queued")
 			post(gate(), s, "daemon", EventScreenViewed, SurfaceTUI)
-			assert.Equal(t, EventScreenViewed, s.seen()[len(s.seen())-1], "an exhausted probe stops only itself")
+			assert.Len(t, s.seen(), maxProbeRejections, "an exhausted probe stops dependent reports too")
 
 			now = now.AddDate(0, 0, 1)
 			probe(gate(), s, "daemon", SurfaceTUI)
-			assert.Len(t, s.seen(), maxProbeRejections+2)
+			assert.Len(t, s.seen(), maxProbeRejections+1)
 		})
 	}
 }
