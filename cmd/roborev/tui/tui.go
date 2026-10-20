@@ -144,9 +144,8 @@ type model struct {
 	expandedPanels       map[uuid.UUID]bool                // panel_run_uuid -> expanded
 	panelMembers         map[uuid.UUID][]storage.ReviewJob // panel_run_uuid -> side-fetched members
 	currentView          viewKind
-	reviewReadSent       bool     // review_viewed issued on screenDay
 	screenDay            string   // UTC day that screensSent covers
-	screensSent          []string // screen requests issued on screenDay
+	screensSent          []string // screen and review_viewed requests issued on screenDay and not failed
 	rerunAgentJobID      int64
 	rerunAgentOptions    []string
 	rerunAgentSelected   int
@@ -1144,7 +1143,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	today := time.Now().UTC().Format(time.DateOnly)
 	if m.screenDay != today {
 		m.screenDay, m.screensSent = today, nil
-		m.reviewReadSent = false
 	}
 
 	// Signal that the event loop is running (once). The control
@@ -1286,6 +1284,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			5*time.Second, m.currentView,
 		)
 		result = m
+	case reportFailedMsg:
+		m.screensSent = slices.DeleteFunc(m.screensSent, func(sent string) bool { return sent == string(msg) })
+		result = m
 	case controlSocketReadyMsg:
 		m.controlSocket = msg.socketPath
 		result = m
@@ -1324,15 +1325,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		read := (key || mouse) && !quit && (m.currentView == viewReview || m.splitActive()) &&
 			m.selectedReviewLoaded() && m.currentReview.ID != 0 &&
 			m.currentReview.Job != nil && m.currentReview.Job.IsReadableReview()
-		if read && !rm.reviewReadSent {
-			rm.reviewReadSent = true
+		if read && !slices.Contains(rm.screensSent, telemetry.EventReviewViewed) {
+			rm.screensSent = append(rm.screensSent, telemetry.EventReviewViewed)
 			cmd = tea.Batch(cmd, rm.reportAction(telemetry.EventReviewViewed))
 		}
 		for _, screen := range rm.screensShown() {
-			if slices.Contains(rm.screensSent, screen) {
-				continue
-			}
-			if key || mouse || !slices.Contains(m.screensShown(), screen) {
+			if !slices.Contains(rm.screensSent, screen) && (key || mouse || !slices.Contains(m.screensShown(), screen)) {
 				rm.screensSent = append(rm.screensSent, screen)
 				cmd = tea.Batch(cmd, rm.postScreen(screen))
 			}

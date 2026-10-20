@@ -61,7 +61,12 @@ func (s *screenRecordingTransport) RoundTrip(req *http.Request) (*http.Response,
 func updateScreenTestModel(m *model, msg tea.Msg) {
 	result, cmd := m.Update(msg)
 	*m = result.(model)
-	collectMsgs(cmd)
+	for _, msg := range collectMsgs(cmd) {
+		if failed, ok := msg.(reportFailedMsg); ok {
+			result, _ = m.Update(failed)
+			*m = result.(model)
+		}
+	}
 }
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables
@@ -87,9 +92,28 @@ func TestScreenFailureIsNotRetriedByHeldKey(t *testing.T) {
 				updateScreenTestModel(&m, keyPressMsg('x'))
 			}
 			assert.LessOrEqual(t, len(transport.screens), 1)
-			assert.Contains(t, m.screensSent, tt.screen)
 		})
 	}
+}
+
+//nolint:paralleltest // t.Setenv of telemetry opt-out variables
+func TestFailedScreenReportIsRetriedOnLaterInputAfterBackoff(t *testing.T) {
+	enableTelemetryEnv(t)
+	synctest.Test(t, func(t *testing.T) {
+		m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
+		transport := &screenRecordingTransport{fail: true}
+		m.client.Transport = transport
+		updateScreenTestModel(&m, keyPressMsg('?'))
+		for range 50 {
+			updateScreenTestModel(&m, keyPressMsg('x'))
+		}
+		require.LessOrEqual(t, len(transport.screens), 1, "a held key stays at one request")
+
+		transport.fail = false
+		time.Sleep(time.Minute)
+		updateScreenTestModel(&m, keyPressMsg('x'))
+		assert.Contains(t, transport.screens, "help", "later input resends the screen the daemon never took")
+	})
 }
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables

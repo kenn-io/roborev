@@ -447,7 +447,7 @@ func (m model) screensShown() []string {
 	return []string{m.currentView.String()}
 }
 
-// postScreen reports a screen once per day, whether or not the daemon accepts it, so a held key never retries.
+// postScreen reports a screen once per day; one that fails comes back as reportFailedMsg for later input to resend.
 func (m model) postScreen(screen string) tea.Cmd {
 	if !telemetry.EnabledFromEnv() || !telemetry.DefaultClientGate.Ready(m.endpoint.TelemetryScope()) {
 		return nil
@@ -456,9 +456,19 @@ func (m model) postScreen(screen string) tea.Cmd {
 		m.probeTelemetry()
 		ctx, cancel := context.WithTimeout(m.apiContext(), telemetry.NotificationTimeout)
 		defer cancel()
-		telemetry.PostScreenViewed(ctx, m.client, m.endpoint.TelemetryScope(), m.endpoint.BaseURL()+daemon.TelemetryEventsPath, screen, telemetry.SurfaceTUI)
+		return reportFailed(screen, telemetry.PostScreenViewed(ctx, m.client, m.endpoint.TelemetryScope(), m.endpoint.BaseURL()+daemon.TelemetryEventsPath, screen, telemetry.SurfaceTUI))
+	}
+}
+
+// reportFailedMsg names a report that got no answer, a 5xx, or a backoff skip. Update unmarks it so later input
+// resends it, and Post's backoff keeps a held key from sending at key-repeat rate.
+type reportFailedMsg string
+
+func reportFailed(report string, settled bool) tea.Msg {
+	if settled {
 		return nil
 	}
+	return reportFailedMsg(report)
 }
 
 func (m model) fetchReleaseNotes() tea.Cmd {
@@ -1543,7 +1553,6 @@ func (m model) reportAction(event string) tea.Cmd {
 		m.probeTelemetry()
 		ctx, cancel := context.WithTimeout(m.apiContext(), telemetry.NotificationTimeout)
 		defer cancel()
-		telemetry.PostReviewEvent(ctx, m.client, m.endpoint.TelemetryScope(), m.endpoint.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceTUI)
-		return nil
+		return reportFailed(event, telemetry.PostReviewEvent(ctx, m.client, m.endpoint.TelemetryScope(), m.endpoint.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceTUI))
 	}
 }

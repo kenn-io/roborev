@@ -38,7 +38,7 @@ type ClientGate struct {
 	// frozen means the file has a newer format: no reports go out and the file stays as found.
 	frozen bool
 	// down holds the backoff after reports that got no answer or a 5xx, per daemon and kept in memory only.
-	down map[string]*reportBackoff
+	down map[string]reportBackoff
 	now  func() time.Time
 }
 
@@ -84,7 +84,7 @@ func (g *ClientGate) current() *clientState {
 	path := filepath.Join(config.DataDir(), clientStateFile)
 	day := g.clock().UTC().Format(time.DateOnly)
 	if g.path != path || g.state.Day != day {
-		g.path, g.loaded, g.frozen, g.down = path, false, false, map[string]*reportBackoff{}
+		g.path, g.loaded, g.frozen, g.down = path, false, false, map[string]reportBackoff{}
 		g.state = clientState{Version: clientStateVersion, Day: day, Endpoints: map[string]*clientEndpoint{}}
 	}
 	return &g.state
@@ -197,21 +197,22 @@ func (g *ClientGate) Probe(ctx context.Context, client *http.Client, scope, url,
 }
 
 // Post sends one report unless the daemon is disabled or backing off; callers run Probe first. A 5xx or no
-// answer starts a memory-only 1 to 16 second backoff that drops reports meanwhile, and the surface's saved
-// app_opened backoff covers them too. A disabled reply from any route is saved.
-func (g *ClientGate) Post(ctx context.Context, client *http.Client, scope, url, event string, props map[string]any) (posthog.Status, error) {
+// answer starts a memory-only 1 to 16 second backoff that skips reports meanwhile, and the surface's saved
+// app_opened backoff covers them too. A disabled reply from any route is saved. It returns whether the report
+// settled: the daemon answered below 500, or it wants no reports. A caller may resend an unsettled report later.
+func (g *ClientGate) Post(ctx context.Context, client *http.Client, scope, url, event string, props map[string]any) bool {
 	g.Load(ctx)
 	surface, _ := props[PropertySurface].(string)
-	if !g.Ready(scope) || g.backingOff(scope, surface) {
-		return posthog.StatusSkipped, nil
+	ready := g.Ready(scope)
+	if !ready || g.backingOff(scope, surface) {
+		return !ready
 	}
 	answering, answers := trackAnswer(client)
 	status, err := posthog.PostEvent(ctx, answering, url, event, props)
-	g.noteReport(scope, err == nil || (answers.status > 0 && answers.status < 500))
 	if status == posthog.StatusDisabled {
 		g.disable(ctx, scope)
 	}
-	return status, err
+	return g.noteReport(scope, err == nil || (answers.status > 0 && answers.status < 500))
 }
 
 // backingOff covers a daemon whose reports just failed and the surface's saved app_opened backoff.
@@ -219,32 +220,23 @@ func (g *ClientGate) backingOff(scope, surface string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	e := g.current().Endpoints[scope]
-	return g.clock().Before(g.down[scope].untilOrZero()) || e.probeOpen(surface) && !e.probeDue(surface, g.clock())
+	return g.clock().Before(g.down[scope].until) || e.probeOpen(surface) && !e.probeDue(surface, g.clock())
 }
 
-// noteReport extends the scope's backoff after a failed report and clears it after a good one.
-func (g *ClientGate) noteReport(scope string, answered bool) {
+// noteReport extends the scope's backoff after a failed report, clears it after an answered one, and returns answered.
+func (g *ClientGate) noteReport(scope string, answered bool) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.current()
 	if answered {
 		delete(g.down, scope)
-		return
+		return true
 	}
 	b := g.down[scope]
-	if b == nil {
-		b = &reportBackoff{}
-		g.down[scope] = b
-	}
 	b.failures++
 	b.until = g.clock().Add(backoffDelay(b.failures))
-}
-
-func (b *reportBackoff) untilOrZero() time.Time {
-	if b == nil {
-		return time.Time{}
-	}
-	return b.until
+	g.down[scope] = b
+	return false
 }
 
 // disable keeps the opt-out in memory first, so an unwritable file loses nothing.

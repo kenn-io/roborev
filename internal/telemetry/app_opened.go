@@ -120,19 +120,19 @@ func PostAppOpened(ctx context.Context, client *http.Client, scope, url, surface
 
 // PostSessionEnded reports one completed interface lifetime.
 func PostSessionEnded(ctx context.Context, client *http.Client, scope, url, surface string, elapsed time.Duration) {
-	_, _ = DefaultClientGate.Post(ctx, client, scope, url, EventSessionEnded, map[string]any{PropertySurface: surface, PropertyDurationBucket: DurationBucket(elapsed)})
+	DefaultClientGate.Post(ctx, client, scope, url, EventSessionEnded, map[string]any{PropertySurface: surface, PropertyDurationBucket: DurationBucket(elapsed)})
 }
 
-func PostScreenViewed(ctx context.Context, client *http.Client, scope, url, screen, surface string) {
-	_, _ = DefaultClientGate.Post(ctx, client, scope, url, EventScreenViewed, map[string]any{PropertyScreen: screen, PropertySurface: surface})
+func PostScreenViewed(ctx context.Context, client *http.Client, scope, url, screen, surface string) bool {
+	return DefaultClientGate.Post(ctx, client, scope, url, EventScreenViewed, map[string]any{PropertyScreen: screen, PropertySurface: surface})
 }
 
-// PostReviewEvent reports a completed review action through the daemon.
-func PostReviewEvent(ctx context.Context, client *http.Client, scope, url, event, surface string) {
-	_, _ = DefaultClientGate.Post(ctx, client, scope, url, event, map[string]any{PropertySurface: surface})
+// PostReviewEvent reports a completed review action through the daemon and whether it settled, as Post does.
+func PostReviewEvent(ctx context.Context, client *http.Client, scope, url, event, surface string) bool {
+	return DefaultClientGate.Post(ctx, client, scope, url, event, map[string]any{PropertySurface: surface})
 }
 
 // PostAgentCall notifies the daemon of one call; callers gate on EnabledFromEnv.
 func PostAgentCall(ctx context.Context, client *http.Client, scope, url string) {
-	_, _ = DefaultClientGate.Post(ctx, client, scope, url, EventAgentActive, nil)
+	DefaultClientGate.Post(ctx, client, scope, url, EventAgentActive, nil)
 }

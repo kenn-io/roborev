@@ -78,7 +78,7 @@ func post(g *ClientGate, s *receiptServer, scope, event, surface string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	props := map[string]any{PropertySurface: surface}
-	_, _ = g.Post(ctx, s.Client(), scope, s.URL, event, props)
+	g.Post(ctx, s.Client(), scope, s.URL, event, props)
 }
 
 func TestClientGateSharesOneProbeAcrossInstances(t *testing.T) {
