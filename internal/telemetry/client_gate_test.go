@@ -49,6 +49,9 @@ func newReceiptServer(t *testing.T, status string) *receiptServer {
 		case "empty": // an older daemon's 202 carries no receipt
 			w.WriteHeader(http.StatusAccepted)
 			return
+		case "401":
+			http.Error(w, "no", http.StatusUnauthorized)
+			return
 		}
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte(`{"status":"` + reply + `"}`))
@@ -147,6 +150,47 @@ func TestClientGateProbeBackoffPersistsStopsAtSixAnswersAndResetsDaily(t *testin
 	now = now.AddDate(0, 0, 1)
 	probe(gate(), s, "daemon", SurfaceTUI)
 	assert.Len(t, s.seen(), maxProbeRejections+1)
+}
+
+func TestClientGateProbeStopsAfterSixRefusals(t *testing.T) {
+	useDataDir(t)
+	s := newReceiptServer(t, "401")
+	now := time.Date(2026, 3, 10, 9, 0, 0, 0, time.UTC)
+	for range 2 * maxProbeRejections {
+		probe(&ClientGate{now: func() time.Time { return now }}, s, "daemon", SurfaceCLI)
+		now = now.Add(time.Minute)
+	}
+	assert.Len(t, s.seen(), maxProbeRejections)
+}
+
+func TestClientGateReportsBackOffAfterAServerError(t *testing.T) {
+	useDataDir(t)
+	s := newReceiptServer(t, "500")
+	now := time.Date(2026, 3, 10, 9, 0, 0, 0, time.UTC)
+	g := &ClientGate{now: func() time.Time { return now }}
+
+	for range 20 {
+		post(g, s, "daemon", EventAgentActive, "")
+	}
+	assert.Len(t, s.seen(), 1, "calls inside the backoff are dropped")
+
+	now = now.Add(time.Second)
+	post(g, s, "daemon", EventAgentActive, "")
+	assert.Len(t, s.seen(), 2)
+	now = now.Add(time.Second)
+	post(g, s, "daemon", EventAgentActive, "")
+	assert.Len(t, s.seen(), 2, "the second failure doubles the wait")
+	now = now.Add(time.Second)
+	post(g, s, "daemon", EventAgentActive, "")
+	assert.Len(t, s.seen(), 3)
+
+	s.status.Store("queued")
+	now = now.Add(time.Minute)
+	post(g, s, "daemon", EventAgentActive, "")
+	post(g, s, "daemon", EventAgentActive, "")
+	assert.Len(t, s.seen(), 5, "a good answer clears the backoff")
+	post(g, s, "other", EventAgentActive, "")
+	assert.Len(t, s.seen(), 6, "another daemon is unaffected")
 }
 
 func TestClientGateServerErrorsOnlyBackOff(t *testing.T) {
@@ -351,4 +395,28 @@ func TestClientGateFollowerWaitsForTheProbeInFlight(t *testing.T) {
 		follower.Wait()
 		assert.Equal(t, int32(1), requests.Load())
 	})
+}
+
+func TestClientGateLeavesANewerFileUntouched(t *testing.T) {
+	dir := useDataDir(t)
+	now := time.Date(2026, 3, 10, 9, 0, 0, 0, time.UTC)
+	newer := []byte(`{"version":2,"day":"2026-03-10","endpoints":{"daemon":{"disabled":true}},"extra":1}`)
+	path := filepath.Join(dir, clientStateFile)
+	require.NoError(t, os.WriteFile(path, newer, 0o600))
+	s := newReceiptServer(t, "queued")
+	g := &ClientGate{now: func() time.Time { return now }}
+
+	probe(g, s, "daemon", SurfaceCLI)
+	post(g, s, "daemon", EventReviewViewed, SurfaceCLI)
+	assert.Equal(t, []string{EventAppOpened, EventReviewViewed}, s.seen(), "a newer format is not trusted")
+	saved, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, newer, saved)
+
+	s.status.Store("disabled")
+	post(g, s, "daemon", EventAgentActive, "")
+	assert.False(t, g.Ready("daemon"), "the receipt stays in memory")
+	saved, err = os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, newer, saved)
 }

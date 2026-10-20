@@ -18,6 +18,8 @@ import (
 
 const (
 	clientStateFile = "telemetry-client.json"
+	// clientStateVersion is the file format this build reads and writes; a newer file is left alone.
+	clientStateVersion = 1
 	// maxProbeRejections bounds the answers without a receipt that the app_opened check accepts per daemon and surface each UTC day.
 	maxProbeRejections = 6
 	// receiptPollInterval paces waits for the receipt lock.
@@ -33,13 +35,23 @@ type ClientGate struct {
 	state  clientState
 	path   string
 	loaded bool
-	now    func() time.Time
+	// frozen means the file has a newer format: memory carries the receipts and the file stays as found.
+	frozen bool
+	// down holds the backoff after reports that got no answer or a 5xx, per daemon and kept in memory only.
+	down map[string]*reportBackoff
+	now  func() time.Time
 }
 
 // DefaultClientGate is the process-wide gate.
 var DefaultClientGate = &ClientGate{}
 
+type reportBackoff struct {
+	failures int
+	until    time.Time
+}
+
 type clientState struct {
+	Version   int                        `json:"version"`
 	Day       string                     `json:"day"`
 	Endpoints map[string]*clientEndpoint `json:"endpoints"`
 }
@@ -52,8 +64,9 @@ type clientEndpoint struct {
 type clientProbe struct {
 	Sent     bool `json:"sent,omitempty"`
 	Attempts int  `json:"attempts,omitempty"`
-	// Rejected counts 2xx answers without a receipt, such as from a daemon too old to send them. Six stop the
-	// check for the day; failures and requests that got no answer only extend the backoff.
+	// Rejected counts answers that are neither a receipt nor a 5xx, such as an empty 2xx from a daemon too old
+	// to send receipts, or a 4xx. Six stop the check for the day; 5xx answers and requests that got no answer
+	// only extend the backoff.
 	Rejected int       `json:"rejected,omitempty"`
 	Next     time.Time `json:"next"`
 }
@@ -71,8 +84,8 @@ func (g *ClientGate) current() *clientState {
 	path := filepath.Join(config.DataDir(), clientStateFile)
 	day := g.clock().UTC().Format(time.DateOnly)
 	if g.path != path || g.state.Day != day {
-		g.path, g.loaded = path, false
-		g.state = clientState{Day: day, Endpoints: map[string]*clientEndpoint{}}
+		g.path, g.loaded, g.frozen, g.down = path, false, false, map[string]*reportBackoff{}
+		g.state = clientState{Version: clientStateVersion, Day: day, Endpoints: map[string]*clientEndpoint{}}
 	}
 	return &g.state
 }
@@ -111,8 +124,15 @@ func (g *ClientGate) Ready(scope string) bool {
 	return e == nil || !e.Disabled
 }
 
-// Load reads the shared receipts into memory.
+// Load reads the shared receipts into memory once per day; Probe and Post call it themselves.
 func (g *ClientGate) Load(ctx context.Context) {
+	g.mu.Lock()
+	g.current()
+	loaded := g.loaded
+	g.mu.Unlock()
+	if loaded {
+		return
+	}
 	if unlock, ok := g.lock(ctx); ok {
 		defer unlock()
 		g.merge()
@@ -151,12 +171,10 @@ func (g *ClientGate) Probe(ctx context.Context, client *http.Client, scope, url,
 	if !send {
 		return
 	}
-	answers := &lastAnswer{base: client.Transport}
-	answering := *client
-	answering.Transport = answers
-	status, err := posthog.PostEvent(ctx, &answering, url, EventAppOpened, map[string]any{PropertySurface: surface})
+	answering, answers := trackAnswer(client)
+	status, err := posthog.PostEvent(ctx, answering, url, EventAppOpened, map[string]any{PropertySurface: surface})
 	if err != nil {
-		if answers.status >= 200 && answers.status < 300 {
+		if answers.status > 0 && answers.status < 500 {
 			g.commit(scope, func(e *clientEndpoint) bool {
 				p := e.Probes[surface]
 				p.Rejected++
@@ -178,27 +196,54 @@ func (g *ClientGate) Probe(ctx context.Context, client *http.Client, scope, url,
 	})
 }
 
-// Post sends one report unless the daemon is disabled; callers run Probe first, so a report waits only
-// for an attempt in flight. A disabled reply from any route is saved.
+// Post sends one report unless the daemon is disabled or has just failed to answer; callers run Probe
+// first, so a report waits only for an attempt in flight. After a report gets no answer or a 5xx, further
+// reports to that daemon wait out a memory-only backoff of 1 to 16 seconds, and are dropped meanwhile.
+// A disabled reply from any route is saved.
 func (g *ClientGate) Post(ctx context.Context, client *http.Client, scope, url, event string, props map[string]any) (posthog.Status, error) {
-	if !g.isLoaded() {
-		g.Load(ctx)
-	}
-	if !g.Ready(scope) {
+	g.Load(ctx)
+	if !g.Ready(scope) || g.backingOff(scope) {
 		return posthog.StatusSkipped, nil
 	}
-	status, err := posthog.PostEvent(ctx, client, url, event, props)
+	answering, answers := trackAnswer(client)
+	status, err := posthog.PostEvent(ctx, answering, url, event, props)
+	g.noteReport(scope, err == nil || (answers.status > 0 && answers.status < 500))
 	if status == posthog.StatusDisabled {
 		g.disable(ctx, scope)
 	}
 	return status, err
 }
 
-func (g *ClientGate) isLoaded() bool {
+func (g *ClientGate) backingOff(scope string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.current()
-	return g.loaded
+	return g.clock().Before(g.down[scope].untilOrZero())
+}
+
+// noteReport extends the scope's backoff after a failed report and clears it after a good one.
+func (g *ClientGate) noteReport(scope string, answered bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.current()
+	if answered {
+		delete(g.down, scope)
+		return
+	}
+	b := g.down[scope]
+	if b == nil {
+		b = &reportBackoff{}
+		g.down[scope] = b
+	}
+	b.failures++
+	b.until = g.clock().Add(backoffDelay(b.failures))
+}
+
+func (b *reportBackoff) untilOrZero() time.Time {
+	if b == nil {
+		return time.Time{}
+	}
+	return b.until
 }
 
 // disable keeps the opt-out in memory first, so an unwritable file loses nothing.
@@ -250,7 +295,14 @@ func (g *ClientGate) merge() {
 		return
 	}
 	var saved clientState
-	if json.Unmarshal(data, &saved) != nil || saved.Day != state.Day {
+	if json.Unmarshal(data, &saved) != nil {
+		return
+	}
+	if saved.Version > clientStateVersion {
+		g.frozen = true
+		return
+	}
+	if saved.Day != state.Day {
 		return
 	}
 	for scope, se := range saved.Endpoints {
@@ -280,19 +332,26 @@ func (g *ClientGate) commit(scope string, change func(*clientEndpoint) bool) {
 		g.mu.Unlock()
 		return
 	}
-	path := g.path
+	path, frozen := g.path, g.frozen
 	data, err := json.Marshal(state)
 	g.mu.Unlock()
-	if err == nil {
+	if err == nil && !frozen {
 		_ = atomicfile.WriteFile(path, data, atomicfile.WithPrivate(), atomicfile.WithoutSync())
 	}
 }
 
-// lastAnswer records the status of the last response. A 2xx answer that still fails is a daemon without
-// receipts, such as an older one; 5xx answers and requests that got no answer only back off.
+// lastAnswer records the status of the last response, or zero when none arrived.
 type lastAnswer struct {
 	base   http.RoundTripper
 	status int
+}
+
+// trackAnswer copies client so its transport records the status of the last response.
+func trackAnswer(client *http.Client) (*http.Client, *lastAnswer) {
+	answers := &lastAnswer{base: client.Transport}
+	tracked := *client
+	tracked.Transport = answers
+	return &tracked, answers
 }
 
 func (l *lastAnswer) RoundTrip(req *http.Request) (*http.Response, error) {

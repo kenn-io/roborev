@@ -373,15 +373,55 @@ describe("setupAppOpenedReporting", () => {
     }
   });
 
-  test("posts every core action once it is reported, without daily bookkeeping", async () => {
+  test("sends review_viewed once per UTC day after the daemon settles it", async () => {
     setup();
     await settle();
     appOpened.reportCoreAction("review_viewed");
     await settle();
+    for (let i = 0; i < 5; i++) {
+      appOpened.reportCoreAction("review_viewed");
+      focusWindow();
+    }
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    appOpened.reportCoreAction("review_closed");
+    appOpened.reportCoreAction("review_closed");
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+
+    vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
+    focusWindow();
+    await settle();
     appOpened.reportCoreAction("review_viewed");
     await settle();
+    const events = await Promise.all(
+      fetchMock.mock.calls.map(async ([request]) => request.json()),
+    );
+    expect(events.filter((e) => e.event === "review_viewed")).toHaveLength(2);
+  });
 
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+  test("a check after the UTC rollover pauses the session without erasing it", async () => {
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+    setup();
+    await settle();
+    now = 30_000;
+    vi.setSystemTime(new Date("2026-03-11T00:01:00Z"));
+    focusWindow();
+    await settle();
+    now += 30_000;
+    globalThis.dispatchEvent(new Event("pagehide"));
+    await settle();
+
+    const events = await Promise.all(
+      fetchMock.mock.calls.map(async ([request]) => request.json()),
+    );
+    expect(events.at(-1)).toEqual({
+      event: "session_ended",
+      properties: { surface: "web", duration_bucket: "1_to_5m" },
+    });
   });
 
   test("queues core actions until the daemon accepts telemetry", async () => {

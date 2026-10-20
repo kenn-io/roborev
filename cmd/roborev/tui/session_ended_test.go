@@ -23,11 +23,13 @@ func TestSessionEndedCapturedThroughDaemonRoute(t *testing.T) {
 	tests := []struct {
 		surface string
 		bucket  string
-		send    func(t *testing.T, url string)
+		// requests counts what the daemon route sees; the TUI's session follows its app_opened check.
+		requests int32
+		send     func(t *testing.T, url string)
 	}{
 		// PostHog batches until Close, so only the single message counted after Close shows that the
 		// calls before readiness and after opt-out sent nothing.
-		{telemetry.SurfaceTUI, telemetry.Duration1To5m, func(t *testing.T, url string) {
+		{telemetry.SurfaceTUI, telemetry.Duration1To5m, 2, func(t *testing.T, url string) {
 			m := newModel(testEndpointFromURL(url), withExternalIODisabled())
 			m.reportSessionEnded(2 * time.Minute)
 			close(m.ready)
@@ -36,7 +38,7 @@ func TestSessionEndedCapturedThroughDaemonRoute(t *testing.T) {
 			enableTelemetryEnv(t)
 			m.reportSessionEnded(2 * time.Minute)
 		}},
-		{telemetry.SurfaceWeb, telemetry.DurationUnder1m, func(t *testing.T, url string) {
+		{telemetry.SurfaceWeb, telemetry.DurationUnder1m, 1, func(t *testing.T, url string) {
 			body := `{"event":"session_ended","properties":{"surface":"web","duration_bucket":"under_1m"}}`
 			response, err := http.Post(url+daemon.TelemetryEventsPath, "application/json", strings.NewReader(body))
 			require.NoError(t, err)
@@ -67,13 +69,17 @@ func TestSessionEndedCapturedThroughDaemonRoute(t *testing.T) {
 			t.Cleanup(srv.Close)
 			tt.send(t, srv.URL)
 			// Wait for the socket request to finish capture before closing the reporter.
-			require.Eventually(t, func() bool { return completed.Load() == 1 }, 5*time.Second, 10*time.Millisecond)
+			require.Eventually(t, func() bool { return completed.Load() == tt.requests }, 5*time.Second, 10*time.Millisecond)
 			require.NoError(t, reporter.Close())
-			sent := messages()
-			require.Len(t, sent, 1)
-			assert.Equal(t, telemetry.EventSessionEnded, sent[0].Event)
-			assert.Equal(t, tt.surface, sent[0].Properties[telemetry.PropertySurface])
-			assert.Equal(t, tt.bucket, sent[0].Properties[telemetry.PropertyDurationBucket])
+			var sessions []testutil.PostHogMessage
+			for _, message := range messages() {
+				if message.Event == telemetry.EventSessionEnded {
+					sessions = append(sessions, message)
+				}
+			}
+			require.Len(t, sessions, 1)
+			assert.Equal(t, tt.surface, sessions[0].Properties[telemetry.PropertySurface])
+			assert.Equal(t, tt.bucket, sessions[0].Properties[telemetry.PropertyDurationBucket])
 		})
 	}
 }

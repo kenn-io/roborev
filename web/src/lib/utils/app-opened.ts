@@ -9,6 +9,10 @@ const telemetryEventsPath = "/api/telemetry/events";
 type CoreAction = "review_viewed" | "review_closed";
 let reporter: BrowserTelemetryReporter | undefined;
 let quiet = true;
+let optedOut = false;
+// A review_viewed the daemon settled is not sent again on this page until the next UTC day.
+let reviewViewedDay = "";
+const today = (): string => new Date().toISOString().slice(0, 10);
 // Actions wait here while the daemon check is pending or the shell is gone; the daemon dedupes them by day.
 const pendingCoreActions = new Set<CoreAction>();
 let listening = false;
@@ -120,14 +124,21 @@ function startReporting(): BrowserTelemetryReporter {
         signal: AbortSignal.timeout(10_000),
       });
       const data: unknown = await response.json().catch(() => undefined);
-      if (
+      const receipt =
         response.status === 202 &&
         typeof data === "object" &&
         data !== null &&
-        "status" in data &&
-        data.status === "disabled"
-      )
+        "status" in data
+          ? data.status
+          : undefined;
+      if (receipt === "disabled") {
+        optedOut = true;
         pendingCoreActions.clear();
+      } else if (
+        event.event === "review_viewed" &&
+        (receipt === "queued" || receipt === "skipped")
+      )
+        reviewViewedDay = today();
       // Auth and rate-limit rejections never reached capture and can recover.
       const retryable = [401, 403, 429].includes(response.status);
       return { status: retryable ? 503 : response.status, data };
@@ -159,10 +170,14 @@ export function setupAppOpenedReporting(): () => void {
         clearTimeout(hiddenTimer);
         hiddenAt = undefined;
         pauseSession();
-        visibleTime = 0;
-        hasInterval = false;
-        intervalEnded = false;
+        // A pending check only pauses the timer; an opt-out discards what it measured.
+        if (optedOut) {
+          visibleTime = 0;
+          hasInterval = false;
+          intervalEnded = false;
+        }
       } else {
+        optedOut = false;
         resumeSession();
         flushSession();
       }
@@ -180,6 +195,7 @@ export function setupAppOpenedReporting(): () => void {
 }
 
 export function reportCoreAction(event: CoreAction): void {
+  if (event === "review_viewed" && reviewViewedDay === today()) return;
   pendingCoreActions.add(event);
   flushCoreActions();
 }

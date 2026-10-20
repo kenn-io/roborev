@@ -1961,7 +1961,7 @@ review, synthesis and compact output.
     `ctrl+d` stay silent; `q` on a loaded review counts. A failed report isn't
     retried on later input.
 - The browser reports a rendered Review tab on load and when focus or visibility
-    returns.
+    returns, until the daemon settles one for the day.
 - CLI reads include `show`, `wait`, `review --wait`, `compact --wait`, and
     nonquiet `fix` output. CLI fixes from `fix`, `refine`, and `analyze --fix`
     report `finding_fixed` when they commit. CLI actions require terminal output
@@ -1984,19 +1984,24 @@ Daemon keys are hashes, so the file stores no address or credential.
     its result. `queued` and `skipped` settle the check. `disabled` from any
     route stops all reports to that daemon until the next UTC day.
 - Action, screen, session, and agent-call reports follow the check, send once,
-    and keep no stored counts. A failed check or report is retried on later
-    activity after 1 to 16 seconds. A daemon that answers a check with a 2xx but
-    no receipt, such as one too old to send receipts, gets no more checks that
-    day after six answers. A daemon that doesn't answer, or answers with an
-    error, is retried at most every 16 seconds.
-- When the file can't be read or written, receipts stay in process memory.
+    and keep no stored counts. A check that gets a 5xx or no answer retries on
+    later activity after 1 to 16 seconds. An answer that is neither a receipt
+    nor a 5xx, such as an empty 202 from a daemon too old to send receipts or a
+    4xx, counts against six per day; after six, that daemon gets no more checks
+    until the next UTC day. After a report gets a 5xx or no answer, later
+    reports to that daemon are dropped for 1 to 16 seconds. That backoff lives
+    in process memory only.
+- When the file can't be read or written, receipts stay in process memory. A
+    file written by a newer version is left as found and receipts stay in
+    memory.
 - CLI and TUI exits wait at most 50 ms in total for reports; each send keeps its
     one-second deadline.
 - The agent-call route answers with the same 202 JSON receipts and stops reading
     the daily counter after call 101.
 - The browser keeps kit-ui's receipts in local storage, separately for each base
     path on an origin. Actions queue in page memory until the daemon accepts
-    telemetry.
+    telemetry. After the daemon settles a `review_viewed`, the page doesn't send
+    another until the next UTC day or a reload.
 
 The browser and TUI also report `screen_viewed` with a fixed `screen` name and
 `surface` of `web` or `tui`. Browser screens are `reviews` and `analytics`. TUI

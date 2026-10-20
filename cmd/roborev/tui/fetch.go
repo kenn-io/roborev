@@ -422,9 +422,10 @@ func (m model) reportSessionEnded(elapsed time.Duration) {
 	if !telemetry.EnabledFromEnv() || !telemetry.DefaultClientGate.Ready(m.endpoint.TelemetryScope()) {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), telemetry.NotificationTimeout)
 	var sends telemetry.SendGroup
 	sends.Go(func() {
+		m.probeTelemetry()
+		ctx, cancel := context.WithTimeout(context.Background(), telemetry.NotificationTimeout)
 		defer cancel()
 		telemetry.PostSessionEnded(ctx, m.client, m.endpoint.TelemetryScope(), m.endpoint.BaseURL()+daemon.TelemetryEventsPath, telemetry.SurfaceTUI, elapsed)
 	})

@@ -74,6 +74,7 @@ func TestScreenFailureIsNotRetriedByHeldKey(t *testing.T) {
 		{"initial queue", "queue", true}, {"help after toggle", "help", false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			enableTelemetryEnv(t)
 			m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
 			transport := &screenRecordingTransport{fail: true}
 			m.client.Transport = transport

@@ -43,8 +43,9 @@ func TestReportSessionEndedBoundsDelivery(t *testing.T) {
 		assert.Equal(t, 50*time.Millisecond, time.Since(started))
 		assert.Equal(t, started.Add(time.Second), transport.deadline)
 		close(release)
+		time.Sleep(100 * time.Millisecond)
 		synctest.Wait()
-		assert.Equal(t, int32(1), transport.requests.Load())
+		assert.Equal(t, int32(2), transport.requests.Load(), "the app_opened check, then the session")
 	})
 }
 
@@ -411,4 +412,29 @@ func TestTUIProgramStartsAndExitsWhileAppOpenedHangs(t *testing.T) {
 	p.Quit()
 	// Waits on socket work in the fake daemon, so wall-clock polling is required.
 	require.Eventually(t, func() bool { return isClosed(runDone) && !isClosed(release) }, 5*time.Second, 10*time.Millisecond)
+}
+
+//nolint:paralleltest // t.Setenv of telemetry opt-out variables
+func TestReportSessionEndedJoinsThePendingProbe(t *testing.T) {
+	enableTelemetryEnv(t)
+	synctest.Test(t, func(t *testing.T) {
+		m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
+		close(m.ready)
+		transport := &holdingTransport{release: make(chan struct{})}
+		m.client.Transport = transport
+		go func() { m.probeTelemetry() }()
+		synctest.Wait()
+
+		started := time.Now()
+		m.reportSessionEnded(2 * time.Minute)
+		assert.Equal(t, 50*time.Millisecond, time.Since(started), "quit waits only the exit budget")
+		transport.mu.Lock()
+		assert.Empty(t, transport.order, "the session waits for the probe")
+		transport.mu.Unlock()
+
+		close(transport.release)
+		time.Sleep(100 * time.Millisecond)
+		synctest.Wait()
+		assert.Equal(t, []string{telemetry.EventAppOpened, telemetry.EventSessionEnded}, transport.order)
+	})
 }
