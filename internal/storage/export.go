@@ -136,10 +136,15 @@ func (ExportDocument) Schema(r huma.Registry) *huma.Schema {
 		Description:          "One finding in a structured review document.",
 		AdditionalProperties: false,
 		Properties: map[string]*huma.Schema{
-			"severity": {Type: huma.TypeString, Description: "One of critical, high, medium, or low."},
-			"problem":  {Type: huma.TypeString},
-			"fix":      {Type: huma.TypeString},
-			"location": {Type: huma.TypeString, Nullable: true, Description: "Where the problem is, or null when the finding has no location."},
+			"severity":   {Type: huma.TypeString, Description: "One of critical, high, medium, or low."},
+			"kind":       {Type: huma.TypeString, Description: "One of defect, test, documentation, or maintainability. Present on version 3 documents."},
+			"confidence": {Type: huma.TypeNumber, Format: "double", Minimum: new(float64(0)), Maximum: new(float64(1)), Description: "The reviewer's estimate, from 0 to 1, that the problem is real. Present on version 3 documents."},
+			"problem":    {Type: huma.TypeString},
+			"fix":        {Type: huma.TypeString},
+			"file":       {Type: huma.TypeString, Nullable: true, Description: "Path relative to the repository root, or null. Present on version 3 documents."},
+			"start_line": {Type: huma.TypeInteger, Format: "int64", Nullable: true, Description: "First line of the problem in the reviewed file, or null. Present on version 3 documents."},
+			"end_line":   {Type: huma.TypeInteger, Format: "int64", Nullable: true, Description: "Last line of the problem in the reviewed file, or null. Present on version 3 documents."},
+			"location":   {Type: huma.TypeString, Nullable: true, Description: "Where the problem is, or null when the finding has no location. On version 3 documents it is derived from file, start_line, and end_line."},
 			"sources": {
 				Type:        huma.TypeArray,
 				Items:       &huma.Schema{Type: huma.TypeInteger, Format: "int64"},
@@ -153,7 +158,7 @@ func (ExportDocument) Schema(r huma.Registry) *huma.Schema {
 		Description:          "The canonical JSON review document. The Go package go.kenn.io/roborev/pkg/structuredreview decodes and renders it.",
 		AdditionalProperties: false,
 		Properties: map[string]*huma.Schema{
-			"schema_version": {Type: huma.TypeInteger, Format: "int64", Minimum: new(float64(1)), Maximum: new(float64(2)), Description: "Version of the document format, separate from the export schema_version."},
+			"schema_version": {Type: huma.TypeInteger, Format: "int64", Minimum: new(float64(1)), Maximum: new(float64(3)), Description: "Version of the document format, separate from the export schema_version."},
 			"summary":        {Type: huma.TypeString},
 			"verdict": {
 				Type:        huma.TypeString,

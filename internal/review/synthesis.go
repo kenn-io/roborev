@@ -2,6 +2,7 @@ package review
 
 import (
 	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"strings"
 
@@ -98,7 +99,7 @@ func BuildSynthesisPrompt(
 		"You are combining multiple code review outputs " +
 			"into a single GitHub PR comment.\n" +
 			"Return exactly one JSON object with this shape and no code fence: " +
-			`{"schema_version":2,"summary":"...","verdict":"pass|fail","findings":[{"severity":"critical|high|medium|low","problem":"...","fix":"...","location":"file:line or null","sources":[1]}]}` + "\n" +
+			`{"schema_version":3,"summary":"...","verdict":"pass|fail","findings":[{"severity":"critical|high|medium|low","kind":"defect|test|documentation|maintainability","confidence":0.8,"problem":"...","fix":"...","file":"path or null","start_line":12,"end_line":14,"sources":[1]}]}` + "\n" +
 			"Put a one-line overall summary in `summary` and your overall judgment in `verdict`. " +
 			"List every finding that requires changes in `findings`; " +
 			"return an empty `findings` array if the reviewers agree the code is clean.\n" +
@@ -109,7 +110,9 @@ func BuildSynthesisPrompt(
 			"- Do not use tools except to read referenced prompt or review-input files in full\n" +
 			"- Deduplicate findings reported by multiple reviewers and cite every source\n" +
 			"- Order findings by severity (Critical > High > Medium > Low)\n" +
-			"- Preserve file/line references in `location`\n" +
+			"- Keep each finding's kind; when reviewers disagree, use the kind most of them gave\n" +
+			"- Set confidence to the highest confidence any source gave, or 0.5 when the sources give none\n" +
+			"- Keep the file, start_line, and end_line of the findings you combine; use null when there is none\n" +
 			"- No preamble about yourself\n")
 
 	b.WriteString("\n")
@@ -148,9 +151,15 @@ func synthesisReviewContent(r ReviewResult) string {
 		b.WriteString(
 			"(review skipped — provider unavailable)")
 	} else if r.Structured != nil {
-		// Render without the threshold so the synthesis agent never
-		// learns which severities are informational.
-		b.WriteString(r.Structured.Markdown(""))
+		// The JSON document keeps each finding's kind, confidence, and line
+		// range, which the Markdown rendering drops or flattens. It carries
+		// no severity threshold, so the synthesis agent never learns which
+		// severities are informational.
+		if document, err := json.Marshal(r.Structured, jsontext.WithIndentPrefix(""), jsontext.WithIndent("  ")); err == nil {
+			b.WriteString("```json\n" + string(document) + "\n```")
+		} else {
+			b.WriteString(r.Structured.Markdown(""))
+		}
 	} else if r.Output != "" {
 		b.WriteString(r.Output)
 	} else if r.Status == ResultFailed {

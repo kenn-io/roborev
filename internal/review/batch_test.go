@@ -422,11 +422,11 @@ func TestRunBatchPreservesStructuredVerdict(t *testing.T) {
 	structuredAgent := &structuredBatchAgent{
 		name: "structured-batch",
 		result: jsontext.Value(`{
-	  "schema_version":2,
+	  "schema_version":3,
 	  "verdict": "pass",
 	  "summary":"High: no actionable findings.",
   "findings":[
-    {"severity":"low","problem":"Name is vague.","fix":"Rename it.","location":null}
+    {"severity":"low","kind":"maintainability","confidence":0.7,"problem":"Name is vague.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}
   ]
 }`),
 	}
@@ -659,7 +659,7 @@ func writeFakeCodex(t *testing.T) (cmdPath string, argsPath string) {
 		fmt.Sprintf("echo \"$@\" > %q", argsPath),
 		// The fake returns a structured review document because the real
 		// codex agent supports schema-constrained output for every review type.
-		"echo '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"schema_version\\\":2,\\\"summary\\\":\\\"ok\\\",\\\"verdict\\\":\\\"pass\\\",\\\"findings\\\":[]}\"}}'",
+		"echo '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"schema_version\\\":3,\\\"summary\\\":\\\"ok\\\",\\\"verdict\\\":\\\"pass\\\",\\\"findings\\\":[]}\"}}'",
 	}, "\n") + "\n"
 
 	cmdPath = filepath.Join(dir, "codex")

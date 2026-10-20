@@ -330,7 +330,7 @@ A `document` has these members:
 
 | Member | Type | Meaning |
 |--------|------|---------|
-| `schema_version` | integer | Version of the document format. It is separate from the export `schema_version`. Current documents use `2`. Version `1` documents have no `verdict` |
+| `schema_version` | integer | Version of the document format. It is separate from the export `schema_version`. Current reviews use `3`. Goal reviews and converted historical reviews use `2`. Version `1` documents have no `verdict` |
 | `summary` | string | The reviewer's summary |
 | `verdict` | string | The agent's own assessment: `pass`, `fail`, or `unable_to_review`. The exported top-level `verdict` comes from the findings, not from this value |
 | `findings` | array | Zero or more findings |
@@ -341,6 +341,18 @@ Each finding has `severity` (`critical`, `high`, `medium`, or `low`), `problem`,
 finding has no location. Findings in a combined panel review also have
 `sources`, the 1-based positions in `source_labels` of the reviews that reported
 the finding.
+
+Version 3 findings also have these members:
+
+| Member | Type | Meaning |
+|--------|------|---------|
+| `kind` | string | `defect`, `test`, `documentation`, or `maintainability` |
+| `confidence` | number | The reviewer's estimate, from 0 to 1, that the problem is real. Models are poorly calibrated, so treat it as a weak signal |
+| `file` | string or `null` | Path relative to the repository root |
+| `start_line`, `end_line` | integer or `null` | First and last line of the problem, or `null` when the finding covers the whole file or has no file |
+
+In version 3, `location` is derived from `file`, `start_line`, and `end_line`,
+for example `internal/foo.go:12-14`.
 
 Other Go modules can import `go.kenn.io/roborev/pkg/structuredreview` to read a
 `document`. `structuredreview.Decode` validates it, and `Document.Markdown("")`

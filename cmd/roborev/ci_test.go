@@ -73,7 +73,7 @@ while [ "$#" -gt 0 ]; do
 done
 printf '%s' "$model" > "$TEST_CI_SYNTHESIS_MODEL"
 cat > /dev/null
-printf '%s\n' '{"type": "item.completed", "item": {"type": "agent_message", "text": "{\"schema_version\": 2, \"summary\": \"Combined test reviews\", \"verdict\": \"fail\", \"findings\": [{\"severity\": \"low\", \"problem\": \"Minor naming issue.\", \"fix\": \"Rename it.\", \"location\": null, \"sources\": [1]}]}"}}'
+printf '%s\n' '{"type": "item.completed", "item": {"type": "agent_message", "text": "{\"schema_version\": 3, \"summary\": \"Combined test reviews\", \"verdict\": \"fail\", \"findings\": [{\"severity\": \"low\", \"kind\": \"maintainability\", \"confidence\": 0.6, \"problem\": \"Minor naming issue.\", \"fix\": \"Rename it.\", \"file\": null, \"start_line\": null, \"end_line\": null, \"sources\": [1]}]}"}}'
 `), 0o755))
 			cfg := fmt.Sprintf(`
 default_model = "unrelated-review-model"

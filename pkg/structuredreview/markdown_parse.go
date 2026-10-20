@@ -182,7 +182,7 @@ func parseRenderedCandidate(lines []string, findingsAt int, opts ParseMarkdownOp
 				return Document{}, "", refuse(RefusalUnrecognizedContent, "unknown agent assessment %q", label)
 			}
 			doc.Verdict = verdict
-			doc.SchemaVersion = SchemaVersion
+			doc.SchemaVersion = TextLocationSchemaVersion
 			header = trimBlankLines(header[:len(header)-1])
 		}
 	}

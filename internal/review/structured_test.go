@@ -63,9 +63,9 @@ func TestStructuredReviewRejectsUnknownFields(t *testing.T) {
 
 func TestStructuredReviewRequiresKnownSchemaVersion(t *testing.T) {
 	_, err := DecodeStructuredReview(jsontext.Value(
-		`{"schema_version":3,"summary":"Done.","verdict":"pass","findings":[]}`,
+		`{"schema_version":4,"summary":"Done.","verdict":"pass","findings":[]}`,
 	))
-	require.ErrorContains(t, err, "unsupported structured review schema_version 3")
+	require.ErrorContains(t, err, "unsupported structured review schema_version 4")
 }
 
 func TestStructuredReviewVersionTwoCarriesVerdict(t *testing.T) {

@@ -6,9 +6,27 @@
  * One finding in a structured review document.
  */
 export interface StructuredReviewFinding {
-  fix: string;
   /**
-   * Where the problem is, or null when the finding has no location.
+   * The reviewer's estimate, from 0 to 1, that the problem is real. Present on version 3 documents.
+   * @minimum 0
+   * @maximum 1
+   */
+  confidence?: number;
+  /**
+   * Last line of the problem in the reviewed file, or null. Present on version 3 documents.
+   * @nullable
+   */
+  end_line?: number | null;
+  /**
+   * Path relative to the repository root, or null. Present on version 3 documents.
+   * @nullable
+   */
+  file?: string | null;
+  fix: string;
+  /** One of defect, test, documentation, or maintainability. Present on version 3 documents. */
+  kind?: string;
+  /**
+   * Where the problem is, or null when the finding has no location. On version 3 documents it is derived from file, start_line, and end_line.
    * @nullable
    */
   location: string | null;
@@ -17,4 +35,9 @@ export interface StructuredReviewFinding {
   severity: string;
   /** 1-based numbers of the input reviews that reported this finding. Present on synthesized documents. */
   sources?: number[];
+  /**
+   * First line of the problem in the reviewed file, or null. Present on version 3 documents.
+   * @nullable
+   */
+  start_line?: number | null;
 }

@@ -11,7 +11,7 @@ export interface StructuredReviewDocument {
   /**
    * Version of the document format, separate from the export schema_version.
    * @minimum 1
-   * @maximum 2
+   * @maximum 3
    */
   schema_version: number;
   /** Names of the input reviews that findings cite in sources, indexed by review number minus one. */

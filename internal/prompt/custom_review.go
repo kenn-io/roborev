@@ -16,14 +16,28 @@ import (
 const structuredReviewOutputInstruction = `
 
 Return exactly one JSON object, without a code fence or other text, with this shape:
-{"schema_version":2,"summary":"...","verdict":"pass|fail|unable_to_review","findings":[{"severity":"critical|high|medium|low","problem":"...","fix":"...","location":null}]}
-Use an empty findings array when there are no findings. Set location to a file:line
-string when known, otherwise null. This JSON format replaces any Markdown output
-format specified earlier in the prompt. Return a concise
-summary, your overall verdict, and every actionable finding. Each finding must
-include its severity, problem, and recommended fix; include a location when one
-is known. Use only these severity values: critical, high, medium, or low. The
-verdict is "pass" when the change is acceptable, "fail" when it is not, and
+{"schema_version":3,"summary":"...","verdict":"pass|fail|unable_to_review","findings":[{"severity":"critical|high|medium|low","kind":"defect|test|documentation|maintainability","confidence":0.8,"problem":"...","fix":"...","file":"path/to/file.go","start_line":12,"end_line":14}]}
+Use an empty findings array when there are no findings. This JSON format
+replaces any Markdown output format specified earlier in the prompt. Return a
+concise summary, your overall verdict, and every actionable finding.
+
+Each finding needs:
+- severity: critical, high, medium, or low.
+- kind: "defect" when the code behaves wrongly in a case you can name; "test"
+  when a test is missing, cannot fail, or misses the case the change is about;
+  "documentation" when a comment, message, or document is wrong or leaves out
+  something a reader needs; "maintainability" when the behavior is right but
+  the structure, duplication, or naming will cost later work.
+- confidence: a number from 0 to 1 for how sure you are that the problem is
+  real.
+- problem and fix: what is wrong and how to fix it.
+- file: the path relative to the repository root, or null when the finding has
+  no single file.
+- start_line and end_line: the first and last line of the problem in the file
+  as it is after the change. Use the same number for a single line. Use null
+  for both when the finding covers the whole file or has no file.
+
+The verdict is "pass" when the change is acceptable, "fail" when it is not, and
 "unable_to_review" only when you could not assess the change at all, for
 example because the diff is missing or unreadable; explain why in the summary.`
 

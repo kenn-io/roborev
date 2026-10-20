@@ -4360,7 +4360,7 @@ components:
         schema_version:
           description: Version of the document format, separate from the export schema_version.
           format: int64
-          maximum: 2
+          maximum: 3
           minimum: 1
           type: integer
         source_labels:
@@ -4382,10 +4382,30 @@ components:
       additionalProperties: false
       description: One finding in a structured review document.
       properties:
+        confidence:
+          description: The reviewer's estimate, from 0 to 1, that the problem is real. Present on version 3 documents.
+          format: double
+          maximum: 1
+          minimum: 0
+          type: number
+        end_line:
+          description: Last line of the problem in the reviewed file, or null. Present on version 3 documents.
+          format: int64
+          type:
+            - integer
+            - "null"
+        file:
+          description: Path relative to the repository root, or null. Present on version 3 documents.
+          type:
+            - string
+            - "null"
         fix:
           type: string
+        kind:
+          description: One of defect, test, documentation, or maintainability. Present on version 3 documents.
+          type: string
         location:
-          description: Where the problem is, or null when the finding has no location.
+          description: Where the problem is, or null when the finding has no location. On version 3 documents it is derived from file, start_line, and end_line.
           type:
             - string
             - "null"
@@ -4400,6 +4420,12 @@ components:
             format: int64
             type: integer
           type: array
+        start_line:
+          description: First line of the problem in the reviewed file, or null. Present on version 3 documents.
+          format: int64
+          type:
+            - integer
+            - "null"
       required:
         - severity
         - problem

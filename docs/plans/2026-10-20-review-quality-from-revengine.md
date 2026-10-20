@@ -459,6 +459,11 @@ This is the structural change with the largest expected effect.
 
 ### 6. Tighten the schema and the cleanup
 
+Status: schema version 3 is built. Findings carry `kind`, `confidence`, and
+`file`, `start_line`, and `end_line`. Locations are checked against the reviewed
+code, duplicates are merged, and findings are ranked in code. Still open: a
+`title` field, the severity rules, and pass or fail on defects only.
+
 - **Add fields:**
   - `title`, one sentence;
   - `kind`: defect, test, documentation, or maintainability;
