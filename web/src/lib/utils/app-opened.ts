@@ -1,5 +1,6 @@
 import {
   startBrowserTelemetry,
+  type BrowserTelemetryOptions,
   type BrowserTelemetryReporter,
 } from "@kenn-io/kit-ui/utils/browser-telemetry";
 import { authenticatedFetch } from "../api/session";
@@ -23,6 +24,8 @@ let hasInterval = false;
 let intervalEnded = false;
 let hiddenAt: number | undefined;
 let hiddenTimer: ReturnType<typeof setTimeout> | undefined;
+let checks = 0;
+type Post = BrowserTelemetryOptions["post"];
 export type Screen = "reviews" | "analytics";
 
 function pauseSession(): void {
@@ -88,12 +91,20 @@ function resumeSession(): void {
   }
 }
 
+// A hidden interval ends 30 minutes after the tab hid, counted only while reporting is on.
+function armHiddenTimer(): void {
+  clearTimeout(hiddenTimer);
+  if (quiet || hiddenAt === undefined) return;
+  const left = hiddenAt + 1_800_000 - Date.now();
+  if (left > 0) hiddenTimer = setTimeout(endSession, left);
+  else endSession();
+}
+
 function onVisibility(): void {
   if (document.hidden) {
     pauseSession();
     hiddenAt = Date.now();
-    clearTimeout(hiddenTimer);
-    if (!quiet) hiddenTimer = setTimeout(endSession, 1_800_000);
+    armHiddenTimer();
   } else {
     clearTimeout(hiddenTimer);
     if (hiddenAt !== undefined && Date.now() - hiddenAt >= 1_800_000)
@@ -110,12 +121,38 @@ function storageKey(): string {
   return scope ? `roborev.telemetry.${scope}` : "roborev.telemetry";
 }
 
+// A post made while quiet is this tab's daily check; count the ones in flight.
+function countChecks(post: Post): Post {
+  return (...args) => {
+    if (!quiet) return post(...args);
+    checks++;
+    return post(...args).finally(() => checks--);
+  };
+}
+
+// A pending check keeps the paused session; quiet with no check in flight is an opt-out.
+function discardUnlessChecking(): void {
+  if (quiet && checks === 0) discardSession();
+}
+
+function onQuiet(value: boolean): void {
+  quiet = value;
+  armHiddenTimer();
+  if (quiet) {
+    pauseSession();
+    queueMicrotask(discardUnlessChecking);
+  } else {
+    flushSession();
+    resumeSession();
+  }
+}
+
 function startReporting(): BrowserTelemetryReporter {
   return startBrowserTelemetry({
     route: telemetryEventsPath,
     surface: "web",
     storageKey: storageKey(),
-    post: async (route, event, options) => {
+    post: countChecks(async (route, event, options) => {
       const readDay = today();
       if (event.event === "review_viewed") reviewPending.add(readDay);
       try {
@@ -155,7 +192,7 @@ function startReporting(): BrowserTelemetryReporter {
       } finally {
         if (event.event === "review_viewed") reviewPending.delete(readDay);
       }
-    },
+    }),
   });
 }
 
@@ -177,17 +214,7 @@ export function setupAppOpenedReporting(): () => void {
   waitingForShell = undefined;
   if (!reporter) {
     reporter = startReporting();
-    reporter.onQuietChange((value) => {
-      quiet = value;
-      if (quiet) {
-        // A pending check only pauses the timer; a disabled receipt discards the session.
-        clearTimeout(hiddenTimer);
-        pauseSession();
-      } else {
-        flushSession();
-        resumeSession();
-      }
-    });
+    reporter.onQuietChange(onQuiet);
   }
   flushSession();
   resumeSession();

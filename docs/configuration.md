@@ -1961,7 +1961,9 @@ review, synthesis and compact output.
     `ctrl+d` stay silent; `q` on a loaded review counts. Failed reports retry on
     later input after backoff, until the daemon settles one for the day.
 - The browser reports a rendered Review tab on load and when focus or visibility
-    returns, until the daemon settles one for the day.
+    returns, until the daemon settles one for the day. A read made while the
+    day's telemetry check is pending is dropped until a later focus, so counts
+    are rough.
 - CLI reads include `show`, `wait`, `review --wait`, `compact --wait`, and
     nonquiet `fix` output. CLI fixes from `fix`, `refine`, and `analyze --fix`
     report `finding_fixed` when they commit. CLI actions require terminal output

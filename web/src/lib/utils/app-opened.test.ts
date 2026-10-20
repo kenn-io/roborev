@@ -458,6 +458,37 @@ describe("setupAppOpenedReporting", () => {
         ).toEqual(["under_1m", "under_1m"]);
       },
     ],
+    [
+      "an enabled reply while hidden ends the session 30 minutes after the tab hid",
+      async () => {
+        vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+        let now = 0;
+        let hidden = false;
+        vi.spyOn(performance, "now").mockImplementation(() => now);
+        vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
+        setup();
+        await vi.advanceTimersByTimeAsync(0);
+        now = 120_000;
+        vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
+        let answer!: (response: Response) => void;
+        fetchMock.mockImplementationOnce(
+          () => new Promise((resolve) => (answer = resolve)),
+        );
+        focusWindow();
+        hidden = true;
+        document.dispatchEvent(new Event("visibilitychange"));
+        await vi.advanceTimersByTimeAsync(10_000);
+        answer(accepted());
+        await vi.advanceTimersByTimeAsync(30 * 60_000 - 10_001);
+        expect((await sentEvents()).at(-1)?.event).toBe("app_opened");
+        await vi.advanceTimersByTimeAsync(1);
+
+        expect((await sentEvents()).at(-1)).toEqual({
+          event: "session_ended",
+          properties: { surface: "web", duration_bucket: "1_to_5m" },
+        });
+      },
+    ],
   ])("next-day check: %s", async (_, scenario) => scenario());
 
   test("keeps only kit-ui keys in local storage", async () => {
@@ -494,6 +525,35 @@ describe("setupAppOpenedReporting", () => {
       "app_opened",
       "review_closed",
     ]);
+  });
+
+  test("a cross-tab opt-out discards measured time before reporting resumes", async () => {
+    const at = startVisit();
+    setup();
+    await settle();
+    at(120_000);
+    const otherTab = startBrowserTelemetry({
+      route: "/api/telemetry/events",
+      surface: "web",
+      storageKey: "roborev.telemetry",
+      post: async () => ({ status: 202, data: { status: "queued" } }),
+    });
+    otherTab.disable();
+    otherTab.stop();
+    focusWindow();
+    await settle();
+    vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
+    focusWindow();
+    await settle();
+    at(130_000);
+    globalThis.dispatchEvent(new Event("pagehide"));
+    await settle();
+
+    expect(
+      (await sentEvents())
+        .filter((event) => event.event === "session_ended")
+        .map((event) => event.properties.duration_bucket),
+    ).toEqual(["under_1m"]);
   });
 
   test.each(["disabled reply", "cross-tab quiet"])(
@@ -558,7 +618,7 @@ describe("setupAppOpenedReporting", () => {
         (await sentEvents())
           .filter((e) => e.event === "session_ended")
           .map((e) => e.properties.duration_bucket),
-      ).toEqual(["1_to_5m", "under_1m"]);
+      ).toEqual(["under_1m"]);
     },
   );
 
