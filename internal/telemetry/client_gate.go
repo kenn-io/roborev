@@ -40,7 +40,7 @@ type ClientGate struct {
 	loaded  bool
 	// frozen means the file has a newer format: no reports go out and the file stays as found.
 	frozen bool
-	// down holds the backoff after reports that got no answer or a 5xx, per daemon and kept in memory only.
+	// down holds the backoff after reports without a receipt, per daemon and kept in memory only.
 	down map[string]reportBackoff
 	now  func() time.Time
 }
@@ -214,10 +214,10 @@ func (g *ClientGate) probe(ctx context.Context, client *http.Client, scope, url,
 	return
 }
 
-// Post sends one report unless the daemon is disabled or backing off; callers run Probe first. A 5xx or no
-// answer starts a memory-only 1 to 16 second backoff that skips reports meanwhile, and the surface's saved
+// Post sends one report unless the daemon is disabled or backing off; callers run Probe first. A missing
+// receipt starts a memory-only 1 to 16 second backoff that skips reports meanwhile, and the surface's saved
 // app_opened backoff covers them too. A disabled reply from any route is saved. It returns whether the report
-// settled: the daemon answered below 500, it wants no reports, or the report went out as the day's agent check.
+// settled: the daemon returned a receipt, it wants no reports, or the report went out as the day's agent check.
 // A caller may resend an unsettled report later.
 func (g *ClientGate) Post(ctx context.Context, client *http.Client, scope, url, event string, props map[string]any) bool {
 	surface, sent := g.prepare(ctx, client, scope, url, event, props)
@@ -225,13 +225,12 @@ func (g *ClientGate) Post(ctx context.Context, client *http.Client, scope, url, 
 	if sent || !ready || g.backingOff(scope, surface) {
 		return sent || !ready
 	}
-	answering, answers := trackAnswer(client)
 	day := g.today()
-	status, err := posthog.PostEvent(ctx, answering, url, event, props)
+	status, err := posthog.PostEvent(ctx, client, url, event, props)
 	if status == posthog.StatusDisabled {
 		g.disable(ctx, day, scope)
 	}
-	return g.noteReport(scope, err == nil || (answers.status > 0 && answers.status < 500))
+	return g.noteReport(scope, err == nil)
 }
 
 // prepare loads the receipts and returns the surface whose saved backoff covers the report. Until the day's

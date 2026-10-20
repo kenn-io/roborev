@@ -911,6 +911,30 @@ func TestCoreActionRemoteLocalFallback(t *testing.T) {
 	}
 }
 
+func TestCoreActionRemoteFallbackDisabledStopsDiscovery(t *testing.T) {
+	resetCLIUse(t)
+	_, rec, ep := disabledDaemon(t)
+	parsedServerEndpoint = &daemon.DaemonEndpoint{Network: "https", Address: "remote.example.com"}
+	cliOutputIsTerminal = func(io.Writer) bool { return true }
+	original := getAnyRunningDaemonForStart
+	t.Cleanup(func() { getAnyRunningDaemonForStart = original })
+	discoveries := 0
+	getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
+		discoveries++
+		return &daemon.RuntimeInfo{Network: ep.Network, Address: ep.Address}, nil
+	}
+
+	reportCLIActionOutput(os.Stdout, telemetry.EventReviewViewed)
+	drainCLIReports()
+	require.Equal(t, 1, discoveries)
+	require.Len(t, rec.telemetryPosts(), 1)
+
+	reportCLIActionOutput(os.Stdout, telemetry.EventFindingFixed)
+	drainCLIReports()
+	assert.Equal(t, 1, discoveries, "the disabled fallback needs no further discovery")
+	assert.Len(t, rec.telemetryPosts(), 1)
+}
+
 func TestCoreActionCompactWait(t *testing.T) {
 	for _, mode := range []string{"terminal", "quiet"} {
 		t.Run(mode, func(t *testing.T) {

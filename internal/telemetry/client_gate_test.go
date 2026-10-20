@@ -200,6 +200,26 @@ func TestClientGateReportsBackOffAfterAServerError(t *testing.T) {
 	assert.Len(t, s.seen(), 7, "another daemon is unaffected")
 }
 
+func TestClientGateUnauthorizedReportBacksOffThenRetries(t *testing.T) {
+	assert := assert.New(t)
+	testenv.SetDataDir(t)
+	s := newReceiptServer(t, "queued")
+	now := time.Date(2026, 3, 10, 9, 0, 0, 0, time.UTC)
+	g := &ClientGate{now: func() time.Time { return now }}
+	probe(g, s, "daemon", SurfaceTUI)
+	props := map[string]any{PropertySurface: SurfaceTUI}
+
+	s.status.Store("401")
+	assert.False(g.Post(t.Context(), s.Client(), "daemon", s.URL, EventScreenViewed, props), "a report without a receipt stays eligible")
+	s.status.Store("queued")
+	assert.False(g.Post(t.Context(), s.Client(), "daemon", s.URL, EventScreenViewed, props))
+	assert.Equal([]string{EventAppOpened, EventScreenViewed}, s.seen(), "backoff suppresses an immediate retry")
+
+	now = now.Add(time.Second)
+	assert.True(g.Post(t.Context(), s.Client(), "daemon", s.URL, EventScreenViewed, props))
+	assert.Equal([]string{EventAppOpened, EventScreenViewed, EventScreenViewed}, s.seen())
+}
+
 func TestClientGateFailuresWithoutAReceiptOnlyBackOff(t *testing.T) {
 	for name, tc := range map[string]struct {
 		fail   func(*receiptServer)

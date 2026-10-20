@@ -169,6 +169,7 @@ func reportCLIActionOutput(out io.Writer, event string) {
 				return
 			}
 			ep = &daemon.DaemonEndpoint{Network: info.Network, Address: info.Address}
+			cliUseEndpoint.Store(ep)
 		}
 		// The action follows the endpoint's app_opened check, started here for a remote fallback or joined if running.
 		probeCLI(ctx, *ep)
