@@ -389,3 +389,43 @@ func TestClientGateReportsHonorTheSavedProbeBackoff(t *testing.T) {
 	post(fresh, s, "daemon", EventReviewViewed, SurfaceCLI)
 	assert.Len(t, s.seen(), 2)
 }
+
+func TestClientGateReceiptAcrossMidnightCountsForTheDayItWasSentOn(t *testing.T) {
+	testenv.SetDataDir(t)
+	var clock atomic.Int64
+	clock.Store(time.Date(2026, 3, 10, 23, 59, 59, 0, time.UTC).UnixNano())
+	now := func() time.Time { return time.Unix(0, clock.Load()).UTC() }
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		clock.Store(time.Date(2026, 3, 11, 0, 0, 1, 0, time.UTC).UnixNano())
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"status":"queued"}`))
+	}))
+	t.Cleanup(srv.Close)
+	ctx := t.Context()
+
+	(&ClientGate{now: now}).Probe(ctx, srv.Client(), "daemon", srv.URL, SurfaceCLI)
+	(&ClientGate{now: now}).Probe(ctx, srv.Client(), "daemon", srv.URL, SurfaceCLI)
+	assert.Equal(t, int32(2), requests.Load(), "the new day still needs its own check")
+}
+
+func TestClientGateNeverRewritesAFileThatTurnedNewerMidReport(t *testing.T) {
+	dir := testenv.SetDataDir(t)
+	path := filepath.Join(dir, clientStateFile)
+	newer := `{"version":2,"day":"2026-03-10","endpoints":{}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = os.WriteFile(path, []byte(newer), 0o600)
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"status":"disabled"}`))
+	}))
+	t.Cleanup(srv.Close)
+	now := time.Date(2026, 3, 10, 9, 0, 0, 0, time.UTC)
+	g := &ClientGate{now: func() time.Time { return now }}
+
+	g.Post(t.Context(), srv.Client(), "daemon", srv.URL, EventAgentActive, nil)
+	saved, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, newer, string(saved))
+	assert.False(t, g.Ready("daemon"))
+}

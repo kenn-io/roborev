@@ -515,6 +515,87 @@ describe("setupAppOpenedReporting", () => {
     },
   );
 
+  test("actions taken while disabled are dropped, not sent when a later day enables", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ status: "disabled" }), { status: 202 }),
+    );
+    setup();
+    await settle();
+    appOpened.reportCoreAction("review_closed");
+    await settle();
+    vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
+    focusWindow();
+    await settle();
+
+    expect((await sentEvents()).map((e) => e.event)).toEqual([
+      "app_opened",
+      "app_opened",
+    ]);
+  });
+
+  test("hiding the tab during a pending check still ends a long absence as its own session", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    let now = 0;
+    let hidden = false;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
+    setup();
+    await vi.advanceTimersByTimeAsync(0);
+    now = 30_000;
+    vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
+    let answer!: (response: Response) => void;
+    fetchMock.mockImplementationOnce(
+      () => new Promise((resolve) => (answer = resolve)),
+    );
+    focusWindow();
+    hidden = true;
+    document.dispatchEvent(new Event("visibilitychange"));
+    answer(accepted());
+    await vi.advanceTimersByTimeAsync(31 * 60_000);
+    hidden = false;
+    now += 31 * 60_000;
+    document.dispatchEvent(new Event("visibilitychange"));
+    now += 10_000;
+    globalThis.dispatchEvent(new Event("pagehide"));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(
+      (await sentEvents())
+        .filter((e) => e.event === "session_ended")
+        .map((e) => e.properties.duration_bucket),
+    ).toEqual(["under_1m", "under_1m"]);
+  });
+
+  test("a read's day is fixed when it is sent, so an older reply cannot settle a newer day", async () => {
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    vi.setSystemTime(new Date("2026-03-10T23:59:50Z"));
+    setup();
+    await settle();
+    const answers: Array<(response: Response) => void> = [];
+    fetchMock.mockImplementation(async (request) =>
+      (await request.clone().json()).event === "review_viewed"
+        ? new Promise((resolve) => answers.push(resolve))
+        : accepted(),
+    );
+    appOpened.reportCoreAction("review_viewed");
+    await settle();
+    vi.setSystemTime(new Date("2026-03-11T00:00:05Z"));
+    focusWindow();
+    await settle();
+    appOpened.reportCoreAction("review_viewed");
+    await settle();
+    expect(answers).toHaveLength(2);
+    answers[0]!(accepted());
+    answers[1]!(new Response(null, { status: 500 }));
+    await settle();
+    now += 60_000;
+    appOpened.reportCoreAction("review_viewed");
+    await settle();
+
+    expect(answers).toHaveLength(3);
+  });
+
   test("keeps only kit-ui keys in local storage", async () => {
     setup();
     await settle();

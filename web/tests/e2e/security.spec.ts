@@ -46,6 +46,13 @@ test.describe.serial("browser listener security", () => {
     for (const key of Object.keys(storage.local))
       expect(key).toMatch(/^roborev\.telemetry(\.|$)/);
     expect(Object.values(storage)).not.toContain(process.env.ROBOREV_E2E_TOKEN);
+    const stored = Object.values(storage.local);
+    for (const secret of [
+      storage.session,
+      storage.csrf,
+      process.env.ROBOREV_E2E_TOKEN,
+    ])
+      expect(stored).not.toContain(secret);
 
     const rawRead = await page.evaluate(async () =>
       fetch("/api/jobs").then((response) => response.status),

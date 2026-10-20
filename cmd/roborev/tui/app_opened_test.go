@@ -28,7 +28,6 @@ func enableTelemetryEnv(t *testing.T) {
 	t.Setenv(telemetry.EnabledEnv, "1")
 	t.Setenv(telemetry.GenericEnabledEnv, "1")
 	testenv.SetDataDir(t)
-	telemetry.DefaultClientGate = &telemetry.ClientGate{}
 }
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables

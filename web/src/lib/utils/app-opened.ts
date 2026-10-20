@@ -9,6 +9,8 @@ const telemetryEventsPath = "/api/telemetry/events";
 type CoreAction = "review_viewed" | "review_closed";
 let reporter: BrowserTelemetryReporter | undefined;
 let quiet = true;
+// A disabled receipt holds until a check enables telemetry again; nothing is measured or queued meanwhile.
+let optedOut = false;
 // A review_viewed the daemon settled is not sent again on this page until the next UTC day.
 // reviewReadDay is the day of the latest read, so a reply that lands after midnight claims the right day.
 let reviewViewedDay = "";
@@ -92,7 +94,7 @@ function resumeSession(): void {
 }
 
 function onVisibility(): void {
-  if (quiet) return;
+  if (optedOut) return;
   if (document.hidden) {
     pauseSession();
     hiddenAt = Date.now();
@@ -120,6 +122,7 @@ function startReporting(): BrowserTelemetryReporter {
     surface: "web",
     storageKey: storageKey(),
     post: async (route, event, options) => {
+      const readDay = reviewReadDay;
       // kit-ui has no pause API; keep its receipts while deferring the network.
       while (!shellMounted) {
         waitingForShell ??= new Promise((resolve) => {
@@ -143,13 +146,14 @@ function startReporting(): BrowserTelemetryReporter {
           ? data.status
           : undefined;
       if (receipt === "disabled") {
+        optedOut = true;
         discardSession();
         pendingCoreActions.clear();
       } else if (
         event.event === "review_viewed" &&
         (receipt === "queued" || receipt === "skipped")
       )
-        reviewViewedDay = reviewReadDay;
+        reviewViewedDay = readDay;
       // Auth and rate-limit rejections never reached capture and can recover.
       const retryable = [401, 403, 429].includes(response.status);
       return { status: retryable ? 503 : response.status, data };
@@ -179,10 +183,9 @@ export function setupAppOpenedReporting(): () => void {
       quiet = value;
       if (quiet) {
         // A pending check only pauses the timer; a disabled receipt discards the session.
-        clearTimeout(hiddenTimer);
-        hiddenAt = undefined;
         pauseSession();
       } else {
+        optedOut = false;
         flushSession();
         resumeSession();
       }
@@ -200,6 +203,7 @@ export function setupAppOpenedReporting(): () => void {
 }
 
 export function reportCoreAction(event: CoreAction): void {
+  if (optedOut) return;
   if (event === "review_viewed") {
     if (reviewViewedDay === today()) return;
     reviewReadDay = today();

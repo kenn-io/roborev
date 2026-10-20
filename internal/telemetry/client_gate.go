@@ -78,11 +78,13 @@ func (g *ClientGate) clock() time.Time {
 	return time.Now()
 }
 
+func (g *ClientGate) today() string { return g.clock().UTC().Format(time.DateOnly) }
+
 // current returns today's receipts for the current data directory, dropping memory from another file or day.
 // Callers hold g.mu.
 func (g *ClientGate) current() *clientState {
 	path := filepath.Join(config.DataDir(), clientStateFile)
-	day := g.clock().UTC().Format(time.DateOnly)
+	day := g.today()
 	if g.path != path || g.state.Day != day {
 		g.path, g.loaded, g.frozen, g.down = path, false, false, map[string]reportBackoff{}
 		g.state = clientState{Version: clientStateVersion, Day: day, Endpoints: map[string]*clientEndpoint{}}
@@ -156,7 +158,8 @@ func (g *ClientGate) Probe(ctx context.Context, client *http.Client, scope, url,
 	defer unlock()
 	g.merge()
 	send := false
-	g.commit(scope, func(e *clientEndpoint) bool {
+	day := g.today()
+	g.commit("", scope, func(e *clientEndpoint) bool {
 		now := g.clock()
 		if g.frozen || !e.probeDue(surface, now) {
 			return false
@@ -175,7 +178,7 @@ func (g *ClientGate) Probe(ctx context.Context, client *http.Client, scope, url,
 	status, err := posthog.PostEvent(ctx, answering, url, EventAppOpened, map[string]any{PropertySurface: surface})
 	if err != nil {
 		if answers.status > 0 && answers.status < 500 {
-			g.commit(scope, func(e *clientEndpoint) bool {
+			g.commit(day, scope, func(e *clientEndpoint) bool {
 				p := e.Probes[surface]
 				p.Rejected++
 				e.Probes[surface] = p
@@ -184,7 +187,7 @@ func (g *ClientGate) Probe(ctx context.Context, client *http.Client, scope, url,
 		}
 		return
 	}
-	g.commit(scope, func(e *clientEndpoint) bool {
+	g.commit(day, scope, func(e *clientEndpoint) bool {
 		if status == posthog.StatusDisabled {
 			e.Disabled = true
 		} else {
@@ -250,7 +253,7 @@ func (g *ClientGate) disable(ctx context.Context, scope string) {
 	if unlock, ok := g.lock(ctx); ok {
 		defer unlock()
 		g.merge()
-		g.commit(scope, func(e *clientEndpoint) bool {
+		g.commit("", scope, func(e *clientEndpoint) bool {
 			e.Disabled = true
 			return true
 		})
@@ -317,18 +320,19 @@ func (g *ClientGate) merge() {
 	}
 }
 
-// commit applies change to memory and, when it reports a change, saves the receipts. Callers hold the receipt lock.
-func (g *ClientGate) commit(scope string, change func(*clientEndpoint) bool) {
+// commit applies change to memory and, when it reports a change, saves the receipts, unless the file is
+// frozen. A day other than "" limits the change to that UTC day. Callers hold the receipt lock.
+func (g *ClientGate) commit(day, scope string, change func(*clientEndpoint) bool) {
 	g.mu.Lock()
 	state := g.current()
-	if !change(state.endpoint(scope)) {
+	if day != "" && state.Day != day || !change(state.endpoint(scope)) {
 		g.mu.Unlock()
 		return
 	}
-	path := g.path
+	path, frozen := g.path, g.frozen
 	data, err := json.Marshal(state)
 	g.mu.Unlock()
-	if err == nil {
+	if err == nil && !frozen {
 		_ = atomicfile.WriteFile(path, data, atomicfile.WithPrivate(), atomicfile.WithoutSync())
 	}
 }
