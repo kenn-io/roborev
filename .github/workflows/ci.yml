@@ -187,7 +187,7 @@ jobs:
   test:
     needs: go-changes
     if: github.event_name == 'workflow_dispatch' || needs.go-changes.outputs.changed == 'true'
-    name: test (${{ matrix.os }})
+    name: test (${{ matrix.shard || matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -198,6 +198,32 @@ jobs:
             runner: namespace-profile-mac-6cpu
           - os: windows-latest
             runner: windows-2025
+            shard: windows-remaining
+          - os: windows-latest
+            runner: windows-2025
+            shard: windows-daemon-a-f
+            package: ./internal/daemon
+            pattern: '^Test[A-F]'
+          - os: windows-latest
+            runner: windows-2025
+            shard: windows-daemon-g-m-t-z
+            package: ./internal/daemon
+            pattern: '^Test[G-MT-Z]'
+          - os: windows-latest
+            runner: windows-2025
+            shard: windows-daemon-n-s
+            package: ./internal/daemon
+            pattern: '^Test[N-S]'
+          - os: windows-latest
+            runner: windows-2025
+            shard: windows-cli-a-m-t-z
+            package: ./cmd/roborev
+            pattern: '^Test[A-MT-Z]'
+          - os: windows-latest
+            runner: windows-2025
+            shard: windows-cli-n-s
+            package: ./cmd/roborev
+            pattern: '^Test[N-S]'
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -260,11 +286,19 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path test-results | Out-Null
+          $packages = @('${{ matrix.package }}')
+          if (-not '${{ matrix.package }}') {
+            $packages = go list -tags integration ./...
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $packages = @($packages | Where-Object { $_ -notin 'go.kenn.io/roborev/internal/daemon', 'go.kenn.io/roborev/cmd/roborev' })
+          }
+          $testArgs = @()
+          if ('${{ matrix.pattern }}') { $testArgs = @('-run', '${{ matrix.pattern }}') }
           # go test on Windows can exit 1 due to temp .exe cleanup
           # ("go: remove ...\.exe: Access is denied") even when all
           # tests pass. Only suppress that specific pattern.
-          $testResultPath = "test-results/${{ matrix.os }}-test.jsonl"
-          go test -json -timeout 30m -shuffle=on -tags integration ./... > $testResultPath 2>&1
+          $testResultPath = "test-results/${{ matrix.shard || matrix.os }}-test.jsonl"
+          go test -json -timeout 30m -shuffle=on -tags integration @testArgs @packages > $testResultPath 2>&1
           $exitCode = $LASTEXITCODE
           if ($exitCode -ne 0) {
             Write-Host "go test failed; recent output:"
@@ -289,8 +323,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
-          name: ${{ matrix.os }}-test-json
-          path: test-results/${{ matrix.os }}-test.jsonl
+          name: ${{ matrix.shard || matrix.os }}-test-json
+          path: test-results/${{ matrix.shard || matrix.os }}-test.jsonl
           if-no-files-found: ignore
 
       - name: Build with CGO disabled
