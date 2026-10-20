@@ -515,6 +515,21 @@ describe("setupAppOpenedReporting", () => {
     },
   );
 
+  test("restored disabled receipts drop actions and hidden timers", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    localStorage.setItem("roborev.telemetry.browser.v1.quiet:2026-03-10", "1");
+    const timeout = vi.spyOn(globalThis, "setTimeout");
+    setup();
+    appOpened.reportCoreAction("review_closed");
+    vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(timeout.mock.calls.some(([, delay]) => delay === 1_800_000)).toBe(false);
+    vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
+    focusWindow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect((await sentEvents()).map((e) => e.event)).toEqual(["app_opened"]);
+  });
+
   test("actions taken while disabled are dropped, not sent when a later day enables", async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(JSON.stringify({ status: "disabled" }), { status: 202 }),

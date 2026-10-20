@@ -64,6 +64,8 @@ type clientEndpoint struct {
 type clientProbe struct {
 	Sent     bool `json:"sent,omitempty"`
 	Attempts int  `json:"attempts,omitempty"`
+	// inFlight lets reports join this process's pending probe before checking backoff.
+	inFlight bool
 	// Rejected counts answers that are neither a receipt nor a 5xx, such as an empty 2xx from a daemon too old
 	// to send receipts, or a 4xx. Six stop the check for the day; 5xx answers and requests that got no answer
 	// only extend the backoff.
@@ -146,7 +148,8 @@ func (g *ClientGate) Load(ctx context.Context) {
 // the rest read its result. If ctx ends first the report is dropped.
 func (g *ClientGate) Probe(ctx context.Context, client *http.Client, scope, url, surface string) {
 	g.mu.Lock()
-	open := !g.frozen && g.current().Endpoints[scope].probeOpen(surface)
+	e := g.current().Endpoints[scope]
+	open := !g.frozen && (e.probeDue(surface, g.clock()) || e != nil && e.Probes[surface].inFlight)
 	g.mu.Unlock()
 	if !open {
 		return
@@ -167,6 +170,7 @@ func (g *ClientGate) Probe(ctx context.Context, client *http.Client, scope, url,
 		p := e.Probes[surface]
 		p.Attempts++
 		p.Next = now.Add(backoffDelay(p.Attempts))
+		p.inFlight = true
 		e.Probes[surface] = p
 		send = true
 		return true
@@ -174,6 +178,16 @@ func (g *ClientGate) Probe(ctx context.Context, client *http.Client, scope, url,
 	if !send {
 		return
 	}
+	defer func() {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		if state := g.current(); state.Day == day {
+			e := state.endpoint(scope)
+			p := e.Probes[surface]
+			p.inFlight = false
+			e.Probes[surface] = p
+		}
+	}()
 	answering, answers := trackAnswer(client)
 	status, err := posthog.PostEvent(ctx, answering, url, EventAppOpened, map[string]any{PropertySurface: surface})
 	if err != nil {
@@ -211,9 +225,10 @@ func (g *ClientGate) Post(ctx context.Context, client *http.Client, scope, url, 
 		return !ready
 	}
 	answering, answers := trackAnswer(client)
+	day := g.today()
 	status, err := posthog.PostEvent(ctx, answering, url, event, props)
 	if status == posthog.StatusDisabled {
-		g.disable(ctx, scope)
+		g.disable(ctx, day, scope)
 	}
 	return g.noteReport(scope, err == nil || (answers.status > 0 && answers.status < 500))
 }
@@ -243,9 +258,11 @@ func (g *ClientGate) noteReport(scope string, answered bool) bool {
 }
 
 // disable keeps the opt-out in memory first, so an unwritable file loses nothing.
-func (g *ClientGate) disable(ctx context.Context, scope string) {
+func (g *ClientGate) disable(ctx context.Context, day, scope string) {
 	g.mu.Lock()
-	g.current().endpoint(scope).Disabled = true
+	if state := g.current(); state.Day == day {
+		state.endpoint(scope).Disabled = true
+	}
 	g.mu.Unlock()
 	// The request may have used up ctx; saving gets its own bound.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), NotificationTimeout)
@@ -253,7 +270,7 @@ func (g *ClientGate) disable(ctx context.Context, scope string) {
 	if unlock, ok := g.lock(ctx); ok {
 		defer unlock()
 		g.merge()
-		g.commit("", scope, func(e *clientEndpoint) bool {
+		g.commit(day, scope, func(e *clientEndpoint) bool {
 			e.Disabled = true
 			return true
 		})

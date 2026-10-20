@@ -522,9 +522,9 @@ unused. See [telemetry configuration](https://github.com/kenn-io/roborev/blob/ma
 for recovery instructions.
 Counts mean the report was queued, not confirmed delivered to PostHog.
 The CLI and TUI send one `app_opened` check per daemon per UTC day and send
-nothing more to a daemon that answers `disabled`. The TUI sends each screen once
-per day whether or not the daemon accepts it. The browser sends each screen once
-per day per browser profile.
+nothing more to a daemon that answers `disabled`. The TUI retries failed screen
+reports on later input after backoff, until the daemon settles one for the day.
+The browser sends each screen once per day per browser profile.
 Agent activity counts each MCP `tools/call`, including tool errors, and each
 invocation of `agent-hook run`, `agent-hook fix-done`, `post-commit`, `enqueue`,
 `remap`, or an eligible daemon command marked `--from-skill` after its first

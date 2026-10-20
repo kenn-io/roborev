@@ -9,8 +9,6 @@ const telemetryEventsPath = "/api/telemetry/events";
 type CoreAction = "review_viewed" | "review_closed";
 let reporter: BrowserTelemetryReporter | undefined;
 let quiet = true;
-// A disabled receipt holds until a check enables telemetry again; nothing is measured or queued meanwhile.
-let optedOut = false;
 // A review_viewed the daemon settled is not sent again on this page until the next UTC day.
 // reviewReadDay is the day of the latest read, so a reply that lands after midnight claims the right day.
 let reviewViewedDay = "";
@@ -94,7 +92,7 @@ function resumeSession(): void {
 }
 
 function onVisibility(): void {
-  if (optedOut) return;
+  if (disabled()) return;
   if (document.hidden) {
     pauseSession();
     hiddenAt = Date.now();
@@ -114,6 +112,16 @@ function onVisibility(): void {
 function storageKey(): string {
   const scope = encodeURIComponent(getBasePath()).replaceAll(".", "%2E");
   return scope ? `roborev.telemetry.${scope}` : "roborev.telemetry";
+}
+
+function disabled(): boolean {
+  try {
+    return (
+      localStorage.getItem(`${storageKey()}.browser.v1.quiet:${today()}`) !== null
+    );
+  } catch {
+    return quiet;
+  }
 }
 
 function startReporting(): BrowserTelemetryReporter {
@@ -146,7 +154,6 @@ function startReporting(): BrowserTelemetryReporter {
           ? data.status
           : undefined;
       if (receipt === "disabled") {
-        optedOut = true;
         discardSession();
         pendingCoreActions.clear();
       } else if (
@@ -185,7 +192,6 @@ export function setupAppOpenedReporting(): () => void {
         // A pending check only pauses the timer; a disabled receipt discards the session.
         pauseSession();
       } else {
-        optedOut = false;
         flushSession();
         resumeSession();
       }
@@ -203,7 +209,7 @@ export function setupAppOpenedReporting(): () => void {
 }
 
 export function reportCoreAction(event: CoreAction): void {
-  if (optedOut) return;
+  if (disabled()) return;
   if (event === "review_viewed") {
     if (reviewViewedDay === today()) return;
     reviewReadDay = today();

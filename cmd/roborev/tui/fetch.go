@@ -456,19 +456,19 @@ func (m model) postScreen(screen string) tea.Cmd {
 		m.probeTelemetry()
 		ctx, cancel := context.WithTimeout(m.apiContext(), telemetry.NotificationTimeout)
 		defer cancel()
-		return reportFailed(screen, telemetry.PostScreenViewed(ctx, m.client, m.endpoint.TelemetryScope(), m.endpoint.BaseURL()+daemon.TelemetryEventsPath, screen, telemetry.SurfaceTUI))
+		return reportFailed(m.screenDay, screen, telemetry.PostScreenViewed(ctx, m.client, m.endpoint.TelemetryScope(), m.endpoint.BaseURL()+daemon.TelemetryEventsPath, screen, telemetry.SurfaceTUI))
 	}
 }
 
 // reportFailedMsg names a report that got no answer, a 5xx, or a backoff skip. Update unmarks it so later input
 // resends it, and Post's backoff keeps a held key from sending at key-repeat rate.
-type reportFailedMsg string
+type reportFailedMsg struct{ day, report string }
 
-func reportFailed(report string, settled bool) tea.Msg {
+func reportFailed(day, report string, settled bool) tea.Msg {
 	if settled {
 		return nil
 	}
-	return reportFailedMsg(report)
+	return reportFailedMsg{day: day, report: report}
 }
 
 func (m model) fetchReleaseNotes() tea.Cmd {
@@ -1553,6 +1553,6 @@ func (m model) reportAction(event string) tea.Cmd {
 		m.probeTelemetry()
 		ctx, cancel := context.WithTimeout(m.apiContext(), telemetry.NotificationTimeout)
 		defer cancel()
-		return reportFailed(event, telemetry.PostReviewEvent(ctx, m.client, m.endpoint.TelemetryScope(), m.endpoint.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceTUI))
+		return reportFailed(m.screenDay, event, telemetry.PostReviewEvent(ctx, m.client, m.endpoint.TelemetryScope(), m.endpoint.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceTUI))
 	}
 }

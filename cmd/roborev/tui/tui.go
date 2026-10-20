@@ -1285,7 +1285,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 		result = m
 	case reportFailedMsg:
-		m.screensSent = slices.DeleteFunc(m.screensSent, func(sent string) bool { return sent == string(msg) })
+		if msg.day == m.screenDay {
+			m.screensSent = slices.DeleteFunc(m.screensSent, func(sent string) bool { return sent == msg.report })
+		}
 		result = m
 	case controlSocketReadyMsg:
 		m.controlSocket = msg.socketPath

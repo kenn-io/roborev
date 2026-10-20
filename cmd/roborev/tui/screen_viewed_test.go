@@ -209,3 +209,24 @@ func TestScreenVisitedWhileProbePendingIsSentOnceItSettles(t *testing.T) {
 		assert.Equal(t, []string{telemetry.EventAppOpened, telemetry.EventScreenViewed}, transport.order)
 	})
 }
+
+//nolint:paralleltest // telemetry environment variables
+func TestYesterdayScreenFailureKeepsTodaysDelivery(t *testing.T) {
+	enableTelemetryEnv(t)
+	synctest.Test(t, func(t *testing.T) {
+		m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
+		transport := &screenRecordingTransport{}
+		m.client.Transport = transport
+		m.probeTelemetry()
+		transport.fail = true
+		failed := m.postScreen("queue")()
+		require.NotNil(t, failed)
+		time.Sleep(24 * time.Hour)
+		transport.fail = false
+		updateScreenTestModel(&m, keyPressMsg('x'))
+		require.Equal(t, []string{"queue", "queue"}, transport.screens)
+		updateScreenTestModel(&m, failed)
+		updateScreenTestModel(&m, keyPressMsg('x'))
+		assert.Equal(t, []string{"queue", "queue"}, transport.screens)
+	})
+}

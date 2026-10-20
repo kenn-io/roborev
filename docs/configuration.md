@@ -1958,8 +1958,8 @@ review, synthesis and compact output.
 
 - The TUI counts a read on key or mouse input while a loaded review is visible.
     Opening a review isn't a read until the next input. Quit keys `ctrl+c` and
-    `ctrl+d` stay silent; `q` on a loaded review counts. A failed report isn't
-    retried on later input.
+    `ctrl+d` stay silent; `q` on a loaded review counts. Failed reports retry on
+    later input after backoff, until the daemon settles one for the day.
 - The browser reports a rendered Review tab on load and when focus or visibility
     returns, until the daemon settles one for the day.
 - CLI reads include `show`, `wait`, `review --wait`, `compact --wait`, and
@@ -1983,17 +1983,18 @@ Daemon keys are hashes, so the file stores no address or credential.
     through its request, so concurrent commands send one check and the rest read
     its result. `queued` and `skipped` settle the check. `disabled` from any
     route stops all reports to that daemon until the next UTC day.
-- Action, screen, session, and agent-call reports follow the check, send once,
-    and keep no stored counts. A check that gets a 5xx or no answer retries on
-    later activity after 1 to 16 seconds. An answer that is neither a receipt
-    nor a 5xx, such as an empty 202 from a daemon too old to send receipts or a
-    4xx, counts against six per day; after six, that daemon gets no more checks
+- Action, screen, and session reports follow the check. MCP agent calls send
+    without waiting for it. Reports keep no stored counts. A check that gets a
+    5xx or no answer retries on later activity after 1 to 16 seconds. An answer
+    that is neither a receipt nor a 5xx, such as an empty 202 from a daemon too
+    old to send receipts or a 4xx, counts against six per day; after six, that
+    daemon gets no more checks
     until the next UTC day. After a report gets a 5xx or no answer, later
     reports to that daemon are dropped for 1 to 16 seconds. That backoff lives
     in process memory only.
 - When the file can't be read or written, receipts stay in process memory. A
-    file written by a newer version is left as found and receipts stay in
-    memory.
+    file written by a newer version is left as found and stops all reports
+    until it's removed.
 - CLI and TUI exits wait at most 50 ms in total for reports; each send keeps its
     one-second deadline.
 - The agent-call route answers with the same 202 JSON receipts and stops reading
@@ -2015,9 +2016,9 @@ a `telemetry-daily.json.lock` sidecar. An unreadable or newer-version claims
 file makes `screen_viewed` and core action reports fail until it's removed. Stop
 the daemon before deleting it. Deletion resets file claims; retired SQLite
 screen claims are unused. Counts mean the report was queued, not confirmed
-delivered to PostHog. The TUI sends each screen once per day whether or not the
-daemon accepts it. The browser sends each screen once per day per browser
-profile.
+delivered to PostHog. The TUI retries failed screen reports on later input after
+backoff, until the daemon settles one for the day. The browser sends each screen
+once per day per browser profile.
 
 Each event carries `install_age_hours`, the whole hours since the install ID was
 created, so short-lived installs such as test sandboxes can be filtered out.

@@ -429,3 +429,40 @@ func TestClientGateNeverRewritesAFileThatTurnedNewerMidReport(t *testing.T) {
 	assert.Equal(t, newer, string(saved))
 	assert.False(t, g.Ready("daemon"))
 }
+
+func TestClientGateLateDisabledReportLeavesNextDayReady(t *testing.T) {
+	testenv.SetDataDir(t)
+	now := time.Date(2026, 3, 10, 23, 59, 59, 0, time.UTC)
+	g := &ClientGate{now: func() time.Time { return now }}
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		now = now.Add(2 * time.Second)
+		return &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(strings.NewReader(`{"status":"disabled"}`)), Header: make(http.Header)}, nil
+	})}
+	g.Post(t.Context(), client, "daemon", "http://daemon.test", EventAgentActive, nil)
+	assert.True(t, g.Ready("daemon"))
+	var requests int
+	client.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		requests++
+		return &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(strings.NewReader(`{"status":"queued"}`)), Header: make(http.Header)}, nil
+	})
+	(&ClientGate{now: func() time.Time { return now }}).Probe(t.Context(), client, "daemon", "http://daemon.test", SurfaceCLI)
+	assert.Equal(t, 1, requests, "a fresh process still checks the new day")
+}
+
+func TestClientGateProbeBackoffSkipsBusyLock(t *testing.T) {
+	dir := testenv.SetDataDir(t)
+	synctest.Test(t, func(t *testing.T) {
+		client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("offline")
+		})}
+		g := &ClientGate{}
+		g.Probe(t.Context(), client, "daemon", "http://daemon.test", SurfaceTUI)
+		held := flock.New(filepath.Join(dir, clientStateFile+".lock"))
+		require.NoError(t, held.Lock())
+		defer func() { require.NoError(t, held.Unlock()) }()
+		ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+		defer cancel()
+		g.Probe(ctx, client, "daemon", "http://daemon.test", SurfaceTUI)
+		assert.NoError(t, ctx.Err(), "backoff returns before waiting on the file lock")
+	})
+}
