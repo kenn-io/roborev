@@ -9,13 +9,13 @@ const telemetryEventsPath = "/api/telemetry/events";
 type CoreAction = "review_viewed" | "review_closed";
 let reporter: BrowserTelemetryReporter | undefined;
 let quiet = true;
+let disabledDay = "";
 // A review_viewed the daemon settled is not sent again on this page until the next UTC day.
-// reviewReadDay is the day of the latest read, so a reply that lands after midnight claims the right day.
 let reviewViewedDay = "";
-let reviewReadDay = "";
+const reviewPending = new Set<string>();
 const today = (): string => new Date().toISOString().slice(0, 10);
 // Actions wait here while the daemon check is pending or the shell is gone; the daemon dedupes them by day.
-const pendingCoreActions = new Set<CoreAction>();
+const pendingCoreActions = new Map<CoreAction, string>();
 let listening = false;
 let shellMounted = false;
 let waitingForShell: Promise<void> | undefined;
@@ -92,12 +92,11 @@ function resumeSession(): void {
 }
 
 function onVisibility(): void {
-  if (disabled()) return;
   if (document.hidden) {
     pauseSession();
     hiddenAt = Date.now();
     clearTimeout(hiddenTimer);
-    hiddenTimer = setTimeout(endSession, 1_800_000);
+    if (!quiet) hiddenTimer = setTimeout(endSession, 1_800_000);
   } else {
     clearTimeout(hiddenTimer);
     if (hiddenAt !== undefined && Date.now() - hiddenAt >= 1_800_000)
@@ -114,56 +113,52 @@ function storageKey(): string {
   return scope ? `roborev.telemetry.${scope}` : "roborev.telemetry";
 }
 
-function disabled(): boolean {
-  try {
-    return (
-      localStorage.getItem(`${storageKey()}.browser.v1.quiet:${today()}`) !== null
-    );
-  } catch {
-    return quiet;
-  }
-}
-
 function startReporting(): BrowserTelemetryReporter {
   return startBrowserTelemetry({
     route: telemetryEventsPath,
     surface: "web",
     storageKey: storageKey(),
     post: async (route, event, options) => {
-      const readDay = reviewReadDay;
-      // kit-ui has no pause API; keep its receipts while deferring the network.
-      while (!shellMounted) {
-        waitingForShell ??= new Promise((resolve) => {
-          resumeReporting = resolve;
+      const readDay = today();
+      if (event.event === "review_viewed") reviewPending.add(readDay);
+      try {
+        // kit-ui has no pause API; keep its receipts while deferring the network.
+        while (!shellMounted) {
+          waitingForShell ??= new Promise((resolve) => {
+            resumeReporting = resolve;
+          });
+          await waitingForShell;
+        }
+        const response = await authenticatedFetch()(route, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(event),
+          ...options,
+          signal: AbortSignal.timeout(10_000),
         });
-        await waitingForShell;
+        const data: unknown = await response.json().catch(() => undefined);
+        const receipt =
+          response.status === 202 &&
+          typeof data === "object" &&
+          data !== null &&
+          "status" in data
+            ? data.status
+            : undefined;
+        if (receipt === "disabled") {
+          disabledDay = today();
+          discardSession();
+          pendingCoreActions.clear();
+        } else if (
+          event.event === "review_viewed" &&
+          (receipt === "queued" || receipt === "skipped")
+        )
+          reviewViewedDay = readDay;
+        // Auth and rate-limit rejections never reached capture and can recover.
+        const retryable = [401, 403, 429].includes(response.status);
+        return { status: retryable ? 503 : response.status, data };
+      } finally {
+        if (event.event === "review_viewed") reviewPending.delete(readDay);
       }
-      const response = await authenticatedFetch()(route, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(event),
-        ...options,
-        signal: AbortSignal.timeout(10_000),
-      });
-      const data: unknown = await response.json().catch(() => undefined);
-      const receipt =
-        response.status === 202 &&
-        typeof data === "object" &&
-        data !== null &&
-        "status" in data
-          ? data.status
-          : undefined;
-      if (receipt === "disabled") {
-        discardSession();
-        pendingCoreActions.clear();
-      } else if (
-        event.event === "review_viewed" &&
-        (receipt === "queued" || receipt === "skipped")
-      )
-        reviewViewedDay = readDay;
-      // Auth and rate-limit rejections never reached capture and can recover.
-      const retryable = [401, 403, 429].includes(response.status);
-      return { status: retryable ? 503 : response.status, data };
     },
   });
 }
@@ -190,6 +185,7 @@ export function setupAppOpenedReporting(): () => void {
       quiet = value;
       if (quiet) {
         // A pending check only pauses the timer; a disabled receipt discards the session.
+        clearTimeout(hiddenTimer);
         pauseSession();
       } else {
         flushSession();
@@ -209,19 +205,22 @@ export function setupAppOpenedReporting(): () => void {
 }
 
 export function reportCoreAction(event: CoreAction): void {
-  if (disabled()) return;
-  if (event === "review_viewed") {
-    if (reviewViewedDay === today()) return;
-    reviewReadDay = today();
-  }
-  pendingCoreActions.add(event);
+  const day = today();
+  if (disabledDay === day) return;
+  if (
+    event === "review_viewed" &&
+    (reviewViewedDay === day || reviewPending.has(day))
+  )
+    return;
+  pendingCoreActions.set(event, day);
   flushCoreActions();
 }
 
 function flushCoreActions(): void {
   if (quiet || !shellMounted) return;
-  for (const event of pendingCoreActions) {
-    reporter?.reportVisit({ event, properties: { surface: "web" } });
+  for (const [event, day] of pendingCoreActions) {
+    if (day === today())
+      reporter?.reportVisit({ event, properties: { surface: "web" } });
   }
   pendingCoreActions.clear();
 }

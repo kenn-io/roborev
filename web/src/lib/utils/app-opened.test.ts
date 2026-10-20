@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import durationBuckets from "./duration-buckets.json";
+import { startBrowserTelemetry } from "@kenn-io/kit-ui/utils/browser-telemetry";
 
 type AppOpenedModule = typeof import("./app-opened");
 
@@ -517,13 +518,22 @@ describe("setupAppOpenedReporting", () => {
 
   test("restored disabled receipts drop actions and hidden timers", async () => {
     vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
-    localStorage.setItem("roborev.telemetry.browser.v1.quiet:2026-03-10", "1");
+    const otherTab = startBrowserTelemetry({
+      route: "/api/telemetry/events",
+      surface: "web",
+      storageKey: "roborev.telemetry",
+      post: async () => ({ status: 202, data: { status: "disabled" } }),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    otherTab.stop();
     const timeout = vi.spyOn(globalThis, "setTimeout");
     setup();
     appOpened.reportCoreAction("review_closed");
     vi.spyOn(document, "hidden", "get").mockReturnValue(true);
     document.dispatchEvent(new Event("visibilitychange"));
-    expect(timeout.mock.calls.some(([, delay]) => delay === 1_800_000)).toBe(false);
+    expect(timeout.mock.calls.some(([, delay]) => delay === 1_800_000)).toBe(
+      false,
+    );
     vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
     focusWindow();
     await vi.advanceTimersByTimeAsync(0);
@@ -642,6 +652,107 @@ describe("setupAppOpenedReporting", () => {
     expect(JSON.parse(await fetchMock.mock.calls[1]![0].text()).event).toBe(
       "review_viewed",
     );
+  });
+
+  test("queues actions during a pending check with blocked storage", async () => {
+    vi.spyOn(localStorage, "getItem").mockImplementation(() => {
+      throw new Error("storage blocked");
+    });
+    let answer!: (response: Response) => void;
+    fetchMock.mockImplementationOnce(
+      () => new Promise((resolve) => (answer = resolve)),
+    );
+    setup();
+    appOpened.reportCoreAction("review_closed");
+    answer(accepted());
+    await settle();
+
+    expect((await sentEvents()).map((e) => e.event)).toEqual([
+      "app_opened",
+      "review_closed",
+    ]);
+  });
+
+  test("drops past-day queued actions when the shell returns", async () => {
+    const stop = setup();
+    await settle();
+    stop();
+    appOpened.reportCoreAction("review_closed");
+    vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
+    focusWindow();
+    await settle();
+    setup();
+    await settle();
+
+    expect((await sentEvents()).map((e) => e.event)).toEqual([
+      "app_opened",
+      "app_opened",
+    ]);
+  });
+
+  test("cross-tab quiet clears the hidden timer and preserves the interval", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    let now = 0;
+    let hidden = false;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
+    setup();
+    await vi.advanceTimersByTimeAsync(0);
+    now = 120_000;
+    hidden = true;
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(vi.getTimerCount()).toBe(1);
+    const otherTab = startBrowserTelemetry({
+      route: "/api/telemetry/events",
+      surface: "web",
+      storageKey: "roborev.telemetry",
+      post: async () => ({ status: 202, data: { status: "queued" } }),
+    });
+    otherTab.disable();
+    otherTab.stop();
+    focusWindow();
+    expect(vi.getTimerCount()).toBe(0);
+    vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
+    focusWindow();
+    await vi.advanceTimersByTimeAsync(0);
+    hidden = false;
+    document.dispatchEvent(new Event("visibilitychange"));
+    now += 10_000;
+    globalThis.dispatchEvent(new Event("pagehide"));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(
+      (await sentEvents())
+        .filter((e) => e.event === "session_ended")
+        .map((e) => e.properties.duration_bucket),
+    ).toEqual(["1_to_5m", "under_1m"]);
+  });
+
+  test("coalesces pending review views and releases a failed read", async () => {
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    setup();
+    await settle();
+    let answer!: (response: Response) => void;
+    fetchMock.mockImplementationOnce(
+      () => new Promise((resolve) => (answer = resolve)),
+    );
+    for (let i = 0; i < 30; i++) {
+      appOpened.reportCoreAction("review_viewed");
+      focusWindow();
+      document.dispatchEvent(new Event("visibilitychange"));
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    answer(new Response(null, { status: 500 }));
+    await settle();
+    now = 60_000;
+    appOpened.reportCoreAction("review_viewed");
+    await settle();
+    expect((await sentEvents()).map((e) => e.event)).toEqual([
+      "app_opened",
+      "review_viewed",
+      "review_viewed",
+    ]);
   });
 
   test("queued actions survive an authentication remount", async () => {
