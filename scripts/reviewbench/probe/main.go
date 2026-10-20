@@ -35,6 +35,7 @@ func run() error {
 	prJSON := flag.String("pr-json", "", "ReviewBench pr.json for the pull request")
 	agentName := flag.String("agent", "claude-code", "roborev agent to review with")
 	model := flag.String("model", "", "model for the agent; empty uses the agent's default")
+	provider := flag.String("provider", "", "pi provider for the model; ignored by other agents")
 	reasoning := flag.String("reasoning", "thorough", "reasoning level: fast, standard, or thorough")
 	producer := flag.String("producer", "roborev", "name written as the findings' agent and producer")
 	out := flag.String("out", "", "where to write the findings file")
@@ -63,6 +64,9 @@ func run() error {
 		return err
 	}
 	a = a.WithReasoning(agent.ParseReasoningLevel(*reasoning)).WithModel(*model)
+	if pi, ok := a.(*agent.PiAgent); ok && *provider != "" {
+		a = pi.WithProvider(*provider)
+	}
 	// Codex user settings can enable connectors and web search, which can
 	// read the upstream pull request's review comments: the answers.
 	a = agent.WithCodexSkillsDisabled(a, true)

@@ -10,10 +10,16 @@
 #   scripts/reviewbench/eval.sh judge --name NAME [judge options]
 #   scripts/reviewbench/eval.sh compare NAME NAME...
 #   scripts/reviewbench/eval.sh ab --base REF --head REF [run and judge options]
+#   scripts/reviewbench/eval.sh harness --ref REF --name NAME --arm A --arm B... [options]
+#
+# ab compares two refs with one agent. harness compares agents on one ref:
+# each --arm is AGENT:PROVIDER:MODEL, for example codex::gpt-6-sol or
+# pi:cpa:gpt-6-sol; PROVIDER only applies to pi and may be empty.
 #
 # Run options:
 #   --agent NAME        roborev agent (default claude-code)
 #   --model MODEL       agent model (default: the agent's own default)
+#   --agent-provider P  pi provider for the model
 #   --reasoning LEVEL   fast, standard, or thorough (default thorough)
 #   --jobs N            reviews run at once (default 4)
 #   --set test|full     the 25-PR test set (default) or all 219 PRs
@@ -42,11 +48,11 @@ probe_src="$root/scripts/reviewbench/probe"
 home="${ROBOREV_EVAL_DIR:-${TMPDIR:-/tmp}/roborev-reviewbench}"
 bench="$home/ReviewBench"
 
-usage() { sed -n '8,29p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '8,35p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 die() { echo "eval: $*" >&2; exit 1; }
 log() { echo "eval: $*" >&2; }
 
-agent=claude-code model="" reasoning=thorough jobs=4 set_name=test prs=()
+agent=claude-code model="" agent_provider="" reasoning=thorough jobs=4 set_name=test prs=() arms=()
 provider=anthropic judge_model=claude-sonnet-5 concurrency=4
 ref="" name="" base_ref="" head_ref=""
 
@@ -60,6 +66,8 @@ parse_options() {
       --head) head_ref="$2" ;;
       --agent) agent="$2" ;;
       --model) model="$2" ;;
+      --agent-provider) agent_provider="$2" ;;
+      --arm) arms+=("$2") ;;
       --reasoning) reasoning="$2" ;;
       --jobs) jobs="$2" ;;
       --set) set_name="$2" ;;
@@ -172,7 +180,7 @@ review_pr() {
   for attempt in 1 2; do
     if ROBOREV_DATA_DIR="$run/roborev-data" timeout "${PR_TIMEOUT:-1800}" \
       "$run/bin/probe" -repo "$run/prs/$key/repo" -pr-json "$run/prs/$key/pr.json" \
-      -agent "$agent" -model "$model" -reasoning "$reasoning" -producer "roborev" \
+      -agent "$agent" -model "$model" -provider "$agent_provider" -reasoning "$reasoning" -producer "roborev" \
       -out "$out.tmp" -artifacts "$run/artifacts/$key" >>"$run/logs/$key.log" 2>&1; then
       mv "$out.tmp" "$out"
       log "$key: $(jq '.findings | length' "$out") finding(s)"
@@ -191,10 +199,11 @@ run_eval() {
   sha="$(build_probe "$ref" "$run/bin/probe")"
   list="$(manifest)"
   jq -n --arg ref "$ref" --arg sha "$sha" --arg agent "$agent" --arg model "$model" \
-    --arg reasoning "$reasoning" --arg set "$set_name" --arg bench "$REVIEWBENCH_SHA" \
-    '{ref: $ref, sha: $sha, agent: $agent, model: $model, reasoning: $reasoning, set: $set, reviewbench: $bench}' \
+    --arg provider "$agent_provider" --arg reasoning "$reasoning" --arg set "$set_name" \
+    --arg bench "$REVIEWBENCH_SHA" \
+    '{ref: $ref, sha: $sha, agent: $agent, provider: $provider, model: $model, reasoning: $reasoning, set: $set, reviewbench: $bench}' \
     > "$run/run.json"
-  log "run $name: roborev $ref ($sha), agent $agent ${model:+model $model }reasoning $reasoning"
+  log "run $name: roborev $ref ($sha), agent $agent ${agent_provider:+provider $agent_provider }${model:+model $model }reasoning $reasoning"
 
   count=$(jq length "$list")
   if [ ${#prs[@]} -gt 0 ]; then indices="${prs[*]}"; else indices="$(seq 0 $((count - 1)))"; fi
@@ -289,6 +298,22 @@ ab() {
   compare "$base_name" "$head_name"
 }
 
+harness() {
+  [ -n "$ref" ] && [ -n "$name" ] && [ ${#arms[@]} -ge 2 ] || usage
+  local arm names=() arm_name
+  for arm in "${arms[@]}"; do
+    IFS=: read -r agent agent_provider model <<<"$arm"
+    [ -n "$agent" ] || die "--arm needs an agent: $arm"
+    arm_name="$name-$agent${agent_provider:+-$agent_provider}${model:+-$model}"
+    names+=("$arm_name")
+    name="$arm_name" run_eval
+  done
+  for arm_name in "${names[@]}"; do
+    name="$arm_name" judge
+  done
+  compare "${names[@]}"
+}
+
 [ $# -ge 1 ] || usage
 command="$1"; shift
 case "$command" in
@@ -297,5 +322,6 @@ case "$command" in
   judge) parse_options "$@"; judge ;;
   compare) compare "$@" ;;
   ab) parse_options "$@"; ab ;;
+  harness) parse_options "$@"; harness ;;
   *) usage ;;
 esac

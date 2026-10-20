@@ -63,6 +63,18 @@ scripts/reviewbench/eval.sh ab --base origin/main --head HEAD --name <topic> \
   [--provider P --judge-model M]
 ```
 
+To compare agent harnesses instead of code, run one ref through several
+agents with the same model. Each `--arm` is `AGENT:PROVIDER:MODEL`, and
+PROVIDER only applies to pi:
+
+```bash
+scripts/reviewbench/eval.sh harness --ref HEAD --name <topic> \
+  --arm codex::gpt-6.1-sol --arm pi:cpa:gpt-6.1-sol [--provider P --judge-model M]
+```
+
+Arms run one after another; never start two eval runs at once, because each
+builds its probe in a temporary worktree of this repository.
+
 A stopped or partly failed run resumes when the same `run` command is run
 again. `scripts/reviewbench/eval.sh compare <name>-base <name>-head` reprints
 the table.
