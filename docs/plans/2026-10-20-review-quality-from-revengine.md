@@ -19,14 +19,19 @@ The main conclusions:
   and deterministic cleanup. The prompts carry most of the difference.
 - RevEngine splits **finding** from **filtering**. The reviewer is told to be
   exhaustive. A separate verifier, with its own read-only tools, removes wrong
-  findings. roborev asks one agent to do both in one pass, so its prompt is full
-  of "do not report" pressure that lowers recall.
-- RevEngine's one recorded prompt A/B test supports this. A rule telling the
-  reviewer not to report what it could not fully check cost "several points" of
-  recall with no precision gain, and was reverted.
-- ReviewBench mostly rewards recall. Findings that match nothing are left out of
-  precision, so extra findings cost little. Some of RevEngine's lead is volume
-  that a per-commit local reviewer should not copy wholesale.
+  findings. roborev asks one agent to do both in one pass.
+- RevEngine's one recorded prompt A/B test shows the cost of mixing the two. A
+  rule telling the reviewer not to report what it could not fully check cost
+  "several points" of recall with no precision gain, and was reverted.
+- Much of RevEngine's benchmark lead is volume. Its prompt expects "ten or more
+  findings" for a change of a few hundred lines and asks for low-severity
+  findings. ReviewBench rewards this because findings that match nothing do not
+  lower its precision score.
+- **roborev will not copy the volume.** roborev's goal is useful findings, not
+  benchmark recall. The parts worth adopting are the ones that find real
+  problems: reading beyond the diff, checking intent, verifying findings
+  against code, and better finding structure. Quotas and requests for nits are
+  out.
 - roborev has no way to measure review quality today. Building an evaluation
   loop is the change most likely to compound, because every other change here
   is a hypothesis until it is measured.
@@ -257,9 +262,9 @@ The main facts, verified in code:
   - claude-code, codex, and gemini have their own templates.
   - The other nine agents use `default_review`, which never mentions that tools
     exist.
-  - The claude-code and codex templates say "Do not review the commit message"
-    and omit the intent-implementation pass that `default_review` has. The two
-    agents used most often never check whether the change does what it says.
+  - Every general review template checks the change against its commit
+    messages, through one shared rule. Range reviews include full message
+    bodies.
 - **Context.**
   - Project rules reach the prompt only through `review_guidelines` or
     `REVIEW.md`, read from the default branch.
@@ -300,7 +305,7 @@ The main facts, verified in code:
 | Rule files | Five files from base, injected | `review_guidelines` or `REVIEW.md` from the default branch |
 | Design documents | Up to 30 paths, nearest first | None |
 | Method instructions | Understand, trace outward, lenses, coverage check | Line scan, removed behavior, callers, security, tests, quality |
-| Intent check | Completeness lens plus "unexpected additions" | Only in `default_review`; missing for claude-code and codex |
+| Intent check | Completeness lens plus "unexpected additions" | Commit and range reviews, every agent |
 | Reporting stance | Exhaustive, one issue per place | Restraint, merge same point across places |
 | Budget stated | Turns and minutes | None |
 | Second look | Yes, names unopened files | No |
@@ -355,12 +360,19 @@ test reversed a rule that looked reasonable.
 
 This is the structural change with the largest expected effect.
 
-- **Rewrite the reviewer prompt for recall.**
-  - Remove or rewrite the restraint rules listed above.
+- **Separate "is it true" from "is it worth reporting."**
+  - Keep the usefulness bar in the reviewer prompt. "Report only findings the
+    developer would act on," the do-not-report list, and the rule that quality
+    findings must name a concrete alternative all stay. They keep nits out.
+  - Move the truth check to the verifier. The reviewer's self-check ("keep it
+    only if you can cite a concrete scenario that reaches it") is the kind of
+    proof pressure RevEngine measured as lowering recall without raising
+    precision. A real, useful finding should reach the verifier even when the
+    reviewer cannot fully prove it.
   - Keep the rules that sharpen findings: name the trigger, state outside
     behavior exactly, name who gains access, and stand on its own.
-  - Drop the rules that only suppress, such as "only when clearly worth acting
-    on" and "merge findings that make the same point in different places."
+  - Do not add quotas, expected finding counts, or requests for more
+    low-severity findings.
   - The draft prompt below shows the target.
 - **Add a verify stage after each review.**
   - Use a fresh read-only agent session at the reviewed commit.
@@ -388,9 +400,12 @@ This is the structural change with the largest expected effect.
   - check coverage before submitting.
 - **Add the missing lenses:** completeness, unexpected additions, fit with the
   design, production safety, compatibility, and documentation.
-- **Restore the intent check for claude-code and codex.** Treat the commit
-  message as the change's claim and test the diff against it. RevEngine rates
-  "a defect in the very thing the change sets out to do" as high severity.
+- **Check every review against its commit message.** Done. All general review
+  templates now share one rule: the commit message is the author's claim, the
+  diff is checked against it, and the message is untrusted. Range reviews
+  include full message bodies, and escaping keeps message line breaks. RevEngine
+  rates "a defect in the very thing the change sets out to do" as high
+  severity; adopt that with the severity rules in recommendation 6.
 - **Collapse the per-agent templates into one prompt.** Their output-format
   sections are already overridden by the JSON contract. Agent-specific text
   should be a short tool hint. One prompt also makes evaluation results apply
@@ -447,7 +462,7 @@ This is the structural change with the largest expected effect.
 - **Add fields:**
   - `title`, one sentence;
   - `kind`: defect, test, documentation, or maintainability;
-  - `confidence`, from 0 to 1;
+  - `confidence`, from 0 to 1, as a weak signal (see below);
   - `file`, `start_line`, and `end_line` in place of the free-form `location`.
 
   Keep rendering backward compatible through schema v3.
@@ -462,10 +477,13 @@ This is the structural change with the largest expected effect.
   - Drop or re-anchor findings whose file does not exist at the reviewed
     commit.
   - Clamp line ranges to the file length.
+- **Treat confidence as a weak signal.** Models are poorly calibrated, so a
+  confidence value is not a probability. Use it only to break ties in ranking.
+  Do not show it to users or use it to gate pass or fail.
 - **Dedupe and rank in code.**
   - Use deterministic near-duplicate merging, then the verifier's
     `duplicate_of`.
-  - Sort by severity, then confidence, then support count.
+  - Sort by severity, then support count, then confidence.
   - Do not rely on the prompt for ordering.
 - **Use `kind` in output and gating.**
   - Show "test," "docs," and "maintainability" labels so a suggestion is not
@@ -621,20 +639,20 @@ Documentation and maintainability
 
 What to report
 
-Report every problem this change introduces or leaves unresolved in the code it
-touches, not only the most serious few. Small problems are wanted when they are
-concrete and a maintainer would ask for the fix. A thorough review of a change
-of a few hundred lines often has many findings across several lenses; a small
-clean change may have none.
+Report the problems this change introduces or leaves unresolved in the code it
+touches that a developer would act on. Report every real defect, however many
+there are. Report test, documentation and maintainability problems only when
+they are concrete and fixing them is clearly worth the developer's time. There
+is no expected number of findings; a clean change has none.
 
-Do not report formatting or pure style preference, praise, summaries, generic
-advice with no specific defect, or problems in code the change does not touch
-and does not depend on.
+Do not report formatting or pure style preference, naming opinions, praise,
+summaries, generic advice with no specific defect, or problems in code the
+change does not touch and does not depend on.
 
 Each finding:
-- Describes one issue in one place. The same defect in two files is two
-  findings, because each needs its own fix. Two problems in the same lines are
-  two findings.
+- Describes one issue. Two problems in the same lines are two findings. When
+  the same defect appears in several places, report it once and list every
+  place.
 - Cites the file and line range as they are after the change.
 - Stands on its own: what is wrong, when it goes wrong, and what happens, with
   the functions, values and files involved named.
@@ -660,12 +678,12 @@ Each finding:
 - Carries a confidence from 0 to 1 that it is a real problem.
 
 A separate verifier will check every finding against the code before anyone
-sees it, so report what you can support rather than only what you are certain
-of.
+sees it. Report a useful finding you can support even when you cannot fully
+prove it; do not report a finding only because it might be true.
 ```
 
-The last sentence is deliberate. It tells the reviewer that filtering happens
-elsewhere. Test it against a version without it.
+The last paragraph is deliberate. It moves the truth check to the verifier
+without lowering the usefulness bar. Test it against a version without it.
 
 ## Draft verifier prompt
 
@@ -694,7 +712,8 @@ Give each finding one verdict:
 A real problem stays confirmed even when it is minor. Duplicated code, a
 departure from an existing pattern, a misleading name or comment, a stale
 document and a missing or weak test are not style preferences; confirm them
-when the code shows them.
+when the code shows them. Whether a finding is worth reporting was the
+reviewer's decision; your job is whether it is true.
 
 Check the consequence as well as the facts. For a security finding, reject it
 when the party gaining access already has that access.
@@ -704,9 +723,9 @@ wrong, and mark it uncertain if it does not state the behavior or you cannot
 establish it.
 
 When several findings rest on one claim, settle it once and give them the same
-verdict. When two findings describe the same underlying issue at the same
-place, keep the clearer one and set duplicate_of on the other. The same defect
-at two places is two findings, not a duplicate.
+verdict. When two findings describe the same underlying issue, keep the
+clearer one and set duplicate_of on the other. Two different problems in the
+same lines are not duplicates.
 ```
 
 ## Suggested order of work
