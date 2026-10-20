@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -19,6 +20,7 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/telemetry"
 	"go.kenn.io/roborev/internal/testenv"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func enableTelemetryEnv(t *testing.T) {
@@ -52,40 +54,20 @@ func TestReportSessionEndedBoundsDelivery(t *testing.T) {
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables
 func TestReportAppOpenedReachesDaemonAllowlist(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
-	t.Setenv(telemetry.EnabledEnv, "0")
-	rep, err := telemetry.NewReporter(telemetry.Options{})
-	require.NoError(err)
 	enableTelemetryEnv(t)
+	endpoint, messages := testutil.NewPostHogStub(t)
+	rep, err := telemetry.NewReporter(telemetry.Options{
+		Database:        testutil.OpenTestDB(t),
+		Endpoint:        endpoint,
+		DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json"),
+	})
+	require.NoError(t, err)
 
-	type recorded struct {
-		body []byte
-		code int
-	}
-	var (
-		mu       sync.Mutex
-		requests []recorded
-	)
 	capture := (&telemetry.AppOpenedLimiter{}).Handler(rep)
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/telemetry/events", func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		r.Body = io.NopCloser(bytes.NewReader(body))
 		rec := httptest.NewRecorder()
-		if bytes.Contains(body, []byte(telemetry.EventAppOpened)) {
-			// The opted-out reporter would answer disabled and end the day's reports; the check settles here instead.
-			rec.WriteHeader(http.StatusAccepted)
-			_, _ = rec.WriteString(`{"status":"queued"}`)
-		} else {
-			capture.ServeHTTP(rec, r)
-		}
-		mu.Lock()
-		requests = append(requests, recorded{
-			body: body, code: rec.Code,
-		})
-		mu.Unlock()
+		capture.ServeHTTP(rec, r)
 		w.WriteHeader(rec.Code)
 		_, _ = w.Write(rec.Body.Bytes())
 	})
@@ -94,43 +76,28 @@ func TestReportAppOpenedReachesDaemonAllowlist(t *testing.T) {
 
 	m := newModel(testEndpointFromURL(ts.URL), withExternalIODisabled())
 	cmd := m.reportAppOpened()
-	require.NotNil(cmd)
-	assert.Nil(cmd())
+	require.NotNil(t, cmd)
+	assert.Nil(t, cmd())
 
 	var names []string
 	for view := viewQueue; view <= viewRerunAgent; view++ {
-		// This opted-out reporter answers disabled, which would silence the rest; each screen starts fresh.
-		testenv.SetDataDir(t)
-		telemetry.DefaultClientGate = &telemetry.ClientGate{}
+		assert.NotEqual(t, "unknown", view.String())
 		names = append(names, view.String())
-		assert.NotEqual("unknown", view.String())
 		m.currentView = view
 		cmd = m.reportScreenViewed()
-		require.NotNil(cmd)
+		require.NotNil(t, cmd)
 		cmd()
 	}
-	mu.Lock()
-	defer mu.Unlock()
-	var screens []recorded
-	for _, request := range requests {
-		if bytes.Contains(request.body, []byte(telemetry.EventScreenViewed)) {
-			screens = append(screens, request)
+	require.NoError(t, rep.Close())
+
+	var screens []string
+	for _, message := range messages() {
+		if message.Event == telemetry.EventScreenViewed {
+			assert.Equal(t, "tui", message.Properties[telemetry.PropertySurface])
+			screens = append(screens, message.Properties[telemetry.PropertyScreen].(string))
 		}
 	}
-	require.Len(screens, len(names))
-	for i, name := range names {
-		var screenEvent struct {
-			Event      string         `json:"event"`
-			Properties map[string]any `json:"properties"`
-		}
-		require.NoError(json.Unmarshal(screens[i].body, &screenEvent))
-		assert.Equal(telemetry.EventScreenViewed, screenEvent.Event)
-		properties, err := rep.SanitizeProperties(screenEvent.Event, screenEvent.Properties)
-		require.NoError(err)
-		assert.Equal(name, properties[telemetry.PropertyScreen])
-		assert.Equal("tui", properties[telemetry.PropertySurface])
-		assert.Equal(http.StatusAccepted, screens[i].code)
-	}
+	assert.ElementsMatch(t, names, screens, "every TUI screen passes the daemon allowlist")
 }
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables

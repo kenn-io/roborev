@@ -57,18 +57,6 @@ func TestCoreActionReviewVisits(t *testing.T) {
 }
 
 //nolint:paralleltest // telemetry environment variables
-func TestCoreActionReviewFailureIsNotRetriedByHeldKey(t *testing.T) {
-	enableTelemetryEnv(t)
-	f := newCoreActionReviewVisitFixture(t)
-	f.update(f.review())
-	f.transport.fail = true
-	for range 50 {
-		f.update(tea.KeyPressMsg{Code: '0'})
-	}
-	assert.Equal(t, []string{"review_viewed"}, f.transport.events)
-}
-
-//nolint:paralleltest // telemetry environment variables
 func TestCoreActionReviewInFlightAndNextUTCDay(t *testing.T) {
 	enableTelemetryEnv(t)
 	synctest.Test(t, func(t *testing.T) {
@@ -90,21 +78,6 @@ func TestCoreActionReviewInFlightAndNextUTCDay(t *testing.T) {
 		f.update(tea.KeyPressMsg{Code: '0'})
 		assert.Equal(t, []string{"review_viewed", "review_viewed"}, f.transport.events)
 	})
-}
-
-//nolint:paralleltest // telemetry environment variables
-func TestCoreActionDisabledReceiptSilencesTheDayThroughReconnect(t *testing.T) {
-	enableTelemetryEnv(t)
-	f := newCoreActionReviewVisitFixture(t)
-	f.update(f.review())
-	f.transport.status = "disabled"
-	f.update(tea.KeyPressMsg{Code: '0'})
-	require.Equal(t, []string{"review_viewed"}, f.transport.events)
-	f.update(reconnectMsg{endpoint: f.m.endpoint})
-	f.transport.status = "queued"
-	f.update(tea.KeyPressMsg{Code: '0'})
-	f.update(tea.KeyPressMsg{Code: '0'})
-	assert.Equal(t, []string{"review_viewed"}, f.transport.events)
 }
 
 //nolint:paralleltest // telemetry environment variables

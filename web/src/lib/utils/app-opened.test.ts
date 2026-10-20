@@ -357,86 +357,163 @@ describe("setupAppOpenedReporting", () => {
     ]);
   });
 
-  test("a disabled reply during a pending check discards the buffered session", async () => {
+  async function sentEvents() {
+    return Promise.all(
+      fetchMock.mock.calls.map(async ([request]) => request.clone().json()),
+    );
+  }
+
+  function startVisit() {
     let now = 0;
     vi.spyOn(performance, "now").mockImplementation(() => now);
     vi.spyOn(document, "hidden", "get").mockReturnValue(false);
-    setup();
-    await settle();
-    now = 120_000;
-    vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ status: "disabled" }), { status: 202 }),
-    );
-    focusWindow();
-    await settle();
-    vi.setSystemTime(new Date("2026-03-12T08:00:00Z"));
-    focusWindow();
-    await settle();
-    now += 10_000;
-    globalThis.dispatchEvent(new Event("pagehide"));
-    await settle();
+    return (ms: number) => void (now = ms);
+  }
 
-    const events = await Promise.all(
-      fetchMock.mock.calls.map(async ([request]) => request.json()),
-    );
-    expect(events.at(-1)).toEqual({
-      event: "session_ended",
-      properties: { surface: "web", duration_bucket: "under_1m" },
-    });
-  });
+  test.each([
+    [
+      "a disabled reply discards the buffered session",
+      async () => {
+        const at = startVisit();
+        setup();
+        await settle();
+        at(120_000);
+        vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
+        fetchMock.mockResolvedValueOnce(
+          new Response(JSON.stringify({ status: "disabled" }), { status: 202 }),
+        );
+        focusWindow();
+        await settle();
+        vi.setSystemTime(new Date("2026-03-12T08:00:00Z"));
+        focusWindow();
+        await settle();
+        at(130_000);
+        globalThis.dispatchEvent(new Event("pagehide"));
+        await settle();
 
-  test("tracking restarts after a pagehide and pageshow during a pending check", async () => {
-    let now = 0;
-    vi.spyOn(performance, "now").mockImplementation(() => now);
-    vi.spyOn(document, "hidden", "get").mockReturnValue(false);
-    setup();
-    await settle();
-    now = 30_000;
-    vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
-    let answer!: (response: Response) => void;
-    fetchMock.mockImplementationOnce(
-      () => new Promise((resolve) => (answer = resolve)),
-    );
-    focusWindow();
-    globalThis.dispatchEvent(new Event("pagehide"));
-    globalThis.dispatchEvent(new Event("pageshow"));
-    answer(accepted());
-    await settle();
-    now += 120_000;
-    globalThis.dispatchEvent(new Event("pagehide"));
-    await settle();
+        expect((await sentEvents()).at(-1)).toEqual({
+          event: "session_ended",
+          properties: { surface: "web", duration_bucket: "under_1m" },
+        });
+      },
+    ],
+    [
+      "a disabled reply drops queued actions and starts no visit timer",
+      async () => {
+        vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+        fetchMock.mockResolvedValueOnce(
+          new Response(JSON.stringify({ status: "disabled" }), { status: 202 }),
+        );
+        const timeout = vi.spyOn(globalThis, "setTimeout");
+        setup();
+        appOpened.reportCoreAction("review_viewed");
+        await vi.advanceTimersByTimeAsync(0);
+        vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+        document.dispatchEvent(new Event("visibilitychange"));
+        appOpened.reportScreenViewed("reviews");
+        globalThis.dispatchEvent(new Event("pagehide"));
+        await vi.advanceTimersByTimeAsync(30 * 60_000);
 
-    const events = await Promise.all(
-      fetchMock.mock.calls.map(async ([request]) => request.json()),
-    );
-    expect(
-      events
-        .filter((e) => e.event === "session_ended")
-        .map((e) => e.properties.duration_bucket),
-    ).toEqual(["under_1m", "1_to_5m"]);
-  });
+        expect(
+          timeout.mock.calls.some(([, delay]) => delay === 1_800_000),
+        ).toBe(false);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      },
+    ],
+    [
+      "tracking restarts after a pagehide and pageshow during the check",
+      async () => {
+        const at = startVisit();
+        setup();
+        await settle();
+        at(30_000);
+        vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
+        let answer!: (response: Response) => void;
+        fetchMock.mockImplementationOnce(
+          () => new Promise((resolve) => (answer = resolve)),
+        );
+        focusWindow();
+        globalThis.dispatchEvent(new Event("pagehide"));
+        globalThis.dispatchEvent(new Event("pageshow"));
+        answer(accepted());
+        await settle();
+        at(150_000);
+        globalThis.dispatchEvent(new Event("pagehide"));
+        await settle();
 
-  test("remembers review_viewed for the day of the read, not of the reply", async () => {
-    vi.setSystemTime(new Date("2026-03-10T23:59:59Z"));
-    setup();
-    await settle();
-    let answer!: (response: Response) => void;
-    fetchMock.mockImplementationOnce(
-      () => new Promise((resolve) => (answer = resolve)),
-    );
-    appOpened.reportCoreAction("review_viewed");
-    vi.setSystemTime(new Date("2026-03-11T00:00:05Z"));
-    answer(accepted());
-    await settle();
-    appOpened.reportCoreAction("review_viewed");
-    await settle();
+        expect(
+          (await sentEvents())
+            .filter((e) => e.event === "session_ended")
+            .map((e) => e.properties.duration_bucket),
+        ).toEqual(["under_1m", "1_to_5m"]);
+      },
+    ],
+    [
+      "a pending check pauses the session without erasing it",
+      async () => {
+        const at = startVisit();
+        setup();
+        await settle();
+        at(30_000);
+        vi.setSystemTime(new Date("2026-03-11T00:01:00Z"));
+        focusWindow();
+        await settle();
+        at(60_000);
+        globalThis.dispatchEvent(new Event("pagehide"));
+        await settle();
 
-    const events = await Promise.all(
-      fetchMock.mock.calls.map(async ([request]) => request.json()),
-    );
-    expect(events.filter((e) => e.event === "review_viewed")).toHaveLength(2);
-  });
+        expect((await sentEvents()).at(-1)).toEqual({
+          event: "session_ended",
+          properties: { surface: "web", duration_bucket: "1_to_5m" },
+        });
+      },
+    ],
+  ])("next-day check: %s", async (_, scenario) => scenario());
+
+  test.each([
+    ["the reply comes the same day", false],
+    ["the reply comes after midnight", true],
+  ])(
+    "sends review_viewed once per UTC day, remembered for the day of the read: %s",
+    async (_, lateReply) => {
+      vi.setSystemTime(new Date("2026-03-10T23:59:50Z"));
+      setup();
+      await settle();
+      let answer!: (response: Response) => void;
+      if (lateReply)
+        fetchMock.mockImplementationOnce(
+          () => new Promise((resolve) => (answer = resolve)),
+        );
+      appOpened.reportCoreAction("review_viewed");
+      if (lateReply) {
+        vi.setSystemTime(new Date("2026-03-11T00:00:05Z"));
+        answer(accepted());
+      } else {
+        await settle();
+        for (let i = 0; i < 5; i++) {
+          appOpened.reportCoreAction("review_viewed");
+          focusWindow();
+        }
+        appOpened.reportCoreAction("review_closed");
+        appOpened.reportCoreAction("review_closed");
+      }
+      await settle();
+      if (!lateReply) {
+        const events = (await sentEvents()).map((e) => e.event);
+        expect(events.filter((e) => e === "review_viewed")).toHaveLength(1);
+        expect(events.filter((e) => e === "review_closed")).toHaveLength(2);
+        vi.setSystemTime(new Date("2026-03-11T00:00:05Z"));
+        focusWindow();
+        await settle();
+      }
+
+      appOpened.reportCoreAction("review_viewed");
+      await settle();
+      expect(
+        (await sentEvents()).filter((e) => e.event === "review_viewed"),
+      ).toHaveLength(2);
+    },
+  );
 
   test("keeps only kit-ui keys in local storage", async () => {
     setup();
@@ -452,57 +529,6 @@ describe("setupAppOpenedReporting", () => {
     for (const key of keys) {
       expect(key).toMatch(/^roborev\.telemetry\.browser\.v1\./);
     }
-  });
-
-  test("sends review_viewed once per UTC day after the daemon settles it", async () => {
-    setup();
-    await settle();
-    appOpened.reportCoreAction("review_viewed");
-    await settle();
-    for (let i = 0; i < 5; i++) {
-      appOpened.reportCoreAction("review_viewed");
-      focusWindow();
-    }
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-
-    appOpened.reportCoreAction("review_closed");
-    appOpened.reportCoreAction("review_closed");
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(4);
-
-    vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
-    focusWindow();
-    await settle();
-    appOpened.reportCoreAction("review_viewed");
-    await settle();
-    const events = await Promise.all(
-      fetchMock.mock.calls.map(async ([request]) => request.json()),
-    );
-    expect(events.filter((e) => e.event === "review_viewed")).toHaveLength(2);
-  });
-
-  test("a check after the UTC rollover pauses the session without erasing it", async () => {
-    let now = 0;
-    vi.spyOn(performance, "now").mockImplementation(() => now);
-    vi.spyOn(document, "hidden", "get").mockReturnValue(false);
-    setup();
-    await settle();
-    now = 30_000;
-    vi.setSystemTime(new Date("2026-03-11T00:01:00Z"));
-    focusWindow();
-    await settle();
-    now += 30_000;
-    globalThis.dispatchEvent(new Event("pagehide"));
-    await settle();
-
-    const events = await Promise.all(
-      fetchMock.mock.calls.map(async ([request]) => request.json()),
-    );
-    expect(events.at(-1)).toEqual({
-      event: "session_ended",
-      properties: { surface: "web", duration_bucket: "1_to_5m" },
-    });
   });
 
   test("queues core actions until the daemon accepts telemetry", async () => {
@@ -539,27 +565,6 @@ describe("setupAppOpenedReporting", () => {
     });
   });
 
-  test("a disabled receipt drops queued actions and starts no visit timer", async () => {
-    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ status: "disabled" }), { status: 202 }),
-    );
-    const timeout = vi.spyOn(globalThis, "setTimeout");
-    setup();
-    appOpened.reportCoreAction("review_viewed");
-    await vi.advanceTimersByTimeAsync(0);
-    vi.spyOn(document, "hidden", "get").mockReturnValue(true);
-    document.dispatchEvent(new Event("visibilitychange"));
-    appOpened.reportScreenViewed("reviews");
-    globalThis.dispatchEvent(new Event("pagehide"));
-    await vi.advanceTimersByTimeAsync(30 * 60_000);
-
-    expect(timeout.mock.calls.some(([, delay]) => delay === 1_800_000)).toBe(
-      false,
-    );
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
   test.each([401, 403, 429])(
     "a %s answer does not claim the app-open check",
     async (status) => {
@@ -571,7 +576,7 @@ describe("setupAppOpenedReporting", () => {
     },
   );
 
-  test("reports each screen once per UTC day and survives a failed post", async () => {
+  test("a failed screen post backs off the next screen reports", async () => {
     setup();
     await settle();
     fetchMock.mockRejectedValueOnce(new TypeError("network down"));

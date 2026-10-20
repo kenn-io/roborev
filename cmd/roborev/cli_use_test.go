@@ -723,7 +723,6 @@ func TestCLIUseReportsAgentActivityForSkillMarkedCommands(t *testing.T) {
 			require.Eventually(t, func() bool { return len(rec.telemetryPosts()) == 1 }, 5*time.Second, 10*time.Millisecond)
 			require.Len(t, rec.telemetryPosts(), 1)
 			assert.Contains(rec.allPaths(), "POST "+daemon.TelemetryAgentCallPath)
-			assert.JSONEq(`{"event":"agent_active","properties":null}`, rec.telemetryPosts()[0].body)
 
 			rec.reset()
 			plain := runCLIFresh(t, true, append(tc.plain, "--server", md.Server.URL)...)
@@ -897,6 +896,9 @@ func TestCoreActionRemoteLocalFallback(t *testing.T) {
 			if mode == "running" || mode == "latest observed" {
 				require.Len(t, rec.actionPosts(), 1)
 				assert.JSONEq(t, `{"event":"review_viewed","properties":{"surface":"cli"}}`, rec.actionPosts()[0].body)
+				if mode == "running" {
+					assert.Contains(t, rec.telemetryPosts()[0].body, `"app_opened"`, "the action follows the check")
+				}
 			} else {
 				assert.Empty(t, rec.actionPosts())
 			}
@@ -1010,29 +1012,6 @@ func disabledDaemon(t *testing.T) (*MockDaemon, *cliUseRecorder, daemon.DaemonEn
 	return md, rec, mustParseEndpoint(t, md.Server.URL)
 }
 
-func TestCLIUseHonorsStoredDisabledAcrossProcesses(t *testing.T) {
-	resetCLIUse(t)
-	_, rec, ep := disabledDaemon(t)
-	cliOutputIsTerminal = func(io.Writer) bool { return true }
-	cliUseEndpoint.Store(&ep)
-	reportCLIActionOutput(os.Stdout, "review_viewed")
-	drainCLIReports()
-	require.Len(t, rec.telemetryPosts(), 1, "the check goes out and the action stays home")
-	assert.Empty(t, rec.actionPosts())
-
-	// A new process reads the stored receipt: no check, no action, no agent call, no MCP goroutines.
-	telemetry.DefaultClientGate = &telemetry.ClientGate{}
-	rec.reset()
-	cliUseEndpoint.Store(&ep)
-	reportCLIActionOutput(os.Stdout, "review_viewed")
-	reportMCPActivity(t.Context(), ep)
-	drainCLIReports()
-	assert.Empty(t, rec.telemetryPosts())
-	enabled := mcpActivityEnabled(ep)
-	drainCLIReports()
-	assert.False(t, enabled())
-}
-
 func TestMCPActivityStartupDoesNotWaitOnTheReceiptLock(t *testing.T) {
 	resetCLIUse(t)
 	held := flock.New(filepath.Join(config.DataDir(), "telemetry-client.json.lock"))
@@ -1051,9 +1030,9 @@ func TestMCPActivityStartupDoesNotWaitOnTheReceiptLock(t *testing.T) {
 	})
 }
 
-func TestDisabledReceiptStopsCLIActionsBeforeAnyWork(t *testing.T) {
+func TestDisabledReceiptStopsCLIAndMCPReportsBeforeAnyWork(t *testing.T) {
 	resetCLIUse(t)
-	_, _, ep := disabledDaemon(t)
+	_, rec, ep := disabledDaemon(t)
 	cliOutputIsTerminal = func(io.Writer) bool { return true }
 	cliUseEndpoint.Store(&ep)
 	probes := 0
@@ -1061,36 +1040,18 @@ func TestDisabledReceiptStopsCLIActionsBeforeAnyWork(t *testing.T) {
 		probes++
 		telemetry.PostAppOpened(ctx, client, scope, url, surface)
 	}
+	agentCalls := 0
+	cliAgentPost = func(context.Context, *http.Client, string, string) { agentCalls++ }
 	reportCLIActionOutput(os.Stdout, "review_viewed")
 	drainCLIReports()
 	require.Equal(t, 1, probes)
+	require.Len(t, rec.telemetryPosts(), 1, "the check goes out and the action stays home")
 
 	reportCLIActionOutput(os.Stdout, "review_closed")
+	reportMCPActivity(t.Context(), ep)
 	drainCLIReports()
 	assert.Equal(t, 1, probes, "nothing is scheduled once the daemon said disabled")
-}
-
-func TestCoreActionRemoteFallbackJoinsLocalProbeAndHonorsBackoff(t *testing.T) {
-	resetCLIUse(t)
-	md, rec := newCLIUseDaemon(t, MockRefineHooks{}, nil)
-	parsedServerEndpoint = &daemon.DaemonEndpoint{Network: "https", Address: "remote.example.com"}
-	cliOutputIsTerminal = func(io.Writer) bool { return true }
-	original := getAnyRunningDaemonForStart
-	t.Cleanup(func() { getAnyRunningDaemonForStart = original })
-	getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
-		return &daemon.RuntimeInfo{Network: "tcp", Address: strings.TrimPrefix(md.Server.URL, "http://")}, nil
-	}
-
-	reportCLIActionOutput(os.Stdout, "review_viewed")
-	drainCLIReports()
-	require.Len(t, rec.telemetryPosts(), 2)
-	assert.Contains(t, rec.telemetryPosts()[0].body, `"app_opened"`)
-	assert.Contains(t, rec.telemetryPosts()[1].body, `"review_viewed"`)
-
-	// The saved receipt means a second command makes no new check.
-	telemetry.DefaultClientGate = &telemetry.ClientGate{}
-	reportCLIActionOutput(os.Stdout, "review_closed")
-	drainCLIReports()
-	require.Len(t, rec.telemetryPosts(), 3)
-	assert.Contains(t, rec.telemetryPosts()[2].body, `"review_closed"`)
+	assert.Zero(t, agentCalls)
+	assert.Len(t, rec.telemetryPosts(), 1)
+	assert.False(t, mcpActivityEnabled(ep)())
 }

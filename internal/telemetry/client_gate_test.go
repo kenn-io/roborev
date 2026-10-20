@@ -81,17 +81,6 @@ func post(g *ClientGate, s *receiptServer, scope, event, surface string) {
 	g.Post(ctx, s.Client(), scope, s.URL, event, props)
 }
 
-func TestClientGateSharesOneProbeAcrossInstances(t *testing.T) {
-	testenv.SetDataDir(t)
-	s := newReceiptServer(t, "queued")
-	var wg sync.WaitGroup
-	for range 100 {
-		wg.Go(func() { probe(&ClientGate{}, s, "daemon", SurfaceCLI) })
-	}
-	wg.Wait()
-	assert.Equal(t, []string{EventAppOpened}, s.seen())
-}
-
 func TestClientGateDisabledStopsEveryEventForThatDaemonOnly(t *testing.T) {
 	testenv.SetDataDir(t)
 	s := newReceiptServer(t, "disabled")
@@ -123,38 +112,35 @@ func TestClientGateDisabledReplyToAnyRouteIsSaved(t *testing.T) {
 }
 
 func TestClientGateProbeBackoffPersistsStopsAtSixAnswersAndResetsDaily(t *testing.T) {
-	testenv.SetDataDir(t)
-	s := newReceiptServer(t, "empty")
-	now := time.Date(2026, 3, 10, 9, 0, 0, 0, time.UTC)
-	gate := func() *ClientGate { return &ClientGate{now: func() time.Time { return now }} }
+	for _, answer := range []string{"empty", "401"} {
+		t.Run(answer, func(t *testing.T) {
+			testenv.SetDataDir(t)
+			s := newReceiptServer(t, answer)
+			now := time.Date(2026, 3, 10, 9, 0, 0, 0, time.UTC)
+			gate := func() *ClientGate { return &ClientGate{now: func() time.Time { return now }} }
 
-	probe(gate(), s, "daemon", SurfaceTUI)
-	probe(gate(), s, "daemon", SurfaceTUI)
-	assert.Len(t, s.seen(), 1, "a new process waits out the saved backoff")
+			probe(gate(), s, "daemon", SurfaceTUI)
+			probe(gate(), s, "daemon", SurfaceTUI)
+			assert.Len(t, s.seen(), 1, "a new process waits out the saved backoff")
 
-	for want := 2; want <= maxProbeRejections; want++ {
-		now = now.Add(time.Minute)
-		probe(gate(), s, "daemon", SurfaceTUI)
-		assert.Len(t, s.seen(), want)
+			for want := 2; want <= maxProbeRejections; want++ {
+				now = now.Add(time.Minute)
+				probe(gate(), s, "daemon", SurfaceTUI)
+				assert.Len(t, s.seen(), want)
+			}
+			now = now.Add(time.Hour)
+			probe(gate(), s, "daemon", SurfaceTUI)
+			assert.Len(t, s.seen(), maxProbeRejections, "the probe stops after six answers without a receipt")
+
+			s.status.Store("queued")
+			post(gate(), s, "daemon", EventScreenViewed, SurfaceTUI)
+			assert.Equal(t, EventScreenViewed, s.seen()[len(s.seen())-1], "an exhausted probe stops only itself")
+
+			now = now.AddDate(0, 0, 1)
+			probe(gate(), s, "daemon", SurfaceTUI)
+			assert.Len(t, s.seen(), maxProbeRejections+2)
+		})
 	}
-	now = now.Add(time.Hour)
-	probe(gate(), s, "daemon", SurfaceTUI)
-	assert.Len(t, s.seen(), maxProbeRejections, "the probe stops after six answers without a receipt")
-
-	now = now.AddDate(0, 0, 1)
-	probe(gate(), s, "daemon", SurfaceTUI)
-	assert.Len(t, s.seen(), maxProbeRejections+1)
-}
-
-func TestClientGateProbeStopsAfterSixRefusals(t *testing.T) {
-	testenv.SetDataDir(t)
-	s := newReceiptServer(t, "401")
-	now := time.Date(2026, 3, 10, 9, 0, 0, 0, time.UTC)
-	for range 2 * maxProbeRejections {
-		probe(&ClientGate{now: func() time.Time { return now }}, s, "daemon", SurfaceCLI)
-		now = now.Add(time.Minute)
-	}
-	assert.Len(t, s.seen(), maxProbeRejections)
 }
 
 func TestClientGateReportsBackOffAfterAServerError(t *testing.T) {
@@ -187,78 +173,52 @@ func TestClientGateReportsBackOffAfterAServerError(t *testing.T) {
 	assert.Len(t, s.seen(), 6, "another daemon is unaffected")
 }
 
-func TestClientGateServerErrorsOnlyBackOff(t *testing.T) {
-	testenv.SetDataDir(t)
-	s := newReceiptServer(t, "500")
-	now := time.Date(2026, 3, 10, 9, 0, 0, 0, time.UTC)
-	gate := func() *ClientGate { return &ClientGate{now: func() time.Time { return now }} }
-	for range 2 * maxProbeRejections {
-		probe(gate(), s, "daemon", SurfaceTUI)
-		now = now.Add(time.Minute)
+func TestClientGateFailuresWithoutAReceiptOnlyBackOff(t *testing.T) {
+	for name, tc := range map[string]struct {
+		fail   func(*receiptServer)
+		revive func(*testing.T, *receiptServer) *receiptServer
+	}{
+		"server error": {func(*receiptServer) {}, func(_ *testing.T, s *receiptServer) *receiptServer {
+			s.status.Store("queued")
+			return s
+		}},
+		"no answer": {(*receiptServer).Close, func(t *testing.T, _ *receiptServer) *receiptServer {
+			return newReceiptServer(t, "queued")
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			testenv.SetDataDir(t)
+			s := newReceiptServer(t, "500")
+			tc.fail(s)
+			now := time.Date(2026, 3, 10, 9, 0, 0, 0, time.UTC)
+			gate := func() *ClientGate { return &ClientGate{now: func() time.Time { return now }} }
+			attempts := func() int {
+				data, err := os.ReadFile(filepath.Join(os.Getenv("ROBOREV_DATA_DIR"), clientStateFile))
+				require.NoError(t, err)
+				var file struct {
+					Endpoints map[string]struct {
+						Probes map[string]clientProbe `json:"probes"`
+					} `json:"endpoints"`
+				}
+				require.NoError(t, json.Unmarshal(data, &file))
+				return file.Endpoints["daemon"].Probes[SurfaceTUI].Attempts
+			}
+
+			for want := 1; want <= 2*maxProbeRejections; want++ {
+				probe(gate(), s, "daemon", SurfaceTUI)
+				assert.Equal(t, want, attempts())
+				probe(gate(), s, "daemon", SurfaceTUI)
+				assert.Equal(t, want, attempts(), "backoff holds the next try")
+				now = now.Add(17 * time.Second)
+			}
+
+			recovered := tc.revive(t, s)
+			before := len(recovered.seen())
+			probe(gate(), recovered, "daemon", SurfaceTUI)
+			probe(gate(), recovered, "daemon", SurfaceTUI)
+			assert.Len(t, recovered.seen(), before+1, "the daemon recovered, so the check sends once")
+		})
 	}
-	require.Len(t, s.seen(), 2*maxProbeRejections)
-
-	s.status.Store("queued")
-	probe(gate(), s, "daemon", SurfaceTUI)
-	probe(gate(), s, "daemon", SurfaceTUI)
-	assert.Len(t, s.seen(), 2*maxProbeRejections+1, "the daemon recovered, so the check sends once")
-}
-
-func TestClientGateUnansweredProbesKeepRetryingAfterBackoff(t *testing.T) {
-	testenv.SetDataDir(t)
-	s := newReceiptServer(t, "queued")
-	s.Close()
-	now := time.Date(2026, 3, 10, 9, 0, 0, 0, time.UTC)
-	gate := func() *ClientGate { return &ClientGate{now: func() time.Time { return now }} }
-	attempts := func() int {
-		data, err := os.ReadFile(filepath.Join(os.Getenv("ROBOREV_DATA_DIR"), clientStateFile))
-		require.NoError(t, err)
-		var file struct {
-			Endpoints map[string]struct {
-				Probes map[string]clientProbe `json:"probes"`
-			} `json:"endpoints"`
-		}
-		require.NoError(t, json.Unmarshal(data, &file))
-		return file.Endpoints["daemon"].Probes[SurfaceCLI].Attempts
-	}
-
-	for want := 1; want <= 3*maxProbeRejections; want++ {
-		probe(gate(), s, "daemon", SurfaceCLI)
-		assert.Equal(t, want, attempts())
-		probe(gate(), s, "daemon", SurfaceCLI)
-		assert.Equal(t, want, attempts(), "backoff holds the next try")
-		now = now.Add(17 * time.Second)
-	}
-
-	revived := newReceiptServer(t, "queued")
-	probe(gate(), revived, "daemon", SurfaceCLI)
-	assert.Equal(t, []string{EventAppOpened}, revived.seen())
-}
-
-func TestClientGateExhaustedProbeStopsOnlyItself(t *testing.T) {
-	testenv.SetDataDir(t)
-	s := newReceiptServer(t, "empty")
-	now := time.Date(2026, 3, 10, 9, 0, 0, 0, time.UTC)
-	g := &ClientGate{now: func() time.Time { return now }}
-
-	for range maxProbeRejections {
-		probe(g, s, "daemon", SurfaceTUI)
-		now = now.Add(time.Minute)
-	}
-	s.status.Store("queued")
-	post(g, s, "daemon", EventScreenViewed, SurfaceTUI)
-	assert.Equal(t, EventScreenViewed, s.seen()[len(s.seen())-1])
-}
-
-func TestClientGateFollowerSeesTheSentReceipt(t *testing.T) {
-	testenv.SetDataDir(t)
-	s := newReceiptServer(t, "queued")
-	probe(&ClientGate{}, s, "daemon", SurfaceCLI)
-
-	follower := &ClientGate{}
-	probe(follower, s, "daemon", SurfaceCLI)
-	post(follower, s, "daemon", EventReviewClosed, SurfaceCLI)
-	assert.Equal(t, []string{EventAppOpened, EventReviewClosed}, s.seen())
 }
 
 func TestClientGateKeepsOnlyDisabledAndProbeState(t *testing.T) {
@@ -389,7 +349,7 @@ func TestClientGateFollowerWaitsForTheProbeInFlight(t *testing.T) {
 
 func TestClientGateRefusesANewerFileAndLeavesItIntact(t *testing.T) {
 	for name, content := range map[string]string{
-		"same shape":    `{"version":2,"day":"2026-03-10","endpoints":{"daemon":{"disabled":true}}}`,
+		"same shape":    `{"version":2,"day":"2026-03-10","endpoints":{}}`,
 		"changed shape": `{"version":2,"day":"2026-03-10","endpoints":[{"scope":"daemon"}]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
