@@ -357,6 +357,87 @@ describe("setupAppOpenedReporting", () => {
     ]);
   });
 
+  test("a disabled reply during a pending check discards the buffered session", async () => {
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+    setup();
+    await settle();
+    now = 120_000;
+    vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ status: "disabled" }), { status: 202 }),
+    );
+    focusWindow();
+    await settle();
+    vi.setSystemTime(new Date("2026-03-12T08:00:00Z"));
+    focusWindow();
+    await settle();
+    now += 10_000;
+    globalThis.dispatchEvent(new Event("pagehide"));
+    await settle();
+
+    const events = await Promise.all(
+      fetchMock.mock.calls.map(async ([request]) => request.json()),
+    );
+    expect(events.at(-1)).toEqual({
+      event: "session_ended",
+      properties: { surface: "web", duration_bucket: "under_1m" },
+    });
+  });
+
+  test("tracking restarts after a pagehide and pageshow during a pending check", async () => {
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+    setup();
+    await settle();
+    now = 30_000;
+    vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
+    let answer!: (response: Response) => void;
+    fetchMock.mockImplementationOnce(
+      () => new Promise((resolve) => (answer = resolve)),
+    );
+    focusWindow();
+    globalThis.dispatchEvent(new Event("pagehide"));
+    globalThis.dispatchEvent(new Event("pageshow"));
+    answer(accepted());
+    await settle();
+    now += 120_000;
+    globalThis.dispatchEvent(new Event("pagehide"));
+    await settle();
+
+    const events = await Promise.all(
+      fetchMock.mock.calls.map(async ([request]) => request.json()),
+    );
+    expect(
+      events
+        .filter((e) => e.event === "session_ended")
+        .map((e) => e.properties.duration_bucket),
+    ).toEqual(["under_1m", "1_to_5m"]);
+  });
+
+  test("remembers review_viewed for the day of the read, not of the reply", async () => {
+    vi.setSystemTime(new Date("2026-03-10T23:59:59Z"));
+    setup();
+    await settle();
+    let answer!: (response: Response) => void;
+    fetchMock.mockImplementationOnce(
+      () => new Promise((resolve) => (answer = resolve)),
+    );
+    appOpened.reportCoreAction("review_viewed");
+    vi.setSystemTime(new Date("2026-03-11T00:00:05Z"));
+    answer(accepted());
+    await settle();
+    appOpened.reportCoreAction("review_viewed");
+    await settle();
+
+    const events = await Promise.all(
+      fetchMock.mock.calls.map(async ([request]) => request.json()),
+    );
+    expect(events.filter((e) => e.event === "review_viewed")).toHaveLength(2);
+  });
+
   test("keeps only kit-ui keys in local storage", async () => {
     setup();
     await settle();

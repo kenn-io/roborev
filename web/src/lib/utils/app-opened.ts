@@ -9,9 +9,10 @@ const telemetryEventsPath = "/api/telemetry/events";
 type CoreAction = "review_viewed" | "review_closed";
 let reporter: BrowserTelemetryReporter | undefined;
 let quiet = true;
-let optedOut = false;
 // A review_viewed the daemon settled is not sent again on this page until the next UTC day.
+// reviewReadDay is the day of the latest read, so a reply that lands after midnight claims the right day.
 let reviewViewedDay = "";
+let reviewReadDay = "";
 const today = (): string => new Date().toISOString().slice(0, 10);
 // Actions wait here while the daemon check is pending or the shell is gone; the daemon dedupes them by day.
 const pendingCoreActions = new Set<CoreAction>();
@@ -56,6 +57,16 @@ function flushSession(): void {
     },
     { keepalive: true },
   );
+}
+
+// An opt-out discards what the session measured, wherever the page is in its check.
+function discardSession(): void {
+  clearTimeout(hiddenTimer);
+  hiddenAt = undefined;
+  pauseSession();
+  visibleTime = 0;
+  hasInterval = false;
+  intervalEnded = false;
 }
 
 function endSession(): void {
@@ -132,13 +143,13 @@ function startReporting(): BrowserTelemetryReporter {
           ? data.status
           : undefined;
       if (receipt === "disabled") {
-        optedOut = true;
+        discardSession();
         pendingCoreActions.clear();
       } else if (
         event.event === "review_viewed" &&
         (receipt === "queued" || receipt === "skipped")
       )
-        reviewViewedDay = today();
+        reviewViewedDay = reviewReadDay;
       // Auth and rate-limit rejections never reached capture and can recover.
       const retryable = [401, 403, 429].includes(response.status);
       return { status: retryable ? 503 : response.status, data };
@@ -167,19 +178,13 @@ export function setupAppOpenedReporting(): () => void {
     reporter.onQuietChange((value) => {
       quiet = value;
       if (quiet) {
+        // A pending check only pauses the timer; a disabled receipt discards the session.
         clearTimeout(hiddenTimer);
         hiddenAt = undefined;
         pauseSession();
-        // A pending check only pauses the timer; an opt-out discards what it measured.
-        if (optedOut) {
-          visibleTime = 0;
-          hasInterval = false;
-          intervalEnded = false;
-        }
       } else {
-        optedOut = false;
-        resumeSession();
         flushSession();
+        resumeSession();
       }
       flushCoreActions();
     });
@@ -195,7 +200,10 @@ export function setupAppOpenedReporting(): () => void {
 }
 
 export function reportCoreAction(event: CoreAction): void {
-  if (event === "review_viewed" && reviewViewedDay === today()) return;
+  if (event === "review_viewed") {
+    if (reviewViewedDay === today()) return;
+    reviewReadDay = today();
+  }
   pendingCoreActions.add(event);
   flushCoreActions();
 }
