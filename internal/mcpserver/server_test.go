@@ -89,7 +89,7 @@ func (f *fakeBackend) Search(ctx context.Context, query SearchQuery) (storage.Se
 // connected client session.
 func connectSession(t *testing.T, backend Backend) *mcp.ClientSession {
 	t.Helper()
-	return connectServer(t, New(backend, "test", nil))
+	return connectServer(t, New(backend, "test", nil, nil))
 }
 
 func connectServer(t *testing.T, server *Server) *mcp.ClientSession {
@@ -117,7 +117,7 @@ func TestActivityDoesNotDelayTools(t *testing.T) {
 		server := New(&fakeBackend{}, "test", func(context.Context) {
 			calls++
 			<-release
-		})
+		}, nil)
 		session := connectServer(t, server)
 		_, err := session.ListTools(t.Context(), nil)
 		require.NoError(t, err)
@@ -654,4 +654,22 @@ func TestGetJobOutputReportsAvailableLines(t *testing.T) {
 	assert.Equal(t, maxOutputLines+5, out.AvailableLines)
 	assert.Len(t, out.Lines, maxOutputLines)
 	assert.True(t, out.Truncated)
+}
+
+func TestActivityDisabledBeforeScheduling(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		calls := 0
+		enabled := false
+		server := New(&fakeBackend{}, "test", func(context.Context) { calls++ }, func() bool { return enabled })
+		session := connectServer(t, server)
+		for range 10 {
+			require.False(t, callTool(t, session, "roborev_status", nil).IsError)
+		}
+		synctest.Wait()
+		assert.Zero(t, calls)
+		enabled = true
+		require.False(t, callTool(t, session, "roborev_status", nil).IsError)
+		synctest.Wait()
+		assert.Equal(t, 1, calls)
+	})
 }

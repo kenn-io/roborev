@@ -2,9 +2,10 @@ package tui
 
 import (
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -13,6 +14,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/telemetry/posthog"
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/telemetry"
@@ -69,36 +71,71 @@ func updateScreenTestModel(m *model, msg tea.Msg) {
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables
 func TestInitialScreenFailureRetriesOnInput(t *testing.T) {
 	enableTelemetryEnv(t)
-	for _, tt := range []struct {
-		name, screen string
-		initial      bool
-	}{
-		{"initial queue", "queue", true}, {"help after toggle", "help", false},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
-			transport := &screenRecordingTransport{fail: true}
-			m.client.Transport = transport
-			key := 'x'
-			if tt.initial {
-				updateScreenTestModel(&m, m.reportScreenViewed()())
-			} else {
-				key = '?'
-				updateScreenTestModel(&m, keyPressMsg(key))
-			}
-			transport.fail = false
-			updateScreenTestModel(&m, keyPressMsg(key))
-			if !tt.initial {
-				updateScreenTestModel(&m, keyPressMsg(key))
-			}
-			assert.Equal(t, []string{tt.screen, tt.screen}, transport.screens)
-			if tt.initial {
-				result, _ := m.Update(screenDeliveryMsg{screen: tt.screen, day: "2000-01-01", err: errors.New("delivery failed")})
-				m = result.(model)
-				assert.Contains(t, m.screensSent, tt.screen)
-			}
-		})
-	}
+	synctest.Test(t, func(t *testing.T) {
+		m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
+		transport := &screenRecordingTransport{}
+		m.client.Transport = transport
+		require.True(t, m.awaitTelemetryProbe())
+		transport.fail = true
+		updateScreenTestModel(&m, m.reportScreenViewed()())
+		for range 100 {
+			updateScreenTestModel(&m, keyPressMsg('x'))
+		}
+		assert.Equal(t, []string{"queue"}, transport.screens)
+		time.Sleep(time.Second)
+		transport.fail = false
+		updateScreenTestModel(&m, keyPressMsg('x'))
+		assert.Equal(t, []string{"queue", "queue"}, transport.screens)
+	})
+}
+
+//nolint:paralleltest // telemetry environment and gate
+func TestSkippedScreenDeliveryCanRetryAfterBackoff(t *testing.T) {
+	enableTelemetryEnv(t)
+	synctest.Test(t, func(t *testing.T) {
+		m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
+		transport := &screenRecordingTransport{}
+		m.client.Transport = transport
+		require.True(t, m.awaitTelemetryProbe())
+		transport.fail = true
+		first, overlapping := m.reportScreenViewed(), m.reportScreenViewed()
+		require.NotNil(t, first)
+		require.NotNil(t, overlapping)
+		first()
+		msg := overlapping().(screenDeliveryMsg)
+		require.Equal(t, posthog.StatusSkipped, msg.status)
+		updateScreenTestModel(&m, msg)
+		time.Sleep(time.Second)
+		transport.fail = false
+		updateScreenTestModel(&m, keyPressMsg('x'))
+		assert.Equal(t, []string{"queue", "queue"}, transport.screens)
+	})
+}
+
+//nolint:paralleltest // t.Setenv of telemetry opt-out variables
+func TestSkippedStartupScreenCanRetryAfterBackoff(t *testing.T) {
+	enableTelemetryEnv(t)
+	synctest.Test(t, func(t *testing.T) {
+		m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
+		transport := &screenRecordingTransport{}
+		m.client.Transport = transport
+		day := time.Now().UTC().Format(time.DateOnly)
+		next := time.Now().UTC().Add(500 * time.Millisecond).Format(time.RFC3339Nano)
+		receipt := `{"version":1,"day":"` + day + `","endpoints":{"` + m.endpoint.TelemetryScope() + `":{"events":{"screen_viewed:tui:queue":{"attempts":1,"next":"` + next + `"}}}}}`
+		require.NoError(t, os.WriteFile(filepath.Join(os.Getenv("ROBOREV_DATA_DIR"), "telemetry-client.json"), []byte(receipt), 0o600))
+		telemetry.DefaultClientGate.Load()
+
+		startup := m.reportStartupTelemetry()
+		require.NotNil(t, startup)
+		msg := startup().(screenDeliveryMsg)
+		require.Equal(t, posthog.StatusSkipped, msg.status)
+		updateScreenTestModel(&m, msg)
+		assert.NotContains(t, m.screensSent, "queue")
+
+		time.Sleep(time.Second)
+		updateScreenTestModel(&m, keyPressMsg('x'))
+		assert.Equal(t, []string{"queue"}, transport.screens)
+	})
 }
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables

@@ -13,12 +13,14 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"uuid"
 
 	tea "charm.land/bubbletea/v2"
 	gansi "charm.land/glamour/v2/ansi"
 	gitrepo "go.kenn.io/kit/git/repo"
+	"go.kenn.io/kit/telemetry/posthog"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
@@ -394,16 +396,64 @@ func (m model) checkForUpdate() tea.Cmd {
 	}
 }
 
-// reportAppOpened tells the daemon the TUI started; its result never reaches Update, so a slow, old or missing daemon changes nothing on screen.
-func (m model) reportAppOpened() tea.Cmd {
+var telemetrySends telemetry.SendGroup
+
+// runTelemetry keeps active reports in the TUI's shared exit budget.
+func runTelemetry(send func() tea.Msg) tea.Msg {
+	result := make(chan tea.Msg, 1)
+	telemetrySends.Go(func() { result <- send() })
+	return <-result
+}
+
+type tuiTelemetryProbe struct {
+	mu      sync.Mutex
+	pending chan struct{}
+}
+
+// awaitTelemetryProbe shares the startup request among command workers.
+func (m model) awaitTelemetryProbe() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), telemetry.NotificationTimeout)
+	defer cancel()
+	scope := m.endpoint.TelemetryScope()
+	probe := m.telemetryProbe
+	probe.mu.Lock()
+	if pending := probe.pending; pending != nil {
+		probe.mu.Unlock()
+		<-pending
+		return telemetry.DefaultClientGate.AwaitProbe(ctx, scope, telemetry.EventAppOpened, telemetry.SurfaceTUI)
+	}
+	// A receipt, or another process's reservation, leaves nothing for this TUI to send.
+	if !telemetry.DefaultClientGate.ReadyEvent(scope, telemetry.EventAppOpened, telemetry.SurfaceTUI, "") {
+		probe.mu.Unlock()
+		return telemetry.DefaultClientGate.AwaitProbe(ctx, scope, telemetry.EventAppOpened, telemetry.SurfaceTUI)
+	}
+	probe.pending = make(chan struct{})
+	probe.mu.Unlock()
+	telemetry.PostAppOpened(ctx, m.client, scope, m.endpoint.BaseURL()+daemon.TelemetryEventsPath, telemetry.SurfaceTUI)
+	probe.mu.Lock()
+	close(probe.pending)
+	probe.pending = nil
+	probe.mu.Unlock()
+	return telemetry.DefaultClientGate.AwaitProbe(ctx, scope, telemetry.EventAppOpened, telemetry.SurfaceTUI)
+}
+
+func (m model) reportStartupTelemetry() tea.Cmd {
 	if !telemetry.EnabledFromEnv() {
 		return nil
 	}
-	client, url := m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath
-	return func() tea.Msg {
-		telemetry.PostAppOpened(m.apiContext(), client, url, telemetry.SurfaceTUI)
-		return nil
+	if cmd := m.postScreen("queue"); cmd != nil {
+		return cmd
 	}
+	return func() tea.Msg {
+		return screenDeliveryMsg{screen: "queue", day: m.screenDay, status: posthog.StatusSkipped}
+	}
+}
+
+func (m model) finishTelemetry(elapsed time.Duration) {
+	if telemetry.EnabledFromEnv() && telemetry.DefaultClientGate.ReadyEvent(m.endpoint.TelemetryScope(), telemetry.EventSessionEnded, telemetry.SurfaceTUI, "") {
+		telemetrySends.Go(func() { m.reportSessionEnded(elapsed) })
+	}
+	telemetrySends.Wait(telemetry.ExitWaitLimit)
 }
 
 func (m model) reportSessionEnded(elapsed time.Duration) {
@@ -412,16 +462,15 @@ func (m model) reportSessionEnded(elapsed time.Duration) {
 	default:
 		return
 	}
-	if !telemetry.EnabledFromEnv() {
+	if !telemetry.EnabledFromEnv() || !telemetry.DefaultClientGate.ReadyEvent(m.endpoint.TelemetryScope(), telemetry.EventSessionEnded, telemetry.SurfaceTUI, "") {
+		return
+	}
+	if !m.awaitTelemetryProbe() {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), telemetry.NotificationTimeout)
-	var sends telemetry.SendGroup
-	sends.Go(func() {
-		defer cancel()
-		telemetry.PostSessionEnded(ctx, m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath, telemetry.SurfaceTUI, elapsed)
-	})
-	sends.Wait(telemetry.ExitWaitLimit)
+	defer cancel()
+	telemetry.PostSessionEnded(ctx, m.client, m.endpoint.TelemetryScope(), m.endpoint.BaseURL()+daemon.TelemetryEventsPath, telemetry.SurfaceTUI, elapsed)
 }
 
 func (m model) reportScreenViewed() tea.Cmd {
@@ -440,19 +489,27 @@ func (m model) screensShown() []string {
 }
 
 func (m model) postScreen(screen string) tea.Cmd {
-	if !telemetry.EnabledFromEnv() {
+	if !telemetry.EnabledFromEnv() || !telemetry.DefaultClientGate.ReadyEvent(m.endpoint.TelemetryScope(), telemetry.EventScreenViewed, telemetry.SurfaceTUI, screen) {
 		return nil
 	}
 	client, url := m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath
 	day := time.Now().UTC().Format(time.DateOnly)
 	return func() tea.Msg {
-		err := telemetry.PostScreenViewed(m.apiContext(), client, url, screen, telemetry.SurfaceTUI)
-		return screenDeliveryMsg{screen: screen, day: day, err: err}
+		return runTelemetry(func() tea.Msg {
+			if !m.awaitTelemetryProbe() {
+				return screenDeliveryMsg{screen: screen, day: day, status: posthog.StatusSkipped}
+			}
+			ctx, cancel := context.WithTimeout(m.apiContext(), telemetry.NotificationTimeout)
+			defer cancel()
+			status, err := telemetry.PostScreenViewed(ctx, client, m.endpoint.TelemetryScope(), url, screen, telemetry.SurfaceTUI)
+			return screenDeliveryMsg{screen: screen, day: day, status: status, err: err}
+		})
 	}
 }
 
 type screenDeliveryMsg struct {
 	screen, day string
+	status      posthog.Status
 	err         error
 }
 
@@ -1531,17 +1588,22 @@ func (m *model) requestFetchFixJobs() tea.Cmd {
 }
 
 func (m model) reportAction(event string) tea.Cmd {
-	if !telemetry.EnabledFromEnv() {
+	if !telemetry.EnabledFromEnv() || !telemetry.DefaultClientGate.ReadyEvent(m.endpoint.TelemetryScope(), event, telemetry.SurfaceTUI, "") {
 		return nil
 	}
 	day := time.Now().UTC().Format(time.DateOnly)
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(m.apiContext(), telemetry.NotificationTimeout)
-		defer cancel()
-		_, err := telemetry.PostReviewEvent(ctx, m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceTUI)
-		if event == telemetry.EventReviewViewed {
-			return screenDeliveryMsg{day: day, err: err}
-		}
-		return nil
+		return runTelemetry(func() tea.Msg {
+			if !m.awaitTelemetryProbe() {
+				return screenDeliveryMsg{day: day, status: posthog.StatusSkipped}
+			}
+			ctx, cancel := context.WithTimeout(m.apiContext(), telemetry.NotificationTimeout)
+			defer cancel()
+			status, err := telemetry.PostReviewEvent(ctx, m.client, m.endpoint.TelemetryScope(), m.endpoint.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceTUI)
+			if event == telemetry.EventReviewViewed {
+				return screenDeliveryMsg{day: day, status: status, err: err}
+			}
+			return nil
+		})
 	}
 }

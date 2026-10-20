@@ -22,6 +22,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/muesli/termenv"
 	gitrepo "go.kenn.io/kit/git/repo"
+	"go.kenn.io/kit/telemetry/posthog"
 	"go.kenn.io/kit/tui/helplayout"
 	"go.kenn.io/kit/tui/helprender"
 	"go.kenn.io/kit/tui/splitlayout"
@@ -144,6 +145,7 @@ type model struct {
 	expandedPanels       map[uuid.UUID]bool                // panel_run_uuid -> expanded
 	panelMembers         map[uuid.UUID][]storage.ReviewJob // panel_run_uuid -> side-fetched members
 	currentView          viewKind
+	telemetryProbe       *tuiTelemetryProbe
 	reviewReadSent       bool     // review_viewed issued on screenDay
 	screenDay            string   // UTC day that screensSent covers
 	screensSent          []string // screen requests issued on screenDay
@@ -900,6 +902,7 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		glamourStyle:        streamfmt.InitialGlamourStyle(),
 		jobs:                []storage.ReviewJob{},
 		currentView:         viewQueue,
+		telemetryProbe:      &tuiTelemetryProbe{},
 		screenDay:           time.Now().UTC().Format(time.DateOnly),
 		screensSent:         []string{viewQueue.String()}, // Init reports the queue
 		width:               80,                           // sensible defaults until we get WindowSizeMsg
@@ -957,8 +960,7 @@ func (m model) Init() tea.Cmd {
 		m.fetchStatus(),
 		m.fetchRepoNames(),
 		m.checkForUpdate(),
-		m.reportAppOpened(),
-		m.reportScreenViewed(),
+		m.reportStartupTelemetry(),
 	}
 	if autoColorMode() && (runtime.GOOS != "windows" || os.Getenv("WT_SESSION") != "") {
 		// Bubble Tea owns stdin and recognizes late replies alongside user input.
@@ -1287,7 +1289,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 		result = m
 	case screenDeliveryMsg:
-		if msg.day == m.screenDay && msg.err != nil {
+		if msg.day == m.screenDay && (msg.err != nil || msg.status == posthog.StatusSkipped) {
 			if msg.screen == "" {
 				m.reviewReadSent = false
 			} else {
@@ -1334,16 +1336,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selectedReviewLoaded() && m.currentReview.ID != 0 &&
 			m.currentReview.Job != nil && m.currentReview.Job.IsReadableReview()
 		if read && !rm.reviewReadSent {
-			rm.reviewReadSent = true
-			cmd = tea.Batch(cmd, rm.reportAction(telemetry.EventReviewViewed))
+			if report := rm.reportAction(telemetry.EventReviewViewed); report != nil {
+				rm.reviewReadSent = true
+				cmd = tea.Batch(cmd, report)
+			}
 		}
 		for _, screen := range rm.screensShown() {
 			if slices.Contains(rm.screensSent, screen) {
 				continue
 			}
 			if key || mouse || !slices.Contains(m.screensShown(), screen) {
-				rm.screensSent = append(rm.screensSent, screen)
-				cmd = tea.Batch(cmd, rm.postScreen(screen))
+				if report := rm.postScreen(screen); report != nil {
+					rm.screensSent = append(rm.screensSent, screen)
+					cmd = tea.Batch(cmd, report)
+				}
 			}
 		}
 		if m.currentView == viewHelp && rm.currentView == viewLog && rm.logFmtr == nil {
@@ -1432,6 +1438,9 @@ func programOptionsForModel(m model) []tea.ProgramOption {
 func Run(cfg Config) error {
 	// Clean up sockets from dead TUI processes before starting
 	CleanupStaleTUIRuntimes()
+	if telemetry.EnabledFromEnv() {
+		telemetry.DefaultClientGate.Load()
+	}
 
 	var opts []option
 	if cfg.Context != nil {
@@ -1532,7 +1541,7 @@ func Run(cfg Config) error {
 	finalModel, err := p.Run()
 	elapsed := time.Since(started)
 	if fm, ok := finalModel.(model); ok {
-		fm.reportSessionEnded(elapsed)
+		fm.finishTelemetry(elapsed)
 	}
 	// Stop SSE subscription goroutine. Use the final model (not the
 	// initial m) because reconnect may have replaced sseStop — closing

@@ -41,11 +41,11 @@
     "test": "vitest run pack.test.ts"
   },
   "dependencies": {
-    "@kenn-io/kit-ui": "github:kenn-io/kit-ui#97be355ef25a02ce96de6da4f3627ed5b922c4c3",
+    "@kenn-io/kit-ui": "github:kenn-io/kit-ui#8015aec038169716dfa3fcf0effc369bdf07c380",
     "dompurify": "3.4.13",
     "effect": "4.0.0-beta.102",
     "marked": "18.0.5",
-    "mermaid": "11.16.1",
+    "mermaid": "12.0.0",
     "shiki": "4.3.0"
   },
   "devDependencies": {

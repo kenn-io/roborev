@@ -147,6 +147,7 @@ func TestRunAnalyzeAndFix_Integration(t *testing.T) {
 			patchServerAddr(t, ts.URL)
 			ep := mustParseEndpoint(t, ts.URL)
 			cliUseEndpoint.Store(&ep)
+			seedCLIAppOpenedReceipt(t, ep, `{"sent":true}`)
 			name := "analyze-fix-commit-test"
 			agent.RegisterForTest(t, &agent.FakeAgent{NameStr: name, ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
 				if committed {

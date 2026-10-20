@@ -22,6 +22,10 @@ import (
 
 func enableTelemetryEnv(t *testing.T) {
 	t.Helper()
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	originalGate := telemetry.DefaultClientGate
+	telemetry.DefaultClientGate = &telemetry.ClientGate{}
+	t.Cleanup(func() { telemetry.DefaultClientGate = originalGate })
 	t.Setenv(telemetry.EnabledEnv, "1")
 	t.Setenv(telemetry.GenericEnabledEnv, "1")
 }
@@ -32,22 +36,29 @@ func TestReportSessionEndedBoundsDelivery(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
 		close(m.ready)
+		m.client.Transport = &screenRecordingTransport{}
+		startup := m.reportStartupTelemetry()
+		require.NotNil(t, startup)
+		require.IsType(t, screenDeliveryMsg{}, startup())
+		require.True(t, m.awaitTelemetryProbe())
+
 		release := make(chan struct{})
-		transport := &stalledTransport{hit: make(chan struct{}, 1), release: release}
+		transport := &stalledTransport{hit: make(chan struct{}, 1), release: release, events: make(chan string, 1)}
 		m.client.Transport = transport
 		started := time.Now()
-		m.reportSessionEnded(2 * time.Minute)
+		m.finishTelemetry(2 * time.Minute)
 		synctest.Wait()
 		assert.Equal(t, 50*time.Millisecond, time.Since(started))
 		assert.Equal(t, started.Add(time.Second), transport.deadline)
 		close(release)
 		synctest.Wait()
 		assert.Equal(t, int32(1), transport.requests.Load())
+		assert.Equal(t, telemetry.EventSessionEnded, <-transport.events)
 	})
 }
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables
-func TestReportAppOpenedReachesDaemonAllowlist(t *testing.T) {
+func TestReportStartupTelemetryReachesDaemonAllowlist(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -83,39 +94,27 @@ func TestReportAppOpenedReachesDaemonAllowlist(t *testing.T) {
 	t.Cleanup(ts.Close)
 
 	m := newModel(testEndpointFromURL(ts.URL), withExternalIODisabled())
-	cmd := m.reportAppOpened()
+	cmd := m.reportStartupTelemetry()
 	require.NotNil(cmd)
-	assert.Nil(cmd())
+	assert.IsType(screenDeliveryMsg{}, cmd())
 
-	var names []string
-	for view := viewQueue; view <= viewRerunAgent; view++ {
-		names = append(names, view.String())
-		assert.NotEqual("unknown", view.String())
-		m.currentView = view
-		cmd = m.reportScreenViewed()
-		require.NotNil(cmd)
-		cmd()
-	}
 	mu.Lock()
 	defer mu.Unlock()
-	require.Len(requests, 1+len(names))
-	for i, name := range names {
-		var screenEvent struct {
-			Event      string         `json:"event"`
-			Properties map[string]any `json:"properties"`
-		}
-		require.NoError(json.Unmarshal(requests[i+1].body, &screenEvent))
-		assert.Equal(telemetry.EventScreenViewed, screenEvent.Event)
-		properties, err := rep.SanitizeProperties(screenEvent.Event, screenEvent.Properties)
-		require.NoError(err)
-		assert.Equal(name, properties[telemetry.PropertyScreen])
-		assert.Equal("tui", properties[telemetry.PropertySurface])
-		assert.Equal(http.StatusAccepted, requests[i+1].code)
+	require.Len(requests, 1)
+	var event struct {
+		Event      string         `json:"event"`
+		Properties map[string]any `json:"properties"`
 	}
+	require.NoError(json.Unmarshal(requests[0].body, &event))
+	assert.Equal(telemetry.EventAppOpened, event.Event)
+	properties, err := rep.SanitizeProperties(event.Event, event.Properties)
+	require.NoError(err)
+	assert.Equal("tui", properties[telemetry.PropertySurface])
+	assert.Equal(http.StatusAccepted, requests[0].code)
 }
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables
-func TestReportAppOpenedIgnoresDaemonFailures(t *testing.T) {
+func TestReportStartupTelemetryIgnoresDaemonFailures(t *testing.T) {
 	enableTelemetryEnv(t)
 
 	answer := func(status int, body string, header map[string]string) http.HandlerFunc {
@@ -142,6 +141,7 @@ func TestReportAppOpenedIgnoresDaemonFailures(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			enableTelemetryEnv(t)
 			assert := assert.New(t)
 			ts := httptest.NewServer(tt.handler)
 			t.Cleanup(ts.Close)
@@ -150,11 +150,14 @@ func TestReportAppOpenedIgnoresDaemonFailures(t *testing.T) {
 				ts.Close()
 			}
 
-			cmd := m.reportAppOpened()
+			cmd := m.reportStartupTelemetry()
 			require.NotNil(t, cmd)
-			assert.Nil(cmd())
-			require.NoError(t, m.err)
-			assert.Zero(m.consecutiveErrors)
+			msg := cmd()
+			require.IsType(t, screenDeliveryMsg{}, msg)
+			updated, _ := m.Update(msg)
+			updatedModel := updated.(model)
+			require.NoError(t, updatedModel.err)
+			assert.Zero(updatedModel.consecutiveErrors)
 		})
 	}
 }
@@ -163,6 +166,7 @@ func TestReportAppOpenedIgnoresDaemonFailures(t *testing.T) {
 type stalledTransport struct {
 	hit      chan struct{}
 	release  <-chan struct{}
+	events   chan string
 	requests atomic.Int32
 	deadline time.Time
 }
@@ -170,6 +174,17 @@ type stalledTransport struct {
 func (s *stalledTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	s.requests.Add(1)
 	s.deadline, _ = req.Context().Deadline()
+	if s.events != nil {
+		var event struct {
+			Name string `json:"event"`
+		}
+		if err := json.NewDecoder(req.Body).Decode(&event); err == nil {
+			select {
+			case s.events <- event.Name:
+			default:
+			}
+		}
+	}
 	select {
 	case s.hit <- struct{}{}:
 	default:
@@ -183,18 +198,16 @@ func (s *stalledTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 }
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables
-func TestReportAppOpenedReturnsWhenClientTimesOut(t *testing.T) {
+func TestReportStartupTelemetryReturnsWhenClientTimesOut(t *testing.T) {
 	enableTelemetryEnv(t)
 
 	synctest.Test(t, func(t *testing.T) {
 		assert := assert.New(t)
 		m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
-		require.Equal(t, 10*time.Second, m.client.Timeout)
-		t.Logf("client timeout %s", m.client.Timeout)
 		transport := &stalledTransport{hit: make(chan struct{}, 1)}
 		m.client.Transport = transport
 
-		cmd := m.reportAppOpened()
+		cmd := m.reportStartupTelemetry()
 		require.NotNil(t, cmd)
 		var result tea.Msg
 		done := make(chan struct{})
@@ -211,20 +224,20 @@ func TestReportAppOpenedReturnsWhenClientTimesOut(t *testing.T) {
 		default:
 		}
 
-		time.Sleep(10 * time.Second)
+		time.Sleep(telemetry.NotificationTimeout)
 		synctest.Wait()
 		select {
 		case <-done:
 		default:
 			assert.Fail("command still running after the client timeout")
 		}
-		assert.Nil(result)
+		assert.IsType(screenDeliveryMsg{}, result)
 		assert.Equal(int32(1), transport.requests.Load())
 	})
 }
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables
-func TestReportAppOpenedSkippedWhenTelemetryOff(t *testing.T) {
+func TestReportStartupTelemetrySkippedWhenTelemetryOff(t *testing.T) {
 	tests := []struct {
 		name    string
 		roborev string
@@ -246,7 +259,7 @@ func TestReportAppOpenedSkippedWhenTelemetryOff(t *testing.T) {
 			t.Cleanup(ts.Close)
 			m := newModel(testEndpointFromURL(ts.URL), withExternalIODisabled())
 
-			assert.Nil(t, m.reportAppOpened())
+			assert.Nil(t, m.reportStartupTelemetry())
 			assert.Nil(t, m.reportScreenViewed())
 			_, cmd := m.Update(keyPressMsg('?'))
 			collectMsgs(cmd)
@@ -302,6 +315,7 @@ func startHeadlessProgram(t *testing.T, m model) (*tea.Program, chan struct{}) {
 	t.Cleanup(func() {
 		p.Kill()
 		<-runDone
+		telemetrySends.Wait(3 * telemetry.NotificationTimeout)
 	})
 	return p, runDone
 }
@@ -354,11 +368,43 @@ func TestTUIProgramReportsAppOpenedOncePerLaunch(t *testing.T) {
 }
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables
+func TestTUIStartupUsesOneProbeWhenTelemetryIsDisabled(t *testing.T) {
+	enableTelemetryEnv(t)
+	var mu sync.Mutex
+	var events []string
+	d := &appOpenedTestDaemon{}
+	ts := d.serve(t, func(w http.ResponseWriter, r *http.Request) {
+		var event struct {
+			Event string `json:"event"`
+		}
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&event))
+		mu.Lock()
+		events = append(events, event.Event)
+		mu.Unlock()
+		w.WriteHeader(http.StatusAccepted)
+		status := "queued"
+		if event.Event == telemetry.EventAppOpened {
+			status = "disabled"
+		}
+		_, _ = w.Write([]byte(`{"status":"` + status + `"}`))
+	})
+	p, runDone := startHeadlessProgram(t, newModel(testEndpointFromURL(ts.URL), withExternalIODisabled()))
+	require.Eventually(t, func() bool { return d.telemetryPosts.Load() == 1 }, 5*time.Second, 10*time.Millisecond)
+	p.Quit()
+	<-runDone
+	telemetrySends.Wait(3 * telemetry.NotificationTimeout)
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, []string{telemetry.EventAppOpened}, events)
+}
+
+//nolint:paralleltest // t.Setenv of telemetry opt-out variables
 func TestTUIProgramStartsAndExitsWhileAppOpenedHangs(t *testing.T) {
 	enableTelemetryEnv(t)
 
 	entered := make(chan struct{})
 	release := make(chan struct{})
+	releaseOnce := sync.OnceFunc(func() { close(release) })
 	var enterOnce sync.Once
 	d := &appOpenedTestDaemon{}
 	ts := d.serve(t, func(w http.ResponseWriter, r *http.Request) {
@@ -368,7 +414,7 @@ func TestTUIProgramStartsAndExitsWhileAppOpenedHangs(t *testing.T) {
 		w.WriteHeader(http.StatusAccepted)
 	})
 	// Registered after the server's cleanup, so it runs first and the held handler can return.
-	t.Cleanup(func() { close(release) })
+	t.Cleanup(releaseOnce)
 
 	isClosed := func(ch chan struct{}) bool {
 		select {
@@ -394,4 +440,96 @@ func TestTUIProgramStartsAndExitsWhileAppOpenedHangs(t *testing.T) {
 	p.Quit()
 	// Waits on socket work in the fake daemon, so wall-clock polling is required.
 	require.Eventually(t, func() bool { return isClosed(runDone) && !isClosed(release) }, 5*time.Second, 10*time.Millisecond)
+	releaseOnce()
+	telemetrySends.Wait(2 * telemetry.NotificationTimeout)
+}
+
+//nolint:paralleltest // telemetry environment and shared send group
+func TestTUIExitSharesTelemetryWaitBudget(t *testing.T) {
+	enableTelemetryEnv(t)
+	synctest.Test(t, func(t *testing.T) {
+		m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
+		close(m.ready)
+		m.client.Transport = &screenRecordingTransport{}
+		m.reportStartupTelemetry()()
+		transport := &stalledTransport{hit: make(chan struct{}, 2)}
+		m.client.Transport = transport
+		done := make(chan struct{})
+		go func() { m.postScreen("help")(); close(done) }()
+		synctest.Wait()
+		start := time.Now()
+		m.finishTelemetry(2 * time.Minute)
+		assert.Equal(t, 50*time.Millisecond, time.Since(start))
+		assert.Equal(t, int32(2), transport.requests.Load())
+		time.Sleep(time.Second)
+		<-done
+		telemetrySends.Wait(time.Second)
+	})
+}
+
+type delayedProbeTransport struct {
+	status  string
+	release chan struct{}
+	events  chan string
+}
+
+func (s *delayedProbeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	var event struct {
+		Event      string            `json:"event"`
+		Properties map[string]string `json:"properties"`
+	}
+	if err := json.NewDecoder(req.Body).Decode(&event); err != nil {
+		return nil, err
+	}
+	name := event.Event
+	if event.Event == telemetry.EventScreenViewed {
+		name += ":" + event.Properties[telemetry.PropertyScreen]
+	}
+	s.events <- name
+	if event.Event == telemetry.EventAppOpened {
+		select {
+		case <-s.release:
+		case <-req.Context().Done():
+			return nil, req.Context().Err()
+		}
+	}
+	return &http.Response{StatusCode: http.StatusAccepted, Header: make(http.Header), Body: io.NopCloser(bytes.NewBufferString(`{"status":"` + s.status + `"}`))}, nil
+}
+
+//nolint:paralleltest // telemetry environment and gate
+func TestTUIStartupProbeHoldsNavigationActionsAndSession(t *testing.T) {
+	for _, status := range []string{"queued", "disabled"} {
+		t.Run(status, func(t *testing.T) {
+			enableTelemetryEnv(t)
+			synctest.Test(t, func(t *testing.T) {
+				m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
+				transport := &delayedProbeTransport{status: status, release: make(chan struct{}), events: make(chan string, 10)}
+				m.client.Transport = transport
+				var sends sync.WaitGroup
+				run := func(cmd tea.Cmd) { sends.Go(func() { collectMsgs(cmd) }) }
+				run(m.reportStartupTelemetry())
+				synctest.Wait()
+				require.Equal(t, "app_opened", <-transport.events)
+				updated, nav := m.Update(keyPressMsg('?'))
+				m = updated.(model)
+				require.Equal(t, viewHelp, m.currentView)
+				run(nav)
+				run(m.reportAction(telemetry.EventReviewViewed))
+				sends.Go(func() { m.reportSessionEnded(time.Minute) })
+				synctest.Wait()
+				require.Empty(t, transport.events)
+				close(transport.release)
+				sends.Wait()
+				var events []string
+				for len(transport.events) > 0 {
+					events = append(events, <-transport.events)
+				}
+				if status == "disabled" {
+					assert.Empty(t, events)
+				} else {
+					assert.ElementsMatch(t, []string{"screen_viewed:queue", "screen_viewed:help", "review_viewed", "session_ended"}, events)
+				}
+			})
+		})
+	}
 }

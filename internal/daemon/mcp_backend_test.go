@@ -371,7 +371,7 @@ func TestMCPSearchCredentialErrorsThroughBothBackends(t *testing.T) {
 				t.Cleanup(api.Close)
 				endpoint := api.URL + mcpserver.HTTPPath
 				if backend == "stdio-backend" {
-					bridge := mcpserver.New(mcpserver.NewHTTPBackend(api.URL, api.Client()), "test", nil)
+					bridge := mcpserver.New(mcpserver.NewHTTPBackend(api.URL, api.Client()), "test", nil, nil)
 					httpBridge := httptest.NewServer(bridge.HTTPHandler())
 					t.Cleanup(httpBridge.Close)
 					endpoint = httpBridge.URL + mcpserver.HTTPPath
@@ -456,7 +456,7 @@ func TestMCPWriteToolsPersistThroughBothBackends(t *testing.T) {
 			t.Cleanup(api.Close)
 			endpoint := api.URL + mcpserver.HTTPPath
 			if transport == "stdio-backend" {
-				bridge := mcpserver.New(mcpserver.NewHTTPBackend(api.URL, api.Client()), "test", nil)
+				bridge := mcpserver.New(mcpserver.NewHTTPBackend(api.URL, api.Client()), "test", nil, nil)
 				httpBridge := httptest.NewServer(bridge.HTTPHandler())
 				t.Cleanup(httpBridge.Close)
 				endpoint = httpBridge.URL + mcpserver.HTTPPath
@@ -519,7 +519,7 @@ func TestMCPSearchReportsAmbiguousRepoPathsThroughBothBackends(t *testing.T) {
 			t.Cleanup(api.Close)
 			endpoint := api.URL + mcpserver.HTTPPath
 			if transport == "stdio-backend" {
-				bridge := mcpserver.New(mcpserver.NewHTTPBackend(api.URL, api.Client()), "test", nil)
+				bridge := mcpserver.New(mcpserver.NewHTTPBackend(api.URL, api.Client()), "test", nil, nil)
 				httpBridge := httptest.NewServer(bridge.HTTPHandler())
 				t.Cleanup(httpBridge.Close)
 				endpoint = httpBridge.URL + mcpserver.HTTPPath

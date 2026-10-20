@@ -13,16 +13,13 @@ import (
 	"time"
 
 	"go.kenn.io/kit/telemetry/posthog"
-
-	"go.kenn.io/roborev/internal/storage"
 )
 
 // AppOpenedLimiter limits daily app opens.
 type AppOpenedLimiter struct {
-	Database *storage.DB
-	mu       sync.Mutex
-	sent     map[string]string // surface -> last accepted UTC date
-	now      func() time.Time  // nil means time.Now; tests set it
+	mu   sync.Mutex
+	sent map[string]string // surface -> last accepted UTC date
+	now  func() time.Time  // nil means time.Now; tests set it
 }
 
 // appOpenedMaxBodyBytes matches kit's maxPostHogCaptureBodyBytes at the pinned version; a larger body goes to kit for its 413.
@@ -46,20 +43,15 @@ func (l *AppOpenedLimiter) Handler(reporter *Reporter) http.Handler {
 		// Hand kit the bytes already read plus the rest, so its size and decode answers stay its own.
 		r.Body = readCloser{Reader: io.MultiReader(bytes.NewReader(body), r.Body), Closer: r.Body}
 		var skip bool
-		var canonical []byte
 		if len(body) <= appOpenedMaxBodyBytes {
 			var event struct {
 				Event string `json:"event"`
 			}
 			if json.Unmarshal(body, &event) == nil {
 				switch strings.TrimSpace(event.Event) {
-				case EventAppOpened, EventScreenViewed:
-					skip, canonical, err = l.alreadySentToday(reporter, body)
-					if err != nil {
-						http.Error(w, "read telemetry claim", http.StatusInternalServerError)
-						return
-					}
-				case EventSessionEnded, EventReviewViewed, EventFindingFixed, EventReviewClosed:
+				case EventAppOpened:
+					skip = l.alreadySentToday(reporter, body)
+				case EventScreenViewed, EventSessionEnded, EventReviewViewed, EventFindingFixed, EventReviewClosed:
 				default:
 					http.Error(w, ErrUnsupportedEvent.Error(), http.StatusBadRequest)
 					return
@@ -73,10 +65,6 @@ func (l *AppOpenedLimiter) Handler(reporter *Reporter) http.Handler {
 			_, _ = io.WriteString(w, "{\"status\":\"queued\"}\n")
 			return
 		}
-		if canonical != nil {
-			r.Body = readCloser{Reader: bytes.NewReader(canonical), Closer: r.Body}
-			r.ContentLength = int64(len(canonical))
-		}
 		capture.ServeHTTP(w, r)
 	})
 }
@@ -86,26 +74,26 @@ type readCloser struct {
 	io.Closer
 }
 
-func (l *AppOpenedLimiter) alreadySentToday(reporter *Reporter, body []byte) (bool, []byte, error) {
+func (l *AppOpenedLimiter) alreadySentToday(reporter *Reporter, body []byte) bool {
 	var req struct {
 		Event      string         `json:"event"`
 		Properties map[string]any `json:"properties"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	if err := decoder.Decode(&req); err != nil {
-		return false, nil, nil
+		return false
 	}
 	// Kit rejects data after the JSON object; leave that answer to kit.
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		return false, nil, nil
+		return false
 	}
 	req.Event = strings.TrimSpace(req.Event)
 	if !reporter.Enabled() {
-		return false, nil, nil
+		return false
 	}
 	props, err := reporter.SanitizeProperties(req.Event, req.Properties)
 	if err != nil {
-		return false, nil, nil
+		return false
 	}
 	surface, _ := props[PropertySurface].(string)
 	clock := l.now
@@ -113,65 +101,38 @@ func (l *AppOpenedLimiter) alreadySentToday(reporter *Reporter, body []byte) (bo
 		clock = time.Now
 	}
 	day := clock().UTC().Format(time.DateOnly)
-	if req.Event == EventScreenViewed {
-		req.Properties = props
-		canonical, err := json.Marshal(req)
-		if err != nil {
-			return false, nil, err
-		}
-		if l.Database == nil {
-			return false, canonical, nil
-		}
-		screen, _ := props[PropertyScreen].(string)
-		claimed, err := l.Database.GetSyncState("telemetry.screen." + screen)
-		return claimed >= day, canonical, err
-	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.sent[surface] == day {
-		return true, nil, nil
+		return true
 	}
 	if l.sent == nil {
 		l.sent = make(map[string]string)
 	}
 	l.sent[surface] = day
-	return false, nil, nil
+	return false
 }
 
 // PostAppOpened posts app_opened for surface to a daemon capture URL and discards the response; callers gate on EnabledFromEnv.
-func PostAppOpened(ctx context.Context, client *http.Client, url, surface string) {
-	_, _ = posthog.PostEvent(ctx, client, url, EventAppOpened, map[string]any{PropertySurface: surface})
+func PostAppOpened(ctx context.Context, client *http.Client, scope, url, surface string) {
+	_, _ = DefaultClientGate.Post(ctx, client, scope, url, EventAppOpened, map[string]any{PropertySurface: surface}, true)
 }
 
 // PostSessionEnded reports one completed interface lifetime.
-func PostSessionEnded(ctx context.Context, client *http.Client, url, surface string, elapsed time.Duration) {
-	_, _ = posthog.PostEvent(ctx, client, url, EventSessionEnded, map[string]any{PropertySurface: surface, PropertyDurationBucket: DurationBucket(elapsed)})
+func PostSessionEnded(ctx context.Context, client *http.Client, scope, url, surface string, elapsed time.Duration) {
+	_, _ = DefaultClientGate.Post(ctx, client, scope, url, EventSessionEnded, map[string]any{PropertySurface: surface, PropertyDurationBucket: DurationBucket(elapsed)}, false)
 }
 
-func PostScreenViewed(ctx context.Context, client *http.Client, url, screen, surface string) error {
-	_, err := posthog.PostEvent(ctx, client, url, EventScreenViewed, map[string]any{PropertyScreen: screen, PropertySurface: surface})
-	return err
+func PostScreenViewed(ctx context.Context, client *http.Client, scope, url, screen, surface string) (posthog.Status, error) {
+	return DefaultClientGate.Post(ctx, client, scope, url, EventScreenViewed, map[string]any{PropertyScreen: screen, PropertySurface: surface}, true)
 }
 
 // PostReviewEvent reports a completed review action through the daemon.
-func PostReviewEvent(ctx context.Context, client *http.Client, url, event, surface string) (posthog.Status, error) {
-	return posthog.PostEvent(ctx, client, url, event, map[string]any{PropertySurface: surface})
+func PostReviewEvent(ctx context.Context, client *http.Client, scope, url, event, surface string) (posthog.Status, error) {
+	return DefaultClientGate.Post(ctx, client, scope, url, event, map[string]any{PropertySurface: surface}, true)
 }
 
 // PostAgentCall notifies the daemon of one call; callers gate on EnabledFromEnv.
-func PostAgentCall(ctx context.Context, client *http.Client, url string) {
-	postTelemetry(ctx, client, url, nil)
-}
-
-func postTelemetry(ctx context.Context, client *http.Client, url string, body []byte) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		return
-	}
-	_ = resp.Body.Close()
+func PostAgentCall(ctx context.Context, client *http.Client, scope, url string) {
+	_, _ = DefaultClientGate.Post(ctx, client, scope, url, EventAgentActive, nil, false)
 }

@@ -1,38 +1,46 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Request } from "@playwright/test";
 
 import { openAnalytics, openReviews } from "./support";
 
+const isTelemetryPost = (request: Request) =>
+  request.method() === "POST" &&
+  new URL(request.url()).pathname.endsWith("/api/telemetry/events");
+
 for (const initial of ["reviews", "analytics"] as const) {
-  test(`reports app_opened and screen_viewed through the daemon from ${initial}`, async ({
+  test(`quiets screen and session reports after a disabled receipt from ${initial}`, async ({
     page,
   }) => {
-    const reported = (event: string) =>
-      page.waitForResponse(
-        (response) =>
-          response.request().method() === "POST" &&
-          new URL(response.url()).pathname.endsWith("/api/telemetry/events") &&
-          response.request().postDataJSON()?.event === event,
-      );
-    const appOpened = reported("app_opened");
-    const screenViewed = reported("screen_viewed");
+    const posts: unknown[] = [];
+    page.on("request", (request) => {
+      if (isTelemetryPost(request)) posts.push(request.postDataJSON());
+    });
+    const appOpened = page.waitForResponse(
+      (response) =>
+        isTelemetryPost(response.request()) &&
+        response.request().postDataJSON()?.event === "app_opened",
+    );
     if (initial === "reviews") await openReviews(page);
     else await openAnalytics(page);
-    for (const [pending, event, properties] of [
-      [appOpened, "app_opened", { surface: "web" }],
-      [screenViewed, "screen_viewed", { screen: initial, surface: "web" }],
-    ] as const) {
-      const response = await pending;
-      expect(response.status()).toBe(202);
-      expect(await response.json()).toEqual({ status: "disabled" });
-      expect(response.request().postDataJSON()).toEqual({ event, properties });
-    }
-    const sessionEnded = reported("session_ended");
-    await page.evaluate(() => globalThis.dispatchEvent(new Event("pagehide")));
-    const response = await sessionEnded;
+    const response = await appOpened;
     expect(response.status()).toBe(202);
-    expect(response.request().postDataJSON()).toEqual({
-      event: "session_ended",
-      properties: { surface: "web", duration_bucket: "under_1m" },
+    expect(await response.json()).toEqual({ status: "disabled" });
+
+    const next = initial === "reviews" ? "Analytics" : "Reviews";
+    await page
+      .getByLabel("Application")
+      .getByRole("button", { name: next, exact: true })
+      .click();
+    await expect(page).toHaveURL(new RegExp(`/${next.toLowerCase()}`));
+    await page.evaluate(() => {
+      globalThis.dispatchEvent(new Event("pagehide"));
+      globalThis.dispatchEvent(new Event("pageshow"));
+      globalThis.dispatchEvent(new Event("focus"));
     });
+    await expect(
+      page.waitForRequest(isTelemetryPost, { timeout: 250 }),
+    ).rejects.toThrow(/Timeout/);
+    expect(posts).toEqual([
+      { event: "app_opened", properties: { surface: "web" } },
+    ]);
   });
 }

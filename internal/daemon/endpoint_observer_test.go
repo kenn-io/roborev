@@ -27,6 +27,31 @@ type observedCall struct {
 	status int
 }
 
+func TestTelemetryScopesKeepUnixReceiptsSeparate(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	a := DaemonEndpoint{Network: "unix", Address: filepath.Join(t.TempDir(), "daemon-a.sock")}
+	b := DaemonEndpoint{Network: "unix", Address: filepath.Join(t.TempDir(), "daemon-b.sock")}
+	require.Equal(t, a.BaseURL(), b.BaseURL())
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"status":"disabled"}`))
+	}))
+	defer srv.Close()
+	gate := &telemetry.ClientGate{}
+	_, err := gate.Post(t.Context(), srv.Client(), a.TelemetryScope(), srv.URL, telemetry.EventAgentActive, nil, false)
+	require.NoError(t, err)
+	assert.False(t, gate.ReadyEvent(a.TelemetryScope(), telemetry.EventAgentActive, "", ""))
+	assert.True(t, gate.ReadyEvent(b.TelemetryScope(), telemetry.EventAgentActive, "", ""))
+	gate = &telemetry.ClientGate{}
+	_, err = gate.Post(t.Context(), srv.Client(), b.TelemetryScope(), srv.URL, telemetry.EventAgentActive, nil, false)
+	require.NoError(t, err)
+	_, err = gate.Post(t.Context(), srv.Client(), a.TelemetryScope(), srv.URL, telemetry.EventAgentActive, nil, false)
+	require.NoError(t, err)
+	assert.Equal(t, 2, requests)
+}
+
 // recordObserver installs an observer that records each call and removes it when the test ends.
 func recordObserver(t *testing.T) func() []observedCall {
 	t.Helper()
@@ -133,7 +158,7 @@ func TestClientResponseObserverUnixSocket(t *testing.T) {
 			return
 		}
 		observedEP = ep
-		telemetry.PostAppOpened(context.Background(), ep.HTTPClient(0), ep.BaseURL()+TelemetryEventsPath, telemetry.SurfaceCLI)
+		telemetry.PostAppOpened(context.Background(), ep.HTTPClient(0), ep.TelemetryScope(), ep.BaseURL()+TelemetryEventsPath, telemetry.SurfaceCLI)
 	})
 	t.Cleanup(func() { SetClientResponseObserver(nil) })
 

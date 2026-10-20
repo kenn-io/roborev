@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"crypto/sha256"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -237,4 +238,9 @@ func (e DaemonEndpoint) APIClient(timeout time.Duration) *roborevclient.Client {
 		panic(fmt.Sprintf("create daemon API client: %v", err))
 	}
 	return api
+}
+
+// TelemetryScope identifies this transport without persisting its address or credentials.
+func (e DaemonEndpoint) TelemetryScope() string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(e.String()+"|"+e.BaseURL())))
 }

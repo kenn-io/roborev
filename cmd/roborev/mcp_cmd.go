@@ -10,6 +10,7 @@ import (
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/mcpserver"
+	"go.kenn.io/roborev/internal/telemetry"
 	"go.kenn.io/roborev/internal/version"
 )
 
@@ -91,8 +92,15 @@ Example client configuration:
 			}
 			ep := getDaemonEndpoint()
 			backend := mcpserver.NewHTTPBackend(ep.BaseURL(), ep.HTTPClient(mcpRequestTimeout))
-			server := mcpserver.New(backend, version.Version, func(ctx context.Context) { reportMCPActivity(ctx, ep) })
+			server := mcpserver.New(backend, version.Version, func(ctx context.Context) { reportMCPActivity(ctx, ep) }, mcpActivityGate(ep))
 			return server.RunStdio(cmd.Context())
 		},
+	}
+}
+
+func mcpActivityGate(ep daemon.DaemonEndpoint) func() bool {
+	telemetry.DefaultClientGate.Load()
+	return func() bool {
+		return cliTelemetryEnabled() && telemetry.DefaultClientGate.ReadyEvent(ep.TelemetryScope(), telemetry.EventAgentActive, "", "")
 	}
 }

@@ -84,13 +84,15 @@ var (
 	cliTelemetryEnabled = telemetry.EnabledFromEnv
 	cliOutputIsTerminal = streamfmt.WriterIsTerminal
 	// Each notification retains its own request deadline.
-	cliUseTimeout  = telemetry.NotificationTimeout
-	cliUsePost     = telemetry.PostAppOpened
-	cliAgentPost   = telemetry.PostAgentCall
-	cliUseOnce     sync.Once
-	cliUseAgent    bool
-	cliUseEndpoint atomic.Pointer[daemon.DaemonEndpoint]
-	cliSends       telemetry.SendGroup
+	cliUseTimeout       = telemetry.NotificationTimeout
+	cliUsePost          = telemetry.PostAppOpened
+	cliAgentPost        = telemetry.PostAgentCall
+	cliUseProbeMu       sync.Mutex
+	cliUseProbes        = map[string]*cliTelemetryProbe{}
+	cliUseAgent         bool
+	cliUseAgentReported bool
+	cliUseEndpoint      atomic.Pointer[daemon.DaemonEndpoint]
+	cliSends            telemetry.SendGroup
 )
 
 // armCLIUse selects human or agent activity for commands that work through the daemon.
@@ -99,6 +101,7 @@ func armCLIUse(cmd *cobra.Command) {
 	if (!cliUseCommands[path] && !agentUseCommands[path]) || !cliTelemetryEnabled() {
 		return
 	}
+	telemetry.DefaultClientGate.Load()
 	cliUseAgent = agentUseCommands[path] || fromSkill
 	daemon.SetClientResponseObserver(observeCLIUse)
 }
@@ -114,27 +117,70 @@ func observeCLIUse(ep daemon.DaemonEndpoint, req *http.Request, resp *http.Respo
 		return
 	}
 	cliUseEndpoint.Store(&ep)
-	cliUseOnce.Do(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), cliUseTimeout)
-		cliSends.Go(func() {
-			defer cancel()
-			if cliUseAgent {
-				cliAgentPost(ctx, ep.HTTPClient(0), ep.BaseURL()+daemon.TelemetryAgentCallPath)
-			} else {
-				cliUsePost(ctx, ep.HTTPClient(0), ep.BaseURL()+daemon.TelemetryEventsPath, telemetry.SurfaceCLI)
-			}
-		})
+	startCLIUse(ep)
+}
+
+func startCLIUse(ep daemon.DaemonEndpoint) {
+	event, surface := telemetry.EventAppOpened, telemetry.SurfaceCLI
+	if cliUseAgent {
+		event, surface = telemetry.EventAgentActive, ""
+	}
+	scope := ep.TelemetryScope()
+	if !telemetry.DefaultClientGate.ReadyEvent(scope, event, surface, "") {
+		return
+	}
+	cliUseProbeMu.Lock()
+	if cliUseAgent && cliUseAgentReported {
+		cliUseProbeMu.Unlock()
+		return
+	}
+	previous := cliUseProbes[scope]
+	if previous != nil {
+		select {
+		case <-previous.done:
+		default:
+			cliUseProbeMu.Unlock()
+			return
+		}
+	}
+	if cliUseAgent {
+		cliUseAgentReported = true
+	}
+	probe := &cliTelemetryProbe{scope: scope, done: make(chan struct{})}
+	cliUseProbes[scope] = probe
+	cliUseProbeMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), cliUseTimeout)
+	cliSends.Go(func() {
+		defer cancel()
+		defer close(probe.done)
+		if cliUseAgent {
+			cliAgentPost(ctx, ep.HTTPClient(0), scope, ep.BaseURL()+daemon.TelemetryAgentCallPath)
+		} else {
+			cliUsePost(ctx, ep.HTTPClient(0), scope, ep.BaseURL()+daemon.TelemetryEventsPath, telemetry.SurfaceCLI)
+		}
 	})
 }
 
+type cliTelemetryProbe struct {
+	scope string
+	done  chan struct{}
+}
+
+func cliUseProbeForScope(scope string) *cliTelemetryProbe {
+	cliUseProbeMu.Lock()
+	defer cliUseProbeMu.Unlock()
+	return cliUseProbes[scope]
+}
+
 func reportMCPActivity(ctx context.Context, ep daemon.DaemonEndpoint) {
-	if !cliTelemetryEnabled() {
+	if !cliTelemetryEnabled() || !telemetry.DefaultClientGate.ReadyEvent(ep.TelemetryScope(), telemetry.EventAgentActive, "", "") {
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, cliUseTimeout)
 	cliSends.Go(func() {
 		defer cancel()
-		cliAgentPost(ctx, ep.HTTPClient(0), ep.BaseURL()+daemon.TelemetryAgentCallPath)
+		cliAgentPost(ctx, ep.HTTPClient(0), ep.TelemetryScope(), ep.BaseURL()+daemon.TelemetryAgentCallPath)
 	})
 }
 
@@ -152,6 +198,9 @@ func reportCLIActionOutput(out io.Writer, event string) {
 	if ep == nil && (parsedServerEndpoint == nil || !parsedServerEndpoint.IsRemote()) {
 		return
 	}
+	if ep != nil && !telemetry.DefaultClientGate.ReadyEvent(ep.TelemetryScope(), event, telemetry.SurfaceCLI, "") {
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), cliUseTimeout)
 	cliSends.Go(func() {
 		defer cancel()
@@ -161,7 +210,20 @@ func reportCLIActionOutput(out io.Writer, event string) {
 				return
 			}
 			ep = &daemon.DaemonEndpoint{Network: info.Network, Address: info.Address}
+			cliUseEndpoint.Store(ep)
 		}
-		_, _ = telemetry.PostReviewEvent(ctx, ep.HTTPClient(0), ep.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceCLI)
+		startCLIUse(*ep)
+		if probe := cliUseProbeForScope(ep.TelemetryScope()); probe != nil {
+			select {
+			case <-probe.done:
+			case <-ctx.Done():
+				return
+			}
+		}
+		// Another process may still hold the app_opened reservation; its receipt also admits this action.
+		if !telemetry.DefaultClientGate.AwaitProbe(ctx, ep.TelemetryScope(), telemetry.EventAppOpened, telemetry.SurfaceCLI) {
+			return
+		}
+		_, _ = telemetry.PostReviewEvent(ctx, ep.HTTPClient(0), ep.TelemetryScope(), ep.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceCLI)
 	})
 }

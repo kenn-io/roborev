@@ -26,7 +26,7 @@ func TestAgentActivityCorruptStateAndSaturation(t *testing.T) {
 		`{"day":"2026-01-02","calls":101,"calls":"invalid"}`,
 	} {
 		require.NoError(t, db.SetSyncState(agentActivityKey, stored))
-		calls, err := db.RecordAgentCall(ctx, day)
+		calls, _, err := db.RecordAgentCall(ctx, day, "")
 		require.NoError(t, err)
 		assert.Equal(uint64(1), calls)
 		value, err := db.GetSyncState(agentActivityKey)
@@ -34,13 +34,13 @@ func TestAgentActivityCorruptStateAndSaturation(t *testing.T) {
 		assert.JSONEq(`{"day":"2026-01-02","calls":1}`, value)
 	}
 	require.NoError(t, db.SetSyncState(agentActivityKey, `{"day":"2026-01-02","calls":100}`))
-	calls, err := db.RecordAgentCall(ctx, day)
+	calls, _, err := db.RecordAgentCall(ctx, day, "")
 	require.NoError(t, err)
 	assert.Equal(uint64(101), calls)
 	_, err = db.Exec(`CREATE TABLE agent_count_writes (value TEXT); CREATE TRIGGER audit_agent_count_update AFTER UPDATE ON sync_state BEGIN INSERT INTO agent_count_writes VALUES (NEW.value); END`)
 	require.NoError(t, err)
 	for range 3 {
-		calls, err := db.RecordAgentCall(ctx, day)
+		calls, _, err := db.RecordAgentCall(ctx, day, "")
 		require.NoError(t, err)
 		assert.Zero(calls)
 	}
@@ -50,7 +50,7 @@ func TestAgentActivityCorruptStateAndSaturation(t *testing.T) {
 	var writes int
 	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM agent_count_writes`).Scan(&writes))
 	assert.Zero(writes)
-	calls, err = db.RecordAgentCall(ctx, "2026-01-03")
+	calls, _, err = db.RecordAgentCall(ctx, "2026-01-03", "")
 	require.NoError(t, err)
 	assert.Equal(uint64(1), calls)
 	stored, err = db.GetSyncState(agentActivityKey)
@@ -70,7 +70,7 @@ func TestAgentActivityDatabaseCancellation(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_, err := db.RecordAgentCall(ctx, "2026-01-02")
+		_, _, err := db.RecordAgentCall(ctx, "2026-01-02", "")
 		assert.ErrorIs(t, err, context.Canceled)
 	}()
 	// Wall-clock wait: database/sql waits for the held SQLite connection.
@@ -97,7 +97,7 @@ func TestAgentActivityBusyWriteCancellation(t *testing.T) {
 		defer close(done)
 		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 		defer cancel()
-		_, err := db.RecordAgentCall(ctx, "2026-01-02")
+		_, _, err := db.RecordAgentCall(ctx, "2026-01-02", "")
 		assert.Error(t, err)
 	}()
 	// Wall-clock wait: SQLite's busy writer must honor the notification deadline.
@@ -175,7 +175,7 @@ func TestAgentActivityFailedRestoreDiscardsConnection(t *testing.T) {
 	require.NoError(t, conn.Close())
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	calls, err := db.RecordAgentCall(ctx, "2026-01-02")
+	calls, _, err := db.RecordAgentCall(ctx, "2026-01-02", "")
 	require.NoError(t, err)
 	assert.Equal(t, uint64(1), calls)
 	assert.True(t, affected.restoreFailed)

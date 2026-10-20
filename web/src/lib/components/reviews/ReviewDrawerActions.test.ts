@@ -7,6 +7,9 @@ import { REVIEW_STORES_KEY } from "../../stores/context";
 import { makeTestAppRuntime } from "../../testing/runtime";
 import ReviewDrawer from "./ReviewDrawer.svelte";
 
+const reportCoreAction = vi.hoisted(() => vi.fn());
+vi.mock("../../utils/app-opened", () => ({ reportCoreAction }));
+
 const runtime = makeTestAppRuntime();
 const stores = createReviewStores({
   runtime,
@@ -17,7 +20,6 @@ const stores = createReviewStores({
     rerunJob: true,
   }),
 });
-
 vi.mock("@kenn-io/roborev-ui/review-content", () => {
   throw new Error("chunk unavailable");
 });
@@ -31,13 +33,9 @@ afterEach(async () => {
 });
 
 it("reports rendered review content after Retry and ignores job-list refreshes", async () => {
-  const events: unknown[] = [];
+  reportCoreAction.mockClear();
   vi.stubGlobal("fetch", async (request: Request) => {
     const path = new URL(request.url).pathname;
-    if (path === "/api/telemetry/events") {
-      events.push(await request.json());
-      return Response.json({ status: "queued" });
-    }
     if (path === "/api/jobs") {
       return Response.json({
         jobs: [
@@ -111,7 +109,7 @@ it("reports rendered review content after Retry and ignores job-list refreshes",
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Could not load the review renderer.",
   );
-  expect(events).toEqual([]);
+  expect(reportCoreAction).not.toHaveBeenCalled();
   vi.doMock("@kenn-io/roborev-ui/review-content", (importOriginal) =>
     importOriginal(),
   );
@@ -119,15 +117,12 @@ it("reports rendered review content after Retry and ignores job-list refreshes",
   expect(
     await screen.findByRole("heading", { name: "Review findings" }),
   ).toBeVisible();
-  await vi.waitFor(() =>
-    expect(events).toEqual([
-      { event: "review_viewed", properties: { surface: "web" } },
-    ]),
-  );
+  await vi.waitFor(() => expect(reportCoreAction).toHaveBeenCalledTimes(1));
+  expect(reportCoreAction).toHaveBeenCalledWith("review_viewed");
 
   for (let refresh = 0; refresh < 2; refresh++) {
     await load(stores.roborevJobs.loadJobsEffect());
     await tick();
   }
-  expect(events).toHaveLength(1);
+  expect(reportCoreAction).toHaveBeenCalledTimes(1);
 });

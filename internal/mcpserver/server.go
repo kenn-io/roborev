@@ -21,7 +21,7 @@ type Server struct {
 // New builds a server exposing the roborev tools. backend must not
 // be nil.
 // activity may be nil; it runs independently and must bound its work.
-func New(backend Backend, version string, activity func(context.Context)) *Server {
+func New(backend Backend, version string, activity func(context.Context), enabled func() bool) *Server {
 	if backend == nil {
 		panic("mcpserver: backend is required")
 	}
@@ -38,7 +38,7 @@ func New(backend Backend, version string, activity func(context.Context)) *Serve
 	s.registerGuidance()
 	s.mcp.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
-			if method == "tools/call" && activity != nil {
+			if method == "tools/call" && activity != nil && (enabled == nil || enabled()) {
 				s.activity.Go(func() { activity(context.WithoutCancel(ctx)) })
 			}
 			return next(ctx, method, req)

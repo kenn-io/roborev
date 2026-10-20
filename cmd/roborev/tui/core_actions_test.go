@@ -26,6 +26,8 @@ func newCoreActionReviewVisitFixture(t *testing.T) *coreActionReviewVisitFixture
 	f.m.endpoint = testEndpointFromURL("http://127.0.0.1:7373")
 	f.m.client = &http.Client{Transport: f.transport}
 	f.m.api = newDaemonAPI(f.m.endpoint, f.m.client)
+	require.True(t, f.m.awaitTelemetryProbe())
+	f.transport.events = nil
 	return f
 }
 
@@ -59,18 +61,19 @@ func TestCoreActionReviewVisits(t *testing.T) {
 //nolint:paralleltest // telemetry environment variables
 func TestCoreActionReviewDeliveryRetriesOnInput(t *testing.T) {
 	enableTelemetryEnv(t)
-	f := newCoreActionReviewVisitFixture(t)
-	f.update(f.review())
-	f.transport.fail = true
-	for range 2 {
+	synctest.Test(t, func(t *testing.T) {
+		f := newCoreActionReviewVisitFixture(t)
+		f.update(f.review())
+		f.transport.fail = true
+		for range 100 {
+			f.update(tea.KeyPressMsg{Code: '0'})
+		}
+		require.Len(t, f.transport.events, 1)
+		time.Sleep(time.Second)
+		f.transport.fail = false
 		f.update(tea.KeyPressMsg{Code: '0'})
-	}
-	require.Len(t, f.transport.events, 2)
-	f.transport.fail = false
-	f.update(displayTickMsg{})
-	require.Len(t, f.transport.events, 2)
-	f.update(tea.KeyPressMsg{Code: '0'})
-	assert.Equal(t, []string{"review_viewed", "review_viewed", "review_viewed"}, f.transport.events)
+		assert.Equal(t, []string{"review_viewed", "review_viewed"}, f.transport.events)
+	})
 }
 
 //nolint:paralleltest // telemetry environment variables
@@ -93,7 +96,7 @@ func TestCoreActionReviewInFlightAndNextUTCDay(t *testing.T) {
 		f.update(displayTickMsg{})
 		require.Len(t, f.transport.events, 1)
 		f.update(tea.KeyPressMsg{Code: '0'})
-		assert.Equal(t, []string{"review_viewed", "review_viewed"}, f.transport.events)
+		assert.Equal(t, []string{"review_viewed", "app_opened", "review_viewed"}, f.transport.events)
 	})
 }
 
@@ -112,9 +115,9 @@ func TestCoreActionReviewReconnectResumesReports(t *testing.T) {
 	f.transport.status = "queued"
 	require.Len(t, f.transport.events, 1)
 	f.update(tea.KeyPressMsg{Code: '0'})
-	require.Equal(t, []string{"review_viewed", "review_viewed"}, f.transport.events)
+	require.Equal(t, []string{"review_viewed"}, f.transport.events)
 	f.update(tea.KeyPressMsg{Code: '0'})
-	assert.Len(t, f.transport.events, 2)
+	assert.Len(t, f.transport.events, 1)
 }
 
 //nolint:paralleltest // telemetry environment variables
@@ -129,6 +132,7 @@ func TestCoreActionOpenedReviewCountsOnNextInput(t *testing.T) {
 		{name: "fix output"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			enableTelemetryEnv(t)
 			f := newCoreActionReviewVisitFixture(t)
 			f.m.layout = splitlayout.Stacked
 			f.m.currentView = viewQueue
@@ -174,6 +178,7 @@ func TestCoreActionExplicitClose(t *testing.T) {
 		{name: "failure", result: closedResultMsg{newState: true, fromKey: true, err: errors.New("failed")}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			enableTelemetryEnv(t)
 			f := newCoreActionReviewVisitFixture(t)
 			if tc.name == "failure" {
 				_, cmd := f.m.handleClosedResultMsg(tc.result)
@@ -223,6 +228,7 @@ func TestCoreActionCommittedPatch(t *testing.T) {
 		{name: "bookkeeping failure", result: applyPatchResultMsg{success: true, err: errors.New("mark failed")}, count: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			enableTelemetryEnv(t)
 			f := newCoreActionReviewVisitFixture(t)
 			_, cmd := f.m.handleApplyPatchResultMsg(tc.result)
 			collectMsgs(cmd)
