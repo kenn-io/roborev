@@ -310,6 +310,10 @@ func TestCoreActionSplitPaneLoadFailureReportsOncePerSelection(t *testing.T) {
 			attempt: response.attempt, err: errors.New("load failed"),
 		})
 	}
+	f.update(f.review())
+	fail()
+	assert.Empty(t, f.transport.events, "the loaded review covers the error")
+	f.m.currentReview = nil
 	f.m.currentView = viewHelp
 	fail()
 	assert.Empty(t, f.transport.events, "the help screen covers the pane")
@@ -330,7 +334,10 @@ func TestCoreActionFlashErrorReportsWhenSeen(t *testing.T) {
 	f := newCoreActionReviewVisitFixture(t)
 	f.update(fixTriggerResultMsg{err: errors.New("enqueue failed")})
 	assert.Empty(t, f.transport.events, "the tasks flash is not on the queue screen")
-	f.m.currentView = viewTasks
+	f.m.currentView, f.m.fixShowHelp = viewTasks, true
+	f.update(screenDeliveryMsg{})
+	assert.Empty(t, f.transport.events, "the tasks help overlay hides the flash")
+	f.m.fixShowHelp = false
 	f.update(screenDeliveryMsg{})
 	f.update(screenDeliveryMsg{})
 	assert.Equal(t, []string{"error_shown"}, f.transport.events)

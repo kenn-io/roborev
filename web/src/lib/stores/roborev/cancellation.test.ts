@@ -495,3 +495,23 @@ it("reports a shown review load failure once per selection", async () => {
   store.loadReview(42);
   await vi.waitFor(() => expect(errorReports).toHaveBeenCalledTimes(2));
 });
+
+it("reports a renderer failure once per selection and once per retry", () => {
+  const store = reviewStore({} as never);
+  store.setSelectedJobId(42);
+  store.reportRendererFailure();
+  store.reportRendererFailure(); // A reload or tab switch remounts the alert.
+  expect(errorReports).toHaveBeenCalledOnce();
+  store.retryRenderer();
+  store.reportRendererFailure();
+  expect(errorReports).toHaveBeenCalledTimes(2);
+  store.setSelectedJobId(43);
+  store.setSelectedJobId(42);
+  store.reportRendererFailure();
+  expect(errorReports).toHaveBeenCalledTimes(3);
+  store.setSelectedJobId(undefined);
+  store.setSelectedJobId(42);
+  store.reportRendererFailure();
+  expect(errorReports).toHaveBeenCalledTimes(4);
+  expect(errorReports).toHaveBeenLastCalledWith("review_viewed");
+});

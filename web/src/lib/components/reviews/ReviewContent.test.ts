@@ -9,13 +9,9 @@ const state = vi.hoisted(() => ({
   notFound: false,
   status: "done",
   error: "",
-  jobId: 42,
 }));
 const errorReports = vi.hoisted(() => vi.fn());
-
-vi.mock("../../utils/app-opened", () => ({
-  reportErrorShown: errorReports,
-}));
+const rendererRetries = vi.hoisted(() => vi.fn());
 
 vi.mock("../../stores/context", () => ({
   getReviewStores: () => ({
@@ -23,7 +19,8 @@ vi.mock("../../stores/context", () => ({
       getOutput: () => state.output,
       isLoading: () => state.loading,
       isReviewNotFound: () => state.notFound,
-      getSelectedJobId: () => state.jobId,
+      reportRendererFailure: errorReports,
+      retryRenderer: rendererRetries,
       getSelectedJob: () => ({ status: state.status, error: state.error }),
     },
   }),
@@ -37,12 +34,12 @@ afterEach(() => {
   cleanup();
   vi.useRealTimers();
   errorReports.mockReset();
+  rendererRetries.mockReset();
   state.output = "## Review output";
   state.loading = false;
   state.notFound = false;
   state.status = "done";
   state.error = "";
-  state.jobId = 42;
 });
 
 describe("ReviewContent", () => {
@@ -52,26 +49,11 @@ describe("ReviewContent", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Could not load the review renderer.",
     );
-    expect(errorReports).toHaveBeenCalledExactlyOnceWith("review_viewed");
+    expect(errorReports).toHaveBeenCalledOnce();
     await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(rendererRetries).toHaveBeenCalledOnce();
     await vi.waitFor(() => expect(errorReports).toHaveBeenCalledTimes(2));
-    expect(errorReports).toHaveBeenLastCalledWith("review_viewed");
-  });
-
-  it("counts a renderer failure once per selected review", async () => {
-    state.jobId = 7;
-    render(ReviewContent);
-    expect(await screen.findByRole("alert")).toBeInTheDocument();
-    cleanup();
-    render(ReviewContent); // Switching tabs remounts the same selection.
-    expect(await screen.findByRole("alert")).toBeInTheDocument();
-    expect(errorReports).toHaveBeenCalledOnce();
-    cleanup();
-    state.jobId = 8;
-    render(ReviewContent);
-    expect(await screen.findByRole("alert")).toBeInTheDocument();
-    expect(errorReports).toHaveBeenCalledTimes(2);
   });
 
   it("keeps a renderer failure without output silent", async () => {

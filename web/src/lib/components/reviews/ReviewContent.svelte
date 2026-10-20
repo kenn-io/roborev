@@ -1,14 +1,7 @@
-<script lang="ts" module>
-  // Review reloads and tab switches remount the alert for the same selection.
-  // A failure counts once per selected job, and again after Retry.
-  let rendererFailureReportedJobId: number | null | undefined;
-</script>
-
 <script lang="ts">
   import { onMount } from "svelte";
   import type { Component } from "svelte";
   import { getReviewStores } from "../../stores/context";
-  import { reportErrorShown } from "../../utils/app-opened";
 
   type RichReviewContentComponent = Component<{
     output: string;
@@ -53,13 +46,10 @@
   }
 
   function reportRendererFailure(): void {
-    const jobId = stores.roborevReview?.getSelectedJobId() ?? null;
-    if (rendererFailureReportedJobId === jobId) return;
-    rendererFailureReportedJobId = jobId;
-    reportErrorShown("review_viewed");
+    stores.roborevReview?.reportRendererFailure();
   }
   function retryRenderer(): void {
-    rendererFailureReportedJobId = undefined;
+    stores.roborevReview?.retryRenderer();
     void loadRichReviewContent();
   }
 

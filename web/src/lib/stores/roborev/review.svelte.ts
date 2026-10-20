@@ -146,6 +146,19 @@ export function createReviewStore(opts: ReviewStoreOptions) {
 
   // Reloads repeat a failure already on screen; count it once per selection.
   let loadFailureReportedJobId: number | undefined;
+  // Review reloads and tab switches remount the renderer alert for the same
+  // selection, so its failure counts once per selection and once per Retry.
+  let rendererFailureReported = false;
+
+  function reportRendererFailure(): void {
+    if (rendererFailureReported) return;
+    rendererFailureReported = true;
+    reportErrorShown("review_viewed");
+  }
+
+  function retryRenderer(): void {
+    rendererFailureReported = false;
+  }
 
   const publishReviewAuthority = (jobId: number, authority: ReviewAuthority) =>
     Effect.sync(() => {
@@ -379,7 +392,10 @@ export function createReviewStore(opts: ReviewStoreOptions) {
   }
 
   function setSelectedJobId(jobId: number | undefined): void {
-    if (jobId !== selectedJobId) loadFailureReportedJobId = undefined;
+    if (jobId !== selectedJobId) {
+      loadFailureReportedJobId = undefined;
+      rendererFailureReported = false;
+    }
     selectedJobId = jobId;
     if (jobId === undefined) {
       review = null;
@@ -438,6 +454,8 @@ export function createReviewStore(opts: ReviewStoreOptions) {
     getResponses,
     isLoading,
     getSelectedJobId,
+    reportRendererFailure,
+    retryRenderer,
     isReviewNotFound,
     getError,
     getPrompt,
