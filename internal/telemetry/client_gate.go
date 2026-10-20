@@ -24,6 +24,8 @@ const (
 	maxProbeRejections = 6
 	// receiptPollInterval paces waits for the receipt lock.
 	receiptPollInterval = 10 * time.Millisecond
+	// surfaceAgent keys the agent call's daily check, which shares the app_opened check's receipts and backoff.
+	surfaceAgent = "agent"
 )
 
 // ClientGate keeps each daemon's opt-out and the day's app_opened check in one file shared by CLI, TUI, and MCP
@@ -143,9 +145,14 @@ func (g *ClientGate) Load(ctx context.Context) {
 }
 
 // Probe sends the day's app_opened check for surface unless a receipt, an opt-out, or backoff covers it.
-// It holds the receipt lock through the request, so processes started together send one check and
-// the rest read its result. If ctx ends first the report is dropped.
 func (g *ClientGate) Probe(ctx context.Context, client *http.Client, scope, url, surface string) {
+	g.probe(ctx, client, scope, url, surface, EventAppOpened, map[string]any{PropertySurface: surface})
+}
+
+// probe sends event as surface's check for the day unless a receipt, an opt-out, or backoff covers it, and
+// returns whether it sent. It holds the receipt lock through the request, so processes started together send
+// one check and the rest read its result. If ctx ends first the report is dropped.
+func (g *ClientGate) probe(ctx context.Context, client *http.Client, scope, url, surface, event string, props map[string]any) (send bool) {
 	for !g.probeMu.TryLock() {
 		select {
 		case <-ctx.Done():
@@ -167,7 +174,6 @@ func (g *ClientGate) Probe(ctx context.Context, client *http.Client, scope, url,
 	}
 	defer unlock()
 	g.merge()
-	send := false
 	day := g.today()
 	g.commit("", scope, func(e *clientEndpoint) bool {
 		now := g.clock()
@@ -185,40 +191,39 @@ func (g *ClientGate) Probe(ctx context.Context, client *http.Client, scope, url,
 		return
 	}
 	answering, answers := trackAnswer(client)
-	status, err := posthog.PostEvent(ctx, answering, url, EventAppOpened, map[string]any{PropertySurface: surface})
-	if err != nil {
-		if answers.status > 0 && answers.status < 500 {
-			g.commit(day, scope, func(e *clientEndpoint) bool {
+	status, err := posthog.PostEvent(ctx, answering, url, event, props)
+	if err == nil {
+		g.commit(day, scope, func(e *clientEndpoint) bool {
+			if status == posthog.StatusDisabled {
+				e.Disabled = true
+			} else {
 				p := e.Probes[surface]
-				p.Rejected++
+				p.Sent = true
 				e.Probes[surface] = p
-				return true
-			})
-		}
-		return
-	}
-	g.commit(day, scope, func(e *clientEndpoint) bool {
-		if status == posthog.StatusDisabled {
-			e.Disabled = true
-		} else {
+			}
+			return true
+		})
+	} else if answers.status > 0 && answers.status < 500 {
+		g.commit(day, scope, func(e *clientEndpoint) bool {
 			p := e.Probes[surface]
-			p.Sent = true
+			p.Rejected++
 			e.Probes[surface] = p
-		}
-		return true
-	})
+			return true
+		})
+	}
+	return
 }
 
 // Post sends one report unless the daemon is disabled or backing off; callers run Probe first. A 5xx or no
 // answer starts a memory-only 1 to 16 second backoff that skips reports meanwhile, and the surface's saved
 // app_opened backoff covers them too. A disabled reply from any route is saved. It returns whether the report
-// settled: the daemon answered below 500, or it wants no reports. A caller may resend an unsettled report later.
+// settled: the daemon answered below 500, it wants no reports, or the report went out as the day's agent check.
+// A caller may resend an unsettled report later.
 func (g *ClientGate) Post(ctx context.Context, client *http.Client, scope, url, event string, props map[string]any) bool {
-	g.Load(ctx)
-	surface, _ := props[PropertySurface].(string)
+	surface, sent := g.prepare(ctx, client, scope, url, event, props)
 	ready := g.Ready(scope)
-	if !ready || g.backingOff(scope, surface) {
-		return !ready
+	if sent || !ready || g.backingOff(scope, surface) {
+		return sent || !ready
 	}
 	answering, answers := trackAnswer(client)
 	day := g.today()
@@ -227,6 +232,18 @@ func (g *ClientGate) Post(ctx context.Context, client *http.Client, scope, url, 
 		g.disable(ctx, day, scope)
 	}
 	return g.noteReport(scope, err == nil || (answers.status > 0 && answers.status < 500))
+}
+
+// prepare loads the receipts and returns the surface whose saved backoff covers the report. Until the day's
+// receipt is known, an agent call goes out as the agent surface's check, so concurrent agent processes send
+// one call and the rest read its result; sent reports whether this call went out that way.
+func (g *ClientGate) prepare(ctx context.Context, client *http.Client, scope, url, event string, props map[string]any) (surface string, sent bool) {
+	g.Load(ctx)
+	if event != EventAgentActive {
+		surface, _ = props[PropertySurface].(string)
+		return surface, false
+	}
+	return surfaceAgent, g.probe(ctx, client, scope, url, surfaceAgent, event, props)
 }
 
 // backingOff covers a daemon whose reports just failed and the surface's saved app_opened backoff.

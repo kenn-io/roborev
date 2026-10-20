@@ -111,6 +111,24 @@ func TestClientGateDisabledReplyToAnyRouteIsSaved(t *testing.T) {
 	assert.Equal(t, []string{EventAgentActive}, s.seen())
 }
 
+func TestClientGateConcurrentAgentCallsShareDisabledReceipt(t *testing.T) {
+	testenv.SetDataDir(t)
+	s := newReceiptServer(t, "disabled")
+	start := make(chan struct{})
+	var calls sync.WaitGroup
+	for range 100 {
+		g := &ClientGate{}
+		g.Load(t.Context())
+		calls.Go(func() {
+			<-start
+			post(g, s, "daemon", EventAgentActive, "")
+		})
+	}
+	close(start)
+	calls.Wait()
+	assert.Equal(t, []string{EventAgentActive}, s.seen(), "concurrent agent calls share the first disabled receipt")
+}
+
 func TestClientGateProbeBackoffPersistsStopsAtSixAnswersAndResetsDaily(t *testing.T) {
 	for _, answer := range []string{"empty", "401"} {
 		t.Run(answer, func(t *testing.T) {
@@ -461,7 +479,8 @@ func TestClientGateNeverRewritesAFileThatTurnedNewerMidReport(t *testing.T) {
 	now := time.Date(2026, 3, 10, 9, 0, 0, 0, time.UTC)
 	g := &ClientGate{now: func() time.Time { return now }}
 
-	g.Post(t.Context(), srv.Client(), "daemon", srv.URL, EventAgentActive, nil)
+	// A report outside the day's check holds no lock through its request, so another process can write meanwhile.
+	g.Post(t.Context(), srv.Client(), "daemon", srv.URL, EventReviewViewed, nil)
 	saved, err := os.ReadFile(path)
 	require.NoError(t, err)
 	assert.Equal(t, newer, string(saved))
