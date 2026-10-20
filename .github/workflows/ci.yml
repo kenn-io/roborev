@@ -203,7 +203,7 @@ jobs:
             runner: windows-2025
             shard: windows-daemon-a-f
             package: ./internal/daemon
-            pattern: &daemon-a-f '^Test([A-F]|[^A-Z]|$)'
+            pattern: &daemon-a-f '^(Test([A-F]|[^A-Z]|$)|Example|Fuzz)'
           - os: windows-latest
             runner: windows-2025
             shard: windows-daemon-g-m-t-z
@@ -218,7 +218,7 @@ jobs:
             runner: windows-2025
             shard: windows-cli-a-m-t-z
             package: ./cmd/roborev
-            pattern: '^Test([A-MT-Z]|[^A-Z]|$)'
+            pattern: '^(Test([A-MT-Z]|[^A-Z]|$)|Example|Fuzz)'
           - os: windows-latest
             runner: windows-2025
             shard: windows-cli-n-s
