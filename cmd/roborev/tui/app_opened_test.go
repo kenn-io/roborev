@@ -43,6 +43,7 @@ func TestReportSessionEndedBoundsDelivery(t *testing.T) {
 		m.reportSessionEnded(2 * time.Minute)
 		synctest.Wait()
 		assert.Equal(t, 50*time.Millisecond, time.Since(started))
+		assert.Equal(t, int32(2), transport.requests.Load(), "app_opened probe and session_ended report")
 		assert.Equal(t, started.Add(time.Second), transport.deadline)
 		close(release)
 	})
@@ -111,7 +112,7 @@ func TestReportAppOpenedIgnoresDaemonFailures(t *testing.T) {
 	assert.Nil(t, cmd())
 }
 
-// stalledTransport holds requests until their context ends or the test releases them.
+// stalledTransport answers probes immediately and holds session_ended until its context ends or the test releases it.
 type stalledTransport struct {
 	hit      chan struct{}
 	release  <-chan struct{}
@@ -121,6 +122,15 @@ type stalledTransport struct {
 
 func (s *stalledTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	s.requests.Add(1)
+	var event struct {
+		Event string `json:"event"`
+	}
+	if err := json.NewDecoder(req.Body).Decode(&event); err != nil {
+		return nil, err
+	}
+	if event.Event != telemetry.EventSessionEnded {
+		return &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(bytes.NewBufferString(`{"status":"queued"}`))}, nil
+	}
 	s.deadline, _ = req.Context().Deadline()
 	select {
 	case s.hit <- struct{}{}:
