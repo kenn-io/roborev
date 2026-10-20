@@ -14,8 +14,6 @@ let disabledDay = "";
 let reviewViewedDay = "";
 const reviewPending = new Set<string>();
 const today = (): string => new Date().toISOString().slice(0, 10);
-// Actions wait here while the daemon check is pending or the shell is gone; the daemon dedupes them by day.
-const pendingCoreActions = new Map<CoreAction, string>();
 let listening = false;
 let shellMounted = false;
 let waitingForShell: Promise<void> | undefined;
@@ -147,7 +145,6 @@ function startReporting(): BrowserTelemetryReporter {
         if (receipt === "disabled") {
           disabledDay = today();
           discardSession();
-          pendingCoreActions.clear();
         } else if (
           event.event === "review_viewed" &&
           (receipt === "queued" || receipt === "skipped")
@@ -191,10 +188,8 @@ export function setupAppOpenedReporting(): () => void {
         flushSession();
         resumeSession();
       }
-      flushCoreActions();
     });
   }
-  flushCoreActions();
   flushSession();
   resumeSession();
   return () => {
@@ -206,21 +201,11 @@ export function setupAppOpenedReporting(): () => void {
 
 export function reportCoreAction(event: CoreAction): void {
   const day = today();
-  if (disabledDay === day) return;
+  if (quiet || !shellMounted || disabledDay === day) return;
   if (
     event === "review_viewed" &&
     (reviewViewedDay === day || reviewPending.has(day))
   )
     return;
-  pendingCoreActions.set(event, day);
-  flushCoreActions();
-}
-
-function flushCoreActions(): void {
-  if (quiet || !shellMounted) return;
-  for (const [event, day] of pendingCoreActions) {
-    if (day === today())
-      reporter?.reportVisit({ event, properties: { surface: "web" } });
-  }
-  pendingCoreActions.clear();
+  reporter?.reportVisit({ event, properties: { surface: "web" } });
 }

@@ -399,7 +399,7 @@ describe("setupAppOpenedReporting", () => {
       },
     ],
     [
-      "a disabled reply drops queued actions and starts no visit timer",
+      "a disabled reply drops actions and starts no visit timer",
       async () => {
         vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
         fetchMock.mockResolvedValueOnce(
@@ -637,7 +637,7 @@ describe("setupAppOpenedReporting", () => {
     }
   });
 
-  test("queues core actions until the daemon accepts telemetry", async () => {
+  test("drops core actions while the daemon check is pending", async () => {
     let resolveAppOpened!: (response: Response) => void;
     fetchMock.mockImplementationOnce(
       () => new Promise((resolve) => (resolveAppOpened = resolve)),
@@ -648,45 +648,12 @@ describe("setupAppOpenedReporting", () => {
     resolveAppOpened(accepted());
     await settle();
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(JSON.parse(await fetchMock.mock.calls[1]![0].text()).event).toBe(
-      "review_viewed",
-    );
-  });
-
-  test("queues actions during a pending check with blocked storage", async () => {
-    vi.spyOn(localStorage, "getItem").mockImplementation(() => {
-      throw new Error("storage blocked");
-    });
-    let answer!: (response: Response) => void;
-    fetchMock.mockImplementationOnce(
-      () => new Promise((resolve) => (answer = resolve)),
-    );
-    setup();
+    expect((await sentEvents()).map((e) => e.event)).toEqual(["app_opened"]);
     appOpened.reportCoreAction("review_closed");
-    answer(accepted());
     await settle();
-
     expect((await sentEvents()).map((e) => e.event)).toEqual([
       "app_opened",
       "review_closed",
-    ]);
-  });
-
-  test("drops past-day queued actions when the shell returns", async () => {
-    const stop = setup();
-    await settle();
-    stop();
-    appOpened.reportCoreAction("review_closed");
-    vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
-    focusWindow();
-    await settle();
-    setup();
-    await settle();
-
-    expect((await sentEvents()).map((e) => e.event)).toEqual([
-      "app_opened",
-      "app_opened",
     ]);
   });
 
@@ -753,23 +720,6 @@ describe("setupAppOpenedReporting", () => {
       "review_viewed",
       "review_viewed",
     ]);
-  });
-
-  test("queued actions survive an authentication remount", async () => {
-    const cleanup = setup();
-    await settle();
-    cleanup();
-    appOpened.reportCoreAction("review_closed");
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-
-    setup();
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(JSON.parse(await fetchMock.mock.calls[1]![0].text())).toEqual({
-      event: "review_closed",
-      properties: { surface: "web" },
-    });
   });
 
   test.each([401, 403, 429])(

@@ -2000,9 +2000,9 @@ Daemon keys are hashes, so the file stores no address or credential.
 - The agent-call route answers with the same 202 JSON receipts and stops reading
     the daily counter after call 101.
 - The browser keeps kit-ui's receipts in local storage, separately for each base
-    path on an origin. Actions queue in page memory until the daemon accepts
-    telemetry. After the daemon settles a `review_viewed`, the page doesn't send
-    another until the next UTC day or a reload.
+    path on an origin. Actions taken while telemetry is quiet or the shell is
+    unmounted are dropped. After the daemon settles a `review_viewed`, the page
+    doesn't send another until the next UTC day or a reload.
 
 The browser and TUI also report `screen_viewed` with a fixed `screen` name and
 `surface` of `web` or `tui`. Browser screens are `reviews` and `analytics`. TUI

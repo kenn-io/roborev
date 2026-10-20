@@ -347,6 +347,44 @@ func TestClientGateFollowerWaitsForTheProbeInFlight(t *testing.T) {
 	})
 }
 
+func TestClientGateFollowerWaitsWithUnusableStorage(t *testing.T) {
+	blocker := filepath.Join(t.TempDir(), "file")
+	require.NoError(t, os.WriteFile(blocker, nil, 0o600))
+	t.Setenv("ROBOREV_DATA_DIR", filepath.Join(blocker, "data"))
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		var requests atomic.Int32
+		client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			requests.Add(1)
+			<-release
+			return &http.Response{
+				StatusCode: http.StatusAccepted,
+				Body:       io.NopCloser(strings.NewReader(`{"status":"disabled"}`)),
+				Header:     make(http.Header),
+			}, nil
+		})}
+		g := &ClientGate{}
+		run := func() {
+			g.Probe(t.Context(), client, "daemon", "http://daemon.test", SurfaceTUI)
+		}
+		var first, follower sync.WaitGroup
+		first.Go(run)
+		synctest.Wait()
+		followed := false
+		follower.Go(func() {
+			run()
+			followed = true
+		})
+		synctest.Wait()
+		assert.False(t, followed, "the follower waits for the receipt even without a file lock")
+		close(release)
+		first.Wait()
+		follower.Wait()
+		assert.Equal(t, int32(1), requests.Load())
+		assert.False(t, g.Ready("daemon"))
+	})
+}
+
 func TestClientGateRefusesANewerFileAndLeavesItIntact(t *testing.T) {
 	for name, content := range map[string]string{
 		"same shape":    `{"version":2,"day":"2026-03-10","endpoints":{}}`,

@@ -31,10 +31,11 @@ const (
 // It keeps no counts for other reports; a restart may send one twice and the daemon dedupes.
 // File and network work belongs in the caller's send goroutine; Ready reads memory only.
 type ClientGate struct {
-	mu     sync.Mutex
-	state  clientState
-	path   string
-	loaded bool
+	probeMu sync.Mutex
+	mu      sync.Mutex
+	state   clientState
+	path    string
+	loaded  bool
 	// frozen means the file has a newer format: no reports go out and the file stays as found.
 	frozen bool
 	// down holds the backoff after reports that got no answer or a 5xx, per daemon and kept in memory only.
@@ -64,8 +65,6 @@ type clientEndpoint struct {
 type clientProbe struct {
 	Sent     bool `json:"sent,omitempty"`
 	Attempts int  `json:"attempts,omitempty"`
-	// inFlight lets reports join this process's pending probe before checking backoff.
-	inFlight bool
 	// Rejected counts answers that are neither a receipt nor a 5xx, such as an empty 2xx from a daemon too old
 	// to send receipts, or a 4xx. Six stop the check for the day; 5xx answers and requests that got no answer
 	// only extend the backoff.
@@ -147,9 +146,17 @@ func (g *ClientGate) Load(ctx context.Context) {
 // It holds the receipt lock through the request, so processes started together send one check and
 // the rest read its result. If ctx ends first the report is dropped.
 func (g *ClientGate) Probe(ctx context.Context, client *http.Client, scope, url, surface string) {
+	for !g.probeMu.TryLock() {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(receiptPollInterval):
+		}
+	}
+	defer g.probeMu.Unlock()
 	g.mu.Lock()
 	e := g.current().Endpoints[scope]
-	open := !g.frozen && (e.probeDue(surface, g.clock()) || e != nil && e.Probes[surface].inFlight)
+	open := !g.frozen && e.probeDue(surface, g.clock())
 	g.mu.Unlock()
 	if !open {
 		return
@@ -170,7 +177,6 @@ func (g *ClientGate) Probe(ctx context.Context, client *http.Client, scope, url,
 		p := e.Probes[surface]
 		p.Attempts++
 		p.Next = now.Add(backoffDelay(p.Attempts))
-		p.inFlight = true
 		e.Probes[surface] = p
 		send = true
 		return true
@@ -178,16 +184,6 @@ func (g *ClientGate) Probe(ctx context.Context, client *http.Client, scope, url,
 	if !send {
 		return
 	}
-	defer func() {
-		g.mu.Lock()
-		defer g.mu.Unlock()
-		if state := g.current(); state.Day == day {
-			e := state.endpoint(scope)
-			p := e.Probes[surface]
-			p.inFlight = false
-			e.Probes[surface] = p
-		}
-	}()
 	answering, answers := trackAnswer(client)
 	status, err := posthog.PostEvent(ctx, answering, url, EventAppOpened, map[string]any{PropertySurface: surface})
 	if err != nil {
@@ -277,8 +273,8 @@ func (g *ClientGate) disable(ctx context.Context, day, scope string) {
 	}
 }
 
-// lock takes the cross-process receipt lock; false means ctx ended first. When storage is unusable
-// there is nothing to wait for, and memory alone carries the receipts.
+// lock takes the cross-process receipt lock; false means ctx ended first. With unusable storage,
+// probeMu still serializes probes and memory alone carries the receipts.
 func (g *ClientGate) lock(ctx context.Context) (func(), bool) {
 	g.mu.Lock()
 	g.current()
@@ -286,11 +282,8 @@ func (g *ClientGate) lock(ctx context.Context) (func(), bool) {
 	g.mu.Unlock()
 	_ = os.MkdirAll(filepath.Dir(path), 0o700)
 	l := flock.New(path + ".lock")
-	if locked, _ := l.TryLockContext(ctx, receiptPollInterval); !locked {
-		if ctx.Err() != nil {
-			return nil, false
-		}
-		return func() {}, true
+	if locked, _ := l.TryLockContext(ctx, receiptPollInterval); !locked && ctx.Err() != nil {
+		return nil, false
 	}
 	return func() { _ = l.Unlock() }, true
 }
