@@ -558,6 +558,8 @@ describe("setupAppOpenedReporting", () => {
       otherTab.disable();
       otherTab.stop();
       focusWindow();
+      // jsdom queues a zero-delay storage event when the other tab writes its receipt.
+      await vi.advanceTimersByTimeAsync(0);
       expect(vi.getTimerCount()).toBe(0);
     } else if (scenario !== "next-day enable") {
       appOpened.reportCoreAction("review_closed");

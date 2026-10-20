@@ -1986,17 +1986,16 @@ Daemon keys are hashes, so the file stores no address or credential.
 - Action, screen, and session reports follow the check. Until the day's agent
     call gets a receipt, agent calls take the same lock, so concurrent agent
     commands send one call and the rest read its result; after that they send
-    freely. Reports keep no stored counts. A check that gets a
-    5xx or no answer retries on later activity after 1 to 16 seconds. An answer
-    that is neither a receipt nor a 5xx, such as an empty 202 from a daemon too
-    old to send receipts or a 4xx, counts against six per day; after six, that
-    daemon gets no more checks
-    until the next UTC day. After a report gets a 5xx or no answer, later
-    reports to that daemon are dropped for 1 to 16 seconds. That backoff lives
-    in process memory only.
+    freely. Reports keep no stored counts. A check that gets a 5xx or no answer
+    retries on later activity after 1 to 16 seconds. An answer that is neither a
+    receipt nor a 5xx, such as an empty 202 from a daemon too old to send
+    receipts or a 4xx, counts against six per day; after six, that daemon gets
+    no more checks until the next UTC day. After a report gets a 5xx or no
+    answer, later reports to that daemon are dropped for 1 to 16 seconds. That
+    backoff lives in process memory only.
 - When the file can't be read or written, receipts stay in process memory. A
-    file written by a newer version is left as found and stops all reports
-    until it's removed.
+    file written by a newer version is left as found and stops all reports until
+    it's removed.
 - CLI and TUI exits wait at most 50 ms in total for reports; each send keeps its
     one-second deadline.
 - The agent-call route answers with the same 202 JSON receipts and stops reading
