@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -23,22 +22,6 @@ import (
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 )
-
-func TestMCPActivityGateLoadsDisabledReceipt(t *testing.T) {
-	resetCLIUse(t)
-	ep := daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}
-	receipt := `{"version":1,"day":"` + time.Now().UTC().Format(time.DateOnly) + `","endpoints":{"` + ep.TelemetryScope() + `":{"disabled":true,"events":{}}}}`
-	path := filepath.Join(config.DataDir(), "telemetry-client.json")
-	require.NoError(t, os.WriteFile(path, []byte(receipt), 0o600))
-	// Evaluate the production scheduling predicate before any telemetry Post.
-	enabled := mcpActivityGate(ep)
-	assert.False(t, enabled())
-	other := daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7374"}
-	assert.True(t, mcpActivityGate(other)())
-	require.NoError(t, os.Remove(path))
-	// Subsequent tool calls retain the cached receipt without reading the file.
-	assert.False(t, enabled())
-}
 
 func TestMCPCmdExposesServeSubcommand(t *testing.T) {
 	cmd := mcpCmd()
@@ -107,7 +90,7 @@ func TestMCPServeSpeaksProtocolOverStdio(t *testing.T) {
 	assert.NotContains(text, "secret")
 	// Wall-clock wait: asynchronous telemetry crosses the mock daemon's TCP socket.
 	require.Eventually(func() bool { return len(rec.telemetryPosts()) == 1 }, time.Second, time.Millisecond)
-	assert.Equal("application/json", rec.telemetryPosts()[0].contentType)
+	assert.JSONEq(`{"event":"agent_active","properties":null}`, rec.telemetryPosts()[0].body)
 	assert.Contains(rec.allPaths(), "POST "+daemon.TelemetryAgentCallPath)
 
 	require.NoError(session.Close())

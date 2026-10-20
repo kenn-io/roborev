@@ -52,7 +52,7 @@ func runRefinePlanOnly(cmd *cobra.Command, opts refineOptions) error {
 			return err
 		}
 	}
-	cfg, err := config.LoadGlobal()
+	cfg, err := loadClientConfig()
 	if err != nil {
 		return err
 	}

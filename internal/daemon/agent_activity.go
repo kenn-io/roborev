@@ -10,8 +10,8 @@ import (
 )
 
 // recordAgentCall persists each count before attempting delivery, so restarts don't repeat events.
-// A client retry repeats its callID, and the stored IDs count that call once per day.
-func (s *Server) recordAgentCall(ctx context.Context, callID string) (posthog.Status, error) {
+// It reports what the client may keep: queued, skipped when the call changes nothing, or disabled.
+func (s *Server) recordAgentCall(ctx context.Context) (posthog.Status, error) {
 	ctx, cancel := context.WithTimeout(ctx, telemetry.NotificationTimeout)
 	defer cancel()
 	select {
@@ -28,15 +28,13 @@ func (s *Server) recordAgentCall(ctx context.Context, callID string) (posthog.St
 		now = time.Now
 	}
 	day := now().UTC().Format(time.DateOnly)
+	// A full day changes nothing, so skip the counter read.
 	if s.agentActivityFullDay == day {
 		return posthog.StatusSkipped, nil
 	}
-	calls, repeated, err := s.db.RecordAgentCall(ctx, day, callID)
+	calls, err := s.db.RecordAgentCall(ctx, day)
 	if err != nil {
 		return "", err
-	}
-	if repeated {
-		return posthog.StatusSkipped, nil
 	}
 	var event, bucket string
 	switch calls {
@@ -53,7 +51,7 @@ func (s *Server) recordAgentCall(ctx context.Context, callID string) (posthog.St
 		}
 		return posthog.StatusSkipped, nil
 	}
-	// The count is saved, so a failed capture must not invite a retry that counts the call again.
+	// The count is saved, so a failed capture reads as skipped rather than inviting a second count.
 	if s.telemetry.Capture(event, map[string]any{telemetry.PropertyCallCountBucket: bucket}) != nil {
 		return posthog.StatusSkipped, nil
 	}

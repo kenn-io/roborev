@@ -21,6 +21,7 @@ type Server struct {
 // New builds a server exposing the roborev tools. backend must not
 // be nil.
 // activity may be nil; it runs independently and must bound its work.
+// enabled may be nil; when it returns false a tool call starts no activity.
 func New(backend Backend, version string, activity func(context.Context), enabled func() bool) *Server {
 	if backend == nil {
 		panic("mcpserver: backend is required")

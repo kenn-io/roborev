@@ -4868,7 +4868,6 @@ func TestCoreActionFixReadAndCommit(t *testing.T) {
 				patchServerAddr(t, md.Server.URL)
 				ep := mustParseEndpoint(t, md.Server.URL)
 				cliUseEndpoint.Store(&ep)
-				seedCLIAppOpenedReceipt(t, ep, `{"sent":true}`)
 				fixAgent := &agent.FakeAgent{NameStr: "test", ReviewFn: func(_ context.Context, dir, _, _ string, _ io.Writer) (string, error) {
 					if outcome == "no change" {
 						return "No change needed", nil
@@ -4896,7 +4895,7 @@ func TestCoreActionFixReadAndCommit(t *testing.T) {
 					assert.Empty(t, output)
 					assert.Empty(t, confirmation)
 					drainCLIReports()
-					assert.Empty(t, rec.telemetryPosts())
+					assert.Empty(t, rec.actionPosts())
 					return
 				}
 				assert.Contains(t, output, "Finding")
@@ -4906,17 +4905,23 @@ func TestCoreActionFixReadAndCommit(t *testing.T) {
 				var events []string
 				if outcome == "stdout commit" {
 					events = append(events, "review_viewed")
+					if batch {
+						events = append(events, "review_viewed")
+					}
 				}
 				if outcome == "commit" {
 					events = append(events, "finding_fixed")
+					if batch {
+						events = append(events, "finding_fixed")
+					}
 				}
 				if len(events) == 0 {
 					drainCLIReports()
 				} else {
 					// Action reports cross the mock daemon socket.
-					require.Eventually(t, func() bool { return len(rec.telemetryPosts()) == len(events) }, 5*time.Second, 10*time.Millisecond)
+					require.Eventually(t, func() bool { return len(rec.actionPosts()) == len(events) }, 5*time.Second, 10*time.Millisecond)
 				}
-				posts := rec.telemetryPosts()
+				posts := rec.actionPosts()
 				require.Len(t, posts, len(events))
 				var actualEvents []string
 				for _, post := range posts {

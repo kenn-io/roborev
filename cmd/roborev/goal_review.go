@@ -57,7 +57,7 @@ func runGoalReviewWithRunner(cmd *cobra.Command, root string, options goalreview
 		}
 		return nil
 	}
-	cfg, err := config.LoadGlobal()
+	cfg, err := loadClientConfig()
 	if err != nil {
 		return err
 	}

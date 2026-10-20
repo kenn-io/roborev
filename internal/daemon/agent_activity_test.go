@@ -36,10 +36,10 @@ func TestAgentActivityBucketsRestartAndUTC(t *testing.T) {
 			var wg sync.WaitGroup
 			for call := 1; call <= 101; call++ {
 				if concurrent {
-					wg.Go(func() { server.recordAgentCall(t.Context(), "") })
+					wg.Go(func() { server.recordAgentCall(t.Context()) })
 					continue
 				}
-				server.recordAgentCall(t.Context(), "")
+				server.recordAgentCall(t.Context())
 				if call == 1 || call == 2 || call == 10 {
 					assert.Len(client.events, 1, "call %d", call)
 				}
@@ -60,7 +60,7 @@ func TestAgentActivityBucketsRestartAndUTC(t *testing.T) {
 			}, client.properties)
 			if !concurrent {
 				now = now.Add(time.Minute)
-				server.recordAgentCall(t.Context(), "")
+				server.recordAgentCall(t.Context())
 				assert.Len(client.events, 4)
 				assert.Equal(telemetry.EventAgentActive, client.events[3])
 			}
@@ -80,7 +80,7 @@ func TestAgentActivityRoutesRejectBrowserCapture(t *testing.T) {
 	client := &failingAgentTelemetry{}
 	server.SetTelemetry(client)
 	t.Run("opted out", func(t *testing.T) {
-		server.recordAgentCall(t.Context(), "")
+		server.recordAgentCall(t.Context())
 		assert.Empty(t, client.events)
 	})
 	client.enabled = true
@@ -116,13 +116,13 @@ func TestAgentActivityCanceledWhileWaiting(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		server.agentActivityGate = make(chan struct{}, 1)
 		server.agentActivityGate <- struct{}{}
-		go server.recordAgentCall(t.Context(), "")
+		go server.recordAgentCall(t.Context())
 		synctest.Wait()
 		time.Sleep(telemetry.NotificationTimeout)
 		synctest.Wait()
 		<-server.agentActivityGate
 		assert.Empty(t, client.events)
-		server.recordAgentCall(t.Context(), "")
+		server.recordAgentCall(t.Context())
 		assert.Equal(t, []string{telemetry.EventAgentActive}, client.events)
 	})
 }
@@ -140,86 +140,40 @@ func TestAgentActivityRouteCountsAfterClientDisconnect(t *testing.T) {
 	assert.Equal(t, []string{telemetry.EventAgentActive}, client.events)
 }
 
-func TestAgentActivityReceiptsAndSaturation(t *testing.T) {
-	server, db, _ := newTestServer(t)
+func TestAgentActivityRouteAnswersWithReceipts(t *testing.T) {
+	server, _, _ := newTestServer(t)
 	client := &fakeTelemetryClient{enabled: true}
 	server.SetTelemetry(client)
-	srv := httptest.NewServer(server.Handler())
-	defer srv.Close()
-	for call := 1; call <= 101; call++ {
+	srv := httptest.NewServer(server.httpServer.Handler)
+	t.Cleanup(srv.Close)
+	post := func() posthog.Status {
 		status, err := posthog.PostEvent(t.Context(), srv.Client(), srv.URL+TelemetryAgentCallPath, telemetry.EventAgentActive, nil)
-		require.NoError(t, err)
-		want := posthog.StatusSkipped
-		if call == 1 || call == 11 || call == 101 {
-			want = posthog.StatusQueued
-		}
-		assert.Equal(t, want, status)
-	}
-	// A restarted daemon reads the saturated count once, then caches the full day.
-	restarted := &Server{db: db, telemetry: client, agentActivityGate: make(chan struct{}, 1)}
-	status, err := restarted.recordAgentCall(t.Context(), "")
-	require.NoError(t, err)
-	assert.Equal(t, posthog.StatusSkipped, status)
-	_, err = db.Exec("ALTER TABLE sync_state RENAME TO unavailable_sync_state")
-	require.NoError(t, err)
-	status, err = restarted.recordAgentCall(t.Context(), "")
-	require.NoError(t, err)
-	assert.Equal(t, posthog.StatusSkipped, status)
-	status, err = posthog.PostEvent(t.Context(), srv.Client(), srv.URL+TelemetryAgentCallPath, telemetry.EventAgentActive, nil)
-	require.NoError(t, err)
-	assert.Equal(t, posthog.StatusSkipped, status)
-	client.enabled = false
-	status, err = posthog.PostEvent(t.Context(), srv.Client(), srv.URL+TelemetryAgentCallPath, telemetry.EventAgentActive, nil)
-	require.NoError(t, err)
-	assert.Equal(t, posthog.StatusDisabled, status)
-}
-
-func TestAgentActivityDatabaseErrorCanRecover(t *testing.T) {
-	server, db, _ := newTestServer(t)
-	client := &fakeTelemetryClient{enabled: true}
-	server.SetTelemetry(client)
-	srv := httptest.NewServer(server.Handler())
-	defer srv.Close()
-	_, err := db.Exec("ALTER TABLE sync_state RENAME TO unavailable_sync_state")
-	require.NoError(t, err)
-	_, err = posthog.PostEvent(t.Context(), srv.Client(), srv.URL+TelemetryAgentCallPath, telemetry.EventAgentActive, nil)
-	require.ErrorContains(t, err, "HTTP 500")
-	assert.Empty(t, client.events)
-	_, err = db.Exec("ALTER TABLE unavailable_sync_state RENAME TO sync_state")
-	require.NoError(t, err)
-	status, err := posthog.PostEvent(t.Context(), srv.Client(), srv.URL+TelemetryAgentCallPath, telemetry.EventAgentActive, nil)
-	require.NoError(t, err)
-	assert.Equal(t, posthog.StatusQueued, status)
-	assert.Equal(t, []string{telemetry.EventAgentActive}, client.events)
-}
-
-func TestAgentActivityRetriedCallCountsOnce(t *testing.T) {
-	server, db, _ := newTestServer(t)
-	client := &failingAgentTelemetry{}
-	client.enabled = true
-	server.SetTelemetry(client)
-	srv := httptest.NewServer(server.Handler())
-	defer srv.Close()
-	post := func(callID string) posthog.Status {
-		t.Helper()
-		status, err := posthog.PostEvent(t.Context(), srv.Client(), srv.URL+TelemetryAgentCallPath+"?call="+callID, telemetry.EventAgentActive, nil)
 		require.NoError(t, err)
 		return status
 	}
-	// The saved count answers 202 even though capture failed, and the retry is not counted again.
-	assert.Equal(t, posthog.StatusSkipped, post("call-a"))
-	assert.Equal(t, posthog.StatusSkipped, post("call-a"))
-	// A daemon restarted before the client's retry still recognizes the call.
-	restarted := &Server{db: db, telemetry: client, agentActivityGate: make(chan struct{}, 1)}
-	status, err := restarted.recordAgentCall(t.Context(), "call-a")
+
+	assert.Equal(t, posthog.StatusQueued, post())
+	assert.Equal(t, posthog.StatusSkipped, post())
+	client.enabled = false
+	assert.Equal(t, posthog.StatusDisabled, post())
+}
+
+func TestAgentActivityStopsReadingTheCounterOnceTheDayIsFull(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	server.SetTelemetry(&fakeTelemetryClient{enabled: true})
+	now := time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC)
+	server.agentActivityNow = func() time.Time { return now }
+	for range 101 {
+		_, err := server.recordAgentCall(t.Context())
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, db.Close())
+	status, err := server.recordAgentCall(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, posthog.StatusSkipped, status)
-	stored, err := db.GetSyncState("telemetry.agent_activity")
-	require.NoError(t, err)
-	assert.Contains(t, stored, `"calls":1`)
-	post("call-b")
-	stored, err = db.GetSyncState("telemetry.agent_activity")
-	require.NoError(t, err)
-	assert.Contains(t, stored, `"calls":2`)
-	assert.Equal(t, []string{telemetry.EventAgentActive}, client.events)
+
+	now = now.AddDate(0, 0, 1)
+	_, err = server.recordAgentCall(t.Context())
+	require.Error(t, err, "a new day reads the counter again")
 }

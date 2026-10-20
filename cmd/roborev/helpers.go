@@ -5,14 +5,31 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
 
 	"github.com/spf13/cobra"
 	gitrepo "go.kenn.io/kit/git/repo"
 
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/githook"
 	"go.kenn.io/roborev/internal/storage"
 )
+
+var clientConfigWarnings sync.Map
+
+func loadClientConfig() (*config.Config, error) {
+	cfg, err := config.LoadGlobal()
+	if err == nil {
+		for _, warning := range cfg.DaemonConfigWarnings() {
+			message := fmt.Sprintf("Warning: ignoring invalid daemon config %v\n", warning)
+			if _, loaded := clientConfigWarnings.LoadOrStore(message, struct{}{}); !loaded {
+				fmt.Fprint(os.Stderr, message)
+			}
+		}
+	}
+	return cfg, err
+}
 
 // exitError signals a specific exit code with no further error output.
 // Always construct via silentExit so cobra's "Error: ..." line is suppressed

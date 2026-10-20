@@ -234,7 +234,8 @@ func (c CostConfig) ResolvedTimeout() time.Duration {
 // Config holds the daemon configuration
 type Config struct {
 	// project holds the remote-specific defaults selected by ForRepo.
-	project ProjectConfig
+	project    ProjectConfig
+	daemonErrs []error
 
 	Projects                   map[string]ProjectConfig        `toml:"projects"`
 	AuthKey                    string                          `toml:"auth_key" json:"-" sensitive:"true" comment:"Shared key for daemon API access: 64 lowercase hex characters from openssl rand -hex 32. Empty disables authentication. Requires daemon restart."`
@@ -621,9 +622,6 @@ func validateConfig(cfg any, acp ACPAgentConfigs) error {
 		if err := global.DaemonTLS.Validate(); err != nil {
 			return err
 		}
-		if err := global.Budget.Validate(); err != nil {
-			return err
-		}
 		if err := validateGoalReviewGate(global.GoalReview.KataGate); err != nil {
 			return err
 		}
@@ -715,6 +713,9 @@ func (c *Config) Validate() (err error) {
 		return markExperimentConfigError(err)
 	}
 	if err := validateConfig(c, c.ACP); err != nil {
+		return err
+	}
+	if err := c.Budget.Validate(); err != nil {
 		return err
 	}
 	if err := validateSearchConfig(c.Search); err != nil {
@@ -1055,53 +1056,98 @@ func GlobalConfigPath() string {
 	return filepath.Join(DataDir(), "config.toml")
 }
 
-// LoadGlobal loads the global configuration from the default path
+// LoadGlobal loads client/workflow configuration from the default path.
+// Daemon-only sections are retained without requiring this process to serve
+// them. Callers can report DaemonConfigWarnings; daemon and diagnostic
+// callers must use the strict LoadGlobalFrom loader.
 func LoadGlobal() (*Config, error) {
-	return LoadGlobalFrom(GlobalConfigPath())
+	return LoadGlobalClientFrom(GlobalConfigPath())
 }
 
-// LoadGlobalFrom loads the global configuration from a specific path
-func LoadGlobalFrom(path string) (*Config, error) {
-	cfg := DefaultConfig()
+// LoadGlobalClientFrom loads workflow settings without rejecting unrelated
+// daemon sections. The caller can report DaemonConfigWarnings separately.
+func LoadGlobalClientFrom(path string) (*Config, error) {
+	cfg, err := parseGlobalFrom(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := normalizeClientConfig(cfg); err != nil {
+		return nil, fmt.Errorf("config: %w", err)
+	}
+	cfg.daemonErrs = applyDaemonSections(cfg)
+	return cfg, nil
+}
 
+// LoadGlobalFrom loads and validates global configuration for a daemon or
+// whole-file diagnostic. Unlike LoadGlobal, it validates daemon-only sections.
+func LoadGlobalFrom(path string) (*Config, error) {
+	cfg, err := LoadGlobalClientFrom(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := errors.Join(cfg.daemonErrs...); err != nil {
+		return nil, fmt.Errorf("config: %w", err)
+	}
+	return cfg, nil
+}
+
+// parseGlobalFrom decodes the global file and migrates deprecated keys.
+func parseGlobalFrom(path string) (*Config, error) {
+	cfg := DefaultConfig()
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return cfg, nil
 	}
 	if err := rejectLegacyACPConfig(path); err != nil {
 		return nil, safeGlobalConfigError(path, err)
 	}
-
 	md, err := toml.DecodeFile(path, cfg)
 	if err != nil {
 		return nil, safeGlobalConfigError(path, err)
 	}
-
-	// Migrate deprecated config keys
 	cfg.migrateDeprecated(md)
-	if err := normalizeGlobalConfig(cfg); err != nil {
-		return nil, fmt.Errorf("config: %w", err)
-	}
-
 	return cfg, nil
 }
 
 func normalizeGlobalConfig(cfg *Config) error {
+	if err := normalizeClientConfig(cfg); err != nil {
+		return err
+	}
+	cfg.daemonErrs = applyDaemonSections(cfg)
+	return errors.Join(cfg.daemonErrs...)
+}
+
+func normalizeClientConfig(cfg *Config) error {
 	if err := validateExperimentEntries(cfg.Experiments, true); err != nil {
 		return markExperimentConfigError(err)
 	}
 	if err := validateConfig(cfg, cfg.ACP); err != nil {
 		return err
 	}
-	if err := cfg.CI.NormalizeInstallations(); err != nil {
-		return err
+	return nil
+}
+
+// DaemonConfigWarnings returns daemon-section errors collected during loading.
+func (c *Config) DaemonConfigWarnings() []error {
+	return c.daemonErrs
+}
+
+func applyDaemonSections(c *Config) []error {
+	var errs []error
+	for _, section := range []struct {
+		name     string
+		validate func() error
+	}{
+		{"budget", c.Budget.Validate},
+		{"ci", c.CI.NormalizeInstallations},
+		{"search", func() error { return validateSearchConfig(c.Search) }},
+		{"remote", func() error { return validateRemoteConfig(c.Remote) }},
+		{"web", func() error { return normalizeWebConfig(&c.Web, c.AuthKey) }},
+	} {
+		if err := section.validate(); err != nil {
+			errs = append(errs, fmt.Errorf("[%s]: %w", section.name, err))
+		}
 	}
-	if err := validateSearchConfig(cfg.Search); err != nil {
-		return err
-	}
-	if err := validateRemoteConfig(cfg.Remote); err != nil {
-		return err
-	}
-	return normalizeWebConfig(&cfg.Web, cfg.AuthKey)
+	return errs
 }
 
 func normalizeWebConfig(web *WebConfig, authKey string) error {

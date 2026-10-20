@@ -376,7 +376,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 		return err
 	}
 
-	cfg, err := config.LoadGlobal()
+	cfg, err := loadClientConfig()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}

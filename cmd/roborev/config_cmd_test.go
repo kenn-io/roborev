@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/BurntSushi/toml"
@@ -987,5 +988,72 @@ func TestGetBudgetPriceRequiresConfiguredEntry(t *testing.T) {
 			_, err := getValueForScope(env.Resolver, key, scope)
 			require.ErrorContains(t, err, `key "`+key+`" is not set in global config`)
 		}
+	}
+}
+
+func TestConfigGetWithInvalidDaemonConfig(t *testing.T) {
+	setupConfigEnv(t, "hook_timeout_seconds = 17\n[web]\nauth_token_file = 'missing-token'\n", "")
+	cmd := configGetCmd()
+	cmd.SetArgs([]string{"hook_timeout_seconds", "--global"})
+	stdout, _ := captureStdoutStderr(t, func() {
+		require.NoError(t, cmd.Execute())
+	})
+	assert.Equal(t, "17\n", stdout)
+}
+
+func TestLoadClientConfigWithInvalidDaemonConfig(t *testing.T) {
+	clientConfigWarnings = sync.Map{}
+	t.Cleanup(func() { clientConfigWarnings = sync.Map{} })
+	env := setupConfigEnv(t, "", "")
+	t.Chdir(env.RepoDir)
+	for _, tc := range []struct {
+		name, contents, warning string
+	}{
+		{"valid", "", ""},
+		{"new web warning", "[web]\nauth_token_file = 'missing-token'\n", "[web]"},
+		{"repeated web warning", "[web]\nauth_token_file = 'missing-token'\n", ""},
+		{"changed web warning", "[web]\nauth_token_file = 'another-missing-token'\n", "[web]"},
+		{"new remote warning", "[web]\nauth_token_file = 'missing-token'\n[remote]\nenabled = true\n", "[remote]"},
+		{"repeated warnings", "[web]\nauth_token_file = 'missing-token'\n[remote]\nenabled = true\n", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(tc.contents), 0o600))
+			_, stderr := captureStdoutStderr(t, func() {
+				_, err := loadClientConfig()
+				require.NoError(t, err)
+			})
+			if tc.warning == "" {
+				assert.Empty(t, stderr)
+			} else {
+				assert.Contains(t, stderr, "Warning: ignoring invalid daemon config "+tc.warning)
+				assert.Equal(t, 1, strings.Count(stderr, "Warning:"))
+			}
+		})
+	}
+}
+
+func TestConfigSetWithInvalidDaemonConfig(t *testing.T) {
+	for _, name := range []string{"repair", "rejects unrelated write"} {
+		t.Run(name, func(t *testing.T) {
+			contents := "hook_timeout_seconds = 17\n[web]\nauth_token_file = 'missing-token'\n"
+			env := setupConfigEnv(t, contents, "")
+			path := filepath.Join(env.DataDir, "config.toml")
+			cmd := configSetCmd()
+			if name == "repair" {
+				tokenPath := filepath.Join(env.DataDir, "token")
+				require.NoError(t, os.WriteFile(tokenPath, []byte(strings.Repeat("A", 43)), 0o600))
+				cmd.SetArgs([]string{"web.auth_token_file", tokenPath, "--global"})
+				require.NoError(t, cmd.Execute())
+				cfg, err := config.LoadGlobalFrom(path)
+				require.NoError(t, err)
+				assert.Equal(t, tokenPath, cfg.Web.AuthTokenFile)
+			} else {
+				cmd.SetArgs([]string{"hook_timeout_seconds", "20", "--global"})
+				require.ErrorContains(t, cmd.Execute(), "[web]")
+				got, err := os.ReadFile(path)
+				require.NoError(t, err)
+				assert.Equal(t, contents, string(got))
+			}
+		})
 	}
 }

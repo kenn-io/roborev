@@ -214,7 +214,7 @@ func enqueueConsolidation(ctx context.Context, cmd *cobra.Command, repoRoot stri
 	// Resolve agent/model/reasoning using "fix" workflow so compact
 	// uses the same config as `roborev fix`.  Pass the resolved values
 	// to the daemon so it doesn't re-resolve under the "review" workflow.
-	cfg, err := config.LoadGlobal()
+	cfg, err := loadClientConfig()
 	if err != nil {
 		return 0, fmt.Errorf("load config: %w", err)
 	}
@@ -473,7 +473,7 @@ func buildCompactPrompt(ctx context.Context, jobReviews []jobReview, branch, rep
 
 	// Include project review guidelines so the compact agent
 	// respects the same rules as regular reviews.
-	globalCfg, _ := config.LoadGlobal()
+	globalCfg, _ := loadClientConfig()
 	guidelines := prompt.LoadGuidelinesWithConfig(ctx, repoRoot, globalCfg)
 	if guidelines != "" {
 		sb.WriteString("## Project Guidelines\n\n")

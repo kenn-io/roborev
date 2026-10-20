@@ -471,3 +471,14 @@ func TestConfigWatcher_AtomicSaveViaRename(t *testing.T) {
 		}, "After atomic save, DefaultAgent = %q, want %q", h.Watcher.Config().DefaultAgent, "gemini")
 	}
 }
+
+func TestConfigWatcherRejectsUnreadableWebTokenFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	old := config.DefaultConfig()
+	old.HookTimeoutSeconds = 17
+	watcher := NewConfigWatcher(path, old, NewBroadcaster(), nil)
+	require.NoError(t, os.WriteFile(path, []byte("hook_timeout_seconds = 29\n[web]\nauth_token_file = 'missing-token'\n"), 0o600))
+	watcher.reloadConfig()
+	assert.Same(t, old, watcher.Config())
+	assert.Zero(t, watcher.ReloadCounter())
+}

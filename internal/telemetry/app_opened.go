@@ -113,26 +113,26 @@ func (l *AppOpenedLimiter) alreadySentToday(reporter *Reporter, body []byte) boo
 	return false
 }
 
-// PostAppOpened posts app_opened for surface to a daemon capture URL and discards the response; callers gate on EnabledFromEnv.
+// PostAppOpened runs the day's app_opened check for surface through the client gate; callers gate on EnabledFromEnv.
 func PostAppOpened(ctx context.Context, client *http.Client, scope, url, surface string) {
-	_, _ = DefaultClientGate.Post(ctx, client, scope, url, EventAppOpened, map[string]any{PropertySurface: surface}, true)
+	DefaultClientGate.Probe(ctx, client, scope, url, surface)
 }
 
 // PostSessionEnded reports one completed interface lifetime.
 func PostSessionEnded(ctx context.Context, client *http.Client, scope, url, surface string, elapsed time.Duration) {
-	_, _ = DefaultClientGate.Post(ctx, client, scope, url, EventSessionEnded, map[string]any{PropertySurface: surface, PropertyDurationBucket: DurationBucket(elapsed)}, false)
+	_, _ = DefaultClientGate.Post(ctx, client, scope, url, EventSessionEnded, map[string]any{PropertySurface: surface, PropertyDurationBucket: DurationBucket(elapsed)})
 }
 
-func PostScreenViewed(ctx context.Context, client *http.Client, scope, url, screen, surface string) (posthog.Status, error) {
-	return DefaultClientGate.Post(ctx, client, scope, url, EventScreenViewed, map[string]any{PropertyScreen: screen, PropertySurface: surface}, true)
+func PostScreenViewed(ctx context.Context, client *http.Client, scope, url, screen, surface string) {
+	_, _ = DefaultClientGate.Post(ctx, client, scope, url, EventScreenViewed, map[string]any{PropertyScreen: screen, PropertySurface: surface})
 }
 
 // PostReviewEvent reports a completed review action through the daemon.
-func PostReviewEvent(ctx context.Context, client *http.Client, scope, url, event, surface string) (posthog.Status, error) {
-	return DefaultClientGate.Post(ctx, client, scope, url, event, map[string]any{PropertySurface: surface}, true)
+func PostReviewEvent(ctx context.Context, client *http.Client, scope, url, event, surface string) {
+	_, _ = DefaultClientGate.Post(ctx, client, scope, url, event, map[string]any{PropertySurface: surface})
 }
 
 // PostAgentCall notifies the daemon of one call; callers gate on EnabledFromEnv.
 func PostAgentCall(ctx context.Context, client *http.Client, scope, url string) {
-	_, _ = DefaultClientGate.Post(ctx, client, scope, url, EventAgentActive, nil, false)
+	_, _ = DefaultClientGate.Post(ctx, client, scope, url, EventAgentActive, nil)
 }

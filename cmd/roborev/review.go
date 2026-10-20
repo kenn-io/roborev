@@ -175,7 +175,7 @@ Examples:
 
 			// Validate --type against the effective global and repository config.
 			if reviewType != "" {
-				globalCfg, loadErr := config.LoadGlobal()
+				globalCfg, loadErr := loadClientConfig()
 				if loadErr != nil {
 					return fmt.Errorf("load config: %w", loadErr)
 				}
@@ -331,7 +331,7 @@ Examples:
 				// Generate dirty diff (includes untracked files).
 				// Use working-tree repo config (not default branch) for
 				// dirty reviews so local exclude_patterns changes apply.
-				globalCfg, _ := config.LoadGlobal()
+				globalCfg, _ := loadClientConfig()
 				excludes := config.ResolveExcludePatternsLocal(
 					root, globalCfg, reviewType,
 				)
@@ -476,7 +476,7 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, di
 	ctx := cmd.Context()
 
 	// Load config
-	cfg, err := config.LoadGlobal()
+	cfg, err := loadClientConfig()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}

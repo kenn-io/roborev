@@ -131,6 +131,22 @@ func TestActivityDoesNotDelayTools(t *testing.T) {
 	})
 }
 
+func TestActivityStaysSilentWhenDisabled(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		calls := 0
+		enabled := false
+		server := New(&fakeBackend{}, "test", func(context.Context) { calls++ }, func() bool { return enabled })
+		session := connectServer(t, server)
+		require.False(t, callTool(t, session, "roborev_status", nil).IsError)
+		synctest.Wait()
+		assert.Zero(t, calls)
+		enabled = true
+		require.False(t, callTool(t, session, "roborev_status", nil).IsError)
+		synctest.Wait()
+		assert.Equal(t, 1, calls)
+	})
+}
+
 func callTool(t *testing.T, session *mcp.ClientSession, name string, args map[string]any) *mcp.CallToolResult {
 	t.Helper()
 	result, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: name, Arguments: args})
@@ -654,22 +670,4 @@ func TestGetJobOutputReportsAvailableLines(t *testing.T) {
 	assert.Equal(t, maxOutputLines+5, out.AvailableLines)
 	assert.Len(t, out.Lines, maxOutputLines)
 	assert.True(t, out.Truncated)
-}
-
-func TestActivityDisabledBeforeScheduling(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		calls := 0
-		enabled := false
-		server := New(&fakeBackend{}, "test", func(context.Context) { calls++ }, func() bool { return enabled })
-		session := connectServer(t, server)
-		for range 10 {
-			require.False(t, callTool(t, session, "roborev_status", nil).IsError)
-		}
-		synctest.Wait()
-		assert.Zero(t, calls)
-		enabled = true
-		require.False(t, callTool(t, session, "roborev_status", nil).IsError)
-		synctest.Wait()
-		assert.Equal(t, 1, calls)
-	})
 }

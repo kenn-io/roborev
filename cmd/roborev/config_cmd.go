@@ -167,7 +167,7 @@ func hasGitDirMetadata(gitPath string) (bool, error) {
 func getValueForScope(resolver RepoResolver, key string, scope configScope) (string, error) {
 	switch scope {
 	case scopeGlobal:
-		cfg, err := config.LoadGlobal()
+		cfg, err := loadClientConfig()
 		if err != nil {
 			return "", fmt.Errorf("load global config: %w", err)
 		}
@@ -241,7 +241,7 @@ func getValueForScope(resolver RepoResolver, key string, scope configScope) (str
 		if !config.IsGlobalKey(key) {
 			return "", fmt.Errorf("key %q is not set in local config", key)
 		}
-		cfg, err := config.LoadGlobal()
+		cfg, err := loadClientConfig()
 		if err != nil {
 			return "", fmt.Errorf("load global config: %w", err)
 		}
@@ -304,7 +304,7 @@ func configValidateCmd() *cobra.Command {
 func validateConfigForScope(resolver RepoResolver, scope configScope) error {
 	switch scope {
 	case scopeGlobal:
-		globalCfg, err := config.LoadGlobal()
+		globalCfg, err := config.LoadGlobalFrom(config.GlobalConfigPath())
 		if err != nil {
 			return fmt.Errorf("load global config: %w", err)
 		}
@@ -340,7 +340,7 @@ func validateConfigForScope(resolver RepoResolver, scope configScope) error {
 		return nil
 
 	default:
-		globalCfg, err := config.LoadGlobal()
+		globalCfg, err := config.LoadGlobalFrom(config.GlobalConfigPath())
 		if err != nil {
 			return fmt.Errorf("load global config: %w", err)
 		}
@@ -469,7 +469,7 @@ func configListCmd() *cobra.Command {
 }
 
 func listGlobalConfig() error {
-	cfg, err := config.LoadGlobal()
+	cfg, err := loadClientConfig()
 	if err != nil {
 		return fmt.Errorf("load global config: %w", err)
 	}
@@ -502,7 +502,7 @@ func listLocalConfig(resolver RepoResolver) error {
 }
 
 func listMergedConfig(resolver RepoResolver, showOrigin bool) error {
-	cfg, err := config.LoadGlobal()
+	cfg, err := loadClientConfig()
 	if err != nil {
 		return fmt.Errorf("load global config: %w", err)
 	}
@@ -567,7 +567,7 @@ func setConfigKey(path, key, value string, isGlobal bool) error {
 	}
 
 	if isGlobal {
-		cfg, err := config.LoadGlobalFrom(path)
+		cfg, err := config.LoadGlobalClientFrom(path)
 		if err != nil {
 			return fmt.Errorf("parse %s: %w", path, err)
 		}

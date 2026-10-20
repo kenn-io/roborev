@@ -25,7 +25,8 @@ func TestSessionEndedCapturedThroughDaemonRoute(t *testing.T) {
 		bucket  string
 		send    func(t *testing.T, url string)
 	}{
-		// The enabled TUI session report first checks app-open status; earlier calls and opt-out send nothing.
+		// PostHog batches until Close, so only the single message counted after Close shows that the
+		// calls before readiness and after opt-out sent nothing.
 		{telemetry.SurfaceTUI, telemetry.Duration1To5m, func(t *testing.T, url string) {
 			m := newModel(testEndpointFromURL(url), withExternalIODisabled())
 			m.reportSessionEnded(2 * time.Minute)
@@ -65,24 +66,14 @@ func TestSessionEndedCapturedThroughDaemonRoute(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 			tt.send(t, srv.URL)
-			// Wait for the socket requests to finish capture before closing the reporter; the TUI probes app_opened first.
-			requests := int32(1)
-			if tt.surface == telemetry.SurfaceTUI {
-				requests = 2
-			}
-			require.Eventually(t, func() bool { return completed.Load() == requests }, 5*time.Second, 10*time.Millisecond)
+			// Wait for the socket request to finish capture before closing the reporter.
+			require.Eventually(t, func() bool { return completed.Load() == 1 }, 5*time.Second, 10*time.Millisecond)
 			require.NoError(t, reporter.Close())
 			sent := messages()
-			if tt.surface == telemetry.SurfaceTUI {
-				require.Len(t, sent, 2)
-				assert.Equal(t, telemetry.EventAppOpened, sent[0].Event)
-			} else {
-				require.Len(t, sent, 1)
-			}
-			session := sent[len(sent)-1]
-			assert.Equal(t, telemetry.EventSessionEnded, session.Event)
-			assert.Equal(t, tt.surface, session.Properties[telemetry.PropertySurface])
-			assert.Equal(t, tt.bucket, session.Properties[telemetry.PropertyDurationBucket])
+			require.Len(t, sent, 1)
+			assert.Equal(t, telemetry.EventSessionEnded, sent[0].Event)
+			assert.Equal(t, tt.surface, sent[0].Properties[telemetry.PropertySurface])
+			assert.Equal(t, tt.bucket, sent[0].Properties[telemetry.PropertyDurationBucket])
 		})
 	}
 }

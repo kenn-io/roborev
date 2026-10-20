@@ -16,7 +16,6 @@ import (
 	"github.com/spf13/cobra"
 	gitrepo "go.kenn.io/kit/git/repo"
 
-	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
@@ -417,7 +416,7 @@ func buildPromptWithContext(repoPath, userPrompt string) string {
 	fmt.Fprintf(&sb, "You are working in the repository \"%s\" at %s.\n", repoName, repoPath)
 
 	// Load project guidelines if available.
-	globalCfg, _ := config.LoadGlobal()
+	globalCfg, _ := loadClientConfig()
 	guidelines := prompt.LoadGuidelinesLocal(repoPath, globalCfg)
 	if guidelines != "" {
 		sb.WriteString("\n## Project Guidelines\n\n")

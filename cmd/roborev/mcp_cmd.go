@@ -92,15 +92,20 @@ Example client configuration:
 			}
 			ep := getDaemonEndpoint()
 			backend := mcpserver.NewHTTPBackend(ep.BaseURL(), ep.HTTPClient(mcpRequestTimeout))
-			server := mcpserver.New(backend, version.Version, func(ctx context.Context) { reportMCPActivity(ctx, ep) }, mcpActivityGate(ep))
+			server := mcpserver.New(backend, version.Version, func(ctx context.Context) { reportMCPActivity(ctx, ep) }, mcpActivityEnabled(ep))
 			return server.RunStdio(cmd.Context())
 		},
 	}
 }
 
-func mcpActivityGate(ep daemon.DaemonEndpoint) func() bool {
-	telemetry.DefaultClientGate.Load()
+// mcpActivityEnabled loads the daemon's receipts once, so a disabled daemon starts no activity goroutines.
+func mcpActivityEnabled(ep daemon.DaemonEndpoint) func() bool {
+	if cliTelemetryEnabled() {
+		ctx, cancel := context.WithTimeout(context.Background(), cliUseTimeout)
+		telemetry.DefaultClientGate.Load(ctx)
+		cancel()
+	}
 	return func() bool {
-		return cliTelemetryEnabled() && telemetry.DefaultClientGate.ReadyEvent(ep.TelemetryScope(), telemetry.EventAgentActive, "", "")
+		return cliTelemetryEnabled() && telemetry.DefaultClientGate.Ready(ep.TelemetryScope())
 	}
 }

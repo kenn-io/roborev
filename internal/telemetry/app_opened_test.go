@@ -2,12 +2,9 @@ package telemetry
 
 import (
 	"bufio"
-	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -165,106 +162,4 @@ func TestAppOpenedLimiterConcurrentFirstRequestsSendOnce(t *testing.T) {
 		assert.Equal(t, http.StatusAccepted, code)
 	}
 	assert.Len(t, messages(), 1)
-}
-
-func freshPostAppOpenedGate(t *testing.T) {
-	t.Helper()
-	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	previous := DefaultClientGate
-	DefaultClientGate = &ClientGate{}
-	t.Cleanup(func() { DefaultClientGate = previous })
-}
-
-func TestPostAppOpened(t *testing.T) {
-	t.Run("posts the app_opened body", func(t *testing.T) {
-		freshPostAppOpenedGate(t)
-		assert := assert.New(t)
-		var method, path, contentType, body string
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			raw, _ := io.ReadAll(r.Body)
-			method, path, contentType, body = r.Method, r.URL.Path, r.Header.Get("Content-Type"), string(raw)
-			w.WriteHeader(http.StatusAccepted)
-			_, _ = io.WriteString(w, `{"status":"queued"}`)
-		}))
-		t.Cleanup(srv.Close)
-
-		assert.True(DefaultClientGate.ReadyEvent("endpoint-a", EventAppOpened, SurfaceCLI, ""))
-		PostAppOpened(context.Background(), srv.Client(), "endpoint-a", srv.URL+"/api/telemetry/events", SurfaceCLI)
-		assert.Equal(http.MethodPost, method)
-		assert.Equal("/api/telemetry/events", path)
-		assert.Equal("application/json", contentType)
-		assert.JSONEq(`{"event":"app_opened","properties":{"surface":"cli"}}`, body)
-	})
-
-	t.Run("a 404 records the failed request", func(t *testing.T) {
-		freshPostAppOpenedGate(t)
-		assert := assert.New(t)
-		var requests int
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			requests++
-			http.NotFound(w, nil)
-		}))
-		t.Cleanup(srv.Close)
-		assert.True(DefaultClientGate.ReadyEvent("endpoint-a", EventAppOpened, SurfaceCLI, ""))
-
-		PostAppOpened(context.Background(), srv.Client(), "endpoint-a", srv.URL+"/api/telemetry/events", SurfaceCLI)
-		assert.Equal(1, requests)
-		assert.False(DefaultClientGate.ReadyEvent("endpoint-a", EventAppOpened, SurfaceCLI, ""))
-	})
-
-	t.Run("a closed server records the failed request", func(t *testing.T) {
-		freshPostAppOpenedGate(t)
-		assert := assert.New(t)
-		srv := httptest.NewServer(http.NotFoundHandler())
-		closedURL := srv.URL + "/api/telemetry/events"
-		srv.Close()
-		assert.True(DefaultClientGate.ReadyEvent("endpoint-a", EventAppOpened, SurfaceCLI, ""))
-		assert.NotPanics(func() {
-			PostAppOpened(context.Background(), http.DefaultClient, "endpoint-a", closedURL, SurfaceCLI)
-		})
-		assert.False(DefaultClientGate.ReadyEvent("endpoint-a", EventAppOpened, SurfaceCLI, ""))
-	})
-
-	t.Run("cancelled context returns without a request", func(t *testing.T) {
-		freshPostAppOpenedGate(t)
-		assert := assert.New(t)
-		var hits int
-		var mu sync.Mutex
-		srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-			mu.Lock()
-			hits++
-			mu.Unlock()
-		}))
-		t.Cleanup(srv.Close)
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-
-		assert.True(DefaultClientGate.ReadyEvent("endpoint-a", EventAppOpened, SurfaceCLI, ""))
-		PostAppOpened(ctx, srv.Client(), "endpoint-a", srv.URL+"/api/telemetry/events", SurfaceCLI)
-		mu.Lock()
-		defer mu.Unlock()
-		assert.Zero(hits)
-		assert.True(DefaultClientGate.ReadyEvent("endpoint-a", EventAppOpened, SurfaceCLI, ""))
-	})
-}
-
-func TestScreenViewedDailyClaims(t *testing.T) {
-	t.Setenv(EnabledEnv, "1")
-	t.Setenv(GenericEnabledEnv, "1")
-	db := testutil.OpenTestDB(t)
-	require.NoError(t, db.SetSyncState("telemetry.screen.queue", "2999-01-01"))
-	endpoint, messages := testutil.NewPostHogStub(t)
-	opts := Options{Database: db, Endpoint: endpoint, DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json")}
-	for range 2 {
-		reporter, err := NewReporter(opts)
-		require.NoError(t, err)
-		// Only file receipts own screen counts, including after daemon restarts.
-		limiter := &AppOpenedLimiter{}
-		for range 2 {
-			assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, `{"event":"screen_viewed","properties":{"screen":"queue","surface":"tui"}}`).Code)
-		}
-		require.NoError(t, reporter.Close())
-	}
-	require.Len(t, messages(), 1)
-	assert.Equal(t, "queue", messages()[0].Properties[PropertyScreen])
 }

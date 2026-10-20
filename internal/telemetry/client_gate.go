@@ -1,13 +1,9 @@
 package telemetry
 
 import (
-	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/json/v2"
-	"errors"
+	"encoding/json"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -20,55 +16,47 @@ import (
 	"go.kenn.io/roborev/internal/config"
 )
 
-// ClientGate shares receipts across processes and keeps a memory fallback when storage fails.
-// File and network work belongs at startup or in the caller's send goroutine.
+const (
+	clientStateFile = "telemetry-client.json"
+	// maxProbeRejections bounds the answers without a receipt that the app_opened check accepts per daemon and surface each UTC day.
+	maxProbeRejections = 6
+	// receiptPollInterval paces waits for the receipt lock.
+	receiptPollInterval = 10 * time.Millisecond
+)
+
+// ClientGate keeps each daemon's opt-out and the day's app_opened check in one file shared by CLI, TUI, and MCP
+// processes, so a day sends one check per daemon and a disabled daemon hears nothing more.
+// It keeps no counts for other reports; a restart may send one twice and the daemon dedupes.
+// File and network work belongs in the caller's send goroutine; Ready reads memory only.
 type ClientGate struct {
-	mu       sync.Mutex
-	ioMuOnce sync.Once
-	ioMu     chan struct{}
-	state    clientState
-	path     string
-	// unsupported records a newer-version file, which this process must not read or replace.
-	unsupported bool
-	// unsaved means state holds changes a failed write could not save. While the file still
-	// holds unsavedFrom, the bytes those changes were made from, state stays the newer copy.
-	// ioMu guards both.
-	unsaved     bool
-	unsavedFrom []byte
-	now         func() time.Time
+	mu     sync.Mutex
+	state  clientState
+	path   string
+	loaded bool
+	now    func() time.Time
 }
 
-const clientStateVersion = 1
-
-// receiptPollInterval paces receipt lock retries and probe waits.
-const receiptPollInterval = 10 * time.Millisecond
+// DefaultClientGate is the process-wide gate.
+var DefaultClientGate = &ClientGate{}
 
 type clientState struct {
-	Version   int                             `json:"version"`
-	Day       string                          `json:"day"`
-	Endpoints map[string]*clientEndpointState `json:"endpoints"`
+	Day       string                     `json:"day"`
+	Endpoints map[string]*clientEndpoint `json:"endpoints"`
 }
 
-type clientEndpointState struct {
-	Disabled bool                     `json:"disabled"`
-	Events   map[string]clientAttempt `json:"events"`
+type clientEndpoint struct {
+	Disabled bool                   `json:"disabled,omitempty"`
+	Probes   map[string]clientProbe `json:"probes,omitempty"`
 }
 
-type clientAttempt struct {
-	Sent     bool `json:"sent"`
-	Attempts int  `json:"attempts"`
-	// Rejected counts answers without a receipt. Six quiet the event until the next UTC day, so a
-	// daemon too old to send receipts isn't retried on every command; unanswered requests only back off.
-	Rejected   int       `json:"rejected,omitempty"`
-	Next       time.Time `json:"next"`
-	Pending    int       `json:"pending,omitempty"`
-	InFlight   bool      `json:"in_flight,omitempty"`
-	LeaseUntil time.Time `json:"lease_until,omitempty"`
-	// CallID names the agent call being sent, so the daemon counts a retried call once.
-	CallID string `json:"call_id,omitempty"`
+type clientProbe struct {
+	Sent     bool `json:"sent,omitempty"`
+	Attempts int  `json:"attempts,omitempty"`
+	// Rejected counts 2xx answers without a receipt, such as from a daemon too old to send them. Six stop the
+	// check for the day; failures and requests that got no answer only extend the backoff.
+	Rejected int       `json:"rejected,omitempty"`
+	Next     time.Time `json:"next"`
 }
-
-var DefaultClientGate = &ClientGate{}
 
 func (g *ClientGate) clock() time.Time {
 	if g.now != nil {
@@ -77,511 +65,246 @@ func (g *ClientGate) clock() time.Time {
 	return time.Now()
 }
 
-func (g *ClientGate) lockIO(ctx context.Context) bool {
-	g.ioMuOnce.Do(func() {
-		g.ioMu = make(chan struct{}, 1)
-		g.ioMu <- struct{}{}
-	})
-	if ctx.Err() != nil {
-		return false
+// current returns today's receipts for the current data directory, dropping memory from another file or day.
+// Callers hold g.mu.
+func (g *ClientGate) current() *clientState {
+	path := filepath.Join(config.DataDir(), clientStateFile)
+	day := g.clock().UTC().Format(time.DateOnly)
+	if g.path != path || g.state.Day != day {
+		g.path, g.loaded = path, false
+		g.state = clientState{Day: day, Endpoints: map[string]*clientEndpoint{}}
 	}
-	select {
-	case <-ctx.Done():
-		return false
-	case <-g.ioMu:
-		if ctx.Err() != nil {
-			g.unlockIO()
-			return false
-		}
+	return &g.state
+}
+
+func (s *clientState) endpoint(scope string) *clientEndpoint {
+	e := s.Endpoints[scope]
+	if e == nil {
+		e = &clientEndpoint{}
+		s.Endpoints[scope] = e
+	}
+	if e.Probes == nil {
+		e.Probes = map[string]clientProbe{}
+	}
+	return e
+}
+
+// probeOpen reports whether the surface's app_opened check could still send today.
+func (e *clientEndpoint) probeOpen(surface string) bool {
+	if e == nil {
 		return true
 	}
+	p := e.Probes[surface]
+	return !e.Disabled && !p.Sent && p.Rejected < maxProbeRejections
 }
 
-func (g *ClientGate) unlockIO() {
-	g.ioMu <- struct{}{}
+// probeDue also waits out backoff, which an attempt in flight counts as, so only the lock holder sends.
+func (e *clientEndpoint) probeDue(surface string, now time.Time) bool {
+	return e.probeOpen(surface) && (e == nil || !now.Before(e.Probes[surface].Next))
 }
 
-// ReadyEvent checks memory only, so callers can gate work before scheduling a send.
-func (g *ClientGate) ReadyEvent(scope, event, surface, screen string) bool {
+// Ready reports whether the daemon may still want reports today. It reads memory only, so input paths can call it.
+func (g *ClientGate) Ready(scope string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.unsupported {
-		return false
-	}
-	if g.path != filepath.Join(config.DataDir(), "telemetry-client.json") || g.state.Day != g.clock().UTC().Format(time.DateOnly) {
-		return true
-	}
-	endpoint := g.state.Endpoints[scope]
-	if endpoint == nil {
-		return true
-	}
-	a := endpoint.Events[event+":"+surface+":"+screen]
-	if event == EventAgentActive {
-		// Agent calls queue during backoff; postAgentCalls paces their delivery.
-		return !endpoint.Disabled && a.Rejected < 6
-	}
-	return !endpoint.Disabled && !a.Sent && a.Rejected < 6 && !g.clock().Before(a.Next)
+	e := g.current().Endpoints[scope]
+	return e == nil || !e.Disabled
 }
 
-// AwaitProbe reports whether endpoint activity may follow a successful receipt
-// for the event that checks whether the daemon accepts telemetry. While a
-// reservation for that event is unsettled, it rereads the shared receipt until
-// its sender settles it, its lease ends, or ctx ends.
-func (g *ClientGate) AwaitProbe(ctx context.Context, scope, event, surface string) bool {
-	key := event + ":" + surface + ":"
-	for first := true; ; first = false {
-		ready, inFlight, leaseUntil := g.probeState(scope, key)
-		if ready || !inFlight {
-			return ready
-		}
-		if !first {
-			if !g.clock().Before(leaseUntil) {
-				return false
-			}
-			select {
-			case <-ctx.Done():
-				return false
-			case <-time.After(receiptPollInterval):
-			}
-		}
-		// Another sender may have settled the probe since this process last read the file.
-		if !g.update(ctx, func(*clientState) {}) {
-			return false
-		}
+// Load reads the shared receipts into memory.
+func (g *ClientGate) Load(ctx context.Context) {
+	if unlock, ok := g.lock(ctx); ok {
+		defer unlock()
+		g.merge()
 	}
 }
 
-func (g *ClientGate) probeState(scope, key string) (ready, inFlight bool, leaseUntil time.Time) {
+// Probe sends the day's app_opened check for surface unless a receipt, an opt-out, or backoff covers it.
+// It holds the receipt lock through the request, so processes started together send one check and
+// the rest read its result. If ctx ends first the report is dropped.
+func (g *ClientGate) Probe(ctx context.Context, client *http.Client, scope, url, surface string) {
 	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.unsupported {
-		return false, false, time.Time{}
-	}
-	if g.path != filepath.Join(config.DataDir(), "telemetry-client.json") || g.state.Day != g.clock().UTC().Format(time.DateOnly) {
-		return false, false, time.Time{}
-	}
-	endpoint := g.state.Endpoints[scope]
-	if endpoint == nil || endpoint.Disabled {
-		return false, false, time.Time{}
-	}
-	a := endpoint.Events[key]
-	return a.Sent, a.InFlight, a.LeaseUntil
-}
-
-// Load primes memory before callers register activity callbacks. It reads only
-// while it can take the receipt lock at once: a writer holding the lock may be
-// replacing the file, and an open reader blocks that replacement on Windows.
-// Without a read, the first update reads the file under the lock.
-func (g *ClientGate) Load() {
-	if !g.lockIO(context.Background()) {
+	open := g.current().Endpoints[scope].probeOpen(surface)
+	g.mu.Unlock()
+	if !open {
 		return
 	}
-	defer g.unlockIO()
-	path := filepath.Join(config.DataDir(), "telemetry-client.json")
-	var stored clientState
-	unsupported := false
-	lock := flock.New(path + ".lock")
-	if locked, err := lock.TryLock(); locked && err == nil {
-		data, err := os.ReadFile(path)
-		_ = lock.Unlock()
-		if err == nil {
-			if json.Unmarshal(data, &stored) != nil {
-				stored = clientState{}
-			} else if stored.Version > clientStateVersion {
-				unsupported = true
-				stored = clientState{}
-			} else if stored.Version < clientStateVersion {
-				stored = clientState{}
-			} else {
-				stored.normalize()
-			}
-		}
+	unlock, ok := g.lock(ctx)
+	if !ok {
+		return
 	}
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.path = path
-	g.state = stored
-	g.unsaved, g.unsavedFrom = false, nil
-	g.unsupported = unsupported
-}
-
-// update applies change under the receipt lock and saves it. Without usable storage, the change
-// stays in memory until another process changes the file. The file then wins, because that
-// process may have queued or settled calls meanwhile; an unsettled call is resent under its ID
-// and the daemon counts it once.
-func (g *ClientGate) update(ctx context.Context, change func(*clientState)) bool {
-	applied, _ := g.updateSaved(ctx, change)
-	return applied
-}
-
-// updateSaved also reports unsaved when a failed write left the change only in memory.
-func (g *ClientGate) updateSaved(ctx context.Context, change func(*clientState)) (applied, unsaved bool) {
-	if !g.lockIO(ctx) {
-		return false, false
-	}
-	defer g.unlockIO()
-	path := filepath.Join(config.DataDir(), "telemetry-client.json")
-	var lock *flock.Flock
-	if os.MkdirAll(filepath.Dir(path), 0o700) == nil {
-		lock = flock.New(path + ".lock")
-		lockCtx, cancel := context.WithTimeout(ctx, NotificationTimeout)
-		locked, err := lock.TryLockContext(lockCtx, receiptPollInterval)
-		cancel()
-		// A wait that ran out or was canceled says nothing about storage, so memory stays as it is.
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || (!locked && err == nil) {
-			return false, false
-		}
-		if err != nil {
-			lock = nil
-		} else {
-			held := lock
-			defer func() { _ = held.Unlock() }()
-		}
-	}
-	var stored clientState
-	var raw []byte
-	loaded := false
-	unsupported := false
-	if lock != nil {
-		data, err := os.ReadFile(path)
-		if err == nil {
-			raw = data
-			if json.Unmarshal(data, &stored) == nil {
-				if stored.Version > clientStateVersion {
-					unsupported = true
-				} else {
-					if stored.Version < clientStateVersion {
-						stored = clientState{}
-					}
-					stored.normalize()
-					loaded = true
-				}
-			}
-		} else if !errors.Is(err, os.ErrNotExist) {
-			lock = nil
-		}
-	}
-	if unsupported {
-		g.mu.Lock()
-		g.unsupported = true
-		g.mu.Unlock()
-		return false, false
-	}
-	g.mu.Lock()
-	if g.path != path {
-		g.state = clientState{}
-		g.path = path
-		g.unsaved, g.unsavedFrom = false, nil
-		g.unsupported = false
-	}
-	if loaded && (!g.unsaved || !bytes.Equal(raw, g.unsavedFrom)) {
-		g.state = stored
-		g.unsaved, g.unsavedFrom = false, nil
-	}
-	day := g.clock().UTC().Format(time.DateOnly)
-	if g.state.Day != day || g.state.Endpoints == nil {
-		g.state = clientState{Version: clientStateVersion, Day: day, Endpoints: map[string]*clientEndpointState{}}
-	}
-	before, _ := json.Marshal(g.state, json.Deterministic(true))
-	g.unsupported = false
-	change(&g.state)
-	data, err := json.Marshal(g.state, json.Deterministic(true))
-	unchanged := err == nil && bytes.Equal(before, data)
-	g.mu.Unlock()
-	if unchanged || lock == nil || err != nil {
-		return true, false
-	}
-	if !writeReceipts(path, data) {
-		g.unsaved, g.unsavedFrom = true, raw
-		return true, true
-	}
-	g.unsaved, g.unsavedFrom = false, nil
-	return true, false
-}
-
-func writeReceipts(path string, data []byte) bool {
-	f, err := os.CreateTemp(filepath.Dir(path), ".telemetry-client-*")
-	if err != nil {
-		return false
-	}
-	defer func() { _ = os.Remove(f.Name()) }()
-	_, err = f.Write(data)
-	if closeErr := f.Close(); err == nil {
-		err = closeErr
-	}
-	if err == nil {
-		err = atomicfile.Replace(f.Name(), path)
-	}
-	return err == nil
-}
-
-func (g *ClientGate) updateMemory(ctx context.Context, change func(*clientState)) bool {
-	if !g.lockIO(ctx) {
-		return false
-	}
-	defer g.unlockIO()
-	path := filepath.Join(config.DataDir(), "telemetry-client.json")
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.unsupported {
-		return false
-	}
-	if g.path != path {
-		g.state = clientState{}
-		g.path = path
-		g.unsaved, g.unsavedFrom = false, nil
-		g.unsupported = false
-	}
-	day := g.clock().UTC().Format(time.DateOnly)
-	if g.state.Day != day || g.state.Endpoints == nil {
-		g.state = clientState{Version: clientStateVersion, Day: day, Endpoints: map[string]*clientEndpointState{}}
-	}
-	change(&g.state)
-	return true
-}
-
-// Post reserves daily events and serializes agent notifications before sending.
-func (g *ClientGate) Post(ctx context.Context, client *http.Client, scope, url, event string, props map[string]any, daily bool) (posthog.Status, error) {
-	if !daily && event == EventAgentActive {
-		return g.postAgentCalls(ctx, client, scope, url, event, props)
-	}
-	surface, _ := props[PropertySurface].(string)
-	screen, _ := props[PropertyScreen].(string)
-	key := event + ":" + surface + ":" + screen
-	claimed := false
-	var sendingDay string
-	g.update(ctx, func(state *clientState) {
-		endpoint := state.endpoint(scope)
-		attempt := endpoint.Events[key]
+	defer unlock()
+	g.merge()
+	send := false
+	g.commit(scope, func(e *clientEndpoint) bool {
 		now := g.clock()
-		if endpoint.Disabled || attempt.Sent || attempt.Rejected >= 6 || now.Before(attempt.Next) {
-			return
+		if !e.probeDue(surface, now) {
+			return false
 		}
-		sendingDay = state.Day
-		claimed = true
-		if !daily {
-			return
-		}
-		attempt.Attempts++
-		attempt.Next = now.Add(backoffDelay(attempt.Attempts))
-		attempt.InFlight = true
-		attempt.LeaseUntil = now.Add(NotificationTimeout)
-		endpoint.Events[key] = attempt
+		p := e.Probes[surface]
+		p.Attempts++
+		p.Next = now.Add(backoffDelay(p.Attempts))
+		e.Probes[surface] = p
+		send = true
+		return true
 	})
-	if !claimed {
+	if !send {
+		return
+	}
+	answers := &lastAnswer{base: client.Transport}
+	answering := *client
+	answering.Transport = answers
+	status, err := posthog.PostEvent(ctx, &answering, url, EventAppOpened, map[string]any{PropertySurface: surface})
+	if err != nil {
+		if answers.status >= 200 && answers.status < 300 {
+			g.commit(scope, func(e *clientEndpoint) bool {
+				p := e.Probes[surface]
+				p.Rejected++
+				e.Probes[surface] = p
+				return true
+			})
+		}
+		return
+	}
+	g.commit(scope, func(e *clientEndpoint) bool {
+		if status == posthog.StatusDisabled {
+			e.Disabled = true
+		} else {
+			p := e.Probes[surface]
+			p.Sent = true
+			e.Probes[surface] = p
+		}
+		return true
+	})
+}
+
+// Post sends one report unless the daemon is disabled; callers run Probe first, so a report waits only
+// for an attempt in flight. A disabled reply from any route is saved.
+func (g *ClientGate) Post(ctx context.Context, client *http.Client, scope, url, event string, props map[string]any) (posthog.Status, error) {
+	if !g.isLoaded() {
+		g.Load(ctx)
+	}
+	if !g.Ready(scope) {
 		return posthog.StatusSkipped, nil
 	}
 	status, err := posthog.PostEvent(ctx, client, url, event, props)
-	updateCtx := ctx
-	if err != nil {
-		var cancel context.CancelFunc
-		updateCtx, cancel = context.WithTimeout(context.Background(), NotificationTimeout)
-		defer cancel()
-	}
-	change := func(state *clientState) {
-		if state.Day != sendingDay {
-			return
-		}
-		endpoint := state.endpoint(scope)
-		if status == posthog.StatusDisabled {
-			endpoint.Disabled = true
-		}
-		if err != nil {
-			a := endpoint.Events[key]
-			if a.Sent {
-				return
-			}
-			if !daily {
-				a.Attempts++
-			}
-			if rejected(err) {
-				a.Rejected++
-			}
-			a.Next = g.clock().Add(backoffDelay(a.Attempts))
-			a.InFlight = false
-			a.LeaseUntil = time.Time{}
-			endpoint.Events[key] = a
-		}
-		if err == nil {
-			if daily {
-				endpoint.Events[key] = clientAttempt{Sent: true}
-			} else {
-				delete(endpoint.Events, key)
-			}
-		}
-	}
-	updated := g.update(updateCtx, change)
-	if !updated && (daily || err != nil || status == posthog.StatusDisabled) {
-		fallbackCtx, cancel := context.WithTimeout(context.Background(), NotificationTimeout)
-		defer cancel()
-		g.updateMemory(fallbackCtx, change)
+	if status == posthog.StatusDisabled {
+		g.disable(ctx, scope)
 	}
 	return status, err
 }
 
-// postAgentCalls queues each call before network work so process exit leaves it retryable.
-func (g *ClientGate) postAgentCalls(ctx context.Context, client *http.Client, scope, url, event string, props map[string]any) (posthog.Status, error) {
-	surface, _ := props[PropertySurface].(string)
-	screen, _ := props[PropertyScreen].(string)
-	key := event + ":" + surface + ":" + screen
-	claimed := false
-	var sendingDay, callID string
-	updated := g.update(ctx, func(state *clientState) {
-		endpoint := state.endpoint(scope)
-		attempt := endpoint.Events[key]
-		now := g.clock()
-		if endpoint.Disabled {
-			return
-		}
-		// An expired lease means its sender stopped waiting; the call keeps its ID, so a replay counts once.
-		if attempt.InFlight && !now.Before(attempt.LeaseUntil) {
-			leaseUntil := attempt.LeaseUntil
-			if leaseUntil.IsZero() {
-				leaseUntil = now
-			}
-			attempt.InFlight = false
-			attempt.LeaseUntil = time.Time{}
-			attempt.Attempts++
-			attempt.Next = leaseUntil.Add(backoffDelay(attempt.Attempts))
-		}
-		if attempt.Rejected >= 6 {
-			endpoint.Events[key] = attempt
-			return
-		}
-		attempt.Pending++
-		if attempt.InFlight || now.Before(attempt.Next) {
-			endpoint.Events[key] = attempt
-			return
-		}
-		attempt.InFlight = true
-		attempt.LeaseUntil = now.Add(NotificationTimeout)
-		if attempt.CallID == "" {
-			attempt.CallID = rand.Text()
-		}
-		endpoint.Events[key] = attempt
-		sendingDay, callID = state.Day, attempt.CallID
-		claimed = true
-	})
-	if !updated || !claimed {
-		return posthog.StatusSkipped, nil
-	}
-	return g.sendPendingAgentCalls(ctx, client, scope, url, event, props, key, sendingDay, callID)
+func (g *ClientGate) isLoaded() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.current()
+	return g.loaded
 }
 
-func (g *ClientGate) sendPendingAgentCalls(ctx context.Context, client *http.Client, scope, url, event string, props map[string]any, key, sendingDay, callID string) (posthog.Status, error) {
-	for {
-		status, err := posthog.PostEvent(ctx, client, withCallID(url, callID), event, props)
-		updateCtx := ctx
-		if err != nil {
-			var cancel context.CancelFunc
-			updateCtx, cancel = context.WithTimeout(context.Background(), NotificationTimeout)
-			defer cancel()
-		}
-		sendNext := false
-		finish := func(state *clientState) {
-			if state.Day != sendingDay {
-				return
-			}
-			endpoint := state.Endpoints[scope]
-			if endpoint == nil {
-				return
-			}
-			if status == posthog.StatusDisabled {
-				endpoint.Disabled = true
-				delete(endpoint.Events, key)
-				return
-			}
-			attempt, ok := endpoint.Events[key]
-			// Another sender already settled this call after its lease expired.
-			if !ok || attempt.CallID != callID {
-				return
-			}
-			if err != nil {
-				attempt.Attempts++
-				if rejected(err) {
-					attempt.Rejected++
-				}
-				attempt.Next = g.clock().Add(backoffDelay(attempt.Attempts))
-				attempt.InFlight = false
-				attempt.LeaseUntil = time.Time{}
-				endpoint.Events[key] = attempt
-				return
-			}
-			if attempt.Pending > 0 {
-				attempt.Pending--
-			}
-			attempt.Attempts, attempt.Rejected = 0, 0
-			attempt.Next = time.Time{}
-			attempt.InFlight = false
-			attempt.LeaseUntil = time.Time{}
-			attempt.CallID = ""
-			if attempt.Pending > 0 {
-				attempt.InFlight = true
-				attempt.LeaseUntil = g.clock().Add(NotificationTimeout)
-				attempt.CallID = rand.Text()
-				callID = attempt.CallID
-				endpoint.Events[key] = attempt
-				sendNext = true
-			} else {
-				delete(endpoint.Events, key)
-			}
-		}
-		applied, unsaved := g.updateSaved(updateCtx, finish)
-		if !applied {
-			sendNext = false
-			fallbackCtx, cancel := context.WithTimeout(context.Background(), NotificationTimeout)
-			g.updateMemory(fallbackCtx, finish)
-			cancel()
-		}
-		// The file still names the settled call, so a later replay would assign the next call a
-		// second ID. Leave it queued until its own ID is saved.
-		if unsaved {
-			sendNext = false
-		}
-		if err != nil || !sendNext {
-			return status, err
-		}
+// disable keeps the opt-out in memory first, so an unwritable file loses nothing.
+func (g *ClientGate) disable(ctx context.Context, scope string) {
+	g.mu.Lock()
+	g.current().endpoint(scope).Disabled = true
+	g.mu.Unlock()
+	// The request may have used up ctx; saving gets its own bound.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), NotificationTimeout)
+	defer cancel()
+	if unlock, ok := g.lock(ctx); ok {
+		defer unlock()
+		g.merge()
+		g.commit(scope, func(e *clientEndpoint) bool {
+			e.Disabled = true
+			return true
+		})
 	}
 }
 
-// withCallID adds the agent call's ID to the daemon route.
-func withCallID(raw, callID string) string {
-	u, err := url.Parse(raw)
+// lock takes the cross-process receipt lock; false means ctx ended first. When storage is unusable
+// there is nothing to wait for, and memory alone carries the receipts.
+func (g *ClientGate) lock(ctx context.Context) (func(), bool) {
+	g.mu.Lock()
+	g.current()
+	path := g.path
+	g.mu.Unlock()
+	_ = os.MkdirAll(filepath.Dir(path), 0o700)
+	l := flock.New(path + ".lock")
+	if locked, _ := l.TryLockContext(ctx, receiptPollInterval); !locked {
+		if ctx.Err() != nil {
+			return nil, false
+		}
+		return func() {}, true
+	}
+	return func() { _ = l.Unlock() }, true
+}
+
+// merge folds the saved receipts into memory, keeping whichever side has more: opt-outs and sent checks
+// stick, attempts only grow, and backoff only lengthens. Unreadable or other-day content reads as empty.
+// Callers hold the receipt lock.
+func (g *ClientGate) merge() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	state := g.current()
+	g.loaded = true
+	data, err := os.ReadFile(g.path)
 	if err != nil {
-		return raw
-	}
-	q := u.Query()
-	q.Set("call", callID)
-	u.RawQuery = q.Encode()
-	return u.String()
-}
-
-func (s *clientState) endpoint(scope string) *clientEndpointState {
-	if s.Endpoints[scope] == nil {
-		s.Endpoints[scope] = &clientEndpointState{Events: map[string]clientAttempt{}}
-	} else if s.Endpoints[scope].Events == nil {
-		s.Endpoints[scope].Events = map[string]clientAttempt{}
-	}
-	return s.Endpoints[scope]
-}
-
-func (s *clientState) normalize() {
-	if s.Endpoints == nil {
-		s.Endpoints = map[string]*clientEndpointState{}
 		return
 	}
-	for _, endpoint := range s.Endpoints {
-		if endpoint != nil && endpoint.Events == nil {
-			endpoint.Events = map[string]clientAttempt{}
+	var saved clientState
+	if json.Unmarshal(data, &saved) != nil || saved.Day != state.Day {
+		return
+	}
+	for scope, se := range saved.Endpoints {
+		if se == nil {
+			continue
+		}
+		e := state.endpoint(scope)
+		e.Disabled = e.Disabled || se.Disabled
+		for surface, sp := range se.Probes {
+			p := e.Probes[surface]
+			p.Sent = p.Sent || sp.Sent
+			p.Attempts = max(p.Attempts, sp.Attempts)
+			p.Rejected = max(p.Rejected, sp.Rejected)
+			if sp.Next.After(p.Next) {
+				p.Next = sp.Next
+			}
+			e.Probes[surface] = p
 		}
 	}
 }
 
-// rejected reports a failure the daemon answered, such as a reply without a receipt. A request
-// that got no answer, such as a refused connection or a timeout, fails with a *url.Error.
-func rejected(err error) bool {
-	_, unanswered := errors.AsType[*url.Error](err)
-	return err != nil && !unanswered
+// commit applies change to memory and, when it reports a change, saves the receipts. Callers hold the receipt lock.
+func (g *ClientGate) commit(scope string, change func(*clientEndpoint) bool) {
+	g.mu.Lock()
+	state := g.current()
+	if !change(state.endpoint(scope)) {
+		g.mu.Unlock()
+		return
+	}
+	path := g.path
+	data, err := json.Marshal(state)
+	g.mu.Unlock()
+	if err == nil {
+		_ = atomicfile.WriteFile(path, data, atomicfile.WithPrivate(), atomicfile.WithoutSync())
+	}
+}
+
+// lastAnswer records the status of the last response. A 2xx answer that still fails is a daemon without
+// receipts, such as an older one; 5xx answers and requests that got no answer only back off.
+type lastAnswer struct {
+	base   http.RoundTripper
+	status int
+}
+
+func (l *lastAnswer) RoundTrip(req *http.Request) (*http.Response, error) {
+	base := l.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	resp, err := base.RoundTrip(req)
+	if resp != nil {
+		l.status = resp.StatusCode
+	}
+	return resp, err
 }
 
 func backoffDelay(attempts int) time.Duration {

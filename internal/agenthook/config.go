@@ -158,7 +158,7 @@ func resolveDroidOptions(cli Options, changed map[string]bool) (Options, error) 
 }
 
 func applyConfig(opts *Options) error {
-	cfg, err := config.LoadGlobalFrom(opts.ConfigPath)
+	cfg, err := config.LoadGlobalClientFrom(opts.ConfigPath)
 	if err != nil {
 		return fmt.Errorf("load roborev config %s: %w", opts.ConfigPath, err)
 	}
@@ -175,7 +175,7 @@ func applyConfig(opts *Options) error {
 }
 
 func applyDroidConfig(opts *Options) error {
-	cfg, err := config.LoadGlobalFrom(opts.ConfigPath)
+	cfg, err := config.LoadGlobalClientFrom(opts.ConfigPath)
 	if err != nil {
 		return fmt.Errorf("load roborev config %s: %w", opts.ConfigPath, err)
 	}

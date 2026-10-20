@@ -28,7 +28,7 @@ func (s *Server) registerTelemetryCaptureRoute(mux *http.ServeMux) {
 			return
 		}
 		// Clients stop waiting shortly after exit, so their disconnect must not drop the count.
-		status, err := s.recordAgentCall(context.WithoutCancel(r.Context()), r.URL.Query().Get("call"))
+		status, err := s.recordAgentCall(context.WithoutCancel(r.Context()))
 		if err != nil {
 			http.Error(w, "record agent activity", http.StatusInternalServerError)
 			return

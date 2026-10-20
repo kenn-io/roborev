@@ -4,9 +4,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -14,7 +13,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/kit/telemetry/posthog"
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/telemetry"
@@ -23,6 +21,7 @@ import (
 type screenRecordingTransport struct {
 	events  []string
 	screens []string
+	opened  int // app_opened checks; events holds every other report
 	fail    bool
 	status  string
 }
@@ -36,9 +35,12 @@ func (s *screenRecordingTransport) RoundTrip(req *http.Request) (*http.Response,
 		if err := json.NewDecoder(req.Body).Decode(&event); err != nil {
 			return nil, err
 		}
-		if event.Event == telemetry.EventScreenViewed {
+		switch event.Event {
+		case telemetry.EventScreenViewed:
 			s.screens = append(s.screens, event.Properties[telemetry.PropertyScreen])
-		} else {
+		case telemetry.EventAppOpened:
+			s.opened++
+		default:
 			s.events = append(s.events, event.Event)
 		}
 	}
@@ -59,83 +61,48 @@ func (s *screenRecordingTransport) RoundTrip(req *http.Request) (*http.Response,
 func updateScreenTestModel(m *model, msg tea.Msg) {
 	result, cmd := m.Update(msg)
 	*m = result.(model)
-	for _, msg := range collectMsgs(cmd) {
-		switch msg.(type) {
-		case screenDeliveryMsg:
-			result, _ = m.Update(msg)
-			*m = result.(model)
-		}
+	collectMsgs(cmd)
+}
+
+//nolint:paralleltest // t.Setenv of telemetry opt-out variables
+func TestScreenFailureIsNotRetriedByHeldKey(t *testing.T) {
+	enableTelemetryEnv(t)
+	for _, tt := range []struct {
+		name, screen string
+		initial      bool
+	}{
+		{"initial queue", "queue", true}, {"help after toggle", "help", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
+			transport := &screenRecordingTransport{fail: true}
+			m.client.Transport = transport
+			if tt.initial {
+				updateScreenTestModel(&m, m.reportScreenViewed()())
+			} else {
+				updateScreenTestModel(&m, keyPressMsg('?'))
+			}
+			for range 50 {
+				updateScreenTestModel(&m, keyPressMsg('x'))
+			}
+			assert.Equal(t, []string{tt.screen}, transport.screens)
+			assert.Contains(t, m.screensSent, tt.screen)
+		})
 	}
 }
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables
-func TestInitialScreenFailureRetriesOnInput(t *testing.T) {
+func TestScreenWaitsForTheProbeBeforeSending(t *testing.T) {
 	enableTelemetryEnv(t)
-	synctest.Test(t, func(t *testing.T) {
-		m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
-		transport := &screenRecordingTransport{}
-		m.client.Transport = transport
-		require.True(t, m.awaitTelemetryProbe())
-		transport.fail = true
-		updateScreenTestModel(&m, m.reportScreenViewed()())
-		for range 100 {
-			updateScreenTestModel(&m, keyPressMsg('x'))
-		}
-		assert.Equal(t, []string{"queue"}, transport.screens)
-		time.Sleep(time.Second)
-		transport.fail = false
-		updateScreenTestModel(&m, keyPressMsg('x'))
-		assert.Equal(t, []string{"queue", "queue"}, transport.screens)
-	})
-}
-
-//nolint:paralleltest // telemetry environment and gate
-func TestSkippedScreenDeliveryCanRetryAfterBackoff(t *testing.T) {
-	enableTelemetryEnv(t)
-	synctest.Test(t, func(t *testing.T) {
-		m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
-		transport := &screenRecordingTransport{}
-		m.client.Transport = transport
-		require.True(t, m.awaitTelemetryProbe())
-		transport.fail = true
-		first, overlapping := m.reportScreenViewed(), m.reportScreenViewed()
-		require.NotNil(t, first)
-		require.NotNil(t, overlapping)
-		first()
-		msg := overlapping().(screenDeliveryMsg)
-		require.Equal(t, posthog.StatusSkipped, msg.status)
-		updateScreenTestModel(&m, msg)
-		time.Sleep(time.Second)
-		transport.fail = false
-		updateScreenTestModel(&m, keyPressMsg('x'))
-		assert.Equal(t, []string{"queue", "queue"}, transport.screens)
-	})
-}
-
-//nolint:paralleltest // t.Setenv of telemetry opt-out variables
-func TestSkippedStartupScreenCanRetryAfterBackoff(t *testing.T) {
-	enableTelemetryEnv(t)
-	synctest.Test(t, func(t *testing.T) {
-		m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
-		transport := &screenRecordingTransport{}
-		m.client.Transport = transport
-		day := time.Now().UTC().Format(time.DateOnly)
-		next := time.Now().UTC().Add(500 * time.Millisecond).Format(time.RFC3339Nano)
-		receipt := `{"version":1,"day":"` + day + `","endpoints":{"` + m.endpoint.TelemetryScope() + `":{"events":{"screen_viewed:tui:queue":{"attempts":1,"next":"` + next + `"}}}}}`
-		require.NoError(t, os.WriteFile(filepath.Join(os.Getenv("ROBOREV_DATA_DIR"), "telemetry-client.json"), []byte(receipt), 0o600))
-		telemetry.DefaultClientGate.Load()
-
-		startup := m.reportStartupTelemetry()
-		require.NotNil(t, startup)
-		msg := startup().(screenDeliveryMsg)
-		require.Equal(t, posthog.StatusSkipped, msg.status)
-		updateScreenTestModel(&m, msg)
-		assert.NotContains(t, m.screensSent, "queue")
-
-		time.Sleep(time.Second)
-		updateScreenTestModel(&m, keyPressMsg('x'))
-		assert.Equal(t, []string{"queue"}, transport.screens)
-	})
+	m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
+	transport := &screenRecordingTransport{}
+	m.client.Transport = transport
+	cmd := m.postScreen("help")
+	require.NotNil(t, cmd, "input returns a command without waiting on the daemon")
+	assert.Empty(t, transport.screens)
+	cmd()
+	assert.Equal(t, 1, transport.opened)
+	assert.Equal(t, []string{"help"}, transport.screens)
 }
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables
@@ -192,4 +159,46 @@ func TestSplitNavigationReportsReviewOncePerDay(t *testing.T) {
 		require.Equal(t, []string{"queue", "review"}, m.screensShown())
 		assert.Equal(t, []string{"review"}, transport.screens)
 	})
+}
+
+// holdingTransport answers app_opened only after release and records the order of reports.
+type holdingTransport struct {
+	release chan struct{}
+	mu      sync.Mutex
+	order   []string
+}
+
+func (h *holdingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	var event struct {
+		Event string `json:"event"`
+	}
+	_ = json.NewDecoder(req.Body).Decode(&event)
+	if event.Event == telemetry.EventAppOpened {
+		<-h.release
+	}
+	h.mu.Lock()
+	h.order = append(h.order, event.Event)
+	h.mu.Unlock()
+	return &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(strings.NewReader(`{"status":"queued"}`)), Header: make(http.Header)}, nil
+}
+
+//nolint:paralleltest // t.Setenv of telemetry opt-out variables
+func TestScreenVisitedWhileProbePendingIsSentOnceItSettles(t *testing.T) {
+	enableTelemetryEnv(t)
+	m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
+	transport := &holdingTransport{release: make(chan struct{})}
+	m.client.Transport = transport
+
+	var wg sync.WaitGroup
+	for _, cmd := range []tea.Cmd{m.reportAppOpened(), m.postScreen("help")} {
+		wg.Go(func() { cmd() })
+	}
+	time.Sleep(50 * time.Millisecond)
+	transport.mu.Lock()
+	assert.Empty(t, transport.order, "the screen waits for the probe")
+	transport.mu.Unlock()
+
+	close(transport.release)
+	wg.Wait()
+	assert.Equal(t, []string{telemetry.EventAppOpened, telemetry.EventScreenViewed}, transport.order)
 }

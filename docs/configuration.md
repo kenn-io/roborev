@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-03
+last_edited: 2026-10-17
 title: Configuration
 description: Configure roborev behavior globally and per-repository
 ---
@@ -13,6 +13,23 @@ roborev uses a layered configuration system. Settings are resolved in this order
 1. **Project defaults** in global `projects` tables, matched by Git remote
 1. **Global** `~/.roborev/config.toml`
 1. **Defaults** (auto-detect agent, thorough reasoning for reviews)
+
+## Validation scope
+
+Client commands retain their configured workflow settings when an unrelated
+`[web]`, `[remote]`, `[search]`, `[budget]`, or CI installation setting is
+invalid. Commands that read settings print a warning naming each invalid daemon
+section on stderr once per run. Shell completion, the post-commit hook, agent
+hooks, and the TUI stay silent. For example, an unavailable
+`web.auth_token_file` does not prevent
+`roborev config get hook_timeout_seconds --global` from returning its value.
+Malformed TOML and values with the wrong TOML type still fail to load.
+
+Daemon startup, configuration reloads, `roborev doctor`, and
+`roborev config validate --global` still reject invalid daemon settings. A
+failed reload keeps the previous configuration. `roborev config set --global`
+can repair an invalid setting, but rejects a write that leaves any daemon
+section invalid and keeps the file unchanged.
 
 ## The `config` Command
 
@@ -1941,10 +1958,10 @@ review, synthesis and compact output.
 
 - The TUI counts a read on key or mouse input while a loaded review is visible.
     Opening a review isn't a read until the next input. Quit keys `ctrl+c` and
-    `ctrl+d` stay silent; `q` on a loaded review counts. A transport error
-    allows another report on later input after backoff.
+    `ctrl+d` stay silent; `q` on a loaded review counts. A failed report isn't
+    retried on later input.
 - The browser reports a rendered Review tab on load and when focus or visibility
-    returns, with one request in flight at a time.
+    returns.
 - CLI reads include `show`, `wait`, `review --wait`, `compact --wait`, and
     nonquiet `fix` output. CLI fixes from `fix`, `refine`, and `analyze --fix`
     report `finding_fixed` when they commit. CLI actions require terminal output
@@ -1954,35 +1971,32 @@ review, synthesis and compact output.
     its installation ID. Without a local daemon, events are dropped. Reporting
     never starts a daemon.
 
-The daemon owns daily deduplication; client receipts suppress repeated requests.
+The daemon owns daily deduplication, so clients may repeat a report. After a
+restart, a client may send an action again.
 
-Client receipts are kept per daemon endpoint:
+Clients keep one receipt file per data directory, `telemetry-client.json`, with
+a `telemetry-client.json.lock` sidecar and atomic replacement. It holds only
+each daemon's `disabled` flag and its `app_opened` check state for the UTC day.
+Daemon keys are hashes, so the file stores no address or credential.
 
-- CLI and TUI receipts share `telemetry-client.json` in the data directory, with
-    a `telemetry-client.json.lock` sidecar and atomic replacement. Endpoint keys
-    are hashes, so the file stores no daemon address or credential.
-- A daily report saves its attempt before sending, so concurrent commands to one
-    endpoint share one request. A command that needs that receipt waits for the
-    other request to finish. `queued` and `skipped` settle the receipt;
-    `disabled` quiets reporting to that endpoint until the next UTC day.
-- Failed reports retry on later activity after 1 to 16 seconds. A daemon that
-    answers six times without a receipt, such as one too old to send receipts,
-    gets no more reports for that event until the next UTC day. A daemon that
-    doesn't answer is retried at most every 16 seconds.
-- When the file can't be read or written, receipts stay in process memory until
-    another process changes the file. The file then wins, because that process
-    may have queued or settled calls meanwhile. A newer-version file turns off
-    CLI, TUI and MCP reports until it's removed.
+- The first CLI or TUI to need the day's `app_opened` check holds the lock
+    through its request, so concurrent commands send one check and the rest read
+    its result. `queued` and `skipped` settle the check. `disabled` from any
+    route stops all reports to that daemon until the next UTC day.
+- Action, screen, session, and agent-call reports follow the check, send once,
+    and keep no stored counts. A failed check or report is retried on later
+    activity after 1 to 16 seconds. A daemon that answers a check with a 2xx but
+    no receipt, such as one too old to send receipts, gets no more checks that
+    day after six answers. A daemon that doesn't answer, or answers with an
+    error, is retried at most every 16 seconds.
+- When the file can't be read or written, receipts stay in process memory.
 - CLI and TUI exits wait at most 50 ms in total for reports; each send keeps its
     one-second deadline.
-- Each agent call carries an ID that a retry repeats. The daemon stores the
-    day's counted IDs with the daily count, so a retried call counts once, even
-    after a daemon restart. Calls made during a retry delay wait in a shared
-    queue, and each queued call is sent only after its ID is saved. The
-    agent-call route answers with the same 202 JSON receipts and stops reading
+- The agent-call route answers with the same 202 JSON receipts and stops reading
     the daily counter after call 101.
-- The browser keeps receipts in local storage through the shared kit-ui gate,
-    separately for each base path on an origin.
+- The browser keeps kit-ui's receipts in local storage, separately for each base
+    path on an origin. Actions queue in page memory until the daemon accepts
+    telemetry.
 
 The browser and TUI also report `screen_viewed` with a fixed `screen` name and
 `surface` of `web` or `tui`. Browser screens are `reviews` and `analytics`. TUI
@@ -1996,7 +2010,9 @@ a `telemetry-daily.json.lock` sidecar. An unreadable or newer-version claims
 file makes `screen_viewed` and core action reports fail until it's removed. Stop
 the daemon before deleting it. Deletion resets file claims; retired SQLite
 screen claims are unused. Counts mean the report was queued, not confirmed
-delivered to PostHog. The TUI retries a failed report on later input.
+delivered to PostHog. The TUI sends each screen once per day whether or not the
+daemon accepts it. The browser reports the visible screen on window focus and
+page change, and the daemon counts it once per day.
 
 Each event carries `install_age_hours`, the whole hours since the install ID was
 created, so short-lived installs such as test sandboxes can be filtered out.

@@ -59,9 +59,7 @@
   });
   setAppRuntime(runtime);
   provideReviewStores(stores);
-  onMount(() => {
-    return setupAppOpenedReporting();
-  });
+  onMount(setupAppOpenedReporting);
   $effect(() => reportScreenViewed(page));
 
   const polling = runtime.runCommand(stores.roborevDaemon.pollingEffect, {

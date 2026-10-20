@@ -118,7 +118,7 @@ func resolveWorkflowConfig(
 ) ghaction.WorkflowConfig {
 	cfg := ghaction.DefaultConfig()
 
-	globalCfg, _ := config.LoadGlobal()
+	globalCfg, _ := loadClientConfig()
 	repoCfg, _ := config.LoadRepoConfig(repoRoot)
 	cfg.Agents = config.ResolveCIWorkflowAgents(
 		agentFlag, repoCfg, globalCfg)
