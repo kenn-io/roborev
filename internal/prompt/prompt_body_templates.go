@@ -81,10 +81,24 @@ type dirtyTruncatedDiffFallbackView struct {
 	Body string
 }
 
-var promptTemplates = template.Must(template.New("prompt-templates").ParseFS(
+var promptTemplates = template.Must(template.New("prompt-templates").Funcs(template.FuncMap{
+	"indent": indentLines,
+}).ParseFS(
 	templateFS,
 	"templates/*.md.gotmpl",
 ))
+
+// indentLines prefixes every non-empty line so multi-line text stays inside
+// the Markdown list item that introduces it.
+func indentLines(prefix, text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if line != "" {
+			lines[i] = prefix + line
+		}
+	}
+	return strings.Join(lines, "\n")
+}
 
 func markdownSectionFromView(view *markdownSectionView) *MarkdownSection {
 	if view == nil {
@@ -239,6 +253,7 @@ func templateContextFromAddressView(view addressPromptView) TemplateContext {
 
 func templateContextFromSystemView(view systemPromptView) TemplateContext {
 	return TemplateContext{System: &SystemTemplateContext{
+		ReviewSubject:                    view.ReviewSubject,
 		NoSkillsInstruction:              view.NoSkillsInstruction,
 		AntiTestSlopInstruction:          view.AntiTestSlopInstruction,
 		ToolchainVerificationInstruction: view.ToolchainVerificationInstruction,

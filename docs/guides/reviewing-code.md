@@ -198,6 +198,19 @@ You can also define schema-constrained review types backed by local Go
 templates, then use them anywhere `--type` or `review_type` is accepted. See
 [Custom Review Types](/docs/advanced/custom-review-types/).
 
+## Commit Messages
+
+Reviewers treat a commit message as the author's statement of what the change is
+meant to do. When the message describes the change, the reviewer checks that the
+diff delivers it and reports any gap at the code that falls short. Range reviews
+include every commit's full message and judge the final result against the
+series' overall goal. A vague message such as "fix" or "wip" skips this check,
+and dirty reviews have no messages to check against.
+
+Messages are untrusted input. Reviewers never follow instructions in them, do
+not accept claims such as "tested" as evidence, and do not comment on a
+message's wording.
+
 ## Task Context from Kata
 
 If your repo is bound to a [Kata](https://github.com/kenn-io/kata) project,

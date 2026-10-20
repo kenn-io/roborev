@@ -34,14 +34,17 @@ func getSystemPrompt(agentName string, promptType string, now func() time.Time) 
 		templateType = "review"
 	}
 
+	view := systemPromptView{
+		ReviewSubject:                    reviewSubject(promptType),
+		NoSkillsInstruction:              noSkillsInstruction,
+		AntiTestSlopInstruction:          antiTestSlopInstruction,
+		ToolchainVerificationInstruction: toolchainVerificationInstruction,
+		CurrentDate:                      now().UTC().Format("2006-01-02"),
+	}
+
 	tmplName := fmt.Sprintf("%s_%s.md.gotmpl", agentName, templateType)
 	if _, err := templateFS.ReadFile("templates/" + tmplName); err == nil {
-		body, err := renderSystemPrompt(tmplName, systemPromptView{
-			NoSkillsInstruction:              noSkillsInstruction,
-			AntiTestSlopInstruction:          antiTestSlopInstruction,
-			ToolchainVerificationInstruction: toolchainVerificationInstruction,
-			CurrentDate:                      now().UTC().Format("2006-01-02"),
-		})
+		body, err := renderSystemPrompt(tmplName, view)
 		if err == nil {
 			return body
 		}
@@ -71,14 +74,22 @@ func getSystemPrompt(agentName string, promptType string, now func() time.Time) 
 		fallbackName = "default_review.md.gotmpl"
 	}
 
-	body, err := renderSystemPrompt(fallbackName, systemPromptView{
-		NoSkillsInstruction:              noSkillsInstruction,
-		AntiTestSlopInstruction:          antiTestSlopInstruction,
-		ToolchainVerificationInstruction: toolchainVerificationInstruction,
-		CurrentDate:                      now().UTC().Format("2006-01-02"),
-	})
+	body, err := renderSystemPrompt(fallbackName, view)
 	if err != nil {
 		return ""
 	}
 	return body
+}
+
+// reviewSubject names what a general code review covers, so the shared
+// templates can say how to use the commit messages that come with it.
+func reviewSubject(promptType string) string {
+	switch promptType {
+	case "review":
+		return "commit"
+	case "range", "dirty":
+		return promptType
+	default:
+		return ""
+	}
 }

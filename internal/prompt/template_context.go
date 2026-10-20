@@ -235,6 +235,7 @@ type RangeSubjectContext struct {
 type RangeEntryContext struct {
 	Commit  string
 	Subject string
+	Message string
 }
 
 type DirtySubjectContext struct {
@@ -361,6 +362,9 @@ func (c AddressTemplateContext) Clone() AddressTemplateContext {
 }
 
 type SystemTemplateContext struct {
+	// ReviewSubject is "commit", "range", or "dirty" for general code
+	// reviews, and empty for every other prompt type.
+	ReviewSubject                    string
 	NoSkillsInstruction              string
 	AntiTestSlopInstruction          string
 	ToolchainVerificationInstruction string

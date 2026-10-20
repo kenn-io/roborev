@@ -1,9 +1,7 @@
 package prompt
 
 import (
-	"bytes"
 	"context"
-	"encoding/xml"
 	"errors"
 	"fmt"
 	"log"
@@ -23,16 +21,23 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
+// xmlEscaper escapes the characters that could close a wrapper tag or an
+// attribute. Unlike xml.EscapeText it keeps newlines and tabs, so a
+// multi-line commit message or diff still reads as lines.
+var xmlEscaper = strings.NewReplacer(
+	"&", "&amp;",
+	"<", "&lt;",
+	">", "&gt;",
+	`"`, "&#34;",
+	"'", "&#39;",
+)
+
 // escapeXML escapes XML special characters so untrusted commit metadata
 // (subject, author, body) cannot break out of the <commit-message> /
 // <commit-messages> wrapper tags and inject synthetic structure into the
 // prompt.
 func escapeXML(s string) string {
-	var buf bytes.Buffer
-	if err := xml.EscapeText(&buf, []byte(s)); err != nil {
-		return "--unescapable-xml--"
-	}
-	return buf.String()
+	return xmlEscaper.Replace(s)
 }
 
 // MaxPromptSize is the legacy maximum size of a prompt in bytes (250KB).
@@ -986,7 +991,11 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 		short := gitrepo.ShortSHA(commitSHA)
 		info, err := git.GetCommitInfoCtx(b.context(), b.repoPath, commitSHA)
 		if err == nil {
-			entries = append(entries, commitRangeEntryView{Commit: short, Subject: escapeXML(info.Subject)})
+			entries = append(entries, commitRangeEntryView{
+				Commit:  short,
+				Subject: escapeXML(info.Subject),
+				Message: escapeXML(strings.TrimSpace(info.Body)),
+			})
 			kataMessages = append(kataMessages, info.Subject+"\n\n"+info.Body)
 			continue
 		}
