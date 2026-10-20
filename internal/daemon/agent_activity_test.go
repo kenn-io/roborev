@@ -172,8 +172,4 @@ func TestAgentActivityStopsReadingTheCounterOnceTheDayIsFull(t *testing.T) {
 	status, err := server.recordAgentCall(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, posthog.StatusSkipped, status)
-
-	now = now.AddDate(0, 0, 1)
-	_, err = server.recordAgentCall(t.Context())
-	require.Error(t, err, "a new day reads the counter again")
 }

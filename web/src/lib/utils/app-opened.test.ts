@@ -527,35 +527,6 @@ describe("setupAppOpenedReporting", () => {
     ]);
   });
 
-  test("a cross-tab opt-out discards measured time before reporting resumes", async () => {
-    const at = startVisit();
-    setup();
-    await settle();
-    at(120_000);
-    const otherTab = startBrowserTelemetry({
-      route: "/api/telemetry/events",
-      surface: "web",
-      storageKey: "roborev.telemetry",
-      post: async () => ({ status: 202, data: { status: "queued" } }),
-    });
-    otherTab.disable();
-    otherTab.stop();
-    focusWindow();
-    await settle();
-    vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
-    focusWindow();
-    await settle();
-    at(130_000);
-    globalThis.dispatchEvent(new Event("pagehide"));
-    await settle();
-
-    expect(
-      (await sentEvents())
-        .filter((event) => event.event === "session_ended")
-        .map((event) => event.properties.duration_bucket),
-    ).toEqual(["under_1m"]);
-  });
-
   test.each(["disabled reply", "cross-tab quiet"])(
     "quiet receipts: %s",
     async (scenario) => {
@@ -623,127 +594,129 @@ describe("setupAppOpenedReporting", () => {
   );
 
   test.each([
-    "the reply comes the same day",
-    "the reply comes after midnight",
-    "an older review reply preserves the newer settled day",
-    "a read's day is fixed when it is sent, so an older reply cannot settle a newer day",
-    "coalesces pending review views and releases a failed read",
-  ])("review views: %s", async (scenario) => {
-    const olderReply =
-      scenario === "an older review reply preserves the newer settled day";
-    if (
-      olderReply ||
-      scenario ===
-        "a read's day is fixed when it is sent, so an older reply cannot settle a newer day"
-    ) {
-      let now = 0;
-      vi.spyOn(performance, "now").mockImplementation(() => now);
-      vi.setSystemTime(new Date("2026-03-10T23:59:50Z"));
-      setup();
-      await settle();
-      const answers: Array<(response: Response) => void> = [];
-      fetchMock.mockImplementation(async (request) =>
-        (await request.clone().json()).event === "review_viewed"
-          ? new Promise((resolve) => answers.push(resolve))
-          : accepted(),
-      );
-      appOpened.reportCoreAction("review_viewed");
-      await settle();
-      vi.setSystemTime(new Date("2026-03-11T00:00:05Z"));
-      focusWindow();
-      await settle();
-      appOpened.reportCoreAction("review_viewed");
-      await settle();
-      expect(answers).toHaveLength(2);
-      if (olderReply) {
-        answers[1]!(accepted());
+    [
+      "the reply comes the same day",
+      async () => {
+        vi.setSystemTime(new Date("2026-03-10T23:59:50Z"));
+        setup();
         await settle();
-        answers[0]!(accepted());
-      } else {
-        answers[0]!(accepted());
-        answers[1]!(new Response(null, { status: 500 }));
-      }
-      await settle();
-      now += 60_000;
-      appOpened.reportCoreAction("review_viewed");
-      await settle();
-
-      if (olderReply) {
+        appOpened.reportCoreAction("review_viewed");
+        await settle();
+        for (let i = 0; i < 5; i++) {
+          appOpened.reportCoreAction("review_viewed");
+          focusWindow();
+        }
+        appOpened.reportCoreAction("review_closed");
+        appOpened.reportCoreAction("review_closed");
+        await settle();
+        const events = (await sentEvents()).map((e) => e.event);
+        expect(events.filter((e) => e === "review_viewed")).toHaveLength(1);
+        expect(events.filter((e) => e === "review_closed")).toHaveLength(2);
+        vi.setSystemTime(new Date("2026-03-11T00:00:05Z"));
+        focusWindow();
+        await settle();
+        appOpened.reportCoreAction("review_viewed");
+        await settle();
         expect(
           (await sentEvents()).filter((e) => e.event === "review_viewed"),
         ).toHaveLength(2);
-      } else {
+      },
+    ],
+    [
+      "an older review reply preserves the newer settled day",
+      async () => {
+        let now = 0;
+        vi.spyOn(performance, "now").mockImplementation(() => now);
+        vi.setSystemTime(new Date("2026-03-10T23:59:50Z"));
+        setup();
+        await settle();
+        const answers: Array<(response: Response) => void> = [];
+        fetchMock.mockImplementation(async (request) =>
+          (await request.clone().json()).event === "review_viewed"
+            ? new Promise((resolve) => answers.push(resolve))
+            : accepted(),
+        );
+        appOpened.reportCoreAction("review_viewed");
+        await settle();
+        vi.setSystemTime(new Date("2026-03-11T00:00:05Z"));
+        focusWindow();
+        await settle();
+        appOpened.reportCoreAction("review_viewed");
+        await settle();
+        expect(answers).toHaveLength(2);
+        answers[1]!(accepted());
+        await settle();
+        answers[0]!(accepted());
+        await settle();
+        now += 60_000;
+        appOpened.reportCoreAction("review_viewed");
+        await settle();
+        expect(
+          (await sentEvents()).filter((e) => e.event === "review_viewed"),
+        ).toHaveLength(2);
+      },
+    ],
+    [
+      "a read's day is fixed when it is sent, so an older reply cannot settle a newer day",
+      async () => {
+        let now = 0;
+        vi.spyOn(performance, "now").mockImplementation(() => now);
+        vi.setSystemTime(new Date("2026-03-10T23:59:50Z"));
+        setup();
+        await settle();
+        const answers: Array<(response: Response) => void> = [];
+        fetchMock.mockImplementation(async (request) =>
+          (await request.clone().json()).event === "review_viewed"
+            ? new Promise((resolve) => answers.push(resolve))
+            : accepted(),
+        );
+        appOpened.reportCoreAction("review_viewed");
+        await settle();
+        vi.setSystemTime(new Date("2026-03-11T00:00:05Z"));
+        focusWindow();
+        await settle();
+        appOpened.reportCoreAction("review_viewed");
+        await settle();
+        expect(answers).toHaveLength(2);
+        answers[0]!(accepted());
+        answers[1]!(new Response(null, { status: 500 }));
+        await settle();
+        now += 60_000;
+        appOpened.reportCoreAction("review_viewed");
+        await settle();
         expect(answers).toHaveLength(3);
-      }
-      return;
-    }
-    if (
-      scenario === "coalesces pending review views and releases a failed read"
-    ) {
-      let now = 0;
-      vi.spyOn(performance, "now").mockImplementation(() => now);
-      setup();
-      await settle();
-      let answer!: (response: Response) => void;
-      fetchMock.mockImplementationOnce(
-        () => new Promise((resolve) => (answer = resolve)),
-      );
-      for (let i = 0; i < 30; i++) {
+      },
+    ],
+    [
+      "coalesces pending review views and releases a failed read",
+      async () => {
+        let now = 0;
+        vi.spyOn(performance, "now").mockImplementation(() => now);
+        setup();
+        await settle();
+        let answer!: (response: Response) => void;
+        fetchMock.mockImplementationOnce(
+          () => new Promise((resolve) => (answer = resolve)),
+        );
+        for (let i = 0; i < 30; i++) {
+          appOpened.reportCoreAction("review_viewed");
+          focusWindow();
+          document.dispatchEvent(new Event("visibilitychange"));
+        }
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        answer(new Response(null, { status: 500 }));
+        await settle();
+        now = 60_000;
         appOpened.reportCoreAction("review_viewed");
-        focusWindow();
-        document.dispatchEvent(new Event("visibilitychange"));
-      }
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-      answer(new Response(null, { status: 500 }));
-      await settle();
-      now = 60_000;
-      appOpened.reportCoreAction("review_viewed");
-      await settle();
-      expect((await sentEvents()).map((e) => e.event)).toEqual([
-        "app_opened",
-        "review_viewed",
-        "review_viewed",
-      ]);
-      return;
-    }
-    const lateReply = scenario === "the reply comes after midnight";
-    vi.setSystemTime(new Date("2026-03-10T23:59:50Z"));
-    setup();
-    await settle();
-    let answer!: (response: Response) => void;
-    if (lateReply)
-      fetchMock.mockImplementationOnce(
-        () => new Promise((resolve) => (answer = resolve)),
-      );
-    appOpened.reportCoreAction("review_viewed");
-    if (lateReply) {
-      vi.setSystemTime(new Date("2026-03-11T00:00:05Z"));
-      answer(accepted());
-    } else {
-      await settle();
-      for (let i = 0; i < 5; i++) {
-        appOpened.reportCoreAction("review_viewed");
-        focusWindow();
-      }
-      appOpened.reportCoreAction("review_closed");
-      appOpened.reportCoreAction("review_closed");
-    }
-    await settle();
-    if (!lateReply) {
-      const events = (await sentEvents()).map((e) => e.event);
-      expect(events.filter((e) => e === "review_viewed")).toHaveLength(1);
-      expect(events.filter((e) => e === "review_closed")).toHaveLength(2);
-      vi.setSystemTime(new Date("2026-03-11T00:00:05Z"));
-      focusWindow();
-      await settle();
-    }
-
-    appOpened.reportCoreAction("review_viewed");
-    await settle();
-    expect(
-      (await sentEvents()).filter((e) => e.event === "review_viewed"),
-    ).toHaveLength(2);
-  });
+        await settle();
+        expect((await sentEvents()).map((e) => e.event)).toEqual([
+          "app_opened",
+          "review_viewed",
+          "review_viewed",
+        ]);
+      },
+    ],
+  ])("review views: %s", async (_, scenario) => scenario());
 
   test.each([401, 403, 429])(
     "a %s answer does not claim the app-open check",

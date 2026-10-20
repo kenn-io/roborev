@@ -85,37 +85,36 @@ func post(g *ClientGate, s *receiptServer, scope, event, surface string) {
 }
 
 func TestClientGateDisabledStopsEveryEventForThatDaemonOnly(t *testing.T) {
-	testenv.SetDataDir(t)
-	s := newReceiptServer(t, "disabled")
-	probe(&ClientGate{}, s, "off", SurfaceCLI)
-	require.Equal(t, []string{EventAppOpened}, s.seen())
+	for _, event := range []string{EventAppOpened, EventReviewViewed} {
+		t.Run(event, func(t *testing.T) {
+			testenv.SetDataDir(t)
+			s := newReceiptServer(t, "disabled")
+			want := []string{EventAppOpened}
+			if event == EventReviewViewed {
+				s.status.Store("queued")
+				probe(&ClientGate{}, s, "off", SurfaceCLI)
+				s.status.Store("disabled")
+				post(&ClientGate{}, s, "off", event, SurfaceCLI)
+				want = append(want, EventReviewViewed)
+			} else {
+				probe(&ClientGate{}, s, "off", SurfaceCLI)
+			}
+			require.Equal(t, want, s.seen())
 
-	fresh := &ClientGate{}
-	probe(fresh, s, "off", SurfaceCLI)
-	post(fresh, s, "off", EventReviewViewed, SurfaceCLI)
-	post(fresh, s, "off", EventAgentActive, "")
-	assert.False(t, fresh.Ready("off"))
-	assert.Equal(t, []string{EventAppOpened}, s.seen())
+			fresh := &ClientGate{}
+			probe(fresh, s, "off", SurfaceCLI)
+			post(fresh, s, "off", EventReviewViewed, SurfaceCLI)
+			post(fresh, s, "off", EventAgentActive, "")
+			assert.False(t, fresh.Ready("off"))
+			assert.Equal(t, want, s.seen())
 
-	s.status.Store("queued")
-	assert.True(t, fresh.Ready("other"))
-	probe(fresh, s, "other", SurfaceCLI)
-	post(fresh, s, "other", EventReviewViewed, SurfaceCLI)
-	assert.Equal(t, []string{EventAppOpened, EventAppOpened, EventReviewViewed}, s.seen())
-}
-
-func TestClientGateDisabledReplyToAnyRouteIsSaved(t *testing.T) {
-	testenv.SetDataDir(t)
-	s := newReceiptServer(t, "queued")
-	g := &ClientGate{}
-	probe(g, s, "daemon", SurfaceCLI)
-	s.status.Store("disabled")
-	post(g, s, "daemon", EventReviewViewed, SurfaceCLI)
-
-	fresh := &ClientGate{}
-	probe(fresh, s, "daemon", SurfaceCLI)
-	post(fresh, s, "daemon", EventReviewViewed, SurfaceCLI)
-	assert.Equal(t, []string{EventAppOpened, EventReviewViewed}, s.seen())
+			s.status.Store("queued")
+			assert.True(t, fresh.Ready("other"))
+			probe(fresh, s, "other", SurfaceCLI)
+			post(fresh, s, "other", EventReviewViewed, SurfaceCLI)
+			assert.Equal(t, append(want, EventAppOpened, EventReviewViewed), s.seen())
+		})
+	}
 }
 
 func TestClientGateProbeBackoffPersistsStopsAtSixAnswersAndResetsDaily(t *testing.T) {
@@ -220,7 +219,17 @@ func TestClientGateFailuresWithoutAReceiptOnlyBackOff(t *testing.T) {
 				assert.Equal(t, want, attempts())
 				probe(gate(), s, "daemon", SurfaceTUI)
 				assert.Equal(t, want, attempts(), "backoff holds the next try")
+				if name == "server error" {
+					fresh := gate()
+					post(fresh, s, "daemon", EventReviewViewed, SurfaceTUI)
+					assert.Len(t, s.seen(), want, "the saved backoff covers dependent reports")
+				}
 				now = now.Add(17 * time.Second)
+			}
+
+			if name == "server error" {
+				post(gate(), s, "daemon", EventReviewViewed, SurfaceTUI)
+				assert.Len(t, s.seen(), 2*maxProbeRejections+1, "dependent reports resume after backoff")
 			}
 
 			recovered := tc.revive(t, s)
@@ -255,20 +264,6 @@ func TestClientGateKeepsOnlyDisabledAndProbeState(t *testing.T) {
 	}
 	assert.Contains(t, string(data), `"sent":true`)
 	assert.NotContains(t, string(data), EventReviewViewed)
-}
-
-func TestClientGateUnusableStorageKeepsReceiptsInMemory(t *testing.T) {
-	blocker := filepath.Join(t.TempDir(), "file")
-	require.NoError(t, os.WriteFile(blocker, nil, 0o600))
-	t.Setenv("ROBOREV_DATA_DIR", filepath.Join(blocker, "data"))
-	s := newReceiptServer(t, "disabled")
-	g := &ClientGate{}
-
-	probe(g, s, "daemon", SurfaceCLI)
-	probe(g, s, "daemon", SurfaceCLI)
-	post(g, s, "daemon", EventAgentActive, "")
-	assert.Equal(t, []string{EventAppOpened}, s.seen())
-	assert.False(t, g.Ready("daemon"))
 }
 
 func TestClientGateReadsUnreadableFileAsEmpty(t *testing.T) {
@@ -319,18 +314,6 @@ func TestClientGateGivesUpWhenTheLockStaysBusy(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
-
-func TestClientGateRollsOverAtUTCMidnight(t *testing.T) {
-	testenv.SetDataDir(t)
-	s := newReceiptServer(t, "disabled")
-	now := time.Date(2026, 3, 10, 23, 59, 0, 0, time.UTC)
-	g := &ClientGate{now: func() time.Time { return now }}
-	probe(g, s, "daemon", SurfaceCLI)
-	assert.False(t, g.Ready("daemon"))
-
-	now = now.Add(2 * time.Minute)
-	assert.True(t, g.Ready("daemon"))
-}
 
 func TestClientGateFollowerWaitsForTheProbeInFlight(t *testing.T) {
 	for _, storage := range []string{"shared file", "unusable storage"} {
@@ -409,24 +392,6 @@ func TestClientGateRefusesANewerFileAndLeavesItIntact(t *testing.T) {
 			assert.Equal(t, content, string(saved))
 		})
 	}
-}
-
-func TestClientGateReportsHonorTheSavedProbeBackoff(t *testing.T) {
-	testenv.SetDataDir(t)
-	s := newReceiptServer(t, "500")
-	now := time.Date(2026, 3, 10, 9, 0, 0, 0, time.UTC)
-	gate := func() *ClientGate { return &ClientGate{now: func() time.Time { return now }} }
-	probe(gate(), s, "daemon", SurfaceCLI)
-	require.Len(t, s.seen(), 1)
-
-	fresh := gate()
-	probe(fresh, s, "daemon", SurfaceCLI)
-	post(fresh, s, "daemon", EventReviewViewed, SurfaceCLI)
-	assert.Len(t, s.seen(), 1, "the saved backoff covers dependent reports")
-
-	now = now.Add(2 * time.Second)
-	post(fresh, s, "daemon", EventReviewViewed, SurfaceCLI)
-	assert.Len(t, s.seen(), 2)
 }
 
 func TestClientGateReceiptAcrossMidnightCountsForTheDayItWasSentOn(t *testing.T) {

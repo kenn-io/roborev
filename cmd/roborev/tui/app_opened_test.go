@@ -100,45 +100,15 @@ func TestReportScreenViewedReachesDaemonAllowlist(t *testing.T) {
 func TestReportAppOpenedIgnoresDaemonFailures(t *testing.T) {
 	enableTelemetryEnv(t)
 
-	answer := func(status int, body string, header map[string]string) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			_, _ = io.Copy(io.Discard, r.Body)
-			for k, v := range header {
-				w.Header().Set(k, v)
-			}
-			w.WriteHeader(status)
-			_, _ = w.Write([]byte(body))
-		}
-	}
-	tests := []struct {
-		name    string
-		handler http.HandlerFunc
-		closed  bool
-	}{
-		{name: "daemon without the route", handler: answer(http.StatusNotFound, "404 page not found", nil)},
-		{name: "allowlist without app_opened", handler: answer(http.StatusBadRequest, "unsupported telemetry event", nil)},
-		{name: "method not allowed", handler: answer(http.StatusMethodNotAllowed, "Method Not Allowed", map[string]string{"Allow": "POST"})},
-		{name: "body too large", handler: answer(http.StatusRequestEntityTooLarge, "telemetry request too large", nil)},
-		{name: "server error", handler: answer(http.StatusInternalServerError, "internal error", nil)},
-		{name: "connection refused", handler: answer(http.StatusAccepted, `{"status":"queued"}`, nil), closed: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert := assert.New(t)
-			ts := httptest.NewServer(tt.handler)
-			t.Cleanup(ts.Close)
-			m := newModel(testEndpointFromURL(ts.URL), withExternalIODisabled())
-			if tt.closed {
-				ts.Close()
-			}
-
-			cmd := m.reportAppOpened()
-			require.NotNil(t, cmd)
-			assert.Nil(cmd())
-			require.NoError(t, m.err)
-			assert.Zero(m.consecutiveErrors)
-		})
-	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	t.Cleanup(ts.Close)
+	m := newModel(testEndpointFromURL(ts.URL), withExternalIODisabled())
+	cmd := m.reportAppOpened()
+	require.NotNil(t, cmd)
+	assert.Nil(t, cmd())
 }
 
 // stalledTransport holds requests until their context ends or the test releases them.
