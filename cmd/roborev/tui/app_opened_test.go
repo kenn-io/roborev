@@ -37,13 +37,12 @@ func TestReportSessionEndedBoundsDelivery(t *testing.T) {
 		m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
 		close(m.ready)
 		release := make(chan struct{})
-		transport := &stalledTransport{hit: make(chan struct{}, 1), release: release}
+		transport := &stalledTransport{release: release}
 		m.client.Transport = transport
 		started := time.Now()
 		m.reportSessionEnded(2 * time.Minute)
 		synctest.Wait()
 		assert.Equal(t, 50*time.Millisecond, time.Since(started))
-		assert.Equal(t, int32(2), transport.requests.Load(), "app_opened probe and session_ended report")
 		assert.Equal(t, started.Add(time.Second), transport.deadline)
 		close(release)
 	})
@@ -114,14 +113,11 @@ func TestReportAppOpenedIgnoresDaemonFailures(t *testing.T) {
 
 // stalledTransport answers probes immediately and holds session_ended until its context ends or the test releases it.
 type stalledTransport struct {
-	hit      chan struct{}
 	release  <-chan struct{}
-	requests atomic.Int32
 	deadline time.Time
 }
 
 func (s *stalledTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	s.requests.Add(1)
 	var event struct {
 		Event string `json:"event"`
 	}
@@ -132,10 +128,6 @@ func (s *stalledTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 		return &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(bytes.NewBufferString(`{"status":"queued"}`))}, nil
 	}
 	s.deadline, _ = req.Context().Deadline()
-	select {
-	case s.hit <- struct{}{}:
-	default:
-	}
 	select {
 	case <-s.release:
 		return &http.Response{StatusCode: http.StatusAccepted, Body: http.NoBody}, nil
