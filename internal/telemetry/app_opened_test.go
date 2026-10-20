@@ -224,6 +224,7 @@ func TestPostAppOpened(t *testing.T) {
 }
 
 func TestScreenViewedDailyClaims(t *testing.T) {
+	allowTelemetryEnv(t)
 	t.Setenv(EnabledEnv, "1")
 	t.Setenv(GenericEnabledEnv, "1")
 	for _, tc := range []struct {
@@ -237,7 +238,7 @@ func TestScreenViewedDailyClaims(t *testing.T) {
 			day := now.AddDate(0, 0, tc.offset).Format(time.DateOnly)
 			require.NoError(t, db.SetSyncState("telemetry.screen.queue", day))
 			endpoint, messages := testutil.NewPostHogStub(t)
-			opts := Options{Database: db, Endpoint: endpoint, DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json")}
+			opts := Options{Version: "v1.2.3", Database: db, Endpoint: endpoint, DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json")}
 			if tc.recover {
 				require.NoError(t, os.Mkdir(opts.DailyClaimsPath, 0o700))
 			}

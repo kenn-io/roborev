@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,6 +21,9 @@ import (
 
 func TestCoreActionDailyClaims(t *testing.T) {
 	testenv.SetDataDir(t)
+	t.Setenv("CI", "")
+	require.NoError(t, os.Unsetenv("CI"))
+	t.Setenv("DO_NOT_TRACK", "0")
 	t.Setenv(telemetry.EnabledEnv, "1")
 	t.Setenv(telemetry.GenericEnabledEnv, "1")
 	recorder, messages := testutil.NewPostHogRecorder(t)
@@ -30,7 +34,7 @@ func TestCoreActionDailyClaims(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 	server := daemon.NewServer(db, config.DefaultConfig(), "")
 	t.Cleanup(func() { require.NoError(t, server.Close()) })
-	opts := telemetry.Options{Database: db, Endpoint: "http://posthog.example.com", DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json")}
+	opts := telemetry.Options{Version: "v1.2.3", Database: db, Endpoint: "http://posthog.example.com", DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json")}
 	reporter, err := telemetry.NewReporter(opts)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reporter.Close()) })

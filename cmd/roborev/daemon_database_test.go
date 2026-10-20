@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/telemetry"
 	"go.kenn.io/roborev/internal/testutil"
+	"go.kenn.io/roborev/internal/version"
 )
 
 func TestDaemonTelemetryScreenViewedUsesDatabaseClaimsPath(t *testing.T) {
@@ -32,6 +33,12 @@ func TestDaemonTelemetryScreenViewedUsesDatabaseClaimsPath(t *testing.T) {
 		require.NoError(t, err, "%s", output)
 		return
 	}
+	originalVersion := version.Version
+	version.Version = "v1.2.3"
+	t.Cleanup(func() { version.Version = originalVersion })
+	t.Setenv("CI", "")
+	require.NoError(t, os.Unsetenv("CI"))
+	t.Setenv("DO_NOT_TRACK", "0")
 	t.Setenv(telemetry.EnabledEnv, "1")
 	t.Setenv(telemetry.GenericEnabledEnv, "1")
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())

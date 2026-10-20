@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -22,6 +23,9 @@ import (
 
 func enableTelemetryEnv(t *testing.T) {
 	t.Helper()
+	t.Setenv("CI", "")
+	require.NoError(t, os.Unsetenv("CI"))
+	t.Setenv("DO_NOT_TRACK", "0")
 	t.Setenv(telemetry.EnabledEnv, "1")
 	t.Setenv(telemetry.GenericEnabledEnv, "1")
 }
