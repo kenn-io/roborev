@@ -496,9 +496,10 @@ code, duplicates are merged, and findings are ranked in code. Still open: a
     `duplicate_of`.
   - Sort by severity, then support count, then confidence.
   - Do not rely on the prompt for ordering.
-- **Use `kind` in output and gating.**
-  - Show "test," "docs," and "maintainability" labels so a suggestion is not
-    read as a proven fault.
+- **Keep `kind` and `topic` in the JSON only.**
+  - Rendered reviews and pull request comments never show them. A label such as
+    "security" in a public comment causes problems, so neither field is
+    rendered.
   - Pass or fail can consider defects only.
 
 ### 7. Diversify panels

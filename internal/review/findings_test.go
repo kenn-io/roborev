@@ -167,13 +167,13 @@ func TestRunAgentReviewStoresSettledFindings(t *testing.T) {
 	assert.Equal("main.go:3-5", stored.Findings[1].Location, "the stored location matches the reviewed file")
 	assert.Equal(structuredreview.KindImprovement, stored.Findings[1].Kind)
 	assert.Equal(structuredreview.TopicDocumentation, stored.Findings[1].Topic)
-	assert.Contains(got.Output, "### 2. Low (improvement, documentation)")
+	assert.Contains(got.Output, "### 2. Low\n")
 	assert.Contains(got.Output, "**Location:** main.go:3-5")
 }
 
-func TestFormatCommentLabelsFindingsThatAreNotDefects(t *testing.T) {
+func TestFormatCommentLeavesKindAndTopicOut(t *testing.T) {
 	defect := located("a.go", 3, 3)
-	defect.Problem = "Nil map write."
+	defect.Topic, defect.Problem = structuredreview.TopicSecurity, "Nil map write."
 	test := located("a_test.go", 0, 0)
 	test.Severity, test.Kind, test.Topic, test.Problem = "low", structuredreview.KindImprovement, structuredreview.TopicTests, "No test covers the empty input."
 	doc := structuredreview.Document{
@@ -183,6 +183,10 @@ func TestFormatCommentLabelsFindingsThatAreNotDefects(t *testing.T) {
 
 	got := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
 
-	assert.Contains(t, got, "- `a.go:3`: Nil map write.")
-	assert.Contains(t, got, "- *Improvement, tests:* `a_test.go`: No test covers the empty input.")
+	assert := assert.New(t)
+	assert.Contains(got, "- `a.go:3`: Nil map write.")
+	assert.Contains(got, "- `a_test.go`: No test covers the empty input.")
+	for _, word := range []string{"ecurity", "mprovement", "efect"} {
+		assert.NotContains(got, word, "PR comments must not carry a finding's kind or topic")
+	}
 }

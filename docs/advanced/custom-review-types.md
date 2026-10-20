@@ -157,17 +157,18 @@ Every finding requires these members:
 - `kind`: `defect` when the code behaves wrongly in a case the finding names, or
     `improvement` when the code works but should still change, such as a missing
     or weak test, wrong documentation, or structure that will cost later work.
-    The review marks improvements next to the severity.
 - `topic`: `tests`, `documentation`, `security`, `performance`, or `design` when
     the finding is about one of those areas, otherwise `null`. A defect can have
-    a topic, and so can an improvement. The review shows the topic next to the
-    severity.
+    a topic, and so can an improvement.
 - `confidence`: a number from 0 to 1. Roborev uses it only to break ties when it
     orders findings.
 - `problem` and `fix`.
 - `file`, `start_line`, and `end_line`: the path relative to the repository root
     and the line range in the reviewed code. Use `null` for the lines when a
     finding covers a whole file, and `null` for all three when it has no file.
+
+`kind`, `topic`, and `confidence` are stored in the review document and exported
+with it. They never appear in the rendered review or in pull request comments.
 
 Before storing a review, Roborev checks every cited file against the reviewed
 commit, or the working tree for uncommitted changes. A finding whose file does

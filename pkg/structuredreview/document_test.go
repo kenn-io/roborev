@@ -129,17 +129,16 @@ func TestVersion3FindingsKeepALocationForOlderReaders(t *testing.T) {
 	assert.Equal(t, "a.go:3-8", *reader.Findings[0].Location)
 }
 
-func TestMarkdownLabelsFindingsThatAreNotDefects(t *testing.T) {
-	defect := Finding{Severity: "high", Kind: KindDefect, Confidence: 0.9, Problem: "p1", Fix: "f1"}
+func TestMarkdownLeavesKindTopicAndConfidenceOut(t *testing.T) {
+	defect := Finding{Severity: "high", Kind: KindDefect, Topic: TopicSecurity, Confidence: 0.9, Problem: "p1", Fix: "f1"}
 	defect.SetLocation("a.go", 4, 4)
-	defect.Topic = TopicSecurity
-	docs := Finding{Severity: "low", Kind: KindImprovement, Topic: TopicDocumentation, Confidence: 0.4, Problem: "p2", Fix: "f2"}
-	plain := Finding{Severity: "low", Kind: KindImprovement, Confidence: 0.4, Problem: "p3", Fix: "f3"}
-	got := Document{SchemaVersion: 3, Summary: "s", Verdict: VerdictFail, Findings: []Finding{defect, docs, plain}}.Markdown("")
+	improvement := Finding{Severity: "low", Kind: KindImprovement, Topic: TopicTests, Confidence: 0.4, Problem: "p2", Fix: "f2"}
+	got := Document{SchemaVersion: 3, Summary: "s", Verdict: VerdictFail, Findings: []Finding{defect, improvement}}.Markdown("")
 
 	assert := assert.New(t)
-	assert.Contains(got, "### 1. High (security)\n\n**Location:** a.go:4\n")
-	assert.Contains(got, "### 2. Low (improvement, documentation)\n")
-	assert.Contains(got, "### 3. Low (improvement)\n")
-	assert.NotContains(got, "0.9", "confidence is not shown to readers")
+	assert.Contains(got, "### 1. High\n\n**Location:** a.go:4\n")
+	assert.Contains(got, "### 2. Low\n")
+	for _, word := range []string{"security", "tests", "defect", "improvement", "0.9", "0.4"} {
+		assert.NotContains(got, word, "rendered reviews are posted to pull requests and must not carry kind, topic, or confidence")
+	}
 }

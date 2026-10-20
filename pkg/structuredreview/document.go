@@ -202,19 +202,6 @@ type Finding struct {
 	Sources []int `json:"sources,omitempty"`
 }
 
-// Labels returns the words a reader needs besides the severity: the kind
-// when the finding is not a defect, then its topic.
-func (f Finding) Labels() []string {
-	var labels []string
-	if f.Kind != "" && f.Kind != KindDefect {
-		labels = append(labels, f.Kind)
-	}
-	if f.Topic != "" {
-		labels = append(labels, f.Topic)
-	}
-	return labels
-}
-
 // FormatLocation renders a file and line range as "path", "path:12", or
 // "path:12-20". It returns "" when file is empty.
 func FormatLocation(file string, startLine, endLine int) string {
@@ -578,11 +565,9 @@ func (r Document) Markdown(minSeverity string) string {
 	}
 	out.WriteString("\n\n## Findings\n")
 	for i, finding := range r.Findings {
-		fmt.Fprintf(&out, "\n### %d. %s", i+1, titleSeverity(finding.Severity))
-		if labels := finding.Labels(); len(labels) > 0 {
-			fmt.Fprintf(&out, " (%s)", strings.Join(labels, ", "))
-		}
-		out.WriteString("\n\n")
+		// Kind, topic, and confidence are data only. Rendered Markdown is
+		// posted to pull requests and never labels a finding with them.
+		fmt.Fprintf(&out, "\n### %d. %s\n\n", i+1, titleSeverity(finding.Severity))
 		if finding.Location != "" {
 			fmt.Fprintf(&out, "**Location:** %s\n\n", finding.Location)
 		}

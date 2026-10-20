@@ -29,7 +29,6 @@ type PreparedComment struct {
 
 type commentFinding struct {
 	severity string
-	labels   []string
 	problem  string
 	fix      string
 	location string
@@ -55,7 +54,7 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 		comment.structured = true
 		for _, finding := range doc.Findings {
 			findings = append(findings, commentFinding{
-				severity: finding.Severity, labels: finding.Labels(), problem: finding.Problem,
+				severity: finding.Severity, problem: finding.Problem,
 				fix: finding.Fix, location: finding.Location,
 			})
 		}
@@ -128,10 +127,6 @@ func FormatComment(comment PreparedComment) string {
 			// Reviewer attribution belongs in the comment footer, not on
 			// each finding.
 			out.WriteString("\n- ")
-			if len(finding.labels) > 0 {
-				label := strings.Join(finding.labels, ", ")
-				fmt.Fprintf(&out, "*%s:* ", strings.ToUpper(label[:1])+label[1:])
-			}
 			if finding.location != "" {
 				fmt.Fprintf(&out, "`%s`: ", finding.location)
 			}
