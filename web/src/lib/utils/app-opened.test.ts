@@ -582,6 +582,37 @@ describe("setupAppOpenedReporting", () => {
     }
   });
 
+  test("an older review reply preserves the newer settled day", async () => {
+    vi.setSystemTime(new Date("2026-03-10T23:59:58Z"));
+    setup();
+    await settle();
+    const answers: Array<(response: Response) => void> = [];
+    fetchMock.mockImplementation(async (request) =>
+      (await request.clone().json()).event === "review_viewed"
+        ? new Promise((resolve) => answers.push(resolve))
+        : accepted(),
+    );
+    appOpened.reportCoreAction("review_viewed");
+    await settle();
+    vi.setSystemTime(new Date("2026-03-11T00:00:01Z"));
+    focusWindow();
+    await settle();
+    appOpened.reportCoreAction("review_viewed");
+    await settle();
+    expect(answers).toHaveLength(2);
+    answers[1]!(accepted());
+    await settle();
+    answers[0]!(accepted());
+    await settle();
+
+    appOpened.reportCoreAction("review_viewed");
+    await settle();
+
+    expect(
+      (await sentEvents()).filter((e) => e.event === "review_viewed"),
+    ).toHaveLength(2);
+  });
+
   test.each([
     "the reply comes the same day",
     "the reply comes after midnight",

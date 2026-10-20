@@ -145,7 +145,8 @@ function startReporting(): BrowserTelemetryReporter {
           discardSession();
         } else if (
           event.event === "review_viewed" &&
-          (receipt === "queued" || receipt === "skipped")
+          (receipt === "queued" || receipt === "skipped") &&
+          readDay > reviewViewedDay
         )
           reviewViewedDay = readDay;
         // Auth and rate-limit rejections never reached capture and can recover.
