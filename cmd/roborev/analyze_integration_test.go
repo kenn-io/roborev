@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -138,8 +139,12 @@ func TestRunAnalyzeAndFix_Integration(t *testing.T) {
 			ts.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == daemon.TelemetryEventsPath {
 					body, _ := io.ReadAll(r.Body)
-					bodies <- string(body)
+					// The action follows the app_opened check; only the action is recorded.
+					if !strings.Contains(string(body), "app_opened") {
+						bodies <- string(body)
+					}
 					w.WriteHeader(http.StatusAccepted)
+					_, _ = io.WriteString(w, `{"status":"queued"}`)
 					return
 				}
 				handler.ServeHTTP(w, r)
