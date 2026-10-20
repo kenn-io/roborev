@@ -523,8 +523,8 @@ for recovery instructions.
 Counts mean the report was queued, not confirmed delivered to PostHog.
 The CLI and TUI send one `app_opened` check per daemon per UTC day and send
 nothing more to a daemon that answers `disabled`. The TUI sends each screen once
-per day whether or not the daemon accepts it. The browser reports the visible
-screen on window focus and page change, and the daemon counts it once per day.
+per day whether or not the daemon accepts it. The browser sends each screen once
+per day per browser profile.
 Agent activity counts each MCP `tools/call`, including tool errors, and each
 invocation of `agent-hook run`, `agent-hook fix-done`, `post-commit`, `enqueue`,
 `remap`, or an eligible daemon command marked `--from-skill` after its first

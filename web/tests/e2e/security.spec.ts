@@ -43,10 +43,8 @@ test.describe.serial("browser listener security", () => {
     }));
     expect(storage.session).toBeTruthy();
     expect(storage.csrf).toBeTruthy();
-    const persisted = JSON.stringify(storage.local);
-    expect(persisted).not.toContain(storage.session);
-    expect(persisted).not.toContain(storage.csrf);
-    expect(persisted).not.toContain(process.env.ROBOREV_E2E_TOKEN);
+    for (const key of Object.keys(storage.local))
+      expect(key).toMatch(/^roborev\.telemetry(\.|$)/);
     expect(Object.values(storage)).not.toContain(process.env.ROBOREV_E2E_TOKEN);
 
     const rawRead = await page.evaluate(async () =>

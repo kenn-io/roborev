@@ -35,7 +35,7 @@ type ClientGate struct {
 	state  clientState
 	path   string
 	loaded bool
-	// frozen means the file has a newer format: memory carries the receipts and the file stays as found.
+	// frozen means the file has a newer format: no reports go out and the file stays as found.
 	frozen bool
 	// down holds the backoff after reports that got no answer or a 5xx, per daemon and kept in memory only.
 	down map[string]*reportBackoff
@@ -121,7 +121,7 @@ func (g *ClientGate) Ready(scope string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	e := g.current().Endpoints[scope]
-	return e == nil || !e.Disabled
+	return !g.frozen && (e == nil || !e.Disabled)
 }
 
 // Load reads the shared receipts into memory once per day; Probe and Post call it themselves.
@@ -144,7 +144,7 @@ func (g *ClientGate) Load(ctx context.Context) {
 // the rest read its result. If ctx ends first the report is dropped.
 func (g *ClientGate) Probe(ctx context.Context, client *http.Client, scope, url, surface string) {
 	g.mu.Lock()
-	open := g.current().Endpoints[scope].probeOpen(surface)
+	open := !g.frozen && g.current().Endpoints[scope].probeOpen(surface)
 	g.mu.Unlock()
 	if !open {
 		return
@@ -158,7 +158,7 @@ func (g *ClientGate) Probe(ctx context.Context, client *http.Client, scope, url,
 	send := false
 	g.commit(scope, func(e *clientEndpoint) bool {
 		now := g.clock()
-		if !e.probeDue(surface, now) {
+		if g.frozen || !e.probeDue(surface, now) {
 			return false
 		}
 		p := e.Probes[surface]
@@ -196,13 +196,13 @@ func (g *ClientGate) Probe(ctx context.Context, client *http.Client, scope, url,
 	})
 }
 
-// Post sends one report unless the daemon is disabled or has just failed to answer; callers run Probe
-// first, so a report waits only for an attempt in flight. After a report gets no answer or a 5xx, further
-// reports to that daemon wait out a memory-only backoff of 1 to 16 seconds, and are dropped meanwhile.
-// A disabled reply from any route is saved.
+// Post sends one report unless the daemon is disabled or backing off; callers run Probe first. A 5xx or no
+// answer starts a memory-only 1 to 16 second backoff that drops reports meanwhile, and the surface's saved
+// app_opened backoff covers them too. A disabled reply from any route is saved.
 func (g *ClientGate) Post(ctx context.Context, client *http.Client, scope, url, event string, props map[string]any) (posthog.Status, error) {
 	g.Load(ctx)
-	if !g.Ready(scope) || g.backingOff(scope) {
+	surface, _ := props[PropertySurface].(string)
+	if !g.Ready(scope) || g.backingOff(scope, surface) {
 		return posthog.StatusSkipped, nil
 	}
 	answering, answers := trackAnswer(client)
@@ -214,11 +214,12 @@ func (g *ClientGate) Post(ctx context.Context, client *http.Client, scope, url, 
 	return status, err
 }
 
-func (g *ClientGate) backingOff(scope string) bool {
+// backingOff covers a daemon whose reports just failed and the surface's saved app_opened backoff.
+func (g *ClientGate) backingOff(scope, surface string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.current()
-	return g.clock().Before(g.down[scope].untilOrZero())
+	e := g.current().Endpoints[scope]
+	return g.clock().Before(g.down[scope].untilOrZero()) || e.probeOpen(surface) && !e.probeDue(surface, g.clock())
 }
 
 // noteReport extends the scope's backoff after a failed report and clears it after a good one.
@@ -294,15 +295,15 @@ func (g *ClientGate) merge() {
 	if err != nil {
 		return
 	}
-	var saved clientState
-	if json.Unmarshal(data, &saved) != nil {
-		return
+	var header struct {
+		Version int `json:"version"`
 	}
-	if saved.Version > clientStateVersion {
+	if json.Unmarshal(data, &header) == nil && header.Version > clientStateVersion {
 		g.frozen = true
 		return
 	}
-	if saved.Day != state.Day {
+	var saved clientState
+	if json.Unmarshal(data, &saved) != nil || saved.Day != state.Day {
 		return
 	}
 	for scope, se := range saved.Endpoints {
@@ -332,10 +333,10 @@ func (g *ClientGate) commit(scope string, change func(*clientEndpoint) bool) {
 		g.mu.Unlock()
 		return
 	}
-	path, frozen := g.path, g.frozen
+	path := g.path
 	data, err := json.Marshal(state)
 	g.mu.Unlock()
-	if err == nil && !frozen {
+	if err == nil {
 		_ = atomicfile.WriteFile(path, data, atomicfile.WithPrivate(), atomicfile.WithoutSync())
 	}
 }

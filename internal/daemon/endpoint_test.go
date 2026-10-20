@@ -259,3 +259,18 @@ func TestDaemonEndpoint_HTTPClient_UnixIgnoresProxy(t *testing.T) {
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
+
+func TestTelemetryScope(t *testing.T) {
+	a := DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}
+	b := DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7374"}
+	unix := DaemonEndpoint{Network: "unix", Address: "/run/user/1000/roborev.sock"}
+
+	assert.Equal(t, a.TelemetryScope(), DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}.TelemetryScope(), "stable")
+	assert.NotEqual(t, a.TelemetryScope(), b.TelemetryScope())
+	assert.NotEqual(t, a.TelemetryScope(), unix.TelemetryScope())
+	for _, ep := range []DaemonEndpoint{a, unix} {
+		scope := ep.TelemetryScope()
+		assert.Regexp(t, `^[0-9a-f]{64}$`, scope)
+		assert.NotContains(t, scope, ep.Address)
+	}
+}

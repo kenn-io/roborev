@@ -45,6 +45,7 @@ func TestCommentRebuttalRecordsBeforeClose(t *testing.T) {
 						mu.Unlock()
 					}
 					w.WriteHeader(http.StatusAccepted)
+					_, _ = io.WriteString(w, `{"status":"queued"}`)
 				case "/api/rebuttal":
 					actions = append(actions, "rebuttal")
 					w.WriteHeader(http.StatusCreated)

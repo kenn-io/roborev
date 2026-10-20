@@ -2016,8 +2016,8 @@ file makes `screen_viewed` and core action reports fail until it's removed. Stop
 the daemon before deleting it. Deletion resets file claims; retired SQLite
 screen claims are unused. Counts mean the report was queued, not confirmed
 delivered to PostHog. The TUI sends each screen once per day whether or not the
-daemon accepts it. The browser reports the visible screen on window focus and
-page change, and the daemon counts it once per day.
+daemon accepts it. The browser sends each screen once per day per browser
+profile.
 
 Each event carries `install_age_hours`, the whole hours since the install ID was
 created, so short-lived installs such as test sandboxes can be filtered out.

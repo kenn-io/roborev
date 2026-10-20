@@ -18,13 +18,14 @@ import (
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/telemetry"
+	"go.kenn.io/roborev/internal/testenv"
 )
 
 func enableTelemetryEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv(telemetry.EnabledEnv, "1")
 	t.Setenv(telemetry.GenericEnabledEnv, "1")
-	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	testenv.SetDataDir(t)
 	telemetry.DefaultClientGate = &telemetry.ClientGate{}
 }
 
@@ -45,7 +46,7 @@ func TestReportSessionEndedBoundsDelivery(t *testing.T) {
 		close(release)
 		time.Sleep(100 * time.Millisecond)
 		synctest.Wait()
-		assert.Equal(t, int32(2), transport.requests.Load(), "the app_opened check, then the session")
+		assert.Equal(t, int32(1), transport.requests.Load(), "the timed-out check's saved backoff holds the session back")
 	})
 }
 
@@ -99,7 +100,7 @@ func TestReportAppOpenedReachesDaemonAllowlist(t *testing.T) {
 	var names []string
 	for view := viewQueue; view <= viewRerunAgent; view++ {
 		// This opted-out reporter answers disabled, which would silence the rest; each screen starts fresh.
-		t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+		testenv.SetDataDir(t)
 		telemetry.DefaultClientGate = &telemetry.ClientGate{}
 		names = append(names, view.String())
 		assert.NotEqual("unknown", view.String())

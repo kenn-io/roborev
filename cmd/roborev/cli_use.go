@@ -120,7 +120,7 @@ func observeCLIUse(ep daemon.DaemonEndpoint, req *http.Request, resp *http.Respo
 		return
 	}
 	scope := ep.TelemetryScope()
-	if _, started := cliProbes.LoadOrStore(scope, true); started || !telemetry.DefaultClientGate.Ready(scope) {
+	if _, started := cliProbes.LoadOrStore(scope, true); started {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), cliUseTimeout)
@@ -157,7 +157,7 @@ func reportCLIActionOutput(out io.Writer, event string) {
 		return
 	}
 	ep := cliUseEndpoint.Load()
-	if ep == nil && (parsedServerEndpoint == nil || !parsedServerEndpoint.IsRemote()) {
+	if ep == nil && (parsedServerEndpoint == nil || !parsedServerEndpoint.IsRemote()) || ep != nil && !telemetry.DefaultClientGate.Ready(ep.TelemetryScope()) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), cliUseTimeout)

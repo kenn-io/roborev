@@ -98,12 +98,15 @@ Example client configuration:
 	}
 }
 
-// mcpActivityEnabled loads the daemon's receipts once, so a disabled daemon starts no activity goroutines.
+// mcpActivityEnabled loads the daemon's receipts in the background, so startup never waits on the receipt
+// lock and a disabled daemon soon starts no activity goroutines.
 func mcpActivityEnabled(ep daemon.DaemonEndpoint) func() bool {
 	if cliTelemetryEnabled() {
 		ctx, cancel := context.WithTimeout(context.Background(), cliUseTimeout)
-		telemetry.DefaultClientGate.Load(ctx)
-		cancel()
+		cliSends.Go(func() {
+			defer cancel()
+			telemetry.DefaultClientGate.Load(ctx)
+		})
 	}
 	return func() bool {
 		return cliTelemetryEnabled() && telemetry.DefaultClientGate.Ready(ep.TelemetryScope())

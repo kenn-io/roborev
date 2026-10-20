@@ -20,6 +20,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,6 +29,7 @@ import (
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/telemetry"
+	"go.kenn.io/roborev/internal/testenv"
 )
 
 const cliUseBody = `{"event":"app_opened","properties":{"surface":"cli"}}`
@@ -53,7 +55,7 @@ func drainCLIReports() {
 // resetCLIUse gives a test a fresh CLI telemetry state with telemetry on and restores every seam afterwards.
 func resetCLIUse(t *testing.T) {
 	t.Helper()
-	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	testenv.SetDataDir(t)
 	origEnabled, origTimeout, origPost := cliTelemetryEnabled, cliUseTimeout, cliUsePost
 	origAgentPost := cliAgentPost
 	origTerminal := cliOutputIsTerminal
@@ -1026,7 +1028,46 @@ func TestCLIUseHonorsStoredDisabledAcrossProcesses(t *testing.T) {
 	reportMCPActivity(t.Context(), ep)
 	drainCLIReports()
 	assert.Empty(t, rec.telemetryPosts())
-	assert.False(t, mcpActivityEnabled(ep)())
+	enabled := mcpActivityEnabled(ep)
+	drainCLIReports()
+	assert.False(t, enabled())
+}
+
+func TestMCPActivityStartupDoesNotWaitOnTheReceiptLock(t *testing.T) {
+	resetCLIUse(t)
+	held := flock.New(filepath.Join(config.DataDir(), "telemetry-client.json.lock"))
+	locked, err := held.TryLock()
+	require.NoError(t, err)
+	require.True(t, locked)
+	t.Cleanup(func() { _ = held.Unlock() })
+
+	synctest.Test(t, func(t *testing.T) {
+		start := time.Now()
+		enabled := mcpActivityEnabled(daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"})
+		assert.Zero(t, time.Since(start), "startup returns without waiting for the lock")
+		assert.True(t, enabled())
+		time.Sleep(2 * cliUseTimeout)
+		synctest.Wait()
+	})
+}
+
+func TestDisabledReceiptStopsCLIActionsBeforeAnyWork(t *testing.T) {
+	resetCLIUse(t)
+	_, _, ep := disabledDaemon(t)
+	cliOutputIsTerminal = func(io.Writer) bool { return true }
+	cliUseEndpoint.Store(&ep)
+	probes := 0
+	cliUsePost = func(ctx context.Context, client *http.Client, scope, url, surface string) {
+		probes++
+		telemetry.PostAppOpened(ctx, client, scope, url, surface)
+	}
+	reportCLIActionOutput(os.Stdout, "review_viewed")
+	drainCLIReports()
+	require.Equal(t, 1, probes)
+
+	reportCLIActionOutput(os.Stdout, "review_closed")
+	drainCLIReports()
+	assert.Equal(t, 1, probes, "nothing is scheduled once the daemon said disabled")
 }
 
 func TestCoreActionRemoteFallbackJoinsLocalProbeAndHonorsBackoff(t *testing.T) {
