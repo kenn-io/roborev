@@ -46,6 +46,18 @@
     return loadPromise;
   }
 
+  // Review reloads remount the alert; only a new failure or a Retry counts.
+  let rendererFailureReported = false;
+  function reportRendererFailure(): void {
+    if (rendererFailureReported) return;
+    rendererFailureReported = true;
+    reportErrorShown("review_viewed");
+  }
+  function retryRenderer(): void {
+    rendererFailureReported = false;
+    void loadRichReviewContent();
+  }
+
   onMount(() => {
     if ("requestIdleCallback" in globalThis) {
       const request = globalThis.requestIdleCallback(() => {
@@ -79,16 +91,10 @@
 {#if stores.roborevReview?.isLoading()}
   <div class="review-state">Loading review…</div>
 {:else if failed}
-  {#key selectedJob?.id}
-    <div
-      class="review-state review-failure"
-      role="alert"
-      {@attach () => reportErrorShown("review_viewed")}
-    >
-      <strong>Review failed</strong>
-      <p>{failureReason}</p>
-    </div>
-  {/key}
+  <div class="review-state review-failure" role="alert">
+    <strong>Review failed</strong>
+    <p>{failureReason}</p>
+  </div>
 {:else if RichReviewContent}
   <RichReviewContent
     {output}
@@ -96,15 +102,9 @@
     {pending}
   />
 {:else if loadError && output}
-  <div
-    class="review-state"
-    role="alert"
-    {@attach () => reportErrorShown("review_viewed")}
-  >
+  <div class="review-state" role="alert" {@attach reportRendererFailure}>
     <p>Could not load the review renderer.</p>
-    <button type="button" onclick={() => void loadRichReviewContent()}>
-      Retry
-    </button>
+    <button type="button" onclick={retryRenderer}>Retry</button>
   </div>
 {:else if pending}
   <div class="review-state">Review in progress…</div>

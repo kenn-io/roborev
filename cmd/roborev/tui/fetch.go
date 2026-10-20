@@ -866,6 +866,7 @@ func (m model) loadJob(jobID int64) (*storage.ReviewJob, error) {
 // applies to any other pointer-receiver mutation returned alongside m.
 func (m *model) dispatchReviewFetch(jobID int64) tea.Cmd {
 	m.reviewFetchSeq++
+	m.reviewErrReportedJobID = 0
 	// Arm the pending-open intent (see pendingReviewOpenJobID's doc comment,
 	// tui.go) BEFORE the fetch closure captures m.currentView below, so a
 	// follow fetch that later races this one and lands first still knows

@@ -524,6 +524,33 @@ func TestIntegration_SyncOutageFromSwallowedWrite(t *testing.T) { //nolint:paral
 	}
 }
 
+func TestIntegration_SyncOutageIgnoresUnsyncableReview(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
+	env := newIntegrationEnv(t)
+	db := env.openDB("unsyncable.db")
+	worker := NewSyncWorker(db, config.SyncConfig{PostgresURL: env.pgURL, MachineName: "unsyncable-test"})
+	_, err := worker.connect(5 * time.Second)
+	require.NoError(t, err)
+	t.Cleanup(worker.pgPool.Close)
+	var reasons []string
+	worker.SetOnSyncFailed(func(reason string) { reasons = append(reasons, reason) })
+	require.NoError(t, worker.doSync())
+	repo, err := db.GetOrCreateRepo(env.TmpDir, "https://example.com/repo.git")
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "HEAD", Agent: "test"})
+	require.NoError(t, err)
+	_, err = db.ClaimJob("worker")
+	require.NoError(t, err)
+	require.NoError(t, db.CompleteJobResult(job.ID, "test", ReviewCompletion{
+		StructuredOutput: reviewFixtureJSON("output"), Output: "output", Verdict: VerdictFail,
+	}))
+	// Truncated JSON decodes with io.ErrUnexpectedEOF, which would otherwise
+	// read as a dropped connection.
+	_, err = db.Exec(`UPDATE reviews SET structured_output = ? WHERE job_id = ?`, `{"summary":`, job.ID)
+	require.NoError(t, err)
+	require.ErrorIs(t, worker.doSync(), errUnsyncableReview)
+	assert.Empty(t, reasons)
+}
+
 func TestIntegration_SyncFullCycle(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	env := newIntegrationEnv(t)
 	db := env.openDB("test.db")

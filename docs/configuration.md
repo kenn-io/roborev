@@ -1957,20 +1957,27 @@ review, synthesis and compact output.
 
 Core action error banners and toasts in the web UI and TUI send `error_shown`
 with `surface=web|tui` and `kind=review_viewed|finding_fixed|review_closed`,
-without a daily limit. Failed closes and reopens both count as `review_closed`.
-The browser's failed-job alert counts as `review_viewed`; missing reviews and
-the TUI's failed-job pane stay silent. CLI errors stay silent.
-Daemon-unreachable errors can't be counted because reporting uses the daemon.
+without a daily limit.
+
+- `review_viewed` counts a review that fails to load or render, including the
+    TUI split pane's load error. A failure counts once per selection; reloads
+    and background retries that show the same failure stay silent until the
+    review loads, the selection changes, or the user opens or retries it.
+- Failed closes and reopens both count as `review_closed`. A close that succeeds
+    but whose refreshed review can't load also counts.
+- Failed agent jobs, missing reviews, and CLI errors stay silent.
+- Daemon-unreachable errors can't be counted because reporting uses the daemon.
 
 The daemon sends `sync_failed` when a full sync pass fails after a successful
 pass in the same process, once per PostgreSQL outage, with
-`sync_source=postgres` and `reason=auth|network|timeout|other`. A successful
-full push and pull allows the next outage to report. Row-specific PostgreSQL
-data errors with SQLSTATE class 22 or 23, local SQLite errors, and configuration
-errors stay silent and leave the source's state unchanged. Outage state resets
-when the daemon restarts; reporting resumes after a full pass succeeds. Unlisted
-`kind`, `reason`, and `sync_source` values become `other`. Neither event
-contains error text.
+`sync_source=postgres` and `reason=auth|network|timeout|other`. A full push and
+pull that reaches PostgreSQL allows the next outage to report, even when
+row-specific data errors (SQLSTATE class 22 or 23) rejected some rows. Those
+data errors, local SQLite errors, reviews that fail local checks before upload,
+and configuration errors never report an outage on their own. Outage state
+resets when the daemon restarts; reporting resumes after a full pass succeeds.
+Unlisted `kind`, `reason`, and `sync_source` values become `other`. Neither
+event contains error text.
 
 The daemon deduplicates successful core action reports per day, so clients may
 repeat them.

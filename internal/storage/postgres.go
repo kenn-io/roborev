@@ -881,6 +881,10 @@ func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
 	return err
 }
 
+// errUnsyncableReview marks a local review that failed checks before any
+// PostgreSQL write.
+var errUnsyncableReview = errors.New("local review cannot be synced")
+
 var errReviewAttemptPending = errors.New("review attempt association is pending; retry after producer sync")
 
 // A metadata repair is a mirror-side change every machine must pull, including
@@ -1576,10 +1580,10 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 	for i, r := range reviews {
 		structuredOutput, err := sanitizePostgresStructuredOutput(r.StructuredOutput)
 		if err != nil {
-			return nil, fmt.Errorf("sanitize structured review output for PostgreSQL: %w", err)
+			return nil, fmt.Errorf("%w: sanitize structured review output for PostgreSQL: %w", errUnsyncableReview, err)
 		}
 		if err := validateStructuredOutputForWrite(structuredOutput); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: %w", errUnsyncableReview, err)
 		}
 		structuredOutputs[i] = structuredOutput
 	}

@@ -144,9 +144,13 @@ export function createReviewStore(opts: ReviewStoreOptions) {
     },
   );
 
+  // Reloads repeat a failure already on screen; count it once per selection.
+  let loadFailureReportedJobId: number | undefined;
+
   const publishReviewAuthority = (jobId: number, authority: ReviewAuthority) =>
     Effect.sync(() => {
       if (selectedJobId !== jobId) return;
+      loadFailureReportedJobId = undefined;
       review = authority.review;
       selectedJob = authority.selectedJob;
       responses = [...authority.responses];
@@ -181,7 +185,10 @@ export function createReviewStore(opts: ReviewStoreOptions) {
             Effect.sync(() => {
               if (selectedJobId !== jobId) return;
               storeError = "Failed to load review";
-              reportErrorShown("review_viewed");
+              if (loadFailureReportedJobId !== jobId) {
+                loadFailureReportedJobId = jobId;
+                reportErrorShown("review_viewed");
+              }
               opts.onError?.("Failed to load review");
             }),
           ),
@@ -372,6 +379,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
   }
 
   function setSelectedJobId(jobId: number | undefined): void {
+    if (jobId !== selectedJobId) loadFailureReportedJobId = undefined;
     selectedJobId = jobId;
     if (jobId === undefined) {
       review = null;

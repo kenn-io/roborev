@@ -513,6 +513,11 @@ type model struct {
 	// scheduleDetailFollow (a fresh follow supersedes any earlier failure).
 	splitDetailErr error
 
+	// reviewErrReportedJobID is the job whose shown review-load failure was
+	// already counted. Background follow retries reuse it; a cursor move, an
+	// explicit open, or a loaded review clears it.
+	reviewErrReportedJobID int64
+
 	// paneReviewSeenNonTerminalJob is a state-machine signal for
 	// splitReconcileDetail's Done/Failed idempotency checks, precision-
 	// independent unlike comparing FinishedAt or rendered error text: a

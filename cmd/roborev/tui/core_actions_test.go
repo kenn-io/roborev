@@ -305,3 +305,25 @@ func TestCoreActionReviewOpenFailure(t *testing.T) {
 		})
 	}
 }
+
+//nolint:paralleltest // telemetry environment variables
+func TestCoreActionSplitPaneLoadFailureReportsOncePerSelection(t *testing.T) {
+	enableTelemetryEnv(t)
+	f := newCoreActionReviewVisitFixture(t)
+	fail := func() {
+		response := f.review()
+		updated, cmd := f.m.handleReviewFollowErrMsg(reviewFollowErrMsg{
+			jobID: response.jobID, gen: response.gen, fetchSeq: response.fetchSeq,
+			attempt: response.attempt, err: errors.New("load failed"),
+		})
+		f.m = updated.(model)
+		collectMsgs(cmd)
+	}
+	fail()
+	fail() // A background retry shows the same failure.
+	assert.Equal(t, []string{"error_shown"}, f.transport.events)
+	f.m, _ = f.m.scheduleDetailFollow()
+	fail()
+	assert.Equal(t, []string{"error_shown", "error_shown"}, f.transport.events)
+	assert.Equal(t, []string{"review_viewed", "review_viewed"}, f.transport.kinds)
+}

@@ -296,6 +296,7 @@ func (m model) scheduleDetailFollow() (model, tea.Cmd) {
 	gen := m.detailFollowGen
 	m.reviewScroll = 0
 	m.splitDetailErr = nil
+	m.reviewErrReportedJobID = 0
 	// The selection moved to a different job -- invalidate any in-flight
 	// pane log fetch/poll for the job we just navigated away from by
 	// bumping paneLogSeq, so a response for it (including a late-arriving

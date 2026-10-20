@@ -235,6 +235,21 @@ func TestSyncFailureOutages(t *testing.T) {
 	assert.Equal(t, []string{"timeout", "auth", "other"}, reasons)
 }
 
+func TestSyncPassWithRejectedRowsArmsOutages(t *testing.T) {
+	t.Parallel()
+	worker := NewSyncWorker(nil, config.SyncConfig{})
+	var reasons []string
+	worker.SetOnSyncFailed(func(reason string) { reasons = append(reasons, reason) })
+	worker.passError = &syncSourceError{&pgconn.PgError{Code: "23505"}}
+	worker.observePass()
+	worker.observeSync(&syncSourceError{net.ErrClosed})
+	assert.Equal(t, []string{"network"}, reasons)
+	worker.passError = &syncSourceError{&pgconn.PgError{Code: "42501"}}
+	worker.observePass()
+	worker.observeSync(&syncSourceError{context.DeadlineExceeded})
+	assert.Equal(t, []string{"network"}, reasons, "a swallowed source failure keeps the outage open")
+}
+
 func TestSyncFailureReason(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -245,6 +260,7 @@ func TestSyncFailureReason(t *testing.T) {
 		{&pgconn.PgError{Code: "42501"}, "auth"},
 		{&pgconn.PgError{Code: "08006"}, "network"},
 		{&pgconn.PgError{Code: "57P01"}, "network"},
+		{&pgconn.PgError{Code: "57P03"}, "network"},
 		{&pgconn.PgError{Code: "53300"}, "network"},
 		{io.EOF, "network"},
 		{io.ErrUnexpectedEOF, "network"},

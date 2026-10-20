@@ -11,8 +11,9 @@ All notable changes to roborev, grouped by minor release.
 
 - Count core action error banners and toasts in the web UI and TUI, and
     PostgreSQL sync outages, in anonymous telemetry using fixed action names and
-    error classes. Failed closes and reopens both count. Missing reviews and TUI
-    failed-job panes stay silent. Daemon-unreachable errors can't be counted.
+    error classes. Failed closes and reopens both count. Each review load or
+    render failure counts once per selection. Failed agent jobs and missing
+    reviews stay silent. Daemon-unreachable errors can't be counted.
 - Cap telemetry waits at exit to 50 ms for CLI commands, stdio MCP sessions, and
     the TUI.
 - Count review reads, committed fixes, and explicit closes in anonymous

@@ -63,6 +63,16 @@ func (w *SyncWorker) observeSync(err error) {
 	}
 }
 
+// observePass records a completed push and pull. Rejected rows still show
+// that PostgreSQL answered, so only swallowed source failures count.
+func (w *SyncWorker) observePass() {
+	if syncDataError(w.passError) {
+		w.observeSync(nil)
+		return
+	}
+	w.observeSync(w.passError)
+}
+
 // syncSourceError distinguishes PostgreSQL operations from local SQLite work.
 type syncSourceError struct{ err error }
 
@@ -79,7 +89,7 @@ func syncFailureReason(err error) string {
 		switch {
 		case strings.HasPrefix(pgErr.Code, "28") || pgErr.Code == "42501":
 			return "auth"
-		case strings.HasPrefix(pgErr.Code, "08") || pgErr.Code == "57P01" || pgErr.Code == "53300":
+		case strings.HasPrefix(pgErr.Code, "08") || strings.HasPrefix(pgErr.Code, "57P") || pgErr.Code == "53300":
 			return "network"
 		}
 	}
@@ -455,7 +465,7 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (*S
 		w.observeSync(err)
 		return nil, fmt.Errorf("pull: %w", err)
 	}
-	w.observeSync(w.passError)
+	w.observePass()
 	stats.PulledJobs = pulled.Jobs
 	stats.PulledReviews = pulled.Reviews
 	stats.PulledResponses = pulled.Responses
@@ -729,7 +739,7 @@ func (w *SyncWorker) doSync() error {
 		return fmt.Errorf("pull: %w", err)
 	}
 
-	w.observeSync(w.passError)
+	w.observePass()
 	return nil
 }
 
@@ -862,7 +872,10 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	if len(reviews) > 0 {
 		success, err := pool.BatchUpsertReviews(ctx, reviews)
 		if err != nil {
-			return stats, fmt.Errorf("batch upsert reviews: %w", &syncSourceError{err})
+			if !errors.Is(err, errUnsyncableReview) {
+				err = &syncSourceError{err}
+			}
+			return stats, fmt.Errorf("batch upsert reviews: %w", err)
 		}
 
 		// Only mark successfully synced reviews
