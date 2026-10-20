@@ -24,15 +24,8 @@ func TestDailyClaimsPath(t *testing.T) {
 	assert.Equal(t, filepath.Join(dir, "telemetry-daily.json"), DailyClaimsPath(filepath.Join(dir, "reviews.db")))
 }
 
-func allowTelemetryEnv(t *testing.T) {
-	t.Helper()
-	t.Setenv("CI", "")
-	require.NoError(t, os.Unsetenv("CI"))
-	t.Setenv("DO_NOT_TRACK", "0")
-}
-
 func TestEnabledFromEnvHonorsRoborevAndGenericOptOut(t *testing.T) {
-	allowTelemetryEnv(t)
+	testutil.SetTelemetryReleaseEnv(t)
 	t.Setenv(GenericEnabledEnv, "")
 	t.Setenv(EnabledEnv, "0")
 	assert.False(t, EnabledFromEnv())
@@ -159,7 +152,7 @@ func TestLoadOrCreateInstallKeepsCreationTimeAcrossRestart(t *testing.T) {
 }
 
 func TestAllowedEventOptionsConfigureRoborevDaemonEvents(t *testing.T) {
-	allowTelemetryEnv(t)
+	releaseVersion := testutil.SetTelemetryReleaseEnv(t)
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -171,7 +164,7 @@ func TestAllowedEventOptionsConfigureRoborevDaemonEvents(t *testing.T) {
 		Application: "roborev",
 		EnvPrefix:   "ROBOREV",
 		DistinctID:  "anonymous-install-id",
-		Version:     "v1.2.3",
+		Version:     releaseVersion,
 		Source:      "daemon",
 	}, allowedEventOptions()...)
 	require.NoError(err)
@@ -230,7 +223,7 @@ func TestAllowedEventOptionsConfigureRoborevDaemonEvents(t *testing.T) {
 	assert.Equal(true, props["sync_enabled"])
 	assert.NotContains(props, "worker_count")
 	assert.Equal("roborev", props["application"])
-	assert.Equal("v1.2.3", props["version"])
+	assert.Equal(releaseVersion, props["version"])
 	assert.Equal("daemon", props["source"])
 	assert.False(props["$process_person_profile"].(bool))
 	assert.True(props["$geoip_disable"].(bool))
@@ -382,16 +375,16 @@ func TestNewReporterOptedOutKeepsAllowlist(t *testing.T) {
 // newPostHogStubReporter returns an enabled reporter and its captured messages.
 func newPostHogStubReporter(t *testing.T) (*Reporter, func() []testutil.PostHogMessage) {
 	t.Helper()
-	allowTelemetryEnv(t)
+	releaseVersion := testutil.SetTelemetryReleaseEnv(t)
 	endpoint, messages := testutil.NewPostHogStub(t)
 	path := filepath.Join(t.TempDir(), "daily.json")
-	reporter, err := NewReporter(Options{Version: "v1.2.3", Endpoint: endpoint, DailyClaimsPath: path, Database: testutil.OpenTestDB(t)})
+	reporter, err := NewReporter(Options{Version: releaseVersion, Endpoint: endpoint, DailyClaimsPath: path, Database: testutil.OpenTestDB(t)})
 	require.NoError(t, err)
 	return reporter, messages
 }
 
 func TestNewReporterOrDisabledErrorFallbackAdmitsNothing(t *testing.T) {
-	allowTelemetryEnv(t)
+	testutil.SetTelemetryReleaseEnv(t)
 	t.Setenv(EnabledEnv, "1")
 	t.Setenv(GenericEnabledEnv, "1")
 

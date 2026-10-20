@@ -34,11 +34,8 @@ func TestDaemonTelemetryScreenViewedUsesDatabaseClaimsPath(t *testing.T) {
 		return
 	}
 	originalVersion := version.Version
-	version.Version = "v1.2.3"
+	version.Version = testutil.SetTelemetryReleaseEnv(t)
 	t.Cleanup(func() { version.Version = originalVersion })
-	t.Setenv("CI", "")
-	require.NoError(t, os.Unsetenv("CI"))
-	t.Setenv("DO_NOT_TRACK", "0")
 	t.Setenv(telemetry.EnabledEnv, "1")
 	t.Setenv(telemetry.GenericEnabledEnv, "1")
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())

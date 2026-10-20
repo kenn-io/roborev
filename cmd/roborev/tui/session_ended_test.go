@@ -46,11 +46,11 @@ func TestSessionEndedCapturedThroughDaemonRoute(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.surface, func(t *testing.T) {
-			enableTelemetryEnv(t)
+			releaseVersion := enableTelemetryEnv(t)
 			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 			db := testutil.OpenTestDB(t)
 			endpoint, messages := testutil.NewPostHogStub(t)
-			reporter, err := telemetry.NewReporter(telemetry.Options{Version: "v1.2.3", Database: db, Endpoint: endpoint, DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json")})
+			reporter, err := telemetry.NewReporter(telemetry.Options{Version: releaseVersion, Database: db, Endpoint: endpoint, DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json")})
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, reporter.Close()) })
 			server := daemon.NewServer(db, &config.Config{}, "")
