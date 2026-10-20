@@ -16,6 +16,7 @@ const (
 	ReviewTypeSecurity  = "security"
 	ReviewTypeDesign    = "design"
 	ReviewTypeLookahead = "lookahead"
+	ReviewTypeTestValue = "test-value"
 	ReviewTypeGoal      = "goal"
 )
 
@@ -29,7 +30,8 @@ func IsDefaultReviewType(rt string) bool {
 
 func IsBuiltInReviewType(rt string) bool {
 	return IsDefaultReviewType(rt) || rt == ReviewTypeSecurity ||
-		rt == ReviewTypeDesign || rt == ReviewTypeLookahead
+		rt == ReviewTypeDesign || rt == ReviewTypeLookahead ||
+		rt == ReviewTypeTestValue
 }
 
 // ValidateReviewTypes canonicalizes, validates, and deduplicates
@@ -48,6 +50,7 @@ func validateReviewTypes(
 		ReviewTypeSecurity:  true,
 		ReviewTypeDesign:    true,
 		ReviewTypeLookahead: true,
+		ReviewTypeTestValue: true,
 	}
 	seen := make(map[string]bool, len(types))
 	canonical := make([]string, 0, len(types))
@@ -55,7 +58,7 @@ func validateReviewTypes(
 		if rt == "" {
 			return nil, fmt.Errorf(
 				"invalid review_type %q "+
-					"(valid: default, security, design, lookahead)", rt)
+					"(valid: default, security, design, lookahead, test-value)", rt)
 		}
 		if IsDefaultReviewType(rt) {
 			rt = ReviewTypeDefault
@@ -75,7 +78,7 @@ func validateReviewTypes(
 func validReviewTypesHelp(custom map[string]bool) string {
 	types := []string{
 		ReviewTypeDefault, ReviewTypeSecurity,
-		ReviewTypeDesign, ReviewTypeLookahead,
+		ReviewTypeDesign, ReviewTypeLookahead, ReviewTypeTestValue,
 	}
 	customTypes := make([]string, 0, len(custom))
 	for name := range custom {
@@ -87,7 +90,10 @@ func validReviewTypesHelp(custom map[string]bool) string {
 }
 
 func ExplicitReviewTypes() []string {
-	return []string{ReviewTypeSecurity, ReviewTypeDesign, ReviewTypeLookahead}
+	return []string{
+		ReviewTypeSecurity, ReviewTypeDesign, ReviewTypeLookahead,
+		ReviewTypeTestValue,
+	}
 }
 
 func ExplicitReviewTypesHelp() string {

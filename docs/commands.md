@@ -83,6 +83,7 @@ roborev review --dirty           # Review working tree
 roborev review --type security   # Security-focused review
 roborev review --type design     # Design-focused review
 roborev review --type lookahead  # Time-series look-ahead bias review
+roborev review --type test-value # Find tests that add no value
 roborev review --type goal       # Superpowers spec/plan and open Kata graph
 
 # Review panels
@@ -98,7 +99,7 @@ roborev review --branch --panel none          # Force single-agent review
 | `--base <branch>` | Base branch for `--branch` comparison (default: auto-detect) |
 | `--agent <name>` | Use a specific agent for review: a built-in (`codex`, `claude-code`, `gemini`, `copilot`, `opencode`, `cursor`, `kiro`, `kilo`, `droid`, `pi`, `grok`, `muse`) or a configured ACP agent |
 | `-m, --model <model>` | Model to use (format varies by agent) |
-| `--type <type>` | Review type (`security`, `design`, `lookahead`, `goal`); `goal` reviews Superpowers intent artifacts |
+| `--type <type>` | Review type (`security`, `design`, `lookahead`, `test-value`, `goal`); `goal` reviews Superpowers intent artifacts |
 | `--spec <path>` | Design spec for `--type goal`; omit for unambiguous discovery |
 | `--plan <path>` | Linked implementation plan for `--type goal` |
 | `--reasoning <level>` | Set a reasoning level; prefer exact `low`/`medium`/`high`/`xhigh`/`max`, while legacy presets remain supported. See [Reasoning Levels](/docs/configuration/#reasoning-levels) |
@@ -930,7 +931,7 @@ roborev ci review --comment                  # Post results as PR/MR comment
 | `--gl-host <url>` | GitLab server URL or hostname; selects GitLab (default: `CI_SERVER_URL`, then `GITLAB_HOST`/`GL_HOST`); hardcode it in the job script when `GITLAB_TOKEN` is protected; mutually exclusive with `--gh-repo` |
 | `--pr <number>` | PR number / GitLab MR IID (default: `GITHUB_EVENT_PATH` or `CI_MERGE_REQUEST_IID`) |
 | `--agent <names>` | Agents to use (comma-separated, default: auto-detect) |
-| `--review-types <types>` | Review types to run (comma-separated: `security`, `design`, `lookahead`, `default`) |
+| `--review-types <types>` | Review types to run (comma-separated: `security`, `design`, `lookahead`, `test-value`, `default`) |
 | `--reasoning <level>` | Legacy (`fast`/`standard`/`thorough`/`maximum`) or exact (`low`/`medium`/`high`/`xhigh`/`max`) reasoning |
 | `--min-severity <level>` | Lowest severity that fails the combined review (`low`/`medium`/`high`/`critical`); lower findings are still reported |
 | `--upsert-comments` | Update the previous roborev comment instead of adding one (overrides `[ci] upsert_comments`) |

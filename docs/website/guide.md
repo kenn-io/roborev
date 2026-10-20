@@ -125,8 +125,8 @@ Migrations must be reversible.
 
 A review panel fans one target out to named subagents, each with its own agent,
 review type, instructions, and timeout, and a synthesis agent merges them into
-one review. Built-in `security`, `design`, and `lookahead` types swap the
-rubric; custom types wrap your own Go template. `roborev analyze` runs
+one review. Built-in `security`, `design`, `lookahead`, and `test-value` types
+swap the rubric; custom types wrap your own Go template. `roborev analyze` runs
 duplication, complexity, dead-code, refactoring, API-design, architecture,
 security, and test-fixture passes over existing code, and `roborev compact`
 verifies open findings against the current tree.

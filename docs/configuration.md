@@ -596,7 +596,8 @@ The fallback hierarchy for each workflow is:
 
 Some review types have no dedicated `{type}_agent` / `{type}_model` keys. Those
 can be pinned through a generic per-type block keyed by the type name, which
-sets `agent` and `model`. Today this applies to the `lookahead` review type:
+sets `agent` and `model`. Today this applies to the `lookahead` and `test-value`
+review types:
 
 ```toml
 [analyze.lookahead]

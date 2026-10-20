@@ -7,6 +7,17 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
+**New features**
+
+- Find tests that add maintenance cost without protecting behavior with
+    `roborev review --type test-value`. The reviewer flags tests of dependency
+    behavior, self-confirming assertions, static text checks, unreachable
+    scenarios, duplicate coverage, and fixtures that bypass the behavior under
+    test. Confirmed findings default to medium severity. See
+    [Review Types](/docs/guides/reviewing-code/#review-types). A custom
+    `[review.types.test-value]` definition must be renamed or removed, because
+    built-in names are reserved.
+
 **Improvements**
 
 - Cap telemetry waits at exit to 50 ms for CLI commands, stdio MCP sessions, and

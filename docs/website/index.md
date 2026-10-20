@@ -97,9 +97,9 @@ writer, or a local model behind a proxy.
   `[review.panels.*]`, and run `roborev review --branch --panel branch_final`.
   A synthesis agent merges the members into one review; optional members can
   flake without blocking it.
-- **Review types.** `--type security`, `--type design`, and `--type lookahead`
-  swap the system prompt. Custom types wrap a Go template rubric in the same
-  schema, severity filtering, and verdict.
+- **Review types.** `--type security`, `--type design`, `--type lookahead`, and
+  `--type test-value` swap the system prompt. Custom types wrap a Go template
+  rubric in the same schema, severity filtering, and verdict.
 - **Analysis.** `roborev analyze` runs duplication, complexity, dead-code,
   refactor, api-design, architecture, security, and test-fixtures passes over
   existing code. Findings land in the same queue; `--fix` applies them.

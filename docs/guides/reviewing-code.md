@@ -166,6 +166,7 @@ roborev review                       # Default code review
 roborev review --type security       # Security-focused review
 roborev review --type design         # Design-focused review
 roborev review --type lookahead      # Time-series look-ahead bias review
+roborev review --type test-value     # Find tests that add no value
 roborev review --branch --type security  # Security review of branch
 ```
 
@@ -175,6 +176,7 @@ roborev review --branch --type security  # Security review of branch
 | `security` | Injection, auth, credential exposure, path traversal, unsafe patterns |
 | `design` | Completeness, feasibility, task scoping, missing considerations |
 | `lookahead` | Time-series look-ahead bias (a.k.a. peekahead / future-data leakage): window/lag direction, train/test ordering, fit-on-full-series, as-of join alignment, point-in-time correctness, label/target leakage |
+| `test-value` | Added or modified tests that protect nothing: tests of dependency behavior, self-confirming assertions, static text checks, unreachable scenarios, duplicate coverage, and fixtures that bypass the behavior under test. Confirmed findings default to medium severity. |
 
 Review types work with all review modes (`--branch`, `--dirty`, `--since`,
 single commits, ranges).
@@ -183,16 +185,19 @@ The `security` and `design` types can have their own agent and model
 configuration via `{type}_agent` and `{type}_model` in `.roborev.toml` or global
 config. See
 [Workflow-Specific Agent and Model](/docs/configuration/#workflow-specific-agent-and-model).
-`lookahead` has no dedicated fields, so pin it through the generic per-type
-block:
+`lookahead` and `test-value` have no dedicated fields, so pin them through the
+generic per-type block:
 
 ```toml
 [analyze.lookahead]
 agent = "claude-code"
 model = "sonnet"
+
+[analyze.test-value]
+agent = "codex"
 ```
 
-When unset, it falls back to your repo or global default agent and model.
+When unset, they fall back to your repo or global default agent and model.
 
 You can also define schema-constrained review types backed by local Go
 templates, then use them anywhere `--type` or `review_type` is accepted. See

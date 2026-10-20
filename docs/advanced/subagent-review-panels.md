@@ -169,7 +169,7 @@ timeout = "3m"
 | `model` | string | Model for this member. Empty means use the workflow model resolution. |
 | `provider` | string | Provider for agents that support provider selection, currently used by Pi. |
 | `reasoning` | string | Reasoning level for this member. Empty means use review reasoning. |
-| `review_type` | string | `default`, `security`, `design`, or `lookahead`. `review` and `general` are accepted as aliases for `default`. |
+| `review_type` | string | `default`, `security`, `design`, `lookahead`, or `test-value`. `review` and `general` are accepted as aliases for `default`. |
 | `instructions` | string | Additional instructions appended only to this member prompt. |
 | `allow_failure` | bool | When true, a failed or canceled member does not make an otherwise successful panel fail. |
 | `non_voting` | bool | When true, the member runs and stores its review but is excluded from synthesis and the panel verdict. |
@@ -177,10 +177,10 @@ timeout = "3m"
 
 The member workflow is chosen from `review_type`: `default` uses review workflow
 config, `security` uses security workflow config, `design` uses design workflow
-config, and fieldless types such as `lookahead` can be pinned with
-`[analyze.lookahead]`. If a member sets `agent` but omits `model`, roborev
-inherits only a workflow specific model. It does not pair that explicit agent
-with an unrelated generic `default_model`.
+config, and fieldless types such as `lookahead` and `test-value` can be pinned
+with `[analyze.lookahead]` or `[analyze.test-value]`. If a member sets `agent`
+but omits `model`, roborev inherits only a workflow specific model. It does not
+pair that explicit agent with an unrelated generic `default_model`.
 
 `allow_failure` is how you mark a flaky or best-effort reviewer. The member
 still runs and its findings are included when it succeeds, but a failed or
