@@ -16,18 +16,20 @@ import (
 const structuredReviewOutputInstruction = `
 
 Return exactly one JSON object, without a code fence or other text, with this shape:
-{"schema_version":3,"summary":"...","verdict":"pass|fail|unable_to_review","findings":[{"severity":"critical|high|medium|low","kind":"defect|test|documentation|maintainability","confidence":0.8,"problem":"...","fix":"...","file":"path/to/file.go","start_line":12,"end_line":14}]}
+{"schema_version":3,"summary":"...","verdict":"pass|fail|unable_to_review","findings":[{"severity":"critical|high|medium|low","kind":"defect|improvement","topic":null,"confidence":0.8,"problem":"...","fix":"...","file":"path/to/file.go","start_line":12,"end_line":14}]}
 Use an empty findings array when there are no findings. This JSON format
 replaces any Markdown output format specified earlier in the prompt. Return a
 concise summary, your overall verdict, and every actionable finding.
 
 Each finding needs:
 - severity: critical, high, medium, or low.
-- kind: "defect" when the code behaves wrongly in a case you can name; "test"
-  when a test is missing, cannot fail, or misses the case the change is about;
-  "documentation" when a comment, message, or document is wrong or leaves out
-  something a reader needs; "maintainability" when the behavior is right but
-  the structure, duplication, or naming will cost later work.
+- kind: "defect" when the code behaves wrongly in a case you can name;
+  "improvement" when the code works but should still change, for example a
+  missing or weak test, wrong documentation, or structure, duplication, or
+  naming that will cost later work.
+- topic: "tests", "documentation", "security", "performance", or "design" when
+  the finding is about one of those areas, otherwise null. A defect can have a
+  topic, such as a security hole; so can an improvement, such as a missing test.
 - confidence: a number from 0 to 1 for how sure you are that the problem is
   real.
 - problem and fix: what is wrong and how to fix it.

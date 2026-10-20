@@ -56,19 +56,28 @@ const TextLocationSchemaVersion = 2
 const (
 	// KindDefect means the code behaves wrongly in a case the finding names.
 	KindDefect = "defect"
-	// KindTest means a test is missing, cannot fail, or misses the case the
-	// change is about.
-	KindTest = "test"
-	// KindDocumentation means a comment, message, or document is wrong or
-	// leaves out something a reader needs.
-	KindDocumentation = "documentation"
-	// KindMaintainability means the behavior is right today but the
-	// structure, duplication, or naming will cost later work.
-	KindMaintainability = "maintainability"
+	// KindImprovement means the code works, but something should still
+	// change: a missing or weak test, wrong documentation, or structure,
+	// duplication, or naming that will cost later work.
+	KindImprovement = "improvement"
 )
 
 // Kinds lists every kind in the order the schema offers them.
-var Kinds = []string{KindDefect, KindTest, KindDocumentation, KindMaintainability}
+var Kinds = []string{KindDefect, KindImprovement}
+
+// Topic values name the area a finding is about, independent of its kind:
+// a defect can be a security problem, and an improvement can be a missing
+// test. A version 3 finding has at most one topic, and may have none.
+const (
+	TopicTests         = "tests"
+	TopicDocumentation = "documentation"
+	TopicSecurity      = "security"
+	TopicPerformance   = "performance"
+	TopicDesign        = "design"
+)
+
+// Topics lists every topic in the order the schema offers them.
+var Topics = []string{TopicTests, TopicDocumentation, TopicSecurity, TopicPerformance, TopicDesign}
 
 // Verdict values the agent may report. The verdict never relaxes a finding:
 // a review with a finding at or above the severity threshold fails whatever
@@ -89,10 +98,10 @@ var Schema = schema(false)
 var SourcedSchema = schema(true)
 
 func schema(withSources bool) jsontext.Value {
-	required := `["severity", "kind", "confidence", "problem", "fix", "file", "start_line", "end_line"]`
+	required := `["severity", "kind", "topic", "confidence", "problem", "fix", "file", "start_line", "end_line"]`
 	sources := ""
 	if withSources {
-		required = `["severity", "kind", "confidence", "problem", "fix", "file", "start_line", "end_line", "sources"]`
+		required = `["severity", "kind", "topic", "confidence", "problem", "fix", "file", "start_line", "end_line", "sources"]`
 		sources = `,
           "sources": {
             "type": "array",
@@ -121,7 +130,11 @@ func schema(withSources bool) jsontext.Value {
           },
           "kind": {
             "type": "string",
-            "enum": [%q, %q, %q, %q]
+            "enum": [%q, %q]
+          },
+          "topic": {
+            "type": ["string", "null"],
+            "enum": [%q, %q, %q, %q, %q, null]
           },
           "confidence": {"type": "number", "minimum": 0, "maximum": 1},
           "problem": {"type": "string", "minLength": 1},
@@ -134,7 +147,8 @@ func schema(withSources bool) jsontext.Value {
     }
   }
 }`, SchemaVersion, VerdictPass, VerdictFail, VerdictUnableToReview, required,
-		KindDefect, KindTest, KindDocumentation, KindMaintainability, sources))
+		KindDefect, KindImprovement,
+		TopicTests, TopicDocumentation, TopicSecurity, TopicPerformance, TopicDesign, sources))
 }
 
 // LegacyDocument preserves historical output without claiming extracted findings.
@@ -162,13 +176,15 @@ type Document struct {
 
 // Finding is one problem a review reports.
 //
-// A version 3 finding has a Kind, a Confidence, and a File with an optional
-// line range; its Location is derived from them by [FormatLocation]. Older
+// A version 3 finding has a Kind, an optional Topic, a Confidence, and a File
+// with an optional line range; its Location is derived from them by [FormatLocation]. Older
 // findings have an empty Kind and only a free-text Location. A non-empty Kind
 // is what marks a finding as version 3 when it is encoded.
 type Finding struct {
 	Severity string `json:"severity"`
 	Kind     string `json:"kind,omitempty"`
+	// Topic is one of [Topics], or empty when no topic applies.
+	Topic string `json:"topic,omitempty"`
 	// Confidence is the reviewer's estimate, from 0 to 1, that the problem is
 	// real. Models are poorly calibrated, so treat it as a weak signal.
 	Confidence float64 `json:"confidence,omitempty"`
@@ -184,6 +200,19 @@ type Finding struct {
 	Location string `json:"location,omitempty"`
 	// Sources holds 1-based input review numbers for a sourced document.
 	Sources []int `json:"sources,omitempty"`
+}
+
+// Labels returns the words a reader needs besides the severity: the kind
+// when the finding is not a defect, then its topic.
+func (f Finding) Labels() []string {
+	var labels []string
+	if f.Kind != "" && f.Kind != KindDefect {
+		labels = append(labels, f.Kind)
+	}
+	if f.Topic != "" {
+		labels = append(labels, f.Topic)
+	}
+	return labels
 }
 
 // FormatLocation renders a file and line range as "path", "path:12", or
@@ -216,8 +245,8 @@ func (f *Finding) SetLocation(file string, startLine, endLine int) {
 
 // MarshalJSON writes the shape of the finding's version. Every finding
 // carries a location, as JSON null when empty, so readers of older documents
-// keep working. A version 3 finding also carries its kind, confidence, file,
-// and line range, with null for an absent file or range.
+// keep working. A version 3 finding also carries its kind, topic, confidence,
+// file, and line range, with null for an absent topic, file, or range.
 func (f Finding) MarshalJSON() ([]byte, error) {
 	var location *string
 	if f.Location != "" {
@@ -236,6 +265,7 @@ func (f Finding) MarshalJSON() ([]byte, error) {
 	type wire struct {
 		Severity   string  `json:"severity"`
 		Kind       string  `json:"kind"`
+		Topic      *string `json:"topic"`
 		Confidence float64 `json:"confidence"`
 		Problem    string  `json:"problem"`
 		Fix        string  `json:"fix"`
@@ -248,6 +278,9 @@ func (f Finding) MarshalJSON() ([]byte, error) {
 	w := wire{
 		Severity: f.Severity, Kind: f.Kind, Confidence: f.Confidence,
 		Problem: f.Problem, Fix: f.Fix, Location: location, Sources: f.Sources,
+	}
+	if f.Topic != "" {
+		w.Topic = &f.Topic
 	}
 	if f.File != "" {
 		w.File = &f.File
@@ -270,6 +303,7 @@ type documentWire struct {
 type findingWire struct {
 	Severity   string         `json:"severity"`
 	Kind       *string        `json:"kind"`
+	Topic      *string        `json:"topic"`
 	Confidence *float64       `json:"confidence"`
 	Problem    string         `json:"problem"`
 	Fix        string         `json:"fix"`
@@ -369,8 +403,8 @@ func Decode(raw jsontext.Value) (Document, error) {
 // decodeTextLocatedFinding reads a version 1 or 2 finding, which must carry a
 // location field and none of the version 3 fields.
 func decodeTextLocatedFinding(wire findingWire) (Finding, error) {
-	if wire.Kind != nil || wire.Confidence != nil || wire.File != nil || wire.StartLine != nil || wire.EndLine != nil {
-		return Finding{}, fmt.Errorf("has kind, confidence, file, or line fields, which need schema_version 3")
+	if wire.Kind != nil || wire.Topic != nil || wire.Confidence != nil || wire.File != nil || wire.StartLine != nil || wire.EndLine != nil {
+		return Finding{}, fmt.Errorf("has kind, topic, confidence, file, or line fields, which need schema_version 3")
 	}
 	if len(wire.Location) == 0 {
 		return Finding{}, fmt.Errorf("has no location field")
@@ -391,7 +425,7 @@ func decodeTextLocatedFinding(wire findingWire) (Finding, error) {
 }
 
 // decodeLocatedFinding reads a version 3 finding. Kind and confidence are
-// required. A missing file or line is read as null, and a stored location is
+// required. A missing topic, file, or line is read as null, and a stored location is
 // ignored because it is derived from the file and lines.
 func decodeLocatedFinding(wire findingWire) (Finding, error) {
 	if wire.Kind == nil {
@@ -400,6 +434,13 @@ func decodeLocatedFinding(wire findingWire) (Finding, error) {
 	kind := strings.ToLower(strings.TrimSpace(*wire.Kind))
 	if !slices.Contains(Kinds, kind) {
 		return Finding{}, fmt.Errorf("has invalid kind %q", *wire.Kind)
+	}
+	var topic string
+	if wire.Topic != nil {
+		topic = strings.ToLower(strings.TrimSpace(*wire.Topic))
+		if topic != "" && !slices.Contains(Topics, topic) {
+			return Finding{}, fmt.Errorf("has invalid topic %q", *wire.Topic)
+		}
 	}
 	if wire.Confidence == nil {
 		return Finding{}, fmt.Errorf("has no confidence")
@@ -416,6 +457,7 @@ func decodeLocatedFinding(wire findingWire) (Finding, error) {
 	finding := Finding{
 		Severity:   wire.Severity,
 		Kind:       kind,
+		Topic:      topic,
 		Confidence: *wire.Confidence,
 		Problem:    wire.Problem,
 		Fix:        wire.Fix,
@@ -537,8 +579,8 @@ func (r Document) Markdown(minSeverity string) string {
 	out.WriteString("\n\n## Findings\n")
 	for i, finding := range r.Findings {
 		fmt.Fprintf(&out, "\n### %d. %s", i+1, titleSeverity(finding.Severity))
-		if finding.Kind != "" && finding.Kind != KindDefect {
-			fmt.Fprintf(&out, " (%s)", finding.Kind)
+		if labels := finding.Labels(); len(labels) > 0 {
+			fmt.Fprintf(&out, " (%s)", strings.Join(labels, ", "))
 		}
 		out.WriteString("\n\n")
 		if finding.Location != "" {

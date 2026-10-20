@@ -26,7 +26,7 @@ func TestRunAgentReviewKeepsCustomVerdictWithRenderedOutput(t *testing.T) {
 	  "verdict": "pass",
 	  "summary": "High: no actionable findings remain.",
   "findings": [
-    {"severity":"low","kind":"maintainability","confidence":0.7,"problem":"Vague name.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}
+    {"severity":"low","kind":"improvement","confidence":0.7,"problem":"Vague name.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}
   ]
 }`),
 	}
@@ -88,7 +88,7 @@ func TestRunAgentReviewRequiresJSONWithoutNativeSchema(t *testing.T) {
 }
 
 func TestRunAgentReviewAcceptsJSONWithoutNativeSchema(t *testing.T) {
-	raw := `{"schema_version":3,"summary":"One finding.","verdict":"fail","findings":[{"severity":"low","kind":"maintainability","confidence":0.7,"problem":"Vague name.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}]}`
+	raw := `{"schema_version":3,"summary":"One finding.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","confidence":0.7,"problem":"Vague name.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}]}`
 	a := &mockAgent{name: "plain", output: raw}
 	got, err := RunAgentReview(t.Context(), a, t.TempDir(), "HEAD", "prompt", "default", "medium", nil)
 	require.NoError(t, err)

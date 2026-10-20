@@ -99,7 +99,7 @@ func BuildSynthesisPrompt(
 		"You are combining multiple code review outputs " +
 			"into a single GitHub PR comment.\n" +
 			"Return exactly one JSON object with this shape and no code fence: " +
-			`{"schema_version":3,"summary":"...","verdict":"pass|fail","findings":[{"severity":"critical|high|medium|low","kind":"defect|test|documentation|maintainability","confidence":0.8,"problem":"...","fix":"...","file":"path or null","start_line":12,"end_line":14,"sources":[1]}]}` + "\n" +
+			`{"schema_version":3,"summary":"...","verdict":"pass|fail","findings":[{"severity":"critical|high|medium|low","kind":"defect|improvement","topic":"copied from the input finding, or null","confidence":0.8,"problem":"...","fix":"...","file":"path or null","start_line":12,"end_line":14,"sources":[1]}]}` + "\n" +
 			"Put a one-line overall summary in `summary` and your overall judgment in `verdict`. " +
 			"List every finding that requires changes in `findings`; " +
 			"return an empty `findings` array if the reviewers agree the code is clean.\n" +
@@ -110,7 +110,7 @@ func BuildSynthesisPrompt(
 			"- Do not use tools except to read referenced prompt or review-input files in full\n" +
 			"- Deduplicate findings reported by multiple reviewers and cite every source\n" +
 			"- Order findings by severity (Critical > High > Medium > Low)\n" +
-			"- Keep each finding's kind; when reviewers disagree, use the kind most of them gave\n" +
+			"- Keep each finding's kind and topic; when reviewers disagree, use the value most of them gave\n" +
 			"- Set confidence to the highest confidence any source gave, or 0.5 when the sources give none\n" +
 			"- Keep the file, start_line, and end_line of the findings you combine; use null when there is none\n" +
 			"- No preamble about yourself\n")

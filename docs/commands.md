@@ -346,7 +346,8 @@ Version 3 findings also have these members:
 
 | Member | Type | Meaning |
 |--------|------|---------|
-| `kind` | string | `defect`, `test`, `documentation`, or `maintainability` |
+| `kind` | string | `defect` when the code behaves wrongly, or `improvement` when it works but should still change |
+| `topic` | string or `null` | `tests`, `documentation`, `security`, `performance`, or `design`, or `null` when no topic applies |
 | `confidence` | number | The reviewer's estimate, from 0 to 1, that the problem is real. Models are poorly calibrated, so treat it as a weak signal |
 | `file` | string or `null` | Path relative to the repository root |
 | `start_line`, `end_line` | integer or `null` | First and last line of the problem, or `null` when the finding covers the whole file or has no file |

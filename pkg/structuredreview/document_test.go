@@ -15,9 +15,9 @@ func TestDecodeReadsVersion3Findings(t *testing.T) {
   "summary": "Three findings.",
   "verdict": "fail",
   "findings": [
-    {"severity":"High","kind":"Defect","confidence":0.9,"problem":"p1","fix":"f1","file":" a.go ","start_line":12,"end_line":14},
-    {"severity":"low","kind":"test","confidence":0,"problem":"p2","fix":"f2","file":"b.go","start_line":null,"end_line":null},
-    {"severity":"low","kind":"maintainability","confidence":1,"problem":"p3","fix":"f3"}
+    {"severity":"High","kind":"Defect","topic":"Security","confidence":0.9,"problem":"p1","fix":"f1","file":" a.go ","start_line":12,"end_line":14},
+    {"severity":"low","kind":"improvement","topic":null,"confidence":0,"problem":"p2","fix":"f2","file":"b.go","start_line":null,"end_line":null},
+    {"severity":"low","kind":"improvement","confidence":1,"problem":"p3","fix":"f3"}
   ]
 }`))
 	require.NoError(t, err)
@@ -27,6 +27,9 @@ func TestDecodeReadsVersion3Findings(t *testing.T) {
 	first := doc.Findings[0]
 	assert.Equal("high", first.Severity)
 	assert.Equal(KindDefect, first.Kind)
+	assert.Equal(TopicSecurity, first.Topic)
+	assert.Empty(doc.Findings[1].Topic, "a null topic reads as none")
+	assert.Empty(doc.Findings[2].Topic, "a missing topic reads as none")
 	assert.InDelta(0.9, first.Confidence, 1e-9)
 	assert.Equal("a.go", first.File)
 	assert.Equal(12, first.StartLine)
@@ -65,6 +68,7 @@ func TestDecodeRejectsInvalidVersion3Findings(t *testing.T) {
 	}{
 		{name: "no kind", finding: `"confidence":0.5`, want: "has no kind"},
 		{name: "unknown kind", finding: `"kind":"nit","confidence":0.5`, want: `invalid kind "nit"`},
+		{name: "unknown topic", finding: `"kind":"defect","topic":"style","confidence":0.5`, want: `invalid topic "style"`},
 		{name: "no confidence", finding: `"kind":"defect"`, want: "has no confidence"},
 		{name: "confidence above 1", finding: `"kind":"defect","confidence":1.5`, want: "outside 0 to 1"},
 		{name: "negative line", finding: `"kind":"defect","confidence":0.5,"file":"a.go","start_line":-1`, want: "negative line"},
@@ -89,7 +93,7 @@ func TestDecodeRejectsVersion3FieldsInOlderDocuments(t *testing.T) {
 func TestEncodedDocumentsDecodeToTheSameDocument(t *testing.T) {
 	located := Finding{Severity: "high", Kind: KindDefect, Confidence: 0.75, Problem: "p", Fix: "f", Sources: []int{2}}
 	located.SetLocation("a.go", 3, 8)
-	unlocated := Finding{Severity: "low", Kind: KindTest, Confidence: 0, Problem: "p2", Fix: "f2"}
+	unlocated := Finding{Severity: "low", Kind: KindImprovement, Topic: TopicTests, Confidence: 0, Problem: "p2", Fix: "f2"}
 	tests := []struct {
 		name string
 		doc  Document
@@ -128,11 +132,14 @@ func TestVersion3FindingsKeepALocationForOlderReaders(t *testing.T) {
 func TestMarkdownLabelsFindingsThatAreNotDefects(t *testing.T) {
 	defect := Finding{Severity: "high", Kind: KindDefect, Confidence: 0.9, Problem: "p1", Fix: "f1"}
 	defect.SetLocation("a.go", 4, 4)
-	docs := Finding{Severity: "low", Kind: KindDocumentation, Confidence: 0.4, Problem: "p2", Fix: "f2"}
-	got := Document{SchemaVersion: 3, Summary: "s", Verdict: VerdictFail, Findings: []Finding{defect, docs}}.Markdown("")
+	defect.Topic = TopicSecurity
+	docs := Finding{Severity: "low", Kind: KindImprovement, Topic: TopicDocumentation, Confidence: 0.4, Problem: "p2", Fix: "f2"}
+	plain := Finding{Severity: "low", Kind: KindImprovement, Confidence: 0.4, Problem: "p3", Fix: "f3"}
+	got := Document{SchemaVersion: 3, Summary: "s", Verdict: VerdictFail, Findings: []Finding{defect, docs, plain}}.Markdown("")
 
 	assert := assert.New(t)
-	assert.Contains(got, "### 1. High\n\n**Location:** a.go:4\n")
-	assert.Contains(got, "### 2. Low (documentation)\n")
+	assert.Contains(got, "### 1. High (security)\n\n**Location:** a.go:4\n")
+	assert.Contains(got, "### 2. Low (improvement, documentation)\n")
+	assert.Contains(got, "### 3. Low (improvement)\n")
 	assert.NotContains(got, "0.9", "confidence is not shown to readers")
 }

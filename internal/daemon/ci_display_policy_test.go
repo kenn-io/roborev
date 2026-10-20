@@ -113,9 +113,9 @@ func TestSuccessfulPanelSynthesisInheritsThreshold(t *testing.T) {
 	} {
 		t.Run(policy.name, func(t *testing.T) {
 			assert := assert.New(t)
-			document := jsontext.Value(`{"schema_version":3,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","kind":"maintainability","confidence":0.6,"problem":"Minor naming issue.","fix":"Rename it.","file":null,"start_line":null,"end_line":null,"sources":[1,2]}]}`)
+			document := jsontext.Value(`{"schema_version":3,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","confidence":0.6,"problem":"Minor naming issue.","fix":"Rename it.","file":null,"start_line":null,"end_line":null,"sources":[1,2]}]}`)
 			// Storage holds the canonical encoding, which adds the derived location.
-			canonical := `{"schema_version":3,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","kind":"maintainability","confidence":0.6,"problem":"Minor naming issue.","fix":"Rename it.","file":null,"start_line":null,"end_line":null,"location":null,"sources":[1,2]}]}`
+			canonical := `{"schema_version":3,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","topic":null,"confidence":0.6,"problem":"Minor naming issue.","fix":"Rename it.","file":null,"start_line":null,"end_line":null,"location":null,"sources":[1,2]}]}`
 			a := &synthesisEntrypointTestAgent{name: "threshold-synthesis", result: string(document)}
 			agent.RegisterForTest(t, a)
 			runUUID, members, synthJob := enqueuePanelRun(t, tc, "threshold-synthesis", []memberSpec{{name: "first", agent: "test"}, {name: "second", agent: "test"}})

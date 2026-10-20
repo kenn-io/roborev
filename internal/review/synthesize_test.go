@@ -721,7 +721,7 @@ func TestSuccessfulSynthesisInheritsThreshold(t *testing.T) {
 		{"unfiltered member", []string{"medium", ""}, "", true},
 	} {
 		t.Run(policy.name, func(t *testing.T) {
-			a := &structuredBatchAgent{name: "threshold-synthesis", result: []byte(`{"schema_version":3,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","kind":"maintainability","confidence":0.7,"problem":"Minor naming issue.","fix":"Rename it.","file":null,"start_line":null,"end_line":null,"sources":[1,2]}]}`)}
+			a := &structuredBatchAgent{name: "threshold-synthesis", result: []byte(`{"schema_version":3,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","confidence":0.7,"problem":"Minor naming issue.","fix":"Rename it.","file":null,"start_line":null,"end_line":null,"sources":[1,2]}]}`)}
 			agent.RegisterForTest(t, a)
 			doc := StructuredReview{SchemaVersion: 2, Summary: "Review complete.", Findings: []StructuredFinding{{Severity: "low", Problem: "Minor naming issue.", Fix: "Rename it."}}}
 			results := make([]ReviewResult, len(policy.members))

@@ -4402,7 +4402,7 @@ components:
         fix:
           type: string
         kind:
-          description: One of defect, test, documentation, or maintainability. Present on version 3 documents.
+          description: defect when the code behaves wrongly, or improvement when it works but should still change. Present on version 3 documents.
           type: string
         location:
           description: Where the problem is, or null when the finding has no location. On version 3 documents it is derived from file, start_line, and end_line.
@@ -4425,6 +4425,11 @@ components:
           format: int64
           type:
             - integer
+            - "null"
+        topic:
+          description: One of tests, documentation, security, performance, or design, or null when no topic applies. Present on version 3 documents.
+          type:
+            - string
             - "null"
       required:
         - severity

@@ -3886,7 +3886,7 @@ type StructuredReviewFinding struct {
 	File *string `json:"file,omitempty"`
 	Fix  string  `json:"fix" validate:"required"`
 
-	// Kind One of defect, test, documentation, or maintainability. Present on version 3 documents.
+	// Kind defect when the code behaves wrongly, or improvement when it works but should still change. Present on version 3 documents.
 	Kind *string `json:"kind,omitempty"`
 
 	// Location Where the problem is, or null when the finding has no location. On version 3 documents it is derived from file, start_line, and end_line.
@@ -3901,6 +3901,9 @@ type StructuredReviewFinding struct {
 
 	// StartLine First line of the problem in the reviewed file, or null. Present on version 3 documents.
 	StartLine *int64 `json:"start_line,omitempty"`
+
+	// Topic One of tests, documentation, security, performance, or design, or null when no topic applies. Present on version 3 documents.
+	Topic *string `json:"topic,omitempty"`
 }
 
 func (s StructuredReviewFinding) Validate() error {

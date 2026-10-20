@@ -349,7 +349,7 @@ func TestWorkerStoresStructuredCustomReviewWithEveryFinding(t *testing.T) {
   "verdict":"fail",
   "findings":[
     {"severity":"high","kind":"defect","confidence":0.9,"problem":"State diverges.","fix":"Use one owner.","file":null,"start_line":null,"end_line":null},
-    {"severity":"low","kind":"maintainability","confidence":0.5,"problem":"Name is vague.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}
+    {"severity":"low","kind":"improvement","confidence":0.5,"problem":"Name is vague.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}
   ]
 }`),
 	})
@@ -446,7 +446,7 @@ func TestWorkerUsesConfiguredSeverityForStructuredVerdict(t *testing.T) {
 	  "summary":"High: no actionable findings.",
 	  "verdict":"pass",
   "findings":[
-    {"severity":"low","kind":"maintainability","confidence":0.5,"problem":"Name is vague.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}
+    {"severity":"low","kind":"improvement","confidence":0.5,"problem":"Name is vague.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}
   ]
 }`),
 	})

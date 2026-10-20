@@ -149,7 +149,7 @@ func TestRunAgentReviewStoresSettledFindings(t *testing.T) {
   "verdict": "fail",
   "summary": "Two problems.",
   "findings": [
-    {"severity":"low","kind":"documentation","confidence":0.6,"problem":"The comment on main describes the old greeting.","fix":"Update it.","file":"b/main.go","start_line":3,"end_line":99},
+    {"severity":"low","kind":"improvement","topic":"documentation","confidence":0.6,"problem":"The comment on main describes the old greeting.","fix":"Update it.","file":"b/main.go","start_line":3,"end_line":99},
     {"severity":"high","kind":"defect","confidence":0.9,"problem":"main prints to stderr.","fix":"Print to stdout.","file":"ghost.go","start_line":1,"end_line":1}
   ]
 }`),
@@ -165,8 +165,9 @@ func TestRunAgentReviewStoresSettledFindings(t *testing.T) {
 	assert.Equal("high", stored.Findings[0].Severity, "findings are ranked before storage")
 	assert.Empty(stored.Findings[0].Location, "a missing file is not stored")
 	assert.Equal("main.go:3-5", stored.Findings[1].Location, "the stored location matches the reviewed file")
-	assert.Equal(structuredreview.KindDocumentation, stored.Findings[1].Kind)
-	assert.Contains(got.Output, "### 2. Low (documentation)")
+	assert.Equal(structuredreview.KindImprovement, stored.Findings[1].Kind)
+	assert.Equal(structuredreview.TopicDocumentation, stored.Findings[1].Topic)
+	assert.Contains(got.Output, "### 2. Low (improvement, documentation)")
 	assert.Contains(got.Output, "**Location:** main.go:3-5")
 }
 
@@ -174,7 +175,7 @@ func TestFormatCommentLabelsFindingsThatAreNotDefects(t *testing.T) {
 	defect := located("a.go", 3, 3)
 	defect.Problem = "Nil map write."
 	test := located("a_test.go", 0, 0)
-	test.Severity, test.Kind, test.Problem = "low", structuredreview.KindTest, "No test covers the empty input."
+	test.Severity, test.Kind, test.Topic, test.Problem = "low", structuredreview.KindImprovement, structuredreview.TopicTests, "No test covers the empty input."
 	doc := structuredreview.Document{
 		SchemaVersion: structuredreview.SchemaVersion, Summary: "s",
 		Verdict: structuredreview.VerdictFail, Findings: []structuredreview.Finding{defect, test},
@@ -183,5 +184,5 @@ func TestFormatCommentLabelsFindingsThatAreNotDefects(t *testing.T) {
 	got := FormatComment(PrepareComment(CommentConfig{}, ReviewResult{Structured: &doc}))
 
 	assert.Contains(t, got, "- `a.go:3`: Nil map write.")
-	assert.Contains(t, got, "- *Test:* `a_test.go`: No test covers the empty input.")
+	assert.Contains(t, got, "- *Improvement, tests:* `a_test.go`: No test covers the empty input.")
 }

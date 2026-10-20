@@ -723,7 +723,7 @@ func TestSynthesisPassingMembersWithRetainedFindingsStillSynthesize(t *testing.T
 
 	synthAgent := &synthesisEntrypointTestAgent{
 		name:   "panel-retained-findings-synth",
-		result: `{"schema_version":3,"summary":"Combined.","verdict":"pass","findings":[{"severity":"low","kind":"maintainability","confidence":0.6,"problem":"shared nit","fix":"tidy","file":null,"start_line":null,"end_line":null,"sources":[1,2]}]}`,
+		result: `{"schema_version":3,"summary":"Combined.","verdict":"pass","findings":[{"severity":"low","kind":"improvement","confidence":0.6,"problem":"shared nit","fix":"tidy","file":null,"start_line":null,"end_line":null,"sources":[1,2]}]}`,
 	}
 	agent.RegisterForTest(t, synthAgent)
 
@@ -1270,7 +1270,7 @@ func TestSynthesisStoresFindingWithoutLocation(t *testing.T) {
 	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: synthAgent,
 		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
-			return `{"schema_version":3,"summary":"One finding without a location.","verdict":"pass","findings":[{"severity":"medium","kind":"test","confidence":0.7,"problem":"Missing test","fix":"Add one","file":null,"start_line":null,"end_line":null,"sources":[1]}]}`, nil
+			return `{"schema_version":3,"summary":"One finding without a location.","verdict":"pass","findings":[{"severity":"medium","kind":"improvement","confidence":0.7,"problem":"Missing test","fix":"Add one","file":null,"start_line":null,"end_line":null,"sources":[1]}]}`, nil
 		},
 	})
 

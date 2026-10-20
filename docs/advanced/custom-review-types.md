@@ -134,6 +134,7 @@ The schema is fixed by roborev. The agent must return:
     {
       "severity": "high",
       "kind": "defect",
+      "topic": "security",
       "confidence": 0.8,
       "problem": "What is wrong and why it matters",
       "fix": "A concrete correction",
@@ -153,11 +154,14 @@ Roborev rejects missing or unsupported versions. `verdict` is `pass`, `fail`, or
 Every finding requires these members:
 
 - `severity`: `critical`, `high`, `medium`, or `low`.
-- `kind`: `defect` when the code behaves wrongly in a case the finding names,
-    `test` for a missing or weak test, `documentation` for wrong or missing
-    documentation, or `maintainability` for structure that will cost later work.
-    The review shows the kind next to the severity for anything other than a
-    defect.
+- `kind`: `defect` when the code behaves wrongly in a case the finding names, or
+    `improvement` when the code works but should still change, such as a missing
+    or weak test, wrong documentation, or structure that will cost later work.
+    The review marks improvements next to the severity.
+- `topic`: `tests`, `documentation`, `security`, `performance`, or `design` when
+    the finding is about one of those areas, otherwise `null`. A defect can have
+    a topic, and so can an improvement. The review shows the topic next to the
+    severity.
 - `confidence`: a number from 0 to 1. Roborev uses it only to break ties when it
     orders findings.
 - `problem` and `fix`.

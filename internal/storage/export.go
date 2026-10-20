@@ -137,7 +137,8 @@ func (ExportDocument) Schema(r huma.Registry) *huma.Schema {
 		AdditionalProperties: false,
 		Properties: map[string]*huma.Schema{
 			"severity":   {Type: huma.TypeString, Description: "One of critical, high, medium, or low."},
-			"kind":       {Type: huma.TypeString, Description: "One of defect, test, documentation, or maintainability. Present on version 3 documents."},
+			"kind":       {Type: huma.TypeString, Description: "defect when the code behaves wrongly, or improvement when it works but should still change. Present on version 3 documents."},
+			"topic":      {Type: huma.TypeString, Nullable: true, Description: "One of tests, documentation, security, performance, or design, or null when no topic applies. Present on version 3 documents."},
 			"confidence": {Type: huma.TypeNumber, Format: "double", Minimum: new(float64(0)), Maximum: new(float64(1)), Description: "The reviewer's estimate, from 0 to 1, that the problem is real. Present on version 3 documents."},
 			"problem":    {Type: huma.TypeString},
 			"fix":        {Type: huma.TypeString},

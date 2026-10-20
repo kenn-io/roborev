@@ -460,13 +460,19 @@ This is the structural change with the largest expected effect.
 ### 6. Tighten the schema and the cleanup
 
 Status: schema version 3 is built. Findings carry `kind`, `confidence`, and
-`file`, `start_line`, and `end_line`. Locations are checked against the reviewed
+`file`, `start_line`, and `end_line`. `kind` is `defect` or `improvement`.
+RevEngine's four kinds were narrowed after a precedent review: code review
+research, linters, and other reviewers consistently split "behaves wrongly"
+from "works but should change", and treat tests and documentation as topics
+rather than kinds. An optional `topic` (tests, documentation, security,
+performance, design) records the area separately, as CodeRabbit's category and
+Conventional Comments' decorations do. Locations are checked against the reviewed
 code, duplicates are merged, and findings are ranked in code. Still open: a
 `title` field, the severity rules, and pass or fail on defects only.
 
 - **Add fields:**
   - `title`, one sentence;
-  - `kind`: defect, test, documentation, or maintainability;
+  - `kind`: defect or improvement, plus an optional `topic`;
   - `confidence`, from 0 to 1, as a weak signal (see below);
   - `file`, `start_line`, and `end_line` in place of the free-form `location`.
 
