@@ -36,38 +36,15 @@ must never run from CI, hooks, or another skill.
 
 ## Judge login
 
-ReviewBench's judge calls models through pi's library, with pi's
-configuration in `~/.pi/agent` by default. pi's command line can see more
-providers than that library: a provider discovered at run time, such as a
-local proxy serving the user's subscriptions, is missing from the library. The
-judge then fails with "Requested matcher model is unavailable".
+The judge uses the same pi login, settings, and extensions as the `pi`
+command, so any model `pi --provider P --model M -p 'hi'` can reach works as
+the judge. Setup patches ReviewBench's judge from pi 0.75.5 to pi 1.x
+(`scripts/reviewbench/reviewbench-pi1.patch`); the old pi cannot see providers
+that pi extensions register, such as a local proxy.
 
-For such a provider, write a `models.json` in its own directory and pass it
-with `--pi-dir`. Read the key with pi's `!command` form so it never lands in a
-file or on a command line. For a proxy at `127.0.0.1:8317` whose key is the
-`cpa` entry in pi's `auth.json`:
-
-```json
-{
-  "providers": {
-    "cliproxy": {
-      "baseUrl": "http://127.0.0.1:8317/v1",
-      "api": "openai-completions",
-      "apiKey": "!jq -r .cpa.key ~/.pi/agent/auth.json",
-      "models": [
-        { "id": "gpt-6-sol", "reasoning": true, "contextWindow": 272000, "maxTokens": 16384 }
-      ]
-    }
-  }
-}
-```
-
-Check the model answers before a long run:
-`PI_CODING_AGENT_DIR=<dir> npx pi --provider cliproxy --model gpt-6-sol --no-tools -p 'Reply {"ok": true}'`,
-run inside the ReviewBench checkout. A proxy key can be limited to some
-models; "model is not allowed for this API key" means pick another.
-
-Never print proxy or pi configuration files that hold keys.
+Check the judge model answers before a long run. A key can be limited to some
+models; "model is not allowed for this API key" means pick another. Never
+print pi or proxy configuration files that hold keys.
 
 ## Run
 
@@ -75,7 +52,7 @@ Smoke-test one pull request when the pipeline itself changed:
 
 ```bash
 scripts/reviewbench/eval.sh run --ref HEAD --name smoke --pr 9 --jobs 1
-scripts/reviewbench/eval.sh judge --name smoke [--provider P --judge-model M --pi-dir DIR]
+scripts/reviewbench/eval.sh judge --name smoke [--provider P --judge-model M]
 ```
 
 Then run the comparison in the background. It runs both arms, judges both,
@@ -83,7 +60,7 @@ and prints the comparison:
 
 ```bash
 scripts/reviewbench/eval.sh ab --base origin/main --head HEAD --name <topic> \
-  [--provider P --judge-model M --pi-dir DIR]
+  [--provider P --judge-model M]
 ```
 
 A stopped or partly failed run resumes when the same `run` command is run

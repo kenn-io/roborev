@@ -22,31 +22,32 @@
 #   --provider NAME     pi provider for the judge (default anthropic)
 #   --judge-model ID    judge model (default claude-sonnet-5, the leaderboard's)
 #   --concurrency N     judge calls at once (default 4)
-#   --pi-dir DIR        pi config directory for the judge (default ~/.pi/agent)
 #
-# The judge authenticates through pi, the library ReviewBench's judge uses. A
-# provider that pi's command line discovers at run time, such as a local proxy,
-# is invisible to that library; point --pi-dir at a directory whose
-# models.json defines the provider instead.
+# The judge reaches models through your pi login, settings, and extensions in
+# ~/.pi/agent, the same way the pi command line does.
 # Benchmark checkouts and results live in $ROBOREV_EVAL_DIR, by default under
 # the system temporary directory, since the repositories are disposable.
 set -euo pipefail
 
-# ReviewBench is pinned so judged results stay comparable across runs.
+# ReviewBench is pinned so judged results stay comparable across runs. Its
+# judge pins pi 0.75.5, which cannot see providers that pi extensions
+# register, so setup moves it to pi 1.x with reviewbench-pi1.patch.
 REVIEWBENCH_REPO=https://github.com/review-bench/ReviewBench.git
 REVIEWBENCH_SHA=4f04392d6bf4941ab6f8a3ea0c15b449f4458864
+PI_VERSION=1.1.0
+PI_PACKAGES=(pi-coding-agent pi-ai pi-agent-core pi-codemode pi-mcp pi-tui pi-telemetry chord)
 
 root="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 probe_src="$root/scripts/reviewbench/probe"
 home="${ROBOREV_EVAL_DIR:-${TMPDIR:-/tmp}/roborev-reviewbench}"
 bench="$home/ReviewBench"
 
-usage() { sed -n '8,32p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '8,29p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 die() { echo "eval: $*" >&2; exit 1; }
 log() { echo "eval: $*" >&2; }
 
 agent=claude-code model="" reasoning=thorough jobs=4 set_name=test prs=()
-provider=anthropic judge_model=claude-sonnet-5 concurrency=4 pi_dir=""
+provider=anthropic judge_model=claude-sonnet-5 concurrency=4
 ref="" name="" base_ref="" head_ref=""
 
 parse_options() {
@@ -66,7 +67,6 @@ parse_options() {
       --provider) provider="$2" ;;
       --judge-model) judge_model="$2" ;;
       --concurrency) concurrency="$2" ;;
-      --pi-dir) pi_dir="$2" ;;
       *) usage ;;
     esac
     shift 2
@@ -81,8 +81,19 @@ setup() {
     git -C "$bench" fetch -q origin "$REVIEWBENCH_SHA"
     git -C "$bench" checkout -q --detach "$REVIEWBENCH_SHA"
   fi
-  if [ ! -d "$bench/node_modules" ] || [ "$bench/package-lock.json" -nt "$bench/node_modules" ]; then
-    (cd "$bench" && npm ci --silent)
+  if ! git -C "$bench" apply --reverse --check "$root/scripts/reviewbench/reviewbench-pi1.patch" 2>/dev/null; then
+    git -C "$bench" checkout -q -- .
+    git -C "$bench" apply "$root/scripts/reviewbench/reviewbench-pi1.patch"
+  fi
+  local installed=""
+  [ -f "$bench/node_modules/@earendil-works/pi-coding-agent/package.json" ] &&
+    installed="$(jq -r .version "$bench/node_modules/@earendil-works/pi-coding-agent/package.json")"
+  if [ "$installed" != "$PI_VERSION" ]; then
+    # Every pi package at one version: caret ranges would pull newer
+    # libraries that this pi-coding-agent does not work with.
+    local packages=() p
+    for p in "${PI_PACKAGES[@]}"; do packages+=("@earendil-works/$p@$PI_VERSION"); done
+    (cd "$bench" && npm ci --silent && npm install --no-save --silent "${packages[@]}")
   fi
 }
 
@@ -226,7 +237,7 @@ judge() {
   local run="$home/runs/$name"
   [ -d "$run/findings" ] || die "no findings for run $name"
   mkdir -p "$run/scoring"
-  (cd "$bench" && PI_CODING_AGENT_DIR="${pi_dir:-${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}}" npm run --silent judge -- \
+  (cd "$bench" && npm run --silent judge -- \
     --candidate "$run/findings" --provider "$provider" --model "$judge_model" \
     --output "$run/scoring/results.json" --repo-dir "$home/judge-repos" \
     --concurrency "$concurrency")
