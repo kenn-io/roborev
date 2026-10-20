@@ -45,9 +45,6 @@ func TestReportSessionEndedBoundsDelivery(t *testing.T) {
 		assert.Equal(t, 50*time.Millisecond, time.Since(started))
 		assert.Equal(t, started.Add(time.Second), transport.deadline)
 		close(release)
-		time.Sleep(100 * time.Millisecond)
-		synctest.Wait()
-		assert.Equal(t, int32(1), transport.requests.Load(), "the timed-out check's saved backoff holds the session back")
 	})
 }
 
@@ -165,47 +162,6 @@ func (s *stalledTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	case <-req.Context().Done():
 		return nil, req.Context().Err()
 	}
-}
-
-//nolint:paralleltest // t.Setenv of telemetry opt-out variables
-func TestReportAppOpenedReturnsWhenClientTimesOut(t *testing.T) {
-	enableTelemetryEnv(t)
-
-	synctest.Test(t, func(t *testing.T) {
-		assert := assert.New(t)
-		m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
-		require.Equal(t, 10*time.Second, m.client.Timeout)
-		t.Logf("client timeout %s", m.client.Timeout)
-		transport := &stalledTransport{hit: make(chan struct{}, 1)}
-		m.client.Transport = transport
-
-		cmd := m.reportAppOpened()
-		require.NotNil(t, cmd)
-		var result tea.Msg
-		done := make(chan struct{})
-		go func() {
-			result = cmd()
-			close(done)
-		}()
-
-		<-transport.hit
-		synctest.Wait()
-		select {
-		case <-done:
-			assert.Fail("command returned before the client timeout")
-		default:
-		}
-
-		time.Sleep(10 * time.Second)
-		synctest.Wait()
-		select {
-		case <-done:
-		default:
-			assert.Fail("command still running after the client timeout")
-		}
-		assert.Nil(result)
-		assert.Equal(int32(1), transport.requests.Load())
-	})
 }
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables

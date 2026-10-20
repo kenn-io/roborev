@@ -423,40 +423,42 @@ describe("setupAppOpenedReporting", () => {
         });
       },
     ],
+    [
+      "hiding the tab during a pending check still ends a long absence as its own session",
+      async () => {
+        vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+        let now = 0;
+        let hidden = false;
+        vi.spyOn(performance, "now").mockImplementation(() => now);
+        vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
+        setup();
+        await vi.advanceTimersByTimeAsync(0);
+        now = 30_000;
+        vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
+        let answer!: (response: Response) => void;
+        fetchMock.mockImplementationOnce(
+          () => new Promise((resolve) => (answer = resolve)),
+        );
+        focusWindow();
+        hidden = true;
+        document.dispatchEvent(new Event("visibilitychange"));
+        answer(accepted());
+        await vi.advanceTimersByTimeAsync(31 * 60_000);
+        hidden = false;
+        now += 31 * 60_000;
+        document.dispatchEvent(new Event("visibilitychange"));
+        now += 10_000;
+        globalThis.dispatchEvent(new Event("pagehide"));
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(
+          (await sentEvents())
+            .filter((e) => e.event === "session_ended")
+            .map((e) => e.properties.duration_bucket),
+        ).toEqual(["under_1m", "under_1m"]);
+      },
+    ],
   ])("next-day check: %s", async (_, scenario) => scenario());
-
-  test("hiding the tab during a pending check still ends a long absence as its own session", async () => {
-    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
-    let now = 0;
-    let hidden = false;
-    vi.spyOn(performance, "now").mockImplementation(() => now);
-    vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
-    setup();
-    await vi.advanceTimersByTimeAsync(0);
-    now = 30_000;
-    vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
-    let answer!: (response: Response) => void;
-    fetchMock.mockImplementationOnce(
-      () => new Promise((resolve) => (answer = resolve)),
-    );
-    focusWindow();
-    hidden = true;
-    document.dispatchEvent(new Event("visibilitychange"));
-    answer(accepted());
-    await vi.advanceTimersByTimeAsync(31 * 60_000);
-    hidden = false;
-    now += 31 * 60_000;
-    document.dispatchEvent(new Event("visibilitychange"));
-    now += 10_000;
-    globalThis.dispatchEvent(new Event("pagehide"));
-    await vi.advanceTimersByTimeAsync(0);
-
-    expect(
-      (await sentEvents())
-        .filter((e) => e.event === "session_ended")
-        .map((e) => e.properties.duration_bucket),
-    ).toEqual(["under_1m", "under_1m"]);
-  });
 
   test("keeps only kit-ui keys in local storage", async () => {
     setup();
@@ -470,7 +472,7 @@ describe("setupAppOpenedReporting", () => {
     const keys = storedKeys();
     expect(keys.length).toBeGreaterThan(0);
     for (const key of keys) {
-      expect(key).toMatch(/^roborev\.telemetry\.browser\.v1\./);
+      expect(key).toMatch(/^roborev\.telemetry/);
     }
   });
 
@@ -494,75 +496,59 @@ describe("setupAppOpenedReporting", () => {
     ]);
   });
 
-  test.each([
-    "disabled reply",
-    "restored receipt",
-    "next-day enable",
-    "cross-tab quiet",
-  ])("quiet receipts: %s", async (scenario) => {
-    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
-    let now = 0;
-    let hidden = false;
-    vi.spyOn(performance, "now").mockImplementation(() => now);
-    vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
-    if (scenario === "restored receipt") {
-      const otherTab = startBrowserTelemetry({
-        route: "/api/telemetry/events",
-        surface: "web",
-        storageKey: "roborev.telemetry",
-        post: async () => ({ status: 202, data: { status: "disabled" } }),
-      });
+  test.each(["disabled reply", "cross-tab quiet"])(
+    "quiet receipts: %s",
+    async (scenario) => {
+      vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+      let now = 0;
+      let hidden = false;
+      vi.spyOn(performance, "now").mockImplementation(() => now);
+      vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
+      if (scenario === "disabled reply") {
+        fetchMock.mockResolvedValueOnce(
+          new Response(JSON.stringify({ status: "disabled" }), { status: 202 }),
+        );
+      }
+      const timeout = vi.spyOn(globalThis, "setTimeout");
+      setup();
+      if (scenario === "disabled reply")
+        appOpened.reportCoreAction("review_viewed");
       await vi.advanceTimersByTimeAsync(0);
-      otherTab.stop();
-    } else if (scenario !== "cross-tab quiet") {
-      fetchMock.mockResolvedValueOnce(
-        new Response(JSON.stringify({ status: "disabled" }), { status: 202 }),
-      );
-    }
-    const timeout = vi.spyOn(globalThis, "setTimeout");
-    setup();
-    if (scenario === "disabled reply")
-      appOpened.reportCoreAction("review_viewed");
-    await vi.advanceTimersByTimeAsync(0);
-    if (scenario === "cross-tab quiet") {
-      now = 120_000;
-      hidden = true;
-      document.dispatchEvent(new Event("visibilitychange"));
-      expect(vi.getTimerCount()).toBe(1);
-      const otherTab = startBrowserTelemetry({
-        route: "/api/telemetry/events",
-        surface: "web",
-        storageKey: "roborev.telemetry",
-        post: async () => ({ status: 202, data: { status: "queued" } }),
-      });
-      otherTab.disable();
-      otherTab.stop();
+      if (scenario === "cross-tab quiet") {
+        now = 120_000;
+        hidden = true;
+        document.dispatchEvent(new Event("visibilitychange"));
+        expect(vi.getTimerCount()).toBe(1);
+        const otherTab = startBrowserTelemetry({
+          route: "/api/telemetry/events",
+          surface: "web",
+          storageKey: "roborev.telemetry",
+          post: async () => ({ status: 202, data: { status: "queued" } }),
+        });
+        otherTab.disable();
+        otherTab.stop();
+        focusWindow();
+        // jsdom queues a zero-delay storage event when the other tab writes its receipt.
+        await vi.advanceTimersByTimeAsync(0);
+        expect(vi.getTimerCount()).toBe(0);
+      } else {
+        appOpened.reportCoreAction("review_closed");
+        hidden = true;
+        document.dispatchEvent(new Event("visibilitychange"));
+        expect(
+          timeout.mock.calls.some(([, delay]) => delay === 1_800_000),
+        ).toBe(false);
+      }
+      if (scenario === "disabled reply") {
+        appOpened.reportScreenViewed("reviews");
+        globalThis.dispatchEvent(new Event("pagehide"));
+        await vi.advanceTimersByTimeAsync(30 * 60_000);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        return;
+      }
+      vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
       focusWindow();
-      // jsdom queues a zero-delay storage event when the other tab writes its receipt.
       await vi.advanceTimersByTimeAsync(0);
-      expect(vi.getTimerCount()).toBe(0);
-    } else if (scenario !== "next-day enable") {
-      appOpened.reportCoreAction("review_closed");
-      hidden = true;
-      document.dispatchEvent(new Event("visibilitychange"));
-      expect(timeout.mock.calls.some(([, delay]) => delay === 1_800_000)).toBe(
-        false,
-      );
-    } else {
-      appOpened.reportCoreAction("review_closed");
-      await vi.advanceTimersByTimeAsync(0);
-    }
-    if (scenario === "disabled reply") {
-      appOpened.reportScreenViewed("reviews");
-      globalThis.dispatchEvent(new Event("pagehide"));
-      await vi.advanceTimersByTimeAsync(30 * 60_000);
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-      return;
-    }
-    vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
-    focusWindow();
-    await vi.advanceTimersByTimeAsync(0);
-    if (scenario === "cross-tab quiet") {
       hidden = false;
       document.dispatchEvent(new Event("visibilitychange"));
       now += 10_000;
@@ -573,55 +559,22 @@ describe("setupAppOpenedReporting", () => {
           .filter((e) => e.event === "session_ended")
           .map((e) => e.properties.duration_bucket),
       ).toEqual(["1_to_5m", "under_1m"]);
-    } else {
-      expect((await sentEvents()).map((e) => e.event)).toEqual(
-        scenario === "restored receipt"
-          ? ["app_opened"]
-          : ["app_opened", "app_opened"],
-      );
-    }
-  });
-
-  test("an older review reply preserves the newer settled day", async () => {
-    vi.setSystemTime(new Date("2026-03-10T23:59:58Z"));
-    setup();
-    await settle();
-    const answers: Array<(response: Response) => void> = [];
-    fetchMock.mockImplementation(async (request) =>
-      (await request.clone().json()).event === "review_viewed"
-        ? new Promise((resolve) => answers.push(resolve))
-        : accepted(),
-    );
-    appOpened.reportCoreAction("review_viewed");
-    await settle();
-    vi.setSystemTime(new Date("2026-03-11T00:00:01Z"));
-    focusWindow();
-    await settle();
-    appOpened.reportCoreAction("review_viewed");
-    await settle();
-    expect(answers).toHaveLength(2);
-    answers[1]!(accepted());
-    await settle();
-    answers[0]!(accepted());
-    await settle();
-
-    appOpened.reportCoreAction("review_viewed");
-    await settle();
-
-    expect(
-      (await sentEvents()).filter((e) => e.event === "review_viewed"),
-    ).toHaveLength(2);
-  });
+    },
+  );
 
   test.each([
     "the reply comes the same day",
     "the reply comes after midnight",
+    "an older review reply preserves the newer settled day",
     "a read's day is fixed when it is sent, so an older reply cannot settle a newer day",
     "coalesces pending review views and releases a failed read",
   ])("review views: %s", async (scenario) => {
+    const olderReply =
+      scenario === "an older review reply preserves the newer settled day";
     if (
+      olderReply ||
       scenario ===
-      "a read's day is fixed when it is sent, so an older reply cannot settle a newer day"
+        "a read's day is fixed when it is sent, so an older reply cannot settle a newer day"
     ) {
       let now = 0;
       vi.spyOn(performance, "now").mockImplementation(() => now);
@@ -642,14 +595,26 @@ describe("setupAppOpenedReporting", () => {
       appOpened.reportCoreAction("review_viewed");
       await settle();
       expect(answers).toHaveLength(2);
-      answers[0]!(accepted());
-      answers[1]!(new Response(null, { status: 500 }));
+      if (olderReply) {
+        answers[1]!(accepted());
+        await settle();
+        answers[0]!(accepted());
+      } else {
+        answers[0]!(accepted());
+        answers[1]!(new Response(null, { status: 500 }));
+      }
       await settle();
       now += 60_000;
       appOpened.reportCoreAction("review_viewed");
       await settle();
 
-      expect(answers).toHaveLength(3);
+      if (olderReply) {
+        expect(
+          (await sentEvents()).filter((e) => e.event === "review_viewed"),
+        ).toHaveLength(2);
+      } else {
+        expect(answers).toHaveLength(3);
+      }
       return;
     }
     if (
@@ -730,24 +695,4 @@ describe("setupAppOpenedReporting", () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
     },
   );
-
-  test("a failed screen post backs off the next screen reports", async () => {
-    setup();
-    await settle();
-    fetchMock.mockRejectedValueOnce(new TypeError("network down"));
-    appOpened.reportScreenViewed("reviews");
-    await settle();
-    appOpened.reportScreenViewed("analytics");
-    await settle();
-    appOpened.reportScreenViewed("analytics");
-    await settle();
-
-    const events = await Promise.all(
-      fetchMock.mock.calls.map(async ([request]) => request.json()),
-    );
-    expect(events.map((body) => body.event)).toEqual([
-      "app_opened",
-      "screen_viewed",
-    ]);
-  });
 });

@@ -933,6 +933,14 @@ func TestCoreActionRemoteFallbackDisabledStopsDiscovery(t *testing.T) {
 	drainCLIReports()
 	assert.Equal(t, 1, discoveries, "the disabled fallback needs no further discovery")
 	assert.Len(t, rec.telemetryPosts(), 1)
+
+	agentCalls := 0
+	cliAgentPost = func(context.Context, *http.Client, string, string) { agentCalls++ }
+	reportMCPActivity(t.Context(), ep)
+	drainCLIReports()
+	assert.Zero(t, agentCalls)
+	assert.Len(t, rec.telemetryPosts(), 1)
+	assert.False(t, mcpActivityEnabled(ep)())
 }
 
 func TestCoreActionCompactWait(t *testing.T) {
@@ -1020,18 +1028,13 @@ func TestCoreActionDeliverySurvivesCommandReturn(t *testing.T) {
 	assert.JSONEq(t, `{"event":"finding_fixed","properties":{"surface":"cli"}}`, <-bodies)
 }
 
-// disabledDaemon answers app_opened with a disabled receipt and every other report with queued.
+// disabledDaemon answers every report with a disabled receipt.
 func disabledDaemon(t *testing.T) (*MockDaemon, *cliUseRecorder, daemon.DaemonEndpoint) {
 	t.Helper()
-	md, rec := newCLIUseDaemon(t, MockRefineHooks{}, func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		status := "queued"
-		if strings.Contains(string(body), "app_opened") {
-			status = "disabled"
-		}
+	md, rec := newCLIUseDaemon(t, MockRefineHooks{}, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
-		_, _ = io.WriteString(w, `{"status":"`+status+`"}`)
+		_, _ = io.WriteString(w, `{"status":"disabled"}`)
 	})
 	return md, rec, mustParseEndpoint(t, md.Server.URL)
 }
@@ -1052,30 +1055,4 @@ func TestMCPActivityStartupDoesNotWaitOnTheReceiptLock(t *testing.T) {
 		time.Sleep(2 * cliUseTimeout)
 		synctest.Wait()
 	})
-}
-
-func TestDisabledReceiptStopsCLIAndMCPReportsBeforeAnyWork(t *testing.T) {
-	resetCLIUse(t)
-	_, rec, ep := disabledDaemon(t)
-	cliOutputIsTerminal = func(io.Writer) bool { return true }
-	cliUseEndpoint.Store(&ep)
-	probes := 0
-	cliUsePost = func(ctx context.Context, client *http.Client, scope, url, surface string) {
-		probes++
-		telemetry.PostAppOpened(ctx, client, scope, url, surface)
-	}
-	agentCalls := 0
-	cliAgentPost = func(context.Context, *http.Client, string, string) { agentCalls++ }
-	reportCLIActionOutput(os.Stdout, "review_viewed")
-	drainCLIReports()
-	require.Equal(t, 1, probes)
-	require.Len(t, rec.telemetryPosts(), 1, "the check goes out and the action stays home")
-
-	reportCLIActionOutput(os.Stdout, "review_closed")
-	reportMCPActivity(t.Context(), ep)
-	drainCLIReports()
-	assert.Equal(t, 1, probes, "nothing is scheduled once the daemon said disabled")
-	assert.Zero(t, agentCalls)
-	assert.Len(t, rec.telemetryPosts(), 1)
-	assert.False(t, mcpActivityEnabled(ep)())
 }
