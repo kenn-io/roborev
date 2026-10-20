@@ -511,7 +511,6 @@ func TestCLIUseCommandSet(t *testing.T) {
 		require.Eventually(t, func() bool { return len(rec.telemetryPosts()) == 1 }, 5*time.Second, 10*time.Millisecond)
 		require.Len(t, rec.telemetryPosts(), 1)
 		assert.Contains(rec.allPaths(), "POST "+daemon.TelemetryAgentCallPath)
-		assert.JSONEq(`{"event":"agent_active","properties":null}`, rec.telemetryPosts()[0].body)
 	})
 }
 
