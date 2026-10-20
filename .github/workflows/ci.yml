@@ -203,22 +203,22 @@ jobs:
             runner: windows-2025
             shard: windows-daemon-a-f
             package: ./internal/daemon
-            pattern: '^Test[A-F]'
+            pattern: &daemon-a-f '^Test([A-F]|[^A-Z]|$)'
           - os: windows-latest
             runner: windows-2025
             shard: windows-daemon-g-m-t-z
             package: ./internal/daemon
-            pattern: '^Test[G-MT-Z]'
+            pattern: &daemon-g-m-t-z '^Test[G-MT-Z]'
           - os: windows-latest
             runner: windows-2025
             shard: windows-daemon-n-s
             package: ./internal/daemon
-            pattern: '^Test[N-S]'
+            pattern: &daemon-n-s '^Test[N-S]'
           - os: windows-latest
             runner: windows-2025
             shard: windows-cli-a-m-t-z
             package: ./cmd/roborev
-            pattern: '^Test[A-MT-Z]'
+            pattern: '^Test([A-MT-Z]|[^A-Z]|$)'
           - os: windows-latest
             runner: windows-2025
             shard: windows-cli-n-s
@@ -257,6 +257,7 @@ jobs:
       - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca  # v5.1.1
 
       - name: Build
+        if: runner.os != 'Windows' || matrix.shard == 'windows-remaining'
         run: go build ./...
 
       - name: Test with race detection (Linux)
@@ -328,6 +329,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Build with CGO disabled
+        if: runner.os != 'Windows' || matrix.shard == 'windows-remaining'
         run: go build ./...
         env:
           CGO_ENABLED: 0
@@ -341,11 +343,11 @@ jobs:
       matrix:
         shard:
           - name: a-f
-            pattern: '^Test[A-F]'
+            pattern: *daemon-a-f
           - name: g-m-t-z
-            pattern: '^Test[G-MT-Z]'
+            pattern: *daemon-g-m-t-z
           - name: n-s
-            pattern: '^Test[N-S]'
+            pattern: *daemon-n-s
     runs-on: namespace-profile-linux-8cpu
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
