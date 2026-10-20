@@ -77,7 +77,10 @@ func probe(g *ClientGate, s *receiptServer, scope, surface string) {
 func post(g *ClientGate, s *receiptServer, scope, event, surface string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	props := map[string]any{PropertySurface: surface}
+	var props map[string]any
+	if event != EventAgentActive {
+		props = map[string]any{PropertySurface: surface}
+	}
 	g.Post(ctx, s.Client(), scope, s.URL, event, props)
 }
 
@@ -103,12 +106,16 @@ func TestClientGateDisabledStopsEveryEventForThatDaemonOnly(t *testing.T) {
 
 func TestClientGateDisabledReplyToAnyRouteIsSaved(t *testing.T) {
 	testenv.SetDataDir(t)
-	s := newReceiptServer(t, "disabled")
-	post(&ClientGate{}, s, "daemon", EventAgentActive, "")
+	s := newReceiptServer(t, "queued")
+	g := &ClientGate{}
+	probe(g, s, "daemon", SurfaceCLI)
+	s.status.Store("disabled")
+	post(g, s, "daemon", EventReviewViewed, SurfaceCLI)
 
 	fresh := &ClientGate{}
-	post(fresh, s, "daemon", EventAgentActive, "")
-	assert.Equal(t, []string{EventAgentActive}, s.seen())
+	probe(fresh, s, "daemon", SurfaceCLI)
+	post(fresh, s, "daemon", EventReviewViewed, SurfaceCLI)
+	assert.Equal(t, []string{EventAppOpened, EventReviewViewed}, s.seen())
 }
 
 func TestClientGateConcurrentAgentCallsShareDisabledReceipt(t *testing.T) {
@@ -163,32 +170,34 @@ func TestClientGateProbeBackoffPersistsStopsAtSixAnswersAndResetsDaily(t *testin
 
 func TestClientGateReportsBackOffAfterAServerError(t *testing.T) {
 	testenv.SetDataDir(t)
-	s := newReceiptServer(t, "500")
+	s := newReceiptServer(t, "queued")
 	now := time.Date(2026, 3, 10, 9, 0, 0, 0, time.UTC)
 	g := &ClientGate{now: func() time.Time { return now }}
 
+	probe(g, s, "daemon", SurfaceCLI)
+	s.status.Store("500")
 	for range 20 {
-		post(g, s, "daemon", EventAgentActive, "")
+		post(g, s, "daemon", EventReviewViewed, SurfaceCLI)
 	}
-	assert.Len(t, s.seen(), 1, "calls inside the backoff are dropped")
+	assert.Len(t, s.seen(), 2, "calls inside the backoff are dropped")
 
 	now = now.Add(time.Second)
-	post(g, s, "daemon", EventAgentActive, "")
-	assert.Len(t, s.seen(), 2)
-	now = now.Add(time.Second)
-	post(g, s, "daemon", EventAgentActive, "")
-	assert.Len(t, s.seen(), 2, "the second failure doubles the wait")
-	now = now.Add(time.Second)
-	post(g, s, "daemon", EventAgentActive, "")
+	post(g, s, "daemon", EventReviewViewed, SurfaceCLI)
 	assert.Len(t, s.seen(), 3)
+	now = now.Add(time.Second)
+	post(g, s, "daemon", EventReviewViewed, SurfaceCLI)
+	assert.Len(t, s.seen(), 3, "the second failure doubles the wait")
+	now = now.Add(time.Second)
+	post(g, s, "daemon", EventReviewViewed, SurfaceCLI)
+	assert.Len(t, s.seen(), 4)
 
 	s.status.Store("queued")
 	now = now.Add(time.Minute)
-	post(g, s, "daemon", EventAgentActive, "")
-	post(g, s, "daemon", EventAgentActive, "")
-	assert.Len(t, s.seen(), 5, "a good answer clears the backoff")
-	post(g, s, "other", EventAgentActive, "")
-	assert.Len(t, s.seen(), 6, "another daemon is unaffected")
+	post(g, s, "daemon", EventReviewViewed, SurfaceCLI)
+	post(g, s, "daemon", EventReviewViewed, SurfaceCLI)
+	assert.Len(t, s.seen(), 6, "a good answer clears the backoff")
+	post(g, s, "other", EventReviewViewed, SurfaceCLI)
+	assert.Len(t, s.seen(), 7, "another daemon is unaffected")
 }
 
 func TestClientGateFailuresWithoutAReceiptOnlyBackOff(t *testing.T) {
@@ -289,26 +298,38 @@ func TestClientGateReadsUnreadableFileAsEmpty(t *testing.T) {
 }
 
 func TestClientGateGivesUpWhenTheLockStaysBusy(t *testing.T) {
-	dir := testenv.SetDataDir(t)
-	held := flock.New(filepath.Join(dir, clientStateFile+".lock"))
-	locked, err := held.TryLock()
-	require.NoError(t, err)
-	require.True(t, locked)
-	t.Cleanup(func() { _ = held.Unlock() })
-
-	synctest.Test(t, func(t *testing.T) {
-		var requests atomic.Int32
-		client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-			requests.Add(1)
-			return nil, errors.New("unexpected request")
-		})}
-		ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
-		defer cancel()
-		g := &ClientGate{}
-		g.Probe(ctx, client, "daemon", "http://daemon.test", SurfaceCLI)
-		assert.Zero(t, requests.Load())
-		assert.True(t, g.Ready("daemon"))
-	})
+	for _, backingOff := range []bool{false, true} {
+		name := "deadline"
+		if backingOff {
+			name = "saved backoff"
+		}
+		t.Run(name, func(t *testing.T) {
+			dir := testenv.SetDataDir(t)
+			synctest.Test(t, func(t *testing.T) {
+				var requests atomic.Int32
+				client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+					requests.Add(1)
+					return nil, errors.New("offline")
+				})}
+				g := &ClientGate{}
+				if backingOff {
+					g.Probe(t.Context(), client, "daemon", "http://daemon.test", SurfaceCLI)
+					requests.Store(0)
+				}
+				held := flock.New(filepath.Join(dir, clientStateFile+".lock"))
+				require.NoError(t, held.Lock())
+				defer func() { require.NoError(t, held.Unlock()) }()
+				ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+				defer cancel()
+				g.Probe(ctx, client, "daemon", "http://daemon.test", SurfaceCLI)
+				assert.Zero(t, requests.Load())
+				assert.True(t, g.Ready("daemon"))
+				if backingOff {
+					assert.NoError(t, ctx.Err(), "backoff returns before waiting on the file lock")
+				}
+			})
+		})
+	}
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -328,79 +349,57 @@ func TestClientGateRollsOverAtUTCMidnight(t *testing.T) {
 }
 
 func TestClientGateFollowerWaitsForTheProbeInFlight(t *testing.T) {
-	testenv.SetDataDir(t)
-	synctest.Test(t, func(t *testing.T) {
-		release := make(chan struct{})
-		var requests atomic.Int32
-		client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-			requests.Add(1)
-			<-release
-			return &http.Response{
-				StatusCode: http.StatusAccepted,
-				Body:       io.NopCloser(strings.NewReader(`{"status":"queued"}`)),
-				Header:     make(http.Header),
-			}, nil
-		})}
-		run := func() {
-			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-			defer cancel()
-			(&ClientGate{}).Probe(ctx, client, "daemon", "http://daemon.test", SurfaceTUI)
-		}
-		var first, follower sync.WaitGroup
-		first.Go(run)
-		synctest.Wait()
-		followed := false
-		follower.Go(func() {
-			run()
-			followed = true
-		})
-		time.Sleep(time.Second)
-		synctest.Wait()
-		assert.False(t, followed, "the follower waits while the first check is in flight")
+	for _, storage := range []string{"shared file", "unusable storage"} {
+		t.Run(storage, func(t *testing.T) {
+			testenv.SetDataDir(t)
+			if storage == "unusable storage" {
+				blocker := filepath.Join(t.TempDir(), "file")
+				require.NoError(t, os.WriteFile(blocker, nil, 0o600))
+				t.Setenv("ROBOREV_DATA_DIR", filepath.Join(blocker, "data"))
+			}
+			g := &ClientGate{}
+			synctest.Test(t, func(t *testing.T) {
+				release := make(chan struct{})
+				var requests atomic.Int32
+				client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+					requests.Add(1)
+					<-release
+					return &http.Response{
+						StatusCode: http.StatusAccepted,
+						Body:       io.NopCloser(strings.NewReader(`{"status":"disabled"}`)),
+						Header:     make(http.Header),
+					}, nil
+				})}
+				run := func() {
+					ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+					defer cancel()
+					gate := g
+					if storage == "shared file" {
+						gate = &ClientGate{}
+					}
+					gate.Probe(ctx, client, "daemon", "http://daemon.test", SurfaceTUI)
+				}
+				var first, follower sync.WaitGroup
+				first.Go(run)
+				synctest.Wait()
+				followed := false
+				follower.Go(func() {
+					run()
+					followed = true
+				})
+				time.Sleep(time.Second)
+				synctest.Wait()
+				assert.False(t, followed, "the follower waits while the first check is in flight")
 
-		close(release)
-		first.Wait()
-		follower.Wait()
-		assert.Equal(t, int32(1), requests.Load())
-	})
-}
-
-func TestClientGateFollowerWaitsWithUnusableStorage(t *testing.T) {
-	blocker := filepath.Join(t.TempDir(), "file")
-	require.NoError(t, os.WriteFile(blocker, nil, 0o600))
-	t.Setenv("ROBOREV_DATA_DIR", filepath.Join(blocker, "data"))
-	synctest.Test(t, func(t *testing.T) {
-		release := make(chan struct{})
-		var requests atomic.Int32
-		client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-			requests.Add(1)
-			<-release
-			return &http.Response{
-				StatusCode: http.StatusAccepted,
-				Body:       io.NopCloser(strings.NewReader(`{"status":"disabled"}`)),
-				Header:     make(http.Header),
-			}, nil
-		})}
-		g := &ClientGate{}
-		run := func() {
-			g.Probe(t.Context(), client, "daemon", "http://daemon.test", SurfaceTUI)
-		}
-		var first, follower sync.WaitGroup
-		first.Go(run)
-		synctest.Wait()
-		followed := false
-		follower.Go(func() {
-			run()
-			followed = true
+				close(release)
+				first.Wait()
+				follower.Wait()
+				assert.Equal(t, int32(1), requests.Load())
+				g.Load(t.Context())
+				assert.False(t, g.Ready("daemon"))
+			})
 		})
-		synctest.Wait()
-		assert.False(t, followed, "the follower waits for the receipt even without a file lock")
-		close(release)
-		first.Wait()
-		follower.Wait()
-		assert.Equal(t, int32(1), requests.Load())
-		assert.False(t, g.Ready("daemon"))
-	})
+	}
 }
 
 func TestClientGateRefusesANewerFileAndLeavesItIntact(t *testing.T) {
@@ -480,7 +479,7 @@ func TestClientGateNeverRewritesAFileThatTurnedNewerMidReport(t *testing.T) {
 	g := &ClientGate{now: func() time.Time { return now }}
 
 	// A report outside the day's check holds no lock through its request, so another process can write meanwhile.
-	g.Post(t.Context(), srv.Client(), "daemon", srv.URL, EventReviewViewed, nil)
+	g.Post(t.Context(), srv.Client(), "daemon", srv.URL, EventReviewViewed, map[string]any{PropertySurface: SurfaceCLI})
 	saved, err := os.ReadFile(path)
 	require.NoError(t, err)
 	assert.Equal(t, newer, string(saved))
@@ -495,7 +494,7 @@ func TestClientGateLateDisabledReportLeavesNextDayReady(t *testing.T) {
 		now = now.Add(2 * time.Second)
 		return &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(strings.NewReader(`{"status":"disabled"}`)), Header: make(http.Header)}, nil
 	})}
-	g.Post(t.Context(), client, "daemon", "http://daemon.test", EventAgentActive, nil)
+	g.Post(t.Context(), client, "daemon", "http://daemon.test", EventReviewViewed, map[string]any{PropertySurface: SurfaceCLI})
 	assert.True(t, g.Ready("daemon"))
 	var requests int
 	client.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
@@ -504,22 +503,4 @@ func TestClientGateLateDisabledReportLeavesNextDayReady(t *testing.T) {
 	})
 	(&ClientGate{now: func() time.Time { return now }}).Probe(t.Context(), client, "daemon", "http://daemon.test", SurfaceCLI)
 	assert.Equal(t, 1, requests, "a fresh process still checks the new day")
-}
-
-func TestClientGateProbeBackoffSkipsBusyLock(t *testing.T) {
-	dir := testenv.SetDataDir(t)
-	synctest.Test(t, func(t *testing.T) {
-		client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-			return nil, errors.New("offline")
-		})}
-		g := &ClientGate{}
-		g.Probe(t.Context(), client, "daemon", "http://daemon.test", SurfaceTUI)
-		held := flock.New(filepath.Join(dir, clientStateFile+".lock"))
-		require.NoError(t, held.Lock())
-		defer func() { require.NoError(t, held.Unlock()) }()
-		ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
-		defer cancel()
-		g.Probe(ctx, client, "daemon", "http://daemon.test", SurfaceTUI)
-		assert.NoError(t, ctx.Err(), "backoff returns before waiting on the file lock")
-	})
 }

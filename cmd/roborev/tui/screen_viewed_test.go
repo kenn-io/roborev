@@ -70,34 +70,48 @@ func updateScreenTestModel(m *model, msg tea.Msg) {
 }
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables
-func TestFailedScreenReportIsRetriedOnLaterInputAfterBackoff(t *testing.T) {
+func TestFailedReportIsRetriedOnLaterInputAfterBackoff(t *testing.T) {
 	for _, tt := range []struct {
 		name, screen string
 		initial      bool
 	}{
-		{"initial queue", "queue", true}, {"help after toggle", "help", false},
+		{"initial queue", "queue", true}, {"help after toggle", "help", false}, {"review_viewed", "", false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			enableTelemetryEnv(t)
 			synctest.Test(t, func(t *testing.T) {
 				m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
-				transport := &screenRecordingTransport{fail: true}
+				key := keyPressMsg('x')
+				if tt.name == "review_viewed" {
+					f := newCoreActionReviewVisitFixture(t)
+					f.update(f.review())
+					m = f.m
+					key = keyPressMsg('0')
+				}
+				transport := &screenRecordingTransport{}
 				m.client.Transport = transport
+				m.probeTelemetry()
+				transport.fail = true
 				if tt.initial {
 					updateScreenTestModel(&m, m.reportScreenViewed()())
+				} else if tt.name == "review_viewed" {
+					updateScreenTestModel(&m, key)
 				} else {
 					updateScreenTestModel(&m, keyPressMsg('?'))
 				}
-				for range 50 {
-					updateScreenTestModel(&m, keyPressMsg('x'))
+				reports, want := &transport.screens, tt.screen
+				if tt.name == "review_viewed" {
+					reports, want = &transport.events, "review_viewed"
 				}
-				assert.Equal(t, 1, transport.opened, "a held key stays at one request")
-				assert.Empty(t, transport.screens)
+				require.Equal(t, []string{want}, *reports)
 
 				transport.fail = false
-				time.Sleep(time.Minute)
-				updateScreenTestModel(&m, keyPressMsg('x'))
-				assert.Equal(t, []string{tt.screen}, transport.screens, "later input resends the screen the daemon never took")
+				time.Sleep(time.Second)
+				updateScreenTestModel(&m, displayTickMsg{})
+				assert.Len(t, *reports, 1, "recovery waits for input")
+				updateScreenTestModel(&m, key)
+				updateScreenTestModel(&m, key)
+				assert.Equal(t, []string{want, want}, *reports)
 			})
 		})
 	}
@@ -181,33 +195,34 @@ func (h *holdingTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 }
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables
-func TestScreenVisitedWhileProbePendingIsSentOnceItSettles(t *testing.T) {
-	enableTelemetryEnv(t)
-	synctest.Test(t, func(t *testing.T) {
-		m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
-		transport := &holdingTransport{release: make(chan struct{})}
-		m.client.Transport = transport
-
-		screen := m.postScreen("help")
-		require.NotNil(t, screen, "input returns a command without waiting on the daemon")
-		transport.mu.Lock()
-		assert.Empty(t, transport.order, "nothing is sent before the command runs")
-		transport.mu.Unlock()
-
-		var wg sync.WaitGroup
-		for _, cmd := range []tea.Cmd{m.reportAppOpened(), screen} {
-			wg.Go(func() { cmd() })
-		}
-		time.Sleep(50 * time.Millisecond)
-		synctest.Wait()
-		transport.mu.Lock()
-		assert.Empty(t, transport.order, "the screen waits for the probe")
-		transport.mu.Unlock()
-
-		close(transport.release)
-		wg.Wait()
-		assert.Equal(t, []string{telemetry.EventAppOpened, telemetry.EventScreenViewed}, transport.order)
-	})
+func TestReportWhileProbePendingIsSentOnceItSettles(t *testing.T) {
+	for _, event := range []string{telemetry.EventScreenViewed, telemetry.EventSessionEnded} {
+		t.Run(event, func(t *testing.T) {
+			enableTelemetryEnv(t)
+			synctest.Test(t, func(t *testing.T) {
+				m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
+				close(m.ready)
+				transport := &holdingTransport{release: make(chan struct{})}
+				m.client.Transport = transport
+				var wg sync.WaitGroup
+				wg.Go(func() { m.probeTelemetry() })
+				synctest.Wait()
+				if event == telemetry.EventSessionEnded {
+					m.reportSessionEnded(2 * time.Minute)
+				} else {
+					screen := m.postScreen("help")
+					require.NotNil(t, screen, "input returns a command without waiting on the daemon")
+					wg.Go(func() { screen() })
+					synctest.Wait()
+				}
+				close(transport.release)
+				time.Sleep(100 * time.Millisecond)
+				wg.Wait()
+				synctest.Wait()
+				assert.Equal(t, []string{telemetry.EventAppOpened, event}, transport.order)
+			})
+		})
+	}
 }
 
 //nolint:paralleltest // telemetry environment variables

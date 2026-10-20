@@ -222,28 +222,6 @@ func TestCoreActionUnreadReviews(t *testing.T) {
 }
 
 //nolint:paralleltest // telemetry environment variables
-func TestCoreActionReviewDeliveryRetriesOnInput(t *testing.T) {
-	enableTelemetryEnv(t)
-	synctest.Test(t, func(t *testing.T) {
-		f := newCoreActionReviewVisitFixture(t)
-		f.update(f.review())
-		f.m.probeTelemetry()
-		f.transport.fail = true
-		for range 50 {
-			f.update(tea.KeyPressMsg{Code: '0'})
-		}
-		require.Equal(t, []string{"review_viewed"}, f.transport.events)
-		time.Sleep(time.Second)
-		f.transport.fail = false
-		f.update(displayTickMsg{})
-		require.Len(t, f.transport.events, 1, "recovery waits for input")
-		f.update(tea.KeyPressMsg{Code: '0'})
-		f.update(tea.KeyPressMsg{Code: '0'})
-		assert.Equal(t, []string{"review_viewed", "review_viewed"}, f.transport.events)
-	})
-}
-
-//nolint:paralleltest // telemetry environment variables
 func TestCoreActionReviewReconnectResumesReports(t *testing.T) {
 	enableTelemetryEnv(t)
 	f := newCoreActionReviewVisitFixture(t)

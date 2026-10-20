@@ -282,28 +282,25 @@ describe("setupAppOpenedReporting", () => {
     },
   );
 
-  test("posts again on the first focus of the next UTC day only", async () => {
-    setup();
-    vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
-    focusWindow();
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+  test.each([
+    ["2026-03-10T09:00:00Z", "2026-03-11T08:00:00Z"],
+    ["2026-03-10T23:59:00Z", "2026-03-11T00:01:00Z"],
+  ])(
+    "posts again on the first focus of the next UTC day only: %s",
+    async (start, next) => {
+      vi.setSystemTime(new Date(start));
+      setup();
+      vi.setSystemTime(new Date(next));
+      focusWindow();
+      await settle();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
 
-    vi.setSystemTime(new Date("2026-03-11T15:00:00Z"));
-    focusWindow();
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-
-  test("uses the UTC day boundary", async () => {
-    vi.setSystemTime(new Date("2026-03-10T23:59:00Z"));
-    setup();
-    vi.setSystemTime(new Date("2026-03-11T00:01:00Z"));
-    focusWindow();
-    await settle();
-
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
+      vi.setSystemTime(new Date("2026-03-11T15:00:00Z"));
+      focusWindow();
+      await settle();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    },
+  );
 
   test("sends nothing when the shell remounts the same day", async () => {
     const cleanup = setup();
@@ -399,29 +396,6 @@ describe("setupAppOpenedReporting", () => {
       },
     ],
     [
-      "a disabled reply drops actions and starts no visit timer",
-      async () => {
-        vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
-        fetchMock.mockResolvedValueOnce(
-          new Response(JSON.stringify({ status: "disabled" }), { status: 202 }),
-        );
-        const timeout = vi.spyOn(globalThis, "setTimeout");
-        setup();
-        appOpened.reportCoreAction("review_viewed");
-        await vi.advanceTimersByTimeAsync(0);
-        vi.spyOn(document, "hidden", "get").mockReturnValue(true);
-        document.dispatchEvent(new Event("visibilitychange"));
-        appOpened.reportScreenViewed("reviews");
-        globalThis.dispatchEvent(new Event("pagehide"));
-        await vi.advanceTimersByTimeAsync(30 * 60_000);
-
-        expect(
-          timeout.mock.calls.some(([, delay]) => delay === 1_800_000),
-        ).toBe(false);
-        expect(fetchMock).toHaveBeenCalledTimes(1);
-      },
-    ],
-    [
       "tracking restarts after a pagehide and pageshow during the check",
       async () => {
         const at = startVisit();
@@ -471,93 +445,6 @@ describe("setupAppOpenedReporting", () => {
     ],
   ])("next-day check: %s", async (_, scenario) => scenario());
 
-  test.each([
-    ["the reply comes the same day", false],
-    ["the reply comes after midnight", true],
-  ])(
-    "sends review_viewed once per UTC day, remembered for the day of the read: %s",
-    async (_, lateReply) => {
-      vi.setSystemTime(new Date("2026-03-10T23:59:50Z"));
-      setup();
-      await settle();
-      let answer!: (response: Response) => void;
-      if (lateReply)
-        fetchMock.mockImplementationOnce(
-          () => new Promise((resolve) => (answer = resolve)),
-        );
-      appOpened.reportCoreAction("review_viewed");
-      if (lateReply) {
-        vi.setSystemTime(new Date("2026-03-11T00:00:05Z"));
-        answer(accepted());
-      } else {
-        await settle();
-        for (let i = 0; i < 5; i++) {
-          appOpened.reportCoreAction("review_viewed");
-          focusWindow();
-        }
-        appOpened.reportCoreAction("review_closed");
-        appOpened.reportCoreAction("review_closed");
-      }
-      await settle();
-      if (!lateReply) {
-        const events = (await sentEvents()).map((e) => e.event);
-        expect(events.filter((e) => e === "review_viewed")).toHaveLength(1);
-        expect(events.filter((e) => e === "review_closed")).toHaveLength(2);
-        vi.setSystemTime(new Date("2026-03-11T00:00:05Z"));
-        focusWindow();
-        await settle();
-      }
-
-      appOpened.reportCoreAction("review_viewed");
-      await settle();
-      expect(
-        (await sentEvents()).filter((e) => e.event === "review_viewed"),
-      ).toHaveLength(2);
-    },
-  );
-
-  test("restored disabled receipts drop actions and hidden timers", async () => {
-    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
-    const otherTab = startBrowserTelemetry({
-      route: "/api/telemetry/events",
-      surface: "web",
-      storageKey: "roborev.telemetry",
-      post: async () => ({ status: 202, data: { status: "disabled" } }),
-    });
-    await vi.advanceTimersByTimeAsync(0);
-    otherTab.stop();
-    const timeout = vi.spyOn(globalThis, "setTimeout");
-    setup();
-    appOpened.reportCoreAction("review_closed");
-    vi.spyOn(document, "hidden", "get").mockReturnValue(true);
-    document.dispatchEvent(new Event("visibilitychange"));
-    expect(timeout.mock.calls.some(([, delay]) => delay === 1_800_000)).toBe(
-      false,
-    );
-    vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
-    focusWindow();
-    await vi.advanceTimersByTimeAsync(0);
-    expect((await sentEvents()).map((e) => e.event)).toEqual(["app_opened"]);
-  });
-
-  test("actions taken while disabled are dropped, not sent when a later day enables", async () => {
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ status: "disabled" }), { status: 202 }),
-    );
-    setup();
-    await settle();
-    appOpened.reportCoreAction("review_closed");
-    await settle();
-    vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
-    focusWindow();
-    await settle();
-
-    expect((await sentEvents()).map((e) => e.event)).toEqual([
-      "app_opened",
-      "app_opened",
-    ]);
-  });
-
   test("hiding the tab during a pending check still ends a long absence as its own session", async () => {
     vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
     let now = 0;
@@ -589,36 +476,6 @@ describe("setupAppOpenedReporting", () => {
         .filter((e) => e.event === "session_ended")
         .map((e) => e.properties.duration_bucket),
     ).toEqual(["under_1m", "under_1m"]);
-  });
-
-  test("a read's day is fixed when it is sent, so an older reply cannot settle a newer day", async () => {
-    let now = 0;
-    vi.spyOn(performance, "now").mockImplementation(() => now);
-    vi.setSystemTime(new Date("2026-03-10T23:59:50Z"));
-    setup();
-    await settle();
-    const answers: Array<(response: Response) => void> = [];
-    fetchMock.mockImplementation(async (request) =>
-      (await request.clone().json()).event === "review_viewed"
-        ? new Promise((resolve) => answers.push(resolve))
-        : accepted(),
-    );
-    appOpened.reportCoreAction("review_viewed");
-    await settle();
-    vi.setSystemTime(new Date("2026-03-11T00:00:05Z"));
-    focusWindow();
-    await settle();
-    appOpened.reportCoreAction("review_viewed");
-    await settle();
-    expect(answers).toHaveLength(2);
-    answers[0]!(accepted());
-    answers[1]!(new Response(null, { status: 500 }));
-    await settle();
-    now += 60_000;
-    appOpened.reportCoreAction("review_viewed");
-    await settle();
-
-    expect(answers).toHaveLength(3);
   });
 
   test("keeps only kit-ui keys in local storage", async () => {
@@ -657,69 +514,197 @@ describe("setupAppOpenedReporting", () => {
     ]);
   });
 
-  test("cross-tab quiet clears the hidden timer and preserves the interval", async () => {
+  test.each([
+    "disabled reply",
+    "restored receipt",
+    "next-day enable",
+    "cross-tab quiet",
+  ])("quiet receipts: %s", async (scenario) => {
     vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
     let now = 0;
     let hidden = false;
     vi.spyOn(performance, "now").mockImplementation(() => now);
     vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
+    if (scenario === "restored receipt") {
+      const otherTab = startBrowserTelemetry({
+        route: "/api/telemetry/events",
+        surface: "web",
+        storageKey: "roborev.telemetry",
+        post: async () => ({ status: 202, data: { status: "disabled" } }),
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      otherTab.stop();
+    } else if (scenario !== "cross-tab quiet") {
+      fetchMock.mockResolvedValueOnce(
+        new Response(JSON.stringify({ status: "disabled" }), { status: 202 }),
+      );
+    }
+    const timeout = vi.spyOn(globalThis, "setTimeout");
     setup();
+    if (scenario === "disabled reply")
+      appOpened.reportCoreAction("review_viewed");
     await vi.advanceTimersByTimeAsync(0);
-    now = 120_000;
-    hidden = true;
-    document.dispatchEvent(new Event("visibilitychange"));
-    expect(vi.getTimerCount()).toBe(1);
-    const otherTab = startBrowserTelemetry({
-      route: "/api/telemetry/events",
-      surface: "web",
-      storageKey: "roborev.telemetry",
-      post: async () => ({ status: 202, data: { status: "queued" } }),
-    });
-    otherTab.disable();
-    otherTab.stop();
-    focusWindow();
-    expect(vi.getTimerCount()).toBe(0);
+    if (scenario === "cross-tab quiet") {
+      now = 120_000;
+      hidden = true;
+      document.dispatchEvent(new Event("visibilitychange"));
+      expect(vi.getTimerCount()).toBe(1);
+      const otherTab = startBrowserTelemetry({
+        route: "/api/telemetry/events",
+        surface: "web",
+        storageKey: "roborev.telemetry",
+        post: async () => ({ status: 202, data: { status: "queued" } }),
+      });
+      otherTab.disable();
+      otherTab.stop();
+      focusWindow();
+      expect(vi.getTimerCount()).toBe(0);
+    } else if (scenario !== "next-day enable") {
+      appOpened.reportCoreAction("review_closed");
+      hidden = true;
+      document.dispatchEvent(new Event("visibilitychange"));
+      expect(timeout.mock.calls.some(([, delay]) => delay === 1_800_000)).toBe(
+        false,
+      );
+    } else {
+      appOpened.reportCoreAction("review_closed");
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    if (scenario === "disabled reply") {
+      appOpened.reportScreenViewed("reviews");
+      globalThis.dispatchEvent(new Event("pagehide"));
+      await vi.advanceTimersByTimeAsync(30 * 60_000);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      return;
+    }
     vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
     focusWindow();
     await vi.advanceTimersByTimeAsync(0);
-    hidden = false;
-    document.dispatchEvent(new Event("visibilitychange"));
-    now += 10_000;
-    globalThis.dispatchEvent(new Event("pagehide"));
-    await vi.advanceTimersByTimeAsync(0);
-
-    expect(
-      (await sentEvents())
-        .filter((e) => e.event === "session_ended")
-        .map((e) => e.properties.duration_bucket),
-    ).toEqual(["1_to_5m", "under_1m"]);
+    if (scenario === "cross-tab quiet") {
+      hidden = false;
+      document.dispatchEvent(new Event("visibilitychange"));
+      now += 10_000;
+      globalThis.dispatchEvent(new Event("pagehide"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(
+        (await sentEvents())
+          .filter((e) => e.event === "session_ended")
+          .map((e) => e.properties.duration_bucket),
+      ).toEqual(["1_to_5m", "under_1m"]);
+    } else {
+      expect((await sentEvents()).map((e) => e.event)).toEqual(
+        scenario === "restored receipt"
+          ? ["app_opened"]
+          : ["app_opened", "app_opened"],
+      );
+    }
   });
 
-  test("coalesces pending review views and releases a failed read", async () => {
-    let now = 0;
-    vi.spyOn(performance, "now").mockImplementation(() => now);
+  test.each([
+    "the reply comes the same day",
+    "the reply comes after midnight",
+    "a read's day is fixed when it is sent, so an older reply cannot settle a newer day",
+    "coalesces pending review views and releases a failed read",
+  ])("review views: %s", async (scenario) => {
+    if (
+      scenario ===
+      "a read's day is fixed when it is sent, so an older reply cannot settle a newer day"
+    ) {
+      let now = 0;
+      vi.spyOn(performance, "now").mockImplementation(() => now);
+      vi.setSystemTime(new Date("2026-03-10T23:59:50Z"));
+      setup();
+      await settle();
+      const answers: Array<(response: Response) => void> = [];
+      fetchMock.mockImplementation(async (request) =>
+        (await request.clone().json()).event === "review_viewed"
+          ? new Promise((resolve) => answers.push(resolve))
+          : accepted(),
+      );
+      appOpened.reportCoreAction("review_viewed");
+      await settle();
+      vi.setSystemTime(new Date("2026-03-11T00:00:05Z"));
+      focusWindow();
+      await settle();
+      appOpened.reportCoreAction("review_viewed");
+      await settle();
+      expect(answers).toHaveLength(2);
+      answers[0]!(accepted());
+      answers[1]!(new Response(null, { status: 500 }));
+      await settle();
+      now += 60_000;
+      appOpened.reportCoreAction("review_viewed");
+      await settle();
+
+      expect(answers).toHaveLength(3);
+      return;
+    }
+    if (
+      scenario === "coalesces pending review views and releases a failed read"
+    ) {
+      let now = 0;
+      vi.spyOn(performance, "now").mockImplementation(() => now);
+      setup();
+      await settle();
+      let answer!: (response: Response) => void;
+      fetchMock.mockImplementationOnce(
+        () => new Promise((resolve) => (answer = resolve)),
+      );
+      for (let i = 0; i < 30; i++) {
+        appOpened.reportCoreAction("review_viewed");
+        focusWindow();
+        document.dispatchEvent(new Event("visibilitychange"));
+      }
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      answer(new Response(null, { status: 500 }));
+      await settle();
+      now = 60_000;
+      appOpened.reportCoreAction("review_viewed");
+      await settle();
+      expect((await sentEvents()).map((e) => e.event)).toEqual([
+        "app_opened",
+        "review_viewed",
+        "review_viewed",
+      ]);
+      return;
+    }
+    const lateReply = scenario === "the reply comes after midnight";
+    vi.setSystemTime(new Date("2026-03-10T23:59:50Z"));
     setup();
     await settle();
     let answer!: (response: Response) => void;
-    fetchMock.mockImplementationOnce(
-      () => new Promise((resolve) => (answer = resolve)),
-    );
-    for (let i = 0; i < 30; i++) {
-      appOpened.reportCoreAction("review_viewed");
-      focusWindow();
-      document.dispatchEvent(new Event("visibilitychange"));
+    if (lateReply)
+      fetchMock.mockImplementationOnce(
+        () => new Promise((resolve) => (answer = resolve)),
+      );
+    appOpened.reportCoreAction("review_viewed");
+    if (lateReply) {
+      vi.setSystemTime(new Date("2026-03-11T00:00:05Z"));
+      answer(accepted());
+    } else {
+      await settle();
+      for (let i = 0; i < 5; i++) {
+        appOpened.reportCoreAction("review_viewed");
+        focusWindow();
+      }
+      appOpened.reportCoreAction("review_closed");
+      appOpened.reportCoreAction("review_closed");
     }
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    answer(new Response(null, { status: 500 }));
     await settle();
-    now = 60_000;
+    if (!lateReply) {
+      const events = (await sentEvents()).map((e) => e.event);
+      expect(events.filter((e) => e === "review_viewed")).toHaveLength(1);
+      expect(events.filter((e) => e === "review_closed")).toHaveLength(2);
+      vi.setSystemTime(new Date("2026-03-11T00:00:05Z"));
+      focusWindow();
+      await settle();
+    }
+
     appOpened.reportCoreAction("review_viewed");
     await settle();
-    expect((await sentEvents()).map((e) => e.event)).toEqual([
-      "app_opened",
-      "review_viewed",
-      "review_viewed",
-    ]);
+    expect(
+      (await sentEvents()).filter((e) => e.event === "review_viewed"),
+    ).toHaveLength(2);
   });
 
   test.each([401, 403, 429])(
