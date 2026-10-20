@@ -189,6 +189,11 @@ Use `testify` (`github.com/stretchr/testify`) for all test assertions. Use `requ
 - Format Zensical Markdown sources with `make markdown`; prose wraps at 80 columns while tables remain unchanged. The non-mutating `make markdown-ci` check runs in the `prek` pre-push hook and CI.
 - Use `prek run --all-files --hook-stage pre-push` to execute the push hooks manually. Run `make lint` only when you explicitly want golangci-lint to apply fixes.
 - Useful build/lint checks: `go build ./...`, `make lint`, `make lint-ci`, `prek run --all-files --hook-stage pre-push`
+- Review-quality evals compare two refs on ReviewBench with
+  `scripts/reviewbench/eval.sh`, driven by the `/reviewbench-eval` skill. They
+  run real agent reviews and paid judge calls, so run them only when the user
+  explicitly asks, never from CI or hooks. Suggest one after changing review
+  prompts, the review schema, synthesis, or finding post-processing.
 
 Test conventions:
 
