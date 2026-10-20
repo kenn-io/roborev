@@ -179,8 +179,7 @@ func TestCoreActionExplicitClose(t *testing.T) {
 			if tc.result.err != nil {
 				tc.result.jobID, tc.result.seq = 42, 1
 				f.m.pendingClosed[42] = pendingState{seq: 1}
-				_, cmd := f.m.handleClosedResultMsg(tc.result)
-				collectMsgs(cmd)
+				f.update(tc.result)
 			} else {
 				var result tea.Model
 				var cmd tea.Cmd
@@ -235,16 +234,11 @@ func TestCoreActionFixOutcomes(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newCoreActionReviewVisitFixture(t)
-			var cmd tea.Cmd
-			switch result := tc.result.(type) {
-			case applyPatchResultMsg:
-				_, cmd = f.m.handleApplyPatchResultMsg(result)
-			case fixTriggerResultMsg:
-				var updated tea.Model
-				updated, cmd = f.m.handleFixTriggerResultMsg(result)
-				assert.Contains(t, updated.(model).renderTasksView(), "Fix failed: enqueue failed")
+			f.m.currentView = viewTasks
+			f.update(tc.result)
+			if _, ok := tc.result.(fixTriggerResultMsg); ok {
+				assert.Contains(t, f.m.renderTasksView(), "Fix failed: enqueue failed")
 			}
-			collectMsgs(cmd)
 			assert.Equal(t, tc.events, f.transport.events)
 			assert.Equal(t, tc.kinds, f.transport.kinds)
 		})
@@ -283,11 +277,11 @@ func TestCoreActionReviewOpenFailure(t *testing.T) {
 			f := newCoreActionReviewVisitFixture(t)
 			response := f.review()
 			f.m.pendingReviewOpenJobID = response.jobID
+			f.m.pendingReviewOpenOrigin = f.m.currentView
 			msg := reviewErrMsg{
 				jobID: response.jobID, gen: response.gen, fetchSeq: response.fetchSeq,
 				attempt: response.attempt, err: errors.New("load failed"),
 			}
-			var cmd tea.Cmd
 			if mode != "ordinary" {
 				f.m.pendingReviewOpenRetried = true
 				if mode == "fix panel" {
@@ -295,11 +289,10 @@ func TestCoreActionReviewOpenFailure(t *testing.T) {
 					f.m.fixPromptJobID = response.jobID
 					f.m.fixPromptFollowRetried = true
 				}
-				_, cmd = f.m.handleReviewFollowErrMsg(reviewFollowErrMsg(msg))
+				f.update(reviewFollowErrMsg(msg))
 			} else {
-				_, cmd = f.m.handleReviewErrMsg(msg)
+				f.update(msg)
 			}
-			collectMsgs(cmd)
 			assert.Equal(t, []string{"error_shown"}, f.transport.events)
 			assert.Equal(t, []string{"review_viewed"}, f.transport.kinds)
 		})
@@ -312,18 +305,40 @@ func TestCoreActionSplitPaneLoadFailureReportsOncePerSelection(t *testing.T) {
 	f := newCoreActionReviewVisitFixture(t)
 	fail := func() {
 		response := f.review()
-		updated, cmd := f.m.handleReviewFollowErrMsg(reviewFollowErrMsg{
+		f.update(reviewFollowErrMsg{
 			jobID: response.jobID, gen: response.gen, fetchSeq: response.fetchSeq,
 			attempt: response.attempt, err: errors.New("load failed"),
 		})
-		f.m = updated.(model)
-		collectMsgs(cmd)
 	}
+	f.m.currentView = viewHelp
 	fail()
+	assert.Empty(t, f.transport.events, "the help screen covers the pane")
+	f.m.currentView = viewQueue
+	f.update(screenDeliveryMsg{}) // Any message runs the visibility check.
+	assert.Equal(t, []string{"error_shown"}, f.transport.events)
 	fail() // A background retry shows the same failure.
 	assert.Equal(t, []string{"error_shown"}, f.transport.events)
 	f.m, _ = f.m.scheduleDetailFollow()
 	fail()
 	assert.Equal(t, []string{"error_shown", "error_shown"}, f.transport.events)
 	assert.Equal(t, []string{"review_viewed", "review_viewed"}, f.transport.kinds)
+}
+
+//nolint:paralleltest // telemetry environment variables
+func TestCoreActionFlashErrorReportsWhenSeen(t *testing.T) {
+	enableTelemetryEnv(t)
+	f := newCoreActionReviewVisitFixture(t)
+	f.update(fixTriggerResultMsg{err: errors.New("enqueue failed")})
+	assert.Empty(t, f.transport.events, "the tasks flash is not on the queue screen")
+	f.m.currentView = viewTasks
+	f.update(screenDeliveryMsg{})
+	f.update(screenDeliveryMsg{})
+	assert.Equal(t, []string{"error_shown"}, f.transport.events)
+
+	f.m.currentView = viewQueue
+	f.update(fixTriggerResultMsg{err: errors.New("enqueue failed")})
+	f.m.flashExpiresAt = time.Now().Add(-time.Second)
+	f.m.currentView = viewTasks
+	f.update(screenDeliveryMsg{})
+	assert.Len(t, f.transport.events, 1, "an expired flash was never seen")
 }

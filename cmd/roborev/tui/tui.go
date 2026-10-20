@@ -251,7 +251,12 @@ type model struct {
 	flashMessage   string
 	flashExpiresAt time.Time
 	flashView      viewKind // View where flash was triggered (only show in same view)
-	flashWarning   bool
+	// flashErrorKind names the core action whose failure the flash shows,
+	// until reportVisibleErrors counts it. flashErrorJobID is the review job
+	// for a review_viewed failure.
+	flashErrorKind  string
+	flashErrorJobID int64
+	flashWarning    bool
 
 	// Track config reload notifications
 	lastConfigReloadCounter uint64                 // Last known ConfigReloadCounter from daemon status
@@ -517,6 +522,9 @@ type model struct {
 	// already counted. Background follow retries reuse it; a cursor move, an
 	// explicit open, or a loaded review clears it.
 	reviewErrReportedJobID int64
+	// paneErrorJobID is a job whose split pane load error has not yet been
+	// on screen.
+	paneErrorJobID int64
 
 	// paneReviewSeenNonTerminalJob is a state-machine signal for
 	// splitReconcileDetail's Done/Failed idempotency checks, precision-
@@ -1341,6 +1349,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if read && !rm.reviewReadSent {
 			rm.reviewReadSent = true
 			cmd = tea.Batch(cmd, rm.reportAction(telemetry.EventReviewViewed, nil))
+		}
+		if errCmd := rm.reportVisibleErrors(); errCmd != nil {
+			cmd = tea.Batch(cmd, errCmd)
 		}
 		for _, screen := range rm.screensShown() {
 			if slices.Contains(rm.screensSent, screen) {

@@ -1110,11 +1110,7 @@ func (m model) handleReviewFollowErrMsg(msg reviewFollowErrMsg) (tea.Model, tea.
 		return m, nil
 	}
 	m.splitDetailErr = msg.err
-	// The split pane shows this failure; the flashes below show it elsewhere.
-	var errCmd tea.Cmd
-	if m.layout == splitlayout.Split {
-		errCmd = m.reportReviewViewError(msg.jobID)
-	}
+	m.paneErrorJobID = msg.jobID
 	// Deliberately does NOT clear paneReviewSeenNonTerminal: a fresh
 	// attempt was genuinely observed and this fetch failed to pick it up,
 	// so the next reconcile pass must still retry (see that field's doc
@@ -1153,7 +1149,7 @@ func (m model) handleReviewFollowErrMsg(msg reviewFollowErrMsg) (tea.Model, tea.
 			// response would pass the `msg.fetchSeq >= fixPromptSeq`
 			// guard and wrongly clear the retry still in flight.
 			m.fixPromptSeq = m.reviewFetchSeq
-			return m, tea.Batch(cmd, errCmd)
+			return m, cmd
 		}
 		m.reviewFixPanelPending = false
 		m.fixPromptJobID = 0
@@ -1164,6 +1160,7 @@ func (m model) handleReviewFollowErrMsg(msg reviewFollowErrMsg) (tea.Model, tea.
 			fmt.Sprintf("Could not load review to fix job #%d: %v", msg.jobID, msg.err),
 			3*time.Second, m.currentView,
 		)
+		m.markFlashError(telemetry.EventReviewViewed, msg.jobID)
 		// The 'F' fetch is an ordinary dispatch, so dispatchReviewFetch
 		// armed the plain open intent alongside this panel. The panel's
 		// terminal failure resolves BOTH: left armed, the block below
@@ -1175,7 +1172,7 @@ func (m model) handleReviewFollowErrMsg(msg reviewFollowErrMsg) (tea.Model, tea.
 			m.pendingReviewOpenOrigin = 0
 			m.pendingReviewOpenSeq = 0
 		}
-		return m, tea.Batch(errCmd, m.reportReviewViewError(msg.jobID))
+		return m, nil
 	}
 	// The plain "open the review" intent needs the same handling as the
 	// fix panel above: a follow failure resolves the freshest dispatch for
@@ -1215,7 +1212,7 @@ func (m model) handleReviewFollowErrMsg(msg reviewFollowErrMsg) (tea.Model, tea.
 			// the `msg.fetchSeq >= pendingReviewOpenSeq` guard and wrongly
 			// clear the retry still in flight.
 			m.pendingReviewOpenSeq = m.reviewFetchSeq
-			return m, tea.Batch(cmd, errCmd)
+			return m, cmd
 		}
 		// Terminal: clear AND surface a warning flash targeted at
 		// pendingReviewOpenOrigin (the view the request was issued FROM,
@@ -1233,19 +1230,10 @@ func (m model) handleReviewFollowErrMsg(msg reviewFollowErrMsg) (tea.Model, tea.
 			fmt.Sprintf("Could not open review for job #%d: %v", msg.jobID, msg.err),
 			3*time.Second, origin,
 		)
-		return m, tea.Batch(errCmd, m.reportReviewViewError(msg.jobID))
+		m.markFlashError(telemetry.EventReviewViewed, msg.jobID)
+		return m, nil
 	}
-	return m, errCmd
-}
-
-// reportReviewViewError counts a shown review-load failure once per job until
-// the selection moves, the user opens the review again, or a review loads.
-func (m *model) reportReviewViewError(jobID int64) tea.Cmd {
-	if m.reviewErrReportedJobID == jobID {
-		return nil
-	}
-	m.reviewErrReportedJobID = jobID
-	return m.reportAction(telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: telemetry.EventReviewViewed})
+	return m, nil
 }
 
 // handleReviewErrMsg processes a failed ORDINARY (non-follow) review fetch
@@ -1335,7 +1323,8 @@ func (m model) handleReviewErrMsg(msg reviewErrMsg) (tea.Model, tea.Cmd) {
 			fmt.Sprintf("Could not open review for job #%d: %v", msg.jobID, msg.err),
 			3*time.Second, origin,
 		)
-		return m, tea.Batch(reconnectCmd, m.reportReviewViewError(msg.jobID))
+		m.markFlashError(telemetry.EventReviewViewed, msg.jobID)
+		return m, reconnectCmd
 	}
 	return m, reconnectCmd
 }
@@ -1736,9 +1725,6 @@ func (m model) handleClosedResultMsg(msg closedResultMsg) (tea.Model, tea.Cmd) {
 
 	if msg.err != nil {
 		if isCurrentRequest {
-			if msg.fromKey {
-				actionCmd = m.reportAction(telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: telemetry.EventReviewClosed})
-			}
 			if msg.reviewView {
 				if m.currentReview != nil && m.currentReview.ID == msg.reviewID {
 					m.currentReview.Closed = msg.oldState
@@ -1773,6 +1759,9 @@ func (m model) handleClosedResultMsg(msg closedResultMsg) (tea.Model, tea.Cmd) {
 				flashView = viewReview
 			}
 			m.setWarningFlash(msg.err.Error(), 3*time.Second, flashView)
+			if msg.fromKey {
+				m.markFlashError(telemetry.EventReviewClosed, 0)
+			}
 			m.err = msg.err
 		}
 	} else {
@@ -2523,7 +2512,8 @@ func (m model) handleFixTriggerResultMsg(
 		m.setFlash(fmt.Sprintf(
 			"Fix failed: %v", msg.err,
 		), 3*time.Second, viewTasks)
-		return m, m.reportAction(telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: telemetry.EventFindingFixed})
+		m.markFlashError(telemetry.EventFindingFixed, 0)
+		return m, nil
 	} else if msg.warning != "" {
 		m.setFlash(msg.warning, 5*time.Second, viewTasks)
 		return m, m.requestFetchFixJobs()
@@ -2577,7 +2567,6 @@ func (m model) handleApplyPatchResultMsg(
 		}
 		return m, tea.Batch(cmds...)
 	} else if msg.commitFailed {
-		actionCmd = m.reportAction(telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: telemetry.EventFindingFixed})
 		detail := fmt.Sprintf(
 			"Job #%d: %v", msg.jobID, msg.err,
 		)
@@ -2587,11 +2576,12 @@ func (m model) handleApplyPatchResultMsg(
 			)
 		}
 		m.setFlash(detail, 8*time.Second, viewTasks)
+		m.markFlashError(telemetry.EventFindingFixed, 0)
 	} else if msg.err != nil {
-		actionCmd = tea.Batch(actionCmd, m.reportAction(telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: telemetry.EventFindingFixed}))
 		m.setFlash(fmt.Sprintf(
 			"Apply failed: %v", msg.err,
 		), 3*time.Second, viewTasks)
+		m.markFlashError(telemetry.EventFindingFixed, 0)
 	} else {
 		m.setFlash(fmt.Sprintf(
 			"Patch from job #%d applied and committed",

@@ -881,9 +881,10 @@ func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
 	return err
 }
 
-// errUnsyncableReview marks a local review that failed checks before any
-// PostgreSQL write.
-var errUnsyncableReview = errors.New("local review cannot be synced")
+// errSyncRowRejected marks a row that sync cannot upload for an application
+// reason, such as failed local checks or a conflicting experiment, rather
+// than a PostgreSQL failure.
+var errSyncRowRejected = errors.New("sync row rejected")
 
 var errReviewAttemptPending = errors.New("review attempt association is pending; retry after producer sync")
 
@@ -1004,7 +1005,7 @@ func (p *PgPool) UpsertExperimentDefinition(ctx context.Context, definition Sync
 		return err
 	}
 	if storedHash != definition.DefinitionHash {
-		return fmt.Errorf("experiment definition conflict for %q", definition.ExperimentID)
+		return fmt.Errorf("%w: experiment definition conflict for %q", errSyncRowRejected, definition.ExperimentID)
 	}
 	return nil
 }
@@ -1015,7 +1016,7 @@ func (p *PgPool) UpsertExperimentAssignment(ctx context.Context, assignment Sync
 		assignment.ExperimentID, assignment.Arm, assignment.SubjectHash,
 		assignment.EffectiveConfigHash, assignment.EffectiveConfigJSON,
 	); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errSyncRowRejected, err)
 	}
 	return p.Tx(ctx, func(tx pgx.Tx) error {
 		// The schema deliberately permits multiple experiment IDs per review
@@ -1049,8 +1050,8 @@ func (p *PgPool) UpsertExperimentAssignment(ctx context.Context, assignment Sync
 				subjectHash != assignment.SubjectHash ||
 				effectiveConfigHash != assignment.EffectiveConfigHash ||
 				effectiveConfigJSON != assignment.EffectiveConfigJSON {
-				return fmt.Errorf("conflicting experiment assignment for %s/%s",
-					assignment.ReviewUnitKind, assignment.ReviewUnitUUID)
+				return fmt.Errorf("%w: conflicting experiment assignment for %s/%s",
+					errSyncRowRejected, assignment.ReviewUnitKind, assignment.ReviewUnitUUID)
 			}
 		}
 		if err := rows.Err(); err != nil {
@@ -1580,10 +1581,10 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 	for i, r := range reviews {
 		structuredOutput, err := sanitizePostgresStructuredOutput(r.StructuredOutput)
 		if err != nil {
-			return nil, fmt.Errorf("%w: sanitize structured review output for PostgreSQL: %w", errUnsyncableReview, err)
+			return nil, fmt.Errorf("%w: sanitize structured review output for PostgreSQL: %w", errSyncRowRejected, err)
 		}
 		if err := validateStructuredOutputForWrite(structuredOutput); err != nil {
-			return nil, fmt.Errorf("%w: %w", errUnsyncableReview, err)
+			return nil, fmt.Errorf("%w: %w", errSyncRowRejected, err)
 		}
 		structuredOutputs[i] = structuredOutput
 	}

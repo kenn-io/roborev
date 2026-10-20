@@ -212,26 +212,26 @@ func TestSyncFailureOutages(t *testing.T) {
 	var reasons []string
 	worker.SetOnSyncFailed(func(reason string) { reasons = append(reasons, reason) })
 	remote := &syncSourceError{context.DeadlineExceeded}
-	worker.observeSync(&syncSourceError{&pgconn.PgError{Code: "23505"}})
-	worker.observeSync(remote) // No successful full pass yet.
+	worker.observeFailure(&syncSourceError{&pgconn.PgError{Code: "23505"}})
+	worker.observeFailure(remote) // No successful full pass yet.
 	assert.Empty(t, reasons)
-	worker.observeSync(nil)
-	worker.observeSync(fmt.Errorf("push experiment definition example: %w", &syncSourceError{&pgconn.PgError{Code: "22001"}}))
-	worker.observeSync(fmt.Errorf("push experiment assignment job/example: %w", &syncSourceError{&pgconn.PgError{Code: "23505"}}))
+	worker.observePass()
+	worker.observeFailure(fmt.Errorf("push experiment definition example: %w", &syncSourceError{&pgconn.PgError{Code: "22001"}}))
+	worker.observeFailure(fmt.Errorf("push experiment assignment job/example: %w", &syncSourceError{&pgconn.PgError{Code: "23505"}}))
 	assert.Empty(t, reasons)
-	worker.observeSync(errors.New("local SQLite failure"))
-	worker.observeSync(remote)
-	worker.observeSync(remote)
+	worker.observeFailure(errors.New("local SQLite failure"))
+	worker.observeFailure(remote)
+	worker.observeFailure(remote)
 	assert.Equal(t, []string{"timeout"}, reasons)
-	worker.observeSync(&syncSourceError{&pgconn.PgError{Code: "22001"}})
-	worker.observeSync(errors.New("local SQLite failure"))
-	worker.observeSync(remote)
+	worker.observeFailure(&syncSourceError{&pgconn.PgError{Code: "22001"}})
+	worker.observeFailure(errors.New("local SQLite failure"))
+	worker.observeFailure(remote)
 	assert.Equal(t, []string{"timeout"}, reasons)
-	worker.observeSync(nil)
-	worker.observeSync(&syncSourceError{&pgconn.PgError{Code: "28P01"}})
+	worker.observePass()
+	worker.observeFailure(&syncSourceError{&pgconn.PgError{Code: "28P01"}})
 	assert.Equal(t, []string{"timeout", "auth"}, reasons)
-	worker.observeSync(nil)
-	worker.observeSync(&syncSourceError{&pgconn.PgError{Code: "25006"}})
+	worker.observePass()
+	worker.observeFailure(&syncSourceError{&pgconn.PgError{Code: "25006"}})
 	assert.Equal(t, []string{"timeout", "auth", "other"}, reasons)
 }
 
@@ -242,12 +242,26 @@ func TestSyncPassWithRejectedRowsArmsOutages(t *testing.T) {
 	worker.SetOnSyncFailed(func(reason string) { reasons = append(reasons, reason) })
 	worker.passError = &syncSourceError{&pgconn.PgError{Code: "23505"}}
 	worker.observePass()
-	worker.observeSync(&syncSourceError{net.ErrClosed})
+	worker.observeFailure(&syncSourceError{net.ErrClosed})
 	assert.Equal(t, []string{"network"}, reasons)
 	worker.passError = &syncSourceError{&pgconn.PgError{Code: "42501"}}
 	worker.observePass()
-	worker.observeSync(&syncSourceError{context.DeadlineExceeded})
+	worker.observeFailure(&syncSourceError{context.DeadlineExceeded})
 	assert.Equal(t, []string{"network"}, reasons, "a swallowed source failure keeps the outage open")
+}
+
+func TestSyncStoppedPassReportsSavedSourceFailure(t *testing.T) {
+	t.Parallel()
+	worker := NewSyncWorker(nil, config.SyncConfig{})
+	var reasons []string
+	worker.SetOnSyncFailed(func(reason string) { reasons = append(reasons, reason) })
+	worker.observePass()
+	conflict := fmt.Errorf("%w: experiment definition conflict", errSyncRowRejected)
+	worker.observeFailure(fmt.Errorf("push experiment definition example: %w", &syncSourceError{conflict}))
+	assert.Empty(t, reasons, "an experiment conflict is not an outage")
+	worker.passError = &syncSourceError{net.ErrClosed}
+	worker.observeFailure(fmt.Errorf("batch upsert reviews: %w", &syncSourceError{errReviewAttemptPending}))
+	assert.Equal(t, []string{"network"}, reasons)
 }
 
 func TestSyncFailureReason(t *testing.T) {

@@ -15,6 +15,7 @@ import (
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
+	"go.kenn.io/roborev/internal/telemetry"
 )
 
 // Filter type constants used in filterStack and popFilter/pushFilter.
@@ -63,6 +64,7 @@ func (m *model) setFlash(msg string, d time.Duration, v viewKind) {
 	m.flashExpiresAt = time.Now().Add(d)
 	m.flashView = v
 	m.flashWarning = false
+	m.flashErrorKind = ""
 }
 
 func (m *model) setWarningFlash(msg string, d time.Duration, v viewKind) {
@@ -70,6 +72,47 @@ func (m *model) setWarningFlash(msg string, d time.Duration, v viewKind) {
 	m.flashExpiresAt = time.Now().Add(d)
 	m.flashView = v
 	m.flashWarning = true
+	m.flashErrorKind = ""
+}
+
+// markFlashError records that the current flash shows a failed core action.
+// reportVisibleErrors counts it once the flash is on screen.
+func (m *model) markFlashError(kind string, jobID int64) {
+	m.flashErrorKind = kind
+	m.flashErrorJobID = jobID
+}
+
+// reportVisibleErrors counts failures whose flash or split pane error is on
+// screen for the first time. A flash that expires or is replaced while another
+// view is showing never counts.
+func (m *model) reportVisibleErrors() tea.Cmd {
+	var cmds []tea.Cmd
+	if m.flashErrorKind != "" && m.renderFlash(m.currentView) != "" {
+		cmds = append(cmds, m.reportErrorShown(m.flashErrorKind, m.flashErrorJobID))
+		m.flashErrorKind = ""
+	}
+	if m.paneErrorJobID != 0 {
+		switch {
+		case m.splitDetailErr == nil || m.selectedJobID != m.paneErrorJobID:
+			m.paneErrorJobID = 0
+		case m.splitActive():
+			cmds = append(cmds, m.reportErrorShown(telemetry.EventReviewViewed, m.paneErrorJobID))
+			m.paneErrorJobID = 0
+		}
+	}
+	return tea.Batch(cmds...)
+}
+
+// reportErrorShown counts a review-load failure once per job until the
+// selection moves, the user opens the review again, or a review loads.
+func (m *model) reportErrorShown(kind string, jobID int64) tea.Cmd {
+	if kind == telemetry.EventReviewViewed {
+		if m.reviewErrReportedJobID == jobID {
+			return nil
+		}
+		m.reviewErrReportedJobID = jobID
+	}
+	return m.reportAction(telemetry.EventErrorShown, map[string]any{telemetry.PropertyKind: kind})
 }
 
 func (m model) renderFlash(view viewKind) string {

@@ -46,12 +46,14 @@ func (w *SyncWorker) SetOnSyncFailed(fn func(string)) {
 	w.mu.Unlock()
 }
 
-func (w *SyncWorker) observeSync(err error) {
-	if err == nil {
-		w.working = true
-		return
+// observeFailure records a pass that stopped before completing push and pull.
+// A source failure already saved in the pass still reports when the pass
+// stops for another reason.
+func (w *SyncWorker) observeFailure(err error) {
+	if !reportableSyncError(err) {
+		err = w.passError
 	}
-	if _, remote := errors.AsType[*syncSourceError](err); !remote || syncDataError(err) || errors.Is(err, errReviewAttemptPending) || !w.working {
+	if !reportableSyncError(err) || !w.working {
 		return
 	}
 	w.working = false
@@ -66,11 +68,16 @@ func (w *SyncWorker) observeSync(err error) {
 // observePass records a completed push and pull. Rejected rows still show
 // that PostgreSQL answered, so only swallowed source failures count.
 func (w *SyncWorker) observePass() {
-	if syncDataError(w.passError) {
-		w.observeSync(nil)
+	if reportableSyncError(w.passError) {
+		w.observeFailure(w.passError)
 		return
 	}
-	w.observeSync(w.passError)
+	w.working = true
+}
+
+func reportableSyncError(err error) bool {
+	_, remote := errors.AsType[*syncSourceError](err)
+	return remote && !syncDataError(err) && !errors.Is(err, errReviewAttemptPending)
 }
 
 // syncSourceError distinguishes PostgreSQL operations from local SQLite work.
@@ -80,6 +87,9 @@ func (e *syncSourceError) Error() string { return e.err.Error() }
 func (e *syncSourceError) Unwrap() error { return e.err }
 
 func syncDataError(err error) bool {
+	if errors.Is(err, errSyncRowRejected) {
+		return true
+	}
 	pgErr, ok := errors.AsType[*pgconn.PgError](err)
 	return ok && (strings.HasPrefix(pgErr.Code, "22") || strings.HasPrefix(pgErr.Code, "23"))
 }
@@ -423,7 +433,7 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (*S
 	for batchNum < maxPushBatches {
 		pushed, err := w.pushChangesWithStats(ctx, pool)
 		if err != nil {
-			w.observeSync(err)
+			w.observeFailure(err)
 			return nil, fmt.Errorf("push: %w", err)
 		}
 		stats.PushedJobs += pushed.Jobs
@@ -451,6 +461,7 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (*S
 				TotalRevs:  stats.PushedReviews,
 				TotalResps: stats.PushedResponses,
 			}) {
+				w.observeFailure(nil)
 				return stats, nil
 			}
 		}
@@ -462,7 +473,7 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (*S
 	// Pull remote changes
 	pulled, err := w.pullChangesWithStats(ctx, pool)
 	if err != nil {
-		w.observeSync(err)
+		w.observeFailure(err)
 		return nil, fmt.Errorf("pull: %w", err)
 	}
 	w.observePass()
@@ -720,7 +731,7 @@ func (w *SyncWorker) doSync() error {
 	for {
 		stats, err := w.pushChangesWithStats(ctx, pool)
 		if err != nil {
-			w.observeSync(err)
+			w.observeFailure(err)
 			return fmt.Errorf("push: %w", err)
 		}
 		if stats.Jobs == 0 && stats.Reviews == 0 && stats.Responses == 0 {
@@ -735,7 +746,7 @@ func (w *SyncWorker) doSync() error {
 
 	// Pull remote changes from PostgreSQL
 	if err := w.pullChanges(ctx, pool); err != nil {
-		w.observeSync(err)
+		w.observeFailure(err)
 		return fmt.Errorf("pull: %w", err)
 	}
 
@@ -872,10 +883,7 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	if len(reviews) > 0 {
 		success, err := pool.BatchUpsertReviews(ctx, reviews)
 		if err != nil {
-			if !errors.Is(err, errUnsyncableReview) {
-				err = &syncSourceError{err}
-			}
-			return stats, fmt.Errorf("batch upsert reviews: %w", err)
+			return stats, fmt.Errorf("batch upsert reviews: %w", &syncSourceError{err})
 		}
 
 		// Only mark successfully synced reviews

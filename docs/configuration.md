@@ -1957,7 +1957,8 @@ review, synthesis and compact output.
 
 Core action error banners and toasts in the web UI and TUI send `error_shown`
 with `surface=web|tui` and `kind=review_viewed|finding_fixed|review_closed`,
-without a daily limit.
+without a daily limit. A TUI error counts when its flash or pane first appears
+on screen; a flash for another view that expires unseen stays silent.
 
 - `review_viewed` counts a review that fails to load or render, including the
     TUI split pane's load error. A failure counts once per selection; reloads
@@ -1973,11 +1974,12 @@ pass in the same process, once per PostgreSQL outage, with
 `sync_source=postgres` and `reason=auth|network|timeout|other`. A full push and
 pull that reaches PostgreSQL allows the next outage to report, even when
 row-specific data errors (SQLSTATE class 22 or 23) rejected some rows. Those
-data errors, local SQLite errors, reviews that fail local checks before upload,
-and configuration errors never report an outage on their own. Outage state
-resets when the daemon restarts; reporting resumes after a full pass succeeds.
-Unlisted `kind`, `reason`, and `sync_source` values become `other`. Neither
-event contains error text.
+data errors, local SQLite errors, rows that fail local checks or conflict with
+an existing experiment, and configuration errors never report an outage on their
+own. A PostgreSQL failure seen earlier in a pass still reports when the pass
+stops for one of those reasons. Outage state resets when the daemon restarts;
+reporting resumes after a full pass succeeds. Unlisted `kind`, `reason`, and
+`sync_source` values become `other`. Neither event contains error text.
 
 The daemon deduplicates successful core action reports per day, so clients may
 repeat them.

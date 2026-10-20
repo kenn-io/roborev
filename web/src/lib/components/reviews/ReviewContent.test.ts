@@ -9,6 +9,7 @@ const state = vi.hoisted(() => ({
   notFound: false,
   status: "done",
   error: "",
+  jobId: 42,
 }));
 const errorReports = vi.hoisted(() => vi.fn());
 
@@ -22,6 +23,7 @@ vi.mock("../../stores/context", () => ({
       getOutput: () => state.output,
       isLoading: () => state.loading,
       isReviewNotFound: () => state.notFound,
+      getSelectedJobId: () => state.jobId,
       getSelectedJob: () => ({ status: state.status, error: state.error }),
     },
   }),
@@ -40,6 +42,7 @@ afterEach(() => {
   state.notFound = false;
   state.status = "done";
   state.error = "";
+  state.jobId = 42;
 });
 
 describe("ReviewContent", () => {
@@ -54,6 +57,21 @@ describe("ReviewContent", () => {
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     await vi.waitFor(() => expect(errorReports).toHaveBeenCalledTimes(2));
     expect(errorReports).toHaveBeenLastCalledWith("review_viewed");
+  });
+
+  it("counts a renderer failure once per selected review", async () => {
+    state.jobId = 7;
+    render(ReviewContent);
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    cleanup();
+    render(ReviewContent); // Switching tabs remounts the same selection.
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(errorReports).toHaveBeenCalledOnce();
+    cleanup();
+    state.jobId = 8;
+    render(ReviewContent);
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(errorReports).toHaveBeenCalledTimes(2);
   });
 
   it("keeps a renderer failure without output silent", async () => {

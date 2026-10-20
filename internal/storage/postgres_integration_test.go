@@ -547,7 +547,7 @@ func TestIntegration_SyncOutageIgnoresUnsyncableReview(t *testing.T) { //nolint:
 	// read as a dropped connection.
 	_, err = db.Exec(`UPDATE reviews SET structured_output = ? WHERE job_id = ?`, `{"summary":`, job.ID)
 	require.NoError(t, err)
-	require.ErrorIs(t, worker.doSync(), errUnsyncableReview)
+	require.ErrorIs(t, worker.doSync(), errSyncRowRejected)
 	assert.Empty(t, reasons)
 }
 
