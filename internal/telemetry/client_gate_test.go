@@ -360,38 +360,26 @@ func TestClientGatePersistsAgentAttemptWhenCallerTimesOut(t *testing.T) {
 func TestClientGateKeepsAgentBackoffInMemoryWhenLockStaysHeld(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	synctest.Test(t, func(t *testing.T) {
+		// Five earlier answers without a receipt make this send the day's last attempt.
+		receipt := `{"version":1,"day":"` + time.Now().UTC().Format(time.DateOnly) + `","endpoints":{"endpoint-a":{"events":{"agent_active::":{"attempts":5,"rejected":5}}}}}`
+		require.NoError(t, os.WriteFile(filepath.Join(os.Getenv("ROBOREV_DATA_DIR"), "telemetry-client.json"), []byte(receipt), 0o600))
 		lock := flock.New(filepath.Join(os.Getenv("ROBOREV_DATA_DIR"), "telemetry-client.json.lock"))
-		lockHeld := make(chan struct{})
-		lockErrors := make(chan error, 1)
-		transport := &timeoutGateTransport{onStart: func() {
+		var requests atomic.Int32
+		client := &http.Client{Transport: clientGateRoundTripper(func(req *http.Request) (*http.Response, error) {
+			requests.Add(1)
+			// Another process takes the receipt lock before this answer settles.
 			if err := lock.Lock(); err != nil {
-				lockErrors <- err
-				return
+				return nil, err
 			}
-			close(lockHeld)
-		}}
-		client := &http.Client{Transport: transport}
+			return &http.Response{StatusCode: http.StatusNotFound, Header: make(http.Header), Body: http.NoBody, Request: req}, nil
+		})}
+		defer func() { _ = lock.Unlock() }()
 		gate := &ClientGate{}
-		ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
-		defer cancel()
-		done := make(chan error, 1)
-		go func() {
-			_, err := gate.Post(ctx, client, "endpoint-a", "http://example.com", EventAgentActive, nil, false)
-			done <- err
-		}()
-		select {
-		case <-lockHeld:
-			defer func() { _ = lock.Unlock() }()
-		case err := <-lockErrors:
-			require.NoError(t, err)
-		}
-		synctest.Wait()
-		require.Error(t, <-done)
-		assert.True(t, gate.ReadyEvent("endpoint-a", EventAgentActive, "", ""))
-		status, err := gate.Post(t.Context(), client, "endpoint-a", "http://example.com", EventAgentActive, nil, false)
-		require.NoError(t, err)
-		assert.Equal(t, posthog.StatusSkipped, status)
-		assert.Equal(t, int32(1), transport.requests.Load())
+		_, err := gate.Post(t.Context(), client, "endpoint-a", "http://example.com", EventAgentActive, nil, false)
+		require.Error(t, err)
+		// Only memory can record the sixth answer while the settlement lock stays held.
+		assert.False(t, gate.ReadyEvent("endpoint-a", EventAgentActive, "", ""))
+		assert.Equal(t, int32(1), requests.Load())
 	})
 }
 
@@ -602,10 +590,17 @@ func (t *lockedReceiptTransport) RoundTrip(req *http.Request) (*http.Response, e
 	}, nil
 }
 
-type failedGateTransport struct{ requests atomic.Int32 }
+// failedGateTransport fails every report: with no answer, or with answer, a 404 without a receipt.
+type failedGateTransport struct {
+	requests atomic.Int32
+	answer   bool
+}
 
-func (f *failedGateTransport) RoundTrip(*http.Request) (*http.Response, error) {
+func (f *failedGateTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	f.requests.Add(1)
+	if f.answer {
+		return &http.Response{StatusCode: http.StatusNotFound, Header: make(http.Header), Body: http.NoBody, Request: req}, nil
+	}
 	return nil, errors.New("unavailable")
 }
 
@@ -620,7 +615,8 @@ func TestClientGateBackoffAndMemoryFallback(t *testing.T) {
 			t.Setenv("ROBOREV_DATA_DIR", dir)
 			synctest.Test(t, func(t *testing.T) {
 				gate := &ClientGate{}
-				transport := &failedGateTransport{}
+				// The daemon answers, but without a receipt, so the day's attempts run out.
+				transport := &failedGateTransport{answer: true}
 				client := &http.Client{Transport: transport}
 				send := func() {
 					_, _ = gate.Post(context.Background(), client, "endpoint-a", "http://example.com", EventScreenViewed, map[string]any{PropertySurface: SurfaceTUI, PropertyScreen: "queue"}, true)
@@ -903,8 +899,8 @@ func TestClientGateKeepsAgentBackoffWhenWritesFail(t *testing.T) {
 		}
 		now = now.Add(time.Minute)
 	}
-	// One request per backoff window, and no more than six attempts for the day.
-	assert.Equal(t, int32(6), transport.requests.Load())
+	// One request per backoff window; an unanswered daemon is retried on later activity.
+	assert.Equal(t, int32(20), transport.requests.Load())
 }
 
 func TestClientGateQueuesAgentCallsDuringBackoff(t *testing.T) {
@@ -998,4 +994,32 @@ func TestClientGateSendsQueuedCallOnlyAfterItsIDIsSaved(t *testing.T) {
 		ids[id] = true
 	}
 	assert.Len(t, ids, 3)
+}
+
+func TestClientGateRetriesUnansweredReportsPastTheDailyLimit(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	synctest.Test(t, func(t *testing.T) {
+		down := true
+		var requests atomic.Int32
+		client := &http.Client{Transport: clientGateRoundTripper(func(req *http.Request) (*http.Response, error) {
+			requests.Add(1)
+			if down {
+				return nil, errors.New("connection refused")
+			}
+			return &http.Response{StatusCode: http.StatusAccepted, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"status":"queued"}`)), Request: req}, nil
+		})}
+		gate := &ClientGate{}
+		props := map[string]any{PropertySurface: SurfaceCLI}
+		for range 8 {
+			_, _ = gate.Post(t.Context(), client, "endpoint-a", "http://example.com", EventAppOpened, props, true)
+			time.Sleep(backoffDelay(5))
+		}
+		assert.Equal(t, int32(8), requests.Load())
+		// The daemon comes back, and the next report after backoff gets its receipt.
+		down = false
+		status, err := gate.Post(t.Context(), client, "endpoint-a", "http://example.com", EventAppOpened, props, true)
+		require.NoError(t, err)
+		assert.Equal(t, posthog.StatusQueued, status)
+		assert.True(t, gate.AwaitProbe(t.Context(), "endpoint-a", EventAppOpened, SurfaceCLI))
+	})
 }

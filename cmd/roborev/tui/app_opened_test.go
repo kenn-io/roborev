@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -452,7 +454,8 @@ func TestTUIExitSharesTelemetryWaitBudget(t *testing.T) {
 		close(m.ready)
 		m.client.Transport = &screenRecordingTransport{}
 		m.reportStartupTelemetry()()
-		transport := &stalledTransport{hit: make(chan struct{}, 2)}
+		// The session report finishes at once, so only the stalled screen report can hold the exit.
+		transport := &screenStallTransport{}
 		m.client.Transport = transport
 		done := make(chan struct{})
 		go func() { m.postScreen("help")(); close(done) }()
@@ -460,11 +463,38 @@ func TestTUIExitSharesTelemetryWaitBudget(t *testing.T) {
 		start := time.Now()
 		m.finishTelemetry(2 * time.Minute)
 		assert.Equal(t, 50*time.Millisecond, time.Since(start))
-		assert.Equal(t, int32(2), transport.requests.Load())
-		time.Sleep(time.Second)
+		assert.Equal(t, []string{telemetry.EventScreenViewed, telemetry.EventSessionEnded}, transport.received())
 		<-done
-		telemetrySends.Wait(time.Second)
 	})
+}
+
+// screenStallTransport holds screen reports until their deadline and accepts every other report.
+type screenStallTransport struct {
+	mu     sync.Mutex
+	events []string
+}
+
+func (s *screenStallTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	var event struct {
+		Name string `json:"event"`
+	}
+	if err := json.NewDecoder(req.Body).Decode(&event); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	s.events = append(s.events, event.Name)
+	s.mu.Unlock()
+	if event.Name == telemetry.EventScreenViewed {
+		<-req.Context().Done()
+		return nil, req.Context().Err()
+	}
+	return &http.Response{StatusCode: http.StatusAccepted, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"status":"queued"}`)), Request: req}, nil
+}
+
+func (s *screenStallTransport) received() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.events)
 }
 
 type delayedProbeTransport struct {

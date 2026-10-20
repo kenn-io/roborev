@@ -1965,7 +1965,10 @@ Client receipts are kept per daemon endpoint:
     endpoint share one request. A command that needs that receipt waits for the
     other request to finish. `queued` and `skipped` settle the receipt;
     `disabled` quiets reporting to that endpoint until the next UTC day.
-- Failed reports retry after 1 to 16 seconds, at most six times per UTC day.
+- Failed reports retry on later activity after 1 to 16 seconds. A daemon that
+    answers six times without a receipt, such as one too old to send receipts,
+    gets no more reports for that event until the next UTC day. A daemon that
+    doesn't answer is retried at most every 16 seconds.
 - When the file can't be read or written, receipts stay in process memory until
     another process changes the file. The file then wins, because that process
     may have queued or settled calls meanwhile. A newer-version file turns off

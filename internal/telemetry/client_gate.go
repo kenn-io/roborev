@@ -55,8 +55,11 @@ type clientEndpointState struct {
 }
 
 type clientAttempt struct {
-	Sent       bool      `json:"sent"`
-	Attempts   int       `json:"attempts"`
+	Sent     bool `json:"sent"`
+	Attempts int  `json:"attempts"`
+	// Rejected counts answers without a receipt. Six quiet the event until the next UTC day, so a
+	// daemon too old to send receipts isn't retried on every command; unanswered requests only back off.
+	Rejected   int       `json:"rejected,omitempty"`
 	Next       time.Time `json:"next"`
 	Pending    int       `json:"pending,omitempty"`
 	InFlight   bool      `json:"in_flight,omitempty"`
@@ -115,9 +118,9 @@ func (g *ClientGate) ReadyEvent(scope, event, surface, screen string) bool {
 	a := endpoint.Events[event+":"+surface+":"+screen]
 	if event == EventAgentActive {
 		// Agent calls queue during backoff; postAgentCalls paces their delivery.
-		return !endpoint.Disabled && a.Attempts < 6
+		return !endpoint.Disabled && a.Rejected < 6
 	}
-	return !endpoint.Disabled && !a.Sent && a.Attempts < 6 && !g.clock().Before(a.Next)
+	return !endpoint.Disabled && !a.Sent && a.Rejected < 6 && !g.clock().Before(a.Next)
 }
 
 // AwaitProbe reports whether endpoint activity may follow a successful receipt
@@ -271,7 +274,7 @@ func (g *ClientGate) updateSaved(ctx context.Context, change func(*clientState))
 		g.unsaved, g.unsavedFrom = false, nil
 		g.unsupported = false
 	}
-	if loaded && !(g.unsaved && bytes.Equal(raw, g.unsavedFrom)) {
+	if loaded && (!g.unsaved || !bytes.Equal(raw, g.unsavedFrom)) {
 		g.state = stored
 		g.unsaved, g.unsavedFrom = false, nil
 	}
@@ -351,7 +354,7 @@ func (g *ClientGate) Post(ctx context.Context, client *http.Client, scope, url, 
 		endpoint := state.endpoint(scope)
 		attempt := endpoint.Events[key]
 		now := g.clock()
-		if endpoint.Disabled || attempt.Sent || attempt.Attempts >= 6 || now.Before(attempt.Next) {
+		if endpoint.Disabled || attempt.Sent || attempt.Rejected >= 6 || now.Before(attempt.Next) {
 			return
 		}
 		sendingDay = state.Day
@@ -390,6 +393,9 @@ func (g *ClientGate) Post(ctx context.Context, client *http.Client, scope, url, 
 			}
 			if !daily {
 				a.Attempts++
+			}
+			if rejected(err) {
+				a.Rejected++
 			}
 			a.Next = g.clock().Add(backoffDelay(a.Attempts))
 			a.InFlight = false
@@ -438,7 +444,7 @@ func (g *ClientGate) postAgentCalls(ctx context.Context, client *http.Client, sc
 			attempt.Attempts++
 			attempt.Next = leaseUntil.Add(backoffDelay(attempt.Attempts))
 		}
-		if attempt.Attempts >= 6 {
+		if attempt.Rejected >= 6 {
 			endpoint.Events[key] = attempt
 			return
 		}
@@ -492,6 +498,9 @@ func (g *ClientGate) sendPendingAgentCalls(ctx context.Context, client *http.Cli
 			}
 			if err != nil {
 				attempt.Attempts++
+				if rejected(err) {
+					attempt.Rejected++
+				}
 				attempt.Next = g.clock().Add(backoffDelay(attempt.Attempts))
 				attempt.InFlight = false
 				attempt.LeaseUntil = time.Time{}
@@ -501,7 +510,7 @@ func (g *ClientGate) sendPendingAgentCalls(ctx context.Context, client *http.Cli
 			if attempt.Pending > 0 {
 				attempt.Pending--
 			}
-			attempt.Attempts = 0
+			attempt.Attempts, attempt.Rejected = 0, 0
 			attempt.Next = time.Time{}
 			attempt.InFlight = false
 			attempt.LeaseUntil = time.Time{}
@@ -566,6 +575,13 @@ func (s *clientState) normalize() {
 			endpoint.Events = map[string]clientAttempt{}
 		}
 	}
+}
+
+// rejected reports a failure the daemon answered, such as a reply without a receipt. A request
+// that got no answer, such as a refused connection or a timeout, fails with a *url.Error.
+func rejected(err error) bool {
+	_, unanswered := errors.AsType[*url.Error](err)
+	return err != nil && !unanswered
 }
 
 func backoffDelay(attempts int) time.Duration {
