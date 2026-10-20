@@ -238,8 +238,8 @@ func (g *ClientGate) Post(ctx context.Context, client *http.Client, scope, url, 
 // receipt is known, an agent call goes out as the agent surface's check, so concurrent agent processes send
 // one call and the rest read its result; sent reports whether this call went out that way.
 func (g *ClientGate) prepare(ctx context.Context, client *http.Client, scope, url, event string, props map[string]any) (surface string, sent bool) {
-	g.Load(ctx)
 	if event != EventAgentActive {
+		g.Load(ctx)
 		surface, _ = props[PropertySurface].(string)
 		return surface, false
 	}
@@ -309,23 +309,26 @@ func (g *ClientGate) lock(ctx context.Context) (func(), bool) {
 // stick, attempts only grow, and backoff only lengthens. Unreadable or other-day content reads as empty.
 // Callers hold the receipt lock.
 func (g *ClientGate) merge() {
+	path := filepath.Join(config.DataDir(), clientStateFile)
+	data, err := os.ReadFile(path)
+	var header struct {
+		Version int `json:"version"`
+	}
+	newer := json.Unmarshal(data, &header) == nil && header.Version > clientStateVersion
+	var saved clientState
+	decodeErr := json.Unmarshal(data, &saved)
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	state := g.current()
 	g.loaded = true
-	data, err := os.ReadFile(g.path)
-	if err != nil {
+	if err != nil || g.path != path {
 		return
 	}
-	var header struct {
-		Version int `json:"version"`
-	}
-	if json.Unmarshal(data, &header) == nil && header.Version > clientStateVersion {
+	if newer {
 		g.frozen = true
 		return
 	}
-	var saved clientState
-	if json.Unmarshal(data, &saved) != nil || saved.Day != state.Day {
+	if decodeErr != nil || saved.Day != state.Day {
 		return
 	}
 	for scope, se := range saved.Endpoints {

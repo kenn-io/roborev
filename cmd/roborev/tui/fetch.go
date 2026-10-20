@@ -1553,6 +1553,10 @@ func (m model) reportAction(event string) tea.Cmd {
 		m.probeTelemetry()
 		ctx, cancel := context.WithTimeout(m.apiContext(), telemetry.NotificationTimeout)
 		defer cancel()
-		return reportFailed(m.screenDay, event, telemetry.PostReviewEvent(ctx, m.client, m.endpoint.TelemetryScope(), m.endpoint.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceTUI))
+		settled := telemetry.PostReviewEvent(ctx, m.client, m.endpoint.TelemetryScope(), m.endpoint.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceTUI)
+		if event == telemetry.EventReviewViewed {
+			return reportFailed(m.screenDay, event, settled)
+		}
+		return nil
 	}
 }

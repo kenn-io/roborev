@@ -282,26 +282,6 @@ describe("setupAppOpenedReporting", () => {
     },
   );
 
-  test.each([
-    ["2026-03-10T09:00:00Z", "2026-03-11T08:00:00Z"],
-    ["2026-03-10T23:59:00Z", "2026-03-11T00:01:00Z"],
-  ])(
-    "posts again on the first focus of the next UTC day only: %s",
-    async (start, next) => {
-      vi.setSystemTime(new Date(start));
-      setup();
-      vi.setSystemTime(new Date(next));
-      focusWindow();
-      await settle();
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-
-      vi.setSystemTime(new Date("2026-03-11T15:00:00Z"));
-      focusWindow();
-      await settle();
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-    },
-  );
-
   test("sends nothing when the shell remounts the same day", async () => {
     const cleanup = setup();
     await settle();

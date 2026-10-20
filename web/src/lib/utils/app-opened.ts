@@ -9,7 +9,6 @@ const telemetryEventsPath = "/api/telemetry/events";
 type CoreAction = "review_viewed" | "review_closed";
 let reporter: BrowserTelemetryReporter | undefined;
 let quiet = true;
-let disabledDay = "";
 // A review_viewed the daemon settled is not sent again on this page until the next UTC day.
 let reviewViewedDay = "";
 const reviewPending = new Set<string>();
@@ -143,7 +142,6 @@ function startReporting(): BrowserTelemetryReporter {
             ? data.status
             : undefined;
         if (receipt === "disabled") {
-          disabledDay = today();
           discardSession();
         } else if (
           event.event === "review_viewed" &&
@@ -201,7 +199,7 @@ export function setupAppOpenedReporting(): () => void {
 
 export function reportCoreAction(event: CoreAction): void {
   const day = today();
-  if (quiet || !shellMounted || disabledDay === day) return;
+  if (quiet || !shellMounted) return;
   if (
     event === "review_viewed" &&
     (reviewViewedDay === day || reviewPending.has(day))
