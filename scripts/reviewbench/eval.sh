@@ -400,16 +400,26 @@ panel_eval() {
   for f in "$run"/member-findings/*/*.json; do
     [ -e "$f" ] || continue
     member="$(basename "$f" .json)"
-    mkdir -p "$results/runs/$name-$member/findings"
-    cp "$f" "$results/runs/$name-$member/findings/$(basename "$(dirname "$f")").json"
     [[ " ${members[*]} " == *" $member "* ]] || members+=("$member")
   done
-  for member in "${members[@]}"; do names+=("$name-$member"); done
+  # A one-member panel's findings are that member's, so they are judged once.
+  if [ ${#members[@]} -gt 1 ]; then
+    for f in "$run"/member-findings/*/*.json; do
+      member="$(basename "$f" .json)"
+      mkdir -p "$results/runs/$name-$member/findings"
+      cp "$f" "$results/runs/$name-$member/findings/$(basename "$(dirname "$f")").json"
+    done
+    for member in "${members[@]}"; do names+=("$name-$member"); done
+  fi
   local n
   for n in "${names[@]}"; do
     name="$n" judge &
   done
   wait
+  if [ -n "$baseline" ] && [ ! -f "$results/runs/$baseline/scoring/results.json" ]; then
+    log "baseline $baseline has not been judged yet; comparing without it"
+    baseline=""
+  fi
   compare ${baseline:+"$baseline"} "${names[@]}"
 }
 
