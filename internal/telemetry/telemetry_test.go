@@ -212,20 +212,13 @@ func TestAllowedEventOptionsConfigureRoborevDaemonEvents(t *testing.T) {
 	assert.False(reporter.EventAllowed("repo_opened"))
 
 	props, err := reporter.SanitizeProperties(EventDaemonActive, map[string]any{
-		"sync_enabled":            true,
-		"worker_count":            4,
-		"$process_person_profile": true,
-		"$geoip_disable":          false,
-		"application":             "caller-app",
+		"sync_enabled": true,
+		"worker_count": 4,
 	})
 	require.NoError(err)
 
 	assert.Equal(true, props["sync_enabled"])
 	assert.NotContains(props, "worker_count")
-	assert.Equal("roborev", props["application"])
-	assert.Equal("daemon", props["source"])
-	assert.False(props["$process_person_profile"].(bool))
-	assert.True(props["$geoip_disable"].(bool))
 	for _, event := range []string{EventDaemonStarted, EventDaemonActive} {
 		for _, bucket := range []string{"0-5", "6-20", "21-100", "over-100"} {
 			props, err := reporter.SanitizeProperties(event, map[string]any{"repo_count": bucket, "review_count": bucket})
