@@ -113,5 +113,8 @@ Lead with the comparison table, then say what it means:
   can raise recall without making reviews more useful.
 
 Save any HTML report under `~/.local/share/roborev-reviewbench/reports/`,
-named by date and topic. Keep run artifacts out of the repository, commits,
+named by date and topic. A saved report is opened outside T3, so it must carry
+its own colors and fonts: give every theme variable a fallback, such as
+`var(--foreground, var(--fb-foreground))`, with light and dark `--fb-*` values
+defined in the page. Keep run artifacts out of the repository, commits,
 and pull request text.
