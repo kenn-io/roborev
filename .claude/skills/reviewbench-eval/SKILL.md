@@ -16,8 +16,9 @@ must never run from CI, hooks, or another skill.
 
 ## Cost
 
-- Each arm runs one agent review per pull request: 25 per arm, 50 for an A/B
-  comparison. Expect about an hour with four reviews at a time.
+- Each arm runs one agent review per pull request: 25 per arm on the test
+  set, 100 on `base100`. Expect about an hour per 25 pull requests with four
+  reviews at a time.
 - Judging each arm calls the judge model once per pull request plus once per
   finding that matches nothing.
 - Tell the user the plan, the refs, the agent, and the model before starting.
@@ -45,6 +46,24 @@ that pi extensions register, such as a local proxy.
 Check the judge model answers before a long run. A key can be limited to some
 models; "model is not allowed for this API key" means pick another. Never
 print pi or proxy configuration files that hold keys.
+
+## Pull request sets
+
+Pick the set with `--set`:
+
+- `base100` is the base set for review-quality work. It is the 25-PR test set
+  plus 75 PRs drawn with a bias toward PRs that have high and medium
+  severity golden findings. It has 1,347 golden findings, 106 of them high.
+  `scripts/reviewbench/sets/base100.txt` lists the PRs and records how they
+  were drawn.
+- `test` is ReviewBench's 25-PR test set, the default. It has 352 golden
+  findings, only 36 of them high, so one recall point is about 3.5 issues.
+  Earlier results used it; it is too small to separate most changes.
+- `full` is all 219 PRs.
+
+A named set is a list of PR URLs in `scripts/reviewbench/sets/NAME.txt`.
+Compare runs only within one set: `base100` over-represents PRs with high
+findings, so its recall is not comparable to the test set or the leaderboard.
 
 ## Run
 

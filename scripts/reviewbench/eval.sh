@@ -36,7 +36,8 @@
 #   --agent-provider P  pi provider for the model
 #   --reasoning LEVEL   fast, standard, or thorough (default thorough)
 #   --jobs N            reviews run at once (default 4)
-#   --set test|full     the 25-PR test set (default) or all 219 PRs
+#   --set SET           test: the 25-PR test set (default); full: all 219 PRs;
+#                       or NAME, the PR list in scripts/reviewbench/sets/NAME.txt
 #   --pr INDEX          only this manifest index; repeat for several
 # Judge options:
 #   --provider NAME     pi provider for the judge (default anthropic)
@@ -134,7 +135,17 @@ manifest() {
   case "$set_name" in
     test) echo "$bench/corpus/test/test.json" ;;
     full) echo "$bench/corpus/manifest.json" ;;
-    *) die "--set must be test or full" ;;
+    *)
+      # A named set lists PR URLs, one per line; '#' lines are comments.
+      local file="$root/scripts/reviewbench/sets/$set_name.txt" out="$cache/sets/$set_name.json"
+      [ -f "$file" ] || die "--set must be test, full, or a list in scripts/reviewbench/sets/"
+      mkdir -p "$cache/sets"
+      grep -v '^#' "$file" | grep . | jq -R . | jq -s --slurpfile m "$bench/corpus/manifest.json" \
+        'map(. as $u | $m[0][] | select(.pr_url == $u))' > "$out"
+      [ "$(jq length "$out")" -eq "$(grep -v '^#' "$file" | grep -c .)" ] ||
+        die "set $set_name lists PRs that are not in ReviewBench's manifest"
+      echo "$out"
+      ;;
   esac
 }
 
