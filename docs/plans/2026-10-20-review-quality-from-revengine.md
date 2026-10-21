@@ -521,6 +521,13 @@ code, duplicates are merged, and findings are ranked in code. Still open: a
     command that needs it.
 
   Both members are being measured on ReviewBench before anyone adopts them.
+- **Synthesis is not where findings are lost.** Ten synthesis prompts, run on
+  the same saved member reviews, kept 99 to 106 of the 115 golden findings the
+  members matched. A version that numbers every member finding and restores
+  any the model leaves out never had to restore one. Of the findings the
+  current prompt appeared to lose, most were still present word for word and
+  the judge simply did not match them again; real losses from over-merging are
+  about four. Recall has to come from the reviewers, not the merge.
 - **Give members different briefs, not the same prompt.**
   - Start with RevEngine's two focus briefs, tests and maintainability.
   - Its swarm task briefs are reusable checklists: callers, callees, logic,

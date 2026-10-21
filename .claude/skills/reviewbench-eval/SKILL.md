@@ -171,6 +171,10 @@ Lead with the comparison table, then say what it means:
 - One round on 25 pull requests is noisy. Treat a difference of a few points
   as noise unless it repeats in a second round or shows in the per-PR
   changes.
+- The judge's matching is itself noisy. Given every member finding unmerged,
+  it left 5 of the 115 golden findings those same findings had matched in the
+  member runs unmatched, although the identical text was present. Before
+  calling a finding lost, check whether its text is still in the output.
 - Grounded recall (GR) is the share of golden findings the review found.
   Grounded precision (GP) ignores findings that match nothing, so it rarely
   moves; augmented precision (AP) shows whether new findings are valid.
