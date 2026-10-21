@@ -21,6 +21,7 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/review"
 )
@@ -161,9 +162,19 @@ func (p probe) review(ctx context.Context, r reviewer, artifacts string) (review
 	}
 	text := built.Prompt
 	if r.instructions != "" {
+		instructions := r.instructions
+		if strings.Contains(instructions, "{{") {
+			// Size the expectation by the diff the reviewer sees, with the
+			// same exclusions as the prompt.
+			diff, err := git.GetRangeDiffCtx(ctx, p.repo, p.gitRef, excludes...)
+			if err != nil {
+				return review.ReviewResult{}, 0, fmt.Errorf("size the change: %w", err)
+			}
+			instructions = expandInstructions(instructions, countChangedLines(diff))
+		}
 		// The same block the daemon appends to a panel member's prompt.
 		text += fmt.Sprintf("\n\n## Additional reviewer instructions (panel: %s / member: %s)\n%s\n",
-			r.panel, r.name, r.instructions)
+			r.panel, r.name, instructions)
 	}
 
 	log := io.Discard
