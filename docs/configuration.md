@@ -1901,9 +1901,10 @@ systemctl --user enable --now roborev
 Release builds of roborev send limited anonymous telemetry when the daemon
 starts and once every 24 hours while it remains running. Events are
 `daemon_started` and `daemon_active`, with `repo_count` and `review_count` as
-buckets: `0-5`, `6-20`, `21-100`, or `over-100`. These events also include whether sync is enabled,
-whether CI is enabled, whether auto design review is enabled, roborev version,
-OS, architecture, and an anonymous install ID stored in the local database.
+buckets: `0-5`, `6-20`, `21-100`, or `over-100`. These events also include
+whether sync is enabled, whether CI is enabled, whether auto design review is
+enabled, roborev version, OS, architecture, and an anonymous install ID stored
+in the local database.
 
 The daemon sends `setup_finished` once per install the first time it finds a
 finished review: one that ran locally, arrived through sync, or already existed

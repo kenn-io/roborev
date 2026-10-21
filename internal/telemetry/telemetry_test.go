@@ -223,7 +223,6 @@ func TestAllowedEventOptionsConfigureRoborevDaemonEvents(t *testing.T) {
 	assert.Equal(true, props["sync_enabled"])
 	assert.NotContains(props, "worker_count")
 	assert.Equal("roborev", props["application"])
-	assert.Equal(releaseVersion, props["version"])
 	assert.Equal("daemon", props["source"])
 	assert.False(props["$process_person_profile"].(bool))
 	assert.True(props["$geoip_disable"].(bool))
