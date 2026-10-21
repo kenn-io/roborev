@@ -1890,33 +1890,20 @@ systemctl --user enable --now roborev
 |----------|-------------|
 | `ROBOREV_DATA_DIR` | Override default data directory (`~/.roborev`) |
 | `ROBOREV_COLOR_MODE` | Color theme: `auto` (default), `dark`, `light`, `none`. See [Color Mode](#color-mode) |
-| `ROBOREV_TELEMETRY_ENABLED` | Set to `0`, `false`, `no`, or `off` to disable anonymous telemetry |
-| `TELEMETRY_ENABLED` | Generic telemetry opt-out. Accepts the same values as `ROBOREV_TELEMETRY_ENABLED` |
-| `DO_NOT_TRACK` | Any present value disables telemetry except `0` or `false`; an empty value disables it |
-| `CI` | Any present value disables telemetry, including an empty value |
+| `ROBOREV_TELEMETRY_ENABLED` | Set to `0` to disable anonymous telemetry |
+| `TELEMETRY_ENABLED` | Generic telemetry opt-out. Set to `0` to disable telemetry |
+| `DO_NOT_TRACK` | Set to `1` to disable telemetry |
 | `VOYAGE_API_KEY` | Example credential source for Voyage when named by `search.embeddings.api_key = { env = "VOYAGE_API_KEY" }` |
 | `NO_COLOR` | Set to any value to disable all color output ([no-color.org](https://no-color.org)) |
 
 ### Telemetry
 
-Release builds send limited anonymous telemetry to PostHog by default. CI,
-development, and fork build versions send no events. A release version is
-`vX.Y.Z` or `X.Y.Z`, without a suffix. The daemon reports when it starts and
-once every 24 hours while it remains running. Events are `daemon_started` and
-`daemon_active`, with `repo_count` and `review_count` as buckets: `0-5`, `6-20`,
-`21-100`, or `over-100`. These events also include `sync_enabled`, `ci_enabled`,
-and `auto_design_enabled` booleans.
-
-Every event includes the shared fields in
-[kit's field table](https://github.com/kenn-io/kit/blob/v0.39.0/telemetry/posthog/fields.md):
-`event`, `distinct_id` (an anonymous install ID stored in the local database),
-`uuid` (a random event ID), and `timestamp` (UTC). Its `properties` include
-`application=roborev`, `source=daemon`, the release `version`, an empty
-`commit`, `goos`, `goarch`, `$lib=posthog-go`, `$lib_version`,
-`$process_person_profile=false`, and `$geoip_disable=true`. `install_age_hours`
-is optional, as described below. The batch envelope contains `api_key` (the
-public project key) and `batch` (the events). Product properties and allowed
-values follow.
+Release builds of roborev send limited anonymous telemetry when the daemon
+starts and once every 24 hours while it remains running. Events are
+`daemon_started` and `daemon_active`, with `repo_count` and `review_count` as
+buckets: `0-5`, `6-20`, `21-100`, or `over-100`. These events also include whether sync is enabled,
+whether CI is enabled, whether auto design review is enabled, roborev version,
+OS, architecture, and an anonymous install ID stored in the local database.
 
 The daemon sends `setup_finished` once per install the first time it finds a
 finished review: one that ran locally, arrived through sync, or already existed
@@ -2036,31 +2023,14 @@ Each event carries `install_age_hours`, the whole hours since the install ID was
 created, so short-lived installs such as test sandboxes can be filtered out.
 Installs created before roborev recorded that time send events without it.
 
-Telemetry excludes repo names, paths, remotes, prompts, review output, provider
-tokens, usernames, and IP geolocation. Set `ROBOREV_TELEMETRY_ENABLED` or
-`TELEMETRY_ENABLED` to `0`, `false`, `no`, or `off` to disable it. Values are
-trimmed and case-insensitive. Any present `DO_NOT_TRACK` value also disables
-telemetry, including an empty value, except `0` or `false` after trimming and
-case folding. Any present `CI` value disables it.
-
-The daemon reads its environment when it starts. Restart it with an opt-out in
-its launch environment:
+Telemetry does not include repo names, paths, remotes, prompts, review output,
+provider tokens, usernames, or IP geolocation. It's always off in CI. Disable it
+with any of these environment variables:
 
 ```bash
-ROBOREV_TELEMETRY_ENABLED=0 roborev daemon restart
-# Alternatives:
-TELEMETRY_ENABLED=0 roborev daemon restart
-DO_NOT_TRACK=1 roborev daemon restart
-```
-
-For a service-managed daemon, change the service environment and restart the
-service. Setting a variable in your shell leaves the running service's
-environment unchanged.
-
-These examples disable reports from that client. An already-running daemon can
-keep reporting until you restart it with an opt-out:
-
-```bash
+ROBOREV_TELEMETRY_ENABLED=0 roborev daemon run
+TELEMETRY_ENABLED=0 roborev daemon run
+DO_NOT_TRACK=1 roborev daemon run
 ROBOREV_TELEMETRY_ENABLED=0 roborev tui
 ROBOREV_TELEMETRY_ENABLED=0 roborev review
 ```

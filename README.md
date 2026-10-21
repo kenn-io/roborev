@@ -471,15 +471,11 @@ from the operator's shell).
 
 ## Telemetry
 
-Release builds send limited anonymous telemetry to PostHog by default. CI,
-development, and fork build versions send no events. See [kit's shared field
-table](https://github.com/kenn-io/kit/blob/v0.39.0/telemetry/posthog/fields.md)
-and [roborev's event properties](https://roborev.io/docs/configuration/#telemetry)
-for the exact payload. The daemon reports when it starts and once every 24
-hours while it remains running: `daemon_started`
+Release builds of roborev send limited anonymous telemetry to PostHog when the
+daemon starts and once every 24 hours while it remains running: `daemon_started`
 and `daemon_active` with `repo_count` and `review_count` as buckets: `0-5`,
-`6-20`, `21-100`, or `over-100`. These events also include `sync_enabled`,
-`ci_enabled`, and `auto_design_enabled`, plus `application=roborev`, version, OS/arch,
+`6-20`, `21-100`, or `over-100`. These events also include sync enabled,
+CI enabled, and auto-design enabled, plus `application=roborev`, version, OS/arch,
 `$process_person_profile=false`, `$geoip_disable=true`, and an anonymous install
 ID.
 
@@ -551,13 +547,8 @@ Each event also carries `install_age_hours`, the whole hours since the install
 was created, so short-lived installs such as test sandboxes can be filtered out.
 It does not send repo names, paths, remotes, prompts, review output, provider
 tokens, usernames, or IP geolocation. Set `ROBOREV_TELEMETRY_ENABLED=0`,
-`TELEMETRY_ENABLED=0`, or `DO_NOT_TRACK=1` to disable it. Restart the daemon with
-the variable in its launch environment, for example
-`ROBOREV_TELEMETRY_ENABLED=0 roborev daemon restart`. For a service-managed
-daemon, change the service environment and restart the service. Per-command
-opt-outs disable that client's reports; an existing daemon can keep reporting.
-Telemetry is always disabled inside Go test processes, regardless of
-environment variables.
+`TELEMETRY_ENABLED=0`, or `DO_NOT_TRACK=1` to disable it, then restart the
+daemon. Telemetry is always off in CI and inside Go test processes.
 
 ## Security Model
 

@@ -9,21 +9,16 @@ All notable changes to roborev, grouped by minor release.
 
 **Improvements**
 
-- Honor `DO_NOT_TRACK` and disable telemetry whenever `CI` is present or the
-    build version is not a plain release version.
-
+- Honor `DO_NOT_TRACK` and keep telemetry off in CI and non-release builds.
 - Count core action error banners and toasts in the web UI and TUI, and
     PostgreSQL sync outages, in anonymous telemetry using fixed action names and
     error classes. Failed closes and reopens both count. Each review load or
     render failure counts once per selection. Failed agent jobs and missing
     reviews stay silent. Daemon-unreachable errors can't be counted.
-
 - Cap telemetry waits at exit to 50 ms for CLI commands, stdio MCP sessions, and
     the TUI.
-
 - Count review reads, committed fixes, and explicit closes in anonymous
     telemetry.
-
 - Report repository and review totals as ranges in anonymous daemon telemetry:
     `0-5`, `6-20`, `21-100`, or `over-100`.
 
