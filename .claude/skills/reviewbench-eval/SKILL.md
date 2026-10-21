@@ -172,9 +172,12 @@ Lead with the comparison table, then say what it means:
   as noise unless it repeats in a second round or shows in the per-PR
   changes.
 - The judge's matching is itself noisy. Given every member finding unmerged,
-  it left 5 of the 115 golden findings those same findings had matched in the
+  it left 3 of the 113 golden findings those same findings had matched in the
   member runs unmatched, although the identical text was present. Before
   calling a finding lost, check whether its text is still in the output.
+- Judge results index each pull request's full golden file under
+  `ReviewBench/golden/`, which also lists known false positives. Look golden
+  findings up there, not in `corpus/test/findings.json`, whose order differs.
 - Grounded recall (GR) is the share of golden findings the review found.
   Grounded precision (GP) ignores findings that match nothing, so it rarely
   moves; augmented precision (AP) shows whether new findings are valid.

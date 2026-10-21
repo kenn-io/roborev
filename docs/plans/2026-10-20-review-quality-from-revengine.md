@@ -522,7 +522,7 @@ code, duplicates are merged, and findings are ranked in code. Still open: a
 
   Both members are being measured on ReviewBench before anyone adopts them.
 - **Synthesis is not where findings are lost.** Ten synthesis prompts, run on
-  the same saved member reviews, kept 99 to 106 of the 115 golden findings the
+  the same saved member reviews, kept 101 to 105 of the 113 golden findings the
   members matched. A version that numbers every member finding and restores
   any the model leaves out never had to restore one. Of the findings the
   current prompt appeared to lose, most were still present word for word and

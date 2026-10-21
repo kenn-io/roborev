@@ -344,6 +344,13 @@ compare() {
   fi
 }
 
+# golden_tp_map writes, for every golden file, the indices of its true-positive
+# findings. Judge results index the full golden list, which also holds the
+# benchmark's known false positives; a candidate can cover one of those.
+golden_tp_map() {
+  jq -n '[inputs | {(.pr_key): [.findings | to_entries[] | select(.value.tp_fp == "tp") | .key]}] | add' "$bench"/golden/*.json
+}
+
 # coverage BASE NAME... counts, for each judged run, the golden findings it
 # covers that BASE misses and the ones BASE covers that it misses. Use it to
 # see what a focused reviewer could add to a panel.
@@ -354,13 +361,16 @@ coverage() {
   for n in "$base" "$@"; do
     [ -f "$results/runs/$n/scoring/results.details.json" ] || die "run $n has not been judged"
   done
+  local tp
+  tp="$(mktemp)"
+  golden_tp_map > "$tp"
   printf '%-28s %8s %6s %6s %8s\n' run covered adds loses together
   for n in "$@"; do
-    jq -rn --arg n "$n" \
+    jq -rn --arg n "$n" --slurpfile tp "$tp" \
       --slurpfile a "$results/runs/$base/scoring/results.details.json" \
       --slurpfile b "$results/runs/$n/scoring/results.details.json" \
       --slurpfile s "$results/runs/$base/scoring/results.json" '
-      def cov(d): d | map({key: .pr_key, value: ([.candidate_findings[] | select(.status == "matched_tp") | .covered_golden_indices[]?] | unique)}) | from_entries;
+      def cov(d): d | map(.pr_key as $k | {key: $k, value: ([.candidate_findings[] | select(.status == "matched_tp") | .covered_golden_indices[]?] | unique | map(select(. as $i | $tp[0][$k] // [] | index($i))))}) | from_entries;
       cov($a[0]) as $x | cov($b[0]) as $y
       | ([$s[0].per_pr[].metrics.overall.golden_tp_count] | add) as $total
       | ($x + $y | keys) as $keys
@@ -374,7 +384,8 @@ coverage() {
   echo
   echo "covered: golden findings the run matched. adds: matched by the run but not by $base."
   echo "loses: matched by $base but not by the run. together: matched by either."
-  echo "Counts can differ slightly from the judge's golden_covered_count, which dedupes on its own terms."
+  echo "Only true-positive golden findings count. Totals can differ by one or two from the judge's golden_covered_count."
+  rm -f "$tp"
 }
 
 # retention SOURCE NAME... measures synthesis on member reviews saved by the
@@ -394,13 +405,16 @@ retention() {
   [ ${#members[@]} -gt 0 ] || die "run $source saved no member findings"
   local files=()
   for member in "${members[@]}"; do files+=("$results/runs/$source-$member/scoring/results.details.json"); done
+  local tp
+  tp="$(mktemp)"
+  golden_tp_map > "$tp"
   printf '%-28s %8s %8s\n' run findings kept
   for n in "$@"; do
-    jq -rn --arg n "$n" --slurpfile run "$results/runs/$n/scoring/results.details.json" '
-      def covered(c): [c[] | select(.status == "matched_tp") | .covered_golden_indices[]?] | unique;
-      ([inputs[] | {(.pr_key): covered(.candidate_findings)}]
+    jq -rn --arg n "$n" --slurpfile tp "$tp" --slurpfile run "$results/runs/$n/scoring/results.details.json" '
+      def covered($k; c): [c[] | select(.status == "matched_tp") | .covered_golden_indices[]?] | unique | map(select(. as $i | $tp[0][$k] // [] | index($i)));
+      ([inputs[] | .pr_key as $k | {($k): covered($k; .candidate_findings)}]
         | reduce .[] as $m ({}; reduce ($m | to_entries[]) as $e (.; .[$e.key] = ((.[$e.key] // []) + $e.value | unique)))) as $union
-      | ($run[0] | map({key: .pr_key, value: covered(.candidate_findings)}) | from_entries) as $mine
+      | ($run[0] | map(.pr_key as $k | {key: $k, value: covered($k; .candidate_findings)}) | from_entries) as $mine
       | ([$union | to_entries[] | .value | length] | add) as $total
       | ([$union | to_entries[] | (.value - (.value - ($mine[.key] // []))) | length] | add) as $kept
       | [$n, ([$run[0][].candidate_findings | length] | add), "\($kept)/\($total)"] | @tsv' "${files[@]}" |
@@ -408,6 +422,7 @@ retention() {
   done
   echo
   echo "kept: golden findings the members matched that the run also matched."
+  rm -f "$tp"
 }
 
 ab() {
