@@ -143,6 +143,17 @@ func (p probe) synthesize(ctx context.Context, synth config.SynthesisSpec, succe
 		return []byte(`{"findings":[]}`), nil
 	}
 
+	if p.synthesis == "concat" {
+		return concatenate(succeeded)
+	}
+	text := review.BuildSynthesisPrompt(succeeded, "low")
+	if p.synthesisInstructions != "" {
+		var err error
+		if text, err = replaceInstructions(text, p.synthesisInstructions); err != nil {
+			return nil, err
+		}
+	}
+
 	a, err := configure(reviewer{agent: synth.Agent, model: synth.Model, reasoning: synth.Reasoning}, false)
 	if err != nil {
 		return nil, err
@@ -152,7 +163,12 @@ func (p probe) synthesize(ctx context.Context, synth config.SynthesisSpec, succe
 		return nil, err
 	}
 	defer closeLog()
-	doc, err := review.RunSynthesisAgent(ctx, a, succeeded, review.BuildSynthesisPrompt(succeeded, "low"), "low", log,
+	if p.artifacts != "" {
+		if err := os.WriteFile(filepath.Join(p.artifacts, "synthesis-prompt.md"), []byte(text), 0o644); err != nil {
+			return nil, err
+		}
+	}
+	doc, err := review.RunSynthesisAgent(ctx, a, succeeded, text, "low", log,
 		review.SynthesisHooks{
 			ConfigRepoPath: p.repo,
 			GlobalConfig:   p.cfg,
@@ -162,6 +178,36 @@ func (p probe) synthesize(ctx context.Context, synth config.SynthesisSpec, succe
 		})
 	if err != nil {
 		return nil, fmt.Errorf("synthesis: %w", err)
+	}
+	return json.Marshal(doc)
+}
+
+// replaceInstructions swaps the instructions at the top of a synthesis prompt
+// for an experimental set, keeping the member reviews that follow them.
+func replaceInstructions(prompt, instructions string) (string, error) {
+	i := strings.Index(prompt, "---\n### Review 1")
+	if i < 0 {
+		return "", fmt.Errorf("synthesis prompt has no review section")
+	}
+	return strings.TrimSpace(instructions) + "\n\n" + prompt[i:], nil
+}
+
+// concatenate is the no-synthesis reference: every member finding, unmerged,
+// citing the review it came from.
+func concatenate(reviews []review.ReviewResult) ([]byte, error) {
+	doc := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: "All member findings, unmerged."}
+	for i, r := range reviews {
+		if r.Structured == nil {
+			continue
+		}
+		for _, f := range r.Structured.Findings {
+			f.Sources = []int{i + 1}
+			doc.Findings = append(doc.Findings, f)
+		}
+	}
+	doc.Verdict = structuredreview.VerdictPass
+	if len(doc.Findings) > 0 {
+		doc.Verdict = structuredreview.VerdictFail
 	}
 	return json.Marshal(doc)
 }

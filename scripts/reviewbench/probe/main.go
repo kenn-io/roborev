@@ -48,6 +48,10 @@ type probe struct {
 	producer  string
 	artifacts string
 	changed   map[string][][2]int
+	// synthesis and synthesisInstructions select an experimental way to
+	// combine panel members; the defaults are roborev's own synthesis.
+	synthesis             string
+	synthesisInstructions string
 }
 
 func run() error {
@@ -59,6 +63,8 @@ func run() error {
 	reasoning := flag.String("reasoning", "thorough", "reasoning level: fast, standard, or thorough")
 	panel := flag.String("panel", "", "review with this roborev panel from the loaded config instead of one agent")
 	memberOut := flag.String("member-out", "", "with -panel, a directory for each member's own findings file")
+	synthesis := flag.String("synthesis", "agent", "with -panel, how to combine members: agent, or concat to keep every member finding unmerged")
+	synthesisInstructions := flag.String("synthesis-instructions", "", "with -panel, a file whose text replaces the synthesis prompt's instructions")
 	membersFrom := flag.String("members-from", "", "with -panel, comma-separated directories of saved MEMBER/review.json files to synthesize instead of running members")
 	producer := flag.String("producer", "roborev", "name written as the findings' agent and producer")
 	out := flag.String("out", "", "where to write the findings file")
@@ -91,6 +97,14 @@ func run() error {
 	}
 
 	if *panel != "" {
+		p.synthesis = *synthesis
+		if *synthesisInstructions != "" {
+			text, err := os.ReadFile(*synthesisInstructions)
+			if err != nil {
+				return err
+			}
+			p.synthesisInstructions = string(text)
+		}
 		var dirs []string
 		if *membersFrom != "" {
 			dirs = strings.Split(*membersFrom, ",")

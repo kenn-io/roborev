@@ -25,6 +25,9 @@
 # reviews they saved in those earlier panel runs, so synthesis with and without
 # a member can be compared on the same member reviews. A focused reviewer is a
 # one-member panel, which reports its findings without synthesis.
+# --synthesis-instructions FILE replaces the synthesis prompt's instructions
+# with the file's text, and --synthesis concat skips synthesis and keeps every
+# member finding unmerged, as a reference for how much synthesis could keep.
 #
 # Run options:
 #   --agent NAME        roborev agent (default claude-code)
@@ -67,6 +70,7 @@ log() { echo "eval: $*" >&2; }
 
 agent=claude-code model="" agent_provider="" reasoning=thorough jobs=4 set_name=test prs=() arms=()
 panel="" panel_config="$HOME/.roborev/config.toml" baseline="" members_from=()
+synthesis="" synthesis_instructions=""
 provider=anthropic judge_model=claude-sonnet-5 concurrency=4
 ref="" name="" base_ref="" head_ref=""
 
@@ -86,6 +90,8 @@ parse_options() {
       --panel-config) panel_config="$2" ;;
       --baseline) baseline="$2" ;;
       --members-from) members_from+=("$2") ;;
+      --synthesis) synthesis="$2" ;;
+      --synthesis-instructions) synthesis_instructions="$(realpath "$2")" ;;
       --reasoning) reasoning="$2" ;;
       --jobs) jobs="$2" ;;
       --set) set_name="$2" ;;
@@ -206,6 +212,8 @@ review_pr() {
       for from in "${members_from[@]}"; do dirs+=("$results/runs/$from/artifacts/$key/members"); done
       mode=(-panel "$panel" -members-from "$(IFS=,; echo "${dirs[*]}")")
     fi
+    [ -z "$synthesis" ] || mode+=(-synthesis "$synthesis")
+    [ -z "$synthesis_instructions" ] || mode+=(-synthesis-instructions "$synthesis_instructions")
   fi
   for attempt in 1 2; do
     if ROBOREV_DATA_DIR="$run/roborev-data" timeout "${PR_TIMEOUT:-1800}" \
@@ -236,8 +244,8 @@ run_eval() {
   jq -n --arg ref "$ref" --arg sha "$sha" --arg agent "$agent" --arg model "$model" \
     --arg provider "$agent_provider" --arg reasoning "$reasoning" --arg set "$set_name" \
     --arg bench "$REVIEWBENCH_SHA" \
-    --arg panel "$panel" --args \
-    '{ref: $ref, sha: $sha, agent: $agent, provider: $provider, model: $model, reasoning: $reasoning, panel: $panel, members_from: $ARGS.positional, set: $set, reviewbench: $bench}' \
+    --arg panel "$panel" --arg synthesis "$synthesis" --arg synthesis_instructions "$synthesis_instructions" --args \
+    '{ref: $ref, sha: $sha, agent: $agent, provider: $provider, model: $model, reasoning: $reasoning, panel: $panel, members_from: $ARGS.positional, synthesis: $synthesis, synthesis_instructions: $synthesis_instructions, set: $set, reviewbench: $bench}' \
     "${members_from[@]}" \
     > "$run/run.json"
   if [ -n "$panel" ]; then
