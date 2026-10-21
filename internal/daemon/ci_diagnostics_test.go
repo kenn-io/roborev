@@ -12,7 +12,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	googlegithub "github.com/google/go-github/v91/github"
+	googlegithub "github.com/google/go-github/v92/github"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
