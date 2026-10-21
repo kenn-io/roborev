@@ -83,6 +83,11 @@ func (p probe) runPanel(ctx context.Context, name, memberOut string, membersFrom
 		return err
 	}
 	if p.artifacts != "" {
+		// Reused members never create the directory, and a panel whose members
+		// found nothing skips synthesis, which otherwise would.
+		if err := os.MkdirAll(p.artifacts, 0o755); err != nil {
+			return err
+		}
 		if err := os.WriteFile(filepath.Join(p.artifacts, "review.json"), document, 0o644); err != nil {
 			return err
 		}
