@@ -146,8 +146,14 @@ func (p probe) synthesize(ctx context.Context, synth config.SynthesisSpec, succe
 	if p.synthesis == "concat" {
 		return concatenate(succeeded)
 	}
+	ids := p.synthesis == "ids" || p.synthesis == "ids-text"
 	text := review.BuildSynthesisPrompt(succeeded, "low")
-	if p.synthesisInstructions != "" {
+	if ids {
+		if p.synthesisInstructions == "" {
+			return nil, fmt.Errorf("-synthesis %s needs -synthesis-instructions", p.synthesis)
+		}
+		text = strings.TrimSpace(p.synthesisInstructions) + "\n\n" + renderWithIDs(succeeded)
+	} else if p.synthesisInstructions != "" {
 		var err error
 		if text, err = replaceInstructions(text, p.synthesisInstructions); err != nil {
 			return nil, err
@@ -178,6 +184,11 @@ func (p probe) synthesize(ctx context.Context, synth config.SynthesisSpec, succe
 		})
 	if err != nil {
 		return nil, fmt.Errorf("synthesis: %w", err)
+	}
+	if ids {
+		var restored, invented int
+		doc, restored, invented = accountForIDs(doc, succeeded, p.synthesis == "ids")
+		fmt.Fprintf(os.Stderr, "probe: ids synthesis restored %d omitted member finding(s), dropped %d uncited\n", restored, invented)
 	}
 	return json.Marshal(doc)
 }

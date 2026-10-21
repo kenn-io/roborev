@@ -43,3 +43,36 @@ func TestConcatenateKeepsEveryMemberFindingWithItsSource(t *testing.T) {
 	assert.Equal(t, []int{2}, doc.Findings[2].Sources)
 	assert.Equal(t, "A.", doc.Findings[2].Problem)
 }
+
+func TestAccountForIDsRestoresOmittedFindings(t *testing.T) {
+	first := memberReview("Nil map write in save.", "Unused import.")
+	second := memberReview("save writes to a nil map when the cache is empty, panicking.")
+	second.Structured.Findings[0].Severity = "high"
+	reviews := []review.ReviewResult{first, second}
+	agent := structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Verdict: "fail", Findings: []structuredreview.Finding{
+		{Severity: "medium", Problem: "[R1.1, R2.1] Merged nil map write.", Fix: "make the map", Sources: []int{1, 2}},
+		{Severity: "low", Problem: "Something no member said.", Fix: "x", Sources: []int{1}},
+	}}
+
+	verbatim, restored, invented := accountForIDs(agent, reviews, true)
+	assert := assert.New(t)
+	assert.Equal(1, restored)
+	assert.Equal(1, invented)
+	require.Len(t, verbatim.Findings, 2)
+	assert.Equal("save writes to a nil map when the cache is empty, panicking.", verbatim.Findings[0].Problem)
+	assert.Equal("high", verbatim.Findings[0].Severity)
+	assert.Equal([]int{1, 2}, verbatim.Findings[0].Sources)
+	assert.Equal("Unused import.", verbatim.Findings[1].Problem)
+	assert.Equal([]int{1}, verbatim.Findings[1].Sources)
+
+	rewritten, _, _ := accountForIDs(agent, reviews, false)
+	assert.Equal("Merged nil map write.", rewritten.Findings[0].Problem)
+	assert.Equal("high", rewritten.Findings[0].Severity)
+}
+
+func TestRenderWithIDsNumbersEveryFinding(t *testing.T) {
+	text := renderWithIDs([]review.ReviewResult{memberReview("A.", "B."), memberReview()})
+	assert.Contains(t, text, "R1.1 [medium, defect]\nProblem: A.")
+	assert.Contains(t, text, "R1.2 [medium, defect]\nProblem: B.")
+	assert.Contains(t, text, "### Review 2\nNo findings.")
+}
