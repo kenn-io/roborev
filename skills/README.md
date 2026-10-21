@@ -23,6 +23,7 @@ Gemini, Hermes, and Qwen.
 | `/roborev-respond <job_id> [message]` | Add a response to a review |
 | `/roborev-superpowers <feature-or-spec/plan>` | Run the Superpowers, Kata, and Roborev engineering loop |
 | `/roborev-snooze [on\|off] [duration]` | Silence or resume Agent Hook reminders in the current workspace |
+| `/roborev-setup-review [what the review is for]` | Design a specialized review with the user, then write its rubrics and configuration |
 
 ## Engineering with Superpowers and Kata
 
@@ -69,5 +70,5 @@ After fixing, document what was done:
 
 | Agent | Invocation |
 |-------|------------|
-| Claude Code | `/roborev-fix`, `/roborev-design-review`, `/roborev-respond`, `/roborev-snooze`, `/roborev-superpowers` |
-| Codex | `$roborev-fix`, `$roborev-design-review`, `$roborev-respond`, `$roborev-snooze`, `$roborev-superpowers` |
+| Claude Code | `/roborev-fix`, `/roborev-design-review`, `/roborev-respond`, `/roborev-setup-review`, `/roborev-snooze`, `/roborev-superpowers` |
+| Codex | `$roborev-fix`, `$roborev-design-review`, `$roborev-respond`, `$roborev-setup-review`, `$roborev-snooze`, `$roborev-superpowers` |

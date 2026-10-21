@@ -276,6 +276,11 @@ Offer these one at a time. Skip any the user declines.
     each self-contained change" rule to the repository's `AGENTS.md` or
     `CLAUDE.md`.
 
+- **A specialized review.** If the repository needs its own checks, such as fact
+    checks for legal drafts, tell the user they can invoke
+    `/roborev-setup-review` (Codex: `$roborev-setup-review`) after setup. Do not
+    start it yourself; it runs only when the user invokes it.
+
 For every other setting, see <https://roborev.io/docs/configuration.md>.
 
 ### Step 8: Summarize
