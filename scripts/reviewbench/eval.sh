@@ -235,6 +235,14 @@ run_eval() {
   setup
   local run="$results/runs/$name" prdir="$cache/prs/$name" list sha i count indices key failed=0
   mkdir -p "$run/bin" "$run/findings" "$run/logs" "$run/artifacts" "$run/roborev-data"
+  if [ -f "$run/run.json" ]; then
+    # A resumed run must keep reviewing with the code it started with, or
+    # its pull requests would mix reviews from two versions.
+    local started_sha
+    started_sha="$(jq -r .sha "$run/run.json")"
+    [ "$(git -C "$root" rev-parse --verify "$ref^{commit}")" = "$started_sha" ] ||
+      die "run $name started at $started_sha; resume it with --ref $started_sha"
+  fi
   sha="$(build_probe "$ref" "$run/bin/probe")"
   if [ -n "$panel" ]; then
     # Only the review sections: panels, subagents, and review types. Nothing
