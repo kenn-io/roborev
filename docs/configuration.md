@@ -672,17 +672,56 @@ The operator controls MCP definitions and the maximum allowed grants in global
 config only:
 
 ```toml
-review_mcp_config = "review-servers.json"
+review_mcp_config = "/operator/review-servers.json"
 review_mcp_allowed_tools = ["sources/read", "sources/find"]
 ```
 
 Repositories and experiments cannot set these authority keys. Each ceiling entry
 names one exact `server/tool` pair. A review's requested grants do not expand
-the operator ceiling. These settings establish configuration and validation;
-this release does not yet provide a strict production adapter or launch selected
-MCP servers. Explicit strict requests fail before invoking an unsupported
-adapter, including a configured backup or budget substitution. Per-request
-agentic mode cannot be combined with strict review tools.
+the operator ceiling. Recheck the current global ceiling at execution: revoking
+a grant also affects queued and frozen reviews. The ceiling is shared by all
+registered repositories. Prefixes and other tools on the same server confer no
+additional grants.
+
+Use an absolute operator-file path so a repository cannot shadow it through the
+working directory. The file uses native Claude MCP configuration:
+
+```json
+{
+  "mcpServers": {
+    "sources": {
+      "command": "source-reader",
+      "args": ["--stdio"]
+    },
+    "unused": {
+      "type": "http",
+      "url": "https://example.invalid/mcp"
+    }
+  }
+}
+```
+
+Selection copies only servers with requested, authorized tools. Other native
+fields, including arguments, environment, transport, URL and headers, survive
+selection. Empty grants do not read this file. Missing servers, unreadable files
+and malformed selected definitions fail preparation. Selected config is written
+to a private temporary directory with mode 0600 and removed after the
+invocation. Its absolute path must resolve outside the actual agent checkout,
+even when the daemon has a different working directory. Relative temporary roots
+and roots resolving inside the checkout fail preparation before writing any
+config. Only its path belongs in command arguments. Definitions and credential
+values must stay out of prompts, stored member settings, logs and sync.
+
+MCP servers are trusted external capabilities. Tool names and `readOnlyHint` do
+not prove that a tool has no side effects. The operator ceiling and server
+credentials authorize capabilities; Roborev does not sandbox the server process.
+Granted responses can reach the model, review output, job logs, synced rows and
+synthesized CI comments. Authorize CI grants with the same care as local grants.
+
+Selected MCP launch remains disabled pending native startup enforcement and
+adapter qualification. Explicit strict requests fail before invoking an
+unsupported adapter, including a configured backup or budget substitution.
+Per-request agentic mode cannot be combined with strict review tools.
 
 Panel and CI jobs freeze resolved review settings in their existing member
 snapshot. Experiment-attributed standalone jobs do the same. Reruns retain the

@@ -114,6 +114,39 @@ func TestReviewToolPolicySettings(t *testing.T) {
 	assert.Equal(t, []string{"read"}, global.Review.Types["quotes"].Tools.MCP["source"])
 }
 
+func TestReviewToolPolicyMemberGrantReplacement(t *testing.T) {
+	global := &Config{
+		ReviewMCPConfig:       "operator-path-sentinel.json",
+		ReviewMCPAllowedTools: []string{"first/read", "second/find"},
+		Review: ReviewConfig{
+			Types: map[string]ReviewTypeSpec{"quotes": {
+				Template: "quotes.md",
+				Tools:    &ReviewToolPolicy{Mode: "read-only", MCP: map[string][]string{"first": {"read"}, "second": {"find"}}},
+			}},
+			Panels: map[string]PanelSpec{"panel": {Members: []string{"reader"}}},
+		},
+	}
+	for _, grants := range []map[string][]string{{"first": {"read", "read"}}, {}} {
+		repo := &RepoConfig{Review: ReviewConfig{Subagents: map[string]SubagentSpec{"reader": {
+			ReviewType: "quotes", Tools: &ReviewToolPolicy{Mode: "read-only", MCP: grants},
+		}}}}
+		members, _, err := ResolveCIPanel("panel", repo, global)
+		require.NoError(t, err)
+		require.Len(t, members, 1)
+		require.NotNil(t, members[0].Tools)
+		assert.NotContains(t, members[0].Tools.MCP, "second")
+		data, err := json.Marshal(members[0])
+		require.NoError(t, err)
+		assert.NotContains(t, string(data), "operator-path-sentinel")
+		assert.NotContains(t, string(data), "review_mcp_allowed_tools")
+		if len(grants) == 0 {
+			assert.Equal(t, map[string][]string{}, members[0].Tools.MCP)
+		} else {
+			assert.Equal(t, map[string][]string{"first": {"read"}}, members[0].Tools.MCP)
+		}
+	}
+}
+
 func TestReviewToolPolicyAuthority(t *testing.T) {
 	for _, entry := range []string{"read", "source/", "/read", "source/read/extra", "source/*", "source/a__b", "source /read"} {
 		cfg := DefaultConfig()
