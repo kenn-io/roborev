@@ -94,6 +94,14 @@ type Builder struct {
 	// structuredOutput appends the JSON output instruction to built-in
 	// review prompts when the agent will return schema-constrained findings.
 	structuredOutput bool
+	pullRequest      PullRequest
+}
+
+// PullRequest is the title and description of the pull request whose
+// commits a range review covers.
+type PullRequest struct {
+	Title       string
+	Description string
 }
 
 // DiffFilePathPlaceholder is a sentinel path embedded in prebuilt
@@ -163,6 +171,14 @@ func (b *Builder) resolvedConfigRepoPath() string {
 func (b *Builder) WithStructuredOutput(enabled bool) *Builder {
 	next := *b
 	next.structuredOutput = enabled
+	return &next
+}
+
+// WithPullRequest returns a builder whose range reviews show the pull
+// request's title and description as the author's statement of intent.
+func (b *Builder) WithPullRequest(pr PullRequest) *Builder {
+	next := *b
+	next.pullRequest = pr
 	return &next
 }
 
@@ -781,9 +797,10 @@ func needsShellQuoting(s string) bool {
 }
 
 type rangeMetadataLoss struct {
-	RemovedEntries  int
-	BlankedSubject  int
-	TrimmedOptional int
+	RemovedEntries     int
+	BlankedSubject     int
+	DroppedPullRequest int
+	TrimmedOptional    int
 }
 
 func compareRangeMetadataLoss(a, b rangeMetadataLoss) int {
@@ -792,6 +809,8 @@ func compareRangeMetadataLoss(a, b rangeMetadataLoss) int {
 		return a.RemovedEntries - b.RemovedEntries
 	case a.BlankedSubject != b.BlankedSubject:
 		return a.BlankedSubject - b.BlankedSubject
+	case a.DroppedPullRequest != b.DroppedPullRequest:
+		return a.DroppedPullRequest - b.DroppedPullRequest
 	default:
 		return a.TrimmedOptional - b.TrimmedOptional
 	}
@@ -830,6 +849,9 @@ func measureRangeMetadataLoss(original, trimmed TemplateContext) rangeMetadataLo
 	loss := rangeMetadataLoss{
 		RemovedEntries:  len(original.Review.Subject.Range.Entries) - len(trimmed.Review.Subject.Range.Entries),
 		TrimmedOptional: measureOptionalSectionsLoss(original.Review.Optional, trimmed.Review.Optional),
+	}
+	if original.Review.Subject.Range.PullRequest != nil && trimmed.Review.Subject.Range.PullRequest == nil {
+		loss.DroppedPullRequest = 1
 	}
 	for i := range trimmed.Review.Subject.Range.Entries {
 		if i >= len(original.Review.Subject.Range.Entries) {
@@ -1006,7 +1028,7 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 		return "", err
 	}
 	ctx.optional.KataContext = kataView
-	currentView := commitRangeSectionView{Count: len(commits), Entries: entries}
+	currentView := commitRangeSectionView{Count: len(commits), PullRequest: b.pullRequestContext(), Entries: entries}
 	diff, err := git.GetRangeDiffCtx(b.context(), b.repoPath, rangeRef, b.resolveExcludes(reviewType)...)
 	if err != nil {
 		return "", fmt.Errorf("get diff: %w", err)
@@ -1023,6 +1045,15 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 		return "", err
 	}
 	return ctx.requiredPrefix + body, nil
+}
+
+func (b *Builder) pullRequestContext() *PullRequestContext {
+	title := strings.TrimSpace(b.pullRequest.Title)
+	description := strings.TrimSpace(strings.ReplaceAll(b.pullRequest.Description, "\r\n", "\n"))
+	if title == "" && description == "" {
+		return nil
+	}
+	return &PullRequestContext{Title: escapeXML(title), Description: escapeXML(description)}
 }
 
 func buildProjectGuidelinesSectionView(guidelines string) *markdownSectionView {

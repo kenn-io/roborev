@@ -556,6 +556,27 @@ func TestBuildRangePromptIncludesCommitMessageBodies(t *testing.T) {
 	assert.Contains(prompt, " Tidy wording\n</commit-messages>")
 }
 
+func TestBuildRangePromptIncludesPullRequest(t *testing.T) {
+	r := newTestRepo(t)
+	base := r.fastCommitFile("a.txt", "a\n", "initial")
+	head := r.fastCommitFile("a.txt", "b\n", "Add retry limit")
+	builder := NewBuilder(nil).ForRepo(r.dir, 0)
+
+	prompt, err := builder.WithPullRequest(PullRequest{
+		Title:       "Cap retries <for> uploads",
+		Description: "Stop after three attempts.\r\nLog each failure & move on.",
+	}).Build(base+".."+head, 0, "test", "review", "")
+	require.NoError(t, err)
+	assert.Contains(t, prompt, "<pull-request context-only=\"true\">\n"+
+		"**Title:** Cap retries &lt;for&gt; uploads\n"+
+		"**Description:**\nStop after three attempts.\nLog each failure &amp; move on.\n"+
+		"</pull-request>")
+
+	plain, err := builder.Build(base+".."+head, 0, "test", "review", "")
+	require.NoError(t, err)
+	assert.NotContains(t, plain, "<pull-request context-only")
+}
+
 func TestSetupLargeCommitAuthorRepoIgnoresIdentityEnv(t *testing.T) {
 	t.Setenv("GIT_AUTHOR_NAME", "env author")
 	t.Setenv("GIT_AUTHOR_EMAIL", "env-author@example.com")

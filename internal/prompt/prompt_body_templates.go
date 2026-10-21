@@ -203,7 +203,7 @@ func templateContextFromRangeView(view rangePromptView) TemplateContext {
 		Review: &ReviewTemplateContext{
 			Kind:     ReviewKindRange,
 			Optional: reviewOptionalContextFromView(view.Optional),
-			Subject:  SubjectContext{Range: &RangeSubjectContext{Count: view.Current.Count, Entries: entries}},
+			Subject:  SubjectContext{Range: &RangeSubjectContext{Count: view.Current.Count, PullRequest: view.Current.PullRequest, Entries: entries}},
 			Diff:     DiffContext{Heading: view.Diff.Heading, Body: view.Diff.Body},
 			Fallback: fallbackContextFromDiffSection(view.Diff),
 		},
@@ -377,6 +377,13 @@ func trimRangePromptContext(limit int, ctx TemplateContext) (TemplateContext, st
 		}
 		if len(body) <= limit {
 			return ctx, body, nil
+		}
+	}
+
+	if ctx.Review != nil && len(body) > limit && ctx.Review.Subject.DropPullRequest() {
+		body, err = renderRangePromptContext(ctx)
+		if err != nil {
+			return TemplateContext{}, "", err
 		}
 	}
 

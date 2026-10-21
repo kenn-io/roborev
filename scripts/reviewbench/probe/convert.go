@@ -19,6 +19,8 @@ type pullRequest struct {
 	PRNumber int    `json:"pr_number"`
 	Base     string `json:"base"`
 	Head     string `json:"head"`
+	Title    string `json:"title"`
+	Body     string `json:"body"`
 }
 
 // findingsFile is ReviewBench's judging input format.
@@ -70,7 +72,7 @@ func convert(pr pullRequest, producer string, document []byte, changed map[strin
 		return findingsFile{}, 0, fmt.Errorf("read review document: %w", err)
 	}
 	out := findingsFile{
-		PR:       findingsPR(pr),
+		PR:       findingsPR{Repo: pr.Repo, PRNumber: pr.PRNumber, Base: pr.Base, Head: pr.Head},
 		Agent:    producer,
 		Findings: []finding{},
 		Usage:    usage{TimeInMS: elapsed.Milliseconds()},

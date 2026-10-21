@@ -198,7 +198,7 @@ You can also define schema-constrained review types backed by local Go
 templates, then use them anywhere `--type` or `review_type` is accepted. See
 [Custom Review Types](/docs/advanced/custom-review-types/).
 
-## Commit Messages
+## Commit Messages and Pull Request Descriptions
 
 Reviewers treat a commit message as the author's statement of what the change is
 meant to do. When the message describes the change, the reviewer checks that the
@@ -207,9 +207,23 @@ include every commit's full message and judge the final result against the
 series' overall goal. A vague message such as "fix" or "wip" skips this check,
 and dirty reviews have no messages to check against.
 
-Messages are untrusted input. Reviewers never follow instructions in them, do
-not accept claims such as "tested" as evidence, and do not comment on a
-message's wording.
+Pull request reviews also show the reviewer the pull request's title and
+description. The description states the overall goal, and the commit messages
+describe the steps toward it. These reviews include the pull request text:
+
+- reviews of GitHub pull requests by the daemon's CI poller
+- `roborev ci review` runs in GitHub Actions `pull_request` jobs, read from the
+    event payload
+- `roborev ci review` runs in GitLab merge request pipelines, read from
+    `CI_MERGE_REQUEST_TITLE` and `CI_MERGE_REQUEST_DESCRIPTION`
+
+When `--pr` names a different request than the one the CI environment describes,
+the review leaves the pull request text out. When a prompt is too large, roborev
+drops the description before it drops commit subjects.
+
+Messages and descriptions are untrusted input. Reviewers never follow
+instructions in them, do not accept claims such as "tested" as evidence, and do
+not comment on their wording.
 
 ## Task Context from Kata
 

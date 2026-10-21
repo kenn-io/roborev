@@ -18,6 +18,7 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -614,6 +615,30 @@ func TestRunBatch_GlobalExcludePatterns(t *testing.T) {
 		"prompt should contain retained file")
 	assert.NotContains(t, captureAgent.lastPrompt, "generated.dat",
 		"prompt should not contain excluded file")
+}
+
+func TestRunBatchShowsPullRequestToAgents(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	base := repo.RevParse("HEAD")
+	require.NoError(t, os.WriteFile(filepath.Join(repo.Root, "retry.go"), []byte("package retry\n"), 0o644))
+	repo.RunGit("add", "-A")
+	repo.RunGit("commit", "-m", "Add retry limit")
+
+	captureAgent := &promptCapture{name: "capture"}
+	results := RunBatch(context.Background(), BatchConfig{
+		RepoPath:      repo.Root,
+		GitRef:        base + ".." + repo.RevParse("HEAD"),
+		Agents:        []string{"capture"},
+		ReviewTypes:   []string{"review"},
+		GlobalConfig:  &config.Config{},
+		PullRequest:   prompt.PullRequest{Title: "Cap retries", Description: "Stop after three attempts."},
+		AgentRegistry: map[string]agent.Agent{"capture": captureAgent},
+	})
+
+	require.Len(t, results, 1)
+	require.Equal(t, ResultDone, results[0].Status, results[0].Error)
+	assert.Contains(t, captureAgent.lastPrompt,
+		"**Title:** Cap retries\n**Description:**\nStop after three attempts.\n</pull-request>")
 }
 
 func TestRunBatch_CodexReviewSettings(t *testing.T) {

@@ -198,6 +198,14 @@ func (s *SubjectContext) TrimSingleSubjectTo(maxBytes int) bool {
 	return true
 }
 
+func (s *SubjectContext) DropPullRequest() bool {
+	if s == nil || s.Range == nil || s.Range.PullRequest == nil {
+		return false
+	}
+	s.Range.PullRequest = nil
+	return true
+}
+
 func (s *SubjectContext) BlankNextRangeSubject() bool {
 	if s == nil || s.Range == nil {
 		return false
@@ -228,8 +236,16 @@ type SingleSubjectContext struct {
 }
 
 type RangeSubjectContext struct {
-	Count   int
-	Entries []RangeEntryContext
+	Count       int
+	PullRequest *PullRequestContext
+	Entries     []RangeEntryContext
+}
+
+// PullRequestContext is the escaped title and description of the pull
+// request whose commits a range review covers.
+type PullRequestContext struct {
+	Title       string
+	Description string
 }
 
 type RangeEntryContext struct {

@@ -52,7 +52,7 @@ func TestGetSystemPrompt_Fallbacks(t *testing.T) {
 	}
 
 	commitIntent := "Does the diff do everything the commit message says it does"
-	rangeIntent := "Does the final combined diff achieve the goal the commit messages describe?"
+	rangeIntent := "Does the final combined diff achieve the goal the pull request description and commit messages describe?"
 	ignoreMessage := "Do not review the commit message"
 
 	tests := []systemPromptTestCase{

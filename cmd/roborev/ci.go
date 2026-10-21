@@ -21,6 +21,7 @@ import (
 	"go.kenn.io/roborev/internal/git"
 	ghpkg "go.kenn.io/roborev/internal/github"
 	glpkg "go.kenn.io/roborev/internal/gitlab"
+	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/review"
 )
 
@@ -356,6 +357,7 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 		RepoConfig:    repoCfg,
 		RepoConfigRef: repoCfgRef,
 		MinSeverity:   reviewMinSev,
+		PullRequest:   detectCIPullRequest(forge, opts.pr),
 	}
 
 	results := review.RunBatch(ctx, batchCfg)
@@ -905,7 +907,9 @@ func postGitLabCIComment(
 // GitHub Actions event payload.
 type ghPREvent struct {
 	PullRequest struct {
-		Number int `json:"number"`
+		Number int    `json:"number"`
+		Title  string `json:"title"`
+		Body   string `json:"body"`
 		Base   struct {
 			SHA string `json:"sha"`
 		} `json:"base"`
@@ -951,6 +955,28 @@ func detectGitRef() (string, error) {
 	}
 
 	return base + ".." + head, nil
+}
+
+// detectCIPullRequest returns the title and description of the pull or merge
+// request that the CI environment describes. When --pr names a different
+// request, it returns nothing, because the environment describes another one.
+func detectCIPullRequest(forge ciForge, prFlag int) prompt.PullRequest {
+	if forge == ciForgeGitLab {
+		iid, err := detectMRIID()
+		if err != nil || (prFlag != 0 && prFlag != iid) {
+			return prompt.PullRequest{}
+		}
+		return prompt.PullRequest{
+			Title:       os.Getenv("CI_MERGE_REQUEST_TITLE"),
+			Description: os.Getenv("CI_MERGE_REQUEST_DESCRIPTION"),
+		}
+	}
+	event, err := readPREvent()
+	if err != nil || event.PullRequest.Number <= 0 ||
+		(prFlag != 0 && prFlag != event.PullRequest.Number) {
+		return prompt.PullRequest{}
+	}
+	return prompt.PullRequest{Title: event.PullRequest.Title, Description: event.PullRequest.Body}
 }
 
 // detectPRNumber attempts to auto-detect the PR number from

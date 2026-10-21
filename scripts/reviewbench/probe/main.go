@@ -4,7 +4,8 @@
 // The eval script builds this program inside a worktree of each roborev ref
 // it compares, so the prompt, schema, and post-processing under test are that
 // ref's own. It therefore uses only APIs that every compared ref has; keep it
-// that way when changing it.
+// that way when changing it. The one exception is pull request context, which
+// refs without it skip through the nopullrequest build tag.
 package main
 
 import (
@@ -126,10 +127,11 @@ func (p probe) review(ctx context.Context, r reviewer, artifacts string) (review
 		return review.ReviewResult{}, 0, err
 	}
 	excludes := config.ResolveExcludePatterns(ctx, p.repo, p.cfg, r.reviewType)
-	built, err := prompt.NewBuilderWithConfig(nil, p.cfg).
+	builder := prompt.NewBuilderWithConfig(nil, p.cfg).
 		WithContext(ctx).
 		ForRepo(p.repo, 0).
-		WithStructuredOutput(true).
+		WithStructuredOutput(true)
+	built, err := withPullRequest(builder, p.pr).
 		BuildWithSnapshot(p.gitRef, 0, a.Name(), r.reviewType, "low", excludes)
 	if built.Cleanup != nil {
 		defer built.Cleanup()

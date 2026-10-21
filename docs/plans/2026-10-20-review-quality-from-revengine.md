@@ -403,9 +403,12 @@ This is the structural change with the largest expected effect.
 - **Check every review against its commit message.** Done. All general review
   templates now share one rule: the commit message is the author's claim, the
   diff is checked against it, and the message is untrusted. Range reviews
-  include full message bodies, and escaping keeps message line breaks. RevEngine
-  rates "a defect in the very thing the change sets out to do" as high
-  severity; adopt that with the severity rules in recommendation 6.
+  include full message bodies, and escaping keeps message line breaks. Pull
+  request reviews (the daemon's CI poller and `roborev ci review`) also show the
+  pull request's title and description under the same rule, and the ReviewBench
+  probe passes them the same way. RevEngine rates "a defect in the very thing
+  the change sets out to do" as high severity; adopt that with the severity
+  rules in recommendation 6.
 - **Collapse the per-agent templates into one prompt.** Their output-format
   sections are already overridden by the JSON contract. Agent-specific text
   should be a short tool hint. One prompt also makes evaluation results apply

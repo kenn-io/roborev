@@ -133,7 +133,10 @@ build_probe() {
   git -C "$root" worktree add -q --detach "$tree/src" "$sha"
   mkdir -p "$tree/src/scripts/reviewbench/probe"
   find "$probe_src" -maxdepth 1 -name '*.go' ! -name '*_test.go' -exec cp {} "$tree/src/scripts/reviewbench/probe/" \;
-  if ! (cd "$tree/src" && go build -o "$2" ./scripts/reviewbench/probe); then
+  # Refs from before pull request context cannot show it to the reviewer.
+  local tags=()
+  grep -q 'func (b \*Builder) WithPullRequest' "$tree/src/internal/prompt/prompt.go" || tags=(-tags nopullrequest)
+  if ! (cd "$tree/src" && go build "${tags[@]}" -o "$2" ./scripts/reviewbench/probe); then
     git -C "$root" worktree remove --force "$tree/src"
     die "the probe does not build at $1 ($sha)"
   fi

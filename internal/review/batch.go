@@ -41,6 +41,9 @@ type BatchConfig struct {
 	// findings are still reported.
 	// When non-empty (and not "low"), agents are instructed to filter findings.
 	MinSeverity string
+	// PullRequest is the reviewed pull or merge request's title and
+	// description, shown to agents as the author's statement of intent.
+	PullRequest prompt.PullRequest
 }
 
 // RunBatch executes all review_type x agent combinations in
@@ -194,7 +197,8 @@ func runSingle(
 		WithContext(ctx).
 		ForRepo(cfg.RepoPath, 0).
 		WithRepoConfig(cfg.RepoConfig, cfg.RepoConfigRef).
-		WithStructuredOutput(true)
+		WithStructuredOutput(true).
+		WithPullRequest(cfg.PullRequest)
 
 	// Normalize review type for prompt building
 	promptReviewType := reviewType
