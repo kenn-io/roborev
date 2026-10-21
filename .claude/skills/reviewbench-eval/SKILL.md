@@ -85,9 +85,11 @@ the table.
   schema, and post-processing under test are that ref's own.
 - Reviews run with an empty `ROBOREV_DATA_DIR`. They never touch the user's
   daemon, database, or roborev config.
-- Benchmark repositories and results live under
-  `${TMPDIR:-/tmp}/roborev-reviewbench` (or `ROBOREV_EVAL_DIR`), never in this
-  repository.
+- Results (findings, scores, logs, and reports) live in
+  `~/.local/share/roborev-reviewbench` (or `ROBOREV_EVAL_DIR`). Benchmark
+  repositories and checkouts are disposable and live under
+  `${TMPDIR:-/tmp}/roborev-reviewbench` (or `ROBOREV_EVAL_CACHE`). Neither is in
+  this repository.
 - Codex runs ignore user config, so connectors and web search cannot fetch the
   upstream pull request's review comments, which are the answers. Claude Code
   reviews only get read tools.
@@ -103,11 +105,13 @@ Lead with the comparison table, then say what it means:
   Grounded precision (GP) ignores findings that match nothing, so it rarely
   moves; augmented precision (AP) shows whether new findings are valid.
 - Read a few per-PR changes in
-  `${TMPDIR:-/tmp}/roborev-reviewbench/runs/<name>/scoring/results.details.json`
+  `~/.local/share/roborev-reviewbench/runs/<name>/scoring/results.details.json`
   before concluding. The review prompt, document, and agent log for each pull
   request are under `runs/<name>/artifacts/`.
 - Do not tune toward the benchmark. Its golden set is mostly earlier AI
   reviewers' findings, and it rewards volume. A change that only adds findings
   can raise recall without making reviews more useful.
 
-Keep run artifacts out of the repository, commits, and pull request text.
+Save any HTML report under `~/.local/share/roborev-reviewbench/reports/`,
+named by date and topic. Keep run artifacts out of the repository, commits,
+and pull request text.

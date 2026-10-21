@@ -31,8 +31,10 @@
 #
 # The judge reaches models through your pi login, settings, and extensions in
 # ~/.pi/agent, the same way the pi command line does.
-# Benchmark checkouts and results live in $ROBOREV_EVAL_DIR, by default under
-# the system temporary directory, since the repositories are disposable.
+# Results (findings, scores, logs, reports) live in $ROBOREV_EVAL_DIR, by
+# default ~/.local/share/roborev-reviewbench. Benchmark repositories and
+# checkouts are disposable and live in $ROBOREV_EVAL_CACHE, by default under
+# the system temporary directory.
 set -euo pipefail
 
 # ReviewBench is pinned so judged results stay comparable across runs. Its
@@ -45,10 +47,11 @@ PI_PACKAGES=(pi-coding-agent pi-ai pi-agent-core pi-codemode pi-mcp pi-tui pi-te
 
 root="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 probe_src="$root/scripts/reviewbench/probe"
-home="${ROBOREV_EVAL_DIR:-${TMPDIR:-/tmp}/roborev-reviewbench}"
-bench="$home/ReviewBench"
+results="${ROBOREV_EVAL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/roborev-reviewbench}"
+cache="${ROBOREV_EVAL_CACHE:-${TMPDIR:-/tmp}/roborev-reviewbench}"
+bench="$cache/ReviewBench"
 
-usage() { sed -n '8,35p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '8,37p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 die() { echo "eval: $*" >&2; exit 1; }
 log() { echo "eval: $*" >&2; }
 
@@ -139,47 +142,47 @@ has_commits() {
   done
 }
 
-# prepare_pr ENTRY RUN_DIR fetches a pull request into a shared cache and
+# prepare_pr ENTRY RUN_DIR PR_DIR fetches a pull request into a shared cache and
 # checks its head out into a worktree of its own, the way ReviewBench's
 # try-agent.sh does: from the review-bench mirror, falling back to upstream.
 prepare_pr() {
-  local entry="$1" run="$2" nwo pr base head key cache dir
+  local entry="$1" run="$2" prdir="$3" nwo pr base head key repo dir
   nwo=$(jq -r .nwo <<<"$entry"); pr=$(jq -r .pr_number <<<"$entry")
   base=$(jq -r .base <<<"$entry"); head=$(jq -r .head <<<"$entry")
   key="${nwo/\//_}_${pr}-${head:0:8}"
-  cache="$home/repos/${nwo/\//_}"
-  dir="$run/prs/$key"
-  [ -d "$cache/.git" ] || git init -q "$cache"
-  git -C "$cache" remote remove origin 2>/dev/null || true
-  git -C "$cache" remote remove upstream 2>/dev/null || true
-  git -C "$cache" remote add origin "https://github.com/review-bench/${nwo/\//_}.git"
-  git -C "$cache" remote add upstream "https://github.com/$nwo.git"
-  if ! has_commits "$cache" "$base" "$head"; then
-    GIT_LFS_SKIP_SMUDGE=1 git -C "$cache" fetch -q --filter=blob:none origin "$base" "$head" 2>/dev/null || true
+  repo="$cache/repos/${nwo/\//_}"
+  dir="$prdir/$key"
+  [ -d "$repo/.git" ] || git init -q "$repo"
+  git -C "$repo" remote remove origin 2>/dev/null || true
+  git -C "$repo" remote remove upstream 2>/dev/null || true
+  git -C "$repo" remote add origin "https://github.com/review-bench/${nwo/\//_}.git"
+  git -C "$repo" remote add upstream "https://github.com/$nwo.git"
+  if ! has_commits "$repo" "$base" "$head"; then
+    GIT_LFS_SKIP_SMUDGE=1 git -C "$repo" fetch -q --filter=blob:none origin "$base" "$head" 2>/dev/null || true
   fi
-  if ! has_commits "$cache" "$base" "$head"; then
-    GIT_LFS_SKIP_SMUDGE=1 git -C "$cache" fetch -q --filter=blob:none upstream "$base" "pull/$pr/head" 2>/dev/null \
-      || GIT_LFS_SKIP_SMUDGE=1 git -C "$cache" fetch -q --filter=blob:none upstream "$base" "$head" 2>/dev/null || true
+  if ! has_commits "$repo" "$base" "$head"; then
+    GIT_LFS_SKIP_SMUDGE=1 git -C "$repo" fetch -q --filter=blob:none upstream "$base" "pull/$pr/head" 2>/dev/null \
+      || GIT_LFS_SKIP_SMUDGE=1 git -C "$repo" fetch -q --filter=blob:none upstream "$base" "$head" 2>/dev/null || true
   fi
-  has_commits "$cache" "$base" "$head" || { log "cannot fetch $nwo#$pr"; return 1; }
+  has_commits "$repo" "$base" "$head" || { log "cannot fetch $nwo#$pr"; return 1; }
   rm -rf "$dir"
   mkdir -p "$dir"
-  git -C "$cache" worktree prune
-  GIT_LFS_SKIP_SMUDGE=1 git -C "$cache" worktree add -q --force --detach "$dir/repo" "$head"
+  git -C "$repo" worktree prune
+  GIT_LFS_SKIP_SMUDGE=1 git -C "$repo" worktree add -q --force --detach "$dir/repo" "$head"
   jq '{repo, pr_number: (.pr_number | tonumber), base, head, nwo, title, body}' <<<"$entry" > "$dir/pr.json"
   echo "$key"
 }
 
-# review_pr RUN_DIR KEY reviews one prepared pull request, retrying once as
+# review_pr RUN_DIR PR_DIR KEY reviews one prepared pull request, retrying once as
 # the benchmark does. Findings that already exist are kept, so a stopped run
 # resumes where it left off.
 review_pr() {
-  local run="$1" key="$2" attempt
+  local run="$1" prdir="$2" key="$3" attempt
   local out="$run/findings/$key.json"
   [ -s "$out" ] && return 0
   for attempt in 1 2; do
     if ROBOREV_DATA_DIR="$run/roborev-data" timeout "${PR_TIMEOUT:-1800}" \
-      "$run/bin/probe" -repo "$run/prs/$key/repo" -pr-json "$run/prs/$key/pr.json" \
+      "$run/bin/probe" -repo "$prdir/$key/repo" -pr-json "$prdir/$key/pr.json" \
       -agent "$agent" -model "$model" -provider "$agent_provider" -reasoning "$reasoning" -producer "roborev" \
       -out "$out.tmp" -artifacts "$run/artifacts/$key" >>"$run/logs/$key.log" 2>&1; then
       mv "$out.tmp" "$out"
@@ -194,7 +197,7 @@ review_pr() {
 run_eval() {
   [ -n "$ref" ] && [ -n "$name" ] || usage
   setup
-  local run="$home/runs/$name" list sha i count indices key failed=0
+  local run="$results/runs/$name" prdir="$cache/prs/$name" list sha i count indices key failed=0
   mkdir -p "$run/bin" "$run/findings" "$run/logs" "$run/artifacts" "$run/roborev-data"
   sha="$(build_probe "$ref" "$run/bin/probe")"
   list="$(manifest)"
@@ -209,7 +212,7 @@ run_eval() {
   if [ ${#prs[@]} -gt 0 ]; then indices="${prs[*]}"; else indices="$(seq 0 $((count - 1)))"; fi
   local keys=()
   for i in $indices; do
-    if key="$(prepare_pr "$(jq -c ".[$i]" "$list")" "$run")"; then
+    if key="$(prepare_pr "$(jq -c ".[$i]" "$list")" "$run" "$prdir")"; then
       keys+=("$key")
     else
       failed=$((failed + 1))
@@ -218,7 +221,7 @@ run_eval() {
 
   local running=0
   for key in "${keys[@]}"; do
-    review_pr "$run" "$key" &
+    review_pr "$run" "$prdir" "$key" &
     running=$((running + 1))
     if [ "$running" -ge "$jobs" ]; then
       wait -n || failed=$((failed + 1))
@@ -231,8 +234,8 @@ run_eval() {
   done
 
   for key in "${keys[@]}"; do
-    git -C "$home/repos/$(jq -r '.nwo | sub("/"; "_")' "$run/prs/$key/pr.json")" \
-      worktree remove --force "$run/prs/$key/repo" 2>/dev/null || true
+    git -C "$cache/repos/$(jq -r '.nwo | sub("/"; "_")' "$prdir/$key/pr.json")" \
+      worktree remove --force "$prdir/$key/repo" 2>/dev/null || true
   done
   log "run $name: $(find "$run/findings" -name '*.json' | wc -l) reviewed, $failed failed"
   # The judge scores only the pull requests that have findings, so a failed
@@ -243,12 +246,12 @@ run_eval() {
 judge() {
   [ -n "$name" ] || usage
   setup
-  local run="$home/runs/$name"
+  local run="$results/runs/$name"
   [ -d "$run/findings" ] || die "no findings for run $name"
   mkdir -p "$run/scoring"
   (cd "$bench" && npm run --silent judge -- \
     --candidate "$run/findings" --provider "$provider" --model "$judge_model" \
-    --output "$run/scoring/results.json" --repo-dir "$home/judge-repos" \
+    --output "$run/scoring/results.json" --repo-dir "$cache/judge-repos" \
     --concurrency "$concurrency")
 }
 
@@ -256,7 +259,7 @@ compare() {
   [ $# -ge 1 ] || usage
   local n
   for n in "$@"; do
-    [ -f "$home/runs/$n/scoring/results.json" ] || die "run $n has not been judged"
+    [ -f "$results/runs/$n/scoring/results.json" ] || die "run $n has not been judged"
   done
   printf '%-28s %5s %8s %6s %6s %6s %6s %6s %8s\n' run PRs findings GP GR F1 AP AR "high GR"
   for n in "$@"; do
@@ -269,7 +272,7 @@ compare() {
       | [$n, .pr_count, $m.candidate_count, ($m.grounded_precision | pct), ($m.grounded_recall | pct),
          ($f1 | pct), ($m.augmented_precision | pct), ($m.augmented_recall | pct),
          (.micro.by_severity.high.grounded_recall | pct)]
-      | @tsv' "$home/runs/$n/scoring/results.json" |
+      | @tsv' "$results/runs/$n/scoring/results.json" |
       awk -F'\t' '{ printf "%-28s %5s %8s %6s %6s %6s %6s %6s %8s\n", $1, $2, $3, $4, $5, $6, $7, $8, $9 }'
   done
   echo
@@ -278,7 +281,7 @@ compare() {
   if [ $# -eq 2 ]; then
     echo
     echo "Golden findings covered per pull request ($1 -> $2):"
-    jq -rn --slurpfile a "$home/runs/$1/scoring/results.json" --slurpfile b "$home/runs/$2/scoring/results.json" '
+    jq -rn --slurpfile a "$results/runs/$1/scoring/results.json" --slurpfile b "$results/runs/$2/scoring/results.json" '
       ($a[0].per_pr | map({key: .pr_key, value: .metrics.overall.golden_covered_count}) | from_entries) as $x
       | $b[0].per_pr[]
       | select(($x[.pr_key] // 0) != .metrics.overall.golden_covered_count)
