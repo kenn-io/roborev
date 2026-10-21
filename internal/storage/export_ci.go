@@ -237,8 +237,8 @@ func legacyGithubRepo(identity string) string {
 // legacyHeadSHA extracts the head of a git_ref: the part after ".." (or
 // "...") for range refs, the ref itself otherwise.
 func legacyHeadSHA(gitRef string) string {
-	if i := strings.LastIndex(gitRef, ".."); i >= 0 {
-		return strings.TrimPrefix(gitRef[i+2:], ".")
+	if _, after, ok := strings.CutLast(gitRef, ".."); ok {
+		return strings.TrimPrefix(after, ".")
 	}
 	return gitRef
 }

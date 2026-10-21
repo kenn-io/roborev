@@ -159,8 +159,8 @@ func (wp *WorkerPool) synthesizeSucceededResults(
 // the frozen mergeBase..headSHA range; formatters short-SHA their argument, so
 // callers that render a single SHA must pass the head side, not the whole range.
 func headOf(gitRef string) string {
-	if i := strings.LastIndex(gitRef, ".."); i >= 0 {
-		return gitRef[i+2:]
+	if _, after, ok := strings.CutLast(gitRef, ".."); ok {
+		return after
 	}
 	return gitRef
 }
