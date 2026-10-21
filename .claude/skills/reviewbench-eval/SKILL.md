@@ -82,6 +82,24 @@ scripts/reviewbench/eval.sh panel --ref HEAD --name <topic> --panel <panel> \
 
 Only the `[review…]` sections of the panel config reach the eval.
 
+Runs take an hour or more. Start them detached from the agent session, so a
+restart of the agent or its host app does not kill them. On Linux with a
+systemd user manager, write the commands to a script under
+`~/.local/share/roborev-reviewbench/queue/` and start it as a transient unit
+from this repository's root:
+
+```bash
+systemd-run --user --unit=reviewbench-<topic> --collect --same-dir \
+  --setenv=PATH="$PATH" --setenv=HOME="$HOME" \
+  ~/.local/share/roborev-reviewbench/queue/<topic>.sh
+systemctl --user status reviewbench-<topic>   # progress: tail the run's log
+```
+
+A unit runs in its own cgroup, so it outlives the session; with lingering on
+(`loginctl enable-linger`), it also outlives logout. Without systemd, use
+`setsid nohup <script> >log 2>&1 &`. Do not run an eval as a background job of
+the agent's shell: it dies with the session.
+
 Each run builds its probe in a temporary worktree of this repository, and two
 builds at once collide on the repository lock. Runs can overlap once built:
 start the next run only after the previous one logs `run NAME: roborev ...`.
