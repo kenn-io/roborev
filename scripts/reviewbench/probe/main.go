@@ -53,6 +53,11 @@ type probe struct {
 	// combine panel members; the defaults are roborev's own synthesis.
 	synthesis             string
 	synthesisInstructions string
+	// store is the review store's root; empty disables it. See store.go.
+	// promptVersion, roborevSHA, prKey, and runName describe this run's
+	// reviews there, and fresh stores new reviews without reusing any.
+	store, promptVersion, roborevSHA, prKey, runName string
+	fresh                                            bool
 }
 
 func run() error {
@@ -70,7 +75,16 @@ func run() error {
 	producer := flag.String("producer", "roborev", "name written as the findings' agent and producer")
 	out := flag.String("out", "", "where to write the findings file")
 	artifacts := flag.String("artifacts", "", "directory for the prompt, review document, and agent log")
+	store := flag.String("store", "", "review store root: reuse a stored review made from the same prompt, and store new reviews")
+	promptVersion := flag.String("prompt-version", "", "with -store, the prompt version key, such as p-7bd0604c")
+	roborevSHA := flag.String("roborev-sha", "", "with -store, the roborev commit under review, recorded with each review")
+	prKey := flag.String("pr-key", "", "with -store, the ReviewBench key of the pull request")
+	runName := flag.String("run-name", "", "with -store, the eval run, recorded with each new review")
+	fresh := flag.Bool("fresh", false, "with -store, run every review instead of reusing stored ones")
 	flag.Parse()
+	if *store != "" && (*promptVersion == "" || *prKey == "") {
+		return fmt.Errorf("-store needs -prompt-version and -pr-key")
+	}
 	if *repo == "" || *prJSON == "" || *out == "" {
 		return fmt.Errorf("-repo, -pr-json, and -out are required")
 	}
@@ -95,6 +109,8 @@ func run() error {
 	p := probe{
 		cfg: cfg, repo: *repo, gitRef: pr.Base + ".." + pr.Head, pr: pr,
 		producer: *producer, artifacts: *artifacts, changed: changedLines(diff),
+		store: *store, promptVersion: *promptVersion, roborevSHA: *roborevSHA,
+		prKey: *prKey, runName: *runName, fresh: *fresh,
 	}
 
 	if *panel != "" {
@@ -160,7 +176,7 @@ func (p probe) review(ctx context.Context, r reviewer, artifacts string) (review
 	if err != nil {
 		return review.ReviewResult{}, 0, fmt.Errorf("build prompt: %w", err)
 	}
-	text := built.Prompt
+	var block, hashBlock string
 	if r.instructions != "" {
 		instructions := r.instructions
 		if strings.Contains(instructions, "{{") {
@@ -173,11 +189,24 @@ func (p probe) review(ctx context.Context, r reviewer, artifacts string) (review
 			instructions = expandInstructions(instructions, countChangedLines(diff))
 		}
 		// The same block the daemon appends to a panel member's prompt.
-		text += fmt.Sprintf("\n\n## Additional reviewer instructions (panel: %s / member: %s)\n%s\n",
-			r.panel, r.name, instructions)
+		block = instructionBlock(r.panel, r.name, instructions)
+		// The panel name is a label, so a member's review is reusable in any
+		// panel: the hash sees a placeholder instead.
+		hashBlock = instructionBlock(anyPanel, r.name, instructions)
 	}
+	text := built.Prompt + block
+	// The hash covers the complete prompt: a prompt too large to send inline
+	// is handed over as a file, and the pointer to it names a temporary path.
+	full := built.Prompt
+	if built.FilePath != "" {
+		raw, err := os.ReadFile(built.FilePath)
+		if err != nil {
+			return review.ReviewResult{}, 0, fmt.Errorf("read prompt snapshot: %w", err)
+		}
+		full = string(raw)
+	}
+	promptHash := sha256Hex([]byte(full + hashBlock))
 
-	log := io.Discard
 	if artifacts != "" {
 		if err := os.MkdirAll(artifacts, 0o755); err != nil {
 			return review.ReviewResult{}, 0, err
@@ -185,6 +214,35 @@ func (p probe) review(ctx context.Context, r reviewer, artifacts string) (review
 		if err := os.WriteFile(filepath.Join(artifacts, "prompt.md"), []byte(text), 0o644); err != nil {
 			return review.ReviewResult{}, 0, err
 		}
+	}
+
+	var key storeKey
+	if p.store != "" {
+		key = storeKey{
+			Harness:       harnessName(r.agent, r.provider),
+			Model:         orDefault(r.model, "default"),
+			Reasoning:     string(agent.ParseReasoningLevel(orDefault(r.reasoning, "thorough"))),
+			PromptVersion: p.promptVersion,
+			Reviewer:      reviewerName(r.name, r.reviewType, r.instructions),
+			PR:            p.prKey,
+		}
+		if !p.fresh {
+			dir, err := findSample(p.store, key, promptHash)
+			if err != nil {
+				return review.ReviewResult{}, 0, err
+			}
+			if dir != "" {
+				result, elapsed, err := loadReview(dir, a.Name(), r.reviewType)
+				if err != nil {
+					return review.ReviewResult{}, 0, err
+				}
+				return result, elapsed, p.recordReview(artifacts, result, dir)
+			}
+		}
+	}
+
+	log := io.Discard
+	if artifacts != "" {
 		logFile, err := os.Create(filepath.Join(artifacts, "agent.log"))
 		if err != nil {
 			return review.ReviewResult{}, 0, err
@@ -200,15 +258,50 @@ func (p probe) review(ctx context.Context, r reviewer, artifacts string) (review
 	}
 	elapsed := time.Since(started)
 	result.Agent, result.ReviewType, result.Status = a.Name(), r.reviewType, review.ResultDone
-	if artifacts != "" {
-		if err := os.WriteFile(filepath.Join(artifacts, "review.json"), result.StructuredOutput, 0o644); err != nil {
-			return review.ReviewResult{}, 0, err
-		}
-		if err := os.WriteFile(filepath.Join(artifacts, "review.md"), []byte(result.Output), 0o644); err != nil {
-			return review.ReviewResult{}, 0, err
+	var dir string
+	if p.store != "" {
+		dir, err = putSample(p.store, key, sampleMeta{
+			Reviewer: key.Reviewer, ReviewType: r.reviewType, Instructions: r.instructions,
+			Agent: r.agent, Provider: r.provider, Model: key.Model, Reasoning: key.Reasoning,
+			PromptVersion: p.promptVersion, PromptSHA256: promptHash, RoborevSHA: p.roborevSHA,
+			PR: p.prKey, SourceRun: p.runName, CreatedAt: time.Now().UTC(),
+			ElapsedSeconds: elapsed.Seconds(),
+		}, result.StructuredOutput, result.Output)
+		if err != nil {
+			return review.ReviewResult{}, 0, fmt.Errorf("store review: %w", err)
 		}
 	}
-	return result, elapsed, nil
+	return result, elapsed, p.recordReview(artifacts, result, dir)
+}
+
+// anyPanel stands in for the panel name when a prompt is hashed.
+const anyPanel = "*"
+
+func instructionBlock(panel, member, instructions string) string {
+	return fmt.Sprintf("\n\n## Additional reviewer instructions (panel: %s / member: %s)\n%s\n",
+		panel, member, instructions)
+}
+
+// recordReview writes a review's document into the run's artifacts, with the
+// path of its stored copy in "sample" when there is one.
+func (p probe) recordReview(artifacts string, result review.ReviewResult, sampleDir string) error {
+	if artifacts == "" {
+		return nil
+	}
+	if err := os.WriteFile(filepath.Join(artifacts, "review.json"), result.StructuredOutput, 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(artifacts, "review.md"), []byte(result.Output), 0o644); err != nil {
+		return err
+	}
+	if sampleDir == "" {
+		return nil
+	}
+	rel, err := filepath.Rel(p.store, sampleDir)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(artifacts, "sample"), []byte(rel+"\n"), 0o644)
 }
 
 func (p probe) writeFindings(path string, document []byte, elapsed time.Duration) error {

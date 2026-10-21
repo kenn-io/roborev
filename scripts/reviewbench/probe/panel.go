@@ -99,27 +99,41 @@ func (p probe) runPanel(ctx context.Context, name, memberOut string, membersFrom
 // the first directory that has them.
 func loadMemberReview(dirs []string, m config.ResolvedMember) (review.ReviewResult, error) {
 	for _, dir := range dirs {
-		raw, err := os.ReadFile(filepath.Join(dir, m.Name, "review.json"))
-		if errors.Is(err, fs.ErrNotExist) {
+		if _, err := os.Stat(filepath.Join(dir, m.Name, "review.json")); errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
-		if err != nil {
-			return review.ReviewResult{}, err
-		}
-		doc, err := structuredreview.Decode(raw)
-		if err != nil {
-			return review.ReviewResult{}, fmt.Errorf("decode %s review: %w", m.Name, err)
-		}
-		output, err := os.ReadFile(filepath.Join(dir, m.Name, "review.md"))
-		if err != nil {
-			return review.ReviewResult{}, err
-		}
-		return review.ReviewResult{
-			Agent: m.Agent, ReviewType: m.ReviewType, Status: review.ResultDone,
-			Output: string(output), Structured: &doc, StructuredOutput: raw,
-		}, nil
+		result, _, err := loadReview(filepath.Join(dir, m.Name), m.Agent, m.ReviewType)
+		return result, err
 	}
 	return review.ReviewResult{}, fmt.Errorf("no saved review for member %s", m.Name)
+}
+
+// loadReview reads a saved review document and its Markdown from dir, with
+// the time the review took when the review store recorded it.
+func loadReview(dir, agentName, reviewType string) (review.ReviewResult, time.Duration, error) {
+	raw, err := os.ReadFile(filepath.Join(dir, "review.json"))
+	if err != nil {
+		return review.ReviewResult{}, 0, err
+	}
+	doc, err := structuredreview.Decode(raw)
+	if err != nil {
+		return review.ReviewResult{}, 0, fmt.Errorf("decode %s: %w", dir, err)
+	}
+	output, err := os.ReadFile(filepath.Join(dir, "review.md"))
+	if err != nil {
+		return review.ReviewResult{}, 0, err
+	}
+	var elapsed time.Duration
+	if metaRaw, err := os.ReadFile(filepath.Join(dir, "meta.json")); err == nil {
+		var m sampleMeta
+		if json.Unmarshal(metaRaw, &m) == nil {
+			elapsed = time.Duration(m.ElapsedSeconds * float64(time.Second))
+		}
+	}
+	return review.ReviewResult{
+		Agent: agentName, ReviewType: reviewType, Status: review.ResultDone,
+		Output: string(output), Structured: &doc, StructuredOutput: raw,
+	}, elapsed, nil
 }
 
 func (p probe) memberArtifacts(member string) string {

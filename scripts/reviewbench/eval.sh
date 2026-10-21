@@ -39,10 +39,17 @@
 #   --set SET           test: the 25-PR test set (default); full: all 219 PRs;
 #                       or NAME, the PR list in scripts/reviewbench/sets/NAME.txt
 #   --pr INDEX          only this manifest index; repeat for several
+#   --fresh             run every review, even ones the review store already has
 # Judge options:
 #   --provider NAME     pi provider for the judge (default anthropic)
 #   --judge-model ID    judge model (default claude-sonnet-5, the leaderboard's)
 #   --concurrency N     judge calls at once (default 4)
+#
+# Every review is kept in the review store, $ROBOREV_EVAL_DIR/reviews, at
+# HARNESS/MODEL/REASONING/PROMPT_VERSION/REVIEWER/PR/N. A run reuses a stored
+# review when the complete prompt it would send has the same hash, and runs
+# only the reviews the store lacks; --fresh adds new samples instead. A run's
+# samples.tsv lists the stored review each pull request used.
 #
 # The judge reaches models through your pi login, settings, and extensions in
 # ~/.pi/agent, the same way the pi command line does.
@@ -72,12 +79,13 @@ log() { echo "eval: $*" >&2; }
 
 agent=claude-code model="" agent_provider="" reasoning=thorough jobs=4 set_name=test prs=() arms=()
 panel="" panel_config="$HOME/.roborev/config.toml" baseline="" members_from=()
-synthesis="" synthesis_instructions=""
+synthesis="" synthesis_instructions="" fresh=""
 provider=anthropic judge_model=claude-sonnet-5 concurrency=4
 ref="" name="" base_ref="" head_ref=""
 
 parse_options() {
   while [ $# -gt 0 ]; do
+    if [ "$1" = --fresh ]; then fresh=1; shift; continue; fi
     [ $# -ge 2 ] || usage
     case "$1" in
       --ref) ref="$2" ;;
@@ -149,6 +157,14 @@ manifest() {
   esac
 }
 
+# prompt_version SHA names the review prompt at roborev commit SHA by the last
+# commit that changed what a reviewer is sent or how its findings are kept.
+# It groups the review store; the prompt hash decides reuse.
+prompt_version() {
+  echo "p-$(git -C "$root" log -1 --format=%H "$1" -- internal/prompt internal/review internal/agent \
+    pkg/structuredreview ':(exclude)internal/review/synthes*' ':(exclude)*_test.go' | cut -c1-8)"
+}
+
 # build_probe REF OUT builds the probe against REF's own review code. The
 # probe source comes from this checkout, so refs that predate it work too.
 build_probe() {
@@ -217,12 +233,15 @@ review_pr() {
   local out="$run/findings/$key.json"
   [ -s "$out" ] && return 0
   local mode=(-agent "$agent" -model "$model" -provider "$agent_provider" -reasoning "$reasoning")
+  local store=(-store "$results/reviews" -prompt-version "$prompt_ver" -roborev-sha "$sha"
+    -pr-key "$key" -run-name "$name" ${fresh:+-fresh})
   if [ -n "$panel" ]; then
     mode=(-panel "$panel" -member-out "$run/member-findings/$key")
     if [ ${#members_from[@]} -gt 0 ]; then
       local dirs=() from
       for from in "${members_from[@]}"; do dirs+=("$results/runs/$from/artifacts/$key/members"); done
       mode=(-panel "$panel" -members-from "$(IFS=,; echo "${dirs[*]}")")
+      store=()
     fi
     [ -z "$synthesis" ] || mode+=(-synthesis "$synthesis")
     [ -z "$synthesis_instructions" ] || mode+=(-synthesis-instructions "$synthesis_instructions")
@@ -230,7 +249,7 @@ review_pr() {
   for attempt in 1 2; do
     if ROBOREV_DATA_DIR="$run/roborev-data" timeout "${PR_TIMEOUT:-1800}" \
       "$run/bin/probe" -repo "$prdir/$key/repo" -pr-json "$prdir/$key/pr.json" \
-      "${mode[@]}" -producer "roborev" \
+      "${mode[@]}" "${store[@]}" -producer "roborev" \
       -out "$out.tmp" -artifacts "$run/artifacts/$key" >>"$run/logs/$key.log" 2>&1; then
       mv "$out.tmp" "$out"
       log "$key: $(jq '.findings | length' "$out") finding(s)"
@@ -255,6 +274,8 @@ run_eval() {
       die "run $name started at $started_sha; resume it with --ref $started_sha"
   fi
   sha="$(build_probe "$ref" "$run/bin/probe")"
+  local prompt_ver
+  prompt_ver="$(prompt_version "$sha")"
   if [ -n "$panel" ]; then
     # Only the review sections: panels, subagents, and review types. Nothing
     # else from the user's roborev config reaches the eval.
@@ -264,8 +285,9 @@ run_eval() {
   jq -n --arg ref "$ref" --arg sha "$sha" --arg agent "$agent" --arg model "$model" \
     --arg provider "$agent_provider" --arg reasoning "$reasoning" --arg set "$set_name" \
     --arg bench "$REVIEWBENCH_SHA" \
+    --arg prompt_version "$prompt_ver" --arg fresh "$fresh" \
     --arg panel "$panel" --arg synthesis "$synthesis" --arg synthesis_instructions "$synthesis_instructions" --args \
-    '{ref: $ref, sha: $sha, agent: $agent, provider: $provider, model: $model, reasoning: $reasoning, panel: $panel, members_from: $ARGS.positional, synthesis: $synthesis, synthesis_instructions: $synthesis_instructions, set: $set, reviewbench: $bench}' \
+    '{ref: $ref, sha: $sha, prompt_version: $prompt_version, fresh: ($fresh != ""), agent: $agent, provider: $provider, model: $model, reasoning: $reasoning, panel: $panel, members_from: $ARGS.positional, synthesis: $synthesis, synthesis_instructions: $synthesis_instructions, set: $set, reviewbench: $bench}' \
     "${members_from[@]}" \
     > "$run/run.json"
   if [ -n "$panel" ]; then
@@ -304,6 +326,11 @@ run_eval() {
       worktree remove --force "$prdir/$key/repo" 2>/dev/null || true
   done
   log "run $name: $(find "$run/findings" -name '*.json' | wc -l) reviewed, $failed failed"
+  # The run's recipe: the stored review each pull request, or member, used.
+  if [ -d "$run/artifacts" ]; then
+    (cd "$run/artifacts" && find . -name sample -printf '%h\t' -exec cat {} \;) |
+      sed 's#^\./##' | sort > "$run/samples.tsv"
+  fi
   # The judge scores only the pull requests that have findings, so a failed
   # review would silently drop out of the score instead of counting as a miss.
   [ "$failed" -eq 0 ] || die "run $name is incomplete; rerun the same command to retry the failed pull requests"

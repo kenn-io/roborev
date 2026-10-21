@@ -65,6 +65,33 @@ A named set is a list of PR URLs in `scripts/reviewbench/sets/NAME.txt`.
 Compare runs only within one set: `base100` over-represents PRs with high
 findings, so its recall is not comparable to the test set or the leaderboard.
 
+## Review store
+
+Every review a run makes is kept in the review store, `reviews/` in the
+results directory, at `HARNESS/MODEL/REASONING/PROMPT_VERSION/REVIEWER/PR/N/`:
+
+```text
+reviews/codex/gpt-6.1-sol/thorough/p-7bd0604c/regular_tenplus/brexhq_CrabTrap_15-5ef0884c/1/
+```
+
+- `REVIEWER` is what the review adds to roborev's base prompt: the panel
+  member name, `stock` for no added instructions, or the review type for
+  another base prompt.
+- `PROMPT_VERSION` is the last roborev commit that changed the prompt, the
+  review schema, or how findings are kept.
+- `N` numbers repeat samples.
+
+A run reuses a stored review when the complete prompt it would send hashes
+the same, with the panel name left out, and runs only the reviews the store
+lacks. So a reviewer reviewed once is reused in every panel and PR set that
+includes it. `--fresh` runs every review and stores new samples, for
+measuring noise. A changed reviewer needs a new name; the store refuses new
+instructions under an old name. Each run writes `samples.tsv`, the stored
+review each pull request used.
+
+Keep the results directory in a private git repository so the store is shared
+and nothing is rerun; commit new reviews and runs once they are judged.
+
 ## Run
 
 Smoke-test one pull request when the pipeline itself changed:
