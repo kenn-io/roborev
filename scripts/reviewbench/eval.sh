@@ -10,6 +10,7 @@
 #   scripts/reviewbench/eval.sh judge --name NAME [judge options]
 #   scripts/reviewbench/eval.sh compare NAME NAME...
 #   scripts/reviewbench/eval.sh coverage BASE NAME...
+#   scripts/reviewbench/eval.sh retention SOURCE NAME...
 #   scripts/reviewbench/eval.sh ab --base REF --head REF [run and judge options]
 #   scripts/reviewbench/eval.sh harness --ref REF --name NAME --arm A --arm B... [options]
 #   scripts/reviewbench/eval.sh panel --ref REF --name NAME --panel PANEL [--baseline RUN] [options]
@@ -368,6 +369,39 @@ coverage() {
   echo "Counts can differ slightly from the judge's golden_covered_count, which dedupes on its own terms."
 }
 
+# retention SOURCE NAME... measures synthesis on member reviews saved by the
+# panel run SOURCE: how many of the golden findings its members matched each
+# run keeps. The judge credits a golden finding once and counts a duplicate
+# as a novel finding, so duplicates do not lower any score; count them from the
+# findings themselves.
+retention() {
+  [ $# -ge 2 ] || usage
+  local source="$1" member members=() n
+  shift
+  for member in "$results/runs/$source"/member-findings/*/*.json; do
+    [ -e "$member" ] || continue
+    member="$(basename "$member" .json)"
+    [[ " ${members[*]} " == *" $member "* ]] || members+=("$member")
+  done
+  [ ${#members[@]} -gt 0 ] || die "run $source saved no member findings"
+  local files=()
+  for member in "${members[@]}"; do files+=("$results/runs/$source-$member/scoring/results.details.json"); done
+  printf '%-28s %8s %8s\n' run findings kept
+  for n in "$@"; do
+    jq -rn --arg n "$n" --slurpfile run "$results/runs/$n/scoring/results.details.json" '
+      def covered(c): [c[] | select(.status == "matched_tp") | .covered_golden_indices[]?] | unique;
+      ([inputs[] | {(.pr_key): covered(.candidate_findings)}]
+        | reduce .[] as $m ({}; reduce ($m | to_entries[]) as $e (.; .[$e.key] = ((.[$e.key] // []) + $e.value | unique)))) as $union
+      | ($run[0] | map({key: .pr_key, value: covered(.candidate_findings)}) | from_entries) as $mine
+      | ([$union | to_entries[] | .value | length] | add) as $total
+      | ([$union | to_entries[] | (.value - (.value - ($mine[.key] // []))) | length] | add) as $kept
+      | [$n, ([$run[0][].candidate_findings | length] | add), "\($kept)/\($total)"] | @tsv' "${files[@]}" |
+      awk -F'\t' '{ printf "%-28s %8s %8s\n", $1, $2, $3 }'
+  done
+  echo
+  echo "kept: golden findings the members matched that the run also matched."
+}
+
 ab() {
   [ -n "$base_ref" ] && [ -n "$head_ref" ] || usage
   local stamp
@@ -439,6 +473,7 @@ case "$command" in
   judge) parse_options "$@"; judge ;;
   compare) compare "$@" ;;
   coverage) coverage "$@" ;;
+  retention) retention "$@" ;;
   ab) parse_options "$@"; ab ;;
   harness) parse_options "$@"; harness ;;
   panel) parse_options "$@"; panel_eval ;;
