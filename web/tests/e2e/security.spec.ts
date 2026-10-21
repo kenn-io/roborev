@@ -85,8 +85,9 @@ test.describe.serial("browser listener security", () => {
     });
 
     await openReview(page, 52);
-    await expect(page.locator(".review-content pre.shiki")).toBeVisible();
-    await expect(page.locator(".review-content pre.mermaid")).toBeVisible();
+    await expect(
+      page.locator(".review-content .kit-mermaid-viewer__pan svg.flowchart"),
+    ).toBeVisible();
     expect(
       await page.evaluate(
         () =>
