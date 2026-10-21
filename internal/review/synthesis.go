@@ -92,22 +92,33 @@ func VerifyDedupePreamble() string {
 func BuildSynthesisPrompt(
 	reviews []ReviewResult,
 	_ string,
+	neutral bool,
 ) string {
+	intro := "You are combining multiple code review outputs into a single GitHub PR comment.\n"
+	material := "the code"
+	inspect := "source code"
+	rubricRule := ""
+	if neutral {
+		intro = "You are combining multiple review outputs into a combined review of the reviewed material.\n"
+		material = "the reviewed material"
+		inspect = "the reviewed material"
+		rubricRule = "- Silence from a different rubric is not disagreement; merge only findings describing the same problem\n"
+	}
 	var b strings.Builder
 	b.WriteString(
-		"You are combining multiple code review outputs " +
-			"into a single GitHub PR comment.\n" +
+		intro +
 			"Return exactly one JSON object with this shape and no code fence: " +
 			`{"schema_version":2,"summary":"...","verdict":"pass|fail","findings":[{"severity":"critical|high|medium|low","problem":"...","fix":"...","location":"file:line or null","sources":[1]}]}` + "\n" +
 			"Put a one-line overall summary in `summary` and your overall judgment in `verdict`. " +
 			"List every finding that requires changes in `findings`; " +
-			"return an empty `findings` array if the reviewers agree the code is clean.\n" +
+			"return an empty `findings` array if the reviewers agree " + material + " is clean.\n" +
 			"In `sources`, list the numbers of the reviews below (### Review N) " +
 			"that reported the finding.\nRules:\n" +
 			"- Only combine the input review results according to these rules\n" +
-			"- Do not independently review source code or inspect the repository\n" +
+			"- Do not independently review " + inspect + " or inspect the repository\n" +
 			"- Do not use tools except to read referenced prompt or review-input files in full\n" +
 			"- Deduplicate findings reported by multiple reviewers and cite every source\n" +
+			rubricRule +
 			"- Order findings by severity (Critical > High > Medium > Low)\n" +
 			"- Preserve file/line references in `location`\n" +
 			"- No preamble about yourself\n")
@@ -126,6 +137,13 @@ func BuildSynthesisPrompt(
 			b.WriteString(" [FAILED]")
 		}
 		b.WriteString("\n")
+		if neutral {
+			rubric := r.ReviewType
+			if config.IsDefaultReviewType(rubric) {
+				rubric = config.ReviewTypeDefault
+			}
+			fmt.Fprintf(&b, "Rubric: %s\n", rubric)
+		}
 		b.WriteString(synthesisReviewContent(r))
 		b.WriteString("\n\n")
 	}
@@ -387,4 +405,16 @@ func SkippedAgentNote(reviews []ReviewResult) string {
 		"\n*Note: %d reviews skipped "+
 			"(quota exhausted)*\n",
 		skips)
+}
+
+// NeedsNeutralSynthesis reports whether any voting input uses a custom rubric.
+// Callers must supply the complete voting set before filtering failed outputs;
+// non-voting observers must not be included.
+func NeedsNeutralSynthesis(reviews []ReviewResult) bool {
+	for _, r := range reviews {
+		if !config.IsBuiltInReviewType(r.ReviewType) {
+			return true
+		}
+	}
+	return false
 }

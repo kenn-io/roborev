@@ -311,7 +311,7 @@ func validateConfigForScope(resolver RepoResolver, scope configScope) error {
 		if err := globalCfg.Validate(); err != nil {
 			return fmt.Errorf("validate global config: %w", err)
 		}
-		if err := config.ValidateExperimentConfigs(globalCfg, nil, nil); err != nil {
+		if err := config.ValidateGlobalExperimentConfigs(globalCfg); err != nil {
 			return fmt.Errorf("validate global config: %w", err)
 		}
 		return nil

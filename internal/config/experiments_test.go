@@ -816,6 +816,17 @@ func TestValidateExperimentConfigsRejectsSemanticOverlayErrors(t *testing.T) {
 			want: "ci.panel",
 		},
 		{
+			name: "subagent review type syntax",
+			overlay: map[string]any{
+				"review": map[string]any{
+					"subagents": map[string]any{
+						"critic": map[string]any{"review_type": "../draft"},
+					},
+				},
+			},
+			want: "invalid custom review type reference",
+		},
+		{
 			name: "subagent reasoning",
 			overlay: map[string]any{
 				"review": map[string]any{
@@ -832,7 +843,7 @@ func TestValidateExperimentConfigsRejectsSemanticOverlayErrors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			enabled := false
 			ratio := 0.5
-			err := ValidateExperimentConfigs(&Config{
+			global := &Config{
 				Experiments: map[string]ExperimentDefinition{
 					"invalid-v1": {
 						Enabled: &enabled, Ratio: &ratio,
@@ -842,10 +853,10 @@ func TestValidateExperimentConfigsRejectsSemanticOverlayErrors(t *testing.T) {
 						Config: tt.overlay,
 					},
 				},
-			}, nil, nil)
+			}
 
-			require.Error(t, err)
-			require.ErrorContains(t, err, tt.want)
+			require.ErrorContains(t, ValidateExperimentConfigs(global, nil, nil), tt.want)
+			require.ErrorContains(t, ValidateGlobalExperimentConfigs(global), tt.want)
 		})
 	}
 }
@@ -869,4 +880,90 @@ func TestSelectReviewExperimentRejectsSemanticErrorForDefaultArm(t *testing.T) {
 
 	require.Error(t, err)
 	require.ErrorContains(t, err, "review_reasoning")
+}
+
+func TestExperimentCustomReferenceValidationScope(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		name := "disabled"
+		if enabled {
+			name = "enabled"
+		}
+		t.Run(name, func(t *testing.T) {
+			ratio := 1.0
+			global := &Config{
+				Review: ReviewConfig{
+					DefaultPanel: "drafts",
+					Subagents:    map[string]SubagentSpec{"editor": {ReviewType: "citations"}},
+					Panels:       map[string]PanelSpec{"drafts": {Members: []string{"editor"}}},
+				},
+				CI: CIConfig{Panel: "drafts"},
+				Experiments: map[string]ExperimentDefinition{"session-v1": {
+					Enabled: &enabled, Ratio: &ratio,
+					Workflows: []ExperimentWorkflow{ExperimentWorkflowReview},
+					Config:    map[string]any{"reuse_review_session": true},
+				}},
+			}
+			require.NoError(t, global.Validate())
+			require.NoError(t, ValidateGlobalExperimentConfigs(global))
+			require.ErrorContains(t, ValidateEffectiveReviewConfig(global, nil), "citations")
+			require.ErrorContains(t, ValidateExperimentConfigs(global, nil, nil), "citations")
+			require.ErrorContains(t, ValidateExperimentConfigs(global, &RepoConfig{}, map[string]any{}), "citations")
+
+			definition := global.Experiments["session-v1"]
+			_, _, err := experimentalArmConfig(global, nil, nil, "session-v1", definition)
+			require.ErrorContains(t, err, "citations")
+
+			repo := &RepoConfig{Review: ReviewConfig{Types: map[string]ReviewTypeSpec{
+				"citations": {Template: "citations.md"},
+			}}}
+			raw := map[string]any{"review": map[string]any{"types": map[string]any{
+				"citations": map[string]any{"template": "citations.md"},
+			}}}
+			require.NoError(t, ValidateEffectiveReviewConfig(global, repo))
+			require.NoError(t, ValidateExperimentConfigs(global, repo, raw))
+			_, _, err = experimentalArmConfig(global, repo, raw, "session-v1", definition)
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestSelectedExperimentRequiresCustomReviewTypeDefinition(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		ratio float64
+		arm   ExperimentArm
+	}{
+		{"default", 0, ExperimentArmDefault},
+		{"experimental", 1, ExperimentArmExperimental},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			enabled := true
+			global := &Config{
+				Review: ReviewConfig{Subagents: map[string]SubagentSpec{
+					"editor": {ReviewType: "citations"},
+				}},
+				Experiments: map[string]ExperimentDefinition{"session-v1": {
+					Enabled: &enabled, Ratio: &tt.ratio,
+					Workflows: []ExperimentWorkflow{ExperimentWorkflowReview},
+					Config:    map[string]any{"reuse_review_session": true},
+				}},
+			}
+			input := ExperimentSelectionInput{
+				Workflow: ExperimentWorkflowReview, Global: global,
+				Subject: ExperimentSubject{Repository: "github.com/example/project", Branch: "draft"},
+			}
+			_, err := SelectReviewExperiment(input)
+			require.ErrorContains(t, err, "citations")
+			input.Repo = &RepoConfig{Review: ReviewConfig{Types: map[string]ReviewTypeSpec{
+				"citations": {Template: "citations.md"},
+			}}}
+			input.RawRepo = map[string]any{"review": map[string]any{"types": map[string]any{
+				"citations": map[string]any{"template": "citations.md"},
+			}}}
+			got, err := SelectReviewExperiment(input)
+			require.NoError(t, err)
+			require.NotNil(t, got.Assignment)
+			assert.Equal(t, tt.arm, got.Assignment.Arm)
+		})
+	}
 }

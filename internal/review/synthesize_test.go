@@ -787,3 +787,32 @@ func TestSynthesisDisplayPolicyAcrossOutcomes(t *testing.T) {
 		}
 	}
 }
+
+func TestCustomSynthesisUsesCompleteInputRubrics(t *testing.T) {
+	for _, status := range []string{ResultFailed, ResultSkipped, ResultDone} {
+		t.Run(status, func(t *testing.T) {
+			a := newSynthesisEntrypointAgent()
+			agent.RegisterForTest(t, a)
+			results := []ReviewResult{
+				{ReviewType: "citations", Status: status, Error: "unavailable", Output: "Custom code quotation finding."},
+				{ReviewType: "security", Status: ResultDone, Output: "Finding A."},
+				{ReviewType: "design", Status: ResultDone, Output: "Finding B."},
+			}
+			_, err := Synthesize(context.Background(), results, SynthesizeOpts{Agent: a.Name()})
+			require.NoError(t, err)
+			require.True(t, a.reviewCalled)
+			check := assert.New(t)
+			check.Contains(a.synthPrompt, "review outputs")
+			check.Contains(a.synthPrompt, "reviewed material")
+			check.Contains(a.synthPrompt, "combined review")
+			check.Contains(a.synthPrompt, "Rubric: citations")
+			check.Contains(a.synthPrompt, "Rubric: security")
+			check.Contains(a.synthPrompt, "Rubric: design")
+			check.Contains(a.synthPrompt, "Silence from a different rubric is not disagreement")
+			check.Contains(a.synthPrompt, "same problem")
+			check.Contains(a.synthPrompt, "### Review 2")
+			check.NotContains(a.synthPrompt, "GitHub PR comment")
+			check.NotContains(a.synthPrompt, "code is clean")
+		})
+	}
+}

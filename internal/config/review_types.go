@@ -184,3 +184,18 @@ func customReviewTypeField(
 	}
 	return strings.TrimSpace(spec.Model)
 }
+
+// validateMemberReviewTypeSyntax accepts built-ins and well-formed custom names
+// without requiring the repository's custom definition to be available yet.
+func validateMemberReviewTypeSyntax(name string) error {
+	if name == "" {
+		return nil
+	}
+	if _, err := ValidateReviewTypesFromConfig([]string{name}, nil, nil); err == nil {
+		return nil
+	}
+	if len(name) > customReviewTypeNameMaxLength || !customReviewTypeNamePattern.MatchString(name) || isReservedCustomReviewTypeName(name) {
+		return fmt.Errorf("invalid custom review type reference %q", name)
+	}
+	return nil
+}

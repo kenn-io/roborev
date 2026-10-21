@@ -2772,6 +2772,10 @@ func TestHandleEnqueueCompactReasoning(t *testing.T) {
 	cfg := config.DefaultConfig()
 	server := NewServer(db, cfg, "")
 
+	repo, err := db.GetOrCreateRepo(repoDir)
+	require.NoError(t, err)
+	source, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, GitRef: "source", Agent: "test", ReviewType: "default"})
+	require.NoError(t, err)
 	reqData := EnqueueRequest{
 		RepoPath:     repoDir,
 		GitRef:       "compact-test",
@@ -2779,6 +2783,7 @@ func TestHandleEnqueueCompactReasoning(t *testing.T) {
 		CustomPrompt: "consolidation prompt",
 		Agentic:      true,
 		JobType:      "compact",
+		SourceJobIDs: []int64{source.ID},
 		// No explicit reasoning — should default to fix reasoning
 	}
 	req := testutil.MakeJSONRequest(

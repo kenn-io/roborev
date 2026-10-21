@@ -1442,6 +1442,11 @@ components:
           type: string
         source:
           type: string
+        source_job_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
         spec_file:
           type: string
       required:

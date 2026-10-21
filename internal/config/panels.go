@@ -121,12 +121,21 @@ func MergedReviewConfig(repoPath string, globalCfg *Config) ReviewConfig {
 // It aggregates all problems in deterministic name order rather than failing
 // on the first, and returns nil when clean.
 func (rc ReviewConfig) Validate() error {
+	return rc.validate(false)
+}
+
+// validate permits repository-defined rubric references during global validation.
+func (rc ReviewConfig) validate(deferCustomReferences bool) error {
 	var errs []error
 	for _, name := range slices.Sorted(maps.Keys(rc.Subagents)) {
 		spec := rc.Subagents[name]
-		if _, err := canonicalMemberReviewType(
-			spec.ReviewType, &RepoConfig{Review: rc}, nil,
-		); err != nil {
+		var typeErr error
+		if deferCustomReferences {
+			typeErr = validateMemberReviewTypeSyntax(spec.ReviewType)
+		} else {
+			_, typeErr = canonicalMemberReviewType(spec.ReviewType, &RepoConfig{Review: rc}, nil)
+		}
+		if err := typeErr; err != nil {
 			errs = append(errs, fmt.Errorf("subagent %q: %w", name, err))
 		}
 		if _, err := NormalizeReasoning(spec.Reasoning); err != nil {

@@ -64,7 +64,7 @@ func TestSynthesisReadsCompleteReviewsFromFiles(t *testing.T) {
 					require.Len(t, files, 1)
 					content, err := os.ReadFile(files[0])
 					require.NoError(t, err)
-					assert.Equal(t, BuildSynthesisPrompt(reviews, ""), string(content))
+					assert.Equal(t, BuildSynthesisPrompt(reviews, "", false), string(content))
 
 					if fail {
 						return "", errors.New("agent failed")
@@ -75,7 +75,7 @@ func TestSynthesisReadsCompleteReviewsFromFiles(t *testing.T) {
 				if schema {
 					selected = &fileSchemaSynthesisAgent{a}
 				}
-				doc, err := RunSynthesisAgent(context.Background(), selected, reviews, BuildSynthesisPrompt(reviews, ""), "", nil, SynthesisHooks{
+				doc, err := RunSynthesisAgent(context.Background(), selected, reviews, BuildSynthesisPrompt(reviews, "", false), "", nil, SynthesisHooks{
 					ConfigRepoPath: repo,
 					GlobalConfig:   &config.Config{DefaultMaxPromptSize: 4096},
 					Checkout:       func() (SynthesisCheckout, error) { return SynthesisCheckout{RepoPath: repo}, nil },
@@ -112,7 +112,7 @@ func TestSynthesisUsesConfigPathResolvedWithCheckout(t *testing.T) {
 		0o600,
 	))
 	reviews := []ReviewResult{{Status: ResultDone, Output: strings.Repeat("finding ", 100)}}
-	fullPrompt := BuildSynthesisPrompt(reviews, "")
+	fullPrompt := BuildSynthesisPrompt(reviews, "", false)
 	a := &fileSynthesisAgent{}
 	a.self = a
 	a.read = func(gotRepo, prompt string) (string, error) {
