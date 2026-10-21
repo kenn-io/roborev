@@ -507,6 +507,20 @@ code, duplicates are merged, and findings are ranked in code. Still open: a
 
 ### 7. Diversify panels
 
+- **Leave linter work to linters.** roborev should not hunt for problems that a
+  compiler, type checker, or the project's configured linters would catch. That
+  rules out members for build, CI, and packaging checks, even though ReviewBench
+  counts misses there.
+- **Add members for the largest groups of misses.** Of the medium and high
+  findings the stock panel missed, two groups need judgment that linters lack:
+  - Failures reported as success: a result marked passed after an
+    infrastructure error, an HTTP 200 for a failed query, or a swallowed
+    cancellation.
+  - Incomplete wiring: a new setting with no way to set it, a feature in one
+    implementation but not its sibling, or a method with no path from the
+    command that needs it.
+
+  Both members are being measured on ReviewBench before anyone adopts them.
 - **Give members different briefs, not the same prompt.**
   - Start with RevEngine's two focus briefs, tests and maintainability.
   - Its swarm task briefs are reusable checklists: callers, callees, logic,

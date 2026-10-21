@@ -82,12 +82,54 @@ scripts/reviewbench/eval.sh panel --ref HEAD --name <topic> --panel <panel> \
 
 Only the `[review…]` sections of the panel config reach the eval.
 
-Arms run one after another; never start two eval runs at once, because each
-builds its probe in a temporary worktree of this repository.
+Each run builds its probe in a temporary worktree of this repository, and two
+builds at once collide on the repository lock. Runs can overlap once built:
+start the next run only after the previous one logs `run NAME: roborev ...`.
 
 A stopped or partly failed run resumes when the same `run` command is run
 again. `scripts/reviewbench/eval.sh compare <name>-base <name>-head` reprints
 the table.
+
+## Improve a panel step by step
+
+Synthesis lets focused reviewers be tried one at a time:
+
+1. Add the reviewer as a subagent in a panel config, with a one-member panel
+   such as `focus_<name>`. Keep all experiment panels in one config file.
+2. Run the one-member panel. It reports the reviewer's findings without
+   synthesis, and its member reviews are saved under `runs/<name>/artifacts`.
+3. Check what the reviewer adds beyond the current panel, and its augmented
+   precision (AP) from `compare`:
+
+   ```bash
+   scripts/reviewbench/eval.sh coverage <panel run> <focus run>
+   ```
+
+4. Rerun only the synthesis, with and without the reviewer, on the same saved
+   member reviews. `--members-from` takes each member's review from the first
+   listed run that has it, so no member runs again:
+
+   ```bash
+   scripts/reviewbench/eval.sh panel --ref HEAD --name <topic>-without \
+     --panel <panel> --members-from <panel run> --panel-config FILE ...
+   scripts/reviewbench/eval.sh panel --ref HEAD --name <topic>-with \
+     --panel <panel with reviewer> --members-from <panel run> \
+     --members-from <focus run> --panel-config FILE ...
+   ```
+
+   Synthesizing both arms fresh keeps synthesis noise in both.
+
+5. Keep a reviewer only when the panel gains recall without a matching loss in
+   AP. Then fold it into the main panel, or into the default prompt when it
+   helps every member.
+
+The same reuse makes synthesis prompt changes cheap to measure: build the new
+synthesis at a new ref and rerun only the synthesis on saved member reviews.
+`coverage` between the panel and each member shows how many golden findings
+members found that synthesis dropped.
+
+Do not add reviewers for problems that compilers, type checkers, or the
+project's linters catch, even when the benchmark counts them.
 
 ## How it stays isolated
 

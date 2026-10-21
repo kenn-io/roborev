@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"go.kenn.io/roborev/internal/agent"
@@ -58,6 +59,7 @@ func run() error {
 	reasoning := flag.String("reasoning", "thorough", "reasoning level: fast, standard, or thorough")
 	panel := flag.String("panel", "", "review with this roborev panel from the loaded config instead of one agent")
 	memberOut := flag.String("member-out", "", "with -panel, a directory for each member's own findings file")
+	membersFrom := flag.String("members-from", "", "with -panel, comma-separated directories of saved MEMBER/review.json files to synthesize instead of running members")
 	producer := flag.String("producer", "roborev", "name written as the findings' agent and producer")
 	out := flag.String("out", "", "where to write the findings file")
 	artifacts := flag.String("artifacts", "", "directory for the prompt, review document, and agent log")
@@ -89,7 +91,11 @@ func run() error {
 	}
 
 	if *panel != "" {
-		return p.runPanel(ctx, *panel, *memberOut, *out)
+		var dirs []string
+		if *membersFrom != "" {
+			dirs = strings.Split(*membersFrom, ",")
+		}
+		return p.runPanel(ctx, *panel, *memberOut, dirs, *out)
 	}
 	result, elapsed, err := p.review(ctx, reviewer{
 		agent: *agentName, model: *model, provider: *provider, reasoning: *reasoning,

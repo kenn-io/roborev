@@ -9,16 +9,22 @@
 #   scripts/reviewbench/eval.sh run --ref REF --name NAME [run options]
 #   scripts/reviewbench/eval.sh judge --name NAME [judge options]
 #   scripts/reviewbench/eval.sh compare NAME NAME...
+#   scripts/reviewbench/eval.sh coverage BASE NAME...
 #   scripts/reviewbench/eval.sh ab --base REF --head REF [run and judge options]
 #   scripts/reviewbench/eval.sh harness --ref REF --name NAME --arm A --arm B... [options]
 #   scripts/reviewbench/eval.sh panel --ref REF --name NAME --panel PANEL [--baseline RUN] [options]
+#   scripts/reviewbench/eval.sh panel ... --members-from RUN [--members-from RUN...]
 #
 # ab compares two refs with one agent. harness compares agents on one ref:
 # each --arm is AGENT:PROVIDER:MODEL, for example codex::gpt-6-sol or
 # pi:cpa:gpt-6-sol; PROVIDER only applies to pi and may be empty. panel reviews
 # with a roborev panel from --panel-config (default ~/.roborev/config.toml),
 # then judges the panel and each member on its own; --baseline names an
-# earlier run, such as a stock reviewer, to print beside them.
+# earlier run, such as a stock reviewer, to print beside them. With
+# --members-from, the panel does not run its members: it synthesizes the
+# reviews they saved in those earlier panel runs, so synthesis with and without
+# a member can be compared on the same member reviews. A focused reviewer is a
+# one-member panel, which reports its findings without synthesis.
 #
 # Run options:
 #   --agent NAME        roborev agent (default claude-code)
@@ -60,7 +66,7 @@ die() { echo "eval: $*" >&2; exit 1; }
 log() { echo "eval: $*" >&2; }
 
 agent=claude-code model="" agent_provider="" reasoning=thorough jobs=4 set_name=test prs=() arms=()
-panel="" panel_config="$HOME/.roborev/config.toml" baseline=""
+panel="" panel_config="$HOME/.roborev/config.toml" baseline="" members_from=()
 provider=anthropic judge_model=claude-sonnet-5 concurrency=4
 ref="" name="" base_ref="" head_ref=""
 
@@ -79,6 +85,7 @@ parse_options() {
       --panel) panel="$2" ;;
       --panel-config) panel_config="$2" ;;
       --baseline) baseline="$2" ;;
+      --members-from) members_from+=("$2") ;;
       --reasoning) reasoning="$2" ;;
       --jobs) jobs="$2" ;;
       --set) set_name="$2" ;;
@@ -194,6 +201,11 @@ review_pr() {
   local mode=(-agent "$agent" -model "$model" -provider "$agent_provider" -reasoning "$reasoning")
   if [ -n "$panel" ]; then
     mode=(-panel "$panel" -member-out "$run/member-findings/$key")
+    if [ ${#members_from[@]} -gt 0 ]; then
+      local dirs=() from
+      for from in "${members_from[@]}"; do dirs+=("$results/runs/$from/artifacts/$key/members"); done
+      mode=(-panel "$panel" -members-from "$(IFS=,; echo "${dirs[*]}")")
+    fi
   fi
   for attempt in 1 2; do
     if ROBOREV_DATA_DIR="$run/roborev-data" timeout "${PR_TIMEOUT:-1800}" \
@@ -224,8 +236,9 @@ run_eval() {
   jq -n --arg ref "$ref" --arg sha "$sha" --arg agent "$agent" --arg model "$model" \
     --arg provider "$agent_provider" --arg reasoning "$reasoning" --arg set "$set_name" \
     --arg bench "$REVIEWBENCH_SHA" \
-    --arg panel "$panel" \
-    '{ref: $ref, sha: $sha, agent: $agent, provider: $provider, model: $model, reasoning: $reasoning, panel: $panel, set: $set, reviewbench: $bench}' \
+    --arg panel "$panel" --args \
+    '{ref: $ref, sha: $sha, agent: $agent, provider: $provider, model: $model, reasoning: $reasoning, panel: $panel, members_from: $ARGS.positional, set: $set, reviewbench: $bench}' \
+    "${members_from[@]}" \
     > "$run/run.json"
   if [ -n "$panel" ]; then
     log "run $name: roborev $ref ($sha), panel $panel"
@@ -314,6 +327,39 @@ compare() {
   fi
 }
 
+# coverage BASE NAME... counts, for each judged run, the golden findings it
+# covers that BASE misses and the ones BASE covers that it misses. Use it to
+# see what a focused reviewer could add to a panel.
+coverage() {
+  [ $# -ge 2 ] || usage
+  local base="$1" n
+  shift
+  for n in "$base" "$@"; do
+    [ -f "$results/runs/$n/scoring/results.details.json" ] || die "run $n has not been judged"
+  done
+  printf '%-28s %8s %6s %6s %8s\n' run covered adds loses together
+  for n in "$@"; do
+    jq -rn --arg n "$n" \
+      --slurpfile a "$results/runs/$base/scoring/results.details.json" \
+      --slurpfile b "$results/runs/$n/scoring/results.details.json" \
+      --slurpfile s "$results/runs/$base/scoring/results.json" '
+      def cov(d): d | map({key: .pr_key, value: ([.candidate_findings[] | select(.status == "matched_tp") | .covered_golden_indices[]?] | unique)}) | from_entries;
+      cov($a[0]) as $x | cov($b[0]) as $y
+      | ([$s[0].per_pr[].metrics.overall.golden_tp_count] | add) as $total
+      | ($x + $y | keys) as $keys
+      | [$n,
+         ([$y[]] | map(length) | add // 0),
+         ([$keys[] as $k | (($y[$k] // []) - ($x[$k] // [])) | length] | add),
+         ([$keys[] as $k | (($x[$k] // []) - ($y[$k] // [])) | length] | add),
+         "\([$keys[] as $k | (($x[$k] // []) + ($y[$k] // []) | unique | length)] | add)/\($total)"]
+      | @tsv' | awk -F'\t' '{ printf "%-28s %8s %6s %6s %8s\n", $1, $2, $3, $4, $5 }'
+  done
+  echo
+  echo "covered: golden findings the run matched. adds: matched by the run but not by $base."
+  echo "loses: matched by $base but not by the run. together: matched by either."
+  echo "Counts can differ slightly from the judge's golden_covered_count, which dedupes on its own terms."
+}
+
 ab() {
   [ -n "$base_ref" ] && [ -n "$head_ref" ] || usage
   local stamp
@@ -347,17 +393,18 @@ panel_eval() {
   [ -f "$panel_config" ] || die "no panel config at $panel_config"
   run_eval
   # Each member's findings become a run of their own, so members are judged
-  # exactly like the panel and can be compared with it.
+  # exactly like the panel and can be compared with it. Reused member reviews
+  # were already judged in the runs they came from.
   local run="$results/runs/$name" member names=("$name") f
+  local members=()
   for f in "$run"/member-findings/*/*.json; do
     [ -e "$f" ] || continue
     member="$(basename "$f" .json)"
     mkdir -p "$results/runs/$name-$member/findings"
     cp "$f" "$results/runs/$name-$member/findings/$(basename "$(dirname "$f")").json"
+    [[ " ${members[*]} " == *" $member "* ]] || members+=("$member")
   done
-  for f in "$results/runs/$name"-*; do
-    [ -d "$f/findings" ] && names+=("$(basename "$f")")
-  done
+  for member in "${members[@]}"; do names+=("$name-$member"); done
   local n
   for n in "${names[@]}"; do
     name="$n" judge &
@@ -373,6 +420,7 @@ case "$command" in
   run) parse_options "$@"; run_eval ;;
   judge) parse_options "$@"; judge ;;
   compare) compare "$@" ;;
+  coverage) coverage "$@" ;;
   ab) parse_options "$@"; ab ;;
   harness) parse_options "$@"; harness ;;
   panel) parse_options "$@"; panel_eval ;;

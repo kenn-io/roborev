@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +14,7 @@ import (
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/review"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 // runPanel reviews with a configured roborev panel the way the daemon does:
@@ -19,8 +22,10 @@ import (
 // findings. A single surviving member passes through unchanged, and a panel
 // whose members all found nothing reports nothing without a synthesis call.
 // With memberOut set, each member's own findings are written there as well,
-// so members can be judged on their own.
-func (p probe) runPanel(ctx context.Context, name, memberOut, out string) error {
+// so members can be judged on their own. With membersFrom set, members are not
+// run: each one's review comes from the first of those directories that holds
+// MEMBER/review.json, so synthesis can be compared on the same member reviews.
+func (p probe) runPanel(ctx context.Context, name, memberOut string, membersFrom []string, out string) error {
 	members, synth, err := config.ResolvePanel(name, p.repo, p.cfg)
 	if err != nil {
 		return err
@@ -36,6 +41,10 @@ func (p probe) runPanel(ctx context.Context, name, memberOut, out string) error 
 	errs := make([]error, len(members))
 	var wg sync.WaitGroup
 	for i, m := range members {
+		if len(membersFrom) > 0 {
+			results[i], errs[i] = loadMemberReview(membersFrom, m)
+			continue
+		}
 		wg.Go(func() {
 			r := reviewer{
 				name: m.Name, agent: m.Agent, model: m.Model, provider: m.Provider,
@@ -79,6 +88,33 @@ func (p probe) runPanel(ctx context.Context, name, memberOut, out string) error 
 		}
 	}
 	return p.writeFindings(out, document, time.Since(started))
+}
+
+// loadMemberReview reads a member's saved review document and Markdown from
+// the first directory that has them.
+func loadMemberReview(dirs []string, m config.ResolvedMember) (review.ReviewResult, error) {
+	for _, dir := range dirs {
+		raw, err := os.ReadFile(filepath.Join(dir, m.Name, "review.json"))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return review.ReviewResult{}, err
+		}
+		doc, err := structuredreview.Decode(raw)
+		if err != nil {
+			return review.ReviewResult{}, fmt.Errorf("decode %s review: %w", m.Name, err)
+		}
+		output, err := os.ReadFile(filepath.Join(dir, m.Name, "review.md"))
+		if err != nil {
+			return review.ReviewResult{}, err
+		}
+		return review.ReviewResult{
+			Agent: m.Agent, ReviewType: m.ReviewType, Status: review.ResultDone,
+			Output: string(output), Structured: &doc, StructuredOutput: raw,
+		}, nil
+	}
+	return review.ReviewResult{}, fmt.Errorf("no saved review for member %s", m.Name)
 }
 
 func (p probe) memberArtifacts(member string) string {
