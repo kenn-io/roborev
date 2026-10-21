@@ -152,7 +152,7 @@ export function setupAppOpenedReporting(getScreen?: () => Screen): () => void {
 
 let reviewPending = false;
 export function reportCoreAction(
-  event: "review_viewed" | "review_closed",
+  event: "review_viewed" | "review_closed" | "search_empty",
 ): void {
   if (event === "review_viewed") {
     if (reviewPending) return;

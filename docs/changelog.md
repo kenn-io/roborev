@@ -16,6 +16,8 @@ All notable changes to roborev, grouped by minor release.
     reviews stay silent. Daemon-unreachable errors can't be counted.
 - Cap telemetry waits at exit to 50 ms for CLI commands, stdio MCP sessions, and
     the TUI.
+- Count Enter-submitted browser searches that return no jobs and human CLI
+    searches that find no reviews in anonymous telemetry, without search text.
 - Count review reads, committed fixes, and explicit closes in anonymous
     telemetry.
 - Report repository and review totals as ranges in anonymous daemon telemetry:

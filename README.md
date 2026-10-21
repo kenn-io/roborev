@@ -521,6 +521,10 @@ UI and TUI, and PostgreSQL sync outages. Failed closes and reopens both count.
 Daemon-unreachable errors can't be counted. See [telemetry configuration](https://github.com/kenn-io/roborev/blob/main/docs/configuration.md#telemetry)
 for event properties and reporting rules.
 
+`search_empty` counts each Enter-submitted browser search that returns no jobs
+and each human CLI search that finds no reviews, with only `surface=web|cli`.
+Previews and search text are excluded.
+
 Daily screen and `review_viewed` claims share `telemetry-daily.json` beside the
 daemon database, wherever `--db` points, with a `telemetry-daily.json.lock`
 sidecar. Deleting the file resets its claims; existing SQLite claims remain

@@ -18,6 +18,7 @@ import {
   panelElapsedStart,
 } from "../../utils/roborev-panel";
 import { reviewTypeColumnLabel } from "../../utils/roborev-review-type";
+import { reportCoreAction } from "../../utils/app-opened";
 import {
   makeRoborevOwner,
   RoborevMutationError,
@@ -179,6 +180,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
   let rerunningJobIds = $state<Set<number>>(new Set());
   let loadedLimit = DEFAULT_PAGE_LIMIT;
   let jobsAuthorityGeneration = 0;
+  let publishedJobsAuthority: JobsAuthority | undefined;
 
   // Filters
   let filterRepo = $state<string | undefined>(undefined);
@@ -374,6 +376,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
     Effect.sync(() => {
       if (generation !== jobsAuthorityGeneration) return [];
       if (JSON.stringify(buildQuery()) !== authority.queryScope) return [];
+      publishedJobsAuthority = authority;
       daemonOrder = new Map(
         authority.jobs.map((job, index) => [job.id, index]),
       );
@@ -424,7 +427,6 @@ export function createJobsStore(opts: JobsStoreOptions) {
             filteredStatusCounts = undefined;
         }).pipe(
           Effect.andThen(refreshJobsAuthority(query)),
-          Effect.asVoid,
           Effect.ensuring(
             Effect.sync(() => {
               loading = false;
@@ -434,8 +436,9 @@ export function createJobsStore(opts: JobsStoreOptions) {
       );
     });
 
-  const loadJobsEffect = () =>
-    loadJobsRequestEffect().pipe(
+  const loadJobsEffect = (request = loadJobsRequestEffect()) =>
+    request.pipe(
+      Effect.asVoid,
       Effect.catch((failure) =>
         Effect.sync(() => {
           storeError =
@@ -534,9 +537,42 @@ export function createJobsStore(opts: JobsStoreOptions) {
   }
 
   // Filter actions
+  function submitSearch(value: string) {
+    applyFilter("search", value || undefined);
+    return opts.runtime.runCommand(
+      loadJobsEffect(
+        loadJobsRequestEffect().pipe(
+          Effect.tap((authority) =>
+            Effect.sync(() => {
+              if (
+                value.trim() &&
+                authority === publishedJobsAuthority &&
+                authority.jobs.length === 0
+              )
+                reportCoreAction("search_empty");
+            }),
+          ),
+        ),
+      ),
+      {
+        operation: "submit Roborev search",
+        safeContext: { owner: opts.owner },
+        onFailure: () => {},
+      },
+    );
+  }
+
   function setFilter(key: StringFilterKey, value: string | undefined): void;
   function setFilter(key: BooleanFilterKey, value: boolean): void;
   function setFilter(
+    key: FilterKey,
+    value: string | boolean | undefined,
+  ): void {
+    applyFilter(key, value);
+    loadJobs();
+  }
+
+  function applyFilter(
     key: FilterKey,
     value: string | boolean | undefined,
   ): void {
@@ -572,7 +608,6 @@ export function createJobsStore(opts: JobsStoreOptions) {
         break;
     }
     if (filterScope() !== previousScope) loadedLimit = DEFAULT_PAGE_LIMIT;
-    loadJobs();
   }
 
   function setRepoBranchFilter(
@@ -937,6 +972,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
       // sync.
       const reconcile = (owner: string) =>
         loadJobsRequestEffect(owner).pipe(
+          Effect.asVoid,
           Effect.provideService(RoborevWorkflow, workflow),
           Effect.mapError((cause) =>
             RoborevStreamError.make({
@@ -1210,6 +1246,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
     loadMore,
     loadMoreEffect,
     setFilter,
+    submitSearch,
     setRepoBranchFilter,
     setSortColumn,
     cancelJob,

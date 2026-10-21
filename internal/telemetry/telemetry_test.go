@@ -244,13 +244,18 @@ func TestAllowedEventOptionsConfigureRoborevDaemonEvents(t *testing.T) {
 	require.NoError(err)
 	assert.Equal("tui", props["surface"])
 	assert.NotContains(props, "repo_count")
-	for _, event := range []string{EventReviewViewed, EventFindingFixed, EventReviewClosed} {
-		assert.True(reporter.EventAllowed(event))
-		props, err := reporter.SanitizeProperties(event, map[string]any{
-			PropertySurface: "tui", "job_id": 42, "output": "private review",
+	for _, tc := range []struct{ event, surface string }{
+		{EventReviewViewed, "tui"},
+		{EventFindingFixed, "tui"},
+		{EventReviewClosed, "tui"},
+		{EventSearchEmpty, "cli"},
+	} {
+		assert.True(reporter.EventAllowed(tc.event))
+		props, err := reporter.SanitizeProperties(tc.event, map[string]any{
+			PropertySurface: tc.surface, "job_id": 42, "output": "private review",
 		})
 		require.NoError(err)
-		assert.Equal("tui", props[PropertySurface])
+		assert.Equal(tc.surface, props[PropertySurface])
 		assert.NotContains(props, "job_id")
 		assert.NotContains(props, "output")
 	}
@@ -306,11 +311,11 @@ func TestAppOpenedSurfaceAcceptsOnlyFixedValues(t *testing.T) {
 		{name: "session numeric bucket", event: EventSessionEnded, property: PropertyDurationBucket, value: 120},
 		{name: "session rejects cli", event: EventSessionEnded, value: "cli"},
 	}
-	for _, event := range []string{EventReviewViewed, EventFindingFixed, EventReviewClosed} {
+	for _, event := range []string{EventReviewViewed, EventFindingFixed, EventReviewClosed, EventSearchEmpty} {
 		for _, surface := range []string{"web", "tui", "cli", "unknown"} {
 			t.Run(event+"/"+surface, func(t *testing.T) {
 				props, err := reporter.SanitizeProperties(event, map[string]any{PropertySurface: surface})
-				if surface == "unknown" || event == EventFindingFixed && surface == "web" {
+				if surface == "unknown" || event == EventFindingFixed && surface == "web" || event == EventSearchEmpty && surface == "tui" {
 					require.Error(t, err)
 					return
 				}

@@ -41,6 +41,7 @@ const (
 	PropertyReason          = "reason"
 	PropertySyncSource      = "sync_source"
 	SyncSourcePostgres      = "postgres"
+	EventSearchEmpty        = "search_empty"
 	EventAgentActive        = "agent_active"
 	EventAgentCallCount     = "agent_call_count"
 	PropertyCallCountBucket = "call_count_bucket"
@@ -151,6 +152,7 @@ func allowedEventOptions() []posthog.Option {
 		posthog.WithAllowedEvent(EventSyncFailed,
 			posthog.RequireProperty(PropertySyncSource, outcomeValues(SyncSourcePostgres)),
 			posthog.RequireProperty(PropertyReason, outcomeValues("auth", "network", "timeout"))),
+		posthog.WithAllowedEvent(EventSearchEmpty, posthog.RequireProperty(PropertySurface, posthog.AllowStringValues(SurfaceWeb, SurfaceCLI))),
 		posthog.WithAllowedEvent(EventAgentActive,
 			posthog.AllowProperty(PropertyCallCountBucket, posthog.AllowStringValues("1-10"))),
 		posthog.WithAllowedEvent(EventAgentCallCount,

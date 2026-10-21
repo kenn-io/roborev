@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 
@@ -474,6 +476,58 @@ func TestSearchCmdHumanOutputShowsModeCoverageAndZeroHits(t *testing.T) {
 	assert.Contains(t, output, "Coverage: mirror complete; vectors disabled")
 	assert.Contains(t, output, "No matching reviews.")
 	assert.Less(t, strings.Index(output, "Coverage:"), strings.Index(output, "No matching reviews."))
+}
+
+func TestSearchCmdEmptySearchTelemetry(t *testing.T) {
+	for _, mode := range []string{"human", "stdout terminal", "json", "agent", "populated"} {
+		t.Run(mode, func(t *testing.T) {
+			resetCLIUse(t)
+			md, rec := newCLIUseDaemon(t, MockRefineHooks{
+				OnUnhandled: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+					if r.URL.Path != "/api/search" {
+						return false
+					}
+					response := emptySearchResponse("nothing", "lexical")
+					if mode == "populated" {
+						response["hits"] = []map[string]any{{
+							"job_id": 42, "review_id": 9, "repo_name": "acme/widgets", "repo_path": "/src/widgets",
+							"git_ref": "main", "review_type": "code", "agent": "codex", "closed": true,
+							"finished_at": "2026-09-15T10:11:12Z", "score": 0.5,
+							"matched_in": []string{"lexical"}, "excerpt": "Lock the \x1b[31mshared\x1b[0m map.\nNext line.",
+						}}
+					}
+					writeSearchResponse(t, w, response)
+					return true
+				},
+			}, nil)
+			ep := mustParseEndpoint(t, md.Server.URL)
+			cliUseEndpoint.Store(&ep)
+			cliTelemetryEnabled = func() bool { return true }
+			args := []string{"nothing"}
+			if mode == "json" || mode == "agent" {
+				args = append(args, "--"+mode)
+			}
+			_, output := captureStdoutStderr(t, func() {
+				cliOutputIsTerminal = func(w io.Writer) bool {
+					if w == os.Stdout {
+						return mode == "stdout terminal"
+					}
+					return w == os.Stderr && mode != "stdout terminal"
+				}
+				cmd := searchCmd()
+				cmd.SetArgs(args)
+				require.NoError(t, cmd.Execute())
+			})
+			drainCLIReports()
+			if mode == "human" {
+				assert.Contains(t, output, "No matching reviews.")
+				require.Len(t, rec.telemetryPosts(), 1)
+				assert.JSONEq(t, `{"event":"search_empty","properties":{"surface":"cli"}}`, rec.telemetryPosts()[0].body)
+			} else {
+				assert.Empty(t, rec.telemetryPosts())
+			}
+		})
+	}
 }
 
 func TestSearchCmdHumanOutputShowsNoticesAndCompactHit(t *testing.T) {

@@ -8,6 +8,8 @@ import {
   type JobsStoreOptions,
 } from "./jobs.svelte";
 import type { ReviewJob } from "../../api/generated/models";
+const actionReports = vi.hoisted(() => vi.fn());
+vi.mock("../../utils/app-opened", () => ({ reportCoreAction: actionReports }));
 
 const originalFetch = globalThis.fetch;
 const runtimes = new Set<OwnedAppRuntime>();
@@ -96,6 +98,103 @@ function makeJob(
     ...(finishedAt ? { finished_at: finishedAt } : {}),
   };
 }
+
+function stubEventStream() {
+  let events: ReadableStreamDefaultController<Uint8Array> | undefined;
+  globalThis.fetch = vi.fn((input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith("/api/stream/events")) {
+      return Promise.resolve(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              events = controller;
+            },
+          }),
+          { status: 200 },
+        ),
+      );
+    }
+    return originalFetch(input, init);
+  });
+  return (chunk: string) => events?.enqueue(new TextEncoder().encode(chunk));
+}
+
+describe("submitted search telemetry", () => {
+  beforeEach(() => {
+    actionReports.mockReset();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("reports each submitted empty search, while refreshes stay silent", async () => {
+    const api = { listJobs: vi.fn().mockResolvedValue({ jobs: [] }) };
+    const store = createJobsStore({ api: api as never, navigate: vi.fn() });
+    store.submitSearch("feature/search");
+    await vi.waitFor(() =>
+      expect(actionReports).toHaveBeenCalledExactlyOnceWith("search_empty"),
+    );
+    store.submitSearch("feature/search");
+    await vi.waitFor(() => expect(actionReports).toHaveBeenCalledTimes(2));
+    expect(actionReports).toHaveBeenLastCalledWith("search_empty");
+    await loadJobs(store);
+    expect(actionReports).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["populated", "feature/search"],
+    ["empty query", ""],
+    ["empty query", " \t\n"],
+    ["preview", "feature/search"],
+    ["failed", "feature/search"],
+  ])("keeps a %s search silent", async (kind, value) => {
+    const api = {
+      listJobs: vi.fn().mockResolvedValue({
+        jobs: kind === "populated" ? [makeJob(1)] : [],
+      }),
+    };
+    if (kind === "failed")
+      api.listJobs.mockRejectedValue(new Error("request failed"));
+    const store = createJobsStore({ api: api as never, navigate: vi.fn() });
+    if (kind === "preview") store.setFilter("search", "feature/search");
+    else store.submitSearch(value);
+    await vi.waitFor(() => {
+      expect(api.listJobs).toHaveBeenCalledTimes(1);
+      expect(store.isLoading()).toBe(false);
+    });
+    if (kind === "failed") expect(store.getError()).not.toBeNull();
+    if (kind === "populated") expect(store.getJobs()).toEqual([makeJob(1)]);
+    expect(actionReports).not.toHaveBeenCalled();
+  });
+
+  it("keeps a discarded empty reply silent when a live refresh shows jobs", async () => {
+    const emitEvent = stubEventStream();
+    const pending = Promise.withResolvers<{ jobs: ReviewJob[] }>();
+    const api = {
+      listJobs: vi
+        .fn()
+        .mockResolvedValueOnce({ jobs: [makeJob(1)] })
+        .mockReturnValueOnce(pending.promise)
+        .mockResolvedValue({ jobs: [makeJob(2)] }),
+    };
+    const store = createJobsStore({ api: api as never, navigate: vi.fn() });
+    const eventOwner = store.connectEventStream("/api/roborev");
+    await vi.waitFor(() => expect(store.isEventStreamConnected()).toBe(true));
+    const execution = store.submitSearch("feature/search");
+    await vi.waitFor(() => expect(api.listJobs).toHaveBeenCalledTimes(2));
+    emitEvent(
+      '{"type":"review.completed","ts":"2026-08-04T13:00:00Z","job_id":42}\n',
+    );
+    await vi.waitFor(() => expect(store.getJobs()).toEqual([makeJob(2)]));
+    pending.resolve({ jobs: [] });
+    await Effect.runPromise(execution.await);
+    expect(store.getJobs()).toEqual([makeJob(2)]);
+    expect(actionReports).not.toHaveBeenCalled();
+    store.disconnectEventStream(eventOwner);
+  });
+});
 
 describe("createJobsStore filter preferences", () => {
   it("maps the branchless display sentinel to the empty branch query", async () => {
@@ -510,19 +609,7 @@ describe("createJobsStore event stream", () => {
   });
 
   it("keeps event reconciliation alive across overlapping list requests", async () => {
-    const encoder = new TextEncoder();
-    let bodyController: ReadableStreamDefaultController<Uint8Array> | undefined;
-    globalThis.fetch = vi.fn(
-      async () =>
-        new Response(
-          new ReadableStream<Uint8Array>({
-            start(controller) {
-              bodyController = controller;
-            },
-          }),
-          { status: 200 },
-        ),
-    );
+    const emitChunk = stubEventStream();
     let requestCount = 0;
     let firstSignal: AbortSignal | undefined;
     let resolveFirst:
@@ -562,10 +649,8 @@ describe("createJobsStore event stream", () => {
     await vi.waitFor(() => expect(store.isEventStreamConnected()).toBe(true));
     expect(api.listJobs).toHaveBeenCalledTimes(1);
 
-    bodyController?.enqueue(
-      encoder.encode(
-        '{"type":"review.completed","ts":"2026-08-04T13:00:00Z","job_id":42}\n',
-      ),
+    emitChunk(
+      '{"type":"review.completed","ts":"2026-08-04T13:00:00Z","job_id":42}\n',
     );
     await vi.waitFor(() => expect(api.listJobs).toHaveBeenCalledTimes(2));
     await loadJobs(store);
@@ -577,10 +662,8 @@ describe("createJobsStore event stream", () => {
       stats: { done: 0, closed: 0, open: 0 },
     });
 
-    bodyController?.enqueue(
-      encoder.encode(
-        '{"type":"review.closed","ts":"2026-08-04T13:01:00Z","job_id":42}\n',
-      ),
+    emitChunk(
+      '{"type":"review.closed","ts":"2026-08-04T13:01:00Z","job_id":42}\n',
     );
     await vi.waitFor(() => expect(api.listJobs).toHaveBeenCalledTimes(4));
 
@@ -589,19 +672,7 @@ describe("createJobsStore event stream", () => {
   });
 
   it("drains burst events while coalescing a slow reconciliation", async () => {
-    const encoder = new TextEncoder();
-    let bodyController: ReadableStreamDefaultController<Uint8Array> | undefined;
-    globalThis.fetch = vi.fn(
-      async () =>
-        new Response(
-          new ReadableStream<Uint8Array>({
-            start(controller) {
-              bodyController = controller;
-            },
-          }),
-          { status: 200 },
-        ),
-    );
+    const emitChunk = stubEventStream();
 
     type JobsResponse = {
       jobs: ReviewJob[];
@@ -633,10 +704,8 @@ describe("createJobsStore event stream", () => {
     await vi.waitFor(() => expect(store.isEventStreamConnected()).toBe(true));
 
     const emitEvent = (index: number) => {
-      bodyController?.enqueue(
-        encoder.encode(
-          `{"type":"review.completed","ts":"2026-08-04T13:00:${String(index).padStart(2, "0")}Z","job_id":42,"repo":"/workspace/repo","repo_name":"repo","sha":"abc123"}\n`,
-        ),
+      emitChunk(
+        `{"type":"review.completed","ts":"2026-08-04T13:00:${String(index).padStart(2, "0")}Z","job_id":42,"repo":"/workspace/repo","repo_name":"repo","sha":"abc123"}\n`,
       );
     };
     emitEvent(0);
@@ -664,19 +733,7 @@ describe("createJobsStore event stream", () => {
   });
 
   it("discards an older list response after event reconciliation publishes", async () => {
-    const encoder = new TextEncoder();
-    let bodyController: ReadableStreamDefaultController<Uint8Array> | undefined;
-    globalThis.fetch = vi.fn(
-      async () =>
-        new Response(
-          new ReadableStream<Uint8Array>({
-            start(controller) {
-              bodyController = controller;
-            },
-          }),
-          { status: 200 },
-        ),
-    );
+    const emitChunk = stubEventStream();
 
     type JobsResponse = {
       jobs: ReviewJob[];
@@ -707,10 +764,8 @@ describe("createJobsStore event stream", () => {
 
     const olderLoad = loadJobs(store);
     await vi.waitFor(() => expect(pending).toHaveLength(2));
-    bodyController?.enqueue(
-      encoder.encode(
-        '{"type":"review.completed","ts":"2026-08-04T13:00:00Z","job_id":42,"repo":"/workspace/repo","repo_name":"repo","sha":"abc123"}\n',
-      ),
+    emitChunk(
+      '{"type":"review.completed","ts":"2026-08-04T13:00:00Z","job_id":42,"repo":"/workspace/repo","repo_name":"repo","sha":"abc123"}\n',
     );
     await vi.waitFor(() => expect(pending).toHaveLength(3));
 
@@ -734,19 +789,7 @@ describe("createJobsStore event stream", () => {
   });
 
   it("invalidates the selected review for commit-scoped comment events", async () => {
-    const encoder = new TextEncoder();
-    let bodyController: ReadableStreamDefaultController<Uint8Array> | undefined;
-    globalThis.fetch = vi.fn(
-      async () =>
-        new Response(
-          new ReadableStream<Uint8Array>({
-            start(controller) {
-              bodyController = controller;
-            },
-          }),
-          { status: 200 },
-        ),
-    );
+    const emitChunk = stubEventStream();
     const api = {
       listJobs: vi.fn().mockResolvedValue({
         jobs: [],
@@ -763,10 +806,8 @@ describe("createJobsStore event stream", () => {
     const eventOwner = store.connectEventStream("/api/roborev");
     await vi.waitFor(() => expect(store.isEventStreamConnected()).toBe(true));
 
-    bodyController?.enqueue(
-      encoder.encode(
-        '{"type":"review.commented","ts":"2026-08-04T13:00:00Z","job_id":0,"repo":"/workspace/repo","repo_name":"repo","sha":"abc123"}\n',
-      ),
+    emitChunk(
+      '{"type":"review.commented","ts":"2026-08-04T13:00:00Z","job_id":0,"repo":"/workspace/repo","repo_name":"repo","sha":"abc123"}\n',
     );
 
     await vi.waitFor(() =>

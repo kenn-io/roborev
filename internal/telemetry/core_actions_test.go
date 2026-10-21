@@ -18,7 +18,8 @@ import (
 	"go.kenn.io/roborev/internal/testutil"
 )
 
-func TestCoreActionDailyClaims(t *testing.T) {
+func coreActionCapture(t *testing.T) (*telemetry.Reporter, func() []testutil.PostHogMessage, func(string) *httptest.ResponseRecorder) {
+	t.Helper()
 	testenv.SetDataDir(t)
 	t.Setenv(telemetry.EnabledEnv, "1")
 	t.Setenv(telemetry.GenericEnabledEnv, "1")
@@ -26,7 +27,7 @@ func TestCoreActionDailyClaims(t *testing.T) {
 	stub := httptest.NewTestServer(t, recorder)
 	transport := http.DefaultTransport
 	http.DefaultTransport = stub.Client().Transport
-	defer func() { http.DefaultTransport = transport }()
+	t.Cleanup(func() { http.DefaultTransport = transport })
 	db := testutil.OpenTestDB(t)
 	server := daemon.NewServer(db, config.DefaultConfig(), "")
 	t.Cleanup(func() { require.NoError(t, server.Close()) })
@@ -50,6 +51,11 @@ func TestCoreActionDailyClaims(t *testing.T) {
 		handler.ServeHTTP(recorder, request)
 		return recorder
 	}
+	return reporter, messages, post
+}
+
+func TestCoreActionDailyClaims(t *testing.T) {
+	reporter, messages, post := coreActionCapture(t)
 	surfacesOf := func(messages []testutil.PostHogMessage) []string {
 		var result []string
 		for _, message := range messages {
@@ -84,4 +90,22 @@ func TestCoreActionDailyClaims(t *testing.T) {
 	}, surfacesOf(sent))
 	assert.Equal(t, "review_closed", sent[9].Properties["kind"])
 	assert.Equal(t, "review_closed", sent[10].Properties["kind"])
+}
+
+func TestSubmittedEmptySearchCapture(t *testing.T) {
+	reporter, messages, post := coreActionCapture(t)
+	assert := assert.New(t)
+	for _, surface := range []string{"web", "cli"} {
+		for range 2 {
+			assert.Equal(http.StatusAccepted, post(`{"event":"search_empty","properties":{"surface":"`+surface+`"}}`).Code)
+		}
+	}
+
+	require.NoError(t, reporter.Close())
+	sent := messages()
+	require.Len(t, sent, 4)
+	for index, message := range sent {
+		assert.Equal("search_empty", message.Event)
+		assert.Equal([]string{"web", "web", "cli", "cli"}[index], message.Properties["surface"])
+	}
 }

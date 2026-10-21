@@ -2001,6 +2001,11 @@ reporting resumes after a full pass succeeds. Unlisted `kind`, `reason`, and
 The daemon deduplicates successful core action reports per day, so clients may
 repeat them.
 
+The browser reports `search_empty` with only `surface=web` each time an
+Enter-submitted search returns no jobs. The CLI reports it with `surface=cli`
+when a human search finds no reviews, under the same terminal and agent rules as
+other CLI actions. Debounced previews stay silent, and search text is excluded.
+
 The browser and TUI also report `screen_viewed` with a fixed `screen` name and
 `surface` of `web` or `tui`. Browser screens are `reviews` and `analytics`. TUI
 screens are `queue`, `review`, `prompt`, `filter`, `comment`, `commit-msg`,
