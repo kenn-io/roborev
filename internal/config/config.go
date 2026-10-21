@@ -659,6 +659,11 @@ func validateConfig(cfg any, acp ACPAgentConfigs) error {
 			return fmt.Errorf("review.panels.%q.synthesis_reasoning: %w", name, err)
 		}
 	}
+	for _, name := range slices.Sorted(maps.Keys(review.Subagents)) {
+		if err := validateMemberReviewTypeSyntax(review.Subagents[name].ReviewType); err != nil {
+			return fmt.Errorf("review.subagents.%q: %w", name, err)
+		}
+	}
 	if err := validateCustomReviewTypes(review.Types); err != nil {
 		return err
 	}
@@ -739,7 +744,7 @@ func (c *Config) Validate() (err error) {
 	); err != nil {
 		return err
 	}
-	return ValidateEffectiveReviewConfig(c, nil)
+	return validateEffectiveReviewConfig(c, nil, true)
 }
 
 // RepoConfig holds per-repo overrides

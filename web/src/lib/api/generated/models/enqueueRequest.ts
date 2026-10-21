@@ -28,5 +28,6 @@ export interface EnqueueRequest {
   review_type?: string;
   since?: string;
   source?: string;
+  source_job_ids?: number[];
   spec_file?: string;
 }

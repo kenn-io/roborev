@@ -30,7 +30,7 @@ func TestTrimNextDropsGuidelinesBeforeKata(t *testing.T) {
 func TestBuildKataContextSectionView(t *testing.T) {
 	v := buildKataContextSectionView(
 		[]kata.Issue{{QualifiedID: "p#abc4", Title: "Add widget", Body: "Build the widget.", Status: "open"}},
-		[]string{"Referenced p#def5 could not be loaded."}, 50000, config.KataModeCurrent)
+		[]string{"Referenced p#def5 could not be loaded."}, 50000, config.KataModeCurrent, false)
 	require.NotNil(t, v)
 	assert.Contains(t, v.Body, "p#abc4")
 	assert.Contains(t, v.Body, "Add widget")
@@ -43,7 +43,7 @@ func TestBuildKataContextSectionView(t *testing.T) {
 func TestBuildKataContextSectionViewOpenModeIntro(t *testing.T) {
 	v := buildKataContextSectionView(
 		[]kata.Issue{{QualifiedID: "p#abc4", Title: "Add widget", Body: "Build the widget.", Status: "open"}},
-		nil, 50000, config.KataModeOpen)
+		nil, 50000, config.KataModeOpen, false)
 	require.NotNil(t, v)
 	assert.Contains(t, v.Body, "background context",
 		"open-mode issues are the whole backlog and must not be framed as authoritative")
@@ -55,7 +55,7 @@ func TestBuildKataContextSectionViewTruncates(t *testing.T) {
 	for i := range big {
 		big[i] = 'x'
 	}
-	v := buildKataContextSectionView([]kata.Issue{{ShortID: "a", Title: "T", Body: string(big)}}, nil, 80, config.KataModeCurrent)
+	v := buildKataContextSectionView([]kata.Issue{{ShortID: "a", Title: "T", Body: string(big)}}, nil, 80, config.KataModeCurrent, false)
 	require.NotNil(t, v)
 	maxLen := len(kataIntroCurrent) + len("\n\n") + 80 + len("\n\n_[kata context truncated]_")
 	assert.LessOrEqual(t, len(v.Body), maxLen, "truncation budget applies to the issue body, not the fixed intro")
@@ -63,7 +63,7 @@ func TestBuildKataContextSectionViewTruncates(t *testing.T) {
 }
 
 func TestBuildKataContextSectionViewEmpty(t *testing.T) {
-	assert.Nil(t, buildKataContextSectionView(nil, nil, 50000, config.KataModeCurrent))
+	assert.Nil(t, buildKataContextSectionView(nil, nil, 50000, config.KataModeCurrent, false))
 }
 
 func TestBuilderInjectsKataContext(t *testing.T) {

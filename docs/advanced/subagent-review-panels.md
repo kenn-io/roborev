@@ -72,6 +72,25 @@ Panels require the daemon. `roborev review --local --panel branch_final` prints
 a note and runs a single agent review because local mode does not use daemon
 side panel resolution.
 
+## Custom rubrics
+
+A member's `review_type` can name a [custom review type](custom-review-types.md)
+from global or repository configuration. A repository definition replaces the
+whole same-name global type, including agent and model fields. A global subagent
+can reference a repository-defined type, but that type must exist when the panel
+is resolved.
+
+Synthesis uses neutral wording when any voting member has a custom rubric, even
+if that member failed or was skipped. Each synthesis input keeps its rubric
+label and numeric source reference. Silence across different rubrics is not
+disagreement, and only findings about the same problem are combined. Custom
+non-voting observers do not change synthesis framing or the verdict.
+Built-in-only panels keep their existing prompt wording.
+
+`roborev compact` rejects a panel parent with a custom voting member. Built-in
+parents with custom non-voting observers remain eligible. The daemon checks its
+member records; a missing parent provenance record is an error.
+
 ## How Panels Work
 
 A panel run creates one member job per configured reviewer and one synthesis

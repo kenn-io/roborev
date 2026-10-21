@@ -26,6 +26,45 @@ still constructs the commit or range context, project guidelines, diff, and
 oversized-diff snapshot instructions. It also owns the output schema, severity
 filtering, pass/fail verdict, and final Markdown rendering.
 
+## Reviews of drafts and other material
+
+A custom rubric can review committed drafts and other versioned material, not
+only software. Roborev uses neutral wording in the generated task context,
+history, metadata, and response guidance. It preserves your template,
+guidelines, quoted findings, and other supplied text. Built-in review types keep
+their existing prompts.
+
+Use the same type name in a panel member's `review_type`:
+
+```toml
+[review.types.citations]
+template = ".roborev/reviews/citations.md"
+agent = "claude-code"
+
+[review.subagents.sources]
+review_type = "citations"
+
+[review.panels.drafts]
+members = ["sources"]
+```
+
+A global subagent may reference a custom type defined in each repository. Global
+loading and global-only validation, including experiment overlays, check the
+reference's syntax. Review resolution requires the type to exist in the
+effective global/repository configuration; an unresolved global-only invocation
+fails.
+
+If any voting panel member uses a custom type, synthesis uses neutral wording
+and labels its inputs with their rubrics. This includes failed or skipped custom
+voters; non-voting observers do not affect synthesis. Findings merge only when
+they describe the same problem. Silence from another rubric does not count as
+disagreement. See [Subagent Review Panels](subagent-review-panels.md).
+
+`compact` supports built-in review sources only. It rejects direct custom
+reviews and panel parents with custom voting members, rather than substituting a
+built-in rubric. `fix` and `refine` remain writable, code-framed workflows; they
+do not promise to preserve a custom rubric during re-review.
+
 ## Configuration reference
 
 Each `[review.types.<name>]` table supports these fields:
