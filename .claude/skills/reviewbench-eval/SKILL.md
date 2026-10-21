@@ -191,7 +191,15 @@ Lead with the comparison table, then say what it means:
 
 Save any HTML report under `~/.local/share/roborev-reviewbench/reports/`,
 named by date and topic. A saved report is opened outside T3, so it must carry
-its own colors and fonts: give every theme variable a fallback, such as
-`var(--foreground, var(--fb-foreground))`, with light and dark `--fb-*` values
-defined in the page. Keep run artifacts out of the repository, commits,
-and pull request text.
+its own colors and fonts. Define light and dark `--fb-*` values in the page and
+use only those for both text and background, and set the background on `html`
+and `body`. Do not mix in host variables such as
+`var(--foreground, var(--fb-foreground))`: a host that supplies a light
+foreground but no background gives white text on a white page. Keep run
+artifacts out of the repository, commits, and pull request text.
+
+Keep `~/.local/share/roborev-reviewbench/EXPERIMENTS.md` current. It is the
+ledger of what was tried, what is running, and what each result was. Read it
+before proposing an experiment, add a run when you launch it, and record the
+numbers and verdict when it finishes. Record analyses too, even ones that led
+nowhere, so they are not repeated.
