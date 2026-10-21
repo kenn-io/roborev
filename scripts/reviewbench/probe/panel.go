@@ -36,9 +36,7 @@ func (p probe) runPanel(ctx context.Context, name, memberOut, out string) error 
 	errs := make([]error, len(members))
 	var wg sync.WaitGroup
 	for i, m := range members {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			r := reviewer{
 				name: m.Name, agent: m.Agent, model: m.Model, provider: m.Provider,
 				reasoning: m.Reasoning, reviewType: m.ReviewType, instructions: m.Instructions, panel: name,
@@ -52,7 +50,7 @@ func (p probe) runPanel(ctx context.Context, name, memberOut, out string) error 
 			if memberOut != "" {
 				errs[i] = p.writeFindings(filepath.Join(memberOut, m.Name+".json"), result.StructuredOutput, elapsed)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 
