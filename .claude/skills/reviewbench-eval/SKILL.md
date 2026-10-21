@@ -72,6 +72,16 @@ scripts/reviewbench/eval.sh harness --ref HEAD --name <topic> \
   --arm codex::gpt-6.1-sol --arm pi:cpa:gpt-6.1-sol [--provider P --judge-model M]
 ```
 
+To compare a roborev panel with its members and a stock reviewer, run the
+panel from your roborev config. It judges the panel and each member on its own:
+
+```bash
+scripts/reviewbench/eval.sh panel --ref HEAD --name <topic> --panel <panel> \
+  --baseline <earlier stock run> [--panel-config FILE] [--provider P --judge-model M]
+```
+
+Only the `[review…]` sections of the panel config reach the eval.
+
 Arms run one after another; never start two eval runs at once, because each
 builds its probe in a temporary worktree of this repository.
 

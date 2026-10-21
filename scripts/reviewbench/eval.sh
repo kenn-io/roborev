@@ -11,10 +11,14 @@
 #   scripts/reviewbench/eval.sh compare NAME NAME...
 #   scripts/reviewbench/eval.sh ab --base REF --head REF [run and judge options]
 #   scripts/reviewbench/eval.sh harness --ref REF --name NAME --arm A --arm B... [options]
+#   scripts/reviewbench/eval.sh panel --ref REF --name NAME --panel PANEL [--baseline RUN] [options]
 #
 # ab compares two refs with one agent. harness compares agents on one ref:
 # each --arm is AGENT:PROVIDER:MODEL, for example codex::gpt-6-sol or
-# pi:cpa:gpt-6-sol; PROVIDER only applies to pi and may be empty.
+# pi:cpa:gpt-6-sol; PROVIDER only applies to pi and may be empty. panel reviews
+# with a roborev panel from --panel-config (default ~/.roborev/config.toml),
+# then judges the panel and each member on its own; --baseline names an
+# earlier run, such as a stock reviewer, to print beside them.
 #
 # Run options:
 #   --agent NAME        roborev agent (default claude-code)
@@ -51,11 +55,12 @@ results="${ROBOREV_EVAL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/roborev-review
 cache="${ROBOREV_EVAL_CACHE:-${TMPDIR:-/tmp}/roborev-reviewbench}"
 bench="$cache/ReviewBench"
 
-usage() { sed -n '8,37p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '8,41p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 die() { echo "eval: $*" >&2; exit 1; }
 log() { echo "eval: $*" >&2; }
 
 agent=claude-code model="" agent_provider="" reasoning=thorough jobs=4 set_name=test prs=() arms=()
+panel="" panel_config="$HOME/.roborev/config.toml" baseline=""
 provider=anthropic judge_model=claude-sonnet-5 concurrency=4
 ref="" name="" base_ref="" head_ref=""
 
@@ -71,6 +76,9 @@ parse_options() {
       --model) model="$2" ;;
       --agent-provider) agent_provider="$2" ;;
       --arm) arms+=("$2") ;;
+      --panel) panel="$2" ;;
+      --panel-config) panel_config="$2" ;;
+      --baseline) baseline="$2" ;;
       --reasoning) reasoning="$2" ;;
       --jobs) jobs="$2" ;;
       --set) set_name="$2" ;;
@@ -124,7 +132,7 @@ build_probe() {
   tree="$(mktemp -d)"
   git -C "$root" worktree add -q --detach "$tree/src" "$sha"
   mkdir -p "$tree/src/scripts/reviewbench/probe"
-  cp "$probe_src/main.go" "$probe_src/convert.go" "$tree/src/scripts/reviewbench/probe/"
+  find "$probe_src" -maxdepth 1 -name '*.go' ! -name '*_test.go' -exec cp {} "$tree/src/scripts/reviewbench/probe/" \;
   if ! (cd "$tree/src" && go build -o "$2" ./scripts/reviewbench/probe); then
     git -C "$root" worktree remove --force "$tree/src"
     die "the probe does not build at $1 ($sha)"
@@ -180,10 +188,14 @@ review_pr() {
   local run="$1" prdir="$2" key="$3" attempt
   local out="$run/findings/$key.json"
   [ -s "$out" ] && return 0
+  local mode=(-agent "$agent" -model "$model" -provider "$agent_provider" -reasoning "$reasoning")
+  if [ -n "$panel" ]; then
+    mode=(-panel "$panel" -member-out "$run/member-findings/$key")
+  fi
   for attempt in 1 2; do
     if ROBOREV_DATA_DIR="$run/roborev-data" timeout "${PR_TIMEOUT:-1800}" \
       "$run/bin/probe" -repo "$prdir/$key/repo" -pr-json "$prdir/$key/pr.json" \
-      -agent "$agent" -model "$model" -provider "$agent_provider" -reasoning "$reasoning" -producer "roborev" \
+      "${mode[@]}" -producer "roborev" \
       -out "$out.tmp" -artifacts "$run/artifacts/$key" >>"$run/logs/$key.log" 2>&1; then
       mv "$out.tmp" "$out"
       log "$key: $(jq '.findings | length' "$out") finding(s)"
@@ -200,13 +212,23 @@ run_eval() {
   local run="$results/runs/$name" prdir="$cache/prs/$name" list sha i count indices key failed=0
   mkdir -p "$run/bin" "$run/findings" "$run/logs" "$run/artifacts" "$run/roborev-data"
   sha="$(build_probe "$ref" "$run/bin/probe")"
+  if [ -n "$panel" ]; then
+    # Only the review sections: panels, subagents, and review types. Nothing
+    # else from the user's roborev config reaches the eval.
+    awk '/^\[/{keep = ($0 ~ /^\[review[].]/)} keep' "$panel_config" > "$run/roborev-data/config.toml"
+  fi
   list="$(manifest)"
   jq -n --arg ref "$ref" --arg sha "$sha" --arg agent "$agent" --arg model "$model" \
     --arg provider "$agent_provider" --arg reasoning "$reasoning" --arg set "$set_name" \
     --arg bench "$REVIEWBENCH_SHA" \
-    '{ref: $ref, sha: $sha, agent: $agent, provider: $provider, model: $model, reasoning: $reasoning, set: $set, reviewbench: $bench}' \
+    --arg panel "$panel" \
+    '{ref: $ref, sha: $sha, agent: $agent, provider: $provider, model: $model, reasoning: $reasoning, panel: $panel, set: $set, reviewbench: $bench}' \
     > "$run/run.json"
-  log "run $name: roborev $ref ($sha), agent $agent ${agent_provider:+provider $agent_provider }${model:+model $model }reasoning $reasoning"
+  if [ -n "$panel" ]; then
+    log "run $name: roborev $ref ($sha), panel $panel"
+  else
+    log "run $name: roborev $ref ($sha), agent $agent ${agent_provider:+provider $agent_provider }${model:+model $model }reasoning $reasoning"
+  fi
 
   count=$(jq length "$list")
   if [ ${#prs[@]} -gt 0 ]; then indices="${prs[*]}"; else indices="$(seq 0 $((count - 1)))"; fi
@@ -317,6 +339,30 @@ harness() {
   compare "${names[@]}"
 }
 
+panel_eval() {
+  [ -n "$ref" ] && [ -n "$name" ] && [ -n "$panel" ] || usage
+  [ -f "$panel_config" ] || die "no panel config at $panel_config"
+  run_eval
+  # Each member's findings become a run of their own, so members are judged
+  # exactly like the panel and can be compared with it.
+  local run="$results/runs/$name" member names=("$name") f
+  for f in "$run"/member-findings/*/*.json; do
+    [ -e "$f" ] || continue
+    member="$(basename "$f" .json)"
+    mkdir -p "$results/runs/$name-$member/findings"
+    cp "$f" "$results/runs/$name-$member/findings/$(basename "$(dirname "$f")").json"
+  done
+  for f in "$results/runs/$name"-*; do
+    [ -d "$f/findings" ] && names+=("$(basename "$f")")
+  done
+  local n
+  for n in "${names[@]}"; do
+    name="$n" judge &
+  done
+  wait
+  compare ${baseline:+"$baseline"} "${names[@]}"
+}
+
 [ $# -ge 1 ] || usage
 command="$1"; shift
 case "$command" in
@@ -326,5 +372,6 @@ case "$command" in
   compare) compare "$@" ;;
   ab) parse_options "$@"; ab ;;
   harness) parse_options "$@"; harness ;;
+  panel) parse_options "$@"; panel_eval ;;
   *) usage ;;
 esac

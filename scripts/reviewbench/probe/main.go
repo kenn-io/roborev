@@ -30,6 +30,24 @@ func main() {
 	}
 }
 
+// reviewer is one agent configuration: the single reviewer of an ordinary
+// run, or one member of a panel.
+type reviewer struct {
+	name, agent, model, provider, reasoning, reviewType, instructions string
+	panel                                                             string
+}
+
+// probe holds what every review of one pull request shares.
+type probe struct {
+	cfg       *config.Config
+	repo      string
+	gitRef    string
+	pr        pullRequest
+	producer  string
+	artifacts string
+	changed   map[string][][2]int
+}
+
 func run() error {
 	repo := flag.String("repo", "", "checkout of the pull request at its head commit")
 	prJSON := flag.String("pr-json", "", "ReviewBench pr.json for the pull request")
@@ -37,6 +55,8 @@ func run() error {
 	model := flag.String("model", "", "model for the agent; empty uses the agent's default")
 	provider := flag.String("provider", "", "pi provider for the model; ignored by other agents")
 	reasoning := flag.String("reasoning", "thorough", "reasoning level: fast, standard, or thorough")
+	panel := flag.String("panel", "", "review with this roborev panel from the loaded config instead of one agent")
+	memberOut := flag.String("member-out", "", "with -panel, a directory for each member's own findings file")
 	producer := flag.String("producer", "roborev", "name written as the findings' agent and producer")
 	out := flag.String("out", "", "where to write the findings file")
 	artifacts := flag.String("artifacts", "", "directory for the prompt, review document, and agent log")
@@ -53,75 +73,113 @@ func run() error {
 	if err := json.Unmarshal(raw, &pr); err != nil {
 		return fmt.Errorf("read %s: %w", *prJSON, err)
 	}
-	gitRef := pr.Base + ".." + pr.Head
-
 	cfg, err := config.LoadGlobal()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	a, err := agent.Get(*agentName)
+	ctx := context.Background()
+	diff, err := gitDiff(ctx, *repo, pr.Base, pr.Head)
 	if err != nil {
 		return err
 	}
-	a = a.WithReasoning(agent.ParseReasoningLevel(*reasoning)).WithModel(*model)
-	if pi, ok := a.(*agent.PiAgent); ok && *provider != "" {
-		a = pi.WithProvider(*provider)
+	p := probe{
+		cfg: cfg, repo: *repo, gitRef: pr.Base + ".." + pr.Head, pr: pr,
+		producer: *producer, artifacts: *artifacts, changed: changedLines(diff),
+	}
+
+	if *panel != "" {
+		return p.runPanel(ctx, *panel, *memberOut, *out)
+	}
+	result, elapsed, err := p.review(ctx, reviewer{
+		agent: *agentName, model: *model, provider: *provider, reasoning: *reasoning,
+	}, *artifacts)
+	if err != nil {
+		return err
+	}
+	return p.writeFindings(*out, result.StructuredOutput, elapsed)
+}
+
+func configure(r reviewer, agentic bool) (agent.Agent, error) {
+	a, err := agent.Get(r.agent)
+	if err != nil {
+		return nil, err
+	}
+	reasoning := r.reasoning
+	if reasoning == "" {
+		reasoning = "thorough"
+	}
+	a = a.WithReasoning(agent.ParseReasoningLevel(reasoning)).WithAgentic(agentic).WithModel(r.model)
+	if pi, ok := a.(*agent.PiAgent); ok && r.provider != "" {
+		a = pi.WithProvider(r.provider)
 	}
 	// Codex user settings can enable connectors and web search, which can
 	// read the upstream pull request's review comments: the answers.
 	a = agent.WithCodexSkillsDisabled(a, true)
-	a = agent.WithCodexUserConfigIgnored(a, true)
+	return agent.WithCodexUserConfigIgnored(a, true), nil
+}
 
-	ctx := context.Background()
-	excludes := config.ResolveExcludePatterns(ctx, *repo, cfg, "")
-	built, err := prompt.NewBuilderWithConfig(nil, cfg).
+// review runs one reviewer the way the daemon runs a review job, including a
+// panel member's instruction block, and records its artifacts.
+func (p probe) review(ctx context.Context, r reviewer, artifacts string) (review.ReviewResult, time.Duration, error) {
+	a, err := configure(r, false)
+	if err != nil {
+		return review.ReviewResult{}, 0, err
+	}
+	excludes := config.ResolveExcludePatterns(ctx, p.repo, p.cfg, r.reviewType)
+	built, err := prompt.NewBuilderWithConfig(nil, p.cfg).
 		WithContext(ctx).
-		ForRepo(*repo, 0).
+		ForRepo(p.repo, 0).
 		WithStructuredOutput(true).
-		BuildWithSnapshot(gitRef, 0, a.Name(), "", "low", excludes)
+		BuildWithSnapshot(p.gitRef, 0, a.Name(), r.reviewType, "low", excludes)
 	if built.Cleanup != nil {
 		defer built.Cleanup()
 	}
 	if err != nil {
-		return fmt.Errorf("build prompt: %w", err)
+		return review.ReviewResult{}, 0, fmt.Errorf("build prompt: %w", err)
+	}
+	text := built.Prompt
+	if r.instructions != "" {
+		// The same block the daemon appends to a panel member's prompt.
+		text += fmt.Sprintf("\n\n## Additional reviewer instructions (panel: %s / member: %s)\n%s\n",
+			r.panel, r.name, r.instructions)
 	}
 
 	log := io.Discard
-	if *artifacts != "" {
-		if err := os.MkdirAll(*artifacts, 0o755); err != nil {
-			return err
+	if artifacts != "" {
+		if err := os.MkdirAll(artifacts, 0o755); err != nil {
+			return review.ReviewResult{}, 0, err
 		}
-		if err := os.WriteFile(filepath.Join(*artifacts, "prompt.md"), []byte(built.Prompt), 0o644); err != nil {
-			return err
+		if err := os.WriteFile(filepath.Join(artifacts, "prompt.md"), []byte(text), 0o644); err != nil {
+			return review.ReviewResult{}, 0, err
 		}
-		logFile, err := os.Create(filepath.Join(*artifacts, "agent.log"))
+		logFile, err := os.Create(filepath.Join(artifacts, "agent.log"))
 		if err != nil {
-			return err
+			return review.ReviewResult{}, 0, err
 		}
 		defer logFile.Close()
 		log = logFile
 	}
 
 	started := time.Now()
-	result, err := review.RunAgentReview(ctx, a, *repo, gitRef, built.Prompt, "", "low", log)
+	result, err := review.RunAgentReview(ctx, a, p.repo, p.gitRef, text, r.reviewType, "low", log)
 	if err != nil {
-		return fmt.Errorf("review: %w", err)
+		return review.ReviewResult{}, 0, fmt.Errorf("review %s: %w", r.name, err)
 	}
 	elapsed := time.Since(started)
-	if *artifacts != "" {
-		if err := os.WriteFile(filepath.Join(*artifacts, "review.json"), result.StructuredOutput, 0o644); err != nil {
-			return err
+	result.Agent, result.ReviewType, result.Status = a.Name(), r.reviewType, review.ResultDone
+	if artifacts != "" {
+		if err := os.WriteFile(filepath.Join(artifacts, "review.json"), result.StructuredOutput, 0o644); err != nil {
+			return review.ReviewResult{}, 0, err
 		}
-		if err := os.WriteFile(filepath.Join(*artifacts, "review.md"), []byte(result.Output), 0o644); err != nil {
-			return err
+		if err := os.WriteFile(filepath.Join(artifacts, "review.md"), []byte(result.Output), 0o644); err != nil {
+			return review.ReviewResult{}, 0, err
 		}
 	}
+	return result, elapsed, nil
+}
 
-	diff, err := gitDiff(ctx, *repo, pr.Base, pr.Head)
-	if err != nil {
-		return err
-	}
-	file, dropped, err := convert(pr, *producer, result.StructuredOutput, changedLines(diff), elapsed)
+func (p probe) writeFindings(path string, document []byte, elapsed time.Duration) error {
+	file, dropped, err := convert(p.pr, p.producer, document, p.changed, elapsed)
 	if err != nil {
 		return err
 	}
@@ -132,5 +190,5 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(*out, append(encoded, '\n'), 0o644)
+	return os.WriteFile(path, append(encoded, '\n'), 0o644)
 }
