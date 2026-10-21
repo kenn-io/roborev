@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -26,16 +27,13 @@ import (
 
 func TestEvidenceWorkerPortableRetryAndFrozenMembers(t *testing.T) {
 	for _, prebuilt := range []bool{false, true} {
-		for _, enabled := range []bool{false, true} {
+		for _, mode := range []string{"disabled", "binary", "manifest"} {
+			enabled := mode != "disabled"
 			name := "rebuilt"
 			if prebuilt {
 				name = "prebuilt"
 			}
-			if enabled {
-				name += "-enabled"
-			} else {
-				name += "-disabled"
-			}
+			name += "-" + mode
 			t.Run(name, func(t *testing.T) {
 				tc := newWorkerTestContext(t, 1)
 				cfg := config.DefaultConfig()
@@ -46,11 +44,24 @@ func TestEvidenceWorkerPortableRetryAndFrozenMembers(t *testing.T) {
 				tc.reconfigurePool(cfg)
 				tc.GitRepo.CommitFile("rubric.md", "Supplied rubric preserved.", "rubric")
 				// The live type disagrees with the frozen member to exercise both directions.
-				rc := &config.RepoConfig{Review: config.ReviewConfig{Types: map[string]config.ReviewTypeSpec{"citations": {Template: "rubric.md", BinaryEvidence: !enabled}}}}
+				rc := &config.RepoConfig{Review: config.ReviewConfig{Types: map[string]config.ReviewTypeSpec{"citations": {Template: "rubric.md", BinaryEvidence: !enabled, EvidenceManifest: "missing-live.toml"}}}}
 				require.NoError(t, config.SaveRepoConfigTo(filepath.Join(tc.TmpDir, ".roborev.toml"), rc))
-				const payload = "%PDF-1.7\n\x00committed draft"
-				sha := tc.GitRepo.CommitFile("draft.pdf", payload, "draft")
-				settings := config.ReviewSettings{BinaryEvidence: enabled}
+				payload := "%PDF-1.7\n\x00committed draft"
+				extension := ".pdf"
+				settings := config.ReviewSettings{BinaryEvidence: mode == "binary"}
+				var sha string
+				if mode == "manifest" {
+					payload = "Pinned source.\r\nCafé.\n"
+					extension = ".txt"
+					settings.EvidenceManifest = "manifest.toml"
+					tc.GitRepo.CommitFiles(map[string]string{
+						"source.txt":    payload,
+						"manifest.toml": fmt.Sprintf("version = 1\n[[documents]]\nid = 'source-a'\ntext_path = 'source.txt'\ntext_sha256 = '%x'\nprovenance = 'docbank://vaults/V/documents/N/versions/C/renditions/A'\n", sha256.Sum256([]byte(payload))),
+					}, "pin source")
+					sha = tc.GitRepo.CommitFile("draft.md", "Revised draft.", "draft")
+				} else {
+					sha = tc.GitRepo.CommitFile("draft.pdf", payload, "draft")
+				}
 				var stored string
 				var err error
 				if prebuilt {
@@ -72,11 +83,16 @@ func TestEvidenceWorkerPortableRetryAndFrozenMembers(t *testing.T) {
 						require.NoError(t, err)
 						text = string(complete)
 					}
-					files, err := filepath.Glob(filepath.Join(repoPath, ".roborev", "roborev-snapshot-*", "*.pdf"))
+					files, err := filepath.Glob(filepath.Join(repoPath, ".roborev", "roborev-snapshot-*", "*"+extension))
 					require.NoError(t, err)
 					if enabled {
 						require.Contains(t, text, "## Committed review evidence")
-						require.Contains(t, text, "draft.pdf")
+						if mode == "manifest" {
+							require.Contains(t, text, "source.txt")
+							require.Contains(t, text, "declared provenance (opaque, not verified)")
+						} else {
+							require.Contains(t, text, "draft.pdf")
+						}
 						require.Len(t, files, 1)
 						data, err := os.ReadFile(files[0])
 						require.NoError(t, err)
@@ -230,6 +246,53 @@ func TestEvidenceWorkerPrebuiltDiffRebindingSafe(t *testing.T) {
 			tc.Pool.processJob(testWorkerID, claimed)
 			tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
 			assert.True(t, called)
+		})
+	}
+}
+
+func TestEvidenceManifestWorkerFailureBeforeInvocation(t *testing.T) {
+	for _, failure := range []string{"missing", "excluded", "hash", "UTF8"} {
+		t.Run(failure, func(t *testing.T) {
+			tc := newWorkerTestContext(t, 1)
+			called := false
+			agent.RegisterForTest(t, &evidenceTestAgent{FakeAgent: &agent.FakeAgent{NameStr: "required-evidence-capture", ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+				called = true
+				return string(testutil.ReviewFixtureJSON("No issues found.")), nil
+			}}})
+			payload := "Pinned text."
+			if failure == "UTF8" {
+				payload = "\xff"
+			}
+			sum := fmt.Sprintf("%x", sha256.Sum256([]byte(payload)))
+			if failure == "hash" {
+				sum = strings.Repeat("a", 64)
+			}
+			files := map[string]string{
+				"rubric.md":     "Review supplied evidence.",
+				"manifest.toml": fmt.Sprintf("version = 1\n[[documents]]\nid = 'source-a'\ntext_path = 'source.txt'\ntext_sha256 = '%s'\n", sum),
+			}
+			if failure != "missing" {
+				files["source.txt"] = payload
+			}
+			rc := &config.RepoConfig{Review: config.ReviewConfig{Types: map[string]config.ReviewTypeSpec{"citations": {Template: "rubric.md", EvidenceManifest: "manifest.toml"}}}}
+			if failure == "excluded" {
+				rc.ExcludePatterns = []string{"source.txt"}
+			}
+			require.NoError(t, config.SaveRepoConfigTo(filepath.Join(tc.TmpDir, ".roborev.toml"), rc))
+			sha := tc.GitRepo.CommitFiles(files, "pin required evidence")
+			job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{RepoID: tc.Repo.ID, GitRef: sha, JobType: storage.JobTypeReview, Agent: "required-evidence-capture", ReviewType: "citations"})
+			require.NoError(t, err)
+			claimed, err := tc.DB.ClaimJob(testWorkerID)
+			require.NoError(t, err)
+			require.NotNil(t, claimed)
+			tc.Pool.processJob(testWorkerID, claimed)
+			got, err := tc.DB.GetJobByID(job.ID)
+			require.NoError(t, err)
+			assert.NotEqual(t, storage.JobStatusDone, got.Status)
+			assert.False(t, called)
+			dirs, err := filepath.Glob(filepath.Join(tc.TmpDir, ".roborev", "roborev-snapshot-*"))
+			require.NoError(t, err)
+			assert.Empty(t, dirs)
 		})
 	}
 }

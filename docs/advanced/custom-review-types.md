@@ -67,9 +67,15 @@ do not promise to preserve a custom rubric during re-review.
 
 ## Committed evidence
 
+The repo-local snapshot directory must contain no tracked files and stay
+separate from committed rubrics and manifests. These examples set `snapshot_dir`
+to `.roborev-snapshots/` so rubrics can remain under `.roborev/reviews/`.
+
 Enable binary evidence on a custom type:
 
 ```toml
+snapshot_dir = ".roborev-snapshots"
+
 [review.types.citations]
 template = ".roborev/reviews/citations.md"
 binary_evidence = true
@@ -115,6 +121,91 @@ mixed panel keep their normal prompts. Dirty reviews reject enabled binary
 evidence or a nonempty `evidence_manifest` before launching an agent; commit the
 material first. Evidence-disabled dirty reviews retain their normal behavior.
 
+## Required pinned text renditions
+
+Use a manifest when a rubric needs exported text, including unchanged sources
+that support a changed draft:
+
+```toml
+snapshot_dir = ".roborev-snapshots"
+
+[review.types.citations]
+template = ".roborev/reviews/citations.md"
+evidence_manifest = "evidence/manifest.toml"
+```
+
+A nonempty `evidence_manifest` requires every listed rendition. It works with
+`binary_evidence = false`, the default. Enable binary evidence as well if the
+reviewer should receive changed source PDFs or images alongside exported text.
+
+The manifest uses version 1:
+
+```toml
+version = 1
+
+[[documents]]
+id = "source-a"
+text_path = "evidence/source-a.txt"
+text_sha256 = "<64 lowercase hexadecimal characters>"
+provenance = "docbank://vaults/V/documents/N/versions/C/renditions/A"
+```
+
+Replace the hash placeholder with the SHA-256 of the committed text bytes.
+
+| Field | Required | Meaning |
+|-------|----------|---------|
+| `version` | Yes | Manifest format version; must be `1` |
+| `documents[].id` | Yes | Nonempty unique document identity |
+| `documents[].text_path` | Yes | Repository-root-relative path to committed UTF-8 text |
+| `documents[].text_sha256` | Yes | SHA-256 of raw text bytes, as 64 lowercase hexadecimal characters |
+| `documents[].source_sha256` | No | Declared source hash, in the same hexadecimal format; not locally verified |
+| `documents[].provenance` | No | Opaque declared provenance; never fetched or verified |
+
+The manifest and text files come from the reviewed head, including unchanged
+entries. Paths are relative to the repository root, even when the manifest lives
+in a subdirectory. They must name regular committed Git files. Absolute paths,
+URLs, traversal, symlinks and submodules are rejected. Missing or excluded
+required files fail preparation before the agent runs. Malformed manifests,
+unknown fields, duplicate IDs, invalid hashes, hash mismatches and invalid UTF-8
+also fail preparation. Roborev hashes raw bytes before validating UTF-8; line
+endings are part of the identity.
+
+Verified renditions use the same private snapshot lifecycle as binary files,
+with content-named `.txt` files. The portable index records document identity,
+text path, blob ID, verified text hash and declared metadata. Source hashes and
+provenance are explicitly labelled as declared and unverified. A text hash
+proves the offered exported bytes; it does not prove OCR fidelity, source
+identity, or that the reviewer read them.
+
+To prepare a pinned Docbank export outside Roborev:
+
+1. Select a specific document version and rendition in Docbank. Export that
+    rendition as UTF-8 text to `evidence/source-a.txt` using your source tool.
+    Keep the pinned version and rendition identity for the provenance field.
+
+1. Stage the exported text, then hash the staged Git blob. Git may normalize
+    line endings during staging; Roborev verifies the committed bytes:
+
+    ```bash
+    git add evidence/source-a.txt
+    git cat-file blob :evidence/source-a.txt | shasum -a 256
+    ```
+
+1. Put the resulting hash and pinned provenance in `evidence/manifest.toml`. If
+    you have a source hash, record it as optional `source_sha256`; Roborev does
+    not use it to claim source verification.
+
+1. Commit the text and manifest with the draft, then review the committed head:
+
+    ```bash
+    git add evidence/manifest.toml draft.md
+    git commit -m "Pin source rendition for draft review"
+    roborev review --type citations --wait
+    ```
+
+Roborev does not contact Docbank, resolve the URI, or search for source bytes.
+New exported bytes require an updated text hash and a new commit.
+
 ## Configuration reference
 
 Each `[review.types.<name>]` table supports these fields:
@@ -127,6 +218,7 @@ Each `[review.types.<name>]` table supports these fields:
 | `model` | No | Model override for this type |
 | `reasoning` | No | Reasoning override for this type |
 | `binary_evidence` | No | Offer changed committed binary files; defaults to false |
+| `evidence_manifest` | No | Repository-relative committed manifest of required text renditions; defaults to empty |
 
 Names must start with a lowercase letter and contain only lowercase letters,
 digits, and hyphens. Names may not replace built-in types or their aliases:
@@ -139,17 +231,19 @@ fields are not merged individually.
 
 ## Paths and includes
 
-Repository and global configuration accept:
+Template and include paths in repository and global configuration accept:
 
 - Repository-relative paths, resolved separately for the repository being
     reviewed.
 - Absolute paths.
 - Home-relative paths beginning with `~/`.
 
-Paths containing `..` and symlinks may also point outside the repository.
-Roborev treats these paths as user-selected files, not as a security boundary.
-In CI, repository-relative files that remain inside the repository are read from
-the configured base ref. External paths are read from the filesystem.
+Template and include paths containing `..` and symlinks may also point outside
+the repository. Roborev treats these paths as user-selected files, not as a
+security boundary. Evidence manifest and rendition paths follow the stricter
+committed-file rules above. In CI, repository-relative files that remain inside
+the repository are read from the configured base ref. External paths are read
+from the filesystem.
 
 Roborev does not fetch URLs while running a review. Download or vendor remote
 rubrics first so reviews remain reproducible and do not depend on the network.

@@ -21,20 +21,24 @@ import (
 	"go.kenn.io/roborev/internal/git"
 )
 
-// EvidenceEntry describes the raw bytes offered for one committed side.
+// EvidenceEntry describes offered committed binary bytes or a pinned rendition.
 // Path is an identity label, never a destination filename. For non-UTF-8 Git
 // names it is the quoted display label, and PathBytes holds the original bytes.
 type EvidenceEntry struct {
-	Path      string `json:"path"`
-	PathBytes []byte `json:"path_bytes,omitzero"`
-	File      string `json:"file,omitzero"`
-	Kind      string `json:"kind"`
-	Side      string `json:"side"`
-	BlobOID   string `json:"blob_oid"`
-	SHA256    string `json:"sha256"`
-	MediaHint string `json:"media_hint"`
-	Omission  string `json:"omission"`
-	Bytes     int64  `json:"bytes"`
+	DocumentID           string `json:"document_id,omitzero"`
+	TextPath             string `json:"text_path,omitzero"`
+	DeclaredSourceSHA256 string `json:"declared_source_sha256,omitzero"`
+	Provenance           string `json:"provenance,omitzero"`
+	Path                 string `json:"path"`
+	PathBytes            []byte `json:"path_bytes,omitzero"`
+	File                 string `json:"file,omitzero"`
+	Kind                 string `json:"kind"`
+	Side                 string `json:"side"`
+	BlobOID              string `json:"blob_oid"`
+	SHA256               string `json:"sha256"`
+	MediaHint            string `json:"media_hint"`
+	Omission             string `json:"omission"`
+	Bytes                int64  `json:"bytes"`
 }
 
 // EvidenceIndex is portable: its identities contain no attempt-local paths.
@@ -43,6 +47,8 @@ type EvidenceIndex struct {
 	Target  git.ReviewEndpoints `json:"target"`
 	Entries []EvidenceEntry     `json:"entries"`
 }
+
+const evidenceTextMedia = "text/plain; charset=utf-8"
 
 const (
 	evidenceFooterStart = "\n\n<!-- roborev-evidence:v1\n"
@@ -132,18 +138,16 @@ func evidencePromptBody(text string, expected EvidenceIndex) (string, error) {
 
 // BuildEvidenceIndex hashes complete blobs selected at immutable Git endpoints.
 func (b *Builder) BuildEvidenceIndex(gitRef string, excludes []string) (EvidenceIndex, error) {
-	// Required manifests must not silently degrade to optional binary evidence.
-	// The pinned-rendition loader extends this boundary in the following change.
-	if b.reviewSettings != nil && b.reviewSettings.EvidenceManifest != "" {
-		return EvidenceIndex{}, fmt.Errorf("required evidence manifests are not supported by this build")
-	}
 	target, err := git.ResolveReviewEndpoints(b.context(), b.repoPath, gitRef)
 	if err != nil {
 		return EvidenceIndex{}, err
 	}
-	changes, err := git.ChangedBinaryEvidence(b.context(), b.repoPath, target, excludes)
-	if err != nil {
-		return EvidenceIndex{}, err
+	var changes []git.EvidenceChange
+	if b.reviewSettings == nil || b.reviewSettings.BinaryEvidence {
+		changes, err = git.ChangedBinaryEvidence(b.context(), b.repoPath, target, excludes)
+		if err != nil {
+			return EvidenceIndex{}, err
+		}
 	}
 	index := EvidenceIndex{Version: 1, Target: target}
 	for _, change := range changes {
@@ -178,6 +182,13 @@ func (b *Builder) BuildEvidenceIndex(gitRef string, excludes []string) (Evidence
 			}
 			index.Entries = append(index.Entries, entry)
 		}
+	}
+	if b.reviewSettings != nil && b.reviewSettings.EvidenceManifest != "" {
+		loaded, err := loadEvidenceManifestWithEntries(b.context(), b.repoPath, target.Head, b.reviewSettings.EvidenceManifest, excludes)
+		if err != nil {
+			return EvidenceIndex{}, fmt.Errorf("load required evidence manifest: %w", err)
+		}
+		index.Entries = append(index.Entries, loaded.entries...)
 	}
 	return index, nil
 }
@@ -219,6 +230,8 @@ func evidenceFilename(sum, media string) (string, error) {
 	}
 	extension := ".bin"
 	switch media {
+	case evidenceTextMedia:
+		extension = ".txt"
 	case "application/pdf":
 		extension = ".pdf"
 	case "image/png":
@@ -279,6 +292,9 @@ func (b *Builder) MaterializeEvidence(index EvidenceIndex, target SnapshotTarget
 			return "", nil, err
 		}
 		fmt.Fprintf(&text, "\n- Path: %q; change: %q; side: %q; blob: %q", path, entry.Kind, entry.Side, entry.BlobOID)
+		if entry.DocumentID != "" {
+			fmt.Fprintf(&text, "; document: %q; text path: %q; declared source SHA256 (not verified): %q; declared provenance (opaque, not verified): %q", entry.DocumentID, entry.TextPath, entry.DeclaredSourceSHA256, entry.Provenance)
+		}
 		if entry.Omission != "" {
 			fmt.Fprintf(&text, "; omission: %q\n", entry.Omission)
 			continue
@@ -298,7 +314,12 @@ func (b *Builder) MaterializeEvidence(index EvidenceIndex, target SnapshotTarget
 			return "", nil, fmt.Errorf("create evidence file: %w", err)
 		}
 		digest := newEvidenceDigest()
-		copyErr := git.CopyBlob(b.context(), b.repoPath, entry.BlobOID, io.MultiWriter(f, digest))
+		var rendition bytes.Buffer
+		writer := io.MultiWriter(f, digest)
+		if entry.DocumentID != "" {
+			writer = io.MultiWriter(f, digest, &rendition)
+		}
+		copyErr := git.CopyBlob(b.context(), b.repoPath, entry.BlobOID, writer)
 		closeErr := f.Close()
 		if copyErr != nil {
 			return "", nil, copyErr
@@ -306,16 +327,26 @@ func (b *Builder) MaterializeEvidence(index EvidenceIndex, target SnapshotTarget
 		if closeErr != nil {
 			return "", nil, closeErr
 		}
-		if digest.sum() != entry.SHA256 || digest.bytes != entry.Bytes || evidenceMedia(digest.prefix) != entry.MediaHint {
+		if digest.sum() != entry.SHA256 || digest.bytes != entry.Bytes {
 			return "", nil, fmt.Errorf("committed evidence bytes do not match index for %q", path)
 		}
-		file := files[entry.SHA256]
+		media := evidenceMedia(digest.prefix)
+		if entry.DocumentID != "" {
+			if !utf8.Valid(rendition.Bytes()) {
+				return "", nil, fmt.Errorf("evidence rendition %q is not valid UTF-8", path)
+			}
+			media = evidenceTextMedia
+		}
+		if media != entry.MediaHint {
+			return "", nil, fmt.Errorf("committed evidence bytes do not match index for %q", path)
+		}
+		file := files[name]
 		if file == "" {
 			file = filepath.Join(dir, name)
 			if err := atomicfile.Replace(f.Name(), file); err != nil {
 				return "", nil, err
 			}
-			files[entry.SHA256] = file
+			files[name] = file
 		} else if err := os.Remove(f.Name()); err != nil {
 			return "", nil, err
 		}
