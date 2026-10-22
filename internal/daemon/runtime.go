@@ -842,7 +842,7 @@ func CleanupZombieDaemons(target DaemonEndpoint) int {
 		if IsDaemonAccessError(probeErr) {
 			continue
 		}
-		if info.PID > 0 && identifyProcess(info.PID) == processNotRoborev {
+		if info.PID > 0 && (info.processIdentityV2 == "" || kitdaemon.CompareRuntimeProcessIdentity(info.processRecord()) != kitdaemon.ProcessIdentityUnknown) && identifyProcess(info.PID) == processNotRoborev {
 			if ep.IsUnix() && ep.Address != target.Address {
 				os.Remove(ep.Address)
 			}

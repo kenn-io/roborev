@@ -419,7 +419,9 @@ func TestServerStartHandlesRuntimeIdentities(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			testenv.SetDataDir(t)
 			setShortRuntimeDir(t)
-			mockIdentifyProcess(t, func(int) processIdentity { return processUnknown })
+			if !tc.unjudged {
+				mockIdentifyProcess(t, func(int) processIdentity { return processUnknown })
+			}
 			pid := tc.pid
 			if pid == 0 {
 				pid = os.Getppid()

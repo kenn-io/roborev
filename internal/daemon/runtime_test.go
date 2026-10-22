@@ -25,6 +25,7 @@ import (
 	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/testenv"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestWaitForGracefulDaemonExitHasNoTimeout(t *testing.T) {
@@ -558,6 +559,23 @@ func TestCleanupZombieDaemonsPreservesTargetSocket(t *testing.T) {
 	assert.Equal(1, cleaned, "should count stale daemon as cleaned")
 	assert.NoFileExists(runtimePath, "runtime file should be removed")
 	assert.FileExists(socketPath, "target socket must be preserved")
+}
+
+func TestCleanupZombieDaemonsPreservesUnjudgedPIDCollision(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("requires Linux process identification")
+	}
+	testenv.SetDataDir(t)
+	setShortRuntimeDir(t)
+	rec := testutil.UnjudgedRuntimeRecord("tcp", "127.0.0.1:1")
+	rec.PID = os.Getpid()
+	require.Equal(t, kitdaemon.ProcessIdentityUnknown, kitdaemon.CompareRuntimeProcessIdentity(rec))
+	require.Equal(t, processNotRoborev, identifyProcess(rec.PID))
+	path, err := runtimeStore().Write(rec)
+	require.NoError(t, err)
+
+	assert.Zero(t, CleanupZombieDaemons(DaemonEndpoint{}))
+	assert.FileExists(t, path)
 }
 
 func TestCleanupZombieDaemonsPreservesIdentifiedLiveLegacyDaemon(t *testing.T) {
