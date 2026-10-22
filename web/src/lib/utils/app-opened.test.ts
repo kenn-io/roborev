@@ -195,6 +195,54 @@ describe("setupAppOpenedReporting", () => {
     });
   });
 
+  test("excludes disabled time from a session resumed after UTC midnight", async () => {
+    let now = 0;
+    let hidden = false;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
+    vi.setSystemTime(new Date("2026-03-10T23:48:00Z"));
+    setup();
+    await settle();
+
+    now = 120_000;
+    vi.setSystemTime(new Date("2026-03-10T23:50:00Z"));
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ status: "disabled" }, { status: 202 }),
+    );
+    appOpened.reportCoreAction("search_empty");
+    await settle();
+
+    now += 240_000;
+    vi.setSystemTime(new Date("2026-03-10T23:54:00Z"));
+    hidden = true;
+    document.dispatchEvent(new Event("visibilitychange"));
+    now += 60_000;
+    vi.setSystemTime(new Date("2026-03-10T23:55:00Z"));
+    hidden = false;
+    document.dispatchEvent(new Event("visibilitychange"));
+    now += 300_000;
+    vi.setSystemTime(new Date("2026-03-11T00:00:00Z"));
+    focusWindow();
+    await settle();
+
+    now += 20_000;
+    globalThis.dispatchEvent(new Event("pagehide"));
+    await settle();
+    expect(
+      await Promise.all(
+        fetchMock.mock.calls.map(([request]) => request.clone().json()),
+      ),
+    ).toEqual([
+      { event: "app_opened", properties: { surface: "web" } },
+      { event: "search_empty", properties: { surface: "web" } },
+      { event: "app_opened", properties: { surface: "web" } },
+      {
+        event: "session_ended",
+        properties: { surface: "web", duration_bucket: "under_1m" },
+      },
+    ]);
+  });
+
   test.each([
     ["initial", "queued"],
     ["initial", "disabled"],
