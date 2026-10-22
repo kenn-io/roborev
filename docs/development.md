@@ -106,6 +106,56 @@ files from the same commit, so workflow changes run before merging. Run
 `make check-actions` locally, then check the PR's jobs on GitHub. Changes to the
 Windows migration workflow also run its migration test.
 
+### Domain review hook proof
+
+The deterministic integration fixture builds a temporary CLI, installs the real
+Git hook in a disposable repository, and makes five native Git commits. A
+loopback daemon receives one two-member custom panel for the complete range.
+Schema-capable test agents return findings so real synthesis runs. Assertions
+cover committed PDF and rendition bytes, portable stored prompts, complete
+oversized prompts, strict empty grants, member replacement, retry and cancel
+cleanup. Production `TestAgent` capabilities are unchanged.
+
+```bash
+go test -tags integration ./internal/daemon -run '^TestDomainReview' -count=1
+go test ./internal/prompt -run '^TestGoldenPrompt' -count=1
+go test -tags integration ./internal/daemon -run '^$' \
+  -fuzz '^FuzzDomainNativeReadPathIdentity$' -fuzztime=30s
+```
+
+The native case skips unless `ROBOREV_RUN_DOMAIN_REVIEWS=1`. Run it on an
+approved authenticated host at the exact candidate commit. Set
+`ROBOREV_DOMAIN_REVIEW_ARTIFACTS` to a private absolute output directory outside
+the checkout:
+
+```bash
+ROBOREV_RUN_DOMAIN_REVIEWS=1 \
+ROBOREV_DOMAIN_REVIEW_ARTIFACTS="$HOME/private-domain-proof" \
+go test -tags integration ./internal/daemon \
+  -run '^TestDomainReviewHookPanelNative$' -count=1 -v
+```
+
+This case invokes the real Claude adapter, selected synthetic MCP server and
+real synthesis. It preserves the operator's authentication HOME and provider
+routing, adds synthetic inherited session/tool overrides, and relies on adapter
+scrubbing. Roborev data and loopback listeners are disposable. No production MCP
+registration or sync is used. The installed CLI must support the strict startup
+recipe.
+
+The private artifacts contain raw native streams and frozen job records.
+Verification requires successful native Read results correlated to the exact
+offered PDF, verified text and complete prompt paths. On macOS the agent
+checkout also crosses `/tmp`'s system symlink. Native init must show the strict
+tool set, permission mode and selected server set. The granted call must reach
+the server; same-server ungranted, prefix and newly advertised tools need native
+permission denials. Removed write, shell, delegation, web and unselected-server
+capabilities must be unavailable at init, with no successful forbidden calls or
+changed file/hook sentinels. Model statements are not native denial evidence.
+
+Run the separate strict adapter qualification as well. Neither deterministic
+flags tests nor an earlier native run qualify a later candidate. Keep raw bridge
+artifacts private; they may contain local paths and provider responses.
+
 ### Codex skill conformance evaluation
 
 The opt-in live evaluation checks that ordinary natural-language review and fix

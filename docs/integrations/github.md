@@ -618,7 +618,7 @@ For implicit matrix CI, customize synthesis with `[ci]` settings:
 ```toml
 [ci]
 synthesis_agent = "claude-code"                  # Agent to use for synthesis
-synthesis_backup_agent = "gemini"                # Backup if primary fails
+synthesis_backup_agent = "gemini"                # Backup synthesis agent
 synthesis_model = "claude-opus-4-8"   # Model override for synthesis
 ```
 

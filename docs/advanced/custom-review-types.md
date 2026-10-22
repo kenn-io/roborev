@@ -384,6 +384,112 @@ Strict reviews always start fresh sessions, including local and CI calls. See
 checks, session isolation, and the native CLI trust boundary. Fix and refine
 retain their existing writable behavior.
 
+### Batched draft review example
+
+First, the operator selects a native MCP configuration file and exact grants in
+the global `~/.roborev/config.toml`:
+
+```toml
+review_mcp_config = "/operator/review-mcp.json"
+review_mcp_allowed_tools = ["archive/lookup"]
+```
+
+Replace the absolute file path with your operator configuration's location. The
+local JSON file uses Claude's native `mcpServers` format. Its `archive` entry
+must identify an operator-approved server and its credentials. Roborev copies
+only selected server definitions into a private per-attempt config; it does not
+start ambient or unselected servers. Keep credentials in operator configuration,
+outside the repository.
+
+Then commit this repository configuration as `.roborev.toml`:
+
+```toml
+post_commit_review = "commit"
+post_commit_batch_size = 5
+
+[review]
+hook_review_panel = "drafts"
+
+[review.types.citations]
+template = "rubrics/citations.md"
+agent = "claude-code"
+binary_evidence = true
+evidence_manifest = "evidence/manifest.toml"
+
+[review.types.citations.tools]
+mode = "read-only"
+mcp = { archive = ["lookup"] }
+
+[review.types.quotes]
+template = "rubrics/quotes.md"
+agent = "claude-code"
+binary_evidence = true
+evidence_manifest = "evidence/manifest.toml"
+
+[review.types.quotes.tools]
+mode = "read-only"
+mcp = { archive = ["lookup"] }
+
+[review.subagents.citations]
+review_type = "citations"
+
+[review.subagents.quotes]
+review_type = "quotes"
+
+[review.subagents.quotes.tools]
+mode = "read-only"
+mcp = {}
+
+[review.panels.drafts]
+members = ["citations", "quotes"]
+synthesis_agent = "claude-code"
+```
+
+The citations member inherits `archive/lookup`. The quotes member's present
+tools table replaces its type's policy and removes all MCP grants. Omitting that
+table would inherit the type policy; omitting tools everywhere retains ordinary
+adapter behavior. An empty strict policy is not absence. Panels have no separate
+tools table, and synthesis receives strict empty grants.
+
+Create `rubrics/citations.md` with instructions to check factual assertions and
+citations against the offered evidence, use `archive/lookup` when needed, and
+report concrete contradictions with corrections. In `rubrics/quotes.md`, ask the
+reviewer to compare quotations against the offered text and report changed
+wording. Give each rubric severity guidance appropriate to the material. For
+example, a quotation that changes a source's meaning may be high severity;
+typographical differences without changed meaning may be low severity.
+
+Commit a valid source PDF and mark it binary in `.gitattributes` when needed:
+
+```gitattributes
+*.pdf binary
+```
+
+Export the required source text, hash its exact bytes, and commit it with the
+[version 1 manifest](#required-pinned-text-renditions). Add the configured
+snapshot directory to `.gitignore` (`.roborev/` by default). After
+`roborev init`, five draft commits queue one panel for the full range. Unchanged
+required renditions are included; binary evidence covers changed binary files in
+that range. Custom voting rubrics produce neutral synthesis with rubric labels
+and source attribution.
+
+Every requested `server/tool` pair must appear in the current operator ceiling.
+Names are exact; wildcards and prefix matching are not supported. Repository and
+experiment config cannot set the operator path or ceiling. Removing a grant
+takes effect at execution, including already queued frozen panels. Unknown
+servers, invalid native config, unavailable grants and missing native startup
+evidence fail the review rather than widening permissions.
+
+MCP server implementations are trusted capabilities: a tool's name or
+`readOnlyHint` does not prove that it has no side effects. Roborev confines the
+reviewer's native tools, not the server process. A granted response can reach
+the model, review output, job logs, synced records and synthesized CI comments.
+Use appropriate server credentials and deliberate grants for every registered
+repository. The installed CLI, managed settings, built-in plugins and provider
+authentication/network machinery also remain trusted. Native tool results and
+permission records establish which calls occurred; model claims and hashes alone
+do not prove that evidence was read.
+
 ## Writing useful severity guidance
 
 The schema guarantees that each finding has a valid severity label, but it
