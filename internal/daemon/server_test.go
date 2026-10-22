@@ -420,10 +420,13 @@ func TestServerStartHandlesRuntimeIdentities(t *testing.T) {
 		identity kitdaemon.ProcessIdentity
 		pid      int
 		refuses  bool
+		unjudged bool
 	}{
 		{name: "earlier boot", identity: kitdaemon.ProcessIdentity(strings.Join(fields, ":"))},
 		{name: "legacy live PID", refuses: true},
-		{name: "unjudged invisible PID", pid: math.MaxInt32, identity: "future-v1:unavailable"},
+		{name: "unjudged live PID", unjudged: true, refuses: true},
+		{name: "unjudged invisible PID", pid: math.MaxInt32, unjudged: true},
+		{name: "second sandbox same PID", pid: os.Getpid(), unjudged: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			testenv.SetDataDir(t)
@@ -433,9 +436,14 @@ func TestServerStartHandlesRuntimeIdentities(t *testing.T) {
 			if pid == 0 {
 				pid = os.Getppid()
 			}
-			path, err := runtimeStore().Write(kitdaemon.RuntimeRecord{
+			rec := kitdaemon.RuntimeRecord{
 				PID: pid, Network: "tcp", Address: "127.0.0.1:1", ProcessIdentityV2: tc.identity,
-			})
+			}
+			if tc.unjudged {
+				rec = testutil.UnjudgedRuntimeRecord(rec.Network, rec.Address)
+				rec.PID = pid
+			}
+			path, err := runtimeStore().Write(rec)
 			require.NoError(t, err)
 			db, _ := testutil.OpenTestDBWithDir(t)
 			cfg := config.DefaultConfig()
@@ -452,7 +460,22 @@ func TestServerStartHandlesRuntimeIdentities(t *testing.T) {
 				assert.FileExists(t, path)
 				return
 			}
-			errCh, info := startServerAndWaitForRuntime(t, server)
+			errCh := make(chan error, 1)
+			go func() { errCh <- server.Start(t.Context()) }()
+			var info *RuntimeInfo
+			var startErr error
+			// Wall-clock wait: startup replaces the previous sandbox's runtime file.
+			require.Eventually(t, func() bool {
+				select {
+				case startErr = <-errCh:
+					return true
+				default:
+				}
+				info, err = ReadRuntime()
+				return err == nil && info.Address != rec.Address
+			}, 5*time.Second, 10*time.Millisecond)
+			require.NoError(t, startErr)
+			require.NotNil(t, info)
 			assert.Equal(t, os.Getpid(), info.PID)
 			stopTestServer(t, server, errCh)
 		})

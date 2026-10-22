@@ -312,7 +312,7 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("daemon already running (pid %d on %s)", info.PID, info.Address)
 	}
 	for _, runtime := range runtimes {
-		if runtime.PID > 0 && !runtime.Stale() && isProcessAlive(runtime.PID) {
+		if runtime.PID > 0 && !runtime.Stale() && isProcessAlive(runtime.PID) && runtime.PID != os.Getpid() {
 			if listener != nil {
 				_ = listener.Close()
 			}

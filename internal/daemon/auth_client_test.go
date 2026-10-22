@@ -18,6 +18,7 @@ import (
 	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func authEndpoint(t *testing.T, rawURL string) DaemonEndpoint {
@@ -260,7 +261,7 @@ func TestAuthDiscoverySkipsStaleProcesses(t *testing.T) {
 }
 
 func TestUnjudgedRuntimeKeepsKeyOffTCP(t *testing.T) {
-	for _, operation := range []string{"discovery", "subsequent request", "alternate endpoint", "cleanup", "shutdown"} {
+	for _, operation := range []string{"discovery", "subsequent request", "alternate endpoint"} {
 		t.Run(operation, func(t *testing.T) {
 			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 			var credentials atomic.Int32
@@ -268,16 +269,10 @@ func TestUnjudgedRuntimeKeepsKeyOffTCP(t *testing.T) {
 				if r.Header.Get("Authorization") != "" {
 					credentials.Add(1)
 				}
-				if r.URL.Path == "/api/shutdown" {
-					w.WriteHeader(http.StatusUnauthorized)
-					return
-				}
 				fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, math.MaxInt32)
 			}))
 			t.Cleanup(server.Close)
-			rec := kitdaemon.RuntimeRecord{
-				PID: math.MaxInt32, Network: "tcp", Address: server.Listener.Addr().String(), ProcessIdentityV2: "future-v1:unavailable",
-			}
+			rec := testutil.UnjudgedRuntimeRecord("tcp", server.Listener.Addr().String())
 			path, err := runtimeStore().Write(rec)
 			require.NoError(t, err)
 			// Discover without a key first, then enable it before the next request.
@@ -296,11 +291,6 @@ func TestUnjudgedRuntimeKeepsKeyOffTCP(t *testing.T) {
 				info.AlternateNetwork, info.AlternateAddress = rec.Network, rec.Address
 				_, err = info.Endpoints()[1].APIClient(time.Second).PingRaw(t.Context())
 				require.ErrorIs(t, err, ErrGuessedEndpointAuth)
-			case "cleanup":
-				mockIdentifyProcess(t, func(int) processIdentity { return processUnknown })
-				assert.Zero(t, CleanupZombieDaemons(DaemonEndpoint{}))
-			case "shutdown":
-				require.Error(t, KillDaemon(info))
 			}
 			assert.Zero(t, credentials.Load())
 			assert.FileExists(t, path)

@@ -25,6 +25,7 @@ import (
 	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/testenv"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestWaitForGracefulDaemonExitHasNoTimeout(t *testing.T) {
@@ -105,132 +106,21 @@ func mockIdentifyProcess(t *testing.T, mock func(int) processIdentity) {
 
 func TestRuntimeRecordWithUnjudgedIdentityIsKept(t *testing.T) {
 	testenv.SetDataDir(t)
-	assert := assert.New(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, math.MaxInt32)
 	}))
 	t.Cleanup(server.Close)
-	mockIdentifyProcess(t, func(int) processIdentity { return processUnknown })
-	ep := DaemonEndpoint{Network: "tcp", Address: server.Listener.Addr().String()}
-	rec := kitdaemon.NewRuntimeRecord(daemonServiceName, "test-version", ep.kitEndpoint())
-	rec.PID = math.MaxInt32
-	// An unknown identity version prevents this caller from judging the process.
-	rec.ProcessIdentityV2 = "future-v1:unavailable"
-	_, err := runtimeStore().Write(rec)
+	rec := testutil.UnjudgedRuntimeRecord("tcp", server.Listener.Addr().String())
+	// A legacy identity must not override an unjudged namespace identity.
+	rec.ProcessIdentity = "different-process"
+	path, err := runtimeStore().Write(rec)
 	require.NoError(t, err)
 
 	info, err := GetAnyRunningDaemonContext(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, info)
-	assert.Equal(math.MaxInt32, info.PID)
-	assert.False(info.Stale())
-}
-
-func TestKillDaemonReturnsWhenUnjudgedDaemonStopsAnswering(t *testing.T) {
-	testenv.SetDataDir(t)
-	assert := assert.New(t)
-	var shutdowns atomic.Int32
-	server := httptest.NewUnstartedServer(nil)
-	server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/ping":
-			fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, math.MaxInt32)
-		case "/api/shutdown":
-			shutdowns.Add(1)
-			assert.NoError(server.Listener.Close())
-			w.WriteHeader(http.StatusOK)
-		default:
-			http.NotFound(w, r)
-		}
-	})
-	server.Start()
-	t.Cleanup(server.Close)
-	rec := kitdaemon.RuntimeRecord{
-		PID: math.MaxInt32, Network: "tcp", Address: server.Listener.Addr().String(), ProcessIdentityV2: "future-v1:unavailable",
-	}
-	path, err := runtimeStore().Write(rec)
-	require.NoError(t, err)
-
-	done := make(chan error, 1)
-	go func() { done <- KillDaemon(runtimeInfoFromRecord(rec)) }()
-	var result error
-	// Wall-clock wait: the loopback HTTP server stops accepting connections.
-	require.Eventually(t, func() bool {
-		select {
-		case result = <-done:
-			return true
-		default:
-			return false
-		}
-	}, 2*time.Second, 10*time.Millisecond)
-	require.NoError(t, result)
-	assert.Equal(int32(1), shutdowns.Load())
-	assert.FileExists(path, "the daemon owns its record while finalization continues after HTTP closes")
-}
-
-func TestKillDaemonKeepsUnjudgedRecords(t *testing.T) {
-	for _, tc := range []struct {
-		name           string
-		pid            int
-		otherResponder bool
-	}{
-		{name: "invisible PID", pid: math.MaxInt32},
-		{name: "different responder", pid: math.MaxInt32, otherResponder: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			testenv.SetDataDir(t)
-			var identified, shutdowns atomic.Int32
-			mockIdentifyProcess(t, func(int) processIdentity {
-				identified.Add(1)
-				if tc.pid == math.MaxInt32 && !tc.otherResponder {
-					return processUnknown
-				}
-				return processNotRoborev
-			})
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/api/shutdown" {
-					shutdowns.Add(1)
-					w.WriteHeader(http.StatusUnauthorized)
-					return
-				}
-				pid := tc.pid
-				if tc.otherResponder {
-					pid = 1
-				}
-				fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, pid)
-			}))
-			t.Cleanup(server.Close)
-			rec := kitdaemon.RuntimeRecord{PID: tc.pid, Network: "tcp", Address: server.Listener.Addr().String(), ProcessIdentityV2: "future-v1:unavailable"}
-			path, err := runtimeStore().Write(rec)
-			require.NoError(t, err)
-			err = KillDaemon(runtimeInfoFromRecord(rec))
-			var wantShutdowns int32
-			if tc.otherResponder {
-				require.ErrorContains(t, err, "cannot verify daemon shutdown")
-			} else {
-				require.ErrorIs(t, err, ErrDaemonAccessDenied)
-				wantShutdowns = 1
-			}
-			assert.Equal(t, wantShutdowns, shutdowns.Load())
-			assert.Zero(t, identified.Load())
-			assert.FileExists(t, path)
-		})
-	}
-}
-
-func TestCleanupZombieDaemonsDoesNotIdentifyUnjudgedPID(t *testing.T) {
-	testenv.SetDataDir(t)
-	var identified int
-	mockIdentifyProcess(t, func(int) processIdentity {
-		identified++
-		return processNotRoborev
-	})
-	path, err := runtimeStore().Write(kitdaemon.RuntimeRecord{
-		PID: math.MaxInt32, Network: "tcp", Address: "127.0.0.1:1", ProcessIdentityV2: "future-v1:unavailable",
-	})
-	require.NoError(t, err)
-	assert.Zero(t, CleanupZombieDaemons(DaemonEndpoint{}))
-	assert.Zero(t, identified)
+	assert.Equal(t, math.MaxInt32, info.PID)
+	assert.False(t, info.Stale())
 	assert.FileExists(t, path)
 }
 
@@ -1088,9 +978,7 @@ func TestRequestGracefulDaemonShutdownUsesSharedContextForDelayedAcceptance(t *t
 	ep := DaemonEndpoint{Network: "tcp", Address: strings.TrimPrefix(server.URL, "http://")}
 
 	done := make(chan error, 1)
-	go func() {
-		done <- requestGracefulDaemonShutdown(ctx, func() (DaemonEndpoint, error) { return ep, nil }, dead.Load)
-	}()
+	go func() { done <- requestGracefulDaemonShutdown(ctx, ep, dead.Load) }()
 	returnedEarly := false
 	var earlyResult error
 	select {
@@ -1119,7 +1007,7 @@ func TestRequestGracefulDaemonShutdownRetriesServerErrors(t *testing.T) {
 	defer cancel()
 	ep := DaemonEndpoint{Network: "tcp", Address: strings.TrimPrefix(server.URL, "http://")}
 
-	require.NoError(t, requestGracefulDaemonShutdown(ctx, func() (DaemonEndpoint, error) { return ep, nil }, func() bool { return false }))
+	require.NoError(t, requestGracefulDaemonShutdown(ctx, ep, func() bool { return false }))
 	assert.Equal(t, int32(2), attempts.Load())
 }
 
@@ -1231,100 +1119,4 @@ func TestKillDaemonKeepsRecordWhenUnknownProcessDoesNotAnswer(t *testing.T) {
 	err = KillDaemon(&RuntimeInfo{PID: os.Getpid(), Network: "tcp", Address: address, SourcePath: runtimePath})
 	require.Error(t, err)
 	assert.FileExists(t, runtimePath)
-}
-
-func TestKillDaemonReturnsWhenUnjudgedEndpointIsReused(t *testing.T) {
-	testenv.SetDataDir(t)
-	var stopped atomic.Bool
-	var shutdowns atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/ping":
-			pid := math.MaxInt32
-			if stopped.Load() {
-				pid = 1
-			}
-			fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, pid)
-		case "/api/shutdown":
-			shutdowns.Add(1)
-			stopped.Store(true)
-			w.WriteHeader(http.StatusOK)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-	rec := kitdaemon.RuntimeRecord{PID: math.MaxInt32, Network: "tcp", Address: server.Listener.Addr().String(), ProcessIdentityV2: "future-v1:unavailable"}
-	path, err := runtimeStore().Write(rec)
-	require.NoError(t, err)
-	done := make(chan error, 1)
-	go func() { done <- KillDaemon(runtimeInfoFromRecord(rec)) }()
-	// Wall-clock wait: the HTTP endpoint now answers for a replacement process.
-	completed := assert.Eventually(t, func() bool {
-		select {
-		case err = <-done:
-			return true
-		default:
-			return false
-		}
-	}, 2*time.Second, 10*time.Millisecond)
-	if !completed {
-		server.CloseClientConnections()
-		server.Close()
-		<-done
-		return
-	}
-	require.NoError(t, err)
-	assert.Equal(t, int32(1), shutdowns.Load())
-	assert.FileExists(t, path, "a replacement endpoint cannot prove the recorded daemon finished finalizing")
-}
-
-func TestKillDaemonFallsBackWhenSelectedSocketDisappears(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix sockets are not supported on Windows")
-	}
-	testenv.SetDataDir(t)
-	socketDir, err := os.MkdirTemp("/tmp", "rr-stop-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(socketDir)
-	socketPath := filepath.Join(socketDir, "d.sock")
-	listener, err := net.Listen("unix", socketPath)
-	require.NoError(t, err)
-	var stopped atomic.Bool
-	var shutdowns atomic.Int32
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/ping":
-			if stopped.Load() {
-				w.WriteHeader(http.StatusServiceUnavailable)
-				return
-			}
-			// Unlinking a live socket leaves existing connections usable, but prevents new dials.
-			if r.Host == "localhost" {
-				assert.NoError(t, os.Remove(socketPath))
-			}
-			fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, math.MaxInt32)
-		case "/api/shutdown":
-			shutdowns.Add(1)
-			stopped.Store(true)
-			w.WriteHeader(http.StatusOK)
-		default:
-			http.NotFound(w, r)
-		}
-	})
-	tcpServer := httptest.NewServer(handler)
-	defer tcpServer.Close()
-	socketServer := httptest.NewUnstartedServer(handler)
-	require.NoError(t, socketServer.Listener.Close())
-	socketServer.Listener = listener
-	socketServer.Start()
-	defer socketServer.Close()
-	rec := kitdaemon.RuntimeRecord{PID: math.MaxInt32, Network: "unix", Address: socketPath, ProcessIdentityV2: "future-v1:unavailable", Metadata: map[string]string{
-		runtimeAlternateNetworkKey: "tcp", runtimeAlternateAddressKey: tcpServer.Listener.Addr().String(),
-	}}
-	path, err := runtimeStore().Write(rec)
-	require.NoError(t, err)
-	require.NoError(t, KillDaemon(runtimeInfoFromRecord(rec)))
-	assert.Equal(t, int32(1), shutdowns.Load())
-	assert.FileExists(t, path)
 }

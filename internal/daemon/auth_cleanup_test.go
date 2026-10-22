@@ -35,6 +35,6 @@ func TestAuthShutdownReportsDeniedRequest(t *testing.T) {
 	ep := authEndpoint(t, server.URL)
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	err := requestGracefulDaemonShutdown(ctx, func() (DaemonEndpoint, error) { return ep, nil }, func() bool { return false })
+	err := requestGracefulDaemonShutdown(ctx, ep, func() bool { return false })
 	require.ErrorIs(t, err, ErrDaemonAccessDenied)
 }

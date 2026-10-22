@@ -150,32 +150,3 @@ func TestAuthKillDaemonFallsBackToTCPWhenSocketIsGone(t *testing.T) {
 	require.NoError(t, KillDaemon(info))
 	assert.Equal(t, "Bearer 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", <-shutdownAuth)
 }
-
-func TestUnjudgedRuntimeUsesPrivateSocketForKey(t *testing.T) {
-	testenv.SetDataDir(t)
-	setShortRuntimeDir(t)
-	db, _ := testutil.OpenTestDBWithDir(t)
-	cfg := config.DefaultConfig()
-	cfg.AuthKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	cfg.ServerAddr = "127.0.0.1:0"
-	cfg.Web.Enabled = false
-	server := NewServer(db, cfg, "")
-	errCh, _ := startServerAndWaitForRuntime(t, server)
-	t.Cleanup(func() { stopTestServer(t, server, errCh) })
-	records, err := runtimeStore().List()
-	require.NoError(t, err)
-	require.Len(t, records, 1)
-	rec := records[0]
-	rec.ProcessIdentityV2 = "future-v1:unavailable"
-	_, err = runtimeStore().Write(rec)
-	require.NoError(t, err)
-	writeAuthClientConfig(t, cfg.AuthKey)
-
-	info, err := GetAnyRunningDaemonContext(t.Context())
-	require.NoError(t, err)
-	require.Equal(t, "unix", info.Network)
-	resp, err := info.Endpoint().HTTPClient(time.Second).Get(info.Endpoint().BaseURL() + "/api/status")
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-}

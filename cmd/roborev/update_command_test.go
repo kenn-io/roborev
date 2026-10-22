@@ -18,10 +18,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/testenv"
+	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/update"
 )
 
@@ -356,40 +356,18 @@ func TestDiscoverDaemonForUpdateRemovesDeadRuntime(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
-func TestUpdateHandoffKeepsUnjudgedRuntime(t *testing.T) {
-	for _, operation := range []string{"runtimeHasPID", "replacementRuntimePID", "initialPIDsExited", "discoverDaemonForUpdate"} {
-		t.Run(operation, func(t *testing.T) {
-			stubUpdateCommand(t)
-			testenv.SetDataDir(t)
-			path, err := daemon.RuntimeStore().Write(kitdaemon.RuntimeRecord{
-				PID: math.MaxInt32, Network: "tcp", Address: "127.0.0.1:1", ProcessIdentityV2: "future-v1:unavailable",
-			})
-			require.NoError(t, err)
-			listAllRuntimes = daemon.ListAllRuntimes
-			switch operation {
-			case "runtimeHasPID":
-				assert.True(t, runtimeHasPID(math.MaxInt32))
-			case "replacementRuntimePID":
-				assert.Equal(t, math.MaxInt32, replacementRuntimePID(1))
-			case "initialPIDsExited":
-				assert.False(t, initialPIDsExited(map[int]struct{}{math.MaxInt32: {}}, 0))
-			case "discoverDaemonForUpdate":
-				getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
-				info, err := discoverDaemonForUpdate()
-				require.ErrorContains(t, err, "running daemon is not responsive")
-				assert.Nil(t, info)
-			}
-			assert.FileExists(t, path)
-		})
-	}
-}
-
-func TestInitialPIDsExitedIgnoresDeadRuntime(t *testing.T) {
+func TestDiscoverDaemonForUpdateKeepsUnjudgedRuntime(t *testing.T) {
 	stubUpdateCommand(t)
-	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		return []*daemon.RuntimeInfo{{PID: math.MaxInt32}}, nil
-	}
-	assert.True(t, initialPIDsExited(map[int]struct{}{math.MaxInt32: {}}, 0))
+	testenv.SetDataDir(t)
+	path, err := daemon.RuntimeStore().Write(testutil.UnjudgedRuntimeRecord("tcp", "127.0.0.1:1"))
+	require.NoError(t, err)
+	listAllRuntimes = daemon.ListAllRuntimes
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
+
+	info, err := discoverDaemonForUpdate()
+	require.ErrorContains(t, err, "running daemon is not responsive")
+	assert.Nil(t, info)
+	assert.FileExists(t, path)
 }
 
 func TestUpdateCommandCancelAfterInstallReleasesLease(t *testing.T) {
@@ -596,32 +574,4 @@ func updateDaemonHandler(
 func readRequestBody(r *http.Request) string {
 	body, _ := io.ReadAll(r.Body)
 	return string(body)
-}
-
-func TestUpdateIgnoresReusedLegacyRuntime(t *testing.T) {
-	for _, operation := range []string{"runtimeHasPID", "replacementRuntimePID", "discoverDaemonForUpdate"} {
-		t.Run(operation, func(t *testing.T) {
-			stubUpdateCommand(t)
-			testenv.SetDataDir(t)
-			require.True(t, daemon.ProcessExists(os.Getpid()))
-			require.False(t, isPIDAliveForUpdateDefault(os.Getpid()), "the test binary is not a daemon")
-			path, err := daemon.RuntimeStore().Write(kitdaemon.RuntimeRecord{
-				PID: os.Getpid(), Network: "tcp", Address: "127.0.0.1:1",
-			})
-			require.NoError(t, err)
-			listAllRuntimes = daemon.ListAllRuntimes
-			switch operation {
-			case "runtimeHasPID":
-				assert.False(t, runtimeHasPID(os.Getpid()))
-			case "replacementRuntimePID":
-				assert.Zero(t, replacementRuntimePID(0))
-			case "discoverDaemonForUpdate":
-				getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
-				info, err := discoverDaemonForUpdate()
-				require.NoError(t, err)
-				assert.Nil(t, info)
-				assert.NoFileExists(t, path)
-			}
-		})
-	}
 }
