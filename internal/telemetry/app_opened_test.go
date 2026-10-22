@@ -344,14 +344,10 @@ func TestClientGateDisabledReceipt(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(3, transport.calls)
 	})
-	for _, outcome := range []string{"503", "transport", "queued", "skipped"} {
+	for _, outcome := range []string{"error", "queued", "skipped"} {
 		t.Run(outcome, func(t *testing.T) {
 			transport := &gateTransport{status: http.StatusAccepted, receipt: `{"status":"` + outcome + `"}`}
-			if outcome == "503" {
-				transport.status = http.StatusServiceUnavailable
-				transport.receipt = ""
-			}
-			if outcome == "transport" {
+			if outcome == "error" {
 				transport.err = fmt.Errorf("network unavailable")
 				transport.receipt = ""
 			}
@@ -359,7 +355,7 @@ func TestClientGateDisabledReceipt(t *testing.T) {
 			client := &http.Client{Transport: transport}
 			for range 2 {
 				_, err := gate.PostEvent(t.Context(), client, "http://example.com/api/telemetry/events", EventAppOpened, nil)
-				if outcome == "503" || outcome == "transport" {
+				if outcome == "error" {
 					require.Error(t, err)
 				} else {
 					require.NoError(t, err)

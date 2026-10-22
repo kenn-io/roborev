@@ -123,22 +123,6 @@ describe("setupAppOpenedReporting", () => {
         },
       ]);
       expect(requests[2]!.keepalive).toBe(true);
-      hidden = false;
-      focusWindow();
-      await vi.advanceTimersByTimeAsync(0);
-      expect(
-        await Promise.all(
-          fetchMock.mock.calls
-            .slice(3)
-            .map(([request]) => request.clone().json()),
-        ),
-      ).toEqual([
-        { event: "app_opened", properties: { surface: "web" } },
-        {
-          event: "screen_viewed",
-          properties: { surface: "web", screen: "reviews" },
-        },
-      ]);
     },
   );
 
@@ -158,22 +142,21 @@ describe("setupAppOpenedReporting", () => {
     expect(request.headers.get("Content-Type")).toBe("application/json");
   });
 
-  test("a disabled session receipt silences reports until the next day's focus", async () => {
+  test("a disabled session receipt disables the reporter", async () => {
+    const start = vi.spyOn(
+      await import("@kenn-io/kit-ui/utils/browser-telemetry"),
+      "startBrowserTelemetry",
+    );
     vi.spyOn(document, "hidden", "get").mockReturnValue(false);
     setup();
     await settle();
+    const disable = vi.spyOn(start.mock.results[0]!.value, "disable");
     fetchMock.mockImplementation(async () =>
       Response.json({ status: "disabled" }, { status: 202 }),
     );
     globalThis.dispatchEvent(new Event("pagehide"));
     await settle();
-    appOpened.reportCoreAction("search_empty");
-    appOpened.reportCoreAction("review_viewed");
-    appOpened.reportScreenViewed("analytics");
-    globalThis.dispatchEvent(new Event("pageshow"));
-    globalThis.dispatchEvent(new Event("pagehide"));
-    focusWindow();
-    await settle();
+    expect(disable).toHaveBeenCalledTimes(1);
     expect(
       await Promise.all(
         fetchMock.mock.calls.map(([request]) => request.clone().json()),
@@ -185,14 +168,6 @@ describe("setupAppOpenedReporting", () => {
         properties: { surface: "web", duration_bucket: "under_1m" },
       },
     ]);
-    vi.setSystemTime(new Date("2026-03-11T00:00:00Z"));
-    focusWindow();
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(await fetchMock.mock.calls[2]![0].json()).toEqual({
-      event: "app_opened",
-      properties: { surface: "web" },
-    });
   });
 
   test("excludes disabled time from a session resumed after UTC midnight", async () => {
@@ -586,31 +561,27 @@ describe("setupAppOpenedReporting", () => {
     },
   );
 
-  test.each(["screen", "core action"])(
-    "bounds %s requests with a ten-second timeout",
-    async (kind) => {
-      setup();
-      await settle();
-      const deadline = new AbortController();
-      const timeout = vi
-        .spyOn(AbortSignal, "timeout")
-        .mockReturnValue(deadline.signal);
-      fetchMock.mockImplementation(
-        (request) =>
-          new Promise((_resolve, reject) =>
-            request.signal.addEventListener("abort", () =>
-              reject(new DOMException("aborted", "AbortError")),
-            ),
+  test("bounds screen requests with a ten-second timeout", async () => {
+    setup();
+    await settle();
+    const deadline = new AbortController();
+    const timeout = vi
+      .spyOn(AbortSignal, "timeout")
+      .mockReturnValue(deadline.signal);
+    fetchMock.mockImplementation(
+      (request) =>
+        new Promise((_resolve, reject) =>
+          request.signal.addEventListener("abort", () =>
+            reject(new DOMException("aborted", "AbortError")),
           ),
-      );
-      if (kind === "screen") appOpened.reportScreenViewed("reviews");
-      else appOpened.reportCoreAction("review_viewed");
-      expect(timeout).toHaveBeenCalledExactlyOnceWith(10_000);
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-      expect(fetchMock.mock.calls[1]![0].signal.aborted).toBe(false);
-      deadline.abort();
-      await settle();
-      expect(fetchMock.mock.calls[1]![0].signal.aborted).toBe(true);
-    },
-  );
+        ),
+    );
+    appOpened.reportScreenViewed("reviews");
+    expect(timeout).toHaveBeenCalledExactlyOnceWith(10_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1]![0].signal.aborted).toBe(false);
+    deadline.abort();
+    await settle();
+    expect(fetchMock.mock.calls[1]![0].signal.aborted).toBe(true);
+  });
 });

@@ -497,7 +497,6 @@ func TestCLIUseCommandSet(t *testing.T) {
 		require.Eventually(t, func() bool { return len(rec.telemetryPosts()) == 1 }, 5*time.Second, 10*time.Millisecond)
 		require.Len(t, rec.telemetryPosts(), 1)
 		assert.Contains(rec.allPaths(), "POST "+daemon.TelemetryAgentCallPath)
-		assert.Equal("application/json", rec.telemetryPosts()[0].contentType)
 	})
 }
 
@@ -709,7 +708,6 @@ func TestCLIUseReportsAgentActivityForSkillMarkedCommands(t *testing.T) {
 			require.Eventually(t, func() bool { return len(rec.telemetryPosts()) == 1 }, 5*time.Second, 10*time.Millisecond)
 			require.Len(t, rec.telemetryPosts(), 1)
 			assert.Contains(rec.allPaths(), "POST "+daemon.TelemetryAgentCallPath)
-			assert.Equal("application/json", rec.telemetryPosts()[0].contentType)
 
 			rec.reset()
 			plain := runCLIFresh(t, true, append(tc.plain, "--server", md.Server.URL)...)

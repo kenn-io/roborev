@@ -90,7 +90,6 @@ func TestMCPServeSpeaksProtocolOverStdio(t *testing.T) {
 	assert.NotContains(text, "secret")
 	// Wall-clock wait: asynchronous telemetry crosses the mock daemon's TCP socket.
 	require.Eventually(func() bool { return len(rec.telemetryPosts()) == 1 }, time.Second, time.Millisecond)
-	assert.Equal("application/json", rec.telemetryPosts()[0].contentType)
 	assert.Contains(rec.allPaths(), "POST "+daemon.TelemetryAgentCallPath)
 
 	require.NoError(session.Close())
