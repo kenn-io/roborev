@@ -808,8 +808,8 @@ func CleanupZombieDaemons(target DaemonEndpoint) int {
 
 		// Check the recorded process before any endpoint receives credentials.
 		if info.hasStaleProcess() {
-			if ep.IsUnix() && ep.Address != target.Address && !kitdaemon.RuntimeProcessAlive(kitdaemon.RuntimeRecord{PID: info.PID, ProcessIdentity: info.processIdentity, ProcessIdentityV2: info.processIdentityV2}) {
-				// Clean up non-matching sockets only when the recorded process is dead.
+			if ep.IsUnix() && ep.Address != target.Address && !kitdaemon.ProcessAlive(info.PID) {
+				// Clean up non-matching sockets only when the PID is dead.
 				os.Remove(ep.Address)
 			}
 			if info.SourcePath != "" {

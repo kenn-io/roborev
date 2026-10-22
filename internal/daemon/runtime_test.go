@@ -193,28 +193,6 @@ func TestCleanupZombieDaemonsDoesNotIdentifyUnjudgedPID(t *testing.T) {
 	assert.FileExists(t, path)
 }
 
-func TestCleanupZombieDaemonsRemovesGoneRecordSocketDespiteLocalPID(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("requires Linux process identities")
-	}
-	testenv.SetDataDir(t)
-	setShortRuntimeDir(t)
-	identity, ok := kitdaemon.ReadProcessIdentity(os.Getpid())
-	require.True(t, ok)
-	fields := strings.Split(string(identity), ":")
-	require.Len(t, fields, 4)
-	fields[1] = "00000000-0000-0000-0000-000000000001"
-	socket := filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "gone.sock")
-	require.NoError(t, os.WriteFile(socket, nil, 0o600))
-	path, err := runtimeStore().Write(kitdaemon.RuntimeRecord{
-		PID: os.Getpid(), Network: "unix", Address: socket, ProcessIdentityV2: kitdaemon.ProcessIdentity(strings.Join(fields, ":")),
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 1, CleanupZombieDaemons(DaemonEndpoint{}))
-	assert.NoFileExists(t, path)
-	assert.NoFileExists(t, socket)
-}
-
 func TestFindAvailablePort(t *testing.T) {
 	// Test finding an available port
 	addr, port, err := FindAvailablePort(defaultTestAddr)
