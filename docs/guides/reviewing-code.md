@@ -167,6 +167,7 @@ roborev review --type security       # Security-focused review
 roborev review --type design         # Design-focused review
 roborev review --type lookahead      # Time-series look-ahead bias review
 roborev review --type test-value     # Find tests that add no value
+roborev review --type exhaustive     # Default review that reports every supportable finding
 roborev review --branch --type security  # Security review of branch
 ```
 
@@ -175,11 +176,14 @@ roborev review --branch --type security  # Security review of branch
 | *(default)* | Bugs, security, testing gaps, regressions, code quality. This is what you get when you omit `--type`. |
 | `security` | Injection, auth, credential exposure, path traversal, unsafe patterns |
 | `design` | Completeness, feasibility, task scoping, missing considerations |
+| `exhaustive` | The default review, told to report every problem it can support, including concrete low-severity ones, and how many findings a change of this size usually has (6 per 100 changed lines, at most 40). Expect more findings and longer, costlier reviews than the default. |
 | `lookahead` | Time-series look-ahead bias (a.k.a. peekahead / future-data leakage): window/lag direction, train/test ordering, fit-on-full-series, as-of join alignment, point-in-time correctness, label/target leakage |
 | `test-value` | Added or modified tests that protect nothing: tests of dependency behavior, self-confirming assertions, static text checks, unreachable scenarios, duplicate coverage, and fixtures that bypass the behavior under test. Confirmed findings default to medium severity. |
 
 Review types work with all review modes (`--branch`, `--dirty`, `--since`,
 single commits, ranges).
+
+`exhaustive` uses the same agent and model settings as the default review.
 
 `test-value` is opt-in. It recommends removing tests that protect no behavior
 the repository owns; it never recommends adding tests or expanding coverage.

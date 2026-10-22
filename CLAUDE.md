@@ -165,7 +165,7 @@ Agents are discovered via PATH lookup (`CommandAgent.CommandName()`). The `test`
 
 ### Review types
 
-Empty/`"review"` (standard), `"security"`, `"design"` — changes the system prompt
+Empty/`"review"` (standard), `"security"`, `"design"` — changes the system prompt. `"exhaustive"` keeps the standard prompt and appends an instruction to report every supportable finding, with an expected count scaled to the diff size (`internal/prompt/exhaustive.go`)
 
 ### Migrations
 
