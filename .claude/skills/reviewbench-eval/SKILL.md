@@ -204,8 +204,8 @@ project's linters catch, even when the benchmark counts them.
 - Results (findings, scores, logs, and reports) live in
   `~/.local/share/roborev-reviewbench` (or `ROBOREV_EVAL_DIR`). Benchmark
   repositories and checkouts are disposable and live under
-  `${TMPDIR:-/tmp}/roborev-reviewbench` (or `ROBOREV_EVAL_CACHE`). Neither is in
-  this repository.
+  `~/.cache/roborev-reviewbench` (or `ROBOREV_EVAL_CACHE`), on disk rather than
+  a RAM-backed `/tmp`. Neither is in this repository.
 - Codex runs ignore user config, so connectors and web search cannot fetch the
   upstream pull request's review comments, which are the answers. Claude Code
   reviews only get read tools.

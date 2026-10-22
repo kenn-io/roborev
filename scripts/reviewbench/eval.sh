@@ -55,8 +55,8 @@
 # ~/.pi/agent, the same way the pi command line does.
 # Results (findings, scores, logs, reports) live in $ROBOREV_EVAL_DIR, by
 # default ~/.local/share/roborev-reviewbench. Benchmark repositories and
-# checkouts are disposable and live in $ROBOREV_EVAL_CACHE, by default under
-# the system temporary directory.
+# checkouts are disposable and live in $ROBOREV_EVAL_CACHE, by default
+# ~/.cache/roborev-reviewbench.
 set -euo pipefail
 
 # ReviewBench is pinned so judged results stay comparable across runs. Its
@@ -70,7 +70,9 @@ PI_PACKAGES=(pi-coding-agent pi-ai pi-agent-core pi-codemode pi-mcp pi-tui pi-te
 root="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 probe_src="$root/scripts/reviewbench/probe"
 results="${ROBOREV_EVAL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/roborev-reviewbench}"
-cache="${ROBOREV_EVAL_CACHE:-${TMPDIR:-/tmp}/roborev-reviewbench}"
+# Disk, not $TMPDIR: /tmp is often RAM-backed, and the cache holds about a
+# hundred repository clones plus a checkout of every pull request per run.
+cache="${ROBOREV_EVAL_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/roborev-reviewbench}"
 bench="$cache/ReviewBench"
 
 usage() { sed -n '8,41p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
@@ -170,7 +172,8 @@ prompt_version() {
 build_probe() {
   local sha tree
   sha="$(git -C "$root" rev-parse --verify "$1^{commit}")" || die "unknown ref $1"
-  tree="$(mktemp -d)"
+  mkdir -p "$cache"
+  tree="$(mktemp -d -p "$cache" build.XXXXXX)"
   git -C "$root" worktree add -q --detach "$tree/src" "$sha"
   mkdir -p "$tree/src/scripts/reviewbench/probe"
   find "$probe_src" -maxdepth 1 -name '*.go' ! -name '*_test.go' -exec cp {} "$tree/src/scripts/reviewbench/probe/" \;
