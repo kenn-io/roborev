@@ -440,6 +440,7 @@ func TestPiReviewWithSchemaUsesAnInstalledSchemaExtension(t *testing.T) {
 		globalSettings string
 		repoSettings   string
 		planning       bool
+		launchArgs     []string
 		wantExplicit   bool
 	}{
 		{name: "nothing installed", wantExplicit: true},
@@ -447,6 +448,8 @@ func TestPiReviewWithSchemaUsesAnInstalledSchemaExtension(t *testing.T) {
 		{name: "installed for the repository", repoSettings: `{"packages":[{"source":"npm:@nqbao/pi-json-schema"}]}`},
 		{name: "other packages installed", globalSettings: unrelated, wantExplicit: true},
 		{name: "planning disables discovered extensions", globalSettings: otherVersion, planning: true, wantExplicit: true},
+		{name: "launch args disable discovered extensions", globalSettings: otherVersion, launchArgs: []string{"--no-extensions"}, wantExplicit: true},
+		{name: "launch args disable discovered extensions by short flag", globalSettings: otherVersion, launchArgs: []string{"-ne"}, wantExplicit: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -477,7 +480,9 @@ done
 				ctx = context.WithValue(ctx, planningContextKey{}, true)
 			}
 
-			_, err := NewPiAgent(cli).ReviewWithSchema(ctx, repoDir, "HEAD", "review", jsonRaw(`{"type":"object"}`), nil)
+			pi := NewPiAgent(cli)
+			pi.LaunchArgs = tt.launchArgs
+			_, err := pi.ReviewWithSchema(ctx, repoDir, "HEAD", "review", jsonRaw(`{"type":"object"}`), nil)
 			require.NoError(t, err)
 
 			args := readLineFile(t, argsFile)

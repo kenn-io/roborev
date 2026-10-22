@@ -321,10 +321,12 @@ func (a *PiAgent) ReviewWithSchema(
 		return nil, fmt.Errorf("pi session not found; cannot resume requested session")
 	}
 	agenticMode := effectiveAgentic(ctx, a.Agentic)
-	// Planning disables discovered extensions, so it always loads the schema
-	// extension explicitly, even when the user installed it.
+	// Planning and a --no-extensions launch argument disable discovered
+	// extensions, so either way the schema extension is loaded explicitly,
+	// even when the user installed it.
 	readOnly := planningReadOnly(ctx)
-	schemaInstalled := !readOnly && piSettingsInstallPackage(repoPath, a.jsonSchemaExtension())
+	schemaInstalled := !readOnly && !piDisablesExtensions(a.LaunchArgs) &&
+		piSettingsInstallPackage(repoPath, a.jsonSchemaExtension())
 	args := a.structuredReviewArgs(promptPath, outputPath, schema, agenticMode, sessionPath, schemaInstalled)
 	if readOnly {
 		// Disable discovered extensions; the explicit schema extension remains enabled.
@@ -475,6 +477,12 @@ func piNpmPackageName(source string) string {
 		name = name[:i]
 	}
 	return name
+}
+
+// piDisablesExtensions reports whether args turn off pi's extension
+// discovery. Explicit --extension paths still load when it is off.
+func piDisablesExtensions(args []string) bool {
+	return slices.Contains(args, "--no-extensions") || slices.Contains(args, "-ne")
 }
 
 // piSettingsInstallPackage reports whether the user's global pi settings, or
