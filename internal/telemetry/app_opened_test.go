@@ -349,9 +349,11 @@ func TestClientGateDisabledReceipt(t *testing.T) {
 			transport := &gateTransport{status: http.StatusAccepted, receipt: `{"status":"` + outcome + `"}`}
 			if outcome == "503" {
 				transport.status = http.StatusServiceUnavailable
+				transport.receipt = ""
 			}
 			if outcome == "transport" {
 				transport.err = fmt.Errorf("network unavailable")
+				transport.receipt = ""
 			}
 			gate := new(ClientGate)
 			client := &http.Client{Transport: transport}

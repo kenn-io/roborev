@@ -76,6 +76,7 @@ func TestDisabledReceiptQuietsModel(t *testing.T) {
 	m.client.Transport = transport
 	close(m.ready)
 	collectMsgs(m.reportScreenViewed())
+	collectMsgs(m.reportAppOpened())
 	collectMsgs(m.postScreen("help"))
 	collectMsgs(m.reportAction(telemetry.EventReviewViewed, nil))
 	m.reportSessionEnded(time.Minute)

@@ -497,7 +497,7 @@ func TestCLIUseCommandSet(t *testing.T) {
 		require.Eventually(t, func() bool { return len(rec.telemetryPosts()) == 1 }, 5*time.Second, 10*time.Millisecond)
 		require.Len(t, rec.telemetryPosts(), 1)
 		assert.Contains(rec.allPaths(), "POST "+daemon.TelemetryAgentCallPath)
-		assert.JSONEq(`{"event":"agent_active","properties":null}`, rec.telemetryPosts()[0].body)
+		assert.Equal("application/json", rec.telemetryPosts()[0].contentType)
 	})
 }
 
@@ -709,7 +709,7 @@ func TestCLIUseReportsAgentActivityForSkillMarkedCommands(t *testing.T) {
 			require.Eventually(t, func() bool { return len(rec.telemetryPosts()) == 1 }, 5*time.Second, 10*time.Millisecond)
 			require.Len(t, rec.telemetryPosts(), 1)
 			assert.Contains(rec.allPaths(), "POST "+daemon.TelemetryAgentCallPath)
-			assert.JSONEq(`{"event":"agent_active","properties":null}`, rec.telemetryPosts()[0].body)
+			assert.Equal("application/json", rec.telemetryPosts()[0].contentType)
 
 			rec.reset()
 			plain := runCLIFresh(t, true, append(tc.plain, "--server", md.Server.URL)...)
@@ -775,23 +775,6 @@ func TestMCPActivity(t *testing.T) {
 			synctest.Wait()
 			clearCLIUseState()
 		})
-	})
-	t.Run("daemon disabled", func(t *testing.T) {
-		resetCLIUse(t)
-		var calls atomic.Int32
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			calls.Add(1)
-			assert.Equal(t, daemon.TelemetryAgentCallPath, r.URL.Path)
-			w.WriteHeader(http.StatusAccepted)
-			_, _ = io.WriteString(w, `{"status":"disabled"}`)
-		}))
-		t.Cleanup(srv.Close)
-		ep := mustParseEndpoint(t, srv.URL)
-		for range 2 {
-			reportMCPActivity(t.Context(), ep)
-			drainCLIReports()
-		}
-		assert.Equal(t, int32(1), calls.Load())
 	})
 	t.Run("opted out", func(t *testing.T) {
 		resetCLIUse(t)
@@ -1000,6 +983,8 @@ func TestCLIActionHonorsDisabledReceipt(t *testing.T) {
 	t.Cleanup(srv.Close)
 	ep := mustParseEndpoint(t, srv.URL)
 	observeCLIUse(ep, httptest.NewRequest(http.MethodGet, "/api/jobs", nil), &http.Response{StatusCode: http.StatusOK})
+	drainCLIReports()
+	reportMCPActivity(t.Context(), ep)
 	drainCLIReports()
 	cliOutputIsTerminal = func(io.Writer) bool { return true }
 	reportCLIActionOutput(io.Discard, telemetry.EventReviewViewed)

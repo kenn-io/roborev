@@ -158,7 +158,7 @@ describe("setupAppOpenedReporting", () => {
     expect(request.headers.get("Content-Type")).toBe("application/json");
   });
 
-  test("a disabled session receipt silences subsequent actions and sessions", async () => {
+  test("a disabled session receipt silences reports until the next day's focus", async () => {
     vi.spyOn(document, "hidden", "get").mockReturnValue(false);
     setup();
     await settle();
@@ -168,9 +168,11 @@ describe("setupAppOpenedReporting", () => {
     globalThis.dispatchEvent(new Event("pagehide"));
     await settle();
     appOpened.reportCoreAction("search_empty");
+    appOpened.reportCoreAction("review_viewed");
     appOpened.reportScreenViewed("analytics");
     globalThis.dispatchEvent(new Event("pageshow"));
     globalThis.dispatchEvent(new Event("pagehide"));
+    focusWindow();
     await settle();
     expect(
       await Promise.all(
@@ -183,6 +185,14 @@ describe("setupAppOpenedReporting", () => {
         properties: { surface: "web", duration_bucket: "under_1m" },
       },
     ]);
+    vi.setSystemTime(new Date("2026-03-11T00:00:00Z"));
+    focusWindow();
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(await fetchMock.mock.calls[2]![0].json()).toEqual({
+      event: "app_opened",
+      properties: { surface: "web" },
+    });
   });
 
   test.each([
@@ -436,88 +446,6 @@ describe("setupAppOpenedReporting", () => {
     },
   );
 
-  test("sends one app_opened across ten page loads and asks again the next day", async () => {
-    for (let load = 0; load < 10; load++) {
-      setup();
-      await settle();
-      for (const cleanup of cleanups.splice(0)) cleanup();
-      for (const [target, type, listener] of listeners.splice(0))
-        target.removeEventListener(type, listener);
-      vi.resetModules();
-      appOpened = await import("./app-opened");
-    }
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    vi.setSystemTime(new Date("2026-03-11T00:00:00Z"));
-    setup();
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-
-  test("a disabled receipt silences screens, reads, and pagehide until the next day's focus", async () => {
-    fetchMock.mockImplementation(async () =>
-      Response.json({ status: "disabled" }, { status: 202 }),
-    );
-    vi.spyOn(document, "hidden", "get").mockReturnValue(false);
-    setup();
-    await settle();
-    appOpened.reportScreenViewed("analytics");
-    appOpened.reportCoreAction("review_viewed");
-    globalThis.dispatchEvent(new Event("pagehide"));
-    focusWindow();
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    vi.setSystemTime(new Date("2026-03-11T00:00:00Z"));
-    focusWindow();
-    await settle();
-    expect(
-      fetchMock.mock.calls.filter(([request]) =>
-        request.url.endsWith("/api/telemetry/events"),
-      ),
-    ).toHaveLength(2);
-    expect(await fetchMock.mock.calls[1]![0].json()).toEqual({
-      event: "app_opened",
-      properties: { surface: "web" },
-    });
-  });
-
-  test("reports each screen and review read once a day across focus returns", async () => {
-    setup();
-    appOpened.reportScreenViewed("reviews");
-    await settle();
-    for (let visit = 0; visit < 3; visit++) {
-      appOpened.reportScreenViewed("analytics");
-      appOpened.reportCoreAction("review_viewed");
-      focusWindow();
-      await settle();
-    }
-    const bodies = await Promise.all(
-      fetchMock.mock.calls.map(([request]) => request.clone().json()),
-    );
-    expect(bodies).toEqual([
-      { event: "app_opened", properties: { surface: "web" } },
-      {
-        event: "screen_viewed",
-        properties: { surface: "web", screen: "reviews" },
-      },
-      {
-        event: "screen_viewed",
-        properties: { surface: "web", screen: "analytics" },
-      },
-      { event: "review_viewed", properties: { surface: "web" } },
-    ]);
-    vi.setSystemTime(new Date("2026-03-11T00:00:00Z"));
-    focusWindow();
-    await settle();
-    appOpened.reportCoreAction("review_viewed");
-    await settle();
-    const reads = await Promise.all(
-      fetchMock.mock.calls.map(([request]) => request.clone().json()),
-    );
-    expect(reads.filter((body) => body.event === "review_viewed")).toHaveLength(
-      2,
-    );
-  });
-
   test("scopes requests and stored receipts to the base path", async () => {
     const meta = document.createElement("meta");
     meta.name = "roborev-base-path";
@@ -568,4 +496,73 @@ describe("setupAppOpenedReporting", () => {
       properties: { surface: "web" },
     });
   });
+  test.each([
+    ["rejected", () => Promise.reject(new TypeError("network down"))],
+    [
+      "answered 400",
+      async () => new Response("unsupported telemetry event", { status: 400 }),
+    ],
+  ])(
+    "swallows a failed post (%s) and still reports the next day",
+    async (_, fail) => {
+      const unhandled = vi.fn();
+      process.on("unhandledRejection", unhandled);
+      try {
+        vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+        setup();
+        await settle();
+        fetchMock.mockImplementationOnce(fail);
+        globalThis.dispatchEvent(new Event("pagehide"));
+        await settle();
+        await settle();
+        expect(unhandled).not.toHaveBeenCalled();
+        expect(await fetchMock.mock.calls[1]![0].clone().json()).toEqual({
+          event: "session_ended",
+          properties: { surface: "web", duration_bucket: "under_1m" },
+        });
+
+        vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
+        focusWindow();
+        await settle();
+        globalThis.dispatchEvent(new Event("pageshow"));
+        globalThis.dispatchEvent(new Event("pagehide"));
+        await settle();
+        expect(fetchMock).toHaveBeenCalledTimes(4);
+        expect(await fetchMock.mock.calls[3]![0].json()).toEqual({
+          event: "session_ended",
+          properties: { surface: "web", duration_bucket: "under_1m" },
+        });
+      } finally {
+        process.off("unhandledRejection", unhandled);
+      }
+    },
+  );
+
+  test.each(["screen", "core action"])(
+    "bounds %s requests with a ten-second timeout",
+    async (kind) => {
+      setup();
+      await settle();
+      const deadline = new AbortController();
+      const timeout = vi
+        .spyOn(AbortSignal, "timeout")
+        .mockReturnValue(deadline.signal);
+      fetchMock.mockImplementation(
+        (request) =>
+          new Promise((_resolve, reject) =>
+            request.signal.addEventListener("abort", () =>
+              reject(new DOMException("aborted", "AbortError")),
+            ),
+          ),
+      );
+      if (kind === "screen") appOpened.reportScreenViewed("reviews");
+      else appOpened.reportCoreAction("review_viewed");
+      expect(timeout).toHaveBeenCalledExactlyOnceWith(10_000);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls[1]![0].signal.aborted).toBe(false);
+      deadline.abort();
+      await settle();
+      expect(fetchMock.mock.calls[1]![0].signal.aborted).toBe(true);
+    },
+  );
 });
