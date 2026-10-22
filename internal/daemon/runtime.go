@@ -86,6 +86,10 @@ func (r RuntimeInfo) HasProcessIdentityV2() bool {
 	return r.processIdentityV2 != ""
 }
 
+func (r RuntimeInfo) processRecord() kitdaemon.RuntimeRecord {
+	return kitdaemon.RuntimeRecord{PID: r.PID, ProcessIdentity: r.processIdentity, ProcessIdentityV2: r.processIdentityV2}
+}
+
 // Endpoint returns a DaemonEndpoint for this runtime.
 func (r RuntimeInfo) Endpoint() DaemonEndpoint {
 	ep := daemonEndpointFromKit(kitdaemon.RuntimeRecord{
@@ -95,9 +99,7 @@ func (r RuntimeInfo) Endpoint() DaemonEndpoint {
 		Service: r.Service,
 		Version: r.Version,
 	}.Endpoint())
-	if r.processIdentityV2 != "" && kitdaemon.CompareRuntimeProcessIdentity(kitdaemon.RuntimeRecord{
-		PID: r.PID, ProcessIdentity: r.processIdentity, ProcessIdentityV2: r.processIdentityV2,
-	}) == kitdaemon.ProcessIdentityUnknown {
+	if r.processIdentityV2 != "" && kitdaemon.CompareRuntimeProcessIdentity(r.processRecord()) == kitdaemon.ProcessIdentityUnknown {
 		ep = ep.AsGuess()
 	}
 	return ep
@@ -578,7 +580,7 @@ func (r *RuntimeInfo) Stale() bool {
 }
 
 func (r *RuntimeInfo) hasStaleProcess() bool {
-	rec := kitdaemon.RuntimeRecord{PID: r.PID, ProcessIdentity: r.processIdentity, ProcessIdentityV2: r.processIdentityV2}
+	rec := r.processRecord()
 	return r.PID > 0 && (!kitdaemon.RuntimeProcessAlive(rec) || kitdaemon.CompareRuntimeProcessIdentity(rec) == kitdaemon.ProcessIdentityMismatch)
 }
 
@@ -647,7 +649,8 @@ func isLoopbackAddr(addr string) bool {
 	return ip.IsLoopback()
 }
 
-// KillDaemon requests graceful shutdown and waits until the daemon exits.
+// KillDaemon requests graceful shutdown and waits until the daemon exits,
+// or stops answering when this caller cannot judge its process.
 // Returns nil if the daemon is no longer running.
 // Only removes runtime file if the daemon is confirmed dead.
 func KillDaemon(info *RuntimeInfo) error {
@@ -656,7 +659,7 @@ func KillDaemon(info *RuntimeInfo) error {
 	}
 
 	ep := info.Endpoint()
-	rec := kitdaemon.RuntimeRecord{PID: info.PID, ProcessIdentity: info.processIdentity, ProcessIdentityV2: info.processIdentityV2}
+	rec := info.processRecord()
 
 	// Remove only this process's runtime record. The endpoint may already belong
 	// to a service-manager replacement.
@@ -668,7 +671,7 @@ func KillDaemon(info *RuntimeInfo) error {
 		}
 	}
 
-	// Endpoint loss proves exit only after shutdown has been accepted.
+	// Endpoint loss ends the wait only after shutdown has been accepted.
 	shutdownAccepted := false
 	// Confirm exact process exit for PIDs this caller can judge; otherwise probe.
 	confirmedDead := func() bool {
@@ -677,11 +680,6 @@ func KillDaemon(info *RuntimeInfo) error {
 		}
 		if !shutdownAccepted {
 			return false
-		}
-		if info.SourcePath != "" {
-			if _, err := os.Stat(info.SourcePath); errors.Is(err, os.ErrNotExist) {
-				return true
-			}
 		}
 		ping, err := ProbeDaemon(ep, 2*time.Second)
 		return err == nil && info.PID > 0 && ping.PID != info.PID || err != nil && !IsDaemonAccessError(err)
@@ -766,7 +764,11 @@ func KillDaemon(info *RuntimeInfo) error {
 	}
 	shutdownAccepted = true
 	waitForGracefulDaemonExit(200*time.Millisecond, confirmedDead)
-	removeRuntimeFile()
+	// HTTP can close before finalization ends. Leave unjudged records for the
+	// daemon to remove when it finishes.
+	if info.PID > 0 && !kitdaemon.RuntimeProcessAlive(rec) {
+		removeRuntimeFile()
+	}
 	return nil
 }
 
@@ -858,7 +860,7 @@ func CleanupZombieDaemons(target DaemonEndpoint) int {
 		if IsDaemonAccessError(probeErr) {
 			continue
 		}
-		if info.PID > 0 && (info.processIdentityV2 == "" || kitdaemon.CompareRuntimeProcessIdentity(kitdaemon.RuntimeRecord{PID: info.PID, ProcessIdentity: info.processIdentity, ProcessIdentityV2: info.processIdentityV2}) == kitdaemon.ProcessIdentityMatch) && identifyProcess(info.PID) == processNotRoborev {
+		if info.PID > 0 && (info.processIdentityV2 == "" || kitdaemon.CompareRuntimeProcessIdentity(info.processRecord()) == kitdaemon.ProcessIdentityMatch) && identifyProcess(info.PID) == processNotRoborev {
 			if ep.IsUnix() && ep.Address != target.Address {
 				os.Remove(ep.Address)
 			}

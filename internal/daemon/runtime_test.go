@@ -165,7 +165,7 @@ func TestKillDaemonReturnsWhenUnjudgedDaemonStopsAnswering(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond)
 	require.NoError(t, result)
 	assert.Equal(int32(1), shutdowns.Load())
-	assert.NoFileExists(path)
+	assert.FileExists(path, "the daemon owns its record while finalization continues after HTTP closes")
 }
 
 func TestKillDaemonKeepsUnjudgedRecords(t *testing.T) {
@@ -1276,7 +1276,7 @@ func TestKillDaemonReturnsWhenUnjudgedEndpointIsReused(t *testing.T) {
 	}
 	require.NoError(t, err)
 	assert.Equal(t, int32(1), shutdowns.Load())
-	assert.NoFileExists(t, path)
+	assert.FileExists(t, path, "a replacement endpoint cannot prove the recorded daemon finished finalizing")
 }
 
 func TestKillDaemonFallsBackWhenSelectedSocketDisappears(t *testing.T) {
@@ -1326,5 +1326,5 @@ func TestKillDaemonFallsBackWhenSelectedSocketDisappears(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, KillDaemon(runtimeInfoFromRecord(rec)))
 	assert.Equal(t, int32(1), shutdowns.Load())
-	assert.NoFileExists(t, path)
+	assert.FileExists(t, path)
 }

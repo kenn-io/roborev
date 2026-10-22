@@ -121,7 +121,7 @@ func runtimeHasPID(pid int) bool {
 		if info == nil || info.PID != pid {
 			continue
 		}
-		if !info.Stale() && (info.HasProcessIdentityV2() || isPIDAliveForUpdate(info.PID)) {
+		if runtimeAliveForUpdate(info) {
 			return true
 		}
 		// Best-effort stale runtime cleanup.
@@ -157,7 +157,7 @@ func replacementRuntimePID(previousPID int) int {
 		if info == nil || info.PID <= 0 || info.PID == previousPID {
 			continue
 		}
-		if info.Stale() || !info.HasProcessIdentityV2() && !isPIDAliveForUpdate(info.PID) {
+		if !runtimeAliveForUpdate(info) {
 			continue
 		}
 		if best == 0 || info.PID < best {
@@ -711,6 +711,10 @@ func runControlledUpdate(
 	return nil
 }
 
+func runtimeAliveForUpdate(info *daemon.RuntimeInfo) bool {
+	return !info.Stale() && (info.HasProcessIdentityV2() || isPIDAliveForUpdate(info.PID))
+}
+
 func discoverDaemonForUpdate() (*daemon.RuntimeInfo, error) {
 	info, probeErr := getAnyRunningDaemon()
 	if probeErr == nil {
@@ -724,7 +728,7 @@ func discoverDaemonForUpdate() (*daemon.RuntimeInfo, error) {
 		if runtimeInfo == nil || runtimeInfo.PID <= 0 {
 			continue
 		}
-		if !runtimeInfo.Stale() && (runtimeInfo.HasProcessIdentityV2() || isPIDAliveForUpdate(runtimeInfo.PID)) {
+		if runtimeAliveForUpdate(runtimeInfo) {
 			return nil, fmt.Errorf("running daemon is not responsive: %w", probeErr)
 		}
 		if runtimeInfo.SourcePath != "" {
