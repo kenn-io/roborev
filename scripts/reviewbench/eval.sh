@@ -56,7 +56,7 @@
 # Results (findings, scores, logs, reports) live in $ROBOREV_EVAL_DIR, by
 # default ~/.local/share/roborev-reviewbench. Benchmark repositories and
 # checkouts are disposable and live in $ROBOREV_EVAL_CACHE, by default
-# ~/.cache/roborev-reviewbench.
+# /var/tmp/roborev-reviewbench.
 set -euo pipefail
 
 # ReviewBench is pinned so judged results stay comparable across runs. Its
@@ -70,9 +70,10 @@ PI_PACKAGES=(pi-coding-agent pi-ai pi-agent-core pi-codemode pi-mcp pi-tui pi-te
 root="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 probe_src="$root/scripts/reviewbench/probe"
 results="${ROBOREV_EVAL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/roborev-reviewbench}"
-# Disk, not $TMPDIR: /tmp is often RAM-backed, and the cache holds about a
-# hundred repository clones plus a checkout of every pull request per run.
-cache="${ROBOREV_EVAL_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/roborev-reviewbench}"
+# /var/tmp, not $TMPDIR: /tmp is often RAM-backed, and the cache holds about
+# a hundred repository clones plus a checkout of every pull request per run.
+# /var/tmp is a temporary directory on disk.
+cache="${ROBOREV_EVAL_CACHE:-/var/tmp/roborev-reviewbench}"
 bench="$cache/ReviewBench"
 
 usage() { sed -n '8,41p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
@@ -213,11 +214,11 @@ prepare_pr() {
   git -C "$repo" remote add origin "https://github.com/review-bench/${nwo/\//_}.git"
   git -C "$repo" remote add upstream "https://github.com/$nwo.git"
   if ! has_commits "$repo" "$base" "$head"; then
-    GIT_LFS_SKIP_SMUDGE=1 git -C "$repo" fetch -q --filter=blob:none origin "$base" "$head" 2>/dev/null || true
+    GIT_LFS_SKIP_SMUDGE=1 git -C "$repo" fetch -q --filter=tree:0 origin "$base" "$head" 2>/dev/null || true
   fi
   if ! has_commits "$repo" "$base" "$head"; then
-    GIT_LFS_SKIP_SMUDGE=1 git -C "$repo" fetch -q --filter=blob:none upstream "$base" "pull/$pr/head" 2>/dev/null \
-      || GIT_LFS_SKIP_SMUDGE=1 git -C "$repo" fetch -q --filter=blob:none upstream "$base" "$head" 2>/dev/null || true
+    GIT_LFS_SKIP_SMUDGE=1 git -C "$repo" fetch -q --filter=tree:0 upstream "$base" "pull/$pr/head" 2>/dev/null \
+      || GIT_LFS_SKIP_SMUDGE=1 git -C "$repo" fetch -q --filter=tree:0 upstream "$base" "$head" 2>/dev/null || true
   fi
   has_commits "$repo" "$base" "$head" || { log "cannot fetch $nwo#$pr"; return 1; }
   rm -rf "$dir"
