@@ -373,6 +373,37 @@ func TestDiscoverDaemonForUpdateKeepsUnjudgedRuntime(t *testing.T) {
 	assert.FileExists(t, path)
 }
 
+func TestUpdateHandoffKeepsUnjudgedRuntime(t *testing.T) {
+	for _, operation := range []string{"runtimeHasPID", "replacementRuntimePID", "initialPIDsExited"} {
+		t.Run(operation, func(t *testing.T) {
+			stubUpdateCommand(t)
+			testenv.SetDataDir(t)
+			path, err := daemon.RuntimeStore().Write(kitdaemon.RuntimeRecord{
+				PID: math.MaxInt32, Network: "tcp", Address: "127.0.0.1:1", ProcessIdentityV2: "future-v1:unavailable",
+			})
+			require.NoError(t, err)
+			listAllRuntimes = daemon.ListAllRuntimes
+			switch operation {
+			case "runtimeHasPID":
+				assert.True(t, runtimeHasPID(math.MaxInt32))
+			case "replacementRuntimePID":
+				assert.Equal(t, math.MaxInt32, replacementRuntimePID(1))
+			case "initialPIDsExited":
+				assert.False(t, initialPIDsExited(map[int]struct{}{math.MaxInt32: {}}, 0))
+			}
+			assert.FileExists(t, path)
+		})
+	}
+}
+
+func TestInitialPIDsExitedIgnoresDeadRuntime(t *testing.T) {
+	stubUpdateCommand(t)
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+		return []*daemon.RuntimeInfo{{PID: math.MaxInt32}}, nil
+	}
+	assert.True(t, initialPIDsExited(map[int]struct{}{math.MaxInt32: {}}, 0))
+}
+
 func TestUpdateCommandCancelAfterInstallReleasesLease(t *testing.T) {
 	stubUpdateCommand(t)
 	var releaseCalls atomic.Int32

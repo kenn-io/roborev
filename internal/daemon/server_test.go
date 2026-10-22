@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -417,18 +418,24 @@ func TestServerStartHandlesRuntimeIdentities(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		identity kitdaemon.ProcessIdentity
+		pid      int
 		refuses  bool
 	}{
 		{name: "earlier boot", identity: kitdaemon.ProcessIdentity(strings.Join(fields, ":"))},
 		{name: "legacy live PID", refuses: true},
 		{name: "unjudged identity", identity: "future-v1:unavailable", refuses: true},
+		{name: "unjudged invisible PID", pid: math.MaxInt32, identity: "future-v1:unavailable", refuses: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			testenv.SetDataDir(t)
 			setShortRuntimeDir(t)
 			mockIdentifyProcess(t, func(int) processIdentity { return processUnknown })
+			pid := tc.pid
+			if pid == 0 {
+				pid = os.Getppid()
+			}
 			path, err := runtimeStore().Write(kitdaemon.RuntimeRecord{
-				PID: os.Getppid(), Network: "tcp", Address: "127.0.0.1:1", ProcessIdentityV2: tc.identity,
+				PID: pid, Network: "tcp", Address: "127.0.0.1:1", ProcessIdentityV2: tc.identity,
 			})
 			require.NoError(t, err)
 			db, _ := testutil.OpenTestDBWithDir(t)
@@ -440,6 +447,8 @@ func TestServerStartHandlesRuntimeIdentities(t *testing.T) {
 				// Bound a regression that starts a real listener instead of refusing.
 				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 				defer cancel()
+				stop := context.AfterFunc(ctx, func() { _ = server.Close() })
+				defer stop()
 				require.ErrorContains(t, server.Start(ctx), "daemon process still running")
 				assert.FileExists(t, path)
 				return

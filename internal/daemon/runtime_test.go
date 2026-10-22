@@ -130,6 +130,91 @@ func TestRuntimeRecordWithUnjudgedIdentityIsKept(t *testing.T) {
 	assert.FileExists(path)
 }
 
+func TestKillDaemonKeepsUnjudgedRecords(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		pid            int
+		otherResponder bool
+	}{
+		{name: "invisible PID", pid: math.MaxInt32},
+		{name: "local PID collision", pid: os.Getpid()},
+		{name: "different responder", pid: math.MaxInt32, otherResponder: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testenv.SetDataDir(t)
+			var identified, shutdowns atomic.Int32
+			mockIdentifyProcess(t, func(int) processIdentity {
+				identified.Add(1)
+				if tc.pid == math.MaxInt32 && !tc.otherResponder {
+					return processUnknown
+				}
+				return processNotRoborev
+			})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/shutdown" {
+					shutdowns.Add(1)
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+				pid := tc.pid
+				if tc.otherResponder {
+					pid = 1
+				}
+				fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, pid)
+			}))
+			t.Cleanup(server.Close)
+			rec := kitdaemon.RuntimeRecord{PID: tc.pid, Network: "tcp", Address: server.Listener.Addr().String(), ProcessIdentityV2: "future-v1:unavailable"}
+			path, err := runtimeStore().Write(rec)
+			require.NoError(t, err)
+			err = KillDaemon(runtimeInfoFromRecord(rec))
+			if !tc.otherResponder {
+				require.ErrorIs(t, err, ErrDaemonAccessDenied)
+				assert.Equal(t, int32(1), shutdowns.Load())
+			}
+			assert.Zero(t, identified.Load())
+			assert.FileExists(t, path)
+		})
+	}
+}
+
+func TestCleanupZombieDaemonsDoesNotIdentifyUnjudgedPID(t *testing.T) {
+	testenv.SetDataDir(t)
+	var identified int
+	mockIdentifyProcess(t, func(int) processIdentity {
+		identified++
+		return processNotRoborev
+	})
+	path, err := runtimeStore().Write(kitdaemon.RuntimeRecord{
+		PID: os.Getpid(), Network: "tcp", Address: "127.0.0.1:1", ProcessIdentityV2: "future-v1:unavailable",
+	})
+	require.NoError(t, err)
+	assert.Zero(t, CleanupZombieDaemons(DaemonEndpoint{}))
+	assert.Zero(t, identified)
+	assert.FileExists(t, path)
+}
+
+func TestCleanupZombieDaemonsRemovesGoneRecordSocketDespiteLocalPID(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("requires Linux process identities")
+	}
+	testenv.SetDataDir(t)
+	setShortRuntimeDir(t)
+	identity, ok := kitdaemon.ReadProcessIdentity(os.Getpid())
+	require.True(t, ok)
+	fields := strings.Split(string(identity), ":")
+	require.Len(t, fields, 4)
+	fields[1] = "00000000-0000-0000-0000-000000000001"
+	socket := filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "gone.sock")
+	require.NoError(t, os.WriteFile(socket, nil, 0o600))
+	path, err := runtimeStore().Write(kitdaemon.RuntimeRecord{
+		PID: os.Getpid(), Network: "unix", Address: socket, ProcessIdentityV2: kitdaemon.ProcessIdentity(strings.Join(fields, ":")),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, CleanupZombieDaemons(DaemonEndpoint{}))
+	assert.NoFileExists(t, path)
+	assert.NoFileExists(t, socket)
+}
+
 func TestFindAvailablePort(t *testing.T) {
 	// Test finding an available port
 	addr, port, err := FindAvailablePort(defaultTestAddr)

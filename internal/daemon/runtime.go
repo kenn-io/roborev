@@ -642,6 +642,7 @@ func KillDaemon(info *RuntimeInfo) error {
 	}
 
 	ep := info.Endpoint()
+	rec := kitdaemon.RuntimeRecord{PID: info.PID, ProcessIdentity: info.processIdentity, ProcessIdentityV2: info.processIdentityV2}
 
 	// Remove only this process's runtime record. The endpoint may already belong
 	// to a service-manager replacement.
@@ -657,7 +658,7 @@ func KillDaemon(info *RuntimeInfo) error {
 	// may start a replacement daemon on the same endpoint immediately.
 	confirmedDead := func() bool {
 		if info.PID > 0 {
-			return !isProcessAlive(info.PID)
+			return !kitdaemon.RuntimeProcessAlive(rec)
 		}
 		alive, err := ProbeDaemonAlive(ep)
 		return !alive && !IsDaemonAccessError(err)
@@ -668,11 +669,7 @@ func KillDaemon(info *RuntimeInfo) error {
 		return nil
 	}
 	identity := processUnknown
-	if info.PID > 0 {
-		if !kitdaemon.RuntimeProcessAlive(kitdaemon.RuntimeRecord{PID: info.PID, ProcessIdentity: info.processIdentity, ProcessIdentityV2: info.processIdentityV2}) {
-			removeRuntimeFile()
-			return nil
-		}
+	if info.PID > 0 && (rec.ProcessIdentityV2 == "" || kitdaemon.CompareRuntimeProcessIdentity(rec) == kitdaemon.ProcessIdentityMatch) {
 		identity = identifyProcess(info.PID)
 		if identity == processNotRoborev {
 			removeRuntimeFile()
@@ -700,7 +697,7 @@ func KillDaemon(info *RuntimeInfo) error {
 	}
 	if !selected && info.PID > 0 {
 		if identity == processUnknown {
-			if len(answeredByOther) == 0 {
+			if len(answeredByOther) == 0 || rec.ProcessIdentityV2 != "" && kitdaemon.CompareRuntimeProcessIdentity(rec) == kitdaemon.ProcessIdentityUnknown {
 				// The process is alive, but nothing proves what it is. Keep
 				// the record so the daemon stays discoverable.
 				return probeErr
@@ -811,8 +808,8 @@ func CleanupZombieDaemons(target DaemonEndpoint) int {
 
 		// Check the recorded process before any endpoint receives credentials.
 		if info.hasStaleProcess() {
-			if ep.IsUnix() && ep.Address != target.Address && !kitdaemon.ProcessAlive(info.PID) {
-				// Clean up non-matching sockets only when the PID is dead.
+			if ep.IsUnix() && ep.Address != target.Address && !kitdaemon.RuntimeProcessAlive(kitdaemon.RuntimeRecord{PID: info.PID, ProcessIdentity: info.processIdentity, ProcessIdentityV2: info.processIdentityV2}) {
+				// Clean up non-matching sockets only when the recorded process is dead.
 				os.Remove(ep.Address)
 			}
 			if info.SourcePath != "" {
@@ -831,7 +828,7 @@ func CleanupZombieDaemons(target DaemonEndpoint) int {
 		if IsDaemonAccessError(probeErr) {
 			continue
 		}
-		if info.PID > 0 && identifyProcess(info.PID) == processNotRoborev {
+		if info.PID > 0 && (info.processIdentityV2 == "" || kitdaemon.CompareRuntimeProcessIdentity(kitdaemon.RuntimeRecord{PID: info.PID, ProcessIdentity: info.processIdentity, ProcessIdentityV2: info.processIdentityV2}) == kitdaemon.ProcessIdentityMatch) && identifyProcess(info.PID) == processNotRoborev {
 			if ep.IsUnix() && ep.Address != target.Address {
 				os.Remove(ep.Address)
 			}

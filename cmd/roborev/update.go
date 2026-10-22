@@ -121,7 +121,7 @@ func runtimeHasPID(pid int) bool {
 		if info == nil || info.PID != pid {
 			continue
 		}
-		if isPIDAliveForUpdate(pid) {
+		if !info.Stale() {
 			return true
 		}
 		// Best-effort stale runtime cleanup.
@@ -148,20 +148,20 @@ func previousPIDExited(previousPID int) bool {
 // replacementRuntimePID returns a live daemon PID from runtime files
 // that differs from previousPID, or 0 if none are found.
 func replacementRuntimePID(previousPID int) int {
-	pids, err := runtimePIDSet()
+	runtimes, err := listAllRuntimes()
 	if err != nil {
 		return 0
 	}
 	best := 0
-	for pid := range pids {
-		if pid <= 0 || pid == previousPID {
+	for _, info := range runtimes {
+		if info == nil || info.PID <= 0 || info.PID == previousPID {
 			continue
 		}
-		if !isPIDAliveForUpdate(pid) {
+		if info.Stale() {
 			continue
 		}
-		if best == 0 || pid < best {
-			best = pid
+		if best == 0 || info.PID < best {
+			best = info.PID
 		}
 	}
 	return best
@@ -205,7 +205,7 @@ func initialPIDsExited(initialPIDs map[int]struct{}, allowPID int) bool {
 		if pid == allowPID {
 			continue
 		}
-		if _, exists := currentPIDs[pid]; exists || isPIDAliveForUpdate(pid) {
+		if _, exists := currentPIDs[pid]; exists && runtimeHasPID(pid) || !exists && isPIDAliveForUpdate(pid) {
 			return false
 		}
 	}
