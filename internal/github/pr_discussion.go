@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	googlegithub "github.com/google/go-github/v92/github"
+	googlegithub "github.com/google/go-github/v93/github"
 )
 
 const (
