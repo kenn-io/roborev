@@ -75,7 +75,7 @@ function resumeSession(): void {
   if (
     shellMounted &&
     !document.hidden &&
-    !intervalEnded &&
+    !(intervalEnded || state === "disabled") &&
     started === undefined
   ) {
     hasInterval = true;
@@ -122,7 +122,7 @@ function startReporting(): BrowserTelemetryReporter {
   });
   reporting.onQuietChange((_quiet, reason) => {
     state = reason;
-    flushSession();
+    (reason === "disabled" ? endSession : flushSession)();
     if (reason === "enabled") resumeSession();
   });
   return reporting;
