@@ -170,6 +170,11 @@ func looksLikeFlagValue(token string) bool {
 	return false
 }
 
+// isProcessAlive checks whether a process with the given PID exists.
+func isProcessAlive(pid int) bool {
+	return processExists(pid)
+}
+
 // processExists checks if a process with the given PID exists using the
 // Win32 API directly. Spawning tasklist here would flash a console window on
 // every liveness poll when the caller has no console of its own.
