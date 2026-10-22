@@ -205,7 +205,7 @@ func (p probe) review(ctx context.Context, r reviewer, artifacts string) (review
 		}
 		full = string(raw)
 	}
-	promptHash := sha256Hex([]byte(full + hashBlock))
+	promptHash := sha256Hex([]byte(hashablePrompt(full) + hashBlock))
 
 	if artifacts != "" {
 		if err := os.MkdirAll(artifacts, 0o755); err != nil {

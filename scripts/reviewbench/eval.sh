@@ -198,6 +198,20 @@ has_commits() {
   done
 }
 
+# set_remote REPO NAME URL points a remote at URL without removing it: removing
+# a remote drops its promisor settings, and the cache's fetches skip trees and
+# file contents, so git could no longer fetch them when a diff or checkout
+# needs them.
+set_remote() {
+  if git -C "$1" remote get-url "$2" >/dev/null 2>&1; then
+    git -C "$1" remote set-url "$2" "$3"
+  else
+    git -C "$1" remote add "$2" "$3"
+  fi
+  git -C "$1" config "remote.$2.promisor" true
+  git -C "$1" config "remote.$2.partialclonefilter" tree:0
+}
+
 # prepare_pr ENTRY RUN_DIR PR_DIR fetches a pull request into a shared cache and
 # checks its head out into a worktree of its own, the way ReviewBench's
 # try-agent.sh does: from the review-bench mirror, falling back to upstream.
@@ -208,11 +222,16 @@ prepare_pr() {
   key="${nwo/\//_}_${pr}-${head:0:8}"
   repo="$cache/repos/${nwo/\//_}"
   dir="$prdir/$key"
+  # Runs at the same time can prepare pull requests of one repository; git
+  # fetches and worktree changes in one repository must not overlap. The lock
+  # is released when this function's subshell exits.
+  mkdir -p "$cache/repos"
+  local lock
+  exec {lock}>"$repo.lock"
+  flock "$lock"
   [ -d "$repo/.git" ] || git init -q "$repo"
-  git -C "$repo" remote remove origin 2>/dev/null || true
-  git -C "$repo" remote remove upstream 2>/dev/null || true
-  git -C "$repo" remote add origin "https://github.com/review-bench/${nwo/\//_}.git"
-  git -C "$repo" remote add upstream "https://github.com/$nwo.git"
+  set_remote "$repo" origin "https://github.com/review-bench/${nwo/\//_}.git"
+  set_remote "$repo" upstream "https://github.com/$nwo.git"
   if ! has_commits "$repo" "$base" "$head"; then
     GIT_LFS_SKIP_SMUDGE=1 git -C "$repo" fetch -q --filter=tree:0 origin "$base" "$head" 2>/dev/null || true
   fi

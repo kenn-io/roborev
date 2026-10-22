@@ -81,3 +81,10 @@ func TestReviewerName(t *testing.T) {
 		assert.Equal(t, tt.want, reviewerName(tt.member, tt.reviewType, tt.instructions))
 	}
 }
+
+func TestHashablePromptMasksTheDate(t *testing.T) {
+	a := "Intro\n\nCurrent date: 2026-10-21 (UTC)\n\nDiff"
+	b := "Intro\n\nCurrent date: 2026-10-22 (UTC)\n\nDiff"
+	assert.Equal(t, hashablePrompt(a), hashablePrompt(b))
+	assert.NotEqual(t, hashablePrompt(a), hashablePrompt("Intro\n\nCurrent date: 2026-10-21 (UTC)\n\nOther diff"))
+}

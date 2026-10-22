@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"time"
@@ -64,6 +65,17 @@ func reviewerName(member, reviewType, instructions string) string {
 		return "stock"
 	}
 	return reviewType
+}
+
+// currentDateLine is the date roborev puts in every prompt. It changes daily
+// without changing what the reviewer is asked, so the hash masks it.
+var currentDateLine = regexp.MustCompile(`(?m)^Current date: [0-9]{4}-[0-9]{2}-[0-9]{2} \(UTC\)$`)
+
+// hashablePrompt is the prompt as hashed for reuse, with the current date
+// masked. The instruction block is hashed separately, with a placeholder for
+// the panel name.
+func hashablePrompt(prompt string) string {
+	return currentDateLine.ReplaceAllString(prompt, "Current date: * (UTC)")
 }
 
 func harnessName(agent, provider string) string {
