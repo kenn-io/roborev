@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -254,6 +255,55 @@ func TestAuthDiscoverySkipsStaleProcesses(t *testing.T) {
 			require.ErrorIs(t, err, os.ErrNotExist)
 			CleanupZombieDaemons(ep)
 			assert.Zero(t, requests.Load(), "stale discovery and cleanup must not send credentials")
+		})
+	}
+}
+
+func TestUnjudgedRuntimeKeepsKeyOffTCP(t *testing.T) {
+	for _, operation := range []string{"discovery", "subsequent request", "alternate endpoint", "cleanup", "shutdown"} {
+		t.Run(operation, func(t *testing.T) {
+			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+			var credentials atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("Authorization") != "" {
+					credentials.Add(1)
+				}
+				if r.URL.Path == "/api/shutdown" {
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+				fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, math.MaxInt32)
+			}))
+			t.Cleanup(server.Close)
+			rec := kitdaemon.RuntimeRecord{
+				PID: math.MaxInt32, Network: "tcp", Address: server.Listener.Addr().String(), ProcessIdentityV2: "future-v1:unavailable",
+			}
+			path, err := runtimeStore().Write(rec)
+			require.NoError(t, err)
+			// Discover without a key first, then enable it before the next request.
+			info, err := GetAnyRunningDaemonContext(t.Context())
+			require.NoError(t, err)
+			writeAuthClientConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+			switch operation {
+			case "discovery":
+				_, err = GetAnyRunningDaemonContext(t.Context())
+				require.Error(t, err)
+			case "subsequent request":
+				_, err = info.Endpoint().APIClient(time.Second).PingRaw(t.Context())
+				require.ErrorIs(t, err, ErrGuessedEndpointAuth)
+			case "alternate endpoint":
+				info.Network, info.Address = "unix", filepath.Join(t.TempDir(), "missing.sock")
+				info.AlternateNetwork, info.AlternateAddress = rec.Network, rec.Address
+				_, err = info.Endpoints()[1].APIClient(time.Second).PingRaw(t.Context())
+				require.ErrorIs(t, err, ErrGuessedEndpointAuth)
+			case "cleanup":
+				mockIdentifyProcess(t, func(int) processIdentity { return processUnknown })
+				assert.Zero(t, CleanupZombieDaemons(DaemonEndpoint{}))
+			case "shutdown":
+				require.Error(t, KillDaemon(info))
+			}
+			assert.Zero(t, credentials.Load())
+			assert.FileExists(t, path)
 		})
 	}
 }

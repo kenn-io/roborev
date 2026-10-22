@@ -83,13 +83,19 @@ type BrowserRuntimeInfo struct {
 
 // Endpoint returns a DaemonEndpoint for this runtime.
 func (r RuntimeInfo) Endpoint() DaemonEndpoint {
-	return daemonEndpointFromKit(kitdaemon.RuntimeRecord{
+	ep := daemonEndpointFromKit(kitdaemon.RuntimeRecord{
 		PID:     r.PID,
 		Network: r.Network,
 		Address: r.Address,
 		Service: r.Service,
 		Version: r.Version,
 	}.Endpoint())
+	if r.processIdentityV2 != "" && kitdaemon.CompareRuntimeProcessIdentity(kitdaemon.RuntimeRecord{
+		PID: r.PID, ProcessIdentity: r.processIdentity, ProcessIdentityV2: r.processIdentityV2,
+	}) == kitdaemon.ProcessIdentityUnknown {
+		ep = ep.AsGuess()
+	}
+	return ep
 }
 
 // Endpoints returns the primary endpoint followed by a valid distinct
@@ -111,6 +117,9 @@ func (r RuntimeInfo) Endpoints() []DaemonEndpoint {
 		return endpoints
 	}
 	alternate, err := ParseEndpoint(raw)
+	if primary.guessed {
+		alternate = alternate.AsGuess()
+	}
 	if err != nil || alternate == primary {
 		return endpoints
 	}
