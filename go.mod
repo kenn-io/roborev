@@ -37,7 +37,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.12.1
 	github.com/yuin/goldmark/v2 v2.1.6
-	gitlab.com/gitlab-org/api/client-go/v3 v3.21.0
+	gitlab.com/gitlab-org/api/client-go/v3 v3.23.0
 	go.kenn.io/kit v0.39.0
 	golang.org/x/mod v0.42.0
 	golang.org/x/net v0.61.0
