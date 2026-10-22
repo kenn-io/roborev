@@ -42,7 +42,7 @@
   },
   "dependencies": {
     "@kenn-io/kit-ui": "github:kenn-io/kit-ui#97be355ef25a02ce96de6da4f3627ed5b922c4c3",
-    "dompurify": "3.4.13",
+    "dompurify": "3.4.16",
     "effect": "4.0.0-beta.102",
     "marked": "18.0.5",
     "mermaid": "11.16.1",
@@ -53,8 +53,8 @@
     "@types/node": "24.10.0",
     "svelte-check": "4.6.0",
     "typescript": "5.9.3",
-    "vite": "8.1.3",
-    "vitest": "4.1.10"
+    "vite": "8.1.6",
+    "vitest": "4.1.12"
   },
   "peerDependencies": {
     "svelte": "^5.56.4"

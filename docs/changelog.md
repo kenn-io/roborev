@@ -7,6 +7,13 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
+**Security**
+
+- Require Go 1.27.3 for source builds and CI to include the certificate distrust
+    fix for [CVE-2026-111943](https://pkg.go.dev/vuln/GO-2026-6809).
+- Update DOMPurify, Vite, Vitest, Orval, and affected transitive JavaScript
+    dependencies to pick up upstream security fixes.
+
 **New features**
 
 - Find tests that add maintenance cost without protecting behavior with
