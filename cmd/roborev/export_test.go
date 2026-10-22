@@ -123,8 +123,14 @@ func TestExportReviewsCmdSendsUpdatedSinceOnEveryPage(t *testing.T) {
 }
 
 func TestExportReviewsCmdKeepsDocumentAsJSONObject(t *testing.T) {
-	const document = `{"schema_version":2,"summary":"One problem.","verdict":"fail","findings":[` +
-		`{"severity":"low","problem":"Typo in a comment.","fix":"Fix the spelling.","location":null}]}`
+	// The daemon exports every document in version 3. One finding is from a
+	// reviewing agent; the other has no kind and no location, as goal reviews
+	// and converted historical reviews may.
+	const document = `{"schema_version":3,"summary":"Two problems.","verdict":"fail","findings":[` +
+		`{"severity":"high","kind":"defect","topic":"security","confidence":0.8,"problem":"The token is logged.","fix":"Redact the token.",` +
+		`"file":"auth/login.go","start_line":42,"end_line":42,"location":"auth/login.go:42"},` +
+		`{"severity":"low","kind":null,"topic":null,"confidence":null,"problem":"Typo in a comment.","fix":"Fix the spelling.",` +
+		`"file":null,"start_line":null,"end_line":null,"location":null}]}`
 	NewMockDaemon(t, MockRefineHooks{
 		OnUnhandled: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
 			if r.URL.Path != "/api/export/reviews" {

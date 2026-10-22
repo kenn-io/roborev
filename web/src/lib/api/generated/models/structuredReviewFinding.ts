@@ -7,11 +7,12 @@
  */
 export interface StructuredReviewFinding {
   /**
-   * The reviewer's estimate, from 0 to 1, that the problem is real. Present on version 3 documents.
+   * The reviewer's estimate, from 0 to 1, that the problem is real. Null exactly when kind is null. Present on version 3 documents.
    * @minimum 0
    * @maximum 1
+   * @nullable
    */
-  confidence?: number;
+  confidence?: number | null;
   /**
    * Last line of the problem in the reviewed file, or null. Present on version 3 documents.
    * @nullable
@@ -23,10 +24,13 @@ export interface StructuredReviewFinding {
    */
   file?: string | null;
   fix: string;
-  /** defect when the code behaves wrongly, or improvement when it works but should still change. Present on version 3 documents. */
-  kind?: string;
   /**
-   * Where the problem is, or null when the finding has no location. On version 3 documents it is derived from file, start_line, and end_line.
+   * defect when the code behaves wrongly, or improvement when it works but should still change. Null when the producer did not classify the finding, as in goal reviews and converted historical reviews. Present on version 3 documents.
+   * @nullable
+   */
+  kind?: string | null;
+  /**
+   * Where the problem is, or null when the finding has no location. Derived from file, start_line, and end_line when file is set; otherwise free text.
    * @nullable
    */
   location: string | null;

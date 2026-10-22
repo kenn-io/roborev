@@ -609,13 +609,14 @@ each completed JSON document using the archive ID from the export:
 roborev legacy-reviews import 1 < converted-review.json
 ```
 
-Import sends the document to the selected daemon. It accepts the existing
-structured document versions and replaces the whole legacy body, rather than
-merging individual findings. It preserves the active review's identity,
-metadata, and open/closed state, and derives its verdict from the supplied
-findings. It rejects invalid documents and refuses to replace an already
-structured review. Synthesis findings must cite valid source reviews. Originals
-remain archived.
+Import sends the document to the selected daemon. It accepts every structured
+document version, stores the document as version 3, and replaces the whole
+legacy body, rather than merging individual findings. A converted finding may
+leave out `kind`, `confidence`, `file`, and the line numbers. It preserves the
+active review's identity, metadata, and open/closed state, and derives its
+verdict from the supplied findings. It rejects invalid documents and refuses to
+replace an already structured review. Synthesis findings must cite valid source
+reviews. Originals remain archived.
 
 An agent working with the running daemon can instead submit the same document to
 `POST /api/review/migrate` on its local API:
@@ -624,7 +625,7 @@ An agent working with the running daemon can instead submit the same document to
 {
   "review_id": 42,
   "document": {
-    "schema_version": 2,
+    "schema_version": 3,
     "summary": "The write can lose data.",
     "verdict": "fail",
     "findings": [{

@@ -20,14 +20,16 @@
 //   - [Document.Markdown] renders a Document as the Markdown that roborev
 //     shows and exports as review content.
 //
-// [SchemaVersion] versions the document, not this Go API. It is the version
-// agents must return and the value of "schema_version" in new review
-// documents. Version 3 findings carry a kind, a confidence, and a file and
-// line range. Versions 1 and 2 carry a free-text location instead, and
-// version 1 has no verdict; Decode accepts both so stored reviews keep
-// working. [Schema] and [SourcedSchema] are the JSON Schemas that constrain
-// agent output to the current version. Storage-only version 0 carries original
-// historical Markdown in Legacy, without extracted findings.
+// [SchemaVersion] versions the document, not this Go API. Every document
+// roborev writes uses it, and encoding a decoded older document writes it too.
+// A version 3 finding from a reviewing agent carries a kind, a confidence, and
+// a file and line range. Producers without that data, such as goal reviews and
+// converted historical reviews, leave kind and confidence null and may give a
+// free-text location instead of a file. Versions 1 and 2 are only decoded, so
+// stored reviews keep working: they carry a free-text location, and version 1
+// has no verdict. [Schema] and [SourcedSchema] are the JSON Schemas that
+// constrain agent output. Storage-only version 0 carries original historical
+// Markdown in Legacy, without extracted findings.
 package structuredreview
 
 import (
@@ -41,18 +43,13 @@ import (
 	"strings"
 )
 
-// SchemaVersion is the version agents must return. Versions 1 and 2 are still
-// decoded so stored reviews keep working.
+// SchemaVersion is the only version roborev writes and the version agents
+// must return. Versions 1 and 2 are still decoded so stored reviews keep
+// working.
 const SchemaVersion = 3
 
-// TextLocationSchemaVersion is the last version whose findings carry a
-// free-text location instead of a kind, confidence, file, and line range.
-// Producers that only have free-text locations, such as goal reviews and
-// converted historical Markdown, write this version.
-const TextLocationSchemaVersion = 2
-
-// Kind values tell a proven fault apart from a suggestion. A version 3
-// finding always has one.
+// Kind values tell a proven fault apart from a suggestion. Every finding from
+// a reviewing agent has one.
 const (
 	// KindDefect means the code behaves wrongly in a case the finding names.
 	KindDefect = "defect"
@@ -165,7 +162,8 @@ type Document struct {
 	Legacy        *LegacyDocument `json:"legacy,omitempty"`
 	SchemaVersion int             `json:"schema_version"`
 	Summary       string          `json:"summary"`
-	// Verdict is the agent's own judgment. Empty for version 1 documents.
+	// Verdict is the agent's own judgment. Empty when the review stated none,
+	// as in version 1 documents and the reviews converted from them.
 	Verdict  string    `json:"verdict,omitempty"`
 	Findings []Finding `json:"findings"`
 	// SourceLabels names the input reviews a sourced document cites, indexed
@@ -174,12 +172,24 @@ type Document struct {
 	SourceLabels []string `json:"source_labels,omitempty"`
 }
 
+// MarshalJSON writes the document in the current [SchemaVersion], whatever
+// version it was decoded from, so roborev only ever writes one version. A
+// legacy document keeps its storage-only version 0 form.
+func (r Document) MarshalJSON() ([]byte, error) {
+	type plain Document
+	if r.Legacy == nil {
+		r.SchemaVersion = SchemaVersion
+	}
+	return json.Marshal(plain(r))
+}
+
 // Finding is one problem a review reports.
 //
-// A version 3 finding has a Kind, an optional Topic, a Confidence, and a File
-// with an optional line range; its Location is derived from them by [FormatLocation]. Older
-// findings have an empty Kind and only a free-text Location. A non-empty Kind
-// is what marks a finding as version 3 when it is encoded.
+// A finding from a reviewing agent has a Kind, an optional Topic, a
+// Confidence, and a File with an optional line range; its Location is derived
+// from them by [FormatLocation]. A finding from another producer, or from a
+// version 1 or 2 document, has an empty Kind, no Confidence, and may have only
+// a free-text Location.
 type Finding struct {
 	Severity string `json:"severity"`
 	Kind     string `json:"kind,omitempty"`
@@ -230,41 +240,33 @@ func (f *Finding) SetLocation(file string, startLine, endLine int) {
 	f.Location = FormatLocation(file, startLine, endLine)
 }
 
-// MarshalJSON writes the shape of the finding's version. Every finding
-// carries a location, as JSON null when empty, so readers of older documents
-// keep working. A version 3 finding also carries its kind, topic, confidence,
-// file, and line range, with null for an absent topic, file, or range.
+// MarshalJSON writes the version 3 shape. Every field is present, with null
+// for an absent kind, topic, confidence, file, line range, or location. A
+// finding without a kind has no confidence either.
 func (f Finding) MarshalJSON() ([]byte, error) {
 	var location *string
 	if f.Location != "" {
 		location = &f.Location
 	}
-	if f.Kind == "" {
-		type wire struct {
-			Severity string  `json:"severity"`
-			Problem  string  `json:"problem"`
-			Fix      string  `json:"fix"`
-			Location *string `json:"location"`
-			Sources  []int   `json:"sources,omitempty"`
-		}
-		return json.Marshal(wire{Severity: f.Severity, Problem: f.Problem, Fix: f.Fix, Location: location, Sources: f.Sources})
-	}
 	type wire struct {
-		Severity   string  `json:"severity"`
-		Kind       string  `json:"kind"`
-		Topic      *string `json:"topic"`
-		Confidence float64 `json:"confidence"`
-		Problem    string  `json:"problem"`
-		Fix        string  `json:"fix"`
-		File       *string `json:"file"`
-		StartLine  *int    `json:"start_line"`
-		EndLine    *int    `json:"end_line"`
-		Location   *string `json:"location"`
-		Sources    []int   `json:"sources,omitempty"`
+		Severity   string   `json:"severity"`
+		Kind       *string  `json:"kind"`
+		Topic      *string  `json:"topic"`
+		Confidence *float64 `json:"confidence"`
+		Problem    string   `json:"problem"`
+		Fix        string   `json:"fix"`
+		File       *string  `json:"file"`
+		StartLine  *int     `json:"start_line"`
+		EndLine    *int     `json:"end_line"`
+		Location   *string  `json:"location"`
+		Sources    []int    `json:"sources,omitempty"`
 	}
 	w := wire{
-		Severity: f.Severity, Kind: f.Kind, Confidence: f.Confidence,
-		Problem: f.Problem, Fix: f.Fix, Location: location, Sources: f.Sources,
+		Severity: f.Severity, Problem: f.Problem, Fix: f.Fix,
+		Location: location, Sources: f.Sources,
+	}
+	if f.Kind != "" {
+		w.Kind, w.Confidence = &f.Kind, &f.Confidence
 	}
 	if f.Topic != "" {
 		w.Topic = &f.Topic
@@ -344,9 +346,15 @@ func Decode(raw jsontext.Value) (Document, error) {
 				"structured review schema_version 1 does not carry a verdict",
 			)
 		}
-	case TextLocationSchemaVersion, SchemaVersion:
+	case 2, SchemaVersion:
 		switch result.Verdict {
 		case VerdictPass, VerdictFail, VerdictUnableToReview:
+		case "":
+			// Version 3 has no verdict when the review stated none, as in
+			// a converted version 1 review. Version 2 always has one.
+			if result.SchemaVersion == 2 {
+				return Document{}, fmt.Errorf("structured review schema_version 2 requires a verdict")
+			}
 		default:
 			return Document{}, fmt.Errorf(
 				"structured review has invalid verdict %q", wire.Verdict,
@@ -412,15 +420,19 @@ func decodeTextLocatedFinding(wire findingWire) (Finding, error) {
 }
 
 // decodeLocatedFinding reads a version 3 finding. Kind and confidence are
-// required. A missing topic, file, or line is read as null, and a stored location is
-// ignored because it is derived from the file and lines.
+// both set or both null. A missing topic, file, or line is read as null. A
+// stored location is derived from the file and lines when there is a file,
+// and is kept as free text when there is not.
 func decodeLocatedFinding(wire findingWire) (Finding, error) {
-	if wire.Kind == nil {
-		return Finding{}, fmt.Errorf("has no kind")
+	if (wire.Kind == nil) != (wire.Confidence == nil) {
+		return Finding{}, fmt.Errorf("has a kind without a confidence, or a confidence without a kind")
 	}
-	kind := strings.ToLower(strings.TrimSpace(*wire.Kind))
-	if !slices.Contains(Kinds, kind) {
-		return Finding{}, fmt.Errorf("has invalid kind %q", *wire.Kind)
+	var kind string
+	if wire.Kind != nil {
+		kind = strings.ToLower(strings.TrimSpace(*wire.Kind))
+		if !slices.Contains(Kinds, kind) {
+			return Finding{}, fmt.Errorf("has invalid kind %q", *wire.Kind)
+		}
 	}
 	var topic string
 	if wire.Topic != nil {
@@ -429,14 +441,15 @@ func decodeLocatedFinding(wire findingWire) (Finding, error) {
 			return Finding{}, fmt.Errorf("has invalid topic %q", *wire.Topic)
 		}
 	}
-	if wire.Confidence == nil {
-		return Finding{}, fmt.Errorf("has no confidence")
+	var confidence float64
+	if wire.Confidence != nil {
+		confidence = *wire.Confidence
+		if confidence < 0 || confidence > 1 {
+			return Finding{}, fmt.Errorf("has confidence %v outside 0 to 1", confidence)
+		}
 	}
-	if *wire.Confidence < 0 || *wire.Confidence > 1 {
-		return Finding{}, fmt.Errorf("has confidence %v outside 0 to 1", *wire.Confidence)
-	}
+	var location string
 	if len(wire.Location) > 0 && !bytes.Equal(wire.Location, []byte("null")) {
-		var location string
 		if err := json.Unmarshal(wire.Location, &location); err != nil {
 			return Finding{}, fmt.Errorf("has invalid location: %w", err)
 		}
@@ -445,7 +458,7 @@ func decodeLocatedFinding(wire findingWire) (Finding, error) {
 		Severity:   wire.Severity,
 		Kind:       kind,
 		Topic:      topic,
-		Confidence: *wire.Confidence,
+		Confidence: confidence,
 		Problem:    wire.Problem,
 		Fix:        wire.Fix,
 		Sources:    wire.Sources,
@@ -467,6 +480,11 @@ func decodeLocatedFinding(wire findingWire) (Finding, error) {
 	if start == 0 {
 		// An end line alone still names a line.
 		start = end
+	}
+	if file == "" {
+		// A line number without a file names nothing, as in SetLocation.
+		finding.Location = strings.TrimSpace(location)
+		return finding, nil
 	}
 	finding.SetLocation(file, start, end)
 	return finding, nil

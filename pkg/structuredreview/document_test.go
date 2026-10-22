@@ -66,10 +66,10 @@ func TestDecodeRejectsInvalidVersion3Findings(t *testing.T) {
 		finding string
 		want    string
 	}{
-		{name: "no kind", finding: `"confidence":0.5`, want: "has no kind"},
+		{name: "confidence without kind", finding: `"confidence":0.5`, want: "kind without a confidence"},
 		{name: "unknown kind", finding: `"kind":"nit","confidence":0.5`, want: `invalid kind "nit"`},
 		{name: "unknown topic", finding: `"kind":"defect","topic":"style","confidence":0.5`, want: `invalid topic "style"`},
-		{name: "no confidence", finding: `"kind":"defect"`, want: "has no confidence"},
+		{name: "kind without confidence", finding: `"kind":"defect"`, want: "kind without a confidence"},
 		{name: "confidence above 1", finding: `"kind":"defect","confidence":1.5`, want: "outside 0 to 1"},
 		{name: "negative line", finding: `"kind":"defect","confidence":0.5,"file":"a.go","start_line":-1`, want: "negative line"},
 	}
@@ -99,7 +99,8 @@ func TestEncodedDocumentsDecodeToTheSameDocument(t *testing.T) {
 		doc  Document
 	}{
 		{name: "version 3", doc: Document{SchemaVersion: 3, Summary: "s", Verdict: VerdictFail, Findings: []Finding{located, unlocated}}},
-		{name: "version 2", doc: Document{SchemaVersion: 2, Summary: "s", Verdict: VerdictFail, Findings: []Finding{{Severity: "low", Problem: "p", Fix: "f", Location: "a.go:3"}}}},
+		{name: "free-text location without kind", doc: Document{SchemaVersion: 3, Summary: "s", Verdict: VerdictFail, Findings: []Finding{{Severity: "low", Problem: "p", Fix: "f", Location: "Kata abc"}}}},
+		{name: "no verdict", doc: Document{SchemaVersion: 3, Summary: "s", Findings: []Finding{{Severity: "low", Problem: "p", Fix: "f"}}}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -110,6 +111,42 @@ func TestEncodedDocumentsDecodeToTheSameDocument(t *testing.T) {
 			assert.Equal(t, tc.doc, got)
 		})
 	}
+}
+
+func TestEncodingAnOlderDocumentWritesTheCurrentVersion(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want Document
+	}{
+		{
+			name: "version 1",
+			raw:  `{"schema_version":1,"summary":"s","findings":[{"severity":"low","problem":"p","fix":"f","location":"a.go:3"}]}`,
+			want: Document{SchemaVersion: 3, Summary: "s", Findings: []Finding{{Severity: "low", Problem: "p", Fix: "f", Location: "a.go:3"}}},
+		},
+		{
+			name: "version 2",
+			raw:  `{"schema_version":2,"summary":"s","verdict":"fail","findings":[{"severity":"low","problem":"p","fix":"f","location":null}]}`,
+			want: Document{SchemaVersion: 3, Summary: "s", Verdict: VerdictFail, Findings: []Finding{{Severity: "low", Problem: "p", Fix: "f"}}},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			old, err := Decode(jsontext.Value(tc.raw))
+			require.NoError(t, err)
+			raw, err := json.Marshal(old)
+			require.NoError(t, err)
+			got, err := Decode(raw)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestDecodeRequiresAVerdictInVersion2(t *testing.T) {
+	_, err := Decode(jsontext.Value(`{"schema_version":2,"summary":"s","findings":[]}`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "schema_version 2 requires a verdict")
 }
 
 func TestVersion3FindingsKeepALocationForOlderReaders(t *testing.T) {

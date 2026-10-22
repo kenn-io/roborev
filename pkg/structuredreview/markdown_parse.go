@@ -73,9 +73,10 @@ type ParseMarkdownOptions struct {
 //   - A review whose first or last line is "No issues found.". The remaining
 //     text is the summary.
 //
-// The older forms never stated the agent's own verdict, so their documents
-// use schema version 1, which has none. Only a rendered "Agent assessment"
-// line produces a version 2 document with a verdict.
+// The result uses the current [SchemaVersion]. Its findings have no kind or
+// confidence and keep their free-text locations. The older forms never stated
+// the agent's own verdict, so their documents have none; only a rendered
+// "Agent assessment" line sets one.
 func ParseMarkdown(markdown string, opts ParseMarkdownOptions) (Document, error) {
 	text := strings.TrimSpace(strings.ReplaceAll(markdown, "\r\n", "\n"))
 	if text == "" {
@@ -172,7 +173,7 @@ func parseRenderedCandidate(lines []string, findingsAt int, opts ParseMarkdownOp
 	if findingsAt < 0 && len(header) > 0 && header[len(header)-1] == renderedNoIssues {
 		header = trimBlankLines(header[:len(header)-1])
 	}
-	doc := Document{SchemaVersion: 1, Findings: []Finding{}}
+	doc := Document{SchemaVersion: SchemaVersion, Findings: []Finding{}}
 	// A header that is only an assessment line is summary text: a document
 	// with a verdict always has a non-empty summary rendered above that line.
 	if len(header) > 1 {
@@ -182,7 +183,6 @@ func parseRenderedCandidate(lines []string, findingsAt int, opts ParseMarkdownOp
 				return Document{}, "", refuse(RefusalUnrecognizedContent, "unknown agent assessment %q", label)
 			}
 			doc.Verdict = verdict
-			doc.SchemaVersion = TextLocationSchemaVersion
 			header = trimBlankLines(header[:len(header)-1])
 		}
 	}
@@ -375,7 +375,7 @@ func parseFindingsList(lines []string) (Document, *MarkdownRefusal) {
 			return Document{}, refuse(RefusalUnrecognizedContent, "the Summary section holds more review structure")
 		}
 	}
-	doc := Document{SchemaVersion: 1, Findings: []Finding{}}
+	doc := Document{SchemaVersion: SchemaVersion, Findings: []Finding{}}
 	doc.Summary = strings.TrimSpace(strings.Join(summaryLines, "\n"))
 	if doc.Summary == "" {
 		return Document{}, refuse(RefusalMissingSummary, "the Summary section is empty")
@@ -440,7 +440,7 @@ func parseNoIssues(lines []string) (Document, *MarkdownRefusal) {
 	if summary == "" {
 		summary = renderedNoIssues
 	}
-	return Document{SchemaVersion: 1, Summary: summary, Findings: []Finding{}}, nil
+	return Document{SchemaVersion: SchemaVersion, Summary: summary, Findings: []Finding{}}, nil
 }
 
 func trimBlankLines(lines []string) []string {

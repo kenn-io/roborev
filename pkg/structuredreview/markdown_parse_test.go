@@ -15,23 +15,23 @@ func TestParseMarkdownRoundTripsRenderedDocuments(t *testing.T) {
 		minSeverity string
 	}{
 		"pass without findings": {doc: Document{
-			SchemaVersion: 2, Summary: "The change renames a helper.", Verdict: VerdictPass, Findings: []Finding{},
+			SchemaVersion: SchemaVersion, Summary: "The change renames a helper.", Verdict: VerdictPass, Findings: []Finding{},
 		}},
 		"version 1 without a verdict": {doc: Document{
-			SchemaVersion: 1, Summary: "The change renames a helper.", Findings: []Finding{},
+			SchemaVersion: SchemaVersion, Summary: "The change renames a helper.", Findings: []Finding{},
 		}},
 		"unable to review": {doc: Document{
-			SchemaVersion: 2, Summary: "The diff could not be read.", Verdict: VerdictUnableToReview, Findings: []Finding{},
+			SchemaVersion: SchemaVersion, Summary: "The diff could not be read.", Verdict: VerdictUnableToReview, Findings: []Finding{},
 		}},
 		"findings with and without a location": {doc: Document{
-			SchemaVersion: 2, Summary: "The change adds a cache.\n\nIt also updates the docs.", Verdict: VerdictFail,
+			SchemaVersion: SchemaVersion, Summary: "The change adds a cache.\n\nIt also updates the docs.", Verdict: VerdictFail,
 			Findings: []Finding{
 				{Severity: "critical", Problem: "The cache is never invalidated.", Fix: "Invalidate on write.", Location: "cache/store.go:42"},
 				{Severity: "low", Problem: "The comment is stale.", Fix: "Update the comment."},
 			},
 		}},
 		"multi-line problem and fix": {doc: Document{
-			SchemaVersion: 2, Summary: "The change adds retries.", Verdict: VerdictFail,
+			SchemaVersion: SchemaVersion, Summary: "The change adds retries.", Verdict: VerdictFail,
 			Findings: []Finding{{
 				Severity: "high", Location: "client/retry.go:10",
 				Problem: "Retries ignore the context.\n\n- The loop never checks ctx.Done().\n- A canceled request keeps running.",
@@ -39,34 +39,34 @@ func TestParseMarkdownRoundTripsRenderedDocuments(t *testing.T) {
 			}},
 		}},
 		"version 1 with findings": {doc: Document{
-			SchemaVersion: 1, Summary: "The change adds a flag.",
+			SchemaVersion: SchemaVersion, Summary: "The change adds a flag.",
 			Findings: []Finding{{Severity: "medium", Problem: "The flag has no test.", Fix: "Add a test.", Location: "cmd/flag.go"}},
 		}},
 		"findings below the rendered threshold": {minSeverity: "high", doc: Document{
-			SchemaVersion: 2, Summary: "The change adds a flag.", Verdict: VerdictPass,
+			SchemaVersion: SchemaVersion, Summary: "The change adds a flag.", Verdict: VerdictPass,
 			Findings: []Finding{{Severity: "low", Problem: "The flag has no test.", Fix: "Add a test."}},
 		}},
 		"synthesis with sources": {doc: Document{
-			SchemaVersion: 2, Summary: "Two reviewers looked at the change.", Verdict: VerdictFail, SourceLabels: labels,
+			SchemaVersion: SchemaVersion, Summary: "Two reviewers looked at the change.", Verdict: VerdictFail, SourceLabels: labels,
 			Findings: []Finding{
 				{Severity: "high", Problem: "The token is logged.", Fix: "Redact the token.", Location: "auth/login.go:7", Sources: []int{2, 1}},
 				{Severity: "medium", Problem: "The error is dropped.", Fix: "Return the error.", Sources: []int{1}},
 			},
 		}},
 		"summary that ends with a Findings heading": {doc: Document{
-			SchemaVersion: 1, Summary: "The change renames a helper.\n\n## Findings", Findings: []Finding{},
+			SchemaVersion: SchemaVersion, Summary: "The change renames a helper.\n\n## Findings", Findings: []Finding{},
 		}},
 		"summary that is only a Findings heading": {doc: Document{
-			SchemaVersion: 1, Summary: "## Findings", Findings: []Finding{},
+			SchemaVersion: SchemaVersion, Summary: "## Findings", Findings: []Finding{},
 		}},
 		"summary that is only an agent assessment line": {doc: Document{
-			SchemaVersion: 1, Summary: renderedAssessment + "Pass", Findings: []Finding{},
+			SchemaVersion: SchemaVersion, Summary: renderedAssessment + "Pass", Findings: []Finding{},
 		}},
 		"summary that is only an unknown agent assessment line": {doc: Document{
-			SchemaVersion: 1, Summary: renderedAssessment + "Maybe", Findings: []Finding{},
+			SchemaVersion: SchemaVersion, Summary: renderedAssessment + "Maybe", Findings: []Finding{},
 		}},
 		"summary that is only an agent assessment line, with findings": {doc: Document{
-			SchemaVersion: 1, Summary: renderedAssessment + "Fail",
+			SchemaVersion: SchemaVersion, Summary: renderedAssessment + "Fail",
 			Findings: []Finding{{Severity: "high", Problem: "The write is not atomic.", Fix: "Rename a temporary file."}},
 		}},
 	}
@@ -106,7 +106,7 @@ func TestParseMarkdownReadsTheLegacyFindingsList(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, Document{
-		SchemaVersion: 1,
+		SchemaVersion: SchemaVersion,
 		Summary:       "The change adds a save routine.",
 		Findings: []Finding{
 			{
@@ -145,7 +145,7 @@ func TestParseMarkdownReadsNoIssuesReviews(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			got, err := ParseMarkdown(tt.markdown, ParseMarkdownOptions{})
 			require.NoError(t, err)
-			assert.Equal(t, Document{SchemaVersion: 1, Summary: tt.summary, Findings: []Finding{}}, got)
+			assert.Equal(t, Document{SchemaVersion: SchemaVersion, Summary: tt.summary, Findings: []Finding{}}, got)
 		})
 	}
 }
@@ -155,7 +155,7 @@ func TestParseMarkdownRefusesInsteadOfGuessing(t *testing.T) {
 		return "## Review Findings\n\n" + strings.Join(fields, "\n") + "\n\n## Summary\n\nThe change adds a save routine."
 	}
 	rendered := Document{
-		SchemaVersion: 2, Summary: "Two reviewers looked at the change.", Verdict: VerdictFail,
+		SchemaVersion: SchemaVersion, Summary: "Two reviewers looked at the change.", Verdict: VerdictFail,
 		SourceLabels: []string{"codex", "codex"},
 		Findings:     []Finding{{Severity: "high", Problem: "The token is logged.", Fix: "Redact the token.", Sources: []int{1}}},
 	}.Markdown("")
