@@ -205,7 +205,9 @@ func TestKillDaemonKeepsUnjudgedRecords(t *testing.T) {
 			require.NoError(t, err)
 			err = KillDaemon(runtimeInfoFromRecord(rec))
 			var wantShutdowns int32
-			if !tc.otherResponder {
+			if tc.otherResponder {
+				require.ErrorContains(t, err, "cannot verify daemon shutdown")
+			} else {
 				require.ErrorIs(t, err, ErrDaemonAccessDenied)
 				wantShutdowns = 1
 			}
@@ -1086,7 +1088,9 @@ func TestRequestGracefulDaemonShutdownUsesSharedContextForDelayedAcceptance(t *t
 	ep := DaemonEndpoint{Network: "tcp", Address: strings.TrimPrefix(server.URL, "http://")}
 
 	done := make(chan error, 1)
-	go func() { done <- requestGracefulDaemonShutdown(ctx, ep, dead.Load) }()
+	go func() {
+		done <- requestGracefulDaemonShutdown(ctx, func() (DaemonEndpoint, error) { return ep, nil }, dead.Load)
+	}()
 	returnedEarly := false
 	var earlyResult error
 	select {
@@ -1115,7 +1119,7 @@ func TestRequestGracefulDaemonShutdownRetriesServerErrors(t *testing.T) {
 	defer cancel()
 	ep := DaemonEndpoint{Network: "tcp", Address: strings.TrimPrefix(server.URL, "http://")}
 
-	require.NoError(t, requestGracefulDaemonShutdown(ctx, ep, func() bool { return false }))
+	require.NoError(t, requestGracefulDaemonShutdown(ctx, func() (DaemonEndpoint, error) { return ep, nil }, func() bool { return false }))
 	assert.Equal(t, int32(2), attempts.Load())
 }
 
@@ -1227,4 +1231,100 @@ func TestKillDaemonKeepsRecordWhenUnknownProcessDoesNotAnswer(t *testing.T) {
 	err = KillDaemon(&RuntimeInfo{PID: os.Getpid(), Network: "tcp", Address: address, SourcePath: runtimePath})
 	require.Error(t, err)
 	assert.FileExists(t, runtimePath)
+}
+
+func TestKillDaemonReturnsWhenUnjudgedEndpointIsReused(t *testing.T) {
+	testenv.SetDataDir(t)
+	var stopped atomic.Bool
+	var shutdowns atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/ping":
+			pid := math.MaxInt32
+			if stopped.Load() {
+				pid = 1
+			}
+			fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, pid)
+		case "/api/shutdown":
+			shutdowns.Add(1)
+			stopped.Store(true)
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	rec := kitdaemon.RuntimeRecord{PID: math.MaxInt32, Network: "tcp", Address: server.Listener.Addr().String(), ProcessIdentityV2: "future-v1:unavailable"}
+	path, err := runtimeStore().Write(rec)
+	require.NoError(t, err)
+	done := make(chan error, 1)
+	go func() { done <- KillDaemon(runtimeInfoFromRecord(rec)) }()
+	// Wall-clock wait: the HTTP endpoint now answers for a replacement process.
+	completed := assert.Eventually(t, func() bool {
+		select {
+		case err = <-done:
+			return true
+		default:
+			return false
+		}
+	}, 2*time.Second, 10*time.Millisecond)
+	if !completed {
+		server.CloseClientConnections()
+		server.Close()
+		<-done
+		return
+	}
+	require.NoError(t, err)
+	assert.Equal(t, int32(1), shutdowns.Load())
+	assert.NoFileExists(t, path)
+}
+
+func TestKillDaemonFallsBackWhenSelectedSocketDisappears(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix sockets are not supported on Windows")
+	}
+	testenv.SetDataDir(t)
+	socketDir, err := os.MkdirTemp("/tmp", "rr-stop-*")
+	require.NoError(t, err)
+	defer os.RemoveAll(socketDir)
+	socketPath := filepath.Join(socketDir, "d.sock")
+	listener, err := net.Listen("unix", socketPath)
+	require.NoError(t, err)
+	var stopped atomic.Bool
+	var shutdowns atomic.Int32
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/ping":
+			if stopped.Load() {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			// Unlinking a live socket leaves existing connections usable, but prevents new dials.
+			if r.Host == "localhost" {
+				assert.NoError(t, os.Remove(socketPath))
+			}
+			fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, math.MaxInt32)
+		case "/api/shutdown":
+			shutdowns.Add(1)
+			stopped.Store(true)
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	tcpServer := httptest.NewServer(handler)
+	defer tcpServer.Close()
+	socketServer := httptest.NewUnstartedServer(handler)
+	require.NoError(t, socketServer.Listener.Close())
+	socketServer.Listener = listener
+	socketServer.Start()
+	defer socketServer.Close()
+	rec := kitdaemon.RuntimeRecord{PID: math.MaxInt32, Network: "unix", Address: socketPath, ProcessIdentityV2: "future-v1:unavailable", Metadata: map[string]string{
+		runtimeAlternateNetworkKey: "tcp", runtimeAlternateAddressKey: tcpServer.Listener.Addr().String(),
+	}}
+	path, err := runtimeStore().Write(rec)
+	require.NoError(t, err)
+	require.NoError(t, KillDaemon(runtimeInfoFromRecord(rec)))
+	assert.Equal(t, int32(1), shutdowns.Load())
+	assert.NoFileExists(t, path)
 }

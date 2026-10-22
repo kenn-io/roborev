@@ -1199,6 +1199,9 @@ func TestRestartDaemonAfterUpdateManagerHandoffUnresponsiveUsesRuntimePID(t *tes
 func TestRestartDaemonAfterUpdateStopFailedPreviousPIDExitedButInitialPIDLingering(t *testing.T) {
 	s := stubRestartVars(t)
 
+	// The lingering legacy PID still belongs to a daemon.
+	isPIDAliveForUpdate = func(pid int) bool { return pid == os.Getpid() }
+
 	var getCalls int
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		getCalls++

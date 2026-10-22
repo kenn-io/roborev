@@ -81,6 +81,11 @@ type BrowserRuntimeInfo struct {
 	DisabledReason string
 }
 
+// HasProcessIdentityV2 reports whether the runtime carries a namespace-aware process identity.
+func (r RuntimeInfo) HasProcessIdentityV2() bool {
+	return r.processIdentityV2 != ""
+}
+
 // Endpoint returns a DaemonEndpoint for this runtime.
 func (r RuntimeInfo) Endpoint() DaemonEndpoint {
 	ep := daemonEndpointFromKit(kitdaemon.RuntimeRecord{
@@ -663,13 +668,23 @@ func KillDaemon(info *RuntimeInfo) error {
 		}
 	}
 
+	// Endpoint loss proves exit only after shutdown has been accepted.
+	shutdownAccepted := false
 	// Confirm exact process exit for PIDs this caller can judge; otherwise probe.
 	confirmedDead := func() bool {
 		if info.PID > 0 && (!kitdaemon.RuntimeProcessAlive(rec) || rec.ProcessIdentityV2 == "" || kitdaemon.CompareRuntimeProcessIdentity(rec) != kitdaemon.ProcessIdentityUnknown) {
 			return !kitdaemon.RuntimeProcessAlive(rec)
 		}
-		alive, err := ProbeDaemonAlive(ep)
-		return !alive && !IsDaemonAccessError(err)
+		if !shutdownAccepted {
+			return false
+		}
+		if info.SourcePath != "" {
+			if _, err := os.Stat(info.SourcePath); errors.Is(err, os.ErrNotExist) {
+				return true
+			}
+		}
+		ping, err := ProbeDaemon(ep, 2*time.Second)
+		return err == nil && info.PID > 0 && ping.PID != info.PID || err != nil && !IsDaemonAccessError(err)
 	}
 	// Reject dead and reused PIDs before any endpoint receives credentials.
 	if info.hasStaleProcess() {
@@ -689,82 +704,89 @@ func KillDaemon(info *RuntimeInfo) error {
 	// delete the socket file while the daemon runs, so fall back to the next
 	// published endpoint. When the PID is known, only that process may get
 	// the shutdown request: another daemon can take over a freed TCP port.
-	selected, answeredByOther := false, map[DaemonEndpoint]bool{}
-	var probeErr error
-	for _, candidate := range info.PreferredEndpoints() {
-		ping, err := ProbeDaemon(candidate, 2*time.Second)
-		if errors.Is(err, ErrDaemonAccessDenied) || err == nil && (info.PID <= 0 || ping.PID == info.PID) {
-			ep, selected = candidate, true
-			break
-		}
-		if err == nil {
-			answeredByOther[candidate] = true
-		} else {
-			probeErr = err
-		}
-	}
-	if !selected && info.PID > 0 {
-		if identity == processUnknown {
-			if len(answeredByOther) == 0 || rec.ProcessIdentityV2 != "" && kitdaemon.CompareRuntimeProcessIdentity(rec) == kitdaemon.ProcessIdentityUnknown {
-				// The process is alive, but nothing proves what it is. Keep
-				// the record so the daemon stays discoverable.
-				return probeErr
-			}
-			// A different daemon answers the published endpoints, so this
-			// record no longer describes a reachable roborev daemon.
-			removeRuntimeFile()
-			return nil
-		}
-		// The process is roborev but did not answer yet; keep the published
-		// endpoint that no other daemon claimed and let shutdown retry.
-		//
-		// Known edge case, deliberately ignored: if the socket file was
-		// deleted (for example, logout removed XDG_RUNTIME_DIR) and the TCP
-		// ping also failed transiently, this picks the missing socket and
-		// shutdown retries only that endpoint until its budget runs out. That
-		// needs the loopback ping to a live daemon to fail at the same moment,
-		// and the cost is a failed stop that succeeds when run again.
-		ep = DaemonEndpoint{}
+	selectEndpoint := func() (DaemonEndpoint, error) {
+		selected, answeredByOther := false, map[DaemonEndpoint]bool{}
+		var probeErr error
 		for _, candidate := range info.PreferredEndpoints() {
-			if !answeredByOther[candidate] {
-				ep = candidate
+			ping, err := ProbeDaemon(candidate, 2*time.Second)
+			if errors.Is(err, ErrDaemonAccessDenied) || err == nil && (info.PID <= 0 || ping.PID == info.PID) {
+				ep, selected = candidate, true
 				break
 			}
+			if err == nil {
+				answeredByOther[candidate] = true
+			} else {
+				probeErr = err
+			}
 		}
-	}
-	if info.PID <= 0 && confirmedDead() {
-		removeRuntimeFile()
-		return nil
+		if !selected && info.PID > 0 {
+			if identity == processUnknown {
+				if len(answeredByOther) == 0 || rec.ProcessIdentityV2 != "" && kitdaemon.CompareRuntimeProcessIdentity(rec) == kitdaemon.ProcessIdentityUnknown {
+					// The process is alive, but nothing proves what it is. Keep
+					// the record so the daemon stays discoverable.
+					if probeErr == nil {
+						probeErr = fmt.Errorf("cannot verify daemon shutdown: published endpoints answer for another process")
+					}
+					return DaemonEndpoint{}, probeErr
+				}
+				// A different daemon answers the published endpoints, so this
+				// record no longer describes a reachable roborev daemon.
+				removeRuntimeFile()
+				ep = DaemonEndpoint{}
+				return ep, nil
+			}
+			// The process is roborev but did not answer yet; keep the published
+			// endpoint that no other daemon claimed and let shutdown retry.
+			ep = DaemonEndpoint{}
+			for _, candidate := range info.PreferredEndpoints() {
+				if !answeredByOther[candidate] {
+					ep = candidate
+					break
+				}
+			}
+		}
+		if ep.Address == "" {
+			return ep, fmt.Errorf("daemon shutdown was not accepted")
+		}
+		return ep, nil
 	}
 
 	// Request graceful shutdown within one shared preparation budget. Once the
 	// daemon accepts the request, wait without a deadline for the exact process
 	// so running reviews still have unlimited time to finish.
-	if ep.Address != "" {
-		shutdownCleanupCtx, cancelShutdownCleanup := context.WithTimeout(
-			context.Background(), shutdownCleanupTimeout,
-		)
-		defer cancelShutdownCleanup()
-		if err := requestGracefulDaemonShutdown(shutdownCleanupCtx, ep, confirmedDead); err != nil {
-			return err
-		}
-		waitForGracefulDaemonExit(200*time.Millisecond, confirmedDead)
-		removeRuntimeFile()
+	shutdownCleanupCtx, cancelShutdownCleanup := context.WithTimeout(
+		context.Background(), shutdownCleanupTimeout,
+	)
+	defer cancelShutdownCleanup()
+	if err := requestGracefulDaemonShutdown(shutdownCleanupCtx, selectEndpoint, confirmedDead); err != nil {
+		return err
+	}
+	if ep.Address == "" {
 		return nil
 	}
-	return fmt.Errorf("daemon shutdown was not accepted")
+	shutdownAccepted = true
+	waitForGracefulDaemonExit(200*time.Millisecond, confirmedDead)
+	removeRuntimeFile()
+	return nil
 }
 
 func requestGracefulDaemonShutdown(
 	ctx context.Context,
-	ep DaemonEndpoint,
+	endpoint func() (DaemonEndpoint, error),
 	confirmedDead func() bool,
 ) error {
-	client := ep.APIClient(0)
 	_, err := backoff.Retry(ctx, func() (struct{}, error) {
 		if confirmedDead() {
 			return struct{}{}, nil
 		}
+		ep, err := endpoint()
+		if err != nil {
+			return struct{}{}, backoff.Permanent(err)
+		}
+		if ep.Address == "" {
+			return struct{}{}, nil
+		}
+		client := ep.APIClient(0)
 		resp, err := client.ShutdownRaw(ctx)
 		if err == nil {
 			resp.Body.Close()

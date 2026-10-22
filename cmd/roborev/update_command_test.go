@@ -597,3 +597,31 @@ func readRequestBody(r *http.Request) string {
 	body, _ := io.ReadAll(r.Body)
 	return string(body)
 }
+
+func TestUpdateIgnoresReusedLegacyRuntime(t *testing.T) {
+	for _, operation := range []string{"runtimeHasPID", "replacementRuntimePID", "discoverDaemonForUpdate"} {
+		t.Run(operation, func(t *testing.T) {
+			stubUpdateCommand(t)
+			testenv.SetDataDir(t)
+			require.True(t, daemon.ProcessExists(os.Getpid()))
+			require.False(t, isPIDAliveForUpdateDefault(os.Getpid()), "the test binary is not a daemon")
+			path, err := daemon.RuntimeStore().Write(kitdaemon.RuntimeRecord{
+				PID: os.Getpid(), Network: "tcp", Address: "127.0.0.1:1",
+			})
+			require.NoError(t, err)
+			listAllRuntimes = daemon.ListAllRuntimes
+			switch operation {
+			case "runtimeHasPID":
+				assert.False(t, runtimeHasPID(os.Getpid()))
+			case "replacementRuntimePID":
+				assert.Zero(t, replacementRuntimePID(0))
+			case "discoverDaemonForUpdate":
+				getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
+				info, err := discoverDaemonForUpdate()
+				require.NoError(t, err)
+				assert.Nil(t, info)
+				assert.NoFileExists(t, path)
+			}
+		})
+	}
+}
