@@ -343,11 +343,6 @@ func TestClientGateDisabledReceipt(t *testing.T) {
 		_, err = post(gate)
 		require.NoError(t, err)
 		assert.Equal(3, transport.calls)
-		for range 2 {
-			_, err = post(nil)
-			require.NoError(t, err)
-		}
-		assert.Equal(5, transport.calls)
 	})
 	for _, outcome := range []string{"503", "transport", "queued", "skipped"} {
 		t.Run(outcome, func(t *testing.T) {

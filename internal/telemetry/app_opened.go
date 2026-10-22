@@ -146,28 +146,22 @@ type ClientGate struct {
 
 // Reset allows reports after a daemon reconnect.
 func (g *ClientGate) Reset() {
-	if g == nil {
-		return
-	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.quietDay = ""
 }
 
 // PostEvent stops sending after a disabled receipt until the next UTC day.
-// A nil gate posts without remembering receipts.
 func (g *ClientGate) PostEvent(ctx context.Context, client *http.Client, url, event string, props map[string]any) (posthog.Status, error) {
 	day := time.Now().UTC().Format(time.DateOnly)
-	if g != nil {
-		g.mu.Lock()
-		quiet := g.quietDay == day
-		g.mu.Unlock()
-		if quiet {
-			return posthog.StatusDisabled, nil
-		}
+	g.mu.Lock()
+	quiet := g.quietDay == day
+	g.mu.Unlock()
+	if quiet {
+		return posthog.StatusDisabled, nil
 	}
 	status, err := posthog.PostEvent(ctx, client, url, event, props)
-	if g != nil && err == nil && status == posthog.StatusDisabled {
+	if err == nil && status == posthog.StatusDisabled {
 		g.mu.Lock()
 		g.quietDay = day
 		g.mu.Unlock()

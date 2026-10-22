@@ -1,5 +1,6 @@
 import {
   startBrowserTelemetry,
+  type BrowserTelemetryOptions,
   type BrowserTelemetryQuietReason,
   type BrowserTelemetryReporter,
 } from "@kenn-io/kit-ui/utils/browser-telemetry";
@@ -41,13 +42,15 @@ function flushSession(): void {
   visibleTime = 0;
   hasInterval = false;
   intervalEnded = false;
-  reporter?.reportVisit(
+  if (state !== "enabled") return;
+  void postTelemetry(
+    telemetryEventsPath,
     {
       event: "session_ended",
       properties: { surface: "web", duration_bucket: duration },
     },
     { keepalive: true },
-  );
+  ).catch(() => {});
 }
 
 function endSession(): void {
@@ -92,19 +95,25 @@ function storageKey(): string {
   return scope ? `roborev.telemetry.${scope}` : "roborev.telemetry";
 }
 
+const postTelemetry: BrowserTelemetryOptions["post"] = (
+  route,
+  event,
+  options,
+) =>
+  authenticatedFetch()(route, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(event),
+    ...options,
+    signal: AbortSignal.timeout(10_000),
+  });
+
 function startReporting(): BrowserTelemetryReporter {
   const reporting = startBrowserTelemetry({
     route: telemetryEventsPath,
     surface: "web",
     storageKey: storageKey(),
-    post: (route, event, options) =>
-      authenticatedFetch()(route, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(event),
-        ...options,
-        signal: AbortSignal.timeout(10_000),
-      }),
+    post: postTelemetry,
   });
   reporting.onQuietChange((_quiet, reason) => {
     state = reason;
@@ -113,10 +122,14 @@ function startReporting(): BrowserTelemetryReporter {
 }
 
 export function reportScreenViewed(screen: Screen): void {
-  reporter?.reportScreen(screen);
+  getReporter().reportScreen(screen);
 }
 
-/** Reports app_opened on the page's first shell mount and on the first window focus of each later UTC day; returns a cleanup. */
+function getReporter(): BrowserTelemetryReporter {
+  return (reporter ??= startReporting());
+}
+
+/** Starts session tracking and daily reporting on load or a visible return; returns a cleanup. */
 export function setupAppOpenedReporting(): () => void {
   if (!listening) {
     listening = true;
@@ -125,10 +138,11 @@ export function setupAppOpenedReporting(): () => void {
     globalThis.addEventListener("pageshow", resumeSession);
   }
   shellMounted = true;
-  if (!reporter || state === "unavailable") {
+  if (state === "unavailable") {
     reporter?.stop();
-    reporter = startReporting();
+    reporter = undefined;
   }
+  getReporter();
   flushSession();
   resumeSession();
   return () => {
@@ -141,14 +155,14 @@ export function reportCoreAction(
   event: "review_viewed" | "review_closed" | "search_empty",
 ): void {
   const report = { event, properties: { surface: "web" } };
-  if (event === "review_viewed") reporter?.reportDaily(event, report);
-  else reporter?.reportVisit(report);
+  if (event === "review_viewed") getReporter().reportDaily(event, report);
+  else getReporter().reportVisit(report);
 }
 
 export function reportErrorShown(
   kind: "review_viewed" | "review_closed",
 ): void {
-  reporter?.reportVisit({
+  getReporter().reportVisit({
     event: "error_shown",
     properties: { surface: "web", kind },
   });

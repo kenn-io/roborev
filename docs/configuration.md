@@ -1938,7 +1938,8 @@ reads them, and so do the `roborev tui` and CLI processes.
 After a `disabled` receipt, the browser sends nothing until a later UTC day's
 load or focus checks again. A TUI, CLI, or MCP process stops reporting until the
 next UTC day, a TUI reconnect, or its own restart. The agent-call route returns
-the same `disabled` or `queued` JSON receipt as the event route.
+the same `disabled`, `queued`, or `skipped` JSON receipt as the event route,
+and returns an error if recording or capture fails.
 
 Agent activity counts each MCP `tools/call`, including tool errors, and each
 invocation of `agent-hook run`, `agent-hook fix-done`, `post-commit`, `enqueue`,

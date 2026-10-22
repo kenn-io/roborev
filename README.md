@@ -494,8 +494,7 @@ browser quits, crashes, or discards the tab before the page closes normally.
 
 The web UI asks the daemon to report `app_opened` once per UTC day per browser
 profile, on load or focus. `roborev tui` asks each time it starts. CLI commands
-that work through the daemon ask after their first
-successful daemon request, without starting a daemon; hook, MCP and daemon
+that work through the daemon ask after their first successful daemon request, without starting a daemon; hook, MCP and daemon
 management commands, and commands the bundled agent skills run with
 `--from-skill`, do not. Agent calls count separately as described below. The daemon sends at most one `app_opened` per surface
 per UTC day, so repeated opens on the same day count once, with the same install

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -54,10 +55,14 @@ func TestReportAppOpenedReachesDaemonAllowlist(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	t.Setenv(telemetry.EnabledEnv, "0")
-	rep, err := telemetry.NewReporter(telemetry.Options{})
-	require.NoError(err)
 	enableTelemetryEnv(t)
+	endpoint, _ := testutil.NewPostHogStub(t)
+	rep, err := telemetry.NewReporter(telemetry.Options{
+		Database: testutil.OpenTestDB(t), Endpoint: endpoint,
+		DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json"),
+	})
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(rep.Close()) })
 
 	type recorded struct {
 		body []byte
@@ -86,8 +91,6 @@ func TestReportAppOpenedReachesDaemonAllowlist(t *testing.T) {
 	t.Cleanup(ts.Close)
 
 	m := newModel(testEndpointFromURL(ts.URL), withExternalIODisabled())
-	// Exercise every screen's allowlist entry with the opted-out reporter.
-	m.telemetryGate = nil
 	cmd := m.reportAppOpened()
 	require.NotNil(cmd)
 	assert.Nil(cmd())

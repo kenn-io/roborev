@@ -234,7 +234,7 @@ func newServerWithLogs(
 	s.registerTelemetryCaptureRoute(mux)
 	if cfg.MCP.Enabled {
 		s.mcpEnabled = true
-		mcpServer := mcpserver.New(s.mcpBackend(), version.Version, s.recordAgentCall)
+		mcpServer := mcpserver.New(s.mcpBackend(), version.Version, func(ctx context.Context) { s.recordAgentCall(ctx) })
 		mux.Handle(mcpserver.HTTPPath, mcpServer.HTTPHandler())
 	}
 

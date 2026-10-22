@@ -72,6 +72,76 @@ describe("setupAppOpenedReporting", () => {
     vi.restoreAllMocks();
   });
 
+  test("keeps the first screen when reported before shell setup", async () => {
+    appOpened.reportScreenViewed("analytics");
+    setup();
+    await settle();
+    expect(
+      await Promise.all(
+        fetchMock.mock.calls.map(([request]) => request.clone().json()),
+      ),
+    ).toEqual([
+      { event: "app_opened", properties: { surface: "web" } },
+      {
+        event: "screen_viewed",
+        properties: { surface: "web", screen: "analytics" },
+      },
+    ]);
+  });
+
+  test.each(["pagehide", "hidden timeout"])(
+    "flushes across UTC midnight without opening a hidden day on %s",
+    async (ending) => {
+      vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+      vi.setSystemTime(new Date("2026-03-10T23:45:00Z"));
+      let hidden = false;
+      vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
+      setup();
+      appOpened.reportScreenViewed("reviews");
+      await vi.advanceTimersByTimeAsync(0);
+      hidden = true;
+      document.dispatchEvent(new Event("visibilitychange"));
+      if (ending === "hidden timeout")
+        await vi.advanceTimersByTimeAsync(1_800_000);
+      else {
+        vi.setSystemTime(new Date("2026-03-11T00:01:00Z"));
+        globalThis.dispatchEvent(new Event("pagehide"));
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      const requests = fetchMock.mock.calls.map(([request]) => request);
+      expect(
+        await Promise.all(requests.map((request) => request.clone().json())),
+      ).toEqual([
+        { event: "app_opened", properties: { surface: "web" } },
+        {
+          event: "screen_viewed",
+          properties: { surface: "web", screen: "reviews" },
+        },
+        {
+          event: "session_ended",
+          properties: { surface: "web", duration_bucket: "under_1m" },
+        },
+      ]);
+      expect(requests[2]!.keepalive).toBe(true);
+      hidden = false;
+      focusWindow();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(
+        await Promise.all(
+          fetchMock.mock.calls
+            .slice(3)
+            .map(([request]) => request.clone().json()),
+        ),
+      ).toEqual([
+        { event: "app_opened", properties: { surface: "web" } },
+        {
+          event: "screen_viewed",
+          properties: { surface: "web", screen: "reviews" },
+        },
+      ]);
+    },
+  );
+
   test("posts one app_opened event with session and CSRF headers on load", async () => {
     setup();
     await settle();
