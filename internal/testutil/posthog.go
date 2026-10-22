@@ -6,11 +6,21 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+// SetTelemetryReleaseEnv allows release telemetry independently of inherited CI opt-outs.
+func SetTelemetryReleaseEnv(t *testing.T) string {
+	t.Helper()
+	t.Setenv("CI", "")
+	require.NoError(t, os.Unsetenv("CI"))
+	t.Setenv("DO_NOT_TRACK", "0")
+	return "v1.2.3"
+}
 
 type PostHogMessage struct {
 	Event      string         `json:"event"`

@@ -131,3 +131,42 @@ func TestIntegration_SetupFinishedAfterSyncPull(t *testing.T) { //nolint:paralle
 	assert.Equal(t, 1, claimAttempts())
 	assert.Equal(t, []string{"setup_finished"}, client.recordedEvents())
 }
+
+func TestIntegration_SyncFailedTelemetry(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL schema
+	postgresURL := os.Getenv("TEST_POSTGRES_URL")
+	if postgresURL == "" {
+		postgresURL = "postgres://roborev_test:roborev_test_password@localhost:5433/roborev_test"
+	}
+	pool, err := storage.NewPgPool(t.Context(), postgresURL, storage.DefaultPgPoolConfig())
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
+	_, err = pool.Pool().Exec(t.Context(), "DROP SCHEMA IF EXISTS roborev CASCADE")
+	require.NoError(t, err)
+	server, db, tmpDir := newTestServer(t)
+	client := &fakeTelemetryClient{enabled: true}
+	server.SetTelemetry(client)
+	worker := storage.NewSyncWorker(db, config.SyncConfig{
+		Enabled: true, PostgresURL: postgresURL, MachineName: "outage-target", Interval: "1h",
+	})
+	server.SetSyncWorker(worker)
+	require.NoError(t, worker.SetSkipInitialSync(true))
+	require.NoError(t, worker.Start())
+	t.Cleanup(worker.Stop)
+	_, err = worker.SyncNow()
+	require.NoError(t, err)
+	_, err = pool.Pool().Exec(t.Context(), `
+		CREATE FUNCTION roborev.deny_job_write() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN RAISE EXCEPTION 'job writes denied' USING ERRCODE = '42501'; END $$;
+		CREATE TRIGGER deny_job_write BEFORE INSERT OR UPDATE ON roborev.review_jobs
+		FOR EACH ROW EXECUTE FUNCTION roborev.deny_job_write()`)
+	require.NoError(t, err)
+	repo, err := db.GetOrCreateRepo(tmpDir, "https://github.com/example/outage.git")
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, GitRef: "HEAD", Agent: "test"})
+	require.NoError(t, err)
+	require.NoError(t, db.CancelJob(job.ID))
+	_, err = worker.SyncNow()
+	require.NoError(t, err, "rejected uploads do not fail the pass")
+	assert.Equal(t, []string{"sync_failed"}, client.recordedEvents())
+	assert.Equal(t, []map[string]any{{"sync_source": "postgres", "reason": "auth"}}, client.recordedProperties())
+}

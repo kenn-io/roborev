@@ -248,7 +248,7 @@
           <article class="proof">
             <p class="proof-tag">Review types</p>
             <h3>Built-in lenses and your own.</h3>
-            <p><code>--type security</code>, <code>--type design</code>, and <code>--type lookahead</code> swap the system prompt. Custom types wrap a Go template rubric in the same schema, severity filtering, and pass/fail verdict.</p>
+            <p><code>--type security</code>, <code>--type design</code>, <code>--type lookahead</code>, and <code>--type test-value</code> swap the system prompt. Custom types wrap a Go template rubric in the same schema, severity filtering, and pass/fail verdict.</p>
           </article>
           <article class="proof">
             <p class="proof-tag">Analysis</p>
@@ -332,7 +332,7 @@
           <div>
             <p class="section-index">08 / Ownership</p>
             <h2 id="own-title">Local by construction. Shared when you choose.</h2>
-            <p class="lede">The daemon runs on your machine, reads your repo, and writes to a SQLite database under <code>~/.roborev</code>. Nothing leaves except the calls your agents already make. Turn on PostgreSQL sync and every machine keeps its local database while the team's review history converges in one place, deduplicated by UUID.</p>
+            <p class="lede">The daemon runs on your machine, reads your repo, and writes to a SQLite database under <code>~/.roborev</code>. Turn on PostgreSQL sync and every machine keeps its local database while the team's review history converges in one place, deduplicated by UUID.</p>
             <ul class="interface-list">
               <li><strong>CLI</strong><span><code>review</code>, <code>show</code>, <code>fix</code>, <code>refine</code>, <code>analyze</code>, <code>list</code>, and <code>--json</code> where scripts need it.</span></li>
               <li><strong>TUI</strong><span>The live queue in the terminal, split-screen on wide windows.</span></li>

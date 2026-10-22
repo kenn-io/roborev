@@ -93,8 +93,8 @@ need the browser application.
 
 ## Build from Source
 
-Building Roborev requires Go 1.27.0 or newer. The embedded browser application
-also requires Bun 1.3.14.
+Building Roborev requires Go 1.27.3 or newer. The embedded browser application
+also requires Bun 1.4.4.
 
 ```bash
 git clone https://github.com/kenn-io/roborev

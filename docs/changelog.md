@@ -7,10 +7,36 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
+**Security**
+
+- Require Go 1.27.3 for source builds and CI to include the certificate distrust
+    fix for [CVE-2026-111943](https://pkg.go.dev/vuln/GO-2026-6809).
+- Update DOMPurify, Vite, Vitest, Orval, and affected transitive JavaScript
+    dependencies to pick up upstream security fixes.
+
+**New features**
+
+- Find tests that add maintenance cost without protecting behavior with
+    `roborev review --type test-value`. The reviewer flags tests of dependency
+    behavior, self-confirming assertions, static text checks, unreachable
+    scenarios, duplicate coverage, and fixtures that bypass the behavior under
+    test. Confirmed findings default to medium severity. See
+    [Review Types](/docs/guides/reviewing-code/#review-types). A custom
+    `[review.types.test-value]` definition must be renamed or removed, because
+    built-in names are reserved.
+
 **Improvements**
 
+- Honor `DO_NOT_TRACK` and keep telemetry off in CI and non-release builds.
+- Count core action error banners and toasts in the web UI and TUI, and
+    PostgreSQL sync outages, in anonymous telemetry using fixed action names and
+    error classes. Failed closes and reopens both count. Each review load or
+    render failure counts once per selection. Failed agent jobs and missing
+    reviews stay silent. Daemon-unreachable errors can't be counted.
 - Cap telemetry waits at exit to 50 ms for CLI commands, stdio MCP sessions, and
     the TUI.
+- Count Enter-submitted browser searches that return no jobs and human CLI
+    searches that find no reviews in anonymous telemetry, without search text.
 - Count review reads, committed fixes, and explicit closes in anonymous
     telemetry.
 - Report repository and review totals as ranges in anonymous daemon telemetry:

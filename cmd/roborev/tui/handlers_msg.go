@@ -727,6 +727,7 @@ func (m *model) releaseReconcileFetch(fetchSeq uint64) {
 // lives here and cannot drift from the ordering logic.
 func (m *model) acceptReview(msg reviewMsg) {
 	m.consecutiveErrors = 0
+	m.reviewErrReportedJobID = 0
 	m.currentReview = msg.review
 	m.currentResponses = msg.responses
 	m.currentBranch = msg.branchName
@@ -1109,6 +1110,7 @@ func (m model) handleReviewFollowErrMsg(msg reviewFollowErrMsg) (tea.Model, tea.
 		return m, nil
 	}
 	m.splitDetailErr = msg.err
+	m.paneErrorJobID = msg.jobID
 	// Deliberately does NOT clear paneReviewSeenNonTerminal: a fresh
 	// attempt was genuinely observed and this fetch failed to pick it up,
 	// so the next reconcile pass must still retry (see that field's doc
@@ -1158,6 +1160,7 @@ func (m model) handleReviewFollowErrMsg(msg reviewFollowErrMsg) (tea.Model, tea.
 			fmt.Sprintf("Could not load review to fix job #%d: %v", msg.jobID, msg.err),
 			3*time.Second, m.currentView,
 		)
+		m.markFlashError(telemetry.EventReviewViewed, msg.jobID)
 		// The 'F' fetch is an ordinary dispatch, so dispatchReviewFetch
 		// armed the plain open intent alongside this panel. The panel's
 		// terminal failure resolves BOTH: left armed, the block below
@@ -1169,6 +1172,7 @@ func (m model) handleReviewFollowErrMsg(msg reviewFollowErrMsg) (tea.Model, tea.
 			m.pendingReviewOpenOrigin = 0
 			m.pendingReviewOpenSeq = 0
 		}
+		return m, nil
 	}
 	// The plain "open the review" intent needs the same handling as the
 	// fix panel above: a follow failure resolves the freshest dispatch for
@@ -1226,6 +1230,8 @@ func (m model) handleReviewFollowErrMsg(msg reviewFollowErrMsg) (tea.Model, tea.
 			fmt.Sprintf("Could not open review for job #%d: %v", msg.jobID, msg.err),
 			3*time.Second, origin,
 		)
+		m.markFlashError(telemetry.EventReviewViewed, msg.jobID)
+		return m, nil
 	}
 	return m, nil
 }
@@ -1317,6 +1323,8 @@ func (m model) handleReviewErrMsg(msg reviewErrMsg) (tea.Model, tea.Cmd) {
 			fmt.Sprintf("Could not open review for job #%d: %v", msg.jobID, msg.err),
 			3*time.Second, origin,
 		)
+		m.markFlashError(telemetry.EventReviewViewed, msg.jobID)
+		return m, reconnectCmd
 	}
 	return m, reconnectCmd
 }
@@ -1697,7 +1705,7 @@ func (m model) handleCommitMsgMsg(
 func (m model) handleClosedResultMsg(msg closedResultMsg) (tea.Model, tea.Cmd) {
 	var actionCmd tea.Cmd
 	if msg.err == nil && msg.newState && msg.fromKey {
-		actionCmd = m.reportAction(telemetry.EventReviewClosed)
+		actionCmd = m.reportAction(telemetry.EventReviewClosed, nil)
 	}
 	// A failed close is rolled back by restoring the selection the
 	// optimistic path moved away from -- a selection change like any
@@ -1751,6 +1759,9 @@ func (m model) handleClosedResultMsg(msg closedResultMsg) (tea.Model, tea.Cmd) {
 				flashView = viewReview
 			}
 			m.setWarningFlash(msg.err.Error(), 3*time.Second, flashView)
+			if msg.fromKey {
+				m.markFlashError(telemetry.EventReviewClosed, 0)
+			}
 			m.err = msg.err
 		}
 	} else {
@@ -2213,6 +2224,7 @@ func (m model) handleReconnectMsg(msg reconnectMsg) (tea.Model, tea.Cmd) {
 	}
 
 	m.reviewReadSent = false
+	m.telemetryGate.Reset()
 	if msg.endpoint != m.endpoint {
 		m.endpoint = msg.endpoint
 		m.client = msg.endpoint.HTTPClient(10 * time.Second)
@@ -2501,6 +2513,8 @@ func (m model) handleFixTriggerResultMsg(
 		m.setFlash(fmt.Sprintf(
 			"Fix failed: %v", msg.err,
 		), 3*time.Second, viewTasks)
+		m.markFlashError(telemetry.EventFindingFixed, 0)
+		return m, nil
 	} else if msg.warning != "" {
 		m.setFlash(msg.warning, 5*time.Second, viewTasks)
 		return m, m.requestFetchFixJobs()
@@ -2510,7 +2524,6 @@ func (m model) handleFixTriggerResultMsg(
 		), 3*time.Second, viewTasks)
 		return m, m.requestFetchFixJobs()
 	}
-	return m, nil
 }
 
 // handlePatchResultMsg processes patch fetch results.
@@ -2536,7 +2549,7 @@ func (m model) handleApplyPatchResultMsg(
 ) (tea.Model, tea.Cmd) {
 	var actionCmd tea.Cmd
 	if msg.success && !msg.commitFailed {
-		actionCmd = m.reportAction(telemetry.EventFindingFixed)
+		actionCmd = m.reportAction(telemetry.EventFindingFixed, nil)
 	}
 	if msg.needWorktree {
 		m.worktreeConfirmJobID = msg.jobID
@@ -2564,10 +2577,12 @@ func (m model) handleApplyPatchResultMsg(
 			)
 		}
 		m.setFlash(detail, 8*time.Second, viewTasks)
+		m.markFlashError(telemetry.EventFindingFixed, 0)
 	} else if msg.err != nil {
 		m.setFlash(fmt.Sprintf(
 			"Apply failed: %v", msg.err,
 		), 3*time.Second, viewTasks)
+		m.markFlashError(telemetry.EventFindingFixed, 0)
 	} else {
 		m.setFlash(fmt.Sprintf(
 			"Patch from job #%d applied and committed",

@@ -97,9 +97,9 @@ writer, or a local model behind a proxy.
   `[review.panels.*]`, and run `roborev review --branch --panel branch_final`.
   A synthesis agent merges the members into one review; optional members can
   flake without blocking it.
-- **Review types.** `--type security`, `--type design`, and `--type lookahead`
-  swap the system prompt. Custom types wrap a Go template rubric in the same
-  schema, severity filtering, and verdict.
+- **Review types.** `--type security`, `--type design`, `--type lookahead`, and
+  `--type test-value` swap the system prompt. Custom types wrap a Go template
+  rubric in the same schema, severity filtering, and verdict.
 - **Analysis.** `roborev analyze` runs duplication, complexity, dead-code,
   refactor, api-design, architecture, security, and test-fixtures passes over
   existing code. Findings land in the same queue; `--fix` applies them.
@@ -137,12 +137,11 @@ reviewers, runtimes, and costs in the footer.
 ## 08 / Ownership: local by construction, shared when you choose
 
 The daemon runs on your machine and writes to SQLite under `~/.roborev`.
-Nothing leaves except the calls your agents already make. PostgreSQL sync lets
-every machine keep its local database while the team's review history
-converges in one place, deduplicated by UUID. Interfaces: CLI, TUI, browser UI,
-HTTP API with server-sent events, bundled agent skills. Telemetry is anonymous
-daemon counts and app opens from the web UI, TUI and command line, off with
-`ROBOREV_TELEMETRY_ENABLED=0`.
+PostgreSQL sync lets every machine keep its local database while the team's
+review history converges in one place, deduplicated by UUID. Interfaces: CLI,
+TUI, browser UI, HTTP API with server-sent events, bundled agent skills.
+Telemetry is anonymous daemon counts and app opens from the web UI, TUI and
+command line, off with `ROBOREV_TELEMETRY_ENABLED=0`.
 
 ## 09 / Boundary: the layer before the pull request
 

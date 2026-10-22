@@ -1,11 +1,17 @@
 package storage
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -198,4 +204,87 @@ func TestSyncPullWriteCallbackIsRaceSafeNilSafeAndInvokedOutsideLock(t *testing.
 
 func testSyncConfig() config.SyncConfig {
 	return config.SyncConfig{Enabled: true, Interval: "1h"}
+}
+
+func TestSyncFailureOutages(t *testing.T) {
+	t.Parallel()
+	worker := NewSyncWorker(nil, config.SyncConfig{})
+	var reasons []string
+	worker.SetOnSyncFailed(func(reason string) { reasons = append(reasons, reason) })
+	remote := &syncSourceError{context.DeadlineExceeded}
+	worker.observeFailure(&syncSourceError{&pgconn.PgError{Code: "23505"}})
+	worker.observeFailure(remote) // No successful full pass yet.
+	assert.Empty(t, reasons)
+	worker.observePass()
+	worker.observeFailure(fmt.Errorf("push experiment definition example: %w", &syncSourceError{&pgconn.PgError{Code: "22001"}}))
+	worker.observeFailure(fmt.Errorf("push experiment assignment job/example: %w", &syncSourceError{&pgconn.PgError{Code: "23505"}}))
+	assert.Empty(t, reasons)
+	worker.observeFailure(errors.New("local SQLite failure"))
+	worker.observeFailure(remote)
+	worker.observeFailure(remote)
+	assert.Equal(t, []string{"timeout"}, reasons)
+	worker.observeFailure(&syncSourceError{&pgconn.PgError{Code: "22001"}})
+	worker.observeFailure(errors.New("local SQLite failure"))
+	worker.observeFailure(remote)
+	assert.Equal(t, []string{"timeout"}, reasons)
+	worker.observePass()
+	worker.observeFailure(&syncSourceError{&pgconn.PgError{Code: "28P01"}})
+	assert.Equal(t, []string{"timeout", "auth"}, reasons)
+	worker.observePass()
+	worker.observeFailure(&syncSourceError{&pgconn.PgError{Code: "25006"}})
+	assert.Equal(t, []string{"timeout", "auth", "other"}, reasons)
+}
+
+func TestSyncPassWithRejectedRowsArmsOutages(t *testing.T) {
+	t.Parallel()
+	worker := NewSyncWorker(nil, config.SyncConfig{})
+	var reasons []string
+	worker.SetOnSyncFailed(func(reason string) { reasons = append(reasons, reason) })
+	worker.passError = &syncSourceError{&pgconn.PgError{Code: "23505"}}
+	worker.observePass()
+	worker.observeFailure(&syncSourceError{net.ErrClosed})
+	assert.Equal(t, []string{"network"}, reasons)
+	worker.passError = &syncSourceError{&pgconn.PgError{Code: "42501"}}
+	worker.observePass()
+	worker.observeFailure(&syncSourceError{context.DeadlineExceeded})
+	assert.Equal(t, []string{"network"}, reasons, "a swallowed source failure keeps the outage open")
+}
+
+func TestSyncStoppedPassReportsSavedSourceFailure(t *testing.T) {
+	t.Parallel()
+	worker := NewSyncWorker(nil, config.SyncConfig{})
+	var reasons []string
+	worker.SetOnSyncFailed(func(reason string) { reasons = append(reasons, reason) })
+	worker.observePass()
+	conflict := fmt.Errorf("%w: experiment definition conflict", errSyncRowRejected)
+	worker.observeFailure(fmt.Errorf("push experiment definition example: %w", &syncSourceError{conflict}))
+	assert.Empty(t, reasons, "an experiment conflict is not an outage")
+	worker.passError = &syncSourceError{net.ErrClosed}
+	worker.observeFailure(fmt.Errorf("batch upsert reviews: %w", &syncSourceError{errReviewAttemptPending}))
+	assert.Equal(t, []string{"network"}, reasons)
+}
+
+func TestSyncFailureReason(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{&pgconn.PgError{Code: "28P01"}, "auth"},
+		{&pgconn.PgError{Code: "42501"}, "auth"},
+		{&pgconn.PgError{Code: "08006"}, "network"},
+		{&pgconn.PgError{Code: "57P01"}, "network"},
+		{&pgconn.PgError{Code: "57P03"}, "network"},
+		{&pgconn.PgError{Code: "53300"}, "network"},
+		{io.EOF, "network"},
+		{io.ErrUnexpectedEOF, "network"},
+		{net.ErrClosed, "network"},
+		{pgconn.ErrConnClosed, "network"},
+		{&net.OpError{Op: "dial", Err: errors.New("connection refused")}, "network"},
+		{context.DeadlineExceeded, "timeout"},
+		{&net.DNSError{IsTimeout: true}, "timeout"},
+		{errors.New("failed"), "other"},
+	} {
+		assert.Equal(t, tc.want, syncFailureReason(fmt.Errorf("sync: %w", tc.err)))
+	}
 }

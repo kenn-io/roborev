@@ -14,6 +14,7 @@ import (
 	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/spf13/cobra"
 
+	"go.kenn.io/roborev/internal/telemetry"
 	roborevclient "go.kenn.io/roborev/pkg/client"
 	"go.kenn.io/roborev/pkg/client/generated"
 )
@@ -287,6 +288,7 @@ func printSearchResults(cmd *cobra.Command, response generated.SearchResponse) {
 
 	if len(response.Hits) == 0 {
 		cmd.Println("No matching reviews.")
+		reportCLIActionOutput(cmd.OutOrStderr(), telemetry.EventSearchEmpty)
 		return
 	}
 	cmd.Println()

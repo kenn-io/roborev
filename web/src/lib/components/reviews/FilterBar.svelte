@@ -116,6 +116,11 @@
       placeholder="Search by ref..."
       ariaLabel="Search by ref"
       oninput={onSearchInput}
+      onkeydown={(event) => {
+        if (event.key !== "Enter" || event.isComposing || event.repeat) return;
+        searchExecution?.interrupt();
+        searchExecution = jobsStore?.submitSearch(searchValue);
+      }}
       {disabled}
     />
   </div>

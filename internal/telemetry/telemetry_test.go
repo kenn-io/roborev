@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -24,6 +25,7 @@ func TestDailyClaimsPath(t *testing.T) {
 }
 
 func TestEnabledFromEnvHonorsRoborevAndGenericOptOut(t *testing.T) {
+	testutil.SetTelemetryReleaseEnv(t)
 	t.Setenv(GenericEnabledEnv, "")
 	t.Setenv(EnabledEnv, "0")
 	assert.False(t, EnabledFromEnv())
@@ -150,6 +152,7 @@ func TestLoadOrCreateInstallKeepsCreationTimeAcrossRestart(t *testing.T) {
 }
 
 func TestAllowedEventOptionsConfigureRoborevDaemonEvents(t *testing.T) {
+	releaseVersion := testutil.SetTelemetryReleaseEnv(t)
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -161,11 +164,42 @@ func TestAllowedEventOptionsConfigureRoborevDaemonEvents(t *testing.T) {
 		Application: "roborev",
 		EnvPrefix:   "ROBOREV",
 		DistinctID:  "anonymous-install-id",
-		Version:     "test-version",
+		Version:     releaseVersion,
 		Source:      "daemon",
 	}, allowedEventOptions()...)
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(reporter.Close()) })
+
+	for _, tc := range []struct {
+		event, property string
+		values          []any
+		base            map[string]any
+	}{
+		{EventErrorShown, PropertyKind, []any{"review_viewed", "finding_fixed", "review_closed", "unknown", 42}, map[string]any{PropertySurface: "tui"}},
+		{EventSyncFailed, PropertyReason, []any{"auth", "network", "timeout", "other"}, map[string]any{PropertySyncSource: "postgres"}},
+		{EventSyncFailed, PropertySyncSource, []any{"postgres", "other"}, map[string]any{PropertyReason: "auth"}},
+	} {
+		_, err := reporter.SanitizeProperties(tc.event, tc.base)
+		require.Error(err)
+		for _, value := range tc.values {
+			properties := maps.Clone(tc.base)
+			properties[tc.property], properties["detail"] = value, "private error"
+			props, err := reporter.SanitizeProperties(tc.event, properties)
+			require.NoError(err)
+			want := value
+			if value == "unknown" || value == 42 {
+				want = "other"
+			}
+			assert.Equal(want, props[tc.property])
+			assert.NotContains(props, "detail")
+		}
+	}
+	for _, surface := range []any{nil, "cli", "unknown", 42} {
+		_, err := reporter.SanitizeProperties(EventErrorShown, map[string]any{PropertyKind: "review_viewed", PropertySurface: surface})
+		require.Error(err)
+	}
+	_, err = reporter.SanitizeProperties(EventErrorShown, map[string]any{PropertyKind: "review_viewed"})
+	require.Error(err)
 
 	assert.True(reporter.EventAllowed(EventDaemonStarted))
 	assert.True(reporter.EventAllowed(EventDaemonActive))
@@ -178,21 +212,13 @@ func TestAllowedEventOptionsConfigureRoborevDaemonEvents(t *testing.T) {
 	assert.False(reporter.EventAllowed("repo_opened"))
 
 	props, err := reporter.SanitizeProperties(EventDaemonActive, map[string]any{
-		"sync_enabled":            true,
-		"worker_count":            4,
-		"$process_person_profile": true,
-		"$geoip_disable":          false,
-		"application":             "caller-app",
+		"sync_enabled": true,
+		"worker_count": 4,
 	})
 	require.NoError(err)
 
 	assert.Equal(true, props["sync_enabled"])
 	assert.NotContains(props, "worker_count")
-	assert.Equal("roborev", props["application"])
-	assert.Equal("test-version", props["version"])
-	assert.Equal("daemon", props["source"])
-	assert.False(props["$process_person_profile"].(bool))
-	assert.True(props["$geoip_disable"].(bool))
 	for _, event := range []string{EventDaemonStarted, EventDaemonActive} {
 		for _, bucket := range []string{"0-5", "6-20", "21-100", "over-100"} {
 			props, err := reporter.SanitizeProperties(event, map[string]any{"repo_count": bucket, "review_count": bucket})
@@ -212,13 +238,18 @@ func TestAllowedEventOptionsConfigureRoborevDaemonEvents(t *testing.T) {
 	require.NoError(err)
 	assert.Equal("tui", props["surface"])
 	assert.NotContains(props, "repo_count")
-	for _, event := range []string{EventReviewViewed, EventFindingFixed, EventReviewClosed} {
-		assert.True(reporter.EventAllowed(event))
-		props, err := reporter.SanitizeProperties(event, map[string]any{
-			PropertySurface: "tui", "job_id": 42, "output": "private review",
+	for _, tc := range []struct{ event, surface string }{
+		{EventReviewViewed, "tui"},
+		{EventFindingFixed, "tui"},
+		{EventReviewClosed, "tui"},
+		{EventSearchEmpty, "cli"},
+	} {
+		assert.True(reporter.EventAllowed(tc.event))
+		props, err := reporter.SanitizeProperties(tc.event, map[string]any{
+			PropertySurface: tc.surface, "job_id": 42, "output": "private review",
 		})
 		require.NoError(err)
-		assert.Equal("tui", props[PropertySurface])
+		assert.Equal(tc.surface, props[PropertySurface])
 		assert.NotContains(props, "job_id")
 		assert.NotContains(props, "output")
 	}
@@ -274,11 +305,11 @@ func TestAppOpenedSurfaceAcceptsOnlyFixedValues(t *testing.T) {
 		{name: "session numeric bucket", event: EventSessionEnded, property: PropertyDurationBucket, value: 120},
 		{name: "session rejects cli", event: EventSessionEnded, value: "cli"},
 	}
-	for _, event := range []string{EventReviewViewed, EventFindingFixed, EventReviewClosed} {
+	for _, event := range []string{EventReviewViewed, EventFindingFixed, EventReviewClosed, EventSearchEmpty} {
 		for _, surface := range []string{"web", "tui", "cli", "unknown"} {
 			t.Run(event+"/"+surface, func(t *testing.T) {
 				props, err := reporter.SanitizeProperties(event, map[string]any{PropertySurface: surface})
-				if surface == "unknown" || event == EventFindingFixed && surface == "web" {
+				if surface == "unknown" || event == EventFindingFixed && surface == "web" || event == EventSearchEmpty && surface == "tui" {
 					require.Error(t, err)
 					return
 				}
@@ -341,14 +372,16 @@ func TestNewReporterOptedOutKeepsAllowlist(t *testing.T) {
 // newPostHogStubReporter returns an enabled reporter and its captured messages.
 func newPostHogStubReporter(t *testing.T) (*Reporter, func() []testutil.PostHogMessage) {
 	t.Helper()
+	releaseVersion := testutil.SetTelemetryReleaseEnv(t)
 	endpoint, messages := testutil.NewPostHogStub(t)
 	path := filepath.Join(t.TempDir(), "daily.json")
-	reporter, err := NewReporter(Options{Endpoint: endpoint, DailyClaimsPath: path, Database: testutil.OpenTestDB(t)})
+	reporter, err := NewReporter(Options{Version: releaseVersion, Endpoint: endpoint, DailyClaimsPath: path, Database: testutil.OpenTestDB(t)})
 	require.NoError(t, err)
 	return reporter, messages
 }
 
 func TestNewReporterOrDisabledErrorFallbackAdmitsNothing(t *testing.T) {
+	testutil.SetTelemetryReleaseEnv(t)
 	t.Setenv(EnabledEnv, "1")
 	t.Setenv(GenericEnabledEnv, "1")
 

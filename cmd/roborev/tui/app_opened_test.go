@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -18,12 +19,15 @@ import (
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/telemetry"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
-func enableTelemetryEnv(t *testing.T) {
+func enableTelemetryEnv(t *testing.T) string {
 	t.Helper()
+	releaseVersion := testutil.SetTelemetryReleaseEnv(t)
 	t.Setenv(telemetry.EnabledEnv, "1")
 	t.Setenv(telemetry.GenericEnabledEnv, "1")
+	return releaseVersion
 }
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables
@@ -51,10 +55,15 @@ func TestReportAppOpenedReachesDaemonAllowlist(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	t.Setenv(telemetry.EnabledEnv, "0")
-	rep, err := telemetry.NewReporter(telemetry.Options{})
-	require.NoError(err)
 	enableTelemetryEnv(t)
+	endpoint, _ := testutil.NewPostHogStub(t)
+	rep, err := telemetry.NewReporter(telemetry.Options{
+		Database: testutil.OpenTestDB(t), Endpoint: endpoint,
+		Version:         "v1.2.3",
+		DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json"),
+	})
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(rep.Close()) })
 
 	type recorded struct {
 		body []byte

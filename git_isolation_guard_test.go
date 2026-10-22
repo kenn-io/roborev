@@ -168,11 +168,11 @@ func importAliases(file *ast.File) map[string]map[string]bool {
 }
 
 func defaultImportName(importPath string) string {
-	idx := strings.LastIndex(importPath, "/")
-	if idx == -1 {
+	_, after, ok := strings.CutLast(importPath, "/")
+	if !ok {
 		return importPath
 	}
-	return importPath[idx+1:]
+	return after
 }
 
 func testFileCallsIsolatedMain(file *ast.File, testenvAliases map[string]bool) bool {

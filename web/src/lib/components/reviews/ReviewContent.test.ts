@@ -10,6 +10,8 @@ const state = vi.hoisted(() => ({
   status: "done",
   error: "",
 }));
+const errorReports = vi.hoisted(() => vi.fn());
+const rendererRetries = vi.hoisted(() => vi.fn());
 
 vi.mock("../../stores/context", () => ({
   getReviewStores: () => ({
@@ -17,6 +19,8 @@ vi.mock("../../stores/context", () => ({
       getOutput: () => state.output,
       isLoading: () => state.loading,
       isReviewNotFound: () => state.notFound,
+      reportRendererFailure: errorReports,
+      retryRenderer: rendererRetries,
       getSelectedJob: () => ({ status: state.status, error: state.error }),
     },
   }),
@@ -28,6 +32,9 @@ vi.mock("@kenn-io/roborev-ui/review-content", () => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
+  errorReports.mockReset();
+  rendererRetries.mockReset();
   state.output = "## Review output";
   state.loading = false;
   state.notFound = false;
@@ -42,11 +49,24 @@ describe("ReviewContent", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Could not load the review renderer.",
     );
+    expect(errorReports).toHaveBeenCalledOnce();
     await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(rendererRetries).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(errorReports).toHaveBeenCalledTimes(2));
   });
 
-  it("shows why a failed review produced no output", () => {
+  it("keeps a renderer failure without output silent", async () => {
+    vi.useFakeTimers();
+    state.output = "";
+    render(ReviewContent);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(errorReports).not.toHaveBeenCalled();
+  });
+
+  it("shows why a failed review produced no output without counting the agent failure", async () => {
+    vi.useFakeTimers();
     state.output = "";
     state.notFound = true;
     state.status = "failed";
@@ -59,6 +79,8 @@ describe("ReviewContent", () => {
       "agent process exited with status 1",
     );
     expect(screen.queryByText("Review in progress…")).toBeNull();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(errorReports).not.toHaveBeenCalled();
   });
 
   it("explains a failed review even when no reason was recorded", () => {

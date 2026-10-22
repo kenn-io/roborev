@@ -4,12 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/cenkalti/backoff/v7"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"go.kenn.io/roborev/internal/config"
 )
@@ -25,11 +29,88 @@ type SyncWorker struct {
 	syncMu          sync.Mutex // serializes sync operations (doSync, SyncNow, FinalPush)
 	connectMu       sync.Mutex // serializes connect operations
 	running         bool
-	skipInitialSync bool // when true, skip the immediate doSync on connect
+	skipInitialSync bool  // when true, skip the immediate doSync on connect
+	working         bool  // protected by syncMu; requires a completed push and pull
+	passError       error // protected by syncMu; remote errors swallowed during push
+	onSyncFailed    func(string)
 	afterPullWrite  func()
 	afterPull       func()
 	pullWrote       bool // protected by syncMu
 	afterReviewPush func([]string)
+}
+
+// SetOnSyncFailed registers a callback for the first failure of each outage.
+func (w *SyncWorker) SetOnSyncFailed(fn func(string)) {
+	w.mu.Lock()
+	w.onSyncFailed = fn
+	w.mu.Unlock()
+}
+
+// observeFailure records a pass that stopped before completing push and pull.
+// A source failure already saved in the pass still reports when the pass
+// stops for another reason.
+func (w *SyncWorker) observeFailure(err error) {
+	if !reportableSyncError(err) {
+		err = w.passError
+	}
+	if !reportableSyncError(err) || !w.working {
+		return
+	}
+	w.working = false
+	w.mu.Lock()
+	fn := w.onSyncFailed
+	w.mu.Unlock()
+	if fn != nil {
+		fn(syncFailureReason(err))
+	}
+}
+
+// observePass records a completed push and pull. Rejected rows still show
+// that PostgreSQL answered, so only swallowed source failures count.
+func (w *SyncWorker) observePass() {
+	if reportableSyncError(w.passError) {
+		w.observeFailure(w.passError)
+		return
+	}
+	w.working = true
+}
+
+func reportableSyncError(err error) bool {
+	_, remote := errors.AsType[*syncSourceError](err)
+	return remote && !syncDataError(err) && !errors.Is(err, errReviewAttemptPending)
+}
+
+// syncSourceError distinguishes PostgreSQL operations from local SQLite work.
+type syncSourceError struct{ err error }
+
+func (e *syncSourceError) Error() string { return e.err.Error() }
+func (e *syncSourceError) Unwrap() error { return e.err }
+
+func syncDataError(err error) bool {
+	if errors.Is(err, errSyncRowRejected) {
+		return true
+	}
+	pgErr, ok := errors.AsType[*pgconn.PgError](err)
+	return ok && (strings.HasPrefix(pgErr.Code, "22") || strings.HasPrefix(pgErr.Code, "23"))
+}
+
+func syncFailureReason(err error) string {
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
+		switch {
+		case strings.HasPrefix(pgErr.Code, "28") || pgErr.Code == "42501":
+			return "auth"
+		case strings.HasPrefix(pgErr.Code, "08") || strings.HasPrefix(pgErr.Code, "57P") || pgErr.Code == "53300":
+			return "network"
+		}
+	}
+	var netErr net.Error
+	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()) {
+		return "timeout"
+	}
+	if netErr != nil || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, net.ErrClosed) || errors.Is(err, pgconn.ErrConnClosed) {
+		return "network"
+	}
+	return "other"
 }
 
 // SetAfterPullWrite registers a callback for successfully committed local
@@ -341,6 +422,7 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (*S
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
+	w.passError = nil
 	stats := &SyncStats{}
 
 	// Push local changes (limited batches to ensure pull still runs)
@@ -351,6 +433,7 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (*S
 	for batchNum < maxPushBatches {
 		pushed, err := w.pushChangesWithStats(ctx, pool)
 		if err != nil {
+			w.observeFailure(err)
 			return nil, fmt.Errorf("push: %w", err)
 		}
 		stats.PushedJobs += pushed.Jobs
@@ -378,6 +461,7 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (*S
 				TotalRevs:  stats.PushedReviews,
 				TotalResps: stats.PushedResponses,
 			}) {
+				w.observeFailure(nil)
 				return stats, nil
 			}
 		}
@@ -389,8 +473,10 @@ func (w *SyncWorker) SyncNowWithProgress(progressFn func(SyncProgress) bool) (*S
 	// Pull remote changes
 	pulled, err := w.pullChangesWithStats(ctx, pool)
 	if err != nil {
+		w.observeFailure(err)
 		return nil, fmt.Errorf("pull: %w", err)
 	}
+	w.observePass()
 	stats.PulledJobs = pulled.Jobs
 	stats.PulledReviews = pulled.Reviews
 	stats.PulledResponses = pulled.Responses
@@ -639,11 +725,13 @@ func (w *SyncWorker) doSync() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
+	w.passError = nil
 	// Push all local changes to PostgreSQL (loop until no more pending)
 	var totalJobs, totalReviews, totalResponses int
 	for {
 		stats, err := w.pushChangesWithStats(ctx, pool)
 		if err != nil {
+			w.observeFailure(err)
 			return fmt.Errorf("push: %w", err)
 		}
 		if stats.Jobs == 0 && stats.Reviews == 0 && stats.Responses == 0 {
@@ -658,9 +746,11 @@ func (w *SyncWorker) doSync() error {
 
 	// Pull remote changes from PostgreSQL
 	if err := w.pullChanges(ctx, pool); err != nil {
+		w.observeFailure(err)
 		return fmt.Errorf("pull: %w", err)
 	}
 
+	w.observePass()
 	return nil
 }
 
@@ -690,7 +780,7 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	}
 	for _, definition := range definitions {
 		if err := pool.UpsertExperimentDefinition(ctx, definition); err != nil {
-			return stats, fmt.Errorf("push experiment definition %s: %w", definition.ExperimentID, err)
+			return stats, fmt.Errorf("push experiment definition %s: %w", definition.ExperimentID, &syncSourceError{err})
 		}
 		if err := w.db.MarkExperimentDefinitionSynced(definition.ExperimentID); err != nil {
 			return stats, fmt.Errorf("mark experiment definition synced: %w", err)
@@ -714,6 +804,9 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 
 			pgRepoID, err := pool.GetOrCreateRepo(ctx, j.RepoIdentity)
 			if err != nil {
+				if !syncDataError(err) || w.passError == nil {
+					w.passError = &syncSourceError{err}
+				}
 				log.Printf("Sync: failed to get/create repo for job %s: %v", j.UUID, err)
 				continue
 			}
@@ -722,6 +815,9 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 			if j.CommitSHA != "" {
 				id, err := pool.GetOrCreateCommit(ctx, pgRepoID, j.CommitSHA, j.CommitAuthor, j.CommitSubject, j.CommitTimestamp)
 				if err != nil {
+					if !syncDataError(err) || w.passError == nil {
+						w.passError = &syncSourceError{err}
+					}
 					log.Printf("Sync: failed to get/create commit for job %s: %v", j.UUID, err)
 					continue
 				}
@@ -739,6 +835,9 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 		if len(preparedJobs) > 0 {
 			success, err := pool.BatchUpsertJobs(ctx, preparedJobs)
 			if err != nil {
+				if !syncDataError(err) || w.passError == nil {
+					w.passError = &syncSourceError{err}
+				}
 				log.Printf("Sync: batch upsert jobs error: %v", err)
 			}
 
@@ -768,7 +867,7 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	for _, assignment := range assignments {
 		if err := pool.UpsertExperimentAssignment(ctx, assignment); err != nil {
 			return stats, fmt.Errorf("push experiment assignment %s/%s: %w",
-				assignment.ReviewUnitKind, assignment.ReviewUnitUUID, err)
+				assignment.ReviewUnitKind, assignment.ReviewUnitUUID, &syncSourceError{err})
 		}
 		if err := w.db.MarkExperimentAssignmentSynced(assignment); err != nil {
 			return stats, fmt.Errorf("mark experiment assignment synced: %w", err)
@@ -784,7 +883,7 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	if len(reviews) > 0 {
 		success, err := pool.BatchUpsertReviews(ctx, reviews)
 		if err != nil {
-			return stats, fmt.Errorf("batch upsert reviews: %w", err)
+			return stats, fmt.Errorf("batch upsert reviews: %w", &syncSourceError{err})
 		}
 
 		// Only mark successfully synced reviews
@@ -814,6 +913,9 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	if len(responses) > 0 {
 		success, err := pool.BatchInsertResponses(ctx, responses)
 		if err != nil {
+			if !syncDataError(err) || w.passError == nil {
+				w.passError = &syncSourceError{err}
+			}
 			log.Printf("Sync: batch insert responses error: %v", err)
 		}
 
@@ -852,7 +954,7 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 
 	definitions, err := pool.PullExperimentDefinitions(ctx, machineID)
 	if err != nil {
-		return stats, fmt.Errorf("pull experiment definitions: %w", err)
+		return stats, fmt.Errorf("pull experiment definitions: %w", &syncSourceError{err})
 	}
 	for _, definition := range definitions {
 		if err := w.db.UpsertPulledExperimentDefinition(definition); err != nil {
@@ -871,7 +973,7 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	for {
 		jobs, newCursor, err := pool.PullJobs(ctx, machineID, jobQueryCursor, 100)
 		if err != nil {
-			return stats, fmt.Errorf("pull jobs: %w", err)
+			return stats, fmt.Errorf("pull jobs: %w", &syncSourceError{err})
 		}
 		if len(jobs) == 0 {
 			break
@@ -907,7 +1009,7 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 			ctx, machineID, assignmentQueryCursor, 100,
 		)
 		if err != nil {
-			return stats, fmt.Errorf("pull experiment assignments: %w", err)
+			return stats, fmt.Errorf("pull experiment assignments: %w", &syncSourceError{err})
 		}
 		if len(assignments) == 0 {
 			break
@@ -948,7 +1050,7 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	for {
 		reviews, newCursor, err := pool.PullReviews(ctx, machineID, knownJobUUIDs, reviewQueryCursor, 100)
 		if err != nil {
-			return stats, fmt.Errorf("pull reviews: %w", err)
+			return stats, fmt.Errorf("pull reviews: %w", &syncSourceError{err})
 		}
 		if len(reviews) == 0 {
 			break
@@ -984,7 +1086,7 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	for {
 		responses, newCursor, err := pool.PullResponses(ctx, machineID, responseQueryCursor, 100)
 		if err != nil {
-			return stats, fmt.Errorf("pull responses: %w", err)
+			return stats, fmt.Errorf("pull responses: %w", &syncSourceError{err})
 		}
 		if len(responses) == 0 {
 			break

@@ -25,7 +25,7 @@ import (
 	"github.com/coreos/go-systemd/v22/activation"
 	"github.com/coreos/go-systemd/v22/daemon"
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/google/go-github/v91/github"
+	"github.com/google/go-github/v93/github"
 	gitrepo "go.kenn.io/kit/git/repo"
 	"go.kenn.io/kit/selfupdate"
 
@@ -234,7 +234,7 @@ func newServerWithLogs(
 	s.registerTelemetryCaptureRoute(mux)
 	if cfg.MCP.Enabled {
 		s.mcpEnabled = true
-		mcpServer := mcpserver.New(s.mcpBackend(), version.Version, s.recordAgentCall)
+		mcpServer := mcpserver.New(s.mcpBackend(), version.Version, func(ctx context.Context) { _, _ = s.recordAgentCall(ctx) })
 		mux.Handle(mcpserver.HTTPPath, mcpServer.HTTPHandler())
 	}
 
@@ -1022,6 +1022,17 @@ func (s *Server) telemetryProperties(cfg *config.Config) map[string]any {
 func (s *Server) SetSyncWorker(sw *storage.SyncWorker) {
 	s.syncWorker = sw
 	sw.SetAfterPullWrite(s.afterSyncPullWrite)
+	sw.SetOnSyncFailed(func(reason string) {
+		if s.telemetry == nil || !s.telemetry.Enabled() {
+			return
+		}
+		if err := s.telemetry.Capture(telemetry.EventSyncFailed, map[string]any{
+			telemetry.PropertySyncSource: telemetry.SyncSourcePostgres,
+			telemetry.PropertyReason:     reason,
+		}); err != nil {
+			log.Printf("Warning: capture sync failed telemetry: %v", err)
+		}
+	})
 	sw.SetAfterPull(s.captureSetupFinishedTelemetry)
 }
 

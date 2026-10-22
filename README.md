@@ -7,7 +7,7 @@ last_edited: 2026-09-17
   <img alt="roborev" src="https://roborev.io/docs/assets/static/logo-with-text-light.svg">
 </picture>
 
-[![Go](https://img.shields.io/badge/Go-1.27.0+-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![Go](https://img.shields.io/badge/Go-1.27.3+-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Docs](https://img.shields.io/badge/Docs-roborev.io-blue)](https://roborev.io)
 
@@ -471,8 +471,8 @@ from the operator's shell).
 
 ## Telemetry
 
-roborev sends limited anonymous telemetry to PostHog when the daemon starts
-and once every 24 hours while the daemon remains running: `daemon_started`
+Release builds of roborev send limited anonymous telemetry to PostHog when the
+daemon starts and once every 24 hours while it remains running: `daemon_started`
 and `daemon_active` with `repo_count` and `review_count` as buckets: `0-5`,
 `6-20`, `21-100`, or `over-100`. These events also include sync enabled,
 CI enabled, and auto-design enabled, plus `application=roborev`, version, OS/arch,
@@ -492,38 +492,55 @@ reports one `session_ended` with `surface` and `duration_bucket`: `under_1m`,
 across tab switches and excludes hidden time. A browser session is lost when the
 browser quits, crashes, or discards the tab before the page closes normally.
 
-The web UI also asks the daemon to report an `app_opened` event when it loads
-and on the first window focus of each later UTC day, and `roborev tui` asks each
-time it starts. CLI commands that work through the daemon ask after their first
-successful daemon request, without starting a daemon; hook, MCP and daemon
-management commands, and commands the bundled agent skills run with
-`--from-skill`, do not. Agent calls count separately as described below. The daemon sends at most one `app_opened` per surface
-per UTC day, so repeated opens on the same day count once, with the same install
-ID and default fields plus `surface` (`web`, `tui` or `cli`). The browser, the TUI and the CLI only talk to the daemon; the TUI and the
-CLI also send nothing when either opt-out variable is set in their own
-environment.
-The browser and TUI also report `screen_viewed` with a fixed `screen` name and
-`surface` of `web` or `tui`. Browser screens are `reviews` and `analytics`.
-TUI screens are `queue`, `review`, `prompt`, `filter`, `comment`,
-`commit-msg`, `help`, `log`, `tasks`, `worktree-confirm`, `patch`,
-`column-options`, `release-notes` and `rerun-agent`. Each screen counts once
-per install per UTC day across interfaces, including daemon restarts. Screen
-names contain no paths, job IDs, filter text or review contents.
-`review_viewed` counts a rendered review read once per installation, surface,
-and UTC day. It carries `surface=web|tui|cli`; the TUI requires key or mouse
-input before counting loaded content. `finding_fixed` counts each committed fix
-with `surface=tui|cli`, and `review_closed` counts each successful explicit close
-with `surface=web|tui|cli`. CLI actions require terminal output and exclude agents
-and `--from-skill`. Reopens and automatic closes stay silent.
+The web UI asks the daemon to report `app_opened` once per UTC day per browser
+profile, on load or focus. `roborev tui` asks each time it starts. CLI commands
+that work through the daemon ask after their first successful daemon request,
+without starting a daemon; hook, MCP and daemon management commands, and
+commands the bundled agent skills run with `--from-skill`, do not. Agent calls
+count separately as described below. The daemon sends at most one `app_opened`
+per surface per UTC day, so repeated opens on the same day count once, with the
+same install ID and default fields plus `surface` (`web`, `tui` or `cli`). The
+browser, the TUI and the CLI only talk to the daemon; the TUI and the CLI also
+send nothing when an opt-out variable is set in their own environment. The
+browser and TUI also report `screen_viewed` with a fixed `screen` name and
+`surface` of `web` or `tui`. Browser screens are `reviews` and `analytics`. TUI
+screens are `queue`, `review`, `prompt`, `filter`, `comment`, `commit-msg`,
+`help`, `log`, `tasks`, `worktree-confirm`, `patch`, `column-options`,
+`release-notes` and `rerun-agent`. Each screen counts once per install per UTC
+day across interfaces, including daemon restarts. Screen names contain no paths,
+job IDs, filter text or review contents. `review_viewed` counts a rendered
+review read once per installation, surface, and UTC day. It carries
+`surface=web|tui|cli`; the TUI requires key or mouse input before counting
+loaded content. `finding_fixed` counts each committed fix with
+`surface=tui|cli`, and `review_closed` counts each successful explicit close
+with `surface=web|tui|cli`. CLI actions require terminal output and exclude
+agents and `--from-skill`. Successful reopens and automatic closes stay silent.
+
+Anonymous telemetry also counts core action error banners and toasts in the web
+UI and TUI, and PostgreSQL sync outages. Failed closes and reopens both count.
+Daemon-unreachable errors can't be counted. See [telemetry configuration](https://github.com/kenn-io/roborev/blob/main/docs/configuration.md#telemetry)
+for event properties and reporting rules.
+
+`search_empty` counts each Enter-submitted browser search that returns no jobs
+and each human CLI search that finds no reviews, with only `surface=web|cli`.
+Previews and search text are excluded.
+
 Daily screen and `review_viewed` claims share `telemetry-daily.json` beside the
 daemon database, wherever `--db` points, with a `telemetry-daily.json.lock`
 sidecar. Deleting the file resets its claims; existing SQLite claims remain
-effective through their recorded UTC dates. See [telemetry configuration](https://github.com/kenn-io/roborev/blob/main/docs/configuration.md#telemetry)
-for recovery instructions.
-Counts mean the report was queued, not confirmed delivered to PostHog.
-The TUI retries a failed screen report on the next key or mouse input while
-that screen is showing. The browser reports the visible screen on every window
-focus and page change, and the daemon counts it once per day.
+effective through their recorded UTC dates. See [telemetry
+configuration](https://github.com/kenn-io/roborev/blob/main/docs/configuration.md#telemetry)
+for recovery instructions. Counts mean the report was queued, not confirmed
+delivered to PostHog. The TUI retries a failed screen report on the next key or
+mouse input while that screen is showing. The browser sends each screen and
+review read once per UTC day per browser profile, across reloads and window
+focus returns. It keeps these daily telemetry claims in localStorage.
+
+After a `disabled` receipt, the browser sends nothing until a later UTC day's
+load or focus checks again. A TUI, CLI, or MCP process stops reporting until the
+next UTC day, a TUI reconnect, or its own restart. The agent-call route returns
+the same `disabled` or `queued` JSON receipt as the event route.
+
 Agent activity counts each MCP `tools/call`, including tool errors, and each
 invocation of `agent-hook run`, `agent-hook fix-done`, `post-commit`, `enqueue`,
 `remap`, or an eligible daemon command marked `--from-skill` after its first
@@ -532,7 +549,7 @@ add nothing. The daemon emits `agent_active` once per install per UTC day with
 `call_count_bucket=1-10`, then `agent_call_count` only on calls 11 and 101 with
 `11-100` and `over-100`. The highest bucket observed that day represents its
 volume. Counts persist across restarts in the existing local database.
-Delivery is best effort and honors both opt-outs.
+Delivery is best effort and honors all opt-outs.
 CLI and stdio MCP notifications and TUI exit reports use a one-second request
 timeout. CLI commands, stdio MCP sessions, and the TUI wait up to 50 ms at exit
 for unfinished reports. Finished reports add no delay. An unfinished report may
@@ -540,9 +557,9 @@ be lost when the process exits. Telemetry alone never starts a daemon.
 Each event also carries `install_age_hours`, the whole hours since the install
 was created, so short-lived installs such as test sandboxes can be filtered out.
 It does not send repo names, paths, remotes, prompts, review output, provider
-tokens, usernames, or IP geolocation. Set `ROBOREV_TELEMETRY_ENABLED=0` to
-disable it. `TELEMETRY_ENABLED=0` is also honored. Telemetry is always disabled
-inside Go test processes, regardless of environment variables.
+tokens, usernames, or IP geolocation. Set `ROBOREV_TELEMETRY_ENABLED=0`,
+`TELEMETRY_ENABLED=0`, or `DO_NOT_TRACK=1` to disable it, then restart the
+daemon. Telemetry is always off in CI and inside Go test processes.
 
 ## Security Model
 

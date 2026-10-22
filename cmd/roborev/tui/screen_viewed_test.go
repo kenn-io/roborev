@@ -19,6 +19,7 @@ import (
 )
 
 type screenRecordingTransport struct {
+	kinds   []string
 	events  []string
 	screens []string
 	fail    bool
@@ -38,6 +39,7 @@ func (s *screenRecordingTransport) RoundTrip(req *http.Request) (*http.Response,
 			s.screens = append(s.screens, event.Properties[telemetry.PropertyScreen])
 		} else {
 			s.events = append(s.events, event.Event)
+			s.kinds = append(s.kinds, event.Properties["kind"])
 		}
 	}
 	status := http.StatusAccepted
@@ -64,6 +66,22 @@ func updateScreenTestModel(m *model, msg tea.Msg) {
 			*m = result.(model)
 		}
 	}
+}
+
+//nolint:paralleltest // t.Setenv of telemetry opt-out variables
+func TestDisabledReceiptQuietsModel(t *testing.T) {
+	enableTelemetryEnv(t)
+	m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
+	transport := &screenRecordingTransport{status: "disabled"}
+	m.client.Transport = transport
+	close(m.ready)
+	collectMsgs(m.reportScreenViewed())
+	collectMsgs(m.reportAppOpened())
+	collectMsgs(m.postScreen("help"))
+	collectMsgs(m.reportAction(telemetry.EventReviewViewed, nil))
+	m.reportSessionEnded(time.Minute)
+	assert.Equal(t, []string{"queue"}, transport.screens)
+	assert.Empty(t, transport.events)
 }
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables

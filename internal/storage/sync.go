@@ -1495,8 +1495,8 @@ func ExtractRepoNameFromIdentity(identity string) string {
 	} else if idx := strings.LastIndex(name, ":"); idx >= 0 {
 		// SSH format like git@github.com:org/repo - get part after last /
 		afterColon := name[idx+1:]
-		if slashIdx := strings.LastIndex(afterColon, "/"); slashIdx >= 0 {
-			name = afterColon[slashIdx+1:]
+		if _, after, ok := strings.CutLast(afterColon, "/"); ok {
+			name = after
 		} else {
 			name = afterColon
 		}

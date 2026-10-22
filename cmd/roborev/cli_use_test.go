@@ -35,6 +35,7 @@ func clearCLIUseState() {
 	drainCLIReports()
 	daemon.SetClientResponseObserver(nil)
 	cliUseOnce = sync.Once{}
+	cliGate.Reset()
 	cliUseEndpoint.Store(nil)
 	cliUseAgent = false
 }
@@ -496,7 +497,6 @@ func TestCLIUseCommandSet(t *testing.T) {
 		require.Eventually(t, func() bool { return len(rec.telemetryPosts()) == 1 }, 5*time.Second, 10*time.Millisecond)
 		require.Len(t, rec.telemetryPosts(), 1)
 		assert.Contains(rec.allPaths(), "POST "+daemon.TelemetryAgentCallPath)
-		assert.Empty(rec.telemetryPosts()[0].body)
 	})
 }
 
@@ -708,7 +708,6 @@ func TestCLIUseReportsAgentActivityForSkillMarkedCommands(t *testing.T) {
 			require.Eventually(t, func() bool { return len(rec.telemetryPosts()) == 1 }, 5*time.Second, 10*time.Millisecond)
 			require.Len(t, rec.telemetryPosts(), 1)
 			assert.Contains(rec.allPaths(), "POST "+daemon.TelemetryAgentCallPath)
-			assert.Empty(rec.telemetryPosts()[0].body)
 
 			rec.reset()
 			plain := runCLIFresh(t, true, append(tc.plain, "--server", md.Server.URL)...)
@@ -969,4 +968,24 @@ func TestCoreActionDeliverySurvivesCommandReturn(t *testing.T) {
 	assert.Equal(t, int32(1), accepted.Load())
 	require.Len(t, bodies, 1)
 	assert.JSONEq(t, `{"event":"finding_fixed","properties":{"surface":"cli"}}`, <-bodies)
+}
+
+func TestCLIActionHonorsDisabledReceipt(t *testing.T) {
+	resetCLIUse(t)
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = io.WriteString(w, `{"status":"disabled"}`)
+	}))
+	t.Cleanup(srv.Close)
+	ep := mustParseEndpoint(t, srv.URL)
+	observeCLIUse(ep, httptest.NewRequest(http.MethodGet, "/api/jobs", nil), &http.Response{StatusCode: http.StatusOK})
+	drainCLIReports()
+	reportMCPActivity(t.Context(), ep)
+	drainCLIReports()
+	cliOutputIsTerminal = func(io.Writer) bool { return true }
+	reportCLIActionOutput(io.Discard, telemetry.EventReviewViewed)
+	drainCLIReports()
+	assert.Equal(t, int32(1), calls.Load())
 }

@@ -401,7 +401,7 @@ func (m model) reportAppOpened() tea.Cmd {
 	}
 	client, url := m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath
 	return func() tea.Msg {
-		telemetry.PostAppOpened(m.apiContext(), client, url, telemetry.SurfaceTUI)
+		m.telemetryGate.PostAppOpened(m.apiContext(), client, url, telemetry.SurfaceTUI)
 		return nil
 	}
 }
@@ -419,7 +419,7 @@ func (m model) reportSessionEnded(elapsed time.Duration) {
 	var sends telemetry.SendGroup
 	sends.Go(func() {
 		defer cancel()
-		telemetry.PostSessionEnded(ctx, m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath, telemetry.SurfaceTUI, elapsed)
+		m.telemetryGate.PostSessionEnded(ctx, m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath, telemetry.SurfaceTUI, elapsed)
 	})
 	sends.Wait(telemetry.ExitWaitLimit)
 }
@@ -446,7 +446,7 @@ func (m model) postScreen(screen string) tea.Cmd {
 	client, url := m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath
 	day := time.Now().UTC().Format(time.DateOnly)
 	return func() tea.Msg {
-		err := telemetry.PostScreenViewed(m.apiContext(), client, url, screen, telemetry.SurfaceTUI)
+		err := m.telemetryGate.PostScreenViewed(m.apiContext(), client, url, screen, telemetry.SurfaceTUI)
 		return screenDeliveryMsg{screen: screen, day: day, err: err}
 	}
 }
@@ -865,6 +865,7 @@ func (m model) loadJob(jobID int64) (*storage.ReviewJob, error) {
 // applies to any other pointer-receiver mutation returned alongside m.
 func (m *model) dispatchReviewFetch(jobID int64) tea.Cmd {
 	m.reviewFetchSeq++
+	m.reviewErrReportedJobID = 0
 	// Arm the pending-open intent (see pendingReviewOpenJobID's doc comment,
 	// tui.go) BEFORE the fetch closure captures m.currentView below, so a
 	// follow fetch that later races this one and lands first still knows
@@ -1530,7 +1531,7 @@ func (m *model) requestFetchFixJobs() tea.Cmd {
 	return m.fetchFixJobs()
 }
 
-func (m model) reportAction(event string) tea.Cmd {
+func (m model) reportAction(event string, props map[string]any) tea.Cmd {
 	if !telemetry.EnabledFromEnv() {
 		return nil
 	}
@@ -1538,7 +1539,11 @@ func (m model) reportAction(event string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(m.apiContext(), telemetry.NotificationTimeout)
 		defer cancel()
-		_, err := telemetry.PostReviewEvent(ctx, m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceTUI)
+		if props == nil {
+			props = make(map[string]any)
+		}
+		props[telemetry.PropertySurface] = telemetry.SurfaceTUI
+		_, err := m.telemetryGate.PostEvent(ctx, m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath, event, props)
 		if event == telemetry.EventReviewViewed {
 			return screenDeliveryMsg{day: day, err: err}
 		}

@@ -45,6 +45,14 @@
     return loadPromise;
   }
 
+  function reportRendererFailure(): void {
+    stores.roborevReview?.reportRendererFailure();
+  }
+  function retryRenderer(): void {
+    stores.roborevReview?.retryRenderer();
+    void loadRichReviewContent();
+  }
+
   onMount(() => {
     if ("requestIdleCallback" in globalThis) {
       const request = globalThis.requestIdleCallback(() => {
@@ -89,11 +97,9 @@
     {pending}
   />
 {:else if loadError && output}
-  <div class="review-state" role="alert">
+  <div class="review-state" role="alert" {@attach reportRendererFailure}>
     <p>Could not load the review renderer.</p>
-    <button type="button" onclick={() => void loadRichReviewContent()}>
-      Retry
-    </button>
+    <button type="button" onclick={retryRenderer}>Retry</button>
   </div>
 {:else if pending}
   <div class="review-state">Review in progress…</div>

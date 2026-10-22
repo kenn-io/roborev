@@ -1,11 +1,17 @@
-import { roborevFetch } from "../api/generated-fetch";
+import {
+  startBrowserTelemetry,
+  type BrowserTelemetryOptions,
+  type BrowserTelemetryQuietReason,
+  type BrowserTelemetryReporter,
+} from "@kenn-io/kit-ui/utils/browser-telemetry";
+import { authenticatedFetch } from "../api/session";
+import { getBasePath } from "../base-path";
 
 const telemetryEventsPath = "/api/telemetry/events";
-let lastReportedDay = "";
+let reporter: BrowserTelemetryReporter | undefined;
+let state: BrowserTelemetryQuietReason = "checking";
 let listening = false;
 let shellMounted = false;
-let loadReported = false;
-let focusPending = false;
 let visibleTime = 0;
 let started: number | undefined;
 let hasInterval = false;
@@ -13,7 +19,6 @@ let intervalEnded = false;
 let hiddenAt: number | undefined;
 let hiddenTimer: ReturnType<typeof setTimeout> | undefined;
 export type Screen = "reviews" | "analytics";
-let currentScreen: (() => Screen) | undefined;
 
 function pauseSession(): void {
   if (started === undefined) return;
@@ -32,16 +37,29 @@ function durationBucket(ms: number): string {
 }
 
 function flushSession(): void {
-  if (!shellMounted || !intervalEnded || !hasInterval) return;
+  if (!intervalEnded || !hasInterval || state === "checking") return;
+  if (!shellMounted && state === "enabled") return;
   const duration = durationBucket(visibleTime);
   visibleTime = 0;
   hasInterval = false;
   intervalEnded = false;
-  void postEvent(
-    "session_ended",
-    { surface: "web", duration_bucket: duration },
+  if (state !== "enabled") return;
+  void postTelemetry(
+    telemetryEventsPath,
+    {
+      event: "session_ended",
+      properties: { surface: "web", duration_bucket: duration },
+    },
     { keepalive: true },
-  ).catch(() => undefined);
+  )
+    .then(async (response) => {
+      if (
+        response.status === 202 &&
+        (await response.json()).status === "disabled"
+      )
+        reporter?.disable();
+    })
+    .catch(() => {});
 }
 
 function endSession(): void {
@@ -57,7 +75,7 @@ function resumeSession(): void {
   if (
     shellMounted &&
     !document.hidden &&
-    !intervalEnded &&
+    !(intervalEnded || state === "disabled") &&
     started === undefined
   ) {
     hasInterval = true;
@@ -80,87 +98,79 @@ function onVisibility(): void {
   }
 }
 
-function reportAppOpened(): void {
-  const day = new Date().toISOString().slice(0, 10);
-  if (day === lastReportedDay) return;
-  lastReportedDay = day;
-  void postEvent("app_opened", { surface: "web" }).catch(() => undefined);
+// Scope receipts to each UI mounted on this origin.
+function storageKey(): string {
+  const scope = encodeURIComponent(getBasePath()).replaceAll(".", "%2E");
+  return scope ? `roborev.telemetry.${scope}` : "roborev.telemetry";
 }
 
-function postEvent(
-  event: string,
-  properties: Record<string, string>,
-  init: { signal?: AbortSignal; keepalive?: boolean } = {},
-): Promise<unknown> {
-  return roborevFetch(telemetryEventsPath, {
+const postTelemetry = ((route, event, options) =>
+  authenticatedFetch()(route, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ event, properties }),
-    ...init,
-  });
-}
+    body: JSON.stringify(event),
+    ...options,
+    signal: AbortSignal.timeout(10_000),
+  })) satisfies BrowserTelemetryOptions["post"];
 
-function postBoundedEvent(
-  event: string,
-  properties: Record<string, string>,
-): Promise<unknown> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10_000);
-  return postEvent(event, properties, { signal: controller.signal }).finally(
-    () => clearTimeout(timeout),
-  );
+function startReporting(): BrowserTelemetryReporter {
+  const reporting = startBrowserTelemetry({
+    route: telemetryEventsPath,
+    surface: "web",
+    storageKey: storageKey(),
+    post: postTelemetry,
+  });
+  reporting.onQuietChange((_quiet, reason) => {
+    state = reason;
+    (reason === "disabled" ? endSession : flushSession)();
+    if (reason === "enabled") resumeSession();
+  });
+  return reporting;
 }
 
 export function reportScreenViewed(screen: Screen): void {
-  void postBoundedEvent("screen_viewed", { screen, surface: "web" }).catch(
-    () => undefined,
-  );
+  getReporter().reportScreen(screen);
 }
 
-// Without a mounted shell there is no session to post with, so the focus waits for the shell to return.
-function onFocus(): void {
-  if (shellMounted) {
-    reportAppOpened();
-    if (currentScreen) reportScreenViewed(currentScreen());
-  } else focusPending = true;
+function getReporter(): BrowserTelemetryReporter {
+  return (reporter ??= startReporting());
 }
 
-/** Reports app_opened on the page's first shell mount and on the first window focus of each later UTC day; returns a cleanup. */
-export function setupAppOpenedReporting(getScreen?: () => Screen): () => void {
+/** Starts session tracking and daily reporting on load or a visible return; returns a cleanup. */
+export function setupAppOpenedReporting(): () => void {
   if (!listening) {
     listening = true;
-    globalThis.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisibility);
     globalThis.addEventListener("pagehide", endSession);
     globalThis.addEventListener("pageshow", resumeSession);
   }
   shellMounted = true;
-  currentScreen = getScreen;
-  // A remount after session recovery is not a load, so only a focus seen meanwhile makes it report.
-  const report = !loadReported || focusPending;
-  loadReported = true;
-  focusPending = false;
-  if (report) reportAppOpened();
+  if (state === "unavailable") {
+    reporter?.stop();
+    reporter = undefined;
+  }
+  getReporter();
   flushSession();
   resumeSession();
   return () => {
     shellMounted = false;
     pauseSession();
-    currentScreen = undefined;
   };
 }
 
-let reviewPending = false;
 export function reportCoreAction(
-  event: "review_viewed" | "review_closed",
+  event: "review_viewed" | "review_closed" | "search_empty",
 ): void {
-  if (event === "review_viewed") {
-    if (reviewPending) return;
-    reviewPending = true;
-  }
-  void postBoundedEvent(event, { surface: "web" })
-    .catch(() => undefined)
-    .finally(() => {
-      if (event === "review_viewed") reviewPending = false;
-    });
+  const report = { event, properties: { surface: "web" } };
+  if (event === "review_viewed") getReporter().reportDaily(event, report);
+  else getReporter().reportVisit(report);
+}
+
+export function reportErrorShown(
+  kind: "review_viewed" | "review_closed",
+): void {
+  getReporter().reportVisit({
+    event: "error_shown",
+    properties: { surface: "web", kind },
+  });
 }

@@ -39,11 +39,16 @@ test.describe.serial("browser listener security", () => {
     const storage = await page.evaluate(() => ({
       session: sessionStorage.getItem("roborev.web.session"),
       csrf: sessionStorage.getItem("roborev.web.csrf"),
-      localCount: localStorage.length,
+      local: Object.entries(localStorage),
     }));
     expect(storage.session).toBeTruthy();
     expect(storage.csrf).toBeTruthy();
-    expect(storage.localCount).toBe(0);
+    for (const [key, value] of storage.local) {
+      expect(key).toMatch(/^roborev\.telemetry\./);
+      expect(value).not.toBe(storage.session);
+      expect(value).not.toBe(storage.csrf);
+      expect(value).not.toContain(process.env.ROBOREV_E2E_TOKEN!);
+    }
     expect(Object.values(storage)).not.toContain(process.env.ROBOREV_E2E_TOKEN);
 
     const rawRead = await page.evaluate(async () =>
@@ -85,8 +90,9 @@ test.describe.serial("browser listener security", () => {
     });
 
     await openReview(page, 52);
-    await expect(page.locator(".review-content pre.shiki")).toBeVisible();
-    await expect(page.locator(".review-content pre.mermaid")).toBeVisible();
+    await expect(
+      page.locator(".review-content .kit-mermaid-viewer__pan svg.flowchart"),
+    ).toBeVisible();
     expect(
       await page.evaluate(
         () =>

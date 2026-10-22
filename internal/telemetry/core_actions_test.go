@@ -18,19 +18,21 @@ import (
 	"go.kenn.io/roborev/internal/testutil"
 )
 
-func TestCoreActionDailyClaims(t *testing.T) {
+func coreActionCapture(t *testing.T) (*telemetry.Reporter, func() []testutil.PostHogMessage, func(string) *httptest.ResponseRecorder) {
+	t.Helper()
 	testenv.SetDataDir(t)
+	releaseVersion := testutil.SetTelemetryReleaseEnv(t)
 	t.Setenv(telemetry.EnabledEnv, "1")
 	t.Setenv(telemetry.GenericEnabledEnv, "1")
 	recorder, messages := testutil.NewPostHogRecorder(t)
 	stub := httptest.NewTestServer(t, recorder)
 	transport := http.DefaultTransport
 	http.DefaultTransport = stub.Client().Transport
-	defer func() { http.DefaultTransport = transport }()
+	t.Cleanup(func() { http.DefaultTransport = transport })
 	db := testutil.OpenTestDB(t)
 	server := daemon.NewServer(db, config.DefaultConfig(), "")
 	t.Cleanup(func() { require.NoError(t, server.Close()) })
-	opts := telemetry.Options{Database: db, Endpoint: "http://posthog.example.com", DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json")}
+	opts := telemetry.Options{Version: releaseVersion, Database: db, Endpoint: "http://posthog.example.com", DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json")}
 	reporter, err := telemetry.NewReporter(opts)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reporter.Close()) })
@@ -50,6 +52,11 @@ func TestCoreActionDailyClaims(t *testing.T) {
 		handler.ServeHTTP(recorder, request)
 		return recorder
 	}
+	return reporter, messages, post
+}
+
+func TestCoreActionDailyClaims(t *testing.T) {
+	reporter, messages, post := coreActionCapture(t)
 	surfacesOf := func(messages []testutil.PostHogMessage) []string {
 		var result []string
 		for _, message := range messages {
@@ -69,13 +76,37 @@ func TestCoreActionDailyClaims(t *testing.T) {
 	}
 	// Review views and screen views have independent daily claims.
 	assert.Equal(t, http.StatusAccepted, post(`{"event":"screen_viewed","properties":{"screen":"review","surface":"tui"}}`).Code)
+	for range 2 {
+		assert.Equal(t, http.StatusAccepted, post(`{"event":"error_shown","properties":{"surface":"tui","kind":"review_closed"}}`).Code)
+	}
 	require.NoError(t, reporter.Close())
 	sent := messages()
-	require.Len(t, sent, 9)
+	require.Len(t, sent, 11)
 	assert.Equal(t, []string{
 		"review_viewed:web", "review_viewed:tui", "review_viewed:cli",
 		"finding_fixed:tui", "finding_fixed:cli",
 		"review_closed:web", "review_closed:tui", "review_closed:cli",
 		"screen_viewed:tui",
+		"error_shown:tui", "error_shown:tui",
 	}, surfacesOf(sent))
+	assert.Equal(t, "review_closed", sent[9].Properties["kind"])
+	assert.Equal(t, "review_closed", sent[10].Properties["kind"])
+}
+
+func TestSubmittedEmptySearchCapture(t *testing.T) {
+	reporter, messages, post := coreActionCapture(t)
+	assert := assert.New(t)
+	for _, surface := range []string{"web", "cli"} {
+		for range 2 {
+			assert.Equal(http.StatusAccepted, post(`{"event":"search_empty","properties":{"surface":"`+surface+`"}}`).Code)
+		}
+	}
+
+	require.NoError(t, reporter.Close())
+	sent := messages()
+	require.Len(t, sent, 4)
+	for index, message := range sent {
+		assert.Equal("search_empty", message.Event)
+		assert.Equal([]string{"web", "web", "cli", "cli"}[index], message.Properties["surface"])
+	}
 }

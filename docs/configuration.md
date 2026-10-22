@@ -613,7 +613,8 @@ The fallback hierarchy for each workflow is:
 
 Some review types have no dedicated `{type}_agent` / `{type}_model` keys. Those
 can be pinned through a generic per-type block keyed by the type name, which
-sets `agent` and `model`. Today this applies to the `lookahead` review type:
+sets `agent` and `model`. Today this applies to the `lookahead` and `test-value`
+review types:
 
 ```toml
 [analyze.lookahead]
@@ -1892,17 +1893,19 @@ systemctl --user enable --now roborev
 | `ROBOREV_COLOR_MODE` | Color theme: `auto` (default), `dark`, `light`, `none`. See [Color Mode](#color-mode) |
 | `ROBOREV_TELEMETRY_ENABLED` | Set to `0` to disable anonymous telemetry |
 | `TELEMETRY_ENABLED` | Generic telemetry opt-out. Set to `0` to disable telemetry |
+| `DO_NOT_TRACK` | Set to `1` to disable telemetry |
 | `VOYAGE_API_KEY` | Example credential source for Voyage when named by `search.embeddings.api_key = { env = "VOYAGE_API_KEY" }` |
 | `NO_COLOR` | Set to any value to disable all color output ([no-color.org](https://no-color.org)) |
 
 ### Telemetry
 
-roborev sends limited anonymous telemetry when the daemon starts and once every
-24 hours while it remains running. Events are `daemon_started` and
-`daemon_active`, with `repo_count` and `review_count` as buckets: `0-5`, `6-20`,
-`21-100`, or `over-100`. These events also include whether sync is enabled,
-whether CI is enabled, whether auto design review is enabled, roborev version,
-OS, architecture, and an anonymous install ID stored in the local database.
+Release builds of roborev send limited anonymous telemetry when the daemon
+starts and once every 24 hours while it remains running. Events are
+`daemon_started` and `daemon_active`, with `repo_count` and `review_count` as
+buckets: `0-5`, `6-20`, `21-100`, or `over-100`. These events also include
+whether sync is enabled, whether CI is enabled, whether auto design review is
+enabled, roborev version, OS, architecture, and an anonymous install ID stored
+in the local database.
 
 The daemon sends `setup_finished` once per install the first time it finds a
 finished review: one that ran locally, arrived through sync, or already existed
@@ -1917,20 +1920,26 @@ reports one `session_ended` with `surface` and `duration_bucket`: `under_1m`,
 across tab switches and excludes hidden time. A browser session is lost when the
 browser quits, crashes, or discards the tab before the page closes normally.
 
-The web UI also asks the daemon to report an anonymous `app_opened` event when
-it loads and on the first window focus of each later UTC day. `roborev tui` asks
-each time it starts. Commands that work through the daemon, such as
-`roborev review`, `roborev list` and `roborev show`, ask once their first daemon
-request succeeds, and they never start a daemon to do so. Git hook, agent hook,
-MCP and daemon management commands never report it. Commands run by the bundled
-agent skills pass `--from-skill` and count as agent activity. Unmarked eligible
-commands still count as app opens. The daemon sends `app_opened` with the same
-install ID, version, OS and architecture plus `surface`, which is `web`, `tui`
-or `cli` and nothing else. It sends at most one `app_opened` per surface per UTC
-day, so repeated loads, tabs, launches and commands on the same day count once.
-It forgets which surfaces it sent on restart. The browser, the TUI and the CLI
+The web UI asks the daemon to report anonymous `app_opened` once per UTC day per
+browser profile, on load or focus. `roborev tui` asks each time it starts.
+Commands that work through the daemon, such as `roborev review`, `roborev list`
+and `roborev show`, ask once their first daemon request succeeds, and they never
+start a daemon to do so. Git hook, agent hook, MCP and daemon management
+commands never report it. Commands run by the bundled agent skills pass
+`--from-skill` and count as agent activity. Unmarked eligible commands still
+count as app opens. The daemon sends `app_opened` with the same install ID,
+version, OS and architecture plus `surface`, which is `web`, `tui` or `cli` and
+nothing else. It sends at most one `app_opened` per surface per UTC day, so
+repeated loads, tabs, launches and commands on the same day count once. It
+forgets which surfaces it sent on restart. The browser, the TUI and the CLI
 never contact PostHog. The same environment variables turn it off; the daemon
 reads them, and so do the `roborev tui` and CLI processes.
+
+After a `disabled` receipt, the browser sends nothing until a later UTC day's
+load or focus checks again. A TUI, CLI, or MCP process stops reporting until the
+next UTC day, a TUI reconnect, or its own restart. The agent-call route returns
+the same `disabled`, `queued`, or `skipped` JSON receipt as the event route, and
+returns an error if recording or capture fails.
 
 Agent activity counts each MCP `tools/call`, including tool errors, and each
 invocation of `agent-hook run`, `agent-hook fix-done`, `post-commit`, `enqueue`,
@@ -1945,7 +1954,7 @@ with `11-100` and `over-100`. Use the highest bucket observed per install and
 UTC day for volume. The local daily count survives daemon restarts in the
 existing database, without a schema migration. These events add no `app_opened`
 events. Each threshold claims one delivery attempt, even if capture fails.
-Delivery is best effort and honors both opt-outs. Failed delivery isn't retried.
+Delivery is best effort and honors all opt-outs. Failed delivery isn't retried.
 CLI and stdio MCP notifications and TUI exit reports use a one-second request
 timeout. CLI commands, stdio MCP sessions, and the TUI wait up to 50 ms at exit
 for unfinished reports. Finished reports add no delay. An unfinished report may
@@ -1960,18 +1969,52 @@ review, synthesis and compact output.
     Opening a review isn't a read until the next input. Quit keys `ctrl+c` and
     `ctrl+d` stay silent; `q` on a loaded review counts. A transport error or
     successful daemon reconnect allows another report on later input.
-- The browser reports a rendered Review tab on load and when focus or visibility
-    returns, with one request in flight at a time.
+- The browser sends a rendered review read once per UTC day per browser profile,
+    across reloads and window focus returns. It keeps daily telemetry claims in
+    localStorage.
 - CLI reads include `show`, `wait`, `review --wait`, `compact --wait`, and
     nonquiet `fix` output. CLI fixes from `fix`, `refine`, and `analyze --fix`
     report `finding_fixed` when they commit. CLI actions require terminal output
     and exclude agents and `--from-skill`.
-- Reopens, automatic closes, prompt reads, and analysis reads stay silent.
+- Successful reopens, automatic closes, prompt reads, and analysis reads stay
+    silent.
 - With a remote `--server`, CLI events use an already-running local daemon and
     its installation ID. Without a local daemon, events are dropped. Reporting
     never starts a daemon.
 
-The daemon owns daily deduplication, so clients may repeat a report.
+Core action error banners and toasts in the web UI and TUI send `error_shown`
+with `surface=web|tui` and `kind=review_viewed|finding_fixed|review_closed`,
+without a daily limit. A TUI error counts when its flash or pane first appears
+on screen; a flash for another view that expires unseen stays silent.
+
+- `review_viewed` counts a review that fails to load or render, including the
+    TUI split pane's load error. A failure counts once per selection; reloads
+    and background retries that show the same failure stay silent until the
+    review loads, the selection changes, or the user opens or retries it.
+- Failed closes and reopens both count as `review_closed`. A close that succeeds
+    but whose refreshed review can't load also counts.
+- Failed agent jobs, missing reviews, and CLI errors stay silent.
+- Daemon-unreachable errors can't be counted because reporting uses the daemon.
+
+The daemon sends `sync_failed` when a full sync pass fails after a successful
+pass in the same process, once per PostgreSQL outage, with
+`sync_source=postgres` and `reason=auth|network|timeout|other`. A full push and
+pull that reaches PostgreSQL allows the next outage to report, even when
+row-specific data errors (SQLSTATE class 22 or 23) rejected some rows. Those
+data errors, local SQLite errors, rows that fail local checks or conflict with
+an existing experiment, and configuration errors never report an outage on their
+own. A PostgreSQL failure seen earlier in a pass still reports when the pass
+stops for one of those reasons. Outage state resets when the daemon restarts;
+reporting resumes after a full pass succeeds. Unlisted `kind`, `reason`, and
+`sync_source` values become `other`. Neither event contains error text.
+
+The daemon deduplicates successful core action reports per day, so clients may
+repeat them.
+
+The browser reports `search_empty` with only `surface=web` each time an
+Enter-submitted search returns no jobs. The CLI reports it with `surface=cli`
+when a human search finds no reviews, under the same terminal and agent rules as
+other CLI actions. Debounced previews stay silent, and search text is excluded.
 
 The browser and TUI also report `screen_viewed` with a fixed `screen` name and
 `surface` of `web` or `tui`. Browser screens are `reviews` and `analytics`. TUI
@@ -1987,20 +2030,21 @@ the daemon before deleting it. Deletion resets file claims; existing SQLite
 claims remain effective through their recorded UTC dates. Counts mean the report
 was queued, not confirmed delivered to PostHog. The TUI retries a failed screen
 report on the next key or mouse input while that screen is showing. The browser
-reports the visible screen on every window focus and page change, and the daemon
-counts it once per day.
+sends each screen and review read once per UTC day per browser profile, across
+reloads and focus returns.
 
 Each event carries `install_age_hours`, the whole hours since the install ID was
 created, so short-lived installs such as test sandboxes can be filtered out.
 Installs created before roborev recorded that time send events without it.
 
 Telemetry does not include repo names, paths, remotes, prompts, review output,
-provider tokens, usernames, or IP geolocation. Disable it with either
-environment variable:
+provider tokens, usernames, or IP geolocation. It's always off in CI. Disable it
+with any of these environment variables:
 
 ```bash
 ROBOREV_TELEMETRY_ENABLED=0 roborev daemon run
 TELEMETRY_ENABLED=0 roborev daemon run
+DO_NOT_TRACK=1 roborev daemon run
 ROBOREV_TELEMETRY_ENABLED=0 roborev tui
 ROBOREV_TELEMETRY_ENABLED=0 roborev review
 ```

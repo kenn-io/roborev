@@ -4,21 +4,23 @@ import (
 	"context"
 	"time"
 
+	"go.kenn.io/kit/telemetry/posthog"
+
 	"go.kenn.io/roborev/internal/telemetry"
 )
 
 // recordAgentCall persists each count before attempting delivery, so restarts don't repeat events.
-func (s *Server) recordAgentCall(ctx context.Context) {
+func (s *Server) recordAgentCall(ctx context.Context) (posthog.Status, error) {
 	ctx, cancel := context.WithTimeout(ctx, telemetry.NotificationTimeout)
 	defer cancel()
 	select {
 	case s.agentActivityGate <- struct{}{}:
 		defer func() { <-s.agentActivityGate }()
 	case <-ctx.Done():
-		return
+		return "", ctx.Err()
 	}
 	if s.telemetry == nil || !s.telemetry.Enabled() {
-		return
+		return posthog.StatusDisabled, nil
 	}
 	now := s.agentActivityNow
 	if now == nil {
@@ -26,7 +28,7 @@ func (s *Server) recordAgentCall(ctx context.Context) {
 	}
 	calls, err := s.db.RecordAgentCall(ctx, now().UTC().Format(time.DateOnly))
 	if err != nil {
-		return
+		return "", err
 	}
 	var event, bucket string
 	switch calls {
@@ -37,7 +39,10 @@ func (s *Server) recordAgentCall(ctx context.Context) {
 	case 101:
 		event, bucket = telemetry.EventAgentCallCount, telemetry.CountOver100
 	default:
-		return
+		return posthog.StatusSkipped, nil
 	}
-	_ = s.telemetry.Capture(event, map[string]any{telemetry.PropertyCallCountBucket: bucket})
+	if err := s.telemetry.Capture(event, map[string]any{telemetry.PropertyCallCountBucket: bucket}); err != nil {
+		return "", err
+	}
+	return posthog.StatusQueued, nil
 }

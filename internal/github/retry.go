@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v7"
-	googlegithub "github.com/google/go-github/v91/github"
+	googlegithub "github.com/google/go-github/v93/github"
 	"golang.org/x/net/http2"
 )
 

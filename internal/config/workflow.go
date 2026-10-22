@@ -16,6 +16,7 @@ const (
 	ReviewTypeSecurity  = "security"
 	ReviewTypeDesign    = "design"
 	ReviewTypeLookahead = "lookahead"
+	ReviewTypeTestValue = "test-value"
 	// ReviewTypeExhaustive is the default code review told to report every
 	// supportable problem, with a finding count scaled to the change size.
 	ReviewTypeExhaustive = "exhaustive"
@@ -39,7 +40,8 @@ func IsGeneralReviewType(rt string) bool {
 
 func IsBuiltInReviewType(rt string) bool {
 	return IsGeneralReviewType(rt) || rt == ReviewTypeSecurity ||
-		rt == ReviewTypeDesign || rt == ReviewTypeLookahead
+		rt == ReviewTypeDesign || rt == ReviewTypeLookahead ||
+		rt == ReviewTypeTestValue
 }
 
 // ValidateReviewTypes canonicalizes, validates, and deduplicates
@@ -58,6 +60,7 @@ func validateReviewTypes(
 		ReviewTypeSecurity:   true,
 		ReviewTypeDesign:     true,
 		ReviewTypeLookahead:  true,
+		ReviewTypeTestValue:  true,
 		ReviewTypeExhaustive: true,
 	}
 	seen := make(map[string]bool, len(types))
@@ -86,7 +89,8 @@ func validateReviewTypes(
 func validReviewTypesHelp(custom map[string]bool) string {
 	types := []string{
 		ReviewTypeDefault, ReviewTypeSecurity,
-		ReviewTypeDesign, ReviewTypeLookahead, ReviewTypeExhaustive,
+		ReviewTypeDesign, ReviewTypeLookahead, ReviewTypeTestValue,
+		ReviewTypeExhaustive,
 	}
 	customTypes := make([]string, 0, len(custom))
 	for name := range custom {
@@ -98,7 +102,10 @@ func validReviewTypesHelp(custom map[string]bool) string {
 }
 
 func ExplicitReviewTypes() []string {
-	return []string{ReviewTypeSecurity, ReviewTypeDesign, ReviewTypeLookahead, ReviewTypeExhaustive}
+	return []string{
+		ReviewTypeSecurity, ReviewTypeDesign, ReviewTypeLookahead,
+		ReviewTypeTestValue, ReviewTypeExhaustive,
+	}
 }
 
 func ExplicitReviewTypesHelp() string {

@@ -1,4 +1,4 @@
-import { reportCoreAction } from "../../utils/app-opened";
+import { reportCoreAction, reportErrorShown } from "../../utils/app-opened";
 import { Clipboard } from "@effect/platform-browser";
 import { Effect, Option } from "effect";
 import type { AppRuntime } from "../../runtime/runtime";
@@ -144,9 +144,26 @@ export function createReviewStore(opts: ReviewStoreOptions) {
     },
   );
 
+  // Reloads repeat a failure already on screen; count it once per selection.
+  let loadFailureReportedJobId: number | undefined;
+  // Review reloads and tab switches remount the renderer alert for the same
+  // selection, so its failure counts once per selection and once per Retry.
+  let rendererFailureReported = false;
+
+  function reportRendererFailure(): void {
+    if (rendererFailureReported) return;
+    rendererFailureReported = true;
+    reportErrorShown("review_viewed");
+  }
+
+  function retryRenderer(): void {
+    rendererFailureReported = false;
+  }
+
   const publishReviewAuthority = (jobId: number, authority: ReviewAuthority) =>
     Effect.sync(() => {
       if (selectedJobId !== jobId) return;
+      loadFailureReportedJobId = undefined;
       review = authority.review;
       selectedJob = authority.selectedJob;
       responses = [...authority.responses];
@@ -181,6 +198,10 @@ export function createReviewStore(opts: ReviewStoreOptions) {
             Effect.sync(() => {
               if (selectedJobId !== jobId) return;
               storeError = "Failed to load review";
+              if (loadFailureReportedJobId !== jobId) {
+                loadFailureReportedJobId = jobId;
+                reportErrorShown("review_viewed");
+              }
               opts.onError?.("Failed to load review");
             }),
           ),
@@ -232,11 +253,12 @@ export function createReviewStore(opts: ReviewStoreOptions) {
               ),
             ),
           onAcknowledgedRefreshFailure: () =>
-            Effect.sync(() =>
+            Effect.sync(() => {
+              reportErrorShown("review_closed");
               opts.onError?.(
                 "Review state changed, but the refreshed review is unavailable",
-              ),
-            ),
+              );
+            }),
         })
         .pipe(
           Effect.tap(() =>
@@ -257,10 +279,12 @@ export function createReviewStore(opts: ReviewStoreOptions) {
     opts.runtime.runCommand(closeReviewEffect(jobId, closed), {
       operation: "close Roborev review",
       safeContext: { job_id: jobId, owner: opts.owner },
-      onFailure: (failure) =>
+      onFailure: (failure) => {
+        reportErrorShown("review_closed");
         opts.onError?.(
           roborevMutationFailureMessage("Failed to close review", failure),
-        ),
+        );
+      },
     });
   }
 
@@ -368,6 +392,10 @@ export function createReviewStore(opts: ReviewStoreOptions) {
   }
 
   function setSelectedJobId(jobId: number | undefined): void {
+    if (jobId !== selectedJobId) {
+      loadFailureReportedJobId = undefined;
+      rendererFailureReported = false;
+    }
     selectedJobId = jobId;
     if (jobId === undefined) {
       review = null;
@@ -426,6 +454,8 @@ export function createReviewStore(opts: ReviewStoreOptions) {
     getResponses,
     isLoading,
     getSelectedJobId,
+    reportRendererFailure,
+    retryRenderer,
     isReviewNotFound,
     getError,
     getPrompt,
