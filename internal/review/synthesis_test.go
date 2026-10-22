@@ -676,3 +676,49 @@ func TestBuildSynthesisPromptRendersStructuredMembersWithoutThreshold(t *testing
 	assert.NotContains(t, prompt, "at or above")
 	assert.NotContains(t, prompt, "medium severity")
 }
+
+// A panel member that finished before a daemon update can be stored as a
+// version 2 review, whose findings have only a free-text location.
+func TestBuildSynthesisPromptAnchorsVersion2Locations(t *testing.T) {
+	structured, err := DecodeStructuredReview(jsontext.Value(`{"schema_version":2,"summary":"Two findings.","verdict":"fail","findings":[` +
+		`{"severity":"high","problem":"Ranged.","fix":"f","location":"internal/a.go:12-14"},` +
+		`{"severity":"low","problem":"Prose.","fix":"f","location":"the retry loop"}]}`))
+	require.NoError(t, err)
+	member := ReviewResult{Agent: "codex", ReviewType: "review", Status: ResultDone, Structured: &structured}
+
+	prompt := BuildSynthesisPrompt([]ReviewResult{member}, "")
+
+	assert := assert.New(t)
+	assert.Contains(prompt, `"file": "internal/a.go"`)
+	assert.Contains(prompt, `"start_line": 12`)
+	assert.Contains(prompt, `"end_line": 14`)
+	assert.Contains(prompt, `"location": "the retry loop"`)
+	assert.Empty(structured.Findings[0].File, "the stored member is not changed")
+}
+
+func TestParseLocation(t *testing.T) {
+	tests := []struct {
+		location   string
+		file       string
+		start, end int
+		ok         bool
+	}{
+		{"a.go:12", "a.go", 12, 12, true},
+		{" dir/a.go:12-20 ", "dir/a.go", 12, 20, true},
+		{"C:/repo/a.go:3", "C:/repo/a.go", 3, 3, true},
+		{"a.go", "", 0, 0, false},
+		{"a.go:20-12", "", 0, 0, false},
+		{"a.go:0", "", 0, 0, false},
+		{"see the retry loop: 3", "", 0, 0, false},
+		{"near line 3:x", "", 0, 0, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.location, func(t *testing.T) {
+			file, start, end, ok := parseLocation(tt.location)
+			assert.Equal(t, tt.ok, ok)
+			assert.Equal(t, tt.file, file)
+			assert.Equal(t, tt.start, start)
+			assert.Equal(t, tt.end, end)
+		})
+	}
+}
