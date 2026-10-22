@@ -94,7 +94,8 @@ func (r RuntimeInfo) Endpoint() DaemonEndpoint {
 		Service: r.Service,
 		Version: r.Version,
 	}.Endpoint())
-	if r.processIdentityV2 != "" && kitdaemon.CompareRuntimeProcessIdentity(r.processRecord()) == kitdaemon.ProcessIdentityUnknown {
+	switch kitdaemon.RuntimeProcessScope(r.processRecord()) {
+	case kitdaemon.ProcessScopeForeign, kitdaemon.ProcessScopeUnknown:
 		ep = ep.AsGuess()
 	}
 	return ep
@@ -842,7 +843,7 @@ func CleanupZombieDaemons(target DaemonEndpoint) int {
 		if IsDaemonAccessError(probeErr) {
 			continue
 		}
-		if info.PID > 0 && (info.processIdentityV2 == "" || kitdaemon.CompareRuntimeProcessIdentity(info.processRecord()) != kitdaemon.ProcessIdentityUnknown) && identifyProcess(info.PID) == processNotRoborev {
+		if info.PID > 0 && kitdaemon.RuntimeProcessScope(info.processRecord()) == kitdaemon.ProcessScopeLocal && identifyProcess(info.PID) == processNotRoborev {
 			if ep.IsUnix() && ep.Address != target.Address {
 				os.Remove(ep.Address)
 			}
