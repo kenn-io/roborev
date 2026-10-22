@@ -59,6 +59,7 @@ func TestReportAppOpenedReachesDaemonAllowlist(t *testing.T) {
 	endpoint, _ := testutil.NewPostHogStub(t)
 	rep, err := telemetry.NewReporter(telemetry.Options{
 		Database: testutil.OpenTestDB(t), Endpoint: endpoint,
+		Version:         "v1.2.3",
 		DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json"),
 	})
 	require.NoError(err)

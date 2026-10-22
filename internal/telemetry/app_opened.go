@@ -191,5 +191,6 @@ func (g *ClientGate) PostReviewEvent(ctx context.Context, client *http.Client, u
 
 // PostAgentCall notifies the daemon of one call; callers gate on EnabledFromEnv.
 func (g *ClientGate) PostAgentCall(ctx context.Context, client *http.Client, url string) {
+	// The agent-call route ignores the event body.
 	_, _ = g.PostEvent(ctx, client, url, EventAgentActive, nil)
 }

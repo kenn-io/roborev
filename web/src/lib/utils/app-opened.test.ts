@@ -158,6 +158,97 @@ describe("setupAppOpenedReporting", () => {
     expect(request.headers.get("Content-Type")).toBe("application/json");
   });
 
+  test("a disabled session receipt silences subsequent actions and sessions", async () => {
+    vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+    setup();
+    await settle();
+    fetchMock.mockImplementation(async () =>
+      Response.json({ status: "disabled" }, { status: 202 }),
+    );
+    globalThis.dispatchEvent(new Event("pagehide"));
+    await settle();
+    appOpened.reportCoreAction("search_empty");
+    appOpened.reportScreenViewed("analytics");
+    globalThis.dispatchEvent(new Event("pageshow"));
+    globalThis.dispatchEvent(new Event("pagehide"));
+    await settle();
+    expect(
+      await Promise.all(
+        fetchMock.mock.calls.map(([request]) => request.clone().json()),
+      ),
+    ).toEqual([
+      { event: "app_opened", properties: { surface: "web" } },
+      {
+        event: "session_ended",
+        properties: { surface: "web", duration_bucket: "under_1m" },
+      },
+    ]);
+  });
+
+  test.each([
+    ["initial", "queued"],
+    ["initial", "disabled"],
+    ["initial", "unauthorized"],
+    ["daily", "queued"],
+    ["daily", "disabled"],
+    ["daily", "unauthorized"],
+  ])(
+    "holds a completed session during a pending %s check until %s",
+    async (check, receipt) => {
+      let now = 0;
+      let hidden = false;
+      vi.spyOn(performance, "now").mockImplementation(() => now);
+      vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
+      if (check === "daily") {
+        setup();
+        await settle();
+        vi.setSystemTime(new Date("2026-03-11T00:00:00Z"));
+      }
+      let resolveCheck!: (response: Response) => void;
+      fetchMock.mockImplementationOnce(
+        () => new Promise((resolve) => (resolveCheck = resolve)),
+      );
+      if (check === "initial") setup();
+      else focusWindow();
+      now = 120_000;
+      hidden = true;
+      document.dispatchEvent(new Event("visibilitychange"));
+      globalThis.dispatchEvent(new Event("pagehide"));
+      globalThis.dispatchEvent(new Event("pagehide"));
+      await settle();
+      const checks = check === "initial" ? 1 : 2;
+      expect(fetchMock).toHaveBeenCalledTimes(checks);
+      resolveCheck(
+        receipt === "unauthorized"
+          ? new Response(null, { status: 401 })
+          : Response.json({ status: receipt }, { status: 202 }),
+      );
+      await settle();
+      expect(fetchMock).toHaveBeenCalledTimes(
+        checks + (receipt === "queued" ? 1 : 0),
+      );
+      if (receipt === "queued") {
+        const request = fetchMock.mock.calls[checks]![0];
+        expect(await request.json()).toEqual({
+          event: "session_ended",
+          properties: { surface: "web", duration_bucket: "1_to_5m" },
+        });
+        expect(request.keepalive).toBe(true);
+      } else {
+        // A later successful mount must not replay an opted-out interval.
+        setup();
+        await settle();
+        expect(
+          await Promise.all(
+            fetchMock.mock.calls.map(([request]) => request.clone().json()),
+          ),
+        ).not.toContainEqual(
+          expect.objectContaining({ event: "session_ended" }),
+        );
+      }
+    },
+  );
+
   test.each(durationBuckets)(
     "reports $ms visible milliseconds as $bucket with closing credentials",
     async ({ ms: elapsed, bucket }) => {

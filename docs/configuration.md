@@ -1970,7 +1970,8 @@ review, synthesis and compact output.
     `ctrl+d` stay silent; `q` on a loaded review counts. A transport error or
     successful daemon reconnect allows another report on later input.
 - The browser sends a rendered review read once per UTC day per browser profile,
-    across reloads and focus or visibility returns.
+    across reloads and window focus returns. It keeps daily telemetry claims in
+    localStorage.
 - CLI reads include `show`, `wait`, `review --wait`, `compact --wait`, and
     nonquiet `fix` output. CLI fixes from `fix`, `refine`, and `analyze --fix`
     report `finding_fixed` when they commit. CLI actions require terminal output

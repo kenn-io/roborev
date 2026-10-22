@@ -530,9 +530,7 @@ sidecar. Deleting the file resets its claims; existing SQLite claims remain
 effective through their recorded UTC dates. See [telemetry configuration](https://github.com/kenn-io/roborev/blob/main/docs/configuration.md#telemetry)
 for recovery instructions.
 Counts mean the report was queued, not confirmed delivered to PostHog.
-The TUI retries a failed screen report on the next key or mouse input while
-that screen is showing. The browser sends each screen and review read once per
-UTC day per browser profile, across reloads and focus returns.
+The TUI retries a failed screen report on the next key or mouse input while that screen is showing. The browser sends each screen and review read once per UTC day per browser profile, across reloads and window focus returns. It keeps these daily telemetry claims in localStorage.
 
 After a `disabled` receipt, the browser sends nothing until a later UTC day's
 load or focus checks again. A TUI, CLI, or MCP process stops reporting until

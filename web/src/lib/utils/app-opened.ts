@@ -37,7 +37,8 @@ function durationBucket(ms: number): string {
 }
 
 function flushSession(): void {
-  if (!shellMounted || !intervalEnded || !hasInterval) return;
+  if (!intervalEnded || !hasInterval || state === "checking") return;
+  if (!shellMounted && state === "enabled") return;
   const duration = durationBucket(visibleTime);
   visibleTime = 0;
   hasInterval = false;
@@ -50,7 +51,15 @@ function flushSession(): void {
       properties: { surface: "web", duration_bucket: duration },
     },
     { keepalive: true },
-  ).catch(() => {});
+  )
+    .then(async (response) => {
+      if (
+        response.status === 202 &&
+        (await response.json()).status === "disabled"
+      )
+        reporter?.disable();
+    })
+    .catch(() => {});
 }
 
 function endSession(): void {
@@ -95,18 +104,14 @@ function storageKey(): string {
   return scope ? `roborev.telemetry.${scope}` : "roborev.telemetry";
 }
 
-const postTelemetry: BrowserTelemetryOptions["post"] = (
-  route,
-  event,
-  options,
-) =>
+const postTelemetry = ((route, event, options) =>
   authenticatedFetch()(route, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(event),
     ...options,
     signal: AbortSignal.timeout(10_000),
-  });
+  })) satisfies BrowserTelemetryOptions["post"];
 
 function startReporting(): BrowserTelemetryReporter {
   const reporting = startBrowserTelemetry({
@@ -117,6 +122,8 @@ function startReporting(): BrowserTelemetryReporter {
   });
   reporting.onQuietChange((_quiet, reason) => {
     state = reason;
+    flushSession();
+    if (reason === "enabled") resumeSession();
   });
   return reporting;
 }
