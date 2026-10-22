@@ -22,4 +22,4 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check sibling pins
-        uses: kenn-io/actions/sibling-pins@983cf481c95fb918bb822d996ecb3c26bb598b4b
+        uses: kenn-io/actions/sibling-pins@68ba2c6390aff0de4aced81a8c2af669514c7ac0

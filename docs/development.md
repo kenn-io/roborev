@@ -161,7 +161,7 @@ required.
 
 ### Browser application
 
-The browser workspace uses Bun 1.3.14. Install the pinned dependency graph and
+The browser workspace uses Bun 1.4.4. Install the pinned dependency graph and
 run its complete checks from the repository root:
 
 ```bash
