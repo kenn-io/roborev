@@ -28,8 +28,8 @@ describe("setupAppOpenedReporting", () => {
     [EventTarget, string, EventListenerOrEventListenerObject]
   > = [];
 
-  function setup(getScreen?: () => "reviews" | "analytics"): () => void {
-    const cleanup = appOpened.setupAppOpenedReporting(getScreen);
+  function setup(): () => void {
+    const cleanup = appOpened.setupAppOpenedReporting();
     cleanups.push(cleanup);
     return cleanup;
   }
@@ -39,6 +39,7 @@ describe("setupAppOpenedReporting", () => {
     appOpened = await import("./app-opened");
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-03-10T09:00:00Z"));
+    localStorage.clear();
     sessionStorage.clear();
     sessionStorage.setItem("roborev.web.session", "tab-session");
     sessionStorage.setItem("roborev.web.csrf", "csrf-value");
@@ -117,6 +118,7 @@ describe("setupAppOpenedReporting", () => {
     vi.spyOn(performance, "now").mockImplementation(() => now);
     vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
     setup();
+    await settle();
     for (let i = 0; i < 20; i++) {
       now += 60_000;
       hidden = true;
@@ -144,6 +146,7 @@ describe("setupAppOpenedReporting", () => {
       vi.spyOn(performance, "now").mockImplementation(() => now);
       vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
       setup();
+      await vi.advanceTimersByTimeAsync(0);
       now = 120_000;
       hidden = true;
       document.dispatchEvent(new Event("visibilitychange"));
@@ -188,6 +191,7 @@ describe("setupAppOpenedReporting", () => {
     vi.spyOn(performance, "now").mockImplementation(() => now);
     vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
     const stop = setup();
+    await settle();
     now = 600_000;
     globalThis.dispatchEvent(new Event("pagehide"));
     hidden = false;
@@ -226,6 +230,7 @@ describe("setupAppOpenedReporting", () => {
       vi.spyOn(performance, "now").mockImplementation(() => now);
       vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
       const stop = setup();
+      await settle();
       now = 120_000;
       stop();
       if (hideDuringGap) {
@@ -270,195 +275,136 @@ describe("setupAppOpenedReporting", () => {
     },
   );
 
-  test("posts again on the first focus of the next UTC day only", async () => {
-    setup();
-    vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
-    focusWindow();
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-
-    vi.setSystemTime(new Date("2026-03-11T15:00:00Z"));
-    focusWindow();
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-
-  test("uses the UTC day boundary", async () => {
-    vi.setSystemTime(new Date("2026-03-10T23:59:00Z"));
-    setup();
-    vi.setSystemTime(new Date("2026-03-11T00:01:00Z"));
-    focusWindow();
-    await settle();
-
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-
-  test("sends nothing when the shell remounts the same day", async () => {
-    setup()();
-    setup();
-    await settle();
-
+  test("sends one app_opened across ten page loads and asks again the next day", async () => {
+    for (let load = 0; load < 10; load++) {
+      setup();
+      await settle();
+      for (const cleanup of cleanups.splice(0)) cleanup();
+      for (const [target, type, listener] of listeners.splice(0))
+        target.removeEventListener(type, listener);
+      vi.resetModules();
+      appOpened = await import("./app-opened");
+    }
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(new Date("2026-03-11T00:00:00Z"));
+    setup();
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  test("sends nothing when the shell remounts on a later day without focus", async () => {
-    setup()();
-    vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
+  test("a disabled receipt silences screens, reads, and pagehide until the next day's focus", async () => {
+    fetchMock.mockImplementation(async () =>
+      Response.json({ status: "disabled" }, { status: 202 }),
+    );
+    vi.spyOn(document, "hidden", "get").mockReturnValue(false);
     setup();
+    await settle();
+    appOpened.reportScreenViewed("analytics");
+    appOpened.reportCoreAction("review_viewed");
+    globalThis.dispatchEvent(new Event("pagehide"));
+    focusWindow();
     await settle();
     expect(fetchMock).toHaveBeenCalledTimes(1);
-
+    vi.setSystemTime(new Date("2026-03-11T00:00:00Z"));
     focusWindow();
     await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-
-  test("resolves the configured base path", async () => {
-    const meta = document.createElement("meta");
-    meta.name = "roborev-base-path";
-    meta.content = "/roborev";
-    document.head.append(meta);
-
-    setup();
-    await settle();
-
-    const request = fetchMock.mock.calls[0]![0];
-    expect(new URL(request.url).pathname).toBe("/roborev/api/telemetry/events");
-  });
-
-  test.each([
-    ["rejected", () => Promise.reject(new TypeError("network down")), false],
-    [
-      "screen rejected",
-      () => Promise.reject(new TypeError("network down")),
-      true,
-    ],
-    [
-      "answered 400",
-      async () => new Response("unsupported telemetry event", { status: 400 }),
-      false,
-    ],
-    [
-      "screen answered 400",
-      async () => new Response("unsupported telemetry event", { status: 400 }),
-      true,
-    ],
-  ])(
-    "swallows a failed post (%s) and still reports the next day",
-    async (_, fail, screenPost) => {
-      const unhandled = vi.fn();
-      process.on("unhandledRejection", unhandled);
-      try {
-        if (screenPost) {
-          setup();
-          await settle();
-          fetchMock.mockImplementationOnce(fail);
-          appOpened.reportScreenViewed("reviews");
-        } else {
-          fetchMock.mockImplementationOnce(fail);
-          setup();
-        }
-        await settle();
-        await settle();
-        expect(unhandled).not.toHaveBeenCalled();
-
-        vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
-        if (screenPost) appOpened.reportScreenViewed("reviews");
-        else focusWindow();
-        await settle();
-        expect(fetchMock).toHaveBeenCalledTimes(screenPost ? 3 : 2);
-      } finally {
-        process.off("unhandledRejection", unhandled);
-      }
-    },
-  );
-
-  test("holds a focus seen while the shell is gone until it returns", async () => {
-    const mount = () => {
-      const cleanup = appOpened.setupAppOpenedReporting(() => "analytics");
-      appOpened.reportScreenViewed("analytics");
-      cleanups.push(cleanup);
-      return cleanup;
-    };
-    mount()();
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    vi.setSystemTime(new Date("2026-03-11T08:00:00Z"));
-    focusWindow();
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    mount();
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(4);
-    expect(JSON.parse(await fetchMock.mock.calls[3]![0].text())).toEqual({
-      event: "screen_viewed",
-      properties: { screen: "analytics", surface: "web" },
+    expect(
+      fetchMock.mock.calls.filter(([request]) =>
+        request.url.endsWith("/api/telemetry/events"),
+      ),
+    ).toHaveLength(2);
+    expect(await fetchMock.mock.calls[1]![0].json()).toEqual({
+      event: "app_opened",
+      properties: { surface: "web" },
     });
   });
-  test("reports page changes and focus while the browser clock stays on the same day", async () => {
-    let screen: "reviews" | "analytics" = "reviews";
-    const cleanup = appOpened.setupAppOpenedReporting(() => screen);
-    cleanups.push(cleanup);
-    appOpened.reportScreenViewed("reviews");
-    screen = "analytics";
-    appOpened.reportScreenViewed(screen);
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+  test("reports each screen and review read once a day across focus returns", async () => {
+    setup();
     appOpened.reportScreenViewed("reviews");
     await settle();
+    for (let visit = 0; visit < 3; visit++) {
+      appOpened.reportScreenViewed("analytics");
+      appOpened.reportCoreAction("review_viewed");
+      focusWindow();
+      await settle();
+    }
+    const bodies = await Promise.all(
+      fetchMock.mock.calls.map(([request]) => request.clone().json()),
+    );
+    expect(bodies).toEqual([
+      { event: "app_opened", properties: { surface: "web" } },
+      {
+        event: "screen_viewed",
+        properties: { surface: "web", screen: "reviews" },
+      },
+      {
+        event: "screen_viewed",
+        properties: { surface: "web", screen: "analytics" },
+      },
+      { event: "review_viewed", properties: { surface: "web" } },
+    ]);
+    vi.setSystemTime(new Date("2026-03-11T00:00:00Z"));
     focusWindow();
     await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(5);
-    const bodies = await Promise.all(
-      fetchMock.mock.calls.map(async ([request]) =>
-        JSON.parse(await request.text()),
-      ),
+    appOpened.reportCoreAction("review_viewed");
+    await settle();
+    const reads = await Promise.all(
+      fetchMock.mock.calls.map(([request]) => request.clone().json()),
     );
-    expect(
-      bodies
-        .filter((body) => body.event === "screen_viewed")
-        .map((body) => body.properties.screen),
-    ).toEqual(["reviews", "analytics", "reviews", "analytics"]);
+    expect(reads.filter((body) => body.event === "review_viewed")).toHaveLength(
+      2,
+    );
   });
 
-  test.each(["network error", "settled response"])(
-    "allows successive review captures after %s",
-    async (outcome) => {
-      if (outcome === "network error")
-        fetchMock.mockRejectedValueOnce(new TypeError("network down"));
-      appOpened.reportCoreAction("review_viewed");
-      appOpened.reportCoreAction("review_viewed");
-      await settle();
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-      appOpened.reportCoreAction("review_viewed");
-      await settle();
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-      expect(await fetchMock.mock.calls[1]![0].json()).toEqual({
-        event: "review_viewed",
-        properties: { surface: "web" },
-      });
-    },
-  );
+  test("scopes requests and stored receipts to the base path", async () => {
+    const meta = document.createElement("meta");
+    meta.name = "roborev-base-path";
+    meta.content = "/first";
+    document.head.append(meta);
+    setup();
+    await settle();
+    for (const cleanup of cleanups.splice(0)) cleanup();
+    for (const [target, type, listener] of listeners.splice(0))
+      target.removeEventListener(type, listener);
+    meta.content = "/second";
+    vi.resetModules();
+    appOpened = await import("./app-opened");
+    setup();
+    await settle();
+    expect(
+      fetchMock.mock.calls.map(([request]) => new URL(request.url).pathname),
+    ).toEqual(["/first/api/telemetry/events", "/second/api/telemetry/events"]);
+    expect(
+      Object.keys(localStorage).some((key) =>
+        key.startsWith("roborev.telemetry.%2Ffirst."),
+      ),
+    ).toBe(true);
+    expect(
+      Object.keys(localStorage).some((key) =>
+        key.startsWith("roborev.telemetry.%2Fsecond."),
+      ),
+    ).toBe(true);
+  });
 
-  test.each(["screen", "core action"])(
-    "bounds %s requests while preserving app-open transport",
-    async (kind) => {
-      vi.useFakeTimers();
-      fetchMock.mockImplementation(
-        (request) =>
-          new Promise((_resolve, reject) =>
-            request.signal.addEventListener("abort", () =>
-              reject(new DOMException("aborted", "AbortError")),
-            ),
-          ),
-      );
-      cleanups.push(appOpened.setupAppOpenedReporting(() => "reviews"));
-      if (kind === "screen") appOpened.reportScreenViewed("reviews");
-      else appOpened.reportCoreAction("review_viewed");
-      await vi.advanceTimersByTimeAsync(10_000);
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-      expect(fetchMock.mock.calls[0]![0].signal.aborted).toBe(false);
-      expect(fetchMock.mock.calls[1]![0].signal.aborted).toBe(true);
-    },
-  );
+  test("a 401 allows a new check after signing back in and remounting", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 401 }));
+    const unmount = setup();
+    await settle();
+    unmount();
+    sessionStorage.setItem("roborev.web.session", "recovered-session");
+    sessionStorage.setItem("roborev.web.csrf", "recovered-csrf");
+    setup();
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const request = fetchMock.mock.calls[1]![0];
+    expect(request.headers.get("X-Roborev-Web-Session")).toBe(
+      "recovered-session",
+    );
+    expect(request.headers.get("X-Roborev-CSRF")).toBe("recovered-csrf");
+    expect(await request.json()).toEqual({
+      event: "app_opened",
+      properties: { surface: "web" },
+    });
+  });
 });

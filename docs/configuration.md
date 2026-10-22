@@ -1920,20 +1920,25 @@ reports one `session_ended` with `surface` and `duration_bucket`: `under_1m`,
 across tab switches and excludes hidden time. A browser session is lost when the
 browser quits, crashes, or discards the tab before the page closes normally.
 
-The web UI also asks the daemon to report an anonymous `app_opened` event when
-it loads and on the first window focus of each later UTC day. `roborev tui` asks
-each time it starts. Commands that work through the daemon, such as
-`roborev review`, `roborev list` and `roborev show`, ask once their first daemon
-request succeeds, and they never start a daemon to do so. Git hook, agent hook,
-MCP and daemon management commands never report it. Commands run by the bundled
-agent skills pass `--from-skill` and count as agent activity. Unmarked eligible
-commands still count as app opens. The daemon sends `app_opened` with the same
-install ID, version, OS and architecture plus `surface`, which is `web`, `tui`
-or `cli` and nothing else. It sends at most one `app_opened` per surface per UTC
-day, so repeated loads, tabs, launches and commands on the same day count once.
-It forgets which surfaces it sent on restart. The browser, the TUI and the CLI
+The web UI asks the daemon to report anonymous `app_opened` once per UTC day per
+browser profile, on load or focus. `roborev tui` asks each time it starts.
+Commands that work through the daemon, such as `roborev review`, `roborev list`
+and `roborev show`, ask once their first daemon request succeeds, and they never
+start a daemon to do so. Git hook, agent hook, MCP and daemon management
+commands never report it. Commands run by the bundled agent skills pass
+`--from-skill` and count as agent activity. Unmarked eligible commands still
+count as app opens. The daemon sends `app_opened` with the same install ID,
+version, OS and architecture plus `surface`, which is `web`, `tui` or `cli` and
+nothing else. It sends at most one `app_opened` per surface per UTC day, so
+repeated loads, tabs, launches and commands on the same day count once. It
+forgets which surfaces it sent on restart. The browser, the TUI and the CLI
 never contact PostHog. The same environment variables turn it off; the daemon
 reads them, and so do the `roborev tui` and CLI processes.
+
+After a `disabled` receipt, the browser sends nothing until a later UTC day's
+load or focus checks again. A TUI, CLI, or MCP process stops reporting until the
+next UTC day, a TUI reconnect, or its own restart. The agent-call route returns
+the same `disabled` or `queued` JSON receipt as the event route.
 
 Agent activity counts each MCP `tools/call`, including tool errors, and each
 invocation of `agent-hook run`, `agent-hook fix-done`, `post-commit`, `enqueue`,
@@ -1963,8 +1968,8 @@ review, synthesis and compact output.
     Opening a review isn't a read until the next input. Quit keys `ctrl+c` and
     `ctrl+d` stay silent; `q` on a loaded review counts. A transport error or
     successful daemon reconnect allows another report on later input.
-- The browser reports a rendered Review tab on load and when focus or visibility
-    returns, with one request in flight at a time.
+- The browser sends a rendered review read once per UTC day per browser profile,
+    across reloads and focus or visibility returns.
 - CLI reads include `show`, `wait`, `review --wait`, `compact --wait`, and
     nonquiet `fix` output. CLI fixes from `fix`, `refine`, and `analyze --fix`
     report `finding_fixed` when they commit. CLI actions require terminal output
@@ -2023,8 +2028,8 @@ the daemon before deleting it. Deletion resets file claims; existing SQLite
 claims remain effective through their recorded UTC dates. Counts mean the report
 was queued, not confirmed delivered to PostHog. The TUI retries a failed screen
 report on the next key or mouse input while that screen is showing. The browser
-reports the visible screen on every window focus and page change, and the daemon
-counts it once per day.
+sends each screen and review read once per UTC day per browser profile, across
+reloads and focus returns.
 
 Each event carries `install_age_hours`, the whole hours since the install ID was
 created, so short-lived installs such as test sandboxes can be filtered out.

@@ -118,6 +118,7 @@ function createMemoryStorage(): Storage {
       return values.size;
     },
     clear() {
+      for (const key of values.keys()) Reflect.deleteProperty(this, key);
       values.clear();
     },
     getItem(key) {
@@ -127,10 +128,16 @@ function createMemoryStorage(): Storage {
       return [...values.keys()][index] ?? null;
     },
     removeItem(key) {
+      Reflect.deleteProperty(this, key);
       values.delete(key);
     },
     setItem(key, value) {
       values.set(key, value);
+      Object.defineProperty(this, key, {
+        configurable: true,
+        enumerable: true,
+        value,
+      });
     },
   };
 }

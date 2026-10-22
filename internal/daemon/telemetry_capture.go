@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"io"
 	"mime"
 	"net/http"
 
@@ -26,9 +27,16 @@ func (s *Server) registerTelemetryCaptureRoute(mux *http.ServeMux) {
 			http.Error(w, "application/json is required", http.StatusUnsupportedMediaType)
 			return
 		}
+		w.Header().Set("Content-Type", "application/json")
+		if s.telemetry == nil || !s.telemetry.Enabled() {
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = io.WriteString(w, "{\"status\":\"disabled\"}\n")
+			return
+		}
 		// Clients stop waiting shortly after exit, so their disconnect must not drop the count.
 		s.recordAgentCall(context.WithoutCancel(r.Context()))
 		w.WriteHeader(http.StatusAccepted)
+		_, _ = io.WriteString(w, "{\"status\":\"queued\"}\n")
 	})
 }
 

@@ -86,6 +86,8 @@ func TestReportAppOpenedReachesDaemonAllowlist(t *testing.T) {
 	t.Cleanup(ts.Close)
 
 	m := newModel(testEndpointFromURL(ts.URL), withExternalIODisabled())
+	// Exercise every screen's allowlist entry with the opted-out reporter.
+	m.telemetryGate = nil
 	cmd := m.reportAppOpened()
 	require.NotNil(cmd)
 	assert.Nil(cmd())

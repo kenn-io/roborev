@@ -69,6 +69,21 @@ func updateScreenTestModel(m *model, msg tea.Msg) {
 }
 
 //nolint:paralleltest // t.Setenv of telemetry opt-out variables
+func TestDisabledReceiptQuietsModel(t *testing.T) {
+	enableTelemetryEnv(t)
+	m := newModel(testEndpointFromURL("http://127.0.0.1:7373"), withExternalIODisabled())
+	transport := &screenRecordingTransport{status: "disabled"}
+	m.client.Transport = transport
+	close(m.ready)
+	collectMsgs(m.reportScreenViewed())
+	collectMsgs(m.postScreen("help"))
+	collectMsgs(m.reportAction(telemetry.EventReviewViewed, nil))
+	m.reportSessionEnded(time.Minute)
+	assert.Equal(t, []string{"queue"}, transport.screens)
+	assert.Empty(t, transport.events)
+}
+
+//nolint:paralleltest // t.Setenv of telemetry opt-out variables
 func TestInitialScreenFailureRetriesOnInput(t *testing.T) {
 	enableTelemetryEnv(t)
 	for _, tt := range []struct {

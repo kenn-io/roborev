@@ -79,7 +79,11 @@ func TestAgentActivityRoutesRejectBrowserCapture(t *testing.T) {
 	client := &failingAgentTelemetry{}
 	server.SetTelemetry(client)
 	t.Run("opted out", func(t *testing.T) {
-		server.recordAgentCall(t.Context())
+		req := httptest.NewRequest(http.MethodPost, TelemetryAgentCallPath, nil)
+		req.Header.Set("Content-Type", "application/json")
+		recorder := serveTelemetryCapture(server.httpServer.Handler, req)
+		assert.Equal(t, http.StatusAccepted, recorder.Code)
+		assert.JSONEq(t, `{"status":"disabled"}`, recorder.Body.String())
 		assert.Empty(t, client.events)
 	})
 	client.enabled = true
@@ -98,8 +102,10 @@ func TestAgentActivityRoutesRejectBrowserCapture(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, TelemetryAgentCallPath, nil)
 		req.Header.Set("Content-Type", tc.contentType)
 		req.Header.Set("Origin", tc.origin)
-		assert.Equal(t, tc.status, serveTelemetryCapture(server.httpServer.Handler, req).Code)
+		recorder := serveTelemetryCapture(server.httpServer.Handler, req)
+		assert.Equal(t, tc.status, recorder.Code)
 		if tc.status == http.StatusAccepted {
+			assert.JSONEq(t, `{"status":"queued"}`, recorder.Body.String())
 			assert.Equal(t, tc.status, serveTelemetryCapture(server.httpServer.Handler, req.Clone(t.Context())).Code)
 			assert.Equal(t, []string{telemetry.EventAgentActive}, client.events)
 		} else {

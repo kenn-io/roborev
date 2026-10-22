@@ -492,9 +492,9 @@ reports one `session_ended` with `surface` and `duration_bucket`: `under_1m`,
 across tab switches and excludes hidden time. A browser session is lost when the
 browser quits, crashes, or discards the tab before the page closes normally.
 
-The web UI also asks the daemon to report an `app_opened` event when it loads
-and on the first window focus of each later UTC day, and `roborev tui` asks each
-time it starts. CLI commands that work through the daemon ask after their first
+The web UI asks the daemon to report `app_opened` once per UTC day per browser
+profile, on load or focus. `roborev tui` asks each time it starts. CLI commands
+that work through the daemon ask after their first
 successful daemon request, without starting a daemon; hook, MCP and daemon
 management commands, and commands the bundled agent skills run with
 `--from-skill`, do not. Agent calls count separately as described below. The daemon sends at most one `app_opened` per surface
@@ -532,8 +532,14 @@ effective through their recorded UTC dates. See [telemetry configuration](https:
 for recovery instructions.
 Counts mean the report was queued, not confirmed delivered to PostHog.
 The TUI retries a failed screen report on the next key or mouse input while
-that screen is showing. The browser reports the visible screen on every window
-focus and page change, and the daemon counts it once per day.
+that screen is showing. The browser sends each screen and review read once per
+UTC day per browser profile, across reloads and focus returns.
+
+After a `disabled` receipt, the browser sends nothing until a later UTC day's
+load or focus checks again. A TUI, CLI, or MCP process stops reporting until
+the next UTC day, a TUI reconnect, or its own restart. The agent-call route
+returns the same `disabled` or `queued` JSON receipt as the event route.
+
 Agent activity counts each MCP `tools/call`, including tool errors, and each
 invocation of `agent-hook run`, `agent-hook fix-done`, `post-commit`, `enqueue`,
 `remap`, or an eligible daemon command marked `--from-skill` after its first

@@ -81,12 +81,13 @@ var agentUseCommands = map[string]bool{
 }
 
 var (
+	cliGate             telemetry.ClientGate
 	cliTelemetryEnabled = telemetry.EnabledFromEnv
 	cliOutputIsTerminal = streamfmt.WriterIsTerminal
 	// Each notification retains its own request deadline.
 	cliUseTimeout  = telemetry.NotificationTimeout
-	cliUsePost     = telemetry.PostAppOpened
-	cliAgentPost   = telemetry.PostAgentCall
+	cliUsePost     = cliGate.PostAppOpened
+	cliAgentPost   = cliGate.PostAgentCall
 	cliUseOnce     sync.Once
 	cliUseAgent    bool
 	cliUseEndpoint atomic.Pointer[daemon.DaemonEndpoint]
@@ -162,6 +163,6 @@ func reportCLIActionOutput(out io.Writer, event string) {
 			}
 			ep = &daemon.DaemonEndpoint{Network: info.Network, Address: info.Address}
 		}
-		_, _ = telemetry.PostReviewEvent(ctx, ep.HTTPClient(0), ep.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceCLI)
+		_, _ = cliGate.PostReviewEvent(ctx, ep.HTTPClient(0), ep.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceCLI)
 	})
 }

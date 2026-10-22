@@ -138,40 +138,64 @@ func (l *AppOpenedLimiter) alreadySentToday(reporter *Reporter, body []byte) (bo
 	return false, nil, nil
 }
 
-// PostAppOpened posts app_opened for surface to a daemon capture URL and discards the response; callers gate on EnabledFromEnv.
-func PostAppOpened(ctx context.Context, client *http.Client, url, surface string) {
-	_, _ = posthog.PostEvent(ctx, client, url, EventAppOpened, map[string]any{PropertySurface: surface})
+// ClientGate remembers a daemon's opt-out for the current UTC day.
+type ClientGate struct {
+	mu       sync.Mutex
+	quietDay string
+}
+
+// Reset allows reports after a daemon reconnect.
+func (g *ClientGate) Reset() {
+	if g == nil {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.quietDay = ""
+}
+
+// PostEvent stops sending after a disabled receipt until the next UTC day.
+// A nil gate posts without remembering receipts.
+func (g *ClientGate) PostEvent(ctx context.Context, client *http.Client, url, event string, props map[string]any) (posthog.Status, error) {
+	day := time.Now().UTC().Format(time.DateOnly)
+	if g != nil {
+		g.mu.Lock()
+		quiet := g.quietDay == day
+		g.mu.Unlock()
+		if quiet {
+			return posthog.StatusDisabled, nil
+		}
+	}
+	status, err := posthog.PostEvent(ctx, client, url, event, props)
+	if g != nil && err == nil && status == posthog.StatusDisabled {
+		g.mu.Lock()
+		g.quietDay = day
+		g.mu.Unlock()
+	}
+	return status, err
+}
+
+// PostAppOpened posts app_opened for surface; callers gate on EnabledFromEnv.
+func (g *ClientGate) PostAppOpened(ctx context.Context, client *http.Client, url, surface string) {
+	_, _ = g.PostEvent(ctx, client, url, EventAppOpened, map[string]any{PropertySurface: surface})
 }
 
 // PostSessionEnded reports one completed interface lifetime.
-func PostSessionEnded(ctx context.Context, client *http.Client, url, surface string, elapsed time.Duration) {
-	_, _ = posthog.PostEvent(ctx, client, url, EventSessionEnded, map[string]any{PropertySurface: surface, PropertyDurationBucket: DurationBucket(elapsed)})
+func (g *ClientGate) PostSessionEnded(ctx context.Context, client *http.Client, url, surface string, elapsed time.Duration) {
+	_, _ = g.PostEvent(ctx, client, url, EventSessionEnded, map[string]any{PropertySurface: surface, PropertyDurationBucket: DurationBucket(elapsed)})
 }
 
-func PostScreenViewed(ctx context.Context, client *http.Client, url, screen, surface string) error {
-	_, err := posthog.PostEvent(ctx, client, url, EventScreenViewed, map[string]any{PropertyScreen: screen, PropertySurface: surface})
+func (g *ClientGate) PostScreenViewed(ctx context.Context, client *http.Client, url, screen, surface string) error {
+	_, err := g.PostEvent(ctx, client, url, EventScreenViewed, map[string]any{PropertyScreen: screen, PropertySurface: surface})
 	return err
 }
 
 // PostReviewEvent reports a completed review action through the daemon.
-func PostReviewEvent(ctx context.Context, client *http.Client, url, event, surface string) (posthog.Status, error) {
-	return posthog.PostEvent(ctx, client, url, event, map[string]any{PropertySurface: surface})
+func (g *ClientGate) PostReviewEvent(ctx context.Context, client *http.Client, url, event, surface string) (posthog.Status, error) {
+	return g.PostEvent(ctx, client, url, event, map[string]any{PropertySurface: surface})
 }
 
 // PostAgentCall notifies the daemon of one call; callers gate on EnabledFromEnv.
-func PostAgentCall(ctx context.Context, client *http.Client, url string) {
-	postTelemetry(ctx, client, url, nil)
-}
-
-func postTelemetry(ctx context.Context, client *http.Client, url string, body []byte) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		return
-	}
-	_ = resp.Body.Close()
+func (g *ClientGate) PostAgentCall(ctx context.Context, client *http.Client, url string) {
+	_, _ = g.PostEvent(ctx, client, url, EventAgentActive, nil)
 }
