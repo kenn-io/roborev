@@ -377,23 +377,27 @@ compare() {
   for n in "$@"; do
     [ -f "$results/runs/$n/scoring/results.json" ] || die "run $n has not been judged"
   done
-  printf '%-28s %5s %8s %6s %6s %6s %6s %6s %8s\n' run PRs findings GP GR F1 AP AR "high GR"
+  printf '%-28s %5s %8s %6s %6s %6s %6s %6s %8s %7s\n' run PRs findings GP GR F1 AP AR "high GR" "bench F1"
   for n in "$@"; do
     jq -r --arg n "$n" '
       def pct: if . == null then "-" else (. * 1000 | round / 10 | tostring) end;
+      def f1(p; r): if p == null or r == null then null elif p + r == 0 then 0
+                    else 2 * p * r / (p + r) end;
       .micro.overall as $m
-      | (if ($m.grounded_precision // 0) + ($m.grounded_recall // 0) > 0
-         then 2 * $m.grounded_precision * $m.grounded_recall / ($m.grounded_precision + $m.grounded_recall)
-         else null end) as $f1
+      | ([.per_pr[].metrics.overall | f1(.augmented_precision; .augmented_recall) | select(. != null)]
+         | if length > 0 then add / length else null end) as $bench
       | [$n, .pr_count, $m.candidate_count, ($m.grounded_precision | pct), ($m.grounded_recall | pct),
-         ($f1 | pct), ($m.augmented_precision | pct), ($m.augmented_recall | pct),
-         (.micro.by_severity.high.grounded_recall | pct)]
+         (f1($m.grounded_precision; $m.grounded_recall) | pct),
+         ($m.augmented_precision | pct), ($m.augmented_recall | pct),
+         (.micro.by_severity.high.grounded_recall | pct), ($bench | pct)]
       | @tsv' "$results/runs/$n/scoring/results.json" |
-      awk -F'\t' '{ printf "%-28s %5s %8s %6s %6s %6s %6s %6s %8s\n", $1, $2, $3, $4, $5, $6, $7, $8, $9 }'
+      awk -F'\t' '{ printf "%-28s %5s %8s %6s %6s %6s %6s %6s %8s %7s\n", $1, $2, $3, $4, $5, $6, $7, $8, $9, $10 }'
   done
   echo
   echo "Micro averages over all findings. GP/GR: grounded precision and recall against the golden set."
   echo "AP/AR: augmented, also crediting unmatched findings the judge classified as valid."
+  echo "bench F1: ReviewBench's headline score, augmented F1 per pull request averaged over pull requests."
+  echo "It rises with volume: extra findings the judge accepts raise both its precision and its recall."
   if [ $# -eq 2 ]; then
     echo
     echo "Golden findings covered per pull request ($1 -> $2):"
