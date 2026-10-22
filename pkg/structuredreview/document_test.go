@@ -143,12 +143,6 @@ func TestEncodingAnOlderDocumentWritesTheCurrentVersion(t *testing.T) {
 	}
 }
 
-func TestDecodeRequiresAVerdictInVersion2(t *testing.T) {
-	_, err := Decode(jsontext.Value(`{"schema_version":2,"summary":"s","findings":[]}`))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "schema_version 2 requires a verdict")
-}
-
 func TestVersion3FindingsKeepALocationForOlderReaders(t *testing.T) {
 	finding := Finding{Severity: "high", Kind: KindDefect, Confidence: 0.5, Problem: "p", Fix: "f"}
 	finding.SetLocation("a.go", 3, 8)

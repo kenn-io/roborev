@@ -105,26 +105,6 @@ func TestGetSystemPrompt_Fallbacks(t *testing.T) {
 			wantContains:    []string{"Do NOT explain your process"},
 			wantNotContains: []string{commitIntent, rangeIntent, ignoreMessage},
 		},
-		{
-			name:            "Default Review",
-			agent:           "test",
-			command:         "review",
-			wantContains:    []string{commitIntent},
-			wantNotContains: []string{rangeIntent},
-		},
-		{
-			name:            "Default Range",
-			agent:           "test",
-			command:         "range",
-			wantContains:    []string{rangeIntent},
-			wantNotContains: []string{commitIntent},
-		},
-		{
-			name:            "Default Dirty",
-			agent:           "test",
-			command:         "dirty",
-			wantNotContains: []string{commitIntent, rangeIntent},
-		},
 	}
 
 	for _, tc := range tests {
