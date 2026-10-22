@@ -169,7 +169,7 @@ timeout = "3m"
 | `model` | string | Model for this member. Empty means use the workflow model resolution. |
 | `provider` | string | Provider for agents that support provider selection, currently used by Pi. |
 | `reasoning` | string | Reasoning level for this member. Empty means use review reasoning. |
-| `review_type` | string | `default`, `security`, `design`, or `lookahead`. `review` and `general` are accepted as aliases for `default`. |
+| `review_type` | string | `default`, `security`, `design`, `lookahead`, or `exhaustive`. `review` and `general` are accepted as aliases for `default`. |
 | `instructions` | string | Additional instructions appended only to this member prompt. |
 | `allow_failure` | bool | When true, a failed or canceled member does not make an otherwise successful panel fail. |
 | `non_voting` | bool | When true, the member runs and stores its review but is excluded from synthesis and the panel verdict. |

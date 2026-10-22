@@ -654,7 +654,7 @@ func (s *Server) maybeDispatchPanelAutoDesign(
 	members []config.ResolvedMember,
 	memberJobs []*storage.ReviewJob,
 ) {
-	if !config.IsDefaultReviewType(in.req.ReviewType) ||
+	if !config.IsGeneralReviewType(in.req.ReviewType) ||
 		panelHasDesignMember(members) ||
 		len(memberJobs) == 0 ||
 		memberJobs[0].JobType != storage.JobTypeReview {
