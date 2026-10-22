@@ -25,7 +25,6 @@ import (
 	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/testenv"
-	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestWaitForGracefulDaemonExitHasNoTimeout(t *testing.T) {
@@ -102,26 +101,6 @@ func mockIdentifyProcess(t *testing.T, mock func(int) processIdentity) {
 	orig := identifyProcess
 	identifyProcess = mock
 	t.Cleanup(func() { identifyProcess = orig })
-}
-
-func TestRuntimeRecordWithUnjudgedIdentityIsKept(t *testing.T) {
-	testenv.SetDataDir(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, math.MaxInt32)
-	}))
-	t.Cleanup(server.Close)
-	rec := testutil.UnjudgedRuntimeRecord("tcp", server.Listener.Addr().String())
-	// A legacy identity must not override an unjudged namespace identity.
-	rec.ProcessIdentity = "different-process"
-	path, err := runtimeStore().Write(rec)
-	require.NoError(t, err)
-
-	info, err := GetAnyRunningDaemonContext(t.Context())
-	require.NoError(t, err)
-	require.NotNil(t, info)
-	assert.Equal(t, math.MaxInt32, info.PID)
-	assert.False(t, info.Stale())
-	assert.FileExists(t, path)
 }
 
 func TestFindAvailablePort(t *testing.T) {

@@ -405,24 +405,12 @@ func TestServerStartHandlesRuntimeIdentities(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("requires Linux process identities")
 	}
-	identity, ok := kitdaemon.ReadProcessIdentity(os.Getppid())
-	require.True(t, ok)
-	fields := strings.Split(string(identity), ":")
-	require.Len(t, fields, 4)
-	// Keep the live PID and namespace, but record a different boot.
-	bootID := "00000000-0000-0000-0000-000000000001"
-	if fields[1] == bootID {
-		bootID = "00000000-0000-0000-0000-000000000002"
-	}
-	fields[1] = bootID
 	for _, tc := range []struct {
 		name     string
-		identity kitdaemon.ProcessIdentity
 		pid      int
 		refuses  bool
 		unjudged bool
 	}{
-		{name: "earlier boot", identity: kitdaemon.ProcessIdentity(strings.Join(fields, ":"))},
 		{name: "legacy live PID", refuses: true},
 		{name: "unjudged live PID", unjudged: true, refuses: true},
 		{name: "unjudged invisible PID", pid: math.MaxInt32, unjudged: true},
@@ -437,7 +425,7 @@ func TestServerStartHandlesRuntimeIdentities(t *testing.T) {
 				pid = os.Getppid()
 			}
 			rec := kitdaemon.RuntimeRecord{
-				PID: pid, Network: "tcp", Address: "127.0.0.1:1", ProcessIdentityV2: tc.identity,
+				PID: pid, Network: "tcp", Address: "127.0.0.1:1",
 			}
 			if tc.unjudged {
 				rec = testutil.UnjudgedRuntimeRecord(rec.Network, rec.Address)

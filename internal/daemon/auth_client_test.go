@@ -282,7 +282,7 @@ func TestUnjudgedRuntimeKeepsKeyOffTCP(t *testing.T) {
 			switch operation {
 			case "discovery":
 				_, err = GetAnyRunningDaemonContext(t.Context())
-				require.Error(t, err)
+				require.ErrorIs(t, err, os.ErrNotExist)
 			case "subsequent request":
 				_, err = info.Endpoint().APIClient(time.Second).PingRaw(t.Context())
 				require.ErrorIs(t, err, ErrGuessedEndpointAuth)
