@@ -130,6 +130,48 @@ func TestRuntimeRecordWithUnjudgedIdentityIsKept(t *testing.T) {
 	assert.FileExists(path)
 }
 
+func TestKillDaemonReturnsWhenUnjudgedDaemonStopsAnswering(t *testing.T) {
+	testenv.SetDataDir(t)
+	assert := assert.New(t)
+	var shutdowns atomic.Int32
+	server := httptest.NewUnstartedServer(nil)
+	server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/ping":
+			fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, math.MaxInt32)
+		case "/api/shutdown":
+			shutdowns.Add(1)
+			assert.NoError(server.Listener.Close())
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	server.Start()
+	t.Cleanup(server.Close)
+	rec := kitdaemon.RuntimeRecord{
+		PID: math.MaxInt32, Network: "tcp", Address: server.Listener.Addr().String(), ProcessIdentityV2: "future-v1:unavailable",
+	}
+	path, err := runtimeStore().Write(rec)
+	require.NoError(t, err)
+
+	done := make(chan error, 1)
+	go func() { done <- KillDaemon(runtimeInfoFromRecord(rec)) }()
+	var result error
+	// Wall-clock wait: the loopback HTTP server stops accepting connections.
+	require.Eventually(t, func() bool {
+		select {
+		case result = <-done:
+			return true
+		default:
+			return false
+		}
+	}, 2*time.Second, 10*time.Millisecond)
+	require.NoError(t, result)
+	assert.Equal(int32(1), shutdowns.Load())
+	assert.NoFileExists(path)
+}
+
 func TestKillDaemonKeepsUnjudgedRecords(t *testing.T) {
 	for _, tc := range []struct {
 		name           string

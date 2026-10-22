@@ -654,10 +654,9 @@ func KillDaemon(info *RuntimeInfo) error {
 		}
 	}
 
-	// When a PID is known, confirm that exact process exited. A service manager
-	// may start a replacement daemon on the same endpoint immediately.
+	// Confirm exact process exit for PIDs this caller can judge; otherwise probe.
 	confirmedDead := func() bool {
-		if info.PID > 0 {
+		if info.PID > 0 && (!kitdaemon.RuntimeProcessAlive(rec) || rec.ProcessIdentityV2 == "" || kitdaemon.CompareRuntimeProcessIdentity(rec) != kitdaemon.ProcessIdentityUnknown) {
 			return !kitdaemon.RuntimeProcessAlive(rec)
 		}
 		alive, err := ProbeDaemonAlive(ep)
