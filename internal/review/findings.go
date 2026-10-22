@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io/fs"
 	"log"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -35,13 +36,16 @@ type fileReader func(path string) ([]byte, error)
 
 // reviewedFiles reads files from the commit a review covered: the end of a
 // range, the commit itself, or the working tree for uncommitted changes and
-// refs that name no commit, such as a compact job's label.
+// refs that name no commit, such as a compact job's label. A range with no
+// end, such as main.., ends at HEAD, as it does for git.
 func reviewedFiles(ctx context.Context, repoPath, gitRef string) fileReader {
 	rev := gitRef
-	if i := strings.LastIndex(rev, ".."); i >= 0 {
-		rev = strings.TrimPrefix(rev[i+2:], ".")
+	if rev == "dirty" {
+		rev = ""
+	} else if i := strings.LastIndex(rev, ".."); i >= 0 {
+		rev = cmp.Or(strings.TrimPrefix(rev[i+2:], "."), "HEAD")
 	}
-	if rev != "" && rev != "dirty" {
+	if rev != "" {
 		if sha, err := git.ResolveSHACtx(ctx, repoPath, rev+"^{commit}"); err == nil {
 			return func(name string) ([]byte, error) {
 				file, err := git.ReadRefFile(repoPath, sha, name)
@@ -161,15 +165,14 @@ func countLines(data []byte) int {
 // same place, since reviewers often cite a line or two above or below.
 const nearbyLines = 3
 
-// duplicateSimilarity is the share of words two problem descriptions must
-// have in common to count as the same problem.
-const duplicateSimilarity = 0.45
-
-// tidyFindings merges findings that describe the same problem at the same
+// tidyFindings merges findings that state the same problem at the same
 // place and orders the rest: most severe first, then those more reviewers
-// reported, then the more confident. Findings without a file are never
-// merged, because nothing ties them to one place. A merged finding keeps
-// the more severe, more confident, or more detailed text and every source.
+// reported, then the more confident. Two problems are the same only when
+// they use the same words, ignoring case, punctuation, and order. Similar
+// wording is not enough: "the name field is not validated" and "the email
+// field is not validated" are two problems with two fixes. Findings without
+// a file are never merged, because nothing ties them to one place. A merged
+// finding keeps the more severe or more confident text and every source.
 func tidyFindings(findings []structuredreview.Finding) []structuredreview.Finding {
 	type keptFinding struct {
 		finding structuredreview.Finding
@@ -180,7 +183,7 @@ func tidyFindings(findings []structuredreview.Finding) []structuredreview.Findin
 		words := problemWords(finding.Problem)
 		twin := slices.IndexFunc(kept, func(other keptFinding) bool {
 			return finding.File != "" && samePlace(finding, other.finding) &&
-				similarity(words, other.words) >= duplicateSimilarity
+				maps.Equal(words, other.words)
 		})
 		if twin < 0 {
 			kept = append(kept, keptFinding{finding, words})
@@ -235,7 +238,7 @@ func mergeSources(a, b []int) []int {
 	return slices.Compact(merged)
 }
 
-var wordPattern = regexp.MustCompile(`[a-z0-9_]{3,}`)
+var wordPattern = regexp.MustCompile(`[a-z0-9_]+`)
 
 func problemWords(text string) map[string]struct{} {
 	words := make(map[string]struct{})
@@ -243,18 +246,4 @@ func problemWords(text string) map[string]struct{} {
 		words[word] = struct{}{}
 	}
 	return words
-}
-
-// similarity is the Jaccard index of two word sets, from 0 to 1.
-func similarity(a, b map[string]struct{}) float64 {
-	if len(a) == 0 || len(b) == 0 {
-		return 0
-	}
-	shared := 0
-	for word := range a {
-		if _, ok := b[word]; ok {
-			shared++
-		}
-	}
-	return float64(shared) / float64(len(a)+len(b)-shared)
 }

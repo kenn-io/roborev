@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"encoding/json/jsontext"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -73,6 +74,25 @@ func TestSettleFindingsUsesTheEndOfARange(t *testing.T) {
 	assert.Equal(t, "added.go:2-3", doc.Findings[0].Location)
 }
 
+// Only the "dirty" ref means uncommitted changes. A range with no end ends
+// at HEAD, and a branch may be named dirty.
+func TestSettleFindingsReadsCommittedRangesNotTheWorkingTree(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	base := repo.HeadSHA()
+	repo.CommitFile("added.go", numberedLines(5), "add file")
+	repo.RunGit("branch", "dirty")
+	require.NoError(t, os.Remove(filepath.Join(repo.Path(), "added.go")))
+
+	for _, ref := range []string{base + "..", base + "..dirty"} {
+		t.Run(ref, func(t *testing.T) {
+			doc := structuredreview.Document{Findings: []structuredreview.Finding{located("added.go", 2, 3)}}
+			settleFindings(context.Background(), repo.Path(), ref, &doc)
+
+			assert.Equal(t, "added.go:2-3", doc.Findings[0].Location)
+		})
+	}
+}
+
 func TestSettleFindingsReadsTheWorkingTreeForUncommittedChanges(t *testing.T) {
 	repo := testutil.NewTestRepoWithCommit(t)
 	repo.WriteFile("new.go", numberedLines(4))
@@ -96,7 +116,7 @@ func TestTidyFindingsMergesTheSameProblemAtTheSamePlace(t *testing.T) {
 	first.Severity = "medium"
 	first.Sources = []int{2}
 	second := located("a.go", 13, 13)
-	second.Problem = "Retry loop never stops when the server returns a 503 response."
+	second.Problem = "the retry loop never stops when the server returns 503"
 	second.Severity = "high"
 	second.Sources = []int{1}
 	otherProblem := located("a.go", 10, 12)
@@ -114,6 +134,21 @@ func TestTidyFindingsMergesTheSameProblemAtTheSamePlace(t *testing.T) {
 	assert.Equal("high", got[0].Severity, "the more severe copy is kept")
 	assert.Equal(second.Problem, got[0].Problem)
 	assert.Equal([]int{1, 2}, got[0].Sources, "a merged finding keeps every source")
+}
+
+// Reviewers often report one problem per field or variable on neighboring
+// lines. Each has its own fix, so similar wording must not merge them.
+func TestTidyFindingsKeepsSimilarProblemsAboutDifferentNames(t *testing.T) {
+	name := located("a.go", 10, 10)
+	name.Problem = "The name field is not validated before saving."
+	email := located("a.go", 11, 11)
+	email.Problem = "The email field is not validated before saving."
+	id := located("a.go", 12, 12)
+	id.Problem = "The id field is not validated before saving."
+
+	got := tidyFindings([]structuredreview.Finding{name, email, id})
+
+	assert.Len(t, got, 3)
 }
 
 func TestTidyFindingsRanksBySeverityThenSupportThenConfidence(t *testing.T) {
