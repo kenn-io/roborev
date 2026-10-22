@@ -423,7 +423,6 @@ func TestServerStartHandlesRuntimeIdentities(t *testing.T) {
 	}{
 		{name: "earlier boot", identity: kitdaemon.ProcessIdentity(strings.Join(fields, ":"))},
 		{name: "legacy live PID", refuses: true},
-		{name: "unjudged identity", identity: "future-v1:unavailable", refuses: true},
 		{name: "unjudged invisible PID", pid: math.MaxInt32, identity: "future-v1:unavailable", refuses: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -1209,20 +1209,25 @@ func TestRestartDaemonAfterUpdateStopFailedPreviousPIDExitedButInitialPIDLingeri
 		// previousPID exited quickly; no replacement PID observed.
 		return nil, os.ErrNotExist
 	}
+	var listCalls int
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		switch getCalls {
-		case 0:
+		listCalls++
+		switch listCalls {
+		case 1:
 			// Initial snapshot includes multiple daemon PIDs.
 			return []*daemon.RuntimeInfo{
 				{PID: math.MaxInt32, Address: "127.0.0.1:7373"},
 				{PID: os.Getpid(), Address: "127.0.0.1:7373"},
 			}, nil
-		case 1:
+		case 2:
 			// waitForDaemonExit still sees previous PID.
 			return []*daemon.RuntimeInfo{
 				{PID: math.MaxInt32, Address: "127.0.0.1:7373"},
 				{PID: os.Getpid(), Address: "127.0.0.1:7373"},
 			}, nil
+		case 3:
+			// No replacement daemon is observed during handoff.
+			return nil, nil
 		default:
 			// previousPID gone, but another initial PID lingers.
 			return []*daemon.RuntimeInfo{
@@ -1240,7 +1245,7 @@ func TestRestartDaemonAfterUpdateStopFailedPreviousPIDExitedButInitialPIDLingeri
 	})
 
 	assert.Equal(t, 0, s.startCalls)
-	assert.Contains(t, output, "restart it manually")
+	assert.Contains(t, output, "warning: older daemon runtimes still present after stop; restart it manually")
 	assert.NotContains(t, output, "Restarting daemon... OK")
 }
 

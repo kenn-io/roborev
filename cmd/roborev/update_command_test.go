@@ -356,25 +356,8 @@ func TestDiscoverDaemonForUpdateRemovesDeadRuntime(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
-func TestDiscoverDaemonForUpdateKeepsUnjudgedRuntime(t *testing.T) {
-	stubUpdateCommand(t)
-	testenv.SetDataDir(t)
-	path, err := daemon.RuntimeStore().Write(kitdaemon.RuntimeRecord{
-		PID: math.MaxInt32, Network: "tcp", Address: "127.0.0.1:1", ProcessIdentityV2: "future-v1:unavailable",
-	})
-	require.NoError(t, err)
-	listAllRuntimes = daemon.ListAllRuntimes
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
-
-	info, err := discoverDaemonForUpdate()
-
-	require.ErrorContains(t, err, "running daemon is not responsive")
-	assert.Nil(t, info)
-	assert.FileExists(t, path)
-}
-
 func TestUpdateHandoffKeepsUnjudgedRuntime(t *testing.T) {
-	for _, operation := range []string{"runtimeHasPID", "replacementRuntimePID", "initialPIDsExited"} {
+	for _, operation := range []string{"runtimeHasPID", "replacementRuntimePID", "initialPIDsExited", "discoverDaemonForUpdate"} {
 		t.Run(operation, func(t *testing.T) {
 			stubUpdateCommand(t)
 			testenv.SetDataDir(t)
@@ -390,6 +373,11 @@ func TestUpdateHandoffKeepsUnjudgedRuntime(t *testing.T) {
 				assert.Equal(t, math.MaxInt32, replacementRuntimePID(1))
 			case "initialPIDsExited":
 				assert.False(t, initialPIDsExited(map[int]struct{}{math.MaxInt32: {}}, 0))
+			case "discoverDaemonForUpdate":
+				getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
+				info, err := discoverDaemonForUpdate()
+				require.ErrorContains(t, err, "running daemon is not responsive")
+				assert.Nil(t, info)
 			}
 			assert.FileExists(t, path)
 		})
