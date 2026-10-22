@@ -1,8 +1,6 @@
 name: Windows Migration
 
-# The PR dispatcher always calls the main-pinned workflow. That workflow
-# independently routes same-repository Linux jobs to the managed public fleet
-# and fork jobs to GitHub-hosted runners.
+# Use the PR's workflow so CI changes are tested before merging.
 on:
   pull_request:
     branches: [main]
@@ -11,4 +9,4 @@ permissions: read-all
 
 jobs:
   run:
-    uses: kenn-io/roborev/.github/workflows/windows-migration.yml@main
+    uses: ./.github/workflows/windows-migration.yml
