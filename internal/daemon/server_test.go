@@ -21,6 +21,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -397,6 +398,57 @@ func TestServerStartReadinessFailureDoesNotLeavePanelSweep(t *testing.T) {
 	sweepCancel := server.sweepCancel
 	server.sweepMu.Unlock()
 	assert.Nil(t, sweepCancel, "panel sweep must not remain active after startup readiness failure")
+}
+
+func TestServerStartHandlesRuntimeIdentities(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("requires Linux process identities")
+	}
+	identity, ok := kitdaemon.ReadProcessIdentity(os.Getppid())
+	require.True(t, ok)
+	fields := strings.Split(string(identity), ":")
+	require.Len(t, fields, 4)
+	// Keep the live PID and namespace, but record a different boot.
+	bootID := "00000000-0000-0000-0000-000000000001"
+	if fields[1] == bootID {
+		bootID = "00000000-0000-0000-0000-000000000002"
+	}
+	fields[1] = bootID
+	for _, tc := range []struct {
+		name     string
+		identity kitdaemon.ProcessIdentity
+		refuses  bool
+	}{
+		{name: "earlier boot", identity: kitdaemon.ProcessIdentity(strings.Join(fields, ":"))},
+		{name: "legacy live PID", refuses: true},
+		{name: "unjudged identity", identity: "future-v1:unavailable", refuses: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testenv.SetDataDir(t)
+			setShortRuntimeDir(t)
+			mockIdentifyProcess(t, func(int) processIdentity { return processUnknown })
+			path, err := runtimeStore().Write(kitdaemon.RuntimeRecord{
+				PID: os.Getppid(), Network: "tcp", Address: "127.0.0.1:1", ProcessIdentityV2: tc.identity,
+			})
+			require.NoError(t, err)
+			db, _ := testutil.OpenTestDBWithDir(t)
+			cfg := config.DefaultConfig()
+			cfg.ServerAddr = "127.0.0.1:0"
+			server := NewServer(db, cfg, "")
+			t.Cleanup(func() { _ = server.Close() })
+			if tc.refuses {
+				// Bound a regression that starts a real listener instead of refusing.
+				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+				defer cancel()
+				require.ErrorContains(t, server.Start(ctx), "daemon process still running")
+				assert.FileExists(t, path)
+				return
+			}
+			errCh, info := startServerAndWaitForRuntime(t, server)
+			assert.Equal(t, os.Getpid(), info.PID)
+			stopTestServer(t, server, errCh)
+		})
+	}
 }
 
 func TestServerStartSupportsIPv6LoopbackBindAddr(t *testing.T) {

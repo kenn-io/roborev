@@ -27,6 +27,8 @@ All notable changes to roborev, grouped by minor release.
 
 **Improvements**
 
+- Start the host daemon over records left by dead sandboxes, and preserve the host
+    daemon's record when a sandboxed command can't see its process.
 - Honor `DO_NOT_TRACK` and keep telemetry off in CI and non-release builds.
 - Count core action error banners and toasts in the web UI and TUI, and
     PostgreSQL sync outages, in anonymous telemetry using fixed action names and

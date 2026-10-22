@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"cmp"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -66,7 +65,8 @@ type RuntimeInfo struct {
 	WebCapabilities   []string `json:"-"`
 	WebDisabledReason string   `json:"-"`
 
-	processIdentity kitdaemon.ProcessIdentity
+	processIdentity   kitdaemon.ProcessIdentity
+	processIdentityV2 kitdaemon.ProcessIdentity
 }
 
 // BrowserRuntimeInfo is the non-secret discovery information published for
@@ -152,18 +152,19 @@ func RuntimeStore() kitdaemon.RuntimeStore {
 func runtimeInfoFromRecord(rec kitdaemon.RuntimeRecord) *RuntimeInfo {
 	ep := daemonEndpointFromKit(rec.Endpoint())
 	info := &RuntimeInfo{
-		PID:              rec.PID,
-		processIdentity:  cmp.Or(rec.ProcessIdentityV2, rec.ProcessIdentity),
-		Network:          ep.Network,
-		Address:          ep.Address,
-		Service:          rec.Service,
-		Version:          rec.Version,
-		SourcePath:       rec.SourcePath,
-		AlternateNetwork: rec.Metadata[runtimeAlternateNetworkKey],
-		AlternateAddress: rec.Metadata[runtimeAlternateAddressKey],
-		WebAddress:       rec.Metadata[runtimeWebAddressKey],
-		WebOrigin:        rec.Metadata[runtimeWebOriginKey],
-		WebBasePath:      rec.Metadata[runtimeWebBasePathKey],
+		PID:               rec.PID,
+		processIdentity:   rec.ProcessIdentity,
+		processIdentityV2: rec.ProcessIdentityV2,
+		Network:           ep.Network,
+		Address:           ep.Address,
+		Service:           rec.Service,
+		Version:           rec.Version,
+		SourcePath:        rec.SourcePath,
+		AlternateNetwork:  rec.Metadata[runtimeAlternateNetworkKey],
+		AlternateAddress:  rec.Metadata[runtimeAlternateAddressKey],
+		WebAddress:        rec.Metadata[runtimeWebAddressKey],
+		WebOrigin:         rec.Metadata[runtimeWebOriginKey],
+		WebBasePath:       rec.Metadata[runtimeWebBasePathKey],
 	}
 	info.WebDisabledReason = rec.Metadata[runtimeWebDisabledReasonKey]
 	if info.WebOrigin != "" {
@@ -563,8 +564,8 @@ func (r *RuntimeInfo) Stale() bool {
 }
 
 func (r *RuntimeInfo) hasStaleProcess() bool {
-	return r.PID > 0 && (!kitdaemon.ProcessAlive(r.PID) ||
-		kitdaemon.CompareProcessIdentity(r.PID, r.processIdentity) == kitdaemon.ProcessIdentityMismatch)
+	rec := kitdaemon.RuntimeRecord{PID: r.PID, ProcessIdentity: r.processIdentity, ProcessIdentityV2: r.processIdentityV2}
+	return r.PID > 0 && (!kitdaemon.RuntimeProcessAlive(rec) || kitdaemon.CompareRuntimeProcessIdentity(rec) == kitdaemon.ProcessIdentityMismatch)
 }
 
 func probeRuntimeAlive(info *RuntimeInfo) (bool, error) {
@@ -668,7 +669,7 @@ func KillDaemon(info *RuntimeInfo) error {
 	}
 	identity := processUnknown
 	if info.PID > 0 {
-		if !isProcessAlive(info.PID) {
+		if !kitdaemon.RuntimeProcessAlive(kitdaemon.RuntimeRecord{PID: info.PID, ProcessIdentity: info.processIdentity, ProcessIdentityV2: info.processIdentityV2}) {
 			removeRuntimeFile()
 			return nil
 		}

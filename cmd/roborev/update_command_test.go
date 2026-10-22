@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -17,8 +18,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/update"
 )
 
@@ -336,17 +339,14 @@ func TestUpdateCommandCancelDuringHookRepairSuppressesSuccess(t *testing.T) {
 
 func TestDiscoverDaemonForUpdateRemovesDeadRuntime(t *testing.T) {
 	stubUpdateCommand(t)
-	oldAlive := isPIDAliveForUpdate
-	t.Cleanup(func() { isPIDAliveForUpdate = oldAlive })
 	runtimePath := filepath.Join(t.TempDir(), "daemon.json")
 	require.NoError(t, os.WriteFile(runtimePath, []byte("{}"), 0o600))
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		return nil, errors.New("probe failed")
 	}
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		return []*daemon.RuntimeInfo{{PID: 42, SourcePath: runtimePath}}, nil
+		return []*daemon.RuntimeInfo{{PID: math.MaxInt32, SourcePath: runtimePath}}, nil
 	}
-	isPIDAliveForUpdate = func(int) bool { return false }
 
 	info, err := discoverDaemonForUpdate()
 
@@ -354,6 +354,23 @@ func TestDiscoverDaemonForUpdateRemovesDeadRuntime(t *testing.T) {
 	assert.Nil(t, info)
 	_, err = os.Stat(runtimePath)
 	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestDiscoverDaemonForUpdateKeepsUnjudgedRuntime(t *testing.T) {
+	stubUpdateCommand(t)
+	testenv.SetDataDir(t)
+	path, err := daemon.RuntimeStore().Write(kitdaemon.RuntimeRecord{
+		PID: math.MaxInt32, Network: "tcp", Address: "127.0.0.1:1", ProcessIdentityV2: "future-v1:unavailable",
+	})
+	require.NoError(t, err)
+	listAllRuntimes = daemon.ListAllRuntimes
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
+
+	info, err := discoverDaemonForUpdate()
+
+	require.ErrorContains(t, err, "running daemon is not responsive")
+	assert.Nil(t, info)
+	assert.FileExists(t, path)
 }
 
 func TestUpdateCommandCancelAfterInstallReleasesLease(t *testing.T) {

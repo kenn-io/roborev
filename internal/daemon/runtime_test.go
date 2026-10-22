@@ -103,6 +103,33 @@ func mockIdentifyProcess(t *testing.T, mock func(int) processIdentity) {
 	t.Cleanup(func() { identifyProcess = orig })
 }
 
+func TestRuntimeRecordWithUnjudgedIdentityIsKept(t *testing.T) {
+	testenv.SetDataDir(t)
+	assert := assert.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, math.MaxInt32)
+	}))
+	t.Cleanup(server.Close)
+	mockIdentifyProcess(t, func(int) processIdentity { return processUnknown })
+	ep := DaemonEndpoint{Network: "tcp", Address: server.Listener.Addr().String()}
+	rec := kitdaemon.NewRuntimeRecord(daemonServiceName, "test-version", ep.kitEndpoint())
+	rec.PID = math.MaxInt32
+	// An unknown identity version prevents this caller from judging the process.
+	rec.ProcessIdentityV2 = "future-v1:unavailable"
+	path, err := runtimeStore().Write(rec)
+	require.NoError(t, err)
+
+	info, err := GetAnyRunningDaemonContext(t.Context())
+	require.NoError(t, err)
+	require.NotNil(t, info)
+	assert.Equal(math.MaxInt32, info.PID)
+	assert.False(info.Stale())
+
+	server.Close()
+	assert.Zero(CleanupZombieDaemons(ep))
+	assert.FileExists(path)
+}
+
 func TestFindAvailablePort(t *testing.T) {
 	// Test finding an available port
 	addr, port, err := FindAvailablePort(defaultTestAddr)
