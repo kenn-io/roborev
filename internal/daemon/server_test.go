@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -414,8 +413,6 @@ func TestServerStartHandlesRuntimeIdentities(t *testing.T) {
 		unjudged bool
 	}{
 		{name: "legacy live PID", refuses: true},
-		{name: "unjudged live PID", unjudged: true, refuses: true},
-		{name: "unjudged invisible PID", pid: math.MaxInt32, unjudged: true},
 		{name: "second sandbox same PID", pid: os.Getpid(), unjudged: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

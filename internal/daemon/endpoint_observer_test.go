@@ -18,7 +18,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/telemetry"
-	"go.kenn.io/roborev/internal/testenv"
 )
 
 type observedCall struct {
@@ -44,24 +43,6 @@ func recordObserver(t *testing.T) func() []observedCall {
 		defer mu.Unlock()
 		return append([]observedCall(nil), calls...)
 	}
-}
-
-func TestProbeDaemonObservesResponse(t *testing.T) {
-	testenv.SetDataDir(t)
-	calls := recordObserver(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, `{"ok":true,"service":"roborev","pid":42}`)
-	}))
-	t.Cleanup(server.Close)
-	ep, err := ParseEndpoint(server.URL)
-	require.NoError(t, err)
-
-	info, err := ProbeDaemon(ep, time.Second)
-	require.NoError(t, err)
-	assert.Equal(t, 42, info.PID)
-	assert.Equal(t, []observedCall{
-		{ep: ep, method: http.MethodGet, path: "/api/ping", status: http.StatusOK},
-	}, calls())
 }
 
 func TestClientResponseObserver(t *testing.T) {

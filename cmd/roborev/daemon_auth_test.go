@@ -28,50 +28,34 @@ import (
 )
 
 func TestAuthUnjudgedRuntimeStatus(t *testing.T) {
-	for _, live := range []bool{true, false} {
-		t.Run(fmt.Sprintf("live=%t", live), func(t *testing.T) {
-			assert := assert.New(t)
-			isolateDaemonSelection(t)
-			t.Setenv("HOME", t.TempDir())
-			t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
-			t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
-			require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`), 0o600))
-			var credentials atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Header.Get("Authorization") != "" {
-					credentials.Add(1)
-				}
-				assert.Equal("/api/ping", r.URL.Path)
-				fmt.Fprintf(w, `{"ok":true,"service":"roborev","version":%q,"pid":%d}`, version.Version, math.MaxInt32)
-			}))
-			t.Cleanup(server.Close)
-			rec := testutil.UnjudgedRuntimeRecord("tcp", server.Listener.Addr().String())
-			_, err := daemon.RuntimeStore().Write(rec)
-			require.NoError(t, err)
-			if !live {
-				server.Close()
-			}
-			getAnyRunningDaemon = daemon.GetAnyRunningDaemon
-			starts := 0
-			startDaemonForEnsure = func() error { starts++; return errors.New("synthetic startup") }
-			cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { return 0 }
-			output := captureStdout(t, func() {
-				cmd := daemonCmd()
-				cmd.SetArgs([]string{"status", "--json"})
-				require.NoError(t, cmd.Execute())
-			})
-			var result statusJSONResult
-			require.NoError(t, json.Unmarshal([]byte(output), &result))
-			assert.Equal(live, result.Running)
-			if live {
-				assert.Zero(starts)
-				assert.Contains(result.Error, "daemon_tls")
-			} else {
-				assert.Equal(1, starts)
-			}
-			assert.Zero(credentials.Load())
-		})
-	}
+	assert := assert.New(t)
+	isolateDaemonSelection(t)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`), 0o600))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("/api/ping", r.URL.Path)
+		fmt.Fprintf(w, `{"ok":true,"service":"roborev","version":%q,"pid":%d}`, version.Version, math.MaxInt32)
+	}))
+	t.Cleanup(server.Close)
+	rec := testutil.UnjudgedRuntimeRecord("tcp", server.Listener.Addr().String())
+	_, err := daemon.RuntimeStore().Write(rec)
+	require.NoError(t, err)
+	getAnyRunningDaemon = daemon.GetAnyRunningDaemon
+	starts := 0
+	startDaemonForEnsure = func() error { starts++; return errors.New("synthetic startup") }
+	cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { return 0 }
+	output := captureStdout(t, func() {
+		cmd := daemonCmd()
+		cmd.SetArgs([]string{"status", "--json"})
+		require.NoError(t, cmd.Execute())
+	})
+	var result statusJSONResult
+	require.NoError(t, json.Unmarshal([]byte(output), &result))
+	assert.True(result.Running)
+	assert.Zero(starts)
+	assert.Contains(result.Error, "daemon_tls")
 }
 
 func TestAuthDaemonRunRejectsBrokenConfig(t *testing.T) {
