@@ -17,7 +17,7 @@ import (
 var (
 	uiEnsureDaemon        = ensureUIDaemon
 	uiGetAnyRunningDaemon = getAnyRunningDaemon
-	uiListAllRuntimes     = daemon.ListJudgedRuntimes
+	uiListAllRuntimes     = daemon.ListAllRuntimes
 	uiProbeDaemon         = daemon.ProbeDaemon
 )
 
