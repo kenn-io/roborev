@@ -112,6 +112,13 @@ type LegacyDocument struct {
 // LegacySchemaVersion is storage-only; agents must return SchemaVersion.
 const LegacySchemaVersion = 0
 
+// Document is one review. Its canonical JSON encoding (encoding/json/v2 with
+// deterministic member order) is a stored finding-identity contract: roborev
+// hashes it to derive the selectors it hands out for a review's findings, and
+// other systems keep those selectors. Add a field only with omitempty, so
+// documents that do not use it encode as before. A change to any tag, to the
+// order of members, or to Finding.MarshalJSON changes every hash and re-keys
+// every stored selector; a test in internal/findingid fails when it happens.
 type Document struct {
 	Legacy        *LegacyDocument `json:"legacy,omitempty"`
 	SchemaVersion int             `json:"schema_version"`
@@ -136,6 +143,9 @@ type Finding struct {
 
 // MarshalJSON emits an empty Location as JSON null so an encoded document
 // stays valid under Schema, which requires the field on every finding.
+//
+// This encoding is part of the stored finding-identity contract described on
+// Document: changing it re-keys every selector derived from a review.
 func (f Finding) MarshalJSON() ([]byte, error) {
 	type wire struct {
 		Severity string  `json:"severity"`

@@ -22,10 +22,18 @@ type FakeClient struct {
 	CreateResult kata.CreateResult
 	CreateErr    error
 
+	CommentResult kata.CommentResult
+	CommentErr    error
+
+	ThreadResult kata.Thread
+	ThreadErr    error
+
 	// Recorded calls.
-	ShowRefs   []string
-	ListOpts   []kata.ListOpts
-	CreateReqs []kata.CreateReq
+	ShowRefs    []string
+	ListOpts    []kata.ListOpts
+	CreateReqs  []kata.CreateReq
+	CommentReqs []kata.CommentReq
+	ThreadReqs  []kata.ThreadReq
 }
 
 func (f *FakeClient) Binding(context.Context) (kata.Binding, error) {
@@ -53,4 +61,14 @@ func (f *FakeClient) Show(_ context.Context, ref string) (kata.Issue, error) {
 func (f *FakeClient) Create(_ context.Context, req kata.CreateReq) (kata.CreateResult, error) {
 	f.CreateReqs = append(f.CreateReqs, req)
 	return f.CreateResult, f.CreateErr
+}
+
+func (f *FakeClient) Comment(_ context.Context, req kata.CommentReq) (kata.CommentResult, error) {
+	f.CommentReqs = append(f.CommentReqs, req)
+	return f.CommentResult, f.CommentErr
+}
+
+func (f *FakeClient) Thread(_ context.Context, req kata.ThreadReq) (kata.Thread, error) {
+	f.ThreadReqs = append(f.ThreadReqs, req)
+	return f.ThreadResult, f.ThreadErr
 }
