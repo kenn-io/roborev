@@ -93,7 +93,7 @@ jobs:
         with:
           go-version: '1.27.3'
 
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38  # v6.5.0
         with:
           node-version: '22.23.4'
 
@@ -142,7 +142,7 @@ jobs:
         with:
           go-version: '1.27.3'
 
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38  # v6.5.0
         with:
           node-version: '22.23.4'
 
@@ -237,7 +237,7 @@ jobs:
           go-version: '1.27.3'
 
       # prepare-demo-db.sh tests run the uv pinned in mise.lock.
-      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8  # v5.1.2
+      - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7  # v5.2.0
 
       - name: Build
         if: runner.os != 'Windows' || matrix.shard == 'windows-remaining'
@@ -373,7 +373,7 @@ jobs:
           go-version: '1.27.3'
 
       # prepare-demo-db.sh tests run the uv pinned in mise.lock.
-      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8  # v5.1.2
+      - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7  # v5.2.0
 
       - name: Test with coverage
         # Race coverage runs in the test and daemon-race jobs; repeating it here
