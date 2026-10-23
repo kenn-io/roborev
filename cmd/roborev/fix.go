@@ -1158,10 +1158,12 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	if err := ensureBaseAgent(repoRoot, opts, tracker); err != nil {
 		return err
 	}
-	implementationPrompt := buildGenericFixPromptWithMetadataForRef(review.Output, minSev, comments, metadata, fixCfg.FixGuidelines, reviewedRefForFix(job))
+	readReplies := kataReplyPromptReader(newDaemonAPI(addr, getDaemonHTTPClientForURL(addr, 0)), "fix")
+	review.Job = job
+	implementationPrompt := buildGenericFixPromptWithMetadataForRef(review.Output+readReplies(ctx, review), minSev, comments, metadata, fixCfg.FixGuidelines, reviewedRefForFix(job))
+	builder := prompt.NewBuilderWithConfig(nil, fixCfg).ForRepo(repoRoot, 0).WithContext(ctx).WithKataReplies(readReplies)
 	if opts.plan || opts.planOnly {
 		review.Job = job
-		builder := prompt.NewBuilderWithConfig(nil, fixCfg).ForRepo(repoRoot, 0)
 		planningPrompt, planErr := builder.BuildPlanPrompt(review, comments, minSev)
 		if planErr != nil {
 			return planErr
@@ -1180,15 +1182,15 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		if opts.planOnly {
 			return nil
 		}
-		prepared, prepareErr := builder.Prepare(implementationPrompt, prompt.SnapshotTarget{})
-		if prepareErr != nil {
-			return prepareErr
-		}
-		if prepared.Cleanup != nil {
-			defer prepared.Cleanup()
-		}
-		implementationPrompt = prepared.Prompt
 	}
+	prepared, prepareErr := builder.Prepare(implementationPrompt, prompt.SnapshotTarget{})
+	if prepareErr != nil {
+		return prepareErr
+	}
+	if prepared.Cleanup != nil {
+		defer prepared.Cleanup()
+	}
+	implementationPrompt = prepared.Prompt
 	currentAgent, resuming := tracker.NextAgent()
 
 	if !opts.quiet {
@@ -1496,6 +1498,13 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 		}
 	}
 
+	readReplies := kataReplyPromptReader(newDaemonAPI(batchAddr, getDaemonHTTPClientForURL(batchAddr, 0)), "fix")
+	for i := range entries {
+		entries[i].review.Job = entries[i].job
+		review := *entries[i].review
+		review.Output += readReplies(ctx, entries[i].review)
+		entries[i].review = &review
+	}
 	// Split into batches by prompt size (after severity resolution
 	// so the severity instruction overhead is accounted for)
 	maxSize := config.ResolveMaxPromptSize(roots.worktreeRoot, cfg)
@@ -1559,12 +1568,12 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 			if opts.planOnly {
 				continue
 			}
-			prepared, prepareErr := prompt.NewBuilderWithConfig(nil, cfg).ForRepo(roots.worktreeRoot, 0).Prepare(fixPrompt, prompt.SnapshotTarget{})
-			if prepareErr != nil {
-				return prepareErr
-			}
-			fixPrompt, cleanupPrompt = prepared.Prompt, prepared.Cleanup
 		}
+		prepared, prepareErr := prompt.NewBuilderWithConfig(nil, cfg).ForRepo(roots.worktreeRoot, 0).Prepare(fixPrompt, prompt.SnapshotTarget{})
+		if prepareErr != nil {
+			return prepareErr
+		}
+		fixPrompt, cleanupPrompt = prepared.Prompt, prepared.Cleanup
 
 		if !opts.quiet {
 			cmd.Printf("Running fix agent (%s) to apply changes...\n\n", currentAgent.Name())

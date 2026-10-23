@@ -30,6 +30,8 @@ type UpdateJobBranchBody = UpdateJobBranchRequest
 
 type BatchJobsBody = BatchJobsRequest
 
+type KataConsumeContextBody = KataConsumeContextRequest
+
 type KataCreateIssueBody = KataCreateRequest
 
 type KataPublishBody = KataPublishRequest

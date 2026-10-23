@@ -21,7 +21,20 @@ func kataCmd() *cobra.Command {
 
 func kataCreateCmd() *cobra.Command { return kataPublicationCmd(true) }
 
-func kataShowCmd() *cobra.Command { return kataPublicationCmd(false) }
+func kataShowCmd() *cobra.Command {
+	cmd := kataPublicationCmd(false)
+	cmd.Use = "show [job_id|sha]"
+	cmd.Short = "Show mapped findings, reply claims, and Kata delivery state"
+	cmd.Args = cobra.MaximumNArgs(1)
+	var issueRef string
+	cmd.Flags().StringVar(&issueRef, "issue", "", "read pinned findings by a saved Kata issue reference")
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		forceJobID, _ := cmd.Flags().GetBool("job")
+		asJSON, _ := cmd.Flags().GetBool("json")
+		return runKataShow(cmd, args, forceJobID, asJSON, issueRef)
+	}
+	return cmd
+}
 
 func kataPublicationCmd(publish bool) *cobra.Command {
 	var forceJobID bool

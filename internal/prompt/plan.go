@@ -101,6 +101,7 @@ func FixPlanReviewContext(repoPath string, review *storage.Review) string {
 
 // BuildPlanPrompt also supplies the reviewed ref and original diff when available.
 func (b *Builder) BuildPlanPrompt(review *storage.Review, responses []storage.Response, minSeverity string) (string, error) {
+	review = b.reviewWithKataReplies(review)
 	skillRoot := b.planSkillRoot
 	if skillRoot == "" {
 		skillRoot = b.repoPath

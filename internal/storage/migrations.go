@@ -39,6 +39,7 @@ var schemaMigrations = []schemaMigration{
 	{4, "Kata publication handoffs", migrateKataHandoffs},
 	{5, "reassessment context", migrateReassessments},
 	{6, "typed Kata responses", migrateKataResponses},
+	{7, "consumed Kata reply snapshots", migrateKataReplySnapshots},
 }
 
 // ErrSchemaTooNew reports a database written by a newer roborev release.

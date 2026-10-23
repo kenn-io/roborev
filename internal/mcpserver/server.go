@@ -13,19 +13,29 @@ const HTTPPath = "/mcp"
 
 // Server wraps an MCP server whose tools access roborev data through a Backend.
 type Server struct {
-	backend  Backend
-	mcp      *mcp.Server
-	activity sync.WaitGroup
+	backend         Backend
+	mcp             *mcp.Server
+	activity        sync.WaitGroup
+	allowKataWrites bool
 }
+
+type Option func(*Server)
+
+// WithKataWrites exposes the typed Kata reply tool. Default servers cannot
+// advertise or invoke it; review bookkeeping tools keep their existing policy.
+func WithKataWrites() Option { return func(s *Server) { s.allowKataWrites = true } }
 
 // New builds a server exposing the roborev tools. backend must not
 // be nil.
 // activity may be nil; it runs independently and must bound its work.
-func New(backend Backend, version string, activity func(context.Context)) *Server {
+func New(backend Backend, version string, activity func(context.Context), options ...Option) *Server {
 	if backend == nil {
 		panic("mcpserver: backend is required")
 	}
 	s := &Server{backend: backend}
+	for _, option := range options {
+		option(s)
+	}
 	s.mcp = mcp.NewServer(
 		&mcp.Implementation{Name: "roborev", Version: version},
 		&mcp.ServerOptions{Capabilities: &mcp.ServerCapabilities{
@@ -35,6 +45,7 @@ func New(backend Backend, version string, activity func(context.Context)) *Serve
 	)
 	s.registerTools()
 	s.registerWriteTools()
+	s.registerKataTools()
 	s.registerGuidance()
 	s.mcp.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {

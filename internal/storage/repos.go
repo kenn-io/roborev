@@ -739,6 +739,12 @@ func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
 			return err
 		}
 
+		// Consumed replies also retain discussion text. Delete them explicitly
+		// because foreign-key enforcement is local to each SQLite connection.
+		if _, err := conn.ExecContext(ctx, `DELETE FROM kata_reply_snapshots WHERE source_job_id IN (SELECT id FROM review_jobs WHERE repo_id = ?)`, repoID); err != nil {
+			return err
+		}
+
 		// Pinned findings hold review text, so they leave with their jobs.
 		if _, err := conn.ExecContext(ctx, `DELETE FROM finding_snapshots WHERE job_id IN (SELECT id FROM review_jobs WHERE repo_id = ?)`, repoID); err != nil {
 			return err

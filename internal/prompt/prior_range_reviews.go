@@ -146,7 +146,7 @@ func (b *Builder) priorRangeReviewViews(
 				Range:  gitrepo.ShortSHA(resolvedStart) + ".." + gitrepo.ShortSHA(resolvedEnd),
 				Agent:  review.Agent,
 				When:   review.CreatedAt.Format("2006-01-02 15:04"),
-				Output: review.Output,
+				Output: b.reviewWithKataReplies(review).Output,
 			}
 			if responses, err := b.db.GetCommentsForJob(review.JobID); err == nil {
 				for _, response := range storage.PromptTrustedResponses(responses) {

@@ -604,7 +604,8 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 		previousAttempts = append(carriedAttempts, previousAttempts...)
 
 		// Build address prompt
-		builder := prompt.NewBuilderWithConfig(nil, cfg).ForRepo(repoPath, 0)
+		builder := prompt.NewBuilderWithConfig(nil, cfg).ForRepo(repoPath, 0).WithContext(ctx).
+			WithKataReplies(kataReplyPromptReader(getDaemonEndpoint().APIClient(0), "fix"))
 		addressPrompt, err := builder.BuildAddressPrompt(currentFailedReview, previousAttempts, minSev)
 		if err != nil {
 			return fmt.Errorf("build address prompt: %w", err)
@@ -670,15 +671,12 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 			return dirtyRefineSubmodulesError(dirtySubmodules)
 		}
 
-		var cleanupPrompt func()
-		if opts.plan {
-			prepared, prepareErr := builder.Prepare(addressPrompt, prompt.SnapshotTarget{RepoPath: worktreePath, ConfigRepoPath: repoPath})
-			if prepareErr != nil {
-				_ = wt.Close(ctx)
-				return prepareErr
-			}
-			addressPrompt, cleanupPrompt = prepared.Prompt, prepared.Cleanup
+		prepared, prepareErr := builder.Prepare(addressPrompt, prompt.SnapshotTarget{RepoPath: worktreePath, ConfigRepoPath: repoPath})
+		if prepareErr != nil {
+			_ = wt.Close(ctx)
+			return prepareErr
 		}
+		addressPrompt, cleanupPrompt := prepared.Prompt, prepared.Cleanup
 
 		// Determine output writer
 		var agentOutput io.Writer

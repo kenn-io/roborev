@@ -112,6 +112,7 @@ type reviewRefInput struct {
 }
 
 type reviewOutput struct {
+	UUID          string                 `json:"uuid,omitempty"`
 	WebURL        string                 `json:"web_url,omitempty" jsonschema:"browser URL for this review on its owning daemon; use this URL when linking to the review"`
 	ID            int64                  `json:"id"`
 	JobID         int64                  `json:"job_id"`
@@ -415,6 +416,9 @@ func (s *Server) getReview(ctx context.Context, in reviewRefInput) (reviewOutput
 		Closed:    review.Closed,
 		CreatedAt: review.CreatedAt,
 		Output:    review.Output,
+	}
+	if review.UUID != nil {
+		out.UUID = review.UUID.String() //nolint:forbidigo // Immutable review UUID in the MCP response.
 	}
 	if review.Job != nil {
 		row := newJobRow(review.Job)
