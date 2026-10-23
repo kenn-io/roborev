@@ -86,8 +86,8 @@ func (r RuntimeInfo) processRecord() kitdaemon.RuntimeRecord {
 	return kitdaemon.RuntimeRecord{PID: r.PID, ProcessIdentity: r.processIdentity, ProcessIdentityV2: r.processIdentityV2}
 }
 
-// Unjudged reports whether the caller cannot judge this runtime's process identity.
-func (r *RuntimeInfo) Unjudged() bool {
+// unjudged reports whether the caller cannot judge this runtime's process identity.
+func (r *RuntimeInfo) unjudged() bool {
 	switch kitdaemon.RuntimeProcessScope(r.processRecord()) {
 	case kitdaemon.ProcessScopeForeign, kitdaemon.ProcessScopeUnknown:
 		return true
@@ -334,7 +334,7 @@ func ListJudgedRuntimes() ([]*RuntimeInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return slices.DeleteFunc(runtimes, (*RuntimeInfo).Unjudged), nil
+	return slices.DeleteFunc(runtimes, (*RuntimeInfo).unjudged), nil
 }
 
 // legacyRuntimeInfo is the on-disk shape written by roborev v0.56 and earlier,
@@ -448,7 +448,7 @@ func discoverRuntimeRecords(
 	var deniedErr error
 	for _, rec := range records {
 		info := runtimeInfoFromRecord(rec)
-		if info.Unjudged() || info.hasStaleProcess() {
+		if info.unjudged() || info.hasStaleProcess() {
 			continue
 		}
 		primary := info.Endpoint()

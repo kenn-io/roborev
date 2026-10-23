@@ -80,7 +80,7 @@ func TestDiscoverySkipsLiveSandboxDaemon(t *testing.T) {
 	runtimes, err := ListAllRuntimes()
 	require.NoError(t, err)
 	require.Len(t, runtimes, 1)
-	assert.True(t, runtimes[0].Unjudged())
+	assert.True(t, runtimes[0].unjudged())
 	after, err := os.ReadFile(path)
 	require.NoError(t, err)
 	assert.Equal(t, before, after)
