@@ -281,16 +281,23 @@ func TestUnjudgedRuntimeKeepsKeyOffTCP(t *testing.T) {
 			writeAuthClientConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 			switch operation {
 			case "discovery":
-				_, err = GetAnyRunningDaemonContext(t.Context())
-				require.ErrorIs(t, err, os.ErrNotExist)
+				info, err = GetAnyRunningDaemonContext(t.Context())
+				require.NoError(t, err)
+				_, err = ProbeDaemon(info.Endpoint(), time.Second)
+				require.NoError(t, err)
+				_, err = info.Endpoint().APIClient(time.Second).GetStatusRaw(t.Context())
+				require.ErrorIs(t, err, ErrUnjudgedEndpointAuth)
+				assert.True(t, IsDaemonAccessError(err))
 			case "subsequent request":
 				_, err = info.Endpoint().APIClient(time.Second).PingRaw(t.Context())
-				require.ErrorIs(t, err, ErrGuessedEndpointAuth)
+				require.ErrorIs(t, err, ErrUnjudgedEndpointAuth)
+				assert.True(t, IsDaemonAccessError(err))
 			case "alternate endpoint":
 				info.Network, info.Address = "unix", filepath.Join(t.TempDir(), "missing.sock")
 				info.AlternateNetwork, info.AlternateAddress = rec.Network, rec.Address
 				_, err = info.Endpoints()[1].APIClient(time.Second).PingRaw(t.Context())
-				require.ErrorIs(t, err, ErrGuessedEndpointAuth)
+				require.ErrorIs(t, err, ErrUnjudgedEndpointAuth)
+				assert.True(t, IsDaemonAccessError(err))
 			}
 			assert.Zero(t, credentials.Load())
 			assert.FileExists(t, path)

@@ -325,6 +325,8 @@ gitlab.com/gitlab-org/api/client-go/v3 v3.23.0 h1:HPFPSeBItRLdrumVnb2cT5+EQrA3aX
 gitlab.com/gitlab-org/api/client-go/v3 v3.23.0/go.mod h1:UQl7jIdE6nbYNDtc4XWXeiam0V4MJx459e637POlpnQ=
 go.kenn.io/kit v0.41.1-0.20261022220146-997a3e4b4bb4 h1:E+cJdHBTUxKWAVba9tu5qco3JEXAjZQlp3z4bbGWAAI=
 go.kenn.io/kit v0.41.1-0.20261022220146-997a3e4b4bb4/go.mod h1:Ze4GU9HHdj0R9UfjfGPObyPiy0Qb3lOHMC66f916NHw=
+go.kenn.io/kit v0.41.1-0.20261022233930-b1a6fa107f8e h1:8ycqYCSfK6Ug0x59dEeD5T4pW2sKlye9ri/E+vGE5x4=
+go.kenn.io/kit v0.41.1-0.20261022233930-b1a6fa107f8e/go.mod h1:Ze4GU9HHdj0R9UfjfGPObyPiy0Qb3lOHMC66f916NHw=
 go.yaml.in/yaml/v3 v3.0.4/go.mod h1:DhzuOOF2ATzADvBadXxruRBLzYTpT36CKvDb3+aBEFg=
 go.yaml.in/yaml/v3 v3.0.5 h1:N6y/pJk8buWs9NY5ERU2HSMfm+IuD/OtfdAnq6kESPw=
 go.yaml.in/yaml/v3 v3.0.5/go.mod h1:HVTZu1O7/Vkt2N+BFy8Zza+lnLsABggaTM2ZpNIGuKg=

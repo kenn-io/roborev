@@ -225,7 +225,9 @@ func startServerAndWaitForRuntime(t *testing.T, server *Server) (<-chan error, *
 		}
 		var err error
 		info, err = ReadRuntime()
-		return err == nil
+		server.endpointMu.Lock()
+		defer server.endpointMu.Unlock()
+		return err == nil && info.PID == os.Getpid() && info.Address == server.endpoint.Address
 	}, 5*time.Second, 10*time.Millisecond)
 	require.NoError(t, startErr)
 	require.NotNil(t, info)
@@ -450,22 +452,7 @@ func TestServerStartHandlesRuntimeIdentities(t *testing.T) {
 				assert.FileExists(t, path)
 				return
 			}
-			errCh := make(chan error, 1)
-			go func() { errCh <- server.Start(t.Context()) }()
-			var info *RuntimeInfo
-			var startErr error
-			// Wall-clock wait: startup replaces the previous sandbox's runtime file.
-			require.Eventually(t, func() bool {
-				select {
-				case startErr = <-errCh:
-					return true
-				default:
-				}
-				info, err = ReadRuntime()
-				return err == nil && info.Address != rec.Address
-			}, 5*time.Second, 10*time.Millisecond)
-			require.NoError(t, startErr)
-			require.NotNil(t, info)
+			errCh, info := startServerAndWaitForRuntime(t, server)
 			assert.Equal(t, os.Getpid(), info.PID)
 			stopTestServer(t, server, errCh)
 		})
