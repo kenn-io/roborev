@@ -33,11 +33,15 @@ type statusJSONOutput struct {
 }
 
 func TestStatusCmdJSONKeepsRespondingUnjudgedDaemon(t *testing.T) {
-	for _, jsonOutput := range []bool{true, false} {
-		t.Run(fmt.Sprintf("json=%t", jsonOutput), func(t *testing.T) {
+	for _, tc := range []struct{ jsonOutput, foreign bool }{{true, true}, {false, true}, {true, false}, {false, false}} {
+		jsonOutput, foreign := tc.jsonOutput, tc.foreign
+		t.Run(fmt.Sprintf("json=%t/foreign=%t", jsonOutput, foreign), func(t *testing.T) {
 			stubServiceRecovery(t)
 			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-			rec := testutil.UnjudgedRuntimeRecord(t, "tcp", "")
+			rec := testutil.UnknownRuntimeRecord("tcp", "")
+			if foreign {
+				rec = testutil.UnjudgedRuntimeRecord(t, "tcp", "")
+			}
 			var credentials, otherRequests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("Authorization") != "" {
@@ -71,13 +75,21 @@ func TestStatusCmdJSONKeepsRespondingUnjudgedDaemon(t *testing.T) {
 				var parsed statusJSONResult
 				require.NoError(t, json.Unmarshal([]byte(output), &parsed))
 				assert.True(parsed.Running)
-				assert.Contains(parsed.Error, "another PID namespace")
+				if foreign {
+					assert.Contains(parsed.Error, "runs in another PID namespace")
+				} else {
+					assert.Contains(parsed.Error, "its process identity can't be judged here")
+				}
 				assert.Nil(parsed.Daemon)
 				assert.Empty(parsed.Jobs)
 			} else {
-				assert.Contains(output, fmt.Sprintf("Daemon: running (pid %d, another PID namespace)", rec.PID))
+				assert.Contains(output, fmt.Sprintf("Daemon: running (pid %d", rec.PID))
 				assert.Contains(output, "Status: unavailable")
-				assert.Contains(output, "run status from the PID namespace that started it")
+				if foreign {
+					assert.Contains(output, "run status from the PID namespace that started it")
+				} else {
+					assert.Contains(output, "its process identity can't be judged here")
+				}
 				assert.NotContains(output, "Jobs:")
 			}
 			assert.Zero(ensures)

@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -24,23 +23,14 @@ import (
 )
 
 func TestKillDaemonKeepsForeignRuntimeWithoutShutdown(t *testing.T) {
-	if address := os.Getenv("ROBOREV_TEST_PIDNS_STOP_ADDRESS"); address != "" {
-		t.Setenv("ROBOREV_DATA_DIR", os.Getenv("ROBOREV_TEST_PIDNS_DATA"))
-		require.Equal(t, 2, os.Getpid())
-		require.NoError(t, WriteRuntime(DaemonEndpoint{Network: "tcp", Address: address}, nil, "test", nil))
-		require.NoError(t, os.WriteFile(filepath.Join(config.DataDir(), "ready"), nil, 0o600))
-		_, err := io.Copy(io.Discard, os.Stdin)
-		require.NoError(t, err)
-		return
-	}
-
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv("ROBOREV_TEST_PIDNS_DATA", testenv.SetDataDir(t))
+	testenv.SetDataDir(t)
+	rec := testutil.UnjudgedRuntimeRecord(t, "tcp", "")
 	var shutdownRequests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/ping":
-			_, _ = io.WriteString(w, `{"ok":true,"service":"roborev","pid":2}`)
+			_, _ = fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, rec.PID)
 		case "/api/shutdown":
 			shutdownRequests.Add(1)
 			w.WriteHeader(http.StatusBadRequest)
@@ -49,20 +39,16 @@ func TestKillDaemonKeepsForeignRuntimeWithoutShutdown(t *testing.T) {
 		}
 	}))
 	t.Cleanup(server.Close)
-	t.Setenv("ROBOREV_TEST_PIDNS_STOP_ADDRESS", strings.TrimPrefix(server.URL, "http://"))
-	setShortRuntimeDir(t)
-	testutil.RunPIDNamespaceTest(t, nil, filepath.Join(config.DataDir(), "ready"))
-
-	records, err := runtimeStore().List()
+	rec.Address = server.Listener.Addr().String()
+	path, err := runtimeStore().Write(rec)
 	require.NoError(t, err)
-	require.Len(t, records, 1)
-	require.Equal(t, kitdaemon.ProcessScopeForeign, kitdaemon.RuntimeProcessScope(records[0]))
-	info := runtimeInfoFromRecord(records[0])
+	rec.SourcePath = path
+	info := runtimeInfoFromRecord(rec)
 	before, err := os.ReadFile(info.SourcePath)
 	require.NoError(t, err)
 	ping, err := ProbeDaemon(info.Endpoint(), time.Second)
 	require.NoError(t, err)
-	require.Equal(t, 2, ping.PID)
+	require.Equal(t, rec.PID, ping.PID)
 
 	err = KillDaemon(info)
 	assert := assert.New(t)
@@ -157,4 +143,27 @@ func TestServerStartAfterShellLaunchedSandbox(t *testing.T) {
 	t.Setenv("ROBOREV_TEST_PIDNS_PHASE", "start")
 	// The trailing command keeps the shell at PID 2 while the daemon runs at PID 3.
 	testutil.RunPIDNamespaceTest(t, []string{"sh", "-c", `"$@"; result=$?; exit "$result"`, "sh"}, "")
+}
+
+func TestReviewForeignDiscoveryRejectsRedirectedPing(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	testenv.SetDataDir(t)
+	rec := testutil.UnjudgedRuntimeRecord(t, "tcp", "")
+	var redirectedRequests atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirectedRequests.Add(1)
+		_, _ = fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, rec.PID)
+	}))
+	t.Cleanup(target.Close)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+r.URL.Path, http.StatusFound)
+	}))
+	t.Cleanup(server.Close)
+	rec.Address = server.Listener.Addr().String()
+	_, err := runtimeStore().Write(rec)
+	require.NoError(t, err)
+	info, err := FindUnjudgedDaemon()
+	require.Error(t, err)
+	assert.Nil(t, info)
+	assert.Zero(t, redirectedRequests.Load())
 }

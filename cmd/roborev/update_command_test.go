@@ -17,6 +17,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/testutil"
@@ -574,9 +575,36 @@ func TestDiscoverDaemonForUpdateReportsUnjudgedRuntime(t *testing.T) {
 	listAllRuntimes = daemon.ListLocalRuntimes
 	getAnyRunningDaemon = daemon.GetAnyRunningDaemon
 	info, err := discoverDaemonForUpdate()
-	require.EqualError(t, err, fmt.Sprintf("daemon pid %d runs in another PID namespace; stop it from there", rec.PID))
+	require.EqualError(t, err, fmt.Sprintf("daemon pid %d: its process identity can't be judged here", rec.PID))
 	assert.Nil(t, info)
 	after, err := os.ReadFile(path)
 	require.NoError(t, err)
 	assert.Equal(t, before, after)
+}
+
+func TestReviewUpdateIgnoresDeadSandboxPIDCollision(t *testing.T) {
+	stubUpdateCommand(t)
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	var rec kitdaemon.RuntimeRecord
+	t.Run("sandbox", func(t *testing.T) {
+		rec = testutil.UnjudgedRuntimeRecord(t, "tcp", "127.0.0.1:1")
+	})
+	if rec.PID == 0 {
+		t.Skip("requires PID namespaces")
+	}
+	// The sandbox exited, but its numeric PID collides with a live host process.
+	rec.PID = os.Getpid()
+	require.Equal(t, kitdaemon.ProcessScopeGone, kitdaemon.RuntimeProcessScope(rec))
+	_, err := daemon.RuntimeStore().Write(rec)
+	require.NoError(t, err)
+	listAllRuntimes = daemon.ListLocalRuntimes
+	getAnyRunningDaemon = daemon.GetAnyRunningDaemon
+	oldAlive := isPIDAliveForUpdate
+	t.Cleanup(func() { isPIDAliveForUpdate = oldAlive })
+	pidChecks := 0
+	isPIDAliveForUpdate = func(int) bool { pidChecks++; return true }
+	info, err := discoverDaemonForUpdate()
+	require.NoError(t, err)
+	assert.Nil(t, info)
+	assert.Zero(t, pidChecks)
 }

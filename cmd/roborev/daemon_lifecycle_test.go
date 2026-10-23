@@ -562,10 +562,45 @@ func TestStopDaemonReportsUnjudgedRuntime(t *testing.T) {
 			require.NoError(t, err)
 			before, err := os.ReadFile(path)
 			require.NoError(t, err)
-			require.EqualError(t, stopDaemon(), fmt.Sprintf("daemon pid %d runs in another PID namespace; stop it from there", rec.PID))
+			message := fmt.Sprintf("daemon pid %d: its process identity can't be judged here", rec.PID)
+			if foreign {
+				message = fmt.Sprintf("daemon pid %d runs in another PID namespace; stop it from there", rec.PID)
+			}
+			require.EqualError(t, stopDaemon(), message)
 			after, err := os.ReadFile(path)
 			require.NoError(t, err)
 			assert.Equal(t, before, after)
+		})
+	}
+}
+
+func TestEnsureDaemonRejectsRespondingUnjudgedDaemon(t *testing.T) {
+	for _, foreign := range []bool{false, true} {
+		t.Run(fmt.Sprintf("foreign=%t", foreign), func(t *testing.T) {
+			isolateDaemonSelection(t)
+			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+			rec := testutil.UnknownRuntimeRecord("tcp", "")
+			if foreign {
+				rec = testutil.UnjudgedRuntimeRecord(t, "tcp", "")
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/api/ping", r.URL.Path)
+				_, _ = fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, rec.PID)
+			}))
+			t.Cleanup(server.Close)
+			rec.Address = server.Listener.Addr().String()
+			_, err := daemon.RuntimeStore().Write(rec)
+			require.NoError(t, err)
+			getAnyRunningDaemon = daemon.GetAnyRunningDaemon
+			starts := 0
+			startDaemonForEnsure = func() error { starts++; return nil }
+			err = ensureDaemon()
+			message := fmt.Sprintf("daemon pid %d: its process identity can't be judged here", rec.PID)
+			if foreign {
+				message = fmt.Sprintf("daemon pid %d runs in another PID namespace", rec.PID)
+			}
+			require.EqualError(t, err, message)
+			assert.Zero(t, starts)
 		})
 	}
 }

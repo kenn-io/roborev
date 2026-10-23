@@ -88,9 +88,14 @@ func (r RuntimeInfo) processRecord() kitdaemon.RuntimeRecord {
 	return kitdaemon.RuntimeRecord{PID: r.PID, ProcessIdentity: r.processIdentity, ProcessIdentityV2: r.processIdentityV2}
 }
 
+// ProcessScope reports how kit classifies the recorded process identity here.
+func (r RuntimeInfo) ProcessScope() kitdaemon.ProcessScope {
+	return kitdaemon.RuntimeProcessScope(r.processRecord())
+}
+
 // Unjudged reports whether the caller cannot judge this runtime's process identity.
 func (r *RuntimeInfo) Unjudged() bool {
-	switch kitdaemon.RuntimeProcessScope(r.processRecord()) {
+	switch r.ProcessScope() {
 	case kitdaemon.ProcessScopeForeign, kitdaemon.ProcessScopeUnknown:
 		return true
 	}
@@ -338,7 +343,7 @@ func ListLocalRuntimes() ([]*RuntimeInfo, error) {
 	}
 	local := runtimes[:0]
 	for _, info := range runtimes {
-		if !info.Unjudged() {
+		if !info.Unjudged() && !info.Stale() {
 			local = append(local, info)
 		}
 	}
@@ -356,12 +361,10 @@ func FindUnjudgedDaemon() (*RuntimeInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+	clientAuth.Key = ""
 	return discoverRuntimeRecords(context.Background(), records, (*RuntimeInfo).Unjudged,
 		func(ctx context.Context, ep DaemonEndpoint) (*PingInfo, error) {
-			if !ep.IsUnix() && !isLoopbackAddr(ep.Address) {
-				return nil, fmt.Errorf("non-loopback daemon address: %s", ep.Address)
-			}
-			return probeDaemonHTTP(ctx, ep, time.Second, ep.transportClient(time.Second, clientAuth.TLS))
+			return probeRuntimeRecordWithAuth(ctx, ep, clientAuth)
 		})
 }
 
@@ -893,7 +896,7 @@ func CleanupZombieDaemons(target DaemonEndpoint) int {
 		if IsDaemonAccessError(probeErr) {
 			continue
 		}
-		if info.PID > 0 && kitdaemon.RuntimeProcessScope(info.processRecord()) == kitdaemon.ProcessScopeLocal && identifyProcess(info.PID) == processNotRoborev {
+		if info.PID > 0 && identifyProcess(info.PID) == processNotRoborev {
 			if ep.IsUnix() && ep.Address != target.Address {
 				os.Remove(ep.Address)
 			}

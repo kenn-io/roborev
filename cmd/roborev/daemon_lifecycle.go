@@ -349,6 +349,10 @@ func ensureDaemon() error {
 		return nil
 	}
 
+	if info, err := daemon.FindUnjudgedDaemon(); err == nil {
+		return unjudgedRuntimeError(info)
+	}
+
 	// Legacy pre-kit daemons are invisible to kit discovery because they do
 	// not serve /api/ping, but they can still hold the default port and DB.
 	// Cleanup uses only this data directory's runtime records. Never adopt
@@ -506,6 +510,13 @@ func stopDaemon() error {
 	return err
 }
 
+func unjudgedRuntimeError(info *daemon.RuntimeInfo) error {
+	if info.ProcessScope() == kitdaemon.ProcessScopeForeign {
+		return fmt.Errorf("daemon pid %d runs in another PID namespace", info.PID)
+	}
+	return fmt.Errorf("daemon pid %d: its process identity can't be judged here", info.PID)
+}
+
 func unjudgedDaemonError() error {
 	runtimes, err := daemon.ListAllRuntimes()
 	if err != nil {
@@ -513,7 +524,11 @@ func unjudgedDaemonError() error {
 	}
 	for _, info := range runtimes {
 		if info.Unjudged() {
-			return fmt.Errorf("daemon pid %d runs in another PID namespace; stop it from there", info.PID)
+			err := unjudgedRuntimeError(info)
+			if info.ProcessScope() == kitdaemon.ProcessScopeForeign {
+				return fmt.Errorf("%w; stop it from there", err)
+			}
+			return err
 		}
 	}
 	return nil
