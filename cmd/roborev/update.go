@@ -96,7 +96,7 @@ func runtimePID() int {
 		return 0
 	}
 	for _, info := range runtimes {
-		if info != nil && info.PID > 0 {
+		if info != nil && info.PID > 0 && !info.Stale() {
 			return info.PID
 		}
 	}
@@ -121,7 +121,7 @@ func runtimeHasPID(pid int) bool {
 		if info == nil || info.PID != pid {
 			continue
 		}
-		if isPIDAliveForUpdate(pid) {
+		if !info.Stale() && isPIDAliveForUpdate(pid) {
 			return true
 		}
 		// Best-effort stale runtime cleanup.
@@ -175,7 +175,7 @@ func pidInSet(pids map[int]struct{}, pid int) bool {
 	return ok
 }
 
-// runtimePIDSet returns all runtime PIDs currently on disk.
+// runtimePIDSet returns runtime PIDs on disk whose records are not stale.
 func runtimePIDSet() (map[int]struct{}, error) {
 	runtimes, err := listAllRuntimes()
 	if err != nil {
@@ -183,7 +183,7 @@ func runtimePIDSet() (map[int]struct{}, error) {
 	}
 	pids := make(map[int]struct{}, len(runtimes))
 	for _, info := range runtimes {
-		if info != nil && info.PID > 0 {
+		if info != nil && info.PID > 0 && !info.Stale() {
 			pids[info.PID] = struct{}{}
 		}
 	}
@@ -724,7 +724,7 @@ func discoverDaemonForUpdate() (*daemon.RuntimeInfo, error) {
 		if runtimeInfo == nil || runtimeInfo.PID <= 0 {
 			continue
 		}
-		if isPIDAliveForUpdate(runtimeInfo.PID) {
+		if !runtimeInfo.Stale() && isPIDAliveForUpdate(runtimeInfo.PID) {
 			return nil, fmt.Errorf("running daemon is not responsive: %w", probeErr)
 		}
 		if runtimeInfo.SourcePath != "" {

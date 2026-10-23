@@ -504,9 +504,7 @@ func listJudgedRuntimes() ([]*daemon.RuntimeInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return slices.DeleteFunc(runtimes, func(info *daemon.RuntimeInfo) bool {
-		return info.Unjudged() || info.Stale()
-	}), nil
+	return slices.DeleteFunc(runtimes, (*daemon.RuntimeInfo).Unjudged), nil
 }
 
 // stopDaemon stops any running daemons.
