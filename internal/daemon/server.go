@@ -242,9 +242,17 @@ func newServerWithLogs(
 	// as event streams when it begins. Stop shuts the server down only after
 	// the worker pool has drained.
 	requestContext, cancelRequests := context.WithCancel(context.Background())
+	// The reviewer endpoint is always mounted; it serves only callers holding
+	// a token the worker pool issued to a running review.
+	grants := newReviewerGrants()
+	s.workerPool.reviewerGrants = grants
+	s.workerPool.reviewerURL = s.reviewerURL
+	reviewer := mcpserver.NewReviewer(reviewerBackend{db: db}, version.Version)
 	s.httpServer = &http.Server{
-		Addr:    cfg.ServerAddr,
-		Handler: withAPIAuthentication(mux, cfg.AuthKey),
+		Addr: cfg.ServerAddr,
+		Handler: withReviewerEndpoint(
+			withAPIAuthentication(mux, cfg.AuthKey), reviewer.HTTPHandler(grants.verify),
+		),
 		BaseContext: func(net.Listener) context.Context {
 			return requestContext
 		},

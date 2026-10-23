@@ -204,3 +204,16 @@ func (b *Builder) readCustomReviewRefFile(
 		filePath = filepath.ToSlash(relativeTarget)
 	}
 }
+
+const reviewerToolsInstruction = "\n\nThe roborev_review tools show earlier findings on this branch, " +
+	"the decisions recorded on them, and git log and blame at this commit: before reporting a " +
+	"finding on code a recent commit changed, check whether it was already raised or decided."
+
+// AddReviewerToolsInstruction tells the reviewer about the reviewer MCP tools.
+// It goes before the structured output instruction so that stays last.
+func AddReviewerToolsInstruction(prompt string) string {
+	if i := strings.LastIndex(prompt, structuredReviewOutputInstruction); i >= 0 {
+		return prompt[:i] + reviewerToolsInstruction + prompt[i:]
+	}
+	return prompt + reviewerToolsInstruction
+}

@@ -208,6 +208,60 @@ coverage semantics.
 Errors are returned as tool errors with a stable `code` of `not_found`,
 `invalid_argument`, `unavailable`, or `internal`.
 
+## Reviewer tools (experimental)
+
+roborev can also give its own review agents a second, separate set of read-only
+tools. A reviewer uses them to look up what the branch has already been through,
+so it does not re-raise a finding someone declined or ask to undo a fix for an
+earlier finding.
+
+Turn it on in the global configuration. No restart is needed:
+
+```toml
+[mcp]
+reviewer_tools = true
+```
+
+`reviewer_tools` does not depend on `enabled`. When it is on, local reviews of a
+single commit on a named branch get the tools if they run on Claude Code or
+Codex. CI reviews, reviews with prebuilt prompts, and other agents run as
+before. The review prompt gains one sentence that names the tools.
+
+| Tool | Returns |
+|------|---------|
+| `branch_findings` | Earlier finished reviews of this branch, newest first: job ID, commit, review type, verdict, closed state, a one-line claim for each finding with severity and location, and the comments recording what was decided |
+| `prior_review` | The full text and comments of one earlier review, by `job_id` or `commit` |
+| `git_log` | Commits that changed a file or a line range, at the reviewed commit |
+| `git_blame` | The commit that last changed each line in a range, at the reviewed commit |
+
+`git_log` and `git_blame` mark each commit with `on_branch` and with
+`fix_for_jobs`: the earlier reviews whose comments cite that commit, which
+usually means it fixed one of their findings.
+
+How access is limited:
+
+- The daemon serves these tools at `/mcp/review`, apart from `/mcp`. They cannot
+    comment, close reviews, or start anything.
+- Each review attempt gets its own random bearer token. The token lives only in
+    daemon memory, is revoked when the attempt ends, and expires at the job
+    timeout. The daemon `auth_key` does not open `/mcp/review`, and a reviewer
+    token does not open any other daemon API.
+- The token fixes the repository, branch, and commit. Tools take no repository
+    or branch arguments. They return only reviews recorded on that branch whose
+    commits are still in the branch's history: for a feature branch, commits not
+    yet on the default branch.
+- Git commands run with fixed arguments against the reviewed commit, never the
+    working tree. Paths must be relative to the repository root.
+- Claude Code gets the server through `--strict-mcp-config`, so your own MCP
+    servers are not loaded, and only the four tools are allowed. Codex gets it
+    through `mcp_servers` configuration, with the token in an environment
+    variable. Codex keeps its read-only sandbox, because Codex calls MCP servers
+    from its own process. Codex loads your own MCP servers only if
+    `ignore_review_user_config` is off.
+
+The tools need the daemon on a plain TCP listener. With a Unix socket or
+`[daemon_tls]`, reviewers run without them.
+
 ## Guidance resource
 
 The server publishes a `roborev://mcp/guidance` Markdown resource describing the

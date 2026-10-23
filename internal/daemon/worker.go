@@ -55,6 +55,10 @@ type WorkerPool struct {
 	activityLog          *ActivityLog
 	budgetRouter         *BudgetRouter
 	captureSetupFinished func()
+	// reviewerGrants and reviewerURL issue reviewer MCP tools to review
+	// attempts. Both are nil when no server mounts the reviewer endpoint.
+	reviewerGrants *reviewerGrants
+	reviewerURL    func() string
 
 	numWorkers    int
 	activeWorkers atomic.Int32
@@ -1258,6 +1262,22 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		reviewPrompt = prompt.ReconcileStructuredOutputInstruction(reviewPrompt, true)
 	}
 
+	// Reviewer tools are scoped to this attempt: the token expires with the
+	// job timeout and is revoked as soon as the attempt returns.
+	agentCtx := ctx
+	if tools, revoke, ok := wp.reviewerToolsFor(job, a, cfg, deadline); ok {
+		defer revoke()
+		agentCtx = agent.WithReviewerTools(ctx, tools)
+		reviewPrompt = prompt.AddReviewerToolsInstruction(reviewPrompt)
+		promptToPersist = prompt.AddReviewerToolsInstruction(promptToPersist)
+		if saved, err := wp.db.SaveJobPromptForAttempt(job, workerID, promptToPersist); err != nil {
+			wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("save prompt: %v", err))
+			return
+		} else if !saved {
+			return
+		}
+	}
+
 	eventWorktreePath := checkout.eventWorktreePath
 
 	// Broadcast started event
@@ -1438,7 +1458,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		)
 	} else if err == nil {
 		agentReview, err = review.RunAgentReview(
-			ctx, a, reviewRepoPath, job.GitRef, reviewPrompt, job.ReviewType,
+			agentCtx, a, reviewRepoPath, job.GitRef, reviewPrompt, job.ReviewType,
 			effectiveMinSeverity, agentOutput,
 		)
 	}
