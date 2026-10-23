@@ -105,6 +105,9 @@ func cloneState(state State) State {
 // failure stops before the next external write. This method never claims an
 // issue and never changes a missing or mismatched ledger to make it fit.
 func Deliver(ctx context.Context, api API, req Request, state State, checkpoint func(State) error) (State, error) {
+	if len(req.Responses) > 0 {
+		return deliverResponse(ctx, api, req, state, checkpoint)
+	}
 	state = cloneState(state)
 	if err := validateRequest(req); err != nil {
 		return state, err
@@ -541,5 +544,21 @@ func preflightLifecycle(env Envelope) error {
 			return err
 		}
 	}
-	return nil
+	if len(env.Responses) == 0 {
+		return nil
+	}
+	previous, next := env, env
+	// Response bodies remain in both pending and receipted slots. The receipt
+	// UID and attribution digest are their only growth, so reserve both before
+	// registering an operation or sending its comment.
+	previous.Responses = append([]LedgerResponse(nil), env.Responses...)
+	next.Responses = append([]LedgerResponse(nil), env.Responses...)
+	for i, response := range env.Responses {
+		response.ReceiptUID = strings.Repeat("Z", kata.MaxUIDBytes)
+		response.AttributionHash = strings.Repeat("f", 64)
+		previous.Responses[i] = response
+		next.Responses[i] = response
+	}
+
+	return validateGuard(previous, next)
 }

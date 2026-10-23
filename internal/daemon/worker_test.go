@@ -490,6 +490,73 @@ func TestWorkerUsesConfiguredSeverityForStructuredVerdict(t *testing.T) {
 	assert.Equal(t, "P", completed.Verdict)
 }
 
+func TestReassessmentCompletionBroadcastsParentComment(t *testing.T) {
+	t.Parallel()
+	tc := newWorkerTestContext(t, 1)
+	agentName := "reassessment-comment-event-test"
+	a := &structuredRebuttalTestAgent{
+		name:      agentName,
+		sessionID: "original-session",
+		progress:  "Rechecking the selected finding.",
+		result:    `{"outcome":"confirmed","explanation":"The caller validates this before the selected path."}`,
+	}
+	agent.RegisterForTest(t, a)
+	parent := testutil.CreateCompletedReview(
+		t, tc.DB, tc.Repo.ID, "reassessment-comment-event", agentName, findingsReviewDocument,
+	)
+	_, err := tc.DB.Exec(`UPDATE review_jobs SET session_id = ? WHERE id = ?`, a.sessionID, parent.ID)
+	require.NoError(t, err)
+	review, err := tc.DB.GetReviewByJobID(parent.ID)
+	require.NoError(t, err)
+	require.NotNil(t, review.UUID)
+	snapshots, err := tc.DB.AssignFindingSnapshots(t.Context(), parent.ID)
+	require.NoError(t, err)
+	require.NotEmpty(t, snapshots)
+	child, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+		RepoID:      tc.Repo.ID,
+		Agent:       agentName,
+		SessionID:   a.sessionID,
+		Prompt:      "Re-evaluate the selected finding using the user's explanation.",
+		JobType:     storage.JobTypeTask,
+		Source:      storage.JobSourceRebuttal,
+		ParentJobID: parent.ID,
+		Reassessment: &storage.ReassessmentContext{
+			OriginalReviewUUID: *review.UUID,
+			Finding:            snapshots[0],
+			Selector:           snapshots[0].Selector,
+			Requester:          "reader",
+			Explanation:        "Request review of this finding.",
+		},
+	})
+	require.NoError(t, err)
+	claimed, err := tc.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, child.ID, claimed.ID)
+	_, eventCh := tc.Broadcaster.Subscribe("")
+	tc.Pool.processJob(testWorkerID, claimed)
+
+	var comment Event
+events:
+	for {
+		select {
+		case event := <-eventCh:
+			if event.Type == "review.commented" {
+				comment = event
+				break events
+			}
+		default:
+			break events
+		}
+	}
+	require.Equal(t, "review.commented", comment.Type)
+	assert.Equal(t, parent.ID, comment.JobID)
+	assert.Equal(t, parent.GitRef, comment.SHA)
+	comments, err := tc.DB.GetCommentsForJob(parent.ID)
+	require.NoError(t, err)
+	require.Len(t, comments, 2)
+}
+
 func TestCanceledJobCannotRerunUntilBlockedAgentExits(t *testing.T) {
 	t.Parallel()
 	tc := newWorkerTestContext(t, 1)

@@ -94,7 +94,7 @@ func TestKataIntegrationRejected(t *testing.T) {
 func TestKataIntegrationIsGlobalOnly(t *testing.T) {
 	for _, key := range []string{
 		"integrations.kata.enabled", "integrations.kata.endpoint", "integrations.kata.api_key",
-		"integrations.kata.api_key_file", "integrations.kata.default_project", "integrations.kata.teammate",
+		"integrations.kata.api_key_file", "integrations.kata.default_project", "integrations.kata.teammate", "integrations.kata.publish_reassessments",
 	} {
 		assert.True(t, IsGlobalKey(key), key)
 		assert.True(t, IsValidKey(key), key)
@@ -267,4 +267,12 @@ func FuzzParseKataEndpoint(f *testing.F) {
 			require.Equal(t, "http://unix", endpoint.URL.String())
 		}
 	})
+}
+
+func TestReassessmentTeammateValidation(t *testing.T) {
+	cfg := KataIntegrationConfig{}
+	assert.Equal(t, "roborev-test", cfg.ReassessmentTeammate("test"))
+	require.NoError(t, ValidateKataTeammate(cfg.ReassessmentTeammate("test")))
+	cfg.Teammate = strings.Repeat("a", 64)
+	require.Error(t, ValidateKataTeammate(cfg.ReassessmentTeammate("test")), "combined attribution must obey upstream handle contract")
 }

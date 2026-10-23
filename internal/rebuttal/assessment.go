@@ -1,40 +1,11 @@
-// Package rebuttal defines the result of a focused finding re-evaluation.
+// Package rebuttal defines focused finding re-evaluation and its agent adapter.
 package rebuttal
 
-import (
-	"encoding/json/v2"
-	"fmt"
-	"strings"
-)
+import "go.kenn.io/roborev/internal/rebuttal/result"
 
 // Assessment is the agent's assertion about the selected original finding.
-type Assessment struct {
-	Outcome     string `json:"outcome"`
-	Explanation string `json:"explanation"`
-}
+// The result package is independent of adapters so storage can persist it.
+type Assessment = result.Assessment
 
-// Parse accepts one JSON assessment with evidence suitable for a Kata reply.
-func Parse(output string) (Assessment, error) {
-	var a Assessment
-	output = strings.TrimSpace(output)
-	if strings.HasPrefix(output, "```") {
-		header, body, ok := strings.Cut(output, "\n")
-		language := strings.TrimSpace(strings.TrimPrefix(header, "```"))
-		if ok && (language == "" || strings.EqualFold(language, "json")) && strings.HasSuffix(body, "```") {
-			output = strings.TrimSpace(strings.TrimSuffix(body, "```"))
-		}
-	}
-	if err := json.Unmarshal([]byte(output), &a, json.RejectUnknownMembers(true)); err != nil {
-		return a, fmt.Errorf("invalid rebuttal assessment: %w", err)
-	}
-	switch a.Outcome {
-	case "confirmed", "refuted", "superseded":
-	default:
-		return a, fmt.Errorf("invalid rebuttal outcome %q", a.Outcome)
-	}
-	a.Explanation = strings.TrimSpace(a.Explanation)
-	if a.Explanation == "" {
-		return a, fmt.Errorf("rebuttal explanation must not be empty")
-	}
-	return a, nil
-}
+// Parse accepts one JSON assessment with a nonempty explanation.
+func Parse(output string) (Assessment, error) { return result.Parse(output) }

@@ -278,6 +278,14 @@ type KataPublishErrorResponseApplicationProblemPlusJSON422 = ErrorModel
 
 type KataPublishErrorResponseApplicationProblemPlusJSON500 = ErrorModel
 
+type KataResponseStatusResponse = KataResponseStatus
+
+type KataResponseStatusErrorResponse = ErrorModel
+
+type KataResponseResponse = KataResponseStatus
+
+type KataResponseErrorResponse = ErrorModel
+
 type KataStatusResponse = KataStatusBody
 
 type KataStatusErrorResponse = ErrorModel
@@ -327,6 +335,18 @@ type RebuttalErrorResponseApplicationProblemPlusJSON409 = ErrorModel
 type RebuttalErrorResponseApplicationProblemPlusJSON422 = ErrorModel
 
 type RebuttalErrorResponseApplicationProblemPlusJSON500 = ErrorModel
+
+type CloseReassessmentReviewResponse = CloseReviewOutputBody
+
+type CloseReassessmentReviewErrorResponse = ErrorModel
+
+type CloseReassessmentReviewErrorResponseApplicationProblemPlusJSON = ErrorModel
+
+type CloseReassessmentReviewErrorResponseApplicationProblemPlusJSON409 = ErrorModel
+
+type CloseReassessmentReviewErrorResponseApplicationProblemPlusJSON422 = ErrorModel
+
+type CloseReassessmentReviewErrorResponseApplicationProblemPlusJSON500 = ErrorModel
 
 type ListReleasesResponse = ReleaseNotesResponse
 
@@ -782,6 +802,20 @@ type KataPublishResp struct {
 	ApplicationProblemPlusJSON500 *KataPublishErrorResponseApplicationProblemPlusJSON500
 }
 
+type KataResponseStatusResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *KataResponseStatusResponse
+}
+
+type KataResponseResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON202      *KataResponseResponse
+}
+
 type KataStatusResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -861,6 +895,18 @@ type RebuttalResp struct {
 	ApplicationProblemPlusJSON409 *RebuttalErrorResponseApplicationProblemPlusJSON409
 	ApplicationProblemPlusJSON422 *RebuttalErrorResponseApplicationProblemPlusJSON422
 	ApplicationProblemPlusJSON500 *RebuttalErrorResponseApplicationProblemPlusJSON500
+}
+
+type CloseReassessmentReviewResp struct {
+	HTTPResponse                  *http.Response
+	Body                          []byte
+	StatusCode                    int
+	JSON200                       *CloseReassessmentReviewResponse
+	ApplicationProblemPlusJSON400 *CloseReassessmentReviewErrorResponse
+	ApplicationProblemPlusJSON404 *CloseReassessmentReviewErrorResponseApplicationProblemPlusJSON
+	ApplicationProblemPlusJSON409 *CloseReassessmentReviewErrorResponseApplicationProblemPlusJSON409
+	ApplicationProblemPlusJSON422 *CloseReassessmentReviewErrorResponseApplicationProblemPlusJSON422
+	ApplicationProblemPlusJSON500 *CloseReassessmentReviewErrorResponseApplicationProblemPlusJSON500
 }
 
 type ListReleasesResp struct {
@@ -1639,6 +1685,37 @@ func (c *RawClient) KataPublishRaw(ctx context.Context, options *KataPublishRequ
 	return c.doer.Do(ctx, req)
 }
 
+func (c *RawClient) KataResponseStatusRaw(ctx context.Context, options *KataResponseStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &KataResponseStatusRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/kata/response",
+		Method:     "GET",
+		Options:    options,
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) KataResponseRaw(ctx context.Context, options *KataResponseRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &KataResponseRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/kata/response",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
 func (c *RawClient) KataStatusRaw(ctx context.Context, options *KataStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
 	if options == nil {
 		options = &KataStatusRequestOptions{}
@@ -1788,6 +1865,22 @@ func (c *RawClient) RebuttalRaw(ctx context.Context, options *RebuttalRequestOpt
 	}
 	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
 		RequestURL:  c.apiClient.GetBaseURL() + "/api/rebuttal",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) CloseReassessmentReviewRaw(ctx context.Context, options *CloseReassessmentReviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &CloseReassessmentReviewRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/rebuttal/close",
 		Method:      "POST",
 		Options:     options,
 		ContentType: "application/json",

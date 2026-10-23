@@ -15,7 +15,7 @@ import (
 
 func kataCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "kata", Short: "Publish reviews to Kata and inspect their delivery"}
-	cmd.AddCommand(kataCreateCmd(), kataShowCmd())
+	cmd.AddCommand(kataCreateCmd(), kataShowCmd(), kataCommentCmd())
 	return cmd
 }
 
@@ -80,6 +80,15 @@ func kataPublicationCmd(publish bool) *cobra.Command {
 			}
 			if publication.LastError != "" {
 				fmt.Fprintln(cmd.OutOrStdout(), "  "+publication.LastError)
+			}
+		}
+		for _, operation := range result.Operations {
+			cmd.Printf("%s  %s (%s)\n", operation.OperationID, operation.State, operation.Kind)
+			if operation.ExistingComment != "" {
+				cmd.Printf("  Existing comment: %s\n", operation.ExistingComment)
+			}
+			if operation.Message != "" {
+				cmd.Println("  " + operation.Message)
 			}
 		}
 		return nil
