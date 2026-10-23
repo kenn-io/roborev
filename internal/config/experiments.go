@@ -530,6 +530,11 @@ func validateExperimentOverlay(overlay map[string]any) error {
 		if _, allowed := reviewExperimentOverlayKeys[key]; !allowed {
 			return fmt.Errorf("key %q is not a review-time configuration setting", key)
 		}
+		if key == "review" {
+			if err := validateExperimentReviewTools(value); err != nil {
+				return err
+			}
+		}
 		if key != "ci" {
 			continue
 		}
@@ -612,7 +617,7 @@ func applyExperimentOverlay(global *Config, rawRepo, overlay map[string]any) (ma
 	repoReview, _ := rawRepo["review"].(map[string]any)
 	globalReview, _ := globalRaw["review"].(map[string]any)
 	effectiveReview, _ := effective["review"].(map[string]any)
-	for _, key := range []string{"subagents", "panels"} {
+	for _, key := range []string{"types", "subagents", "panels"} {
 		overlayEntries, ok := overlayReview[key].(map[string]any)
 		if !ok {
 			continue
@@ -638,7 +643,11 @@ func applyExperimentOverlay(global *Config, rawRepo, overlay map[string]any) (ma
 				baseEntry = globalEntries[name]
 			}
 			baseMap, _ := baseEntry.(map[string]any)
-			effectiveEntries[name] = mergeExperimentMaps(baseMap, overlayMap)
+			entry := mergeExperimentMaps(baseMap, overlayMap)
+			if tools, present := overlayMap["tools"]; present && key != "panels" {
+				entry["tools"] = cloneExperimentValue(tools)
+			}
+			effectiveEntries[name] = entry
 		}
 	}
 

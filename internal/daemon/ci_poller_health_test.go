@@ -1060,6 +1060,8 @@ func TestHealthCIPollerForkHeadWithStalePullRef(t *testing.T) {
 			require.NoError(t, os.WriteFile(
 				filepath.Join(upstream.Root, "objects", "info", "alternates"),
 				[]byte(filepath.Join(fork.Root, "objects")+"\n"), 0o644))
+			dev.Run("--git-dir", upstream.Root, "symbolic-ref", "HEAD", "refs/heads/main")
+			require.NoError(t, os.RemoveAll(h.RepoPath))
 			dev.Run("clone", "--quiet", "--no-local", upstream.Root, h.RepoPath)
 			require.Equal(t, oldHead,
 				strings.Fields(dev.Run("ls-remote", upstream.Root, "refs/pull/7/head"))[0])

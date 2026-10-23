@@ -197,6 +197,16 @@ func (s *Server) rerunPanelRun(job *storage.ReviewJob, requestID uuid.UUID) (*Re
 			fmt.Sprintf("restore panel experiment plan: %v", err))
 	}
 
+	for _, opts := range append(memberOpts, synthOpts) {
+		target := *job
+		target.JobType = opts.JobType
+		target.Agent, target.BackupAgent = opts.Agent, opts.BackupAgent
+		target.ReviewType = opts.ReviewType
+		target.PanelMemberConfigJSON = opts.PanelMemberConfigJSON
+		if err := validateReviewExecutionPolicy(&target, s.configWatcher.Config(), "", opts.BackupAgent); err != nil {
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+	}
 	_, synthJob, replayed, err := s.db.EnqueuePanelRerun(memberOpts, synthOpts, requestID, job.ID)
 	if err != nil {
 		if errors.Is(err, storage.ErrCIPanelActive) || errors.Is(err, storage.ErrCIPanelTargetMissing) {

@@ -15,6 +15,9 @@ import (
 // ReviewResult holds the outcome of a single review in a batch.
 // Decoupled from storage.BatchReviewResult for daemon-free use.
 type ReviewResult struct {
+	// Tools retains policy even for failed voting members so synthesis cannot
+	// weaken their requested native tool boundary after success filtering.
+	Tools      *config.ReviewToolPolicy
 	Agent      string
 	ReviewType string
 	Output     string
@@ -46,6 +49,17 @@ type ReviewResult struct {
 	// otherwise successful panel fail. It is set from the resolved member config
 	// stored with the job, not from live config.
 	AllowFailure bool
+}
+
+// SynthesisToolPolicy permits no MCP when any voting member is strict. Callers
+// must pass the full voting set, including failed and skipped reviewers.
+func SynthesisToolPolicy(results []ReviewResult) *config.ReviewToolPolicy {
+	for _, result := range results {
+		if result.Tools != nil {
+			return &config.ReviewToolPolicy{Mode: "read-only", MCP: map[string][]string{}}
+		}
+	}
+	return nil
 }
 
 // Passed returns the canonical review verdict when one is available, falling

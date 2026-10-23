@@ -1092,3 +1092,17 @@ reuse_review_session = true
 		})
 	}
 }
+
+func TestSetConfigKeyReviewToolPolicyAuthorityGlobalOnly(t *testing.T) {
+	for key, value := range map[string]string{"review_mcp_config": "servers.json", "review_mcp_allowed_tools": "source/read,source/find"} {
+		t.Run(key, func(t *testing.T) {
+			globalPath := setupConfigFile(t)
+			require.NoError(t, setConfigKey(globalPath, key, value, true))
+			raw := readTOML(t, globalPath)
+			require.Contains(t, raw, key)
+			repoPath := setupConfigFile(t)
+			require.ErrorContains(t, setConfigKey(repoPath, key, value, false), "global setting")
+			require.NoFileExists(t, repoPath)
+		})
+	}
+}

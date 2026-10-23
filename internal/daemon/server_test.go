@@ -468,6 +468,8 @@ func TestServerContinuesWhenAuxiliaryListenerFails(t *testing.T) {
 	assert.Len(t, info.Endpoints(), 1)
 	_, err := ProbeDaemon(info.Endpoint(), time.Second)
 	require.NoError(t, err)
+	// Detach the logger before reading its buffer while workers are running.
+	log.SetOutput(origLogOutput)
 	assert.Contains(t, logOutput.String(), "auxiliary Unix listener")
 	assert.Contains(t, logOutput.String(), "synthetic auxiliary bind failure")
 

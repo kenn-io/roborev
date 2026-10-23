@@ -90,6 +90,12 @@ func runSingle(
 		Agent:      agentName,
 		ReviewType: reviewType,
 	}
+	settings, err := config.ResolveReviewSettings(reviewType, nil, cfg.RepoConfig, cfg.GlobalConfig)
+	result.Tools = settings.Tools
+	if err != nil {
+		result.Status, result.Error = ResultFailed, err.Error()
+		return result
+	}
 
 	// Map review type to workflow name for config
 	// resolution (same mapping as CI poller).
@@ -161,6 +167,10 @@ func runSingle(
 		result.Error = fmt.Sprintf("resolve agent %q: %v", resolvedName, err)
 		return result
 	}
+	if err := agent.ValidateReviewToolBackup(settings.Tools, resolution, resolvedAgent.Name()); err != nil {
+		result.Status, result.Error = ResultFailed, err.Error()
+		return result
+	}
 
 	// Apply model override
 	if model != "" {
@@ -180,6 +190,10 @@ func runSingle(
 		resolvedAgent,
 		config.ResolveIgnoreCodexReviewUserConfig(cfg.RepoPath, cfg.GlobalConfig),
 	)
+	if err := agent.ValidateReviewToolSelection(settings.Tools, resolvedAgent, false); err != nil {
+		result.Status, result.Error = ResultFailed, err.Error()
+		return result
+	}
 
 	// Record the resolved agent name
 	result.Agent = resolvedAgent.Name()
@@ -226,7 +240,7 @@ func runSingle(
 
 	agentReview, err := RunAgentReview(
 		ctx, resolvedAgent, cfg.RepoPath, cfg.GitRef, reviewPrompt,
-		reviewType, cfg.MinSeverity, nil,
+		reviewType, cfg.MinSeverity, settings.Tools, nil,
 	)
 	if err != nil {
 		result.Status = ResultFailed

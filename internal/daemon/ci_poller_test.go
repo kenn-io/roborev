@@ -33,6 +33,7 @@ import (
 )
 
 type ciPollerHarness struct {
+	GitRepo  *testutil.TestRepo
 	DB       *storage.DB
 	RepoPath string
 	Repo     *storage.Repo
@@ -65,7 +66,9 @@ func installFakeGHAuthToken(t *testing.T, token string) {
 func newCIPollerHarness(t *testing.T, identity string) *ciPollerHarness {
 	t.Helper()
 	db := testutil.OpenTestDB(t)
-	repoPath := t.TempDir()
+	gitRepo := testutil.NewGitRepo(t)
+	gitRepo.CommitFile("README.md", "Review fixture\n", "initial")
+	repoPath := gitRepo.Path()
 	repo, err := db.GetOrCreateRepo(repoPath, identity)
 	if err != nil {
 		require.Condition(t, func() bool {
@@ -86,7 +89,7 @@ func newCIPollerHarness(t *testing.T, identity string) *ciPollerHarness {
 	p.prPostTargetFn = func(_ context.Context, ghRepo string, prNumber int) (panelPostTarget, error) {
 		return panelPostTarget{Open: p.isPROpenFn == nil || p.isPROpenFn(ghRepo, prNumber)}, nil
 	}
-	return &ciPollerHarness{DB: db, RepoPath: repo.RootPath, Repo: repo, Cfg: cfg, Poller: p}
+	return &ciPollerHarness{GitRepo: gitRepo, DB: db, RepoPath: repo.RootPath, Repo: repo, Cfg: cfg, Poller: p}
 }
 
 // stubProcessPRGit wires up git stubs on the poller so processPR doesn't
@@ -414,6 +417,9 @@ func stubGitCloneFn(t *testing.T, remoteURL string, called *bool) func(context.C
 	return func(_ context.Context, _, targetPath string, _ []string) error {
 		*called = true
 		if err := exec.Command("git", "init", "-b", "main", targetPath).Run(); err != nil {
+			return err
+		}
+		if err := exec.Command("git", "-C", targetPath, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "initial").Run(); err != nil {
 			return err
 		}
 		return exec.Command("git", "-C", targetPath, "remote", "add", "origin", remoteURL).Run()
@@ -1219,6 +1225,9 @@ func TestCIPollerProcessPR_WhitespaceReasoning(t *testing.T) {
 		}, "write .roborev.toml: %v", err)
 	}
 
+	h.GitRepo.Run("add", ".roborev.toml")
+	h.GitRepo.Run("commit", "-m", "trusted config")
+
 	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
 		Number: 50, HeadRefOid: "whitespace-reasoning-sha", BaseRefName: "main",
 	}, h.Cfg)
@@ -1244,6 +1253,9 @@ func TestCIPollerProcessPR_InvalidReasoning(t *testing.T) {
 		}, "write .roborev.toml: %v", err)
 	}
 	statuses := h.CaptureCommitStatuses()
+
+	h.GitRepo.Run("add", ".roborev.toml")
+	h.GitRepo.Run("commit", "-m", "trusted config")
 
 	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
 		Number: 51, HeadRefOid: "invalid-reasoning-sha", BaseRefName: "main",
@@ -2390,11 +2402,7 @@ func TestCIPollerProcessPR_RepoOverrides(t *testing.T) {
 	h.stubProcessPRGit()
 	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return "base-sha", nil }
 
-	if err := os.WriteFile(h.RepoPath+"/.roborev.toml", []byte("[ci]\nagents = [\"codex\"]\nreview_types = [\"review\"]\nreasoning = \"fast\"\n"), 0o644); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "write .roborev.toml: %v", err)
-	}
+	h.GitRepo.CommitFile(".roborev.toml", "[ci]\nagents = ['codex']\nreview_types = ['review']\nreasoning = 'fast'\n", "trusted config")
 
 	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
 		Number: 99, HeadRefOid: "repo-override-sha", BaseRefName: "main",
@@ -2409,7 +2417,7 @@ func TestCIPollerProcessPR_RepoOverrides(t *testing.T) {
 	assert.Equal("fast", members[0].Reasoning)
 }
 
-func TestCIPollerProcessPR_MalformedRepoConfigFallsBackToGlobal(t *testing.T) {
+func TestCIPollerProcessPR_MalformedTrustedConfigStopsReview(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
 	h.Cfg.CI.ReviewTypes = []string{"security"}
 	h.Cfg.CI.Agents = []string{"codex"}
@@ -2417,23 +2425,20 @@ func TestCIPollerProcessPR_MalformedRepoConfigFallsBackToGlobal(t *testing.T) {
 	h.stubProcessPRGit()
 	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return "base-sha", nil }
 
-	require.NoError(t, os.WriteFile(
-		filepath.Join(h.RepoPath, ".roborev.toml"),
-		[]byte("[ci]\nagents = ["),
-		0o644,
-	))
+	h.GitRepo.CommitFile(".roborev.toml", "[ci]\nagents = [", "invalid trusted config")
+	// A valid checkout override and weaker global policy cannot hide the error.
+	require.NoError(t, os.WriteFile(filepath.Join(h.RepoPath, ".roborev.toml"), []byte("[ci]\nagents = ['test']"), 0o600))
 
 	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
 		Number:      100,
 		HeadRefOid:  "repo-bad-config-sha",
 		BaseRefName: "main",
 	}, h.Cfg)
-	require.NoError(t, err)
-
-	members := h.panelMembers(t, "acme/api", 100, "repo-bad-config-sha")
-	require.Len(t, members, 1)
-	assert.Equal(t, "codex", members[0].Agent)
-	assert.Equal(t, "thorough", members[0].Reasoning)
+	require.Error(t, err)
+	assert.False(t, h.hasPanel(t, "acme/api", 100, "repo-bad-config-sha"))
+	var count int
+	require.NoError(t, h.DB.QueryRow("SELECT COUNT(*) FROM review_jobs").Scan(&count))
+	assert.Zero(t, count)
 }
 
 func TestCIPollerProcessPR_RepoConfigLoadFailureDoesNotSetConfigurationStatus(t *testing.T) {
@@ -2612,7 +2617,7 @@ func TestLoadCIRepoConfig_LoadsFromDefaultBranch(t *testing.T) {
 	assert.Equal(t, "origin/main", repoConfig.Ref)
 }
 
-func TestLoadCIRepoConfig_FallsBackWhenNoConfigOnDefaultBranch(t *testing.T) {
+func TestLoadCIRepoConfig_MissingTrustedConfigIsAuthoritative(t *testing.T) {
 	dir, _ := initGitRepoWithOrigin(t)
 
 	// No .roborev.toml on origin/main, but put one in the working tree
@@ -2629,9 +2634,8 @@ func TestLoadCIRepoConfig_FallsBackWhenNoConfigOnDefaultBranch(t *testing.T) {
 			return false
 		}, "loadCIRepoConfig: %v", err)
 	}
-	require.NotNil(t, repoConfig.Config, "expected filesystem fallback config")
-	assert.Equal(t, []string{"codex"}, repoConfig.Config.CI.Agents, "agents from filesystem fallback")
-	assert.Empty(t, repoConfig.Ref)
+	assert.Nil(t, repoConfig.Config)
+	assert.Equal(t, "origin/main", repoConfig.Ref)
 }
 
 func TestLoadCIRepoConfig_PropagatesParseError(t *testing.T) {
@@ -3546,6 +3550,9 @@ func TestCIPollerProcessPR_RepoReviewsMapOverride(
 		}, "write .roborev.toml: %v", err)
 	}
 
+	h.GitRepo.Run("add", ".roborev.toml")
+	h.GitRepo.Run("commit", "-m", "trusted config")
+
 	err := h.Poller.processPR(
 		context.Background(), "acme/api",
 		ghPR{
@@ -3589,6 +3596,9 @@ func TestCIPollerProcessPR_RepoEmptyReviewsDisables(
 			return false
 		}, "write .roborev.toml: %v", err)
 	}
+
+	h.GitRepo.Run("add", ".roborev.toml")
+	h.GitRepo.Run("commit", "-m", "trusted config")
 
 	err := h.Poller.processPR(
 		context.Background(), "acme/api",
@@ -4563,16 +4573,8 @@ func TestResolveUpsertComments_RepoOverridesGlobal(t *testing.T) {
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 	h.Cfg.CI.UpsertComments = true
 
-	// Write a .roborev.toml in the repo that disables upsert.
-	tomlPath := filepath.Join(h.RepoPath, ".roborev.toml")
-	err := os.WriteFile(tomlPath, []byte(
-		"[ci]\nupsert_comments = false\n",
-	), 0o644)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, err)
-	}
+	// CI settings come from the trusted default branch.
+	h.GitRepo.CommitFile(".roborev.toml", "[ci]\nupsert_comments = false\n", "trusted config")
 
 	if h.Poller.resolveUpsertComments("acme/api") {
 		require.Condition(t, func() bool {
@@ -4585,16 +4587,8 @@ func TestResolveUpsertComments_RepoEnablesOverGlobal(t *testing.T) {
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 	// Global default is false.
 
-	// Write a .roborev.toml in the repo that enables upsert.
-	tomlPath := filepath.Join(h.RepoPath, ".roborev.toml")
-	err := os.WriteFile(tomlPath, []byte(
-		"[ci]\nupsert_comments = true\n",
-	), 0o644)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, err)
-	}
+	// CI settings come from the trusted default branch.
+	h.GitRepo.CommitFile(".roborev.toml", "[ci]\nupsert_comments = true\n", "trusted config")
 
 	if !h.Poller.resolveUpsertComments("acme/api") {
 		require.Condition(t, func() bool {
@@ -4618,11 +4612,8 @@ func TestResolveIncludeCosts_RepoOverridesGlobal(t *testing.T) {
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 	h.Cfg.CI.IncludeCosts = true
 
-	tomlPath := filepath.Join(h.RepoPath, ".roborev.toml")
-	err := os.WriteFile(tomlPath, []byte(
-		"[ci]\ninclude_costs = false\n",
-	), 0o644)
-	require.NoError(t, err)
+	// CI settings come from the trusted default branch.
+	h.GitRepo.CommitFile(".roborev.toml", "[ci]\ninclude_costs = false\n", "trusted config")
 
 	assert.False(t, h.Poller.resolveIncludeCosts("acme/api"))
 }
@@ -4630,11 +4621,8 @@ func TestResolveIncludeCosts_RepoOverridesGlobal(t *testing.T) {
 func TestResolveIncludeCosts_RepoEnablesOverGlobal(t *testing.T) {
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 
-	tomlPath := filepath.Join(h.RepoPath, ".roborev.toml")
-	err := os.WriteFile(tomlPath, []byte(
-		"[ci]\ninclude_costs = true\n",
-	), 0o644)
-	require.NoError(t, err)
+	// CI settings come from the trusted default branch.
+	h.GitRepo.CommitFile(".roborev.toml", "[ci]\ninclude_costs = true\n", "trusted config")
 
 	assert.True(t, h.Poller.resolveIncludeCosts("acme/api"))
 }

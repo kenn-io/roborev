@@ -448,7 +448,9 @@ type Config struct {
 	AutoDesignReview AutoDesignReviewConfig `toml:"auto_design_review"`
 
 	// Subagent review panels (opt-in)
-	Review ReviewConfig `toml:"review"`
+	Review                ReviewConfig `toml:"review"`
+	ReviewMCPConfig       string       `toml:"review_mcp_config" comment:"Operator-controlled native MCP definitions for strict reviews."`
+	ReviewMCPAllowedTools []string     `toml:"review_mcp_allowed_tools" comment:"Exact server/tool grants allowed for strict reviews across repositories."`
 
 	// Optional agent harness hook integration
 	AgentHook AgentHookConfig `toml:"agent_hook"`
@@ -714,6 +716,9 @@ func (c *Config) Validate() (err error) {
 	defer func() {
 		err = markConfigValidationError(err)
 	}()
+	if err := validateReviewMCPAllowedTools(c.ReviewMCPAllowedTools); err != nil {
+		return err
+	}
 	if err := validateExperimentEntries(c.Experiments, true); err != nil {
 		return markExperimentConfigError(err)
 	}
@@ -1468,6 +1473,11 @@ func LoadRepoConfigWithRaw(repoPath string) (*RepoConfig, map[string]any, error)
 }
 
 func validateRepoConfigScope(md toml.MetaData) error {
+	for _, key := range []string{"review_mcp_config", "review_mcp_allowed_tools"} {
+		if md.IsDefined(key) {
+			return fmt.Errorf("repository config key %q is global-only", key)
+		}
+	}
 	if md.IsDefined("search") {
 		return fmt.Errorf(
 			"repository config key %q is global-only; move it to ~/.roborev/config.toml",
