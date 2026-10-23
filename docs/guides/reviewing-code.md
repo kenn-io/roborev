@@ -181,6 +181,10 @@ roborev review --branch --type security  # Security review of branch
 Review types work with all review modes (`--branch`, `--dirty`, `--since`,
 single commits, ranges).
 
+`test-value` is opt-in. It recommends removing tests that protect no behavior
+the repository owns; it never recommends adding tests or expanding coverage.
+Normal code reviews keep their existing testing guidance.
+
 The `security` and `design` types can have their own agent and model
 configuration via `{type}_agent` and `{type}_model` in `.roborev.toml` or global
 config. See

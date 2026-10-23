@@ -5,42 +5,94 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
-## Unreleased
+## 0.73.0
 
-**Security**
+<small>2026-10-23</small>
 
-- Require Go 1.27.3 for source builds and CI to include the certificate distrust
-    fix for [CVE-2026-111943](https://pkg.go.dev/vuln/GO-2026-6809).
-- Update DOMPurify, Vite, Vitest, Orval, and affected transitive JavaScript
-    dependencies to pick up upstream security fixes.
+Find tests that protect no behavior the repository owns, run reviews with Muse
+Code, and configure embedding text for search models such as EmbeddingGemma 2.
+Before updating, check the
+[0.73.0 upgrade steps](/docs/installation/#upgrading-to-0730) for the newly
+reserved `test-value` review type and source-build requirements.
 
 **New features**
 
-- Find tests that add maintenance cost without protecting behavior with
-    `roborev review --type test-value`. The reviewer flags tests of dependency
-    behavior, self-confirming assertions, static text checks, unreachable
-    scenarios, duplicate coverage, and fixtures that bypass the behavior under
-    test. Confirmed findings default to medium severity. See
-    [Review Types](/docs/guides/reviewing-code/#review-types). A custom
-    `[review.types.test-value]` definition must be renamed or removed, because
-    built-in names are reserved.
+- Find tests that protect no behavior the repository owns with
+    `roborev review --type test-value`. This opt-in review recommends removing
+    low-value tests and never asks for more tests. Findings default to medium
+    severity. Rename or remove any custom `[review.types.test-value]` definition
+    before upgrading, because `test-value` is now reserved. See
+    [Review Types](/docs/guides/reviewing-code/#review-types).
+- Run reviews, planning, fix, and refine with Muse Code 1.4.10 or later. Put
+    `muse` on your PATH or set `muse_cmd`. For pay-as-you-go use, set
+    `model = "muse-spark-1.3"`. See [Muse Code](/docs/agents/#muse-code) for
+    setup and limitations.
+- Configure separate prefixes and suffixes for indexed text and search queries
+    under `[search.embeddings]`, including those required by EmbeddingGemma 2.
+    See the
+    [EmbeddingGemma 2 recipe](/docs/search/#configure-embeddinggemma-2-text-embeddings).
 
 **Improvements**
 
-- Honor `DO_NOT_TRACK` and keep telemetry off in CI and non-release builds.
-- Count core action error banners and toasts in the web UI and TUI, and
-    PostgreSQL sync outages, in anonymous telemetry using fixed action names and
-    error classes. Failed closes and reopens both count. Each review load or
-    render failure counts once per selection. Failed agent jobs and missing
-    reviews stay silent. Daemon-unreachable errors can't be counted.
-- Cap telemetry waits at exit to 50 ms for CLI commands, stdio MCP sessions, and
-    the TUI.
-- Count Enter-submitted browser searches that return no jobs and human CLI
-    searches that find no reviews in anonymous telemetry, without search text.
-- Count review reads, committed fixes, and explicit closes in anonymous
-    telemetry.
-- Report repository and review totals as ranges in anonymous daemon telemetry:
-    `0-5`, `6-20`, `21-100`, or `over-100`.
+- Review diagrams preserve pan and zoom when you resize the browser's review
+    pane. See the [Reviews workspace](/docs/web-ui/#reviews-workspace).
+- Submit browser searches immediately by pressing Enter, without waiting for the
+    preview delay.
+- Anonymous telemetry records review reads, fixes, closes, the first readable
+    review, searches with no results, displayed errors, and PostgreSQL sync
+    outages. Reports omit search queries and error text. Repository and review
+    totals use ranges instead of exact counts. See
+    [telemetry](/docs/configuration/#telemetry) for event details and opt-outs.
+
+**Bug fixes**
+
+- Anonymous telemetry respects `DO_NOT_TRACK=1` and stays off in CI and
+    non-release builds. Clients stop sending reports after the daemon says
+    telemetry is disabled, and the browser excludes that time from session
+    length.
+- Client commands retain their settings when an unrelated daemon configuration
+    section is invalid and report the bad section in a warning. Daemon startup
+    and configuration validation still reject invalid settings.
+- Ordinary commands replace outdated daemons through supported systemd user
+    services after active reviews finish. Pausing before replacement preserves
+    queued reviews, and unsupported setups receive a manual restart command. See
+    [service configuration](/docs/configuration/#persistent-daemon).
+- Reviews detect Claude Code, Codex, and Copilot upgrades without requiring a
+    daemon restart. This prevents stale capability information from breaking
+    Copilot's structured review output.
+- CLI commands, MCP processes, and the terminal interface limit telemetry exit
+    waits to 50 ms when the daemon stalls.
+- New builds include the certificate distrust fix for
+    [CVE-2026-111943](https://pkg.go.dev/vuln/GO-2026-6809). Building from
+    source requires Go 1.27.3 or later. DOMPurify, Vite, Vitest, Orval, and
+    affected transitive JavaScript dependencies also receive upstream security
+    fixes.
+
+**Acknowledgements**
+
+Thanks to everyone who contributed to this release:
+
+- [Marius van Niekerk](https://github.com/mariusvniekerk) added the `test-value`
+    review type in [#1398](https://github.com/kenn-io/roborev/pull/1398),
+    refreshed agent capabilities after CLI upgrades in
+    [#1396](https://github.com/kenn-io/roborev/pull/1396), and updated build
+    tools and CI checks.
+- [Rod Boev](https://github.com/rodboev) added Muse Code support in
+    [#1382](https://github.com/kenn-io/roborev/pull/1382), improved telemetry
+    and its opt-outs, recovered managed daemons through systemd, preserved
+    diagram pan and zoom, and improved search submission and CI reliability.
+- [Rusty Shackleford](https://github.com/salmonumbrella) added embedding text
+    prefixes and suffixes in
+    [#1346](https://github.com/kenn-io/roborev/pull/1346), preserved client
+    settings when daemon configuration is invalid in
+    [#1386](https://github.com/kenn-io/roborev/pull/1386), and isolated
+    telemetry test settings.
+- [Wes McKinney](https://github.com/wesm) updated Go and browser security
+    dependencies in [#1433](https://github.com/kenn-io/roborev/pull/1433),
+    restored lint checks, moved CI to GitHub-hosted runners, and documented
+    release upgrades.
+
+______________________________________________________________________
 
 ## 0.72.0
 
