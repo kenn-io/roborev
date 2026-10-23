@@ -55,6 +55,7 @@ type KataIssue struct {
 	Body        string         `json:"body"`
 	Status      string         `json:"status"`
 	Labels      []string       `json:"labels"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
 	Parent      *KataLinkPeer  `json:"parent,omitempty"`
 	Blocks      []KataLinkPeer `json:"blocks,omitempty"`
 	BlockedBy   []KataLinkPeer `json:"blocked_by,omitempty"`
@@ -165,7 +166,7 @@ func kataProxyError(err error) error {
 func kataIssueFromClient(issue kata.Issue) KataIssue {
 	return KataIssue{
 		ShortID: issue.ShortID, QualifiedID: issue.QualifiedID, Title: issue.Title, Body: issue.Body,
-		Status: issue.Status, Labels: issue.Labels, Parent: kataPeer(issue.Parent),
+		Status: issue.Status, Labels: issue.Labels, Metadata: issue.Metadata, Parent: kataPeer(issue.Parent),
 		Blocks: kataPeers(issue.Blocks), BlockedBy: kataPeers(issue.BlockedBy), Related: kataPeers(issue.Related),
 	}
 }

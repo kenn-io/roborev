@@ -190,3 +190,23 @@ func (k KataIntegrationConfig) ResolveAPIKey() (string, error) {
 	}
 	return key, nil
 }
+
+// ValidateKataHooks checks local content policy. Repository hooks cannot enable
+// a connection; the daemon also validates them against its effective settings.
+func ValidateKataHooks(hooks []HookConfig, enabled bool) error {
+	for _, h := range hooks {
+		if h.Findings == "" {
+			continue
+		}
+		if h.Type != "kata" {
+			return fmt.Errorf("findings requires a Kata hook")
+		}
+		if h.Findings != "comments" && h.Findings != "summary" {
+			return fmt.Errorf("hooks.findings must be comments or summary")
+		}
+		if !enabled {
+			return fmt.Errorf("hooks.findings requires the Kata API connection")
+		}
+	}
+	return nil
+}

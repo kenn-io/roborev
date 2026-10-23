@@ -101,6 +101,7 @@ func newRootCmd() *cobra.Command {
 	rootCmd.AddCommand(agentHookCmd())
 	rootCmd.AddCommand(checkAgentsCmd())
 	rootCmd.AddCommand(doctorCmd())
+	rootCmd.AddCommand(kataCmd())
 	rootCmd.AddCommand(ciCmd())
 	rootCmd.AddCommand(logCmd())
 	rootCmd.AddCommand(summaryCmd())

@@ -221,15 +221,15 @@ func allMembersPassed(
 func (wp *WorkerPool) failSynthesisWithoutReviewContext(
 	_ context.Context, workerID string, job *storage.ReviewJob, errorMsg string,
 ) {
-	wp.runAttemptTransition(workerID, job, func() {
-		wp.failSynthesisWithoutReviewLocked(workerID, job, errorMsg)
+	wp.runKataAttemptTransition(workerID, job, kataOutcome{event: "failed"}, func(prepared kataTransition) {
+		wp.failSynthesisWithoutReviewLocked(workerID, job, errorMsg, prepared)
 	})
 }
 
 func (wp *WorkerPool) failSynthesisWithoutReviewLocked(
-	workerID string, job *storage.ReviewJob, errorMsg string,
+	workerID string, job *storage.ReviewJob, errorMsg string, prepared kataTransition,
 ) {
-	if updated, err := wp.failJobAndInvalidateBudget(job.ID, workerID, errorMsg); err != nil {
+	if updated, err := wp.failJobAndInvalidateBudget(job.ID, workerID, errorMsg, prepared); err != nil {
 		log.Printf("[%s] Error failing synthesis job %d: %v", workerID, job.ID, err)
 	} else if updated {
 		log.Printf("[%s] Synthesis job %d failed: %s",
@@ -240,6 +240,11 @@ func (wp *WorkerPool) failSynthesisWithoutReviewLocked(
 		event.Agent = ""
 		event.Error = errorMsg
 		event.SuppressHooks = true
+		// Kata skips member alerts, so the parent supplies its single failure
+		// notification. API-connected daemons deliver it through the handoff;
+		// CLI mode needs this event to reach the Kata hook.
+		event.AllowKataHook = !event.SuppressKata
+		event.KataDeliveryMode = prepared.mode
 		wp.broadcaster.Broadcast(event)
 		if wp.errorLog != nil {
 			wp.errorLog.LogError("worker",
@@ -267,27 +272,33 @@ type synthesisResult struct {
 func (wp *WorkerPool) completeSynthesisContext(
 	workerID string, job *storage.ReviewJob, res synthesisResult,
 ) {
-	wp.runAttemptTransition(workerID, job, func() {
-		wp.completeSynthesisLocked(workerID, job, res)
+	verdict := res.review.Verdict
+	if verdict == storage.VerdictUnknown && len(res.review.StructuredOutput) == 0 {
+		verdict = storage.ParseVerdict(res.review.Output)
+	}
+	var completeErr error
+	wp.runKataAttemptTransition(workerID, job, kataOutcome{event: "completed", verdict: verdict}, func(prepared kataTransition) {
+		completeErr = wp.completeSynthesisLocked(workerID, job, res, prepared)
 	})
+	if completeErr != nil {
+		wp.failOrRetryContext(context.Background(), workerID, job, res.review.Agent,
+			fmt.Sprintf("store synthesis review: %v", completeErr))
+	}
 }
 
 func (wp *WorkerPool) completeSynthesisLocked(
-	workerID string, job *storage.ReviewJob, res synthesisResult,
-) {
+	workerID string, job *storage.ReviewJob, res synthesisResult, prepared kataTransition,
+) error {
 	agentName, output := res.review.Agent, res.review.Output
 	completeErr := wp.db.CompleteJobResult(job.ID, agentName, storage.ReviewCompletion{
-		Output: output, Verdict: res.review.Verdict, StructuredOutput: res.review.StructuredOutput, MinSeverity: res.review.MinSeverity,
+		KataHandoffBuilder: prepared.builder,
+		Output:             output, Verdict: res.review.Verdict, StructuredOutput: res.review.StructuredOutput, MinSeverity: res.review.MinSeverity,
 	})
 	if completeErr != nil {
 		// Leaving the job running would strand the panel with no comment.
 		// Route the storage failure through the ordinary retry/fail path.
 		log.Printf("[%s] Error storing synthesis review for job %d: %v", workerID, job.ID, completeErr)
-		wp.failOrRetryInnerLocked(
-			workerID, job, agentName,
-			fmt.Sprintf("store synthesis review: %v", completeErr), false, nil,
-		)
-		return
+		return completeErr
 	}
 
 	// CompleteJob no-ops when status != running (cancel race). Confirm the job
@@ -295,12 +306,12 @@ func (wp *WorkerPool) completeSynthesisLocked(
 	j, err := wp.db.GetJobByID(job.ID)
 	if err != nil {
 		log.Printf("[%s] Synthesis job %d: failed to verify status: %v", workerID, job.ID, err)
-		return
+		return nil
 	}
 	if j.Status != storage.JobStatusDone {
 		log.Printf("[%s] Synthesis job %d not completed (status=%s), skipping broadcast",
 			workerID, job.ID, j.Status)
-		return
+		return nil
 	}
 	wp.invalidateBudgetSpend()
 	if res.captureUsage {
@@ -318,18 +329,21 @@ func (wp *WorkerPool) completeSynthesisLocked(
 		workerID, job.ID, job.RepoName, job.PanelName)
 
 	wp.broadcaster.Broadcast(Event{
-		Type:     "review.completed",
-		TS:       time.Now(),
-		JobID:    job.ID,
-		JobUUID:  job.UUID,
-		Repo:     job.RepoPath,
-		RepoName: job.RepoName,
-		SHA:      job.GitRef,
-		Branch:   job.HookBranch(),
-		Agent:    agentName,
-		Verdict:  string(verdict),
-		Findings: output,
+		Type:             "review.completed",
+		TS:               time.Now(),
+		JobID:            job.ID,
+		SuppressKata:     !kataEligibleJob(job),
+		KataDeliveryMode: prepared.mode,
+		JobUUID:          job.UUID,
+		Repo:             job.RepoPath,
+		RepoName:         job.RepoName,
+		SHA:              job.GitRef,
+		Branch:           job.HookBranch(),
+		Agent:            agentName,
+		Verdict:          string(verdict),
+		Findings:         output,
 	})
+	return nil
 }
 
 // runSynthesisAgent invokes the configured agent read-only (non-agentic) to
@@ -357,14 +371,15 @@ func (wp *WorkerPool) runSynthesisAgent(
 	}
 
 	wp.broadcaster.Broadcast(Event{
-		Type:     "review.started",
-		TS:       time.Now(),
-		JobID:    job.ID,
-		Repo:     job.RepoPath,
-		RepoName: job.RepoName,
-		SHA:      job.GitRef,
-		Branch:   job.HookBranch(),
-		Agent:    agentName,
+		Type:         "review.started",
+		TS:           time.Now(),
+		JobID:        job.ID,
+		SuppressKata: !kataEligibleJob(job),
+		Repo:         job.RepoPath,
+		RepoName:     job.RepoName,
+		SHA:          job.GitRef,
+		Branch:       job.HookBranch(),
+		Agent:        agentName,
 	})
 
 	normalizer := GetNormalizer(agentName)

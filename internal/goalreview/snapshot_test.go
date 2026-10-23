@@ -41,6 +41,20 @@ func TestGoalCaptureComplete(t *testing.T) {
 	require.ErrorContains(t, err, "ledger unavailable")
 }
 
+func TestGoalCaptureRoundTripsMixedCaseMetadata(t *testing.T) {
+	root := t.TempDir()
+	writeArtifact(t, root, specPath, "# Feature\n")
+	metadata := map[string]any{"externalID": "tracker-42", "NestedObject": map[string]any{"OwnerName": "reviewer"}}
+	client := &katatest.FakeClient{BindingResult: kata.Binding{Project: "project"}, ListResult: []kata.Issue{{ShortID: "task", Status: "open", Metadata: metadata}}}
+	snapshot, err := Capture(t.Context(), root, Selection{}, client)
+	require.NoError(t, err)
+	decoded, err := ParseSnapshot(BuildPrompt(snapshot))
+	require.NoError(t, err)
+	require.Len(t, decoded.Issues, 1)
+	assert.Equal(t, metadata, decoded.Issues[0].Metadata)
+	assert.Equal(t, snapshot.ID(), decoded.ID())
+}
+
 func exampleSnapshot() Snapshot {
 	return Snapshot{Source: "superpowers", Stage: "plan", Project: "project", Artifacts: []Artifact{{Kind: "spec", Path: specPath, Content: "# Feature\n"}, {Kind: "plan", Path: planPath, Content: "**Goal:** Feature\n### Task 1: Work\n- [ ] Verify\n```md\n- [ ] example\n```\n"}}, Issues: []kata.Issue{{ShortID: "aaaa", Title: "A", Status: "open", Labels: []string{"z", "a"}}, {ShortID: "bbbb", Title: "B", Status: "open"}}, Edges: []Edge{{Type: "blocks", From: "project#aaaa", To: "project#bbbb"}}}
 }

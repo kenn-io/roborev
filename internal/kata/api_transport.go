@@ -152,9 +152,9 @@ func (t *transport) closeIdleConnections() {
 func (t *transport) do(ctx context.Context, method, path string, query url.Values, body any, header http.Header, out any, success ...int) (http.Header, error) {
 	var reader io.Reader
 	if body != nil {
-		encoded, err := json.Marshal(body, json.Deterministic(true))
+		encoded, err := marshalRequest(body)
 		if err != nil {
-			return nil, fmt.Errorf("encode kata request: %w", err)
+			return nil, err
 		}
 		reader = bytes.NewReader(encoded)
 	}

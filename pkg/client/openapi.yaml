@@ -2466,6 +2466,33 @@ components:
         - short_id
         - reused
       type: object
+    KataFindingPublication:
+      additionalProperties: false
+      properties:
+        comment:
+          description: Validated root comment UID
+          type: string
+        id:
+          description: Immutable finding selector
+          type: string
+        issue:
+          type: string
+        issue_uid:
+          type: string
+        last_error:
+          type: string
+        operation_id:
+          type: string
+        policy:
+          type: string
+        state:
+          type: string
+      required:
+        - id
+        - state
+        - policy
+        - operation_id
+      type: object
     KataIssue:
       additionalProperties: false
       properties:
@@ -2490,6 +2517,9 @@ components:
           items:
             type: string
           type: array
+        metadata:
+          additionalProperties: {}
+          type: object
         parent:
           $ref: "#/components/schemas/KataLinkPeer"
         qualified_id:
@@ -2542,6 +2572,72 @@ components:
           type: string
       required:
         - short_id
+      type: object
+    KataPublication:
+      additionalProperties: false
+      properties:
+        findings:
+          items:
+            $ref: "#/components/schemas/KataFindingPublication"
+          type: array
+        issue:
+          type: string
+        issue_uid:
+          type: string
+        last_error:
+          type: string
+        operation_id:
+          type: string
+        policy:
+          type: string
+        review_uuid:
+          type: string
+        state:
+          type: string
+      required:
+        - operation_id
+        - state
+        - policy
+        - findings
+      type: object
+    KataPublicationsBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/KataPublicationsBody.json
+          format: uri
+          readOnly: true
+          type: string
+        job_id:
+          format: int64
+          type: integer
+        publications:
+          items:
+            $ref: "#/components/schemas/KataPublication"
+          type: array
+      required:
+        - job_id
+        - publications
+      type: object
+    KataPublishRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/KataPublishRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        job_id:
+          description: Completed or failed job to explicitly publish using its matching Kata hooks
+          format: int64
+          minimum: 1
+          type: integer
+      required:
+        - job_id
       type: object
     KataStatusBody:
       additionalProperties: false
@@ -6463,6 +6559,110 @@ paths:
                 $ref: "#/components/schemas/ErrorModel"
           description: Bad Gateway
       summary: File a Kata issue as roborev through the daemon's connection
+      tags:
+        - kata
+  /api/kata/publications:
+    get:
+      operationId: kata-publications
+      parameters:
+        - description: Job whose saved Kata publications to look up
+          explode: false
+          in: query
+          name: job_id
+          required: true
+          schema:
+            description: Job whose saved Kata publications to look up
+            format: int64
+            minimum: 1
+            type: integer
+        - description: Only return publications belonging to this immutable review
+          explode: false
+          in: query
+          name: review_uuid
+          schema:
+            description: Only return publications belonging to this immutable review
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataPublicationsBody"
+          description: OK
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Not Found
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Internal Server Error
+      summary: Look up a job's Kata publications by their metadata
+      tags:
+        - kata
+  /api/kata/publish:
+    post:
+      operationId: kata-publish
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KataPublishRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataPublicationsBody"
+          description: OK
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Conflict
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Internal Server Error
+      summary: Explicitly capture a job's Kata publication
       tags:
         - kata
   /api/kata/status:

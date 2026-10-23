@@ -314,7 +314,7 @@ func kataDaemonError(action string, err error) error {
 func kataIssueFromDaemon(issue generated.KataIssue) kata.Issue {
 	out := kata.Issue{
 		ShortID: issue.ShortID, QualifiedID: issue.QualifiedID, Title: issue.Title, Body: issue.Body,
-		Status: issue.Status, Labels: issue.Labels, Parent: kataPeerFromDaemon(issue.Parent),
+		Status: issue.Status, Labels: issue.Labels, Metadata: issue.Metadata, Parent: kataPeerFromDaemon(issue.Parent),
 		Blocks: kataPeersFromDaemon(issue.Blocks), BlockedBy: kataPeersFromDaemon(issue.BlockedBy),
 		Related: kataPeersFromDaemon(issue.Related),
 	}

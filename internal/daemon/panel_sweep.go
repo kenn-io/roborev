@@ -50,13 +50,20 @@ func (s *Server) sweepOrphanedJobs(ctx context.Context) {
 
 func (s *Server) failOrphanedJob(ctx context.Context, job *storage.ReviewJob) {
 	wp := s.workerPool
+	if wp.ownsJob(job.WorkerID, job.ID) {
+		return
+	}
+	var prepared kataTransition
+	if wp.prepareKataTransition != nil {
+		prepared = wp.prepareKataTransition(ctx, job, kataOutcome{event: "failed"})
+	}
 	wp.attemptTransitionsMu.RLock()
 	defer wp.attemptTransitionsMu.RUnlock()
 	if wp.ownsJob(job.WorkerID, job.ID) {
 		return
 	}
 	const errorMsg = "daemon did not save the job's outcome"
-	updated, err := s.db.FailJobAttempt(ctx, job.ID, job.WorkerID, job.StartedAtRaw, errorMsg)
+	updated, err := s.db.FailJobAttemptWithKata(ctx, job.ID, job.WorkerID, job.StartedAtRaw, errorMsg, prepared.builder)
 	if err != nil {
 		log.Printf("panel sweep: fail orphan job %d: %v", job.ID, err)
 		return
@@ -66,7 +73,7 @@ func (s *Server) failOrphanedJob(ctx context.Context, job *storage.ReviewJob) {
 	}
 	log.Printf("panel sweep: job %d failed: %s", job.ID, errorMsg)
 	wp.invalidateBudgetSpend()
-	wp.broadcastFailed(job, job.Agent, errorMsg)
+	wp.broadcastFailed(job, job.Agent, errorMsg, prepared.mode)
 	if wp.errorLog != nil {
 		wp.errorLog.LogError("worker", fmt.Sprintf("job %d failed: %s", job.ID, errorMsg), job.ID)
 	}

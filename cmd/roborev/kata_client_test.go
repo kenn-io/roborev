@@ -96,7 +96,8 @@ func kataShimMarker(t *testing.T) string {
 func TestKataClientUsesTheDaemonsConnection(t *testing.T) {
 	marker := kataShimMarker(t)
 	fake := katafake.New(t)
-	fake.AddIssue(7, "aaa1", "In reviews", "the body", "bug")
+	metadata := map[string]any{"NestedObject": map[string]any{"ExternalID": "synthetic-issue", "Verified": true}, "Values": []any{"item", true, nil}}
+	fake.AddIssue(7, "aaa1", "In reviews", "the body", "bug").Out.Metadata = metadata
 	fake.AddIssue(8, "bbb2", "In other", "")
 	ep := kataDaemon(t, enabledKata(fake))
 	var probes atomic.Int32
@@ -112,6 +113,7 @@ func TestKataClientUsesTheDaemonsConnection(t *testing.T) {
 		require.Len(t, issues, 1)
 		assert.Equal(t, "aaa1", issues[0].ShortID)
 		assert.Equal(t, []string{"bug"}, issues[0].Labels)
+		assert.Equal(t, metadata, issues[0].Metadata)
 	})
 	t.Run("the repository's own binding selects the project", func(t *testing.T) {
 		c := newKataClientAt(bindRepo(t, "other"), config.DefaultConfig(), fixedEndpoint(ep, &probes))
@@ -128,6 +130,7 @@ func TestKataClientUsesTheDaemonsConnection(t *testing.T) {
 		qualified, err := c.Show(ctx, "reviews#aaa1")
 		require.NoError(t, err)
 		assert.Equal(t, "the body", qualified.Body)
+		assert.Equal(t, metadata, qualified.Metadata)
 	})
 	t.Run("a write goes through the daemon as roborev", func(t *testing.T) {
 		c := newKataClientAt(bindRepo(t, "other"), config.DefaultConfig(), fixedEndpoint(ep, &probes))

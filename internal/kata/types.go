@@ -34,20 +34,23 @@ type Issue struct {
 	QualifiedID string `json:"qualified_id"`
 	// UID and ProjectUID are Kata's full, stable identities for the issue and
 	// its project. A short ID is only unique within one project.
-	UID        string     `json:"uid,omitempty"`
-	ProjectUID string     `json:"project_uid,omitempty"`
-	Title      string     `json:"title"`
-	Body       string     `json:"body"`
-	Status     string     `json:"status"`
-	Labels     []string   `json:"labels"`
-	Parent     *LinkPeer  `json:"parent,omitempty"`
-	Blocks     []LinkPeer `json:"blocks,omitempty"`
-	BlockedBy  []LinkPeer `json:"blocked_by,omitempty"`
-	Related    []LinkPeer `json:"related,omitempty"`
+	UID        string   `json:"uid,omitempty"`
+	ProjectUID string   `json:"project_uid,omitempty"`
+	Title      string   `json:"title"`
+	Body       string   `json:"body"`
+	Status     string   `json:"status"`
+	Labels     []string `json:"labels"`
+	// Omit empty metadata to preserve previously serialized goal snapshots.
+	Metadata    map[string]any `json:"metadata,omitempty"`
+	Attribution Attribution    `json:"-"`
+	Parent      *LinkPeer      `json:"parent,omitempty"`
+	Blocks      []LinkPeer     `json:"blocks,omitempty"`
+	BlockedBy   []LinkPeer     `json:"blocked_by,omitempty"`
+	Related     []LinkPeer     `json:"related,omitempty"`
 
-	// Comments are every comment on the issue, oldest first. Only the API
-	// client reads them; the kata CLI client leaves them empty, so empty here
-	// does not mean the issue has none.
+	// Comments contains the returned issue comments, oldest first. Only a
+	// successful API ShowComplete proves this is every comment. The CLI client
+	// leaves them empty, which does not mean the issue has none.
 	Comments []Comment `json:"-"`
 	// CommentsTruncated is set when Kata says it left comments out.
 	CommentsTruncated bool `json:"-"`
@@ -78,6 +81,9 @@ type ListOpts struct {
 
 // CreateReq describes an issue to create.
 type CreateReq struct {
+	// ForceNew is used only after publication marker lookup proves this is a
+	// distinct immutable review/policy, rather than a retry or a lookalike reuse.
+	ForceNew       bool
 	Title          string
 	Body           string
 	Project        string // optional; overrides the .kata.toml binding

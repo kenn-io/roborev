@@ -66,8 +66,9 @@ type = "kata"
 | `command` | string | Shell command to run, with `{var}` template interpolation |
 | `type` | string | Built-in hook type: `"beads"`, `"kata"`, or `"webhook"`. Empty or `"command"` runs `command` |
 | `url` | string | Webhook destination URL (required when `type = "webhook"`) |
-| `project` | string | Kata hook project override. Defaults to the repo's `.kata.toml` binding |
+| `project` | string | Kata hook project override. Defaults to the repo binding (`.kata.local.toml`, then `.kata.toml`), then the API connection's `default_project` |
 | `labels` | array | Extra labels for Kata-created issues. `roborev` is always added |
+| `findings` | string | Kata publication policy: `comments` posts one root comment per structured finding; `summary` sends generic notices without review text. Both require an enabled API connection. Unset preserves the existing issue body |
 | `priority` | integer | Kata issue priority (`0`-`4`). Omit to use roborev's defaults |
 
 ### Global vs Per-Repo Hooks
@@ -231,8 +232,24 @@ binding (`.kata.local.toml`, then `.kata.toml`, searched upward from the repo's
 working directory), then `default_project` when the API connection is enabled.
 Set `project = "myproj"` to override the target project. Every issue receives
 the `roborev` label plus a marker label (`review-failed` or `review-finding`)
-and any extra `labels` you configure. roborev uses an idempotency key per
-job/event so reruns do not create duplicate Kata issues.
+and any extra `labels` you configure. Kata hooks exclude CI jobs and panel
+members for both events. A synthesis parent may publish its combined findings.
+
+With the API connection enabled, each review's publication is saved durably and
+retried until its receipts and metadata ledger are complete. Repeated attempts
+reuse the same issue; a rerun has a new review identity. Startup resumes saved
+operations and never backfills old reviews from today's hook settings.
+
+Set `findings = "comments"` to post one root comment per structured finding, or
+`findings = "summary"` to send generic notices without finding text, locations,
+fixes, or raw errors. Both require the API connection. Summary deliveries never
+attach to issues containing full review text. With `findings` unset, the issue
+body keeps its existing format.
+
+Use `roborev kata show 42` to inspect delivery and `roborev kata create 42` to
+explicitly backfill a completed job using its matching hooks. See
+[Publish individual findings](/docs/integrations/kata/#publish-individual-findings)
+for retry rules, privacy policy, and JSON mappings.
 
 By default the hook runs the `kata` CLI, which must be on `PATH`. If it is
 missing, or the repo is not bound to a Kata project, the hook is skipped. If you
