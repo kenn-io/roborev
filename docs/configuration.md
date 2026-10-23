@@ -1200,6 +1200,7 @@ filter_branch = false             # Show all branches on startup (default: curre
 | `integrations.kata.api_key_file` | string | - | File holding the Kata credential, read by the daemon | Yes |
 | `integrations.kata.default_project` | string | - | Kata project for repos without a binding | Yes |
 | `integrations.kata.teammate` | string | `roborev` | Teammate name Kata records on comments roborev posts | Yes |
+| `integrations.kata.publish_reassessments` | bool | false | Publish focused reassessments as typed responses under `<teammate>-<agent>`; see [Publishing focused reassessments](/docs/integrations/kata/#publishing-focused-reassessments) | Yes |
 | `goal_review.kata_gate.default` | string | `block` | Global candidate-gate policy: `block`, `warn`, or `off`; see [Engineering with Superpowers and Kata](/docs/integrations/goal-review/) | Yes |
 | `review_min_severity` | string | - | Default lowest severity that fails a review: `critical`, `high`, `medium`, or `low`. Lower findings are still reported | Yes |
 | `fix_min_severity` | string | - | Default minimum severity for `fix`: `critical`, `high`, `medium`, or `low` | Yes |

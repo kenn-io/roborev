@@ -23,6 +23,7 @@ import (
 )
 
 type structuredRebuttalTestAgent struct {
+	name            string
 	sessionID       string
 	progress        string
 	result          string
@@ -45,7 +46,12 @@ func (*sessionOnlyRebuttalTestAgent) CommandLine() string                       
 
 func (*structuredRebuttalTestAgent) SupportsReadOnlyReview() bool { return true }
 
-func (a *structuredRebuttalTestAgent) Name() string { return "test" }
+func (a *structuredRebuttalTestAgent) Name() string {
+	if a.name != "" {
+		return a.name
+	}
+	return "test"
+}
 
 func (a *structuredRebuttalTestAgent) writeProgress(out io.Writer) error {
 	if out == nil {
@@ -166,6 +172,37 @@ func TestRebuttalEnqueuePreservesOriginalSession(t *testing.T) {
 	review, err := db.GetReviewByJobID(parent.ID)
 	require.NoError(t, err)
 	a.False(review.Closed)
+}
+
+func TestRebuttalSynthesisResumesActualBackupAgent(t *testing.T) {
+	s, db, _ := newTestServer(t)
+	primary, err := agent.Get("test")
+	require.NoError(t, err)
+	agent.Register(&sessionOnlyRebuttalTestAgent{})
+	t.Cleanup(func() { agent.Register(primary) })
+	backup := &structuredRebuttalTestAgent{name: "synthesis-backup"}
+	agent.RegisterForTest(t, backup)
+	repo := testutil.CreateTestRepo(t, db)
+	parent := testutil.CreateCompletedReview(t, db, repo.ID, "abc123", backup.Name(), "The guard is missing.")
+	_, err = db.Exec(`UPDATE reviews SET agent=? WHERE job_id=?`, backup.Name(), parent.ID)
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE review_jobs SET job_type='synthesis', agent='test', model='primary-model', backup_agent=?, backup_model='backup-model', provider='original-provider', reasoning='', session_id='backup-session' WHERE id=?`, backup.Name(), parent.ID)
+	require.NoError(t, err)
+	body, err := json.Marshal(RebuttalRequest{JobID: parent.ID, Finding: "The guard is missing.", Comment: "The caller checks it.", Commenter: "operator"})
+	require.NoError(t, err)
+
+	rr := serveHuma(t, s, http.MethodPost, "/api/rebuttal", body)
+	require.Equal(t, http.StatusCreated, rr.Code, rr.Body.String())
+	var queued storage.ReviewJob
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &queued))
+	stored, err := db.GetJobByID(queued.ID)
+	require.NoError(t, err)
+	a := assert.New(t)
+	a.Equal(backup.Name(), stored.Agent)
+	a.Equal("backup-model", stored.Model)
+	a.Equal("backup-session", stored.SessionID)
+	a.Equal("original-provider", stored.Provider)
+	a.Equal("thorough", stored.Reasoning)
 }
 
 func TestRebuttalFindingMatchIgnoresWhitespaceWraps(t *testing.T) {

@@ -39,8 +39,9 @@ type KataPublication struct {
 }
 
 type KataPublicationsBody struct {
-	JobID        int64             `json:"job_id"`
-	Publications []KataPublication `json:"publications"`
+	JobID        int64                        `json:"job_id"`
+	Publications []KataPublication            `json:"publications"`
+	Operations   []storage.KataResponseStatus `json:"operations,omitempty"`
 }
 
 type (
@@ -110,6 +111,9 @@ func (s *Server) humaKataPublish(ctx context.Context, in *KataPublishInput) (*Ka
 	}
 	out := &KataPublicationsOutput{Body: KataPublicationsBody{JobID: job.ID, Publications: []KataPublication{}}}
 	for _, h := range records {
+		if len(h.Request.Responses) > 0 {
+			continue
+		}
 		if h.ReviewUUID != reviewUUID || reviewUUID == "" && h.Request.FailureRun != storage.KataFailureRun(job) {
 			continue
 		}
@@ -134,7 +138,14 @@ func (s *Server) kataPublications(ctx context.Context, jobID int64, reviewUUID s
 		return nil, huma.Error500InternalServerError("could not load Kata publications")
 	}
 	out := &KataPublicationsOutput{Body: KataPublicationsBody{JobID: jobID, Publications: []KataPublication{}}}
+	out.Body.Operations, err = s.db.KataResponseStatuses(ctx, jobID, "")
+	if err != nil {
+		return nil, huma.Error500InternalServerError("could not load response statuses")
+	}
 	for _, h := range records {
+		if len(h.Request.Responses) > 0 {
+			continue
+		}
 		if reviewUUID != "" && h.ReviewUUID != reviewUUID {
 			continue
 		}

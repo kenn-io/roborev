@@ -1317,6 +1317,9 @@ components:
           type: string
         reasoning:
           type: string
+        reassessment_durable:
+          description: Whether the daemon owns durable recording of this reassessment result
+          type: boolean
         repo_id:
           format: int64
           type: integer
@@ -2610,6 +2613,10 @@ components:
         job_id:
           format: int64
           type: integer
+        operations:
+          items:
+            $ref: "#/components/schemas/KataResponseStatus"
+          type: array
         publications:
           items:
             $ref: "#/components/schemas/KataPublication"
@@ -2635,6 +2642,69 @@ components:
           type: integer
       required:
         - job_id
+      type: object
+    KataResponseRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/KataResponseRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        body:
+          type: string
+        finding_id:
+          description: Complete finding selector or Kata comment reference
+          type: string
+        job_id:
+          description: Optional original job ID; otherwise resolve the immutable finding or comment target
+          format: int64
+          type: integer
+        kind:
+          type: string
+        operation_id:
+          type: string
+        replacement:
+          type: string
+        target_comment:
+          type: string
+      required:
+        - operation_id
+        - finding_id
+        - kind
+        - body
+      type: object
+    KataResponseStatus:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/KataResponseStatus.json
+          format: uri
+          readOnly: true
+          type: string
+        existing_comment:
+          type: string
+        kind:
+          type: string
+        message:
+          type: string
+        operation_id:
+          type: string
+        receipt:
+          type: string
+        state:
+          type: string
+        target:
+          type: string
+      required:
+        - operation_id
+        - state
+        - kind
+        - target
       type: object
     KataStatusBody:
       additionalProperties: false
@@ -3153,6 +3223,9 @@ components:
           type: string
         reasoning:
           type: string
+        reassessment_durable:
+          description: Whether the daemon owns durable recording of this reassessment result
+          type: boolean
         repo_id:
           format: int64
           type: integer
@@ -3393,6 +3466,9 @@ components:
         job_id:
           format: int64
           type: integer
+        replacement:
+          description: Optional complete selector of a replacement finding
+          type: string
       required:
         - job_id
         - comment
@@ -4110,6 +4186,9 @@ components:
           type: boolean
         reasoning:
           type: string
+        reassessment_durable:
+          description: Whether the daemon owns durable recording of this reassessment result
+          type: boolean
         repo_id:
           format: int64
           type: integer
@@ -6660,6 +6739,56 @@ paths:
                 $ref: "#/components/schemas/ErrorModel"
           description: Internal Server Error
       summary: Explicitly capture a job's Kata publication
+      tags:
+        - kata
+  /api/kata/response:
+    get:
+      operationId: kata-response-status
+      parameters:
+        - explode: false
+          in: query
+          name: operation_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataResponseStatus"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API kata response
+      tags:
+        - kata
+    post:
+      operationId: kata-response
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KataResponseRequest"
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataResponseStatus"
+          description: Accepted
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Post API kata response
       tags:
         - kata
   /api/kata/status:

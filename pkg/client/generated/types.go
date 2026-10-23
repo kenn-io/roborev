@@ -1051,28 +1051,31 @@ type EnqueueCreatedResponse struct {
 	PromptPrebuilt        bool                   `json:"prompt_prebuilt"`
 	Provider              *string                `json:"provider,omitempty"`
 	Reasoning             *string                `json:"reasoning,omitempty"`
-	RepoID                int64                  `json:"repo_id"`
-	RepoName              *string                `json:"repo_name,omitempty"`
-	RepoPath              *string                `json:"repo_path,omitempty"`
-	RequestedModel        *string                `json:"requested_model,omitempty"`
-	RequestedProvider     *string                `json:"requested_provider,omitempty"`
-	ResumeSourceJobUUID   *uuid.UUID             `json:"resume_source_job_uuid,omitempty"`
-	RetryCount            int64                  `json:"retry_count"`
-	ReviewType            *string                `json:"review_type,omitempty"`
-	SessionID             *string                `json:"session_id,omitempty"`
-	SkipReason            *string                `json:"skip_reason,omitempty"`
-	Source                *string                `json:"source,omitempty"`
-	SourceMachineID       *uuid.UUID             `json:"source_machine_id,omitempty"`
-	StartedAt             *time.Time             `json:"started_at,omitempty"`
-	Status                string                 `json:"status" validate:"required"`
-	SyncedAt              *time.Time             `json:"synced_at,omitempty"`
-	TokenUsage            *string                `json:"token_usage,omitempty"`
-	UpdatedAt             *time.Time             `json:"updated_at,omitempty"`
-	UUID                  uuid.UUID              `json:"uuid" validate:"required"`
-	Verdict               *string                `json:"verdict,omitempty"`
-	WebURL                *string                `json:"web_url,omitempty"`
-	WorkerID              *string                `json:"worker_id,omitempty"`
-	WorktreePath          *string                `json:"worktree_path,omitempty"`
+
+	// ReassessmentDurable Whether the daemon owns durable recording of this reassessment result
+	ReassessmentDurable *bool      `json:"reassessment_durable,omitempty"`
+	RepoID              int64      `json:"repo_id"`
+	RepoName            *string    `json:"repo_name,omitempty"`
+	RepoPath            *string    `json:"repo_path,omitempty"`
+	RequestedModel      *string    `json:"requested_model,omitempty"`
+	RequestedProvider   *string    `json:"requested_provider,omitempty"`
+	ResumeSourceJobUUID *uuid.UUID `json:"resume_source_job_uuid,omitempty"`
+	RetryCount          int64      `json:"retry_count"`
+	ReviewType          *string    `json:"review_type,omitempty"`
+	SessionID           *string    `json:"session_id,omitempty"`
+	SkipReason          *string    `json:"skip_reason,omitempty"`
+	Source              *string    `json:"source,omitempty"`
+	SourceMachineID     *uuid.UUID `json:"source_machine_id,omitempty"`
+	StartedAt           *time.Time `json:"started_at,omitempty"`
+	Status              string     `json:"status" validate:"required"`
+	SyncedAt            *time.Time `json:"synced_at,omitempty"`
+	TokenUsage          *string    `json:"token_usage,omitempty"`
+	UpdatedAt           *time.Time `json:"updated_at,omitempty"`
+	UUID                uuid.UUID  `json:"uuid" validate:"required"`
+	Verdict             *string    `json:"verdict,omitempty"`
+	WebURL              *string    `json:"web_url,omitempty"`
+	WorkerID            *string    `json:"worker_id,omitempty"`
+	WorktreePath        *string    `json:"worktree_path,omitempty"`
 }
 
 func (e EnqueueCreatedResponse) Validate() error {
@@ -2484,13 +2487,21 @@ func (k KataPublication) Validate() error {
 
 type KataPublicationsBody struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema       *string           `json:"$schema,omitempty"`
-	JobID        int64             `json:"job_id"`
-	Publications []KataPublication `json:"publications" validate:"required"`
+	Schema       *string              `json:"$schema,omitempty"`
+	JobID        int64                `json:"job_id"`
+	Operations   []KataResponseStatus `json:"operations,omitempty"`
+	Publications []KataPublication    `json:"publications" validate:"required"`
 }
 
 func (k KataPublicationsBody) Validate() error {
 	var errors runtime.ValidationErrors
+	for i, item := range k.Operations {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Operations[%d]", i), err)
+			}
+		}
+	}
 	for i, item := range k.Publications {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -2513,6 +2524,42 @@ type KataPublishRequest struct {
 }
 
 func (k KataPublishRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(k))
+}
+
+type KataResponseRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+	Body   string  `json:"body" validate:"required"`
+
+	// FindingID Complete finding selector or Kata comment reference
+	FindingID string `json:"finding_id" validate:"required"`
+
+	// JobID Optional original job ID; otherwise resolve the immutable finding or comment target
+	JobID         *int64  `json:"job_id,omitempty"`
+	Kind          string  `json:"kind" validate:"required"`
+	OperationID   string  `json:"operation_id" validate:"required"`
+	Replacement   *string `json:"replacement,omitempty"`
+	TargetComment *string `json:"target_comment,omitempty"`
+}
+
+func (k KataResponseRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(k))
+}
+
+type KataResponseStatus struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema          *string `json:"$schema,omitempty"`
+	ExistingComment *string `json:"existing_comment,omitempty"`
+	Kind            string  `json:"kind" validate:"required"`
+	Message         *string `json:"message,omitempty"`
+	OperationID     string  `json:"operation_id" validate:"required"`
+	Receipt         *string `json:"receipt,omitempty"`
+	State           string  `json:"state" validate:"required"`
+	Target          string  `json:"target" validate:"required"`
+}
+
+func (k KataResponseStatus) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(k))
 }
 
@@ -2913,28 +2960,31 @@ type PanelEnqueueResponse struct {
 	PromptPrebuilt        bool                   `json:"prompt_prebuilt"`
 	Provider              *string                `json:"provider,omitempty"`
 	Reasoning             *string                `json:"reasoning,omitempty"`
-	RepoID                int64                  `json:"repo_id"`
-	RepoName              *string                `json:"repo_name,omitempty"`
-	RepoPath              *string                `json:"repo_path,omitempty"`
-	RequestedModel        *string                `json:"requested_model,omitempty"`
-	RequestedProvider     *string                `json:"requested_provider,omitempty"`
-	ResumeSourceJobUUID   *uuid.UUID             `json:"resume_source_job_uuid,omitempty"`
-	RetryCount            int64                  `json:"retry_count"`
-	ReviewType            *string                `json:"review_type,omitempty"`
-	SessionID             *string                `json:"session_id,omitempty"`
-	SkipReason            *string                `json:"skip_reason,omitempty"`
-	Source                *string                `json:"source,omitempty"`
-	SourceMachineID       *uuid.UUID             `json:"source_machine_id,omitempty"`
-	StartedAt             *time.Time             `json:"started_at,omitempty"`
-	Status                string                 `json:"status" validate:"required"`
-	SyncedAt              *time.Time             `json:"synced_at,omitempty"`
-	TokenUsage            *string                `json:"token_usage,omitempty"`
-	UpdatedAt             *time.Time             `json:"updated_at,omitempty"`
-	UUID                  *uuid.UUID             `json:"uuid,omitempty"`
-	Verdict               *string                `json:"verdict,omitempty"`
-	WebURL                *string                `json:"web_url,omitempty"`
-	WorkerID              *string                `json:"worker_id,omitempty"`
-	WorktreePath          *string                `json:"worktree_path,omitempty"`
+
+	// ReassessmentDurable Whether the daemon owns durable recording of this reassessment result
+	ReassessmentDurable *bool      `json:"reassessment_durable,omitempty"`
+	RepoID              int64      `json:"repo_id"`
+	RepoName            *string    `json:"repo_name,omitempty"`
+	RepoPath            *string    `json:"repo_path,omitempty"`
+	RequestedModel      *string    `json:"requested_model,omitempty"`
+	RequestedProvider   *string    `json:"requested_provider,omitempty"`
+	ResumeSourceJobUUID *uuid.UUID `json:"resume_source_job_uuid,omitempty"`
+	RetryCount          int64      `json:"retry_count"`
+	ReviewType          *string    `json:"review_type,omitempty"`
+	SessionID           *string    `json:"session_id,omitempty"`
+	SkipReason          *string    `json:"skip_reason,omitempty"`
+	Source              *string    `json:"source,omitempty"`
+	SourceMachineID     *uuid.UUID `json:"source_machine_id,omitempty"`
+	StartedAt           *time.Time `json:"started_at,omitempty"`
+	Status              string     `json:"status" validate:"required"`
+	SyncedAt            *time.Time `json:"synced_at,omitempty"`
+	TokenUsage          *string    `json:"token_usage,omitempty"`
+	UpdatedAt           *time.Time `json:"updated_at,omitempty"`
+	UUID                *uuid.UUID `json:"uuid,omitempty"`
+	Verdict             *string    `json:"verdict,omitempty"`
+	WebURL              *string    `json:"web_url,omitempty"`
+	WorkerID            *string    `json:"worker_id,omitempty"`
+	WorktreePath        *string    `json:"worktree_path,omitempty"`
 }
 
 func (p PanelEnqueueResponse) Validate() error {
@@ -3140,6 +3190,9 @@ type RebuttalRequest struct {
 	// FindingID Complete selector of a finding of the current review to re-evaluate, as GET /api/review/findings lists it; use this or finding
 	FindingID *string `json:"finding_id,omitempty"`
 	JobID     int64   `json:"job_id"`
+
+	// Replacement Optional complete selector of a replacement finding
+	Replacement *string `json:"replacement,omitempty"`
 }
 
 func (r RebuttalRequest) Validate() error {
@@ -3686,28 +3739,31 @@ type ReviewJob struct {
 	Provider              *string                `json:"provider,omitempty"`
 	Readable              *bool                  `json:"readable,omitempty"`
 	Reasoning             *string                `json:"reasoning,omitempty"`
-	RepoID                int64                  `json:"repo_id"`
-	RepoName              *string                `json:"repo_name,omitempty"`
-	RepoPath              *string                `json:"repo_path,omitempty"`
-	RequestedModel        *string                `json:"requested_model,omitempty"`
-	RequestedProvider     *string                `json:"requested_provider,omitempty"`
-	ResumeSourceJobUUID   *uuid.UUID             `json:"resume_source_job_uuid,omitempty"`
-	RetryCount            int64                  `json:"retry_count"`
-	ReviewType            *string                `json:"review_type,omitempty"`
-	SessionID             *string                `json:"session_id,omitempty"`
-	SkipReason            *string                `json:"skip_reason,omitempty"`
-	Source                *string                `json:"source,omitempty"`
-	SourceMachineID       *uuid.UUID             `json:"source_machine_id,omitempty"`
-	StartedAt             *time.Time             `json:"started_at,omitempty"`
-	Status                string                 `json:"status" validate:"required"`
-	SyncedAt              *time.Time             `json:"synced_at,omitempty"`
-	TokenUsage            *string                `json:"token_usage,omitempty"`
-	UpdatedAt             *time.Time             `json:"updated_at,omitempty"`
-	UUID                  *uuid.UUID             `json:"uuid,omitempty"`
-	Verdict               *string                `json:"verdict,omitempty"`
-	WebURL                *string                `json:"web_url,omitempty"`
-	WorkerID              *string                `json:"worker_id,omitempty"`
-	WorktreePath          *string                `json:"worktree_path,omitempty"`
+
+	// ReassessmentDurable Whether the daemon owns durable recording of this reassessment result
+	ReassessmentDurable *bool      `json:"reassessment_durable,omitempty"`
+	RepoID              int64      `json:"repo_id"`
+	RepoName            *string    `json:"repo_name,omitempty"`
+	RepoPath            *string    `json:"repo_path,omitempty"`
+	RequestedModel      *string    `json:"requested_model,omitempty"`
+	RequestedProvider   *string    `json:"requested_provider,omitempty"`
+	ResumeSourceJobUUID *uuid.UUID `json:"resume_source_job_uuid,omitempty"`
+	RetryCount          int64      `json:"retry_count"`
+	ReviewType          *string    `json:"review_type,omitempty"`
+	SessionID           *string    `json:"session_id,omitempty"`
+	SkipReason          *string    `json:"skip_reason,omitempty"`
+	Source              *string    `json:"source,omitempty"`
+	SourceMachineID     *uuid.UUID `json:"source_machine_id,omitempty"`
+	StartedAt           *time.Time `json:"started_at,omitempty"`
+	Status              string     `json:"status" validate:"required"`
+	SyncedAt            *time.Time `json:"synced_at,omitempty"`
+	TokenUsage          *string    `json:"token_usage,omitempty"`
+	UpdatedAt           *time.Time `json:"updated_at,omitempty"`
+	UUID                *uuid.UUID `json:"uuid,omitempty"`
+	Verdict             *string    `json:"verdict,omitempty"`
+	WebURL              *string    `json:"web_url,omitempty"`
+	WorkerID            *string    `json:"worker_id,omitempty"`
+	WorktreePath        *string    `json:"worktree_path,omitempty"`
 }
 
 func (r ReviewJob) Validate() error {

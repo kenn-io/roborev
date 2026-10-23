@@ -338,6 +338,13 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Tags = []string{"daemon"}
 		})
 
+	huma.Post(api, "/api/kata/response", s.humaKataResponse, func(o *huma.Operation) {
+		o.OperationID = "kata-response"
+		o.Tags = []string{"kata"}
+		o.DefaultStatus = 202
+		o.MaxBodyBytes = -1
+	})
+	huma.Get(api, "/api/kata/response", s.humaKataResponseStatus, func(o *huma.Operation) { o.OperationID = "kata-response-status"; o.Tags = []string{"kata"} })
 	huma.Get(api, "/api/kata/status", s.humaKataStatus,
 		func(o *huma.Operation) {
 			o.OperationID = "kata-status"
@@ -540,6 +547,8 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 		})
 
 	huma.Post(api, "/api/rebuttal", s.humaRebuttal, func(o *huma.Operation) {
+		// Preserve complete finding/evidence input; provider transport owns its limits.
+		o.MaxBodyBytes = -1
 		o.OperationID = "rebuttal"
 		o.Summary = "Re-evaluate one finding in the original agent session"
 		o.DefaultStatus = 201

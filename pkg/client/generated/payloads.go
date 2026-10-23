@@ -34,6 +34,8 @@ type KataCreateIssueBody = KataCreateRequest
 
 type KataPublishBody = KataPublishRequest
 
+type KataResponseBody = KataResponseRequest
+
 type CleanJobLogsBody = CleanJobLogsInputBody
 
 type ConvertLegacyReviewsBody = ConvertLegacyReviewsInputBody
