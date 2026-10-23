@@ -18,7 +18,6 @@ import (
 	"github.com/spf13/cobra"
 	gitrepo "go.kenn.io/kit/git/repo"
 
-	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/telemetry"
 	"go.kenn.io/roborev/internal/tokens"
@@ -194,9 +193,6 @@ Examples:
 
 			resp, err := newDaemonAPI(addr, client).GetReviewRaw(ctx, nil, roborevclient.WithQuery(query))
 			if err != nil {
-				if daemon.IsDaemonAccessError(err) {
-					return err
-				}
 				return fmt.Errorf("failed to connect to daemon (is it running?)")
 			}
 			defer resp.Body.Close()

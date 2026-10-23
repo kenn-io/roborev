@@ -55,7 +55,7 @@ var (
 	daemonStartTimeout          = 2 * time.Minute
 	getAnyRunningDaemon         = daemon.GetAnyRunningDaemon
 	getAnyRunningDaemonForStart = daemon.GetAnyRunningDaemonContext
-	listAllRuntimes             = daemon.ListAllRuntimes
+	listAllRuntimes             = daemon.ListLocalRuntimes
 	cleanupZombieDaemons        = daemon.CleanupZombieDaemons
 	isPIDAliveForUpdate         = isPIDAliveForUpdateDefault
 	startDaemonForEnsure        = startDaemon
@@ -319,12 +319,6 @@ func ensureDaemon() error {
 	}
 	if discoveryErr == nil {
 		if !skipVersionCheck {
-			if info.Unjudged() {
-				if verbose {
-					fmt.Fprintln(lifecycleOut, "Daemon recovery skipped; process identity can't be judged from this PID namespace")
-				}
-				return nil
-			}
 			// The probe can outlast the daemon, so read its cgroup first.
 			outsideService := discoveredOutsideService(info.PID)
 			probe, err := probeDaemonForEnsure(info.Endpoint(), 2*time.Second)
@@ -503,7 +497,7 @@ func openDetachedDaemonLogs() (*os.File, *os.File, func(), error) {
 // stopDaemon stops any running daemons.
 // Returns ErrDaemonNotRunning if no daemon runtime files are found.
 func stopDaemon() error {
-	return stopDaemonRuntimes(daemon.ListAllRuntimes, daemon.KillDaemon, os.Stderr)
+	return stopDaemonRuntimes(daemon.ListLocalRuntimes, daemon.KillDaemon, os.Stderr)
 }
 
 func stopDaemonRuntimes(list func() ([]*daemon.RuntimeInfo, error), drain func(*daemon.RuntimeInfo) error, out io.Writer) error {
@@ -522,18 +516,12 @@ func stopDaemonRuntimes(list func() ([]*daemon.RuntimeInfo, error), drain func(*
 
 	// Kill all found daemons, track failures
 	var lastErr error
-	var skippedErr error
-	var skippedMessages []string
 	for _, info := range runtimes {
-		if !info.Unjudged() {
-			fmt.Fprintln(out, "Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...")
-		}
+		fmt.Fprintln(
+			out,
+			"Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...",
+		)
 		if err := drain(info); err != nil {
-			if errors.Is(err, daemon.ErrUnjudgedRuntime) {
-				skippedMessages = append(skippedMessages, fmt.Sprintf("Skipping daemon (pid %d): %v", info.PID, err))
-				skippedErr = err
-				continue
-			}
 			lastErr = fmt.Errorf("failed to stop daemon (pid %d): %w", info.PID, err)
 			if errors.Is(err, daemon.ErrDaemonAccessDenied) {
 				lastErr = fmt.Errorf("%w; restore the daemon's startup auth_key or stop PID %d manually", lastErr, info.PID)
@@ -541,11 +529,5 @@ func stopDaemonRuntimes(list func() ([]*daemon.RuntimeInfo, error), drain func(*
 		}
 	}
 
-	if len(skippedMessages) == len(runtimes) {
-		return skippedErr
-	}
-	for _, message := range skippedMessages {
-		fmt.Fprintln(out, message)
-	}
 	return lastErr
 }

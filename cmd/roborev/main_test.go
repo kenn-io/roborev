@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -985,10 +984,10 @@ func TestRestartDaemonAfterUpdateManagerRestarted(t *testing.T) {
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		getCalls++
 		if getCalls == 1 {
-			return &daemon.RuntimeInfo{PID: os.Getppid(), Address: "127.0.0.1:7373"}, nil
+			return &daemon.RuntimeInfo{PID: 100, Address: "127.0.0.1:7373"}, nil
 		}
 		// After stop, an external manager restarted with a new PID.
-		return &daemon.RuntimeInfo{PID: os.Getpid(), Address: "127.0.0.1:7373"}, nil
+		return &daemon.RuntimeInfo{PID: 200, Address: "127.0.0.1:7373"}, nil
 	}
 
 	output := captureStdout(t, func() {
@@ -1028,13 +1027,13 @@ func TestWaitForDaemonExitProbeErrorWithRuntimePresentTimesOut(t *testing.T) {
 		return nil, os.ErrNotExist
 	}
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		return []*daemon.RuntimeInfo{{PID: os.Getpid(), Address: "127.0.0.1:7373"}}, nil
+		return []*daemon.RuntimeInfo{{PID: 100, Address: "127.0.0.1:7373"}}, nil
 	}
 	isPIDAliveForUpdate = func(pid int) bool {
-		return pid == os.Getpid()
+		return pid == 100
 	}
 
-	exited, newPID := waitForDaemonExit(os.Getpid(), 5*time.Millisecond)
+	exited, newPID := waitForDaemonExit(100, 5*time.Millisecond)
 	assert.False(t, exited)
 	assert.Equal(t, 0, newPID)
 }
@@ -1046,14 +1045,14 @@ func TestWaitForDaemonExitProbeErrorWithStaleRuntimeExits(t *testing.T) {
 		return nil, os.ErrNotExist
 	}
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		return []*daemon.RuntimeInfo{{PID: math.MaxInt32, Address: "127.0.0.1:7373"}}, nil
+		return []*daemon.RuntimeInfo{{PID: 100, Address: "127.0.0.1:7373"}}, nil
 	}
 	// PID is dead; runtime entry is stale.
 	isPIDAliveForUpdate = func(int) bool {
 		return false
 	}
 
-	exited, newPID := waitForDaemonExit(math.MaxInt32, 5*time.Millisecond)
+	exited, newPID := waitForDaemonExit(100, 5*time.Millisecond)
 	assert.True(t, exited)
 	assert.Equal(t, 0, newPID)
 }
@@ -1068,10 +1067,10 @@ func TestWaitForDaemonExitRuntimeGoneButPIDAliveTimesOut(t *testing.T) {
 		return nil, nil
 	}
 	isPIDAliveForUpdate = func(pid int) bool {
-		return pid == os.Getpid()
+		return pid == 100
 	}
 
-	exited, newPID := waitForDaemonExit(os.Getpid(), 5*time.Millisecond)
+	exited, newPID := waitForDaemonExit(100, 5*time.Millisecond)
 	assert.False(t, exited)
 	assert.Equal(t, 0, newPID)
 }
@@ -1091,30 +1090,29 @@ func TestWaitForDaemonExitRuntimeGonePIDReusedAsNonDaemonExits(t *testing.T) {
 		return false
 	}
 
-	exited, newPID := waitForDaemonExit(math.MaxInt32, 5*time.Millisecond)
+	exited, newPID := waitForDaemonExit(100, 5*time.Millisecond)
 	assert.True(t, exited)
 	assert.Equal(t, 0, newPID)
 }
 
 func TestWaitForDaemonExitDetectsUnresponsiveManagerHandoffFromRuntimePID(t *testing.T) {
 	stubRestartVars(t)
-	replacementPID := os.Getpid()
 
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		return nil, os.ErrNotExist
 	}
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
 		return []*daemon.RuntimeInfo{
-			{PID: replacementPID, Address: "127.0.0.1:7373"},
+			{PID: 200, Address: "127.0.0.1:7373"},
 		}, nil
 	}
 	isPIDAliveForUpdate = func(pid int) bool {
-		return pid == replacementPID
+		return pid == 200
 	}
 
-	exited, newPID := waitForDaemonExit(math.MaxInt32, 5*time.Millisecond)
+	exited, newPID := waitForDaemonExit(100, 5*time.Millisecond)
 	require.True(t, exited, "expected exited=true when previous pid is gone")
-	assert.Equal(t, replacementPID, newPID)
+	assert.Equal(t, 200, newPID)
 }
 
 func TestInitialPIDsExitedRequiresPIDDeath(t *testing.T) {
@@ -1159,13 +1157,12 @@ func TestInitialPIDsExitedAllowsManagerPID(t *testing.T) {
 
 func TestRestartDaemonAfterUpdateManagerHandoffUnresponsiveUsesRuntimePID(t *testing.T) {
 	s := stubRestartVars(t)
-	replacementPID := os.Getpid()
 
 	var getCalls int
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		getCalls++
 		if getCalls == 1 {
-			return &daemon.RuntimeInfo{PID: os.Getppid(), Address: "127.0.0.1:7373"}, nil
+			return &daemon.RuntimeInfo{PID: 100, Address: "127.0.0.1:7373"}, nil
 		}
 		// Replacement daemon is not yet responsive.
 		return nil, os.ErrNotExist
@@ -1177,16 +1174,16 @@ func TestRestartDaemonAfterUpdateManagerHandoffUnresponsiveUsesRuntimePID(t *tes
 		if listCalls == 1 {
 			// Initial snapshot for stop validation.
 			return []*daemon.RuntimeInfo{
-				{PID: os.Getppid(), Address: "127.0.0.1:7373"},
+				{PID: 100, Address: "127.0.0.1:7373"},
 			}, nil
 		}
 		// Runtime handoff to manager-restarted PID.
 		return []*daemon.RuntimeInfo{
-			{PID: replacementPID, Address: "127.0.0.1:7373"},
+			{PID: 200, Address: "127.0.0.1:7373"},
 		}, nil
 	}
 	isPIDAliveForUpdate = func(pid int) bool {
-		return pid == replacementPID
+		return pid == 200
 	}
 
 	output := captureStdout(t, func() {
@@ -1206,7 +1203,7 @@ func TestRestartDaemonAfterUpdateStopFailedPreviousPIDExitedButInitialPIDLingeri
 		getCalls++
 		if getCalls == 1 {
 			// Initial probe sees previous PID.
-			return &daemon.RuntimeInfo{PID: os.Getppid(), Address: "127.0.0.1:7373"}, nil
+			return &daemon.RuntimeInfo{PID: 100, Address: "127.0.0.1:7373"}, nil
 		}
 		// previousPID exited quickly; no replacement PID observed.
 		return nil, os.ErrNotExist
@@ -1216,19 +1213,19 @@ func TestRestartDaemonAfterUpdateStopFailedPreviousPIDExitedButInitialPIDLingeri
 		case 0:
 			// Initial snapshot includes multiple daemon PIDs.
 			return []*daemon.RuntimeInfo{
-				{PID: os.Getppid(), Address: "127.0.0.1:7373"},
-				{PID: os.Getpid(), Address: "127.0.0.1:7373"},
+				{PID: 100, Address: "127.0.0.1:7373"},
+				{PID: 101, Address: "127.0.0.1:7373"},
 			}, nil
 		case 1:
 			// waitForDaemonExit still sees previous PID.
 			return []*daemon.RuntimeInfo{
-				{PID: os.Getppid(), Address: "127.0.0.1:7373"},
-				{PID: os.Getpid(), Address: "127.0.0.1:7373"},
+				{PID: 100, Address: "127.0.0.1:7373"},
+				{PID: 101, Address: "127.0.0.1:7373"},
 			}, nil
 		default:
 			// previousPID gone, but another initial PID lingers.
 			return []*daemon.RuntimeInfo{
-				{PID: os.Getpid(), Address: "127.0.0.1:7373"},
+				{PID: 101, Address: "127.0.0.1:7373"},
 			}, nil
 		}
 	}
@@ -1254,7 +1251,7 @@ func TestRestartDaemonAfterUpdateStopFailedInitialSnapshotErrorWithLingeringRunt
 		getCalls++
 		if getCalls == 1 {
 			// Initial probe sees previous PID.
-			return &daemon.RuntimeInfo{PID: os.Getppid(), Address: "127.0.0.1:7373"}, nil
+			return &daemon.RuntimeInfo{PID: 100, Address: "127.0.0.1:7373"}, nil
 		}
 		// After stop attempt, daemon probe fails.
 		return nil, os.ErrNotExist
@@ -1270,7 +1267,7 @@ func TestRestartDaemonAfterUpdateStopFailedInitialSnapshotErrorWithLingeringRunt
 		case 2:
 			// waitForDaemonExit still sees previous PID.
 			return []*daemon.RuntimeInfo{
-				{PID: os.Getppid(), Address: "127.0.0.1:7373"},
+				{PID: 100, Address: "127.0.0.1:7373"},
 			}, nil
 		case 3:
 			// previousPID is now gone from runtime files.
@@ -1278,7 +1275,7 @@ func TestRestartDaemonAfterUpdateStopFailedInitialSnapshotErrorWithLingeringRunt
 		default:
 			// Verification after stop failure finds another lingering runtime.
 			return []*daemon.RuntimeInfo{
-				{PID: os.Getpid(), Address: "127.0.0.1:7373"},
+				{PID: 101, Address: "127.0.0.1:7373"},
 			}, nil
 		}
 	}
@@ -1309,12 +1306,12 @@ func TestRestartDaemonAfterUpdateProbeFailFallback(t *testing.T) {
 		if getCalls <= 4 {
 			return nil, os.ErrNotExist
 		}
-		return &daemon.RuntimeInfo{PID: os.Getpid(), Address: "127.0.0.1:7373"}, nil
+		return &daemon.RuntimeInfo{PID: 300, Address: "127.0.0.1:7373"}, nil
 	}
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
 		if getCalls <= 3 {
 			return []*daemon.RuntimeInfo{
-				{PID: os.Getppid(), Address: "127.0.0.1:7373"},
+				{PID: 100, Address: "127.0.0.1:7373"},
 			}, nil
 		}
 		return nil, nil
@@ -1355,12 +1352,12 @@ func TestRestartDaemonAfterUpdateExitsQuickly(t *testing.T) {
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		getCalls++
 		if getCalls == 1 {
-			return &daemon.RuntimeInfo{PID: os.Getppid(), Address: "127.0.0.1:7373"}, nil
+			return &daemon.RuntimeInfo{PID: 100, Address: "127.0.0.1:7373"}, nil
 		}
 		if getCalls == 2 {
 			return nil, os.ErrNotExist
 		}
-		return &daemon.RuntimeInfo{PID: os.Getpid(), Address: "127.0.0.1:7373"}, nil
+		return &daemon.RuntimeInfo{PID: 400, Address: "127.0.0.1:7373"}, nil
 	}
 
 	output := captureStdout(t, func() {

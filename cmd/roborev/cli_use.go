@@ -160,8 +160,7 @@ func reportCLIActionOutput(out io.Writer, event string) {
 			if err != nil || info == nil {
 				return
 			}
-			e := info.Endpoint()
-			ep = &e
+			ep = &daemon.DaemonEndpoint{Network: info.Network, Address: info.Address}
 		}
 		_, _ = telemetry.PostReviewEvent(ctx, ep.HTTPClient(0), ep.BaseURL()+daemon.TelemetryEventsPath, event, telemetry.SurfaceCLI)
 	})

@@ -10,18 +10,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/daemon"
-	"go.kenn.io/roborev/internal/testutil"
 )
 
 func updateTestEndpoint(t *testing.T, handler http.Handler) daemon.DaemonEndpoint {
@@ -354,42 +351,4 @@ func waitForUpdateTestSignal(ch <-chan struct{}, timeout time.Duration) bool {
 	case <-time.After(timeout):
 		return false
 	}
-}
-
-func TestRestartUpdatedDaemonIgnoresUnjudgedReplacement(t *testing.T) {
-	stubRestartVars(t)
-	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	rec := testutil.UnjudgedRuntimeRecord(t, "tcp", "127.0.0.1:1")
-	path, err := daemon.RuntimeStore().Write(rec)
-	require.NoError(t, err)
-	listAllRuntimes = daemon.ListAllRuntimes
-	isPIDAliveForUpdate = func(pid int) bool { return pid == rec.PID }
-	started := false
-	startUpdatedDaemon = func(string) error { started = true; return nil }
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		if started {
-			return &daemon.RuntimeInfo{PID: 200, Version: "v0.65.0"}, nil
-		}
-		return nil, os.ErrNotExist
-	}
-	synctest.Test(t, func(t *testing.T) {
-		err := restartAndVerifyUpdatedDaemon(t.Context(), t.TempDir(), "0.65.0", &daemon.RuntimeInfo{PID: 100})
-		require.NoError(t, err)
-		assert.True(t, started)
-	})
-	assert.FileExists(t, path)
-}
-
-func TestUpdateRuntimePIDChecksRetainUnjudgedRecords(t *testing.T) {
-	stubRestartVars(t)
-	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	rec := testutil.UnjudgedRuntimeRecord(t, "tcp", "127.0.0.1:1")
-	path, err := daemon.RuntimeStore().Write(rec)
-	require.NoError(t, err)
-	listAllRuntimes = daemon.ListAllRuntimes
-	checks := 0
-	isPIDAliveForUpdate = func(int) bool { checks++; return false }
-	assert.False(t, runtimeHasPID(rec.PID))
-	assert.Zero(t, checks)
-	assert.FileExists(t, path)
 }

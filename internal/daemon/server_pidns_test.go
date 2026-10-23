@@ -5,14 +5,12 @@ package daemon
 import (
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 
@@ -75,7 +73,7 @@ func TestKillDaemonKeepsForeignRuntimeWithoutShutdown(t *testing.T) {
 	assert.Equal(before, after)
 }
 
-func TestDiscoveryFindsLiveSandboxDaemon(t *testing.T) {
+func TestDiscoverySkipsLiveSandboxDaemon(t *testing.T) {
 	if os.Getenv("ROBOREV_TEST_PIDNS_SERVE") == "1" {
 		t.Setenv("ROBOREV_DATA_DIR", os.Getenv("ROBOREV_TEST_PIDNS_DATA"))
 		require.Equal(t, 2, os.Getpid())
@@ -107,46 +105,14 @@ func TestDiscoveryFindsLiveSandboxDaemon(t *testing.T) {
 	before, err := os.ReadFile(path)
 	require.NoError(t, err)
 	info, err := GetAnyRunningDaemon()
+	require.ErrorIs(t, err, os.ErrNotExist)
+	assert.Nil(t, info)
+	runtimes, err := ListLocalRuntimes()
 	require.NoError(t, err)
-	assert.Equal(t, 2, info.PID)
-	response, err := info.Endpoint().APIClient(time.Second).GetStatusRaw(t.Context())
-	require.NoError(t, err)
-	defer response.Body.Close()
-	assert.Equal(t, http.StatusOK, response.StatusCode)
+	assert.Empty(t, runtimes)
 	after, err := os.ReadFile(path)
 	require.NoError(t, err)
 	assert.Equal(t, before, after)
-}
-
-func TestCleanupZombieDaemonsRemovesDeadSandboxSocket(t *testing.T) {
-	if socket := os.Getenv("ROBOREV_TEST_PIDNS_SOCKET"); socket != "" {
-		t.Setenv("ROBOREV_DATA_DIR", os.Getenv("ROBOREV_TEST_PIDNS_DATA"))
-		require.Equal(t, 3, os.Getpid())
-		listener, err := net.ListenUnix("unix", &net.UnixAddr{Net: "unix", Name: socket})
-		require.NoError(t, err)
-		t.Cleanup(func() { _ = listener.Close() })
-		require.NoError(t, WriteRuntime(DaemonEndpoint{Network: "unix", Address: socket}, nil, "test", nil))
-		require.NoError(t, syscall.Kill(os.Getpid(), syscall.SIGKILL))
-		return
-	}
-
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("ROBOREV_TEST_PIDNS_DATA", testenv.SetDataDir(t))
-	socket := filepath.Join(setShortRuntimeDir(t), "sandbox.sock")
-	t.Setenv("ROBOREV_TEST_PIDNS_SOCKET", socket)
-	// The shell exits successfully only after the sandbox daemon is killed.
-	setShortRuntimeDir(t)
-	testutil.RunPIDNamespaceTest(t, []string{"sh", "-c", `"$@"; test "$?" -eq 137`, "sh"}, "")
-	records, err := runtimeStore().List()
-	require.NoError(t, err)
-	require.Len(t, records, 1)
-	require.Equal(t, kitdaemon.ProcessScopeGone, kitdaemon.RuntimeProcessScope(records[0]))
-	require.True(t, kitdaemon.ProcessAlive(records[0].PID), "host must have an unrelated process at the sandbox PID")
-	require.FileExists(t, socket)
-
-	assert.Equal(t, 1, CleanupZombieDaemons(DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:0"}))
-	assert.NoFileExists(t, records[0].SourcePath)
-	assert.NoFileExists(t, socket)
 }
 
 func TestServerStartAfterShellLaunchedSandbox(t *testing.T) {

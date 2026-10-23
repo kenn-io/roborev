@@ -21,7 +21,6 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
-	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestAuthDaemonRunRejectsBrokenConfig(t *testing.T) {
@@ -364,32 +363,4 @@ func TestAuthStatusReportsConfigFailure(t *testing.T) {
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
 	require.ErrorIs(t, cmd.Execute(), daemon.ErrClientConfig)
-}
-
-func TestAuthUnjudgedListAndShowKeepAccessError(t *testing.T) {
-	for _, name := range []string{"list", "show"} {
-		t.Run(name, func(t *testing.T) {
-			isolateDaemonSelection(t)
-			t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "1")
-			require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`), 0o600))
-			rec := testutil.UnjudgedRuntimeRecord(t, "tcp", "127.0.0.1:1")
-			_, err := daemon.RuntimeStore().Write(rec)
-			require.NoError(t, err)
-			runtimes, err := daemon.ListAllRuntimes()
-			require.NoError(t, err)
-			require.Len(t, runtimes, 1)
-			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return runtimes[0], nil }
-			cmd := listCmd()
-			cmd.SetArgs([]string{"--all-branches"})
-			if name == "show" {
-				cmd = showCmd()
-				cmd.SetArgs([]string{"--job", "42"})
-			}
-			cmd.SetErr(io.Discard)
-			err = cmd.Execute()
-			require.Error(t, err)
-			assert.True(t, daemon.IsDaemonAccessError(err))
-			assert.NotContains(t, err.Error(), "failed to connect")
-		})
-	}
 }

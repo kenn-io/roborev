@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net"
@@ -13,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -35,50 +33,19 @@ import (
 	"go.kenn.io/roborev/internal/version"
 )
 
-func TestStopDaemonRuntimesSkipsUnjudged(t *testing.T) {
-	localInfo := &daemon.RuntimeInfo{PID: 42}
-	for _, tc := range []struct {
-		name    string
-		local   []*daemon.RuntimeInfo
-		waiting int
-		wantErr bool
-	}{
-		{name: "only unjudged", wantErr: true},
-		{name: "local and unjudged", local: []*daemon.RuntimeInfo{localInfo}, waiting: 1},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-			rec := testutil.UnknownRuntimeRecord("tcp", "127.0.0.1:1")
-			_, err := daemon.RuntimeStore().Write(rec)
-			require.NoError(t, err)
-			runtimes, err := daemon.ListAllRuntimes()
-			require.NoError(t, err)
-			require.Len(t, runtimes, 1)
-			unjudged := runtimes[0]
-			runtimes = append(runtimes, tc.local...)
-			var drained []*daemon.RuntimeInfo
-			var out bytes.Buffer
-			err = stopDaemonRuntimes(func() ([]*daemon.RuntimeInfo, error) {
-				return runtimes, nil
-			}, func(info *daemon.RuntimeInfo) error {
-				if info == unjudged {
-					return fmt.Errorf("cannot judge daemon PID %d: %w", info.PID, daemon.ErrUnjudgedRuntime)
-				}
-				drained = append(drained, info)
-				return nil
-			}, &out)
-			assert.Equal(t, tc.local, drained)
-			assert.Equal(t, tc.waiting, strings.Count(out.String(), "Waiting for daemon shutdown"))
-			if tc.wantErr {
-				require.ErrorIs(t, err, daemon.ErrUnjudgedRuntime)
-				require.ErrorContains(t, err, "cannot judge daemon PID")
-				assert.NotContains(t, out.String(), err.Error())
-			} else {
-				require.NoError(t, err)
-				assert.Contains(t, out.String(), "Skipping daemon")
-			}
-		})
-	}
+func TestListLocalRuntimesSkipsLiveForeignRecord(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	rec := testutil.UnjudgedRuntimeRecord(t, "tcp", "127.0.0.1:1")
+	path, err := daemon.RuntimeStore().Write(rec)
+	require.NoError(t, err)
+	before, err := os.ReadFile(path)
+	require.NoError(t, err)
+	runtimes, err := listAllRuntimes()
+	require.NoError(t, err)
+	assert.Empty(t, runtimes)
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
 }
 
 func TestGetDaemonEndpointAvoidsDefaultDaemonPortInTests(t *testing.T) {

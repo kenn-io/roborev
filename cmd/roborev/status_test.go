@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -15,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
@@ -30,55 +33,59 @@ type statusJSONOutput struct {
 }
 
 func TestStatusCmdJSONKeepsRespondingUnjudgedDaemon(t *testing.T) {
-	for _, daemonVersion := range []string{"v-old", ""} {
-		t.Run("version="+daemonVersion, func(t *testing.T) {
+	for _, jsonOutput := range []bool{true, false} {
+		t.Run(fmt.Sprintf("json=%t", jsonOutput), func(t *testing.T) {
 			stubServiceRecovery(t)
-			t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "0")
+			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 			rec := testutil.UnjudgedRuntimeRecord(t, "tcp", "")
-			var shutdowns atomic.Int32
-			md := NewMockDaemon(t, MockRefineHooks{
-				OnPing: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
-					_ = json.NewEncoder(w).Encode(daemon.PingInfo{OK: true, Service: "roborev", Version: daemonVersion, PID: rec.PID})
-					return true
-				},
-				OnUnhandled: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
-					if r.URL.Path == "/api/shutdown" {
-						shutdowns.Add(1)
-					}
-					return false
-				},
-			})
-			defer md.Close()
-			serverAddr = ""
-			runtimes, err := daemon.ListAllRuntimes()
-			require.NoError(t, err)
-			require.Len(t, runtimes, 1)
-			require.NoError(t, os.Remove(runtimes[0].SourcePath))
-			rec.Address = md.Server.URL[len("http://"):]
+			var credentials, otherRequests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("Authorization") != "" {
+					credentials.Add(1)
+				}
+				if r.URL.Path != "/api/ping" {
+					otherRequests.Add(1)
+				}
+				_ = json.NewEncoder(w).Encode(daemon.PingInfo{OK: true, Service: "roborev", Version: "v-old", PID: rec.PID})
+			}))
+			t.Cleanup(server.Close)
+			rec.Address = server.Listener.Addr().String()
 			path, err := daemon.RuntimeStore().Write(rec)
 			require.NoError(t, err)
-			cgroupReads, serviceLookups := 0, 0
-			daemonCgroupUnit = func(int) (string, error) {
-				cgroupReads++
-				return "", nil
-			}
-			findDaemonService = func(context.Context, int) (*daemonService, error) {
-				serviceLookups++
-				return nil, nil
-			}
-
+			before, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`), 0o600))
+			original := statusEnsureDaemon
+			t.Cleanup(func() { statusEnsureDaemon = original })
+			ensures := 0
+			statusEnsureDaemon = func() error { ensures++; return nil }
 			output := captureStdout(t, func() {
 				cmd := statusCmd()
-				cmd.SetArgs([]string{"--json"})
+				if jsonOutput {
+					cmd.SetArgs([]string{"--json"})
+				}
 				require.NoError(t, cmd.Execute())
 			})
-			var parsed statusJSONOutput
-			require.NoError(t, json.Unmarshal([]byte(output), &parsed))
-			assert.True(t, parsed.Running)
-			assert.Zero(t, shutdowns.Load())
-			assert.FileExists(t, path)
-			assert.Zero(t, cgroupReads)
-			assert.Zero(t, serviceLookups)
+			assert := assert.New(t)
+			if jsonOutput {
+				var parsed statusJSONResult
+				require.NoError(t, json.Unmarshal([]byte(output), &parsed))
+				assert.True(parsed.Running)
+				assert.Contains(parsed.Error, "another PID namespace")
+				assert.Nil(parsed.Daemon)
+				assert.Empty(parsed.Jobs)
+			} else {
+				assert.Contains(output, fmt.Sprintf("Daemon: running (pid %d, another PID namespace)", rec.PID))
+				assert.Contains(output, "Status: unavailable")
+				assert.Contains(output, "host")
+				assert.NotContains(output, "Jobs:")
+			}
+			assert.Zero(ensures)
+			assert.Zero(credentials.Load())
+			assert.Zero(otherRequests.Load())
+			after, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(before, after)
 		})
 	}
 }

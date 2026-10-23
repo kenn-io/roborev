@@ -15,7 +15,6 @@ import (
 	"github.com/spf13/cobra"
 	gitrepo "go.kenn.io/kit/git/repo"
 
-	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/pkg/client/generated"
 )
@@ -136,9 +135,6 @@ Examples:
 			client := ep.APIClient(5 * time.Second)
 			resp, err := client.ListJobsRaw(cmd.Context(), &generated.ListJobsRequestOptions{Query: &params})
 			if err != nil {
-				if daemon.IsDaemonAccessError(err) {
-					return err
-				}
 				return fmt.Errorf("failed to connect to daemon (is it running?)")
 			}
 			defer resp.Body.Close()

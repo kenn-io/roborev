@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -20,54 +19,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/daemon"
-	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/update"
 )
-
-func TestUpdateCommandRefusesUnjudgedBeforeInstall(t *testing.T) {
-	for _, probeFails := range []bool{false, true} {
-		name := "probe finds it"
-		if probeFails {
-			name = "probe fails"
-		}
-		t.Run(name, func(t *testing.T) {
-			info := stubUpdateCommand(t)
-			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-			rec := testutil.UnjudgedRuntimeRecord(t, "tcp", "127.0.0.1:1")
-			path, err := daemon.RuntimeStore().Write(rec)
-			require.NoError(t, err)
-			runtimes, err := daemon.ListAllRuntimes()
-			require.NoError(t, err)
-			require.Len(t, runtimes, 1)
-			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-				if probeFails {
-					return nil, errors.New("probe failed")
-				}
-				return runtimes[0], nil
-			}
-			listAllRuntimes = daemon.ListAllRuntimes
-			oldAlive := isPIDAliveForUpdate
-			t.Cleanup(func() { isPIDAliveForUpdate = oldAlive })
-			pidChecks := 0
-			isPIDAliveForUpdate = func(int) bool { pidChecks++; return false }
-			installs := 0
-			performUpdateForCommand = func(context.Context, *update.UpdateInfo, update.Reporter) error {
-				installs++
-				return errors.New("unexpected installation")
-			}
-			var out bytes.Buffer
-			err = runControlledUpdate(t.Context(), strings.NewReader(""), &out, info, t.TempDir(), policyWait, true, false)
-			require.ErrorIs(t, err, daemon.ErrUnjudgedRuntime)
-			assert.Contains(t, err.Error(), "update from there")
-			if probeFails {
-				assert.Contains(t, err.Error(), path)
-			}
-			assert.FileExists(t, path)
-			assert.Zero(t, pidChecks)
-			assert.Zero(t, installs)
-		})
-	}
-}
 
 func stubUpdateCommand(t *testing.T) *update.UpdateInfo {
 	t.Helper()
@@ -383,14 +336,17 @@ func TestUpdateCommandCancelDuringHookRepairSuppressesSuccess(t *testing.T) {
 
 func TestDiscoverDaemonForUpdateRemovesDeadRuntime(t *testing.T) {
 	stubUpdateCommand(t)
+	oldAlive := isPIDAliveForUpdate
+	t.Cleanup(func() { isPIDAliveForUpdate = oldAlive })
 	runtimePath := filepath.Join(t.TempDir(), "daemon.json")
 	require.NoError(t, os.WriteFile(runtimePath, []byte("{}"), 0o600))
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		return nil, errors.New("probe failed")
 	}
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		return []*daemon.RuntimeInfo{{PID: math.MaxInt32, SourcePath: runtimePath}}, nil
+		return []*daemon.RuntimeInfo{{PID: 42, SourcePath: runtimePath}}, nil
 	}
+	isPIDAliveForUpdate = func(int) bool { return false }
 
 	info, err := discoverDaemonForUpdate()
 

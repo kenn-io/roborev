@@ -20,7 +20,6 @@ import (
 	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/config"
-	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
 const (
@@ -100,17 +99,13 @@ func (r *RuntimeInfo) Unjudged() bool {
 
 // Endpoint returns a DaemonEndpoint for this runtime.
 func (r RuntimeInfo) Endpoint() DaemonEndpoint {
-	ep := daemonEndpointFromKit(kitdaemon.RuntimeRecord{
+	return daemonEndpointFromKit(kitdaemon.RuntimeRecord{
 		PID:     r.PID,
 		Network: r.Network,
 		Address: r.Address,
 		Service: r.Service,
 		Version: r.Version,
 	}.Endpoint())
-	if r.Unjudged() {
-		ep = ep.asUnjudged()
-	}
-	return ep
 }
 
 // Endpoints returns the primary endpoint followed by a valid distinct
@@ -132,9 +127,6 @@ func (r RuntimeInfo) Endpoints() []DaemonEndpoint {
 		return endpoints
 	}
 	alternate, err := ParseEndpoint(raw)
-	if primary.unjudged {
-		alternate = alternate.asUnjudged()
-	}
 	if err != nil || alternate == primary {
 		return endpoints
 	}
@@ -338,6 +330,45 @@ func ListAllRuntimes() ([]*RuntimeInfo, error) {
 	return runtimes, nil
 }
 
+// ListLocalRuntimes returns runtime records whose processes can be judged here.
+func ListLocalRuntimes() ([]*RuntimeInfo, error) {
+	runtimes, err := ListAllRuntimes()
+	if err != nil {
+		return nil, err
+	}
+	local := runtimes[:0]
+	for _, info := range runtimes {
+		if !info.Unjudged() {
+			local = append(local, info)
+		}
+	}
+	return local, nil
+}
+
+// FindUnjudgedDaemon finds a responsive daemon whose process cannot be judged
+// here. Its liveness probes send no authentication key.
+func FindUnjudgedDaemon() (*RuntimeInfo, error) {
+	runtimes, err := ListAllRuntimes()
+	if err != nil {
+		return nil, err
+	}
+	for _, info := range runtimes {
+		if info.hasStaleProcess() || !info.Unjudged() {
+			continue
+		}
+		for _, ep := range info.PreferredEndpoints() {
+			if !ep.IsUnix() && !isLoopbackAddr(ep.Address) {
+				continue
+			}
+			ping, err := probeDaemonHTTP(context.Background(), ep, time.Second, ep.transportClient(time.Second, config.DaemonTLSConfig{}))
+			if err == nil && ping.PID == info.PID {
+				return info, nil
+			}
+		}
+	}
+	return nil, os.ErrNotExist
+}
+
 // legacyRuntimeInfo is the on-disk shape written by roborev v0.56 and earlier,
 // which stored daemon.<pid>.json and daemon.json in the data dir root.
 type legacyRuntimeInfo struct {
@@ -406,7 +437,7 @@ func probeRuntimeRecordWithAuth(ctx context.Context, ep DaemonEndpoint, clientAu
 	if !ep.IsUnix() && !isLoopbackAddr(ep.Address) {
 		return nil, fmt.Errorf("non-loopback daemon address: %s", ep.Address)
 	}
-	client := ep.pingHTTPClient(time.Second, clientAuth, nil)
+	client := ep.authClient(time.Second, clientAuth.TLS, func() (string, error) { return clientAuth.Key, nil })
 	return probeDaemonHTTP(ctx, ep, time.Second, client)
 }
 
@@ -449,7 +480,7 @@ func discoverRuntimeRecords(
 	var deniedErr error
 	for _, rec := range records {
 		info := runtimeInfoFromRecord(rec)
-		if info.hasStaleProcess() {
+		if info.hasStaleProcess() || info.Unjudged() {
 			continue
 		}
 		primary := info.Endpoint()
@@ -509,8 +540,7 @@ func ProbeDaemon(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error) {
 	if !ep.IsRemote() && !ep.IsUnix() && !isLoopbackAddr(ep.Address) {
 		return nil, fmt.Errorf("non-loopback daemon address: %s", ep.Address)
 	}
-	clientAuth, err := loadClientAuth()
-	return probeDaemonHTTP(context.Background(), ep, timeout, ep.pingHTTPClient(timeout, clientAuth, err))
+	return probeDaemonHTTP(context.Background(), ep, timeout, ep.HTTPClient(timeout))
 }
 
 // ProbeDaemonPing validates a daemon endpoint like ProbeDaemon but decodes
@@ -525,12 +555,7 @@ func ProbeDaemonPing(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	clientAuth, configErr := loadClientAuth()
-	client, err := roborevclient.NewWithHTTPClient(ep.BaseURL(), ep.pingHTTPClient(timeout, clientAuth, configErr))
-	if err != nil {
-		return nil, err
-	}
-	resp, err := client.PingRaw(ctx)
+	resp, err := ep.APIClient(timeout).PingRaw(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -844,8 +869,8 @@ func CleanupZombieDaemons(target DaemonEndpoint) int {
 
 		// Check the recorded process before any endpoint receives credentials.
 		if info.hasStaleProcess() {
-			if ep.IsUnix() && ep.Address != target.Address && !kitdaemon.RuntimeProcessAlive(info.processRecord()) {
-				// Clean up non-matching sockets only when the recorded process is dead.
+			if ep.IsUnix() && ep.Address != target.Address && !kitdaemon.ProcessAlive(info.PID) {
+				// Clean up non-matching sockets only when the PID is dead.
 				os.Remove(ep.Address)
 			}
 			if info.SourcePath != "" {

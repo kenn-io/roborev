@@ -1678,10 +1678,6 @@ Roborev clients choose a transport in this order:
     address you give. This covers Windows, a socket file that was removed, and
     daemons older than v0.65.0.
 
-Across PID namespaces, clients can discover a daemon over plain TCP but require
-the Unix socket or `[daemon_tls]` to send `auth_key` when they cannot judge the
-runtime process identity.
-
 When no running daemon has published an address, clients do not send the key
 over plain TCP to the default address. Commands that need the daemon start it
 instead. Remote `https://` daemons use signed requests and are not affected. On

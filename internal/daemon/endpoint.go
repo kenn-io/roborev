@@ -27,7 +27,6 @@ type DaemonEndpoint struct {
 	remoteURL string // Explicit HTTPS URL; never used for local discovery.
 	accessErr error  // A terminal discovery error; never persisted.
 	guessed   bool   // A default address no running daemon published.
-	unjudged  bool   // The runtime process identity cannot be judged here.
 	Address   string // "127.0.0.1:7373" or "/tmp/roborev-1000/daemon.sock"
 }
 
@@ -101,18 +100,6 @@ var ErrGuessedEndpointAuth = errors.New(
 	"no running daemon published this address; refusing to send auth_key over plain TCP to a default address",
 )
 
-// ErrUnjudgedEndpointAuth means the runtime process identity cannot be judged
-// and the available transport cannot protect auth_key.
-var ErrUnjudgedEndpointAuth = fmt.Errorf(
-	"%w: runtime process identity cannot be judged; use the Unix socket or configure daemon_tls to protect auth_key",
-	ErrDaemonAccessDenied,
-)
-
-func (e DaemonEndpoint) asUnjudged() DaemonEndpoint {
-	e.unjudged = true
-	return e.AsGuess()
-}
-
 // AsGuess marks a default address used when no runtime record names a
 // running daemon. Clients do not send auth_key to it over plain TCP.
 func (e DaemonEndpoint) AsGuess() DaemonEndpoint {
@@ -157,9 +144,6 @@ func (e DaemonEndpoint) authClient(
 	return auth.HTTPClient(e.BaseURL(), e.transportClient(timeout, tlsSettings), func() (string, error) {
 		value, err := key()
 		if err == nil && value != "" && !protected {
-			if e.unjudged {
-				return "", ErrUnjudgedEndpointAuth
-			}
 			return "", ErrGuessedEndpointAuth
 		}
 		return value, err

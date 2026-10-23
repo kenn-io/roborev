@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -18,7 +17,6 @@ import (
 	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/config"
-	"go.kenn.io/roborev/internal/testutil"
 )
 
 func authEndpoint(t *testing.T, rawURL string) DaemonEndpoint {
@@ -256,60 +254,6 @@ func TestAuthDiscoverySkipsStaleProcesses(t *testing.T) {
 			require.ErrorIs(t, err, os.ErrNotExist)
 			CleanupZombieDaemons(ep)
 			assert.Zero(t, requests.Load(), "stale discovery and cleanup must not send credentials")
-		})
-	}
-}
-
-func TestUnjudgedRuntimeKeepsKeyOffTCP(t *testing.T) {
-	for _, operation := range []string{"discovery", "MCP ping", "broken config probe", "alternate endpoint"} {
-		t.Run(operation, func(t *testing.T) {
-			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-			rec := testutil.UnjudgedRuntimeRecord(t, "tcp", "")
-			var credentials atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Header.Get("Authorization") != "" {
-					credentials.Add(1)
-				}
-				fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d,"mcp_url":"http://example.com/mcp"}`, rec.PID)
-			}))
-			t.Cleanup(server.Close)
-			rec.Address = server.Listener.Addr().String()
-			path, err := runtimeStore().Write(rec)
-			require.NoError(t, err)
-			// Discover without a key first, then enable it before the next request.
-			info, err := GetAnyRunningDaemonContext(t.Context())
-			require.NoError(t, err)
-			writeAuthClientConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-			switch operation {
-			case "discovery":
-				info, err = GetAnyRunningDaemonContext(t.Context())
-				require.NoError(t, err)
-				_, err = ProbeDaemon(info.Endpoint(), time.Second)
-				require.NoError(t, err)
-				_, err = info.Endpoint().APIClient(time.Second).GetStatusRaw(t.Context())
-				require.ErrorIs(t, err, ErrUnjudgedEndpointAuth)
-				assert.Contains(t, err.Error(), "runtime process identity cannot be judged")
-				assert.NotContains(t, err.Error(), "no running daemon published this address")
-				require.NotErrorIs(t, err, ErrGuessedEndpointAuth)
-				assert.True(t, IsDaemonAccessError(err))
-			case "MCP ping":
-				ping, err := ProbeDaemonPing(info.Endpoint(), time.Second)
-				require.NoError(t, err)
-				assert.Equal(t, "http://example.com/mcp", ping.MCPURL)
-			case "broken config probe":
-				require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "bad key"`), 0o600))
-				ping, err := ProbeDaemon(info.Endpoint(), time.Second)
-				require.NoError(t, err)
-				assert.True(t, ping.OK)
-			case "alternate endpoint":
-				info.Network, info.Address = "unix", filepath.Join(t.TempDir(), "missing.sock")
-				info.AlternateNetwork, info.AlternateAddress = rec.Network, rec.Address
-				_, err = info.Endpoints()[1].APIClient(time.Second).PingRaw(t.Context())
-				require.ErrorIs(t, err, ErrUnjudgedEndpointAuth)
-				assert.True(t, IsDaemonAccessError(err))
-			}
-			assert.Zero(t, credentials.Load())
-			assert.FileExists(t, path)
 		})
 	}
 }
