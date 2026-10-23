@@ -350,6 +350,10 @@ func ensureDaemon() error {
 		return nil
 	}
 
+	if err := daemon.CheckUnjudgedRuntimes(); err != nil {
+		return err
+	}
+
 	// Legacy pre-kit daemons are invisible to kit discovery because they do
 	// not serve /api/ping, but they can still hold the default port and DB.
 	// Cleanup uses only this data directory's runtime records. Never adopt
@@ -510,6 +514,9 @@ func stopDaemon() error {
 }
 
 func stopJudgedDaemons() error {
+	if err := daemon.CheckUnjudgedRuntimes(); err != nil {
+		return err
+	}
 	return stopDaemonRuntimes(listJudgedRuntimes, daemon.KillDaemon, os.Stderr)
 }
 

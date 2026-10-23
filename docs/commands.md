@@ -1105,6 +1105,10 @@ default loopback port does not identify your daemon: another local account may
 own that port. When no runtime is found, commands that start the daemon launch
 your own instance; other requests report that the daemon is not running.
 
+Status reports `unknown` when a daemon responds or denies access from another
+PID namespace and no local daemon is available. If that daemon blocks
+replacement, restart leaves the local daemon running and foreign records alone.
+
 Use `--server <address>` to select an endpoint explicitly, including a manually
 managed daemon without a runtime record. The CLI probes that endpoint and does
 not start or restart a local daemon on its behalf.

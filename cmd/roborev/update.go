@@ -225,6 +225,10 @@ func restartDaemonAfterUpdate(binDir string, noRestart bool) {
 		fmt.Println("Skipping daemon restart (--no-restart)")
 		return
 	}
+	if err := daemon.CheckUnjudgedRuntimes(); err != nil {
+		fmt.Printf("warning: daemon restart refused: %v\n", err)
+		return
+	}
 
 	fmt.Print("Restarting daemon... ")
 

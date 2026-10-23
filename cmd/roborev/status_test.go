@@ -189,7 +189,7 @@ func TestStatusCmdReportsUnjudgedRuntime(t *testing.T) {
 				var requests atomic.Int32
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					requests.Add(1)
-					w.WriteHeader(http.StatusServiceUnavailable)
+					w.WriteHeader(http.StatusUnauthorized)
 				}))
 				t.Cleanup(server.Close)
 				rec := testutil.UnjudgedRuntimeRecord(t, "tcp", server.Listener.Addr().String())
@@ -228,9 +228,9 @@ func TestStatusCmdReportsUnjudgedRuntime(t *testing.T) {
 				assert.Contains(output, "unknown")
 				assert.Contains(output, filepath.Base(path))
 				assert.Contains(output, fmt.Sprintf("pid %d", rec.PID))
-				assert.Contains(output, "recorded from another PID namespace")
+				assert.Contains(output, "running in another PID namespace; not managed from here")
 				assert.Zero(starts)
-				assert.Zero(requests.Load())
+				assert.Equal(int32(1), requests.Load())
 				after, err := os.ReadFile(path)
 				require.NoError(t, err)
 				assert.Equal(before, after)

@@ -2,7 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/testutil"
@@ -25,57 +30,99 @@ func TestReviewRestartWithRetainedForeignRuntime(t *testing.T) {
 		return
 	}
 
-	isolateDaemonSelection(t)
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
-	executable, err := os.Executable()
-	require.NoError(t, err)
-	starts := 0
-	start := func() error {
-		cmd := exec.Command(executable, "-test.run=^TestReviewRestartWithRetainedForeignRuntime$", "daemon", "run")
-		cmd.Env = append(os.Environ(), "ROBOREV_TEST_RESTART_DAEMON="+os.Getenv("ROBOREV_DATA_DIR"))
-		if err := cmd.Start(); err != nil {
-			return err
-		}
-		done := make(chan error, 1)
-		go func() { done <- cmd.Wait() }()
-		t.Cleanup(func() {
-			_ = cmd.Process.Kill()
-			<-done
-		})
-		// Wall-clock wait: the child publishes its runtime and HTTP listener.
-		require.Eventually(t, func() bool {
-			info, err := daemon.GetAnyRunningDaemon()
-			return err == nil && info.PID == cmd.Process.Pid
-		}, 30*time.Second, 20*time.Millisecond)
-		starts++
-		return nil
-	}
-	require.NoError(t, start())
-	original, err := daemon.GetAnyRunningDaemon()
-	require.NoError(t, err)
-	rec := testutil.UnjudgedRuntimeRecord(t, "tcp", "127.0.0.1:1")
-	path, err := daemon.RuntimeStore().Write(rec)
-	require.NoError(t, err)
-	before, err := os.ReadFile(path)
-	require.NoError(t, err)
-	t.Setenv("ROBOREV_TEST_RUNTIME_WRITER", "")
-	originalEnsure := daemonEnsure
-	daemonEnsure = start
-	t.Cleanup(func() { daemonEnsure = originalEnsure })
+	for _, operation := range []string{"dead restart", "restart", "recovery", "update"} {
+		t.Run(operation, func(t *testing.T) {
+			isolateDaemonSelection(t)
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+			executable, err := os.Executable()
+			require.NoError(t, err)
+			starts := 0
+			start := func() error {
+				cmd := exec.Command(executable, "-test.run=^TestReviewRestartWithRetainedForeignRuntime$", "daemon", "run")
+				cmd.Env = append(os.Environ(), "ROBOREV_TEST_RESTART_DAEMON="+os.Getenv("ROBOREV_DATA_DIR"))
+				if err := cmd.Start(); err != nil {
+					return err
+				}
+				done := make(chan error, 1)
+				go func() { done <- cmd.Wait() }()
+				t.Cleanup(func() {
+					_ = cmd.Process.Kill()
+					<-done
+				})
+				// Wall-clock wait: the child publishes its runtime and HTTP listener.
+				require.Eventually(t, func() bool {
+					info, err := daemon.GetAnyRunningDaemon()
+					return err == nil && info.PID == cmd.Process.Pid
+				}, 30*time.Second, 20*time.Millisecond)
+				starts++
+				return nil
+			}
+			require.NoError(t, start())
+			original, err := daemon.GetAnyRunningDaemon()
+			require.NoError(t, err)
+			var rec kitdaemon.RuntimeRecord
+			address := "127.0.0.1:1"
+			if operation != "dead restart" {
+				foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					assert.Empty(t, r.Header.Get("Authorization"))
+					_ = json.NewEncoder(w).Encode(daemon.PingInfo{OK: true, Service: "roborev", PID: rec.PID})
+				}))
+				t.Cleanup(foreign.Close)
+				address = foreign.Listener.Addr().String()
+			}
+			rec = testutil.UnjudgedRuntimeRecord(t, "tcp", address)
+			path, err := daemon.RuntimeStore().Write(rec)
+			require.NoError(t, err)
+			before, err := os.ReadFile(path)
+			require.NoError(t, err)
+			t.Setenv("ROBOREV_TEST_RUNTIME_WRITER", "")
+			originalEnsure := daemonEnsure
+			daemonEnsure = func() error {
+				if operation == "dead restart" {
+					return start()
+				}
+				starts++
+				return errors.New("unexpected replacement startup")
+			}
+			t.Cleanup(func() { daemonEnsure = originalEnsure })
 
-	cmd := daemonCmd()
-	cmd.SetArgs([]string{"restart"})
-	err = cmd.Execute()
-	require.NoError(t, err)
-	assert := assert.New(t)
-	assert.Equal(2, starts)
-	replacement, err := daemon.GetAnyRunningDaemon()
-	require.NoError(t, err)
-	assert.NotEqual(original.PID, replacement.PID)
-	after, err := os.ReadFile(path)
-	require.NoError(t, err)
-	assert.Equal(before, after)
+			switch operation {
+			case "dead restart", "restart":
+				cmd := daemonCmd()
+				cmd.SetArgs([]string{"restart"})
+				err = cmd.Execute()
+			case "recovery":
+				err = recoverDaemon(original, nil, true)
+			case "update":
+				var session *updateDaemonSession
+				session, err = prepareUpdateDaemon(t.Context(), original.Endpoint(), "owner", policyWait, io.Discard)
+				if session != nil {
+					t.Cleanup(func() { _, _ = session.release(t.Context()) })
+				}
+			}
+			assert := assert.New(t)
+			if operation == "dead restart" {
+				require.NoError(t, err)
+				assert.Equal(2, starts)
+				replacement, err := daemon.GetAnyRunningDaemon()
+				require.NoError(t, err)
+				assert.NotEqual(original.PID, replacement.PID)
+			} else {
+				require.ErrorIs(t, err, daemon.ErrUnjudgedRuntime)
+				assert.Equal(1, starts)
+				ping, pingErr := daemon.ProbeDaemon(original.Endpoint(), time.Second)
+				require.NoError(t, pingErr, "local daemon must keep serving")
+				assert.Equal(original.PID, ping.PID)
+				status, statusErr := fetchDaemonStatus(t.Context(), original.Endpoint())
+				require.NoError(t, statusErr)
+				assert.False(status.UpdateDraining)
+			}
+			after, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(before, after)
+		})
+	}
 }
 
 func TestStopDaemonWithRetryRepeatsPreparationFailures(t *testing.T) {

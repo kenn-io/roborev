@@ -8,7 +8,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"text/tabwriter"
 	"time"
 
@@ -22,7 +21,7 @@ import (
 )
 
 var (
-	statusEnsureDaemon = ensureStatusDaemon
+	statusEnsureDaemon = ensureDaemon
 	statusDiscover     = uiRuntimeInfo
 )
 
@@ -52,22 +51,9 @@ func unavailableStatus(err error, running bool, web webUIStatus) statusJSONResul
 	}
 }
 
-func ensureStatusDaemon() error {
-	if serverAddr == "" {
-		_, err := getAnyRunningDaemon()
-		if errors.Is(err, os.ErrNotExist) {
-			runtimes, err := daemon.ListAllRuntimes()
-			if err != nil {
-				return err
-			}
-			for _, info := range runtimes {
-				if info.Unjudged() && !info.Stale() {
-					return fmt.Errorf("%w: status unknown for %s (pid %d), recorded from another PID namespace or its identity can't be judged here", daemon.ErrUnjudgedRuntime, filepath.Base(info.SourcePath), info.PID)
-				}
-			}
-		}
-	}
-	return ensureDaemon()
+func writeStatusJSON(result statusJSONResult) error {
+	enc := jsontext.NewEncoder(os.Stdout, jsontext.WithIndent("  "))
+	return json.MarshalEncode(enc, result)
 }
 
 func writeMissingDaemonStatus(err error, jsonOutput bool) error {
@@ -76,8 +62,7 @@ func writeMissingDaemonStatus(err error, jsonOutput bool) error {
 		result.Error = err.Error()
 	}
 	if jsonOutput {
-		enc := jsontext.NewEncoder(os.Stdout, jsontext.WithIndent("  "))
-		return json.MarshalEncode(enc, result)
+		return writeStatusJSON(result)
 	}
 	if result.Error != "" {
 		fmt.Printf("Daemon: unknown\n%s\n", result.Error)
@@ -97,13 +82,9 @@ func statusCmd() *cobra.Command {
 		Short: "Show daemon, browser UI, and queue status",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			webStatus := webUIStatus{}
-			writeJSONResult := func(result statusJSONResult) error {
-				enc := jsontext.NewEncoder(os.Stdout, jsontext.WithIndent("  "))
-				return json.MarshalEncode(enc, result)
-			}
 			writeStatusUnavailable := func(result statusJSONResult) error {
 				if jsonOutput {
-					return writeJSONResult(result)
+					return writeStatusJSON(result)
 				}
 				state := "not running"
 				if result.Running {
@@ -120,6 +101,9 @@ func statusCmd() *cobra.Command {
 				if _, managed := errors.AsType[*managedRecoveryError](err); managed || errors.Is(err, errRecoveryLock) {
 					return writeStatusUnavailable(managedRecoveryStatus(err))
 				}
+				if errors.Is(err, daemon.ErrUnjudgedRuntime) {
+					return writeMissingDaemonStatus(err, jsonOutput)
+				}
 				if errors.Is(err, daemon.ErrClientConfig) {
 					return err
 				}
@@ -129,7 +113,7 @@ func statusCmd() *cobra.Command {
 						err,
 					)
 					if jsonOutput {
-						return writeJSONResult(statusJSONResult{
+						return writeStatusJSON(statusJSONResult{
 							Running:           true,
 							WebURL:            webStatus.url,
 							WebDisabledReason: webStatus.disabledReason,
@@ -189,7 +173,7 @@ func statusCmd() *cobra.Command {
 			}
 
 			if jsonOutput {
-				return writeJSONResult(statusJSONResult{
+				return writeStatusJSON(statusJSONResult{
 					Running:           true,
 					WebURL:            webStatus.url,
 					WebDisabledReason: webStatus.disabledReason,

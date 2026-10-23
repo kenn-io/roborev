@@ -48,6 +48,9 @@ func prepareUpdateDaemon(
 	policy runningReviewPolicy,
 	out io.Writer,
 ) (*updateDaemonSession, error) {
+	if err := daemon.CheckUnjudgedRuntimes(); err != nil {
+		return nil, err
+	}
 	api, err := newUpdateAPI(endpoint)
 	if err != nil {
 		return nil, err

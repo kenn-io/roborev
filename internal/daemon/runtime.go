@@ -434,6 +434,40 @@ func (r *RuntimeInfo) discoverable() bool {
 	return !r.Unjudged() && !r.hasStaleProcess()
 }
 
+// CheckUnjudgedRuntimes refuses replacement while a retained runtime answers
+// or denies access. Unreachable records do not block startup.
+func CheckUnjudgedRuntimes() error {
+	runtimes, err := ListAllRuntimes()
+	if err != nil {
+		return err
+	}
+	auth, err := loadClientAuth()
+	if err != nil {
+		return err
+	}
+	auth.Key = ""
+	var denied *RuntimeInfo
+	info, err := discoverRuntimeRecords(context.Background(), runtimes, func(info *RuntimeInfo) bool {
+		return info.Unjudged() && !info.hasStaleProcess()
+	}, func(ctx context.Context, info *RuntimeInfo, ep DaemonEndpoint) (*PingInfo, error) {
+		ping, err := probeRuntimeRecordWithAuth(ctx, ep, auth)
+		if IsDaemonAccessError(err) {
+			denied = info
+		}
+		return ping, err
+	})
+	if IsDaemonAccessError(err) {
+		info = denied
+	}
+	if info != nil {
+		return fmt.Errorf("%w: status unknown for %s (pid %d): running in another PID namespace; not managed from here", errors.Join(ErrUnjudgedRuntime, err), filepath.Base(info.SourcePath), info.PID)
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
 func discoverRuntimeRecords(
 	ctx context.Context,
 	runtimes []*RuntimeInfo,

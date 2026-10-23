@@ -208,6 +208,9 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 		}
 		return err
 	}
+	if err := daemon.CheckUnjudgedRuntimes(); err != nil {
+		return err
+	}
 	if owner == nil {
 		if err := stopDaemonRuntimes(listAllRuntimes, drainManagedDaemon, lifecycleOut); err != nil && !errors.Is(err, ErrDaemonNotRunning) {
 			return err
