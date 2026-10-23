@@ -29,18 +29,8 @@ func TestReviewRestartWithRetainedForeignRuntime(t *testing.T) {
 		return
 	}
 
-	for _, tc := range []struct {
-		operation, recordState string
-	}{
-		{"restart", "responsive"},
-		{"restart", "unreachable"},
-		{"recovery", "responsive"},
-		{"recovery", "unreachable"},
-		{"update", "responsive"},
-		{"update", "unreachable"},
-	} {
-		operation, recordState := tc.operation, tc.recordState
-		t.Run(operation+"/"+recordState, func(t *testing.T) {
+	for _, operation := range []string{"restart", "recovery", "update"} {
+		t.Run(operation+"/responsive", func(t *testing.T) {
 			isolateDaemonSelection(t)
 			t.Setenv("HOME", t.TempDir())
 			t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
@@ -76,10 +66,6 @@ func TestReviewRestartWithRetainedForeignRuntime(t *testing.T) {
 			}))
 			t.Cleanup(foreign.Close)
 			rec.Address = foreign.Listener.Addr().String()
-			if recordState == "unreachable" {
-				rec.PID = os.Getppid()
-				foreign.Close()
-			}
 			_, err = daemon.RuntimeStore().Write(rec)
 			require.NoError(t, err)
 			originalEnsure := daemonEnsure

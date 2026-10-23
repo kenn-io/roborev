@@ -29,23 +29,70 @@ import (
 	"go.kenn.io/roborev/internal/testutil"
 )
 
-func TestCheckUnjudgedRuntimesAllowsUnreachableRuntime(t *testing.T) {
-	testenv.SetDataDir(t)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	address := listener.Addr().String()
-	require.NoError(t, listener.Close())
-	rec := testutil.UnknownRuntimeRecord("tcp", address)
-	path, err := runtimeStore().Write(rec)
-	require.NoError(t, err)
-	before, err := os.ReadFile(path)
-	require.NoError(t, err)
+func TestCheckUnjudgedRuntimes(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		pid     int
+		denied  bool
+		foreign bool
+		blocked bool
+	}{
+		{name: "unreachable live process", pid: os.Getppid(), blocked: true},
+		{name: "unreachable dead process", pid: math.MaxInt32},
+		{name: "daemon authentication denied", pid: os.Getpid(), denied: true, blocked: true},
+		{name: "plain 401 in foreign namespace", foreign: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testenv.SetDataDir(t)
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+			writeAuthClientConfig(t, strings.Repeat("ab", 32))
+			rec := testutil.UnknownRuntimeRecord("tcp", "")
+			rec.PID = tc.pid
+			if tc.foreign {
+				rec = testutil.UnjudgedRuntimeRecord(t, "tcp", "")
+			}
+			if tc.denied || tc.foreign {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					assert.Empty(t, r.Header.Get("Authorization"))
+					if tc.denied {
+						w.Header().Set("WWW-Authenticate", "Bearer")
+						w.WriteHeader(http.StatusUnauthorized)
+						_, _ = fmt.Fprint(w, `{"error":"daemon authentication required"}`)
+						return
+					}
+					w.WriteHeader(http.StatusUnauthorized)
+				}))
+				t.Cleanup(server.Close)
+				rec.Address = server.Listener.Addr().String()
+			} else {
+				listener, err := net.Listen("tcp", "127.0.0.1:0")
+				require.NoError(t, err)
+				rec.Address = listener.Addr().String()
+				require.NoError(t, listener.Close())
+			}
+			path, err := runtimeStore().Write(rec)
+			require.NoError(t, err)
+			before, err := os.ReadFile(path)
+			require.NoError(t, err)
 
-	assert.NoError(t, CheckUnjudgedRuntimes(t.Context()))
-
-	after, err := os.ReadFile(path)
-	require.NoError(t, err)
-	assert.Equal(t, before, after)
+			err = CheckUnjudgedRuntimes(t.Context())
+			assert := assert.New(t)
+			if tc.blocked {
+				require.ErrorIs(t, err, ErrUnjudgedRuntime)
+			} else {
+				require.NoError(t, err)
+			}
+			if tc.denied {
+				assert.Contains(err.Error(), filepath.Base(path))
+				assert.Contains(err.Error(), fmt.Sprintf("pid %d", rec.PID))
+				assert.Contains(err.Error(), "running in another PID namespace; not managed from here")
+			}
+			after, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(before, after)
+		})
+	}
 }
 
 func TestCheckUnjudgedRuntimesWithoutCandidatesIgnoresBadConfig(t *testing.T) {

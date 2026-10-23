@@ -24,40 +24,26 @@ import (
 )
 
 func TestEnsureDaemonDoesNotSpawnWithRespondingUnjudgedRuntime(t *testing.T) {
-	for _, denied := range []bool{false, true} {
-		t.Run(fmt.Sprintf("denied=%t", denied), func(t *testing.T) {
-			isolateDaemonSelection(t)
-			t.Setenv("HOME", t.TempDir())
-			t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
-			cfg := config.DefaultConfig()
-			cfg.AuthKey = strings.Repeat("ab", 32)
-			require.NoError(t, config.SaveGlobal(cfg))
-			rec := testutil.UnknownRuntimeRecord("tcp", "")
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				assert.Empty(t, r.Header.Get("Authorization"))
-				if denied {
-					w.Header().Set("WWW-Authenticate", "Bearer")
-					w.WriteHeader(http.StatusUnauthorized)
-					_, _ = fmt.Fprint(w, `{"error":"daemon authentication required"}`)
-					return
-				}
-				fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, rec.PID)
-			}))
-			t.Cleanup(server.Close)
-			rec.Address = server.Listener.Addr().String()
-			path, err := daemon.RuntimeStore().Write(rec)
-			require.NoError(t, err)
-			starts := 0
-			startDaemonForEnsure = func() error { starts++; return nil }
-			err = ensureDaemon()
-			assert := assert.New(t)
-			require.ErrorIs(t, err, daemon.ErrUnjudgedRuntime)
-			assert.Contains(err.Error(), filepath.Base(path))
-			assert.Contains(err.Error(), fmt.Sprintf("pid %d", rec.PID))
-			assert.Contains(err.Error(), "running in another PID namespace; not managed from here")
-			assert.Zero(starts)
-		})
-	}
+	isolateDaemonSelection(t)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	cfg := config.DefaultConfig()
+	cfg.AuthKey = strings.Repeat("ab", 32)
+	require.NoError(t, config.SaveGlobal(cfg))
+	rec := testutil.UnknownRuntimeRecord("tcp", "")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Empty(t, r.Header.Get("Authorization"))
+		fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, rec.PID)
+	}))
+	t.Cleanup(server.Close)
+	rec.Address = server.Listener.Addr().String()
+	_, err := daemon.RuntimeStore().Write(rec)
+	require.NoError(t, err)
+	starts := 0
+	startDaemonForEnsure = func() error { starts++; return nil }
+
+	require.ErrorIs(t, ensureDaemon(), daemon.ErrUnjudgedRuntime)
+	assert.Zero(t, starts)
 }
 
 func isolateDaemonSelection(t *testing.T) {
@@ -76,34 +62,6 @@ func isolateDaemonSelection(t *testing.T) {
 		cleanupZombieDaemons, startDaemonForEnsure = oldCleanup, oldStart
 		findDaemonService, daemonCgroupUnit = oldService, oldCgroup
 	})
-}
-
-func TestEnsureDaemonAllowsUnjudgedEndpointReusedByUnauthorizedService(t *testing.T) {
-	isolateDaemonSelection(t)
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
-	cfg := config.DefaultConfig()
-	cfg.AuthKey = strings.Repeat("ab", 32)
-	require.NoError(t, config.SaveGlobal(cfg))
-	foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Empty(t, r.Header.Get("Authorization"))
-		w.WriteHeader(http.StatusUnauthorized)
-	}))
-	t.Cleanup(foreign.Close)
-	rec := testutil.UnknownRuntimeRecord("tcp", foreign.Listener.Addr().String())
-	path, err := daemon.RuntimeStore().Write(rec)
-	require.NoError(t, err)
-	before, err := os.ReadFile(path)
-	require.NoError(t, err)
-	getAnyRunningDaemon = daemon.GetAnyRunningDaemon
-	starts := 0
-	startDaemonForEnsure = func() error { starts++; return nil }
-
-	require.NoError(t, ensureDaemon())
-	assert.Equal(t, 1, starts)
-	after, err := os.ReadFile(path)
-	require.NoError(t, err)
-	assert.Equal(t, before, after)
 }
 
 func TestEnsureDaemonDoesNotAdoptUnpublishedDefaultDaemon(t *testing.T) {

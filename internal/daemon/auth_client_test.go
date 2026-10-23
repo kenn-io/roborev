@@ -90,8 +90,6 @@ func TestUnjudgedProbeRecognizesDaemonAuthenticationResponse(t *testing.T) {
 
 			_, err = probeRuntimeRecordWithAuth(t.Context(), ep, config.ClientAuth{Key: strings.Repeat("ab", 32)}, true)
 			require.ErrorIs(t, err, ErrDaemonAccessDenied)
-			_, err = probeRuntimeRecordWithAuth(t.Context(), ep, config.ClientAuth{}, false)
-			require.ErrorIs(t, err, ErrDaemonAccessDenied)
 		})
 	}
 }
