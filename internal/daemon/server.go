@@ -36,6 +36,7 @@ import (
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/goalreview"
+	"go.kenn.io/roborev/internal/katacontext"
 	"go.kenn.io/roborev/internal/mcpserver"
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
@@ -95,6 +96,7 @@ type Server struct {
 	startTime               time.Time
 	endpointMu              sync.Mutex // protects endpoint (written by Start, read by Stop)
 	mcpEnabled              bool       // [mcp] enabled at construction; /mcp is mounted on the API listener
+	mcpAllowKataWrites      bool
 	endpoint                DaemonEndpoint
 	alternateEndpoint       *DaemonEndpoint
 	socketActivated         bool // true if started via systemd socket activation
@@ -136,6 +138,9 @@ var (
 // ServerOption customizes a daemon server before it starts.
 type ServerOption func(*Server)
 
+// WithKataWrites explicitly exposes typed Kata replies on the HTTP MCP server.
+func WithKataWrites() ServerOption { return func(s *Server) { s.mcpAllowKataWrites = true } }
+
 // WithWebDevelopmentOrigin adds one exact loopback origin for the disposable
 // development server. Production callers must not set this option.
 func WithWebDevelopmentOrigin(origin string) ServerOption {
@@ -164,11 +169,7 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string, options ..
 		log.Printf("Warning: failed to create activity log: %v", err)
 	}
 
-	server := newServerWithLogs(db, cfg, configPath, errorLog, activityLog)
-	for _, option := range options {
-		option(server)
-	}
-	return server
+	return newServerWithLogs(db, cfg, configPath, errorLog, activityLog, options...)
 }
 
 func newServerWithLogs(
@@ -177,6 +178,7 @@ func newServerWithLogs(
 	configPath string,
 	errorLog *ErrorLog,
 	activityLog *ActivityLog,
+	options ...ServerOption,
 ) *Server {
 	// Always set for deterministic state - default to false (conservative)
 	agent.SetAllowUnsafeAgents(cfg.AllowUnsafeAgents != nil && *cfg.AllowUnsafeAgents)
@@ -233,13 +235,20 @@ func newServerWithLogs(
 		daemonAgentHookSource{db: db, errorLog: errorLog},
 	)
 
+	for _, option := range options {
+		option(s)
+	}
 	mux := http.NewServeMux()
 	s.registerHumaAPI(mux)
 	s.registerAgentHookRoutes(mux)
 	s.registerTelemetryCaptureRoute(mux)
 	if cfg.MCP.Enabled {
 		s.mcpEnabled = true
-		mcpServer := mcpserver.New(s.mcpBackend(), version.Version, func(ctx context.Context) { _, _ = s.recordAgentCall(ctx) })
+		var mcpOptions []mcpserver.Option
+		if s.mcpAllowKataWrites {
+			mcpOptions = append(mcpOptions, mcpserver.WithKataWrites())
+		}
+		mcpServer := mcpserver.New(s.mcpBackend(), version.Version, func(ctx context.Context) { _, _ = s.recordAgentCall(ctx) }, mcpOptions...)
 		mux.Handle(mcpserver.HTTPPath, mcpServer.HTTPHandler())
 	}
 
@@ -3709,6 +3718,18 @@ func (s *Server) humaFixJob(
 				http.StatusBadRequest,
 				ErrorResponse{Error: "parent job has no review to fix"},
 			)
+		}
+		if review.UUID != nil {
+			run := katacontext.Run{ID: uuid.New().String(), Purpose: "fix"}                                                                                //nolint:forbidigo // Persisted fix-prompt consumption identifier.
+			replySnapshots, readErr := katacontext.ReadJob(ctx, s.db, s.configWatcher.Config().Integrations.Kata, parentJob.ID, review.UUID.String(), run) //nolint:forbidigo // Immutable review UUID at the captured-publication storage boundary.
+			if readErr != nil {
+				return rawJSONOutput(http.StatusServiceUnavailable, ErrorResponse{Error: "Kata finding reply snapshot unavailable"})
+			}
+			if len(replySnapshots) > 0 {
+				withReplies := *review
+				withReplies.Output += "\n\nKata reply snapshot run: " + run.ID + katacontext.Format(replySnapshots)
+				review = &withReplies
+			}
 		}
 
 		commitID, fallbackSHA := parentJob.LegacyCommentLookupTarget()

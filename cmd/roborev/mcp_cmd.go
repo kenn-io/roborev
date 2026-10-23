@@ -65,7 +65,8 @@ snooze Agent Hooks, and complete hook fix sessions. Reviews cannot be started.
 }
 
 func mcpServeCmd() *cobra.Command {
-	return &cobra.Command{
+	var allowKataWrites bool
+	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Serve roborev tools over stdio",
 		Long: `Serve the roborev MCP tools over stdin/stdout.
@@ -91,8 +92,14 @@ Example client configuration:
 			}
 			ep := getDaemonEndpoint()
 			backend := mcpserver.NewHTTPBackend(ep.BaseURL(), ep.HTTPClient(mcpRequestTimeout))
-			server := mcpserver.New(backend, version.Version, func(ctx context.Context) { reportMCPActivity(ctx, ep) })
+			var options []mcpserver.Option
+			if allowKataWrites {
+				options = append(options, mcpserver.WithKataWrites())
+			}
+			server := mcpserver.New(backend, version.Version, func(ctx context.Context) { reportMCPActivity(ctx, ep) }, options...)
 			return server.RunStdio(cmd.Context())
 		},
 	}
+	cmd.Flags().BoolVar(&allowKataWrites, "allow-kata-writes", false, "expose the typed Kata reply MCP tool")
+	return cmd
 }

@@ -63,7 +63,8 @@ use `open` if you want dirty reviews to see the backlog.
 Kata context applies to local review prompts only (single commit, branch ranges,
 and dirty reviews). Daemon CI pull-request reviews never include Kata context,
 since PR head content is untrusted and backlog details could leak into public PR
-comments. Fix and task jobs do not receive Kata context either.
+comments. Task jobs do not receive Kata task context either. Finding reply
+read-back for fixes is separate from task intent, as described below.
 
 If the prompt exceeds `max_prompt_size`, roborev trims other optional context
 first and drops Kata context last.
@@ -210,6 +211,55 @@ or issues.
 
 See [Built-in: Kata Integration](/docs/guides/hooks/#built-in-kata-integration)
 in the review hooks guide for hook fields and event patterns.
+
+## Reading finding replies
+
+When findings have been published as Kata comments, inspect their pinned
+snapshots and discussion with:
+
+```bash
+roborev kata show --job 123 --json
+roborev kata show --issue reviews#abcd
+```
+
+The context view reports the original finding, whether its snapshot and comment
+target are available, and each reply's author, teammate, kind, evidence, and
+edited state. It also reports unavailable targets and truncated discussions.
+Conflicting replies remain visible. A reply claiming a fix, a commit SHA, or a
+finding's absence from a later review does not establish resolution. Roborev
+never derives a fixed or accepted state from these claims.
+
+Fix and planning prompts include mapped replies. Later local reviews include
+replies for the relevant prior reviews they already use, including prior range
+reviews. Each run records the reply snapshot it consumed, so a later edit does
+not replace that run's evidence. Reply content is framed as untrusted data to
+evaluate against the current code and tests. It cannot supply instructions or
+suppress findings. Complete assembled prompts use the normal inline or file
+handoff when they exceed `max_prompt_size`.
+
+Read-back uses the publication's recorded endpoint, project identity, issue, and
+finding selector. Changing the current project or binding cannot redirect an
+existing mapping. The matching Kata connection must still be enabled. CI reviews
+never fetch or send Kata reply context.
+
+For a mapped finding, `/roborev-fix` commits a verified change before posting a
+`reply` with its SHA. It uses `refute` only with actual validation evidence and
+records deferred findings with `reply`, leaving the review open. A fix is never
+a `confirm`: confirmation supports the original finding's claim. Findings
+without a Kata mapping keep their existing local comment and closure behavior.
+
+`/roborev-respond` accepts `--kata <kind> --finding-id <selector>` to send a
+targeted reply through `roborev kata comment --<kind> <selector>` without
+closing the roborev review. Pending delivery and duplicate replies remain
+unresolved. Check them with `roborev kata show --job <job_id> --json`. Retry the
+identical request with `--idempotency-key <key>`; keys are opaque and
+case-sensitive.
+
+MCP clients can look up mapped issues and read this context through
+`roborev_kata_issues` and `roborev_kata_context`. The `roborev_kata_reply` tool
+requires an explicit `--allow-kata-writes` on `roborev mcp serve` for stdio or
+`roborev daemon run` for the daemon's HTTP MCP endpoint. It uses the same
+durable typed response API as the CLI and never closes reviews.
 
 ## Connecting the daemon to Kata's API
 

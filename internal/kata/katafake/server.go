@@ -6,9 +6,11 @@
 package katafake
 
 import (
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -108,6 +110,7 @@ func New(t *testing.T) *Server {
 	mux.HandleFunc("POST /api/v1/projects/{pid}/issues", f.createIssue)
 	mux.HandleFunc("GET /api/v1/projects/{pid}/issues/{ref}", f.showIssue)
 	mux.HandleFunc("POST /api/v1/projects/{pid}/issues/{ref}/comments", f.createComment)
+	mux.HandleFunc("POST /api/v1/projects/{pid}/issues/{ref}/metadata", f.patchMetadata)
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		r.Body = io.NopCloser(strings.NewReader(string(body)))
@@ -129,6 +132,43 @@ func New(t *testing.T) *Server {
 	}))
 	t.Cleanup(f.srv.Close)
 	return f
+}
+
+// patchMetadata models Kata's guarded JSON comparison. The response contains
+// issue metadata, while comment receipts still require a separate full read.
+func (f *Server) patchMetadata(w http.ResponseWriter, r *http.Request) {
+	pid, ok := f.project(w, r)
+	if !ok {
+		return
+	}
+	issue := f.find(pid, r.PathValue("ref"))
+	if issue == nil {
+		f.Fail(w, http.StatusNotFound, "issue_not_found", "no such issue")
+		return
+	}
+	var body struct {
+		Patch map[string]any `json:"patch"`
+		Guard struct {
+			Key     string `json:"key"`
+			IfValue string `json:"if_value"`
+		} `json:"guard"`
+	}
+	if err := json.UnmarshalRead(r.Body, &body); err != nil {
+		f.Fail(w, http.StatusBadRequest, "bad_request", "invalid metadata request")
+		return
+	}
+	old, err := json.Marshal(issue.Out.Metadata[body.Guard.Key])
+	if err != nil {
+		f.Fail(w, http.StatusInternalServerError, "encoding", "invalid stored metadata")
+		return
+	}
+	actual, expected := jsontext.Value(old), jsontext.Value(body.Guard.IfValue)
+	if actual.Canonicalize() != nil || expected.Canonicalize() != nil || string(actual) != string(expected) {
+		f.Fail(w, http.StatusConflict, "metadata_guard_failed", "guard changed")
+		return
+	}
+	maps.Copy(issue.Out.Metadata, body.Patch)
+	f.Reply(w, gen.PatchIssueMetadataResponseBody{Issue: gen.Issue{ShortID: issue.Out.ShortID, UID: issue.Out.UID, ProjectUID: issue.Out.ProjectUID, Metadata: issue.Out.Metadata}})
 }
 
 // URL is the server's base URL.

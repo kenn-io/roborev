@@ -26,6 +26,7 @@ import (
 	gitpkg "go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/goalreview"
 	"go.kenn.io/roborev/internal/kata"
+	"go.kenn.io/roborev/internal/katacontext"
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/rebuttal"
 	"go.kenn.io/roborev/internal/review"
@@ -705,6 +706,17 @@ func (wp *WorkerPool) basePromptBuilderForJob(
 		builder = builder.WithKataClient(
 			kata.NewFromConfig(checkout.resolvedConfigRepoPath(), cfg),
 		)
+		run := katacontext.Run{ID: fmt.Sprintf("job:%d:%s:%s", job.ID, job.WorkerID, job.StartedAtRaw), Purpose: "review"}
+		builder = builder.WithKataReplies(func(ctx context.Context, source *storage.Review) string {
+			if source.UUID == nil {
+				return ""
+			}
+			snapshots, err := katacontext.ReadJob(ctx, wp.db, wp.cfgGetter.Config().Integrations.Kata, source.JobID, source.UUID.String(), run) //nolint:forbidigo // Immutable review UUID at the captured-publication storage boundary.
+			if err != nil {
+				return "\n\nKata finding reply context unavailable; evaluate the original findings independently."
+			}
+			return katacontext.Format(snapshots)
+		})
 	}
 	return builder
 }

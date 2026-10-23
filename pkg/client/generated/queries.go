@@ -288,6 +288,14 @@ func (l ListJobsQuery) Validate() error {
 	return errors
 }
 
+type KataContextQuery struct {
+	JobID      *int64  `json:"job_id,omitempty"`
+	ReviewUUID *string `json:"review_uuid,omitempty"`
+
+	// Ref Frozen qualified issue reference or full issue UID
+	Ref *string `json:"ref,omitempty"`
+}
+
 type KataShowIssueQuery struct {
 	// Ref Issue short ID, UID, or project#short ID
 	Ref string `json:"ref" validate:"required"`

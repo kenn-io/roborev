@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	gen "go.kenn.io/kata/pkg/client/generated"
 )
 
 // MinEvidenceRunes is how many Unicode runes a confirm or refute needs after
@@ -162,6 +164,9 @@ type CommentResult struct {
 	Attribution Attribution
 }
 
+// CommentLink preserves Kata's link availability and attributed preview fields.
+type CommentLink = gen.CommentLink
+
 // Comment is one comment of an issue as Kata reports it.
 type Comment struct {
 	UID string
@@ -176,8 +181,12 @@ type Comment struct {
 	EditedAt *time.Time
 	// ReplyTo is the UID of the comment this one answers, and Kind how. Both
 	// are empty for a plain comment.
-	ReplyTo string
-	Kind    CommentKind
+	ReplyTo            string
+	Kind               CommentKind
+	Reply              *CommentLink  `json:",omitempty"`
+	Backlinks          []CommentLink `json:",omitempty"`
+	BacklinksTruncated bool          `json:",omitempty"`
+	Verification       string        `json:",omitempty"`
 	Attribution
 }
 

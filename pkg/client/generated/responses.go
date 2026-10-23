@@ -214,6 +214,14 @@ type BatchJobsResponse = BatchJobsOutputBody
 
 type BatchJobsErrorResponse = ErrorModel
 
+type KataContextResponse = KataReplyContext
+
+type KataContextErrorResponse = ErrorModel
+
+type KataConsumeContextResponse = KataReplyContext
+
+type KataConsumeContextErrorResponse = ErrorModel
+
 type KataShowIssueResponse = KataIssue
 
 type KataShowIssueErrorResponse = ErrorModel
@@ -726,6 +734,20 @@ type BatchJobsResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *BatchJobsResponse
+}
+
+type KataContextResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *KataContextResponse
+}
+
+type KataConsumeContextResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *KataConsumeContextResponse
 }
 
 type KataShowIssueResp struct {
@@ -1574,6 +1596,37 @@ func (c *RawClient) BatchJobsRaw(ctx context.Context, options *BatchJobsRequestO
 	}
 	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
 		RequestURL:  c.apiClient.GetBaseURL() + "/api/jobs/batch",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) KataContextRaw(ctx context.Context, options *KataContextRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &KataContextRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/kata/context",
+		Method:     "GET",
+		Options:    options,
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) KataConsumeContextRaw(ctx context.Context, options *KataConsumeContextRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &KataConsumeContextRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/kata/context",
 		Method:      "POST",
 		Options:     options,
 		ContentType: "application/json",

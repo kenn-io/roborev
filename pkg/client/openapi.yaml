@@ -888,6 +888,98 @@ components:
         - job_id
         - closed
       type: object
+    Comment:
+      additionalProperties: false
+      properties:
+        AccountableActor:
+          type: string
+        Author:
+          type: string
+        Backlinks:
+          items:
+            $ref: "#/components/schemas/CommentLink"
+          type: array
+        BacklinksTruncated:
+          type: boolean
+        Body:
+          type: string
+        CreatedAt:
+          format: date-time
+          type: string
+        EditedAt:
+          format: date-time
+          type:
+            - string
+            - "null"
+        Handle:
+          type: string
+        IssueUID:
+          type: string
+        Kind:
+          type: string
+        Reply:
+          $ref: "#/components/schemas/CommentLink"
+        ReplyTo:
+          type: string
+        SourceActor:
+          type: string
+        Teammate:
+          type: string
+        UID:
+          type: string
+        Verification:
+          type: string
+      required:
+        - UID
+        - Handle
+        - IssueUID
+        - Body
+        - CreatedAt
+        - EditedAt
+        - ReplyTo
+        - Kind
+        - Author
+        - Teammate
+        - SourceActor
+        - AccountableActor
+      type: object
+    CommentLink:
+      additionalProperties: false
+      properties:
+        author:
+          type: string
+        body:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        edited_at:
+          format: date-time
+          type: string
+        handle:
+          type: string
+        issue_short_id:
+          type: string
+        issue_uid:
+          type: string
+        kind:
+          type: string
+        project_id:
+          format: int64
+          type: integer
+        project_uid:
+          type: string
+        status:
+          type: string
+        target_edited:
+          type: boolean
+        teammate:
+          type: string
+        uid:
+          type: string
+      required:
+        - kind
+      type: object
     ComponentHealth:
       additionalProperties: false
       properties:
@@ -2152,6 +2244,60 @@ components:
         - medium
         - low
       type: object
+    FindingProvenance:
+      additionalProperties: false
+      properties:
+        panel_member_index:
+          format: int64
+          type: integer
+        panel_member_name:
+          type: string
+        panel_name:
+          type: string
+        panel_role:
+          type: string
+        panel_run_uuid:
+          type: string
+        source_labels:
+          items:
+            type: string
+          type: array
+      type: object
+    FindingSnapshot:
+      additionalProperties: false
+      properties:
+        CreatedAt:
+          format: date-time
+          type: string
+        DocumentHash:
+          type: string
+        Finding:
+          $ref: "#/components/schemas/KataPinnedFinding"
+        Index:
+          format: int64
+          type: integer
+        JobID:
+          format: int64
+          type: integer
+        JobUUID:
+          type: string
+        Provenance:
+          $ref: "#/components/schemas/FindingProvenance"
+        ReviewUUID:
+          type: string
+        Selector:
+          type: string
+      required:
+        - Selector
+        - JobID
+        - JobUUID
+        - ReviewUUID
+        - DocumentHash
+        - Index
+        - Finding
+        - Provenance
+        - CreatedAt
+      type: object
     FixJobRequest:
       additionalProperties: false
       properties:
@@ -2414,6 +2560,31 @@ components:
       required:
         - job
       type: object
+    KataConsumeContextRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/KataConsumeContextRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        job_id:
+          format: int64
+          type: integer
+        purpose:
+          type: string
+        ref:
+          type: string
+        review_uuid:
+          type: string
+        run_id:
+          type: string
+      required:
+        - run_id
+        - purpose
+      type: object
     KataCreateRequest:
       additionalProperties: false
       properties:
@@ -2573,6 +2744,27 @@ components:
       required:
         - short_id
       type: object
+    KataPinnedFinding:
+      additionalProperties: false
+      properties:
+        fix:
+          type: string
+        location:
+          type: string
+        problem:
+          type: string
+        severity:
+          type: string
+        sources:
+          items:
+            format: int64
+            type: integer
+          type: array
+      required:
+        - severity
+        - problem
+        - fix
+      type: object
     KataPublication:
       additionalProperties: false
       properties:
@@ -2642,6 +2834,43 @@ components:
           type: integer
       required:
         - job_id
+      type: object
+    KataReplyContext:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/KataReplyContext.json
+          format: uri
+          readOnly: true
+          type: string
+        issue_ref:
+          type: string
+        job_id:
+          format: int64
+          type: integer
+        message:
+          type: string
+        operations:
+          items:
+            $ref: "#/components/schemas/KataResponseStatus"
+          type: array
+        publications:
+          items:
+            $ref: "#/components/schemas/KataPublication"
+          type: array
+        review_uuid:
+          type: string
+        run_id:
+          type: string
+        snapshots:
+          items:
+            $ref: "#/components/schemas/ReplySnapshot"
+          type: array
+      required:
+        - snapshots
+        - publications
       type: object
     KataResponseRequest:
       additionalProperties: false
@@ -3656,6 +3885,60 @@ components:
           $ref: "#/components/schemas/Repo"
       required:
         - repo
+      type: object
+    ReplyFinding:
+      additionalProperties: false
+      properties:
+        availability:
+          type: string
+        message:
+          type: string
+        replies:
+          items:
+            $ref: "#/components/schemas/Comment"
+          type: array
+        root:
+          $ref: "#/components/schemas/Comment"
+        root_uid:
+          type: string
+        selector:
+          type: string
+        snapshot:
+          $ref: "#/components/schemas/FindingSnapshot"
+        thread_unavailable:
+          type: boolean
+        truncated:
+          type: boolean
+      required:
+        - selector
+        - availability
+        - replies
+        - truncated
+      type: object
+    ReplySnapshot:
+      additionalProperties: false
+      properties:
+        findings:
+          items:
+            $ref: "#/components/schemas/ReplyFinding"
+          type: array
+        issue_ref:
+          type: string
+        issue_uid:
+          type: string
+        operation_id:
+          type: string
+        policy:
+          type: string
+        review_uuid:
+          type: string
+        state:
+          type: string
+      required:
+        - issue_ref
+        - issue_uid
+        - review_uuid
+        - findings
       type: object
     Repo:
       additionalProperties: false
@@ -6447,6 +6730,68 @@ paths:
       summary: Fetch jobs with reviews by ID
       tags:
         - jobs
+  /api/kata/context:
+    get:
+      operationId: kata-context
+      parameters:
+        - explode: false
+          in: query
+          name: job_id
+          schema:
+            format: int64
+            type: integer
+        - explode: false
+          in: query
+          name: review_uuid
+          schema:
+            type: string
+        - description: Frozen qualified issue reference or full issue UID
+          explode: false
+          in: query
+          name: ref
+          schema:
+            description: Frozen qualified issue reference or full issue UID
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataReplyContext"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API kata context
+      tags:
+        - kata
+    post:
+      operationId: kata-consume-context
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KataConsumeContextRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataReplyContext"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Post API kata context
+      tags:
+        - kata
   /api/kata/issue:
     get:
       operationId: kata-show-issue

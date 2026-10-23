@@ -737,6 +737,106 @@ func (c CloseReviewRequest) Validate() error {
 	return errors
 }
 
+type Comment struct {
+	AccountableActor   string        `json:"AccountableActor" validate:"required"`
+	Author             string        `json:"Author" validate:"required"`
+	Backlinks          []CommentLink `json:"Backlinks,omitempty"`
+	BacklinksTruncated *bool         `json:"BacklinksTruncated,omitempty"`
+	Body               string        `json:"Body" validate:"required"`
+	CreatedAt          time.Time     `json:"CreatedAt" validate:"required"`
+	EditedAt           *time.Time    `json:"EditedAt,omitempty" validate:"required"`
+	Handle             string        `json:"Handle" validate:"required"`
+	IssueUID           string        `json:"IssueUID" validate:"required"`
+	Kind               string        `json:"Kind" validate:"required"`
+	Reply              *CommentLink  `json:"Reply,omitempty"`
+	ReplyTo            string        `json:"ReplyTo" validate:"required"`
+	SourceActor        string        `json:"SourceActor" validate:"required"`
+	Teammate           string        `json:"Teammate" validate:"required"`
+	UID                string        `json:"UID" validate:"required"`
+	Verification       *string       `json:"Verification,omitempty"`
+}
+
+func (c Comment) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.AccountableActor, "required"); err != nil {
+		errors = errors.Append("AccountableActor", err)
+	}
+	if err := typesValidator.Var(c.Author, "required"); err != nil {
+		errors = errors.Append("Author", err)
+	}
+	for i, item := range c.Backlinks {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Backlinks[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(c.Body, "required"); err != nil {
+		errors = errors.Append("Body", err)
+	}
+	if err := typesValidator.Var(c.CreatedAt, "required"); err != nil {
+		errors = errors.Append("CreatedAt", err)
+	}
+	if c.EditedAt != nil {
+		if err := typesValidator.Var(c.EditedAt, "required"); err != nil {
+			errors = errors.Append("EditedAt", err)
+		}
+	}
+	if err := typesValidator.Var(c.Handle, "required"); err != nil {
+		errors = errors.Append("Handle", err)
+	}
+	if err := typesValidator.Var(c.IssueUID, "required"); err != nil {
+		errors = errors.Append("IssueUID", err)
+	}
+	if err := typesValidator.Var(c.Kind, "required"); err != nil {
+		errors = errors.Append("Kind", err)
+	}
+	if c.Reply != nil {
+		if v, ok := any(c.Reply).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Reply", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(c.ReplyTo, "required"); err != nil {
+		errors = errors.Append("ReplyTo", err)
+	}
+	if err := typesValidator.Var(c.SourceActor, "required"); err != nil {
+		errors = errors.Append("SourceActor", err)
+	}
+	if err := typesValidator.Var(c.Teammate, "required"); err != nil {
+		errors = errors.Append("Teammate", err)
+	}
+	if err := typesValidator.Var(c.UID, "required"); err != nil {
+		errors = errors.Append("UID", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CommentLink struct {
+	Author       *string    `json:"author,omitempty"`
+	Body         *string    `json:"body,omitempty"`
+	CreatedAt    *time.Time `json:"created_at,omitempty"`
+	EditedAt     *time.Time `json:"edited_at,omitempty"`
+	Handle       *string    `json:"handle,omitempty"`
+	IssueShortID *string    `json:"issue_short_id,omitempty"`
+	IssueUID     *string    `json:"issue_uid,omitempty"`
+	Kind         string     `json:"kind" validate:"required"`
+	ProjectID    *int64     `json:"project_id,omitempty"`
+	ProjectUID   *string    `json:"project_uid,omitempty"`
+	Status       *string    `json:"status,omitempty"`
+	TargetEdited *bool      `json:"target_edited,omitempty"`
+	Teammate     *string    `json:"teammate,omitempty"`
+	UID          *string    `json:"uid,omitempty"`
+}
+
+func (c CommentLink) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
 type ComponentHealth struct {
 	Healthy  bool               `json:"healthy"`
 	Message  *string            `json:"message,omitempty"`
@@ -2057,6 +2157,60 @@ type FindingCounts struct {
 	Medium   int64 `json:"medium"`
 }
 
+type FindingProvenance struct {
+	PanelMemberIndex *int64   `json:"panel_member_index,omitempty"`
+	PanelMemberName  *string  `json:"panel_member_name,omitempty"`
+	PanelName        *string  `json:"panel_name,omitempty"`
+	PanelRole        *string  `json:"panel_role,omitempty"`
+	PanelRunUUID     *string  `json:"panel_run_uuid,omitempty"`
+	SourceLabels     []string `json:"source_labels,omitempty"`
+}
+
+type FindingSnapshot struct {
+	CreatedAt    time.Time         `json:"CreatedAt" validate:"required"`
+	DocumentHash string            `json:"DocumentHash" validate:"required"`
+	Finding      KataPinnedFinding `json:"Finding"`
+	Index        int64             `json:"Index"`
+	JobID        int64             `json:"JobID"`
+	JobUUID      string            `json:"JobUUID" validate:"required"`
+	Provenance   FindingProvenance `json:"Provenance"`
+	ReviewUUID   string            `json:"ReviewUUID" validate:"required"`
+	Selector     string            `json:"Selector" validate:"required"`
+}
+
+func (f FindingSnapshot) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(f.CreatedAt, "required"); err != nil {
+		errors = errors.Append("CreatedAt", err)
+	}
+	if err := typesValidator.Var(f.DocumentHash, "required"); err != nil {
+		errors = errors.Append("DocumentHash", err)
+	}
+	if v, ok := any(f.Finding).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Finding", err)
+		}
+	}
+	if err := typesValidator.Var(f.JobUUID, "required"); err != nil {
+		errors = errors.Append("JobUUID", err)
+	}
+	if v, ok := any(f.Provenance).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Provenance", err)
+		}
+	}
+	if err := typesValidator.Var(f.ReviewUUID, "required"); err != nil {
+		errors = errors.Append("ReviewUUID", err)
+	}
+	if err := typesValidator.Var(f.Selector, "required"); err != nil {
+		errors = errors.Append("Selector", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type FixJobRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema      *string `json:"$schema,omitempty"`
@@ -2290,6 +2444,20 @@ func (j JobWithReview) Validate() error {
 	return errors
 }
 
+type KataConsumeContextRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema     *string `json:"$schema,omitempty"`
+	JobID      *int64  `json:"job_id,omitempty"`
+	Purpose    string  `json:"purpose" validate:"required"`
+	Ref        *string `json:"ref,omitempty"`
+	ReviewUUID *string `json:"review_uuid,omitempty"`
+	RunID      string  `json:"run_id" validate:"required"`
+}
+
+func (k KataConsumeContextRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(k))
+}
+
 type KataCreateRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema *string `json:"$schema,omitempty"`
@@ -2450,6 +2618,18 @@ func (k KataLinkPeer) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(k))
 }
 
+type KataPinnedFinding struct {
+	Fix      string  `json:"fix" validate:"required"`
+	Location *string `json:"location,omitempty"`
+	Problem  string  `json:"problem" validate:"required"`
+	Severity string  `json:"severity" validate:"required"`
+	Sources  []int64 `json:"sources,omitempty"`
+}
+
+func (k KataPinnedFinding) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(k))
+}
+
 type KataPublication struct {
 	Findings    []KataFindingPublication `json:"findings" validate:"required"`
 	Issue       *string                  `json:"issue,omitempty"`
@@ -2525,6 +2705,48 @@ type KataPublishRequest struct {
 
 func (k KataPublishRequest) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(k))
+}
+
+type KataReplyContext struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema       *string              `json:"$schema,omitempty"`
+	IssueRef     *string              `json:"issue_ref,omitempty"`
+	JobID        *int64               `json:"job_id,omitempty"`
+	Message      *string              `json:"message,omitempty"`
+	Operations   []KataResponseStatus `json:"operations,omitempty"`
+	Publications []KataPublication    `json:"publications" validate:"required"`
+	ReviewUUID   *string              `json:"review_uuid,omitempty"`
+	RunID        *string              `json:"run_id,omitempty"`
+	Snapshots    []ReplySnapshot      `json:"snapshots" validate:"required"`
+}
+
+func (k KataReplyContext) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range k.Operations {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Operations[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range k.Publications {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Publications[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range k.Snapshots {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Snapshots[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type KataResponseRequest struct {
@@ -3324,6 +3546,87 @@ func (r RenameRepoOutputBody) Validate() error {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Repo", err)
 		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ReplyFinding struct {
+	Availability      string           `json:"availability" validate:"required"`
+	Message           *string          `json:"message,omitempty"`
+	Replies           []Comment        `json:"replies" validate:"required"`
+	Root              *Comment         `json:"root,omitempty"`
+	RootUID           *string          `json:"root_uid,omitempty"`
+	Selector          string           `json:"selector" validate:"required"`
+	Snapshot          *FindingSnapshot `json:"snapshot,omitempty"`
+	ThreadUnavailable *bool            `json:"thread_unavailable,omitempty"`
+	Truncated         bool             `json:"truncated"`
+}
+
+func (r ReplyFinding) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(r.Availability, "required"); err != nil {
+		errors = errors.Append("Availability", err)
+	}
+	for i, item := range r.Replies {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Replies[%d]", i), err)
+			}
+		}
+	}
+	if r.Root != nil {
+		if v, ok := any(r.Root).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Root", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(r.Selector, "required"); err != nil {
+		errors = errors.Append("Selector", err)
+	}
+	if r.Snapshot != nil {
+		if v, ok := any(r.Snapshot).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Snapshot", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ReplySnapshot struct {
+	Findings    []ReplyFinding `json:"findings" validate:"required"`
+	IssueRef    string         `json:"issue_ref" validate:"required"`
+	IssueUID    string         `json:"issue_uid" validate:"required"`
+	OperationID *string        `json:"operation_id,omitempty"`
+	Policy      *string        `json:"policy,omitempty"`
+	ReviewUUID  string         `json:"review_uuid" validate:"required"`
+	State       *string        `json:"state,omitempty"`
+}
+
+func (r ReplySnapshot) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range r.Findings {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Findings[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(r.IssueRef, "required"); err != nil {
+		errors = errors.Append("IssueRef", err)
+	}
+	if err := typesValidator.Var(r.IssueUID, "required"); err != nil {
+		errors = errors.Append("IssueUID", err)
+	}
+	if err := typesValidator.Var(r.ReviewUUID, "required"); err != nil {
+		errors = errors.Append("ReviewUUID", err)
 	}
 	if len(errors) == 0 {
 		return nil
