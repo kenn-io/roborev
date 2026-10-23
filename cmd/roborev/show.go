@@ -18,6 +18,8 @@ import (
 	"github.com/spf13/cobra"
 	gitrepo "go.kenn.io/kit/git/repo"
 
+	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/findingid"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/telemetry"
 	"go.kenn.io/roborev/internal/tokens"
@@ -224,14 +226,18 @@ Examples:
 				}
 			}
 
+			// Ask once for the finding selectors, whichever way the review is shown.
+			findings := fetchShowFindings(client, addr, review)
+
 			if jsonOutput {
 				// Include comments so tools/skills can see developer feedback.
 				type reviewWithComments struct {
 					storage.Review
-					Comments []storage.Response `json:"comments,omitempty"`
-					Panel    *showPanelBlock    `json:"panel,omitempty"`
+					Comments []storage.Response     `json:"comments,omitempty"`
+					Panel    *showPanelBlock        `json:"panel,omitempty"`
+					Findings []daemon.ReviewFinding `json:"findings,omitempty"`
 				}
-				out := reviewWithComments{Review: review, Comments: allComments}
+				out := reviewWithComments{Review: review, Comments: allComments, Findings: findings}
 				if !ep.IsRemote() {
 					out.Comments = fetchShowComments(client, addr, review)
 				}
@@ -277,6 +283,14 @@ Examples:
 				fmt.Println(review.Prompt)
 			} else {
 				fmt.Println(review.Output)
+			}
+
+			if len(findings) > 0 {
+				fmt.Println()
+				fmt.Println("--- Findings ---")
+				for _, f := range findings {
+					fmt.Println(formatShowFinding(f))
+				}
 			}
 
 			// Fetch and display comments (including legacy commit-based)
@@ -382,6 +396,68 @@ func fetchPanelMembers(client *http.Client, addr string, runUUID uuid.UUID) ([]s
 		return members[i].PanelMemberIndex < members[j].PanelMemberIndex
 	})
 	return members, nil
+}
+
+// fetchShowFindings asks the daemon for the selectors of a structured review's
+// findings. A review without structured output has none and costs no request.
+// A daemon that predates the route, or a remote grant that may only read,
+// answers 404 or 403; show then lists no selectors rather than failing.
+func fetchShowFindings(client *http.Client, addr string, review storage.Review) []daemon.ReviewFinding {
+	if len(review.StructuredOutput) == 0 {
+		return nil
+	}
+	resp, err := newDaemonAPI(addr, client).ListReviewFindingsRaw(context.Background(), &generated.ListReviewFindingsRequestOptions{Query: &generated.ListReviewFindingsQuery{JobID: review.JobID}})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not list finding selectors for job %d: %v\n", review.JobID, err)
+		return nil
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusNotFound, http.StatusForbidden:
+		return nil
+	default:
+		fmt.Fprintf(os.Stderr, "Warning: could not list finding selectors for job %d: daemon returned %s\n", review.JobID, resp.Status)
+		return nil
+	}
+	var body daemon.ReviewFindingsBody
+	if err := json.UnmarshalRead(resp.Body, &body); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not read finding selectors for job %d: %v\n", review.JobID, err)
+		return nil
+	}
+	if len(body.Findings) == 0 {
+		return nil
+	}
+	if review.UUID == nil || body.ReviewUUID == nil || *body.ReviewUUID != *review.UUID {
+		fmt.Fprintf(os.Stderr, "Warning: finding selectors for job %d do not match the displayed review\n", review.JobID)
+		return nil
+	}
+	structured, err := json.Marshal(review.StructuredOutput)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not hash the displayed review for job %d: %v\n", review.JobID, err)
+		return nil
+	}
+	documentHash, err := findingid.DocumentHash(jsontext.Value(structured))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not hash the displayed review for job %d: %v\n", review.JobID, err)
+		return nil
+	}
+	if body.DocumentHash != documentHash {
+		fmt.Fprintf(os.Stderr, "Warning: finding selectors for job %d do not match the displayed review\n", review.JobID)
+		return nil
+	}
+	return body.Findings
+}
+
+// formatShowFinding is one line of the findings list: position, selector,
+// severity, and location when the finding has one. The numbering matches the
+// numbered findings in the review text.
+func formatShowFinding(f daemon.ReviewFinding) string {
+	line := fmt.Sprintf("%d. %s  %s", f.Index+1, f.ID, f.Severity)
+	if f.Location != "" {
+		line += "  " + f.Location
+	}
+	return line
 }
 
 // fetchShowComments retrieves comments for a review, merging legacy

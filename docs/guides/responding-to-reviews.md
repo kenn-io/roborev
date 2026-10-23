@@ -126,10 +126,25 @@ roborev comment 42 --rebuttal --finding "Missing null check in handler." \
   -m "The caller rejects null input before invoking the handler."
 ```
 
-`--finding` must be an excerpt of the original review. Roborev queues a focused
-assessment and waits for the original agent session, using the review's model,
-provider and normal review permissions. It does not request a full review or
-apply fixes. `roborev respond` accepts the same options.
+`--finding` must be an excerpt of the original review. To name the finding
+instead, pass the selector that `roborev show 42` lists for it:
+
+```bash
+roborev comment 42 --rebuttal \
+  --finding-id f:boprylsnljhg7ct3dqwt4t22nmbpi3sz2rej44fz \
+  -m "The caller rejects null input before invoking the handler."
+```
+
+Copy the whole selector from `roborev show`. Part of one is rejected, even if it
+would match only one finding. The selector must come from the review as it
+stands now: after you rerun the job, a selector from the earlier review is
+rejected, because the rebuttal would be recorded on a different review. Use
+`--finding` or `--finding-id`, not both.
+
+Roborev queues a focused assessment and waits for the original agent session,
+using the review's model, provider and normal review permissions. It does not
+request a full review or apply fixes. `roborev respond` accepts the same
+options.
 
 The assessment confirms, refutes or supersedes the selected finding and explains
 its evidence, including any severity change. Both the explanation and assessment

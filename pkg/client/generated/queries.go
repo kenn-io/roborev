@@ -288,6 +288,49 @@ func (l ListJobsQuery) Validate() error {
 	return errors
 }
 
+type KataShowIssueQuery struct {
+	// Ref Issue short ID, UID, or project#short ID
+	Ref string `json:"ref" validate:"required"`
+
+	// Project Project for a bare ref; empty selects the default project
+	Project *string `json:"project,omitempty"`
+}
+
+func (k KataShowIssueQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(k))
+}
+
+type KataListIssuesQuery struct {
+	// Project Project to read; empty selects the default project
+	Project *string `json:"project,omitempty"`
+
+	// Status Issue status filter: open (default), closed, or all
+	Status *string `json:"status,omitempty"`
+
+	// Unlimited Read the complete set instead of the first 200 issues
+	Unlimited *bool `json:"unlimited,omitempty"`
+}
+
+type KataPublicationsQuery struct {
+	// JobID Job whose saved Kata publications to look up
+	JobID int64 `json:"job_id" validate:"gte=1"`
+
+	// ReviewUUID Only return publications belonging to this immutable review
+	ReviewUUID *string `json:"review_uuid,omitempty"`
+}
+
+func (k KataPublicationsQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(k))
+}
+
+type KataStatusQuery struct {
+	// Repo Repository root on the daemon host whose .kata.local.toml or .kata.toml binding selects the project
+	Repo *string `json:"repo,omitempty"`
+
+	// Project Project to check instead of the repository's binding or the default project
+	Project *string `json:"project,omitempty"`
+}
+
 type ListReposQuery struct {
 	// Branch Filter to repos with jobs on this branch
 	Branch *string `json:"branch,omitempty"`
@@ -322,6 +365,15 @@ type GetReviewQuery struct {
 
 	// Sha Look up review by commit SHA
 	Sha *string `json:"sha,omitempty"`
+}
+
+type ListReviewFindingsQuery struct {
+	// JobID Job whose review's findings to list
+	JobID int64 `json:"job_id" validate:"gte=1"`
+}
+
+func (l ListReviewFindingsQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
 }
 
 type SearchReviewsQuery struct {

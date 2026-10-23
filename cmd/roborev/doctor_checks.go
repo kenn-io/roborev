@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/kata"
 )
 
 // doctorRecentWindow is how far back the failure checks look.
@@ -42,6 +44,15 @@ type doctorEnv struct {
 	daemonAgents    *doctorDaemonAgents
 	daemonAgentsErr error
 
+	// kata is the daemon's Kata connection evaluated for kataProject, the
+	// repository's binding as this machine sees it ("" for the daemon's
+	// default); nil when the daemon could not say, with kataErr. kataBindingErr
+	// is set when the binding file cannot be read.
+	kata           *daemon.KataStatusBody
+	kataErr        error
+	kataProject    string
+	kataBindingErr error
+
 	postCommitLog string
 }
 
@@ -68,8 +79,28 @@ func loadDoctorEnv(ctx context.Context, repoPath string, d doctorDaemon) *doctor
 	env.ping, env.pingErr = d.Ping()
 	if env.pingErr == nil {
 		env.daemonAgents, env.daemonAgentsErr = d.Agents(ctx, repoPath, doctorAgentNames(env))
+		env.kataProject, env.kataBindingErr = doctorKataProject(ctx, repoPath)
+		env.kata, env.kataErr = d.KataStatus(ctx, env.kataProject)
 	}
 	return env
+}
+
+// doctorKataProject is the project `roborev review --local` would send to the
+// daemon: the repository's .kata.local.toml or .kata.toml binding, read on this
+// machine, else "" for the daemon's default. An unreadable binding file is
+// returned so the doctor can say so.
+func doctorKataProject(ctx context.Context, repoPath string) (string, error) {
+	if repoPath == "" {
+		return "", nil
+	}
+	binding, err := localKataBinding(ctx, repoPath)
+	if err != nil {
+		if errors.Is(err, kata.ErrNoBinding) {
+			return "", nil
+		}
+		return "", err
+	}
+	return binding.Project, nil
 }
 
 // doctorAgentNames lists the agent names the doctor asks the daemon to

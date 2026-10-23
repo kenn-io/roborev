@@ -36,6 +36,7 @@ type HookRunner struct {
 	idleCh        chan chan struct{}
 	wg            sync.WaitGroup
 	newKataClient func(workdir string) kata.Client
+	durableKata   bool
 }
 
 // NewHookRunner creates a new HookRunner that subscribes to events from the broadcaster.
@@ -46,14 +47,14 @@ func NewHookRunner(cfgGetter ConfigGetter, broadcaster Broadcaster, logger *log.
 	subID, eventCh := broadcaster.Subscribe("")
 
 	hr := &HookRunner{
-		cfgGetter:     cfgGetter,
-		broadcaster:   broadcaster,
-		logger:        logger,
-		subID:         subID,
-		stopCh:        make(chan struct{}),
-		idleCh:        make(chan chan struct{}),
-		newKataClient: func(workdir string) kata.Client { return kata.NewCLIClient(workdir) },
+		cfgGetter:   cfgGetter,
+		broadcaster: broadcaster,
+		logger:      logger,
+		subID:       subID,
+		stopCh:      make(chan struct{}),
+		idleCh:      make(chan chan struct{}),
 	}
+	hr.newKataClient = hr.defaultKataClient
 
 	go hr.listen(eventCh)
 
@@ -138,7 +139,7 @@ func (hr *HookRunner) Stop() {
 
 // handleEvent checks all configured hooks against the event and fires matches.
 func (hr *HookRunner) handleEvent(event Event) {
-	if event.SuppressHooks {
+	if event.SuppressHooks && !event.AllowKataHook {
 		return
 	}
 	// Goal reviews use their own event names and require explicit hooks.
@@ -171,6 +172,9 @@ func (hr *HookRunner) handleEvent(event Event) {
 
 	fired := 0
 	for _, hook := range hooks {
+		if event.SuppressHooks && hook.Type != "kata" {
+			continue
+		}
 		if !matchEvent(hook.Event, event.Type) {
 			continue
 		}
@@ -191,6 +195,17 @@ func (hr *HookRunner) handleEvent(event Event) {
 		}
 
 		if hook.Type == "kata" {
+			useAPI := cfg.Integrations.Kata.Enabled
+			if event.KataDeliveryMode != "" {
+				useAPI = event.KataDeliveryMode == "api"
+			}
+			if event.SuppressKata || (hr.durableKata && useAPI) {
+				continue
+			}
+			if hook.Findings != "" && !useAPI {
+				hr.logger.Printf("kata hook: findings requires Kata API connection")
+				continue
+			}
 			fired++
 			hr.wg.Add(1)
 			go hr.runKataHook(hook, event, effectiveRepo)
@@ -434,6 +449,9 @@ const kataHookMaxBodyBytes = 16384
 // kataCreateRequest builds the kata issue for an event, or ok=false when no
 // issue should be filed (e.g. a passing review).
 func kataCreateRequest(hook config.HookConfig, event Event) (kata.CreateReq, bool) {
+	if event.SuppressKata {
+		return kata.CreateReq{}, false
+	}
 	repoName := event.RepoName
 	if repoName == "" {
 		repoName = filepath.Base(event.Repo)
@@ -527,6 +545,18 @@ func dedupeStrings(in []string) []string {
 	return out
 }
 
+// defaultKataClient builds the Kata client for workdir from the current
+// configuration: the API connection when [integrations.kata] is enabled, the
+// kata CLI otherwise. Configuration is read per call, so a reloaded connection
+// applies to the next hook run.
+func (hr *HookRunner) defaultKataClient(workdir string) kata.Client {
+	var cfg *config.Config
+	if hr.cfgGetter != nil {
+		cfg = hr.cfgGetter.Config()
+	}
+	return kata.NewFromConfig(workdir, cfg)
+}
+
 // runKataHook files a kata issue for the event. Every failure is logged
 // visibly because the hook is explicitly configured.
 func (hr *HookRunner) runKataHook(hook config.HookConfig, event Event, workdir string) {
@@ -539,9 +569,12 @@ func (hr *HookRunner) runKataHook(hook config.HookConfig, event Event, workdir s
 
 	factory := hr.newKataClient
 	if factory == nil {
-		factory = func(wd string) kata.Client { return kata.NewCLIClient(wd) }
+		factory = hr.defaultKataClient
 	}
 	client := factory(workdir)
+	if event.KataDeliveryMode == "cli" {
+		client = kata.NewCLIClient(workdir)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -560,6 +593,10 @@ func (hr *HookRunner) runKataHook(hook config.HookConfig, event Event, workdir s
 	}
 	if res.Reused {
 		hr.logger.Printf("kata hook: reused issue %s (job %d)", res.ShortID, event.JobID)
+		return
+	}
+	if author := res.Attribution.Author; author != "" {
+		hr.logger.Printf("kata hook: created issue %s (job %d) as %s", res.ShortID, event.JobID, author)
 		return
 	}
 	hr.logger.Printf("kata hook: created issue %s (job %d)", res.ShortID, event.JobID)

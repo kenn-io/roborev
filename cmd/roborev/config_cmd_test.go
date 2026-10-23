@@ -1057,3 +1057,35 @@ func TestConfigSetWithInvalidDaemonConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestKataIntegrationConfigCommandsMaskTheKeyAndStayGlobal(t *testing.T) {
+	assert := assert.New(t)
+	const secret = "synthetic-kata-secret-9f3a"
+	env := setupConfigEnv(t, `[integrations.kata]
+enabled = true
+endpoint = "https://kata.example.com"
+api_key = "`+secret+`"
+default_project = "reviews"
+`, "")
+
+	listed := captureOutput(t, func() error {
+		cmd := configListCmd()
+		cmd.SetArgs([]string{"--global"})
+		return cmd.Execute()
+	})
+	assert.Contains(listed, "integrations.kata.endpoint=https://kata.example.com")
+	assert.Contains(listed, "integrations.kata.default_project=reviews")
+	assert.NotContains(listed, secret)
+	assert.Contains(listed, "integrations.kata.api_key=****")
+
+	got := captureOutput(t, func() error {
+		cmd := configGetCmd()
+		cmd.SetArgs([]string{"integrations.kata.api_key", "--global"})
+		return cmd.Execute()
+	})
+	assert.NotContains(got, secret)
+	assert.True(strings.HasPrefix(got, "****"), got)
+
+	require.NoError(t, setConfigKey(filepath.Join(env.DataDir, "config.toml"), "integrations.kata.enabled", "false", true))
+	require.ErrorContains(t, setConfigKey(filepath.Join(env.RepoDir, ".roborev.toml"), "integrations.kata.endpoint", "https://other.example.com", false), "global")
+}

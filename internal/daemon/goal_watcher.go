@@ -272,7 +272,7 @@ func (s *Server) newGoalWatcher() *goalWatcher {
 			if err != nil {
 				return input, err
 			}
-			input.snapshot, err = goalreview.Capture(ctx, checkout.root, selection, kata.NewCLIClient(checkout.configRoot))
+			input.snapshot, err = goalreview.Capture(ctx, checkout.root, selection, kata.NewFromConfig(checkout.configRoot, s.configWatcher.Config()))
 			if errors.Is(err, goalreview.ErrNoSpecs) {
 				return goalWatchInput{}, nil
 			}
