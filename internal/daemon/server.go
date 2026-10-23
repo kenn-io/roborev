@@ -238,10 +238,18 @@ func newServerWithLogs(
 		mux.Handle(mcpserver.HTTPPath, mcpServer.HTTPHandler())
 	}
 
+	// Shutdown waits for active connections, so end long-lived requests such
+	// as event streams when it begins. Stop shuts the server down only after
+	// the worker pool has drained.
+	requestContext, cancelRequests := context.WithCancel(context.Background())
 	s.httpServer = &http.Server{
 		Addr:    cfg.ServerAddr,
 		Handler: withAPIAuthentication(mux, cfg.AuthKey),
+		BaseContext: func(net.Listener) context.Context {
+			return requestContext
+		},
 	}
+	s.httpServer.RegisterOnShutdown(cancelRequests)
 
 	return s
 }
