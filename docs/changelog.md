@@ -28,7 +28,9 @@ All notable changes to roborev, grouped by minor release.
 **Improvements**
 
 - Start daemons over records left by dead sandboxes, and keep runtime records
-    during discovery when the caller can't judge their process.
+    during discovery when the caller can't judge their process. Refuse startup
+    when a keyless probe of such a record finds a responding daemon or an access
+    error.
 - Honor `DO_NOT_TRACK` and keep telemetry off in CI and non-release builds.
 - Count core action error banners and toasts in the web UI and TUI, and
     PostgreSQL sync outages, in anonymous telemetry using fixed action names and

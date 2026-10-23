@@ -3,8 +3,10 @@
 package daemon
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,6 +23,85 @@ import (
 	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/testutil"
 )
+
+func TestServerStartWithSandboxSocket(t *testing.T) {
+	for _, responding := range []bool{true, false} {
+		t.Run(fmt.Sprintf("responding=%t", responding), func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			testenv.SetDataDir(t)
+			address := filepath.Join(setShortRuntimeDir(t), "daemon.sock")
+			var rec kitdaemon.RuntimeRecord
+			if responding {
+				rec = testutil.UnjudgedRuntimeRecord(t, "unix", address)
+			} else {
+				// End the sandbox before trying to start its replacement.
+				t.Run("sandbox", func(t *testing.T) {
+					rec = testutil.UnjudgedRuntimeRecord(t, "unix", address)
+				})
+				if rec.PID == 0 {
+					t.Skip("requires PID namespaces")
+				}
+			}
+			listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: address, Net: "unix"})
+			require.NoError(t, err)
+			listener.SetUnlinkOnClose(false)
+			foreign := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/api/ping", r.URL.Path)
+				assert.Empty(t, r.Header.Get("Authorization"))
+				_, _ = fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, rec.PID)
+			}))
+			require.NoError(t, foreign.Listener.Close())
+			foreign.Listener = listener
+			foreign.Start()
+			t.Cleanup(foreign.Close)
+			if !responding {
+				foreign.Close()
+			}
+			path, err := runtimeStore().Write(rec)
+			require.NoError(t, err)
+			before, err := os.ReadFile(path)
+			require.NoError(t, err)
+			db, _ := testutil.OpenTestDBWithDir(t)
+			cfg := config.DefaultConfig()
+			cfg.ServerAddr = "unix://" + address
+			cfg.AuthKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+			require.NoError(t, config.SaveGlobal(cfg))
+			server := NewServer(db, cfg, "")
+			t.Cleanup(func() { _ = server.Close() })
+			if responding {
+				errCh := make(chan error, 1)
+				go func() { errCh <- server.Start(context.Background()) }()
+				returned := false
+				t.Cleanup(func() {
+					if !returned {
+						stopTestServer(t, server, errCh)
+					}
+				})
+				// Wall-clock wait: startup probes the foreign Unix listener.
+				require.Eventually(t, func() bool {
+					select {
+					case err = <-errCh:
+						returned = true
+						return true
+					default:
+						return false
+					}
+				}, 5*time.Second, 10*time.Millisecond)
+				require.ErrorContains(t, err, "daemon already running")
+				ping, err := probeRuntimeRecordWithAuth(t.Context(), DaemonEndpoint{Network: "unix", Address: address}, config.ClientAuth{})
+				require.NoError(t, err)
+				assert.Equal(t, rec.PID, ping.PID)
+				after, err := os.ReadFile(path)
+				require.NoError(t, err)
+				assert.Equal(t, before, after)
+			} else {
+				errCh, info := startServerAndWaitForRuntime(t, server)
+				assert.Equal(t, address, info.Address)
+				stopTestServer(t, server, errCh)
+			}
+		})
+	}
+}
 
 func TestKillDaemonKeepsUnjudgedRuntimeWithoutShutdown(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())

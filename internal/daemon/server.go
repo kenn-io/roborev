@@ -312,6 +312,19 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 		return fmt.Errorf("daemon already running (pid %d on %s)", info.PID, info.Address)
 	}
+	info, discoveryErr = FindUnjudgedDaemon()
+	if IsDaemonAccessError(discoveryErr) {
+		if listener != nil {
+			_ = listener.Close()
+		}
+		return discoveryErr
+	}
+	if discoveryErr == nil {
+		if listener != nil {
+			_ = listener.Close()
+		}
+		return fmt.Errorf("daemon already running (pid %d on %s)", info.PID, info.Address)
+	}
 	for _, runtime := range runtimes {
 		if kitdaemon.RuntimeRecordBlocksStart(runtime.processRecord()) {
 			if listener != nil {

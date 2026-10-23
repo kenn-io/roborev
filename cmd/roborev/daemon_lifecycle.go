@@ -506,31 +506,7 @@ func listJudgedRuntimes() ([]*daemon.RuntimeInfo, error) {
 // stopDaemon stops any running daemons.
 // Returns ErrDaemonNotRunning if no daemon runtime files are found.
 func stopDaemon() error {
-	err := stopDaemonRuntimes(listAllRuntimes, daemon.KillDaemon, os.Stderr)
-	if errors.Is(err, ErrDaemonNotRunning) {
-		if unjudgedErr := unjudgedDaemonError(); unjudgedErr != nil {
-			return unjudgedErr
-		}
-	}
-	return err
-}
-
-func unjudgedRuntimeError(info *daemon.RuntimeInfo) error {
-	if info.ProcessScope() == kitdaemon.ProcessScopeForeign {
-		return fmt.Errorf("daemon pid %d runs in another PID namespace", info.PID)
-	}
-	return fmt.Errorf("daemon pid %d: its process identity can't be judged here", info.PID)
-}
-
-func unjudgedDaemonError() error {
-	info, err := daemon.FindUnjudgedDaemon()
-	if err == nil {
-		return unjudgedRuntimeError(info)
-	}
-	if daemon.IsDaemonAccessError(err) {
-		return err
-	}
-	return nil
+	return stopDaemonRuntimes(listAllRuntimes, daemon.KillDaemon, os.Stderr)
 }
 
 func stopDaemonRuntimes(list func() ([]*daemon.RuntimeInfo, error), drain func(*daemon.RuntimeInfo) error, out io.Writer) error {

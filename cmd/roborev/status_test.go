@@ -5,12 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,7 +16,6 @@ import (
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
-	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/version"
 )
 
@@ -29,58 +25,6 @@ type statusJSONOutput struct {
 	Daemon  storage.DaemonStatus `json:"daemon"`
 	Jobs    []storage.ReviewJob  `json:"jobs,omitempty"`
 	Error   string               `json:"error,omitempty"`
-}
-
-func TestStatusCmdKeepsRespondingUnjudgedDaemon(t *testing.T) {
-	for _, jsonOutput := range []bool{true, false} {
-		t.Run(fmt.Sprintf("json=%t", jsonOutput), func(t *testing.T) {
-			stubServiceRecovery(t)
-			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-			rec := testutil.UnknownRuntimeRecord("tcp", "")
-			var otherRequests atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path != "/api/ping" {
-					otherRequests.Add(1)
-				}
-				_ = json.NewEncoder(w).Encode(daemon.PingInfo{OK: true, Service: "roborev", Version: "v-old", PID: rec.PID})
-			}))
-			t.Cleanup(server.Close)
-			rec.Address = server.Listener.Addr().String()
-			path, err := daemon.RuntimeStore().Write(rec)
-			require.NoError(t, err)
-			before, err := os.ReadFile(path)
-			require.NoError(t, err)
-			original := statusEnsureDaemon
-			t.Cleanup(func() { statusEnsureDaemon = original })
-			ensures := 0
-			statusEnsureDaemon = func() error { ensures++; return nil }
-			output := captureStdout(t, func() {
-				cmd := statusCmd()
-				if jsonOutput {
-					cmd.SetArgs([]string{"--json"})
-				}
-				require.NoError(t, cmd.Execute())
-			})
-			assert := assert.New(t)
-			if jsonOutput {
-				var parsed statusJSONResult
-				require.NoError(t, json.Unmarshal([]byte(output), &parsed))
-				assert.True(parsed.Running)
-				assert.Contains(parsed.Error, fmt.Sprintf("pid %d", rec.PID))
-				assert.Nil(parsed.Daemon)
-				assert.Empty(parsed.Jobs)
-			} else {
-				assert.Contains(output, fmt.Sprintf("Daemon: running (pid %d", rec.PID))
-				assert.Contains(output, fmt.Sprintf("Status: unavailable: daemon pid %d", rec.PID))
-				assert.NotContains(output, "Jobs:")
-			}
-			assert.Zero(ensures)
-			assert.Zero(otherRequests.Load())
-			after, err := os.ReadFile(path)
-			require.NoError(t, err)
-			assert.Equal(before, after)
-		})
-	}
 }
 
 func TestStatusCmdShowsWebUIURL(t *testing.T) {
@@ -673,17 +617,4 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestStatusExplicitServerSkipsDiscovery(t *testing.T) {
-	originalDiscover, originalEnsure, originalAddr := statusDiscover, statusEnsureDaemon, serverAddr
-	t.Cleanup(func() {
-		statusDiscover, statusEnsureDaemon, serverAddr = originalDiscover, originalEnsure, originalAddr
-	})
-	serverAddr = "http://127.0.0.1:12345"
-	calls := 0
-	statusDiscover = func() (*daemon.RuntimeInfo, error) { calls++; return nil, os.ErrNotExist }
-	statusEnsureDaemon = func() error { return daemon.ErrClientConfig }
-	require.ErrorIs(t, statusCmd().Execute(), daemon.ErrClientConfig)
-	assert.Zero(t, calls)
 }

@@ -724,14 +724,14 @@ func discoverDaemonForUpdate() (*daemon.RuntimeInfo, error) {
 		if runtimeInfo == nil || runtimeInfo.PID <= 0 {
 			continue
 		}
-		if !runtimeInfo.Stale() && isPIDAliveForUpdate(runtimeInfo.PID) {
+		if isPIDAliveForUpdate(runtimeInfo.PID) {
 			return nil, fmt.Errorf("running daemon is not responsive: %w", probeErr)
 		}
 		if runtimeInfo.SourcePath != "" {
 			_ = os.Remove(runtimeInfo.SourcePath)
 		}
 	}
-	return nil, unjudgedDaemonError()
+	return nil, nil
 }
 
 func confirmUpdate(in io.Reader, out io.Writer) (bool, error) {

@@ -1109,14 +1109,11 @@ Use `--server <address>` to select an endpoint explicitly, including a manually
 managed daemon without a runtime record. The CLI probes that endpoint and does
 not start or restart a local daemon on its behalf.
 
-Discovery skips daemon records from another PID namespace or whose process
-identity can't be judged, and leaves those records on disk. When only these
-records remain, stop and update tell you to stop the daemon from its PID
-namespace. Other commands ignore these records and may start a local daemon.
-`roborev status` and `roborev daemon status` report a responding daemon in
-another PID namespace using a ping sent without `auth_key` and with the
-configured TLS settings. Queue status is unavailable; run status from the PID
-namespace that started the daemon.
+Discovery skips runtime records from another PID namespace or whose process
+identity can't be judged, and keeps those records on disk. Before starting a
+daemon, roborev probes these endpoints without `auth_key`, using the configured
+TLS settings. Startup refuses if a daemon responds or the probe encounters an
+access error. A dead sandbox's connection-refused response allows startup.
 
 ```bash
 roborev daemon start             # Start background daemon

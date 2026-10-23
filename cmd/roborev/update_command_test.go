@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,7 +17,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/testutil"
@@ -565,40 +563,6 @@ func readRequestBody(r *http.Request) string {
 	return string(body)
 }
 
-func TestDiscoverDaemonForUpdateReportsUnjudgedRuntime(t *testing.T) {
-	for _, responding := range []bool{true, false} {
-		t.Run(fmt.Sprintf("responding=%t", responding), func(t *testing.T) {
-			stubUpdateCommand(t)
-			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-			rec := testutil.UnknownRuntimeRecord("tcp", "127.0.0.1:1")
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal(t, "/api/ping", r.URL.Path)
-				_, _ = fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, rec.PID)
-			}))
-			t.Cleanup(server.Close)
-			if responding {
-				rec.Address = server.Listener.Addr().String()
-			}
-			path, err := daemon.RuntimeStore().Write(rec)
-			require.NoError(t, err)
-			before, err := os.ReadFile(path)
-			require.NoError(t, err)
-			listAllRuntimes = listJudgedRuntimes
-			getAnyRunningDaemon = daemon.GetAnyRunningDaemon
-			info, err := discoverDaemonForUpdate()
-			if responding {
-				require.EqualError(t, err, fmt.Sprintf("daemon pid %d: its process identity can't be judged here", rec.PID))
-			} else {
-				require.NoError(t, err)
-			}
-			assert.Nil(t, info)
-			after, err := os.ReadFile(path)
-			require.NoError(t, err)
-			assert.Equal(t, before, after)
-		})
-	}
-}
-
 func TestUpdateReplacementIgnoresUnjudgedRuntimePIDCollision(t *testing.T) {
 	if dataDir := os.Getenv("ROBOREV_TEST_PIDNS_COLLISION_DATA"); dataDir == "" {
 		t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
@@ -625,32 +589,4 @@ func TestUpdateReplacementIgnoresUnjudgedRuntimePIDCollision(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, pids, os.Getpid())
 	assert.Zero(t, replacementRuntimePID(0))
-}
-
-func TestDiscoverDaemonForUpdateIgnoresDeadSandboxPIDCollision(t *testing.T) {
-	stubUpdateCommand(t)
-	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	var rec kitdaemon.RuntimeRecord
-	// The subtest deliberately ends the sandbox before replacing its PID below.
-	t.Run("sandbox", func(t *testing.T) {
-		rec = testutil.UnjudgedRuntimeRecord(t, "tcp", "127.0.0.1:1")
-	})
-	if rec.PID == 0 {
-		t.Skip("requires PID namespaces")
-	}
-	// The sandbox exited, but its numeric PID collides with a live host process.
-	rec.PID = os.Getpid()
-	require.Equal(t, kitdaemon.ProcessScopeGone, kitdaemon.RuntimeProcessScope(rec))
-	_, err := daemon.RuntimeStore().Write(rec)
-	require.NoError(t, err)
-	listAllRuntimes = listJudgedRuntimes
-	getAnyRunningDaemon = daemon.GetAnyRunningDaemon
-	oldAlive := isPIDAliveForUpdate
-	t.Cleanup(func() { isPIDAliveForUpdate = oldAlive })
-	pidChecks := 0
-	isPIDAliveForUpdate = func(int) bool { pidChecks++; return true }
-	info, err := discoverDaemonForUpdate()
-	require.NoError(t, err)
-	assert.Nil(t, info)
-	assert.Zero(t, pidChecks)
 }

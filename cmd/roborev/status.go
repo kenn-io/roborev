@@ -77,20 +77,6 @@ func statusCmd() *cobra.Command {
 				return nil
 			}
 
-			if serverAddr == "" {
-				if _, err := statusDiscover(); errors.Is(err, os.ErrNotExist) {
-					if info, err := daemon.FindUnjudgedDaemon(); err == nil {
-						message := unjudgedRuntimeError(info).Error()
-						if jsonOutput {
-							return writeJSONResult(statusJSONResult{Running: true, Error: message})
-						}
-						fmt.Printf("Daemon: running (pid %d)\n", info.PID)
-						fmt.Printf("Status: unavailable: %s\n", message)
-						return nil
-					}
-				}
-			}
-
 			// Ensure daemon is running (and restart if version mismatch)
 			if err := statusEnsureDaemon(); err != nil {
 				if _, managed := errors.AsType[*managedRecoveryError](err); managed || errors.Is(err, errRecoveryLock) {
