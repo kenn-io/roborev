@@ -154,6 +154,8 @@ type CommentReq struct {
 // an earlier request with the same key and body, which is a success.
 type CommentResult struct {
 	UID         string
+	Body        string
+	EditedAt    *time.Time
 	Changed     bool
 	Kind        CommentKind
 	ReplyTo     string

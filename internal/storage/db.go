@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -235,8 +236,10 @@ CREATE INDEX IF NOT EXISTS idx_commits_sha ON commits(sha);
 
 type DB struct {
 	*sql.DB
-	analytics analyticsStmts
-	attempts  jobAttempts
+	analytics     analyticsStmts
+	attempts      jobAttempts
+	kataBuilderMu sync.RWMutex
+	kataBuilder   KataHandoffBuilder
 }
 
 // Close closes the cached prepared statements and then the database.
