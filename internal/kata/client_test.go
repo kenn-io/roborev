@@ -219,3 +219,19 @@ func TestCreateZeroPriorityEmitted(t *testing.T) {
 	assert.Contains(t, *args, "--priority")
 	assert.Contains(t, *args, "0")
 }
+
+func TestBuildKataCmdInheritsProcessEnvByDefault(t *testing.T) {
+	c := NewCLIClient(t.TempDir())
+	cmd := buildKataCmd(context.Background(), c, []string{"list"}, nil)
+	assert.Nil(t, cmd.Env, "a nil Env makes exec inherit the process environment")
+}
+
+// A client built with an explicit environment must not see the caller's
+// KATA_SERVER, token, or attribution: the entries are the whole environment.
+func TestBuildKataCmdUsesExplicitEnvOnly(t *testing.T) {
+	t.Setenv("KATA_SERVER", "http://127.0.0.1:1")
+	t.Setenv("KATA_AUTHOR", "inherited")
+	c := NewCLIClientWithEnv(t.TempDir(), []string{"KATA_HOME=/disposable", "PATH=/bin"})
+	cmd := buildKataCmd(context.Background(), c, []string{"list"}, nil)
+	assert.Equal(t, []string{"KATA_HOME=/disposable", "PATH=/bin"}, cmd.Env)
+}
