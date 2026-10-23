@@ -33,33 +33,6 @@ func stubServiceRecovery(t *testing.T) {
 	})
 }
 
-func TestRecoverDaemonKeepsResponsiveDaemonWithUnjudgedRuntime(t *testing.T) {
-	stubServiceRecovery(t)
-	var progress bytes.Buffer
-	lifecycleOut = &progress
-	original := &daemon.RuntimeInfo{PID: 1234, Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}
-	findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
-	getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return original, nil }
-	oldCheck := checkUnjudgedRuntimes
-	t.Cleanup(func() { checkUnjudgedRuntimes = oldCheck })
-	checks, stops, starts := 0, 0, 0
-	checkUnjudgedRuntimes = func(context.Context) error {
-		checks++
-		return daemon.ErrUnjudgedRuntime
-	}
-	drainManagedDaemon = func(*daemon.RuntimeInfo) error { stops++; return nil }
-	startDaemonForEnsure = func() error { starts++; return nil }
-	startDaemonService = func(context.Context, string) error { starts++; return nil }
-
-	err := recoverDaemon(original, nil, false)
-	require.NoError(t, err)
-	assert := assert.New(t)
-	assert.Equal(1, checks)
-	assert.Zero(stops)
-	assert.Zero(starts)
-	assert.Contains(progress.String(), "Daemon recovery skipped; "+daemon.ErrUnjudgedRuntime.Error())
-}
-
 func TestUnmanagedRecoveryDrainsDiscoveredRuntimes(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

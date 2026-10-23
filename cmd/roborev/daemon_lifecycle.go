@@ -537,10 +537,9 @@ func stopDaemonRuntimes(list func() ([]*daemon.RuntimeInfo, error), drain func(*
 	// Kill all found daemons, track failures
 	var lastErr error
 	for _, info := range runtimes {
-		fmt.Fprintln(
-			out,
-			"Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...",
-		)
+		if !info.Unjudged() {
+			fmt.Fprintln(out, "Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...")
+		}
 		if err := drain(info); err != nil {
 			lastErr = fmt.Errorf("failed to stop daemon (pid %d): %w", info.PID, err)
 			if errors.Is(err, daemon.ErrDaemonAccessDenied) {

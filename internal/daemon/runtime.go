@@ -434,8 +434,16 @@ func (r *RuntimeInfo) discoverable() bool {
 	return !r.Unjudged() && !r.hasStaleProcess()
 }
 
-// CheckUnjudgedRuntimes refuses replacement while a retained runtime answers
-// or denies access. Unreachable records do not block startup.
+func checkRuntimeProcessForStart(info *RuntimeInfo) error {
+	if kitdaemon.RuntimeRecordBlocksStart(info.processRecord()) {
+		return fmt.Errorf("daemon process still running (pid %d)", info.PID)
+	}
+	return nil
+}
+
+// CheckUnjudgedRuntimes refuses replacement while a retained runtime answers,
+// denies access, or has a process that blocks startup. Judged runtimes will be
+// stopped by the replacement operation.
 func CheckUnjudgedRuntimes(ctx context.Context) error {
 	runtimes, err := ListAllRuntimes()
 	if err != nil {
@@ -463,6 +471,13 @@ func CheckUnjudgedRuntimes(ctx context.Context) error {
 		return fmt.Errorf("%w: status unknown for %s (pid %d): running in another PID namespace; not managed from here", errors.Join(ErrUnjudgedRuntime, err), filepath.Base(info.SourcePath), info.PID)
 	}
 	if errors.Is(err, os.ErrNotExist) {
+		for _, runtime := range runtimes {
+			if runtime.Unjudged() {
+				if err := checkRuntimeProcessForStart(runtime); err != nil {
+					return fmt.Errorf("%w: %w", ErrUnjudgedRuntime, err)
+				}
+			}
+		}
 		return nil
 	}
 	return err
