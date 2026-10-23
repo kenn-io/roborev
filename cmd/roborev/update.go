@@ -721,10 +721,10 @@ func discoverDaemonForUpdate() (*daemon.RuntimeInfo, error) {
 		return nil, fmt.Errorf("inspect daemon runtimes: %w", listErr)
 	}
 	for _, runtimeInfo := range runtimes {
-		if runtimeInfo == nil || runtimeInfo.PID <= 0 {
+		if runtimeInfo == nil || runtimeInfo.PID <= 0 || runtimeInfo.Unjudged() {
 			continue
 		}
-		if isPIDAliveForUpdate(runtimeInfo.PID) {
+		if !runtimeInfo.Stale() && isPIDAliveForUpdate(runtimeInfo.PID) {
 			return nil, fmt.Errorf("running daemon is not responsive: %w", probeErr)
 		}
 		if runtimeInfo.SourcePath != "" {

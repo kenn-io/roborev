@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -55,7 +56,7 @@ var (
 	daemonStartTimeout          = 2 * time.Minute
 	getAnyRunningDaemon         = daemon.GetAnyRunningDaemon
 	getAnyRunningDaemonForStart = daemon.GetAnyRunningDaemonContext
-	listAllRuntimes             = daemon.ListLocalRuntimes
+	listAllRuntimes             = daemon.ListAllRuntimes
 	cleanupZombieDaemons        = daemon.CleanupZombieDaemons
 	isPIDAliveForUpdate         = isPIDAliveForUpdateDefault
 	startDaemonForEnsure        = startDaemon
@@ -349,8 +350,8 @@ func ensureDaemon() error {
 		return nil
 	}
 
-	if info, err := daemon.FindUnjudgedDaemon(); err == nil {
-		return unjudgedRuntimeError(info)
+	if err := unjudgedDaemonError(); err != nil {
+		return err
 	}
 
 	// Legacy pre-kit daemons are invisible to kit discovery because they do
@@ -501,7 +502,7 @@ func openDetachedDaemonLogs() (*os.File, *os.File, func(), error) {
 // stopDaemon stops any running daemons.
 // Returns ErrDaemonNotRunning if no daemon runtime files are found.
 func stopDaemon() error {
-	err := stopDaemonRuntimes(daemon.ListLocalRuntimes, daemon.KillDaemon, os.Stderr)
+	err := stopDaemonRuntimes(daemon.ListAllRuntimes, daemon.KillDaemon, os.Stderr)
 	if errors.Is(err, ErrDaemonNotRunning) {
 		if unjudgedErr := unjudgedDaemonError(); unjudgedErr != nil {
 			return unjudgedErr
@@ -518,18 +519,12 @@ func unjudgedRuntimeError(info *daemon.RuntimeInfo) error {
 }
 
 func unjudgedDaemonError() error {
-	runtimes, err := daemon.ListAllRuntimes()
-	if err != nil {
-		return fmt.Errorf("inspect daemon runtimes: %w", err)
+	info, err := daemon.FindUnjudgedDaemon()
+	if err == nil {
+		return unjudgedRuntimeError(info)
 	}
-	for _, info := range runtimes {
-		if info.Unjudged() {
-			err := unjudgedRuntimeError(info)
-			if info.ProcessScope() == kitdaemon.ProcessScopeForeign {
-				return fmt.Errorf("%w; stop it from there", err)
-			}
-			return err
-		}
+	if daemon.IsDaemonAccessError(err) {
+		return err
 	}
 	return nil
 }
@@ -544,7 +539,7 @@ func stopDaemonRuntimes(list func() ([]*daemon.RuntimeInfo, error), drain func(*
 		// Propagate other errors (permission, IO, etc.)
 		return fmt.Errorf("failed to list daemon runtimes: %w", err)
 	}
-	if len(runtimes) == 0 {
+	if runtimes = slices.DeleteFunc(runtimes, (*daemon.RuntimeInfo).Unjudged); len(runtimes) == 0 {
 		return ErrDaemonNotRunning
 	}
 

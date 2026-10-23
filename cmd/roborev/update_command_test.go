@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -568,11 +569,17 @@ func TestDiscoverDaemonForUpdateReportsUnjudgedRuntime(t *testing.T) {
 	stubUpdateCommand(t)
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	rec := testutil.UnknownRuntimeRecord("tcp", "127.0.0.1:1")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/ping", r.URL.Path)
+		_, _ = fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, rec.PID)
+	}))
+	t.Cleanup(server.Close)
+	rec.Address = server.Listener.Addr().String()
 	path, err := daemon.RuntimeStore().Write(rec)
 	require.NoError(t, err)
 	before, err := os.ReadFile(path)
 	require.NoError(t, err)
-	listAllRuntimes = daemon.ListLocalRuntimes
+	listAllRuntimes = daemon.ListAllRuntimes
 	getAnyRunningDaemon = daemon.GetAnyRunningDaemon
 	info, err := discoverDaemonForUpdate()
 	require.EqualError(t, err, fmt.Sprintf("daemon pid %d: its process identity can't be judged here", rec.PID))
@@ -597,7 +604,7 @@ func TestReviewUpdateIgnoresDeadSandboxPIDCollision(t *testing.T) {
 	require.Equal(t, kitdaemon.ProcessScopeGone, kitdaemon.RuntimeProcessScope(rec))
 	_, err := daemon.RuntimeStore().Write(rec)
 	require.NoError(t, err)
-	listAllRuntimes = daemon.ListLocalRuntimes
+	listAllRuntimes = daemon.ListAllRuntimes
 	getAnyRunningDaemon = daemon.GetAnyRunningDaemon
 	oldAlive := isPIDAliveForUpdate
 	t.Cleanup(func() { isPIDAliveForUpdate = oldAlive })
@@ -607,4 +614,34 @@ func TestReviewUpdateIgnoresDeadSandboxPIDCollision(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, info)
 	assert.Zero(t, pidChecks)
+}
+
+func TestScratchDeadLocalUpdateRemoves(t *testing.T) {
+	stubUpdateCommand(t)
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	rec := testutil.UnknownRuntimeRecord("tcp", "127.0.0.1:1")
+	rec.ProcessIdentityV2 = ""
+	path, err := daemon.RuntimeStore().Write(rec)
+	require.NoError(t, err)
+	getAnyRunningDaemon = daemon.GetAnyRunningDaemon
+	// Exercise the default list rather than stubUpdateCommand's empty list.
+	listAllRuntimes = daemon.ListAllRuntimes
+	info, err := discoverDaemonForUpdate()
+	require.NoError(t, err)
+	assert.Nil(t, info)
+	assert.NoFileExists(t, path)
+}
+
+func TestScratchStaleUnjudgedUpdate(t *testing.T) {
+	stubUpdateCommand(t)
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	rec := testutil.UnknownRuntimeRecord("tcp", "127.0.0.1:1")
+	path, err := daemon.RuntimeStore().Write(rec)
+	require.NoError(t, err)
+	getAnyRunningDaemon = daemon.GetAnyRunningDaemon
+	listAllRuntimes = daemon.ListAllRuntimes
+	info, err := discoverDaemonForUpdate()
+	require.NoError(t, err)
+	assert.Nil(t, info)
+	assert.FileExists(t, path)
 }

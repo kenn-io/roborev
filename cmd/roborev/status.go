@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	kitdaemon "go.kenn.io/kit/daemon"
 	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/daemon"
@@ -82,9 +81,6 @@ func statusCmd() *cobra.Command {
 				if _, err := statusDiscover(); errors.Is(err, os.ErrNotExist) {
 					if info, err := daemon.FindUnjudgedDaemon(); err == nil {
 						message := unjudgedRuntimeError(info).Error()
-						if info.ProcessScope() == kitdaemon.ProcessScopeForeign {
-							message += "; run status from the PID namespace that started it"
-						}
 						if jsonOutput {
 							return writeJSONResult(statusJSONResult{Running: true, Error: message})
 						}

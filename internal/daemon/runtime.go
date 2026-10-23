@@ -335,21 +335,6 @@ func ListAllRuntimes() ([]*RuntimeInfo, error) {
 	return runtimes, nil
 }
 
-// ListLocalRuntimes returns runtime records whose processes can be judged here.
-func ListLocalRuntimes() ([]*RuntimeInfo, error) {
-	runtimes, err := ListAllRuntimes()
-	if err != nil {
-		return nil, err
-	}
-	local := runtimes[:0]
-	for _, info := range runtimes {
-		if !info.Unjudged() && !info.Stale() {
-			local = append(local, info)
-		}
-	}
-	return local, nil
-}
-
 // FindUnjudgedDaemon finds a responsive daemon whose process cannot be judged
 // here. Its liveness probes send no authentication key.
 func FindUnjudgedDaemon() (*RuntimeInfo, error) {

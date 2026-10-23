@@ -3,6 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -34,7 +38,7 @@ import (
 	"go.kenn.io/roborev/internal/version"
 )
 
-func TestListLocalRuntimesSkipsLiveForeignRecord(t *testing.T) {
+func TestListAllRuntimesKeepsLiveForeignRecord(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	rec := testutil.UnjudgedRuntimeRecord(t, "tcp", "127.0.0.1:1")
 	path, err := daemon.RuntimeStore().Write(rec)
@@ -43,7 +47,8 @@ func TestListLocalRuntimesSkipsLiveForeignRecord(t *testing.T) {
 	require.NoError(t, err)
 	runtimes, err := listAllRuntimes()
 	require.NoError(t, err)
-	assert.Empty(t, runtimes)
+	require.Len(t, runtimes, 1)
+	assert.True(t, runtimes[0].Unjudged())
 	after, err := os.ReadFile(path)
 	require.NoError(t, err)
 	assert.Equal(t, before, after)
@@ -558,13 +563,19 @@ func TestStopDaemonReportsUnjudgedRuntime(t *testing.T) {
 			if foreign {
 				rec = testutil.UnjudgedRuntimeRecord(t, "tcp", "127.0.0.1:1")
 			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/api/ping", r.URL.Path)
+				_, _ = fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, rec.PID)
+			}))
+			t.Cleanup(server.Close)
+			rec.Address = server.Listener.Addr().String()
 			path, err := daemon.RuntimeStore().Write(rec)
 			require.NoError(t, err)
 			before, err := os.ReadFile(path)
 			require.NoError(t, err)
 			message := fmt.Sprintf("daemon pid %d: its process identity can't be judged here", rec.PID)
 			if foreign {
-				message = fmt.Sprintf("daemon pid %d runs in another PID namespace; stop it from there", rec.PID)
+				message = fmt.Sprintf("daemon pid %d runs in another PID namespace", rec.PID)
 			}
 			require.EqualError(t, stopDaemon(), message)
 			after, err := os.ReadFile(path)
@@ -603,4 +614,68 @@ func TestEnsureDaemonRejectsRespondingUnjudgedDaemon(t *testing.T) {
 			assert.Zero(t, starts)
 		})
 	}
+}
+
+func TestScratchDeadLocalStopRemoves(t *testing.T) {
+	testenv.SetDataDir(t)
+	rec := testutil.UnknownRuntimeRecord("tcp", "127.0.0.1:1")
+	rec.ProcessIdentityV2 = ""
+	path, err := daemon.RuntimeStore().Write(rec)
+	require.NoError(t, err)
+	require.NoError(t, stopDaemon())
+	assert.NoFileExists(t, path)
+}
+
+func TestScratchStaleUnjudgedStop(t *testing.T) {
+	testenv.SetDataDir(t)
+	rec := testutil.UnknownRuntimeRecord("tcp", "127.0.0.1:1")
+	path, err := daemon.RuntimeStore().Write(rec)
+	require.NoError(t, err)
+	require.ErrorIs(t, stopDaemon(), ErrDaemonNotRunning)
+	assert.FileExists(t, path)
+}
+
+func TestIndependentForeignTLSFailureRetained(t *testing.T) {
+	isolateDaemonSelection(t)
+	var requests atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+	}))
+	t.Cleanup(server.Close)
+	require.NotContains(t, server.Certificate().DNSNames, "localhost")
+	certPath, keyPath := filepath.Join(t.TempDir(), "cert.pem"), filepath.Join(t.TempDir(), "key.pem")
+	key, err := x509.MarshalPKCS8PrivateKey(server.TLS.Certificates[0].PrivateKey)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0o600))
+	require.NoError(t, os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key}), 0o600))
+	body := fmt.Sprintf("[daemon_tls]\nca_file = %q\nclient_cert_file = %q\nclient_key_file = %q\n", certPath, certPath, keyPath)
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(body), 0o600))
+	rec := testutil.UnjudgedRuntimeRecord(t, "tcp", strings.Replace(server.Listener.Addr().String(), "127.0.0.1", "localhost", 1))
+	path, err := daemon.RuntimeStore().Write(rec)
+	require.NoError(t, err)
+	before, err := os.ReadFile(path)
+	require.NoError(t, err)
+	getAnyRunningDaemon = daemon.GetAnyRunningDaemon
+	starts := 0
+	startDaemonForEnsure = func() error { starts++; return nil }
+	err = ensureDaemon()
+	var verification *tls.CertificateVerificationError
+	require.ErrorAs(t, err, &verification)
+	assert.Zero(t, starts)
+	assert.Zero(t, requests.Load())
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+}
+
+func TestEnsureDaemonStartsAfterStaleUnjudgedConnectionFailure(t *testing.T) {
+	isolateDaemonSelection(t)
+	rec := testutil.UnknownRuntimeRecord("tcp", "127.0.0.1:1")
+	_, err := daemon.RuntimeStore().Write(rec)
+	require.NoError(t, err)
+	getAnyRunningDaemon = daemon.GetAnyRunningDaemon
+	starts := 0
+	startDaemonForEnsure = func() error { starts++; return nil }
+	require.NoError(t, ensureDaemon())
+	assert.Equal(t, 1, starts)
 }

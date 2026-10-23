@@ -76,7 +76,7 @@ func TestStatusCmdJSONKeepsRespondingUnjudgedDaemon(t *testing.T) {
 				require.NoError(t, json.Unmarshal([]byte(output), &parsed))
 				assert.True(parsed.Running)
 				if foreign {
-					assert.Contains(parsed.Error, "runs in another PID namespace")
+					assert.Equal(fmt.Sprintf("daemon pid %d runs in another PID namespace", rec.PID), parsed.Error)
 				} else {
 					assert.Contains(parsed.Error, "its process identity can't be judged here")
 				}
@@ -86,7 +86,7 @@ func TestStatusCmdJSONKeepsRespondingUnjudgedDaemon(t *testing.T) {
 				assert.Contains(output, fmt.Sprintf("Daemon: running (pid %d", rec.PID))
 				assert.Contains(output, "Status: unavailable")
 				if foreign {
-					assert.Contains(output, "run status from the PID namespace that started it")
+					assert.Contains(output, fmt.Sprintf("Status: unavailable: daemon pid %d runs in another PID namespace\n", rec.PID))
 				} else {
 					assert.Contains(output, "its process identity can't be judged here")
 				}
