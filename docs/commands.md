@@ -1112,10 +1112,11 @@ not start or restart a local daemon on its behalf.
 Discovery skips daemon records from another PID namespace or whose process
 identity can't be judged, and leaves those records on disk. When only these
 records remain, stop and update tell you to stop the daemon from its PID
-namespace. `roborev status` and `roborev daemon status` report a responding
-daemon in another PID namespace using a ping sent without `auth_key` and with
-the configured TLS settings. Queue status is unavailable; run status from the
-PID namespace that started the daemon.
+namespace. Other commands ignore these records and may start a local daemon.
+`roborev status` and `roborev daemon status` report a responding daemon in
+another PID namespace using a ping sent without `auth_key` and with the
+configured TLS settings. Queue status is unavailable; run status from the PID
+namespace that started the daemon.
 
 ```bash
 roborev daemon start             # Start background daemon

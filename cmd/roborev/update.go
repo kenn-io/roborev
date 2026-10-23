@@ -721,7 +721,7 @@ func discoverDaemonForUpdate() (*daemon.RuntimeInfo, error) {
 		return nil, fmt.Errorf("inspect daemon runtimes: %w", listErr)
 	}
 	for _, runtimeInfo := range runtimes {
-		if runtimeInfo == nil || runtimeInfo.PID <= 0 || runtimeInfo.Unjudged() {
+		if runtimeInfo == nil || runtimeInfo.PID <= 0 {
 			continue
 		}
 		if !runtimeInfo.Stale() && isPIDAliveForUpdate(runtimeInfo.PID) {

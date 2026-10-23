@@ -56,7 +56,7 @@ var (
 	daemonStartTimeout          = 2 * time.Minute
 	getAnyRunningDaemon         = daemon.GetAnyRunningDaemon
 	getAnyRunningDaemonForStart = daemon.GetAnyRunningDaemonContext
-	listAllRuntimes             = daemon.ListAllRuntimes
+	listAllRuntimes             = listJudgedRuntimes
 	cleanupZombieDaemons        = daemon.CleanupZombieDaemons
 	isPIDAliveForUpdate         = isPIDAliveForUpdateDefault
 	startDaemonForEnsure        = startDaemon
@@ -350,10 +350,6 @@ func ensureDaemon() error {
 		return nil
 	}
 
-	if err := unjudgedDaemonError(); err != nil {
-		return err
-	}
-
 	// Legacy pre-kit daemons are invisible to kit discovery because they do
 	// not serve /api/ping, but they can still hold the default port and DB.
 	// Cleanup uses only this data directory's runtime records. Never adopt
@@ -499,10 +495,18 @@ func openDetachedDaemonLogs() (*os.File, *os.File, func(), error) {
 	return stdout, stderr, closeLogs, nil
 }
 
+func listJudgedRuntimes() ([]*daemon.RuntimeInfo, error) {
+	runtimes, err := daemon.ListAllRuntimes()
+	if err != nil {
+		return nil, err
+	}
+	return slices.DeleteFunc(runtimes, (*daemon.RuntimeInfo).Unjudged), nil
+}
+
 // stopDaemon stops any running daemons.
 // Returns ErrDaemonNotRunning if no daemon runtime files are found.
 func stopDaemon() error {
-	err := stopDaemonRuntimes(daemon.ListAllRuntimes, daemon.KillDaemon, os.Stderr)
+	err := stopDaemonRuntimes(listAllRuntimes, daemon.KillDaemon, os.Stderr)
 	if errors.Is(err, ErrDaemonNotRunning) {
 		if unjudgedErr := unjudgedDaemonError(); unjudgedErr != nil {
 			return unjudgedErr
@@ -539,7 +543,7 @@ func stopDaemonRuntimes(list func() ([]*daemon.RuntimeInfo, error), drain func(*
 		// Propagate other errors (permission, IO, etc.)
 		return fmt.Errorf("failed to list daemon runtimes: %w", err)
 	}
-	if runtimes = slices.DeleteFunc(runtimes, (*daemon.RuntimeInfo).Unjudged); len(runtimes) == 0 {
+	if len(runtimes) == 0 {
 		return ErrDaemonNotRunning
 	}
 
