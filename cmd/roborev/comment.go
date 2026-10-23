@@ -179,6 +179,7 @@ Examples:
 	cmd.Flags().StringVar(&rebuttalOpts.findingID, "finding-id", "", "complete selector of the finding to re-evaluate, copied whole from 'roborev show' (requires --rebuttal)")
 	cmd.Flags().BoolVar(&rebuttalOpts.close, "close", false, "close the whole review after recording the rebuttal assessment")
 
+	cmd.Flags().StringVar(&rebuttalOpts.replacement, "replacement", "", "Replacement finding selector for reassessment")
 	return cmd
 }
 

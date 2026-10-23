@@ -1578,6 +1578,9 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				completed = true
 			}
 		}
+		if completed && job.Source == storage.JobSourceRebuttal {
+			wp.broadcastReassessmentComment(workerID, ctx, job)
+		}
 
 		// For compact jobs, mark source jobs as closed now that we've
 		// confirmed the compact job completed.
@@ -1668,6 +1671,38 @@ func (wp *WorkerPool) finishCanceledAttempt(workerID string, job *storage.Review
 		// Member canceled is terminal — release the panel synthesis.
 		wp.releaseIfPanelMember(job)
 	})
+}
+
+func (wp *WorkerPool) broadcastReassessmentComment(workerID string, ctx context.Context, job *storage.ReviewJob) {
+	if job.ParentJobID == nil {
+		return
+	}
+	assessment, err := wp.db.Reassessment(ctx, job.ID)
+	if err != nil {
+		log.Printf("[%s] Job %d: failed to load reassessment for comment event: %v", workerID, job.ID, err)
+		return
+	}
+	if assessment.Assessment == nil {
+		return
+	}
+	review, err := wp.db.GetReviewByJobID(*job.ParentJobID)
+	if err != nil {
+		log.Printf("[%s] Job %d: failed to load parent review for comment event: %v", workerID, job.ID, err)
+		return
+	}
+	if review == nil || review.UUID == nil || *review.UUID != assessment.Context.OriginalReviewUUID {
+		return
+	}
+	hash, err := storage.ReassessmentReviewHash(review)
+	if err != nil || hash != assessment.Context.OriginalDocumentHash {
+		return
+	}
+	parent, err := wp.db.GetJobByID(*job.ParentJobID)
+	if err != nil {
+		log.Printf("[%s] Job %d: failed to load parent job for comment event: %v", workerID, job.ID, err)
+		return
+	}
+	wp.broadcaster.Broadcast(eventForJob(jobEventType(parent, "commented"), parent, parent.ID))
 }
 
 func (wp *WorkerPool) finishRunningJob(workerID string, jobID int64) {

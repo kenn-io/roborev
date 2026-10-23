@@ -237,6 +237,7 @@ teammate = "roborev"                            # default
 | `api_key` | Bearer credential, masked in `roborev config list` and `get`. Prefer `api_key_file` |
 | `api_key_file` | File holding the credential, read by the daemon each time it connects. A leading `~/` is your home directory. Mutually exclusive with `api_key` |
 | `default_project` | Project used when a repo has no binding |
+| `publish_reassessments` | Publish focused finding reassessments as typed replies. Default `false`; requires a completed finding comment mapping |
 | `teammate` | Teammate name Kata records on comments roborev posts. Default `roborev`. Letters, digits, `.`, `_`, and `-`, starting with a letter or digit, up to 64 characters. Root finding comments use this name; issues carry no teammate |
 
 The section is global-only. A repo's `.roborev.toml` that sets it is rejected,
@@ -325,3 +326,77 @@ Together, the two directions form a workflow: a commit references a Kata issue,
 the review prompt includes that issue as task intent, and if the review fails or
 finds problems, the findings land back in the Kata backlog with the commands to
 reproduce and fix them.
+
+## Responding to a published finding
+
+Copy the complete finding selector from `roborev show`, then submit a response
+through the daemon:
+
+```bash
+roborev kata comment --refute <selector> \
+  -m 'The caller checks this value before execution reaches the selected path.'
+```
+
+Use `--reply <selector>` for progress, `--confirm <selector>` for reproduced
+evidence, `--refute <selector>` for contradicting evidence, or
+`--supersede <selector> --replacement <selector>` to name a replacement finding.
+Confirm and refute require at least 40 Unicode characters after whitespace is
+normalized. Short evidence is rejected with its kind unchanged.
+
+The CLI prints an idempotency key before contacting the daemon. Save it: retry
+an interrupted request with the same payload and `--idempotency-key <key>`.
+Caller-supplied keys are opaque and case-sensitive. If no key is supplied, the
+CLI generates a UUID. Reusing a key with changed content is rejected. Inspect
+pending operations with `roborev kata show <job_id|sha>`. A queued operation
+remains pending until the remote receipt is recorded durably.
+
+Responses use the finding's original comment, destination, and content policy.
+They require a completed comment mapping from the API publication hook. Missing
+or ambiguous mappings are reported explicitly. A duplicate reply remains pending
+and reports the existing comment; roborev never forces it through or silently
+changes its target. To continue an existing reply, give its comment reference as
+the flag value:
+
+```bash
+roborev kata comment --reply c:abcdef -m 'Follow-up evidence.'
+```
+
+The daemon checks the comment's lineage against the original finding mapping
+before enqueueing it.
+
+A response changes neither the review verdict nor its closed state. Older
+daemons and Kata servers without typed reply support require an update; there is
+no fallback to a plain comment.
+
+### Publishing focused reassessments
+
+Focused `comment --rebuttal` jobs record their assessment in the daemon, even
+when the waiting CLI disconnects. Completed local panel syntheses can also be
+reassessed when their original read-only agent session is available. When a
+synthesis used its backup agent, reassessment resumes that agent with its backup
+model. The daemon retains the original finding, review version, and canonical
+document hash. If the document changes before enqueue, the request is rejected.
+If it changes during reassessment, even with the same review identity, the
+assessment stays with the original snapshot and cannot annotate or close the
+replacement review. Equivalent JSON encodings preserve the document hash. With
+`--rebuttal --close`, the daemon checks the persisted reassessment context and
+closes only that unchanged parent document in the same transaction. A daemon
+without the reassessment-close endpoint rejects the close request.
+
+Reassessment publication is off by default. To enable it globally:
+
+```toml
+[integrations.kata]
+publish_reassessments = true
+```
+
+Confirmed and refuted assessments publish as `confirm` and `refute`. A
+superseded assessment publishes as `supersede` when the request names a
+`--replacement <selector>`; otherwise it publishes as `reply`. These writes use
+`<teammate>-<agent>`, which must satisfy Kata's teammate handle rules as a
+combined name. Insufficient evidence leaves publication pending with a
+diagnostic. Summary policy withholds the finding and explanation text from both
+the response payload and delivery errors.
+
+Automatic typed publication requires `--finding-id`. Legacy `--finding` excerpts
+retain their local reassessment behavior.

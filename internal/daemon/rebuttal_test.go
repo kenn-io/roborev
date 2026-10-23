@@ -23,6 +23,7 @@ import (
 )
 
 type structuredRebuttalTestAgent struct {
+	name            string
 	sessionID       string
 	progress        string
 	result          string
@@ -45,7 +46,12 @@ func (*sessionOnlyRebuttalTestAgent) CommandLine() string                       
 
 func (*structuredRebuttalTestAgent) SupportsReadOnlyReview() bool { return true }
 
-func (a *structuredRebuttalTestAgent) Name() string { return "test" }
+func (a *structuredRebuttalTestAgent) Name() string {
+	if a.name != "" {
+		return a.name
+	}
+	return "test"
+}
 
 func (a *structuredRebuttalTestAgent) writeProgress(out io.Writer) error {
 	if out == nil {
@@ -168,6 +174,37 @@ func TestRebuttalEnqueuePreservesOriginalSession(t *testing.T) {
 	a.False(review.Closed)
 }
 
+func TestRebuttalSynthesisResumesActualBackupAgent(t *testing.T) {
+	s, db, _ := newTestServer(t)
+	primary, err := agent.Get("test")
+	require.NoError(t, err)
+	agent.Register(&sessionOnlyRebuttalTestAgent{})
+	t.Cleanup(func() { agent.Register(primary) })
+	backup := &structuredRebuttalTestAgent{name: "synthesis-backup"}
+	agent.RegisterForTest(t, backup)
+	repo := testutil.CreateTestRepo(t, db)
+	parent := testutil.CreateCompletedReview(t, db, repo.ID, "abc123", backup.Name(), "The guard is missing.")
+	_, err = db.Exec(`UPDATE reviews SET agent=? WHERE job_id=?`, backup.Name(), parent.ID)
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE review_jobs SET job_type='synthesis', agent='test', model='primary-model', backup_agent=?, backup_model='backup-model', provider='original-provider', reasoning='', session_id='backup-session' WHERE id=?`, backup.Name(), parent.ID)
+	require.NoError(t, err)
+	body, err := json.Marshal(RebuttalRequest{JobID: parent.ID, Finding: "The guard is missing.", Comment: "The caller checks it.", Commenter: "operator"})
+	require.NoError(t, err)
+
+	rr := serveHuma(t, s, http.MethodPost, "/api/rebuttal", body)
+	require.Equal(t, http.StatusCreated, rr.Code, rr.Body.String())
+	var queued storage.ReviewJob
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &queued))
+	stored, err := db.GetJobByID(queued.ID)
+	require.NoError(t, err)
+	a := assert.New(t)
+	a.Equal(backup.Name(), stored.Agent)
+	a.Equal("backup-model", stored.Model)
+	a.Equal("backup-session", stored.SessionID)
+	a.Equal("original-provider", stored.Provider)
+	a.Equal("thorough", stored.Reasoning)
+}
+
 func TestRebuttalFindingMatchIgnoresWhitespaceWraps(t *testing.T) {
 	s, db, _ := newTestServer(t)
 	repo := testutil.CreateTestRepo(t, db)
@@ -264,6 +301,46 @@ func TestRebuttalRejectsAssessmentAndCloseAfterReviewReplacement(t *testing.T) {
 	replacement, err = db.GetReviewByJobID(parent.ID)
 	require.NoError(t, err)
 	assert.True(t, replacement.Closed)
+}
+
+func TestReassessmentCloseGuardsPersistedDocument(t *testing.T) {
+	for _, changed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "equivalent document", true: "changed document"}[changed], func(t *testing.T) {
+			s, db, _ := newTestServer(t)
+			repo := testutil.CreateTestRepo(t, db)
+			parent := testutil.CreateCompletedReview(t, db, repo.ID, "abc123", "test", "The guard is missing.")
+			_, err := db.Exec(`UPDATE review_jobs SET session_id='original-session' WHERE id=?`, parent.ID)
+			require.NoError(t, err)
+			queued := serveHuma(t, s, http.MethodPost, "/api/rebuttal", fmt.Appendf(nil, `{"job_id":%d,"finding":"The guard is missing.","comment":"The caller checks it.","commenter":"operator"}`, parent.ID))
+			require.Equal(t, http.StatusCreated, queued.Code, queued.Body.String())
+			var job storage.ReviewJob
+			require.NoError(t, json.Unmarshal(queued.Body.Bytes(), &job))
+			claimed, err := db.ClaimJob("worker")
+			require.NoError(t, err)
+			require.Equal(t, job.ID, claimed.ID)
+			require.NoError(t, db.CompleteJob(job.ID, "test", `{"outcome":"refuted","explanation":"The caller validates this input before reaching the path."}`))
+			review, err := db.GetReviewByJobID(parent.ID)
+			require.NoError(t, err)
+			if changed {
+				review.StructuredOutput["summary"] = "A different review document."
+			}
+			raw, err := json.Marshal(review.StructuredOutput)
+			require.NoError(t, err)
+			_, err = db.Exec(`UPDATE reviews SET structured_output=? WHERE job_id=?`, "\n"+string(raw)+"\n", parent.ID)
+			require.NoError(t, err)
+			closeBody, err := json.Marshal(CloseReassessmentRequest{JobID: job.ID})
+			require.NoError(t, err)
+			closed := serveHuma(t, s, http.MethodPost, "/api/rebuttal/close", closeBody)
+			want := http.StatusOK
+			if changed {
+				want = http.StatusConflict
+			}
+			assert.Equal(t, want, closed.Code, closed.Body.String())
+			current, err := db.GetReviewByJobID(parent.ID)
+			require.NoError(t, err)
+			assert.Equal(t, !changed, current.Closed)
+		})
+	}
 }
 
 func TestRebuttalInvalidRequestDoesNotQueue(t *testing.T) {
