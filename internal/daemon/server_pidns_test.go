@@ -269,15 +269,6 @@ func TestServerStartAfterShellLaunchedSandbox(t *testing.T) {
 	if phase := os.Getenv("ROBOREV_TEST_PIDNS_PHASE"); phase != "" {
 		t.Setenv("ROBOREV_DATA_DIR", os.Getenv("ROBOREV_TEST_PIDNS_DATA"))
 		setShortRuntimeDir(t)
-		if phase == "record" {
-			require.Equal(t, 2, os.Getpid())
-			require.NoError(t, WriteRuntime(DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, nil, "test", nil))
-			require.NoError(t, os.WriteFile(filepath.Join(config.DataDir(), "ready"), nil, 0o600))
-			_, err := io.Copy(io.Discard, os.Stdin)
-			require.NoError(t, err)
-			return
-		}
-
 		require.Equal(t, 2, os.Getppid(), "shell holds the old daemon's PID")
 		require.Equal(t, 3, os.Getpid())
 		records, err := runtimeStore().List()
@@ -301,9 +292,11 @@ func TestServerStartAfterShellLaunchedSandbox(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("ROBOREV_TEST_PIDNS_DATA", testenv.SetDataDir(t))
 	setShortRuntimeDir(t)
-	t.Setenv("ROBOREV_TEST_PIDNS_PHASE", "record")
 	// Keep the first namespace alive so its inode cannot be reused for start.
-	testutil.RunPIDNamespaceTest(t, nil, filepath.Join(config.DataDir(), "ready"))
+	rec := testutil.UnjudgedRuntimeRecord(t, "tcp", "127.0.0.1:1")
+	_, err := runtimeStore().Write(rec)
+	require.NoError(t, err)
+	t.Setenv("ROBOREV_TEST_RUNTIME_WRITER", "")
 	t.Setenv("ROBOREV_TEST_PIDNS_PHASE", "start")
 	// The trailing command keeps the shell at PID 2 while the daemon runs at PID 3.
 	testutil.RunPIDNamespaceTest(t, []string{"sh", "-c", `"$@"; result=$?; exit "$result"`, "sh"}, "")
