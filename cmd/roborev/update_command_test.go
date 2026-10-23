@@ -49,6 +49,36 @@ func TestUpdateCommandRefusesUnjudgedBeforeInstall(t *testing.T) {
 	assert.Zero(t, shutdowns.Load())
 }
 
+func TestUpdateCommandRefusesUnjudgedAfterProbeFailure(t *testing.T) {
+	info := stubUpdateCommand(t)
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	rec := testutil.UnjudgedRuntimeRecord("tcp", "127.0.0.1:1")
+	path, err := daemon.RuntimeStore().Write(rec)
+	require.NoError(t, err)
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		return nil, errors.New("probe failed")
+	}
+	listAllRuntimes = daemon.ListAllRuntimes
+	oldAlive := isPIDAliveForUpdate
+	t.Cleanup(func() { isPIDAliveForUpdate = oldAlive })
+	pidChecks := 0
+	isPIDAliveForUpdate = func(int) bool {
+		pidChecks++
+		return false
+	}
+	installs := 0
+	performUpdateForCommand = func(context.Context, *update.UpdateInfo, update.Reporter) error {
+		installs++
+		return errors.New("unexpected installation")
+	}
+	var out bytes.Buffer
+	err = runControlledUpdate(t.Context(), strings.NewReader(""), &out, info, t.TempDir(), policyWait, true, false)
+	require.ErrorIs(t, err, daemon.ErrUnjudgedRuntime)
+	assert.FileExists(t, path)
+	assert.Zero(t, pidChecks)
+	assert.Zero(t, installs)
+}
+
 func stubUpdateCommand(t *testing.T) *update.UpdateInfo {
 	t.Helper()
 	originalCheck := checkForUpdateForCommand

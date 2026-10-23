@@ -727,6 +727,9 @@ func discoverDaemonForUpdate() (*daemon.RuntimeInfo, error) {
 		if runtimeInfo == nil || runtimeInfo.PID <= 0 {
 			continue
 		}
+		if runtimeInfo.Unjudged() {
+			return nil, fmt.Errorf("%w %d: runs in another PID namespace; update from there", daemon.ErrUnjudgedRuntime, runtimeInfo.PID)
+		}
 		if isPIDAliveForUpdate(runtimeInfo.PID) {
 			return nil, fmt.Errorf("running daemon is not responsive: %w", probeErr)
 		}

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/version"
 )
 
@@ -25,6 +27,60 @@ type statusJSONOutput struct {
 	Daemon  storage.DaemonStatus `json:"daemon"`
 	Jobs    []storage.ReviewJob  `json:"jobs,omitempty"`
 	Error   string               `json:"error,omitempty"`
+}
+
+func TestStatusCmdJSONKeepsRespondingUnjudgedDaemon(t *testing.T) {
+	for _, daemonVersion := range []string{"v-old", ""} {
+		t.Run("version="+daemonVersion, func(t *testing.T) {
+			stubServiceRecovery(t)
+			t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "0")
+			rec := testutil.UnjudgedRuntimeRecord("tcp", "")
+			var shutdowns atomic.Int32
+			md := NewMockDaemon(t, MockRefineHooks{
+				OnPing: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+					_ = json.NewEncoder(w).Encode(daemon.PingInfo{OK: true, Service: "roborev", Version: daemonVersion, PID: rec.PID})
+					return true
+				},
+				OnUnhandled: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+					if r.URL.Path == "/api/shutdown" {
+						shutdowns.Add(1)
+					}
+					return false
+				},
+			})
+			defer md.Close()
+			serverAddr = ""
+			runtimes, err := daemon.ListAllRuntimes()
+			require.NoError(t, err)
+			require.Len(t, runtimes, 1)
+			require.NoError(t, os.Remove(runtimes[0].SourcePath))
+			rec.Address = md.Server.URL[len("http://"):]
+			path, err := daemon.RuntimeStore().Write(rec)
+			require.NoError(t, err)
+			cgroupReads, serviceLookups := 0, 0
+			daemonCgroupUnit = func(int) (string, error) {
+				cgroupReads++
+				return "", nil
+			}
+			findDaemonService = func(context.Context, int) (*daemonService, error) {
+				serviceLookups++
+				return nil, nil
+			}
+
+			output := captureStdout(t, func() {
+				cmd := statusCmd()
+				cmd.SetArgs([]string{"--json"})
+				require.NoError(t, cmd.Execute())
+			})
+			var parsed statusJSONOutput
+			require.NoError(t, json.Unmarshal([]byte(output), &parsed))
+			assert.True(t, parsed.Running)
+			assert.Zero(t, shutdowns.Load())
+			assert.FileExists(t, path)
+			assert.Zero(t, cgroupReads)
+			assert.Zero(t, serviceLookups)
+		})
+	}
 }
 
 func TestStatusCmdShowsWebUIURL(t *testing.T) {

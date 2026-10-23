@@ -319,6 +319,12 @@ func ensureDaemon() error {
 	}
 	if discoveryErr == nil {
 		if !skipVersionCheck {
+			if info.Unjudged() {
+				if verbose {
+					fmt.Fprintln(lifecycleOut, "Daemon recovery skipped; process identity can't be judged from this PID namespace")
+				}
+				return nil
+			}
 			// The probe can outlast the daemon, so read its cgroup first.
 			outsideService := discoveredOutsideService(info.PID)
 			probe, err := probeDaemonForEnsure(info.Endpoint(), 2*time.Second)
