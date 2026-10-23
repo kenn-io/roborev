@@ -137,6 +137,7 @@ func TestStopBoundsDrainStateCleanupWithSharedContext(t *testing.T) {
 			"test",
 			nil,
 		))
+		server.runtimePublished = true
 
 		originalTimeout := shutdownCleanupTimeout
 		originalRetryInterval := shutdownCleanupRetryInterval
@@ -194,6 +195,7 @@ func TestStopKeepsRuntimePublishedUntilWorkersFinish(t *testing.T) {
 			"test",
 			nil,
 		))
+		server.runtimePublished = true
 
 		server.workerPool.wg.Add(1)
 		close(server.workerPool.readyCh)
