@@ -87,20 +87,9 @@ func PrepareReviewToolPolicy(a Agent, p *config.ReviewToolPolicy, cfg *config.Co
 	if err != nil {
 		return nil, noop, fmt.Errorf("%w: %w", ErrReviewToolPolicy, err)
 	}
-	// Selected-server preparation and native startup enforcement must land
-	// together before MCP requests can execute.
-	if len(policy.MCP) != 0 {
-		return nil, noop, fmt.Errorf("%w: strict MCP grants are not supported yet", ErrReviewToolPolicy)
-	}
-	dir, err := newPrivateReviewConfigDir(checkoutPath)
+	path, cleanup, err := prepareReviewMCPConfig(*policy, cfg, checkoutPath)
 	if err != nil {
 		return nil, noop, err
-	}
-	cleanup := func() { _ = os.RemoveAll(dir) }
-	path := filepath.Join(dir, "mcp.json")
-	if err := os.WriteFile(path, []byte(`{"mcpServers":{}}`), 0o600); err != nil {
-		cleanup()
-		return nil, noop, fmt.Errorf("%w: cannot write review MCP config", ErrReviewToolPolicy)
 	}
 	if session, ok := a.(SessionAgent); ok {
 		a = session.WithSessionID("")

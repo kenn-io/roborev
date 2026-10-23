@@ -29,7 +29,7 @@ func (a *ClaudeAgent) buildStrictArgs(includeEffort bool) []string {
 	args := []string{
 		"-p", "--verbose", "--output-format", "stream-json",
 		"--restricted", "--tools", "Read,Glob,Grep", "--strict-mcp-config", "--mcp-config", a.strictMCPConfigPath,
-		"--permission-mode", "dontAsk", "--permission-prompts", "none", "--allowedTools", "Read,Glob,Grep",
+		"--permission-mode", "dontAsk", "--permission-prompts", "none", "--allowedTools", strings.Join(append([]string{"Read", "Glob", "Grep"}, nativeReviewToolNames(*a.strictPolicy)...), ","),
 		"--no-session-persistence", "--disable-slash-commands",
 	}
 	// Strict sessions never resume, even if a caller configured an old ID.
@@ -101,7 +101,10 @@ type claudeStrictInit struct {
 	} `json:"mcp_servers"`
 }
 
-func validateClaudeStrictInit(raw []byte, schema bool) error {
+func validateClaudeStrictInit(raw []byte, schema bool, policy config.ReviewToolPolicy) error {
+	if _, err := config.CanonicalReviewToolPolicy(&policy); err != nil {
+		return err
+	}
 	var init claudeStrictInit
 	if err := json.Unmarshal(raw, &init); err != nil {
 		return fmt.Errorf("malformed init evidence")
@@ -114,8 +117,17 @@ func validateClaudeStrictInit(raw []byte, schema bool) error {
 			return fmt.Errorf("required tool %s is unavailable", tool)
 		}
 	}
+	selected := make(map[string]bool)
+	for server, tools := range policy.MCP {
+		if len(tools) > 0 {
+			selected[server] = true
+		}
+	}
 	for _, tool := range init.Tools {
 		if tool == "Read" || tool == "Glob" || tool == "Grep" || (schema && tool == "StructuredOutput") {
+			continue
+		}
+		if namespace, _, ok := strings.Cut(strings.TrimPrefix(tool, "mcp__"), "__"); strings.HasPrefix(tool, "mcp__") && ok && selected[namespace] {
 			continue
 		}
 		return fmt.Errorf("unexpected native tool %q", tool)
@@ -123,13 +135,30 @@ func validateClaudeStrictInit(raw []byte, schema bool) error {
 	if init.MCPServers == nil {
 		return fmt.Errorf("missing MCP server evidence")
 	}
-	if len(init.MCPServers) != 0 {
-		return fmt.Errorf("unexpected MCP server")
+	connected := make(map[string]bool)
+	for _, server := range init.MCPServers {
+		if !selected[server.Name] {
+			return fmt.Errorf("unexpected MCP server %q", server.Name)
+		}
+		if server.Status != "connected" {
+			return fmt.Errorf("MCP server %q is not connected at startup", server.Name)
+		}
+		connected[server.Name] = true
+	}
+	for server := range selected {
+		if !connected[server] {
+			return fmt.Errorf("missing selected MCP server %q", server)
+		}
+	}
+	for _, tool := range nativeReviewToolNames(policy) {
+		if !slices.Contains(init.Tools, tool) {
+			return fmt.Errorf("granted tool %q is unavailable", tool)
+		}
 	}
 	return nil
 }
 
-func parseClaudeStrictStream(r io.Reader, out io.Writer, schema bool) (string, error) {
+func parseClaudeStrictStream(r io.Reader, out io.Writer, schema bool, policy config.ReviewToolPolicy) (string, error) {
 	var stream bytes.Buffer
 	var initialized bool
 	var startupErr error
@@ -144,7 +173,7 @@ func parseClaudeStrictStream(r io.Reader, out io.Writer, schema bool) (string, e
 			return nil
 		}
 		if msg.Type == "system" && msg.Subtype == "init" {
-			if err := validateClaudeStrictInit([]byte(line), schema); err != nil {
+			if err := validateClaudeStrictInit([]byte(line), schema, policy); err != nil {
 				startupErr = err
 			}
 			initialized = true
@@ -182,9 +211,6 @@ func (a *ClaudeAgent) strictReview(ctx context.Context, repoPath, prompt string,
 	if a.Agentic {
 		return "", fmt.Errorf("%w: strict review tools cannot be combined with agentic mode", ErrReviewToolPolicy)
 	}
-	if len(policy.MCP) != 0 {
-		return "", fmt.Errorf("%w: strict MCP grants are not supported yet", ErrReviewToolPolicy)
-	}
 	if a.strictMCPConfigPath == "" {
 		return "", fmt.Errorf("%w: strict review requires a prepared MCP config", ErrReviewToolPolicy)
 	}
@@ -207,7 +233,9 @@ func (a *ClaudeAgent) strictReview(ctx context.Context, repoPath, prompt string,
 	}
 	result, err := runStreamingCLI(ctx, streamingCLISpec{
 		Name: "claude", Command: a.Command, Args: args, Dir: repoPath, Env: env, Stdin: strings.NewReader(prompt), Output: out,
-		Parse: func(r io.Reader, sw *syncWriter) (string, error) { return parseClaudeStrictStream(r, sw, hasSchema) },
+		Parse: func(r io.Reader, sw *syncWriter) (string, error) {
+			return parseClaudeStrictStream(r, sw, hasSchema, *policy)
+		},
 	})
 	if err != nil {
 		return "", err

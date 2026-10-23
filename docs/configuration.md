@@ -663,7 +663,10 @@ sources = ["read", "find"]
 Omitting `tools` retains ordinary adapter behavior. A present table requires
 `mode = "read-only"`; omitting `mcp` requests strict review without MCP grants.
 An empty grant map also means strict review without MCP access. Server and tool
-names contain only ASCII letters, digits, `_`, and `-`, with no `__`. Wildcards,
+names contain only ASCII letters, digits, `_`, and `-`, with no `__`. Server
+names cannot end in `_`, and tool names cannot begin with `_`; otherwise
+distinct pairs could encode to the same native `mcp__server__tool` name. Leading
+server underscores and trailing tool underscores remain valid. Wildcards,
 whitespace, slashes, and namespace prefixes are rejected. Duplicate tool names
 are removed. A member policy replaces the whole type policy, and an experiment
 policy replaces the whole previous policy, including all server grants.
@@ -718,10 +721,15 @@ credentials authorize capabilities; Roborev does not sandbox the server process.
 Granted responses can reach the model, review output, job logs, synced rows and
 synthesized CI comments. Authorize CI grants with the same care as local grants.
 
-Selected MCP launch remains disabled pending native startup enforcement and
-adapter qualification. Explicit strict requests fail before invoking an
-unsupported adapter, including a configured backup or budget substitution.
-Per-request agentic mode cannot be combined with strict review tools.
+Selected MCP launch is enabled for strict Claude reviews. Native startup checks
+require connected selected servers and every exact granted tool. Unselected
+servers and tools from unselected namespaces fail the invocation. Other tools
+advertised by a selected server remain ungranted. Actual-adapter native
+qualification remains pending; deterministic tests do not establish native
+permission enforcement. See [strict reviews](agents/index.md#strict-reviews).
+Explicit strict requests fail before invoking an unsupported adapter, including
+a configured backup or budget substitution. Per-request agentic mode cannot be
+combined with strict review tools.
 
 Panel and CI jobs freeze resolved review settings in their existing member
 snapshot. Experiment-attributed standalone jobs do the same. Reruns retain the
