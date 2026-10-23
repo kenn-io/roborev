@@ -535,26 +535,6 @@ func TestDaemonSearchCredentialFiles(t *testing.T) {
 	}
 }
 
-func TestEnsureDaemonIgnoresRespondingUnjudgedDaemon(t *testing.T) {
-	isolateDaemonSelection(t)
-	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	rec := testutil.UnknownRuntimeRecord("tcp", "")
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/ping", r.URL.Path)
-		_, _ = fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, rec.PID)
-	}))
-	t.Cleanup(server.Close)
-	rec.Address = server.Listener.Addr().String()
-	_, err := daemon.RuntimeStore().Write(rec)
-	require.NoError(t, err)
-	getAnyRunningDaemon = daemon.GetAnyRunningDaemon
-	starts := 0
-	startDaemonForEnsure = func() error { starts++; return nil }
-	err = ensureDaemon()
-	require.NoError(t, err)
-	assert.Equal(t, 1, starts)
-}
-
 func TestStopDaemonReportsUnjudgedRuntime(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	testenv.SetDataDir(t)

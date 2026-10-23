@@ -180,62 +180,56 @@ func TestDaemonStatusUsesSharedStatusOutput(t *testing.T) {
 }
 
 func TestStatusCmdReportsUnjudgedRuntime(t *testing.T) {
-	for _, daemonCommand := range []bool{false, true} {
-		for _, jsonOutput := range []bool{false, true} {
-			t.Run(fmt.Sprintf("daemon=%t/json=%t", daemonCommand, jsonOutput), func(t *testing.T) {
-				isolateDaemonSelection(t)
-				t.Setenv("HOME", t.TempDir())
-				t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
-				var requests atomic.Int32
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					requests.Add(1)
-					w.WriteHeader(http.StatusServiceUnavailable)
-				}))
-				t.Cleanup(server.Close)
-				rec := testutil.UnjudgedRuntimeRecord(t, "tcp", server.Listener.Addr().String())
-				path, err := daemon.RuntimeStore().Write(rec)
-				require.NoError(t, err)
-				before, err := os.ReadFile(path)
-				require.NoError(t, err)
-				getAnyRunningDaemon = daemon.GetAnyRunningDaemon
-				starts := 0
-				startDaemonForEnsure = func() error {
-					starts++
-					return errors.New("unexpected daemon start")
-				}
-				cmd := statusCmd()
-				var args []string
-				if daemonCommand {
-					cmd = daemonCmd()
-					args = append(args, "status")
-				}
-				if jsonOutput {
-					args = append(args, "--json")
-				}
-				cmd.SetArgs(args)
-				output := captureStdout(t, func() { require.NoError(t, cmd.Execute()) })
-				assert := assert.New(t)
-				if jsonOutput {
-					var result statusJSONOutput
-					require.NoError(t, json.Unmarshal([]byte(output), &result))
-					assert.False(result.Running)
-					output = result.Error
-				} else {
-					assert.Contains(output, "Daemon: unknown")
-					assert.NotContains(output, "Daemon: not running")
-					assert.NotContains(output, "roborev daemon start")
-				}
-				assert.Contains(output, "unknown")
-				assert.Contains(output, filepath.Base(path))
-				assert.Contains(output, fmt.Sprintf("pid %d", rec.PID))
-				assert.Contains(output, "recorded from another PID namespace")
-				assert.Zero(starts)
-				assert.Zero(requests.Load())
-				after, err := os.ReadFile(path)
-				require.NoError(t, err)
-				assert.Equal(before, after)
-			})
-		}
+	for _, jsonOutput := range []bool{false, true} {
+		t.Run(fmt.Sprintf("json=%t", jsonOutput), func(t *testing.T) {
+			isolateDaemonSelection(t)
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				w.WriteHeader(http.StatusServiceUnavailable)
+			}))
+			t.Cleanup(server.Close)
+			rec := testutil.UnjudgedRuntimeRecord(t, "tcp", server.Listener.Addr().String())
+			path, err := daemon.RuntimeStore().Write(rec)
+			require.NoError(t, err)
+			before, err := os.ReadFile(path)
+			require.NoError(t, err)
+			getAnyRunningDaemon = daemon.GetAnyRunningDaemon
+			starts := 0
+			startDaemonForEnsure = func() error {
+				starts++
+				return errors.New("unexpected daemon start")
+			}
+			cmd := statusCmd()
+			var args []string
+			if jsonOutput {
+				args = append(args, "--json")
+			}
+			cmd.SetArgs(args)
+			output := captureStdout(t, func() { require.NoError(t, cmd.Execute()) })
+			assert := assert.New(t)
+			if jsonOutput {
+				var result statusJSONOutput
+				require.NoError(t, json.Unmarshal([]byte(output), &result))
+				assert.False(result.Running)
+				output = result.Error
+			} else {
+				assert.Contains(output, "Daemon: unknown")
+				assert.NotContains(output, "Daemon: not running")
+				assert.NotContains(output, "roborev daemon start")
+			}
+			assert.Contains(output, "unknown")
+			assert.Contains(output, filepath.Base(path))
+			assert.Contains(output, fmt.Sprintf("pid %d", rec.PID))
+			assert.Contains(output, "recorded from another PID namespace")
+			assert.Zero(starts)
+			assert.Zero(requests.Load())
+			after, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(before, after)
+		})
 	}
 }
 

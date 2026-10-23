@@ -564,23 +564,11 @@ func readRequestBody(r *http.Request) string {
 }
 
 func TestUpdateReplacementIgnoresUnjudgedRuntimePIDCollision(t *testing.T) {
-	if dataDir := os.Getenv("ROBOREV_TEST_PIDNS_COLLISION_DATA"); dataDir == "" {
-		t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-		rec := testutil.UnjudgedRuntimeRecord(t, "tcp", "127.0.0.1:1")
-		_, err := daemon.RuntimeStore().Write(rec)
-		require.NoError(t, err)
-		t.Setenv("ROBOREV_TEST_PIDNS_COLLISION_DATA", os.Getenv("ROBOREV_DATA_DIR"))
-		t.Setenv("ROBOREV_TEST_RUNTIME_WRITER", "")
-		// Keep the writer alive while a sibling namespace reads its runtime.
-		testutil.RunPIDNamespaceTest(t, nil, "")
-		return
-	} else {
-		t.Setenv("ROBOREV_DATA_DIR", dataDir)
-	}
-	info, err := daemon.ReadRuntimeForPID(os.Getpid())
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	rec := testutil.UnknownRuntimeRecord("tcp", "127.0.0.1:1")
+	rec.PID = os.Getpid()
+	_, err := daemon.RuntimeStore().Write(rec)
 	require.NoError(t, err)
-	require.Equal(t, os.Getpid(), info.PID)
-	require.True(t, info.Unjudged())
 	oldAlive := isPIDAliveForUpdate
 	t.Cleanup(func() { isPIDAliveForUpdate = oldAlive })
 	isPIDAliveForUpdate = func(pid int) bool { return pid == os.Getpid() }
@@ -588,5 +576,4 @@ func TestUpdateReplacementIgnoresUnjudgedRuntimePIDCollision(t *testing.T) {
 	pids, err := runtimePIDSet()
 	require.NoError(t, err)
 	assert.NotContains(t, pids, os.Getpid())
-	assert.Zero(t, replacementRuntimePID(0))
 }

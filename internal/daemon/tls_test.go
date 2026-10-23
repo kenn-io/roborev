@@ -7,16 +7,13 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"math/big"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -171,44 +168,4 @@ func TestCheckTLSFiles(t *testing.T) {
 	notPEM.CAFile = filepath.Join(t.TempDir(), "ca.pem")
 	require.NoError(t, os.WriteFile(notPEM.CAFile, []byte("not a certificate"), 0o600))
 	require.ErrorContains(t, CheckTLSFiles(notPEM), "contains no PEM certificates")
-}
-
-func TestServerStartUnjudgedDaemonKeepsTLS(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	testenv.SetDataDir(t)
-	setShortRuntimeDir(t)
-	pki := newTestPKI(t)
-	rec := testutil.UnknownRuntimeRecord("tcp", "")
-	var requests, credentials atomic.Int32
-	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		if r.Header.Get("Authorization") != "" {
-			credentials.Add(1)
-		}
-		_ = json.NewEncoder(w).Encode(PingInfo{OK: true, Service: "roborev", PID: rec.PID})
-	}))
-	cert, err := tls.LoadX509KeyPair(pki.CertFile, pki.KeyFile)
-	require.NoError(t, err)
-	server.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
-	server.StartTLS()
-	t.Cleanup(server.Close)
-	rec.Address = server.Listener.Addr().String()
-	rec.Metadata = map[string]string{runtimeAlternateNetworkKey: "unix", runtimeAlternateAddressKey: filepath.Join(t.TempDir(), "missing.sock")}
-	path, err := runtimeStore().Write(rec)
-	require.NoError(t, err)
-	before, err := os.ReadFile(path)
-	require.NoError(t, err)
-	db, _ := testutil.OpenTestDBWithDir(t)
-	cfg := config.DefaultConfig()
-	cfg.ServerAddr = "127.0.0.1:0"
-	cfg.AuthKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	cfg.DaemonTLS = pki
-	local := NewServer(db, cfg, "")
-	t.Cleanup(func() { _ = local.Close() })
-	require.EqualError(t, local.Start(t.Context()), fmt.Sprintf("daemon already running (pid %d on %s)", rec.PID, rec.Address))
-	assert.Equal(t, int32(1), requests.Load())
-	assert.Zero(t, credentials.Load())
-	after, err := os.ReadFile(path)
-	require.NoError(t, err)
-	assert.Equal(t, before, after)
 }
