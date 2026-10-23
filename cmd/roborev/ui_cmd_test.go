@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestUICmdOpensReviewRoutes(t *testing.T) {
@@ -213,6 +214,33 @@ func TestUICmdMatchesEquivalentLoopbackServerToProbedDaemonPID(t *testing.T) {
 
 	require.NoError(t, uiCmd().Execute())
 	assert.Equal(t, "https://live.example.com/reviews", opened)
+}
+
+func TestUIRuntimeInfoSkipsUnjudgedPIDMatch(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	rec := testutil.UnknownRuntimeRecord("tcp", "127.0.0.1:1")
+	rec.Metadata = map[string]string{"web_origin": "https://unjudged.example.com"}
+	_, err := daemon.RuntimeStore().Write(rec)
+	require.NoError(t, err)
+	probe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		assert.NoError(t, json.NewEncoder(w).Encode(daemon.PingInfo{
+			OK: true, Service: "roborev", PID: rec.PID,
+		}))
+	}))
+	t.Cleanup(probe.Close)
+
+	originalServerAddr := serverAddr
+	originalParsed := parsedServerEndpoint
+	serverAddr = strings.TrimPrefix(probe.URL, "http://")
+	parsedServerEndpoint = nil
+	t.Cleanup(func() {
+		serverAddr = originalServerAddr
+		parsedServerEndpoint = originalParsed
+	})
+
+	info, err := uiRuntimeInfo()
+	require.ErrorContains(t, err, "browser metadata is unavailable")
+	assert.Nil(t, info)
 }
 
 func TestUICmdRejectsInvalidPublishedOrigin(t *testing.T) {

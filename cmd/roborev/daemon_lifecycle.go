@@ -13,7 +13,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -56,7 +55,7 @@ var (
 	daemonStartTimeout          = 2 * time.Minute
 	getAnyRunningDaemon         = daemon.GetAnyRunningDaemon
 	getAnyRunningDaemonForStart = daemon.GetAnyRunningDaemonContext
-	listAllRuntimes             = listJudgedRuntimes
+	listAllRuntimes             = daemon.ListJudgedRuntimes
 	cleanupZombieDaemons        = daemon.CleanupZombieDaemons
 	isPIDAliveForUpdate         = isPIDAliveForUpdateDefault
 	startDaemonForEnsure        = startDaemon
@@ -493,14 +492,6 @@ func openDetachedDaemonLogs() (*os.File, *os.File, func(), error) {
 		_ = stderr.Close()
 	}
 	return stdout, stderr, closeLogs, nil
-}
-
-func listJudgedRuntimes() ([]*daemon.RuntimeInfo, error) {
-	runtimes, err := daemon.ListAllRuntimes()
-	if err != nil {
-		return nil, err
-	}
-	return slices.DeleteFunc(runtimes, (*daemon.RuntimeInfo).Unjudged), nil
 }
 
 // stopDaemon stops any running daemons.

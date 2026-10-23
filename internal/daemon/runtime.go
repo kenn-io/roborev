@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -325,6 +326,15 @@ func ListAllRuntimes() ([]*RuntimeInfo, error) {
 		runtimes = append(runtimes, info)
 	}
 	return runtimes, nil
+}
+
+// ListJudgedRuntimes returns runtime records whose process identity the caller can judge.
+func ListJudgedRuntimes() ([]*RuntimeInfo, error) {
+	runtimes, err := ListAllRuntimes()
+	if err != nil {
+		return nil, err
+	}
+	return slices.DeleteFunc(runtimes, (*RuntimeInfo).Unjudged), nil
 }
 
 // legacyRuntimeInfo is the on-disk shape written by roborev v0.56 and earlier,

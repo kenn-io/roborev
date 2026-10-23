@@ -72,8 +72,6 @@ func TestServerStartWithSandboxSocket(t *testing.T) {
 	}))
 	t.Cleanup(foreign.Close)
 	rec.Address = foreign.Listener.Addr().String()
-	_, err = (kitdaemon.RuntimeStore{Dir: t.TempDir()}).Write(kitdaemon.RuntimeRecord{PID: 2, Network: "tcp", Address: rec.Address})
-	require.NoError(t, err)
 	_, err = runtimeStore().Write(rec)
 	require.NoError(t, err)
 

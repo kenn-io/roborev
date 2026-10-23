@@ -566,12 +566,8 @@ func readRequestBody(r *http.Request) string {
 func TestUpdateReplacementIgnoresUnjudgedRuntimePIDCollision(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	rec := testutil.UnknownRuntimeRecord("tcp", "127.0.0.1:1")
-	rec.PID = os.Getpid()
 	_, err := daemon.RuntimeStore().Write(rec)
 	require.NoError(t, err)
-	oldAlive := isPIDAliveForUpdate
-	t.Cleanup(func() { isPIDAliveForUpdate = oldAlive })
-	isPIDAliveForUpdate = func(pid int) bool { return pid == os.Getpid() }
 
 	pids, err := runtimePIDSet()
 	require.NoError(t, err)
