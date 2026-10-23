@@ -56,11 +56,8 @@ func writeStatusJSON(result statusJSONResult) error {
 	return json.MarshalEncode(enc, result)
 }
 
-func writeMissingDaemonStatus(err error, jsonOutput bool) error {
-	result := statusJSONResult{Running: false}
-	if errors.Is(err, daemon.ErrUnjudgedRuntime) {
-		result.Error = err.Error()
-	}
+func writeMissingDaemonStatus(message string, jsonOutput bool) error {
+	result := statusJSONResult{Running: false, Error: message}
 	if jsonOutput {
 		return writeStatusJSON(result)
 	}
@@ -102,7 +99,7 @@ func statusCmd() *cobra.Command {
 					return writeStatusUnavailable(managedRecoveryStatus(err))
 				}
 				if errors.Is(err, daemon.ErrUnjudgedRuntime) {
-					return writeMissingDaemonStatus(err, jsonOutput)
+					return writeMissingDaemonStatus(err.Error(), jsonOutput)
 				}
 				if errors.Is(err, daemon.ErrClientConfig) {
 					return err
@@ -125,7 +122,7 @@ func statusCmd() *cobra.Command {
 					fmt.Println(message)
 					return nil
 				}
-				return writeMissingDaemonStatus(err, jsonOutput)
+				return writeMissingDaemonStatus("", jsonOutput)
 			}
 			webStatus = discoverWebUI(statusDiscover)
 

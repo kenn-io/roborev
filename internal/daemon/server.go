@@ -26,6 +26,7 @@ import (
 	"github.com/coreos/go-systemd/v22/daemon"
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/go-github/v93/github"
+	"go.kenn.io/kit/atomicfile"
 	kitdaemon "go.kenn.io/kit/daemon"
 	gitrepo "go.kenn.io/kit/git/repo"
 	"go.kenn.io/kit/selfupdate"
@@ -45,6 +46,8 @@ import (
 	"go.kenn.io/roborev/internal/tokens"
 	"go.kenn.io/roborev/internal/version"
 )
+
+var writeServerRuntime = WriteRuntime
 
 // Server is the HTTP API server for the daemon
 type Server struct {
@@ -491,10 +494,10 @@ func (s *Server) Start(ctx context.Context) error {
 	s.startGoalWatcher(ctx)
 
 	// Write runtime info only after the HTTP server is accepting requests.
-	if err := WriteRuntime(ep, alternate, version.Version, browserRuntime); err != nil {
+	err = writeServerRuntime(ep, alternate, version.Version, browserRuntime)
+	s.runtimePublished = err == nil || errors.Is(err, atomicfile.ErrPublished)
+	if err != nil {
 		log.Printf("Warning: failed to write runtime info: %v", err)
-	} else {
-		s.runtimePublished = true
 	}
 	s.browserMu.Unlock()
 

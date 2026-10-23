@@ -19,7 +19,29 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/testenv"
+	"go.kenn.io/roborev/internal/testutil"
 )
+
+func TestPrepareUpdateDaemonCanceledBeforeUnjudgedProbe(t *testing.T) {
+	testenv.SetDataDir(t)
+	rec := testutil.UnknownRuntimeRecord("tcp", "")
+	var requests atomic.Int32
+	endpoint := updateTestEndpoint(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, rec.PID)
+	}))
+	rec.Address = endpoint.Address
+	_, err := daemon.RuntimeStore().Write(rec)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, err = prepareUpdateDaemon(ctx, endpoint, "owner", policyWait, io.Discard)
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Zero(t, requests.Load())
+}
 
 func updateTestEndpoint(t *testing.T, handler http.Handler) daemon.DaemonEndpoint {
 	t.Helper()

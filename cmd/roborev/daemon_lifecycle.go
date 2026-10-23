@@ -350,7 +350,7 @@ func ensureDaemon() error {
 		return nil
 	}
 
-	if err := daemon.CheckUnjudgedRuntimes(); err != nil {
+	if err := daemon.CheckUnjudgedRuntimes(context.Background()); err != nil {
 		return err
 	}
 
@@ -514,7 +514,7 @@ func stopDaemon() error {
 }
 
 func stopJudgedDaemons() error {
-	if err := daemon.CheckUnjudgedRuntimes(); err != nil {
+	if err := daemon.CheckUnjudgedRuntimes(context.Background()); err != nil {
 		return err
 	}
 	return stopDaemonRuntimes(listJudgedRuntimes, daemon.KillDaemon, os.Stderr)

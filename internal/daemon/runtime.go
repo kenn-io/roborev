@@ -436,20 +436,20 @@ func (r *RuntimeInfo) discoverable() bool {
 
 // CheckUnjudgedRuntimes refuses replacement while a retained runtime answers
 // or denies access. Unreachable records do not block startup.
-func CheckUnjudgedRuntimes() error {
+func CheckUnjudgedRuntimes(ctx context.Context) error {
 	runtimes, err := ListAllRuntimes()
 	if err != nil {
 		return err
 	}
-	auth, err := loadClientAuth()
-	if err != nil {
-		return err
-	}
-	auth.Key = ""
 	var denied *RuntimeInfo
-	info, err := discoverRuntimeRecords(context.Background(), runtimes, func(info *RuntimeInfo) bool {
+	info, err := discoverRuntimeRecords(ctx, runtimes, func(info *RuntimeInfo) bool {
 		return info.Unjudged() && !info.hasStaleProcess()
 	}, func(ctx context.Context, info *RuntimeInfo, ep DaemonEndpoint) (*PingInfo, error) {
+		auth, err := loadClientAuth()
+		if err != nil {
+			return nil, err
+		}
+		auth.Key = ""
 		ping, err := probeRuntimeRecordWithAuth(ctx, ep, auth)
 		if IsDaemonAccessError(err) {
 			denied = info

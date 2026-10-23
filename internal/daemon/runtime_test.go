@@ -24,9 +24,26 @@ import (
 	"github.com/stretchr/testify/require"
 	kitdaemon "go.kenn.io/kit/daemon"
 
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/testutil"
 )
+
+func TestCheckUnjudgedRuntimesWithoutCandidatesIgnoresBadConfig(t *testing.T) {
+	for _, judged := range []bool{false, true} {
+		t.Run(fmt.Sprintf("judged=%t", judged), func(t *testing.T) {
+			dir := testenv.SetDataDir(t)
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte("invalid = ["), 0o600))
+			if judged {
+				require.NoError(t, WriteRuntime(DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, nil, "test", nil))
+			}
+			_, err := config.LoadGlobal()
+			require.Error(t, err)
+
+			assert.NoError(t, CheckUnjudgedRuntimes(t.Context()))
+		})
+	}
+}
 
 func TestWaitForGracefulDaemonExitHasNoTimeout(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {

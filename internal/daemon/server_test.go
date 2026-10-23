@@ -21,6 +21,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/atomicfile"
 	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/agent"
@@ -29,6 +30,28 @@ import (
 	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/testutil"
 )
+
+func TestServerStopRemovesRuntimeAfterPublishedWriteError(t *testing.T) {
+	testenv.SetDataDir(t)
+	write := writeServerRuntime
+	t.Cleanup(func() { writeServerRuntime = write })
+	writeServerRuntime = func(primary DaemonEndpoint, alternate *DaemonEndpoint, version string, browser *BrowserRuntimeInfo) error {
+		if err := write(primary, alternate, version, browser); err != nil {
+			return err
+		}
+		return fmt.Errorf("runtime directory sync: %w", atomicfile.ErrNotDurable)
+	}
+	db, _ := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	cfg.ServerAddr = "127.0.0.1:0"
+	server := NewServer(db, cfg, "")
+	t.Cleanup(func() { require.NoError(t, server.Close()) })
+
+	errCh, _ := startServerAndWaitForRuntime(t, server)
+	stopTestServer(t, server, errCh)
+
+	assert.NoFileExists(t, RuntimePath())
+}
 
 // safeRecorder wraps httptest.ResponseRecorder with mutex protection for concurrent access
 type safeRecorder struct {
