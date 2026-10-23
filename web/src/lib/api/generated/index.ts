@@ -3,6 +3,7 @@ export * from "./comments/comments";
 export * from "./daemon/daemon";
 export * from "./default/default";
 export * from "./jobs/jobs";
+export * from "./kata/kata";
 export * from "./maintenance/maintenance";
 export * from "./repos/repos";
 export * from "./reviews/reviews";

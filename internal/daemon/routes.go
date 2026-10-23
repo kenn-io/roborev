@@ -330,6 +330,38 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Tags = []string{"daemon"}
 		})
 
+	huma.Get(api, "/api/kata/status", s.humaKataStatus,
+		func(o *huma.Operation) {
+			o.OperationID = "kata-status"
+			o.Summary = "Report the daemon's Kata connection"
+			o.Tags = []string{"kata"}
+		})
+
+	huma.Get(api, "/api/kata/issues", s.humaKataIssues,
+		func(o *huma.Operation) {
+			o.OperationID = "kata-list-issues"
+			o.Summary = "List Kata issues through the daemon's connection"
+			o.Tags = []string{"kata"}
+			o.Errors = []int{http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusBadGateway}
+		})
+
+	huma.Get(api, "/api/kata/issue", s.humaKataIssue,
+		func(o *huma.Operation) {
+			o.OperationID = "kata-show-issue"
+			o.Summary = "Show one Kata issue through the daemon's connection"
+			o.Tags = []string{"kata"}
+			o.Errors = []int{http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusBadGateway}
+		})
+
+	huma.Post(api, "/api/kata/issues", s.humaKataCreate,
+		func(o *huma.Operation) {
+			o.OperationID = "kata-create-issue"
+			o.Summary = "File a Kata issue as roborev through the daemon's connection"
+			o.Tags = []string{"kata"}
+			o.DefaultStatus = http.StatusCreated
+			o.Errors = []int{http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusBadGateway}
+		})
+
 	huma.Get(api, "/api/ping", s.humaPing,
 		func(o *huma.Operation) {
 			o.OperationID = "ping"

@@ -45,8 +45,9 @@ type ServerInfo struct {
 type APIOption func(*apiSettings)
 
 type apiSettings struct {
-	timeout    time.Duration
-	httpClient *http.Client
+	timeout     time.Duration
+	httpClient  *http.Client
+	noWorkspace bool
 }
 
 // WithTimeout sets the per-request deadline.
@@ -56,6 +57,12 @@ func WithTimeout(d time.Duration) APIOption { return func(s *apiSettings) { s.ti
 // Its timeout and redirect policy are overridden.
 func WithHTTPClient(c *http.Client) APIOption { return func(s *apiSettings) { s.httpClient = c } }
 
+// WithoutWorkspace makes the client ignore binding files and the working
+// directory: the project is the one a call names, else the default project. The
+// daemon's proxy endpoints use it, because the daemon's own directory says
+// nothing about the caller's repository.
+func WithoutWorkspace() APIOption { return func(s *apiSettings) { s.noWorkspace = true } }
+
 // APIClient implements Client over Kata's HTTP API, using the configured
 // connection. Only the daemon builds one: it holds the credential. It resolves
 // a workspace's project the way the kata CLI does and falls back to the
@@ -63,6 +70,7 @@ func WithHTTPClient(c *http.Client) APIOption { return func(s *apiSettings) { s.
 type APIClient struct {
 	tr             *transport
 	workdir        string
+	noWorkspace    bool
 	defaultProject string
 
 	mu       sync.Mutex
@@ -117,7 +125,7 @@ func NewAPIClient(workdir string, cfg config.KataIntegrationConfig, opts ...APIO
 		return nil, err
 	}
 	return &APIClient{
-		tr: tr, workdir: workdir,
+		tr: tr, workdir: workdir, noWorkspace: settings.noWorkspace,
 		defaultProject: strings.TrimSpace(cfg.DefaultProject),
 	}, nil
 }
@@ -136,9 +144,12 @@ func (c *APIClient) CloseIdleConnections() {
 // project when the workspace has no binding. A binding file that is present
 // but unreadable stops the lookup. It never contacts Kata.
 func (c *APIClient) Binding(context.Context) (Binding, error) {
-	b, err := workspaceBinding(c.workdir)
-	if err == nil {
-		return b, nil
+	err := ErrNoBinding
+	if !c.noWorkspace {
+		var b Binding
+		if b, err = workspaceBinding(c.workdir); err == nil {
+			return b, nil
+		}
 	}
 	if errors.Is(err, ErrNoBinding) && c.defaultProject != "" {
 		return Binding{Project: c.defaultProject}, nil
@@ -267,7 +278,13 @@ func (c *APIClient) issuesPath(ctx context.Context, project string) (path, resol
 // List returns issues filtered by status (default "open") for the bound
 // project. Unlimited reads the complete set page by page.
 func (c *APIClient) List(ctx context.Context, opts ListOpts) ([]Issue, error) {
-	path, _, err := c.issuesPath(ctx, "")
+	return c.ListProject(ctx, "", opts)
+}
+
+// ListProject is List for a named project; an empty name selects the bound or
+// default project.
+func (c *APIClient) ListProject(ctx context.Context, project string, opts ListOpts) ([]Issue, error) {
+	path, _, err := c.issuesPath(ctx, project)
 	if err != nil {
 		return nil, err
 	}

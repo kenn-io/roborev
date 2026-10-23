@@ -2411,6 +2411,184 @@ components:
       required:
         - job
       type: object
+    KataCreateRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/KataCreateRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        body:
+          description: Issue body
+          type: string
+        idempotency_key:
+          description: Makes a retry return the issue the first request created
+          type: string
+        labels:
+          items:
+            type: string
+          type: array
+        priority:
+          description: Priority 0 to 4
+          format: int64
+          type: integer
+        project:
+          description: Project to file into; empty selects the default project
+          type: string
+        title:
+          description: Issue title
+          type: string
+      required:
+        - title
+      type: object
+    KataCreateResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/KataCreateResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        author:
+          description: The actor Kata recorded; an authenticated credential overrides roborev's requested actor
+          type: string
+        reused:
+          description: Whether Kata answered with an issue an earlier request under the same key created
+          type: boolean
+        short_id:
+          type: string
+      required:
+        - short_id
+        - reused
+      type: object
+    KataIssue:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/KataIssue.json
+          format: uri
+          readOnly: true
+          type: string
+        blocked_by:
+          items:
+            $ref: "#/components/schemas/KataLinkPeer"
+          type: array
+        blocks:
+          items:
+            $ref: "#/components/schemas/KataLinkPeer"
+          type: array
+        body:
+          type: string
+        labels:
+          items:
+            type: string
+          type: array
+        parent:
+          $ref: "#/components/schemas/KataLinkPeer"
+        qualified_id:
+          type: string
+        related:
+          items:
+            $ref: "#/components/schemas/KataLinkPeer"
+          type: array
+        short_id:
+          type: string
+        status:
+          type: string
+        title:
+          type: string
+      required:
+        - short_id
+        - qualified_id
+        - title
+        - body
+        - status
+        - labels
+      type: object
+    KataIssuesOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/KataIssuesOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        issues:
+          items:
+            $ref: "#/components/schemas/KataIssue"
+          type: array
+      required:
+        - issues
+      type: object
+    KataLinkPeer:
+      additionalProperties: false
+      properties:
+        project:
+          type: string
+        qualified_id:
+          type: string
+        short_id:
+          type: string
+        status:
+          type: string
+      required:
+        - short_id
+      type: object
+    KataStatusBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/KataStatusBody.json
+          format: uri
+          readOnly: true
+          type: string
+        api_schema_version:
+          description: Kata API schema version
+          type: string
+        default_project:
+          description: The configured default project
+          type: string
+        enabled:
+          description: Whether [integrations.kata] is enabled on the daemon
+          type: boolean
+        message:
+          description: Plain description of the state
+          type: string
+        project:
+          description: "Project in effect: the requested one, the repository's binding, or the default project"
+          type: string
+        security_note:
+          description: Reduced security guarantee on this platform, if any
+          type: string
+        server_version:
+          description: Kata server version
+          type: string
+        state:
+          description: "Connection state: disabled, unreachable, authentication_required, incompatible, project_not_found, or ready"
+          type: string
+        supports_replies:
+          description: Whether the server stores typed comment replies (API schema 0.28.0 or later)
+          type: boolean
+        teammate:
+          description: Teammate name for roborev's own Kata writes
+          type: string
+      required:
+        - enabled
+        - state
+        - supports_replies
+        - message
+      type: object
     LegacyConversionReport:
       additionalProperties: false
       properties:
@@ -6030,6 +6208,230 @@ paths:
       summary: Fetch jobs with reviews by ID
       tags:
         - jobs
+  /api/kata/issue:
+    get:
+      operationId: kata-show-issue
+      parameters:
+        - description: Issue short ID, UID, or project#short ID
+          explode: false
+          in: query
+          name: ref
+          required: true
+          schema:
+            description: Issue short ID, UID, or project#short ID
+            type: string
+        - description: Project for a bare ref; empty selects the default project
+          explode: false
+          in: query
+          name: project
+          schema:
+            description: Project for a bare ref; empty selects the default project
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataIssue"
+          description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Bad Request
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Conflict
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Internal Server Error
+        "502":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Bad Gateway
+      summary: Show one Kata issue through the daemon's connection
+      tags:
+        - kata
+  /api/kata/issues:
+    get:
+      operationId: kata-list-issues
+      parameters:
+        - description: Project to read; empty selects the default project
+          explode: false
+          in: query
+          name: project
+          schema:
+            description: Project to read; empty selects the default project
+            type: string
+        - description: "Issue status filter: open (default), closed, or all"
+          explode: false
+          in: query
+          name: status
+          schema:
+            description: "Issue status filter: open (default), closed, or all"
+            type: string
+        - description: Read the complete set instead of the first 200 issues
+          explode: false
+          in: query
+          name: unlimited
+          schema:
+            description: Read the complete set instead of the first 200 issues
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataIssuesOutputBody"
+          description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Bad Request
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Conflict
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Internal Server Error
+        "502":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Bad Gateway
+      summary: List Kata issues through the daemon's connection
+      tags:
+        - kata
+    post:
+      operationId: kata-create-issue
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KataCreateRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataCreateResponse"
+          description: Created
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Bad Request
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Conflict
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Internal Server Error
+        "502":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Bad Gateway
+      summary: File a Kata issue as roborev through the daemon's connection
+      tags:
+        - kata
+  /api/kata/status:
+    get:
+      operationId: kata-status
+      parameters:
+        - description: Repository root on the daemon host whose .kata.local.toml or .kata.toml binding selects the project
+          explode: false
+          in: query
+          name: repo
+          schema:
+            description: Repository root on the daemon host whose .kata.local.toml or .kata.toml binding selects the project
+            type: string
+        - description: Project to check instead of the repository's binding or the default project
+          explode: false
+          in: query
+          name: project
+          schema:
+            description: Project to check instead of the repository's binding or the default project
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataStatusBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Report the daemon's Kata connection
+      tags:
+        - kata
   /api/logs/clean:
     post:
       operationId: clean-job-logs
