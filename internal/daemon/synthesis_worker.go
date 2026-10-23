@@ -425,7 +425,7 @@ func (wp *WorkerPool) runSynthesisAgent(
 		GlobalConfig:   cfg,
 		// Mark the agent invoked only once it is about to run, so a checkout
 		// failure below is never miscounted as an agent run.
-		BeforeInvoke: func() { wp.markAgentInvoked(workerID, job, a) },
+		BeforeInvoke: func(prepared agent.Agent) { wp.markAgentInvoked(workerID, job, prepared) },
 		// Synthesis follows the same isolation policy as its member reviews.
 		Checkout: func() (reviewpkg.SynthesisCheckout, error) {
 			checkout, err := wp.prepareJobCheckout(ctx, workerID, job, cfg)
@@ -433,9 +433,11 @@ func (wp *WorkerPool) runSynthesisAgent(
 				return reviewpkg.SynthesisCheckout{}, err
 			}
 			configRepoPath := ""
-			if checkout.isolatedLocalReview {
+			if checkout.isolatedLocalReview || tools != nil {
 				if err := wp.db.IsolateJobSession(job.ID, workerID); err != nil {
-					checkout.cleanup()
+					if checkout.cleanup != nil {
+						checkout.cleanup()
+					}
 					return reviewpkg.SynthesisCheckout{}, fmt.Errorf("clear synthesis session: %w", err)
 				}
 				job.SessionID = ""

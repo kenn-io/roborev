@@ -233,6 +233,14 @@ func runSingle(
 		defer snapResult.Cleanup()
 	}
 
+	preparedAgent, toolCleanup, err := agent.PrepareReviewToolPolicy(resolvedAgent, settings.Tools, cfg.GlobalConfig, cfg.RepoPath, false)
+	if err != nil {
+		result.Status, result.Error = ResultFailed, err.Error()
+		return result
+	}
+	defer toolCleanup()
+	resolvedAgent = preparedAgent
+
 	// Run review
 	log.Printf(
 		"ci review: running agent=%s type=%s ref=%s",

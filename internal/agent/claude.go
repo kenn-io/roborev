@@ -14,15 +14,19 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+
+	"go.kenn.io/roborev/internal/config"
 )
 
 // ClaudeAgent runs code reviews using Claude Code CLI
 type ClaudeAgent struct {
-	Command   string         // The claude command to run (default: "claude")
-	Model     string         // Model to use (e.g., "opus", "sonnet", or full name)
-	Reasoning ReasoningLevel // Reasoning level mapped to --effort flag
-	Agentic   bool           // Whether agentic mode is enabled (allow file edits)
-	SessionID string         // Existing session ID to resume
+	Command             string         // The claude command to run (default: "claude")
+	Model               string         // Model to use (e.g., "opus", "sonnet", or full name)
+	Reasoning           ReasoningLevel // Reasoning level mapped to --effort flag
+	Agentic             bool           // Whether agentic mode is enabled (allow file edits)
+	SessionID           string         // Existing session ID to resume
+	strictPolicy        *config.ReviewToolPolicy
+	strictMCPConfigPath string
 }
 
 const (
@@ -54,13 +58,19 @@ func (a *ClaudeAgent) clone(opts ...agentCloneOption) *ClaudeAgent {
 		a.SessionID,
 		opts...,
 	)
-	return &ClaudeAgent{
-		Command:   cfg.Command,
-		Model:     cfg.Model,
-		Reasoning: cfg.Reasoning,
-		Agentic:   cfg.Agentic,
-		SessionID: cfg.SessionID,
+	clone := &ClaudeAgent{
+		Command:             cfg.Command,
+		Model:               cfg.Model,
+		Reasoning:           cfg.Reasoning,
+		Agentic:             cfg.Agentic,
+		SessionID:           cfg.SessionID,
+		strictPolicy:        a.strictPolicy.Clone(),
+		strictMCPConfigPath: a.strictMCPConfigPath,
 	}
+	if clone.strictPolicy != nil {
+		clone.SessionID = ""
+	}
+	return clone
 }
 
 // WithReasoning returns a copy of the agent with the specified reasoning level.
@@ -95,6 +105,9 @@ func (a *ClaudeAgent) CommandName() string {
 }
 
 func (a *ClaudeAgent) CommandLine() string {
+	if a.strictPolicy != nil {
+		return a.Command + " " + strings.Join(a.buildStrictArgs(true), " ")
+	}
 	agenticMode := a.Agentic || AllowUnsafeAgents()
 	return a.commandLine(agenticMode)
 }
@@ -198,11 +211,23 @@ func isLoopbackHost(host string) bool {
 	return false
 }
 
-func (a *ClaudeAgent) buildArgs(agenticMode, includeEffort bool) []string {
+func (a *ClaudeAgent) buildArgs(permissionBypass, includeEffort bool) []string {
 	// Always use stdin piping + stream-json for non-interactive execution
 	// (following claude-code-action pattern from Anthropic)
-	args := []string{"-p", "--verbose", "--output-format", "stream-json"}
+	args := append([]string{"-p", "--verbose", "--output-format", "stream-json"}, a.buildModelSessionArgs(includeEffort)...)
+	if permissionBypass {
+		args = append(args, claudeDangerousFlag)
+	}
+	if a.Agentic && permissionBypass {
+		// Only explicit agentic calls can use writable tools.
+		return append(args, "--allowedTools", "Edit,MultiEdit,Write,Read,Glob,Grep,Bash")
+	}
+	// Preapproval alone leaves other tools loaded. Limit built-ins and MCP tools.
+	return append(args, "--allowedTools", "Read,Glob,Grep", "--tools", "Read,Glob,Grep", "--disallowedTools", "mcp__*")
+}
 
+func (a *ClaudeAgent) buildModelSessionArgs(includeEffort bool) []string {
+	var args []string
 	// buildArgs is also called from CommandLine() for display; on parse error
 	// fall back to the raw configured model so operators see what they typed
 	// in logs. Review() re-parses and surfaces the error before execution.
@@ -223,14 +248,6 @@ func (a *ClaudeAgent) buildArgs(agenticMode, includeEffort bool) []string {
 		}
 	}
 
-	if agenticMode {
-		// Agentic mode: Claude can use tools and make file changes
-		args = append(args, claudeDangerousFlag)
-		args = append(args, "--allowedTools", "Edit,MultiEdit,Write,Read,Glob,Grep,Bash")
-	} else {
-		// Preapproval alone leaves other tools loaded. Limit built-ins and MCP tools.
-		args = append(args, "--allowedTools", "Read,Glob,Grep", "--tools", "Read,Glob,Grep", "--disallowedTools", "mcp__*")
-	}
 	return args
 }
 
@@ -309,6 +326,9 @@ func claudeSupportsBareFlag(ctx context.Context, command string) bool {
 }
 
 func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+	if a.strictPolicy != nil {
+		return a.strictReview(ctx, repoPath, prompt, nil, output)
+	}
 	model, baseURL, err := parseModel(a.Model)
 	if err != nil {
 		return "", err
@@ -831,6 +851,10 @@ func (a *ClaudeAgent) ReviewWithSchema(
 	schema jsontext.Value,
 	out io.Writer,
 ) (jsontext.Value, error) {
+	if a.strictPolicy != nil {
+		result, err := a.strictReview(ctx, repoPath, prompt, schema, out)
+		return jsontext.Value(result), err
+	}
 	model, baseURL, err := parseModel(a.Model)
 	if err != nil {
 		return nil, err
