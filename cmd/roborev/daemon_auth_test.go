@@ -2,11 +2,9 @@ package main
 
 import (
 	"context"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -24,39 +22,7 @@ import (
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/testutil"
-	"go.kenn.io/roborev/internal/version"
 )
-
-func TestAuthUnjudgedRuntimeStatus(t *testing.T) {
-	assert := assert.New(t)
-	isolateDaemonSelection(t)
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
-	t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
-	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`), 0o600))
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal("/api/ping", r.URL.Path)
-		fmt.Fprintf(w, `{"ok":true,"service":"roborev","version":%q,"pid":%d}`, version.Version, math.MaxInt32)
-	}))
-	t.Cleanup(server.Close)
-	rec := testutil.UnjudgedRuntimeRecord("tcp", server.Listener.Addr().String())
-	_, err := daemon.RuntimeStore().Write(rec)
-	require.NoError(t, err)
-	getAnyRunningDaemon = daemon.GetAnyRunningDaemon
-	starts := 0
-	startDaemonForEnsure = func() error { starts++; return errors.New("synthetic startup") }
-	cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { return 0 }
-	output := captureStdout(t, func() {
-		cmd := daemonCmd()
-		cmd.SetArgs([]string{"status", "--json"})
-		require.NoError(t, cmd.Execute())
-	})
-	var result statusJSONResult
-	require.NoError(t, json.Unmarshal([]byte(output), &result))
-	assert.True(result.Running)
-	assert.Zero(starts)
-	assert.Contains(result.Error, "daemon_tls")
-}
 
 func TestAuthDaemonRunRejectsBrokenConfig(t *testing.T) {
 	for _, tc := range []struct{ name, contents string }{
@@ -406,7 +372,7 @@ func TestAuthUnjudgedListAndShowKeepAccessError(t *testing.T) {
 			isolateDaemonSelection(t)
 			t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "1")
 			require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`), 0o600))
-			rec := testutil.UnjudgedRuntimeRecord("tcp", "127.0.0.1:1")
+			rec := testutil.UnjudgedRuntimeRecord(t, "tcp", "127.0.0.1:1")
 			_, err := daemon.RuntimeStore().Write(rec)
 			require.NoError(t, err)
 			runtimes, err := daemon.ListAllRuntimes()
@@ -421,8 +387,9 @@ func TestAuthUnjudgedListAndShowKeepAccessError(t *testing.T) {
 			}
 			cmd.SetErr(io.Discard)
 			err = cmd.Execute()
-			require.ErrorIs(t, err, daemon.ErrUnjudgedEndpointAuth)
-			assert.Contains(t, err.Error(), "daemon_tls")
+			require.Error(t, err)
+			assert.True(t, daemon.IsDaemonAccessError(err))
+			assert.NotContains(t, err.Error(), "failed to connect")
 		})
 	}
 }

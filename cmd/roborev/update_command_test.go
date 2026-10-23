@@ -25,60 +25,48 @@ import (
 )
 
 func TestUpdateCommandRefusesUnjudgedBeforeInstall(t *testing.T) {
-	info := stubUpdateCommand(t)
-	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	var prepares, releases, shutdowns atomic.Int32
-	ep := updateTestEndpoint(t, updateDaemonHandler(0, &prepares, &releases, &shutdowns))
-	rec := testutil.UnjudgedRuntimeRecord(ep.Network, ep.Address)
-	_, err := daemon.RuntimeStore().Write(rec)
-	require.NoError(t, err)
-	runtimes, err := daemon.ListAllRuntimes()
-	require.NoError(t, err)
-	require.Len(t, runtimes, 1)
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return runtimes[0], nil }
-	installs := 0
-	performUpdateForCommand = func(context.Context, *update.UpdateInfo, update.Reporter) error {
-		installs++
-		return errors.New("unexpected installation")
+	for _, probeFails := range []bool{false, true} {
+		name := "probe finds it"
+		if probeFails {
+			name = "probe fails"
+		}
+		t.Run(name, func(t *testing.T) {
+			info := stubUpdateCommand(t)
+			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+			rec := testutil.UnjudgedRuntimeRecord(t, "tcp", "127.0.0.1:1")
+			path, err := daemon.RuntimeStore().Write(rec)
+			require.NoError(t, err)
+			runtimes, err := daemon.ListAllRuntimes()
+			require.NoError(t, err)
+			require.Len(t, runtimes, 1)
+			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+				if probeFails {
+					return nil, errors.New("probe failed")
+				}
+				return runtimes[0], nil
+			}
+			listAllRuntimes = daemon.ListAllRuntimes
+			oldAlive := isPIDAliveForUpdate
+			t.Cleanup(func() { isPIDAliveForUpdate = oldAlive })
+			pidChecks := 0
+			isPIDAliveForUpdate = func(int) bool { pidChecks++; return false }
+			installs := 0
+			performUpdateForCommand = func(context.Context, *update.UpdateInfo, update.Reporter) error {
+				installs++
+				return errors.New("unexpected installation")
+			}
+			var out bytes.Buffer
+			err = runControlledUpdate(t.Context(), strings.NewReader(""), &out, info, t.TempDir(), policyWait, true, false)
+			require.ErrorIs(t, err, daemon.ErrUnjudgedRuntime)
+			assert.Contains(t, err.Error(), "update from there")
+			if probeFails {
+				assert.Contains(t, err.Error(), path)
+			}
+			assert.FileExists(t, path)
+			assert.Zero(t, pidChecks)
+			assert.Zero(t, installs)
+		})
 	}
-	var out bytes.Buffer
-	err = runControlledUpdate(t.Context(), strings.NewReader(""), &out, info, t.TempDir(), policyWait, true, false)
-	require.ErrorContains(t, err, "update from there")
-	require.ErrorIs(t, err, daemon.ErrUnjudgedRuntime)
-	assert.Zero(t, prepares.Load())
-	assert.Zero(t, installs)
-	assert.Zero(t, shutdowns.Load())
-}
-
-func TestUpdateCommandRefusesUnjudgedAfterProbeFailure(t *testing.T) {
-	info := stubUpdateCommand(t)
-	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	rec := testutil.UnjudgedRuntimeRecord("tcp", "127.0.0.1:1")
-	path, err := daemon.RuntimeStore().Write(rec)
-	require.NoError(t, err)
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		return nil, errors.New("probe failed")
-	}
-	listAllRuntimes = daemon.ListAllRuntimes
-	oldAlive := isPIDAliveForUpdate
-	t.Cleanup(func() { isPIDAliveForUpdate = oldAlive })
-	pidChecks := 0
-	isPIDAliveForUpdate = func(int) bool {
-		pidChecks++
-		return false
-	}
-	installs := 0
-	performUpdateForCommand = func(context.Context, *update.UpdateInfo, update.Reporter) error {
-		installs++
-		return errors.New("unexpected installation")
-	}
-	var out bytes.Buffer
-	err = runControlledUpdate(t.Context(), strings.NewReader(""), &out, info, t.TempDir(), policyWait, true, false)
-	require.ErrorIs(t, err, daemon.ErrUnjudgedRuntime)
-	require.ErrorContains(t, err, path)
-	assert.FileExists(t, path)
-	assert.Zero(t, pidChecks)
-	assert.Zero(t, installs)
 }
 
 func stubUpdateCommand(t *testing.T) *update.UpdateInfo {

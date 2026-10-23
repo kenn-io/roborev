@@ -41,7 +41,7 @@ func TestCLIActionUnjudgedRuntimeKeepsKeyOffTCP(t *testing.T) {
 		w.WriteHeader(http.StatusAccepted)
 	}))
 	t.Cleanup(server.Close)
-	rec := testutil.UnjudgedRuntimeRecord("tcp", server.Listener.Addr().String())
+	rec := testutil.UnjudgedRuntimeRecord(t, "tcp", server.Listener.Addr().String())
 	_, err := daemon.RuntimeStore().Write(rec)
 	require.NoError(t, err)
 	runtimes, err := daemon.ListAllRuntimes()

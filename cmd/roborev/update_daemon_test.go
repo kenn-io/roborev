@@ -359,8 +359,7 @@ func waitForUpdateTestSignal(ch <-chan struct{}, timeout time.Duration) bool {
 func TestRestartUpdatedDaemonIgnoresUnjudgedReplacement(t *testing.T) {
 	stubRestartVars(t)
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	rec := testutil.UnjudgedRuntimeRecord("tcp", "127.0.0.1:1")
-	rec.PID = os.Getpid()
+	rec := testutil.UnjudgedRuntimeRecord(t, "tcp", "127.0.0.1:1")
 	path, err := daemon.RuntimeStore().Write(rec)
 	require.NoError(t, err)
 	listAllRuntimes = daemon.ListAllRuntimes
@@ -384,7 +383,7 @@ func TestRestartUpdatedDaemonIgnoresUnjudgedReplacement(t *testing.T) {
 func TestUpdateRuntimePIDChecksRetainUnjudgedRecords(t *testing.T) {
 	stubRestartVars(t)
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	rec := testutil.UnjudgedRuntimeRecord("tcp", "127.0.0.1:1")
+	rec := testutil.UnjudgedRuntimeRecord(t, "tcp", "127.0.0.1:1")
 	path, err := daemon.RuntimeStore().Write(rec)
 	require.NoError(t, err)
 	listAllRuntimes = daemon.ListAllRuntimes

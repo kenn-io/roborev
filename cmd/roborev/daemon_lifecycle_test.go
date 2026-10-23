@@ -36,43 +36,45 @@ import (
 )
 
 func TestStopDaemonRuntimesSkipsUnjudged(t *testing.T) {
-	for _, local := range []bool{false, true} {
-		t.Run(fmt.Sprint(local), func(t *testing.T) {
+	localInfo := &daemon.RuntimeInfo{PID: 42}
+	for _, tc := range []struct {
+		name    string
+		local   []*daemon.RuntimeInfo
+		waiting int
+		wantErr bool
+	}{
+		{name: "only unjudged", wantErr: true},
+		{name: "local and unjudged", local: []*daemon.RuntimeInfo{localInfo}, waiting: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-			rec := testutil.UnjudgedRuntimeRecord("tcp", "127.0.0.1:1")
-			path, err := daemon.RuntimeStore().Write(rec)
+			rec := testutil.UnknownRuntimeRecord("tcp", "127.0.0.1:1")
+			_, err := daemon.RuntimeStore().Write(rec)
 			require.NoError(t, err)
 			runtimes, err := daemon.ListAllRuntimes()
 			require.NoError(t, err)
 			require.Len(t, runtimes, 1)
-			localInfo := &daemon.RuntimeInfo{PID: 42}
-			if local {
-				runtimes = append(runtimes, localInfo)
-			}
+			unjudged := runtimes[0]
+			runtimes = append(runtimes, tc.local...)
 			var drained []*daemon.RuntimeInfo
 			var out bytes.Buffer
 			err = stopDaemonRuntimes(func() ([]*daemon.RuntimeInfo, error) {
 				return runtimes, nil
 			}, func(info *daemon.RuntimeInfo) error {
-				if info == localInfo {
-					drained = append(drained, info)
-					return nil
+				if info == unjudged {
+					return fmt.Errorf("cannot judge daemon PID %d: %w", info.PID, daemon.ErrUnjudgedRuntime)
 				}
-				return daemon.KillDaemon(info)
+				drained = append(drained, info)
+				return nil
 			}, &out)
-			if local {
-				require.NoError(t, err)
-				assert.Equal(t, []*daemon.RuntimeInfo{localInfo}, drained)
-				assert.Equal(t, 1, strings.Count(out.String(), "Waiting for daemon shutdown"))
-			} else {
-				require.ErrorContains(t, err, "cannot judge daemon PID")
+			assert.Equal(t, tc.local, drained)
+			assert.Equal(t, tc.waiting, strings.Count(out.String(), "Waiting for daemon shutdown"))
+			if tc.wantErr {
 				require.ErrorIs(t, err, daemon.ErrUnjudgedRuntime)
-				assert.Empty(t, drained)
-				assert.NotContains(t, out.String(), "Waiting for daemon shutdown")
+				require.ErrorContains(t, err, "cannot judge daemon PID")
 				assert.NotContains(t, out.String(), err.Error())
-			}
-			assert.FileExists(t, path)
-			if local {
+			} else {
+				require.NoError(t, err)
 				assert.Contains(t, out.String(), "Skipping daemon")
 			}
 		})

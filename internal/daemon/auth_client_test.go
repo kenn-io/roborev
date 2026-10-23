@@ -264,15 +264,16 @@ func TestUnjudgedRuntimeKeepsKeyOffTCP(t *testing.T) {
 	for _, operation := range []string{"discovery", "MCP ping", "broken config probe", "alternate endpoint"} {
 		t.Run(operation, func(t *testing.T) {
 			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+			rec := testutil.UnjudgedRuntimeRecord(t, "tcp", "")
 			var credentials atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("Authorization") != "" {
 					credentials.Add(1)
 				}
-				fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d,"mcp_url":"http://example.com/mcp"}`, math.MaxInt32)
+				fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d,"mcp_url":"http://example.com/mcp"}`, rec.PID)
 			}))
 			t.Cleanup(server.Close)
-			rec := testutil.UnjudgedRuntimeRecord("tcp", server.Listener.Addr().String())
+			rec.Address = server.Listener.Addr().String()
 			path, err := runtimeStore().Write(rec)
 			require.NoError(t, err)
 			// Discover without a key first, then enable it before the next request.

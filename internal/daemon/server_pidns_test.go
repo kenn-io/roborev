@@ -3,15 +3,12 @@
 package daemon
 
 import (
-	"bytes"
-	"context"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -55,7 +52,8 @@ func TestKillDaemonKeepsForeignRuntimeWithoutShutdown(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	t.Setenv("ROBOREV_TEST_PIDNS_STOP_ADDRESS", strings.TrimPrefix(server.URL, "http://"))
-	runPIDNamespaceTest(t, nil, true)
+	setShortRuntimeDir(t)
+	testutil.RunPIDNamespaceTest(t, nil, filepath.Join(config.DataDir(), "ready"))
 
 	records, err := runtimeStore().List()
 	require.NoError(t, err)
@@ -98,7 +96,8 @@ func TestDiscoveryFindsLiveSandboxDaemon(t *testing.T) {
 	dataDir := testenv.SetDataDir(t)
 	t.Setenv("ROBOREV_TEST_PIDNS_DATA", dataDir)
 	t.Setenv("ROBOREV_TEST_PIDNS_SERVE", "1")
-	runPIDNamespaceTest(t, nil, true)
+	setShortRuntimeDir(t)
+	testutil.RunPIDNamespaceTest(t, nil, filepath.Join(config.DataDir(), "ready"))
 
 	records, err := runtimeStore().List()
 	require.NoError(t, err)
@@ -136,7 +135,8 @@ func TestCleanupZombieDaemonsRemovesDeadSandboxSocket(t *testing.T) {
 	socket := filepath.Join(setShortRuntimeDir(t), "sandbox.sock")
 	t.Setenv("ROBOREV_TEST_PIDNS_SOCKET", socket)
 	// The shell exits successfully only after the sandbox daemon is killed.
-	runPIDNamespaceTest(t, []string{"sh", "-c", `"$@"; test "$?" -eq 137`, "sh"}, false)
+	setShortRuntimeDir(t)
+	testutil.RunPIDNamespaceTest(t, []string{"sh", "-c", `"$@"; test "$?" -eq 137`, "sh"}, "")
 	records, err := runtimeStore().List()
 	require.NoError(t, err)
 	require.Len(t, records, 1)
@@ -156,6 +156,9 @@ func TestServerStartAfterShellLaunchedSandbox(t *testing.T) {
 		if phase == "record" {
 			require.Equal(t, 2, os.Getpid())
 			require.NoError(t, WriteRuntime(DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, nil, "test", nil))
+			require.NoError(t, os.WriteFile(filepath.Join(config.DataDir(), "ready"), nil, 0o600))
+			_, err := io.Copy(io.Discard, os.Stdin)
+			require.NoError(t, err)
 			return
 		}
 
@@ -165,11 +168,7 @@ func TestServerStartAfterShellLaunchedSandbox(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, records, 1)
 		require.Equal(t, 2, records[0].PID)
-		scope := kitdaemon.RuntimeProcessScope(records[0])
-		if scope != kitdaemon.ProcessScopeForeign {
-			// The kernel can reuse the record phase's namespace inode for this sandbox.
-			assert.False(t, kitdaemon.RuntimeRecordBlocksStart(records[0]))
-		}
+		require.Equal(t, kitdaemon.ProcessScopeForeign, kitdaemon.RuntimeProcessScope(records[0]))
 
 		db, _ := testutil.OpenTestDBWithDir(t)
 		cfg := config.DefaultConfig()
@@ -178,63 +177,18 @@ func TestServerStartAfterShellLaunchedSandbox(t *testing.T) {
 		t.Cleanup(func() { _ = server.Close() })
 		errCh, info := startServerAndWaitForRuntime(t, server)
 		assert.Equal(t, 3, info.PID)
-		if scope == kitdaemon.ProcessScopeForeign {
-			assert.FileExists(t, filepath.Join(runtimeStore().Dir, "daemon.2.json"))
-		}
+		assert.FileExists(t, filepath.Join(runtimeStore().Dir, "daemon.2.json"))
 		stopTestServer(t, server, errCh)
 		return
 	}
 
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("ROBOREV_TEST_PIDNS_DATA", testenv.SetDataDir(t))
-	for _, phase := range []string{"record", "start"} {
-		t.Setenv("ROBOREV_TEST_PIDNS_PHASE", phase)
-		var command []string
-		if phase == "start" {
-			// The trailing command keeps the shell at PID 2 while the daemon runs at PID 3.
-			command = []string{"sh", "-c", `"$@"; result=$?; exit "$result"`, "sh"}
-		}
-		runPIDNamespaceTest(t, command, false)
-	}
-}
-
-// runPIDNamespaceTest runs this test in a sandbox, optionally keeping it alive
-// until cleanup after its runtime record or daemon listener is ready.
-func runPIDNamespaceTest(t *testing.T, command []string, waitReady bool) {
-	t.Helper()
-	bwrap, err := exec.LookPath("bwrap")
-	if err != nil {
-		t.Skip("requires bubblewrap for PID namespaces")
-	}
-	args := []string{"--unshare-pid", "--bind", "/", "/", "--proc", "/proc", "--"}
-	probe := exec.CommandContext(t.Context(), bwrap, append(args, "true")...)
-	if output, err := probe.CombinedOutput(); err != nil {
-		t.Skipf("PID namespaces unavailable: %v: %s", err, output)
-	}
 	setShortRuntimeDir(t)
-	executable, err := os.Executable()
-	require.NoError(t, err)
-	command = append(command, executable, "-test.run=^"+t.Name()+"$", "-test.timeout=30s")
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	t.Cleanup(cancel)
-	cmd := exec.CommandContext(ctx, bwrap, append(args, command...)...)
-	if !waitReady {
-		output, err := cmd.CombinedOutput()
-		require.NoError(t, err, "%s", output)
-		return
-	}
-	var output bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &output, &output
-	stdin, err := cmd.StdinPipe()
-	require.NoError(t, err)
-	require.NoError(t, cmd.Start())
-	t.Cleanup(func() {
-		require.NoError(t, stdin.Close())
-		require.NoError(t, cmd.Wait(), "%s", output.String())
-	})
-	// Wall-clock wait: the sandbox process writes its record or starts its listener.
-	require.Eventually(t, func() bool {
-		_, err := os.Stat(filepath.Join(config.DataDir(), "ready"))
-		return err == nil
-	}, 5*time.Second, 10*time.Millisecond)
+	t.Setenv("ROBOREV_TEST_PIDNS_PHASE", "record")
+	// Keep the first namespace alive so its inode cannot be reused for start.
+	testutil.RunPIDNamespaceTest(t, nil, filepath.Join(config.DataDir(), "ready"))
+	t.Setenv("ROBOREV_TEST_PIDNS_PHASE", "start")
+	// The trailing command keeps the shell at PID 2 while the daemon runs at PID 3.
+	testutil.RunPIDNamespaceTest(t, []string{"sh", "-c", `"$@"; result=$?; exit "$result"`, "sh"}, "")
 }

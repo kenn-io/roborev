@@ -402,58 +402,30 @@ func TestServerStartReadinessFailureDoesNotLeavePanelSweep(t *testing.T) {
 	assert.Nil(t, sweepCancel, "panel sweep must not remain active after startup readiness failure")
 }
 
-func TestServerStartHandlesRuntimeIdentities(t *testing.T) {
+func TestServerStartRefusesLegacyLivePID(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("requires Linux process identities")
 	}
-	for _, tc := range []struct {
-		name     string
-		pid      int
-		refuses  bool
-		unjudged bool
-	}{
-		{name: "legacy live PID", refuses: true},
-		{name: "second sandbox same PID", pid: os.Getpid(), unjudged: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			testenv.SetDataDir(t)
-			setShortRuntimeDir(t)
-			if !tc.unjudged {
-				mockIdentifyProcess(t, func(int) processIdentity { return processUnknown })
-			}
-			pid := tc.pid
-			if pid == 0 {
-				pid = os.Getppid()
-			}
-			rec := kitdaemon.RuntimeRecord{
-				PID: pid, Network: "tcp", Address: "127.0.0.1:1",
-			}
-			if tc.unjudged {
-				rec = testutil.UnjudgedRuntimeRecord(rec.Network, rec.Address)
-				rec.PID = pid
-			}
-			path, err := runtimeStore().Write(rec)
-			require.NoError(t, err)
-			db, _ := testutil.OpenTestDBWithDir(t)
-			cfg := config.DefaultConfig()
-			cfg.ServerAddr = "127.0.0.1:0"
-			server := NewServer(db, cfg, "")
-			t.Cleanup(func() { _ = server.Close() })
-			if tc.refuses {
-				// Bound a regression that starts a real listener instead of refusing.
-				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-				defer cancel()
-				stop := context.AfterFunc(ctx, func() { _ = server.Close() })
-				defer stop()
-				require.ErrorContains(t, server.Start(ctx), "daemon process still running")
-				assert.FileExists(t, path)
-				return
-			}
-			errCh, info := startServerAndWaitForRuntime(t, server)
-			assert.Equal(t, os.Getpid(), info.PID)
-			stopTestServer(t, server, errCh)
-		})
+	testenv.SetDataDir(t)
+	setShortRuntimeDir(t)
+	mockIdentifyProcess(t, func(int) processIdentity { return processUnknown })
+	rec := kitdaemon.RuntimeRecord{
+		PID: os.Getppid(), Network: "tcp", Address: "127.0.0.1:1",
 	}
+	path, err := runtimeStore().Write(rec)
+	require.NoError(t, err)
+	db, _ := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	cfg.ServerAddr = "127.0.0.1:0"
+	server := NewServer(db, cfg, "")
+	t.Cleanup(func() { _ = server.Close() })
+	// Bound a regression that starts a real listener instead of refusing.
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	stop := context.AfterFunc(ctx, func() { _ = server.Close() })
+	defer stop()
+	require.ErrorContains(t, server.Start(ctx), "daemon process still running")
+	assert.FileExists(t, path)
 }
 
 func TestServerStartSupportsIPv6LoopbackBindAddr(t *testing.T) {

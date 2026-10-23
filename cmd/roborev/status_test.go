@@ -34,7 +34,7 @@ func TestStatusCmdJSONKeepsRespondingUnjudgedDaemon(t *testing.T) {
 		t.Run("version="+daemonVersion, func(t *testing.T) {
 			stubServiceRecovery(t)
 			t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "0")
-			rec := testutil.UnjudgedRuntimeRecord("tcp", "")
+			rec := testutil.UnjudgedRuntimeRecord(t, "tcp", "")
 			var shutdowns atomic.Int32
 			md := NewMockDaemon(t, MockRefineHooks{
 				OnPing: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {

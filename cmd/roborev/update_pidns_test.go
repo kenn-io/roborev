@@ -4,7 +4,6 @@ package main
 
 import (
 	"os"
-	"os/exec"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,6 +12,7 @@ import (
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/testenv"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestUpdateIgnoresDeadSandbox(t *testing.T) {
@@ -27,28 +27,17 @@ func TestUpdateIgnoresDeadSandbox(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, runtimes, 1)
 
+	pids, err := runtimePIDSet()
+	require.NoError(t, err)
+	assert.Empty(t, pids)
+	pid, err := waitForDaemonExitContext(t.Context(), 0)
+	require.NoError(t, err)
+	assert.Zero(t, pid)
+
 	info, err := discoverDaemonForUpdate()
 	require.NoError(t, err)
 	assert.Nil(t, info)
 	assert.NoFileExists(t, runtimes[0].SourcePath)
-}
-
-func TestUpdateDoesNotAdoptDeadSandboxPID(t *testing.T) {
-	if writeDeadSandboxRuntimeForUpdate(t) {
-		return
-	}
-	stubRestartVars(t)
-	listAllRuntimes = daemon.ListAllRuntimes
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
-	isPIDAliveForUpdate = kitdaemon.ProcessAlive
-
-	pids, err := runtimePIDSet()
-	require.NoError(t, err)
-	assert.Empty(t, pids)
-	assert.Zero(t, replacementRuntimePID(0))
-	pid, err := waitForDaemonExitContext(t.Context(), 0)
-	require.NoError(t, err)
-	assert.Zero(t, pid)
 }
 
 // writeDeadSandboxRuntimeForUpdate reexecutes the test in a PID namespace
@@ -61,21 +50,10 @@ func writeDeadSandboxRuntimeForUpdate(t *testing.T) bool {
 		require.NoError(t, daemon.WriteRuntime(daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, nil, "test", nil))
 		return true
 	}
-	bwrap, err := exec.LookPath("bwrap")
-	if err != nil {
-		t.Skip("requires bubblewrap for PID namespaces")
-	}
-	args := []string{"--unshare-pid", "--bind", "/", "/", "--proc", "/proc", "--"}
-	if output, err := exec.CommandContext(t.Context(), bwrap, append(args, "true")...).CombinedOutput(); err != nil {
-		t.Skipf("PID namespaces unavailable: %v: %s", err, output)
-	}
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
 	t.Setenv("ROBOREV_TEST_UPDATE_PIDNS_DATA", testenv.SetDataDir(t))
-	executable, err := os.Executable()
-	require.NoError(t, err)
-	output, err := exec.CommandContext(t.Context(), bwrap, append(args, executable, "-test.run=^"+t.Name()+"$", "-test.timeout=30s")...).CombinedOutput()
-	require.NoError(t, err, "%s", output)
+	testutil.RunPIDNamespaceTest(t, nil, "")
 	records, err := daemon.RuntimeStore().List()
 	require.NoError(t, err)
 	require.Len(t, records, 1)
