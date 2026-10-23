@@ -29,6 +29,25 @@ import (
 	"go.kenn.io/roborev/internal/testutil"
 )
 
+func TestCheckUnjudgedRuntimesAllowsUnreachableRuntime(t *testing.T) {
+	testenv.SetDataDir(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	address := listener.Addr().String()
+	require.NoError(t, listener.Close())
+	rec := testutil.UnknownRuntimeRecord("tcp", address)
+	path, err := runtimeStore().Write(rec)
+	require.NoError(t, err)
+	before, err := os.ReadFile(path)
+	require.NoError(t, err)
+
+	assert.NoError(t, CheckUnjudgedRuntimes(t.Context()))
+
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+}
+
 func TestCheckUnjudgedRuntimesWithoutCandidatesIgnoresBadConfig(t *testing.T) {
 	for _, judged := range []bool{false, true} {
 		t.Run(fmt.Sprintf("judged=%t", judged), func(t *testing.T) {

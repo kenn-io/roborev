@@ -3,7 +3,6 @@ package testutil
 import (
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -39,7 +38,7 @@ func UnjudgedRuntimeRecord(t *testing.T, network, address string) kitdaemon.Runt
 // UnknownRuntimeRecord represents an identity this version cannot judge.
 func UnknownRuntimeRecord(network, address string) kitdaemon.RuntimeRecord {
 	return kitdaemon.RuntimeRecord{
-		PID: math.MaxInt32, Network: network, Address: address,
+		PID: os.Getpid(), Network: network, Address: address,
 		ProcessIdentityV2: "future-v1:unavailable",
 	}
 }

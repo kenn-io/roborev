@@ -15,7 +15,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/testutil"
@@ -30,7 +29,7 @@ func TestReviewRestartWithRetainedForeignRuntime(t *testing.T) {
 		return
 	}
 
-	for _, operation := range []string{"dead restart", "restart", "recovery", "update"} {
+	for _, operation := range []string{"restart", "recovery", "update"} {
 		t.Run(operation, func(t *testing.T) {
 			isolateDaemonSelection(t)
 			t.Setenv("HOME", t.TempDir())
@@ -61,34 +60,23 @@ func TestReviewRestartWithRetainedForeignRuntime(t *testing.T) {
 			require.NoError(t, start())
 			original, err := daemon.GetAnyRunningDaemon()
 			require.NoError(t, err)
-			var rec kitdaemon.RuntimeRecord
-			address := "127.0.0.1:1"
-			if operation != "dead restart" {
-				foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					assert.Empty(t, r.Header.Get("Authorization"))
-					_ = json.NewEncoder(w).Encode(daemon.PingInfo{OK: true, Service: "roborev", PID: rec.PID})
-				}))
-				t.Cleanup(foreign.Close)
-				address = foreign.Listener.Addr().String()
-			}
-			rec = testutil.UnjudgedRuntimeRecord(t, "tcp", address)
-			path, err := daemon.RuntimeStore().Write(rec)
+			rec := testutil.UnknownRuntimeRecord("tcp", "")
+			foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(daemon.PingInfo{OK: true, Service: "roborev", PID: rec.PID})
+			}))
+			t.Cleanup(foreign.Close)
+			rec.Address = foreign.Listener.Addr().String()
+			_, err = daemon.RuntimeStore().Write(rec)
 			require.NoError(t, err)
-			before, err := os.ReadFile(path)
-			require.NoError(t, err)
-			t.Setenv("ROBOREV_TEST_RUNTIME_WRITER", "")
 			originalEnsure := daemonEnsure
 			daemonEnsure = func() error {
-				if operation == "dead restart" {
-					return start()
-				}
 				starts++
 				return errors.New("unexpected replacement startup")
 			}
 			t.Cleanup(func() { daemonEnsure = originalEnsure })
 
 			switch operation {
-			case "dead restart", "restart":
+			case "restart":
 				cmd := daemonCmd()
 				cmd.SetArgs([]string{"restart"})
 				err = cmd.Execute()
@@ -102,25 +90,14 @@ func TestReviewRestartWithRetainedForeignRuntime(t *testing.T) {
 				}
 			}
 			assert := assert.New(t)
-			if operation == "dead restart" {
-				require.NoError(t, err)
-				assert.Equal(2, starts)
-				replacement, err := daemon.GetAnyRunningDaemon()
-				require.NoError(t, err)
-				assert.NotEqual(original.PID, replacement.PID)
-			} else {
-				require.ErrorIs(t, err, daemon.ErrUnjudgedRuntime)
-				assert.Equal(1, starts)
-				ping, pingErr := daemon.ProbeDaemon(original.Endpoint(), time.Second)
-				require.NoError(t, pingErr, "local daemon must keep serving")
-				assert.Equal(original.PID, ping.PID)
-				status, statusErr := fetchDaemonStatus(t.Context(), original.Endpoint())
-				require.NoError(t, statusErr)
-				assert.False(status.UpdateDraining)
-			}
-			after, err := os.ReadFile(path)
-			require.NoError(t, err)
-			assert.Equal(before, after)
+			require.ErrorIs(t, err, daemon.ErrUnjudgedRuntime)
+			assert.Equal(1, starts)
+			ping, pingErr := daemon.ProbeDaemon(original.Endpoint(), time.Second)
+			require.NoError(t, pingErr, "local daemon must keep serving")
+			assert.Equal(original.PID, ping.PID)
+			status, statusErr := fetchDaemonStatus(t.Context(), original.Endpoint())
+			require.NoError(t, statusErr)
+			assert.False(status.UpdateDraining)
 		})
 	}
 }

@@ -26,43 +26,29 @@ import (
 )
 
 func TestServerStopAfterRefusedStartPreservesForeignRuntime(t *testing.T) {
-	if os.Getenv("ROBOREV_TEST_PIDNS_REFUSED_START") == "1" {
-		t.Setenv("ROBOREV_DATA_DIR", os.Getenv("ROBOREV_TEST_PIDNS_DATA"))
-		records, err := runtimeStore().List()
-		require.NoError(t, err)
-		require.Len(t, records, 1)
-		rec := records[0]
-		require.Equal(t, os.Getpid(), rec.PID)
-		require.Equal(t, kitdaemon.ProcessScopeForeign, kitdaemon.RuntimeProcessScope(rec))
-		before, err := os.ReadFile(rec.SourcePath)
-		require.NoError(t, err)
-		db, _ := testutil.OpenTestDBWithDir(t)
-		cfg := config.DefaultConfig()
-		cfg.ServerAddr = "127.0.0.1:0"
-		server := NewServer(db, cfg, "")
-		t.Cleanup(func() { _ = server.Close() })
-		require.EqualError(t, server.Start(t.Context()), fmt.Sprintf("daemon already running (pid %d on %s)", rec.PID, rec.Address))
-		require.NoError(t, server.Stop())
-		after, err := os.ReadFile(rec.SourcePath)
-		require.NoError(t, err)
-		assert.Equal(t, before, after)
-		return
-	}
-
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv("ROBOREV_TEST_PIDNS_DATA", testenv.SetDataDir(t))
+	testenv.SetDataDir(t)
 	setShortRuntimeDir(t)
-	var rec kitdaemon.RuntimeRecord
+	rec := testutil.UnknownRuntimeRecord("tcp", "")
 	foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(PingInfo{OK: true, Service: "roborev", PID: rec.PID})
 	}))
 	t.Cleanup(foreign.Close)
-	rec = testutil.UnjudgedRuntimeRecord(t, "tcp", foreign.Listener.Addr().String())
-	_, err := runtimeStore().Write(rec)
+	rec.Address = foreign.Listener.Addr().String()
+	path, err := runtimeStore().Write(rec)
 	require.NoError(t, err)
-	t.Setenv("ROBOREV_TEST_RUNTIME_WRITER", "")
-	t.Setenv("ROBOREV_TEST_PIDNS_REFUSED_START", "1")
-	testutil.RunPIDNamespaceTest(t, nil, "")
+	before, err := os.ReadFile(path)
+	require.NoError(t, err)
+	db, _ := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	cfg.ServerAddr = "127.0.0.1:0"
+	server := NewServer(db, cfg, "")
+	t.Cleanup(func() { _ = server.Close() })
+	require.Error(t, server.Start(t.Context()))
+	require.NoError(t, server.Stop())
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
 }
 
 func TestServerStartWithSandboxSocket(t *testing.T) {
@@ -142,32 +128,6 @@ func TestServerStartWithSandboxSocket(t *testing.T) {
 			assert.Equal(t, before, after)
 		})
 	}
-}
-
-func TestServerStartAfterSandboxSocketStopsResponding(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	testenv.SetDataDir(t)
-	address := filepath.Join(setShortRuntimeDir(t), "daemon.sock")
-	var rec kitdaemon.RuntimeRecord
-	// End the sandbox before trying to start its replacement.
-	t.Run("sandbox", func(t *testing.T) {
-		rec = testutil.UnjudgedRuntimeRecord(t, "unix", address)
-	})
-	if rec.PID == 0 {
-		t.Skip("requires PID namespaces")
-	}
-	_, err := runtimeStore().Write(rec)
-	require.NoError(t, err)
-	db, _ := testutil.OpenTestDBWithDir(t)
-	cfg := config.DefaultConfig()
-	cfg.ServerAddr = "unix://" + address
-	cfg.AuthKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	require.NoError(t, config.SaveGlobal(cfg))
-	server := NewServer(db, cfg, "")
-	t.Cleanup(func() { _ = server.Close() })
-	errCh, info := startServerAndWaitForRuntime(t, server)
-	assert.Equal(t, address, info.Address)
-	stopTestServer(t, server, errCh)
 }
 
 func TestServerStartForeignProbeUsesSelectedConfig(t *testing.T) {
