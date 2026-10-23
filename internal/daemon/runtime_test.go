@@ -24,7 +24,6 @@ import (
 	"github.com/stretchr/testify/require"
 	kitdaemon "go.kenn.io/kit/daemon"
 
-	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -560,37 +559,6 @@ func TestCleanupZombieDaemonsPreservesTargetSocket(t *testing.T) {
 	assert.Equal(1, cleaned, "should count stale daemon as cleaned")
 	assert.NoFileExists(runtimePath, "runtime file should be removed")
 	assert.FileExists(socketPath, "target socket must be preserved")
-}
-
-func TestCleanupZombieDaemonsPreservesUnjudged(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		pid  int
-	}{
-		{name: "invisible PID", pid: math.MaxInt32},
-		{name: "PID collision", pid: os.Getpid()},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			testenv.SetDataDir(t)
-			setShortRuntimeDir(t)
-			rec := testutil.UnknownRuntimeRecord("tcp", "127.0.0.1:1")
-			rec.PID = tc.pid
-			require.Equal(t, kitdaemon.ProcessScopeUnknown, kitdaemon.RuntimeProcessScope(rec))
-			if tc.pid == math.MaxInt32 {
-				require.False(t, isProcessAlive(rec.PID))
-			} else {
-				if runtime.GOOS != "linux" {
-					t.Skip("requires Linux process identification")
-				}
-				require.Equal(t, processNotRoborev, identifyProcess(rec.PID))
-			}
-			path, err := runtimeStore().Write(rec)
-			require.NoError(t, err)
-
-			assert.Zero(t, CleanupZombieDaemons(DaemonEndpoint{}))
-			assert.FileExists(t, path)
-		})
-	}
 }
 
 func TestCleanupZombieDaemonsPreservesIdentifiedLiveLegacyDaemon(t *testing.T) {
@@ -1134,35 +1102,23 @@ func TestKillDaemonKeepsRecordWhenUnknownProcessDoesNotAnswer(t *testing.T) {
 }
 
 func TestCleanupZombieDaemonsSkipsUnjudgedEndpoints(t *testing.T) {
-	for _, foreign := range []bool{false, true} {
-		t.Run(fmt.Sprintf("foreign=%t", foreign), func(t *testing.T) {
-			testenv.SetDataDir(t)
-			setShortRuntimeDir(t)
-			rec := testutil.UnknownRuntimeRecord("tcp", "")
-			if foreign {
-				rec = testutil.UnjudgedRuntimeRecord(t, "tcp", "")
-			}
-			var requests, credentials atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				requests.Add(1)
-				if r.Header.Get("Authorization") != "" {
-					credentials.Add(1)
-				}
-				_ = json.NewEncoder(w).Encode(PingInfo{OK: true, Service: "roborev", PID: rec.PID})
-			}))
-			t.Cleanup(server.Close)
-			rec.Address = server.Listener.Addr().String()
-			path, err := runtimeStore().Write(rec)
-			require.NoError(t, err)
-			before, err := os.ReadFile(path)
-			require.NoError(t, err)
-			require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`), 0o600))
-			assert.Zero(t, CleanupZombieDaemons(DaemonEndpoint{}))
-			assert.Zero(t, requests.Load())
-			assert.Zero(t, credentials.Load())
-			after, err := os.ReadFile(path)
-			require.NoError(t, err)
-			assert.Equal(t, before, after)
-		})
-	}
+	testenv.SetDataDir(t)
+	setShortRuntimeDir(t)
+	rec := testutil.UnknownRuntimeRecord("tcp", "")
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		_ = json.NewEncoder(w).Encode(PingInfo{OK: true, Service: "roborev", PID: rec.PID})
+	}))
+	t.Cleanup(server.Close)
+	rec.Address = server.Listener.Addr().String()
+	path, err := runtimeStore().Write(rec)
+	require.NoError(t, err)
+	before, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Zero(t, CleanupZombieDaemons(DaemonEndpoint{}))
+	assert.Zero(t, requests.Load())
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
 }

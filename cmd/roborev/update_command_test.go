@@ -566,33 +566,44 @@ func readRequestBody(r *http.Request) string {
 }
 
 func TestDiscoverDaemonForUpdateReportsUnjudgedRuntime(t *testing.T) {
-	stubUpdateCommand(t)
-	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	rec := testutil.UnknownRuntimeRecord("tcp", "127.0.0.1:1")
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/ping", r.URL.Path)
-		_, _ = fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, rec.PID)
-	}))
-	t.Cleanup(server.Close)
-	rec.Address = server.Listener.Addr().String()
-	path, err := daemon.RuntimeStore().Write(rec)
-	require.NoError(t, err)
-	before, err := os.ReadFile(path)
-	require.NoError(t, err)
-	listAllRuntimes = daemon.ListAllRuntimes
-	getAnyRunningDaemon = daemon.GetAnyRunningDaemon
-	info, err := discoverDaemonForUpdate()
-	require.EqualError(t, err, fmt.Sprintf("daemon pid %d: its process identity can't be judged here", rec.PID))
-	assert.Nil(t, info)
-	after, err := os.ReadFile(path)
-	require.NoError(t, err)
-	assert.Equal(t, before, after)
+	for _, responding := range []bool{true, false} {
+		t.Run(fmt.Sprintf("responding=%t", responding), func(t *testing.T) {
+			stubUpdateCommand(t)
+			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+			rec := testutil.UnknownRuntimeRecord("tcp", "127.0.0.1:1")
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/api/ping", r.URL.Path)
+				_, _ = fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, rec.PID)
+			}))
+			t.Cleanup(server.Close)
+			if responding {
+				rec.Address = server.Listener.Addr().String()
+			}
+			path, err := daemon.RuntimeStore().Write(rec)
+			require.NoError(t, err)
+			before, err := os.ReadFile(path)
+			require.NoError(t, err)
+			listAllRuntimes = daemon.ListAllRuntimes
+			getAnyRunningDaemon = daemon.GetAnyRunningDaemon
+			info, err := discoverDaemonForUpdate()
+			if responding {
+				require.EqualError(t, err, fmt.Sprintf("daemon pid %d: its process identity can't be judged here", rec.PID))
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Nil(t, info)
+			after, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, before, after)
+		})
+	}
 }
 
-func TestReviewUpdateIgnoresDeadSandboxPIDCollision(t *testing.T) {
+func TestDiscoverDaemonForUpdateIgnoresDeadSandboxPIDCollision(t *testing.T) {
 	stubUpdateCommand(t)
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	var rec kitdaemon.RuntimeRecord
+	// The subtest deliberately ends the sandbox before replacing its PID below.
 	t.Run("sandbox", func(t *testing.T) {
 		rec = testutil.UnjudgedRuntimeRecord(t, "tcp", "127.0.0.1:1")
 	})
@@ -614,34 +625,4 @@ func TestReviewUpdateIgnoresDeadSandboxPIDCollision(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, info)
 	assert.Zero(t, pidChecks)
-}
-
-func TestScratchDeadLocalUpdateRemoves(t *testing.T) {
-	stubUpdateCommand(t)
-	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	rec := testutil.UnknownRuntimeRecord("tcp", "127.0.0.1:1")
-	rec.ProcessIdentityV2 = ""
-	path, err := daemon.RuntimeStore().Write(rec)
-	require.NoError(t, err)
-	getAnyRunningDaemon = daemon.GetAnyRunningDaemon
-	// Exercise the default list rather than stubUpdateCommand's empty list.
-	listAllRuntimes = daemon.ListAllRuntimes
-	info, err := discoverDaemonForUpdate()
-	require.NoError(t, err)
-	assert.Nil(t, info)
-	assert.NoFileExists(t, path)
-}
-
-func TestScratchStaleUnjudgedUpdate(t *testing.T) {
-	stubUpdateCommand(t)
-	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	rec := testutil.UnknownRuntimeRecord("tcp", "127.0.0.1:1")
-	path, err := daemon.RuntimeStore().Write(rec)
-	require.NoError(t, err)
-	getAnyRunningDaemon = daemon.GetAnyRunningDaemon
-	listAllRuntimes = daemon.ListAllRuntimes
-	info, err := discoverDaemonForUpdate()
-	require.NoError(t, err)
-	assert.Nil(t, info)
-	assert.FileExists(t, path)
 }

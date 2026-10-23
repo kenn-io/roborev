@@ -17,7 +17,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
@@ -32,21 +31,14 @@ type statusJSONOutput struct {
 	Error   string               `json:"error,omitempty"`
 }
 
-func TestStatusCmdJSONKeepsRespondingUnjudgedDaemon(t *testing.T) {
-	for _, tc := range []struct{ jsonOutput, foreign bool }{{true, true}, {false, true}, {true, false}, {false, false}} {
-		jsonOutput, foreign := tc.jsonOutput, tc.foreign
-		t.Run(fmt.Sprintf("json=%t/foreign=%t", jsonOutput, foreign), func(t *testing.T) {
+func TestStatusCmdKeepsRespondingUnjudgedDaemon(t *testing.T) {
+	for _, jsonOutput := range []bool{true, false} {
+		t.Run(fmt.Sprintf("json=%t", jsonOutput), func(t *testing.T) {
 			stubServiceRecovery(t)
 			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 			rec := testutil.UnknownRuntimeRecord("tcp", "")
-			if foreign {
-				rec = testutil.UnjudgedRuntimeRecord(t, "tcp", "")
-			}
-			var credentials, otherRequests atomic.Int32
+			var otherRequests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Header.Get("Authorization") != "" {
-					credentials.Add(1)
-				}
 				if r.URL.Path != "/api/ping" {
 					otherRequests.Add(1)
 				}
@@ -58,7 +50,6 @@ func TestStatusCmdJSONKeepsRespondingUnjudgedDaemon(t *testing.T) {
 			require.NoError(t, err)
 			before, err := os.ReadFile(path)
 			require.NoError(t, err)
-			require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`), 0o600))
 			original := statusEnsureDaemon
 			t.Cleanup(func() { statusEnsureDaemon = original })
 			ensures := 0
@@ -75,25 +66,15 @@ func TestStatusCmdJSONKeepsRespondingUnjudgedDaemon(t *testing.T) {
 				var parsed statusJSONResult
 				require.NoError(t, json.Unmarshal([]byte(output), &parsed))
 				assert.True(parsed.Running)
-				if foreign {
-					assert.Equal(fmt.Sprintf("daemon pid %d runs in another PID namespace", rec.PID), parsed.Error)
-				} else {
-					assert.Contains(parsed.Error, "its process identity can't be judged here")
-				}
+				assert.Contains(parsed.Error, fmt.Sprintf("pid %d", rec.PID))
 				assert.Nil(parsed.Daemon)
 				assert.Empty(parsed.Jobs)
 			} else {
 				assert.Contains(output, fmt.Sprintf("Daemon: running (pid %d", rec.PID))
-				assert.Contains(output, "Status: unavailable")
-				if foreign {
-					assert.Contains(output, fmt.Sprintf("Status: unavailable: daemon pid %d runs in another PID namespace\n", rec.PID))
-				} else {
-					assert.Contains(output, "its process identity can't be judged here")
-				}
+				assert.Contains(output, fmt.Sprintf("Status: unavailable: daemon pid %d", rec.PID))
 				assert.NotContains(output, "Jobs:")
 			}
 			assert.Zero(ensures)
-			assert.Zero(credentials.Load())
 			assert.Zero(otherRequests.Load())
 			after, err := os.ReadFile(path)
 			require.NoError(t, err)

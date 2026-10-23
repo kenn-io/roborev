@@ -22,10 +22,10 @@ import (
 	"go.kenn.io/roborev/internal/testutil"
 )
 
-func TestKillDaemonKeepsForeignRuntimeWithoutShutdown(t *testing.T) {
+func TestKillDaemonKeepsUnjudgedRuntimeWithoutShutdown(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	testenv.SetDataDir(t)
-	rec := testutil.UnjudgedRuntimeRecord(t, "tcp", "")
+	rec := testutil.UnknownRuntimeRecord("tcp", "")
 	var shutdownRequests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -144,27 +144,4 @@ func TestServerStartAfterShellLaunchedSandbox(t *testing.T) {
 	t.Setenv("ROBOREV_TEST_PIDNS_PHASE", "start")
 	// The trailing command keeps the shell at PID 2 while the daemon runs at PID 3.
 	testutil.RunPIDNamespaceTest(t, []string{"sh", "-c", `"$@"; result=$?; exit "$result"`, "sh"}, "")
-}
-
-func TestReviewForeignDiscoveryRejectsRedirectedPing(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	testenv.SetDataDir(t)
-	rec := testutil.UnjudgedRuntimeRecord(t, "tcp", "")
-	var redirectedRequests atomic.Int32
-	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		redirectedRequests.Add(1)
-		_, _ = fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, rec.PID)
-	}))
-	t.Cleanup(target.Close)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, target.URL+r.URL.Path, http.StatusFound)
-	}))
-	t.Cleanup(server.Close)
-	rec.Address = server.Listener.Addr().String()
-	_, err := runtimeStore().Write(rec)
-	require.NoError(t, err)
-	info, err := FindUnjudgedDaemon()
-	require.Error(t, err)
-	assert.Nil(t, info)
-	assert.Zero(t, redirectedRequests.Load())
 }

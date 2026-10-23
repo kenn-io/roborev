@@ -178,7 +178,7 @@ func TestFindUnjudgedDaemonKeepsTLS(t *testing.T) {
 	setShortRuntimeDir(t)
 	pki := newTestPKI(t)
 	writeMutualTLSClientConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", pki)
-	rec := testutil.UnjudgedRuntimeRecord(t, "tcp", "")
+	rec := testutil.UnknownRuntimeRecord("tcp", "")
 	var requests, credentials atomic.Int32
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)

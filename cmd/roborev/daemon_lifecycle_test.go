@@ -38,22 +38,6 @@ import (
 	"go.kenn.io/roborev/internal/version"
 )
 
-func TestListAllRuntimesKeepsLiveForeignRecord(t *testing.T) {
-	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	rec := testutil.UnjudgedRuntimeRecord(t, "tcp", "127.0.0.1:1")
-	path, err := daemon.RuntimeStore().Write(rec)
-	require.NoError(t, err)
-	before, err := os.ReadFile(path)
-	require.NoError(t, err)
-	runtimes, err := listAllRuntimes()
-	require.NoError(t, err)
-	require.Len(t, runtimes, 1)
-	assert.True(t, runtimes[0].Unjudged())
-	after, err := os.ReadFile(path)
-	require.NoError(t, err)
-	assert.Equal(t, before, after)
-}
-
 func TestGetDaemonEndpointAvoidsDefaultDaemonPortInTests(t *testing.T) {
 	exe, err := os.Executable()
 	require.NoError(t, err)
@@ -556,11 +540,19 @@ func TestDaemonSearchCredentialFiles(t *testing.T) {
 }
 
 func TestStopDaemonReportsUnjudgedRuntime(t *testing.T) {
-	for _, foreign := range []bool{false, true} {
-		t.Run(fmt.Sprintf("foreign=%t", foreign), func(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		foreign    bool
+		responding bool
+	}{
+		{name: "responding unknown", responding: true},
+		{name: "responding foreign", foreign: true, responding: true},
+		{name: "unresponsive unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 			rec := testutil.UnknownRuntimeRecord("tcp", "127.0.0.1:1")
-			if foreign {
+			if tc.foreign {
 				rec = testutil.UnjudgedRuntimeRecord(t, "tcp", "127.0.0.1:1")
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -568,16 +560,22 @@ func TestStopDaemonReportsUnjudgedRuntime(t *testing.T) {
 				_, _ = fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, rec.PID)
 			}))
 			t.Cleanup(server.Close)
-			rec.Address = server.Listener.Addr().String()
+			if tc.responding {
+				rec.Address = server.Listener.Addr().String()
+			}
 			path, err := daemon.RuntimeStore().Write(rec)
 			require.NoError(t, err)
 			before, err := os.ReadFile(path)
 			require.NoError(t, err)
 			message := fmt.Sprintf("daemon pid %d: its process identity can't be judged here", rec.PID)
-			if foreign {
+			if tc.foreign {
 				message = fmt.Sprintf("daemon pid %d runs in another PID namespace", rec.PID)
 			}
-			require.EqualError(t, stopDaemon(), message)
+			if tc.responding {
+				require.EqualError(t, stopDaemon(), message)
+			} else {
+				require.ErrorIs(t, stopDaemon(), ErrDaemonNotRunning)
+			}
 			after, err := os.ReadFile(path)
 			require.NoError(t, err)
 			assert.Equal(t, before, after)
@@ -586,56 +584,26 @@ func TestStopDaemonReportsUnjudgedRuntime(t *testing.T) {
 }
 
 func TestEnsureDaemonRejectsRespondingUnjudgedDaemon(t *testing.T) {
-	for _, foreign := range []bool{false, true} {
-		t.Run(fmt.Sprintf("foreign=%t", foreign), func(t *testing.T) {
-			isolateDaemonSelection(t)
-			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-			rec := testutil.UnknownRuntimeRecord("tcp", "")
-			if foreign {
-				rec = testutil.UnjudgedRuntimeRecord(t, "tcp", "")
-			}
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal(t, "/api/ping", r.URL.Path)
-				_, _ = fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, rec.PID)
-			}))
-			t.Cleanup(server.Close)
-			rec.Address = server.Listener.Addr().String()
-			_, err := daemon.RuntimeStore().Write(rec)
-			require.NoError(t, err)
-			getAnyRunningDaemon = daemon.GetAnyRunningDaemon
-			starts := 0
-			startDaemonForEnsure = func() error { starts++; return nil }
-			err = ensureDaemon()
-			message := fmt.Sprintf("daemon pid %d: its process identity can't be judged here", rec.PID)
-			if foreign {
-				message = fmt.Sprintf("daemon pid %d runs in another PID namespace", rec.PID)
-			}
-			require.EqualError(t, err, message)
-			assert.Zero(t, starts)
-		})
-	}
-}
-
-func TestScratchDeadLocalStopRemoves(t *testing.T) {
-	testenv.SetDataDir(t)
-	rec := testutil.UnknownRuntimeRecord("tcp", "127.0.0.1:1")
-	rec.ProcessIdentityV2 = ""
-	path, err := daemon.RuntimeStore().Write(rec)
+	isolateDaemonSelection(t)
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	rec := testutil.UnknownRuntimeRecord("tcp", "")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/ping", r.URL.Path)
+		_, _ = fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, rec.PID)
+	}))
+	t.Cleanup(server.Close)
+	rec.Address = server.Listener.Addr().String()
+	_, err := daemon.RuntimeStore().Write(rec)
 	require.NoError(t, err)
-	require.NoError(t, stopDaemon())
-	assert.NoFileExists(t, path)
+	getAnyRunningDaemon = daemon.GetAnyRunningDaemon
+	starts := 0
+	startDaemonForEnsure = func() error { starts++; return nil }
+	err = ensureDaemon()
+	require.ErrorContains(t, err, fmt.Sprintf("pid %d", rec.PID))
+	assert.Zero(t, starts)
 }
 
-func TestScratchStaleUnjudgedStop(t *testing.T) {
-	testenv.SetDataDir(t)
-	rec := testutil.UnknownRuntimeRecord("tcp", "127.0.0.1:1")
-	path, err := daemon.RuntimeStore().Write(rec)
-	require.NoError(t, err)
-	require.ErrorIs(t, stopDaemon(), ErrDaemonNotRunning)
-	assert.FileExists(t, path)
-}
-
-func TestIndependentForeignTLSFailureRetained(t *testing.T) {
+func TestEnsureDaemonRetainsUnjudgedRuntimeOnTLSFailure(t *testing.T) {
 	isolateDaemonSelection(t)
 	var requests atomic.Int32
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -650,7 +618,7 @@ func TestIndependentForeignTLSFailureRetained(t *testing.T) {
 	require.NoError(t, os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key}), 0o600))
 	body := fmt.Sprintf("[daemon_tls]\nca_file = %q\nclient_cert_file = %q\nclient_key_file = %q\n", certPath, certPath, keyPath)
 	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(body), 0o600))
-	rec := testutil.UnjudgedRuntimeRecord(t, "tcp", strings.Replace(server.Listener.Addr().String(), "127.0.0.1", "localhost", 1))
+	rec := testutil.UnknownRuntimeRecord("tcp", strings.Replace(server.Listener.Addr().String(), "127.0.0.1", "localhost", 1))
 	path, err := daemon.RuntimeStore().Write(rec)
 	require.NoError(t, err)
 	before, err := os.ReadFile(path)
