@@ -36,11 +36,12 @@ func (e *managedRecoveryError) Unwrap() error { return e.cause }
 var (
 	errRecoveryLock = errors.New("wait for daemon recovery lock")
 
-	findDaemonService  = lookupDaemonService
-	daemonCgroupUnit   = serviceCgroup
-	serviceMainPID     = userServiceMainPID
-	startDaemonService = startUserService
-	drainManagedDaemon = daemon.KillDaemon
+	findDaemonService     = lookupDaemonService
+	daemonCgroupUnit      = serviceCgroup
+	serviceMainPID        = userServiceMainPID
+	startDaemonService    = startUserService
+	drainManagedDaemon    = daemon.KillDaemon
+	checkUnjudgedRuntimes = daemon.CheckUnjudgedRuntimes
 )
 
 // supported reports unit settings that systemctl start cannot replace safely.
@@ -208,7 +209,11 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 		}
 		return err
 	}
-	if err := daemon.CheckUnjudgedRuntimes(ctx); err != nil {
+	if err := checkUnjudgedRuntimes(ctx); err != nil {
+		if responsive {
+			fmt.Fprintf(lifecycleOut, "Daemon recovery skipped; %v\n", err)
+			return nil
+		}
 		return err
 	}
 	if owner == nil {

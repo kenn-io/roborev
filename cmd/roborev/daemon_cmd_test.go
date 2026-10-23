@@ -90,7 +90,11 @@ func TestReviewRestartWithRetainedForeignRuntime(t *testing.T) {
 				}
 			}
 			assert := assert.New(t)
-			require.ErrorIs(t, err, daemon.ErrUnjudgedRuntime)
+			if operation == "recovery" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, daemon.ErrUnjudgedRuntime)
+			}
 			assert.Equal(1, starts)
 			ping, pingErr := daemon.ProbeDaemon(original.Endpoint(), time.Second)
 			require.NoError(t, pingErr, "local daemon must keep serving")
