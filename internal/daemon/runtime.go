@@ -394,10 +394,7 @@ func probeRuntimeRecordWithAuth(ctx context.Context, ep DaemonEndpoint, clientAu
 	if !ep.IsUnix() && !isLoopbackAddr(ep.Address) {
 		return nil, fmt.Errorf("non-loopback daemon address: %s", ep.Address)
 	}
-	if ep.unjudged && !ep.IsUnix() && !clientAuth.TLS.Enabled() {
-		clientAuth.Key = ""
-	}
-	client := ep.authClient(time.Second, clientAuth.TLS, func() (string, error) { return clientAuth.Key, nil })
+	client := ep.pingHTTPClient(time.Second, clientAuth, nil)
 	return probeDaemonHTTP(ctx, ep, time.Second, client)
 }
 
@@ -500,16 +497,11 @@ func ProbeDaemon(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error) {
 	if !ep.IsRemote() && !ep.IsUnix() && !isLoopbackAddr(ep.Address) {
 		return nil, fmt.Errorf("non-loopback daemon address: %s", ep.Address)
 	}
-	if ep.unjudged && !ep.IsUnix() {
-		clientAuth, err := loadClientAuth()
-		if err != nil {
-			return nil, err
-		}
-		if !clientAuth.TLS.Enabled() {
-			return probeDaemonHTTP(context.Background(), ep, timeout, ep.transportClient(timeout, clientAuth.TLS))
-		}
+	if ep.IsRemote() {
+		return probeDaemonHTTP(context.Background(), ep, timeout, ep.HTTPClient(timeout))
 	}
-	return probeDaemonHTTP(context.Background(), ep, timeout, ep.HTTPClient(timeout))
+	clientAuth, err := loadClientAuth()
+	return probeDaemonHTTP(context.Background(), ep, timeout, ep.pingHTTPClient(timeout, clientAuth, err))
 }
 
 // ProbeDaemonPing validates a daemon endpoint like ProbeDaemon but decodes

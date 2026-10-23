@@ -261,7 +261,7 @@ func TestAuthDiscoverySkipsStaleProcesses(t *testing.T) {
 }
 
 func TestUnjudgedRuntimeKeepsKeyOffTCP(t *testing.T) {
-	for _, operation := range []string{"discovery", "subsequent request", "alternate endpoint"} {
+	for _, operation := range []string{"discovery", "broken config probe", "subsequent request", "alternate endpoint"} {
 		t.Run(operation, func(t *testing.T) {
 			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 			var credentials atomic.Int32
@@ -288,6 +288,11 @@ func TestUnjudgedRuntimeKeepsKeyOffTCP(t *testing.T) {
 				_, err = info.Endpoint().APIClient(time.Second).GetStatusRaw(t.Context())
 				require.ErrorIs(t, err, ErrUnjudgedEndpointAuth)
 				assert.True(t, IsDaemonAccessError(err))
+			case "broken config probe":
+				require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "bad key"`), 0o600))
+				ping, err := ProbeDaemon(info.Endpoint(), time.Second)
+				require.NoError(t, err)
+				assert.True(t, ping.OK)
 			case "subsequent request":
 				_, err = info.Endpoint().APIClient(time.Second).PingRaw(t.Context())
 				require.ErrorIs(t, err, ErrUnjudgedEndpointAuth)

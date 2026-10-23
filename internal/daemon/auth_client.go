@@ -24,6 +24,20 @@ func loadClientAuth() (config.ClientAuth, error) {
 	return clientAuth, nil
 }
 
+// pingHTTPClient keeps unjudged plain-TCP liveness probes independent of
+// credentials, including errors loading them.
+func (e DaemonEndpoint) pingHTTPClient(timeout time.Duration, settings config.ClientAuth, configErr error) *http.Client {
+	if e.unjudged && !e.IsUnix() && !settings.TLS.Enabled() {
+		return e.transportClient(timeout, settings.TLS)
+	}
+	return e.authClient(timeout, settings.TLS, func() (string, error) {
+		if e.accessErr != nil {
+			return "", e.accessErr
+		}
+		return settings.Key, configErr
+	})
+}
+
 // readinessHTTPClient probes a listener this process just bound. No other
 // process can hold that endpoint, so the key is sent over any transport.
 // Ordinary CLI and TUI clients use HTTPClient instead.

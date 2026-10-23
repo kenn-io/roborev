@@ -66,11 +66,6 @@ func TestAuthUnjudgedRuntimeStatus(t *testing.T) {
 			if live {
 				assert.Zero(starts)
 				assert.Contains(result.Error, "daemon_tls")
-				info, err := daemon.GetAnyRunningDaemon()
-				require.NoError(t, err)
-				_, err = info.Endpoint().APIClient(time.Second).GetStatusRaw(t.Context())
-				require.ErrorIs(t, err, daemon.ErrUnjudgedEndpointAuth)
-				assert.True(daemon.IsDaemonAccessError(err))
 			} else {
 				assert.Equal(1, starts)
 			}
