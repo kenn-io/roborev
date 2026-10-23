@@ -437,13 +437,6 @@ func isTLSFailure(err error) bool {
 		errors.As(err, &recordHeader) || errors.As(err, &op) && op.Op == "remote error"
 }
 
-func checkRuntimeProcessForStart(info *RuntimeInfo) error {
-	if kitdaemon.RuntimeRecordBlocksStart(info.processRecord()) {
-		return fmt.Errorf("daemon process still running (pid %d)", info.PID)
-	}
-	return nil
-}
-
 func discoverRuntimeRecords(
 	ctx context.Context,
 	records []kitdaemon.RuntimeRecord,
@@ -830,16 +823,13 @@ func waitForGracefulDaemonExit(
 // CleanupZombieDaemons finds and kills all unresponsive daemons.
 // Returns the number of zombies cleaned up.
 func CleanupZombieDaemons(target DaemonEndpoint) int {
-	runtimes, err := ListAllRuntimes()
+	runtimes, err := ListJudgedRuntimes()
 	if err != nil {
 		return 0
 	}
 
 	cleaned := 0
 	for _, info := range runtimes {
-		if info.Unjudged() {
-			continue
-		}
 		ep := info.Endpoint()
 
 		// Check the recorded process before any endpoint receives credentials.

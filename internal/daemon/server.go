@@ -26,6 +26,7 @@ import (
 	"github.com/coreos/go-systemd/v22/daemon"
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/go-github/v93/github"
+	kitdaemon "go.kenn.io/kit/daemon"
 	gitrepo "go.kenn.io/kit/git/repo"
 	"go.kenn.io/kit/selfupdate"
 
@@ -320,11 +321,11 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("daemon already running (pid %d on %s)", info.PID, info.Address)
 	}
 	for _, runtime := range runtimes {
-		if err := checkRuntimeProcessForStart(runtime); err != nil {
+		if kitdaemon.RuntimeRecordBlocksStart(runtime.processRecord()) {
 			if listener != nil {
 				_ = listener.Close()
 			}
-			return err
+			return fmt.Errorf("daemon process still running (pid %d)", runtime.PID)
 		}
 	}
 	if err := s.db.SetShutdownDraining(false); err != nil {
