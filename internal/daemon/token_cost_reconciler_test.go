@@ -336,9 +336,10 @@ func TestTokenCostReconcilerBacksOffRepeatedMisses(t *testing.T) {
 		job := seedTokenCostCandidate(t, tc, "late-session", `{}`)
 		tc.Pool.tokenCostScanInterval = time.Minute
 		tc.Pool.tokenCostRetryInterval = time.Hour
-		// Run only the reconciler. SQLite lock retries use time.Sleep on
-		// macOS, so synctest.Wait can return before a contending query finishes.
+		// Keep worker lock retries and overlapping log scans from delaying cost
+		// scans; SQLite retry sleeps on macOS let synctest.Wait return early.
 		tc.Pool.numWorkers = 0
+		tc.Pool.tokenUsageLogScanInterval = 24 * time.Hour
 
 		var indexed atomic.Bool
 		var lookups atomic.Int32
