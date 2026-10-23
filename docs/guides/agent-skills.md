@@ -146,9 +146,11 @@ they compare against, and what should fail. It plays each part back, then
 proposes the complete [custom review types](../advanced/custom-review-types.md),
 rubrics, panel, and post-commit batching. It writes nothing until you approve.
 After approval it validates the configuration, and with your consent runs one
-trial review to tune the rubrics. Reviews keep using the agent the repository
-already runs, as long as it supports custom types: Codex, Claude Code, Pi, or
-Grok.
+trial review to tune the rubrics. Custom review types need an agent with
+structured output: Codex, Claude Code, Pi, or Grok. Unless a type names its own
+agent, it uses the repository's `agent` or the global `default_agent`, not
+`review_agent`, so the skill checks which agent each reviewer gets and asks
+before changing it.
 
 ### Review a commit
 

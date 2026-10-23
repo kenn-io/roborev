@@ -153,6 +153,7 @@ This mapping is for you, not the user. Use only what the conversation needs.
 | A short source every review needs in full | `[review.types.<name>.includes]`, rendered with `{{ index .Includes "<key>" }}` |
 | One custom check after every commit or every N commits | A type, a subagent that uses it, and a one-member panel; set `hook_review_panel` under `[review]`. Automatic reviews use this panel and carry no review type. Set `post_commit_batch_size = N` for every N commits. |
 | Several custom checks after every commit or every N commits | A type and subagent per check, a panel listing those subagents, and `hook_review_panel` under `[review]`. Set `post_commit_batch_size = N` for every N commits. |
+| Keep the usual code review after commits too | Add a subagent with `review_type = "default"` to the hook panel |
 | The whole branch each time | `post_commit_review = "branch"` |
 | Reviews on request | `[review] default_panel`, or `--type` and `--panel` |
 | Reviews on pull requests | `[ci] panel`; see <https://roborev.io/docs/advanced/subagent-review-panels/#ci-panels> |
@@ -186,9 +187,14 @@ Rules that matter:
     severity levels so what the user said must fail sits at or above that one
     threshold. Findings below it still appear in the review; they just do not
     fail it.
-- Type names start with a lowercase letter and use lowercase letters, digits,
-    and hyphens. These names are reserved: `default`, `review`, `general`,
-    `security`, `design`, `lookahead`, `goal`, `fix`, `refine`, and `classify`.
+- `hook_review_panel` replaces whatever ran after each commit before,
+    including the usual code review and any global `hook_review_panel`. For
+    code, ask whether the usual review should keep running, and if so add a
+    `default` member to the panel.
+- Type names start with a lowercase letter, use lowercase letters, digits,
+    and hyphens, and are at most 64 characters. These names are reserved:
+    `default`, `review`, `general`, `security`, `design`, `lookahead`,
+    `test-value`, `goal`, `fix`, `refine`, and `classify`.
 - Keep rubrics and sources outside the snapshot directory (`.roborev/` by
     default). It is ignored by Git, and `roborev init` refuses to run while
     tracked files sit under it. Use a committed directory such as
@@ -202,14 +208,20 @@ Rules that matter:
     `max_prompt_size`, so include only short sources. Name long sources, and
     sources that will grow, by path.
 - When the material is not code, say so in `review_guidelines` so every
-    reviewer reads it that way.
+    reviewer reads it that way, and in each rubric so trial reviews read it
+    that way before the guidelines take effect.
 - `fix` and `refine` are writable, code-framed workflows. For non-code
     material, the user or a writing agent corrects findings. Say so before the
     user turns on the Agent Hook, which hands findings to `$roborev-fix`.
-- Local reviews read custom types, panels, and hook settings from the checkout's
-    `.roborev.toml`. Review guidelines and `REVIEW.md` come from the default
-    branch, and CI reads everything from its trusted base ref. Commit the whole
-    setup to the default branch so all three agree.
+- Local reviews read custom types, panels, hook settings, and rubrics from the
+    checkout. Review guidelines and `REVIEW.md` come from the default branch,
+    which is `origin/<default>` when the repository has an `origin` remote, so
+    they apply only after the setup is pushed there. CI reads everything from
+    its trusted base ref. Commit the whole setup to the default branch so all
+    three agree, and tell the user the guidelines wait on that push.
+- A `type = "kata"` hook files an issue for each reviewer's failing review as
+    well as for the combined review. With a panel of several reviewers, one
+    failing commit can open several issues. Say so when proposing it.
 
 Example: a legal brief checked every five commits by two reviewers. It leaves
 the agent to the repository or machine default. Adapt it; do not copy names
@@ -330,7 +342,8 @@ Send one proposal:
     each.
 1. How it will run: when reviews start, which agents run, and how many agent
     calls one review uses. A panel uses one call per reviewer, plus one
-    combining call when more than one reviewer reports findings.
+    combining call when two or more reviewers finish and any of them reports
+    a finding or does not pass.
 1. The commit you will make after the checks pass: branch and message.
 1. The full content of every file: `.roborev.toml` (or the exact change to an
     existing one) and each rubric.
@@ -439,8 +452,8 @@ Finish with a short summary:
 - How to tune: edit a rubric, commit, and review again.
 - How to add a source document: commit its text where the rubric expects it,
     and update the rubric or include when the path changes.
-- What is still pending, such as hooks, a stopped daemon, or the
-    confidentiality decision.
+- What is still pending, such as hooks, a stopped daemon, guidelines waiting
+    on a push to the default branch, or the confidentiality decision.
 
 ## Red flags
 
