@@ -319,6 +319,45 @@ make docs-deploy
 
 `make docs-deploy` runs `vercel deploy --prod` from the repository root.
 
+## Native strict Claude qualification
+
+Strict tool policies need a live test of the installed Claude CLI as well as
+unit tests. Use an authenticated execution host with `claude`, `python3`, and
+the project's Go toolchain. Run the candidate commit from inside a Claude
+session; keep its native authentication and provider routing environment. Choose
+a private absolute artifact directory outside the checkout:
+
+```bash
+ROBOREV_RUN_STRICT_CLAUDE=1 \
+ROBOREV_STRICT_CLAUDE_ARTIFACTS=/tmp/strict-review-proof \
+go test -tags integration ./internal/agent \
+  -run '^TestClaudeStrictNativeQualification$' -count=1 -v
+```
+
+The test invokes the actual Go adapter for ordinary reviews, strict reviews with
+empty grants, and strict reviews with one exact MCP grant, in plain and schema
+modes. It adds synthetic inherited session/tool overrides. Ordinary cases also
+enable coordinator mode in project settings to exercise the adapter's narrow
+environment and invocation-level settings overrides. Do not substitute a copied
+CLI invocation or a wrapper that clears the whole environment. Normal CI skips
+this live test.
+
+Inspect each case's `native-stream.jsonl`, `adapter-output.json`, server call
+log, and checkout sentinels. Successful native Read, Glob and Grep results are
+required; model-authored claims do not count. Strict granted calls also need a
+successful lookup and native permission denials for same-server ungranted,
+prefix-lookalike and newly advertised tools. Unselected/ambient servers must
+never start. Unexpected built-ins, missing startup evidence or failed/late
+selected servers fail the invocation even if the final review looks valid.
+
+Strict cases include permissive project settings and a hook sentinel: hooks must
+stay inactive and checkout files must remain unchanged. Ordinary hardening
+restricts available tools and MCP configuration; it does not promise strict
+settings or hook isolation. The synthetic MCP server permits every test tool, so
+its call log independently exposes any ungranted call that escapes the native
+permission layer. Raw host streams may contain session or machine details; keep
+them private and attach only a sanitized result summary to a public review.
+
 ## License
 
 MIT

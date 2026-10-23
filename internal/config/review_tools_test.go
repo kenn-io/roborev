@@ -55,7 +55,7 @@ func TestReviewToolPolicyRejectsInvalid(t *testing.T) {
 		})
 	}
 	_, err := CanonicalReviewToolPolicy(&ReviewToolPolicy{Mode: "read-only", MCP: map[string][]string{
-		"A-0_b": {"_read", "READ-2", strings.Repeat("x", 1024)},
+		"A-0_b": {"read_", "READ-2", strings.Repeat("x", 1024)},
 	}})
 	require.NoError(t, err)
 }
@@ -279,6 +279,9 @@ func FuzzReviewToolPolicyCanonicalization(f *testing.F) {
 		{"read-only", "a__b", "read", "read"},
 		{"read-only", "research", "read/*", "read"},
 		{"read-only", "research", "", "read"},
+		{"read-only", "archive_", "lookup", "read"},
+		{"read-only", "archive", "_lookup", "read"},
+		{"read-only", "_archive", "lookup_", "read_source"},
 	} {
 		f.Add(seed[0], seed[1], seed[2], seed[3])
 	}
@@ -299,7 +302,7 @@ func FuzzReviewToolPolicyCanonicalization(f *testing.F) {
 			assert.Equal(t, &ReviewToolPolicy{Mode: mode, MCP: map[string][]string{server: {first, second}}}, input)
 		})
 		got, err := CanonicalReviewToolPolicy(input)
-		if mode != "read-only" || !validName(server) || !validName(first) || !validName(second) {
+		if mode != "read-only" || !validName(server) || strings.HasSuffix(server, "_") || !validName(first) || strings.HasPrefix(first, "_") || !validName(second) || strings.HasPrefix(second, "_") {
 			require.Error(t, err)
 			return
 		}
@@ -322,4 +325,24 @@ func FuzzReviewToolPolicyCanonicalization(f *testing.F) {
 func TestReviewToolPolicyExperimentRejectsPanelPolicy(t *testing.T) {
 	overlay := map[string]any{"review": map[string]any{"panels": map[string]any{"summary": map[string]any{"tools": map[string]any{"mode": "read-only"}}}}}
 	require.ErrorContains(t, validateExperimentOverlay(overlay), "review.panels.summary.tools is not supported")
+}
+
+func TestReviewToolPolicyNativeBoundaryGrammar(t *testing.T) {
+	for _, pair := range [][2]string{{"archive_", "lookup"}, {"archive", "_lookup"}, {"_", "lookup"}, {"archive", "_"}} {
+		t.Run(pair[0]+"/"+pair[1], func(t *testing.T) {
+			_, err := CanonicalReviewToolPolicy(&ReviewToolPolicy{Mode: "read-only", MCP: map[string][]string{pair[0]: {pair[1]}}})
+			require.ErrorContains(t, err, "invalid review MCP")
+			require.Error(t, validateReviewMCPAllowedTools([]string{pair[0] + "/" + pair[1]}))
+		})
+	}
+	_, err := CanonicalReviewToolPolicy(&ReviewToolPolicy{Mode: "read-only", MCP: map[string][]string{"archive_": {}}})
+	require.ErrorContains(t, err, "server name")
+	// Underscores away from the encoding boundary and hyphens remain accepted.
+	for _, pair := range [][2]string{{"_archive", "lookup_"}, {"a_b", "read_source"}, {"-", "-"}, {"A-0_b", "READ-2_"}} {
+		policy := &ReviewToolPolicy{Mode: "read-only", MCP: map[string][]string{pair[0]: {pair[1]}}}
+		got, err := CanonicalReviewToolPolicy(policy)
+		require.NoError(t, err)
+		assert.Equal(t, policy, got)
+		require.NoError(t, validateReviewMCPAllowedTools([]string{pair[0] + "/" + pair[1]}))
+	}
 }

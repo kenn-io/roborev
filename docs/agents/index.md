@@ -126,6 +126,11 @@ Global `allow_unsafe_agents = true` may bypass permission prompts, but it does
 not broaden ordinary Claude reviews. Explicit agentic calls, including fix
 workflows, retain their writable tools and permission bypass.
 
+Ordinary reviews remove inherited `CLAUDE_CODE_COORDINATOR_MODE` and pass
+`--settings '{"env":{"CLAUDE_CODE_COORDINATOR_MODE":""}}'` so loaded settings
+cannot re-enable coordinator mode and suppress read tools. Agentic and planning
+calls do not receive this override.
+
 These tool restrictions do not isolate Claude settings, hooks, plugins, or
 ambient MCP servers; those remain trusted. Denying MCP tool calls does not
 prevent ambient servers from starting. Environment variables keep the existing
@@ -138,13 +143,17 @@ An explicit `tools.mode = "read-only"` opts into strict Claude reviews. The
 adapter starts a fresh session with restricted settings, `dontAsk` permissions,
 no permission prompts, no session persistence, and slash commands disabled. It
 exposes `Read`, `Glob`, and `Grep`; schema output may also expose the native
-`StructuredOutput` tool. At this stage, nonempty MCP grants fail explicitly.
+`StructuredOutput` tool. Nonempty MCP grants launch only selected,
+operator-authorized servers. The allowed tool list contains exact native grant
+names; other tools on a selected server remain ungranted.
 
 Strict reviews require native startup evidence for the requested permission
-mode, read tools, and empty MCP server set. Missing evidence or unexpected tools
-fail the invocation even if the agent returns a valid review document. A denied
-tool attempt alone does not invalidate an otherwise successful review. Missing
-CLI flags cause an upgrade error before the review starts.
+mode, read tools, connected selected servers, and every granted tool. Empty
+grants require an empty MCP server set. Missing evidence, failed or late server
+connections, and tools from unselected namespaces fail the invocation even if
+the agent returns a valid review document. A denied tool attempt alone does not
+invalidate an otherwise successful review. Missing CLI flags cause an upgrade
+error before the review starts.
 
 The private MCP configuration stays outside the agent checkout. Its temporary
 root must be absolute and resolve outside that checkout, including through
@@ -159,7 +168,9 @@ Strict execution removes the accepted inherited session, coordinator, messaging,
 and tool override variables. Existing native/proxy routing still owns provider
 and authentication variables; unknown names pass through. Managed settings, the
 installed CLI, and its built-in plugins remain trusted. The live adapter
-qualification is separate from deterministic flag and parser tests.
+qualification remains pending. Deterministic flag and parser tests do not prove
+native permission enforcement; the opt-in actual-adapter harness must pass
+before shipping this support.
 
 ## Routing Claude Code to a Proxy
 

@@ -227,9 +227,12 @@ mcp = {}
 ```
 
 An empty MCP map explicitly selects strict execution without MCP access.
-Unsupported adapters and nonempty MCP grants fail before review invocation. If
-any voting member requests strict tools, synthesis uses strict tools with no MCP
-access. Non-voting observers do not change synthesis policy.
+Nonempty grants launch only operator-authorized servers and grant exact tool
+names. See [MCP authority](../configuration.md#strict-review-tool-policies) for
+global server definitions and the operator ceiling. Unsupported adapters fail
+before review invocation. If any voting member requests strict tools, synthesis
+uses strict tools with no MCP access. Non-voting observers do not change
+synthesis policy.
 
 Strict reviews always start fresh sessions, including local and CI calls. See
 [Claude Code review tools](../agents/index.md#strict-reviews) for startup

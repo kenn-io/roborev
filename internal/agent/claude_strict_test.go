@@ -196,7 +196,7 @@ func TestClaudeStrictStreamOrderingAndErrors(t *testing.T) {
 			{"missing-mcp-evidence", strings.ReplaceAll(strictClaudeInit, `,"mcp_servers":[]`, "") + "\n" + strictClaudeResult, false},
 		} {
 			t.Run(fmt.Sprintf("schema=%t/%s", schema, tc.name), func(t *testing.T) {
-				_, err := parseClaudeStrictStream(strings.NewReader(tc.stream), nil, schema)
+				_, err := parseClaudeStrictStream(strings.NewReader(tc.stream), nil, schema, config.ReviewToolPolicy{Mode: "read-only"})
 				if tc.valid {
 					require.NoError(t, err)
 				} else {
@@ -272,7 +272,7 @@ func TestClaudeStrictPolicyClone(t *testing.T) {
 	assert.Equal(t, []string{"lookup"}, clone.strictPolicy.MCP["archive"])
 	assert.Empty(t, clone.SessionID)
 	assert.Equal(t, "old-session", original.SessionID)
-	require.ErrorIs(t, callStrictClaudeReview(t, clone, t.Context(), false, "review"), ErrReviewToolPolicy, "nonempty grants cannot execute yet")
+	assert.Contains(t, clone.CommandLine(), "Read,Glob,Grep,mcp__archive__lookup")
 }
 
 func FuzzClaudeStrictStartupTools(f *testing.F) {
@@ -287,7 +287,7 @@ func FuzzClaudeStrictStartupTools(f *testing.F) {
 		extra = strings.ToValidUTF8(extra, "\ufffd")
 		init, err := json.Marshal(map[string]any{"type": "system", "subtype": "init", "permissionMode": mode, "tools": []string{"Read", "Glob", "Grep", extra}, "mcp_servers": []any{}})
 		require.NoError(t, err)
-		result, err := parseClaudeStrictStream(strings.NewReader(string(init)+"\n"+strictClaudeResult), nil, schema)
+		result, err := parseClaudeStrictStream(strings.NewReader(string(init)+"\n"+strictClaudeResult), nil, schema, config.ReviewToolPolicy{Mode: "read-only"})
 		permitted := extra == "Read" || extra == "Glob" || extra == "Grep" || (schema && extra == "StructuredOutput")
 		if mode == "dontAsk" && permitted {
 			require.NoError(t, err)
@@ -296,5 +296,224 @@ func FuzzClaudeStrictStartupTools(f *testing.F) {
 			require.ErrorIs(t, err, ErrReviewToolPolicy)
 			assert.Empty(t, result)
 		}
+	})
+}
+
+// Removing selected-config composition or accepting a partial/foreign startup
+// must fail here, regardless of a valid-looking final review.
+func TestClaudeStrictMCPStartup(t *testing.T) {
+	const connected = `{"type":"system","subtype":"init","permissionMode":"dontAsk","tools":["Read","Glob","Grep","mcp__archive__lookup","mcp__archive__lookup_extra","mcp__archive__new_tool"],"mcp_servers":[{"name":"archive","status":"connected"}]}`
+	for _, schema := range []bool{false, true} {
+		for _, tc := range []struct {
+			name, init string
+			valid      bool
+		}{
+			{"connected", connected, true},
+			{"missing-grant", strings.ReplaceAll(connected, `"mcp__archive__lookup",`, ""), false},
+			{"unselected-tool", strings.ReplaceAll(connected, `"Grep"`, `"Grep","mcp__other__lookup"`), false},
+			{"prefix-server", strings.ReplaceAll(connected, "mcp__archive__new_tool", "mcp__archive_extra__lookup"), false},
+			{"unselected-server", strings.ReplaceAll(connected, `"mcp_servers":[`, `"mcp_servers":[{"name":"other","status":"connected"},`), false},
+			{"failed", strings.ReplaceAll(connected, `"connected"`, `"failed"`), false},
+			{"late", strings.ReplaceAll(connected, `"connected"`, `"pending"`), false},
+			{"missing-server", strings.ReplaceAll(connected, `[{"name":"archive","status":"connected"}]`, `[]`), false},
+			{"missing-init", "", false},
+			{"builtin", strings.ReplaceAll(connected, `"Grep"`, `"Grep","WebFetch"`), false},
+			{"structured", strings.ReplaceAll(connected, `"Grep"`, `"Grep","StructuredOutput"`), schema},
+		} {
+			t.Run(fmt.Sprintf("schema=%t/%s", schema, tc.name), func(t *testing.T) {
+				mock := mockAgentCLI(t, MockCLIOpts{HelpOutput: strictClaudeHelp, CaptureArgs: true, StdoutLines: []string{tc.init, strictClaudeResult}})
+				operator := filepath.Join(t.TempDir(), "operator.json")
+				require.NoError(t, os.WriteFile(operator, []byte(`{"mcpServers":{"archive":{"command":"synthetic-server","env":{"TOKEN":"synthetic-secret"}},"other":{"command":"never-start"}}}`), 0o600))
+				p := &config.ReviewToolPolicy{Mode: "read-only", MCP: map[string][]string{"archive": {"lookup"}}}
+				repoPath := t.TempDir()
+				a, cleanup, err := PrepareReviewToolPolicy(NewClaudeAgent(mock.CmdPath), p, &config.Config{ReviewMCPConfig: operator, ReviewMCPAllowedTools: []string{"archive/lookup"}}, repoPath, false)
+				require.NoError(t, err)
+				defer cleanup()
+				if schema {
+					_, err = a.(StructuredReviewAgent).ReviewWithSchema(t.Context(), repoPath, "HEAD", "review", jsontext.Value(`{"type":"object"}`), nil)
+				} else {
+					_, err = a.Review(t.Context(), repoPath, "HEAD", "review", nil)
+				}
+				if tc.valid {
+					require.NoError(t, err)
+				} else {
+					require.ErrorIs(t, err, ErrReviewToolPolicy)
+				}
+				args := readMockArgs(t, mock.ArgsFile)
+				assert.Contains(t, args, "Read,Glob,Grep,mcp__archive__lookup")
+				assert.NotContains(t, strings.Join(args, " "), "synthetic-secret")
+				path := a.(*ClaudeAgent).strictMCPConfigPath
+				data, readErr := os.ReadFile(path)
+				require.NoError(t, readErr)
+				assert.NotContains(t, string(data), "never-start")
+				cleanup()
+				_, err = os.Stat(path)
+				require.ErrorIs(t, err, os.ErrNotExist)
+			})
+		}
+	}
+}
+
+func FuzzClaudeStrictMCPNamespaces(f *testing.F) {
+	for _, name := range []string{"mcp__archive__lookup", "mcp__archive__lookup_extra", "mcp__archive_extra__lookup", "mcp__other__lookup", "Bash", "ToolSearch", "mcp__archive__new_tool", ""} {
+		f.Add(name, true, true)
+		f.Add(name, false, true)
+		f.Add(name, true, false)
+	}
+	f.Fuzz(func(t *testing.T, extra string, connected, granted bool) {
+		extra = strings.ToValidUTF8(extra, "\ufffd")
+		tools := []string{"Read", "Glob", "Grep", extra}
+		if granted {
+			tools = append(tools, "mcp__archive__lookup")
+		}
+		status := "pending"
+		if connected {
+			status = "connected"
+		}
+		raw, err := json.Marshal(map[string]any{"type": "system", "subtype": "init", "permissionMode": "dontAsk", "tools": tools, "mcp_servers": []any{map[string]string{"name": "archive", "status": status}}})
+		require.NoError(t, err)
+		// Independent namespace oracle: only the literal selected prefix is
+		// exposed. Exact lookup presence is independent of the extra's prefix.
+		allowed := extra == "Read" || extra == "Glob" || extra == "Grep" || strings.HasPrefix(extra, "mcp__archive__")
+		for _, schema := range []bool{false, true} {
+			result, err := parseClaudeStrictStream(strings.NewReader(string(raw)+"\n"+strictClaudeResult), nil, schema, config.ReviewToolPolicy{Mode: "read-only", MCP: map[string][]string{"archive": {"lookup"}}})
+			if connected && (granted || extra == "mcp__archive__lookup") && (allowed || (schema && extra == "StructuredOutput")) {
+				require.NoError(t, err)
+				assert.JSONEq(t, `{"findings":[]}`, result)
+			} else {
+				require.ErrorIs(t, err, ErrReviewToolPolicy)
+				assert.Empty(t, result)
+			}
+		}
+	})
+}
+
+func TestClaudeStrictMCPAuthorityEachAttempt(t *testing.T) {
+	operator := filepath.Join(t.TempDir(), "operator.json")
+	require.NoError(t, os.WriteFile(operator, []byte(`{"mcpServers":{"archive":{"command":"synthetic-server"}}}`), 0o600))
+	policy := &config.ReviewToolPolicy{Mode: "read-only", MCP: map[string][]string{"archive": {"lookup"}}}
+	cfg := &config.Config{ReviewMCPConfig: operator, ReviewMCPAllowedTools: []string{"archive/lookup"}}
+	a := NewClaudeAgent("unused")
+	prepared, cleanup, err := PrepareReviewToolPolicy(a, policy, cfg, t.TempDir(), false)
+	require.NoError(t, err)
+	path := prepared.(*ClaudeAgent).strictMCPConfigPath
+	cleanup()
+	_, err = os.Stat(path)
+	require.ErrorIs(t, err, os.ErrNotExist)
+
+	// A frozen member/experiment/rerun policy grants no authority of its own.
+	cfg.ReviewMCPAllowedTools = nil
+	_, cleanup, err = PrepareReviewToolPolicy(a, policy, cfg, t.TempDir(), false)
+	require.ErrorIs(t, err, ErrReviewToolPolicy)
+	cleanup()
+
+	// Strict synthesis drops member grants and never needs the operator file.
+	cfg.ReviewMCPConfig = filepath.Join(t.TempDir(), "missing.json")
+	prepared, cleanup, err = PrepareReviewToolPolicy(a, &config.ReviewToolPolicy{Mode: "read-only"}, cfg, t.TempDir(), false)
+	require.NoError(t, err)
+	defer cleanup()
+	data, err := os.ReadFile(prepared.(*ClaudeAgent).strictMCPConfigPath)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"mcpServers":{}}`, string(data))
+}
+
+// Losing checkoutPath when composing selected MCP preparation would write
+// operator secrets into the agent's readable checkout instead of failing.
+func TestClaudeStrictMCPPreparationUsesActualCheckout(t *testing.T) {
+	checkout := t.TempDir()
+	inside := filepath.Join(checkout, "tmp")
+	require.NoError(t, os.Mkdir(inside, 0o700))
+	operator := filepath.Join(t.TempDir(), "operator.json")
+	require.NoError(t, os.WriteFile(operator, []byte(`{"mcpServers":{"archive":{"command":"synthetic-server","env":{"TOKEN":"synthetic-secret"}}}}`), 0o600))
+	cfg := &config.Config{ReviewMCPConfig: operator, ReviewMCPAllowedTools: []string{"archive/lookup"}}
+	policy := &config.ReviewToolPolicy{Mode: "read-only", MCP: map[string][]string{"archive": {"lookup"}}}
+	for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(key, inside)
+	}
+	prepared, cleanup, err := PrepareReviewToolPolicy(NewClaudeAgent("unused"), policy, cfg, checkout, false)
+	t.Cleanup(cleanup)
+	require.ErrorIs(t, err, ErrReviewToolPolicy)
+	assert := assert.New(t)
+	assert.Nil(prepared)
+	assert.NotContains(err.Error(), "synthetic-secret")
+	assert.NotContains(err.Error(), checkout)
+	entries, err := os.ReadDir(inside)
+	require.NoError(t, err)
+	assert.Empty(entries, "rejection must precede private config creation")
+}
+
+// The old grammar encoded archive_/lookup and archive/_lookup identically.
+// Both must be rejected before capability probing or review invocation, and
+// direct parser use must enforce the same policy in both output modes.
+func TestClaudeStrictMCPBoundaryTrigger(t *testing.T) {
+	const initFormat = `{"type":"system","subtype":"init","permissionMode":"dontAsk","tools":["Read","Glob","Grep","mcp__archive___lookup"],"mcp_servers":[{"name":%q,"status":"connected"}]}`
+	for _, pair := range [][2]string{{"archive_", "lookup"}, {"archive", "_lookup"}} {
+		init := fmt.Sprintf(initFormat, pair[0])
+		for _, schema := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/%s/schema=%t", pair[0], pair[1], schema), func(t *testing.T) {
+				policy := config.ReviewToolPolicy{Mode: "read-only", MCP: map[string][]string{pair[0]: {pair[1]}}}
+				mock := mockAgentCLI(t, MockCLIOpts{CaptureArgs: true, StdoutLines: []string{init, strictClaudeResult}})
+				// The helper executes an ETXTBSY readiness probe when creating the fixture.
+				require.NoError(t, os.Remove(mock.ArgsFile))
+				cfg := &config.Config{ReviewMCPConfig: "must-not-read", ReviewMCPAllowedTools: []string{pair[0] + "/" + pair[1]}}
+				a, cleanup, err := PrepareReviewToolPolicy(NewClaudeAgent(mock.CmdPath), &policy, cfg, t.TempDir(), false)
+				t.Cleanup(cleanup)
+				require.ErrorIs(t, err, ErrReviewToolPolicy)
+				require.ErrorContains(t, err, "invalid review MCP")
+				assert.Nil(t, a)
+				// Bypassing preparation must also reject before CLI execution.
+				strict := NewClaudeAgent(mock.CmdPath).WithStrictReview(policy, "must-not-read")
+				if schema {
+					_, err = strict.(StructuredReviewAgent).ReviewWithSchema(t.Context(), t.TempDir(), "HEAD", "review", jsontext.Value(`{"type":"object"}`), nil)
+				} else {
+					_, err = strict.Review(t.Context(), t.TempDir(), "HEAD", "review", nil)
+				}
+				require.ErrorIs(t, err, ErrReviewToolPolicy)
+				require.ErrorContains(t, err, "invalid review MCP")
+				_, err = os.Stat(mock.ArgsFile)
+				require.ErrorIs(t, err, os.ErrNotExist, "no capability probe or review process may start")
+				result, err := parseClaudeStrictStream(strings.NewReader(init+"\n"+strictClaudeResult), nil, schema, policy)
+				require.ErrorIs(t, err, ErrReviewToolPolicy)
+				require.ErrorContains(t, err, "invalid review MCP")
+				assert.Empty(t, result)
+			})
+		}
+	}
+}
+
+// Every accepted logical pair must decode to itself, and two accepted pairs
+// must share a native name iff they are the same pair. The config fuzz target
+// independently checks acceptance, so rejecting valid names cannot hide here.
+func FuzzClaudeStrictMCPNameRoundTrip(f *testing.F) {
+	for _, seed := range [][4]string{
+		{"archive_", "lookup", "archive", "_lookup"},
+		{"archive", "read_source", "archive_extra", "read_source"},
+		{"_archive", "lookup_", "_archive", "lookup_"},
+		{"A-0_b", "READ-2_", "A-0_b", "READ-2"},
+		{"-", "x_y", "-", "xy"},
+	} {
+		f.Add(seed[0], seed[1], seed[2], seed[3])
+	}
+	f.Fuzz(func(t *testing.T, server, tool, otherServer, otherTool string) {
+		var names [2]string
+		pairs := [][2]string{{server, tool}, {otherServer, otherTool}}
+		for i, pair := range pairs {
+			policy, err := config.CanonicalReviewToolPolicy(&config.ReviewToolPolicy{Mode: "read-only", MCP: map[string][]string{pair[0]: {pair[1]}}})
+			if err != nil {
+				return // Rejection-direction grammar oracle lives in config tests.
+			}
+			encoded := nativeReviewToolNames(*policy)
+			require.Len(t, encoded, 1)
+			names[i] = encoded[0]
+			assert.Equal(t, []string{"mcp", pair[0], pair[1]}, strings.Split(encoded[0], "__"))
+			for _, schema := range []bool{false, true} {
+				raw, err := json.Marshal(map[string]any{"type": "system", "subtype": "init", "permissionMode": "dontAsk", "tools": []string{"Read", "Glob", "Grep", encoded[0]}, "mcp_servers": []any{map[string]string{"name": pair[0], "status": "connected"}}})
+				require.NoError(t, err)
+				result, err := parseClaudeStrictStream(strings.NewReader(string(raw)+"\n"+strictClaudeResult), nil, schema, *policy)
+				require.NoError(t, err)
+				assert.JSONEq(t, `{"findings":[]}`, result)
+			}
+		}
+		assert.Equal(t, server == otherServer && tool == otherTool, names[0] == names[1])
 	})
 }

@@ -222,6 +222,11 @@ func (a *ClaudeAgent) buildArgs(permissionBypass, includeEffort bool) []string {
 		// Only explicit agentic calls can use writable tools.
 		return append(args, "--allowedTools", "Edit,MultiEdit,Write,Read,Glob,Grep,Bash")
 	}
+	// Settings may re-enable coordinator mode after environment filtering.
+	// Place the override before variadic tool flags.
+	if !a.Agentic {
+		args = slices.Insert(args, 1, "--settings", `{"env":{"CLAUDE_CODE_COORDINATOR_MODE":""}}`)
+	}
 	// Preapproval alone leaves other tools loaded. Limit built-ins and MCP tools.
 	return append(args, "--allowedTools", "Read,Glob,Grep", "--tools", "Read,Glob,Grep", "--disallowedTools", "mcp__*")
 }
@@ -252,7 +257,9 @@ func (a *ClaudeAgent) buildModelSessionArgs(includeEffort bool) []string {
 }
 
 func (a *ClaudeAgent) buildPlanningArgs(includeEffort bool) []string {
-	args := a.buildArgs(false, includeEffort)
+	planningAgent := *a
+	planningAgent.Agentic = true
+	args := planningAgent.buildArgs(false, includeEffort)
 	// Override any configured default permission mode.
 	return append(args, "--permission-mode", "plan")
 }
@@ -358,7 +365,11 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
-	env, err := buildClaudeEnv(cmd.Environ(), model, baseURL)
+	baseEnv := cmd.Environ()
+	if !a.Agentic && !planningReadOnly(ctx) {
+		baseEnv = filterEnv(baseEnv, "CLAUDE_CODE_COORDINATOR_MODE")
+	}
+	env, err := buildClaudeEnv(baseEnv, model, baseURL)
 	if err != nil {
 		return "", err
 	}
@@ -882,7 +893,11 @@ func (a *ClaudeAgent) ReviewWithSchema(
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
-	env, err := buildClaudeEnv(cmd.Environ(), model, baseURL)
+	baseEnv := cmd.Environ()
+	if !a.Agentic && !planningReadOnly(ctx) {
+		baseEnv = filterEnv(baseEnv, "CLAUDE_CODE_COORDINATOR_MODE")
+	}
+	env, err := buildClaudeEnv(baseEnv, model, baseURL)
 	if err != nil {
 		return nil, err
 	}
