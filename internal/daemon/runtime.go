@@ -634,6 +634,13 @@ func IsDaemonAlive(ep DaemonEndpoint) bool {
 	return alive
 }
 
+// IdentityGone reports whether r's recorded identity proves its process gone or replaced.
+func (r *RuntimeInfo) IdentityGone() bool {
+	rec := r.processRecord()
+	return kitdaemon.RuntimeProcessScope(rec) == kitdaemon.ProcessScopeGone ||
+		kitdaemon.CompareRuntimeProcessIdentity(rec) == kitdaemon.ProcessIdentityMismatch
+}
+
 // hasStaleProcess rejects dead or reused PIDs before sending credentials.
 // An unknown identity is not proof of a mismatch; older records may lack it.
 // Stale reports that the recorded process exited or its PID now belongs to

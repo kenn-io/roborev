@@ -611,7 +611,7 @@ func TestUpdateAfterDeadSandbox(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, runtimes, 1)
 	require.Equal(t, 2, runtimes[0].PID)
-	require.True(t, runtimes[0].Stale())
+	require.True(t, runtimes[0].IdentityGone())
 	if !isPIDAliveForUpdate(runtimes[0].PID) {
 		t.Skip("sandbox PID has no live host process")
 	}
