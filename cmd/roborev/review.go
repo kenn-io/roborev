@@ -550,6 +550,16 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, di
 	if err := agent.ValidateStructuredReviewSelection(reviewType, a); err != nil {
 		return fmt.Errorf("invalid agent: %w", err)
 	}
+	settings, err := config.ResolveReviewSettings(reviewType, nil, repoCfg, cfg)
+	if err != nil {
+		return err
+	}
+	if err := agent.ValidateReviewToolSelection(settings.Tools, a, false); err != nil {
+		return err
+	}
+	if err := agent.ValidateReviewToolBackup(settings.Tools, resolution, a.Name()); err != nil {
+		return err
+	}
 
 	// Use consistent output writer, respecting --quiet
 	out := cmd.OutOrStdout()
@@ -592,7 +602,7 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, di
 
 	_, err = reviewpkg.RunAgentReview(
 		cmd.Context(), a, repoPath, gitRef, reviewPrompt, reviewType,
-		resolvedMinSev, out,
+		resolvedMinSev, settings.Tools, out,
 	)
 	if err != nil {
 		return fmt.Errorf("review failed: %w", err)

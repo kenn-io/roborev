@@ -12,8 +12,31 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 )
+
+func TestRunAgentReviewToolPolicyRejectsUnsupported(t *testing.T) {
+	called := false
+	a := &agent.FakeAgent{NameStr: "unsupported", ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+		called = true
+		return "", nil
+	}}
+	_, err := RunAgentReview(t.Context(), a, t.TempDir(), "HEAD", "prompt", "default", "", &config.ReviewToolPolicy{Mode: "read-only"}, nil)
+	require.ErrorContains(t, err, "does not support strict review tools")
+	assert.False(t, called)
+}
+
+func TestSynthesisToolPolicyRejectsUnsupported(t *testing.T) {
+	called := false
+	a := &agent.FakeAgent{NameStr: "unsupported", ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+		called = true
+		return "", nil
+	}}
+	_, err := RunSynthesisAgent(t.Context(), a, nil, "prompt", "", nil, SynthesisHooks{Tools: &config.ReviewToolPolicy{Mode: "read-only"}})
+	require.ErrorContains(t, err, "does not support strict review tools")
+	assert.False(t, called)
+}
 
 func TestRunAgentReviewKeepsCustomVerdictWithRenderedOutput(t *testing.T) {
 	a := &structuredBatchAgent{
@@ -31,7 +54,7 @@ func TestRunAgentReviewKeepsCustomVerdictWithRenderedOutput(t *testing.T) {
 
 	got, err := RunAgentReview(
 		context.Background(), a, t.TempDir(), "HEAD", "prompt",
-		"custom", "medium", &streamed,
+		"custom", "medium", nil, &streamed,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, got.Structured)
@@ -62,7 +85,7 @@ func TestRunAgentReviewUsesSchemaForBuiltInTypesWhenSupported(t *testing.T) {
 
 	got, err := RunAgentReview(
 		context.Background(), a, t.TempDir(), "HEAD", "prompt",
-		"default", "", nil,
+		"default", "", nil, nil,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, got.Structured)
@@ -77,14 +100,14 @@ func TestRunAgentReviewRequiresJSONWithoutNativeSchema(t *testing.T) {
 	a := &agent.FakeAgent{NameStr: "plain", ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
 		return "No issues found.", nil
 	}}
-	_, err := RunAgentReview(t.Context(), a, t.TempDir(), "HEAD", "prompt", "default", "", nil)
+	_, err := RunAgentReview(t.Context(), a, t.TempDir(), "HEAD", "prompt", "default", "", nil, nil)
 	require.ErrorContains(t, err, "decode structured review")
 }
 
 func TestRunAgentReviewAcceptsJSONWithoutNativeSchema(t *testing.T) {
 	raw := `{"schema_version":2,"summary":"One finding.","verdict":"fail","findings":[{"severity":"low","problem":"Vague name.","fix":"Rename it.","location":null}]}`
 	a := &mockAgent{name: "plain", output: raw}
-	got, err := RunAgentReview(t.Context(), a, t.TempDir(), "HEAD", "prompt", "default", "medium", nil)
+	got, err := RunAgentReview(t.Context(), a, t.TempDir(), "HEAD", "prompt", "default", "medium", nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, got.Structured)
 	assert.JSONEq(t, raw, string(got.StructuredOutput))
@@ -132,7 +155,7 @@ func TestRunAgentReviewTreatsUnableToReviewAsFailure(t *testing.T) {
 
 	_, err := RunAgentReview(
 		context.Background(), a, t.TempDir(), "HEAD", "prompt",
-		"default", "", nil,
+		"default", "", nil, nil,
 	)
 	require.ErrorContains(t, err, "could not review the change")
 	require.ErrorContains(t, err, "truncated before any code appeared")
@@ -151,7 +174,7 @@ func TestRunAgentReviewRendersAgentVerdict(t *testing.T) {
 
 	got, err := RunAgentReview(
 		context.Background(), a, t.TempDir(), "HEAD", "prompt",
-		"default", "", nil,
+		"default", "", nil, nil,
 	)
 	require.NoError(t, err)
 	assert.Equal(t, storage.VerdictPass, got.Verdict)
@@ -165,7 +188,7 @@ func TestRunAgentReviewRejectsOldSchemaFromLiveAgent(t *testing.T) {
 		result: jsontext.Value(`{"schema_version":1,"summary":"Clean.","findings":[]}`),
 	}
 	_, err := RunAgentReview(
-		context.Background(), a, t.TempDir(), "HEAD", "prompt", "default", "", nil,
+		context.Background(), a, t.TempDir(), "HEAD", "prompt", "default", "", nil, nil,
 	)
 	require.ErrorContains(t, err, "schema_version 1, want 2")
 }
@@ -176,7 +199,7 @@ func TestRunAgentReviewRejectsFailWithoutFindings(t *testing.T) {
 		result: jsontext.Value(`{"schema_version":2,"summary":"Bad.","verdict":"fail","findings":[]}`),
 	}
 	_, err := RunAgentReview(
-		context.Background(), a, t.TempDir(), "HEAD", "prompt", "default", "", nil,
+		context.Background(), a, t.TempDir(), "HEAD", "prompt", "default", "", nil, nil,
 	)
 	require.ErrorContains(t, err, "failing verdict without any finding")
 }
@@ -214,7 +237,7 @@ func TestRunAgentReviewRecoversJSONAfterNarration(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			a := plainAgent(narratedReview(tt.narration, document))
 			got, err := RunAgentReview(
-				t.Context(), a, t.TempDir(), "HEAD", "prompt", "default", "", nil,
+				t.Context(), a, t.TempDir(), "HEAD", "prompt", "default", "", nil, nil,
 			)
 			require.NoError(t, err)
 			require.NotNil(t, got.Structured)
@@ -229,7 +252,7 @@ func TestRunAgentReviewValidatesRecoveredDocument(t *testing.T) {
 		"I could not read the diff.",
 		`{"schema_version":2,"summary":"The diff was unreadable.","verdict":"unable_to_review","findings":[]}`,
 	))
-	_, err := RunAgentReview(t.Context(), a, t.TempDir(), "HEAD", "prompt", "default", "", nil)
+	_, err := RunAgentReview(t.Context(), a, t.TempDir(), "HEAD", "prompt", "default", "", nil, nil)
 	require.ErrorContains(t, err, "could not review the change")
 	_, isNoVerdict := errors.AsType[*NoVerdictError](err)
 	assert.False(t, isNoVerdict, "a recovered document is judged by its verdict, not by prose")
@@ -237,7 +260,7 @@ func TestRunAgentReviewValidatesRecoveredDocument(t *testing.T) {
 
 func TestRunAgentReviewClassifiesProseWithoutDocument(t *testing.T) {
 	a := plainAgent("I am unable to read the diff.")
-	_, err := RunAgentReview(t.Context(), a, t.TempDir(), "HEAD", "prompt", "default", "", nil)
+	_, err := RunAgentReview(t.Context(), a, t.TempDir(), "HEAD", "prompt", "default", "", nil, nil)
 	noVerdict, ok := errors.AsType[*NoVerdictError](err)
 	require.True(t, ok, "got %v", err)
 	assert.Equal(t, storage.OutputUnreadableInput, noVerdict.Kind)
@@ -277,4 +300,16 @@ func TestExtractTrailingJSONObject(t *testing.T) {
 			assert.Equal(t, tt.want, extractTrailingJSONObject(tt.raw))
 		})
 	}
+}
+
+func TestBatchReviewToolPolicyRejectsUnsupported(t *testing.T) {
+	a := &structuredBatchAgent{name: "unsupported"}
+	// Built-ins accept a member policy only through a frozen member snapshot;
+	// a custom type owns policy in direct batch execution.
+	cfg := config.DefaultConfig()
+	cfg.Review.Types = map[string]config.ReviewTypeSpec{"citations": {Template: "review.md", Tools: &config.ReviewToolPolicy{Mode: "read-only"}}}
+	result := runSingle(t.Context(), BatchConfig{GlobalConfig: cfg, AgentRegistry: map[string]agent.Agent{a.Name(): a}}, a.Name(), "citations")
+	require.Equal(t, ResultFailed, result.Status)
+	require.Contains(t, result.Error, "does not support strict review tools")
+	require.NotNil(t, result.Tools)
 }

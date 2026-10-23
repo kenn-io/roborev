@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/config"
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/pkg/structuredreview"
@@ -29,6 +30,15 @@ var errSynthesisCanceled = errors.New("synthesis canceled")
 func (wp *WorkerPool) processSynthesisJob(
 	ctx context.Context, workerID string, job *storage.ReviewJob,
 ) {
+	execution, err := decodeReviewExecutionSnapshot(job.PanelMemberConfigJSON)
+	if err != nil {
+		wp.failSynthesisWithoutReviewContext(ctx, workerID, job, err.Error())
+		return
+	}
+	wp.processSynthesisJobWithSnapshot(ctx, workerID, job, execution)
+}
+
+func (wp *WorkerPool) processSynthesisJobWithSnapshot(ctx context.Context, workerID string, job *storage.ReviewJob, execution reviewExecutionSnapshot) {
 	if job.PanelRunUUID == nil {
 		wp.failOrRetryContext(ctx, workerID, job, job.Agent, "synthesis job has no panel run UUID")
 		return
@@ -42,7 +52,21 @@ func (wp *WorkerPool) processSynthesisJob(
 		wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("load panel members: %v", err))
 		return
 	}
+	// Decode every voting member before filtering successful output. Failed
+	// strict voters still constrain the synthesis invocation.
 	results := toReviewResults(rows)
+	for i, row := range rows {
+		snapshot, err := decodeReviewExecutionSnapshot(row.PanelMemberConfigJSON)
+		if err != nil {
+			wp.failSynthesisWithoutReviewContext(ctx, workerID, job, err.Error())
+			return
+		}
+		results[i].Tools = snapshot.Tools
+	}
+	tools := reviewpkg.SynthesisToolPolicy(results)
+	if tools == nil {
+		tools = execution.Tools
+	}
 	for i := range results {
 		results[i] = results[i].ApplyMinSeverity(job.MinSeverity)
 	}
@@ -91,7 +115,7 @@ func (wp *WorkerPool) processSynthesisJob(
 			return
 		}
 		// Two or more succeeded — combine and deduplicate via one agent call.
-		wp.synthesizeSucceededResults(ctx, workerID, job, succeeded, neutral)
+		wp.synthesizeSucceededResults(ctx, workerID, job, succeeded, neutral, execution, tools)
 	}
 }
 
@@ -121,19 +145,23 @@ func (wp *WorkerPool) synthesizeSucceededResults(
 	job *storage.ReviewJob,
 	succeeded []reviewpkg.ReviewResult,
 	neutral bool,
+	execution reviewExecutionSnapshot,
+	tools *config.ReviewToolPolicy,
 ) {
 	// Mirror processJob's quota gate: an agent already in cooldown must fail
 	// over instead of burning another quota-exhausted call. The no-agent
 	// branches skip this check because they never invoke an agent.
 	canonicalAgent := agent.CanonicalName(job.Agent)
 	if wp.isAgentCoolingDown(canonicalAgent) {
-		wp.failCooldownOrFailoverContext(ctx, workerID, job, canonicalAgent,
+		_, isolated := wp.jobForRuntimeReviewConfig(workerID, job, wp.cfgGetter.Config())
+		failoverJob := wp.jobForAgentFailover(workerID, job, isolated)
+		wp.failCooldownOrFailoverContext(ctx, workerID, failoverJob, canonicalAgent,
 			fmt.Sprintf("agent %s quota cooldown active", canonicalAgent))
 		return
 	}
 	prompt := reviewpkg.BuildSynthesisPrompt(succeeded, job.MinSeverity, neutral)
 	doc, resolvedAgent, capturedSession, runErr := wp.runSynthesisAgent(
-		ctx, workerID, job, succeeded, prompt,
+		ctx, workerID, job, succeeded, prompt, execution, tools,
 	)
 	if runErr != nil {
 		// runSynthesisAgent already handled the failure/cancel.
@@ -344,6 +372,7 @@ func (wp *WorkerPool) completeSynthesisLocked(
 func (wp *WorkerPool) runSynthesisAgent(
 	ctx context.Context, workerID string, job *storage.ReviewJob,
 	reviews []reviewpkg.ReviewResult, prompt string,
+	execution reviewExecutionSnapshot, tools *config.ReviewToolPolicy,
 ) (reviewpkg.SynthesisDocument, string, string, error) {
 	if saved, err := wp.db.SaveJobPromptForAttempt(job, workerID, prompt); err != nil {
 		log.Printf("[%s] Error saving synthesis prompt for job %d: %v", workerID, job.ID, err)
@@ -353,7 +382,7 @@ func (wp *WorkerPool) runSynthesisAgent(
 		return reviewpkg.SynthesisDocument{}, "", "", errSynthesisCanceled
 	}
 
-	a, agentName, err := wp.configureSynthesisAgentContext(ctx, workerID, job)
+	a, agentName, err := wp.configureSynthesisAgentWithSnapshot(ctx, workerID, job, execution, tools)
 	if err != nil {
 		return reviewpkg.SynthesisDocument{}, "", "", err
 	}
@@ -391,6 +420,7 @@ func (wp *WorkerPool) runSynthesisAgent(
 
 	cfg := wp.cfgGetter.Config()
 	doc, err := reviewpkg.RunSynthesisAgent(ctx, a, reviews, prompt, job.MinSeverity, agentOutput, reviewpkg.SynthesisHooks{
+		Tools:          tools,
 		ConfigRepoPath: resolveEffectiveRepoPath(workerID, job),
 		GlobalConfig:   cfg,
 		// Mark the agent invoked only once it is about to run, so a checkout
@@ -469,8 +499,21 @@ func (wp *WorkerPool) configureSynthesisAgent(
 func (wp *WorkerPool) configureSynthesisAgentContext(
 	ctx context.Context, workerID string, job *storage.ReviewJob,
 ) (agent.Agent, string, error) {
+	execution, err := decodeReviewExecutionSnapshot(job.PanelMemberConfigJSON)
+	if err != nil {
+		wp.failSynthesisWithoutReviewContext(ctx, workerID, job, err.Error())
+		return nil, "", err
+	}
+	return wp.configureSynthesisAgentWithSnapshot(ctx, workerID, job, execution, execution.Tools)
+}
+
+func (wp *WorkerPool) configureSynthesisAgentWithSnapshot(
+	ctx context.Context, workerID string, job *storage.ReviewJob,
+	execution reviewExecutionSnapshot, tools *config.ReviewToolPolicy,
+) (agent.Agent, string, error) {
 	cfg := wp.cfgGetter.Config()
-	baseAgent, err := resolveConfiguredJobAgent(job, cfg, job.BackupAgent)
+	configJob, _ := wp.jobForRuntimeReviewConfig(workerID, job, cfg)
+	baseAgent, err := resolveConfiguredJobAgentWithSnapshot(configJob, cfg, execution, job.BackupAgent)
 	if err != nil {
 		wp.failOrRetryAgentContext(ctx, workerID, job, job.Agent, fmt.Sprintf("get agent: %v", err))
 		return nil, "", err
@@ -498,6 +541,15 @@ func (wp *WorkerPool) configureSynthesisAgentContext(
 		}
 	}
 
+	if err := agent.ValidateReviewToolSelection(tools, a, job.Agentic); err != nil {
+		wp.failSynthesisWithoutReviewContext(ctx, workerID, job, err.Error())
+		return nil, "", err
+	}
+	resolution := agent.WorkflowConfig{GlobalConfig: cfg, RepoConfig: &config.RepoConfig{ACP: execution.ACP}, BackupAgent: job.BackupAgent}
+	if err := agent.ValidateReviewToolBackup(tools, resolution, a.Name()); err != nil {
+		wp.failSynthesisWithoutReviewContext(ctx, workerID, job, err.Error())
+		return nil, "", err
+	}
 	agentName := a.Name()
 	return a, agentName, nil
 }

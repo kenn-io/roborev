@@ -6,7 +6,10 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -94,6 +97,19 @@ func (a *synthesisEntrypointAgent) Review(
 	return `{"schema_version":2,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","problem":"combined","fix":"fix","location":"file.go:1","sources":[1]}]}`, nil
 }
 func (a *synthesisEntrypointAgent) CommandLine() string { return "synthesis-entrypoint" }
+
+type strictSynthesisEntrypointAgent struct{ *synthesisEntrypointAgent }
+
+func (a *strictSynthesisEntrypointAgent) WithStrictReview(config.ReviewToolPolicy, string) agent.Agent {
+	return a
+}
+
+type namedSynthesisEntrypointAgent struct {
+	*synthesisEntrypointAgent
+	name string
+}
+
+func (a *namedSynthesisEntrypointAgent) Name() string { return a.name }
 
 type structuredSynthesisAgent struct {
 	commonMockAgent
@@ -813,6 +829,237 @@ func TestCustomSynthesisUsesCompleteInputRubrics(t *testing.T) {
 			check.Contains(a.synthPrompt, "### Review 2")
 			check.NotContains(a.synthPrompt, "GitHub PR comment")
 			check.NotContains(a.synthPrompt, "code is clean")
+		})
+	}
+}
+
+func TestSynthesisTrustedConfigAbsence(t *testing.T) {
+	a := &namedSynthesisEntrypointAgent{newSynthesisEntrypointAgent(), "acp.trusted-synthesis"}
+	a.self = a
+	agent.RegisterForTest(t, a)
+	repo := t.TempDir()
+	missingCommand := filepath.Join(t.TempDir(), "unavailable-synthesis")
+	require.NoError(t, os.WriteFile(filepath.Join(repo, ".roborev.toml"),
+		[]byte("[acp.trusted-synthesis]\ncommand = "+strconv.Quote(missingCommand)+"\n"), 0o600))
+	cfg := config.DefaultConfig()
+	// The checkout shadows the registered fake with an unavailable ACP entry.
+	// Authoritative trusted absence must bypass that real filesystem selection.
+	_, err := agent.GetPreferredOrBackupWithConfig(repo, a.Name(), cfg)
+	require.ErrorContains(t, err, "no configured agent available")
+	results := []ReviewResult{{Status: ResultDone, Output: "Review A."}, {Status: ResultDone, Output: "Review B."}}
+	result, err := Synthesize(t.Context(), results, SynthesizeOpts{Agent: a.Name(), RepoPath: repo, RepoConfigRef: "base", GlobalConfig: cfg})
+	require.NoError(t, err)
+	require.True(t, a.reviewCalled)
+	assert.Contains(t, result.Output, "synthesized output")
+}
+
+func TestSynthesisToolPolicyRejectsConfiguredBackup(t *testing.T) {
+	a := &strictSynthesisEntrypointAgent{newSynthesisEntrypointAgent()}
+	a.self = a
+	agent.RegisterForTest(t, a)
+	results := []ReviewResult{{Status: ResultDone, Output: "Review A."}, {Status: ResultDone, Output: "Review B."}}
+	_, err := Synthesize(t.Context(), results, SynthesizeOpts{Agent: a.Name(), BackupAgent: "missing-policy-backup", Tools: &config.ReviewToolPolicy{Mode: "read-only"}})
+	require.ErrorIs(t, err, agent.ErrReviewToolPolicy)
+	require.ErrorContains(t, err, `resolve backup agent "missing-policy-backup"`)
+	require.False(t, a.reviewCalled)
+}
+
+func TestSynthesisToolPolicyUnavailableSelectionIsHardError(t *testing.T) {
+	results := []ReviewResult{{Status: ResultDone, Output: "Review A."}, {Status: ResultDone, Output: "Review B."}}
+	_, err := Synthesize(t.Context(), results, SynthesizeOpts{Agent: "missing-strict-synthesis", Tools: &config.ReviewToolPolicy{Mode: "read-only"}})
+	require.ErrorIs(t, err, agent.ErrReviewToolPolicy)
+}
+
+type modelCheckingSynthesisAgent struct {
+	*namedSynthesisEntrypointAgent
+	model, invokedModel string
+	expectedModel       string
+	err                 error
+	calls               int
+}
+
+func (a *modelCheckingSynthesisAgent) WithModel(model string) agent.Agent {
+	a.model = model
+	return a
+}
+
+func (a *modelCheckingSynthesisAgent) Review(ctx context.Context, repo, ref, prompt string, out io.Writer) (string, error) {
+	a.invokedModel = a.model
+	a.calls++
+	if a.err != nil {
+		return "", a.err
+	}
+	expected := a.expectedModel
+	if expected == "" {
+		expected = "backup-default"
+	}
+	if a.model != expected {
+		return "", errors.New("model is incompatible with synthesis backup")
+	}
+	return a.synthesisEntrypointAgent.Review(ctx, repo, ref, prompt, out)
+}
+
+func TestSynthesisBackupKeepsOwnModel(t *testing.T) {
+	a := &modelCheckingSynthesisAgent{
+		namedSynthesisEntrypointAgent: &namedSynthesisEntrypointAgent{newSynthesisEntrypointAgent(), "synthesis-model-backup"},
+		model:                         "backup-default",
+	}
+	a.self = a
+	agent.RegisterForTest(t, a)
+	cfg := config.DefaultConfig()
+	cfg.CodexCmd = filepath.Join(t.TempDir(), "unavailable-primary")
+	results := []ReviewResult{{Status: ResultDone, Output: "Review A."}, {Status: ResultDone, Output: "Review B."}}
+	result, err := Synthesize(t.Context(), results, SynthesizeOpts{
+		Agent: "codex", Model: "primary-only-model", BackupAgent: a.Name(),
+		GlobalConfig: cfg, RepoConfigRef: "trusted-base",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "backup-default", a.invokedModel)
+	assert.True(t, a.reviewCalled)
+	assert.Contains(t, result.Output, "synthesized output")
+}
+
+func TestSynthesisPreferredAgentReceivesModel(t *testing.T) {
+	a := &modelCheckingSynthesisAgent{
+		namedSynthesisEntrypointAgent: &namedSynthesisEntrypointAgent{newSynthesisEntrypointAgent(), "synthesis-model-primary"},
+		model:                         "adapter-default",
+	}
+	a.self = a
+	agent.RegisterForTest(t, a)
+	results := []ReviewResult{{Status: ResultDone, Output: "Review A."}, {Status: ResultDone, Output: "Review B."}}
+	result, err := Synthesize(t.Context(), results, SynthesizeOpts{
+		Agent: a.Name(), Model: "backup-default", RepoConfigRef: "trusted-base",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "backup-default", a.invokedModel)
+	assert.True(t, a.reviewCalled)
+	assert.Contains(t, result.Output, "synthesized output")
+}
+
+// Removing the backup must not change which available automatic primary runs.
+// Exercise real registry discovery, not the injectable resolver seam.
+func TestSynthesisAutomaticPrimaryBeforeBackup(t *testing.T) {
+	for _, trusted := range []bool{false, true} {
+		t.Run(strconv.FormatBool(trusted), func(t *testing.T) {
+			primary := &modelCheckingSynthesisAgent{
+				namedSynthesisEntrypointAgent: &namedSynthesisEntrypointAgent{newSynthesisEntrypointAgent(), "codex"},
+				model:                         "primary-default", expectedModel: "primary-only-model",
+			}
+			backup := &modelCheckingSynthesisAgent{
+				namedSynthesisEntrypointAgent: &namedSynthesisEntrypointAgent{newSynthesisEntrypointAgent(), "claude-code"},
+				model:                         "backup-default",
+			}
+			primary.self, backup.self = primary, backup
+			for _, a := range []agent.Agent{primary, backup} {
+				original, err := agent.Get(a.Name())
+				require.NoError(t, err)
+				agent.Register(a)
+				t.Cleanup(func() { agent.Register(original) })
+			}
+			opts := SynthesizeOpts{Model: "primary-only-model", BackupAgent: backup.Name(), GlobalConfig: config.DefaultConfig(), RepoPath: t.TempDir()}
+			if trusted {
+				opts.RepoConfigRef = "trusted-base"
+			}
+			results := []ReviewResult{{Status: ResultDone, Output: "Review A."}, {Status: ResultDone, Output: "Review B."}}
+			result, err := Synthesize(t.Context(), results, opts)
+			require.NoError(t, err)
+			check := assert.New(t)
+			check.True(primary.reviewCalled)
+			check.Equal("primary-only-model", primary.invokedModel)
+			check.False(backup.reviewCalled)
+			check.Empty(backup.invokedModel)
+			check.Equal("backup-default", backup.model)
+			check.Contains(result.Output, "synthesized output")
+		})
+	}
+}
+
+// Named ACP backups are available by explicit configuration but are not in
+// ordinary registry discovery. Exercise that real fallback and model pairing.
+func TestSynthesisAutomaticACPBackupKeepsOwnModel(t *testing.T) {
+	t.Setenv("PATH", "")
+	executable, err := os.Executable()
+	require.NoError(t, err)
+	cfg := config.DefaultConfig()
+	_, err = agent.GetAvailableWithConfigFromConfig(nil, "", cfg)
+	require.ErrorContains(t, err, "no agents available")
+	for _, model := range []string{"", "backup-default"} {
+		cfg.ACP = config.ACPAgentConfigs{"backup": {Command: executable, Model: model}}
+		for _, trusted := range []bool{false, true} {
+			t.Run(model+"/trusted="+strconv.FormatBool(trusted), func(t *testing.T) {
+				opts := SynthesizeOpts{Model: "primary-only-model", BackupAgent: "acp.backup", GlobalConfig: cfg, RepoPath: t.TempDir()}
+				if trusted {
+					opts.RepoConfigRef = "trusted-base"
+				}
+				selected, err := resolveSynthesisAgent(opts)
+				require.NoError(t, err)
+				acp, ok := selected.(*agent.ACPAgent)
+				require.True(t, ok)
+				assert.Equal(t, "acp.backup", acp.Name())
+				assert.Equal(t, model, acp.Model)
+			})
+		}
+	}
+}
+
+func TestSynthesisRuntimeBackup(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		failure         error
+		backupFailure   error
+		sameAgent       bool
+		wantCalls       int
+		wantPolicyError bool
+	}{
+		{name: "quota", failure: errors.New("quota exceeded"), wantCalls: 1},
+		{name: "outage", failure: errors.New("503 service unavailable"), wantCalls: 1},
+		{name: "unavailable", failure: agent.MarkUnavailable(errors.New("agent process failed")), wantCalls: 1},
+		{name: "classified", failure: agent.WithLimitClassification(errors.New("provider refused"), agent.LimitClassification{Kind: agent.LimitKindPermanent}), wantCalls: 1},
+		{name: "ordinary failure", failure: errors.New("invalid synthesis response")},
+		{name: "canceled", failure: context.Canceled},
+		{name: "deadline", failure: context.DeadlineExceeded},
+		{name: "policy", failure: errors.Join(agent.ErrReviewToolPolicy, errors.New("quota exceeded")), wantPolicyError: true},
+		{name: "backup also fails", failure: errors.New("quota exceeded"), backupFailure: errors.New("quota exceeded"), wantCalls: 1},
+		{name: "same agent", failure: errors.New("quota exceeded"), sameAgent: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			primary := &modelCheckingSynthesisAgent{
+				namedSynthesisEntrypointAgent: &namedSynthesisEntrypointAgent{newSynthesisEntrypointAgent(), "runtime-primary"},
+				err:                           tc.failure,
+			}
+			backup := &modelCheckingSynthesisAgent{
+				namedSynthesisEntrypointAgent: &namedSynthesisEntrypointAgent{newSynthesisEntrypointAgent(), "runtime-backup"},
+				model:                         "backup-default", err: tc.backupFailure,
+			}
+			primary.self, backup.self = primary, backup
+			agent.RegisterForTest(t, primary)
+			agent.RegisterForTest(t, backup)
+			backupName := backup.Name()
+			if tc.sameAgent {
+				backupName = primary.Name()
+			}
+			results := []ReviewResult{{Status: ResultDone, Output: "Review A."}, {Status: ResultDone, Output: "Review B."}}
+			result, err := Synthesize(t.Context(), results, SynthesizeOpts{
+				Agent: primary.Name(), Model: "primary-only-model", BackupAgent: backupName,
+				RepoConfigRef: "trusted-base", GlobalConfig: config.DefaultConfig(),
+			})
+			assert := assert.New(t)
+			assert.Equal(1, primary.calls)
+			assert.Equal("primary-only-model", primary.invokedModel)
+			assert.Equal(tc.wantCalls, backup.calls)
+			if tc.wantPolicyError {
+				require.ErrorIs(t, err, agent.ErrReviewToolPolicy)
+			} else {
+				require.NoError(t, err)
+			}
+			if tc.wantCalls > 0 {
+				assert.Equal("backup-default", backup.invokedModel)
+				if tc.backupFailure == nil {
+					assert.Contains(result.Output, "synthesized output")
+				} else {
+					assert.Contains(result.Output, "Synthesis unavailable.")
+				}
+			}
 		})
 	}
 }

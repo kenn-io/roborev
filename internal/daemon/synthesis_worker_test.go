@@ -219,7 +219,7 @@ func TestRunSynthesisAgentMarksInvokedOnlyWhenAgentRuns(t *testing.T) {
 		job, err := tc.DB.GetJobByID(synth.ID)
 		require.NoError(t, err)
 
-		_, _, _, runErr := tc.Pool.runSynthesisAgent(context.Background(), testWorkerID, job, nil, "prompt")
+		_, _, _, runErr := tc.Pool.runSynthesisAgent(context.Background(), testWorkerID, job, nil, "prompt", reviewExecutionSnapshot{}, nil)
 		require.Error(t, runErr, "checkout must fail before the agent runs")
 
 		failed, err := tc.DB.GetJobByID(synth.ID)
@@ -250,7 +250,7 @@ func TestRunSynthesisAgentMarksInvokedOnlyWhenAgentRuns(t *testing.T) {
 		job, err := tc.DB.GetJobByID(synth.ID)
 		require.NoError(t, err)
 
-		_, _, _, runErr := tc.Pool.runSynthesisAgent(context.Background(), testWorkerID, job, nil, "prompt")
+		_, _, _, runErr := tc.Pool.runSynthesisAgent(context.Background(), testWorkerID, job, nil, "prompt", reviewExecutionSnapshot{}, nil)
 		require.NoError(t, runErr)
 		assert.True(t, jobAgentInvoked(t, tc, synth.ID),
 			"a synthesis agent that actually runs must be marked agent_invoked")

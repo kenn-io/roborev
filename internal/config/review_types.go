@@ -20,21 +20,28 @@ var (
 // and include paths are resolved when the prompt is built so one global type
 // may refer to files in each repository by relative path.
 type ReviewTypeSpec struct {
-	Template  string            `toml:"template" comment:"Go template containing the custom review rubric."`
-	Includes  map[string]string `toml:"includes" comment:"Named local files exposed to the template through .Includes."`
-	Agent     string            `toml:"agent" comment:"Structured-output agent override for this review type."`
-	Model     string            `toml:"model" comment:"Model override for this review type."`
-	Reasoning string            `toml:"reasoning" comment:"Reasoning level for this review type."`
+	Tools            *ReviewToolPolicy `toml:"tools"`
+	BinaryEvidence   bool              `toml:"binary_evidence"`
+	EvidenceManifest string            `toml:"evidence_manifest"`
+	Template         string            `toml:"template" comment:"Go template containing the custom review rubric."`
+	Includes         map[string]string `toml:"includes" comment:"Named local files exposed to the template through .Includes."`
+	Agent            string            `toml:"agent" comment:"Structured-output agent override for this review type."`
+	Model            string            `toml:"model" comment:"Model override for this review type."`
+	Reasoning        string            `toml:"reasoning" comment:"Reasoning level for this review type."`
 }
 
 func (s ReviewTypeSpec) Clone() ReviewTypeSpec {
 	cloned := s
 	cloned.Includes = maps.Clone(s.Includes)
+	cloned.Tools = s.Tools.Clone()
 	return cloned
 }
 
 func (s ReviewTypeSpec) validate(name string) error {
 	var errs []error
+	if _, err := CanonicalReviewToolPolicy(s.Tools); err != nil {
+		errs = append(errs, fmt.Errorf("review type %q: %w", name, err))
+	}
 	if strings.TrimSpace(s.Template) == "" {
 		errs = append(errs, fmt.Errorf("review type %q has no template", name))
 	}

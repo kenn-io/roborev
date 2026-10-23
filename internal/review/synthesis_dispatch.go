@@ -32,6 +32,7 @@ func (e *SynthesisCheckoutError) Unwrap() error { return e.Err }
 
 // SynthesisHooks lets a caller observe the dispatch without duplicating it.
 type SynthesisHooks struct {
+	Tools *config.ReviewToolPolicy
 	// ConfigRepoPath is the fallback for checkouts that do not provide their
 	// own configuration path.
 	ConfigRepoPath string
@@ -55,6 +56,9 @@ func RunSynthesisAgent(
 	out io.Writer,
 	hooks SynthesisHooks,
 ) (SynthesisDocument, error) {
+	if err := agent.ValidateReviewToolSelection(hooks.Tools, a, false); err != nil {
+		return SynthesisDocument{}, err
+	}
 	invoke := func() {
 		if hooks.BeforeInvoke != nil {
 			hooks.BeforeInvoke()

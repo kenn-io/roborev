@@ -1562,7 +1562,7 @@ template = "default-review.md"
 	assert.Contains(t, stored.Output, "Default-branch review instructions loaded.")
 }
 
-func TestProcessJob_CIPromptFallbackKeepsDefaultRefAfterConfigParseError(t *testing.T) {
+func TestProcessJob_CIRejectsMalformedTrustedConfig(t *testing.T) {
 	t.Parallel()
 	tc := newWorkerTestContext(t, 1)
 	agentName := "ci-custom-review-invalid-config-test"
@@ -1614,11 +1614,12 @@ func TestProcessJob_CIPromptFallbackKeepsDefaultRefAfterConfigParseError(t *test
 
 	tc.Pool.processJob(testWorkerID, claimed)
 
-	tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
-	stored, err := tc.DB.GetReviewByJobID(job.ID)
+	stored, err := tc.DB.GetJobByID(job.ID)
 	require.NoError(t, err)
-	assert.Contains(t, stored.Prompt, "Review the default branch global contract.")
-	assert.Contains(t, stored.Output, "Global review instructions loaded from the default branch.")
+	assert.NotEqual(t, storage.JobStatusDone, stored.Status)
+	_, err = tc.DB.GetReviewByJobID(job.ID)
+	require.Error(t, err)
+	assert.Zero(t, jobAgentInvoked(t, tc, job.ID))
 }
 
 func TestProcessJob_BuildsDirtyPromptFromPersistedDirtyFiles(t *testing.T) {
@@ -2995,7 +2996,7 @@ func TestResolveReviewJobAgentUsesCISnapshottedACPConfig(t *testing.T) {
 	assert.Equal(t, frozenCommand, configuredACP.CommandName())
 }
 
-func TestResolveReviewJobAgentLegacyCIUsesWorkingTreeACPConfig(t *testing.T) {
+func TestResolveReviewJobAgentLegacyCISnapshotDoesNotUseWorkingTreeACPConfig(t *testing.T) {
 	binDir := t.TempDir()
 	liveCommand := filepath.Join(binDir, "live-goose")
 	if runtime.GOOS == "windows" {
@@ -3012,10 +3013,8 @@ func TestResolveReviewJobAgentLegacyCIUsesWorkingTreeACPConfig(t *testing.T) {
 	}
 
 	configured, err := resolveReviewJobAgent(job, config.DefaultConfig())
-	require.NoError(t, err)
-	configuredACP, ok := configured.(*agent.ACPAgent)
-	require.True(t, ok)
-	assert.Equal(t, liveCommand, configuredACP.CommandName())
+	require.Error(t, err)
+	assert.Nil(t, configured)
 }
 
 func TestCIMemberFailoverUsesSnapshottedACPBackup(t *testing.T) {
