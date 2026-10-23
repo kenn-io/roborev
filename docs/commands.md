@@ -1109,10 +1109,10 @@ Use `--server <address>` to select an endpoint explicitly, including a manually
 managed daemon without a runtime record. The CLI probes that endpoint and does
 not start or restart a local daemon on its behalf.
 
-`roborev daemon stop` and a `roborev daemon status` that restarts the daemon over
-a version mismatch refuse a daemon recorded in another PID namespace or whose
-identity can't be judged, and keep its record; stop it from the namespace it
-runs in.
+`roborev daemon stop` and a `roborev daemon status` that restarts the daemon
+over a version mismatch refuse a daemon recorded in another PID namespace or
+whose identity can't be judged, and keep its record; stop it from the namespace
+it runs in.
 
 ```bash
 roborev daemon start             # Start background daemon
