@@ -119,7 +119,7 @@ func TestServerStartWithSandboxSocket(t *testing.T) {
 			assert.Equal(t, int32(1), requests.Load())
 			assert.Zero(t, credentials.Load())
 			if !useTLS {
-				ping, err := probeRuntimeRecordWithAuth(t.Context(), DaemonEndpoint{Network: "unix", Address: address}, config.ClientAuth{})
+				ping, err := probeRuntimeRecordWithAuth(t.Context(), DaemonEndpoint{Network: "unix", Address: address}, config.ClientAuth{}, true)
 				require.NoError(t, err)
 				assert.Equal(t, rec.PID, ping.PID)
 			}
@@ -154,6 +154,35 @@ func TestServerStartForeignProbeUsesSelectedConfig(t *testing.T) {
 	errCh, info := startServerAndWaitForRuntime(t, server)
 	assert.Equal(t, os.Getpid(), info.PID)
 	stopTestServer(t, server, errCh)
+}
+
+func TestServerStartAllowsUnjudgedEndpointReusedByUnauthorizedService(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	testenv.SetDataDir(t)
+	setShortRuntimeDir(t)
+	foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Empty(t, r.Header.Get("Authorization"))
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(foreign.Close)
+	rec := testutil.UnjudgedRuntimeRecord(t, "tcp", foreign.Listener.Addr().String())
+	path, err := runtimeStore().Write(rec)
+	require.NoError(t, err)
+	before, err := os.ReadFile(path)
+	require.NoError(t, err)
+	cfg := config.DefaultConfig()
+	cfg.ServerAddr = "127.0.0.1:0"
+	cfg.AuthKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	db, _ := testutil.OpenTestDBWithDir(t)
+	server := NewServer(db, cfg, "")
+	t.Cleanup(func() { _ = server.Close() })
+
+	errCh, info := startServerAndWaitForRuntime(t, server)
+	assert.Equal(t, os.Getpid(), info.PID)
+	stopTestServer(t, server, errCh)
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
 }
 
 func TestKillDaemonKeepsUnjudgedRuntimeWithoutShutdown(t *testing.T) {

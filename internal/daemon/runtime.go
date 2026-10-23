@@ -388,10 +388,10 @@ func probeRuntimeRecord(ctx context.Context, ep DaemonEndpoint) (*PingInfo, erro
 	if err != nil {
 		return nil, err
 	}
-	return probeRuntimeRecordWithAuth(ctx, ep, clientAuth)
+	return probeRuntimeRecordWithAuth(ctx, ep, clientAuth, false)
 }
 
-func probeRuntimeRecordWithAuth(ctx context.Context, ep DaemonEndpoint, clientAuth config.ClientAuth) (*PingInfo, error) {
+func probeRuntimeRecordWithAuth(ctx context.Context, ep DaemonEndpoint, clientAuth config.ClientAuth, unjudged bool) (*PingInfo, error) {
 	if ep.Address == "" {
 		return nil, fmt.Errorf("empty daemon address")
 	}
@@ -399,7 +399,7 @@ func probeRuntimeRecordWithAuth(ctx context.Context, ep DaemonEndpoint, clientAu
 		return nil, fmt.Errorf("non-loopback daemon address: %s", ep.Address)
 	}
 	client := ep.authClient(time.Second, clientAuth.TLS, func() (string, error) { return clientAuth.Key, nil })
-	return probeDaemonHTTP(ctx, ep, time.Second, client)
+	return probeDaemonHTTP(ctx, ep, time.Second, client, unjudged && clientAuth.Key == "")
 }
 
 // IsDaemonAccessError reports credential, configuration, TLS, and local
@@ -458,7 +458,7 @@ func CheckUnjudgedRuntimes(ctx context.Context) error {
 			return nil, err
 		}
 		auth.Key = ""
-		ping, err := probeRuntimeRecordWithAuth(ctx, ep, auth)
+		ping, err := probeRuntimeRecordWithAuth(ctx, ep, auth, true)
 		if IsDaemonAccessError(err) {
 			denied = info
 		}
@@ -564,7 +564,7 @@ func ProbeDaemon(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error) {
 	if !ep.IsRemote() && !ep.IsUnix() && !isLoopbackAddr(ep.Address) {
 		return nil, fmt.Errorf("non-loopback daemon address: %s", ep.Address)
 	}
-	return probeDaemonHTTP(context.Background(), ep, timeout, ep.HTTPClient(timeout))
+	return probeDaemonHTTP(context.Background(), ep, timeout, ep.HTTPClient(timeout), false)
 }
 
 // ProbeDaemonPing validates a daemon endpoint like ProbeDaemon but decodes

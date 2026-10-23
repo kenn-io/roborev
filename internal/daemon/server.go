@@ -307,7 +307,7 @@ func (s *Server) Start(ctx context.Context) error {
 		if info.Unjudged() {
 			auth.Key = ""
 		}
-		return probeRuntimeRecordWithAuth(ctx, endpoint, auth)
+		return probeRuntimeRecordWithAuth(ctx, endpoint, auth, info.Unjudged())
 	})
 	if IsDaemonAccessError(discoveryErr) {
 		if listener != nil {
@@ -594,7 +594,7 @@ func waitForServerReady(ctx context.Context, ep DaemonEndpoint, timeout time.Dur
 		default:
 		}
 		client := ep.readinessHTTPClient(200*time.Millisecond, startup)
-		if _, err := probeDaemonHTTP(ctx, ep, 200*time.Millisecond, client); err == nil {
+		if _, err := probeDaemonHTTP(ctx, ep, 200*time.Millisecond, client, false); err == nil {
 			return true, false, nil
 		} else {
 			lastErr = err

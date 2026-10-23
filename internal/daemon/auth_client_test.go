@@ -62,6 +62,40 @@ func TestAuthEndpointClientAndProbe(t *testing.T) {
 	assert.ErrorIs(t, err, ErrDaemonAccessDenied)
 }
 
+func TestUnjudgedProbeRecognizesDaemonAuthenticationResponse(t *testing.T) {
+	for _, response := range []struct {
+		name      string
+		challenge string
+		body      string
+		daemon    bool
+	}{
+		{name: "plain 401"},
+		{name: "bearer only", challenge: "Bearer", body: "unauthorized"},
+		{name: "body only", body: `{"error":"daemon authentication required"}`},
+		{name: "other error", challenge: "Bearer", body: `{"error":"authentication required"}`},
+		{name: "daemon", challenge: "Bearer", body: `{"error":"daemon authentication required"}`, daemon: true},
+	} {
+		t.Run(response.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("WWW-Authenticate", response.challenge)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = fmt.Fprint(w, response.body)
+			}))
+			t.Cleanup(server.Close)
+			ep := authEndpoint(t, server.URL)
+			_, err := probeRuntimeRecordWithAuth(t.Context(), ep, config.ClientAuth{}, true)
+			require.Error(t, err)
+			assert.Equal(t, response.daemon, IsDaemonAccessError(err))
+
+			_, err = probeRuntimeRecordWithAuth(t.Context(), ep, config.ClientAuth{Key: strings.Repeat("ab", 32)}, true)
+			require.ErrorIs(t, err, ErrDaemonAccessDenied)
+			_, err = probeRuntimeRecordWithAuth(t.Context(), ep, config.ClientAuth{}, false)
+			require.ErrorIs(t, err, ErrDaemonAccessDenied)
+		})
+	}
+}
+
 func TestAuthClientRefusesOtherOriginsAndRedirects(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	writeAuthClientConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
