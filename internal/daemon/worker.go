@@ -692,7 +692,7 @@ func (wp *WorkerPool) basePromptBuilderForJob(
 		WithStructuredOutput(reviewJobUsesStructuredOutput(job))
 	if !job.IsCIReview() {
 		builder = builder.WithKataClient(
-			kata.NewCLIClient(checkout.resolvedConfigRepoPath()),
+			kata.NewFromConfig(checkout.resolvedConfigRepoPath(), cfg),
 		)
 	}
 	return builder

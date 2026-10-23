@@ -57,6 +57,10 @@ func (s *Server) humaDoctorAgents(
 		if !ok || seen[tool] {
 			continue
 		}
+		if h.Type == "kata" && cfg.Integrations.Kata.Enabled {
+			// The daemon files through the Kata API, so the kata CLI is not needed.
+			continue
+		}
 		seen[tool] = true
 		d := agent.Diagnosis{Name: tool, Command: tool}
 		if path, err := exec.LookPath(tool); err != nil {

@@ -74,6 +74,10 @@ type doctorDaemonAgents struct {
 type doctorDaemon interface {
 	Ping() (*daemon.PingInfo, error)
 	Agents(ctx context.Context, repo string, names []string) (*doctorDaemonAgents, error)
+	// KataStatus asks for the daemon's Kata connection. project is the
+	// repository's binding as this machine sees it; empty means the daemon's
+	// default project.
+	KataStatus(ctx context.Context, project string) (*daemon.KataStatusBody, error)
 	Status(ctx context.Context) (*generated.DaemonStatus, error)
 	Health(ctx context.Context) (*generated.HealthStatus, error)
 	FailedJobs(ctx context.Context, since time.Time) ([]generated.ReviewJob, error)
@@ -301,6 +305,22 @@ func doctorAgentsFromAPI(resp *generated.DoctorAgentsResponse) *doctorDaemonAgen
 		out.Panels = append(out.Panels, panel)
 	}
 	return out
+}
+
+func (d liveDoctorDaemon) KataStatus(ctx context.Context, project string) (*daemon.KataStatusBody, error) {
+	query := &generated.KataStatusQuery{}
+	if project != "" {
+		query.Project = &project
+	}
+	resp, err := d.client().KataStatus(ctx, &generated.KataStatusRequestOptions{Query: query})
+	if err != nil {
+		return nil, daemonRequestError("ask the daemon about its Kata connection", err)
+	}
+	return &daemon.KataStatusBody{
+		Enabled: resp.Enabled, State: resp.State, Project: deref(resp.Project), DefaultProject: deref(resp.DefaultProject),
+		Teammate: deref(resp.Teammate), ServerVersion: deref(resp.ServerVersion), APISchemaVersion: deref(resp.APISchemaVersion),
+		SupportsReplies: resp.SupportsReplies, Message: resp.Message, SecurityNote: deref(resp.SecurityNote),
+	}, nil
 }
 
 func diagnosesFromAPI(in []generated.Diagnosis) []agent.Diagnosis {
