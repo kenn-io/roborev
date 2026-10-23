@@ -531,6 +531,10 @@ func (a *CodexAgent) review(
 	args := runAgent.buildArgsWithSchema(
 		repoPath, agenticMode, autoApprove, sandboxBroken, schemaPath,
 	)
+	tools, useTools := reviewerToolsFrom(ctx)
+	if useTools {
+		args = codexReviewerArgs(args, tools)
+	}
 	command := a.Command
 	var env []string
 	var cancel func() error
@@ -547,6 +551,12 @@ func (a *CodexAgent) review(
 		defer cleanup()
 		command, args, env = wrapped[0], wrapped[1:], wrappedEnv
 		cancel = func() error { cleanup(); return nil }
+	}
+	if useTools {
+		if env == nil {
+			env = os.Environ()
+		}
+		env = append(env, codexReviewerTokenEnv+"="+tools.Token)
 	}
 	stdoutDiagnostics := newCodexDiagnosticCapture()
 
