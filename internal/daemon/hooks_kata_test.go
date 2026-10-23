@@ -4,10 +4,12 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,6 +20,7 @@ import (
 	"go.kenn.io/roborev/internal/kata"
 	"go.kenn.io/roborev/internal/kata/katafake"
 	"go.kenn.io/roborev/internal/kata/katatest"
+	"go.kenn.io/roborev/internal/storage"
 )
 
 func TestKataCreateRequestFailed(t *testing.T) {
@@ -210,4 +213,40 @@ func TestKataHookKeepsTheCLIWhenTheConnectionIsOff(t *testing.T) {
 	hr = newKataHookRunner(t, nil, nil)
 	_, isCLI = hr.newKataClient(t.TempDir()).(*kata.CLIClient)
 	assert.True(t, isCLI, "a runner without a config source behaves as before")
+}
+
+func TestKataCLISyntheticPanelFailure(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	run, members, _ := enqueuePanelRun(t, tc, "failed-panel", []memberSpec{{name: "member", agent: "test"}})
+	failMember(t, tc, members[0].ID)
+	synth := releaseAndClaimSynthesis(t, tc, run)
+	_, events := tc.Broadcaster.Subscribe("")
+	tc.Pool.processJob(testWorkerID, synth)
+	var event Event
+	for len(events) > 0 {
+		next := <-events
+		if next.Type == "review.failed" {
+			event = next
+		}
+	}
+	require.Equal(t, "review.failed", event.Type)
+	require.True(t, event.SuppressHooks)
+	var webhookCalls atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { webhookCalls.Add(1) }))
+	defer server.Close()
+	cfg := config.DefaultConfig()
+	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.failed", Project: "reviews"}, {Type: "webhook", Event: "review.failed", URL: server.URL}}
+	fake := &katatest.FakeClient{CreateResult: kata.CreateResult{ShortID: "new1"}}
+	hr := newKataHookRunner(t, cfg, log.New(io.Discard, "", 0))
+	hr.durableKata = true
+	hr.newKataClient = func(string) kata.Client { return fake }
+	hr.handleEvent(event)
+	hr.wg.Wait()
+	require.Len(t, fake.CreateReqs, 1)
+	assert.Zero(t, webhookCalls.Load())
+	member := eventForJob("review.failed", &storage.ReviewJob{ID: 9, PanelRole: storage.PanelRoleMember}, 9)
+	hr.handleEvent(member)
+	hr.wg.Wait()
+	assert.Len(t, fake.CreateReqs, 1)
+	assert.Equal(t, int64(1), webhookCalls.Load())
 }

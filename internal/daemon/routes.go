@@ -353,6 +353,22 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Errors = []int{http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusBadGateway}
 		})
 
+	huma.Post(api, "/api/kata/publish", s.humaKataPublish,
+		func(o *huma.Operation) {
+			o.OperationID = "kata-publish"
+			o.Summary = "Explicitly capture a job's Kata publication"
+			o.Tags = []string{"kata"}
+			o.Errors = []int{http.StatusForbidden, http.StatusNotFound, http.StatusConflict}
+		})
+
+	huma.Get(api, "/api/kata/publications", s.humaKataPublications,
+		func(o *huma.Operation) {
+			o.OperationID = "kata-publications"
+			o.Summary = "Look up a job's Kata publications by their metadata"
+			o.Tags = []string{"kata"}
+			o.Errors = []int{http.StatusForbidden, http.StatusNotFound}
+		})
+
 	huma.Get(api, "/api/kata/issue", s.humaKataIssue,
 		func(o *huma.Operation) {
 			o.OperationID = "kata-show-issue"

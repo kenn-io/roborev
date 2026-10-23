@@ -76,6 +76,7 @@ type Server struct {
 	syncEnabledAtStart      bool // [sync] needs a restart; reloads leave the worker as started
 	ciPoller                *CIPoller
 	hookRunner              *HookRunner
+	kataPublisher           *kataPublisher
 	errorLog                *ErrorLog
 	activityLog             *ActivityLog
 	releaseNotesClient      *github.Client
@@ -222,6 +223,10 @@ func newServerWithLogs(
 		startTime:          time.Now(),
 		shutdownCh:         make(chan struct{}),
 	}
+	s.kataPublisher = &kataPublisher{db: db, config: configWatcher}
+	hookRunner.durableKata = true
+	db.SetKataHandoffBuilder(s.prepareKataPublication)
+	s.workerPool.prepareKataTransition = s.prepareKataTransition
 	s.updateCoordinator = &updateDrainCoordinator{server: s, now: time.Now}
 	s.workerPool.captureSetupFinished = s.captureSetupFinishedTelemetry
 	s.agentHookState, s.agentHookStateErr = agenthook.LoadState(
@@ -479,6 +484,8 @@ func (s *Server) Start(ctx context.Context) error {
 		return nil
 	}
 	s.browserRuntime = browserRuntime
+	s.kataPublisher.start(ctx)
+	defer s.kataPublisher.stop()
 	s.startPanelSweep(ctx)
 	s.startGoalWatcher(ctx)
 
@@ -794,6 +801,9 @@ func (s *Server) stopOnce0() error {
 		}
 	}
 
+	if s.kataPublisher != nil {
+		s.kataPublisher.stop()
+	}
 	// Stop hook runner
 	if s.hookRunner != nil {
 		s.hookRunner.WaitUntilIdle()

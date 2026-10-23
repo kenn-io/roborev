@@ -311,6 +311,18 @@ type KataListIssuesQuery struct {
 	Unlimited *bool `json:"unlimited,omitempty"`
 }
 
+type KataPublicationsQuery struct {
+	// JobID Job whose saved Kata publications to look up
+	JobID int64 `json:"job_id" validate:"gte=1"`
+
+	// ReviewUUID Only return publications belonging to this immutable review
+	ReviewUUID *string `json:"review_uuid,omitempty"`
+}
+
+func (k KataPublicationsQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(k))
+}
+
 type KataStatusQuery struct {
 	// Repo Repository root on the daemon host whose .kata.local.toml or .kata.toml binding selects the project
 	Repo *string `json:"repo,omitempty"`

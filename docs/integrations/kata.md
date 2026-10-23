@@ -93,8 +93,120 @@ priority = 2
 The hook uses the repo's Kata binding (`.kata.local.toml`, then `.kata.toml`) by
 default; set `project = "myproj"` to override. Every issue receives the
 `roborev` label plus a marker label (`review-failed` or `review-finding`) and
-any extra `labels` you configure. roborev uses an idempotency key per job/event,
-so reruns do not create duplicate issues.
+any extra `labels` you configure. Repeated delivery of the same publication
+reuses its issue. A rerun produces a new review identity and a separate
+publication when the API connection is enabled.
+
+Kata hooks publish only standalone local reviews and synthesis parents. CI
+reviews and panel members are excluded from both completed and failed events. If
+every local panel member fails, the synthesis parent sends one failure
+notification, including when Kata uses the CLI. Other hook types keep their
+existing event behavior.
+
+### Publish individual findings
+
+Enable the API connection below, then opt in on each Kata hook:
+
+```toml
+[[hooks]]
+event = "review.*"
+type = "kata"
+findings = "comments"  # or "summary"
+```
+
+| `findings` | Content sent to Kata |
+|------------|----------------------|
+| Unset | The existing issue body, with no individual finding comments |
+| `comments` | One root comment per structured finding, with its severity, problem, fix, and location |
+| `summary` | Generic issue and finding notices with local inspection commands; no finding text, locations, fixes, or raw failure messages |
+
+Historical prose reviews have no finding selectors and remain issue-only.
+Summary publications use a separate issue from publications containing full
+text. The policy also filters pending metadata and errors; clearing a pending
+field does not remove its contents from Kata's federated metadata history.
+
+The daemon saves each authorized publication with the review's completion. It
+retains the exact payload, policy, destination, and finding selectors across
+restarts and reruns. A worker retries pending publications without another hook
+event. The operation stays pending until the issue, every expected root comment,
+and the issue's metadata ledger have matching receipts.
+
+Completion capture also chooses API or CLI delivery. Changing the connection
+before hook dispatch does not switch that notification's transport. Destination
+lookups run before the worker guards its terminal transition, so an unavailable
+Kata server does not prevent other jobs from starting or being rerun.
+
+Inspect saved publications or explicitly publish an older review:
+
+```bash
+roborev kata show 42
+roborev kata create 42
+roborev kata show 42 --json
+roborev kata show --job 42 --json # force a numeric argument to be a job ID
+```
+
+`create` uses the job's matching Kata hooks and requires an enabled API
+connection. It queues durable work and prints its operation ID and current
+state. `show` reads issue metadata to recover mappings even after a lost
+response. Its JSON output includes each finding's selector, issue reference and
+UID, root comment UID, policy, operation ID, and delivery state, including older
+publications after a rerun. Both commands accept a job ID or git reference,
+trying git references first. Boolean `--job` forces a positive numeric job ID.
+`roborev show` displays roborev review data without querying Kata.
+
+Each failed manual run has its own frozen publication. Automatic retries keep
+the same run identity; manually requeueing the job starts a new one. Explicit
+publication captures the current terminal run without replacing earlier work.
+`create` returns only that run's publications. Earlier publications cannot
+authorize a rerun that has no matching hook. If the review document changes
+during capture, `create` reports a conflict so it can be retried against the
+current document.
+
+Starting the daemon resumes saved operations only. It never publishes older or
+imported reviews because a hook was enabled later. Use `create` to authorize
+that backfill explicitly.
+
+### Destination and unresolved delivery
+
+A publication freezes the effective project selection and full project UID when
+Kata can resolve it. If Kata is offline, a previously validated UID may be
+reused only for the same endpoint and project selection. On the first-ever
+offline publication, no UID is known: the worker resolves the frozen selection
+through a read and saves that UID before any write. It cannot detect project
+reassignment that occurred before that first observation.
+
+If the configured credential file cannot be read during capture, completion
+retains a blocked diagnostic. An unserializable publication, such as agent
+stderr containing invalid UTF-8, also retains a blocked diagnostic while
+preserving the job's original failure locally. Restore the credential file or
+correct the publication input and use `roborev kata create` to authorize
+publication. A publication already captured with a valid credential waits for
+that same credential; it never adopts a replacement key.
+
+Retries refuse a changed endpoint, credential, or project identity. They use
+metadata markers and the frozen request fingerprint to find the original issue,
+including closed issues. After Kata's seven-day replay window, recovery uses
+complete reads; it does not repost a missing or altered comment. Ambiguous
+markers, changed ledgers, unsupported schemas, unavailable writer endpoints,
+closed issues with missing finding comments, and rejected writes retain the
+operation with a pending diagnostic. Existing comments can still establish
+delivery on a closed issue. Roborev never takes a federation claim to bypass a
+rejection.
+
+Replies quoting a finding marker and comments from other teammates do not
+interfere with finding delivery. A recorded root comment must still match its
+original content and attribution.
+
+Publications that exceed Kata's 1 MiB request limit stay pending locally. The
+worker sizes pending and completed metadata, including the guard's previous
+value, before creating an issue. Shared metadata uses a hash of returned
+attribution; local receipts retain the complete author and teammate. The worker
+preserves the complete findings instead of clipping their text.
+
+Publishing and replying are separate operations. This integration publishes root
+finding comments; it does not infer acceptance, refutation, or a fix from a
+commit, passing review, newer review, or closed issue. It does not close reviews
+or issues.
 
 See [Built-in: Kata Integration](/docs/guides/hooks/#built-in-kata-integration)
 in the review hooks guide for hook fields and event patterns.
@@ -123,7 +235,7 @@ teammate = "roborev"                            # default
 | `api_key` | Bearer credential, masked in `roborev config list` and `get`. Prefer `api_key_file` |
 | `api_key_file` | File holding the credential, read by the daemon each time it connects. A leading `~/` is your home directory. Mutually exclusive with `api_key` |
 | `default_project` | Project used when a repo has no binding |
-| `teammate` | Teammate name Kata records on comments roborev posts. Default `roborev`. Letters, digits, `.`, `_`, and `-`, starting with a letter or digit, up to 64 characters. Roborev files issues, which carry no teammate, and does not post comments yet, so nothing uses it today |
+| `teammate` | Teammate name Kata records on comments roborev posts. Default `roborev`. Letters, digits, `.`, `_`, and `-`, starting with a letter or digit, up to 64 characters. Root finding comments use this name; issues carry no teammate |
 
 The section is global-only. A repo's `.roborev.toml` that sets it is rejected,
 because a repo must not choose where credentials are sent. A loopback HTTP

@@ -587,7 +587,7 @@ teammate = "roborev"
 | `api_key` | - | Bearer credential, masked in config output. Mutually exclusive with `api_key_file` |
 | `api_key_file` | - | File holding the credential; a leading `~/` is your home directory |
 | `default_project` | - | Project used when a repo has no `.kata.local.toml` or `.kata.toml` binding |
-| `teammate` | `roborev` | Teammate name Kata records on comments roborev posts; nothing posts comments yet |
+| `teammate` | `roborev` | Teammate name Kata records on root finding comments roborev posts |
 
 The project for a hook is its `project`, then the repo's binding, then
 `default_project`, and it must exist on the server. Every write names `roborev`
@@ -596,6 +596,16 @@ overrides that, so give roborev its own credential. An enabled connection that
 cannot be built fails every Kata call with the reason and never falls back to
 the CLI. `roborev doctor` reports its state. See
 [Connecting the daemon to Kata's API](/docs/integrations/kata/#connecting-the-daemon-to-katas-api).
+
+Kata hooks can set `findings = "comments"` or `findings = "summary"` when this
+connection is enabled. The first posts individual structured findings as root
+comments. The second sends generic notices without finding text, locations,
+fixes, or raw errors. Unset preserves the existing issue body. The daemon saves
+authorized publications durably and retries them across restarts; enabling a
+hook does not publish historical reviews. Use `roborev kata create 42` for
+explicit backfill and `roborev kata show 42` for delivery status. See
+[Publish individual findings](/docs/integrations/kata/#publish-individual-findings)
+for the full policy and destination rules.
 
 ### Workflow-Specific Agent and Model
 

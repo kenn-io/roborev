@@ -2328,6 +2328,24 @@ func (k KataCreateResponse) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(k))
 }
 
+type KataFindingPublication struct {
+	// Comment Validated root comment UID
+	Comment *string `json:"comment,omitempty"`
+
+	// ID Immutable finding selector
+	ID          string  `json:"id" validate:"required"`
+	Issue       *string `json:"issue,omitempty"`
+	IssueUID    *string `json:"issue_uid,omitempty"`
+	LastError   *string `json:"last_error,omitempty"`
+	OperationID string  `json:"operation_id" validate:"required"`
+	Policy      string  `json:"policy" validate:"required"`
+	State       string  `json:"state" validate:"required"`
+}
+
+func (k KataFindingPublication) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(k))
+}
+
 type KataIssue struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema      *string        `json:"$schema,omitempty"`
@@ -2426,6 +2444,75 @@ type KataLinkPeer struct {
 }
 
 func (k KataLinkPeer) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(k))
+}
+
+type KataPublication struct {
+	Findings    []KataFindingPublication `json:"findings" validate:"required"`
+	Issue       *string                  `json:"issue,omitempty"`
+	IssueUID    *string                  `json:"issue_uid,omitempty"`
+	LastError   *string                  `json:"last_error,omitempty"`
+	OperationID string                   `json:"operation_id" validate:"required"`
+	Policy      string                   `json:"policy" validate:"required"`
+	ReviewUUID  *string                  `json:"review_uuid,omitempty"`
+	State       string                   `json:"state" validate:"required"`
+}
+
+func (k KataPublication) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range k.Findings {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Findings[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(k.OperationID, "required"); err != nil {
+		errors = errors.Append("OperationID", err)
+	}
+	if err := typesValidator.Var(k.Policy, "required"); err != nil {
+		errors = errors.Append("Policy", err)
+	}
+	if err := typesValidator.Var(k.State, "required"); err != nil {
+		errors = errors.Append("State", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type KataPublicationsBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema       *string           `json:"$schema,omitempty"`
+	JobID        int64             `json:"job_id"`
+	Publications []KataPublication `json:"publications" validate:"required"`
+}
+
+func (k KataPublicationsBody) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range k.Publications {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Publications[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type KataPublishRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+
+	// JobID Completed or failed job to explicitly publish using its matching Kata hooks
+	JobID int64 `json:"job_id" validate:"gte=1"`
+}
+
+func (k KataPublishRequest) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(k))
 }
 

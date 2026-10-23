@@ -239,7 +239,7 @@ func TestAPIClientListMapsIssuesAndSendsFilters(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, issues, 1)
 	assert.Equal(t, Issue{
-		ShortID: "abc4", QualifiedID: "reviews#abc4", Title: "Title", Body: "Body", Status: "open", Labels: []string{"bug", "p1"},
+		ShortID: "abc4", QualifiedID: "reviews#abc4", UID: "I0000000000000000000000001", ProjectUID: "P0000000000000000000000007", Title: "Title", Body: "Body", Status: "open", Labels: []string{"bug", "p1"}, Metadata: map[string]any{}, Attribution: Attribution{Author: "someone"},
 		Parent:    &LinkPeer{ShortID: "par1", Project: "reviews", QualifiedID: "reviews#par1", Status: "open"},
 		Blocks:    []LinkPeer{{ShortID: "b1", Project: "other", QualifiedID: "other#b1", Status: "open"}},
 		BlockedBy: []LinkPeer{{ShortID: "b2", Project: "reviews", QualifiedID: "reviews#b2", Status: "closed"}},
