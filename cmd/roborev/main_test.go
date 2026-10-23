@@ -966,7 +966,7 @@ func TestRestartDaemonAfterUpdateNoRestart(t *testing.T) {
 	s := stubRestartVars(t)
 
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		return &daemon.RuntimeInfo{PID: os.Getppid(), Address: "127.0.0.1:7373"}, nil
+		return &daemon.RuntimeInfo{PID: 100, Address: "127.0.0.1:7373"}, nil
 	}
 
 	output := captureStdout(t, func() {
@@ -1004,7 +1004,7 @@ func TestRestartDaemonAfterUpdateStopFailureSamePID(t *testing.T) {
 	s := stubRestartVars(t)
 
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		return &daemon.RuntimeInfo{PID: os.Getppid(), Address: "127.0.0.1:7373"}, nil
+		return &daemon.RuntimeInfo{PID: 100, Address: "127.0.0.1:7373"}, nil
 	}
 	stopDaemonForUpdate = func() error {
 		s.stopCalls++
@@ -1016,7 +1016,7 @@ func TestRestartDaemonAfterUpdateStopFailureSamePID(t *testing.T) {
 	})
 
 	assert.Contains(t, output, "warning: failed to stop daemon: cannot stop daemon")
-	assert.Contains(t, output, fmt.Sprintf("warning: daemon pid %d is still running; restart it manually", os.Getppid()))
+	assert.Contains(t, output, "warning: daemon pid 100 is still running; restart it manually")
 	assert.NotContains(t, output, "Restarting daemon... OK")
 	assert.Equal(t, 0, s.startCalls)
 }
@@ -1124,13 +1124,13 @@ func TestInitialPIDsExitedRequiresPIDDeath(t *testing.T) {
 		return nil, nil
 	}
 	isPIDAliveForUpdate = func(pid int) bool {
-		return pid == os.Getpid()
+		return pid == 101
 	}
 
 	ok := initialPIDsExited(
 		map[int]struct{}{
-			math.MaxInt32: {},
-			os.Getpid():   {},
+			100: {},
+			101: {},
 		},
 		0,
 	)
@@ -1144,15 +1144,15 @@ func TestInitialPIDsExitedAllowsManagerPID(t *testing.T) {
 		return nil, nil
 	}
 	isPIDAliveForUpdate = func(pid int) bool {
-		return pid == os.Getpid()
+		return pid == 500
 	}
 
 	ok := initialPIDsExited(
 		map[int]struct{}{
-			math.MaxInt32: {},
-			os.Getpid():   {},
+			100: {},
+			500: {},
 		},
-		os.Getpid(),
+		500,
 	)
 	require.True(t, ok, "expected true when only allowPID remains alive")
 }
