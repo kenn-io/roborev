@@ -47,6 +47,9 @@ const (
 // permissions prevented every usable endpoint from being probed.
 var ErrDaemonAccessDenied = errors.New("daemon access denied")
 
+// ErrUnjudgedRuntime means the caller cannot use the recorded PID as a lifecycle target.
+var ErrUnjudgedRuntime = errors.New("cannot judge daemon PID")
+
 var probeRuntimeEndpoint = probeRuntimeRecord
 
 // RuntimeInfo stores daemon runtime state
@@ -85,6 +88,15 @@ func (r RuntimeInfo) processRecord() kitdaemon.RuntimeRecord {
 	return kitdaemon.RuntimeRecord{PID: r.PID, ProcessIdentity: r.processIdentity, ProcessIdentityV2: r.processIdentityV2}
 }
 
+// Unjudged reports whether the caller cannot judge this runtime's process identity.
+func (r *RuntimeInfo) Unjudged() bool {
+	switch kitdaemon.RuntimeProcessScope(r.processRecord()) {
+	case kitdaemon.ProcessScopeForeign, kitdaemon.ProcessScopeUnknown:
+		return true
+	}
+	return false
+}
+
 // Endpoint returns a DaemonEndpoint for this runtime.
 func (r RuntimeInfo) Endpoint() DaemonEndpoint {
 	ep := daemonEndpointFromKit(kitdaemon.RuntimeRecord{
@@ -94,8 +106,7 @@ func (r RuntimeInfo) Endpoint() DaemonEndpoint {
 		Service: r.Service,
 		Version: r.Version,
 	}.Endpoint())
-	switch kitdaemon.RuntimeProcessScope(r.processRecord()) {
-	case kitdaemon.ProcessScopeForeign, kitdaemon.ProcessScopeUnknown:
+	if r.Unjudged() {
 		ep = ep.asUnjudged()
 	}
 	return ep
@@ -685,8 +696,8 @@ func KillDaemon(info *RuntimeInfo) error {
 		removeRuntimeFile()
 		return nil
 	}
-	if scope := kitdaemon.RuntimeProcessScope(info.processRecord()); scope == kitdaemon.ProcessScopeForeign || scope == kitdaemon.ProcessScopeUnknown {
-		return fmt.Errorf("cannot judge daemon PID %d from this PID namespace; stop it from where it runs", info.PID)
+	if info.Unjudged() {
+		return fmt.Errorf("%w %d from this PID namespace; stop it from where it runs", ErrUnjudgedRuntime, info.PID)
 	}
 	identity := processUnknown
 	if info.PID > 0 {

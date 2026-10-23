@@ -19,8 +19,35 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/update"
 )
+
+func TestUpdateCommandRefusesUnjudgedBeforeInstall(t *testing.T) {
+	info := stubUpdateCommand(t)
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	var prepares, releases, shutdowns atomic.Int32
+	ep := updateTestEndpoint(t, updateDaemonHandler(0, &prepares, &releases, &shutdowns))
+	rec := testutil.UnjudgedRuntimeRecord(ep.Network, ep.Address)
+	_, err := daemon.RuntimeStore().Write(rec)
+	require.NoError(t, err)
+	runtimes, err := daemon.ListAllRuntimes()
+	require.NoError(t, err)
+	require.Len(t, runtimes, 1)
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return runtimes[0], nil }
+	installs := 0
+	performUpdateForCommand = func(context.Context, *update.UpdateInfo, update.Reporter) error {
+		installs++
+		return errors.New("unexpected installation")
+	}
+	var out bytes.Buffer
+	err = runControlledUpdate(t.Context(), strings.NewReader(""), &out, info, t.TempDir(), policyWait, true, false)
+	require.ErrorContains(t, err, "update from there")
+	require.ErrorIs(t, err, daemon.ErrUnjudgedRuntime)
+	assert.Zero(t, prepares.Load())
+	assert.Zero(t, installs)
+	assert.Zero(t, shutdowns.Load())
+}
 
 func stubUpdateCommand(t *testing.T) *update.UpdateInfo {
 	t.Helper()

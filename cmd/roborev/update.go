@@ -714,6 +714,9 @@ func runControlledUpdate(
 func discoverDaemonForUpdate() (*daemon.RuntimeInfo, error) {
 	info, probeErr := getAnyRunningDaemon()
 	if probeErr == nil {
+		if info != nil && info.Unjudged() {
+			return nil, fmt.Errorf("%w %d: runs in another PID namespace; update from there", daemon.ErrUnjudgedRuntime, info.PID)
+		}
 		return info, nil
 	}
 	runtimes, listErr := listAllRuntimes()

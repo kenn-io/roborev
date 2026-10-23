@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -29,8 +30,48 @@ import (
 	"go.kenn.io/roborev/internal/searchindex"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testenv"
+	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/version"
 )
+
+func TestStopDaemonRuntimesSkipsUnjudged(t *testing.T) {
+	for _, local := range []bool{false, true} {
+		t.Run(fmt.Sprint(local), func(t *testing.T) {
+			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+			rec := testutil.UnjudgedRuntimeRecord("tcp", "127.0.0.1:1")
+			path, err := daemon.RuntimeStore().Write(rec)
+			require.NoError(t, err)
+			runtimes, err := daemon.ListAllRuntimes()
+			require.NoError(t, err)
+			require.Len(t, runtimes, 1)
+			localInfo := &daemon.RuntimeInfo{PID: 42}
+			if local {
+				runtimes = append(runtimes, localInfo)
+			}
+			var drained []*daemon.RuntimeInfo
+			var out bytes.Buffer
+			err = stopDaemonRuntimes(func() ([]*daemon.RuntimeInfo, error) {
+				return runtimes, nil
+			}, func(info *daemon.RuntimeInfo) error {
+				if info == localInfo {
+					drained = append(drained, info)
+					return nil
+				}
+				return daemon.KillDaemon(info)
+			}, &out)
+			if local {
+				require.NoError(t, err)
+				assert.Equal(t, []*daemon.RuntimeInfo{localInfo}, drained)
+			} else {
+				require.ErrorContains(t, err, "cannot judge daemon PID")
+				require.ErrorIs(t, err, daemon.ErrUnjudgedRuntime)
+				assert.Empty(t, drained)
+			}
+			assert.FileExists(t, path)
+			assert.Contains(t, out.String(), "Skipping daemon")
+		})
+	}
+}
 
 func TestGetDaemonEndpointAvoidsDefaultDaemonPortInTests(t *testing.T) {
 	exe, err := os.Executable()

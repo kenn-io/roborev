@@ -23,10 +23,45 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/telemetry"
+	"go.kenn.io/roborev/internal/testutil"
 )
+
+func TestCLIActionUnjudgedRuntimeKeepsKeyOffTCP(t *testing.T) {
+	resetCLIUse(t)
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	var credentials atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			credentials.Add(1)
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(server.Close)
+	rec := testutil.UnjudgedRuntimeRecord("tcp", server.Listener.Addr().String())
+	_, err := daemon.RuntimeStore().Write(rec)
+	require.NoError(t, err)
+	runtimes, err := daemon.ListAllRuntimes()
+	require.NoError(t, err)
+	require.Len(t, runtimes, 1)
+	original := getAnyRunningDaemonForStart
+	t.Cleanup(func() { getAnyRunningDaemonForStart = original })
+	var discoveries atomic.Int32
+	getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
+		discoveries.Add(1)
+		return runtimes[0], nil
+	}
+	parsedServerEndpoint = &daemon.DaemonEndpoint{Network: "https", Address: "remote.example.com"}
+	cliOutputIsTerminal = func(io.Writer) bool { return true }
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`), 0o600))
+	reportCLIActionOutput(io.Discard, "review_viewed")
+	drainCLIReports()
+	assert.Equal(t, int32(1), discoveries.Load())
+	assert.Zero(t, credentials.Load())
+}
 
 const cliUseBody = `{"event":"app_opened","properties":{"surface":"cli"}}`
 
