@@ -64,7 +64,7 @@ export, or vice versa.`),
 				return usageErr(cmd, err)
 			}
 			if err := ensureDaemon(); err != nil {
-				return err
+				return fmt.Errorf("daemon not running: %w", err)
 			}
 
 			doc, err := fetchAllExportCIMetrics(getDaemonEndpoint(), opts, limitSet)

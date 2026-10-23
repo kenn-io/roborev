@@ -17,7 +17,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/testutil"
@@ -577,54 +576,4 @@ func TestUpdateReplacementIgnoresUnjudgedRuntimePIDCollision(t *testing.T) {
 	pids, err := runtimePIDSet()
 	require.NoError(t, err)
 	assert.NotContains(t, pids, os.Getpid())
-}
-
-func TestUpdateRemovesDeadLocalRuntime(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
-	const deadPID = 2147483000
-	path, err := daemon.RuntimeStore().Write(kitdaemon.RuntimeRecord{
-		PID: deadPID, Network: "tcp", Address: "127.0.0.1:1",
-	})
-	require.NoError(t, err)
-	require.FileExists(t, path)
-	require.False(t, isPIDAliveForUpdate(deadPID))
-
-	assert.False(t, runtimeHasPID(deadPID))
-	assert.NoFileExists(t, path)
-}
-
-func TestUpdateAfterDeadSandbox(t *testing.T) {
-	if dataDir := os.Getenv("ROBOREV_TEST_UPDATE_PIDNS_DATA"); dataDir != "" {
-		t.Setenv("ROBOREV_DATA_DIR", dataDir)
-		require.NoError(t, daemon.WriteRuntime(daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, nil, "test-version", nil))
-		return
-	}
-
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
-	t.Setenv("ROBOREV_TEST_UPDATE_PIDNS_DATA", os.Getenv("ROBOREV_DATA_DIR"))
-	testutil.RunPIDNamespaceTest(t, nil, "")
-	runtimes, err := daemon.ListAllRuntimes()
-	require.NoError(t, err)
-	require.Len(t, runtimes, 1)
-	require.Equal(t, 2, runtimes[0].PID)
-	require.True(t, runtimes[0].IdentityGone())
-	if !isPIDAliveForUpdate(runtimes[0].PID) {
-		t.Skip("sandbox PID has no live host process")
-	}
-
-	stubUpdateCommand(t)
-	listAllRuntimes = listJudgedRuntimes
-	var out bytes.Buffer
-	cmd := updateCmd()
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"--yes"})
-
-	require.NoError(t, cmd.Execute())
-	assert.Contains(t, out.String(), "Installing   done")
-	assert.Contains(t, out.String(), "Daemon       not running")
 }

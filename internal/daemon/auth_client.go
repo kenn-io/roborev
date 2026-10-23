@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -41,36 +40,23 @@ func (e DaemonEndpoint) WithAccessError(err error) DaemonEndpoint {
 	return e
 }
 
-type probeAuthTransport struct {
-	base            http.RoundTripper
-	keylessUnjudged bool
-}
+type probeAuthTransport struct{ base http.RoundTripper }
 
 func (t probeAuthTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	resp, err := t.base.RoundTrip(r)
-	if err == nil && resp.StatusCode == http.StatusUnauthorized && (!t.keylessUnjudged || isDaemonAuthResponse(resp)) {
+	if err == nil && resp.StatusCode == http.StatusUnauthorized {
 		resp.Body.Close()
 		return nil, fmt.Errorf("%w: check auth_key in the global config", ErrDaemonAccessDenied)
 	}
 	return resp, err
 }
 
-func probeDaemonHTTP(ctx context.Context, ep DaemonEndpoint, timeout time.Duration, client *http.Client, keylessUnjudged bool) (*PingInfo, error) {
+func probeDaemonHTTP(ctx context.Context, ep DaemonEndpoint, timeout time.Duration, client *http.Client) (*PingInfo, error) {
 	clone := *client
-	clone.Transport = probeAuthTransport{base: client.Transport, keylessUnjudged: keylessUnjudged}
+	clone.Transport = probeAuthTransport{base: client.Transport}
 	info, err := kitdaemon.ProbeHTTP(ctx, &clone, ep.BaseURL(), kitdaemon.ProbeOptions{ExpectedService: daemonServiceName, Timeout: timeout})
 	if err != nil {
 		return nil, err
 	}
 	return pingInfoFromKit(info), nil
-}
-
-// isDaemonAuthResponse distinguishes a daemon denial from an unrelated service
-// that reused a retained runtime's endpoint. The probe owns and closes the body.
-func isDaemonAuthResponse(resp *http.Response) bool {
-	if resp.Header.Get("WWW-Authenticate") != "Bearer" {
-		return false
-	}
-	var body ErrorResponse
-	return json.UnmarshalRead(resp.Body, &body) == nil && body.Error == "daemon authentication required"
 }

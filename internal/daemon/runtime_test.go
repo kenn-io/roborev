@@ -24,92 +24,9 @@ import (
 	"github.com/stretchr/testify/require"
 	kitdaemon "go.kenn.io/kit/daemon"
 
-	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/testutil"
 )
-
-func TestCheckUnjudgedRuntimes(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		pid     int
-		denied  bool
-		foreign bool
-		blocked bool
-	}{
-		{name: "unreachable live process", pid: os.Getppid(), blocked: true},
-		{name: "unreachable dead process", pid: math.MaxInt32},
-		{name: "daemon authentication denied", pid: os.Getpid(), denied: true, blocked: true},
-		{name: "plain 401 in foreign namespace", foreign: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			testenv.SetDataDir(t)
-			t.Setenv("HOME", t.TempDir())
-			t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
-			writeAuthClientConfig(t, strings.Repeat("ab", 32))
-			rec := testutil.UnknownRuntimeRecord("tcp", "")
-			rec.PID = tc.pid
-			if tc.foreign {
-				rec = testutil.UnjudgedRuntimeRecord(t, "tcp", "")
-			}
-			if tc.denied || tc.foreign {
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					assert.Empty(t, r.Header.Get("Authorization"))
-					if tc.denied {
-						w.Header().Set("WWW-Authenticate", "Bearer")
-						w.WriteHeader(http.StatusUnauthorized)
-						_, _ = fmt.Fprint(w, `{"error":"daemon authentication required"}`)
-						return
-					}
-					w.WriteHeader(http.StatusUnauthorized)
-				}))
-				t.Cleanup(server.Close)
-				rec.Address = server.Listener.Addr().String()
-			} else {
-				listener, err := net.Listen("tcp", "127.0.0.1:0")
-				require.NoError(t, err)
-				rec.Address = listener.Addr().String()
-				require.NoError(t, listener.Close())
-			}
-			path, err := runtimeStore().Write(rec)
-			require.NoError(t, err)
-			before, err := os.ReadFile(path)
-			require.NoError(t, err)
-
-			err = CheckUnjudgedRuntimes(t.Context())
-			assert := assert.New(t)
-			if tc.blocked {
-				require.ErrorIs(t, err, ErrUnjudgedRuntime)
-			} else {
-				require.NoError(t, err)
-			}
-			if tc.denied {
-				assert.Contains(err.Error(), filepath.Base(path))
-				assert.Contains(err.Error(), fmt.Sprintf("pid %d", rec.PID))
-				assert.Contains(err.Error(), "running in another PID namespace; not managed from here")
-			}
-			after, err := os.ReadFile(path)
-			require.NoError(t, err)
-			assert.Equal(before, after)
-		})
-	}
-}
-
-func TestCheckUnjudgedRuntimesWithoutCandidatesIgnoresBadConfig(t *testing.T) {
-	for _, judged := range []bool{false, true} {
-		t.Run(fmt.Sprintf("judged=%t", judged), func(t *testing.T) {
-			dir := testenv.SetDataDir(t)
-			require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte("invalid = ["), 0o600))
-			if judged {
-				require.NoError(t, WriteRuntime(DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, nil, "test", nil))
-			}
-			_, err := config.LoadGlobal()
-			require.Error(t, err)
-
-			assert.NoError(t, CheckUnjudgedRuntimes(t.Context()))
-		})
-	}
-}
 
 func TestWaitForGracefulDaemonExitHasNoTimeout(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -756,7 +673,7 @@ func TestDiscoverRuntimeRecords(t *testing.T) {
 	denied := &net.OpError{Op: "dial", Net: "tcp", Err: syscall.EPERM}
 
 	t.Run("falls back after primary access denied", func(t *testing.T) {
-		got, err := discoverRuntimeRecords(t.Context(), []*RuntimeInfo{runtimeInfoFromRecord(record)}, (*RuntimeInfo).discoverable, func(_ context.Context, _ *RuntimeInfo, ep DaemonEndpoint) (*PingInfo, error) {
+		got, err := discoverRuntimeRecords(t.Context(), []kitdaemon.RuntimeRecord{record}, func(_ context.Context, ep DaemonEndpoint) (*PingInfo, error) {
 			if ep.Address == defaultTestAddr {
 				return nil, denied
 			}
@@ -769,7 +686,7 @@ func TestDiscoverRuntimeRecords(t *testing.T) {
 	})
 
 	t.Run("preserves access denied after every endpoint fails", func(t *testing.T) {
-		_, err := discoverRuntimeRecords(t.Context(), []*RuntimeInfo{runtimeInfoFromRecord(record)}, (*RuntimeInfo).discoverable, func(context.Context, *RuntimeInfo, DaemonEndpoint) (*PingInfo, error) {
+		_, err := discoverRuntimeRecords(t.Context(), []kitdaemon.RuntimeRecord{record}, func(context.Context, DaemonEndpoint) (*PingInfo, error) {
 			return nil, denied
 		})
 
@@ -778,7 +695,7 @@ func TestDiscoverRuntimeRecords(t *testing.T) {
 	})
 
 	t.Run("ordinary failures mean not found", func(t *testing.T) {
-		_, err := discoverRuntimeRecords(t.Context(), []*RuntimeInfo{runtimeInfoFromRecord(record)}, (*RuntimeInfo).discoverable, func(context.Context, *RuntimeInfo, DaemonEndpoint) (*PingInfo, error) {
+		_, err := discoverRuntimeRecords(t.Context(), []kitdaemon.RuntimeRecord{record}, func(context.Context, DaemonEndpoint) (*PingInfo, error) {
 			return nil, errors.New("connection refused")
 		})
 
@@ -790,7 +707,7 @@ func TestDiscoverRuntimeRecords(t *testing.T) {
 		"mismatched ping PID": record.PID + 1,
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := discoverRuntimeRecords(t.Context(), []*RuntimeInfo{runtimeInfoFromRecord(record)}, (*RuntimeInfo).discoverable, func(context.Context, *RuntimeInfo, DaemonEndpoint) (*PingInfo, error) {
+			_, err := discoverRuntimeRecords(t.Context(), []kitdaemon.RuntimeRecord{record}, func(context.Context, DaemonEndpoint) (*PingInfo, error) {
 				return &PingInfo{OK: true, Service: daemonServiceName, PID: pingPID}, nil
 			})
 

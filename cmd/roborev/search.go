@@ -137,7 +137,7 @@ func boolCount(values ...bool) int {
 
 func runSearch(cmd *cobra.Command, query string, opts searchOpts) error {
 	if err := ensureDaemon(); err != nil {
-		return err
+		return fmt.Errorf("daemon not running: %w", err)
 	}
 
 	endpoint := getDaemonEndpoint()

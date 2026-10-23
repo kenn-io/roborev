@@ -47,9 +47,6 @@ const (
 // permissions prevented every usable endpoint from being probed.
 var ErrDaemonAccessDenied = errors.New("daemon access denied")
 
-// ErrUnjudgedRuntime means the caller cannot use the recorded PID as a lifecycle target.
-var ErrUnjudgedRuntime = errors.New("cannot judge daemon PID")
-
 var probeRuntimeEndpoint = probeRuntimeRecord
 
 // RuntimeInfo stores daemon runtime state
@@ -388,10 +385,10 @@ func probeRuntimeRecord(ctx context.Context, ep DaemonEndpoint) (*PingInfo, erro
 	if err != nil {
 		return nil, err
 	}
-	return probeRuntimeRecordWithAuth(ctx, ep, clientAuth, false)
+	return probeRuntimeRecordWithAuth(ctx, ep, clientAuth)
 }
 
-func probeRuntimeRecordWithAuth(ctx context.Context, ep DaemonEndpoint, clientAuth config.ClientAuth, unjudged bool) (*PingInfo, error) {
+func probeRuntimeRecordWithAuth(ctx context.Context, ep DaemonEndpoint, clientAuth config.ClientAuth) (*PingInfo, error) {
 	if ep.Address == "" {
 		return nil, fmt.Errorf("empty daemon address")
 	}
@@ -399,7 +396,7 @@ func probeRuntimeRecordWithAuth(ctx context.Context, ep DaemonEndpoint, clientAu
 		return nil, fmt.Errorf("non-loopback daemon address: %s", ep.Address)
 	}
 	client := ep.authClient(time.Second, clientAuth.TLS, func() (string, error) { return clientAuth.Key, nil })
-	return probeDaemonHTTP(ctx, ep, time.Second, client, unjudged && clientAuth.Key == "")
+	return probeDaemonHTTP(ctx, ep, time.Second, client)
 }
 
 // IsDaemonAccessError reports credential, configuration, TLS, and local
@@ -430,10 +427,6 @@ func isTLSFailure(err error) bool {
 		errors.As(err, &recordHeader) || errors.As(err, &op) && op.Op == "remote error"
 }
 
-func (r *RuntimeInfo) discoverable() bool {
-	return !r.Unjudged() && !r.hasStaleProcess()
-}
-
 func checkRuntimeProcessForStart(info *RuntimeInfo) error {
 	if kitdaemon.RuntimeRecordBlocksStart(info.processRecord()) {
 		return fmt.Errorf("daemon process still running (pid %d)", info.PID)
@@ -441,61 +434,18 @@ func checkRuntimeProcessForStart(info *RuntimeInfo) error {
 	return nil
 }
 
-// CheckUnjudgedRuntimes refuses replacement while a retained runtime answers,
-// denies access, or has a process that blocks startup. Judged runtimes will be
-// stopped by the replacement operation.
-func CheckUnjudgedRuntimes(ctx context.Context) error {
-	runtimes, err := ListAllRuntimes()
-	if err != nil {
-		return err
-	}
-	var denied *RuntimeInfo
-	info, err := discoverRuntimeRecords(ctx, runtimes, func(info *RuntimeInfo) bool {
-		return info.Unjudged() && !info.hasStaleProcess()
-	}, func(ctx context.Context, info *RuntimeInfo, ep DaemonEndpoint) (*PingInfo, error) {
-		auth, err := loadClientAuth()
-		if err != nil {
-			return nil, err
-		}
-		auth.Key = ""
-		ping, err := probeRuntimeRecordWithAuth(ctx, ep, auth, true)
-		if IsDaemonAccessError(err) {
-			denied = info
-		}
-		return ping, err
-	})
-	if IsDaemonAccessError(err) {
-		info = denied
-	}
-	if info != nil {
-		return fmt.Errorf("%w: status unknown for %s (pid %d): running in another PID namespace; not managed from here", errors.Join(ErrUnjudgedRuntime, err), filepath.Base(info.SourcePath), info.PID)
-	}
-	if errors.Is(err, os.ErrNotExist) {
-		for _, runtime := range runtimes {
-			if runtime.Unjudged() {
-				if err := checkRuntimeProcessForStart(runtime); err != nil {
-					return fmt.Errorf("%w: %w", ErrUnjudgedRuntime, err)
-				}
-			}
-		}
-		return nil
-	}
-	return err
-}
-
 func discoverRuntimeRecords(
 	ctx context.Context,
-	runtimes []*RuntimeInfo,
-	eligible func(*RuntimeInfo) bool,
-	probe func(context.Context, *RuntimeInfo, DaemonEndpoint) (*PingInfo, error),
+	records []kitdaemon.RuntimeRecord,
+	probe func(context.Context, DaemonEndpoint) (*PingInfo, error),
 ) (*RuntimeInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	var deniedErr error
-	for _, runtime := range runtimes {
-		info := *runtime
-		if !eligible(&info) {
+	for _, rec := range records {
+		info := runtimeInfoFromRecord(rec)
+		if info.Unjudged() || info.hasStaleProcess() {
 			continue
 		}
 		primary := info.Endpoint()
@@ -503,18 +453,15 @@ func discoverRuntimeRecords(
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			ping, err := probe(ctx, &info, ep)
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
-			}
-			if err == nil && ping != nil && ping.PID != 0 && ping.PID == info.PID {
+			ping, err := probe(ctx, ep)
+			if err == nil && ping != nil && ping.PID != 0 && ping.PID == rec.PID {
 				info.Network = ep.Network
 				info.Address = ep.Address
 				if ep != primary {
 					info.AlternateNetwork = primary.Network
 					info.AlternateAddress = primary.Address
 				}
-				return &info, nil
+				return info, nil
 			}
 			if IsDaemonAccessError(err) {
 				deniedErr = fmt.Errorf("daemon at %s: %w", ep, err)
@@ -541,13 +488,7 @@ func getAnyRunningDaemonContext(ctx context.Context, probe func(context.Context,
 	if err != nil {
 		return nil, err
 	}
-	runtimes := make([]*RuntimeInfo, 0, len(records))
-	for _, record := range records {
-		runtimes = append(runtimes, runtimeInfoFromRecord(record))
-	}
-	return discoverRuntimeRecords(ctx, runtimes, (*RuntimeInfo).discoverable, func(ctx context.Context, _ *RuntimeInfo, ep DaemonEndpoint) (*PingInfo, error) {
-		return probe(ctx, ep)
-	})
+	return discoverRuntimeRecords(ctx, records, probe)
 }
 
 // GetAnyRunningDaemon returns info about a responsive daemon.
@@ -564,7 +505,7 @@ func ProbeDaemon(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error) {
 	if !ep.IsRemote() && !ep.IsUnix() && !isLoopbackAddr(ep.Address) {
 		return nil, fmt.Errorf("non-loopback daemon address: %s", ep.Address)
 	}
-	return probeDaemonHTTP(context.Background(), ep, timeout, ep.HTTPClient(timeout), false)
+	return probeDaemonHTTP(context.Background(), ep, timeout, ep.HTTPClient(timeout))
 }
 
 // ProbeDaemonPing validates a daemon endpoint like ProbeDaemon but decodes
@@ -632,13 +573,6 @@ func ProbeDaemonAlive(ep DaemonEndpoint) (bool, error) {
 func IsDaemonAlive(ep DaemonEndpoint) bool {
 	alive, _ := ProbeDaemonAlive(ep)
 	return alive
-}
-
-// IdentityGone reports whether r's recorded identity proves its process gone or replaced.
-func (r *RuntimeInfo) IdentityGone() bool {
-	rec := r.processRecord()
-	return kitdaemon.RuntimeProcessScope(rec) == kitdaemon.ProcessScopeGone ||
-		kitdaemon.CompareRuntimeProcessIdentity(rec) == kitdaemon.ProcessIdentityMismatch
 }
 
 // hasStaleProcess rejects dead or reused PIDs before sending credentials.
@@ -752,9 +686,6 @@ func KillDaemon(info *RuntimeInfo) error {
 	if info.hasStaleProcess() {
 		removeRuntimeFile()
 		return nil
-	}
-	if info.Unjudged() {
-		return fmt.Errorf("%w %d from this PID namespace; stop it from where it runs", ErrUnjudgedRuntime, info.PID)
 	}
 	identity := processUnknown
 	if info.PID > 0 {

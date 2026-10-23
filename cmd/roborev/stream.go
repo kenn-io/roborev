@@ -51,7 +51,7 @@ Examples:
 			ctx := cmd.Context()
 			// Ensure daemon is running
 			if err := ensureDaemon(); err != nil {
-				return err
+				return fmt.Errorf("daemon not running: %w", err)
 			}
 
 			// Resolve repo filter if set - use main repo root for worktree compatibility

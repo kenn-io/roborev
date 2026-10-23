@@ -18,7 +18,7 @@ already finished (done, failed, canceled, etc.) cannot.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := ensureDaemon(); err != nil {
-				return err
+				return fmt.Errorf("daemon not running: %w", err)
 			}
 
 			jobID, err := strconv.ParseInt(args[0], 10, 64)

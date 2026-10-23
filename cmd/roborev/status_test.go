@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -174,32 +173,6 @@ func TestDaemonStatusUsesSharedStatusOutput(t *testing.T) {
 
 	assert.Contains(t, output, "Daemon: running")
 	assert.Contains(t, output, "Web UI: https://reviews.example.com\n")
-}
-
-func TestStatusCmdReportsUnjudgedRuntime(t *testing.T) {
-	for _, jsonOutput := range []bool{false, true} {
-		t.Run(fmt.Sprintf("json=%t", jsonOutput), func(t *testing.T) {
-			isolateDaemonSelection(t)
-			originalEnsure := statusEnsureDaemon
-			statusEnsureDaemon = func() error { return daemon.ErrUnjudgedRuntime }
-			t.Cleanup(func() { statusEnsureDaemon = originalEnsure })
-			cmd := statusCmd()
-			if jsonOutput {
-				cmd.SetArgs([]string{"--json"})
-			}
-			output := captureStdout(t, func() { require.NoError(t, cmd.Execute()) })
-			assert := assert.New(t)
-			if jsonOutput {
-				var result statusJSONOutput
-				require.NoError(t, json.Unmarshal([]byte(output), &result))
-				assert.False(result.Running)
-				assert.Equal(daemon.ErrUnjudgedRuntime.Error(), result.Error)
-			} else {
-				assert.Contains(output, "Daemon: unknown")
-				assert.NotContains(output, "roborev daemon start")
-			}
-		})
-	}
 }
 
 func withStatusWebRuntime(t *testing.T, discover func() (*daemon.RuntimeInfo, error)) {

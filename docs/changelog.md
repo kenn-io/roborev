@@ -9,10 +9,8 @@ All notable changes to roborev, grouped by minor release.
 
 **Improvements**
 
-- Start daemons over records left by dead sandboxes, and keep runtime records
-    during discovery when the caller can't judge their process. Refuse startup
-    when a keyless probe of such a record finds a responding daemon or an access
-    error.
+- Start daemons over runtime records left by dead sandboxes.
+- Sandboxed commands keep the host daemon's runtime record.
 
 ## 0.73.0
 

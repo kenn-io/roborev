@@ -26,7 +26,6 @@ import (
 	"github.com/coreos/go-systemd/v22/daemon"
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/go-github/v93/github"
-	"go.kenn.io/kit/atomicfile"
 	gitrepo "go.kenn.io/kit/git/repo"
 	"go.kenn.io/kit/selfupdate"
 
@@ -45,8 +44,6 @@ import (
 	"go.kenn.io/roborev/internal/tokens"
 	"go.kenn.io/roborev/internal/version"
 )
-
-var writeServerRuntime = WriteRuntime
 
 // Server is the HTTP API server for the daemon
 type Server struct {
@@ -73,7 +70,6 @@ type Server struct {
 	browserListener         net.Listener
 	browserRuntime          *BrowserRuntimeInfo
 	browserStopping         bool
-	runtimePublished        bool // protected by browserMu
 	allowWebCompilationStub bool
 	webDevOrigin            string
 	syncWorker              *storage.SyncWorker
@@ -300,14 +296,8 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	// Check if a responsive daemon is still running after cleanup.
-	info, discoveryErr := discoverRuntimeRecords(ctx, runtimes, func(info *RuntimeInfo) bool {
-		return !info.hasStaleProcess()
-	}, func(ctx context.Context, info *RuntimeInfo, endpoint DaemonEndpoint) (*PingInfo, error) {
-		auth := s.startupAuth()
-		if info.Unjudged() {
-			auth.Key = ""
-		}
-		return probeRuntimeRecordWithAuth(ctx, endpoint, auth, info.Unjudged())
+	info, discoveryErr := getAnyRunningDaemonContext(ctx, func(ctx context.Context, endpoint DaemonEndpoint) (*PingInfo, error) {
+		return probeRuntimeRecordWithAuth(ctx, endpoint, s.startupAuth())
 	})
 	if IsDaemonAccessError(discoveryErr) {
 		if listener != nil {
@@ -493,9 +483,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.startGoalWatcher(ctx)
 
 	// Write runtime info only after the HTTP server is accepting requests.
-	err = writeServerRuntime(ep, alternate, version.Version, browserRuntime)
-	s.runtimePublished = err == nil || errors.Is(err, atomicfile.ErrPublished)
-	if err != nil {
+	if err := WriteRuntime(ep, alternate, version.Version, browserRuntime); err != nil {
 		log.Printf("Warning: failed to write runtime info: %v", err)
 	}
 	s.browserMu.Unlock()
@@ -594,7 +582,7 @@ func waitForServerReady(ctx context.Context, ep DaemonEndpoint, timeout time.Dur
 		default:
 		}
 		client := ep.readinessHTTPClient(200*time.Millisecond, startup)
-		if _, err := probeDaemonHTTP(ctx, ep, 200*time.Millisecond, client, false); err == nil {
+		if _, err := probeDaemonHTTP(ctx, ep, 200*time.Millisecond, client); err == nil {
 			return true, false, nil
 		} else {
 			lastErr = err
@@ -738,7 +726,6 @@ func (s *Server) stopOnce0() error {
 	browserListener := s.browserListener
 	remoteServer := s.remoteServer
 	remoteCancel := s.remoteCancel
-	runtimePublished := s.runtimePublished
 	s.browserMu.Unlock()
 	if remoteCancel != nil {
 		remoteCancel()
@@ -846,9 +833,7 @@ func (s *Server) stopOnce0() error {
 	if err := s.clearShutdownDrain(shutdownCleanupCtx); err != nil {
 		cleanupErr = errors.Join(cleanupErr, err)
 	}
-	if runtimePublished {
-		RemoveRuntime()
-	}
+	RemoveRuntime()
 
 	return cleanupErr
 }

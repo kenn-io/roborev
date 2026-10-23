@@ -51,26 +51,6 @@ func unavailableStatus(err error, running bool, web webUIStatus) statusJSONResul
 	}
 }
 
-func writeStatusJSON(result statusJSONResult) error {
-	enc := jsontext.NewEncoder(os.Stdout, jsontext.WithIndent("  "))
-	return json.MarshalEncode(enc, result)
-}
-
-func writeMissingDaemonStatus(message string, jsonOutput bool) error {
-	result := statusJSONResult{Running: false, Error: message}
-	if jsonOutput {
-		return writeStatusJSON(result)
-	}
-	if result.Error != "" {
-		fmt.Printf("Daemon: unknown\n%s\n", result.Error)
-		return nil
-	}
-	fmt.Println("Daemon: not running")
-	fmt.Println()
-	fmt.Println("Start with: roborev daemon start")
-	return nil
-}
-
 func statusCmd() *cobra.Command {
 	var jsonOutput bool
 
@@ -79,9 +59,13 @@ func statusCmd() *cobra.Command {
 		Short: "Show daemon, browser UI, and queue status",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			webStatus := webUIStatus{}
+			writeJSONResult := func(result statusJSONResult) error {
+				enc := jsontext.NewEncoder(os.Stdout, jsontext.WithIndent("  "))
+				return json.MarshalEncode(enc, result)
+			}
 			writeStatusUnavailable := func(result statusJSONResult) error {
 				if jsonOutput {
-					return writeStatusJSON(result)
+					return writeJSONResult(result)
 				}
 				state := "not running"
 				if result.Running {
@@ -98,9 +82,6 @@ func statusCmd() *cobra.Command {
 				if _, managed := errors.AsType[*managedRecoveryError](err); managed || errors.Is(err, errRecoveryLock) {
 					return writeStatusUnavailable(managedRecoveryStatus(err))
 				}
-				if errors.Is(err, daemon.ErrUnjudgedRuntime) {
-					return writeMissingDaemonStatus(err.Error(), jsonOutput)
-				}
 				if errors.Is(err, daemon.ErrClientConfig) {
 					return err
 				}
@@ -110,7 +91,7 @@ func statusCmd() *cobra.Command {
 						err,
 					)
 					if jsonOutput {
-						return writeStatusJSON(statusJSONResult{
+						return writeJSONResult(statusJSONResult{
 							Running:           true,
 							WebURL:            webStatus.url,
 							WebDisabledReason: webStatus.disabledReason,
@@ -122,7 +103,13 @@ func statusCmd() *cobra.Command {
 					fmt.Println(message)
 					return nil
 				}
-				return writeMissingDaemonStatus("", jsonOutput)
+				if jsonOutput {
+					return writeJSONResult(statusJSONResult{Running: false})
+				}
+				fmt.Println("Daemon: not running")
+				fmt.Println()
+				fmt.Println("Start with: roborev daemon start")
+				return nil
 			}
 			webStatus = discoverWebUI(statusDiscover)
 
@@ -170,7 +157,7 @@ func statusCmd() *cobra.Command {
 			}
 
 			if jsonOutput {
-				return writeStatusJSON(statusJSONResult{
+				return writeJSONResult(statusJSONResult{
 					Running:           true,
 					WebURL:            webStatus.url,
 					WebDisabledReason: webStatus.disabledReason,

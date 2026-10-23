@@ -95,7 +95,7 @@ func syncNowCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Check daemon is running
 			if err := ensureDaemon(); err != nil {
-				return err
+				return fmt.Errorf("daemon not running: %w", err)
 			}
 
 			ep := getDaemonEndpoint()

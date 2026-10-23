@@ -350,10 +350,6 @@ func ensureDaemon() error {
 		return nil
 	}
 
-	if err := daemon.CheckUnjudgedRuntimes(context.Background()); err != nil {
-		return err
-	}
-
 	// Legacy pre-kit daemons are invisible to kit discovery because they do
 	// not serve /api/ping, but they can still hold the default port and DB.
 	// Cleanup uses only this data directory's runtime records. Never adopt
@@ -510,14 +506,7 @@ func listJudgedRuntimes() ([]*daemon.RuntimeInfo, error) {
 // stopDaemon stops any running daemons.
 // Returns ErrDaemonNotRunning if no daemon runtime files are found.
 func stopDaemon() error {
-	return stopDaemonRuntimes(daemon.ListAllRuntimes, daemon.KillDaemon, os.Stderr)
-}
-
-func stopJudgedDaemons() error {
-	if err := daemon.CheckUnjudgedRuntimes(context.Background()); err != nil {
-		return err
-	}
-	return stopDaemonRuntimes(listJudgedRuntimes, daemon.KillDaemon, os.Stderr)
+	return stopDaemonRuntimes(listAllRuntimes, daemon.KillDaemon, os.Stderr)
 }
 
 func stopDaemonRuntimes(list func() ([]*daemon.RuntimeInfo, error), drain func(*daemon.RuntimeInfo) error, out io.Writer) error {
@@ -537,9 +526,10 @@ func stopDaemonRuntimes(list func() ([]*daemon.RuntimeInfo, error), drain func(*
 	// Kill all found daemons, track failures
 	var lastErr error
 	for _, info := range runtimes {
-		if !info.Unjudged() {
-			fmt.Fprintln(out, "Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...")
-		}
+		fmt.Fprintln(
+			out,
+			"Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...",
+		)
 		if err := drain(info); err != nil {
 			lastErr = fmt.Errorf("failed to stop daemon (pid %d): %w", info.PID, err)
 			if errors.Is(err, daemon.ErrDaemonAccessDenied) {

@@ -3,11 +3,8 @@
 package daemon
 
 import (
-	"crypto/tls"
 	"encoding/json"
-	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -25,198 +22,96 @@ import (
 	"go.kenn.io/roborev/internal/testutil"
 )
 
-func TestServerStopAfterRefusedStartPreservesForeignRuntime(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	testenv.SetDataDir(t)
+func TestServerStartWithSandboxSocket(t *testing.T) {
+	if dataDir := os.Getenv("ROBOREV_TEST_REUSED_ENDPOINT_DATA"); dataDir == "" {
+		t.Setenv("HOME", t.TempDir())
+		dataDir = testenv.SetDataDir(t)
+		setShortRuntimeDir(t)
+		ready := filepath.Join(dataDir, "replacement-ready")
+		released := filepath.Join(dataDir, "sibling-stopped")
+		t.Setenv("ROBOREV_TEST_REUSED_ENDPOINT_DATA", dataDir)
+		parent := t
+		var rec kitdaemon.RuntimeRecord
+		// Start the replacement namespace before ending the sibling so the
+		// kernel cannot reuse the sibling's namespace inode for the replacement.
+		t.Run("sibling", func(t *testing.T) {
+			rec = testutil.UnjudgedRuntimeRecord(t, "tcp", "127.0.0.1:1")
+			_, err := runtimeStore().Write(rec)
+			require.NoError(t, err)
+			t.Setenv("ROBOREV_TEST_RUNTIME_WRITER", "")
+			testutil.RunPIDNamespaceTest(parent, nil, ready)
+		})
+		if rec.PID == 0 {
+			t.Skip("requires PID namespaces")
+		}
+		require.NoError(t, os.WriteFile(released, nil, 0o600))
+		return
+	} else {
+		t.Setenv("ROBOREV_DATA_DIR", dataDir)
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(config.DataDir(), "replacement-ready"), nil, 0o600))
+	// Wall-clock wait: the parent ends the sibling subprocess before releasing Start.
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(filepath.Join(config.DataDir(), "sibling-stopped"))
+		return err == nil
+	}, 5*time.Second, 10*time.Millisecond)
 	setShortRuntimeDir(t)
-	rec := testutil.UnknownRuntimeRecord("tcp", "")
+	records, err := runtimeStore().List()
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	rec := records[0]
+	require.Equal(t, 2, rec.PID)
+	require.Equal(t, kitdaemon.ProcessScopeForeign, kitdaemon.RuntimeProcessScope(rec))
+
+	// Another daemon in a different data directory now serves the old endpoint
+	// with the same namespace-local PID.
+	var requests atomic.Int32
 	foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(PingInfo{OK: true, Service: "roborev", PID: rec.PID})
+		requests.Add(1)
+		_ = json.NewEncoder(w).Encode(PingInfo{OK: true, Service: "roborev", PID: 2})
 	}))
 	t.Cleanup(foreign.Close)
 	rec.Address = foreign.Listener.Addr().String()
-	path, err := runtimeStore().Write(rec)
+	_, err = (kitdaemon.RuntimeStore{Dir: t.TempDir()}).Write(kitdaemon.RuntimeRecord{PID: 2, Network: "tcp", Address: rec.Address})
 	require.NoError(t, err)
-	before, err := os.ReadFile(path)
-	require.NoError(t, err)
-	db, _ := testutil.OpenTestDBWithDir(t)
-	cfg := config.DefaultConfig()
-	cfg.ServerAddr = "127.0.0.1:0"
-	server := NewServer(db, cfg, "")
-	t.Cleanup(func() { _ = server.Close() })
-	require.Error(t, server.Start(t.Context()))
-	require.NoError(t, server.Stop())
-	after, err := os.ReadFile(path)
-	require.NoError(t, err)
-	assert.Equal(t, before, after)
-}
-
-func TestServerStartWithSandboxSocket(t *testing.T) {
-	for _, useTLS := range []bool{false, true} {
-		t.Run(fmt.Sprintf("tls=%t", useTLS), func(t *testing.T) {
-			t.Setenv("HOME", t.TempDir())
-			testenv.SetDataDir(t)
-			address := filepath.Join(setShortRuntimeDir(t), "daemon.sock")
-			cfg := config.DefaultConfig()
-			cfg.ServerAddr = "unix://" + address
-			cfg.AuthKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-			var rec kitdaemon.RuntimeRecord
-			var requests, credentials atomic.Int32
-			foreign := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				requests.Add(1)
-				assert.Equal(t, "/api/ping", r.URL.Path)
-				if r.Header.Get("Authorization") != "" {
-					credentials.Add(1)
-				}
-				_ = json.NewEncoder(w).Encode(PingInfo{OK: true, Service: "roborev", PID: rec.PID})
-			}))
-			t.Cleanup(foreign.Close)
-			if useTLS {
-				cfg.DaemonTLS = newTestPKI(t)
-				cfg.ServerAddr = "127.0.0.1:0"
-				rec = testutil.UnknownRuntimeRecord("tcp", foreign.Listener.Addr().String())
-				rec.Metadata = map[string]string{runtimeAlternateNetworkKey: "unix", runtimeAlternateAddressKey: address}
-				cert, err := tls.LoadX509KeyPair(cfg.DaemonTLS.CertFile, cfg.DaemonTLS.KeyFile)
-				require.NoError(t, err)
-				foreign.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
-				foreign.StartTLS()
-			} else {
-				rec = testutil.UnjudgedRuntimeRecord(t, "unix", address)
-				listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: address, Net: "unix"})
-				require.NoError(t, err)
-				listener.SetUnlinkOnClose(false)
-				require.NoError(t, foreign.Listener.Close())
-				foreign.Listener = listener
-				foreign.Start()
-			}
-			path, err := runtimeStore().Write(rec)
-			require.NoError(t, err)
-			before, err := os.ReadFile(path)
-			require.NoError(t, err)
-			db, _ := testutil.OpenTestDBWithDir(t)
-			require.NoError(t, config.SaveGlobal(cfg))
-			server := NewServer(db, cfg, "")
-			t.Cleanup(func() { _ = server.Close() })
-			errCh := make(chan error, 1)
-			go func() { errCh <- server.Start(t.Context()) }()
-			returned := false
-			t.Cleanup(func() {
-				if !returned {
-					stopTestServer(t, server, errCh)
-				}
-			})
-			// Wall-clock wait: startup probes the foreign listener.
-			require.Eventually(t, func() bool {
-				select {
-				case err = <-errCh:
-					returned = true
-					return true
-				default:
-					return false
-				}
-			}, 5*time.Second, 10*time.Millisecond)
-			require.EqualError(t, err, fmt.Sprintf("daemon already running (pid %d on %s)", rec.PID, rec.Address))
-			assert.Equal(t, int32(1), requests.Load())
-			assert.Zero(t, credentials.Load())
-			if !useTLS {
-				ping, err := probeRuntimeRecordWithAuth(t.Context(), DaemonEndpoint{Network: "unix", Address: address}, config.ClientAuth{}, true)
-				require.NoError(t, err)
-				assert.Equal(t, rec.PID, ping.PID)
-			}
-			after, err := os.ReadFile(path)
-			require.NoError(t, err)
-			assert.Equal(t, before, after)
-		})
-	}
-}
-
-func TestServerStartForeignProbeUsesSelectedConfig(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	testenv.SetDataDir(t)
-	setShortRuntimeDir(t)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	address := listener.Addr().String()
-	require.NoError(t, listener.Close())
-	rec := testutil.UnjudgedRuntimeRecord(t, "tcp", address)
 	_, err = runtimeStore().Write(rec)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte("auth_key = 'invalid'\n"), 0o600))
+
+	db, _ := testutil.OpenTestDBWithDir(t)
 	cfg := config.DefaultConfig()
 	cfg.ServerAddr = "127.0.0.1:0"
-	customPath := filepath.Join(t.TempDir(), "custom.toml")
-	require.NoError(t, config.SaveGlobalTo(customPath, cfg))
-	cfg, err = config.LoadGlobalFrom(customPath)
-	require.NoError(t, err)
-	db, _ := testutil.OpenTestDBWithDir(t)
 	server := NewServer(db, cfg, "")
 	t.Cleanup(func() { _ = server.Close() })
 	errCh, info := startServerAndWaitForRuntime(t, server)
 	assert.Equal(t, os.Getpid(), info.PID)
 	stopTestServer(t, server, errCh)
+	assert.Zero(t, requests.Load())
 }
 
-func TestServerStartAllowsUnjudgedEndpointReusedByUnauthorizedService(t *testing.T) {
+func TestServerStartAfterSandboxSocketStopsResponding(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	testenv.SetDataDir(t)
-	setShortRuntimeDir(t)
-	foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Empty(t, r.Header.Get("Authorization"))
-		w.WriteHeader(http.StatusUnauthorized)
-	}))
-	t.Cleanup(foreign.Close)
-	rec := testutil.UnjudgedRuntimeRecord(t, "tcp", foreign.Listener.Addr().String())
-	path, err := runtimeStore().Write(rec)
+	address := filepath.Join(setShortRuntimeDir(t), "daemon.sock")
+	var rec kitdaemon.RuntimeRecord
+	// End the sandbox before trying to start its replacement.
+	t.Run("sandbox", func(t *testing.T) {
+		rec = testutil.UnjudgedRuntimeRecord(t, "unix", address)
+	})
+	if rec.PID == 0 {
+		t.Skip("requires PID namespaces")
+	}
+	_, err := runtimeStore().Write(rec)
 	require.NoError(t, err)
-	before, err := os.ReadFile(path)
-	require.NoError(t, err)
+	db, _ := testutil.OpenTestDBWithDir(t)
 	cfg := config.DefaultConfig()
-	cfg.ServerAddr = "127.0.0.1:0"
+	cfg.ServerAddr = "unix://" + address
 	cfg.AuthKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	db, _ := testutil.OpenTestDBWithDir(t)
+	require.NoError(t, config.SaveGlobal(cfg))
 	server := NewServer(db, cfg, "")
 	t.Cleanup(func() { _ = server.Close() })
-
 	errCh, info := startServerAndWaitForRuntime(t, server)
-	assert.Equal(t, os.Getpid(), info.PID)
+	assert.Equal(t, address, info.Address)
 	stopTestServer(t, server, errCh)
-	after, err := os.ReadFile(path)
-	require.NoError(t, err)
-	assert.Equal(t, before, after)
-}
-
-func TestKillDaemonKeepsUnjudgedRuntimeWithoutShutdown(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	testenv.SetDataDir(t)
-	rec := testutil.UnknownRuntimeRecord("tcp", "")
-	var shutdownRequests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/ping":
-			_, _ = fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, rec.PID)
-		case "/api/shutdown":
-			shutdownRequests.Add(1)
-			w.WriteHeader(http.StatusBadRequest)
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	t.Cleanup(server.Close)
-	rec.Address = server.Listener.Addr().String()
-	path, err := runtimeStore().Write(rec)
-	require.NoError(t, err)
-	rec.SourcePath = path
-	info := runtimeInfoFromRecord(rec)
-	before, err := os.ReadFile(info.SourcePath)
-	require.NoError(t, err)
-
-	err = KillDaemon(info)
-	assert := assert.New(t)
-	require.EqualError(t, err, fmt.Sprintf("cannot judge daemon PID %d from this PID namespace; stop it from where it runs", info.PID))
-	assert.Equal(int32(0), shutdownRequests.Load())
-	after, err := os.ReadFile(info.SourcePath)
-	require.NoError(t, err)
-	assert.Equal(before, after)
 }
 
 func TestDiscoverySkipsLiveSandboxDaemon(t *testing.T) {
@@ -297,4 +192,28 @@ func TestServerStartAfterShellLaunchedSandbox(t *testing.T) {
 	t.Setenv("ROBOREV_TEST_PIDNS_PHASE", "start")
 	// The trailing command keeps the shell at PID 2 while the daemon runs at PID 3.
 	testutil.RunPIDNamespaceTest(t, []string{"sh", "-c", `"$@"; result=$?; exit "$result"`, "sh"}, "")
+}
+
+func TestSandboxDiscoveryKeepsHostRuntime(t *testing.T) {
+	if dataDir := os.Getenv("ROBOREV_TEST_HOST_RUNTIME_DATA"); dataDir != "" {
+		t.Setenv("ROBOREV_DATA_DIR", dataDir)
+		info, err := GetAnyRunningDaemon()
+		require.ErrorIs(t, err, os.ErrNotExist)
+		assert.Nil(t, info)
+		assert.Zero(t, CleanupZombieDaemons(DaemonEndpoint{}))
+		return
+	}
+
+	t.Setenv("HOME", t.TempDir())
+	dataDir := testenv.SetDataDir(t)
+	setShortRuntimeDir(t)
+	require.NoError(t, WriteRuntime(DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, nil, "test", nil))
+	path := RuntimePath()
+	before, err := os.ReadFile(path)
+	require.NoError(t, err)
+	t.Setenv("ROBOREV_TEST_HOST_RUNTIME_DATA", dataDir)
+	testutil.RunPIDNamespaceTest(t, nil, "")
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
 }

@@ -19,36 +19,8 @@ import (
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/testenv"
-	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/version"
 )
-
-func TestEnsureDaemonDoesNotSpawnWithRespondingUnjudgedRuntime(t *testing.T) {
-	isolateDaemonSelection(t)
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
-	cfg := config.DefaultConfig()
-	cfg.AuthKey = strings.Repeat("ab", 32)
-	require.NoError(t, config.SaveGlobal(cfg))
-	rec := testutil.UnknownRuntimeRecord("tcp", "")
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Empty(t, r.Header.Get("Authorization"))
-		fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, rec.PID)
-	}))
-	t.Cleanup(server.Close)
-	rec.Address = server.Listener.Addr().String()
-	_, err := daemon.RuntimeStore().Write(rec)
-	require.NoError(t, err)
-	starts := 0
-	startDaemonForEnsure = func() error { starts++; return nil }
-
-	cmd := listCmd()
-	err = cmd.RunE(cmd, nil)
-	require.ErrorIs(t, err, daemon.ErrUnjudgedRuntime)
-	assert.Contains(t, err.Error(), "running in another PID namespace; not managed from here")
-	assert.NotContains(t, err.Error(), "not running")
-	assert.Zero(t, starts)
-}
 
 func isolateDaemonSelection(t *testing.T) {
 	t.Helper()

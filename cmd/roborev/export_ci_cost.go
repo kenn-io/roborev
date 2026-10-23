@@ -56,7 +56,7 @@ Legacy cursors cannot be resumed against a regular export, or vice versa.`),
 				return usageErr(cmd, err)
 			}
 			if err := ensureDaemon(); err != nil {
-				return err
+				return fmt.Errorf("daemon not running: %w", err)
 			}
 
 			doc, err := fetchAllExportCICosts(getDaemonEndpoint(), opts, limitSet)

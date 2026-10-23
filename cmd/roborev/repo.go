@@ -547,7 +547,7 @@ Examples:
 
 func repoAPIClient() (*roborevclient.Client, error) {
 	if err := ensureDaemon(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("daemon not running: %w", err)
 	}
 	return getDaemonEndpoint().APIClient(0), nil
 }
