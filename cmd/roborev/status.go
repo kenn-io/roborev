@@ -8,7 +8,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"text/tabwriter"
 	"time"
 
@@ -22,7 +21,7 @@ import (
 )
 
 var (
-	statusEnsureDaemon = ensureStatusDaemon
+	statusEnsureDaemon = ensureDaemon
 	statusDiscover     = uiRuntimeInfo
 )
 
@@ -50,43 +49,6 @@ func unavailableStatus(err error, running bool, web webUIStatus) statusJSONResul
 		WebDisabledReason: web.disabledReason,
 		Error:             err.Error(),
 	}
-}
-
-func ensureStatusDaemon() error {
-	if serverAddr == "" {
-		_, err := getAnyRunningDaemon()
-		if errors.Is(err, os.ErrNotExist) {
-			runtimes, err := daemon.ListAllRuntimes()
-			if err != nil {
-				return err
-			}
-			for _, info := range runtimes {
-				if info.Unjudged() && !info.Stale() {
-					return fmt.Errorf("%w: status unknown for %s (pid %d), recorded from another PID namespace or its identity can't be judged here", daemon.ErrUnjudgedRuntime, filepath.Base(info.SourcePath), info.PID)
-				}
-			}
-		}
-	}
-	return ensureDaemon()
-}
-
-func writeMissingDaemonStatus(err error, jsonOutput bool) error {
-	result := statusJSONResult{Running: false}
-	if errors.Is(err, daemon.ErrUnjudgedRuntime) {
-		result.Error = err.Error()
-	}
-	if jsonOutput {
-		enc := jsontext.NewEncoder(os.Stdout, jsontext.WithIndent("  "))
-		return json.MarshalEncode(enc, result)
-	}
-	if result.Error != "" {
-		fmt.Printf("Daemon: unknown\n%s\n", result.Error)
-		return nil
-	}
-	fmt.Println("Daemon: not running")
-	fmt.Println()
-	fmt.Println("Start with: roborev daemon start")
-	return nil
 }
 
 func statusCmd() *cobra.Command {
@@ -141,7 +103,13 @@ func statusCmd() *cobra.Command {
 					fmt.Println(message)
 					return nil
 				}
-				return writeMissingDaemonStatus(err, jsonOutput)
+				if jsonOutput {
+					return writeJSONResult(statusJSONResult{Running: false})
+				}
+				fmt.Println("Daemon: not running")
+				fmt.Println()
+				fmt.Println("Start with: roborev daemon start")
+				return nil
 			}
 			webStatus = discoverWebUI(statusDiscover)
 

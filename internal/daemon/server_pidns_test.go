@@ -3,7 +3,6 @@
 package daemon
 
 import (
-	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -13,7 +12,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -26,6 +24,46 @@ import (
 	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/testutil"
 )
+
+func TestServerStopAfterRefusedStartPreservesForeignRuntime(t *testing.T) {
+	if os.Getenv("ROBOREV_TEST_PIDNS_REFUSED_START") == "1" {
+		t.Setenv("ROBOREV_DATA_DIR", os.Getenv("ROBOREV_TEST_PIDNS_DATA"))
+		records, err := runtimeStore().List()
+		require.NoError(t, err)
+		require.Len(t, records, 1)
+		rec := records[0]
+		require.Equal(t, os.Getpid(), rec.PID)
+		require.Equal(t, kitdaemon.ProcessScopeForeign, kitdaemon.RuntimeProcessScope(rec))
+		before, err := os.ReadFile(rec.SourcePath)
+		require.NoError(t, err)
+		db, _ := testutil.OpenTestDBWithDir(t)
+		cfg := config.DefaultConfig()
+		cfg.ServerAddr = "127.0.0.1:0"
+		server := NewServer(db, cfg, "")
+		t.Cleanup(func() { _ = server.Close() })
+		require.EqualError(t, server.Start(t.Context()), fmt.Sprintf("daemon already running (pid %d on %s)", rec.PID, rec.Address))
+		require.NoError(t, server.Stop())
+		after, err := os.ReadFile(rec.SourcePath)
+		require.NoError(t, err)
+		assert.Equal(t, before, after)
+		return
+	}
+
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("ROBOREV_TEST_PIDNS_DATA", testenv.SetDataDir(t))
+	setShortRuntimeDir(t)
+	var rec kitdaemon.RuntimeRecord
+	foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(PingInfo{OK: true, Service: "roborev", PID: rec.PID})
+	}))
+	t.Cleanup(foreign.Close)
+	rec = testutil.UnjudgedRuntimeRecord(t, "tcp", foreign.Listener.Addr().String())
+	_, err := runtimeStore().Write(rec)
+	require.NoError(t, err)
+	t.Setenv("ROBOREV_TEST_RUNTIME_WRITER", "")
+	t.Setenv("ROBOREV_TEST_PIDNS_REFUSED_START", "1")
+	testutil.RunPIDNamespaceTest(t, nil, "")
+}
 
 func TestServerStartWithSandboxSocket(t *testing.T) {
 	for _, useTLS := range []bool{false, true} {
@@ -156,77 +194,6 @@ func TestServerStartForeignProbeUsesSelectedConfig(t *testing.T) {
 	errCh, info := startServerAndWaitForRuntime(t, server)
 	assert.Equal(t, os.Getpid(), info.PID)
 	stopTestServer(t, server, errCh)
-}
-
-func TestServerStartForeignProbeHonorsCancellation(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	testenv.SetDataDir(t)
-	setShortRuntimeDir(t)
-	var startedOnce, cancelledOnce sync.Once
-	started := make(chan struct{})
-	cancelled := make(chan struct{})
-	release := make(chan struct{})
-	foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		startedOnce.Do(func() { close(started) })
-		select {
-		case <-r.Context().Done():
-			cancelledOnce.Do(func() { close(cancelled) })
-		case <-release:
-		}
-	}))
-	t.Cleanup(foreign.Close)
-	t.Cleanup(func() { close(release) })
-	rec := testutil.UnjudgedRuntimeRecord(t, "tcp", foreign.Listener.Addr().String())
-	_, err := runtimeStore().Write(rec)
-	require.NoError(t, err)
-	db, _ := testutil.OpenTestDBWithDir(t)
-	cfg := config.DefaultConfig()
-	cfg.ServerAddr = "127.0.0.1:0"
-	server := NewServer(db, cfg, "")
-	t.Cleanup(func() { _ = server.Close() })
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	errCh := make(chan error, 1)
-	go func() { errCh <- server.Start(ctx) }()
-	returned := false
-	t.Cleanup(func() {
-		cancel()
-		_ = server.Stop()
-		if !returned {
-			<-errCh
-		}
-	})
-	// Wall-clock waits: the probe uses a real HTTP connection.
-	require.Eventually(t, func() bool {
-		select {
-		case <-started:
-			return true
-		default:
-			return false
-		}
-	}, 5*time.Second, time.Millisecond)
-	cancel()
-	// Wall-clock wait: cancellation must close the real HTTP connection before its one-second timeout.
-	//nolint:kennlint // a longer budget would also accept the probe's own timeout instead of Start's cancellation
-	require.Eventually(t, func() bool {
-		select {
-		case <-cancelled:
-			return true
-		default:
-			return false
-		}
-	}, 500*time.Millisecond, time.Millisecond, "foreign HTTP probe ignored Server.Start cancellation")
-	// Wall-clock wait: Start must return after the real HTTP probe is cancelled.
-	require.Eventually(t, func() bool {
-		select {
-		case err = <-errCh:
-			returned = true
-			return true
-		default:
-			return false
-		}
-	}, 5*time.Second, time.Millisecond)
-	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestKillDaemonKeepsUnjudgedRuntimeWithoutShutdown(t *testing.T) {

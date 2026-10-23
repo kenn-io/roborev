@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net"
@@ -30,7 +29,6 @@ import (
 	"go.kenn.io/roborev/internal/searchindex"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testenv"
-	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/version"
 )
 
@@ -533,29 +531,4 @@ func TestDaemonSearchCredentialFiles(t *testing.T) {
 			assert.NotContains(t, health.CredentialReason, "example-key")
 		})
 	}
-}
-
-func TestStopDaemonReportsUnjudgedRuntime(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	testenv.SetDataDir(t)
-	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		w.WriteHeader(http.StatusServiceUnavailable)
-	}))
-	t.Cleanup(server.Close)
-	rec := testutil.UnjudgedRuntimeRecord(t, "tcp", server.Listener.Addr().String())
-	path, err := daemon.RuntimeStore().Write(rec)
-	require.NoError(t, err)
-	before, err := os.ReadFile(path)
-	require.NoError(t, err)
-	_, out := captureStdoutStderr(t, func() { err = stopDaemon() })
-	require.ErrorIs(t, err, ErrDaemonNotRunning)
-	assert := assert.New(t)
-	assert.Equal(fmt.Sprintf("No local daemon is running; left %s (pid %d), recorded from another PID namespace, alone\n", filepath.Base(path), rec.PID), out)
-	assert.Zero(requests.Load())
-	after, err := os.ReadFile(path)
-	require.NoError(t, err)
-	assert.Equal(before, after)
 }

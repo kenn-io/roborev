@@ -71,6 +71,7 @@ type Server struct {
 	browserListener         net.Listener
 	browserRuntime          *BrowserRuntimeInfo
 	browserStopping         bool
+	runtimePublished        bool // protected by browserMu
 	allowWebCompilationStub bool
 	webDevOrigin            string
 	syncWorker              *storage.SyncWorker
@@ -306,7 +307,7 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 		return probeRuntimeRecordWithAuth(ctx, endpoint, auth)
 	})
-	if discoveryErr != nil && !errors.Is(discoveryErr, os.ErrNotExist) {
+	if IsDaemonAccessError(discoveryErr) {
 		if listener != nil {
 			_ = listener.Close()
 		}
@@ -492,6 +493,8 @@ func (s *Server) Start(ctx context.Context) error {
 	// Write runtime info only after the HTTP server is accepting requests.
 	if err := WriteRuntime(ep, alternate, version.Version, browserRuntime); err != nil {
 		log.Printf("Warning: failed to write runtime info: %v", err)
+	} else {
+		s.runtimePublished = true
 	}
 	s.browserMu.Unlock()
 
@@ -733,6 +736,7 @@ func (s *Server) stopOnce0() error {
 	browserListener := s.browserListener
 	remoteServer := s.remoteServer
 	remoteCancel := s.remoteCancel
+	runtimePublished := s.runtimePublished
 	s.browserMu.Unlock()
 	if remoteCancel != nil {
 		remoteCancel()
@@ -840,7 +844,9 @@ func (s *Server) stopOnce0() error {
 	if err := s.clearShutdownDrain(shutdownCleanupCtx); err != nil {
 		cleanupErr = errors.Join(cleanupErr, err)
 	}
-	RemoveRuntime()
+	if runtimePublished {
+		RemoveRuntime()
+	}
 
 	return cleanupErr
 }

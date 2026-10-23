@@ -519,18 +519,7 @@ func stopDaemonRuntimes(list func() ([]*daemon.RuntimeInfo, error), drain func(*
 		// Propagate other errors (permission, IO, etc.)
 		return fmt.Errorf("failed to list daemon runtimes: %w", err)
 	}
-	var unjudged []string
-	runtimes = slices.DeleteFunc(runtimes, func(info *daemon.RuntimeInfo) bool {
-		if !info.Unjudged() {
-			return false
-		}
-		unjudged = append(unjudged, fmt.Sprintf("%s (pid %d)", filepath.Base(info.SourcePath), info.PID))
-		return true
-	})
 	if len(runtimes) == 0 {
-		if len(unjudged) > 0 {
-			fmt.Fprintf(out, "No local daemon is running; left %s, recorded from another PID namespace, alone\n", strings.Join(unjudged, ", "))
-		}
 		return ErrDaemonNotRunning
 	}
 
