@@ -96,7 +96,7 @@ func runtimePID() int {
 		return 0
 	}
 	for _, info := range runtimes {
-		if info != nil && info.PID > 0 {
+		if info != nil && !info.Unjudged() && info.PID > 0 {
 			return info.PID
 		}
 	}
@@ -118,7 +118,7 @@ func runtimeHasPID(pid int) bool {
 		return true
 	}
 	for _, info := range runtimes {
-		if info == nil || info.PID != pid {
+		if info == nil || info.Unjudged() || info.PID != pid {
 			continue
 		}
 		if isPIDAliveForUpdate(pid) {
@@ -175,7 +175,7 @@ func pidInSet(pids map[int]struct{}, pid int) bool {
 	return ok
 }
 
-// runtimePIDSet returns all runtime PIDs currently on disk.
+// runtimePIDSet returns runtime PIDs whose process identity can be judged.
 func runtimePIDSet() (map[int]struct{}, error) {
 	runtimes, err := listAllRuntimes()
 	if err != nil {
@@ -183,7 +183,7 @@ func runtimePIDSet() (map[int]struct{}, error) {
 	}
 	pids := make(map[int]struct{}, len(runtimes))
 	for _, info := range runtimes {
-		if info != nil && info.PID > 0 {
+		if info != nil && !info.Unjudged() && info.PID > 0 {
 			pids[info.PID] = struct{}{}
 		}
 	}
@@ -728,7 +728,7 @@ func discoverDaemonForUpdate() (*daemon.RuntimeInfo, error) {
 			continue
 		}
 		if runtimeInfo.Unjudged() {
-			return nil, fmt.Errorf("%w %d: runs in another PID namespace; update from there", daemon.ErrUnjudgedRuntime, runtimeInfo.PID)
+			return nil, fmt.Errorf("%w %d: runs in another PID namespace; update from there, or remove %s if that daemon is gone", daemon.ErrUnjudgedRuntime, runtimeInfo.PID, runtimeInfo.SourcePath)
 		}
 		if isPIDAliveForUpdate(runtimeInfo.PID) {
 			return nil, fmt.Errorf("running daemon is not responsive: %w", probeErr)

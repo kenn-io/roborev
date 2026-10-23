@@ -66,9 +66,12 @@ func TestStopDaemonRuntimesSkipsUnjudged(t *testing.T) {
 				require.ErrorContains(t, err, "cannot judge daemon PID")
 				require.ErrorIs(t, err, daemon.ErrUnjudgedRuntime)
 				assert.Empty(t, drained)
+				assert.NotContains(t, out.String(), err.Error())
 			}
 			assert.FileExists(t, path)
-			assert.Contains(t, out.String(), "Skipping daemon")
+			if local {
+				assert.Contains(t, out.String(), "Skipping daemon")
+			}
 		})
 	}
 }

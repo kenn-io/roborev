@@ -74,6 +74,7 @@ func TestUpdateCommandRefusesUnjudgedAfterProbeFailure(t *testing.T) {
 	var out bytes.Buffer
 	err = runControlledUpdate(t.Context(), strings.NewReader(""), &out, info, t.TempDir(), policyWait, true, false)
 	require.ErrorIs(t, err, daemon.ErrUnjudgedRuntime)
+	require.ErrorContains(t, err, path)
 	assert.FileExists(t, path)
 	assert.Zero(t, pidChecks)
 	assert.Zero(t, installs)

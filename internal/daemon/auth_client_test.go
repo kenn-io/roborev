@@ -261,7 +261,7 @@ func TestAuthDiscoverySkipsStaleProcesses(t *testing.T) {
 }
 
 func TestUnjudgedRuntimeKeepsKeyOffTCP(t *testing.T) {
-	for _, operation := range []string{"discovery", "broken config probe", "alternate endpoint"} {
+	for _, operation := range []string{"discovery", "MCP ping", "broken config probe", "alternate endpoint"} {
 		t.Run(operation, func(t *testing.T) {
 			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 			var credentials atomic.Int32
@@ -269,7 +269,7 @@ func TestUnjudgedRuntimeKeepsKeyOffTCP(t *testing.T) {
 				if r.Header.Get("Authorization") != "" {
 					credentials.Add(1)
 				}
-				fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d}`, math.MaxInt32)
+				fmt.Fprintf(w, `{"ok":true,"service":"roborev","pid":%d,"mcp_url":"http://example.com/mcp"}`, math.MaxInt32)
 			}))
 			t.Cleanup(server.Close)
 			rec := testutil.UnjudgedRuntimeRecord("tcp", server.Listener.Addr().String())
@@ -291,6 +291,10 @@ func TestUnjudgedRuntimeKeepsKeyOffTCP(t *testing.T) {
 				assert.NotContains(t, err.Error(), "no running daemon published this address")
 				require.NotErrorIs(t, err, ErrGuessedEndpointAuth)
 				assert.True(t, IsDaemonAccessError(err))
+			case "MCP ping":
+				ping, err := ProbeDaemonPing(info.Endpoint(), time.Second)
+				require.NoError(t, err)
+				assert.Equal(t, "http://example.com/mcp", ping.MCPURL)
 			case "broken config probe":
 				require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "bad key"`), 0o600))
 				ping, err := ProbeDaemon(info.Endpoint(), time.Second)

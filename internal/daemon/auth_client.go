@@ -27,6 +27,9 @@ func loadClientAuth() (config.ClientAuth, error) {
 // pingHTTPClient keeps unjudged plain-TCP liveness probes independent of
 // credentials, including errors loading them.
 func (e DaemonEndpoint) pingHTTPClient(timeout time.Duration, settings config.ClientAuth, configErr error) *http.Client {
+	if e.IsRemote() {
+		return e.HTTPClient(timeout)
+	}
 	if e.unjudged && !e.IsUnix() && !settings.TLS.Enabled() {
 		return e.transportClient(timeout, settings.TLS)
 	}

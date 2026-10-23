@@ -523,7 +523,7 @@ func stopDaemonRuntimes(list func() ([]*daemon.RuntimeInfo, error), drain func(*
 	// Kill all found daemons, track failures
 	var lastErr error
 	var skippedErr error
-	skipped := 0
+	var skippedMessages []string
 	for _, info := range runtimes {
 		fmt.Fprintln(
 			out,
@@ -531,9 +531,8 @@ func stopDaemonRuntimes(list func() ([]*daemon.RuntimeInfo, error), drain func(*
 		)
 		if err := drain(info); err != nil {
 			if errors.Is(err, daemon.ErrUnjudgedRuntime) {
-				fmt.Fprintf(out, "Skipping daemon (pid %d): %v\n", info.PID, err)
+				skippedMessages = append(skippedMessages, fmt.Sprintf("Skipping daemon (pid %d): %v", info.PID, err))
 				skippedErr = err
-				skipped++
 				continue
 			}
 			lastErr = fmt.Errorf("failed to stop daemon (pid %d): %w", info.PID, err)
@@ -543,8 +542,11 @@ func stopDaemonRuntimes(list func() ([]*daemon.RuntimeInfo, error), drain func(*
 		}
 	}
 
-	if skipped == len(runtimes) {
+	if len(skippedMessages) == len(runtimes) {
 		return skippedErr
+	}
+	for _, message := range skippedMessages {
+		fmt.Fprintln(out, message)
 	}
 	return lastErr
 }

@@ -20,6 +20,7 @@ import (
 	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/config"
+	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
 const (
@@ -508,13 +509,8 @@ func ProbeDaemon(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error) {
 	if !ep.IsRemote() && !ep.IsUnix() && !isLoopbackAddr(ep.Address) {
 		return nil, fmt.Errorf("non-loopback daemon address: %s", ep.Address)
 	}
-	if ep.unjudged && !ep.IsRemote() && !ep.IsUnix() {
-		clientAuth, err := loadClientAuth()
-		if !clientAuth.TLS.Enabled() {
-			return probeDaemonHTTP(context.Background(), ep, timeout, ep.pingHTTPClient(timeout, clientAuth, err))
-		}
-	}
-	return probeDaemonHTTP(context.Background(), ep, timeout, ep.HTTPClient(timeout))
+	clientAuth, err := loadClientAuth()
+	return probeDaemonHTTP(context.Background(), ep, timeout, ep.pingHTTPClient(timeout, clientAuth, err))
 }
 
 // ProbeDaemonPing validates a daemon endpoint like ProbeDaemon but decodes
@@ -529,7 +525,12 @@ func ProbeDaemonPing(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	resp, err := ep.APIClient(timeout).PingRaw(ctx)
+	clientAuth, configErr := loadClientAuth()
+	client, err := roborevclient.NewWithHTTPClient(ep.BaseURL(), ep.pingHTTPClient(timeout, clientAuth, configErr))
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.PingRaw(ctx)
 	if err != nil {
 		return nil, err
 	}
