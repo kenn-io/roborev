@@ -40,9 +40,9 @@ Each `[review.types.<name>]` table supports these fields:
 
 Names must start with a lowercase letter and contain only lowercase letters,
 digits, and hyphens. Names may not replace built-in types or their aliases:
-`default`, `review`, `general`, `security`, `design`, `lookahead`, and
-`test-value`. Names used by other built-in workflows are also reserved: `fix`,
-`refine`, and `classify`.
+`default`, `review`, `general`, `security`, `design`, `lookahead`, `test-value`,
+and `exhaustive`. Names used by other built-in workflows are also reserved:
+`fix`, `refine`, and `classify`.
 
 A repository definition replaces a global definition with the same name. Its
 fields are not merged individually.
@@ -127,26 +127,55 @@ The schema is fixed by roborev. The agent must return:
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "summary": "Overall assessment",
   "verdict": "fail",
   "findings": [
     {
       "severity": "high",
+      "kind": "defect",
+      "topic": "security",
+      "confidence": 0.8,
       "problem": "What is wrong and why it matters",
       "fix": "A concrete correction",
-      "location": "optional/file.go:42"
+      "file": "internal/file.go",
+      "start_line": 42,
+      "end_line": 45
     }
   ]
 }
 ```
 
 `schema_version`, `summary`, `verdict`, and `findings` are required. The current
-schema version is `2`; stored version `1` documents (without a verdict) still
-load, and Roborev rejects missing or unsupported versions. `verdict` is `pass`,
-`fail`, or `unable_to_review`. Every finding requires `severity`, `problem`,
-`fix`, and `location`; use `null` when a finding has no location. Severity must
-be one of `critical`, `high`, `medium`, or `low`.
+schema version is `3`. Stored version `1` and `2` documents still load, and
+Roborev rejects missing or unsupported versions. `verdict` is `pass`, `fail`, or
+`unable_to_review`.
+
+Every finding requires these members:
+
+- `severity`: `critical`, `high`, `medium`, or `low`.
+- `kind`: `defect` when the code behaves wrongly in a case the finding names, or
+    `improvement` when the code works but should still change, such as a missing
+    or weak test, wrong documentation, or structure that will cost later work.
+- `topic`: `tests`, `documentation`, `security`, `performance`, or `design` when
+    the finding is about one of those areas, otherwise `null`. A defect can have
+    a topic, and so can an improvement.
+- `confidence`: a number from 0 to 1. Roborev uses it only to break ties when it
+    orders findings.
+- `problem` and `fix`.
+- `file`, `start_line`, and `end_line`: the path relative to the repository root
+    and the line range in the reviewed code. Use `null` for the lines when a
+    finding covers a whole file, and `null` for all three when it has no file.
+
+`kind`, `topic`, and `confidence` are stored in the review document and exported
+with it. They never appear in the rendered review or in pull request comments.
+
+Before storing a review, Roborev checks every cited file against the reviewed
+commit, or the working tree for uncommitted changes. A finding whose file does
+not exist there keeps its text but loses its location, and a line range past the
+end of the file is shortened. Roborev then merges findings that describe the
+same problem at nearly the same lines of the same file. It orders the rest by
+severity, then by how many panel members reported them, then by confidence.
 
 The agent's verdict is shown in the review as an assessment but does not change
 the outcome: the findings and the severity threshold decide pass or fail. The

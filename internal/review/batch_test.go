@@ -18,6 +18,7 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -422,11 +423,11 @@ func TestRunBatchPreservesStructuredVerdict(t *testing.T) {
 	structuredAgent := &structuredBatchAgent{
 		name: "structured-batch",
 		result: jsontext.Value(`{
-	  "schema_version":2,
+	  "schema_version":3,
 	  "verdict": "pass",
 	  "summary":"High: no actionable findings.",
   "findings":[
-    {"severity":"low","problem":"Name is vague.","fix":"Rename it.","location":null}
+    {"severity":"low","kind":"improvement","confidence":0.7,"problem":"Name is vague.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}
   ]
 }`),
 	}
@@ -616,6 +617,30 @@ func TestRunBatch_GlobalExcludePatterns(t *testing.T) {
 		"prompt should not contain excluded file")
 }
 
+func TestRunBatchShowsPullRequestToAgents(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	base := repo.RevParse("HEAD")
+	require.NoError(t, os.WriteFile(filepath.Join(repo.Root, "retry.go"), []byte("package retry\n"), 0o644))
+	repo.RunGit("add", "-A")
+	repo.RunGit("commit", "-m", "Add retry limit")
+
+	captureAgent := &promptCapture{name: "capture"}
+	results := RunBatch(context.Background(), BatchConfig{
+		RepoPath:      repo.Root,
+		GitRef:        base + ".." + repo.RevParse("HEAD"),
+		Agents:        []string{"capture"},
+		ReviewTypes:   []string{"review"},
+		GlobalConfig:  &config.Config{},
+		PullRequest:   prompt.PullRequest{Title: "Cap retries", Description: "Stop after three attempts."},
+		AgentRegistry: map[string]agent.Agent{"capture": captureAgent},
+	})
+
+	require.Len(t, results, 1)
+	require.Equal(t, ResultDone, results[0].Status, results[0].Error)
+	assert.Contains(t, captureAgent.lastPrompt,
+		"**Title:** Cap retries\n**Description:**\nStop after three attempts.\n</pull-request>")
+}
+
 func TestRunBatch_CodexReviewSettings(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("skipping test that requires Unix shell scripts")
@@ -659,7 +684,7 @@ func writeFakeCodex(t *testing.T) (cmdPath string, argsPath string) {
 		fmt.Sprintf("echo \"$@\" > %q", argsPath),
 		// The fake returns a structured review document because the real
 		// codex agent supports schema-constrained output for every review type.
-		"echo '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"schema_version\\\":2,\\\"summary\\\":\\\"ok\\\",\\\"verdict\\\":\\\"pass\\\",\\\"findings\\\":[]}\"}}'",
+		"echo '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"schema_version\\\":3,\\\"summary\\\":\\\"ok\\\",\\\"verdict\\\":\\\"pass\\\",\\\"findings\\\":[]}\"}}'",
 	}, "\n") + "\n"
 
 	cmdPath = filepath.Join(dir, "codex")

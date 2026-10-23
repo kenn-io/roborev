@@ -143,9 +143,9 @@ func TestIntegrationLegacyReviewAutomaticConversion(t *testing.T) { //nolint:par
 		require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT count(*) FROM reviews WHERE uuid = $1`, id).Scan(&count))
 		return count
 	}
-	wantDocument := `{"schema_version":1,"summary":"The change adds a save routine.","findings":[
-		{"severity":"high","problem":"The write is not atomic.","fix":"Write to a temporary file and rename it.","location":"store/save.go:88"},
-		{"severity":"low","problem":"The comment is stale.","fix":"Update the comment.","location":"store/save.go:12"}]}`
+	wantDocument := `{"schema_version":3,"summary":"The change adds a save routine.","findings":[
+		{"severity":"high","kind":null,"topic":null,"confidence":null,"problem":"The write is not atomic.","fix":"Write to a temporary file and rename it.","file":null,"start_line":null,"end_line":null,"location":"store/save.go:88"},
+		{"severity":"low","kind":null,"topic":null,"confidence":null,"problem":"The comment is stale.","fix":"Update the comment.","file":null,"start_line":null,"end_line":null,"location":"store/save.go:12"}]}`
 
 	// The mirror upgrade converts what roborev can read back and archives the rest.
 	upgraded := insert(legacyFindingsMarkdown, false, true)

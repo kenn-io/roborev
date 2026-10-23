@@ -2,7 +2,10 @@ package review
 
 import (
 	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 
 	gitrepo "go.kenn.io/kit/git/repo"
@@ -98,7 +101,7 @@ func BuildSynthesisPrompt(
 		"You are combining multiple code review outputs " +
 			"into a single GitHub PR comment.\n" +
 			"Return exactly one JSON object with this shape and no code fence: " +
-			`{"schema_version":2,"summary":"...","verdict":"pass|fail","findings":[{"severity":"critical|high|medium|low","problem":"...","fix":"...","location":"file:line or null","sources":[1]}]}` + "\n" +
+			`{"schema_version":3,"summary":"...","verdict":"pass|fail","findings":[{"severity":"critical|high|medium|low","kind":"defect|improvement","topic":"copied from the input finding, or null","confidence":0.8,"problem":"...","fix":"...","file":"path or null","start_line":12,"end_line":14,"sources":[1]}]}` + "\n" +
 			"Put a one-line overall summary in `summary` and your overall judgment in `verdict`. " +
 			"List every finding that requires changes in `findings`; " +
 			"return an empty `findings` array if the reviewers agree the code is clean.\n" +
@@ -109,7 +112,10 @@ func BuildSynthesisPrompt(
 			"- Do not use tools except to read referenced prompt or review-input files in full\n" +
 			"- Deduplicate findings reported by multiple reviewers and cite every source\n" +
 			"- Order findings by severity (Critical > High > Medium > Low)\n" +
-			"- Preserve file/line references in `location`\n" +
+			"- Keep each finding's kind and topic; when reviewers disagree, use the value most of them gave\n" +
+			"- Set confidence to the highest confidence any source gave, or 0.5 when the sources give none\n" +
+			"- Keep the file, start_line, and end_line of the findings you combine; use null when there is none\n" +
+			"- When an input finding has a location but no file, name that location in the problem\n" +
 			"- No preamble about yourself\n")
 
 	b.WriteString("\n")
@@ -148,15 +154,64 @@ func synthesisReviewContent(r ReviewResult) string {
 		b.WriteString(
 			"(review skipped — provider unavailable)")
 	} else if r.Structured != nil {
-		// Render without the threshold so the synthesis agent never
-		// learns which severities are informational.
-		b.WriteString(r.Structured.Markdown(""))
+		// The JSON document keeps each finding's kind, confidence, and line
+		// range, which the Markdown rendering drops or flattens. It carries
+		// no severity threshold, so the synthesis agent never learns which
+		// severities are informational.
+		member := anchorLegacyLocations(*r.Structured)
+		if document, err := json.Marshal(member, jsontext.WithIndentPrefix(""), jsontext.WithIndent("  ")); err == nil {
+			b.WriteString("```json\n" + string(document) + "\n```")
+		} else {
+			b.WriteString(member.Markdown(""))
+		}
 	} else if r.Output != "" {
 		b.WriteString(r.Output)
 	} else if r.Status == ResultFailed {
 		b.WriteString("(no output — review failed)")
 	}
 	return b.String()
+}
+
+// anchorLegacyLocations gives findings from a version 1 or 2 review a file
+// and line range parsed from their free-text location. A panel member that
+// finished before a daemon update may still be stored in that form, and the
+// synthesis agent copies only file, start_line, and end_line. A location in
+// any other form stays as free text. The caller's findings are not changed.
+func anchorLegacyLocations(doc StructuredReview) StructuredReview {
+	doc.Findings = slices.Clone(doc.Findings)
+	for i, finding := range doc.Findings {
+		if finding.File != "" || finding.Location == "" {
+			continue
+		}
+		if file, start, end, ok := parseLocation(finding.Location); ok {
+			doc.Findings[i].SetLocation(file, start, end)
+		}
+	}
+	return doc
+}
+
+// parseLocation reads the "path:12" and "path:12-20" forms that
+// [structuredreview.FormatLocation] writes. A bare path is not accepted,
+// because free text such as "the retry loop" would read as one.
+func parseLocation(location string) (file string, start, end int, ok bool) {
+	location = strings.TrimSpace(location)
+	colon := strings.LastIndex(location, ":")
+	if colon <= 0 || strings.ContainsAny(location[:colon], " \t") {
+		return "", 0, 0, false
+	}
+	file, lines := location[:colon], location[colon+1:]
+	first, last, isRange := strings.Cut(lines, "-")
+	start, err := strconv.Atoi(first)
+	if err != nil || start <= 0 {
+		return "", 0, 0, false
+	}
+	end = start
+	if isRange {
+		if end, err = strconv.Atoi(last); err != nil || end < start {
+			return "", 0, 0, false
+		}
+	}
+	return file, start, end, true
 }
 
 // FormatSynthesizedComment wraps synthesized output with header

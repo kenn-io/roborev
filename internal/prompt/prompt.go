@@ -1,9 +1,7 @@
 package prompt
 
 import (
-	"bytes"
 	"context"
-	"encoding/xml"
 	"errors"
 	"fmt"
 	"log"
@@ -23,16 +21,23 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
+// xmlEscaper escapes the characters that could close a wrapper tag or an
+// attribute. Unlike xml.EscapeText it keeps newlines and tabs, so a
+// multi-line commit message or diff still reads as lines.
+var xmlEscaper = strings.NewReplacer(
+	"&", "&amp;",
+	"<", "&lt;",
+	">", "&gt;",
+	`"`, "&#34;",
+	"'", "&#39;",
+)
+
 // escapeXML escapes XML special characters so untrusted commit metadata
 // (subject, author, body) cannot break out of the <commit-message> /
 // <commit-messages> wrapper tags and inject synthetic structure into the
 // prompt.
 func escapeXML(s string) string {
-	var buf bytes.Buffer
-	if err := xml.EscapeText(&buf, []byte(s)); err != nil {
-		return "--unescapable-xml--"
-	}
-	return buf.String()
+	return xmlEscaper.Replace(s)
 }
 
 // MaxPromptSize is the legacy maximum size of a prompt in bytes (250KB).
@@ -89,6 +94,14 @@ type Builder struct {
 	// structuredOutput appends the JSON output instruction to built-in
 	// review prompts when the agent will return schema-constrained findings.
 	structuredOutput bool
+	pullRequest      PullRequest
+}
+
+// PullRequest is the title and description of the pull request whose
+// commits a range review covers.
+type PullRequest struct {
+	Title       string
+	Description string
 }
 
 // DiffFilePathPlaceholder is a sentinel path embedded in prebuilt
@@ -161,6 +174,14 @@ func (b *Builder) WithStructuredOutput(enabled bool) *Builder {
 	return &next
 }
 
+// WithPullRequest returns a builder whose range reviews show the pull
+// request's title and description as the author's statement of intent.
+func (b *Builder) WithPullRequest(pr PullRequest) *Builder {
+	next := *b
+	next.pullRequest = pr
+	return &next
+}
+
 // WithKataClient returns a builder that resolves kata task context via client.
 // A nil client disables kata context.
 func (b *Builder) WithKataClient(client kata.Client) *Builder {
@@ -216,7 +237,7 @@ func (b *Builder) context() context.Context {
 }
 
 // Build constructs a review prompt for a commit or range with context from previous reviews.
-// reviewType selects the system prompt variant (e.g., "security"); any default alias (see config.IsDefaultReviewType) uses the standard prompt.
+// reviewType selects the system prompt variant (e.g., "security"); any default alias (see config.IsDefaultReviewType) uses the standard prompt, and "exhaustive" adds a size-scaled instruction to it.
 func (b *Builder) Build(gitRef string, contextCount int, agentName, reviewType, minSeverity string) (string, error) {
 	return b.BuildWithAdditionalContext(gitRef, contextCount, agentName, reviewType, minSeverity, "")
 }
@@ -574,7 +595,7 @@ func (b *Builder) BuildDirtyWithSnapshotTargetAndFiles(
 
 // BuildDirty constructs a review prompt for uncommitted (dirty) changes.
 // The diff is provided directly since it was captured at enqueue time.
-// reviewType selects the system prompt variant (e.g., "security"); any default alias (see config.IsDefaultReviewType) uses the standard prompt.
+// reviewType selects the system prompt variant (e.g., "security"); any default alias (see config.IsDefaultReviewType) uses the standard prompt, and "exhaustive" adds a size-scaled instruction to it.
 func (b *Builder) BuildDirty(diff string, contextCount int, agentName, reviewType, minSeverity string) (string, error) {
 	return b.BuildDirtyWithFiles(diff, nil, contextCount, agentName, reviewType, minSeverity)
 }
@@ -625,7 +646,7 @@ func (b *Builder) BuildDirtyWithFiles(diff string, changedFiles []string, contex
 	if err != nil {
 		return "", err
 	}
-	return ctx.requiredPrefix + body, nil
+	return ctx.requiredPrefix + body + exhaustiveInstruction(reviewType, diff), nil
 }
 
 func fitPrefixWithSuffixVariants(prefix string, limit int, variants ...string) (string, error) {
@@ -688,7 +709,7 @@ type promptBuildContext struct {
 
 func (b *Builder) newPromptBuildContext(agentName, reviewType, minSeverity, defaultPromptType string, optional optionalSectionsView) (promptBuildContext, error) {
 	promptType := defaultPromptType
-	if !config.IsDefaultReviewType(reviewType) {
+	if !config.IsGeneralReviewType(reviewType) {
 		promptType = reviewType
 	}
 	if promptType == config.ReviewTypeDesign {
@@ -776,9 +797,10 @@ func needsShellQuoting(s string) bool {
 }
 
 type rangeMetadataLoss struct {
-	RemovedEntries  int
-	BlankedSubject  int
-	TrimmedOptional int
+	RemovedEntries     int
+	BlankedSubject     int
+	DroppedPullRequest int
+	TrimmedOptional    int
 }
 
 func compareRangeMetadataLoss(a, b rangeMetadataLoss) int {
@@ -787,6 +809,8 @@ func compareRangeMetadataLoss(a, b rangeMetadataLoss) int {
 		return a.RemovedEntries - b.RemovedEntries
 	case a.BlankedSubject != b.BlankedSubject:
 		return a.BlankedSubject - b.BlankedSubject
+	case a.DroppedPullRequest != b.DroppedPullRequest:
+		return a.DroppedPullRequest - b.DroppedPullRequest
 	default:
 		return a.TrimmedOptional - b.TrimmedOptional
 	}
@@ -825,6 +849,9 @@ func measureRangeMetadataLoss(original, trimmed TemplateContext) rangeMetadataLo
 	loss := rangeMetadataLoss{
 		RemovedEntries:  len(original.Review.Subject.Range.Entries) - len(trimmed.Review.Subject.Range.Entries),
 		TrimmedOptional: measureOptionalSectionsLoss(original.Review.Optional, trimmed.Review.Optional),
+	}
+	if original.Review.Subject.Range.PullRequest != nil && trimmed.Review.Subject.Range.PullRequest == nil {
+		loss.DroppedPullRequest = 1
 	}
 	for i := range trimmed.Review.Subject.Range.Entries {
 		if i >= len(original.Review.Subject.Range.Entries) {
@@ -933,7 +960,7 @@ func (b *Builder) buildSinglePrompt(sha string, contextCount int, agentName, rev
 	if err != nil {
 		return "", err
 	}
-	return ctx.requiredPrefix + body, nil
+	return ctx.requiredPrefix + body + exhaustiveInstruction(reviewType, diff), nil
 }
 
 // buildRangePrompt constructs a prompt for a commit range
@@ -986,7 +1013,11 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 		short := gitrepo.ShortSHA(commitSHA)
 		info, err := git.GetCommitInfoCtx(b.context(), b.repoPath, commitSHA)
 		if err == nil {
-			entries = append(entries, commitRangeEntryView{Commit: short, Subject: escapeXML(info.Subject)})
+			entries = append(entries, commitRangeEntryView{
+				Commit:  short,
+				Subject: escapeXML(info.Subject),
+				Message: escapeXML(strings.TrimSpace(info.Body)),
+			})
 			kataMessages = append(kataMessages, info.Subject+"\n\n"+info.Body)
 			continue
 		}
@@ -997,7 +1028,7 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 		return "", err
 	}
 	ctx.optional.KataContext = kataView
-	currentView := commitRangeSectionView{Count: len(commits), Entries: entries}
+	currentView := commitRangeSectionView{Count: len(commits), PullRequest: b.pullRequestContext(), Entries: entries}
 	diff, err := git.GetRangeDiffCtx(b.context(), b.repoPath, rangeRef, b.resolveExcludes(reviewType)...)
 	if err != nil {
 		return "", fmt.Errorf("get diff: %w", err)
@@ -1013,7 +1044,16 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 	if err != nil {
 		return "", err
 	}
-	return ctx.requiredPrefix + body, nil
+	return ctx.requiredPrefix + body + exhaustiveInstruction(reviewType, diff), nil
+}
+
+func (b *Builder) pullRequestContext() *PullRequestContext {
+	title := strings.TrimSpace(b.pullRequest.Title)
+	description := strings.TrimSpace(strings.ReplaceAll(b.pullRequest.Description, "\r\n", "\n"))
+	if title == "" && description == "" {
+		return nil
+	}
+	return &PullRequestContext{Title: escapeXML(title), Description: escapeXML(description)}
 }
 
 func buildProjectGuidelinesSectionView(guidelines string) *markdownSectionView {

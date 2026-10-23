@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json/v2"
 	"errors"
@@ -90,6 +91,7 @@ Examples:
   roborev review --branch --type security  # Security review of branch
   roborev review --type lookahead  # Time-series look-ahead bias review of HEAD
   roborev review --type test-value # Find worthless tests in HEAD
+  roborev review --type exhaustive  # Default review that reports every supportable finding
 `,
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			ctx := cmd.Context()
@@ -459,7 +461,7 @@ Examples:
 	cmd.Flags().StringVar(&baseBranch, "base", "", "base branch for --branch comparison (default: auto-detect)")
 	cmd.Flags().StringVar(&since, "since", "", "review commits since this commit (exclusive, like git's .. range)")
 	cmd.Flags().BoolVar(&local, "local", false, "run review locally without daemon (streams output to console)")
-	cmd.Flags().StringVar(&reviewType, "type", "", "review type (security, design, lookahead, test-value, goal)")
+	cmd.Flags().StringVar(&reviewType, "type", "", "review type (security, design, lookahead, test-value, exhaustive, goal)")
 	cmd.Flags().StringVar(&specFile, "spec", "", "Superpowers design spec for --type goal")
 	cmd.Flags().StringVar(&planFile, "plan", "", "Superpowers implementation plan for --type goal")
 	cmd.Flags().StringVar(&provider, "provider", "", "provider for pi agent (e.g. anthropic, openai)")
@@ -472,9 +474,43 @@ Examples:
 	return cmd
 }
 
+// freezeReviewRef resolves each end of a review ref, such as HEAD or
+// X..HEAD, to a commit SHA. The prompt, the agent, and the check of finding
+// locations then all see the same commits, even if HEAD moves during the
+// review. An empty end of a range means HEAD, as it does for git.
+func freezeReviewRef(ctx context.Context, repoPath, gitRef string) (string, error) {
+	resolve := func(ref string) (string, error) {
+		return git.ResolveSHACtx(ctx, repoPath, cmp.Or(ref, "HEAD")+"^{commit}")
+	}
+	start, end, isRange := strings.Cut(gitRef, "..")
+	if !isRange {
+		return resolve(gitRef)
+	}
+	separator := ".."
+	if rest, ok := strings.CutPrefix(end, "."); ok {
+		separator, end = "...", rest
+	}
+	start, err := resolve(start)
+	if err != nil {
+		return "", err
+	}
+	end, err = resolve(end)
+	if err != nil {
+		return "", err
+	}
+	return start + separator + end, nil
+}
+
 // runLocalReview runs a review directly without the daemon
 func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, dirtyFiles []string, agentName, model, provider, reasoning, reviewType string, quiet bool, minSeverity string) error {
 	ctx := cmd.Context()
+	if gitRef != "dirty" {
+		frozen, err := freezeReviewRef(ctx, repoPath, gitRef)
+		if err != nil {
+			return fmt.Errorf("resolve %s: %w", gitRef, err)
+		}
+		gitRef = frozen
+	}
 
 	// Load config
 	cfg, err := loadClientConfig()

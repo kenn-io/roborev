@@ -380,13 +380,17 @@ func TestHumaExportReviewsExportsDocumentInContentProfileOnly(t *testing.T) {
 	}
 
 	content := export("content")
+	// The stored version 2 document is exported normalized and in the
+	// current version, with null for the version 3 fields it lacks.
 	assert.JSONEq(`{
-		"schema_version": 2,
+		"schema_version": 3,
 		"summary": "Two problems.",
 		"verdict": "fail",
 		"findings": [
-			{"severity": "high", "problem": "The token is logged.", "fix": "Redact the token.", "location": "auth/login.go:42"},
-			{"severity": "low", "problem": "Typo in a comment.", "fix": "Fix the spelling.", "location": null}
+			{"severity": "high", "kind": null, "topic": null, "confidence": null, "problem": "The token is logged.", "fix": "Redact the token.",
+			 "file": null, "start_line": null, "end_line": null, "location": "auth/login.go:42"},
+			{"severity": "low", "kind": null, "topic": null, "confidence": null, "problem": "Typo in a comment.", "fix": "Fix the spelling.",
+			 "file": null, "start_line": null, "end_line": null, "location": null}
 		]
 	}`, string(content[0]["document"]))
 	var findings struct {

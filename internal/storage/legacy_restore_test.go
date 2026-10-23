@@ -134,7 +134,9 @@ func TestRestoreSynthesisKeepsExistingFindings(t *testing.T) {
 	assert.Contains(t, review.Output, "Reported by:** test (design)")
 	var stored string
 	require.NoError(t, env.db.QueryRow(`SELECT structured_output FROM reviews WHERE job_id = ?`, jobID).Scan(&stored))
-	assert.JSONEq(t, `{"schema_version":2,"summary":"Existing assessment.","verdict":"fail","findings":[{"severity":"high","problem":"The write loses data.","fix":"Keep the old file.","location":null,"sources":[2]}],"source_labels":["test (security)","test (design)"]}`, stored)
+	// Adding source labels rewrites the document, so it is stored in the
+	// current version; the finding itself is unchanged.
+	assert.JSONEq(t, `{"schema_version":3,"summary":"Existing assessment.","verdict":"fail","findings":[{"severity":"high","kind":null,"topic":null,"confidence":null,"problem":"The write loses data.","fix":"Keep the old file.","file":null,"start_line":null,"end_line":null,"location":null,"sources":[2]}],"source_labels":["test (security)","test (design)"]}`, stored)
 	assert.Equal(t, "Existing assessment.", review.StructuredOutput["summary"])
 	assert.Equal(t, VerdictFail, review.Verdict())
 }

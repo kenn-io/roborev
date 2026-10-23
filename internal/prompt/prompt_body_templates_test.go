@@ -478,6 +478,28 @@ func TestFitRangePromptTrimsOptionalSectionsBeforeRangeMetadata(t *testing.T) {
 	assert.NotContains(t, body, strings.Repeat("g", 128))
 }
 
+func TestFitRangePromptDropsPullRequestBeforeCommitSubjects(t *testing.T) {
+	view := rangePromptView{
+		Current: commitRangeSectionView{
+			PullRequest: &PullRequestContext{Title: "Cap retries", Description: strings.Repeat("d", 256)},
+			Entries:     []commitRangeEntryView{{Commit: "abc1234", Subject: "first change"}},
+		},
+		Diff: diffSectionView{
+			Heading:  "### Combined Diff",
+			Fallback: "(Diff too large; for Codex run `git diff abc1234..def5678 --` locally.)\n",
+		},
+	}
+	withoutPR := view
+	withoutPR.Current.PullRequest = nil
+	withoutPRBody, err := renderRangePrompt(withoutPR)
+	require.NoError(t, err)
+
+	body, err := fitRangePrompt(len(withoutPRBody), view)
+	require.NoError(t, err)
+	assert.Contains(t, body, "- abc1234 first change")
+	assert.NotContains(t, body, "<pull-request")
+}
+
 func TestFitRangePromptDropsTrailingEntriesBeforeCombinedDiff(t *testing.T) {
 	entries := make([]commitRangeEntryView, 0, 80)
 	for i := range 80 {

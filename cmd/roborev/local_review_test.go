@@ -307,3 +307,32 @@ review_reasoning = "medium"
 		})
 	}
 }
+
+func TestFreezeReviewRefResolvesEachEndToACommit(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	first := repo.CommitFile("a.txt", "a\n", "first")
+	second := repo.CommitFile("b.txt", "b\n", "second")
+	repo.RunGit("tag", "-a", "v1", "-m", "release")
+
+	tests := []struct {
+		ref  string
+		want string
+	}{
+		{"HEAD", second},
+		{"v1", second},
+		{first + "..HEAD", first + ".." + second},
+		{"HEAD^..HEAD", first + ".." + second},
+		{"HEAD^..", first + ".." + second},
+		{"HEAD^...HEAD", first + "..." + second},
+	}
+	for _, tt := range tests {
+		t.Run(tt.ref, func(t *testing.T) {
+			got, err := freezeReviewRef(t.Context(), repo.Path(), tt.ref)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+
+	_, err := freezeReviewRef(t.Context(), repo.Path(), "no-such-ref")
+	assert.Error(t, err)
+}

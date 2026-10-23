@@ -3842,14 +3842,14 @@ func (s ShutdownOutputBody) Validate() error {
 type StructuredReviewDocument struct {
 	Findings []StructuredReviewFinding `json:"findings" validate:"required"`
 
-	// SchemaVersion Version of the document format, separate from the export schema_version.
-	SchemaVersion int64 `json:"schema_version" validate:"gte=1,lte=2"`
+	// SchemaVersion Version of the document format, separate from the export schema_version. Export writes every document in the current version, 3.
+	SchemaVersion int64 `json:"schema_version" validate:"gte=1,lte=3"`
 
 	// SourceLabels Names of the input reviews that findings cite in sources, indexed by review number minus one.
 	SourceLabels []string `json:"source_labels,omitempty"`
 	Summary      string   `json:"summary" validate:"required"`
 
-	// Verdict The agent's own assessment: pass, fail, or unable_to_review. Omitted by version 1 documents.
+	// Verdict The agent's own assessment: pass, fail, or unable_to_review. Omitted when the review stated none, as in converted version 1 reviews.
 	Verdict *string `json:"verdict,omitempty"`
 }
 
@@ -3862,7 +3862,7 @@ func (s StructuredReviewDocument) Validate() error {
 			}
 		}
 	}
-	if err := typesValidator.Var(s.SchemaVersion, "gte=1,lte=2"); err != nil {
+	if err := typesValidator.Var(s.SchemaVersion, "gte=1,lte=3"); err != nil {
 		errors = errors.Append("SchemaVersion", err)
 	}
 	if err := typesValidator.Var(s.Summary, "required"); err != nil {
@@ -3876,9 +3876,20 @@ func (s StructuredReviewDocument) Validate() error {
 
 // StructuredReviewFinding One finding in a structured review document.
 type StructuredReviewFinding struct {
-	Fix string `json:"fix" validate:"required"`
+	// Confidence The reviewer's estimate, from 0 to 1, that the problem is real. Null exactly when kind is null. Present on version 3 documents.
+	Confidence *float64 `json:"confidence,omitempty" validate:"omitempty,gte=0,lte=1"`
 
-	// Location Where the problem is, or null when the finding has no location.
+	// EndLine Last line of the problem in the reviewed file, or null. Present on version 3 documents.
+	EndLine *int64 `json:"end_line,omitempty"`
+
+	// File Path relative to the repository root, or null. Present on version 3 documents.
+	File *string `json:"file,omitempty"`
+	Fix  string  `json:"fix" validate:"required"`
+
+	// Kind defect when the code behaves wrongly, or improvement when it works but should still change. Null when the producer did not classify the finding, as in goal reviews and converted historical reviews. Present on version 3 documents.
+	Kind *string `json:"kind,omitempty"`
+
+	// Location Where the problem is, or null when the finding has no location. Derived from file, start_line, and end_line when file is set; otherwise free text.
 	Location *string `json:"location,omitempty" validate:"required"`
 	Problem  string  `json:"problem" validate:"required"`
 
@@ -3887,6 +3898,12 @@ type StructuredReviewFinding struct {
 
 	// Sources 1-based numbers of the input reviews that reported this finding. Present on synthesized documents.
 	Sources []int64 `json:"sources,omitempty"`
+
+	// StartLine First line of the problem in the reviewed file, or null. Present on version 3 documents.
+	StartLine *int64 `json:"start_line,omitempty"`
+
+	// Topic One of tests, documentation, security, performance, or design, or null when no topic applies. Present on version 3 documents.
+	Topic *string `json:"topic,omitempty"`
 }
 
 func (s StructuredReviewFinding) Validate() error {

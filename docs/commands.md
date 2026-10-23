@@ -84,6 +84,7 @@ roborev review --type security   # Security-focused review
 roborev review --type design     # Design-focused review
 roborev review --type lookahead  # Time-series look-ahead bias review
 roborev review --type test-value # Find tests that add no value
+roborev review --type exhaustive # Default review that reports every supportable finding
 roborev review --type goal       # Superpowers spec/plan and open Kata graph
 
 # Review panels
@@ -99,7 +100,7 @@ roborev review --branch --panel none          # Force single-agent review
 | `--base <branch>` | Base branch for `--branch` comparison (default: auto-detect) |
 | `--agent <name>` | Use a specific agent for review: a built-in (`codex`, `claude-code`, `gemini`, `copilot`, `opencode`, `cursor`, `kiro`, `kilo`, `droid`, `pi`, `grok`, `muse`) or a configured ACP agent |
 | `-m, --model <model>` | Model to use (format varies by agent) |
-| `--type <type>` | Review type (`security`, `design`, `lookahead`, `test-value`, `goal`); `goal` reviews Superpowers intent artifacts |
+| `--type <type>` | Review type (`security`, `design`, `lookahead`, `test-value`, `exhaustive`, `goal`); `goal` reviews Superpowers intent artifacts |
 | `--spec <path>` | Design spec for `--type goal`; omit for unambiguous discovery |
 | `--plan <path>` | Linked implementation plan for `--type goal` |
 | `--reasoning <level>` | Set a reasoning level; prefer exact `low`/`medium`/`high`/`xhigh`/`max`, while legacy presets remain supported. See [Reasoning Levels](/docs/configuration/#reasoning-levels) |
@@ -331,9 +332,9 @@ A `document` has these members:
 
 | Member | Type | Meaning |
 |--------|------|---------|
-| `schema_version` | integer | Version of the document format. It is separate from the export `schema_version`. Current documents use `2`. Version `1` documents have no `verdict` |
+| `schema_version` | integer | Version of the document format. It is separate from the export `schema_version`. Export writes every document as version `3`, including reviews stored in older versions |
 | `summary` | string | The reviewer's summary |
-| `verdict` | string | The agent's own assessment: `pass`, `fail`, or `unable_to_review`. The exported top-level `verdict` comes from the findings, not from this value |
+| `verdict` | string | The agent's own assessment: `pass`, `fail`, or `unable_to_review`. Omitted when the review stated none, as in some converted historical reviews. The exported top-level `verdict` comes from the findings, not from this value |
 | `findings` | array | Zero or more findings |
 | `source_labels` | array of strings | Only on combined panel reviews. Names the member reviews that findings cite |
 
@@ -342,6 +343,22 @@ Each finding has `severity` (`critical`, `high`, `medium`, or `low`), `problem`,
 finding has no location. Findings in a combined panel review also have
 `sources`, the 1-based positions in `source_labels` of the reviews that reported
 the finding.
+
+Findings also have these members. They are `null` when the review that produced
+the finding did not set them, as in goal reviews and converted historical
+reviews:
+
+| Member | Type | Meaning |
+|--------|------|---------|
+| `kind` | string or `null` | `defect` when the code behaves wrongly, or `improvement` when it works but should still change |
+| `topic` | string or `null` | `tests`, `documentation`, `security`, `performance`, or `design`, or `null` when no topic applies |
+| `confidence` | number or `null` | The reviewer's estimate, from 0 to 1, that the problem is real. Models are poorly calibrated, so treat it as a weak signal. `null` exactly when `kind` is `null` |
+| `file` | string or `null` | Path relative to the repository root |
+| `start_line`, `end_line` | integer or `null` | First and last line of the problem, or `null` when the finding covers the whole file or has no file |
+
+When `file` is set, `location` is derived from `file`, `start_line`, and
+`end_line`, for example `internal/foo.go:12-14`. Otherwise `location` is free
+text, such as a goal review's `Kata abc123`, or `null`.
 
 Other Go modules can import `go.kenn.io/roborev/pkg/structuredreview` to read a
 `document`. `structuredreview.Decode` validates it, and `Document.Markdown("")`
@@ -931,7 +948,7 @@ roborev ci review --comment                  # Post results as PR/MR comment
 | `--gl-host <url>` | GitLab server URL or hostname; selects GitLab (default: `CI_SERVER_URL`, then `GITLAB_HOST`/`GL_HOST`); hardcode it in the job script when `GITLAB_TOKEN` is protected; mutually exclusive with `--gh-repo` |
 | `--pr <number>` | PR number / GitLab MR IID (default: `GITHUB_EVENT_PATH` or `CI_MERGE_REQUEST_IID`) |
 | `--agent <names>` | Agents to use (comma-separated, default: auto-detect) |
-| `--review-types <types>` | Review types to run (comma-separated: `security`, `design`, `lookahead`, `test-value`, `default`) |
+| `--review-types <types>` | Review types to run (comma-separated: `security`, `design`, `lookahead`, `test-value`, `exhaustive`, `default`) |
 | `--reasoning <level>` | Legacy (`fast`/`standard`/`thorough`/`maximum`) or exact (`low`/`medium`/`high`/`xhigh`/`max`) reasoning |
 | `--min-severity <level>` | Lowest severity that fails the combined review (`low`/`medium`/`high`/`critical`); lower findings are still reported |
 | `--upsert-comments` | Update the previous roborev comment instead of adding one (overrides `[ci] upsert_comments`) |

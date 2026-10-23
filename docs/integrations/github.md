@@ -359,7 +359,7 @@ enabled = true
 poll_interval = "5m"
 repos = ["myorg/myrepo"]
 agents = ["codex"]              # which agents to use (or omit for auto-detect)
-review_types = ["security"]     # "security", "design", "lookahead", "test-value", or "default"
+review_types = ["security"]     # "security", "design", "lookahead", "test-value", "exhaustive", or "default"
 ```
 
 > `"default"` runs the standard code review (bugs, security, testing gaps,
@@ -792,7 +792,7 @@ set, it takes priority over the matrix fields for that repo.
 | `skip_labels` | array | `[]` | GitHub PR labels that skip CI reviews (case-insensitive) |
 | `max_repos` | int | `100` | Safety cap on total expanded repos (explicit repos have priority over wildcard-expanded ones) |
 | `panel` | string | | Named `[review.panels.<name>]` panel for CI reviews. When set, overrides `agents`, `review_types`, and `reviews`. |
-| `review_types` | array | `["security"]` | Review types to run for each PR: `security`, `design`, `lookahead`, `test-value`, or `default`. `"review"` and `"general"` are accepted as aliases for `"default"`. |
+| `review_types` | array | `["security"]` | Review types to run for each PR: `security`, `design`, `lookahead`, `test-value`, `exhaustive`, or `default`. `"review"` and `"general"` are accepted as aliases for `"default"`. |
 | `agents` | array | auto-detect | Agents to run for each PR (e.g., `["codex", "gemini"]`) |
 | `reviews` | table | | Granular agent-to-review-type map. Overrides `agents` and `review_types` when set. See [Granular Review Matrix](#granular-review-matrix). |
 | `model` | string | | Model override for CI reviews |

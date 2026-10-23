@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"strings"
@@ -49,6 +50,11 @@ func RunAgentReview(
 	if err := validateLiveDocument(a.Name(), structured); err != nil {
 		return ReviewResult{}, err
 	}
+	settleFindings(ctx, repoPath, gitRef, &structured)
+	document, err = json.Marshal(structured)
+	if err != nil {
+		return ReviewResult{}, fmt.Errorf("encode structured review: %w", err)
+	}
 	output := structured.Markdown(minSeverity)
 	if out != nil {
 		_, _ = fmt.Fprintln(out, output)
@@ -57,7 +63,7 @@ func RunAgentReview(
 		Output:           output,
 		Verdict:          storage.VerdictFromPassed(structured.Passed(minSeverity)),
 		Structured:       &structured,
-		StructuredOutput: append(jsontext.Value(nil), document...),
+		StructuredOutput: jsontext.Value(document),
 		MinSeverity:      minSeverity,
 	}, nil
 }
