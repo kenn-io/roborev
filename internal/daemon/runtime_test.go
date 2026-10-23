@@ -561,6 +561,39 @@ func TestCleanupZombieDaemonsPreservesTargetSocket(t *testing.T) {
 	assert.FileExists(socketPath, "target socket must be preserved")
 }
 
+func TestKillDaemonKeepsUnjudgedRuntimeWithInvisiblePID(t *testing.T) {
+	testenv.SetDataDir(t)
+	setShortRuntimeDir(t)
+	rec := testutil.UnjudgedRuntimeRecord("tcp", "127.0.0.1:1")
+	require.Equal(t, kitdaemon.ProcessScopeUnknown, kitdaemon.RuntimeProcessScope(rec))
+	require.False(t, isProcessAlive(rec.PID))
+	path, err := runtimeStore().Write(rec)
+	require.NoError(t, err)
+	before, err := os.ReadFile(path)
+	require.NoError(t, err)
+	rec.SourcePath = path
+
+	err = KillDaemon(runtimeInfoFromRecord(rec))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot judge daemon PID")
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+}
+
+func TestCleanupZombieDaemonsPreservesUnjudgedInvisiblePID(t *testing.T) {
+	testenv.SetDataDir(t)
+	setShortRuntimeDir(t)
+	rec := testutil.UnjudgedRuntimeRecord("tcp", "127.0.0.1:1")
+	require.Equal(t, kitdaemon.ProcessScopeUnknown, kitdaemon.RuntimeProcessScope(rec))
+	require.False(t, isProcessAlive(rec.PID))
+	path, err := runtimeStore().Write(rec)
+	require.NoError(t, err)
+
+	assert.Zero(t, CleanupZombieDaemons(DaemonEndpoint{}))
+	assert.FileExists(t, path)
+}
+
 func TestCleanupZombieDaemonsPreservesUnjudgedPIDCollision(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("requires Linux process identification")

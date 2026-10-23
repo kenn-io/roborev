@@ -685,8 +685,8 @@ func KillDaemon(info *RuntimeInfo) error {
 		removeRuntimeFile()
 		return nil
 	}
-	if kitdaemon.RuntimeProcessScope(info.processRecord()) == kitdaemon.ProcessScopeForeign {
-		return fmt.Errorf("daemon PID %d runs in another PID namespace; stop it from there", info.PID)
+	if scope := kitdaemon.RuntimeProcessScope(info.processRecord()); scope == kitdaemon.ProcessScopeForeign || scope == kitdaemon.ProcessScopeUnknown {
+		return fmt.Errorf("cannot judge daemon PID %d from this PID namespace; stop it from where it runs", info.PID)
 	}
 	identity := processUnknown
 	if info.PID > 0 {

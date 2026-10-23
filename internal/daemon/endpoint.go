@@ -104,8 +104,8 @@ var ErrGuessedEndpointAuth = errors.New(
 // ErrUnjudgedEndpointAuth means the runtime process identity cannot be judged
 // and the available transport cannot protect auth_key.
 var ErrUnjudgedEndpointAuth = fmt.Errorf(
-	"%w: %w; use the Unix socket or configure daemon_tls when the runtime process identity cannot be judged",
-	ErrDaemonAccessDenied, ErrGuessedEndpointAuth,
+	"%w: runtime process identity cannot be judged; use the Unix socket or configure daemon_tls to protect auth_key",
+	ErrDaemonAccessDenied,
 )
 
 func (e DaemonEndpoint) asUnjudged() DaemonEndpoint {

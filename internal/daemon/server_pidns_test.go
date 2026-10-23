@@ -37,19 +37,8 @@ func TestKillDaemonKeepsForeignRuntimeWithoutShutdown(t *testing.T) {
 		return
 	}
 
-	bwrap, err := exec.LookPath("bwrap")
-	if err != nil {
-		t.Skip("requires bubblewrap for PID namespaces")
-	}
-	args := []string{"--unshare-pid", "--bind", "/", "/", "--proc", "/proc", "--"}
-	probe := exec.CommandContext(t.Context(), bwrap, append(args, "true")...)
-	if output, err := probe.CombinedOutput(); err != nil {
-		t.Skipf("PID namespaces unavailable: %v: %s", err, output)
-	}
-
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("ROBOREV_TEST_PIDNS_DATA", testenv.SetDataDir(t))
-	setShortRuntimeDir(t)
 	var shutdownRequests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -64,25 +53,7 @@ func TestKillDaemonKeepsForeignRuntimeWithoutShutdown(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	t.Setenv("ROBOREV_TEST_PIDNS_STOP_ADDRESS", strings.TrimPrefix(server.URL, "http://"))
-	executable, err := os.Executable()
-	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	t.Cleanup(cancel)
-	cmd := exec.CommandContext(ctx, bwrap, append(args, executable, "-test.run=^TestKillDaemonKeepsForeignRuntimeWithoutShutdown$", "-test.timeout=30s")...)
-	var output bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &output, &output
-	stdin, err := cmd.StdinPipe()
-	require.NoError(t, err)
-	require.NoError(t, cmd.Start())
-	t.Cleanup(func() {
-		require.NoError(t, stdin.Close())
-		require.NoError(t, cmd.Wait(), "%s", output.String())
-	})
-	// Wall-clock wait: the sandbox process writes its runtime record.
-	require.Eventually(t, func() bool {
-		_, err := os.Stat(filepath.Join(config.DataDir(), "ready"))
-		return err == nil
-	}, 5*time.Second, 10*time.Millisecond)
+	runPIDNamespaceTest(t, nil, true)
 
 	records, err := runtimeStore().List()
 	require.NoError(t, err)
@@ -100,7 +71,7 @@ func TestKillDaemonKeepsForeignRuntimeWithoutShutdown(t *testing.T) {
 	assert := assert.New(t)
 	// Wall-clock bound: KillDaemon must return without waiting on a process or HTTP shutdown.
 	assert.Less(time.Since(start), time.Second)
-	require.EqualError(t, err, fmt.Sprintf("daemon PID %d runs in another PID namespace; stop it from there", info.PID))
+	require.EqualError(t, err, fmt.Sprintf("cannot judge daemon PID %d from this PID namespace; stop it from where it runs", info.PID))
 	assert.Equal(int32(0), shutdownRequests.Load())
 	after, err := os.ReadFile(info.SourcePath)
 	require.NoError(t, err)
@@ -124,40 +95,11 @@ func TestDiscoveryFindsLiveSandboxDaemon(t *testing.T) {
 		return
 	}
 
-	bwrap, err := exec.LookPath("bwrap")
-	if err != nil {
-		t.Skip("requires bubblewrap for PID namespaces")
-	}
-	args := []string{"--unshare-pid", "--bind", "/", "/", "--proc", "/proc", "--"}
-	probe := exec.CommandContext(t.Context(), bwrap, append(args, "true")...)
-	if output, err := probe.CombinedOutput(); err != nil {
-		t.Skipf("PID namespaces unavailable: %v: %s", err, output)
-	}
-
 	t.Setenv("HOME", t.TempDir())
 	dataDir := testenv.SetDataDir(t)
-	setShortRuntimeDir(t)
 	t.Setenv("ROBOREV_TEST_PIDNS_DATA", dataDir)
 	t.Setenv("ROBOREV_TEST_PIDNS_SERVE", "1")
-	executable, err := os.Executable()
-	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	t.Cleanup(cancel)
-	cmd := exec.CommandContext(ctx, bwrap, append(args, executable, "-test.run=^TestDiscoveryFindsLiveSandboxDaemon$", "-test.timeout=30s")...)
-	var output bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &output, &output
-	stdin, err := cmd.StdinPipe()
-	require.NoError(t, err)
-	require.NoError(t, cmd.Start())
-	t.Cleanup(func() {
-		require.NoError(t, stdin.Close())
-		require.NoError(t, cmd.Wait(), "%s", output.String())
-	})
-	// Wall-clock wait: the sandbox process starts a real daemon listener.
-	require.Eventually(t, func() bool {
-		_, err := os.Stat(filepath.Join(dataDir, "ready"))
-		return err == nil
-	}, 5*time.Second, 10*time.Millisecond)
+	runPIDNamespaceTest(t, nil, true)
 
 	records, err := runtimeStore().List()
 	require.NoError(t, err)
@@ -208,6 +150,23 @@ func TestServerStartAfterShellLaunchedSandbox(t *testing.T) {
 		return
 	}
 
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("ROBOREV_TEST_PIDNS_DATA", testenv.SetDataDir(t))
+	for _, phase := range []string{"record", "start"} {
+		t.Setenv("ROBOREV_TEST_PIDNS_PHASE", phase)
+		var command []string
+		if phase == "start" {
+			// The trailing command keeps the shell at PID 2 while the daemon runs at PID 3.
+			command = []string{"sh", "-c", `"$@"; result=$?; exit "$result"`, "sh"}
+		}
+		runPIDNamespaceTest(t, command, false)
+	}
+}
+
+// runPIDNamespaceTest runs this test in a sandbox, optionally keeping it alive
+// until cleanup after its runtime record or daemon listener is ready.
+func runPIDNamespaceTest(t *testing.T, command []string, waitReady bool) {
+	t.Helper()
 	bwrap, err := exec.LookPath("bwrap")
 	if err != nil {
 		t.Skip("requires bubblewrap for PID namespaces")
@@ -217,20 +176,30 @@ func TestServerStartAfterShellLaunchedSandbox(t *testing.T) {
 	if output, err := probe.CombinedOutput(); err != nil {
 		t.Skipf("PID namespaces unavailable: %v: %s", err, output)
 	}
-
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("ROBOREV_TEST_PIDNS_DATA", testenv.SetDataDir(t))
+	setShortRuntimeDir(t)
 	executable, err := os.Executable()
 	require.NoError(t, err)
-	for _, phase := range []string{"record", "start"} {
-		t.Setenv("ROBOREV_TEST_PIDNS_PHASE", phase)
-		command := []string{executable, "-test.run=^TestServerStartAfterShellLaunchedSandbox$", "-test.timeout=30s"}
-		if phase == "start" {
-			// The trailing command keeps the shell at PID 2 while the daemon runs at PID 3.
-			command = append([]string{"sh", "-c", `"$@"; result=$?; exit "$result"`, "sh"}, command...)
-		}
-		cmd := exec.CommandContext(t.Context(), bwrap, append(args, command...)...)
+	command = append(command, executable, "-test.run=^"+t.Name()+"$", "-test.timeout=30s")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancel)
+	cmd := exec.CommandContext(ctx, bwrap, append(args, command...)...)
+	if !waitReady {
 		output, err := cmd.CombinedOutput()
-		require.NoError(t, err, "%s sandbox: %s", phase, output)
+		require.NoError(t, err, "%s", output)
+		return
 	}
+	var output bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &output, &output
+	stdin, err := cmd.StdinPipe()
+	require.NoError(t, err)
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() {
+		require.NoError(t, stdin.Close())
+		require.NoError(t, cmd.Wait(), "%s", output.String())
+	})
+	// Wall-clock wait: the sandbox process writes its record or starts its listener.
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(filepath.Join(config.DataDir(), "ready"))
+		return err == nil
+	}, 5*time.Second, 10*time.Millisecond)
 }

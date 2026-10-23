@@ -287,6 +287,9 @@ func TestUnjudgedRuntimeKeepsKeyOffTCP(t *testing.T) {
 				require.NoError(t, err)
 				_, err = info.Endpoint().APIClient(time.Second).GetStatusRaw(t.Context())
 				require.ErrorIs(t, err, ErrUnjudgedEndpointAuth)
+				assert.Contains(t, err.Error(), "runtime process identity cannot be judged")
+				assert.NotContains(t, err.Error(), "no running daemon published this address")
+				require.NotErrorIs(t, err, ErrGuessedEndpointAuth)
 				assert.True(t, IsDaemonAccessError(err))
 			case "broken config probe":
 				require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "bad key"`), 0o600))
