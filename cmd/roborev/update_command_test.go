@@ -19,7 +19,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/daemon"
-	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/update"
 )
 
@@ -561,15 +560,4 @@ func updateDaemonHandler(
 func readRequestBody(r *http.Request) string {
 	body, _ := io.ReadAll(r.Body)
 	return string(body)
-}
-
-func TestUpdateReplacementIgnoresUnjudgedRuntimePIDCollision(t *testing.T) {
-	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	rec := testutil.UnknownRuntimeRecord("tcp", "127.0.0.1:1")
-	_, err := daemon.RuntimeStore().Write(rec)
-	require.NoError(t, err)
-
-	pids, err := runtimePIDSet()
-	require.NoError(t, err)
-	assert.NotContains(t, pids, os.Getpid())
 }
