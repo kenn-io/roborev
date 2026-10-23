@@ -786,7 +786,7 @@ func detachedHeadReviewRefs(ctx context.Context, worktreeRoot string) map[string
 		}
 		seen[sha] = struct{}{}
 		refs[sha] = struct{}{}
-		if branch, _ := git.GetBranchName(worktreeRoot, sha); branch != "" {
+		if git.GetBranchName(worktreeRoot, sha) != "" {
 			continue
 		}
 		parents, err := git.GetCommitParents(worktreeRoot, sha)

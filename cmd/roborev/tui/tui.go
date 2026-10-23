@@ -1131,11 +1131,7 @@ func (m *model) getBranchForJobCtx(ctx context.Context, job storage.ReviewJob) s
 		sha = sha[idx+2:]
 	}
 
-	branch, err := git.GetBranchNameCtx(ctx, job.RepoPath, sha)
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-		// A context error says nothing about reachability. Try again on render.
-		return ""
-	}
+	branch := git.GetBranchNameCtx(ctx, job.RepoPath, sha)
 	if branch == "" {
 		// The commit isn't reachable from any local branch - typically a
 		// commit made on top of a detached HEAD (e.g. mid git-bisect).
@@ -1144,7 +1140,7 @@ func (m *model) getBranchForJobCtx(ctx context.Context, job storage.ReviewJob) s
 	}
 	// Cache result (including "" when neither lookup nor the detached
 	// placeholder apply, e.g. task/dirty/CI jobs).
-	// Context errors and unavailable repos remain uncached.
+	// We only skip caching above when repo doesn't exist yet
 	if m.branchNames != nil {
 		m.branchNames[job.ID] = branch
 	}

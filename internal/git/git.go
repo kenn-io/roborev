@@ -2077,33 +2077,31 @@ func IsRebaseInProgress(repoPath string) bool {
 }
 
 // GetBranchName returns a human-readable branch reference for a commit.
-// Returns something like "main" or "feature/foo", stripping ancestor suffixes.
-// Uses a 2 second limit to avoid blocking UI.
-func GetBranchName(repoPath, sha string) (string, error) {
+// Returns something like "main", "feature/foo", or "main~3" depending on
+// where the commit is relative to branch heads. Returns empty string on error
+// or timeout (2 second limit to avoid blocking UI).
+func GetBranchName(repoPath, sha string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	return GetBranchNameCtx(ctx, repoPath, sha)
 }
 
-// GetBranchNameCtx returns a branch name, or empty string when no branch
-// reaches the commit. Command failures, including cancellation, return an error.
-func GetBranchNameCtx(ctx context.Context, repoPath, sha string) (string, error) {
+// GetBranchNameCtx returns a human-readable branch reference for a commit.
+// It uses the supplied context and returns an empty string on error.
+func GetBranchNameCtx(ctx context.Context, repoPath, sha string) string {
 	cmd := newGitCmdContext(ctx, "name-rev", "--name-only", "--refs=refs/heads/*", sha)
 	cmd.Dir = repoPath
 
-	out, err := gitOutput(cmd)
+	out, err := cmd.Output()
 	if err != nil {
-		if ctx.Err() != nil {
-			err = ctx.Err()
-		}
-		return "", fmt.Errorf("git name-rev: %w", err)
+		return ""
 	}
 
 	name := strings.TrimSpace(string(out))
 	// name-rev returns "undefined" if commit isn't reachable from any branch
 	if name == "" || name == "undefined" {
-		return "", nil
+		return ""
 	}
 
 	// Strip ~N or ^N suffix (e.g., "main~12" -> "main")
@@ -2112,7 +2110,7 @@ func GetBranchNameCtx(ctx context.Context, repoPath, sha string) (string, error)
 		name = name[:idx]
 	}
 
-	return name, nil
+	return name
 }
 
 // WorktreePathForBranch returns the worktree directory where branch is checked out.
