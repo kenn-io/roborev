@@ -40,7 +40,7 @@ type SynthesisHooks struct {
 	// BeforeInvoke runs once, immediately before the agent is called. The
 	// daemon uses it to record that an agent actually ran, so it must fire
 	// after any checkout preparation that could still fail.
-	BeforeInvoke func()
+	BeforeInvoke func(agent.Agent)
 	// Checkout resolves where read-capable agents run, including when
 	// oversized synthesis inputs need repo-local files.
 	Checkout func() (SynthesisCheckout, error)
@@ -61,7 +61,7 @@ func RunSynthesisAgent(
 	}
 	invoke := func() {
 		if hooks.BeforeInvoke != nil {
-			hooks.BeforeInvoke()
+			hooks.BeforeInvoke(a)
 		}
 	}
 
@@ -102,6 +102,12 @@ func RunSynthesisAgent(
 	}
 	prompt = prepared.Prompt
 
+	preparedAgent, toolCleanup, err := agent.PrepareReviewToolPolicy(a, hooks.Tools, hooks.GlobalConfig, checkout.RepoPath, false)
+	if err != nil {
+		return SynthesisDocument{}, err
+	}
+	defer toolCleanup()
+	a = preparedAgent
 	invoke()
 	output, err := invokeReview(ctx, a, checkout.RepoPath, checkout.GitRef, prompt, SynthesisSchema, out)
 	return decodeSynthesisResult(a, reviews, jsontext.Value(output), err)

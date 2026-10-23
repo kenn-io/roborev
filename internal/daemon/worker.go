@@ -1113,21 +1113,20 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("prepare checkout: %v", err))
 		return
 	}
-	// Session resume can retain the old checkout cwd. Clear both persisted and
-	// in-memory metadata before capturing a fresh session for this attempt.
-	if checkout.isolatedLocalReview {
+	checkout = wp.refreshIsolatedReviewConfigPath(workerID, checkout, job)
+	settings, settingsErr := resolveReviewJobSettings(job, execution, checkout.resolvedConfigRepoPath(), cfg)
+	if settingsErr != nil {
+		wp.failOrRetryContext(ctx, workerID, job, job.Agent, "resolve review settings: "+settingsErr.Error())
+		return
+	}
+	// Strict reviews never inherit a session, even when their checkout is kept.
+	if checkout.isolatedLocalReview || settings.Tools != nil {
 		if err := wp.db.IsolateJobSession(job.ID, workerID); err != nil {
 			wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("clear review session: %v", err))
 			return
 		}
 		job.SessionID = ""
 		job.ResumeSourceJobUUID = nil
-	}
-	checkout = wp.refreshIsolatedReviewConfigPath(workerID, checkout, job)
-	settings, settingsErr := resolveReviewJobSettings(job, execution, checkout.resolvedConfigRepoPath(), cfg)
-	if settingsErr != nil {
-		wp.failOrRetryContext(ctx, workerID, job, job.Agent, "resolve review settings: "+settingsErr.Error())
-		return
 	}
 
 	// Prompt-independent cleanup must not force a prebuilt CI job to reload
@@ -1507,6 +1506,13 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			defer preparedPrompt.Cleanup()
 		}
 		reviewPrompt = preparedPrompt.Prompt
+		preparedAgent, toolCleanup, policyErr := agent.PrepareReviewToolPolicy(a, settings.Tools, wp.cfgGetter.Config(), reviewRepoPath, job.Agentic)
+		if policyErr != nil {
+			wp.failOrRetryContext(ctx, workerID, job, agentName, policyErr.Error())
+			return
+		}
+		defer toolCleanup()
+		a = preparedAgent
 		wp.markAgentInvoked(workerID, job, a)
 		if planningPrompt != "" {
 			implementationInvoked = true

@@ -103,7 +103,7 @@ func TestClaudeBuildArgs(t *testing.T) {
 
 	t.Run("AgenticMode", func(t *testing.T) {
 		// Agentic mode: write tools + dangerous flag
-		args := a.buildArgs(true, false)
+		args := a.WithAgentic(true).(*ClaudeAgent).buildArgs(true, false)
 		assertContainsArg(t, args, claudeDangerousFlag)
 		assertContainsArg(t, args, "--allowedTools")
 		assert.NotContains(t, args, "--tools")
@@ -506,6 +506,39 @@ func TestClaudeReviewUnsafeMissingFlagErrors(t *testing.T) {
 	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.Error(t, err)
 	assert.Contains(err.Error(), "does not support")
+}
+
+func TestClaudeReviewUnsafePreservesToolScope(t *testing.T) {
+	withUnsafeAgents(t, true)
+	for _, schema := range []bool{false, true} {
+		for _, agentic := range []bool{false, true} {
+			t.Run(fmt.Sprintf("schema=%t/agentic=%t", schema, agentic), func(t *testing.T) {
+				mock := mockAgentCLI(t, MockCLIOpts{
+					HelpOutput:  "usage: claude " + claudeDangerousFlag,
+					CaptureArgs: true,
+					StdoutLines: []string{`{"type":"result","result":"{\"findings\":[]}"}`},
+				})
+				a := NewClaudeAgent(mock.CmdPath).WithAgentic(agentic).(*ClaudeAgent)
+				if schema {
+					_, err := a.ReviewWithSchema(t.Context(), t.TempDir(), "deadbeef", "prompt", jsontext.Value(`{"type":"object"}`), nil)
+					require.NoError(t, err)
+				} else {
+					_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
+					require.NoError(t, err)
+				}
+				args := readMockArgs(t, mock.ArgsFile)
+				assertContainsArg(t, args, claudeDangerousFlag)
+				if agentic {
+					assertTools(t, args, []string{"Edit", "Write", "Bash"}, nil)
+					assert.NotContains(t, args, "--tools")
+				} else {
+					assertTools(t, args, []string{"Read", "Glob", "Grep"}, []string{"Edit", "Write", "Bash"})
+					assertArgsContain(t, strings.Join(args, " "), "--tools", "Read,Glob,Grep")
+					assertArgsContain(t, strings.Join(args, " "), "--disallowedTools", "mcp__*")
+				}
+			})
+		}
+	}
 }
 
 func TestClaudeReviewPassesArgs(t *testing.T) {

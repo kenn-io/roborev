@@ -115,6 +115,52 @@ model = "gpt-4.1"  # Override for this repo
 Model resolution priority: CLI flag > per-repo config > global config > agent
 default.
 
+## Claude Code Review Tools
+
+Ordinary Claude Code reviews, including schema reviews and synthesis, expose
+only the built-in `Read`, `Glob`, and `Grep` tools. roborev passes
+`--tools Read,Glob,Grep` and `--allowedTools Read,Glob,Grep`, denies `mcp__*`,
+and sends prompt input on stdin.
+
+Global `allow_unsafe_agents = true` may bypass permission prompts, but it does
+not broaden ordinary Claude reviews. Explicit agentic calls, including fix
+workflows, retain their writable tools and permission bypass.
+
+These tool restrictions do not isolate Claude settings, hooks, plugins, or
+ambient MCP servers; those remain trusted. Denying MCP tool calls does not
+prevent ambient servers from starting. Environment variables keep the existing
+native/proxy routing behavior. Planning uses plan permission mode, selects
+`Read,Glob,Grep`, and denies MCP tool calls.
+
+### Strict reviews
+
+An explicit `tools.mode = "read-only"` opts into strict Claude reviews. The
+adapter starts a fresh session with restricted settings, `dontAsk` permissions,
+no permission prompts, no session persistence, and slash commands disabled. It
+exposes `Read`, `Glob`, and `Grep`; schema output may also expose the native
+`StructuredOutput` tool. At this stage, nonempty MCP grants fail explicitly.
+
+Strict reviews require native startup evidence for the requested permission
+mode, read tools, and empty MCP server set. Missing evidence or unexpected tools
+fail the invocation even if the agent returns a valid review document. A denied
+tool attempt alone does not invalidate an otherwise successful review. Missing
+CLI flags cause an upgrade error before the review starts.
+
+The private MCP configuration stays outside the agent checkout. Its temporary
+root must be absolute and resolve outside that checkout, including through
+symlinks. An unsafe temporary root fails preparation before config files exist.
+
+Strict sessions cannot resume prior sessions or become reuse candidates. This
+also applies to synthesis and reviews that keep the current checkout. Rebuttals
+reject isolated sessions. Global unsafe mode does not broaden strict execution;
+an explicit agentic request conflicts with the policy.
+
+Strict execution removes the accepted inherited session, coordinator, messaging,
+and tool override variables. Existing native/proxy routing still owns provider
+and authentication variables; unknown names pass through. Managed settings, the
+installed CLI, and its built-in plugins remain trusted. The live adapter
+qualification is separate from deterministic flag and parser tests.
+
 ## Routing Claude Code to a Proxy
 
 The `claude-code` agent accepts a model spec of the form `<model>@<base_url>`.

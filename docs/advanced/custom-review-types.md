@@ -213,6 +213,29 @@ at or above the threshold and passes otherwise. Built-in review types use the
 same schema when the agent supports schema-constrained output, and fall back to
 prose for other agents.
 
+## Strict tools
+
+Custom review types can request the Claude-only strict tool boundary:
+
+```toml
+[review.types.citations]
+template = "reviews/citations.tmpl"
+
+[review.types.citations.tools]
+mode = "read-only"
+mcp = {}
+```
+
+An empty MCP map explicitly selects strict execution without MCP access.
+Unsupported adapters and nonempty MCP grants fail before review invocation. If
+any voting member requests strict tools, synthesis uses strict tools with no MCP
+access. Non-voting observers do not change synthesis policy.
+
+Strict reviews always start fresh sessions, including local and CI calls. See
+[Claude Code review tools](../agents/index.md#strict-reviews) for startup
+checks, session isolation, and the native CLI trust boundary. Fix and refine
+retain their existing writable behavior.
+
 ## Writing useful severity guidance
 
 The schema guarantees that each finding has a valid severity label, but it
