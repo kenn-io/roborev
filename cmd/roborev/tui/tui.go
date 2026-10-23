@@ -1132,8 +1132,8 @@ func (m *model) getBranchForJobCtx(ctx context.Context, job storage.ReviewJob) s
 	}
 
 	branch, err := git.GetBranchNameCtx(ctx, job.RepoPath, sha)
-	if err != nil {
-		// A failed lookup says nothing about reachability. Try again on render.
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		// A context error says nothing about reachability. Try again on render.
 		return ""
 	}
 	if branch == "" {
@@ -1144,7 +1144,7 @@ func (m *model) getBranchForJobCtx(ctx context.Context, job storage.ReviewJob) s
 	}
 	// Cache result (including "" when neither lookup nor the detached
 	// placeholder apply, e.g. task/dirty/CI jobs).
-	// Failed lookups and unavailable repos remain uncached.
+	// Context errors and unavailable repos remain uncached.
 	if m.branchNames != nil {
 		m.branchNames[job.ID] = branch
 	}

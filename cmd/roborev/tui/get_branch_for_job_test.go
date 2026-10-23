@@ -96,6 +96,13 @@ func TestBackfillBranchValue(t *testing.T) {
 		assert.Equal(t, branchNone, branch)
 	})
 
+	t.Run("git command failure persists sentinel", func(t *testing.T) {
+		job := storage.ReviewJob{JobType: storage.JobTypeReview, GitRef: detachedSHA, RepoPath: t.TempDir(), CommitID: &commitID}
+		branch, ok := backfillBranchValue(job, nil)
+		assert.True(t, ok)
+		assert.Equal(t, branchNone, branch)
+	})
+
 	t.Run("locally missing repo persists sentinel instead of stranding the row", func(t *testing.T) {
 		job := storage.ReviewJob{JobType: storage.JobTypeReview, GitRef: detachedSHA, RepoPath: "/nonexistent/repo", CommitID: &commitID}
 		branch, ok := backfillBranchValue(job, nil)
@@ -159,8 +166,7 @@ func TestGetBranchForJobReachableFromBranch(t *testing.T) {
 	}
 
 	m := newModel(localhostEndpoint, withExternalIODisabled())
-	// Exercise reachability without the render path's wall-clock deadline.
-	got := m.getBranchForJobCtx(t.Context(), job)
+	got := m.getBranchForJob(job)
 
 	assert.Equal(t, "main", got)
 }
@@ -179,6 +185,8 @@ func TestGetBranchForJobLookupFailure(t *testing.T) {
 	}
 	ctx, cancel := context.WithDeadline(t.Context(), time.Time{})
 	defer cancel()
+	canceledCtx, cancelLookup := context.WithCancel(t.Context())
+	cancelLookup()
 
 	for _, tt := range []struct {
 		name     string
@@ -186,7 +194,7 @@ func TestGetBranchForJobLookupFailure(t *testing.T) {
 		repoPath string
 	}{
 		{"deadline exceeded", ctx, repo.Path()},
-		{"git command fails", t.Context(), t.TempDir()},
+		{"canceled", canceledCtx, repo.Path()},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -200,4 +208,22 @@ func TestGetBranchForJobLookupFailure(t *testing.T) {
 			assert.Equal("main", m.branchNames[job.ID])
 		})
 	}
+}
+
+func TestGetBranchForJobPersistentFailureCached(t *testing.T) {
+	t.Parallel()
+	repo := testutil.InitTestRepo(t)
+	sha := repo.CommitFile("a.txt", "one", "first")
+	job := storage.ReviewJob{
+		ID: 1, JobType: storage.JobTypeReview, GitRef: sha,
+		RepoPath: t.TempDir(), CommitID: new(int64(1)),
+	}
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	want := "(detached @ " + sha[:7] + ")"
+	assert.Equal(t, want, m.getBranchForJob(job))
+	assert.Equal(t, want, m.branchNames[job.ID])
+
+	// A valid repo would resolve main if the next render retried the lookup.
+	job.RepoPath = repo.Path()
+	assert.Equal(t, want, m.getBranchForJob(job))
 }

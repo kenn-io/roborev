@@ -40,6 +40,16 @@ func TestReviewBranchName(t *testing.T) {
 		want string
 	}{
 		{
+			name: "git command failure shows detached placeholder",
+			job: &storage.ReviewJob{
+				JobType:  storage.JobTypeReview,
+				GitRef:   "abc1234567",
+				RepoPath: t.TempDir(),
+				CommitID: new(int64(1)),
+			},
+			want: "(detached @ abc1234)",
+		},
+		{
 			name: "nil job",
 			job:  nil,
 			want: "",
