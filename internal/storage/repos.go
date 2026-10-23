@@ -689,6 +689,16 @@ func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
 	}
 
 	if cascade {
+		// SQLite foreign-key enforcement is connection-local. Remove frozen
+		// response evidence and reassessment context explicitly, before their
+		// handoffs and jobs, even when this connection has enforcement off.
+		if _, err := conn.ExecContext(ctx, `DELETE FROM kata_responses WHERE job_id IN (SELECT id FROM review_jobs WHERE repo_id = ?)`, repoID); err != nil {
+			return err
+		}
+		if _, err := conn.ExecContext(ctx, `DELETE FROM reassessments WHERE job_id IN (SELECT id FROM review_jobs WHERE repo_id = ?)`, repoID); err != nil {
+			return err
+		}
+
 		// Delete in correct order due to foreign keys
 		// 1a. Delete responses for jobs in this repo (job_id based)
 		_, err := conn.ExecContext(ctx, `

@@ -48,6 +48,8 @@ export interface EnqueueCreatedResponse {
   prompt_prebuilt: boolean;
   provider?: string;
   reasoning?: string;
+  /** Whether the daemon owns durable recording of this reassessment result */
+  reassessment_durable?: boolean;
   repo_id: number;
   repo_name?: string;
   repo_path?: string;

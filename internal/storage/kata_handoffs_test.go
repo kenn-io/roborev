@@ -96,7 +96,7 @@ func TestKataHandoffClaimsAndDurableBackoff(t *testing.T) {
 
 func TestKataExplicitCaptureIsIdempotent(t *testing.T) {
 	t.Parallel()
-	env := setupJobEnv(t, "/tmp/handoff-no-backfill", "old123")
+	env := setupJobEnv(t, "/tmp/handoff-explicit-idempotent", "old123")
 	completeWithDocument(t, env.db, env.job.ID, snapshotDocument)
 	env.db.SetKataHandoffBuilder(handoffBuilder)
 	require.NoError(t, env.db.CaptureKataHandoffs(t.Context(), env.job.ID))

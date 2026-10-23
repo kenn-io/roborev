@@ -323,6 +323,14 @@ func (k KataPublicationsQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(k))
 }
 
+type KataResponseStatusQuery struct {
+	OperationID string `json:"operation_id" validate:"required"`
+}
+
+func (k KataResponseStatusQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(k))
+}
+
 type KataStatusQuery struct {
 	// Repo Repository root on the daemon host whose .kata.local.toml or .kata.toml binding selects the project
 	Repo *string `json:"repo,omitempty"`

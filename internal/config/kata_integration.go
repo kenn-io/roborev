@@ -29,12 +29,13 @@ type IntegrationsConfig struct {
 // When enabled, every Kata use goes through this connection; when disabled,
 // roborev keeps running the kata CLI as before.
 type KataIntegrationConfig struct {
-	Enabled        bool   `toml:"enabled" comment:"Connect the daemon to Kata's API instead of running the kata CLI. Requires endpoint."`
-	Endpoint       string `toml:"endpoint" comment:"Kata API endpoint: https://host, loopback http://localhost:port, or unix:///path/to/socket."`
-	APIKey         string `toml:"api_key" json:"-" sensitive:"true" comment:"Bearer credential for Kata. Prefer api_key_file; masked in config output."`
-	APIKeyFile     string `toml:"api_key_file" comment:"File holding the Kata credential, read by the daemon. A leading ~/ is the home directory."`
-	DefaultProject string `toml:"default_project" comment:"Kata project used when a repository has no .kata.local.toml or .kata.toml binding."`
-	Teammate       string `toml:"teammate" comment:"Teammate name Kata records on comments roborev posts (default roborev)."`
+	PublishReassessments bool   `toml:"publish_reassessments" comment:"Publish focused reassessment results as typed finding responses (default false)."`
+	Enabled              bool   `toml:"enabled" comment:"Connect the daemon to Kata's API instead of running the kata CLI. Requires endpoint."`
+	Endpoint             string `toml:"endpoint" comment:"Kata API endpoint: https://host, loopback http://localhost:port, or unix:///path/to/socket."`
+	APIKey               string `toml:"api_key" json:"-" sensitive:"true" comment:"Bearer credential for Kata. Prefer api_key_file; masked in config output."`
+	APIKeyFile           string `toml:"api_key_file" comment:"File holding the Kata credential, read by the daemon. A leading ~/ is the home directory."`
+	DefaultProject       string `toml:"default_project" comment:"Kata project used when a repository has no .kata.local.toml or .kata.toml binding."`
+	Teammate             string `toml:"teammate" comment:"Teammate name Kata records on comments roborev posts (default roborev)."`
 }
 
 // KataEndpointKind classifies an accepted Kata endpoint.
@@ -209,4 +210,10 @@ func ValidateKataHooks(hooks []HookConfig, enabled bool) error {
 		}
 	}
 	return nil
+}
+
+// ReassessmentTeammate attributes the agent's reassessment separately from
+// ordinary daemon writes. Validate the combined handle before enqueue.
+func (k KataIntegrationConfig) ReassessmentTeammate(agent string) string {
+	return k.ResolvedTeammate() + "-" + agent
 }

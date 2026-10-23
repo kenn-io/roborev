@@ -18,16 +18,15 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
-func TestCommentRebuttalRecordsBeforeClose(t *testing.T) {
+func TestCommentRebuttalUsesDaemonAssessmentBeforeClose(t *testing.T) {
 	for _, tc := range []struct {
-		name                       string
-		valid, staleOriginalReview bool
-		closeFails                 bool
+		name       string
+		valid      bool
+		closeFails bool
 	}{
 		{name: "valid", valid: true},
 		{name: "invalid"},
 		{name: "close fails", valid: true, closeFails: true},
-		{name: "stale original review", valid: true, staleOriginalReview: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resetCLIUse(t)
@@ -51,6 +50,7 @@ func TestCommentRebuttalRecordsBeforeClose(t *testing.T) {
 					w.WriteHeader(http.StatusCreated)
 					j := storage.ReviewJob{ID: 8, UUID: new(uuid.New()), RepoPath: t.TempDir(), Agent: "test"}
 					j.OriginalReviewUUID = &originalReviewUUID
+					j.ReassessmentDurable = true
 					assert.NoError(t, json.MarshalWrite(w, j))
 				case "/api/jobs":
 					assert.NoError(t, json.MarshalWrite(w, map[string]any{"jobs": []storage.ReviewJob{{ID: 8, Status: storage.JobStatusDone}}}))
@@ -61,19 +61,12 @@ func TestCommentRebuttalRecordsBeforeClose(t *testing.T) {
 					}
 					assert.NoError(t, json.MarshalWrite(w, storage.Review{Output: output}))
 				case "/api/comment":
-					var request map[string]any
+					actions = append(actions, "unexpected CLI annotation")
+					w.WriteHeader(http.StatusInternalServerError)
+				case "/api/rebuttal/close":
+					var request map[string]int64
 					assert.NoError(t, json.UnmarshalRead(r.Body, &request))
-					assert.Equal(t, originalReviewUUID.String(), request["expected_review_uuid"])
-					actions = append(actions, "assessment")
-					if tc.staleOriginalReview {
-						w.WriteHeader(http.StatusConflict)
-						return
-					}
-					w.WriteHeader(http.StatusCreated)
-				case "/api/review/close":
-					var request map[string]any
-					assert.NoError(t, json.UnmarshalRead(r.Body, &request))
-					assert.Equal(t, originalReviewUUID.String(), request["expected_review_uuid"])
+					assert.Equal(t, int64(8), request["job_id"])
 					actions = append(actions, "close")
 					if tc.closeFails {
 						w.WriteHeader(http.StatusConflict)
@@ -87,19 +80,17 @@ func TestCommentRebuttalRecordsBeforeClose(t *testing.T) {
 				cliOutputIsTerminal = func(out io.Writer) bool { return out == os.Stderr }
 				err = cmd.Execute()
 			})
-			if tc.staleOriginalReview {
-				require.ErrorContains(t, err, "original review left open")
-				assert.Equal(t, []string{"rebuttal", "assessment"}, actions)
-			} else if tc.closeFails {
+			if tc.closeFails {
 				require.ErrorContains(t, err, "close failed")
+				assert.Equal(t, []string{"rebuttal", "close"}, actions)
 			} else if valid {
 				require.NoError(t, err)
-				assert.Equal(t, []string{"rebuttal", "assessment", "close"}, actions)
+				assert.Equal(t, []string{"rebuttal", "close"}, actions)
 			} else {
 				require.Error(t, err)
 				assert.Equal(t, []string{"rebuttal"}, actions)
 			}
-			if valid && !tc.staleOriginalReview && !tc.closeFails {
+			if valid && !tc.closeFails {
 				// The close report crosses the mock daemon socket.
 				require.Eventually(t, func() bool {
 					mu.Lock()
@@ -111,7 +102,7 @@ func TestCommentRebuttalRecordsBeforeClose(t *testing.T) {
 			}
 			mu.Lock()
 			defer mu.Unlock()
-			if valid && !tc.staleOriginalReview && !tc.closeFails {
+			if valid && !tc.closeFails {
 				require.Len(t, closes, 1)
 				assert.JSONEq(t, `{"event":"review_closed","properties":{"surface":"cli"}}`, closes[0])
 			} else {
@@ -180,13 +171,11 @@ func TestCommentRebuttalSelectsAFindingBySelector(t *testing.T) {
 	var (
 		mu       sync.Mutex
 		rebuttal map[string]any
-		recorded string
+		recorded int
 	)
 	record := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request map[string]any
-		assert.NoError(t, json.UnmarshalRead(r.Body, &request))
 		mu.Lock()
-		recorded, _ = request["comment"].(string)
+		recorded++
 		mu.Unlock()
 		w.WriteHeader(http.StatusCreated)
 	})
@@ -195,7 +184,7 @@ func TestCommentRebuttalSelectsAFindingBySelector(t *testing.T) {
 		assert.NoError(t, json.UnmarshalRead(r.Body, &rebuttal))
 		mu.Unlock()
 		w.WriteHeader(http.StatusCreated)
-		job := storage.ReviewJob{ID: 8, UUID: new(uuid.New()), RepoPath: t.TempDir(), Agent: "test", OriginalReviewUUID: &originalReviewUUID}
+		job := storage.ReviewJob{ID: 8, UUID: new(uuid.New()), RepoPath: t.TempDir(), Agent: "test", OriginalReviewUUID: &originalReviewUUID, ReassessmentDurable: true}
 		assert.NoError(t, json.MarshalWrite(w, job))
 	})
 	list := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -238,9 +227,7 @@ func TestCommentRebuttalSelectsAFindingBySelector(t *testing.T) {
 	defer mu.Unlock()
 	assert.Equal(t, findings.Findings[1].ID, rebuttal["finding_id"], "the daemon gets the full selector")
 	assert.NotContains(t, rebuttal, "finding", "a selector and an excerpt are not sent together")
-	assert.Contains(t, recorded, "Problem: Typo.", "the recorded assessment quotes the finding that was selected")
-	assert.Contains(t, recorded, "Fix: Spell it.")
-	assert.NotContains(t, recorded, "Nil dereference.")
+	assert.Zero(t, recorded, "the daemon owns assessment annotations")
 }
 
 func TestCommentRebuttalRequiresACompleteSelector(t *testing.T) {
@@ -306,4 +293,18 @@ func TestCommentRebuttalRejectsAnUnusableSelectorWithoutQueueing(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRebuttalOldDaemonCannotCloseUnrecordedAssessment(t *testing.T) {
+	daemonFromHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/rebuttal" {
+			w.WriteHeader(http.StatusCreated)
+			assert.NoError(t, json.MarshalWrite(w, storage.ReviewJob{ID: 8, OriginalReviewUUID: new(uuid.New())}))
+			return
+		}
+		assert.NotEqual(t, "/api/rebuttal/close", r.URL.Path, "an older daemon must never allow closing without durable assessment recording")
+	}))
+	cmd := commentCmd()
+	cmd.SetArgs([]string{"42", "--rebuttal", "--finding", "Missing guard.", "-m", "The caller validates.", "--close"})
+	require.ErrorContains(t, cmd.Execute(), "does not persist reassessment results")
 }

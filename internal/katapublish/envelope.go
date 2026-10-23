@@ -35,7 +35,14 @@ type Request struct {
 	// enqueue generation. Completed reviews use ReviewUUID instead. Omission
 	// preserves existing completed-publication fingerprints.
 	FailureRun string `json:"failure_run,omitempty"`
-	// IssueUID is reserved for explicit response delivery, which K2 rejects.
+	// Response-only captures are omitted from publication encodings so existing
+	// K2 payload fingerprints retain their exact meaning.
+	PublicationOperationID string        `json:",omitempty"`
+	PublicationFingerprint string        `json:",omitempty"`
+	PublicationProjectUID  string        `json:",omitempty"`
+	RootAttributionHash    string        `json:",omitempty"`
+	PublicationEntries     []LedgerEntry `json:",omitempty"`
+	// IssueUID identifies the existing issue for explicit response delivery.
 	IssueUID    string
 	OperationID string
 	Endpoint    string
@@ -57,8 +64,9 @@ type Entry struct {
 	Body         string `json:"body"`
 }
 
-// Response reserves the frozen operation shape used by future typed responses.
+// Response is one immutable typed finding response, registered before sending.
 type Response struct {
+	Root        string `json:"root,omitempty"`
 	OperationID string `json:"operation_id"`
 	Fingerprint string `json:"fingerprint"`
 	Body        string `json:"body"`
@@ -214,7 +222,7 @@ func (env Envelope) validateRequest(req Request, projectUID string) error {
 	if err != nil {
 		return err
 	}
-	if env.Version != want.Version || env.WriterEndpoint != want.WriterEndpoint || env.ProjectUID != want.ProjectUID || env.OperationID != want.OperationID || env.Fingerprint != want.Fingerprint || env.Policy != want.Policy || env.ReviewUUID != want.ReviewUUID || len(env.Entries) != len(want.Entries) || len(env.Responses) != len(want.Responses) {
+	if env.Version != want.Version || env.WriterEndpoint != want.WriterEndpoint || env.ProjectUID != want.ProjectUID || env.OperationID != want.OperationID || env.Fingerprint != want.Fingerprint || env.Policy != want.Policy || env.ReviewUUID != want.ReviewUUID || len(env.Entries) != len(want.Entries) || (len(want.Responses) > 0 && len(env.Responses) != len(want.Responses)) {
 		return fmt.Errorf("%w: publication ledger changed", ErrPending)
 	}
 	seen := map[string]bool{}
@@ -225,8 +233,8 @@ func (env Envelope) validateRequest(req Request, projectUID string) error {
 		}
 		seen[e.Selector] = true
 	}
-	for i, e := range env.Responses {
-		if !reflect.DeepEqual(e.Response, want.Responses[i].Response) {
+	for i, e := range want.Responses {
+		if !reflect.DeepEqual(e.Response, env.Responses[i].Response) {
 			return fmt.Errorf("%w: response operation changed", ErrPending)
 		}
 	}

@@ -25,6 +25,7 @@ type rebuttalOptions struct {
 	enabled, close bool
 	finding        string
 	findingID      string
+	replacement    string
 }
 
 func (o rebuttalOptions) validate() error {
@@ -41,6 +42,14 @@ func (o rebuttalOptions) validate() error {
 	if hasFindingID {
 		if _, err := findingid.Parse(strings.TrimSpace(o.findingID)); err != nil {
 			return fmt.Errorf("--finding-id takes a complete selector copied from 'roborev show', not part of one: %w", err)
+		}
+	}
+	if o.replacement != "" {
+		if !o.enabled {
+			return fmt.Errorf("--replacement requires --rebuttal or --kata supersede")
+		}
+		if _, err := findingid.Parse(o.replacement); err != nil {
+			return fmt.Errorf("replacement: %w", err)
 		}
 	}
 	return nil
@@ -112,8 +121,7 @@ func runCommentRebuttal(cmd *cobra.Command, jobID int64, commenter, message stri
 	ctx := cmd.Context()
 	ep := getDaemonEndpoint()
 	api := ep.APIClient(30 * time.Second)
-	request := daemon.RebuttalRequest{JobID: jobID, Finding: o.finding, Comment: message, Commenter: commenter}
-	finding := o.finding
+	request := daemon.RebuttalRequest{JobID: jobID, Finding: o.finding, Comment: message, Commenter: commenter, Replacement: o.replacement}
 	if strings.TrimSpace(o.findingID) != "" {
 		findings, err := listReviewFindings(ctx, api, jobID)
 		if err != nil {
@@ -126,11 +134,13 @@ func runCommentRebuttal(cmd *cobra.Command, jobID int64, commenter, message stri
 		// The daemon checks the selector against the review again when it queues
 		// the rebuttal. The excerpt is only what the recorded assessment quotes.
 		request.Finding, request.FindingID = "", selected.ID
-		finding = selected.Excerpt()
 	}
 	var job storage.ReviewJob
 	if err := postRebuttalAPI(ctx, api.RebuttalRaw, request, &job); err != nil {
 		return fmt.Errorf("queue rebuttal: %w", err)
+	}
+	if !job.ReassessmentDurable {
+		return fmt.Errorf("daemon does not persist reassessment results; update and restart it before retrying; queued job %d and original review left open", job.ID)
 	}
 	cmd.Printf("Rebuttal job %d queued for review %d\n", job.ID, jobID)
 	review, err := waitForJobCompletion(ctx, ep.BaseURL(), job.ID, nil)
@@ -144,16 +154,9 @@ func runCommentRebuttal(cmd *cobra.Command, jobID int64, commenter, message stri
 	if job.OriginalReviewUUID == nil {
 		return fmt.Errorf("rebuttal job %d has no UUID for a safe rebuttal assessment; original review left open", job.ID)
 	}
-	body := fmt.Sprintf("Rebuttal job %d (%s): %s\n\nFinding:\n%s\n\n%s", job.ID, job.Agent, assessment.Outcome, finding, assessment.Explanation)
-	if err := postRebuttalAPI(ctx, api.AddCommentRaw, daemon.AddCommentRequest{
-		JobID: jobID, Commenter: job.Agent, Comment: body,
-		ExpectedReviewUUID: job.OriginalReviewUUID,
-	}, nil); err != nil {
-		return fmt.Errorf("record rebuttal job %d: %w; original review left open", job.ID, err)
-	}
 	if o.close {
-		if err := postRebuttalAPI(ctx, api.CloseReviewRaw, daemon.CloseReviewRequest{
-			JobID: jobID, Closed: true, ExpectedReviewUUID: job.OriginalReviewUUID,
+		if err := postRebuttalAPI(ctx, api.CloseReassessmentReviewRaw, daemon.CloseReassessmentRequest{
+			JobID: job.ID,
 		}, nil); err != nil {
 			return fmt.Errorf("rebuttal job %d recorded but close failed: %w", job.ID, err)
 		}

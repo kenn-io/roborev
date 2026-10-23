@@ -68,6 +68,7 @@ func parseSQLiteTime(s string) time.Time {
 //   - CommitID > 0 → "review" (single commit)
 //   - otherwise → "range" (commit range)
 type EnqueueOpts struct {
+	Reassessment        *ReassessmentContext
 	RepoID              int64
 	CommitID            int64  // >0 for single-commit reviews
 	GitRef              string // SHA, "start..end" range, or "dirty"
@@ -136,6 +137,9 @@ func (db *DB) EnqueueJob(opts EnqueueOpts) (*ReviewJob, error) {
 	defer func() { _ = tx.Rollback() }()
 	job, err := db.insertJobTx(ctx, tx, opts, uid, machineID, now)
 	if err != nil {
+		return nil, err
+	}
+	if err := insertReassessment(ctx, tx, job, opts.Reassessment, machineID, now); err != nil {
 		return nil, err
 	}
 	if opts.Experiment != nil {
@@ -1448,6 +1452,9 @@ func (db *DB) completeJob(
 	if err := persistKataCompletion(ctx, conn, job, requests); err != nil {
 		return err
 	}
+	if err := completeReassessment(ctx, conn, jobID, agent, finalOutput, machineID, now); err != nil {
+		return err
+	}
 	_, err = conn.ExecContext(ctx, "COMMIT")
 	if err != nil {
 		return err
@@ -2463,6 +2470,15 @@ func (db *DB) GetJobByIDContext(ctx context.Context, id int64) (*ReviewJob, erro
 		return nil, err
 	}
 
+	if j.Source == JobSourceRebuttal {
+		capture, err := db.Reassessment(ctx, j.ID)
+		if err == nil {
+			j.OriginalReviewUUID = &capture.Context.OriginalReviewUUID
+			j.ReassessmentDurable = true
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+	}
 	return &j, nil
 }
 

@@ -196,7 +196,15 @@ func InsertKataHandoffTx(ctx context.Context, q snapshotQueries, jobID int64, re
 	if err != nil {
 		return err
 	}
-	if _, err = q.ExecContext(ctx, `INSERT INTO kata_handoffs(operation_id,job_id,review_uuid,fingerprint,request_json,state_json) VALUES(?,?,?,?,?,?) ON CONFLICT(operation_id) DO NOTHING`, req.OperationID, jobID, req.ReviewUUID, fingerprint, string(raw), `{}`); err != nil {
+	initialState := `{}`
+	if len(req.Responses) > 0 {
+		encoded, err := json.Marshal(katapublish.State{IssueUID: req.IssueUID, IssueRef: req.Project + "#" + req.IssueUID, ProjectUID: req.ProjectUID})
+		if err != nil {
+			return err
+		}
+		initialState = string(encoded)
+	}
+	if _, err = q.ExecContext(ctx, `INSERT INTO kata_handoffs(operation_id,job_id,review_uuid,fingerprint,request_json,state_json) VALUES(?,?,?,?,?,?) ON CONFLICT(operation_id) DO NOTHING`, req.OperationID, jobID, req.ReviewUUID, fingerprint, string(raw), initialState); err != nil {
 		return err
 	}
 	var stored string
@@ -231,7 +239,7 @@ func (db *DB) CaptureKataHandoffs(ctx context.Context, jobID int64) error {
 		}
 	}
 	for _, h := range existing {
-		if h.ReviewUUID == reviewUUID && (reviewUUID != "" || h.Request.FailureRun == KataFailureRun(job)) && h.Request.Policy != "blocked" {
+		if len(h.Request.Responses) == 0 && h.ReviewUUID == reviewUUID && (reviewUUID != "" || h.Request.FailureRun == KataFailureRun(job)) && h.Request.Policy != "blocked" {
 			return nil
 		}
 	}

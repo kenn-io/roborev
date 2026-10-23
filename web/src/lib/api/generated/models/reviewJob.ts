@@ -51,6 +51,8 @@ export interface ReviewJob {
   provider?: string;
   readable?: boolean;
   reasoning?: string;
+  /** Whether the daemon owns durable recording of this reassessment result */
+  reassessment_durable?: boolean;
   repo_id: number;
   repo_name?: string;
   repo_path?: string;

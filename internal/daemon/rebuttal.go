@@ -25,15 +25,50 @@ type RebuttalRequest struct {
 	// FindingID selects the finding.
 	Finding string `json:"finding,omitempty" doc:"Excerpt of the original review text to re-evaluate; use this or finding_id"`
 	// FindingID is a complete selector from GET /api/review/findings.
-	FindingID string `json:"finding_id,omitempty" doc:"Complete selector of a finding of the current review to re-evaluate, as GET /api/review/findings lists it; use this or finding"`
-	Comment   string `json:"comment"`
-	Commenter string `json:"commenter"`
+	FindingID   string `json:"finding_id,omitempty" doc:"Complete selector of a finding of the current review to re-evaluate, as GET /api/review/findings lists it; use this or finding"`
+	Replacement string `json:"replacement,omitempty" doc:"Optional complete selector of a replacement finding"`
+	Comment     string `json:"comment"`
+	Commenter   string `json:"commenter"`
 }
 
 type (
 	RebuttalInput  struct{ Body RebuttalRequest }
 	RebuttalOutput struct{ Body *storage.ReviewJob }
 )
+
+// CloseReassessmentRequest selects the completed reassessment whose original
+// parent document should be closed.
+type CloseReassessmentRequest struct {
+	JobID int64 `json:"job_id" doc:"Completed reassessment job ID"`
+}
+
+type CloseReassessmentInput struct {
+	Body CloseReassessmentRequest
+}
+
+func (s *Server) humaCloseReassessment(ctx context.Context, in *CloseReassessmentInput) (*CloseReviewOutput, error) {
+	if in.Body.JobID <= 0 {
+		return nil, huma.Error400BadRequest("job_id must name a completed reassessment")
+	}
+	parentID, err := s.db.CloseReviewAfterReassessment(ctx, in.Body.JobID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, huma.Error404NotFound("reassessment or parent review not found")
+	}
+	if errors.Is(err, storage.ErrReviewChanged) || errors.Is(err, storage.ErrFindingChanged) {
+		return nil, huma.Error409Conflict("reassessment parent document changed or assessment is not complete")
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError("close reassessment parent failed")
+	}
+	parent, err := s.db.GetJobByID(parentID)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("get reassessment parent failed")
+	}
+	s.broadcaster.Broadcast(eventForMutationPrincipal(ctx, eventForJob(jobEventType(parent, "closed"), parent, parentID)))
+	out := &CloseReviewOutput{}
+	out.Body.Success = true
+	return out, nil
+}
 
 func rebuttalAgent(job *storage.ReviewJob, cfg *config.Config) (agent.Agent, error) {
 	if strings.TrimSpace(job.SessionID) == "" || strings.HasPrefix(job.SessionID, "-") || strings.ContainsAny(job.SessionID, "\x00\r\n") {
@@ -93,7 +128,7 @@ func (s *Server) humaRebuttal(ctx context.Context, in *RebuttalInput) (*Rebuttal
 	// Use the joined job so execution settings and the review version come
 	// from the same snapshot, even when the original job is rerun.
 	parent := review.Job
-	if parent.Status != storage.JobStatusDone || !parent.IsReviewJob() || parent.IsCIReview() {
+	if parent.Status != storage.JobStatusDone || (!parent.IsReviewJob() && !parent.IsSynthesisJob()) || parent.IsCIReview() {
 		return nil, huma.Error400BadRequest("rebuttal requires a completed local code review")
 	}
 	isolated, err := s.db.JobSessionIsolated(ctx, parent.ID)
@@ -102,6 +137,20 @@ func (s *Server) humaRebuttal(ctx context.Context, in *RebuttalInput) (*Rebuttal
 	}
 	if isolated {
 		return nil, huma.Error400BadRequest("isolated review sessions cannot be reused for rebuttals")
+	}
+	if parent.IsSynthesisJob() {
+		// Synthesis can complete through its backup without changing the
+		// configured job agent. Resume the agent that owns the saved session,
+		// with the same model and reasoning used by synthesis execution.
+		execution := *parent
+		if synthesisSelectedBackupAgent(parent, review.Agent) {
+			execution.Model = parent.BackupModel
+		}
+		execution.Agent = review.Agent
+		if strings.TrimSpace(execution.Reasoning) == "" {
+			execution.Reasoning = "thorough"
+		}
+		parent = &execution
 	}
 	if _, err := rebuttalAgent(parent, s.configWatcher.Config()); err != nil {
 		return nil, huma.Error400BadRequest(err.Error())
@@ -112,14 +161,38 @@ func (s *Server) humaRebuttal(ctx context.Context, in *RebuttalInput) (*Rebuttal
 	if review.Closed {
 		return nil, huma.Error400BadRequest("rebuttal requires an open review")
 	}
+	capture := &storage.ReassessmentContext{OriginalReviewUUID: *review.UUID, Selector: req.FindingID, Excerpt: req.Finding, Requester: req.Commenter, Explanation: req.Comment, Replacement: req.Replacement, Policy: "local"}
+	capture.OriginalDocumentHash, err = storage.ReassessmentReviewHash(review)
+	if err != nil {
+		return nil, huma.Error409Conflict("review content is unavailable for reassessment")
+	}
+	if req.Replacement != "" {
+		replacement, err := s.db.FindingSnapshot(ctx, req.Replacement)
+		if err != nil {
+			return nil, huma.Error400BadRequest("replacement must name an available finding")
+		}
+		replacementJob, err := s.db.GetJobByID(replacement.JobID)
+		if err != nil || replacementJob.RepoID != parent.RepoID {
+			return nil, huma.Error400BadRequest("replacement must name a finding in the same repository")
+		}
+		capture.Replacement = replacement.Selector
+	}
 	if req.FindingID != "" {
 		selected, err := s.rebuttalFinding(ctx, parent.ID, req.FindingID)
 		if err != nil {
 			return nil, err
 		}
 		req.Finding = selected.Excerpt()
+		capture.Selector = selected.ID
+		capture.Finding, err = s.db.FindingSnapshot(ctx, selected.ID)
+		if err != nil {
+			return nil, huma.Error409Conflict("selected finding is unavailable")
+		}
 	} else if !containsFindingExcerpt(review.Output, req.Finding) {
 		return nil, huma.Error400BadRequest("finding must be an excerpt of the original review")
+	}
+	if capture.Replacement != "" && capture.Replacement == capture.Selector {
+		return nil, huma.Error400BadRequest("replacement must name another finding")
 	}
 	focused := fmt.Sprintf(`Re-evaluate only the selected finding from your original review using the user's explanation.
 Do not run a full review or change any files. Preserve normal review permissions.
@@ -132,29 +205,31 @@ superseded: the original finding is outdated or replaced. Explain any severity d
 Original finding: %q
 User explanation: %q
 `, req.Finding, req.Comment)
-	if _, err := s.db.AddCommentToJobWithSourceIfReviewUUID(
-		parent.ID, *review.UUID, req.Commenter, req.Comment, storage.ResponseSourceLocal,
-	); err != nil {
-		if errors.Is(err, storage.ErrReviewChanged) {
-			return nil, huma.Error409Conflict(err.Error())
+	if cfg := s.configWatcher.Config().Integrations.Kata; cfg.PublishReassessments && cfg.Enabled && req.FindingID != "" {
+		capture.Delivery, err = s.captureReassessmentDelivery(ctx, parent, capture.Selector, cfg)
+		if err != nil {
+			return nil, err
 		}
-		return nil, huma.Error500InternalServerError(fmt.Sprintf("save explanation: %v", err))
+		capture.Policy = capture.Delivery.Policy
 	}
-	s.broadcaster.Broadcast(eventForMutationPrincipal(
-		ctx, eventForJob(jobEventType(parent, "commented"), parent, parent.ID),
-	))
 	job, err := s.db.EnqueueJob(storage.EnqueueOpts{
 		RepoID: parent.RepoID, GitRef: parent.GitRef, Branch: parent.Branch, Agent: parent.Agent,
 		Model: parent.Model, Provider: parent.Provider, Reasoning: parent.Reasoning,
 		SessionID: parent.SessionID, Prompt: focused, JobType: storage.JobTypeTask,
 		Source: storage.JobSourceRebuttal, ParentJobID: parent.ID, WorktreePath: parent.WorktreePath,
+		Reassessment: capture,
 	})
 	if err != nil {
-		return nil, huma.Error500InternalServerError(fmt.Sprintf("explanation saved but enqueue failed: %v", err))
+		if errors.Is(err, storage.ErrReviewChanged) || errors.Is(err, storage.ErrFindingChanged) {
+			return nil, huma.Error409Conflict(err.Error())
+		}
+		return nil, huma.Error500InternalServerError("queue reassessment failed")
 	}
+	s.broadcaster.Broadcast(eventForMutationPrincipal(ctx, eventForJob(jobEventType(parent, "commented"), parent, parent.ID)))
 	job.RepoPath = parent.RepoPath
 	job.RepoName = parent.RepoName
 	job.OriginalReviewUUID = review.UUID
+	job.ReassessmentDurable = true
 	s.broadcaster.Broadcast(eventForJob("review.enqueued", job, job.ID))
 	return &RebuttalOutput{Body: job}, nil
 }
