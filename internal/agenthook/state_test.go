@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -460,10 +461,19 @@ func TestCountOpenFailedReviewsExcludesNonReviewJobTypes(t *testing.T) {
 		job(storage.JobTypeInsights, failVerdict),
 		job(storage.JobTypeClassify, failVerdict),
 	}
+	design := job(storage.JobTypeReview, failVerdict)
+	design.ReviewType = config.ReviewTypeDesign
+	jobs = append(jobs, design)
 	count, ok := countOpenFailedReviews(context.Background(), reviewSourceWithJobs(jobs...), repo.Path(), "main", head)
 
 	assert.True(ok)
-	assert.Equal(1, count, "only failed review jobs count; passed reviews and non-review job types are not actionable")
+	assert.Equal(1, count, "only failed code review jobs count; passed reviews, design reviews, and non-review job types are not actionable")
+}
+
+func TestBuildPromptReasonKeepsPreambleWithCustomInstruction(t *testing.T) {
+	reason := buildStopReason(Request{Instruction: "Run the fix skill now."}, 5, nil)
+
+	assert.Equal(t, reminderPreamble+" Run the fix skill now. 5 Stop hooks reached.", reason)
 }
 
 func TestBuildHookReasonsDoNotExposeInternalContext(t *testing.T) {
@@ -485,17 +495,17 @@ func TestBuildHookReasonsDoNotExposeInternalContext(t *testing.T) {
 	}
 
 	failed := buildFailedReviewReason(req, st, nil)
-	assert.Equal(DefaultInstruction+` 1 open failed roborev review on "agent-hook-integration".`, failed)
+	assert.Equal(reminderPreamble+" "+DefaultInstruction+` 1 open failed roborev review on "agent-hook-integration".`, failed)
 	assert.NotContains(failed, req.Event.SessionID)
 	assert.NotContains(failed, "/workspace/roborev")
 
 	stop := buildStopReason(req, st.Count, nil)
-	assert.Equal(DefaultInstruction+" 4 Stop hooks reached.", stop)
+	assert.Equal(reminderPreamble+" "+DefaultInstruction+" 4 Stop hooks reached.", stop)
 	assert.NotContains(stop, req.Event.SessionID)
 	assert.NotContains(stop, "/workspace/roborev")
 
 	commit := buildCommitReason(req, st.CommitCount, st.LastCommitRepo, nil)
-	assert.Equal(DefaultInstruction+` 2 commits reached in "agent-hook-integration".`, commit)
+	assert.Equal(reminderPreamble+" "+DefaultInstruction+` 2 commits reached in "agent-hook-integration".`, commit)
 	assert.NotContains(commit, req.Event.SessionID)
 	assert.NotContains(commit, "/workspace/roborev")
 }
@@ -551,10 +561,11 @@ func TestBuildFailedReviewReasonSanitizesUntrustedBranch(t *testing.T) {
 
 	assert.NotContains(reason, "\n", "no control characters reach the agent")
 	assert.Equal(2, strings.Count(reason, `"`), "branch renders as one quoted token with no breakout")
-	assert.True(strings.HasPrefix(reason, "Run roborev fix. "), "the trusted instruction stays first")
+	trusted := reminderPreamble + " Run roborev fix. "
+	assert.True(strings.HasPrefix(reason, trusted), "the trusted preamble and instruction stay first")
 
 	long := SessionState{FailedReviewCount: 1, LastFailedReviewBranch: strings.Repeat("A", 500)}
-	assert.Less(len(buildFailedReviewReason(req, long, nil)), 160, "a hostile name cannot flood the agent context")
+	assert.Less(len(buildFailedReviewReason(req, long, nil)), len(trusted)+160, "a hostile name cannot flood the agent context")
 }
 
 func TestApplyFailedReviewTriggerScopesDedupPerRepoBranch(t *testing.T) {
@@ -3002,8 +3013,9 @@ func TestRecordUserPromptSubmitInjectsSelfContainedReminder(t *testing.T) {
 	assert.Contains(first.Reason, "job 1 (")
 	assert.Contains(first.Reason, "verdict F")
 	assert.Contains(first.Reason, head[:12])
+	assert.Contains(first.Reason, reminderPreamble)
 	assert.Contains(first.Reason, "finish the user's current task first")
-	assert.Contains(first.Reason, "Invoke the roborev-fix skill")
+	assert.Contains(first.Reason, "triage these reviews with the roborev-fix skill")
 
 	// The failed-review reminder is acknowledged. The next prompt still
 	// triggers, but only through the active fix session (matching the Stop
@@ -3044,7 +3056,8 @@ func TestRecordUserPromptCustomInstructionReplacesDefaultGuidance(t *testing.T) 
 	require.NoError(t, err)
 	assert.True(t, resp.Triggered)
 	assert.Contains(t, resp.Reason, "Custom triage: handle job 2 after the current task.")
-	assert.NotContains(t, resp.Reason, "Invoke the roborev-fix skill")
+	assert.NotContains(t, resp.Reason, "triage these reviews")
+	assert.Contains(t, resp.Reason, reminderPreamble)
 	assert.Contains(t, resp.Reason, "job 2 (")
 }
 

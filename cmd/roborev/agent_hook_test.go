@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	kitagenthook "go.kenn.io/kit/agenthook"
 
+	roborevagent "go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/agenthook"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/skills"
@@ -327,6 +328,39 @@ func TestRunAgentHookFailsOpenWhenDaemonUnavailable(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, `{}`, stdout.String())
 	assert.Contains(t, stderr.String(), "daemon unavailable")
+}
+
+func TestRunAgentHookStaysQuietInsideRoborevAgents(t *testing.T) {
+	t.Setenv(roborevagent.HookSuppressEnv, "1")
+	oldPost := postAgentHook
+	posted := false
+	postAgentHook = func(context.Context, string, agenthook.Request) (agenthook.Response, error) {
+		posted = true
+		return agenthook.Response{Triggered: true, Reason: "resolve reviews"}, nil
+	}
+	t.Cleanup(func() { postAgentHook = oldPost })
+
+	tests := []struct {
+		name string
+		run  func(stdin io.Reader, stdout io.Writer) error
+	}{
+		{"kit profile", func(stdin io.Reader, stdout io.Writer) error {
+			return runAgentHook(kitagenthook.AgentClaude, agenthook.DefaultOptions(), stdin, stdout, io.Discard)
+		}},
+		{"local profile", func(stdin io.Reader, stdout io.Writer) error {
+			return runLocalAgentHook(agenthook.AgentGrok, agenthook.DefaultOptions(), stdin, stdout, io.Discard)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			err := tt.run(strings.NewReader(`{"session_id":"s1","hook_event_name":"Stop"}`), &stdout)
+
+			require.NoError(t, err)
+			assert.JSONEq(t, `{}`, stdout.String())
+			assert.False(t, posted, "a roborev-launched agent's session must not reach the daemon")
+		})
+	}
 }
 
 func TestRunAgentHookEncodesKitStopResponse(t *testing.T) {
