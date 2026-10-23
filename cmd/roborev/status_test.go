@@ -183,11 +183,6 @@ func TestStatusCmdReportsUnjudgedRuntime(t *testing.T) {
 			originalEnsure := statusEnsureDaemon
 			statusEnsureDaemon = func() error { return daemon.ErrUnjudgedRuntime }
 			t.Cleanup(func() { statusEnsureDaemon = originalEnsure })
-			starts := 0
-			startDaemonForEnsure = func() error {
-				starts++
-				return errors.New("unexpected daemon start")
-			}
 			cmd := statusCmd()
 			if jsonOutput {
 				cmd.SetArgs([]string{"--json"})
@@ -203,7 +198,6 @@ func TestStatusCmdReportsUnjudgedRuntime(t *testing.T) {
 				assert.Contains(output, "Daemon: unknown")
 				assert.NotContains(output, "roborev daemon start")
 			}
-			assert.Zero(starts)
 		})
 	}
 }

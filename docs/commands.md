@@ -1108,6 +1108,9 @@ your own instance; other requests report that the daemon is not running.
 Status reports `unknown` when a daemon responds or denies access from another
 PID namespace and no local daemon is available. If that daemon blocks
 replacement, restart leaves the local daemon running and foreign records alone.
+Even when it can reach the daemon, a sandboxed command won't use a daemon in
+another PID namespace: status shows `unknown`, and other commands and
+`roborev ui` report that the daemon runs elsewhere.
 
 Use `--server <address>` to select an endpoint explicitly, including a manually
 managed daemon without a runtime record. The CLI probes that endpoint and does

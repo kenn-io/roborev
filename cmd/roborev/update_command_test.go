@@ -577,3 +577,35 @@ func TestUpdateReplacementIgnoresUnjudgedRuntimePIDCollision(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, pids, os.Getpid())
 }
+
+func TestUpdateAfterDeadSandbox(t *testing.T) {
+	if dataDir := os.Getenv("ROBOREV_TEST_UPDATE_PIDNS_DATA"); dataDir != "" {
+		t.Setenv("ROBOREV_DATA_DIR", dataDir)
+		require.NoError(t, daemon.WriteRuntime(daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, nil, "test-version", nil))
+		return
+	}
+
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	t.Setenv("ROBOREV_TEST_UPDATE_PIDNS_DATA", os.Getenv("ROBOREV_DATA_DIR"))
+	testutil.RunPIDNamespaceTest(t, nil, "")
+	runtimes, err := daemon.ListAllRuntimes()
+	require.NoError(t, err)
+	require.Len(t, runtimes, 1)
+	require.Equal(t, 2, runtimes[0].PID)
+	require.True(t, runtimes[0].Stale())
+	require.True(t, isPIDAliveForUpdate(runtimes[0].PID), "sandbox PID belongs to a live host process")
+
+	stubUpdateCommand(t)
+	listAllRuntimes = listJudgedRuntimes
+	var out bytes.Buffer
+	cmd := updateCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--yes"})
+
+	require.NoError(t, cmd.Execute())
+	assert.Contains(t, out.String(), "Installing   done")
+	assert.Contains(t, out.String(), "Daemon       not running")
+}
