@@ -25,7 +25,6 @@ import (
 	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/testenv"
-	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestWaitForGracefulDaemonExitHasNoTimeout(t *testing.T) {
@@ -1099,26 +1098,4 @@ func TestKillDaemonKeepsRecordWhenUnknownProcessDoesNotAnswer(t *testing.T) {
 	err = KillDaemon(&RuntimeInfo{PID: os.Getpid(), Network: "tcp", Address: address, SourcePath: runtimePath})
 	require.Error(t, err)
 	assert.FileExists(t, runtimePath)
-}
-
-func TestCleanupZombieDaemonsSkipsUnjudgedEndpoints(t *testing.T) {
-	testenv.SetDataDir(t)
-	setShortRuntimeDir(t)
-	rec := testutil.UnknownRuntimeRecord("tcp", "")
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		_ = json.NewEncoder(w).Encode(PingInfo{OK: true, Service: "roborev", PID: rec.PID})
-	}))
-	t.Cleanup(server.Close)
-	rec.Address = server.Listener.Addr().String()
-	path, err := runtimeStore().Write(rec)
-	require.NoError(t, err)
-	before, err := os.ReadFile(path)
-	require.NoError(t, err)
-	assert.Zero(t, CleanupZombieDaemons(DaemonEndpoint{}))
-	assert.Zero(t, requests.Load())
-	after, err := os.ReadFile(path)
-	require.NoError(t, err)
-	assert.Equal(t, before, after)
 }

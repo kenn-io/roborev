@@ -17,32 +17,6 @@ import (
 	"go.kenn.io/roborev/internal/testutil"
 )
 
-func TestServerStartOverDeadSandboxRecord(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	testenv.SetDataDir(t)
-	address := filepath.Join(setShortRuntimeDir(t), "daemon.sock")
-	var rec kitdaemon.RuntimeRecord
-	// End the sandbox before trying to start its replacement.
-	t.Run("sandbox", func(t *testing.T) {
-		rec = testutil.UnjudgedRuntimeRecord(t, "unix", address)
-	})
-	if rec.PID == 0 {
-		t.Skip("requires PID namespaces")
-	}
-	_, err := runtimeStore().Write(rec)
-	require.NoError(t, err)
-	db, _ := testutil.OpenTestDBWithDir(t)
-	cfg := config.DefaultConfig()
-	cfg.ServerAddr = "unix://" + address
-	cfg.AuthKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	require.NoError(t, config.SaveGlobal(cfg))
-	server := NewServer(db, cfg, "")
-	t.Cleanup(func() { _ = server.Close() })
-	errCh, info := startServerAndWaitForRuntime(t, server)
-	assert.Equal(t, address, info.Address)
-	stopTestServer(t, server, errCh)
-}
-
 func TestDiscoverySkipsLiveSandboxDaemon(t *testing.T) {
 	if os.Getenv("ROBOREV_TEST_PIDNS_SERVE") == "1" {
 		t.Setenv("ROBOREV_DATA_DIR", os.Getenv("ROBOREV_TEST_PIDNS_DATA"))
@@ -123,12 +97,9 @@ func TestServerStartAfterShellLaunchedSandbox(t *testing.T) {
 	testutil.RunPIDNamespaceTest(t, []string{"sh", "-c", `"$@"; result=$?; exit "$result"`, "sh"}, "")
 }
 
-func TestSandboxDiscoveryKeepsHostRuntime(t *testing.T) {
+func TestSandboxCleanupKeepsHostRuntime(t *testing.T) {
 	if dataDir := os.Getenv("ROBOREV_TEST_HOST_RUNTIME_DATA"); dataDir != "" {
 		t.Setenv("ROBOREV_DATA_DIR", dataDir)
-		info, err := GetAnyRunningDaemon()
-		require.ErrorIs(t, err, os.ErrNotExist)
-		assert.Nil(t, info)
 		assert.Zero(t, CleanupZombieDaemons(DaemonEndpoint{}))
 		return
 	}

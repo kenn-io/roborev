@@ -17,6 +17,7 @@ import (
 	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func authEndpoint(t *testing.T, rawURL string) DaemonEndpoint {
@@ -218,7 +219,7 @@ func TestAuthDeniedRuntimeIsPreserved(t *testing.T) {
 }
 
 func TestAuthDiscoverySkipsStaleProcesses(t *testing.T) {
-	for _, state := range []string{"dead", "reused", "live"} {
+	for _, state := range []string{"dead", "reused", "live", "unjudged"} {
 		t.Run(state, func(t *testing.T) {
 			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 			writeAuthClientConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
@@ -242,9 +243,16 @@ func TestAuthDiscoverySkipsStaleProcesses(t *testing.T) {
 				}
 				rec.ProcessIdentityV2 = identity
 				require.Equal(t, kitdaemon.ProcessIdentityMismatch, kitdaemon.CompareRuntimeProcessIdentity(rec))
+			case "unjudged":
+				rec = testutil.UnknownRuntimeRecord(ep.Network, ep.Address)
 			}
-			_, err := runtimeStore().Write(rec)
+			path, err := runtimeStore().Write(rec)
 			require.NoError(t, err)
+			var before []byte
+			if state == "unjudged" {
+				before, err = os.ReadFile(path)
+				require.NoError(t, err)
+			}
 			_, err = GetAnyRunningDaemonContext(t.Context())
 			if state == "live" {
 				require.NoError(t, err)
@@ -252,8 +260,14 @@ func TestAuthDiscoverySkipsStaleProcesses(t *testing.T) {
 				return
 			}
 			require.ErrorIs(t, err, os.ErrNotExist)
-			CleanupZombieDaemons(ep)
+			cleaned := CleanupZombieDaemons(ep)
 			assert.Zero(t, requests.Load(), "stale discovery and cleanup must not send credentials")
+			if state == "unjudged" {
+				assert.Zero(t, cleaned)
+				after, err := os.ReadFile(path)
+				require.NoError(t, err)
+				assert.Equal(t, before, after)
+			}
 		})
 	}
 }
