@@ -2049,7 +2049,8 @@ ROBOREV_TELEMETRY_ENABLED=0 roborev tui
 ROBOREV_TELEMETRY_ENABLED=0 roborev review
 ```
 
-Telemetry is disabled in Go test processes.
+Release builds set the PostHog project key at link time. Builds without the key,
+including source builds and Go test processes, send no telemetry.
 
 ### Color Mode
 
