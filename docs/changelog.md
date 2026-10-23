@@ -16,6 +16,15 @@ All notable changes to roborev, grouped by minor release.
 
 **New features**
 
+- Findings of a structured review now have stable selectors. `roborev show`
+    lists a selector such as `f:...` for each finding, `roborev show --json`
+    adds them as `findings[].id`, and `roborev comment --rebuttal` accepts
+    `--finding-id` in place of an excerpt. The daemon keeps an immutable copy of
+    each finding when its selector is first handed out (SQLite schema migration
+    3), so a selector keeps naming the same finding after a rerun replaces the
+    review. See [Commands](/docs/commands/#viewing-reviews) and
+    [Re-evaluating a Finding](/docs/guides/responding-to-reviews/#re-evaluating-a-finding).
+
 - Find tests that add maintenance cost without protecting behavior with
     `roborev review --type test-value`. The reviewer flags tests of dependency
     behavior, self-confirming assertions, static text checks, unreachable

@@ -888,6 +888,98 @@ components:
         - job_id
         - closed
       type: object
+    Comment:
+      additionalProperties: false
+      properties:
+        AccountableActor:
+          type: string
+        Author:
+          type: string
+        Backlinks:
+          items:
+            $ref: "#/components/schemas/CommentLink"
+          type: array
+        BacklinksTruncated:
+          type: boolean
+        Body:
+          type: string
+        CreatedAt:
+          format: date-time
+          type: string
+        EditedAt:
+          format: date-time
+          type:
+            - string
+            - "null"
+        Handle:
+          type: string
+        IssueUID:
+          type: string
+        Kind:
+          type: string
+        Reply:
+          $ref: "#/components/schemas/CommentLink"
+        ReplyTo:
+          type: string
+        SourceActor:
+          type: string
+        Teammate:
+          type: string
+        UID:
+          type: string
+        Verification:
+          type: string
+      required:
+        - UID
+        - Handle
+        - IssueUID
+        - Body
+        - CreatedAt
+        - EditedAt
+        - ReplyTo
+        - Kind
+        - Author
+        - Teammate
+        - SourceActor
+        - AccountableActor
+      type: object
+    CommentLink:
+      additionalProperties: false
+      properties:
+        author:
+          type: string
+        body:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        edited_at:
+          format: date-time
+          type: string
+        handle:
+          type: string
+        issue_short_id:
+          type: string
+        issue_uid:
+          type: string
+        kind:
+          type: string
+        project_id:
+          format: int64
+          type: integer
+        project_uid:
+          type: string
+        status:
+          type: string
+        target_edited:
+          type: boolean
+        teammate:
+          type: string
+        uid:
+          type: string
+      required:
+        - kind
+      type: object
     ComponentHealth:
       additionalProperties: false
       properties:
@@ -1317,6 +1409,9 @@ components:
           type: string
         reasoning:
           type: string
+        reassessment_durable:
+          description: Whether the daemon owns durable recording of this reassessment result
+          type: boolean
         repo_id:
           format: int64
           type: integer
@@ -2149,6 +2244,60 @@ components:
         - medium
         - low
       type: object
+    FindingProvenance:
+      additionalProperties: false
+      properties:
+        panel_member_index:
+          format: int64
+          type: integer
+        panel_member_name:
+          type: string
+        panel_name:
+          type: string
+        panel_role:
+          type: string
+        panel_run_uuid:
+          type: string
+        source_labels:
+          items:
+            type: string
+          type: array
+      type: object
+    FindingSnapshot:
+      additionalProperties: false
+      properties:
+        CreatedAt:
+          format: date-time
+          type: string
+        DocumentHash:
+          type: string
+        Finding:
+          $ref: "#/components/schemas/KataPinnedFinding"
+        Index:
+          format: int64
+          type: integer
+        JobID:
+          format: int64
+          type: integer
+        JobUUID:
+          type: string
+        Provenance:
+          $ref: "#/components/schemas/FindingProvenance"
+        ReviewUUID:
+          type: string
+        Selector:
+          type: string
+      required:
+        - Selector
+        - JobID
+        - JobUUID
+        - ReviewUUID
+        - DocumentHash
+        - Index
+        - Finding
+        - Provenance
+        - CreatedAt
+      type: object
     FixJobRequest:
       additionalProperties: false
       properties:
@@ -2410,6 +2559,427 @@ components:
           $ref: "#/components/schemas/Review"
       required:
         - job
+      type: object
+    KataConsumeContextRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/KataConsumeContextRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        job_id:
+          format: int64
+          type: integer
+        purpose:
+          type: string
+        ref:
+          type: string
+        review_uuid:
+          type: string
+        run_id:
+          type: string
+      required:
+        - run_id
+        - purpose
+      type: object
+    KataCreateRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/KataCreateRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        body:
+          description: Issue body
+          type: string
+        idempotency_key:
+          description: Makes a retry return the issue the first request created
+          type: string
+        labels:
+          items:
+            type: string
+          type: array
+        priority:
+          description: Priority 0 to 4
+          format: int64
+          type: integer
+        project:
+          description: Project to file into; empty selects the default project
+          type: string
+        title:
+          description: Issue title
+          type: string
+      required:
+        - title
+      type: object
+    KataCreateResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/KataCreateResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        author:
+          description: The actor Kata recorded; an authenticated credential overrides roborev's requested actor
+          type: string
+        reused:
+          description: Whether Kata answered with an issue an earlier request under the same key created
+          type: boolean
+        short_id:
+          type: string
+      required:
+        - short_id
+        - reused
+      type: object
+    KataFindingPublication:
+      additionalProperties: false
+      properties:
+        comment:
+          description: Validated root comment UID
+          type: string
+        id:
+          description: Immutable finding selector
+          type: string
+        issue:
+          type: string
+        issue_uid:
+          type: string
+        last_error:
+          type: string
+        operation_id:
+          type: string
+        policy:
+          type: string
+        state:
+          type: string
+      required:
+        - id
+        - state
+        - policy
+        - operation_id
+      type: object
+    KataIssue:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/KataIssue.json
+          format: uri
+          readOnly: true
+          type: string
+        blocked_by:
+          items:
+            $ref: "#/components/schemas/KataLinkPeer"
+          type: array
+        blocks:
+          items:
+            $ref: "#/components/schemas/KataLinkPeer"
+          type: array
+        body:
+          type: string
+        labels:
+          items:
+            type: string
+          type: array
+        parent:
+          $ref: "#/components/schemas/KataLinkPeer"
+        qualified_id:
+          type: string
+        related:
+          items:
+            $ref: "#/components/schemas/KataLinkPeer"
+          type: array
+        short_id:
+          type: string
+        status:
+          type: string
+        title:
+          type: string
+      required:
+        - short_id
+        - qualified_id
+        - title
+        - body
+        - status
+        - labels
+      type: object
+    KataIssuesOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/KataIssuesOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        issues:
+          items:
+            $ref: "#/components/schemas/KataIssue"
+          type: array
+      required:
+        - issues
+      type: object
+    KataLinkPeer:
+      additionalProperties: false
+      properties:
+        project:
+          type: string
+        qualified_id:
+          type: string
+        short_id:
+          type: string
+        status:
+          type: string
+      required:
+        - short_id
+      type: object
+    KataPinnedFinding:
+      additionalProperties: false
+      properties:
+        fix:
+          type: string
+        location:
+          type: string
+        problem:
+          type: string
+        severity:
+          type: string
+        sources:
+          items:
+            format: int64
+            type: integer
+          type: array
+      required:
+        - severity
+        - problem
+        - fix
+      type: object
+    KataPublication:
+      additionalProperties: false
+      properties:
+        findings:
+          items:
+            $ref: "#/components/schemas/KataFindingPublication"
+          type: array
+        issue:
+          type: string
+        issue_uid:
+          type: string
+        last_error:
+          type: string
+        operation_id:
+          type: string
+        policy:
+          type: string
+        review_uuid:
+          type: string
+        state:
+          type: string
+      required:
+        - operation_id
+        - state
+        - policy
+        - findings
+      type: object
+    KataPublicationsBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/KataPublicationsBody.json
+          format: uri
+          readOnly: true
+          type: string
+        job_id:
+          format: int64
+          type: integer
+        operations:
+          items:
+            $ref: "#/components/schemas/KataResponseStatus"
+          type: array
+        publications:
+          items:
+            $ref: "#/components/schemas/KataPublication"
+          type: array
+      required:
+        - job_id
+        - publications
+      type: object
+    KataPublishRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/KataPublishRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        job_id:
+          description: Completed or failed job to explicitly publish using its matching Kata hooks
+          format: int64
+          minimum: 1
+          type: integer
+      required:
+        - job_id
+      type: object
+    KataReplyContext:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/KataReplyContext.json
+          format: uri
+          readOnly: true
+          type: string
+        issue_ref:
+          type: string
+        job_id:
+          format: int64
+          type: integer
+        message:
+          type: string
+        operations:
+          items:
+            $ref: "#/components/schemas/KataResponseStatus"
+          type: array
+        publications:
+          items:
+            $ref: "#/components/schemas/KataPublication"
+          type: array
+        review_uuid:
+          type: string
+        run_id:
+          type: string
+        snapshots:
+          items:
+            $ref: "#/components/schemas/ReplySnapshot"
+          type: array
+      required:
+        - snapshots
+        - publications
+      type: object
+    KataResponseRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/KataResponseRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        body:
+          type: string
+        finding_id:
+          description: Complete finding selector or Kata comment reference
+          type: string
+        job_id:
+          description: Optional original job ID; otherwise resolve the immutable finding or comment target
+          format: int64
+          type: integer
+        kind:
+          type: string
+        operation_id:
+          type: string
+        replacement:
+          type: string
+        target_comment:
+          type: string
+      required:
+        - operation_id
+        - finding_id
+        - kind
+        - body
+      type: object
+    KataResponseStatus:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/KataResponseStatus.json
+          format: uri
+          readOnly: true
+          type: string
+        existing_comment:
+          type: string
+        kind:
+          type: string
+        message:
+          type: string
+        operation_id:
+          type: string
+        receipt:
+          type: string
+        state:
+          type: string
+        target:
+          type: string
+      required:
+        - operation_id
+        - state
+        - kind
+        - target
+      type: object
+    KataStatusBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/KataStatusBody.json
+          format: uri
+          readOnly: true
+          type: string
+        api_schema_version:
+          description: Kata API schema version
+          type: string
+        default_project:
+          description: The configured default project
+          type: string
+        enabled:
+          description: Whether [integrations.kata] is enabled on the daemon
+          type: boolean
+        message:
+          description: Plain description of the state
+          type: string
+        project:
+          description: "Project in effect: the requested one, the repository's binding, or the default project"
+          type: string
+        security_note:
+          description: Reduced security guarantee on this platform, if any
+          type: string
+        server_version:
+          description: Kata server version
+          type: string
+        state:
+          description: "Connection state: disabled, unreachable, authentication_required, incompatible, project_not_found, or ready"
+          type: string
+        supports_replies:
+          description: Whether the server stores typed comment replies (API schema 0.28.0 or later)
+          type: boolean
+        teammate:
+          description: Teammate name for roborev's own Kata writes
+          type: string
+      required:
+        - enabled
+        - state
+        - supports_replies
+        - message
       type: object
     LegacyConversionReport:
       additionalProperties: false
@@ -2882,6 +3452,9 @@ components:
           type: string
         reasoning:
           type: string
+        reassessment_durable:
+          description: Whether the daemon owns durable recording of this reassessment result
+          type: boolean
         repo_id:
           format: int64
           type: integer
@@ -3114,13 +3687,19 @@ components:
         commenter:
           type: string
         finding:
+          description: Excerpt of the original review text to re-evaluate; use this or finding_id
+          type: string
+        finding_id:
+          description: Complete selector of a finding of the current review to re-evaluate, as GET /api/review/findings lists it; use this or finding
           type: string
         job_id:
           format: int64
           type: integer
+        replacement:
+          description: Optional complete selector of a replacement finding
+          type: string
       required:
         - job_id
-        - finding
         - comment
         - commenter
       type: object
@@ -3306,6 +3885,60 @@ components:
           $ref: "#/components/schemas/Repo"
       required:
         - repo
+      type: object
+    ReplyFinding:
+      additionalProperties: false
+      properties:
+        availability:
+          type: string
+        message:
+          type: string
+        replies:
+          items:
+            $ref: "#/components/schemas/Comment"
+          type: array
+        root:
+          $ref: "#/components/schemas/Comment"
+        root_uid:
+          type: string
+        selector:
+          type: string
+        snapshot:
+          $ref: "#/components/schemas/FindingSnapshot"
+        thread_unavailable:
+          type: boolean
+        truncated:
+          type: boolean
+      required:
+        - selector
+        - availability
+        - replies
+        - truncated
+      type: object
+    ReplySnapshot:
+      additionalProperties: false
+      properties:
+        findings:
+          items:
+            $ref: "#/components/schemas/ReplyFinding"
+          type: array
+        issue_ref:
+          type: string
+        issue_uid:
+          type: string
+        operation_id:
+          type: string
+        policy:
+          type: string
+        review_uuid:
+          type: string
+        state:
+          type: string
+      required:
+        - issue_ref
+        - issue_uid
+        - review_uuid
+        - findings
       type: object
     Repo:
       additionalProperties: false
@@ -3659,6 +4292,70 @@ components:
           format: int64
           type: integer
       type: object
+    ReviewFinding:
+      additionalProperties: false
+      properties:
+        fix:
+          type: string
+        id:
+          description: Selector for this finding, such as f:... ; --finding-id takes it whole, as listed
+          type: string
+        index:
+          description: Zero-based position of the finding in the review document
+          format: int64
+          type: integer
+        location:
+          type: string
+        problem:
+          type: string
+        severity:
+          type: string
+        source_labels:
+          description: Labels of the member reviews a combined finding cites
+          items:
+            type: string
+          type: array
+        sources:
+          description: 1-based numbers of the member reviews a combined finding cites
+          items:
+            format: int64
+            type: integer
+          type: array
+      required:
+        - id
+        - index
+        - severity
+        - problem
+        - fix
+      type: object
+    ReviewFindingsBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/ReviewFindingsBody.json
+          format: uri
+          readOnly: true
+          type: string
+        document_hash:
+          description: SHA-256 of the canonical review document the selectors were derived from
+          type: string
+        findings:
+          items:
+            $ref: "#/components/schemas/ReviewFinding"
+          type: array
+        job_id:
+          format: int64
+          type: integer
+        review_uuid:
+          description: The review the selectors belong to
+          format: uuid
+          type: string
+      required:
+        - job_id
+        - findings
+      type: object
     ReviewIDSetValue:
       additionalProperties: false
       type: object
@@ -3772,6 +4469,9 @@ components:
           type: boolean
         reasoning:
           type: string
+        reassessment_durable:
+          description: Whether the daemon owns durable recording of this reassessment result
+          type: boolean
         repo_id:
           format: int64
           type: integer
@@ -6030,6 +6730,446 @@ paths:
       summary: Fetch jobs with reviews by ID
       tags:
         - jobs
+  /api/kata/context:
+    get:
+      operationId: kata-context
+      parameters:
+        - explode: false
+          in: query
+          name: job_id
+          schema:
+            format: int64
+            type: integer
+        - explode: false
+          in: query
+          name: review_uuid
+          schema:
+            type: string
+        - description: Frozen qualified issue reference or full issue UID
+          explode: false
+          in: query
+          name: ref
+          schema:
+            description: Frozen qualified issue reference or full issue UID
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataReplyContext"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API kata context
+      tags:
+        - kata
+    post:
+      operationId: kata-consume-context
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KataConsumeContextRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataReplyContext"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Post API kata context
+      tags:
+        - kata
+  /api/kata/issue:
+    get:
+      operationId: kata-show-issue
+      parameters:
+        - description: Issue short ID, UID, or project#short ID
+          explode: false
+          in: query
+          name: ref
+          required: true
+          schema:
+            description: Issue short ID, UID, or project#short ID
+            type: string
+        - description: Project for a bare ref; empty selects the default project
+          explode: false
+          in: query
+          name: project
+          schema:
+            description: Project for a bare ref; empty selects the default project
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataIssue"
+          description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Bad Request
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Conflict
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Internal Server Error
+        "502":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Bad Gateway
+      summary: Show one Kata issue through the daemon's connection
+      tags:
+        - kata
+  /api/kata/issues:
+    get:
+      operationId: kata-list-issues
+      parameters:
+        - description: Project to read; empty selects the default project
+          explode: false
+          in: query
+          name: project
+          schema:
+            description: Project to read; empty selects the default project
+            type: string
+        - description: "Issue status filter: open (default), closed, or all"
+          explode: false
+          in: query
+          name: status
+          schema:
+            description: "Issue status filter: open (default), closed, or all"
+            type: string
+        - description: Read the complete set instead of the first 200 issues
+          explode: false
+          in: query
+          name: unlimited
+          schema:
+            description: Read the complete set instead of the first 200 issues
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataIssuesOutputBody"
+          description: OK
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Bad Request
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Conflict
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Internal Server Error
+        "502":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Bad Gateway
+      summary: List Kata issues through the daemon's connection
+      tags:
+        - kata
+    post:
+      operationId: kata-create-issue
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KataCreateRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataCreateResponse"
+          description: Created
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Bad Request
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Conflict
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Internal Server Error
+        "502":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Bad Gateway
+      summary: File a Kata issue as roborev through the daemon's connection
+      tags:
+        - kata
+  /api/kata/publications:
+    get:
+      operationId: kata-publications
+      parameters:
+        - description: Job whose saved Kata publications to look up
+          explode: false
+          in: query
+          name: job_id
+          required: true
+          schema:
+            description: Job whose saved Kata publications to look up
+            format: int64
+            minimum: 1
+            type: integer
+        - description: Only return publications belonging to this immutable review
+          explode: false
+          in: query
+          name: review_uuid
+          schema:
+            description: Only return publications belonging to this immutable review
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataPublicationsBody"
+          description: OK
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Not Found
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Internal Server Error
+      summary: Look up a job's Kata publications by their metadata
+      tags:
+        - kata
+  /api/kata/publish:
+    post:
+      operationId: kata-publish
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KataPublishRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataPublicationsBody"
+          description: OK
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Forbidden
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Conflict
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Internal Server Error
+      summary: Explicitly capture a job's Kata publication
+      tags:
+        - kata
+  /api/kata/response:
+    get:
+      operationId: kata-response-status
+      parameters:
+        - explode: false
+          in: query
+          name: operation_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataResponseStatus"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get API kata response
+      tags:
+        - kata
+    post:
+      operationId: kata-response
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KataResponseRequest"
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataResponseStatus"
+          description: Accepted
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Post API kata response
+      tags:
+        - kata
+  /api/kata/status:
+    get:
+      operationId: kata-status
+      parameters:
+        - description: Repository root on the daemon host whose .kata.local.toml or .kata.toml binding selects the project
+          explode: false
+          in: query
+          name: repo
+          schema:
+            description: Repository root on the daemon host whose .kata.local.toml or .kata.toml binding selects the project
+            type: string
+        - description: Project to check instead of the repository's binding or the default project
+          explode: false
+          in: query
+          name: project
+          schema:
+            description: Project to check instead of the repository's binding or the default project
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataStatusBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Report the daemon's Kata connection
+      tags:
+        - kata
   /api/logs/clean:
     post:
       operationId: clean-job-logs
@@ -6693,6 +7833,54 @@ paths:
                 $ref: "#/components/schemas/ErrorModel"
           description: Internal Server Error
       summary: Close or reopen a review
+      tags:
+        - reviews
+  /api/review/findings:
+    get:
+      operationId: list-review-findings
+      parameters:
+        - description: Job whose review's findings to list
+          explode: false
+          in: query
+          name: job_id
+          required: true
+          schema:
+            description: Job whose review's findings to list
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviewFindingsBody"
+          description: OK
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Conflict
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Internal Server Error
+      summary: List a review's findings under stable selectors
       tags:
         - reviews
   /api/review/migrate:

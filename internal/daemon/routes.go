@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/roborev/internal/backfill"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/version"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 var configureHumaOnce sync.Once
@@ -31,6 +32,11 @@ func humaConfig(title string) huma.Config {
 	cfg.Components.Schemas = huma.NewMapRegistry("#/components/schemas/", func(t reflect.Type, hint string) string {
 		if t == reflect.TypeFor[agenthook.Response]() {
 			return "AgentHookResponse"
+		}
+		if t == reflect.TypeFor[structuredreview.Finding]() {
+			// The structured-output contract registers its own canonical schema;
+			// the pinned storage representation needs a distinct reflection name.
+			return "KataPinnedFinding"
 		}
 		return huma.DefaultSchemaNamer(t, hint)
 	})
@@ -141,6 +147,14 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.OperationID = "get-review"
 			o.Summary = "Get a review by job ID or SHA"
 			o.Tags = []string{"reviews"}
+		})
+
+	huma.Get(api, "/api/review/findings", s.humaReviewFindings,
+		func(o *huma.Operation) {
+			o.OperationID = "list-review-findings"
+			o.Summary = "List a review's findings under stable selectors"
+			o.Tags = []string{"reviews"}
+			o.Errors = []int{http.StatusNotFound, http.StatusConflict}
 		})
 
 	huma.Get(api, "/api/search", s.humaSearchReviews,
@@ -330,6 +344,70 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Tags = []string{"daemon"}
 		})
 
+	huma.Get(api, "/api/kata/context", s.humaKataContext, func(o *huma.Operation) {
+		o.OperationID = "kata-context"
+		o.Tags = []string{"kata"}
+	})
+	huma.Post(api, "/api/kata/context", s.humaKataConsumeContext, func(o *huma.Operation) {
+		o.OperationID = "kata-consume-context"
+		o.Tags = []string{"kata"}
+		o.MaxBodyBytes = -1
+	})
+	huma.Post(api, "/api/kata/response", s.humaKataResponse, func(o *huma.Operation) {
+		o.OperationID = "kata-response"
+		o.Tags = []string{"kata"}
+		o.DefaultStatus = 202
+		o.MaxBodyBytes = -1
+	})
+	huma.Get(api, "/api/kata/response", s.humaKataResponseStatus, func(o *huma.Operation) { o.OperationID = "kata-response-status"; o.Tags = []string{"kata"} })
+	huma.Get(api, "/api/kata/status", s.humaKataStatus,
+		func(o *huma.Operation) {
+			o.OperationID = "kata-status"
+			o.Summary = "Report the daemon's Kata connection"
+			o.Tags = []string{"kata"}
+		})
+
+	huma.Get(api, "/api/kata/issues", s.humaKataIssues,
+		func(o *huma.Operation) {
+			o.OperationID = "kata-list-issues"
+			o.Summary = "List Kata issues through the daemon's connection"
+			o.Tags = []string{"kata"}
+			o.Errors = []int{http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusBadGateway}
+		})
+
+	huma.Post(api, "/api/kata/publish", s.humaKataPublish,
+		func(o *huma.Operation) {
+			o.OperationID = "kata-publish"
+			o.Summary = "Explicitly capture a job's Kata publication"
+			o.Tags = []string{"kata"}
+			o.Errors = []int{http.StatusForbidden, http.StatusNotFound, http.StatusConflict}
+		})
+
+	huma.Get(api, "/api/kata/publications", s.humaKataPublications,
+		func(o *huma.Operation) {
+			o.OperationID = "kata-publications"
+			o.Summary = "Look up a job's Kata publications by their metadata"
+			o.Tags = []string{"kata"}
+			o.Errors = []int{http.StatusForbidden, http.StatusNotFound}
+		})
+
+	huma.Get(api, "/api/kata/issue", s.humaKataIssue,
+		func(o *huma.Operation) {
+			o.OperationID = "kata-show-issue"
+			o.Summary = "Show one Kata issue through the daemon's connection"
+			o.Tags = []string{"kata"}
+			o.Errors = []int{http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusBadGateway}
+		})
+
+	huma.Post(api, "/api/kata/issues", s.humaKataCreate,
+		func(o *huma.Operation) {
+			o.OperationID = "kata-create-issue"
+			o.Summary = "File a Kata issue as roborev through the daemon's connection"
+			o.Tags = []string{"kata"}
+			o.DefaultStatus = http.StatusCreated
+			o.Errors = []int{http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusBadGateway}
+		})
+
 	huma.Get(api, "/api/ping", s.humaPing,
 		func(o *huma.Operation) {
 			o.OperationID = "ping"
@@ -484,6 +562,8 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 		})
 
 	huma.Post(api, "/api/rebuttal", s.humaRebuttal, func(o *huma.Operation) {
+		// Preserve complete finding/evidence input; provider transport owns its limits.
+		o.MaxBodyBytes = -1
 		o.OperationID = "rebuttal"
 		o.Summary = "Re-evaluate one finding in the original agent session"
 		o.DefaultStatus = 201

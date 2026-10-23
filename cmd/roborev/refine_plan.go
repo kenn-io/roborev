@@ -228,6 +228,8 @@ func planRefineReviewAtTarget(
 	)
 	planningPrompt, err := prompt.NewBuilderWithConfig(nil, cfg).
 		ForRepo(planningRepoPath, 0).
+		WithContext(ctx).
+		WithKataReplies(kataReplyPromptReader(getDaemonEndpoint().APIClient(0), "planning")).
 		WithPlanSkillRoot(repoPath).
 		BuildPlanPrompt(review, comments, minSeverity)
 	if err != nil {

@@ -34,8 +34,9 @@ func NewCLIClient(workdir string) *CLIClient {
 	return &CLIClient{bin: "kata", workdir: workdir, run: realRun}
 }
 
-// NewCLIClientWithEnv is NewCLIClient plus extra environment entries appended to
-// the process environment (used by tests to set KATA_HOME).
+// NewCLIClientWithEnv is NewCLIClient with env as the complete environment of
+// every kata subprocess. Nothing is inherited from the process, so a test can
+// keep the caller's Kata routing, token, and attribution out of the run.
 func NewCLIClientWithEnv(workdir string, env []string) *CLIClient {
 	c := NewCLIClient(workdir)
 	c.env = env
@@ -46,8 +47,8 @@ func buildKataCmd(ctx context.Context, c *CLIClient, args []string, stdin io.Rea
 	cmd := exec.CommandContext(ctx, c.bin, args...)
 	procutil.HideConsole(cmd)
 	cmd.Dir = c.workdir
-	if len(c.env) > 0 {
-		cmd.Env = append(os.Environ(), c.env...)
+	if c.env != nil {
+		cmd.Env = c.env
 	}
 	cmd.Stdin = stdin
 	return cmd
@@ -86,7 +87,13 @@ func realRun(ctx context.Context, c *CLIClient, args []string, stdin io.Reader) 
 // binary. A present-but-unreadable config file stops the search with an error
 // rather than silently binding to a parent project.
 func (c *CLIClient) Binding(_ context.Context) (Binding, error) {
-	dir := c.workdir
+	return workspaceBinding(c.workdir)
+}
+
+// workspaceBinding reads the binding for workdir. Both clients use it, so the
+// API connection resolves a workspace exactly as the kata CLI does.
+func workspaceBinding(workdir string) (Binding, error) {
+	dir := workdir
 	if dir == "" {
 		dir = "."
 	}
@@ -140,13 +147,16 @@ type listEnvelope struct {
 	Issues []Issue `json:"issues"`
 }
 
+// linkEdge is one link of an issue as Kata reports it.
+type linkEdge struct {
+	Type string   `json:"type"`
+	From LinkPeer `json:"from"`
+	To   LinkPeer `json:"to"`
+}
+
 type showEnvelope struct {
-	Issue Issue `json:"issue"`
-	Links []struct {
-		Type string   `json:"type"`
-		From LinkPeer `json:"from"`
-		To   LinkPeer `json:"to"`
-	} `json:"links"`
+	Issue  Issue      `json:"issue"`
+	Links  []linkEdge `json:"links"`
 	Labels []struct {
 		Label string `json:"label"`
 	} `json:"labels"`
@@ -154,7 +164,9 @@ type showEnvelope struct {
 
 type createEnvelope struct {
 	Issue struct {
-		ShortID string `json:"short_id"`
+		ShortID    string `json:"short_id"`
+		UID        string `json:"uid"`
+		ProjectUID string `json:"project_uid"`
 	} `json:"issue"`
 	Reused bool `json:"reused"`
 }
@@ -225,34 +237,8 @@ func (c *CLIClient) Show(ctx context.Context, ref string) (Issue, error) {
 			return Issue{}, err
 		}
 		iss.QualifiedID = currentID
-		for _, link := range env.Links {
-			fromID := qualifiedLinkPeerID(link.From)
-			toID := qualifiedLinkPeerID(link.To)
-			outgoing := fromID == currentID
-			if !outgoing && toID != currentID {
-				return Issue{}, fmt.Errorf("kata show returned a link that cannot be resolved against %q", currentID)
-			}
-			if fromID == "" || toID == "" {
-				return Issue{}, fmt.Errorf("kata show returned a link without a qualified issue identity")
-			}
-			peer := link.From
-			if outgoing {
-				peer = link.To
-			}
-			switch link.Type {
-			case "parent":
-				if outgoing {
-					iss.Parent = &peer
-				}
-			case "blocks":
-				if outgoing {
-					iss.Blocks = append(iss.Blocks, peer)
-				} else {
-					iss.BlockedBy = append(iss.BlockedBy, peer)
-				}
-			case "related":
-				iss.Related = append(iss.Related, peer)
-			}
+		if err := attachLinks(&iss, currentID, env.Links); err != nil {
+			return Issue{}, err
 		}
 	}
 	for _, l := range env.Labels {
@@ -261,6 +247,41 @@ func (c *CLIClient) Show(ctx context.Context, ref string) (Issue, error) {
 		}
 	}
 	return iss, nil
+}
+
+// attachLinks sorts an issue's links into parent, blocks, blocked-by, and
+// related, using currentID to tell which end of each link is this issue.
+func attachLinks(iss *Issue, currentID string, links []linkEdge) error {
+	for _, link := range links {
+		fromID := qualifiedLinkPeerID(link.From)
+		toID := qualifiedLinkPeerID(link.To)
+		outgoing := fromID == currentID
+		if !outgoing && toID != currentID {
+			return fmt.Errorf("kata show returned a link that cannot be resolved against %q", currentID)
+		}
+		if fromID == "" || toID == "" {
+			return fmt.Errorf("kata show returned a link without a qualified issue identity")
+		}
+		peer := link.From
+		if outgoing {
+			peer = link.To
+		}
+		switch link.Type {
+		case "parent":
+			if outgoing {
+				iss.Parent = &peer
+			}
+		case "blocks":
+			if outgoing {
+				iss.Blocks = append(iss.Blocks, peer)
+			} else {
+				iss.BlockedBy = append(iss.BlockedBy, peer)
+			}
+		case "related":
+			iss.Related = append(iss.Related, peer)
+		}
+	}
+	return nil
 }
 
 func (c *CLIClient) qualifiedShownIssueID(ctx context.Context, ref string, iss Issue) (string, error) {
@@ -295,6 +316,9 @@ func qualifiedLinkPeerID(peer LinkPeer) string {
 
 // Create files an issue, piping the body over stdin via --body-stdin.
 func (c *CLIClient) Create(ctx context.Context, req CreateReq) (CreateResult, error) {
+	if len(req.Metadata) > 0 {
+		return CreateResult{}, ErrMetadataUnsupported
+	}
 	args := []string{"create", req.Title, "--json", "--body-stdin"}
 	if req.Project != "" {
 		args = append(args, "--project", req.Project)
@@ -316,5 +340,17 @@ func (c *CLIClient) Create(ctx context.Context, req CreateReq) (CreateResult, er
 	if err := json.Unmarshal(out, &env); err != nil {
 		return CreateResult{}, fmt.Errorf("parse kata create: %w", err)
 	}
-	return CreateResult{ShortID: env.Issue.ShortID, Reused: env.Reused}, nil
+	return CreateResult{ShortID: env.Issue.ShortID, IssueUID: env.Issue.UID, ProjectUID: env.Issue.ProjectUID, Reused: env.Reused}, nil
+}
+
+// Comment is not supported by the kata CLI client: replies need the Kata API
+// connection, which reports who Kata attributed the write to and which comment
+// it stored. Nothing is run.
+func (c *CLIClient) Comment(context.Context, CommentReq) (CommentResult, error) {
+	return CommentResult{}, ErrCommentsUnsupported
+}
+
+// Thread is not supported by the kata CLI client. Nothing is run.
+func (c *CLIClient) Thread(context.Context, ThreadReq) (Thread, error) {
+	return Thread{}, ErrCommentsUnsupported
 }

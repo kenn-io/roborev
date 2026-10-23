@@ -241,12 +241,13 @@ func displayWebUI(status webUIStatus) string {
 // daemonRunCmd runs the daemon in the foreground (used by "daemon start" internally)
 func daemonRunCmd() *cobra.Command {
 	var (
-		dbPath       string
-		configPath   string
-		addr         string
-		workers      int
-		webDevOrigin string
-		queuePaused  bool
+		dbPath          string
+		configPath      string
+		addr            string
+		workers         int
+		webDevOrigin    string
+		queuePaused     bool
+		allowKataWrites bool
 	)
 
 	cmd := &cobra.Command{
@@ -379,6 +380,9 @@ func daemonRunCmd() *cobra.Command {
 
 			// Create and start server
 			var serverOptions []daemon.ServerOption
+			if allowKataWrites {
+				serverOptions = append(serverOptions, daemon.WithKataWrites())
+			}
 			if webDevOrigin != "" {
 				serverOptions = append(serverOptions, daemon.WithWebDevelopmentOrigin(webDevOrigin))
 			}
@@ -441,6 +445,7 @@ func daemonRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&addr, "addr", "", "server address (overrides config)")
 	cmd.Flags().IntVar(&workers, "workers", 0, "number of workers (overrides config)")
 	cmd.Flags().BoolVar(&queuePaused, "queue-paused", false, "initial queue pause state before workers start")
+	cmd.Flags().BoolVar(&allowKataWrites, "allow-kata-writes", false, "expose the typed Kata reply tool on the daemon MCP endpoint")
 	_ = cmd.Flags().MarkHidden("queue-paused")
 	cmd.Flags().StringVar(&webDevOrigin, "web-dev-origin", "", "exact loopback origin for web development")
 	if err := cmd.Flags().MarkHidden("web-dev-origin"); err != nil {

@@ -164,6 +164,8 @@ func TestRegisteredToolsAndGuidance(t *testing.T) {
 		"roborev_complete_fix",
 		"roborev_get_job_output",
 		"roborev_get_review",
+		"roborev_kata_context",
+		"roborev_kata_issues",
 		"roborev_list_branches",
 		"roborev_list_comments",
 		"roborev_list_jobs",

@@ -196,3 +196,28 @@ synthesis_agent = "test"
 	assert.Contains(t, panels[0].Error, `panel member "missing"`,
 		"queueing selects every member's agent, so allow_failure does not help")
 }
+
+// With the connection on, the daemon files through the API, so a kata hook
+// does not need the kata CLI on its PATH.
+func TestDoctorAgentsSkipsTheKataCLIWhenTheConnectionIsOn(t *testing.T) {
+	server, _ := kataAPIServer(t)
+	repo := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repo, ".roborev.toml"),
+		[]byte("[[hooks]]\nevent = \"review.failed\"\ntype = \"kata\"\n"), 0o600))
+	get := func() DoctorAgentsOutput {
+		req := httptest.NewRequest(http.MethodGet, "/api/doctor/agents?"+url.Values{"repo": {repo}}.Encode(), nil)
+		w := httptest.NewRecorder()
+		server.httpServer.Handler.ServeHTTP(w, req)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		var out DoctorAgentsOutput
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out.Body))
+		return out
+	}
+
+	assert.Empty(t, get().Body.HookTools)
+
+	server.configWatcher.Config().Integrations.Kata.Enabled = false
+	out := get()
+	require.Len(t, out.Body.HookTools, 1, "with the connection off a kata hook still needs the CLI")
+	assert.Equal(t, "kata", out.Body.HookTools[0].Name)
+}

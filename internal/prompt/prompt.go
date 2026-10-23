@@ -86,6 +86,7 @@ type Builder struct {
 	planSkillRoot  string
 	repoID         int64
 	kataClient     kata.Client
+	kataReplies    func(context.Context, *storage.Review) string
 	// structuredOutput appends the JSON output instruction to built-in
 	// review prompts when the agent will return schema-constrained findings.
 	structuredOutput bool
@@ -166,6 +167,23 @@ func (b *Builder) WithStructuredOutput(enabled bool) *Builder {
 func (b *Builder) WithKataClient(client kata.Client) *Builder {
 	next := *b
 	next.kataClient = client
+	return &next
+}
+
+// WithKataReplies attaches per-run attributed reply context to relevant prior
+// reviews and fix/planning prompts. CI builders must leave this unset.
+func (b *Builder) WithKataReplies(read func(context.Context, *storage.Review) string) *Builder {
+	next := *b
+	next.kataReplies = read
+	return &next
+}
+
+func (b *Builder) reviewWithKataReplies(review *storage.Review) *storage.Review {
+	if review == nil || b.kataReplies == nil {
+		return review
+	}
+	next := *review
+	next.Output += b.kataReplies(b.context(), review)
 	return &next
 }
 
@@ -1279,7 +1297,7 @@ func (b *Builder) previousAttemptContexts(gitRef string) []reviewAttemptContext 
 
 	attempts := make([]reviewAttemptContext, 0, len(reviews))
 	for _, review := range reviews {
-		attempt := reviewAttemptContext{Review: review}
+		attempt := reviewAttemptContext{Review: *b.reviewWithKataReplies(&review)}
 		if review.JobID > 0 {
 			responses, err := b.db.GetCommentsForJob(review.JobID)
 			if err == nil {
@@ -1318,7 +1336,7 @@ func (b *Builder) lookupReviewContexts(shas []string, skipMissing bool) []Histor
 			contexts = append(contexts, HistoricalReviewContext{SHA: sha})
 			continue
 		}
-		ctx := HistoricalReviewContext{SHA: sha, Review: review}
+		ctx := HistoricalReviewContext{SHA: sha, Review: b.reviewWithKataReplies(review)}
 		if review.JobID > 0 {
 			if responses, err := b.db.GetCommentsForJob(review.JobID); err == nil {
 				ctx.Responses = storage.PromptTrustedResponses(responses)
@@ -1400,6 +1418,7 @@ func FormatUserComments(comments []storage.Response) string {
 // When minSeverity is non-empty, a severity filtering instruction is
 // injected before the findings section.
 func (b *Builder) BuildAddressPrompt(review *storage.Review, previousAttempts []storage.Response, minSeverity string) (string, error) {
+	review = b.reviewWithKataReplies(review)
 	view := addressPromptView{
 		SeverityFilter: config.SeverityInstruction(minSeverity),
 		ReviewFindings: review.Output,

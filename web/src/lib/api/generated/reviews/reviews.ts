@@ -13,9 +13,11 @@ import type {
   GetReviewParams,
   GoalGateRequest,
   GoalGateResponse,
+  ListReviewFindingsParams,
   MigrateReviewInputBody,
   MigrateReviewOutputBody,
   Review,
+  ReviewFindingsBody,
   SearchResponse,
   SearchReviewsParams,
 } from "../models";
@@ -249,6 +251,35 @@ export const closeReview = async (
       ...getHeaders(options?.headers),
     },
     body: JSON.stringify(closeReviewRequest),
+  });
+};
+
+export const getListReviewFindingsUrl = (params: ListReviewFindingsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/review/findings?${stringifiedParams}`
+    : `/api/review/findings`;
+};
+
+/**
+ * @summary List a review's findings under stable selectors
+ */
+export const listReviewFindings = async (
+  params: ListReviewFindingsParams,
+  options?: RequestInit,
+): Promise<ReviewFindingsBody> => {
+  return roborevFetch<ReviewFindingsBody>(getListReviewFindingsUrl(params), {
+    ...options,
+    method: "GET",
   });
 };
 
