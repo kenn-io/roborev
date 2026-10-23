@@ -7,13 +7,16 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"math/big"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -168,4 +171,40 @@ func TestCheckTLSFiles(t *testing.T) {
 	notPEM.CAFile = filepath.Join(t.TempDir(), "ca.pem")
 	require.NoError(t, os.WriteFile(notPEM.CAFile, []byte("not a certificate"), 0o600))
 	require.ErrorContains(t, CheckTLSFiles(notPEM), "contains no PEM certificates")
+}
+
+func TestFindUnjudgedDaemonKeepsTLS(t *testing.T) {
+	testenv.SetDataDir(t)
+	setShortRuntimeDir(t)
+	pki := newTestPKI(t)
+	writeMutualTLSClientConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", pki)
+	rec := testutil.UnjudgedRuntimeRecord(t, "tcp", "")
+	var requests, credentials atomic.Int32
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.Header.Get("Authorization") != "" {
+			credentials.Add(1)
+		}
+		_ = json.NewEncoder(w).Encode(PingInfo{OK: true, Service: "roborev", PID: rec.PID})
+	}))
+	cert, err := tls.LoadX509KeyPair(pki.CertFile, pki.KeyFile)
+	require.NoError(t, err)
+	server.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
+	server.StartTLS()
+	t.Cleanup(server.Close)
+	rec.Address = server.Listener.Addr().String()
+	rec.Metadata = map[string]string{runtimeAlternateNetworkKey: "unix", runtimeAlternateAddressKey: filepath.Join(t.TempDir(), "missing.sock")}
+	path, err := runtimeStore().Write(rec)
+	require.NoError(t, err)
+	before, err := os.ReadFile(path)
+	require.NoError(t, err)
+	info, err := FindUnjudgedDaemon()
+	require.NoError(t, err)
+	assert.Equal(t, rec.PID, info.PID)
+	assert.Equal(t, rec.Address, info.Address)
+	assert.Equal(t, int32(1), requests.Load())
+	assert.Zero(t, credentials.Load())
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
 }

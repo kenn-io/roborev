@@ -497,7 +497,26 @@ func openDetachedDaemonLogs() (*os.File, *os.File, func(), error) {
 // stopDaemon stops any running daemons.
 // Returns ErrDaemonNotRunning if no daemon runtime files are found.
 func stopDaemon() error {
-	return stopDaemonRuntimes(daemon.ListLocalRuntimes, daemon.KillDaemon, os.Stderr)
+	err := stopDaemonRuntimes(daemon.ListLocalRuntimes, daemon.KillDaemon, os.Stderr)
+	if errors.Is(err, ErrDaemonNotRunning) {
+		if unjudgedErr := unjudgedDaemonError(); unjudgedErr != nil {
+			return unjudgedErr
+		}
+	}
+	return err
+}
+
+func unjudgedDaemonError() error {
+	runtimes, err := daemon.ListAllRuntimes()
+	if err != nil {
+		return fmt.Errorf("inspect daemon runtimes: %w", err)
+	}
+	for _, info := range runtimes {
+		if info.Unjudged() {
+			return fmt.Errorf("daemon pid %d runs in another PID namespace; stop it from there", info.PID)
+		}
+	}
+	return nil
 }
 
 func stopDaemonRuntimes(list func() ([]*daemon.RuntimeInfo, error), drain func(*daemon.RuntimeInfo) error, out io.Writer) error {

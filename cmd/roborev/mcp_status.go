@@ -73,7 +73,7 @@ func discoverMCPListeners(timeout time.Duration) ([]mcpListenerStatus, error) {
 		for _, rt := range runtimes {
 			// A crashed daemon's freed port could now belong to another
 			// account, and the probe carries auth_key.
-			if mcpStatusRuntimeStale(rt) {
+			if rt.Unjudged() || mcpStatusRuntimeStale(rt) {
 				continue
 			}
 			// Probe the private socket first so auth_key stays off TCP.

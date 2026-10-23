@@ -731,7 +731,7 @@ func discoverDaemonForUpdate() (*daemon.RuntimeInfo, error) {
 			_ = os.Remove(runtimeInfo.SourcePath)
 		}
 	}
-	return nil, nil
+	return nil, unjudgedDaemonError()
 }
 
 func confirmUpdate(in io.Reader, out io.Writer) (bool, error) {

@@ -1,11 +1,12 @@
 package testutil
 
 import (
+	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -19,24 +20,18 @@ func UnjudgedRuntimeRecord(t *testing.T, network, address string) kitdaemon.Runt
 	if runtime.GOOS != "linux" {
 		t.Skip("requires Linux PID namespaces")
 	}
-	identityPath := filepath.Join(t.TempDir(), "identity")
-	// Read the shell's start ticks before holding it alive on stdin.
-	runPIDNamespaceCommand(t, []string{"sh", "-c", `
-boot=$(cat /proc/sys/kernel/random/boot_id)
-namespace=$(readlink /proc/$$/ns/pid)
-namespace=${namespace#pid:[}
-namespace=${namespace%]}
-ticks=$(awk '{print $22}' /proc/$$/stat)
-printf 'linux-v1:%s:%s:%s' "$boot" "$namespace" "$ticks" > "$1"
-: > "$1.ready"
-read -r done || :
-`, "sh", identityPath}, identityPath+".ready")
-	identity, err := os.ReadFile(identityPath)
+
+	dir := t.TempDir()
+	ready := filepath.Join(dir, "ready")
+	t.Setenv("ROBOREV_TEST_RUNTIME_WRITER", ready)
+	executable, err := os.Executable()
 	require.NoError(t, err)
-	rec := kitdaemon.RuntimeRecord{
-		PID: 2, Network: network, Address: address,
-		ProcessIdentityV2: kitdaemon.ProcessIdentity(strings.TrimSpace(string(identity))),
-	}
+	runPIDNamespaceCommand(t, []string{executable}, ready)
+	runtimePath, err := os.ReadFile(ready)
+	require.NoError(t, err)
+	rec, err := (kitdaemon.RuntimeStore{Dir: filepath.Dir(string(runtimePath))}).Read(string(runtimePath))
+	require.NoError(t, err)
+	rec.Network, rec.Address = network, address
 	require.Equal(t, kitdaemon.ProcessScopeForeign, kitdaemon.RuntimeProcessScope(rec))
 	return rec
 }
@@ -47,4 +42,28 @@ func UnknownRuntimeRecord(network, address string) kitdaemon.RuntimeRecord {
 		PID: math.MaxInt32, Network: network, Address: address,
 		ProcessIdentityV2: "future-v1:unavailable",
 	}
+}
+
+// RuntimeWriterMain handles the namespace fixture subprocess before TestMain
+// replaces its data directory. The caller supplies the application's writer.
+func RuntimeWriterMain(write func() (string, error)) bool {
+	ready := os.Getenv("ROBOREV_TEST_RUNTIME_WRITER")
+	if ready == "" {
+		return false
+	}
+	must := func(err error) {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
+	must(os.Setenv("ROBOREV_DATA_DIR", filepath.Dir(ready)))
+	must(os.Setenv("XDG_RUNTIME_DIR", filepath.Join(filepath.Dir(ready), "runtime")))
+	must(os.MkdirAll(os.Getenv("XDG_RUNTIME_DIR"), 0o700))
+	path, err := write()
+	must(err)
+	must(os.WriteFile(ready, []byte(path), 0o600))
+	_, err = io.Copy(io.Discard, os.Stdin)
+	must(err)
+	return true
 }

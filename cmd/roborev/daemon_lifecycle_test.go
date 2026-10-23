@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -545,6 +546,26 @@ func TestDaemonSearchCredentialFiles(t *testing.T) {
 				assert.Empty(t, health.CredentialReason)
 			}
 			assert.NotContains(t, health.CredentialReason, "example-key")
+		})
+	}
+}
+
+func TestStopDaemonReportsUnjudgedRuntime(t *testing.T) {
+	for _, foreign := range []bool{false, true} {
+		t.Run(fmt.Sprintf("foreign=%t", foreign), func(t *testing.T) {
+			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+			rec := testutil.UnknownRuntimeRecord("tcp", "127.0.0.1:1")
+			if foreign {
+				rec = testutil.UnjudgedRuntimeRecord(t, "tcp", "127.0.0.1:1")
+			}
+			path, err := daemon.RuntimeStore().Write(rec)
+			require.NoError(t, err)
+			before, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.EqualError(t, stopDaemon(), fmt.Sprintf("daemon pid %d runs in another PID namespace; stop it from there", rec.PID))
+			after, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, before, after)
 		})
 	}
 }

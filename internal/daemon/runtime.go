@@ -348,25 +348,21 @@ func ListLocalRuntimes() ([]*RuntimeInfo, error) {
 // FindUnjudgedDaemon finds a responsive daemon whose process cannot be judged
 // here. Its liveness probes send no authentication key.
 func FindUnjudgedDaemon() (*RuntimeInfo, error) {
-	runtimes, err := ListAllRuntimes()
+	records, err := runtimeStore().List()
 	if err != nil {
 		return nil, err
 	}
-	for _, info := range runtimes {
-		if info.hasStaleProcess() || !info.Unjudged() {
-			continue
-		}
-		for _, ep := range info.PreferredEndpoints() {
-			if !ep.IsUnix() && !isLoopbackAddr(ep.Address) {
-				continue
-			}
-			ping, err := probeDaemonHTTP(context.Background(), ep, time.Second, ep.transportClient(time.Second, config.DaemonTLSConfig{}))
-			if err == nil && ping.PID == info.PID {
-				return info, nil
-			}
-		}
+	clientAuth, err := loadClientAuth()
+	if err != nil {
+		return nil, err
 	}
-	return nil, os.ErrNotExist
+	return discoverRuntimeRecords(context.Background(), records, (*RuntimeInfo).Unjudged,
+		func(ctx context.Context, ep DaemonEndpoint) (*PingInfo, error) {
+			if !ep.IsUnix() && !isLoopbackAddr(ep.Address) {
+				return nil, fmt.Errorf("non-loopback daemon address: %s", ep.Address)
+			}
+			return probeDaemonHTTP(ctx, ep, time.Second, ep.transportClient(time.Second, clientAuth.TLS))
+		})
 }
 
 // legacyRuntimeInfo is the on-disk shape written by roborev v0.56 and earlier,
@@ -469,9 +465,14 @@ func isTLSFailure(err error) bool {
 		errors.As(err, &recordHeader) || errors.As(err, &op) && op.Op == "remote error"
 }
 
+func (r *RuntimeInfo) discoverable() bool {
+	return !r.Unjudged() && !r.hasStaleProcess()
+}
+
 func discoverRuntimeRecords(
 	ctx context.Context,
 	records []kitdaemon.RuntimeRecord,
+	eligible func(*RuntimeInfo) bool,
 	probe func(context.Context, DaemonEndpoint) (*PingInfo, error),
 ) (*RuntimeInfo, error) {
 	if err := ctx.Err(); err != nil {
@@ -480,7 +481,7 @@ func discoverRuntimeRecords(
 	var deniedErr error
 	for _, rec := range records {
 		info := runtimeInfoFromRecord(rec)
-		if info.hasStaleProcess() || info.Unjudged() {
+		if !eligible(info) {
 			continue
 		}
 		primary := info.Endpoint()
@@ -523,7 +524,7 @@ func getAnyRunningDaemonContext(ctx context.Context, probe func(context.Context,
 	if err != nil {
 		return nil, err
 	}
-	return discoverRuntimeRecords(ctx, records, probe)
+	return discoverRuntimeRecords(ctx, records, (*RuntimeInfo).discoverable, probe)
 }
 
 // GetAnyRunningDaemon returns info about a responsive daemon.
@@ -865,6 +866,9 @@ func CleanupZombieDaemons(target DaemonEndpoint) int {
 
 	cleaned := 0
 	for _, info := range runtimes {
+		if info.Unjudged() {
+			continue
+		}
 		ep := info.Endpoint()
 
 		// Check the recorded process before any endpoint receives credentials.

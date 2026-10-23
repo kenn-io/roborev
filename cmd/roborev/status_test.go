@@ -77,7 +77,7 @@ func TestStatusCmdJSONKeepsRespondingUnjudgedDaemon(t *testing.T) {
 			} else {
 				assert.Contains(output, fmt.Sprintf("Daemon: running (pid %d, another PID namespace)", rec.PID))
 				assert.Contains(output, "Status: unavailable")
-				assert.Contains(output, "host")
+				assert.Contains(output, "run status from the PID namespace that started it")
 				assert.NotContains(output, "Jobs:")
 			}
 			assert.Zero(ensures)
@@ -680,4 +680,17 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStatusExplicitServerSkipsDiscovery(t *testing.T) {
+	originalDiscover, originalEnsure, originalAddr := statusDiscover, statusEnsureDaemon, serverAddr
+	t.Cleanup(func() {
+		statusDiscover, statusEnsureDaemon, serverAddr = originalDiscover, originalEnsure, originalAddr
+	})
+	serverAddr = "http://127.0.0.1:12345"
+	calls := 0
+	statusDiscover = func() (*daemon.RuntimeInfo, error) { calls++; return nil, os.ErrNotExist }
+	statusEnsureDaemon = func() error { return daemon.ErrClientConfig }
+	require.ErrorIs(t, statusCmd().Execute(), daemon.ErrClientConfig)
+	assert.Zero(t, calls)
 }

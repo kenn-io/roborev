@@ -11,6 +11,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestMCPCmdExposesServeSubcommand(t *testing.T) {
@@ -305,4 +307,39 @@ func TestMCPServeRejectsStaleExplicitServer(t *testing.T) {
 
 	t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "1")
 	require.NoError(t, ensureMCPDaemon())
+}
+
+func TestMCPStatusSkipsUnjudgedEndpoints(t *testing.T) {
+	for _, foreign := range []bool{false, true} {
+		t.Run(fmt.Sprintf("foreign=%t", foreign), func(t *testing.T) {
+			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+			rec := testutil.UnknownRuntimeRecord("tcp", "")
+			if foreign {
+				rec = testutil.UnjudgedRuntimeRecord(t, "tcp", "")
+			}
+			var requests, credentials atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				if r.Header.Get("Authorization") != "" {
+					credentials.Add(1)
+				}
+				_ = json.NewEncoder(w).Encode(daemon.PingInfo{OK: true, Service: "roborev", PID: rec.PID, MCPURL: "http://127.0.0.1:12345/mcp"})
+			}))
+			t.Cleanup(server.Close)
+			rec.Address = server.Listener.Addr().String()
+			path, err := daemon.RuntimeStore().Write(rec)
+			require.NoError(t, err)
+			before, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`), 0o600))
+			listeners, err := discoverMCPListeners(time.Second)
+			require.NoError(t, err)
+			assert.Empty(t, listeners)
+			assert.Zero(t, requests.Load())
+			assert.Zero(t, credentials.Load())
+			after, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, before, after)
+		})
+	}
 }

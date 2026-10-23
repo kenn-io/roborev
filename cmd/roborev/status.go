@@ -77,15 +77,17 @@ func statusCmd() *cobra.Command {
 				return nil
 			}
 
-			if _, err := statusDiscover(); serverAddr == "" && errors.Is(err, os.ErrNotExist) {
-				if info, err := daemon.FindUnjudgedDaemon(); err == nil {
-					message := "daemon is in another PID namespace; run status on the host to see queue status"
-					if jsonOutput {
-						return writeJSONResult(statusJSONResult{Running: true, Error: message})
+			if serverAddr == "" {
+				if _, err := statusDiscover(); errors.Is(err, os.ErrNotExist) {
+					if info, err := daemon.FindUnjudgedDaemon(); err == nil {
+						message := "daemon is in another PID namespace; run status from the PID namespace that started it"
+						if jsonOutput {
+							return writeJSONResult(statusJSONResult{Running: true, Error: message})
+						}
+						fmt.Printf("Daemon: running (pid %d, another PID namespace)\n", info.PID)
+						fmt.Printf("Status: unavailable: %s\n", message)
+						return nil
 					}
-					fmt.Printf("Daemon: running (pid %d, another PID namespace)\n", info.PID)
-					fmt.Printf("Status: unavailable: %s\n", message)
-					return nil
 				}
 			}
 

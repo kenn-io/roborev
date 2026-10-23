@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/update"
 )
 
@@ -560,4 +561,22 @@ func updateDaemonHandler(
 func readRequestBody(r *http.Request) string {
 	body, _ := io.ReadAll(r.Body)
 	return string(body)
+}
+
+func TestDiscoverDaemonForUpdateReportsUnjudgedRuntime(t *testing.T) {
+	stubUpdateCommand(t)
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	rec := testutil.UnknownRuntimeRecord("tcp", "127.0.0.1:1")
+	path, err := daemon.RuntimeStore().Write(rec)
+	require.NoError(t, err)
+	before, err := os.ReadFile(path)
+	require.NoError(t, err)
+	listAllRuntimes = daemon.ListLocalRuntimes
+	getAnyRunningDaemon = daemon.GetAnyRunningDaemon
+	info, err := discoverDaemonForUpdate()
+	require.EqualError(t, err, fmt.Sprintf("daemon pid %d runs in another PID namespace; stop it from there", rec.PID))
+	assert.Nil(t, info)
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
 }
