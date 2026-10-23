@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -33,7 +35,7 @@ func TestGetBranchForJobDetachedHead(t *testing.T) {
 	}
 
 	m := newModel(localhostEndpoint, withExternalIODisabled())
-	got := m.getBranchForJob(job)
+	got := m.getBranchForJobCtx(t.Context(), job)
 
 	assert.Equal(t, "(detached @ "+sha[:7]+")", got)
 
@@ -49,7 +51,7 @@ func TestGetBranchForJobDetachedHead(t *testing.T) {
 		RepoPath: repo.Path(),
 		CommitID: &commitID,
 	}
-	assert.Equal(t, "(detached @ "+sha[:7]+")", m.getBranchForJob(synthesis))
+	assert.Equal(t, "(detached @ "+sha[:7]+")", m.getBranchForJobCtx(t.Context(), synthesis))
 }
 
 // TestBackfillBranchValue covers the once-per-session branch backfill
@@ -157,8 +159,45 @@ func TestGetBranchForJobReachableFromBranch(t *testing.T) {
 	}
 
 	m := newModel(localhostEndpoint, withExternalIODisabled())
-	got := m.getBranchForJob(job)
+	// Exercise reachability without the render path's wall-clock deadline.
+	got := m.getBranchForJobCtx(t.Context(), job)
 
-	assert.NotEmpty(t, got)
-	assert.NotContains(t, got, "detached")
+	assert.Equal(t, "main", got)
+}
+
+func TestGetBranchForJobLookupFailure(t *testing.T) {
+	t.Parallel()
+	repo := testutil.InitTestRepo(t)
+	sha := repo.CommitFile("a.txt", "one", "first")
+	commitID := int64(1)
+	job := storage.ReviewJob{
+		ID:       1,
+		JobType:  storage.JobTypeReview,
+		GitRef:   sha,
+		RepoPath: repo.Path(),
+		CommitID: &commitID,
+	}
+	ctx, cancel := context.WithDeadline(t.Context(), time.Time{})
+	defer cancel()
+
+	for _, tt := range []struct {
+		name     string
+		ctx      context.Context
+		repoPath string
+	}{
+		{"deadline exceeded", ctx, repo.Path()},
+		{"git command fails", t.Context(), t.TempDir()},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			m := newModel(localhostEndpoint, withExternalIODisabled())
+			failedJob := job
+			failedJob.RepoPath = tt.repoPath
+			assert.Empty(m.getBranchForJobCtx(tt.ctx, failedJob))
+			assert.NotContains(m.branchNames, job.ID, "failed lookups must remain retryable")
+
+			assert.Equal("main", m.getBranchForJobCtx(t.Context(), job))
+			assert.Equal("main", m.branchNames[job.ID])
+		})
+	}
 }

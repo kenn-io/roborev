@@ -1056,7 +1056,8 @@ func TestGetBranchName(t *testing.T) {
 		commitSHA := repo.HeadSHA()
 		expectedBranch := repo.Run("rev-parse", "--abbrev-ref", "HEAD")
 
-		branch := GetBranchName(repo.Dir, commitSHA)
+		branch, err := GetBranchNameCtx(t.Context(), repo.Dir, commitSHA)
+		require.NoError(t, err)
 		assert.Equal(t, expectedBranch, branch, "expected %s, got %s", expectedBranch, branch)
 	})
 
@@ -1068,24 +1069,38 @@ func TestGetBranchName(t *testing.T) {
 
 		repo.CommitFile("file2.txt", "content2", "second")
 
-		branch := GetBranchName(repo.Dir, commitSHA)
+		branch, err := GetBranchNameCtx(t.Context(), repo.Dir, commitSHA)
+		require.NoError(t, err)
 		assert.Equal(t, expectedBranch, branch, "expected %s (suffix stripped), got %s", expectedBranch, branch)
 	})
 
-	t.Run("non-existent repo returns empty", func(t *testing.T) {
+	t.Run("non-repository returns error", func(t *testing.T) {
 		repo := NewTestRepoWithCommit(t)
 		commitSHA := repo.HeadSHA()
 
 		nonRepo := t.TempDir()
-		branch := GetBranchName(nonRepo, commitSHA)
+		branch, err := GetBranchNameCtx(t.Context(), nonRepo, commitSHA)
+		require.Error(t, err)
 		assert.Empty(t, branch, "expected empty string, got %s", branch)
 	})
 
 	t.Run("invalid SHA returns empty", func(t *testing.T) {
 		repo := NewTestRepoWithCommit(t)
 
-		branch := GetBranchName(repo.Dir, "0000000000000000000000000000000000000000")
+		branch, err := GetBranchNameCtx(t.Context(), repo.Dir, "0000000000000000000000000000000000000000")
+		require.NoError(t, err)
 		assert.Empty(t, branch, "expected empty string, got %s", branch)
+	})
+
+	t.Run("unreachable commit returns empty without error", func(t *testing.T) {
+		repo := NewTestRepoWithCommit(t)
+		repo.Run("checkout", "--detach")
+		repo.CommitFile("detached.txt", "detached", "detached commit")
+		sha := repo.HeadSHA()
+
+		branch, err := GetBranchNameCtx(t.Context(), repo.Dir, sha)
+		require.NoError(t, err)
+		assert.Empty(t, branch)
 	})
 }
 
@@ -3550,6 +3565,7 @@ func TestCtxVariantsHonorCancellation(t *testing.T) {
 		name string
 		call func() error
 	}{
+		{"GetBranchNameCtx", func() error { _, err := GetBranchNameCtx(ctx, repo.Dir, sha); return err }},
 		{"GetCommitInfoCtx", func() error { _, err := GetCommitInfoCtx(ctx, repo.Dir, sha); return err }},
 		{"GetFilesChangedCtx", func() error { _, err := GetFilesChangedCtx(ctx, repo.Dir, sha); return err }},
 		{"GetDiffLimitedCtx", func() error { _, _, err := GetDiffLimitedCtx(ctx, repo.Dir, sha, 1024); return err }},

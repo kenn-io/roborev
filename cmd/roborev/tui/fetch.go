@@ -624,7 +624,10 @@ func backfillBranchValue(job storage.ReviewJob, machineID *uuid.UUID) (string, b
 	if idx := strings.Index(sha, ".."); idx != -1 {
 		sha = sha[idx+2:]
 	}
-	branch := git.GetBranchName(job.RepoPath, sha)
+	branch, err := git.GetBranchName(job.RepoPath, sha)
+	if err != nil {
+		return "", false
+	}
 	if branch == "" {
 		if detachedBranchLabel(job) != "" {
 			return "", false
@@ -1015,7 +1018,11 @@ func reviewBranchName(job *storage.ReviewJob) string {
 		return ""
 	}
 	if job.RepoPath != "" && !strings.Contains(job.GitRef, "..") {
-		if branch := git.GetBranchName(job.RepoPath, job.GitRef); branch != "" {
+		branch, err := git.GetBranchName(job.RepoPath, job.GitRef)
+		if err != nil {
+			return ""
+		}
+		if branch != "" {
 			return branch
 		}
 	}
