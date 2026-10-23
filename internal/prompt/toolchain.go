@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"maps"
@@ -18,6 +19,10 @@ import (
 // buildToolchainSection states the Go versions of modules containing changed Go
 // files. An empty ref reads dirty manifests from the working tree.
 func buildToolchainSection(repoPath, ref string, changedFiles []string, neutral bool) string {
+	return buildToolchainSectionCtx(context.Background(), repoPath, ref, changedFiles, neutral)
+}
+
+func buildToolchainSectionCtx(ctx context.Context, repoPath, ref string, changedFiles []string, neutral bool) string {
 	if _, end, ok := git.ParseRange(ref); ok {
 		ref = strings.TrimPrefix(end, ".") // Three-dot ranges also use the right endpoint.
 		if ref == "" {
@@ -45,7 +50,7 @@ func buildToolchainSection(repoPath, ref string, changedFiles []string, neutral 
 					data, err = os.ReadFile(filepath.Join(repoPath, filepath.FromSlash(manifest)))
 					module.found = !errors.Is(err, os.ErrNotExist)
 				} else {
-					data, err = git.ReadFile(repoPath, ref, manifest)
+					data, err = git.ReadFileCtx(ctx, repoPath, ref, manifest)
 					module.found = err == nil
 				}
 				if err == nil {

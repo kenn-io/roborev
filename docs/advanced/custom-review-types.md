@@ -23,7 +23,7 @@ reasoning = "thorough"
 
 The template supplies instructions for what the reviewer should check. Roborev
 still constructs the commit or range context, project guidelines, diff, and
-oversized-diff snapshot instructions. It also owns the output schema, severity
+complete-prompt snapshot instructions. It also owns the output schema, severity
 filtering, pass/fail verdict, and final Markdown rendering.
 
 ## Reviews of drafts and other material
@@ -65,6 +65,56 @@ reviews and panel parents with custom voting members, rather than substituting a
 built-in rubric. `fix` and `refine` remain writable, code-framed workflows; they
 do not promise to preserve a custom rubric during re-review.
 
+## Committed evidence
+
+Enable binary evidence on a custom type:
+
+```toml
+[review.types.citations]
+template = ".roborev/reviews/citations.md"
+binary_evidence = true
+```
+
+Roborev reads the reviewed commit's Git objects, rather than the current
+working-tree files. Single commits, roots, ranges and merges use the same
+selection as the review diff, including exclusions and rename behavior. A range
+that includes the first commit also includes binary files introduced in that
+commit. Committed endpoint attributes determine binary classification; a
+different checkout's attributes do not change the evidence set. Evidence-enabled
+preparation ignores Git replacement refs and disables text conversion and
+external diff commands for the rendered comparison and prebuilt diff snapshots.
+
+Each changed binary has an index entry with its escaped original path, change
+kind, old or new side, Git blob ID, raw-byte SHA-256, byte count and media hint.
+Deletions retain old bytes; modifications offer both sides. Equal content shares
+one file within an attempt. Symlinks, submodules and mode-only changes have
+explicit omissions and are not copied as ordinary binary files. Git LFS pointers
+remain text pointers; Roborev does not fetch their remote payloads.
+
+The files live in private, ignored attempt directories under `snapshot_dir` in
+the actual agent checkout. Their names come from content hashes. Sniffed PDF and
+supported image types get safe extensions for native readers. Files use mode
+0600 and remain available even when the prompt fits inline. Unsupported media is
+labelled as needing a supplied text rendition. Hashes identify the bytes
+offered; they do not prove that the agent read or understood a file.
+
+Stored and prebuilt prompts carry a versioned portable evidence footer. At
+execution, Roborev validates it against the resolved settings and reviewed Git
+objects, then binds fresh file paths. The supplied rubric, PR discussion and
+member instructions survive retries. Prompt text does not grant tools or select
+operator configuration. Cleanup covers successful and failed attempts; retries
+reconstruct the pinned bytes and fail if required Git objects are missing.
+
+The complete evidence index participates in the usual prompt preparation after
+all attachments. Oversized prompts use the same complete-file transport as
+ordinary reviews. Evidence files have no separate guessed size or page cap.
+There is no machine-wide evidence cache or runtime network lookup.
+
+Evidence applies only to the custom rubric that enables it. Other members in a
+mixed panel keep their normal prompts. Dirty reviews reject enabled binary
+evidence or a nonempty `evidence_manifest` before launching an agent; commit the
+material first. Evidence-disabled dirty reviews retain their normal behavior.
+
 ## Configuration reference
 
 Each `[review.types.<name>]` table supports these fields:
@@ -76,6 +126,7 @@ Each `[review.types.<name>]` table supports these fields:
 | `agent` | No | Agent override for this type |
 | `model` | No | Model override for this type |
 | `reasoning` | No | Reasoning override for this type |
+| `binary_evidence` | No | Offer changed committed binary files; defaults to false |
 
 Names must start with a lowercase letter and contain only lowercase letters,
 digits, and hyphens. Names may not replace built-in types or their aliases:

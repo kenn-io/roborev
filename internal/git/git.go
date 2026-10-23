@@ -57,7 +57,20 @@ func newGitCmd(args ...string) *exec.Cmd {
 }
 
 func newGitCmdContext(ctx context.Context, args ...string) *exec.Cmd {
-	return gitRunner.Command(ctx, "", args...)
+	safeEvidence := evidenceReadPolicy(ctx)
+	if safeEvidence && len(args) > 0 {
+		switch args[0] {
+		case "diff", "show", "diff-tree":
+			args = append([]string{args[0], "--no-ext-diff", "--no-textconv"}, args[1:]...)
+		}
+	}
+	cmd := gitRunner.Command(ctx, "", args...)
+	if safeEvidence {
+		// A pinned OID still follows refs/replace unless explicitly disabled.
+		// Missing objects must fail rather than trigger a partial-clone fetch.
+		cmd.Env = append(cmd.Environ(), "GIT_NO_REPLACE_OBJECTS=1", "GIT_NO_LAZY_FETCH=1")
+	}
+	return cmd
 }
 
 // gitOutput runs cmd and returns its stdout. When git fails, the error carries
@@ -1386,7 +1399,12 @@ func GetMainRepoRoot(path string) (string, error) {
 
 // ReadFile reads a file at a specific commit
 func ReadFile(repoPath, sha, filePath string) ([]byte, error) {
-	cmd := newGitCmd("show", fmt.Sprintf("%s:%s", sha, filePath))
+	return ReadFileCtx(context.Background(), repoPath, sha, filePath)
+}
+
+// ReadFileCtx is ReadFile with a cancellable context and its Git read policy.
+func ReadFileCtx(ctx context.Context, repoPath, sha, filePath string) ([]byte, error) {
+	cmd := newGitCmdContext(ctx, "show", fmt.Sprintf("%s:%s", sha, filePath))
 	cmd.Dir = repoPath
 
 	var stdout, stderr bytes.Buffer
@@ -1409,7 +1427,12 @@ type RefFile struct {
 
 // ReadRefFile reads a file and its tree mode at a specific commit.
 func ReadRefFile(repoPath, sha, filePath string) (RefFile, error) {
-	cmd := newGitCmd("ls-tree", "-z", sha, "--", filePath)
+	return ReadRefFileCtx(context.Background(), repoPath, sha, filePath)
+}
+
+// ReadRefFileCtx is ReadRefFile with a cancellable context and its Git read policy.
+func ReadRefFileCtx(ctx context.Context, repoPath, sha, filePath string) (RefFile, error) {
+	cmd := newGitCmdContext(ctx, "ls-tree", "-z", sha, "--", filePath)
 	cmd.Dir = repoPath
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -1430,7 +1453,7 @@ func ReadRefFile(repoPath, sha, filePath string) (RefFile, error) {
 	}
 	symlink := string(fields[0]) == "120000"
 
-	cmd = newGitCmd("cat-file", "blob", string(fields[2]))
+	cmd = newGitCmdContext(ctx, "cat-file", "blob", string(fields[2]))
 	cmd.Dir = repoPath
 	stdout.Reset()
 	stderr.Reset()

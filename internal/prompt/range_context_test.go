@@ -89,12 +89,18 @@ func TestBuildRangePrompt_PriorReviewsDocument(t *testing.T) {
 	}
 	assert.NotContains(withoutAddedRanges.Prompt, "<prior-range-reviews")
 
-	// Prompt-build failures must also release a document already written.
+	// A template failure after prior-review snapshot creation must clean it up.
 	if withoutAddedRanges.Cleanup != nil {
 		withoutAddedRanges.Cleanup()
 	}
-	_, err = builder.BuildWithSnapshot(base+".."+third, 2, "test", "unconfigured-review", "", nil)
-	require.ErrorContains(t, err, "is not configured")
+	failingBuilder := builder.WithRepoConfig(&config.RepoConfig{Review: config.ReviewConfig{
+		Types: map[string]config.ReviewTypeSpec{
+			"custom": {Template: "missing-review.tmpl"},
+		},
+	}}, "")
+	_, err = failingBuilder.BuildWithSnapshot(base+".."+third, 2, "test", "custom", "", nil)
+	require.ErrorContains(t, err, `review type "custom" template`)
+	require.ErrorIs(t, err, os.ErrNotExist)
 	snapshots, err = filepath.Glob(filepath.Join(repo.Path(), ".roborev", "roborev-snapshot-*"))
 	require.NoError(t, err)
 	assert.Empty(snapshots)

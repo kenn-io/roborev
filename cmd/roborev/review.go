@@ -577,6 +577,7 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, di
 		ForRepo(repoPath, 0).
 		WithRepoConfig(repoCfg, "").
 		WithKataClient(kata.NewCLIClient(repoPath)).
+		WithReviewSettings(settings).
 		WithStructuredOutput(true)
 	var reviewPrompt string
 	var snapshotCleanup func()

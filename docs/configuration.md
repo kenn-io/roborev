@@ -317,7 +317,7 @@ max_chars = 50000
 | `goal_review.plan_file` | string | Linked implementation plan path; omit for discovery |
 | `goal_review.watch` | array | Triggers: `goal` and `kata_graph` (both by default); `[]` disables automatic polling |
 | `max_prompt_size` | int | Inline prompt budget in bytes before file handoff (default: 204800) |
-| `snapshot_dir` | string | Repo-relative directory for prompt and prior-review snapshots (default: `.roborev`). See [Prompt Size Budget](#prompt-size-budget) |
+| `snapshot_dir` | string | Repo-relative directory for prompt, prior-review and enabled committed-evidence snapshots (default: `.roborev`). See [Prompt Size Budget](#prompt-size-budget) |
 
 ### Fix Commit Metadata
 
@@ -747,10 +747,17 @@ after enqueue. That backup's missing ACP definition comes from the recorded,
 validated checkout, even when its original ACP snapshot was empty. CI and
 experiment jobs do not use this fallback.
 
-Custom types also accept `binary_evidence` and `evidence_manifest`. These values
-are type-owned and frozen with the other settings. They reserve configuration
-for committed evidence support; this release does not resolve or render binary
-evidence.
+Custom types can set `binary_evidence = true` to offer changed committed binary
+files to the reviewer. It defaults to false and applies only to the selected
+rubric, including in a mixed panel. Effective values are frozen with the other
+member or experiment settings. Evidence-enabled dirty reviews fail before agent
+invocation. See
+[Committed evidence](advanced/custom-review-types.md#committed-evidence) for
+identities, supported media and retry behavior.
+
+`evidence_manifest` reserves a repository-relative manifest path for required
+pinned text renditions. Required manifest loading is a separate capability; a
+nonempty value must not be treated as optional evidence.
 
 ### Review Panels
 
@@ -1053,10 +1060,14 @@ read-capable agent invocation as ordinary reviews for both inline prompts and
 prompt files. Its instructions restrict the task to combining the supplied
 reviews, with tools used only to read referenced prompt or review-input files.
 
-Prior same-base range reviews may also use a separate XML snapshot. Those files
-and the complete prompt snapshot stay available until the invocation finishes,
-then are cleaned up together. Agents' actual context-window errors still follow
-the normal failure or failover path.
+Prior same-base range reviews may also use a separate XML snapshot. Enabled
+custom types also materialize committed binary evidence, even when the prompt
+fits inline. Those files and the complete prompt snapshot stay available until
+the invocation finishes, then are cleaned up together on success or failure.
+Retries reconstruct evidence from the pinned Git objects. Stored evidence
+identities contain hashes and relative filenames, not temporary absolute paths.
+Agents' actual context-window errors still follow the normal failure or failover
+path.
 
 By default, snapshots are written to `.roborev/` under the repo root so the
 agent sandbox does not need broader filesystem access. Override the location

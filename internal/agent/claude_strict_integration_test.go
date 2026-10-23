@@ -301,12 +301,33 @@ Attempt these calls even though permissions should deny them. Do not substitute 
 					assert.ErrorIs(t, statErr, os.ErrNotExist)
 				}
 				assert.Equal(t, before, qualificationFiles(t, repo), "native review changed checkout files")
-				assertQualificationServerCalls(t, serverLog, mode == "strict-granted")
+				assertQualificationServerCalls(t, serverLog, mode)
 				require.NoError(t, err, "adapter failed; inspect private native stream")
 				require.NoError(t, checkClaudeQualificationEvidence(stream.Bytes(), proof, mode == "strict-granted"))
-				assertQualificationNativeTools(t, stream.Bytes(), mode == "strict-granted", schema)
+				assertQualificationNativeTools(t, stream.Bytes(), mode, schema)
 			})
 		}
+	}
+}
+
+func TestClaudeOrdinaryQualificationAllowsMCPDiscovery(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "server.jsonl")
+	require.NoError(t, os.WriteFile(path, []byte(`{"event":"start","server":"ambient"}
+{"event":"list","server":"ambient","tools":["lookup"]}
+`), 0o600))
+	assertQualificationServerCalls(t, path, "ordinary")
+	assertQualificationServerCalls(t, filepath.Join(t.TempDir(), "absent.jsonl"), "ordinary")
+	assertQualificationServerCalls(t, filepath.Join(t.TempDir(), "absent.jsonl"), "strict-empty")
+	assertQualificationNativeTools(t, []byte(`{"type":"system","subtype":"init","tools":["Read","Glob","Grep","mcp__ambient__lookup"]}`), "ordinary", false)
+}
+
+func TestClaudeOrdinaryQualificationRejectsMCPCalls(t *testing.T) {
+	for _, data := range []string{
+		`{"event":"call","server":"ambient","tool":"lookup"}`,
+		`{"event":"start","server":"ambient"}` + "\n" + `{"event":"call","server":"other","tool":"lookup"}`,
+		`malformed`,
+	} {
+		require.Error(t, checkOrdinaryQualificationServerCalls([]byte(data)))
 	}
 }
 
@@ -317,14 +338,21 @@ func writeQualificationJSON(t *testing.T, path string, value any) {
 	require.NoError(t, os.WriteFile(path, data, 0o600))
 }
 
-func assertQualificationServerCalls(t *testing.T, path string, granted bool) {
+func assertQualificationServerCalls(t *testing.T, path string, mode string) {
 	t.Helper()
 	data, err := os.ReadFile(path)
-	if !granted {
-		require.ErrorIs(t, err, os.ErrNotExist, "empty/ordinary policies must start no MCP servers")
+	if mode == "strict-empty" {
+		require.ErrorIs(t, err, os.ErrNotExist, "strict empty grants must start no MCP servers")
+		return
+	}
+	if mode == "ordinary" && os.IsNotExist(err) {
 		return
 	}
 	require.NoError(t, err)
+	if mode == "ordinary" {
+		require.NoError(t, checkOrdinaryQualificationServerCalls(data))
+		return
+	}
 	var starts, calls, initialLists, refreshedLists int
 	var changed, lookupCompleted bool
 	for line := range bytes.SplitSeq(bytes.TrimSpace(data), []byte{'\n'}) {
@@ -366,8 +394,28 @@ func assertQualificationServerCalls(t *testing.T, path string, granted bool) {
 	require.True(t, lookupCompleted, "no newly advertised-tool qualification without client refresh")
 }
 
-func assertQualificationNativeTools(t *testing.T, stream []byte, granted, schema bool) {
+// Ordinary reviews may discover ambient servers, but no server may execute a call.
+func checkOrdinaryQualificationServerCalls(data []byte) error {
+	for line := range bytes.SplitSeq(bytes.TrimSpace(data), []byte{'\n'}) {
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var event struct {
+			Event string `json:"event"`
+		}
+		if err := json.Unmarshal(line, &event); err != nil {
+			return fmt.Errorf("invalid MCP server evidence: %w", err)
+		}
+		if event.Event == "call" {
+			return fmt.Errorf("ordinary review executed an MCP tool call")
+		}
+	}
+	return nil
+}
+
+func assertQualificationNativeTools(t *testing.T, stream []byte, mode string, schema bool) {
 	t.Helper()
+	granted := mode == "strict-granted"
 	var found bool
 	for line := range bytes.SplitSeq(stream, []byte{'\n'}) {
 		var msg struct {
@@ -386,6 +434,9 @@ func assertQualificationNativeTools(t *testing.T, stream []byte, granted, schema
 			assert.NotContains(t, msg.Tools, "mcp__archive__new_tool", "new_tool must not be advertised at startup")
 		}
 		for _, tool := range msg.Tools {
+			if mode == "ordinary" && strings.HasPrefix(tool, "mcp__") {
+				continue
+			}
 			if tool == "Read" || tool == "Glob" || tool == "Grep" || (schema && tool == "StructuredOutput") || (granted && strings.HasPrefix(tool, "mcp__archive__")) {
 				continue
 			}

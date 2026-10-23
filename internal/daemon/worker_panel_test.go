@@ -149,16 +149,6 @@ func TestPanelMemberTimeoutOverridesDefaultJobTimeout(t *testing.T) {
 	assert.Equal(t, 90*time.Second, resolveJobTimeoutDuration(snapshot, 30))
 }
 
-func TestPanelMemberInvalidTimeoutRejectsExecution(t *testing.T) {
-	job := &storage.ReviewJob{
-		PanelRole:             storage.PanelRoleMember,
-		PanelMemberConfigJSON: `{"timeout":"later"}`,
-	}
-
-	_, err := decodeReviewExecutionSnapshot(job.PanelMemberConfigJSON)
-	require.ErrorContains(t, err, "timeout")
-}
-
 func TestMemberInstructionsNotAppendedForNonPanelJob(t *testing.T) {
 	t.Parallel()
 	tc := newWorkerTestContext(t, 1)

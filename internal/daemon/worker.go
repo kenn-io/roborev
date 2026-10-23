@@ -1117,7 +1117,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 
 	// Prompt-independent cleanup must not force a prebuilt CI job to reload
 	// repository review configuration that it no longer needs.
-	pb := wp.basePromptBuilderForJob(ctx, checkout, job, cfg)
+	pb := wp.basePromptBuilderForJob(ctx, checkout, job, cfg).WithReviewSettings(settings)
 	if err := cleanupStaleSnapshotsForJob(pb, checkout, job.RepoID); err != nil {
 		log.Printf("[%s] Warning: cleanup stale snapshots for job %d: %v", workerID, job.ID, err)
 	}
@@ -1143,21 +1143,6 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		// discussion context survives retries and failover.
 		reviewPrompt = storedPromptValue
 		promptToPersist = storedPromptValue
-		var cleanup func()
-		excludes := config.ResolveExcludePatterns(
-			ctx, checkout.resolvedConfigRepoPath(), cfg, job.ReviewType,
-		)
-		reviewPrompt, cleanup, err = preparePrebuiltPrompt(
-			ctx, checkout.promptRepoPath, checkout.snapshotTarget, job, reviewPrompt, excludes,
-		)
-		if cleanup != nil {
-			defer cleanup()
-		}
-		if err != nil {
-			log.Printf("[%s] Error preparing prebuilt prompt: %v", workerID, err)
-			wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("prepare prebuilt prompt: %v", err))
-			return
-		}
 	} else if job.UsesStoredPrompt() && job.Prompt != "" {
 		// Prompt-native job (task, compact) — prepend agent-specific preamble
 		preamble := prompt.GetSystemPrompt(job.Agent, "run")
@@ -1181,6 +1166,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("configure prompt builder: %v", err))
 			return
 		}
+
+		pb = pb.WithReviewSettings(settings)
 
 		// Attributed jobs use the frozen plan verbatim, including an explicit
 		// empty value. Ordinary jobs keep the legacy config cascade.
@@ -1224,11 +1211,42 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Panel members carry trusted reviewer instructions resolved at enqueue
 	// time. Append them after every prompt path (snapshot/dirty/range/
 	// prebuilt) so the agent and the stored prompt both include them.
-	reviewPrompt += memberSuffix
-	if promptToPersist == "" {
-		promptToPersist = reviewPrompt
+	if settings.BinaryEvidence || settings.EvidenceManifest != "" {
+		excludes := config.ResolveExcludePatterns(ctx, checkout.resolvedConfigRepoPath(), cfg, job.ReviewType)
+		bound, bindErr := pb.BindReviewEvidence(reviewPrompt, job.GitRef, job.ReviewType, excludes, checkout.snapshotTarget, memberSuffix)
+		if bindErr != nil {
+			wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("prepare evidence: %v", bindErr))
+			return
+		}
+		if bound.Cleanup != nil {
+			defer bound.Cleanup()
+		}
+		reviewPrompt, promptToPersist = bound.Prompt, bound.StoredPrompt
 	} else {
-		promptToPersist = strings.TrimSuffix(promptToPersist, memberSuffix) + memberSuffix
+		reviewPrompt += memberSuffix
+		if promptToPersist == "" {
+			promptToPersist = reviewPrompt
+		} else {
+			promptToPersist = strings.TrimSuffix(promptToPersist, memberSuffix) + memberSuffix
+		}
+	}
+	// Diff placeholders belong to prebuilt transport. Bind after evidence so
+	// persistence retains portable identities and no attempt-local file paths.
+	if job.PromptPrebuilt {
+		excludes := config.ResolveExcludePatterns(ctx, checkout.resolvedConfigRepoPath(), cfg, job.ReviewType)
+		var cleanup func()
+		readCtx := ctx
+		if settings.BinaryEvidence || settings.EvidenceManifest != "" {
+			readCtx = gitpkg.WithEvidenceReadPolicy(ctx)
+		}
+		reviewPrompt, cleanup, err = preparePrebuiltPrompt(readCtx, checkout.promptRepoPath, checkout.snapshotTarget, job, reviewPrompt, excludes)
+		if cleanup != nil {
+			defer cleanup()
+		}
+		if err != nil {
+			wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("prepare prebuilt prompt: %v", err))
+			return
+		}
 	}
 
 	// The job's stored prompt is the only copy the prompt views read, so a
