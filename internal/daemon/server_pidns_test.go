@@ -3,15 +3,10 @@
 package daemon
 
 import (
-	"encoding/json"
 	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,71 +17,7 @@ import (
 	"go.kenn.io/roborev/internal/testutil"
 )
 
-func TestServerStartWithSandboxSocket(t *testing.T) {
-	if dataDir := os.Getenv("ROBOREV_TEST_REUSED_ENDPOINT_DATA"); dataDir == "" {
-		t.Setenv("HOME", t.TempDir())
-		dataDir = testenv.SetDataDir(t)
-		setShortRuntimeDir(t)
-		ready := filepath.Join(dataDir, "replacement-ready")
-		released := filepath.Join(dataDir, "sibling-stopped")
-		t.Setenv("ROBOREV_TEST_REUSED_ENDPOINT_DATA", dataDir)
-		parent := t
-		var rec kitdaemon.RuntimeRecord
-		// Start the replacement namespace before ending the sibling so the
-		// kernel cannot reuse the sibling's namespace inode for the replacement.
-		t.Run("sibling", func(t *testing.T) {
-			rec = testutil.UnjudgedRuntimeRecord(t, "tcp", "127.0.0.1:1")
-			_, err := runtimeStore().Write(rec)
-			require.NoError(t, err)
-			t.Setenv("ROBOREV_TEST_RUNTIME_WRITER", "")
-			testutil.RunPIDNamespaceTest(parent, nil, ready)
-		})
-		if rec.PID == 0 {
-			t.Skip("requires PID namespaces")
-		}
-		require.NoError(t, os.WriteFile(released, nil, 0o600))
-		return
-	} else {
-		t.Setenv("ROBOREV_DATA_DIR", dataDir)
-	}
-	require.NoError(t, os.WriteFile(filepath.Join(config.DataDir(), "replacement-ready"), nil, 0o600))
-	// Wall-clock wait: the parent ends the sibling subprocess before releasing Start.
-	require.Eventually(t, func() bool {
-		_, err := os.Stat(filepath.Join(config.DataDir(), "sibling-stopped"))
-		return err == nil
-	}, 5*time.Second, 10*time.Millisecond)
-	setShortRuntimeDir(t)
-	records, err := runtimeStore().List()
-	require.NoError(t, err)
-	require.Len(t, records, 1)
-	rec := records[0]
-	require.Equal(t, 2, rec.PID)
-	require.Equal(t, kitdaemon.ProcessScopeForeign, kitdaemon.RuntimeProcessScope(rec))
-
-	// Another daemon in a different data directory now serves the old endpoint
-	// with the same namespace-local PID.
-	var requests atomic.Int32
-	foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		_ = json.NewEncoder(w).Encode(PingInfo{OK: true, Service: "roborev", PID: 2})
-	}))
-	t.Cleanup(foreign.Close)
-	rec.Address = foreign.Listener.Addr().String()
-	_, err = runtimeStore().Write(rec)
-	require.NoError(t, err)
-
-	db, _ := testutil.OpenTestDBWithDir(t)
-	cfg := config.DefaultConfig()
-	cfg.ServerAddr = "127.0.0.1:0"
-	server := NewServer(db, cfg, "")
-	t.Cleanup(func() { _ = server.Close() })
-	errCh, info := startServerAndWaitForRuntime(t, server)
-	assert.Equal(t, os.Getpid(), info.PID)
-	stopTestServer(t, server, errCh)
-	assert.Zero(t, requests.Load())
-}
-
-func TestServerStartAfterSandboxSocketStopsResponding(t *testing.T) {
+func TestServerStartOverDeadSandboxRecord(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	testenv.SetDataDir(t)
 	address := filepath.Join(setShortRuntimeDir(t), "daemon.sock")

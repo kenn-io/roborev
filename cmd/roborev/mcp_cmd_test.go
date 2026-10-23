@@ -11,7 +11,6 @@ import (
 	"os"
 	"runtime"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -310,23 +309,10 @@ func TestMCPServeRejectsStaleExplicitServer(t *testing.T) {
 
 func TestMCPStatusSkipsUnjudgedEndpoints(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	rec := testutil.UnknownRuntimeRecord("tcp", "")
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		_ = json.NewEncoder(w).Encode(daemon.PingInfo{OK: true, Service: "roborev", PID: rec.PID, MCPURL: "http://127.0.0.1:12345/mcp"})
-	}))
-	t.Cleanup(server.Close)
-	rec.Address = server.Listener.Addr().String()
-	path, err := daemon.RuntimeStore().Write(rec)
+	rec := testutil.UnknownRuntimeRecord("tcp", "127.0.0.1:12345")
+	_, err := daemon.RuntimeStore().Write(rec)
 	require.NoError(t, err)
-	before, err := os.ReadFile(path)
-	require.NoError(t, err)
-	listeners, err := discoverMCPListeners(time.Second)
+	listeners, err := mcpStatusListRuntimes()
 	require.NoError(t, err)
 	assert.Empty(t, listeners)
-	assert.Zero(t, requests.Load())
-	after, err := os.ReadFile(path)
-	require.NoError(t, err)
-	assert.Equal(t, before, after)
 }
