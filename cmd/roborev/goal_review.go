@@ -13,7 +13,6 @@ import (
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/goalreview"
-	"go.kenn.io/roborev/internal/kata"
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
 	roborevclient "go.kenn.io/roborev/pkg/client"
@@ -70,7 +69,7 @@ func runGoalReviewWithRunner(cmd *cobra.Command, root string, options goalreview
 	if err != nil {
 		return err
 	}
-	snapshot, err := goalreview.Capture(cmd.Context(), root, selection, kata.NewCLIClient(root))
+	snapshot, err := goalreview.Capture(cmd.Context(), root, selection, newKataClient(root, cfg))
 	if err != nil {
 		return err
 	}

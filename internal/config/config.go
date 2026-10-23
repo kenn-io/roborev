@@ -95,6 +95,7 @@ func markConfigValidationError(err error) error {
 
 // HookConfig defines a hook that runs on review events
 type HookConfig struct {
+	Findings string   `toml:"findings"`             // kata: comments or summary; unset preserves the issue body
 	Event    string   `toml:"event"`                // "review.failed", "review.completed", "review.*"
 	Branches []string `toml:"branches"`             // optional branch globs (path.Match); empty = all branches
 	Command  string   `toml:"command"`              // shell command with {var} templates
@@ -457,6 +458,9 @@ type Config struct {
 
 	// Kata task-context integration for review prompts
 	KataContext KataContextConfig `toml:"kata_context"`
+	// Optional connections to other services. Global-only: credentials and
+	// endpoints are the daemon owner's choice, never a repository's.
+	Integrations IntegrationsConfig `toml:"integrations"`
 	// Candidate-gate policy. Keep this global so checkout config cannot weaken it.
 	GoalReview GoalReviewPolicyConfig `toml:"goal_review"`
 
@@ -616,6 +620,9 @@ func walkAgentReferences(value reflect.Value, path string, visit func(path, name
 
 func validateConfig(cfg any, acp ACPAgentConfigs) error {
 	if global, ok := cfg.(*Config); ok {
+		if err := ValidateKataHooks(global.Hooks, global.Integrations.Kata.Enabled); err != nil {
+			return err
+		}
 		if err := ValidateAuthKey(global.AuthKey); err != nil {
 			return err
 		}
@@ -627,6 +634,9 @@ func validateConfig(cfg any, acp ACPAgentConfigs) error {
 		}
 	}
 	if repo, ok := cfg.(*RepoConfig); ok {
+		if err := ValidateKataHooks(repo.Hooks, true); err != nil {
+			return err
+		}
 		if err := validateGoalReview(repo.GoalReview); err != nil {
 			return err
 		}
@@ -720,6 +730,9 @@ func (c *Config) Validate() (err error) {
 	}
 	if err := validateSearchConfig(c.Search); err != nil {
 		return err
+	}
+	if err := c.Integrations.Kata.Validate(); err != nil {
+		return fmt.Errorf("integrations.kata: %w", err)
 	}
 	reasoning := []namedConfigValue{
 		{key: "review_reasoning", value: c.ReviewReasoning},
@@ -1024,7 +1037,8 @@ func DefaultConfig() *Config {
 			FailedReviewThreshold: 4,
 			Instruction:           DefaultAgentHookInstruction,
 		},
-		KataContext: KataContextConfig{Mode: KataModeOff, MaxChars: defaultKataMaxChars},
+		KataContext:  KataContextConfig{Mode: KataModeOff, MaxChars: defaultKataMaxChars},
+		Integrations: IntegrationsConfig{Kata: KataIntegrationConfig{Teammate: DefaultKataTeammate}},
 		Agent: AgentConfig{
 			Codex: CodexConfig{
 				DisableReviewSkills:    true,
@@ -1142,6 +1156,7 @@ func applyDaemonSections(c *Config) []error {
 		{"search", func() error { return validateSearchConfig(c.Search) }},
 		{"remote", func() error { return validateRemoteConfig(c.Remote) }},
 		{"web", func() error { return normalizeWebConfig(&c.Web, c.AuthKey) }},
+		{"integrations.kata", c.Integrations.Kata.Validate},
 	} {
 		if err := section.validate(); err != nil {
 			errs = append(errs, fmt.Errorf("[%s]: %w", section.name, err))
@@ -1473,6 +1488,12 @@ func validateRepoConfigScope(md toml.MetaData) error {
 		return fmt.Errorf(
 			"repository config key %q is global-only; move it to ~/.roborev/config.toml",
 			"fix_guidelines",
+		)
+	}
+	if md.IsDefined("integrations", "kata") {
+		return fmt.Errorf(
+			"repository config key %q is global-only; move it to ~/.roborev/config.toml",
+			"integrations.kata",
 		)
 	}
 	if md.IsDefined("goal_review", "kata_gate") {

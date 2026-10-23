@@ -1159,6 +1159,358 @@ func (o *BatchJobsRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// KataShowIssueRequestOptions is the options needed to make a request to KataShowIssue.
+type KataShowIssueRequestOptions struct {
+	Query *KataShowIssueQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *KataShowIssueRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *KataShowIssueRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *KataShowIssueRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *KataShowIssueRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *KataShowIssueRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// KataListIssuesRequestOptions is the options needed to make a request to KataListIssues.
+type KataListIssuesRequestOptions struct {
+	Query *KataListIssuesQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *KataListIssuesRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *KataListIssuesRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *KataListIssuesRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *KataListIssuesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *KataListIssuesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// KataCreateIssueRequestOptions is the options needed to make a request to KataCreateIssue.
+type KataCreateIssueRequestOptions struct {
+	Body *KataCreateIssueBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *KataCreateIssueRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *KataCreateIssueRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *KataCreateIssueRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *KataCreateIssueRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *KataCreateIssueRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// KataPublicationsRequestOptions is the options needed to make a request to KataPublications.
+type KataPublicationsRequestOptions struct {
+	Query *KataPublicationsQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *KataPublicationsRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *KataPublicationsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *KataPublicationsRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *KataPublicationsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *KataPublicationsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// KataPublishRequestOptions is the options needed to make a request to KataPublish.
+type KataPublishRequestOptions struct {
+	Body *KataPublishBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *KataPublishRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *KataPublishRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *KataPublishRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *KataPublishRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *KataPublishRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// KataResponseStatusRequestOptions is the options needed to make a request to KataResponseStatus.
+type KataResponseStatusRequestOptions struct {
+	Query *KataResponseStatusQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *KataResponseStatusRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *KataResponseStatusRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *KataResponseStatusRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *KataResponseStatusRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *KataResponseStatusRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// KataResponseRequestOptions is the options needed to make a request to KataResponse.
+type KataResponseRequestOptions struct {
+	Body *KataResponseBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *KataResponseRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *KataResponseRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *KataResponseRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *KataResponseRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *KataResponseRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// KataStatusRequestOptions is the options needed to make a request to KataStatus.
+type KataStatusRequestOptions struct {
+	Query *KataStatusQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *KataStatusRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *KataStatusRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *KataStatusRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *KataStatusRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *KataStatusRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // CleanJobLogsRequestOptions is the options needed to make a request to CleanJobLogs.
 type CleanJobLogsRequestOptions struct {
 	Body *CleanJobLogsBody
@@ -1420,6 +1772,50 @@ func (o *RebuttalRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *RebuttalRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// CloseReassessmentReviewRequestOptions is the options needed to make a request to CloseReassessmentReview.
+type CloseReassessmentReviewRequestOptions struct {
+	Body *CloseReassessmentReviewBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *CloseReassessmentReviewRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CloseReassessmentReviewRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CloseReassessmentReviewRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CloseReassessmentReviewRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CloseReassessmentReviewRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -1904,6 +2300,50 @@ func (o *CloseReviewRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *CloseReviewRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ListReviewFindingsRequestOptions is the options needed to make a request to ListReviewFindings.
+type ListReviewFindingsRequestOptions struct {
+	Query *ListReviewFindingsQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ListReviewFindingsRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListReviewFindingsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListReviewFindingsRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListReviewFindingsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListReviewFindingsRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 

@@ -1,8 +1,15 @@
 package daemon
 
 import (
+	"io"
 	"log"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -11,7 +18,9 @@ import (
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/kata"
+	"go.kenn.io/roborev/internal/kata/katafake"
 	"go.kenn.io/roborev/internal/kata/katatest"
+	"go.kenn.io/roborev/internal/storage"
 )
 
 func TestKataCreateRequestFailed(t *testing.T) {
@@ -95,4 +104,149 @@ func TestRunKataHookLogsNoBinding(t *testing.T) {
 
 	assert.Empty(t, fake.CreateReqs, "must not create without a binding")
 	assert.Contains(t, buf.String(), "no .kata.toml binding")
+}
+
+// kataOnPathMarker puts a kata executable first on PATH that records every
+// run, so a test can prove the daemon never starts it.
+func kataOnPathMarker(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a shell script as the kata executable")
+	}
+	bin := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "kata-was-run")
+	script := "#!/bin/sh\necho \"$@\" >> " + marker + "\nexit 1\n"
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "kata"), []byte(script), 0o755))
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return marker
+}
+
+func kataConnectionConfig(fake *katafake.Server) *config.Config {
+	cfg := config.DefaultConfig()
+	cfg.Integrations.Kata = config.KataIntegrationConfig{
+		Enabled: true, Endpoint: fake.URL(), APIKey: "synthetic-kata-credential",
+		DefaultProject: "reviews", Teammate: "roborev",
+	}
+	return cfg
+}
+
+func newKataHookRunner(t *testing.T, cfg *config.Config, logger *log.Logger) *HookRunner {
+	t.Helper()
+	hr := NewHookRunner(NewStaticConfig(cfg), NewBroadcaster(), logger)
+	t.Cleanup(hr.Stop)
+	return hr
+}
+
+func TestKataHookFilesThroughTheConfiguredConnection(t *testing.T) {
+	marker := kataOnPathMarker(t)
+	fake := katafake.New(t)
+	fake.Principal = "kata-service"
+	var buf strings.Builder
+	hr := newKataHookRunner(t, kataConnectionConfig(fake), log.New(&buf, "", 0))
+
+	event := Event{Type: "review.failed", JobID: 5, SHA: "abc123", RepoName: "repo", Error: "boom"}
+	hr.wg.Add(1)
+	hr.runKataHook(config.HookConfig{Type: "kata"}, event, t.TempDir())
+
+	var posts []katafake.Request
+	for _, r := range fake.Requests() {
+		if r.Method == http.MethodPost {
+			posts = append(posts, r)
+		}
+	}
+	require.Len(t, posts, 1, "log: %s", buf.String())
+	assert.Equal(t, "/api/v1/projects/7/issues", posts[0].Path, "an unbound repository files into default_project")
+	body := posts[0].JSON(t)
+	assert.Equal(t, "roborev", body["actor"])
+	assert.Contains(t, body["title"], "Review failed for repo")
+	assert.Equal(t, "Bearer synthetic-kata-credential", posts[0].Header.Get("Authorization"))
+	assert.NotEmpty(t, posts[0].Header.Get("Idempotency-Key"))
+	assert.Contains(t, buf.String(), "created issue")
+	assert.Contains(t, buf.String(), "as kata-service", "the attribution Kata returned is logged")
+	assert.NotContains(t, buf.String(), "synthetic-kata-credential")
+	assert.NoFileExists(t, marker, "the kata CLI must not run when the connection is enabled")
+}
+
+func TestKataHookProjectPrecedence(t *testing.T) {
+	bound := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(bound, ".kata.toml"), []byte("[project]\nname = \"other\"\n"), 0o600))
+	tests := []struct {
+		name, workdir, hookProject, wantPath string
+	}{
+		{"hook project wins over a binding", bound, "reviews", "/api/v1/projects/7/issues"},
+		{"binding wins over the default project", bound, "", "/api/v1/projects/8/issues"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := katafake.New(t)
+			hr := newKataHookRunner(t, kataConnectionConfig(fake), log.New(io.Discard, "", 0))
+			hr.wg.Add(1)
+			hr.runKataHook(config.HookConfig{Type: "kata", Project: tt.hookProject}, Event{Type: "review.failed", JobID: 5, SHA: "x"}, tt.workdir)
+			var paths []string
+			for _, r := range fake.Requests() {
+				if r.Method == http.MethodPost {
+					paths = append(paths, r.Path)
+				}
+			}
+			assert.Equal(t, []string{tt.wantPath}, paths)
+		})
+	}
+}
+
+func TestKataHookWithABrokenConnectionFailsVisiblyAndNeverShellsOut(t *testing.T) {
+	marker := kataOnPathMarker(t)
+	cfg := config.DefaultConfig()
+	cfg.Integrations.Kata = config.KataIntegrationConfig{Enabled: true, Endpoint: "ftp://kata.example.com", Teammate: "roborev"}
+	var buf strings.Builder
+	hr := newKataHookRunner(t, cfg, log.New(&buf, "", 0))
+	hr.wg.Add(1)
+	hr.runKataHook(config.HookConfig{Type: "kata", Project: "p"}, Event{Type: "review.failed", JobID: 5, SHA: "x"}, t.TempDir())
+	assert.Contains(t, buf.String(), "kata hook error")
+	assert.Contains(t, buf.String(), "endpoint")
+	assert.NoFileExists(t, marker)
+}
+
+func TestKataHookKeepsTheCLIWhenTheConnectionIsOff(t *testing.T) {
+	hr := newKataHookRunner(t, config.DefaultConfig(), nil)
+	_, isCLI := hr.newKataClient(t.TempDir()).(*kata.CLIClient)
+	assert.True(t, isCLI)
+	hr = newKataHookRunner(t, nil, nil)
+	_, isCLI = hr.newKataClient(t.TempDir()).(*kata.CLIClient)
+	assert.True(t, isCLI, "a runner without a config source behaves as before")
+}
+
+func TestKataCLISyntheticPanelFailure(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	run, members, _ := enqueuePanelRun(t, tc, "failed-panel", []memberSpec{{name: "member", agent: "test"}})
+	failMember(t, tc, members[0].ID)
+	synth := releaseAndClaimSynthesis(t, tc, run)
+	_, events := tc.Broadcaster.Subscribe("")
+	tc.Pool.processJob(testWorkerID, synth)
+	var event Event
+	for len(events) > 0 {
+		next := <-events
+		if next.Type == "review.failed" {
+			event = next
+		}
+	}
+	require.Equal(t, "review.failed", event.Type)
+	require.True(t, event.SuppressHooks)
+	var webhookCalls atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { webhookCalls.Add(1) }))
+	defer server.Close()
+	cfg := config.DefaultConfig()
+	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.failed", Project: "reviews"}, {Type: "webhook", Event: "review.failed", URL: server.URL}}
+	fake := &katatest.FakeClient{CreateResult: kata.CreateResult{ShortID: "new1"}}
+	hr := newKataHookRunner(t, cfg, log.New(io.Discard, "", 0))
+	hr.durableKata = true
+	hr.newKataClient = func(string) kata.Client { return fake }
+	hr.handleEvent(event)
+	hr.wg.Wait()
+	require.Len(t, fake.CreateReqs, 1)
+	assert.Zero(t, webhookCalls.Load())
+	member := eventForJob("review.failed", &storage.ReviewJob{ID: 9, PanelRole: storage.PanelRoleMember}, 9)
+	hr.handleEvent(member)
+	hr.wg.Wait()
+	assert.Len(t, fake.CreateReqs, 1)
+	assert.Equal(t, int64(1), webhookCalls.Load())
 }

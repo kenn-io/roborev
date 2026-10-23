@@ -68,6 +68,7 @@ func parseSQLiteTime(s string) time.Time {
 //   - CommitID > 0 → "review" (single commit)
 //   - otherwise → "range" (commit range)
 type EnqueueOpts struct {
+	Reassessment        *ReassessmentContext
 	RepoID              int64
 	CommitID            int64  // >0 for single-commit reviews
 	GitRef              string // SHA, "start..end" range, or "dirty"
@@ -136,6 +137,9 @@ func (db *DB) EnqueueJob(opts EnqueueOpts) (*ReviewJob, error) {
 	defer func() { _ = tx.Rollback() }()
 	job, err := db.insertJobTx(ctx, tx, opts, uid, machineID, now)
 	if err != nil {
+		return nil, err
+	}
+	if err := insertReassessment(ctx, tx, job, opts.Reassessment, machineID, now); err != nil {
 		return nil, err
 	}
 	if opts.Experiment != nil {
@@ -1303,6 +1307,8 @@ type ReviewCompletion struct {
 	StructuredOutput jsontext.Value
 	MinSeverity      string
 	FileCoverage     *ReviewFileCoverage
+	// KataHandoffBuilder was prepared before acquiring the attempt guard.
+	KataHandoffBuilder KataHandoffBuilder
 }
 
 // CompleteJobResult marks a job done and stores the result produced by the
@@ -1323,37 +1329,21 @@ func (db *DB) completeJob(
 	if err := validateStructuredOutputForWrite(completion.StructuredOutput); err != nil {
 		return err
 	}
+	job, err := db.GetJobByID(jobID)
+	if err != nil {
+		return err
+	}
 	// Get machine ID and generate UUIDs before starting transaction
 	// to avoid potential lock conflicts with GetMachineID's writes
 	now := time.Now().Format(time.RFC3339)
 	machineID, _ := db.GetMachineID()
 	reviewUUID := uuid.New()
 
-	// Use BEGIN IMMEDIATE to acquire write lock upfront, avoiding deadlocks
-	// when concurrent goroutines (workers, sync) try to upgrade from read to write.
 	ctx := context.Background()
-	conn, err := db.Conn(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-
-	if err := beginImmediate(ctx, conn); err != nil {
-		return err
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			if err := rollbackConn(conn); err != nil {
-				log.Printf("jobs CompleteJob: rollback failed: %v", err)
-			}
-		}
-	}()
-
 	// Fetch output_prefix and job_type from job (if any)
 	var outputPrefix sql.NullString
 	var jobType, storedThreshold string
-	err = conn.QueryRowContext(ctx, `SELECT output_prefix, job_type, COALESCE(min_severity, '') FROM review_jobs WHERE id = ?`, jobID).Scan(&outputPrefix, &jobType, &storedThreshold)
+	err = db.QueryRowContext(ctx, `SELECT output_prefix, job_type, COALESCE(min_severity, '') FROM review_jobs WHERE id = ?`, jobID).Scan(&outputPrefix, &jobType, &storedThreshold)
 	if completion.MinSeverity == "" {
 		completion.MinSeverity = storedThreshold
 	}
@@ -1387,6 +1377,30 @@ func (db *DB) completeJob(
 	} else if outputPrefix.Valid {
 		finalOutput = outputPrefix.String + finalOutput
 	}
+
+	requests, err := db.prepareKataCompletion(ctx, job, reviewUUID.String(), completion.StructuredOutput, completion.Output, completion.Verdict, "", time.Now(), completion.KataHandoffBuilder)
+	if err != nil {
+		return err
+	}
+	// Use BEGIN IMMEDIATE to acquire write lock upfront, avoiding deadlocks
+	// when concurrent goroutines (workers, sync) try to upgrade from read to write.
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	if err := beginImmediate(ctx, conn); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			if err := rollbackConn(conn); err != nil {
+				log.Printf("jobs CompleteJob: rollback failed: %v", err)
+			}
+		}
+	}()
 
 	// Update job status only if still running (not canceled)
 	result, err := conn.ExecContext(ctx, `
@@ -1435,6 +1449,12 @@ func (db *DB) completeJob(
 		return err
 	}
 
+	if err := persistKataCompletion(ctx, conn, job, requests); err != nil {
+		return err
+	}
+	if err := completeReassessment(ctx, conn, jobID, agent, finalOutput, machineID, now); err != nil {
+		return err
+	}
 	_, err = conn.ExecContext(ctx, "COMMIT")
 	if err != nil {
 		return err
@@ -1468,21 +1488,75 @@ func (db *DB) FailJob(jobID int64, workerID string, errorMsg string) (bool, erro
 
 // FailJobAttempt fails only the running attempt with the given worker and start time.
 func (db *DB) FailJobAttempt(ctx context.Context, jobID int64, workerID, startedAt, errorMsg string) (bool, error) {
-	return db.failJob(ctx, jobID, errorMsg, " AND worker_id = ? AND started_at = ?", workerID, startedAt)
+	return db.FailJobAttemptWithKata(ctx, jobID, workerID, startedAt, errorMsg, nil)
+}
+
+// FailJobAttemptWithKata preserves attempt ownership checks while using
+// publication destinations prepared before the caller's transition guard.
+func (db *DB) FailJobAttemptWithKata(ctx context.Context, jobID int64, workerID, startedAt, errorMsg string, builder KataHandoffBuilder) (bool, error) {
+	return db.failJobWithKata(ctx, jobID, errorMsg, builder, " AND worker_id = ? AND started_at = ?", workerID, startedAt)
+}
+
+// FailJobWithKata uses policy and destinations prepared outside the attempt guard.
+func (db *DB) FailJobWithKata(jobID int64, workerID, errorMsg string, builder KataHandoffBuilder) (bool, error) {
+	predicate := ""
+	var args []any
+	if workerID != "" {
+		predicate = " AND worker_id = ?"
+		args = append(args, workerID)
+	}
+	return db.failJobWithKata(context.Background(), jobID, errorMsg, builder, predicate, args...)
 }
 
 func (db *DB) failJob(ctx context.Context, jobID int64, errorMsg, predicate string, attemptArgs ...any) (bool, error) {
-	now := time.Now().Format(time.RFC3339)
-	args := append([]any{now, errorMsg, now, jobID}, attemptArgs...)
-	result, err := db.ExecContext(ctx, `UPDATE review_jobs SET status = 'failed', finished_at = ?, error = ?, updated_at = ? WHERE id = ? AND status = 'running'`+predicate, args...)
+	return db.failJobWithKata(ctx, jobID, errorMsg, nil, predicate, attemptArgs...)
+}
+
+func (db *DB) failJobWithKata(ctx context.Context, jobID int64, errorMsg string, builder KataHandoffBuilder, predicate string, attemptArgs ...any) (bool, error) {
+	job, err := db.GetJobByID(jobID)
+	if err != nil {
+		return false, err
+	}
+	requests, err := db.prepareKataCompletion(ctx, job, "", nil, "", VerdictUnknown, errorMsg, time.Now(), builder)
+	if err != nil {
+		return false, err
+	}
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer conn.Close()
+	if err = beginImmediate(ctx, conn); err != nil {
+		return false, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			if rollbackErr := rollbackConn(conn); rollbackErr != nil {
+				log.Printf("Kata failure transition rollback: %v", rollbackErr)
+			}
+		}
+	}()
+	unchanged, err := kataJobUnchanged(ctx, conn, job)
+	if err != nil || !unchanged {
+		return false, err
+	}
+	now := time.Now()
+	args := append([]any{now.Format(time.RFC3339), errorMsg, now.Format(time.RFC3339), jobID}, attemptArgs...)
+	result, err := conn.ExecContext(ctx, `UPDATE review_jobs SET status='failed',finished_at=?,error=?,updated_at=? WHERE id=? AND status='running'`+predicate, args...)
 	if err != nil {
 		return false, err
 	}
 	rows, err := result.RowsAffected()
-	if err != nil {
+	if err != nil || rows == 0 {
 		return false, err
 	}
-	return rows > 0, nil
+	if err = persistKataCompletion(ctx, conn, job, requests); err != nil {
+		return false, err
+	}
+	_, err = conn.ExecContext(ctx, "COMMIT")
+	committed = err == nil
+	return committed, err
 }
 
 // CancelJob marks a running or queued job as canceled
@@ -2396,6 +2470,15 @@ func (db *DB) GetJobByIDContext(ctx context.Context, id int64) (*ReviewJob, erro
 		return nil, err
 	}
 
+	if j.Source == JobSourceRebuttal {
+		capture, err := db.Reassessment(ctx, j.ID)
+		if err == nil {
+			j.OriginalReviewUUID = &capture.Context.OriginalReviewUUID
+			j.ReassessmentDurable = true
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+	}
 	return &j, nil
 }
 

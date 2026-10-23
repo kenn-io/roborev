@@ -8,18 +8,22 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
 	"uuid"
 
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/findingid"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
 
 type structuredRebuttalTestAgent struct {
+	name            string
 	sessionID       string
 	progress        string
 	result          string
@@ -42,7 +46,12 @@ func (*sessionOnlyRebuttalTestAgent) CommandLine() string                       
 
 func (*structuredRebuttalTestAgent) SupportsReadOnlyReview() bool { return true }
 
-func (a *structuredRebuttalTestAgent) Name() string { return "test" }
+func (a *structuredRebuttalTestAgent) Name() string {
+	if a.name != "" {
+		return a.name
+	}
+	return "test"
+}
 
 func (a *structuredRebuttalTestAgent) writeProgress(out io.Writer) error {
 	if out == nil {
@@ -165,6 +174,37 @@ func TestRebuttalEnqueuePreservesOriginalSession(t *testing.T) {
 	a.False(review.Closed)
 }
 
+func TestRebuttalSynthesisResumesActualBackupAgent(t *testing.T) {
+	s, db, _ := newTestServer(t)
+	primary, err := agent.Get("test")
+	require.NoError(t, err)
+	agent.Register(&sessionOnlyRebuttalTestAgent{})
+	t.Cleanup(func() { agent.Register(primary) })
+	backup := &structuredRebuttalTestAgent{name: "synthesis-backup"}
+	agent.RegisterForTest(t, backup)
+	repo := testutil.CreateTestRepo(t, db)
+	parent := testutil.CreateCompletedReview(t, db, repo.ID, "abc123", backup.Name(), "The guard is missing.")
+	_, err = db.Exec(`UPDATE reviews SET agent=? WHERE job_id=?`, backup.Name(), parent.ID)
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE review_jobs SET job_type='synthesis', agent='test', model='primary-model', backup_agent=?, backup_model='backup-model', provider='original-provider', reasoning='', session_id='backup-session' WHERE id=?`, backup.Name(), parent.ID)
+	require.NoError(t, err)
+	body, err := json.Marshal(RebuttalRequest{JobID: parent.ID, Finding: "The guard is missing.", Comment: "The caller checks it.", Commenter: "operator"})
+	require.NoError(t, err)
+
+	rr := serveHuma(t, s, http.MethodPost, "/api/rebuttal", body)
+	require.Equal(t, http.StatusCreated, rr.Code, rr.Body.String())
+	var queued storage.ReviewJob
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &queued))
+	stored, err := db.GetJobByID(queued.ID)
+	require.NoError(t, err)
+	a := assert.New(t)
+	a.Equal(backup.Name(), stored.Agent)
+	a.Equal("backup-model", stored.Model)
+	a.Equal("backup-session", stored.SessionID)
+	a.Equal("original-provider", stored.Provider)
+	a.Equal("thorough", stored.Reasoning)
+}
+
 func TestRebuttalFindingMatchIgnoresWhitespaceWraps(t *testing.T) {
 	s, db, _ := newTestServer(t)
 	repo := testutil.CreateTestRepo(t, db)
@@ -261,6 +301,46 @@ func TestRebuttalRejectsAssessmentAndCloseAfterReviewReplacement(t *testing.T) {
 	replacement, err = db.GetReviewByJobID(parent.ID)
 	require.NoError(t, err)
 	assert.True(t, replacement.Closed)
+}
+
+func TestReassessmentCloseGuardsPersistedDocument(t *testing.T) {
+	for _, changed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "equivalent document", true: "changed document"}[changed], func(t *testing.T) {
+			s, db, _ := newTestServer(t)
+			repo := testutil.CreateTestRepo(t, db)
+			parent := testutil.CreateCompletedReview(t, db, repo.ID, "abc123", "test", "The guard is missing.")
+			_, err := db.Exec(`UPDATE review_jobs SET session_id='original-session' WHERE id=?`, parent.ID)
+			require.NoError(t, err)
+			queued := serveHuma(t, s, http.MethodPost, "/api/rebuttal", fmt.Appendf(nil, `{"job_id":%d,"finding":"The guard is missing.","comment":"The caller checks it.","commenter":"operator"}`, parent.ID))
+			require.Equal(t, http.StatusCreated, queued.Code, queued.Body.String())
+			var job storage.ReviewJob
+			require.NoError(t, json.Unmarshal(queued.Body.Bytes(), &job))
+			claimed, err := db.ClaimJob("worker")
+			require.NoError(t, err)
+			require.Equal(t, job.ID, claimed.ID)
+			require.NoError(t, db.CompleteJob(job.ID, "test", `{"outcome":"refuted","explanation":"The caller validates this input before reaching the path."}`))
+			review, err := db.GetReviewByJobID(parent.ID)
+			require.NoError(t, err)
+			if changed {
+				review.StructuredOutput["summary"] = "A different review document."
+			}
+			raw, err := json.Marshal(review.StructuredOutput)
+			require.NoError(t, err)
+			_, err = db.Exec(`UPDATE reviews SET structured_output=? WHERE job_id=?`, "\n"+string(raw)+"\n", parent.ID)
+			require.NoError(t, err)
+			closeBody, err := json.Marshal(CloseReassessmentRequest{JobID: job.ID})
+			require.NoError(t, err)
+			closed := serveHuma(t, s, http.MethodPost, "/api/rebuttal/close", closeBody)
+			want := http.StatusOK
+			if changed {
+				want = http.StatusConflict
+			}
+			assert.Equal(t, want, closed.Code, closed.Body.String())
+			current, err := db.GetReviewByJobID(parent.ID)
+			require.NoError(t, err)
+			assert.Equal(t, !changed, current.Closed)
+		})
+	}
 }
 
 func TestRebuttalInvalidRequestDoesNotQueue(t *testing.T) {
@@ -406,4 +486,129 @@ func TestRebuttalCannotRerunWithoutSession(t *testing.T) {
 	require.NoError(t, err)
 	rr := serveHuma(t, s, http.MethodPost, "/api/job/rerun", fmt.Appendf(nil, `{"job_id":%d}`, j.ID))
 	assert.Equal(t, http.StatusBadRequest, rr.Code, rr.Body.String())
+}
+
+// rebuttalFindingParent stores a completed two-finding review that a rebuttal
+// can target, and returns its job ID with the selectors of both findings.
+func rebuttalFindingParent(t *testing.T, s *Server, db *storage.DB) (int64, []ReviewFinding) {
+	t.Helper()
+	repo := testutil.CreateTestRepo(t, db)
+	parent := testutil.CreateCompletedReview(t, db, repo.ID, "abc123", "test", findingsReviewDocument)
+	_, err := db.Exec(`UPDATE review_jobs SET session_id='original-session' WHERE id=?`, parent.ID)
+	require.NoError(t, err)
+	out, err := s.humaReviewFindings(t.Context(), &ReviewFindingsInput{JobID: parent.ID})
+	require.NoError(t, err)
+	require.Len(t, out.Body.Findings, 2)
+	return parent.ID, out.Body.Findings
+}
+
+func rebuttalRequestBody(t *testing.T, fields map[string]any) []byte {
+	t.Helper()
+	body, err := json.Marshal(fields)
+	require.NoError(t, err)
+	return body
+}
+
+func TestRebuttalSelectsAFindingBySelector(t *testing.T) {
+	s, db, _ := newTestServer(t)
+	jobID, findings := rebuttalFindingParent(t, s, db)
+
+	t.Run("full selector", func(t *testing.T) {
+		rr := serveHuma(t, s, http.MethodPost, "/api/rebuttal", rebuttalRequestBody(t, map[string]any{
+			"job_id": jobID, "finding_id": findings[1].ID, "comment": "It is intended.", "commenter": "operator",
+		}))
+		require.Equal(t, http.StatusCreated, rr.Code, rr.Body.String())
+		var job storage.ReviewJob
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &job))
+		stored, err := db.GetJobByID(job.ID)
+		require.NoError(t, err)
+		assert.Contains(t, stored.Prompt, "Typo.", "the prompt carries the selected finding")
+		assert.Contains(t, stored.Prompt, "Spell it.")
+		assert.NotContains(t, stored.Prompt, "Nil dereference.", "and only that finding")
+	})
+	t.Run("the other finding, in capitals", func(t *testing.T) {
+		rr := serveHuma(t, s, http.MethodPost, "/api/rebuttal", rebuttalRequestBody(t, map[string]any{
+			"job_id": jobID, "finding_id": strings.ToUpper(findings[0].ID), "comment": "It is intended.", "commenter": "operator",
+		}))
+		require.Equal(t, http.StatusCreated, rr.Code, rr.Body.String())
+		var job storage.ReviewJob
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &job))
+		stored, err := db.GetJobByID(job.ID)
+		require.NoError(t, err)
+		assert.Contains(t, stored.Prompt, "Nil dereference.")
+		assert.NotContains(t, stored.Prompt, "Typo.")
+	})
+}
+
+func TestRebuttalRejectsAnUnusableFindingSelector(t *testing.T) {
+	s, db, _ := newTestServer(t)
+	jobID, findings := rebuttalFindingParent(t, s, db)
+	otherJob, _ := rebuttalFindingParent(t, s, db)
+	// The right review and position under a document hash the review never had.
+	parsed, err := findingid.Parse(findings[0].ID)
+	require.NoError(t, err)
+	staleHash, err := findingid.New(parsed.ReviewUUID, parsed.Index, strings.Repeat("ab", 32))
+	require.NoError(t, err)
+	// Well formed, but nothing was ever pinned under it.
+	unknown, err := findingid.New(uuid.New(), 0, strings.Repeat("cd", 32))
+	require.NoError(t, err)
+
+	for name, tc := range map[string]struct {
+		fields map[string]any
+		want   int
+	}{
+		"neither finding nor selector": {map[string]any{"job_id": jobID}, http.StatusBadRequest},
+		"both":                         {map[string]any{"job_id": jobID, "finding": "Typo.", "finding_id": findings[0].ID}, http.StatusBadRequest},
+		"not a selector":               {map[string]any{"job_id": jobID, "finding_id": "Typo."}, http.StatusBadRequest},
+		"stale document hash":          {map[string]any{"job_id": jobID, "finding_id": staleHash.String()}, http.StatusNotFound},
+		"unknown selector":             {map[string]any{"job_id": jobID, "finding_id": unknown.String()}, http.StatusNotFound},
+		"shortened selector":           {map[string]any{"job_id": jobID, "finding_id": findings[0].ID[:len(findings[0].ID)-4]}, http.StatusBadRequest},
+		"another job's finding":        {map[string]any{"job_id": otherJob, "finding_id": findings[0].ID}, http.StatusBadRequest},
+	} {
+		tc.fields["comment"], tc.fields["commenter"] = "Explanation", "operator"
+		rr := serveHuma(t, s, http.MethodPost, "/api/rebuttal", rebuttalRequestBody(t, tc.fields))
+		assert.Equal(t, tc.want, rr.Code, "%s: %s", name, rr.Body.String())
+	}
+	var queued int
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM review_jobs WHERE source = 'rebuttal'`).Scan(&queued))
+	assert.Zero(t, queued, "a rejected selector queues nothing")
+}
+
+func TestRebuttalRejectsASelectorFromAnEarlierReview(t *testing.T) {
+	s, db, _ := newTestServer(t)
+	jobID, findings := rebuttalFindingParent(t, s, db)
+
+	// A rerun replaces the review. The old selector still names the old
+	// finding, but the review the rebuttal would be recorded on is a new one.
+	require.NoError(t, db.ReenqueueJob(jobID, storage.ReenqueueOpts{}))
+	_, err := db.ClaimJob("worker")
+	require.NoError(t, err)
+	require.NoError(t, testutil.CompleteReviewFixture(db, jobID, "worker", "prompt", findingsReviewDocument))
+	_, err = db.Exec(`UPDATE review_jobs SET session_id='original-session' WHERE id=?`, jobID)
+	require.NoError(t, err)
+
+	rr := serveHuma(t, s, http.MethodPost, "/api/rebuttal", rebuttalRequestBody(t, map[string]any{
+		"job_id": jobID, "finding_id": findings[0].ID, "comment": "Explanation", "commenter": "operator",
+	}))
+	assert.Equal(t, http.StatusConflict, rr.Code, rr.Body.String())
+	assert.Contains(t, rr.Body.String(), "rerun")
+	var queued int
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM review_jobs WHERE source = 'rebuttal'`).Scan(&queued))
+	assert.Zero(t, queued)
+}
+
+// A rerun can delete the review between the rebuttal handler reading it and
+// the selector being checked against it. That is the same conflict as a
+// selector from before a rerun, not a server error.
+func TestRebuttalFindingReportsAReviewDeletedByARerunAsAConflict(t *testing.T) {
+	s, db, _ := newTestServer(t)
+	jobID, findings := rebuttalFindingParent(t, s, db)
+	_, err := db.Exec(`DELETE FROM reviews WHERE job_id = ?`, jobID)
+	require.NoError(t, err)
+
+	_, err = s.rebuttalFinding(t.Context(), jobID, findings[0].ID)
+	var status huma.StatusError
+	require.ErrorAs(t, err, &status)
+	assert.Equal(t, http.StatusConflict, status.GetStatus(), err.Error())
+	assert.Contains(t, err.Error(), "rerun")
 }

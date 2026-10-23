@@ -67,3 +67,11 @@ func TestParseAssessmentSingleFence(t *testing.T) {
 		require.Error(t, err)
 	}
 }
+
+func TestAssessmentErrorsWithholdUntrustedContent(t *testing.T) {
+	for _, input := range []string{`{"outcome":"confidential-sentinel","explanation":"evidence"}`, `{"outcome":"refuted","explanation":"evidence","confidential-sentinel":true}`} {
+		_, err := Parse(input)
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), "confidential-sentinel")
+	}
+}

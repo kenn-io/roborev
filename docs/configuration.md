@@ -520,9 +520,9 @@ artifact selection, supported agents and the versioned candidate-gate API.
 ### Kata Integration
 
 If your repo is bound to a [Kata](https://github.com/kenn-io/kata) project with
-a committed `.kata.toml`, roborev can include Kata task context in review
-prompts. For an overview of both directions of the integration, see
-[Kata](/docs/integrations/kata/).
+`.kata.toml` (committed) or `.kata.local.toml` (a local override), roborev can
+include Kata task context in review prompts. For an overview of both directions
+of the integration, see [Kata](/docs/integrations/kata/).
 
 ```toml
 # .roborev.toml or ~/.roborev/config.toml
@@ -548,10 +548,12 @@ and dirty reviews). Daemon CI pull-request reviews never include Kata context,
 since PR head content is untrusted and backlog details could leak into public PR
 comments. Fix and task jobs do not receive Kata context either.
 
-The `kata` CLI must be on `PATH`. If the CLI is missing or the repo is not bound
-to Kata, roborev skips the context without failing the review. If a binding
-exists but is broken, or a referenced issue cannot be loaded, the daemon logs
-the error and includes a note in the prompt when useful.
+By default the `kata` CLI must be on `PATH`; see
+[Kata API connection](#kata-api-connection) to use Kata's API instead. If the
+CLI is missing or the repo is not bound to Kata, roborev skips the context
+without failing the review. If a binding exists but is broken, or a referenced
+issue cannot be loaded, the daemon logs the error and includes a note in the
+prompt when useful.
 
 Kata context is optional prompt context. If the prompt exceeds
 `max_prompt_size`, roborev trims other optional context first and drops Kata
@@ -560,6 +562,50 @@ context last.
 To file failed reviews and review findings back into Kata, configure a
 `type = "kata"` review hook. See
 [Built-in: Kata Integration](/docs/guides/hooks/#built-in-kata-integration).
+
+### Kata API connection
+
+`[integrations.kata]` connects the daemon to a Kata server through Kata's API
+with credentials that belong to roborev, instead of running the `kata` CLI. It
+applies to review hooks, Kata context in review prompts, and goal reviews. The
+section is global-only; a repo's `.roborev.toml` that sets it is rejected.
+
+```toml
+# ~/.roborev/config.toml
+[integrations.kata]
+enabled = true
+endpoint = "https://kata.example.com"
+api_key_file = "~/.config/roborev/kata-token"
+default_project = "reviews"
+teammate = "roborev"
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `false` | Use the API connection. When `false`, roborev runs the `kata` CLI exactly as before |
+| `endpoint` | - | Required when enabled: `https://host`, loopback `http://localhost:port`, or `unix:///path/to/socket` |
+| `api_key` | - | Bearer credential, masked in config output. Mutually exclusive with `api_key_file` |
+| `api_key_file` | - | File holding the credential; a leading `~/` is your home directory |
+| `default_project` | - | Project used when a repo has no `.kata.local.toml` or `.kata.toml` binding |
+| `teammate` | `roborev` | Teammate name Kata records on root finding comments roborev posts |
+
+The project for a hook is its `project`, then the repo's binding, then
+`default_project`, and it must exist on the server. Every write names `roborev`
+as the actor; a credential that Kata issues for a named user or service
+overrides that, so give roborev its own credential. An enabled connection that
+cannot be built fails every Kata call with the reason and never falls back to
+the CLI. `roborev doctor` reports its state. See
+[Connecting the daemon to Kata's API](/docs/integrations/kata/#connecting-the-daemon-to-katas-api).
+
+Kata hooks can set `findings = "comments"` or `findings = "summary"` when this
+connection is enabled. The first posts individual structured findings as root
+comments. The second sends generic notices without finding text, locations,
+fixes, or raw errors. Unset preserves the existing issue body. The daemon saves
+authorized publications durably and retries them across restarts; enabling a
+hook does not publish historical reviews. Use `roborev kata create 42` for
+explicit backfill and `roborev kata show 42` for delivery status. See
+[Publish individual findings](/docs/integrations/kata/#publish-individual-findings)
+for the full policy and destination rules.
 
 ### Workflow-Specific Agent and Model
 
@@ -1148,6 +1194,13 @@ filter_branch = false             # Show all branches on startup (default: curre
 | `auto_close_passing_reviews` | bool | false | Automatically close reviews that pass, including reviews whose findings all fall below `review_min_severity` | Yes |
 | `kata_context.mode` | string | `off` | Kata task context in review prompts: `off`, `current`, or `open` | Yes |
 | `kata_context.max_chars` | int | `50000` | Maximum bytes of Kata issue context to include | Yes |
+| `integrations.kata.enabled` | bool | false | Connect the daemon to Kata's API instead of running the `kata` CLI; see [Kata API connection](#kata-api-connection). Global-only | Yes |
+| `integrations.kata.endpoint` | string | - | Kata API endpoint: `https://host`, loopback `http://localhost:port`, or `unix:///path` | Yes |
+| `integrations.kata.api_key` | string | - | Bearer credential for Kata, masked in config output; mutually exclusive with `api_key_file` | Yes |
+| `integrations.kata.api_key_file` | string | - | File holding the Kata credential, read by the daemon | Yes |
+| `integrations.kata.default_project` | string | - | Kata project for repos without a binding | Yes |
+| `integrations.kata.teammate` | string | `roborev` | Teammate name Kata records on comments roborev posts | Yes |
+| `integrations.kata.publish_reassessments` | bool | false | Publish focused reassessments as typed responses under `<teammate>-<agent>`; see [Publishing focused reassessments](/docs/integrations/kata/#publishing-focused-reassessments) | Yes |
 | `goal_review.kata_gate.default` | string | `block` | Global candidate-gate policy: `block`, `warn`, or `off`; see [Engineering with Superpowers and Kata](/docs/integrations/goal-review/) | Yes |
 | `review_min_severity` | string | - | Default lowest severity that fails a review: `critical`, `high`, `medium`, or `low`. Lower findings are still reported | Yes |
 | `fix_min_severity` | string | - | Default minimum severity for `fix`: `critical`, `high`, `medium`, or `low` | Yes |

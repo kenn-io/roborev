@@ -7,6 +7,11 @@ export interface RebuttalRequest {
   readonly $schema?: string;
   comment: string;
   commenter: string;
-  finding: string;
+  /** Excerpt of the original review text to re-evaluate; use this or finding_id */
+  finding?: string;
+  /** Complete selector of a finding of the current review to re-evaluate, as GET /api/review/findings lists it; use this or finding */
+  finding_id?: string;
   job_id: number;
+  /** Optional complete selector of a replacement finding */
+  replacement?: string;
 }

@@ -30,6 +30,12 @@ type UpdateJobBranchBody = UpdateJobBranchRequest
 
 type BatchJobsBody = BatchJobsRequest
 
+type KataCreateIssueBody = KataCreateRequest
+
+type KataPublishBody = KataPublishRequest
+
+type KataResponseBody = KataResponseRequest
+
 type CleanJobLogsBody = CleanJobLogsInputBody
 
 type ConvertLegacyReviewsBody = ConvertLegacyReviewsInputBody
@@ -41,6 +47,8 @@ type ImportLegacyReviewBody = ImportLegacyReviewInputBody
 type ScanTokenUsageBody = ScanTokenUsageInputBody
 
 type RebuttalBody = RebuttalRequest
+
+type CloseReassessmentReviewBody = CloseReassessmentRequest
 
 type RemapJobsBody = RemapRequest
 

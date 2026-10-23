@@ -35,6 +35,10 @@ type schemaMigration struct {
 var schemaMigrations = []schemaMigration{
 	{1, "baseline", migrateBaseline},
 	{2, "compress job content", migrateJobContent},
+	{3, "finding snapshots", migrateFindingSnapshots},
+	{4, "Kata publication handoffs", migrateKataHandoffs},
+	{5, "reassessment context", migrateReassessments},
+	{6, "typed Kata responses", migrateKataResponses},
 }
 
 // ErrSchemaTooNew reports a database written by a newer roborev release.

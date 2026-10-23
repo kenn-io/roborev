@@ -153,6 +153,20 @@ func TestShowParsesEnvelope(t *testing.T) {
 	assert.Equal(t, []string{"show", "abc4", "--json"}, *args)
 }
 
+func TestShowAndCreateKeepKataUIDs(t *testing.T) {
+	c, _ := stubClient(`{"issue":{"short_id":"abc4","uid":"01JISSUE","project_uid":"01JPROJECT","title":"T","status":"open"}}`, nil)
+	shown, err := c.Show(context.Background(), "abc4")
+	require.NoError(t, err)
+	assert.Equal(t, "01JISSUE", shown.UID)
+	assert.Equal(t, "01JPROJECT", shown.ProjectUID)
+
+	c, _ = stubClient(`{"issue":{"short_id":"zzz9","uid":"01JNEW","project_uid":"01JPROJECT"},"reused":false}`, nil)
+	created, err := c.Create(context.Background(), CreateReq{Title: "t"})
+	require.NoError(t, err)
+	assert.Equal(t, "01JNEW", created.IssueUID)
+	assert.Equal(t, "01JPROJECT", created.ProjectUID)
+}
+
 func TestShowNoLabels(t *testing.T) {
 	c, _ := stubClient(`{"kata_api_version":1,"issue":
 		{"short_id":"abc4","title":"Task","status":"open"}}`, nil)
@@ -218,4 +232,20 @@ func TestCreateZeroPriorityEmitted(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, *args, "--priority")
 	assert.Contains(t, *args, "0")
+}
+
+func TestBuildKataCmdInheritsProcessEnvByDefault(t *testing.T) {
+	c := NewCLIClient(t.TempDir())
+	cmd := buildKataCmd(context.Background(), c, []string{"list"}, nil)
+	assert.Nil(t, cmd.Env, "a nil Env makes exec inherit the process environment")
+}
+
+// A client built with an explicit environment must not see the caller's
+// KATA_SERVER, token, or attribution: the entries are the whole environment.
+func TestBuildKataCmdUsesExplicitEnvOnly(t *testing.T) {
+	t.Setenv("KATA_SERVER", "http://127.0.0.1:1")
+	t.Setenv("KATA_AUTHOR", "inherited")
+	c := NewCLIClientWithEnv(t.TempDir(), []string{"KATA_HOME=/disposable", "PATH=/bin"})
+	cmd := buildKataCmd(context.Background(), c, []string{"list"}, nil)
+	assert.Equal(t, []string{"KATA_HOME=/disposable", "PATH=/bin"}, cmd.Env)
 }
