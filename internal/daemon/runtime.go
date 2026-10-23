@@ -497,11 +497,13 @@ func ProbeDaemon(ep DaemonEndpoint, timeout time.Duration) (*PingInfo, error) {
 	if !ep.IsRemote() && !ep.IsUnix() && !isLoopbackAddr(ep.Address) {
 		return nil, fmt.Errorf("non-loopback daemon address: %s", ep.Address)
 	}
-	if ep.IsRemote() {
-		return probeDaemonHTTP(context.Background(), ep, timeout, ep.HTTPClient(timeout))
+	if ep.unjudged && !ep.IsRemote() && !ep.IsUnix() {
+		clientAuth, err := loadClientAuth()
+		if !clientAuth.TLS.Enabled() {
+			return probeDaemonHTTP(context.Background(), ep, timeout, ep.pingHTTPClient(timeout, clientAuth, err))
+		}
 	}
-	clientAuth, err := loadClientAuth()
-	return probeDaemonHTTP(context.Background(), ep, timeout, ep.pingHTTPClient(timeout, clientAuth, err))
+	return probeDaemonHTTP(context.Background(), ep, timeout, ep.HTTPClient(timeout))
 }
 
 // ProbeDaemonPing validates a daemon endpoint like ProbeDaemon but decodes
@@ -682,6 +684,9 @@ func KillDaemon(info *RuntimeInfo) error {
 	if info.hasStaleProcess() {
 		removeRuntimeFile()
 		return nil
+	}
+	if kitdaemon.RuntimeProcessScope(info.processRecord()) == kitdaemon.ProcessScopeForeign {
+		return fmt.Errorf("daemon PID %d runs in another PID namespace; stop it from there", info.PID)
 	}
 	identity := processUnknown
 	if info.PID > 0 {
