@@ -6,20 +6,26 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/findingid"
 	gitpkg "go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
 )
 
 // RebuttalRequest selects a finding and supplies context for its original agent.
 type RebuttalRequest struct {
-	JobID     int64  `json:"job_id"`
-	Finding   string `json:"finding"`
+	JobID int64 `json:"job_id"`
+	// Finding is an excerpt of the original review. Exactly one of Finding and
+	// FindingID selects the finding.
+	Finding string `json:"finding,omitempty" doc:"Excerpt of the original review text to re-evaluate; use this or finding_id"`
+	// FindingID is a complete selector from GET /api/review/findings.
+	FindingID string `json:"finding_id,omitempty" doc:"Complete selector of a finding of the current review to re-evaluate, as GET /api/review/findings lists it; use this or finding"`
 	Comment   string `json:"comment"`
 	Commenter string `json:"commenter"`
 }
@@ -69,9 +75,13 @@ func containsFindingExcerpt(output, finding string) bool {
 func (s *Server) humaRebuttal(ctx context.Context, in *RebuttalInput) (*RebuttalOutput, error) {
 	req := in.Body
 	req.Finding = strings.TrimSpace(req.Finding)
+	req.FindingID = strings.TrimSpace(req.FindingID)
 	req.Comment = strings.TrimSpace(req.Comment)
-	if req.JobID <= 0 || req.Finding == "" || req.Comment == "" || strings.TrimSpace(req.Commenter) == "" {
-		return nil, huma.Error400BadRequest("job_id, finding, comment and commenter are required")
+	if req.Finding != "" && req.FindingID != "" {
+		return nil, huma.Error400BadRequest("select the finding with finding or finding_id, not both")
+	}
+	if req.JobID <= 0 || (req.Finding == "" && req.FindingID == "") || req.Comment == "" || strings.TrimSpace(req.Commenter) == "" {
+		return nil, huma.Error400BadRequest("job_id, finding or finding_id, comment and commenter are required")
 	}
 	review, err := s.db.GetReviewByJobID(req.JobID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -102,7 +112,13 @@ func (s *Server) humaRebuttal(ctx context.Context, in *RebuttalInput) (*Rebuttal
 	if review.Closed {
 		return nil, huma.Error400BadRequest("rebuttal requires an open review")
 	}
-	if !containsFindingExcerpt(review.Output, req.Finding) {
+	if req.FindingID != "" {
+		selected, err := s.rebuttalFinding(ctx, parent.ID, req.FindingID)
+		if err != nil {
+			return nil, err
+		}
+		req.Finding = selected.Excerpt()
+	} else if !containsFindingExcerpt(review.Output, req.Finding) {
 		return nil, huma.Error400BadRequest("finding must be an excerpt of the original review")
 	}
 	focused := fmt.Sprintf(`Re-evaluate only the selected finding from your original review using the user's explanation.
@@ -141,4 +157,38 @@ User explanation: %q
 	job.OriginalReviewUUID = review.UUID
 	s.broadcaster.Broadcast(eventForJob("review.enqueued", job, job.ID))
 	return &RebuttalOutput{Body: job}, nil
+}
+
+// rebuttalFinding resolves a finding selector for a rebuttal of jobID's
+// current review. The selector must name a finding of that job's current review
+// document: one pinned for an earlier review of the job, because a rerun
+// replaced it, or under a document that has since changed, is a conflict.
+func (s *Server) rebuttalFinding(ctx context.Context, jobID int64, selector string) (ReviewFinding, error) {
+	snap, err := s.db.FindingSnapshot(ctx, selector)
+	switch {
+	case errors.Is(err, findingid.ErrInvalid):
+		return ReviewFinding{}, huma.Error400BadRequest(err.Error())
+	case errors.Is(err, findingid.ErrNotFound):
+		return ReviewFinding{}, huma.Error404NotFound(err.Error())
+	case err != nil:
+		return ReviewFinding{}, huma.Error500InternalServerError(fmt.Sprintf("resolve finding selector: %v", err))
+	}
+	if snap.JobID != jobID {
+		return ReviewFinding{}, huma.Error400BadRequest("the finding belongs to another job's review")
+	}
+	current, err := s.db.AssignFindingSnapshots(ctx, jobID)
+	if errors.Is(err, storage.ErrNoReview) {
+		// A rerun deleted the review after the handler read it.
+		return ReviewFinding{}, huma.Error409Conflict("the job is being rerun, so it has no review to select a finding from")
+	}
+	if errors.Is(err, storage.ErrFindingChanged) {
+		return ReviewFinding{}, huma.Error409Conflict(err.Error())
+	}
+	if err != nil {
+		return ReviewFinding{}, huma.Error500InternalServerError(fmt.Sprintf("check finding selector: %v", err))
+	}
+	if !slices.ContainsFunc(current, func(c storage.FindingSnapshot) bool { return c.Selector == snap.Selector }) {
+		return ReviewFinding{}, huma.Error409Conflict("the finding is from an earlier review of this job; the job was rerun, so list its current findings")
+	}
+	return reviewFindingFromSnapshot(snap), nil
 }

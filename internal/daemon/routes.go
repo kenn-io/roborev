@@ -143,6 +143,14 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Tags = []string{"reviews"}
 		})
 
+	huma.Get(api, "/api/review/findings", s.humaReviewFindings,
+		func(o *huma.Operation) {
+			o.OperationID = "list-review-findings"
+			o.Summary = "List a review's findings under stable selectors"
+			o.Tags = []string{"reviews"}
+			o.Errors = []int{http.StatusNotFound, http.StatusConflict}
+		})
+
 	huma.Get(api, "/api/search", s.humaSearchReviews,
 		func(o *huma.Operation) {
 			o.Errors = []int{http.StatusBadRequest, http.StatusConflict, http.StatusInternalServerError, http.StatusServiceUnavailable}
@@ -328,6 +336,38 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.OperationID = "doctor-agents"
 			o.Summary = "Report agent availability as the daemon sees it"
 			o.Tags = []string{"daemon"}
+		})
+
+	huma.Get(api, "/api/kata/status", s.humaKataStatus,
+		func(o *huma.Operation) {
+			o.OperationID = "kata-status"
+			o.Summary = "Report the daemon's Kata connection"
+			o.Tags = []string{"kata"}
+		})
+
+	huma.Get(api, "/api/kata/issues", s.humaKataIssues,
+		func(o *huma.Operation) {
+			o.OperationID = "kata-list-issues"
+			o.Summary = "List Kata issues through the daemon's connection"
+			o.Tags = []string{"kata"}
+			o.Errors = []int{http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusBadGateway}
+		})
+
+	huma.Get(api, "/api/kata/issue", s.humaKataIssue,
+		func(o *huma.Operation) {
+			o.OperationID = "kata-show-issue"
+			o.Summary = "Show one Kata issue through the daemon's connection"
+			o.Tags = []string{"kata"}
+			o.Errors = []int{http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusBadGateway}
+		})
+
+	huma.Post(api, "/api/kata/issues", s.humaKataCreate,
+		func(o *huma.Operation) {
+			o.OperationID = "kata-create-issue"
+			o.Summary = "File a Kata issue as roborev through the daemon's connection"
+			o.Tags = []string{"kata"}
+			o.DefaultStatus = http.StatusCreated
+			o.Errors = []int{http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusBadGateway}
 		})
 
 	huma.Get(api, "/api/ping", s.humaPing,
