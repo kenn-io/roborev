@@ -88,14 +88,9 @@ func (r RuntimeInfo) processRecord() kitdaemon.RuntimeRecord {
 	return kitdaemon.RuntimeRecord{PID: r.PID, ProcessIdentity: r.processIdentity, ProcessIdentityV2: r.processIdentityV2}
 }
 
-// ProcessScope reports how kit classifies the recorded process identity here.
-func (r RuntimeInfo) ProcessScope() kitdaemon.ProcessScope {
-	return kitdaemon.RuntimeProcessScope(r.processRecord())
-}
-
 // Unjudged reports whether the caller cannot judge this runtime's process identity.
 func (r *RuntimeInfo) Unjudged() bool {
-	switch r.ProcessScope() {
+	switch kitdaemon.RuntimeProcessScope(r.processRecord()) {
 	case kitdaemon.ProcessScopeForeign, kitdaemon.ProcessScopeUnknown:
 		return true
 	}
@@ -335,26 +330,6 @@ func ListAllRuntimes() ([]*RuntimeInfo, error) {
 	return runtimes, nil
 }
 
-// FindUnjudgedDaemon finds a responsive daemon whose process cannot be judged
-// here. Its liveness probes send no authentication key.
-func FindUnjudgedDaemon() (*RuntimeInfo, error) {
-	records, err := runtimeStore().List()
-	if err != nil {
-		return nil, err
-	}
-	return discoverRuntimeRecords(context.Background(), records, func(info *RuntimeInfo) bool {
-		return info.Unjudged() && !info.hasStaleProcess()
-	},
-		func(ctx context.Context, ep DaemonEndpoint) (*PingInfo, error) {
-			clientAuth, err := loadClientAuth()
-			if err != nil {
-				return nil, err
-			}
-			clientAuth.Key = ""
-			return probeRuntimeRecordWithAuth(ctx, ep, clientAuth)
-		})
-}
-
 // legacyRuntimeInfo is the on-disk shape written by roborev v0.56 and earlier,
 // which stored daemon.<pid>.json and daemon.json in the data dir root.
 type legacyRuntimeInfo struct {
@@ -461,17 +436,17 @@ func (r *RuntimeInfo) discoverable() bool {
 
 func discoverRuntimeRecords(
 	ctx context.Context,
-	records []kitdaemon.RuntimeRecord,
+	runtimes []*RuntimeInfo,
 	eligible func(*RuntimeInfo) bool,
-	probe func(context.Context, DaemonEndpoint) (*PingInfo, error),
+	probe func(context.Context, *RuntimeInfo, DaemonEndpoint) (*PingInfo, error),
 ) (*RuntimeInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	var deniedErr error
-	for _, rec := range records {
-		info := runtimeInfoFromRecord(rec)
-		if !eligible(info) {
+	for _, runtime := range runtimes {
+		info := *runtime
+		if !eligible(&info) {
 			continue
 		}
 		primary := info.Endpoint()
@@ -479,15 +454,18 @@ func discoverRuntimeRecords(
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			ping, err := probe(ctx, ep)
-			if err == nil && ping != nil && ping.PID != 0 && ping.PID == rec.PID {
+			ping, err := probe(ctx, &info, ep)
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			if err == nil && ping != nil && ping.PID != 0 && ping.PID == info.PID {
 				info.Network = ep.Network
 				info.Address = ep.Address
 				if ep != primary {
 					info.AlternateNetwork = primary.Network
 					info.AlternateAddress = primary.Address
 				}
-				return info, nil
+				return &info, nil
 			}
 			if IsDaemonAccessError(err) {
 				deniedErr = fmt.Errorf("daemon at %s: %w", ep, err)
@@ -514,7 +492,13 @@ func getAnyRunningDaemonContext(ctx context.Context, probe func(context.Context,
 	if err != nil {
 		return nil, err
 	}
-	return discoverRuntimeRecords(ctx, records, (*RuntimeInfo).discoverable, probe)
+	runtimes := make([]*RuntimeInfo, 0, len(records))
+	for _, record := range records {
+		runtimes = append(runtimes, runtimeInfoFromRecord(record))
+	}
+	return discoverRuntimeRecords(ctx, runtimes, (*RuntimeInfo).discoverable, func(ctx context.Context, _ *RuntimeInfo, ep DaemonEndpoint) (*PingInfo, error) {
+		return probe(ctx, ep)
+	})
 }
 
 // GetAnyRunningDaemon returns info about a responsive daemon.

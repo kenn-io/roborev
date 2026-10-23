@@ -103,6 +103,88 @@ func TestServerStartWithSandboxSocket(t *testing.T) {
 	}
 }
 
+func TestReviewCustomConfigForeignRecord(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	testenv.SetDataDir(t)
+	setShortRuntimeDir(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	address := listener.Addr().String()
+	require.NoError(t, listener.Close())
+	rec := testutil.UnjudgedRuntimeRecord(t, "tcp", address)
+	_, err = runtimeStore().Write(rec)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte("auth_key = 'invalid'\n"), 0o600))
+	cfg := config.DefaultConfig()
+	cfg.ServerAddr = "127.0.0.1:0"
+	customPath := filepath.Join(t.TempDir(), "custom.toml")
+	require.NoError(t, config.SaveGlobalTo(customPath, cfg))
+	cfg, err = config.LoadGlobalFrom(customPath)
+	require.NoError(t, err)
+	db, _ := testutil.OpenTestDBWithDir(t)
+	server := NewServer(db, cfg, "")
+	t.Cleanup(func() { _ = server.Close() })
+	errCh, info := startServerAndWaitForRuntime(t, server)
+	assert.Equal(t, os.Getpid(), info.PID)
+	stopTestServer(t, server, errCh)
+}
+
+func TestReviewForeignProbeHonorsCancellation(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	testenv.SetDataDir(t)
+	setShortRuntimeDir(t)
+	started := make(chan struct{})
+	cancelled := make(chan struct{})
+	release := make(chan struct{})
+	foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		select {
+		case <-r.Context().Done():
+			close(cancelled)
+		case <-release:
+		}
+	}))
+	t.Cleanup(foreign.Close)
+	t.Cleanup(func() { close(release) })
+	rec := testutil.UnjudgedRuntimeRecord(t, "tcp", foreign.Listener.Addr().String())
+	_, err := runtimeStore().Write(rec)
+	require.NoError(t, err)
+	db, _ := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	cfg.ServerAddr = "127.0.0.1:0"
+	server := NewServer(db, cfg, "")
+	t.Cleanup(func() { _ = server.Close() })
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- server.Start(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		_ = server.Stop()
+		<-errCh
+	})
+	// Wall-clock waits: the probe uses a real HTTP connection.
+	require.Eventually(t, func() bool {
+		select {
+		case <-started:
+			return true
+		default:
+			return false
+		}
+	}, 5*time.Second, time.Millisecond)
+	cancel()
+	// Wall-clock wait: cancellation must close the real HTTP connection before its one-second timeout.
+	//nolint:kennlint // a longer budget would also accept the probe's own timeout instead of Start's cancellation
+	require.Eventually(t, func() bool {
+		select {
+		case <-cancelled:
+			return true
+		default:
+			return false
+		}
+	}, 500*time.Millisecond, time.Millisecond, "foreign HTTP probe ignored Server.Start cancellation")
+}
+
 func TestKillDaemonKeepsUnjudgedRuntimeWithoutShutdown(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	testenv.SetDataDir(t)

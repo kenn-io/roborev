@@ -297,23 +297,16 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	// Check if a responsive daemon is still running after cleanup.
-	info, discoveryErr := getAnyRunningDaemonContext(ctx, func(ctx context.Context, endpoint DaemonEndpoint) (*PingInfo, error) {
-		return probeRuntimeRecordWithAuth(ctx, endpoint, s.startupAuth())
+	info, discoveryErr := discoverRuntimeRecords(ctx, runtimes, func(info *RuntimeInfo) bool {
+		return !info.hasStaleProcess()
+	}, func(ctx context.Context, info *RuntimeInfo, endpoint DaemonEndpoint) (*PingInfo, error) {
+		auth := s.startupAuth()
+		if info.Unjudged() {
+			auth.Key = ""
+		}
+		return probeRuntimeRecordWithAuth(ctx, endpoint, auth)
 	})
-	if IsDaemonAccessError(discoveryErr) {
-		if listener != nil {
-			_ = listener.Close()
-		}
-		return discoveryErr
-	}
-	if discoveryErr == nil {
-		if listener != nil {
-			_ = listener.Close()
-		}
-		return fmt.Errorf("daemon already running (pid %d on %s)", info.PID, info.Address)
-	}
-	info, discoveryErr = FindUnjudgedDaemon()
-	if IsDaemonAccessError(discoveryErr) {
+	if discoveryErr != nil && !errors.Is(discoveryErr, os.ErrNotExist) {
 		if listener != nil {
 			_ = listener.Close()
 		}

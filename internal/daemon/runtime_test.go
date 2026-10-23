@@ -673,7 +673,7 @@ func TestDiscoverRuntimeRecords(t *testing.T) {
 	denied := &net.OpError{Op: "dial", Net: "tcp", Err: syscall.EPERM}
 
 	t.Run("falls back after primary access denied", func(t *testing.T) {
-		got, err := discoverRuntimeRecords(t.Context(), []kitdaemon.RuntimeRecord{record}, (*RuntimeInfo).discoverable, func(_ context.Context, ep DaemonEndpoint) (*PingInfo, error) {
+		got, err := discoverRuntimeRecords(t.Context(), []*RuntimeInfo{runtimeInfoFromRecord(record)}, (*RuntimeInfo).discoverable, func(_ context.Context, _ *RuntimeInfo, ep DaemonEndpoint) (*PingInfo, error) {
 			if ep.Address == defaultTestAddr {
 				return nil, denied
 			}
@@ -686,7 +686,7 @@ func TestDiscoverRuntimeRecords(t *testing.T) {
 	})
 
 	t.Run("preserves access denied after every endpoint fails", func(t *testing.T) {
-		_, err := discoverRuntimeRecords(t.Context(), []kitdaemon.RuntimeRecord{record}, (*RuntimeInfo).discoverable, func(context.Context, DaemonEndpoint) (*PingInfo, error) {
+		_, err := discoverRuntimeRecords(t.Context(), []*RuntimeInfo{runtimeInfoFromRecord(record)}, (*RuntimeInfo).discoverable, func(context.Context, *RuntimeInfo, DaemonEndpoint) (*PingInfo, error) {
 			return nil, denied
 		})
 
@@ -695,7 +695,7 @@ func TestDiscoverRuntimeRecords(t *testing.T) {
 	})
 
 	t.Run("ordinary failures mean not found", func(t *testing.T) {
-		_, err := discoverRuntimeRecords(t.Context(), []kitdaemon.RuntimeRecord{record}, (*RuntimeInfo).discoverable, func(context.Context, DaemonEndpoint) (*PingInfo, error) {
+		_, err := discoverRuntimeRecords(t.Context(), []*RuntimeInfo{runtimeInfoFromRecord(record)}, (*RuntimeInfo).discoverable, func(context.Context, *RuntimeInfo, DaemonEndpoint) (*PingInfo, error) {
 			return nil, errors.New("connection refused")
 		})
 
@@ -707,7 +707,7 @@ func TestDiscoverRuntimeRecords(t *testing.T) {
 		"mismatched ping PID": record.PID + 1,
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := discoverRuntimeRecords(t.Context(), []kitdaemon.RuntimeRecord{record}, (*RuntimeInfo).discoverable, func(context.Context, DaemonEndpoint) (*PingInfo, error) {
+			_, err := discoverRuntimeRecords(t.Context(), []*RuntimeInfo{runtimeInfoFromRecord(record)}, (*RuntimeInfo).discoverable, func(context.Context, *RuntimeInfo, DaemonEndpoint) (*PingInfo, error) {
 				return &PingInfo{OK: true, Service: daemonServiceName, PID: pingPID}, nil
 			})
 

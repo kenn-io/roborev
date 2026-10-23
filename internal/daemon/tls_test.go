@@ -173,11 +173,11 @@ func TestCheckTLSFiles(t *testing.T) {
 	require.ErrorContains(t, CheckTLSFiles(notPEM), "contains no PEM certificates")
 }
 
-func TestFindUnjudgedDaemonKeepsTLS(t *testing.T) {
+func TestServerStartUnjudgedDaemonKeepsTLS(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	testenv.SetDataDir(t)
 	setShortRuntimeDir(t)
 	pki := newTestPKI(t)
-	writeMutualTLSClientConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", pki)
 	rec := testutil.UnknownRuntimeRecord("tcp", "")
 	var requests, credentials atomic.Int32
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -198,10 +198,14 @@ func TestFindUnjudgedDaemonKeepsTLS(t *testing.T) {
 	require.NoError(t, err)
 	before, err := os.ReadFile(path)
 	require.NoError(t, err)
-	info, err := FindUnjudgedDaemon()
-	require.NoError(t, err)
-	assert.Equal(t, rec.PID, info.PID)
-	assert.Equal(t, rec.Address, info.Address)
+	db, _ := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	cfg.ServerAddr = "127.0.0.1:0"
+	cfg.AuthKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	cfg.DaemonTLS = pki
+	local := NewServer(db, cfg, "")
+	t.Cleanup(func() { _ = local.Close() })
+	require.EqualError(t, local.Start(t.Context()), fmt.Sprintf("daemon already running (pid %d on %s)", rec.PID, rec.Address))
 	assert.Equal(t, int32(1), requests.Load())
 	assert.Zero(t, credentials.Load())
 	after, err := os.ReadFile(path)

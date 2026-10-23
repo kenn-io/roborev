@@ -1113,7 +1113,10 @@ Discovery skips runtime records from another PID namespace or whose process
 identity can't be judged, and keeps those records on disk. Before starting a
 daemon, roborev probes these endpoints without `auth_key`, using the configured
 TLS settings. Startup refuses if a daemon responds or the probe encounters an
-access error. A dead sandbox's connection-refused response allows startup.
+access error. A dead sandbox's connection-refused response allows startup. While
+a daemon runs in another PID namespace, a sandboxed command waits out the
+startup timeout, and that daemon's runtime record stays until removed from a
+namespace where its process can be judged.
 
 ```bash
 roborev daemon start             # Start background daemon
