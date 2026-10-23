@@ -93,7 +93,7 @@ completed_at cursor pull with a separate --updated-since pull.`),
 				return usageErr(cmd, err)
 			}
 			if err := ensureDaemon(); err != nil {
-				return fmt.Errorf("daemon not running: %w", err)
+				return err
 			}
 
 			doc, err := fetchAllExportReviews(getDaemonEndpoint(), opts, limitSet)

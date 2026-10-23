@@ -23,7 +23,7 @@ var mcpProbeDaemon = daemon.ProbeDaemonPing
 func ensureMCPDaemon() error {
 	if serverAddr == "" {
 		if err := ensureDaemon(); err != nil {
-			return fmt.Errorf("daemon not running: %w", err)
+			return err
 		}
 		return nil
 	}

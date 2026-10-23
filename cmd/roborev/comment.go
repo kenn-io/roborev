@@ -88,7 +88,7 @@ Examples:
 
 			// Ensure daemon is running
 			if err := ensureDaemon(); err != nil {
-				return fmt.Errorf("daemon not running: %w", err)
+				return err
 			}
 
 			// Message can be positional argument or flag
@@ -200,7 +200,7 @@ func closeCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Ensure daemon is running
 			if err := ensureDaemon(); err != nil {
-				return fmt.Errorf("daemon not running: %w", err)
+				return err
 			}
 
 			jobID, err := strconv.ParseInt(args[0], 10, 64)

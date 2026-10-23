@@ -128,7 +128,7 @@ Examples:
 
 			// All local validation passed — now ensure daemon is running
 			if err := ensureDaemon(); err != nil {
-				return fmt.Errorf("daemon not running: %w", err)
+				return err
 			}
 
 			// If we have a ref to resolve, use findJobForCommit
@@ -227,7 +227,7 @@ func waitMultiple(
 
 	// Phase 2: Ensure daemon is running.
 	if err := ensureDaemon(); err != nil {
-		return fmt.Errorf("daemon not running: %w", err)
+		return err
 	}
 
 	// Phase 3: Resolve git refs to job IDs via daemon.

@@ -410,7 +410,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 
 	// 2. Connect to daemon (only after all validation passes)
 	if err := ensureDaemon(); err != nil {
-		return fmt.Errorf("daemon not running: %w", err)
+		return err
 	}
 
 	client, err := daemon.NewHTTPClientFromRuntime()
@@ -884,7 +884,7 @@ func runRefineList(
 	cmd *cobra.Command, opts refineOptions,
 ) error {
 	if err := ensureDaemon(); err != nil {
-		return fmt.Errorf("daemon not running: %w", err)
+		return err
 	}
 	ctx := cmd.Context()
 
@@ -1016,7 +1016,7 @@ func runRefineAllBranches(
 	}
 
 	if err := ensureDaemon(); err != nil {
-		return fmt.Errorf("daemon not running: %w", err)
+		return err
 	}
 	// Use main repo root for API queries
 	apiRepoRoot := repoPath

@@ -42,7 +42,11 @@ func TestEnsureDaemonDoesNotSpawnWithRespondingUnjudgedRuntime(t *testing.T) {
 	starts := 0
 	startDaemonForEnsure = func() error { starts++; return nil }
 
-	require.ErrorIs(t, ensureDaemon(), daemon.ErrUnjudgedRuntime)
+	cmd := listCmd()
+	err = cmd.RunE(cmd, nil)
+	require.ErrorIs(t, err, daemon.ErrUnjudgedRuntime)
+	assert.Contains(t, err.Error(), "running in another PID namespace; not managed from here")
+	assert.NotContains(t, err.Error(), "not running")
 	assert.Zero(t, starts)
 }
 
