@@ -149,22 +149,40 @@ func TestKataClientUsesTheDaemonsConnection(t *testing.T) {
 		assert.Equal(t, "Bearer "+kataCLICredential, post.Header.Get("Authorization"))
 		assert.Equal(t, "roborev", post.JSON(t)["actor"])
 	})
+	t.Run("comments are the daemon's to deliver, not a CLI process's", func(t *testing.T) {
+		c := newKataClientAt(bindRepo(t, "other"), config.DefaultConfig(), fixedEndpoint(ep, &probes))
+		before := len(fake.AllRequests())
+		_, err := c.Comment(ctx, kata.CommentReq{Issue: "bbb2", Body: "b", Kind: kata.CommentReply, ReplyTo: "C0000000000000000000000001", IdempotencyKey: "cli:2"})
+		require.ErrorIs(t, err, kata.ErrCommentsUnsupported)
+		_, err = c.Thread(ctx, kata.ThreadReq{Issue: "bbb2", Root: "C0000000000000000000000001"})
+		require.ErrorIs(t, err, kata.ErrCommentsUnsupported)
+		for _, r := range fake.AllRequests()[before:] {
+			assert.NotContains(t, r.Path, "/comments")
+		}
+	})
 	assert.NoFileExists(t, marker, "the kata CLI must not run")
 }
 
 func TestKataClientProbesOnFirstUse(t *testing.T) {
 	fake := katafake.New(t)
-	ep := kataDaemon(t, enabledKata(fake))
 	var probes atomic.Int32
-	c := newKataClientAt(bindRepo(t, "reviews"), config.DefaultConfig(), fixedEndpoint(ep, &probes))
+	ep := kataDaemonObserved(t, enabledKata(fake), func(r *http.Request) {
+		if r.URL.Path == "/api/kata/status" {
+			probes.Add(1)
+		}
+	})
+	c := newKataClientAt(bindRepo(t, "reviews"), config.DefaultConfig(), func() (daemon.DaemonEndpoint, error) {
+		return ep, nil
+	})
 	assert.Zero(t, probes.Load(), "building a client contacts nothing; most commands never use Kata")
 	_, err := c.Binding(context.Background())
 	require.NoError(t, err)
+	assert.EqualValues(t, 1, probes.Load(), "the first Kata operation probes the daemon once")
 	_, err = c.List(context.Background(), kata.ListOpts{})
 	require.NoError(t, err)
 	_, err = c.List(context.Background(), kata.ListOpts{})
 	require.NoError(t, err)
-	assert.EqualValues(t, 1, probes.Load(), "the daemon is asked once per client")
+	assert.EqualValues(t, 1, probes.Load(), "the same client reuses its first probe")
 }
 
 func TestKataClientKeepsTheCLIWhenTheConnectionIsOff(t *testing.T) {
@@ -289,6 +307,11 @@ func TestKataClientNeverShellsOutWhenTheConnectionIsEnabledLocally(t *testing.T)
 		_, err = c.Show(ctx, "abc4")
 		require.Error(t, err)
 		_, err = c.Create(ctx, kata.CreateReq{Title: "t"})
+		require.Error(t, err)
+		_, err = c.Comment(ctx, kata.CommentReq{Issue: "abc4", Body: "b", IdempotencyKey: "k"})
+		require.Error(t, err)
+		require.NotErrorIs(t, err, kata.ErrCommentsUnsupported, "the cause is the missing connection")
+		_, err = c.Thread(ctx, kata.ThreadReq{Issue: "abc4", Root: "C0000000000000000000000001"})
 		require.Error(t, err)
 	})
 	t.Run("daemon has the connection off", func(t *testing.T) {

@@ -36,3 +36,8 @@ func (c failedClient) Show(context.Context, string) (Issue, error)     { return 
 func (c failedClient) Create(context.Context, CreateReq) (CreateResult, error) {
 	return CreateResult{}, c.err
 }
+
+func (c failedClient) Comment(context.Context, CommentReq) (CommentResult, error) {
+	return CommentResult{}, c.err
+}
+func (c failedClient) Thread(context.Context, ThreadReq) (Thread, error) { return Thread{}, c.err }

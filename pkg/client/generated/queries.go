@@ -355,6 +355,15 @@ type GetReviewQuery struct {
 	Sha *string `json:"sha,omitempty"`
 }
 
+type ListReviewFindingsQuery struct {
+	// JobID Job whose review's findings to list
+	JobID int64 `json:"job_id" validate:"gte=1"`
+}
+
+func (l ListReviewFindingsQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
+}
+
 type SearchReviewsQuery struct {
 	// Q Required review search query (maximum 2,000 UTF-8 runes)
 	Q string `json:"q" validate:"required,max=2000,min=1"`

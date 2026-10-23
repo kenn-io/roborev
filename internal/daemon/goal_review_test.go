@@ -83,6 +83,36 @@ func TestGoalWorkerRejectsMissingOrChangedFrozenEvidence(t *testing.T) {
 	}
 }
 
+func TestGoalWorkerAcceptsPreviouslySerializedKataSnapshot(t *testing.T) {
+	c := newWorkerTestContext(t, 1)
+	registerGoalReviewPi(t, c.Pool.cfgGetter.Config())
+	frozenPrompt := "\nBEGIN_SUPERPOWERS_SNAPSHOT\n" + `{"source":"superpowers","stage":"spec","project":"reviews","artifacts":[{"kind":"spec","path":"spec.md","content":"# Feature\n"}],"issues":[{"short_id":"task1","qualified_id":"reviews#task1","title":"Task","body":"Requirement","status":"open","labels":[]}],"edges":[]}` + "\nEND_SUPERPOWERS_SNAPSHOT\n"
+	job, err := c.DB.EnqueueJob(storage.EnqueueOpts{
+		RepoID: c.Repo.ID, GitRef: "6e47c24644838603eb7cba9b63937b953e50d2f995d6bb1412689408f7bbbd33",
+		Agent: "pi", ReviewType: config.ReviewTypeGoal, JobType: storage.JobTypeGoalReview,
+		Prompt: frozenPrompt, PromptPrebuilt: true,
+	})
+	require.NoError(t, err)
+	claimed, err := c.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, job.ID, claimed.ID)
+
+	runnerCalled := false
+	c.Pool.goalReviewRunner = goalReviewTestRunner(func(_ context.Context, snapshot goalreview.Snapshot, _ prompt.SnapshotResult) ([]goalreview.Finding, error) {
+		runnerCalled = true
+		require.Len(t, snapshot.Issues, 1)
+		assert.Equal(t, "task1", snapshot.Issues[0].ShortID)
+		return nil, nil
+	})
+	c.Pool.processGoalReview(context.Background(), testWorkerID, claimed, c.Pool.cfgGetter.Config())
+
+	stored, err := c.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusDone, stored.Status)
+	assert.True(t, runnerCalled, "the previous digest must pass the frozen snapshot check")
+}
+
 func TestGoalWorkerUpdateInterruptionGuardsSuccessfulCompletion(t *testing.T) {
 	c := newWorkerTestContext(t, 1)
 	registerGoalReviewPi(t, c.Pool.cfgGetter.Config())

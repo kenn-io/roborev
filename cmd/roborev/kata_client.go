@@ -155,6 +155,14 @@ func (c *lazyKataClient) Create(ctx context.Context, req kata.CreateReq) (kata.C
 	return c.resolve(ctx).Create(ctx, req)
 }
 
+func (c *lazyKataClient) Comment(ctx context.Context, req kata.CommentReq) (kata.CommentResult, error) {
+	return c.resolve(ctx).Comment(ctx, req)
+}
+
+func (c *lazyKataClient) Thread(ctx context.Context, req kata.ThreadReq) (kata.Thread, error) {
+	return c.resolve(ctx).Thread(ctx, req)
+}
+
 // failedKataClient reports one error from every call.
 type failedKataClient struct{ err error }
 
@@ -172,6 +180,14 @@ func (c failedKataClient) Show(context.Context, string) (kata.Issue, error) {
 
 func (c failedKataClient) Create(context.Context, kata.CreateReq) (kata.CreateResult, error) {
 	return kata.CreateResult{}, c.err
+}
+
+func (c failedKataClient) Comment(context.Context, kata.CommentReq) (kata.CommentResult, error) {
+	return kata.CommentResult{}, c.err
+}
+
+func (c failedKataClient) Thread(context.Context, kata.ThreadReq) (kata.Thread, error) {
+	return kata.Thread{}, c.err
 }
 
 // daemonKataClient implements kata.Client through the daemon's Kata endpoints.
@@ -265,6 +281,17 @@ func (c *daemonKataClient) Create(ctx context.Context, req kata.CreateReq) (kata
 		ShortID: resp.ShortID, Reused: resp.Reused,
 		Attribution: kata.Attribution{Author: deref(resp.Author)},
 	}, nil
+}
+
+// Comment and Thread are not available to a CLI process. The daemon holds the
+// credential and delivers typed replies as operations it can resume; a
+// process that returns after one command cannot.
+func (c *daemonKataClient) Comment(context.Context, kata.CommentReq) (kata.CommentResult, error) {
+	return kata.CommentResult{}, kata.ErrCommentsUnsupported
+}
+
+func (c *daemonKataClient) Thread(context.Context, kata.ThreadReq) (kata.Thread, error) {
+	return kata.Thread{}, kata.ErrCommentsUnsupported
 }
 
 // localKataBinding reads the repository's .kata.local.toml or .kata.toml

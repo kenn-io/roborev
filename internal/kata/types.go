@@ -20,22 +20,37 @@ var (
 	// ErrMetadataUnsupported means the kata CLI client was asked to write issue
 	// metadata, which needs the Kata API connection.
 	ErrMetadataUnsupported = errors.New("kata: issue metadata requires the Kata API connection")
+	// ErrCommentsUnsupported means the kata CLI client was asked to write or
+	// read a comment thread, which needs the Kata API connection. The CLI
+	// client never guesses at a reply from the output of the kata command.
+	ErrCommentsUnsupported = errors.New("kata: comments require the Kata API connection")
 )
 
 // Issue is the subset of a kata issue roborev consumes. Field names match the
 // kata daemon JSON wire schema. QualifiedID is available when the command
 // returns a project-qualified issue identity.
 type Issue struct {
-	ShortID     string     `json:"short_id"`
-	QualifiedID string     `json:"qualified_id"`
-	Title       string     `json:"title"`
-	Body        string     `json:"body"`
-	Status      string     `json:"status"`
-	Labels      []string   `json:"labels"`
-	Parent      *LinkPeer  `json:"parent,omitempty"`
-	Blocks      []LinkPeer `json:"blocks,omitempty"`
-	BlockedBy   []LinkPeer `json:"blocked_by,omitempty"`
-	Related     []LinkPeer `json:"related,omitempty"`
+	ShortID     string `json:"short_id"`
+	QualifiedID string `json:"qualified_id"`
+	// UID and ProjectUID are Kata's full, stable identities for the issue and
+	// its project. A short ID is only unique within one project.
+	UID        string     `json:"uid,omitempty"`
+	ProjectUID string     `json:"project_uid,omitempty"`
+	Title      string     `json:"title"`
+	Body       string     `json:"body"`
+	Status     string     `json:"status"`
+	Labels     []string   `json:"labels"`
+	Parent     *LinkPeer  `json:"parent,omitempty"`
+	Blocks     []LinkPeer `json:"blocks,omitempty"`
+	BlockedBy  []LinkPeer `json:"blocked_by,omitempty"`
+	Related    []LinkPeer `json:"related,omitempty"`
+
+	// Comments are every comment on the issue, oldest first. Only the API
+	// client reads them; the kata CLI client leaves them empty, so empty here
+	// does not mean the issue has none.
+	Comments []Comment `json:"-"`
+	// CommentsTruncated is set when Kata says it left comments out.
+	CommentsTruncated bool `json:"-"`
 }
 
 // LinkPeer identifies a related issue without claiming its body was captured.
@@ -49,6 +64,10 @@ type LinkPeer struct {
 // Binding identifies the kata project a workspace is bound to.
 type Binding struct {
 	Project string
+	// ProjectUID is the project's full Kata identity. A binding file names only
+	// the project, so the API client fills it in from the server in
+	// ResolveBinding; the CLI client leaves it empty.
+	ProjectUID string
 }
 
 // ListOpts controls a List call.
@@ -73,17 +92,24 @@ type CreateReq struct {
 // short_id but not qualified_id.
 type CreateResult struct {
 	ShortID string
-	Reused  bool
+	// IssueUID and ProjectUID are Kata's full identities for the issue and its
+	// project. The kata CLI client fills them in when the server reports them.
+	IssueUID   string
+	ProjectUID string
+	Reused     bool
 	// Attribution is who Kata says wrote the issue. The kata CLI client leaves
 	// it empty; the API client records what the server returned.
 	Attribution Attribution
 }
 
-// Attribution is who Kata says wrote an issue. An authenticated credential can
-// override the actor a request names, so callers record this, never what they
-// asked for.
+// Attribution is the identity Kata attached to a write. An authenticated
+// credential can override the actor a request names, so callers record this,
+// never what they asked for.
 type Attribution struct {
-	Author string
+	Author           string
+	Teammate         string
+	SourceActor      string
+	AccountableActor string
 }
 
 // Client is the kata interface roborev depends on.
@@ -92,4 +118,10 @@ type Client interface {
 	List(ctx context.Context, opts ListOpts) ([]Issue, error)
 	Show(ctx context.Context, ref string) (Issue, error)
 	Create(ctx context.Context, req CreateReq) (CreateResult, error)
+	// Comment appends a comment or a typed reply. Only the API client
+	// implements it; the others return ErrCommentsUnsupported.
+	Comment(ctx context.Context, req CommentReq) (CommentResult, error)
+	// Thread reads the comments beneath one comment. Only the API client
+	// implements it; the others return ErrCommentsUnsupported.
+	Thread(ctx context.Context, req ThreadReq) (Thread, error)
 }

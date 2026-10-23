@@ -164,7 +164,9 @@ type showEnvelope struct {
 
 type createEnvelope struct {
 	Issue struct {
-		ShortID string `json:"short_id"`
+		ShortID    string `json:"short_id"`
+		UID        string `json:"uid"`
+		ProjectUID string `json:"project_uid"`
 	} `json:"issue"`
 	Reused bool `json:"reused"`
 }
@@ -338,5 +340,17 @@ func (c *CLIClient) Create(ctx context.Context, req CreateReq) (CreateResult, er
 	if err := json.Unmarshal(out, &env); err != nil {
 		return CreateResult{}, fmt.Errorf("parse kata create: %w", err)
 	}
-	return CreateResult{ShortID: env.Issue.ShortID, Reused: env.Reused}, nil
+	return CreateResult{ShortID: env.Issue.ShortID, IssueUID: env.Issue.UID, ProjectUID: env.Issue.ProjectUID, Reused: env.Reused}, nil
+}
+
+// Comment is not supported by the kata CLI client: replies need the Kata API
+// connection, which reports who Kata attributed the write to and which comment
+// it stored. Nothing is run.
+func (c *CLIClient) Comment(context.Context, CommentReq) (CommentResult, error) {
+	return CommentResult{}, ErrCommentsUnsupported
+}
+
+// Thread is not supported by the kata CLI client. Nothing is run.
+func (c *CLIClient) Thread(context.Context, ThreadReq) (Thread, error) {
+	return Thread{}, ErrCommentsUnsupported
 }

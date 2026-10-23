@@ -1,6 +1,7 @@
 package kata
 
 import (
+	"cmp"
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -41,6 +43,12 @@ type ServerInfo struct {
 	APISchemaVersion string
 }
 
+// SupportsReplies reports whether the server stores typed replies and reads
+// comment threads.
+func (s ServerInfo) SupportsReplies() bool {
+	return schemaAtLeast(s.APISchemaVersion, RepliesAPISchemaVersion)
+}
+
 // APIOption adjusts an APIClient.
 type APIOption func(*apiSettings)
 
@@ -72,10 +80,18 @@ type APIClient struct {
 	workdir        string
 	noWorkspace    bool
 	defaultProject string
+	teammate       string
 
 	mu       sync.Mutex
 	info     *ServerInfo
-	projects map[string]int64
+	projects map[string]projectRef
+}
+
+// projectRef is an active project as the server lists it.
+type projectRef struct {
+	Name string
+	ID   int64
+	UID  string
 }
 
 var _ Client = (*APIClient)(nil)
@@ -114,6 +130,10 @@ func NewAPIClient(workdir string, cfg config.KataIntegrationConfig, opts ...APIO
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrAuthenticationRequired, err)
 	}
+	teammate := cfg.ResolvedTeammate()
+	if err := config.ValidateKataTeammate(teammate); err != nil {
+		return nil, err
+	}
 	var settings apiSettings
 	for _, opt := range opts {
 		opt(&settings)
@@ -125,7 +145,7 @@ func NewAPIClient(workdir string, cfg config.KataIntegrationConfig, opts ...APIO
 		return nil, err
 	}
 	return &APIClient{
-		tr: tr, workdir: workdir, noWorkspace: settings.noWorkspace,
+		tr: tr, workdir: workdir, noWorkspace: settings.noWorkspace, teammate: teammate,
 		defaultProject: strings.TrimSpace(cfg.DefaultProject),
 	}, nil
 }
@@ -155,6 +175,25 @@ func (c *APIClient) Binding(context.Context) (Binding, error) {
 		return Binding{Project: c.defaultProject}, nil
 	}
 	return Binding{}, err
+}
+
+// ResolveBinding is Binding with the project's full UID, which only the server
+// knows. It contacts Kata, and fails with ErrProjectNotFound when the bound
+// project is not an active project on the server.
+func (c *APIClient) ResolveBinding(ctx context.Context) (Binding, error) {
+	b, err := c.Binding(ctx)
+	if err != nil {
+		return Binding{}, err
+	}
+	if _, err := c.Info(ctx); err != nil {
+		return Binding{}, err
+	}
+	project, err := c.project(ctx, b.Project)
+	if err != nil {
+		return Binding{}, err
+	}
+	b.ProjectUID = project.UID
+	return b, nil
 }
 
 func compatibleAPISchema(reported string) bool { return schemaAtLeast(reported, MinAPISchemaVersion) }
@@ -208,44 +247,44 @@ func (c *APIClient) refreshInfo(ctx context.Context) (ServerInfo, error) {
 	return info, nil
 }
 
-// projectID resolves an active project by name. It refreshes a cached project
+// project resolves an active project by name. It refreshes a cached project
 // list when the requested project is missing.
-func (c *APIClient) projectID(ctx context.Context, name string) (int64, error) {
+func (c *APIClient) project(ctx context.Context, name string) (projectRef, error) {
 	if name == "" {
-		return 0, ErrNoBinding
+		return projectRef{}, ErrNoBinding
 	}
 	c.mu.Lock()
 	cached := c.projects
 	c.mu.Unlock()
-	if cached == nil {
+	if _, ok := cached[name]; cached == nil || !ok {
 		var err error
 		cached, err = c.refreshProjects(ctx)
 		if err != nil {
-			return 0, err
-		}
-	} else if _, ok := cached[name]; !ok {
-		var err error
-		cached, err = c.refreshProjects(ctx)
-		if err != nil {
-			return 0, err
+			return projectRef{}, err
 		}
 	}
-	id, ok := cached[name]
+	project, ok := cached[name]
 	if !ok {
-		return 0, fmt.Errorf("%w: %q", ErrProjectNotFound, name)
+		return projectRef{}, fmt.Errorf("%w: %q", ErrProjectNotFound, name)
 	}
-	return id, nil
+	return project, nil
 }
 
-func (c *APIClient) refreshProjects(ctx context.Context) (map[string]int64, error) {
+// projectID is project for callers that need only the numeric ID.
+func (c *APIClient) projectID(ctx context.Context, name string) (int64, error) {
+	project, err := c.project(ctx, name)
+	return project.ID, err
+}
+
+func (c *APIClient) refreshProjects(ctx context.Context) (map[string]projectRef, error) {
 	var list gen.ListProjectsResponseBody
 	if _, err := c.tr.do(ctx, http.MethodGet, "/api/v1/projects", nil, nil, nil, &list, http.StatusOK); err != nil {
 		return nil, err
 	}
-	projects := make(map[string]int64, len(list.Projects))
+	projects := make(map[string]projectRef, len(list.Projects))
 	for _, project := range list.Projects {
 		if project.Active && project.DeletedAt == nil {
-			projects[project.Name] = project.ID
+			projects[project.Name] = projectRef{Name: project.Name, ID: project.ID, UID: project.UID}
 		}
 	}
 	c.mu.Lock()
@@ -256,23 +295,23 @@ func (c *APIClient) refreshProjects(ctx context.Context) (map[string]int64, erro
 
 // issuesPath checks compatibility, resolves project (the workspace binding or
 // default when empty), and returns the issues collection path for it along
-// with the resolved project name.
-func (c *APIClient) issuesPath(ctx context.Context, project string) (path, resolved string, err error) {
+// with the resolved project.
+func (c *APIClient) issuesPath(ctx context.Context, project string) (path string, resolved projectRef, err error) {
 	if project == "" {
 		b, err := c.Binding(ctx)
 		if err != nil {
-			return "", "", err
+			return "", projectRef{}, err
 		}
 		project = b.Project
 	}
 	if _, err := c.Info(ctx); err != nil {
-		return "", "", err
+		return "", projectRef{}, err
 	}
-	id, err := c.projectID(ctx, project)
+	resolved, err = c.project(ctx, project)
 	if err != nil {
-		return "", "", err
+		return "", projectRef{}, err
 	}
-	return "/api/v1/projects/" + strconv.FormatInt(id, 10) + "/issues", project, nil
+	return "/api/v1/projects/" + strconv.FormatInt(resolved.ID, 10) + "/issues", resolved, nil
 }
 
 // List returns issues filtered by status (default "open") for the bound
@@ -400,26 +439,23 @@ func splitRef(ref string) (project, id string, err error) {
 	return project, id, nil
 }
 
-// Show returns one issue by short ID, UID, or project#short ID.
+// Show returns one issue by short ID, UID, or project#short ID, with its
+// comments.
 func (c *APIClient) Show(ctx context.Context, ref string) (Issue, error) {
 	project, id, err := splitRef(ref)
 	if err != nil {
 		return Issue{}, err
 	}
-	path, project, err := c.issuesPath(ctx, project)
+	shown, resolved, err := c.show(ctx, project, id, nil)
 	if err != nil {
 		return Issue{}, err
 	}
-	var shown gen.ShowIssueResponseBody
-	if _, err := c.tr.do(ctx, http.MethodGet, path+"/"+id, nil, nil, nil, &shown, http.StatusOK); err != nil {
-		return Issue{}, err
-	}
-	if !strings.EqualFold(shown.Issue.ShortID, id) && shown.Issue.UID != id {
-		return Issue{}, fmt.Errorf("%w: Kata returned a different issue than %q", ErrInvalidResponse, id)
-	}
 	iss := Issue{
-		ShortID: shown.Issue.ShortID, QualifiedID: project + "#" + shown.Issue.ShortID, Title: shown.Issue.Title,
-		Body: shown.Issue.Body, Status: shown.Issue.Status,
+		ShortID: shown.Issue.ShortID, QualifiedID: resolved.Name + "#" + shown.Issue.ShortID, Title: shown.Issue.Title,
+		Body: shown.Issue.Body, Status: shown.Issue.Status, UID: shown.Issue.UID,
+		ProjectUID:        cmp.Or(str(shown.Issue.ProjectUID), resolved.UID),
+		Comments:          commentsFromAPI(shown.Comments),
+		CommentsTruncated: shown.CommentsTruncated != nil && *shown.CommentsTruncated,
 	}
 	edges := make([]linkEdge, 0, len(shown.Links))
 	for _, link := range shown.Links {
@@ -436,6 +472,54 @@ func (c *APIClient) Show(ctx context.Context, ref string) (Issue, error) {
 	return iss, nil
 }
 
+// show reads one issue with query, and checks Kata answered with the issue
+// that was asked for.
+func (c *APIClient) show(ctx context.Context, project, id string, query url.Values) (gen.ShowIssueResponseBody, projectRef, error) {
+	path, resolved, err := c.issuesPath(ctx, project)
+	if err != nil {
+		return gen.ShowIssueResponseBody{}, projectRef{}, err
+	}
+	var shown gen.ShowIssueResponseBody
+	if _, err := c.tr.do(ctx, http.MethodGet, path+"/"+id, query, nil, nil, &shown, http.StatusOK); err != nil {
+		return gen.ShowIssueResponseBody{}, projectRef{}, err
+	}
+	if !strings.EqualFold(shown.Issue.ShortID, id) && shown.Issue.UID != id {
+		return gen.ShowIssueResponseBody{}, projectRef{}, fmt.Errorf("%w: Kata returned a different issue than %q", ErrInvalidResponse, id)
+	}
+	return shown, resolved, nil
+}
+
+func str(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+func commentFromAPI(c gen.CommentOut) Comment {
+	return Comment{
+		UID: c.UID, Handle: str(c.Handle), IssueUID: str(c.IssueUID), Body: c.Body,
+		CreatedAt: c.CreatedAt, EditedAt: c.EditedAt,
+		ReplyTo: str(c.ReplyToUID), Kind: CommentKind(str(c.ReplyKind)),
+		Attribution: attributionOf(c.Author, c.Teammate, c.SourceActor, c.AccountableActor),
+	}
+}
+
+func commentsFromAPI(comments []gen.CommentOut) []Comment {
+	if len(comments) == 0 {
+		return nil
+	}
+	out := make([]Comment, 0, len(comments))
+	for _, c := range comments {
+		out = append(out, commentFromAPI(c))
+	}
+	return out
+}
+
+func attributionOf(author string, teammate, source, accountable *string) Attribution {
+	return Attribution{Author: author, Teammate: str(teammate), SourceActor: str(source), AccountableActor: str(accountable)}
+}
+
 // Create files an issue with the idempotency key and metadata in the request.
 // The project is the request's, else the workspace binding, else the default.
 // A look-alike soft block is surfaced as an error, as with the kata CLI.
@@ -443,7 +527,7 @@ func (c *APIClient) Create(ctx context.Context, req CreateReq) (CreateResult, er
 	if strings.TrimSpace(req.Title) == "" {
 		return CreateResult{}, fmt.Errorf("%w: title is required", ErrRequestRejected)
 	}
-	path, _, err := c.issuesPath(ctx, req.Project)
+	path, project, err := c.issuesPath(ctx, req.Project)
 	if err != nil {
 		return CreateResult{}, err
 	}
@@ -465,8 +549,137 @@ func (c *APIClient) Create(ctx context.Context, req CreateReq) (CreateResult, er
 		return CreateResult{}, fmt.Errorf("%w: created issue has no short ID", ErrInvalidResponse)
 	}
 	return CreateResult{
-		ShortID:     created.Issue.ShortID,
+		ShortID: created.Issue.ShortID, IssueUID: created.Issue.UID,
+		ProjectUID:  cmp.Or(str(created.Issue.ProjectUID), project.UID),
 		Reused:      created.Reused != nil && *created.Reused,
-		Attribution: Attribution{Author: created.Issue.Author},
+		Attribution: attributionOf(created.Issue.Author, created.Issue.Teammate, created.Issue.SourceActor, created.Issue.AccountableActor),
 	}, nil
+}
+
+// validCommentUID reports whether s has the shape of a Kata UID: a 26-character
+// ULID (internal/uid/uid.go EncodedLen at v0.19.0). The server checks the rest.
+func validCommentUID(s string) bool {
+	if len(s) != 26 {
+		return false
+	}
+	for _, r := range s {
+		isDigit, isLower, isUpper := '0' <= r && r <= '9', 'a' <= r && r <= 'z', 'A' <= r && r <= 'Z'
+		if !isDigit && !isLower && !isUpper {
+			return false
+		}
+	}
+	return true
+}
+
+// Comment appends a comment or typed reply. Typed replies are refused before
+// anything is sent when the server cannot store them or when a confirm or
+// refute has too little evidence; a plain comment works on any compatible
+// server. The idempotency key is required so a retry replays instead of
+// duplicating, and a replay (changed=false) is a success. A rejection by Kata
+// is a *CommentError when it is one of the distinct cases callers handle:
+// ErrDuplicateReply, ErrIdempotencyMismatch, ErrIssueClosed, ErrCommentNotFound.
+// Roborev never asks Kata to force a duplicate reply.
+func (c *APIClient) Comment(ctx context.Context, req CommentReq) (CommentResult, error) {
+	if err := validatePathSegment(req.Issue); err != nil {
+		return CommentResult{}, err
+	}
+	if strings.TrimSpace(req.Body) == "" {
+		return CommentResult{}, fmt.Errorf("%w: comment body is required", ErrRequestRejected)
+	}
+	if req.IdempotencyKey == "" {
+		return CommentResult{}, fmt.Errorf("%w: an idempotency key is required", ErrRequestRejected)
+	}
+	if req.Kind != "" && !req.Kind.valid() {
+		return CommentResult{}, fmt.Errorf("%w: unknown reply kind %q", ErrRequestRejected, req.Kind)
+	}
+	if (req.Kind == "") != (req.ReplyTo == "") {
+		return CommentResult{}, fmt.Errorf("%w: a reply needs both its kind and the comment it answers", ErrRequestRejected)
+	}
+	if req.ReplyTo != "" && !validCommentUID(req.ReplyTo) {
+		return CommentResult{}, fmt.Errorf("%w: the comment a reply answers is named by its UID", ErrRequestRejected)
+	}
+	teammate := cmp.Or(req.Teammate, c.teammate)
+	if err := config.ValidateKataTeammate(teammate); err != nil {
+		return CommentResult{}, fmt.Errorf("%w: %w", ErrRequestRejected, err)
+	}
+	if err := ValidateEvidence(req.Kind, req.Body); err != nil {
+		return CommentResult{}, err
+	}
+	path, _, err := c.issuesPath(ctx, req.Project)
+	if err != nil {
+		return CommentResult{}, err
+	}
+	if req.Kind != "" {
+		info, err := c.Info(ctx)
+		if err != nil {
+			return CommentResult{}, err
+		}
+		if !info.SupportsReplies() {
+			return CommentResult{}, ErrRepliesUnsupported
+		}
+	}
+	body := gen.CommentRequestBody{Actor: new(WriteActor), Body: req.Body, Teammate: &teammate}
+	if req.Kind != "" {
+		body.Kind = new(gen.CommentRequestBodyKind(req.Kind))
+		body.ReplyTo = &req.ReplyTo
+	}
+	var posted gen.CommentResponseBody
+	header := http.Header{"Idempotency-Key": {req.IdempotencyKey}}
+	if _, err := c.tr.do(ctx, http.MethodPost, path+"/"+req.Issue+"/comments", nil, body, header, &posted, http.StatusOK, http.StatusCreated); err != nil {
+		return CommentResult{}, classifyCommentError(err)
+	}
+	comment := commentFromAPI(commentOutOf(posted.Comment))
+	if comment.UID == "" {
+		return CommentResult{}, fmt.Errorf("%w: comment has no UID", ErrInvalidResponse)
+	}
+	// A server that ignored the reply fields would have stored a plain comment.
+	if comment.Kind != req.Kind || !strings.EqualFold(comment.ReplyTo, req.ReplyTo) {
+		return CommentResult{}, fmt.Errorf("%w: Kata stored a %q reply to %q instead of the %q reply to %q that was sent",
+			ErrInvalidResponse, comment.Kind, comment.ReplyTo, req.Kind, req.ReplyTo)
+	}
+	return CommentResult{
+		UID: comment.UID, Changed: posted.Changed, Kind: comment.Kind, ReplyTo: comment.ReplyTo, Attribution: comment.Attribution,
+	}, nil
+}
+
+// commentOutOf views the comment a write returned as the shape a read returns.
+func commentOutOf(c gen.Comment) gen.CommentOut {
+	return gen.CommentOut{
+		AccountableActor: c.AccountableActor, Author: c.Author, Body: c.Body, CreatedAt: c.CreatedAt, EditedAt: c.EditedAt,
+		ReplyKind: c.ReplyKind, ReplyToUID: c.ReplyToUID, SourceActor: c.SourceActor, Teammate: c.Teammate, UID: c.UID,
+	}
+}
+
+// Thread reads the comment named by req.Root and every reply beneath it,
+// including replies posted on other issues of the project. Kata returns at most
+// 50 comments, keeps the root, and sets Truncated when it left some out. A
+// server that predates typed replies would ignore the selection and answer with
+// the whole issue, so it is refused.
+func (c *APIClient) Thread(ctx context.Context, req ThreadReq) (Thread, error) {
+	if !validCommentUID(req.Root) {
+		return Thread{}, fmt.Errorf("%w: a thread is read from its root comment's UID", ErrRequestRejected)
+	}
+	project, id, err := splitRef(req.Issue)
+	if err != nil {
+		return Thread{}, err
+	}
+	info, err := c.Info(ctx)
+	if err != nil {
+		return Thread{}, err
+	}
+	if !info.SupportsReplies() {
+		return Thread{}, ErrRepliesUnsupported
+	}
+	shown, _, err := c.show(ctx, project, id, url.Values{"thread": {req.Root}})
+	if err != nil {
+		return Thread{}, classifyCommentError(err)
+	}
+	thread := Thread{
+		Comments:  commentsFromAPI(shown.Comments),
+		Truncated: shown.CommentsTruncated != nil && *shown.CommentsTruncated,
+	}
+	if !slices.ContainsFunc(thread.Comments, func(cm Comment) bool { return strings.EqualFold(cm.UID, req.Root) }) {
+		return Thread{}, fmt.Errorf("%w: the thread does not contain its root comment", ErrInvalidResponse)
+	}
+	return thread, nil
 }

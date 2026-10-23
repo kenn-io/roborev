@@ -12,11 +12,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	gen "go.kenn.io/kata/pkg/client/generated"
 )
@@ -42,10 +44,11 @@ type Server struct {
 	// needs the request to name an actor.
 	Principal string
 
-	Projects []gen.ProjectOut
-	issues   map[int64][]*Issue
-	nextID   int64
-	keys     map[string]keyed
+	Projects    []gen.ProjectOut
+	issues      map[int64][]*Issue
+	nextID      int64
+	nextComment int64
+	keys        map[string]keyed
 	// ListPages, when set, replaces the issue list with canned pages keyed by
 	// the cursor query value ("" is the first page).
 	ListPages map[string]gen.ListIssuesResponseBody
@@ -61,6 +64,7 @@ type Issue struct {
 type keyed struct {
 	fingerprint string
 	issue       *Issue
+	comment     *gen.Comment
 }
 
 // Request is a recorded request.
@@ -92,6 +96,8 @@ func New(t *testing.T) *Server {
 		issues:    map[int64][]*Issue{},
 		keys:      map[string]keyed{},
 		nextID:    1,
+		// Comment UIDs are 26 characters, like Kata's ULIDs.
+		nextComment: 1,
 	}
 	f.AddProject(7, "reviews")
 	f.AddProject(8, "other")
@@ -101,6 +107,7 @@ func New(t *testing.T) *Server {
 	mux.HandleFunc("GET /api/v1/projects/{pid}/issues", f.listIssues)
 	mux.HandleFunc("POST /api/v1/projects/{pid}/issues", f.createIssue)
 	mux.HandleFunc("GET /api/v1/projects/{pid}/issues/{ref}", f.showIssue)
+	mux.HandleFunc("POST /api/v1/projects/{pid}/issues/{ref}/comments", f.createComment)
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		r.Body = io.NopCloser(strings.NewReader(string(body)))
@@ -156,14 +163,14 @@ func (f *Server) AddProject(id int64, name string) {
 func (f *Server) AddIssue(projectID int64, short, title, body string, labels ...string) *Issue {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	project := ""
+	project, projectUID := "", ""
 	for _, p := range f.Projects {
 		if p.ID == projectID {
-			project = p.Name
+			project, projectUID = p.Name, p.UID
 		}
 	}
 	issue := &Issue{Out: gen.IssueOut{
-		ID: f.nextID, ProjectID: projectID, ShortID: short, QualifiedID: project + "#" + short,
+		ID: f.nextID, ProjectID: projectID, ProjectUID: &projectUID, ShortID: short, QualifiedID: project + "#" + short,
 		UID: fmt.Sprintf("I%025d", f.nextID), Title: title, Body: body, Status: "open", Labels: labels,
 		Metadata: map[string]any{}, Revision: 1, Author: "someone",
 	}}
@@ -177,6 +184,13 @@ func (f *Server) Fail(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.MarshalWrite(w, map[string]any{"status": status, "error": map[string]any{"code": code, "message": message}})
+}
+
+// FailData is Fail with the error envelope's data member.
+func (f *Server) FailData(w http.ResponseWriter, status int, code, message string, data map[string]any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.MarshalWrite(w, map[string]any{"status": status, "error": map[string]any{"code": code, "message": message, "data": data}})
 }
 
 // Reply writes value as a JSON response.
@@ -272,17 +286,15 @@ func (f *Server) showIssue(w http.ResponseWriter, r *http.Request) {
 	out := issue.Out
 	show := gen.ShowIssueOut{
 		Author: out.Author, Body: out.Body, ID: out.ID, Labels: out.Labels, Metadata: out.Metadata,
-		ProjectID: out.ProjectID, Revision: out.Revision, ShortID: out.ShortID, Status: out.Status,
+		ProjectID: out.ProjectID, ProjectUID: out.ProjectUID, Revision: out.Revision, ShortID: out.ShortID, Status: out.Status,
 		Title: out.Title, UID: out.UID,
 	}
 	labels := make([]gen.IssueLabel, 0, len(out.Labels))
 	for _, l := range out.Labels {
 		labels = append(labels, gen.IssueLabel{Label: l})
 	}
-	f.Reply(w, gen.ShowIssueResponseBody{
-		Issue: show, Labels: labels, Links: append([]gen.LinkOut{}, issue.Links...),
-		Comments: append([]gen.CommentOut{}, issue.Comments...),
-	})
+	body := gen.ShowIssueResponseBody{Issue: show, Labels: labels, Links: append([]gen.LinkOut{}, issue.Links...), Comments: append([]gen.CommentOut{}, issue.Comments...)}
+	f.Reply(w, body)
 }
 
 func (f *Server) createIssue(w http.ResponseWriter, r *http.Request) {
@@ -332,10 +344,120 @@ func (f *Server) createIssue(w http.ResponseWriter, r *http.Request) {
 
 func asIssue(out gen.IssueOut) gen.Issue {
 	return gen.Issue{
-		Author: out.Author, Body: out.Body, ID: out.ID, Metadata: out.Metadata, ProjectID: out.ProjectID,
+		Author: out.Author, Body: out.Body, ID: out.ID, Metadata: out.Metadata, ProjectID: out.ProjectID, ProjectUID: out.ProjectUID,
 		Revision: out.Revision, ShortID: out.ShortID, Status: out.Status, Title: out.Title, UID: out.UID,
 		Priority: out.Priority, Owner: out.Owner, CreatedAt: time.Unix(0, 0).UTC(), UpdatedAt: time.Unix(0, 0).UTC(),
 	}
+}
+
+// minEvidenceRunes mirrors internal/db/comment_reply_write.go:49 at v0.19.0. It
+// is deliberately written out again here instead of imported from roborev's
+// client, so a test of that client's rule checks it against an independent copy.
+const minEvidenceRunes = 40
+
+// findComment returns the project's comment with uid, and the issue holding it.
+func (f *Server) findComment(pid int64, uid string) (gen.CommentOut, *Issue, bool) {
+	for _, issue := range f.issues[pid] {
+		for _, c := range issue.Comments {
+			if strings.EqualFold(c.UID, uid) {
+				return c, issue, true
+			}
+		}
+	}
+	return gen.CommentOut{}, nil, false
+}
+
+// createComment answers POST .../comments with Kata v0.19.0's rules for a plain
+// comment and for a typed reply, in Kata's order: replay by idempotency key,
+// then body, kind and target pairing, a closed issue, a missing target, too
+// little evidence, and a duplicate (internal/daemon/handlers_comments.go and
+// internal/db/comment_reply_write.go).
+func (f *Server) createComment(w http.ResponseWriter, r *http.Request) {
+	pid, ok := f.project(w, r)
+	if !ok {
+		return
+	}
+	issue := f.find(pid, r.PathValue("ref"))
+	if issue == nil {
+		f.Fail(w, http.StatusNotFound, "issue_not_found", "no such issue")
+		return
+	}
+	var req gen.CommentRequestBody
+	if err := json.UnmarshalRead(r.Body, &req); err != nil {
+		f.Fail(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	author, ok := f.actor(w, req.Actor)
+	if !ok {
+		return
+	}
+	kind, replyTo, teammate := "", deref(req.ReplyTo), deref(req.Teammate)
+	if req.Kind != nil {
+		kind = string(*req.Kind)
+	}
+	fingerprint := fmt.Sprintf("%s|%s|%s|%s|%s|%s", issue.Out.UID, author, req.Body, kind, replyTo, teammate)
+	key := r.Header.Get("Idempotency-Key")
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if prior, seen := f.keys[key]; key != "" && seen {
+		if prior.comment == nil || prior.fingerprint != fingerprint {
+			f.Fail(w, http.StatusConflict, "idempotency_mismatch", "idempotency key matched a prior comment with a different fingerprint")
+			return
+		}
+		f.Reply(w, gen.CommentResponseBody{Changed: false, Comment: *prior.comment, Issue: asIssue(issue.Out)})
+		return
+	}
+	if strings.TrimSpace(req.Body) == "" || (replyTo == "") != (kind == "") || (kind != "" && !slices.Contains([]string{"reply", "confirm", "refute", "supersede"}, kind)) {
+		f.Fail(w, http.StatusBadRequest, "validation", "reply_to and a valid kind must be supplied together")
+		return
+	}
+	if replyTo != "" {
+		if issue.Out.Status != "open" {
+			f.Fail(w, http.StatusConflict, "issue_closed", "reopen the reply issue before adding a typed reply")
+			return
+		}
+		target, _, found := f.findComment(pid, replyTo)
+		if !found {
+			f.Fail(w, http.StatusNotFound, "comment_not_found", "comment not found")
+			return
+		}
+		replyTo = target.UID
+		if (kind == "confirm" || kind == "refute") && utf8.RuneCountInString(strings.Join(strings.Fields(req.Body), " ")) < minEvidenceRunes {
+			f.Fail(w, http.StatusBadRequest, "validation", kind+" body needs at least 40 characters after whitespace normalization")
+			return
+		}
+		for _, other := range f.issues[pid] {
+			for _, c := range other.Comments {
+				if c.ReplyToUID != nil && *c.ReplyToUID == replyTo && deref(c.ReplyKind) == kind && c.Author == author && deref(c.Teammate) == teammate {
+					f.FailData(w, http.StatusConflict, "duplicate_reply", "a reply of this kind already exists for this author and teammate",
+						map[string]any{"existing_uid": c.UID, "existing_handle": deref(c.Handle)})
+					return
+				}
+			}
+		}
+	}
+	uid := fmt.Sprintf("C%025d", f.nextComment)
+	handle := "c:" + strings.ToLower(uid[len(uid)-6:])
+	created := time.Unix(f.nextComment, 0).UTC()
+	f.nextComment++
+	out := gen.CommentOut{
+		ID: int64(len(issue.Comments) + 1), IssueID: issue.Out.ID, UID: uid, Handle: &handle, Author: author, Body: req.Body,
+		CreatedAt: created, IssueUID: &issue.Out.UID, IssueShortID: &issue.Out.ShortID, ProjectUID: issue.Out.ProjectUID,
+	}
+	comment := gen.Comment{ID: out.ID, IssueID: out.IssueID, UID: uid, Author: author, Body: req.Body, CreatedAt: created}
+	if teammate != "" {
+		out.Teammate, comment.Teammate = &teammate, &teammate
+	}
+	if kind != "" {
+		out.ReplyKind, comment.ReplyKind = &kind, &kind
+		out.ReplyToUID, comment.ReplyToUID = &replyTo, &replyTo
+	}
+	issue.Comments = append(issue.Comments, out)
+	if key != "" {
+		f.keys[key] = keyed{fingerprint: fingerprint, comment: &comment}
+	}
+	f.Reply(w, gen.CommentResponseBody{Changed: true, Comment: comment, Issue: asIssue(issue.Out)})
 }
 
 func deref(s *string) string {

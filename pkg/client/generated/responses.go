@@ -382,6 +382,16 @@ type CloseReviewErrorResponseApplicationProblemPlusJSON422 = ErrorModel
 
 type CloseReviewErrorResponseApplicationProblemPlusJSON500 = ErrorModel
 
+type ListReviewFindingsResponse = ReviewFindingsBody
+
+type ListReviewFindingsErrorResponse = ErrorModel
+
+type ListReviewFindingsErrorResponseApplicationProblemPlusJSON = ErrorModel
+
+type ListReviewFindingsErrorResponseApplicationProblemPlusJSON422 = ErrorModel
+
+type ListReviewFindingsErrorResponseApplicationProblemPlusJSON500 = ErrorModel
+
 type MigrateReviewResponse = MigrateReviewOutputBody
 
 type MigrateReviewErrorResponse = ErrorModel
@@ -909,6 +919,17 @@ type CloseReviewResp struct {
 	ApplicationProblemPlusJSON409 *CloseReviewErrorResponseApplicationProblemPlusJSON409
 	ApplicationProblemPlusJSON422 *CloseReviewErrorResponseApplicationProblemPlusJSON422
 	ApplicationProblemPlusJSON500 *CloseReviewErrorResponseApplicationProblemPlusJSON500
+}
+
+type ListReviewFindingsResp struct {
+	HTTPResponse                  *http.Response
+	Body                          []byte
+	StatusCode                    int
+	JSON200                       *ListReviewFindingsResponse
+	ApplicationProblemPlusJSON404 *ListReviewFindingsErrorResponse
+	ApplicationProblemPlusJSON409 *ListReviewFindingsErrorResponseApplicationProblemPlusJSON
+	ApplicationProblemPlusJSON422 *ListReviewFindingsErrorResponseApplicationProblemPlusJSON422
+	ApplicationProblemPlusJSON500 *ListReviewFindingsErrorResponseApplicationProblemPlusJSON500
 }
 
 type MigrateReviewResp struct {
@@ -1878,6 +1899,21 @@ func (c *RawClient) CloseReviewRaw(ctx context.Context, options *CloseReviewRequ
 		Method:      "POST",
 		Options:     options,
 		ContentType: "application/json",
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) ListReviewFindingsRaw(ctx context.Context, options *ListReviewFindingsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &ListReviewFindingsRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/review/findings",
+		Method:     "GET",
+		Options:    options,
 	}, reqEditors...)
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)

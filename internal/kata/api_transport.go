@@ -50,6 +50,10 @@ type APIError struct {
 	Code    string
 	Message string
 	Class   error
+	// ExistingUID and ExistingHandle come from Kata's duplicate_reply error and
+	// name the comment that already holds the reply. They are empty otherwise.
+	ExistingUID    string
+	ExistingHandle string
 }
 
 func (e *APIError) Error() string {
@@ -222,6 +226,10 @@ func readAPIError(resp *http.Response) error {
 		Error struct {
 			Code    string `json:"code"`
 			Message string `json:"message"`
+			Data    struct {
+				ExistingUID    string `json:"existing_uid"`
+				ExistingHandle string `json:"existing_handle"`
+			} `json:"data"`
 		} `json:"error"`
 	}
 	data, err := io.ReadAll(resp.Body)
@@ -231,6 +239,8 @@ func readAPIError(resp *http.Response) error {
 	if json.Unmarshal(data, &envelope) == nil {
 		apiErr.Code = sanitizeServerText(envelope.Error.Code)
 		apiErr.Message = sanitizeServerText(envelope.Error.Message)
+		apiErr.ExistingUID = sanitizeServerText(envelope.Error.Data.ExistingUID)
+		apiErr.ExistingHandle = sanitizeServerText(envelope.Error.Data.ExistingHandle)
 	}
 	return apiErr
 }

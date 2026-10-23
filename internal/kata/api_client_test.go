@@ -523,11 +523,13 @@ func TestAPIClientTimesOut(t *testing.T) {
 		c, err := NewAPIClient(t.TempDir(), cfg, WithHTTPClient(hung), WithTimeout(2*time.Second))
 		require.NoError(t, err)
 		t.Cleanup(c.CloseIdleConnections)
+		started := time.Now()
 		errc := make(chan error, 1)
 		go func() { _, err := c.List(context.Background(), ListOpts{}); errc <- err }()
 		synctest.Wait()
 		assert.Empty(t, errc, "request returned before the configured deadline")
 		require.ErrorIs(t, <-errc, ErrUnreachable)
+		assert.Equal(t, 2*time.Second, time.Since(started), "request returns at the configured deadline")
 	})
 }
 

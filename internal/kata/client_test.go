@@ -153,6 +153,20 @@ func TestShowParsesEnvelope(t *testing.T) {
 	assert.Equal(t, []string{"show", "abc4", "--json"}, *args)
 }
 
+func TestShowAndCreateKeepKataUIDs(t *testing.T) {
+	c, _ := stubClient(`{"issue":{"short_id":"abc4","uid":"01JISSUE","project_uid":"01JPROJECT","title":"T","status":"open"}}`, nil)
+	shown, err := c.Show(context.Background(), "abc4")
+	require.NoError(t, err)
+	assert.Equal(t, "01JISSUE", shown.UID)
+	assert.Equal(t, "01JPROJECT", shown.ProjectUID)
+
+	c, _ = stubClient(`{"issue":{"short_id":"zzz9","uid":"01JNEW","project_uid":"01JPROJECT"},"reused":false}`, nil)
+	created, err := c.Create(context.Background(), CreateReq{Title: "t"})
+	require.NoError(t, err)
+	assert.Equal(t, "01JNEW", created.IssueUID)
+	assert.Equal(t, "01JPROJECT", created.ProjectUID)
+}
+
 func TestShowNoLabels(t *testing.T) {
 	c, _ := stubClient(`{"kata_api_version":1,"issue":
 		{"short_id":"abc4","title":"Task","status":"open"}}`, nil)

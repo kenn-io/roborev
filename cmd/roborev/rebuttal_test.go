@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/findingid"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -129,17 +130,27 @@ func TestCommentRebuttalRejectsIncompleteOptions(t *testing.T) {
 		{
 			name: "rebuttal requires a finding",
 			opts: rebuttalOptions{enabled: true},
-			want: "--rebuttal requires --finding with an excerpt of the original review",
+			want: "--rebuttal requires --finding with an excerpt of the original review, or --finding-id with a finding selector",
 		},
 		{
 			name: "finding requires rebuttal",
 			opts: rebuttalOptions{finding: "finding"},
-			want: "--finding and --close require --rebuttal",
+			want: "--finding, --finding-id and --close require --rebuttal",
+		},
+		{
+			name: "finding selector requires rebuttal",
+			opts: rebuttalOptions{findingID: "f:abc"},
+			want: "--finding, --finding-id and --close require --rebuttal",
 		},
 		{
 			name: "close requires rebuttal",
 			opts: rebuttalOptions{close: true},
-			want: "--finding and --close require --rebuttal",
+			want: "--finding, --finding-id and --close require --rebuttal",
+		},
+		{
+			name: "an excerpt and a selector are alternatives",
+			opts: rebuttalOptions{enabled: true, finding: "finding", findingID: "f:abc"},
+			want: "--finding and --finding-id select the finding two ways; use one",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -159,5 +170,140 @@ func TestCommentInvalidJobIDNamesRequestedMode(t *testing.T) {
 		cmd := commentCmd()
 		cmd.SetArgs(tc.args)
 		require.ErrorContains(t, cmd.Execute(), tc.want)
+	}
+}
+
+func TestCommentRebuttalSelectsAFindingBySelector(t *testing.T) {
+	resetCLIUse(t)
+	findings := sampleFindings()
+	originalReviewUUID := uuid.New()
+	var (
+		mu       sync.Mutex
+		rebuttal map[string]any
+		recorded string
+	)
+	record := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request map[string]any
+		assert.NoError(t, json.UnmarshalRead(r.Body, &request))
+		mu.Lock()
+		recorded, _ = request["comment"].(string)
+		mu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+	})
+	queue := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		assert.NoError(t, json.UnmarshalRead(r.Body, &rebuttal))
+		mu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+		job := storage.ReviewJob{ID: 8, UUID: new(uuid.New()), RepoPath: t.TempDir(), Agent: "test", OriginalReviewUUID: &originalReviewUUID}
+		assert.NoError(t, json.MarshalWrite(w, job))
+	})
+	list := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "42", r.URL.Query().Get("job_id"))
+		assert.NoError(t, json.MarshalWrite(w, findings))
+	})
+	NewMockDaemon(t, MockRefineHooks{
+		OnComment: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+			record.ServeHTTP(w, r)
+			return true
+		},
+		OnGetJobs: func(w http.ResponseWriter, _ *http.Request, _ *mockRefineState) bool {
+			_ = json.MarshalWrite(w, map[string]any{"jobs": []storage.ReviewJob{{ID: 8, Status: storage.JobStatusDone}}})
+			return true
+		},
+		OnReview: func(w http.ResponseWriter, _ *http.Request, _ *mockRefineState) bool {
+			_ = json.MarshalWrite(w, storage.Review{Output: `{"outcome":"confirmed","explanation":"Verified the value is nil on that path."}`})
+			return true
+		},
+		OnUnhandled: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+			switch r.URL.Path {
+			case "/api/review/findings":
+				list.ServeHTTP(w, r)
+			case "/api/rebuttal":
+				queue.ServeHTTP(w, r)
+			default:
+				return false
+			}
+			return true
+		},
+	})
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{"comment", "42", "-m", "It cannot be nil here.", "--rebuttal", "--finding-id", findings.Findings[1].ID})
+	var err error
+	captureStdoutStderr(t, func() { err = cmd.Execute() })
+	require.NoError(t, err)
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, findings.Findings[1].ID, rebuttal["finding_id"], "the daemon gets the full selector")
+	assert.NotContains(t, rebuttal, "finding", "a selector and an excerpt are not sent together")
+	assert.Contains(t, recorded, "Problem: Typo.", "the recorded assessment quotes the finding that was selected")
+	assert.Contains(t, recorded, "Fix: Spell it.")
+	assert.NotContains(t, recorded, "Nil dereference.")
+}
+
+func TestCommentRebuttalRequiresACompleteSelector(t *testing.T) {
+	complete := sampleFindings().Findings[0].ID
+	require.NoError(t, rebuttalOptions{enabled: true, findingID: complete}.validate())
+	require.NoError(t, rebuttalOptions{enabled: true, findingID: strings.ToUpper(complete)}.validate(), "capitals are read as lower case")
+	require.NoError(t, rebuttalOptions{enabled: true, findingID: " " + complete + "\n"}.validate(), "surrounding space from a paste is not part of the selector")
+
+	for name, selector := range map[string]string{
+		"shortened":   complete[:len(complete)-4],
+		"bare prefix": "f:",
+		"an excerpt":  "Missing guard.",
+		"split":       complete[:10] + " " + complete[10:],
+	} {
+		err := rebuttalOptions{enabled: true, findingID: selector}.validate()
+		require.ErrorIs(t, err, findingid.ErrInvalid, name)
+		require.ErrorContains(t, err, "complete selector copied from 'roborev show'", name)
+	}
+}
+
+func TestCommentRebuttalRejectsAnUnusableSelectorWithoutQueueing(t *testing.T) {
+	findings := sampleFindings()
+	foreign, err := findingid.New(uuid.New(), 0, strings.Repeat("cd", 32))
+	require.NoError(t, err)
+	for name, tc := range map[string]struct {
+		selector, want string
+		listed         bool
+	}{
+		"shortened":                           {findings.Findings[0].ID[:len(findings.Findings[0].ID)-4], "complete selector", false},
+		"not selector text":                   {"Typo.", "complete selector", false},
+		"well formed, but not in this review": {foreign.String(), "no finding matches", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			resetCLIUse(t)
+			var listings, rebuttals int
+			list := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				listings++
+				assert.NoError(t, json.MarshalWrite(w, findings))
+			})
+			NewMockDaemon(t, MockRefineHooks{
+				OnUnhandled: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+					switch r.URL.Path {
+					case "/api/review/findings":
+						list.ServeHTTP(w, r)
+					case "/api/rebuttal":
+						rebuttals++
+					default:
+						return false
+					}
+					return true
+				},
+			})
+			cmd := newRootCmd()
+			cmd.SetArgs([]string{"comment", "42", "-m", "Explanation", "--rebuttal", "--finding-id", tc.selector})
+			var runErr error
+			captureStdoutStderr(t, func() { runErr = cmd.Execute() })
+			require.ErrorContains(t, runErr, tc.want)
+			assert.Zero(t, rebuttals, "nothing is queued for a selector the CLI cannot resolve")
+			if tc.listed {
+				assert.Equal(t, 1, listings)
+			} else {
+				assert.Zero(t, listings, "a malformed selector is refused before the daemon is asked")
+			}
+		})
 	}
 }

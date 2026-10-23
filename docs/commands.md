@@ -200,6 +200,21 @@ completes.
 `roborev show` displays review comments after the review output when comments
 exist, matching the layout in the TUI review detail view.
 
+For a structured review, `roborev show` also lists a selector for each finding
+under `--- Findings ---`, numbered to match the findings in the review text. A
+selector looks like `f:...`. It names one finding of one review, stays the same
+every time you ask for it, and does not reveal the finding. The daemon keeps an
+immutable copy of each finding the first time its selector is handed out, so a
+selector still names the same finding after you rerun the job and the rerun
+replaces the review.
+
+`roborev show --json` adds a top-level `findings` array with each finding's `id`
+(the selector), `index`, `severity`, `problem`, `fix`, `location`, and, for a
+combined panel finding, the `sources` and `source_labels` it cites. Reviews
+without structured findings, such as historical prose reviews, have no
+selectors, and the array is absent. A daemon that is too old to list selectors,
+and a remote connection with read-only access, also leave the array out.
+
 Failed Codex jobs report the final turn error when supplied; raw logs retain
 reconnect notices.
 
@@ -572,6 +587,7 @@ roborev close <job_id> --reopen      # Reopen a closed review
 | `--job` | Force interpretation as job ID |
 | `--rebuttal` | Re-evaluate one finding in its original agent session and wait |
 | `--finding` | Excerpt of the original review to re-evaluate |
+| `--finding-id` | Complete selector of the finding to re-evaluate, copied whole from `roborev show` (requires `--rebuttal`; use instead of `--finding`) |
 | `--close` | Close the whole review after recording the assessment (requires `--rebuttal`) |
 
 !!! note

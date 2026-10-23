@@ -3046,7 +3046,12 @@ type RebuttalRequest struct {
 	Schema    *string `json:"$schema,omitempty"`
 	Comment   string  `json:"comment" validate:"required"`
 	Commenter string  `json:"commenter" validate:"required"`
-	Finding   string  `json:"finding" validate:"required"`
+
+	// Finding Excerpt of the original review text to re-evaluate; use this or finding_id
+	Finding *string `json:"finding,omitempty"`
+
+	// FindingID Complete selector of a finding of the current review to re-evaluate, as GET /api/review/findings lists it; use this or finding
+	FindingID *string `json:"finding_id,omitempty"`
 	JobID     int64   `json:"job_id"`
 }
 
@@ -3486,6 +3491,64 @@ func (r Review) Validate() error {
 type ReviewFileCoverage struct {
 	Excluded *int64 `json:"excluded,omitempty"`
 	Reviewed *int64 `json:"reviewed,omitempty"`
+}
+
+type ReviewFinding struct {
+	Fix string `json:"fix" validate:"required"`
+
+	// ID Selector for this finding, such as f:... ; --finding-id takes it whole, as listed
+	ID string `json:"id" validate:"required"`
+
+	// Index Zero-based position of the finding in the review document
+	Index    int64   `json:"index"`
+	Location *string `json:"location,omitempty"`
+	Problem  string  `json:"problem" validate:"required"`
+	Severity string  `json:"severity" validate:"required"`
+
+	// SourceLabels Labels of the member reviews a combined finding cites
+	SourceLabels []string `json:"source_labels,omitempty"`
+
+	// Sources 1-based numbers of the member reviews a combined finding cites
+	Sources []int64 `json:"sources,omitempty"`
+}
+
+func (r ReviewFinding) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(r))
+}
+
+type ReviewFindingsBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+
+	// DocumentHash SHA-256 of the canonical review document the selectors were derived from
+	DocumentHash *string         `json:"document_hash,omitempty"`
+	Findings     []ReviewFinding `json:"findings" validate:"required"`
+	JobID        int64           `json:"job_id"`
+
+	// ReviewUUID The review the selectors belong to
+	ReviewUUID *uuid.UUID `json:"review_uuid,omitempty"`
+}
+
+func (r ReviewFindingsBody) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range r.Findings {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Findings[%d]", i), err)
+			}
+		}
+	}
+	if r.ReviewUUID != nil {
+		if v, ok := any(r.ReviewUUID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ReviewUUID", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type ReviewIDSetValue = map[string]any

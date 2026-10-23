@@ -55,6 +55,10 @@ func TestNewFromConfigNeverFallsBackToTheCLIOnABadConfiguration(t *testing.T) {
 	require.ErrorIs(t, err, ErrInsecureEndpoint)
 	_, err = c.Create(t.Context(), CreateReq{Title: "t"})
 	require.ErrorIs(t, err, ErrInsecureEndpoint)
+	_, err = c.Comment(t.Context(), CommentReq{Issue: "abc4", Body: "b", IdempotencyKey: "k"})
+	require.ErrorIs(t, err, ErrInsecureEndpoint)
+	_, err = c.Thread(t.Context(), ThreadReq{Issue: "abc4", Root: "C0000000000000000000000001"})
+	require.ErrorIs(t, err, ErrInsecureEndpoint)
 
 	missingKey := kataConfigFor("https://kata.example.com")
 	missingKey.APIKey, missingKey.APIKeyFile = "", filepath.Join(t.TempDir(), "missing")
