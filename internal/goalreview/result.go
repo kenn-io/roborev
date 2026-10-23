@@ -1,9 +1,8 @@
 package goalreview
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
-	"io"
 	"slices"
 	"strconv"
 	"strings"
@@ -24,64 +23,10 @@ type Finding struct {
 	Location Location `json:"location"`
 }
 
-// DecodeStrict also rejects duplicate keys, which encoding/json otherwise
-// accepts with last-value-wins semantics.
+// DecodeStrict rejects unknown or case-mismatched schema fields and duplicate
+// keys. Dictionary keys, including issue metadata, remain arbitrary strings.
 func DecodeStrict(raw string, value any) error {
-	tokens := json.NewDecoder(strings.NewReader(raw))
-	var walk func() error
-	walk = func() error {
-		token, err := tokens.Token()
-		if err != nil {
-			return err
-		}
-		delim, ok := token.(json.Delim)
-		if !ok {
-			return nil
-		}
-		switch delim {
-		case '{':
-			keys := map[string]bool{}
-			for tokens.More() {
-				key, err := tokens.Token()
-				if err != nil {
-					return err
-				}
-				name, ok := key.(string)
-				if !ok {
-					return fmt.Errorf("invalid JSON key")
-				}
-				if name != strings.ToLower(name) {
-					return fmt.Errorf("JSON field must match its schema name exactly: %q", name)
-				}
-				if keys[name] {
-					return fmt.Errorf("duplicate JSON key %s", name)
-				}
-				keys[name] = true
-				if err := walk(); err != nil {
-					return err
-				}
-			}
-		case '[':
-			for tokens.More() {
-				if err := walk(); err != nil {
-					return err
-				}
-			}
-		default:
-			return fmt.Errorf("invalid JSON delimiter")
-		}
-		_, err = tokens.Token()
-		return err
-	}
-	if err := walk(); err != nil {
-		return err
-	}
-	if _, err := tokens.Token(); err != io.EOF {
-		return fmt.Errorf("extra JSON content")
-	}
-	decoder := json.NewDecoder(strings.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	return decoder.Decode(value)
+	return json.Unmarshal([]byte(raw), value, json.RejectUnknownMembers(true))
 }
 
 func ParseResult(raw string, snapshot Snapshot) ([]Finding, error) {

@@ -48,13 +48,14 @@ type runningJobCancellation struct {
 
 // WorkerPool manages a pool of review workers
 type WorkerPool struct {
-	db                   *storage.DB
-	cfgGetter            ConfigGetter
-	broadcaster          Broadcaster
-	errorLog             *ErrorLog
-	activityLog          *ActivityLog
-	budgetRouter         *BudgetRouter
-	captureSetupFinished func()
+	db                    *storage.DB
+	cfgGetter             ConfigGetter
+	prepareKataTransition func(context.Context, *storage.ReviewJob, kataOutcome) kataTransition
+	broadcaster           Broadcaster
+	errorLog              *ErrorLog
+	activityLog           *ActivityLog
+	budgetRouter          *BudgetRouter
+	captureSetupFinished  func()
 
 	numWorkers    int
 	activeWorkers atomic.Int32
@@ -527,6 +528,16 @@ func (wp *WorkerPool) runAttemptTransition(
 		log.Printf("[%s] Job %d: validate attempt: %v", workerID, job.ID, err)
 	}
 	return !ran
+}
+
+// runKataAttemptTransition resolves external publication data without holding
+// either attempt guard, then revalidates ownership before local persistence.
+func (wp *WorkerPool) runKataAttemptTransition(workerID string, job *storage.ReviewJob, outcome kataOutcome, transition func(kataTransition)) bool {
+	var prepared kataTransition
+	if wp.prepareKataTransition != nil {
+		prepared = wp.prepareKataTransition(context.Background(), job, outcome)
+	}
+	return wp.runAttemptTransition(workerID, job, func() { transition(prepared) })
 }
 
 // IsJobPendingCancel reports whether a job is in the pendingCancels set.
@@ -1279,6 +1290,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		Type:          "review.started",
 		TS:            time.Now(),
 		JobID:         job.ID,
+		SuppressKata:  !kataEligibleJob(job),
 		Repo:          job.RepoPath,
 		RepoName:      job.RepoName,
 		SHA:           job.GitRef,
@@ -1530,8 +1542,12 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}
 	}
 
+	verdict := agentReview.Verdict
+	if verdict == storage.VerdictUnknown {
+		verdict = storage.ParseVerdict(output)
+	}
 	completed := false
-	wp.runAttemptTransition(workerID, job, func() {
+	wp.runKataAttemptTransition(workerID, job, kataOutcome{event: "completed", verdict: verdict}, func(prepared kataTransition) {
 		// Store the result (use actual agent name, not requested).
 		// CompleteJob/CompleteFixJob is a no-op (returns nil) if the job was
 		// canceled between agent finish and now.
@@ -1544,19 +1560,21 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			agentReview.Verdict != storage.VerdictUnknown {
 			if err := wp.db.CompleteJobResult(
 				job.ID, agentName, storage.ReviewCompletion{
-					Output:           output,
-					Verdict:          agentReview.Verdict,
-					StructuredOutput: agentReview.StructuredOutput,
-					MinSeverity:      effectiveMinSeverity,
-					FileCoverage:     fileCoverage,
+					KataHandoffBuilder: prepared.builder,
+					Output:             output,
+					Verdict:            agentReview.Verdict,
+					StructuredOutput:   agentReview.StructuredOutput,
+					MinSeverity:        effectiveMinSeverity,
+					FileCoverage:       fileCoverage,
 				},
 			); err != nil {
 				log.Printf("[%s] Error storing review verdict: %v", workerID, err)
 				return
 			}
 		} else if err := wp.db.CompleteJobResult(job.ID, agentName, storage.ReviewCompletion{
-			Output:       output,
-			FileCoverage: fileCoverage,
+			KataHandoffBuilder: prepared.builder,
+			Output:             output,
+			FileCoverage:       fileCoverage,
 		}); err != nil {
 			log.Printf("[%s] Error storing review: %v", workerID, err)
 			return
@@ -1587,10 +1605,6 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			}
 		}
 
-		verdict := agentReview.Verdict
-		if verdict == storage.VerdictUnknown {
-			verdict = storage.ParseVerdict(output)
-		}
 		wp.autoClosePassingReview(workerID, job, verdict)
 
 		if planningPrompt == "" {
@@ -1623,19 +1637,21 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			eventVerdict = ""
 		}
 		wp.broadcaster.Broadcast(Event{
-			Type:          "review.completed",
-			TS:            time.Now(),
-			JobID:         job.ID,
-			JobUUID:       job.UUID,
-			Repo:          job.RepoPath,
-			RepoName:      job.RepoName,
-			SHA:           job.GitRef,
-			Branch:        job.HookBranch(),
-			Agent:         agentName,
-			Verdict:       eventVerdict,
-			Findings:      output,
-			WorktreePath:  eventWorktreePath,
-			SuppressHooks: suppressJobHooks(job),
+			Type:             "review.completed",
+			TS:               time.Now(),
+			JobID:            job.ID,
+			SuppressKata:     !kataEligibleJob(job),
+			KataDeliveryMode: prepared.mode,
+			JobUUID:          job.UUID,
+			Repo:             job.RepoPath,
+			RepoName:         job.RepoName,
+			SHA:              job.GitRef,
+			Branch:           job.HookBranch(),
+			Agent:            agentName,
+			Verdict:          eventVerdict,
+			Findings:         output,
+			WorktreePath:     eventWorktreePath,
+			SuppressHooks:    suppressJobHooks(job),
 		})
 	})
 	if completed && wp.captureSetupFinished != nil {
@@ -1653,6 +1669,7 @@ func (wp *WorkerPool) finishCanceledAttempt(workerID string, job *storage.Review
 				Type:          jobEventType(job, "canceled"),
 				TS:            time.Now(),
 				JobID:         job.ID,
+				SuppressKata:  !kataEligibleJob(job),
 				Repo:          job.RepoPath,
 				RepoName:      job.RepoName,
 				SHA:           job.GitRef,
@@ -1703,8 +1720,12 @@ func (wp *WorkerPool) releaseCanceledClaim(workerID string, jobID int64) {
 	}
 }
 
-func (wp *WorkerPool) failJobAndInvalidateBudget(jobID int64, workerID, errorMsg string) (bool, error) {
-	updated, err := wp.db.FailJob(jobID, workerID, errorMsg)
+func (wp *WorkerPool) failJobAndInvalidateBudget(jobID int64, workerID, errorMsg string, prepared ...kataTransition) (bool, error) {
+	var builder storage.KataHandoffBuilder
+	if len(prepared) > 0 {
+		builder = prepared[0].builder
+	}
+	updated, err := wp.db.FailJobWithKata(jobID, workerID, errorMsg, builder)
 	if updated {
 		wp.invalidateBudgetSpend()
 	}
@@ -1756,8 +1777,8 @@ func (wp *WorkerPool) failOrRetry(workerID string, job *storage.ReviewJob, agent
 func (wp *WorkerPool) failOrRetryContext(
 	_ context.Context, workerID string, job *storage.ReviewJob, agentName string, errorMsg string,
 ) {
-	wp.runAttemptTransition(workerID, job, func() {
-		wp.failOrRetryInnerLocked(workerID, job, agentName, errorMsg, false, nil)
+	wp.runKataAttemptTransition(workerID, job, kataOutcome{event: "failed"}, func(prepared kataTransition) {
+		wp.failOrRetryInnerLocked(workerID, job, agentName, errorMsg, false, nil, prepared)
 	})
 }
 
@@ -1771,8 +1792,8 @@ func (wp *WorkerPool) failOrRetryAgent(workerID string, job *storage.ReviewJob, 
 func (wp *WorkerPool) failOrRetryAgentContext(
 	_ context.Context, workerID string, job *storage.ReviewJob, agentName string, errorMsg string,
 ) {
-	wp.runAttemptTransition(workerID, job, func() {
-		wp.failOrRetryInnerLocked(workerID, job, agentName, errorMsg, true, nil)
+	wp.runKataAttemptTransition(workerID, job, kataOutcome{event: "failed"}, func(prepared kataTransition) {
+		wp.failOrRetryInnerLocked(workerID, job, agentName, errorMsg, true, nil, prepared)
 	})
 }
 
@@ -1812,9 +1833,9 @@ func (wp *WorkerPool) failOrRetryAgentExecutionContext(
 	if attached && classification.Kind == agent.LimitKindTransient {
 		errorMsg = review.OutageError(errorMsg)
 	}
-	wp.runAttemptTransition(workerID, job, func() {
+	wp.runKataAttemptTransition(workerID, job, kataOutcome{event: "failed"}, func(prepared kataTransition) {
 		wp.failOrRetryInnerLocked(
-			workerID, job, agentName, errorMsg, true, &classification,
+			workerID, job, agentName, errorMsg, true, &classification, prepared,
 		)
 	})
 }
@@ -1836,8 +1857,8 @@ func (wp *WorkerPool) finalErrorMsg(agentName, errorMsg string, agentError bool)
 }
 
 func (wp *WorkerPool) failOrRetryInner(workerID string, job *storage.ReviewJob, agentName string, errorMsg string, agentError bool) {
-	wp.runAttemptTransition(workerID, job, func() {
-		wp.failOrRetryInnerLocked(workerID, job, agentName, errorMsg, agentError, nil)
+	wp.runKataAttemptTransition(workerID, job, kataOutcome{event: "failed"}, func(prepared kataTransition) {
+		wp.failOrRetryInnerLocked(workerID, job, agentName, errorMsg, agentError, nil, prepared)
 	})
 }
 
@@ -1865,6 +1886,7 @@ func (wp *WorkerPool) failOrRetryInnerLocked(
 	errorMsg string,
 	agentError bool,
 	classificationOverride *agent.LimitClassification,
+	prepared kataTransition,
 ) {
 	// RetryJob clears sessions. Rebuttals must never start fresh.
 	if job.Source == storage.JobSourceRebuttal {
@@ -1877,7 +1899,7 @@ func (wp *WorkerPool) failOrRetryInnerLocked(
 				wp.cooldownAgentForLimit(workerID, agentName, cls)
 			}
 		}
-		wp.failoverOrFailNonRetryableAgentLocked(workerID, job, agentName, errorMsg)
+		wp.failoverOrFailNonRetryableAgentLocked(workerID, job, agentName, errorMsg, prepared)
 		return
 	}
 	// Quota and session-limit errors skip retries entirely — cool down
@@ -1891,7 +1913,7 @@ func (wp *WorkerPool) failOrRetryInnerLocked(
 		}
 		switch cls.Kind {
 		case agent.LimitKindPermanent:
-			wp.failoverOrFailNonRetryableAgentLocked(workerID, job, agentName, errorMsg)
+			wp.failoverOrFailNonRetryableAgentLocked(workerID, job, agentName, errorMsg, prepared)
 			return
 		case agent.LimitKindQuota, agent.LimitKindSession:
 			wp.cooldownAgentForLimit(workerID, agentName, cls)
@@ -1901,7 +1923,7 @@ func (wp *WorkerPool) failOrRetryInnerLocked(
 				prefix = review.OutageErrorPrefix
 				label = "session limit"
 			}
-			wp.failoverOrFailWithPrefixLocked(workerID, job, agentName, errorMsg, prefix, label)
+			wp.failoverOrFailWithPrefixLocked(workerID, job, agentName, errorMsg, prefix, label, prepared)
 			return
 		case agent.LimitKindNone:
 			if errorMsg != "" {
@@ -1914,17 +1936,17 @@ func (wp *WorkerPool) failOrRetryInnerLocked(
 		}
 	}
 	if agentError && isContextWindowError(errorMsg) {
-		wp.failoverOrFailNonRetryableAgentLocked(workerID, job, agentName, errorMsg)
+		wp.failoverOrFailNonRetryableAgentLocked(workerID, job, agentName, errorMsg, prepared)
 		return
 	}
 
 	retried, err := wp.db.RetryJob(job.ID, workerID, maxRetries, wp.retryBackoff)
 	if err != nil {
 		log.Printf("[%s] Error retrying job: %v", workerID, err)
-		if updated, fErr := wp.failJobAndInvalidateBudget(job.ID, workerID, wp.finalErrorMsg(agentName, errorMsg, agentError)); fErr != nil {
+		if updated, fErr := wp.failJobAndInvalidateBudget(job.ID, workerID, wp.finalErrorMsg(agentName, errorMsg, agentError), prepared); fErr != nil {
 			log.Printf("[%s] Error failing job %d: %v", workerID, job.ID, fErr)
 		} else if updated {
-			wp.broadcastFailed(job, agentName, errorMsg)
+			wp.broadcastFailed(job, agentName, errorMsg, prepared.mode)
 			if wp.errorLog != nil {
 				wp.errorLog.LogError("worker", fmt.Sprintf("job %d failed: %s", job.ID, errorMsg), job.ID)
 			}
@@ -1956,14 +1978,14 @@ func (wp *WorkerPool) failOrRetryInnerLocked(
 		}
 
 		// No backup or failover failed -- mark as failed
-		if updated, fErr := wp.failJobAndInvalidateBudget(job.ID, workerID, wp.finalErrorMsg(agentName, errorMsg, agentError)); fErr != nil {
+		if updated, fErr := wp.failJobAndInvalidateBudget(job.ID, workerID, wp.finalErrorMsg(agentName, errorMsg, agentError), prepared); fErr != nil {
 			log.Printf("[%s] Error failing job %d: %v", workerID, job.ID, fErr)
 		} else if updated {
 			log.Printf("[%s] Job %d %s %sreview/%s failed after %d retries",
 				workerID, job.ID, job.RepoName,
 				reviewTypeTag(job.ReviewType), agentName,
 				maxRetries)
-			wp.broadcastFailed(job, agentName, errorMsg)
+			wp.broadcastFailed(job, agentName, errorMsg, prepared.mode)
 			if wp.errorLog != nil {
 				wp.errorLog.LogError("worker", fmt.Sprintf("job %d failed after %d retries: %s", job.ID, maxRetries, errorMsg), job.ID)
 			}
@@ -1977,13 +1999,14 @@ func (wp *WorkerPool) failoverOrFailNonRetryableAgentContext(
 	workerID string, job *storage.ReviewJob,
 	agentName, errorMsg string,
 ) {
-	wp.runAttemptTransition(workerID, job, func() {
-		wp.failoverOrFailNonRetryableAgentLocked(workerID, job, agentName, errorMsg)
+	wp.runKataAttemptTransition(workerID, job, kataOutcome{event: "failed"}, func(prepared kataTransition) {
+		wp.failoverOrFailNonRetryableAgentLocked(workerID, job, agentName, errorMsg, prepared)
 	})
 }
 
 func (wp *WorkerPool) failoverOrFailNonRetryableAgentLocked(
 	workerID string, job *storage.ReviewJob, agentName, errorMsg string,
+	prepared kataTransition,
 ) {
 	backupAgent := wp.resolveBackupAgent(job)
 	if backupAgent != "" && !wp.isAgentCoolingDown(backupAgent) {
@@ -2000,13 +2023,13 @@ func (wp *WorkerPool) failoverOrFailNonRetryableAgentLocked(
 		}
 	}
 
-	if updated, err := wp.failJobAndInvalidateBudget(job.ID, workerID, errorMsg); err != nil {
+	if updated, err := wp.failJobAndInvalidateBudget(job.ID, workerID, errorMsg, prepared); err != nil {
 		log.Printf("[%s] Error failing job %d: %v", workerID, job.ID, err)
 	} else if updated {
 		log.Printf("[%s] Job %d %s %sreview/%s failed without retry: %s",
 			workerID, job.ID, job.RepoName,
 			reviewTypeTag(job.ReviewType), agentName, errorMsg)
-		wp.broadcastFailed(job, agentName, errorMsg)
+		wp.broadcastFailed(job, agentName, errorMsg, prepared.mode)
 		if wp.errorLog != nil {
 			wp.errorLog.LogError("worker", fmt.Sprintf("job %d failed without retry: %s", job.ID, errorMsg), job.ID)
 		}
@@ -2119,7 +2142,11 @@ func (wp *WorkerPool) resolveBackupModel(job *storage.ReviewJob) string {
 }
 
 // broadcastFailed sends a review.failed event for a job
-func (wp *WorkerPool) broadcastFailed(job *storage.ReviewJob, agentName, errorMsg string) {
+func (wp *WorkerPool) broadcastFailed(job *storage.ReviewJob, agentName, errorMsg string, modes ...string) {
+	mode := ""
+	if len(modes) > 0 {
+		mode = modes[0]
+	}
 	wtPath := ""
 	if job.WorktreePath != "" {
 		if _, err := os.Stat(job.WorktreePath); err == nil {
@@ -2127,18 +2154,20 @@ func (wp *WorkerPool) broadcastFailed(job *storage.ReviewJob, agentName, errorMs
 		}
 	}
 	wp.broadcaster.Broadcast(Event{
-		Type:          jobEventType(job, "failed"),
-		TS:            time.Now(),
-		JobID:         job.ID,
-		JobUUID:       job.UUID,
-		Repo:          job.RepoPath,
-		RepoName:      job.RepoName,
-		SHA:           job.GitRef,
-		Branch:        job.HookBranch(),
-		Agent:         agentName,
-		Error:         errorMsg,
-		WorktreePath:  wtPath,
-		SuppressHooks: suppressJobHooks(job),
+		Type:             jobEventType(job, "failed"),
+		TS:               time.Now(),
+		JobID:            job.ID,
+		SuppressKata:     !kataEligibleJob(job),
+		KataDeliveryMode: mode,
+		JobUUID:          job.UUID,
+		Repo:             job.RepoPath,
+		RepoName:         job.RepoName,
+		SHA:              job.GitRef,
+		Branch:           job.HookBranch(),
+		Agent:            agentName,
+		Error:            errorMsg,
+		WorktreePath:     wtPath,
+		SuppressHooks:    suppressJobHooks(job),
 	})
 	// broadcastFailed is the terminal-failure chokepoint (never reached on
 	// retry/failover), so a member that finally fails releases its panel's
@@ -2429,14 +2458,15 @@ func (wp *WorkerPool) failoverOrFailWithPrefixContext(
 	workerID string, job *storage.ReviewJob,
 	agentName, errorMsg, prefix, label string,
 ) {
-	wp.runAttemptTransition(workerID, job, func() {
-		wp.failoverOrFailWithPrefixLocked(workerID, job, agentName, errorMsg, prefix, label)
+	wp.runKataAttemptTransition(workerID, job, kataOutcome{event: "failed"}, func(prepared kataTransition) {
+		wp.failoverOrFailWithPrefixLocked(workerID, job, agentName, errorMsg, prefix, label, prepared)
 	})
 }
 
 func (wp *WorkerPool) failoverOrFailWithPrefixLocked(
 	workerID string, job *storage.ReviewJob,
 	agentName, errorMsg, prefix, label string,
+	prepared kataTransition,
 ) {
 	backupAgent := wp.resolveBackupAgent(job)
 	if backupAgent != "" && !wp.isAgentCoolingDown(backupAgent) {
@@ -2455,20 +2485,21 @@ func (wp *WorkerPool) failoverOrFailWithPrefixLocked(
 		}
 	}
 
-	wp.failJobWithPrefixLocked(workerID, job, agentName, errorMsg, prefix, label)
+	wp.failJobWithPrefixLocked(workerID, job, agentName, errorMsg, prefix, label, prepared)
 }
 
 func (wp *WorkerPool) failJobWithPrefixLocked(
 	workerID string, job *storage.ReviewJob,
 	agentName, errorMsg, prefix, label string,
+	prepared kataTransition,
 ) {
 	storedMsg := prefixedFailure(prefix, errorMsg)
-	if updated, err := wp.failJobAndInvalidateBudget(job.ID, workerID, storedMsg); err != nil {
+	if updated, err := wp.failJobAndInvalidateBudget(job.ID, workerID, storedMsg, prepared); err != nil {
 		log.Printf("[%s] Error failing job %d: %v", workerID, job.ID, err)
 	} else if updated {
 		log.Printf("[%s] Job %d skipped (agent %s %s)",
 			workerID, job.ID, agentName, label)
-		wp.broadcastFailed(job, agentName, storedMsg)
+		wp.broadcastFailed(job, agentName, storedMsg, prepared.mode)
 		if wp.errorLog != nil {
 			wp.errorLog.LogError("worker",
 				fmt.Sprintf("job %d skipped (%s): %s", job.ID, label, errorMsg),

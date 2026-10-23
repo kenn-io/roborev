@@ -11,20 +11,25 @@ import (
 
 // Event represents a review event that can be broadcast
 type Event struct {
-	Type          string     `json:"type"`
-	TS            time.Time  `json:"ts"`
-	JobID         int64      `json:"job_id"`
-	JobUUID       *uuid.UUID `json:"job_uuid,omitempty" format:"uuid"`
-	Repo          string     `json:"repo"`
-	RepoName      string     `json:"repo_name"`
-	SHA           string     `json:"sha"`
-	Branch        string     `json:"branch,omitempty"`
-	Agent         string     `json:"agent,omitempty"`
-	Verdict       string     `json:"verdict,omitempty"`
-	Findings      string     `json:"findings,omitempty"`
-	Error         string     `json:"error,omitempty"`
-	WorktreePath  string     `json:"worktree_path,omitempty"`
-	SuppressHooks bool       `json:"-"`
+	Type             string     `json:"type"`
+	TS               time.Time  `json:"ts"`
+	JobID            int64      `json:"job_id"`
+	JobUUID          *uuid.UUID `json:"job_uuid,omitempty" format:"uuid"`
+	Repo             string     `json:"repo"`
+	RepoName         string     `json:"repo_name"`
+	SHA              string     `json:"sha"`
+	Branch           string     `json:"branch,omitempty"`
+	Agent            string     `json:"agent,omitempty"`
+	Verdict          string     `json:"verdict,omitempty"`
+	Findings         string     `json:"findings,omitempty"`
+	Error            string     `json:"error,omitempty"`
+	WorktreePath     string     `json:"worktree_path,omitempty"`
+	KataDeliveryMode string     `json:"-"`
+	SuppressKata     bool       `json:"-"`
+	SuppressHooks    bool       `json:"-"`
+	// AllowKataHook permits one synthetic panel-parent failure notification
+	// while other hooks remain suppressed.
+	AllowKataHook bool `json:"-"`
 }
 
 func eventForJob(eventType string, job *storage.ReviewJob, fallbackID int64) Event {
@@ -40,6 +45,7 @@ func eventForJob(eventType string, job *storage.ReviewJob, fallbackID int64) Eve
 	event.Branch = job.HookBranch()
 	event.Agent = job.Agent
 	event.SuppressHooks = suppressJobHooks(job)
+	event.SuppressKata = !kataEligibleJob(job)
 	return event
 }
 

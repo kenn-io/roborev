@@ -95,6 +95,7 @@ func markConfigValidationError(err error) error {
 
 // HookConfig defines a hook that runs on review events
 type HookConfig struct {
+	Findings string   `toml:"findings"`             // kata: comments or summary; unset preserves the issue body
 	Event    string   `toml:"event"`                // "review.failed", "review.completed", "review.*"
 	Branches []string `toml:"branches"`             // optional branch globs (path.Match); empty = all branches
 	Command  string   `toml:"command"`              // shell command with {var} templates
@@ -619,6 +620,9 @@ func walkAgentReferences(value reflect.Value, path string, visit func(path, name
 
 func validateConfig(cfg any, acp ACPAgentConfigs) error {
 	if global, ok := cfg.(*Config); ok {
+		if err := ValidateKataHooks(global.Hooks, global.Integrations.Kata.Enabled); err != nil {
+			return err
+		}
 		if err := ValidateAuthKey(global.AuthKey); err != nil {
 			return err
 		}
@@ -630,6 +634,9 @@ func validateConfig(cfg any, acp ACPAgentConfigs) error {
 		}
 	}
 	if repo, ok := cfg.(*RepoConfig); ok {
+		if err := ValidateKataHooks(repo.Hooks, true); err != nil {
+			return err
+		}
 		if err := validateGoalReview(repo.GoalReview); err != nil {
 			return err
 		}

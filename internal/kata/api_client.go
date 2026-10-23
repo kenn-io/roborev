@@ -3,6 +3,8 @@ package kata
 import (
 	"cmp"
 	"context"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -89,6 +91,7 @@ func WithWorkspaceAlias(alias ProjectAlias) APIOption {
 // a workspace's project the way the kata CLI does and falls back to the
 // configured default project.
 type APIClient struct {
+	endpoint       string
 	tr             *transport
 	workdir        string
 	noWorkspace    bool
@@ -105,6 +108,25 @@ type projectRef struct {
 }
 
 var _ Client = (*APIClient)(nil)
+
+type apiIssueListPage struct {
+	Complete   *bool          `json:"complete"`
+	Issues     jsontext.Value `json:"issues"`
+	NextCursor *string        `json:"next_cursor,omitempty"`
+	Total      *int64         `json:"total,omitempty"`
+	Truncated  bool           `json:"truncated"`
+}
+
+func (p apiIssueListPage) decodeIssues() ([]gen.IssueOut, error) {
+	if p.Issues.Kind() != jsontext.KindBeginArray {
+		return nil, fmt.Errorf("%w: the issue list has no issues array", ErrInvalidResponse)
+	}
+	var issues []gen.IssueOut
+	if err := json.Unmarshal(p.Issues, &issues); err != nil {
+		return nil, fmt.Errorf("%w: could not decode the issue list: %w", ErrInvalidResponse, err)
+	}
+	return issues, nil
+}
 
 // NewAPIClient builds a client for cfg. It reads the credential and checks the
 // endpoint but does not contact Kata, so construction is cheap and a
@@ -136,8 +158,8 @@ func NewAPIClient(workdir string, cfg config.KataIntegrationConfig, opts ...APIO
 		return nil, err
 	}
 	return &APIClient{
-		tr: tr, workdir: workdir, noWorkspace: settings.noWorkspace,
-		workspaceAlias: settings.workspaceAlias, teammate: teammate,
+		endpoint: normalizedEndpoint(endpoint), tr: tr, workdir: workdir,
+		noWorkspace: settings.noWorkspace, workspaceAlias: settings.workspaceAlias, teammate: teammate,
 		defaultProject: strings.TrimSpace(cfg.DefaultProject),
 	}, nil
 }
@@ -246,16 +268,31 @@ func (c *APIClient) project(ctx context.Context, name string) (projectRef, error
 	if name == "" {
 		return projectRef{}, ErrNoBinding
 	}
-	var list gen.ListProjectsResponseBody
-	if _, err := c.tr.do(ctx, http.MethodGet, "/api/v1/projects", nil, nil, nil, &list, http.StatusOK); err != nil {
+	projects, err := c.refreshProjects(ctx)
+	if err != nil {
 		return projectRef{}, err
 	}
+	project, ok := projects[name]
+	if !ok {
+		return projectRef{}, fmt.Errorf("%w: %q", ErrProjectNotFound, name)
+	}
+	return project, nil
+}
+
+// refreshProjects reads active project identities without caching them. A
+// project may have been deleted and recreated under the same name.
+func (c *APIClient) refreshProjects(ctx context.Context) (map[string]projectRef, error) {
+	var list gen.ListProjectsResponseBody
+	if _, err := c.tr.do(ctx, http.MethodGet, "/api/v1/projects", nil, nil, nil, &list, http.StatusOK); err != nil {
+		return nil, err
+	}
+	projects := make(map[string]projectRef, len(list.Projects))
 	for _, project := range list.Projects {
-		if project.Name == name && project.Active && project.DeletedAt == nil {
-			return projectRef{Name: project.Name, ID: project.ID, UID: project.UID}, nil
+		if project.Active && project.DeletedAt == nil {
+			projects[project.Name] = projectRef{Name: project.Name, ID: project.ID, UID: project.UID}
 		}
 	}
-	return projectRef{}, fmt.Errorf("%w: %q", ErrProjectNotFound, name)
+	return projects, nil
 }
 
 func (c *APIClient) selectProjectRef(ctx context.Context, project string) (projectRef, ServerInfo, error) {
@@ -329,13 +366,17 @@ func (c *APIClient) issuesPath(ctx context.Context, project string) (string, pro
 	return "/api/v1/projects/" + strconv.FormatInt(resolved.ID, 10) + "/issues", resolved, info, nil
 }
 
-func (c *APIClient) listPage(ctx context.Context, path string, query url.Values) (gen.ListIssuesResponseBody, error) {
-	var page gen.ListIssuesResponseBody
+func (c *APIClient) listPage(ctx context.Context, path string, query url.Values) (apiIssueListPage, []gen.IssueOut, error) {
+	var page apiIssueListPage
 	_, err := c.tr.do(ctx, http.MethodGet, path, query, nil, nil, &page, http.StatusOK)
-	if err == nil && page.Issues == nil {
-		err = fmt.Errorf("%w: the issue list has no issues array", ErrInvalidResponse)
+	if err != nil {
+		return apiIssueListPage{}, nil, err
 	}
-	return page, err
+	issues, err := page.decodeIssues()
+	if err != nil {
+		return apiIssueListPage{}, nil, err
+	}
+	return page, issues, nil
 }
 
 // List returns issues filtered by status (default "open") for the bound
@@ -362,20 +403,23 @@ func (c *APIClient) ListProject(ctx context.Context, project string, opts ListOp
 	query := url.Values{"status": {status}}
 	if !opts.Unlimited {
 		query.Set("limit", strconv.Itoa(apiDefaultListLimit))
-		page, err := c.listPage(ctx, path, query)
+		_, issues, err := c.listPage(ctx, path, query)
 		if err != nil {
 			return nil, err
 		}
-		return issuesFromAPI(page.Issues), nil
+		return issuesFromAPI(issues), nil
 	}
 	if !schemaAtLeast(info.APISchemaVersion, PaginationAPISchemaVersion) {
 		// This server ignores a cursor but returns every issue when the limit
 		// is absent, as `kata list --limit 0` relies on.
-		page, err := c.listPage(ctx, path, query)
+		page, issues, err := c.listPage(ctx, path, query)
 		if err != nil {
 			return nil, err
 		}
-		return issuesFromAPI(page.Issues), nil
+		if page.Truncated || page.Complete != nil && !*page.Complete || page.NextCursor != nil && *page.NextCursor != "" {
+			return nil, fmt.Errorf("%w: legacy issue list is incomplete", ErrInvalidResponse)
+		}
+		return issuesFromAPI(issues), nil
 	}
 	// Cursors need a stable order and a page size: without a limit Kata returns
 	// every issue in one page and no cursor. Every page is read, so the page
@@ -385,13 +429,13 @@ func (c *APIClient) ListProject(ctx context.Context, project string, opts ListOp
 	var out []Issue
 	seen := map[string]bool{}
 	for {
-		page, err := c.listPage(ctx, path, query)
+		page, issues, err := c.listPage(ctx, path, query)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, issuesFromAPI(page.Issues)...)
+		out = append(out, issuesFromAPI(issues)...)
 		if page.NextCursor == nil || *page.NextCursor == "" {
-			if !page.Complete {
+			if page.Complete == nil || !*page.Complete || page.Truncated {
 				return nil, fmt.Errorf("%w: the issue list ended without a complete page", ErrInvalidResponse)
 			}
 			return out, nil
@@ -410,7 +454,9 @@ func issuesFromAPI(issues []gen.IssueOut) []Issue {
 	for _, issue := range issues {
 		out = append(out, Issue{
 			ShortID: issue.ShortID, QualifiedID: issue.QualifiedID, Title: issue.Title, Body: issue.Body,
-			Status: issue.Status, Labels: issue.Labels, Parent: peerFromAPI(issue.Parent),
+			UID: issue.UID, ProjectUID: str(issue.ProjectUID), Metadata: issue.Metadata,
+			Attribution: attributionOf(issue.Author, issue.Teammate, issue.SourceActor, issue.AccountableActor),
+			Status:      issue.Status, Labels: issue.Labels, Parent: peerFromAPI(issue.Parent),
 			Blocks: peersFromAPI(issue.Blocks), BlockedBy: peersFromAPI(issue.BlockedBy), Related: peersFromAPI(issue.Related),
 		})
 	}
@@ -454,17 +500,22 @@ func splitRef(ref string) (project, id string, err error) {
 // Show returns one issue by short ID, UID, or project#short ID, with its
 // comments.
 func (c *APIClient) Show(ctx context.Context, ref string) (Issue, error) {
+	return c.showIssue(ctx, ref, false)
+}
+
+func (c *APIClient) showIssue(ctx context.Context, ref string, complete bool) (Issue, error) {
 	project, id, err := splitRef(ref)
 	if err != nil {
 		return Issue{}, err
 	}
-	shown, resolved, err := c.show(ctx, project, id, nil)
+	shown, resolved, err := c.readShow(ctx, project, id, nil, complete)
 	if err != nil {
 		return Issue{}, err
 	}
 	iss := Issue{
 		ShortID: shown.Issue.ShortID, QualifiedID: resolved.Name + "#" + shown.Issue.ShortID, Title: shown.Issue.Title,
-		Body: shown.Issue.Body, Status: shown.Issue.Status, UID: shown.Issue.UID,
+		Body: shown.Issue.Body, Status: shown.Issue.Status, UID: shown.Issue.UID, Metadata: shown.Issue.Metadata,
+		Attribution:       attributionOf(shown.Issue.Author, shown.Issue.Teammate, shown.Issue.SourceActor, shown.Issue.AccountableActor),
 		ProjectUID:        cmp.Or(str(shown.Issue.ProjectUID), resolved.UID),
 		Comments:          commentsFromAPI(shown.Comments),
 		CommentsTruncated: shown.CommentsTruncated != nil && *shown.CommentsTruncated,
@@ -487,17 +538,36 @@ func (c *APIClient) Show(ctx context.Context, ref string) (Issue, error) {
 // show reads one issue with query, and checks Kata answered with the issue
 // that was asked for.
 func (c *APIClient) show(ctx context.Context, project, id string, query url.Values) (gen.ShowIssueResponseBody, projectRef, error) {
+	return c.readShow(ctx, project, id, query, false)
+}
+
+func (c *APIClient) readShow(ctx context.Context, project, id string, query url.Values, complete bool) (gen.ShowIssueResponseBody, projectRef, error) {
 	path, resolved, _, err := c.issuesPath(ctx, project)
 	if err != nil {
 		return gen.ShowIssueResponseBody{}, projectRef{}, err
 	}
-	return c.showAt(ctx, path, resolved, id, query)
+	return c.readShowAt(ctx, path, resolved, id, query, complete)
 }
 
 func (c *APIClient) showAt(ctx context.Context, path string, resolved projectRef, id string, query url.Values) (gen.ShowIssueResponseBody, projectRef, error) {
-	var shown gen.ShowIssueResponseBody
-	if _, err := c.tr.do(ctx, http.MethodGet, path+"/"+id, query, nil, nil, &shown, http.StatusOK); err != nil {
+	return c.readShowAt(ctx, path, resolved, id, query, false)
+}
+
+func (c *APIClient) readShowAt(ctx context.Context, path string, resolved projectRef, id string, query url.Values, complete bool) (gen.ShowIssueResponseBody, projectRef, error) {
+	var response apiShowResponse
+	if _, err := c.tr.do(ctx, http.MethodGet, path+"/"+id, query, nil, nil, &response, http.StatusOK); err != nil {
 		return gen.ShowIssueResponseBody{}, projectRef{}, err
+	}
+	shown := response.shown
+	if complete {
+		for _, comment := range shown.Comments {
+			if !boundedReceiptUID(comment.UID) {
+				return gen.ShowIssueResponseBody{}, projectRef{}, fmt.Errorf("%w: comment has an invalid UID", ErrInvalidResponse)
+			}
+		}
+	}
+	if complete && (!response.commentsArray || shown.CommentsTruncated != nil && *shown.CommentsTruncated) {
+		return gen.ShowIssueResponseBody{}, projectRef{}, fmt.Errorf("%w: issue comments are incomplete", ErrInvalidResponse)
 	}
 	if !strings.EqualFold(shown.Issue.ShortID, id) && !strings.EqualFold(shown.Issue.UID, id) {
 		return gen.ShowIssueResponseBody{}, projectRef{}, fmt.Errorf("%w: Kata returned a different issue than %q", ErrInvalidResponse, id)
@@ -540,21 +610,19 @@ func attributionOf(author string, teammate, source, accountable *string) Attribu
 // The project is the request's, else the workspace binding, else the default.
 // A look-alike soft block is surfaced as an error, as with the kata CLI.
 func (c *APIClient) Create(ctx context.Context, req CreateReq) (CreateResult, error) {
-	if strings.TrimSpace(req.Title) == "" {
-		return CreateResult{}, fmt.Errorf("%w: title is required", ErrRequestRejected)
+	body, err := createRequest(req)
+	if err != nil {
+		return CreateResult{}, err
 	}
 	if !httpguts.ValidHeaderFieldValue(req.IdempotencyKey) {
 		return CreateResult{}, fmt.Errorf("%w: invalid idempotency key", ErrRequestRejected)
 	}
+	if err := ValidateRequestSize(body); err != nil {
+		return CreateResult{}, err
+	}
 	path, project, _, err := c.issuesPath(ctx, req.Project)
 	if err != nil {
 		return CreateResult{}, err
-	}
-	body := gen.CreateIssueRequestBody{
-		Actor: new(WriteActor), Title: req.Title, Body: &req.Body, Labels: req.Labels,
-	}
-	if req.Priority != nil {
-		body.Priority = new(int64(*req.Priority))
 	}
 	var header http.Header
 	if req.IdempotencyKey != "" {
@@ -645,8 +713,8 @@ func (c *APIClient) Comment(ctx context.Context, req CommentReq) (CommentResult,
 		return CommentResult{}, classifyCommentError(err)
 	}
 	comment := commentFromAPI(commentOutOf(posted.Comment))
-	if comment.UID == "" {
-		return CommentResult{}, fmt.Errorf("%w: comment has no UID", ErrInvalidResponse)
+	if !boundedReceiptUID(comment.UID) {
+		return CommentResult{}, fmt.Errorf("%w: comment has an invalid UID", ErrInvalidResponse)
 	}
 	// A server that ignored the reply fields would have stored a plain comment.
 	if comment.Kind != req.Kind || !strings.EqualFold(comment.ReplyTo, req.ReplyTo) {
@@ -654,7 +722,8 @@ func (c *APIClient) Comment(ctx context.Context, req CommentReq) (CommentResult,
 			ErrInvalidResponse, comment.Kind, comment.ReplyTo, req.Kind, req.ReplyTo)
 	}
 	return CommentResult{
-		UID: comment.UID, Changed: posted.Changed, Kind: comment.Kind, ReplyTo: comment.ReplyTo, Attribution: comment.Attribution,
+		UID: comment.UID, Body: comment.Body, EditedAt: comment.EditedAt, Changed: posted.Changed,
+		Kind: comment.Kind, ReplyTo: comment.ReplyTo, Attribution: comment.Attribution,
 	}, nil
 }
 

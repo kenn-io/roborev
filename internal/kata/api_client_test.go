@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -24,7 +25,6 @@ import (
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/kata/katafake"
 	"go.kenn.io/roborev/internal/testenv"
-	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestMain(m *testing.M) {
@@ -54,6 +54,14 @@ func namedWorkspace(t *testing.T, project string) string {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, ".kata.local.toml"), []byte("version = 1\n[project]\nname = \""+project+"\"\n"), 0o600))
 	}
 	return dir
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.CommandContext(t.Context(), "git", args...)
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(output))
 }
 
 func TestNewAPIClientFailsExplicitlyOnABadConfiguration(t *testing.T) {
@@ -204,7 +212,7 @@ func TestAPIClientListMapsIssuesAndSendsFilters(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, issues, 1)
 	assert.Equal(t, Issue{
-		ShortID: "abc4", QualifiedID: "reviews#abc4", Title: "Title", Body: "Body", Status: "open", Labels: []string{"bug", "p1"},
+		ShortID: "abc4", QualifiedID: "reviews#abc4", UID: "I0000000000000000000000001", ProjectUID: "P0000000000000000000000007", Title: "Title", Body: "Body", Status: "open", Labels: []string{"bug", "p1"}, Metadata: map[string]any{}, Attribution: Attribution{Author: "someone"},
 		Parent:    &LinkPeer{ShortID: "par1", Project: "reviews", QualifiedID: "reviews#par1", Status: "open"},
 		Blocks:    []LinkPeer{{ShortID: "b1", Project: "other", QualifiedID: "other#b1", Status: "open"}},
 		BlockedBy: []LinkPeer{{ShortID: "b2", Project: "reviews", QualifiedID: "reviews#b2", Status: "closed"}},
@@ -721,10 +729,11 @@ func TestAPIClientRegisteredAliasSelection(t *testing.T) {
 // Selecting by the stale file name, another remote, or an unnormalized URL
 // must not direct a request at the old project.
 func TestAPIClientRegisteredGitAlias(t *testing.T) {
-	repo := testutil.NewTestRepo(t)
-	repo.RunGit("remote", "add", "backup", "https://code.example/other/repo.git")
-	repo.RunGit("remote", "add", "origin", "git@code.example:Team/Review%20Repo.git")
-	repo.WriteFile(".kata.toml", "version = 1\n[project]\nname = \"reviews\"\n")
+	repo := t.TempDir()
+	runGit(t, repo, "init", "--quiet")
+	runGit(t, repo, "remote", "add", "backup", "https://code.example/other/repo.git")
+	runGit(t, repo, "remote", "add", "origin", "git@code.example:Team/Review%20Repo.git")
+	require.NoError(t, os.WriteFile(filepath.Join(repo, ".kata.toml"), []byte("version = 1\n[project]\nname = \"reviews\"\n"), 0o600))
 	f := katafake.New(t)
 	f.Override = func(w http.ResponseWriter, r *http.Request) bool {
 		if r.URL.Path != "/api/v1/projects/resolve" {
@@ -738,7 +747,7 @@ func TestAPIClientRegisteredGitAlias(t *testing.T) {
 		}})
 		return true
 	}
-	b, err := apiClientFor(t, f, repo.Root).Binding(t.Context())
+	b, err := apiClientFor(t, f, repo).Binding(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, "other", b.Project)
 	reqs := f.Requests()

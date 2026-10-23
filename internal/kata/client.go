@@ -407,6 +407,9 @@ func qualifiedLinkPeerID(peer LinkPeer) string {
 
 // Create files an issue, piping the body over stdin via --body-stdin.
 func (c *CLIClient) Create(ctx context.Context, req CreateReq) (CreateResult, error) {
+	if len(req.Metadata) > 0 {
+		return CreateResult{}, ErrMetadataUnsupported
+	}
 	args := []string{"create", req.Title, "--json", "--body-stdin"}
 	if req.Project != "" {
 		args = append(args, "--project", req.Project)
