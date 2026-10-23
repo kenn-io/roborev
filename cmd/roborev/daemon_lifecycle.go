@@ -509,6 +509,10 @@ func stopDaemon() error {
 	return stopDaemonRuntimes(daemon.ListAllRuntimes, daemon.KillDaemon, os.Stderr)
 }
 
+func stopJudgedDaemons() error {
+	return stopDaemonRuntimes(listJudgedRuntimes, daemon.KillDaemon, os.Stderr)
+}
+
 func stopDaemonRuntimes(list func() ([]*daemon.RuntimeInfo, error), drain func(*daemon.RuntimeInfo) error, out io.Writer) error {
 	runtimes, err := list()
 	if err != nil {
