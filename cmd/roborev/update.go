@@ -183,7 +183,7 @@ func runtimePIDSet() (map[int]struct{}, error) {
 	}
 	pids := make(map[int]struct{}, len(runtimes))
 	for _, info := range runtimes {
-		if info != nil && !info.Unjudged() && info.PID > 0 {
+		if info != nil && !info.Unjudged() && info.PID > 0 && !info.Stale() {
 			pids[info.PID] = struct{}{}
 		}
 	}
@@ -730,7 +730,7 @@ func discoverDaemonForUpdate() (*daemon.RuntimeInfo, error) {
 		if runtimeInfo.Unjudged() {
 			return nil, fmt.Errorf("%w %d: runs in another PID namespace; update from there, or remove %s if that daemon is gone", daemon.ErrUnjudgedRuntime, runtimeInfo.PID, runtimeInfo.SourcePath)
 		}
-		if isPIDAliveForUpdate(runtimeInfo.PID) {
+		if !runtimeInfo.Stale() {
 			return nil, fmt.Errorf("running daemon is not responsive: %w", probeErr)
 		}
 		if runtimeInfo.SourcePath != "" {

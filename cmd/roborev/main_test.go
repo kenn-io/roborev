@@ -1097,22 +1097,23 @@ func TestWaitForDaemonExitRuntimeGonePIDReusedAsNonDaemonExits(t *testing.T) {
 
 func TestWaitForDaemonExitDetectsUnresponsiveManagerHandoffFromRuntimePID(t *testing.T) {
 	stubRestartVars(t)
+	replacementPID := os.Getpid()
 
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		return nil, os.ErrNotExist
 	}
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
 		return []*daemon.RuntimeInfo{
-			{PID: 200, Address: "127.0.0.1:7373"},
+			{PID: replacementPID, Address: "127.0.0.1:7373"},
 		}, nil
 	}
 	isPIDAliveForUpdate = func(pid int) bool {
-		return pid == 200
+		return pid == replacementPID
 	}
 
 	exited, newPID := waitForDaemonExit(100, 5*time.Millisecond)
 	require.True(t, exited, "expected exited=true when previous pid is gone")
-	assert.Equal(t, 200, newPID)
+	assert.Equal(t, replacementPID, newPID)
 }
 
 func TestInitialPIDsExitedRequiresPIDDeath(t *testing.T) {
@@ -1157,6 +1158,7 @@ func TestInitialPIDsExitedAllowsManagerPID(t *testing.T) {
 
 func TestRestartDaemonAfterUpdateManagerHandoffUnresponsiveUsesRuntimePID(t *testing.T) {
 	s := stubRestartVars(t)
+	replacementPID := os.Getpid()
 
 	var getCalls int
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
@@ -1179,11 +1181,11 @@ func TestRestartDaemonAfterUpdateManagerHandoffUnresponsiveUsesRuntimePID(t *tes
 		}
 		// Runtime handoff to manager-restarted PID.
 		return []*daemon.RuntimeInfo{
-			{PID: 200, Address: "127.0.0.1:7373"},
+			{PID: replacementPID, Address: "127.0.0.1:7373"},
 		}, nil
 	}
 	isPIDAliveForUpdate = func(pid int) bool {
-		return pid == 200
+		return pid == replacementPID
 	}
 
 	output := captureStdout(t, func() {
@@ -1214,18 +1216,18 @@ func TestRestartDaemonAfterUpdateStopFailedPreviousPIDExitedButInitialPIDLingeri
 			// Initial snapshot includes multiple daemon PIDs.
 			return []*daemon.RuntimeInfo{
 				{PID: 100, Address: "127.0.0.1:7373"},
-				{PID: 101, Address: "127.0.0.1:7373"},
+				{PID: os.Getpid(), Address: "127.0.0.1:7373"},
 			}, nil
 		case 1:
 			// waitForDaemonExit still sees previous PID.
 			return []*daemon.RuntimeInfo{
 				{PID: 100, Address: "127.0.0.1:7373"},
-				{PID: 101, Address: "127.0.0.1:7373"},
+				{PID: os.Getpid(), Address: "127.0.0.1:7373"},
 			}, nil
 		default:
 			// previousPID gone, but another initial PID lingers.
 			return []*daemon.RuntimeInfo{
-				{PID: 101, Address: "127.0.0.1:7373"},
+				{PID: os.Getpid(), Address: "127.0.0.1:7373"},
 			}, nil
 		}
 	}
@@ -1275,7 +1277,7 @@ func TestRestartDaemonAfterUpdateStopFailedInitialSnapshotErrorWithLingeringRunt
 		default:
 			// Verification after stop failure finds another lingering runtime.
 			return []*daemon.RuntimeInfo{
-				{PID: 101, Address: "127.0.0.1:7373"},
+				{PID: os.Getpid(), Address: "127.0.0.1:7373"},
 			}, nil
 		}
 	}

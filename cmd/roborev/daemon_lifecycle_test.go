@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -62,10 +63,12 @@ func TestStopDaemonRuntimesSkipsUnjudged(t *testing.T) {
 			if local {
 				require.NoError(t, err)
 				assert.Equal(t, []*daemon.RuntimeInfo{localInfo}, drained)
+				assert.Equal(t, 1, strings.Count(out.String(), "Waiting for daemon shutdown"))
 			} else {
 				require.ErrorContains(t, err, "cannot judge daemon PID")
 				require.ErrorIs(t, err, daemon.ErrUnjudgedRuntime)
 				assert.Empty(t, drained)
+				assert.NotContains(t, out.String(), "Waiting for daemon shutdown")
 				assert.NotContains(t, out.String(), err.Error())
 			}
 			assert.FileExists(t, path)

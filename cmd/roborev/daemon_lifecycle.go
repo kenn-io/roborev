@@ -525,10 +525,9 @@ func stopDaemonRuntimes(list func() ([]*daemon.RuntimeInfo, error), drain func(*
 	var skippedErr error
 	var skippedMessages []string
 	for _, info := range runtimes {
-		fmt.Fprintln(
-			out,
-			"Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...",
-		)
+		if !info.Unjudged() {
+			fmt.Fprintln(out, "Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...")
+		}
 		if err := drain(info); err != nil {
 			if errors.Is(err, daemon.ErrUnjudgedRuntime) {
 				skippedMessages = append(skippedMessages, fmt.Sprintf("Skipping daemon (pid %d): %v", info.PID, err))

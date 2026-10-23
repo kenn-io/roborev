@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -394,17 +395,14 @@ func TestUpdateCommandCancelDuringHookRepairSuppressesSuccess(t *testing.T) {
 
 func TestDiscoverDaemonForUpdateRemovesDeadRuntime(t *testing.T) {
 	stubUpdateCommand(t)
-	oldAlive := isPIDAliveForUpdate
-	t.Cleanup(func() { isPIDAliveForUpdate = oldAlive })
 	runtimePath := filepath.Join(t.TempDir(), "daemon.json")
 	require.NoError(t, os.WriteFile(runtimePath, []byte("{}"), 0o600))
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		return nil, errors.New("probe failed")
 	}
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		return []*daemon.RuntimeInfo{{PID: 42, SourcePath: runtimePath}}, nil
+		return []*daemon.RuntimeInfo{{PID: math.MaxInt32, SourcePath: runtimePath}}, nil
 	}
-	isPIDAliveForUpdate = func(int) bool { return false }
 
 	info, err := discoverDaemonForUpdate()
 
