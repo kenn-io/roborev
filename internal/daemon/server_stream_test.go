@@ -15,6 +15,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 // startStreamHandler starts the stream handler in a goroutine and waits for subscription.
@@ -482,4 +485,28 @@ func TestHandleStreamEvents(t *testing.T) {
 			}
 		})
 	})
+}
+
+func TestServerShutdownCancelsActiveEventStream(t *testing.T) {
+	db, _ := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	cfg.ServerAddr = "127.0.0.1:0"
+	cfg.MaxWorkers = 0
+	server := NewServer(db, cfg, "")
+	errCh, runtime := startServerAndWaitForRuntime(t, server)
+	t.Cleanup(func() { _ = server.httpServer.Close() })
+
+	initialSubscribers := server.broadcaster.SubscriberCount()
+	response, err := http.Get("http://" + runtime.Address + "/api/stream/events")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = response.Body.Close() })
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	assert.Greater(t, server.broadcaster.SubscriberCount(), initialSubscribers)
+
+	stopped := make(chan error, 1)
+	go func() { stopped <- server.Stop() }()
+	// Wall-clock wait: real daemon listener shutdown with an open stream.
+	require.Eventually(t, func() bool { return len(stopped) == 1 }, time.Second, 10*time.Millisecond)
+	require.NoError(t, <-stopped)
+	assert.NoError(t, <-errCh)
 }
