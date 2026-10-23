@@ -342,13 +342,15 @@ func FindUnjudgedDaemon() (*RuntimeInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	clientAuth, err := loadClientAuth()
-	if err != nil {
-		return nil, err
-	}
-	clientAuth.Key = ""
-	return discoverRuntimeRecords(context.Background(), records, (*RuntimeInfo).Unjudged,
+	return discoverRuntimeRecords(context.Background(), records, func(info *RuntimeInfo) bool {
+		return info.Unjudged() && !info.hasStaleProcess()
+	},
 		func(ctx context.Context, ep DaemonEndpoint) (*PingInfo, error) {
+			clientAuth, err := loadClientAuth()
+			if err != nil {
+				return nil, err
+			}
+			clientAuth.Key = ""
 			return probeRuntimeRecordWithAuth(ctx, ep, clientAuth)
 		})
 }
