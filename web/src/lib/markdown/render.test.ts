@@ -206,6 +206,13 @@ describe("renderMarkdown code highlighting", () => {
     expect(html).toContain("--shiki-dark:");
   });
 
+  it("keeps Shiki token colors when a font hint sits beside them", async () => {
+    const html = await renderMarkdown("```diff\n@@ -1 +1 @@\n```");
+
+    expect(html).toContain("--shiki-light:#");
+    expect(html).not.toContain("font-weight");
+  });
+
   it("removes raw style elements", async () => {
     const html = await renderMarkdown(
       "<svg><style>body { display: none }</style><text>Review output</text></svg>",
