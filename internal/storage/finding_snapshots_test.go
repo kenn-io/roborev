@@ -341,7 +341,7 @@ func TestOpenCreatesFindingSnapshotsOnce(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
-	assert.Equal(t, []int{1, 2, 3, 4, 5, 6}, appliedVersions(t, db))
+	assert.Equal(t, []int{1, 2, 3, 4, 5, 6, 7}, appliedVersions(t, db))
 
 	// The migration is safe to run again after an interruption.
 	require.NoError(t, migrateFindingSnapshots(context.Background(), db))

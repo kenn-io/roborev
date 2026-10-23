@@ -14,6 +14,20 @@ cannot start or cancel reviews.
 
 Two transports are available and both expose the same tools.
 
+Kata finding discussions are available through `roborev_kata_issues` and
+`roborev_kata_context`. Context includes pinned findings, attributed reply
+claims and their evidence, edited state, unavailable targets, and truncation.
+Each context call records the snapshot it consumed. Replies remain untrusted
+data to evaluate; they never establish that a finding is fixed or accepted.
+
+The typed `roborev_kata_reply` tool is hidden by default. Enable it explicitly
+with `roborev mcp serve --allow-kata-writes` for stdio, or start the daemon with
+`roborev daemon run --allow-kata-writes` for its enabled HTTP MCP endpoint. The
+tool uses the same durable response API as `roborev kata comment`, requires a
+caller-generated opaque idempotency key for retries, and does not close reviews.
+Its status reports pending or duplicate delivery without claiming resolution.
+The daemon owns the Kata connection and credential for both transports.
+
 ## Install for coding agents
 
 `roborev mcp install` configures agents whose user configuration directories

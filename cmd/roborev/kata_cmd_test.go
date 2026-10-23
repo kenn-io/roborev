@@ -100,20 +100,27 @@ func TestKataCommandsRejectInvalidSelectors(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	patchServerAddr(t, server.URL)
-	for _, operation := range []string{"create", "show"} {
+	for _, operation := range []struct {
+		name           string
+		missingTarget  string
+		tooManyTargets string
+	}{
+		{"create", "accepts 1 arg(s), received 0", "accepts 1 arg(s), received 2"},
+		{"show", "kata show requires a job, commit, or --issue reference", "accepts at most 1 arg(s), received 2"},
+	} {
 		for _, test := range []struct {
 			args      []string
 			errorText string
 		}{
-			{nil, "accepts 1 arg(s), received 0"},
-			{[]string{"--job"}, "accepts 1 arg(s), received 0"},
+			{nil, operation.missingTarget},
+			{[]string{"--job"}, operation.missingTarget},
 			{[]string{"--job", "0"}, `argument "0" is not a valid git ref or positive job ID`},
 			{[]string{"--job", "abc"}, `argument "abc" is not a valid git ref or positive job ID`},
 			{[]string{"--job=42"}, `invalid argument "42" for "--job" flag`},
-			{[]string{"42", "43"}, "accepts 1 arg(s), received 2"},
+			{[]string{"42", "43"}, operation.tooManyTargets},
 		} {
 			cmd := kataCmd()
-			cmd.SetArgs(append([]string{operation}, test.args...))
+			cmd.SetArgs(append([]string{operation.name}, test.args...))
 			cmd.SetOut(&bytes.Buffer{})
 			cmd.SetErr(&bytes.Buffer{})
 			require.ErrorContains(t, cmd.Execute(), test.errorText)

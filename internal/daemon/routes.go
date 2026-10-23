@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/roborev/internal/backfill"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/version"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 var configureHumaOnce sync.Once
@@ -31,6 +32,11 @@ func humaConfig(title string) huma.Config {
 	cfg.Components.Schemas = huma.NewMapRegistry("#/components/schemas/", func(t reflect.Type, hint string) string {
 		if t == reflect.TypeFor[agenthook.Response]() {
 			return "AgentHookResponse"
+		}
+		if t == reflect.TypeFor[structuredreview.Finding]() {
+			// The structured-output contract registers its own canonical schema;
+			// the pinned storage representation needs a distinct reflection name.
+			return "KataPinnedFinding"
 		}
 		return huma.DefaultSchemaNamer(t, hint)
 	})
@@ -338,6 +344,15 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Tags = []string{"daemon"}
 		})
 
+	huma.Get(api, "/api/kata/context", s.humaKataContext, func(o *huma.Operation) {
+		o.OperationID = "kata-context"
+		o.Tags = []string{"kata"}
+	})
+	huma.Post(api, "/api/kata/context", s.humaKataConsumeContext, func(o *huma.Operation) {
+		o.OperationID = "kata-consume-context"
+		o.Tags = []string{"kata"}
+		o.MaxBodyBytes = -1
+	})
 	huma.Post(api, "/api/kata/response", s.humaKataResponse, func(o *huma.Operation) {
 		o.OperationID = "kata-response"
 		o.Tags = []string{"kata"}

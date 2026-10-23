@@ -68,6 +68,12 @@ func decodeValue(value any) (Envelope, error) {
 	return DecodeEnvelope(data)
 }
 
+// PublicationLedger validates a read-back issue against the original frozen
+// publication. It never changes the issue, receipts or local handoff.
+func PublicationLedger(issue kata.Issue, req Request, state State) (Envelope, error) {
+	return readEnvelope(issue, req, state)
+}
+
 func readEnvelope(issue kata.Issue, req Request, state State) (Envelope, error) {
 	fingerprint, err := Fingerprint(req)
 	if err != nil {

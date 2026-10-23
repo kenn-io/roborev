@@ -521,11 +521,18 @@ func str(s *string) string {
 }
 
 func commentFromAPI(c gen.CommentOut) Comment {
+	verification := ""
+	if c.Verification != nil {
+		verification = string(*c.Verification)
+	}
 	return Comment{
 		UID: c.UID, Handle: str(c.Handle), IssueUID: str(c.IssueUID), Body: c.Body,
 		CreatedAt: c.CreatedAt, EditedAt: c.EditedAt,
 		ReplyTo: str(c.ReplyToUID), Kind: CommentKind(str(c.ReplyKind)),
-		Attribution: attributionOf(c.Author, c.Teammate, c.SourceActor, c.AccountableActor),
+		Reply: c.Reply, Backlinks: c.Backlinks,
+		BacklinksTruncated: c.BacklinksTruncated != nil && *c.BacklinksTruncated,
+		Verification:       verification,
+		Attribution:        attributionOf(c.Author, c.Teammate, c.SourceActor, c.AccountableActor),
 	}
 }
 

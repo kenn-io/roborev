@@ -344,7 +344,7 @@ func (b *HTTPBackend) getJSON(call func(*roborevclient.Client) (*http.Response, 
 		return NewError(ErrorCodeUnavailable, fmt.Sprintf("roborev daemon request failed: %v", err))
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusAccepted {
 		return httpStatusError(resp)
 	}
 	if err := json.UnmarshalRead(resp.Body, out); err != nil {
