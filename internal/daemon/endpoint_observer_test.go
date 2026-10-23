@@ -133,7 +133,7 @@ func TestClientResponseObserverUnixSocket(t *testing.T) {
 			return
 		}
 		observedEP = ep
-		telemetry.PostAppOpened(context.Background(), ep.HTTPClient(0), ep.BaseURL()+TelemetryEventsPath, telemetry.SurfaceCLI)
+		new(telemetry.ClientGate).PostAppOpened(context.Background(), ep.HTTPClient(0), ep.BaseURL()+TelemetryEventsPath, telemetry.SurfaceCLI)
 	})
 	t.Cleanup(func() { SetClientResponseObserver(nil) })
 

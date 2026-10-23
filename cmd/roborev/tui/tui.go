@@ -144,6 +144,7 @@ type model struct {
 	expandedPanels       map[uuid.UUID]bool                // panel_run_uuid -> expanded
 	panelMembers         map[uuid.UUID][]storage.ReviewJob // panel_run_uuid -> side-fetched members
 	currentView          viewKind
+	telemetryGate        *telemetry.ClientGate
 	reviewReadSent       bool     // review_viewed issued on screenDay
 	screenDay            string   // UTC day that screensSent covers
 	screensSent          []string // screen requests issued on screenDay
@@ -914,6 +915,7 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		jobs:                []storage.ReviewJob{},
 		currentView:         viewQueue,
 		screenDay:           time.Now().UTC().Format(time.DateOnly),
+		telemetryGate:       new(telemetry.ClientGate),
 		screensSent:         []string{viewQueue.String()}, // Init reports the queue
 		width:               80,                           // sensible defaults until we get WindowSizeMsg
 		height:              24,
@@ -1086,6 +1088,12 @@ func uniqueJobRepoPaths(jobs []storage.ReviewJob) []string {
 // if the stored branch is empty and the repo is available locally.
 // Results are cached to avoid repeated git calls on render.
 func (m *model) getBranchForJob(job storage.ReviewJob) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	return m.getBranchForJobCtx(ctx, job)
+}
+
+func (m *model) getBranchForJobCtx(ctx context.Context, job storage.ReviewJob) string {
 	// Use stored branch if available
 	if job.Branch != "" {
 		return job.Branch
@@ -1123,7 +1131,7 @@ func (m *model) getBranchForJob(job storage.ReviewJob) string {
 		sha = sha[idx+2:]
 	}
 
-	branch := git.GetBranchName(job.RepoPath, sha)
+	branch := git.GetBranchNameCtx(ctx, job.RepoPath, sha)
 	if branch == "" {
 		// The commit isn't reachable from any local branch - typically a
 		// commit made on top of a detached HEAD (e.g. mid git-bisect).

@@ -492,29 +492,29 @@ reports one `session_ended` with `surface` and `duration_bucket`: `under_1m`,
 across tab switches and excludes hidden time. A browser session is lost when the
 browser quits, crashes, or discards the tab before the page closes normally.
 
-The web UI also asks the daemon to report an `app_opened` event when it loads
-and on the first window focus of each later UTC day, and `roborev tui` asks each
-time it starts. CLI commands that work through the daemon ask after their first
-successful daemon request, without starting a daemon; hook, MCP and daemon
-management commands, and commands the bundled agent skills run with
-`--from-skill`, do not. Agent calls count separately as described below. The daemon sends at most one `app_opened` per surface
-per UTC day, so repeated opens on the same day count once, with the same install
-ID and default fields plus `surface` (`web`, `tui` or `cli`). The browser, the TUI and the CLI only talk to the daemon; the TUI and the
-CLI also send nothing when an opt-out variable is set in their own
-environment.
-The browser and TUI also report `screen_viewed` with a fixed `screen` name and
-`surface` of `web` or `tui`. Browser screens are `reviews` and `analytics`.
-TUI screens are `queue`, `review`, `prompt`, `filter`, `comment`,
-`commit-msg`, `help`, `log`, `tasks`, `worktree-confirm`, `patch`,
-`column-options`, `release-notes` and `rerun-agent`. Each screen counts once
-per install per UTC day across interfaces, including daemon restarts. Screen
-names contain no paths, job IDs, filter text or review contents.
-`review_viewed` counts a rendered review read once per installation, surface,
-and UTC day. It carries `surface=web|tui|cli`; the TUI requires key or mouse
-input before counting loaded content. `finding_fixed` counts each committed fix
-with `surface=tui|cli`, and `review_closed` counts each successful explicit close
-with `surface=web|tui|cli`. CLI actions require terminal output and exclude agents
-and `--from-skill`. Successful reopens and automatic closes stay silent.
+The web UI asks the daemon to report `app_opened` once per UTC day per browser
+profile, on load or focus. `roborev tui` asks each time it starts. CLI commands
+that work through the daemon ask after their first successful daemon request,
+without starting a daemon; hook, MCP and daemon management commands, and
+commands the bundled agent skills run with `--from-skill`, do not. Agent calls
+count separately as described below. The daemon sends at most one `app_opened`
+per surface per UTC day, so repeated opens on the same day count once, with the
+same install ID and default fields plus `surface` (`web`, `tui` or `cli`). The
+browser, the TUI and the CLI only talk to the daemon; the TUI and the CLI also
+send nothing when an opt-out variable is set in their own environment. The
+browser and TUI also report `screen_viewed` with a fixed `screen` name and
+`surface` of `web` or `tui`. Browser screens are `reviews` and `analytics`. TUI
+screens are `queue`, `review`, `prompt`, `filter`, `comment`, `commit-msg`,
+`help`, `log`, `tasks`, `worktree-confirm`, `patch`, `column-options`,
+`release-notes` and `rerun-agent`. Each screen counts once per install per UTC
+day across interfaces, including daemon restarts. Screen names contain no paths,
+job IDs, filter text or review contents. `review_viewed` counts a rendered
+review read once per installation, surface, and UTC day. It carries
+`surface=web|tui|cli`; the TUI requires key or mouse input before counting
+loaded content. `finding_fixed` counts each committed fix with
+`surface=tui|cli`, and `review_closed` counts each successful explicit close
+with `surface=web|tui|cli`. CLI actions require terminal output and exclude
+agents and `--from-skill`. Successful reopens and automatic closes stay silent.
 
 Anonymous telemetry also counts core action error banners and toasts in the web
 UI and TUI, and PostgreSQL sync outages. Failed closes and reopens both count.
@@ -528,12 +528,19 @@ Previews and search text are excluded.
 Daily screen and `review_viewed` claims share `telemetry-daily.json` beside the
 daemon database, wherever `--db` points, with a `telemetry-daily.json.lock`
 sidecar. Deleting the file resets its claims; existing SQLite claims remain
-effective through their recorded UTC dates. See [telemetry configuration](https://github.com/kenn-io/roborev/blob/main/docs/configuration.md#telemetry)
-for recovery instructions.
-Counts mean the report was queued, not confirmed delivered to PostHog.
-The TUI retries a failed screen report on the next key or mouse input while
-that screen is showing. The browser reports the visible screen on every window
-focus and page change, and the daemon counts it once per day.
+effective through their recorded UTC dates. See [telemetry
+configuration](https://github.com/kenn-io/roborev/blob/main/docs/configuration.md#telemetry)
+for recovery instructions. Counts mean the report was queued, not confirmed
+delivered to PostHog. The TUI retries a failed screen report on the next key or
+mouse input while that screen is showing. The browser sends each screen and
+review read once per UTC day per browser profile, across reloads and window
+focus returns. It keeps these daily telemetry claims in localStorage.
+
+After a `disabled` receipt, the browser sends nothing until a later UTC day's
+load or focus checks again. A TUI, CLI, or MCP process stops reporting until the
+next UTC day, a TUI reconnect, or its own restart. The agent-call route returns
+the same `disabled` or `queued` JSON receipt as the event route.
+
 Agent activity counts each MCP `tools/call`, including tool errors, and each
 invocation of `agent-hook run`, `agent-hook fix-done`, `post-commit`, `enqueue`,
 `remap`, or an eligible daemon command marked `--from-skill` after its first

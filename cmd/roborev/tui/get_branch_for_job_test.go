@@ -157,7 +157,7 @@ func TestGetBranchForJobReachableFromBranch(t *testing.T) {
 	}
 
 	m := newModel(localhostEndpoint, withExternalIODisabled())
-	got := m.getBranchForJob(job)
+	got := m.getBranchForJobCtx(t.Context(), job)
 
 	assert.NotEmpty(t, got)
 	assert.NotContains(t, got, "detached")

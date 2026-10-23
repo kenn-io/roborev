@@ -66,6 +66,9 @@ closed review, `no` for an open review, and `--` when no closed state is
 available. Panel member rows show `--` because the synthesis row owns the
 panel's closed state.
 
+Ref search previews results as you type. Press Enter to submit the current text
+immediately, without waiting for the preview delay.
+
 Select a column header to sort by that column; select it again to reverse the
 order. Numeric and time columns sort largest or newest first. Sorting reorders
 the jobs already loaded in the browser. While older jobs remain unloaded, a note
@@ -97,6 +100,9 @@ provides:
 - the persisted agent log and the exact stored prompt;
 - close or reopen, rerun, and eligible cancellation actions; and
 - review-output copying and a comment form.
+
+Mermaid diagrams in review output support pan and zoom. Resizing the review pane
+preserves the current view of the diagram.
 
 Hover over the review output to reveal the copy icon in its top-right corner. It
 copies the original Markdown, including headings, lists, links, and code blocks.

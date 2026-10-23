@@ -1,4 +1,4 @@
-FROM oven/bun:1.3.14-alpine AS web-builder
+FROM oven/bun:1.4.4-alpine AS web-builder
 
 RUN apk add --no-cache git
 
@@ -34,7 +34,7 @@ RUN CGO_ENABLED=0 go build \
     -ldflags="-X go.kenn.io/roborev/internal/version.Version=${VERSION}" \
     -o /roborev ./cmd/roborev
 
-FROM node:22-bookworm
+FROM node:22.23.4-bookworm
 
 # Install dependencies for freeze + tmux screenshots
 RUN apt-get update && \

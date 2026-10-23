@@ -14,10 +14,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/telemetry/posthog"
 
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -181,7 +183,7 @@ func TestPostAppOpened(t *testing.T) {
 		}))
 		t.Cleanup(srv.Close)
 
-		PostAppOpened(context.Background(), srv.Client(), srv.URL+"/api/telemetry/events", SurfaceCLI)
+		new(ClientGate).PostAppOpened(context.Background(), srv.Client(), srv.URL+"/api/telemetry/events", SurfaceCLI)
 		assert.Equal(http.MethodPost, method)
 		assert.Equal("/api/telemetry/events", path)
 		assert.Equal("application/json", contentType)
@@ -192,7 +194,7 @@ func TestPostAppOpened(t *testing.T) {
 		srv := httptest.NewServer(http.NotFoundHandler())
 		t.Cleanup(srv.Close)
 		assert.NotPanics(t, func() {
-			PostAppOpened(context.Background(), srv.Client(), srv.URL+"/api/telemetry/events", SurfaceCLI)
+			new(ClientGate).PostAppOpened(context.Background(), srv.Client(), srv.URL+"/api/telemetry/events", SurfaceCLI)
 		})
 
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -200,7 +202,7 @@ func TestPostAppOpened(t *testing.T) {
 		closedURL := "http://" + ln.Addr().String() + "/api/telemetry/events"
 		require.NoError(t, ln.Close())
 		assert.NotPanics(t, func() {
-			PostAppOpened(context.Background(), http.DefaultClient, closedURL, SurfaceCLI)
+			new(ClientGate).PostAppOpened(context.Background(), http.DefaultClient, closedURL, SurfaceCLI)
 		})
 	})
 
@@ -216,7 +218,7 @@ func TestPostAppOpened(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		PostAppOpened(ctx, srv.Client(), srv.URL+"/api/telemetry/events", SurfaceCLI)
+		new(ClientGate).PostAppOpened(ctx, srv.Client(), srv.URL+"/api/telemetry/events", SurfaceCLI)
 		mu.Lock()
 		defer mu.Unlock()
 		assert.Zero(t, hits)
@@ -299,6 +301,67 @@ func TestScreenViewedDailyClaims(t *testing.T) {
 			stored, err := db.GetSyncState("telemetry.screen.queue")
 			require.NoError(t, err)
 			assert.Equal(t, day, stored)
+		})
+	}
+}
+
+type gateTransport struct {
+	calls   int
+	status  int
+	receipt string
+	err     error
+}
+
+func (s *gateTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	s.calls++
+	if s.err != nil {
+		return nil, s.err
+	}
+	return &http.Response{StatusCode: s.status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(s.receipt))}, nil
+}
+
+func TestClientGateDisabledReceipt(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		transport := &gateTransport{status: http.StatusAccepted, receipt: `{"status":"disabled"}`}
+		client := &http.Client{Transport: transport}
+		gate := new(ClientGate)
+		post := func(g *ClientGate) (posthog.Status, error) {
+			return g.PostEvent(t.Context(), client, "http://example.com/api/telemetry/events", EventAppOpened, nil)
+		}
+		for range 3 {
+			status, err := post(gate)
+			require.NoError(t, err)
+			assert.Equal(posthog.StatusDisabled, status)
+		}
+		assert.Equal(1, transport.calls)
+		time.Sleep(24 * time.Hour)
+		_, err := post(gate)
+		require.NoError(t, err)
+		assert.Equal(2, transport.calls)
+		gate.Reset()
+		_, err = post(gate)
+		require.NoError(t, err)
+		assert.Equal(3, transport.calls)
+	})
+	for _, outcome := range []string{"error", "queued", "skipped"} {
+		t.Run(outcome, func(t *testing.T) {
+			transport := &gateTransport{status: http.StatusAccepted, receipt: `{"status":"` + outcome + `"}`}
+			if outcome == "error" {
+				transport.err = fmt.Errorf("network unavailable")
+				transport.receipt = ""
+			}
+			gate := new(ClientGate)
+			client := &http.Client{Transport: transport}
+			for range 2 {
+				_, err := gate.PostEvent(t.Context(), client, "http://example.com/api/telemetry/events", EventAppOpened, nil)
+				if outcome == "error" {
+					require.Error(t, err)
+				} else {
+					require.NoError(t, err)
+				}
+			}
+			assert.Equal(t, 2, transport.calls)
 		})
 	}
 }

@@ -94,7 +94,7 @@ need the browser application.
 ## Build from Source
 
 Building Roborev requires Go 1.27.3 or newer. The embedded browser application
-also requires Bun 1.3.14.
+also requires Bun 1.4.4.
 
 ```bash
 git clone https://github.com/kenn-io/roborev
@@ -129,6 +129,20 @@ This downloads and replaces the current binary with the latest release. Read the
 [changelog](/docs/changelog/) before updating, or press `U` in the terminal
 interface to read recent release notes. The browser application also has a
 release-notes viewer in its header.
+
+### Upgrading to 0.73.0
+
+Check these items before updating from 0.72.x or earlier:
+
+| If you use... | Upgrade action |
+| --- | --- |
+| A custom `[review.types.test-value]` definition | Rename or remove it in global and repository configuration before upgrading. `test-value` is now a built-in review type, so custom definitions cannot use that name. Update commands, panels, and other references if you rename it. See [Custom Review Types](/docs/advanced/custom-review-types/). |
+| Source builds | Use Go 1.27.3 or newer and Bun 1.4.4 for the embedded browser application. The Go update includes the certificate distrust fix for [CVE-2026-111943](https://pkg.go.dev/vuln/GO-2026-6809). |
+| Muse Code | Install Muse Code 1.4.10 or later and put `muse` on PATH, or set `muse_cmd`. For pay-as-you-go use, set `model = "muse-spark-1.3"`. See [Muse Code](/docs/agents/#muse-code). |
+
+If you are upgrading from 0.71.x or earlier, also follow the
+[0.72.0 database conversion steps](#upgrading-to-0720) below before starting the
+new daemon.
 
 ### Upgrading to 0.72.0
 

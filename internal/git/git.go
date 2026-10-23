@@ -2084,6 +2084,12 @@ func GetBranchName(repoPath, sha string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
+	return GetBranchNameCtx(ctx, repoPath, sha)
+}
+
+// GetBranchNameCtx returns a human-readable branch reference for a commit.
+// It uses the supplied context and returns an empty string on error.
+func GetBranchNameCtx(ctx context.Context, repoPath, sha string) string {
 	cmd := newGitCmdContext(ctx, "name-rev", "--name-only", "--refs=refs/heads/*", sha)
 	cmd.Dir = repoPath
 

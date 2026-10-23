@@ -19,7 +19,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	gansi "charm.land/glamour/v2/ansi"
 	gitrepo "go.kenn.io/kit/git/repo"
-	"go.kenn.io/kit/telemetry/posthog"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
@@ -402,7 +401,7 @@ func (m model) reportAppOpened() tea.Cmd {
 	}
 	client, url := m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath
 	return func() tea.Msg {
-		telemetry.PostAppOpened(m.apiContext(), client, url, telemetry.SurfaceTUI)
+		m.telemetryGate.PostAppOpened(m.apiContext(), client, url, telemetry.SurfaceTUI)
 		return nil
 	}
 }
@@ -420,7 +419,7 @@ func (m model) reportSessionEnded(elapsed time.Duration) {
 	var sends telemetry.SendGroup
 	sends.Go(func() {
 		defer cancel()
-		telemetry.PostSessionEnded(ctx, m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath, telemetry.SurfaceTUI, elapsed)
+		m.telemetryGate.PostSessionEnded(ctx, m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath, telemetry.SurfaceTUI, elapsed)
 	})
 	sends.Wait(telemetry.ExitWaitLimit)
 }
@@ -447,7 +446,7 @@ func (m model) postScreen(screen string) tea.Cmd {
 	client, url := m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath
 	day := time.Now().UTC().Format(time.DateOnly)
 	return func() tea.Msg {
-		err := telemetry.PostScreenViewed(m.apiContext(), client, url, screen, telemetry.SurfaceTUI)
+		err := m.telemetryGate.PostScreenViewed(m.apiContext(), client, url, screen, telemetry.SurfaceTUI)
 		return screenDeliveryMsg{screen: screen, day: day, err: err}
 	}
 }
@@ -1544,7 +1543,7 @@ func (m model) reportAction(event string, props map[string]any) tea.Cmd {
 			props = make(map[string]any)
 		}
 		props[telemetry.PropertySurface] = telemetry.SurfaceTUI
-		_, err := posthog.PostEvent(ctx, m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath, event, props)
+		_, err := m.telemetryGate.PostEvent(ctx, m.client, m.endpoint.BaseURL()+daemon.TelemetryEventsPath, event, props)
 		if event == telemetry.EventReviewViewed {
 			return screenDeliveryMsg{day: day, err: err}
 		}

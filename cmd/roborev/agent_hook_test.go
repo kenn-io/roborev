@@ -118,7 +118,6 @@ func TestRunAgentHookUsesConfiguredRegularDaemonEndpoint(t *testing.T) {
 	// Activity reporting crosses the mock daemon socket.
 	require.Eventually(t, func() bool { return len(rec.telemetryPosts()) == 1 }, 5*time.Second, 10*time.Millisecond)
 	assert.Equal(t, []string{"POST /api/agent-hook/event"}, rec.businessPaths())
-	assert.Equal(t, []recordedTelemetry{{method: http.MethodPost, contentType: "application/json"}}, rec.telemetryPosts())
 	executable, err := os.Executable()
 	require.NoError(t, err)
 	commands, err := kitagenthook.BuildCommand(

@@ -2,4 +2,4 @@
 lockfile = true
 
 [tools]
-uv = "0.12.23"
+uv = "0.13.4"

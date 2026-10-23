@@ -76,13 +76,8 @@ func (f *failingAgentTelemetry) Capture(event string, props map[string]any) erro
 
 func TestAgentActivityRoutesRejectBrowserCapture(t *testing.T) {
 	server, _, _ := newTestServer(t)
-	client := &failingAgentTelemetry{}
+	client := &fakeTelemetryClient{enabled: true}
 	server.SetTelemetry(client)
-	t.Run("opted out", func(t *testing.T) {
-		server.recordAgentCall(t.Context())
-		assert.Empty(t, client.events)
-	})
-	client.enabled = true
 	for _, tc := range []struct {
 		contentType string
 		origin      string
@@ -99,12 +94,48 @@ func TestAgentActivityRoutesRejectBrowserCapture(t *testing.T) {
 		req.Header.Set("Content-Type", tc.contentType)
 		req.Header.Set("Origin", tc.origin)
 		assert.Equal(t, tc.status, serveTelemetryCapture(server.httpServer.Handler, req).Code)
-		if tc.status == http.StatusAccepted {
-			assert.Equal(t, tc.status, serveTelemetryCapture(server.httpServer.Handler, req.Clone(t.Context())).Code)
-			assert.Equal(t, []string{telemetry.EventAgentActive}, client.events)
-		} else {
+		if tc.status != http.StatusAccepted {
 			assert.Empty(t, client.events)
 		}
+	}
+}
+
+func TestAgentActivityRouteReceipts(t *testing.T) {
+	server, _, _ := newTestServer(t)
+	client := &fakeTelemetryClient{}
+	server.SetTelemetry(client)
+	t.Run("opted out", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, TelemetryAgentCallPath, nil)
+		req.Header.Set("Content-Type", "application/json")
+		recorder := serveTelemetryCapture(server.httpServer.Handler, req)
+		assert.Equal(t, http.StatusAccepted, recorder.Code)
+		assert.JSONEq(t, `{"status":"disabled"}`, recorder.Body.String())
+		assert.Empty(t, client.events)
+	})
+	t.Run("queued then skipped", func(t *testing.T) {
+		client.enabled = true
+		for _, status := range []string{"queued", "skipped"} {
+			req := httptest.NewRequest(http.MethodPost, TelemetryAgentCallPath, nil)
+			req.Header.Set("Content-Type", "application/json")
+			recorder := serveTelemetryCapture(server.httpServer.Handler, req)
+			assert.Equal(t, http.StatusAccepted, recorder.Code)
+			assert.JSONEq(t, `{"status":"`+status+`"}`, recorder.Body.String())
+			assert.Equal(t, []string{telemetry.EventAgentActive}, client.events)
+		}
+	})
+
+	for _, failure := range []string{"storage", "capture"} {
+		t.Run(failure, func(t *testing.T) {
+			server, db, _ := newTestServer(t)
+			server.SetTelemetry(&failingAgentTelemetry{fakeTelemetryClient{enabled: true}})
+			if failure == "storage" {
+				require.NoError(t, db.Close())
+			}
+			req := httptest.NewRequest(http.MethodPost, TelemetryAgentCallPath, nil)
+			req.Header.Set("Content-Type", "application/json")
+			recorder := serveTelemetryCapture(server.httpServer.Handler, req)
+			assert.Equal(t, http.StatusInternalServerError, recorder.Code)
+		})
 	}
 }
 

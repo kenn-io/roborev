@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"mime"
 	"net/http"
 
@@ -27,8 +28,14 @@ func (s *Server) registerTelemetryCaptureRoute(mux *http.ServeMux) {
 			return
 		}
 		// Clients stop waiting shortly after exit, so their disconnect must not drop the count.
-		s.recordAgentCall(context.WithoutCancel(r.Context()))
+		status, err := s.recordAgentCall(context.WithoutCancel(r.Context()))
+		if err != nil {
+			http.Error(w, "capture telemetry event failed", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": string(status)})
 	})
 }
 

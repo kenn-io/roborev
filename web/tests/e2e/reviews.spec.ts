@@ -212,7 +212,7 @@ test.describe.serial("native review workspace", () => {
     ).toBeVisible();
     await expect(page.locator(".review-content pre.shiki")).toBeVisible();
     await expect(
-      page.locator(".review-content .kit-mermaid-viewer svg.flowchart"),
+      page.locator(".review-content .kit-mermaid-viewer__pan svg.flowchart"),
     ).toBeVisible();
     await expect(page.locator(".response-item")).toHaveCount(2);
   });
