@@ -2,11 +2,15 @@ package tui
 
 import (
 	"context"
+	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -166,7 +170,7 @@ func TestGetBranchForJobReachableFromBranch(t *testing.T) {
 	}
 
 	m := newModel(localhostEndpoint, withExternalIODisabled())
-	got := m.getBranchForJob(job)
+	got := m.getBranchForJobCtx(t.Context(), job)
 
 	assert.Equal(t, "main", got)
 }
@@ -206,6 +210,63 @@ func TestGetBranchForJobLookupFailure(t *testing.T) {
 
 			assert.Equal("main", m.getBranchForJobCtx(t.Context(), job))
 			assert.Equal("main", m.branchNames[job.ID])
+		})
+	}
+}
+
+func TestBranchLookupRunningTimeout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("slow git wrapper uses a POSIX shell")
+	}
+	repo := testutil.InitTestRepo(t)
+	sha := repo.CommitFile("a.txt", "one", "first")
+	job := storage.ReviewJob{
+		ID: 1, JobType: storage.JobTypeReview, GitRef: sha,
+		RepoPath: repo.Path(), CommitID: new(int64(1)),
+	}
+
+	for _, name := range []string{"git", "queue", "backfill", "review"} {
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			m := newModel(localhostEndpoint, withExternalIODisabled())
+			started := filepath.Join(t.TempDir(), "started")
+			t.Setenv("BRANCH_LOOKUP_STARTED", started)
+			restore := testutil.MockBinaryInPath(t, "git", "#!/bin/sh\n: > \"$BRANCH_LOOKUP_STARTED\"\nexec sleep 30\n")
+			t.Cleanup(restore)
+
+			// These production deadlines kill a subprocess, which synctest cannot observe.
+			switch name {
+			case "git":
+				branch, err := git.GetBranchName(job.RepoPath, job.GitRef)
+				assert.Empty(branch)
+				require.ErrorIs(t, err, context.DeadlineExceeded)
+			case "queue":
+				assert.Empty(m.getBranchForJob(job))
+				assert.NotContains(m.branchNames, job.ID)
+			case "backfill":
+				branch, persist := backfillBranchValue(job, nil)
+				assert.Empty(branch)
+				assert.False(persist)
+			case "review":
+				assert.Empty(reviewBranchName(&job))
+			}
+			require.FileExists(t, started, "git must start before its deadline expires")
+
+			restore()
+			switch name {
+			case "git":
+				branch, err := git.GetBranchNameCtx(t.Context(), job.RepoPath, job.GitRef)
+				require.NoError(t, err)
+				assert.Equal("main", branch)
+			case "queue":
+				assert.Equal("main", m.getBranchForJobCtx(t.Context(), job))
+			case "backfill":
+				branch, persist := backfillBranchValue(job, nil)
+				assert.Equal("main", branch)
+				assert.True(persist)
+			case "review":
+				assert.Equal("main", reviewBranchName(&job))
+			}
 		})
 	}
 }

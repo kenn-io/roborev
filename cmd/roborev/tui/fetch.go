@@ -1022,6 +1022,9 @@ func reviewBranchName(job *storage.ReviewJob) string {
 	}
 	if job.RepoPath != "" && !strings.Contains(job.GitRef, "..") {
 		branch, err := git.GetBranchName(job.RepoPath, job.GitRef)
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return ""
+		}
 		if err == nil && branch != "" {
 			return branch
 		}

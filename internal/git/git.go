@@ -2094,6 +2094,9 @@ func GetBranchNameCtx(ctx context.Context, repoPath, sha string) (string, error)
 
 	out, err := gitOutput(cmd)
 	if err != nil {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
 		return "", fmt.Errorf("git name-rev: %w", err)
 	}
 
