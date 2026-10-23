@@ -50,6 +50,7 @@ func TestDaemonTelemetryScreenViewedUsesDatabaseClaimsPath(t *testing.T) {
 	endpoint, _ := testutil.NewPostHogStub(t)
 	reporter := newDaemonTelemetry(owner, telemetry.Options{
 		Database: db,
+		APIKey:   testutil.PostHogTestAPIKey,
 		Endpoint: endpoint,
 	})
 	t.Cleanup(func() { require.NoError(t, reporter.Close()) })

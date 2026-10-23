@@ -44,6 +44,7 @@ func newTelemetryCaptureRequest(method string, body []byte) *http.Request {
 }
 
 func TestTelemetryCaptureRouteOnCoreMux(t *testing.T) {
+	t.Setenv(telemetry.EnabledEnv, "0")
 	server, _, _ := newTestServer(t)
 	reporter, err := telemetry.NewReporter(telemetry.Options{})
 	require.NoError(t, err)
@@ -152,6 +153,7 @@ func TestTelemetryCaptureRouteWithoutReporterAdmitsNothing(t *testing.T) {
 }
 
 func TestBrowserHandlerTelemetryCaptureRoute(t *testing.T) {
+	t.Setenv(telemetry.EnabledEnv, "0")
 	server, _, _ := newTestServer(t)
 	reporter, err := telemetry.NewReporter(telemetry.Options{})
 	require.NoError(t, err)

@@ -13,6 +13,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// PostHogTestAPIKey enables a reporter in tests, which have no link-time key.
+const PostHogTestAPIKey = "test-posthog-api-key"
+
 // SetTelemetryReleaseEnv allows release telemetry independently of inherited CI opt-outs.
 func SetTelemetryReleaseEnv(t *testing.T) string {
 	t.Helper()
