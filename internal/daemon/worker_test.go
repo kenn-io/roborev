@@ -4455,11 +4455,7 @@ func TestServerWakesWorkerPoolWhenWorkBecomesClaimable(t *testing.T) {
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			db := testutil.OpenTestDB(t)
-			cfg := config.DefaultConfig()
-			cfg.MaxWorkers = 1
-			server := newServerWithLogs(db, cfg, "", newTestErrorLog(), newTestActivityLog())
-			t.Cleanup(func() { _ = server.Close() })
+			server, db, _ := newTestServer(t)
 			repo := testutil.NewTestRepoWithCommit(t)
 			storedRepo, err := db.GetOrCreateRepo(repo.Path())
 			require.NoError(t, err)
