@@ -4461,23 +4461,10 @@ func TestServerWakesWorkerPoolWhenWorkBecomesClaimable(t *testing.T) {
 // Four workers sharing one SQLite file can deadlock a synctest bubble, so the
 // fan-out is checked on the wake channel alone.
 func TestWorkerPoolWakeReachesEveryIdleWorker(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		tc := newWorkerTestContext(t, 4)
-		woken := make(chan struct{}, 4)
-		for range 4 {
-			go func() {
-				select {
-				case <-tc.Pool.wakeCh:
-					woken <- struct{}{}
-				case <-time.After(time.Second):
-				}
-			}()
-		}
-		synctest.Wait()
-		tc.Pool.wake()
-		synctest.Wait()
-		assert.Len(t, woken, 4)
-	})
+	pool := NewWorkerPool(nil, NewStaticConfig(config.DefaultConfig()), 4, NewBroadcaster(), nil, nil)
+	pool.wake()
+	pool.wake()
+	assert.Len(t, pool.wakeCh, 4, "one token per worker, and extra wakes don't block")
 }
 
 func TestWorkerPoolNegativeWorkerCount(t *testing.T) {
