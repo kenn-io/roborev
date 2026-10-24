@@ -620,7 +620,7 @@ func HasWorkflowAgentOverrideFromConfig(
 			return true
 		}
 		if allowAnalyzeFallback {
-			if globalCustomDefined {
+			if globalCustomDefined && !repoCustomDefined {
 				return customReviewTypeField(
 					globalCfg.Review.Types, workflow, true,
 				) != ""
@@ -720,7 +720,7 @@ func ResolveWorkflowModelFromConfig(
 			return s
 		}
 		if allowAnalyzeFallback {
-			if globalCustomDefined {
+			if globalCustomDefined && !repoCustomDefined {
 				return customReviewTypeField(
 					globalCfg.Review.Types, workflow, false,
 				)
@@ -908,7 +908,7 @@ func getWorkflowValue(repo *RepoConfig, global *Config, workflow, level string, 
 			return s
 		}
 		if allowAnalyzeFallback {
-			if s := customReviewTypeField(global.Review.Types, workflow, isAgent); s != "" {
+			if s := customReviewTypeField(global.Review.Types, workflow, isAgent); !repoCustomDefined && s != "" {
 				return s
 			}
 			if !customDefined {

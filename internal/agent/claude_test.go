@@ -93,6 +93,8 @@ func TestClaudeBuildArgs(t *testing.T) {
 			assertContainsArg(t, args, req)
 		}
 		assertNotContainsArg(t, args, claudeDangerousFlag)
+		assertArgsContain(t, strings.Join(args, " "), "--tools", "Read,Glob,Grep")
+		assertArgsContain(t, strings.Join(args, " "), "--disallowedTools", "mcp__*")
 
 		assertTools(t, args,
 			[]string{"Read", "Glob", "Grep"},
@@ -104,6 +106,8 @@ func TestClaudeBuildArgs(t *testing.T) {
 		args := a.buildArgs(true, false)
 		assertContainsArg(t, args, claudeDangerousFlag)
 		assertContainsArg(t, args, "--allowedTools")
+		assert.NotContains(t, args, "--tools")
+		assert.NotContains(t, args, "--disallowedTools")
 
 		assertTools(t, args,
 			[]string{"Edit", "Write", "Bash"},
@@ -128,7 +132,7 @@ func TestClaudePlanningCommandLine(t *testing.T) {
 	a := NewClaudeAgent("claude").WithAgentic(true).WithReasoning(ReasoningThorough).(*ClaudeAgent)
 	a.SessionID = "implementation-session"
 
-	assert.Equal(t, "claude -p --verbose --output-format stream-json --effort high --allowedTools Read,Glob,Grep --permission-mode plan --tools Read,Glob,Grep --disallowedTools mcp__*", a.PlanningCommandLine())
+	assert.Equal(t, "claude -p --verbose --output-format stream-json --effort high --allowedTools Read,Glob,Grep --tools Read,Glob,Grep --disallowedTools mcp__* --permission-mode plan", a.PlanningCommandLine())
 }
 
 func TestParseModel(t *testing.T) {
@@ -504,21 +508,44 @@ func TestClaudeReviewUnsafeMissingFlagErrors(t *testing.T) {
 	assert.Contains(err.Error(), "does not support")
 }
 
-func TestClaudeReviewWithSessionResumePassesResumeArgs(t *testing.T) {
-	mock := mockAgentCLI(t, MockCLIOpts{
-		CaptureArgs: true,
-		StdoutLines: []string{
-			`{"type":"result","result":"ok"}`,
-		},
-	})
+func TestClaudeReviewPassesArgs(t *testing.T) {
+	withUnsafeAgents(t, false)
 
-	a := NewClaudeAgent(mock.CmdPath).WithSessionID("session-123").(*ClaudeAgent)
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
-	require.NoError(t, err)
+	for _, tt := range []struct {
+		name   string
+		schema bool
+		resume bool
+	}{
+		{name: "Review"},
+		{name: "ReviewWithSchema", schema: true},
+		{name: "ResumeSession", resume: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := mockAgentCLI(t, MockCLIOpts{
+				CaptureArgs: true,
+				StdoutLines: []string{`{"type":"result","result":"{\"findings\":[]}"}`},
+			})
+			a := NewClaudeAgent(mock.CmdPath)
+			if tt.resume {
+				a = a.WithSessionID("session-123").(*ClaudeAgent)
+			}
+			if tt.schema {
+				_, err := a.ReviewWithSchema(context.Background(), t.TempDir(), "deadbeef", "prompt", jsontext.Value(`{"type":"object"}`), nil)
+				require.NoError(t, err)
+			} else {
+				_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+				require.NoError(t, err)
+			}
 
-	args := readMockArgs(t, mock.ArgsFile)
-	assertContainsArg(t, args, "--resume")
-	assertContainsArg(t, args, "session-123")
+			args := readMockArgs(t, mock.ArgsFile)
+			if tt.resume {
+				assertContainsArg(t, args, "--resume")
+				assertContainsArg(t, args, "session-123")
+			} else {
+				assertArgsContain(t, strings.Join(args, " "), "--tools", "Read,Glob,Grep")
+			}
+		})
+	}
 }
 
 func TestParseStreamJSON(t *testing.T) {

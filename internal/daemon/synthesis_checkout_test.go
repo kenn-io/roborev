@@ -15,6 +15,7 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestLocalSynthesisCheckoutSurvivesCallerRemoval(t *testing.T) {
@@ -107,4 +108,59 @@ func TestLocalSynthesisCheckoutSurvivesCallerRemoval(t *testing.T) {
 	assert.Zero(t, resumed)
 	assert.Equal(t, caller, got.WorktreePath)
 	assert.NoDirExists(t, path)
+}
+
+// Native agent selection must use the same config checkout as isolated execution.
+func TestLocalSynthesisSelectsAgentAfterCallerRemoval(t *testing.T) {
+	for _, isolate := range []bool{true, false} {
+		t.Run(fmt.Sprintf("isolation=%t", isolate), func(t *testing.T) {
+			assert := assert.New(t)
+			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+			tc := newWorkerTestContext(t, 1)
+			tc.Pool.cfgGetter.Config().IsolateReviews = isolate
+			tc.GitRepo.CommitFile("marker.txt", "reviewed\n", "head")
+			caller := filepath.Join(t.TempDir(), "caller")
+			tc.GitRepo.Run("worktree", "add", "--detach", caller, "HEAD")
+			calls := 0
+			var checkout string
+			original, err := agent.Get("codex")
+			require.NoError(t, err)
+			agent.Register(&agent.FakeAgent{NameStr: "codex", ReviewFn: func(ctx context.Context, path, ref, prompt string, out io.Writer) (string, error) {
+				calls++
+				checkout = path
+				require.NotEqual(t, caller, path)
+				require.NotEqual(t, tc.TmpDir, path)
+				data, err := os.ReadFile(filepath.Join(path, "marker.txt"))
+				require.NoError(t, err)
+				require.Equal(t, "reviewed\n", string(data))
+				require.Contains(t, prompt, "member finding")
+				return string(testutil.ReviewFixtureJSON("No issues found.")), nil
+			}})
+			t.Cleanup(func() { agent.Register(original) })
+			run, members, _ := enqueuePanelRun(t, tc, "removed-caller-panel", []memberSpec{{name: "first", agent: "test"}, {name: "second", agent: "test"}})
+			setSynthesisAgent(t, tc, run, "codex")
+			_, err = tc.DB.Exec("UPDATE review_jobs SET worktree_path=? WHERE panel_run_uuid=?", caller, run)
+			require.NoError(t, err)
+			completeMember(t, tc, members[0].ID, "test", "member finding in first review")
+			completeMember(t, tc, members[1].ID, "test", "member finding in second review")
+			tc.GitRepo.Run("worktree", "remove", "--force", caller)
+			synth := releaseAndClaimSynthesis(t, tc, run)
+			tc.Pool.processJob(testWorkerID, synth)
+			got, err := tc.DB.GetJobByID(synth.ID)
+			require.NoError(t, err)
+			if !isolate {
+				assert.Zero(calls)
+				assert.Equal(storage.JobStatusQueued, got.Status)
+				assert.Equal(caller, got.WorktreePath)
+				assert.Equal(synth.RepoPath, got.RepoPath)
+				return
+			}
+			assert.Equal(1, calls, "synthesis must select and invoke the native agent")
+			require.Equal(t, storage.JobStatusDone, got.Status, got.Error)
+			assert.Equal(caller, got.WorktreePath)
+			assert.Equal(synth.RepoPath, got.RepoPath)
+			assert.Equal(synth.Branch, got.Branch)
+			assert.NoDirExists(checkout)
+		})
+	}
 }

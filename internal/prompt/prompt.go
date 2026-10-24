@@ -587,8 +587,8 @@ func (b *Builder) BuildDirtyWithFiles(diff string, changedFiles []string, contex
 	if err != nil {
 		return "", err
 	}
-	ctx.optional.DependencyMetadata = buildDependencyMetadataSection(changedFiles)
-	ctx.optional.Toolchain = buildToolchainSection(b.repoPath, "", changedFiles)
+	ctx.optional.DependencyMetadata = buildDependencyMetadataSection(changedFiles, ctx.optional.Neutral)
+	ctx.optional.Toolchain = buildToolchainSection(b.repoPath, "", changedFiles, ctx.optional.Neutral)
 
 	ctx.optional.ProjectGuidelines = buildProjectGuidelinesSectionView(
 		LoadGuidelinesLocal(b.resolvedConfigRepoPath(), b.globalCfg),
@@ -596,7 +596,7 @@ func (b *Builder) BuildDirtyWithFiles(diff string, changedFiles []string, contex
 
 	// Uncommitted changes have no commit messages, so "current" mode has no
 	// refs to resolve; "open" mode still lists open katas.
-	kataView, err := b.resolveKataContext(nil)
+	kataView, err := b.resolveKataContext(nil, ctx.optional.Neutral)
 	if err != nil {
 		return "", err
 	}
@@ -705,6 +705,7 @@ func (b *Builder) newPromptBuildContext(agentName, reviewType, minSeverity, defa
 		requiredPrefix += structuredReviewOutputInstruction
 	}
 	requiredPrefix += "\n"
+	optional.Neutral = custom
 	return promptBuildContext{
 		requiredPrefix: requiredPrefix,
 		optional:       optional,
@@ -893,8 +894,8 @@ func (b *Builder) buildSinglePrompt(sha string, contextCount int, agentName, rev
 	// Include previous review attempts for this same commit (for re-reviews)
 	ctx.optional.PreviousAttempts = previousAttemptViewsFromContexts(b.previousAttemptContexts(sha))
 	if files, err := git.DiffPathsCtx(b.context(), b.repoPath, sha, nil); err == nil {
-		ctx.optional.DependencyMetadata = buildDependencyMetadataSection(files)
-		ctx.optional.Toolchain = buildToolchainSection(b.repoPath, sha, files)
+		ctx.optional.DependencyMetadata = buildDependencyMetadataSection(files, ctx.optional.Neutral)
+		ctx.optional.Toolchain = buildToolchainSection(b.repoPath, sha, files, ctx.optional.Neutral)
 	}
 
 	// Current commit section
@@ -906,7 +907,7 @@ func (b *Builder) buildSinglePrompt(sha string, contextCount int, agentName, rev
 		return "", fmt.Errorf("get commit info: %w", err)
 	}
 
-	kataView, err := b.resolveKataContext([]string{info.Subject + "\n\n" + info.Body})
+	kataView, err := b.resolveKataContext([]string{info.Subject + "\n\n" + info.Body}, ctx.optional.Neutral)
 	if err != nil {
 		return "", err
 	}
@@ -965,8 +966,8 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 		return "", fmt.Errorf("get range commits: %w", err)
 	}
 	if files, err := git.DiffPathsCtx(b.context(), b.repoPath, rangeRef, nil); err == nil {
-		ctx.optional.DependencyMetadata = buildDependencyMetadataSection(files)
-		ctx.optional.Toolchain = buildToolchainSection(b.repoPath, rangeRef, files)
+		ctx.optional.DependencyMetadata = buildDependencyMetadataSection(files, ctx.optional.Neutral)
+		ctx.optional.Toolchain = buildToolchainSection(b.repoPath, rangeRef, files, ctx.optional.Neutral)
 	}
 	if opts.priorRangeReviewsFile != nil {
 		ctx.optional.PriorRangeReviewsFile = *opts.priorRangeReviewsFile
@@ -992,7 +993,7 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 		}
 		entries = append(entries, commitRangeEntryView{Commit: short})
 	}
-	kataView, err := b.resolveKataContext(kataMessages)
+	kataView, err := b.resolveKataContext(kataMessages, ctx.optional.Neutral)
 	if err != nil {
 		return "", err
 	}
@@ -1036,7 +1037,7 @@ const (
 	kataIntroOpen    = "The kata issue(s) below are the open tasks in this project's tracker, included as background context. They may be unrelated to this change. Use them to understand intent where relevant; do not raise findings merely because this change does not address an open kata."
 )
 
-func buildKataContextSectionView(issues []kata.Issue, notes []string, maxChars int, mode string) *markdownSectionView {
+func buildKataContextSectionView(issues []kata.Issue, notes []string, maxChars int, mode string, neutral bool) *markdownSectionView {
 	if len(issues) == 0 && len(notes) == 0 {
 		return nil
 	}
@@ -1075,6 +1076,9 @@ func buildKataContextSectionView(issues []kata.Issue, notes []string, maxChars i
 		body = strings.TrimSpace(truncateUTF8(body, maxChars)) + "\n\n_[kata context truncated]_"
 	}
 	intro := kataIntroCurrent
+	if neutral {
+		intro = "The kata issue(s) below are referenced by this change and are the authoritative task description. Treat them as the source of truth for intent. Raise as high-priority findings: (a) material that diverges from or omits what a kata specifies, and (b) contradictions between the change and a kata, or across multiple katas."
+	}
 	if mode == config.KataModeOpen {
 		intro = kataIntroOpen
 	}
@@ -1084,7 +1088,7 @@ func buildKataContextSectionView(issues []kata.Issue, notes []string, maxChars i
 // resolveKataContext populates the optional KataContext section when
 // configured. It returns an error only for context cancellation, so a
 // canceled review aborts prompt construction instead of proceeding.
-func (b *Builder) resolveKataContext(messages []string) (*markdownSectionView, error) {
+func (b *Builder) resolveKataContext(messages []string, neutral bool) (*markdownSectionView, error) {
 	if b.kataClient == nil {
 		return nil, nil
 	}
@@ -1099,7 +1103,7 @@ func (b *Builder) resolveKataContext(messages []string) (*markdownSectionView, e
 	for _, err := range res.Errs {
 		log.Printf("kata context (repo %s, mode %s): %v", b.resolvedConfigRepoPath(), kc.Mode, err)
 	}
-	return buildKataContextSectionView(res.Issues, res.Notes, kc.MaxChars, kc.Mode), nil
+	return buildKataContextSectionView(res.Issues, res.Notes, kc.MaxChars, kc.Mode, neutral), nil
 }
 
 func buildAdditionalContextSection(additionalContext string) string {

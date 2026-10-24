@@ -1178,6 +1178,7 @@ type EnqueueRequest struct {
 	ReviewType        *string  `json:"review_type,omitempty"`
 	Since             *string  `json:"since,omitempty"`
 	Source            *string  `json:"source,omitempty"`
+	SourceJobIds      []int64  `json:"source_job_ids,omitempty"`
 	SpecFile          *string  `json:"spec_file,omitempty"`
 }
 
