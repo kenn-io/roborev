@@ -42,7 +42,7 @@ CLI / Agent hooks -> HTTP API -> Daemon (roborev daemon run) -> Worker Pool -> A
 ```
 
 - **Daemon**: HTTP server on port 7373 (auto-finds available port if busy)
-- **Workers**: Pool of 4 (configurable) parallel review workers
+- **Workers**: Pool of 4 (configurable) parallel review workers. The daemon wakes idle workers when a job is queued, and they poll every 2 seconds as a fallback
 - **Storage**: SQLite at `~/.roborev/reviews.db` with WAL mode
 - **Agent Hook state**: JSON at `~/.roborev/agent-hook/state.json`
 
