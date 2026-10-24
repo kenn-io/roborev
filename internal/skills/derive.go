@@ -31,6 +31,7 @@ var derivedDroidSkills = []string{
 	"roborev-respond",
 	"roborev-review",
 	"roborev-review-branch",
+	"roborev-setup-review",
 	"roborev-snooze",
 	"roborev-superpowers",
 }
@@ -39,6 +40,7 @@ var derivedClaudeSkills = []string{
 	"roborev-fix",
 	"roborev-refine",
 	"roborev-respond",
+	"roborev-setup-review",
 	"roborev-snooze",
 	"roborev-superpowers",
 }
@@ -60,6 +62,7 @@ var derivedGrokSkills = []string{
 	"roborev-respond",
 	"roborev-review",
 	"roborev-review-branch",
+	"roborev-setup-review",
 	"roborev-snooze",
 	"roborev-superpowers",
 }

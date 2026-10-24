@@ -59,7 +59,8 @@ as raw Markdown at /docs/<page>.md.
 - [Responding to reviews](https://roborev.io/docs/guides/responding-to-reviews.md):
   comments, finding reassessment, closing, and the review ledger
 - [Agent skills](https://roborev.io/docs/guides/agent-skills.md): the
-  `/roborev-fix`, `/roborev-refine`, `/roborev-superpowers`, and review skills
+  `/roborev-fix`, `/roborev-refine`, `/roborev-superpowers`,
+  `/roborev-setup-review`, and review skills
 - [Code analysis and refactoring](https://roborev.io/docs/guides/assisted-refactoring.md):
   `roborev analyze` types and `roborev fix`
 - [Auto-fix with refine](https://roborev.io/docs/guides/auto-fixing.md): the
