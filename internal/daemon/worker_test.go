@@ -4319,13 +4319,6 @@ func TestWorkerPoolWakesIdleWorkersOnNewJob(t *testing.T) {
 	makeParent := func(t *testing.T, f *fixture, parentAgent string) *storage.ReviewJob {
 		return testutil.CreateCompletedReview(t, f.DB, f.Repo.ID, testutil.GetHeadSHA(t, f.TmpDir), parentAgent, "The guard is missing.")
 	}
-	unpause := func(t *testing.T, f *fixture, workers int) {
-		require.NoError(t, f.DB.SetQueuePaused(true))
-		for range workers {
-			f.enqueue("", "")
-		}
-		f.postTrigger("/api/queue/unpause", struct{}{}, http.StatusOK)
-	}
 	for _, test := range []struct {
 		name    string
 		workers int
@@ -4395,7 +4388,11 @@ func TestWorkerPoolWakesIdleWorkersOnNewJob(t *testing.T) {
 			f.job.ID = f.enqueue("shared-session", "").ID
 			f.trigger = func() { f.server.sweepStuckPanels(context.Background()) }
 		}},
-		{"unpause", 4, func(t *testing.T, f *fixture) { unpause(t, f, 4) }},
+		{"unpause", 1, func(t *testing.T, f *fixture) {
+			require.NoError(t, f.DB.SetQueuePaused(true))
+			f.enqueue("", "")
+			f.postTrigger("/api/queue/unpause", struct{}{}, http.StatusOK)
+		}},
 		{"poll fallback without a wake", 1, func(t *testing.T, f *fixture) {
 			f.trigger = func() {
 				f.job.ID = f.enqueue("", "").ID
@@ -4487,6 +4484,28 @@ func TestWorkerPoolWakesIdleWorkersOnNewJob(t *testing.T) {
 			})
 		})
 	}
+}
+
+// Four workers sharing one SQLite file can deadlock a synctest bubble, so the
+// fan-out is checked on the wake channel alone.
+func TestWorkerPoolWakeReachesEveryIdleWorker(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		tc := newWorkerTestContext(t, 4)
+		woken := make(chan struct{}, 4)
+		for range 4 {
+			go func() {
+				select {
+				case <-tc.Pool.wakeCh:
+					woken <- struct{}{}
+				case <-time.After(time.Second):
+				}
+			}()
+		}
+		synctest.Wait()
+		tc.Pool.wake()
+		synctest.Wait()
+		assert.Len(t, woken, 4)
+	})
 }
 
 func TestWorkerPoolNegativeWorkerCount(t *testing.T) {
