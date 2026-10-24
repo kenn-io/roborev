@@ -32,6 +32,14 @@ var getAvailableWithConfig = func(repoPath string, preferred string, cfg *config
 
 // SynthesizeOpts controls synthesis behavior.
 type SynthesizeOpts struct {
+	Tools *config.ReviewToolPolicy
+	// BackupAgent is the configured synthesis backup, validated before invocation.
+	BackupAgent string
+	// RepoConfigRef marks RepoConfig (including nil absence) as authoritative.
+	RepoConfig    *config.RepoConfig
+	RepoConfigRef string
+	// Neutral preserves custom framing when a caller has already filtered inputs.
+	Neutral bool
 	// Agent name for synthesis (empty = first available).
 	Agent string
 	// Model override for the synthesis agent.
@@ -69,6 +77,18 @@ func Synthesize(
 	results []ReviewResult,
 	opts SynthesizeOpts,
 ) (SynthesisResult, error) {
+	if _, err := config.CanonicalReviewToolPolicy(opts.Tools); err != nil {
+		return SynthesisResult{}, err
+	}
+	for _, result := range results {
+		if _, err := config.CanonicalReviewToolPolicy(result.Tools); err != nil {
+			return SynthesisResult{}, err
+		}
+	}
+	if derived := SynthesisToolPolicy(results); derived != nil {
+		opts.Tools = derived
+	}
+	opts.Neutral = opts.Neutral || NeedsNeutralSynthesis(results)
 	results = slices.Clone(results)
 	for i := range results {
 		results[i] = results[i].ApplyMinSeverity(opts.MinSeverity)
@@ -113,6 +133,9 @@ func Synthesize(
 	// Multiple results — synthesize with LLM
 	comment, err := runSynthesis(ctx, results, opts, commentConfig)
 	if err != nil {
+		if errors.Is(err, agent.ErrReviewToolPolicy) {
+			return SynthesisResult{}, err
+		}
 		log.Printf(
 			"ci review: synthesis failed: %v "+
 				"(falling back to raw format)", err)
@@ -152,19 +175,70 @@ func formatSingleResult(
 	return header + output
 }
 
+func resolveSynthesisAgent(opts SynthesizeOpts) (agent.Agent, error) {
+	var synthAgent agent.Agent
+	var err error
+	if opts.RepoConfigRef != "" || opts.RepoConfig != nil {
+		if opts.Agent == "" {
+			synthAgent, err = agent.GetAvailableWithConfigFromConfig(opts.RepoConfig, opts.Agent, opts.GlobalConfig)
+		} else {
+			synthAgent, err = agent.GetPreferredOrBackupWithConfigFromConfig(opts.RepoConfig, opts.Agent, opts.GlobalConfig, opts.BackupAgent)
+		}
+	} else if opts.Agent == "" {
+		synthAgent, err = getAvailableWithConfig(opts.RepoPath, opts.Agent, opts.GlobalConfig)
+	} else {
+		synthAgent, err = getAvailableWithConfig(opts.RepoPath, opts.Agent, opts.GlobalConfig, opts.BackupAgent)
+	}
+	// Empty means ordinary primary discovery, not backup-first selection.
+	// Record that primary before considering a configured backup so the model
+	// override cannot leak onto a backup when discovery fails.
+	primary := opts.Agent
+	if opts.Agent == "" {
+		if err == nil {
+			primary = synthAgent.Name()
+		} else if opts.BackupAgent != "" {
+			if opts.RepoConfigRef != "" || opts.RepoConfig != nil {
+				synthAgent, err = agent.GetPreferredOrBackupWithConfigFromConfig(opts.RepoConfig, opts.BackupAgent, opts.GlobalConfig)
+			} else {
+				synthAgent, err = getAvailableWithConfig(opts.RepoPath, opts.BackupAgent, opts.GlobalConfig)
+			}
+		}
+	}
+	if err != nil {
+		if opts.Tools != nil {
+			return nil, fmt.Errorf("%w: get synthesis agent: %w", agent.ErrReviewToolPolicy, err)
+		}
+		return nil, fmt.Errorf("get synthesis agent: %w", err)
+	}
+
+	if err := agent.ValidateReviewToolBackup(opts.Tools, agent.WorkflowConfig{
+		GlobalConfig: opts.GlobalConfig, RepoConfig: opts.RepoConfig, BackupAgent: opts.BackupAgent,
+	}, synthAgent.Name()); err != nil {
+		return nil, err
+	}
+
+	// The explicit model belongs to the preferred adapter. A selected backup
+	// keeps its own configured model or default.
+	selection := agent.WorkflowConfig{RepoConfig: opts.RepoConfig, GlobalConfig: opts.GlobalConfig}
+	if selection.RepoConfig == nil {
+		selection.RepoConfig = &config.RepoConfig{}
+	}
+	if opts.Model != "" && primary != "" && selection.AgentMatches(synthAgent.Name(), primary) {
+		synthAgent = synthAgent.WithModel(opts.Model)
+	}
+
+	return synthAgent, nil
+}
+
 func runSynthesis(
 	ctx context.Context,
 	results []ReviewResult,
 	opts SynthesizeOpts,
 	commentConfig CommentConfig,
 ) (SynthesisResult, error) {
-	synthAgent, err := getAvailableWithConfig(opts.RepoPath, opts.Agent, opts.GlobalConfig)
+	synthAgent, err := resolveSynthesisAgent(opts)
 	if err != nil {
-		return SynthesisResult{}, fmt.Errorf("get synthesis agent: %w", err)
-	}
-
-	if opts.Model != "" {
-		synthAgent = synthAgent.WithModel(opts.Model)
+		return SynthesisResult{}, err
 	}
 
 	if opts.Reasoning != "" {
@@ -176,13 +250,14 @@ func runSynthesis(
 	}
 
 	synthPrompt := BuildSynthesisPrompt(
-		results, opts.MinSeverity)
+		results, opts.MinSeverity, opts.Neutral)
 
 	synthCtx, cancel := context.WithTimeout(
 		ctx, 5*time.Minute)
 	defer cancel()
 
 	doc, err := RunSynthesisAgent(synthCtx, synthAgent, results, synthPrompt, opts.MinSeverity, nil, SynthesisHooks{
+		Tools:          opts.Tools,
 		ConfigRepoPath: opts.RepoPath,
 		GlobalConfig:   opts.GlobalConfig,
 		Checkout: func() (SynthesisCheckout, error) {
@@ -190,6 +265,18 @@ func runSynthesis(
 		},
 	})
 	if err != nil {
+		selection := agent.WorkflowConfig{RepoConfig: opts.RepoConfig, GlobalConfig: opts.GlobalConfig}
+		if selection.RepoConfig == nil {
+			selection.RepoConfig = &config.RepoConfig{}
+		}
+		if opts.BackupAgent != "" && !selection.AgentMatches(synthAgent.Name(), opts.BackupAgent) &&
+			synthesisCanFailover(synthCtx, synthAgent.Name(), err) {
+			backupOpts := opts
+			backupOpts.Agent = opts.BackupAgent
+			backupOpts.Model = ""
+			backupOpts.BackupAgent = ""
+			return runSynthesis(ctx, results, backupOpts, commentConfig)
+		}
 		return SynthesisResult{}, fmt.Errorf("synthesis review: %w", err)
 	}
 
@@ -197,4 +284,19 @@ func runSynthesis(
 		Output:        FormatSynthesizedComment(doc.Markdown(opts.MinSeverity), results, opts.HeadSHA),
 		GitHubComment: FormatSynthesizedComment(FormatComment(PrepareComment(commentConfig, ReviewResult{Structured: &doc})), results, opts.HeadSHA),
 	}, nil
+}
+
+// synthesisCanFailover excludes policy and checkout errors even when their
+// diagnostics happen to contain provider-limit wording.
+func synthesisCanFailover(ctx context.Context, name string, err error) bool {
+	var checkout *SynthesisCheckoutError
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, agent.ErrReviewToolPolicy) || errors.As(err, &checkout) {
+		return false
+	}
+	classification, attached := agent.LimitClassificationFromError(err)
+	if !attached {
+		classification = agent.ClassifyLimit(agent.CanonicalName(name), err.Error())
+	}
+	return classification.Kind != agent.LimitKindNone || agent.IsUnavailable(err)
 }

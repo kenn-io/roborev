@@ -162,8 +162,8 @@ func (b *Builder) readCustomReviewRefFile(
 		var remaining string
 		for i := range parts {
 			candidate := path.Join(parts[:i+1]...)
-			candidateEntry, err := git.ReadRefFile(
-				b.repoPath, b.repoCfgRef, candidate,
+			candidateEntry, err := git.ReadRefFileCtx(
+				b.context(), b.repoPath, b.repoCfgRef, candidate,
 			)
 			if err != nil {
 				if i == len(parts)-1 {

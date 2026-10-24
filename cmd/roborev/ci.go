@@ -238,7 +238,7 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 		}
 	}
 
-	// Load configs (warn on error, don't fail). Repository configuration and
+	// Load trusted configuration. Repository configuration and
 	// its relative custom-review files come from the trusted side of the
 	// reviewed range, never from the checkout under review.
 	globalCfg := loadCIGlobalConfig(root).ForRepo(root)
@@ -257,11 +257,9 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 		}
 		return fmt.Errorf("resolve trusted CI config ref: %w", refErr)
 	}
-	repoConfig, err := config.LoadRepoConfigWithFallback(root, repoCfgRef)
+	repoConfig, err := config.LoadTrustedRepoConfig(root, repoCfgRef)
 	if err != nil {
-		log.Printf(
-			"ci review: load repo config from %s: %v "+
-				"(using defaults)", repoCfgRef, err)
+		return fmt.Errorf("load trusted CI repo config: %w", err)
 	}
 	repoCfg := repoConfig.Config
 	repoCfgRef = repoConfig.Ref
@@ -363,17 +361,26 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	// Determine HEAD SHA for comment formatting
 	headSHA := extractHeadSHA(gitRef)
 
+	// Resolve the backup from the same trusted source as the CI members.
+	synthesisConfig, err := config.ResolveCISynthesis(reasoningLevel, repoCfg, globalCfg)
+	if err != nil {
+		return fmt.Errorf("resolve synthesis: %w", err)
+	}
 	// Synthesize
 	synthesis, synthErr := review.Synthesize(
 		ctx, results, review.SynthesizeOpts{
-			Agent:        synthAgent,
-			Model:        config.ResolveCISynthesisModel(globalCfg),
-			Reasoning:    globalCfg.ProjectSynthesisReasoning(),
-			MinSeverity:  ciMinSev,
-			RepoPath:     root,
-			GitRef:       gitRef,
-			HeadSHA:      headSHA,
-			GlobalConfig: globalCfg,
+			Neutral:       review.NeedsNeutralSynthesis(results),
+			RepoConfig:    repoCfg,
+			RepoConfigRef: repoCfgRef,
+			BackupAgent:   synthesisConfig.BackupAgent,
+			Agent:         synthAgent,
+			Model:         config.ResolveCISynthesisModel(globalCfg),
+			Reasoning:     globalCfg.ProjectSynthesisReasoning(),
+			MinSeverity:   ciMinSev,
+			RepoPath:      root,
+			GitRef:        gitRef,
+			HeadSHA:       headSHA,
+			GlobalConfig:  globalCfg,
 		})
 	if synthErr != nil &&
 		!errors.Is(synthErr, review.ErrAllFailed) {

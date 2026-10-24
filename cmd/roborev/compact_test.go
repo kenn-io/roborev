@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -336,4 +337,31 @@ func TestCompactWorktreeBranchResolution(t *testing.T) {
 
 	require.NotEmpty(t, receivedRepo, "expected repo param to be sent")
 	assert.Equal(t, repo.Dir, receivedRepo, "repo: want main repo path")
+}
+
+func TestCompactSendsSelectedSourceIDs(t *testing.T) {
+	var received daemon.EnqueueRequest
+	_ = newMockDaemonBuilder(t).
+		WithHandler("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+			assert.NoError(t, json.NewDecoder(r.Body).Decode(&received))
+			w.WriteHeader(http.StatusCreated)
+			writeJSON(w, storage.ReviewJob{ID: 700})
+		}).Build()
+	repo := testutil.NewTestRepoWithCommit(t)
+	sources := []jobReview{
+		{jobID: 17, job: &storage.ReviewJob{ID: 17, ReviewType: "security"}, review: &storage.Review{Output: "Finding A."}},
+		// Listings do not expose voting member rows: parent classification must
+		// reach the daemon instead of being inferred here.
+		{jobID: 23, job: &storage.ReviewJob{ID: 23, JobType: storage.JobTypeSynthesis}, review: &storage.Review{Output: "Finding B."}},
+	}
+	var jobID int64
+	_, err := runWithOutput(t, repo.Path(), func(cmd *cobra.Command) error {
+		var enqueueErr error
+		jobID, enqueueErr = enqueueConsolidation(t.Context(), cmd, repo.Path(), sources, "main", compactOptions{agentName: "test", quiet: true})
+		return enqueueErr
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(700), jobID)
+	assert.Equal(t, []int64{17, 23}, received.SourceJobIDs)
+	assert.Equal(t, "compact", received.JobType)
 }

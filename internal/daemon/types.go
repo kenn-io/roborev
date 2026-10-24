@@ -33,6 +33,7 @@ type EnqueueRequest struct {
 	AnalysisType      string   `json:"analysis_type,omitempty"`       // Recorded analyze type
 	AnalysisFiles     []string `json:"analysis_files,omitempty"`      // Repository-relative files supplied to analyze
 	AnalysisCommitSHA string   `json:"analysis_commit_sha,omitempty"` // Commit whose contents were supplied to analyze
+	SourceJobIDs      []int64  `json:"source_job_ids,omitempty"`      // Reviews being consolidated by a compact job
 	JobType           string   `json:"job_type,omitempty"`            // Explicit job type (review/range/dirty/task/insights/compact/fix)
 	Provider          string   `json:"provider,omitempty"`            // Provider for pi agent (e.g., "anthropic")
 	MinSeverity       string   `json:"min_severity,omitempty"`        // Minimum severity filter: critical, high, medium, low

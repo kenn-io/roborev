@@ -1098,17 +1098,24 @@ func resolveRerunOpts(
 		job.BackupAgent = job.BudgetOriginalBackupAgent
 		job.BackupModel = job.BudgetOriginalBackupModel
 	}
-	resolutionPath := job.RepoPath
-	if job.IsGoalReviewJob() {
-		resolutionPath = GoalReviewConfigRepoPath(job)
-	} else if job.WorktreePath != "" {
-		resolutionPath = validatedWorktreePath(job.WorktreePath, job.RepoPath)
-		if resolutionPath == "" {
-			return storage.ReenqueueOpts{}, fmt.Errorf("rerun job worktree path is stale or invalid")
-		}
+	resolutionPath, err := reviewJobConfigPath(job)
+	if err != nil {
+		return storage.ReenqueueOpts{}, fmt.Errorf("rerun %w", err)
 	}
+	cfg = cfg.ForRepo(resolutionPath)
 
-	if err := config.ValidateRepoConfig(resolutionPath); err != nil {
+	if _, err := decodeReviewExecutionSnapshot(job.PanelMemberConfigJSON); err != nil {
+		return storage.ReenqueueOpts{}, err
+	}
+	var repoCfg *config.RepoConfig
+	if job.IsCIReview() {
+		var source config.RepoConfigSource
+		source, err = loadCIRepoConfig(resolutionPath)
+		repoCfg = source.Config
+	} else {
+		repoCfg, err = config.LoadRepoConfig(resolutionPath)
+	}
+	if err != nil {
 		return storage.ReenqueueOpts{}, fmt.Errorf("resolve workflow config: %w", err)
 	}
 	if assignment != nil {
@@ -1126,8 +1133,21 @@ func resolveRerunOpts(
 		if planHash != assignment.EffectiveConfigHash {
 			return storage.ReenqueueOpts{}, errors.New("frozen experiment plan does not match its attribution")
 		}
-		if err := validateRerunAgent(
-			resolutionPath, plan.Agent, plan.BackupAgent, cfg,
+		frozen := *job
+		frozen.PanelMemberConfigJSON = plan.PanelMemberConfigJSON
+		if err := validateReviewExecutionPolicy(&frozen, cfg, plan.Agent, plan.BackupAgent); err != nil {
+			return storage.ReenqueueOpts{}, err
+		}
+		frozenSnapshot, err := decodeReviewExecutionSnapshot(plan.PanelMemberConfigJSON)
+		if err != nil {
+			return storage.ReenqueueOpts{}, err
+		}
+		availabilityConfig := repoCfg
+		if plan.PanelMemberConfigJSON != "" {
+			availabilityConfig = &config.RepoConfig{ACP: frozenSnapshot.ACP}
+		}
+		if err := validateRerunAgentFromConfig(
+			availabilityConfig, plan.Agent, plan.BackupAgent, cfg,
 		); err != nil {
 			return storage.ReenqueueOpts{}, err
 		}
@@ -1140,13 +1160,17 @@ func resolveRerunOpts(
 	}
 
 	workflow := workflowForJob(job.JobType, job.ReviewType)
-	resolution, err := agent.ResolveWorkflowConfig(
-		"", resolutionPath, cfg, workflow, job.Reasoning,
+	resolution, err := agent.ResolveWorkflowConfigFromConfig(
+		"", repoCfg, cfg, workflow, job.Reasoning,
 	)
 	if err != nil {
 		return storage.ReenqueueOpts{}, fmt.Errorf("resolve workflow config: %w", err)
 	}
 	selectedAgent = strings.TrimSpace(selectedAgent)
+	backup := job.BackupAgent
+	if backup == "" {
+		backup = resolution.BackupAgent
+	}
 	if selectedAgent != "" {
 		selected, err := agent.GetAvailableExactWithConfigFromConfig(
 			resolution.RepoConfig, selectedAgent, cfg,
@@ -1162,6 +1186,9 @@ func resolveRerunOpts(
 			)
 		}
 		if err := agent.ValidateStructuredReviewSelection(job.ReviewType, selected); err != nil {
+			return storage.ReenqueueOpts{}, err
+		}
+		if err := validateReviewExecutionPolicy(job, cfg, selectedAgent, backup); err != nil {
 			return storage.ReenqueueOpts{}, err
 		}
 		if job.IsGoalReviewJob() {
@@ -1184,11 +1211,14 @@ func resolveRerunOpts(
 		}, nil
 	}
 
+	if err := validateReviewExecutionPolicy(job, cfg, "", backup); err != nil {
+		return storage.ReenqueueOpts{}, err
+	}
 	backupAgent := resolution.BackupAgent
 	if strings.TrimSpace(job.BackupAgent) != "" {
 		backupAgent = job.BackupAgent
 	}
-	if err := validateRerunAgent(resolutionPath, job.Agent, backupAgent, cfg); err != nil {
+	if err := validateRerunAgentFromConfig(repoCfg, job.Agent, backupAgent, cfg); err != nil {
 		return storage.ReenqueueOpts{}, err
 	}
 
@@ -1206,8 +1236,8 @@ func resolveRerunModelProvider(job *storage.ReviewJob, cfg *config.Config) (stri
 	return opts.Model, opts.Provider, err
 }
 
-func validateRerunAgent(repoPath string, agentName string, backupAgent string, cfg *config.Config) error {
-	_, err := agent.GetPreferredOrBackupWithConfig(repoPath, agentName, cfg, backupAgent)
+func validateRerunAgentFromConfig(repoCfg *config.RepoConfig, agentName string, backupAgent string, cfg *config.Config) error {
+	_, err := agent.GetPreferredOrBackupWithConfigFromConfig(repoCfg, agentName, cfg, backupAgent)
 	if err != nil {
 		if _, ok := errors.AsType[*agent.UnknownAgentError](err); ok {
 			return fmt.Errorf("invalid agent: %w", err)
@@ -2932,6 +2962,11 @@ func (s *Server) humaEnqueue(
 	ctx context.Context, input *EnqueueInput,
 ) (*RawJSONOutput, error) {
 	req := input.Body
+	if req.JobType == storage.JobTypeCompact {
+		if err := s.validateCompactSources(req.SourceJobIDs); err != nil {
+			return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		}
+	}
 	if req.ReviewType == config.ReviewTypeGoal {
 		return s.enqueueGoalReview(ctx, req)
 	}
@@ -3231,6 +3266,7 @@ type singleAgentInputs struct {
 }
 
 type resolvedSingleAgent struct {
+	Settings    config.ReviewSettings
 	Agent       string
 	Model       string
 	BackupAgent string
@@ -3283,6 +3319,20 @@ func (s *Server) resolveSingleAgent(
 		return resolvedSingleAgent{}, out
 	}
 	agentName = resolved.Name()
+	var settings config.ReviewSettings
+	if target := (storage.ReviewJob{JobType: storage.JobTypeForEnqueue(in.descriptor.baseOpts())}); target.IsReviewJob() && !target.IsGoalReviewJob() {
+		settings, err = config.ResolveReviewSettings(in.req.ReviewType, nil, in.repoCfg, in.cfg)
+		if err == nil {
+			err = agent.ValidateReviewToolSelection(settings.Tools, resolved, in.req.Agentic)
+		}
+		if err == nil {
+			err = agent.ValidateReviewToolBackup(settings.Tools, resolution, agentName)
+		}
+		if err != nil {
+			out, _ := rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+			return resolvedSingleAgent{}, out
+		}
+	}
 	if err := agent.ValidateStructuredReviewBackup(
 		in.req.ReviewType, resolution, agentName,
 	); err != nil {
@@ -3296,6 +3346,7 @@ func (s *Server) resolveSingleAgent(
 		resolution, agentName, in.repoCfg, in.cfg,
 	)
 	return resolvedSingleAgent{
+		Settings:    settings,
 		Agent:       agentName,
 		Model:       resolution.ModelForSelectedAgent(agentName, in.requestedModel),
 		BackupAgent: backupAgent,
@@ -3324,6 +3375,15 @@ func (s *Server) enqueueSingleAgent(
 	if in.experiment != nil {
 		o.BackupAgent = execution.BackupAgent
 		o.BackupModel = execution.BackupModel
+		acp, err := snapshotACPExecutionConfig(in.repoCfg, in.cfg, o.Agent, o.BackupAgent)
+		if err != nil {
+			return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		}
+		data, err := json.Marshal(reviewExecutionSnapshot{ReviewSettings: execution.Settings, ReviewType: o.ReviewType, ACP: acp})
+		if err != nil {
+			return rawJSONOutput(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		}
+		o.PanelMemberConfigJSON = string(data)
 		assignment, assignErr := storageAssignmentForExperiment(
 			in.experiment, experimentPlanForJob(o),
 		)

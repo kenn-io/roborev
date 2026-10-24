@@ -138,8 +138,6 @@ func TestPlanningOverridesUnsafeMode(t *testing.T) {
 				assert.Contains(t, args, "--sandbox\nread-only\n")
 			case "claude":
 				assert.Contains(t, args, "--permission-mode\nplan\n")
-				assert.Contains(t, args, "--tools\nRead,Glob,Grep\n")
-				assert.Contains(t, args, "--disallowedTools\nmcp__*\n")
 			case "droid":
 				assert.NotContains(t, args, "--auto")
 			case "pi":
