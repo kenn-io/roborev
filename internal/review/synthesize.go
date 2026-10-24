@@ -32,6 +32,8 @@ var getAvailableWithConfig = func(repoPath string, preferred string, cfg *config
 
 // SynthesizeOpts controls synthesis behavior.
 type SynthesizeOpts struct {
+	// Neutral preserves custom framing when a caller has already filtered inputs.
+	Neutral bool
 	// Agent name for synthesis (empty = first available).
 	Agent string
 	// Model override for the synthesis agent.
@@ -69,6 +71,7 @@ func Synthesize(
 	results []ReviewResult,
 	opts SynthesizeOpts,
 ) (SynthesisResult, error) {
+	opts.Neutral = opts.Neutral || NeedsNeutralSynthesis(results)
 	results = slices.Clone(results)
 	for i := range results {
 		results[i] = results[i].ApplyMinSeverity(opts.MinSeverity)
@@ -176,7 +179,7 @@ func runSynthesis(
 	}
 
 	synthPrompt := BuildSynthesisPrompt(
-		results, opts.MinSeverity)
+		results, opts.MinSeverity, opts.Neutral)
 
 	synthCtx, cancel := context.WithTimeout(
 		ctx, 5*time.Minute)

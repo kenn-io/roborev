@@ -1057,3 +1057,38 @@ func TestConfigSetWithInvalidDaemonConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestGlobalValidationDefersCustomReferencesWithExperiments(t *testing.T) {
+	for _, enabled := range []string{"true", "false"} {
+		t.Run(enabled, func(t *testing.T) {
+			assert := assert.New(t)
+			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+			path := config.GlobalConfigPath()
+			require.NoError(t, os.WriteFile(path, []byte(`
+[review.subagents.editor]
+review_type = "citations"
+[review.panels.drafts]
+members = ["editor"]
+[experiments.session-v1]
+enabled = `+enabled+`
+ratio = 1.0
+workflows = ["review"]
+[experiments.session-v1.config]
+reuse_review_session = true
+`), 0o600))
+			cmd := configValidateCmd()
+			var output strings.Builder
+			cmd.SetOut(&output)
+			cmd.SetArgs([]string{"--global"})
+			require.NoError(t, cmd.Execute())
+			assert.Equal("configuration is valid\n", output.String())
+
+			global, err := config.LoadGlobalFrom(path)
+			require.NoError(t, err)
+			check := findDoctorCheck(t, checkDoctorGlobalConfig(&doctorEnv{
+				global: global, globalPath: path,
+			}), "config.global")
+			assert.Equal(doctorOK, check.Status, "%v", check.Details)
+		})
+	}
+}

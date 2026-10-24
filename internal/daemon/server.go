@@ -2932,6 +2932,11 @@ func (s *Server) humaEnqueue(
 	ctx context.Context, input *EnqueueInput,
 ) (*RawJSONOutput, error) {
 	req := input.Body
+	if req.JobType == storage.JobTypeCompact {
+		if err := s.validateCompactSources(req.SourceJobIDs); err != nil {
+			return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		}
+	}
 	if req.ReviewType == config.ReviewTypeGoal {
 		return s.enqueueGoalReview(ctx, req)
 	}

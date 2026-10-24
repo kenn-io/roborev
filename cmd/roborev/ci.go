@@ -366,6 +366,7 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	// Synthesize
 	synthesis, synthErr := review.Synthesize(
 		ctx, results, review.SynthesizeOpts{
+			Neutral:      review.NeedsNeutralSynthesis(results),
 			Agent:        synthAgent,
 			Model:        config.ResolveCISynthesisModel(globalCfg),
 			Reasoning:    globalCfg.ProjectSynthesisReasoning(),
