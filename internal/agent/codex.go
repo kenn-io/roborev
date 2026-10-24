@@ -464,12 +464,18 @@ func (a *CodexAgent) review(
 	args := runAgent.buildArgsWithSchema(
 		repoPath, agenticMode, autoApprove, sandboxBroken, schemaPath,
 	)
+	var env []string
+	if tools, ok := reviewerToolsFrom(ctx); ok {
+		args = codexReviewerArgs(args, tools)
+		env = append(os.Environ(), codexReviewerTokenEnv+"="+tools.Token)
+	}
 	stdoutDiagnostics := newCodexDiagnosticCapture()
 
 	runResult, runErr := runStreamingCLI(ctx, streamingCLISpec{
 		Name:         "codex",
 		Command:      a.Command,
 		Args:         args,
+		Env:          env,
 		Dir:          repoPath,
 		Stdin:        strings.NewReader(prompt),
 		Output:       output,

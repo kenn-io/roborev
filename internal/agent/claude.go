@@ -336,6 +336,11 @@ func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 	if planningReadOnly(ctx) {
 		args = a.buildPlanningArgs(includeEffort)
 	}
+	args, cleanupReviewerTools, err := a.withReviewerTools(ctx, args)
+	if err != nil {
+		return "", err
+	}
+	defer cleanupReviewerTools()
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
@@ -855,6 +860,11 @@ func (a *ClaudeAgent) ReviewWithSchema(
 	if planningReadOnly(ctx) {
 		args = a.buildPlanningArgs(includeEffort)
 	}
+	args, cleanupReviewerTools, err := a.withReviewerTools(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanupReviewerTools()
 	args = append(args, "--json-schema", string(schema))
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
