@@ -20,7 +20,6 @@ import (
 // control socket's get-filters command.
 type TUIRuntimeInfo struct {
 	PID               int                       `json:"pid"`
-	ProcessIdentity   kitdaemon.ProcessIdentity `json:"process_identity,omitempty"`
 	ProcessIdentityV2 kitdaemon.ProcessIdentity `json:"process_identity_v2,omitempty"`
 	SocketPath        string                    `json:"socket_path"`
 	ServerAddr        string                    `json:"server_addr"`
@@ -134,7 +133,7 @@ func CleanupStaleTUIRuntimes() int {
 	cleaned := 0
 	for _, info := range runtimes {
 		if kitdaemon.RuntimeProcessAlive(kitdaemon.RuntimeRecord{
-			PID: info.PID, ProcessIdentity: info.ProcessIdentity, ProcessIdentityV2: info.ProcessIdentityV2,
+			PID: info.PID, ProcessIdentityV2: info.ProcessIdentityV2,
 		}) {
 			continue
 		}
@@ -159,7 +158,6 @@ func buildTUIRuntimeInfo(
 	record := kitdaemon.NewRuntimeRecord("roborev-tui", "", kitdaemon.Endpoint{})
 	return TUIRuntimeInfo{
 		PID:               record.PID,
-		ProcessIdentity:   record.ProcessIdentity,
 		ProcessIdentityV2: record.ProcessIdentityV2,
 		SocketPath:        socketPath,
 		ServerAddr:        serverAddr,
