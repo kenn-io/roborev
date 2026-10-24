@@ -3015,7 +3015,10 @@ func TestSaveColumnOptionsWritesVersion(t *testing.T) { //nolint:paralleltest //
 	// Execute the save command
 	cmd := m.saveColumnOptions()
 	msg := cmd()
-	assert.Nil(t, msg, "saveColumnOptions should succeed")
+	if errMsg, ok := msg.(configSaveErrMsg); ok {
+		require.NoError(t, errMsg.err, "saveColumnOptions should succeed")
+	}
+	require.Nil(t, msg, "saveColumnOptions should succeed")
 
 	// Reload and verify both version and hidden columns were persisted
 	loaded, err := config.LoadGlobal()

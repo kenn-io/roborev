@@ -145,7 +145,7 @@ func TestBuildSynthesisPrompt_Basic(t *testing.T) {
 			Output:     "No issues found.",
 		},
 	}
-	prompt := BuildSynthesisPrompt(reviews, "")
+	prompt := BuildSynthesisPrompt(reviews, "", false)
 
 	assertContainsAll(t, prompt, []string{
 		"combining multiple code review outputs",
@@ -252,7 +252,7 @@ func TestBuildSynthesisPrompt_UsesNeutralReviewerLabels(t *testing.T) {
 		},
 	}
 
-	prompt := BuildSynthesisPrompt(reviews, "")
+	prompt := BuildSynthesisPrompt(reviews, "", false)
 
 	assert.Contains(t, prompt, "### Review 1")
 	assert.Contains(t, prompt, "### Review 2")
@@ -262,38 +262,6 @@ func TestBuildSynthesisPrompt_UsesNeutralReviewerLabels(t *testing.T) {
 	assert.NotContains(t, prompt, "Type=design")
 	assert.NotContains(t, prompt, "security")
 	assert.NotContains(t, prompt, "design")
-}
-
-func TestBuildSynthesisPrompt_Severity(t *testing.T) {
-	reviews := []ReviewResult{
-		{
-			Agent:      "codex",
-			ReviewType: "security",
-			Status:     "done",
-			Output:     "test output",
-		},
-	}
-
-	tests := []struct {
-		name            string
-		severity        string
-		wantContains    string
-		wantNotContains string
-	}{
-		{"high severity", "high", "", "Severity threshold"},
-		{"low severity", "low", "", "Severity threshold"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			prompt := BuildSynthesisPrompt(reviews, tt.severity)
-			if tt.wantContains != "" {
-				assert.Contains(t, prompt, tt.wantContains)
-			}
-			if tt.wantNotContains != "" {
-				assert.NotContains(t, prompt, tt.wantNotContains)
-			}
-		})
-	}
 }
 
 func TestBuildSynthesisPrompt_QuotaAndFailed(t *testing.T) {
@@ -318,7 +286,7 @@ func TestBuildSynthesisPrompt_QuotaAndFailed(t *testing.T) {
 			Error:      "agent crashed",
 		},
 	}
-	prompt := BuildSynthesisPrompt(reviews, "")
+	prompt := BuildSynthesisPrompt(reviews, "", false)
 
 	assertContainsAll(t, prompt, []string{
 		"[SKIPPED]",
@@ -339,7 +307,7 @@ func TestBuildSynthesisPrompt_PreservesFullReviews(t *testing.T) {
 			Output:     longOutput,
 		},
 	}
-	prompt := BuildSynthesisPrompt(reviews, "")
+	prompt := BuildSynthesisPrompt(reviews, "", false)
 
 	assert.Contains(t, prompt, longOutput)
 }
@@ -416,7 +384,7 @@ func TestFullReviewContentPreservesUTF8(t *testing.T) {
 	})
 
 	t.Run("BuildSynthesisPrompt", func(t *testing.T) {
-		prompt := BuildSynthesisPrompt(reviews, "medium")
+		prompt := BuildSynthesisPrompt(reviews, "medium", false)
 		require.True(t, utf8.ValidString(prompt),
 			"synthesis prompt must not contain a split rune")
 		assert.Contains(t, prompt, oversized)
@@ -632,7 +600,7 @@ func TestBuildSynthesisPrompt_IncludesSkipped(t *testing.T) {
 			SkipReason: "trivial diff",
 		},
 	}
-	prompt := BuildSynthesisPrompt(reviews, "")
+	prompt := BuildSynthesisPrompt(reviews, "", false)
 	assertContainsAll(t, prompt, []string{
 		"Add type for foo",
 		"Review skipped: trivial diff",
@@ -652,7 +620,7 @@ func TestBuildSynthesisPrompt_TransientSkipped(t *testing.T) {
 			Error:      OutageErrorPrefix + "429",
 		},
 	}
-	prompt := BuildSynthesisPrompt(reviews, "")
+	prompt := BuildSynthesisPrompt(reviews, "", false)
 	assertContainsAll(t, prompt, []string{
 		"[SKIPPED]",
 		"provider unavailable",
@@ -671,8 +639,71 @@ func TestBuildSynthesisPromptRendersStructuredMembersWithoutThreshold(t *testing
 	}.ApplyMinSeverity("medium")
 	require.Contains(t, member.Output, "No findings at or above medium severity.")
 
-	prompt := BuildSynthesisPrompt([]ReviewResult{member}, "medium")
+	prompt := BuildSynthesisPrompt([]ReviewResult{member}, "medium", false)
 	assert.Contains(t, prompt, "Nit.")
 	assert.NotContains(t, prompt, "at or above")
 	assert.NotContains(t, prompt, "medium severity")
+}
+
+func TestBuildSynthesisPromptBuiltinBytes(t *testing.T) {
+	// Baseline text predates custom framing; do not regenerate it from the builder.
+	const want = `You are combining multiple code review outputs into a single GitHub PR comment.
+Return exactly one JSON object with this shape and no code fence: {"schema_version":2,"summary":"...","verdict":"pass|fail","findings":[{"severity":"critical|high|medium|low","problem":"...","fix":"...","location":"file:line or null","sources":[1]}]}
+Put a one-line overall summary in ` + "`summary`" + ` and your overall judgment in ` + "`verdict`" + `. List every finding that requires changes in ` + "`findings`" + `; return an empty ` + "`findings`" + ` array if the reviewers agree the code is clean.
+In ` + "`sources`" + `, list the numbers of the reviews below (### Review N) that reported the finding.
+Rules:
+- Only combine the input review results according to these rules
+- Do not independently review source code or inspect the repository
+- Do not use tools except to read referenced prompt or review-input files in full
+- Deduplicate findings reported by multiple reviewers and cite every source
+- Order findings by severity (Critical > High > Medium > Low)
+- Preserve file/line references in ` + "`location`" + `
+- No preamble about yourself
+
+---
+### Review 1
+Finding A.
+
+---
+### Review 2
+Finding B.
+
+`
+	got := BuildSynthesisPrompt([]ReviewResult{
+		{ReviewType: "security", Status: ResultDone, Output: "Finding A."},
+		{ReviewType: "design", Status: ResultDone, Output: "Finding B."},
+	}, "high", false)
+	assert.Equal(t, want, got)
+}
+
+func FuzzSynthesisFramingFullVotingSet(f *testing.F) {
+	f.Add(true, "failed", true, "code quotation")
+	f.Add(true, "skipped", false, "")
+	f.Add(false, "done", false, "unchanged output")
+	f.Fuzz(func(t *testing.T, custom bool, status string, first bool, output string) {
+		results := []ReviewResult{
+			{ReviewType: "security", Status: ResultDone, Output: "Finding A."},
+			{ReviewType: "design", Status: ResultDone, Output: "Finding B."},
+		}
+		if custom {
+			r := ReviewResult{ReviewType: "citations", Status: status}
+			if first {
+				results = append([]ReviewResult{r}, results...)
+			} else {
+				results = append(results, r)
+			}
+		}
+		// Arbitrary supplied text may include domain words and template syntax.
+		results = append(results, ReviewResult{ReviewType: "default", Status: ResultDone, Output: output})
+		neutral := NeedsNeutralSynthesis(results)
+		assert.Equal(t, custom, neutral)
+		got := BuildSynthesisPrompt(results, "", neutral)
+		assert.Contains(t, got, output+"\n\n")
+		if custom {
+			assert.Contains(t, got, "combined review of the reviewed material")
+			assert.Contains(t, got, "Rubric: citations")
+		} else {
+			assert.Contains(t, got, "single GitHub PR comment")
+		}
+	})
 }

@@ -744,6 +744,15 @@ into a single review job. Original jobs are automatically closed when
 consolidation finishes. This adds a quality layer between `review` and `fix` to
 reduce false positives.
 
+Compact accepts built-in review sources only. Direct custom reviews and panel
+parents with custom voting members are rejected before enqueue. A custom
+non-voting observer does not disqualify a built-in panel. The daemon checks
+source jobs and authoritative voting member records; missing source jobs or
+panel provenance are errors. API clients must send a nonempty `source_job_ids`
+array for a new compact request. The CLI sends the IDs of the selected reviews.
+The field validates source provenance only. Automatic source closure uses
+completion metadata written by the CLI.
+
 If the verification reports that findings remain, `compact` requires each one to
 be repeated with actionable detail (severity, file/line, description). Outputs
 that mention remaining findings only as counts or summaries are rejected and the

@@ -397,6 +397,7 @@ func TestBudgetRoutingSkipsUnsupportedCustomReviewCandidates(t *testing.T) {
 			ctx := newWorkerTestContext(t, 1)
 			cfg := config.DefaultConfig()
 			cfg.CodexCmd = "go"
+			cfg.Review.Types = map[string]config.ReviewTypeSpec{"custom": {Template: "review.md"}}
 			cfg.Budget = config.BudgetConfig{
 				Enabled: true, DailyLimitCents: 500, ReserveFloorCents: 100, AgentCosts: tc.costs,
 			}
