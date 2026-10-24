@@ -2737,6 +2737,7 @@ func (s *Server) humaRerunJob(
 	return resp, nil
 }
 
+// broadcastRerunEnqueued wakes idle workers for the rerun job, then announces it.
 func (s *Server) broadcastRerunEnqueued(
 	jobID int64, jobUUID *uuid.UUID, source *storage.ReviewJob,
 ) {
@@ -3406,6 +3407,7 @@ type enqueueSideEffectInputs struct {
 	reviewType string
 }
 
+// logEnqueueSideEffects wakes idle workers for the enqueued job, then logs and announces it.
 func (s *Server) logEnqueueSideEffects(
 	job *storage.ReviewJob, in enqueueSideEffectInputs,
 ) {
