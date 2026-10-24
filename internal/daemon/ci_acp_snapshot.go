@@ -1,8 +1,9 @@
 package daemon
 
 import (
-	"encoding/json/v2"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"go.kenn.io/roborev/internal/agent"
@@ -10,10 +11,7 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
-type ciPanelMemberConfig struct {
-	config.ResolvedMember
-	ACP config.ACPAgentConfigs `json:"acp,omitempty"`
-}
+type ciPanelMemberConfig = reviewExecutionSnapshot
 
 type ciACPExecutionConfig struct {
 	ACP config.ACPAgentConfigs `json:"acp,omitempty"`
@@ -44,39 +42,83 @@ func snapshotACPExecutionConfig(
 	return snapshot, nil
 }
 
-func ciACPRepoConfig(job *storage.ReviewJob) (*config.RepoConfig, bool, error) {
-	if job == nil || !job.IsCIReview() || job.PanelMemberConfigJSON == "" {
-		return nil, false, nil
-	}
-	var snapshot ciACPExecutionConfig
-	if err := json.Unmarshal([]byte(job.PanelMemberConfigJSON), &snapshot); err != nil {
-		return nil, false, fmt.Errorf("decode CI ACP execution config: %w", err)
-	}
-	if len(snapshot.ACP) == 0 {
-		return nil, false, nil
-	}
-	return &config.RepoConfig{ACP: snapshot.ACP}, true, nil
-}
-
 func resolveConfiguredJobAgent(
 	job *storage.ReviewJob,
 	cfg *config.Config,
 	backups ...string,
 ) (agent.Agent, error) {
-	repoCfg, snapshotted, err := ciACPRepoConfig(job)
+	snapshot, err := decodeReviewExecutionSnapshot(job.PanelMemberConfigJSON)
 	if err != nil {
 		return nil, err
 	}
-	if snapshotted {
+	return resolveConfiguredJobAgentWithSnapshot(job, cfg, snapshot, backups...)
+}
+
+func resolveConfiguredJobAgentWithSnapshot(job *storage.ReviewJob, cfg *config.Config, snapshot reviewExecutionSnapshot, backups ...string) (agent.Agent, error) {
+	if len(snapshot.ACP) > 0 || job.IsCIReview() && job.PanelMemberConfigJSON != "" {
+		acp, err := localPanelACPWithDynamicBackup(job, cfg, snapshot, append([]string{job.Agent}, backups...))
+		if err != nil {
+			return nil, err
+		}
 		return agent.GetPreferredOrBackupWithConfigFromConfig(
-			repoCfg, job.Agent, cfg, backups...,
+			&config.RepoConfig{ACP: acp}, job.Agent, cfg, backups...,
 		)
 	}
-	return agent.GetPreferredOrBackupWithConfig(
-		job.RepoPath, job.Agent, cfg, backups...,
-	)
+	if job.IsCIReview() {
+		source, err := loadCIRepoConfig(job.RepoPath)
+		if err != nil {
+			return nil, err
+		}
+		return agent.GetPreferredOrBackupWithConfigFromConfig(source.Config, job.Agent, cfg, backups...)
+	}
+	path, err := reviewJobConfigPath(job)
+	if err != nil {
+		return nil, err
+	}
+	return agent.GetPreferredOrBackupWithConfig(path, job.Agent, cfg, backups...)
 }
 
 func resolveReviewJobAgent(job *storage.ReviewJob, cfg *config.Config) (agent.Agent, error) {
 	return resolveConfiguredJobAgent(job, cfg)
+}
+
+// Ordinary local panels may acquire a workflow backup after enqueue. Resolve
+// only that missing definition live; every entry already frozen stays frozen.
+func localPanelACPWithDynamicBackup(job *storage.ReviewJob, cfg *config.Config, snapshot reviewExecutionSnapshot, requested []string) (config.ACPAgentConfigs, error) {
+	if job.IsCIReview() || job.PanelRole != storage.PanelRoleMember ||
+		job.FrozenExperimentPlan != nil || len(job.Experiments) != 0 ||
+		job.BackupAgent != "" || snapshot.BackupAgent != "" {
+		return snapshot.ACP, nil
+	}
+	needsLive := slices.ContainsFunc(requested, func(name string) bool {
+		key := agent.ACPConfigName(name)
+		_, frozen := snapshot.ACP[key]
+		return key != "" && !frozen
+	})
+	if !needsLive {
+		return snapshot.ACP, nil
+	}
+	path, err := reviewJobConfigPath(job)
+	if err != nil {
+		return nil, err
+	}
+	repoCfg, err := config.LoadRepoConfig(path)
+	if err != nil {
+		return nil, err
+	}
+	backup := config.ResolveBackupAgentForWorkflowFromConfig(repoCfg, cfg, failoverWorkflow(job))
+	key := agent.ACPConfigName(backup)
+	if key == "" || !slices.Contains(requested, backup) {
+		return snapshot.ACP, nil
+	}
+	if _, frozen := snapshot.ACP[key]; frozen {
+		return snapshot.ACP, nil
+	}
+	entry, ok := config.ResolveACPAgentConfigFromConfig(key, repoCfg, cfg)
+	if !ok {
+		return snapshot.ACP, nil
+	}
+	acp := maps.Clone(snapshot.ACP)
+	acp[key] = entry
+	return acp, nil
 }

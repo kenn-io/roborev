@@ -15,13 +15,14 @@ import (
 // fields fall back to the existing workflow resolution at resolve time, so a
 // subagent may omit model/reasoning and inherit the workflow default.
 type SubagentSpec struct {
-	Agent        string `toml:"agent"`
-	Model        string `toml:"model"`
-	Provider     string `toml:"provider"`
-	Reasoning    string `toml:"reasoning"`
-	ReviewType   string `toml:"review_type"`
-	Instructions string `toml:"instructions"`
-	AllowFailure bool   `toml:"allow_failure"`
+	Tools        *ReviewToolPolicy `toml:"tools"`
+	Agent        string            `toml:"agent"`
+	Model        string            `toml:"model"`
+	Provider     string            `toml:"provider"`
+	Reasoning    string            `toml:"reasoning"`
+	ReviewType   string            `toml:"review_type"`
+	Instructions string            `toml:"instructions"`
+	AllowFailure bool              `toml:"allow_failure"`
 	// NonVoting runs the member and stores its review for inspection but
 	// keeps it out of synthesis and the panel verdict. Use it to trial a new
 	// agent or model without letting it influence the authoritative result.
@@ -72,8 +73,14 @@ func MergeReviewConfig(repo, global ReviewConfig) ReviewConfig {
 	for name, spec := range repo.Types {
 		merged.Types[name] = spec.Clone()
 	}
-	maps.Copy(merged.Subagents, global.Subagents)
-	maps.Copy(merged.Subagents, repo.Subagents)
+	for name, spec := range global.Subagents {
+		spec.Tools = spec.Tools.Clone()
+		merged.Subagents[name] = spec
+	}
+	for name, spec := range repo.Subagents {
+		spec.Tools = spec.Tools.Clone()
+		merged.Subagents[name] = spec
+	}
 	maps.Copy(merged.Panels, global.Panels)
 	maps.Copy(merged.Panels, repo.Panels)
 	return merged
@@ -121,12 +128,24 @@ func MergedReviewConfig(repoPath string, globalCfg *Config) ReviewConfig {
 // It aggregates all problems in deterministic name order rather than failing
 // on the first, and returns nil when clean.
 func (rc ReviewConfig) Validate() error {
+	return rc.validate(false)
+}
+
+// validate permits repository-defined rubric references during global validation.
+func (rc ReviewConfig) validate(deferCustomReferences bool) error {
 	var errs []error
 	for _, name := range slices.Sorted(maps.Keys(rc.Subagents)) {
 		spec := rc.Subagents[name]
-		if _, err := canonicalMemberReviewType(
-			spec.ReviewType, &RepoConfig{Review: rc}, nil,
-		); err != nil {
+		if _, err := CanonicalReviewToolPolicy(spec.Tools); err != nil {
+			errs = append(errs, fmt.Errorf("subagent %q: %w", name, err))
+		}
+		var typeErr error
+		if deferCustomReferences {
+			typeErr = validateMemberReviewTypeSyntax(spec.ReviewType)
+		} else {
+			_, typeErr = canonicalMemberReviewType(spec.ReviewType, &RepoConfig{Review: rc}, nil)
+		}
+		if err := typeErr; err != nil {
 			errs = append(errs, fmt.Errorf("subagent %q: %w", name, err))
 		}
 		if _, err := NormalizeReasoning(spec.Reasoning); err != nil {
@@ -218,6 +237,7 @@ func SelectPanelName(requested, source string, merged ReviewConfig) string {
 // ResolvedMember is a fully-resolved panel member. It is the value serialized
 // into the review_jobs.panel_member_config_json column for reproducibility.
 type ResolvedMember struct {
+	ReviewSettings
 	Name          string `json:"name"`
 	Index         int    `json:"index"`
 	Agent         string `json:"agent"`
@@ -401,6 +421,10 @@ func resolveMemberFromConfig(
 	if err := validateSubagentTimeout(spec.Timeout); err != nil {
 		return ResolvedMember{}, fmt.Errorf("subagent %q: %w", name, err)
 	}
+	settings, err := ResolveReviewSettings(reviewType, spec.Tools, repoCfg, globalCfg)
+	if err != nil {
+		return ResolvedMember{}, fmt.Errorf("subagent %q: %w", name, err)
+	}
 	workflow := WorkflowForReviewType(reviewType)
 	agent := spec.Agent
 	if agent == "" {
@@ -422,19 +446,20 @@ func resolveMemberFromConfig(
 		modelExplicit = true
 	}
 	return ResolvedMember{
-		Name:          name,
-		Index:         index,
-		Agent:         agent,
-		AgentExplicit: strings.TrimSpace(spec.Agent) != "",
-		Model:         model,
-		ModelExplicit: modelExplicit,
-		Provider:      spec.Provider,
-		Reasoning:     reasoning,
-		ReviewType:    reviewType,
-		Instructions:  spec.Instructions,
-		AllowFailure:  spec.AllowFailure,
-		NonVoting:     spec.NonVoting,
-		Timeout:       spec.Timeout,
+		ReviewSettings: settings,
+		Name:           name,
+		Index:          index,
+		Agent:          agent,
+		AgentExplicit:  strings.TrimSpace(spec.Agent) != "",
+		Model:          model,
+		ModelExplicit:  modelExplicit,
+		Provider:       spec.Provider,
+		Reasoning:      reasoning,
+		ReviewType:     reviewType,
+		Instructions:   spec.Instructions,
+		AllowFailure:   spec.AllowFailure,
+		NonVoting:      spec.NonVoting,
+		Timeout:        spec.Timeout,
 	}, nil
 }
 

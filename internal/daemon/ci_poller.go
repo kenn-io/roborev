@@ -951,9 +951,8 @@ func matchingCISkipLabel(prLabels, skipLabels []string) (string, bool) {
 }
 
 // loadCIRepoConfigFor loads typed and raw repo config through one loader. A
-// parse error is non-fatal — CI review falls back to global/default settings so
-// a broken repo override does not disable PR review entirely — but experiment
-// validation and other load failures are returned.
+// trusted config absence is authoritative. Every load/parse failure aborts
+// resolution instead of weakening repository policy to global defaults.
 func (p *CIPoller) loadCIRepoConfigFor(repoPath, ghRepo string) (ciRepoConfigSource, error) {
 	loadRepoConfig := p.loadRepoConfigFn
 	if loadRepoConfig == nil {
@@ -961,11 +960,7 @@ func (p *CIPoller) loadCIRepoConfigFor(repoPath, ghRepo string) (ciRepoConfigSou
 	}
 	repoConfig, err := loadRepoConfig(repoPath)
 	if err != nil {
-		if config.IsConfigValidationError(err) || !config.IsConfigParseError(err) {
-			return ciRepoConfigSource{}, fmt.Errorf("load repo config: %w", err)
-		}
-		log.Printf("CI poller: warning: failed to load repo config for %s: %v", ghRepo, err)
-		return ciRepoConfigSource{}, nil
+		return repoConfig, fmt.Errorf("load repo config: %w", err)
 	}
 	return repoConfig, nil
 }
@@ -1168,6 +1163,11 @@ func (p *CIPoller) resolveCIMatrixMembers(
 			BackupAgent: backupAgent,
 			BackupModel: backupModel,
 		})
+		settings, err := config.ResolveReviewSettings(entry.ReviewType, nil, repoCfg, cfg)
+		if err != nil {
+			return nil, config.SynthesisSpec{}, err
+		}
+		members[len(members)-1].ReviewSettings = settings
 	}
 
 	synth, err := config.ResolveCISynthesis(reasoning, repoCfg, cfg)
@@ -1222,6 +1222,15 @@ func (p *CIPoller) resolveCIPanelMemberExecution(
 		if err != nil {
 			return "", "", "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, member.ReviewType, err)
 		}
+		if member.Tools != nil {
+			selected, selectErr := agent.GetPreferredOrBackupWithConfigFromConfig(repoCfg, name, cfg)
+			if selectErr != nil {
+				return "", "", "", "", selectErr
+			}
+			if policyErr := agent.ValidateReviewToolSelection(member.Tools, selected, false); policyErr != nil {
+				return "", "", "", "", policyErr
+			}
+		}
 		resolvedAgent = name
 	} else {
 		var selected agent.Agent
@@ -1242,6 +1251,9 @@ func (p *CIPoller) resolveCIPanelMemberExecution(
 		); err != nil {
 			return "", "", "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, member.ReviewType, err)
 		}
+		if err := agent.ValidateReviewToolSelection(member.Tools, selected, false); err != nil {
+			return "", "", "", "", err
+		}
 		resolvedAgent = selected.Name()
 	}
 	resolvedAgent = agent.StorageNameFromConfig(resolvedAgent, repoCfg, cfg)
@@ -1251,6 +1263,9 @@ func (p *CIPoller) resolveCIPanelMemberExecution(
 		return "", "", "", "", fmt.Errorf(
 			"%w for type=%s: %w", errNoCIAgent, member.ReviewType, err,
 		)
+	}
+	if err := agent.ValidateReviewToolBackup(member.Tools, resolution, resolvedAgent); err != nil {
+		return "", "", "", "", err
 	}
 	model := member.Model
 	if !member.ModelExplicit || !resolution.AgentMatches(resolvedAgent, member.Agent) {
@@ -1288,6 +1303,11 @@ func (p *CIPoller) resolveMatrixMemberAgent(
 	entry config.AgentReviewType,
 	reasoning string,
 ) (string, string, string, string, error) {
+	settings, settingsErr := config.ResolveReviewSettings(entry.ReviewType, nil, repoCfg, cfg)
+	if settingsErr != nil {
+		return "", "", "", "", settingsErr
+	}
+
 	workflow := config.WorkflowForReviewType(entry.ReviewType)
 	resolution, err := agent.ResolveWorkflowConfigFromConfig(entry.Agent, repoCfg, cfg, workflow, reasoning)
 	if err != nil {
@@ -1302,6 +1322,15 @@ func (p *CIPoller) resolveMatrixMemberAgent(
 		name, err := p.agentResolverFn(resolvedAgent)
 		if err != nil {
 			return "", "", "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, entry.ReviewType, err)
+		}
+		if settings.Tools != nil {
+			selected, selectErr := agent.GetPreferredOrBackupWithConfigFromConfig(repoCfg, name, cfg)
+			if selectErr != nil {
+				return "", "", "", "", selectErr
+			}
+			if policyErr := agent.ValidateReviewToolSelection(settings.Tools, selected, false); policyErr != nil {
+				return "", "", "", "", policyErr
+			}
 		}
 		resolvedAgent = name
 	} else {
@@ -1323,6 +1352,9 @@ func (p *CIPoller) resolveMatrixMemberAgent(
 		); err != nil {
 			return "", "", "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, entry.ReviewType, err)
 		}
+		if err := agent.ValidateReviewToolSelection(settings.Tools, selected, false); err != nil {
+			return "", "", "", "", err
+		}
 		resolvedAgent = selected.Name()
 	}
 	resolvedAgent = agent.StorageNameFromConfig(resolvedAgent, repoCfg, cfg)
@@ -1332,6 +1364,9 @@ func (p *CIPoller) resolveMatrixMemberAgent(
 		return "", "", "", "", fmt.Errorf(
 			"%w for type=%s: %w", errNoCIAgent, entry.ReviewType, err,
 		)
+	}
+	if err := agent.ValidateReviewToolBackup(settings.Tools, resolution, resolvedAgent); err != nil {
+		return "", "", "", "", err
 	}
 	backupAgent, backupModel := backupExecutionForSelectedAgent(
 		resolution, resolvedAgent, repoCfg, cfg,
@@ -1681,12 +1716,9 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 			"snapshot synthesis ACP config: %w", err,
 		)
 	}
-	if len(synthACP) > 0 {
-		encoded, marshalErr := json.Marshal(ciACPExecutionConfig{ACP: synthACP})
-		if marshalErr != nil {
-			return nil, storage.EnqueueOpts{}, fmt.Errorf("snapshot synthesis ACP config: %w", marshalErr)
-		}
-		synthSnapshot = encoded
+	synthSnapshot, err = json.Marshal(synthesisExecutionSnapshot(in.members, synthACP))
+	if err != nil {
+		return nil, storage.EnqueueOpts{}, fmt.Errorf("snapshot synthesis config: %w", err)
 	}
 	synthOpts := storage.EnqueueOpts{
 		RepoID:                in.repo.ID,
@@ -3462,11 +3494,9 @@ func isPermanentGitHubAccessError(err error) bool {
 func loadCIRepoConfig(repoPath string) (ciRepoConfigSource, error) {
 	defaultBranch, err := gitpkg.GetDefaultBranch(repoPath)
 	if err != nil {
-		// Can't determine default branch (no origin, bare repo, etc.)
-		// — fall back to filesystem.
-		return config.LoadRepoConfigWithFallback(repoPath, "")
+		return ciRepoConfigSource{}, fmt.Errorf("resolve trusted CI default branch: %w", err)
 	}
-	return config.LoadRepoConfigWithFallback(repoPath, defaultBranch)
+	return config.LoadTrustedRepoConfig(repoPath, defaultBranch)
 }
 
 // resolveCISynthesisMinSeverity resolves synthesis severity from the already
@@ -3864,7 +3894,8 @@ func toReviewResult(
 	br storage.BatchReviewResult,
 ) reviewpkg.ReviewResult {
 	var member struct {
-		AllowFailure bool `json:"allow_failure"`
+		AllowFailure bool                     `json:"allow_failure"`
+		Tools        *config.ReviewToolPolicy `json:"tools"`
 	}
 	if br.PanelMemberConfigJSON != "" {
 		_ = json.Unmarshal([]byte(br.PanelMemberConfigJSON), &member)
@@ -3884,6 +3915,7 @@ func toReviewResult(
 		Skipped:          br.Status == string(storage.JobStatusSkipped),
 		SkipReason:       br.SkipReason,
 		AllowFailure:     member.AllowFailure,
+		Tools:            member.Tools,
 	}
 	result.MinSeverity = br.MinSeverity
 	if len(br.StructuredOutput) != 0 {
