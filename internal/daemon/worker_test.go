@@ -4317,6 +4317,7 @@ func TestWorkerPoolWakesIdleWorkersOnNewJob(t *testing.T) {
 		{name: "unpause", workers: 1},
 		{name: "panel cancel release", workers: 1},
 		{name: "panel sweep release", workers: 1},
+		{name: "orphan member release", workers: 1},
 		{name: "orphan session release", workers: 1},
 		{name: "unpause four workers", workers: 4},
 		{name: "poll fallback without a wake", workers: 1},
@@ -4395,7 +4396,7 @@ func TestWorkerPoolWakesIdleWorkersOnNewJob(t *testing.T) {
 						require.NoError(t, err)
 					}
 					trigger = func() { post("/api/queue/unpause", struct{}{}, http.StatusOK) }
-				case "panel cancel release", "panel sweep release":
+				case "panel cancel release", "panel sweep release", "orphan member release":
 					tc := &workerTestContext{DB: db, TmpDir: repo.Path(), Repo: storedRepo}
 					_, members, synth := enqueuePanelRun(t, tc, "wake-panel", []memberSpec{{name: "member", agent: "test"}})
 					claimed, err := db.ClaimJob("orphan-worker")
@@ -4405,11 +4406,22 @@ func TestWorkerPoolWakesIdleWorkersOnNewJob(t *testing.T) {
 					jobID, eventType = synth.ID, "review.failed"
 					if test.name == "panel cancel release" {
 						trigger = func() { post("/api/job/cancel", CancelJobRequest{JobID: members[0].ID}, http.StatusOK) }
-					} else {
+					} else if test.name == "panel sweep release" {
 						// Isolate synthesis release from the orphan-failure wake.
 						updated, err := db.FailJob(members[0].ID, claimed.WorkerID, "synthetic member failure")
 						require.NoError(t, err)
 						require.True(t, updated)
+						trigger = func() { server.sweepStuckPanels(context.Background()) }
+					} else {
+						server.workerPool.broadcaster = &observingBroadcaster{
+							Broadcaster: server.workerPool.broadcaster,
+							observe: func(event Event) {
+								if event.Type == "review.failed" && event.JobID == members[0].ID {
+									// Drain any earlier wake before broadcastFailed releases synthesis.
+									synctest.Wait()
+								}
+							},
+						}
 						trigger = func() { server.sweepStuckPanels(context.Background()) }
 					}
 				case "orphan session release":

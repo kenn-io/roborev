@@ -64,10 +64,10 @@ func (s *Server) failOrphanedJob(ctx context.Context, job *storage.ReviewJob) {
 	if !updated {
 		return
 	}
-	wp.wake()
 	log.Printf("panel sweep: job %d failed: %s", job.ID, errorMsg)
 	wp.invalidateBudgetSpend()
 	wp.broadcastFailed(job, job.Agent, errorMsg)
+	wp.wake()
 	if wp.errorLog != nil {
 		wp.errorLog.LogError("worker", fmt.Sprintf("job %d failed: %s", job.ID, errorMsg), job.ID)
 	}
