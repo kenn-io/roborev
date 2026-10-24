@@ -22,6 +22,7 @@ import (
 )
 
 func TestEnqueueIfNeeded(t *testing.T) {
+	setupFastPolling(t)
 	// Constants used across tests
 	const sha = "abc123def456"
 

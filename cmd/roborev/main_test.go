@@ -68,7 +68,7 @@ func captureStdout(t *testing.T, fn func()) string {
 }
 
 // setupFastPolling reduces all polling intervals to 1ms for fast tests.
-// Returns a cleanup function that restores the original values.
+// Restores the original values during cleanup.
 func setupFastPolling(t *testing.T) {
 	t.Helper()
 
@@ -76,17 +76,23 @@ func setupFastPolling(t *testing.T) {
 	origPollMax := pollMaxInterval
 	origPostCommitWait := postCommitWaitDelay
 	origDaemonPoll := daemon.DefaultPollInterval
+	origProbeRetry := ensureProbeRetryDelay
+	origEnqueueProbe := enqueueIfNeededProbeDelay
 
 	pollStartInterval = 1 * time.Millisecond
 	pollMaxInterval = 1 * time.Millisecond
 	postCommitWaitDelay = 1 * time.Millisecond
 	daemon.DefaultPollInterval = 1 * time.Millisecond
+	ensureProbeRetryDelay = 1 * time.Millisecond
+	enqueueIfNeededProbeDelay = 1 * time.Millisecond
 
 	t.Cleanup(func() {
 		pollStartInterval = origPollStart
 		pollMaxInterval = origPollMax
 		postCommitWaitDelay = origPostCommitWait
 		daemon.DefaultPollInterval = origDaemonPoll
+		ensureProbeRetryDelay = origProbeRetry
+		enqueueIfNeededProbeDelay = origEnqueueProbe
 	})
 }
 

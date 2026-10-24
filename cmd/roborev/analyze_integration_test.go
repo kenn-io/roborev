@@ -23,6 +23,7 @@ import (
 )
 
 func TestWaitForAnalysisJob(t *testing.T) {
+	setupFastPolling(t)
 	const testJobID = 42
 	tests := []struct {
 		name       string
@@ -117,6 +118,7 @@ func TestWaitForAnalysisJob(t *testing.T) {
 }
 
 func TestRunAnalyzeAndFix_Integration(t *testing.T) {
+	setupFastPolling(t)
 	for _, outcome := range []string{"no change", "commit", "quiet commit"} {
 		t.Run(outcome, func(t *testing.T) {
 			committed := outcome != "no change"
