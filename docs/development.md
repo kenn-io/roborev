@@ -15,6 +15,22 @@ make install    # Installs with version info (e.g., v0.7.0-5-gabcdef)
 Or use `go install ./cmd/...` for quick iteration (version shows commit hash
 only).
 
+### Package builds
+
+Package maintainers can disable self-updates so users upgrade through their
+package manager. Set this linker flag when building:
+
+```bash
+CGO_ENABLED=0 go build \
+  -ldflags="-X go.kenn.io/roborev/internal/update.disabled=true" \
+  -o bin/roborev ./cmd/roborev
+```
+
+These builds reject `roborev update`, including `--check` and `--force`, with a
+message directing users to their package manager. The terminal interface skips
+update checks and update notifications. Builds without this flag retain the
+normal update behavior.
+
 ## Project Structure
 
 ```
