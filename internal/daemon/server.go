@@ -2737,11 +2737,10 @@ func (s *Server) humaRerunJob(
 	return resp, nil
 }
 
-// broadcastRerunEnqueued wakes idle workers for the rerun job, then announces it.
+// broadcastRerunEnqueued announces the rerun job, then wakes idle workers.
 func (s *Server) broadcastRerunEnqueued(
 	jobID int64, jobUUID *uuid.UUID, source *storage.ReviewJob,
 ) {
-	s.workerPool.wake()
 	s.broadcaster.Broadcast(Event{
 		Type:     "job.enqueued",
 		TS:       time.Now(),
@@ -2752,6 +2751,7 @@ func (s *Server) broadcastRerunEnqueued(
 		SHA:      source.GitRef,
 		Agent:    source.Agent,
 	})
+	s.workerPool.wake()
 }
 
 func (s *Server) humaCloseReview(
@@ -3407,11 +3407,10 @@ type enqueueSideEffectInputs struct {
 	reviewType string
 }
 
-// logEnqueueSideEffects wakes idle workers for the enqueued job, then logs and announces it.
+// logEnqueueSideEffects logs and announces the enqueued job, then wakes idle workers.
 func (s *Server) logEnqueueSideEffects(
 	job *storage.ReviewJob, in enqueueSideEffectInputs,
 ) {
-	s.workerPool.wake()
 	if s.activityLog != nil {
 		s.activityLog.Log(
 			"job.enqueued", "server",
@@ -3435,6 +3434,7 @@ func (s *Server) logEnqueueSideEffects(
 		SHA:      job.GitRef,
 		Agent:    in.agentName,
 	})
+	s.workerPool.wake()
 }
 
 func (s *Server) humaBatchJobs(

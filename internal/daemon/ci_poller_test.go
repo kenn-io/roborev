@@ -792,6 +792,10 @@ func TestCIPollerEnqueueWakesIdleWorker(t *testing.T) {
 		server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
 		defer server.Close()
 		server.SetCIPoller(h.Poller)
+		var order []string
+		wake := h.Poller.wakeFn
+		h.Poller.wakeFn = func() { order = append(order, "wake"); wake() }
+		h.Poller.setCommitStatusFn = func(_, _, state, _ string) error { order = append(order, state); return nil }
 		server.workerPool.Start()
 		synctest.Wait()
 
@@ -805,6 +809,7 @@ func TestCIPollerEnqueueWakesIdleWorker(t *testing.T) {
 		case <-time.After(time.Second):
 		}
 		require.True(t, didStart, "CI panel member must start before the 2s fallback poll")
+		require.Equal(t, []string{"pending", "wake"}, order, "workers wake after the pending status is set")
 	})
 }
 

@@ -4361,7 +4361,6 @@ func TestWorkerPoolWakesIdleWorkersOnNewJob(t *testing.T) {
 			require.NoError(t, err)
 			f.postTrigger("/api/rebuttal", RebuttalRequest{JobID: parent.ID, Finding: "The guard is missing.", Comment: "Check the caller.", Commenter: "operator"}, http.StatusCreated)
 		}},
-		{"unpause", 1, func(t *testing.T, f *fixture) { unpause(t, f, 1) }},
 		{"panel cancel release", 1, func(t *testing.T, f *fixture) {
 			member, _ := f.panel()
 			f.postTrigger("/api/job/cancel", CancelJobRequest{JobID: member.ID}, http.StatusOK)
@@ -4396,7 +4395,7 @@ func TestWorkerPoolWakesIdleWorkersOnNewJob(t *testing.T) {
 			f.job.ID = f.enqueue("shared-session", "").ID
 			f.trigger = func() { f.server.sweepStuckPanels(context.Background()) }
 		}},
-		{"unpause four workers", 4, func(t *testing.T, f *fixture) { unpause(t, f, 4) }},
+		{"unpause", 4, func(t *testing.T, f *fixture) { unpause(t, f, 4) }},
 		{"poll fallback without a wake", 1, func(t *testing.T, f *fixture) {
 			f.trigger = func() {
 				f.job.ID = f.enqueue("", "").ID

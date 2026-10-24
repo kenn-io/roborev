@@ -873,9 +873,6 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 		// Another poller owns this PR+HEAD; it set (or will set) the status.
 		return false, nil
 	}
-	if p.wakeFn != nil {
-		p.wakeFn()
-	}
 	p.broadcastJobEvent("job.enqueued", synthJob)
 
 	headShort := gitpkg.ShortSHA(pr.HeadRefOid)
@@ -884,6 +881,11 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 
 	if err := p.setPendingReviewStatus(ghRepo, pr.Number, pr.HeadRefOid, "Review in progress"); err != nil {
 		log.Printf("CI poller: failed to set pending status for %s@%s: %v", ghRepo, headShort, err)
+	}
+	// Wake workers last: a fast review must not publish its result before the
+	// pending status above, which would then overwrite it.
+	if p.wakeFn != nil {
+		p.wakeFn()
 	}
 
 	return true, nil

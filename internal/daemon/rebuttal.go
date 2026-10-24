@@ -136,10 +136,10 @@ User explanation: %q
 	if err != nil {
 		return nil, huma.Error500InternalServerError(fmt.Sprintf("explanation saved but enqueue failed: %v", err))
 	}
-	s.workerPool.wake()
 	job.RepoPath = parent.RepoPath
 	job.RepoName = parent.RepoName
 	job.OriginalReviewUUID = review.UUID
 	s.broadcaster.Broadcast(eventForJob("review.enqueued", job, job.ID))
+	s.workerPool.wake()
 	return &RebuttalOutput{Body: job}, nil
 }
