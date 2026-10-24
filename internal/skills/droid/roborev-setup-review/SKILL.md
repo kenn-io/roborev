@@ -320,6 +320,10 @@ Before proposing, tell the user where the material can go:
 - every agent priced in `budget.agent_costs`, when `budget.enabled` is true;
     near the daily cap, budget routing can move a review that is not part of
     a panel to any of them, even when its type names an agent;
+- the design-review classifier (`classify_agent`, `claude-code` by default)
+    and the design reviewer's agent, when `auto_design_review.enabled` or
+    `auto_design_review.hook_enabled` is true; a panel run with no design
+    member can start both, whatever agents its members pin;
 - roborev's local database, which stores prompts and reviews;
 - the PostgreSQL mirror, when `sync.enabled` is true;
 - pull request comments, when CI reviews cover this repository;
@@ -335,7 +339,12 @@ is unavailable. Check `roborev config --from-skill list --show-origin` for
 for `budget.enabled` and `budget.agent_costs`. Budget routing does not change
 panel members or synthesis. While providers are restricted and budget routing
 is on, run every review through a panel, a one-member panel for a single type,
-or get approval to change the budget policy.
+or get approval to change the budget policy. When either
+`auto_design_review` setting is on and providers are restricted, propose
+`enabled = false` and `hook_enabled = false` under `[auto_design_review]` in
+`.roborev.toml`. The design review it starts is a standalone job, so budget
+routing can move it too. Propose turning it off for non-code material anyway;
+a design review of prose is noise.
 
 ## Propose and get approval
 
