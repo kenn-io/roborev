@@ -360,7 +360,7 @@ func TestCommandLineForPlanningIgnoresGlobalUnsafeMode(t *testing.T) {
 		unsafe   string
 		readOnly string
 	}{
-		{"claude", NewClaudeAgent("claude"), claudeDangerousFlag, "--permission-mode plan --tools Read,Glob,Grep --disallowedTools mcp__*"},
+		{"claude", NewClaudeAgent("claude"), claudeDangerousFlag, "--permission-mode plan"},
 		{"codex", NewCodexAgent("codex"), codexDangerousFlag, "--sandbox read-only"},
 		{"copilot", NewCopilotAgent("copilot"), "", "--available-tools=view,glob,grep,skill"},
 		{"cursor", NewCursorAgent("cursor"), "--force", "--mode plan"},

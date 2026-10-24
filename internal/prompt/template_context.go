@@ -58,6 +58,7 @@ const (
 )
 
 type ReviewOptionalContext struct {
+	Neutral               bool
 	ProjectGuidelines     *MarkdownSection
 	KataContext           *MarkdownSection
 	AdditionalContext     string

@@ -644,6 +644,106 @@ optional agent, model, and reasoning overrides. See
 [Custom Review Types](/docs/advanced/custom-review-types/) for path rules,
 template values, structured output, and examples.
 
+### Strict Review Tool Policies
+
+A custom type can request a strict policy. A subagent can replace its type's
+policy with its own `[review.subagents.<name>.tools]` table:
+
+```toml
+[review.types.citations]
+template = ".roborev/prompts/citations.md"
+
+[review.types.citations.tools]
+mode = "read-only"
+
+[review.types.citations.tools.mcp]
+sources = ["read", "find"]
+```
+
+Omitting `tools` retains ordinary adapter behavior. A present table requires
+`mode = "read-only"`; omitting `mcp` requests strict review without MCP grants.
+An empty grant map also means strict review without MCP access. Server and tool
+names contain only ASCII letters, digits, `_`, and `-`, with no `__`. Wildcards,
+whitespace, slashes, and namespace prefixes are rejected. Duplicate tool names
+are removed. A member policy replaces the whole type policy, and an experiment
+policy replaces the whole previous policy, including all server grants.
+
+The operator controls MCP definitions and the maximum allowed grants in global
+config only:
+
+```toml
+review_mcp_config = "/operator/review-servers.json"
+review_mcp_allowed_tools = ["sources/read", "sources/find"]
+```
+
+Repositories and experiments cannot set these authority keys. Each ceiling entry
+names one exact `server/tool` pair. A review's requested grants do not expand
+the operator ceiling. Recheck the current global ceiling at execution: revoking
+a grant also affects queued and frozen reviews. The ceiling is shared by all
+registered repositories. Prefixes and other tools on the same server confer no
+additional grants.
+
+Use an absolute operator-file path so a repository cannot shadow it through the
+working directory. The file uses native Claude MCP configuration:
+
+```json
+{
+  "mcpServers": {
+    "sources": {
+      "command": "source-reader",
+      "args": ["--stdio"]
+    },
+    "unused": {
+      "type": "http",
+      "url": "https://example.invalid/mcp"
+    }
+  }
+}
+```
+
+Selection copies only servers with requested, authorized tools. Other native
+fields, including arguments, environment, transport, URL and headers, survive
+selection. Empty grants do not read this file. Missing servers, unreadable files
+and malformed selected definitions fail preparation. Selected config is written
+to a private temporary directory with mode 0600 and removed after the
+invocation. Its absolute path must resolve outside the actual agent checkout,
+even when the daemon has a different working directory. Relative temporary roots
+and roots resolving inside the checkout fail preparation before writing any
+config. Only its path belongs in command arguments. Definitions and credential
+values must stay out of prompts, stored member settings, logs and sync.
+
+MCP servers are trusted external capabilities. Tool names and `readOnlyHint` do
+not prove that a tool has no side effects. The operator ceiling and server
+credentials authorize capabilities; Roborev does not sandbox the server process.
+Granted responses can reach the model, review output, job logs, synced rows and
+synthesized CI comments. Authorize CI grants with the same care as local grants.
+
+Selected MCP launch remains disabled pending native startup enforcement and
+adapter qualification. Explicit strict requests fail before invoking an
+unsupported adapter, including a configured backup or budget substitution.
+Per-request agentic mode cannot be combined with strict review tools.
+
+Panel and CI jobs freeze resolved review settings in their existing member
+snapshot. Experiment-attributed standalone jobs do the same. Reruns retain the
+snapshot, including an absent tool policy and disabled evidence settings, even
+if configuration changes later. Legacy snapshots without these fields retain
+ordinary tools and disabled evidence. Standalone jobs without a snapshot resolve
+their current type settings. Global operator authority is never copied into the
+snapshot. Local reruns and budget routing resolve current settings from the
+recorded, validated worktree; stale or unrelated worktree paths are rejected.
+
+Frozen ACP definitions remain authoritative on rerun. Local panels retain the
+backup agent and model resolved at enqueue, including an empty model. An
+ordinary local panel with no frozen backup may use a workflow backup configured
+after enqueue. That backup's missing ACP definition comes from the recorded,
+validated checkout, even when its original ACP snapshot was empty. CI and
+experiment jobs do not use this fallback.
+
+Custom types also accept `binary_evidence` and `evidence_manifest`. These values
+are type-owned and frozen with the other settings. They reserve configuration
+for committed evidence support; this release does not resolve or render binary
+evidence.
+
 ### Review Panels
 
 Use `[review]` to configure subagent review panels. A panel fans one daemon
@@ -1065,10 +1165,14 @@ reused by later reviews, including after isolation is disabled. Each retry or
 backup-agent attempt resolves `isolate_reviews` again; a later attempt that runs
 without isolation can produce a reusable session.
 
-After preparing the checkout, the daemon resolves the configuration path again
-so it can use the main repository if the source worktree was removed during
-setup. Configuration changes apply to subsequent attempts without restarting the
-daemon.
+The daemon resolves the configuration path before synthesis-agent selection and
+cooldown failover, then again after preparing the checkout. This lets isolated
+execution use the main repository if the source worktree disappears during
+setup. If the primary agent fails after the source worktree is removed, live
+backup selection also uses the main repository's configuration. Frozen backup
+settings remain authoritative. Rerun and budget-routing checks still require a
+valid recorded checkout. Configuration changes apply to subsequent attempts
+without restarting the daemon.
 
 Queued jobs and retries still need the repository path recorded on the job. For
 a worktree linked to a main checkout, keep that main checkout available. For a

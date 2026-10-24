@@ -26,6 +26,45 @@ still constructs the commit or range context, project guidelines, diff, and
 oversized-diff snapshot instructions. It also owns the output schema, severity
 filtering, pass/fail verdict, and final Markdown rendering.
 
+## Reviews of drafts and other material
+
+A custom rubric can review committed drafts and other versioned material, not
+only software. Roborev uses neutral wording in the generated task context,
+history, metadata, and response guidance. It preserves your template,
+guidelines, quoted findings, and other supplied text. Built-in review types keep
+their existing prompts.
+
+Use the same type name in a panel member's `review_type`:
+
+```toml
+[review.types.citations]
+template = ".roborev/reviews/citations.md"
+agent = "claude-code"
+
+[review.subagents.sources]
+review_type = "citations"
+
+[review.panels.drafts]
+members = ["sources"]
+```
+
+A global subagent may reference a custom type defined in each repository. Global
+loading and global-only validation, including experiment overlays, check the
+reference's syntax. Review resolution requires the type to exist in the
+effective global/repository configuration; an unresolved global-only invocation
+fails.
+
+If any voting panel member uses a custom type, synthesis uses neutral wording
+and labels its inputs with their rubrics. This includes failed or skipped custom
+voters; non-voting observers do not affect synthesis. Findings merge only when
+they describe the same problem. Silence from another rubric does not count as
+disagreement. See [Subagent Review Panels](subagent-review-panels.md).
+
+`compact` supports built-in review sources only. It rejects direct custom
+reviews and panel parents with custom voting members, rather than substituting a
+built-in rubric. `fix` and `refine` remain writable, code-framed workflows; they
+do not promise to preserve a custom rubric during re-review.
+
 ## Configuration reference
 
 Each `[review.types.<name>]` table supports these fields:
@@ -173,6 +212,29 @@ Roborev keeps every finding in the review output. `review_min_severity` or
 at or above the threshold and passes otherwise. Built-in review types use the
 same schema when the agent supports schema-constrained output, and fall back to
 prose for other agents.
+
+## Strict tools
+
+Custom review types can request the Claude-only strict tool boundary:
+
+```toml
+[review.types.citations]
+template = "reviews/citations.tmpl"
+
+[review.types.citations.tools]
+mode = "read-only"
+mcp = {}
+```
+
+An empty MCP map explicitly selects strict execution without MCP access.
+Unsupported adapters and nonempty MCP grants fail before review invocation. If
+any voting member requests strict tools, synthesis uses strict tools with no MCP
+access. Non-voting observers do not change synthesis policy.
+
+Strict reviews always start fresh sessions, including local and CI calls. See
+[Claude Code review tools](../agents/index.md#strict-reviews) for startup
+checks, session isolation, and the native CLI trust boundary. Fix and refine
+retain their existing writable behavior.
 
 ## Writing useful severity guidance
 

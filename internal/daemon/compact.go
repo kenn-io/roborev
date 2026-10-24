@@ -47,3 +47,37 @@ func DeleteCompactMetadata(jobID int64) error {
 func compactMetadataPath(jobID int64) string {
 	return filepath.Join(config.DataDir(), fmt.Sprintf("compact-%d.json", jobID))
 }
+
+// validateCompactSources uses authoritative member rows, not listing metadata:
+// a synthesis job's own review type does not identify the rubrics it combined.
+func (s *Server) validateCompactSources(sourceIDs []int64) error {
+	if len(sourceIDs) == 0 {
+		return fmt.Errorf("compact source_job_ids are required")
+	}
+	for _, id := range sourceIDs {
+		job, err := s.db.GetJobByID(id)
+		if err != nil {
+			return fmt.Errorf("load compact source %d: %w", id, err)
+		}
+		if job.IsSynthesisJob() {
+			if job.PanelRunUUID == nil {
+				return fmt.Errorf("compact source %d has no panel provenance", id)
+			}
+			members, err := s.db.GetPanelMemberReviews(*job.PanelRunUUID)
+			if err != nil {
+				return fmt.Errorf("load compact source %d members: %w", id, err)
+			}
+			if len(members) == 0 {
+				return fmt.Errorf("compact source %d has no voting member provenance", id)
+			}
+			for _, member := range members {
+				if !config.IsBuiltInReviewType(member.ReviewType) {
+					return fmt.Errorf("compact source %d includes custom voting rubric %q; compact supports built-in reviews only", id, member.ReviewType)
+				}
+			}
+		} else if !config.IsBuiltInReviewType(job.ReviewType) {
+			return fmt.Errorf("compact source %d uses custom rubric %q; compact supports built-in reviews only", id, job.ReviewType)
+		}
+	}
+	return nil
+}
