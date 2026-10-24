@@ -92,4 +92,5 @@ func (s *Server) sweepStuckPanels(ctx context.Context) {
 			log.Printf("panel sweep: release %s: %v", u, err)
 		}
 	}
+	s.workerPool.wake()
 }

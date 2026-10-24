@@ -2467,6 +2467,7 @@ func (s *Server) humaUnpauseQueue(
 		)
 	}
 	resp := &QueuePauseOutput{}
+	s.workerPool.wake()
 	resp.Body.QueuePaused = false
 	return resp, nil
 }
@@ -2738,6 +2739,7 @@ func (s *Server) humaRerunJob(
 func (s *Server) broadcastRerunEnqueued(
 	jobID int64, jobUUID *uuid.UUID, source *storage.ReviewJob,
 ) {
+	s.workerPool.wake()
 	s.broadcaster.Broadcast(Event{
 		Type:     "job.enqueued",
 		TS:       time.Now(),
@@ -3406,6 +3408,7 @@ type enqueueSideEffectInputs struct {
 func (s *Server) logEnqueueSideEffects(
 	job *storage.ReviewJob, in enqueueSideEffectInputs,
 ) {
+	s.workerPool.wake()
 	if s.activityLog != nil {
 		s.activityLog.Log(
 			"job.enqueued", "server",
@@ -3859,6 +3862,7 @@ func (s *Server) humaFixJob(
 			ErrorResponse{Error: fmt.Sprintf("enqueue fix job: %v", err)},
 		)
 	}
+	s.workerPool.wake()
 	if commitID > 0 {
 		job.CommitSubject = parentJob.CommitSubject
 	}

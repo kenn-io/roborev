@@ -98,6 +98,7 @@ type WorkerPool struct {
 	tokenUsageIndexRetryWindow   time.Duration
 	tokenUsageIndexRetryInterval time.Duration
 	tokenCostRetryCh             chan int64
+	wakeCh                       chan struct{}
 	tokenCostScanInterval        time.Duration
 	tokenCostRetryInterval       time.Duration
 	tokenCostPageSize            int
@@ -150,6 +151,7 @@ func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broad
 		tokenUsageIndexRetryWindow:   tokenUsageIndexRetryWindow,
 		tokenUsageIndexRetryInterval: tokenUsageIndexRetryInterval,
 		tokenCostRetryCh:             make(chan int64, tokenCostRetryBufferSize),
+		wakeCh:                       make(chan struct{}, numWorkers),
 		tokenCostScanInterval:        tokenCostScanInterval,
 		tokenCostRetryInterval:       tokenCostRetryInterval,
 		tokenCostPageSize:            tokenCostPageSize,
@@ -161,6 +163,17 @@ func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broad
 	}
 	pool.budgetRouter = NewBudgetRouter(db, pool.isAgentCoolingDown)
 	return pool
+}
+
+// wake prompts every idle worker to check for newly claimable jobs.
+func (wp *WorkerPool) wake() {
+	for {
+		select {
+		case wp.wakeCh <- struct{}{}:
+		default:
+			return
+		}
+	}
 }
 
 // Start begins the worker pool. Safe to call multiple times;
@@ -845,6 +858,7 @@ func (wp *WorkerPool) worker(id int) {
 			case <-wp.stopCh:
 				log.Printf("[%s] Shutting down", workerID)
 				return
+			case <-wp.wakeCh:
 			case <-time.After(2 * time.Second):
 			}
 			continue

@@ -88,6 +88,7 @@ func (s *Server) enqueueGoalReviewWithConfig(ctx context.Context, req EnqueueReq
 	if err != nil {
 		return rawJSONOutput(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 	}
+	s.workerPool.wake()
 	job.RepoPath = repo.RootPath
 	job.RepoName = repo.Name
 	s.broadcaster.Broadcast(Event{Type: "goal_review.enqueued", TS: time.Now(), JobID: job.ID, JobUUID: job.UUID, Repo: repo.RootPath, RepoName: repo.Name, SHA: job.GitRef, Branch: job.Branch, Agent: job.Agent, WorktreePath: worktree})

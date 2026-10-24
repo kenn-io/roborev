@@ -4303,6 +4303,58 @@ func TestWorker_ClassifyJob_Yes_PromotesToDesignReview(t *testing.T) {
 	assert.Equal(1, n, "exactly one auto_design row must exist (no second INSERT)")
 }
 
+func TestWorkerPoolWakesIdleWorkersOnNewJob(t *testing.T) {
+	for _, path := range []string{"enqueue", "unpause", "fallback"} {
+		t.Run(path, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				server, db, _ := newTestServer(t)
+				repo := testutil.NewGitRepo(t)
+				started := make(chan struct{}, 1)
+				const agentName = "idle-worker-wake"
+				agent.RegisterForTest(t, &agent.FakeAgent{NameStr: agentName, ReviewFn: func(_ context.Context, _, _, _ string, _ io.Writer) (string, error) {
+					started <- struct{}{}
+					return "No issues found.", nil
+				}})
+				if path == "unpause" {
+					require.NoError(t, db.SetQueuePaused(true))
+				}
+				server.workerPool.Start()
+				defer server.workerPool.Stop()
+				synctest.Wait()
+				if path == "fallback" {
+					storedRepo, err := db.GetOrCreateRepo(repo.Path())
+					require.NoError(t, err)
+					_, err = db.EnqueueJob(storage.EnqueueOpts{RepoID: storedRepo.ID, GitRef: "prompt", Agent: agentName, Prompt: "Review this codebase", JobType: storage.JobTypeTask})
+					require.NoError(t, err)
+				} else {
+					request := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", EnqueueRequest{RepoPath: repo.Path(), GitRef: "prompt", Agent: agentName, CustomPrompt: "Review this codebase"})
+					response := httptest.NewRecorder()
+					server.httpServer.Handler.ServeHTTP(response, request)
+					require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
+				}
+				if path == "unpause" {
+					synctest.Wait()
+					response := httptest.NewRecorder()
+					server.httpServer.Handler.ServeHTTP(response, testutil.MakeJSONRequest(t, http.MethodPost, "/api/queue/unpause", struct{}{}))
+					require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+				}
+				if path == "fallback" {
+					synctest.Wait()
+					require.Empty(t, started, "direct database enqueue waits for the poll")
+					time.Sleep(2 * time.Second)
+				}
+				didStart := false
+				select {
+				case <-started:
+					didStart = true
+				case <-time.After(time.Second):
+				}
+				require.True(t, didStart, "idle worker must start the queued job before the 2s poll")
+			})
+		})
+	}
+}
+
 func TestWorkerPoolDoesNotClaimNewJobsWhenQueuePaused(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		tc := newWorkerTestContext(t, 1)
