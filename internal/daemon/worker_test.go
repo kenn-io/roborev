@@ -29,6 +29,7 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	gitpkg "go.kenn.io/roborev/internal/git"
+	"go.kenn.io/roborev/internal/goalreview"
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
@@ -4304,55 +4305,169 @@ func TestWorker_ClassifyJob_Yes_PromotesToDesignReview(t *testing.T) {
 }
 
 func TestWorkerPoolWakesIdleWorkersOnNewJob(t *testing.T) {
-	for _, path := range []string{"enqueue", "unpause", "fallback"} {
-		t.Run(path, func(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		workers int
+	}{
+		{name: "enqueue", workers: 1},
+		{name: "rerun", workers: 1},
+		{name: "fix", workers: 1},
+		{name: "goal review", workers: 1},
+		{name: "rebuttal", workers: 1},
+		{name: "unpause", workers: 1},
+		{name: "panel cancel release", workers: 1},
+		{name: "panel sweep release", workers: 1},
+		{name: "unpause four workers", workers: 4},
+		{name: "fallback", workers: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				server, db, _ := newTestServer(t)
-				repo := testutil.NewGitRepo(t)
-				started := make(chan struct{}, 1)
+				server.workerPool.numWorkers = test.workers
+				server.workerPool.wakeCh = make(chan struct{}, test.workers)
+				repo := testutil.NewTestRepoWithCommit(t)
+				storedRepo, err := db.GetOrCreateRepo(repo.Path())
+				require.NoError(t, err)
+				started := make(chan struct{}, test.workers)
+				release := make(chan struct{})
 				const agentName = "idle-worker-wake"
-				agent.RegisterForTest(t, &agent.FakeAgent{NameStr: agentName, ReviewFn: func(_ context.Context, _, _, _ string, _ io.Writer) (string, error) {
+				agent.RegisterForTest(t, &agent.FakeAgent{NameStr: agentName, ReviewFn: func(ctx context.Context, _, _, _ string, _ io.Writer) (string, error) {
 					started <- struct{}{}
-					return "No issues found.", nil
+					select {
+					case <-release:
+						return "No issues found.", nil
+					case <-ctx.Done():
+						return "", ctx.Err()
+					}
 				}})
-				if path == "unpause" {
+				server.configWatcher.Config().FixAgent = agentName
+				subscriber, events := server.broadcaster.Subscribe("")
+				defer server.broadcaster.Unsubscribe(subscriber)
+				post := func(path string, body any, status int) *httptest.ResponseRecorder {
+					response := httptest.NewRecorder()
+					server.httpServer.Handler.ServeHTTP(response, testutil.MakeJSONRequest(t, http.MethodPost, path, body))
+					require.Equal(t, status, response.Code, response.Body.String())
+					return response
+				}
+				path := "/api/enqueue"
+				var body any = EnqueueRequest{RepoPath: repo.Path(), GitRef: "prompt", Agent: agentName, CustomPrompt: "Review this codebase"}
+				status := http.StatusCreated
+				var jobID int64
+				eventType := "review.started"
+				var trigger func()
+				switch test.name {
+				case "rerun", "fix", "rebuttal":
+					parentAgent := agentName
+					if test.name == "rebuttal" {
+						parentAgent = "test"
+						original, err := agent.Get("test")
+						require.NoError(t, err)
+						agent.Register(&structuredRebuttalTestAgent{result: `{"outcome":"confirmed","explanation":"The guard is missing."}`})
+						t.Cleanup(func() { agent.Register(original) })
+					}
+					parent := testutil.CreateCompletedReview(t, db, storedRepo.ID, testutil.GetHeadSHA(t, repo.Path()), parentAgent, "The guard is missing.")
+					switch test.name {
+					case "rerun":
+						path, body, status = "/api/job/rerun", RerunJobRequest{JobID: parent.ID}, http.StatusOK
+						jobID = parent.ID
+					case "fix":
+						path, body = "/api/job/fix", fixJobRequest{ParentJobID: parent.ID}
+					case "rebuttal":
+						_, err := db.Exec("UPDATE review_jobs SET session_id = 'original-session' WHERE id = ?", parent.ID)
+						require.NoError(t, err)
+						path, body = "/api/rebuttal", RebuttalRequest{JobID: parent.ID, Finding: "The guard is missing.", Comment: "Check the caller.", Commenter: "operator"}
+					}
+				case "goal review":
+					registerGoalReviewPi(t, server.configWatcher.Config())
+					goalArtifacts(t, repo.Path())
+					server.workerPool.goalReviewRunner = goalReviewTestRunner(func(context.Context, goalreview.Snapshot, prompt.SnapshotResult) ([]goalreview.Finding, error) {
+						return nil, nil
+					})
+					body = EnqueueRequest{RepoPath: repo.Path(), Agent: "pi", JobType: storage.JobTypeGoalReview, ReviewType: "goal"}
+					eventType = "goal_review.started"
+				case "unpause", "unpause four workers":
 					require.NoError(t, db.SetQueuePaused(true))
+					for range test.workers {
+						_, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: storedRepo.ID, GitRef: "prompt", Agent: agentName, Prompt: "Review this codebase", JobType: storage.JobTypeTask})
+						require.NoError(t, err)
+					}
+					trigger = func() { post("/api/queue/unpause", struct{}{}, http.StatusOK) }
+				case "panel cancel release", "panel sweep release":
+					tc := &workerTestContext{DB: db, TmpDir: repo.Path(), Repo: storedRepo}
+					_, members, synth := enqueuePanelRun(t, tc, "wake-panel", []memberSpec{{name: "member", agent: "test"}})
+					claimed, err := db.ClaimJob("orphan-worker")
+					require.NoError(t, err)
+					require.NotNil(t, claimed)
+					require.Equal(t, members[0].ID, claimed.ID)
+					jobID, eventType = synth.ID, "review.failed"
+					if test.name == "panel cancel release" {
+						trigger = func() { post("/api/job/cancel", CancelJobRequest{JobID: members[0].ID}, http.StatusOK) }
+					} else {
+						trigger = func() { server.sweepStuckPanels(context.Background()) }
+					}
+				case "fallback":
+					trigger = func() {
+						job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: storedRepo.ID, GitRef: "prompt", Agent: agentName, Prompt: "Review this codebase", JobType: storage.JobTypeTask})
+						require.NoError(t, err)
+						jobID = job.ID
+						time.Sleep(2 * time.Second)
+					}
 				}
 				server.workerPool.Start()
 				defer server.workerPool.Stop()
+				defer close(release)
 				synctest.Wait()
-				if path == "fallback" {
-					storedRepo, err := db.GetOrCreateRepo(repo.Path())
-					require.NoError(t, err)
-					_, err = db.EnqueueJob(storage.EnqueueOpts{RepoID: storedRepo.ID, GitRef: "prompt", Agent: agentName, Prompt: "Review this codebase", JobType: storage.JobTypeTask})
-					require.NoError(t, err)
+				if trigger != nil {
+					trigger()
 				} else {
-					request := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", EnqueueRequest{RepoPath: repo.Path(), GitRef: "prompt", Agent: agentName, CustomPrompt: "Review this codebase"})
-					response := httptest.NewRecorder()
-					server.httpServer.Handler.ServeHTTP(response, request)
-					require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
+					response := post(path, body, status)
+					if jobID == 0 {
+						var job storage.ReviewJob
+						require.NoError(t, json.Unmarshal(response.Body.Bytes(), &job))
+						jobID = job.ID
+					}
 				}
-				if path == "unpause" {
-					synctest.Wait()
-					response := httptest.NewRecorder()
-					server.httpServer.Handler.ServeHTTP(response, testutil.MakeJSONRequest(t, http.MethodPost, "/api/queue/unpause", struct{}{}))
-					require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+				deadline := time.After(time.Second)
+				processed := func() bool {
+					for count := 0; count < test.workers; {
+						select {
+						case event := <-events:
+							if event.Type == eventType && (jobID == 0 || event.JobID == jobID) {
+								count++
+							}
+						case <-deadline:
+							return false
+						}
+					}
+					return true
+				}()
+				require.True(t, processed, "workers must process the released jobs before the 2s fallback poll")
+				if test.workers == 4 {
+					allStarted := func() bool {
+						for range test.workers {
+							select {
+							case <-started:
+							case <-deadline:
+								return false
+							}
+						}
+						return true
+					}()
+					require.True(t, allStarted, "all four blocked agents must start before the fallback poll")
 				}
-				if path == "fallback" {
-					synctest.Wait()
-					require.Empty(t, started, "direct database enqueue waits for the poll")
-					time.Sleep(2 * time.Second)
-				}
-				didStart := false
-				select {
-				case <-started:
-					didStart = true
-				case <-time.After(time.Second):
-				}
-				require.True(t, didStart, "idle worker must start the queued job before the 2s poll")
 			})
 		})
 	}
+}
+
+func TestWorkerPoolNegativeWorkerCount(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		server, _, _ := newTestServer(t)
+		pool := NewWorkerPool(server.db, server.configWatcher, -1, server.broadcaster, nil, nil)
+		defer pool.Stop()
+		pool.wake()
+		assert.Zero(t, pool.ActiveWorkers())
+	})
 }
 
 func TestWorkerPoolDoesNotClaimNewJobsWhenQueuePaused(t *testing.T) {

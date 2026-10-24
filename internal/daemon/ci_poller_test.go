@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -772,6 +773,39 @@ func TestAppendPanelPRFooterBoundsOversizedFooter(t *testing.T) {
 	assert.NotContains(t, comment, "Panel:")
 	assert.NotContains(t, comment, "Members:")
 	assert.NotContains(t, comment, "Job:", "synthesis footer must not leak a job ID that confuses local fixing agents")
+}
+
+func TestCIPollerEnqueueWakesIdleWorker(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+		repo := testutil.InitTestGitRepo(t, h.RepoPath)
+		h.Cfg.MaxWorkers = 1
+		h.Cfg.CI.ReviewTypes = []string{"review"}
+		h.Cfg.CI.Agents = []string{"ci-idle-worker-wake"}
+		h.stubProcessPRGit()
+		h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return repo.HeadSHA(), nil }
+		started := make(chan struct{}, 1)
+		agent.RegisterForTest(t, &agent.FakeAgent{NameStr: "ci-idle-worker-wake", ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+			started <- struct{}{}
+			return string(testutil.ReviewFixtureJSON("No issues found.")), nil
+		}})
+		server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
+		defer server.Close()
+		server.SetCIPoller(h.Poller)
+		server.workerPool.Start()
+		synctest.Wait()
+
+		created, err := h.Poller.enqueuePanelRun(context.Background(), "acme/api", ghPR{Number: 42, HeadRefOid: repo.HeadSHA(), BaseRefName: "main"}, h.Cfg)
+		require.NoError(t, err)
+		require.True(t, created)
+		didStart := false
+		select {
+		case <-started:
+			didStart = true
+		case <-time.After(time.Second):
+		}
+		require.True(t, didStart, "CI panel member must start before the 2s fallback poll")
+	})
 }
 
 func TestCIPollerProcessPR_EnqueuesMatrix(t *testing.T) {

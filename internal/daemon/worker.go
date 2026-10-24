@@ -151,7 +151,7 @@ func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broad
 		tokenUsageIndexRetryWindow:   tokenUsageIndexRetryWindow,
 		tokenUsageIndexRetryInterval: tokenUsageIndexRetryInterval,
 		tokenCostRetryCh:             make(chan int64, tokenCostRetryBufferSize),
-		wakeCh:                       make(chan struct{}, numWorkers),
+		wakeCh:                       make(chan struct{}, max(numWorkers, 0)),
 		tokenCostScanInterval:        tokenCostScanInterval,
 		tokenCostRetryInterval:       tokenCostRetryInterval,
 		tokenCostPageSize:            tokenCostPageSize,

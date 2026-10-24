@@ -123,6 +123,7 @@ type CIPoller struct {
 	setSkippedCheckFn   func(ghRepo, sha, summary string) error
 	agentResolverFn     func(name string) (string, error)      // returns resolved agent name
 	jobCancelFn         func(jobID int64)                      // kills running worker process (optional)
+	wakeFn              func()                                 // wakes idle workers after enqueue (optional)
 	isPROpenFn          func(ghRepo string, prNumber int) bool // checks if a PR is still open
 	prPostTargetFn      func(context.Context, string, int) (panelPostTarget, error)
 
@@ -871,6 +872,9 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 	if !created {
 		// Another poller owns this PR+HEAD; it set (or will set) the status.
 		return false, nil
+	}
+	if p.wakeFn != nil {
+		p.wakeFn()
 	}
 	p.broadcastJobEvent("job.enqueued", synthJob)
 

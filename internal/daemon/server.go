@@ -1052,11 +1052,12 @@ func (s *Server) afterSyncPullWrite() {
 }
 
 // SetCIPoller sets the CI poller for status reporting and wires up
-// the worker pool cancellation callback so the poller can kill running
-// processes when superseding stale batches.
+// worker callbacks so new jobs wake idle workers and superseding stale
+// batches kills their running processes.
 func (s *Server) SetCIPoller(cp *CIPoller) {
 	s.ciPoller = cp
 	cp.errorLog = s.errorLog
+	cp.wakeFn = s.workerPool.wake
 	cp.jobCancelFn = func(jobID int64) {
 		s.workerPool.CancelJob(jobID)
 	}
