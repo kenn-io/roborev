@@ -4490,7 +4490,7 @@ func TestServerWakesWorkerPoolWhenWorkBecomesClaimable(t *testing.T) {
 				<-server.workerPool.wakeCh
 			}
 			f.trigger()
-			assert.Positive(t, len(server.workerPool.wakeCh), "claimable work must wake the worker pool")
+			assert.NotEmpty(t, server.workerPool.wakeCh, "claimable work must wake the worker pool")
 		})
 	}
 }

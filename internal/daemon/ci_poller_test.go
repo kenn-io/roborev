@@ -798,7 +798,7 @@ func TestCIPollerEnqueueWakesWorkerPool(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, created)
 	require.Equal(t, []string{"pending", "wake"}, order, "workers wake after the pending status is set")
-	assert.Positive(t, len(server.workerPool.wakeCh), "CI enqueue must wake the server worker pool")
+	assert.NotEmpty(t, server.workerPool.wakeCh, "CI enqueue must wake the server worker pool")
 }
 
 func TestCIPollerProcessPR_EnqueuesMatrix(t *testing.T) {
