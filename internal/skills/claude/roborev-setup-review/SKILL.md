@@ -318,6 +318,9 @@ Before proposing, tell the user where the material can go:
     endpoint each agent CLI is signed in to; roborev does not choose it;
 - any other agent a review can reach: the repository or machine default agent
     for reviews outside the panel, and configured backup agents;
+- every agent priced in `budget.agent_costs`, when `budget.enabled` is true;
+    near the daily cap, budget routing can move a review that is not part of
+    a panel to any of them, even when its type names an agent;
 - roborev's local database, which stores prompts and reviews;
 - the PostgreSQL mirror, when `sync.enabled` is true;
 - pull request comments, when CI reviews cover this repository;
@@ -329,7 +332,11 @@ some providers, set `agent` on every custom type, `synthesis_agent` on every
 panel, and the repository `agent` and `default_panel`. A repository `agent`
 alone lets roborev fall back to another installed agent when the approved one
 is unavailable. Check `roborev config --from-skill list --show-origin` for
-`backup_agent` and other `*_backup_agent` keys that would route elsewhere.
+`backup_agent` and other `*_backup_agent` keys that would route elsewhere, and
+for `budget.enabled` and `budget.agent_costs`. Budget routing does not change
+panel members or synthesis. While providers are restricted and budget routing
+is on, run every review through a panel, a one-member panel for a single type,
+or get approval to change the budget policy.
 
 ## Propose and get approval
 
@@ -416,7 +423,8 @@ Hooks review only commits made after setup, so material committed earlier is
 reviewed only when someone asks.
 Offer one review of the commit or range that holds it. Use `--panel none` for
 a standalone custom type so a configured `default_panel` cannot replace the
-rubric with its members:
+rubric with its members. When providers are restricted and budget routing is
+on, use a panel instead; see [Confidential material](#confidential-material).
 
 ```bash
 roborev review --from-skill --type facts --panel none --wait
