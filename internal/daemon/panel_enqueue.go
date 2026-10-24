@@ -514,6 +514,7 @@ func applyFrozenExperimentSettings(
 		}
 	}
 
+	job.PanelMemberConfigJSON = plan.PanelMemberConfigJSON
 	job.MinSeverity = plan.MinSeverity
 	job.BackupAgent = plan.BackupAgent
 	job.BackupModel = plan.BackupModel
@@ -572,11 +573,17 @@ func planPanelRun(
 	if err != nil {
 		return panelRunPlan{}, err
 	}
-	return panelRunPlan{
-		members:    members,
-		memberOpts: memberOpts,
-		synthOpts:  panelSynthesisOpts(descriptor, panelName, runUUID, synth, repoCfg, cfg),
-	}, nil
+	synthOpts := panelSynthesisOpts(descriptor, panelName, runUUID, synth, repoCfg, cfg)
+	acp, err := snapshotACPExecutionConfig(repoCfg, cfg, synthOpts.Agent, synthOpts.BackupAgent)
+	if err != nil {
+		return panelRunPlan{}, err
+	}
+	snapshot, err := json.Marshal(synthesisExecutionSnapshot(members, acp))
+	if err != nil {
+		return panelRunPlan{}, err
+	}
+	synthOpts.PanelMemberConfigJSON = string(snapshot)
+	return panelRunPlan{members: members, memberOpts: memberOpts, synthOpts: synthOpts}, nil
 }
 
 func (s *Server) enqueuePanelRun(ctx context.Context, in panelRunInputs) (*RawJSONOutput, error) {
@@ -689,13 +696,23 @@ func panelMemberOpts(
 	out := make([]storage.EnqueueOpts, len(members))
 	for i, m := range members {
 		o := descriptor.baseOpts()
-		cfgJSON, _ := json.Marshal(m)
 		var err error
 		o.Agent, o.Model, o.BackupAgent, o.BackupModel, err = resolvePanelMemberExecution(
 			m, descriptor, repoCfg, cfg,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("panel member %q: %w", m.Name, err)
+		}
+		acp, err := snapshotACPExecutionConfig(repoCfg, cfg, o.Agent, o.BackupAgent)
+		if err != nil {
+			return nil, err
+		}
+		frozen := m
+		frozen.Agent, frozen.Model = o.Agent, o.Model
+		frozen.BackupAgent, frozen.BackupModel = o.BackupAgent, o.BackupModel
+		cfgJSON, err := json.Marshal(reviewExecutionSnapshot{ResolvedMember: frozen, ACP: acp})
+		if err != nil {
+			return nil, fmt.Errorf("snapshot panel member %q: %w", m.Name, err)
 		}
 		o.Provider = m.Provider
 		o.Reasoning, o.ReviewType = m.Reasoning, m.ReviewType
@@ -739,7 +756,13 @@ func resolvePanelMemberExecution(
 	if err := agent.ValidateStructuredReviewSelection(m.ReviewType, selected); err != nil {
 		return "", "", "", "", err
 	}
+	if err := agent.ValidateReviewToolSelection(m.Tools, selected, descriptor.agentic); err != nil {
+		return "", "", "", "", err
+	}
 	selectedName := agent.StorageNameFromConfig(selected.Name(), repoCfg, cfg)
+	if err := agent.ValidateReviewToolBackup(m.Tools, resolution, selectedName); err != nil {
+		return "", "", "", "", err
+	}
 	if err := agent.ValidateStructuredReviewBackup(
 		m.ReviewType, resolution, selectedName,
 	); err != nil {

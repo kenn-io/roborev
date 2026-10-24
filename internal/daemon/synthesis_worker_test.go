@@ -219,7 +219,7 @@ func TestRunSynthesisAgentMarksInvokedOnlyWhenAgentRuns(t *testing.T) {
 		job, err := tc.DB.GetJobByID(synth.ID)
 		require.NoError(t, err)
 
-		_, _, _, runErr := tc.Pool.runSynthesisAgent(context.Background(), testWorkerID, job, nil, "prompt")
+		_, _, _, runErr := tc.Pool.runSynthesisAgent(context.Background(), testWorkerID, job, nil, "prompt", reviewExecutionSnapshot{}, nil)
 		require.Error(t, runErr, "checkout must fail before the agent runs")
 
 		failed, err := tc.DB.GetJobByID(synth.ID)
@@ -250,7 +250,7 @@ func TestRunSynthesisAgentMarksInvokedOnlyWhenAgentRuns(t *testing.T) {
 		job, err := tc.DB.GetJobByID(synth.ID)
 		require.NoError(t, err)
 
-		_, _, _, runErr := tc.Pool.runSynthesisAgent(context.Background(), testWorkerID, job, nil, "prompt")
+		_, _, _, runErr := tc.Pool.runSynthesisAgent(context.Background(), testWorkerID, job, nil, "prompt", reviewExecutionSnapshot{}, nil)
 		require.NoError(t, runErr)
 		assert.True(t, jobAgentInvoked(t, tc, synth.ID),
 			"a synthesis agent that actually runs must be marked agent_invoked")
@@ -1351,4 +1351,56 @@ func TestSynthesisImportedUnableReview(t *testing.T) {
 	tc.assertJobStatus(t, synth.ID, storage.JobStatusFailed)
 	_, err = tc.DB.GetReviewByJobID(synth.ID)
 	require.Error(t, err, "an imported unavailable result must not become a completed review")
+}
+
+func TestCustomSynthesisFramingBeforeSuccessFiltering(t *testing.T) {
+	for _, state := range []string{"failed", "skipped", "succeeded", "observer"} {
+		t.Run(state, func(t *testing.T) {
+			tc := newWorkerTestContext(t, 1)
+			memberAgent := "custom-framing-member-" + state
+			registerPassingAgent(t, memberAgent)
+			synthAgent := &synthesisEntrypointTestAgent{name: "custom-framing-synth-" + state}
+			agent.RegisterForTest(t, synthAgent)
+			run, members, _ := enqueuePanelRun(t, tc, "draft-panel", []memberSpec{
+				{name: "custom", agent: memberAgent, nonVoting: state == "observer"},
+				{name: "security", agent: memberAgent},
+				{name: "design", agent: memberAgent},
+			})
+			setSynthesisAgent(t, tc, run, synthAgent.Name())
+			for i, rubric := range []string{"citations", "security", "design"} {
+				_, err := tc.DB.Exec("UPDATE review_jobs SET review_type = ? WHERE id = ?", rubric, members[i].ID)
+				require.NoError(t, err)
+			}
+			switch state {
+			case "failed":
+				failMember(t, tc, members[0].ID)
+			case "skipped":
+				_, err := tc.DB.Exec("UPDATE review_jobs SET status = 'skipped', skip_reason = 'not applicable' WHERE id = ?", members[0].ID)
+				require.NoError(t, err)
+			default:
+				completeMember(t, tc, members[0].ID, memberAgent, "Custom code finding.")
+			}
+			completeMember(t, tc, members[1].ID, memberAgent, "Security finding.")
+			completeMember(t, tc, members[2].ID, memberAgent, "Design finding.")
+			synth := releaseAndClaimSynthesis(t, tc, run)
+			tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+			tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
+			require.True(t, synthAgent.reviewCalled)
+			check := assert.New(t)
+			if state == "observer" {
+				check.Contains(synthAgent.synthPrompt, "multiple code review outputs")
+				check.NotContains(synthAgent.synthPrompt, "Rubric:")
+				check.NotContains(synthAgent.synthPrompt, "Custom code finding.")
+			} else {
+				check.Contains(synthAgent.synthPrompt, "reviewed material")
+				check.NotContains(synthAgent.synthPrompt, "multiple code review outputs")
+				check.Contains(synthAgent.synthPrompt, "Rubric: security")
+				check.Contains(synthAgent.synthPrompt, "Rubric: design")
+				if state == "succeeded" {
+					check.Contains(synthAgent.synthPrompt, "Rubric: citations")
+					check.Contains(synthAgent.synthPrompt, "Custom code finding.")
+				}
+			}
+		})
+	}
 }

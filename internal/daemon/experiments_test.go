@@ -52,6 +52,10 @@ func TestEnqueueSingleReviewPersistsExperiment(t *testing.T) {
 
 	stored, err := db.GetJobByID(job.ID)
 	require.NoError(t, err)
+	require.NotEmpty(t, stored.PanelMemberConfigJSON, "standalone experiment must freeze absent/off review settings")
+	snapshot, err := decodeReviewExecutionSnapshot(stored.PanelMemberConfigJSON)
+	require.NoError(t, err)
+	assert.Equal(t, config.ReviewSettings{}, snapshot.ReviewSettings)
 	assert.Equal(t, job.Branch, stored.Branch)
 	assert.Equal(t, job.Experiments, stored.Experiments)
 
@@ -306,6 +310,9 @@ func TestExperimentStandaloneRerunPreservesFrozenPlan(t *testing.T) {
 	})
 	require.Len(t, job.Experiments, 1)
 	frozenExperiments := job.Experiments
+	frozen, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	require.NotEmpty(t, frozen.PanelMemberConfigJSON)
 
 	claimed, err := db.ClaimJob("experiment-rerun-worker")
 	require.NoError(t, err)
@@ -345,6 +352,10 @@ func TestExperimentStandaloneRerunPreservesFrozenPlan(t *testing.T) {
 	assert.Equal(t, "claude-code", rerun.BackupAgent)
 	assert.Equal(t, "frozen-backup-model", rerun.BackupModel)
 	assert.Equal(t, frozenExperiments, rerun.Experiments)
+	assert.Equal(t, frozen.PanelMemberConfigJSON, rerun.PanelMemberConfigJSON)
+	restored, err := decodeReviewExecutionSnapshot(rerun.PanelMemberConfigJSON)
+	require.NoError(t, err)
+	assert.Equal(t, config.ReviewSettings{}, restored.ReviewSettings)
 }
 
 func TestPanelExperimentResumesCompatibleMemberSession(t *testing.T) {

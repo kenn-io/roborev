@@ -17,7 +17,7 @@ import (
 
 // buildToolchainSection states the Go versions of modules containing changed Go
 // files. An empty ref reads dirty manifests from the working tree.
-func buildToolchainSection(repoPath, ref string, changedFiles []string) string {
+func buildToolchainSection(repoPath, ref string, changedFiles []string, neutral bool) string {
 	if _, end, ok := git.ParseRange(ref); ok {
 		ref = strings.TrimPrefix(end, ".") // Three-dot ranges also use the right endpoint.
 		if ref == "" {
@@ -71,7 +71,11 @@ func buildToolchainSection(repoPath, ref string, changedFiles []string) string {
 		return ""
 	}
 	var section strings.Builder
-	section.WriteString("## Toolchain\n\nJudge version-gated language and standard-library features against the owning module's `go` directive:\n\n")
+	if neutral {
+		section.WriteString("## Format and Version Context\n\nDeclared language versions in the reviewed material (use where relevant to the rubric):\n\n")
+	} else {
+		section.WriteString("## Toolchain\n\nJudge version-gated language and standard-library features against the owning module's `go` directive:\n\n")
+	}
 	for _, manifest := range slices.Sorted(maps.Keys(versions)) {
 		fmt.Fprintf(&section, "- `%s`: Go %s\n", manifest, versions[manifest])
 	}

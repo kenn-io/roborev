@@ -651,7 +651,7 @@ func TestRerunPanelPreservesSynthesisBackup(t *testing.T) {
 	synth := storage.EnqueueOpts{
 		RepoID: repo.ID, GitRef: "abc123", Agent: "primary",
 		BackupAgent: "backup", BackupModel: "backup-model",
-		PanelMemberConfigJSON: `{"acp":{"primary":{"command":"frozen-primary"}}}`,
+		PanelMemberConfigJSON: `{"acp":{"primary":{"Command":"frozen-primary"}}}`,
 		PanelRunUUID:          &runUUID, PanelRole: storage.PanelRoleSynthesis, PanelName: "p",
 	}
 	_, synthJob, err := db.EnqueuePanelRun(members, synth)

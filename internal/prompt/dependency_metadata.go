@@ -52,16 +52,23 @@ var dependencyMetadataNames = map[string]struct{}{
 	"conda-lock.yaml":    {},
 }
 
-func buildDependencyMetadataSection(files []string) string {
+func buildDependencyMetadataSection(files []string, neutral bool) string {
 	metadata := changedDependencyMetadataFiles(files)
 	if len(metadata) == 0 {
 		return ""
 	}
 
 	var b strings.Builder
-	b.WriteString("## Dependency Metadata\n\n")
-	b.WriteString("Lockfile and checksum bodies may be omitted from the main diff to keep reviews focused. Use this file list as dependency-consistency evidence; do not infer that a companion file is missing just because its body is omitted.\n\n")
-	b.WriteString("Changed dependency metadata:\n")
+	if neutral {
+		b.WriteString("## Supporting File Metadata\n\n")
+		b.WriteString("The changed files below contain dependency metadata. Use them as context when relevant to the rubric; omission from the diff does not mean a companion file is missing.\n\n")
+		b.WriteString("Changed metadata files:\n")
+	} else {
+		b.WriteString("## Dependency Metadata\n\n")
+		b.WriteString("Lockfile and checksum bodies may be omitted from the main diff to keep reviews focused. Use this file list as dependency-consistency evidence; do not infer that a companion file is missing just because its body is omitted.\n\n")
+		b.WriteString("Changed dependency metadata:\n")
+	}
+
 	for _, file := range metadata {
 		b.WriteString("- ")
 		b.WriteString(dependencyMetadataLine(file, metadata))

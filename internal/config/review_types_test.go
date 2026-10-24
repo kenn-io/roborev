@@ -224,16 +224,74 @@ func TestCustomReviewTypeWorkflowOverrides(t *testing.T) {
 	repoCfg.Review.Types["thermonuclear"] = ReviewTypeSpec{
 		Template: "repo.tmpl",
 	}
-	assert.True(t, HasWorkflowAgentOverrideFromConfig(
+	assert.False(t, HasWorkflowAgentOverrideFromConfig(
 		repoCfg, globalCfg, "thermonuclear", "thorough",
 	))
-	assert.Equal(t, "global-model", ResolveWorkflowModelFromConfig(
+	assert.Empty(t, ResolveWorkflowModelFromConfig(
 		repoCfg, globalCfg, "thermonuclear", "thorough",
 	))
-	assert.Equal(t, "global-agent", ResolveAgentForWorkflowFromConfig(
+	assert.Equal(t, "codex", ResolveAgentForWorkflowFromConfig(
 		"", repoCfg, globalCfg, "thermonuclear", "thorough",
 	))
-	assert.Equal(t, "global-model", ResolveModelForWorkflowFromConfig(
+	assert.Empty(t, ResolveModelForWorkflowFromConfig(
 		"", repoCfg, globalCfg, "thermonuclear", "thorough",
 	))
+}
+
+func TestGlobalCustomPanelReferenceResolvesInRepository(t *testing.T) {
+	path := writeGlobalConfig(t, `
+[review.subagents.editor]
+review_type = "citations"
+[review.panels.drafts]
+members = ["editor"]
+`)
+	global, err := LoadGlobalFrom(path)
+	require.NoError(t, err)
+	require.NoError(t, global.Validate())
+	repo := &RepoConfig{Review: ReviewConfig{Types: map[string]ReviewTypeSpec{
+		"citations": {Template: "citations.md"},
+	}}}
+	require.NoError(t, ValidateEffectiveReviewConfig(global, repo))
+	members, _, err := ResolveCIPanel("drafts", repo, global)
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	assert.Equal(t, "citations", members[0].ReviewType)
+	require.Error(t, ValidateEffectiveReviewConfig(global, nil))
+	_, _, err = ResolveCIPanel("drafts", nil, global)
+	assert.Error(t, err)
+}
+
+func TestGlobalCustomPanelReferenceRejectsInvalidSyntax(t *testing.T) {
+	for _, name := range []string{"bad_name", "../draft", "UPPER", "goal", "fix"} {
+		t.Run(name, func(t *testing.T) {
+			path := writeGlobalConfig(t, "[review.subagents.editor]\nreview_type = \""+name+"\"\n")
+			_, err := LoadGlobalFrom(path)
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestCustomPanelRepositoryDefinitionReplacesGlobal(t *testing.T) {
+	assert := assert.New(t)
+	global := &Config{Review: ReviewConfig{
+		Types: map[string]ReviewTypeSpec{"citations": {
+			Template: "global.md", Agent: "global-agent", Model: "global-model", Includes: map[string]string{"Source": "global.txt"},
+		}},
+		Subagents: map[string]SubagentSpec{"editor": {ReviewType: "citations"}},
+		Panels:    map[string]PanelSpec{"drafts": {Members: []string{"editor"}}},
+	}}
+	repo := &RepoConfig{Review: ReviewConfig{Types: map[string]ReviewTypeSpec{
+		"citations": {Template: "repo.md"},
+	}}}
+	merged := MergeReviewConfig(repo.Review, global.Review)
+	assert.Equal(ReviewTypeSpec{Template: "repo.md"}, merged.Types["citations"])
+	members, _, err := ResolveCIPanel("drafts", repo, global)
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	assert.Empty(members[0].Model)
+	assert.Equal(ReviewTypeSpec{
+		Template: "global.md", Agent: "global-agent", Model: "global-model",
+		Includes: map[string]string{"Source": "global.txt"},
+	}, global.Review.Types["citations"])
+	assert.Equal(ReviewTypeSpec{Template: "repo.md"}, repo.Review.Types["citations"])
 }
