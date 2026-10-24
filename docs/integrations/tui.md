@@ -519,8 +519,8 @@ tools. The socket uses a newline-delimited JSON protocol: send a JSON request,
 receive a JSON response.
 
 On startup, the TUI writes runtime metadata to `~/.roborev/tui.{PID}.json`
-containing the PID, socket path, and daemon server address. External tools can
-read this file to discover running TUI instances.
+containing the PID, process identity, socket path, and daemon server address.
+External tools can read this file to discover running TUI instances.
 
 ### Query Commands
 

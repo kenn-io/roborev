@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"go.kenn.io/kit/atomicfile"
+	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/config"
 )
@@ -18,9 +19,11 @@ import (
 // omitted — it changes at runtime and should be queried via the
 // control socket's get-filters command.
 type TUIRuntimeInfo struct {
-	PID        int    `json:"pid"`
-	SocketPath string `json:"socket_path"`
-	ServerAddr string `json:"server_addr"`
+	PID               int                       `json:"pid"`
+	ProcessIdentity   kitdaemon.ProcessIdentity `json:"process_identity,omitempty"`
+	ProcessIdentityV2 kitdaemon.ProcessIdentity `json:"process_identity_v2,omitempty"`
+	SocketPath        string                    `json:"socket_path"`
+	ServerAddr        string                    `json:"server_addr"`
 }
 
 // tuiRuntimePath returns the metadata file path for a given PID.
@@ -130,7 +133,9 @@ func CleanupStaleTUIRuntimes() int {
 
 	cleaned := 0
 	for _, info := range runtimes {
-		if isProcessAlive(info.PID) {
+		if kitdaemon.RuntimeProcessAlive(kitdaemon.RuntimeRecord{
+			PID: info.PID, ProcessIdentity: info.ProcessIdentity, ProcessIdentityV2: info.ProcessIdentityV2,
+		}) {
 			continue
 		}
 		// Only remove the socket if it's actually a stale
@@ -151,10 +156,13 @@ func CleanupStaleTUIRuntimes() int {
 func buildTUIRuntimeInfo(
 	socketPath, serverAddr string,
 ) TUIRuntimeInfo {
+	record := kitdaemon.NewRuntimeRecord("roborev-tui", "", kitdaemon.Endpoint{})
 	return TUIRuntimeInfo{
-		PID:        os.Getpid(),
-		SocketPath: socketPath,
-		ServerAddr: serverAddr,
+		PID:               record.PID,
+		ProcessIdentity:   record.ProcessIdentity,
+		ProcessIdentityV2: record.ProcessIdentityV2,
+		SocketPath:        socketPath,
+		ServerAddr:        serverAddr,
 	}
 }
 

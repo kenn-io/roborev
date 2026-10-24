@@ -11,6 +11,7 @@ All notable changes to roborev, grouped by minor release.
 
 - Start daemons over runtime records left by dead sandboxes.
 - Sandboxed commands keep the host daemon's runtime record.
+- A TUI in a sandbox keeps the host TUI's runtime file.
 
 ## 0.73.0
 
