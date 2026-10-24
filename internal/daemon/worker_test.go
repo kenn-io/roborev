@@ -4318,7 +4318,7 @@ func TestWorkerPoolWakesIdleWorkersOnNewJob(t *testing.T) {
 		{name: "panel cancel release", workers: 1},
 		{name: "panel sweep release", workers: 1},
 		{name: "unpause four workers", workers: 4},
-		{name: "fallback", workers: 1},
+		{name: "poll fallback without a wake", workers: 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
@@ -4405,7 +4405,7 @@ func TestWorkerPoolWakesIdleWorkersOnNewJob(t *testing.T) {
 					} else {
 						trigger = func() { server.sweepStuckPanels(context.Background()) }
 					}
-				case "fallback":
+				case "poll fallback without a wake":
 					trigger = func() {
 						job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: storedRepo.ID, GitRef: "prompt", Agent: agentName, Prompt: "Review this codebase", JobType: storage.JobTypeTask})
 						require.NoError(t, err)

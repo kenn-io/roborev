@@ -2926,6 +2926,8 @@ func (p *CIPoller) expireTimedOutPanels(ghRepo string, cfg *config.Config) {
 		// call is idempotent.
 		if err := p.db.MaybeReleasePanelSynthesis(row.PanelRunUUID); err != nil {
 			log.Printf("CI poller: timeout: release synthesis for %s: %v", row.PanelRunUUID, err)
+		} else if p.wakeFn != nil {
+			p.wakeFn()
 		}
 	}
 	if expired > 0 {
