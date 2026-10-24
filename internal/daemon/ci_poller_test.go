@@ -774,33 +774,6 @@ func TestAppendPanelPRFooterBoundsOversizedFooter(t *testing.T) {
 	assert.NotContains(t, comment, "Job:", "synthesis footer must not leak a job ID that confuses local fixing agents")
 }
 
-func TestCIPollerEnqueueWakesWorkerPool(t *testing.T) {
-	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-	repo := testutil.InitTestGitRepo(t, h.RepoPath)
-	h.Cfg.MaxWorkers = 1
-	h.Cfg.CI.ReviewTypes = []string{"review"}
-	h.Cfg.CI.Agents = []string{"test"}
-	h.stubProcessPRGit()
-	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return repo.HeadSHA(), nil }
-	server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
-	defer server.Close()
-	server.SetCIPoller(h.Poller)
-	var order []string
-	wake := h.Poller.wakeFn
-	require.NotNil(t, wake)
-	h.Poller.wakeFn = func() { order = append(order, "wake"); wake() }
-	h.Poller.setCommitStatusFn = func(_, _, state, _ string) error { order = append(order, state); return nil }
-	for len(server.workerPool.wakeCh) > 0 {
-		<-server.workerPool.wakeCh
-	}
-
-	created, err := h.Poller.enqueuePanelRun(context.Background(), "acme/api", ghPR{Number: 42, HeadRefOid: repo.HeadSHA(), BaseRefName: "main"}, h.Cfg)
-	require.NoError(t, err)
-	require.True(t, created)
-	require.Equal(t, []string{"pending", "wake"}, order, "workers wake after the pending status is set")
-	assert.NotEmpty(t, server.workerPool.wakeCh, "CI enqueue must wake the server worker pool")
-}
-
 func TestCIPollerProcessPR_EnqueuesMatrix(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
 	h.Cfg.CI.ReviewTypes = []string{"security", "review"}

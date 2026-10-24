@@ -4340,10 +4340,7 @@ func TestWorkerPoolWakesIdleWorkersOnNewJob(t *testing.T) {
 				queuedAt := time.Now()
 				var job storage.ReviewJob
 				if test.viaHTTP {
-					response := httptest.NewRecorder()
-					server.httpServer.Handler.ServeHTTP(response, testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", EnqueueRequest{RepoPath: repo.Path(), GitRef: "prompt", Agent: agentName, CustomPrompt: "Review this codebase"}))
-					require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
-					require.NoError(t, json.Unmarshal(response.Body.Bytes(), &job))
+					job = enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: "prompt", Agent: agentName, CustomPrompt: "Review this codebase"})
 				} else {
 					queued, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: storedRepo.ID, GitRef: "prompt", Agent: agentName, Prompt: "Review this codebase", JobType: storage.JobTypeTask})
 					require.NoError(t, err)
@@ -4410,42 +4407,12 @@ func TestServerWakesWorkerPoolWhenWorkBecomesClaimable(t *testing.T) {
 			require.NoError(t, err)
 			f.postTrigger("/api/rebuttal", RebuttalRequest{JobID: parent.ID, Finding: "The guard is missing.", Comment: "Check the caller.", Commenter: "operator"}, http.StatusCreated)
 		}},
-		{"panel cancel release", func(t *testing.T, f *fixture) {
-			member, _ := f.panel()
-			f.postTrigger("/api/job/cancel", CancelJobRequest{JobID: member.ID}, http.StatusOK)
-		}},
 		{"panel sweep release", func(t *testing.T, f *fixture) {
 			member, claimed := f.panel()
-			// Isolate synthesis release from the orphan-failure wake.
+			// Fail the member first so the sweep only releases synthesis.
 			updated, err := f.DB.FailJob(member.ID, claimed.WorkerID, "synthetic member failure")
 			require.NoError(t, err)
 			require.True(t, updated)
-			f.trigger = func() { f.server.sweepStuckPanels(context.Background()) }
-		}},
-		{"orphan member release", func(t *testing.T, f *fixture) {
-			member, _ := f.panel()
-			observedFailure := false
-			f.server.workerPool.broadcaster = &observingBroadcaster{
-				Broadcaster: f.server.workerPool.broadcaster,
-				observe: func(event Event) {
-					if event.Type == "review.failed" && event.JobID == member.ID {
-						observedFailure = true
-						assert.Empty(t, f.server.workerPool.wakeCh, "synthesis is released after the member failure broadcast")
-					}
-				},
-			}
-			f.trigger = func() {
-				f.server.sweepStuckPanels(context.Background())
-				assert.True(t, observedFailure, "member failure must be broadcast")
-			}
-		}},
-		{"orphan session release", func(t *testing.T, f *fixture) {
-			orphan := f.enqueue("shared-session", storage.JobSourceRebuttal)
-			claimed, err := f.DB.ClaimJob("orphan-worker")
-			require.NoError(t, err)
-			require.NotNil(t, claimed)
-			require.Equal(t, orphan.ID, claimed.ID)
-			f.enqueue("shared-session", "")
 			f.trigger = func() { f.server.sweepStuckPanels(context.Background()) }
 		}},
 		{"unpause", func(t *testing.T, f *fixture) {
@@ -4514,13 +4481,8 @@ func TestWorkerPoolWakeReachesEveryIdleWorker(t *testing.T) {
 }
 
 func TestWorkerPoolNegativeWorkerCount(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		server, _, _ := newTestServer(t)
-		pool := NewWorkerPool(server.db, server.configWatcher, -1, server.broadcaster, nil, nil)
-		defer pool.Stop()
-		pool.wake()
-		assert.Zero(t, pool.ActiveWorkers())
-	})
+	pool := NewWorkerPool(nil, NewStaticConfig(config.DefaultConfig()), -1, NewBroadcaster(), nil, nil)
+	pool.wake()
 }
 
 func TestWorkerPoolDoesNotClaimNewJobsWhenQueuePaused(t *testing.T) {

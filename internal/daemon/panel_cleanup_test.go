@@ -214,8 +214,6 @@ func TestExpireTimedOutPanels(t *testing.T) {
 
 	var canceled []int64
 	h.Poller.jobCancelFn = func(jobID int64) { canceled = append(canceled, jobID) }
-	wakes := 0
-	h.Poller.wakeFn = func() { wakes++ }
 
 	panel, synth, members := h.seedBlockedPanelRun(t, "acme/api", 24, "headsha", "base..headsha",
 		[]jobSpec{
@@ -228,7 +226,6 @@ func TestExpireTimedOutPanels(t *testing.T) {
 	require.True(t, h.synthBlocked(t, synth.PanelRunUUID), "synthesis blocked before sweep")
 
 	h.Poller.expireTimedOutPanels("acme/api", h.Cfg)
-	assert.Equal(1, wakes, "released synthesis wakes idle workers")
 
 	hung, err := h.DB.GetJobByID(members[1].ID)
 	require.NoError(t, err)

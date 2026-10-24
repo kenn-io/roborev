@@ -128,7 +128,5 @@ func (s *Server) releaseSynthesisIfCanceledMember(job *storage.ReviewJob) {
 	}
 	if err := s.db.MaybeReleasePanelSynthesis(*job.PanelRunUUID); err != nil {
 		log.Printf("cancel cascade: release synthesis for %s: %v", job.PanelRunUUID, err)
-		return
 	}
-	s.workerPool.wake()
 }

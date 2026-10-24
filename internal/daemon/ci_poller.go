@@ -123,7 +123,6 @@ type CIPoller struct {
 	setSkippedCheckFn   func(ghRepo, sha, summary string) error
 	agentResolverFn     func(name string) (string, error)      // returns resolved agent name
 	jobCancelFn         func(jobID int64)                      // kills running worker process (optional)
-	wakeFn              func()                                 // wakes idle workers after enqueue (optional)
 	isPROpenFn          func(ghRepo string, prNumber int) bool // checks if a PR is still open
 	prPostTargetFn      func(context.Context, string, int) (panelPostTarget, error)
 
@@ -881,11 +880,6 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 
 	if err := p.setPendingReviewStatus(ghRepo, pr.Number, pr.HeadRefOid, "Review in progress"); err != nil {
 		log.Printf("CI poller: failed to set pending status for %s@%s: %v", ghRepo, headShort, err)
-	}
-	// Wake workers last: a fast review must not publish its result before the
-	// pending status above, which would then overwrite it.
-	if p.wakeFn != nil {
-		p.wakeFn()
 	}
 
 	return true, nil
@@ -2928,8 +2922,6 @@ func (p *CIPoller) expireTimedOutPanels(ghRepo string, cfg *config.Config) {
 		// call is idempotent.
 		if err := p.db.MaybeReleasePanelSynthesis(row.PanelRunUUID); err != nil {
 			log.Printf("CI poller: timeout: release synthesis for %s: %v", row.PanelRunUUID, err)
-		} else if p.wakeFn != nil {
-			p.wakeFn()
 		}
 	}
 	if expired > 0 {
