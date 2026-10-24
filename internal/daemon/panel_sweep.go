@@ -64,6 +64,7 @@ func (s *Server) failOrphanedJob(ctx context.Context, job *storage.ReviewJob) {
 	if !updated {
 		return
 	}
+	wp.wake()
 	log.Printf("panel sweep: job %d failed: %s", job.ID, errorMsg)
 	wp.invalidateBudgetSpend()
 	wp.broadcastFailed(job, job.Agent, errorMsg)
@@ -90,7 +91,8 @@ func (s *Server) sweepStuckPanels(ctx context.Context) {
 		}
 		if err := s.db.MaybeReleasePanelSynthesisContext(ctx, u); err != nil {
 			log.Printf("panel sweep: release %s: %v", u, err)
+			continue
 		}
+		s.workerPool.wake()
 	}
-	s.workerPool.wake()
 }

@@ -4317,14 +4317,17 @@ func TestWorkerPoolWakesIdleWorkersOnNewJob(t *testing.T) {
 		{name: "unpause", workers: 1},
 		{name: "panel cancel release", workers: 1},
 		{name: "panel sweep release", workers: 1},
+		{name: "orphan session release", workers: 1},
 		{name: "unpause four workers", workers: 4},
 		{name: "poll fallback without a wake", workers: 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				server, db, _ := newTestServer(t)
-				server.workerPool.numWorkers = test.workers
-				server.workerPool.wakeCh = make(chan struct{}, test.workers)
+				db := testutil.OpenTestDB(t)
+				cfg := config.DefaultConfig()
+				cfg.MaxWorkers = test.workers
+				server := newServerWithLogs(db, cfg, "", newTestErrorLog(), newTestActivityLog())
+				t.Cleanup(func() { _ = server.Close() })
 				repo := testutil.NewTestRepoWithCommit(t)
 				storedRepo, err := db.GetOrCreateRepo(repo.Path())
 				require.NoError(t, err)
@@ -4403,8 +4406,23 @@ func TestWorkerPoolWakesIdleWorkersOnNewJob(t *testing.T) {
 					if test.name == "panel cancel release" {
 						trigger = func() { post("/api/job/cancel", CancelJobRequest{JobID: members[0].ID}, http.StatusOK) }
 					} else {
+						// Isolate synthesis release from the orphan-failure wake.
+						updated, err := db.FailJob(members[0].ID, claimed.WorkerID, "synthetic member failure")
+						require.NoError(t, err)
+						require.True(t, updated)
 						trigger = func() { server.sweepStuckPanels(context.Background()) }
 					}
+				case "orphan session release":
+					orphan, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: storedRepo.ID, GitRef: "prompt", Agent: agentName, Prompt: "Review this codebase", JobType: storage.JobTypeTask, SessionID: "shared-session", Source: storage.JobSourceRebuttal})
+					require.NoError(t, err)
+					claimed, err := db.ClaimJob("orphan-worker")
+					require.NoError(t, err)
+					require.NotNil(t, claimed)
+					require.Equal(t, orphan.ID, claimed.ID)
+					queued, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: storedRepo.ID, GitRef: "prompt", Agent: agentName, Prompt: "Review this codebase", JobType: storage.JobTypeTask, SessionID: "shared-session"})
+					require.NoError(t, err)
+					jobID = queued.ID
+					trigger = func() { server.sweepStuckPanels(context.Background()) }
 				case "poll fallback without a wake":
 					trigger = func() {
 						job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: storedRepo.ID, GitRef: "prompt", Agent: agentName, Prompt: "Review this codebase", JobType: storage.JobTypeTask})
