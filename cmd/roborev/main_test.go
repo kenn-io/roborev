@@ -67,7 +67,8 @@ func captureStdout(t *testing.T, fn func()) string {
 	return output
 }
 
-// setupFastPolling reduces all polling intervals to 1ms for fast tests.
+// setupFastPolling reduces polling intervals, the post-commit wait, the daemon
+// probe retry delay, and the fix enqueue probe delay to 1ms for fast tests.
 // Restores the original values during cleanup.
 func setupFastPolling(t *testing.T) {
 	t.Helper()
