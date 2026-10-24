@@ -12,6 +12,15 @@ import (
 // selectBudgetJobAgent preserves pinned execution contracts and automatic
 // recovery. Fresh explicit-agent-only jobs opt into the global budget policy.
 func (wp *WorkerPool) selectBudgetJobAgent(ctx context.Context, workerID string, job *storage.ReviewJob, cfg *config.Config) (agent.Agent, bool) {
+	snapshot, err := decodeReviewExecutionSnapshot(job.PanelMemberConfigJSON)
+	if err != nil {
+		wp.failOrRetryContext(ctx, workerID, job, job.Agent, err.Error())
+		return nil, false
+	}
+	return wp.selectBudgetJobAgentWithSnapshot(ctx, workerID, job, cfg, snapshot)
+}
+
+func (wp *WorkerPool) selectBudgetJobAgentWithSnapshot(ctx context.Context, workerID string, job *storage.ReviewJob, cfg *config.Config, snapshot reviewExecutionSnapshot) (agent.Agent, bool) {
 	if wp.budgetRouter == nil || cfg == nil || !cfg.Budget.Enabled ||
 		!hasBudgetPrice(job.Agent, cfg.Budget.AgentCosts) ||
 		agent.CanonicalName(job.Agent) == "test" ||
@@ -20,9 +29,11 @@ func (wp *WorkerPool) selectBudgetJobAgent(ctx context.Context, workerID string,
 		job.IsCIReview() || job.JobType == storage.JobTypeClassify || job.IsSynthesisJob() {
 		return nil, true
 	}
-	configRoot := job.RepoPath
-	if job.IsGoalReviewJob() {
-		configRoot = GoalReviewConfigRepoPath(job)
+	configRoot, err := reviewJobConfigPath(job)
+	if err != nil {
+		wp.logJobStarted(workerID, job)
+		wp.failOrRetryContext(ctx, workerID, job, job.Agent, "load budget routing config: "+err.Error())
+		return nil, false
 	}
 	repoCfg, err := config.LoadRepoConfig(configRoot)
 	if err != nil {
@@ -58,10 +69,22 @@ func (wp *WorkerPool) selectBudgetJobAgent(ctx context.Context, workerID string,
 		}
 		return ""
 	}
+	var tools *config.ReviewToolPolicy
+	if job.IsReviewJob() && !job.IsGoalReviewJob() {
+		settings, err := resolveReviewJobSettings(job, snapshot, configRoot, cfg)
+		if err != nil {
+			wp.failOrRetryContext(ctx, workerID, job, job.Agent, err.Error())
+			return nil, false
+		}
+		tools = settings.Tools
+	}
 	var eligible func(agent.Agent) bool
-	if job.IsGoalReviewJob() {
+	if job.IsGoalReviewJob() || tools != nil {
 		eligible = func(candidate agent.Agent) bool {
-			if claude, ok := candidate.WithModel(modelForAgent(candidate.Name())).(*agent.ClaudeAgent); ok {
+			if err := agent.ValidateReviewToolSelection(tools, candidate, job.Agentic); err != nil {
+				return false
+			}
+			if claude, ok := candidate.WithModel(modelForAgent(candidate.Name())).(*agent.ClaudeAgent); ok && job.IsGoalReviewJob() {
 				return claude.ValidateGoalReview(ctx) == nil
 			}
 			return true

@@ -102,6 +102,13 @@ Thanks to everyone who contributed to this release:
 
 ______________________________________________________________________
 
+**Bug fixes**
+
+- Read-only Claude reviews and panel synthesis no longer get write, shell, web,
+    subagent, or MCP tools or skills, even when Claude settings bypass
+    permissions. Reviews fail if the Claude CLI lacks `--tools`; upgrade Claude
+    to continue.
+
 ## 0.72.0
 
 <small>2026-10-16</small>

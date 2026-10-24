@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"database/sql"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -614,6 +613,49 @@ func (wp *WorkerPool) refreshIsolatedReviewConfigPath(
 	return checkout
 }
 
+// jobForRuntimeReviewConfig resolves config before an isolated local review's
+// checkout exists. Reruns and budget routing retain strict recorded-path checks.
+// The copy is only for selection; storage, events, and hooks keep the original.
+func (wp *WorkerPool) jobForRuntimeReviewConfig(
+	workerID string, job *storage.ReviewJob, cfg *config.Config,
+) (*storage.ReviewJob, bool) {
+	committedReview := (job.IsReviewJob() || job.IsSynthesisJob()) &&
+		!job.IsGoalReviewJob() && !job.IsDirtyJob() && job.GitRef != "dirty"
+	if !committedReview || job.IsCIReview() || job.Source == storage.JobSourceRebuttal {
+		return job, false
+	}
+	requiresCIWorktree, err := wp.jobRequiresCIExactCheckout(job)
+	if err != nil || requiresCIWorktree {
+		return job, false
+	}
+	configPath := resolveEffectiveRepoPath(workerID, job)
+	if !config.ResolveIsolateReviews(configPath, cfg) {
+		return job, false
+	}
+	resolution := *job
+	resolution.RepoPath = configPath
+	resolution.WorktreePath = ""
+	return &resolution, true
+}
+
+// jobForAgentFailover resolves an isolated local attempt's live backup from
+// its current config checkout, including before checkout at the cooldown gate.
+// Keep the original job paths for storage, events, and hooks.
+func (wp *WorkerPool) jobForAgentFailover(
+	workerID string, job *storage.ReviewJob, isolatedLocalReview bool,
+) *storage.ReviewJob {
+	if !isolatedLocalReview {
+		return job
+	}
+	resolution := *job
+	resolution.RepoPath = resolveEffectiveRepoPath(workerID, job)
+	resolution.WorktreePath = ""
+	failover := *job
+	failover.BackupAgent = wp.resolveBackupAgent(&resolution)
+	failover.BackupModel = wp.resolveBackupModel(&resolution)
+	return &failover
+}
+
 func (wp *WorkerPool) prepareJobCheckout(
 	ctx context.Context, workerID string, job *storage.ReviewJob,
 	cfg *config.Config,
@@ -662,14 +704,10 @@ func (wp *WorkerPool) promptBuilderForJob(
 	cfg *config.Config,
 ) (*prompt.Builder, error) {
 	builder := wp.basePromptBuilderForJob(ctx, checkout, job, cfg)
-	if job.IsCIReview() && strings.TrimSpace(job.CIBaseBranch) != "" {
+	if job.IsCIReview() {
 		repoConfig, err := loadCIRepoConfig(checkout.resolvedConfigRepoPath())
 		if err != nil {
-			if !config.IsConfigParseError(err) {
-				return nil, fmt.Errorf("load CI review config: %w", err)
-			}
-			log.Printf("worker: warning: failed to load CI review config: %v", err)
-			repoConfig.Config = nil
+			return nil, fmt.Errorf("load CI review config: %w", err)
 		}
 		builder = builder.WithRepoConfig(
 			repoConfig.Config,
@@ -900,6 +938,19 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Snapshot config once to ensure consistent settings throughout the job.
 	// This prevents mixed settings if config reloads mid-job.
 	cfg := wp.cfgGetter.Config()
+	jobUUID := uuid.Nil()
+	if job.UUID != nil {
+		jobUUID = *job.UUID
+	}
+	assignment, assignmentErr := wp.db.GetExperimentAssignmentInputForJobUUID(jobUUID)
+	if assignmentErr == nil && assignment != nil {
+		assignmentErr = applyFrozenExperimentSettings(job, assignment)
+		job.FrozenExperimentPlan = assignment
+	}
+	execution, executionErr := decodeReviewExecutionSnapshot(job.PanelMemberConfigJSON)
+	if assignmentErr != nil {
+		executionErr = fmt.Errorf("load frozen experiment plan: %w", assignmentErr)
+	}
 
 	// Get timeout from config (per-repo or global, default 30 minutes), then
 	// overlay any frozen panel-member timeout captured at enqueue time.
@@ -908,13 +959,13 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		configRoot = GoalReviewConfigRepoPath(job)
 	}
 	timeoutMinutes := config.ResolveJobTimeout(configRoot, cfg)
-	jobTimeoutDuration := resolveJobTimeoutDuration(job, timeoutMinutes)
+	jobTimeoutDuration := resolveJobTimeoutDuration(execution, timeoutMinutes)
 	timeoutDuration := jobTimeoutDuration
 	var planningTimeout time.Duration
 	planningPrompt := ""
 	// A prebuilt prompt stored by an earlier attempt already ends with the
 	// member instructions; drop them so this attempt appends them once.
-	memberSuffix := memberInstructionSuffix(job)
+	memberSuffix := memberInstructionSuffix(job, execution)
 	storedPromptValue := strings.TrimSuffix(job.Prompt, memberSuffix)
 	var planningDecodeErr error
 	if job.IsFixJob() {
@@ -948,6 +999,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Every attempt owns the lifetime of its output stream, including paths that
 	// fail before an agent starts and synthesis paths that do not invoke one.
 	defer wp.outputBuffers.CloseJob(job.ID)
+	if executionErr != nil {
+		wp.failOrRetryContext(ctx, workerID, job, job.Agent, "invalid review execution: "+executionErr.Error())
+		return
+	}
 	if ctx.Err() != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			wp.failOrRetryContext(ctx, workerID, job, job.Agent, "job timed out waiting for previous attempt cleanup")
@@ -957,34 +1012,13 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		return
 	}
 
-	jobUUID := uuid.Nil()
-	if job.UUID != nil {
-		jobUUID = *job.UUID
-	}
-	assignment, err := wp.db.GetExperimentAssignmentInputForJobUUID(jobUUID)
-	if err != nil {
-		wp.logJobStarted(workerID, job)
-		wp.failOrRetryContext(ctx, workerID, job, job.Agent,
-			fmt.Sprintf("load frozen experiment plan: %v", err))
-		return
-	}
-	if assignment != nil {
-		if err := applyFrozenExperimentSettings(job, assignment); err != nil {
-			wp.logJobStarted(workerID, job)
-			wp.failOrRetryContext(ctx, workerID, job, job.Agent,
-				fmt.Sprintf("load frozen experiment plan: %v", err))
-			return
-		}
-		job.FrozenExperimentPlan = assignment
-	}
-
 	// Synthesis jobs route to their own handler before the cooldown gate: the
 	// all-failed and passthrough branches call no agent, so a synthesis-agent
 	// quota cooldown must not skip or fail them. Placing this after
 	// registerRunningJob keeps synthesis jobs cancellable.
 	if job.IsSynthesisJob() {
 		wp.logJobStarted(workerID, job)
-		wp.processSynthesisJob(ctx, workerID, job)
+		wp.processSynthesisJobWithSnapshot(ctx, workerID, job, execution)
 		return
 	}
 
@@ -1018,7 +1052,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Budget selection precedes the cooldown gate and prompt construction so
 	// both use the actual selected agent. Guarded persistence prevents a
 	// canceled or reassigned row from starting an agent.
-	budgetAgent, proceed := wp.selectBudgetJobAgent(ctx, workerID, job, cfg)
+	budgetAgent, proceed := wp.selectBudgetJobAgentWithSnapshot(ctx, workerID, job, cfg, execution)
 	if !proceed {
 		return
 	}
@@ -1036,7 +1070,9 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	if wp.isAgentCoolingDown(canonicalAgent) {
 		log.Printf("[%s] Agent %s in cooldown, skipping job %d",
 			workerID, canonicalAgent, job.ID)
-		wp.failCooldownOrFailoverContext(ctx, workerID, job, canonicalAgent,
+		_, isolated := wp.jobForRuntimeReviewConfig(workerID, job, cfg)
+		failoverJob := wp.jobForAgentFailover(workerID, job, isolated)
+		wp.failCooldownOrFailoverContext(ctx, workerID, failoverJob, canonicalAgent,
 			fmt.Sprintf("agent %s quota cooldown active", canonicalAgent))
 		return
 	}
@@ -1063,9 +1099,14 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("prepare checkout: %v", err))
 		return
 	}
-	// Session resume can retain the old checkout cwd. Clear both persisted and
-	// in-memory metadata before capturing a fresh session for this attempt.
-	if checkout.isolatedLocalReview {
+	checkout = wp.refreshIsolatedReviewConfigPath(workerID, checkout, job)
+	settings, settingsErr := resolveReviewJobSettings(job, execution, checkout.resolvedConfigRepoPath(), cfg)
+	if settingsErr != nil {
+		wp.failOrRetryContext(ctx, workerID, job, job.Agent, "resolve review settings: "+settingsErr.Error())
+		return
+	}
+	// Strict reviews never inherit a session, even when their checkout is kept.
+	if checkout.isolatedLocalReview || settings.Tools != nil {
 		if err := wp.db.IsolateJobSession(job.ID, workerID); err != nil {
 			wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("clear review session: %v", err))
 			return
@@ -1073,11 +1114,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		job.SessionID = ""
 		job.ResumeSourceJobUUID = nil
 	}
-	checkout = wp.refreshIsolatedReviewConfigPath(workerID, checkout, job)
 
 	// Prompt-independent cleanup must not force a prebuilt CI job to reload
 	// repository review configuration that it no longer needs.
-	pb := wp.basePromptBuilderForJob(ctx, checkout, job, cfg)
+	pb := wp.basePromptBuilderForJob(ctx, checkout, job, cfg).WithReviewSettings(settings)
 	if err := cleanupStaleSnapshotsForJob(pb, checkout, job.RepoID); err != nil {
 		log.Printf("[%s] Warning: cleanup stale snapshots for job %d: %v", workerID, job.ID, err)
 	}
@@ -1103,21 +1143,6 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		// discussion context survives retries and failover.
 		reviewPrompt = storedPromptValue
 		promptToPersist = storedPromptValue
-		var cleanup func()
-		excludes := config.ResolveExcludePatterns(
-			ctx, checkout.resolvedConfigRepoPath(), cfg, job.ReviewType,
-		)
-		reviewPrompt, cleanup, err = preparePrebuiltPrompt(
-			ctx, checkout.promptRepoPath, checkout.snapshotTarget, job, reviewPrompt, excludes,
-		)
-		if cleanup != nil {
-			defer cleanup()
-		}
-		if err != nil {
-			log.Printf("[%s] Error preparing prebuilt prompt: %v", workerID, err)
-			wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("prepare prebuilt prompt: %v", err))
-			return
-		}
 	} else if job.UsesStoredPrompt() && job.Prompt != "" {
 		// Prompt-native job (task, compact) — prepend agent-specific preamble
 		preamble := prompt.GetSystemPrompt(job.Agent, "run")
@@ -1141,6 +1166,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("configure prompt builder: %v", err))
 			return
 		}
+
+		pb = pb.WithReviewSettings(settings)
 
 		// Attributed jobs use the frozen plan verbatim, including an explicit
 		// empty value. Ordinary jobs keep the legacy config cascade.
@@ -1184,11 +1211,42 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Panel members carry trusted reviewer instructions resolved at enqueue
 	// time. Append them after every prompt path (snapshot/dirty/range/
 	// prebuilt) so the agent and the stored prompt both include them.
-	reviewPrompt += memberSuffix
-	if promptToPersist == "" {
-		promptToPersist = reviewPrompt
+	if settings.BinaryEvidence || settings.EvidenceManifest != "" {
+		excludes := config.ResolveExcludePatterns(ctx, checkout.resolvedConfigRepoPath(), cfg, job.ReviewType)
+		bound, bindErr := pb.BindReviewEvidence(reviewPrompt, job.GitRef, job.ReviewType, excludes, checkout.snapshotTarget, memberSuffix)
+		if bindErr != nil {
+			wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("prepare evidence: %v", bindErr))
+			return
+		}
+		if bound.Cleanup != nil {
+			defer bound.Cleanup()
+		}
+		reviewPrompt, promptToPersist = bound.Prompt, bound.StoredPrompt
 	} else {
-		promptToPersist = strings.TrimSuffix(promptToPersist, memberSuffix) + memberSuffix
+		reviewPrompt += memberSuffix
+		if promptToPersist == "" {
+			promptToPersist = reviewPrompt
+		} else {
+			promptToPersist = strings.TrimSuffix(promptToPersist, memberSuffix) + memberSuffix
+		}
+	}
+	// Diff placeholders belong to prebuilt transport. Bind after evidence so
+	// persistence retains portable identities and no attempt-local file paths.
+	if job.PromptPrebuilt {
+		excludes := config.ResolveExcludePatterns(ctx, checkout.resolvedConfigRepoPath(), cfg, job.ReviewType)
+		var cleanup func()
+		readCtx := ctx
+		if settings.BinaryEvidence || settings.EvidenceManifest != "" {
+			readCtx = gitpkg.WithEvidenceReadPolicy(ctx)
+		}
+		reviewPrompt, cleanup, err = preparePrebuiltPrompt(readCtx, checkout.promptRepoPath, checkout.snapshotTarget, job, reviewPrompt, excludes)
+		if cleanup != nil {
+			defer cleanup()
+		}
+		if err != nil {
+			wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("prepare prebuilt prompt: %v", err))
+			return
+		}
 	}
 
 	// The job's stored prompt is the only copy the prompt views read, so a
@@ -1206,11 +1264,19 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	var agentErr error
 	baseAgent := budgetAgent
 	if baseAgent == nil {
-		baseAgent, agentErr = resolveReviewJobAgent(job, cfg)
+		agentJob := *job
+		if checkout.isolatedLocalReview {
+			// Checkout preparation already resolved the config source, including
+			// the main-repo fallback when the caller worktree has disappeared.
+			agentJob.RepoPath = checkout.resolvedConfigRepoPath()
+			agentJob.WorktreePath = ""
+		}
+		baseAgent, agentErr = resolveConfiguredJobAgentWithSnapshot(&agentJob, cfg, execution)
 	}
 	if agentErr != nil {
 		log.Printf("[%s] Error getting agent: %v", workerID, agentErr)
-		wp.failOrRetryAgentContext(ctx, workerID, job, job.Agent, fmt.Sprintf("get agent: %v", agentErr))
+		failoverJob := wp.jobForAgentFailover(workerID, job, checkout.isolatedLocalReview)
+		wp.failOrRetryAgentContext(ctx, workerID, failoverJob, job.Agent, fmt.Sprintf("get agent: %v", agentErr))
 		return
 	}
 
@@ -1244,6 +1310,37 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	if job.Provider != "" {
 		if pa, ok := a.(*agent.PiAgent); ok {
 			a = pa.WithProvider(job.Provider)
+		}
+	}
+	if err := agent.ValidateReviewToolSelection(settings.Tools, a, job.Agentic); err != nil {
+		wp.failOrRetryContext(ctx, workerID, job, job.Agent, err.Error())
+		return
+	}
+
+	if settings.Tools != nil {
+		var policyRepo *config.RepoConfig
+		var policyErr error
+		if job.PanelMemberConfigJSON != "" {
+			policyRepo = &config.RepoConfig{ACP: execution.ACP}
+		} else if job.IsCIReview() {
+			source, err := loadCIRepoConfig(checkout.resolvedConfigRepoPath())
+			policyRepo, policyErr = source.Config, err
+		} else {
+			policyRepo, policyErr = config.LoadRepoConfig(checkout.resolvedConfigRepoPath())
+		}
+		if policyErr == nil {
+			resolution, err := agent.ResolveWorkflowConfigFromConfig(job.Agent, policyRepo, cfg, failoverWorkflow(job), job.Reasoning)
+			policyErr = err
+			if policyErr == nil {
+				if job.BackupAgent != "" || job.PanelMemberConfigJSON != "" {
+					resolution.BackupAgent = job.BackupAgent
+				}
+				policyErr = agent.ValidateReviewToolBackup(settings.Tools, resolution, a.Name())
+			}
+		}
+		if policyErr != nil {
+			wp.failOrRetryContext(ctx, workerID, job, job.Agent, policyErr.Error())
+			return
 		}
 	}
 
@@ -1413,6 +1510,13 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			defer preparedPrompt.Cleanup()
 		}
 		reviewPrompt = preparedPrompt.Prompt
+		preparedAgent, toolCleanup, policyErr := agent.PrepareReviewToolPolicy(a, settings.Tools, wp.cfgGetter.Config(), reviewRepoPath, job.Agentic)
+		if policyErr != nil {
+			wp.failOrRetryContext(ctx, workerID, job, agentName, policyErr.Error())
+			return
+		}
+		defer toolCleanup()
+		a = preparedAgent
 		wp.markAgentInvoked(workerID, job, a)
 		if planningPrompt != "" {
 			implementationInvoked = true
@@ -1439,7 +1543,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	} else if err == nil {
 		agentReview, err = review.RunAgentReview(
 			ctx, a, reviewRepoPath, job.GitRef, reviewPrompt, job.ReviewType,
-			effectiveMinSeverity, agentOutput,
+			effectiveMinSeverity, settings.Tools, agentOutput,
 		)
 	}
 	output := agentReview.Output
@@ -1467,6 +1571,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			wp.finishCanceledAttempt(workerID, job, agentName, eventWorktreePath)
 			return // Job already marked as canceled in DB, nothing more to do
 		}
+		failoverJob := wp.jobForAgentFailover(workerID, job, checkout.isolatedLocalReview)
 		if errors.Is(err, context.DeadlineExceeded) || ctx.Err() == context.DeadlineExceeded {
 			timeoutErr := fmt.Sprintf(
 				"%s %s",
@@ -1474,12 +1579,12 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				jobTimeoutDuration.Round(time.Second),
 			)
 			log.Printf("[%s] Job %d timed out: %v", workerID, job.ID, err)
-			wp.failOrRetryAgentContext(ctx, workerID, job, agentName, timeoutErr)
+			wp.failOrRetryAgentContext(ctx, workerID, failoverJob, agentName, timeoutErr)
 			return
 		}
 		log.Printf("[%s] Agent error on job %d: %v",
 			workerID, job.ID, err)
-		wp.failOrRetryAgentExecutionContext(ctx, workerID, job, agentName, err)
+		wp.failOrRetryAgentExecutionContext(ctx, workerID, failoverJob, agentName, err)
 		return
 	}
 	if wp.handleUpdateInterruption(ctx, workerID, job) {
@@ -2010,9 +2115,9 @@ func failoverWorkflow(job *storage.ReviewJob) string {
 	return config.WorkflowForReviewType(job.ReviewType)
 }
 
-// resolveBackupAgent determines the backup agent for a job. A frozen
-// experiment plan is authoritative, including an explicit empty backup.
-// Ordinary jobs retain the workflow-config fallback.
+// resolveBackupAgent prefers the job override, then its frozen snapshot.
+// Experiment/CI absence is authoritative; other jobs without a frozen backup
+// retain the workflow-config fallback.
 func (wp *WorkerPool) resolveBackupAgent(job *storage.ReviewJob) string {
 	if job.Source == storage.JobSourceRebuttal {
 		return ""
@@ -2023,22 +2128,30 @@ func (wp *WorkerPool) resolveBackupAgent(job *storage.ReviewJob) string {
 	// value if the name is unknown so the override is never silently dropped.
 	// Note: agent.Get resolves from the registry, not PATH, so this does not
 	// require local installation.
-	if job.FrozenExperimentPlan != nil && job.BackupAgent == "" {
+	backup := job.BackupAgent
+	if backup == "" {
+		snapshot, err := decodeReviewExecutionSnapshot(job.PanelMemberConfigJSON)
+		if err != nil {
+			return ""
+		}
+		backup = snapshot.BackupAgent
+	}
+	if (job.FrozenExperimentPlan != nil || job.IsCIReview() && job.PanelMemberConfigJSON != "") && backup == "" {
 		return ""
 	}
-	if job.BackupAgent != "" {
-		if resolved, err := agent.Get(job.BackupAgent); err == nil {
+	if backup != "" {
+		if resolved, err := agent.Get(backup); err == nil {
 			return resolved.Name()
 		}
-		return job.BackupAgent
+		return backup
 	}
 	if job.JobType == storage.JobTypeSynthesis {
 		return ""
 	}
 	cfg := wp.cfgGetter.Config()
-	configRoot := job.RepoPath
-	if job.IsGoalReviewJob() {
-		configRoot = GoalReviewConfigRepoPath(job)
+	configRoot, err := reviewJobConfigPath(job)
+	if err != nil {
+		return ""
 	}
 	resolution, err := agent.ResolveWorkflowConfig(
 		"", configRoot, cfg, failoverWorkflow(job), "",
@@ -2046,7 +2159,7 @@ func (wp *WorkerPool) resolveBackupAgent(job *storage.ReviewJob) string {
 	if err != nil {
 		return ""
 	}
-	backup := resolution.BackupAgent
+	backup = resolution.BackupAgent
 	if backup == "" {
 		return ""
 	}
@@ -2066,25 +2179,32 @@ func (wp *WorkerPool) resolveBackupAgent(job *storage.ReviewJob) string {
 	return resolved.Name()
 }
 
-// resolveBackupModel returns the frozen experiment value when present.
-// Ordinary jobs retain the workflow-config fallback.
+// resolveBackupModel stays paired with the job or snapshot backup agent.
+// Jobs without a frozen backup retain the workflow-config fallback.
 func (wp *WorkerPool) resolveBackupModel(job *storage.ReviewJob) string {
 	// Stored backup agent present => use the stored model, even if empty. Never
 	// fall through to the workflow backup model, which is resolved for a
 	// different agent (the user's F7 guardrail).
-	if job.FrozenExperimentPlan != nil {
+	if job.BackupAgent != "" {
 		return job.BackupModel
 	}
-	if job.BackupAgent != "" {
+	snapshot, err := decodeReviewExecutionSnapshot(job.PanelMemberConfigJSON)
+	if err != nil {
+		return ""
+	}
+	if snapshot.BackupAgent != "" {
+		return snapshot.BackupModel
+	}
+	if job.FrozenExperimentPlan != nil || job.IsCIReview() && job.PanelMemberConfigJSON != "" {
 		return job.BackupModel
 	}
 	if job.JobType == storage.JobTypeSynthesis {
 		return ""
 	}
 	cfg := wp.cfgGetter.Config()
-	configRoot := job.RepoPath
-	if job.IsGoalReviewJob() {
-		configRoot = GoalReviewConfigRepoPath(job)
+	configRoot, err := reviewJobConfigPath(job)
+	if err != nil {
+		return ""
 	}
 	resolution, err := agent.ResolveWorkflowConfig(
 		"", configRoot, cfg, failoverWorkflow(job), "",
@@ -2135,12 +2255,8 @@ func (wp *WorkerPool) broadcastFailed(job *storage.ReviewJob, agentName, errorMs
 // memberInstructionSuffix returns the trusted reviewer-instruction block to
 // append to a panel member's review prompt. It returns "" for a non-member job,
 // or when the member config is missing/unparseable or carries no instructions.
-func memberInstructionSuffix(job *storage.ReviewJob) string {
-	if job.PanelRole != storage.PanelRoleMember || job.PanelMemberConfigJSON == "" {
-		return ""
-	}
-	var m config.ResolvedMember
-	if json.Unmarshal([]byte(job.PanelMemberConfigJSON), &m) != nil || m.Instructions == "" {
+func memberInstructionSuffix(job *storage.ReviewJob, m reviewExecutionSnapshot) string {
+	if job.PanelRole != storage.PanelRoleMember || m.Instructions == "" {
 		return ""
 	}
 	return fmt.Sprintf(
@@ -2149,20 +2265,12 @@ func memberInstructionSuffix(job *storage.ReviewJob) string {
 	)
 }
 
-func resolveJobTimeoutDuration(job *storage.ReviewJob, defaultMinutes int) time.Duration {
+func resolveJobTimeoutDuration(execution reviewExecutionSnapshot, defaultMinutes int) time.Duration {
 	defaultDuration := time.Duration(defaultMinutes) * time.Minute
-	if job.PanelRole != storage.PanelRoleMember || job.PanelMemberConfigJSON == "" {
+	if execution.timeout == 0 {
 		return defaultDuration
 	}
-	var m config.ResolvedMember
-	if json.Unmarshal([]byte(job.PanelMemberConfigJSON), &m) != nil || m.Timeout == "" {
-		return defaultDuration
-	}
-	d, err := time.ParseDuration(m.Timeout)
-	if err != nil || d <= 0 {
-		return defaultDuration
-	}
-	return d
+	return execution.timeout
 }
 
 // releaseIfPanelMember releases a panel run's blocked synthesis job when this

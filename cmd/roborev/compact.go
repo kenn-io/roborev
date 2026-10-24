@@ -264,7 +264,7 @@ func enqueueConsolidation(ctx context.Context, cmd *cobra.Command, repoRoot stri
 	resolved.agentName = agentName
 	resolved.model = model
 	resolved.reasoning = reasoning
-	job, err := enqueueCompactJob(ctx, repoRoot, compactPrompt, outputPrefix, label, branchFilter, resolved)
+	job, err := enqueueCompactJob(ctx, repoRoot, compactPrompt, outputPrefix, label, branchFilter, extractJobIDs(jobReviews), resolved)
 	if err != nil {
 		return 0, fmt.Errorf("enqueue verification job: %w", err)
 	}
@@ -531,7 +531,7 @@ func buildCompactOutputPrefix(jobCount int, branch string, jobIDs []int64) strin
 	return sb.String()
 }
 
-func enqueueCompactJob(ctx context.Context, repoRoot, prompt, outputPrefix, label, branch string, opts compactOptions) (*storage.ReviewJob, error) {
+func enqueueCompactJob(ctx context.Context, repoRoot, prompt, outputPrefix, label, branch string, sourceIDs []int64, opts compactOptions) (*storage.ReviewJob, error) {
 	if branch == "" {
 		branch = gitrepo.CurrentBranch(ctx, repoRoot)
 	}
@@ -547,6 +547,7 @@ func enqueueCompactJob(ctx context.Context, repoRoot, prompt, outputPrefix, labe
 		OutputPrefix: outputPrefix,
 		Agentic:      true,
 		JobType:      "compact",
+		SourceJobIDs: sourceIDs,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal enqueue request: %w", err)

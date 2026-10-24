@@ -79,6 +79,7 @@ type Builder struct {
 	globalCfg      *config.Config // optional global config for exclude patterns
 	repoCfg        *config.RepoConfig
 	repoCfgSet     bool
+	reviewSettings *config.ReviewSettings
 	repoCfgRef     string
 	ctx            context.Context
 	repoPath       string
@@ -209,10 +210,14 @@ func (b *Builder) resolveExcludes(
 }
 
 func (b *Builder) context() context.Context {
-	if b.ctx != nil {
-		return b.ctx
+	ctx := b.ctx
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	return context.Background()
+	if b.reviewSettings != nil && (b.reviewSettings.BinaryEvidence || b.reviewSettings.EvidenceManifest != "") {
+		ctx = git.WithEvidenceReadPolicy(ctx)
+	}
+	return ctx
 }
 
 // Build constructs a review prompt for a commit or range with context from previous reviews.
@@ -231,17 +236,48 @@ func (b *Builder) BuildWithAdditionalContext(gitRef string, contextCount int, ag
 }
 
 func (b *Builder) buildWithOpts(gitRef string, contextCount int, agentName, reviewType string, opts buildOpts) (string, error) {
-	if git.IsRange(gitRef) {
-		return b.buildRangePrompt(gitRef, contextCount, agentName, reviewType, opts)
+	settings, err := b.resolveReviewSettings(reviewType)
+	if err != nil {
+		return "", err
 	}
-	return b.buildSinglePrompt(gitRef, contextCount, agentName, reviewType, opts)
+	if opts.excludes == nil {
+		resolved := b.resolveExcludes(reviewType)
+		opts.excludes = &resolved
+	}
+	var index EvidenceIndex
+	enabled := settings.BinaryEvidence || settings.EvidenceManifest != ""
+	isRange := git.IsRange(gitRef)
+	if enabled {
+		b = b.WithReviewSettings(settings)
+		index, err = b.BuildEvidenceIndex(gitRef, *opts.excludes)
+		if err != nil {
+			return "", err
+		}
+		// Both the diff and the attachment use the endpoints resolved above.
+		gitRef = index.Target.Head
+		if isRange {
+			gitRef = index.Target.Bases[0] + ".." + index.Target.Head
+		}
+	}
+	var text string
+	if isRange {
+		text, err = b.buildRangePrompt(gitRef, contextCount, agentName, reviewType, opts)
+	} else {
+		text, err = b.buildSinglePrompt(gitRef, contextCount, agentName, reviewType, opts)
+	}
+	if err != nil || !enabled {
+		return text, err
+	}
+	return AppendEvidenceIndex(text, index)
 }
 
 // SnapshotResult holds a prompt and cleanup for its temporary reference files.
 type SnapshotResult struct {
-	Prompt   string
-	FilePath string
-	Cleanup  func()
+	Prompt string
+	// StoredPrompt is portable full text for persistence when evidence is enabled.
+	StoredPrompt string
+	FilePath     string
+	Cleanup      func()
 }
 
 // SnapshotTarget controls where prompt, diff, and prior-review snapshots are written.
@@ -272,6 +308,27 @@ func (b *Builder) BuildWithSnapshotTarget(
 		}
 	}()
 
+	settings, settingsErr := b.resolveReviewSettings(reviewType)
+	if settingsErr != nil {
+		return result, settingsErr
+	}
+	if settings.BinaryEvidence || settings.EvidenceManifest != "" {
+		b = b.WithReviewSettings(settings)
+		// Resolve symbolic endpoints before any other prompt reads. Subsequent
+		// index validation and retries address only these immutable commit OIDs.
+		endpoints, resolveErr := git.ResolveReviewEndpoints(b.context(), b.repoPath, gitRef)
+		if resolveErr != nil {
+			return result, resolveErr
+		}
+		if git.IsRange(gitRef) {
+			gitRef = endpoints.Bases[0] + ".." + endpoints.Head
+		} else {
+			gitRef = endpoints.Head
+		}
+	}
+	if excludes == nil {
+		excludes = b.resolveExcludes(reviewType)
+	}
 	var priorReviewsFile string
 	if reviews := b.priorRangeReviewsForRef(gitRef, contextCount); len(reviews) > 0 {
 		priorReviewsFile, result.Cleanup, err = b.writePriorRangeReviewsSnapshot(reviews, target)
@@ -280,14 +337,31 @@ func (b *Builder) BuildWithSnapshotTarget(
 		}
 	}
 	text, err := b.buildWithOpts(gitRef, contextCount, agentName, reviewType, buildOpts{
-		minSeverity: minSeverity, priorRangeReviewsFile: &priorReviewsFile,
+		minSeverity: minSeverity, priorRangeReviewsFile: &priorReviewsFile, excludes: &excludes,
 	})
 	if err != nil {
 		return result, err
 	}
-	prepared, err := b.Prepare(text, target)
+	bound, err := b.BindReviewEvidence(text, gitRef, reviewType, excludes, target)
 	if err != nil {
 		return result, err
+	}
+	prepared, err := b.Prepare(bound.Prompt, target)
+	if err != nil {
+		if bound.Cleanup != nil {
+			bound.Cleanup()
+		}
+		return result, err
+	}
+	prepared.StoredPrompt = bound.StoredPrompt
+	promptCleanup := prepared.Cleanup
+	if bound.Cleanup != nil {
+		prepared.Cleanup = func() {
+			if promptCleanup != nil {
+				promptCleanup()
+			}
+			bound.Cleanup()
+		}
 	}
 	priorCleanup := result.Cleanup
 	result = prepared
@@ -583,12 +657,19 @@ func (b *Builder) BuildDirty(diff string, contextCount int, agentName, reviewTyp
 // dirty file names for dependency metadata summaries. The diff itself may have
 // review exclusions applied.
 func (b *Builder) BuildDirtyWithFiles(diff string, changedFiles []string, contextCount int, agentName, reviewType, minSeverity string) (string, error) {
+	settings, err := b.resolveReviewSettings(reviewType)
+	if err != nil {
+		return "", err
+	}
+	if settings.BinaryEvidence || settings.EvidenceManifest != "" {
+		return "", fmt.Errorf("review evidence requires committed material; dirty reviews are unsupported")
+	}
 	ctx, err := b.newPromptBuildContext(agentName, reviewType, minSeverity, "dirty", optionalSectionsView{})
 	if err != nil {
 		return "", err
 	}
-	ctx.optional.DependencyMetadata = buildDependencyMetadataSection(changedFiles)
-	ctx.optional.Toolchain = buildToolchainSection(b.repoPath, "", changedFiles)
+	ctx.optional.DependencyMetadata = buildDependencyMetadataSection(changedFiles, ctx.optional.Neutral)
+	ctx.optional.Toolchain = buildToolchainSection(b.repoPath, "", changedFiles, ctx.optional.Neutral)
 
 	ctx.optional.ProjectGuidelines = buildProjectGuidelinesSectionView(
 		LoadGuidelinesLocal(b.resolvedConfigRepoPath(), b.globalCfg),
@@ -596,7 +677,7 @@ func (b *Builder) BuildDirtyWithFiles(diff string, changedFiles []string, contex
 
 	// Uncommitted changes have no commit messages, so "current" mode has no
 	// refs to resolve; "open" mode still lists open katas.
-	kataView, err := b.resolveKataContext(nil)
+	kataView, err := b.resolveKataContext(nil, ctx.optional.Neutral)
 	if err != nil {
 		return "", err
 	}
@@ -671,6 +752,8 @@ func hardCapPrompt(prompt string, limit int) string {
 }
 
 type buildOpts struct {
+	// A nil pointer uses resolved review excludes; a non-nil value is explicit.
+	excludes *[]string
 	// nil defers review-document creation until a prebuilt prompt is executed.
 	// A non-nil value supplies the prepared path, or an empty string for no history.
 	priorRangeReviewsFile *string
@@ -705,6 +788,7 @@ func (b *Builder) newPromptBuildContext(agentName, reviewType, minSeverity, defa
 		requiredPrefix += structuredReviewOutputInstruction
 	}
 	requiredPrefix += "\n"
+	optional.Neutral = custom
 	return promptBuildContext{
 		requiredPrefix: requiredPrefix,
 		optional:       optional,
@@ -893,8 +977,8 @@ func (b *Builder) buildSinglePrompt(sha string, contextCount int, agentName, rev
 	// Include previous review attempts for this same commit (for re-reviews)
 	ctx.optional.PreviousAttempts = previousAttemptViewsFromContexts(b.previousAttemptContexts(sha))
 	if files, err := git.DiffPathsCtx(b.context(), b.repoPath, sha, nil); err == nil {
-		ctx.optional.DependencyMetadata = buildDependencyMetadataSection(files)
-		ctx.optional.Toolchain = buildToolchainSection(b.repoPath, sha, files)
+		ctx.optional.DependencyMetadata = buildDependencyMetadataSection(files, ctx.optional.Neutral)
+		ctx.optional.Toolchain = buildToolchainSectionCtx(b.context(), b.repoPath, sha, files, ctx.optional.Neutral)
 	}
 
 	// Current commit section
@@ -906,7 +990,7 @@ func (b *Builder) buildSinglePrompt(sha string, contextCount int, agentName, rev
 		return "", fmt.Errorf("get commit info: %w", err)
 	}
 
-	kataView, err := b.resolveKataContext([]string{info.Subject + "\n\n" + info.Body})
+	kataView, err := b.resolveKataContext([]string{info.Subject + "\n\n" + info.Body}, ctx.optional.Neutral)
 	if err != nil {
 		return "", err
 	}
@@ -918,7 +1002,7 @@ func (b *Builder) buildSinglePrompt(sha string, contextCount int, agentName, rev
 		Author:  escapeXML(info.Author),
 		Message: escapeXML(info.Body),
 	}
-	diff, err := git.GetDiffCtx(b.context(), b.repoPath, sha, b.resolveExcludes(reviewType)...)
+	diff, err := git.GetDiffCtx(b.context(), b.repoPath, sha, (*opts.excludes)...)
 	if err != nil {
 		return "", fmt.Errorf("get diff: %w", err)
 	}
@@ -965,8 +1049,8 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 		return "", fmt.Errorf("get range commits: %w", err)
 	}
 	if files, err := git.DiffPathsCtx(b.context(), b.repoPath, rangeRef, nil); err == nil {
-		ctx.optional.DependencyMetadata = buildDependencyMetadataSection(files)
-		ctx.optional.Toolchain = buildToolchainSection(b.repoPath, rangeRef, files)
+		ctx.optional.DependencyMetadata = buildDependencyMetadataSection(files, ctx.optional.Neutral)
+		ctx.optional.Toolchain = buildToolchainSectionCtx(b.context(), b.repoPath, rangeRef, files, ctx.optional.Neutral)
 	}
 	if opts.priorRangeReviewsFile != nil {
 		ctx.optional.PriorRangeReviewsFile = *opts.priorRangeReviewsFile
@@ -992,13 +1076,13 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 		}
 		entries = append(entries, commitRangeEntryView{Commit: short})
 	}
-	kataView, err := b.resolveKataContext(kataMessages)
+	kataView, err := b.resolveKataContext(kataMessages, ctx.optional.Neutral)
 	if err != nil {
 		return "", err
 	}
 	ctx.optional.KataContext = kataView
 	currentView := commitRangeSectionView{Count: len(commits), Entries: entries}
-	diff, err := git.GetRangeDiffCtx(b.context(), b.repoPath, rangeRef, b.resolveExcludes(reviewType)...)
+	diff, err := git.GetRangeDiffCtx(b.context(), b.repoPath, rangeRef, (*opts.excludes)...)
 	if err != nil {
 		return "", fmt.Errorf("get diff: %w", err)
 	}
@@ -1036,7 +1120,7 @@ const (
 	kataIntroOpen    = "The kata issue(s) below are the open tasks in this project's tracker, included as background context. They may be unrelated to this change. Use them to understand intent where relevant; do not raise findings merely because this change does not address an open kata."
 )
 
-func buildKataContextSectionView(issues []kata.Issue, notes []string, maxChars int, mode string) *markdownSectionView {
+func buildKataContextSectionView(issues []kata.Issue, notes []string, maxChars int, mode string, neutral bool) *markdownSectionView {
 	if len(issues) == 0 && len(notes) == 0 {
 		return nil
 	}
@@ -1075,6 +1159,9 @@ func buildKataContextSectionView(issues []kata.Issue, notes []string, maxChars i
 		body = strings.TrimSpace(truncateUTF8(body, maxChars)) + "\n\n_[kata context truncated]_"
 	}
 	intro := kataIntroCurrent
+	if neutral {
+		intro = "The kata issue(s) below are referenced by this change and are the authoritative task description. Treat them as the source of truth for intent. Raise as high-priority findings: (a) material that diverges from or omits what a kata specifies, and (b) contradictions between the change and a kata, or across multiple katas."
+	}
 	if mode == config.KataModeOpen {
 		intro = kataIntroOpen
 	}
@@ -1084,7 +1171,7 @@ func buildKataContextSectionView(issues []kata.Issue, notes []string, maxChars i
 // resolveKataContext populates the optional KataContext section when
 // configured. It returns an error only for context cancellation, so a
 // canceled review aborts prompt construction instead of proceeding.
-func (b *Builder) resolveKataContext(messages []string) (*markdownSectionView, error) {
+func (b *Builder) resolveKataContext(messages []string, neutral bool) (*markdownSectionView, error) {
 	if b.kataClient == nil {
 		return nil, nil
 	}
@@ -1099,7 +1186,7 @@ func (b *Builder) resolveKataContext(messages []string) (*markdownSectionView, e
 	for _, err := range res.Errs {
 		log.Printf("kata context (repo %s, mode %s): %v", b.resolvedConfigRepoPath(), kc.Mode, err)
 	}
-	return buildKataContextSectionView(res.Issues, res.Notes, kc.MaxChars, kc.Mode), nil
+	return buildKataContextSectionView(res.Issues, res.Notes, kc.MaxChars, kc.Mode, neutral), nil
 }
 
 func buildAdditionalContextSection(additionalContext string) string {

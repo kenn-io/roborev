@@ -23,8 +23,188 @@ reasoning = "thorough"
 
 The template supplies instructions for what the reviewer should check. Roborev
 still constructs the commit or range context, project guidelines, diff, and
-oversized-diff snapshot instructions. It also owns the output schema, severity
+complete-prompt snapshot instructions. It also owns the output schema, severity
 filtering, pass/fail verdict, and final Markdown rendering.
+
+## Reviews of drafts and other material
+
+A custom rubric can review committed drafts and other versioned material, not
+only software. Roborev uses neutral wording in the generated task context,
+history, metadata, and response guidance. It preserves your template,
+guidelines, quoted findings, and other supplied text. Built-in review types keep
+their existing prompts.
+
+Use the same type name in a panel member's `review_type`:
+
+```toml
+[review.types.citations]
+template = ".roborev/reviews/citations.md"
+agent = "claude-code"
+
+[review.subagents.sources]
+review_type = "citations"
+
+[review.panels.drafts]
+members = ["sources"]
+```
+
+A global subagent may reference a custom type defined in each repository. Global
+loading and global-only validation, including experiment overlays, check the
+reference's syntax. Review resolution requires the type to exist in the
+effective global/repository configuration; an unresolved global-only invocation
+fails.
+
+If any voting panel member uses a custom type, synthesis uses neutral wording
+and labels its inputs with their rubrics. This includes failed or skipped custom
+voters; non-voting observers do not affect synthesis. Findings merge only when
+they describe the same problem. Silence from another rubric does not count as
+disagreement. See [Subagent Review Panels](subagent-review-panels.md).
+
+`compact` supports built-in review sources only. It rejects direct custom
+reviews and panel parents with custom voting members, rather than substituting a
+built-in rubric. `fix` and `refine` remain writable, code-framed workflows; they
+do not promise to preserve a custom rubric during re-review.
+
+## Committed evidence
+
+The repo-local snapshot directory must contain no tracked files and stay
+separate from committed rubrics and manifests. These examples set `snapshot_dir`
+to `.roborev-snapshots/` so rubrics can remain under `.roborev/reviews/`.
+
+Enable binary evidence on a custom type:
+
+```toml
+snapshot_dir = ".roborev-snapshots"
+
+[review.types.citations]
+template = ".roborev/reviews/citations.md"
+binary_evidence = true
+```
+
+Roborev reads the reviewed commit's Git objects, rather than the current
+working-tree files. Single commits, roots, ranges and merges use the same
+selection as the review diff, including exclusions and rename behavior. A range
+that includes the first commit also includes binary files introduced in that
+commit. Committed endpoint attributes determine binary classification; a
+different checkout's attributes do not change the evidence set. Evidence-enabled
+preparation ignores Git replacement refs and disables text conversion and
+external diff commands for the rendered comparison and prebuilt diff snapshots.
+
+Each changed binary has an index entry with its escaped original path, change
+kind, old or new side, Git blob ID, raw-byte SHA-256, byte count and media hint.
+Deletions retain old bytes; modifications offer both sides. Equal content shares
+one file within an attempt. Symlinks, submodules and mode-only changes have
+explicit omissions and are not copied as ordinary binary files. Git LFS pointers
+remain text pointers; Roborev does not fetch their remote payloads.
+
+The files live in private, ignored attempt directories under `snapshot_dir` in
+the actual agent checkout. Their names come from content hashes. Sniffed PDF and
+supported image types get safe extensions for native readers. Files use mode
+0600 and remain available even when the prompt fits inline. Unsupported media is
+labelled as needing a supplied text rendition. Hashes identify the bytes
+offered; they do not prove that the agent read or understood a file.
+
+Stored and prebuilt prompts carry a versioned portable evidence footer. At
+execution, Roborev validates it against the resolved settings and reviewed Git
+objects, then binds fresh file paths. The supplied rubric, PR discussion and
+member instructions survive retries. Prompt text does not grant tools or select
+operator configuration. Cleanup covers successful and failed attempts; retries
+reconstruct the pinned bytes and fail if required Git objects are missing.
+
+The complete evidence index participates in the usual prompt preparation after
+all attachments. Oversized prompts use the same complete-file transport as
+ordinary reviews. Evidence files have no separate guessed size or page cap.
+There is no machine-wide evidence cache or runtime network lookup.
+
+Evidence applies only to the custom rubric that enables it. Other members in a
+mixed panel keep their normal prompts. Dirty reviews reject enabled binary
+evidence or a nonempty `evidence_manifest` before launching an agent; commit the
+material first. Evidence-disabled dirty reviews retain their normal behavior.
+
+## Required pinned text renditions
+
+Use a manifest when a rubric needs exported text, including unchanged sources
+that support a changed draft:
+
+```toml
+snapshot_dir = ".roborev-snapshots"
+
+[review.types.citations]
+template = ".roborev/reviews/citations.md"
+evidence_manifest = "evidence/manifest.toml"
+```
+
+A nonempty `evidence_manifest` requires every listed rendition. It works with
+`binary_evidence = false`, the default. Enable binary evidence as well if the
+reviewer should receive changed source PDFs or images alongside exported text.
+
+The manifest uses version 1:
+
+```toml
+version = 1
+
+[[documents]]
+id = "source-a"
+text_path = "evidence/source-a.txt"
+text_sha256 = "<64 lowercase hexadecimal characters>"
+provenance = "docbank://vaults/V/documents/N/versions/C/renditions/A"
+```
+
+Replace the hash placeholder with the SHA-256 of the committed text bytes.
+
+| Field | Required | Meaning |
+|-------|----------|---------|
+| `version` | Yes | Manifest format version; must be `1` |
+| `documents[].id` | Yes | Nonempty unique document identity |
+| `documents[].text_path` | Yes | Repository-root-relative path to committed UTF-8 text |
+| `documents[].text_sha256` | Yes | SHA-256 of raw text bytes, as 64 lowercase hexadecimal characters |
+| `documents[].source_sha256` | No | Declared source hash, in the same hexadecimal format; not locally verified |
+| `documents[].provenance` | No | Opaque declared provenance; never fetched or verified |
+
+The manifest and text files come from the reviewed head, including unchanged
+entries. Paths are relative to the repository root, even when the manifest lives
+in a subdirectory. They must name regular committed Git files. Absolute paths,
+URLs, traversal, symlinks and submodules are rejected. Missing or excluded
+required files fail preparation before the agent runs. Malformed manifests,
+unknown fields, duplicate IDs, invalid hashes, hash mismatches and invalid UTF-8
+also fail preparation. Roborev hashes raw bytes before validating UTF-8; line
+endings are part of the identity.
+
+Verified renditions use the same private snapshot lifecycle as binary files,
+with content-named `.txt` files. The portable index records document identity,
+text path, blob ID, verified text hash and declared metadata. Source hashes and
+provenance are explicitly labelled as declared and unverified. A text hash
+proves the offered exported bytes; it does not prove OCR fidelity, source
+identity, or that the reviewer read them.
+
+To prepare a pinned Docbank export outside Roborev:
+
+1. Select a specific document version and rendition in Docbank. Export that
+    rendition as UTF-8 text to `evidence/source-a.txt` using your source tool.
+    Keep the pinned version and rendition identity for the provenance field.
+
+1. Stage the exported text, then hash the staged Git blob. Git may normalize
+    line endings during staging; Roborev verifies the committed bytes:
+
+    ```bash
+    git add evidence/source-a.txt
+    git cat-file blob :evidence/source-a.txt | shasum -a 256
+    ```
+
+1. Put the resulting hash and pinned provenance in `evidence/manifest.toml`. If
+    you have a source hash, record it as optional `source_sha256`; Roborev does
+    not use it to claim source verification.
+
+1. Commit the text and manifest with the draft, then review the committed head:
+
+    ```bash
+    git add evidence/manifest.toml draft.md
+    git commit -m "Pin source rendition for draft review"
+    roborev review --type citations --wait
+    ```
+
+Roborev does not contact Docbank, resolve the URI, or search for source bytes.
+New exported bytes require an updated text hash and a new commit.
 
 ## Configuration reference
 
@@ -37,6 +217,8 @@ Each `[review.types.<name>]` table supports these fields:
 | `agent` | No | Agent override for this type |
 | `model` | No | Model override for this type |
 | `reasoning` | No | Reasoning override for this type |
+| `binary_evidence` | No | Offer changed committed binary files; defaults to false |
+| `evidence_manifest` | No | Repository-relative committed manifest of required text renditions; defaults to empty |
 
 Names must start with a lowercase letter and contain only lowercase letters,
 digits, and hyphens. Names may not replace built-in types or their aliases:
@@ -49,17 +231,19 @@ fields are not merged individually.
 
 ## Paths and includes
 
-Repository and global configuration accept:
+Template and include paths in repository and global configuration accept:
 
 - Repository-relative paths, resolved separately for the repository being
     reviewed.
 - Absolute paths.
 - Home-relative paths beginning with `~/`.
 
-Paths containing `..` and symlinks may also point outside the repository.
-Roborev treats these paths as user-selected files, not as a security boundary.
-In CI, repository-relative files that remain inside the repository are read from
-the configured base ref. External paths are read from the filesystem.
+Template and include paths containing `..` and symlinks may also point outside
+the repository. Roborev treats these paths as user-selected files, not as a
+security boundary. Evidence manifest and rendition paths follow the stricter
+committed-file rules above. In CI, repository-relative files that remain inside
+the repository are read from the configured base ref. External paths are read
+from the filesystem.
 
 Roborev does not fetch URLs while running a review. Download or vendor remote
 rubrics first so reviews remain reproducible and do not depend on the network.
@@ -173,6 +357,138 @@ Roborev keeps every finding in the review output. `review_min_severity` or
 at or above the threshold and passes otherwise. Built-in review types use the
 same schema when the agent supports schema-constrained output, and fall back to
 prose for other agents.
+
+## Strict tools
+
+Custom review types can request the Claude-only strict tool boundary:
+
+```toml
+[review.types.citations]
+template = "reviews/citations.tmpl"
+
+[review.types.citations.tools]
+mode = "read-only"
+mcp = {}
+```
+
+An empty MCP map explicitly selects strict execution without MCP access.
+Nonempty grants launch only operator-authorized servers and grant exact tool
+names. See [MCP authority](../configuration.md#strict-review-tool-policies) for
+global server definitions and the operator ceiling. Unsupported adapters fail
+before review invocation. If any voting member requests strict tools, synthesis
+uses strict tools with no MCP access. Non-voting observers do not change
+synthesis policy.
+
+Strict reviews always start fresh sessions, including local and CI calls. See
+[Claude Code review tools](../agents/index.md#strict-reviews) for startup
+checks, session isolation, and the native CLI trust boundary. Fix and refine
+retain their existing writable behavior.
+
+### Batched draft review example
+
+First, the operator selects a native MCP configuration file and exact grants in
+the global `~/.roborev/config.toml`:
+
+```toml
+review_mcp_config = "/operator/review-mcp.json"
+review_mcp_allowed_tools = ["archive/lookup"]
+```
+
+Replace the absolute file path with your operator configuration's location. The
+local JSON file uses Claude's native `mcpServers` format. Its `archive` entry
+must identify an operator-approved server and its credentials. Roborev copies
+only selected server definitions into a private per-attempt config; it does not
+start ambient or unselected servers. Keep credentials in operator configuration,
+outside the repository.
+
+Then commit this repository configuration as `.roborev.toml`:
+
+```toml
+post_commit_review = "commit"
+post_commit_batch_size = 5
+
+[review]
+hook_review_panel = "drafts"
+
+[review.types.citations]
+template = "rubrics/citations.md"
+agent = "claude-code"
+binary_evidence = true
+evidence_manifest = "evidence/manifest.toml"
+
+[review.types.citations.tools]
+mode = "read-only"
+mcp = { archive = ["lookup"] }
+
+[review.types.quotes]
+template = "rubrics/quotes.md"
+agent = "claude-code"
+binary_evidence = true
+evidence_manifest = "evidence/manifest.toml"
+
+[review.types.quotes.tools]
+mode = "read-only"
+mcp = { archive = ["lookup"] }
+
+[review.subagents.citations]
+review_type = "citations"
+
+[review.subagents.quotes]
+review_type = "quotes"
+
+[review.subagents.quotes.tools]
+mode = "read-only"
+mcp = {}
+
+[review.panels.drafts]
+members = ["citations", "quotes"]
+synthesis_agent = "claude-code"
+```
+
+The citations member inherits `archive/lookup`. The quotes member's present
+tools table replaces its type's policy and removes all MCP grants. Omitting that
+table would inherit the type policy; omitting tools everywhere retains ordinary
+adapter behavior. An empty strict policy is not absence. Panels have no separate
+tools table, and synthesis receives strict empty grants.
+
+Create `rubrics/citations.md` with instructions to check factual assertions and
+citations against the offered evidence, use `archive/lookup` when needed, and
+report concrete contradictions with corrections. In `rubrics/quotes.md`, ask the
+reviewer to compare quotations against the offered text and report changed
+wording. Give each rubric severity guidance appropriate to the material. For
+example, a quotation that changes a source's meaning may be high severity;
+typographical differences without changed meaning may be low severity.
+
+Commit a valid source PDF and mark it binary in `.gitattributes` when needed:
+
+```gitattributes
+*.pdf binary
+```
+
+Export the required source text, hash its exact bytes, and commit it with the
+[version 1 manifest](#required-pinned-text-renditions). Add the configured
+snapshot directory to `.gitignore` (`.roborev/` by default). After
+`roborev init`, five draft commits queue one panel for the full range. Unchanged
+required renditions are included; binary evidence covers changed binary files in
+that range. Custom voting rubrics produce neutral synthesis with rubric labels
+and source attribution.
+
+Every requested `server/tool` pair must appear in the current operator ceiling.
+Names are exact; wildcards and prefix matching are not supported. Repository and
+experiment config cannot set the operator path or ceiling. Removing a grant
+takes effect at execution, including already queued frozen panels. Unknown
+servers, invalid native config, unavailable grants and missing native startup
+evidence fail the review rather than widening permissions.
+
+MCP server implementations are trusted capabilities: a tool's name or
+`readOnlyHint` does not prove that it has no side effects. Roborev confines the
+reviewer's native tools, not the server process. A granted response can reach
+the model, review output, job logs, synced records and synthesized CI comments.
+Use appropriate server credentials and deliberate grants for every registered
+repository. The installed CLI, managed settings, built-in plugins and provider
+authentication/network machinery also remain trusted. Native tool results and
+permission records establish which calls occurred; model claims and hashes alone
+do not prove that evidence was read.
 
 ## Writing useful severity guidance
 

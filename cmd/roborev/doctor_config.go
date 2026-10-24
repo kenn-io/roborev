@@ -25,7 +25,7 @@ func checkDoctorGlobalConfig(env *doctorEnv) []doctorCheck {
 	default:
 		err := env.global.Validate()
 		if err == nil {
-			err = config.ValidateExperimentConfigs(env.global, nil, nil)
+			err = config.ValidateGlobalExperimentConfigs(env.global)
 		}
 		if err != nil {
 			c.Status = doctorFail

@@ -22,7 +22,7 @@ func TestBuildToolchainSection(t *testing.T) {
 		dir := t.TempDir()
 		writeGoMod(t, dir, "module example.com/app\n\ngo 1.27.0\n")
 
-		section := buildToolchainSection(dir, "", []string{"main.go"})
+		section := buildToolchainSection(dir, "", []string{"main.go"}, false)
 
 		assert.Contains(t, section, "- `go.mod`: Go 1.27.0\n")
 		assert.Contains(t, section, "## Toolchain")
@@ -32,7 +32,7 @@ func TestBuildToolchainSection(t *testing.T) {
 		dir := t.TempDir()
 		writeGoMod(t, dir, "module example.com/app\n\ngo 1.22\n")
 
-		section := buildToolchainSection(dir, "", []string{"go.mod"})
+		section := buildToolchainSection(dir, "", []string{"go.mod"}, false)
 
 		assert.Contains(t, section, "- `go.mod`: Go 1.22\n")
 	})
@@ -41,7 +41,7 @@ func TestBuildToolchainSection(t *testing.T) {
 		dir := t.TempDir()
 		writeGoMod(t, dir, "module example.com/app\n\ngo 1.21\n")
 
-		section := buildToolchainSection(dir, "", []string{"pkg/pkg.go"})
+		section := buildToolchainSection(dir, "", []string{"pkg/pkg.go"}, false)
 
 		assert.Contains(t, section, "- `go.mod`: Go 1.21\n")
 	})
@@ -50,25 +50,25 @@ func TestBuildToolchainSection(t *testing.T) {
 		dir := t.TempDir()
 		writeGoMod(t, dir, "module example.com/app\n\ngo 1.27.0\n")
 
-		assert.Empty(t, buildToolchainSection(dir, "", []string{"notes.md", "main_test.ts"}))
+		assert.Empty(t, buildToolchainSection(dir, "", []string{"notes.md", "main_test.ts"}, false))
 	})
 
 	t.Run("missing go.mod omitted", func(t *testing.T) {
-		assert.Empty(t, buildToolchainSection(t.TempDir(), "", []string{"main.go"}))
+		assert.Empty(t, buildToolchainSection(t.TempDir(), "", []string{"main.go"}, false))
 	})
 
 	t.Run("go.mod without go directive omitted", func(t *testing.T) {
 		dir := t.TempDir()
 		writeGoMod(t, dir, "module example.com/app\n\nrequire example.com/dep v1.0.0\n")
 
-		assert.Empty(t, buildToolchainSection(dir, "", []string{"main.go"}))
+		assert.Empty(t, buildToolchainSection(dir, "", []string{"main.go"}, false))
 	})
 
 	t.Run("malformed go.mod omitted", func(t *testing.T) {
 		dir := t.TempDir()
 		writeGoMod(t, dir, "this is not a go.mod\n\x00\n")
 
-		assert.Empty(t, buildToolchainSection(dir, "", []string{"main.go"}))
+		assert.Empty(t, buildToolchainSection(dir, "", []string{"main.go"}, false))
 	})
 
 	t.Run("nested module without root module", func(t *testing.T) {
@@ -76,7 +76,7 @@ func TestBuildToolchainSection(t *testing.T) {
 		require.NoError(t, os.Mkdir(filepath.Join(dir, "nested"), 0o755))
 		writeGoMod(t, filepath.Join(dir, "nested"), "module example.com/nested\n\ngo 1.21\n")
 
-		assert.Contains(t, buildToolchainSection(dir, "", []string{"nested/go.mod"}), "- `nested/go.mod`: Go 1.21\n")
+		assert.Contains(t, buildToolchainSection(dir, "", []string{"nested/go.mod"}, false), "- `nested/go.mod`: Go 1.21\n")
 	})
 
 	t.Run("unreadable nested manifest does not inherit root version", func(t *testing.T) {
@@ -84,7 +84,7 @@ func TestBuildToolchainSection(t *testing.T) {
 		writeGoMod(t, dir, "module example.com/root\n\ngo 1.27.0\n")
 		require.NoError(t, os.MkdirAll(filepath.Join(dir, "nested", "go.mod"), 0o755))
 
-		assert.Empty(t, buildToolchainSection(dir, "", []string{"nested/main.go"}))
+		assert.Empty(t, buildToolchainSection(dir, "", []string{"nested/main.go"}, false))
 	})
 
 	for _, content := range []string{"module example.com/nested\n", "invalid go.mod\n"} {
@@ -94,7 +94,7 @@ func TestBuildToolchainSection(t *testing.T) {
 			require.NoError(t, os.Mkdir(filepath.Join(dir, "nested"), 0o755))
 			writeGoMod(t, filepath.Join(dir, "nested"), content)
 
-			assert.Empty(t, buildToolchainSection(dir, "", []string{"nested/main.go"}))
+			assert.Empty(t, buildToolchainSection(dir, "", []string{"nested/main.go"}, false))
 		})
 	}
 }

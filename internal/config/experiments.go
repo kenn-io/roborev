@@ -84,6 +84,17 @@ type canonicalExperimentDefinition struct {
 	Config    map[string]any       `json:"config"`
 }
 
+// ValidateGlobalExperimentConfigs validates global experiment overlays without
+// requiring repository-defined custom subagent review types to exist yet.
+// Review-time callers must use ValidateExperimentConfigs instead.
+func ValidateGlobalExperimentConfigs(global *Config) error {
+	definitions, err := mergeExperimentDefinitions(global, nil)
+	if err != nil {
+		return markExperimentConfigError(err)
+	}
+	return validateMaterializedExperimentConfigs(global, nil, definitions, true)
+}
+
 // ValidateExperimentConfigs validates every materialized experiment overlay
 // after merging global definitions with repository enablement overrides.
 func ValidateExperimentConfigs(
@@ -98,7 +109,7 @@ func ValidateExperimentConfigs(
 	if err != nil {
 		return markExperimentConfigError(err)
 	}
-	return validateMaterializedExperimentConfigs(global, rawRepo, definitions)
+	return validateMaterializedExperimentConfigs(global, rawRepo, definitions, false)
 }
 
 // ValidateRepoExperimentConfigs validates complete experiment definitions in
@@ -122,12 +133,12 @@ func ValidateRepoExperimentConfigs(repo *RepoConfig, rawRepo map[string]any) err
 			definitions[id] = definition
 		}
 	}
-	return validateMaterializedExperimentConfigs(nil, rawRepo, definitions)
+	return validateMaterializedExperimentConfigs(nil, rawRepo, definitions, false)
 }
 
 func validateMaterializedExperimentConfigs(
 	global *Config, rawRepo map[string]any,
-	definitions map[string]ExperimentDefinition,
+	definitions map[string]ExperimentDefinition, deferCustomReferences bool,
 ) error {
 	for _, id := range sortedMapKeys(definitions) {
 		effectiveRaw, err := applyExperimentOverlay(
@@ -141,7 +152,7 @@ func validateMaterializedExperimentConfigs(
 			return markExperimentConfigError(fmt.Errorf("experiment %q config: %w", id, err))
 		}
 		effectiveCfg.experimentOverlay = cloneExperimentMap(definitions[id].Config)
-		if err := ValidateEffectiveReviewConfig(global, effectiveCfg); err != nil {
+		if err := validateEffectiveReviewConfig(global, effectiveCfg, deferCustomReferences); err != nil {
 			return markExperimentConfigError(fmt.Errorf("experiment %q config: %w", id, err))
 		}
 	}
@@ -151,6 +162,10 @@ func validateMaterializedExperimentConfigs(
 // ValidateEffectiveReviewConfig validates review-time settings after merging
 // global and repository configuration.
 func ValidateEffectiveReviewConfig(global *Config, effective *RepoConfig) error {
+	return validateEffectiveReviewConfig(global, effective, false)
+}
+
+func validateEffectiveReviewConfig(global *Config, effective *RepoConfig, deferCustomReferences bool) error {
 	if err := effective.Validate(); err != nil {
 		return err
 	}
@@ -176,10 +191,13 @@ func ValidateEffectiveReviewConfig(global *Config, effective *RepoConfig) error 
 			return fmt.Errorf("ci.reasoning: %w", err)
 		}
 	}
-	if err := MergeReviewConfigFromConfig(effective, global).Validate(); err != nil {
+	if err := MergeReviewConfigFromConfig(effective, global).validate(deferCustomReferences); err != nil {
 		return fmt.Errorf("review: %w", err)
 	}
 	if panelName := ResolveCIPanelName(effective, global); panelName != "" {
+		if deferCustomReferences {
+			return MergeReviewConfigFromConfig(effective, global).checkPanelRef("ci.panel", panelName)
+		}
 		if _, _, err := ResolveCIPanel(panelName, effective, global); err != nil {
 			return fmt.Errorf("ci.panel: %w", err)
 		}
@@ -512,6 +530,11 @@ func validateExperimentOverlay(overlay map[string]any) error {
 		if _, allowed := reviewExperimentOverlayKeys[key]; !allowed {
 			return fmt.Errorf("key %q is not a review-time configuration setting", key)
 		}
+		if key == "review" {
+			if err := validateExperimentReviewTools(value); err != nil {
+				return err
+			}
+		}
 		if key != "ci" {
 			continue
 		}
@@ -594,7 +617,7 @@ func applyExperimentOverlay(global *Config, rawRepo, overlay map[string]any) (ma
 	repoReview, _ := rawRepo["review"].(map[string]any)
 	globalReview, _ := globalRaw["review"].(map[string]any)
 	effectiveReview, _ := effective["review"].(map[string]any)
-	for _, key := range []string{"subagents", "panels"} {
+	for _, key := range []string{"types", "subagents", "panels"} {
 		overlayEntries, ok := overlayReview[key].(map[string]any)
 		if !ok {
 			continue
@@ -620,7 +643,11 @@ func applyExperimentOverlay(global *Config, rawRepo, overlay map[string]any) (ma
 				baseEntry = globalEntries[name]
 			}
 			baseMap, _ := baseEntry.(map[string]any)
-			effectiveEntries[name] = mergeExperimentMaps(baseMap, overlayMap)
+			entry := mergeExperimentMaps(baseMap, overlayMap)
+			if tools, present := overlayMap["tools"]; present && key != "panels" {
+				entry["tools"] = cloneExperimentValue(tools)
+			}
+			effectiveEntries[name] = entry
 		}
 	}
 

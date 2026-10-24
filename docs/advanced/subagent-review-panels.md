@@ -72,6 +72,36 @@ Panels require the daemon. `roborev review --local --panel branch_final` prints
 a note and runs a single agent review because local mode does not use daemon
 side panel resolution.
 
+## Custom rubrics
+
+A member's `review_type` can name a [custom review type](custom-review-types.md)
+from global or repository configuration. A repository definition replaces the
+whole same-name global type, including agent and model fields. A global subagent
+can reference a repository-defined type, but that type must exist when the panel
+is resolved.
+
+Synthesis uses neutral wording when any voting member has a custom rubric, even
+if that member failed or was skipped. Each synthesis input keeps its rubric
+label and numeric source reference. Silence across different rubrics is not
+disagreement, and only findings about the same problem are combined. Custom
+non-voting observers do not change synthesis framing or the verdict.
+Built-in-only panels keep their existing prompt wording.
+
+A member inherits the custom type's tools policy unless it supplies its own
+complete `[review.subagents.<name>.tools]` table. A present table replaces the
+type policy, including `mode = "read-only"` with `mcp = {}`. Grants never merge.
+If any voter is strict, synthesis is strict with no MCP grants, even when that
+voter fails. Observers do not change synthesis policy. See the
+[draft panel example](custom-review-types.md#batched-draft-review-example).
+
+Member settings are frozen when the panel is queued. The operator's native MCP
+file and exact grant ceiling are checked live at execution; snapshots and prompt
+text cannot supply that authority.
+
+`roborev compact` rejects a panel parent with a custom voting member. Built-in
+parents with custom non-voting observers remain eligible. The daemon checks its
+member records; a missing parent provenance record is an error.
+
 ## How Panels Work
 
 A panel run creates one member job per configured reviewer and one synthesis
@@ -284,6 +314,11 @@ If `[ci] panel` is empty, the poller uses the compatible matrix settings:
 
 That matrix becomes an implicit panel. Synthesis still produces one PR comment,
 and one member output can pass through without an extra synthesis agent call.
+
+Direct CI uses its selected range start or first parent as the trusted
+configuration ref. Missing trusted configuration does not permit fallback to
+PR-head or checkout settings, and malformed trusted configuration fails the
+review.
 
 CI panel posting has additional safety checks. Before posting or retrying,
 roborev verifies the PR is still open, the HEAD SHA is unchanged, and the repo

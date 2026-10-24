@@ -71,6 +71,28 @@ The `roborev-fix` and `roborev-refine` skills come from `roborev skills install`
 (see [Agent Skills](../guides/agent-skills.md)). Agent Hook installation updates
 the bundled skills automatically for supported profiles.
 
+### Review drafts with a panel
+
+The same hook can batch changes to Markdown drafts and their source material.
+For a complete example, see
+[Custom Review Types](../advanced/custom-review-types.md#batched-draft-review-example).
+It combines two custom rubrics, a five-commit batch, committed PDF evidence, and
+required pinned text renditions. The hook queues two member reviews and one
+synthesis parent for the accumulated range. Findings from both rubrics reach the
+combined review.
+
+Commit the configuration, rubrics, source text and manifest before writing the
+draft revisions. Run `roborev init` in that repository to install the hooks.
+After five commits, inspect the panel in `roborev tui` or find the synthesis job
+ID with `roborev list`, then run `roborev show --job <synthesis-job-id>`. The
+combined output identifies its contributing reviewers. A partial batch remains
+pending until another commit reaches the threshold or pre-push flushes it.
+
+Binary and manifest evidence require committed material; dirty reviews reject
+those settings. Correct domain findings manually or with a suitably instructed
+writing agent. `fix` and `refine` are writable, code-framed workflows and do not
+promise custom-rubric re-reviews. `compact` rejects custom review sources.
+
 ## Layer 2 - Agent hook
 
 The agent hook watches supported coding-agent sessions and, once review work

@@ -858,3 +858,14 @@ func TestCompareKeysNilInterfaces(t *testing.T) {
 
 	assert.Equal(1, compareKeys(v2, v1))
 }
+
+func TestReviewToolPolicyAuthorityKeysGlobalOnly(t *testing.T) {
+	cfg := &Config{}
+	for key, value := range map[string]string{"review_mcp_config": "servers.json", "review_mcp_allowed_tools": "source/read,source/find"} {
+		require.NoError(t, SetConfigValue(cfg, key, value))
+		assert.True(t, IsGlobalKey(key))
+		require.Error(t, SetConfigValue(&RepoConfig{}, key, value))
+	}
+	assert.Equal(t, "servers.json", cfg.ReviewMCPConfig)
+	assert.Equal(t, []string{"source/read", "source/find"}, cfg.ReviewMCPAllowedTools)
+}

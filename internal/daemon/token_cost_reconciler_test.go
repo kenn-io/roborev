@@ -333,6 +333,10 @@ func TestTokenCostReconcilerAdvancesPastUnavailableCandidate(t *testing.T) {
 func TestTokenCostReconcilerBacksOffRepeatedMisses(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		tc := newWorkerTestContext(t, 1)
+		// Test only the reconciler's backoff schedule. A job worker can hold
+		// SQLite's writer lock during startup, making the reconciler's
+		// machine-ID lookup enter a fake-clock busy sleep.
+		tc.Pool.numWorkers = 0
 		job := seedTokenCostCandidate(t, tc, "late-session", `{}`)
 		tc.Pool.tokenCostScanInterval = time.Minute
 		tc.Pool.tokenCostRetryInterval = time.Hour

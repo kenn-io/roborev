@@ -519,6 +519,21 @@ When `panel` is set, the CI poller ignores `agents`, `review_types`, and
 plus the repo's `.roborev.toml` as loaded from the repo's default branch. Repo
 definitions override global definitions by name.
 
+A missing `.roborev.toml` at the trusted default-branch ref means that the
+repository has no overrides. Roborev keeps global settings and never reads the
+PR checkout as a fallback. An unknown default branch, unreadable ref, or invalid
+trusted configuration stops enqueueing before any review agent starts. Prompt
+prebuild failures may still enqueue a job for worker rebuilding, but they do not
+change the configuration trust source. The worker uses the same trusted source
+when it rebuilds a CI prompt.
+
+Direct `roborev ci review` uses its trusted range start or first-parent ref for
+repository configuration. Trusted absence is authoritative for batch members and
+synthesis. Tool policies are validated against the selected adapter and its
+configured backup; unsupported strict policies fail before invocation. See
+[Strict Review Tool Policies](/docs/configuration/#strict-review-tool-policies)
+for exact names, operator authority, and frozen job settings.
+
 Use `allow_failure = true` on a subagent when that reviewer is best-effort or
 depends on flaky infrastructure. Its successful output is still included, but a
 failure or cancellation will not block an otherwise usable CI panel comment.
@@ -603,15 +618,17 @@ For implicit matrix CI, customize synthesis with `[ci]` settings:
 ```toml
 [ci]
 synthesis_agent = "claude-code"                  # Agent to use for synthesis
-synthesis_backup_agent = "gemini"                # Backup if primary fails
+synthesis_backup_agent = "gemini"                # Backup synthesis agent
 synthesis_model = "claude-opus-4-8"   # Model override for synthesis
 ```
 
-If the primary synthesis agent fails because of quota or availability, roborev
-tries `synthesis_backup_agent` before falling back to raw formatting. Named
-panels use their own `synthesis_agent`, `synthesis_model`,
-`synthesis_reasoning`, `synthesis_backup_agent`, and `synthesis_backup_model`
-fields under `[review.panels.<name>]`.
+If the primary synthesis agent is unavailable or reports a quota or provider
+availability failure while running, roborev tries `synthesis_backup_agent`
+before falling back to raw formatting. The backup keeps its own configured
+model. Tool policy validation errors remain hard failures. Named panels use
+their own `synthesis_agent`, `synthesis_model`, `synthesis_reasoning`,
+`synthesis_backup_agent`, and `synthesis_backup_model` fields under
+`[review.panels.<name>]`.
 
 ## Comment Upsert
 
