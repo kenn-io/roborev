@@ -247,6 +247,50 @@ When CI has no command-line `--reasoning` value or repository `[ci].reasoning`,
 a custom type's `reasoning` field controls that type. An explicit CI value
 applies to every review in the matrix.
 
+## Document review example
+
+Custom types are not limited to code. This `.roborev.toml` reviews drafts of a
+written report with two rubrics, batching five commits into one panel:
+
+```toml
+post_commit_review = "commit"
+post_commit_batch_size = 5
+
+[review]
+hook_review_panel = "drafts"
+
+[review.types.citations]
+template = "rubrics/citations.md"
+agent = "claude-code" # strict tool policies require Claude Code
+binary_evidence = true
+
+[review.types.citations.tools]
+mode = "read-only"
+mcp = { archive = ["lookup"] }
+
+[review.types.quotes]
+template = "rubrics/quotes.md"
+binary_evidence = true
+
+[review.subagents.citations]
+review_type = "citations"
+
+[review.subagents.quotes]
+review_type = "quotes"
+
+[review.panels.drafts]
+members = ["citations", "quotes"]
+synthesis_agent = "claude-code"
+```
+
+The citations rubric checks claims against the committed exhibits and may call
+`archive/lookup` once the operator allows it (see
+[Granting MCP tools](#granting-mcp-tools)). The quotes rubric compares
+quotations with the exhibits and gets no extra tools. Commit source PDFs next to
+the drafts, add the snapshot directory (`.roborev/` by default) to `.gitignore`,
+and run `roborev init`. The combined review labels each finding with its rubric
+and does not describe the material as code.
+
 ## Thermonuclear example
 
 Download the Cursor Team Kit rubric into the repository:
