@@ -169,7 +169,7 @@ func (wp *WorkerPool) processGoalReview(ctx context.Context, workerID string, jo
 		if err := jobLog.Close(); err != nil {
 			log.Printf("[%s] close goal review log: %v", workerID, err)
 		}
-		wp.captureGoalUsage(workerID, job, a.Name())
+		wp.captureSessionlessUsage(workerID, job, a.Name())
 	}()
 	findings, err := runner(ctx, a, root, snapshot, prepared, io.MultiWriter(jobLog, outputWriter))
 	if ctx.Err() != nil {
@@ -223,21 +223,22 @@ func (wp *WorkerPool) processGoalReview(ctx context.Context, workerID string, jo
 	}
 }
 
-// Goal reviewers disable session persistence, so their own output is the
-// source of usage. Store only the terminal attempt that produced this log.
-func (wp *WorkerPool) captureGoalUsage(workerID string, job *storage.ReviewJob, agentName string) {
+// Goal reviewers and strict Claude reviewers disable session persistence, so
+// their own output is the source of usage. Store only the terminal attempt
+// that produced this log.
+func (wp *WorkerPool) captureSessionlessUsage(workerID string, job *storage.ReviewJob, agentName string) {
 	file, err := os.Open(JobLogPath(job.ID))
 	if errors.Is(err, os.ErrNotExist) {
 		return
 	}
 	if err != nil {
-		log.Printf("[%s] open goal review usage log: %v", workerID, err)
+		log.Printf("[%s] open usage log: %v", workerID, err)
 		return
 	}
 	defer file.Close()
 	usage, err := tokens.ParseSchemaUsage(agentName, file)
 	if err != nil {
-		log.Printf("[%s] read goal review usage: %v", workerID, err)
+		log.Printf("[%s] read usage log: %v", workerID, err)
 		return
 	}
 	if usage == nil {
@@ -249,7 +250,7 @@ func (wp *WorkerPool) captureGoalUsage(workerID string, job *storage.ReviewJob, 
 		TokenUsageJSON: tokens.ToJSON(usage),
 	})
 	if err != nil {
-		log.Printf("[%s] save goal review usage: %v", workerID, err)
+		log.Printf("[%s] save usage: %v", workerID, err)
 	}
 	if updated {
 		wp.invalidateBudgetSpend()

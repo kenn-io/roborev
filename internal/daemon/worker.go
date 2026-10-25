@@ -1623,7 +1623,12 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		wp.autoClosePassingReview(workerID, job, verdict)
 
 		if planningPrompt == "" {
-			wp.captureTokenUsageForSession(context.Background(), workerID, job, sessionWriter.SessionID())
+			if tools != nil && agentName == "claude-code" {
+				// Strict Claude sessions are not saved, so read usage from the job log.
+				wp.captureSessionlessUsage(workerID, job, agentName)
+			} else {
+				wp.captureTokenUsageForSession(context.Background(), workerID, job, sessionWriter.SessionID())
+			}
 		}
 		wp.invalidateBudgetSpend()
 
