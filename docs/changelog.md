@@ -13,6 +13,15 @@ All notable changes to roborev, grouped by minor release.
 - Sandboxed commands keep the host daemon's runtime record.
 - A TUI in a sandbox keeps the host TUI's runtime file.
 
+**Bug fixes**
+
+- Codex reviews work when the Codex login is stored in the OS keyring and
+    `ignore_review_user_config = true`. roborev forwards
+    `cli_auth_credentials_store` and the other login settings from the Codex
+    user config. A missing Codex login now fails without retries and the error
+    explains how to fix it. See
+    [Codex login storage](/docs/configuration/#codex-login-storage).
+
 ## 0.73.0
 
 <small>2026-10-23</small>

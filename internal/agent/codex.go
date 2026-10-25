@@ -12,6 +12,8 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+
+	"go.kenn.io/roborev/internal/config"
 )
 
 // CodexAgent runs code reviews using the Codex CLI
@@ -25,6 +27,7 @@ type CodexAgent struct {
 	IgnoreUserConfig          bool           // Whether to pass --ignore-user-config
 	ConfigOverrides           []string       // Extra `-c key=value` overrides injected from roborev config
 	omitThreadSource          bool           // True when this Codex CLI rejects --thread-source
+	userAuthOverrides         []string       // Sign-in keys forwarded from the ignored user config
 }
 
 const (
@@ -77,6 +80,7 @@ func (a *CodexAgent) clone(opts ...agentCloneOption) *CodexAgent {
 		IgnoreUserConfig:          a.IgnoreUserConfig,
 		ConfigOverrides:           a.ConfigOverrides,
 		omitThreadSource:          a.omitThreadSource,
+		userAuthOverrides:         a.userAuthOverrides,
 	}
 }
 
@@ -237,6 +241,14 @@ func (a *CodexAgent) commandArgs(opts codexArgOptions, goos string) []string {
 		// setting still wins. The read-only policy is set separately below.
 		args = append(args, "-c", `windows.sandbox="elevated"`)
 	}
+	if a.IgnoreUserConfig {
+		// Ignoring user config also drops where the Codex login is stored.
+		// Like the Windows default, these go before user overrides so an
+		// explicit [agent.codex.config] setting still wins.
+		for _, override := range a.userAuthOverrides {
+			args = append(args, "-c", override)
+		}
+	}
 	// User-provided overrides go before roborev's own -c flags so roborev's
 	// safety settings (skills, sandbox, reasoning) win on any key conflict.
 	for _, override := range a.ConfigOverrides {
@@ -280,6 +292,23 @@ func (a *CodexAgent) commandArgs(opts codexArgOptions, goos string) []string {
 		args = append(args, "-")
 	}
 	return args
+}
+
+// codexUserAuthOverrides returns the sign-in settings from the Codex user
+// config that --ignore-user-config would otherwise drop. A config that cannot
+// be read is logged and skipped so the review still runs with Codex defaults.
+func codexUserAuthOverrides() []string {
+	codexHome, err := config.CodexHomeDir()
+	if err != nil {
+		log.Printf("codex: cannot locate Codex config to forward sign-in settings: %v", err)
+		return nil
+	}
+	overrides, err := config.CodexUserAuthOverrideArgs(codexHome)
+	if err != nil {
+		log.Printf("codex: cannot read sign-in settings from Codex config: %v", err)
+		return nil
+	}
+	return overrides
 }
 
 func codexSupportsDangerousFlag(ctx context.Context, command string, ignoreUserConfig bool) (bool, error) {
@@ -416,6 +445,10 @@ func (a *CodexAgent) review(
 		if !supported {
 			clone := *a
 			clone.IgnoreUserConfig = false
+			runAgent = &clone
+		} else if overrides := codexUserAuthOverrides(); len(overrides) > 0 {
+			clone := *a
+			clone.userAuthOverrides = overrides
 			runAgent = &clone
 		}
 	}
@@ -699,26 +732,38 @@ func isCodexToolEvent(ev codexEvent) bool {
 }
 
 func codexFailureEventError(ev codexEvent) error {
+	var fallback string
 	switch ev.Type {
 	case "turn.failed":
-		if ev.Error.Message != "" {
-			return fmt.Errorf("%w: %s", errCodexStreamFailed, ev.Error.Message)
-		}
-		if ev.Message != "" {
-			return fmt.Errorf("%w: %s", errCodexStreamFailed, ev.Message)
-		}
-		return fmt.Errorf("%w: turn failed", errCodexStreamFailed)
+		fallback = "turn failed"
 	case "error":
-		if ev.Error.Message != "" {
-			return fmt.Errorf("%w: %s", errCodexStreamFailed, ev.Error.Message)
-		}
-		if ev.Message != "" {
-			return fmt.Errorf("%w: %s", errCodexStreamFailed, ev.Message)
-		}
-		return fmt.Errorf("%w: stream error", errCodexStreamFailed)
+		fallback = "stream error"
 	default:
 		return nil
 	}
+	msg := ev.Error.Message
+	if msg == "" {
+		msg = ev.Message
+	}
+	if msg == "" {
+		return fmt.Errorf("%w: %s", errCodexStreamFailed, fallback)
+	}
+	return fmt.Errorf("%w: %s%s", errCodexStreamFailed, msg, codexMissingAuthHint(msg))
+}
+
+// codexMissingAuthMarker is the wording of the 401 Codex receives when it
+// sends no credentials at all, for example because the login is stored in the
+// OS keyring but Codex is looking for ~/.codex/auth.json.
+const codexMissingAuthMarker = "missing bearer or basic authentication"
+
+func codexMissingAuthHint(msg string) string {
+	if !strings.Contains(strings.ToLower(msg), codexMissingAuthMarker) {
+		return ""
+	}
+	return " (Codex found no login for this review: check `codex login status`" +
+		" in the daemon's environment. If the login is stored in the OS" +
+		` keyring, set cli_auth_credentials_store = "keyring" in` +
+		" $CODEX_HOME/config.toml or under [agent.codex.config])"
 }
 
 // parseStreamJSON parses codex's --json JSONL output and extracts review text.

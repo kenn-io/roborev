@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -229,6 +230,60 @@ func TestCodexCommandArgsWindowsSandboxOverride(t *testing.T) {
 	}
 }
 
+func codexConfigArgs(args []string) []string {
+	var configs []string
+	for i, arg := range args {
+		if arg == "-c" && i+1 < len(args) {
+			configs = append(configs, args[i+1])
+		}
+	}
+	return configs
+}
+
+func TestCodexCommandArgsUserAuthOverrides(t *testing.T) {
+	auth := []string{`cli_auth_credentials_store="keyring"`, `forced_login_method="chatgpt"`}
+
+	t.Run("precede explicit overrides", func(t *testing.T) {
+		a := WithCodexUserConfigIgnored(NewCodexAgent("codex"), true).(*CodexAgent)
+		a.userAuthOverrides = auth
+		a.ConfigOverrides = []string{`cli_auth_credentials_store="file"`}
+		args := a.commandArgs(codexArgOptions{autoApprove: true, preview: true}, "linux")
+
+		assert.Equal(t, []string{
+			`cli_auth_credentials_store="keyring"`,
+			`forced_login_method="chatgpt"`,
+			`cli_auth_credentials_store="file"`,
+		}, codexConfigArgs(args), "an explicit [agent.codex.config] value must come last so it wins")
+	})
+
+	t.Run("follow the Windows sandbox default", func(t *testing.T) {
+		a := WithCodexUserConfigIgnored(NewCodexAgent("codex"), true).(*CodexAgent)
+		a.userAuthOverrides = auth[:1]
+		args := a.commandArgs(codexArgOptions{autoApprove: true, preview: true}, "windows")
+
+		assert.Equal(t, []string{
+			`windows.sandbox="elevated"`,
+			`cli_auth_credentials_store="keyring"`,
+		}, codexConfigArgs(args))
+	})
+
+	t.Run("omitted when user config is loaded", func(t *testing.T) {
+		a := NewCodexAgent("codex")
+		a.userAuthOverrides = auth
+		args := a.commandArgs(codexArgOptions{autoApprove: true, preview: true}, "linux")
+
+		assert.Empty(t, codexConfigArgs(args))
+	})
+
+	t.Run("kept by clone", func(t *testing.T) {
+		a := WithCodexUserConfigIgnored(NewCodexAgent("codex"), true).(*CodexAgent)
+		a.userAuthOverrides = auth
+		clone := a.WithModel("o3").(*CodexAgent)
+
+		assert.Equal(t, auth, clone.userAuthOverrides)
+	})
+}
+
 func TestCodexBuildArgsIncludesConfigOverrides(t *testing.T) {
 	a := NewCodexAgent("codex")
 	a.ConfigOverrides = []string{
@@ -423,6 +478,119 @@ func TestCodexReviewOmitsIgnoreUserConfigWhenUnsupported(t *testing.T) {
 	assertNotContainsArg(t, args, codexIgnoreUserConfigFlag)
 }
 
+func setCodexUserConfig(t *testing.T, content string) {
+	t.Helper()
+	codexHome := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(content), 0o600))
+	t.Setenv("CODEX_HOME", codexHome)
+}
+
+func TestCodexReviewForwardsUserAuthSettingsWhenIgnoringUserConfig(t *testing.T) {
+	setCodexUserConfig(t, `
+model = "user-model"
+cli_auth_credentials_store = "keyring"
+forced_login_method = "chatgpt"
+
+[mcp_servers.docs]
+command = "docs-mcp"
+`)
+
+	tests := []struct {
+		name         string
+		ignoreConfig bool
+		helpOutput   string
+		overrides    []string
+		wantConfigs  []string
+	}{
+		{
+			name:         "ignored user config",
+			ignoreConfig: true,
+			helpOutput:   "usage --sandbox " + codexIgnoreUserConfigFlag,
+			wantConfigs:  []string{`cli_auth_credentials_store="keyring"`, `forced_login_method="chatgpt"`},
+		},
+		{
+			name:         "explicit override wins",
+			ignoreConfig: true,
+			helpOutput:   "usage --sandbox " + codexIgnoreUserConfigFlag,
+			overrides:    []string{`cli_auth_credentials_store="file"`},
+			wantConfigs: []string{
+				`cli_auth_credentials_store="keyring"`,
+				`forced_login_method="chatgpt"`,
+				`cli_auth_credentials_store="file"`,
+			},
+		},
+		{
+			name:         "user config loaded",
+			ignoreConfig: false,
+			helpOutput:   "usage --sandbox " + codexIgnoreUserConfigFlag,
+		},
+		{
+			name:         "ignore flag unsupported",
+			ignoreConfig: true,
+			helpOutput:   "usage --sandbox",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a, mock := setupMockCodex(t, false, MockCLIOpts{
+				HelpOutput:  tt.helpOutput,
+				CaptureArgs: true,
+				StdoutLines: []string{
+					`{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}`,
+				},
+			})
+			a = WithCodexUserConfigIgnored(a, tt.ignoreConfig).(*CodexAgent)
+			a.ConfigOverrides = tt.overrides
+
+			_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+			require.NoError(t, err)
+
+			args := readMockArgs(t, mock.ArgsFile)
+			assert.Equal(t, tt.wantConfigs, codexConfigArgs(args))
+			assertNotContainsArg(t, args, `model="user-model"`)
+			assert.Empty(t, a.userAuthOverrides, "Review must not mutate the configured agent")
+		})
+	}
+}
+
+func TestCodexReviewRunsWhenUserConfigIsInvalid(t *testing.T) {
+	setCodexUserConfig(t, "cli_auth_credentials_store = \n")
+	a, mock := setupMockCodex(t, false, MockCLIOpts{
+		HelpOutput:  "usage --sandbox " + codexIgnoreUserConfigFlag,
+		CaptureArgs: true,
+		StdoutLines: []string{
+			`{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}`,
+		},
+	})
+	a = WithCodexUserConfigIgnored(a, true).(*CodexAgent)
+
+	result, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "ok", result)
+
+	args := readMockArgs(t, mock.ArgsFile)
+	assertContainsArg(t, args, codexIgnoreUserConfigFlag)
+	assert.Empty(t, codexConfigArgs(args))
+}
+
+func TestCodexReviewMissingAuthIsPermanent(t *testing.T) {
+	const unauthorized = `Reconnecting... 2/5 (unexpected status 401 Unauthorized: Missing bearer or basic authentication in header, url: wss://api.openai.com/v1/responses)`
+	a, _ := setupMockCodex(t, false, MockCLIOpts{
+		HelpOutput: "usage --sandbox",
+		StdoutLines: []string{
+			`{"type":"turn.started"}`,
+			`{"type":"error","message":"` + unauthorized + `"}`,
+		},
+	})
+
+	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	require.ErrorIs(t, err, errCodexStreamFailed)
+	assert.Contains(t, err.Error(), unauthorized)
+	assert.Contains(t, err.Error(), "cli_auth_credentials_store")
+	assert.Contains(t, err.Error(), "[agent.codex.config]")
+	assert.Equal(t, LimitKindPermanent, ClassifyLimit("codex", "agent: codex failed: "+err.Error()).Kind)
+}
+
 func TestCodexReviewUsesSandboxNone(t *testing.T) {
 	a, mock := setupMockCodex(t, false, MockCLIOpts{
 		HelpOutput:  "usage --sandbox",
@@ -590,6 +758,15 @@ func TestCodexParseStreamJSON(t *testing.T) {
 			),
 			wantErr:        errCodexStreamFailed,
 			wantErrMessage: "codex stream reported failure: Connection closed.",
+		},
+		{
+			name: "MissingAuthAddsHint",
+			input: buildStream(
+				`{"type":"error","message":"Reconnecting... 1/5 (unexpected status 401 Unauthorized: Missing bearer or basic authentication in header)"}`,
+			),
+			wantErr: errCodexStreamFailed,
+			wantErrMessage: "codex stream reported failure: Reconnecting... 1/5 (unexpected status 401 Unauthorized: Missing bearer or basic authentication in header)" +
+				codexMissingAuthHint("missing bearer or basic authentication"),
 		},
 		{
 			name:           "MessageLessTurnFailedReturnsFallback",

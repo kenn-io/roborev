@@ -2,6 +2,11 @@ package config
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -26,6 +31,64 @@ func (c CodexConfig) ConfigOverrideArgs() []string {
 	flattenCodexConfigOverrides("", c.Config, &out)
 	sort.Strings(out)
 	return out
+}
+
+// codexUserAuthKeys are the Codex user-config keys that describe how this
+// machine signs in to Codex rather than how a review behaves. Codex drops
+// them under --ignore-user-config along with the rest of the user config, so
+// a login kept in the OS keyring (cli_auth_credentials_store = "keyring")
+// becomes invisible and every request fails with 401.
+var codexUserAuthKeys = []string{
+	"cli_auth_credentials_store",
+	"forced_chatgpt_workspace_id",
+	"forced_login_method",
+}
+
+// CodexHomeDir returns the directory Codex reads its config from: $CODEX_HOME
+// when set, otherwise ~/.codex.
+func CodexHomeDir() (string, error) {
+	if dir := os.Getenv("CODEX_HOME"); dir != "" {
+		return dir, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".codex"), nil
+}
+
+// CodexUserAuthOverrideArgs reads the sign-in keys from codexHome/config.toml
+// and returns them as Codex `-c key=value` overrides, sorted by key. Only
+// codexUserAuthKeys are forwarded, so MCP servers, profiles, model and prompt
+// settings from the user config stay out of reviews that ignore it. A missing
+// config file yields no overrides and no error.
+func CodexUserAuthOverrideArgs(codexHome string) ([]string, error) {
+	path := filepath.Join(codexHome, "config.toml")
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var userConfig map[string]any
+	if err := toml.Unmarshal(data, &userConfig); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	var out []string
+	for _, key := range codexUserAuthKeys {
+		val, ok := userConfig[key]
+		if !ok {
+			continue
+		}
+		if _, isTable := val.(map[string]any); isTable {
+			continue
+		}
+		if encoded, ok := encodeTOMLOverrideValue(val); ok {
+			out = append(out, key+"="+encoded)
+		}
+	}
+	return out, nil
 }
 
 func flattenCodexConfigOverrides(prefix string, table map[string]any, out *[]string) {

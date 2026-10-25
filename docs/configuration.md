@@ -2346,6 +2346,36 @@ numbers and booleans stay bare, and arrays stay arrays. roborev's own review
 controls (skill suppression, sandbox mode, reasoning effort) are applied after
 your overrides, so they take precedence if a key collides.
 
+#### Codex Login Storage
+
+`--ignore-user-config` also drops the settings that tell Codex where your login
+is stored. If `~/.codex/config.toml` sets
+`cli_auth_credentials_store = "keyring"`, your ChatGPT login lives in the OS
+keyring and there is no `~/.codex/auth.json`. Without that setting Codex looks
+for the file, finds no login, and every request fails with
+`401 Unauthorized: Missing bearer or basic authentication`.
+
+When a review ignores user config, roborev reads these keys from
+`$CODEX_HOME/config.toml` (default `~/.codex/config.toml`) and passes them to
+Codex as `-c` overrides:
+
+- `cli_auth_credentials_store`
+- `forced_login_method`
+- `forced_chatgpt_workspace_id`
+
+No other user setting is forwarded. A value set under `[agent.codex.config]`
+takes precedence over the forwarded one:
+
+```toml
+# ~/.roborev/config.toml
+[agent.codex.config]
+cli_auth_credentials_store = "keyring"
+```
+
+If Codex still reports the 401, the daemon may see a different `CODEX_HOME` than
+your terminal. roborev treats this error as permanent: the job goes to the
+backup agent, or fails, without retries.
+
 #### Windows Sandbox
 
 On native Windows, `--ignore-user-config` also drops the `[windows]` sandbox
