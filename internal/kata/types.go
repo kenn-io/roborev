@@ -17,6 +17,9 @@ var (
 	ErrUnavailable = errors.New("kata: binary not found on PATH")
 	// ErrNoBinding means no .kata.toml binding was found for the workdir.
 	ErrNoBinding = errors.New("kata: no .kata.toml binding for workdir")
+	// ErrMetadataUnsupported means the kata CLI client was asked to write issue
+	// metadata, which needs the Kata API connection.
+	ErrMetadataUnsupported = errors.New("kata: issue metadata requires the Kata API connection")
 )
 
 // Issue is the subset of a kata issue roborev consumes. Field names match the
@@ -62,6 +65,8 @@ type CreateReq struct {
 	Labels         []string
 	Priority       *int // nil = let kata decide
 	IdempotencyKey string
+	// Metadata is written with the issue. Only the API client supports it.
+	Metadata map[string]any
 }
 
 // CreateResult reports the outcome of a Create. The create response carries
@@ -69,6 +74,16 @@ type CreateReq struct {
 type CreateResult struct {
 	ShortID string
 	Reused  bool
+	// Attribution is who Kata says wrote the issue. The kata CLI client leaves
+	// it empty; the API client records what the server returned.
+	Attribution Attribution
+}
+
+// Attribution is who Kata says wrote an issue. An authenticated credential can
+// override the actor a request names, so callers record this, never what they
+// asked for.
+type Attribution struct {
+	Author string
 }
 
 // Client is the kata interface roborev depends on.
