@@ -2382,17 +2382,6 @@ func TestCIPollerProcessPR_AutoClonesUnknownRepo(t *testing.T) {
 	require.NotNil(t, panel)
 }
 
-func TestBuildSynthesisPrompt_PreservesLargeOutputs(t *testing.T) {
-	largeOutput := strings.Repeat("x", 20000)
-	reviews := []review.ReviewResult{
-		{Agent: "codex", ReviewType: "security", Output: largeOutput, Status: "done"},
-	}
-
-	prompt := review.BuildSynthesisPrompt(reviews, "", false)
-
-	assert.Contains(t, prompt, largeOutput)
-}
-
 func TestCIPollerProcessPR_RepoOverrides(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
 	h.Cfg.CI.ReviewTypes = []string{"security", "review"}

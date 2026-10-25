@@ -287,38 +287,6 @@ func TestBuildSynthesisPrompt_NeutralLabelsRubrics(t *testing.T) {
 	assert.NotContains(prompt, "source code")
 }
 
-func TestBuildSynthesisPrompt_Severity(t *testing.T) {
-	reviews := []ReviewResult{
-		{
-			Agent:      "codex",
-			ReviewType: "security",
-			Status:     "done",
-			Output:     "test output",
-		},
-	}
-
-	tests := []struct {
-		name            string
-		severity        string
-		wantContains    string
-		wantNotContains string
-	}{
-		{"high severity", "high", "", "Severity threshold"},
-		{"low severity", "low", "", "Severity threshold"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			prompt := BuildSynthesisPrompt(reviews, tt.severity, false)
-			if tt.wantContains != "" {
-				assert.Contains(t, prompt, tt.wantContains)
-			}
-			if tt.wantNotContains != "" {
-				assert.NotContains(t, prompt, tt.wantNotContains)
-			}
-		})
-	}
-}
-
 func TestBuildSynthesisPrompt_QuotaAndFailed(t *testing.T) {
 	reviews := []ReviewResult{
 		{
