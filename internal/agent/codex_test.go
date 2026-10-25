@@ -1,10 +1,12 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"slices"
@@ -18,6 +20,9 @@ import (
 
 func setupMockCodex(t *testing.T, unsafe bool, opts MockCLIOpts) (*CodexAgent, *MockCLIResult) {
 	withUnsafeAgents(t, unsafe)
+	// Keep reviews that ignore user config from reading the developer's
+	// ~/.codex/config.toml. Tests that need one call setCodexUserConfig.
+	t.Setenv("CODEX_HOME", t.TempDir())
 	mock := mockAgentCLI(t, opts)
 	return NewCodexAgent(mock.CmdPath), mock
 }
@@ -470,14 +475,14 @@ func setCodexUserConfig(t *testing.T, content string) {
 }
 
 func TestCodexReviewForwardsUserAuthSettingsWhenIgnoringUserConfig(t *testing.T) {
-	setCodexUserConfig(t, `
+	const userConfig = `
 model = "user-model"
 cli_auth_credentials_store = "keyring"
 forced_login_method = "chatgpt"
 
 [mcp_servers.docs]
 command = "docs-mcp"
-`)
+`
 
 	tests := []struct {
 		name         string
@@ -523,6 +528,7 @@ command = "docs-mcp"
 					`{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}`,
 				},
 			})
+			setCodexUserConfig(t, userConfig)
 			a = WithCodexUserConfigIgnored(a, tt.ignoreConfig).(*CodexAgent)
 			a.ConfigOverrides = tt.overrides
 
@@ -538,7 +544,6 @@ command = "docs-mcp"
 }
 
 func TestCodexReviewRunsWhenUserConfigIsInvalid(t *testing.T) {
-	setCodexUserConfig(t, "cli_auth_credentials_store = \n")
 	a, mock := setupMockCodex(t, false, MockCLIOpts{
 		HelpOutput:  "usage --sandbox " + codexIgnoreUserConfigFlag,
 		CaptureArgs: true,
@@ -546,15 +551,23 @@ func TestCodexReviewRunsWhenUserConfigIsInvalid(t *testing.T) {
 			`{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}`,
 		},
 	})
+	setCodexUserConfig(t, "cli_auth_credentials_store = \n")
 	a = WithCodexUserConfigIgnored(a, true).(*CodexAgent)
+	var logs bytes.Buffer
+	prevOutput := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(prevOutput) })
 
-	result, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
-	require.NoError(t, err)
-	assert.Equal(t, "ok", result)
+	for range 2 {
+		result, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+		require.NoError(t, err)
+		assert.Equal(t, "ok", result)
 
-	args := readMockArgs(t, mock.ArgsFile)
-	assertContainsArg(t, args, codexIgnoreUserConfigFlag)
-	assert.Empty(t, codexConfigArgs(args))
+		args := readMockArgs(t, mock.ArgsFile)
+		assertContainsArg(t, args, codexIgnoreUserConfigFlag)
+		assert.Empty(t, codexConfigArgs(args))
+	}
+	assert.Equal(t, 1, strings.Count(logs.String(), "cannot read sign-in settings"), "a broken config warns once, not on every review")
 }
 
 func TestCodexReviewMissingAuthIsPermanent(t *testing.T) {

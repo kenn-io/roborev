@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 
 	"go.kenn.io/roborev/internal/config"
 )
@@ -293,18 +294,28 @@ func (a *CodexAgent) commandArgs(opts codexArgOptions, goos string) []string {
 	return args
 }
 
+// codexUserAuthWarnings holds the config problems already logged, so a broken
+// Codex config warns once instead of on every review.
+var codexUserAuthWarnings sync.Map
+
+func warnCodexUserAuthOnce(msg string) {
+	if _, seen := codexUserAuthWarnings.LoadOrStore(msg, struct{}{}); !seen {
+		log.Print(msg)
+	}
+}
+
 // codexUserAuthOverrides returns the sign-in settings from the Codex user
 // config that --ignore-user-config would otherwise drop. A config that cannot
 // be read is logged and skipped so the review still runs with Codex defaults.
 func codexUserAuthOverrides() []string {
 	codexHome, err := config.CodexHomeDir()
 	if err != nil {
-		log.Printf("codex: cannot locate Codex config to forward sign-in settings: %v", err)
+		warnCodexUserAuthOnce(fmt.Sprintf("codex: cannot locate Codex config to forward sign-in settings: %v", err))
 		return nil
 	}
 	overrides, err := config.CodexUserAuthOverrideArgs(codexHome)
 	if err != nil {
-		log.Printf("codex: cannot read sign-in settings from Codex config: %v", err)
+		warnCodexUserAuthOnce(fmt.Sprintf("codex: cannot read sign-in settings from Codex config: %v", err))
 		return nil
 	}
 	return overrides
