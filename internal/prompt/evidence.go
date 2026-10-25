@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"go.kenn.io/roborev/internal/git"
@@ -57,8 +58,7 @@ func (b *Builder) AppendBinaryEvidence(text, gitRef string, excludes []string, t
 		}
 		data, err := git.ReadBlob(b.context(), b.repoPath, change.OID)
 		if err == nil {
-			// Keep the original name and extension so readers recognize the type.
-			file := filepath.Join(dir, fmt.Sprintf("%d-%s", i+1, path.Base(change.Path)))
+			file := filepath.Join(dir, evidenceFileName(i+1, change.Path))
 			if err = writeSnapshotFile(file, data); err == nil {
 				lines = append(lines, fmt.Sprintf("- %q (%s): read %q", change.Path, change.Status, file))
 			}
@@ -75,4 +75,25 @@ func (b *Builder) AppendBinaryEvidence(text, gitRef string, excludes []string, t
 		"working tree, which may differ. Deleted files have no copy.\n\n" +
 		strings.Join(lines, "\n") + "\n"
 	return text + section, cleanup, nil
+}
+
+// evidenceFileName names the saved copy of the n-th changed binary file. It
+// keeps the committed base name so readers recognize the type, but only when
+// that name is a single safe path element on every OS. Git allows "\" and ":"
+// in file names, and Windows would treat them as separators or drive and stream
+// markers, placing the copy outside the snapshot directory. Other names fall
+// back to n plus the extension when it is plain ASCII letters and digits.
+func evidenceFileName(n int, repoPath string) string {
+	name := path.Base(repoPath)
+	if filepath.IsLocal(name) && !strings.ContainsAny(name, `\/:`) {
+		return fmt.Sprintf("%d-%s", n, name)
+	}
+	ext := strings.TrimPrefix(path.Ext(name), ".")
+	plain := ext != "" && !strings.ContainsFunc(ext, func(r rune) bool {
+		return !('a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || '0' <= r && r <= '9')
+	})
+	if !plain {
+		return strconv.Itoa(n)
+	}
+	return fmt.Sprintf("%d.%s", n, ext)
 }

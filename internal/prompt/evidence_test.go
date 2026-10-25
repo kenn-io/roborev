@@ -94,3 +94,24 @@ func TestBinaryEvidenceRejectsDirtyReviews(t *testing.T) {
 	_, err := builder.BuildDirtyWithSnapshot("diff --git a/x b/x\n", 0, "test", "", "")
 	require.ErrorIs(t, err, ErrBinaryEvidenceDirty)
 }
+
+func TestEvidenceFileNameStaysInSnapshotDir(t *testing.T) {
+	dir := t.TempDir()
+	for _, tc := range []struct{ path, want string }{
+		{path: "exhibits/brief.pdf", want: "3-brief.pdf"},
+		{path: `x\..\..\..\Users\Public\evil.lnk`, want: "3.lnk"},
+		{path: `docs/..\evil.pdf`, want: "3.pdf"},
+		{path: `C:evil.pdf`, want: "3.pdf"},
+		{path: `docs/C:\Windows\evil.exe`, want: "3.exe"},
+		{path: "brief.pdf:hidden", want: "3"},
+		{path: `evil\..`, want: "3"},
+		{path: "..", want: "3"},
+		{path: `evil\x.p\df`, want: "3"},
+	} {
+		got := evidenceFileName(3, tc.path)
+		assert.Equal(t, tc.want, got, tc.path)
+		rel, err := filepath.Rel(dir, filepath.Join(dir, got))
+		require.NoError(t, err)
+		assert.Equal(t, got, rel, "%s stays a single element of the snapshot directory", tc.path)
+	}
+}
