@@ -90,7 +90,7 @@ func evidenceFileName(n int, repoPath string) string {
 	}
 	ext := strings.TrimPrefix(path.Ext(name), ".")
 	plain := ext != "" && !strings.ContainsFunc(ext, func(r rune) bool {
-		return !('a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || '0' <= r && r <= '9')
+		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9')
 	})
 	if !plain {
 		return strconv.Itoa(n)
