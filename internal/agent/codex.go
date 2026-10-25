@@ -80,7 +80,6 @@ func (a *CodexAgent) clone(opts ...agentCloneOption) *CodexAgent {
 		IgnoreUserConfig:          a.IgnoreUserConfig,
 		ConfigOverrides:           a.ConfigOverrides,
 		omitThreadSource:          a.omitThreadSource,
-		userAuthOverrides:         a.userAuthOverrides,
 	}
 }
 

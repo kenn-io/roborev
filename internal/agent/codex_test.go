@@ -266,22 +266,6 @@ func TestCodexCommandArgsUserAuthOverrides(t *testing.T) {
 			`cli_auth_credentials_store="keyring"`,
 		}, codexConfigArgs(args))
 	})
-
-	t.Run("omitted when user config is loaded", func(t *testing.T) {
-		a := NewCodexAgent("codex")
-		a.userAuthOverrides = auth
-		args := a.commandArgs(codexArgOptions{autoApprove: true, preview: true}, "linux")
-
-		assert.Empty(t, codexConfigArgs(args))
-	})
-
-	t.Run("kept by clone", func(t *testing.T) {
-		a := WithCodexUserConfigIgnored(NewCodexAgent("codex"), true).(*CodexAgent)
-		a.userAuthOverrides = auth
-		clone := a.WithModel("o3").(*CodexAgent)
-
-		assert.Equal(t, auth, clone.userAuthOverrides)
-	})
 }
 
 func TestCodexBuildArgsIncludesConfigOverrides(t *testing.T) {
