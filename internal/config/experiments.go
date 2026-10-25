@@ -512,6 +512,11 @@ func validateExperimentOverlay(overlay map[string]any) error {
 		if _, allowed := reviewExperimentOverlayKeys[key]; !allowed {
 			return fmt.Errorf("key %q is not a review-time configuration setting", key)
 		}
+		if review, ok := value.(map[string]any); ok && key == "review" {
+			if err := validateExperimentReviewTools(review); err != nil {
+				return err
+			}
+		}
 		if key != "ci" {
 			continue
 		}

@@ -90,6 +90,12 @@ func runSingle(
 		Agent:      agentName,
 		ReviewType: reviewType,
 	}
+	settings, err := config.ResolveReviewSettings(reviewType, nil, cfg.RepoConfig, cfg.GlobalConfig)
+	if err != nil {
+		result.Status = ResultFailed
+		result.Error = fmt.Sprintf("resolve review settings: %v", err)
+		return result
+	}
 
 	// Map review type to workflow name for config
 	// resolution (same mapping as CI poller).
@@ -226,7 +232,7 @@ func runSingle(
 
 	agentReview, err := RunAgentReview(
 		ctx, resolvedAgent, cfg.RepoPath, cfg.GitRef, reviewPrompt,
-		reviewType, cfg.MinSeverity, nil,
+		reviewType, cfg.MinSeverity, settings.Tools, nil,
 	)
 	if err != nil {
 		result.Status = ResultFailed

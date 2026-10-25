@@ -58,10 +58,15 @@ func (wp *WorkerPool) selectBudgetJobAgent(ctx context.Context, workerID string,
 		}
 		return ""
 	}
+	// Execution resolves the policy again and reports any error.
+	tools, _ := currentReviewTools(*job, repoCfg, cfg)
 	var eligible func(agent.Agent) bool
-	if job.IsGoalReviewJob() {
+	if job.IsGoalReviewJob() || tools != nil {
 		eligible = func(candidate agent.Agent) bool {
-			if claude, ok := candidate.WithModel(modelForAgent(candidate.Name())).(*agent.ClaudeAgent); ok {
+			if agent.ValidateReviewToolSelection(tools, candidate, job.Agentic) != nil {
+				return false
+			}
+			if claude, ok := candidate.WithModel(modelForAgent(candidate.Name())).(*agent.ClaudeAgent); ok && job.IsGoalReviewJob() {
 				return claude.ValidateGoalReview(ctx) == nil
 			}
 			return true

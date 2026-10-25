@@ -41,6 +41,7 @@ Each `[review.types.<name>]` table supports these fields:
 | `agent` | No | Agent override for this type |
 | `model` | No | Model override for this type |
 | `reasoning` | No | Reasoning override for this type |
+| `tools` | No | Strict read-only tool policy with exact MCP tools; see [Strict Review Tool Policies](/docs/configuration/#strict-review-tool-policies) |
 
 Names must start with a lowercase letter and contain only lowercase letters,
 digits, and hyphens. Names may not replace built-in types or their aliases:

@@ -3285,6 +3285,18 @@ func (s *Server) resolveSingleAgent(
 		return resolvedSingleAgent{}, out
 	}
 	agentName = resolved.Name()
+	target := storage.ReviewJob{JobType: storage.JobTypeForEnqueue(in.descriptor.baseOpts()), ReviewType: in.req.ReviewType}
+	tools, err := currentReviewTools(target, in.repoCfg, in.cfg)
+	if err == nil {
+		err = agent.ValidateReviewToolSelection(tools, resolved, in.req.Agentic)
+	}
+	if err == nil {
+		err = agent.ValidateReviewToolBackup(tools, resolution, agentName)
+	}
+	if err != nil {
+		out, _ := rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return resolvedSingleAgent{}, out
+	}
 	if err := agent.ValidateStructuredReviewBackup(
 		in.req.ReviewType, resolution, agentName,
 	); err != nil {

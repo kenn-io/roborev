@@ -27,6 +27,8 @@ type SubagentSpec struct {
 	// agent or model without letting it influence the authoritative result.
 	NonVoting bool   `toml:"non_voting"`
 	Timeout   string `toml:"timeout"`
+	// Tools, when set, replaces the review type's tool policy as a whole.
+	Tools *ReviewToolPolicy `toml:"tools"`
 }
 
 // PanelSpec is a named set of subagent members plus an optional synthesis
@@ -135,6 +137,9 @@ func (rc ReviewConfig) Validate() error {
 		if err := validateSubagentTimeout(spec.Timeout); err != nil {
 			errs = append(errs, fmt.Errorf("subagent %q: %w", name, err))
 		}
+		if _, err := CanonicalReviewToolPolicy(spec.Tools); err != nil {
+			errs = append(errs, fmt.Errorf("subagent %q: %w", name, err))
+		}
 	}
 	for _, name := range slices.Sorted(maps.Keys(rc.Panels)) {
 		panel := rc.Panels[name]
@@ -218,6 +223,7 @@ func SelectPanelName(requested, source string, merged ReviewConfig) string {
 // ResolvedMember is a fully-resolved panel member. It is the value serialized
 // into the review_jobs.panel_member_config_json column for reproducibility.
 type ResolvedMember struct {
+	ReviewSettings
 	Name          string `json:"name"`
 	Index         int    `json:"index"`
 	Agent         string `json:"agent"`
@@ -401,6 +407,10 @@ func resolveMemberFromConfig(
 	if err := validateSubagentTimeout(spec.Timeout); err != nil {
 		return ResolvedMember{}, fmt.Errorf("subagent %q: %w", name, err)
 	}
+	settings, err := ResolveReviewSettings(reviewType, spec.Tools, repoCfg, globalCfg)
+	if err != nil {
+		return ResolvedMember{}, fmt.Errorf("subagent %q: %w", name, err)
+	}
 	workflow := WorkflowForReviewType(reviewType)
 	agent := spec.Agent
 	if agent == "" {
@@ -422,19 +432,20 @@ func resolveMemberFromConfig(
 		modelExplicit = true
 	}
 	return ResolvedMember{
-		Name:          name,
-		Index:         index,
-		Agent:         agent,
-		AgentExplicit: strings.TrimSpace(spec.Agent) != "",
-		Model:         model,
-		ModelExplicit: modelExplicit,
-		Provider:      spec.Provider,
-		Reasoning:     reasoning,
-		ReviewType:    reviewType,
-		Instructions:  spec.Instructions,
-		AllowFailure:  spec.AllowFailure,
-		NonVoting:     spec.NonVoting,
-		Timeout:       spec.Timeout,
+		ReviewSettings: settings,
+		Name:           name,
+		Index:          index,
+		Agent:          agent,
+		AgentExplicit:  strings.TrimSpace(spec.Agent) != "",
+		Model:          model,
+		ModelExplicit:  modelExplicit,
+		Provider:       spec.Provider,
+		Reasoning:      reasoning,
+		ReviewType:     reviewType,
+		Instructions:   spec.Instructions,
+		AllowFailure:   spec.AllowFailure,
+		NonVoting:      spec.NonVoting,
+		Timeout:        spec.Timeout,
 	}, nil
 }
 

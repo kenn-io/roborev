@@ -487,6 +487,10 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, di
 	if err != nil {
 		return fmt.Errorf("load repository config: %w", err)
 	}
+	settings, err := config.ResolveReviewSettings(reviewType, nil, repoCfg, cfg)
+	if err != nil {
+		return err
+	}
 
 	// Resolve and validate reasoning (matches daemon behavior)
 	reasoning, err = config.ResolveReviewReasoningForTypeFromConfig(
@@ -592,7 +596,7 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, di
 
 	_, err = reviewpkg.RunAgentReview(
 		cmd.Context(), a, repoPath, gitRef, reviewPrompt, reviewType,
-		resolvedMinSev, out,
+		resolvedMinSev, settings.Tools, out,
 	)
 	if err != nil {
 		return fmt.Errorf("review failed: %w", err)

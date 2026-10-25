@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -23,12 +24,17 @@ func invokeReview(ctx context.Context, a agent.Agent, repoPath, gitRef, prompt s
 
 // RunAgentReview validates JSON for every review, including agents without a
 // native schema mode. Markdown is a presentation of the validated document.
+// A non-nil tools policy fails before the agent runs unless a enforces it.
 func RunAgentReview(
 	ctx context.Context,
 	a agent.Agent,
 	repoPath, gitRef, reviewPrompt, reviewType, minSeverity string,
+	tools *config.ReviewToolPolicy,
 	out io.Writer,
 ) (ReviewResult, error) {
+	if err := agent.ValidateReviewToolSelection(tools, a, false); err != nil {
+		return ReviewResult{}, err
+	}
 	if err := agent.ValidateStructuredReviewSelection(reviewType, a); err != nil {
 		return ReviewResult{}, err
 	}

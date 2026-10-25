@@ -1261,6 +1261,18 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}
 	}
 
+	// A strict tool policy must never run unrestricted. An agent that cannot
+	// enforce it fails before starting; failover may pick a capable backup.
+	tools, toolsErr := reviewJobTools(job, checkout.resolvedConfigRepoPath(), cfg)
+	if toolsErr != nil {
+		wp.failOrRetryContext(ctx, workerID, job, a.Name(), toolsErr.Error())
+		return
+	}
+	if err := agent.ValidateReviewToolSelection(tools, a, job.Agentic); err != nil {
+		wp.failoverOrFailNonRetryableAgentContext(ctx, workerID, job, a.Name(), err.Error())
+		return
+	}
+
 	// Use the actual agent name (may differ from requested if fallback occurred)
 	agentName := a.Name()
 	if agentName != job.Agent {
@@ -1453,7 +1465,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	} else if err == nil {
 		agentReview, err = review.RunAgentReview(
 			ctx, a, reviewRepoPath, job.GitRef, reviewPrompt, job.ReviewType,
-			effectiveMinSeverity, agentOutput,
+			effectiveMinSeverity, tools, agentOutput,
 		)
 	}
 	output := agentReview.Output

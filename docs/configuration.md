@@ -644,6 +644,33 @@ optional agent, model, and reasoning overrides. See
 [Custom Review Types](/docs/advanced/custom-review-types/) for path rules,
 template values, structured output, and examples.
 
+### Strict Review Tool Policies
+
+A custom review type can ask for a strict tool policy. The agent then gets only
+read-only native tools plus the exact MCP tools the policy names:
+
+```toml
+[review.types.citations.tools]
+mode = "read-only"
+
+[review.types.citations.tools.mcp]
+sources = ["read", "find"]
+```
+
+- Omit `tools` to keep the agent's ordinary behavior. Omit `mcp` for a strict
+    review with no MCP tools.
+- Server and tool names are exact. Wildcards, slashes, and `__` are rejected.
+- A subagent's `[review.subagents.<name>.tools]` table replaces its type's
+    policy as a whole. Grants are not merged. Experiments cannot change `tools`.
+- Only global config names the MCP server file (`review_mcp_config`) and the
+    most a review may request (`review_mcp_allowed_tools`, a list of
+    `server/tool` pairs). Repository config cannot set either key.
+- Panel and CI members keep the policy they were queued with, including on
+    rerun.
+- If the selected agent or its backup cannot enforce the policy, the review
+    fails before it starts. Strict policies cannot be combined with agentic
+    mode. No agent supports strict policies or MCP grants in this release yet.
+
 ### Review Panels
 
 Use `[review]` to configure subagent review panels. A panel fans one daemon

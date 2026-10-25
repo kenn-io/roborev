@@ -1111,9 +1111,19 @@ func (p *CIPoller) resolveCIMembers(
 		if err != nil {
 			return nil, config.SynthesisSpec{}, err
 		}
+		if err := validateMemberTools(members, repoCfg, cfg); err != nil {
+			return nil, config.SynthesisSpec{}, err
+		}
 		return members, synth, nil
 	}
-	return p.resolveCIMatrixMembers(repo, repoCfg, rawRepoCfg, cfg, ghRepo)
+	members, synth, err := p.resolveCIMatrixMembers(repo, repoCfg, rawRepoCfg, cfg, ghRepo)
+	if err != nil {
+		return nil, config.SynthesisSpec{}, err
+	}
+	if err := validateMemberTools(members, repoCfg, cfg); err != nil {
+		return nil, config.SynthesisSpec{}, err
+	}
+	return members, synth, nil
 }
 
 // ciPanelName returns the configured CI panel name (repo [ci].panel over global
@@ -1158,15 +1168,20 @@ func (p *CIPoller) resolveCIMatrixMembers(
 		if err != nil {
 			return nil, config.SynthesisSpec{}, err
 		}
+		settings, err := config.ResolveReviewSettings(entry.ReviewType, nil, repoCfg, cfg)
+		if err != nil {
+			return nil, config.SynthesisSpec{}, err
+		}
 		members = append(members, config.ResolvedMember{
-			Name:        fmt.Sprintf("%s-%s", resolvedAgent, namedReviewType(entry.ReviewType)),
-			Index:       i,
-			Agent:       resolvedAgent,
-			Model:       resolvedModel,
-			ReviewType:  entry.ReviewType,
-			Reasoning:   memberReasoning,
-			BackupAgent: backupAgent,
-			BackupModel: backupModel,
+			ReviewSettings: settings,
+			Name:           fmt.Sprintf("%s-%s", resolvedAgent, namedReviewType(entry.ReviewType)),
+			Index:          i,
+			Agent:          resolvedAgent,
+			Model:          resolvedModel,
+			ReviewType:     entry.ReviewType,
+			Reasoning:      memberReasoning,
+			BackupAgent:    backupAgent,
+			BackupModel:    backupModel,
 		})
 	}
 

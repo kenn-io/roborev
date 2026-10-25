@@ -739,7 +739,13 @@ func resolvePanelMemberExecution(
 	if err := agent.ValidateStructuredReviewSelection(m.ReviewType, selected); err != nil {
 		return "", "", "", "", err
 	}
+	if err := agent.ValidateReviewToolSelection(m.Tools, selected, descriptor.agentic); err != nil {
+		return "", "", "", "", err
+	}
 	selectedName := agent.StorageNameFromConfig(selected.Name(), repoCfg, cfg)
+	if err := agent.ValidateReviewToolBackup(m.Tools, resolution, selectedName); err != nil {
+		return "", "", "", "", err
+	}
 	if err := agent.ValidateStructuredReviewBackup(
 		m.ReviewType, resolution, selectedName,
 	); err != nil {
