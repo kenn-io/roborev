@@ -177,7 +177,7 @@ CLI (roborev) -> HTTP API -> Daemon -> Worker Pool -> Agent adapters
 
 Use `testify` (`github.com/stretchr/testify`) for all test assertions. Use `require.*` for fatal preconditions and `assert.*` for non-fatal checks. Do not use raw `if`/`t.Errorf`/`t.Fatalf` patterns.
 
-- Focused test pass: `go test ./internal/<pkg>/ -run <Name>`. CI runs the full suite (`go test -tags integration ./...`); the pre-push hooks do not run `go test`.
+- Focused test pass: `go test ./internal/<pkg>/ -run <Name>`. CI runs the full suite (`go test -tags integration ./...`); the pre-push hooks run only the git-isolation test.
 - Integration tests: `go test -tags=integration ./...`
 - PostgreSQL tests: `go test -tags=postgres -v ./internal/storage/... -run Integration`
 - ACP smoke tests: use the `make test-acp-integration*` targets in `Makefile`
