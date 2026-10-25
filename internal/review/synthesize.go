@@ -175,8 +175,9 @@ func runSynthesis(
 		synthAgent = synthAgent.WithReasoning(agent.ParseReasoningLevel(reasoning))
 	}
 
+	// results is the unfiltered input set, so failed custom voters count.
 	synthPrompt := BuildSynthesisPrompt(
-		results, opts.MinSeverity)
+		results, opts.MinSeverity, NeedsNeutralSynthesis(results))
 
 	synthCtx, cancel := context.WithTimeout(
 		ctx, 5*time.Minute)

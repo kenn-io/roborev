@@ -108,6 +108,13 @@ When a panel uses `min_severity`, member findings below the threshold stay in
 the combined output. The threshold only decides whether the panel passes or
 fails.
 
+When any voting member uses a [custom review type](custom-review-types.md), the
+synthesis prompt describes the work as reviewed material instead of code and
+labels each input with its rubric. This applies even if that member failed or
+was skipped. Silence from a reviewer with a different rubric is not treated as
+disagreement. Non-voting observers do not change this wording, and panels with
+only built-in review types keep the existing prompt.
+
 ## Selection Rules
 
 | Selector | Applies To | Behavior |

@@ -51,6 +51,8 @@ func (wp *WorkerPool) processSynthesisJob(
 	resolvedJob := *job
 	resolvedJob.MinSeverity = reviewpkg.ResolveSynthesisMinSeverity(results, job.MinSeverity)
 	job = &resolvedJob
+	// Decide framing from every voting member before failures are dropped.
+	neutral := reviewpkg.NeedsNeutralSynthesis(results)
 	succeeded := filterSucceeded(results)
 
 	switch len(succeeded) {
@@ -90,7 +92,7 @@ func (wp *WorkerPool) processSynthesisJob(
 			return
 		}
 		// Two or more succeeded — combine and deduplicate via one agent call.
-		wp.synthesizeSucceededResults(ctx, workerID, job, succeeded)
+		wp.synthesizeSucceededResults(ctx, workerID, job, succeeded, neutral)
 	}
 }
 
@@ -119,6 +121,7 @@ func (wp *WorkerPool) synthesizeSucceededResults(
 	workerID string,
 	job *storage.ReviewJob,
 	succeeded []reviewpkg.ReviewResult,
+	neutral bool,
 ) {
 	// Mirror processJob's quota gate: an agent already in cooldown must fail
 	// over instead of burning another quota-exhausted call. The no-agent
@@ -129,7 +132,7 @@ func (wp *WorkerPool) synthesizeSucceededResults(
 			fmt.Sprintf("agent %s quota cooldown active", canonicalAgent))
 		return
 	}
-	prompt := reviewpkg.BuildSynthesisPrompt(succeeded, job.MinSeverity)
+	prompt := reviewpkg.BuildSynthesisPrompt(succeeded, job.MinSeverity, neutral)
 	doc, resolvedAgent, capturedSession, runErr := wp.runSynthesisAgent(
 		ctx, workerID, job, succeeded, prompt,
 	)

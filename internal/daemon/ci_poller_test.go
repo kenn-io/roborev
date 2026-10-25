@@ -438,7 +438,7 @@ func TestBuildSynthesisPrompt(t *testing.T) {
 		{Agent: "codex", ReviewType: "review", Status: "failed", Error: "timeout"},
 	}
 
-	prompt := review.BuildSynthesisPrompt(reviews, "")
+	prompt := review.BuildSynthesisPrompt(reviews, "", false)
 
 	assertContainsAll(t, prompt, "prompt",
 		"Deduplicate findings",
@@ -2388,7 +2388,7 @@ func TestBuildSynthesisPrompt_PreservesLargeOutputs(t *testing.T) {
 		{Agent: "codex", ReviewType: "security", Output: largeOutput, Status: "done"},
 	}
 
-	prompt := review.BuildSynthesisPrompt(reviews, "")
+	prompt := review.BuildSynthesisPrompt(reviews, "", false)
 
 	assert.Contains(t, prompt, largeOutput)
 }
@@ -2476,7 +2476,7 @@ func TestBuildSynthesisPrompt_SanitizesErrors(t *testing.T) {
 	reviews := []review.ReviewResult{
 		{Agent: "codex", ReviewType: "security", Status: "failed", Error: "secret-token-abc123: auth error"},
 	}
-	prompt := review.BuildSynthesisPrompt(reviews, "")
+	prompt := review.BuildSynthesisPrompt(reviews, "", false)
 	if strings.Contains(prompt, "secret-token-abc123") {
 		assert.Condition(t, func() bool {
 			return false
@@ -2494,7 +2494,7 @@ func TestBuildSynthesisPrompt_NeverMentionsMinSeverity(t *testing.T) {
 		{Agent: "codex", ReviewType: "security", Output: "No issues found.", Status: "done"},
 	}
 	for _, severity := range []string{"", "low", "medium", "high", "critical"} {
-		prompt := review.BuildSynthesisPrompt(reviews, severity)
+		prompt := review.BuildSynthesisPrompt(reviews, severity, false)
 		assert.NotContains(t, prompt, "Severity threshold", "min_severity=%q", severity)
 		assert.NotContains(t, prompt, "Omit findings below", "min_severity=%q", severity)
 		assert.Contains(t, prompt, "No issues found.")
@@ -2771,7 +2771,7 @@ func TestBuildSynthesisPrompt_QuotaSkippedLabel(t *testing.T) {
 		{Agent: "gemini", ReviewType: "security", Status: "failed", Error: review.QuotaErrorPrefix + "quota exhausted"},
 	}
 
-	prompt := review.BuildSynthesisPrompt(reviews, "")
+	prompt := review.BuildSynthesisPrompt(reviews, "", false)
 
 	assertContainsAll(t, prompt, "prompt",
 		"[SKIPPED]",

@@ -145,10 +145,12 @@ func TestBuildSynthesisPrompt_Basic(t *testing.T) {
 			Output:     "No issues found.",
 		},
 	}
-	prompt := BuildSynthesisPrompt(reviews, "")
+	prompt := BuildSynthesisPrompt(reviews, "", false)
 
 	assertContainsAll(t, prompt, []string{
-		"combining multiple code review outputs",
+		"combining multiple code review outputs into a single GitHub PR comment",
+		"reviewers agree the code is clean",
+		"Do not independently review source code",
 		`"sources":[1]`,
 		"### Review N",
 		"Only combine the input review results according to these rules",
@@ -161,6 +163,8 @@ func TestBuildSynthesisPrompt_Basic(t *testing.T) {
 	assert.NotContains(t, prompt, "Type=")
 	assert.NotContains(t, prompt, "Verify each finding")
 	assert.NotContains(t, prompt, "current codebase")
+	assert.NotContains(t, prompt, "Rubric:")
+	assert.NotContains(t, prompt, "different rubric")
 }
 
 func TestDecodeSynthesisDocument(t *testing.T) {
@@ -252,7 +256,7 @@ func TestBuildSynthesisPrompt_UsesNeutralReviewerLabels(t *testing.T) {
 		},
 	}
 
-	prompt := BuildSynthesisPrompt(reviews, "")
+	prompt := BuildSynthesisPrompt(reviews, "", false)
 
 	assert.Contains(t, prompt, "### Review 1")
 	assert.Contains(t, prompt, "### Review 2")
@@ -262,6 +266,25 @@ func TestBuildSynthesisPrompt_UsesNeutralReviewerLabels(t *testing.T) {
 	assert.NotContains(t, prompt, "Type=design")
 	assert.NotContains(t, prompt, "security")
 	assert.NotContains(t, prompt, "design")
+}
+
+func TestBuildSynthesisPrompt_NeutralLabelsRubrics(t *testing.T) {
+	assert := assert.New(t)
+	reviews := []ReviewResult{
+		{ReviewType: "citations", Status: ResultDone, Output: "Claim lacks a source."},
+		{ReviewType: "review", Status: ResultDone, Output: "Finding B."},
+	}
+
+	prompt := BuildSynthesisPrompt(reviews, "", true)
+
+	assert.Contains(prompt, "combined review of the reviewed material")
+	assert.Contains(prompt, "Silence from a different rubric is not disagreement")
+	assert.Contains(prompt, "### Review 1\nRubric: citations\nClaim lacks a source.")
+	assert.Contains(prompt, "### Review 2\nRubric: default\nFinding B.")
+	assert.NotContains(prompt, "code review")
+	assert.NotContains(prompt, "GitHub PR comment")
+	assert.NotContains(prompt, "the code is clean")
+	assert.NotContains(prompt, "source code")
 }
 
 func TestBuildSynthesisPrompt_Severity(t *testing.T) {
@@ -285,7 +308,7 @@ func TestBuildSynthesisPrompt_Severity(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			prompt := BuildSynthesisPrompt(reviews, tt.severity)
+			prompt := BuildSynthesisPrompt(reviews, tt.severity, false)
 			if tt.wantContains != "" {
 				assert.Contains(t, prompt, tt.wantContains)
 			}
@@ -318,7 +341,7 @@ func TestBuildSynthesisPrompt_QuotaAndFailed(t *testing.T) {
 			Error:      "agent crashed",
 		},
 	}
-	prompt := BuildSynthesisPrompt(reviews, "")
+	prompt := BuildSynthesisPrompt(reviews, "", false)
 
 	assertContainsAll(t, prompt, []string{
 		"[SKIPPED]",
@@ -339,7 +362,7 @@ func TestBuildSynthesisPrompt_PreservesFullReviews(t *testing.T) {
 			Output:     longOutput,
 		},
 	}
-	prompt := BuildSynthesisPrompt(reviews, "")
+	prompt := BuildSynthesisPrompt(reviews, "", false)
 
 	assert.Contains(t, prompt, longOutput)
 }
@@ -416,7 +439,7 @@ func TestFullReviewContentPreservesUTF8(t *testing.T) {
 	})
 
 	t.Run("BuildSynthesisPrompt", func(t *testing.T) {
-		prompt := BuildSynthesisPrompt(reviews, "medium")
+		prompt := BuildSynthesisPrompt(reviews, "medium", false)
 		require.True(t, utf8.ValidString(prompt),
 			"synthesis prompt must not contain a split rune")
 		assert.Contains(t, prompt, oversized)
@@ -632,7 +655,7 @@ func TestBuildSynthesisPrompt_IncludesSkipped(t *testing.T) {
 			SkipReason: "trivial diff",
 		},
 	}
-	prompt := BuildSynthesisPrompt(reviews, "")
+	prompt := BuildSynthesisPrompt(reviews, "", false)
 	assertContainsAll(t, prompt, []string{
 		"Add type for foo",
 		"Review skipped: trivial diff",
@@ -652,7 +675,7 @@ func TestBuildSynthesisPrompt_TransientSkipped(t *testing.T) {
 			Error:      OutageErrorPrefix + "429",
 		},
 	}
-	prompt := BuildSynthesisPrompt(reviews, "")
+	prompt := BuildSynthesisPrompt(reviews, "", false)
 	assertContainsAll(t, prompt, []string{
 		"[SKIPPED]",
 		"provider unavailable",
@@ -671,7 +694,7 @@ func TestBuildSynthesisPromptRendersStructuredMembersWithoutThreshold(t *testing
 	}.ApplyMinSeverity("medium")
 	require.Contains(t, member.Output, "No findings at or above medium severity.")
 
-	prompt := BuildSynthesisPrompt([]ReviewResult{member}, "medium")
+	prompt := BuildSynthesisPrompt([]ReviewResult{member}, "medium", false)
 	assert.Contains(t, prompt, "Nit.")
 	assert.NotContains(t, prompt, "at or above")
 	assert.NotContains(t, prompt, "medium severity")

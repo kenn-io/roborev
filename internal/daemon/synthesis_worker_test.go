@@ -1352,3 +1352,57 @@ func TestSynthesisImportedUnableReview(t *testing.T) {
 	_, err = tc.DB.GetReviewByJobID(synth.ID)
 	require.Error(t, err, "an imported unavailable result must not become a completed review")
 }
+
+func TestSynthesisNeutralFramingUsesVotingMembers(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		observer    bool
+		wantNeutral bool
+	}{
+		{name: "failed custom voter", wantNeutral: true},
+		{name: "custom observer only", observer: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tc := newWorkerTestContext(t, 1)
+			memberAgent := "neutral-framing-member"
+			registerPassingAgent(t, memberAgent)
+			synthAgent := &synthesisEntrypointTestAgent{name: "neutral-framing-synth"}
+			agent.RegisterForTest(t, synthAgent)
+			run, members, _ := enqueuePanelRun(t, tc, "draft-panel", []memberSpec{
+				{name: "citations", agent: memberAgent, nonVoting: tt.observer},
+				{name: "security", agent: memberAgent},
+				{name: "design", agent: memberAgent},
+			})
+			setSynthesisAgent(t, tc, run, synthAgent.Name())
+			for i, rubric := range []string{"citations", "security", "design"} {
+				_, err := tc.DB.Exec("UPDATE review_jobs SET review_type = ? WHERE id = ?", rubric, members[i].ID)
+				require.NoError(t, err)
+			}
+			if tt.observer {
+				completeMember(t, tc, members[0].ID, memberAgent, "Observer finding.")
+			} else {
+				failMember(t, tc, members[0].ID)
+			}
+			completeMember(t, tc, members[1].ID, memberAgent, "Security finding.")
+			completeMember(t, tc, members[2].ID, memberAgent, "Design finding.")
+
+			synth := releaseAndClaimSynthesis(t, tc, run)
+			tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+			tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
+			require.True(t, synthAgent.reviewCalled)
+
+			assert := assert.New(t)
+			prompt := synthAgent.synthPrompt
+			if tt.wantNeutral {
+				assert.Contains(prompt, "combined review of the reviewed material")
+				assert.Contains(prompt, "Rubric: security")
+				assert.Contains(prompt, "Rubric: design")
+				assert.NotContains(prompt, "code review outputs")
+			} else {
+				assert.Contains(prompt, "multiple code review outputs")
+				assert.NotContains(prompt, "Rubric:")
+				assert.NotContains(prompt, "Observer finding.")
+			}
+		})
+	}
+}
