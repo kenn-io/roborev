@@ -64,7 +64,7 @@ func TestClaudeStrictReviewRequiresStrictFlags(t *testing.T) {
 	_, err := strict.Review(context.Background(), t.TempDir(), "HEAD", "prompt", nil)
 
 	require.ErrorIs(t, err, ErrReviewToolPolicy)
-	assert.ErrorContains(t, err, "--restricted; upgrade claude")
+	require.ErrorContains(t, err, "--restricted; upgrade claude")
 	assert.NoFileExists(t, mock.ArgsFile, "claude must not run without the strict flags")
 }
 
