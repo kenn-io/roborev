@@ -3,10 +3,12 @@ package agent
 import (
 	"context"
 	"encoding/json/jsontext"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -123,10 +125,11 @@ func TestCheckStrictReviewPrepared(t *testing.T) {
 	require.NoError(t, CheckStrictReviewPrepared(policy, claude.WithStrictReview(*policy, "mcp.json")))
 }
 
-func TestClaudeStrictReviewStopsOnBadStartup(t *testing.T) {
+func TestClaudeStrictReviewReportsPolicyErrorWhenStopped(t *testing.T) {
 	helpFile := filepath.Join(t.TempDir(), "help.txt")
 	require.NoError(t, os.WriteFile(helpFile, []byte(claudeStrictHelp), 0o600))
-	// The CLI would keep running after a startup report that breaks the policy.
+	// The CLI is still running when the review stops it, so the run also fails
+	// with a canceled context. The review must report the policy error instead.
 	cmd := writeTempCommand(t, `#!/bin/sh
 case "$1" in *etxtbsy*) exit 0;; --help) cat "`+helpFile+`"; exit 0;; esac
 echo '{"type":"system","subtype":"init","permissionMode":"dontAsk","tools":["Read","Glob","Grep","Bash"],"mcp_servers":[]}'
@@ -138,4 +141,33 @@ exec sleep 60
 
 	require.ErrorIs(t, err, ErrReviewToolPolicy)
 	assert.ErrorContains(t, err, "started with tools [Bash Glob Grep Read]")
+}
+
+func TestParseClaudeStrictStreamStopsClaudeOnBadStartup(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		runCtx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		// Claude keeps its stdout open after a startup report that breaks the policy.
+		stdout, claude := io.Pipe()
+		defer claude.Close()
+		go func() {
+			_, _ = io.WriteString(claude, `{"type":"system","subtype":"init","permissionMode":"dontAsk","tools":["Read","Glob","Grep","Bash"],"mcp_servers":[]}`+"\n")
+		}()
+
+		parsed := make(chan error, 1)
+		go func() {
+			_, err := parseClaudeStrictStreamOrStop(stdout, nil, claudeStrictNativeTools, false, cancel)
+			parsed <- err
+		}()
+		synctest.Wait()
+
+		var err error
+		select {
+		case err = <-parsed:
+		default: // still reading; err stays nil and the check below fails
+		}
+		require.ErrorIs(t, err, ErrReviewToolPolicy, "the parser must stop at the bad startup report")
+		assert.ErrorContains(t, err, "started with tools [Bash Glob Grep Read]")
+		assert.ErrorIs(t, runCtx.Err(), context.Canceled, "claude must be stopped")
+	})
 }

@@ -176,6 +176,16 @@ func parseClaudeStrictStream(r io.Reader, out io.Writer, wantTools []string, sch
 	return parseStreamJSON(&stream, nil)
 }
 
+// parseClaudeStrictStreamOrStop calls stop as soon as the stream breaks the
+// policy, so Claude does not keep running after a bad startup report.
+func parseClaudeStrictStreamOrStop(r io.Reader, out io.Writer, wantTools []string, schema bool, stop func()) (string, error) {
+	parsed, err := parseClaudeStrictStream(r, out, wantTools, schema)
+	if errors.Is(err, ErrReviewToolPolicy) {
+		stop()
+	}
+	return parsed, err
+}
+
 func (a *ClaudeAgent) strictReview(ctx context.Context, repoPath, prompt string, schema jsontext.Value, out io.Writer) (string, error) {
 	if a.strictMCPConfigPath == "" {
 		return "", fmt.Errorf("%w: strict claude review has no MCP config", ErrReviewToolPolicy)
@@ -220,11 +230,7 @@ func (a *ClaudeAgent) strictReview(ctx context.Context, repoPath, prompt string,
 			if sw != nil {
 				w = sw
 			}
-			parsed, err := parseClaudeStrictStream(r, w, wantTools, hasSchema)
-			if errors.Is(err, ErrReviewToolPolicy) {
-				cancel()
-			}
-			return parsed, err
+			return parseClaudeStrictStreamOrStop(r, w, wantTools, hasSchema, cancel)
 		},
 	})
 	if errors.Is(result.ParseErr, ErrReviewToolPolicy) {
