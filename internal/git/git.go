@@ -1898,6 +1898,85 @@ func DiffPathsCtx(ctx context.Context, repoPath, gitRef string, pathspec []strin
 	return paths, nil
 }
 
+// BinaryChange is a regular file that Git treats as binary in a committed
+// review subject. OID names the committed blob; it is empty for deletions.
+type BinaryChange struct {
+	Path   string
+	Status string // "added", "modified", or "deleted"
+	OID    string
+}
+
+// ChangedBinaryFiles lists the binary files a commit or range changes, using
+// the same refs and pathspec as the review diff. Symlinks and submodules are
+// not files and are skipped. A single merge commit reports no files because
+// its combined diff has no single old side.
+func ChangedBinaryFiles(ctx context.Context, repoPath, gitRef string, extraExcludes ...string) ([]BinaryChange, error) {
+	flags := []string{"--raw", "--numstat", "--no-renames", "--no-abbrev", "-z", "--"}
+	var args []string
+	if IsRange(gitRef) {
+		args = append([]string{"diff", gitRef}, flags...)
+	} else {
+		args = append([]string{"show", gitRef, "--format="}, flags...)
+	}
+	args = append(args, ReviewPathspecArgs(extraExcludes...)...)
+	cmd := newGitCmdContext(ctx, args...)
+	cmd.Dir = repoPath
+	out, err := gitOutput(cmd)
+	if err != nil {
+		return nil, fmt.Errorf("git diff binary files: %w", err)
+	}
+
+	// Raw records (":<modes> <oids> <status>", path) precede numstat records
+	// ("<added>\t<deleted>\t<path>"). Numstat reports binary files as "-\t-".
+	raw := make(map[string]BinaryChange)
+	var binary []string
+	tokens := strings.Split(string(out), "\x00")
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		if header, ok := strings.CutPrefix(token, ":"); ok {
+			i++
+			fields := strings.Fields(header)
+			if len(fields) != 5 || i >= len(tokens) {
+				continue // combined merge records have more fields
+			}
+			oldMode, newMode, newOID, status := fields[0], fields[1], fields[3], fields[4]
+			change := BinaryChange{Path: tokens[i], Status: "modified", OID: newOID}
+			mode := newMode
+			switch status {
+			case "A":
+				change.Status = "added"
+			case "D":
+				change.Status, change.OID, mode = "deleted", "", oldMode
+			}
+			if mode == "100644" || mode == "100755" {
+				raw[change.Path] = change
+			}
+			continue
+		}
+		if path, ok := strings.CutPrefix(token, "-\t-\t"); ok {
+			binary = append(binary, path)
+		}
+	}
+	var changes []BinaryChange
+	for _, path := range binary {
+		if change, ok := raw[path]; ok {
+			changes = append(changes, change)
+		}
+	}
+	return changes, nil
+}
+
+// ReadBlob returns the contents of a blob object.
+func ReadBlob(ctx context.Context, repoPath, oid string) ([]byte, error) {
+	cmd := newGitCmdContext(ctx, "cat-file", "blob", oid)
+	cmd.Dir = repoPath
+	out, err := gitOutput(cmd)
+	if err != nil {
+		return nil, fmt.Errorf("git cat-file blob %s: %w", oid, err)
+	}
+	return out, nil
+}
+
 func captureGitOutputLimited(ctx context.Context, repoPath string, maxBytes int, args ...string) (string, bool, error) {
 	if maxBytes <= 0 {
 		return "", true, nil

@@ -1088,10 +1088,16 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		job.ResumeSourceJobUUID = nil
 	}
 	checkout = wp.refreshIsolatedReviewConfigPath(workerID, checkout, job)
+	// Settings frozen at enqueue time decide this review's tools and evidence.
+	settings, err := reviewJobSettings(job, checkout.resolvedConfigRepoPath(), cfg)
+	if err != nil {
+		wp.failOrRetryContext(ctx, workerID, job, job.Agent, err.Error())
+		return
+	}
 
 	// Prompt-independent cleanup must not force a prebuilt CI job to reload
 	// repository review configuration that it no longer needs.
-	pb := wp.basePromptBuilderForJob(ctx, checkout, job, cfg)
+	pb := wp.basePromptBuilderForJob(ctx, checkout, job, cfg).WithBinaryEvidence(settings.BinaryEvidence)
 	if err := cleanupStaleSnapshotsForJob(pb, checkout, job.RepoID); err != nil {
 		log.Printf("[%s] Warning: cleanup stale snapshots for job %d: %v", workerID, job.ID, err)
 	}
@@ -1155,6 +1161,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("configure prompt builder: %v", err))
 			return
 		}
+		pb = pb.WithBinaryEvidence(settings.BinaryEvidence)
 
 		// Attributed jobs use the frozen plan verbatim, including an explicit
 		// empty value. Ordinary jobs keep the legacy config cascade.
@@ -1194,6 +1201,20 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		log.Printf("[%s] Error building prompt: %v", workerID, err)
 		wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("build prompt: %v", err))
 		return
+	}
+	// Each attempt writes fresh committed binary evidence into the agent's
+	// checkout; it is removed when the attempt ends.
+	if !job.IsDirtyJob() && !job.UsesStoredPrompt() && job.Source != storage.JobSourceRebuttal {
+		excludes := config.ResolveExcludePatterns(ctx, checkout.resolvedConfigRepoPath(), cfg, job.ReviewType)
+		var cleanup func()
+		reviewPrompt, cleanup, err = pb.AppendBinaryEvidence(reviewPrompt, job.GitRef, excludes, checkout.snapshotTarget)
+		if cleanup != nil {
+			defer cleanup()
+		}
+		if err != nil {
+			wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("prepare binary evidence: %v", err))
+			return
+		}
 	}
 	// Panel members carry trusted reviewer instructions resolved at enqueue
 	// time. Append them after every prompt path (snapshot/dirty/range/
@@ -1263,11 +1284,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 
 	// A strict tool policy must never run unrestricted. An agent that cannot
 	// enforce it fails before starting; failover may pick a capable backup.
-	tools, toolsErr := reviewJobTools(job, checkout.resolvedConfigRepoPath(), cfg)
-	if toolsErr != nil {
-		wp.failOrRetryContext(ctx, workerID, job, a.Name(), toolsErr.Error())
-		return
-	}
+	tools := settings.Tools
 	if err := agent.ValidateReviewToolSelection(tools, a, job.Agentic); err != nil {
 		wp.failoverOrFailNonRetryableAgentContext(ctx, workerID, job, a.Name(), err.Error())
 		return

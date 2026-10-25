@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json/v2"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -173,4 +174,37 @@ func TestExperimentReviewTypeToolPolicy(t *testing.T) {
 			assert.Equal(t, tc.want, members[0].Tools)
 		})
 	}
+}
+
+func TestResolveReviewSettingsBinaryEvidence(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, ".roborev.toml", `
+[review.types.exhibits]
+template = "rubric.md"
+binary_evidence = true
+
+[review.subagents.checker]
+review_type = "exhibits"
+
+[review.panels.audit]
+members = ["checker"]
+`)
+	repoCfg, err := LoadRepoConfig(dir)
+	require.NoError(t, err)
+
+	settings, err := ResolveReviewSettings("exhibits", nil, repoCfg, nil)
+	require.NoError(t, err)
+	assert.True(t, settings.BinaryEvidence)
+	settings, err = ResolveReviewSettings("default", nil, repoCfg, nil)
+	require.NoError(t, err)
+	assert.False(t, settings.BinaryEvidence)
+
+	members, _, err := ResolveCIPanel("audit", repoCfg, nil)
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	frozen, err := json.Marshal(members[0])
+	require.NoError(t, err)
+	var decoded ReviewSettings
+	require.NoError(t, json.Unmarshal(frozen, &decoded))
+	assert.True(t, decoded.BinaryEvidence, "panel members freeze the setting with their config")
 }

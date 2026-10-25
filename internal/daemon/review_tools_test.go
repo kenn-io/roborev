@@ -98,9 +98,9 @@ func TestPanelRerunKeepsFrozenToolPolicy(t *testing.T) {
 	_, rerunMembers := rerunAndLoadNewRun(t, server, db, oldRunUUID, synth.ID)
 	require.Len(t, rerunMembers, 1)
 	cfg := config.DefaultConfig()
-	tools, err := reviewJobTools(&rerunMembers[0], member.RepoPath, cfg)
+	settings, err := reviewJobSettings(&rerunMembers[0], member.RepoPath, cfg)
 	require.NoError(t, err)
-	assert.Equal(t, &config.ReviewToolPolicy{Mode: "read-only", MCP: map[string][]string{}}, tools)
+	assert.Equal(t, &config.ReviewToolPolicy{Mode: "read-only", MCP: map[string][]string{}}, settings.Tools)
 }
 
 type strictWorkerTestAgent struct {

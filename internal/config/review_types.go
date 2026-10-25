@@ -26,6 +26,9 @@ type ReviewTypeSpec struct {
 	Model     string            `toml:"model" comment:"Model override for this review type."`
 	Reasoning string            `toml:"reasoning" comment:"Reasoning level for this review type."`
 	Tools     *ReviewToolPolicy `toml:"tools" comment:"Strict read-only tool policy and exact MCP tools for this review type."`
+	// BinaryEvidence gives reviewers the committed bytes of changed binary
+	// files, such as PDFs and images, that a text diff cannot show.
+	BinaryEvidence bool `toml:"binary_evidence" comment:"Save committed binary files changed by the review for the reviewer to read."`
 }
 
 func (s ReviewTypeSpec) Clone() ReviewTypeSpec {

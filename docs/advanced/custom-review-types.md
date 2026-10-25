@@ -42,6 +42,7 @@ Each `[review.types.<name>]` table supports these fields:
 | `model` | No | Model override for this type |
 | `reasoning` | No | Reasoning override for this type |
 | `tools` | No | Strict read-only tool policy with exact MCP tools; requires Claude Code. See [Strict Review Tool Policies](/docs/configuration/#strict-review-tool-policies) |
+| `binary_evidence` | No | Give reviewers the committed copies of changed binary files. See [Binary evidence](#binary-evidence) |
 
 Names must start with a lowercase letter and contain only lowercase letters,
 digits, and hyphens. Names may not replace built-in types or their aliases:
@@ -69,6 +70,30 @@ sources = ["read", "find"]
 The operator's global config must define the `sources` server and allow both
 tools. See
 [Strict Review Tool Policies](/docs/configuration/#strict-review-tool-policies).
+
+### Binary evidence
+
+A text diff only says that a PDF or image changed. When a rubric needs to read
+those files, for example to check a draft against its exhibits, set
+`binary_evidence = true`:
+
+```toml
+[review.types.exhibits]
+template = ".roborev/exhibits.md"
+binary_evidence = true
+```
+
+For a review of a commit or a commit range, roborev saves the committed version
+of each changed binary file under `snapshot_dir` (default `.roborev/`) in the
+checkout where the reviewer runs. The prompt gains a "Committed review evidence"
+section that lists each file's path, whether it was added, modified, or deleted,
+and the saved copy to read. Deleted files are listed without a copy. The copies
+come from Git, so later edits in the working tree do not change them. roborev
+removes them when the review attempt ends.
+
+Only review types that set `binary_evidence` get the section; other panel
+members are unchanged. Reviews of uncommitted changes fail with an error when
+the type sets it. Keep `snapshot_dir` in `.gitignore`; `roborev init` adds it.
 
 ## Paths and includes
 

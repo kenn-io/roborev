@@ -62,7 +62,7 @@ CLI (roborev) -> HTTP API -> Daemon -> Worker Pool -> Agent adapters
   database operations. Direct database opens are allowed only inside `daemon run`;
   tests may open isolated fixtures. Hold the daemon database ownership lock
   before opening SQLite until the database is closed.
-- Background daemon work must not edit tracked source files in the user's checked-out working tree or apply agent changes there. Repo metadata is different: `roborev init` may update the usually tracked `.gitignore` so the configured `snapshot_dir` (default `.roborev/`) is ignored, and daemon review work may create disposable ignored snapshot artifacts there so sandboxed agents can read oversized prompts and diffs. Runtime snapshot creation may also add a local `.git/info/exclude` fallback when an existing checkout is missing the ignore rule.
+- Background daemon work must not edit tracked source files in the user's checked-out working tree or apply agent changes there. Repo metadata is different: `roborev init` may update the usually tracked `.gitignore` so the configured `snapshot_dir` (default `.roborev/`) is ignored, and daemon review work may create disposable ignored snapshot artifacts there so sandboxed agents can read oversized prompts and diffs, or committed copies of changed binary files for review types that set `binary_evidence`. Runtime snapshot creation may also add a local `.git/info/exclude` fallback when an existing checkout is missing the ignore rule.
 - Foreground agentic flows such as `roborev fix` and `roborev refine` may modify code.
 - Isolated background fix work uses temporary git worktrees and stores patches in the DB.
 
@@ -310,7 +310,7 @@ When reviewing or fixing issues:
 - Focus on correctness, concurrency safety, and error handling in daemon/worker code.
 - For storage changes, keep migrations minimal and validate schema and queries.
 - For API changes, preserve HTTP/JSON conventions.
-- For daemon changes, preserve the rule that background jobs must not edit tracked source files in the checked-out working tree or apply agent changes there. The repo metadata exception is snapshot ignore setup: `.gitignore` may be updated by `roborev init`, and daemon snapshot writes may add a local `.git/info/exclude` fallback. Ignored repo-local snapshot artifacts are allowed only for oversized prompt or diff handoff and must stay under the configured `snapshot_dir`, remain gitignored, and be cleaned up best-effort.
+- For daemon changes, preserve the rule that background jobs must not edit tracked source files in the checked-out working tree or apply agent changes there. The repo metadata exception is snapshot ignore setup: `.gitignore` may be updated by `roborev init`, and daemon snapshot writes may add a local `.git/info/exclude` fallback. Ignored repo-local snapshot artifacts are allowed only for oversized prompt or diff handoff and committed binary evidence, and must stay under the configured `snapshot_dir`, remain gitignored, and be cleaned up best-effort.
 - When addressing review feedback, update tests if behavior changes.
 - If the user pastes review findings or review text directly into the prompt, treat that as direct fix input and work from the pasted content.
 - Do not invoke review-fetching skills for pasted review text unless the user explicitly asks for that skill or provides only a review/job ID that must be fetched first.

@@ -18,7 +18,8 @@ type ReviewToolPolicy struct {
 // ReviewSettings holds the resolved per-review settings frozen with panel and
 // CI member config. Operator-only MCP settings never belong here.
 type ReviewSettings struct {
-	Tools *ReviewToolPolicy `json:"tools,omitzero"`
+	Tools          *ReviewToolPolicy `json:"tools,omitzero"`
+	BinaryEvidence bool              `json:"binary_evidence,omitzero"`
 }
 
 var reviewToolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
@@ -89,6 +90,7 @@ func ResolveReviewSettings(reviewType string, memberTools *ReviewToolPolicy, rep
 			return settings, fmt.Errorf("unknown review type %q", reviewType)
 		}
 		settings.Tools = resolved.Spec.Tools
+		settings.BinaryEvidence = resolved.Spec.BinaryEvidence
 	}
 	if memberTools != nil {
 		settings.Tools = memberTools

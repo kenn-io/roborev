@@ -200,6 +200,7 @@ func runSingle(
 		WithContext(ctx).
 		ForRepo(cfg.RepoPath, 0).
 		WithRepoConfig(cfg.RepoConfig, cfg.RepoConfigRef).
+		WithBinaryEvidence(settings.BinaryEvidence).
 		WithStructuredOutput(true)
 
 	// Normalize review type for prompt building

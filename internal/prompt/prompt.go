@@ -89,6 +89,8 @@ type Builder struct {
 	// structuredOutput appends the JSON output instruction to built-in
 	// review prompts when the agent will return schema-constrained findings.
 	structuredOutput bool
+	// binaryEvidence hands reviewers committed copies of changed binary files.
+	binaryEvidence bool
 }
 
 // DiffFilePathPlaceholder is a sentinel path embedded in prebuilt
@@ -285,21 +287,35 @@ func (b *Builder) BuildWithSnapshotTarget(
 	if err != nil {
 		return result, err
 	}
+	text, evidenceCleanup, err := b.AppendBinaryEvidence(text, gitRef, excludes, target)
+	if err != nil {
+		return result, err
+	}
+	result.Cleanup = joinCleanups(evidenceCleanup, result.Cleanup)
 	prepared, err := b.Prepare(text, target)
 	if err != nil {
 		return result, err
 	}
-	priorCleanup := result.Cleanup
-	result = prepared
-	if priorCleanup != nil {
-		result.Cleanup = func() {
-			if prepared.Cleanup != nil {
-				prepared.Cleanup()
-			}
-			priorCleanup()
+	prepared.Cleanup = joinCleanups(prepared.Cleanup, result.Cleanup)
+	return prepared, nil
+}
+
+// joinCleanups runs each non-nil cleanup in order. It returns nil if none is set.
+func joinCleanups(cleanups ...func()) func() {
+	var set []func()
+	for _, cleanup := range cleanups {
+		if cleanup != nil {
+			set = append(set, cleanup)
 		}
 	}
-	return result, nil
+	if len(set) == 0 {
+		return nil
+	}
+	return func() {
+		for _, cleanup := range set {
+			cleanup()
+		}
+	}
 }
 
 // WriteDiffSnapshot writes the full diff for a git ref to a repo-local temp
@@ -367,6 +383,21 @@ func writeExternalDiffSnapshot(repoPath, snapshotRoot, diff string) (string, fun
 }
 
 func writeExternalSnapshot(repoPath, snapshotRoot, filename, content string) (string, func(), error) {
+	dir, cleanup, err := createSnapshotDir(repoPath, snapshotRoot)
+	if err != nil {
+		return "", nil, err
+	}
+	snapshotFile := filepath.Join(dir, filename)
+	if err := writeSnapshotFile(snapshotFile, []byte(content)); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	return snapshotFile, cleanup, nil
+}
+
+// createSnapshotDir creates a private, ignored snapshot directory under
+// snapshotRoot. Stale cleanup skips it until the returned cleanup runs.
+func createSnapshotDir(repoPath, snapshotRoot string) (string, func(), error) {
 	if err := validateSnapshotRoot(repoPath, snapshotRoot); err != nil {
 		return "", nil, err
 	}
@@ -392,27 +423,26 @@ func writeExternalSnapshot(repoPath, snapshotRoot, filename, content string) (st
 	}
 	unregister := registerActiveSnapshot(dir)
 	snapshotLifecycleMu.Unlock()
-	snapshotFile := filepath.Join(dir, filename)
-	f, err := os.OpenFile(snapshotFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		unregister()
-		os.RemoveAll(dir)
-		return "", nil, fmt.Errorf("create snapshot: %w", err)
-	}
-	_, writeErr := f.WriteString(content)
-	closeErr := f.Close()
-	if writeErr != nil || closeErr != nil {
-		unregister()
-		os.RemoveAll(dir)
-		if writeErr != nil {
-			return "", nil, fmt.Errorf("write snapshot: %w", writeErr)
-		}
-		return "", nil, fmt.Errorf("close snapshot: %w", closeErr)
-	}
-	return snapshotFile, func() {
+	return dir, func() {
 		os.RemoveAll(dir)
 		unregister()
 	}, nil
+}
+
+func writeSnapshotFile(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("create snapshot: %w", err)
+	}
+	_, writeErr := f.Write(data)
+	closeErr := f.Close()
+	if writeErr != nil {
+		return fmt.Errorf("write snapshot: %w", writeErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close snapshot: %w", closeErr)
+	}
+	return nil
 }
 
 func writeSnapshotMarker(dir string) error {
@@ -583,6 +613,9 @@ func (b *Builder) BuildDirty(diff string, contextCount int, agentName, reviewTyp
 // dirty file names for dependency metadata summaries. The diff itself may have
 // review exclusions applied.
 func (b *Builder) BuildDirtyWithFiles(diff string, changedFiles []string, contextCount int, agentName, reviewType, minSeverity string) (string, error) {
+	if b.binaryEvidence {
+		return "", ErrBinaryEvidenceDirty
+	}
 	ctx, err := b.newPromptBuildContext(agentName, reviewType, minSeverity, "dirty", optionalSectionsView{})
 	if err != nil {
 		return "", err
