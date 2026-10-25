@@ -331,20 +331,30 @@ Before proposing, tell the user where the material can go:
     Kata issue text, which `[kata_context]` adds to review prompts.
 
 Ask whether that is acceptable. Do not decide for them. If the user allows only
-some providers, set `agent` on every custom type, `synthesis_agent` on every
-panel, and the repository `agent` and `default_panel`. A repository `agent`
-alone lets roborev fall back to another installed agent when the approved one
-is unavailable. Check `roborev config --from-skill list --show-origin` for
-`backup_agent` and other `*_backup_agent` keys that would route elsewhere, and
-for `budget.enabled` and `budget.agent_costs`. Budget routing does not change
-panel members or synthesis. While providers are restricted and budget routing
-is on, run every review through a panel, a one-member panel for a single type,
-or get approval to change the budget policy. When either
-`auto_design_review` setting is on and providers are restricted, propose
-`enabled = false` and `hook_enabled = false` under `[auto_design_review]` in
-`.roborev.toml`. The design review it starts is a standalone job, so budget
-routing can move it too. Propose turning it off for non-code material anyway;
-a design review of prose is noise.
+some providers, every job that can carry the material must name an approved
+agent itself. An agent inherited from a default can come from `review_agent`
+or another workflow setting, and can fall back to any installed agent.
+
+- Set `agent` on every subagent in every panel, built-in members such as a
+    `default` reviewer included, and on every custom type.
+- Set `synthesis_agent` on every panel, and the repository `agent` and
+    `default_panel`.
+- Check `roborev config --from-skill list --show-origin` for `backup_agent`
+    and `*_backup_agent`, and every panel for `synthesis_backup_agent`. Each
+    backup must be an approved agent or be removed.
+- Check `budget.enabled` and `budget.agent_costs`. Budget routing does not
+    change panel members or synthesis, but can move any other review. While it
+    is on, run every review through a panel, a one-member panel for a single
+    type, or get approval to change the budget policy.
+- When either `auto_design_review` setting is on, propose `enabled = false`
+    and `hook_enabled = false` under `[auto_design_review]` in `.roborev.toml`.
+    The design review it starts is a standalone job, so budget routing can
+    move it too.
+- In the proposal, name the agent each reviewer, combining call, and backup
+    will use.
+
+Propose turning off automatic design review for non-code material even
+without a provider restriction; a design review of prose is noise.
 
 ## Propose and get approval
 
