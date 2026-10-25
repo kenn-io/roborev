@@ -661,7 +661,10 @@ sources = ["read", "find"]
     review with no MCP tools.
 - Server and tool names are exact. Wildcards, slashes, and `__` are rejected.
 - A subagent's `[review.subagents.<name>.tools]` table replaces its type's
-    policy as a whole. Grants are not merged. Experiments cannot change `tools`.
+    policy as a whole. Grants are not merged.
+- An experiment that overrides a review type or subagent may set `tools`,
+    which replaces the base policy as a whole. Omitting `tools` keeps the
+    base policy.
 - Only global config names the MCP server file (`review_mcp_config`) and the
     most a review may request (`review_mcp_allowed_tools`, a list of
     `server/tool` pairs). Repository config cannot set either key.

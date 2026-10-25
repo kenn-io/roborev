@@ -97,18 +97,3 @@ func validateReviewMCPAllowedTools(entries []string) error {
 	}
 	return nil
 }
-
-// Experiments may not change a review's tool policy: a partial overlay would
-// merge with the base policy and could widen it.
-func validateExperimentReviewTools(review map[string]any) error {
-	for _, section := range []string{"types", "subagents"} {
-		entries, _ := review[section].(map[string]any)
-		for name, entry := range entries {
-			fields, _ := entry.(map[string]any)
-			if _, present := fields["tools"]; present {
-				return fmt.Errorf("experiment review.%s.%s.tools is not supported", section, name)
-			}
-		}
-	}
-	return nil
-}
