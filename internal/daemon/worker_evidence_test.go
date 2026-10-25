@@ -26,6 +26,9 @@ template = "rubric.md"
 
 func TestProcessJobBinaryEvidenceOnlyForEnablingType(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
+	// Git for Windows routes *.pdf through a text converter that rejects these
+	// synthetic bytes; review the fixture as plain binary on every host.
+	require.NoError(t, os.WriteFile(filepath.Join(tc.GitRepo.GitDir, "info", "attributes"), []byte("*.pdf -diff\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, ".roborev.toml"), []byte(binaryEvidenceTypesConfig), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, "rubric.md"), []byte("Check the exhibits.\n"), 0o644))
 	sha := tc.GitRepo.CommitFile("exhibit.pdf", "%PDF\x00committed", "add exhibit")

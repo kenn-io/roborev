@@ -16,6 +16,13 @@ import (
 
 const committedPDF = "%PDF-1.7\x00committed exhibit"
 
+// diffPDFsAsBinary keeps host text converters, such as the one Git for Windows
+// configures for *.pdf, from rejecting the synthetic PDF bytes in diffs.
+func diffPDFsAsBinary(t *testing.T, repo *testutil.TestRepo) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join(repo.GitDir, "info", "attributes"), []byte("*.pdf -diff\n"), 0o644))
+}
+
 // savedEvidencePath returns the snapshot path the prompt lists for repoPath.
 func savedEvidencePath(t *testing.T, text, repoPath string) string {
 	t.Helper()
@@ -28,6 +35,7 @@ func savedEvidencePath(t *testing.T, text, repoPath string) string {
 
 func TestBuildWithSnapshotBinaryEvidence(t *testing.T) {
 	repo := testutil.NewTestRepoWithCommit(t)
+	diffPDFsAsBinary(t, repo)
 	repo.CommitFiles(map[string]string{"old.png": "\x89PNG\x00"}, "add image")
 	base := repo.HeadSHA()
 	repo.RunGit("rm", "-q", "old.png")
@@ -77,6 +85,7 @@ func TestBuildWithSnapshotBinaryEvidence(t *testing.T) {
 
 func TestBinaryEvidenceOffLeavesPromptUnchanged(t *testing.T) {
 	repo := testutil.NewTestRepoWithCommit(t)
+	diffPDFsAsBinary(t, repo)
 	head := repo.CommitFile("brief.pdf", committedPDF, "add exhibit")
 	builder := NewBuilderWithConfig(nil, &config.Config{}).ForRepo(repo.Path(), 0)
 
