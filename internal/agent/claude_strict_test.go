@@ -157,7 +157,7 @@ exec sleep 60
 	_, err := strict.Review(context.Background(), t.TempDir(), "HEAD", "prompt", nil)
 
 	require.ErrorIs(t, err, ErrReviewToolPolicy)
-	assert.ErrorContains(t, err, "started with tools [Bash Glob Grep Read]")
+	require.ErrorContains(t, err, "started with tools [Bash Glob Grep Read]")
 }
 
 func TestParseClaudeStrictStreamStopsClaudeOnBadStartup(t *testing.T) {
@@ -184,7 +184,7 @@ func TestParseClaudeStrictStreamStopsClaudeOnBadStartup(t *testing.T) {
 		default: // still reading; err stays nil and the check below fails
 		}
 		require.ErrorIs(t, err, ErrReviewToolPolicy, "the parser must stop at the bad startup report")
-		assert.ErrorContains(t, err, "started with tools [Bash Glob Grep Read]")
+		require.ErrorContains(t, err, "started with tools [Bash Glob Grep Read]")
 		assert.ErrorIs(t, runCtx.Err(), context.Canceled, "claude must be stopped")
 	})
 }
