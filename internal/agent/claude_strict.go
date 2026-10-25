@@ -170,7 +170,13 @@ func parseClaudeStrictStream(r io.Reader, out io.Writer, wantTools []string, sch
 		return "", errors.New("claude did not report its startup tools")
 	}
 	if schema {
-		result, err := parseClaudeClassifyStream(&stream)
+		result, err := parseClaudeClassifyStream(bytes.NewReader(stream.Bytes()))
+		if err != nil {
+			// Keep provider errors such as quota limits, like ordinary reviews.
+			if _, streamErr := parseStreamJSON(bytes.NewReader(stream.Bytes()), nil); streamErr != nil {
+				return "", streamErr
+			}
+		}
 		return string(result), err
 	}
 	return parseStreamJSON(&stream, nil)

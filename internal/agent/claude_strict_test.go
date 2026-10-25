@@ -55,6 +55,23 @@ func TestClaudeStrictReviewRunsLockedDownSession(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
+func TestClaudeStrictSchemaReviewKeepsQuotaError(t *testing.T) {
+	mock := mockAgentCLI(t, MockCLIOpts{
+		HelpOutput: claudeStrictHelp,
+		StdoutLines: []string{
+			claudeStrictInitLine,
+			`{"type":"result","is_error":true,"error":{"message":"You've hit your weekly limit"}}`,
+		},
+		ExitCode: 1,
+	})
+	strict := NewClaudeAgent(mock.CmdPath).WithStrictReview(config.ReviewToolPolicy{Mode: "read-only"}, "mcp.json").(*ClaudeAgent)
+
+	_, err := strict.ReviewWithSchema(context.Background(), t.TempDir(), "HEAD", "prompt", jsontext.Value(`{"type":"object"}`), nil)
+
+	require.ErrorContains(t, err, "You've hit your weekly limit")
+	assert.Equal(t, LimitKindQuota, ClassifyLimit("claude-code", "agent: "+err.Error()).Kind)
+}
+
 func TestClaudeStrictReviewRequiresStrictFlags(t *testing.T) {
 	mock := mockAgentCLI(t, MockCLIOpts{
 		HelpOutput:  strings.Replace(claudeStrictHelp, "--restricted ", "", 1),
