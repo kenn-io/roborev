@@ -20,7 +20,7 @@ func (wp *WorkerPool) selectBudgetJobAgent(ctx context.Context, workerID string,
 		job.IsCIReview() || job.JobType == storage.JobTypeClassify || job.IsSynthesisJob() {
 		return nil, true
 	}
-	configRoot := job.RepoPath
+	configRoot := resolveEffectiveRepoPath(workerID, job)
 	if job.IsGoalReviewJob() {
 		configRoot = GoalReviewConfigRepoPath(job)
 	}

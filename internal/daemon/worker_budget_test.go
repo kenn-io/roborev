@@ -423,6 +423,52 @@ func TestBudgetRoutingSkipsUnsupportedCustomReviewCandidates(t *testing.T) {
 	}
 }
 
+type budgetStrictReviewAgent struct{ *budgetStructuredReviewAgent }
+
+func (a *budgetStrictReviewAgent) WithStrictReview(config.ReviewToolPolicy, string) agent.Agent {
+	return a
+}
+
+func TestBudgetRoutingUsesLinkedWorktreeToolPolicy(t *testing.T) {
+	ctx := newWorkerTestContext(t, 1)
+	for _, a := range []agent.Agent{
+		&budgetStrictReviewAgent{&budgetStructuredReviewAgent{&budgetRecordingAgent{name: "codex"}}},
+		&budgetStructuredReviewAgent{&budgetRecordingAgent{name: "gemini"}},
+	} {
+		original, err := agent.Get(a.Name())
+		require.NoError(t, err)
+		agent.Register(a)
+		t.Cleanup(func() { agent.Register(original) })
+	}
+	// Only the caller's linked worktree makes the custom type strict.
+	linked := filepath.Join(t.TempDir(), "linked")
+	ctx.GitRepo.RunGit("worktree", "add", "--detach", linked)
+	require.NoError(t, os.WriteFile(filepath.Join(ctx.TmpDir, ".roborev.toml"),
+		[]byte("[review.types.custom]\ntemplate = \"custom.md\"\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(linked, ".roborev.toml"), []byte(strictCustomTypeConfig), 0o600))
+
+	cfg := config.DefaultConfig()
+	cfg.Budget = config.BudgetConfig{
+		Enabled: true, DailyLimitCents: 500, ReserveFloorCents: 100,
+		AgentCosts: config.BudgetAgentCosts{"codex": 15, "gemini": 5},
+	}
+	ctx.reconfigurePool(cfg)
+	prior, err := ctx.DB.EnqueueJob(storage.EnqueueOpts{RepoID: ctx.Repo.ID, GitRef: "HEAD", Agent: "test"})
+	require.NoError(t, err)
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err = ctx.DB.Exec(`UPDATE review_jobs SET status='done',started_at=?,finished_at=?,agent_invoked=1,token_usage='{"has_cost":true,"cost_usd":5}' WHERE id=?`, now, now, prior.ID)
+	require.NoError(t, err)
+
+	job := ctx.createAndClaimJobWithAgent(t, testutil.GetHeadSHA(t, ctx.TmpDir), testWorkerID, "codex")
+	job.ReviewType = "custom"
+	job.WorktreePath = linked
+	selected, proceed := ctx.Pool.selectBudgetJobAgent(t.Context(), testWorkerID, job, cfg)
+	require.True(t, proceed)
+	require.NotNil(t, selected)
+	assert.Equal(t, "codex", selected.Name(), "the cheaper agent cannot run the worktree's strict review")
+	assert.Equal(t, "codex", job.Agent)
+}
+
 func TestBudgetRoutingPreservesConfiguredAgentAsFailover(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	primary := &budgetRecordingAgent{name: "codex"}
