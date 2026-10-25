@@ -10,11 +10,13 @@ import (
 func TestCanonicalReviewToolPolicy(t *testing.T) {
 	got, err := CanonicalReviewToolPolicy(&ReviewToolPolicy{Mode: "read-only", MCP: map[string][]string{
 		"research": {"read_source", "find-citation", "read_source"},
+		"_archive": {"lookup_"},
 		"unused":   {},
 	}})
 	require.NoError(t, err)
 	assert.Equal(t, &ReviewToolPolicy{Mode: "read-only", MCP: map[string][]string{
 		"research": {"find-citation", "read_source"},
+		"_archive": {"lookup_"},
 	}}, got)
 
 	got, err = CanonicalReviewToolPolicy(nil)
@@ -30,6 +32,8 @@ func TestCanonicalReviewToolPolicy(t *testing.T) {
 		"space in server":  {Mode: "read-only", MCP: map[string][]string{"my source": {"read"}}},
 		"empty server":     {Mode: "read-only", MCP: map[string][]string{"": {"read"}}},
 		"bad server alone": {Mode: "read-only", MCP: map[string][]string{"a.b": {}}},
+		"server ends in _": {Mode: "read-only", MCP: map[string][]string{"archive_": {"lookup"}}},
+		"tool starts in _": {Mode: "read-only", MCP: map[string][]string{"archive": {"_lookup"}}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := CanonicalReviewToolPolicy(&policy)
@@ -95,7 +99,7 @@ func TestReviewMCPAuthorityIsGlobalOnly(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.ReviewMCPAllowedTools = []string{"sources/read"}
 	require.NoError(t, cfg.Validate())
-	for _, entry := range []string{"read", "sources/", "sources/*", "sources/read/extra"} {
+	for _, entry := range []string{"read", "sources/", "sources/*", "sources/read/extra", "sources_/read"} {
 		cfg.ReviewMCPAllowedTools = []string{entry}
 		require.Error(t, cfg.Validate(), entry)
 	}

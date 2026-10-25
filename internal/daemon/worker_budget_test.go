@@ -425,7 +425,7 @@ func TestBudgetRoutingSkipsUnsupportedCustomReviewCandidates(t *testing.T) {
 
 type budgetStrictReviewAgent struct{ *budgetStructuredReviewAgent }
 
-func (a *budgetStrictReviewAgent) WithStrictReview(config.ReviewToolPolicy, string) agent.Agent {
+func (a *budgetStrictReviewAgent) WithStrictReview(config.ReviewToolPolicy, agent.ReviewMCP) agent.Agent {
 	return a
 }
 

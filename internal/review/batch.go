@@ -225,7 +225,7 @@ func runSingle(
 		defer snapResult.Cleanup()
 	}
 
-	resolvedAgent, toolCleanup, err := agent.PrepareReviewToolPolicy(resolvedAgent, settings.Tools)
+	resolvedAgent, toolCleanup, err := agent.PrepareReviewToolPolicy(resolvedAgent, settings.Tools, cfg.GlobalConfig)
 	if err != nil {
 		result.Status = ResultFailed
 		result.Error = err.Error()

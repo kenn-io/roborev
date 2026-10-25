@@ -52,6 +52,24 @@ digits, and hyphens. Names may not replace built-in types or their aliases:
 A repository definition replaces a global definition with the same name. Its
 fields are not merged individually.
 
+### Granting MCP tools
+
+A strict review type can name the exact MCP tools its reviewer may call. For
+example, a citations rubric can look up sources while other types get no MCP
+access:
+
+```toml
+[review.types.citations.tools]
+mode = "read-only"
+
+[review.types.citations.tools.mcp]
+sources = ["read", "find"]
+```
+
+The operator's global config must define the `sources` server and allow both
+tools. See
+[Strict Review Tool Policies](/docs/configuration/#strict-review-tool-policies).
+
 ## Paths and includes
 
 Repository and global configuration accept:

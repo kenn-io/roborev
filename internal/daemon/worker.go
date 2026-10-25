@@ -1454,7 +1454,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			defer preparedPrompt.Cleanup()
 		}
 		reviewPrompt = preparedPrompt.Prompt
-		preparedAgent, toolCleanup, toolErr := agent.PrepareReviewToolPolicy(a, tools)
+		preparedAgent, toolCleanup, toolErr := agent.PrepareReviewToolPolicy(a, tools, cfg)
 		if toolErr != nil {
 			wp.failOrRetryContext(ctx, workerID, job, agentName, fmt.Sprintf("prepare review tools: %v", toolErr))
 			return

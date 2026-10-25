@@ -135,16 +135,18 @@ A strict review starts a fresh, locked-down Claude session:
     (`$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json`) into a
     private settings file for the review. Hooks, permissions, and plugins are
     never loaded.
-- MCP servers come only from an empty, private config file that roborev writes
-    for the review and deletes afterwards.
+- MCP servers come only from a private config file that roborev writes for the
+    review and deletes afterwards. It lists only the servers the review was
+    granted, and only the granted tools are allowed.
 - Permissions use `dontAsk` mode with no prompts. Slash commands are disabled.
 - The session never resumes an earlier session, is not saved, and is never
     reused by a later review.
 
 Before trusting the output, roborev checks Claude's startup report. If it shows
-a different tool set, a different permission mode, or any MCP server, roborev
-stops Claude and fails the review. If the installed Claude Code CLI lacks a
-required flag, the review fails with an upgrade error instead of running.
+a different tool set, a different permission mode, a missing or unconnected
+granted server, a missing granted tool, or any other MCP server, roborev stops
+Claude and fails the review. If the installed Claude Code CLI lacks a required
+flag, the review fails with an upgrade error instead of running.
 
 ## Routing Claude Code to a Proxy
 

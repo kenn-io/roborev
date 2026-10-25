@@ -27,8 +27,8 @@ type ClaudeAgent struct {
 	SessionID string         // Existing session ID to resume
 
 	// Set by WithStrictReview. A strict agent never resumes a session.
-	strictPolicy        *config.ReviewToolPolicy
-	strictMCPConfigPath string
+	strictPolicy *config.ReviewToolPolicy
+	strictMCP    ReviewMCP
 	// Set by PrepareReviewToolPolicy when user settings hold credential keys.
 	strictSettingsPath string
 }
@@ -63,14 +63,14 @@ func (a *ClaudeAgent) clone(opts ...agentCloneOption) *ClaudeAgent {
 		opts...,
 	)
 	clone := &ClaudeAgent{
-		Command:             cfg.Command,
-		Model:               cfg.Model,
-		Reasoning:           cfg.Reasoning,
-		Agentic:             cfg.Agentic,
-		SessionID:           cfg.SessionID,
-		strictPolicy:        a.strictPolicy.Clone(),
-		strictMCPConfigPath: a.strictMCPConfigPath,
-		strictSettingsPath:  a.strictSettingsPath,
+		Command:            cfg.Command,
+		Model:              cfg.Model,
+		Reasoning:          cfg.Reasoning,
+		Agentic:            cfg.Agentic,
+		SessionID:          cfg.SessionID,
+		strictPolicy:       a.strictPolicy.Clone(),
+		strictMCP:          a.strictMCP,
+		strictSettingsPath: a.strictSettingsPath,
 	}
 	if clone.strictPolicy != nil {
 		clone.Agentic = false

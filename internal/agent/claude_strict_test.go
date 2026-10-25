@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -22,10 +23,14 @@ const claudeStrictHelp = "--restricted --tools --allowedTools, --allowed-tools -
 const claudeStrictInitLine = `{"type":"system","subtype":"init","permissionMode":"dontAsk","tools":["Read","Glob","Grep","StructuredOutput"],"mcp_servers":[]}`
 
 func TestClaudeStrictReviewRunsLockedDownSession(t *testing.T) {
+	// The selected server also offers an ungranted tool; --allowedTools denies it.
+	initLine := `{"type":"system","subtype":"init","permissionMode":"dontAsk",` +
+		`"tools":["Read","Glob","Grep","StructuredOutput","mcp__sources__read","mcp__sources__find"],` +
+		`"mcp_servers":[{"name":"sources","status":"connected"}]}`
 	mock := mockAgentCLI(t, MockCLIOpts{
 		HelpOutput:  claudeStrictHelp,
 		CaptureArgs: true,
-		StdoutLines: []string{claudeStrictInitLine, `{"type":"result","result":"{\"findings\":[]}"}`},
+		StdoutLines: []string{initLine, `{"type":"result","result":"{\"findings\":[]}"}`},
 	})
 	userDir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", userDir)
@@ -36,13 +41,15 @@ func TestClaudeStrictReviewRunsLockedDownSession(t *testing.T) {
 		"permissions": {"allow": ["Bash"]},
 		"enabledPlugins": {"synthetic@market": true}
 	}`), 0o600))
+	cfg := &config.Config{ReviewMCPConfig: writeOperatorMCPConfig(t), ReviewMCPAllowedTools: []string{"sources/read"}}
+	policy := &config.ReviewToolPolicy{Mode: "read-only", MCP: map[string][]string{"sources": {"read"}}}
 	base := NewClaudeAgent(mock.CmdPath).WithModel("opus").WithReasoning(ReasoningThorough).(*ClaudeAgent).WithSessionID("old-session")
-	prepared, cleanup, err := PrepareReviewToolPolicy(base, &config.ReviewToolPolicy{Mode: "read-only"})
+	prepared, cleanup, err := PrepareReviewToolPolicy(base, policy, cfg)
 	require.NoError(t, err)
 	mcpConfig := prepared.(*ClaudeAgent).StrictReviewMCPConfig()
 	data, err := os.ReadFile(mcpConfig)
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"mcpServers":{}}`, string(data))
+	assert.JSONEq(t, `{"mcpServers":{"sources":{"command":"source-reader","args":["--stdio"]}}}`, string(data))
 	// Only credential and provider keys survive; hooks, permissions and
 	// plugins from user settings must never reach the strict session.
 	settings := filepath.Join(filepath.Dir(mcpConfig), "settings.json")
@@ -63,7 +70,7 @@ func TestClaudeStrictReviewRunsLockedDownSession(t *testing.T) {
 	assert.JSONEq(t, `{"findings":[]}`, string(out))
 	assert.Equal(t, []string{
 		"-p", "--verbose", "--output-format", "stream-json",
-		"--restricted", "--tools", "Glob,Grep,Read", "--allowedTools", "Glob,Grep,Read",
+		"--restricted", "--tools", "Glob,Grep,Read", "--allowedTools", "Glob,Grep,Read,mcp__sources__read",
 		"--strict-mcp-config", "--mcp-config", mcpConfig,
 		"--permission-mode", "dontAsk", "--permission-prompts", "none",
 		"--no-session-persistence", "--disable-slash-commands",
@@ -81,7 +88,7 @@ func TestClaudeStrictReviewRunsLockedDownSession(t *testing.T) {
 
 func TestClaudeStrictReviewWithoutUserSettingsPassesNoSettings(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
-	prepared, cleanup, err := PrepareReviewToolPolicy(NewClaudeAgent("claude"), &config.ReviewToolPolicy{Mode: "read-only"})
+	prepared, cleanup, err := PrepareReviewToolPolicy(NewClaudeAgent("claude"), &config.ReviewToolPolicy{Mode: "read-only"}, &config.Config{})
 	require.NoError(t, err)
 	defer cleanup()
 
@@ -99,7 +106,7 @@ func TestClaudeStrictSchemaReviewKeepsQuotaError(t *testing.T) {
 		},
 		ExitCode: 1,
 	})
-	strict := NewClaudeAgent(mock.CmdPath).WithStrictReview(config.ReviewToolPolicy{Mode: "read-only"}, "mcp.json").(*ClaudeAgent)
+	strict := NewClaudeAgent(mock.CmdPath).WithStrictReview(config.ReviewToolPolicy{Mode: "read-only"}, ReviewMCP{ConfigPath: "mcp.json"}).(*ClaudeAgent)
 
 	_, err := strict.ReviewWithSchema(context.Background(), t.TempDir(), "HEAD", "prompt", jsontext.Value(`{"type":"object"}`), nil)
 
@@ -113,7 +120,7 @@ func TestClaudeStrictReviewRequiresStrictFlags(t *testing.T) {
 		CaptureArgs: true,
 		StdoutLines: []string{claudeStrictInitLine},
 	})
-	strict := NewClaudeAgent(mock.CmdPath).WithStrictReview(config.ReviewToolPolicy{Mode: "read-only"}, "mcp.json")
+	strict := NewClaudeAgent(mock.CmdPath).WithStrictReview(config.ReviewToolPolicy{Mode: "read-only"}, ReviewMCP{ConfigPath: "mcp.json"})
 
 	_, err := strict.Review(context.Background(), t.TempDir(), "HEAD", "prompt", nil)
 
@@ -127,9 +134,17 @@ func TestParseClaudeStrictStream(t *testing.T) {
 	init := func(fields string) string {
 		return `{"type":"system","subtype":"init",` + fields + `}`
 	}
+	granted := append(slices.Clone(claudeStrictNativeTools), "mcp__sources__read")
+	sources := []string{"sources"}
+	mcpInit := func(tools, servers string) string {
+		return init(`"permissionMode":"dontAsk","tools":["Read","Glob","Grep"` + tools + `],"mcp_servers":[` + servers + `]`)
+	}
+	const connected = `{"name":"sources","status":"connected"}`
 	tests := []struct {
 		name    string
 		stream  []string
+		tools   []string
+		servers []string
 		wantErr string
 	}{
 		{name: "exact startup", stream: []string{
@@ -151,10 +166,32 @@ func TestParseClaudeStrictStream(t *testing.T) {
 		{name: "output before init", stream: []string{
 			result, init(`"permissionMode":"dontAsk","tools":["Read","Glob","Grep"],"mcp_servers":[]`),
 		}, wantErr: "result output before its init event"},
+		{name: "exact MCP startup", tools: granted, servers: sources, stream: []string{
+			mcpInit(`,"mcp__sources__read","mcp__sources__find"`, connected), result,
+		}},
+		{name: "selected server missing", tools: granted, servers: sources, stream: []string{
+			mcpInit(`,"mcp__sources__read"`, ""), result,
+		}, wantErr: `without selected MCP server "sources"`},
+		{name: "selected server not connected", tools: granted, servers: sources, stream: []string{
+			mcpInit(`,"mcp__sources__read"`, `{"name":"sources","status":"failed"}`), result,
+		}, wantErr: `MCP server "sources" is "failed"`},
+		{name: "granted tool missing", tools: granted, servers: sources, stream: []string{
+			mcpInit(`,"mcp__sources__find"`, connected), result,
+		}, wantErr: `without granted tool "mcp__sources__read"`},
+		{name: "unselected server", tools: granted, servers: sources, stream: []string{
+			mcpInit(`,"mcp__sources__read"`, connected+`,{"name":"ambient","status":"connected"}`), result,
+		}, wantErr: `MCP server "ambient"`},
+		{name: "foreign MCP namespace", tools: granted, servers: sources, stream: []string{
+			mcpInit(`,"mcp__sources__read","mcp__ambient__write"`, connected), result,
+		}, wantErr: `"mcp__ambient__write" from an unselected MCP server`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseClaudeStrictStream(strings.NewReader(strings.Join(tt.stream, "\n")), nil, claudeStrictNativeTools, false)
+			tools := tt.tools
+			if tools == nil {
+				tools = claudeStrictNativeTools
+			}
+			got, err := parseClaudeStrictStream(strings.NewReader(strings.Join(tt.stream, "\n")), nil, tools, tt.servers, false)
 			if tt.wantErr == "" {
 				require.NoError(t, err)
 				assert.Equal(t, "review text", got)
@@ -165,7 +202,7 @@ func TestParseClaudeStrictStream(t *testing.T) {
 		})
 	}
 
-	_, err := parseClaudeStrictStream(strings.NewReader(`{"type":"system","subtype":"hook_started"}`), nil, claudeStrictNativeTools, false)
+	_, err := parseClaudeStrictStream(strings.NewReader(`{"type":"system","subtype":"hook_started"}`), nil, claudeStrictNativeTools, nil, false)
 	require.ErrorContains(t, err, "did not report its startup tools")
 }
 
@@ -174,7 +211,7 @@ func TestCheckStrictReviewPrepared(t *testing.T) {
 	claude := NewClaudeAgent("claude")
 	require.NoError(t, CheckStrictReviewPrepared(nil, claude))
 	require.ErrorIs(t, CheckStrictReviewPrepared(policy, claude), ErrReviewToolPolicy)
-	require.NoError(t, CheckStrictReviewPrepared(policy, claude.WithStrictReview(*policy, "mcp.json")))
+	require.NoError(t, CheckStrictReviewPrepared(policy, claude.WithStrictReview(*policy, ReviewMCP{ConfigPath: "mcp.json"})))
 }
 
 func TestClaudeStrictReviewReportsPolicyErrorWhenStopped(t *testing.T) {
@@ -187,7 +224,7 @@ case "$1" in *etxtbsy*) exit 0;; --help) cat "`+helpFile+`"; exit 0;; esac
 echo '{"type":"system","subtype":"init","permissionMode":"dontAsk","tools":["Read","Glob","Grep","Bash"],"mcp_servers":[]}'
 exec sleep 60
 `)
-	strict := NewClaudeAgent(cmd).WithStrictReview(config.ReviewToolPolicy{Mode: "read-only"}, "mcp.json")
+	strict := NewClaudeAgent(cmd).WithStrictReview(config.ReviewToolPolicy{Mode: "read-only"}, ReviewMCP{ConfigPath: "mcp.json"})
 
 	_, err := strict.Review(context.Background(), t.TempDir(), "HEAD", "prompt", nil)
 
@@ -208,7 +245,7 @@ func TestParseClaudeStrictStreamStopsClaudeOnBadStartup(t *testing.T) {
 
 		parsed := make(chan error, 1)
 		go func() {
-			_, err := parseClaudeStrictStreamOrStop(stdout, nil, claudeStrictNativeTools, false, cancel)
+			_, err := parseClaudeStrictStreamOrStop(stdout, nil, claudeStrictNativeTools, nil, false, cancel)
 			parsed <- err
 		}()
 		synctest.Wait()

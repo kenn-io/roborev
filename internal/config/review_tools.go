@@ -40,6 +40,16 @@ func validReviewToolName(name string) bool {
 	return reviewToolNamePattern.MatchString(name) && !strings.Contains(name, "__")
 }
 
+// Native names join server + "__" + tool, so a server ending in "_" or a tool
+// starting with "_" could collide: archive_/lookup and archive/_lookup.
+func validReviewMCPServerName(name string) bool {
+	return validReviewToolName(name) && !strings.HasSuffix(name, "_")
+}
+
+func validReviewMCPToolName(name string) bool {
+	return validReviewToolName(name) && !strings.HasPrefix(name, "_")
+}
+
 // CanonicalReviewToolPolicy validates a policy and returns a copy with sorted,
 // duplicate-free tool lists and no empty server entries.
 func CanonicalReviewToolPolicy(p *ReviewToolPolicy) (*ReviewToolPolicy, error) {
@@ -51,11 +61,11 @@ func CanonicalReviewToolPolicy(p *ReviewToolPolicy) (*ReviewToolPolicy, error) {
 	}
 	result := &ReviewToolPolicy{Mode: p.Mode, MCP: make(map[string][]string, len(p.MCP))}
 	for server, tools := range p.MCP {
-		if !validReviewToolName(server) {
+		if !validReviewMCPServerName(server) {
 			return nil, fmt.Errorf("invalid review MCP server name %q", server)
 		}
 		for _, tool := range tools {
-			if !validReviewToolName(tool) {
+			if !validReviewMCPToolName(tool) {
 				return nil, fmt.Errorf("invalid review MCP tool name %q for server %q", tool, server)
 			}
 		}
@@ -91,7 +101,7 @@ func ResolveReviewSettings(reviewType string, memberTools *ReviewToolPolicy, rep
 func validateReviewMCPAllowedTools(entries []string) error {
 	for _, entry := range entries {
 		server, tool, ok := strings.Cut(entry, "/")
-		if !ok || !validReviewToolName(server) || !validReviewToolName(tool) {
+		if !ok || !validReviewMCPServerName(server) || !validReviewMCPToolName(tool) {
 			return fmt.Errorf("review_mcp_allowed_tools entry %q must be an exact server/tool pair", entry)
 		}
 	}

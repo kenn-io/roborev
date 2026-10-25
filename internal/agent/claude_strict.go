@@ -33,12 +33,12 @@ var claudeStrictFlags = []string{
 var claudeHelpFlagCache sync.Map
 
 // WithStrictReview returns a copy that runs reviews in a fresh, locked-down
-// Claude session limited to policy. mcpConfigPath is the only MCP config the
+// Claude session limited to policy. mcp.ConfigPath is the only MCP config the
 // session loads.
-func (a *ClaudeAgent) WithStrictReview(policy config.ReviewToolPolicy, mcpConfigPath string) Agent {
+func (a *ClaudeAgent) WithStrictReview(policy config.ReviewToolPolicy, mcp ReviewMCP) Agent {
 	clone := a.clone()
 	clone.strictPolicy = policy.Clone()
-	clone.strictMCPConfigPath = mcpConfigPath
+	clone.strictMCP = mcp
 	clone.strictSettingsPath = ""
 	clone.Agentic = false
 	clone.SessionID = ""
@@ -51,22 +51,24 @@ func (a *ClaudeAgent) StrictReviewMCPConfig() string {
 	if a.strictPolicy == nil {
 		return ""
 	}
-	return a.strictMCPConfigPath
+	return a.strictMCP.ConfigPath
 }
 
-// strictAllowedTools lists the tools a strict session may load and use.
+// strictAllowedTools lists the tools a strict session may use: the native
+// tools plus the exact granted MCP tools.
 func (a *ClaudeAgent) strictAllowedTools() []string {
-	return slices.Clone(claudeStrictNativeTools)
+	return slices.Concat(claudeStrictNativeTools, a.strictMCP.Tools)
 }
 
 func (a *ClaudeAgent) buildStrictArgs(includeEffort bool) []string {
-	tools := strings.Join(a.strictAllowedTools(), ",")
 	args := []string{
 		"-p", "--verbose", "--output-format", "stream-json",
 		// --restricted skips user, project and local settings, so hooks,
 		// plugins and permission rules from them cannot add tools.
-		"--restricted", "--tools", tools, "--allowedTools", tools,
-		"--strict-mcp-config", "--mcp-config", a.strictMCPConfigPath,
+		// --tools limits built-in tools only; MCP tools come from --mcp-config.
+		"--restricted", "--tools", strings.Join(claudeStrictNativeTools, ","),
+		"--allowedTools", strings.Join(a.strictAllowedTools(), ","),
+		"--strict-mcp-config", "--mcp-config", a.strictMCP.ConfigPath,
 		"--permission-mode", "dontAsk", "--permission-prompts", "none",
 		"--no-session-persistence", "--disable-slash-commands",
 	}
@@ -164,13 +166,16 @@ type claudeStrictInit struct {
 	PermissionMode string   `json:"permissionMode"`
 	Tools          []string `json:"tools"`
 	MCPServers     []struct {
-		Name string `json:"name"`
+		Name   string `json:"name"`
+		Status string `json:"status"`
 	} `json:"mcp_servers"`
 }
 
 // validateClaudeStrictInit checks Claude's own startup report: the session
-// must load exactly wantTools, no MCP servers, and the non-prompting mode.
-func validateClaudeStrictInit(line []byte, wantTools []string) error {
+// must run in the non-prompting mode, load exactly the native tools in
+// wantTools, connect exactly wantServers, and offer every granted MCP tool in
+// wantTools. A selected server may offer other tools; --allowedTools denies them.
+func validateClaudeStrictInit(line []byte, wantTools, wantServers []string) error {
 	var init claudeStrictInit
 	if err := json.Unmarshal(line, &init); err != nil {
 		return fmt.Errorf("%w: malformed claude init event: %w", ErrReviewToolPolicy, err)
@@ -178,13 +183,44 @@ func validateClaudeStrictInit(line []byte, wantTools []string) error {
 	if init.PermissionMode != "dontAsk" {
 		return fmt.Errorf("%w: claude started in permission mode %q, want dontAsk", ErrReviewToolPolicy, init.PermissionMode)
 	}
-	got := slices.Sorted(slices.Values(init.Tools))
-	want := slices.Sorted(slices.Values(wantTools))
-	if !slices.Equal(got, want) {
-		return fmt.Errorf("%w: claude started with tools %v, want %v", ErrReviewToolPolicy, got, want)
+	var gotNative, wantNative []string
+	for _, tool := range init.Tools {
+		rest, ok := strings.CutPrefix(tool, "mcp__")
+		if !ok {
+			gotNative = append(gotNative, tool)
+			continue
+		}
+		server, _, _ := strings.Cut(rest, "__")
+		if !slices.Contains(wantServers, server) {
+			return fmt.Errorf("%w: claude started with tool %q from an unselected MCP server", ErrReviewToolPolicy, tool)
+		}
 	}
-	if len(init.MCPServers) != 0 {
-		return fmt.Errorf("%w: claude started with MCP server %q", ErrReviewToolPolicy, init.MCPServers[0].Name)
+	for _, tool := range wantTools {
+		if !strings.HasPrefix(tool, "mcp__") {
+			wantNative = append(wantNative, tool)
+		} else if !slices.Contains(init.Tools, tool) {
+			return fmt.Errorf("%w: claude started without granted tool %q", ErrReviewToolPolicy, tool)
+		}
+	}
+	slices.Sort(gotNative)
+	slices.Sort(wantNative)
+	if !slices.Equal(gotNative, wantNative) {
+		return fmt.Errorf("%w: claude started with tools %v, want %v", ErrReviewToolPolicy, gotNative, wantNative)
+	}
+	connected := map[string]bool{}
+	for _, server := range init.MCPServers {
+		if !slices.Contains(wantServers, server.Name) {
+			return fmt.Errorf("%w: claude started with MCP server %q", ErrReviewToolPolicy, server.Name)
+		}
+		if server.Status != "connected" {
+			return fmt.Errorf("%w: MCP server %q is %q at startup, want connected", ErrReviewToolPolicy, server.Name, server.Status)
+		}
+		connected[server.Name] = true
+	}
+	for _, server := range wantServers {
+		if !connected[server] {
+			return fmt.Errorf("%w: claude started without selected MCP server %q", ErrReviewToolPolicy, server)
+		}
 	}
 	return nil
 }
@@ -192,7 +228,7 @@ func validateClaudeStrictInit(line []byte, wantTools []string) error {
 // parseClaudeStrictStream checks the init event before any model output and
 // stops at the first violation. It then parses the stream like an ordinary
 // review, or a schema review when schema is set.
-func parseClaudeStrictStream(r io.Reader, out io.Writer, wantTools []string, schema bool) (string, error) {
+func parseClaudeStrictStream(r io.Reader, out io.Writer, wantTools, wantServers []string, schema bool) (string, error) {
 	var stream bytes.Buffer
 	initialized := false
 	err := scanStreamJSONLines(r, out, func(line string) error {
@@ -211,7 +247,7 @@ func parseClaudeStrictStream(r io.Reader, out io.Writer, wantTools []string, sch
 		switch {
 		case msg.Type == "system" && msg.Subtype == "init":
 			initialized = true
-			return validateClaudeStrictInit([]byte(line), wantTools)
+			return validateClaudeStrictInit([]byte(line), wantTools, wantServers)
 		case msg.Type == "assistant" || msg.Type == "result" || msg.Type == "tool_use" || msg.Type == "tool_result":
 			return fmt.Errorf("%w: claude sent %s output before its init event", ErrReviewToolPolicy, msg.Type)
 		}
@@ -238,8 +274,8 @@ func parseClaudeStrictStream(r io.Reader, out io.Writer, wantTools []string, sch
 
 // parseClaudeStrictStreamOrStop calls stop as soon as the stream breaks the
 // policy, so Claude does not keep running after a bad startup report.
-func parseClaudeStrictStreamOrStop(r io.Reader, out io.Writer, wantTools []string, schema bool, stop func()) (string, error) {
-	parsed, err := parseClaudeStrictStream(r, out, wantTools, schema)
+func parseClaudeStrictStreamOrStop(r io.Reader, out io.Writer, wantTools, wantServers []string, schema bool, stop func()) (string, error) {
+	parsed, err := parseClaudeStrictStream(r, out, wantTools, wantServers, schema)
 	if errors.Is(err, ErrReviewToolPolicy) {
 		stop()
 	}
@@ -247,7 +283,7 @@ func parseClaudeStrictStreamOrStop(r io.Reader, out io.Writer, wantTools []strin
 }
 
 func (a *ClaudeAgent) strictReview(ctx context.Context, repoPath, prompt string, schema jsontext.Value, out io.Writer) (string, error) {
-	if a.strictMCPConfigPath == "" {
+	if a.strictMCP.ConfigPath == "" {
 		return "", fmt.Errorf("%w: strict claude review has no MCP config", ErrReviewToolPolicy)
 	}
 	model, baseURL, err := parseModel(a.Model)
@@ -293,7 +329,7 @@ func (a *ClaudeAgent) strictReview(ctx context.Context, repoPath, prompt string,
 			if sw != nil {
 				w = sw
 			}
-			return parseClaudeStrictStreamOrStop(r, w, wantTools, hasSchema, cancel)
+			return parseClaudeStrictStreamOrStop(r, w, wantTools, a.strictMCP.Servers, hasSchema, cancel)
 		},
 	})
 	if errors.Is(result.ParseErr, ErrReviewToolPolicy) {

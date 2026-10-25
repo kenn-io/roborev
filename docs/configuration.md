@@ -659,21 +659,46 @@ sources = ["read", "find"]
 
 - Omit `tools` to keep the agent's ordinary behavior. Omit `mcp` for a strict
     review with no MCP tools.
-- Server and tool names are exact. Wildcards, slashes, and `__` are rejected.
+- Server and tool names are exact. Wildcards, slashes, and `__` are rejected. A
+    server name cannot end in `_` and a tool name cannot start with `_`, so two
+    grants never map to the same Claude tool name.
 - A subagent's `[review.subagents.<name>.tools]` table replaces its type's
     policy as a whole. Grants are not merged.
 - An experiment that overrides a review type or subagent may set `tools`, which
     replaces the base policy as a whole. Omitting `tools` keeps the base policy.
-- Only global config names the MCP server file (`review_mcp_config`) and the
-    most a review may request (`review_mcp_allowed_tools`, a list of
-    `server/tool` pairs). Repository config cannot set either key.
+- Only global config names the MCP servers and the tools a review may request.
+    Repository config cannot set either key. See below.
 - Panel and CI members keep the policy they were queued with, including on
     rerun.
 - If the selected agent or its backup cannot enforce the policy, the review
     fails before it starts. Strict policies cannot be combined with agentic
     mode. Only Claude Code supports strict policies; see
-    [Strict Claude Code Reviews](/docs/agents/#strict-claude-code-reviews). No
-    agent supports MCP grants in this release yet.
+    [Strict Claude Code Reviews](/docs/agents/#strict-claude-code-reviews).
+
+The operator sets up MCP access in `~/.roborev/config.toml`:
+
+```toml
+review_mcp_config = "/etc/roborev/review-mcp.json"
+review_mcp_allowed_tools = ["sources/read", "sources/find"]
+```
+
+`review_mcp_config` is an absolute path to a file in Claude Code's own MCP
+format:
+
+```json
+{
+  "mcpServers": {
+    "sources": { "command": "source-reader", "args": ["--stdio"] }
+  }
+}
+```
+
+`review_mcp_allowed_tools` is the ceiling: a review type can only request
+`server/tool` pairs listed there, matched exactly. Roborev checks the current
+ceiling every time a review runs, so removing a pair also stops queued reviews
+from using it. Each review gets a private copy of the file that holds only its
+granted servers, so other servers in the file never start. Reviews without MCP
+grants never read the file.
 
 ### Review Panels
 

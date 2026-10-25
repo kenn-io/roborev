@@ -115,9 +115,9 @@ func (a *strictWorkerTestAgent) WithAgentic(bool) agent.Agent                   
 func (a *strictWorkerTestAgent) WithModel(string) agent.Agent                   { return a }
 func (a *strictWorkerTestAgent) StrictReviewMCPConfig() string                  { return a.mcpConfig }
 
-func (a *strictWorkerTestAgent) WithStrictReview(_ config.ReviewToolPolicy, path string) agent.Agent {
+func (a *strictWorkerTestAgent) WithStrictReview(_ config.ReviewToolPolicy, mcp agent.ReviewMCP) agent.Agent {
 	clone := *a
-	clone.mcpConfig = path
+	clone.mcpConfig = mcp.ConfigPath
 	return &clone
 }
 
