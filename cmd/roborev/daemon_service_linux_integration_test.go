@@ -73,7 +73,9 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			}
 			script := writeSlowUpdateAgent(t, dataDir)
 			releaseReview := filepath.Join(dataDir, "finish-review")
-			if pausing {
+			// Hold the active review until released so the single worker
+			// cannot claim the queued review while the scenario runs.
+			if pausing || scenario == "socket vanished pause" {
 				body, err := os.ReadFile(script)
 				require.NoError(t, err)
 				body = []byte(strings.Replace(string(body), "sleep 2", "while [ ! -f "+strconv.Quote(releaseReview)+" ]; do sleep 0.05; done", 1))
@@ -158,7 +160,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			if socketActivated {
 				if scenario == "socket vanished pause" {
 					installRoborev(t, newBinary, link)
-					assertVanishedSocketPauseRefused(t, original, unit, dataDir, queued)
+					assertVanishedSocketPauseRefused(t, original, unit, dataDir, releaseReview, queued)
 				} else {
 					assertSocketReplacementKept(t, original, unit, listen, queued)
 				}
@@ -288,8 +290,11 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 	}
 }
 
-func assertVanishedSocketPauseRefused(t *testing.T, original *daemon.RuntimeInfo, unit, dataDir string, queued storage.ReviewJob) {
+func assertVanishedSocketPauseRefused(t *testing.T, original *daemon.RuntimeInfo, unit, dataDir, releaseReview string, queued storage.ReviewJob) {
 	t.Helper()
+	db, err := storage.OpenReadOnly(filepath.Join(dataDir, "reviews.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, db.Close()) })
 	oldFind, oldDiscovery, oldPause := findDaemonService, getAnyRunningDaemonForStart, pendingStartPause
 	t.Cleanup(func() {
 		findDaemonService, getAnyRunningDaemonForStart, pendingStartPause = oldFind, oldDiscovery, oldPause
@@ -306,7 +311,17 @@ func assertVanishedSocketPauseRefused(t *testing.T, original *daemon.RuntimeInfo
 		if !missed {
 			// The real daemon exits after ownership is captured. Its socket
 			// remains active, and its queued review has not been claimed.
-			require.NoError(t, daemon.KillDaemon(original))
+			killed := make(chan error, 1)
+			go func() { killed <- daemon.KillDaemon(original) }()
+			// The daemon is a separate process that closes its SQLite claim
+			// gate before draining. Release the active review only after
+			// that, so the worker cannot claim the queued review.
+			require.Eventually(t, func() bool {
+				draining, err := db.IsShutdownDraining()
+				return err == nil && draining
+			}, 15*time.Second, 10*time.Millisecond)
+			require.NoError(t, os.WriteFile(releaseReview, nil, 0o600))
+			require.NoError(t, <-killed)
 			missed = true
 			return nil, os.ErrNotExist
 		}
@@ -314,12 +329,9 @@ func assertVanishedSocketPauseRefused(t *testing.T, original *daemon.RuntimeInfo
 	}
 	paused := true
 	pendingStartPause = &paused
-	err := recoverDaemon(original, nil, false)
+	err = recoverDaemon(original, nil, false)
 	assert.ErrorContains(t, err, "run systemctl --user start "+unit+", then retry roborev pause")
 	assert.Zero(t, serviceMainPIDForTest(t, unit), "failed pause must leave the activation socket untouched")
-	db, err := storage.OpenReadOnly(filepath.Join(dataDir, "reviews.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, db.Close()) })
 	job, err := db.GetJobByID(queued.ID)
 	require.NoError(t, err)
 	assert.Equal(t, storage.JobStatusQueued, job.Status, "pause failure must leave the queued review unclaimed")
