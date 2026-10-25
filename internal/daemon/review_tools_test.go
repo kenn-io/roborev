@@ -1,6 +1,10 @@
 package daemon
 
 import (
+	"context"
+	"encoding/json/jsontext"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -95,4 +99,79 @@ func TestPanelRerunKeepsFrozenToolPolicy(t *testing.T) {
 	tools, err := reviewJobTools(&rerunMembers[0], member.RepoPath, cfg)
 	require.NoError(t, err)
 	assert.Equal(t, &config.ReviewToolPolicy{Mode: "read-only", MCP: map[string][]string{}}, tools)
+}
+
+type strictWorkerTestAgent struct {
+	*structuredWorkerTestAgent
+	mcpConfig string
+	err       error
+	onReview  func(mcpConfig string)
+}
+
+func (a *strictWorkerTestAgent) WithReasoning(agent.ReasoningLevel) agent.Agent { return a }
+func (a *strictWorkerTestAgent) WithAgentic(bool) agent.Agent                   { return a }
+func (a *strictWorkerTestAgent) WithModel(string) agent.Agent                   { return a }
+func (a *strictWorkerTestAgent) StrictReviewMCPConfig() string                  { return a.mcpConfig }
+
+func (a *strictWorkerTestAgent) WithStrictReview(_ config.ReviewToolPolicy, path string) agent.Agent {
+	clone := *a
+	clone.mcpConfig = path
+	return &clone
+}
+
+func (a *strictWorkerTestAgent) ReviewWithSchema(context.Context, string, string, string, jsontext.Value, io.Writer) (jsontext.Value, error) {
+	a.onReview(a.mcpConfig)
+	return a.result, a.err
+}
+
+func TestProcessJobRunsStrictReviewInFreshSession(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		err  error
+	}{{name: "success"}, {name: "agent failure", err: errors.New("agent crashed")}} {
+		t.Run(tt.name, func(t *testing.T) {
+			tc := newWorkerTestContext(t, 1)
+			require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, ".roborev.toml"), []byte(strictCustomTypeConfig), 0o644))
+			require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, "custom.md"), []byte("Check the citations.\n"), 0o644))
+			sha := testutil.GetHeadSHA(t, tc.TmpDir)
+			commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, sha, "Author", "Subject", time.Now())
+			require.NoError(t, err)
+			job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+				RepoID: tc.Repo.ID, CommitID: commit.ID, GitRef: sha, Agent: "strict-tools-session", ReviewType: "custom",
+			})
+			require.NoError(t, err)
+			claimed, err := tc.DB.ClaimJob(testWorkerID)
+			require.NoError(t, err)
+			_, err = tc.DB.Exec("UPDATE review_jobs SET session_id = 'old-session' WHERE id = ?", job.ID)
+			require.NoError(t, err)
+			claimed.SessionID = "old-session"
+
+			var mcpConfig string
+			agent.RegisterForTest(t, &strictWorkerTestAgent{
+				structuredWorkerTestAgent: &structuredWorkerTestAgent{
+					name:   "strict-tools-session",
+					result: jsontext.Value(`{"schema_version":2,"summary":"No findings.","verdict":"pass","findings":[]}`),
+				},
+				err: tt.err,
+				onReview: func(path string) {
+					mcpConfig = path
+					assert.FileExists(t, path)
+					row, err := tc.DB.GetJobByID(job.ID)
+					require.NoError(t, err)
+					assert.Empty(t, row.SessionID, "a strict review must not resume a session")
+					isolated, err := tc.DB.JobSessionIsolated(t.Context(), job.ID)
+					require.NoError(t, err)
+					assert.True(t, isolated)
+				},
+			})
+
+			tc.Pool.processJob(testWorkerID, claimed)
+
+			require.NotEmpty(t, mcpConfig, "the worker must prepare the strict agent")
+			assert.NoFileExists(t, mcpConfig)
+			if tt.err == nil {
+				tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+			}
+		})
+	}
 }

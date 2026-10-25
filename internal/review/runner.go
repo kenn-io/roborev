@@ -24,7 +24,8 @@ func invokeReview(ctx context.Context, a agent.Agent, repoPath, gitRef, prompt s
 
 // RunAgentReview validates JSON for every review, including agents without a
 // native schema mode. Markdown is a presentation of the validated document.
-// A non-nil tools policy fails before the agent runs unless a enforces it.
+// A non-nil tools policy fails before the agent runs unless a was prepared by
+// agent.PrepareReviewToolPolicy.
 func RunAgentReview(
 	ctx context.Context,
 	a agent.Agent,
@@ -32,7 +33,7 @@ func RunAgentReview(
 	tools *config.ReviewToolPolicy,
 	out io.Writer,
 ) (ReviewResult, error) {
-	if err := agent.ValidateReviewToolSelection(tools, a, false); err != nil {
+	if err := agent.CheckStrictReviewPrepared(tools, a); err != nil {
 		return ReviewResult{}, err
 	}
 	if err := agent.ValidateStructuredReviewSelection(reviewType, a); err != nil {

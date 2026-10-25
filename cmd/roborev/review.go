@@ -594,6 +594,12 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, di
 		return fmt.Errorf("build prompt: %w", err)
 	}
 
+	a, toolCleanup, err := agent.PrepareReviewToolPolicy(a, settings.Tools)
+	if err != nil {
+		return fmt.Errorf("invalid agent: %w", err)
+	}
+	defer toolCleanup()
+
 	_, err = reviewpkg.RunAgentReview(
 		cmd.Context(), a, repoPath, gitRef, reviewPrompt, reviewType,
 		resolvedMinSev, settings.Tools, out,

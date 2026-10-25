@@ -22,7 +22,11 @@ func TestValidateReviewToolSelection(t *testing.T) {
 	require.ErrorContains(t, ValidateReviewToolSelection(&config.ReviewToolPolicy{}, capable, false), "mode")
 	withMCP := &config.ReviewToolPolicy{Mode: "read-only", MCP: map[string][]string{"sources": {"read"}}}
 	require.ErrorContains(t, ValidateReviewToolSelection(withMCP, capable, false), "MCP grants are not supported yet")
-	for _, name := range []string{"claude-code", "codex", "test"} {
+	claude, err := Get("claude-code")
+	require.NoError(t, err)
+	require.NoError(t, ValidateReviewToolSelection(strict, claude, false))
+	require.ErrorContains(t, ValidateReviewToolSelection(withMCP, claude, false), "MCP grants are not supported yet")
+	for _, name := range []string{"codex", "test"} {
 		a, err := Get(name)
 		require.NoError(t, err)
 		require.ErrorContains(t, ValidateReviewToolSelection(strict, a, false), "does not support strict review tools", name)

@@ -671,7 +671,9 @@ sources = ["read", "find"]
     rerun.
 - If the selected agent or its backup cannot enforce the policy, the review
     fails before it starts. Strict policies cannot be combined with agentic
-    mode. No agent supports strict policies or MCP grants in this release yet.
+    mode. Only Claude Code supports strict policies; see
+    [Strict Claude Code Reviews](/docs/agents/#strict-claude-code-reviews). No
+    agent supports MCP grants in this release yet.
 
 ### Review Panels
 

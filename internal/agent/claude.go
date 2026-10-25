@@ -14,6 +14,8 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+
+	"go.kenn.io/roborev/internal/config"
 )
 
 // ClaudeAgent runs code reviews using Claude Code CLI
@@ -23,6 +25,10 @@ type ClaudeAgent struct {
 	Reasoning ReasoningLevel // Reasoning level mapped to --effort flag
 	Agentic   bool           // Whether agentic mode is enabled (allow file edits)
 	SessionID string         // Existing session ID to resume
+
+	// Set by WithStrictReview. A strict agent never resumes a session.
+	strictPolicy        *config.ReviewToolPolicy
+	strictMCPConfigPath string
 }
 
 const (
@@ -54,13 +60,20 @@ func (a *ClaudeAgent) clone(opts ...agentCloneOption) *ClaudeAgent {
 		a.SessionID,
 		opts...,
 	)
-	return &ClaudeAgent{
-		Command:   cfg.Command,
-		Model:     cfg.Model,
-		Reasoning: cfg.Reasoning,
-		Agentic:   cfg.Agentic,
-		SessionID: cfg.SessionID,
+	clone := &ClaudeAgent{
+		Command:             cfg.Command,
+		Model:               cfg.Model,
+		Reasoning:           cfg.Reasoning,
+		Agentic:             cfg.Agentic,
+		SessionID:           cfg.SessionID,
+		strictPolicy:        a.strictPolicy.Clone(),
+		strictMCPConfigPath: a.strictMCPConfigPath,
 	}
+	if clone.strictPolicy != nil {
+		clone.Agentic = false
+		clone.SessionID = ""
+	}
+	return clone
 }
 
 // WithReasoning returns a copy of the agent with the specified reasoning level.
@@ -95,6 +108,9 @@ func (a *ClaudeAgent) CommandName() string {
 }
 
 func (a *ClaudeAgent) CommandLine() string {
+	if a.strictPolicy != nil {
+		return a.Command + " " + strings.Join(a.buildStrictArgs(true), " ")
+	}
 	agenticMode := a.Agentic || AllowUnsafeAgents()
 	return a.commandLine(agenticMode)
 }
@@ -309,6 +325,9 @@ func claudeSupportsBareFlag(ctx context.Context, command string) bool {
 }
 
 func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+	if a.strictPolicy != nil {
+		return a.strictReview(ctx, repoPath, prompt, nil, output)
+	}
 	model, baseURL, err := parseModel(a.Model)
 	if err != nil {
 		return "", err
@@ -831,6 +850,13 @@ func (a *ClaudeAgent) ReviewWithSchema(
 	schema jsontext.Value,
 	out io.Writer,
 ) (jsontext.Value, error) {
+	if a.strictPolicy != nil {
+		result, err := a.strictReview(ctx, repoPath, prompt, schema, out)
+		if err != nil {
+			return nil, err
+		}
+		return jsontext.Value(result), nil
+	}
 	model, baseURL, err := parseModel(a.Model)
 	if err != nil {
 		return nil, err

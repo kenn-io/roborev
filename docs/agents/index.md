@@ -115,6 +115,30 @@ model = "gpt-4.1"  # Override for this repo
 Model resolution priority: CLI flag > per-repo config > global config > agent
 default.
 
+## Strict Claude Code Reviews
+
+A custom review type with `tools.mode = "read-only"` runs as a strict review.
+Claude Code is the only agent that supports strict reviews; other agents fail
+before the review starts.
+
+A strict review starts a fresh, locked-down Claude session:
+
+- Only the built-in `Read`, `Glob`, and `Grep` tools are loaded, plus
+    `StructuredOutput` for schema output.
+- User, project, and local Claude settings are not loaded, so their hooks,
+    plugins, and permission rules cannot add tools. Managed settings still
+    apply.
+- MCP servers come only from an empty, private config file that roborev writes
+    for the review and deletes afterwards.
+- Permissions use `dontAsk` mode with no prompts. Slash commands are disabled.
+- The session never resumes an earlier session, is not saved, and is never
+    reused by a later review.
+
+Before trusting the output, roborev checks Claude's startup report. If it shows
+a different tool set, a different permission mode, or any MCP server, roborev
+stops Claude and fails the review. If the installed Claude Code CLI lacks a
+required flag, the review fails with an upgrade error instead of running.
+
 ## Routing Claude Code to a Proxy
 
 The `claude-code` agent accepts a model spec of the form `<model>@<base_url>`.

@@ -1272,6 +1272,16 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		wp.failoverOrFailNonRetryableAgentContext(ctx, workerID, job, a.Name(), err.Error())
 		return
 	}
+	// A strict review starts a fresh session, and isolation keeps the session
+	// it captures from being resumed by later reviews.
+	if tools != nil && !checkout.isolatedLocalReview {
+		if err := wp.db.IsolateJobSession(job.ID, workerID); err != nil {
+			wp.failOrRetryContext(ctx, workerID, job, a.Name(), fmt.Sprintf("clear review session: %v", err))
+			return
+		}
+		job.SessionID = ""
+		job.ResumeSourceJobUUID = nil
+	}
 
 	// Use the actual agent name (may differ from requested if fallback occurred)
 	agentName := a.Name()
@@ -1439,6 +1449,13 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			defer preparedPrompt.Cleanup()
 		}
 		reviewPrompt = preparedPrompt.Prompt
+		preparedAgent, toolCleanup, toolErr := agent.PrepareReviewToolPolicy(a, tools)
+		if toolErr != nil {
+			wp.failOrRetryContext(ctx, workerID, job, agentName, fmt.Sprintf("prepare review tools: %v", toolErr))
+			return
+		}
+		defer toolCleanup()
+		a = preparedAgent
 		wp.markAgentInvoked(workerID, job, a)
 		if planningPrompt != "" {
 			implementationInvoked = true
