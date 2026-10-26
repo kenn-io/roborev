@@ -385,6 +385,11 @@ func (m *model) requestFetchStatus() tea.Cmd {
 }
 
 func (m model) checkForUpdate() tea.Cmd {
+	// Package-managed builds upgrade through their package manager, which
+	// can trail GitHub releases, so they show no update notification.
+	if update.PackageManaged() {
+		return nil
+	}
 	return func() tea.Msg {
 		info, err := update.CheckForUpdate(false) // Use cache
 		if err != nil || info == nil {

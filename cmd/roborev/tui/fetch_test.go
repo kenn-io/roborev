@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/version"
 )
 
 func TestListJobsParamsRepeatedRepo(t *testing.T) {
@@ -129,4 +130,12 @@ func TestListFetchesRequestMetadataOnlyRows(t *testing.T) {
 		assert.Equal("true", queries[key].Get("omit_prompt"),
 			"%s fetch must request metadata-only rows", key)
 	}
+}
+
+func TestCheckForUpdateSkipsPackageManagedBuild(t *testing.T) {
+	original := version.Distribution
+	version.Distribution = "homebrew"
+	t.Cleanup(func() { version.Distribution = original })
+
+	assert.Nil(t, model{}.checkForUpdate())
 }

@@ -21,6 +21,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/version"
 )
 
 type archiveEntry struct {
@@ -50,37 +52,11 @@ func (r *testReporter) Progress(downloaded, total int64) {
 	r.progress = append(r.progress, downloaded, total)
 }
 
-func TestUpdaterCheckForUpdateDisabled(t *testing.T) {
-	original := disabled
-	disabled = "true"
-	t.Cleanup(func() { disabled = original })
-
-	requests := 0
-	cacheDir := t.TempDir()
-	updater := NewUpdater(Deps{
-		Version:  "v1.2.3",
-		CacheDir: func() string { return cacheDir },
-		Client: &http.Client{
-			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-				requests++
-				return nil, fmt.Errorf("unexpected request to %s", req.URL)
-			}),
-		},
-	})
-
-	for _, force := range []bool{false, true} {
-		info, err := updater.CheckForUpdate(force)
-		require.EqualError(t, err, "self-update is disabled in this build; use your package manager to update roborev")
-		assert.Nil(t, info)
-	}
-	assert.Equal(t, 0, requests)
-}
-
-func TestUpdaterPerformUpdateDisabled(t *testing.T) {
+func TestUpdaterPerformUpdateRefusesPackageManagedBuild(t *testing.T) {
 	assert := assert.New(t)
-	original := disabled
-	disabled = "true"
-	t.Cleanup(func() { disabled = original })
+	original := version.Distribution
+	version.Distribution = "homebrew"
+	t.Cleanup(func() { version.Distribution = original })
 
 	currentBinary := filepath.Join(t.TempDir(), executableName(runtime.GOOS))
 	require.NoError(t, os.WriteFile(currentBinary, []byte("package-managed-binary"), 0o755))
@@ -101,7 +77,7 @@ func TestUpdaterPerformUpdateDisabled(t *testing.T) {
 		DownloadURL: "https://downloads.example/roborev.tar.gz",
 		Checksum:    strings.Repeat("a", 64),
 	}, reporter)
-	require.EqualError(t, err, "self-update is disabled in this build; use your package manager to update roborev")
+	require.EqualError(t, err, "self-update is disabled in this build: Homebrew manages this installation; use 'brew upgrade roborev' to update")
 	assert.Equal(0, requests)
 	installed, err := os.ReadFile(currentBinary)
 	require.NoError(t, err)

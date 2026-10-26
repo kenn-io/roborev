@@ -806,6 +806,14 @@ launchd or systemd).`,
 			out := cmd.OutOrStdout()
 			in := cmd.InOrStdin()
 
+			// Package-managed builds may check for releases but never
+			// replace themselves.
+			if !checkOnly {
+				if err := update.ManagedUpdateError(); err != nil {
+					return err
+				}
+			}
+
 			// kit already wraps check errors with "check for updates:".
 			info, err := checkForUpdateForCommand(true) // Force check, ignore cache
 			if err != nil {
@@ -814,6 +822,13 @@ launchd or systemd).`,
 
 			if info == nil {
 				fmt.Fprintf(out, "Already running latest version (%s)\n", version.Version)
+				return nil
+			}
+
+			if update.PackageManaged() {
+				fmt.Fprintln(out, "Update available")
+				fmt.Fprintf(out, "  Version  %s -> %s\n", info.CurrentVersion, info.LatestVersion)
+				fmt.Fprintf(out, "\n%s. Packages can trail GitHub releases.\n", update.UpgradeHint())
 				return nil
 			}
 

@@ -17,19 +17,25 @@ only).
 
 ### Package builds
 
-Package maintainers can disable self-updates so users upgrade through their
-package manager. Set this linker flag when building:
+Package maintainers can mark a build as owned by their package manager, so users
+upgrade through it instead of `roborev update`. Set
+`internal/version.Distribution` to the package manager's name with a linker
+flag:
 
 ```bash
-CGO_ENABLED=0 go build \
-  -ldflags="-X go.kenn.io/roborev/internal/update.disabled=true" \
+go build \
+  -ldflags="-X go.kenn.io/roborev/internal/version.Distribution=homebrew" \
   -o bin/roborev ./cmd/roborev
 ```
 
-These builds reject `roborev update`, including `--check` and `--force`, with a
-message directing users to their package manager. The terminal interface skips
-update checks and update notifications. Builds without this flag retain the
-normal update behavior.
+- `roborev update`, including `--force`, refuses to replace these builds. For
+    `homebrew`, the message tells users to run `brew upgrade roborev`. Other
+    names get a message naming the package.
+- `roborev update --check` still reports newer releases and says to upgrade
+    through the package manager.
+- The terminal interface skips update checks and update notifications.
+- Builds with an empty `Distribution`, the default, keep the normal update
+    behavior.
 
 ## Project Structure
 

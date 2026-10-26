@@ -62,10 +62,33 @@ type stdoutReporter struct {
 
 type nopReporter struct{}
 
-// disabled is set to "true" through -ldflags by package managers that own updates.
-var disabled = "false"
+// PackageManaged reports whether a package manager owns updates for this
+// build. Such builds may check for releases but never replace themselves.
+func PackageManaged() bool {
+	return version.Distribution != ""
+}
 
-var errDisabled = errors.New("self-update is disabled in this build; use your package manager to update roborev")
+// UpgradeHint tells users of a package-managed build how to upgrade. It is
+// empty for builds that update themselves.
+func UpgradeHint() string {
+	switch version.Distribution {
+	case "":
+		return ""
+	case "homebrew":
+		return "Homebrew manages this installation; use 'brew upgrade roborev' to update"
+	default:
+		return fmt.Sprintf("Package %q manages this installation; upgrade roborev through that package manager", version.Distribution)
+	}
+}
+
+// ManagedUpdateError returns the error for a refused self-update, or nil
+// when this build may update itself.
+func ManagedUpdateError() error {
+	if !PackageManaged() {
+		return nil
+	}
+	return errors.New("self-update is disabled in this build: " + UpgradeHint())
+}
 
 func CheckForUpdate(forceCheck bool) (*UpdateInfo, error) {
 	return defaultUpdater().CheckForUpdate(forceCheck)
@@ -125,9 +148,6 @@ func defaultUpdater() *Updater {
 }
 
 func (u *Updater) CheckForUpdate(forceCheck bool) (*UpdateInfo, error) {
-	if disabled == "true" {
-		return nil, errDisabled
-	}
 	if selfupdate.IsDevBuildVersion(u.deps.Version) && !forceCheck {
 		return nil, nil
 	}
@@ -324,8 +344,8 @@ func (u *Updater) PerformUpdate(info *UpdateInfo, reporter Reporter) error {
 func (u *Updater) PerformUpdateContext(
 	ctx context.Context, info *UpdateInfo, reporter Reporter,
 ) error {
-	if disabled == "true" {
-		return errDisabled
+	if err := ManagedUpdateError(); err != nil {
+		return err
 	}
 	reporter = normalizeReporter(reporter)
 	if info == nil {
