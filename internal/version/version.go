@@ -21,9 +21,10 @@ var readBuildInfo = debug.ReadBuildInfo
 // For dev builds with git describe version, use: make install
 var Version = defaultVersion
 
-// Distribution names the package manager that owns this binary, such as
-// "homebrew". Package builds set it via -ldflags. An empty value means a
-// release archive or source build that may replace itself.
+// Distribution names the channel that delivered this binary. Package builds
+// set it via -ldflags to their package manager, such as "homebrew", and do
+// not replace themselves. Official direct downloads use "kenn" and, like an
+// empty value for source builds, may replace themselves.
 var Distribution string
 
 func init() {

@@ -35,7 +35,8 @@ go build \
     through the package manager.
 - The terminal interface skips update checks and update notifications.
 - Builds with an empty `Distribution`, the default, keep the normal update
-    behavior.
+    behavior. So do official direct downloads, which set `Distribution` to
+    `kenn`.
 
 Homebrew formulas can use the `homebrew` make target. It runs the normal build
 with cgo enabled and `Distribution` set to `homebrew`:

@@ -133,10 +133,17 @@ func TestListFetchesRequestMetadataOnlyRows(t *testing.T) {
 }
 
 //nolint:paralleltest // sets the package-level version.Distribution
-func TestCheckForUpdateSkipsPackageManagedBuild(t *testing.T) {
+func TestCheckForUpdateOnlyForSelfUpdatingBuilds(t *testing.T) {
 	original := version.Distribution
-	version.Distribution = "homebrew"
 	t.Cleanup(func() { version.Distribution = original })
 
-	assert.Nil(t, model{}.checkForUpdate())
+	version.Distribution = "homebrew"
+	assert.Nil(t, model{}.checkForUpdate(), "package-managed builds skip the update check")
+
+	// Official direct downloads ("kenn") update themselves, so they keep
+	// the update check and notification.
+	for _, distribution := range []string{"", "kenn"} {
+		version.Distribution = distribution
+		assert.NotNil(t, model{}.checkForUpdate(), "distribution %q", distribution)
+	}
 }

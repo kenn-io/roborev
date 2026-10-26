@@ -576,6 +576,55 @@ func TestUpdateCheckInPackageManagedBuildPointsToPackageManager(t *testing.T) {
 	assert.NotContains(t, out.String(), "--force")
 }
 
+// Official direct downloads ("kenn") update themselves, like builds with no
+// Distribution.
+func TestUpdateCommandInstallsSelfUpdatingBuild(t *testing.T) {
+	for _, distribution := range []string{"", "kenn"} {
+		t.Run("distribution="+distribution, func(t *testing.T) {
+			info := stubUpdateCommand(t)
+			stubDistribution(t, distribution)
+			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+				return nil, errors.New("not running")
+			}
+			var installs atomic.Int32
+			performUpdateForCommand = func(_ context.Context, got *update.UpdateInfo, reporter update.Reporter) error {
+				installs.Add(1)
+				reporter.Progress(got.Size, got.Size)
+				return nil
+			}
+			var out bytes.Buffer
+			cmd := updateCmd()
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SetArgs([]string{"--yes"})
+
+			require.NoError(t, cmd.Execute())
+			assert.Equal(t, int32(1), installs.Load())
+			assert.Contains(t, out.String(), "Updated roborev to "+info.LatestVersion)
+		})
+	}
+}
+
+func TestUpdateCheckInSelfUpdatingBuildShowsNoPackageGuidance(t *testing.T) {
+	for _, distribution := range []string{"", "kenn"} {
+		t.Run("distribution="+distribution, func(t *testing.T) {
+			stubUpdateCommand(t)
+			stubDistribution(t, distribution)
+			var out bytes.Buffer
+			cmd := updateCmd()
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SetArgs([]string{"--check"})
+
+			require.NoError(t, cmd.Execute())
+			assert.Contains(t, out.String(), "Version  v1.0.0 -> v1.1.0")
+			assert.Contains(t, out.String(), "Install  ")
+			assert.NotContains(t, out.String(), "brew")
+			assert.NotContains(t, out.String(), "manages this installation")
+		})
+	}
+}
+
 func updateDaemonHandler(
 	running int,
 	prepareCalls, releaseCalls, shutdownCalls *atomic.Int32,

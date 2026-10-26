@@ -62,18 +62,23 @@ type stdoutReporter struct {
 
 type nopReporter struct{}
 
+// directDistribution marks official direct downloads. They update
+// themselves, like builds with no Distribution.
+const directDistribution = "kenn"
+
 // PackageManaged reports whether a package manager owns updates for this
 // build. Such builds may check for releases but never replace themselves.
 func PackageManaged() bool {
-	return version.Distribution != ""
+	return version.Distribution != "" && version.Distribution != directDistribution
 }
 
 // UpgradeHint tells users of a package-managed build how to upgrade. It is
 // empty for builds that update themselves.
 func UpgradeHint() string {
-	switch version.Distribution {
-	case "":
+	if !PackageManaged() {
 		return ""
+	}
+	switch version.Distribution {
 	case "homebrew":
 		return "Homebrew manages this installation; use 'brew upgrade roborev' to update"
 	default:
