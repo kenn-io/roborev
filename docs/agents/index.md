@@ -333,7 +333,7 @@ and commands):
 | Agent | Agentic Support |
 |-------|-----------------|
 | Codex | Full (uses `--dangerously-bypass-approvals-and-sandbox`) |
-| Claude Code | Full (uses `--dangerously-skip-permissions`) |
+| Claude Code | Full (uses `--dangerously-skip-permissions`; reviews, synthesis, and planning load only `Read`, `Glob`, and `Grep`) |
 | Gemini (Antigravity) | Full (uses `--dangerously-skip-permissions`) |
 | Gemini (legacy) | Full (uses `--yolo` and `--allowed-tools`) |
 | Copilot | Limited (requires manual approval for actions) |

@@ -7,11 +7,52 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
+**New features**
+
+- Set up a specialized review by conversation with `/roborev-setup-review`
+    (`$roborev-setup-review` in Codex). Your agent asks what reviewers should
+    catch, proposes the review types, rubrics, and panel, and writes nothing
+    until you approve. See
+    [Set up a custom review](/docs/guides/agent-skills/#set-up-a-custom-review).
+- Limit a custom review type to read-only tools plus the exact MCP tools it
+    names, with `[review.types.<name>.tools]`. Only global config defines the
+    MCP servers and the tools reviews may request, through `review_mcp_config`
+    and `review_mcp_allowed_tools`. Strict policies require Claude Code. See
+    [Strict Review Tool Policies](/docs/configuration/#strict-review-tool-policies).
+- Strict Claude Code reviews run in a fresh, locked-down session that loads only
+    `Read`, `Glob`, `Grep`, and the granted MCP tools, ignores user and project
+    Claude settings, and fails if Claude reports any other tool or server. See
+    [Strict Claude Code Reviews](/docs/agents/#strict-claude-code-reviews).
+- Show reviewers committed PDFs, images, and other binary files with
+    `binary_evidence = true` on a custom review type. Reviews of commits and
+    ranges get a saved copy of each changed binary file. See
+    [Binary evidence](/docs/advanced/custom-review-types/#binary-evidence).
+- Review documents as well as code. Panels with a custom review type describe
+    the work as reviewed material, label each finding with its rubric, and do
+    not treat a reviewer with a different rubric as disagreeing. See the
+    [document review example](/docs/advanced/custom-review-types/#document-review-example).
+
 **Improvements**
 
+- Reviews, reruns, and fixes start as soon as they are queued, instead of up to
+    two seconds later.
+- Package maintainers can build roborev with self-updates disabled, so
+    `roborev update` points users to their package manager. See
+    [Package builds](/docs/development/#package-builds).
 - Start daemons over runtime records left by dead sandboxes.
 - Sandboxed commands keep the host daemon's runtime record.
 - A TUI in a sandbox keeps the host TUI's runtime file.
+
+**Bug fixes**
+
+- Read-only Claude reviews and panel synthesis no longer get write, shell, web,
+    subagent, or MCP tools or skills, even when Claude settings bypass
+    permissions. Reviews fail if the Claude CLI lacks `--tools`; upgrade Claude
+    to continue.
+- `roborev daemon stop` and SIGTERM stop the daemon promptly while the TUI or
+    another client holds the event stream open. Before, the daemon waited 35
+    seconds and exited with an error, which made systemd units with
+    `Restart=on-failure` restart it.
 
 ## 0.73.0
 
@@ -101,13 +142,6 @@ Thanks to everyone who contributed to this release:
     release upgrades.
 
 ______________________________________________________________________
-
-**Bug fixes**
-
-- Read-only Claude reviews and panel synthesis no longer get write, shell, web,
-    subagent, or MCP tools or skills, even when Claude settings bypass
-    permissions. Reviews fail if the Claude CLI lacks `--tools`; upgrade Claude
-    to continue.
 
 ## 0.72.0
 
