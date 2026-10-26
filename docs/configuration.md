@@ -226,7 +226,7 @@ project.
 ```toml
 agent = "gemini"                  # AI agent to use
 model = "gemini-3-flash-preview"  # Model override for this repo
-review_context_count = 5   # Recent reviews to include as context
+review_context_count = 5   # Earlier reviews to include as context (0 disables)
 display_name = "backend"   # Custom name shown in TUI (optional)
 excluded_branches = ["wip", "scratch"]  # Branches to skip reviews on
 excluded_branch_patterns = ["worktree-agent-*", "release/*"]  # Branch globs to skip for automatic post-commit reviews
@@ -266,7 +266,7 @@ max_chars = 50000
 | `agent` | string | AI agent to use for this repo |
 | `model` | string | Model to use (overrides global `default_model`) |
 | `display_name` | string | Custom name shown in TUI |
-| `review_context_count` | int | Number of recent reviews to include as context |
+| `review_context_count` | int | Number of earlier reviews to include as context. Overrides the global value; `0` turns context off for this repo |
 | `isolate_reviews` | bool | Run committed reviews in daemon-owned detached checkouts. Overrides the global setting; see [Isolated Review Checkouts](#isolated-review-checkouts) |
 | `excluded_branches` | array | Branches to skip automatic reviews on |
 | `excluded_branch_patterns` | array | Whole-name branch globs to skip automatic post-commit reviews on |
@@ -1202,7 +1202,7 @@ filter_branch = false             # Show all branches on startup (default: curre
 | `agent_quota_cooldown` | string | `30m0s` | Maximum daemon-wide cooldown after an agent quota or session-limit error, as a Go duration such as `10m`, `30m`, or `1h` | Yes |
 | `allow_unsafe_agents` | bool | false | Enable agentic mode globally | Yes |
 | `anthropic_api_key` | string | - | Anthropic API key for Claude Code | Yes |
-| `review_context_count` | int | 3 | Recent reviews to include as context | Yes |
+| `review_context_count` | int | 3 | Earlier reviews to include as context; `0` turns context off. A repo `.roborev.toml` value overrides it | Yes |
 | `review_guidelines` | string | - | Global reviewer instructions included in review prompts for every repo | Yes |
 | `reuse_review_session` | bool | false | (Experimental) Resume prior agent sessions on the same branch. See [Session Reuse](/docs/guides/reviewing-code/#session-reuse) | Yes |
 | `reuse_review_session_lookback` | int | 0 | Max recent session candidates to consider (0 = unlimited) | Yes |

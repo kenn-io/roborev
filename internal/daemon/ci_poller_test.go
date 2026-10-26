@@ -4890,6 +4890,41 @@ func TestBuildPanelOpts_RecordsPRBranchOnJobs(t *testing.T) {
 	assert.Equal(t, "feature/review", synthOpts.Branch)
 }
 
+func TestBuildPanelOptsUsesDefaultBranchReviewContextCount(t *testing.T) {
+	tests := []struct {
+		name    string
+		repoCfg *config.RepoConfig
+		want    int
+	}{
+		{"repo unset inherits global", &config.RepoConfig{}, 3},
+		{"repo zero disables context", &config.RepoConfig{ReviewContextCount: new(0)}, 0},
+		{"repo value overrides global", &config.RepoConfig{ReviewContextCount: new(8)}, 8},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &CIPoller{}
+			gotCount := -1
+			p.buildReviewPromptFn = func(_ context.Context, _, _ string, _ int64, contextCount int, _, _, _, _ string, _ *config.RepoConfig, _ string, _ *config.Config) (string, error) {
+				gotCount = contextCount
+				return "prebuilt prompt", nil
+			}
+			_, _, err := p.buildPanelOpts(context.Background(), buildPanelOptsInput{
+				repo:       &storage.Repo{ID: 1, RootPath: t.TempDir()},
+				repoCfg:    tt.repoCfg,
+				repoCfgRef: "origin/main",
+				cfg:        config.DefaultConfig(),
+				ghRepo:     "acme/api",
+				gitRef:     "base..head",
+				prNumber:   1,
+				members:    []config.ResolvedMember{{Name: "m1", Agent: "codex"}},
+				synth:      config.SynthesisSpec{Agent: "codex"},
+			})
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, gotCount)
+		})
+	}
+}
+
 func TestBuildPanelOptsSnapshotsEffectiveACPExecutionConfig(t *testing.T) {
 	p := &CIPoller{}
 	p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.RepoConfig, string, *config.Config) (string, error) {

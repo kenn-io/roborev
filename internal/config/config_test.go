@@ -119,6 +119,51 @@ func TestResolveAgent(t *testing.T) {
 	}, "Expected 'codex' (explicit), got '%s'", agent)
 }
 
+func TestResolveReviewContextCount(t *testing.T) {
+	tests := []struct {
+		name   string
+		repo   *RepoConfig
+		global *Config
+		want   int
+	}{
+		{"no configs", nil, nil, DefaultReviewContextCount},
+		{"repo unset uses global", &RepoConfig{}, &Config{ReviewContextCount: 7}, 7},
+		{"nil repo uses global", nil, &Config{ReviewContextCount: 7}, 7},
+		{"global zero disables", &RepoConfig{}, &Config{ReviewContextCount: 0}, 0},
+		{"repo zero overrides positive global", &RepoConfig{ReviewContextCount: new(0)}, &Config{ReviewContextCount: 3}, 0},
+		{"repo positive overrides global", &RepoConfig{ReviewContextCount: new(10)}, &Config{ReviewContextCount: 3}, 10},
+		{"repo set with nil global", &RepoConfig{ReviewContextCount: new(5)}, nil, 5},
+		{"negative repo clamps to zero", &RepoConfig{ReviewContextCount: new(-2)}, &Config{ReviewContextCount: 3}, 0},
+		{"negative global clamps to zero", &RepoConfig{}, &Config{ReviewContextCount: -1}, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, ResolveReviewContextCount(tt.repo, tt.global))
+		})
+	}
+}
+
+func TestReviewContextCountFromRepoFile(t *testing.T) {
+	tests := []struct {
+		name string
+		toml string
+		want int
+	}{
+		{"absent inherits global", "agent = \"codex\"\n", 5},
+		{"explicit zero disables", "review_context_count = 0\n", 0},
+		{"explicit value overrides", "review_context_count = 9\n", 9},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(dir, ".roborev.toml"), []byte(tt.toml), 0o644))
+			repoCfg, err := LoadRepoConfig(dir)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, ResolveReviewContextCount(repoCfg, &Config{ReviewContextCount: 5}))
+		})
+	}
+}
+
 func TestSaveAndLoadGlobal(t *testing.T) {
 	testenv.SetDataDir(t)
 

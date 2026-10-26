@@ -1105,6 +1105,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	var fileCoverage *storage.ReviewFileCoverage
 	var promptToPersist string
 	effectiveMinSeverity := job.MinSeverity
+	// Built prompts resolve the context count below. Prebuilt CI prompts
+	// resolve it only if they still need the prior range reviews file.
+	var contextCount int
+	var contextCountResolved bool
 	if job.IsFixJob() {
 		if planningDecodeErr != nil {
 			wp.failoverOrFailNonRetryableAgentContext(ctx, workerID, job, job.Agent, planningDecodeErr.Error())
@@ -1175,6 +1179,14 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			effectiveMinSeverity = resolved
 		}
 
+		contextCount, err = pb.ReviewContextCount()
+		if err != nil {
+			log.Printf("[%s] Error resolving review context count: %v", workerID, err)
+			wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("resolve review context count: %v", err))
+			return
+		}
+		contextCountResolved = true
+
 		if job.IsDirtyJob() {
 			// Dirty job - use pre-captured diff
 			diffContent := ""
@@ -1182,7 +1194,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				diffContent = *job.DiffContent
 			}
 			reviewPrompt, err = pb.BuildDirtyWithFiles(
-				diffContent, job.DirtyFiles, cfg.ReviewContextCount, job.Agent, job.ReviewType, effectiveMinSeverity,
+				diffContent, job.DirtyFiles, contextCount, job.Agent, job.ReviewType, effectiveMinSeverity,
 			)
 		} else {
 			// Build the complete prompt; preparation happens after all additions.
@@ -1190,7 +1202,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				ctx, checkout.resolvedConfigRepoPath(), cfg, job.ReviewType,
 			)
 			reviewPrompt, err = pb.Build(
-				job.GitRef, cfg.ReviewContextCount, job.Agent, job.ReviewType, effectiveMinSeverity,
+				job.GitRef, contextCount, job.Agent, job.ReviewType, effectiveMinSeverity,
 			)
 			if err == nil {
 				fileCoverage = reviewFileCoverageForJob(ctx, checkout.promptRepoPath, job, excludes)
@@ -1402,8 +1414,19 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		log.Printf("[%s] Fix job %d: running agent in worktree %s", workerID, job.ID, wt.Dir)
 	}
 
+	if !contextCountResolved && strings.Contains(reviewPrompt, prompt.PriorRangeReviewsFilePathPlaceholder) {
+		// CI jobs must read the count from the default-branch config.
+		countBuilder, countErr := wp.promptBuilderForJob(ctx, checkout, job, cfg)
+		if countErr == nil {
+			contextCount, countErr = countBuilder.ReviewContextCount()
+		}
+		if countErr != nil {
+			wp.failOrRetryContext(ctx, workerID, job, agentName, fmt.Sprintf("resolve review context count: %v", countErr))
+			return
+		}
+	}
 	priorResult, priorErr := pb.PreparePriorRangeReviewsSnapshot(
-		reviewPrompt, job.GitRef, cfg.ReviewContextCount, prompt.SnapshotTarget{
+		reviewPrompt, job.GitRef, contextCount, prompt.SnapshotTarget{
 			RepoPath: reviewRepoPath, ConfigRepoPath: checkout.resolvedConfigRepoPath(),
 		},
 	)

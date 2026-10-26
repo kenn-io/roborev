@@ -573,17 +573,18 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, di
 		WithKataClient(kata.NewCLIClient(repoPath)).
 		WithBinaryEvidence(settings.BinaryEvidence).
 		WithStructuredOutput(true)
+	contextCount := config.ResolveReviewContextCount(repoCfg, cfg)
 	var reviewPrompt string
 	var snapshotCleanup func()
 	if diffContent != "" || len(dirtyFiles) > 0 {
 		// Dirty review
-		dirtyResult, dirtyErr := pb.BuildDirtyWithSnapshotAndFiles(diffContent, dirtyFiles, cfg.ReviewContextCount, a.Name(), reviewType, resolvedMinSev)
+		dirtyResult, dirtyErr := pb.BuildDirtyWithSnapshotAndFiles(diffContent, dirtyFiles, contextCount, a.Name(), reviewType, resolvedMinSev)
 		reviewPrompt = dirtyResult.Prompt
 		snapshotCleanup = dirtyResult.Cleanup
 		err = dirtyErr
 	} else {
 		excludes := config.ResolveExcludePatterns(ctx, repoPath, cfg, reviewType)
-		result, buildErr := pb.BuildWithSnapshot(gitRef, cfg.ReviewContextCount, a.Name(), reviewType, resolvedMinSev, excludes)
+		result, buildErr := pb.BuildWithSnapshot(gitRef, contextCount, a.Name(), reviewType, resolvedMinSev, excludes)
 		reviewPrompt = result.Prompt
 		snapshotCleanup = result.Cleanup
 		err = buildErr

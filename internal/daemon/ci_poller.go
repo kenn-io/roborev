@@ -1625,10 +1625,11 @@ type buildPanelOptsInput struct {
 func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) ([]storage.EnqueueOpts, storage.EnqueueOpts, error) {
 	synthesisMinSeverity := resolveCISynthesisMinSeverity(in.repoCfg, in.cfg, in.ghRepo)
 	reviewMinSeverity := resolveCIReviewMinSeverity(in.repoCfg, in.cfg, in.ghRepo)
+	contextCount := config.ResolveReviewContextCount(in.repoCfg, in.cfg)
 	memberOpts := make([]storage.EnqueueOpts, 0, len(in.members))
 	for i, m := range in.members {
 		storedPrompt, err := p.callBuildReviewPrompt(
-			ctx, in.repo.RootPath, in.gitRef, in.repo.ID, in.cfg.ReviewContextCount,
+			ctx, in.repo.RootPath, in.gitRef, in.repo.ID, contextCount,
 			m.Agent, m.ReviewType, reviewMinSeverity, in.prDiscussionContext,
 			in.repoCfg, in.repoCfgRef, in.cfg,
 		)

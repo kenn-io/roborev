@@ -122,6 +122,16 @@ func (b *Builder) resolveRepoConfig() (*config.RepoConfig, error) {
 	return config.LoadRepoConfig(b.resolvedConfigRepoPath())
 }
 
+// ReviewContextCount returns how many earlier reviews to include as context,
+// resolved against the same repo config the builder uses for everything else.
+func (b *Builder) ReviewContextCount() (int, error) {
+	repoCfg, err := b.resolveRepoConfig()
+	if err != nil {
+		return 0, err
+	}
+	return config.ResolveReviewContextCount(repoCfg, b.globalCfg), nil
+}
+
 func (b *Builder) readCustomReviewFile(
 	filePath string,
 ) ([]byte, error) {

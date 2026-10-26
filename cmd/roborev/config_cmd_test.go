@@ -540,6 +540,25 @@ func TestSetConfigKey(t *testing.T) {
 	})
 }
 
+func TestSetConfigKeyLocalReviewContextCount(t *testing.T) {
+	assert := assert.New(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".roborev.toml")
+
+	require.NoError(t, setConfigKey(path, "review_context_count", "0", false))
+	repoCfg, err := config.LoadRepoConfig(dir)
+	require.NoError(t, err)
+	require.NotNil(t, repoCfg.ReviewContextCount)
+	assert.Equal(0, *repoCfg.ReviewContextCount)
+	assert.Equal(0, config.ResolveReviewContextCount(repoCfg, config.DefaultConfig()))
+
+	got, err := config.GetConfigValue(repoCfg, "review_context_count")
+	require.NoError(t, err)
+	assert.Equal("0", got)
+
+	assert.Error(setConfigKey(path, "review_context_count", "many", false))
+}
+
 func TestSetConfigKeyNestedCreation(t *testing.T) {
 	path := setupConfigFile(t)
 

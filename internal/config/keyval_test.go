@@ -433,7 +433,7 @@ func TestMergedConfigWithOrigin(t *testing.T) {
 				g.ReviewContextCount = 5
 				return g
 			}(),
-			repo:      &RepoConfig{ReviewContextCount: 10},
+			repo:      &RepoConfig{ReviewContextCount: new(10)},
 			rawGlobal: map[string]any{"review_context_count": int64(5)},
 			rawRepo:   map[string]any{"review_context_count": int64(10)},
 			want: map[string]expectedOrigin{

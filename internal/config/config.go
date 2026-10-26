@@ -757,7 +757,7 @@ type RepoConfig struct {
 	Model                           string                          `toml:"model" comment:"Default model for this repo when no workflow-specific model is set."` // Model for agents (format varies by agent)
 	BackupAgent                     string                          `toml:"backup_agent" comment:"Backup agent for this repo if the primary agent fails."`
 	BackupModel                     string                          `toml:"backup_model" comment:"Backup model for this repo if the primary model fails."`
-	ReviewContextCount              int                             `toml:"review_context_count" comment:"Number of related reviews to include as context for this repo."`
+	ReviewContextCount              *int                            `toml:"review_context_count" comment:"Number of earlier reviews to include as context for this repo. Unset uses the global value; 0 disables context."`
 	ReviewGuidelines                string                          `toml:"review_guidelines" comment:"Extra review instructions added to prompts for this repo."`
 	ReviewMDFallback                *bool                           `toml:"review_md_fallback" comment:"Use REVIEW.md when review_guidelines is empty or unset."`
 	ReviewGuidelinesSupersedeGlobal bool                            `toml:"review_guidelines_supersede_global" comment:"Use repo review_guidelines instead of appending global review_guidelines."`
@@ -975,6 +975,9 @@ func (c *RepoConfig) UsesReviewMDFallback() bool {
 }
 
 const (
+	// DefaultReviewContextCount is how many earlier reviews go into a review
+	// prompt when no config sets review_context_count.
+	DefaultReviewContextCount    = 3
 	DefaultPiJSONSchemaExtension = "npm:@nqbao/pi-json-schema@0.1.1"
 	DefaultAgentQuotaCooldown    = 30 * time.Minute
 	DefaultAgentHookInstruction  = `Invoke the roborev-fix skill for only the review job IDs named in this reminder.
@@ -1001,7 +1004,7 @@ func DefaultConfig() *Config {
 	cfg := &Config{
 		ServerAddr:         "127.0.0.1:7373",
 		MaxWorkers:         4,
-		ReviewContextCount: 3,
+		ReviewContextCount: DefaultReviewContextCount,
 		DefaultAgent:       "codex",
 		JobTimeoutMinutes:  30,
 		AgentQuotaCooldown: DefaultAgentQuotaCooldown.String(),
@@ -2150,6 +2153,20 @@ func ResolveMaxPromptSize(repoPath string, globalCfg *Config) int {
 		globalVal = clampPositive(globalCfg.DefaultMaxPromptSize)
 	}
 	return resolve(DefaultMaxPromptSize, repoVal, globalVal)
+}
+
+// ResolveReviewContextCount returns how many earlier reviews go into a
+// review prompt as context. Priority: repo > global > default. Callers pass
+// the repo config they already trust (CI loads it from the default branch).
+// Negative values resolve to 0, which disables context.
+func ResolveReviewContextCount(repoCfg *RepoConfig, globalCfg *Config) int {
+	count := DefaultReviewContextCount
+	if repoCfg != nil && repoCfg.ReviewContextCount != nil {
+		count = *repoCfg.ReviewContextCount
+	} else if globalCfg != nil {
+		count = globalCfg.ReviewContextCount
+	}
+	return max(count, 0)
 }
 
 // Kata context modes and the default cap on combined kata context bytes.
