@@ -3,7 +3,12 @@
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 # Public PostHog ingest key. Builds without it send no telemetry.
 POSTHOG_PROJECT_KEY ?= phc_AzHd9YvuHR7M5poKzC6eW654d3SgKyBdoQPuwkWhimUf
-LDFLAGS := -X go.kenn.io/roborev/internal/version.Version=$(VERSION) -X go.kenn.io/kit/telemetry/posthog.projectKey=$(POSTHOG_PROJECT_KEY)
+# Package manager that owns the binary, such as homebrew. Builds with a
+# value refuse to update themselves. Empty means a self-updating build.
+DISTRIBUTION ?=
+BINDIR ?= bin
+# Recursive so a target can set DISTRIBUTION for its own build.
+LDFLAGS = -X go.kenn.io/roborev/internal/version.Version=$(VERSION) -X go.kenn.io/kit/telemetry/posthog.projectKey=$(POSTHOG_PROJECT_KEY) -X go.kenn.io/roborev/internal/version.Distribution=$(DISTRIBUTION)
 ACP_TEST_COMMAND ?= $(abspath scripts/acp-agent)
 ACP_TEST_ADAPTER ?= codex
 ACP_TEST_ARGS ?=
@@ -27,12 +32,20 @@ GOLANGCI_LINT_VERSION := $(shell sed -n 's/^version: v//p' .custom-gcl.yml)
 # (golangci-lint #3502). A per-checkout cache dies with its checkout.
 export GOLANGCI_LINT_CACHE := $(CURDIR)/.golangci-lint-cache
 
-.PHONY: build web-build web-dev web-test-e2e web-assets-check web-embed web-restore web-release-check release-snapshot-check install clean test test-git-isolation test-codex-skill-eval test-integration test-acp-integration test-acp-integration-codex test-acp-integration-claude test-postgres test-all postgres-up postgres-down test-postgres-ci api-generate api-check api-breaking lint lint-ci markdown markdown-ci check-golangci-lint print-golangci-lint-version check-actions check-renovate-config install-hooks docs-install docs-build docs-serve docs-preview docs-check docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy
+.PHONY: build homebrew web-build web-dev web-test-e2e web-assets-check web-embed web-restore web-release-check release-snapshot-check install clean test test-git-isolation test-codex-skill-eval test-integration test-acp-integration test-acp-integration-codex test-acp-integration-claude test-postgres test-all postgres-up postgres-down test-postgres-ci api-generate api-check api-breaking lint lint-ci markdown markdown-ci check-golangci-lint print-golangci-lint-version check-actions check-renovate-config install-hooks docs-install docs-build docs-serve docs-preview docs-check docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy
 
 build: web-embed
 	@set -e; trap '$(MAKE) web-restore' EXIT; \
 		mkdir -p bin; \
 		go build -ldflags="$(LDFLAGS)" -o bin/roborev ./cmd/roborev
+
+# Homebrew build profile: the normal build with cgo, owned by Homebrew.
+# Formulas run: make homebrew VERSION=<version> BINDIR=<dir>
+homebrew: DISTRIBUTION = homebrew
+homebrew: web-embed
+	@set -e; trap '$(MAKE) web-restore' EXIT; \
+		mkdir -p "$(BINDIR)"; \
+		CGO_ENABLED=1 go build -ldflags="$(LDFLAGS)" -o "$(BINDIR)/roborev" ./cmd/roborev
 
 web-build:
 	cd web && bun run build

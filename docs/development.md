@@ -37,6 +37,16 @@ go build \
 - Builds with an empty `Distribution`, the default, keep the normal update
     behavior.
 
+Homebrew formulas can use the `homebrew` make target. It runs the normal build
+with cgo enabled and `Distribution` set to `homebrew`:
+
+```bash
+make homebrew VERSION=1.2.3 BINDIR=/path/to/bin
+```
+
+Other `make` and GoReleaser builds read `Distribution` from the `DISTRIBUTION`
+variable, which is empty by default.
+
 ## Project Structure
 
 ```
