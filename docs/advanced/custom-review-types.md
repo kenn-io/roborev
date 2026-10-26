@@ -79,7 +79,7 @@ those files, for example to check a draft against its exhibits, set
 
 ```toml
 [review.types.exhibits]
-template = ".roborev/exhibits.md"
+template = "rubrics/exhibits.md"
 binary_evidence = true
 ```
 
@@ -94,6 +94,8 @@ removes them when the review attempt ends.
 Only review types that set `binary_evidence` get the section; other panel
 members are unchanged. Reviews of uncommitted changes fail with an error when
 the type sets it. Keep `snapshot_dir` in `.gitignore`; `roborev init` adds it.
+Keep committed rubrics outside `snapshot_dir`, because roborev will not write
+snapshots into a directory that holds tracked files.
 
 ## Paths and includes
 
