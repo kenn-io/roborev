@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -178,6 +179,9 @@ func TestProcessJobRunsStrictReviewInFreshSession(t *testing.T) {
 }
 
 func TestProcessJobRecordsStrictClaudeUsageWithoutSavedSession(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fake command uses POSIX permissions")
+	}
 	tc := newWorkerTestContext(t, 1)
 	require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, ".roborev.toml"), []byte(strictCustomTypeConfig), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, "custom.md"), []byte("Check the citations.\n"), 0o644))
