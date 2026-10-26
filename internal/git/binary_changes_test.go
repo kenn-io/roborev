@@ -44,3 +44,30 @@ func TestChangedBinaryFiles(t *testing.T) {
 		assert.Equal(t, "%PDF\x00v2", string(data))
 	}
 }
+
+func TestChangedBinaryFilesMergeConflictResolution(t *testing.T) {
+	ctx := context.Background()
+	repo := NewTestRepo(t)
+	repo.WriteFile("exhibit.pdf", "%PDF\x00base")
+	repo.Run("add", "-A")
+	repo.Run("commit", "-m", "base")
+	repo.Run("checkout", "-q", "-b", "side")
+	repo.WriteFile("exhibit.pdf", "%PDF\x00side")
+	repo.Run("commit", "-q", "-am", "side")
+	repo.Run("checkout", "-q", "-")
+	repo.WriteFile("exhibit.pdf", "%PDF\x00main")
+	repo.Run("commit", "-q", "-am", "main")
+	// Merge without auto-resolving, then commit bytes that differ from both
+	// parents, as a hand-resolved binary conflict would.
+	repo.Run("merge", "-q", "--no-ff", "--no-commit", "-s", "ours", "side")
+	repo.WriteFile("exhibit.pdf", "%PDF\x00resolved")
+	repo.Run("add", "exhibit.pdf")
+	repo.Run("commit", "-q", "--no-edit")
+
+	changes, err := ChangedBinaryFiles(ctx, repo.Dir, repo.HeadSHA())
+	require.NoError(t, err)
+	require.Len(t, changes, 1)
+	data, err := ReadBlob(ctx, repo.Dir, changes[0].OID)
+	require.NoError(t, err)
+	assert.Equal(t, "%PDF\x00resolved", string(data))
+}

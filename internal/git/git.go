@@ -1916,7 +1916,9 @@ func ChangedBinaryFiles(ctx context.Context, repoPath, gitRef string, extraExclu
 	if IsRange(gitRef) {
 		args = append([]string{"diff", gitRef}, flags...)
 	} else {
-		args = append([]string{"show", gitRef, "--format="}, flags...)
+		// A merge commit is compared with its first parent: the changes the
+		// merge brought in, including binary conflict resolutions.
+		args = append([]string{"show", gitRef, "--format=", "--diff-merges=first-parent"}, flags...)
 	}
 	args = append(args, ReviewPathspecArgs(extraExcludes...)...)
 	cmd := newGitCmdContext(ctx, args...)
@@ -1937,7 +1939,7 @@ func ChangedBinaryFiles(ctx context.Context, repoPath, gitRef string, extraExclu
 			i++
 			fields := strings.Fields(header)
 			if len(fields) != 5 || i >= len(tokens) {
-				continue // combined merge records have more fields
+				continue
 			}
 			oldMode, newMode, newOID, status := fields[0], fields[1], fields[3], fields[4]
 			change := BinaryChange{Path: tokens[i], Status: "modified", OID: newOID}
