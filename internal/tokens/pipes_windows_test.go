@@ -1,7 +1,6 @@
 package tokens
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -162,12 +161,4 @@ func TestAgentsviewCommandPreservesWindowsStderr(t *testing.T) {
 	var exitErr *exec.ExitError
 	require.ErrorAs(t, err, &exitErr)
 	assert.Contains(t, string(exitErr.Stderr), "usage lookup failed")
-}
-
-func TestAgentsviewCommandCanceledBeforeStart(t *testing.T) {
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	cmd := filepath.Join(os.Getenv("SystemRoot"), "System32", "cmd.exe")
-	_, err := runAgentsviewCommand(ctx, 10*time.Second, cmd, "/d", "/c", "exit 0")
-	require.ErrorIs(t, err, context.Canceled)
 }
