@@ -132,6 +132,7 @@ func TestListFetchesRequestMetadataOnlyRows(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // sets the package-level version.Distribution
 func TestCheckForUpdateSkipsPackageManagedBuild(t *testing.T) {
 	original := version.Distribution
 	version.Distribution = "homebrew"
