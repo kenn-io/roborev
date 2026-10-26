@@ -54,6 +54,10 @@ All notable changes to roborev, grouped by minor release.
 - Reviews no longer fail when a git text converter fails on a file, as Git for
     Windows does by default for some PDF and Word files. The diff shows the file
     as binary instead.
+- Rebasing a conflicting fix patch from the TUI Tasks view now builds the new
+    patch on the tip of the review's branch. Before, a rebase for a
+    single-commit review reused the reviewed commit, so the new patch conflicted
+    again and each rebase repeated the same failure.
 
 ## 0.73.0
 

@@ -66,8 +66,9 @@ applied.
 
 If the patch conflicts with the current state of your working tree (e.g. because
 new commits landed after the review), roborev offers to re-run the fix against
-current HEAD. Press `R` to trigger a rebase: the agent receives the original
-patch as context and produces a new patch targeting the current code.
+the current tip of the review's branch. Press `R` to trigger a rebase: the agent
+receives the original patch as context and produces a new patch targeting the
+current code.
 
 ## See Also
 

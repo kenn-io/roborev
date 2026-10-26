@@ -3811,8 +3811,10 @@ func (s *Server) humaFixJob(
 		)
 	}
 
+	// A rebase must run against the branch tip the patch will be applied
+	// to. Reusing the reviewed commit would reproduce the same conflict.
 	fixGitRef := req.GitRef
-	if fixGitRef == "" && !strings.Contains(parentJob.GitRef, "..") {
+	if fixGitRef == "" && req.StaleJobID == 0 && !strings.Contains(parentJob.GitRef, "..") {
 		fixGitRef = parentJob.GitRef
 	}
 	if fixGitRef == "" {
