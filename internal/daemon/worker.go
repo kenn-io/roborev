@@ -1581,6 +1581,12 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}
 	}
 
+	var tokenUsage *sessionTokenUsage
+	if planningPrompt == "" && (tools == nil || agentName != "claude-code") {
+		collected := wp.collectTokenUsageForSession(context.Background(), workerID, job, sessionWriter.SessionID())
+		tokenUsage = &collected
+	}
+
 	completed := false
 	wp.runAttemptTransition(workerID, job, func() {
 		// Store the result (use actual agent name, not requested).
@@ -1644,8 +1650,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}
 		wp.autoClosePassingReview(workerID, job, verdict)
 
-		if planningPrompt == "" && (tools == nil || agentName != "claude-code") {
-			wp.captureTokenUsageForSession(context.Background(), workerID, job, sessionWriter.SessionID())
+		if tokenUsage != nil {
+			wp.storeTokenUsageForSession(workerID, job, *tokenUsage)
 		}
 		wp.invalidateBudgetSpend()
 
@@ -2242,35 +2248,58 @@ func (wp *WorkerPool) releaseIfPanelMember(job *storage.ReviewJob) {
 	}
 }
 
-func (wp *WorkerPool) captureTokenUsageForSession(
+// sessionTokenUsage is the usage gathered for one attempt before it is stored.
+type sessionTokenUsage struct {
+	capturedSession string
+	wasResumed      bool
+	logUsage        *tokens.Usage
+	providerUsage   *tokens.Usage
+}
+
+// collectTokenUsageForSession reads usage from the job log and the usage
+// provider. The provider lookup can run an external command, so callers must
+// not hold the attempt lock: claimed jobs wait for that lock before they
+// register for cancellation and timeout.
+func (wp *WorkerPool) collectTokenUsageForSession(
 	ctx context.Context, workerID string, job *storage.ReviewJob, capturedSession string,
-) {
+) sessionTokenUsage {
 	// Only fetch agentsview usage for fresh sessions (where we captured a new
 	// session ID). Resumed-session agentsview totals are cumulative across
 	// turns, but Codex job-log turn.completed usage belongs to this job's
 	// stream and is safe to parse below.
-	wasResumed := job.SessionID != "" && capturedSession == job.SessionID
-
-	var logUsage *tokens.Usage
-	var providerUsage *tokens.Usage
+	collected := sessionTokenUsage{
+		capturedSession: capturedSession,
+		wasResumed:      job.SessionID != "" && capturedSession == job.SessionID,
+	}
 	logUsage, logErr := tokens.ParseCodexUsageFile(JobLogPath(job.ID))
 	if logErr != nil {
 		log.Printf("[%s] Warning: parse token usage from job log for job %d: %v",
 			workerID, job.ID, logErr)
 	}
+	collected.logUsage = logUsage
 
-	if capturedSession != "" && !wasResumed {
+	if capturedSession != "" && !collected.wasResumed {
 		fetched, tokenErr := wp.fetchFreshSessionUsage(
 			ctx, wp.fetchTokenUsage, capturedSession,
 		)
 		switch {
 		case tokenErr == nil:
-			providerUsage = fetched
+			collected.providerUsage = fetched
 		case !errors.Is(tokenErr, tokens.ErrUsageProviderUnavailable):
 			log.Printf("[%s] Warning: fetch token usage for job %d: %v",
 				workerID, job.ID, tokenErr)
 		}
 	}
+	return collected
+}
+
+// storeTokenUsageForSession saves collected usage on the job's terminal row.
+// Writes are pinned to the attempt that collected the usage.
+func (wp *WorkerPool) storeTokenUsageForSession(
+	workerID string, job *storage.ReviewJob, collected sessionTokenUsage,
+) {
+	capturedSession, wasResumed := collected.capturedSession, collected.wasResumed
+	logUsage, providerUsage := collected.logUsage, collected.providerUsage
 	usage := backfill.MergeTokenUsage(tokens.ToJSON(logUsage), providerUsage)
 	needsLateCost := capturedSession != "" && !wasResumed &&
 		backfill.NeedsTokenCostBackfill(tokens.ToJSON(usage))

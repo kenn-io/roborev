@@ -270,13 +270,20 @@ type synthesisResult struct {
 func (wp *WorkerPool) completeSynthesisContext(
 	workerID string, job *storage.ReviewJob, res synthesisResult,
 ) {
+	var tokenUsage *sessionTokenUsage
+	if res.captureUsage {
+		collected := wp.collectTokenUsageForSession(
+			context.Background(), workerID, job, res.capturedSession,
+		)
+		tokenUsage = &collected
+	}
 	wp.runAttemptTransition(workerID, job, func() {
-		wp.completeSynthesisLocked(workerID, job, res)
+		wp.completeSynthesisLocked(workerID, job, res, tokenUsage)
 	})
 }
 
 func (wp *WorkerPool) completeSynthesisLocked(
-	workerID string, job *storage.ReviewJob, res synthesisResult,
+	workerID string, job *storage.ReviewJob, res synthesisResult, tokenUsage *sessionTokenUsage,
 ) {
 	agentName, output := res.review.Agent, res.review.Output
 	completeErr := wp.db.CompleteJobResult(job.ID, agentName, storage.ReviewCompletion{
@@ -306,10 +313,8 @@ func (wp *WorkerPool) completeSynthesisLocked(
 		return
 	}
 	wp.invalidateBudgetSpend()
-	if res.captureUsage {
-		wp.captureTokenUsageForSession(
-			context.Background(), workerID, job, res.capturedSession,
-		)
+	if tokenUsage != nil {
+		wp.storeTokenUsageForSession(workerID, job, *tokenUsage)
 	}
 	verdict := res.review.Verdict
 	if verdict == storage.VerdictUnknown && len(res.review.StructuredOutput) == 0 {

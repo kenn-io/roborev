@@ -13,6 +13,14 @@ All notable changes to roborev, grouped by minor release.
 - Sandboxed commands keep the host daemon's runtime record.
 - A TUI in a sandbox keeps the host TUI's runtime file.
 
+**Bug fixes**
+
+- The daemon keeps starting jobs when an agentsview token usage lookup hangs.
+    The lookup returns at its timeout even when a process agentsview started is
+    still running, and jobs no longer wait for it before they start. A job that
+    cannot start fails or retries at its job timeout instead of staying
+    `running` until it is canceled by hand.
+
 ## 0.73.0
 
 <small>2026-10-23</small>

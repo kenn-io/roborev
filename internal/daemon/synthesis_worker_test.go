@@ -875,8 +875,13 @@ func TestSynthesisCapturesTokenUsage(t *testing.T) {
 	agent.RegisterForTest(t, synthAgent)
 
 	var fetchedSession string
+	var synthJobID int64
+	var statusDuringFetch storage.JobStatus
 	tc.Pool.tokenUsageFetcher = func(ctx context.Context, sessionID string) (*tokens.Usage, error) {
 		fetchedSession = sessionID
+		job, err := tc.DB.GetJobByID(synthJobID)
+		require.NoError(t, err)
+		statusDuringFetch = job.Status
 		return &tokens.Usage{CostUSD: 0.03, HasCost: true}, nil
 	}
 	var usageAtCompletion string
@@ -896,6 +901,7 @@ func TestSynthesisCapturesTokenUsage(t *testing.T) {
 		{name: "m0", agent: memberAgent},
 		{name: "m1", agent: memberAgent},
 	})
+	synthJobID = synth.ID
 	setSynthesisAgent(t, tc, runUUID, synthAgent.name)
 	completeMember(t, tc, members[0].ID, memberAgent, "Review #1\n\n## Review Findings\n\n- Severity: Medium\n- Location: a.go:1\n- Problem: A\n- Fix: Fix A")
 	completeMember(t, tc, members[1].ID, memberAgent, "Review #2\n\n## Review Findings\n\n- Severity: Medium\n- Location: b.go:2\n- Problem: B\n- Fix: Fix B")
@@ -905,6 +911,9 @@ func TestSynthesisCapturesTokenUsage(t *testing.T) {
 
 	updated := tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
 	assert.Equal("synth-session-123", fetchedSession)
+	// The provider lookup runs before the completion transition takes the
+	// attempt lock, so a slow lookup cannot stall other jobs' registration.
+	assert.Equal(storage.JobStatusRunning, statusDuringFetch)
 	assert.Contains(updated.TokenUsage, `"cost_usd":0.03`)
 	assert.Contains(updated.TokenUsage, `"has_cost":true`)
 	assert.Contains(usageAtCompletion, `"cost_usd":0.03`)

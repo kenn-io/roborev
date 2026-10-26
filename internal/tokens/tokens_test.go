@@ -906,3 +906,82 @@ func TestToJSON(t *testing.T) {
 		assert.InDelta(t, 1.23, got.CostUSD, 1e-9)
 	})
 }
+
+// installPipeHoldingAgentsview installs a fake agentsview that leaves a
+// background process holding its inherited stdout and stderr, which is what
+// a launcher shim does when the agentsview it starts spawns helpers. body
+// runs after the background process starts. The helper is killed on cleanup.
+func installPipeHoldingAgentsview(t *testing.T, body string) {
+	t.Helper()
+	pidFile := filepath.Join(t.TempDir(), "holder.pid")
+	t.Setenv("FAKE_AGENTSVIEW_HOLDER_PID", pidFile)
+	installFakeAgentsview(t, "#!/bin/sh\nsleep 30 &\necho $! > \"$FAKE_AGENTSVIEW_HOLDER_PID\"\n"+body)
+	t.Cleanup(func() {
+		data, err := os.ReadFile(pidFile)
+		if err != nil {
+			return
+		}
+		var pid int
+		if _, err := fmt.Sscan(string(data), &pid); err != nil {
+			return
+		}
+		if proc, err := os.FindProcess(pid); err == nil {
+			_ = proc.Kill()
+		}
+	})
+}
+
+// fetchInBackground runs the lookup in a goroutine so a regression fails the
+// test instead of blocking it until the holder process exits.
+func fetchInBackground(cfg FetchConfig) <-chan fetchResult {
+	done := make(chan fetchResult, 1)
+	go func() {
+		usage, err := FetchForSessionWithConfig(context.Background(), "s", cfg)
+		done <- fetchResult{usage: usage, err: err}
+	}()
+	return done
+}
+
+type fetchResult struct {
+	usage *Usage
+	err   error
+}
+
+func waitForFetch(t *testing.T, done <-chan fetchResult) fetchResult {
+	t.Helper()
+	var result fetchResult
+	// Wall-clock wait: the fake agentsview subprocess and the background
+	// process that holds its pipes for 30 seconds.
+	require.Eventually(t, func() bool {
+		select {
+		case result = <-done:
+			return true
+		default:
+			return false
+		}
+	}, 10*time.Second, 10*time.Millisecond,
+		"usage lookup waited for a process that inherited its pipes")
+	return result
+}
+
+func TestFetchForSessionTimeoutDoesNotWaitForInheritedPipes(t *testing.T) {
+	installPipeHoldingAgentsview(t, "exec sleep 30\n")
+
+	result := waitForFetch(t, fetchInBackground(FetchConfig{Timeout: 100 * time.Millisecond}))
+
+	require.Error(t, result.err)
+	assert.Nil(t, result.usage)
+}
+
+func TestFetchForSessionReturnsUsageWhenHelperKeepsPipesOpen(t *testing.T) {
+	installPipeHoldingAgentsview(t, `echo '{"session_id":"s","total_output_tokens":42,"peak_context_tokens":900,"cost_usd":0.07,"has_cost":true}'
+exit 0
+`)
+
+	result := waitForFetch(t, fetchInBackground(FetchConfig{Timeout: 10 * time.Second}))
+
+	require.NoError(t, result.err)
+	require.NotNil(t, result.usage)
+	assert.Equal(t, int64(42), result.usage.OutputTokens)
+	assert.InDelta(t, 0.07, result.usage.CostUSD, 1e-9)
+}

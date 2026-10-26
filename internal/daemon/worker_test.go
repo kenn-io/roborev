@@ -1149,6 +1149,65 @@ func TestProcessJob_UsageEndpointFailureKeepsCompletedJob(t *testing.T) {
 	assert.Empty(t, updated.TokenUsage)
 }
 
+// captureTokenUsageForSession collects and stores usage in one step, the way
+// completion does across its attempt transition.
+func (wp *WorkerPool) captureTokenUsageForSession(
+	ctx context.Context, workerID string, job *storage.ReviewJob, capturedSession string,
+) {
+	wp.storeTokenUsageForSession(
+		workerID, job, wp.collectTokenUsageForSession(ctx, workerID, job, capturedSession),
+	)
+}
+
+// A new attempt registers for cancellation and timeout only after it takes the
+// attempt lock, so a slow usage lookup while completing another job must not
+// hold that lock.
+func TestProcessJobFetchesTokenUsageOutsideAttemptLock(t *testing.T) {
+	t.Parallel()
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	const agentName = "slow-usage-lookup"
+	agent.RegisterForTest(t, &sessionStreamingTestAgent{
+		name:       agentName,
+		streamLine: `{"type":"thread.started","thread_id":"slow-usage-session"}`,
+	})
+
+	fetching, finishFetch := make(chan struct{}), make(chan struct{})
+	var finishOnce sync.Once
+	unblockFetch := func() { finishOnce.Do(func() { close(finishFetch) }) }
+	t.Cleanup(unblockFetch)
+	tc.Pool.tokenUsageFetcher = func(context.Context, string) (*tokens.Usage, error) {
+		close(fetching)
+		<-finishFetch
+		return &tokens.Usage{CostUSD: 0.05, HasCost: true}, nil
+	}
+
+	first := tc.createAndClaimJobWithAgent(t, sha, "worker-a", agentName)
+	processed := make(chan struct{})
+	go func() {
+		defer close(processed)
+		tc.Pool.processJob("worker-a", first)
+	}()
+	select {
+	case <-fetching:
+	case <-processed:
+		require.FailNow(t, "job completed without looking up token usage")
+	}
+
+	next := tc.createAndClaimJobWithAgent(t, sha, "worker-b", "test")
+	// Wall-clock bound: StartJobAttempt reads the claimed row from SQLite.
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	release, err := tc.DB.StartJobAttempt(ctx, next, "worker-b", cancel)
+	require.NoError(t, err, "the next attempt waited for the usage lookup")
+	release()
+
+	unblockFetch()
+	<-processed
+	updated := tc.assertJobStatus(t, first.ID, storage.JobStatusDone)
+	assert.Contains(t, updated.TokenUsage, `"cost_usd":0.05`)
+}
+
 func TestCaptureTokenUsageForSessionUsesCodexJobLog(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	tc := newWorkerTestContext(t, 1)

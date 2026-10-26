@@ -271,9 +271,16 @@ func fetchForSessionCLI(
 	}, nil
 }
 
+// agentsviewWaitDelay bounds how long a lookup waits for its output pipes to
+// close after agentsview exits or is killed. Killing agentsview does not kill
+// processes it started, and a descendant that inherited the pipes would
+// otherwise keep Output blocked until that descendant exits.
+const agentsviewWaitDelay = 250 * time.Millisecond
+
 func buildAgentsviewCmd(ctx context.Context, binPath string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, binPath, args...)
 	procutil.HideConsole(cmd)
+	cmd.WaitDelay = agentsviewWaitDelay
 	return cmd
 }
 
@@ -282,7 +289,13 @@ func runAgentsviewCommand(
 ) ([]byte, error) {
 	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	return buildAgentsviewCmd(cmdCtx, binPath, args...).Output()
+	out, err := buildAgentsviewCmd(cmdCtx, binPath, args...).Output()
+	// ErrWaitDelay means agentsview exited successfully but a descendant kept
+	// the pipes open; the output agentsview wrote is complete.
+	if errors.Is(err, exec.ErrWaitDelay) {
+		err = nil
+	}
+	return out, err
 }
 
 func shouldFallbackToTokenUse(err error) bool {
