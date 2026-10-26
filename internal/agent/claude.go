@@ -29,6 +29,8 @@ type ClaudeAgent struct {
 	// Set by WithStrictReview. A strict agent never resumes a session.
 	strictPolicy        *config.ReviewToolPolicy
 	strictMCPConfigPath string
+	// Set by PrepareReviewToolPolicy when user settings hold credential keys.
+	strictSettingsPath string
 }
 
 const (
@@ -68,6 +70,7 @@ func (a *ClaudeAgent) clone(opts ...agentCloneOption) *ClaudeAgent {
 		SessionID:           cfg.SessionID,
 		strictPolicy:        a.strictPolicy.Clone(),
 		strictMCPConfigPath: a.strictMCPConfigPath,
+		strictSettingsPath:  a.strictSettingsPath,
 	}
 	if clone.strictPolicy != nil {
 		clone.Agentic = false

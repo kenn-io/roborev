@@ -71,8 +71,9 @@ func ValidateReviewToolBackup(p *config.ReviewToolPolicy, resolution WorkflowCon
 
 // PrepareReviewToolPolicy returns the agent to run a review under policy p and
 // a cleanup func the caller must run once the review ends, on every path. A
-// strict policy gets a private MCP config file and a fresh session; a nil
-// policy returns a unchanged.
+// strict policy gets a private MCP config file, a private copy of the Claude
+// user settings' credential keys, and a fresh session; a nil policy returns a
+// unchanged.
 func PrepareReviewToolPolicy(a Agent, p *config.ReviewToolPolicy) (Agent, func(), error) {
 	noop := func() {}
 	if p == nil {
@@ -89,7 +90,16 @@ func PrepareReviewToolPolicy(a Agent, p *config.ReviewToolPolicy) (Agent, func()
 	if err != nil {
 		return nil, noop, err
 	}
-	return a.(StrictReviewAgent).WithStrictReview(*policy, path), cleanup, nil
+	strict := a.(StrictReviewAgent).WithStrictReview(*policy, path)
+	if c, ok := strict.(*ClaudeAgent); ok {
+		settings, err := writeClaudeStrictSettings(filepath.Dir(path))
+		if err != nil {
+			cleanup()
+			return nil, noop, err
+		}
+		c.strictSettingsPath = settings
+	}
+	return strict, cleanup, nil
 }
 
 // writeReviewMCPConfig writes the MCP config a strict review loads to a new

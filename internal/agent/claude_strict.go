@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -38,6 +39,7 @@ func (a *ClaudeAgent) WithStrictReview(policy config.ReviewToolPolicy, mcpConfig
 	clone := a.clone()
 	clone.strictPolicy = policy.Clone()
 	clone.strictMCPConfigPath = mcpConfigPath
+	clone.strictSettingsPath = ""
 	clone.Agentic = false
 	clone.SessionID = ""
 	return clone
@@ -68,6 +70,10 @@ func (a *ClaudeAgent) buildStrictArgs(includeEffort bool) []string {
 		"--permission-mode", "dontAsk", "--permission-prompts", "none",
 		"--no-session-persistence", "--disable-slash-commands",
 	}
+	if a.strictSettingsPath != "" {
+		// Only the credential and provider keys copied from user settings.
+		args = append(args, "--settings", a.strictSettingsPath)
+	}
 	model, _, err := parseModel(a.Model)
 	if err != nil {
 		model = a.Model
@@ -79,6 +85,54 @@ func (a *ClaudeAgent) buildStrictArgs(includeEffort bool) []string {
 		args = append(args, claudeEffortFlag, effort)
 	}
 	return args
+}
+
+// claudeStrictSettingsKeys are the user settings a strict review keeps:
+// credentials and provider selection, which --restricted would otherwise drop.
+var claudeStrictSettingsKeys = []string{
+	"env", "apiKeyHelper", "awsAuthRefresh", "awsCredentialExport", "gcpAuthRefresh",
+	"forceLoginMethod", "forceLoginOrgUUID", "modelOverrides",
+}
+
+// writeClaudeStrictSettings copies claudeStrictSettingsKeys from the user
+// settings file into dir/settings.json and returns its path. It never reads
+// project or local settings, which the reviewed repository controls. It
+// returns "" when the user file is missing, invalid, or has none of the keys.
+func writeClaudeStrictSettings(dir string) (string, error) {
+	configDir := os.Getenv("CLAUDE_CONFIG_DIR")
+	if configDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", nil
+		}
+		configDir = filepath.Join(home, ".claude")
+	}
+	data, err := os.ReadFile(filepath.Join(configDir, "settings.json"))
+	if err != nil {
+		return "", nil
+	}
+	var user map[string]jsontext.Value
+	if json.Unmarshal(data, &user) != nil {
+		return "", nil
+	}
+	kept := make(map[string]jsontext.Value)
+	for _, key := range claudeStrictSettingsKeys {
+		if value, ok := user[key]; ok {
+			kept[key] = value
+		}
+	}
+	if len(kept) == 0 {
+		return "", nil
+	}
+	out, err := json.Marshal(kept)
+	if err != nil {
+		return "", fmt.Errorf("encode strict claude settings: %w", err)
+	}
+	path := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		return "", fmt.Errorf("write strict claude settings: %w", err)
+	}
+	return path, nil
 }
 
 func claudeHelpFlags(ctx context.Context, command string) (map[string]bool, error) {
@@ -208,6 +262,9 @@ func (a *ClaudeAgent) strictReview(ctx context.Context, repoPath, prompt string,
 	required := claudeStrictFlags
 	if hasSchema {
 		required = append(slices.Clone(required), "--json-schema")
+	}
+	if a.strictSettingsPath != "" {
+		required = append(slices.Clone(required), "--settings")
 	}
 	for _, flag := range required {
 		if !flags[flag] {

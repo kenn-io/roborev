@@ -17,7 +17,7 @@ import (
 )
 
 const claudeStrictHelp = "--restricted --tools --allowedTools, --allowed-tools --strict-mcp-config --mcp-config " +
-	"--permission-mode --permission-prompts --no-session-persistence --disable-slash-commands --effort --json-schema"
+	"--permission-mode --permission-prompts --no-session-persistence --disable-slash-commands --effort --json-schema --settings"
 
 const claudeStrictInitLine = `{"type":"system","subtype":"init","permissionMode":"dontAsk","tools":["Read","Glob","Grep","StructuredOutput"],"mcp_servers":[]}`
 
@@ -27,6 +27,15 @@ func TestClaudeStrictReviewRunsLockedDownSession(t *testing.T) {
 		CaptureArgs: true,
 		StdoutLines: []string{claudeStrictInitLine, `{"type":"result","result":"{\"findings\":[]}"}`},
 	})
+	userDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", userDir)
+	require.NoError(t, os.WriteFile(filepath.Join(userDir, "settings.json"), []byte(`{
+		"env": {"ANTHROPIC_BASE_URL": "https://gateway.example", "ANTHROPIC_AUTH_TOKEN": "synthetic-token"},
+		"apiKeyHelper": "/usr/local/bin/synthetic-key",
+		"hooks": {"PreToolUse": []},
+		"permissions": {"allow": ["Bash"]},
+		"enabledPlugins": {"synthetic@market": true}
+	}`), 0o600))
 	base := NewClaudeAgent(mock.CmdPath).WithModel("opus").WithReasoning(ReasoningThorough).(*ClaudeAgent).WithSessionID("old-session")
 	prepared, cleanup, err := PrepareReviewToolPolicy(base, &config.ReviewToolPolicy{Mode: "read-only"})
 	require.NoError(t, err)
@@ -34,6 +43,18 @@ func TestClaudeStrictReviewRunsLockedDownSession(t *testing.T) {
 	data, err := os.ReadFile(mcpConfig)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"mcpServers":{}}`, string(data))
+	// Only credential and provider keys survive; hooks, permissions and
+	// plugins from user settings must never reach the strict session.
+	settings := filepath.Join(filepath.Dir(mcpConfig), "settings.json")
+	data, err = os.ReadFile(settings)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{
+		"env": {"ANTHROPIC_BASE_URL": "https://gateway.example", "ANTHROPIC_AUTH_TOKEN": "synthetic-token"},
+		"apiKeyHelper": "/usr/local/bin/synthetic-key"
+	}`, string(data))
+	info, err := os.Stat(settings)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 
 	// A session set after preparation must not resume either.
 	strict := prepared.(*ClaudeAgent).WithSessionID("later-session").(*ClaudeAgent)
@@ -46,6 +67,7 @@ func TestClaudeStrictReviewRunsLockedDownSession(t *testing.T) {
 		"--strict-mcp-config", "--mcp-config", mcpConfig,
 		"--permission-mode", "dontAsk", "--permission-prompts", "none",
 		"--no-session-persistence", "--disable-slash-commands",
+		"--settings", settings,
 		"--model", "opus", "--effort", "high",
 		"--json-schema", `{"type":"object"}`,
 	}, readMockArgs(t, mock.ArgsFile))
@@ -53,6 +75,19 @@ func TestClaudeStrictReviewRunsLockedDownSession(t *testing.T) {
 	cleanup()
 	_, err = os.Stat(mcpConfig)
 	require.ErrorIs(t, err, os.ErrNotExist)
+	_, err = os.Stat(settings)
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestClaudeStrictReviewWithoutUserSettingsPassesNoSettings(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	prepared, cleanup, err := PrepareReviewToolPolicy(NewClaudeAgent("claude"), &config.ReviewToolPolicy{Mode: "read-only"})
+	require.NoError(t, err)
+	defer cleanup()
+
+	strict := prepared.(*ClaudeAgent)
+	assert.NotContains(t, strict.buildStrictArgs(false), "--settings")
+	assert.NoFileExists(t, filepath.Join(filepath.Dir(strict.StrictReviewMCPConfig()), "settings.json"))
 }
 
 func TestClaudeStrictSchemaReviewKeepsQuotaError(t *testing.T) {

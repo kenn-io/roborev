@@ -209,6 +209,8 @@ func TestProcessJobRecordsStrictClaudeUsageWhenReviewFails(t *testing.T) {
 func claimStrictClaudeUsageJob(t *testing.T, result string) (*workerTestContext, *storage.ReviewJob) {
 	t.Helper()
 	tc := newWorkerTestContext(t, 1)
+	// Keep the strict review from reading the developer's Claude settings.
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, ".roborev.toml"), []byte(strictCustomTypeConfig), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, "custom.md"), []byte("Check the citations.\n"), 0o644))
 	bin := t.TempDir()

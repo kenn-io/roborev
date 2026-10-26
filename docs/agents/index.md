@@ -128,6 +128,13 @@ A strict review starts a fresh, locked-down Claude session:
 - User, project, and local Claude settings are not loaded, so their hooks,
     plugins, and permission rules cannot add tools. Managed settings still
     apply.
+- To keep gateway, Bedrock, Vertex, and Foundry setups working, roborev copies
+    only the `env`, `apiKeyHelper`, `awsAuthRefresh`, `awsCredentialExport`,
+    `gcpAuthRefresh`, `forceLoginMethod`, `forceLoginOrgUUID`, and
+    `modelOverrides` keys from your user settings file
+    (`$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json`) into a
+    private settings file for the review. Hooks, permissions, and plugins are
+    never loaded.
 - MCP servers come only from an empty, private config file that roborev writes
     for the review and deletes afterwards.
 - Permissions use `dontAsk` mode with no prompts. Slash commands are disabled.
