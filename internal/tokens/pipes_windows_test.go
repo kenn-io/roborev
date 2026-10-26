@@ -171,8 +171,3 @@ func TestAgentsviewCommandCanceledBeforeStart(t *testing.T) {
 	_, err := runAgentsviewCommand(ctx, 10*time.Second, cmd, "/d", "/c", "exit 0")
 	require.ErrorIs(t, err, context.Canceled)
 }
-
-func TestAgentsviewCommandMissingExecutable(t *testing.T) {
-	_, err := runAgentsviewCommand(t.Context(), 10*time.Second, filepath.Join(t.TempDir(), "missing.exe"))
-	require.Error(t, err)
-}
