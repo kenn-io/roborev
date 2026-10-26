@@ -2287,6 +2287,187 @@ func (j JobWithReview) Validate() error {
 	return errors
 }
 
+type KataCreateRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+
+	// Body Issue body
+	Body *string `json:"body,omitempty"`
+
+	// IdempotencyKey Makes a retry return the issue the first request created
+	IdempotencyKey *string  `json:"idempotency_key,omitempty"`
+	Labels         []string `json:"labels,omitempty"`
+
+	// Priority Priority 0 to 4
+	Priority *int64 `json:"priority,omitempty"`
+
+	// Project Project to file into; empty selects the default project
+	Project *string `json:"project,omitempty"`
+
+	// Title Issue title
+	Title string `json:"title" validate:"required"`
+}
+
+func (k KataCreateRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(k))
+}
+
+type KataCreateResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+
+	// Author The actor Kata recorded; an authenticated credential overrides roborev's requested actor
+	Author *string `json:"author,omitempty"`
+
+	// Reused Whether Kata answered with an issue an earlier request under the same key created
+	Reused  bool   `json:"reused"`
+	ShortID string `json:"short_id" validate:"required"`
+}
+
+func (k KataCreateResponse) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(k))
+}
+
+type KataIssue struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema      *string        `json:"$schema,omitempty"`
+	BlockedBy   []KataLinkPeer `json:"blocked_by,omitempty"`
+	Blocks      []KataLinkPeer `json:"blocks,omitempty"`
+	Body        string         `json:"body" validate:"required"`
+	Labels      []string       `json:"labels" validate:"required"`
+	Parent      *KataLinkPeer  `json:"parent,omitempty"`
+	QualifiedID string         `json:"qualified_id" validate:"required"`
+	Related     []KataLinkPeer `json:"related,omitempty"`
+	ShortID     string         `json:"short_id" validate:"required"`
+	Status      string         `json:"status" validate:"required"`
+	Title       string         `json:"title" validate:"required"`
+}
+
+func (k KataIssue) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range k.BlockedBy {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("BlockedBy[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range k.Blocks {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Blocks[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(k.Body, "required"); err != nil {
+		errors = errors.Append("Body", err)
+	}
+	if err := typesValidator.Var(k.Labels, "required"); err != nil {
+		errors = errors.Append("Labels", err)
+	}
+	if k.Parent != nil {
+		if v, ok := any(k.Parent).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Parent", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(k.QualifiedID, "required"); err != nil {
+		errors = errors.Append("QualifiedID", err)
+	}
+	for i, item := range k.Related {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Related[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(k.ShortID, "required"); err != nil {
+		errors = errors.Append("ShortID", err)
+	}
+	if err := typesValidator.Var(k.Status, "required"); err != nil {
+		errors = errors.Append("Status", err)
+	}
+	if err := typesValidator.Var(k.Title, "required"); err != nil {
+		errors = errors.Append("Title", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type KataIssuesOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string     `json:"$schema,omitempty"`
+	Issues []KataIssue `json:"issues" validate:"required"`
+}
+
+func (k KataIssuesOutputBody) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range k.Issues {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Issues[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type KataLinkPeer struct {
+	Project     *string `json:"project,omitempty"`
+	QualifiedID *string `json:"qualified_id,omitempty"`
+	ShortID     string  `json:"short_id" validate:"required"`
+	Status      *string `json:"status,omitempty"`
+}
+
+func (k KataLinkPeer) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(k))
+}
+
+type KataStatusBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+
+	// APISchemaVersion Kata API schema version
+	APISchemaVersion *string `json:"api_schema_version,omitempty"`
+
+	// DefaultProject The configured default project
+	DefaultProject *string `json:"default_project,omitempty"`
+
+	// Enabled Whether [integrations.kata] is enabled on the daemon
+	Enabled bool `json:"enabled"`
+
+	// Message Plain description of the state
+	Message string `json:"message" validate:"required"`
+
+	// Project Project in effect: the requested one, the repository's binding, or the default project
+	Project *string `json:"project,omitempty"`
+
+	// SecurityNote Reduced security guarantee on this platform, if any
+	SecurityNote *string `json:"security_note,omitempty"`
+
+	// ServerVersion Kata server version
+	ServerVersion *string `json:"server_version,omitempty"`
+
+	// State Connection state: disabled, unreachable, authentication_required, incompatible, project_not_found, or ready
+	State string `json:"state" validate:"required"`
+
+	// SupportsReplies Whether the server stores typed comment replies (API schema 0.28.0 or later)
+	SupportsReplies bool `json:"supports_replies"`
+
+	// Teammate Teammate name for roborev's own Kata writes
+	Teammate *string `json:"teammate,omitempty"`
+}
+
+func (k KataStatusBody) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(k))
+}
+
 type LegacyConversionReport struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema     *string          `json:"$schema,omitempty"`

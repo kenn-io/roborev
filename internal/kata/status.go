@@ -10,7 +10,8 @@ import (
 // State is the condition of the daemon's Kata connection.
 type State string
 
-// Connection states. Ready needs a compatible API schema and the project.
+// Connection states. Ready needs a compatible API schema and the project;
+// typed replies need a newer schema, reported by Status.SupportsReplies.
 const (
 	StateDisabled               State = "disabled"
 	StateUnreachable            State = "unreachable"
@@ -20,7 +21,7 @@ const (
 	StateReady                  State = "ready"
 )
 
-// Status is what Evaluate learned about the connection. It carries no
+// Status is what EvaluateWith learned about the connection. It carries no
 // credential and no endpoint, so it is safe to log and to return from the
 // daemon API.
 type Status struct {
@@ -32,6 +33,16 @@ type Status struct {
 	APISchemaVersion string `json:"api_schema_version,omitempty"`
 	Message          string `json:"message"`
 	SecurityNote     string `json:"security_note,omitempty"`
+}
+
+// RepliesAPISchemaVersion is the first API schema that stores typed comment
+// replies (reply, confirm, refute, supersede).
+const RepliesAPISchemaVersion = "0.28.0"
+
+// SupportsReplies reports whether the connection is ready and the server
+// stores typed replies.
+func (s Status) SupportsReplies() bool {
+	return s.State == StateReady && schemaAtLeast(s.APISchemaVersion, RepliesAPISchemaVersion)
 }
 
 // EvaluateWith checks the connection without writing anything: the server's

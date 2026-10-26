@@ -226,17 +226,26 @@ What the `type = "kata"` hook does for each event:
 | `review.completed` | `F` (fail) | Creates a priority-2 Kata issue for the review findings, including `roborev show` and `roborev fix` commands |
 | `review.completed` | `P` (pass) | No action |
 
-The Kata hook runs in the repo's working directory and uses the repo's committed
-`.kata.toml` binding by default. Set `project = "myproj"` to override the target
-project. Every issue receives the `roborev` label plus a marker label
-(`review-failed` or `review-finding`) and any extra `labels` you configure.
-roborev uses an idempotency key per job/event so reruns do not create duplicate
-Kata issues.
+The Kata hook picks the project in this order: the hook's `project`, the repo's
+binding (`.kata.local.toml`, then `.kata.toml`, searched upward from the repo's
+working directory), then `default_project` when the API connection is enabled.
+Set `project = "myproj"` to override the target project. Every issue receives
+the `roborev` label plus a marker label (`review-failed` or `review-finding`)
+and any extra `labels` you configure. roborev uses an idempotency key per
+job/event so reruns do not create duplicate Kata issues.
 
-The `kata` CLI must be on `PATH`. If it is missing, or the repo is not bound to
-a Kata project, the hook is skipped. If you explicitly configured the hook but
-Kata fails because the binding is broken or the CLI command fails, the daemon
-logs the error so the integration does not fail silently.
+By default the hook runs the `kata` CLI, which must be on `PATH`. If it is
+missing, or the repo is not bound to a Kata project, the hook is skipped. If you
+explicitly configured the hook but Kata fails because the binding is broken or
+the CLI command fails, the daemon logs the error so the integration does not
+fail silently.
+
+To file through Kata's API instead, with a credential that belongs to roborev
+and no CLI on the daemon's `PATH`, enable `[integrations.kata]` in the global
+config. The hook then writes as `roborev`, and its log line names the author
+Kata recorded. A misconfigured connection fails every hook run with the reason;
+it never falls back to the CLI. See
+[Connecting the daemon to Kata's API](/docs/integrations/kata/#connecting-the-daemon-to-katas-api).
 
 ## Built-in: Webhook Integration
 

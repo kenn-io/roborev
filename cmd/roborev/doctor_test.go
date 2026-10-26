@@ -33,6 +33,11 @@ type fakeDoctorDaemon struct {
 	ping   *daemon.PingInfo
 	agents *doctorDaemonAgents
 	jobs   []generated.ReviewJob
+	// kata is the canned Kata status; kataProjects records the project each
+	// status request named.
+	kata         *daemon.KataStatusBody
+	kataErr      error
+	kataProjects *[]string
 }
 
 func (f fakeDoctorDaemon) Ping() (*daemon.PingInfo, error) {
@@ -44,6 +49,13 @@ func (f fakeDoctorDaemon) Ping() (*daemon.PingInfo, error) {
 
 func (f fakeDoctorDaemon) Agents(context.Context, string, []string) (*doctorDaemonAgents, error) {
 	return f.agents, nil
+}
+
+func (f fakeDoctorDaemon) KataStatus(_ context.Context, project string) (*daemon.KataStatusBody, error) {
+	if f.kataProjects != nil {
+		*f.kataProjects = append(*f.kataProjects, project)
+	}
+	return f.kata, f.kataErr
 }
 
 func (f fakeDoctorDaemon) Status(context.Context) (*generated.DaemonStatus, error) {
