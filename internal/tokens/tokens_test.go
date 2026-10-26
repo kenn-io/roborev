@@ -907,30 +907,6 @@ func TestToJSON(t *testing.T) {
 	})
 }
 
-// installPipeHoldingAgentsview installs a fake agentsview that leaves a
-// background process holding its inherited stdout and stderr, which is what
-// a launcher shim does when the agentsview it starts spawns helpers. body
-// runs after the background process starts. The helper is killed on cleanup.
-func installPipeHoldingAgentsview(t *testing.T, body string) {
-	t.Helper()
-	pidFile := filepath.Join(t.TempDir(), "holder.pid")
-	t.Setenv("FAKE_AGENTSVIEW_HOLDER_PID", pidFile)
-	installFakeAgentsview(t, "#!/bin/sh\nsleep 30 &\necho $! > \"$FAKE_AGENTSVIEW_HOLDER_PID\"\n"+body)
-	t.Cleanup(func() {
-		data, err := os.ReadFile(pidFile)
-		if err != nil {
-			return
-		}
-		var pid int
-		if _, err := fmt.Sscan(string(data), &pid); err != nil {
-			return
-		}
-		if proc, err := os.FindProcess(pid); err == nil {
-			_ = proc.Kill()
-		}
-	})
-}
-
 // fetchInBackground runs the lookup in a goroutine so a regression fails the
 // test instead of blocking it until the holder process exits.
 func fetchInBackground(cfg FetchConfig) <-chan fetchResult {
@@ -965,18 +941,16 @@ func waitForFetch(t *testing.T, done <-chan fetchResult) fetchResult {
 }
 
 func TestFetchForSessionTimeoutDoesNotWaitForInheritedPipes(t *testing.T) {
-	installPipeHoldingAgentsview(t, "exec sleep 30\n")
+	installPipeHoldingAgentsview(t, false)
 
-	result := waitForFetch(t, fetchInBackground(FetchConfig{Timeout: 100 * time.Millisecond}))
+	result := waitForFetch(t, fetchInBackground(FetchConfig{Timeout: 2 * time.Second}))
 
 	require.Error(t, result.err)
 	assert.Nil(t, result.usage)
 }
 
 func TestFetchForSessionReturnsUsageWhenHelperKeepsPipesOpen(t *testing.T) {
-	installPipeHoldingAgentsview(t, `echo '{"session_id":"s","total_output_tokens":42,"peak_context_tokens":900,"cost_usd":0.07,"has_cost":true}'
-exit 0
-`)
+	installPipeHoldingAgentsview(t, true)
 
 	result := waitForFetch(t, fetchInBackground(FetchConfig{Timeout: 10 * time.Second}))
 

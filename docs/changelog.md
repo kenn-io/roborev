@@ -20,6 +20,9 @@ All notable changes to roborev, grouped by minor release.
     still running, and jobs no longer wait for it before they start. A job that
     cannot start fails or retries at its job timeout instead of staying
     `running` until it is canceled by hand.
+- On Windows, a timed-out agentsview lookup also terminates processes it
+    started, including grandchildren launched through Scoop shims. Successful
+    lookups can still start the agentsview server.
 
 ## 0.73.0
 

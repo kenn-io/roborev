@@ -289,7 +289,7 @@ func runAgentsviewCommand(
 ) ([]byte, error) {
 	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	out, err := buildAgentsviewCmd(cmdCtx, binPath, args...).Output()
+	out, err := agentsviewOutput(buildAgentsviewCmd(cmdCtx, binPath, args...))
 	// ErrWaitDelay means agentsview exited successfully but a descendant kept
 	// the pipes open; the output agentsview wrote is complete.
 	if errors.Is(err, exec.ErrWaitDelay) {
