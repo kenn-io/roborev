@@ -40,6 +40,10 @@ All notable changes to roborev, grouped by minor release.
 
 **Bug fixes**
 
+- Sync [Agent Hook](/docs/agent-hook/) configs across machines with
+    `--binary roborev` or `--binary roborev.exe`. Installation still checks
+    PATH, but keeps the bare name in hooks and the optional MCP stdio server
+    entry.
 - Read-only Claude reviews and panel synthesis no longer get write, shell, web,
     subagent, or MCP tools or skills, even when Claude settings bypass
     permissions. Reviews fail if the Claude CLI lacks `--tools`; upgrade Claude

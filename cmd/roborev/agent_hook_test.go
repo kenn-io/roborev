@@ -40,6 +40,64 @@ func TestAgentHookInstallSupportsExplicitQwenProfile(t *testing.T) {
 	assert.Contains(t, string(body), "--source=roborev-agent-hook")
 }
 
+func TestAgentHookInstallPreservesBareRoborevBinary(t *testing.T) {
+	dir := writeFakeAgentBinary(t, "roborev")
+	t.Setenv("PATH", dir)
+	path := filepath.Join(t.TempDir(), "settings.json")
+	cmd := agentHookCmd()
+	cmd.SetOut(io.Discard)
+	cmd.SetArgs([]string{
+		"install", "--agent", "qwen", "--config", path,
+		"--binary", "roborev", "--mcp",
+	})
+
+	require.NoError(t, cmd.Execute())
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var config struct {
+		MCPServers map[string]struct {
+			Command string `json:"command"`
+		} `json:"mcpServers"`
+	}
+	require.NoError(t, json.Unmarshal(body, &config))
+	assert := assert.New(t)
+	assert.Contains(string(body), "roborev agent-hook run --agent qwen")
+	assert.Equal("roborev", config.MCPServers["roborev"].Command)
+	assert.NotContains(string(body), dir)
+}
+
+func TestAgentHookInstallRejectsMissingBareRoborevBinary(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	cmd := agentHookCmd()
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{
+		"install", "--agent", "qwen", "--config", filepath.Join(t.TempDir(), "settings.json"),
+		"--binary", "roborev",
+	})
+
+	require.ErrorContains(t, cmd.Execute(), "find roborev on PATH")
+}
+
+func TestAgentHookInstallResolvesOtherBareBinary(t *testing.T) {
+	dir := writeFakeAgentBinary(t, "roborev-dev")
+	t.Setenv("PATH", dir)
+	path := filepath.Join(t.TempDir(), "settings.json")
+	cmd := agentHookCmd()
+	cmd.SetOut(io.Discard)
+	cmd.SetArgs([]string{
+		"install", "--agent", "qwen", "--config", path,
+		"--binary", "roborev-dev",
+	})
+
+	require.NoError(t, cmd.Execute())
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	expectedPath, err := json.Marshal(filepath.Join(dir, "roborev-dev"))
+	require.NoError(t, err)
+	assert.Contains(t, string(body), string(expectedPath[1:len(expectedPath)-1]))
+}
+
 func TestPostAgentHookPreservesRegularDaemonEndpointInOwnerCloseout(t *testing.T) {
 	fixSessionID := uuid.MustParse("00000000-0000-4000-8000-000000000001")
 	var gotPath string

@@ -173,6 +173,11 @@ binary explicitly when needed:
 roborev agent-hook install --binary ~/.local/share/mise/shims/roborev
 ```
 
+For configs synced across machines, `--binary roborev` or `--binary roborev.exe`
+checks the name on PATH and keeps the bare name in generated hooks. The harness
+must have roborev on its runtime PATH. With `--mcp`, the stdio server entry uses
+the same name. Other bare names and paths are saved as absolute paths.
+
 On Windows, generated Claude Code hook commands use Git Bash-compatible quoting,
 including for Scoop installation paths.
 
