@@ -4303,6 +4303,175 @@ func TestWorker_ClassifyJob_Yes_PromotesToDesignReview(t *testing.T) {
 	assert.Equal(1, n, "exactly one auto_design row must exist (no second INSERT)")
 }
 
+func TestWorkerPoolWakesIdleWorkersOnNewJob(t *testing.T) {
+	const agentName = "idle-worker-wake"
+	for _, test := range []struct {
+		name    string
+		viaHTTP bool
+	}{
+		{"enqueue", true},
+		{"poll fallback without a wake", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				db := testutil.OpenTestDB(t)
+				cfg := config.DefaultConfig()
+				cfg.MaxWorkers = 1
+				server := newServerWithLogs(db, cfg, "", newTestErrorLog(), newTestActivityLog())
+				t.Cleanup(func() { _ = server.Close() })
+				repo := testutil.NewTestRepoWithCommit(t)
+				storedRepo, err := db.GetOrCreateRepo(repo.Path())
+				require.NoError(t, err)
+				release := make(chan struct{})
+				agent.RegisterForTest(t, &agent.FakeAgent{NameStr: agentName, ReviewFn: func(ctx context.Context, _, _, _ string, _ io.Writer) (string, error) {
+					select {
+					case <-release:
+						return "No issues found.", nil
+					case <-ctx.Done():
+						return "", ctx.Err()
+					}
+				}})
+				subscriber, events := server.broadcaster.Subscribe("")
+				defer server.broadcaster.Unsubscribe(subscriber)
+				server.workerPool.Start()
+				defer server.workerPool.Stop()
+				defer close(release)
+				synctest.Wait()
+				queuedAt := time.Now()
+				var job storage.ReviewJob
+				if test.viaHTTP {
+					job = enqueueViaHTTP(t, server, EnqueueRequest{RepoPath: repo.Path(), GitRef: "prompt", Agent: agentName, CustomPrompt: "Review this codebase"})
+				} else {
+					queued, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: storedRepo.ID, GitRef: "prompt", Agent: agentName, Prompt: "Review this codebase", JobType: storage.JobTypeTask})
+					require.NoError(t, err)
+					job = *queued
+				}
+				deadline := time.After(3 * time.Second)
+				var event Event
+			waitStarted:
+				for {
+					select {
+					case event = <-events:
+						if event.Type == "review.started" && event.JobID == job.ID {
+							break waitStarted
+						}
+					case <-deadline:
+						break waitStarted
+					}
+				}
+				require.Equal(t, "review.started", event.Type, "idle worker must start the job")
+				require.Equal(t, job.ID, event.JobID)
+				if test.viaHTTP {
+					assert.Less(t, time.Since(queuedAt), 2*time.Second, "enqueue wakes the idle worker before the fallback poll")
+				} else {
+					assert.Equal(t, 2*time.Second, time.Since(queuedAt), "the fallback poll starts a job inserted without a wake")
+				}
+			})
+		})
+	}
+}
+
+func TestServerWakesWorkerPoolWhenWorkBecomesClaimable(t *testing.T) {
+	const agentName = "test"
+	type fixture struct {
+		*workerTestContext
+		server      *Server
+		postTrigger func(string, any, int)
+		enqueue     func(string, string) *storage.ReviewJob
+		panel       func() (*storage.ReviewJob, *storage.ReviewJob)
+		trigger     func()
+	}
+	makeParent := func(t *testing.T, f *fixture, parentAgent string) *storage.ReviewJob {
+		return testutil.CreateCompletedReview(t, f.DB, f.Repo.ID, testutil.GetHeadSHA(t, f.TmpDir), parentAgent, "The guard is missing.")
+	}
+	for _, test := range []struct {
+		name  string
+		setup func(*testing.T, *fixture)
+	}{
+		{"rerun", func(t *testing.T, f *fixture) {
+			parent := makeParent(t, f, agentName)
+			f.postTrigger("/api/job/rerun", RerunJobRequest{JobID: parent.ID}, http.StatusOK)
+		}},
+		{"fix", func(t *testing.T, f *fixture) {
+			parent := makeParent(t, f, agentName)
+			f.postTrigger("/api/job/fix", fixJobRequest{ParentJobID: parent.ID}, http.StatusCreated)
+		}},
+		{"goal review", func(t *testing.T, f *fixture) {
+			registerGoalReviewPi(t, f.server.configWatcher.Config())
+			goalArtifacts(t, f.TmpDir)
+			f.postTrigger("/api/enqueue", EnqueueRequest{RepoPath: f.TmpDir, Agent: "pi", JobType: storage.JobTypeGoalReview, ReviewType: "goal"}, http.StatusCreated)
+		}},
+		{"rebuttal", func(t *testing.T, f *fixture) {
+			parent := makeParent(t, f, "test")
+			_, err := f.DB.Exec("UPDATE review_jobs SET session_id = 'original-session' WHERE id = ?", parent.ID)
+			require.NoError(t, err)
+			f.postTrigger("/api/rebuttal", RebuttalRequest{JobID: parent.ID, Finding: "The guard is missing.", Comment: "Check the caller.", Commenter: "operator"}, http.StatusCreated)
+		}},
+		{"panel sweep release", func(t *testing.T, f *fixture) {
+			member, claimed := f.panel()
+			// Fail the member first so the sweep only releases synthesis.
+			updated, err := f.DB.FailJob(member.ID, claimed.WorkerID, "synthetic member failure")
+			require.NoError(t, err)
+			require.True(t, updated)
+			f.trigger = func() { f.server.sweepStuckPanels(context.Background()) }
+		}},
+		{"unpause", func(t *testing.T, f *fixture) {
+			require.NoError(t, f.DB.SetQueuePaused(true))
+			f.enqueue("", "")
+			f.postTrigger("/api/queue/unpause", struct{}{}, http.StatusOK)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server, db, _ := newTestServer(t)
+			repo := testutil.NewTestRepoWithCommit(t)
+			storedRepo, err := db.GetOrCreateRepo(repo.Path())
+			require.NoError(t, err)
+			server.configWatcher.Config().FixAgent = agentName
+			f := &fixture{workerTestContext: &workerTestContext{DB: db, TmpDir: repo.Path(), Repo: storedRepo}, server: server}
+			f.postTrigger = func(path string, body any, status int) {
+				f.trigger = func() {
+					response := httptest.NewRecorder()
+					server.httpServer.Handler.ServeHTTP(response, testutil.MakeJSONRequest(t, http.MethodPost, path, body))
+					require.Equal(t, status, response.Code, response.Body.String())
+				}
+			}
+			f.enqueue = func(session, source string) *storage.ReviewJob {
+				job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: storedRepo.ID, GitRef: "prompt", Agent: agentName, Prompt: "Review this codebase", JobType: storage.JobTypeTask, SessionID: session, Source: source})
+				require.NoError(t, err)
+				return job
+			}
+			f.panel = func() (*storage.ReviewJob, *storage.ReviewJob) {
+				_, members, _ := enqueuePanelRun(t, f.workerTestContext, "wake-panel", []memberSpec{{name: "member", agent: "test"}})
+				claimed, err := db.ClaimJob("orphan-worker")
+				require.NoError(t, err)
+				require.NotNil(t, claimed)
+				require.Equal(t, members[0].ID, claimed.ID)
+				return members[0], claimed
+			}
+			test.setup(t, f)
+			for len(server.workerPool.wakeCh) > 0 {
+				<-server.workerPool.wakeCh
+			}
+			f.trigger()
+			assert.NotEmpty(t, server.workerPool.wakeCh, "claimable work must wake the worker pool")
+		})
+	}
+}
+
+// Four workers sharing one SQLite file can deadlock a synctest bubble, so the
+// fan-out is checked on the wake channel alone.
+func TestWorkerPoolWakeReachesEveryIdleWorker(t *testing.T) {
+	pool := NewWorkerPool(nil, NewStaticConfig(config.DefaultConfig()), 4, NewBroadcaster(), nil, nil)
+	pool.wake()
+	pool.wake()
+	assert.Len(t, pool.wakeCh, 4, "one token per worker, and extra wakes don't block")
+}
+
+func TestWorkerPoolNegativeWorkerCount(t *testing.T) {
+	pool := NewWorkerPool(nil, NewStaticConfig(config.DefaultConfig()), -1, NewBroadcaster(), nil, nil)
+	pool.wake()
+}
+
 func TestWorkerPoolDoesNotClaimNewJobsWhenQueuePaused(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		tc := newWorkerTestContext(t, 1)

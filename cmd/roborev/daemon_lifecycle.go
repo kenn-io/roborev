@@ -55,7 +55,7 @@ var (
 	daemonStartTimeout          = 2 * time.Minute
 	getAnyRunningDaemon         = daemon.GetAnyRunningDaemon
 	getAnyRunningDaemonForStart = daemon.GetAnyRunningDaemonContext
-	listAllRuntimes             = daemon.ListAllRuntimes
+	listAllRuntimes             = daemon.ListJudgedRuntimes
 	cleanupZombieDaemons        = daemon.CleanupZombieDaemons
 	isPIDAliveForUpdate         = isPIDAliveForUpdateDefault
 	startDaemonForEnsure        = startDaemon
@@ -497,7 +497,7 @@ func openDetachedDaemonLogs() (*os.File, *os.File, func(), error) {
 // stopDaemon stops any running daemons.
 // Returns ErrDaemonNotRunning if no daemon runtime files are found.
 func stopDaemon() error {
-	return stopDaemonRuntimes(daemon.ListAllRuntimes, daemon.KillDaemon, os.Stderr)
+	return stopDaemonRuntimes(listAllRuntimes, daemon.KillDaemon, os.Stderr)
 }
 
 func stopDaemonRuntimes(list func() ([]*daemon.RuntimeInfo, error), drain func(*daemon.RuntimeInfo) error, out io.Writer) error {

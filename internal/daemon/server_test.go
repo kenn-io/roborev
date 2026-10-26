@@ -21,6 +21,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -223,7 +224,9 @@ func startServerAndWaitForRuntime(t *testing.T, server *Server) (<-chan error, *
 		}
 		var err error
 		info, err = ReadRuntime()
-		return err == nil
+		server.endpointMu.Lock()
+		defer server.endpointMu.Unlock()
+		return err == nil && info.PID == os.Getpid() && info.Address == server.endpoint.Address
 	}, 5*time.Second, 10*time.Millisecond)
 	require.NoError(t, startErr)
 	require.NotNil(t, info)
@@ -397,6 +400,32 @@ func TestServerStartReadinessFailureDoesNotLeavePanelSweep(t *testing.T) {
 	sweepCancel := server.sweepCancel
 	server.sweepMu.Unlock()
 	assert.Nil(t, sweepCancel, "panel sweep must not remain active after startup readiness failure")
+}
+
+func TestServerStartRefusesLegacyLivePID(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("requires Linux process identities")
+	}
+	testenv.SetDataDir(t)
+	setShortRuntimeDir(t)
+	mockIdentifyProcess(t, func(int) processIdentity { return processUnknown })
+	rec := kitdaemon.RuntimeRecord{
+		PID: os.Getppid(), Network: "tcp", Address: "127.0.0.1:1",
+	}
+	path, err := runtimeStore().Write(rec)
+	require.NoError(t, err)
+	db, _ := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	cfg.ServerAddr = "127.0.0.1:0"
+	server := NewServer(db, cfg, "")
+	t.Cleanup(func() { _ = server.Close() })
+	// Bound a regression that starts a real listener instead of refusing.
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	stop := context.AfterFunc(ctx, func() { _ = server.Close() })
+	defer stop()
+	require.ErrorContains(t, server.Start(ctx), "daemon process still running")
+	assert.FileExists(t, path)
 }
 
 func TestServerStartSupportsIPv6LoopbackBindAddr(t *testing.T) {

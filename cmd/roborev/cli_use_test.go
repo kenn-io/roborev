@@ -894,6 +894,7 @@ func TestCoreActionRemoteLocalFallback(t *testing.T) {
 }
 
 func TestCoreActionCompactWait(t *testing.T) {
+	setupFastPolling(t)
 	for _, mode := range []string{"terminal", "quiet"} {
 		t.Run(mode, func(t *testing.T) {
 			resetCLIUse(t)

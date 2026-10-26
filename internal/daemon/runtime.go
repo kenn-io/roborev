@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"cmp"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -12,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -66,7 +66,8 @@ type RuntimeInfo struct {
 	WebCapabilities   []string `json:"-"`
 	WebDisabledReason string   `json:"-"`
 
-	processIdentity kitdaemon.ProcessIdentity
+	processIdentity   kitdaemon.ProcessIdentity
+	processIdentityV2 kitdaemon.ProcessIdentity
 }
 
 // BrowserRuntimeInfo is the non-secret discovery information published for
@@ -79,6 +80,19 @@ type BrowserRuntimeInfo struct {
 	WebBasePath    string
 	Capabilities   []string
 	DisabledReason string
+}
+
+func (r RuntimeInfo) processRecord() kitdaemon.RuntimeRecord {
+	return kitdaemon.RuntimeRecord{PID: r.PID, ProcessIdentity: r.processIdentity, ProcessIdentityV2: r.processIdentityV2}
+}
+
+// unjudged reports whether the caller cannot judge this runtime's process identity.
+func (r *RuntimeInfo) unjudged() bool {
+	switch kitdaemon.RuntimeProcessScope(r.processRecord()) {
+	case kitdaemon.ProcessScopeForeign, kitdaemon.ProcessScopeUnknown:
+		return true
+	}
+	return false
 }
 
 // Endpoint returns a DaemonEndpoint for this runtime.
@@ -152,18 +166,19 @@ func RuntimeStore() kitdaemon.RuntimeStore {
 func runtimeInfoFromRecord(rec kitdaemon.RuntimeRecord) *RuntimeInfo {
 	ep := daemonEndpointFromKit(rec.Endpoint())
 	info := &RuntimeInfo{
-		PID:              rec.PID,
-		processIdentity:  cmp.Or(rec.ProcessIdentityV2, rec.ProcessIdentity),
-		Network:          ep.Network,
-		Address:          ep.Address,
-		Service:          rec.Service,
-		Version:          rec.Version,
-		SourcePath:       rec.SourcePath,
-		AlternateNetwork: rec.Metadata[runtimeAlternateNetworkKey],
-		AlternateAddress: rec.Metadata[runtimeAlternateAddressKey],
-		WebAddress:       rec.Metadata[runtimeWebAddressKey],
-		WebOrigin:        rec.Metadata[runtimeWebOriginKey],
-		WebBasePath:      rec.Metadata[runtimeWebBasePathKey],
+		PID:               rec.PID,
+		processIdentity:   rec.ProcessIdentity,
+		processIdentityV2: rec.ProcessIdentityV2,
+		Network:           ep.Network,
+		Address:           ep.Address,
+		Service:           rec.Service,
+		Version:           rec.Version,
+		SourcePath:        rec.SourcePath,
+		AlternateNetwork:  rec.Metadata[runtimeAlternateNetworkKey],
+		AlternateAddress:  rec.Metadata[runtimeAlternateAddressKey],
+		WebAddress:        rec.Metadata[runtimeWebAddressKey],
+		WebOrigin:         rec.Metadata[runtimeWebOriginKey],
+		WebBasePath:       rec.Metadata[runtimeWebBasePathKey],
 	}
 	info.WebDisabledReason = rec.Metadata[runtimeWebDisabledReasonKey]
 	if info.WebOrigin != "" {
@@ -313,6 +328,15 @@ func ListAllRuntimes() ([]*RuntimeInfo, error) {
 	return runtimes, nil
 }
 
+// ListJudgedRuntimes returns runtime records whose process identity the caller can judge.
+func ListJudgedRuntimes() ([]*RuntimeInfo, error) {
+	runtimes, err := ListAllRuntimes()
+	if err != nil {
+		return nil, err
+	}
+	return slices.DeleteFunc(runtimes, (*RuntimeInfo).unjudged), nil
+}
+
 // legacyRuntimeInfo is the on-disk shape written by roborev v0.56 and earlier,
 // which stored daemon.<pid>.json and daemon.json in the data dir root.
 type legacyRuntimeInfo struct {
@@ -424,7 +448,7 @@ func discoverRuntimeRecords(
 	var deniedErr error
 	for _, rec := range records {
 		info := runtimeInfoFromRecord(rec)
-		if info.hasStaleProcess() {
+		if info.unjudged() || info.hasStaleProcess() {
 			continue
 		}
 		primary := info.Endpoint()
@@ -563,8 +587,8 @@ func (r *RuntimeInfo) Stale() bool {
 }
 
 func (r *RuntimeInfo) hasStaleProcess() bool {
-	return r.PID > 0 && (!kitdaemon.ProcessAlive(r.PID) ||
-		kitdaemon.CompareProcessIdentity(r.PID, r.processIdentity) == kitdaemon.ProcessIdentityMismatch)
+	rec := r.processRecord()
+	return r.PID > 0 && (!kitdaemon.RuntimeProcessAlive(rec) || kitdaemon.CompareRuntimeProcessIdentity(rec) == kitdaemon.ProcessIdentityMismatch)
 }
 
 func probeRuntimeAlive(info *RuntimeInfo) (bool, error) {
@@ -799,7 +823,7 @@ func waitForGracefulDaemonExit(
 // CleanupZombieDaemons finds and kills all unresponsive daemons.
 // Returns the number of zombies cleaned up.
 func CleanupZombieDaemons(target DaemonEndpoint) int {
-	runtimes, err := ListAllRuntimes()
+	runtimes, err := ListJudgedRuntimes()
 	if err != nil {
 		return 0
 	}

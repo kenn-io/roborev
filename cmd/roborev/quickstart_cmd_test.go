@@ -59,6 +59,7 @@ func TestCheckConfiguredAgentRequiresNonEmptyGlobalDefault(t *testing.T) {
 }
 
 func TestDetectStateUsesGlobalWorkflowReviewAgent(t *testing.T) {
+	setupFastPolling(t)
 	assert := assert.New(t)
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	repo := newTempGitRepo(t)
@@ -288,6 +289,7 @@ func newTempGitRepo(t *testing.T) string {
 }
 
 func TestDetectStateSchema(t *testing.T) {
+	setupFastPolling(t)
 	assert := assert.New(t)
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	repo := newTempGitRepo(t)
@@ -315,6 +317,7 @@ func TestDetectStateSchema(t *testing.T) {
 }
 
 func TestDetectStateOutsideRepoMarksRepoChecksUnknown(t *testing.T) {
+	setupFastPolling(t)
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	state := detectState(context.Background(), "", false)
 
@@ -331,6 +334,7 @@ func TestDetectStateOutsideRepoMarksRepoChecksUnknown(t *testing.T) {
 }
 
 func TestDetectStateIsReadOnly(t *testing.T) {
+	setupFastPolling(t)
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	repo := newTempGitRepo(t)
 	hookPath := filepath.Join(repo, ".git", "hooks", "post-commit")
@@ -372,6 +376,7 @@ func TestRenderHumanIncludesGuideAndState(t *testing.T) {
 }
 
 func TestQuickstartJSONOmitsGuide(t *testing.T) {
+	setupFastPolling(t)
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	repo := newTempGitRepo(t)
 
@@ -391,6 +396,7 @@ func TestQuickstartJSONOmitsGuide(t *testing.T) {
 }
 
 func TestQuickstartOutsideGitRepo(t *testing.T) {
+	setupFastPolling(t)
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	t.Chdir(t.TempDir())
 

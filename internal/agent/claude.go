@@ -228,17 +228,16 @@ func (a *ClaudeAgent) buildArgs(agenticMode, includeEffort bool) []string {
 		args = append(args, claudeDangerousFlag)
 		args = append(args, "--allowedTools", "Edit,MultiEdit,Write,Read,Glob,Grep,Bash")
 	} else {
-		// Review mode: preapprove read-only tools.
-		args = append(args, "--allowedTools", "Read,Glob,Grep")
+		// Preapproval alone leaves other tools loaded. Limit built-ins and MCP tools.
+		args = append(args, "--allowedTools", "Read,Glob,Grep", "--tools", "Read,Glob,Grep", "--disallowedTools", "mcp__*")
 	}
 	return args
 }
 
 func (a *ClaudeAgent) buildPlanningArgs(includeEffort bool) []string {
 	args := a.buildArgs(false, includeEffort)
-	// --allowedTools only preapproves tools. Limit built-ins and MCP tools
-	// separately, and override any configured default permission mode.
-	return append(args, "--permission-mode", "plan", "--tools", "Read,Glob,Grep", "--disallowedTools", "mcp__*")
+	// Override any configured default permission mode.
+	return append(args, "--permission-mode", "plan")
 }
 
 func claudeSupportsDangerousFlag(ctx context.Context, command string) (bool, error) {

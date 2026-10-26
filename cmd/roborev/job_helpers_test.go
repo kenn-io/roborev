@@ -50,6 +50,7 @@ func (*reviewPipeListener) Addr() net.Addr {
 }
 
 func TestWaitForJobCompletionReturnsNotFoundImmediately(t *testing.T) {
+	setupFastPolling(t)
 	var jobCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -74,6 +75,7 @@ func TestWaitForJobCompletionReturnsNotFoundImmediately(t *testing.T) {
 }
 
 func TestAuthJobPollingStopsOnTerminalDenial(t *testing.T) {
+	setupFastPolling(t)
 	for _, tc := range []struct {
 		name         string
 		status       storage.JobStatus

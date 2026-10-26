@@ -17,8 +17,8 @@ import (
 // This consolidates polling logic used across compact, analyze, fix, and run commands.
 func waitForJobCompletion(ctx context.Context, serverAddr string, jobID int64, output io.Writer) (*storage.Review, error) {
 	api := newDaemonReviewAPI(serverAddr, getDaemonHTTPClientForURL(serverAddr, 30*time.Second))
-	pollInterval := 1 * time.Second
-	maxInterval := 5 * time.Second
+	pollInterval := pollStartInterval
+	maxInterval := pollMaxInterval
 	lastOutputLen := 0
 	lastStatus := ""
 	waitDots := 0

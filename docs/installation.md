@@ -130,6 +130,11 @@ This downloads and replaces the current binary with the latest release. Read the
 interface to read recent release notes. The browser application also has a
 release-notes viewer in its header.
 
+Package maintainers can
+[disable self-updates](/docs/development/#package-builds). If your build reports
+that self-update is disabled, upgrade through your package manager instead, such
+as `brew upgrade roborev` for Homebrew.
+
 ### Upgrading to 0.73.0
 
 Check these items before updating from 0.72.x or earlier:

@@ -5,6 +5,14 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
+## Unreleased
+
+**Improvements**
+
+- Start daemons over runtime records left by dead sandboxes.
+- Sandboxed commands keep the host daemon's runtime record.
+- A TUI in a sandbox keeps the host TUI's runtime file.
+
 ## 0.73.0
 
 <small>2026-10-23</small>
@@ -93,6 +101,13 @@ Thanks to everyone who contributed to this release:
     release upgrades.
 
 ______________________________________________________________________
+
+**Bug fixes**
+
+- Read-only Claude reviews and panel synthesis no longer get write, shell, web,
+    subagent, or MCP tools or skills, even when Claude settings bypass
+    permissions. Reviews fail if the Claude CLI lacks `--tools`; upgrade Claude
+    to continue.
 
 ## 0.72.0
 

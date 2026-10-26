@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"go.kenn.io/roborev/internal/testenv"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 // TestMain isolates the entire daemon test package from the production
@@ -13,6 +14,13 @@ import (
 // logs at DefaultActivityLogPath() → ~/.roborev/activity.log, polluting
 // the production log with test events and confusing running TUIs.
 func TestMain(m *testing.M) {
+	if testutil.RuntimeWriterMain(func() (string, error) {
+		err := WriteRuntime(DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, nil, "test", nil)
+		return RuntimePath(), err
+	}) {
+		return
+	}
+
 	// Re-invoked as a fake `kata` binary by tests that copy the test
 	// executable onto PATH as kata (see installFakeKata in
 	// ci_poller_test.go) to prove kata content cannot reach CI prompts.

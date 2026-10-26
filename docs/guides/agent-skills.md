@@ -70,6 +70,7 @@ before roborev receives the path. Custom destinations are not tracked by
 | `/roborev-respond <job_id> [message]` | Add a response to document changes |
 | `/roborev-superpowers <feature or existing spec/plan>` | Carry a feature through specification, planning, implementation, review, and verification with Superpowers and Kata |
 | `/roborev-snooze [on\|off] [duration]` | Silence or resume Agent Hook reminders for the current worktree and branch |
+| `/roborev-setup-review [what the review is for]` | Interview you about a specialized review, then write its rubrics and configuration |
 
 ## Usage
 
@@ -128,6 +129,28 @@ resume existing documents and tasks. Superpowers and Kata must be available;
 goal reviews also need a configured Pi reviewer or Claude Code with an Anthropic
 API key or proxy model. See
 [setup and workflow](/docs/integrations/goal-review/).
+
+### Set up a custom review
+
+Use `/roborev-setup-review` (`$roborev-setup-review` in Codex) from any agent
+with roborev skills installed when a repository needs its own review, such as
+fact and quotation checks for legal drafts:
+
+```text
+/roborev-setup-review
+/roborev-setup-review check our brief drafts against the exhibits
+```
+
+The agent asks one question at a time about what reviewers should catch, what
+they compare against, and what should fail. It plays each part back, then
+proposes the complete [custom review types](../advanced/custom-review-types.md),
+rubrics, panel, and post-commit batching. It writes nothing until you approve.
+After approval it validates the configuration, and with your consent runs one
+trial review to tune the rubrics. Custom review types need an agent with
+structured output: Codex, Claude Code, Pi, or Grok. Unless a type names its own
+agent, it uses the repository's `agent` or the global `default_agent`, not
+`review_agent`, so the skill checks which agent each reviewer gets and asks
+before changing it.
 
 ### Review a commit
 
@@ -304,11 +327,11 @@ which can produce better results than the CLI's isolated worktree approach.
 
 | Agent | Syntax |
 |-------|--------|
-| Claude Code, personal install | `/roborev-review`, `/roborev-review-branch`, `/roborev-design-review`, `/roborev-design-review-branch`, `/roborev-lookahead-review`, `/roborev-lookahead-review-branch`, `/roborev-fix`, `/roborev-refine`, `/roborev-respond`, `/roborev-snooze` |
-| Claude Code, plugin install | `/roborev:roborev-review`, `/roborev:roborev-review-branch`, `/roborev:roborev-design-review`, `/roborev:roborev-design-review-branch`, `/roborev:roborev-lookahead-review`, `/roborev:roborev-lookahead-review-branch`, `/roborev:roborev-fix`, `/roborev:roborev-refine`, `/roborev:roborev-respond`, `/roborev:roborev-snooze` |
-| Factory Droid | `/roborev-review`, `/roborev-review-branch`, `/roborev-design-review`, `/roborev-design-review-branch`, `/roborev-lookahead-review`, `/roborev-lookahead-review-branch`, `/roborev-fix`, `/roborev-refine`, `/roborev-respond`, `/roborev-snooze` |
-| Codex, personal install | `$roborev-review`, `$roborev-review-branch`, `$roborev-design-review`, `$roborev-design-review-branch`, `$roborev-lookahead-review`, `$roborev-lookahead-review-branch`, `$roborev-fix`, `$roborev-refine`, `$roborev-respond`, `$roborev-snooze` |
-| Codex, plugin install | `$roborev:roborev-review`, `$roborev:roborev-review-branch`, `$roborev:roborev-design-review`, `$roborev:roborev-design-review-branch`, `$roborev:roborev-lookahead-review`, `$roborev:roborev-lookahead-review-branch`, `$roborev:roborev-fix`, `$roborev:roborev-refine`, `$roborev:roborev-respond`, `$roborev:roborev-snooze` |
+| Claude Code, personal install | `/roborev-review`, `/roborev-review-branch`, `/roborev-design-review`, `/roborev-design-review-branch`, `/roborev-lookahead-review`, `/roborev-lookahead-review-branch`, `/roborev-fix`, `/roborev-refine`, `/roborev-respond`, `/roborev-snooze`, `/roborev-setup-review` |
+| Claude Code, plugin install | `/roborev:roborev-review`, `/roborev:roborev-review-branch`, `/roborev:roborev-design-review`, `/roborev:roborev-design-review-branch`, `/roborev:roborev-lookahead-review`, `/roborev:roborev-lookahead-review-branch`, `/roborev:roborev-fix`, `/roborev:roborev-refine`, `/roborev:roborev-respond`, `/roborev:roborev-snooze`, `/roborev:roborev-setup-review` |
+| Factory Droid | `/roborev-review`, `/roborev-review-branch`, `/roborev-design-review`, `/roborev-design-review-branch`, `/roborev-lookahead-review`, `/roborev-lookahead-review-branch`, `/roborev-fix`, `/roborev-refine`, `/roborev-respond`, `/roborev-snooze`, `/roborev-setup-review` |
+| Codex, personal install | `$roborev-review`, `$roborev-review-branch`, `$roborev-design-review`, `$roborev-design-review-branch`, `$roborev-lookahead-review`, `$roborev-lookahead-review-branch`, `$roborev-fix`, `$roborev-refine`, `$roborev-respond`, `$roborev-snooze`, `$roborev-setup-review` |
+| Codex, plugin install | `$roborev:roborev-review`, `$roborev:roborev-review-branch`, `$roborev:roborev-design-review`, `$roborev:roborev-design-review-branch`, `$roborev:roborev-lookahead-review`, `$roborev:roborev-lookahead-review-branch`, `$roborev:roborev-fix`, `$roborev:roborev-refine`, `$roborev:roborev-respond`, `$roborev:roborev-snooze`, `$roborev:roborev-setup-review` |
 
 Codex can also invoke either installation by selecting the skill in its
 structured skill picker. Skill descriptions intentionally state only the

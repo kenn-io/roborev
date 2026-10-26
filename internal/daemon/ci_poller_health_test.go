@@ -222,56 +222,60 @@ func TestHealthCIPollerSkipStatusIsNotRepeated(t *testing.T) {
 		{name: "lookup failed", readError: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
-			h, healthServer := newCIHealthHarness(t)
-			h.Cfg.CI.Repos = []string{"acme/api"}
-			h.Cfg.CI.SkipLabels = []string{"skip-review"}
-			pr := ghPR{Number: 1, HeadRefOid: "head-a", Labels: []string{"skip-review"}}
-			h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return []ghPR{pr}, nil }
-			current := googlegithub.RepoStatus{
-				Context: new("roborev"), State: &tc.state, Description: &tc.description,
-			}
-			var writes []googlegithub.RepoStatus
-			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				switch {
-				case r.Method == http.MethodGet && r.URL.Path == "/api/v3/repos/acme/api/commits/head-a/status":
-					if tc.readError {
-						http.Error(w, `{"message":"status lookup unavailable"}`, http.StatusBadGateway)
-						return
-					}
-					if r.URL.Query().Get("page") == "" {
-						w.Header().Set("Link", fmt.Sprintf("<http://%s%s?page=2>; rel=\"next\"", r.Host, r.URL.Path))
-						fmt.Fprint(w, `{"statuses":[{"context":"build","state":"success","description":"Review skipped: label skip-review"}]}`)
-						return
-					}
-					statuses := []googlegithub.RepoStatus{}
-					if current.GetState() != "" {
-						statuses = append(statuses, current)
-					}
-					assert.NoError(json.NewEncoder(w).Encode(map[string]any{"statuses": statuses}))
-				case r.Method == http.MethodPost && r.URL.Path == "/api/v3/repos/acme/api/statuses/head-a":
-					assert.NoError(json.NewDecoder(r.Body).Decode(&current))
-					writes = append(writes, current)
-					w.WriteHeader(http.StatusCreated)
-					assert.NoError(json.NewEncoder(w).Encode(current))
-				default:
-					http.NotFound(w, r)
+			synctest.Test(t, func(t *testing.T) {
+				assert := assert.New(t)
+				h, healthServer := newCIHealthHarness(t)
+				h.Cfg.CI.Repos = []string{"acme/api"}
+				h.Cfg.CI.SkipLabels = []string{"skip-review"}
+				pr := ghPR{Number: 1, HeadRefOid: "head-a", Labels: []string{"skip-review"}}
+				h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return []ghPR{pr}, nil }
+				current := googlegithub.RepoStatus{
+					Context: new("roborev"), State: &tc.state, Description: &tc.description,
 				}
-			}))
-			t.Cleanup(api.Close)
-			h.Poller.githubAPIURL = api.URL + "/api/v3"
-			h.Poller.setCommitStatusFn = nil
-			for range 2 {
-				h.Poller.poll(context.Background())
-				assert.Equal(!tc.readError, decodeHealthStatus(t, executeHealthCheck(healthServer, http.MethodGet)).Healthy)
-			}
-			require.Len(t, writes, tc.wantWrites)
-			for _, status := range writes {
-				assert.Equal("roborev", status.GetContext())
-				assert.Equal("success", status.GetState())
-				assert.Equal("Review skipped: label skip-review", status.GetDescription())
-			}
+				var writes []googlegithub.RepoStatus
+				api := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					switch {
+					case r.Method == http.MethodGet && r.URL.Path == "/api/v3/repos/acme/api/commits/head-a/status":
+						if tc.readError {
+							http.Error(w, `{"message":"status lookup unavailable"}`, http.StatusBadGateway)
+							return
+						}
+						if r.URL.Query().Get("page") == "" {
+							w.Header().Set("Link", fmt.Sprintf("<http://%s%s?page=2>; rel=\"next\"", r.Host, r.URL.Path))
+							fmt.Fprint(w, `{"statuses":[{"context":"build","state":"success","description":"Review skipped: label skip-review"}]}`)
+							return
+						}
+						statuses := []googlegithub.RepoStatus{}
+						if current.GetState() != "" {
+							statuses = append(statuses, current)
+						}
+						assert.NoError(json.NewEncoder(w).Encode(map[string]any{"statuses": statuses}))
+					case r.Method == http.MethodPost && r.URL.Path == "/api/v3/repos/acme/api/statuses/head-a":
+						assert.NoError(json.NewDecoder(r.Body).Decode(&current))
+						writes = append(writes, current)
+						w.WriteHeader(http.StatusCreated)
+						assert.NoError(json.NewEncoder(w).Encode(current))
+					default:
+						http.NotFound(w, r)
+					}
+				}))
+				transport := http.DefaultTransport
+				http.DefaultTransport = api.Client().Transport
+				defer func() { http.DefaultTransport = transport }()
+				h.Poller.githubAPIURL = api.URL + "/api/v3"
+				h.Poller.setCommitStatusFn = nil
+				for range 2 {
+					h.Poller.poll(context.Background())
+					assert.Equal(!tc.readError, decodeHealthStatus(t, executeHealthCheck(healthServer, http.MethodGet)).Healthy)
+				}
+				require.Len(t, writes, tc.wantWrites)
+				for _, status := range writes {
+					assert.Equal("roborev", status.GetContext())
+					assert.Equal("success", status.GetState())
+					assert.Equal("Review skipped: label skip-review", status.GetDescription())
+				}
+			})
 		})
 	}
 }
@@ -693,52 +697,56 @@ func TestHealthCIPollerCleanupNonPullRequestTarget(t *testing.T) {
 		{"issue lookup unavailable", http.StatusBadGateway, `{"message":"Unavailable"}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
-			h, server := newCIHealthHarness(t)
-			h.Cfg.CI.Repos = []string{"acme/api"}
-			panel, synth, members := h.seedBlockedPanelRun(t, "acme/api", 1, "head-a", "base..head-a",
-				[]jobSpec{{Agent: "test", ReviewType: "review"}})
-			require.NoError(t, h.DB.MarkPanelRetired(panel.ID))
-			require.NoError(t, h.DB.DeferReviewAttempt("acme/api", 1, "head-a",
-				"genuine", "review failed", &panel.PanelRunUUID, time.Now().Add(time.Hour), true))
-			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal(http.MethodGet, r.Method, "cleanup must not publish to an issue")
-				w.Header().Set("Content-Type", "application/json")
-				switch r.URL.Path {
-				case "/api/v3/repos/acme/api/pulls/1":
-					w.WriteHeader(http.StatusNotFound)
-					fmt.Fprint(w, `{"message":"Not Found"}`)
-				case "/api/v3/repos/acme/api/issues/1":
-					w.WriteHeader(tc.issueStatus)
-					fmt.Fprint(w, tc.issueBody)
-				default:
-					http.NotFound(w, r)
+			synctest.Test(t, func(t *testing.T) {
+				assert := assert.New(t)
+				h, server := newCIHealthHarness(t)
+				h.Cfg.CI.Repos = []string{"acme/api"}
+				panel, synth, members := h.seedBlockedPanelRun(t, "acme/api", 1, "head-a", "base..head-a",
+					[]jobSpec{{Agent: "test", ReviewType: "review"}})
+				require.NoError(t, h.DB.MarkPanelRetired(panel.ID))
+				require.NoError(t, h.DB.DeferReviewAttempt("acme/api", 1, "head-a",
+					"genuine", "review failed", &panel.PanelRunUUID, time.Now().Add(time.Hour), true))
+				api := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					assert.Equal(http.MethodGet, r.Method, "cleanup must not publish to an issue")
+					w.Header().Set("Content-Type", "application/json")
+					switch r.URL.Path {
+					case "/api/v3/repos/acme/api/pulls/1":
+						w.WriteHeader(http.StatusNotFound)
+						fmt.Fprint(w, `{"message":"Not Found"}`)
+					case "/api/v3/repos/acme/api/issues/1":
+						w.WriteHeader(tc.issueStatus)
+						fmt.Fprint(w, tc.issueBody)
+					default:
+						http.NotFound(w, r)
+					}
+				}))
+				transport := http.DefaultTransport
+				http.DefaultTransport = api.Client().Transport
+				defer func() { http.DefaultTransport = transport }()
+				h.Poller.githubAPIURL = api.URL + "/api/v3"
+				h.Poller.prPostTargetFn = nil
+				h.Poller.isPROpenFn = nil
+				h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return nil, nil }
+				for range 2 {
+					h.Poller.poll(context.Background())
+					assert.Equal(tc.wantCleanup, decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy)
 				}
-			}))
-			defer api.Close()
-			h.Poller.githubAPIURL = api.URL + "/api/v3"
-			h.Poller.prPostTargetFn = nil
-			h.Poller.isPROpenFn = nil
-			h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return nil, nil }
-			for range 2 {
-				h.Poller.poll(context.Background())
-				assert.Equal(tc.wantCleanup, decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy)
-			}
-			attempt, err := h.DB.GetReviewAttempt("acme/api", 1, "head-a")
-			require.NoError(t, err)
-			panel, panelErr := h.DB.GetCIPanelByPRSHA("acme/api", 1, "head-a")
-			if tc.wantCleanup {
-				assert.Nil(attempt, "confirmed issue must no longer reserve a review attempt")
-				require.NoError(t, panelErr)
-				assert.NotNil(panel.RetiredAt)
-				assert.Equal(storage.JobStatusCanceled, h.jobStatus(t, synth.ID))
-				assert.Equal(storage.JobStatusCanceled, h.jobStatus(t, members[0].ID))
-			} else {
-				assert.NotNil(attempt, "ambiguous access failure must retain the attempt")
-				require.NoError(t, panelErr)
-				assert.Equal(storage.JobStatusQueued, h.jobStatus(t, synth.ID))
-				assert.Equal(storage.JobStatusQueued, h.jobStatus(t, members[0].ID))
-			}
+				attempt, err := h.DB.GetReviewAttempt("acme/api", 1, "head-a")
+				require.NoError(t, err)
+				panel, panelErr := h.DB.GetCIPanelByPRSHA("acme/api", 1, "head-a")
+				if tc.wantCleanup {
+					assert.Nil(attempt, "confirmed issue must no longer reserve a review attempt")
+					require.NoError(t, panelErr)
+					assert.NotNil(panel.RetiredAt)
+					assert.Equal(storage.JobStatusCanceled, h.jobStatus(t, synth.ID))
+					assert.Equal(storage.JobStatusCanceled, h.jobStatus(t, members[0].ID))
+				} else {
+					assert.NotNil(attempt, "ambiguous access failure must retain the attempt")
+					require.NoError(t, panelErr)
+					assert.Equal(storage.JobStatusQueued, h.jobStatus(t, synth.ID))
+					assert.Equal(storage.JobStatusQueued, h.jobStatus(t, members[0].ID))
+				}
+			})
 		})
 	}
 }

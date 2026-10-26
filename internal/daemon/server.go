@@ -26,6 +26,7 @@ import (
 	"github.com/coreos/go-systemd/v22/daemon"
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/go-github/v93/github"
+	kitdaemon "go.kenn.io/kit/daemon"
 	gitrepo "go.kenn.io/kit/git/repo"
 	"go.kenn.io/kit/selfupdate"
 
@@ -320,7 +321,7 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("daemon already running (pid %d on %s)", info.PID, info.Address)
 	}
 	for _, runtime := range runtimes {
-		if runtime.PID > 0 && isProcessAlive(runtime.PID) {
+		if kitdaemon.RuntimeRecordBlocksStart(runtime.processRecord()) {
 			if listener != nil {
 				_ = listener.Close()
 			}
@@ -2466,6 +2467,7 @@ func (s *Server) humaUnpauseQueue(
 		)
 	}
 	resp := &QueuePauseOutput{}
+	s.workerPool.wake()
 	resp.Body.QueuePaused = false
 	return resp, nil
 }
@@ -2747,6 +2749,7 @@ func (s *Server) broadcastRerunEnqueued(
 		SHA:      source.GitRef,
 		Agent:    source.Agent,
 	})
+	s.workerPool.wake()
 }
 
 func (s *Server) humaCloseReview(
@@ -3428,6 +3431,7 @@ func (s *Server) logEnqueueSideEffects(
 		SHA:      job.GitRef,
 		Agent:    in.agentName,
 	})
+	s.workerPool.wake()
 }
 
 func (s *Server) humaBatchJobs(
@@ -3858,6 +3862,7 @@ func (s *Server) humaFixJob(
 			ErrorResponse{Error: fmt.Sprintf("enqueue fix job: %v", err)},
 		)
 	}
+	s.workerPool.wake()
 	if commitID > 0 {
 		job.CommitSubject = parentJob.CommitSubject
 	}

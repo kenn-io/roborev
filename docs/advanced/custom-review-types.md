@@ -21,6 +21,10 @@ agent = "codex"
 reasoning = "thorough"
 ```
 
+To have your coding agent interview you and write this setup, invoke
+`/roborev-setup-review` (`$roborev-setup-review` in Codex). See
+[Agent Skills](../guides/agent-skills.md#set-up-a-custom-review).
+
 The template supplies instructions for what the reviewer should check. Roborev
 still constructs the commit or range context, project guidelines, diff, and
 oversized-diff snapshot instructions. It also owns the output schema, severity

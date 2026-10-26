@@ -140,5 +140,6 @@ User explanation: %q
 	job.RepoName = parent.RepoName
 	job.OriginalReviewUUID = review.UUID
 	s.broadcaster.Broadcast(eventForJob("review.enqueued", job, job.ID))
+	s.workerPool.wake()
 	return &RebuttalOutput{Body: job}, nil
 }

@@ -738,8 +738,8 @@ func runAnalyzeAndFix(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot str
 // The context controls the maximum wait time.
 func waitForAnalysisJob(ctx context.Context, ep daemon.DaemonEndpoint, jobID int64) (*storage.Review, error) {
 	api := newDaemonReviewAPI(ep.BaseURL(), ep.HTTPClient(30*time.Second))
-	pollInterval := 1 * time.Second
-	maxInterval := 5 * time.Second
+	pollInterval := pollStartInterval
+	maxInterval := pollMaxInterval
 
 	for {
 		// Check for cancellation/timeout
