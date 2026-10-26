@@ -1384,6 +1384,11 @@ enabled = true
 Enabling it requires a daemon restart. The stdio transport, `roborev mcp serve`,
 needs no configuration.
 
+`reviewer_tools = true` in the same section gives Claude Code and Codex
+reviewers separate read-only tools for the branch's earlier findings and git
+history. It is off by default and independent of `enabled`. See
+[Reviewer tools](/docs/integrations/mcp/#reviewer-tools-experimental).
+
 ### Data Directory
 
 All roborev data is stored in `~/.roborev/` by default:
