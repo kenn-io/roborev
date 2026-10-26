@@ -3,12 +3,13 @@
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 # Public PostHog ingest key. Builds without it send no telemetry.
 POSTHOG_PROJECT_KEY ?= phc_AzHd9YvuHR7M5poKzC6eW654d3SgKyBdoQPuwkWhimUf
-# Package manager that owns the binary, such as homebrew. Builds with a
-# value refuse to update themselves. Empty means a self-updating build.
+# Channel that delivered the binary, for update policy and telemetry.
+# Empty or kenn builds update themselves. A package manager name, such as
+# homebrew, makes the build refuse to update itself.
 DISTRIBUTION ?=
 BINDIR ?= bin
 # Recursive so a target can set DISTRIBUTION for its own build.
-LDFLAGS = -X go.kenn.io/roborev/internal/version.Version=$(VERSION) -X go.kenn.io/kit/telemetry/posthog.projectKey=$(POSTHOG_PROJECT_KEY) -X go.kenn.io/roborev/internal/version.Distribution=$(DISTRIBUTION)
+LDFLAGS = -X go.kenn.io/roborev/internal/version.Version=$(VERSION) -X go.kenn.io/kit/telemetry/posthog.projectKey=$(POSTHOG_PROJECT_KEY) -X go.kenn.io/roborev/internal/version.Distribution=$(DISTRIBUTION) -X go.kenn.io/kit/telemetry/posthog.distribution=$(DISTRIBUTION)
 ACP_TEST_COMMAND ?= $(abspath scripts/acp-agent)
 ACP_TEST_ADAPTER ?= codex
 ACP_TEST_ARGS ?=

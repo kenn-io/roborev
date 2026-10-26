@@ -25,8 +25,10 @@ builds:
       - -s -w -X go.kenn.io/roborev/internal/version.Version=v{{ .Version }}
       # Public PostHog ingest key. Builds without it send no telemetry.
       - -X go.kenn.io/kit/telemetry/posthog.projectKey=phc_AzHd9YvuHR7M5poKzC6eW654d3SgKyBdoQPuwkWhimUf
-      # Package manager that owns the binary. Empty means a self-updating build.
+      # Channel that delivered the binary, for update policy and telemetry.
+      # Empty or kenn means a self-updating build.
       - -X go.kenn.io/roborev/internal/version.Distribution={{ envOrDefault "DISTRIBUTION" "" }}
+      - -X go.kenn.io/kit/telemetry/posthog.distribution={{ envOrDefault "DISTRIBUTION" "" }}
     goos:
       - linux
       - darwin

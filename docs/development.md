@@ -46,7 +46,8 @@ make homebrew VERSION=1.2.3 BINDIR=/path/to/bin
 ```
 
 Other `make` and GoReleaser builds read `Distribution` from the `DISTRIBUTION`
-variable, which is empty by default.
+variable, which is empty by default. The same value also sets kit's telemetry
+distribution.
 
 ## Project Structure
 
