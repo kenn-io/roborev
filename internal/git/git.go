@@ -847,10 +847,7 @@ func GetDiffCtx(
 	args := []string{"show", sha, "--format=", "--"}
 	args = append(args, ReviewPathspecArgs(extraExcludes...)...)
 
-	cmd := newGitCmdContext(ctx, args...)
-	cmd.Dir = repoPath
-
-	out, err := gitOutput(cmd)
+	out, err := reviewDiffOutput(ctx, repoPath, args)
 	if err != nil {
 		return "", fmt.Errorf("git show: %w", err)
 	}
@@ -872,7 +869,7 @@ func GetDiffLimitedCtx(
 ) (string, bool, error) {
 	args := []string{"show", sha, "--format=", "--"}
 	args = append(args, ReviewPathspecArgs(extraExcludes...)...)
-	return captureGitOutputLimited(ctx, repoPath, maxBytes, args...)
+	return reviewDiffLimited(ctx, repoPath, maxBytes, args)
 }
 
 // GetFilesChanged returns the list of files changed in a commit
@@ -1559,10 +1556,7 @@ func GetRangeDiffCtx(
 	args := []string{"diff", rangeRef, "--"}
 	args = append(args, ReviewPathspecArgs(extraExcludes...)...)
 
-	cmd := newGitCmdContext(ctx, args...)
-	cmd.Dir = repoPath
-
-	out, err := gitOutput(cmd)
+	out, err := reviewDiffOutput(ctx, repoPath, args)
 	if err != nil {
 		return "", fmt.Errorf("git diff range: %w", err)
 	}
@@ -1584,7 +1578,7 @@ func GetRangeDiffLimitedCtx(
 ) (string, bool, error) {
 	args := []string{"diff", rangeRef, "--"}
 	args = append(args, ReviewPathspecArgs(extraExcludes...)...)
-	return captureGitOutputLimited(ctx, repoPath, maxBytes, args...)
+	return reviewDiffLimited(ctx, repoPath, maxBytes, args)
 }
 
 // HasUncommittedChanges returns true if there are uncommitted changes (staged, unstaged, or untracked files)
@@ -1663,10 +1657,8 @@ func GetDirtyDiff(
 	}
 
 	// 1. Get diff of tracked files (staged + unstaged)
-	cmd := newGitCmd(diffArgs("diff", "HEAD")...)
-	cmd.Dir = repoPath
-
-	out, err := cmd.Output()
+	ctx := context.Background()
+	out, err := reviewDiffOutput(ctx, repoPath, diffArgs("diff", "HEAD"))
 	if err != nil {
 		// If HEAD doesn't exist (no commits yet), we need to combine:
 		// - git diff --cached <empty-tree>: shows staged files (index vs empty)
@@ -1674,9 +1666,7 @@ func GetDirtyDiff(
 		// This covers the edge case where a file is staged but then removed from working tree
 
 		// Get staged changes vs empty tree
-		cmd = newGitCmd(diffArgs("diff", "--cached", EmptyTreeSHA)...)
-		cmd.Dir = repoPath
-		stagedOut, err := gitOutput(cmd)
+		stagedOut, err := reviewDiffOutput(ctx, repoPath, diffArgs("diff", "--cached", EmptyTreeSHA))
 		if err != nil {
 			return "", fmt.Errorf("git diff --cached: %w", err)
 		}
@@ -1685,9 +1675,7 @@ func GetDirtyDiff(
 		}
 
 		// Get unstaged changes (working tree vs index)
-		cmd = newGitCmd(diffArgs("diff")...)
-		cmd.Dir = repoPath
-		unstagedOut, err := gitOutput(cmd)
+		unstagedOut, err := reviewDiffOutput(ctx, repoPath, diffArgs("diff"))
 		if err != nil {
 			return "", fmt.Errorf("git diff: %w", err)
 		}
@@ -1711,7 +1699,7 @@ func GetDirtyDiff(
 	// modifying it must stay visible to review).
 	lsArgs = append(lsArgs, ":(exclude,glob)**/.kata.local.toml")
 	lsArgs = append(lsArgs, extra...)
-	cmd = newGitCmd(lsArgs...)
+	cmd := newGitCmd(lsArgs...)
 	cmd.Dir = repoPath
 
 	untrackedOut, err := gitOutput(cmd)
@@ -1977,6 +1965,37 @@ func ReadBlob(ctx context.Context, repoPath, oid string) ([]byte, error) {
 		return nil, fmt.Errorf("git cat-file blob %s: %w", oid, err)
 	}
 	return out, nil
+}
+
+// runReviewDiff runs a review diff command and, when git exits with code 128,
+// retries it once with --no-textconv after the subcommand. A failing textconv
+// driver, such as Git for Windows' PDF converter on a file it does not
+// recognize, makes git exit 128; without conversion git reports the file as
+// binary instead. Working converters never trigger the retry.
+func runReviewDiff(args []string, run func(args []string) error) error {
+	err := run(args)
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok && exitErr.ExitCode() == 128 {
+		err = run(slices.Concat(args[:1], []string{"--no-textconv"}, args[1:]))
+	}
+	return err
+}
+
+func reviewDiffOutput(ctx context.Context, repoPath string, args []string) (out []byte, err error) {
+	err = runReviewDiff(args, func(args []string) error {
+		cmd := newGitCmdContext(ctx, args...)
+		cmd.Dir = repoPath
+		out, err = gitOutput(cmd)
+		return err
+	})
+	return out, err
+}
+
+func reviewDiffLimited(ctx context.Context, repoPath string, maxBytes int, args []string) (out string, truncated bool, err error) {
+	err = runReviewDiff(args, func(args []string) error {
+		out, truncated, err = captureGitOutputLimited(ctx, repoPath, maxBytes, args...)
+		return err
+	})
+	return out, truncated, err
 }
 
 func captureGitOutputLimited(ctx context.Context, repoPath string, maxBytes int, args ...string) (string, bool, error) {
