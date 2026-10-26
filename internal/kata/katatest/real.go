@@ -46,7 +46,7 @@ func StartReal(t *testing.T, ctx context.Context) RealKata {
 	// binding. kata create rejects an unregistered project, so this must run
 	// before any client call. Bounded by ctx so a hung kata cannot block until
 	// the global test timeout.
-	initCmd := exec.CommandContext(ctx, "kata", "init", "--project", "e2etest")
+	initCmd := exec.CommandContext(ctx, "kata", "init", "--workspace", repo, "--project", "e2etest")
 	initCmd.Dir = repo
 	initCmd.Env = env
 	out, err := initCmd.CombinedOutput()

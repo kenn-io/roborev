@@ -299,14 +299,14 @@ func claudeSupportsToolsFlag(ctx context.Context, command string) bool {
 	if cached, ok := claudeToolsSupport.Load(cacheKey); ok {
 		return cached.(bool)
 	}
-	cmd := exec.CommandContext(ctx, command, "--help")
+	cmd := exec.CommandContext(ctx, command, "--tools", "default", "--version")
 	configureCapabilityProbe(ctx, cmd)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// Don't cache transient failures.
 		return false
 	}
-	supported := strings.Contains(string(output), "--tools")
+	supported := strings.Contains(string(output), "Claude Code")
 	claudeToolsSupport.Store(cacheKey, supported)
 	return supported
 }
@@ -316,13 +316,13 @@ func claudeSupportsBareFlag(ctx context.Context, command string) bool {
 	if cached, ok := claudeBareSupport.Load(cacheKey); ok {
 		return cached.(bool)
 	}
-	cmd := exec.CommandContext(ctx, command, "--help")
+	cmd := exec.CommandContext(ctx, command, "--bare", "--version")
 	configureCapabilityProbe(ctx, cmd)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return false
 	}
-	supported := strings.Contains(string(output), "--bare")
+	supported := strings.Contains(string(output), "Claude Code")
 	claudeBareSupport.Store(cacheKey, supported)
 	return supported
 }

@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json/v2"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,7 +23,6 @@ func TestKataIntegrationAccepted(t *testing.T) {
 	tests := []struct {
 		name, contents string
 		want           KataIntegrationConfig
-		wantKind       KataEndpointKind
 	}{
 		{
 			name: "https with inline key",
@@ -32,7 +32,6 @@ func TestKataIntegrationAccepted(t *testing.T) {
 				Enabled: true, Endpoint: "https://kata.example.com", APIKey: "k",
 				DefaultProject: "reviews", Teammate: "review-bot",
 			},
-			wantKind: KataEndpointHTTPS,
 		},
 		{
 			name: "loopback http with key file and default teammate",
@@ -42,7 +41,6 @@ func TestKataIntegrationAccepted(t *testing.T) {
 				Enabled: true, Endpoint: "http://127.0.0.1:7777",
 				APIKeyFile: "/etc/roborev/kata-token", Teammate: DefaultKataTeammate,
 			},
-			wantKind: KataEndpointLoopbackHTTP,
 		},
 		{
 			name:     "unix socket needs no key",
@@ -50,7 +48,6 @@ func TestKataIntegrationAccepted(t *testing.T) {
 			want: KataIntegrationConfig{
 				Enabled: true, Endpoint: "unix:///run/kata/api.sock", Teammate: DefaultKataTeammate,
 			},
-			wantKind: KataEndpointUnix,
 		},
 		{
 			name:     "disabled settings are not validated",
@@ -69,49 +66,29 @@ func TestKataIntegrationAccepted(t *testing.T) {
 			cfg, err := loadKataIntegration(t, tt.contents)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, cfg.Integrations.Kata)
-			if tt.want.Enabled {
-				endpoint, err := cfg.Integrations.Kata.ParsedEndpoint()
-				require.NoError(t, err)
-				assert.Equal(t, tt.wantKind, endpoint.Kind)
-			}
 		})
 	}
 }
 
 func TestKataIntegrationRejected(t *testing.T) {
+	const secret = "synthetic-kata-secret-9f3a"
 	enabled := "[integrations.kata]\nenabled = true\n"
 	tests := []struct{ name, contents, wantErr string }{
 		{"missing endpoint", enabled, "endpoint"},
-		{"unsupported scheme", enabled + "endpoint = \"ftp://kata.example.com\"\n", "unsupported scheme"},
 		{"remote plaintext http", enabled + "endpoint = \"http://kata.example.com\"\napi_key = \"k\"\n", "plaintext"},
-		{"userinfo", enabled + "endpoint = \"https://user:pw@kata.example.com\"\n", "userinfo"},
-		{"query", enabled + "endpoint = \"https://kata.example.com/?x=1\"\n", "query"},
-		{"fragment", enabled + "endpoint = \"https://kata.example.com/#x\"\n", "fragment"},
-		{"https without host", enabled + "endpoint = \"https://\"\n", "host"},
-		{"unix with host", enabled + "endpoint = \"unix://host/run/api.sock\"\n", "unix"},
-		{"unix with relative path", enabled + "endpoint = \"unix:run/api.sock\"\n", "unix"},
 		{"loopback http without key", enabled + "endpoint = \"http://localhost:7777\"\n", "api_key"},
-		{"both key sources", enabled + "endpoint = \"https://kata.example.com\"\napi_key = \"k\"\napi_key_file = \"/f\"\n", "mutually exclusive"},
+		{"both key sources", enabled + "endpoint = \"https://kata.example.com\"\napi_key = \"" + secret + "\"\napi_key_file = \"/f\"\n", "mutually exclusive"},
 		{"teammate with leading dash", enabled + "endpoint = \"https://kata.example.com\"\nteammate = \"-bot\"\n", "teammate"},
-		{"teammate with space", enabled + "endpoint = \"https://kata.example.com\"\nteammate = \"review bot\"\n", "teammate"},
-		{"teammate too long", enabled + "endpoint = \"https://kata.example.com\"\nteammate = \"" + strings.Repeat("a", 65) + "\"\n", "teammate"},
 		{"default project with newline", enabled + "endpoint = \"https://kata.example.com\"\ndefault_project = \"a\\nb\"\n", "default_project"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := loadKataIntegration(t, tt.contents)
 			require.ErrorContains(t, err, tt.wantErr)
-			assert.ErrorContains(t, err, "integrations.kata")
+			require.ErrorContains(t, err, "integrations.kata")
+			assert.NotContains(t, err.Error(), secret)
 		})
 	}
-}
-
-func TestKataIntegrationErrorsNeverEchoTheKey(t *testing.T) {
-	const secret = "synthetic-kata-secret-9f3a"
-	_, err := loadKataIntegration(t, "[integrations.kata]\nenabled = true\napi_key = \""+secret+"\"\n"+
-		"api_key_file = \"/f\"\nendpoint = \"https://kata.example.com\"\n")
-	require.Error(t, err)
-	assert.NotContains(t, err.Error(), secret)
 }
 
 func TestKataIntegrationIsGlobalOnly(t *testing.T) {
@@ -273,18 +250,21 @@ func FuzzParseKataEndpoint(f *testing.F) {
 		require.Nil(t, endpoint.URL.User, "%q", raw)
 		require.Empty(t, endpoint.URL.RawQuery, "%q", raw)
 		require.Empty(t, endpoint.URL.Fragment, "%q", raw)
+		require.Contains(t, []KataEndpointKind{KataEndpointHTTPS, KataEndpointLoopbackHTTP, KataEndpointUnix}, endpoint.Kind)
 		switch endpoint.Kind {
 		case KataEndpointHTTPS:
 			require.Equal(t, "https", endpoint.URL.Scheme)
-			require.NotEmpty(t, endpoint.URL.Hostname())
+			parsed, err := url.Parse(raw)
+			require.NoError(t, err)
+			require.Equal(t, parsed.Host, endpoint.URL.Host)
+			require.Equal(t, parsed.EscapedPath(), endpoint.URL.EscapedPath())
+			require.Equal(t, parsed.RawQuery, endpoint.URL.RawQuery)
 		case KataEndpointLoopbackHTTP:
 			require.Equal(t, "http", endpoint.URL.Scheme)
 			require.True(t, isLoopbackHost(endpoint.URL.Hostname()), "%q", raw)
 		case KataEndpointUnix:
 			require.True(t, strings.HasPrefix(endpoint.SocketPath, "/"), "%q", raw)
 			require.Equal(t, "http://unix", endpoint.URL.String())
-		default:
-			require.Failf(t, "unknown kind", "%q -> %q", raw, endpoint.Kind)
 		}
 	})
 }

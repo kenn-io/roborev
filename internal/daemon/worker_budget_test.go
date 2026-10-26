@@ -695,12 +695,13 @@ func TestBudgetRoutingSelectsEligibleGoalReviewer(t *testing.T) {
 			probeLog := filepath.Join(t.TempDir(), "probe.log")
 			command := filepath.Join(t.TempDir(), "claude")
 			script := fmt.Sprintf(`#!/bin/sh
-case "$1" in
+case "$*" in
   *etxtbsy*) exit 0 ;;
-  --help) printf '%%s\n' %q; printf 'probe\n' >> %q; exit 0 ;;
+  *--version*) help=%q; printf 'probe\n' >> %q; case "$* $help" in *" --tools "*) echo "Claude Code"; exit 0;; *" --bare "*) echo "Claude Code"; exit 0;; esac; exit 0 ;;
+  *--help*) printf '%%s\n' %q; printf 'probe\n' >> %q; exit 0 ;;
   *) exit 9 ;;
 esac
-`, tc.help, probeLog)
+`, tc.help, probeLog, probeLog, tc.help)
 			require.NoError(t, os.WriteFile(command, []byte(script), 0o700))
 			cfg.PiCmd, cfg.ClaudeCodeCmd, cfg.GrokCmd = command, command, command
 			for _, a := range []agent.Agent{agent.NewPiAgent(command), agent.NewClaudeAgent(command), &budgetStructuredReviewAgent{budgetRecordingAgent: &budgetRecordingAgent{name: "grok"}}} {
