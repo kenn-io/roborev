@@ -54,32 +54,16 @@ func EvaluateWith(ctx context.Context, workdir string, cfg config.KataIntegratio
 // workspace's project when it is empty.
 func (c *APIClient) EvaluateProject(ctx context.Context, project string) Status {
 	result := Status{SecurityNote: c.SecurityNote()}
-	info, err := c.refreshInfo(ctx)
+	_, project, info, err := c.selectProject(ctx, project)
 	result.ServerVersion, result.APISchemaVersion = info.Version, info.APISchemaVersion
+	result.Project = project
 	if err != nil {
-		return withFacts(statusForError(err, ""), result)
-	}
-	if project == "" {
-		binding, err := c.Binding(ctx)
-		if err != nil {
-			if errors.Is(err, ErrNoBinding) {
-				result.State = StateProjectNotFound
-				result.Message = "The workspace has no Kata binding and integrations.kata.default_project is not set."
-				return result
-			}
-			result.State = StateIncompatible
-			result.Message = "The workspace's Kata binding file could not be read."
+		if errors.Is(err, ErrNoBinding) {
+			result.State = StateProjectNotFound
+			result.Message = "The workspace has no Kata binding and integrations.kata.default_project is not set."
 			return result
 		}
-		project = binding.Project
-	}
-	result.Project = project
-	projects, err := c.refreshProjects(ctx)
-	if err != nil {
 		return withFacts(statusForError(err, project), result)
-	}
-	if _, ok := projects[project]; !ok {
-		return withFacts(statusForError(ErrProjectNotFound, project), result)
 	}
 	result.State = StateReady
 	result.Message = "The Kata connection is ready."
@@ -115,7 +99,7 @@ func statusForError(err error, project string) Status {
 	case errors.Is(err, ErrIncompatible), errors.Is(err, ErrInvalidResponse),
 		errors.Is(err, ErrRedirect), errors.Is(err, ErrRequestRejected), errors.Is(err, ErrNotFound):
 		s.State = StateIncompatible
-		s.Message = "The server is reachable or configured but is not a compatible Kata API (needs API schema " + MinAPISchemaVersion + " or later)."
+		s.Message = "The server is reachable or configured but is not a compatible Kata API (needs API schema " + MinAPISchemaVersion + " through " + MaxAPISchemaVersion + ")."
 	default:
 		s.State = StateUnreachable
 		s.Message = "The Kata server is unavailable."

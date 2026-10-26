@@ -25,7 +25,7 @@ func TestBindingReadsKataToml(t *testing.T) {
 func TestBindingWalksUp(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".kata.toml"),
-		[]byte("[project]\nname = \"parentproj\"\n"), 0o644))
+		[]byte("version = 1\n[project]\nname = \"parentproj\"\n"), 0o644))
 	child := filepath.Join(root, "a", "b")
 	require.NoError(t, os.MkdirAll(child, 0o755))
 
@@ -39,24 +39,25 @@ func TestBindingNoBinding(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNoBinding)
 }
 
-func TestBindingEmptyNameKeepsWalking(t *testing.T) {
+func TestBindingEmptyNameStops(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".kata.toml"),
-		[]byte("[project]\nname = \"parentproj\"\n"), 0o644))
+		[]byte("version = 1\n[project]\nname = \"parentproj\"\n"), 0o644))
 	child := filepath.Join(root, "child")
 	require.NoError(t, os.MkdirAll(child, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(child, ".kata.toml"),
-		[]byte("[project]\n"), 0o644)) // present but no name
+		[]byte("version = 1\n[project]\n"), 0o644)) // present but no name
 
 	b, err := NewCLIClient(child).Binding(context.Background())
-	require.NoError(t, err)
-	assert.Equal(t, "parentproj", b.Project)
+	require.Error(t, err)
+	require.NotErrorIs(t, err, ErrNoBinding)
+	assert.Empty(t, b.Project)
 }
 
 func TestBindingMalformedTomlStops(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".kata.toml"),
-		[]byte("[project]\nname = \"parentproj\"\n"), 0o644))
+		[]byte("version = 1\n[project]\nname = \"parentproj\"\n"), 0o644))
 	child := filepath.Join(root, "child")
 	require.NoError(t, os.MkdirAll(child, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(child, ".kata.toml"),
@@ -71,9 +72,9 @@ func TestBindingMalformedTomlStops(t *testing.T) {
 func TestBindingLocalTomlOverrides(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".kata.toml"),
-		[]byte("[project]\nname = \"committed\"\n"), 0o644))
+		[]byte("version = 1\n[project]\nname = \"committed\"\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".kata.local.toml"),
-		[]byte("[project]\nname = \"local\"\n"), 0o644))
+		[]byte("version = 1\n[project]\nname = \"local\"\n"), 0o644))
 
 	b, err := NewCLIClient(dir).Binding(context.Background())
 	require.NoError(t, err)
@@ -83,9 +84,9 @@ func TestBindingLocalTomlOverrides(t *testing.T) {
 func TestBindingLocalServerOnlyFallsThrough(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".kata.toml"),
-		[]byte("[project]\nname = \"committed\"\n"), 0o644))
+		[]byte("version = 1\n[project]\nname = \"committed\"\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".kata.local.toml"),
-		[]byte("[server]\nurl = \"http://x\"\n"), 0o644))
+		[]byte("version = 1\n[server]\nurl = \"http://x\"\n"), 0o644))
 
 	b, err := NewCLIClient(dir).Binding(context.Background())
 	require.NoError(t, err)
@@ -95,7 +96,7 @@ func TestBindingLocalServerOnlyFallsThrough(t *testing.T) {
 func TestBindingMalformedLocalTomlStops(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".kata.toml"),
-		[]byte("[project]\nname = \"parentproj\"\n"), 0o644))
+		[]byte("version = 1\n[project]\nname = \"parentproj\"\n"), 0o644))
 	child := filepath.Join(root, "child")
 	require.NoError(t, os.MkdirAll(child, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(child, ".kata.local.toml"),
@@ -165,7 +166,7 @@ func TestShowNoLabels(t *testing.T) {
 func TestShowUsesProjectQualifiedLinkDirection(t *testing.T) {
 	workdir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(workdir, ".kata.toml"),
-		[]byte("[project]\nname = \"current\"\n"), 0o600))
+		[]byte("version = 1\n[project]\nname = \"current\"\n"), 0o600))
 	c, _ := stubClient(`{"issue":{"short_id":"same","title":"Current"},"links":[
 		{"type":"blocks","from":{"short_id":"same","project":"other","qualified_id":"other#same"},
 		 "to":{"short_id":"same","project":"current","qualified_id":"current#same"}}]}`, nil)
@@ -220,18 +221,28 @@ func TestCreateZeroPriorityEmitted(t *testing.T) {
 	assert.Contains(t, *args, "0")
 }
 
-func TestBuildKataCmdInheritsProcessEnvByDefault(t *testing.T) {
-	c := NewCLIClient(t.TempDir())
-	cmd := buildKataCmd(context.Background(), c, []string{"list"}, nil)
-	assert.Nil(t, cmd.Env, "a nil Env makes exec inherit the process environment")
-}
-
-// A client built with an explicit environment must not see the caller's
-// KATA_SERVER, token, or attribution: the entries are the whole environment.
-func TestBuildKataCmdUsesExplicitEnvOnly(t *testing.T) {
+// An explicit environment replaces the caller's routing and identity; nil
+// alone preserves legacy process-environment inheritance.
+func TestBuildKataCmdEnvironmentSelection(t *testing.T) {
 	t.Setenv("KATA_SERVER", "http://127.0.0.1:1")
 	t.Setenv("KATA_AUTHOR", "inherited")
-	c := NewCLIClientWithEnv(t.TempDir(), []string{"KATA_HOME=/disposable", "PATH=/bin"})
-	cmd := buildKataCmd(context.Background(), c, []string{"list"}, nil)
-	assert.Equal(t, []string{"KATA_HOME=/disposable", "PATH=/bin"}, cmd.Env)
+	for _, tc := range []struct {
+		name string
+		env  []string
+	}{
+		{"legacy constructor", nil},
+		{"explicit nil", nil},
+		{"explicit empty", []string{}},
+		{"explicit entries", []string{"KATA_HOME=/disposable", "PATH=/bin"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			workdir := t.TempDir()
+			c := NewCLIClient(workdir)
+			if tc.name != "legacy constructor" {
+				c = NewCLIClientWithEnv(workdir, tc.env)
+			}
+			cmd := buildKataCmd(t.Context(), c, []string{"list"}, nil)
+			assert.Equal(t, tc.env, cmd.Env)
+		})
+	}
 }

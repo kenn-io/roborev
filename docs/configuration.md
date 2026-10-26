@@ -561,6 +561,44 @@ To file failed reviews and review findings back into Kata, configure a
 `type = "kata"` review hook. See
 [Built-in: Kata Integration](/docs/guides/hooks/#built-in-kata-integration).
 
+#### Explicit Kata Connection
+
+The global `[integrations.kata]` settings configure an explicit API endpoint and
+credential. These settings are accepted only in `~/.roborev/config.toml`; a
+repository cannot choose where the credential is sent. The API client is
+available, but existing review, hook, and goal workflows still use the Kata CLI.
+Enabling these settings does not redirect those workflows yet.
+
+```toml
+# ~/.roborev/config.toml
+[integrations.kata]
+enabled = true
+endpoint = "https://kata.example.com"
+api_key_file = "~/.config/roborev/kata-token"
+default_project = "reviews"
+teammate = "review-bot"
+```
+
+| Global key | Type | Default | Meaning |
+|------------|------|---------|---------|
+| `integrations.kata.enabled` | bool | `false` | Enable the explicit API connection settings |
+| `integrations.kata.endpoint` | string | empty | HTTPS URL, loopback HTTP URL, or absolute `unix:///path/to/socket` URL |
+| `integrations.kata.api_key` | string | empty | Inline bearer credential; masked in config output and omitted from JSON |
+| `integrations.kata.api_key_file` | string | empty | Credential file read when the API client is created; a leading `~/` expands to the home directory |
+| `integrations.kata.default_project` | string | empty | Exact project name used when the workspace has no binding |
+| `integrations.kata.teammate` | string | `roborev` | Configured teammate handle; does not set issue-write attribution |
+
+Choose either `api_key` or `api_key_file`. Loopback HTTP requires a key; remote
+plaintext HTTP is refused. HTTPS and Unix sockets may omit a key when the server
+authenticates the connection another way. Endpoint URLs cannot contain userinfo,
+a query, or a fragment.
+
+The teammate value is stored with the connection settings. Issue creation
+records the authenticated principal, or the requested actor `roborev`, under
+Kata's attribution rules. See the
+[Kata integration overview](/docs/integrations/kata/#explicit-api-connection)
+for project selection and compatibility behavior.
+
 ### Workflow-Specific Agent and Model
 
 Use different agents or models depending on the workflow and reasoning level:
@@ -1148,6 +1186,7 @@ filter_branch = false             # Show all branches on startup (default: curre
 | `auto_close_passing_reviews` | bool | false | Automatically close reviews that pass, including reviews whose findings all fall below `review_min_severity` | Yes |
 | `kata_context.mode` | string | `off` | Kata task context in review prompts: `off`, `current`, or `open` | Yes |
 | `kata_context.max_chars` | int | `50000` | Maximum bytes of Kata issue context to include | Yes |
+| `integrations.kata.*` | table | disabled | Global-only explicit connection settings; see [Explicit Kata Connection](#explicit-kata-connection) | N/A |
 | `goal_review.kata_gate.default` | string | `block` | Global candidate-gate policy: `block`, `warn`, or `off`; see [Engineering with Superpowers and Kata](/docs/integrations/goal-review/) | Yes |
 | `review_min_severity` | string | - | Default lowest severity that fails a review: `critical`, `high`, `medium`, or `low`. Lower findings are still reported | Yes |
 | `fix_min_severity` | string | - | Default minimum severity for `fix`: `critical`, `high`, `medium`, or `low` | Yes |

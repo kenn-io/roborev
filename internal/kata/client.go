@@ -1,6 +1,7 @@
 package kata
 
 import (
+	"cmp"
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -13,8 +14,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/BurntSushi/toml"
+	"go.kenn.io/kit/pathresolve"
 
 	"go.kenn.io/roborev/internal/procutil"
 )
@@ -84,7 +87,7 @@ func realRun(ctx context.Context, c *CLIClient, args []string, stdin io.Reader) 
 
 // Binding resolves the workspace project by reading .kata.local.toml (local
 // override) then .kata.toml, from workdir upward. It does not require the kata
-// binary. A present-but-unreadable config file stops the search with an error
+// binary. A present-but-unreadable or unsupported config file stops the search
 // rather than silently binding to a parent project.
 func (c *CLIClient) Binding(_ context.Context) (Binding, error) {
 	return workspaceBinding(c.workdir)
@@ -93,38 +96,85 @@ func (c *CLIClient) Binding(_ context.Context) (Binding, error) {
 // workspaceBinding reads the binding for workdir. Both clients use it, so the
 // API connection resolves a workspace exactly as the kata CLI does.
 func workspaceBinding(workdir string) (Binding, error) {
-	dir := workdir
-	if dir == "" {
-		dir = "."
-	}
-	abs, err := filepath.Abs(dir)
+	selection, err := discoverWorkspace(workdir)
+	return Binding{Project: selection.name}, err
+}
+
+type workspaceProject struct {
+	name, root, gitRoot string
+	local               bool
+}
+
+func discoverWorkspace(workdir string) (workspaceProject, error) {
+	abs, err := filepath.Abs(cmp.Or(workdir, "."))
 	if err != nil {
-		return Binding{}, err
+		return workspaceProject{}, err
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return workspaceProject{}, fmt.Errorf("kata: stat workspace: %w", err)
+	}
+	resolved, err := pathresolve.EvalSymlinks(abs)
+	if err != nil {
+		return workspaceProject{}, fmt.Errorf("kata: resolve workspace: %w", err)
+	}
+	if !info.IsDir() {
+		abs, resolved = filepath.Dir(abs), filepath.Dir(resolved)
+	}
+	lexicalGit, err := workspaceGitRoot(abs)
+	if err != nil {
+		return workspaceProject{}, err
+	}
+	physicalGit, err := workspaceGitRoot(resolved)
+	if err != nil {
+		return workspaceProject{}, err
+	}
+	gitRoot := lexicalGit
+	if physicalGit != "" {
+		resolvedLexical, resolveErr := pathresolve.EvalSymlinks(lexicalGit)
+		if resolveErr != nil || resolvedLexical != physicalGit {
+			abs, gitRoot = resolved, physicalGit
+		}
 	}
 	for {
 		for _, base := range []string{".kata.local.toml", ".kata.toml"} {
-			name, found, err := readKataProjectName(filepath.Join(abs, base))
+			local := base == ".kata.local.toml"
+			name, found, err := readKataProjectName(filepath.Join(abs, base), local)
 			if err != nil {
-				return Binding{}, err
+				return workspaceProject{}, err
 			}
 			if found {
-				return Binding{Project: name}, nil
+				return workspaceProject{name: name, root: abs, gitRoot: gitRoot, local: local}, nil
 			}
+		}
+		if abs == gitRoot {
+			break
 		}
 		parent := filepath.Dir(abs)
 		if parent == abs {
-			return Binding{}, ErrNoBinding
+			break
 		}
 		abs = parent
 	}
+	return workspaceProject{}, ErrNoBinding
 }
 
-// readKataProjectName reads [project].name from a kata config file. found is
-// true only when the file exists, parses, and carries a non-empty name. A
-// missing file returns (found=false, err=nil) so the caller keeps searching; a
-// present-but-unreadable or malformed file returns a non-nil err so the caller
-// stops rather than silently binding to a parent project.
-func readKataProjectName(path string) (name string, found bool, err error) {
+func workspaceGitRoot(start string) (string, error) {
+	for {
+		_, err := os.Stat(filepath.Join(start, ".git"))
+		switch {
+		case err == nil:
+			return start, nil
+		case !errors.Is(err, fs.ErrNotExist):
+			return "", fmt.Errorf("kata: discover .git: %w", err)
+		case filepath.Dir(start) == start:
+			return "", nil
+		}
+		start = filepath.Dir(start)
+	}
+}
+
+func readKataProjectName(path string, local bool) (name string, found bool, err error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", false, nil
@@ -133,14 +183,35 @@ func readKataProjectName(path string) (name string, found bool, err error) {
 		return "", false, fmt.Errorf("kata: read %s: %w", path, err)
 	}
 	var doc struct {
+		Version int `toml:"version"`
 		Project struct {
-			Name string `toml:"name"`
+			Name     string `toml:"name"`
+			Identity string `toml:"identity"`
 		} `toml:"project"`
 	}
 	if _, err := toml.Decode(string(data), &doc); err != nil {
 		return "", false, fmt.Errorf("kata: parse %s: %w", path, err)
 	}
-	return doc.Project.Name, doc.Project.Name != "", nil
+	if doc.Version != 1 {
+		return "", false, fmt.Errorf("kata: unsupported binding version %d (expected 1)", doc.Version)
+	}
+	name = strings.TrimSpace(doc.Project.Name)
+	identity := strings.TrimSpace(doc.Project.Identity)
+	if !local && name == "" && identity != "" {
+		name = identity[strings.LastIndexAny(identity, "/:")+1:]
+	}
+	if name == "" {
+		if local {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("kata: %s: project.name must be non-empty", path)
+	}
+	for _, r := range name {
+		if !unicode.IsPrint(r) {
+			return "", false, fmt.Errorf("kata: %s: project.name contains non-printable character %U", path, r)
+		}
+	}
+	return name, true, nil
 }
 
 type listEnvelope struct {
@@ -314,9 +385,6 @@ func qualifiedLinkPeerID(peer LinkPeer) string {
 
 // Create files an issue, piping the body over stdin via --body-stdin.
 func (c *CLIClient) Create(ctx context.Context, req CreateReq) (CreateResult, error) {
-	if len(req.Metadata) > 0 {
-		return CreateResult{}, ErrMetadataUnsupported
-	}
 	args := []string{"create", req.Title, "--json", "--body-stdin"}
 	if req.Project != "" {
 		args = append(args, "--project", req.Project)

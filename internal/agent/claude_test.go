@@ -892,7 +892,7 @@ func TestClaudeClassifyWithSchemaKeepsStreamError(t *testing.T) {
 func TestClaudeClassifyStreamsProgressBeforeExit(t *testing.T) {
 	release := filepath.Join(t.TempDir(), "release")
 	script := fmt.Sprintf(`#!/bin/sh
-case "$1" in *etxtbsy*) exit 0;; --help) echo 'usage: claude --tools'; exit 0;; esac
+case "$*" in *etxtbsy*) exit 0;; *--version*) echo "Claude Code"; exit 0;; *--help*) echo 'usage: claude --tools'; exit 0;; esac
 echo '{"type":"system","session_id":"session-a"}'
 while [ ! -f %q ]; do sleep 0.01; done
 echo '{"type":"result","result":"{\"findings\":[]}","usage":{"input_tokens":100,"output_tokens":10},"total_cost_usd":0.25}'

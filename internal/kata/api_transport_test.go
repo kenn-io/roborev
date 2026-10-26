@@ -48,42 +48,36 @@ type pong struct {
 }
 
 func TestTransportSendsBearerAndAcceptHeaders(t *testing.T) {
-	var got http.Header
-	var gotPath, gotQuery string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got, gotPath, gotQuery = r.Header.Clone(), r.URL.Path, r.URL.RawQuery
-		jsonHandler(`{"ok":true}`)(w, r)
-	}))
-	defer srv.Close()
-	tr := transportFor(t, srv.URL+"/proxy/", "static-credential")
-
-	var out pong
-	_, err := tr.do(t.Context(), http.MethodGet, "/api/v1/health", url.Values{"a": {"b c"}}, nil, nil, &out, http.StatusOK)
-	require.NoError(t, err)
-	assert.True(t, out.OK)
-	assert.Equal(t, "Bearer static-credential", got.Get("Authorization"))
-	assert.Equal(t, "application/json", got.Get("Accept"))
-	assert.Equal(t, "/proxy/api/v1/health", gotPath, "a path prefix on the endpoint is kept")
-	assert.Equal(t, "a=b+c", gotQuery)
-}
-
-func TestTransportSendsNoAuthorizationWithoutAKey(t *testing.T) {
-	var got http.Header
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got = r.Header.Clone()
-		jsonHandler(`{"ok":true}`)(w, r)
-	}))
-	defer srv.Close()
-	// An https endpoint may rely on mutual TLS or an authenticating proxy, so
-	// it can run without a key; the server decides.
-	tr := transportFor(t, "https://kata.example.com", "", func(o *transportOptions) {
-		o.HTTPClient = srv.Client()
-		o.Endpoint.URL, _ = url.Parse(srv.URL)
-	})
-	var out pong
-	_, err := tr.do(t.Context(), http.MethodGet, "/x", nil, nil, nil, &out, http.StatusOK)
-	require.NoError(t, err)
-	assert.Empty(t, got.Get("Authorization"))
+	for _, tc := range []struct{ name, key, authorization string }{
+		{"keyed HTTP", "static-credential", "Bearer static-credential"},
+		{"keyless HTTPS", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got http.Header
+			var gotPath, gotQuery string
+			srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got, gotPath, gotQuery = r.Header.Clone(), r.URL.Path, r.URL.RawQuery
+				jsonHandler(`{"ok":true}`)(w, r)
+			}))
+			if tc.key == "" {
+				srv.StartTLS()
+			} else {
+				srv.Start()
+			}
+			defer srv.Close()
+			// Keyless HTTPS may rely on mutual TLS or an authenticating proxy.
+			tr := transportFor(t, srv.URL+"/proxy/", tc.key, func(o *transportOptions) { o.HTTPClient = srv.Client() })
+			var out pong
+			_, err := tr.do(t.Context(), http.MethodGet, "/api/v1/health", url.Values{"a": {"b c"}}, nil, nil, &out, http.StatusOK)
+			require.NoError(t, err)
+			assert := assert.New(t)
+			assert.True(out.OK)
+			assert.Equal(tc.authorization, got.Get("Authorization"))
+			assert.Equal("application/json", got.Get("Accept"))
+			assert.Equal("/proxy/api/v1/health", gotPath, "a path prefix on the endpoint is kept")
+			assert.Equal("a=b+c", gotQuery)
+		})
+	}
 }
 
 func TestTransportEncodesJSONBodiesDeterministically(t *testing.T) {
@@ -225,66 +219,65 @@ func TestTransportClassifiesStatuses(t *testing.T) {
 	}
 }
 
-func TestTransportReportsKataErrorCodes(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusConflict)
-		_, _ = w.Write([]byte(`{"status":409,"error":{"code":"idempotency_mismatch","message":"key reused with a different body"}}`))
-	}))
-	defer srv.Close()
-	tr := transportFor(t, srv.URL, "k")
-	var out pong
-	_, err := tr.do(t.Context(), http.MethodPost, "/x", nil, nil, nil, &out, http.StatusOK)
-	require.ErrorIs(t, err, ErrConflict)
-	assert.Equal(t, "idempotency_mismatch", ErrorCode(err))
-	apiErr, ok := AsAPIError(err)
-	require.True(t, ok)
-	assert.Equal(t, http.StatusConflict, apiErr.Status)
-	assert.Contains(t, apiErr.Error(), "idempotency_mismatch")
+func TestTransportReportsKataErrorCodesAndMessages(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		status        int
+		code, message string
+		want          error
+	}{
+		{"retry conflict", http.StatusConflict, "idempotency_mismatch", "key reused with a different body", ErrConflict},
+		{"complete long message", http.StatusBadRequest, "bad", strings.Repeat("m", (64<<10)+1), ErrRequestRejected},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(`{"error":{"code":"` + tc.code + `","message":"` + tc.message + `"}}`))
+			}))
+			defer srv.Close()
+			tr := transportFor(t, srv.URL, "k")
+			var out pong
+			_, err := tr.do(t.Context(), http.MethodPost, "/x", nil, nil, nil, &out, http.StatusOK)
+			require.ErrorIs(t, err, tc.want)
+			apiErr, ok := AsAPIError(err)
+			require.True(t, ok)
+			assert := assert.New(t)
+			assert.Equal(tc.code, ErrorCode(err))
+			assert.Equal(tc.status, apiErr.Status)
+			assert.Equal(tc.message, apiErr.Message)
+			assert.Contains(apiErr.Error(), tc.code)
+		})
+	}
 	assert.Empty(t, ErrorCode(ErrRedirect))
 }
 
-func TestTransportPreservesLongServerMessages(t *testing.T) {
-	long := strings.Repeat("m", (64<<10)+1)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":{"code":"bad","message":"` + long + `"}}`))
-	}))
-	defer srv.Close()
-	tr := transportFor(t, srv.URL, "k")
-	var out pong
-	_, err := tr.do(t.Context(), http.MethodGet, "/x", nil, nil, nil, &out, http.StatusOK)
-	require.ErrorIs(t, err, ErrRequestRejected)
-	apiErr, ok := AsAPIError(err)
-	require.True(t, ok)
-	assert.Equal(t, long, apiErr.Message)
-}
-
-func TestTransportRejectsMalformedSuccessBodies(t *testing.T) {
-	for name, body := range map[string]string{
-		"not json":      `<html>`,
-		"trailing data": `{"ok":true} {"ok":false}`,
-		"wrong type":    `{"ok":"yes"}`,
-		"empty":         ``,
+func TestTransportDecodesSuccessResponses(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		valid      bool
+	}{
+		{"known fields", `{"ok":true}`, true},
+		{"additive fields", `{"ok":true,"later_field":{"x":1}}`, true},
+		{"not json", `<html>`, false},
+		{"trailing data", `{"ok":true} {"ok":false}`, false},
+		{"duplicate fields", `{"ok":true,"ok":false}`, false},
+		{"wrong type", `{"ok":"yes"}`, false},
+		{"empty", ``, false},
 	} {
-		t.Run(name, func(t *testing.T) {
-			srv := httptest.NewServer(jsonHandler(body))
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(jsonHandler(tc.body))
 			defer srv.Close()
 			tr := transportFor(t, srv.URL, "k")
 			var out pong
 			_, err := tr.do(t.Context(), http.MethodGet, "/x", nil, nil, nil, &out, http.StatusOK)
-			require.ErrorIs(t, err, ErrInvalidResponse)
+			if !tc.valid {
+				require.ErrorIs(t, err, ErrInvalidResponse)
+				return
+			}
+			require.NoError(t, err)
+			assert.True(t, out.OK)
 		})
 	}
-}
-
-func TestTransportToleratesFieldsFromNewerServers(t *testing.T) {
-	srv := httptest.NewServer(jsonHandler(`{"ok":true,"a_field_added_in_a_later_kata":{"x":1}}`))
-	defer srv.Close()
-	tr := transportFor(t, srv.URL, "k")
-	var out pong
-	_, err := tr.do(t.Context(), http.MethodGet, "/x", nil, nil, nil, &out, http.StatusOK)
-	require.NoError(t, err)
-	assert.True(t, out.OK)
 }
 
 func TestTransportReportsAClosedPortAsUnreachable(t *testing.T) {
@@ -329,65 +322,59 @@ func serveOnUnixSocket(t *testing.T, dirMode, socketMode os.FileMode, handler ht
 	return path
 }
 
-func TestTransportReachesAPrivateUnixSocket(t *testing.T) {
+func TestTransportUnixSocketSecurity(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unix socket ownership checks are unavailable on Windows")
 	}
-	var gotAuth atomic.Value
-	path := serveOnUnixSocket(t, 0o700, 0o600, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotAuth.Store(r.Header.Get("Authorization"))
-		jsonHandler(`{"ok":true}`)(w, r)
-	}))
-	tr := transportFor(t, "unix://"+path, "")
-	var out pong
-	_, err := tr.do(t.Context(), http.MethodGet, "/api/v1/health", nil, nil, nil, &out, http.StatusOK)
-	require.NoError(t, err)
-	assert.True(t, out.OK)
-	assert.Empty(t, gotAuth.Load(), "a socket relies on its owner, not a bearer key")
-}
-
-// Kata's local daemon creates its socket inside a 0700 directory with a mode
-// taken from the umask: 0775 under the common umask 002.
-func TestTransportAcceptsAGroupWritableSocketInAPrivateDirectory(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("unix socket ownership checks are unavailable on Windows")
+	for _, tc := range []struct {
+		name                string
+		dirMode, socketMode os.FileMode
+		want                error
+	}{
+		{"private socket", 0o700, 0o600, nil},
+		// Kata's daemon uses its umask: a common 002 produces a 0775 socket.
+		{"group writable socket in private directory", 0o700, 0o775, nil},
+		{"world accessible directory", 0o755, 0o600, ErrInsecureEndpoint},
+		{"symlinked socket", 0o700, 0o600, ErrInsecureEndpoint},
+		{"not a socket", 0o700, 0o600, ErrInsecureEndpoint},
+		{"missing socket", 0o700, 0o600, ErrUnreachable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotAuth atomic.Value
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotAuth.Store(r.Header.Get("Authorization"))
+				jsonHandler(`{"ok":true}`)(w, r)
+			})
+			var path string
+			switch tc.name {
+			case "not a socket", "missing socket":
+				dir := shortTempDir(t)
+				require.NoError(t, os.Chmod(dir, tc.dirMode))
+				path = filepath.Join(dir, "plain")
+				if tc.name == "not a socket" {
+					require.NoError(t, os.WriteFile(path, nil, 0o600))
+				}
+			default:
+				path = serveOnUnixSocket(t, tc.dirMode, tc.socketMode, handler)
+				if tc.name == "symlinked socket" {
+					link := filepath.Join(filepath.Dir(path), "link.sock")
+					require.NoError(t, os.Symlink(path, link))
+					path = link
+				}
+			}
+			tr, err := newTransportForSocket(t, path)
+			if tc.want != nil {
+				require.ErrorIs(t, err, tc.want)
+				return
+			}
+			require.NoError(t, err)
+			var out pong
+			_, err = tr.do(t.Context(), http.MethodGet, "/api/v1/health", nil, nil, nil, &out, http.StatusOK)
+			require.NoError(t, err)
+			assert.True(t, out.OK)
+			assert.Empty(t, gotAuth.Load(), "a socket relies on its owner, not a bearer key")
+		})
 	}
-	path := serveOnUnixSocket(t, 0o700, 0o775, jsonHandler(`{"ok":true}`))
-	tr := transportFor(t, "unix://"+path, "")
-	var out pong
-	_, err := tr.do(t.Context(), http.MethodGet, "/x", nil, nil, nil, &out, http.StatusOK)
-	require.NoError(t, err)
-}
-
-func TestTransportRefusesInsecureUnixSockets(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("unix socket ownership checks are unavailable on Windows")
-	}
-	handler := jsonHandler(`{"ok":true}`)
-	t.Run("world accessible directory", func(t *testing.T) {
-		path := serveOnUnixSocket(t, 0o755, 0o600, handler)
-		_, err := newTransportForSocket(t, path)
-		require.ErrorIs(t, err, ErrInsecureEndpoint)
-	})
-	t.Run("symlinked socket", func(t *testing.T) {
-		path := serveOnUnixSocket(t, 0o700, 0o600, handler)
-		link := filepath.Join(filepath.Dir(path), "link.sock")
-		require.NoError(t, os.Symlink(path, link))
-		_, err := newTransportForSocket(t, link)
-		require.ErrorIs(t, err, ErrInsecureEndpoint)
-	})
-	t.Run("not a socket", func(t *testing.T) {
-		dir := shortTempDir(t)
-		require.NoError(t, os.Chmod(dir, 0o700))
-		file := filepath.Join(dir, "plain")
-		require.NoError(t, os.WriteFile(file, nil, 0o600))
-		_, err := newTransportForSocket(t, file)
-		require.ErrorIs(t, err, ErrInsecureEndpoint)
-	})
-	t.Run("missing socket", func(t *testing.T) {
-		_, err := newTransportForSocket(t, filepath.Join(shortTempDir(t), "gone.sock"))
-		require.ErrorIs(t, err, ErrUnreachable)
-	})
 }
 
 func newTransportForSocket(t *testing.T, path string) (*transport, error) {
@@ -450,7 +437,50 @@ func FuzzSanitizeServerText(f *testing.F) {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, text string) {
-		got := sanitizeServerText(text)
-		require.Negative(t, strings.IndexFunc(got, unicode.IsControl), "%q -> %q", text, got)
+		var want strings.Builder
+		for _, r := range text {
+			if !unicode.IsControl(r) {
+				want.WriteRune(r)
+			}
+		}
+		require.Equal(t, want.String(), sanitizeServerText(text))
+	})
+}
+
+// HTTP header values allow tab and bytes above ASCII, but reject other C0
+// controls and DEL. Check both classifications and exact delivery without
+// imposing an extra token grammar on an otherwise usable credential.
+func FuzzTransportCredentialHeader(f *testing.F) {
+	for _, seed := range []string{"", "opaque:key", "tab\tkey", "é", "\xff", "bad\nkey", "bad\x00key", "bad\x7fkey"} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, content string) {
+		key := "prefix" + content + "suffix"
+		var sent []string
+		endpoint, err := config.ParseKataEndpoint("https://kata.example.com")
+		require.NoError(t, err)
+		client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			sent = append(sent, r.Header.Get("Authorization"))
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}, nil
+		})}
+		tr, err := newTransport(transportOptions{Endpoint: endpoint, APIKey: key, HTTPClient: client})
+		valid := true
+		for i := range len(content) {
+			if content[i] < 0x20 && content[i] != '\t' || content[i] == 0x7f {
+				valid = false
+			}
+		}
+		if !valid {
+			require.ErrorIs(t, err, ErrAuthenticationRequired)
+			require.Equal(t, ErrAuthenticationRequired.Error(), err.Error(), "invalid credentials are never echoed")
+			require.Empty(t, sent)
+			return
+		}
+		require.NoError(t, err)
+		t.Cleanup(tr.closeIdleConnections)
+		var out pong
+		_, err = tr.do(t.Context(), http.MethodGet, "/api/v1/health", nil, nil, nil, &out, http.StatusOK)
+		require.NoError(t, err)
+		require.Equal(t, []string{"Bearer " + key}, sent)
 	})
 }
