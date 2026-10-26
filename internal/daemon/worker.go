@@ -1331,6 +1331,11 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		if err := jobLog.Close(); err != nil {
 			log.Printf("[%s] Warning: close job log for job %d: %v", workerID, job.ID, err)
 		}
+		// Strict Claude sessions are not saved, so read usage from the job log
+		// on every terminal path; failed attempts can still spend tokens.
+		if planningPrompt == "" && tools != nil && agentName == "claude-code" {
+			wp.captureSessionlessUsage(workerID, job, agentName)
+		}
 	}()
 	agentOutput := io.MultiWriter(jobLog, outputWriter)
 	var planningUsageCapture *tokens.CodexUsageCaptureWriter
@@ -1622,13 +1627,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}
 		wp.autoClosePassingReview(workerID, job, verdict)
 
-		if planningPrompt == "" {
-			if tools != nil && agentName == "claude-code" {
-				// Strict Claude sessions are not saved, so read usage from the job log.
-				wp.captureSessionlessUsage(workerID, job, agentName)
-			} else {
-				wp.captureTokenUsageForSession(context.Background(), workerID, job, sessionWriter.SessionID())
-			}
+		if planningPrompt == "" && (tools == nil || agentName != "claude-code") {
+			wp.captureTokenUsageForSession(context.Background(), workerID, job, sessionWriter.SessionID())
 		}
 		wp.invalidateBudgetSpend()
 

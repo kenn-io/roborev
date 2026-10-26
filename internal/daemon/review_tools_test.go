@@ -182,6 +182,32 @@ func TestProcessJobRecordsStrictClaudeUsageWithoutSavedSession(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell fake command uses POSIX permissions")
 	}
+	tc, claimed := claimStrictClaudeUsageJob(t, `{\"schema_version\":2,\"summary\":\"No findings.\",\"verdict\":\"pass\",\"findings\":[]}`)
+
+	tc.Pool.processJob(testWorkerID, claimed)
+
+	stored := tc.assertJobStatus(t, claimed.ID, storage.JobStatusDone)
+	assertStrictClaudeUsage(t, stored)
+}
+
+func TestProcessJobRecordsStrictClaudeUsageWhenReviewFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fake command uses POSIX permissions")
+	}
+	tc, claimed := claimStrictClaudeUsageJob(t, "not a review")
+	claimed = tc.exhaustRetries(t, claimed, testWorkerID, "claude-code")
+
+	tc.Pool.processJob(testWorkerID, claimed)
+
+	stored := tc.assertJobStatus(t, claimed.ID, storage.JobStatusFailed)
+	assertStrictClaudeUsage(t, stored)
+}
+
+// claimStrictClaudeUsageJob claims a strict custom review run by a fake
+// Claude whose result event carries the given result text, 100 input
+// tokens, 20 output tokens, and a $0.25 cost.
+func claimStrictClaudeUsageJob(t *testing.T, result string) (*workerTestContext, *storage.ReviewJob) {
+	t.Helper()
 	tc := newWorkerTestContext(t, 1)
 	require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, ".roborev.toml"), []byte(strictCustomTypeConfig), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, "custom.md"), []byte("Check the citations.\n"), 0o644))
@@ -189,7 +215,7 @@ func TestProcessJobRecordsStrictClaudeUsageWithoutSavedSession(t *testing.T) {
 	stream := filepath.Join(bin, "stream.jsonl")
 	require.NoError(t, os.WriteFile(stream, []byte(
 		`{"type":"system","subtype":"init","session_id":"unsaved","permissionMode":"dontAsk","tools":["Read","Glob","Grep","StructuredOutput"],"mcp_servers":[]}`+"\n"+
-			`{"type":"result","session_id":"unsaved","result":"{\"schema_version\":2,\"summary\":\"No findings.\",\"verdict\":\"pass\",\"findings\":[]}","usage":{"input_tokens":100,"output_tokens":20},"total_cost_usd":0.25}`+"\n",
+			`{"type":"result","session_id":"unsaved","result":"`+result+`","usage":{"input_tokens":100,"output_tokens":20},"total_cost_usd":0.25}`+"\n",
 	), 0o600))
 	claude := filepath.Join(bin, "claude")
 	require.NoError(t, os.WriteFile(claude, []byte(`#!/bin/sh
@@ -209,16 +235,17 @@ cat '`+stream+`'
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, sha, "Author", "Subject", time.Now())
 	require.NoError(t, err)
-	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+	_, err = tc.DB.EnqueueJob(storage.EnqueueOpts{
 		RepoID: tc.Repo.ID, CommitID: commit.ID, GitRef: sha, Agent: "claude-code", ReviewType: "custom",
 	})
 	require.NoError(t, err)
 	claimed, err := tc.DB.ClaimJob(testWorkerID)
 	require.NoError(t, err)
+	return tc, claimed
+}
 
-	tc.Pool.processJob(testWorkerID, claimed)
-
-	stored := tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+func assertStrictClaudeUsage(t *testing.T, stored *storage.ReviewJob) {
+	t.Helper()
 	usage := tokens.ParseJSON(stored.TokenUsage)
 	require.NotNil(t, usage, "strict Claude usage must be recorded")
 	assert.Equal(t, int64(100), usage.InputTokens)
