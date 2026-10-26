@@ -156,6 +156,7 @@ CLI (roborev) -> HTTP API -> Daemon -> Worker Pool -> Agent adapters
 - Agent changes usually touch the adapter file, `internal/agent/agent.go` registry/fallback logic, and tests that use `test_agent.go`.
 - TUI changes rarely live in one file; expect to touch fetch, handlers, render, and tests together.
 - Hook behavior spans `cmd/roborev/init_cmd.go`, `internal/githook/`, and daemon hook execution in `internal/daemon/hooks.go`.
+- Review setup changes also update the `roborev-setup-review` skill. This covers custom review types, panels, subagents, review tool policies, binary evidence, and other review settings a user would configure. The skill carries its own list of what roborev supports and never reads the docs, so a feature it does not list is a feature it will not propose. Edit `internal/skills/claude/` and `internal/skills/codex/`, then run `go generate ./internal/skills/` to regenerate the other variants.
 - CI/sync work often crosses daemon, storage, and config packages. Do not patch only one side.
 
 ## Runtime And Config Notes

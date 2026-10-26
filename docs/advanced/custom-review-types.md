@@ -91,6 +91,17 @@ and the saved copy to read. Deleted files are listed without a copy. The copies
 come from Git, so later edits in the working tree do not change them. roborev
 removes them when the review attempt ends.
 
+The reviewer opens each copy with its own tools, so choose an agent that can
+read the file type:
+
+- Claude Code and Grok read PDFs and images directly.
+- Codex reads images. It reads a PDF only by running a converter, such as
+    `pdftotext`, that is installed on the machine running the review. It gets no
+    text from a scanned PDF.
+
+`exclude_patterns` applies to the evidence as well as the diff, so a binary file
+that matches it gets no copy.
+
 Only review types that set `binary_evidence` get the section; other panel
 members are unchanged. Reviews of uncommitted changes fail with an error when
 the type sets it. Keep `snapshot_dir` in `.gitignore`; `roborev init` adds it.

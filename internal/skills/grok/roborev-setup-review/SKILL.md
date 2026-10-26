@@ -213,6 +213,15 @@ Rules that matter:
     included, so for a source that stays unchanged, such as an exhibit that
     later drafts cite, also commit an exported text copy beside it. Reviews of
     uncommitted changes fail when the type sets `binary_evidence`.
+    `exclude_patterns` removes files from the evidence as well as the diff, so
+    never exclude binary files a reviewer must read.
+- The reviewer opens each saved copy with its own tools, so match the agent to
+    the files. Claude Code and Grok read PDFs and images directly. Codex reads
+    images, but reads a PDF only by running a converter such as `pdftotext` on
+    the machine that runs the review, and gets no text from a scanned PDF. For
+    PDF evidence, propose `claude-code` or `grok` on the type, or check that the
+    converter is installed. Before relying on Pi, have the user confirm it can
+    read the file types involved.
 - A reviewer reaches an outside service only through exact MCP grants on a
     strict type: a `[review.types.<name>.tools]` table with
     `mode = "read-only"` and an `mcp` table that names each server and its
