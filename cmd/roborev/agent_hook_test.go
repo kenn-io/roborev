@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -82,6 +83,8 @@ func TestAgentHookInstallRejectsMissingBareRoborevBinary(t *testing.T) {
 func TestAgentHookInstallResolvesOtherBareBinary(t *testing.T) {
 	dir := writeFakeAgentBinary(t, "roborev-dev")
 	t.Setenv("PATH", dir)
+	binaryPath, err := exec.LookPath("roborev-dev")
+	require.NoError(t, err)
 	path := filepath.Join(t.TempDir(), "settings.json")
 	cmd := agentHookCmd()
 	cmd.SetOut(io.Discard)
@@ -93,7 +96,7 @@ func TestAgentHookInstallResolvesOtherBareBinary(t *testing.T) {
 	require.NoError(t, cmd.Execute())
 	body, err := os.ReadFile(path)
 	require.NoError(t, err)
-	expectedPath, err := json.Marshal(filepath.Join(dir, "roborev-dev"))
+	expectedPath, err := json.Marshal(binaryPath)
 	require.NoError(t, err)
 	assert.Contains(t, string(body), string(expectedPath[1:len(expectedPath)-1]))
 }
