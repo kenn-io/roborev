@@ -700,6 +700,11 @@ from using it. Each review gets a private copy of the file that holds only its
 granted servers, so other servers in the file never start. Reviews without MCP
 grants never read the file.
 
+Strict reviews ignore user, project and local Claude settings, but Claude's
+managed (policy) settings still apply. A managed allow rule such as
+`mcp__sources__*` can approve tools on a granted server beyond the ones listed
+here, so keep managed rules as narrow as your grants.
+
 ### Review Panels
 
 Use `[review]` to configure subagent review panels. A panel fans one daemon
