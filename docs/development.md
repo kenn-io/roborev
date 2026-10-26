@@ -206,6 +206,28 @@ therefore leave the browser listener disabled. `make build` and `make install`
 run the validated web-asset transaction when an embedded browser application is
 required.
 
+### Shared build cache and debugging
+
+`make` targets build and test Go code with `-trimpath`. Compiled code then
+records module-relative source paths instead of absolute ones, so every clone
+and git worktree shares one Go build cache. Without it, each checkout compiles
+and caches its own copy of every package.
+
+- To opt out for one command, run `make test GOFLAGS=-trimpath=false`.
+- To get the same sharing from plain `go` commands outside `make`, run
+    `go env -w GOFLAGS=-trimpath` once.
+
+Trimmed binaries do not record where their source lives, so Delve needs help
+finding it:
+
+- `dlv debug` and `dlv test` inherit `GOFLAGS`. Pass
+    `--build-flags=-trimpath=false` so Delve can show source. Debug builds turn
+    off optimizations, so they never shared cache entries anyway.
+- For `dlv exec` or `dlv attach` on a trimmed binary, start Delve from the
+    repository root and run `config substitute-path -guess` (Delve 1.24 or
+    newer). It maps the module path to your checkout, the standard library to
+    `GOROOT`, and dependencies to the module cache.
+
 ### Browser application
 
 The browser workspace uses Bun 1.4.4. Install the pinned dependency graph and

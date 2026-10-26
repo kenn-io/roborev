@@ -194,6 +194,11 @@ Use `testify` (`github.com/stretchr/testify`) for all test assertions. Use `requ
 Test conventions:
 
 - Prefer fast, isolated tests that use `t.TempDir()`.
+- Never locate files from a path returned by `runtime.Caller` or a stack trace;
+  builds use `-trimpath`, so those paths are module-relative. Tests run from
+  their package directory, so use paths relative to it. Trimmed test binaries
+  also cannot fall back to the Go installation's time zone database, so test
+  files that load named zones blank-import `time/tzdata`.
 - Use the shared database helpers (`testutil.OpenTestDB`,
   `testutil.OpenTestDBWithDir`, or storage's `openTestDB`) for ordinary tests.
   Build databases from scratch only for initialization or migration tests.

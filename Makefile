@@ -33,6 +33,19 @@ GOLANGCI_LINT_VERSION := $(shell sed -n 's/^version: v//p' .custom-gcl.yml)
 # (golangci-lint #3502). A per-checkout cache dies with its checkout.
 export GOLANGCI_LINT_CACHE := $(CURDIR)/.golangci-lint-cache
 
+# Compile without absolute source paths so every checkout and worktree shares
+# one Go build cache instead of each compiling its own copy of every package.
+# Read `go env` first so flags saved with `go env -w GOFLAGS=...` survive the
+# export. GOFLAGS=-trimpath=false opts out. Debuggers need a source mapping:
+# docs/development.md#shared-build-cache-and-debugging.
+ifeq ($(origin GOFLAGS),undefined)
+GOFLAGS := $(shell go env GOFLAGS)
+endif
+ifeq ($(filter -trimpath -trimpath=%,$(GOFLAGS)),)
+override GOFLAGS += -trimpath
+endif
+export GOFLAGS
+
 .PHONY: build homebrew web-build web-dev web-test-e2e web-assets-check web-embed web-restore web-release-check release-snapshot-check install clean test test-git-isolation test-codex-skill-eval test-integration test-acp-integration test-acp-integration-codex test-acp-integration-claude test-postgres test-all postgres-up postgres-down test-postgres-ci api-generate api-check api-breaking lint lint-ci markdown markdown-ci check-golangci-lint print-golangci-lint-version check-actions check-renovate-config install-hooks docs-install docs-build docs-serve docs-preview docs-check docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy
 
 build: web-embed
