@@ -162,6 +162,8 @@ This mapping is for you, not the user. Use only what the conversation needs.
 | Passing reviews close themselves | `auto_close_passing_reviews = true` |
 | Reviewers that see the task a commit is for, from Kata | `[kata_context]` with `mode = "current"`; commits name their issue, such as `Closes: kata#abc4` |
 | Failed reviews and findings filed as Kata issues | A `[[hooks]]` entry with `event = "review.*"` and `type = "kata"` |
+| Reviewers that read changed PDFs, scans, or images | `binary_evidence = true` on the type; see <https://roborev.io/docs/advanced/custom-review-types/#binary-evidence> |
+| A reviewer that looks things up through an outside service | A strict `tools` policy on the type that grants exact MCP tools; see <https://roborev.io/docs/advanced/custom-review-types/#granting-mcp-tools> |
 | Files reviewers should skip | `exclude_patterns` |
 | Reviewers that skip the setup itself, for non-code material | `exclude_patterns = [".roborev.toml", "review-rubrics/"]` |
 | A particular agent or model | `agent`, `model`, and `reasoning` in the repository, type, or subagent |
@@ -201,10 +203,27 @@ Rules that matter:
     tracked files sit under it. Use a committed directory such as
     `review-rubrics/`.
 - Reviewers see the diff, the rubric, and the guidelines, and read other files
-    in the checkout with read-only tools. They cannot fetch URLs or call outside
-    services. Commit the text a check needs. For a PDF or scan, commit an
-    exported text copy beside it. If a source cannot be committed, tell the user
-    the reviewer can check only what the repository holds.
+    in the checkout with read-only tools. They cannot fetch URLs. Commit the
+    text a check needs. If a source can be neither committed nor reached
+    through an MCP grant, tell the user the reviewer can check only what the
+    repository holds.
+- For PDFs, scans, and images, set `binary_evidence = true` on the type.
+    Reviews of a commit or range then get a saved copy of each binary file
+    those commits add or change. Files the commits do not touch are not
+    included, so for a source that stays unchanged, such as an exhibit that
+    later drafts cite, also commit an exported text copy beside it. Reviews of
+    uncommitted changes fail when the type sets `binary_evidence`.
+- A reviewer reaches an outside service only through exact MCP grants on a
+    strict type: a `[review.types.<name>.tools]` table with
+    `mode = "read-only"` and an `mcp` table that names each server and its
+    tools. Strict types run only on Claude Code, so set `agent = "claude-code"`
+    on the type. A backup agent that cannot enforce the policy fails the review
+    instead of running it. The global `~/.roborev/config.toml` must define the
+    server in `review_mcp_config` and list each `server/tool` pair in
+    `review_mcp_allowed_tools`; repository config cannot set either. Propose
+    those global lines separately and write them only with the user's
+    approval. See
+    <https://roborev.io/docs/configuration/#strict-review-tool-policies>.
 - Includes are read when the review is built and count toward
     `max_prompt_size`, so include only short sources. Name long sources, and
     sources that will grow, by path.
@@ -325,6 +344,8 @@ Before proposing, tell the user where the material can go:
     and the design reviewer's agent, when `auto_design_review.enabled` or
     `auto_design_review.hook_enabled` is true; a panel run with no design
     member can start both, whatever agents its members pin;
+- the MCP servers a strict review type is granted, which receive whatever
+    the reviewer sends in its tool calls;
 - roborev's local database, which stores prompts and reviews;
 - the PostgreSQL mirror, when `sync.enabled` is true;
 - pull request comments, when CI reviews cover this repository;

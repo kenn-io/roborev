@@ -72,6 +72,11 @@ You can also choose the exact binary path with
 - **Agent Hook** - Optional hooks for Claude Code, Codex, Copilot CLI, Cursor,
   Factory Droid, Gemini CLI, Hermes, and Qwen bring open findings back into the
   active agent session.
+- **Custom Reviews** - Write your own rubrics and run them as review panels,
+  for code or for documents such as legal drafts. `/roborev-setup-review`
+  interviews you and writes the setup. Reviewers can read PDFs that a commit
+  adds or changes, and strict review types get only read tools plus the MCP
+  tools you grant.
 - **Code Analysis** - Built-in analysis types (duplication, complexity,
   refactoring, test fixtures, dead code, security) that agents can fix
   automatically.
@@ -571,7 +576,9 @@ daemon. Telemetry is always off in CI. Release builds, `make build`, and
 roborev delegates code review and fix tasks to AI coding agents that
 have shell access. Review agents may execute read-only git and shell
 commands to inspect diffs; fix agents run in isolated worktrees with
-full tool access.
+full tool access. A custom review type with a strict tool policy runs
+Claude Code in a locked-down session with only read tools and the MCP
+tools the operator allows.
 
 **roborev is designed for use with trusted codebases.** The review
 prompt includes diff content and commit messages from the repository.

@@ -12,7 +12,8 @@ All notable changes to roborev, grouped by minor release.
 - Set up a specialized review by conversation with `/roborev-setup-review`
     (`$roborev-setup-review` in Codex). Your agent asks what reviewers should
     catch, proposes the review types, rubrics, and panel, and writes nothing
-    until you approve. See
+    until you approve. It can also set up binary evidence and MCP tool grants.
+    See
     [Set up a custom review](/docs/guides/agent-skills/#set-up-a-custom-review).
 - Limit a custom review type to read-only tools plus the exact MCP tools it
     names, with `[review.types.<name>.tools]`. Only global config defines the

@@ -72,7 +72,8 @@ as raw Markdown at /docs/<page>.md.
 - [Subagent review panels](https://roborev.io/docs/advanced/subagent-review-panels.md):
   multi-reviewer panels with synthesis
 - [Custom review types](https://roborev.io/docs/advanced/custom-review-types.md):
-  template-driven review rubrics
+  template-driven review rubrics, document reviews, binary evidence, and MCP
+  tool grants
 - [Custom tasks and agentic mode](https://roborev.io/docs/advanced/custom-tasks.md):
   agentic reviews and custom prompts
 - [Agent Client Protocol](https://roborev.io/docs/advanced/acp.md): ACP

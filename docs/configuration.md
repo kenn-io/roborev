@@ -1204,6 +1204,8 @@ filter_branch = false             # Show all branches on startup (default: curre
 | `anthropic_api_key` | string | - | Anthropic API key for Claude Code | Yes |
 | `review_context_count` | int | 3 | Earlier reviews to include as context; `0` turns context off. A repo `.roborev.toml` value overrides it | Yes |
 | `review_guidelines` | string | - | Global reviewer instructions included in review prompts for every repo | Yes |
+| `review_mcp_config` | string | - | Absolute path to a Claude Code MCP config file that defines the servers strict review types may be granted. Global only; see [Strict Review Tool Policies](#strict-review-tool-policies) | Yes |
+| `review_mcp_allowed_tools` | array | `[]` | Exact `server/tool` pairs that strict review types may request. Global only; see [Strict Review Tool Policies](#strict-review-tool-policies) | Yes |
 | `reuse_review_session` | bool | false | (Experimental) Resume prior agent sessions on the same branch. See [Session Reuse](/docs/guides/reviewing-code/#session-reuse) | Yes |
 | `reuse_review_session_lookback` | int | 0 | Max recent session candidates to consider (0 = unlimited) | Yes |
 | `auto_close_passing_reviews` | bool | false | Automatically close reviews that pass, including reviews whose findings all fall below `review_min_severity` | Yes |
