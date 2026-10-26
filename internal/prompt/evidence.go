@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"go.kenn.io/roborev/internal/git"
 )
@@ -86,7 +87,7 @@ func (b *Builder) AppendBinaryEvidence(text, gitRef string, excludes []string, t
 func evidenceFileName(n int, repoPath string) string {
 	name := path.Base(repoPath)
 	if filepath.IsLocal(name) && !strings.ContainsAny(name, `\/:`) {
-		return fmt.Sprintf("%d-%s", n, name)
+		return trimEvidenceFileName(fmt.Sprintf("%d-", n), name)
 	}
 	ext := strings.TrimPrefix(path.Ext(name), ".")
 	plain := ext != "" && !strings.ContainsFunc(ext, func(r rune) bool {
@@ -96,4 +97,27 @@ func evidenceFileName(n int, repoPath string) string {
 		return strconv.Itoa(n)
 	}
 	return fmt.Sprintf("%d.%s", n, ext)
+}
+
+// maxEvidenceFileNameBytes is the file name limit on ext4 and APFS (NAME_MAX).
+// A committed base name can already use all of it, and the n- prefix would
+// push the copy's name past the limit and fail the write.
+const maxEvidenceFileNameBytes = 255
+
+// trimEvidenceFileName shortens the name part of prefix+name to fit the file
+// name limit, keeping the extension and cutting on a UTF-8 boundary.
+func trimEvidenceFileName(prefix, name string) string {
+	if len(prefix)+len(name) <= maxEvidenceFileNameBytes {
+		return prefix + name
+	}
+	ext := path.Ext(name)
+	if len(prefix)+len(ext) >= maxEvidenceFileNameBytes {
+		ext = ""
+	}
+	stem := strings.TrimSuffix(name, ext)
+	keep := maxEvidenceFileNameBytes - len(prefix) - len(ext)
+	for keep > 0 && !utf8.RuneStart(stem[keep]) {
+		keep--
+	}
+	return prefix + stem[:keep] + ext
 }

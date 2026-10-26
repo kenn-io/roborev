@@ -5,7 +5,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -123,4 +125,19 @@ func TestEvidenceFileNameStaysInSnapshotDir(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, got, rel, "%s stays a single element of the snapshot directory", tc.path)
 	}
+}
+
+func TestEvidenceFileNameTrimsLongNames(t *testing.T) {
+	assert := assert.New(t)
+	long := strings.Repeat("a", 251) + ".pdf"
+	got := evidenceFileName(12, "exhibits/"+long)
+	assert.Len(got, 255)
+	assert.True(strings.HasPrefix(got, "12-aaa"), got)
+	assert.True(strings.HasSuffix(got, ".pdf"), got)
+
+	accented := strings.Repeat("é", 126) + ".pdf"
+	got = evidenceFileName(3, accented)
+	assert.LessOrEqual(len(got), 255)
+	assert.True(utf8.ValidString(got), "trimming must not split a character")
+	assert.True(strings.HasSuffix(got, ".pdf"), got)
 }
