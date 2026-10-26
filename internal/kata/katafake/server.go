@@ -2,7 +2,8 @@
 // generated response types from Kata v0.19.0, so a reply that stops matching
 // Kata's OpenAPI shapes fails to compile instead of passing against a
 // hand-written JSON string. It imports nothing from roborev, so tests in any
-// package can use it.
+// package can use it. It captures requests and supplies wire/fault responses;
+// retry semantics are tested against the real daemon, not modeled here.
 package katafake
 
 import (
@@ -45,7 +46,6 @@ type Server struct {
 	Projects []gen.ProjectOut
 	issues   map[int64][]*Issue
 	nextID   int64
-	keys     map[string]keyed
 	// ListPages, when set, replaces the issue list with canned pages keyed by
 	// the cursor query value ("" is the first page).
 	ListPages map[string]gen.ListIssuesResponseBody
@@ -56,11 +56,6 @@ type Issue struct {
 	Out      gen.IssueOut
 	Comments []gen.CommentOut
 	Links    []gen.LinkOut
-}
-
-type keyed struct {
-	fingerprint string
-	issue       *Issue
 }
 
 // Request is a recorded request.
@@ -90,7 +85,6 @@ func New(t *testing.T) *Server {
 		t:         t,
 		APISchema: "0.28.0",
 		issues:    map[int64][]*Issue{},
-		keys:      map[string]keyed{},
 		nextID:    1,
 	}
 	f.AddProject(7, "reviews")
@@ -299,33 +293,10 @@ func (f *Server) createIssue(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	fingerprint := fmt.Sprintf("%s|%s|%v", req.Title, deref(req.Body), req.Labels)
-	if key := r.Header.Get("Idempotency-Key"); key != "" {
-		f.mu.Lock()
-		prior, seen := f.keys[key]
-		f.mu.Unlock()
-		if seen {
-			if prior.fingerprint != fingerprint {
-				f.Fail(w, http.StatusConflict, "idempotency_mismatch", "key reused with a different request")
-				return
-			}
-			reused := true
-			f.Reply(w, gen.MutationResponseBody{Issue: asIssue(prior.issue.Out), Reused: &reused})
-			return
-		}
-	}
 	short := fmt.Sprintf("n%03d", f.nextID)
 	issue := f.AddIssue(pid, short, req.Title, deref(req.Body), req.Labels...)
 	issue.Out.Author = author
 	issue.Out.Priority = req.Priority
-	if req.Metadata != nil {
-		issue.Out.Metadata = req.Metadata
-	}
-	if key := r.Header.Get("Idempotency-Key"); key != "" {
-		f.mu.Lock()
-		f.keys[key] = keyed{fingerprint: fingerprint, issue: issue}
-		f.mu.Unlock()
-	}
 	reused := false
 	f.Reply(w, gen.MutationResponseBody{Changed: true, Issue: asIssue(issue.Out), Reused: &reused})
 }

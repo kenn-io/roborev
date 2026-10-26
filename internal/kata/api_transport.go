@@ -16,6 +16,8 @@ import (
 	"time"
 	"unicode"
 
+	"golang.org/x/net/http/httpguts"
+
 	"go.kenn.io/roborev/internal/config"
 )
 
@@ -106,6 +108,9 @@ func newTransport(opts transportOptions) (*transport, error) {
 		return nil, fmt.Errorf("%w: endpoint is empty", ErrInsecureEndpoint)
 	}
 	key := strings.TrimSpace(opts.APIKey)
+	if !httpguts.ValidHeaderFieldValue(key) {
+		return nil, ErrAuthenticationRequired
+	}
 	if endpoint.Kind == config.KataEndpointLoopbackHTTP && key == "" {
 		return nil, ErrAuthenticationRequired
 	}

@@ -2,19 +2,21 @@ package kata
 
 import (
 	"context"
-	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	gen "go.kenn.io/kata/pkg/client/generated"
+	gitcmd "go.kenn.io/kit/git/cmd"
+	gitremote "go.kenn.io/kit/git/remote"
+	gitrepo "go.kenn.io/kit/git/repo"
 	"golang.org/x/mod/semver"
+	"golang.org/x/net/http/httpguts"
 
 	"go.kenn.io/roborev/internal/config"
 )
@@ -22,6 +24,7 @@ import (
 const (
 	// MinAPISchemaVersion is the oldest Kata API schema the connection accepts.
 	MinAPISchemaVersion = "0.21.0"
+	MaxAPISchemaVersion = "0.28.0"
 	// PaginationAPISchemaVersion is the first schema that honors a list cursor
 	// (Kata v0.19.0's cmd/kata/api_compat.go, apiVersionDiscoveryPagination).
 	// An older server ignores the cursor and would repeat the first page.
@@ -64,32 +67,9 @@ type APIClient struct {
 	tr             *transport
 	workdir        string
 	defaultProject string
-
-	mu       sync.Mutex
-	info     *ServerInfo
-	projects map[string]int64
 }
 
 var _ Client = (*APIClient)(nil)
-
-type apiIssueListPage struct {
-	Complete   bool           `json:"complete"`
-	Issues     jsontext.Value `json:"issues"`
-	NextCursor *string        `json:"next_cursor,omitempty"`
-	Total      *int64         `json:"total,omitempty"`
-	Truncated  bool           `json:"truncated"`
-}
-
-func (p apiIssueListPage) decodeIssues() ([]gen.IssueOut, error) {
-	if p.Issues.Kind() != jsontext.KindBeginArray {
-		return nil, fmt.Errorf("%w: the issue list has no issues array", ErrInvalidResponse)
-	}
-	var issues []gen.IssueOut
-	if err := json.Unmarshal(p.Issues, &issues); err != nil {
-		return nil, fmt.Errorf("%w: could not decode the issue list: %w", ErrInvalidResponse, err)
-	}
-	return issues, nil
-}
 
 // NewAPIClient builds a client for cfg. It reads the credential and checks the
 // endpoint but does not contact Kata, so construction is cheap and a
@@ -132,51 +112,68 @@ func (c *APIClient) CloseIdleConnections() {
 	}
 }
 
-// Binding returns the workspace's bound project, or the configured default
-// project when the workspace has no binding. A binding file that is present
-// but unreadable stops the lookup. It never contacts Kata.
-func (c *APIClient) Binding(context.Context) (Binding, error) {
-	b, err := workspaceBinding(c.workdir)
-	if err == nil {
-		return b, nil
+func (c *APIClient) Binding(ctx context.Context) (Binding, error) {
+	_, project, _, err := c.selectProject(ctx, "")
+	if err != nil {
+		return Binding{}, err
 	}
-	if errors.Is(err, ErrNoBinding) && c.defaultProject != "" {
-		return Binding{Project: c.defaultProject}, nil
-	}
-	return Binding{}, err
+	return Binding{Project: project}, nil
 }
 
-func compatibleAPISchema(reported string) bool { return schemaAtLeast(reported, MinAPISchemaVersion) }
+func workspaceAlias(ctx context.Context, selected workspaceProject) (*gen.AliasInput, error) {
+	root := selected.root
+	if selected.gitRoot != "" {
+		root = selected.gitRoot
+		remotes, err := gitrepo.ListRemotes(ctx, root)
+		if err != nil {
+			return nil, err
+		}
+		if len(remotes) != 0 {
+			target := "origin"
+			if !slices.Contains(remotes, target) {
+				target = remotes[0]
+			}
+			out, err := gitcmd.New().Output(ctx, root, "remote", "get-url", target)
+			if err != nil {
+				return nil, err
+			}
+			raw := strings.TrimSpace(string(out))
+			if raw != "" {
+				identity := gitremote.RemoteHost(raw)
+				if identity == "" {
+					return nil, fmt.Errorf("%w: unrecognized Git remote", ErrIncompatible)
+				}
+				if path := gitremote.RemoteRepoPath(raw); path != "" {
+					identity += "/" + path
+				}
+				if decoded, err := url.PathUnescape(identity); err == nil {
+					identity = decoded
+				}
+				return &gen.AliasInput{Identity: strings.ReplaceAll(identity, " ", "-"), Kind: "git"}, nil
+			}
+		}
+	}
+	return &gen.AliasInput{Identity: "local://" + root, Kind: "local"}, nil
+}
+
+func compatibleAPISchema(reported string) bool {
+	return schemaAtLeast(reported, MinAPISchemaVersion) && semver.Compare("v"+strings.TrimPrefix(strings.TrimSpace(reported), "v"), "v"+MaxAPISchemaVersion) <= 0
+}
 
 // schemaAtLeast compares a reported "MAJOR.MINOR.PATCH" (a leading v is
 // allowed) with a minimum. Anything that is not a full semantic version fails.
 func schemaAtLeast(reported, minimum string) bool {
 	core := strings.TrimPrefix(strings.TrimSpace(reported), "v")
 	version := "v" + core
-	if !semver.IsValid(version) || strings.Count(strings.SplitN(core, "-", 2)[0], ".") != 2 {
+	core, _, _ = strings.Cut(core, "-")
+	core, _, _ = strings.Cut(core, "+")
+	if !semver.IsValid(version) || strings.Count(core, ".") != 2 {
 		return false
 	}
 	return semver.Compare(version, "v"+minimum) >= 0
 }
 
-// Info returns compatible server information, caching a successful health
-// check on this client. A server that does not implement the health endpoint,
-// or reports a schema older than MinAPISchemaVersion, is incompatible and
-// nothing else is sent to it.
 func (c *APIClient) Info(ctx context.Context) (ServerInfo, error) {
-	c.mu.Lock()
-	cached := c.info
-	c.mu.Unlock()
-	if cached != nil {
-		return *cached, nil
-	}
-	return c.refreshInfo(ctx)
-}
-
-// refreshInfo checks health even when this client already cached a compatible
-// result. Connection evaluation uses it to detect a server that stopped or
-// began rejecting requests after an earlier successful check.
-func (c *APIClient) refreshInfo(ctx context.Context) (ServerInfo, error) {
 	var health gen.HealthResponseBody
 	if _, err := c.tr.do(ctx, http.MethodGet, "/api/v1/health", nil, nil, nil, &health, http.StatusOK); err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -191,84 +188,90 @@ func (c *APIClient) refreshInfo(ctx context.Context) (ServerInfo, error) {
 	if !compatibleAPISchema(info.APISchemaVersion) {
 		return info, ErrIncompatible
 	}
-	c.mu.Lock()
-	c.info = &info
-	c.mu.Unlock()
 	return info, nil
 }
 
-// projectID resolves an active project by name. It refreshes a cached project
-// list when the requested project is missing.
 func (c *APIClient) projectID(ctx context.Context, name string) (int64, error) {
 	if name == "" {
 		return 0, ErrNoBinding
 	}
-	c.mu.Lock()
-	cached := c.projects
-	c.mu.Unlock()
-	if cached == nil {
-		var err error
-		cached, err = c.refreshProjects(ctx)
-		if err != nil {
-			return 0, err
-		}
-	} else if _, ok := cached[name]; !ok {
-		var err error
-		cached, err = c.refreshProjects(ctx)
-		if err != nil {
-			return 0, err
-		}
-	}
-	id, ok := cached[name]
-	if !ok {
-		return 0, fmt.Errorf("%w: %q", ErrProjectNotFound, name)
-	}
-	return id, nil
-}
-
-func (c *APIClient) refreshProjects(ctx context.Context) (map[string]int64, error) {
 	var list gen.ListProjectsResponseBody
 	if _, err := c.tr.do(ctx, http.MethodGet, "/api/v1/projects", nil, nil, nil, &list, http.StatusOK); err != nil {
-		return nil, err
+		return 0, err
 	}
-	projects := make(map[string]int64, len(list.Projects))
 	for _, project := range list.Projects {
-		if project.Active && project.DeletedAt == nil {
-			projects[project.Name] = project.ID
+		if project.Name == name && project.Active && project.DeletedAt == nil {
+			return project.ID, nil
 		}
 	}
-	c.mu.Lock()
-	c.projects = projects
-	c.mu.Unlock()
-	return projects, nil
+	return 0, fmt.Errorf("%w: %q", ErrProjectNotFound, name)
 }
 
-// issuesPath checks compatibility, resolves project (the workspace binding or
-// default when empty), and returns the issues collection path for it along
-// with the resolved project name.
-func (c *APIClient) issuesPath(ctx context.Context, project string) (path, resolved string, err error) {
+func (c *APIClient) selectProject(ctx context.Context, project string) (int64, string, ServerInfo, error) {
+	var selected workspaceProject
 	if project == "" {
-		b, err := c.Binding(ctx)
-		if err != nil {
-			return "", "", err
+		var err error
+		selected, err = discoverWorkspace(c.workdir)
+		if err != nil && !errors.Is(err, ErrNoBinding) {
+			return 0, "", ServerInfo{}, fmt.Errorf("%w: %w", ErrIncompatible, err)
 		}
-		project = b.Project
+		project = selected.name
+		if errors.Is(err, ErrNoBinding) {
+			project = c.defaultProject
+		}
 	}
-	if _, err := c.Info(ctx); err != nil {
-		return "", "", err
+	info, err := c.Info(ctx)
+	if err != nil {
+		return 0, "", info, err
+	}
+	if selected.name != "" && !selected.local {
+		alias, err := workspaceAlias(ctx, selected)
+		if err != nil {
+			return 0, "", info, fmt.Errorf("%w: %w", ErrIncompatible, err)
+		}
+		var resolved gen.ProjectResolveBody
+		_, err = c.tr.do(ctx, http.MethodPost, "/api/v1/projects/resolve", nil,
+			gen.ResolveProjectRequestBody{Alias: alias}, nil, &resolved, http.StatusOK)
+		if errors.Is(err, ErrNotFound) {
+			err = fmt.Errorf("%w: %w", ErrProjectNotFound, err)
+		}
+		if err != nil {
+			return 0, "", info, err
+		}
+		if resolved.Project.ID <= 0 || resolved.Project.Name == "" {
+			return 0, "", info, ErrInvalidResponse
+		}
+		if !resolved.Project.Active || resolved.Project.DeletedAt != nil {
+			return 0, "", info, ErrProjectNotFound
+		}
+		return resolved.Project.ID, resolved.Project.Name, info, nil
 	}
 	id, err := c.projectID(ctx, project)
+	return id, project, info, err
+}
+
+func (c *APIClient) issuesPath(ctx context.Context, project string) (string, string, ServerInfo, error) {
+	id, project, info, err := c.selectProject(ctx, project)
 	if err != nil {
-		return "", "", err
+		return "", "", info, err
 	}
-	return "/api/v1/projects/" + strconv.FormatInt(id, 10) + "/issues", project, nil
+	return "/api/v1/projects/" + strconv.FormatInt(id, 10) + "/issues", project, info, nil
+}
+
+func (c *APIClient) listPage(ctx context.Context, path string, query url.Values) (gen.ListIssuesResponseBody, error) {
+	var page gen.ListIssuesResponseBody
+	_, err := c.tr.do(ctx, http.MethodGet, path, query, nil, nil, &page, http.StatusOK)
+	if err == nil && page.Issues == nil {
+		err = fmt.Errorf("%w: the issue list has no issues array", ErrInvalidResponse)
+	}
+	return page, err
 }
 
 // List returns issues filtered by status (default "open") for the bound
 // project. Unlimited reads the complete set, page by page on servers that
 // support cursors.
 func (c *APIClient) List(ctx context.Context, opts ListOpts) ([]Issue, error) {
-	path, _, err := c.issuesPath(ctx, "")
+	path, _, info, err := c.issuesPath(ctx, "")
 	if err != nil {
 		return nil, err
 	}
@@ -282,32 +285,20 @@ func (c *APIClient) List(ctx context.Context, opts ListOpts) ([]Issue, error) {
 	query := url.Values{"status": {status}}
 	if !opts.Unlimited {
 		query.Set("limit", strconv.Itoa(apiDefaultListLimit))
-		var page apiIssueListPage
-		if _, err := c.tr.do(ctx, http.MethodGet, path, query, nil, nil, &page, http.StatusOK); err != nil {
-			return nil, err
-		}
-		issues, err := page.decodeIssues()
+		page, err := c.listPage(ctx, path, query)
 		if err != nil {
 			return nil, err
 		}
-		return issuesFromAPI(issues), nil
-	}
-	info, err := c.Info(ctx)
-	if err != nil {
-		return nil, err
+		return issuesFromAPI(page.Issues), nil
 	}
 	if !schemaAtLeast(info.APISchemaVersion, PaginationAPISchemaVersion) {
 		// This server ignores a cursor but returns every issue when the limit
 		// is absent, as `kata list --limit 0` relies on.
-		var all apiIssueListPage
-		if _, err := c.tr.do(ctx, http.MethodGet, path, query, nil, nil, &all, http.StatusOK); err != nil {
-			return nil, err
-		}
-		issues, err := all.decodeIssues()
+		page, err := c.listPage(ctx, path, query)
 		if err != nil {
 			return nil, err
 		}
-		return issuesFromAPI(issues), nil
+		return issuesFromAPI(page.Issues), nil
 	}
 	// Cursors need a stable order and a page size: without a limit Kata returns
 	// every issue in one page and no cursor. Every page is read, so the page
@@ -317,15 +308,11 @@ func (c *APIClient) List(ctx context.Context, opts ListOpts) ([]Issue, error) {
 	var out []Issue
 	seen := map[string]bool{}
 	for {
-		var page apiIssueListPage
-		if _, err := c.tr.do(ctx, http.MethodGet, path, query, nil, nil, &page, http.StatusOK); err != nil {
-			return nil, err
-		}
-		issues, err := page.decodeIssues()
+		page, err := c.listPage(ctx, path, query)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, issuesFromAPI(issues)...)
+		out = append(out, issuesFromAPI(page.Issues)...)
 		if page.NextCursor == nil || *page.NextCursor == "" {
 			if !page.Complete {
 				return nil, fmt.Errorf("%w: the issue list ended without a complete page", ErrInvalidResponse)
@@ -393,7 +380,7 @@ func (c *APIClient) Show(ctx context.Context, ref string) (Issue, error) {
 	if err != nil {
 		return Issue{}, err
 	}
-	path, project, err := c.issuesPath(ctx, project)
+	path, project, _, err := c.issuesPath(ctx, project)
 	if err != nil {
 		return Issue{}, err
 	}
@@ -425,19 +412,22 @@ func (c *APIClient) Show(ctx context.Context, ref string) (Issue, error) {
 	return iss, nil
 }
 
-// Create files an issue with the idempotency key and metadata in the request.
+// Create files an issue with the request's idempotency key.
 // The project is the request's, else the workspace binding, else the default.
 // A look-alike soft block is surfaced as an error, as with the kata CLI.
 func (c *APIClient) Create(ctx context.Context, req CreateReq) (CreateResult, error) {
 	if strings.TrimSpace(req.Title) == "" {
 		return CreateResult{}, fmt.Errorf("%w: title is required", ErrRequestRejected)
 	}
-	path, _, err := c.issuesPath(ctx, req.Project)
+	if !httpguts.ValidHeaderFieldValue(req.IdempotencyKey) {
+		return CreateResult{}, fmt.Errorf("%w: invalid idempotency key", ErrRequestRejected)
+	}
+	path, _, _, err := c.issuesPath(ctx, req.Project)
 	if err != nil {
 		return CreateResult{}, err
 	}
 	body := gen.CreateIssueRequestBody{
-		Actor: new(WriteActor), Title: req.Title, Body: &req.Body, Labels: req.Labels, Metadata: req.Metadata,
+		Actor: new(WriteActor), Title: req.Title, Body: &req.Body, Labels: req.Labels,
 	}
 	if req.Priority != nil {
 		body.Priority = new(int64(*req.Priority))
