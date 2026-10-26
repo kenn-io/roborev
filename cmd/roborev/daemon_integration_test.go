@@ -183,7 +183,7 @@ func TestDaemonShutdownBySignal(t *testing.T) {
 	binPath := filepath.Join(tmpDir, "roborev-test")
 	// Use "." since we are in cmd/roborev package. The built daemon runs in a
 	// subprocess, so compile kit's test telemetry disable tag into that binary.
-	buildCmd := exec.Command("go", "build", "-tags", "kit_posthog_disabled", "-o", binPath, ".")
+	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -360,7 +360,7 @@ func TestDaemonLifecycleEndToEnd(t *testing.T) {
 	}
 	// The built daemon runs in a subprocess, so compile kit's test telemetry
 	// disable tag into that binary.
-	buildCmd := exec.Command("go", "build", "-tags", "kit_posthog_disabled", "-o", binPath, ".")
+	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
 	out, err := buildCmd.CombinedOutput()
 	require.NoError(t, err, "failed to build test binary: %s", out)
 
@@ -497,7 +497,7 @@ func buildVersionedUpdateDaemon(t *testing.T, dir, name, version string) string 
 	t.Helper()
 	path := filepath.Join(dir, name)
 	cmd := exec.Command(
-		"go", "build", "-tags", "kit_posthog_disabled",
+		"go", "build",
 		"-ldflags", "-X go.kenn.io/roborev/internal/version.Version="+version,
 		"-o", path, ".",
 	)

@@ -2049,8 +2049,9 @@ ROBOREV_TELEMETRY_ENABLED=0 roborev tui
 ROBOREV_TELEMETRY_ENABLED=0 roborev review
 ```
 
-Release builds set the PostHog project key at link time. Builds without the key,
-including source builds and Go test processes, send no telemetry.
+Release builds, `make build`, and `make install` set the PostHog project key at
+link time. Plain `go build` and `go install` builds and Go test processes have
+no key and send no telemetry.
 
 ### Color Mode
 

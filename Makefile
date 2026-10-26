@@ -1,7 +1,9 @@
 # Makefile for roborev development builds
 
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
-LDFLAGS := -X go.kenn.io/roborev/internal/version.Version=$(VERSION)
+# Public PostHog ingest key. Builds without it send no telemetry.
+POSTHOG_PROJECT_KEY ?= phc_AzHd9YvuHR7M5poKzC6eW654d3SgKyBdoQPuwkWhimUf
+LDFLAGS := -X go.kenn.io/roborev/internal/version.Version=$(VERSION) -X go.kenn.io/kit/telemetry/posthog.projectKey=$(POSTHOG_PROJECT_KEY)
 ACP_TEST_COMMAND ?= $(abspath scripts/acp-agent)
 ACP_TEST_ADAPTER ?= codex
 ACP_TEST_ARGS ?=
