@@ -1235,7 +1235,7 @@ roborev agent-hook reset <session-id>   # Reset one session (or --all)
 | `--dry-run` | Report whether each target needs changes without writing (`install`) |
 | `--config <path>` | Override the native config path for one explicit profile |
 | `--command <cmd>` | Override the full command for one explicit profile; it must select the same agent |
-| `--binary <path>` | Resolve and bake this roborev binary path into installed agent hooks. Mutually exclusive with `--command` |
+| `--binary <path>` | Bare `roborev` or `roborev.exe` is checked on PATH and kept as given. Other values (including shims) are saved as absolute paths; pass a full path to pin one. Mutually exclusive with `--command` |
 
 The default install detects agents by executable or existing config directory;
 `--agent all` skips detection. Factory Droid remains user-scoped and rejects
