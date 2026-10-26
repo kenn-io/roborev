@@ -176,6 +176,13 @@
     outline-offset: -2px;
   }
 
+  /* Square the leading edge so the selection stripe stays a straight bar. */
+  .job-row.highlighted,
+  .job-row.selected {
+    border-start-start-radius: 0;
+    border-end-start-radius: 0;
+  }
+
   .job-row.highlighted {
     background: color-mix(in srgb, var(--accent-blue) 5%, var(--bg-surface));
     box-shadow: inset 2px 0 0
