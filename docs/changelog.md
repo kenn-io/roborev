@@ -37,15 +37,6 @@ All notable changes to roborev, grouped by minor release.
 
 - Reviews, reruns, and fixes start as soon as they are queued, instead of up to
     two seconds later.
-- Package maintainers can mark a build as owned by their package manager, so
-    `roborev update` refuses to replace it and points users to the package
-    manager instead. Homebrew formulas can run `make homebrew`. See
-    [Package builds](/docs/development/#package-builds).
-- Telemetry events report the channel that built the binary, such as `homebrew`.
-    Plain `go build` and `go install` builds send no telemetry.
-- Start daemons over runtime records left by dead sandboxes.
-- Sandboxed commands keep the host daemon's runtime record.
-- A TUI in a sandbox keeps the host TUI's runtime file.
 
 **Bug fixes**
 
