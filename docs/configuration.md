@@ -2037,6 +2037,10 @@ Each event carries `install_age_hours`, the whole hours since the install ID was
 created, so short-lived installs such as test sandboxes can be filtered out.
 Installs created before roborev recorded that time send events without it.
 
+Each event also carries `distribution`, the channel that built the binary, such
+as `homebrew` or `kenn` for official direct downloads. It's empty for source
+builds.
+
 Telemetry does not include repo names, paths, remotes, prompts, review output,
 provider tokens, usernames, or IP geolocation. It's always off in CI. Disable it
 with any of these environment variables:
