@@ -62,7 +62,7 @@ func convertLegacyMarkdown(in legacyMarkdown) (jsontext.Value, *legacyRefusal) {
 	}
 	var doc structuredreview.Document
 	if config.IsMarkerOnlyOutput(in.Markdown) {
-		doc = structuredreview.Document{SchemaVersion: 1, Summary: legacyThresholdSummary, Findings: []structuredreview.Finding{}}
+		doc = structuredreview.Document{SchemaVersion: structuredreview.SchemaVersion, Summary: legacyThresholdSummary, Findings: []structuredreview.Finding{}}
 	} else {
 		parsed, err := structuredreview.ParseMarkdown(in.Markdown, structuredreview.ParseMarkdownOptions{SourceLabels: in.SourceLabels})
 		if err != nil {

@@ -51,53 +51,59 @@ func TestGetSystemPrompt_Fallbacks(t *testing.T) {
 		return fixedTime
 	}
 
-	// Get the review prompt to verify fallbacks match exactly
-	geminiReviewPrompt := getSystemPrompt("gemini", "review", mockNow)
-	codexReviewPrompt := getSystemPrompt("codex", "review", mockNow)
-	claudeReviewPrompt := getSystemPrompt("claude-code", "review", mockNow)
+	commitIntent := "Does the diff do everything the commit message says it does"
+	rangeIntent := "Does the final combined diff achieve the goal the pull request description and commit messages describe?"
+	ignoreMessage := "Do not review the commit message"
 
 	tests := []systemPromptTestCase{
 		{
-			name:         "Codex Review",
-			agent:        "codex",
-			command:      "review",
-			wantContains: []string{"## Review Findings", "front matter", "Do NOT build the project, run the test suite, or execute the code while reviewing.", "after the last tool call"},
+			name:            "Codex Review",
+			agent:           "codex",
+			command:         "review",
+			wantContains:    []string{"## Review Findings", "front matter", "Do NOT build the project, run the test suite, or execute the code while reviewing.", "after the last tool call", commitIntent},
+			wantNotContains: []string{rangeIntent, ignoreMessage},
 		},
 		{
-			name:         "Claude Review",
-			agent:        "claude-code",
-			command:      "review",
-			wantContains: []string{"## Review Findings", "front matter", "Do NOT build the project, run the test suite, or execute the code while reviewing.", "after the last tool call"},
+			name:            "Claude Review",
+			agent:           "claude-code",
+			command:         "review",
+			wantContains:    []string{"## Review Findings", "front matter", "Do NOT build the project, run the test suite, or execute the code while reviewing.", "after the last tool call", commitIntent},
+			wantNotContains: []string{rangeIntent, ignoreMessage},
 		},
 		{
-			name:         "Gemini Review",
-			agent:        "gemini",
-			command:      "review",
-			wantContains: []string{"Do NOT explain your process", "Do NOT build the project, run the test suite, or execute the code while reviewing.", "after the last tool call"},
+			name:            "Gemini Review",
+			agent:           "gemini",
+			command:         "review",
+			wantContains:    []string{"Do NOT explain your process", "Do NOT build the project, run the test suite, or execute the code while reviewing.", "after the last tool call", commitIntent},
+			wantNotContains: []string{rangeIntent, ignoreMessage},
 		},
 		{
-			name:      "Codex Range (Review Fallback)",
-			agent:     "codex",
-			command:   "range",
-			wantExact: codexReviewPrompt,
+			name:            "Codex Range (Review Fallback)",
+			agent:           "codex",
+			command:         "range",
+			wantContains:    []string{"## Review Findings", rangeIntent},
+			wantNotContains: []string{commitIntent, ignoreMessage},
 		},
 		{
-			name:      "Claude Dirty (Review Fallback)",
-			agent:     "claude-code",
-			command:   "dirty",
-			wantExact: claudeReviewPrompt,
+			name:            "Claude Dirty (Review Fallback)",
+			agent:           "claude-code",
+			command:         "dirty",
+			wantContains:    []string{"## Review Findings"},
+			wantNotContains: []string{commitIntent, rangeIntent, ignoreMessage},
 		},
 		{
-			name:      "Gemini Range (Review Fallback)",
-			agent:     "gemini",
-			command:   "range",
-			wantExact: geminiReviewPrompt,
+			name:            "Gemini Range (Review Fallback)",
+			agent:           "gemini",
+			command:         "range",
+			wantContains:    []string{"Do NOT explain your process", rangeIntent},
+			wantNotContains: []string{commitIntent, ignoreMessage},
 		},
 		{
-			name:      "Gemini Dirty (Review Fallback)",
-			agent:     "gemini",
-			command:   "dirty",
-			wantExact: geminiReviewPrompt,
+			name:            "Gemini Dirty (Review Fallback)",
+			agent:           "gemini",
+			command:         "dirty",
+			wantContains:    []string{"Do NOT explain your process"},
+			wantNotContains: []string{commitIntent, rangeIntent, ignoreMessage},
 		},
 	}
 

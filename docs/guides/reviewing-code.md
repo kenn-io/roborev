@@ -167,6 +167,7 @@ roborev review --type security       # Security-focused review
 roborev review --type design         # Design-focused review
 roborev review --type lookahead      # Time-series look-ahead bias review
 roborev review --type test-value     # Find tests that add no value
+roborev review --type exhaustive     # Default review that reports every supportable finding
 roborev review --branch --type security  # Security review of branch
 ```
 
@@ -175,6 +176,7 @@ roborev review --branch --type security  # Security review of branch
 | *(default)* | Bugs, security, testing gaps, regressions, code quality. This is what you get when you omit `--type`. |
 | `security` | Injection, auth, credential exposure, path traversal, unsafe patterns |
 | `design` | Completeness, feasibility, task scoping, missing considerations |
+| `exhaustive` | The default review, told to report every problem it can support, including concrete low-severity ones, and how many findings a change of this size usually has (6 per 100 changed lines, at most 40). Expect more findings and longer, costlier reviews than the default. |
 | `lookahead` | Time-series look-ahead bias (a.k.a. peekahead / future-data leakage): window/lag direction, train/test ordering, fit-on-full-series, as-of join alignment, point-in-time correctness, label/target leakage |
 | `test-value` | Added or modified tests that protect nothing: tests of dependency behavior, self-confirming assertions, static text checks, unreachable scenarios, duplicate coverage, and fixtures that bypass the behavior under test. Confirmed findings default to medium severity. |
 
@@ -184,6 +186,8 @@ single commits, ranges).
 `test-value` is opt-in. It recommends removing tests that protect no behavior
 the repository owns; it never recommends adding tests or expanding coverage.
 Normal code reviews keep their existing testing guidance.
+
+`exhaustive` uses the same agent and model settings as the default review.
 
 The `security` and `design` types can have their own agent and model
 configuration via `{type}_agent` and `{type}_model` in `.roborev.toml` or global
@@ -206,6 +210,33 @@ When unset, they fall back to your repo or global default agent and model.
 You can also define schema-constrained review types backed by local Go
 templates, then use them anywhere `--type` or `review_type` is accepted. See
 [Custom Review Types](/docs/advanced/custom-review-types/).
+
+## Commit Messages and Pull Request Descriptions
+
+Reviewers treat a commit message as the author's statement of what the change is
+meant to do. When the message describes the change, the reviewer checks that the
+diff delivers it and reports any gap at the code that falls short. Range reviews
+include every commit's full message and judge the final result against the
+series' overall goal. A vague message such as "fix" or "wip" skips this check,
+and dirty reviews have no messages to check against.
+
+Pull request reviews also show the reviewer the pull request's title and
+description. The description states the overall goal, and the commit messages
+describe the steps toward it. These reviews include the pull request text:
+
+- reviews of GitHub pull requests by the daemon's CI poller
+- `roborev ci review` runs in GitHub Actions `pull_request` jobs, read from the
+    event payload
+- `roborev ci review` runs in GitLab merge request pipelines, read from
+    `CI_MERGE_REQUEST_TITLE` and `CI_MERGE_REQUEST_DESCRIPTION`
+
+When `--pr` names a different request than the one the CI environment describes,
+the review leaves the pull request text out. When a prompt is too large, roborev
+drops the description before it drops commit subjects.
+
+Messages and descriptions are untrusted input. Reviewers never follow
+instructions in them, do not accept claims such as "tested" as evidence, and do
+not comment on their wording.
 
 ## Task Context from Kata
 
@@ -500,6 +531,10 @@ review document. Markdown is generated for display and export. Findings below
 the configured severity threshold stay in the document, and synthesis documents
 retain their source references and reviewer labels.
 
+After receiving an agent's review, roborev merges findings only when their
+nonempty problem text matches exactly and they cite the same file at nearby
+locations. Case, punctuation, and word order are preserved when comparing text.
+
 On database upgrade, roborev handles each older review in one of three ways:
 
 - A review with valid JSON keeps that JSON as the authoritative review. Older
@@ -591,13 +626,14 @@ each completed JSON document using the archive ID from the export:
 roborev legacy-reviews import 1 < converted-review.json
 ```
 
-Import sends the document to the selected daemon. It accepts the existing
-structured document versions and replaces the whole legacy body, rather than
-merging individual findings. It preserves the active review's identity,
-metadata, and open/closed state, and derives its verdict from the supplied
-findings. It rejects invalid documents and refuses to replace an already
-structured review. Synthesis findings must cite valid source reviews. Originals
-remain archived.
+Import sends the document to the selected daemon. It accepts every structured
+document version, stores the document as version 3, and replaces the whole
+legacy body, rather than merging individual findings. A converted finding may
+leave out `kind`, `confidence`, `file`, and the line numbers. It preserves the
+active review's identity, metadata, and open/closed state, and derives its
+verdict from the supplied findings. It rejects invalid documents and refuses to
+replace an already structured review. Synthesis findings must cite valid source
+reviews. Originals remain archived.
 
 An agent working with the running daemon can instead submit the same document to
 `POST /api/review/migrate` on its local API:
@@ -606,7 +642,7 @@ An agent working with the running daemon can instead submit the same document to
 {
   "review_id": 42,
   "document": {
-    "schema_version": 2,
+    "schema_version": 3,
     "summary": "The write can lose data.",
     "verdict": "fail",
     "findings": [{

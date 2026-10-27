@@ -120,9 +120,12 @@ const exportTestStoredDocument = `{
   "schema_version": 2
 }`
 
-const exportTestCanonicalDocument = `{"schema_version":2,"summary":"Two problems.","verdict":"fail","findings":[` +
-	`{"severity":"high","problem":"The token is logged.","fix":"Redact the token.","location":"auth/login.go:42"},` +
-	`{"severity":"low","problem":"Typo in a comment.","fix":"Fix the spelling.","location":null}]}`
+// exportTestCanonicalDocument is the stored version 2 document as export
+// writes it: normalized and in the current version, with null for the version
+// 3 fields a version 2 finding does not have.
+const exportTestCanonicalDocument = `{"schema_version":3,"summary":"Two problems.","verdict":"fail","findings":[` +
+	`{"severity":"high","kind":null,"topic":null,"confidence":null,"problem":"The token is logged.","fix":"Redact the token.","file":null,"start_line":null,"end_line":null,"location":"auth/login.go:42"},` +
+	`{"severity":"low","kind":null,"topic":null,"confidence":null,"problem":"Typo in a comment.","fix":"Fix the spelling.","file":null,"start_line":null,"end_line":null,"location":null}]}`
 
 func TestExportReviewsContentProfileExportsCanonicalDocument(t *testing.T) {
 	t.Parallel()

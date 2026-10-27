@@ -63,9 +63,9 @@ func TestStructuredReviewRejectsUnknownFields(t *testing.T) {
 
 func TestStructuredReviewRequiresKnownSchemaVersion(t *testing.T) {
 	_, err := DecodeStructuredReview(jsontext.Value(
-		`{"schema_version":3,"summary":"Done.","verdict":"pass","findings":[]}`,
+		`{"schema_version":4,"summary":"Done.","verdict":"pass","findings":[]}`,
 	))
-	require.ErrorContains(t, err, "unsupported structured review schema_version 3")
+	require.ErrorContains(t, err, "unsupported structured review schema_version 4")
 }
 
 func TestStructuredReviewVersionTwoCarriesVerdict(t *testing.T) {
@@ -103,7 +103,7 @@ func TestStructuredReviewRejectsInvalidVerdict(t *testing.T) {
 	_, err = DecodeStructuredReview(jsontext.Value(
 		`{"schema_version":2,"summary":"Done.","findings":[]}`,
 	))
-	require.ErrorContains(t, err, "invalid verdict")
+	require.ErrorContains(t, err, "schema_version 2 requires a verdict")
 }
 
 func TestStructuredReviewUnableToReview(t *testing.T) {
@@ -118,4 +118,34 @@ func TestLiveReviewRejectsHistoricalDocument(t *testing.T) {
 	doc, err := DecodeStructuredReview(jsontext.Value(`{"schema_version":0,"legacy":{"markdown":"Historical text","recorded_verdict":false}}`))
 	require.NoError(t, err)
 	require.ErrorContains(t, validateLiveDocument("test", doc), "schema_version")
+}
+
+// Stored version 3 documents from goal reviews and converted historical
+// reviews may lack a verdict, kind, and confidence. A live agent was given a
+// schema that requires them, so their absence is an agent error.
+func TestLiveReviewRequiresVerdictAndKind(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "no verdict",
+			raw:  `{"schema_version":3,"summary":"Done.","findings":[]}`,
+			want: "without a verdict",
+		},
+		{
+			name: "finding without kind",
+			raw: `{"schema_version":3,"summary":"Done.","verdict":"fail","findings":[` +
+				`{"severity":"high","kind":null,"confidence":null,"problem":"p","fix":"f","location":"a.go:3"}]}`,
+			want: "finding 1 without a kind",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			doc, err := DecodeStructuredReview(jsontext.Value(tc.raw))
+			require.NoError(t, err)
+			require.ErrorContains(t, validateLiveDocument("test", doc), tc.want)
+		})
+	}
 }
