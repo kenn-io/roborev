@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // sleepingClock models a machine that can sleep: synctest's fake clock stands
@@ -27,7 +28,6 @@ func (c *sleepingClock) sleep(d time.Duration) {
 
 func TestWallClockDeadlineCountsMachineSleep(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		assert := assert.New(t)
 		clock := &sleepingClock{}
 		start := time.Now()
 		ctx, cancel := newWallClockDeadline(context.Background(), clock.now().Add(30*time.Minute), clock.now)
@@ -40,10 +40,10 @@ func TestWallClockDeadlineCountsMachineSleep(t *testing.T) {
 		time.Sleep(wallClockCheckInterval)
 		synctest.Wait()
 
-		assert.ErrorIs(ctx.Err(), context.DeadlineExceeded)
-		assert.ErrorIs(context.Cause(ctx), context.DeadlineExceeded)
-		assert.ErrorIs(child.Err(), context.DeadlineExceeded)
-		assert.Less(time.Since(start), 30*time.Minute)
+		require.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
+		require.ErrorIs(t, context.Cause(ctx), context.DeadlineExceeded)
+		require.ErrorIs(t, child.Err(), context.DeadlineExceeded)
+		assert.Less(t, time.Since(start), 30*time.Minute)
 	})
 }
 
@@ -55,7 +55,7 @@ func TestWallClockDeadlineWithoutSleep(t *testing.T) {
 
 		<-ctx.Done()
 
-		assert.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
+		require.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
 		assert.Equal(t, 30*time.Minute, time.Since(start))
 	})
 }
@@ -71,7 +71,7 @@ func TestWallClockDeadlineCancel(t *testing.T) {
 		cancelDirect()
 		synctest.Wait()
 
-		assert.ErrorIs(t, fromParent.Err(), context.Canceled)
-		assert.ErrorIs(t, direct.Err(), context.Canceled)
+		require.ErrorIs(t, fromParent.Err(), context.Canceled)
+		require.ErrorIs(t, direct.Err(), context.Canceled)
 	})
 }
