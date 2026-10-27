@@ -356,7 +356,7 @@ func fetchQueuedJobPromptReview(client *http.Client, addr string, jobID int64, o
 // panel with >=50 rows is not truncated (the synthesis row also counts toward
 // the default cap).
 func fetchPanelMembers(client *http.Client, addr string, runUUID uuid.UUID) ([]storage.ReviewJob, error) {
-	resp, err := newDaemonAPI(addr, client).ListJobsRaw(context.Background(), &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{PanelRun: new(runUUID.String()), Limit: new(int64(0))}})
+	resp, err := newDaemonAPI(addr, client).ListJobsRaw(context.Background(), &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{PanelRun: new(runUUID), Limit: new(int64(0))}})
 	if err != nil {
 		return nil, err
 	}

@@ -86,12 +86,21 @@ type AgentHookFixDoneOutputBody struct {
 
 type AgentHookFixDoneRequest struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema       *string `json:"$schema,omitempty"`
-	FixSessionID string  `json:"fix_session_id" validate:"required"`
+	Schema       *string   `json:"$schema,omitempty"`
+	FixSessionID uuid.UUID `json:"fix_session_id" validate:"required"`
 }
 
 func (a AgentHookFixDoneRequest) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(a))
+	var errors runtime.ValidationErrors
+	if v, ok := any(a.FixSessionID).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("FixSessionID", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type AgentHookResetOutputBody struct {
@@ -109,25 +118,39 @@ type AgentHookResetRequest struct {
 
 type AgentHookResponse struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema                *string `json:"$schema,omitempty"`
-	CommitCount           *int64  `json:"commit_count,omitempty"`
-	CommitThreshold       *int64  `json:"commit_threshold,omitempty"`
-	Count                 int64   `json:"count"`
-	Diagnosis             *string `json:"diagnosis,omitempty"`
-	FailedReviewCount     *int64  `json:"failed_review_count,omitempty"`
-	FailedReviewThreshold *int64  `json:"failed_review_threshold,omitempty"`
-	FixSessionID          *string `json:"fix_session_id,omitempty"`
-	Reason                *string `json:"reason,omitempty"`
-	RemindCount           *int64  `json:"remind_count,omitempty"`
-	SessionID             string  `json:"session_id" validate:"required"`
-	Skipped               *bool   `json:"skipped,omitempty"`
-	Threshold             int64   `json:"threshold"`
-	Triggered             bool    `json:"triggered"`
-	TriggeredBy           *string `json:"triggered_by,omitempty"`
+	Schema                *string    `json:"$schema,omitempty"`
+	CommitCount           *int64     `json:"commit_count,omitempty"`
+	CommitThreshold       *int64     `json:"commit_threshold,omitempty"`
+	Count                 int64      `json:"count"`
+	Diagnosis             *string    `json:"diagnosis,omitempty"`
+	FailedReviewCount     *int64     `json:"failed_review_count,omitempty"`
+	FailedReviewThreshold *int64     `json:"failed_review_threshold,omitempty"`
+	FixSessionID          *uuid.UUID `json:"fix_session_id,omitempty"`
+	Reason                *string    `json:"reason,omitempty"`
+	RemindCount           *int64     `json:"remind_count,omitempty"`
+	SessionID             string     `json:"session_id" validate:"required"`
+	Skipped               *bool      `json:"skipped,omitempty"`
+	Threshold             int64      `json:"threshold"`
+	Triggered             bool       `json:"triggered"`
+	TriggeredBy           *string    `json:"triggered_by,omitempty"`
 }
 
 func (a AgentHookResponse) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(a))
+	var errors runtime.ValidationErrors
+	if a.FixSessionID != nil {
+		if v, ok := any(a.FixSessionID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("FixSessionID", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(a.SessionID, "required"); err != nil {
+		errors = errors.Append("SessionID", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type AgentHookSessionsOutputBody struct {
@@ -2812,9 +2835,9 @@ func (p PingInfo) Validate() error {
 }
 
 type PostgresLegacyReview struct {
-	ID             string               `json:"id" validate:"required"`
+	ID             uuid.UUID            `json:"id" validate:"required"`
 	JobType        string               `json:"job_type" validate:"required"`
-	JobUUID        string               `json:"job_uuid" validate:"required"`
+	JobUUID        uuid.UUID            `json:"job_uuid" validate:"required"`
 	Markdown       string               `json:"markdown" validate:"required"`
 	MigrationError string               `json:"migration_error" validate:"required"`
 	PreviousJSON   string               `json:"previous_json" validate:"required"`
@@ -2823,14 +2846,18 @@ type PostgresLegacyReview struct {
 
 func (p PostgresLegacyReview) Validate() error {
 	var errors runtime.ValidationErrors
-	if err := typesValidator.Var(p.ID, "required"); err != nil {
-		errors = errors.Append("ID", err)
+	if v, ok := any(p.ID).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ID", err)
+		}
 	}
 	if err := typesValidator.Var(p.JobType, "required"); err != nil {
 		errors = errors.Append("JobType", err)
 	}
-	if err := typesValidator.Var(p.JobUUID, "required"); err != nil {
-		errors = errors.Append("JobUUID", err)
+	if v, ok := any(p.JobUUID).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("JobUUID", err)
+		}
 	}
 	if err := typesValidator.Var(p.Markdown, "required"); err != nil {
 		errors = errors.Append("Markdown", err)

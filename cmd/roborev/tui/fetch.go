@@ -1071,7 +1071,7 @@ func (m model) fetchPanelMembers(runUUID uuid.UUID) tea.Cmd {
 	api := newDaemonAPI(m.endpoint, m.client)
 	return func() tea.Msg {
 		resp, err := api.ListJobsRaw(m.apiContext(), &daemonclient.ListJobsRequestOptions{Query: &daemonclient.ListJobsQuery{
-			PanelRun: new(runUUID.String()), Limit: new(int64(0)),
+			PanelRun: new(runUUID), Limit: new(int64(0)),
 			OmitPrompt:      new(daemonclient.ListJobsQueryOmitPromptTrue),
 			IncludeFindings: new(daemonclient.ListJobsQueryIncludeFindingsTrue),
 		}})

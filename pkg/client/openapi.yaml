@@ -91,6 +91,7 @@ components:
           readOnly: true
           type: string
         fix_session_id:
+          format: uuid
           type: string
       required:
         - fix_session_id
@@ -153,6 +154,7 @@ components:
           format: int64
           type: integer
         fix_session_id:
+          format: uuid
           type: string
         reason:
           type: string
@@ -3061,10 +3063,12 @@ components:
       additionalProperties: false
       properties:
         id:
+          format: uuid
           type: string
         job_type:
           type: string
         job_uuid:
+          format: uuid
           type: string
         markdown:
           type: string
@@ -5914,6 +5918,7 @@ paths:
           name: panel_run
           schema:
             description: Return all jobs (members + synthesis) of one panel run
+            format: uuid
             type: string
         - description: Include individual panel member jobs alongside panel synthesis jobs
           explode: false
