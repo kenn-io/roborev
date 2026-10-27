@@ -37,7 +37,6 @@ All notable changes to roborev, grouped by minor release.
 
 - Reviews, reruns, and fixes start as soon as they are queued, instead of up to
     two seconds later.
-
 - Sync [Agent Hook](/docs/agent-hook/) configs across machines with
     `--binary roborev` or `--binary roborev.exe`. Installation still checks
     PATH, but keeps the bare name in hooks and the optional MCP stdio server
@@ -63,9 +62,6 @@ All notable changes to roborev, grouped by minor release.
     patch on the tip of the review's branch. Before, a rebase for a
     single-commit review reused the reviewed commit, so the new patch conflicted
     again and each rebase repeated the same failure.
-
-**Bug fixes**
-
 - The daemon keeps starting jobs when an agentsview token usage lookup hangs.
     The lookup returns at its timeout even when a process agentsview started is
     still running, and jobs no longer wait for it before they start. A job that
@@ -74,9 +70,6 @@ All notable changes to roborev, grouped by minor release.
 - On Windows, a timed-out agentsview lookup also terminates processes it
     started, including grandchildren launched through Scoop shims. Successful
     lookups can still start the agentsview server.
-
-**Bug fixes**
-
 - Codex reviews work when the Codex login is stored in the OS keyring and
     `ignore_review_user_config = true`. roborev forwards
     `cli_auth_credentials_store` and the other login settings from the Codex
