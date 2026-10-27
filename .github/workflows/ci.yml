@@ -35,7 +35,6 @@ jobs:
         id: filter
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d  # v4.0.3
         with:
-          base: ${{ github.ref }}
           filters: |
             go:
               - '*.go'
@@ -114,7 +113,7 @@ jobs:
 
   api-breaking:
     needs: go-changes
-    if: github.event_name == 'pull_request' && needs.go-changes.outputs.changed == 'true'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.go-changes.outputs.changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -127,8 +126,8 @@ jobs:
 
       - name: Check for breaking API contract changes
         env:
-          BASE_REF: ${{ github.base_ref }}
-        run: make api-breaking BASE_REF="origin/$BASE_REF"
+          BASE_REF: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || format('origin/{0}', github.base_ref) }}
+        run: make api-breaking BASE_REF="$BASE_REF"
 
   web:
     needs: go-changes
