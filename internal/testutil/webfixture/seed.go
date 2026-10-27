@@ -226,8 +226,8 @@ func insertReview(tx *sql.Tx, job fixtureJob) error {
 		doc.Summary = "The change needs an error-handling correction."
 		doc.Verdict = structuredreview.VerdictFail
 		doc.Findings = []structuredreview.Finding{{
-			Severity: "medium", Problem: problem,
-			Fix: "Return the error to the caller.",
+			Severity: "medium", Kind: structuredreview.KindDefect, Confidence: 0.8,
+			Problem: problem, Fix: "Return the error to the caller.",
 		}}
 		if job.jobType == storage.JobTypeSynthesis {
 			doc.SourceLabels = []string{"codex"}

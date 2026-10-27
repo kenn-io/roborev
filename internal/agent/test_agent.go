@@ -147,8 +147,8 @@ func (a *TestAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 	body := fmt.Sprintf("%s\n\nCommit: %s\nRepo: %s", a.Output, shortSHA, repoPath)
 	if jsontext.Value([]byte(a.Output)).IsValid() {
 		body = a.Output
-	} else if strings.Contains(prompt, `"schema_version":2`) {
-		raw, err := json.Marshal(map[string]any{"schema_version": 2, "summary": a.Output, "verdict": "pass", "findings": []any{}})
+	} else if strings.Contains(prompt, `"schema_version":3`) {
+		raw, err := json.Marshal(map[string]any{"schema_version": 3, "summary": a.Output, "verdict": "pass", "findings": []any{}})
 		if err != nil {
 			return "", err
 		}

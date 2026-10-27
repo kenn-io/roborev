@@ -1,6 +1,7 @@
 package goalreview
 
 import (
+	"encoding/json/v2"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -113,4 +114,24 @@ func TestGoalFindingDocumentRoundTripPreservesKataPrefixedFile(t *testing.T) {
 	snapshot := Snapshot{Artifacts: []Artifact{{Kind: "spec", Path: "Kata notes.md", Content: "# Feature"}}}
 	findings := []Finding{{Severity: "high", Message: "Contradiction", Fix: "Resolve it.", Location: Location{File: "Kata notes.md", Line: 1}}}
 	assert.Equal(t, findings, FindingsFromDocument(Document(findings), snapshot))
+}
+
+// Goal findings are stored as version 3 documents. Their free-text locations,
+// including Kata issue anchors, must survive encoding and decoding.
+func TestGoalDocumentSurvivesStorageAsVersion3(t *testing.T) {
+	snapshot := Snapshot{
+		Artifacts: []Artifact{{Kind: "spec", Path: "spec.md", Content: "# Feature\nRequirement"}},
+		Issues:    []kata.Issue{{ShortID: "aaaa"}},
+	}
+	findings := []Finding{
+		{Severity: "high", Message: "Contradiction", Fix: "Resolve it.", Location: Location{File: "spec.md", Line: 2}},
+		{Severity: "low", Message: "Conflicting task", Fix: "Align it.", Location: Location{KataID: "aaaa"}},
+		{Severity: "low", Message: "Unanchored", Fix: "Provide evidence."},
+	}
+	raw, err := json.Marshal(Document(findings))
+	require.NoError(t, err)
+	doc, err := structuredreview.Decode(raw)
+	require.NoError(t, err)
+	assert.Equal(t, structuredreview.SchemaVersion, doc.SchemaVersion)
+	assert.Equal(t, findings, FindingsFromDocument(doc, snapshot))
 }

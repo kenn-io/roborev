@@ -17,7 +17,10 @@ const (
 	ReviewTypeDesign    = "design"
 	ReviewTypeLookahead = "lookahead"
 	ReviewTypeTestValue = "test-value"
-	ReviewTypeGoal      = "goal"
+	// ReviewTypeExhaustive is the default code review told to report every
+	// supportable problem, with a finding count scaled to the change size.
+	ReviewTypeExhaustive = "exhaustive"
+	ReviewTypeGoal       = "goal"
 )
 
 // IsDefaultReviewType returns true if the review type represents the standard
@@ -28,8 +31,15 @@ func IsDefaultReviewType(rt string) bool {
 		rt == "general" || rt == "review"
 }
 
+// IsGeneralReviewType reports whether the review type runs the general code
+// review: the default review or its exhaustive variant. Both use the default
+// system prompt and the review workflow's agent and model.
+func IsGeneralReviewType(rt string) bool {
+	return IsDefaultReviewType(rt) || rt == ReviewTypeExhaustive
+}
+
 func IsBuiltInReviewType(rt string) bool {
-	return IsDefaultReviewType(rt) || rt == ReviewTypeSecurity ||
+	return IsGeneralReviewType(rt) || rt == ReviewTypeSecurity ||
 		rt == ReviewTypeDesign || rt == ReviewTypeLookahead ||
 		rt == ReviewTypeTestValue
 }
@@ -47,10 +57,11 @@ func validateReviewTypes(
 	custom map[string]bool,
 ) ([]string, error) {
 	validSpecial := map[string]bool{
-		ReviewTypeSecurity:  true,
-		ReviewTypeDesign:    true,
-		ReviewTypeLookahead: true,
-		ReviewTypeTestValue: true,
+		ReviewTypeSecurity:   true,
+		ReviewTypeDesign:     true,
+		ReviewTypeLookahead:  true,
+		ReviewTypeTestValue:  true,
+		ReviewTypeExhaustive: true,
 	}
 	seen := make(map[string]bool, len(types))
 	canonical := make([]string, 0, len(types))
@@ -58,7 +69,7 @@ func validateReviewTypes(
 		if rt == "" {
 			return nil, fmt.Errorf(
 				"invalid review_type %q "+
-					"(valid: default, security, design, lookahead, test-value)", rt)
+					"(valid: %s)", rt, validReviewTypesHelp(custom))
 		}
 		if IsDefaultReviewType(rt) {
 			rt = ReviewTypeDefault
@@ -79,6 +90,7 @@ func validReviewTypesHelp(custom map[string]bool) string {
 	types := []string{
 		ReviewTypeDefault, ReviewTypeSecurity,
 		ReviewTypeDesign, ReviewTypeLookahead, ReviewTypeTestValue,
+		ReviewTypeExhaustive,
 	}
 	customTypes := make([]string, 0, len(custom))
 	for name := range custom {
@@ -92,7 +104,7 @@ func validReviewTypesHelp(custom map[string]bool) string {
 func ExplicitReviewTypes() []string {
 	return []string{
 		ReviewTypeSecurity, ReviewTypeDesign, ReviewTypeLookahead,
-		ReviewTypeTestValue,
+		ReviewTypeTestValue, ReviewTypeExhaustive,
 	}
 }
 
@@ -105,7 +117,7 @@ func ValidReviewTypesHelp() string {
 }
 
 func WorkflowForReviewType(reviewType string) string {
-	if IsDefaultReviewType(reviewType) || reviewType == ReviewTypeGoal {
+	if IsGeneralReviewType(reviewType) || reviewType == ReviewTypeGoal {
 		return "review"
 	}
 	return reviewType

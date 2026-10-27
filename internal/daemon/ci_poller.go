@@ -79,6 +79,7 @@ type ghPR struct {
 	HeadRefName string     `json:"headRefName"`
 	BaseRefName string     `json:"baseRefName"`
 	Title       string     `json:"title"`
+	Body        string     `json:"body"`
 	Author      ghPRAuthor `json:"author"`
 	Labels      []string   `json:"labels"`
 }
@@ -88,6 +89,8 @@ type panelPostTarget struct {
 	HeadSHA     string
 	HeadRefName string
 	BaseRefName string
+	Title       string
+	Body        string
 	AuthorLogin string
 	Labels      []string
 }
@@ -117,7 +120,7 @@ type CIPoller struct {
 	gitCloneFn          func(ctx context.Context, ghRepo, targetPath string, env []string) error
 	mergeBaseFn         func(string, string, string) (string, error)
 	loadRepoConfigFn    func(string) (ciRepoConfigSource, error)
-	buildReviewPromptFn func(context.Context, string, string, int64, int, string, string, string, string, *config.RepoConfig, string, *config.Config) (string, error)
+	buildReviewPromptFn func(context.Context, string, string, int64, int, string, string, string, string, prompt.PullRequest, *config.RepoConfig, string, *config.Config) (string, error)
 	postPRCommentFn     func(string, int, string) error
 	setCommitStatusFn   func(ghRepo, sha, state, description string) error
 	setSkippedCheckFn   func(ghRepo, sha, summary string) error
@@ -204,12 +207,13 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 	// task-ledger content stays out of CI prompts entirely (it could
 	// otherwise surface in publicly posted PR comments). Kata context is a
 	// local-review feature; the worker also skips it for CI jobs.
-	p.buildReviewPromptFn = func(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, repoCfg *config.RepoConfig, repoCfgRef string, cfg *config.Config) (string, error) {
+	p.buildReviewPromptFn = func(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, pr prompt.PullRequest, repoCfg *config.RepoConfig, repoCfgRef string, cfg *config.Config) (string, error) {
 		builder := prompt.NewBuilderWithConfig(p.db, cfg).
 			WithContext(ctx).
 			ForRepo(repoPath, repoID).
 			WithRepoConfig(repoCfg, repoCfgRef).
-			WithStructuredOutput(true)
+			WithStructuredOutput(true).
+			WithPullRequest(pr)
 		return builder.BuildWithAdditionalContext(
 			gitRef,
 			contextCount,
@@ -843,6 +847,7 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 			baseBranch: pr.BaseRefName,
 			prNumber:   pr.Number, panelName: ciPanelName(repoCfg, cfg),
 			prDiscussionContext: prDiscussionContext,
+			pullRequest:         prompt.PullRequest{Title: pr.Title, Description: pr.Body},
 			members:             members, synth: synth,
 		})
 	if err != nil {
@@ -1611,8 +1616,11 @@ type buildPanelOptsInput struct {
 	prNumber            int
 	panelName           string // config panel name ("" for the implicit matrix)
 	prDiscussionContext string
-	members             []config.ResolvedMember
-	synth               config.SynthesisSpec
+	// pullRequest is the PR's title and description. Like commit messages,
+	// it is author-written and untrusted; the prompt frames it that way.
+	pullRequest prompt.PullRequest
+	members     []config.ResolvedMember
+	synth       config.SynthesisSpec
 }
 
 // buildPanelOpts builds the member and synthesis EnqueueOpts for a CI panel run.
@@ -1631,7 +1639,7 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 		storedPrompt, err := p.callBuildReviewPrompt(
 			ctx, in.repo.RootPath, in.gitRef, in.repo.ID, contextCount,
 			m.Agent, m.ReviewType, reviewMinSeverity, in.prDiscussionContext,
-			in.repoCfg, in.repoCfgRef, in.cfg,
+			in.pullRequest, in.repoCfg, in.repoCfgRef, in.cfg,
 		)
 		if err != nil {
 			// A canceled poller (Stop or shutdown) must abort the whole run
@@ -2260,6 +2268,7 @@ func (p *CIPoller) listOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, erro
 			HeadRefName: pr.HeadRefName,
 			BaseRefName: pr.BaseRefName,
 			Title:       pr.Title,
+			Body:        pr.Body,
 			Author:      ghPRAuthor{Login: pr.AuthorLogin},
 			Labels:      pr.Labels,
 		})
@@ -3190,6 +3199,8 @@ func (p *CIPoller) retryAttemptPR(
 		HeadRefOid:  headSHA,
 		HeadRefName: target.HeadRefName,
 		BaseRefName: baseRefName,
+		Title:       target.Title,
+		Body:        target.Body,
 		Labels:      target.Labels,
 		// Preserve the author so kata trust gating in enqueuePanelRun does
 		// not fail closed for trusted authors on the retry path.
@@ -3563,15 +3574,16 @@ func (p *CIPoller) callMergeBase(repoPath, baseRef, headRef string) (string, err
 	return gitpkg.GetMergeBase(repoPath, baseRef, headRef)
 }
 
-func (p *CIPoller) callBuildReviewPrompt(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, repoCfg *config.RepoConfig, repoCfgRef string, cfg *config.Config) (string, error) {
+func (p *CIPoller) callBuildReviewPrompt(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, pr prompt.PullRequest, repoCfg *config.RepoConfig, repoCfgRef string, cfg *config.Config) (string, error) {
 	if p.buildReviewPromptFn != nil {
-		return p.buildReviewPromptFn(ctx, repoPath, gitRef, repoID, contextCount, agentName, reviewType, minSeverity, additionalContext, repoCfg, repoCfgRef, cfg)
+		return p.buildReviewPromptFn(ctx, repoPath, gitRef, repoID, contextCount, agentName, reviewType, minSeverity, additionalContext, pr, repoCfg, repoCfgRef, cfg)
 	}
 	builder := prompt.NewBuilderWithConfig(p.db, cfg).
 		WithContext(ctx).
 		ForRepo(repoPath, repoID).
 		WithRepoConfig(repoCfg, repoCfgRef).
-		WithStructuredOutput(true)
+		WithStructuredOutput(true).
+		WithPullRequest(pr)
 	return builder.BuildWithAdditionalContext(
 		gitRef,
 		contextCount,
@@ -3676,6 +3688,8 @@ func (p *CIPoller) panelPostTarget(
 		HeadSHA:     pr.HeadRefOID,
 		HeadRefName: pr.HeadRefName,
 		BaseRefName: pr.BaseRefName,
+		Title:       pr.Title,
+		Body:        pr.Body,
 		AuthorLogin: pr.AuthorLogin,
 		Labels:      pr.Labels,
 	}, nil
