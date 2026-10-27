@@ -327,16 +327,16 @@ Run the docs validation checks:
 make docs-check
 ```
 
-The Vercel project should be linked from the repository root with `docs/` as its
-root directory. Use these project settings:
+Deploying needs a Vercel link in the `docs/` directory, because the deploy
+uploads that directory:
 
-| Setting | Value |
-| --- | --- |
-| Framework preset | `Other` |
-| Root directory | `docs` |
-| Install command | `uv sync --frozen --no-dev` |
-| Build command | `uv run --frozen bash ./vercel-build.sh` |
-| Output directory | `site` |
+```bash
+vercel link --cwd docs
+```
+
+`docs/vercel.json` supplies the build settings. See
+[Publishing](https://github.com/kenn-io/roborev/blob/main/docs/README.md#publishing)
+in the docs maintainer guide for the project setup.
 
 The build wrapper also copies `index.md` and every nav-listed Markdown document
 into `site/`. That keeps source-form docs available from the same deployment as
@@ -357,7 +357,7 @@ For the direct Vercel deploy step only, use:
 make docs-deploy
 ```
 
-`make docs-deploy` runs `vercel deploy --prod` from the repository root.
+`make docs-deploy` runs `vercel deploy docs --prod`.
 
 ## License
 
