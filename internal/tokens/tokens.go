@@ -25,6 +25,9 @@ import (
 // the optional provider as a user-visible failure.
 var ErrUsageProviderUnavailable = errors.New("usage provider unavailable")
 
+// ErrBatchUnsupported asks callers to use their ordered single-session path.
+var ErrBatchUnsupported = errors.New("batch usage unsupported")
+
 // Usage holds token consumption data for a single review job.
 // Stored as JSON in the review_jobs.token_usage column.
 // Fields align with agentsview's session-usage output.
@@ -202,6 +205,77 @@ func FetchForSessionWithConfig(
 	return fetchForSessionCLI(ctx, sessionID, cfg)
 }
 
+// SessionUsageResult holds one requested session's usage or lookup error.
+type SessionUsageResult struct {
+	Usage *Usage
+	Err   error
+}
+
+// FetchForSessionsWithConfig uses one CLI invocation for a page.
+// Unsupported providers return ErrBatchUnsupported for ordered single-session lookup.
+func FetchForSessionsWithConfig(
+	ctx context.Context, sessionIDs []string, cfg FetchConfig,
+) (map[string]SessionUsageResult, error) {
+	results := make(map[string]SessionUsageResult, len(sessionIDs))
+	var ids []string
+	for _, id := range sessionIDs {
+		if _, seen := results[id]; !seen {
+			ids = append(ids, id)
+			results[id] = SessionUsageResult{}
+		}
+	}
+	if len(ids) == 0 {
+		return results, nil
+	}
+	if cfg.Endpoint != "" {
+		return nil, ErrBatchUnsupported
+	}
+	binPath, err := resolveAgentsview()
+	if err != nil {
+		return nil, ErrBatchUnsupported
+	}
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	args := append([]string{"session", "usage-batch"}, ids...)
+	args = append(args, "--format", "json", "--no-sync")
+	out, err := runAgentsviewCommand(ctx, timeout*time.Duration(len(ids)), binPath, args...)
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	if err != nil {
+		if shouldFallbackFromBatch(err) {
+			return nil, ErrBatchUnsupported
+		}
+		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
+			return nil, fmt.Errorf("agentsview batch usage: %w: %s", err, exitErr.Stderr)
+		}
+		return nil, fmt.Errorf("agentsview batch usage: %w", err)
+	}
+	var response struct {
+		Results []struct {
+			RequestedID string              `json:"requested_id"`
+			ExitCode    int                 `json:"exit_code"`
+			Usage       *agentsviewResponse `json:"usage"`
+			Error       string              `json:"error"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(out, &response); err != nil {
+		return nil, fmt.Errorf("parse agentsview batch output: %w", err)
+	}
+	for _, result := range response.Results {
+		if result.ExitCode == 0 && result.Usage != nil {
+			results[result.RequestedID] = SessionUsageResult{Usage: result.Usage.tokenUsage()}
+		} else {
+			results[result.RequestedID] = SessionUsageResult{
+				Err: sessionUsageExitResult(result.ExitCode, result.Error),
+			}
+		}
+	}
+	return results, nil
+}
+
 func fetchForSessionCLI(
 	ctx context.Context, sessionID string, cfg FetchConfig,
 ) (*Usage, error) {
@@ -229,8 +303,7 @@ func fetchForSessionCLI(
 		"session", "usage", sessionID, "--format", "json", "--no-sync",
 	)
 	// Older CLIs can still report costs, but their usage queries may sync sources.
-	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok && exitErr.ExitCode() == 1 &&
-		strings.Contains(string(exitErr.Stderr), "unknown flag: --no-sync") {
+	if rejectsNoSync(err) {
 		out, err = runAgentsviewCommand(
 			ctx, timeout, binPath,
 			"session", "usage", sessionID, "--format", "json",
@@ -252,6 +325,10 @@ func fetchForSessionCLI(
 		return nil, fmt.Errorf("parse agentsview output: %w", err)
 	}
 
+	return resp.tokenUsage(), nil
+}
+
+func (resp agentsviewResponse) tokenUsage() *Usage {
 	// A has_cost flag with no accompanying amount carries no dollars, so it is
 	// not treated as cost data: recording it would price the review at $0 and
 	// silently deflate every aggregate it lands in.
@@ -261,14 +338,14 @@ func fetchForSessionCLI(
 	}
 
 	if resp.OutputTokens == 0 && resp.PeakContextTokens == 0 && !hasCost {
-		return nil, nil
+		return nil
 	}
 	return &Usage{
 		OutputTokens:      resp.OutputTokens,
 		PeakContextTokens: resp.PeakContextTokens,
 		CostUSD:           costUSD,
 		HasCost:           hasCost,
-	}, nil
+	}
 }
 
 // agentsviewWaitDelay bounds how long a lookup waits for its output pipes to
@@ -308,22 +385,34 @@ func shouldFallbackToTokenUse(err error) bool {
 		strings.Contains(stderr, "unknown subcommand")
 }
 
+func shouldFallbackFromBatch(err error) bool {
+	return shouldFallbackToTokenUse(err) || rejectsNoSync(err)
+}
+
+func rejectsNoSync(err error) bool {
+	exitErr, ok := errors.AsType[*exec.ExitError](err)
+	if !ok || exitErr.ExitCode() != 1 {
+		return false
+	}
+	stderr := strings.ToLower(string(exitErr.Stderr))
+	return strings.Contains(stderr, "unknown flag: --no-sync")
+}
+
 func handleSessionUsageError(err error) error {
 	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
-		// agentsview usage exit codes: 2 = session not found,
-		// 3 = found but no token/cost data. Both mean "no usage",
-		// not an error.
-		switch code := exitErr.ExitCode(); code {
-		case 2, 3:
-			return nil
-		default:
-			return fmt.Errorf(
-				"agentsview usage: exit %d: %s",
-				code, exitErr.Stderr,
-			)
-		}
+		return sessionUsageExitResult(exitErr.ExitCode(), string(exitErr.Stderr))
 	}
 	return fmt.Errorf("agentsview usage: %w", err)
+}
+
+func sessionUsageExitResult(code int, message string) error {
+	// Codes 2 and 3 mean a missing session or missing usage data.
+	switch code {
+	case 0, 2, 3:
+		return nil
+	default:
+		return fmt.Errorf("agentsview usage: exit %d: %s", code, message)
+	}
 }
 
 func handleTokenUseError(out []byte, err error) error {

@@ -92,7 +92,8 @@ type WorkerPool struct {
 	// tokenUsageFetcher looks up captured session usage. Nil uses the
 	// configured tokens.FetchForSessionWithConfig path; tests substitute a
 	// deterministic fetcher.
-	tokenUsageFetcher func(context.Context, string) (*tokens.Usage, error)
+	tokenUsageFetcher      func(context.Context, string) (*tokens.Usage, error)
+	tokenUsageBatchFetcher func(context.Context, []string) (map[string]tokens.SessionUsageResult, error)
 	// tokenUsageIndexRetryWindow and tokenUsageIndexRetryInterval bound the
 	// fresh-session indexing retry. Tests shorten both values.
 	tokenUsageIndexRetryWindow   time.Duration
@@ -2382,6 +2383,21 @@ func (wp *WorkerPool) fetchTokenUsage(
 			RequireCLI: true,
 		},
 	)
+}
+
+func (wp *WorkerPool) fetchTokenUsageBatch(
+	ctx context.Context, ids []string,
+) (map[string]tokens.SessionUsageResult, error) {
+	if wp.tokenUsageBatchFetcher != nil {
+		return wp.tokenUsageBatchFetcher(ctx, ids)
+	}
+	if wp.tokenUsageFetcher != nil {
+		return nil, tokens.ErrBatchUnsupported
+	}
+	cfg := wp.cfgGetter.Config()
+	return tokens.FetchForSessionsWithConfig(ctx, ids, tokens.FetchConfig{
+		Endpoint: cfg.Cost.Endpoint, Timeout: cfg.Cost.ResolvedTimeout(),
+	})
 }
 
 func (wp *WorkerPool) fetchFreshSessionUsage(
