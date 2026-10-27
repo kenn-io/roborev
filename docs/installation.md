@@ -135,6 +135,14 @@ Package maintainers can
 that self-update is disabled, upgrade through your package manager instead, such
 as `brew upgrade roborev` for Homebrew.
 
+### Upgrading to 0.74.0
+
+Check this item before updating from 0.73.x or earlier:
+
+| If you use... | Upgrade action |
+| --- | --- |
+| Claude Code reviews, panel synthesis, or planning | Run `claude --help` and check that it lists `--tools`. If it does not, upgrade Claude Code first. roborev now passes `--tools` so that Claude loads only `Read`, `Glob`, and `Grep`, and older Claude Code versions reject the flag. See [Strict Claude Code Reviews](/docs/agents/#strict-claude-code-reviews). |
+
 ### Upgrading to 0.73.0
 
 Check these items before updating from 0.72.x or earlier:
