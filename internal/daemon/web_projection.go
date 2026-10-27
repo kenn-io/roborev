@@ -23,7 +23,7 @@ type ReviewProjectionInput struct {
 
 type ReviewProjectionJob struct {
 	ID              int64                 `json:"id"`
-	UUID            *uuid.UUID            `json:"uuid,omitempty" format:"uuid"`
+	UUID            *uuid.UUID            `json:"uuid,omitempty"`
 	Project         string                `json:"project"`
 	GitRef          string                `json:"git_ref"`
 	Branch          string                `json:"branch,omitempty"`

@@ -66,7 +66,7 @@ type ExportReviewsPage struct {
 }
 
 type ExportReview struct {
-	ReviewID            uuid.UUID              `json:"review_id" format:"uuid"`
+	ReviewID            uuid.UUID              `json:"review_id"`
 	Status              string                 `json:"status"`
 	Verdict             string                 `json:"verdict" doc:"pass, fail, or unknown when a legacy review has no recorded verdict."`
 	CreatedAt           string                 `json:"created_at"`
@@ -87,11 +87,11 @@ type ExportReview struct {
 	UpdatedAt           string                 `json:"updated_at" doc:"RFC3339 UTC time the review row last changed, including close and reopen. Falls back to completed_at when the row has no recorded update time."`
 	Subagents           []ExportSubagent       `json:"subagents"`
 	Experiments         []ExperimentAssignment `json:"experiments"`
-	ResumeSourceJobUUID *uuid.UUID             `json:"resume_source_job_uuid" format:"uuid" nullable:"true"`
+	ResumeSourceJobUUID *uuid.UUID             `json:"resume_source_job_uuid" nullable:"true"`
 }
 
 type ExportSubagent struct {
-	ReviewID            uuid.UUID        `json:"review_id" format:"uuid"`
+	ReviewID            uuid.UUID        `json:"review_id"`
 	Name                string           `json:"name"`
 	Agent               string           `json:"agent"`
 	Model               *string          `json:"model"`
@@ -102,7 +102,7 @@ type ExportSubagent struct {
 	Cost                ExportReviewCost `json:"cost"`
 	Content             *string          `json:"content"`
 	Document            *ExportDocument  `json:"document"`
-	ResumeSourceJobUUID *uuid.UUID       `json:"resume_source_job_uuid" format:"uuid" nullable:"true"`
+	ResumeSourceJobUUID *uuid.UUID       `json:"resume_source_job_uuid" nullable:"true"`
 }
 
 // ExportDocument is a stored structured review document as the export emits

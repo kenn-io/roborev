@@ -14,7 +14,7 @@ type Event struct {
 	Type          string     `json:"type"`
 	TS            time.Time  `json:"ts"`
 	JobID         int64      `json:"job_id"`
-	JobUUID       *uuid.UUID `json:"job_uuid,omitempty" format:"uuid"`
+	JobUUID       *uuid.UUID `json:"job_uuid,omitempty"`
 	Repo          string     `json:"repo"`
 	RepoName      string     `json:"repo_name"`
 	SHA           string     `json:"sha"`

@@ -121,7 +121,7 @@ type CIPanel struct {
 	GithubRepo       string     `json:"github_repo"`
 	PRNumber         int        `json:"pr_number"`
 	HeadSHA          string     `json:"head_sha"`
-	PanelRunUUID     uuid.UUID  `json:"panel_run_uuid" format:"uuid"`
+	PanelRunUUID     uuid.UUID  `json:"panel_run_uuid"`
 	SynthesisJobID   *int64     `json:"synthesis_job_id,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
 	PostingClaimedAt *time.Time `json:"posting_claimed_at,omitempty"`

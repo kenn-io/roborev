@@ -72,7 +72,7 @@ type ExportCIPanel struct {
 
 // ExportCIPanelJob is one member or synthesis job of an exported panel.
 type ExportCIPanelJob struct {
-	JobUUID             uuid.UUID  `json:"job_uuid" format:"uuid"`
+	JobUUID             uuid.UUID  `json:"job_uuid"`
 	Role                string     `json:"role"`
 	Agent               string     `json:"agent"`
 	Model               *string    `json:"model"`
@@ -80,7 +80,7 @@ type ExportCIPanelJob struct {
 	Status              string     `json:"status"`
 	StartedAt           *string    `json:"started_at"`
 	FinishedAt          *string    `json:"finished_at"`
-	ResumeSourceJobUUID *uuid.UUID `json:"resume_source_job_uuid" format:"uuid" nullable:"true"`
+	ResumeSourceJobUUID *uuid.UUID `json:"resume_source_job_uuid" nullable:"true"`
 }
 
 type ciMetricsCursor struct {

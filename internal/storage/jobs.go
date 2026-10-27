@@ -3055,7 +3055,7 @@ func getPanelMemberReviews(q querier, panelRunUUID uuid.UUID) ([]BatchReviewResu
 // ambiguous — an all-failed panel is finished but has zero done members — so
 // the terminal set is broken out explicitly.
 type PanelSummary struct {
-	PanelRunUUID        uuid.UUID  `json:"panel_run_uuid" format:"uuid"`
+	PanelRunUUID        uuid.UUID  `json:"panel_run_uuid"`
 	MembersTotal        int        `json:"members_total"`
 	MembersTerminal     int        `json:"members_terminal"`
 	MembersSucceeded    int        `json:"members_succeeded"`

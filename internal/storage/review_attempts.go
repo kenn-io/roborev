@@ -27,7 +27,7 @@ type ReviewAttempt struct {
 	LastErrorClass             string     `json:"last_error_class"`
 	ConsecutiveGenuineAttempts int        `json:"consecutive_genuine_attempts"`
 	LastErrorExcerpt           string     `json:"last_error_excerpt"`
-	LastPanelRunUUID           *uuid.UUID `json:"last_panel_run_uuid,omitempty" format:"uuid"`
+	LastPanelRunUUID           *uuid.UUID `json:"last_panel_run_uuid,omitempty"`
 	State                      string     `json:"state"`
 	UpdatedAt                  time.Time  `json:"updated_at"`
 }

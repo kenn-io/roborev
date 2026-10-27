@@ -390,7 +390,7 @@ type ImportLegacyReviewInput struct {
 	Body struct {
 		LegacyMaintenanceTarget
 		ID       int64          `json:"id,omitempty"`
-		UUID     uuid.UUID      `json:"uuid,omitzero" format:"uuid"`
+		UUID     uuid.UUID      `json:"uuid,omitzero"`
 		Document jsontext.Value `json:"document"`
 	}
 }

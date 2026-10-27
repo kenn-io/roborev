@@ -48,7 +48,7 @@ type EnqueueRequest struct {
 // always emitted and OpenAPI marks it required.
 type EnqueueCreatedResponse struct {
 	*storage.ReviewJob
-	UUID uuid.UUID `json:"uuid" format:"uuid"`
+	UUID uuid.UUID `json:"uuid"`
 }
 
 // PanelEnqueueResponse is returned when an enqueue fans out into a panel run.
@@ -60,7 +60,7 @@ type PanelEnqueueResponse struct {
 	// keeps the shallower field, so PanelRunUUID is the authoritative response
 	// key and (unlike the embedded omitempty field) is always emitted.
 	*storage.ReviewJob
-	PanelRunUUID uuid.UUID `json:"panel_run_uuid" format:"uuid"`
+	PanelRunUUID uuid.UUID `json:"panel_run_uuid"`
 	MemberJobIDs []int64   `json:"member_job_ids"`
 }
 
@@ -174,7 +174,7 @@ type ExportReviewsDocument struct {
 	Tool          string                 `json:"tool"`
 	ToolVersion   string                 `json:"tool_version"`
 	GeneratedAt   string                 `json:"generated_at"`
-	DatabaseID    uuid.UUID              `json:"database_id" format:"uuid" doc:"Stable identity for the local review database; changes when the database is recreated."`
+	DatabaseID    uuid.UUID              `json:"database_id" doc:"Stable identity for the local review database; changes when the database is recreated."`
 	Profile       string                 `json:"profile"`
 	Window        ExportReviewsWindow    `json:"window"`
 	Truncated     bool                   `json:"truncated" doc:"True when more matching rows are available immediately."`
@@ -244,7 +244,7 @@ type ExportCIMetricsDocument struct {
 	Tool          string                  `json:"tool"`
 	ToolVersion   string                  `json:"tool_version"`
 	GeneratedAt   string                  `json:"generated_at"`
-	DatabaseID    uuid.UUID               `json:"database_id" format:"uuid" doc:"Stable identity for the local review database; changes when the database is recreated."`
+	DatabaseID    uuid.UUID               `json:"database_id" doc:"Stable identity for the local review database; changes when the database is recreated."`
 	Window        ExportReviewsWindow     `json:"window"`
 	Truncated     bool                    `json:"truncated" doc:"True when more matching rows are available immediately."`
 	NextCursor    *string                 `json:"next_cursor" doc:"Opaque resume cursor emitted when panels is non-empty."`
@@ -274,7 +274,7 @@ type ExportCICostDocument struct {
 	Tool          string                    `json:"tool"`
 	ToolVersion   string                    `json:"tool_version"`
 	GeneratedAt   string                    `json:"generated_at"`
-	DatabaseID    uuid.UUID                 `json:"database_id" format:"uuid" doc:"Stable identity for the local review database; changes when the database is recreated."`
+	DatabaseID    uuid.UUID                 `json:"database_id" doc:"Stable identity for the local review database; changes when the database is recreated."`
 	Legacy        bool                      `json:"legacy"`
 	Window        ExportReviewsWindow       `json:"window"`
 	Truncated     bool                      `json:"truncated" doc:"True when more matching rows are available immediately."`
@@ -297,7 +297,7 @@ type CancelJobRequest struct {
 // RerunJobRequest is the JSON body for POST /api/job/rerun.
 type RerunJobRequest struct {
 	JobID     int64      `json:"job_id"`
-	RequestID *uuid.UUID `json:"request_id,omitempty" format:"uuid"`
+	RequestID *uuid.UUID `json:"request_id,omitempty"`
 	Agent     string     `json:"agent,omitempty"`
 }
 
@@ -307,14 +307,14 @@ type AddCommentRequest struct {
 	JobID              int64      `json:"job_id,omitempty"` // Preferred: link to job
 	Commenter          string     `json:"commenter"`
 	Comment            string     `json:"comment"`
-	ExpectedReviewUUID *uuid.UUID `json:"expected_review_uuid,omitempty" format:"uuid"`
+	ExpectedReviewUUID *uuid.UUID `json:"expected_review_uuid,omitempty"`
 }
 
 // CloseReviewRequest is the JSON body for POST /api/review/close.
 type CloseReviewRequest struct {
 	JobID              int64      `json:"job_id"`
 	Closed             bool       `json:"closed"`
-	ExpectedReviewUUID *uuid.UUID `json:"expected_review_uuid,omitempty" format:"uuid"`
+	ExpectedReviewUUID *uuid.UUID `json:"expected_review_uuid,omitempty"`
 }
 
 // JobOutputResponse is the response for GET /api/job/output.
@@ -351,8 +351,8 @@ type RerunJobOutput struct {
 	Body struct {
 		Success   bool       `json:"success"`
 		JobID     int64      `json:"job_id"`
-		RequestID uuid.UUID  `json:"request_id" format:"uuid"`
-		RunUUID   *uuid.UUID `json:"run_uuid,omitempty" format:"uuid"`
+		RequestID uuid.UUID  `json:"request_id"`
+		RunUUID   *uuid.UUID `json:"run_uuid,omitempty"`
 	}
 }
 
@@ -765,7 +765,7 @@ type SyncStatusOutput struct {
 		Message           string            `json:"message"`
 		Interval          string            `json:"interval"`
 		MachineName       string            `json:"machine_name"`
-		MachineID         *uuid.UUID        `json:"machine_id,omitempty" format:"uuid"`
+		MachineID         *uuid.UUID        `json:"machine_id,omitempty"`
 		Warnings          []string          `json:"warnings"`
 		PendingPush       SyncPendingCounts `json:"pending_push"`
 		PendingLimit      int               `json:"pending_limit"`

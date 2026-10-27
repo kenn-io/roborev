@@ -39,7 +39,7 @@ type ExportCICostPage struct {
 // ExportCICostJob is one CI job where an agent ran. CostUSD is nil when the
 // job has no usable recorded price; a pointer to zero is a priced free run.
 type ExportCICostJob struct {
-	JobUUID             uuid.UUID              `json:"job_uuid" format:"uuid"`
+	JobUUID             uuid.UUID              `json:"job_uuid"`
 	FinishedAt          string                 `json:"finished_at"`
 	Agent               string                 `json:"agent"`
 	Model               *string                `json:"model"`
@@ -48,7 +48,7 @@ type ExportCICostJob struct {
 	Status              string                 `json:"status"`
 	CostUSD             *float64               `json:"cost_usd"`
 	Experiments         []ExperimentAssignment `json:"experiments"`
-	ResumeSourceJobUUID *uuid.UUID             `json:"resume_source_job_uuid" format:"uuid" nullable:"true"`
+	ResumeSourceJobUUID *uuid.UUID             `json:"resume_source_job_uuid" nullable:"true"`
 }
 
 type ciCostCursor struct {
