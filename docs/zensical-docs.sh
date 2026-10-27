@@ -124,6 +124,9 @@ assemble_site_root() {
     fi
     cp -R "$docs_root/website/$entry" "$docs_root/$site_dir/$entry"
   done
+  # Embed the website fonts in its stylesheet and inline the first-paint hold
+  # script, so no page paints text in a fallback face first.
+  (cd "$docs_root" && python3 scripts/inline_website_assets.py --site-dir "$site_dir")
 
   if [[ ! -s "$docs_root/llms.txt" ]]; then
     printf 'missing docs/llms.txt\n' >&2

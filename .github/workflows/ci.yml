@@ -25,6 +25,7 @@ jobs:
       changed: ${{ github.event_name != 'workflow_dispatch' && steps.filter.outputs.go == 'true' }}
       lint: ${{ github.event_name != 'workflow_dispatch' && steps.filter.outputs.lint == 'true' }}
       web: ${{ github.event_name != 'workflow_dispatch' && steps.filter.outputs.web == 'true' }}
+      docs: ${{ github.event_name != 'workflow_dispatch' && steps.filter.outputs.docs == 'true' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -79,6 +80,10 @@ jobs:
               - 'pkg/client/openapi.yaml'
               - 'Makefile'
               - '.goreleaser.yaml'
+              - '.github/workflows/ci.yml'
+            docs:
+              - 'docs/**'
+              - 'Makefile'
               - '.github/workflows/ci.yml'
 
   api:
@@ -173,8 +178,72 @@ jobs:
       - name: Validate embedded release assets
         run: make web-release-check
 
+      # The first-paint check loads the pages the daemon serves, so it sees
+      # the daemon's real headers, including its Content-Security-Policy.
+      - name: Build the daemon for the first-paint check
+        env:
+          FIRST_PAINT_DIR: ${{ runner.temp }}/first-paint
+        run: |
+          mkdir -p "$FIRST_PAINT_DIR"
+          trap 'make web-restore' EXIT
+          make web-embed
+          go build -o "$FIRST_PAINT_DIR/roborev" ./cmd/roborev
+
+      - name: Start the daemon for the first-paint check
+        env:
+          FIRST_PAINT_DIR: ${{ runner.temp }}/first-paint
+        run: |
+          home="$FIRST_PAINT_DIR/home"
+          mkdir -p "$FIRST_PAINT_DIR/data" "$home"
+          go run ./internal/testutil/cmd/seed-web -out "$FIRST_PAINT_DIR/reviews.db"
+          printf 'max_workers = 0\n\n[web]\nenabled = true\nlisten = "127.0.0.1:7380"\n' \
+            > "$FIRST_PAINT_DIR/config.toml"
+          HOME="$home" XDG_CACHE_HOME="$home/.cache" XDG_CONFIG_HOME="$home/.config" \
+            ROBOREV_DATA_DIR="$FIRST_PAINT_DIR/data" ROBOREV_TELEMETRY_ENABLED=0 \
+            "$FIRST_PAINT_DIR/roborev" daemon run --db "$FIRST_PAINT_DIR/reviews.db" \
+            --config "$FIRST_PAINT_DIR/config.toml" --addr 127.0.0.1:0 \
+            > "$FIRST_PAINT_DIR/daemon.log" 2>&1 &
+          if ! curl --fail --silent --show-error --retry 30 --retry-delay 1 \
+            --retry-all-errors http://127.0.0.1:7380/api/ping; then
+            cat "$FIRST_PAINT_DIR/daemon.log"
+            exit 1
+          fi
+
+      - name: Check first paint of the browser UI
+        uses: kenn-io/actions/first-paint@ee1ddcce6a620e49ba96f613bb8d113e0193b4f6 # first-paint, kenn-io/actions#6
+        with:
+          urls: |
+            http://127.0.0.1:7380/reviews
+            http://127.0.0.1:7380/reviews/52
+            http://127.0.0.1:7380/analytics
+
       - name: Verify checks leave the tree unchanged
         run: git diff --exit-code
+
+  docs-first-paint:
+    needs: go-changes
+    if: needs.go-changes.outputs.docs == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
+        with:
+          version: '0.13.4'
+          enable-cache: true
+          cache-dependency-glob: docs/uv.lock
+
+      - name: Build the docs site
+        run: |
+          make docs-install
+          make docs-build
+
+      - name: Check first paint of the docs site
+        uses: kenn-io/actions/first-paint@ee1ddcce6a620e49ba96f613bb8d113e0193b4f6 # first-paint, kenn-io/actions#6
+        with:
+          dist: docs/site
 
   test:
     needs: go-changes
