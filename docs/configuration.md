@@ -1194,7 +1194,7 @@ filter_branch = false             # Show all branches on startup (default: curre
 | `web.auth_token` | string | - | Base64url-encoded 32-byte random token exchanged for a process-local browser session | No |
 | `web.auth_token_file` | string | - | Host-local file containing the browser token; mutually exclusive with `web.auth_token` | No |
 | `max_workers` | int | 4 | Number of parallel review workers | No |
-| `job_timeout_minutes` | int | 30 | Per-job timeout in minutes; plan-first background fixes add an equal planning budget | Yes |
+| `job_timeout_minutes` | int | 30 | Per-job timeout in minutes of wall-clock time, so time the machine spends asleep counts against it. Plan-first background fixes add an equal planning budget | Yes |
 | `isolate_reviews` | bool | false | Run committed reviews in daemon-owned detached checkouts; see [Isolated Review Checkouts](#isolated-review-checkouts) | Yes |
 | `hook_timeout_seconds` | int | `3` (`30` on Windows) | Post-commit hook request timeout, in seconds. Raise it on Windows or large repos where the daemon's enqueue git calls are slow. Zero or negative values are ignored and fall back to the platform default | Yes |
 | `prompt_retention_days` | int | `0` | Delete the stored prompts of review and range jobs this many days after they finish. Zero or negative keeps prompts forever. See [Stored prompts and retention](#stored-prompts-and-retention) | Yes |

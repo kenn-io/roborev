@@ -940,7 +940,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			timeoutDuration += planningTimeout
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeoutDuration)
+	ctx, cancel := withWallClockTimeout(context.Background(), timeoutDuration)
 	defer cancel()
 	releaseAttempt, err := wp.db.StartJobAttempt(ctx, job, workerID, cancel)
 	if err != nil {

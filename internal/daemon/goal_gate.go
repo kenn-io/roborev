@@ -146,7 +146,7 @@ func (s *Server) humaGoalGate(ctx context.Context, input *goalGateInput) (*goalG
 	defer release()
 	cfg := s.configWatcher.Config()
 	timeout := time.Duration(config.ResolveJobTimeout(root, cfg)) * time.Minute
-	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	runCtx, cancel := withWallClockTimeout(ctx, timeout)
 	defer cancel()
 	stopCancel := context.AfterFunc(s.goalGate.ctx, cancel)
 	defer stopCancel()

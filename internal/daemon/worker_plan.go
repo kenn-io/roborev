@@ -21,7 +21,7 @@ func (wp *WorkerPool) prepareFixPlan(ctx context.Context, planningTimeout time.D
 	planCtx := ctx
 	if planningTimeout > 0 {
 		var cancel context.CancelFunc
-		planCtx, cancel = context.WithTimeout(ctx, planningTimeout)
+		planCtx, cancel = withWallClockTimeout(ctx, planningTimeout)
 		defer cancel()
 	}
 	plan, err := agent.RunPlan(planCtx, a, repoPath, "HEAD", planningPrompt, output, func(path, text string) (string, func(), error) {
