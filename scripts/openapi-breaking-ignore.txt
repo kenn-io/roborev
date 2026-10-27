@@ -11,5 +11,5 @@ GET /api/export/reviews added `#/components/schemas/LegacyReviewDocument` to the
 
 # Version 3 review documents add a kind, confidence, file, and line range to
 # each finding. Every finding still carries its location.
-GET /api/export/reviews the `reviews/items/document/oneOf[#/components/schemas/StructuredReviewDocument]/schema_version` response property's max was increased from `2.00` to `3.00` for the response status `200`
-GET /api/export/reviews the `reviews/items/subagents/items/document/oneOf[#/components/schemas/StructuredReviewDocument]/schema_version` response property's max was increased from `2.00` to `3.00` for the response status `200`
+# oasdiff reports both export paths together as one shared-schema change.
+GET /api/export/reviews the `reviews/items/document/oneOf[#/components/schemas/StructuredReviewDocument]/schema_version` response property's max was increased from `2.00` to `3.00` for the response status `200` (shared schema: `StructuredReviewDocument`, also at `reviews/items/subagents/items/document/oneOf[#/components/schemas/StructuredReviewDocument]/schema_version`)
