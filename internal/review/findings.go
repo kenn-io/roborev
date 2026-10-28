@@ -166,8 +166,8 @@ const nearbyLines = 3
 // tidyFindings merges findings that state the same problem at the same
 // place and orders the rest: most severe first, then those more reviewers
 // reported, then the more confident. Only identical, nonempty problem text
-// is merged: case, punctuation, and word order can distinguish identifiers
-// and operations that need different fixes. Findings without a file are never
+// with the same fix is merged: case, punctuation, word order, and corrections
+// can distinguish independent issues. Findings without a file are never
 // merged, because nothing ties them to one place. A merged finding keeps the
 // more severe or more confident copy and every source.
 func tidyFindings(findings []structuredreview.Finding) []structuredreview.Finding {
@@ -175,7 +175,7 @@ func tidyFindings(findings []structuredreview.Finding) []structuredreview.Findin
 	for _, finding := range findings {
 		twin := slices.IndexFunc(kept, func(other structuredreview.Finding) bool {
 			return finding.File != "" && finding.Problem != "" && samePlace(finding, other) &&
-				finding.Problem == other.Problem
+				finding.Problem == other.Problem && finding.Fix == other.Fix
 		})
 		if twin < 0 {
 			kept = append(kept, finding)

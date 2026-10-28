@@ -234,9 +234,10 @@ with it. They never appear in the rendered review or in pull request comments.
 Before storing a review, Roborev checks every cited file against the reviewed
 commit, or the working tree for uncommitted changes. A finding whose file does
 not exist there keeps its text but loses its location, and a line range past the
-end of the file is shortened. Roborev then merges findings that describe the
-same problem at nearly the same lines of the same file. It orders the rest by
-severity, then by how many panel members reported them, then by confidence.
+end of the file is shortened. Roborev then merges findings with identical
+problem and fix text at nearly the same lines of the same file. It orders the
+rest by severity, then by how many panel members reported them, then by
+confidence.
 
 The agent's verdict is shown in the review as an assessment but does not change
 the outcome: the findings and the severity threshold decide pass or fail. The

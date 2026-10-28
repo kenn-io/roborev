@@ -159,6 +159,7 @@ func clearForgeCIEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
 		"GITHUB_ACTIONS", "GITHUB_REPOSITORY", "GITHUB_EVENT_PATH", "GITHUB_REF",
+		"GITHUB_SERVER_URL", "GITHUB_API_URL", "GH_HOST",
 		"GITLAB_CI", "CI_PROJECT_PATH", "CI_MERGE_REQUEST_PROJECT_PATH",
 		"CI_MERGE_REQUEST_IID", "CI_MERGE_REQUEST_TITLE", "CI_MERGE_REQUEST_DESCRIPTION",
 		"CI_COMMIT_SHA", "CI_COMMIT_BEFORE_SHA", "CI_COMMIT_BRANCH",
@@ -307,31 +308,59 @@ func TestDetectPRNumber_NoEnv(t *testing.T) {
 
 func TestDetectCIPullRequest(t *testing.T) {
 	want := prompt.PullRequest{Title: "Cap retries", Description: "Stop after three attempts."}
+	for _, forge := range []ciForge{ciForgeGitHub, ciForgeGitLab} {
+		t.Run(string(forge), func(t *testing.T) {
+			tests := []struct {
+				name string
+				opts ciReviewOpts
+				env  map[string]string
+				want prompt.PullRequest
+			}{
+				{name: "environment request", want: want},
+				{name: "matching request", opts: ciReviewOpts{pr: 42, ghRepo: "acme/source", glRepo: "acme/source"}, want: want},
+				{name: "different request", opts: ciReviewOpts{pr: 7}},
+				{name: "different repository with same number", opts: ciReviewOpts{pr: 42, ghRepo: "acme/other", glRepo: "acme/other"}},
+				{name: "different host with same repository and number", opts: ciReviewOpts{pr: 42, ghRepo: "acme/source", glRepo: "acme/source", glHost: "https://other.example.com"}, env: map[string]string{"GITHUB_API_URL": "https://other.example.com/api/v3/"}},
+				{name: "missing repository", env: map[string]string{"GITHUB_REPOSITORY": "", "CI_MERGE_REQUEST_PROJECT_PATH": "", "CI_PROJECT_PATH": ""}},
+				{name: "missing server", env: map[string]string{"GITHUB_SERVER_URL": "", "CI_SERVER_URL": ""}},
+				{name: "malformed server", env: map[string]string{"GITHUB_SERVER_URL": "://", "CI_SERVER_URL": "://"}},
+			}
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					clearForgeCIEnv(t)
+					t.Setenv("GITHUB_REPOSITORY", "acme/source")
+					t.Setenv("GITHUB_SERVER_URL", "https://github.com")
+					t.Setenv("GITHUB_API_URL", "https://api.github.com")
+					setupFakeGitHubEvent(t, map[string]any{
+						"pull_request": map[string]any{"number": 42, "title": want.Title, "body": want.Description},
+					})
+					t.Setenv("CI_MERGE_REQUEST_IID", "42")
+					t.Setenv("CI_MERGE_REQUEST_TITLE", want.Title)
+					t.Setenv("CI_MERGE_REQUEST_DESCRIPTION", want.Description)
+					t.Setenv("CI_MERGE_REQUEST_PROJECT_PATH", "acme/source")
+					// Fork pipelines run in a different project from the MR target.
+					t.Setenv("CI_PROJECT_PATH", "acme/fork")
+					t.Setenv("CI_SERVER_URL", "https://gitlab.example.com")
+					for key, value := range tt.env {
+						t.Setenv(key, value)
+					}
 
-	t.Run("github event", func(t *testing.T) {
-		clearForgeCIEnv(t)
-		setupFakeGitHubEvent(t, map[string]any{
-			"pull_request": map[string]any{"number": 42, "title": want.Title, "body": want.Description},
+					opts := tt.opts
+					if forge == ciForgeGitHub {
+						opts.glRepo, opts.glHost = "", ""
+					} else {
+						opts.ghRepo = ""
+					}
+					assert.Equal(t, tt.want, detectCIPullRequest(forge, opts))
+				})
+			}
 		})
-		assert.Equal(t, want, detectCIPullRequest(ciForgeGitHub, 0))
-		assert.Equal(t, want, detectCIPullRequest(ciForgeGitHub, 42))
-		assert.Equal(t, prompt.PullRequest{}, detectCIPullRequest(ciForgeGitHub, 7),
-			"an explicit --pr for another request must not borrow the event's text")
-	})
-
-	t.Run("gitlab merge request", func(t *testing.T) {
-		clearForgeCIEnv(t)
-		t.Setenv("CI_MERGE_REQUEST_IID", "9")
-		t.Setenv("CI_MERGE_REQUEST_TITLE", want.Title)
-		t.Setenv("CI_MERGE_REQUEST_DESCRIPTION", want.Description)
-		assert.Equal(t, want, detectCIPullRequest(ciForgeGitLab, 0))
-		assert.Equal(t, prompt.PullRequest{}, detectCIPullRequest(ciForgeGitLab, 3))
-	})
+	}
 
 	t.Run("no request", func(t *testing.T) {
 		clearForgeCIEnv(t)
-		assert.Equal(t, prompt.PullRequest{}, detectCIPullRequest(ciForgeGitHub, 0))
-		assert.Equal(t, prompt.PullRequest{}, detectCIPullRequest(ciForgeGitLab, 0))
+		assert.Equal(t, prompt.PullRequest{}, detectCIPullRequest(ciForgeGitHub, ciReviewOpts{}))
+		assert.Equal(t, prompt.PullRequest{}, detectCIPullRequest(ciForgeGitLab, ciReviewOpts{}))
 	})
 }
 
