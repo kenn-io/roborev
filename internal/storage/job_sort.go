@@ -78,8 +78,11 @@ func WithSortAfter(position JobSortPosition) ListJobsOption {
 }
 
 // jobSortKeys returns the SQL expressions a listing sorts by before the job
-// ID, and the arguments those expressions bind, in order. Every expression is
+// ID, and the arguments those expressions bind, in order. Expressions are
 // non-NULL so row-value comparisons against a resume position stay defined.
+// The enqueue time is the exception: it must match the expression of
+// idx_review_jobs_enqueued_position for the default listing to read the index
+// in order, and it is NULL only for timestamp text SQLite cannot parse.
 // The expressions reproduce what the web table showed when it sorted rows
 // itself, so the server order matches the displayed values.
 func jobSortKeys(sort JobSort, includeFindings bool) ([]string, []any) {
@@ -103,7 +106,7 @@ func jobSortKeys(sort JobSort, includeFindings bool) ([]string, []any) {
 	case JobSortCost:
 		return []string{jobCostSortExpr}, nil
 	default:
-		return []string{"COALESCE(" + sqliteNormalizedTimestampExpr("j.enqueued_at") + ", '')"}, nil
+		return []string{sqliteNormalizedTimestampExpr("j.enqueued_at")}, nil
 	}
 }
 

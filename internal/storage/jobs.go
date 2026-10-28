@@ -2235,9 +2235,9 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 	return " WHERE " + strings.Join(conditions, " AND "), args
 }
 
-// ListJobs returns jobs with optional status, repo, branch, and closed filters.
-func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int, opts ...ListJobsOption) ([]ReviewJob, error) {
-	options := collectListJobsOptions(opts...)
+// listJobsQuery builds the ListJobs query. It returns the query, its
+// arguments, and how many sort key columns follow the job columns.
+func listJobsQuery(statusFilter, repoFilter string, limit, offset int, options listJobsOptions) (string, []any, int, error) {
 	// Metadata-only listings skip the prompt column for terminal jobs; the
 	// scan still binds the same positional field, it just never touches the
 	// large TEXT payload. Queued/running rows keep their prompt: the active
@@ -2255,7 +2255,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 	// last row from the values this query ordered by.
 	sortKeys, sortKeyArgs := jobSortKeys(options.sort, options.includeFindings)
 	if options.sortAfter != nil && len(options.sortAfter.Keys) != len(sortKeys) {
-		return nil, fmt.Errorf("%w: %s sort takes %d keys, got %d",
+		return "", nil, 0, fmt.Errorf("%w: %s sort takes %d keys, got %d",
 			ErrInvalidSortPosition, options.sort.Column, len(sortKeys), len(options.sortAfter.Keys))
 	}
 	var sortKeyColumns strings.Builder
@@ -2312,6 +2312,16 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		}
 	}
 
+	return query, args, len(sortKeys), nil
+}
+
+// ListJobs returns jobs with optional status, repo, branch, and closed filters.
+func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int, opts ...ListJobsOption) ([]ReviewJob, error) {
+	options := collectListJobsOptions(opts...)
+	query, args, sortKeyCount, err := listJobsQuery(statusFilter, repoFilter, limit, offset, options)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err
@@ -2323,7 +2333,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		var j ReviewJob
 		var fields reviewJobScanFields
 		var review jobReviewScanFields
-		j.SortKey = make([]any, len(sortKeys))
+		j.SortKey = make([]any, sortKeyCount)
 		destinations := jobWithReviewScanDestinations(&j, &fields, &review)
 		for i := range j.SortKey {
 			destinations = append(destinations, &j.SortKey[i])
