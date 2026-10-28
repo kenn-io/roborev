@@ -230,9 +230,10 @@ describe the steps toward it. These reviews include the pull request text:
 - `roborev ci review` runs in GitLab merge request pipelines, read from
     `CI_MERGE_REQUEST_TITLE` and `CI_MERGE_REQUEST_DESCRIPTION`
 
-When `--pr` names a different request than the one the CI environment describes,
-the review leaves the pull request text out. When a prompt is too large, roborev
-drops the description before it drops commit subjects.
+For `roborev ci review`, this text is included only when the selected
+repository, forge host, and request number match the CI environment. When a
+prompt is too large to pass inline, roborev gives the reviewer a file containing
+the complete prompt, including the pull request description and commit messages.
 
 Messages and descriptions are untrusted input. Reviewers never follow
 instructions in them, do not accept claims such as "tested" as evidence, and do
@@ -532,8 +533,9 @@ the configured severity threshold stay in the document, and synthesis documents
 retain their source references and reviewer labels.
 
 After receiving an agent's review, roborev merges findings only when their
-nonempty problem text matches exactly and they cite the same file at nearby
-locations. Case, punctuation, and word order are preserved when comparing text.
+nonempty problem text and recommended fixes match exactly and they cite the same
+file at nearby locations. Case, punctuation, and word order are preserved when
+comparing text.
 
 On database upgrade, roborev handles each older review in one of three ways:
 

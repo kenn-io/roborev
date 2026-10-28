@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -357,7 +358,7 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 		RepoConfig:    repoCfg,
 		RepoConfigRef: repoCfgRef,
 		MinSeverity:   reviewMinSev,
-		PullRequest:   detectCIPullRequest(forge, opts.pr),
+		PullRequest:   detectCIPullRequest(forge, opts),
 	}
 
 	results := review.RunBatch(ctx, batchCfg)
@@ -958,12 +959,17 @@ func detectGitRef() (string, error) {
 }
 
 // detectCIPullRequest returns the title and description of the pull or merge
-// request that the CI environment describes. When --pr names a different
-// request, it returns nothing, because the environment describes another one.
-func detectCIPullRequest(forge ciForge, prFlag int) prompt.PullRequest {
+// request that the CI environment describes, only when its repository, host,
+// and request number match the selected review target.
+func detectCIPullRequest(forge ciForge, opts ciReviewOpts) prompt.PullRequest {
 	if forge == ciForgeGitLab {
+		apiBase, err := glpkg.GitLabAPIBaseURL(opts.glHost)
+		if err != nil || !matchesCIRepository(opts.glRepo, detectGitLabProjectPath(),
+			glpkg.HostnameFromAPIBaseURL(apiBase), os.Getenv("CI_SERVER_URL")) {
+			return prompt.PullRequest{}
+		}
 		iid, err := detectMRIID()
-		if err != nil || (prFlag != 0 && prFlag != iid) {
+		if err != nil || (opts.pr != 0 && opts.pr != iid) {
 			return prompt.PullRequest{}
 		}
 		return prompt.PullRequest{
@@ -971,12 +977,23 @@ func detectCIPullRequest(forge ciForge, prFlag int) prompt.PullRequest {
 			Description: os.Getenv("CI_MERGE_REQUEST_DESCRIPTION"),
 		}
 	}
+	apiBase, err := ghpkg.GitHubAPIBaseURL(os.Getenv("GITHUB_API_URL"))
+	if err != nil || !matchesCIRepository(opts.ghRepo, os.Getenv("GITHUB_REPOSITORY"),
+		ghpkg.HostnameFromAPIBaseURL(apiBase), os.Getenv("GITHUB_SERVER_URL")) {
+		return prompt.PullRequest{}
+	}
 	event, err := readPREvent()
 	if err != nil || event.PullRequest.Number <= 0 ||
-		(prFlag != 0 && prFlag != event.PullRequest.Number) {
+		(opts.pr != 0 && opts.pr != event.PullRequest.Number) {
 		return prompt.PullRequest{}
 	}
 	return prompt.PullRequest{Title: event.PullRequest.Title, Description: event.PullRequest.Body}
+}
+
+func matchesCIRepository(repoFlag, ciRepo, host, serverURL string) bool {
+	server, err := url.Parse(serverURL)
+	return err == nil && server.Host != "" && ciRepo != "" &&
+		(repoFlag == "" || repoFlag == ciRepo) && strings.EqualFold(host, server.Host)
 }
 
 // detectPRNumber attempts to auto-detect the PR number from

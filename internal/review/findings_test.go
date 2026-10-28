@@ -113,11 +113,12 @@ func TestSettleFindingsLeavesLocationsWhenTheCheckoutIsMissing(t *testing.T) {
 func TestTidyFindingsMergesTheSameProblemAtTheSamePlace(t *testing.T) {
 	first := located("a.go", 10, 12)
 	first.Problem = "The retry loop never stops when the server returns 503."
+	first.Fix = "Stop retrying on 503."
 	first.Severity = "medium"
 	first.Sources = []int{2}
 	second := located("a.go", 13, 13)
 	second.Problem = first.Problem
-	second.Fix = "Stop retrying on 503."
+	second.Fix = first.Fix
 	second.Severity = "high"
 	second.Sources = []int{1}
 	otherProblem := located("a.go", 10, 12)
@@ -258,6 +259,30 @@ func TestRunAgentReviewStoresSettledFindings(t *testing.T) {
 	assert.Equal(structuredreview.TopicDocumentation, stored.Findings[1].Topic)
 	assert.Contains(got.Output, "### 2. Low\n")
 	assert.Contains(got.Output, "**Location:** main.go:3-5")
+}
+
+func TestRunAgentReviewPreservesDifferentCorrections(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	a := &structuredBatchAgent{
+		name: "structured",
+		result: jsontext.Value(`{
+  "schema_version": 3,
+  "summary": "Two missing checks.",
+  "verdict": "fail",
+  "findings": [
+    {"severity":"medium","kind":"defect","confidence":0.9,"problem":"Input is not validated.","fix":"Validate the name.","file":"main.go","start_line":3,"end_line":3},
+    {"severity":"medium","kind":"defect","confidence":0.9,"problem":"Input is not validated.","fix":"Validate the email.","file":"main.go","start_line":4,"end_line":4}
+  ]
+}`),
+	}
+
+	got, err := RunAgentReview(t.Context(), a, repo.Path(), repo.HeadSHA(), "prompt", "", "", nil, nil)
+	require.NoError(t, err)
+	stored, err := structuredreview.Decode(got.StructuredOutput)
+	require.NoError(t, err)
+	require.Len(t, stored.Findings, 2)
+	assert.Equal(t, "Validate the name.", stored.Findings[0].Fix)
+	assert.Equal(t, "Validate the email.", stored.Findings[1].Fix)
 }
 
 func TestFormatCommentLeavesKindAndTopicOut(t *testing.T) {
