@@ -244,7 +244,12 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	// its relative custom-review files come from the trusted side of the
 	// reviewed range, never from the checkout under review.
 	globalCfg := loadCIGlobalConfig(root).ForRepo(root)
-	repoCfgRef, refErr := trustedCIRepoConfigRef(root, gitRef)
+	// Keep prompts, agents, synthesis, and finding locations on the same commits.
+	gitRef, refErr := freezeReviewRef(ctx, root, gitRef)
+	var repoCfgRef string
+	if refErr == nil {
+		repoCfgRef, refErr = trustedCIRepoConfigRef(root, gitRef)
+	}
 	if refErr != nil {
 		// Preserve the flag-validation diagnostic when a plainly unknown type
 		// and an invalid ref are supplied together. Repository-defined types
