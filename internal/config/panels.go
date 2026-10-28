@@ -44,6 +44,10 @@ type PanelSpec struct {
 	SynthesisReasoning   string   `toml:"synthesis_reasoning"`
 	SynthesisBackupAgent string   `toml:"synthesis_backup_agent"`
 	SynthesisBackupModel string   `toml:"synthesis_backup_model"`
+	// SynthesisInstructions extends the synthesis prompt. When set, the
+	// synthesis agent may read the repository with its read-only tools to
+	// follow them; when empty, synthesis only merges the member reviews.
+	SynthesisInstructions string `toml:"synthesis_instructions"`
 }
 
 // ReviewConfig holds the [review] table: panel selection defaults plus the
@@ -243,13 +247,15 @@ type ResolvedMember struct {
 
 // SynthesisSpec is the resolved agent/model/reasoning for a panel's synthesis
 // job. BackupAgent/BackupModel are the explicit synthesis failover backup,
-// passed through verbatim from the panel spec (no resolution or fallback).
+// passed through verbatim from the panel spec (no resolution or fallback), as
+// are the panel's synthesis Instructions.
 type SynthesisSpec struct {
-	Agent       string `json:"agent"`
-	Model       string `json:"model"`
-	Reasoning   string `json:"reasoning"`
-	BackupAgent string `json:"backup_agent"`
-	BackupModel string `json:"backup_model"`
+	Agent        string `json:"agent"`
+	Model        string `json:"model"`
+	Reasoning    string `json:"reasoning"`
+	BackupAgent  string `json:"backup_agent"`
+	BackupModel  string `json:"backup_model"`
+	Instructions string `json:"instructions,omitempty"`
 }
 
 // ResolvePanel resolves a named panel into ordered members and a synthesis
@@ -513,8 +519,9 @@ func resolveSynthesisFromConfig(
 	}
 	return SynthesisSpec{
 		Agent: agent, Model: model, Reasoning: reasoning,
-		BackupAgent: panel.SynthesisBackupAgent,
-		BackupModel: panel.SynthesisBackupModel,
+		BackupAgent:  panel.SynthesisBackupAgent,
+		BackupModel:  panel.SynthesisBackupModel,
+		Instructions: strings.TrimSpace(panel.SynthesisInstructions),
 	}, nil
 }
 

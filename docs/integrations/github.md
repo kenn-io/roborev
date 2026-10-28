@@ -610,8 +610,9 @@ synthesis_model = "claude-opus-4-8"   # Model override for synthesis
 If the primary synthesis agent fails because of quota or availability, roborev
 tries `synthesis_backup_agent` before falling back to raw formatting. Named
 panels use their own `synthesis_agent`, `synthesis_model`,
-`synthesis_reasoning`, `synthesis_backup_agent`, and `synthesis_backup_model`
-fields under `[review.panels.<name>]`.
+`synthesis_reasoning`, `synthesis_backup_agent`, `synthesis_backup_model`, and
+`synthesis_instructions` fields under `[review.panels.<name>]`. The implicit
+matrix has no synthesis instructions setting; use a named panel for that.
 
 ## Comment Upsert
 

@@ -1686,7 +1686,6 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 		})
 	}
 
-	var synthSnapshot []byte
 	synthAgent := agent.StorageNameFromConfig(in.synth.Agent, in.repoCfg, in.cfg)
 	synthBackupAgent := agent.StorageNameFromConfig(in.synth.BackupAgent, in.repoCfg, in.cfg)
 	synthACP, err := snapshotACPExecutionConfig(
@@ -1697,12 +1696,12 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 			"snapshot synthesis ACP config: %w", err,
 		)
 	}
-	if len(synthACP) > 0 {
-		encoded, marshalErr := json.Marshal(ciACPExecutionConfig{ACP: synthACP})
-		if marshalErr != nil {
-			return nil, storage.EnqueueOpts{}, fmt.Errorf("snapshot synthesis ACP config: %w", marshalErr)
-		}
-		synthSnapshot = encoded
+	synthSnapshot, err := synthesisJobConfig{
+		ACP:          synthACP,
+		Instructions: in.synth.Instructions,
+	}.encode()
+	if err != nil {
+		return nil, storage.EnqueueOpts{}, fmt.Errorf("snapshot synthesis config: %w", err)
 	}
 	synthOpts := storage.EnqueueOpts{
 		RepoID:                in.repo.ID,
@@ -1719,7 +1718,7 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 		Source:                storage.JobSourceCI,
 		PanelRole:             storage.PanelRoleSynthesis,
 		PanelName:             in.panelName,
-		PanelMemberConfigJSON: string(synthSnapshot),
+		PanelMemberConfigJSON: synthSnapshot,
 		ClaimBlocked:          true,
 	}
 	return memberOpts, synthOpts, nil

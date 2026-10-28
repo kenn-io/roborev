@@ -23,9 +23,9 @@ var errSynthesisCanceled = errors.New("synthesis canceled")
 
 // processSynthesisJob executes a panel synthesis job against the run's member
 // reviews. It picks one of three branches: all members failed -> failed job
-// without a review (no agent); exactly one member succeeded -> passthrough that member's
-// output and effective threshold; two or more
-// succeeded -> a single verify+dedupe agent call.
+// without a review (no agent); exactly one member succeeded and the panel has
+// no synthesis instructions -> passthrough that member's output and effective
+// threshold; otherwise -> a single verify+dedupe agent call.
 func (wp *WorkerPool) processSynthesisJob(
 	ctx context.Context, workerID string, job *storage.ReviewJob,
 ) {
@@ -54,18 +54,25 @@ func (wp *WorkerPool) processSynthesisJob(
 	// Decide framing from every voting member before failures are dropped.
 	neutral := reviewpkg.NeedsNeutralSynthesis(results)
 	succeeded := filterSucceeded(results)
+	instructions, err := synthesisInstructions(job)
+	if err != nil {
+		wp.failOrRetryContext(ctx, workerID, job, job.Agent, err.Error())
+		return
+	}
 
-	switch len(succeeded) {
-	case 0:
+	switch {
+	case len(succeeded) == 0:
 		errMsg, ok := allAvailabilitySkippedFailure(results)
 		if !ok {
 			errMsg = "all review agents failed or produced no usable output"
 		}
 		wp.failSynthesisWithoutReviewContext(ctx, workerID, job, errMsg)
-	case 1:
+	case len(succeeded) == 1 && instructions == "":
 		// Exactly one member produced output — pass it through verbatim and
 		// label the review with that member's agent. Its verdict already
 		// honors the panel threshold, so no synthesis agent is needed.
+		// With synthesis instructions, the default branch runs the agent so it
+		// can act on the findings.
 		single := succeeded[0]
 		doc, err := reviewpkg.DecodeStructuredReview(single.StructuredOutput)
 		if err != nil {
@@ -91,8 +98,8 @@ func (wp *WorkerPool) processSynthesisJob(
 			})
 			return
 		}
-		// Two or more succeeded — combine and deduplicate via one agent call.
-		wp.synthesizeSucceededResults(ctx, workerID, job, succeeded, neutral)
+		// Combine and deduplicate via one agent call.
+		wp.synthesizeSucceededResults(ctx, workerID, job, succeeded, neutral, instructions)
 	}
 }
 
@@ -122,6 +129,7 @@ func (wp *WorkerPool) synthesizeSucceededResults(
 	job *storage.ReviewJob,
 	succeeded []reviewpkg.ReviewResult,
 	neutral bool,
+	instructions string,
 ) {
 	// Mirror processJob's quota gate: an agent already in cooldown must fail
 	// over instead of burning another quota-exhausted call. The no-agent
@@ -132,7 +140,7 @@ func (wp *WorkerPool) synthesizeSucceededResults(
 			fmt.Sprintf("agent %s quota cooldown active", canonicalAgent))
 		return
 	}
-	prompt := reviewpkg.BuildSynthesisPrompt(succeeded, job.MinSeverity, neutral)
+	prompt := reviewpkg.BuildSynthesisPrompt(succeeded, job.MinSeverity, neutral, instructions)
 	doc, resolvedAgent, capturedSession, runErr := wp.runSynthesisAgent(
 		ctx, workerID, job, succeeded, prompt,
 	)
@@ -155,6 +163,40 @@ func (wp *WorkerPool) synthesizeSucceededResults(
 		capturedSession: capturedSession,
 		captureUsage:    true,
 	})
+}
+
+// synthesisJobConfig is the snapshot a panel synthesis job stores in its
+// panel_member_config_json column. CI synthesis jobs also freeze their ACP
+// execution config there, which ciACPRepoConfig reads.
+type synthesisJobConfig struct {
+	ciACPExecutionConfig
+	Instructions string `json:"instructions,omitempty"`
+}
+
+// encode returns "" when nothing is set, so a synthesis job without
+// instructions or an ACP snapshot stores no config.
+func (c synthesisJobConfig) encode() (string, error) {
+	if c.Instructions == "" && len(c.ACP) == 0 {
+		return "", nil
+	}
+	raw, err := json.Marshal(c)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+// synthesisInstructions returns the panel synthesis instructions frozen with
+// the job, or "" when it has none.
+func synthesisInstructions(job *storage.ReviewJob) (string, error) {
+	if job.PanelMemberConfigJSON == "" {
+		return "", nil
+	}
+	var c synthesisJobConfig
+	if err := json.Unmarshal([]byte(job.PanelMemberConfigJSON), &c); err != nil {
+		return "", fmt.Errorf("decode synthesis config: %w", err)
+	}
+	return c.Instructions, nil
 }
 
 // headOf returns the head side of a git ref range: the part after the last

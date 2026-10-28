@@ -176,8 +176,10 @@ func runSynthesis(
 	}
 
 	// results is the unfiltered input set, so failed custom voters count.
+	// This path runs the agents x review_types matrix, which has no panel to
+	// supply synthesis instructions.
 	synthPrompt := BuildSynthesisPrompt(
-		results, opts.MinSeverity, NeedsNeutralSynthesis(results))
+		results, opts.MinSeverity, NeedsNeutralSynthesis(results), "")
 
 	synthCtx, cancel := context.WithTimeout(
 		ctx, 5*time.Minute)

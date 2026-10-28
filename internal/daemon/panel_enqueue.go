@@ -572,10 +572,14 @@ func planPanelRun(
 	if err != nil {
 		return panelRunPlan{}, err
 	}
+	synthOpts, err := panelSynthesisOpts(descriptor, panelName, runUUID, synth, repoCfg, cfg)
+	if err != nil {
+		return panelRunPlan{}, err
+	}
 	return panelRunPlan{
 		members:    members,
 		memberOpts: memberOpts,
-		synthOpts:  panelSynthesisOpts(descriptor, panelName, runUUID, synth, repoCfg, cfg),
+		synthOpts:  synthOpts,
 	}, nil
 }
 
@@ -769,14 +773,19 @@ func workflowForPanelReviewType(reviewType string) string {
 
 // panelSynthesisOpts overlays the synthesis spec and panel fields onto the
 // frozen base opts. The synthesis BackupAgent/BackupModel are persisted so the
-// worker can prefer them on synthesis failover.
+// worker can prefer them on synthesis failover, and the synthesis instructions
+// are frozen with the job so reruns keep them.
 // EnqueuePanelRun enforces JobTypeSynthesis/PanelRoleSynthesis/ClaimBlocked, but
 // they are set here too so the opts are self-describing.
 func panelSynthesisOpts(
 	descriptor targetDescriptor, panelName string, runUUID uuid.UUID,
 	synth config.SynthesisSpec,
 	repoCfg *config.RepoConfig, cfg *config.Config,
-) storage.EnqueueOpts {
+) (storage.EnqueueOpts, error) {
+	snapshot, err := synthesisJobConfig{Instructions: synth.Instructions}.encode()
+	if err != nil {
+		return storage.EnqueueOpts{}, fmt.Errorf("snapshot synthesis config: %w", err)
+	}
 	o := descriptor.baseOpts()
 	o.JobType = storage.JobTypeSynthesis
 	o.Agent = agent.StorageNameFromConfig(synth.Agent, repoCfg, cfg)
@@ -785,5 +794,6 @@ func panelSynthesisOpts(
 	o.BackupModel = synth.BackupModel
 	o.PanelRunUUID, o.PanelRole = &runUUID, storage.PanelRoleSynthesis
 	o.PanelName, o.ClaimBlocked = panelName, true
-	return o
+	o.PanelMemberConfigJSON = snapshot
+	return o, nil
 }

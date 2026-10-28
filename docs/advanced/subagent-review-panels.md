@@ -96,8 +96,8 @@ Synthesis avoids extra agent work when it can:
     output is `No issues found.` Members that pass only because their findings
     fall below `min_severity` still go through synthesis so those findings reach
     the combined output.
-- If exactly one member produced output, that output can be passed through
-    directly.
+- If exactly one member produced output and the panel sets no
+    `synthesis_instructions`, that output can be passed through directly.
 - If multiple members produced findings, a read only synthesis agent verifies,
     deduplicates, preserves file and line references, groups by severity, and
     writes one combined result.
@@ -114,6 +114,52 @@ labels each input with its rubric. This applies even if that member failed or
 was skipped. Silence from a reviewer with a different rubric is not treated as
 disagreement. Non-voting observers do not change this wording, and panels with
 only built-in review types keep the existing prompt.
+
+## Synthesis Instructions
+
+Without instructions, synthesis only merges member reviews. It deduplicates
+findings, cites the reviewers behind each one, and does not read the repository.
+Set `synthesis_instructions` on a panel to give the synthesis agent more work,
+such as checking each finding against the code or labeling it for the fix flow:
+
+```toml
+[review.panels.branch_final]
+members = ["bug", "security"]
+synthesis_agent = "claude-code"
+synthesis_model = "opus"
+synthesis_reasoning = "thorough"
+synthesis_instructions = """
+Verify each finding against the code and drop findings that do not hold.
+Decide whether the suggested fix is safe to apply without asking the user.
+Start each problem with "Label: just fix." or "Label: needs the user."
+"""
+```
+
+When a panel sets instructions:
+
+- The prompt keeps its output format and merge rules and adds the instructions
+    after them. Panels without instructions get the merge-only prompt unchanged.
+- The agent may read the repository, with the read-only access a normal review
+    has: Claude Code gets `Read`, `Glob`, and `Grep`, and Codex runs in its
+    read-only sandbox. `allow_unsafe_agents` lifts this, as it does for reviews.
+- For a commit or range review, the agent reads a temporary checkout of the
+    reviewed commit, even when `isolate_reviews` is off. Later edits in your
+    working tree cannot change what it checks. A dirty-tree review reads the
+    working tree, which is what it reviewed.
+- Every finding must still come from a member review. The agent cannot add
+    findings of its own.
+- Synthesis runs even when only one member produced output, so the instructions
+    apply to its findings. A panel whose members all pass with no findings still
+    skips synthesis.
+- Findings have no label field. Ask for labels in the `problem` text, as in the
+    example. They appear as written in the review that `roborev fix` and the fix
+    agent read.
+- The instructions are saved with the panel run when it is queued. Rerunning the
+    parent review uses the saved instructions.
+- A repository panel with the same name as a global panel replaces it, including
+    its instructions.
+- `[ci] panel` runs use the named panel's instructions. The implicit CI matrix
+    and `roborev ci review` have no synthesis instructions setting.
 
 ## Selection Rules
 
@@ -248,6 +294,7 @@ synthesis_backup_model = "claude-opus-4-8"
 | `synthesis_reasoning` | string | Reasoning level for synthesis. Empty means use `fix_reasoning` from the repository, then the global config, then `standard`. A project `synthesis_reasoning` overrides it. |
 | `synthesis_backup_agent` | string | Explicit backup agent for synthesis if the primary is unavailable or fails. |
 | `synthesis_backup_model` | string | Explicit backup model for synthesis backup. |
+| `synthesis_instructions` | string | Extra instructions for the synthesis agent. Empty means synthesis only merges member reviews. See [Synthesis Instructions](#synthesis-instructions). |
 
 Panel validation fails if `default_panel` or `hook_review_panel` names an
 undefined panel, a panel has no members, or a panel references an undefined
