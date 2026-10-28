@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/git"
@@ -63,11 +64,16 @@ func reviewedFiles(ctx context.Context, repoPath, gitRef string) fileReader {
 		}
 		defer root.Close()
 		data, err := root.ReadFile(name)
-		var pathErr *fs.PathError
-		if errors.As(err, &pathErr) && !errors.Is(err, fs.ErrPermission) {
-			// Missing paths, directories, and paths that escape the
-			// checkout all mean the finding names no file in it.
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
 			return nil, fs.ErrNotExist
+		}
+		if err != nil {
+			// A directory is not a file. Any other failure, such as an I/O
+			// error or a symlink that leaves the checkout, means the file
+			// cannot be checked, not that it is missing.
+			if info, statErr := root.Stat(name); statErr == nil && info.IsDir() {
+				return nil, fs.ErrNotExist
+			}
 		}
 		return data, err
 	}
