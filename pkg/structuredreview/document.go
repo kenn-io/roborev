@@ -28,7 +28,8 @@
 // free-text location instead of a file. Versions 1 and 2 are only decoded, so
 // stored reviews keep working: they carry a free-text location, and version 1
 // has no verdict. [Schema] and [SourcedSchema] are the JSON Schemas that
-// constrain agent output. Storage-only version 0 carries original historical
+// constrain agent output, and [ConversionSchema] and [ConversionSourcedSchema]
+// constrain converted historical reviews. Storage-only version 0 carries original historical
 // Markdown in Legacy, without extracted findings.
 package structuredreview
 
@@ -87,18 +88,38 @@ const (
 )
 
 // Schema constrains a single reviewer's output.
-var Schema = schema(false)
+var Schema = schema(false, false)
 
 // SourcedSchema additionally requires every finding to cite the 1-based
 // numbers of the input reviews that reported it. Synthesis uses it so a
 // combined finding keeps its provenance.
-var SourcedSchema = schema(true)
+var SourcedSchema = schema(true, false)
 
-func schema(withSources bool) jsontext.Value {
-	required := `["severity", "kind", "topic", "confidence", "problem", "fix", "file", "start_line", "end_line"]`
+// ConversionSchema constrains a historical review that an agent converts
+// without reviewing the code again. Historical reviews often lack a verdict,
+// a kind, a confidence, or a file, so those may be null, and a finding may
+// carry a free-text location instead of a file. [Decode] accepts every
+// document it allows.
+var ConversionSchema = schema(false, true)
+
+// ConversionSourcedSchema is [ConversionSchema] for a combined review, with
+// the sources that [SourcedSchema] requires.
+var ConversionSourcedSchema = schema(true, true)
+
+func schema(withSources, conversion bool) jsontext.Value {
+	required := `"severity", "kind", "topic", "confidence", "problem", "fix", "file", "start_line", "end_line"`
+	// A live agent must state a verdict, a kind, and a confidence.
+	verdictType, kindType, confidenceType, nullable := `"string"`, `"string"`, `"number"`, ""
+	location := ""
+	if conversion {
+		verdictType, kindType, confidenceType, nullable = `["string", "null"]`, `["string", "null"]`, `["number", "null"]`, ", null"
+		required += `, "location"`
+		location = `,
+          "location": {"type": ["string", "null"]}`
+	}
 	sources := ""
 	if withSources {
-		required = `["severity", "kind", "topic", "confidence", "problem", "fix", "file", "start_line", "end_line", "sources"]`
+		required += `, "sources"`
 		sources = `,
           "sources": {
             "type": "array",
@@ -113,39 +134,40 @@ func schema(withSources bool) jsontext.Value {
   "properties": {
     "schema_version": {"type": "integer", "const": %d},
     "summary": {"type": "string", "minLength": 1},
-    "verdict": {"type": "string", "enum": [%q, %q, %q]},
+    "verdict": {"type": %s, "enum": [%q, %q, %q%s]},
     "findings": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": %s,
+        "required": [%s],
         "properties": {
           "severity": {
             "type": "string",
             "enum": ["critical", "high", "medium", "low"]
           },
           "kind": {
-            "type": "string",
-            "enum": [%q, %q]
+            "type": %s,
+            "enum": [%q, %q%s]
           },
           "topic": {
             "type": ["string", "null"],
             "enum": [%q, %q, %q, %q, %q, null]
           },
-          "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+          "confidence": {"type": %s, "minimum": 0, "maximum": 1},
           "problem": {"type": "string", "minLength": 1},
           "fix": {"type": "string", "minLength": 1},
           "file": {"type": ["string", "null"]},
           "start_line": {"type": ["integer", "null"], "minimum": 1},
-          "end_line": {"type": ["integer", "null"], "minimum": 1}%s
+          "end_line": {"type": ["integer", "null"], "minimum": 1}%s%s
         }
       }
     }
   }
-}`, SchemaVersion, VerdictPass, VerdictFail, VerdictUnableToReview, required,
-		KindDefect, KindImprovement,
-		TopicTests, TopicDocumentation, TopicSecurity, TopicPerformance, TopicDesign, sources))
+}`, SchemaVersion, verdictType, VerdictPass, VerdictFail, VerdictUnableToReview, nullable,
+		required, kindType, KindDefect, KindImprovement, nullable,
+		TopicTests, TopicDocumentation, TopicSecurity, TopicPerformance, TopicDesign,
+		confidenceType, location, sources))
 }
 
 // LegacyDocument preserves historical output without claiming extracted findings.
