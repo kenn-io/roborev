@@ -103,6 +103,34 @@ func TestSettleFindingsReadsTheWorkingTreeForUncommittedChanges(t *testing.T) {
 	assert.Equal(t, "new.go:3-4", doc.Findings[0].Location)
 }
 
+// In the working tree, only a missing path or a directory proves a finding
+// names no file. A file that exists but cannot be read keeps its location.
+func TestSettleFindingsDropsWorkingTreeLocationsOnlyForMissingFiles(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	repo.WriteFile("pkg/real.go", numberedLines(4))
+	outside := filepath.Join(t.TempDir(), "outside.go")
+	require.NoError(t, os.WriteFile(outside, []byte(numberedLines(4)), 0o644))
+	if err := os.Symlink(outside, filepath.Join(repo.Path(), "escape.go")); err != nil {
+		t.Skipf("cannot create symlinks: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name, file, want string
+	}{
+		{"missing file", "gone.go", ""},
+		{"directory", "pkg", ""},
+		{"path below a file", "pkg/real.go/inner.go", ""},
+		{"unreadable symlink out of the checkout", "escape.go", "escape.go:2-3"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := structuredreview.Document{Findings: []structuredreview.Finding{located(tc.file, 2, 3)}}
+			settleFindings(context.Background(), repo.Path(), "dirty", &doc)
+
+			assert.Equal(t, tc.want, doc.Findings[0].Location)
+		})
+	}
+}
+
 func TestSettleFindingsLeavesLocationsWhenTheCheckoutIsMissing(t *testing.T) {
 	doc := structuredreview.Document{Findings: []structuredreview.Finding{located("main.go", 3, 4)}}
 	settleFindings(context.Background(), filepath.Join(t.TempDir(), "gone"), "dirty", &doc)
