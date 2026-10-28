@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import {
+  jobIds,
   jobRow,
   olderJobsMarker,
   openReview,
@@ -198,25 +199,29 @@ test.describe.serial("native review workspace", () => {
     await expect(page.locator(".count-done")).toContainText("0 done");
 
     await selectStatus(page, "All statuses");
-    const firstId = async () =>
-      Number(
-        (await page.locator(".col-id .job-id").first().textContent())?.trim(),
-      );
     const idHeader = page.getByRole("columnheader", { name: "ID" });
-    const newestFirst = await firstId();
     await idHeader.getByRole("button").click();
     await expect(idHeader).toHaveAttribute("aria-sort", "descending");
-    await expect(page.locator(".sort-scope")).toContainText(
-      "Sorted by ID across the 50 most recent jobs",
-    );
     await idHeader.getByRole("button").click();
     await expect(idHeader).toHaveAttribute("aria-sort", "ascending");
-    expect(await firstId()).toBeLessThan(newestFirst);
+    await expect(jobIds(page)).toHaveText(
+      Array.from({ length: 50 }, (_, index) => String(index + 1)),
+    );
 
+    const pageRequest = page.waitForRequest((request) => {
+      const url = new URL(request.url());
+      return url.pathname === "/api/jobs" && url.searchParams.has("cursor");
+    });
     await scrollJobsToEnd(page);
+    const pageQuery = new URL((await pageRequest).url()).searchParams;
+    expect(pageQuery.get("sort")).toBe("id");
+    expect(pageQuery.get("direction")).toBe("asc");
     await expect(olderJobsMarker(page)).toHaveCount(0);
-    await expect(page.locator(".sort-scope")).toBeHidden();
-    expect(await firstId()).toBe(1);
+    // Jobs 54 and 55 are panel members and list under their panel row.
+    await expect(jobIds(page)).toHaveText([
+      ...Array.from({ length: 53 }, (_, index) => String(index + 1)),
+      "56",
+    ]);
 
     const closedHeader = page.getByRole("columnheader", {
       name: "Closed",

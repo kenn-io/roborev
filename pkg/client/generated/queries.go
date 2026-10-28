@@ -229,8 +229,14 @@ type ListJobsQuery struct {
 	// Before Deprecated numeric job cursor retained for compatibility
 	Before *int64 `json:"before,omitempty"`
 
-	// Cursor Opaque next_cursor from a previous page; resumes after its immutable enqueue-time position
+	// Cursor Opaque next_cursor from a previous page with the same sort; resumes after its last job
 	Cursor *string `json:"cursor,omitempty"`
+
+	// Sort Order by id, repo, agent, review_type, status, verdict, closed, elapsed, cost, or enqueued_at (default); ties break by id
+	Sort *string `json:"sort,omitempty"`
+
+	// Direction Sort direction: asc or desc (default)
+	Direction *string `json:"direction,omitempty"`
 }
 
 func (l ListJobsQuery) Validate() error {

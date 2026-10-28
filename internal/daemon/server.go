@@ -1746,14 +1746,36 @@ func (s *Server) humaListJobs(
 	if input.Cursor != "" && input.Before > 0 {
 		return nil, huma.Error400BadRequest("cursor and before are mutually exclusive")
 	}
-	position, enqueuedAt, cursorErr := s.decodeJobListCursor(input.Cursor)
+	sortColumn, sortErr := storage.ParseJobSortColumn(input.Sort)
+	if sortErr != nil {
+		return nil, huma.Error400BadRequest(sortErr.Error())
+	}
+	sort := storage.JobSort{Column: sortColumn}
+	switch input.Direction {
+	case "", "desc":
+	case "asc":
+		sort.Ascending = true
+	default:
+		return nil, huma.Error400BadRequest(
+			fmt.Sprintf("unknown sort direction %q", input.Direction),
+		)
+	}
+	if input.Before > 0 && (sort.Column != storage.JobSortEnqueuedAt || sort.Ascending) {
+		return nil, huma.Error400BadRequest("before requires the default enqueued_at desc sort; use cursor")
+	}
+	position, asOf, cursorErr := s.decodeJobListCursor(input.Cursor, sort)
 	if cursorErr != nil {
 		return nil, huma.Error400BadRequest(cursorErr.Error())
 	}
+	if sort.Column == storage.JobSortElapsed {
+		sort.AsOf = asOf
+		if position == nil {
+			sort.AsOf = time.Now()
+		}
+	}
+	listOpts = append(listOpts, storage.WithSort(sort))
 	if position != nil {
-		listOpts = append(
-			listOpts, storage.WithBeforePosition(enqueuedAt, position.JobID),
-		)
+		listOpts = append(listOpts, storage.WithSortAfter(*position))
 	} else if input.Before > 0 {
 		listOpts = append(
 			listOpts, storage.WithBeforeCursor(input.Before),
@@ -1779,6 +1801,9 @@ func (s *Server) humaListJobs(
 	jobs, err := s.db.ListJobs(
 		input.Status, repo, fetchLimit, offset, listOpts...,
 	)
+	if errors.Is(err, storage.ErrInvalidSortPosition) {
+		return nil, huma.Error400BadRequest(fmt.Sprintf("invalid jobs cursor: %v", err))
+	}
 	if err != nil {
 		return nil, huma.Error500InternalServerError(
 			fmt.Sprintf("list jobs: %v", err),
@@ -1792,7 +1817,7 @@ func (s *Server) humaListJobs(
 	}
 	var nextCursor *string
 	if hasMore && len(jobs) > 0 {
-		encoded, cursorErr := s.encodeJobListCursor(jobs[len(jobs)-1])
+		encoded, cursorErr := s.encodeJobListCursor(jobs[len(jobs)-1], sort)
 		if cursorErr != nil {
 			return nil, huma.Error500InternalServerError(
 				fmt.Sprintf("encode jobs cursor: %v", cursorErr),

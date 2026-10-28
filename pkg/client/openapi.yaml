@@ -5987,12 +5987,26 @@ paths:
             description: Deprecated numeric job cursor retained for compatibility
             format: int64
             type: integer
-        - description: Opaque next_cursor from a previous page; resumes after its immutable enqueue-time position
+        - description: Opaque next_cursor from a previous page with the same sort; resumes after its last job
           explode: false
           in: query
           name: cursor
           schema:
-            description: Opaque next_cursor from a previous page; resumes after its immutable enqueue-time position
+            description: Opaque next_cursor from a previous page with the same sort; resumes after its last job
+            type: string
+        - description: Order by id, repo, agent, review_type, status, verdict, closed, elapsed, cost, or enqueued_at (default); ties break by id
+          explode: false
+          in: query
+          name: sort
+          schema:
+            description: Order by id, repo, agent, review_type, status, verdict, closed, elapsed, cost, or enqueued_at (default); ties break by id
+            type: string
+        - description: "Sort direction: asc or desc (default)"
+          explode: false
+          in: query
+          name: direction
+          schema:
+            description: "Sort direction: asc or desc (default)"
             type: string
       responses:
         "200":

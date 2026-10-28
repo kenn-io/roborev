@@ -70,17 +70,15 @@ Ref search previews results as you type. Press Enter to submit the current text
 immediately, without waiting for the preview delay.
 
 The table loads the most recent jobs first. Scroll to the end of the table to
-load the next page of older jobs; loading continues until the table fills its
-scroll area or no older jobs remain. The table holds at most 10,000 jobs; a note
-at the end says when it stops at that limit, and filters reach older jobs. If a
-page fails to load, the table shows an error with a **Retry** button.
+load the next page; loading continues until the table fills its scroll area or
+no more jobs remain. The table holds at most 10,000 jobs; a note at the end says
+when it stops at that limit, and filters reach the rest. If a page fails to
+load, the table shows an error with a **Retry** button.
 
 Select a column header to sort by that column; select it again to reverse the
-order. Numeric and time columns sort largest or newest first. Sorting reorders
-the jobs already loaded in the browser. While older jobs remain unloaded, a note
-under the table says so. Scrolling to the end still fetches the next page in
-queue order and adds it to the sorted list. When those older jobs sort above the
-view, scroll away from the end and back to load the next page.
+order. Numeric and time columns sort largest or newest first. The daemon sorts
+every job that matches the filters. Changing the sort reloads the table from the
+top, and each page you scroll to continues in the same order.
 
 Each row fits on one line: the commit column shows the repository, branch, short
 ref, and commit subject, and the Agent column shows the model beside the agent.

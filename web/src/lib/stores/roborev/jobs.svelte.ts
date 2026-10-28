@@ -12,12 +12,7 @@ import type {
   ListJobsParams,
   ReviewJob,
 } from "../../api/generated/models";
-import {
-  isPanelParent,
-  panelCostUsd,
-  panelElapsedStart,
-} from "../../utils/roborev-panel";
-import { reviewTypeColumnLabel } from "../../utils/roborev-review-type";
+import { isPanelParent } from "../../utils/roborev-panel";
 import { reportCoreAction } from "../../utils/app-opened";
 import {
   makeRoborevOwner,
@@ -158,6 +153,9 @@ export function createJobsStore(opts: JobsStoreOptions) {
   // State
   let jobs = $state<ReviewJob[]>([]);
   let loading = $state(false);
+  // Identifies the request that set `loading`. A replaced request finishes
+  // after its successor starts and must not clear the successor's flag.
+  let loadingRequest = 0;
   let hasMore = $state(false);
   let allResultsLoaded = $state(true);
   let nextCursor: string | undefined;
@@ -183,6 +181,9 @@ export function createJobsStore(opts: JobsStoreOptions) {
   let jobsAuthorityGeneration = 0;
   let publishedJobsRevision = 0;
   let publishedJobsAuthority: JobsAuthority | undefined;
+  // filterScope() of the rows and cursor in `jobs`. A page loaded for an
+  // older filter or sort must not continue or extend the current list.
+  let pageScope: string | undefined;
 
   // Filters
   let filterRepo = $state<string | undefined>(undefined);
@@ -191,10 +192,8 @@ export function createJobsStore(opts: JobsStoreOptions) {
   let filterSearch = $state<string | undefined>(undefined);
   let filterJobType = $state<string | undefined>(undefined);
 
-  // Sorting (client-side). Sorting reorders the loaded rows only; paging
-  // always continues from the daemon's enqueue-order cursor. daemonOrder
-  // records that order so the default sort can be restored exactly.
-  let daemonOrder = new Map<number, number>();
+  // Sorting runs in the daemon. Every list request carries the sort, and
+  // pages arrive in that order.
   let sortColumn = $state<SortColumn>("enqueued_at");
   let sortDirection = $state<SortDirection>("desc");
 
@@ -212,7 +211,12 @@ export function createJobsStore(opts: JobsStoreOptions) {
   let activeEventOwner: string | undefined;
 
   function buildQuery(): ListJobsQuery {
-    const q: ListJobsQuery = { limit: loadedLimit, omit_prompt: "true" };
+    const q: ListJobsQuery = {
+      limit: loadedLimit,
+      omit_prompt: "true",
+      sort: sortColumn,
+      direction: sortDirection,
+    };
     if (filterRepo) q.repo = [filterRepo];
     if (filterBranch === "(none)") q.branch_empty = "true";
     else if (filterBranch) q.branch = filterBranch;
@@ -256,21 +260,6 @@ export function createJobsStore(opts: JobsStoreOptions) {
     };
   }
 
-  function getElapsedSeconds(job: ReviewJob): number {
-    const startedAt = panelElapsedStart(job, getPanelMembersForJob(job));
-    if (!startedAt) return -1;
-    const start = new Date(startedAt).getTime();
-    const end = job.finished_at
-      ? new Date(job.finished_at).getTime()
-      : Date.now();
-    return Math.max(0, Math.floor((end - start) / 1000));
-  }
-
-  function getPanelMembersForJob(job: ReviewJob): ReviewJob[] | undefined {
-    const runUuid = job.panel_run_uuid;
-    return runUuid ? panelMembers[runUuid] : undefined;
-  }
-
   function getPanelParentForMemberId(memberId: number): ReviewJob | undefined {
     for (const job of jobs) {
       const runUuid = job.panel_run_uuid;
@@ -284,52 +273,6 @@ export function createJobsStore(opts: JobsStoreOptions) {
 
   function wantsPanelMembers(runUuid: string): boolean {
     return expandedPanels[runUuid] === true || interestedPanelRun === runUuid;
-  }
-
-  function getSortValue(job: ReviewJob, col: SortColumn): string | number {
-    switch (col) {
-      case "id":
-        return job.id;
-      case "repo":
-        return `${job.repo_name ?? ""}\u0000${job.branch ?? ""}`;
-      case "closed":
-        return job.closed === undefined ? -1 : Number(job.closed);
-      case "status":
-        return job.status;
-      case "verdict":
-        return job.verdict ?? "";
-      case "agent":
-        return job.agent;
-      case "review_type":
-        return reviewTypeColumnLabel(job);
-      case "elapsed":
-        return getElapsedSeconds(job);
-      case "cost":
-        return panelCostUsd(job, getPanelMembersForJob(job)) ?? -1;
-      case "enqueued_at":
-        return job.enqueued_at;
-      default:
-        return job.id;
-    }
-  }
-
-  function sortJobs(list: ReviewJob[]): ReviewJob[] {
-    // The daemon already returns this order using its cursor-compatible,
-    // normalized timestamp expression. Restore it exactly, including for
-    // legacy rows whose timestamp text uses a different format.
-    if (sortColumn === "enqueued_at" && sortDirection === "desc") {
-      const rank = (job: ReviewJob) =>
-        daemonOrder.get(job.id) ?? Number.MAX_SAFE_INTEGER;
-      return [...list].sort((a, b) => rank(a) - rank(b));
-    }
-    const dir = sortDirection === "asc" ? 1 : -1;
-    return [...list].sort((a, b) => {
-      const av = getSortValue(a, sortColumn);
-      const bv = getSortValue(b, sortColumn);
-      if (av < bv) return -1 * dir;
-      if (av > bv) return 1 * dir;
-      return 0;
-    });
   }
 
   const fetchJobsAuthority = Effect.fn("RoborevJobs.fetchAuthority")(function* (
@@ -380,10 +323,8 @@ export function createJobsStore(opts: JobsStoreOptions) {
       if (JSON.stringify(buildQuery()) !== authority.queryScope) return [];
       publishedJobsRevision += 1;
       publishedJobsAuthority = authority;
-      daemonOrder = new Map(
-        authority.jobs.map((job, index) => [job.id, index]),
-      );
-      jobs = sortJobs([...authority.jobs]);
+      pageScope = filterScope();
+      jobs = [...authority.jobs];
       hasMore = authority.hasMore && jobs.length < MAX_LOADED_JOBS;
       allResultsLoaded = !authority.hasMore;
       nextCursor = authority.nextCursor;
@@ -426,6 +367,16 @@ export function createJobsStore(opts: JobsStoreOptions) {
       return authority;
     });
 
+  function startLoading(): number {
+    loadingRequest += 1;
+    loading = true;
+    return loadingRequest;
+  }
+
+  function finishLoading(request: number): void {
+    if (request === loadingRequest) loading = false;
+  }
+
   const loadJobsRequestEffect = (
     requestOwner = opts.owner,
     reportFailure = true,
@@ -433,10 +384,11 @@ export function createJobsStore(opts: JobsStoreOptions) {
     Effect.gen(function* () {
       const workflow = yield* RoborevWorkflow;
       const query = buildQuery();
+      let request = 0;
       return yield* workflow.jobs(
         requestOwner,
         Effect.sync(() => {
-          loading = true;
+          request = startLoading();
           storeError = null;
           loadMoreError = null;
           const countScope = JSON.stringify(query);
@@ -444,11 +396,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
             filteredStatusCounts = undefined;
         }).pipe(
           Effect.andThen(refreshJobsAuthority(query, reportFailure)),
-          Effect.ensuring(
-            Effect.sync(() => {
-              loading = false;
-            }),
-          ),
+          Effect.ensuring(Effect.sync(() => finishLoading(request))),
         ),
       );
     });
@@ -469,6 +417,8 @@ export function createJobsStore(opts: JobsStoreOptions) {
   const loadMoreEffect = () =>
     Effect.gen(function* () {
       if (!hasMore || loading || jobs.length === 0) return;
+      const scope = filterScope();
+      if (pageScope !== scope) return;
       if (jobs.length >= MAX_LOADED_JOBS) {
         hasMore = false;
         return;
@@ -498,11 +448,12 @@ export function createJobsStore(opts: JobsStoreOptions) {
       const pageStillApplies = () =>
         generation === jobsAuthorityGeneration &&
         revision === publishedJobsRevision;
+      let request = 0;
       yield* workflow.jobs(
         opts.owner,
         Effect.gen(function* () {
           yield* Effect.sync(() => {
-            loading = true;
+            request = startLoading();
             loadMoreError = null;
           });
           const result = yield* executeRoborevRequest(
@@ -520,14 +471,14 @@ export function createJobsStore(opts: JobsStoreOptions) {
             ),
           );
           yield* Effect.sync(() => {
+            if (pageScope !== scope) return;
             if (!pageStillApplies()) return;
             const existingIds = new Set(jobs.map((job) => job.id));
             const remaining = MAX_LOADED_JOBS - jobs.length;
             const fresh = (result.jobs ?? [])
               .filter((job) => !existingIds.has(job.id))
               .slice(0, remaining);
-            for (const job of fresh) daemonOrder.set(job.id, daemonOrder.size);
-            jobs = sortJobs([...jobs, ...fresh]);
+            jobs = [...jobs, ...fresh];
             hasMore =
               (result.has_more ?? false) && jobs.length < MAX_LOADED_JOBS;
             allResultsLoaded = !(result.has_more ?? false);
@@ -542,11 +493,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
                 failure instanceof Error ? failure.message : String(failure);
             }),
           ),
-          Effect.ensuring(
-            Effect.sync(() => {
-              loading = false;
-            }),
-          ),
+          Effect.ensuring(Effect.sync(() => finishLoading(request))),
         ),
       );
     });
@@ -651,7 +598,8 @@ export function createJobsStore(opts: JobsStoreOptions) {
       sortColumn = col;
       sortDirection = DESCENDING_FIRST.has(col) ? "desc" : "asc";
     }
-    jobs = sortJobs(jobs);
+    loadedLimit = DEFAULT_PAGE_LIMIT;
+    loadJobs();
   }
 
   // Job actions
@@ -875,8 +823,6 @@ export function createJobsStore(opts: JobsStoreOptions) {
             delete memberErrors[runUuid];
             panelMemberErrors = memberErrors;
             adjustHiddenHighlight(runUuid);
-            if (sortColumn === "cost" || sortColumn === "elapsed")
-              jobs = sortJobs(jobs);
           }),
         onFailure: (failure) =>
           Effect.sync(() => {
