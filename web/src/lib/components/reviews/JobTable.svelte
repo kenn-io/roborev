@@ -61,6 +61,19 @@
       jobsStore.getLoadMoreError() === null,
   );
 
+  const hitJobLimit = $derived(
+    jobsStore !== undefined &&
+      jobsStore.getJobs().length > 0 &&
+      !jobsStore.getHasMore() &&
+      !jobsStore.areAllJobsLoaded(),
+  );
+
+  // Row count when a page was requested from a full table. Under an
+  // oldest-first sort, older pages land above the view and the browser keeps
+  // the end in view, so the next page waits until the sentinel leaves view or
+  // the list is replaced with no more rows than this.
+  let rowsAtFullLoad = -1;
+
   // A new observer reports the sentinel's position once on observe(). The
   // effect builds one each time a load finishes, so a page that leaves the
   // sentinel in view loads the next page until the table fills the scroll
@@ -69,13 +82,20 @@
   // request.
   $effect(() => {
     if (!canLoadMore || !scroller || !sentinel) return;
+    const root = scroller;
     const observer = new IntersectionObserver(
       (entries) => {
-        if (!entries.some((entry) => entry.isIntersecting)) return;
+        if (!entries.some((entry) => entry.isIntersecting)) {
+          rowsAtFullLoad = -1;
+          return;
+        }
+        const rows = jobsStore.getJobs().length;
+        if (rowsAtFullLoad >= 0 && rows > rowsAtFullLoad) return;
         observer.disconnect();
+        rowsAtFullLoad = root.scrollHeight > root.clientHeight ? rows : -1;
         jobsStore.loadMore();
       },
-      { root: scroller, rootMargin: "0px 0px 200px 0px" },
+      { root, rootMargin: "0px 0px 200px 0px" },
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
@@ -212,12 +232,21 @@
     </div>
   {/if}
 
+  {#if hitJobLimit && jobsStore}
+    <div class="loading-bar">
+      Showing the {jobsStore.getJobs().length} most recent jobs, the most the table
+      loads. Filter the list to reach older jobs.
+    </div>
+  {/if}
+
   {#if partialSort && jobsStore}
     <div class="table-footer">
       <span class="sort-scope" role="status">
         Sorted by {sortLabels[jobsStore.getSortColumn()]} across the
-        {jobsStore.getJobs().length} most recent jobs. Scroll to the end to load older
-        jobs.
+        {jobsStore.getJobs().length} most recent jobs.
+        {#if jobsStore.getLoadMoreError() === null && !hitJobLimit}
+          Scroll to the end to load older jobs.
+        {/if}
       </span>
     </div>
   {/if}
@@ -286,7 +315,11 @@
     color: var(--accent-red);
   }
 
+  /* Sticky so the sentinel stays inside the observed area when a wide table
+     is scrolled right by more than the wrapper's width. */
   .scroll-sentinel {
+    position: sticky;
+    left: 0;
     height: 1px;
   }
 

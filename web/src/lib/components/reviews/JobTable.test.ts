@@ -22,8 +22,11 @@ vi.mock("../../stores/context", () => ({
 // jsdom has no layout, so this observer models the table's scroll area: the
 // end sentinel is in view while fewer rows than `rowsThatFit` are rendered, or
 // when the user has scrolled to the end and no rows have been added since.
+// `endStaysInView` models the browser keeping the end in view when new rows
+// sort above it.
 let rowsThatFit = 0;
 let rowsAtScrollEnd = -1;
+let endStaysInView = false;
 const observers = new Set<FakeIntersectionObserver>();
 
 function renderedRows(): number {
@@ -32,7 +35,11 @@ function renderedRows(): number {
 
 function sentinelInView(): boolean {
   const rows = renderedRows();
-  return rows < rowsThatFit || rows <= rowsAtScrollEnd;
+  return (
+    rows < rowsThatFit ||
+    rows <= rowsAtScrollEnd ||
+    (endStaysInView && rowsAtScrollEnd >= 0)
+  );
 }
 
 class FakeIntersectionObserver {
@@ -45,10 +52,6 @@ class FakeIntersectionObserver {
     observers.add(this);
     // Browsers report a newly observed target's position asynchronously.
     queueMicrotask(() => this.report());
-  }
-
-  unobserve(target: Element): void {
-    this.targets.delete(target);
   }
 
   disconnect(): void {
@@ -72,6 +75,11 @@ class FakeIntersectionObserver {
 
 function scrollToEnd(): void {
   rowsAtScrollEnd = renderedRows();
+  for (const observer of observers) observer.report();
+}
+
+function scrollAwayFromEnd(): void {
+  rowsAtScrollEnd = -1;
   for (const observer of observers) observer.report();
 }
 
@@ -133,6 +141,9 @@ function mountTable(
   });
   context.jobs = store;
   render(JobTable);
+  const region = screen.getByRole("region", { name: "Review jobs" });
+  Object.defineProperty(region, "scrollHeight", { get: renderedRows });
+  Object.defineProperty(region, "clientHeight", { get: () => rowsThatFit });
   store.loadJobs();
   return api;
 }
@@ -152,6 +163,7 @@ describe("JobTable infinite scroll", () => {
     localStorage.clear();
     rowsThatFit = 0;
     rowsAtScrollEnd = -1;
+    endStaysInView = false;
     vi.stubGlobal("IntersectionObserver", FakeIntersectionObserver);
     runtime = makeTestAppRuntime();
   });
@@ -291,5 +303,47 @@ describe("JobTable infinite scroll", () => {
 
     await vi.waitFor(() => expect(renderedRows()).toBe(20));
     expect(pageRequests(api).at(-1)?.status).toBe("done");
+  });
+  it("waits for a fresh scroll when older pages sort above the view", async () => {
+    rowsThatFit = 5;
+    const serve = pagedJobs(10, 5);
+    const api = mountTable(async (query) => serve(query));
+    await vi.waitFor(() => expect(renderedRows()).toBe(10));
+    context.jobs?.setSortColumn("id");
+    context.jobs?.setSortColumn("id");
+    expect(context.jobs?.getSortDirection()).toBe("asc");
+    endStaysInView = true;
+
+    scrollToEnd();
+    await vi.waitFor(() => expect(renderedRows()).toBe(20));
+    await settle();
+    expect(pageRequests(api)).toHaveLength(1);
+
+    scrollAwayFromEnd();
+    scrollToEnd();
+    await vi.waitFor(() => expect(renderedRows()).toBe(30));
+    await settle();
+    expect(pageRequests(api)).toHaveLength(2);
+  });
+
+  it("drops the scroll hint while a failed page waits for retry", async () => {
+    rowsThatFit = 5;
+    const serve = pagedJobs(10, 2);
+    mountTable(async (query) => {
+      if (isPageRequest(query)) throw new Error("daemon unavailable");
+      return serve(query);
+    });
+    await vi.waitFor(() => expect(renderedRows()).toBe(10));
+    context.jobs?.setSortColumn("id");
+    const note = await screen.findByText(/^Sorted by ID/);
+    expect(note).toHaveTextContent("Scroll to the end to load older jobs.");
+
+    scrollToEnd();
+    await screen.findByRole("alert");
+
+    expect(note).toHaveTextContent(
+      "Sorted by ID across the 10 most recent jobs.",
+    );
+    expect(note).not.toHaveTextContent("Scroll to the end");
   });
 });

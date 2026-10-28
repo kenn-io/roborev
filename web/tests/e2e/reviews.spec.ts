@@ -98,6 +98,24 @@ test.describe.serial("native review workspace", () => {
     await expect(olderJobsMarker(page)).toHaveCount(0);
   });
 
+  test("loads older pages while the job table is scrolled right", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 360, height: 640 });
+    await openReviews(page);
+    await expect(page.locator(".job-row")).toHaveCount(50);
+
+    const region = page.getByRole("region", { name: "Review jobs" });
+    const scrolledPastWidth = await region.evaluate((element) => {
+      element.scrollLeft = element.scrollWidth;
+      return element.scrollLeft > element.clientWidth;
+    });
+    expect(scrolledPastWidth).toBe(true);
+
+    await scrollJobsToEnd(page);
+    await expect(page.locator(".job-row")).toHaveCount(54);
+  });
+
   test("retries an older page that failed to load", async ({ page }) => {
     let failPages = true;
     await page.route("**/api/jobs?**", async (route) => {
