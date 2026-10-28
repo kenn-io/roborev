@@ -40,7 +40,7 @@ require (
 	gitlab.com/gitlab-org/api/client-go/v3 v3.39.0
 	go.kenn.io/kit v0.45.0
 	golang.org/x/mod v0.42.0
-	golang.org/x/net v0.61.0
+	golang.org/x/net v0.62.0
 	golang.org/x/sys v0.49.0
 	golang.org/x/term v0.47.0
 	gopkg.in/yaml.v3 v3.0.1
