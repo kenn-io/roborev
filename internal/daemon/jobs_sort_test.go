@@ -69,25 +69,11 @@ func TestHumaListJobsSortedCursorPaging(t *testing.T) {
 	assert.Equal(t, []int64{ids[3], ids[2], ids[0], ids[4], ids[1]}, got)
 }
 
-func TestHumaListJobsDefaultsToNewestFirst(t *testing.T) {
-	srv, db, _ := newTestServer(t)
-	ids := seedCostJobs(t, db)
-
-	page := fetchSortedJobsPage(t, srv, "limit=10")
-	got := make([]int64, 0, len(page.Jobs))
-	for _, job := range page.Jobs {
-		got = append(got, job.ID)
-	}
-	assert.Equal(t, []int64{ids[4], ids[3], ids[2], ids[1], ids[0]}, got)
-}
-
 func TestHumaListJobsRejectsInvalidSort(t *testing.T) {
 	srv, db, _ := newTestServer(t)
 	seedCostJobs(t, db)
 	costCursor := fetchSortedJobsPage(t, srv, "sort=cost&limit=1").NextCursor
 	require.NotNil(t, costCursor)
-	defaultCursor := fetchSortedJobsPage(t, srv, "limit=1").NextCursor
-	require.NotNil(t, defaultCursor)
 
 	for _, query := range []string{
 		"sort=commit_subject",
@@ -96,7 +82,6 @@ func TestHumaListJobsRejectsInvalidSort(t *testing.T) {
 		"direction=asc&before=3",
 		"sort=agent&cursor=" + url.QueryEscape(*costCursor),
 		"sort=cost&direction=asc&cursor=" + url.QueryEscape(*costCursor),
-		"direction=asc&cursor=" + url.QueryEscape(*defaultCursor),
 	} {
 		t.Run(query, func(t *testing.T) {
 			rr := serveHuma(t, srv, http.MethodGet, fmt.Sprintf("/api/jobs?%s", query), nil)

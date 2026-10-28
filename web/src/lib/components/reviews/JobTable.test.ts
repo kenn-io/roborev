@@ -124,7 +124,7 @@ function pagedJobs(pageSize: number, pageCount: number) {
 }
 
 function isPageRequest(query: ListJobsParams): boolean {
-  return query.cursor !== undefined || query.before !== undefined;
+  return query.cursor !== undefined;
 }
 
 let runtime: OwnedAppRuntime;
@@ -336,5 +336,113 @@ describe("JobTable infinite scroll", () => {
       sort: "id",
       direction: "asc",
     });
+  });
+});
+
+describe("JobTable sort reload", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    rowsThatFit = 0;
+    rowsAtScrollEnd = -1;
+    vi.stubGlobal("IntersectionObserver", FakeIntersectionObserver);
+    runtime = makeTestAppRuntime();
+  });
+
+  afterEach(async () => {
+    cleanup();
+    context.jobs?.dispose();
+    context.jobs = undefined;
+    observers.clear();
+    vi.unstubAllGlobals();
+    await Effect.runPromise(runtime.disposeEffect);
+  });
+
+  // Newest first by default; oldest first by ID once the ID header is
+  // clicked twice (descending, then ascending).
+  function serveBySort(query: ListJobsParams): JobsPage {
+    const ascending = query.sort === "id" && query.direction === "asc";
+    return {
+      jobs: [3, 2, 1].map((id) => makeJob(ascending ? 4 - id : id)),
+      has_more: false,
+      next_cursor: null,
+      stats: { done: 3, closed: 0, open: 3 },
+    };
+  }
+
+  function idHeaderButton(): HTMLElement {
+    return within(screen.getByRole("columnheader", { name: "ID" })).getByRole(
+      "button",
+    );
+  }
+
+  function headerGroup(): HTMLElement {
+    const group = screen.getByRole("table").querySelector("thead");
+    if (group === null) throw new Error("job table has no header");
+    return group;
+  }
+
+  it("marks the rows busy until the new order arrives", async () => {
+    const reply = Promise.withResolvers<void>();
+    mountTable(async (query) => {
+      if (query.sort === "id") await reply.promise;
+      return serveBySort(query);
+    });
+    await vi.waitFor(() => expect(renderedIds()).toEqual([3, 2, 1]));
+    const table = screen.getByRole("table");
+    expect(table).toHaveAttribute("aria-busy", "false");
+
+    await fireEvent.click(idHeaderButton());
+
+    expect(table).toHaveAttribute("aria-busy", "true");
+    reply.resolve();
+    await vi.waitFor(() => expect(table).toHaveAttribute("aria-busy", "false"));
+  });
+
+  it("shows a failed sort under the header and clears it after a reload", async () => {
+    let failSort = true;
+    mountTable(async (query) => {
+      if (query.sort === "id" && failSort) {
+        throw new Error("daemon unavailable");
+      }
+      return serveBySort(query);
+    });
+    await vi.waitFor(() => expect(renderedIds()).toEqual([3, 2, 1]));
+
+    await fireEvent.click(idHeaderButton());
+    await fireEvent.click(idHeaderButton());
+
+    const failure = await within(headerGroup()).findByRole("alert");
+    expect(failure).toHaveTextContent("Could not sort jobs.");
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(screen.getByRole("table")).toHaveAttribute("aria-busy", "false");
+    expect(renderedIds()).toEqual([3, 2, 1]);
+
+    failSort = false;
+    await fireEvent.click(
+      within(failure).getByRole("button", { name: "Retry" }),
+    );
+
+    await vi.waitFor(() => expect(renderedIds()).toEqual([1, 2, 3]));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("clears a failed sort when a filter change loads the new order", async () => {
+    let failSort = true;
+    mountTable(async (query) => {
+      if (query.sort === "id" && failSort) {
+        throw new Error("daemon unavailable");
+      }
+      return serveBySort(query);
+    });
+    await vi.waitFor(() => expect(renderedIds()).toEqual([3, 2, 1]));
+    await fireEvent.click(idHeaderButton());
+    await fireEvent.click(idHeaderButton());
+    await within(headerGroup()).findByRole("alert");
+
+    failSort = false;
+    context.jobs?.setFilter("status", "done");
+
+    await vi.waitFor(() => expect(renderedIds()).toEqual([1, 2, 3]));
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

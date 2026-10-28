@@ -4,8 +4,8 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"modernc.org/sqlite"
@@ -102,7 +102,8 @@ func jobSortKeys(sort JobSort, includeFindings bool) ([]string, []any) {
 	case JobSortClosed:
 		return []string{"COALESCE(rv.closed, -1)"}, nil
 	case JobSortElapsed:
-		return []string{jobElapsedSortExpr}, []any{sort.AsOf.UTC().Format(time.DateTime)}
+		asOf := sort.AsOf.UTC().Format(time.DateTime)
+		return []string{jobElapsedSortExpr}, slices.Repeat([]any{asOf}, strings.Count(jobElapsedSortExpr, "?"))
 	case JobSortCost:
 		return []string{jobCostSortExpr}, nil
 	default:
@@ -151,16 +152,23 @@ func jobVerdictSortExpr(includeFindings bool) string {
 		" ELSE roborev_parse_verdict(rv.output) END"
 }
 
-// jobElapsedSortExpr is a job's run time in whole seconds, or -1 before it
-// starts. An unfinished job runs to the bound AsOf time. A panel synthesis
-// row starts with its earliest member.
+// jobElapsedSortExpr is a job's run time in whole seconds as of the bound
+// AsOf time, or -1 for a job that had not started by then. Every "?" binds
+// AsOf. Measuring at AsOf keeps a job in place when it starts or finishes
+// between pages: its real finish time would otherwise move it past the cursor
+// and out of every later page. A panel synthesis row starts with its earliest
+// member.
 var jobElapsedSortExpr = func() string {
-	ownStart := "julianday(" + sqliteNormalizedTimestampExpr("j.started_at") + ")"
-	memberStart := "(SELECT MIN(julianday(" + sqliteNormalizedTimestampExpr("m.started_at") + ")) " + jobPanelMembersFrom + ")"
+	startOf := func(column string) string {
+		started := "julianday(" + sqliteNormalizedTimestampExpr(column) + ")"
+		return "CASE WHEN " + started + " <= julianday(?) THEN " + started + " END"
+	}
+	ownStart := startOf("j.started_at")
+	memberStart := "(SELECT MIN(" + startOf("m.started_at") + ") " + jobPanelMembersFrom + ")"
 	start := "CASE WHEN " + jobPanelParentCond +
 		" THEN COALESCE(MIN(" + ownStart + ", " + memberStart + "), " + ownStart + ", " + memberStart + ")" +
 		" ELSE " + ownStart + " END"
-	end := "julianday(COALESCE(" + sqliteNormalizedTimestampExpr("j.finished_at") + ", ?))"
+	end := "MIN(COALESCE(julianday(" + sqliteNormalizedTimestampExpr("j.finished_at") + "), julianday(?)), julianday(?))"
 	return "COALESCE(MAX(0, CAST(ROUND((" + end + " - (" + start + ")) * 86400) AS INTEGER)), -1)"
 }()
 
@@ -179,17 +187,6 @@ var jobCostSortExpr = func() string {
 		" THEN COALESCE((" + own + ") + " + members + ", " + own + ", " + members + ", -1)" +
 		" ELSE COALESCE(" + own + ", -1) END"
 }()
-
-// registerSortFunctions makes roborev_parse_verdict available to every
-// connection the sqlite driver opens afterwards. VolatileArgs passes review
-// text with its full length; the function keeps nothing from its argument.
-var registerSortFunctions = sync.OnceValue(func() error {
-	impl := &sqlite.FunctionImpl{NArgs: 1, Deterministic: true, VolatileArgs: true, Scalar: sqlParseVerdict}
-	if err := sqlite.RegisterFunction("roborev_parse_verdict", impl); err != nil {
-		return fmt.Errorf("register roborev_parse_verdict: %w", err)
-	}
-	return nil
-})
 
 func sqlParseVerdict(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
 	switch v := args[0].(type) {

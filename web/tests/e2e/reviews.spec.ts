@@ -232,6 +232,40 @@ test.describe.serial("native review workspace", () => {
     await expect(idHeader).not.toHaveAttribute("aria-sort");
   });
 
+  test("shows the start of a new sort order after scrolling down", async ({
+    page,
+  }) => {
+    await openReviews(page);
+    await scrollJobsToEnd(page);
+    await expect(page.locator(".job-row")).toHaveCount(54);
+    await scrollJobsToEnd(page);
+
+    const pageRequests: string[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (url.pathname === "/api/jobs" && url.searchParams.has("cursor")) {
+        pageRequests.push(url.search);
+      }
+    });
+    const idHeader = page.getByRole("columnheader", { name: "ID" });
+    await idHeader.getByRole("button").click();
+
+    await expect(idHeader).toHaveAttribute("aria-sort", "descending");
+    await expect(jobIds(page).first()).toHaveText("56");
+    await expect(jobRow(page, 56)).toBeInViewport();
+    await expect(page.locator(".job-row")).toHaveCount(50);
+    // Intersection observers report during rendering, so two frames give a
+    // sentinel left in view the chance to request another page.
+    await page.evaluate(
+      () =>
+        new Promise((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        ),
+    );
+    await expect(page.locator(".job-row")).toHaveCount(50);
+    expect(pageRequests).toEqual([]);
+  });
+
   test("filters by project, ref, and closed state", async ({ page }) => {
     await openReviews(page);
 

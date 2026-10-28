@@ -260,9 +260,6 @@ func Open(dbPath string) (*DB, error) {
 	if err := registerContentFunctions(); err != nil {
 		return nil, err
 	}
-	if err := registerSortFunctions(); err != nil {
-		return nil, err
-	}
 
 	// Open with WAL mode and busy timeout.
 	// 30s busy_timeout gives enough headroom for concurrent writers

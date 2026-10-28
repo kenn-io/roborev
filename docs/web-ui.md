@@ -77,8 +77,10 @@ load, the table shows an error with a **Retry** button.
 
 Select a column header to sort by that column; select it again to reverse the
 order. Numeric and time columns sort largest or newest first. The daemon sorts
-every job that matches the filters. Changing the sort reloads the table from the
-top, and each page you scroll to continues in the same order.
+every job that matches the filters. Changing the sort scrolls to the top and
+reloads the table; the rows dim until the new order arrives. Each page you
+scroll to continues in the same order. If the reload fails, the table keeps the
+previous rows and shows an error under the headers with a **Retry** button.
 
 Each row fits on one line: the commit column shows the repository, branch, short
 ref, and commit subject, and the Agent column shows the model beside the agent.

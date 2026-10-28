@@ -196,12 +196,33 @@ func TestListJobsRejectsSortPositionForAnotherColumn(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidSortPosition)
 }
 
-func TestParseJobSortColumn(t *testing.T) {
+func TestListJobsElapsedPagesKeepJobsThatChangeBetweenPages(t *testing.T) {
 	t.Parallel()
-	column, err := ParseJobSortColumn("")
-	require.NoError(t, err)
-	assert.Equal(t, JobSortEnqueuedAt, column)
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	ids := seedSortJobs(t, db, base)
+	asOf := base.Add(10 * time.Hour)
+	sort := WithSort(JobSort{Column: JobSortElapsed, AsOf: asOf})
+	members := WithExcludePanelRole(PanelRoleMember)
 
-	_, err = ParseJobSortColumn("commit_subject")
-	require.Error(t, err)
+	first, err := db.ListJobs("", "", 2, 0, sort, members)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{ids[5], ids[1]}, jobIDs(first))
+
+	// After the first page, the running job (50s at asOf) finishes an hour
+	// later, and the queued job starts and runs for two hours. Measured at
+	// their real times, both would sort above the cursor and be skipped.
+	_, err = db.Exec(`UPDATE review_jobs SET status = 'done', finished_at = ? WHERE id = ?`,
+		asOf.Add(time.Hour).Format(time.RFC3339), ids[3])
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE review_jobs SET status = 'done', started_at = ?, finished_at = ? WHERE id = ?`,
+		asOf.Add(time.Minute).Format(time.RFC3339), asOf.Add(2*time.Hour).Format(time.RFC3339), ids[4])
+	require.NoError(t, err)
+
+	last := first[len(first)-1]
+	rest, err := db.ListJobs("", "", 0, 0, sort, members,
+		WithSortAfter(JobSortPosition{Keys: last.SortKey, JobID: last.ID}))
+	require.NoError(t, err)
+	assert.Equal(t, []int64{ids[2], ids[0], ids[3], ids[4]}, jobIDs(rest))
 }

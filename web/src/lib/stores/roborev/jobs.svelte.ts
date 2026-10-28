@@ -173,6 +173,11 @@ export function createJobsStore(opts: JobsStoreOptions) {
   let filteredStatusCountsScope: string | undefined;
   let storeError = $state<string | null>(null);
   let loadMoreError = $state<string | null>(null);
+  // A sort change replaces the rows with a fresh first page. Until a load
+  // publishes rows in the new order, the header names a sort the rows do
+  // not show yet; sortError holds the failure of that reload.
+  let sortPending = $state(false);
+  let sortError = $state<string | null>(null);
   let selectedJobId = $state<number | undefined>(undefined);
   let selectedReviewRevision = $state(0);
   let highlightedJobId = $state<number | undefined>(undefined);
@@ -324,6 +329,8 @@ export function createJobsStore(opts: JobsStoreOptions) {
       publishedJobsRevision += 1;
       publishedJobsAuthority = authority;
       pageScope = filterScope();
+      sortPending = false;
+      sortError = null;
       jobs = [...authority.jobs];
       hasMore = authority.hasMore && jobs.length < MAX_LOADED_JOBS;
       allResultsLoaded = !authority.hasMore;
@@ -354,9 +361,16 @@ export function createJobsStore(opts: JobsStoreOptions) {
       const authority = yield* fetchJobsAuthority(query).pipe(
         Effect.tapError((failure) =>
           Effect.sync(() => {
-            if (reportFailure && generation === jobsAuthorityGeneration)
-              storeError =
-                failure instanceof Error ? failure.message : String(failure);
+            if (!reportFailure || generation !== jobsAuthorityGeneration)
+              return;
+            const message =
+              failure instanceof Error ? failure.message : String(failure);
+            if (sortPending) {
+              sortPending = false;
+              sortError = message;
+            } else {
+              storeError = message;
+            }
           }),
         ),
       );
@@ -426,18 +440,8 @@ export function createJobsStore(opts: JobsStoreOptions) {
       const workflow = yield* RoborevWorkflow;
       const query = buildQuery();
       query.limit = DEFAULT_PAGE_LIMIT;
-      if (nextCursor) {
-        query.cursor = nextCursor;
-      } else {
-        query.before = jobs.reduce((oldest, candidate) => {
-          const candidateTime = Date.parse(candidate.enqueued_at);
-          const oldestTime = Date.parse(oldest.enqueued_at);
-          return candidateTime < oldestTime ||
-            (candidateTime === oldestTime && candidate.id < oldest.id)
-            ? candidate
-            : oldest;
-        }).id;
-      }
+      if (nextCursor === undefined) return;
+      query.cursor = nextCursor;
       // Live updates reload the list under their own owner, so they never
       // cancel this request. A page fetched for a list that a newer load has
       // since replaced would skip the rows between the two, so its result
@@ -599,6 +603,12 @@ export function createJobsStore(opts: JobsStoreOptions) {
       sortDirection = DESCENDING_FIRST.has(col) ? "desc" : "asc";
     }
     loadedLimit = DEFAULT_PAGE_LIMIT;
+    reloadSortedJobs();
+  }
+
+  function reloadSortedJobs(): void {
+    sortPending = true;
+    sortError = null;
     loadJobs();
   }
 
@@ -1125,6 +1135,12 @@ export function createJobsStore(opts: JobsStoreOptions) {
   function getLoadMoreError(): string | null {
     return loadMoreError;
   }
+  function isSortPending(): boolean {
+    return sortPending;
+  }
+  function getSortError(): string | null {
+    return sortError;
+  }
   function getSelectedJobId(): number | undefined {
     return selectedJobId;
   }
@@ -1191,6 +1207,8 @@ export function createJobsStore(opts: JobsStoreOptions) {
     usesFilteredStatusCounts,
     getError,
     getLoadMoreError,
+    isSortPending,
+    getSortError,
     getSelectedJobId,
     getSelectedReviewRevision,
     getHighlightedJobId,
@@ -1222,6 +1240,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
     submitSearch,
     setRepoBranchFilter,
     setSortColumn,
+    retrySort: reloadSortedJobs,
     cancelJob,
     cancelJobEffect,
     rerunJob,
