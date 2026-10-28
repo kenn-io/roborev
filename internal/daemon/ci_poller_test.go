@@ -438,7 +438,7 @@ func TestBuildSynthesisPrompt(t *testing.T) {
 		{Agent: "codex", ReviewType: "review", Status: "failed", Error: "timeout"},
 	}
 
-	prompt := review.BuildSynthesisPrompt(reviews, "", false, "")
+	prompt := review.BuildSynthesisPrompt(reviews, false, "")
 
 	assertContainsAll(t, prompt, "prompt",
 		"Deduplicate findings",
@@ -2465,7 +2465,7 @@ func TestBuildSynthesisPrompt_SanitizesErrors(t *testing.T) {
 	reviews := []review.ReviewResult{
 		{Agent: "codex", ReviewType: "security", Status: "failed", Error: "secret-token-abc123: auth error"},
 	}
-	prompt := review.BuildSynthesisPrompt(reviews, "", false, "")
+	prompt := review.BuildSynthesisPrompt(reviews, false, "")
 	if strings.Contains(prompt, "secret-token-abc123") {
 		assert.Condition(t, func() bool {
 			return false
@@ -2475,18 +2475,6 @@ func TestBuildSynthesisPrompt_SanitizesErrors(t *testing.T) {
 		assert.Condition(t, func() bool {
 			return false
 		}, "expected [FAILED] marker in synthesis prompt")
-	}
-}
-
-func TestBuildSynthesisPrompt_NeverMentionsMinSeverity(t *testing.T) {
-	reviews := []review.ReviewResult{
-		{Agent: "codex", ReviewType: "security", Output: "No issues found.", Status: "done"},
-	}
-	for _, severity := range []string{"", "low", "medium", "high", "critical"} {
-		prompt := review.BuildSynthesisPrompt(reviews, severity, false, "")
-		assert.NotContains(t, prompt, "Severity threshold", "min_severity=%q", severity)
-		assert.NotContains(t, prompt, "Omit findings below", "min_severity=%q", severity)
-		assert.Contains(t, prompt, "No issues found.")
 	}
 }
 
@@ -2760,7 +2748,7 @@ func TestBuildSynthesisPrompt_QuotaSkippedLabel(t *testing.T) {
 		{Agent: "gemini", ReviewType: "security", Status: "failed", Error: review.QuotaErrorPrefix + "quota exhausted"},
 	}
 
-	prompt := review.BuildSynthesisPrompt(reviews, "", false, "")
+	prompt := review.BuildSynthesisPrompt(reviews, false, "")
 
 	assertContainsAll(t, prompt, "prompt",
 		"[SKIPPED]",
@@ -4980,7 +4968,8 @@ func TestBuildPanelOptsSnapshotsEffectiveACPExecutionConfig(t *testing.T) {
 
 	// The synthesis worker reads both parts of the same snapshot.
 	synthJob := &storage.ReviewJob{
-		Source: storage.JobSourceCI, PanelMemberConfigJSON: synthOpts.PanelMemberConfigJSON,
+		JobType: storage.JobTypeSynthesis, Source: storage.JobSourceCI,
+		PanelMemberConfigJSON: synthOpts.PanelMemberConfigJSON,
 	}
 	instructions, err := synthesisInstructions(synthJob)
 	require.NoError(t, err)
