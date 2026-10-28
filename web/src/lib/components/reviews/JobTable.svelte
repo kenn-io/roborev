@@ -63,7 +63,6 @@
 
   const hitJobLimit = $derived(
     jobsStore !== undefined &&
-      jobsStore.getJobs().length > 0 &&
       !jobsStore.getHasMore() &&
       !jobsStore.areAllJobsLoaded(),
   );
@@ -234,18 +233,22 @@
 
   {#if hitJobLimit && jobsStore}
     <div class="loading-bar">
-      Showing the {jobsStore.getJobs().length} most recent jobs, the most the table
-      loads. Filter the list to reach older jobs.
+      Showing the {jobsStore.getJobs().length.toLocaleString()} most recent jobs,
+      the most the table loads. Filter the list to reach older jobs.
     </div>
   {/if}
 
   {#if partialSort && jobsStore}
     <div class="table-footer">
       <span class="sort-scope" role="status">
-        Sorted by {sortLabels[jobsStore.getSortColumn()]} across the
-        {jobsStore.getJobs().length} most recent jobs.
-        {#if jobsStore.getLoadMoreError() === null && !hitJobLimit}
-          Scroll to the end to load older jobs.
+        {#if hitJobLimit}
+          Sorted by {sortLabels[jobsStore.getSortColumn()]}.
+        {:else}
+          Sorted by {sortLabels[jobsStore.getSortColumn()]} across the
+          {jobsStore.getJobs().length} most recent jobs.
+          {#if jobsStore.getLoadMoreError() === null}
+            Scroll to the end to load older jobs.
+          {/if}
         {/if}
       </span>
     </div>
