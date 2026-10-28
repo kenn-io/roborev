@@ -63,9 +63,6 @@ homepage = "/"
 [project.theme]
 variant = "modern"
 custom_dir = "overrides"
-# stylesheets/extra.css sets system font stacks. Without this, the theme loads
-# Inter and JetBrains Mono from Google Fonts and never uses them.
-font = false
 logo = "assets/static/logo.svg"
 favicon = "assets/static/favicon.svg"
 features = [

@@ -18,16 +18,10 @@ pull large screenshots and PNGs into the main history.
 - `*.md`, `guides/`, `advanced/`, `integrations/`, `agents/`: public docs
   source, rendered under `/docs/`.
 - `website/`: the hand-written product page, guide, 404 page, styles, script,
-  and self-hosted fonts (OFL licenses alongside). Copied to the site root.
-  Every local reference must be root-relative (`/docs/...`, `/styles/...`);
-  media comes from the hydrated `/docs/assets/...` tree, never from tracked
-  files.
-- `scripts/inline_website_assets.py`: rewrites the built website pages so they
-  never paint text in a fallback face. It embeds the `/fonts/*.woff2` files in
-  `styles/site.css` as data URLs and inlines `scripts/hold-first-paint.js`
-  directly after each page's `<meta charset>`. That script is a copy of
-  `first-paint/hold-first-paint.js` from kenn-io/actions; update the two
-  together.
+  and self-hosted fonts (OFL licenses alongside). Copied verbatim to the site
+  root. Every local reference must be root-relative (`/docs/...`,
+  `/styles/...`); media comes from the hydrated `/docs/assets/...` tree, never
+  from tracked files.
 - `llms.txt`: the machine-readable site index.
 - `zensical.toml`: Zensical site configuration and navigation.
 - `pyproject.toml` and `uv.lock`: pinned docs toolchain.
@@ -111,10 +105,6 @@ hook and CI.
 `make docs-check` hydrates assets, runs a strict Zensical build, checks generated
 links/assets/metadata, verifies public Markdown source files, and validates
 `vercel.json` redirects.
-
-CI also builds the site and runs the kenn-io/actions first-paint check on every
-built page in Firefox and Chromium. It fails when a page can paint before its
-stylesheets or fonts load.
 
 Asset hydration force-fetches `origin/docs-assets` and
 `origin/docs-generated-assets` by default so force-pushed orphan branches do not
