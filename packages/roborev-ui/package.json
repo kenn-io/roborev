@@ -41,7 +41,7 @@
     "test": "vitest run pack.test.ts"
   },
   "dependencies": {
-    "@kenn-io/kit-ui": "github:kenn-io/kit-ui#bc0a0ee42376ccdf869d6391edf31068581be694",
+    "@kenn-io/kit-ui": "github:kenn-io/kit-ui#a6bfaffcfb05da95b90600c95daf7272cfaf0196",
     "dompurify": "3.4.16",
     "effect": "4.0.0-beta.102",
     "marked": "18.0.5",
