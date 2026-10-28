@@ -52,6 +52,15 @@ operations, and token backfill. Most JSON endpoints are represented in the
 generated client; endpoints that stream or return raw bytes are exposed through
 raw helper methods.
 
+### Agent health
+
+`/api/health` reports the `agents` component as unhealthy when the daemon cannot
+run the agents that the global config selects for post-commit and manual
+reviews. Enqueue would reject those reviews. While this component is unhealthy,
+the daemon reports both `healthy` and `ready` as false. The message names the
+missing agents and includes the daemon's `PATH`. A repo config can select other
+agents; `roborev doctor` checks those for the current repo.
+
 ### Worker health
 
 `/api/health` reports stalled jobs through the `workers` component. A running

@@ -270,6 +270,7 @@ func daemonRunCmd() *cobra.Command {
 			}
 			defer func() { runErr = errors.Join(runErr, closeLogs()) }()
 			log.Printf("Starting roborev daemon (version %s)...", version.Version)
+			extendDaemonPATH()
 
 			// Silently clean up old roborevd binary if it exists (consolidated into roborev)
 			if exePath, err := os.Executable(); err == nil {

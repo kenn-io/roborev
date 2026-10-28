@@ -520,6 +520,14 @@ func (s *Server) Start(ctx context.Context) error {
 		)
 	}
 
+	if agents := reviewAgentHealth(cfg); !agents.Healthy {
+		message := "reviews will be rejected until their agent can run: " + agents.Message
+		log.Printf("Warning: %s", message)
+		if s.errorLog != nil {
+			s.errorLog.LogError("agents", message, 0)
+		}
+	}
+
 	// Repair stale roborev-managed hooks in registered repos (skip in CI
 	// mode where repos are fetch-only and don't need local hooks).
 	if s.ciPoller == nil {
@@ -3973,6 +3981,12 @@ func (s *Server) humaGetHealth(
 		Healthy: workersHealthy,
 		Message: workersMessage,
 	})
+
+	agents := reviewAgentHealth(s.configWatcher.Config())
+	if !agents.Healthy {
+		allHealthy = false
+	}
+	components = append(components, agents)
 
 	if s.syncWorker != nil {
 		syncHealthy, syncMessage := s.syncWorker.HealthCheck()

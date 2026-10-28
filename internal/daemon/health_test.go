@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 	"uuid"
@@ -413,6 +414,41 @@ func TestHealthReportsConcreteReconcilerReplacement(t *testing.T) {
 }
 
 // Helpers
+
+func TestHealthReportsUnavailableReviewAgent(t *testing.T) {
+	// The default config reviews with codex; the daemon PATH lacks it.
+	t.Setenv("PATH", t.TempDir())
+	db := testutil.OpenTestDB(t)
+	server := newServerWithLogs(db, config.DefaultConfig(), "", newTestErrorLog(), newTestActivityLog())
+	t.Cleanup(func() { server.Close() })
+	agents := func(health storage.HealthStatus) storage.ComponentHealth {
+		for _, c := range health.Components {
+			if c.Name == "agents" {
+				return c
+			}
+		}
+		require.FailNow(t, "health has no agents component")
+		return storage.ComponentHealth{}
+	}
+
+	health := decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
+	assert.False(t, health.Healthy)
+	assert.False(t, health.Ready)
+	assert.False(t, agents(health).Healthy)
+	assert.Contains(t, agents(health).Message, `"codex"`)
+
+	binDir := t.TempDir()
+	codex, script := filepath.Join(binDir, "codex"), "#!/bin/sh\nexit 0\n"
+	if runtime.GOOS == "windows" {
+		codex, script = codex+".cmd", "@echo off\r\nexit /b 0\r\n"
+	}
+	require.NoError(t, os.WriteFile(codex, []byte(script), 0o755))
+	t.Setenv("PATH", binDir)
+
+	health = decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
+	assert.True(t, agents(health).Healthy)
+	assert.True(t, health.Healthy)
+}
 
 func hasComponent(components []storage.ComponentHealth, name string) bool {
 	for _, c := range components {
