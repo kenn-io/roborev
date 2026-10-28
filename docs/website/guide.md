@@ -13,7 +13,10 @@ detects hook managers like Husky through `core.hooksPath` and never edits
 tracked source. Point your coding agent at `roborev quickstart` and it will
 inspect the repo and finish the setup.
 
-On macOS or Linux with Homebrew:
+On Linux, use the [install script](https://roborev.io/docs/installation/#install-script)
+or a [DEB or RPM package](https://roborev.io/docs/installation/#linux-packages-deb-and-rpm).
+
+On macOS, install with Homebrew and initialize your repo:
 
 ```sh
 brew install roborev

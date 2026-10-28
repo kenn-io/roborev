@@ -152,8 +152,8 @@ for, so what reaches the PR has already been reviewed and fixed several times.
 
 ## 10 / Start
 
-- Homebrew (macOS / Linux): `brew install roborev`
-- Install script (macOS / Linux): `curl -fsSL https://roborev.io/install.sh | bash`
+- macOS (Homebrew): `brew install roborev`
+- Linux (install script): `curl -fsSL https://roborev.io/install.sh | bash`
 - Windows: `powershell -ExecutionPolicy ByPass -c "irm https://roborev.io/install.ps1 | iex"`
 
 See [all install options](https://roborev.io/docs/installation/).

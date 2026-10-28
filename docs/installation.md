@@ -3,7 +3,11 @@ title: Installation
 description: Install roborev on your system
 ---
 
-## Homebrew (macOS / Linux)
+On macOS, use [Homebrew](#homebrew-macos). On Linux, use the
+[install script](#install-script) or a
+[DEB or RPM package](#linux-packages-deb-and-rpm).
+
+## Homebrew (macOS)
 
 Install roborev from [Homebrew core](https://formulae.brew.sh/formula/roborev):
 
@@ -13,8 +17,6 @@ brew install roborev
 
 No extra tap is needed. The package includes the CLI, terminal UI, and browser
 application. Homebrew manages [updates](#update).
-
-Homebrew also supports [Linux](https://docs.brew.sh/Homebrew-on-Linux).
 
 ## Install Script
 

@@ -18,17 +18,19 @@ documentation. For the product story, start at the
 
 ## Install
 
-=== "Homebrew (macOS / Linux)"
+=== "macOS (Homebrew)"
 
     ```bash
     brew install roborev
     ```
 
-=== "Install script (macOS / Linux)"
+=== "Linux"
 
     ```bash
     curl -fsSL https://roborev.io/install.sh | bash
     ```
+
+    Or install a [DEB or RPM package](installation.md#linux-packages-deb-and-rpm).
 
 === "Windows"
 
