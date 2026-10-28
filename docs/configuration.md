@@ -737,7 +737,9 @@ select a named panel with `[ci] panel = "branch_final"`. Use
 `allow_failure = true` for flaky or best-effort subagents whose failure should
 not fail an otherwise successful panel. Use `non_voting = true` to trial a new
 agent or model: the member runs and stores its review, but it is excluded from
-synthesis and the panel verdict.
+synthesis and the panel verdict. Use `synthesis_instructions` on a panel to have
+synthesis check findings against the code or label them; see
+[Synthesis Instructions](/docs/advanced/subagent-review-panels/#synthesis-instructions).
 
 Global and repo panel maps are merged by name, with repo entries overriding
 global entries. See

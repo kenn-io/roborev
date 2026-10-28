@@ -615,6 +615,88 @@ func TestSynthesisSingleSuccessPassthrough(t *testing.T) {
 	assert.False(synthCalled, "passthrough must not invoke an agent")
 }
 
+// TestSynthesisInstructionsRunAgentForSingleSuccess verifies a panel with
+// synthesis instructions runs the synthesis agent even when only one member
+// succeeded, and that the agent receives the instructions in place of the
+// merge-only rules.
+func TestSynthesisInstructionsRunAgentForSingleSuccess(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	tc := newWorkerTestContext(t, 1)
+
+	const memberAgent = "panel-instructed-member"
+	registerPassingAgent(t, memberAgent)
+
+	var captured string
+	const synthAgent = "synth-instructed"
+	agent.RegisterForTest(t, &agent.FakeAgent{
+		NameStr: synthAgent,
+		ReviewFn: func(_ context.Context, _, _, prompt string, _ io.Writer) (string, error) {
+			captured = prompt
+			return `{"schema_version":2,"summary":"Verified","verdict":"fail","findings":[{"severity":"high","problem":"Label: just fix. Nil map write.","fix":"Initialize the map.","location":"alpha.go:3","sources":[1]}]}`, nil
+		},
+	})
+
+	runUUID, members, _ := enqueuePanelRun(t, tc, "instructed-panel", []memberSpec{
+		{name: "m0", agent: memberAgent},
+		{name: "m1", agent: memberAgent},
+	})
+	setSynthesisAgent(t, tc, runUUID, synthAgent)
+	_, err := tc.DB.Exec(
+		"UPDATE review_jobs SET panel_member_config_json = ? WHERE panel_run_uuid = ? AND panel_role = 'synthesis'",
+		`{"instructions":"Label each finding just fix or needs the user."}`, runUUID,
+	)
+	require.NoError(t, err)
+	completeMember(t, tc, members[0].ID, memberAgent, "High: nil map write in alpha.go:3")
+	failMember(t, tc, members[1].ID)
+
+	synth := releaseAndClaimSynthesis(t, tc, runUUID)
+	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+
+	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
+	review, err := tc.DB.GetReviewByJobID(synth.ID)
+	require.NoError(t, err)
+	assert.Equal(synthAgent, review.Agent, "the synthesis agent, not a passthrough, produced the review")
+	assert.Contains(review.Output, "Label: just fix. Nil map write.")
+
+	assert.Contains(captured, "## Additional synthesis instructions\nLabel each finding just fix or needs the user.\n")
+	assert.Contains(captured, "High: nil map write in alpha.go:3")
+	assert.NotContains(captured, "or inspect the repository")
+}
+
+// TestSynthesisUnreadableConfigRetries verifies a synthesis job whose frozen
+// config cannot be decoded retries instead of running a merge-only synthesis
+// that silently drops the panel's instructions.
+func TestSynthesisUnreadableConfigRetries(t *testing.T) {
+	t.Parallel()
+	tc := newWorkerTestContext(t, 1)
+
+	const memberAgent = "panel-bad-config-member"
+	registerPassingAgent(t, memberAgent)
+	var synthCalled bool
+	const synthAgent = "synth-bad-config"
+	registerNeverCalledAgent(t, synthAgent, &synthCalled)
+
+	runUUID, members, _ := enqueuePanelRun(t, tc, "bad-config-panel", []memberSpec{
+		{name: "m0", agent: memberAgent},
+		{name: "m1", agent: memberAgent},
+	})
+	setSynthesisAgent(t, tc, runUUID, synthAgent)
+	_, err := tc.DB.Exec(
+		"UPDATE review_jobs SET panel_member_config_json = '{' WHERE panel_run_uuid = ? AND panel_role = 'synthesis'",
+		runUUID,
+	)
+	require.NoError(t, err)
+	completeMember(t, tc, members[0].ID, memberAgent, "Finding A in alpha.go")
+	completeMember(t, tc, members[1].ID, memberAgent, "Finding B in beta.go")
+
+	synth := releaseAndClaimSynthesis(t, tc, runUUID)
+	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+
+	tc.assertJobStatus(t, synth.ID, storage.JobStatusQueued)
+	assert.False(t, synthCalled)
+}
+
 func TestSynthesisSingleSuccessWithMinSeverityPassesThroughBelowThreshold(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)

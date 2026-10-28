@@ -438,7 +438,7 @@ func TestBuildSynthesisPrompt(t *testing.T) {
 		{Agent: "codex", ReviewType: "review", Status: "failed", Error: "timeout"},
 	}
 
-	prompt := review.BuildSynthesisPrompt(reviews, "", false)
+	prompt := review.BuildSynthesisPrompt(reviews, "", false, "")
 
 	assertContainsAll(t, prompt, "prompt",
 		"Deduplicate findings",
@@ -2465,7 +2465,7 @@ func TestBuildSynthesisPrompt_SanitizesErrors(t *testing.T) {
 	reviews := []review.ReviewResult{
 		{Agent: "codex", ReviewType: "security", Status: "failed", Error: "secret-token-abc123: auth error"},
 	}
-	prompt := review.BuildSynthesisPrompt(reviews, "", false)
+	prompt := review.BuildSynthesisPrompt(reviews, "", false, "")
 	if strings.Contains(prompt, "secret-token-abc123") {
 		assert.Condition(t, func() bool {
 			return false
@@ -2483,7 +2483,7 @@ func TestBuildSynthesisPrompt_NeverMentionsMinSeverity(t *testing.T) {
 		{Agent: "codex", ReviewType: "security", Output: "No issues found.", Status: "done"},
 	}
 	for _, severity := range []string{"", "low", "medium", "high", "critical"} {
-		prompt := review.BuildSynthesisPrompt(reviews, severity, false)
+		prompt := review.BuildSynthesisPrompt(reviews, severity, false, "")
 		assert.NotContains(t, prompt, "Severity threshold", "min_severity=%q", severity)
 		assert.NotContains(t, prompt, "Omit findings below", "min_severity=%q", severity)
 		assert.Contains(t, prompt, "No issues found.")
@@ -2760,7 +2760,7 @@ func TestBuildSynthesisPrompt_QuotaSkippedLabel(t *testing.T) {
 		{Agent: "gemini", ReviewType: "security", Status: "failed", Error: review.QuotaErrorPrefix + "quota exhausted"},
 	}
 
-	prompt := review.BuildSynthesisPrompt(reviews, "", false)
+	prompt := review.BuildSynthesisPrompt(reviews, "", false, "")
 
 	assertContainsAll(t, prompt, "prompt",
 		"[SKIPPED]",
@@ -4951,6 +4951,7 @@ func TestBuildPanelOptsSnapshotsEffectiveACPExecutionConfig(t *testing.T) {
 		}},
 		synth: config.SynthesisSpec{
 			Agent: "acp.owl", BackupAgent: "acp.goose",
+			Instructions: "Label each finding.",
 		},
 	})
 	require.NoError(t, err)
@@ -4976,6 +4977,18 @@ func TestBuildPanelOptsSnapshotsEffectiveACPExecutionConfig(t *testing.T) {
 	assert.NotContains(t, synthSnapshot.ACP, "unused")
 	assert.Equal(t, "acp.owl", synthOpts.Agent)
 	assert.Equal(t, "acp.goose", synthOpts.BackupAgent)
+
+	// The synthesis worker reads both parts of the same snapshot.
+	synthJob := &storage.ReviewJob{
+		Source: storage.JobSourceCI, PanelMemberConfigJSON: synthOpts.PanelMemberConfigJSON,
+	}
+	instructions, err := synthesisInstructions(synthJob)
+	require.NoError(t, err)
+	assert.Equal(t, "Label each finding.", instructions)
+	acpRepoCfg, snapshotted, err := ciACPRepoConfig(synthJob)
+	require.NoError(t, err)
+	assert.True(t, snapshotted)
+	assert.Equal(t, "global-owl", acpRepoCfg.ACP["owl"].Command)
 }
 
 func TestBuildPanelOptsRejectsACPReferencesMissingFromDefaultBranch(t *testing.T) {

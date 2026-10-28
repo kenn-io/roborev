@@ -485,6 +485,30 @@ func TestResolveSynthesisBackupPassThrough(t *testing.T) {
 	assert.Empty(ciSynthNone.BackupModel)
 }
 
+func TestResolveCIPanelSynthesisInstructions(t *testing.T) {
+	subagents := map[string]SubagentSpec{"default": {ReviewType: "default"}}
+	global := &Config{Review: ReviewConfig{
+		Subagents: subagents,
+		Panels: map[string]PanelSpec{
+			"verify": {Members: []string{"default"}, SynthesisInstructions: "\n  Label each finding.\n"},
+			"shared": {Members: []string{"default"}, SynthesisInstructions: "Global instructions."},
+		},
+	}}
+	// A repo panel replaces the global panel of the same name as a whole,
+	// so omitting the key there drops the global instructions.
+	repoCfg := &RepoConfig{Review: ReviewConfig{
+		Panels: map[string]PanelSpec{"shared": {Members: []string{"default"}}},
+	}}
+
+	_, synth, err := ResolveCIPanel("verify", repoCfg, global)
+	require.NoError(t, err)
+	assert.Equal(t, "Label each finding.", synth.Instructions)
+
+	_, synth, err = ResolveCIPanel("shared", repoCfg, global)
+	require.NoError(t, err)
+	assert.Empty(t, synth.Instructions)
+}
+
 func TestResolveCIPanelUsesProvidedConfigNotWorkingTree(t *testing.T) {
 	repoCfg := &RepoConfig{Review: ReviewConfig{
 		Panels:    map[string]PanelSpec{"ci": {Members: []string{"a"}, SynthesisAgent: "codex"}},

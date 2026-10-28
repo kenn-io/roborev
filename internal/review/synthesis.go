@@ -90,11 +90,15 @@ func VerifyDedupePreamble() string {
 // severity threshold is applied to the synthesized output afterwards and is
 // never shown to the agent, so every finding survives synthesis. When neutral
 // is true (see NeedsNeutralSynthesis), the prompt avoids calling the work code
-// and labels each input with its rubric.
+// and labels each input with its rubric. Empty instructions keep synthesis a
+// pure merge of the inputs. Non-empty instructions come from the panel's
+// synthesis_instructions: the agent may then read the repository with its
+// read-only tools to follow them, and the instructions follow the rules.
 func BuildSynthesisPrompt(
 	reviews []ReviewResult,
 	_ string,
 	neutral bool,
+	instructions string,
 ) string {
 	intro := "You are combining multiple code review outputs into a single GitHub PR comment.\n"
 	material := "the code"
@@ -106,6 +110,14 @@ func BuildSynthesisPrompt(
 		inspect = "the reviewed material"
 		rubricRule = "- Silence from a different rubric is not disagreement; merge only findings describing the same problem\n"
 	}
+	scopeRules := "- Only combine the input review results according to these rules\n" +
+		"- Do not independently review " + inspect + " or inspect the repository\n" +
+		"- Do not use tools except to read referenced prompt or review-input files in full\n"
+	if instructions != "" {
+		scopeRules = "- Combine the input review results according to these rules, then apply the additional synthesis instructions below\n" +
+			"- You may read the repository with your read-only tools when the additional instructions call for it; never modify files\n" +
+			"- Every finding must come from at least one input review; do not add findings of your own\n"
+	}
 	var b strings.Builder
 	b.WriteString(
 		intro +
@@ -116,14 +128,15 @@ func BuildSynthesisPrompt(
 			"return an empty `findings` array if the reviewers agree " + material + " is clean.\n" +
 			"In `sources`, list the numbers of the reviews below (### Review N) " +
 			"that reported the finding.\nRules:\n" +
-			"- Only combine the input review results according to these rules\n" +
-			"- Do not independently review " + inspect + " or inspect the repository\n" +
-			"- Do not use tools except to read referenced prompt or review-input files in full\n" +
+			scopeRules +
 			"- Deduplicate findings reported by multiple reviewers and cite every source\n" +
 			rubricRule +
 			"- Order findings by severity (Critical > High > Medium > Low)\n" +
 			"- Preserve file/line references in `location`\n" +
 			"- No preamble about yourself\n")
+	if instructions != "" {
+		b.WriteString("\n## Additional synthesis instructions\n" + instructions + "\n")
+	}
 
 	b.WriteString("\n")
 

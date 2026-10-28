@@ -168,6 +168,7 @@ This mapping is for you, not the user. Use only what the conversation needs.
 | A particular agent or model | `agent`, `model`, and `reasoning` in the repository, type, or subagent |
 | A reviewer on trial | `non_voting = true` on the subagent |
 | A reviewer that may flake | `allow_failure = true` and `timeout` on the subagent |
+| A combined review that checks each finding against the material, or labels findings for whoever fixes them | `synthesis_instructions` on the panel; see <https://roborev.io/docs/advanced/subagent-review-panels/#synthesis-instructions> |
 
 Rules that matter:
 
