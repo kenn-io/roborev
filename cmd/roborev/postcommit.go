@@ -52,17 +52,15 @@ func postCommitCmd() *cobra.Command {
 		Short: "Hook entry point: enqueue a review after commit",
 		Args:  cobra.NoArgs,
 		// Hook entrypoint: every outcome goes to the hook log file. Git
-		// shows stderr to the committer, so only a commit that will not be
-		// reviewed prints there (see warnNotQueued). Set both silences
+		// shows stderr to the committer, so a commit that will not be
+		// reviewed prints there (see warnNotQueued), as does any daemon
+		// start or recovery progress. Set both silences
 		// explicitly so future changes that return non-nil from RunE don't
 		// leak Cobra-formatted output to git.
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			// Daemon start and recovery progress is not for the committer.
-			defer func(out io.Writer) { lifecycleOut = out }(lifecycleOut)
-			lifecycleOut = io.Discard
 			notQueued := func(root, reason string) {
 				hookLog(root, "fail", reason)
 				warnNotQueued(cmd.ErrOrStderr(), reason)
