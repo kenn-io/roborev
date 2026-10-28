@@ -616,9 +616,12 @@ roborev legacy-reviews export > migration-input.json
 ```
 
 Give that file to your agent. It contains the original records, the conversion
-errors, and the review and synthesis JSON schemas. Ask the agent to preserve all
-findings and to leave any record it cannot convert faithfully unresolved. Import
-each completed JSON document using the archive ID from the export:
+errors, and the JSON schemas for converted reviews and combined reviews. These
+schemas let a finding leave `kind`, `confidence`, and `file` null and keep a
+free-text `location`, so the agent never has to invent them. Ask the agent to
+preserve all findings and to leave any record it cannot convert faithfully
+unresolved. Import each completed JSON document using the archive ID from the
+export:
 
 ```bash
 roborev legacy-reviews import 1 < converted-review.json
