@@ -174,6 +174,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
   let filteredStatusCounts = $state<JobStatusCounts | undefined>(undefined);
   let filteredStatusCountsScope: string | undefined;
   let storeError = $state<string | null>(null);
+  let loadMoreError = $state<string | null>(null);
   let selectedJobId = $state<number | undefined>(undefined);
   let selectedReviewRevision = $state(0);
   let highlightedJobId = $state<number | undefined>(undefined);
@@ -422,6 +423,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
         Effect.sync(() => {
           loading = true;
           storeError = null;
+          loadMoreError = null;
           const countScope = JSON.stringify(query);
           if (hasActiveFilters() && filteredStatusCountsScope !== countScope)
             filteredStatusCounts = undefined;
@@ -482,7 +484,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
         Effect.gen(function* () {
           yield* Effect.sync(() => {
             loading = true;
-            storeError = null;
+            loadMoreError = null;
           });
           const result = yield* executeRoborevRequest(
             "load more Roborev jobs",
@@ -515,7 +517,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
         }).pipe(
           Effect.catch((failure) =>
             Effect.sync(() => {
-              storeError =
+              loadMoreError =
                 failure instanceof Error ? failure.message : String(failure);
             }),
           ),
@@ -1153,6 +1155,9 @@ export function createJobsStore(opts: JobsStoreOptions) {
   function getError(): string | null {
     return storeError;
   }
+  function getLoadMoreError(): string | null {
+    return loadMoreError;
+  }
   function getSelectedJobId(): number | undefined {
     return selectedJobId;
   }
@@ -1218,6 +1223,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
     getFilteredStatusCounts,
     usesFilteredStatusCounts,
     getError,
+    getLoadMoreError,
     getSelectedJobId,
     getSelectedReviewRevision,
     getHighlightedJobId,

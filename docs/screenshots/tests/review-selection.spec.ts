@@ -2,23 +2,28 @@ import { expect, test } from "@playwright/test";
 
 import { findFirstFailingJob } from "./review-selection";
 
-test("loads additional pages until a failing job appears", async ({ page }) => {
+test("scrolls to older pages until a failing job appears", async ({ page }) => {
   await page.setContent(`
-    <section aria-label="Review jobs">
-      <div class="job-row"><span class="verdict-pass">Pass</span></div>
-      <button type="button">Load more</button>
+    <section aria-label="Review jobs" style="height: 100px; overflow: auto">
+      <div class="job-row" style="height: 200px">
+        <span class="verdict-pass">Pass</span>
+      </div>
+      <div class="scroll-sentinel" style="height: 1px"></div>
     </section>
     <script>
+      const jobs = document.querySelector("section");
       let loadedPages = 0;
-      document.querySelector("button").addEventListener("click", () => {
+      jobs.addEventListener("scroll", () => {
+        const sentinel = jobs.querySelector(".scroll-sentinel");
+        if (!sentinel || jobs.scrollTop === 0) return;
         loadedPages += 1;
-        document.querySelector("section").insertAdjacentHTML(
-          "afterbegin",
+        sentinel.insertAdjacentHTML(
+          "beforebegin",
           loadedPages === 2
-            ? '<div class="job-row"><span class="verdict-fail">Fail</span></div>'
-            : '<div class="job-row"><span class="verdict-pass">Pass</span></div>',
+            ? '<div class="job-row" style="height: 200px"><span class="verdict-fail">Fail</span></div>'
+            : '<div class="job-row" style="height: 200px"><span class="verdict-pass">Pass</span></div>',
         );
-        if (loadedPages === 2) document.querySelector("button").remove();
+        if (loadedPages === 2) sentinel.remove();
       });
     </script>
   `);

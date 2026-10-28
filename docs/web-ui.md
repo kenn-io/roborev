@@ -69,11 +69,16 @@ panel's closed state.
 Ref search previews results as you type. Press Enter to submit the current text
 immediately, without waiting for the preview delay.
 
+The table loads the most recent jobs first. Scroll to the end of the table to
+load the next page of older jobs; loading continues until the table fills its
+scroll area or no older jobs remain. If a page fails to load, the table shows an
+error with a **Retry** button.
+
 Select a column header to sort by that column; select it again to reverse the
 order. Numeric and time columns sort largest or newest first. Sorting reorders
 the jobs already loaded in the browser. While older jobs remain unloaded, a note
-under the table says so; **Load more** still fetches the next page in queue
-order and adds it to the sorted list.
+under the table says so. Scrolling to the end still fetches the next page in
+queue order and adds it to the sorted list.
 
 Each row fits on one line: the commit column shows the repository, branch, short
 ref, and commit subject, and the Agent column shows the model beside the agent.
