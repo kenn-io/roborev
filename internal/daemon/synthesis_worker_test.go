@@ -646,7 +646,7 @@ func TestSynthesisInstructionsRunAgentForSingleSuccess(t *testing.T) {
 		NameStr: synthAgent,
 		ReviewFn: func(_ context.Context, _, _, prompt string, _ io.Writer) (string, error) {
 			captured = prompt
-			return `{"schema_version":2,"summary":"Verified","verdict":"fail","findings":[{"severity":"high","problem":"Label: just fix. Nil map write.","fix":"Initialize the map.","location":"alpha.go:3","sources":[1]}]}`, nil
+			return `{"schema_version":3,"summary":"Verified","verdict":"fail","findings":[{"severity":"high","kind":"defect","confidence":0.9,"problem":"Label: just fix. Nil map write.","fix":"Initialize the map.","file":"alpha.go","start_line":3,"end_line":3,"sources":[1]}]}`, nil
 		},
 	})
 
@@ -1367,7 +1367,7 @@ func TestInstructedSynthesisReadsReviewedCommit(t *testing.T) {
 			content, err := os.ReadFile(filepath.Join(repoPath, "alpha.go"))
 			require.NoError(t, err)
 			seen = string(content)
-			return `{"schema_version":2,"summary":"Done.","verdict":"pass","findings":[]}`, nil
+			return `{"schema_version":3,"summary":"Done.","verdict":"pass","findings":[]}`, nil
 		},
 	})
 
