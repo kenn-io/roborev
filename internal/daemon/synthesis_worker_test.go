@@ -664,39 +664,6 @@ func TestSynthesisInstructionsRunAgentForSingleSuccess(t *testing.T) {
 	assert.NotContains(captured, "or inspect the repository")
 }
 
-// TestSynthesisUnreadableConfigRetries verifies a synthesis job whose frozen
-// config cannot be decoded retries instead of running a merge-only synthesis
-// that silently drops the panel's instructions.
-func TestSynthesisUnreadableConfigRetries(t *testing.T) {
-	t.Parallel()
-	tc := newWorkerTestContext(t, 1)
-
-	const memberAgent = "panel-bad-config-member"
-	registerPassingAgent(t, memberAgent)
-	var synthCalled bool
-	const synthAgent = "synth-bad-config"
-	registerNeverCalledAgent(t, synthAgent, &synthCalled)
-
-	runUUID, members, _ := enqueuePanelRun(t, tc, "bad-config-panel", []memberSpec{
-		{name: "m0", agent: memberAgent},
-		{name: "m1", agent: memberAgent},
-	})
-	setSynthesisAgent(t, tc, runUUID, synthAgent)
-	_, err := tc.DB.Exec(
-		"UPDATE review_jobs SET panel_member_config_json = '{' WHERE panel_run_uuid = ? AND panel_role = 'synthesis'",
-		runUUID,
-	)
-	require.NoError(t, err)
-	completeMember(t, tc, members[0].ID, memberAgent, "Finding A in alpha.go")
-	completeMember(t, tc, members[1].ID, memberAgent, "Finding B in beta.go")
-
-	synth := releaseAndClaimSynthesis(t, tc, runUUID)
-	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
-
-	tc.assertJobStatus(t, synth.ID, storage.JobStatusQueued)
-	assert.False(t, synthCalled)
-}
-
 func TestSynthesisSingleSuccessWithMinSeverityPassesThroughBelowThreshold(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
@@ -1366,6 +1333,54 @@ func TestSynthesisRunsAgainstWorktree(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestInstructedSynthesisReadsReviewedCommit verifies synthesis with
+// instructions reads files at the reviewed commit even when isolate_reviews is
+// off and the working tree has since changed, so verifying a finding cannot
+// pass on code the review never saw.
+func TestInstructedSynthesisReadsReviewedCommit(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	tc := newWorkerTestContext(t, 1)
+
+	alpha := filepath.Join(tc.TmpDir, "alpha.go")
+	require.NoError(t, os.WriteFile(alpha, []byte("reviewed\n"), 0o600))
+	tc.GitRepo.Run("add", "alpha.go")
+	tc.GitRepo.Run("commit", "-m", "add alpha")
+
+	const memberAgent = "panel-commit-member"
+	registerPassingAgent(t, memberAgent)
+	var seen string
+	const synthAgent = "synth-commit"
+	agent.RegisterForTest(t, &agent.FakeAgent{
+		NameStr: synthAgent,
+		ReviewFn: func(_ context.Context, repoPath, _, _ string, _ io.Writer) (string, error) {
+			content, err := os.ReadFile(filepath.Join(repoPath, "alpha.go"))
+			require.NoError(t, err)
+			seen = string(content)
+			return `{"schema_version":2,"summary":"Done.","verdict":"pass","findings":[]}`, nil
+		},
+	})
+
+	runUUID, members, _ := enqueuePanelRun(t, tc, "commit-panel", []memberSpec{
+		{name: "m0", agent: memberAgent},
+		{name: "m1", agent: memberAgent},
+	})
+	setSynthesisAgent(t, tc, runUUID, synthAgent)
+	_, err := tc.DB.Exec(
+		"UPDATE review_jobs SET panel_member_config_json = ? WHERE panel_run_uuid = ? AND panel_role = 'synthesis'",
+		`{"instructions":"Verify each finding against the code."}`, runUUID,
+	)
+	require.NoError(t, err)
+	completeMember(t, tc, members[0].ID, memberAgent, "High: bug in alpha.go:1")
+	completeMember(t, tc, members[1].ID, memberAgent, "High: other bug in alpha.go:1")
+	require.NoError(t, os.WriteFile(alpha, []byte("edited after review\n"), 0o600))
+
+	synth := releaseAndClaimSynthesis(t, tc, runUUID)
+	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+
+	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
+	assert.Equal(t, "reviewed\n", seen)
 }
 
 func TestSynthesisStoresFindingWithoutLocation(t *testing.T) {

@@ -139,10 +139,13 @@ When a panel sets instructions:
 
 - The prompt keeps its output format and merge rules and adds the instructions
     after them. Panels without instructions get the merge-only prompt unchanged.
-- The agent may read the repository. It runs in the same checkout as the member
-    reviews, with the read-only access a normal review has: Claude Code gets
-    `Read`, `Glob`, and `Grep`, and Codex runs in its read-only sandbox.
-    `allow_unsafe_agents` lifts this, as it does for reviews.
+- The agent may read the repository, with the read-only access a normal review
+    has: Claude Code gets `Read`, `Glob`, and `Grep`, and Codex runs in its
+    read-only sandbox. `allow_unsafe_agents` lifts this, as it does for reviews.
+- For a commit or range review, the agent reads a temporary checkout of the
+    reviewed commit, even when `isolate_reviews` is off. Later edits in your
+    working tree cannot change what it checks. A dirty-tree review reads the
+    working tree, which is what it reviewed.
 - Every finding must still come from a member review. The agent cannot add
     findings of its own.
 - Synthesis runs even when only one member produced output, so the instructions

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"go.kenn.io/roborev/internal/agent"
-	"go.kenn.io/roborev/internal/config"
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/pkg/structuredreview"
@@ -170,8 +169,8 @@ func (wp *WorkerPool) synthesizeSucceededResults(
 // panel_member_config_json column. CI synthesis jobs also freeze their ACP
 // execution config there, which ciACPRepoConfig reads.
 type synthesisJobConfig struct {
-	Instructions string                 `json:"instructions,omitempty"`
-	ACP          config.ACPAgentConfigs `json:"acp,omitempty"`
+	ciACPExecutionConfig
+	Instructions string `json:"instructions,omitempty"`
 }
 
 // encode returns "" when nothing is set, so a synthesis job without

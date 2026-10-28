@@ -1697,7 +1697,8 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 		)
 	}
 	synthSnapshot, err := synthesisJobConfig{
-		Instructions: in.synth.Instructions, ACP: synthACP,
+		ACP:          synthACP,
+		Instructions: in.synth.Instructions,
 	}.encode()
 	if err != nil {
 		return nil, storage.EnqueueOpts{}, fmt.Errorf("snapshot synthesis config: %w", err)

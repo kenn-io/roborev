@@ -648,7 +648,17 @@ func (wp *WorkerPool) prepareJobCheckout(
 		// IsDirtyJob only identifies the member jobs themselves.
 		committedReview := (job.IsReviewJob() || job.IsSynthesisJob()) &&
 			!job.IsDirtyJob() && job.GitRef != "dirty"
-		if !committedReview || !config.ResolveIsolateReviews(repoPath, cfg) {
+		isolate := config.ResolveIsolateReviews(repoPath, cfg)
+		if !isolate && job.IsSynthesisJob() {
+			// Synthesis instructions may tell the agent to read the code,
+			// which must be the reviewed commit, not the live working tree.
+			instructions, err := synthesisInstructions(job)
+			if err != nil {
+				return preparedJobCheckout{}, err
+			}
+			isolate = instructions != ""
+		}
+		if !committedReview || !isolate {
 			return checkout, nil
 		}
 		checkout.isolatedLocalReview = true
