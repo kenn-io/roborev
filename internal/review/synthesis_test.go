@@ -288,8 +288,8 @@ func TestBuildSynthesisPrompt_NeutralLabelsRubrics(t *testing.T) {
 }
 
 // TestBuildSynthesisPrompt_NoInstructionsIsMergeOnly pins the complete prompt
-// a panel without synthesis_instructions gets, captured before instructions
-// existed, so adding them cannot change that prompt.
+// a panel without synthesis_instructions gets, so adding instructions cannot
+// change that prompt.
 func TestBuildSynthesisPrompt_NoInstructionsIsMergeOnly(t *testing.T) {
 	reviews := []ReviewResult{
 		{Agent: "codex", Status: ResultDone, Output: "High: nil deref in foo.go:10"},
@@ -299,7 +299,7 @@ func TestBuildSynthesisPrompt_NoInstructionsIsMergeOnly(t *testing.T) {
 	prompt := BuildSynthesisPrompt(reviews, "", false, "")
 
 	assert.Equal(t, "You are combining multiple code review outputs into a single GitHub PR comment.\n"+
-		`Return exactly one JSON object with this shape and no code fence: {"schema_version":2,"summary":"...","verdict":"pass|fail","findings":[{"severity":"critical|high|medium|low","problem":"...","fix":"...","location":"file:line or null","sources":[1]}]}`+"\n"+
+		`Return exactly one JSON object with this shape and no code fence: {"schema_version":3,"summary":"...","verdict":"pass|fail","findings":[{"severity":"critical|high|medium|low","kind":"defect|improvement","topic":"copied from the input finding, or null","confidence":0.8,"problem":"...","fix":"...","file":"path or null","start_line":12,"end_line":14,"sources":[1]}]}`+"\n"+
 		"Put a one-line overall summary in `summary` and your overall judgment in `verdict`. List every finding that requires changes in `findings`; return an empty `findings` array if the reviewers agree the code is clean.\n"+
 		"In `sources`, list the numbers of the reviews below (### Review N) that reported the finding.\n"+
 		"Rules:\n"+
@@ -308,10 +308,13 @@ func TestBuildSynthesisPrompt_NoInstructionsIsMergeOnly(t *testing.T) {
 		"- Do not use tools except to read referenced prompt or review-input files in full\n"+
 		"- Deduplicate findings reported by multiple reviewers and cite every source\n"+
 		"- Order findings by severity (Critical > High > Medium > Low)\n"+
-		"- Preserve file/line references in `location`\n"+
+		"- Keep each finding's kind and topic; when reviewers disagree, use the value most of them gave\n"+
+		"- Set confidence to the highest confidence any source gave, or 0.5 when the sources give none\n"+
+		"- Keep the file, start_line, and end_line of the findings you combine; use null when there is none\n"+
+		"- When an input finding has a location but no file, name that location in the problem\n"+
 		"- No preamble about yourself\n"+
-		"\n---\n### Review 1\nHigh: nil deref in foo.go:10\n\n"+
-		"---\n### Review 2\nNo issues found.\n\n", prompt)
+		"\n---\n### Review 1\nHigh: nil deref in foo.go:10\n"+
+		"\n---\n### Review 2\nNo issues found.\n\n", prompt)
 }
 
 func TestBuildSynthesisPrompt_InstructionsAllowRepositoryReads(t *testing.T) {
@@ -730,7 +733,7 @@ func TestBuildSynthesisPromptAnchorsVersion2Locations(t *testing.T) {
 	require.NoError(t, err)
 	member := ReviewResult{Agent: "codex", ReviewType: "review", Status: ResultDone, Structured: &structured}
 
-	prompt := BuildSynthesisPrompt([]ReviewResult{member}, "", false)
+	prompt := BuildSynthesisPrompt([]ReviewResult{member}, "", false, "")
 
 	assert := assert.New(t)
 	assert.Contains(prompt, `"file": "internal/a.go"`)
