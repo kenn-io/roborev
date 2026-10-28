@@ -46,7 +46,7 @@ func TestGeneratePostCommit(t *testing.T) {
 
 	t.Run("post-commit line without background", func(t *testing.T) {
 		t.Parallel()
-		require.True(t, strings.Contains(content, "post-commit") && strings.Contains(content, "2>/dev/null"), "hook should call post-commit with 2>/dev/null")
+		require.Contains(t, content, "\"$ROBOREV\" post-commit\n", "hook should show post-commit warnings to the committer")
 
 		idx := strings.Index(content, "\" post-commit")
 		if idx != -1 {

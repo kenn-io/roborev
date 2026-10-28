@@ -51,14 +51,20 @@ func postCommitCmd() *cobra.Command {
 		Use:   "post-commit",
 		Short: "Hook entry point: enqueue a review after commit",
 		Args:  cobra.NoArgs,
-		// Hook entrypoint: any failure must be silent (logged to the
-		// hook log file, never printed to git's stderr). Set both
-		// silences explicitly so future changes that return non-nil
-		// from RunE don't leak Cobra-formatted output to git.
+		// Hook entrypoint: every outcome goes to the hook log file. Git
+		// shows stderr to the committer, so a commit that will not be
+		// reviewed prints there (see warnNotQueued), as does any daemon
+		// start or recovery progress. Set both silences
+		// explicitly so future changes that return non-nil from RunE don't
+		// leak Cobra-formatted output to git.
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
+			notQueued := func(root, reason string) {
+				hookLog(root, "fail", reason)
+				warnNotQueued(cmd.ErrOrStderr(), reason)
+			}
 			if repoPath == "" {
 				repoPath = "."
 			}
@@ -119,9 +125,7 @@ func postCommitCmd() *cobra.Command {
 				var err error
 				batchSize, err = config.ResolvePostCommitBatchSizeWithError(root)
 				if err != nil {
-					hookLog(root, "fail", fmt.Sprintf(
-						"load batch config: %v", err,
-					))
+					notQueued(root, fmt.Sprintf("load batch config: %v", err))
 					return nil
 				}
 				if flushBranch != "" {
@@ -146,9 +150,7 @@ func postCommitCmd() *cobra.Command {
 			}
 
 			if err := ensureDaemon(); err != nil {
-				hookLog(root, "fail", fmt.Sprintf(
-					"daemon unavailable: %v", err,
-				))
+				notQueued(root, fmt.Sprintf("daemon unavailable: %v", err))
 				return nil
 			}
 
@@ -196,9 +198,7 @@ func postCommitCmd() *cobra.Command {
 			ep := getDaemonEndpoint()
 			resp, err := newDaemonAPI(ep.BaseURL(), hookHTTPClient(ep, timeout)).EnqueueJobRaw(cmd.Context(), nil, roborevclient.WithBody(reqBody))
 			if err != nil {
-				hookLog(root, "fail", fmt.Sprintf(
-					"enqueue request failed: %v", err,
-				))
+				notQueued(root, fmt.Sprintf("enqueue request failed: %v", err))
 				return nil
 			}
 			defer resp.Body.Close()
@@ -210,6 +210,7 @@ func postCommitCmd() *cobra.Command {
 					resp.StatusCode,
 					truncateBytes(body, 200),
 				))
+				warnNotQueued(cmd.ErrOrStderr(), daemonErrorMessage(resp.StatusCode, body))
 				return nil
 			}
 
@@ -346,6 +347,25 @@ func postCommitLogPath() string {
 // hookLog appends a single JSONL entry to the post-commit log.
 // Best-effort: errors are silently ignored so the hook never
 // blocks a commit.
+// warnNotQueued tells the committer that this commit will not be reviewed.
+// Without it the failure would only reach the hook log.
+func warnNotQueued(w io.Writer, reason string) {
+	reason, _, _ = strings.Cut(reason, "\n")
+	fmt.Fprintf(w, "roborev: commit not queued for review: %s\nroborev: run 'roborev doctor' to diagnose\n", reason)
+}
+
+// daemonErrorMessage returns the error a daemon response reports, or the
+// status code when the body has none.
+func daemonErrorMessage(status int, body []byte) string {
+	var resp struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(body, &resp); err == nil && resp.Error != "" {
+		return resp.Error
+	}
+	return fmt.Sprintf("daemon returned %d", status)
+}
+
 func hookLog(repo, outcome, message string) {
 	logPath := postCommitLogPath()
 

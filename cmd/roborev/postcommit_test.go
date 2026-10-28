@@ -53,11 +53,30 @@ func TestPostCommitSubmitsHEAD(t *testing.T) {
 
 	repo.CommitFile("file.txt", "content", "initial commit")
 
-	_, _, err := executePostCommitCmd("--repo", repo.Dir)
+	_, stderr, err := executePostCommitCmd("--repo", repo.Dir)
 	require.NoError(t, err)
 
 	req := <-reqCh
 	assert.Equal(t, "HEAD", req.GitRef)
+	assert.Empty(t, stderr, "a queued commit prints nothing to git's output")
+}
+
+func TestPostCommitWarnsWhenDaemonRejectsCommit(t *testing.T) {
+	repo, mux := setupTestEnvironment(t)
+	mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":"no review agent available: agent not found\nmore detail"}`))
+	})
+	repo.CommitFile("file.txt", "content", "initial commit")
+
+	_, stderr, err := executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err, "a hook failure must not fail the commit")
+
+	assert.Equal(t,
+		"roborev: commit not queued for review: no review agent available: agent not found\n"+
+			"roborev: run 'roborev doctor' to diagnose\n",
+		stderr)
 }
 
 func TestPostCommitBranchReview(t *testing.T) {

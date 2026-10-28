@@ -166,6 +166,12 @@ or `error`), and a reason when the hook skips or fails. This is useful for
 diagnosing silent hook failures, especially in linked git worktrees where path
 resolution issues can prevent the hook from firing.
 
+When the hook cannot queue a commit, it also prints a warning after
+`git commit`, for example
+`roborev: commit not queued for review: daemon unavailable: ...`. The commit
+itself still succeeds. Hooks installed before this warning existed discard it;
+the daemon upgrades them when it starts, or run `roborev init`.
+
 ```bash
 # View the last few hook invocations
 tail -5 ~/.roborev/post-commit.log | jq .
