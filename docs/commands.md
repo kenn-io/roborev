@@ -956,6 +956,10 @@ roborev ci review --comment                  # Post results as PR/MR comment
 
 Runs a one-shot review without a daemon or database. Designed for CI pipelines
 where you want review results as part of the build, not as a background service.
+Refs such as `HEAD~3..HEAD` resolve to commit SHAs before the agents start.
+Prompts, finding location checks, synthesis, and the final comment use those
+same commits even if a branch moves during the review.
+
 With `--comment`, roborev calls the forge only when at least one completed agent
 produced substantive review output. Empty responses and roborev's empty-output
 placeholder do not qualify. If every agent fails before producing output, the

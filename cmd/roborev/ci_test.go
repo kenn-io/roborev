@@ -4,17 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	glpkg "go.kenn.io/roborev/internal/gitlab"
 	"go.kenn.io/roborev/internal/prompt"
@@ -125,6 +129,66 @@ synthesis_reasoning = %q
 			assert.Equal(t, wantReasoning, string(reasoning))
 		})
 	}
+}
+
+func TestCIReviewKeepsCommitsWhenHEADMoves(t *testing.T) {
+	clearForgeCIEnv(t)
+	testenv.SetDataDir(t)
+	repo := testutil.NewTestRepoWithCommit(t)
+	base := repo.HeadSHA()
+	head := repo.CommitFile("tracked.go", "one\ntwo\nthree\nfour\nfive\n", "add reviewed file")
+	t.Chdir(repo.Path())
+
+	type invocation struct{ ref, prompt string }
+	reviewCalls := make(chan invocation, 2)
+	var moveHead sync.Once
+	var moveErr error
+	reviewer := &agent.FakeAgent{NameStr: "ci-moving-head-reviewer", ReviewFn: func(ctx context.Context, repoPath, gitRef, prompt string, _ io.Writer) (string, error) {
+		reviewCalls <- invocation{gitRef, prompt}
+		// Move HEAD after a review prompt has been built. Both reviewers and
+		// synthesis must keep the original file and line range.
+		moveHead.Do(func() {
+			moveErr = os.WriteFile(filepath.Join(repoPath, "tracked.go"), []byte("replacement\n"), 0o644)
+			if moveErr != nil {
+				return
+			}
+			cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "commit", "-am", "shorten file during review")
+			if data, err := cmd.CombinedOutput(); err != nil {
+				moveErr = fmt.Errorf("commit: %w: %s", err, data)
+			}
+		})
+		return `{"schema_version":3,"summary":"Check the original lines.","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.9,"problem":"The original range needs validation.","fix":"Validate the inputs.","file":"tracked.go","start_line":3,"end_line":5}]}`, moveErr
+	}}
+	var synthesisCall invocation
+	synthesizer := &agent.FakeAgent{NameStr: "ci-moving-head-synthesizer", ReviewFn: func(_ context.Context, _, gitRef, prompt string, _ io.Writer) (string, error) {
+		synthesisCall = invocation{gitRef, prompt}
+		return `{"schema_version":3,"summary":"Check the original lines.","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.9,"problem":"The original range needs validation.","fix":"Validate the inputs.","file":"tracked.go","start_line":3,"end_line":5,"sources":[1,2]}]}`, nil
+	}}
+	agent.RegisterForTest(t, reviewer)
+	agent.RegisterForTest(t, synthesizer)
+	cmd := ciCmd()
+	cmd.SetArgs([]string{"review", "--ref", "HEAD^..HEAD", "--agent", reviewer.Name(), "--review-types", "default,security", "--synthesis-agent", synthesizer.Name()})
+
+	var runErr error
+	output := captureOutput(t, func() error {
+		runErr = cmd.Execute()
+		return runErr
+	})
+
+	require.NoError(t, runErr)
+	require.NoError(t, moveErr)
+	assert := assert.New(t)
+	assert.NotEqual(head, repo.HeadSHA(), "the checkout advanced during the review")
+	require.Len(t, reviewCalls, 2)
+	close(reviewCalls)
+	for call := range reviewCalls {
+		assert.Equal(base+".."+head, call.ref)
+		assert.Contains(call.prompt, "+five", "each review sees the original diff")
+	}
+	assert.Equal(base+".."+head, synthesisCall.ref)
+	assert.Equal(2, strings.Count(synthesisCall.prompt, "tracked.go:3-5"), "both member findings keep their line ranges")
+	assert.Contains(output, "tracked.go:3-5", "synthesis keeps the original location")
+	assert.Contains(output, "`"+head[:7]+"`", "the comment names the reviewed commit")
 }
 
 func installFakeGHAuthToken(t *testing.T, token string) {
