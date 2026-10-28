@@ -180,14 +180,16 @@ reasoning = "fast"
 
 ## Installation
 
+**[Homebrew](https://formulae.brew.sh/formula/roborev) (macOS / Linux):**
+```bash
+brew install roborev
+```
+
+Homebrew manages updates with `brew upgrade roborev`.
+
 **Shell Script (macOS / Linux):**
 ```bash
 curl -fsSL https://roborev.io/install.sh | bash
-```
-
-**Homebrew (macOS / Linux):**
-```bash
-brew install kenn-io/tap/roborev
 ```
 
 **Windows (PowerShell):**

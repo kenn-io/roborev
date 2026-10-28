@@ -5,7 +5,13 @@ description: Get up and running with roborev in minutes
 
 ## Install
 
-=== "macOS / Linux"
+=== "Homebrew (macOS / Linux)"
+
+    ```bash
+    brew install roborev
+    ```
+
+=== "Install script (macOS / Linux)"
 
     ```bash
     curl -fsSL https://roborev.io/install.sh | bash

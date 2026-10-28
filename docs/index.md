@@ -18,16 +18,16 @@ documentation. For the product story, start at the
 
 ## Install
 
-=== "macOS / Linux"
+=== "Homebrew (macOS / Linux)"
+
+    ```bash
+    brew install roborev
+    ```
+
+=== "Install script (macOS / Linux)"
 
     ```bash
     curl -fsSL https://roborev.io/install.sh | bash
-    ```
-
-=== "Homebrew"
-
-    ```bash
-    brew install kenn-io/tap/roborev
     ```
 
 === "Windows"
