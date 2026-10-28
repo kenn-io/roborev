@@ -91,7 +91,6 @@ Examples:
   roborev review --branch --type security  # Security review of branch
   roborev review --type lookahead  # Time-series look-ahead bias review of HEAD
   roborev review --type test-value # Find worthless tests in HEAD
-  roborev review --type exhaustive  # Default review that reports every supportable finding
 `,
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			ctx := cmd.Context()
@@ -461,7 +460,7 @@ Examples:
 	cmd.Flags().StringVar(&baseBranch, "base", "", "base branch for --branch comparison (default: auto-detect)")
 	cmd.Flags().StringVar(&since, "since", "", "review commits since this commit (exclusive, like git's .. range)")
 	cmd.Flags().BoolVar(&local, "local", false, "run review locally without daemon (streams output to console)")
-	cmd.Flags().StringVar(&reviewType, "type", "", "review type (security, design, lookahead, test-value, exhaustive, goal)")
+	cmd.Flags().StringVar(&reviewType, "type", "", "review type (security, design, lookahead, test-value, goal)")
 	cmd.Flags().StringVar(&specFile, "spec", "", "Superpowers design spec for --type goal")
 	cmd.Flags().StringVar(&planFile, "plan", "", "Superpowers implementation plan for --type goal")
 	cmd.Flags().StringVar(&provider, "provider", "", "provider for pi agent (e.g. anthropic, openai)")
