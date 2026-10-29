@@ -2096,6 +2096,8 @@ type ExportSubagent struct {
 	DurationMs          *int64                  `json:"duration_ms"`
 	Model               *string                 `json:"model" validate:"required"`
 	Name                string                  `json:"name" validate:"required"`
+	// NonVoting True when the panel member is advisory and does not affect the panel verdict.
+	NonVoting           bool                    `json:"non_voting"`
 	ResumeSourceJobUUID *uuid.UUID              `json:"resume_source_job_uuid" validate:"required"`
 	ReviewID            uuid.UUID               `json:"review_id" validate:"required"`
 	ReviewType          *string                 `json:"review_type" validate:"required"`
