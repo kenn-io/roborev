@@ -113,8 +113,6 @@ func TestCICheckFailurePreservesSynthesis(t *testing.T) {
 	for _, path := range []string{"passthrough", "agent"} {
 		t.Run(path, func(t *testing.T) {
 			tc := newWorkerTestContext(t, 1)
-			// Resolve the proxy key beside this loaded config, where it is absent.
-			tc.Pool.cfgGetter = NewConfigWatcher(filepath.Join(t.TempDir(), "config.toml"), config.DefaultConfig(), nil, nil)
 			synthAgent := &synthesisEntrypointTestAgent{name: "checker-failure-" + path, result: `{"schema_version":3,"summary":"Verified","verdict":"fail","findings":[{"severity":"high","kind":"defect","confidence":0.9,"problem":"Nil map write.","fix":"Initialize the map.","file":"alpha.go","start_line":3,"end_line":3,"sources":[1]}]}`}
 			agent.RegisterForTest(t, synthAgent)
 			type result struct {
@@ -140,6 +138,12 @@ func TestCICheckFailurePreservesSynthesis(t *testing.T) {
 				markMemberRunning(t, tc, members[0].ID)
 				require.NoError(t, tc.DB.CompleteJobResult(members[0].ID, "test", storage.ReviewCompletion{Output: "high finding", Verdict: storage.VerdictFail, StructuredOutput: jsontext.Value(synthAgent.result)}))
 				job := releaseAndClaimSynthesis(t, tc, run)
+				if check {
+					// Missing frozen base metadata stops only the checker.
+					sha := testutil.GetHeadSHA(t, tc.TmpDir)
+					job.GitRef = sha + ".." + sha
+					job.CIBaseBranch = ""
+				}
 				tc.Pool.processSynthesisJob(t.Context(), testWorkerID, job)
 				review, err := tc.DB.GetReviewByJobID(job.ID)
 				require.NoError(t, err)
@@ -149,7 +153,7 @@ func TestCICheckFailurePreservesSynthesis(t *testing.T) {
 				if check {
 					log, err := os.ReadFile(JobLogPath(job.ID))
 					require.NoError(t, err)
-					assert.Contains(t, string(log), "CI checker failed; keeping original review: read credential proxy key")
+					assert.Contains(t, string(log), "CI checker failed; keeping original review: CI checker requires base branch")
 				}
 			}
 			assert.Equal(t, results[0], results[1])
@@ -202,10 +206,8 @@ func TestCICheckSumSymlink(t *testing.T) {
 	goScript := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = env ]; then printf '%%s\\n' '%s' '%s'; else echo checksum > go.sum; fi\n", tools, tools)
 	require.NoError(t, os.WriteFile(filepath.Join(tools, "bin", "go"), []byte(goScript), 0o700))
 	t.Setenv("PATH", filepath.Join(tools, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
-	key := filepath.Join(t.TempDir(), "key")
-	require.NoError(t, os.WriteFile(key, []byte("test-key"), 0o600))
 	sha := testutil.GetHeadSHA(t, repo.Root)
-	_, err := runCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha, CIBaseBranch: "main"}, ciCheckConfig{}, structuredreview.Document{}, key, nil, io.Discard)
+	_, err := runCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha, CIBaseBranch: "main"}, ciCheckConfig{}, structuredreview.Document{}, agent.CodexSandbox{}, nil, io.Discard)
 	require.ErrorContains(t, err, "go.sum must be a regular file")
 	assert.NoFileExists(t, target)
 }
@@ -224,10 +226,8 @@ func TestCICheckSubmodules(t *testing.T) {
 	script := fmt.Sprintf("#!/bin/sh\ncat work/repo*/dependency/present.txt > '%s'\nexit 1\n", observed)
 	require.NoError(t, os.WriteFile(filepath.Join(tools, "go"), []byte(script), 0o700))
 	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
-	key := filepath.Join(tools, "key")
-	require.NoError(t, os.WriteFile(key, []byte("test-key"), 0o600))
 	sha := testutil.GetHeadSHA(t, repo.Root)
-	_, err := runCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha, CIBaseBranch: "main"}, ciCheckConfig{}, structuredreview.Document{}, key, nil, io.Discard)
+	_, err := runCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha, CIBaseBranch: "main"}, ciCheckConfig{}, structuredreview.Document{}, agent.CodexSandbox{}, nil, io.Discard)
 	require.Error(t, err)
 	data, err := os.ReadFile(observed)
 	require.NoError(t, err)
@@ -249,10 +249,8 @@ func TestCICheckMiseShim(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(tools, "mise"), []byte(script), 0o700))
 	require.NoError(t, os.Symlink("mise", filepath.Join(tools, "codex")))
 	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
-	key := filepath.Join(tools, "key")
-	require.NoError(t, os.WriteFile(key, []byte("test-key"), 0o600))
 	sha := testutil.GetHeadSHA(t, repo.Root)
-	_, err := runCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha, CIBaseBranch: "main"}, ciCheckConfig{}, structuredreview.Document{}, key, nil, io.Discard)
+	_, err := runCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha, CIBaseBranch: "main"}, ciCheckConfig{}, structuredreview.Document{}, agent.CodexSandbox{}, nil, io.Discard)
 	require.Error(t, err)
 	data, err := os.ReadFile(observed)
 	require.NoError(t, err)

@@ -3,8 +3,8 @@
 package daemon
 
 import (
+	"bytes"
 	"encoding/json/v2"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
@@ -33,9 +34,9 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 		require.NoError(t, err)
 	}
 	tc := newWorkerTestContext(t, 1)
-	configDir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(configDir, "credential-proxy.key"), []byte("checker-test-key"), 0o600))
-	tc.Pool.cfgGetter = NewConfigWatcher(filepath.Join(configDir, "config.toml"), config.DefaultConfig(), nil, nil)
+	loginDir := t.TempDir()
+	t.Setenv("CODEX_HOME", loginDir)
+	require.NoError(t, os.WriteFile(filepath.Join(loginDir, "auth.json"), []byte(`{"tokens":{"access_token":"checker-test-token"}}`), 0o600))
 	beforeRefs, err := exec.CommandContext(t.Context(), "git", "-C", tc.TmpDir, "show-ref").CombinedOutput()
 	require.NoError(t, err)
 	beforeStatus, err := exec.CommandContext(t.Context(), "git", "-C", tc.TmpDir, "status", "--porcelain").CombinedOutput()
@@ -43,14 +44,12 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 	oldRoots, err := filepath.Glob(filepath.Join(os.TempDir(), "roborev-ci-check-*"))
 	require.NoError(t, err)
 	var roots []string
-	listener, err := net.Listen("tcp", "127.0.0.1:8317")
-	require.NoError(t, err)
-	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer checker-test-key" {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer checker-test-token" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		if r.Method != http.MethodPost || r.URL.Path != "/v1/responses" {
+		if r.Method != http.MethodPost || r.URL.Path != "/responses" {
 			http.NotFound(w, r)
 			return
 		}
@@ -80,33 +79,30 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 		const final = `{"verdicts":[{"finding":1,"keep":false,"evidence":"go build succeeded","reason":"Build claim refuted"},{"finding":2,"keep":true,"evidence":"test reproduced data loss","reason":"Data is lost"}]}`
 		testutil.WriteCodexResponse(t, w, map[string]any{"type": "message", "role": "assistant", "id": "msg_test", "content": []any{map[string]any{"type": "output_text", "text": final}}})
 	}))
-	// Replace the unused listener allocated by httptest before starting.
-	require.NoError(t, server.Listener.Close())
-	server.Listener = listener
-	server.Start()
 	defer server.Close()
 	run, members, _ := enqueuePanelRun(t, tc, "checker-panel", []memberSpec{{name: "one", agent: "test"}})
 	cfg := config.DefaultConfig()
 	cfg.CI.CheckReasoning = " HIGH "
 	require.NoError(t, cfg.Validate())
-	snapshot, err := synthesisJobConfig{Check: &ciCheckConfig{Model: "test-model", Reasoning: cfg.CI.CheckReasoning}}.encode()
-	require.NoError(t, err)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
-	_, err = tc.DB.Exec("UPDATE review_jobs SET panel_member_config_json = ?, git_ref = ?, ci_base_branch = 'main' WHERE panel_run_uuid = ? AND panel_role = 'synthesis'", snapshot, sha+".."+sha, run)
-	require.NoError(t, err)
-	doc := structuredreview.Document{SchemaVersion: 3, Summary: "The build claim and data loss need fixes", Verdict: "fail", Findings: []structuredreview.Finding{{Severity: "high", Problem: "build claim", Fix: "fix"}, {Severity: "medium", Problem: "data loss", Fix: "fix"}}}
+	doc := structuredreview.Document{SchemaVersion: 3, SourceLabels: []string{"test"}, Summary: "The build claim and data loss need fixes", Verdict: "fail", Findings: []structuredreview.Finding{{Severity: "high", Problem: "build claim", Fix: "fix", Sources: []int{1}}, {Severity: "medium", Problem: "data loss", Fix: "fix", Sources: []int{1}}}}
 	raw, err := json.Marshal(doc)
 	require.NoError(t, err)
 	markMemberRunning(t, tc, members[0].ID)
 	require.NoError(t, tc.DB.CompleteJobResult(members[0].ID, "test", storage.ReviewCompletion{Output: doc.Markdown(""), Verdict: storage.VerdictFail, StructuredOutput: raw}))
 	job := releaseAndClaimSynthesis(t, tc, run)
-	tc.Pool.processSynthesisJob(t.Context(), testWorkerID, job)
+	job.GitRef, job.CIBaseBranch = sha+".."+sha, "main"
+	var log bytes.Buffer
+	checkedDoc, err := runCICheck(t.Context(), job, ciCheckConfig{Model: "test-model", Reasoning: cfg.CI.CheckReasoning}, doc, agent.CodexSandbox{Upstream: server.URL}, nil, &log)
+	require.NoError(t, err, "%s", log.String())
+	checkedRaw, err := json.Marshal(checkedDoc)
+	require.NoError(t, err)
+	tc.Pool.completeSynthesisContext(testWorkerID, job, synthesisResult{review: reviewpkg.ReviewResult{
+		Agent: "codex", Output: checkedDoc.Markdown(""), Verdict: reviewpkg.SynthesisVerdict(checkedDoc, ""), StructuredOutput: checkedRaw,
+	}})
 	review, err := tc.DB.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
-	log, logErr := os.ReadFile(JobLogPath(job.ID))
-	require.NoError(t, logErr)
-	assert.NotContains(t, string(log), "CI checker failed")
-	assert.NotContains(t, review.Output, "build claim", string(log))
+	assert.NotContains(t, review.Output, "build claim", log.String())
 	stored, err := json.Marshal(review.StructuredOutput)
 	require.NoError(t, err)
 	checked, err := reviewpkg.DecodeStructuredReview(stored)
@@ -114,7 +110,7 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 	assert.Equal(t, "1 finding.", checked.Summary)
 	assert.Equal(t, structuredreview.VerdictFail, checked.Verdict)
 	assert.Contains(t, review.Output, "data loss")
-	require.NotEmpty(t, roots, string(log))
+	require.NotEmpty(t, roots, log.String())
 	for _, root := range roots {
 		assert.NoDirExists(t, root)
 	}
