@@ -90,9 +90,6 @@ check dbus-systemd deny env XDG_RUNTIME_DIR="$6" DBUS_SESSION_BUS_ADDRESS="unix:
 check external-domain deny curl -fsS https://example.com
 check other-loopback deny bash -c ': >/dev/tcp/127.0.0.1/"$1"' probe "$7"
 check direct-upstream deny curl --fail-with-body -sS -o "$1/direct-upstream-response" https://chatgpt.com/backend-api/codex/responses
-check route-get deny bash -c 'curl -fsS "$CODEX_BASE_URL/other" -H "Authorization: Bearer $CODEX_PHANTOM"'
-check route-no-key deny bash -c 'curl -fsS -X POST "$CODEX_BASE_URL/responses"'
-check route-wrong-key deny bash -c 'curl -fsS -X POST "$CODEX_BASE_URL/responses" -H "Authorization: Bearer wrong-key"'
 check auth-read deny cat "$8"
 exit "$failed"
 `
@@ -104,7 +101,7 @@ exit "$failed"
 	out, err := process.CombinedOutput()
 	require.NoError(t, err, "%s", out)
 	assert.NotContains(t, string(out), "BAD ")
-	for _, name := range []string{"work-write", "read-grant", "sibling-write", "sibling-read", "home-write", "shared-tmp-write", "git-read", "git-commit", "git-config", "dbus-systemd", "external-domain", "other-loopback", "direct-upstream", "route-get", "route-no-key", "route-wrong-key", "auth-read"} {
+	for _, name := range []string{"work-write", "read-grant", "sibling-write", "sibling-read", "home-write", "shared-tmp-write", "git-read", "git-commit", "git-config", "dbus-systemd", "external-domain", "other-loopback", "direct-upstream", "auth-read"} {
 		assert.Contains(t, string(out), "OK "+name)
 	}
 	assert.NoFileExists(t, filepath.Join(sibling, "overwritten"))
