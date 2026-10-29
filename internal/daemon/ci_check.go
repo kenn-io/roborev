@@ -118,8 +118,8 @@ func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob
 		err = fmt.Errorf("find checker codex: %w", err)
 		return
 	}
-	// A native executable needs only its own file. npm launchers load their package.
-	readPaths := []string{codex}
+	// Native Codex loads sibling helpers. npm launchers load their package.
+	readPaths := []string{filepath.Dir(codex)}
 	toolPath := os.Getenv("PATH")
 	launcher, openErr := os.Open(codex)
 	if openErr != nil {

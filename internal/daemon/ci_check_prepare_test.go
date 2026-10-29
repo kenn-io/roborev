@@ -94,12 +94,15 @@ func TestCICheckNativeLauncherRead(t *testing.T) {
 	}
 	repo := testutil.NewTestRepoWithCommit(t)
 	tools := t.TempDir()
-	f, err := os.Create(filepath.Join(tools, "codex"))
+	nativeDir := filepath.Join(tools, "native")
+	require.NoError(t, os.Mkdir(nativeDir, 0o700))
+	f, err := os.Create(filepath.Join(nativeDir, "codex"))
 	require.NoError(t, err)
 	const size = 32 << 20
 	require.NoError(t, f.Truncate(size))
 	require.NoError(t, f.Chmod(0o700))
 	require.NoError(t, f.Close())
+	require.NoError(t, os.Symlink(filepath.Join(nativeDir, "codex"), filepath.Join(tools, "codex")))
 	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
 	sha := testutil.GetHeadSHA(t, repo.Root)
 	var before, after runtime.MemStats
@@ -109,7 +112,7 @@ func TestCICheckNativeLauncherRead(t *testing.T) {
 	runtime.ReadMemStats(&after)
 	require.NoError(t, err)
 	t.Cleanup(cleanup)
-	assert.Contains(t, spec.ReadPaths, filepath.Join(tools, "codex"))
+	assert.Contains(t, spec.ReadPaths, nativeDir, "native Codex needs its sibling helpers")
 	assert.NotContains(t, spec.ReadPaths, tools)
 	assert.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(size), "launcher probe must read only its header")
 }
