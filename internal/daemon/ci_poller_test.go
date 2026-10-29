@@ -21,6 +21,7 @@ import (
 
 	googlegithub "github.com/google/go-github/v93/github"
 	"github.com/stretchr/testify/assert"
+
 	// ciPollerHarness bundles DB, repo, config, and poller for CI poller tests.
 	"github.com/stretchr/testify/require"
 
@@ -143,7 +144,7 @@ func TestCIPollerHarnessProcessPRGitStubsGitHubSideEffects(t *testing.T) {
 		Number:      42,
 		HeadRefOid:  "head-sha-123",
 		BaseRefName: "main",
-	}, h.Cfg, nil)
+	}, h.Cfg)
 	require.NoError(t, err)
 	assert.Equal(t, 0, discussionCalls)
 	assert.Equal(t, 0, statusCalls)
@@ -802,7 +803,7 @@ func TestCIPollerProcessPR_EnqueuesMatrix(t *testing.T) {
 		Number:      42,
 		HeadRefOid:  "head-sha-123",
 		BaseRefName: "main",
-	}, h.Cfg, nil)
+	}, h.Cfg)
 	require.NoError(t, err, "processPR")
 
 	members := h.panelMembers(t, "acme/api", 42, "head-sha-123")
@@ -835,57 +836,27 @@ func TestCIPollerProcessPR_EnqueuesMatrix(t *testing.T) {
 func TestCIPollerPollRepo_UsesPRListAndProcessesEach(t *testing.T) {
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 	h.Cfg.CI.ReviewTypes = []string{"security"}
-	h.Cfg.CI.Agents = []string{"test"}
-	h.Cfg.CI.SkipDrafts = true
-	listings := 0
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.Poller = NewCIPoller(h.DB, NewStaticConfig(h.Cfg), nil)
 	h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) {
-		listings++
 		return []ghPR{
 			{Number: 7, HeadRefOid: "11111111aaaaaaaa", BaseRefName: "main"},
 			{Number: 8, HeadRefOid: "22222222bbbbbbbb", BaseRefName: "main"},
-			{Number: 9, HeadRefOid: "draft-head-a", BaseRefName: "main", Draft: true},
-			{Number: 10, HeadRefOid: "draft-head-b", BaseRefName: "main", Draft: true},
+			{Number: 9, HeadRefOid: "33333333cccccccc", BaseRefName: "main", Draft: true},
 		}, nil
 	}
+	h.Cfg.CI.SkipDrafts = true
 	h.stubProcessPRGit()
 	checks := h.CaptureSkippedChecks()
 
-	require.NoError(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg))
+	require.NoError(t, h.Poller.pollRepo(context.Background(), "acme/api", h.Cfg), "pollRepo")
 
-	assert.Equal(t, 1, listings, "all draft skips reuse the poll's complete PR listing")
-	assert.Len(t, *checks, 2)
-	assert.True(t, h.hasPanel(t, "acme/api", 7, "11111111aaaaaaaa"))
-	assert.True(t, h.hasPanel(t, "acme/api", 8, "22222222bbbbbbbb"))
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	h.Poller.listOpenPRsFn = func(got context.Context, _ string) ([]ghPR, error) {
-		assert.Same(t, ctx, got, "discovery retains caller cancellation")
-		return nil, got.Err()
-	}
-	require.ErrorIs(t, h.Poller.pollRepo(ctx, "acme/api", h.Cfg), context.Canceled)
-
-	t.Run("listed draft shares omitted active sibling", func(t *testing.T) {
-		assert := assert.New(t)
-		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-		h.Cfg.CI.SkipDrafts = true
-		h.Cfg.CI.Agents = []string{"test"}
-		h.stubProcessPRGit()
-		ready := ghPR{Number: 31, HeadRefOid: "shared-active-head", HeadRefName: "feature/review", BaseRefName: "main"}
-		draft := ghPR{Number: 32, HeadRefOid: ready.HeadRefOid, BaseRefName: "main", Draft: true}
-		statuses := h.CaptureCommitStatuses()
-		checks := h.CaptureSkippedChecks()
-		require.NoError(t, h.Poller.processPR(t.Context(), "acme/api", ready, h.Cfg, map[int]ghPR{ready.Number: ready}))
-		h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return []ghPR{draft}, nil }
-		h.Poller.prPostTargetFn = func(_ context.Context, _ string, number int) (panelPostTarget, error) {
-			require.Equal(t, ready.Number, number)
-			return panelPostTarget{Open: true, HeadSHA: ready.HeadRefOid, HeadRefName: ready.HeadRefName, BaseRefName: ready.BaseRefName}, nil
-		}
-		require.NoError(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg))
-		assert.True(h.hasPanel(t, "acme/api", ready.Number, ready.HeadRefOid))
-		require.NotEmpty(t, *statuses)
-		assert.Equal("pending", (*statuses)[len(*statuses)-1].State)
-		assert.Empty(*checks, "cleanup's confirmed-open sibling keeps its review status")
-	})
+	assert.True(t, h.hasPanel(t, "acme/api", 7, "11111111aaaaaaaa"), "expected panel for PR 7")
+	assert.True(t, h.hasPanel(t, "acme/api", 8, "22222222bbbbbbbb"), "expected panel for PR 8")
+	assert.False(t, h.hasPanel(t, "acme/api", 9, "33333333cccccccc"), "draft PR 9 is skipped")
+	assert.Equal(t, []capturedSkippedCheck{{
+		Repo: "acme/api", SHA: "33333333cccccccc", Summary: "Review skipped: draft",
+	}}, *checks)
 }
 
 func TestCIPollerProcessPR_SkipsConfiguredLabel(t *testing.T) {
@@ -923,11 +894,7 @@ func TestCIPollerProcessPR_SkipsConfiguredLabel(t *testing.T) {
 				require.NoError(t, h.DB.DeferReviewAttempt("acme/api", pr.Number, pr.HeadRefOid,
 					"transient", "provider unavailable", nil, time.Now().Add(time.Hour), false))
 			}
-			var inventory map[int]ghPR
-			if tc.label {
-				inventory = map[int]ghPR{pr.Number: pr, 10: {Number: 10, HeadRefOid: pr.HeadRefOid, BaseRefName: "main"}}
-			}
-			require.NoError(t, h.Poller.processPR(t.Context(), "acme/api", pr, h.Cfg, inventory))
+			require.NoError(t, h.Poller.processPR(t.Context(), "acme/api", pr, h.Cfg))
 			skip := !tc.draft || tc.skipDrafts || tc.label
 			assert.Equal(!skip, h.hasPanel(t, "acme/api", pr.Number, pr.HeadRefOid))
 			if skip {
@@ -943,7 +910,7 @@ func TestCIPollerProcessPR_SkipsConfiguredLabel(t *testing.T) {
 			pr.Draft = false
 			pr.Labels = nil
 			for range 2 {
-				require.NoError(t, h.Poller.processPR(t.Context(), "acme/api", pr, h.Cfg, nil))
+				require.NoError(t, h.Poller.processPR(t.Context(), "acme/api", pr, h.Cfg))
 			}
 			assert.Equal(1, fetches, "ready at the same SHA enqueues exactly once")
 			assert.True(h.hasPanel(t, "acme/api", pr.Number, pr.HeadRefOid))
@@ -1157,7 +1124,7 @@ func TestRetrySweepReenqueuesAfterTransient(t *testing.T) {
 	pr := ghPR{Number: 90, HeadRefOid: headSHA, BaseRefName: "main"}
 
 	// First run: reserve-on-enqueue creates the attempt row (pending).
-	require.NoError(t, h.Poller.processPR(context.Background(), "acme/api", pr, h.Cfg, nil))
+	require.NoError(t, h.Poller.processPR(context.Background(), "acme/api", pr, h.Cfg))
 	first, err := h.DB.GetCIPanelByPRSHA("acme/api", 90, headSHA)
 	require.NoError(t, err)
 	attempt, err := h.DB.GetReviewAttempt("acme/api", 90, headSHA)
@@ -1183,7 +1150,7 @@ func TestRetrySweepReenqueuesAfterTransient(t *testing.T) {
 	require.NoError(t, err)
 
 	// Retry sweep re-enqueues a fresh panel run for the same (repo, pr, sha).
-	require.NoError(t, h.Poller.retryDueReviewAttempts(context.Background(), "acme/api", map[int]ghPR{pr.Number: pr}, h.Cfg))
+	require.NoError(t, h.Poller.retryDueReviewAttempts(context.Background(), "acme/api", []ghPR{pr}, h.Cfg))
 
 	attempt, err = h.DB.GetReviewAttempt("acme/api", 90, headSHA)
 	require.NoError(t, err)
@@ -1434,7 +1401,7 @@ func TestCIPollerProcessPR_WhitespaceReasoning(t *testing.T) {
 
 	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
 		Number: 50, HeadRefOid: "whitespace-reasoning-sha", BaseRefName: "main",
-	}, h.Cfg, nil)
+	}, h.Cfg)
 	require.NoError(t, err, "processPR")
 
 	members := h.panelMembers(t, "acme/api", 50, "whitespace-reasoning-sha")
@@ -1460,7 +1427,7 @@ func TestCIPollerProcessPR_InvalidReasoning(t *testing.T) {
 
 	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
 		Number: 51, HeadRefOid: "invalid-reasoning-sha", BaseRefName: "main",
-	}, h.Cfg, nil)
+	}, h.Cfg)
 	require.ErrorContains(t, err, "ci.reasoning")
 	assert.False(t, h.hasPanel(t, "acme/api", 51, "invalid-reasoning-sha"))
 	require.Len(t, *statuses, 1)
@@ -1513,7 +1480,7 @@ func TestCIPollerProcessPR_IncludesHumanPRDiscussion(t *testing.T) {
 
 	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
 		Number: 77, HeadRefOid: headSHA, BaseRefName: "main",
-	}, h.Cfg, nil)
+	}, h.Cfg)
 	require.NoError(t, err)
 
 	members := h.panelMembers(t, "acme/api", 77, headSHA)
@@ -1567,7 +1534,7 @@ func TestCIPollerProcessPR_FallsBackWhenPromptPrebuildFails(t *testing.T) {
 
 	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
 		Number: 78, HeadRefOid: headSHA, BaseRefName: "main",
-	}, h.Cfg, nil)
+	}, h.Cfg)
 	require.NoError(t, err)
 
 	members := h.panelMembers(t, "acme/api", 78, headSHA)
@@ -1610,7 +1577,7 @@ func TestCIPollerProcessPR_PrebuildsCompletePrompt(t *testing.T) {
 
 	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
 		Number: 79, HeadRefOid: headSHA, BaseRefName: "main",
-	}, h.Cfg, nil)
+	}, h.Cfg)
 	require.NoError(t, err)
 
 	members := h.panelMembers(t, "acme/api", 79, headSHA)
@@ -1660,7 +1627,7 @@ func TestCIPollerProcessPR_InvalidReviewType(t *testing.T) {
 
 	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
 		Number: 1, HeadRefOid: "head-sha", BaseRefName: "main",
-	}, h.Cfg, nil)
+	}, h.Cfg)
 	require.Error(t, err, "expected error for invalid review type")
 	require.ErrorContains(t, err, "invalid review_type")
 
@@ -1677,7 +1644,7 @@ func TestCIPollerProcessPR_EmptyReviewType(t *testing.T) {
 
 	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
 		Number: 2, HeadRefOid: "head-sha-2", BaseRefName: "main",
-	}, h.Cfg, nil)
+	}, h.Cfg)
 	require.Error(t, err, "expected error for empty review type")
 	require.ErrorContains(t, err, "invalid review_type")
 	assert.False(t, h.hasPanel(t, "acme/api", 2, "head-sha-2"), "no panel on validation error")
@@ -1693,7 +1660,7 @@ func TestCIPollerProcessPR_DesignReviewType(t *testing.T) {
 
 	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
 		Number: 10, HeadRefOid: "design-head", BaseRefName: "main",
-	}, h.Cfg, nil)
+	}, h.Cfg)
 	require.NoError(t, err, "processPR")
 
 	members := h.panelMembers(t, "acme/api", 10, "design-head")
@@ -1712,7 +1679,7 @@ func TestCIPollerProcessPR_AliasDeduplication(t *testing.T) {
 
 	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
 		Number: 11, HeadRefOid: "dedup-head", BaseRefName: "main",
-	}, h.Cfg, nil)
+	}, h.Cfg)
 	require.NoError(t, err, "processPR")
 
 	members := h.panelMembers(t, "acme/api", 11, "dedup-head")
@@ -2613,7 +2580,7 @@ func TestCIPollerProcessPR_AutoClonesUnknownRepo(t *testing.T) {
 		Number:      1,
 		HeadRefOid:  "abc123",
 		BaseRefName: "main",
-	}, cfg, nil)
+	}, cfg)
 	require.NoError(t, err, "processPR")
 
 	panel, err := db.GetCIPanelByPRSHA("org/newrepo", 1, "abc123")
@@ -2637,7 +2604,7 @@ func TestCIPollerProcessPR_RepoOverrides(t *testing.T) {
 
 	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
 		Number: 99, HeadRefOid: "repo-override-sha", BaseRefName: "main",
-	}, h.Cfg, nil)
+	}, h.Cfg)
 	require.NoError(t, err, "processPR")
 
 	members := h.panelMembers(t, "acme/api", 99, "repo-override-sha")
@@ -2666,7 +2633,7 @@ func TestCIPollerProcessPR_MalformedRepoConfigFallsBackToGlobal(t *testing.T) {
 		Number:      100,
 		HeadRefOid:  "repo-bad-config-sha",
 		BaseRefName: "main",
-	}, h.Cfg, nil)
+	}, h.Cfg)
 	require.NoError(t, err)
 
 	members := h.panelMembers(t, "acme/api", 100, "repo-bad-config-sha")
@@ -2691,7 +2658,7 @@ func TestCIPollerProcessPR_RepoConfigLoadFailureDoesNotSetConfigurationStatus(t 
 		Number:      101,
 		HeadRefOid:  "repo-config-read-failed-sha",
 		BaseRefName: "main",
-	}, h.Cfg, nil)
+	}, h.Cfg)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "load repo config:")
 
@@ -2910,7 +2877,7 @@ func TestCIPollerProcessPR_SetsPendingCommitStatus(t *testing.T) {
 
 	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
 		Number: 60, HeadRefOid: "status-test-sha", BaseRefName: "main",
-	}, h.Cfg, nil)
+	}, h.Cfg)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -3070,7 +3037,7 @@ func TestCIPollerProcessPR_ThrottlesRecentPR(t *testing.T) {
 	captured := h.CaptureCommitStatuses()
 	err := h.Poller.processPR(
 		context.Background(), "acme/api",
-		ghPR{Number: 70, HeadRefOid: "first-sha", BaseRefName: "main"}, h.Cfg, nil)
+		ghPR{Number: 70, HeadRefOid: "first-sha", BaseRefName: "main"}, h.Cfg)
 	require.NoError(t, err, "first processPR")
 	assert.True(h.hasPanel(t, "acme/api", 70, "first-sha"), "expected panel for first push")
 
@@ -3088,7 +3055,7 @@ func TestCIPollerProcessPR_ThrottlesRecentPR(t *testing.T) {
 	*captured = nil
 	err = h.Poller.processPR(
 		context.Background(), "acme/api",
-		ghPR{Number: 70, HeadRefOid: "second-sha", BaseRefName: "main"}, h.Cfg, nil)
+		ghPR{Number: 70, HeadRefOid: "second-sha", BaseRefName: "main"}, h.Cfg)
 	require.NoError(t, err, "second processPR")
 
 	assert.False(h.hasPanel(t, "acme/api", 70, "second-sha"),
@@ -3108,13 +3075,49 @@ func TestCIPollerProcessPR_ThrottlesRecentPR(t *testing.T) {
 	*captured = nil
 	err = h.Poller.processPR(
 		context.Background(), "acme/api",
-		ghPR{Number: 70, HeadRefOid: "third-sha", BaseRefName: "main"}, h.Cfg, nil)
+		ghPR{Number: 70, HeadRefOid: "third-sha", BaseRefName: "main"}, h.Cfg)
 	require.NoError(t, err, "third processPR")
 
 	assert.False(h.hasPanel(t, "acme/api", 70, "third-sha"),
 		"third push inside throttle window must not create a run")
 	require.Len(t, *captured, 1, "expected one deferred status on third push")
 	assert.Equal("pending", (*captured)[0].State)
+}
+
+func TestCIPollerProcessPR_ThrottlesAfterCompletedReview(t *testing.T) {
+	assert := assert.New(t)
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	h.Cfg.CI.ReviewTypes = []string{"security"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.Cfg.CI.ThrottleInterval = "1h"
+	h.Poller = NewCIPoller(
+		h.DB, NewStaticConfig(h.Cfg), nil,
+	)
+	h.stubProcessPRGit()
+	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) {
+		return "base-sha", nil
+	}
+
+	// First push — reviewed normally, recording the run's created_at.
+	err := h.Poller.processPR(
+		context.Background(), "acme/api",
+		ghPR{Number: 71, HeadRefOid: "first-sha", BaseRefName: "main"}, h.Cfg)
+	require.NoError(t, err, "first processPR")
+	require.True(t, h.hasPanel(t, "acme/api", 71, "first-sha"), "expected panel for first push")
+
+	// Second push at a new SHA within the throttle window is throttled on the
+	// recent run's timestamp (the panel throttle is purely time-based): no new
+	// run, deferred status set.
+	captured := h.CaptureCommitStatuses()
+	err = h.Poller.processPR(
+		context.Background(), "acme/api",
+		ghPR{Number: 71, HeadRefOid: "second-sha", BaseRefName: "main"}, h.Cfg)
+	require.NoError(t, err, "second processPR")
+
+	assert.False(h.hasPanel(t, "acme/api", 71, "second-sha"), "throttled second push creates no run")
+	require.Len(t, *captured, 1, "expected one deferred status")
+	assert.Equal("pending", (*captured)[0].State)
+	assert.Contains((*captured)[0].Desc, "Review deferred")
 }
 
 func TestCIPollerProcessPR_PostedSameHeadIsAlreadyReviewed(t *testing.T) {
@@ -3133,7 +3136,7 @@ func TestCIPollerProcessPR_PostedSameHeadIsAlreadyReviewed(t *testing.T) {
 
 	err := h.Poller.processPR(
 		context.Background(), "acme/api",
-		ghPR{Number: 72, HeadRefOid: "same-sha", BaseRefName: "main"}, h.Cfg, nil)
+		ghPR{Number: 72, HeadRefOid: "same-sha", BaseRefName: "main"}, h.Cfg)
 	require.NoError(t, err, "first processPR")
 	panel, err := h.DB.GetCIPanelByPRSHA("acme/api", 72, "same-sha")
 	require.NoError(t, err)
@@ -3142,7 +3145,7 @@ func TestCIPollerProcessPR_PostedSameHeadIsAlreadyReviewed(t *testing.T) {
 	captured := h.CaptureCommitStatuses()
 	err = h.Poller.processPR(
 		context.Background(), "acme/api",
-		ghPR{Number: 72, HeadRefOid: "same-sha", BaseRefName: "main"}, h.Cfg, nil)
+		ghPR{Number: 72, HeadRefOid: "same-sha", BaseRefName: "main"}, h.Cfg)
 	require.NoError(t, err, "second processPR")
 
 	assert.Empty(*captured, "posted same-head panel must be treated as already reviewed, not throttled")
@@ -3164,7 +3167,7 @@ func TestCIPollerProcessPR_DistinguishesSameHeadReplayFromCrossHeadThrottle(t *t
 
 	err := h.Poller.processPR(
 		context.Background(), "acme/api",
-		ghPR{Number: 73, HeadRefOid: "reviewed-sha", BaseRefName: "main"}, h.Cfg, nil)
+		ghPR{Number: 73, HeadRefOid: "reviewed-sha", BaseRefName: "main"}, h.Cfg)
 	require.NoError(t, err, "first processPR")
 	panel, err := h.DB.GetCIPanelByPRSHA("acme/api", 73, "reviewed-sha")
 	require.NoError(t, err)
@@ -3173,7 +3176,7 @@ func TestCIPollerProcessPR_DistinguishesSameHeadReplayFromCrossHeadThrottle(t *t
 	captured := h.CaptureCommitStatuses()
 	err = h.Poller.processPR(
 		context.Background(), "acme/api",
-		ghPR{Number: 73, HeadRefOid: "reviewed-sha", BaseRefName: "main"}, h.Cfg, nil)
+		ghPR{Number: 73, HeadRefOid: "reviewed-sha", BaseRefName: "main"}, h.Cfg)
 	require.NoError(t, err, "same-head replay")
 
 	assert.Empty(*captured, "same-head replay must be silently deduplicated")
@@ -3181,7 +3184,7 @@ func TestCIPollerProcessPR_DistinguishesSameHeadReplayFromCrossHeadThrottle(t *t
 	*captured = nil
 	err = h.Poller.processPR(
 		context.Background(), "acme/api",
-		ghPR{Number: 73, HeadRefOid: "new-sha", BaseRefName: "main"}, h.Cfg, nil)
+		ghPR{Number: 73, HeadRefOid: "new-sha", BaseRefName: "main"}, h.Cfg)
 	require.NoError(t, err, "cross-head retry")
 
 	assert.False(h.hasPanel(t, "acme/api", 73, "new-sha"),
@@ -3216,7 +3219,7 @@ func TestCIPollerProcessPR_LegacyCIReviewDoesNotSuppressPanel(t *testing.T) {
 
 	err = h.Poller.processPR(
 		context.Background(), "acme/api",
-		ghPR{Number: 73, HeadRefOid: "legacy-sha", BaseRefName: "main"}, h.Cfg, nil)
+		ghPR{Number: 73, HeadRefOid: "legacy-sha", BaseRefName: "main"}, h.Cfg)
 	require.NoError(t, err, "processPR")
 
 	assert.True(h.hasPanel(t, "acme/api", 73, "legacy-sha"),
@@ -3245,7 +3248,7 @@ func TestCIPollerProcessPR_ThrottleBypassUser(t *testing.T) {
 			HeadRefOid:  "first-sha",
 			BaseRefName: "main",
 			Author:      ghPRAuthor{Login: "wesm"},
-		}, h.Cfg, nil)
+		}, h.Cfg)
 	require.NoError(t, err, "first processPR")
 	require.True(t, h.hasPanel(t, "acme/api", 80, "first-sha"), "expected panel for first push")
 
@@ -3257,7 +3260,7 @@ func TestCIPollerProcessPR_ThrottleBypassUser(t *testing.T) {
 			HeadRefOid:  "second-sha",
 			BaseRefName: "main",
 			Author:      ghPRAuthor{Login: "wesm"},
-		}, h.Cfg, nil)
+		}, h.Cfg)
 	require.NoError(t, err, "second processPR")
 	assert.True(t, h.hasPanel(t, "acme/api", 80, "second-sha"),
 		"expected panel for bypass user's second push")
@@ -3283,7 +3286,7 @@ func TestCIPollerProcessPR_ThrottleDisabled(t *testing.T) {
 			Number:      71,
 			HeadRefOid:  "first-sha",
 			BaseRefName: "main",
-		}, h.Cfg, nil)
+		}, h.Cfg)
 	require.NoError(t, err, "first processPR")
 
 	// Second push — should NOT be throttled (throttle disabled).
@@ -3293,7 +3296,7 @@ func TestCIPollerProcessPR_ThrottleDisabled(t *testing.T) {
 			Number:      71,
 			HeadRefOid:  "second-sha",
 			BaseRefName: "main",
-		}, h.Cfg, nil)
+		}, h.Cfg)
 	require.NoError(t, err, "second processPR")
 
 	assert.True(t, h.hasPanel(t, "acme/api", 71, "second-sha"),
@@ -3321,7 +3324,7 @@ func TestCIPollerProcessPR_ReviewsMapMatrix(t *testing.T) {
 			Number:      72,
 			HeadRefOid:  "matrix-sha",
 			BaseRefName: "main",
-		}, h.Cfg, nil)
+		}, h.Cfg)
 	require.NoError(t, err, "processPR")
 
 	members := h.panelMembers(t, "acme/api", 72, "matrix-sha")
@@ -3743,7 +3746,7 @@ func TestCIPollerProcessPR_RepoReviewsMapOverride(
 			Number:      73,
 			HeadRefOid:  "repo-matrix-sha",
 			BaseRefName: "main",
-		}, h.Cfg, nil)
+		}, h.Cfg)
 	require.NoError(t, err, "processPR")
 
 	// Repo reviews map: codex -> [security] only.
@@ -3787,7 +3790,7 @@ func TestCIPollerProcessPR_RepoEmptyReviewsDisables(
 			Number:      74,
 			HeadRefOid:  "empty-reviews-sha",
 			BaseRefName: "main",
-		}, h.Cfg, nil)
+		}, h.Cfg)
 	require.NoError(t, err, "processPR")
 
 	assert.False(t, h.hasPanel(t, "acme/api", 74, "empty-reviews-sha"),
@@ -3815,7 +3818,7 @@ func TestCIPollerProcessPR_EmptyMatrixSkipsRun(t *testing.T) {
 			Number:      90,
 			HeadRefOid:  "head-sha",
 			BaseRefName: "main",
-		}, h.Cfg, nil)
+		}, h.Cfg)
 	require.NoError(t, err, "processPR")
 
 	assert.False(t, h.hasPanel(t, "acme/api", 90, "head-sha"),
@@ -3854,7 +3857,7 @@ func TestCIPollerProcessPR_AgentFailureSetsErrorStatus(t *testing.T) {
 			Number:      91,
 			HeadRefOid:  "head-sha-91",
 			BaseRefName: "main",
-		}, h.Cfg, nil)
+		}, h.Cfg)
 	require.Error(t, err, "expected error from processPR")
 
 	assert := assert.New(t)
@@ -3882,7 +3885,7 @@ func TestCIPollerProcessPR_TransientEnqueueFailureDoesNotSetConfigurationStatus(
 
 	err := h.Poller.processPR(
 		context.Background(), "acme/api",
-		ghPR{Number: 93, HeadRefOid: "head-sha-93", BaseRefName: "main"}, h.Cfg, nil)
+		ghPR{Number: 93, HeadRefOid: "head-sha-93", BaseRefName: "main"}, h.Cfg)
 
 	require.ErrorContains(t, err, "temporary fetch failure")
 	assert.Empty(t, *statuses)
@@ -3910,7 +3913,7 @@ func TestCIPollerProcessPR_ExperimentValidationFailureSetsConfigurationStatus(t 
 	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
 		Number: 94, HeadRefOid: "head-sha-94", HeadRefName: "feature",
 		BaseRefName: "main",
-	}, h.Cfg, nil)
+	}, h.Cfg)
 
 	require.ErrorContains(t, err, "ci.min_severity")
 	require.Len(t, *statuses, 1)
@@ -3944,7 +3947,7 @@ func TestCIPollerProcessPR_RepoExperimentValidationFailureSetsConfigurationStatu
 	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
 		Number: 95, HeadRefOid: "head-sha-95", HeadRefName: "feature",
 		BaseRefName: "main",
-	}, h.Cfg, nil)
+	}, h.Cfg)
 
 	require.ErrorContains(t, err, "not_review_config")
 	require.Len(t, *statuses, 1)
@@ -3986,7 +3989,7 @@ func TestCIPollerProcessPR_NoAgentStillSupersedes(t *testing.T) {
 
 	err := h.Poller.processPR(
 		context.Background(), "acme/api",
-		ghPR{Number: 92, HeadRefOid: "new-sha", BaseRefName: "main"}, h.Cfg, nil)
+		ghPR{Number: 92, HeadRefOid: "new-sha", BaseRefName: "main"}, h.Cfg)
 	require.ErrorIs(t, err, errNoCIAgent, "expected errNoCIAgent from processPR")
 
 	// The prior-HEAD run is superseded despite the new HEAD being unreviewable.
@@ -4069,7 +4072,7 @@ func TestProcessPRCreatesPanelRun(t *testing.T) {
 
 	err := p.processPR(context.Background(), "acme/api", ghPR{
 		Number: 5, HeadRefOid: head, BaseRefName: "main",
-	}, cfg, nil)
+	}, cfg)
 	require.NoError(t, err, "processPR")
 
 	panel, err := db.GetCIPanelByPRSHA("acme/api", 5, head)
@@ -4120,7 +4123,7 @@ func TestProcessPRAutoDesignUsesConfiguredBackupModel(t *testing.T) {
 
 	err := p.processPR(context.Background(), "acme/api", ghPR{
 		Number: 14, HeadRefOid: head, BaseRefName: "main",
-	}, cfg, nil)
+	}, cfg)
 	require.NoError(t, err, "processPR")
 
 	panel, err := db.GetCIPanelByPRSHA("acme/api", 14, head)
@@ -4163,7 +4166,7 @@ func TestProcessPRAutoDesignPersistsNamedACPBackupSnapshot(t *testing.T) {
 
 	err := p.processPR(context.Background(), "acme/api", ghPR{
 		Number: 16, HeadRefOid: head, BaseRefName: "main",
-	}, cfg, nil)
+	}, cfg)
 	require.NoError(t, err)
 	panel, err := db.GetCIPanelByPRSHA("acme/api", 16, head)
 	require.NoError(t, err)
@@ -4204,7 +4207,7 @@ func TestProcessPRAutoDesignUsesCIModelOverride(t *testing.T) {
 
 	err := p.processPR(context.Background(), "acme/api", ghPR{
 		Number: 15, HeadRefOid: head, BaseRefName: "main",
-	}, cfg, nil)
+	}, cfg)
 	require.NoError(t, err, "processPR")
 
 	panel, err := db.GetCIPanelByPRSHA("acme/api", 15, head)
@@ -4295,7 +4298,7 @@ func TestProcessPRSynthesisAndMembersUseSeparateMinSeverity(t *testing.T) {
 
 	err := p.processPR(context.Background(), "acme/api", ghPR{
 		Number: 12, HeadRefOid: head, BaseRefName: "main",
-	}, cfg, nil)
+	}, cfg)
 	require.NoError(t, err, "processPR")
 
 	panel, err := db.GetCIPanelByPRSHA("acme/api", 12, head)
@@ -4334,7 +4337,7 @@ func TestProcessPRMemberMinSeverityInvalidRepoReportsConfigurationError(t *testi
 
 	err := p.processPR(context.Background(), "acme/api", ghPR{
 		Number: 13, HeadRefOid: head, BaseRefName: "main",
-	}, cfg, nil)
+	}, cfg)
 	require.ErrorContains(t, err, "review_min_severity")
 	require.Len(t, statuses, 1)
 	assert.Equal(t, "error", statuses[0].State)
@@ -4366,7 +4369,7 @@ func TestProcessPRNamedPanelMembers(t *testing.T) {
 
 	err := p.processPR(context.Background(), "acme/api", ghPR{
 		Number: 6, HeadRefOid: head, BaseRefName: "main",
-	}, cfg, nil)
+	}, cfg)
 	require.NoError(t, err, "processPR")
 
 	panel, err := db.GetCIPanelByPRSHA("acme/api", 6, head)
@@ -4407,7 +4410,7 @@ func TestProcessPRNamedPanelACPMemberReplacesInheritedWorkflowModel(t *testing.T
 
 	err := p.processPR(context.Background(), "acme/api", ghPR{
 		Number: 17, HeadRefOid: head, BaseRefName: "main",
-	}, cfg, nil)
+	}, cfg)
 	require.NoError(t, err)
 
 	panel, err := db.GetCIPanelByPRSHA("acme/api", 17, head)
@@ -4456,7 +4459,7 @@ func TestProcessPRNamedPanelMemberUsesBackupModelWhenPreferredUnavailable(t *tes
 
 	err := p.processPR(context.Background(), "acme/api", ghPR{
 		Number: 15, HeadRefOid: head, BaseRefName: "main",
-	}, cfg, nil)
+	}, cfg)
 	require.NoError(t, err, "processPR")
 
 	panel, err := db.GetCIPanelByPRSHA("acme/api", 15, head)
@@ -4502,7 +4505,7 @@ func TestProcessPRNamedPanelOmittedAgentAutoDetectsAvailableAgent(t *testing.T) 
 
 	err := p.processPR(context.Background(), "acme/api", ghPR{
 		Number: 16, HeadRefOid: head, BaseRefName: "main",
-	}, cfg, nil)
+	}, cfg)
 	require.NoError(t, err, "processPR")
 
 	panel, err := db.GetCIPanelByPRSHA("acme/api", 16, head)
@@ -4534,7 +4537,7 @@ func TestProcessPRAutoDesignAppendsNoneWhenNotWarranted(t *testing.T) {
 
 	err := p.processPR(context.Background(), "acme/api", ghPR{
 		Number: 7, HeadRefOid: head, BaseRefName: "main",
-	}, cfg, nil)
+	}, cfg)
 	require.NoError(t, err, "processPR")
 
 	panel, err := db.GetCIPanelByPRSHA("acme/api", 7, head)
@@ -4575,7 +4578,7 @@ func TestProcessPRAutoDesignIgnoresNonVotingDesignMember(t *testing.T) {
 
 	err := p.processPR(context.Background(), "acme/api", ghPR{
 		Number: 9, HeadRefOid: head, BaseRefName: "main",
-	}, cfg, nil)
+	}, cfg)
 	require.NoError(t, err, "processPR")
 
 	panel, err := db.GetCIPanelByPRSHA("acme/api", 9, head)
@@ -4619,7 +4622,7 @@ func TestProcessPRAutoDesignFailsOpenOnAmbiguous(t *testing.T) {
 
 	err := p.processPR(context.Background(), "acme/api", ghPR{
 		Number: 8, HeadRefOid: head, BaseRefName: "main",
-	}, cfg, nil)
+	}, cfg)
 	require.NoError(t, err, "processPR")
 
 	panel, err := db.GetCIPanelByPRSHA("acme/api", 8, head)
@@ -4656,7 +4659,7 @@ func TestProcessPRAutoDesignMultiCommitEarlierWarrants(t *testing.T) {
 
 	err := p.processPR(context.Background(), "acme/api", ghPR{
 		Number: 30, HeadRefOid: head, BaseRefName: "main",
-	}, cfg, nil)
+	}, cfg)
 	require.NoError(t, err, "processPR")
 
 	panel, err := db.GetCIPanelByPRSHA("acme/api", 30, head)
@@ -4720,7 +4723,7 @@ func TestProcessPRIgnoresWorkingTreeAutoDesignConfig(t *testing.T) {
 
 	err := p.processPR(context.Background(), "acme/api", ghPR{
 		Number: 9, HeadRefOid: head, BaseRefName: "main",
-	}, cfg, nil)
+	}, cfg)
 	require.NoError(t, err, "processPR")
 
 	panel, err := db.GetCIPanelByPRSHA("acme/api", 9, head)
@@ -4861,7 +4864,7 @@ func TestClosedPRCleansUpDeferredAttempt(t *testing.T) {
 
 	// PR 5 has closed: absent from openPRs and the PR-open check returns false.
 	h.Poller.isPROpenFn = func(string, int) bool { return false }
-	require.NoError(t, h.Poller.cleanupClosedPRPanels(context.Background(), "acme/api", map[int]ghPR{}))
+	require.NoError(t, h.Poller.cleanupClosedPRPanels(context.Background(), "acme/api", map[int]bool{}))
 
 	attempt, err = h.DB.GetReviewAttempt("acme/api", prNum, headSHA)
 	require.NoError(t, err)
@@ -4882,7 +4885,8 @@ func TestRetryDueReviewAttemptDeletesAdvancedHead(t *testing.T) {
 	require.NoError(t, h.DB.DeferReviewAttempt("acme/api", prNum, oldSHA,
 		"transient", "provider unavailable", testUUIDPtr("old-run"), now.Add(-time.Minute), false))
 
-	require.NoError(t, h.Poller.retryDueReviewAttempts(context.Background(), "acme/api", map[int]ghPR{prNum: {Number: prNum, HeadRefOid: newSHA, BaseRefName: "main"}}, h.Cfg))
+	require.NoError(t, h.Poller.retryDueReviewAttempts(context.Background(), "acme/api",
+		[]ghPR{{Number: prNum, HeadRefOid: newSHA, BaseRefName: "main"}}, h.Cfg))
 
 	attempt, err := h.DB.GetReviewAttempt("acme/api", prNum, oldSHA)
 	require.NoError(t, err)
@@ -4914,7 +4918,8 @@ func TestRetryDueReviewAttemptFetchesPRMissingFromOpenPage(t *testing.T) {
 		return panelPostTarget{Open: true, HeadSHA: headSHA, HeadRefName: "feature/retry", BaseRefName: baseBranch}, nil
 	}
 
-	require.NoError(t, h.Poller.retryDueReviewAttempts(context.Background(), "acme/api", map[int]ghPR{1: {Number: 1, HeadRefOid: "other-head", BaseRefName: "main"}}, h.Cfg))
+	require.NoError(t, h.Poller.retryDueReviewAttempts(context.Background(), "acme/api",
+		[]ghPR{{Number: 1, HeadRefOid: "other-head", BaseRefName: "main"}}, h.Cfg))
 
 	assert.Equal([]int{prNum}, lookedUp, "missing PR is checked directly before skipping")
 	attempt, err := h.DB.GetReviewAttempt("acme/api", prNum, headSHA)
@@ -4942,116 +4947,45 @@ func TestRetryDueReviewAttemptFetchesPRMissingFromOpenPage(t *testing.T) {
 }
 
 func TestRetryDueReviewAttemptSkipsConfiguredLabel(t *testing.T) {
-	for _, tc := range []struct {
-		name                                                    string
-		draft, direct, shared, siblingDirect, reverse, canceled bool
-	}{
-		{name: "label listed"},
-		{name: "label direct", direct: true},
-		{name: "draft listed", draft: true},
-		{name: "draft direct", draft: true, direct: true},
-		{name: "draft direct with ready sibling", draft: true, direct: true, shared: true},
-		{name: "draft direct with ready sibling also missing", draft: true, direct: true, shared: true, siblingDirect: true},
-		{name: "draft direct before ready sibling also missing", draft: true, direct: true, shared: true, siblingDirect: true, reverse: true},
-		{name: "canceled direct lookup", direct: true, canceled: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
-			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-			h.Cfg.CI.SkipLabels = []string{"skip-review"}
-			h.Cfg.CI.SkipDrafts = true
-			h.Cfg.CI.Agents = []string{"test"}
-			h.stubProcessPRGit()
-			statuses := h.CaptureCommitStatuses()
-			checks := h.CaptureSkippedChecks()
-			pr := ghPR{Number: 133, HeadRefOid: "deferred-head", BaseRefName: "main", Draft: tc.draft}
-			siblingNumber := 132
-			if tc.reverse {
-				siblingNumber = 134
-			}
-			reason := "Review skipped: draft"
-			if !tc.draft {
-				pr.Labels = []string{"Skip-Review"}
-				reason = "Review skipped: label Skip-Review"
-			}
-			now := time.Now()
-			if tc.siblingDirect {
-				_, err := h.DB.ReserveReviewAttempt("acme/api", siblingNumber, pr.HeadRefOid, now.Add(-time.Hour))
-				require.NoError(t, err)
-				require.NoError(t, h.DB.DeferReviewAttempt("acme/api", siblingNumber, pr.HeadRefOid,
-					"transient", "provider unavailable", nil, now.Add(-2*time.Minute), false))
-			}
-			_, err := h.DB.ReserveReviewAttempt("acme/api", pr.Number, pr.HeadRefOid, now.Add(-time.Hour))
-			require.NoError(t, err)
-			require.NoError(t, h.DB.DeferReviewAttempt("acme/api", pr.Number, pr.HeadRefOid,
-				"transient", "provider unavailable", testUUIDPtr("old-run"), now.Add(-time.Minute), false))
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			if tc.canceled {
-				cancel()
-			}
-			lookups := 0
-			h.Poller.prPostTargetFn = func(got context.Context, _ string, number int) (panelPostTarget, error) {
-				lookups++
-				assert.Same(ctx, got, "direct lookup retains caller cancellation")
-				if tc.siblingDirect && number == siblingNumber {
-					return panelPostTarget{Open: true, HeadSHA: pr.HeadRefOid, BaseRefName: "main"}, got.Err()
-				}
-				assert.Equal(pr.Number, number)
-				return panelPostTarget{
-					Open: true, HeadSHA: pr.HeadRefOid, BaseRefName: pr.BaseRefName,
-					Draft: pr.Draft, Labels: pr.Labels,
-				}, got.Err()
-			}
-			prs := map[int]ghPR{pr.Number: pr}
-			if tc.direct {
-				delete(prs, pr.Number)
-			}
-			if tc.shared {
-				prs[siblingNumber] = ghPR{Number: siblingNumber, HeadRefOid: pr.HeadRefOid, BaseRefName: "main"}
-			}
-			if tc.siblingDirect {
-				delete(prs, siblingNumber)
-			}
-			if tc.siblingDirect {
-				capture := h.Poller.setCommitStatusFn
-				h.Poller.setCommitStatusFn = func(repo, sha, state, desc string) error {
-					assert.Equal(2, lookups, "resolve all fetched due peers before publishing any result")
-					return capture(repo, sha, state, desc)
-				}
-			}
-			require.NoError(t, h.Poller.retryDueReviewAttempts(ctx, "acme/api", prs, h.Cfg))
-			wantLookups := 0
-			if tc.direct {
-				wantLookups = 1
-			}
-			if tc.siblingDirect {
-				wantLookups++
-			}
-			assert.Equal(wantLookups, lookups)
-			attempt, err := h.DB.GetReviewAttempt("acme/api", pr.Number, pr.HeadRefOid)
-			require.NoError(t, err)
-			if tc.canceled {
-				require.NotNil(t, attempt)
-				assert.Equal("deferred", attempt.State)
-			} else {
-				assert.Nil(attempt)
-			}
-			assert.False(h.hasPanel(t, "acme/api", pr.Number, pr.HeadRefOid))
-			if tc.siblingDirect {
-				assert.True(h.hasPanel(t, "acme/api", siblingNumber, pr.HeadRefOid))
-				require.NotEmpty(t, *statuses)
-				assert.Equal("pending", (*statuses)[len(*statuses)-1].State)
-				assert.Empty(*checks, "directly recovered ready sibling keeps its review status")
-			} else if tc.shared || tc.canceled {
-				assert.Empty(*statuses)
-				assert.Empty(*checks)
-			} else {
-				assert.Equal([]capturedStatus{{Repo: "acme/api", SHA: pr.HeadRefOid, State: "success", Desc: reason}}, *statuses)
-				assert.Equal([]capturedSkippedCheck{{Repo: "acme/api", SHA: pr.HeadRefOid, Summary: reason}}, *checks)
-			}
-		})
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	h.Cfg.CI.SkipLabels = []string{"skip-review"}
+	statuses := h.CaptureCommitStatuses()
+	skippedChecks := h.CaptureSkippedChecks()
+
+	const headSHA = "labeleddeferred01"
+	const prNum = 133
+	now := time.Now()
+	created, err := h.DB.ReserveReviewAttempt(
+		"acme/api", prNum, headSHA, now.Add(-time.Hour))
+	require.NoError(t, err)
+	require.True(t, created)
+	require.NoError(t, h.DB.DeferReviewAttempt(
+		"acme/api", prNum, headSHA, "transient", "provider unavailable",
+		testUUIDPtr("old-run"), now.Add(-time.Minute), false))
+
+	h.Poller.prPostTargetFn = func(
+		context.Context, string, int,
+	) (panelPostTarget, error) {
+		return panelPostTarget{
+			Open: true, HeadSHA: headSHA, BaseRefName: "main",
+			Labels: []string{"Skip-Review"},
+		}, nil
 	}
+	require.NoError(t, h.Poller.retryDueReviewAttempts(
+		context.Background(), "acme/api", nil, h.Cfg))
+
+	attempt, err := h.DB.GetReviewAttempt("acme/api", prNum, headSHA)
+	require.NoError(t, err)
+	assert.Nil(t, attempt)
+	assert.False(t, h.hasPanel(t, "acme/api", prNum, headSHA))
+	assert.Equal(t, []capturedStatus{{
+		Repo: "acme/api", SHA: headSHA, State: "success",
+		Desc: "Review skipped: label Skip-Review",
+	}}, *statuses)
+	assert.Equal(t, []capturedSkippedCheck{{
+		Repo: "acme/api", SHA: headSHA,
+		Summary: "Review skipped: label Skip-Review",
+	}}, *skippedChecks)
 }
 
 // TestRetryDueReviewAttemptAppliesPRFilters checks that a deferred retry whose
@@ -5501,24 +5435,15 @@ func TestBuildPanelOptsAbortsOnCanceledPrebuild(t *testing.T) {
 func TestRetryAttemptPRCarriesAuthor(t *testing.T) {
 	p := &CIPoller{}
 	p.prPostTargetFn = func(_ context.Context, _ string, _ int) (panelPostTarget, error) {
-		return panelPostTarget{
-			Open: true, HeadSHA: " head000 ", HeadRefName: "feature/retry", BaseRefName: " main ",
-			AuthorLogin: "reviewer", Draft: true, Labels: []string{"review"},
-		}, nil
+		return panelPostTarget{Open: true, HeadSHA: "head000", BaseRefName: "main", AuthorLogin: "alice", Draft: true}, nil
 	}
 
-	for _, inventory := range []map[int]ghPR{nil, {}} {
-		pr, ok := p.retryAttemptPR(t.Context(), "acme/api",
-			&storage.ReviewAttempt{PRNumber: 7, HeadSHA: "head000"}, inventory)
-		require.True(t, ok)
-		assert.Equal(t, ghPR{
-			Number: 7, HeadRefOid: "head000", HeadRefName: "feature/retry", BaseRefName: "main",
-			Author: ghPRAuthor{Login: "reviewer"}, Draft: true, Labels: []string{"review"},
-		}, pr)
-		if inventory != nil {
-			assert.Equal(t, pr, inventory[7], "later retry consumers need the complete recovered PR")
-		}
-	}
+	pr, ok := p.retryAttemptPR(context.Background(), "acme/api",
+		&storage.ReviewAttempt{PRNumber: 7, HeadSHA: "head000"}, nil)
+	require.True(t, ok)
+	assert.Equal(t, "alice", pr.Author.Login,
+		"direct lookup must reconstruct the PR with its author preserved")
+	assert.True(t, pr.Draft, "direct lookup must preserve draft state for skip decisions")
 }
 
 func TestFormatPanelReviewerStatusLabelsNoVerdict(t *testing.T) {

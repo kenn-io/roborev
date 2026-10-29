@@ -439,7 +439,7 @@ func testHealthCIPollerEnqueueFailure(t *testing.T, draft bool) {
 			}
 
 			// A deferred head skips the ordinary enqueue path before the retry sweep.
-			require.NoError(t, h.Poller.processPR(context.Background(), "acme/api", pr, h.Cfg, nil))
+			require.NoError(t, h.Poller.processPR(context.Background(), "acme/api", pr, h.Cfg))
 			require.Zero(t, fetches)
 			h.Poller.poll(context.Background())
 			health := decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
@@ -946,7 +946,7 @@ func TestHealthCIPollerSupersededCleanupFailure(t *testing.T) {
 			}
 			_, err := h.DB.Exec(trigger)
 			require.NoError(t, err)
-			require.Error(t, h.Poller.processPR(context.Background(), "acme/api", pr, h.Cfg, nil))
+			require.Error(t, h.Poller.processPR(context.Background(), "acme/api", pr, h.Cfg))
 
 			// A replacement may already have been queued by another poller. Its
 			// deduplication gate must not hide unfinished cleanup of the old run.
@@ -1184,7 +1184,7 @@ func TestHealthCIPollerForkHeadWithStalePullRef(t *testing.T) {
 			assert.Contains(health.Components, storage.ComponentHealth{
 				Name: "ci", Healthy: false, Message: "review failed for acme/api#7",
 			})
-			err := h.Poller.processPR(context.Background(), "acme/api", pr, h.Cfg, nil)
+			err := h.Poller.processPR(context.Background(), "acme/api", pr, h.Cfg)
 			assert.ErrorContains(err, "PR #7 head commit "+newHead+" is not available locally")
 		})
 	}
