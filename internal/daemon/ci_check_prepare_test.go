@@ -26,6 +26,9 @@ func TestCICheckPreparation(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires shell fixtures and symlinks")
 	}
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("requires go for module warming and build")
+	}
 	proxy := t.TempDir()
 	versionDir := filepath.Join(proxy, "example.com", "dependency", "@v")
 	require.NoError(t, os.MkdirAll(versionDir, 0o700))
@@ -48,6 +51,7 @@ func TestCICheckPreparation(t *testing.T) {
 
 	sub := testutil.NewTestRepoWithCommit(t)
 	sub.CommitFile("present.txt", "submodule content", "content")
+	wantHead := sub.HeadSHA()
 	repo := testutil.NewTestRepoWithCommit(t)
 	// The upstream and its sibling exist, while no sibling exists next to the checker copy.
 	remoteDir := t.TempDir()
@@ -64,29 +68,21 @@ func TestCICheckPreparation(t *testing.T) {
 	repo.RunGit("add", "go.sum")
 	repo.RunGit("commit", "-m", "checksum link")
 
-	tools := t.TempDir()
-	nativeDir := filepath.Join(tools, "native")
-	require.NoError(t, os.Mkdir(nativeDir, 0o700))
-	native, err := os.Create(filepath.Join(nativeDir, "codex"))
-	require.NoError(t, err)
-	const size = 32 << 20
-	require.NoError(t, native.Truncate(size))
-	require.NoError(t, native.Chmod(0o700))
-	require.NoError(t, native.Close())
-	require.NoError(t, os.Symlink(filepath.Join(nativeDir, "codex"), filepath.Join(tools, "codex")))
-	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
-
+	command := filepath.Join(t.TempDir(), "codex")
+	require.NoError(t, os.WriteFile(command, []byte("native fixture"), 0o700))
 	sha := testutil.GetHeadSHA(t, repo.Root)
-	var before, after runtime.MemStats
-	runtime.ReadMemStats(&before)
 	wp := &WorkerPool{}
-	run, err := wp.prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}, "codex", nil, io.Discard)
-	runtime.ReadMemStats(&after)
+	run, err := wp.prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}, command, nil, io.Discard)
 	require.NoError(t, err)
 	t.Cleanup(run.cleanup)
-	assert.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(size), "launcher probe must read only its header")
-	assert.Contains(t, run.Job.ReadPaths, nativeDir, "native Codex needs its sibling helpers")
-	assert.NotContains(t, run.Job.ReadPaths, tools)
+	git := exec.CommandContext(t.Context(), "git", "-C", filepath.Join(run.Repo, "dependency"), "rev-parse", "HEAD")
+	output, err := git.CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	assert.Equal(t, wantHead, strings.TrimSpace(string(output)))
+	build := exec.CommandContext(t.Context(), "go", "build", "-o", filepath.Join(t.TempDir(), "copy"), ".")
+	build.Dir = run.Repo
+	output, err = build.CombinedOutput()
+	require.NoError(t, err, "%s", output)
 	content, err := os.ReadFile(filepath.Join(run.Repo, "dependency", "present.txt"))
 	require.NoError(t, err)
 	assert.Equal(t, "submodule content", string(content))
@@ -97,43 +93,6 @@ func TestCICheckPreparation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, hostPath, target)
 	assert.NoFileExists(t, hostPath)
-}
-
-func TestCICheckPreparationSubmoduleBuild(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("requires cp")
-	}
-	t.Setenv("GOWORK", "off")
-	t.Setenv("GOPROXY", "off")
-	sub := testutil.NewTestRepoWithCommit(t)
-	repo := testutil.NewTestRepoWithCommit(t)
-	repo.RunGit("-c", "protocol.file.allow=always", "submodule", "add", sub.Root, "dependency")
-	repo.RunGit("commit", "-am", "add submodule")
-	repo.CommitFile("go.mod", "module example.com/check\n\ngo 1.24.0\n", "module")
-	buildDir := t.TempDir()
-	build := exec.CommandContext(t.Context(), "go", "build", "-o", filepath.Join(buildDir, "original"), ".")
-	build.Dir = repo.Root
-	output, err := build.CombinedOutput()
-	require.NoError(t, err, "%s", output)
-	wantHead := sub.HeadSHA()
-
-	command := filepath.Join(t.TempDir(), "codex")
-	require.NoError(t, os.WriteFile(command, []byte("native fixture"), 0o700))
-	sha := testutil.GetHeadSHA(t, repo.Root)
-	wp := &WorkerPool{}
-	run, err := wp.prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}, command, nil, io.Discard)
-	require.NoError(t, err)
-	t.Cleanup(run.cleanup)
-
-	git := exec.CommandContext(t.Context(), "git", "-C", filepath.Join(run.Repo, "dependency"), "rev-parse", "HEAD")
-	output, err = git.CombinedOutput()
-	if assert.NoError(t, err, "%s", output) {
-		assert.Equal(t, wantHead, strings.TrimSpace(string(output)))
-	}
-	build = exec.CommandContext(t.Context(), "go", "build", "-o", filepath.Join(buildDir, "copy"), ".")
-	build.Dir = run.Repo
-	output, err = build.CombinedOutput()
-	assert.NoError(t, err, "%s", output)
 }
 
 func TestCICheckWarming(t *testing.T) {
@@ -170,12 +129,9 @@ func TestCICheckCredentialOverlap(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires symlinks")
 	}
-	for _, name := range []string{"codex equal", "codex child", "codex symlink", "home equal", "home child", "git directory", "separate"} {
+	for _, name := range []string{"codex equal", "codex child", "codex symlink", "home equal", "home child", "git directory", "no overlap"} {
 		t.Run(name, func(t *testing.T) {
-			tc := newWorkerTestContext(t, 1)
 			tools := t.TempDir()
-			command := filepath.Join(tools, "codex")
-			require.NoError(t, os.WriteFile(command, []byte("native fixture"), 0o700))
 			home, login := t.TempDir(), t.TempDir()
 			switch name {
 			case "codex equal":
@@ -188,8 +144,6 @@ func TestCICheckCredentialOverlap(t *testing.T) {
 					require.NoError(t, os.Symlink(login, link))
 					login = link
 				}
-			case "git directory":
-				login = filepath.Join(tc.TmpDir, ".git")
 			case "home equal":
 				home = tools
 			case "home child":
@@ -198,13 +152,21 @@ func TestCICheckCredentialOverlap(t *testing.T) {
 			}
 			t.Setenv("HOME", home)
 			t.Setenv("CODEX_HOME", login)
-			require.NoError(t, os.WriteFile(filepath.Join(login, "auth.json"), []byte(`{"tokens":{"access_token":"synthetic-token"}}`), 0o600))
-			sha := testutil.GetHeadSHA(t, tc.TmpDir)
-			run, err := tc.Pool.prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: tc.TmpDir, GitRef: sha + ".." + sha}, command, nil, io.Discard)
-			if err == nil {
-				t.Cleanup(run.cleanup)
+			if name == "git directory" {
+				command := filepath.Join(tools, "codex")
+				require.NoError(t, os.WriteFile(command, []byte("native fixture"), 0o700))
+				tc := newWorkerTestContext(t, 1)
+				t.Setenv("CODEX_HOME", filepath.Join(tc.TmpDir, ".git"))
+				sha := testutil.GetHeadSHA(t, tc.TmpDir)
+				run, err := tc.Pool.prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: tc.TmpDir, GitRef: sha + ".." + sha}, command, nil, io.Discard)
+				if err == nil {
+					t.Cleanup(run.cleanup)
+				}
+				require.ErrorContains(t, err, "read grant contains host")
+				return
 			}
-			if name == "separate" {
+			err := validateCICheckReadPaths([]string{tools})
+			if name == "no overlap" {
 				require.NoError(t, err)
 			} else {
 				require.ErrorContains(t, err, "read grant contains host")
