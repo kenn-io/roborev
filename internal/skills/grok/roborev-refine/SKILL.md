@@ -19,7 +19,7 @@ CLI. Do not simply shell out to `roborev refine`.
 ## Usage
 
 ```
-/roborev-refine [--since <commit>] [--branch <name>] [--max-iterations <n>]
+/roborev-refine [--since <commit>] [--branch <name>] [--max-iterations <n>] [--stop-on-stall]
 ```
 
 ## Explicit invocation only
@@ -32,6 +32,7 @@ behavior and must not run roborev.
 - `--since <commit>`: refine commits after this commit (exclusive); required on the default branch
 - `--branch <name>`: validate that the current branch matches before refining
 - `--max-iterations <n>`: maximum fix-review cycles (default: 10)
+- `--stop-on-stall`: stop at the repeated-file advisory, leaving the new review open
 
 This skill intentionally focuses on the current branch flow. It does not expose
 `roborev refine --all-branches` or `roborev refine --list`.
@@ -61,7 +62,7 @@ AGENTS.md instructions when they conflict with these steps.
 
 ## Instructions
 
-When the user invokes `/roborev-refine [--since <commit>] [--branch <name>] [--max-iterations <n>]`:
+When the user invokes `/roborev-refine [--since <commit>] [--branch <name>] [--max-iterations <n>] [--stop-on-stall]`:
 
 ### 1. Validate inputs and refine context
 
@@ -221,6 +222,33 @@ stale commit-level reviews open:
 ```bash
 roborev close --from-skill <hook_job_id>
 ```
+
+Track repeated finding files at this full-scope re-review step. The initial
+review is baseline zero. Count one round only after a new fix commit and its
+completed failing full-scope review; do not also count the optional hook review
+or a retry without a new commit. Read
+`roborev show --from-skill --job --json <job_id>` and use all stored severities
+from valid `structured_output` findings. Recognize only repo-relative paths
+(optionally `:line` or
+`:start-end`) that match tracked files at the reviewed endpoint; ignore
+unlocated/unsupported findings and never extract locations from Markdown.
+Reject absolute paths, traversal, URLs, prose, and malformed line suffixes;
+line numbers must be positive decimals with ordered ranges.
+
+If the new nonempty file set is a subset of the preceding set, increment the
+streak; otherwise reset to zero. Always replace the preceding set. Passing,
+closed, invalid or wholly unlocated reviews, no-change fixes, errors while
+running or waiting for a re-review, and new/unrelated chains reset the streak.
+Count each fix SHA once, including recovered reviews.
+
+At exactly three consecutive qualifying rounds, print an advisory naming sorted
+files and suggest inspecting the approach, simplifying or removing code, or
+recording a decision. Repeated files alone do not prove lack of progress. Save
+it on the newly failed review with commenter `roborev-refine`, using the safe
+heredoc pattern above. Warn if the comment fails. Advise even on the final
+permitted iteration. Continue by default without repeating the advisory until a
+reset; with `--stop-on-stall`, stop before another fix and leave this review
+open, even if saving the comment failed.
 
 - If the explicit full-scope review **passed**: inform the user and stop. The
   branch or requested commit range is clean.
