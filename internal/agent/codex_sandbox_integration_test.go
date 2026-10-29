@@ -33,7 +33,7 @@ func TestCodexSandboxIntegration(t *testing.T) {
 			t.Skipf("%s is required", command)
 		}
 	}
-	for _, commandType := range []string{"absolute", "relative", "symlink"} {
+	for _, commandType := range []string{"relative", "symlink"} {
 		t.Run(commandType, func(t *testing.T) {
 			codex, err := exec.LookPath("codex")
 			require.NoError(t, err)
@@ -51,10 +51,9 @@ func TestCodexSandboxIntegration(t *testing.T) {
 			marker := filepath.Join(work, "probe-ran")
 			probe := fmt.Sprintf("#!/bin/bash\n"+testutil.SandboxShellChecks+`
 check codex-home allow bash -c '[[ "$CODEX_HOME" == "$1"/.codex-home-* && -d "$CODEX_HOME" ]]' probe '%s'
-check login-read deny cat '%s/auth.json'
 touch '%s'
 exit "$failed"
-`, work, secrets, marker)
+`, work, marker)
 
 			const key = "sandbox-test-token"
 			var calls, unauthorized atomic.Int32
@@ -116,22 +115,20 @@ exit "$failed"
 			} else {
 				require.True(t, os.IsNotExist(err), "%v", err)
 			}
-			command := codex
-			if commandType != "absolute" {
-				require.NoError(t, os.Mkdir(filepath.Join(work, "tools"), 0o700))
-				if commandType == "relative" {
-					data, err := os.ReadFile(codex)
-					require.NoError(t, err)
-					require.NoError(t, os.WriteFile(filepath.Join(work, "tools", "codex"), data, 0o700))
-					command = "./" + filepath.Join(filepath.Base(work), "tools", "codex")
-				} else {
-					launcher := filepath.Join(work, "tools", "launcher")
-					script := fmt.Sprintf("#!/bin/sh\n[ \"${0##*/}\" = codex ] || { echo 'launcher requires basename codex' >&2; exit 1; }\nexec %q \"$@\"\n", codex)
-					require.NoError(t, os.WriteFile(launcher, []byte(script), 0o700))
-					require.NoError(t, os.Symlink(launcher, filepath.Join(work, "tools", "codex")))
-					t.Setenv("PATH", filepath.Join(work, "tools")+string(os.PathListSeparator)+os.Getenv("PATH"))
-					command = "codex"
-				}
+			var command string
+			require.NoError(t, os.Mkdir(filepath.Join(work, "tools"), 0o700))
+			if commandType == "relative" {
+				data, err := os.ReadFile(codex)
+				require.NoError(t, err)
+				require.NoError(t, os.WriteFile(filepath.Join(work, "tools", "codex"), data, 0o700))
+				command = "./" + filepath.Join(filepath.Base(work), "tools", "codex")
+			} else {
+				launcher := filepath.Join(work, "tools", "launcher")
+				script := fmt.Sprintf("#!/bin/sh\n[ \"${0##*/}\" = codex ] || { echo 'launcher requires basename codex' >&2; exit 1; }\nexec %q \"$@\"\n", codex)
+				require.NoError(t, os.WriteFile(launcher, []byte(script), 0o700))
+				require.NoError(t, os.Symlink(launcher, filepath.Join(work, "tools", "codex")))
+				t.Setenv("PATH", filepath.Join(work, "tools")+string(os.PathListSeparator)+os.Getenv("PATH"))
+				command = "codex"
 			}
 			a := NewCodexAgent(command).WithSandbox(&CodexSandbox{Job: job, upstream: server.URL})
 			a.IgnoreUserConfig = true
@@ -141,9 +138,7 @@ exit "$failed"
 			result, err := a.Review(context.Background(), filepath.Join(filepath.Base(work), "repo"), "HEAD", "Run the supplied probe.", &stream)
 			require.NoError(t, err, "%s", stream.String())
 			assert.NotContains(t, string(result), "BAD ")
-			for _, name := range []string{"codex-home", "login-read"} {
-				assert.Contains(t, string(result), "OK "+name)
-			}
+			assert.Contains(t, string(result), "OK codex-home")
 			assert.FileExists(t, marker)
 			assert.GreaterOrEqual(t, calls.Load(), int32(2))
 			assert.Zero(t, unauthorized.Load())

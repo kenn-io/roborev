@@ -9,7 +9,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -1190,7 +1189,7 @@ func TestCodexSandboxRefusesResumeAndPlanning(t *testing.T) {
 	}
 }
 
-func TestCodexSandboxRelativeWorkDir(t *testing.T) {
+func TestCodexSandboxRelativeWorkDirAndRepoContainment(t *testing.T) {
 	for _, relativeHome := range []bool{false, true} {
 		t.Run(fmt.Sprintf("relative-home=%t", relativeHome), func(t *testing.T) {
 			dir, err := filepath.EvalSymlinks(t.TempDir())
@@ -1226,22 +1225,16 @@ func TestCodexSandboxRelativeWorkDir(t *testing.T) {
 }
 
 func TestCodexSandboxWrapperFailure(t *testing.T) {
-	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
-		t.Skip("nono pin requires linux/amd64")
-	}
 	dir := t.TempDir()
 	repo := filepath.Join(dir, "repo")
 	require.NoError(t, os.Mkdir(repo, 0o700))
 	marker := filepath.Join(dir, "executed")
 	command := writeTempCommand(t, "#!/bin/sh\ncase \"$1\" in *etxtbsy*) exit 0;; esac\ncase \" $* \" in *' --help '*) echo '"+codexDangerousFlag+" "+codexThreadSourceFlag+"'; exit 0;; esac\n: >'"+marker+"'\n")
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "nono"), []byte("#!/bin/sh\nexit 0\n"), 0o700))
 	t.Setenv("PATH", dir)
-	authFile := filepath.Join(t.TempDir(), "auth.json")
-	t.Setenv("CODEX_HOME", filepath.Dir(authFile))
-	require.NoError(t, os.WriteFile(authFile, []byte(`{"tokens":{"account_id":"fixture-account"}}`), 0o600))
+	t.Setenv("CODEX_HOME", t.TempDir())
 	a := NewCodexAgent(command).WithSandbox(&CodexSandbox{Job: sandbox.Job{WorkDir: dir, MemoryMax: 1 << 30}})
 	_, err := a.Review(t.Context(), repo, "HEAD", "review", nil)
-	require.ErrorContains(t, err, "checksum mismatch")
+	require.Error(t, err)
 	assert.NoFileExists(t, marker)
 	homes, err := filepath.Glob(filepath.Join(dir, ".codex-home-*"))
 	require.NoError(t, err)

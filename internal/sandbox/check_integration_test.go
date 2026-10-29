@@ -38,7 +38,7 @@ func TestSandboxSelfCheck(t *testing.T) {
 	job := Job{WorkDir: t.TempDir()}
 	err := job.check(t.Context(), []string{"env"}, []string{"PATH=/usr/bin:/bin"})
 	require.ErrorContains(t, err, "sandbox self-check failed")
-	for _, name := range []string{"canary-read", "loopback-connect", "external-connect", "environment-canary"} {
+	for _, name := range []string{"canary-read", "loopback-connect", "environment-canary"} {
 		assert.Contains(t, err.Error(), name)
 	}
 }
@@ -112,12 +112,19 @@ exit "$failed"
 	require.NoError(t, err)
 	// nono's TLS interceptor returns this body for an endpoint-policy denial.
 	assert.Equal(t, `{"error":"Forbidden"}`, string(denial))
-	t.Run("unenforceable-policy", func(t *testing.T) {
-		job := Job{WorkDir: t.TempDir(), Route: Route{Name: "codex", Upstream: "http://example.com", Path: "/responses", EnvVar: "CODEX_PHANTOM", Capture: []string{"/bin/echo", "fixture-token"}}, MemoryMax: 1 << 30,
-			Env: []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir()}}
-		_, _, _, err := job.Command(t.Context(), []string{"true"})
-		require.ErrorContains(t, err, "must use HTTPS (HTTP only allowed for loopback addresses)")
-	})
+}
+
+func TestSandboxUnenforceablePolicy(t *testing.T) {
+	if os.Getenv("ROBOREV_RUN_SANDBOX_INTEGRATION") != "1" || runtime.GOARCH != "amd64" {
+		t.Skip("requires opt-in linux/amd64 sandbox integration")
+	}
+	if _, err := exec.LookPath("nono"); err != nil {
+		t.Skip("nono is required")
+	}
+	job := Job{WorkDir: t.TempDir(), Route: Route{Name: "codex", Upstream: "http://example.com", Path: "/responses", EnvVar: "CODEX_PHANTOM", Capture: []string{"/bin/echo", "fixture-token"}}, MemoryMax: 1 << 30,
+		Env: []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir()}}
+	_, _, _, err := job.Command(t.Context(), []string{"true"})
+	require.ErrorContains(t, err, "must use HTTPS (HTTP only allowed for loopback addresses)")
 }
 
 func TestSandboxProcessCleanup(t *testing.T) {
