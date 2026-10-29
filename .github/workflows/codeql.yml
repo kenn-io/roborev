@@ -1,14 +1,14 @@
 name: CodeQL
 
 on:
+  workflow_call:
   push:
-    branches: [main]
-  pull_request:
     branches: [main]
   schedule:
     - cron: '37 4 * * 1'
 
 env:
+  CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/codeql.yml:analyze
   # "|" falls back to the source repo on any proxy error, including HTTP/2 stream resets mid-download.
   GOPROXY: https://proxy.golang.org|direct
 
