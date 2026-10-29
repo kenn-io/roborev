@@ -7,6 +7,10 @@ on:
   schedule:
     - cron: '37 4 * * 1'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 env:
   CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/codeql.yml:analyze
   # "|" falls back to the source repo on any proxy error, including HTTP/2 stream resets mid-download.
