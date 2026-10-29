@@ -25,6 +25,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/stacktest"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -961,6 +962,7 @@ func TestWorkerCIPanelMembersAtDifferentHeadsRunConcurrentlyInSeparateWorktrees(
 		select {
 		case <-workersDone:
 		case <-time.After(30 * time.Second):
+			stacktest.Dump(t)
 			t.Log("timed out waiting for concurrent CI workers to finish")
 		}
 	}()
@@ -970,6 +972,7 @@ func TestWorkerCIPanelMembersAtDifferentHeadsRunConcurrentlyInSeparateWorktrees(
 		select {
 		case <-started:
 		case <-deadline:
+			stacktest.Dump(t)
 			require.Equal(t, 2, received, "timed out waiting for concurrent CI agents to start")
 		}
 	}
