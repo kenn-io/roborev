@@ -33,6 +33,43 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 		_, err := exec.LookPath(name)
 		require.NoError(t, err)
 	}
+	t.Run("native", testCICheckSandboxIntegration)
+	t.Run("npm", func(t *testing.T) {
+		codex, err := resolveCICheckCommand(t.Context(), t.TempDir(), "codex")
+		require.NoError(t, err)
+		prefix := t.TempDir()
+		packageDir := filepath.Join(prefix, "lib", "node_modules", "@openai", "codex")
+		nativePackage := filepath.Join(filepath.Dir(packageDir), "codex-linux-x64")
+		native := filepath.Join(nativePackage, "vendor", "x86_64-unknown-linux-musl", "bin", "codex")
+		require.NoError(t, os.MkdirAll(filepath.Dir(native), 0o700))
+		copyCmd := exec.CommandContext(t.Context(), "cp", "--reflink=auto", codex, native)
+		output, err := copyCmd.CombinedOutput()
+		require.NoError(t, err, "%s", output)
+		require.NoError(t, os.WriteFile(filepath.Join(nativePackage, "package.json"), []byte(`{"name":"@openai/codex-linux-x64"}`), 0o600))
+		require.NoError(t, os.MkdirAll(filepath.Join(packageDir, "bin"), 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(packageDir, "package.json"), []byte(`{"type":"module"}`), 0o600))
+		// Match the npm launcher's sibling-package resolution at rust-v0.164.0.
+		launcher := `#!/usr/bin/env node
+import { createRequire } from 'node:module';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+const require = createRequire(import.meta.url);
+const pkg = require.resolve('@openai/codex-linux-x64/package.json');
+const native = path.join(path.dirname(pkg), 'vendor', 'x86_64-unknown-linux-musl', 'bin', 'codex');
+const child = spawnSync(native, process.argv.slice(2), { stdio: 'inherit' });
+if (child.error) throw child.error;
+process.exit(child.status ?? 1);
+`
+		require.NoError(t, os.WriteFile(filepath.Join(packageDir, "bin", "codex.js"), []byte(launcher), 0o700))
+		bin := filepath.Join(prefix, "bin")
+		require.NoError(t, os.Mkdir(bin, 0o700))
+		require.NoError(t, os.Symlink(filepath.Join(packageDir, "bin", "codex.js"), filepath.Join(bin, "codex")))
+		t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+		testCICheckSandboxIntegration(t)
+	})
+}
+
+func testCICheckSandboxIntegration(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	repoRoot := tc.TmpDir
 	loginDir := t.TempDir()
