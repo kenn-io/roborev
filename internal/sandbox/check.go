@@ -36,6 +36,13 @@ touch "$1/.sandbox-write-$$" && rm "$1/.sandbox-write-$$" || bad workdir-write
 cat "$2" >/dev/null 2>&1 && bad canary-read
 ( : >/dev/tcp/127.0.0.1/"$3" ) 2>/dev/null && bad loopback-connect
 ( : >/dev/tcp/1.1.1.1/443 ) 2>/dev/null && bad external-connect
+/usr/bin/python3 -c 'import urllib.request,urllib.error,sys
+try:
+ urllib.request.urlopen("https://example.com", timeout=5)
+except urllib.error.HTTPError:
+ pass
+except Exception:
+ sys.exit(1)' 2>/dev/null && bad proxy-external
 [[ ! -v ROBOREV_SANDBOX_CANARY ]] || bad environment-canary
 [[ ! -v XDG_RUNTIME_DIR ]] || bad environment-runtime
 [[ ! -v DBUS_SESSION_BUS_ADDRESS ]] || bad environment-dbus

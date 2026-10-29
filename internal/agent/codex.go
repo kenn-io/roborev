@@ -258,7 +258,7 @@ func (a *CodexAgent) commandArgs(opts codexArgOptions, goos string) []string {
 		args = append(args, "-c", override)
 	}
 	if a.sandbox != nil && !opts.preview {
-		args = append(args, "-c", `web_search="disabled"`, "-c", `model_provider="roborev-proxy"`)
+		args = append(args, "-c", `web_search="disabled"`, "-c", `model_provider="roborev-route"`)
 	}
 	if opts.agenticMode {
 		args = append(args, codexDangerousFlag)
@@ -551,7 +551,7 @@ func (a *CodexAgent) review(
 		if err != nil {
 			return "", err
 		}
-		wrapped, wrappedEnv, cleanup, err := job.Command(ctx, append([]string{resolved}, args...))
+		wrapped, wrappedEnv, cleanup, err := job.Command(ctx, append([]string{"/bin/sh", "-c", `exec "$0" -c "model_providers.roborev-route.base_url=\"$CODEX_BASE_URL\"" "$@"`, resolved}, args...))
 		if err != nil {
 			return "", err
 		}
@@ -728,15 +728,7 @@ func (a *CodexAgent) ReviewWithSchema(
 	schema jsontext.Value,
 	out io.Writer,
 ) (jsontext.Value, error) {
-	schemaDir := ""
-	if a.sandbox != nil {
-		var err error
-		schemaDir, err = filepath.Abs(a.sandbox.Job.WorkDir)
-		if err != nil {
-			return nil, fmt.Errorf("resolve sandbox work dir: %w", err)
-		}
-	}
-	schemaFile, err := os.CreateTemp(schemaDir, "roborev-codex-review-schema-*.json")
+	schemaFile, err := os.CreateTemp("", "roborev-codex-review-schema-*.json")
 	if err != nil {
 		return nil, fmt.Errorf("create codex review schema: %w", err)
 	}

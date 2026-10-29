@@ -356,8 +356,8 @@ review vs agentic modes.
 
 The Codex backend can run agentic jobs inside nono. This is an internal API for
 callers that supply a job directory, read-only paths, an explicit environment, a
-memory cap in bytes, and a credential proxy port and key. The CI checker will
-use this API; configuration doesn't expose it yet.
+memory cap in bytes, and a host Codex login file. The CI checker will use this
+API; configuration doesn't expose it yet.
 
 The job can write its work directory and read the caller's read-only paths plus
 nono's default system paths. Keep the Git directory outside the work directory
@@ -373,8 +373,8 @@ Host requirements:
 - A systemd user manager reachable through `XDG_RUNTIME_DIR` and, when needed,
     `DBUS_SESSION_BUS_ADDRESS`. Each run uses a scope with the caller's
     `MemoryMax` and `MemorySwapMax=0`.
-- A credential proxy listening on 127.0.0.1 that holds the model login and
-    accepts the caller's client key through the Responses API.
+- A Codex login file with `tokens.account_id` and `tokens.access_token`, by
+    default in the host's `CODEX_HOME` or `~/.codex`.
 - Bash and Python 3 at `/usr/bin/python3` for the self-check.
 
 Before each run, roborev verifies nono's checksum and runs a probe under the
@@ -383,15 +383,16 @@ reads, network access, environment filtering, and access to the user D-Bus. Any
 mismatch or unenforceable policy stops the run before Codex starts.
 
 Codex runs in agentic mode with a private `CODEX_HOME` inside the job directory.
-Its provider points to the proxy. The job can read its proxy key from the
-configuration file, and the key works only against the proxy. Web search is
-disabled. The job receives only its explicit environment, and it can reach only
-the proxy port. The host login and user D-Bus stay outside the sandbox. Planning
-refuses this agentic mode.
+Its provider uses nono's credential route. The nono supervisor reads the host
+login on demand and injects the access token into model requests. The job sees
+only a placeholder key and a loopback URL. Only `POST /responses` to the Codex
+upstream goes out. The configuration file contains the account ID and provider
+settings. Web search is disabled. The host login and user D-Bus stay outside the
+sandbox. Planning refuses this agentic mode.
 
 Tests that start a loopback server, such as `httptest.NewServer`, fail inside
 this sandbox. Run `make test-sandbox-integration` with nono and Codex on PATH to
-exercise the policy with real binaries and a local stand-in proxy.
+exercise the policy with real binaries and a local stand-in Responses server.
 
 ## Pi
 

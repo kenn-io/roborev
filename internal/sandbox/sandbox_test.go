@@ -50,9 +50,13 @@ func TestSandboxCommandRejectsReadPaths(t *testing.T) {
 	require.NoError(t, os.WriteFile(file, []byte("fixture"), 0o600))
 	link := filepath.Join(t.TempDir(), "read-link")
 	require.NoError(t, os.Symlink(file, link))
+	tempParent := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(tempParent, "tmp"), 0o700))
+	t.Setenv("TMPDIR", filepath.Join(tempParent, "tmp"))
 	for _, tc := range []struct {
 		name, path, want string
 	}{
+		{"temp-parent", tempParent, "contains sandbox temp dir"},
 		{"file", file, "inside sandbox WorkDir"},
 		{"workdir", work, "inside sandbox WorkDir"},
 		{"symlink", link, "inside sandbox WorkDir"},

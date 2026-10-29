@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,9 +20,15 @@ import (
 type Job struct {
 	WorkDir   string
 	ReadPaths []string
-	ProxyPort int
+	Route     Route
 	Env       []string
 	MemoryMax int64
+}
+
+// Route lets nono capture a host credential and inject it into matching requests.
+type Route struct {
+	Name, Upstream, Path, EnvVar string
+	Capture                      []string
 }
 
 // Command verifies nono and the job policy before returning a wrapped command.
@@ -41,6 +48,10 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 		return nil, nil, nil, fmt.Errorf("resolve sandbox WorkDir: %w", err)
 	}
 	j.WorkDir = workDir
+	tempDir, err := filepath.EvalSymlinks(os.TempDir())
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("resolve sandbox temp dir: %w", err)
+	}
 	readPaths := make([]string, 0, len(j.ReadPaths))
 	for _, path := range j.ReadPaths {
 		resolved, err := filepath.Abs(path)
@@ -56,6 +67,13 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 		}
 		if rel == "." || filepath.IsLocal(rel) {
 			return nil, nil, nil, fmt.Errorf("read path %q is inside sandbox WorkDir %q; read paths must be outside it", path, workDir)
+		}
+		rel, err = filepath.Rel(resolved, tempDir)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("compare sandbox read path %q with temp dir: %w", path, err)
+		}
+		if rel == "." || filepath.IsLocal(rel) {
+			return nil, nil, nil, fmt.Errorf("read path %q contains sandbox temp dir %q", path, tempDir)
 		}
 		readPaths = append(readPaths, resolved)
 	}
@@ -88,6 +106,10 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 		key, _, _ := strings.Cut(entry, "=")
 		keys = append(keys, key)
 	}
+	upstream, err := url.Parse(j.Route.Upstream)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("parse sandbox route upstream: %w", err)
+	}
 	// nono adds embedded default groups without resolving a named user profile.
 	profile := map[string]any{
 		"groups":   map[string]any{"exclude": []string{"system_write_linux"}},
@@ -99,7 +121,18 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 			"write_file": []string{"/dev/null", "/dev/zero", "/dev/full", "/dev/tty"},
 			"write":      []string{"/dev/pts"},
 		},
-		"network": map[string]any{"allow_domain": []string{"proxy-mode.invalid"}, "open_port": []int{j.ProxyPort}},
+		"network": map[string]any{
+			"credentials":  []string{j.Route.Name},
+			"allow_domain": []any{map[string]any{"domain": upstream.Hostname(), "endpoints": []any{map[string]any{"method": "GET", "path": "/nono-no-direct-access"}}}},
+			"custom_credentials": map[string]any{j.Route.Name: map[string]any{
+				"upstream": j.Route.Upstream, "credential_key": "cmd://" + j.Route.Name,
+				"env_var": j.Route.EnvVar, "credential_format": "Bearer {}",
+				"endpoint_rules": []any{map[string]any{"method": "POST", "path": j.Route.Path}},
+			}},
+		},
+		"credential_capture": map[string]any{j.Route.Name: map[string]any{
+			"command": j.Route.Capture, "timeout_secs": 5, "cache_ttl_secs": 300,
+		}},
 		"environment": map[string]any{
 			"allow_vars": keys,
 			"set_vars": map[string]string{

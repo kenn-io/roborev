@@ -8,7 +8,6 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -54,10 +53,9 @@ func TestCodexSandboxIntegration(t *testing.T) {
 		out, err := exec.CommandContext(t.Context(), "git", args...).CombinedOutput()
 		require.NoError(t, err, "%s", out)
 	}
-	for _, name := range []string{"auth.json", "home-secret"} {
-		require.NoError(t, os.WriteFile(filepath.Join(secrets, name), []byte("private fixture"), 0o600))
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(secrets, "home-secret"), []byte("private fixture"), 0o600))
 	t.Setenv("CODEX_HOME", secrets)
+	require.NoError(t, os.WriteFile(filepath.Join(secrets, "auth.json"), []byte(`{"tokens":{"account_id":"fixture-account","access_token":"sandbox-test-token"}}`), 0o600))
 
 	marker := filepath.Join(work, "probe-ran")
 	probe := fmt.Sprintf(`#!/bin/bash
@@ -72,22 +70,23 @@ check() {
   fi
 }
 check codex-home allow bash -c '[[ "$CODEX_HOME" == "$1"/.codex-home-* && -d "$CODEX_HOME" ]]' probe '%s'
+check config-token deny grep -F sandbox-test-token "$CODEX_HOME/config.toml"
 check login-read deny cat '%s/auth.json'
 check home-read deny cat "$HOME/home-secret"
 touch '%s'
 exit "$failed"
 `, work, secrets, marker)
 
-	const key = "sandbox-test-key"
+	const key = "sandbox-test-token"
 	var calls, unauthorized atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		if r.Header.Get("Authorization") != "Bearer "+key {
+		if r.Header.Get("Authorization") != "Bearer "+key || r.Header.Get("chatgpt-account-id") != "fixture-account" {
 			unauthorized.Add(1)
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		if r.Method != http.MethodPost || r.URL.Path != "/v1/responses" {
+		if r.Method != http.MethodPost || r.URL.Path != "/responses" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
@@ -126,33 +125,32 @@ exit "$failed"
 				functionTools = true
 			}
 		}
-		item := sandboxProxyItem(t, outputs, functionTools)
+		item := sandboxRouteItem(t, outputs, functionTools)
 		send("response.output_item.done", map[string]any{"type": "response.output_item.done", "item": item})
 		send("response.completed", map[string]any{"type": "response.completed", "response": map[string]any{"id": "resp_test", "usage": map[string]int{"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}}})
 	}))
 	defer server.Close()
-	port := server.Listener.Addr().(*net.TCPAddr).Port
 	require.NoError(t, os.WriteFile(filepath.Join(work, "probe.sh"), []byte(probe), 0o700))
 
 	job := sandbox.Job{
 		WorkDir: filepath.Base(work), ReadPaths: []string{gitDir, filepath.Dir(filepath.Dir(codex))},
-		ProxyPort: port, MemoryMax: 8 << 30,
-		Env: []string{"PATH=/usr/bin:/bin", "HOME=" + secrets, "TMPDIR=" + work},
+		MemoryMax: 8 << 30,
+		Env:       []string{"PATH=/usr/bin:/bin", "HOME=" + secrets, "TMPDIR=" + work},
 	}
 	if _, err := os.Stat("/etc/codex"); err == nil {
 		job.ReadPaths = append(job.ReadPaths, "/etc/codex")
 	} else {
 		require.True(t, os.IsNotExist(err), "%v", err)
 	}
-	a := NewCodexAgent(codex).WithSandbox(&CodexSandbox{Job: job, ProxyKey: key})
+	a := NewCodexAgent(codex).WithSandbox(&CodexSandbox{Job: job, upstream: server.URL})
 	a.IgnoreUserConfig = true
 	a.ConfigOverrides = []string{`web_search="live"`, `model_provider="wrong-provider"`}
 	a.Model = "test-model"
 	var stream bytes.Buffer
-	result, err := a.ReviewWithSchema(context.Background(), filepath.Join(filepath.Base(work), "repo"), "HEAD", "Run the supplied probe.", jsontext.Value(`{"type":"object","properties":{"probe":{"type":"string"}},"required":["probe"],"additionalProperties":false}`), &stream)
+	result, err := a.Review(context.Background(), filepath.Join(filepath.Base(work), "repo"), "HEAD", "Run the supplied probe.", &stream)
 	require.NoError(t, err, "%s", stream.String())
 	assert.NotContains(t, string(result), "BAD ")
-	for _, name := range []string{"codex-home", "login-read", "home-read"} {
+	for _, name := range []string{"codex-home", "config-token", "login-read", "home-read"} {
 		assert.Contains(t, string(result), "OK "+name)
 	}
 	assert.FileExists(t, marker)
@@ -163,7 +161,7 @@ exit "$failed"
 	assert.Empty(t, homes)
 }
 
-func sandboxProxyItem(t *testing.T, outputs []string, functionTools bool) map[string]any {
+func sandboxRouteItem(t *testing.T, outputs []string, functionTools bool) map[string]any {
 	t.Helper()
 	name := "exec_command"
 	args := map[string]any{"cmd": "bash ../probe.sh", "yield_time_ms": 1000}

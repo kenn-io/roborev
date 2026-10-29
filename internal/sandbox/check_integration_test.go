@@ -84,13 +84,12 @@ func TestSandboxLiteralGrants(t *testing.T) {
 				out, err := exec.CommandContext(t.Context(), "git", args...).CombinedOutput()
 				require.NoError(t, err, "%s", out)
 			}
-			listener, err := net.Listen("tcp4", "127.0.0.1:0")
-			require.NoError(t, err)
-			defer listener.Close()
+			authFile := filepath.Join(home, "auth.json")
+			require.NoError(t, os.WriteFile(authFile, []byte("fixture-token"), 0o600))
 			other, err := net.Listen("tcp4", "127.0.0.1:0")
 			require.NoError(t, err)
 			defer other.Close()
-			job := Job{WorkDir: work, ReadPaths: []string{read}, ProxyPort: listener.Addr().(*net.TCPAddr).Port,
+			job := Job{WorkDir: work, ReadPaths: []string{read}, Route: Route{Name: "codex", Upstream: "https://chatgpt.com/backend-api/codex", Path: "/responses", EnvVar: "CODEX_PHANTOM", Capture: []string{"/bin/cat", authFile}},
 				Env: []string{"PATH=/usr/bin:/bin", "HOME=" + home, "XDG_CONFIG_HOME=" + configDir}, MemoryMax: 1 << 30}
 			script := `
 failed=0
@@ -117,10 +116,14 @@ check git-config deny git config --local sandbox.probe changed
 check dbus-systemd deny env XDG_RUNTIME_DIR="$6" DBUS_SESSION_BUS_ADDRESS="unix:path=$6/bus" systemd-run --user --wait -q /usr/bin/true
 check external-domain deny curl -fsS https://example.com
 check other-loopback deny bash -c ': >/dev/tcp/127.0.0.1/"$1"' probe "$7"
-check proxy-port allow bash -c ': >/dev/tcp/127.0.0.1/"$1"' probe "$8"
+check direct-upstream deny curl -fsS https://chatgpt.com/backend-api/codex/responses
+check route-get deny bash -c 'curl -fsS "$CODEX_BASE_URL/other" -H "Authorization: Bearer $CODEX_PHANTOM"'
+check route-no-key deny bash -c 'curl -fsS -X POST "$CODEX_BASE_URL/responses"'
+check route-wrong-key deny bash -c 'curl -fsS -X POST "$CODEX_BASE_URL/responses" -H "Authorization: Bearer wrong-key"'
+check auth-read deny cat "$8"
 exit "$failed"
 `
-			cmd, env, cleanup, err := job.Command(t.Context(), []string{"bash", "-c", script, "probe", work, read, sibling, secret, repo, os.Getenv("XDG_RUNTIME_DIR"), strconv.Itoa(other.Addr().(*net.TCPAddr).Port), strconv.Itoa(job.ProxyPort)})
+			cmd, env, cleanup, err := job.Command(t.Context(), []string{"bash", "-c", script, "probe", work, read, sibling, secret, repo, os.Getenv("XDG_RUNTIME_DIR"), strconv.Itoa(other.Addr().(*net.TCPAddr).Port), authFile})
 			require.NoError(t, err)
 			defer cleanup()
 			process := exec.CommandContext(t.Context(), cmd[0], cmd[1:]...)
@@ -128,17 +131,17 @@ exit "$failed"
 			out, err := process.CombinedOutput()
 			require.NoError(t, err, "%s", out)
 			assert.NotContains(t, string(out), "BAD ")
-			for _, name := range []string{"work-write", "read-grant", "sibling-write", "sibling-read", "home-read", "home-write", "shared-tmp-write", "git-read", "git-commit", "git-config", "dbus-systemd", "external-domain", "other-loopback", "proxy-port"} {
+			for _, name := range []string{"work-write", "read-grant", "sibling-write", "sibling-read", "home-read", "home-write", "shared-tmp-write", "git-read", "git-commit", "git-config", "dbus-systemd", "external-domain", "other-loopback", "direct-upstream", "route-get", "route-no-key", "route-wrong-key", "auth-read"} {
 				assert.Contains(t, string(out), "OK "+name)
 			}
 			assert.NoFileExists(t, filepath.Join(sibling, "overwritten"))
 		})
 	}
 	t.Run("unenforceable-policy", func(t *testing.T) {
-		job := Job{WorkDir: t.TempDir(), ProxyPort: 0, MemoryMax: 1 << 30,
+		job := Job{WorkDir: t.TempDir(), Route: Route{Name: "codex", Upstream: "http://example.com", Path: "/responses", EnvVar: "CODEX_PHANTOM", Capture: []string{"/bin/echo", "fixture-token"}}, MemoryMax: 1 << 30,
 			Env: []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir()}}
 		_, _, _, err := job.Command(t.Context(), []string{"true"})
-		require.ErrorContains(t, err, "open_port")
+		require.ErrorContains(t, err, "must use HTTPS (HTTP only allowed for loopback addresses)")
 	})
 }
 
@@ -152,12 +155,10 @@ func TestSandboxProcessCleanup(t *testing.T) {
 	for _, cancelRun := range []bool{false, true} {
 		t.Run(map[bool]string{false: "return", true: "cancel"}[cancelRun], func(t *testing.T) {
 			work := t.TempDir()
-			listener, err := net.Listen("tcp4", "127.0.0.1:0")
-			require.NoError(t, err)
-			defer listener.Close()
 			job := Job{
-				WorkDir: work, ProxyPort: listener.Addr().(*net.TCPAddr).Port,
-				Env: []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir()}, MemoryMax: 1 << 30,
+				WorkDir: work,
+				Route:   Route{Name: "codex", Upstream: "https://chatgpt.com/backend-api/codex", Path: "/responses", EnvVar: "CODEX_PHANTOM", Capture: []string{"/bin/echo", "fixture-token"}},
+				Env:     []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir()}, MemoryMax: 1 << 30,
 			}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()

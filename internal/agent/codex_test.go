@@ -1207,7 +1207,9 @@ func TestCodexSandboxRelativeWorkDir(t *testing.T) {
 	work := filepath.Join(dir, "work")
 	repo := filepath.Join(work, "repo")
 	require.NoError(t, os.MkdirAll(repo, 0o700))
-	s := CodexSandbox{Job: sandbox.Job{WorkDir: "work"}, ProxyKey: "test-key"}
+	authFile := filepath.Join(dir, "auth.json")
+	require.NoError(t, os.WriteFile(authFile, []byte(`{"tokens":{"account_id":"fixture-account","access_token":"fixture-token"}}`), 0o600))
+	s := CodexSandbox{Job: sandbox.Job{WorkDir: "work"}, AuthFile: authFile}
 	job, cleanup, err := s.prepare(repo)
 	require.NoError(t, err)
 	defer cleanup()
@@ -1217,7 +1219,15 @@ func TestCodexSandboxRelativeWorkDir(t *testing.T) {
 	require.Len(t, job.Env, 1)
 	home := strings.TrimPrefix(job.Env[0], "CODEX_HOME=")
 	assert.Equal(work, filepath.Dir(home))
-	assert.FileExists(filepath.Join(home, "config.toml"))
+	data, err := os.ReadFile(filepath.Join(home, "config.toml"))
+	require.NoError(t, err)
+	assert.Contains(string(data), "fixture-account")
+	assert.NotContains(string(data), "fixture-token")
+	t.Run("missing-account", func(t *testing.T) {
+		require.NoError(t, os.WriteFile(authFile, []byte(`{"tokens":{"access_token":"fixture-token"}}`), 0o600))
+		_, _, err := s.prepare(repo)
+		require.ErrorContains(t, err, "missing tokens.account_id")
+	})
 }
 
 func TestCodexSandboxWrapperFailure(t *testing.T) {
@@ -1231,7 +1241,9 @@ func TestCodexSandboxWrapperFailure(t *testing.T) {
 	command := writeTempCommand(t, "#!/bin/sh\ncase \"$1\" in *etxtbsy*) exit 0;; esac\ncase \" $* \" in *' --help '*) echo '"+codexDangerousFlag+" "+codexThreadSourceFlag+"'; exit 0;; esac\n: >'"+marker+"'\n")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "nono"), []byte("#!/bin/sh\nexit 0\n"), 0o700))
 	t.Setenv("PATH", dir)
-	a := NewCodexAgent(command).WithSandbox(&CodexSandbox{Job: sandbox.Job{WorkDir: dir, MemoryMax: 1 << 30}})
+	authFile := filepath.Join(t.TempDir(), "auth.json")
+	require.NoError(t, os.WriteFile(authFile, []byte(`{"tokens":{"account_id":"fixture-account"}}`), 0o600))
+	a := NewCodexAgent(command).WithSandbox(&CodexSandbox{Job: sandbox.Job{WorkDir: dir, MemoryMax: 1 << 30}, AuthFile: authFile})
 	_, err := a.Review(t.Context(), repo, "HEAD", "review", nil)
 	require.ErrorContains(t, err, "checksum mismatch")
 	assert.NoFileExists(t, marker)
