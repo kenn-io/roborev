@@ -93,6 +93,7 @@ type ExportReview struct {
 type ExportSubagent struct {
 	ReviewID            uuid.UUID        `json:"review_id"`
 	Name                string           `json:"name"`
+	NonVoting           bool             `json:"non_voting" doc:"True when the panel member is advisory and does not affect the panel verdict."`
 	Agent               string           `json:"agent"`
 	Model               *string          `json:"model"`
 	ReviewType          *string          `json:"review_type"`
@@ -496,7 +497,7 @@ func (db *DB) exportSubagents(panelRunUUID uuid.UUID, profile ExportProfile) ([]
 	rows, err := db.Query(`
 		SELECT rv.uuid, rv.verdict_bool, rv.created_at, `+outputExpr+`,
 		       j.agent, j.model, j.review_type, j.panel_member_name, j.started_at, j.finished_at,
-		       j.token_usage, j.resume_source_job_uuid
+		       j.token_usage, j.resume_source_job_uuid, j.non_voting
 		FROM review_jobs j
 		JOIN reviews rv ON rv.job_id = j.id
 		WHERE j.panel_run_uuid = ?
@@ -524,9 +525,10 @@ func (db *DB) exportSubagents(panelRunUUID uuid.UUID, profile ExportProfile) ([]
 		var finishedAt sql.NullString
 		var tokenUsage sql.NullString
 		var resumeSource sql.Null[uuid.UUID]
+		var nonVoting bool
 		if err := rows.Scan(&reviewID, &verdictBool, &completedAt, &output,
 			&agentName, &model, &reviewType, &memberName, &startedAt,
-			&finishedAt, &tokenUsage, &resumeSource); err != nil {
+			&finishedAt, &tokenUsage, &resumeSource, &nonVoting); err != nil {
 			return nil, err
 		}
 		name := nullStringValue(memberName)
@@ -536,6 +538,7 @@ func (db *DB) exportSubagents(panelRunUUID uuid.UUID, profile ExportProfile) ([]
 		sub := ExportSubagent{
 			ReviewID:    reviewID,
 			Name:        name,
+			NonVoting:   nonVoting,
 			Agent:       agentName,
 			Model:       stringPtrNonEmpty(nullStringValue(model)),
 			ReviewType:  stringPtrNonEmpty(nullStringValue(reviewType)),
