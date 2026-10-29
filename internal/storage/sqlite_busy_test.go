@@ -143,6 +143,7 @@ func TestRetryOnSQLiteBusyUsesEachAttemptBudget(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
 		calls := 0
+		start := time.Now()
 
 		_, err := retryOnSQLiteBusy(ctx, 4, 10*time.Millisecond, 0, nil, func(attemptCtx context.Context) (*ReviewJob, error) {
 			calls++
@@ -152,5 +153,6 @@ func TestRetryOnSQLiteBusyUsesEachAttemptBudget(t *testing.T) {
 		require.ErrorIs(t, err, context.DeadlineExceeded)
 		assert.True(t, IsSQLiteBusy(err))
 		assert.Equal(t, 4, calls)
+		assert.Equal(t, 40*time.Millisecond, time.Since(start))
 	})
 }

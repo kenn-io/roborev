@@ -1028,103 +1028,54 @@ func TestRestartDaemonAfterUpdateStopFailureSamePID(t *testing.T) {
 	assert.Equal(t, 0, s.startCalls)
 }
 
-func TestWaitForDaemonExitProbeErrorWithRuntimePresentTimesOut(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		stubRestartVars(t)
+func TestWaitForDaemonExit(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		runtimes   []*daemon.RuntimeInfo
+		alivePID   int
+		wantExited bool
+		wantPID    int
+	}{
+		{
+			name:     "runtime gone but PID alive times out",
+			alivePID: 100,
+		},
+		{
+			name:       "stale runtime exits",
+			runtimes:   []*daemon.RuntimeInfo{{PID: 100, Address: "127.0.0.1:7373"}},
+			wantExited: true,
+		},
+		{
+			name:       "runtime gone and PID reused as non-daemon exits",
+			wantExited: true,
+		},
+		{
+			name:       "unresponsive manager handoff from runtime PID",
+			runtimes:   []*daemon.RuntimeInfo{{PID: 200, Address: "127.0.0.1:7373"}},
+			alivePID:   200,
+			wantExited: true,
+			wantPID:    200,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				stubRestartVars(t)
+				getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+					return nil, os.ErrNotExist
+				}
+				listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+					return tc.runtimes, nil
+				}
+				isPIDAliveForUpdate = func(pid int) bool {
+					return pid == tc.alivePID
+				}
 
-		getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-			return nil, os.ErrNotExist
-		}
-		listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-			return []*daemon.RuntimeInfo{{PID: 100, Address: "127.0.0.1:7373"}}, nil
-		}
-		isPIDAliveForUpdate = func(pid int) bool {
-			return pid == 100
-		}
-
-		exited, newPID := waitForDaemonExit(100, 5*time.Millisecond)
-		assert.False(t, exited)
-		assert.Equal(t, 0, newPID)
-	})
-}
-
-func TestWaitForDaemonExitProbeErrorWithStaleRuntimeExits(t *testing.T) {
-	stubRestartVars(t)
-
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		return nil, os.ErrNotExist
+				exited, newPID := waitForDaemonExit(100, 5*time.Millisecond)
+				assert.Equal(t, tc.wantExited, exited)
+				assert.Equal(t, tc.wantPID, newPID)
+			})
+		})
 	}
-	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		return []*daemon.RuntimeInfo{{PID: 100, Address: "127.0.0.1:7373"}}, nil
-	}
-	// PID is dead; runtime entry is stale.
-	isPIDAliveForUpdate = func(int) bool {
-		return false
-	}
-
-	exited, newPID := waitForDaemonExit(100, time.Second)
-	assert.True(t, exited)
-	assert.Equal(t, 0, newPID)
-}
-
-func TestWaitForDaemonExitRuntimeGoneButPIDAliveTimesOut(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		stubRestartVars(t)
-
-		getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-			return nil, os.ErrNotExist
-		}
-		listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-			return nil, nil
-		}
-		isPIDAliveForUpdate = func(pid int) bool {
-			return pid == 100
-		}
-
-		exited, newPID := waitForDaemonExit(100, 5*time.Millisecond)
-		assert.False(t, exited)
-		assert.Equal(t, 0, newPID)
-	})
-}
-
-func TestWaitForDaemonExitRuntimeGonePIDReusedAsNonDaemonExits(t *testing.T) {
-	stubRestartVars(t)
-
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		return nil, os.ErrNotExist
-	}
-	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		return nil, nil
-	}
-	// Simulate PID reuse: old daemon runtime is gone and PID now belongs
-	// to a non-daemon process, so daemon liveness should not block exit.
-	isPIDAliveForUpdate = func(pid int) bool {
-		return false
-	}
-
-	exited, newPID := waitForDaemonExit(100, time.Second)
-	assert.True(t, exited)
-	assert.Equal(t, 0, newPID)
-}
-
-func TestWaitForDaemonExitDetectsUnresponsiveManagerHandoffFromRuntimePID(t *testing.T) {
-	stubRestartVars(t)
-
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		return nil, os.ErrNotExist
-	}
-	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		return []*daemon.RuntimeInfo{
-			{PID: 200, Address: "127.0.0.1:7373"},
-		}, nil
-	}
-	isPIDAliveForUpdate = func(pid int) bool {
-		return pid == 200
-	}
-
-	exited, newPID := waitForDaemonExit(100, time.Second)
-	require.True(t, exited, "expected exited=true when previous pid is gone")
-	assert.Equal(t, 200, newPID)
 }
 
 func TestInitialPIDsExitedRequiresPIDDeath(t *testing.T) {
