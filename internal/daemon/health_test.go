@@ -100,11 +100,15 @@ func setupTestServer(t *testing.T) *Server {
 	return server
 }
 
-// executeHealthCheck sends a request to the health endpoint and returns the recorder.
+// executeHealthCheck sends a request to the health endpoint and returns the
+// recorder. The response can come from the last agents check while a refresh
+// runs in the background. The helper waits for that refresh, so no goroutine
+// reads the config after the request returns while a test changes it.
 func executeHealthCheck(server *Server, method string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, "/api/health", nil)
 	w := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(w, req)
+	server.agentHealth.wait()
 	return w
 }
 
@@ -445,10 +449,10 @@ func TestHealthReportsUnavailableReviewAgent(t *testing.T) {
 	require.NoError(t, os.WriteFile(codex, []byte(script), 0o755))
 	t.Setenv("PATH", binDir)
 
-	// A request returns the last result and starts a refresh.
+	// A request returns the last result and starts a refresh; the helper
+	// waits for the refresh to finish.
 	health = decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
 	assert.False(t, agents(health).Healthy)
-	server.agentHealth.wait()
 
 	health = decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
 	assert.True(t, agents(health).Healthy)
