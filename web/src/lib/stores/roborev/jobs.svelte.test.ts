@@ -731,6 +731,15 @@ describe("createJobsStore sorting", () => {
 });
 
 describe("createJobsStore event stream", () => {
+  type JobsResponse = {
+    jobs: ReviewJob[];
+    has_more: boolean;
+    next_cursor?: string;
+    stats: { done: number; running: number; closed: number; open: number };
+  };
+  const ids = (from: number, to: number) =>
+    Array.from({ length: from - to + 1 }, (_, index) => from - index);
+
   afterEach(() => {
     globalThis.fetch = originalFetch;
     vi.restoreAllMocks();
@@ -934,11 +943,6 @@ describe("createJobsStore event stream", () => {
   it("drains burst events while coalescing a slow reconciliation", async () => {
     const emitChunk = stubEventStream();
 
-    type JobsResponse = {
-      jobs: ReviewJob[];
-      has_more: boolean;
-      stats: { done: number; running: number; closed: number; open: number };
-    };
     const pending: Array<(value: JobsResponse) => void> = [];
     let requestCount = 0;
     const api = {
@@ -995,11 +999,6 @@ describe("createJobsStore event stream", () => {
   it("discards an older list response after event reconciliation publishes", async () => {
     const emitChunk = stubEventStream();
 
-    type JobsResponse = {
-      jobs: ReviewJob[];
-      has_more: boolean;
-      stats: { done: number; running: number; closed: number; open: number };
-    };
     const pending: Array<(value: JobsResponse) => void> = [];
     const api = {
       listJobs: vi.fn(
@@ -1051,11 +1050,6 @@ describe("createJobsStore event stream", () => {
   it("ignores an older list failure after event reconciliation publishes", async () => {
     const emitChunk = stubEventStream();
 
-    type JobsResponse = {
-      jobs: ReviewJob[];
-      has_more: boolean;
-      stats: { done: number; running: number; closed: number; open: number };
-    };
     const pending: Array<{
       resolve: (value: JobsResponse) => void;
       reject: (reason: Error) => void;
@@ -1106,12 +1100,6 @@ describe("createJobsStore event stream", () => {
   it("drops an older page after event reconciliation replaces the list", async () => {
     const emitChunk = stubEventStream();
 
-    type JobsResponse = {
-      jobs: ReviewJob[];
-      has_more: boolean;
-      next_cursor?: string;
-      stats: { done: number; running: number; closed: number; open: number };
-    };
     const pending: Array<{
       resolve: (value: JobsResponse) => void;
       reject: (reason: Error) => void;
@@ -1128,8 +1116,6 @@ describe("createJobsStore event stream", () => {
       api: api as never,
       navigate: vi.fn(),
     });
-    const ids = (from: number, to: number) =>
-      Array.from({ length: from - to + 1 }, (_, index) => from - index);
     const stats = { done: 11, running: 0, closed: 0, open: 11 };
     const eventOwner = store.connectEventStream("/api/roborev");
     await vi.waitFor(() => expect(pending).toHaveLength(1));
@@ -1179,12 +1165,6 @@ describe("createJobsStore event stream", () => {
   it("drops a page that started before a pending reconciliation published", async () => {
     const emitChunk = stubEventStream();
 
-    type JobsResponse = {
-      jobs: ReviewJob[];
-      has_more: boolean;
-      next_cursor?: string;
-      stats: { done: number; running: number; closed: number; open: number };
-    };
     const pending: Array<{
       resolve: (value: JobsResponse) => void;
       reject: (reason: Error) => void;
@@ -1203,8 +1183,6 @@ describe("createJobsStore event stream", () => {
       api: api as never,
       navigate: vi.fn(),
     });
-    const ids = (from: number, to: number) =>
-      Array.from({ length: from - to + 1 }, (_, index) => from - index);
     const stats = { done: 11, running: 0, closed: 0, open: 11 };
     const eventOwner = store.connectEventStream("/api/roborev");
     await vi.waitFor(() => expect(pending).toHaveLength(1));
@@ -1261,13 +1239,7 @@ describe("createJobsStore event stream", () => {
     store.disconnectEventStream(eventOwner);
   });
 
-  it("drops a page that started while a rerun's reload was pending", async () => {
-    type JobsResponse = {
-      jobs: ReviewJob[];
-      has_more: boolean;
-      next_cursor?: string;
-      stats: { done: number; running: number; closed: number; open: number };
-    };
+  it("waits for a rerun's reload before loading the next page", async () => {
     const pending: Array<(value: JobsResponse) => void> = [];
     const cursors: Array<string | undefined> = [];
     const stats = { done: 11, running: 0, closed: 0, open: 11 };
@@ -1289,8 +1261,6 @@ describe("createJobsStore event stream", () => {
       api: api as never,
       navigate: vi.fn(),
     });
-    const ids = (from: number, to: number) =>
-      Array.from({ length: from - to + 1 }, (_, index) => from - index);
     const initialLoad = loadJobs(store);
     await vi.waitFor(() => expect(pending).toHaveLength(1));
     pending[0]?.({
@@ -1301,25 +1271,36 @@ describe("createJobsStore event stream", () => {
     });
     await initialLoad;
 
-    // A rerun's reload does not hold the loading state, so a page can start
-    // while it runs, from the list the reload is about to replace.
+    // A page appended during the rerun's reload would change the list size
+    // the reload was built for, and the reload's rows would be discarded.
     store.rerunJob(8);
     await vi.waitFor(() => expect(pending).toHaveLength(2));
-    const page = loadMoreJobs(store);
-    await vi.waitFor(() => expect(pending).toHaveLength(3));
-    expect(cursors.at(-1)).toBe("after-6");
+    expect(store.isLoading()).toBe(true);
+    await loadMoreJobs(store);
+    expect(pending).toHaveLength(2);
+
     pending[1]?.({
-      jobs: ids(11, 7).map((id) => makeJob(id)),
+      jobs: [
+        makeJob(11),
+        makeJob(10),
+        makeJob(9),
+        { ...makeJob(8), status: "queued" },
+        makeJob(7),
+      ],
       has_more: true,
       next_cursor: "after-7",
       stats,
     });
-    await vi.waitFor(() =>
-      expect(store.getJobs().map((job) => job.id)).toContain(11),
-    );
+    await vi.waitFor(() => expect(store.isLoading()).toBe(false));
+    expect(store.getJobs().find((job) => job.id === 8)?.status).toBe("queued");
+
+    const page = loadMoreJobs(store);
+    await vi.waitFor(() => expect(pending).toHaveLength(3));
+    expect(cursors.at(-1)).toBe("after-7");
     pending[2]?.({
-      jobs: ids(5, 1).map((id) => makeJob(id)),
-      has_more: false,
+      jobs: ids(6, 2).map((id) => makeJob(id)),
+      has_more: true,
+      next_cursor: "after-2",
       stats,
     });
     await page;
@@ -1329,9 +1310,7 @@ describe("createJobsStore event stream", () => {
         .getJobs()
         .map((job) => job.id)
         .sort((a, b) => b - a),
-    ).toEqual(ids(11, 7));
-    expect(store.getHasMore()).toBe(true);
-    expect(store.areAllJobsLoaded()).toBe(false);
+    ).toEqual(ids(11, 2));
   });
 
   it("invalidates the selected review for commit-scoped comment events", async () => {
