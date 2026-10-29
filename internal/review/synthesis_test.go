@@ -733,7 +733,7 @@ func TestBuildSynthesisPromptAnchorsVersion2Locations(t *testing.T) {
 	require.NoError(t, err)
 	member := ReviewResult{Agent: "codex", ReviewType: "review", Status: ResultDone, Structured: &structured}
 
-	prompt := BuildSynthesisPrompt([]ReviewResult{member}, "", false, "")
+	prompt := BuildSynthesisPrompt([]ReviewResult{member}, false, "")
 
 	assert := assert.New(t)
 	assert.Contains(prompt, `"file": "internal/a.go"`)
