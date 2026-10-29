@@ -114,7 +114,7 @@ func TestCIPollerRestartRecoversExhaustedReview(t *testing.T) {
 	// A fetch failure after claiming the recovery must not strand it behind
 	// the previous terminal panel's posted_at marker.
 	h.Poller.gitFetchFn = func(context.Context, string, []string) error { return errors.New("fetch unavailable") }
-	require.NoError(t, h.Poller.retryDueReviewAttempts(context.Background(), "acme/api", []ghPR{pr}, h.Cfg))
+	require.NoError(t, h.Poller.retryDueReviewAttempts(context.Background(), "acme/api", map[int]ghPR{pr.Number: pr}, h.Cfg))
 	require.NoError(t, h.Poller.reconcileStuckAttempts("acme/api"))
 	attempt, err = h.DB.GetReviewAttempt("acme/api", pr.Number, pr.HeadRefOid)
 	require.NoError(t, err)
@@ -125,7 +125,7 @@ func TestCIPollerRestartRecoversExhaustedReview(t *testing.T) {
 	for range 3 {
 		_, err = h.DB.Exec(`UPDATE ci_pr_review_attempts SET next_attempt_at = datetime('now','-1 hour')`)
 		require.NoError(t, err)
-		require.NoError(t, h.Poller.retryDueReviewAttempts(context.Background(), "acme/api", []ghPR{pr}, h.Cfg))
+		require.NoError(t, h.Poller.retryDueReviewAttempts(context.Background(), "acme/api", map[int]ghPR{pr.Number: pr}, h.Cfg))
 		current, err := h.DB.GetActiveCIPanelByPRSHA("acme/api", pr.Number, pr.HeadRefOid)
 		require.NoError(t, err)
 		members, err := h.DB.GetPanelMembers(current.PanelRunUUID)
@@ -139,15 +139,15 @@ func TestCIPollerRestartRecoversExhaustedReview(t *testing.T) {
 	attempt, err = h.DB.GetReviewAttempt("acme/api", pr.Number, pr.HeadRefOid)
 	require.NoError(t, err)
 	require.Equal(t, "done", attempt.State)
-	require.NoError(t, h.Poller.processPR(context.Background(), "acme/api", pr, h.Cfg))
-	require.NoError(t, h.Poller.retryDueReviewAttempts(context.Background(), "acme/api", []ghPR{pr}, h.Cfg))
+	require.NoError(t, h.Poller.processPR(context.Background(), "acme/api", pr, h.Cfg, nil))
+	require.NoError(t, h.Poller.retryDueReviewAttempts(context.Background(), "acme/api", map[int]ghPR{pr.Number: pr}, h.Cfg))
 	attempt, err = h.DB.GetReviewAttempt("acme/api", pr.Number, pr.HeadRefOid)
 	require.NoError(t, err)
 	require.Equal(t, "done", attempt.State, "normal polling must not reset an exhausted budget")
 
 	require.NoError(t, h.Poller.Start())
 	h.Poller.Stop()
-	require.NoError(t, h.Poller.retryDueReviewAttempts(context.Background(), "acme/api", []ghPR{pr}, h.Cfg))
+	require.NoError(t, h.Poller.retryDueReviewAttempts(context.Background(), "acme/api", map[int]ghPR{pr.Number: pr}, h.Cfg))
 	id := h.drivePanelOutcome(t, "acme/api", pr.Number, pr.HeadRefOid, "done")
 	h.Poller.handleReviewCompleted(ciEvent(id, "review.completed"))
 	require.Len(t, *comments, 1)
@@ -312,7 +312,7 @@ func TestCIPanelCanceledRerunKeepsPostedReview(t *testing.T) {
 				h.Poller.handleReviewFailed(ciEvent(rerun.Body.JobID, "review.failed"))
 				_, err = h.DB.Exec(`UPDATE ci_pr_review_attempts SET next_attempt_at = datetime('now', '-1 hour')`)
 				require.NoError(t, err)
-				require.NoError(t, h.Poller.retryDueReviewAttempts(context.Background(), "acme/api", []ghPR{pr}, h.Cfg))
+				require.NoError(t, h.Poller.retryDueReviewAttempts(context.Background(), "acme/api", map[int]ghPR{pr.Number: pr}, h.Cfg))
 				retry, err := h.DB.GetActiveCIPanelByPRSHA("acme/api", 7, "head-a")
 				require.NoError(t, err)
 				require.NotEqual(t, *rerun.Body.RunUUID, retry.PanelRunUUID)
@@ -325,7 +325,7 @@ func TestCIPanelCanceledRerunKeepsPostedReview(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(posted, reviewed, "only a delivered review suppresses a new automatic run after cancellation")
 			if posted {
-				require.NoError(t, h.Poller.processPR(context.Background(), "acme/api", pr, h.Cfg))
+				require.NoError(t, h.Poller.processPR(context.Background(), "acme/api", pr, h.Cfg, nil))
 				assert.Equal([]capturedStatus{{Repo: "acme/api", SHA: "head-a", State: "success", Desc: "Review complete"}}, *statuses,
 					"reruns and automatic retries must preserve the delivered status when canceled")
 			}

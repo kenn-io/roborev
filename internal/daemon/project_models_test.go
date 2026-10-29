@@ -102,7 +102,7 @@ func TestCIPollerProjectPanelOverrides(t *testing.T) {
 				p.mergeBaseFn = func(_, _, _ string) (string, error) { return base, nil }
 				err := p.processPR(context.Background(), "acme/api", ghPR{
 					Number: 1, HeadRefOid: head, BaseRefName: "main",
-				}, cfg)
+				}, cfg, nil)
 				require.NoError(t, err)
 				panel, err := db.GetCIPanelByPRSHA("acme/api", 1, head)
 				require.NoError(t, err)

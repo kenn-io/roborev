@@ -83,6 +83,7 @@ type ghPR struct {
 	Author      ghPRAuthor `json:"author"`
 	// AuthorAssociation is GitHub's author_association for the PR author.
 	AuthorAssociation string   `json:"authorAssociation"`
+	Draft             bool     `json:"draft"`
 	Labels            []string `json:"labels"`
 }
 
@@ -95,6 +96,7 @@ type panelPostTarget struct {
 	Body              string
 	AuthorLogin       string
 	AuthorAssociation string
+	Draft             bool
 	Labels            []string
 }
 
@@ -953,6 +955,9 @@ type ciSkip struct {
 // exclude this PR from review. It returns an error, and no decision, when it
 // cannot read CODEOWNERS for the allow_codeowners check.
 func (p *CIPoller) ciPRSkip(ctx context.Context, ghRepo string, pr ghPR, ci *config.CIConfig) (ciSkip, bool, error) {
+	if ci.SkipDrafts && pr.Draft {
+		return ciSkip{description: "Review skipped: draft pull request", reason: "it is a draft pull request"}, true, nil
+	}
 	if label, skip := matchingCISkipLabel(pr.Labels, ci.SkipLabels); skip {
 		return ciSkip{
 			description: fmt.Sprintf("Review skipped: label %s", label),
@@ -2379,6 +2384,7 @@ func (p *CIPoller) listOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, erro
 			Body:              pr.Body,
 			Author:            ghPRAuthor{Login: pr.AuthorLogin},
 			AuthorAssociation: pr.AuthorAssociation,
+			Draft:             pr.Draft,
 			Labels:            pr.Labels,
 		})
 	}
@@ -3809,6 +3815,7 @@ func (p *CIPoller) panelPostTarget(
 		Body:              pr.Body,
 		AuthorLogin:       pr.AuthorLogin,
 		AuthorAssociation: pr.AuthorAssociation,
+		Draft:             pr.Draft,
 		Labels:            pr.Labels,
 	}, nil
 }

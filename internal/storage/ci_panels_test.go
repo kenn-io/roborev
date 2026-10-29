@@ -238,6 +238,33 @@ func TestGetPendingPanelPRs(t *testing.T) {
 	assert.Equal([]int{2, 3}, got, "only pending PRs for o/r")
 }
 
+func TestGetCIPanelPRsAtSHA(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	seedPanelRow(t, db, "o/r", 1, "target")
+	posted := seedPanelRow(t, db, "o/r", 2, "target")
+	require.NoError(t, db.MarkPanelPosted(posted, PanelOutcomeReviewPosted, "success", "Review complete"))
+	retired := seedPanelRow(t, db, "o/r", 3, "target")
+	require.NoError(t, db.MarkPanelRetired(retired))
+	duplicate := seedPanelRow(t, db, "o/r", 3, "target")
+	require.NoError(t, db.MarkPanelRetired(duplicate))
+	seedPanelRow(t, db, "x/y", 5, "target")
+	seedPanelRow(t, db, "o/r", 6, "other")
+	for _, pr := range []int{1, 4} {
+		_, err := db.ReserveReviewAttempt("o/r", pr, "target", time.Now())
+		require.NoError(t, err)
+	}
+	_, err := db.ReserveReviewAttempt("x/y", 7, "target", time.Now())
+	require.NoError(t, err)
+	_, err = db.ReserveReviewAttempt("o/r", 8, "other", time.Now())
+	require.NoError(t, err)
+	refs, err := db.GetCIPanelPRsAtSHA("o/r", "target")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []PanelPRRef{{"o/r", 1}, {"o/r", 2}, {"o/r", 3}, {"o/r", 4}}, refs,
+		"include posted/retired history and reservations without a mapping, once per PR")
+}
+
 // TestGetActivePanelsForPR covers supersede + closed-PR cleanup support: the
 // query returns only the un-posted (posted_at IS NULL) rows for the given
 // (github_repo, pr_number), excluding posted rows and rows for other PRs/repos.

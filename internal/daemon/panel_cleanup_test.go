@@ -429,7 +429,7 @@ func TestCleanupClosedPRPanels(t *testing.T) {
 		[]jobSpec{{Agent: "test", ReviewType: "review"}})
 	require.Len(t, members, 1)
 
-	openPRs := map[int]bool{} // PR 10 absent → not open
+	openPRs := map[int]ghPR{} // PR 10 absent → not open
 	h.Poller.cleanupClosedPRPanels(context.Background(), "acme/api", openPRs)
 
 	assert.Equal(storage.JobStatusCanceled, h.jobStatus(t, synth.ID), "synthesis canceled")
@@ -460,7 +460,7 @@ func TestCleanupClosedPRPanelsKeepsOpenPR(t *testing.T) {
 	_, synth, members := h.seedBlockedPanelRun(t, "acme/api", 11, "headsha", "base..headsha",
 		[]jobSpec{{Agent: "test", ReviewType: "review"}})
 
-	openPRs := map[int]bool{} // absent from list, but callIsPROpen confirms open
+	openPRs := map[int]ghPR{} // absent from list, but callIsPROpen confirms open
 	h.Poller.cleanupClosedPRPanels(context.Background(), "acme/api", openPRs)
 
 	assert.NotEqual(t, storage.JobStatusCanceled, h.jobStatus(t, synth.ID), "open-PR synthesis kept")

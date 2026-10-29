@@ -858,3 +858,17 @@ func TestCompareKeysNilInterfaces(t *testing.T) {
 
 	assert.Equal(1, compareKeys(v2, v1))
 }
+
+func TestCIConfigSkipDraftsKeys(t *testing.T) {
+	cfg := DefaultConfig()
+	for _, value := range []string{"true", "false"} {
+		require.NoError(t, SetConfigValue(cfg, "ci.skip_drafts", value))
+		got, err := GetConfigValue(cfg, "ci.skip_drafts")
+		require.NoError(t, err)
+		assert.Equal(t, value, got)
+	}
+	require.Error(t, SetConfigValue(cfg, "ci.skip_drafts", "sometimes"))
+	require.Error(t, SetConfigValue(&RepoConfig{}, "ci.skip_drafts", "true"))
+	_, err := GetConfigValue(&RepoConfig{}, "ci.skip_drafts")
+	assert.Error(t, err)
+}

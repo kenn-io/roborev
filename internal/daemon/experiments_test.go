@@ -431,7 +431,7 @@ func TestCIPollerUsesStoredRepoAndSourceBranchExperimentIdentity(t *testing.T) {
 		HeadRefOid:  head,
 		HeadRefName: "feature/ci-experiment",
 		BaseRefName: "main",
-	}, cfg)
+	}, cfg, nil)
 	require.NoError(t, err)
 
 	panel, err := db.GetCIPanelByPRSHA("acme/api", 41, head)
@@ -484,7 +484,7 @@ func TestCIPollerExperimentFreezesSynthesisSeverity(t *testing.T) {
 		HeadRefOid:  head,
 		HeadRefName: "feature/ci-severity",
 		BaseRefName: "main",
-	}, cfg)
+	}, cfg, nil)
 	require.NoError(t, err)
 
 	panel, err := db.GetCIPanelByPRSHA("acme/api", 42, head)

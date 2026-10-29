@@ -762,6 +762,28 @@ func (db *DB) GetUnpostedTerminalPanels(githubRepo string) ([]CIPanel, error) {
 	return panels, rows.Err()
 }
 
+// GetCIPanelPRsAtSHA returns stored review owners at a repository commit,
+// including retained panel history and reservations without a panel mapping.
+func (db *DB) GetCIPanelPRsAtSHA(githubRepo, headSHA string) ([]PanelPRRef, error) {
+	rows, err := db.Query(`SELECT github_repo, pr_number FROM ci_pr_panels
+		WHERE github_repo = ? AND head_sha = ?
+		UNION SELECT github_repo, pr_number FROM ci_pr_review_attempts
+		WHERE github_repo = ? AND head_sha = ?`, githubRepo, headSHA, githubRepo, headSHA)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var refs []PanelPRRef
+	for rows.Next() {
+		var ref PanelPRRef
+		if err := rows.Scan(&ref.GithubRepo, &ref.PRNumber); err != nil {
+			return nil, err
+		}
+		refs = append(refs, ref)
+	}
+	return refs, rows.Err()
+}
+
 // GetPendingPanelPRs returns the distinct (github_repo, pr_number) pairs that
 // have an un-posted panel run, so the poll loop can check whether those PRs are
 // still open (closed-PR cleanup). Retired runs remain candidates only while

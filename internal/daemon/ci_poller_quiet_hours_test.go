@@ -80,7 +80,7 @@ func TestCIPollerProcessPR_QuietHoursThrottlesBypassUser(t *testing.T) {
 	}
 
 	// First push — no prior review, reviewed immediately even in the window.
-	err := h.Poller.processPR(context.Background(), "acme/api", pr("first-sha"), h.Cfg)
+	err := h.Poller.processPR(context.Background(), "acme/api", pr("first-sha"), h.Cfg, nil)
 	require.NoError(t, err, "first processPR")
 	assert.True(h.hasPanel(t, "acme/api", 90, "first-sha"), "first review is never blocked")
 
@@ -94,7 +94,7 @@ func TestCIPollerProcessPR_QuietHoursThrottlesBypassUser(t *testing.T) {
 
 	// Second push within the quiet interval — throttled despite bypass.
 	captured := h.CaptureCommitStatuses()
-	err = h.Poller.processPR(context.Background(), "acme/api", pr("second-sha"), h.Cfg)
+	err = h.Poller.processPR(context.Background(), "acme/api", pr("second-sha"), h.Cfg, nil)
 	require.NoError(t, err, "second processPR")
 	assert.False(h.hasPanel(t, "acme/api", 90, "second-sha"),
 		"quiet hours must throttle bypass users")
@@ -127,11 +127,11 @@ func TestCIPollerProcessPR_QuietHoursBypassSkipsQuietThrottle(t *testing.T) {
 		}
 	}
 
-	err := h.Poller.processPR(context.Background(), "acme/api", pr("first-sha"), h.Cfg)
+	err := h.Poller.processPR(context.Background(), "acme/api", pr("first-sha"), h.Cfg, nil)
 	require.NoError(t, err, "first processPR")
 	require.True(t, h.hasPanel(t, "acme/api", 98, "first-sha"))
 
-	err = h.Poller.processPR(context.Background(), "acme/api", pr("second-sha"), h.Cfg)
+	err = h.Poller.processPR(context.Background(), "acme/api", pr("second-sha"), h.Cfg, nil)
 	require.NoError(t, err, "second processPR")
 	assert.True(t, h.hasPanel(t, "acme/api", 98, "second-sha"),
 		"author bypassing both throttle layers should be reviewed immediately")
@@ -150,11 +150,11 @@ func TestCIPollerProcessPR_QuietHoursBypassPreservesBaseThrottle(t *testing.T) {
 		}
 	}
 
-	err := h.Poller.processPR(context.Background(), "acme/api", pr("first-sha"), h.Cfg)
+	err := h.Poller.processPR(context.Background(), "acme/api", pr("first-sha"), h.Cfg, nil)
 	require.NoError(t, err, "first processPR")
 	require.True(t, h.hasPanel(t, "acme/api", 99, "first-sha"))
 
-	err = h.Poller.processPR(context.Background(), "acme/api", pr("second-sha"), h.Cfg)
+	err = h.Poller.processPR(context.Background(), "acme/api", pr("second-sha"), h.Cfg, nil)
 	require.NoError(t, err, "second processPR")
 	assert.False(t, h.hasPanel(t, "acme/api", 99, "second-sha"),
 		"quiet-hours bypass must not bypass the ordinary throttle")
@@ -180,11 +180,11 @@ func TestCIPollerProcessPR_QuietHoursElapsedBaseKeepsPanel(t *testing.T) {
 		}
 	}
 
-	err := h.Poller.processPR(context.Background(), "acme/api", pr("first-sha"), h.Cfg)
+	err := h.Poller.processPR(context.Background(), "acme/api", pr("first-sha"), h.Cfg, nil)
 	require.NoError(t, err, "first processPR")
 	require.True(t, h.hasPanel(t, "acme/api", 93, "first-sha"))
 
-	err = h.Poller.processPR(context.Background(), "acme/api", pr("second-sha"), h.Cfg)
+	err = h.Poller.processPR(context.Background(), "acme/api", pr("second-sha"), h.Cfg, nil)
 	require.NoError(t, err, "second processPR")
 	assert.False(h.hasPanel(t, "acme/api", 93, "second-sha"),
 		"quiet-hours interval must still throttle after the base interval elapses")
@@ -206,12 +206,12 @@ func TestCIPollerProcessPR_QuietHoursInactiveKeepsBypass(t *testing.T) {
 		}
 	}
 
-	err := h.Poller.processPR(context.Background(), "acme/api", pr("first-sha"), h.Cfg)
+	err := h.Poller.processPR(context.Background(), "acme/api", pr("first-sha"), h.Cfg, nil)
 	require.NoError(t, err, "first processPR")
 	require.True(t, h.hasPanel(t, "acme/api", 91, "first-sha"))
 
 	// Outside the window, bypass users keep their existing behavior.
-	err = h.Poller.processPR(context.Background(), "acme/api", pr("second-sha"), h.Cfg)
+	err = h.Poller.processPR(context.Background(), "acme/api", pr("second-sha"), h.Cfg, nil)
 	require.NoError(t, err, "second processPR")
 	assert.True(t, h.hasPanel(t, "acme/api", 91, "second-sha"),
 		"bypass user must not be throttled outside quiet hours")
@@ -233,11 +233,11 @@ func TestCIPollerProcessPR_QuietHoursBaseThrottleWins(t *testing.T) {
 		}
 	}
 
-	err := h.Poller.processPR(context.Background(), "acme/api", pr("first-sha"), h.Cfg)
+	err := h.Poller.processPR(context.Background(), "acme/api", pr("first-sha"), h.Cfg, nil)
 	require.NoError(t, err, "first processPR")
 	assert.True(h.hasPanel(t, "acme/api", 92, "first-sha"))
 
-	err = h.Poller.processPR(context.Background(), "acme/api", pr("second-sha"), h.Cfg)
+	err = h.Poller.processPR(context.Background(), "acme/api", pr("second-sha"), h.Cfg, nil)
 	require.NoError(t, err, "second processPR")
 	assert.False(h.hasPanel(t, "acme/api", 92, "second-sha"),
 		"base throttle interval must still apply when longer than the quiet interval")
@@ -265,9 +265,9 @@ func TestCIPollerProcessPR_QuietHoursSnapshotPostsAfterHeadAdvance(t *testing.T)
 
 	// First push starts a panel; the second is deferred by quiet hours only
 	// and must flag the retained panel to post despite the HEAD advance.
-	err := h.Poller.processPR(context.Background(), "acme/api", pr("first-sha"), h.Cfg)
+	err := h.Poller.processPR(context.Background(), "acme/api", pr("first-sha"), h.Cfg, nil)
 	require.NoError(t, err, "first processPR")
-	err = h.Poller.processPR(context.Background(), "acme/api", pr("second-sha"), h.Cfg)
+	err = h.Poller.processPR(context.Background(), "acme/api", pr("second-sha"), h.Cfg, nil)
 	require.NoError(t, err, "second processPR")
 
 	panel, err := h.DB.GetCIPanelByPRSHA("acme/api", 94, "first-sha")
@@ -309,7 +309,7 @@ func TestCIPollerQuietHoursFlagSetAfterRowLoadStillPosts(t *testing.T) {
 		ghPR{
 			Number: 95, HeadRefOid: "first-sha", BaseRefName: "main",
 			Author: ghPRAuthor{Login: "wesm"},
-		}, h.Cfg)
+		}, h.Cfg, nil)
 	require.NoError(t, err, "first processPR")
 
 	panel, err := h.DB.GetCIPanelByPRSHA("acme/api", 95, "first-sha")
@@ -359,7 +359,7 @@ func TestCIPollerQuietHoursFlagSetDuringTargetLookupStillPosts(t *testing.T) {
 		ghPR{
 			Number: 96, HeadRefOid: "first-sha", BaseRefName: "main",
 			Author: ghPRAuthor{Login: "wesm"},
-		}, h.Cfg)
+		}, h.Cfg, nil)
 	require.NoError(t, err, "first processPR")
 
 	panel, err := h.DB.GetCIPanelByPRSHA("acme/api", 96, "first-sha")
@@ -411,7 +411,7 @@ func TestCIPollerQuietHoursPanelCompletingDuringStatusStillPosts(t *testing.T) {
 		}
 	}
 
-	err := h.Poller.processPR(context.Background(), "acme/api", pr("first-sha"), h.Cfg)
+	err := h.Poller.processPR(context.Background(), "acme/api", pr("first-sha"), h.Cfg, nil)
 	require.NoError(t, err, "first processPR")
 
 	panel, err := h.DB.GetCIPanelByPRSHA("acme/api", 97, "first-sha")
@@ -441,7 +441,7 @@ func TestCIPollerQuietHoursPanelCompletingDuringStatusStillPosts(t *testing.T) {
 		return nil
 	}
 
-	err = h.Poller.processPR(context.Background(), "acme/api", pr("second-sha"), h.Cfg)
+	err = h.Poller.processPR(context.Background(), "acme/api", pr("second-sha"), h.Cfg, nil)
 	require.NoError(t, err, "second processPR")
 
 	require.Len(t, *comments, 1, "panel completing during the deferred-status call must post")
