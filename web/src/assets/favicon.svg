@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <!-- Dark background -->
+  <rect width="32" height="32" fill="#0a0a0a"/>
+
+  <!-- Magnifying glass ring -->
+  <circle cx="13" cy="13" r="10" stroke="#00ff9f" stroke-width="2" fill="#0a0a0a"/>
+
+  <!-- Handle -->
+  <rect x="21" y="21" width="10" height="3" fill="#00ff9f" transform="rotate(45 21 21)"/>
+
+  <!-- Bot eyes (simplified) -->
+  <rect x="9" y="11" width="3" height="3" fill="#00ff9f"/>
+  <rect x="14" y="11" width="3" height="3" fill="#00ff9f"/>
+</svg>
