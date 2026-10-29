@@ -788,6 +788,61 @@ describe("createJobsStore event stream", () => {
     store.disconnectEventStream(eventOwner);
   });
 
+  it("ignores an older list failure after event reconciliation publishes", async () => {
+    const emitChunk = stubEventStream();
+
+    type JobsResponse = {
+      jobs: ReviewJob[];
+      has_more: boolean;
+      stats: { done: number; running: number; closed: number; open: number };
+    };
+    const pending: Array<{
+      resolve: (value: JobsResponse) => void;
+      reject: (reason: Error) => void;
+    }> = [];
+    const api = {
+      listJobs: vi.fn(
+        () =>
+          new Promise<JobsResponse>((resolve, reject) => {
+            pending.push({ resolve, reject });
+          }),
+      ),
+    };
+    const store = createJobsStore({
+      api: api as never,
+      navigate: vi.fn(),
+    });
+    const eventOwner = store.connectEventStream("/api/roborev");
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    pending[0]?.resolve({
+      jobs: [],
+      has_more: false,
+      stats: { done: 0, running: 0, closed: 0, open: 0 },
+    });
+    await vi.waitFor(() => expect(store.isEventStreamConnected()).toBe(true));
+
+    const olderLoad = loadJobs(store);
+    await vi.waitFor(() => expect(pending).toHaveLength(2));
+    emitChunk(
+      '{"type":"review.completed","ts":"2026-08-04T13:00:00Z","job_id":42,"repo":"/workspace/repo","repo_name":"repo","sha":"abc123"}\n',
+    );
+    await vi.waitFor(() => expect(pending).toHaveLength(3));
+
+    pending[2]?.resolve({
+      jobs: [makeJob(42)],
+      has_more: true,
+      stats: { done: 1, running: 0, closed: 0, open: 1 },
+    });
+    await vi.waitFor(() => expect(store.getJobs()).toHaveLength(1));
+
+    pending[1]?.reject(new Error("request failed"));
+    await olderLoad;
+
+    expect(store.getError()).toBeNull();
+    expect(store.getHasMore()).toBe(true);
+    store.disconnectEventStream(eventOwner);
+  });
+
   it("invalidates the selected review for commit-scoped comment events", async () => {
     const emitChunk = stubEventStream();
     const api = {

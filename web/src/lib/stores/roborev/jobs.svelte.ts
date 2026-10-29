@@ -400,13 +400,23 @@ export function createJobsStore(opts: JobsStoreOptions) {
       return Array.from(runs);
     });
 
-  const refreshJobsAuthority = (query: ListJobsQuery) =>
+  // A failed request reports its error only while no newer request has
+  // started. A newer request owns the rows, and its result replaces them.
+  const refreshJobsAuthority = (query: ListJobsQuery, reportFailure = false) =>
     Effect.gen(function* () {
       const generation = yield* Effect.sync(() => {
         jobsAuthorityGeneration += 1;
         return jobsAuthorityGeneration;
       });
-      const authority = yield* fetchJobsAuthority(query);
+      const authority = yield* fetchJobsAuthority(query).pipe(
+        Effect.tapError((failure) =>
+          Effect.sync(() => {
+            if (reportFailure && generation === jobsAuthorityGeneration)
+              storeError =
+                failure instanceof Error ? failure.message : String(failure);
+          }),
+        ),
+      );
       const expandedRuns = yield* publishJobsAuthority(authority, generation);
       yield* Effect.forEach(expandedRuns, fetchPanelMembersEffect, {
         discard: true,
@@ -414,7 +424,10 @@ export function createJobsStore(opts: JobsStoreOptions) {
       return authority;
     });
 
-  const loadJobsRequestEffect = (requestOwner = opts.owner) =>
+  const loadJobsRequestEffect = (
+    requestOwner = opts.owner,
+    reportFailure = true,
+  ) =>
     Effect.gen(function* () {
       const workflow = yield* RoborevWorkflow;
       const query = buildQuery();
@@ -428,7 +441,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
           if (hasActiveFilters() && filteredStatusCountsScope !== countScope)
             filteredStatusCounts = undefined;
         }).pipe(
-          Effect.andThen(refreshJobsAuthority(query)),
+          Effect.andThen(refreshJobsAuthority(query, reportFailure)),
           Effect.ensuring(
             Effect.sync(() => {
               loading = false;
@@ -438,16 +451,10 @@ export function createJobsStore(opts: JobsStoreOptions) {
       );
     });
 
+  // The request has already reported its failure, if that failure still
+  // applies.
   const loadJobsEffect = (request = loadJobsRequestEffect()) =>
-    request.pipe(
-      Effect.asVoid,
-      Effect.catch((failure) =>
-        Effect.sync(() => {
-          storeError =
-            failure instanceof Error ? failure.message : String(failure);
-        }),
-      ),
-    );
+    request.pipe(Effect.ignore);
 
   function loadJobs(): void {
     opts.runtime.runCommand(loadJobsEffect(), {
@@ -973,7 +980,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
       // but must never interrupt the stream callback that keeps live state in
       // sync.
       const reconcile = (owner: string) =>
-        loadJobsRequestEffect(owner).pipe(
+        loadJobsRequestEffect(owner, false).pipe(
           Effect.asVoid,
           Effect.provideService(RoborevWorkflow, workflow),
           Effect.mapError((cause) =>
