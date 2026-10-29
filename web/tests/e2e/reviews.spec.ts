@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import {
+  jobIds,
   jobRow,
   olderJobsMarker,
   openReview,
@@ -198,25 +199,29 @@ test.describe.serial("native review workspace", () => {
     await expect(page.locator(".count-done")).toContainText("0 done");
 
     await selectStatus(page, "All statuses");
-    const firstId = async () =>
-      Number(
-        (await page.locator(".col-id .job-id").first().textContent())?.trim(),
-      );
     const idHeader = page.getByRole("columnheader", { name: "ID" });
-    const newestFirst = await firstId();
     await idHeader.getByRole("button").click();
     await expect(idHeader).toHaveAttribute("aria-sort", "descending");
-    await expect(page.locator(".sort-scope")).toContainText(
-      "Sorted by ID across the 50 most recent jobs",
-    );
     await idHeader.getByRole("button").click();
     await expect(idHeader).toHaveAttribute("aria-sort", "ascending");
-    expect(await firstId()).toBeLessThan(newestFirst);
+    await expect(jobIds(page)).toHaveText(
+      Array.from({ length: 50 }, (_, index) => String(index + 1)),
+    );
 
+    const pageRequest = page.waitForRequest((request) => {
+      const url = new URL(request.url());
+      return url.pathname === "/api/jobs" && url.searchParams.has("cursor");
+    });
     await scrollJobsToEnd(page);
+    const pageQuery = new URL((await pageRequest).url()).searchParams;
+    expect(pageQuery.get("sort")).toBe("id");
+    expect(pageQuery.get("direction")).toBe("asc");
     await expect(olderJobsMarker(page)).toHaveCount(0);
-    await expect(page.locator(".sort-scope")).toBeHidden();
-    expect(await firstId()).toBe(1);
+    // Jobs 54 and 55 are panel members and list under their panel row.
+    await expect(jobIds(page)).toHaveText([
+      ...Array.from({ length: 53 }, (_, index) => String(index + 1)),
+      "56",
+    ]);
 
     const closedHeader = page.getByRole("columnheader", {
       name: "Closed",
@@ -225,6 +230,40 @@ test.describe.serial("native review workspace", () => {
     await closedHeader.getByRole("button").click();
     await expect(closedHeader).toHaveAttribute("aria-sort", "ascending");
     await expect(idHeader).not.toHaveAttribute("aria-sort");
+  });
+
+  test("shows the start of a new sort order after scrolling down", async ({
+    page,
+  }) => {
+    await openReviews(page);
+    await scrollJobsToEnd(page);
+    await expect(page.locator(".job-row")).toHaveCount(54);
+    await scrollJobsToEnd(page);
+
+    const pageRequests: string[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (url.pathname === "/api/jobs" && url.searchParams.has("cursor")) {
+        pageRequests.push(url.search);
+      }
+    });
+    const idHeader = page.getByRole("columnheader", { name: "ID" });
+    await idHeader.getByRole("button").click();
+
+    await expect(idHeader).toHaveAttribute("aria-sort", "descending");
+    await expect(jobIds(page).first()).toHaveText("56");
+    await expect(jobRow(page, 56)).toBeInViewport();
+    await expect(page.locator(".job-row")).toHaveCount(50);
+    // Intersection observers report during rendering, so two frames give a
+    // sentinel left in view the chance to request another page.
+    await page.evaluate(
+      () =>
+        new Promise((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        ),
+    );
+    await expect(page.locator(".job-row")).toHaveCount(50);
+    expect(pageRequests).toEqual([]);
   });
 
   test("filters by project, ref, and closed state", async ({ page }) => {

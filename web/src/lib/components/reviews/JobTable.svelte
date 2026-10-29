@@ -27,28 +27,6 @@
     { key: "enqueued_at", label: "Queued", numeric: true },
   ];
 
-  const sortLabels: Record<SortColumn, string> = {
-    id: "ID",
-    repo: "commit",
-    closed: "closed state",
-    status: "status",
-    verdict: "verdict",
-    agent: "agent",
-    review_type: "type",
-    elapsed: "elapsed time",
-    cost: "cost",
-    enqueued_at: "queue time",
-  };
-
-  const partialSort = $derived(
-    jobsStore !== undefined &&
-      !jobsStore.areAllJobsLoaded() &&
-      !(
-        jobsStore.getSortColumn() === "enqueued_at" &&
-        jobsStore.getSortDirection() === "desc"
-      ),
-  );
-
   let scroller = $state<HTMLDivElement>();
   let sentinel = $state<HTMLDivElement>();
 
@@ -58,6 +36,7 @@
       jobsStore.getJobs().length > 0 &&
       !jobsStore.isLoading() &&
       jobsStore.getError() === null &&
+      jobsStore.getSortError() === null &&
       jobsStore.getLoadMoreError() === null,
   );
 
@@ -67,38 +46,33 @@
       !jobsStore.areAllJobsLoaded(),
   );
 
-  // Row count when a page was requested from a full table. Under an
-  // oldest-first sort, older pages land above the view and the browser keeps
-  // the end in view, so the next page waits until the sentinel leaves view or
-  // the list is replaced with no more rows than this.
-  let rowsAtFullLoad = -1;
-
   // A new observer reports the sentinel's position once on observe(). The
   // effect builds one each time a load finishes, so a page that leaves the
   // sentinel in view loads the next page until the table fills the scroll
-  // container or the daemon has no older jobs. Disconnecting before
+  // container or the daemon has no more jobs. Disconnecting before
   // loadMore() keeps a second intersection from replacing the in-flight
   // request.
   $effect(() => {
     if (!canLoadMore || !scroller || !sentinel) return;
-    const root = scroller;
     const observer = new IntersectionObserver(
       (entries) => {
-        if (!entries.some((entry) => entry.isIntersecting)) {
-          rowsAtFullLoad = -1;
-          return;
-        }
-        const rows = jobsStore.getJobs().length;
-        if (rowsAtFullLoad >= 0 && rows > rowsAtFullLoad) return;
+        if (!entries.some((entry) => entry.isIntersecting)) return;
         observer.disconnect();
-        rowsAtFullLoad = root.scrollHeight > root.clientHeight ? rows : -1;
         jobsStore.loadMore();
       },
-      { root, rootMargin: "0px 0px 200px 0px" },
+      { root: scroller, rootMargin: "0px 0px 200px 0px" },
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
   });
+
+  // A sort replaces the rows with the first page of the new order. Without
+  // the reset, a view scrolled past that page clamps to its end, hiding the
+  // top of the new order and pulling in further pages at once.
+  function sortBy(col: SortColumn) {
+    if (scroller) scroller.scrollTop = 0;
+    jobsStore?.setSortColumn(col);
+  }
 
   function sortDirection(col: ColumnDef) {
     return jobsStore?.getSortColumn() === col.key
@@ -116,7 +90,11 @@
   tabindex="0"
   bind:this={scroller}
 >
-  <table class="job-table">
+  <table
+    class="job-table"
+    class:sorting={jobsStore?.isSortPending()}
+    aria-busy={jobsStore?.isSortPending() ?? false}
+  >
     <thead>
       <tr>
         {#each columns as col (col.key)}
@@ -125,11 +103,27 @@
             numeric={col.numeric ?? false}
             sortable
             sortDirection={sortDirection(col)}
-            onsort={() => jobsStore?.setSortColumn(col.key)}
+            onsort={() => sortBy(col.key)}
             class={`th-${col.key}`}
           />
         {/each}
       </tr>
+      {#if jobsStore && jobsStore.getSortError() !== null}
+        <tr class="sort-error-row">
+          <td colspan={columns.length}>
+            <div class="sort-error" role="alert">
+              Could not sort jobs.
+              <button
+                type="button"
+                class="sort-retry"
+                onclick={() => jobsStore.retrySort()}
+              >
+                Retry
+              </button>
+            </div>
+          </td>
+        </tr>
+      {/if}
     </thead>
     <tbody>
       {#if jobsStore}
@@ -233,24 +227,8 @@
 
   {#if hitJobLimit && jobsStore}
     <div class="loading-bar">
-      Showing the {jobsStore.getJobs().length.toLocaleString()} most recent jobs,
-      the most the table loads. Filter the list to reach older jobs.
-    </div>
-  {/if}
-
-  {#if partialSort && jobsStore}
-    <div class="table-footer">
-      <span class="sort-scope" role="status">
-        {#if hitJobLimit}
-          Sorted by {sortLabels[jobsStore.getSortColumn()]}.
-        {:else}
-          Sorted by {sortLabels[jobsStore.getSortColumn()]} across the
-          {jobsStore.getJobs().length} most recent jobs.
-          {#if jobsStore.getLoadMoreError() === null}
-            Scroll to the end to load older jobs.
-          {/if}
-        {/if}
-      </span>
+      Showing the first {jobsStore.getJobs().length.toLocaleString()} jobs in this
+      order, the most the table loads. Filter the list to reach the rest.
     </div>
   {/if}
 </div>
@@ -293,6 +271,33 @@
     padding-left: 14px;
   }
 
+  /* The delay keeps a fast reload from flashing the rows. */
+  .job-table tbody {
+    transition: opacity 0.15s ease-out;
+  }
+
+  .job-table.sorting tbody {
+    opacity: 0.45;
+    transition-delay: 0.1s;
+  }
+
+  .sort-error-row td {
+    padding: 0;
+    background: var(--bg-inset);
+    box-shadow: inset 0 -1px 0 var(--border-default);
+  }
+
+  /* Sticky so the message stays in view while a wide table is scrolled
+     right. */
+  .sort-error {
+    position: sticky;
+    left: 0;
+    display: inline-block;
+    padding: 6px 14px;
+    font-size: var(--font-size-sm);
+    color: var(--accent-red);
+  }
+
   .loading-bar {
     padding: 12px;
     text-align: center;
@@ -327,7 +332,8 @@
   }
 
   .members-retry,
-  .load-more-retry {
+  .load-more-retry,
+  .sort-retry {
     margin-left: 8px;
     border: 0;
     padding: 0;
@@ -336,16 +342,5 @@
     font: inherit;
     text-decoration: underline;
     cursor: pointer;
-  }
-
-  .table-footer {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: var(--space-6);
-    padding: 10px 16px;
-    border-top: 1px solid var(--border-muted);
-    color: var(--text-muted);
-    font-size: var(--font-size-sm);
   }
 </style>

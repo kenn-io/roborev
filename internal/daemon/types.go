@@ -120,7 +120,9 @@ type ListJobsInput struct {
 	Limit               int       `query:"limit" default:"-999999" doc:"Max results (default 50, 0=unlimited, max 10000)"`
 	Offset              int       `query:"offset" default:"-1" doc:"Skip N results (requires limit>0)"`
 	Before              int64     `query:"before" default:"-1" doc:"Deprecated numeric job cursor retained for compatibility"`
-	Cursor              string    `query:"cursor" doc:"Opaque next_cursor from a previous page; resumes after its immutable enqueue-time position"`
+	Cursor              string    `query:"cursor" doc:"Opaque next_cursor from a previous page with the same sort; resumes after its last job"`
+	Sort                string    `query:"sort" doc:"Order by id, repo, agent, review_type, status, verdict, closed, elapsed, cost, or enqueued_at (default); ties break by id"`
+	Direction           string    `query:"direction" doc:"Sort direction: asc or desc (default)"`
 }
 
 // ListJobsOutput is the response for GET /api/jobs.

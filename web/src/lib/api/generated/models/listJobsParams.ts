@@ -95,7 +95,15 @@ export type ListJobsParams = {
    */
   before?: number;
   /**
-   * Opaque next_cursor from a previous page; resumes after its immutable enqueue-time position
+   * Opaque next_cursor from a previous page with the same sort; resumes after its last job
    */
   cursor?: string;
+  /**
+   * Order by id, repo, agent, review_type, status, verdict, closed, elapsed, cost, or enqueued_at (default); ties break by id
+   */
+  sort?: string;
+  /**
+   * Sort direction: asc or desc (default)
+   */
+  direction?: string;
 };

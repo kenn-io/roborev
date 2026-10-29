@@ -6,6 +6,10 @@ export function jobRow(page: Page, id: number) {
   });
 }
 
+export function jobIds(page: Page): Locator {
+  return page.locator(".job-row .col-id .job-id");
+}
+
 export async function openReviews(
   page: Page,
   path = "/reviews",

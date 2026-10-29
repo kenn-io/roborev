@@ -1292,7 +1292,7 @@ func TestListJobsWithBeforeCursor(t *testing.T) {
 	})
 }
 
-func TestListJobsFirstPageUsesPositionIndex(t *testing.T) {
+func TestListJobsSortsReadTheirIndexes(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		name string
@@ -1318,35 +1318,42 @@ func TestListJobsFirstPageUsesPositionIndex(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			db := test.open(t)
-			rows, err := db.Query(`
-				EXPLAIN QUERY PLAN
-				SELECT j.id, r.name, c.subject, rv.closed
-				FROM review_jobs j
-				JOIN repos r ON r.id = j.repo_id
-				LEFT JOIN commits c ON c.id = j.commit_id
-				LEFT JOIN reviews rv ON rv.job_id = j.id
-				WHERE NOT (
-					COALESCE(j.source, '') = 'auto_design'
-					AND (j.job_type = ? OR j.status = ?)
-				)
-				AND COALESCE(j.panel_role, '') != ?
-				ORDER BY `+sqliteNormalizedTimestampExpr("j.enqueued_at")+` DESC, j.id DESC
-				LIMIT 51
-			`, JobTypeClassify, string(JobStatusSkipped), PanelRoleMember)
-			require.NoError(t, err)
-			defer rows.Close()
+			// The web table's first page, a page resumed from a cursor, and a
+			// status sort, which reads idx_review_jobs_status in order.
+			for _, page := range []struct {
+				name  string
+				index string
+				extra []ListJobsOption
+			}{
+				{"first page", "idx_review_jobs_enqueued_position", nil},
+				{"cursor page", "idx_review_jobs_enqueued_position", []ListJobsOption{WithSortAfter(JobSortPosition{
+					Keys: []any{"2026-01-01 00:00:00"}, JobID: 10,
+				})}},
+				{"status sort", "idx_review_jobs_status", []ListJobsOption{WithSort(JobSort{Column: JobSortStatus})}},
+			} {
+				t.Run(page.name, func(t *testing.T) {
+					opts := append([]ListJobsOption{
+						WithoutPrompt(), WithHideClassifyJobs(), WithExcludePanelRole(PanelRoleMember),
+					}, page.extra...)
+					query, args, _, err := listJobsQuery("", "", 51, 0, collectListJobsOptions(opts...))
+					require.NoError(t, err)
+					rows, err := db.Query("EXPLAIN QUERY PLAN "+query, args...)
+					require.NoError(t, err)
+					defer rows.Close()
 
-			var details []string
-			for rows.Next() {
-				var id, parent, unused int
-				var detail string
-				require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
-				details = append(details, detail)
+					var details []string
+					for rows.Next() {
+						var id, parent, unused int
+						var detail string
+						require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+						details = append(details, detail)
+					}
+					require.NoError(t, rows.Err())
+					plan := strings.Join(details, "\n")
+					assert.Contains(t, plan, "USING INDEX "+page.index)
+					assert.NotContains(t, plan, "USE TEMP B-TREE FOR ORDER BY")
+				})
 			}
-			require.NoError(t, rows.Err())
-			plan := strings.Join(details, "\n")
-			assert.Contains(t, plan, "USING INDEX idx_review_jobs_enqueued_position")
-			assert.NotContains(t, plan, "USE TEMP B-TREE FOR ORDER BY")
 		})
 	}
 }

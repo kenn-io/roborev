@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/svelte";
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -22,24 +28,23 @@ vi.mock("../../stores/context", () => ({
 // jsdom has no layout, so this observer models the table's scroll area: the
 // end sentinel is in view while fewer rows than `rowsThatFit` are rendered, or
 // when the user has scrolled to the end and no rows have been added since.
-// `endStaysInView` models the browser keeping the end in view when new rows
-// sort above it.
 let rowsThatFit = 0;
 let rowsAtScrollEnd = -1;
-let endStaysInView = false;
 const observers = new Set<FakeIntersectionObserver>();
 
 function renderedRows(): number {
   return document.querySelectorAll(".job-row").length;
 }
 
+function renderedIds(): number[] {
+  return Array.from(document.querySelectorAll(".job-row .job-id"), (cell) =>
+    Number(cell.textContent),
+  );
+}
+
 function sentinelInView(): boolean {
   const rows = renderedRows();
-  return (
-    rows < rowsThatFit ||
-    rows <= rowsAtScrollEnd ||
-    (endStaysInView && rowsAtScrollEnd >= 0)
-  );
+  return rows < rowsThatFit || rows <= rowsAtScrollEnd;
 }
 
 class FakeIntersectionObserver {
@@ -75,11 +80,6 @@ class FakeIntersectionObserver {
 
 function scrollToEnd(): void {
   rowsAtScrollEnd = renderedRows();
-  for (const observer of observers) observer.report();
-}
-
-function scrollAwayFromEnd(): void {
-  rowsAtScrollEnd = -1;
   for (const observer of observers) observer.report();
 }
 
@@ -124,7 +124,7 @@ function pagedJobs(pageSize: number, pageCount: number) {
 }
 
 function isPageRequest(query: ListJobsParams): boolean {
-  return query.cursor !== undefined || query.before !== undefined;
+  return query.cursor !== undefined;
 }
 
 let runtime: OwnedAppRuntime;
@@ -141,9 +141,6 @@ function mountTable(
   });
   context.jobs = store;
   render(JobTable);
-  const region = screen.getByRole("region", { name: "Review jobs" });
-  Object.defineProperty(region, "scrollHeight", { get: renderedRows });
-  Object.defineProperty(region, "clientHeight", { get: () => rowsThatFit });
   store.loadJobs();
   return api;
 }
@@ -163,7 +160,6 @@ describe("JobTable infinite scroll", () => {
     localStorage.clear();
     rowsThatFit = 0;
     rowsAtScrollEnd = -1;
-    endStaysInView = false;
     vi.stubGlobal("IntersectionObserver", FakeIntersectionObserver);
     runtime = makeTestAppRuntime();
   });
@@ -296,54 +292,137 @@ describe("JobTable infinite scroll", () => {
         ),
       ).toBe(true),
     );
-    await vi.waitFor(() => expect(context.jobs?.isLoading()).toBe(false));
-    expect(renderedRows()).toBe(10);
 
-    scrollToEnd();
-
+    // The view is still at the end, so the replaced list pages again.
     await vi.waitFor(() => expect(renderedRows()).toBe(20));
-    expect(pageRequests(api).at(-1)?.status).toBe("done");
-  });
-  it("waits for a fresh scroll when older pages sort above the view", async () => {
-    rowsThatFit = 5;
-    const serve = pagedJobs(10, 5);
-    const api = mountTable(async (query) => serve(query));
-    await vi.waitFor(() => expect(renderedRows()).toBe(10));
-    context.jobs?.setSortColumn("id");
-    context.jobs?.setSortColumn("id");
-    expect(context.jobs?.getSortDirection()).toBe("asc");
-    endStaysInView = true;
-
-    scrollToEnd();
-    await vi.waitFor(() => expect(renderedRows()).toBe(20));
-    await settle();
-    expect(pageRequests(api)).toHaveLength(1);
-
-    scrollAwayFromEnd();
-    scrollToEnd();
-    await vi.waitFor(() => expect(renderedRows()).toBe(30));
-    await settle();
-    expect(pageRequests(api)).toHaveLength(2);
+    expect(pageRequests(api).at(-1)).toMatchObject({
+      status: "done",
+      cursor: "1",
+    });
   });
 
-  it("drops the scroll hint while a failed page waits for retry", async () => {
+  it("lists scroll-loaded pages in the order of the chosen sort", async () => {
     rowsThatFit = 5;
-    const serve = pagedJobs(10, 2);
-    mountTable(async (query) => {
-      if (isPageRequest(query)) throw new Error("daemon unavailable");
-      return serve(query);
+    const serve = pagedJobs(10, 3);
+    const api = mountTable(async (query) => {
+      if (query.sort !== "id" || query.direction !== "asc") return serve(query);
+      // Oldest-first by ID: 1..10, then 11..20 after cursor "asc-1".
+      const second = query.cursor === "asc-1";
+      return {
+        jobs: Array.from({ length: 10 }, (_, index) =>
+          makeJob((second ? 11 : 1) + index),
+        ),
+        has_more: !second,
+        next_cursor: second ? null : "asc-1",
+        stats: { done: 20, closed: 0, open: 20 },
+      };
     });
     await vi.waitFor(() => expect(renderedRows()).toBe(10));
-    context.jobs?.setSortColumn("id");
-    const note = await screen.findByText(/^Sorted by ID/);
-    expect(note).toHaveTextContent("Scroll to the end to load older jobs.");
+    const idButton = within(
+      screen.getByRole("columnheader", { name: "ID" }),
+    ).getByRole("button");
 
+    await fireEvent.click(idButton);
+    await fireEvent.click(idButton);
+    await vi.waitFor(() => expect(renderedIds()[0]).toBe(1));
     scrollToEnd();
-    await screen.findByRole("alert");
 
-    expect(note).toHaveTextContent(
-      "Sorted by ID across the 10 most recent jobs.",
+    await vi.waitFor(() => expect(renderedRows()).toBe(20));
+    expect(renderedIds()).toEqual(
+      Array.from({ length: 20 }, (_, index) => index + 1),
     );
-    expect(note).not.toHaveTextContent("Scroll to the end");
+    expect(pageRequests(api).at(-1)).toMatchObject({
+      cursor: "asc-1",
+      sort: "id",
+      direction: "asc",
+    });
+  });
+});
+
+describe("JobTable sort reload", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    rowsThatFit = 0;
+    rowsAtScrollEnd = -1;
+    vi.stubGlobal("IntersectionObserver", FakeIntersectionObserver);
+    runtime = makeTestAppRuntime();
+  });
+
+  afterEach(async () => {
+    cleanup();
+    context.jobs?.dispose();
+    context.jobs = undefined;
+    observers.clear();
+    vi.unstubAllGlobals();
+    await Effect.runPromise(runtime.disposeEffect);
+  });
+
+  // Newest first by default; oldest first by ID once the ID header is
+  // clicked twice (descending, then ascending).
+  function serveBySort(query: ListJobsParams): JobsPage {
+    const ascending = query.sort === "id" && query.direction === "asc";
+    return {
+      jobs: [3, 2, 1].map((id) => makeJob(ascending ? 4 - id : id)),
+      has_more: false,
+      next_cursor: null,
+      stats: { done: 3, closed: 0, open: 3 },
+    };
+  }
+
+  function idHeaderButton(): HTMLElement {
+    return within(screen.getByRole("columnheader", { name: "ID" })).getByRole(
+      "button",
+    );
+  }
+
+  function headerGroup(): HTMLElement {
+    const group = screen.getByRole("table").querySelector("thead");
+    if (group === null) throw new Error("job table has no header");
+    return group;
+  }
+
+  it("marks the rows busy until the new order arrives", async () => {
+    const reply = Promise.withResolvers<void>();
+    mountTable(async (query) => {
+      if (query.sort === "id") await reply.promise;
+      return serveBySort(query);
+    });
+    await vi.waitFor(() => expect(renderedIds()).toEqual([3, 2, 1]));
+    const table = screen.getByRole("table");
+    expect(table).toHaveAttribute("aria-busy", "false");
+
+    await fireEvent.click(idHeaderButton());
+
+    expect(table).toHaveAttribute("aria-busy", "true");
+    reply.resolve();
+    await vi.waitFor(() => expect(table).toHaveAttribute("aria-busy", "false"));
+  });
+
+  it("shows a failed sort under the header and clears it after a reload", async () => {
+    let failSort = true;
+    mountTable(async (query) => {
+      if (query.sort === "id" && failSort) {
+        throw new Error("daemon unavailable");
+      }
+      return serveBySort(query);
+    });
+    await vi.waitFor(() => expect(renderedIds()).toEqual([3, 2, 1]));
+
+    await fireEvent.click(idHeaderButton());
+    await fireEvent.click(idHeaderButton());
+
+    const failure = await within(headerGroup()).findByRole("alert");
+    expect(failure).toHaveTextContent("Could not sort jobs.");
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(screen.getByRole("table")).toHaveAttribute("aria-busy", "false");
+    expect(renderedIds()).toEqual([3, 2, 1]);
+
+    failSort = false;
+    await fireEvent.click(
+      within(failure).getByRole("button", { name: "Retry" }),
+    );
+
+    await vi.waitFor(() => expect(renderedIds()).toEqual([1, 2, 3]));
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

@@ -28,7 +28,7 @@ curl --unix-socket "$XDG_RUNTIME_DIR/roborev/daemon.sock" http://localhost/opena
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/jobs` | GET | List review jobs (supports cursor-based pagination via `before` parameter) |
+| `/api/jobs` | GET | List review jobs, newest first by default. `sort` and `direction` choose the order; pass a page's `next_cursor` as `cursor` to get the next page |
 | `/api/review` | GET | Get review by job ID or SHA |
 | `/api/comments` | GET | List comments for a job or commit |
 | `/api/repos` | GET | List repos with job counts |

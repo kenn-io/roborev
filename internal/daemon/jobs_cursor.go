@@ -11,36 +11,77 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
-const jobListCursorVersion = 1
+// Version 2 cursors carry the listing's sort and the last row's sort keys.
+// Version 1 cursors held only an enqueue time and are rejected.
+const jobListCursorVersion = 2
 
 type jobListCursor struct {
-	Version    int       `json:"version"`
-	DatabaseID uuid.UUID `json:"database_id"`
-	EnqueuedAt string    `json:"enqueued_at"`
-	JobID      int64     `json:"job_id"`
+	Version    int                   `json:"version"`
+	DatabaseID uuid.UUID             `json:"database_id"`
+	Sort       storage.JobSortColumn `json:"sort"`
+	Ascending  bool                  `json:"ascending"`
+	// AsOf is the elapsed-time reference shared by every page of an
+	// elapsed sort; other sorts leave it empty.
+	AsOf  string             `json:"as_of,omitzero"`
+	Keys  []jobListCursorKey `json:"keys"`
+	JobID int64              `json:"job_id"`
 }
 
-func (s *Server) encodeJobListCursor(job storage.ReviewJob) (string, error) {
-	if job.ID <= 0 || job.EnqueuedAt.IsZero() {
-		return "", errors.New("cannot encode job cursor without an enqueue position")
+// jobListCursorKey holds one sort key: a number, or text. Text travels as
+// bytes, which JSON writes as base64, because sort text such as a branch name
+// need not be valid UTF-8 and the JSON encoder rejects text that is not.
+type jobListCursorKey struct {
+	Text   []byte   `json:"text,omitzero"`
+	Number *float64 `json:"number,omitzero"`
+}
+
+// encodeJobListCursor returns a cursor that resumes the sorted listing after
+// job, which must come from a ListJobs call using sort.
+func (s *Server) encodeJobListCursor(job storage.ReviewJob, sort storage.JobSort) (string, error) {
+	if job.ID <= 0 {
+		return "", errors.New("cannot encode job cursor without a job ID")
 	}
 	databaseID, err := s.db.GetDatabaseID()
 	if err != nil {
 		return "", fmt.Errorf("load database identity: %w", err)
 	}
-	data, err := json.Marshal(jobListCursor{
+	keys := make([]jobListCursorKey, len(job.SortKey))
+	for i, key := range job.SortKey {
+		switch v := key.(type) {
+		case string:
+			keys[i].Text = []byte(v)
+		case int64:
+			keys[i].Number = new(float64(v))
+		case float64:
+			keys[i].Number = new(v)
+		default:
+			return "", fmt.Errorf("encode job cursor: unsupported sort key type %T", key)
+		}
+	}
+	cursor := jobListCursor{
 		Version:    jobListCursorVersion,
 		DatabaseID: databaseID,
-		EnqueuedAt: job.EnqueuedAt.UTC().Format(time.RFC3339Nano),
+		Sort:       sort.Column,
+		Ascending:  sort.Ascending,
+		Keys:       keys,
 		JobID:      job.ID,
-	})
+	}
+	if sort.Column == storage.JobSortElapsed {
+		cursor.AsOf = sort.AsOf.UTC().Format(time.RFC3339Nano)
+	}
+	data, err := json.Marshal(cursor)
 	if err != nil {
 		return "", fmt.Errorf("encode job cursor: %w", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(data), nil
 }
 
-func (s *Server) decodeJobListCursor(value string) (*jobListCursor, time.Time, error) {
+// decodeJobListCursor checks that a cursor was issued by this database for
+// the requested sort, and returns its resume position and elapsed-time
+// reference. An empty value returns a nil position.
+func (s *Server) decodeJobListCursor(
+	value string, sort storage.JobSort,
+) (*storage.JobSortPosition, time.Time, error) {
 	if value == "" {
 		return nil, time.Time{}, nil
 	}
@@ -57,12 +98,18 @@ func (s *Server) decodeJobListCursor(value string) (*jobListCursor, time.Time, e
 			"invalid jobs cursor: unsupported version %d", cursor.Version,
 		)
 	}
-	if cursor.DatabaseID == uuid.Nil() || cursor.EnqueuedAt == "" || cursor.JobID <= 0 {
+	if cursor.DatabaseID == uuid.Nil() || cursor.JobID <= 0 {
 		return nil, time.Time{}, errors.New("invalid jobs cursor: missing fields")
 	}
-	enqueuedAt, err := time.Parse(time.RFC3339Nano, cursor.EnqueuedAt)
-	if err != nil {
-		return nil, time.Time{}, fmt.Errorf("invalid jobs cursor timestamp: %w", err)
+	if cursor.Sort != sort.Column || cursor.Ascending != sort.Ascending {
+		return nil, time.Time{}, errors.New("invalid jobs cursor: it belongs to a different sort")
+	}
+	var asOf time.Time
+	if sort.Column == storage.JobSortElapsed {
+		asOf, err = time.Parse(time.RFC3339Nano, cursor.AsOf)
+		if err != nil {
+			return nil, time.Time{}, fmt.Errorf("invalid jobs cursor elapsed reference: %w", err)
+		}
 	}
 	databaseID, err := s.db.GetDatabaseID()
 	if err != nil {
@@ -71,5 +118,13 @@ func (s *Server) decodeJobListCursor(value string) (*jobListCursor, time.Time, e
 	if cursor.DatabaseID != databaseID {
 		return nil, time.Time{}, errors.New("invalid jobs cursor: database identity changed")
 	}
-	return &cursor, enqueuedAt.UTC(), nil
+	keys := make([]any, len(cursor.Keys))
+	for i, key := range cursor.Keys {
+		if key.Number != nil {
+			keys[i] = *key.Number
+		} else {
+			keys[i] = string(key.Text)
+		}
+	}
+	return &storage.JobSortPosition{Keys: keys, JobID: cursor.JobID}, asOf, nil
 }
