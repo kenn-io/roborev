@@ -170,6 +170,11 @@ This mapping is for you, not the user. Use only what the conversation needs.
 | A reviewer that may flake | `allow_failure = true` and `timeout` on the subagent |
 | A combined review that checks each finding against the material, or labels findings for whoever fixes them | `synthesis_instructions` on the panel; see <https://roborev.io/docs/advanced/subagent-review-panels/#synthesis-instructions> |
 
+For a small panel that checks findings before keeping them, use the
+[precise panel recipe](https://roborev.io/docs/advanced/subagent-review-panels/#precise-panel-recipe).
+It keeps agreed findings unless disproved and requires code evidence for
+single-reviewer or contradicted findings. Silence is not disagreement.
+
 Rules that matter:
 
 - Put the setup in the repository's `.roborev.toml`. Use the global
