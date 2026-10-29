@@ -99,3 +99,27 @@ func setupReviewTOMLExample(t *testing.T, content, marker string) string {
 	require.Len(t, matches, 1, "want exactly one TOML example marked %q", marker)
 	return matches[0]
 }
+
+// Both authored setup workflows propose real, loadable experiment settings.
+func TestSetupReviewExperimentExampleValidates(t *testing.T) {
+	for _, agent := range []Agent{AgentCodex, AgentClaude} {
+		t.Run(string(agent), func(t *testing.T) {
+			destination := t.TempDir()
+			_, err := InstallToPath(agent, destination, nil)
+			require.NoError(t, err)
+			content, err := os.ReadFile(filepath.Join(destination, "roborev-setup-review", "SKILL.md"))
+			require.NoError(t, err)
+			example := setupReviewTOMLExample(t, string(content), "# Experiment with an immutable success bar")
+			repo := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(repo, ".roborev.toml"), []byte(example), 0o644))
+			cfg, raw, err := config.LoadRepoConfigWithRaw(repo)
+			require.NoError(t, err)
+			require.NoError(t, config.ValidateRepoExperimentConfigs(cfg, raw))
+			selection, err := config.SelectReviewExperiment(config.ExperimentSelectionInput{Workflow: config.ExperimentWorkflowReview, Subject: config.ExperimentSubject{Repository: "example/project", Branch: "topic"}, Repo: cfg, RawRepo: raw})
+			require.NoError(t, err)
+			require.NotNil(t, selection.Assignment)
+			require.NotNil(t, cfg.Experiments["session-v1"].Success)
+			assert.Equal(t, "cost_per_review", cfg.Experiments["session-v1"].Success.Metric)
+		})
+	}
+}

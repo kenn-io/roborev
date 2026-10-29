@@ -45,6 +45,7 @@ type ExperimentReport struct {
 	Labels         ExperimentLabelCoverage      `json:"labels"`
 	Metrics        []ExperimentMetricComparison `json:"metrics"`
 	Method         ExperimentReportMethod       `json:"method"`
+	Success        *ExperimentSuccessResult     `json:"success,omitempty"`
 	definitionJSON string
 }
 
@@ -327,6 +328,7 @@ func (db *DB) GetExperimentReport(ctx context.Context, id string, opts Experimen
 	if err != nil {
 		return nil, err
 	}
+	r.Success = evaluateExperimentSuccess(r)
 	return r, nil
 }
 
