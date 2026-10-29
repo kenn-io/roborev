@@ -474,8 +474,12 @@ export function createJobsStore(opts: JobsStoreOptions) {
       const workflow = yield* RoborevWorkflow;
       const query = buildQuery();
       query.limit = DEFAULT_PAGE_LIMIT;
-      if (nextCursor) {
-        query.cursor = nextCursor;
+      // A live update can replace the rows while this page loads, and the new
+      // rows may end at a different job. The page continues the list only if
+      // the list still ends where the page starts.
+      const after = nextCursor;
+      if (after) {
+        query.cursor = after;
       } else {
         query.before = jobs.reduce((oldest, candidate) => {
           const candidateTime = Date.parse(candidate.enqueued_at);
@@ -486,6 +490,11 @@ export function createJobsStore(opts: JobsStoreOptions) {
             : oldest;
         }).id;
       }
+      // Live updates reload the list under their own owner, so they never
+      // cancel this request. A page fetched for a list that a newer load has
+      // since replaced would skip the rows between the two, so its result
+      // and its error are dropped.
+      const generation = jobsAuthorityGeneration;
       yield* workflow.jobs(
         opts.owner,
         Effect.gen(function* () {
@@ -508,6 +517,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
             ),
           );
           yield* Effect.sync(() => {
+            if (generation !== jobsAuthorityGeneration) return;
             const existingIds = new Set(jobs.map((job) => job.id));
             const remaining = MAX_LOADED_JOBS - jobs.length;
             const fresh = (result.jobs ?? [])
@@ -524,6 +534,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
         }).pipe(
           Effect.catch((failure) =>
             Effect.sync(() => {
+              if (generation !== jobsAuthorityGeneration) return;
               loadMoreError =
                 failure instanceof Error ? failure.message : String(failure);
             }),
