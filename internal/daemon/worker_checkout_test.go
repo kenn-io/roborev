@@ -90,6 +90,38 @@ func TestIsolatedCheckoutFailureDoesNotUseSource(t *testing.T) {
 	assert.Empty(t, checkout.agentRepoPath)
 }
 
+// TestOnlySynthesisInstructionsForceExactCheckout verifies that with
+// isolate_reviews off, a synthesis job's instructions move it to an exact
+// checkout, while a member's own reviewer instructions, stored under the same
+// key, leave it in the working tree.
+func TestOnlySynthesisInstructionsForceExactCheckout(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	tc := newWorkerTestContext(t, 1)
+	cfg := config.DefaultConfig()
+	head := testutil.GetHeadSHA(t, tc.TmpDir)
+	for _, tt := range []struct {
+		name  string
+		job   storage.ReviewJob
+		exact bool
+	}{
+		{"synthesis", storage.ReviewJob{JobType: storage.JobTypeSynthesis, PanelRole: storage.PanelRoleSynthesis}, true},
+		{"member", storage.ReviewJob{JobType: storage.JobTypeReview, PanelRole: storage.PanelRoleMember}, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			job := tt.job
+			job.RepoPath, job.GitRef = tc.TmpDir, head
+			job.PanelMemberConfigJSON = `{"instructions":"Read the code."}`
+			checkout, err := tc.Pool.prepareJobCheckout(context.Background(), testWorkerID, &job, cfg)
+			require.NoError(t, err)
+			if checkout.cleanup != nil {
+				t.Cleanup(checkout.cleanup)
+			}
+			assert.Equal(t, tt.exact, checkout.isolatedLocalReview)
+			assert.Equal(t, tt.exact, checkout.agentRepoPath != tc.TmpDir)
+		})
+	}
+}
+
 func TestBareBackedIsolatedCheckoutCleanup(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	repo := testutil.NewTestRepoWithCommit(t)

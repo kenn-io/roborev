@@ -96,7 +96,6 @@ func VerifyDedupePreamble() string {
 // read-only tools to follow them, and the instructions follow the rules.
 func BuildSynthesisPrompt(
 	reviews []ReviewResult,
-	_ string,
 	neutral bool,
 	instructions string,
 ) string {
