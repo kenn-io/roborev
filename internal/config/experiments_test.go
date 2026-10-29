@@ -870,3 +870,38 @@ func TestSelectReviewExperimentRejectsSemanticErrorForDefaultArm(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorContains(t, err, "review_reasoning")
 }
+
+func TestWorkflowExperimentArmsCarryTheirOwnPanelSelection(t *testing.T) {
+	enabled := true
+	ratio := 0.5
+	global := &Config{
+		Review: ReviewConfig{
+			DefaultPanel: "base", HookPanel: "base",
+			Subagents: map[string]SubagentSpec{"ok": {Agent: "test"}},
+			Panels: map[string]PanelSpec{
+				"base": {Members: []string{"ok"}, SynthesisAgent: "test"},
+				"alt":  {Members: []string{"ok"}, SynthesisAgent: "test"},
+			},
+		},
+		Experiments: map[string]ExperimentDefinition{
+			"try": {
+				Enabled: &enabled, Ratio: &ratio,
+				Workflows: []ExperimentWorkflow{ExperimentWorkflowReview},
+				Config:    map[string]any{"review": map[string]any{"hook_review_panel": "alt"}},
+			},
+		},
+	}
+
+	arms, err := WorkflowExperimentArms(ExperimentWorkflowReview, global, nil, nil)
+	require.NoError(t, err)
+	require.Len(t, arms, 2)
+	assert.Equal(t, ExperimentArmDefault, arms[0].Arm)
+	assert.Equal(t, "base", arms[0].PanelName("post_commit"))
+	assert.Equal(t, ExperimentArmExperimental, arms[1].Arm)
+	assert.Equal(t, "alt", arms[1].PanelName("post_commit"))
+	assert.Equal(t, "base", arms[1].PanelName(""), "manual reviews keep the base panel")
+
+	arms, err = WorkflowExperimentArms(ExperimentWorkflowCI, global, nil, nil)
+	require.NoError(t, err)
+	assert.Len(t, arms, 1, "the experiment does not apply to CI")
+}

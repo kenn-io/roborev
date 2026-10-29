@@ -101,9 +101,8 @@ func ResolveDoctorPanels(
 	}
 	var panels []DoctorPanel
 	for _, arm := range arms {
-		merged := config.MergeReviewConfigFromConfig(arm.RepoConfig, cfg)
 		for _, src := range doctorPanelSources {
-			name := config.SelectPanelName("", src.source, merged)
+			name := arm.PanelName(src.source)
 			if name == "" {
 				continue
 			}

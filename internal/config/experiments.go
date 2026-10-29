@@ -326,12 +326,23 @@ type ExperimentArmConfig struct {
 	Arm           ExperimentArm
 	RepoConfig    *RepoConfig
 	RawRepoConfig map[string]any
+	// Review is this arm's review config merged over the global config.
+	Review ReviewConfig
+}
+
+// PanelName returns the panel this arm selects for a kind of review: the
+// post-commit panel for a post-commit job source, the default panel for an
+// empty one. It is empty when the arm reviews with a single agent.
+func (a ExperimentArmConfig) PanelName(source string) string {
+	return SelectPanelName("", source, a.Review)
 }
 
 // WorkflowExperimentArms returns every repository config a workflow can run
 // with: the default arm, plus the experimental arm when an enabled
 // experiment applies to the workflow. It applies the experiment the same way
-// SelectReviewExperiment does, without assigning a branch to an arm.
+// SelectReviewExperiment does, without assigning a branch to an arm. Anything
+// that checks or reports on a workflow's configuration must iterate this list
+// rather than look at the base config alone.
 func WorkflowExperimentArms(
 	workflow ExperimentWorkflow, global *Config, repo *RepoConfig, rawRepo map[string]any,
 ) ([]ExperimentArmConfig, error) {
@@ -342,16 +353,19 @@ func WorkflowExperimentArms(
 	arms := []ExperimentArmConfig{{
 		ExperimentID: id, Arm: ExperimentArmDefault, RepoConfig: repo, RawRepoConfig: rawRepo,
 	}}
-	if id == "" {
-		return arms, nil
+	if id != "" {
+		cfg, raw, err := experimentalArmConfig(global, repo, rawRepo, id, definition)
+		if err != nil {
+			return nil, err
+		}
+		arms = append(arms, ExperimentArmConfig{
+			ExperimentID: id, Arm: ExperimentArmExperimental, RepoConfig: cfg, RawRepoConfig: raw,
+		})
 	}
-	cfg, raw, err := experimentalArmConfig(global, repo, rawRepo, id, definition)
-	if err != nil {
-		return nil, err
+	for i := range arms {
+		arms[i].Review = MergeReviewConfigFromConfig(arms[i].RepoConfig, global)
 	}
-	return append(arms, ExperimentArmConfig{
-		ExperimentID: id, Arm: ExperimentArmExperimental, RepoConfig: cfg, RawRepoConfig: raw,
-	}), nil
+	return arms, nil
 }
 
 // experimentForWorkflow returns the single enabled experiment that applies
