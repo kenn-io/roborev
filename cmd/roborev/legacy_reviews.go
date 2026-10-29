@@ -89,7 +89,7 @@ throughout conversion.`),
 				Records         any            `json:"records"`
 			}{
 				"Convert each historical review into the supplied JSON model. Never replace an already structured review. Preserve every finding and its severity, problem, fix, location, and synthesis source numbers when present. Do not invent missing information or re-review the code. Leave ambiguous records unresolved and report why. Return one JSON file per resolved record for import with roborev legacy-reviews and the same --server and --postgres-url options, followed by import <id> < converted.json. The id is the archive ID. When review_id is present, you may instead POST {review_id, document} to the running daemon at /api/review/migrate.",
-				structuredreview.Schema, structuredreview.SourcedSchema, records,
+				structuredreview.ConversionSchema, structuredreview.ConversionSourcedSchema, records,
 			})
 		},
 	})

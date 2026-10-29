@@ -18,6 +18,7 @@ type OpenPullRequest struct {
 	HeadRefName string
 	BaseRefName string
 	Title       string
+	Body        string
 	AuthorLogin string
 	Labels      []string
 }
@@ -28,6 +29,8 @@ type PullRequestInfo struct {
 	HeadRefOID  string
 	HeadRefName string
 	BaseRefName string
+	Title       string
+	Body        string
 	AuthorLogin string
 	Labels      []string
 }
@@ -58,6 +61,7 @@ func (c *Client) ListOpenPullRequests(ctx context.Context, ghRepo string) ([]Ope
 				HeadRefName: pr.GetHead().GetRef(),
 				BaseRefName: pr.GetBase().GetRef(),
 				Title:       pr.GetTitle(),
+				Body:        pr.GetBody(),
 				AuthorLogin: pr.GetUser().GetLogin(),
 				Labels:      pullRequestLabelNames(pr.GetLabels()),
 			})
@@ -95,6 +99,8 @@ func (c *Client) GetPullRequest(ctx context.Context, ghRepo string, prNumber int
 		HeadRefOID:  pr.GetHead().GetSHA(),
 		HeadRefName: pr.GetHead().GetRef(),
 		BaseRefName: pr.GetBase().GetRef(),
+		Title:       pr.GetTitle(),
+		Body:        pr.GetBody(),
 		AuthorLogin: pr.GetUser().GetLogin(),
 		Labels:      pullRequestLabelNames(pr.GetLabels()),
 	}, nil

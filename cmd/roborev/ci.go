@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -21,6 +22,7 @@ import (
 	"go.kenn.io/roborev/internal/git"
 	ghpkg "go.kenn.io/roborev/internal/github"
 	glpkg "go.kenn.io/roborev/internal/gitlab"
+	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/review"
 )
 
@@ -242,7 +244,12 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	// its relative custom-review files come from the trusted side of the
 	// reviewed range, never from the checkout under review.
 	globalCfg := loadCIGlobalConfig(root).ForRepo(root)
-	repoCfgRef, refErr := trustedCIRepoConfigRef(root, gitRef)
+	// Keep prompts, agents, synthesis, and finding locations on the same commits.
+	gitRef, refErr := freezeReviewRef(ctx, root, gitRef)
+	var repoCfgRef string
+	if refErr == nil {
+		repoCfgRef, refErr = trustedCIRepoConfigRef(root, gitRef)
+	}
 	if refErr != nil {
 		// Preserve the flag-validation diagnostic when a plainly unknown type
 		// and an invalid ref are supplied together. Repository-defined types
@@ -356,6 +363,7 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 		RepoConfig:    repoCfg,
 		RepoConfigRef: repoCfgRef,
 		MinSeverity:   reviewMinSev,
+		PullRequest:   detectCIPullRequest(forge, opts),
 	}
 
 	results := review.RunBatch(ctx, batchCfg)
@@ -905,7 +913,9 @@ func postGitLabCIComment(
 // GitHub Actions event payload.
 type ghPREvent struct {
 	PullRequest struct {
-		Number int `json:"number"`
+		Number int    `json:"number"`
+		Title  string `json:"title"`
+		Body   string `json:"body"`
 		Base   struct {
 			SHA string `json:"sha"`
 		} `json:"base"`
@@ -951,6 +961,44 @@ func detectGitRef() (string, error) {
 	}
 
 	return base + ".." + head, nil
+}
+
+// detectCIPullRequest returns the title and description of the pull or merge
+// request that the CI environment describes, only when its repository, host,
+// and request number match the selected review target.
+func detectCIPullRequest(forge ciForge, opts ciReviewOpts) prompt.PullRequest {
+	if forge == ciForgeGitLab {
+		apiBase, err := glpkg.GitLabAPIBaseURL(opts.glHost)
+		if err != nil || !matchesCIRepository(opts.glRepo, detectGitLabProjectPath(),
+			glpkg.HostnameFromAPIBaseURL(apiBase), os.Getenv("CI_SERVER_URL")) {
+			return prompt.PullRequest{}
+		}
+		iid, err := detectMRIID()
+		if err != nil || (opts.pr != 0 && opts.pr != iid) {
+			return prompt.PullRequest{}
+		}
+		return prompt.PullRequest{
+			Title:       os.Getenv("CI_MERGE_REQUEST_TITLE"),
+			Description: os.Getenv("CI_MERGE_REQUEST_DESCRIPTION"),
+		}
+	}
+	apiBase, err := ghpkg.GitHubAPIBaseURL(os.Getenv("GITHUB_API_URL"))
+	if err != nil || !matchesCIRepository(opts.ghRepo, os.Getenv("GITHUB_REPOSITORY"),
+		ghpkg.HostnameFromAPIBaseURL(apiBase), os.Getenv("GITHUB_SERVER_URL")) {
+		return prompt.PullRequest{}
+	}
+	event, err := readPREvent()
+	if err != nil || event.PullRequest.Number <= 0 ||
+		(opts.pr != 0 && opts.pr != event.PullRequest.Number) {
+		return prompt.PullRequest{}
+	}
+	return prompt.PullRequest{Title: event.PullRequest.Title, Description: event.PullRequest.Body}
+}
+
+func matchesCIRepository(repoFlag, ciRepo, host, serverURL string) bool {
+	server, err := url.Parse(serverURL)
+	return err == nil && server.Host != "" && ciRepo != "" &&
+		(repoFlag == "" || repoFlag == ciRepo) && strings.EqualFold(host, server.Host)
 }
 
 // detectPRNumber attempts to auto-detect the PR number from

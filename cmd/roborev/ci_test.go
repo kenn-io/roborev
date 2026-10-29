@@ -4,19 +4,24 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	glpkg "go.kenn.io/roborev/internal/gitlab"
+	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/testutil"
@@ -73,7 +78,7 @@ while [ "$#" -gt 0 ]; do
 done
 printf '%s' "$model" > "$TEST_CI_SYNTHESIS_MODEL"
 cat > /dev/null
-printf '%s\n' '{"type": "item.completed", "item": {"type": "agent_message", "text": "{\"schema_version\": 2, \"summary\": \"Combined test reviews\", \"verdict\": \"fail\", \"findings\": [{\"severity\": \"low\", \"problem\": \"Minor naming issue.\", \"fix\": \"Rename it.\", \"location\": null, \"sources\": [1]}]}"}}'
+printf '%s\n' '{"type": "item.completed", "item": {"type": "agent_message", "text": "{\"schema_version\": 3, \"summary\": \"Combined test reviews\", \"verdict\": \"fail\", \"findings\": [{\"severity\": \"low\", \"kind\": \"improvement\", \"confidence\": 0.6, \"problem\": \"Minor naming issue.\", \"fix\": \"Rename it.\", \"file\": null, \"start_line\": null, \"end_line\": null, \"sources\": [1]}]}"}}'
 `), 0o755))
 			cfg := fmt.Sprintf(`
 default_model = "unrelated-review-model"
@@ -126,6 +131,66 @@ synthesis_reasoning = %q
 	}
 }
 
+func TestCIReviewKeepsCommitsWhenHEADMoves(t *testing.T) {
+	clearForgeCIEnv(t)
+	testenv.SetDataDir(t)
+	repo := testutil.NewTestRepoWithCommit(t)
+	base := repo.HeadSHA()
+	head := repo.CommitFile("tracked.go", "one\ntwo\nthree\nfour\nfive\n", "add reviewed file")
+	t.Chdir(repo.Path())
+
+	type invocation struct{ ref, prompt string }
+	reviewCalls := make(chan invocation, 2)
+	var moveHead sync.Once
+	var moveErr error
+	reviewer := &agent.FakeAgent{NameStr: "ci-moving-head-reviewer", ReviewFn: func(ctx context.Context, repoPath, gitRef, prompt string, _ io.Writer) (string, error) {
+		reviewCalls <- invocation{gitRef, prompt}
+		// Move HEAD after a review prompt has been built. Both reviewers and
+		// synthesis must keep the original file and line range.
+		moveHead.Do(func() {
+			moveErr = os.WriteFile(filepath.Join(repoPath, "tracked.go"), []byte("replacement\n"), 0o644)
+			if moveErr != nil {
+				return
+			}
+			cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "commit", "-am", "shorten file during review")
+			if data, err := cmd.CombinedOutput(); err != nil {
+				moveErr = fmt.Errorf("commit: %w: %s", err, data)
+			}
+		})
+		return `{"schema_version":3,"summary":"Check the original lines.","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.9,"problem":"The original range needs validation.","fix":"Validate the inputs.","file":"tracked.go","start_line":3,"end_line":5}]}`, moveErr
+	}}
+	var synthesisCall invocation
+	synthesizer := &agent.FakeAgent{NameStr: "ci-moving-head-synthesizer", ReviewFn: func(_ context.Context, _, gitRef, prompt string, _ io.Writer) (string, error) {
+		synthesisCall = invocation{gitRef, prompt}
+		return `{"schema_version":3,"summary":"Check the original lines.","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.9,"problem":"The original range needs validation.","fix":"Validate the inputs.","file":"tracked.go","start_line":3,"end_line":5,"sources":[1,2]}]}`, nil
+	}}
+	agent.RegisterForTest(t, reviewer)
+	agent.RegisterForTest(t, synthesizer)
+	cmd := ciCmd()
+	cmd.SetArgs([]string{"review", "--ref", "HEAD^..HEAD", "--agent", reviewer.Name(), "--review-types", "default,security", "--synthesis-agent", synthesizer.Name()})
+
+	var runErr error
+	output := captureOutput(t, func() error {
+		runErr = cmd.Execute()
+		return runErr
+	})
+
+	require.NoError(t, runErr)
+	require.NoError(t, moveErr)
+	assert := assert.New(t)
+	assert.NotEqual(head, repo.HeadSHA(), "the checkout advanced during the review")
+	require.Len(t, reviewCalls, 2)
+	close(reviewCalls)
+	for call := range reviewCalls {
+		assert.Equal(base+".."+head, call.ref)
+		assert.Contains(call.prompt, "+five", "each review sees the original diff")
+	}
+	assert.Equal(base+".."+head, synthesisCall.ref)
+	assert.Equal(2, strings.Count(synthesisCall.prompt, "tracked.go:3-5"), "both member findings keep their line ranges")
+	assert.Contains(output, "tracked.go:3-5", "synthesis keeps the original location")
+	assert.Contains(output, "`"+head[:7]+"`", "the comment names the reviewed commit")
+}
+
 func installFakeGHAuthToken(t *testing.T, token string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -158,8 +223,9 @@ func clearForgeCIEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
 		"GITHUB_ACTIONS", "GITHUB_REPOSITORY", "GITHUB_EVENT_PATH", "GITHUB_REF",
+		"GITHUB_SERVER_URL", "GITHUB_API_URL", "GH_HOST",
 		"GITLAB_CI", "CI_PROJECT_PATH", "CI_MERGE_REQUEST_PROJECT_PATH",
-		"CI_MERGE_REQUEST_IID",
+		"CI_MERGE_REQUEST_IID", "CI_MERGE_REQUEST_TITLE", "CI_MERGE_REQUEST_DESCRIPTION",
 		"CI_COMMIT_SHA", "CI_COMMIT_BEFORE_SHA", "CI_COMMIT_BRANCH",
 		"CI_MERGE_REQUEST_DIFF_BASE_SHA", "CI_MERGE_REQUEST_TARGET_BRANCH_SHA",
 		"CI_MERGE_REQUEST_SOURCE_BRANCH_SHA", "CI_DEFAULT_BRANCH",
@@ -302,6 +368,64 @@ func TestDetectPRNumber_NoEnv(t *testing.T) {
 
 	_, err := detectPRNumber()
 	require.Error(t, err)
+}
+
+func TestDetectCIPullRequest(t *testing.T) {
+	want := prompt.PullRequest{Title: "Cap retries", Description: "Stop after three attempts."}
+	for _, forge := range []ciForge{ciForgeGitHub, ciForgeGitLab} {
+		t.Run(string(forge), func(t *testing.T) {
+			tests := []struct {
+				name string
+				opts ciReviewOpts
+				env  map[string]string
+				want prompt.PullRequest
+			}{
+				{name: "environment request", want: want},
+				{name: "matching request", opts: ciReviewOpts{pr: 42, ghRepo: "acme/source", glRepo: "acme/source"}, want: want},
+				{name: "different request", opts: ciReviewOpts{pr: 7}},
+				{name: "different repository with same number", opts: ciReviewOpts{pr: 42, ghRepo: "acme/other", glRepo: "acme/other"}},
+				{name: "different host with same repository and number", opts: ciReviewOpts{pr: 42, ghRepo: "acme/source", glRepo: "acme/source", glHost: "https://other.example.com"}, env: map[string]string{"GITHUB_API_URL": "https://other.example.com/api/v3/"}},
+				{name: "missing repository", env: map[string]string{"GITHUB_REPOSITORY": "", "CI_MERGE_REQUEST_PROJECT_PATH": "", "CI_PROJECT_PATH": ""}},
+				{name: "missing server", env: map[string]string{"GITHUB_SERVER_URL": "", "CI_SERVER_URL": ""}},
+				{name: "malformed server", env: map[string]string{"GITHUB_SERVER_URL": "://", "CI_SERVER_URL": "://"}},
+			}
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					clearForgeCIEnv(t)
+					t.Setenv("GITHUB_REPOSITORY", "acme/source")
+					t.Setenv("GITHUB_SERVER_URL", "https://github.com")
+					t.Setenv("GITHUB_API_URL", "https://api.github.com")
+					setupFakeGitHubEvent(t, map[string]any{
+						"pull_request": map[string]any{"number": 42, "title": want.Title, "body": want.Description},
+					})
+					t.Setenv("CI_MERGE_REQUEST_IID", "42")
+					t.Setenv("CI_MERGE_REQUEST_TITLE", want.Title)
+					t.Setenv("CI_MERGE_REQUEST_DESCRIPTION", want.Description)
+					t.Setenv("CI_MERGE_REQUEST_PROJECT_PATH", "acme/source")
+					// Fork pipelines run in a different project from the MR target.
+					t.Setenv("CI_PROJECT_PATH", "acme/fork")
+					t.Setenv("CI_SERVER_URL", "https://gitlab.example.com")
+					for key, value := range tt.env {
+						t.Setenv(key, value)
+					}
+
+					opts := tt.opts
+					if forge == ciForgeGitHub {
+						opts.glRepo, opts.glHost = "", ""
+					} else {
+						opts.ghRepo = ""
+					}
+					assert.Equal(t, tt.want, detectCIPullRequest(forge, opts))
+				})
+			}
+		})
+	}
+
+	t.Run("no request", func(t *testing.T) {
+		clearForgeCIEnv(t)
+		assert.Equal(t, prompt.PullRequest{}, detectCIPullRequest(ciForgeGitHub, ciReviewOpts{}))
+		assert.Equal(t, prompt.PullRequest{}, detectCIPullRequest(ciForgeGitLab, ciReviewOpts{}))
+	})
 }
 
 func TestDetectCIForge(t *testing.T) {

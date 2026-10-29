@@ -9,14 +9,14 @@ import type { StructuredReviewFinding } from "./structuredReviewFinding";
 export interface StructuredReviewDocument {
   findings: StructuredReviewFinding[];
   /**
-   * Version of the document format, separate from the export schema_version.
+   * Version of the document format, separate from the export schema_version. Export writes every document in the current version, 3.
    * @minimum 1
-   * @maximum 2
+   * @maximum 3
    */
   schema_version: number;
   /** Names of the input reviews that findings cite in sources, indexed by review number minus one. */
   source_labels?: string[];
   summary: string;
-  /** The agent's own assessment: pass, fail, or unable_to_review. Omitted by version 1 documents. */
+  /** The agent's own assessment: pass, fail, or unable_to_review. Omitted when the review stated none, as in converted version 1 reviews. */
   verdict?: string;
 }

@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	ghpkg "go.kenn.io/roborev/internal/github"
+	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
@@ -1348,7 +1349,7 @@ func TestCIPollerProcessPR_FallsBackWhenPromptPrebuildFails(t *testing.T) {
 			CreatedAt: time.Date(2026, time.March, 27, 12, 0, 0, 0, time.UTC),
 		}}, nil
 	}
-	h.Poller.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.RepoConfig, string, *config.Config) (string, error) {
+	h.Poller.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, prompt.PullRequest, *config.RepoConfig, string, *config.Config) (string, error) {
 		return "", errors.New("prompt prebuild exploded")
 	}
 
@@ -1410,6 +1411,32 @@ func TestCIPollerProcessPR_PrebuildsCompletePrompt(t *testing.T) {
 	assert.Contains(prompt, strings.Repeat("y", 20))
 	assert.NotContains(prompt, "inspect the commit range locally with read-only git commands")
 	assert.NotContains(prompt, "git diff --unified=80")
+}
+
+func TestCIPollerProcessPR_PromptIncludesPullRequest(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	h.Cfg.CI.ReviewTypes = []string{"review"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.Poller = NewCIPoller(h.DB, NewStaticConfig(h.Cfg), nil)
+	h.stubProcessPRGit()
+
+	repo := testutil.InitTestGitRepo(t, h.RepoPath)
+	baseSHA := repo.HeadSHA()
+	headSHA := repo.CommitFile("retry.txt", "retry", "Add retry limit")
+	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return baseSHA, nil }
+
+	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
+		Number: 80, HeadRefOid: headSHA, BaseRefName: "main",
+		Title: "Cap upload retries", Body: "Stop after three attempts <always>.",
+	}, h.Cfg)
+	require.NoError(t, err)
+
+	members := h.panelMembers(t, "acme/api", 80, headSHA)
+	require.Len(t, members, 1)
+	assert.Contains(t, members[0].Prompt, "<pull-request context-only=\"true\">\n"+
+		"**Title:** Cap upload retries\n"+
+		"**Description:**\nStop after three attempts &lt;always&gt;.\n"+
+		"</pull-request>")
 }
 
 func TestCIPollerProcessPR_InvalidReviewType(t *testing.T) {
@@ -4846,7 +4873,7 @@ func TestReconcileStuckAttempt(t *testing.T) {
 func TestBuildPanelOpts_RecordsPRBranchOnJobs(t *testing.T) {
 	p := &CIPoller{}
 	var promptConfigRef string
-	p.buildReviewPromptFn = func(_ context.Context, _, _ string, _ int64, _ int, _, _, _, _ string, _ *config.RepoConfig, configRef string, _ *config.Config) (string, error) {
+	p.buildReviewPromptFn = func(_ context.Context, _, _ string, _ int64, _ int, _, _, _, _ string, _ prompt.PullRequest, _ *config.RepoConfig, configRef string, _ *config.Config) (string, error) {
 		promptConfigRef = configRef
 		return "prebuilt prompt", nil
 	}
@@ -4892,7 +4919,7 @@ func TestBuildPanelOptsUsesDefaultBranchReviewContextCount(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			p := &CIPoller{}
 			gotCount := -1
-			p.buildReviewPromptFn = func(_ context.Context, _, _ string, _ int64, contextCount int, _, _, _, _ string, _ *config.RepoConfig, _ string, _ *config.Config) (string, error) {
+			p.buildReviewPromptFn = func(_ context.Context, _, _ string, _ int64, contextCount int, _, _, _, _ string, _ prompt.PullRequest, _ *config.RepoConfig, _ string, _ *config.Config) (string, error) {
 				gotCount = contextCount
 				return "prebuilt prompt", nil
 			}
@@ -4915,7 +4942,7 @@ func TestBuildPanelOptsUsesDefaultBranchReviewContextCount(t *testing.T) {
 
 func TestBuildPanelOptsSnapshotsEffectiveACPExecutionConfig(t *testing.T) {
 	p := &CIPoller{}
-	p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.RepoConfig, string, *config.Config) (string, error) {
+	p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, prompt.PullRequest, *config.RepoConfig, string, *config.Config) (string, error) {
 		return "prebuilt prompt", nil
 	}
 	cfg := config.DefaultConfig()
@@ -5027,7 +5054,7 @@ func TestBuildPanelOptsRejectsACPReferencesMissingFromDefaultBranch(t *testing.T
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := &CIPoller{}
-			p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.RepoConfig, string, *config.Config) (string, error) {
+			p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, prompt.PullRequest, *config.RepoConfig, string, *config.Config) (string, error) {
 				return "prebuilt prompt", nil
 			}
 			memberOpts, synthOpts, err := p.buildPanelOpts(
@@ -5112,7 +5139,7 @@ func TestCIPromptPrebuildNeverIncludesKataContext(t *testing.T) {
 	cfg.KataContext.Mode = config.KataModeOpen
 	p := NewCIPoller(nil, NewStaticConfig(cfg), nil)
 
-	out, err := p.callBuildReviewPrompt(context.Background(), repo.Path(), sha, 0, 0, "test", "", "", "", nil, "", cfg)
+	out, err := p.callBuildReviewPrompt(context.Background(), repo.Path(), sha, 0, 0, "test", "", "", "", prompt.PullRequest{}, nil, "", cfg)
 	require.NoError(t, err)
 	assert.NotContains(t, out, "Task Context (kata)",
 		"CI prompt prebuilds must never include kata task-ledger content")
@@ -5132,7 +5159,7 @@ func TestBuildPanelOptsAbortsOnCanceledPrebuild(t *testing.T) {
 
 	t.Run("cancellation aborts the run", func(t *testing.T) {
 		p := &CIPoller{}
-		p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.RepoConfig, string, *config.Config) (string, error) {
+		p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, prompt.PullRequest, *config.RepoConfig, string, *config.Config) (string, error) {
 			return "", fmt.Errorf("building prompt: %w", context.Canceled)
 		}
 		_, _, err := p.buildPanelOpts(context.Background(), in)
@@ -5141,7 +5168,7 @@ func TestBuildPanelOptsAbortsOnCanceledPrebuild(t *testing.T) {
 
 	t.Run("other prebuild errors still enqueue without stored prompt", func(t *testing.T) {
 		p := &CIPoller{}
-		p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.RepoConfig, string, *config.Config) (string, error) {
+		p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, prompt.PullRequest, *config.RepoConfig, string, *config.Config) (string, error) {
 			return "", errors.New("prompt prebuild exploded")
 		}
 		memberOpts, _, err := p.buildPanelOpts(context.Background(), in)

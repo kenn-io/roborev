@@ -207,6 +207,34 @@ You can also define schema-constrained review types backed by local Go
 templates, then use them anywhere `--type` or `review_type` is accepted. See
 [Custom Review Types](/docs/advanced/custom-review-types/).
 
+## Commit Messages and Pull Request Descriptions
+
+Reviewers treat a commit message as the author's statement of what the change is
+meant to do. When the message describes the change, the reviewer checks that the
+diff delivers it and reports any gap at the code that falls short. Range reviews
+include every commit's full message and judge the final result against the
+series' overall goal. A vague message such as "fix" or "wip" skips this check,
+and dirty reviews have no messages to check against.
+
+Pull request reviews also show the reviewer the pull request's title and
+description. The description states the overall goal, and the commit messages
+describe the steps toward it. These reviews include the pull request text:
+
+- reviews of GitHub pull requests by the daemon's CI poller
+- `roborev ci review` runs in GitHub Actions `pull_request` jobs, read from the
+    event payload
+- `roborev ci review` runs in GitLab merge request pipelines, read from
+    `CI_MERGE_REQUEST_TITLE` and `CI_MERGE_REQUEST_DESCRIPTION`
+
+For `roborev ci review`, this text is included only when the selected
+repository, forge host, and request number match the CI environment. When a
+prompt is too large to pass inline, roborev gives the reviewer a file containing
+the complete prompt, including the pull request description and commit messages.
+
+Messages and descriptions are untrusted input. Reviewers never follow
+instructions in them, do not accept claims such as "tested" as evidence, and do
+not comment on their wording.
+
 ## Task Context from Kata
 
 If your repo is bound to a [Kata](https://github.com/kenn-io/kata) project,
@@ -500,6 +528,11 @@ review document. Markdown is generated for display and export. Findings below
 the configured severity threshold stay in the document, and synthesis documents
 retain their source references and reviewer labels.
 
+After receiving an agent's review, roborev merges findings only when their
+nonempty problem text and recommended fixes match exactly and they cite the same
+file at nearby locations. Case, punctuation, and word order are preserved when
+comparing text.
+
 On database upgrade, roborev handles each older review in one of three ways:
 
 - A review with valid JSON keeps that JSON as the authoritative review. Older
@@ -583,21 +616,25 @@ roborev legacy-reviews export > migration-input.json
 ```
 
 Give that file to your agent. It contains the original records, the conversion
-errors, and the review and synthesis JSON schemas. Ask the agent to preserve all
-findings and to leave any record it cannot convert faithfully unresolved. Import
-each completed JSON document using the archive ID from the export:
+errors, and the JSON schemas for converted reviews and combined reviews. These
+schemas let a finding leave `kind`, `confidence`, and `file` null and keep a
+free-text `location`, so the agent never has to invent them. Ask the agent to
+preserve all findings and to leave any record it cannot convert faithfully
+unresolved. Import each completed JSON document using the archive ID from the
+export:
 
 ```bash
 roborev legacy-reviews import 1 < converted-review.json
 ```
 
-Import sends the document to the selected daemon. It accepts the existing
-structured document versions and replaces the whole legacy body, rather than
-merging individual findings. It preserves the active review's identity,
-metadata, and open/closed state, and derives its verdict from the supplied
-findings. It rejects invalid documents and refuses to replace an already
-structured review. Synthesis findings must cite valid source reviews. Originals
-remain archived.
+Import sends the document to the selected daemon. It accepts every structured
+document version, stores the document as version 3, and replaces the whole
+legacy body, rather than merging individual findings. A converted finding may
+leave out `kind`, `confidence`, `file`, and the line numbers. It preserves the
+active review's identity, metadata, and open/closed state, and derives its
+verdict from the supplied findings. It rejects invalid documents and refuses to
+replace an already structured review. Synthesis findings must cite valid source
+reviews. Originals remain archived.
 
 An agent working with the running daemon can instead submit the same document to
 `POST /api/review/migrate` on its local API:
@@ -606,7 +643,7 @@ An agent working with the running daemon can instead submit the same document to
 {
   "review_id": 42,
   "document": {
-    "schema_version": 2,
+    "schema_version": 3,
     "summary": "The write can lose data.",
     "verdict": "fail",
     "findings": [{

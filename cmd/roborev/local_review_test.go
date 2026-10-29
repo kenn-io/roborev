@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -145,6 +148,32 @@ func TestLocalReviewWithDirtyDiff(t *testing.T) {
 
 	// We don't check output for diff content because agent output is mocked.
 	h.assertOutputContains("No issues found.")
+}
+
+func TestLocalReviewRetainsLocationsForDirtyBranch(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	base := repo.HeadSHA()
+	head := repo.CommitFile("added.go", "package main\nvar value = 1\n", "add file")
+	repo.RunGit("branch", "dirty")
+	repo.RunGit("checkout", "--detach", base)
+
+	a := &agent.FakeAgent{
+		NameStr: "test-dirty-branch",
+		ReviewFn: func(_ context.Context, _, ref, _ string, _ io.Writer) (string, error) {
+			assert.Equal(t, head, ref, "committed targets are resolved before invoking the agent")
+			return `{"schema_version":3,"verdict":"fail","summary":"One problem.","findings":[{"severity":"medium","kind":"defect","confidence":0.9,"problem":"The value is incorrect.","fix":"Correct it.","file":"added.go","start_line":2,"end_line":2}]}`, nil
+		},
+	}
+	agent.RegisterForTest(t, a)
+	cmd := reviewCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--local", "--repo", repo.Path(), "--agent", a.Name(), "dirty"})
+
+	require.NoError(t, cmd.Execute())
+
+	assert.Contains(t, out.String(), "**Location:** added.go:2")
 }
 
 func TestLocalReviewAgentResolution(t *testing.T) {
@@ -306,4 +335,35 @@ review_reasoning = "medium"
 			h.assertOutputContains("model: " + want + "-model, reasoning: " + want)
 		})
 	}
+}
+
+func TestFreezeReviewRefResolvesEachEndToACommit(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	first := repo.CommitFile("a.txt", "a\n", "first")
+	second := repo.CommitFile("b.txt", "b\n", "second")
+	repo.RunGit("tag", "-a", "v1", "-m", "release")
+
+	tests := []struct {
+		ref  string
+		want string
+	}{
+		{"HEAD", second},
+		{"v1", second},
+		{first + "..HEAD", first + ".." + second},
+		{"HEAD^..HEAD", first + ".." + second},
+		{"HEAD^..", first + ".." + second},
+		{"HEAD^...HEAD", first + "..." + second},
+		{":/first", first},
+		{":/first..:/second", first + ".." + second},
+	}
+	for _, tt := range tests {
+		t.Run(tt.ref, func(t *testing.T) {
+			got, err := freezeReviewRef(t.Context(), repo.Path(), tt.ref)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+
+	_, err := freezeReviewRef(t.Context(), repo.Path(), "no-such-ref")
+	assert.Error(t, err)
 }

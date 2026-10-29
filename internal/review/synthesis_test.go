@@ -288,8 +288,8 @@ func TestBuildSynthesisPrompt_NeutralLabelsRubrics(t *testing.T) {
 }
 
 // TestBuildSynthesisPrompt_NoInstructionsIsMergeOnly pins the complete prompt
-// a panel without synthesis_instructions gets, captured before instructions
-// existed, so adding them cannot change that prompt.
+// a panel without synthesis_instructions gets, so adding instructions cannot
+// change that prompt.
 func TestBuildSynthesisPrompt_NoInstructionsIsMergeOnly(t *testing.T) {
 	reviews := []ReviewResult{
 		{Agent: "codex", Status: ResultDone, Output: "High: nil deref in foo.go:10"},
@@ -299,7 +299,7 @@ func TestBuildSynthesisPrompt_NoInstructionsIsMergeOnly(t *testing.T) {
 	prompt := BuildSynthesisPrompt(reviews, false, "")
 
 	assert.Equal(t, "You are combining multiple code review outputs into a single GitHub PR comment.\n"+
-		`Return exactly one JSON object with this shape and no code fence: {"schema_version":2,"summary":"...","verdict":"pass|fail","findings":[{"severity":"critical|high|medium|low","problem":"...","fix":"...","location":"file:line or null","sources":[1]}]}`+"\n"+
+		`Return exactly one JSON object with this shape and no code fence: {"schema_version":3,"summary":"...","verdict":"pass|fail","findings":[{"severity":"critical|high|medium|low","kind":"defect|improvement","topic":"copied from the input finding, or null","confidence":0.8,"problem":"...","fix":"...","file":"path or null","start_line":12,"end_line":14,"sources":[1]}]}`+"\n"+
 		"Put a one-line overall summary in `summary` and your overall judgment in `verdict`. List every finding that requires changes in `findings`; return an empty `findings` array if the reviewers agree the code is clean.\n"+
 		"In `sources`, list the numbers of the reviews below (### Review N) that reported the finding.\n"+
 		"Rules:\n"+
@@ -308,10 +308,13 @@ func TestBuildSynthesisPrompt_NoInstructionsIsMergeOnly(t *testing.T) {
 		"- Do not use tools except to read referenced prompt or review-input files in full\n"+
 		"- Deduplicate findings reported by multiple reviewers and cite every source\n"+
 		"- Order findings by severity (Critical > High > Medium > Low)\n"+
-		"- Preserve file/line references in `location`\n"+
+		"- Keep each finding's kind and topic; when reviewers disagree, use the value most of them gave\n"+
+		"- Set confidence to the highest confidence any source gave, or 0.5 when the sources give none\n"+
+		"- Keep the file, start_line, and end_line of the findings you combine; use null when there is none\n"+
+		"- When an input finding has a location but no file, name that location in the problem\n"+
 		"- No preamble about yourself\n"+
-		"\n---\n### Review 1\nHigh: nil deref in foo.go:10\n\n"+
-		"---\n### Review 2\nNo issues found.\n\n", prompt)
+		"\n---\n### Review 1\nHigh: nil deref in foo.go:10\n"+
+		"\n---\n### Review 2\nNo issues found.\n\n", prompt)
 }
 
 func TestBuildSynthesisPrompt_InstructionsAllowRepositoryReads(t *testing.T) {
@@ -719,4 +722,50 @@ func TestBuildSynthesisPromptRendersStructuredMembersWithoutThreshold(t *testing
 	assert.Contains(t, prompt, "Nit.")
 	assert.NotContains(t, prompt, "at or above")
 	assert.NotContains(t, prompt, "medium severity")
+}
+
+// A panel member that finished before a daemon update can be stored as a
+// version 2 review, whose findings have only a free-text location.
+func TestBuildSynthesisPromptAnchorsVersion2Locations(t *testing.T) {
+	structured, err := DecodeStructuredReview(jsontext.Value(`{"schema_version":2,"summary":"Two findings.","verdict":"fail","findings":[` +
+		`{"severity":"high","problem":"Ranged.","fix":"f","location":"internal/a.go:12-14"},` +
+		`{"severity":"low","problem":"Prose.","fix":"f","location":"the retry loop"}]}`))
+	require.NoError(t, err)
+	member := ReviewResult{Agent: "codex", ReviewType: "review", Status: ResultDone, Structured: &structured}
+
+	prompt := BuildSynthesisPrompt([]ReviewResult{member}, false, "")
+
+	assert := assert.New(t)
+	assert.Contains(prompt, `"file": "internal/a.go"`)
+	assert.Contains(prompt, `"start_line": 12`)
+	assert.Contains(prompt, `"end_line": 14`)
+	assert.Contains(prompt, `"location": "the retry loop"`)
+	assert.Empty(structured.Findings[0].File, "the stored member is not changed")
+}
+
+func TestParseLocation(t *testing.T) {
+	tests := []struct {
+		location   string
+		file       string
+		start, end int
+		ok         bool
+	}{
+		{"a.go:12", "a.go", 12, 12, true},
+		{" dir/a.go:12-20 ", "dir/a.go", 12, 20, true},
+		{"C:/repo/a.go:3", "C:/repo/a.go", 3, 3, true},
+		{"a.go", "", 0, 0, false},
+		{"a.go:20-12", "", 0, 0, false},
+		{"a.go:0", "", 0, 0, false},
+		{"see the retry loop: 3", "", 0, 0, false},
+		{"near line 3:x", "", 0, 0, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.location, func(t *testing.T) {
+			file, start, end, ok := parseLocation(tt.location)
+			assert.Equal(t, tt.ok, ok)
+			assert.Equal(t, tt.file, file)
+			assert.Equal(t, tt.start, start)
+			assert.Equal(t, tt.end, end)
+		})
+	}
 }

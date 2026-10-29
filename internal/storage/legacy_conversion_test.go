@@ -100,9 +100,9 @@ func TestUpgradeConvertsMarkdownReviewsRoborevWroteAndArchivesTheRest(t *testing
 		assert := assert.New(t)
 		got := readStoredReview(t, env.db, findings.jobID)
 		assert.Empty(got.output)
-		assert.JSONEq(`{"schema_version":1,"summary":"The change adds a save routine.","findings":[
-			{"severity":"high","problem":"The write is not atomic.","fix":"Write to a temporary file and rename it.","location":"store/save.go:88"},
-			{"severity":"low","problem":"The comment is stale.","fix":"Update the comment.","location":"store/save.go:12"}]}`, got.document)
+		assert.JSONEq(`{"schema_version":3,"summary":"The change adds a save routine.","findings":[
+			{"severity":"high","kind":null,"topic":null,"confidence":null,"problem":"The write is not atomic.","fix":"Write to a temporary file and rename it.","file":null,"start_line":null,"end_line":null,"location":"store/save.go:88"},
+			{"severity":"low","kind":null,"topic":null,"confidence":null,"problem":"The comment is stale.","fix":"Update the comment.","file":null,"start_line":null,"end_line":null,"location":"store/save.go:12"}]}`, got.document)
 		assert.True(got.closed, "closed state is unchanged")
 		assert.Equal(findings.createdAt, got.createdAt, "completion time is unchanged")
 		require.NotNil(t, got.verdict)
@@ -126,13 +126,13 @@ func TestUpgradeConvertsMarkdownReviewsRoborevWroteAndArchivesTheRest(t *testing
 			assert.True(t, *got.verdict)
 		}
 		got := readStoredReview(t, env.db, clean.jobID)
-		assert.JSONEq(t, `{"schema_version":1,"summary":"The change renames a helper.","findings":[]}`, got.document)
+		assert.JSONEq(t, `{"schema_version":3,"summary":"The change renames a helper.","findings":[]}`, got.document)
 	})
 
 	t.Run("rendered Markdown keeps the stated agent verdict", func(t *testing.T) {
 		got := readStoredReview(t, env.db, rendered.jobID)
-		assert.JSONEq(t, `{"schema_version":2,"summary":"The change adds a cache.","verdict":"fail","findings":[
-			{"severity":"medium","problem":"The cache is never invalidated.","fix":"Invalidate on write.","location":null}]}`, got.document)
+		assert.JSONEq(t, `{"schema_version":3,"summary":"The change adds a cache.","verdict":"fail","findings":[
+			{"severity":"medium","kind":null,"topic":null,"confidence":null,"problem":"The cache is never invalidated.","fix":"Invalidate on write.","file":null,"start_line":null,"end_line":null,"location":null}]}`, got.document)
 	})
 
 	t.Run("prose stays archived with the refusal reason", func(t *testing.T) {
@@ -298,7 +298,7 @@ func TestConvertLegacySynthesisReviews(t *testing.T) {
 
 	var document string
 	require.NoError(t, env.db.QueryRow(`SELECT structured_output FROM reviews WHERE job_id = ?`, clean).Scan(&document))
-	assert.JSONEq(t, `{"schema_version":1,"summary":"No issues found.","findings":[],"source_labels":["test (security)","test (design)"]}`, document)
+	assert.JSONEq(t, `{"schema_version":3,"summary":"No issues found.","findings":[],"source_labels":["test (security)","test (design)"]}`, document)
 
 	require.NoError(t, env.db.QueryRow(`SELECT structured_output FROM reviews WHERE job_id = ?`, attributed).Scan(&document))
 	doc, err := structuredreview.Decode(jsontext.Value(document))

@@ -331,9 +331,9 @@ A `document` has these members:
 
 | Member | Type | Meaning |
 |--------|------|---------|
-| `schema_version` | integer | Version of the document format. It is separate from the export `schema_version`. Current documents use `2`. Version `1` documents have no `verdict` |
+| `schema_version` | integer | Version of the document format. It is separate from the export `schema_version`. Export writes every document as version `3`, including reviews stored in older versions |
 | `summary` | string | The reviewer's summary |
-| `verdict` | string | The agent's own assessment: `pass`, `fail`, or `unable_to_review`. The exported top-level `verdict` comes from the findings, not from this value |
+| `verdict` | string | The agent's own assessment: `pass`, `fail`, or `unable_to_review`. Omitted when the review stated none, as in some converted historical reviews. The exported top-level `verdict` comes from the findings, not from this value |
 | `findings` | array | Zero or more findings |
 | `source_labels` | array of strings | Only on combined panel reviews. Names the member reviews that findings cite |
 
@@ -342,6 +342,22 @@ Each finding has `severity` (`critical`, `high`, `medium`, or `low`), `problem`,
 finding has no location. Findings in a combined panel review also have
 `sources`, the 1-based positions in `source_labels` of the reviews that reported
 the finding.
+
+Findings also have these members. They are `null` when the review that produced
+the finding did not set them, as in goal reviews and converted historical
+reviews:
+
+| Member | Type | Meaning |
+|--------|------|---------|
+| `kind` | string or `null` | `defect` when the code behaves wrongly, or `improvement` when it works but should still change |
+| `topic` | string or `null` | `tests`, `documentation`, `security`, `performance`, or `design`, or `null` when no topic applies |
+| `confidence` | number or `null` | The reviewer's estimate, from 0 to 1, that the problem is real. Models are poorly calibrated, so treat it as a weak signal. `null` exactly when `kind` is `null` |
+| `file` | string or `null` | Path relative to the repository root |
+| `start_line`, `end_line` | integer or `null` | First and last line of the problem, or `null` when the finding covers the whole file or has no file |
+
+When `file` is set, `location` is derived from `file`, `start_line`, and
+`end_line`, for example `internal/foo.go:12-14`. Otherwise `location` is free
+text, such as a goal review's `Kata abc123`, or `null`.
 
 Other Go modules can import `go.kenn.io/roborev/pkg/structuredreview` to read a
 `document`. `structuredreview.Decode` validates it, and `Document.Markdown("")`
@@ -939,6 +955,10 @@ roborev ci review --comment                  # Post results as PR/MR comment
 
 Runs a one-shot review without a daemon or database. Designed for CI pipelines
 where you want review results as part of the build, not as a background service.
+Refs such as `HEAD~3..HEAD` resolve to commit SHAs before the agents start.
+Prompts, finding location checks, synthesis, and the final comment use those
+same commits even if a branch moves during the review.
+
 With `--comment`, roborev calls the forge only when at least one completed agent
 produced substantive review output. Empty responses and roborev's empty-output
 placeholder do not qualify. If every agent fails before producing output, the
