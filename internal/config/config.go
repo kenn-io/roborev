@@ -734,9 +734,6 @@ func (c *Config) Validate() (err error) {
 	if err := validateSearchConfig(c.Search); err != nil {
 		return err
 	}
-	if c.CI.CheckAgent != "" && c.CI.CheckAgent != "codex" {
-		return fmt.Errorf("ci.check_agent must be codex")
-	}
 	reasoning := []namedConfigValue{
 		{key: "ci.check_reasoning", value: c.CI.CheckReasoning},
 		{key: "review_reasoning", value: c.ReviewReasoning},
@@ -1489,7 +1486,7 @@ func LoadRepoConfigWithRaw(repoPath string) (*RepoConfig, map[string]any, error)
 }
 
 func validateRepoConfigScope(md toml.MetaData) error {
-	for _, key := range []string{"check_agent", "check_model", "check_reasoning"} {
+	for _, key := range []string{"check_model", "check_reasoning"} {
 		if md.IsDefined("ci", key) {
 			return fmt.Errorf("repository config key %q is global-only; move it to ~/.roborev/config.toml", "ci."+key)
 		}

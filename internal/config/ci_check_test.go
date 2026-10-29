@@ -20,9 +20,6 @@ func TestCICheckConfig(t *testing.T) {
 		}
 	}
 	cfg := DefaultConfig()
-	cfg.CI.CheckAgent = "claude"
-	require.ErrorContains(t, cfg.Validate(), "ci.check_agent")
-	cfg.CI.CheckAgent = "codex"
 	cfg.CI.CheckReasoning = "invalid"
 	require.ErrorContains(t, cfg.Validate(), "ci.check_reasoning")
 	cfg.CI.CheckReasoning = "high"
@@ -30,7 +27,7 @@ func TestCICheckConfig(t *testing.T) {
 }
 
 func TestCICheckRepoScope(t *testing.T) {
-	for _, key := range []string{"check_agent", "check_model", "check_reasoning"} {
+	for _, key := range []string{"check_model", "check_reasoning"} {
 		t.Run(key, func(t *testing.T) {
 			dir := t.TempDir()
 			require.NoError(t, os.WriteFile(filepath.Join(dir, ".roborev.toml"), []byte("[ci]\n"+key+" = \"codex\"\n"), 0o600))
@@ -39,4 +36,9 @@ func TestCICheckRepoScope(t *testing.T) {
 			require.ErrorContains(t, err, "global-only")
 		})
 	}
+}
+
+func TestCICheckRejectsUnsupportedAgent(t *testing.T) {
+	// Config writes must reject this input before it can be saved and reloaded.
+	require.Error(t, SetConfigValue(DefaultConfig(), "ci.check_agent", "claude"))
 }

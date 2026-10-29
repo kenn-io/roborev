@@ -104,7 +104,6 @@ type AgentReviewType struct {
 type CIConfig struct {
 	// Check runs a sandboxed Codex check before storing CI findings.
 	Check          bool   `toml:"check"`
-	CheckAgent     string `toml:"check_agent"`
 	CheckModel     string `toml:"check_model"`
 	CheckReasoning string `toml:"check_reasoning"`
 

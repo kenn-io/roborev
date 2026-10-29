@@ -743,15 +743,14 @@ head before roborev stores and posts the review:
 ```toml
 [ci]
 check = true
-check_agent = "codex"
 check_model = "gpt-6.1-sol"
 check_reasoning = "high"
 ```
 
 The checker is off by default. A repository can override `check` in its
-`.roborev.toml` on the default branch. Only the global config selects the agent,
-model, and reasoning. Codex is the only supported checker agent. The daemon-free
-`roborev ci review` command ignores these checker settings.
+`.roborev.toml` on the default branch. Only the global config selects the model
+and reasoning. The checker uses the Codex command selected by `codex_cmd`.
+The daemon-free `roborev ci review` command ignores these checker settings.
 
 The host needs Linux on amd64, the pinned nono build, a systemd user manager,
 Codex with a host login, Bash, and Python 3 at `/usr/bin/python3`. Go is needed
@@ -941,7 +940,6 @@ set, it takes priority over the matrix fields for that repo.
 | `synthesis_backup_agent` | string | | Backup agent for implicit matrix synthesis when the primary fails |
 | `synthesis_model` | string | | Model override for implicit matrix synthesis |
 | `check` | bool | `false` | Try synthesized findings before posting |
-| `check_agent` | string | `"codex"` | Checker agent; currently only Codex is supported. Global only |
 | `check_model` | string | | Model override for the checker. Global only |
 | `check_reasoning` | string | `"standard"` | Reasoning level for the checker. Global only |
 | `upsert_comments` | bool | `false` | Update existing PR comments instead of creating new ones |

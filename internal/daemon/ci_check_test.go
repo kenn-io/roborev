@@ -135,21 +135,35 @@ func TestCICheckInvalidReloadReasoning(t *testing.T) {
 	assert.Contains(t, logs.String(), "CI checker disabled")
 }
 
-func TestCICheckMiseShim(t *testing.T) {
+func TestCICheckConfiguredCommand(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires shell fixture")
 	}
+	tc := newWorkerTestContext(t, 1)
 	tools := t.TempDir()
-	installed := filepath.Join(tools, "installed", "codex")
-	require.NoError(t, os.Mkdir(filepath.Dir(installed), 0o700))
-	require.NoError(t, os.WriteFile(installed, []byte("native fixture"), 0o700))
-	script := fmt.Sprintf("#!/bin/sh\n[ \"$1 $2\" = 'which codex' ] || exit 1\nprintf '%%s\\n' '%s'\n", installed)
-	require.NoError(t, os.WriteFile(filepath.Join(tools, "mise"), []byte(script), 0o700))
-	require.NoError(t, os.Symlink("mise", filepath.Join(tools, "codex")))
-	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
-	got, err := resolveCICheckCommand(t.Context(), t.TempDir(), "codex")
-	require.NoError(t, err)
-	assert.Equal(t, installed, got)
+	scratch := t.TempDir()
+	t.Setenv("TMPDIR", scratch)
+	cfg := config.DefaultConfig()
+	cfg.CodexCmd = "custom-codex"
+	tc.Pool.cfgGetter = NewStaticConfig(cfg)
+	t.Setenv("PATH", tools)
+	for _, installed := range []bool{false, true} {
+		t.Run(fmt.Sprint(installed), func(t *testing.T) {
+			if installed {
+				require.NoError(t, os.WriteFile(filepath.Join(tools, cfg.CodexCmd), []byte("native fixture"), 0o700))
+			}
+			_, err := tc.Pool.runCICheck(t.Context(), &storage.ReviewJob{RepoPath: tc.TmpDir, GitRef: "invalid"}, ciCheckConfig{}, structuredreview.Document{}, nil, io.Discard)
+			require.Error(t, err)
+			if installed {
+				assert.Contains(t, err.Error(), "resolve review repository")
+			} else {
+				assert.Contains(t, err.Error(), "custom-codex")
+				entries, err := os.ReadDir(scratch)
+				require.NoError(t, err)
+				assert.Empty(t, entries)
+			}
+		})
+	}
 }
 
 func TestCICheckStoredReview(t *testing.T) {
@@ -186,8 +200,23 @@ func TestCICheckStoredReview(t *testing.T) {
 				require.NoError(t, tc.DB.CompleteJobResult(members[0].ID, "test", storage.ReviewCompletion{Output: "two claims", Verdict: storage.VerdictFail, StructuredOutput: jsontext.Value(synthAgent.result)}))
 				job := releaseAndClaimSynthesis(t, tc, run)
 				calls := 0
-				tc.Pool.ciCheck = func(_ context.Context, got *storage.ReviewJob, cfg ciCheckConfig, doc structuredreview.Document, _ agent.CodexSandbox, _ []string, out io.Writer) (structuredreview.Document, error) {
+				_, updates, unsubscribe := tc.Pool.outputBuffers.Subscribe(job.ID)
+				defer unsubscribe()
+				tc.Pool.ciCheck = func(_ context.Context, got *storage.ReviewJob, cfg ciCheckConfig, doc structuredreview.Document, _ []string, out io.Writer) (structuredreview.Document, error) {
 					calls++
+					select {
+					case _, open := <-updates:
+						require.True(t, open, "synthesis stream closed before checking")
+					default:
+					}
+					fmt.Fprintln(out, "checker progress")
+					var progress OutputLine
+					select {
+					case progress = <-updates:
+					default:
+					}
+					assert.Equal(t, "checker progress", progress.Text)
+
 					assert.Equal(t, job.ID, got.ID)
 					assert.Equal(t, "high", got.MinSeverity)
 					assert.Equal(t, "high", cfg.Reasoning)
@@ -249,7 +278,7 @@ func TestCICheckCompletionContext(t *testing.T) {
 			if mode != "off canceled" {
 				job.PanelMemberConfigJSON = `{"check":{}}`
 			}
-			tc.Pool.ciCheck = func(ctx context.Context, _ *storage.ReviewJob, _ ciCheckConfig, _ structuredreview.Document, _ agent.CodexSandbox, _ []string, _ io.Writer) (structuredreview.Document, error) {
+			tc.Pool.ciCheck = func(ctx context.Context, _ *storage.ReviewJob, _ ciCheckConfig, _ structuredreview.Document, _ []string, _ io.Writer) (structuredreview.Document, error) {
 				return structuredreview.Document{}, ctx.Err()
 			}
 			ctx, cancel := context.WithCancel(t.Context())
@@ -260,7 +289,11 @@ func TestCICheckCompletionContext(t *testing.T) {
 				cancel()
 			}
 			defer cancel()
-			tc.Pool.checkAndCompleteSynthesis(ctx, testWorkerID, job, original)
+			var check *ciCheckConfig
+			if mode != "off canceled" {
+				check = &ciCheckConfig{}
+			}
+			tc.Pool.checkAndCompleteSynthesis(ctx, testWorkerID, job, original, check)
 			finished, err := tc.DB.GetJobByID(job.ID)
 			require.NoError(t, err)
 			if mode == "checker canceled" {
