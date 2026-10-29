@@ -352,6 +352,8 @@ export function createJobsStore(opts: JobsStoreOptions) {
 
   // A failed request reports its error only while no newer request has
   // started. A newer request owns the rows, and its result replaces them.
+  // The newest request also decides a pending sort, whoever started it: a
+  // sort reload's own response is discarded once a newer request starts.
   const refreshJobsAuthority = (query: ListJobsQuery, reportFailure = false) =>
     Effect.gen(function* () {
       const generation = yield* Effect.sync(() => {
@@ -361,14 +363,13 @@ export function createJobsStore(opts: JobsStoreOptions) {
       const authority = yield* fetchJobsAuthority(query).pipe(
         Effect.tapError((failure) =>
           Effect.sync(() => {
-            if (!reportFailure || generation !== jobsAuthorityGeneration)
-              return;
+            if (generation !== jobsAuthorityGeneration) return;
             const message =
               failure instanceof Error ? failure.message : String(failure);
             if (sortPending) {
               sortPending = false;
               sortError = message;
-            } else {
+            } else if (reportFailure) {
               storeError = message;
             }
           }),

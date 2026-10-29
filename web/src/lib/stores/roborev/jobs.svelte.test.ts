@@ -571,6 +571,52 @@ describe("createJobsStore sorting", () => {
     firstSortReply.resolve();
   });
 
+  it("reports a failed sort when a rerun's reload fails during the sort reload", async () => {
+    const sorted = sortedApi();
+    const firstSortReply = Promise.withResolvers<void>();
+    const rerunReply = Promise.withResolvers<{ job_id: number }>();
+    let sortRequests = 0;
+    const api = {
+      listJobs: vi.fn().mockImplementation(async (query) => {
+        const typed = query as { id?: number; sort?: string };
+        if (typed.id !== undefined) {
+          return {
+            jobs: [makeJob(typed.id)],
+            has_more: false,
+            stats: { done: 1, closed: 0, open: 1 },
+          };
+        }
+        if (typed.sort === "id") {
+          sortRequests += 1;
+          if (sortRequests === 1) await firstSortReply.promise;
+          else throw new Error("daemon unavailable");
+        }
+        return sorted.listJobs(query);
+      }),
+      rerunJob: vi.fn().mockReturnValue(rerunReply.promise),
+    };
+    const store = createJobsStore({
+      api: api as never,
+      navigate: vi.fn(),
+      onError: vi.fn(),
+    });
+    await loadJobs(store);
+    store.rerunJob(30);
+    await vi.waitFor(() => expect(api.rerunJob).toHaveBeenCalledOnce());
+
+    // The rerun's reload replaces the sort reload, then fails.
+    store.setSortColumn("id");
+    rerunReply.resolve({ job_id: 30 });
+
+    await vi.waitFor(() =>
+      expect(store.getSortError()).toEqual(expect.any(String)),
+    );
+    expect(store.isSortPending()).toBe(false);
+    firstSortReply.resolve();
+    await vi.waitFor(() => expect(store.isLoading()).toBe(false));
+    expect(ids(store)).toEqual([30, 29]);
+  });
+
   it("marks the sort pending until rows in the new order arrive", async () => {
     const sorted = sortedApi();
     const reply = Promise.withResolvers<void>();
