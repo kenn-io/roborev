@@ -328,9 +328,11 @@ type ExperimentArmConfig struct {
 	RawRepoConfig map[string]any
 	// Review is this arm's review config merged over the global config.
 	Review ReviewConfig
-	// Assignable is false for an arm that no review can be assigned to: the
-	// experimental arm at ratio 0 and the default arm at ratio 1. Checks that
-	// ask whether reviews can run should skip such an arm; checks that
+	// Assignable is false only for the experimental arm at ratio 0, which no
+	// review can be assigned to. The default arm is always assignable: a
+	// review with no branch and a prompt-based task are not enrolled in the
+	// experiment, so they use it at any ratio. Checks that ask whether
+	// reviews can run should skip an arm that is not assignable; checks that
 	// validate or report configuration should still cover it.
 	Assignable bool
 }
@@ -357,7 +359,7 @@ func WorkflowExperimentArms(
 	}
 	arms := []ExperimentArmConfig{{
 		ExperimentID: id, Arm: ExperimentArmDefault, RepoConfig: repo, RawRepoConfig: rawRepo,
-		Assignable: id == "" || armAssignable(ExperimentArmDefault, *definition.Ratio),
+		Assignable: true,
 	}}
 	if id != "" {
 		cfg, raw, err := experimentalArmConfig(global, repo, rawRepo, id, definition)
@@ -366,7 +368,7 @@ func WorkflowExperimentArms(
 		}
 		arms = append(arms, ExperimentArmConfig{
 			ExperimentID: id, Arm: ExperimentArmExperimental, RepoConfig: cfg, RawRepoConfig: raw,
-			Assignable: armAssignable(ExperimentArmExperimental, *definition.Ratio),
+			Assignable: *definition.Ratio > 0,
 		})
 	}
 	for i := range arms {
@@ -573,14 +575,6 @@ func hashExperimentSubject(subject ExperimentSubject) string {
 		encoded.WriteString(field)
 	}
 	return sha256Hex(encoded.Bytes())
-}
-
-// armAssignable reports whether assignExperimentArm can return arm for ratio.
-func armAssignable(arm ExperimentArm, ratio float64) bool {
-	if arm == ExperimentArmExperimental {
-		return ratio > 0
-	}
-	return ratio < 1
 }
 
 func assignExperimentArm(id, subjectHash string, ratio float64) ExperimentArm {

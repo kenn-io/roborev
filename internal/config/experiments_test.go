@@ -905,13 +905,14 @@ func TestWorkflowExperimentArmsCarryTheirOwnPanelSelection(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, arms, 1, "the experiment does not apply to CI")
 
+	// The default arm always applies: reviews with no branch are not enrolled.
 	for _, tt := range []struct {
 		ratio                  float64
 		defaultAssignable, exp bool
 	}{
 		{0, true, false},
 		{0.5, true, true},
-		{1, false, true},
+		{1, true, true},
 	} {
 		ratio := tt.ratio
 		global.Experiments["try"] = ExperimentDefinition{

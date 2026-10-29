@@ -849,7 +849,7 @@ type DoctorPanel struct {
 	Experiment string              `json:"experiment,omitempty" doc:"ID of the review experiment whose experimental arm runs this panel; empty for the default configuration"`
 	Error      string              `json:"error,omitempty" doc:"Why queueing this panel would be rejected"`
 	Members    []DoctorPanelMember `json:"members"`
-	Synthesis  agent.Diagnosis     `json:"synthesis" doc:"The agent that combines member results"`
+	Synthesis  agent.Diagnosis     `json:"synthesis" doc:"The agent that combines member results; its name is empty when the panel has one voting member, because that member's result is passed through"`
 }
 
 // DoctorPanelMember is one panel member and the agent queueing selects for it.

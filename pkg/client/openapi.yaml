@@ -1166,7 +1166,7 @@ components:
           type: string
         synthesis:
           $ref: "#/components/schemas/Diagnosis"
-          description: The agent that combines member results
+          description: The agent that combines member results; its name is empty when the panel has one voting member, because that member's result is passed through
         used_for:
           description: "Which reviews select this panel: post_commit, manual, or both"
           items:

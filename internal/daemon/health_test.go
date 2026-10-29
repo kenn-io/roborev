@@ -435,7 +435,13 @@ func TestHealthReportsUnavailableReviewAgent(t *testing.T) {
 		return storage.ComponentHealth{}
 	}
 
+	// Before the first check finishes, health reports it is still running
+	// instead of probing in the request. The helper waits for that check.
 	health := decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
+	assert.True(t, agents(health).Healthy)
+	assert.Contains(t, agents(health).Message, "still running")
+
+	health = decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
 	assert.False(t, health.Healthy)
 	assert.False(t, health.Ready)
 	assert.False(t, agents(health).Healthy)

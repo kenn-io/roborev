@@ -128,6 +128,17 @@ func planDoctorPanel(repo, name string, repoCfg *config.RepoConfig, cfg *config.
 	for _, o := range plan.memberOpts {
 		p.Members = append(p.Members, DoctorPanelMember{Name: o.PanelMemberName, Agent: o.Agent})
 	}
+	voting := 0
+	for _, o := range plan.memberOpts {
+		if !o.NonVoting {
+			voting++
+		}
+	}
+	if voting <= 1 {
+		// The worker passes a lone voting member's result through, so this
+		// panel never runs a synthesis agent. An empty name says so.
+		return p
+	}
 	job := &storage.ReviewJob{RepoPath: repo, Agent: plan.synthOpts.Agent, BackupAgent: plan.synthOpts.BackupAgent}
 	p.Synthesis = agent.Diagnosis{Name: plan.synthOpts.Agent}
 	if a, err := resolveConfiguredJobAgent(job, cfg, job.BackupAgent); err != nil {

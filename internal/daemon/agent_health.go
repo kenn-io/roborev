@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"slices"
@@ -17,8 +18,8 @@ import (
 // rejects a review whose agents cannot run, and a post-commit hook has no
 // terminal to report that on, so the daemon reports it here instead. Repo
 // configs can select other agents; `roborev doctor` checks those per repo.
-func reviewAgentHealth(cfg *config.Config) storage.ComponentHealth {
-	problems := reviewAgentProblems(cfg)
+func reviewAgentHealth(ctx context.Context, cfg *config.Config) storage.ComponentHealth {
+	problems := reviewAgentProblems(ctx, cfg)
 	if len(problems) == 0 {
 		return storage.ComponentHealth{Name: "agents", Healthy: true}
 	}
@@ -32,9 +33,18 @@ func reviewAgentHealth(cfg *config.Config) storage.ComponentHealth {
 // agentHealthCache serves the agents health component without running the
 // check inside a health request. The check can run an agent executable to
 // identify it, and that can hang, while roborev status stops waiting for
-// health after two seconds. A request returns the last result and starts at
-// most one background refresh, so the result can be one request out of date.
+// health after two seconds. At most one background check runs at a time. A
+// request returns the last result, or a pending observation before the first
+// one exists, and starts a refresh. Stopping the cache cancels its context and
+// waits for the running check, so no check outlives the daemon.
 type agentHealthCache struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	// run performs one check; it is a field so tests can control it.
+	run func(ctx context.Context, cfg *config.Config) storage.ComponentHealth
+	// onFirst, when set, receives the first completed result.
+	onFirst func(storage.ComponentHealth)
+
 	mu         sync.Mutex
 	latest     storage.ComponentHealth
 	checked    bool
@@ -42,45 +52,69 @@ type agentHealthCache struct {
 	wg         sync.WaitGroup
 }
 
-// check runs the check, stores its result, and returns it.
-func (c *agentHealthCache) check(cfg *config.Config) storage.ComponentHealth {
-	health := reviewAgentHealth(cfg)
-	c.mu.Lock()
-	c.latest, c.checked = health, true
-	c.mu.Unlock()
-	return health
+func newAgentHealthCache() *agentHealthCache {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &agentHealthCache{ctx: ctx, cancel: cancel, run: reviewAgentHealth}
 }
 
-// observe returns the last result. Only when no check has run yet does it run
-// one itself, because nothing is known.
+// refreshLocked starts a background check unless one is running or the cache is
+// stopped. The caller holds c.mu.
+func (c *agentHealthCache) refreshLocked(cfg *config.Config) {
+	if c.refreshing || c.ctx.Err() != nil {
+		return
+	}
+	c.refreshing = true
+	c.wg.Go(func() {
+		health := c.run(c.ctx, cfg)
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.refreshing = false
+		if c.ctx.Err() != nil {
+			return
+		}
+		first := !c.checked
+		c.latest, c.checked = health, true
+		if first && c.onFirst != nil {
+			c.onFirst(health)
+		}
+	})
+}
+
+// start begins the first check at daemon startup.
+func (c *agentHealthCache) start(cfg *config.Config) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.refreshLocked(cfg)
+}
+
+// observe returns the last result and starts a refresh. Before the first check
+// finishes it reports that the check is still running, as healthy, so that
+// no request waits for an executable probe.
 func (c *agentHealthCache) observe(cfg *config.Config) storage.ComponentHealth {
 	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.refreshLocked(cfg)
 	if !c.checked {
-		c.mu.Unlock()
-		return c.check(cfg)
+		return storage.ComponentHealth{Name: "agents", Healthy: true, Message: "first agent check is still running"}
 	}
-	latest := c.latest
-	if !c.refreshing {
-		c.refreshing = true
-		c.wg.Go(func() {
-			c.check(cfg)
-			c.mu.Lock()
-			c.refreshing = false
-			c.mu.Unlock()
-		})
-	}
-	c.mu.Unlock()
-	return latest
+	return c.latest
 }
 
-// wait blocks until a running background refresh finishes.
+// wait blocks until a running background check finishes.
 func (c *agentHealthCache) wait() { c.wg.Wait() }
+
+// stop cancels the context, which ends the running check between routes, and
+// waits for it. A probe in progress ends at its own deadline.
+func (c *agentHealthCache) stop() {
+	c.cancel()
+	c.wg.Wait()
+}
 
 // reviewAgentProblems checks every kind of review the global config can start:
 // post-commit and manual reviews, in the default arm and in the experimental
 // arm of an enabled review experiment. Each one runs the panel it selects, or
 // else the single review agent, the way enqueue resolves them.
-func reviewAgentProblems(cfg *config.Config) []string {
+func reviewAgentProblems(ctx context.Context, cfg *config.Config) []string {
 	arms, err := config.WorkflowExperimentArms(config.ExperimentWorkflowReview, cfg, nil, nil)
 	if err != nil {
 		return []string{firstLine(err.Error())}
@@ -96,6 +130,9 @@ func reviewAgentProblems(cfg *config.Config) []string {
 			continue
 		}
 		for _, src := range doctorPanelSources {
+			if ctx.Err() != nil {
+				return problems
+			}
 			name := arm.PanelName(src.source)
 			if name == "" {
 				if err := singleReviewAgentError(arm.RepoConfig, cfg); err != nil {

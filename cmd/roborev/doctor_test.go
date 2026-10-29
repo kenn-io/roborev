@@ -524,6 +524,20 @@ func TestDoctorReviewPanels(t *testing.T) {
 		assert.Equal(t, doctorFail, checks[0].Status)
 	})
 
+	t.Run("a panel with no synthesis agent passes", func(t *testing.T) {
+		lone := okPanel
+		lone.Synthesis = agent.Diagnosis{}
+		env := &doctorEnv{
+			ctx:          t.Context(),
+			global:       &config.Config{},
+			daemonAgents: &doctorDaemonAgents{Panels: []daemon.DoctorPanel{lone}},
+		}
+		checks, _ := checkDoctorReviewAgents(env)
+		require.Len(t, checks, 1)
+		assert.Equal(t, doctorOK, checks[0].Status)
+		assert.Contains(t, checks[0].Summary, "no synthesis agent runs for one voting member")
+	})
+
 	t.Run("an experimental-arm panel does not replace the single agent", func(t *testing.T) {
 		armPanel := okPanel
 		armPanel.Experiment = "try"

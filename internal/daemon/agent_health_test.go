@@ -1,15 +1,18 @@
 package daemon
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/storage"
 )
 
 func TestReviewAgentProblems(t *testing.T) {
@@ -97,7 +100,7 @@ hook_review_panel = "guard"
 			problem: `"codex"`,
 		},
 		{
-			name: "default arm that no review is assigned to is not checked",
+			name: "default arm is checked at ratio 1 because unenrolled reviews use it",
 			config: `default_agent = "codex"
 [experiments.try]
 enabled = true
@@ -107,6 +110,52 @@ workflows = ["review"]
 [experiments.try.config]
 agent = "test"
 `,
+			problem: `"codex"`,
+		},
+		{
+			name: "panel with one voting member needs no synthesis agent",
+			config: `default_agent = "test"
+[review]
+default_panel = "guard"
+hook_review_panel = "guard"
+[review.subagents.ok]
+agent = "test"
+[review.panels.guard]
+members = ["ok"]
+synthesis_agent = "codex"
+`,
+		},
+		{
+			name: "non-voting observers do not make a panel need a synthesis agent",
+			config: `default_agent = "test"
+[review]
+default_panel = "guard"
+hook_review_panel = "guard"
+[review.subagents.ok]
+agent = "test"
+[review.subagents.watcher]
+agent = "test"
+non_voting = true
+[review.panels.guard]
+members = ["ok", "watcher"]
+synthesis_agent = "codex"
+`,
+		},
+		{
+			name: "panel with several voting members needs its synthesis agent",
+			config: `default_agent = "test"
+[review]
+default_panel = "guard"
+hook_review_panel = "guard"
+[review.subagents.one]
+agent = "test"
+[review.subagents.two]
+agent = "test"
+[review.panels.guard]
+members = ["one", "two"]
+synthesis_agent = "codex"
+`,
+			problem: "synthesis",
 		},
 	}
 	for _, tt := range tests {
@@ -116,7 +165,7 @@ agent = "test"
 			cfg, err := config.LoadGlobalFrom(path)
 			require.NoError(t, err)
 
-			problems := reviewAgentProblems(cfg)
+			problems := reviewAgentProblems(t.Context(), cfg)
 			if tt.problem == "" {
 				assert.Empty(t, problems)
 				return
@@ -125,4 +174,74 @@ agent = "test"
 			assert.Contains(t, problems[0], tt.problem)
 		})
 	}
+}
+
+func TestAgentHealthCache(t *testing.T) {
+	cfg := config.DefaultConfig()
+	unhealthy := storage.ComponentHealth{Name: "agents", Message: "no agent"}
+	newCache := func(t *testing.T, run func(context.Context, *config.Config) storage.ComponentHealth) *agentHealthCache {
+		c := newAgentHealthCache()
+		c.run = run
+		t.Cleanup(c.stop)
+		return c
+	}
+
+	t.Run("requests share one check and see a pending result until it finishes", func(t *testing.T) {
+		started := make(chan struct{}, 10)
+		release := make(chan struct{})
+		var runs atomic.Int32
+		c := newCache(t, func(context.Context, *config.Config) storage.ComponentHealth {
+			runs.Add(1)
+			started <- struct{}{}
+			<-release
+			return unhealthy
+		})
+		var firsts []storage.ComponentHealth
+		c.onFirst = func(h storage.ComponentHealth) { firsts = append(firsts, h) }
+
+		for range 5 {
+			pending := c.observe(cfg)
+			assert.True(t, pending.Healthy)
+			assert.Contains(t, pending.Message, "still running")
+		}
+		<-started
+		assert.EqualValues(t, 1, runs.Load(), "concurrent requests start one check")
+
+		close(release)
+		c.wait()
+		assert.Equal(t, unhealthy, c.observe(cfg))
+		c.wait()
+		assert.Equal(t, []storage.ComponentHealth{unhealthy}, firsts, "only the first result is reported at startup")
+	})
+
+	t.Run("stop cancels a running check, waits for it, and starts no more", func(t *testing.T) {
+		started := make(chan struct{}, 10)
+		var runs atomic.Int32
+		c := newCache(t, func(ctx context.Context, _ *config.Config) storage.ComponentHealth {
+			runs.Add(1)
+			started <- struct{}{}
+			<-ctx.Done()
+			return unhealthy
+		})
+
+		c.observe(cfg)
+		<-started
+		c.stop()
+
+		pending := c.observe(cfg)
+		assert.True(t, pending.Healthy, "a result that finished after stop is discarded")
+		assert.Contains(t, pending.Message, "still running")
+		assert.EqualValues(t, 1, runs.Load(), "no check starts after stop")
+	})
+}
+
+func TestReviewAgentProblemsStopsWhenCancelled(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	cfg := config.DefaultConfig()
+	cfg.DefaultAgent = "codex"
+	require.NotEmpty(t, reviewAgentProblems(t.Context(), cfg), "codex is unavailable")
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	assert.Empty(t, reviewAgentProblems(ctx, cfg), "a cancelled check does not run its probes")
 }

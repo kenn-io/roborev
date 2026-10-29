@@ -62,7 +62,7 @@ type Server struct {
 	searchCancel            context.CancelFunc
 	searchSubscriberID      int
 	searchWG                sync.WaitGroup
-	agentHealth             agentHealthCache
+	agentHealth             *agentHealthCache
 	searchStopped           bool
 	httpServer              *http.Server
 	remoteServer            *http.Server
@@ -206,6 +206,7 @@ func newServerWithLogs(
 		authKey:            cfg.AuthKey,
 		syncEnabledAtStart: cfg.Sync.Enabled,
 		goalGate:           newGoalGate(),
+		agentHealth:        newAgentHealthCache(),
 		daemonTLS:          cfg.DaemonTLS,
 		db:                 db,
 		appOpened:          telemetry.AppOpenedLimiter{Database: db},
@@ -521,13 +522,19 @@ func (s *Server) Start(ctx context.Context) error {
 		)
 	}
 
-	if agents := s.agentHealth.check(cfg); !agents.Healthy {
+	// The first agents check runs in the background so startup and health
+	// requests never wait for an executable probe.
+	s.agentHealth.onFirst = func(agents storage.ComponentHealth) {
+		if agents.Healthy {
+			return
+		}
 		message := "reviews will be rejected until their agent can run: " + agents.Message
 		log.Printf("Warning: %s", message)
 		if s.errorLog != nil {
 			s.errorLog.LogError("agents", message, 0)
 		}
 	}
+	s.agentHealth.start(cfg)
 
 	// Repair stale roborev-managed hooks in registered repos (skip in CI
 	// mode where repos are fetch-only and don't need local hooks).
@@ -722,6 +729,7 @@ func (s *Server) stopOnce0() error {
 	}
 	// Stop telemetry loop
 	close(s.telemetryStop)
+	s.agentHealth.stop()
 	s.setupWorkerMu.Lock()
 	if s.setupWorkerCancel != nil {
 		s.setupWorkerCancel()
