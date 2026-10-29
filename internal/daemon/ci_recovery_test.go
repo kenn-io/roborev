@@ -74,6 +74,7 @@ func TestCIPanelRerunPublishesReview(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, outcome, *original.Outcome)
 			assert.NotNil(t, original.RetiredAt)
+			assertPanelRetireReason(t, h.DB, original.ID, "")
 			failures, err := h.DB.GetFailedReviewAttempts("acme/api")
 			require.NoError(t, err)
 			assert.Empty(t, failures, "historical failures must not obscure delivered recovery")
@@ -105,6 +106,7 @@ func TestCIPollerRestartRecoversExhaustedReview(t *testing.T) {
 	attempt, err = h.DB.GetReviewAttempt("acme/api", pr.Number, pr.HeadRefOid)
 	require.NoError(t, err)
 	require.Equal(t, "deferred", attempt.State)
+	assertPanelRetireReason(t, h.DB, panel.ID, "")
 	failures, err := h.DB.GetFailedReviewAttempts("acme/api")
 	require.NoError(t, err)
 	require.Len(t, failures, 1, "rearming must retain failure health until delivery")
@@ -250,7 +252,7 @@ func TestCIPanelRerunIgnoresCanceledPredecessor(t *testing.T) {
 	for _, successorState := range []string{"pending", "done"} {
 		t.Run(successorState, func(t *testing.T) {
 			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-			_, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a",
+			panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a",
 				[]jobSpec{{Agent: "test", Status: "failed", Error: "model unavailable"}})
 			h.markJobCanceled(t, synth.ID, "canceled by user")
 			server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
@@ -266,6 +268,7 @@ func TestCIPanelRerunIgnoresCanceledPredecessor(t *testing.T) {
 			// after a rerun has taken ownership of the same PR HEAD.
 			h.Poller.handleReviewCanceled(ciEvent(synth.ID, "review.canceled"))
 			server.retireCIPanelForCanceledSynthesis(synth)
+			assertPanelRetireReason(t, h.DB, panel.ID, "superseded")
 			attempt, err := h.DB.GetReviewAttempt("acme/api", 7, "head-a")
 			require.NoError(t, err)
 			require.NotNil(t, attempt, "old cancellation must not remove the successor's attempt")

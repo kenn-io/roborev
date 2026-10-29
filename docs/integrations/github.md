@@ -39,6 +39,14 @@ poller does not search that history before enqueueing jobs, so the lookup does
 not delay other PRs or deferred retries. This context can include reviews that
 completed while the job was queued.
 
+## Monitor review load
+
+Run `roborev summary --all --since 7d` to inspect panel counts, retirement
+reasons, runs per PR, posting turnaround, and recorded cost with coverage. The
+[CI run health summary](/docs/commands/#ci-run-health) explains the cohorts and
+how unavailable pricing or timing data is displayed. Use `--all` to include CI
+checkouts outside your current working repository.
+
 ## What to Expect
 
 Before enabling the CI poller, understand the following:
