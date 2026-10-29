@@ -41,6 +41,12 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	require.NoError(t, err)
 
 	work, secrets := t.TempDir(), t.TempDir()
+	configDir := filepath.Join(work, "config")
+	profiles := filepath.Join(configDir, "nono", "profiles")
+	require.NoError(t, os.MkdirAll(profiles, 0o700))
+	planted, err := json.Marshal(map[string]any{"filesystem": map[string]any{"read_file": []string{filepath.Join(secrets, "home-secret")}}})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(profiles, "default.json"), planted, 0o600))
 	repo, gitDir := filepath.Join(work, "repo"), filepath.Join(t.TempDir(), "repo.git")
 	require.NoError(t, os.Mkdir(repo, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(repo, "README.md"), []byte("sandbox fixture\n"), 0o600))
@@ -164,7 +170,7 @@ exit "$failed"
 	job := sandbox.Job{
 		WorkDir: work, ReadPaths: []string{gitDir, filepath.Dir(filepath.Dir(codex)), "/etc/codex"},
 		ProxyPort: port, MemoryMax: 8 << 30,
-		Env: []string{"PATH=/usr/bin:/bin", "HOME=" + secrets, "TMPDIR=" + work},
+		Env: []string{"PATH=/usr/bin:/bin", "HOME=" + secrets, "TMPDIR=" + work, "XDG_CONFIG_HOME=" + configDir},
 	}
 	a := NewCodexAgent(codex).WithSandbox(&CodexSandbox{Job: job, ProxyKey: key})
 	a.IgnoreUserConfig = true

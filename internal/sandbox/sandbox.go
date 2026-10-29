@@ -61,8 +61,8 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 		key, _, _ := strings.Cut(entry, "=")
 		keys = append(keys, key)
 	}
+	// nono adds embedded default groups without resolving a named user profile.
 	profile := map[string]any{
-		"extends":  "default",
 		"groups":   map[string]any{"exclude": []string{"system_write_linux"}},
 		"workdir":  map[string]any{"access": "none"},
 		"linux":    map[string]any{"af_unix_mediation": "pathname"},
@@ -88,7 +88,11 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("create sandbox profile: %w", err)
 	}
-	cleanup = func() { _ = os.Remove(file.Name()) }
+	unit := filepath.Base(file.Name()) + ".scope"
+	cleanup = func() {
+		killScope(unit)
+		_ = os.Remove(file.Name())
+	}
 	if err = json.MarshalWrite(file, profile); err != nil {
 		_ = file.Close()
 		cleanup()
@@ -105,9 +109,21 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 			env = append(env, key+"="+value)
 		}
 	}
-	if err = j.check(ctx, cmd, env); err != nil {
+	checkUnit := filepath.Base(file.Name()) + "-check.scope"
+	checkCmd := append([]string{cmd[0], "--unit=" + checkUnit}, cmd[1:]...)
+	err = j.check(ctx, checkCmd, env)
+	killScope(checkUnit)
+	if err != nil {
 		cleanup()
 		return nil, nil, nil, err
 	}
+	cmd = append([]string{cmd[0], "--unit=" + unit}, cmd[1:]...)
 	return append(cmd, argv...), env, cleanup, nil
+}
+
+func killScope(unit string) {
+	// Use the host environment and a fresh context: the job may be cancelled.
+	_ = exec.Command("systemctl", "--user", "kill", "--signal=KILL", "--kill-whom=all", unit).Run()
+	// Wait for the unit to stop before the caller removes the job's files.
+	_ = exec.Command("systemctl", "--user", "stop", unit).Run()
 }

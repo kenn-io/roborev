@@ -48,8 +48,6 @@ func (s *CodexSandbox) prepare(repoPath string) (sandbox.Job, func(), error) {
 		return job, nil, err
 	}
 	config := map[string]any{
-		"model_provider": "roborev-proxy",
-		"web_search":     "disabled",
 		"model_providers": map[string]any{"roborev-proxy": map[string]any{
 			"name":                      "roborev-proxy",
 			"base_url":                  fmt.Sprintf("http://127.0.0.1:%d/v1", job.ProxyPort),
