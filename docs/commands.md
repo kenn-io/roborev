@@ -845,6 +845,11 @@ improvements to review guidelines. The command queries completed reviews
 `review_guidelines` from global and repo config as context, and sends the batch
 to an agent for structured analysis.
 
+Each review panel contributes its synthesis review once; individual panel
+members are excluded. Panel entries include the panel name and configured member
+count, including advisory members. Closed reviews and trusted comments remain
+available as context.
+
 The agent produces:
 
 - Recurring finding patterns across reviews
