@@ -268,6 +268,32 @@ describe("JobTable infinite scroll", () => {
     expect(pageRequests(api)).toHaveLength(2);
   });
 
+  it("offers a retry when a list reload fails, then resumes paging", async () => {
+    rowsThatFit = 5;
+    const serve = pagedJobs(10, 2);
+    let failList = false;
+    const api = mountTable(async (query) => {
+      if (!isPageRequest(query) && failList) throw new Error("");
+      return serve(query);
+    });
+    await vi.waitFor(() => expect(renderedRows()).toBe(10));
+
+    failList = true;
+    context.jobs?.setFilter("status", "done");
+    const failure = await screen.findByRole("alert");
+    expect(failure).toHaveTextContent("Could not load jobs.");
+    scrollToEnd();
+    await settle();
+    expect(pageRequests(api)).toHaveLength(0);
+
+    failList = false;
+    await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    await vi.waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    await vi.waitFor(() => expect(renderedRows()).toBe(20));
+    expect(pageRequests(api)).toHaveLength(1);
+  });
+
   it("resumes paging after a filter change replaces an in-flight page", async () => {
     rowsThatFit = 5;
     const serve = pagedJobs(10, 3);

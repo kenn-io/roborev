@@ -202,9 +202,18 @@
     <div class="loading-bar" role="status">Loading...</div>
   {/if}
 
-  {#if jobsStore?.getError()}
-    <div class="error-bar">
-      {jobsStore.getError()}
+  <!-- Any list error stops scroll loading, so it always offers Retry. A
+       transport failure has an empty message. -->
+  {#if jobsStore && jobsStore.getError() !== null}
+    <div class="error-bar" role="alert">
+      {jobsStore.getError() || "Could not load jobs."}
+      <button
+        type="button"
+        class="list-retry"
+        onclick={() => jobsStore.loadJobs()}
+      >
+        Retry
+      </button>
     </div>
   {/if}
 
@@ -332,6 +341,7 @@
   }
 
   .members-retry,
+  .list-retry,
   .load-more-retry,
   .sort-retry {
     margin-left: 8px;

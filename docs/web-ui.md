@@ -72,8 +72,9 @@ immediately, without waiting for the preview delay.
 The table loads the most recent jobs first. Scroll to the end of the table to
 load the next page; loading continues until the table fills its scroll area or
 no more jobs remain. The table holds at most 10,000 jobs; a note at the end says
-when it stops at that limit, and filters reach the rest. If a page fails to
-load, the table shows an error with a **Retry** button.
+when it stops at that limit, and filters reach the rest. If a page or the list
+itself fails to load, the table shows an error with a **Retry** button, and
+scrolling loads nothing more until a retry succeeds.
 
 Select a column header to sort by that column; select it again to reverse the
 order. Numeric and time columns sort largest or newest first. The daemon sorts
