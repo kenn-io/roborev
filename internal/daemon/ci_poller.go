@@ -3323,6 +3323,7 @@ func (p *CIPoller) retryAttemptPR(
 		BaseRefName: baseRefName,
 		Title:       target.Title,
 		Body:        target.Body,
+		Draft:       target.Draft,
 		Labels:      target.Labels,
 		// Preserve the author so the [ci] author filter does not skip
 		// trusted authors on the retry path.
