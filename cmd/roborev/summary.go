@@ -25,6 +25,9 @@ func summaryCmd() *cobra.Command {
 		branch     string
 		since      string
 		allRepos   bool
+		findings   bool
+		groupBy    string
+		minSamples int
 		jsonOutput bool
 	)
 
@@ -44,6 +47,15 @@ Examples:
   roborev summary --repo /path/to/repo
   roborev summary --json              # Structured output for scripting`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if !findings && (cmd.Flags().Changed("by") || cmd.Flags().Changed("min-samples")) {
+				return fmt.Errorf("--by and --min-samples require --findings")
+			}
+			if err := storage.ValidateFindingOptions(findings, groupBy, 0); err != nil {
+				return err
+			}
+			if minSamples < 1 {
+				return fmt.Errorf("--min-samples must be a positive integer")
+			}
 			ctx := cmd.Context()
 			if err := ensureDaemon(); err != nil {
 				return fmt.Errorf("daemon not running: %w", err)
@@ -65,6 +77,11 @@ Examples:
 			}
 
 			params := generated.GetSummaryQuery{}
+			if findings {
+				params.Findings = new(generated.GetSummaryQueryFindings("true"))
+				params.By = new(groupBy)
+				params.MinSamples = new(fmt.Sprint(minSamples))
+			}
 			if repoPath != "" {
 				params.Repo = new(repoPath)
 			}
@@ -104,6 +121,9 @@ Examples:
 		},
 	}
 
+	cmd.Flags().BoolVar(&findings, "findings", false, "show version-bound finding outcomes")
+	cmd.Flags().StringVar(&groupBy, "by", "", "group findings by severity, review-type, agent, model, arm, or member (default severity)")
+	cmd.Flags().IntVar(&minSamples, "min-samples", storage.DefaultFindingMinSamples, "minimum labeled findings for displaying a rate")
 	cmd.Flags().StringVar(&repoPath, "repo", "", "scope to a single repo (default: current repo)")
 	cmd.Flags().StringVar(&branch, "branch", "", "scope to a single branch")
 	cmd.Flags().StringVar(&since, "since", "7d", "time window (e.g. 24h, 7d, 30d)")
@@ -241,7 +261,10 @@ func printSummary(cmd *cobra.Command, s storage.Summary) {
 		cmd.Println()
 	}
 
-	if s.Overview.Total == 0 {
+	if s.Findings != nil {
+		printFindingSummary(cmd, s.Findings)
+	}
+	if s.Overview.Total == 0 && s.Findings == nil {
 		cmd.Println("No review data for this time window.")
 	}
 }
@@ -348,4 +371,115 @@ func formatSince(since time.Time) string {
 		return fmt.Sprintf("%.0fd", days)
 	}
 	return fmt.Sprintf("%.0fw", days/7)
+}
+
+// printFindingSummary keeps unavailable rates separate from raw counts.
+func printFindingSummary(cmd *cobra.Command, f *storage.FindingStats) {
+	cmd.Printf("Finding outcomes by %s (finished_at; as of %s)\n", f.GroupBy, f.AsOf.UTC().Format(time.RFC3339))
+	cmd.Printf("  Structured reviews: %d/%d | Labeled findings: %d/%d (R: %d)\n", f.StructuredReviews, f.LogicalReviews, f.Total.Labeled, f.Total.Findings, f.TierLabeled["R"])
+	cohort := f.TierCoverage["R"]
+	cmd.Printf("  R cohort labeled findings: %d/%d (local standalone reviews)\n", cohort.Labeled, cohort.Findings)
+	cmd.Printf("  Documents unavailable: %d missing, %d invalid, %d legacy, %d unable to review\n", f.MissingDocuments, f.InvalidDocuments, f.LegacyDocuments, f.UnableDocuments)
+	cmd.Printf("  Rebuttals: %d valid, %d unbound, %d stale, %d unmatched/ambiguous, %d invalid, %d ineligible\n", f.Rebuttals.Valid, f.Rebuttals.Unbound, f.Rebuttals.Stale, f.Rebuttals.Ambiguous, f.Rebuttals.Invalid, f.Rebuttals.Ineligible)
+	cmd.Println("  R confirms/refutes agent assertions; closure is resolution only. K, D and panel R labels unavailable.")
+	if f.Members != nil {
+		printMemberFindingSummary(cmd, f.Members)
+		return
+	}
+	priced := false
+	for _, r := range f.Rows {
+		if r.Cost.JobsWithCost > 0 {
+			priced = true
+			break
+		}
+	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	fmt.Fprint(w, "  Group\tFindings\tLabeled\tPositive\tNegative\tExcluded\tUnlabeled\tActed-on\tResolution")
+	if priced {
+		fmt.Fprint(w, "\tRetained spend\tCost/positive")
+	}
+	fmt.Fprintln(w)
+	for _, r := range f.Rows {
+		rate := "-"
+		if r.RateState == "below_minimum" {
+			rate = fmt.Sprintf("n<%d", f.MinSamples)
+		} else if r.ActedOnRate != nil {
+			rate = fmt.Sprintf("%.0f%%", 100**r.ActedOnRate)
+		}
+		resolution := fmt.Sprintf("%d/%d", r.ClosedReviews, r.FailingReviews)
+		if r.ResolutionRate != nil {
+			resolution += fmt.Sprintf(" (%.0f%%)", 100**r.ResolutionRate)
+		}
+		key := r.Key
+		if key == "" {
+			key = "(unspecified)"
+		}
+		fmt.Fprintf(w, "  %s\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s", key, r.Findings, r.Labeled, r.Positive, r.Negative, r.Excluded, r.Unlabeled, rate, resolution)
+		if priced {
+			spend, per := "-", "-"
+			if r.Cost.JobsWithCost > 0 {
+				spend = fmt.Sprintf("~$%.2f", r.Cost.TotalUSD)
+				if !r.Cost.Complete {
+					spend = fmt.Sprintf("≥$%.2f (%d/%d priced)", r.Cost.TotalUSD, r.Cost.JobsWithCost, r.Cost.JobsTotal)
+				}
+				if r.CostPerPositive != nil {
+					per = fmt.Sprintf("~$%.2f", *r.CostPerPositive)
+					if !r.Cost.Complete {
+						per = fmt.Sprintf("≥$%.2f (%d/%d priced)", *r.CostPerPositive, r.Cost.JobsWithCost, r.Cost.JobsTotal)
+					}
+				}
+			}
+			fmt.Fprintf(w, "\t%s\t%s", spend, per)
+		}
+		fmt.Fprintln(w)
+	}
+	_ = w.Flush()
+	if f.GroupBy == "severity" && priced {
+		cmd.Println("  Severity spend overlaps across cells; each review is charged once per cell.")
+	}
+	cmd.Println()
+}
+
+// printMemberFindingSummary keeps excluded runs and spend separate from the
+// attributable cohort, and gives raised findings their structured-run coverage.
+func printMemberFindingSummary(cmd *cobra.Command, stats *storage.MemberStats) {
+	cmd.Println("Panel member contribution")
+	cmd.Printf("  %d panel runs, %d member runs excluded from contribution and its spend (source attribution unavailable).\n", stats.SkippedPanelRuns, stats.SkippedMemberRuns)
+	cmd.Println("  Solo labels unavailable; panel-parent outcomes cannot establish solo negatives.")
+	priced, skippedPriced := false, false
+	for _, row := range stats.Rows {
+		priced = priced || row.Cost.JobsWithCost > 0
+		skippedPriced = skippedPriced || row.SkippedCost.JobsWithCost > 0
+	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	fmt.Fprint(w, "  Repo\tPanel\tMember\tRuns\tAttributed\tSkipped\tStructured runs\tRaised\tCited\tAgreed\tSolo\tSolo labeled")
+	if priced {
+		fmt.Fprint(w, "\tMember spend\tCost/cited\tCost/agreed")
+	}
+	if skippedPriced {
+		fmt.Fprint(w, "\tSkipped spend")
+	}
+	fmt.Fprintln(w)
+	for _, row := range stats.Rows {
+		fmt.Fprintf(w, "  %s\t%s\t%s\t%d\t%d\t%d\t%d/%d\t%d\t%d\t%d\t%d\t%d/%d (unavailable)", row.RepoPath, row.PanelName, row.MemberName, row.Runs, row.AttributedRuns, row.SkippedRuns, row.StructuredRuns, row.AttributedRuns, row.FindingsRaised, row.Cited, row.Agreed, row.Solo, row.SoloLabeled, row.Solo)
+		if priced {
+			fmt.Fprintf(w, "\t%s\t%s\t%s", formatMemberFindingSpend(row.Cost, new(row.Cost.TotalUSD)), formatMemberFindingSpend(row.Cost, row.CostPerCited), formatMemberFindingSpend(row.Cost, row.CostPerAgreed))
+		}
+		if skippedPriced {
+			fmt.Fprintf(w, "\t%s", formatMemberFindingSpend(row.SkippedCost, new(row.SkippedCost.TotalUSD)))
+		}
+		fmt.Fprintln(w)
+	}
+	_ = w.Flush()
+	cmd.Println()
+}
+
+func formatMemberFindingSpend(cost storage.CostAggregate, value *float64) string {
+	if value == nil || cost.JobsWithCost == 0 {
+		return "-"
+	}
+	if !cost.Complete {
+		return fmt.Sprintf("≥$%.2f (%d/%d priced)", *value, cost.JobsWithCost, cost.JobsTotal)
+	}
+	return fmt.Sprintf("~$%.2f", *value)
 }

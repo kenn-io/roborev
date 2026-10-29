@@ -271,6 +271,24 @@ func (s SearchReviewsQueryState) Validate() error {
 	}
 }
 
+// GetSummaryQueryFindings Include finding outcomes
+type GetSummaryQueryFindings string
+
+const (
+	GetSummaryQueryFindingsFalse GetSummaryQueryFindings = "false"
+	GetSummaryQueryFindingsTrue  GetSummaryQueryFindings = "true"
+)
+
+// Validate checks if the GetSummaryQueryFindings value is valid
+func (g GetSummaryQueryFindings) Validate() error {
+	switch g {
+	case GetSummaryQueryFindingsFalse, GetSummaryQueryFindingsTrue:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid GetSummaryQueryFindings value, got: %v", g))
+	}
+}
+
 // GetSummaryQueryAll Include per-repo breakdown
 type GetSummaryQueryAll string
 

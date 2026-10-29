@@ -5,6 +5,7 @@ import type { AgentStats } from "./agentStats";
 import type { CostAggregate } from "./costAggregate";
 import type { DurationStats } from "./durationStats";
 import type { FailureStats } from "./failureStats";
+import type { FindingStats } from "./findingStats";
 import type { JobTypeStats } from "./jobTypeStats";
 import type { OverviewStats } from "./overviewStats";
 import type { RepoSummary } from "./repoSummary";
@@ -18,6 +19,7 @@ export interface Summary {
   cost: CostAggregate;
   duration: DurationStats;
   failures: FailureStats;
+  findings?: FindingStats;
   job_types: JobTypeStats[];
   overview: OverviewStats;
   repo_path?: string;

@@ -2475,6 +2475,17 @@ func (s *Server) humaUnpauseQueue(
 func (s *Server) humaGetSummary(
 	ctx context.Context, input *GetSummaryInput,
 ) (*GetSummaryOutput, error) {
+	minimum := 0
+	if input.MinSamples != "" {
+		var err error
+		minimum, err = strconv.Atoi(input.MinSamples)
+		if err != nil || minimum < 1 {
+			return nil, huma.Error400BadRequest("min_samples must be a positive integer")
+		}
+	}
+	if err := storage.ValidateFindingOptions(input.Findings == "true", input.By, minimum); err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
+	}
 	since := time.Now().Add(-7 * 24 * time.Hour)
 	if input.Since != "" {
 		d, err := parseDuration(input.Since)
@@ -2487,10 +2498,13 @@ func (s *Server) humaGetSummary(
 	}
 
 	opts := storage.SummaryOptions{
-		RepoPath: input.Repo,
-		Branch:   input.Branch,
-		Since:    since,
-		AllRepos: input.All == "true",
+		RepoPath:   input.Repo,
+		Branch:     input.Branch,
+		Since:      since,
+		AllRepos:   input.All == "true",
+		Findings:   input.Findings == "true",
+		GroupBy:    input.By,
+		MinSamples: minimum,
 	}
 
 	summary, err := s.db.GetSummary(opts)

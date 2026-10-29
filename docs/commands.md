@@ -764,6 +764,9 @@ roborev summary --since 30d         # Last 30 days
 roborev summary --branch main       # Filter by branch
 roborev summary --repo /path/to/repo
 roborev summary --json              # Structured output for scripting
+roborev summary --findings          # Finding outcomes by severity
+roborev summary --findings --by agent --min-samples 5
+roborev summary --findings --by member # Voting member contribution and spend
 ```
 
 | Flag | Description |
@@ -772,6 +775,9 @@ roborev summary --json              # Structured output for scripting
 | `--branch <name>` | Scope to a single branch |
 | `--repo <path>` | Scope to a single repo (default: current repo) |
 | `--all` | Show summary across all repos (mutually exclusive with `--repo`) |
+| `--findings` | Include structured finding outcomes |
+| `--by <group>` | With `--findings`: `severity` (default), `review-type`, `agent`, `model`, `arm`, or `member` |
+| `--min-samples <n>` | With `--findings`: positive labeled sample threshold for displaying rates (default: `5`) |
 | `--json` | Structured output for scripting |
 
 The summary includes:
@@ -787,6 +793,83 @@ The summary includes:
 - **Failures**: Total failures, retries, and error categories
 - **Cost**: Approximate agent spend for eligible jobs in the same time window,
     with coverage when only some jobs reported cost
+
+### Finding outcomes
+
+`summary --findings` adds a completion-time snapshot of logical code reviews:
+standalone commit, range and dirty reviews, plus panel synthesis parents. Panel
+members, goal reviews, tasks, fixes, insights and compact jobs are excluded.
+Existing summary fields keep their enqueue-time window. The additive `findings`
+JSON block reports the repository, branch, since, as-of and `finished_at` time
+basis, all raw counts, coverage and nullable rates with a suppression state.
+Zero-finding structured reviews count toward document coverage. Missing,
+invalid, legacy and unable-to-review documents remain in the logical review
+denominator. All structured severities count, including findings below a passing
+review's configured threshold.
+
+- **Positive / negative (tier R)**: A completed rebuttal assessment confirms or
+    refutes one uniquely matched finding in the current review version. This is
+    an agent assertion, not proof that someone applied a fix. New rebuttals bind
+    their quoted finding and review UUID in their stored prompt. Old unbound,
+    stale, failed, malformed and ambiguous assessments do not label findings.
+    The latest valid assessment wins. Comments never create labels.
+- **Excluded**: Superseded findings remain visible but do not enter the labeled
+    denominator. Labeled is positive plus negative; unlabeled is separate.
+- **Acted-on rate**: Positive / labeled. A zero denominator is unavailable.
+    Fewer than `--min-samples` labels shows `n<5` with the default threshold
+    while preserving every underlying count. This display threshold is adapted
+    from
+    [lever's five-example evidence rule](https://github.com/github/lever/blob/f859d0a/automations/precision-review/improver-prompt.md).
+    It does not limit reads or agent execution.
+- **Review resolution**: Distinct closed failing reviews / distinct failing
+    reviews contributing to the cell. Each review counts once per cell. Closure
+    never turns a finding into a positive or negative label.
+- **Coverage**: Structured / logical reviews and labeled / total findings, with
+    effective tier counts and rejected rebuttal coverage. The R cohort coverage
+    denominator is structured findings from local standalone reviews; it does
+    not promise that every stored session can still be resumed. Tier K (typed
+    replies), tier D (fix dispositions), and panel-parent tier R are unavailable
+    today.
+
+Agent and model groups describe the logical parent's configuration, including
+panels that passed through one member's output. Arm groups use experiment ID,
+definition hash and arm; unassigned reviews have an explicit bucket.
+Non-severity groups retain zero-finding and unavailable-document reviews.
+
+Cost is approximate spend on distinct retained eligible execution rows, not all
+historical retries. Whole-panel cost includes parent and member work, including
+failed invoked and advisory members. Each execution is charged once per cell;
+severity cells overlap when a review contains several severities, so their spend
+is not additive. Runs that never invoked an agent do not reduce cost coverage. A
+recorded zero-dollar price is priced; missing prices are not free. Cost /
+positive is unavailable without positive findings. Partial prices show a lower
+bound such as `≥$2.00 (3/4 priced)`; human cost columns are omitted when no row
+has usable prices. JSON always preserves eligible and priced denominators.
+
+### Panel member contribution
+
+`summary --findings --by member` groups voting members by repository identity,
+panel name and member name. Runs include failed and clean executions. Attributed
+and skipped runs are separate; findings raised count only usable structured
+member reviews, with structured / attributed run coverage. Cited counts each
+synthesis finding once per member. Agreed means another distinct source also
+reported it; solo means only that member did. Repeated source indices remain one
+citation, and duplicate display labels keep their positional identities.
+
+The complete ordered source list must match the persisted voting inputs.
+Missing, invalid or mismatched attribution excludes the whole panel run from
+contribution and its spend. Skipped panel/member counts and separate skipped
+spend expose that excluded cohort. Valid all-clean and single-success
+passthrough reviews retain runs and eligible member spend, including failures.
+Advisory members are excluded from this view; whole-panel spend still includes
+them.
+
+Member spend charges each retained eligible execution once. Cost / cited and
+cost / agreed use the same attributable cohort and are unavailable with a zero
+denominator or no recorded prices. Partial prices remain lower bounds. Solo
+negative counts and rates are unavailable because panel-parent outcome labels
+are unavailable; labeled / solo coverage stays visible without claiming zero
+noise. JSON exposes these rows in the optional `findings.members` block.
 
 ## Aggregate Cost
 
@@ -844,6 +927,11 @@ improvements to review guidelines. The command queries completed reviews
 (focusing on failures) within the time window, includes the currently resolved
 `review_guidelines` from global and repo config as context, and sends the batch
 to an agent for structured analysis.
+
+Each review panel contributes its synthesis review once; individual panel
+members are excluded. Panel entries include the panel name and configured member
+count, including advisory members. Closed reviews and trusted comments remain
+available as context.
 
 The agent produces:
 

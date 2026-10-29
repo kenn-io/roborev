@@ -19,8 +19,8 @@ import (
 )
 
 // preciseTimestampLayout is a fixed-width timestamp layout used for the
-// retry_not_before column and attempt boundaries (started_at). Two reasons it
-// differs from RFC3339Nano:
+// retry_not_before column, attempt boundaries (started_at), and rebuttal
+// assessment completions. Two reasons it differs from RFC3339Nano:
 //   - The 9-digit padded fractional seconds avoid the RFC3339Nano quirk
 //     of stripping trailing zeros (".5" vs ".500000000"), which would
 //     break lexicographic SQL comparison around fractional widths.
@@ -1350,10 +1350,10 @@ func (db *DB) completeJob(
 		}
 	}()
 
-	// Fetch output_prefix and job_type from job (if any)
+	// Fetch output_prefix, job_type and source from job (if any)
 	var outputPrefix sql.NullString
-	var jobType, storedThreshold string
-	err = conn.QueryRowContext(ctx, `SELECT output_prefix, job_type, COALESCE(min_severity, '') FROM review_jobs WHERE id = ?`, jobID).Scan(&outputPrefix, &jobType, &storedThreshold)
+	var jobType, source, storedThreshold string
+	err = conn.QueryRowContext(ctx, `SELECT output_prefix, job_type, COALESCE(source, ''), COALESCE(min_severity, '') FROM review_jobs WHERE id = ?`, jobID).Scan(&outputPrefix, &jobType, &source, &storedThreshold)
 	if completion.MinSeverity == "" {
 		completion.MinSeverity = storedThreshold
 	}
@@ -1388,13 +1388,19 @@ func (db *DB) completeJob(
 		finalOutput = outputPrefix.String + finalOutput
 	}
 
+	finishedAt := now
+	if jobType == JobTypeTask && source == JobSourceRebuttal {
+		// Latest-assessment selection needs the completion order within a
+		// second. Capture it while this transaction owns the write lock.
+		finishedAt = preciseTimestampAt(time.Now())
+	}
 	// Update job status only if still running (not canceled)
 	result, err := conn.ExecContext(ctx, `
 		UPDATE review_jobs
 		SET status = 'done', finished_at = ?, updated_at = ?,
 		    min_severity = COALESCE(NULLIF(?, ''), min_severity)
 		WHERE id = ? AND status = 'running'
-	`, now, now, normalizeMinSeverityForWrite(completion.MinSeverity), jobID)
+	`, finishedAt, now, normalizeMinSeverityForWrite(completion.MinSeverity), jobID)
 	if err != nil {
 		return err
 	}
