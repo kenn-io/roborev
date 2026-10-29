@@ -80,6 +80,19 @@ func setSynthesisAgent(t *testing.T, tc *workerTestContext, runUUID uuid.UUID, a
 	require.NoError(t, err)
 }
 
+// setSynthesisInstructions stores panel synthesis instructions on the run's
+// synthesis job in the same encoding production writes.
+func setSynthesisInstructions(t *testing.T, tc *workerTestContext, runUUID uuid.UUID, instructions string) {
+	t.Helper()
+	raw, err := synthesisJobConfig{Instructions: instructions}.encode()
+	require.NoError(t, err)
+	_, err = tc.DB.Exec(
+		"UPDATE review_jobs SET panel_member_config_json = ? WHERE panel_run_uuid = ? AND panel_role = 'synthesis'",
+		raw, runUUID,
+	)
+	require.NoError(t, err)
+}
+
 // releaseAndClaimSynthesis releases the gated synthesis job for the run and
 // claims it, asserting the claimed job is the synthesis row.
 func releaseAndClaimSynthesis(
@@ -642,11 +655,7 @@ func TestSynthesisInstructionsRunAgentForSingleSuccess(t *testing.T) {
 		{name: "m1", agent: memberAgent},
 	})
 	setSynthesisAgent(t, tc, runUUID, synthAgent)
-	_, err := tc.DB.Exec(
-		"UPDATE review_jobs SET panel_member_config_json = ? WHERE panel_run_uuid = ? AND panel_role = 'synthesis'",
-		`{"instructions":"Label each finding just fix or needs the user."}`, runUUID,
-	)
-	require.NoError(t, err)
+	setSynthesisInstructions(t, tc, runUUID, "Label each finding just fix or needs the user.")
 	completeMember(t, tc, members[0].ID, memberAgent, "High: nil map write in alpha.go:3")
 	failMember(t, tc, members[1].ID)
 
@@ -1367,11 +1376,7 @@ func TestInstructedSynthesisReadsReviewedCommit(t *testing.T) {
 		{name: "m1", agent: memberAgent},
 	})
 	setSynthesisAgent(t, tc, runUUID, synthAgent)
-	_, err := tc.DB.Exec(
-		"UPDATE review_jobs SET panel_member_config_json = ? WHERE panel_run_uuid = ? AND panel_role = 'synthesis'",
-		`{"instructions":"Verify each finding against the code."}`, runUUID,
-	)
-	require.NoError(t, err)
+	setSynthesisInstructions(t, tc, runUUID, "Verify each finding against the code.")
 	completeMember(t, tc, members[0].ID, memberAgent, "High: bug in alpha.go:1")
 	completeMember(t, tc, members[1].ID, memberAgent, "High: other bug in alpha.go:1")
 	require.NoError(t, os.WriteFile(alpha, []byte("edited after review\n"), 0o600))
