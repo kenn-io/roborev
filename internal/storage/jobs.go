@@ -773,6 +773,12 @@ func (db *DB) SaveJobPrompt(jobID int64, prompt string) error {
 // marker onto a row a new attempt now owns — that would wrongly make the
 // terminal row cost-eligible. Mirrors SaveJobSessionID.
 func (db *DB) MarkJobAgentInvoked(jobID int64, workerID, cmdLine string) error {
+	return db.MarkJobAgentInvokedAs(jobID, workerID, "", "", cmdLine)
+}
+
+// MarkJobAgentInvokedAs also persists the selected executor and its model.
+// An empty executor preserves the stored configuration for existing callers.
+func (db *DB) MarkJobAgentInvokedAs(jobID int64, workerID, executor, model, cmdLine string) error {
 	ctx := context.Background()
 	conn, err := db.Conn(ctx)
 	if err != nil {
@@ -792,9 +798,11 @@ func (db *DB) MarkJobAgentInvoked(jobID int64, workerID, cmdLine string) error {
 	}()
 
 	result, err := conn.ExecContext(ctx,
-		`UPDATE review_jobs SET command_line = ?, agent_invoked = 1
+		`UPDATE review_jobs SET command_line = ?, agent_invoked = 1,
+		 model = CASE WHEN ? != '' THEN ? ELSE model END,
+		 agent = COALESCE(NULLIF(?, ''), agent), synced_at = NULL
 		 WHERE id = ? AND status = 'running' AND worker_id = ?`,
-		cmdLine, jobID, workerID)
+		cmdLine, executor, nullString(model), executor, jobID, workerID)
 	if err != nil {
 		return err
 	}
@@ -1325,7 +1333,9 @@ func (db *DB) completeJob(
 	}
 	// Get machine ID and generate UUIDs before starting transaction
 	// to avoid potential lock conflicts with GetMachineID's writes
-	now := time.Now().Format(time.RFC3339)
+	now := time.Now()
+	finished := preciseTimestampAt(now)
+	updated := now.Format(time.RFC3339)
 	machineID, _ := db.GetMachineID()
 	reviewUUID := uuid.New()
 
@@ -1394,7 +1404,7 @@ func (db *DB) completeJob(
 		SET status = 'done', finished_at = ?, updated_at = ?,
 		    min_severity = COALESCE(NULLIF(?, ''), min_severity)
 		WHERE id = ? AND status = 'running'
-	`, now, now, normalizeMinSeverityForWrite(completion.MinSeverity), jobID)
+	`, finished, updated, normalizeMinSeverityForWrite(completion.MinSeverity), jobID)
 	if err != nil {
 		return err
 	}
@@ -1430,7 +1440,7 @@ func (db *DB) completeJob(
 	_, err = conn.ExecContext(ctx, `INSERT INTO reviews (job_id, agent, output, verdict_bool, structured_output, reviewed_file_count, excluded_file_count, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		jobID, agent, finalOutput, verdictBoolVal,
 		nullString(string(completion.StructuredOutput)), reviewedFileCount, excludedFileCount,
-		reviewUUID, machineID, now)
+		reviewUUID, machineID, updated)
 	if err != nil {
 		return err
 	}
@@ -1472,8 +1482,10 @@ func (db *DB) FailJobAttempt(ctx context.Context, jobID int64, workerID, started
 }
 
 func (db *DB) failJob(ctx context.Context, jobID int64, errorMsg, predicate string, attemptArgs ...any) (bool, error) {
-	now := time.Now().Format(time.RFC3339)
-	args := append([]any{now, errorMsg, now, jobID}, attemptArgs...)
+	now := time.Now()
+	finished := preciseTimestampAt(now)
+	updated := now.Format(time.RFC3339)
+	args := append([]any{finished, errorMsg, updated, jobID}, attemptArgs...)
 	result, err := db.ExecContext(ctx, `UPDATE review_jobs SET status = 'failed', finished_at = ?, error = ?, updated_at = ? WHERE id = ? AND status = 'running'`+predicate, args...)
 	if err != nil {
 		return false, err
@@ -1487,12 +1499,14 @@ func (db *DB) failJob(ctx context.Context, jobID int64, errorMsg, predicate stri
 
 // CancelJob marks a running or queued job as canceled
 func (db *DB) CancelJob(jobID int64) error {
-	now := time.Now().Format(time.RFC3339)
+	now := time.Now()
+	finished := preciseTimestampAt(now)
+	updated := now.Format(time.RFC3339)
 	result, err := db.Exec(`
 		UPDATE review_jobs
 		SET status = 'canceled', finished_at = ?, updated_at = ?
 		WHERE id = ? AND status IN ('queued', 'running')
-	`, now, now, jobID)
+	`, finished, updated, jobID)
 	if err != nil {
 		return err
 	}

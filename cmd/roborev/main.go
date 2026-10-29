@@ -105,6 +105,7 @@ func newRootCmd() *cobra.Command {
 	rootCmd.AddCommand(logCmd())
 	rootCmd.AddCommand(summaryCmd())
 	rootCmd.AddCommand(costCmd())
+	rootCmd.AddCommand(experimentsCmd())
 	rootCmd.AddCommand(backfillVerdictsCmd())
 	rootCmd.AddCommand(legacyReviewsCmd())
 	rootCmd.AddCommand(configCmd())
