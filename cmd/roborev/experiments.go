@@ -131,6 +131,13 @@ func formatExperimentReport(report storage.ExperimentReport) string {
 	if (!report.Default.Cost.Complete && report.Default.ReviewUnits > 0) || (!report.Experiment.Cost.Complete && report.Experiment.ReviewUnits > 0) {
 		out.WriteString("Cost comparison requires full coverage in both arms. Run roborev backfill-tokens for missing usage; prices may remain unavailable.\n")
 	}
+	if report.Success != nil {
+		bar := report.Success
+		fmt.Fprintf(&out, "Success bar: %s (%s %s by at least %s)\n  %s\n", bar.State, bar.Metric, bar.Direction, bar.MinEffect, bar.Reason)
+		for _, guard := range bar.Guards {
+			fmt.Fprintf(&out, "  %s: %s; %s\n", guard.Guard, guard.State, guard.Reason)
+		}
+	}
 	out.WriteString("\nMetrics (experiment minus default; costs in USD, durations in seconds, rates as fractions):\n")
 	for _, metric := range report.Metrics {
 		fmt.Fprintf(&out, "%s: %s\n", metric.Metric, metric.State)

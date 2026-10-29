@@ -785,9 +785,9 @@ runtime settings are rejected because workers resolve those after enqueue.
 Database, sync, credential, hook, browser, and comment-posting settings are also
 rejected.
 
-An experiment ID is immutable. To change its ratio, workflows, or overlay,
-create a new versioned ID. A repository can enable or disable a definition from
-global config by overriding only `enabled`:
+An experiment ID is immutable. To change its ratio, workflows, overlay, or
+success bar, create a new versioned ID. A repository can enable or disable a
+definition from global config by overriding only `enabled`:
 
 ```toml
 # .roborev.toml
@@ -799,13 +799,45 @@ At most one enabled experiment may apply to a workflow. Disabled experiments do
 not record assignments.
 
 Read an enrolled experiment with
-`roborev experiments report review-session-resumption-v1`. Reporting adds no
-configuration and does not change enrollment. The
+`roborev experiments report review-session-resumption-v1`. Reporting does not
+change enrollment. The
 [experiment report contract](/docs/commands/#experiment-reports) explains UTC
 assignment cohorts, equally weighted branch subjects, full panel spend,
 latest-retained-attempt limits, metric coverage, and exploratory comparisons.
-Finding-level labels remain unavailable; the report declares no overall winner
-or configured success bar.
+Finding-level labels remain unavailable. Free comparisons declare no overall
+winner. An optional success bar evaluates a declared objective:
+
+```toml
+[experiments.review-session-resumption-v1.success]
+metric = "cost_per_review"
+direction = "lower"
+min_effect = "20%"
+guards = ["job_failure_rate <= +0", "off_plan_rate <= +0"]
+```
+
+Declare the bar before enrollment. `metric` must be one of the report's exact
+metric names. `direction` is `higher` or `lower`, including for descriptive
+metrics such as finding counts. `min_effect` is a nonnegative absolute number in
+metric units, such as `0.2`, or a percent string, such as `"20%"`. Quoted
+absolute numbers also work. A zero minimum still requires detected improvement.
+Guards accept only `<metric> <= <signed number>` or
+`<metric> >= <signed number>`, with an optional `%` after the number. They bound
+experiment-minus-default changes; they do not execute expressions.
+
+Percentages use `abs(default)` as the baseline. A zero baseline makes a relative
+primary effect or guard unavailable, even when both arms are zero. The report
+reads the stored definition, so editing current configuration cannot change an
+enrolled bar. Adding or changing a success bar requires a new experiment ID;
+definitions without a bar keep their existing hashes. Success settings belong
+beside `config`, not inside the review overlay.
+
+The primary must show improvement with both p \<= 0.05 and a 95% interval
+excluding zero in the declared direction. Its conservative improvement bound
+must also meet `min_effect`; each guard's conservative interval endpoint must
+meet its bound. Integrity and reliability gates still apply. Requested metrics
+with missing observations, insufficient subjects, or unavailable labels yield
+`not enough data`. Unrelated unavailable label metrics do not block a cost
+objective. Otherwise the report prints `bar met` or `bar not met`.
 
 Review, CI metrics, and CI cost exports include an `experiments` field. It is an
 array of assignments when an experiment applies and `null` otherwise. Each

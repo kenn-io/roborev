@@ -909,8 +909,25 @@ Insufficient subjects or required coverage yields `not enough data`. A detected
 increase in failure or off-plan rate gates other conclusions with
 `reliability worse`. Detection requires both two-sided p \<= 0.05 and a
 bootstrap interval excluding zero. Eligible metrics say `better`/`worse`, or
-descriptive `higher`/`lower`, and otherwise `no detectable difference`. The
-report declares no overall winner or success bar.
+descriptive `higher`/`lower`, and otherwise `no detectable difference`. The free
+comparisons declare no overall winner.
+
+When the enrolled definition includes a
+[success bar](/docs/configuration/#review-configuration-experiments), the report
+also prints `bar met`, `bar not met`, or `not enough data`, with a reason and
+per-guard results. The optional JSON `success` object is omitted when no bar was
+configured. Evaluation always uses the stored definition; current config edits
+cannot move the bar.
+
+The primary needs a detected improvement in its declared direction, including
+when its minimum is zero. Its conservative 95% improvement bound must meet the
+minimum effect. Guards bound experiment-minus-default changes using the upper
+interval endpoint for `<=` and the lower endpoint for `>=`. Percent conditions
+use `abs(default)`; a zero baseline makes them unavailable. Missing required
+metric observations, insufficient subjects, or incomplete integrity/reliability
+evidence yield `not enough data`. A detected reliability regression blocks
+success even when reliability itself is the primary objective. Unavailable label
+metrics only block bars that request them.
 
 See
 [Review configuration experiments](/docs/configuration/#review-configuration-experiments)

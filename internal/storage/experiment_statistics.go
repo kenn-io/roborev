@@ -5,18 +5,15 @@ import (
 	"math/rand/v2"
 	"slices"
 	"strings"
+
+	"go.kenn.io/roborev/internal/config"
 )
 
 // The report contract specifies 4,096 resamples: Monte Carlo standard error
 // near p=.05 is about .0034. This is an approximation budget, not an input cap.
 const experimentResamples = 4096
 
-var experimentReportMetrics = []string{
-	"cost_per_review", "duration_p50_seconds", "duration_p90_seconds",
-	"fail_verdict_rate", "findings_critical_per_review", "findings_high_per_review",
-	"findings_medium_per_review", "findings_low_per_review", "job_failure_rate",
-	"off_plan_rate", "refuted_per_100", "confirmed_per_review", "cost_per_confirmed",
-}
+var experimentReportMetrics = config.ExperimentReportMetrics()
 
 type experimentInference struct {
 	Delta        float64

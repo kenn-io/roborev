@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
-	"maps"
 	"math"
 	"math/big"
 	"slices"
@@ -36,6 +35,7 @@ const (
 // ExperimentDefinition is a named configuration experiment. Pointer fields
 // preserve the distinction between an omitted value and an explicit zero.
 type ExperimentDefinition struct {
+	Success   *ExperimentSuccess   `toml:"success,omitempty" json:"success,omitempty"`
 	Enabled   *bool                `toml:"enabled,omitempty" json:"-"`
 	Ratio     *float64             `toml:"ratio,omitempty" json:"ratio"`
 	Workflows []ExperimentWorkflow `toml:"workflows,omitempty" json:"workflows"`
@@ -82,6 +82,7 @@ type canonicalExperimentDefinition struct {
 	Ratio     float64              `json:"ratio"`
 	Workflows []ExperimentWorkflow `json:"workflows"`
 	Config    map[string]any       `json:"config"`
+	Success   *ExperimentSuccess   `json:"success,omitempty"`
 }
 
 // ValidateExperimentConfigs validates every materialized experiment overlay
@@ -412,7 +413,9 @@ func mergeExperimentDefinitions(global *Config, repo *RepoConfig) (map[string]Ex
 		if err := validateExperimentEntries(global.Experiments, true); err != nil {
 			return nil, err
 		}
-		maps.Copy(merged, global.Experiments)
+		for id, definition := range global.Experiments {
+			merged[id] = cloneExperimentDefinition(definition)
+		}
 	}
 	if repo != nil {
 		for id, definition := range repo.Experiments {
@@ -429,10 +432,10 @@ func mergeExperimentDefinitions(global *Config, repo *RepoConfig) (map[string]Ex
 				if !experimentDefinitionComplete(definition) {
 					return nil, fmt.Errorf("repository experiment %q overrides no global definition", id)
 				}
-				merged[id] = definition
+				merged[id] = cloneExperimentDefinition(definition)
 				continue
 			}
-			base.Enabled = definition.Enabled
+			base.Enabled = new(*definition.Enabled)
 			merged[id] = base
 		}
 	}
@@ -498,6 +501,9 @@ func validateExperimentDefinition(id string, definition ExperimentDefinition) er
 		}
 		seen[workflow] = struct{}{}
 	}
+	if err := ValidateExperimentSuccess(definition.Success); err != nil {
+		return fmt.Errorf("experiment %q: %w", id, err)
+	}
 	if err := validateExperimentOverlay(definition.Config); err != nil {
 		return fmt.Errorf("experiment %q config: %w", id, err)
 	}
@@ -532,7 +538,7 @@ func canonicalizeExperimentDefinition(definition ExperimentDefinition) ([]byte, 
 	workflows := slices.Clone(definition.Workflows)
 	slices.Sort(workflows)
 	encoded, err := json.Marshal(canonicalExperimentDefinition{
-		Ratio: *definition.Ratio, Workflows: workflows, Config: definition.Config,
+		Ratio: *definition.Ratio, Workflows: workflows, Config: definition.Config, Success: definition.Success,
 	}, json.Deterministic(true))
 	if err != nil {
 		return nil, "", err
@@ -875,7 +881,7 @@ func experimentDefinitionComplete(definition ExperimentDefinition) bool {
 }
 
 func experimentEnabledOnly(definition ExperimentDefinition) bool {
-	return definition.Enabled != nil && definition.Ratio == nil && len(definition.Workflows) == 0 && len(definition.Config) == 0
+	return definition.Enabled != nil && definition.Ratio == nil && len(definition.Workflows) == 0 && len(definition.Config) == 0 && definition.Success == nil
 }
 
 func experimentEnabled(definition ExperimentDefinition) bool {

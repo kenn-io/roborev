@@ -209,3 +209,13 @@ func TestFormatExperimentReport(t *testing.T) {
 	assert.NotContains(out, "95% randomization threshold=")
 	assert.NotContains(out, "bootstrap 95% interval")
 }
+
+func TestFormatExperimentReportSuccess(t *testing.T) {
+	report := experimentReportFixture()
+	require.NoError(t, json.Unmarshal([]byte(`{"success":{"metric":"cost_per_review","direction":"lower","min_effect":"20%","state":"bar not met","reason":"Minimum improvement was not established.","guards":[{"guard":"job_failure_rate <= +0","state":"bar met","reason":"Bound met."}]}}`), &report))
+	out := formatExperimentReport(report)
+	assert.Contains(t, out, "Success bar: bar not met")
+	assert.Contains(t, out, "cost_per_review lower by at least 20%")
+	assert.Contains(t, out, "Minimum improvement was not established.")
+	assert.Contains(t, out, "job_failure_rate <= +0: bar met")
+}
