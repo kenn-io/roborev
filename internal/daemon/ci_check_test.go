@@ -153,15 +153,15 @@ func TestCICheckStoredReview(t *testing.T) {
 	for _, path := range []string{"passthrough", "agent"} {
 		t.Run(path, func(t *testing.T) {
 			tc := newWorkerTestContext(t, 1)
-			synthAgent := &synthesisEntrypointTestAgent{name: "checker-" + path, result: `{"schema_version":3,"summary":"Two claims","verdict":"fail","findings":[{"severity":"high","kind":"defect","confidence":0.9,"problem":"Build claim","fix":"Fix build","sources":[1]},{"severity":"medium","kind":"defect","confidence":0.9,"problem":"Data loss","fix":"Preserve data","sources":[1]}]}`}
+			synthAgent := &synthesisEntrypointTestAgent{name: "checker-" + path, result: `{"schema_version":3,"summary":"Two claims","verdict":"pass","findings":[{"severity":"high","kind":"defect","confidence":0.9,"problem":"Build claim","fix":"Fix build","sources":[1]},{"severity":"medium","kind":"defect","confidence":0.9,"problem":"Data loss","fix":"Preserve data","sources":[1]}]}`}
 			agent.RegisterForTest(t, synthAgent)
 			type result struct {
 				output     string
-				structured any
-				verdict    *string
+				structured string
+				verdict    storage.Verdict
 			}
 			results := make(map[string]result)
-			for _, mode := range []string{"off", "failure", "drop", "below threshold"} {
+			for _, mode := range []string{"off", "failure", "keep", "drop", "below threshold"} {
 				run, members, _ := enqueuePanelRun(t, tc, "checker-"+mode, []memberSpec{{name: "one", agent: "test"}})
 				setSynthesisAgent(t, tc, run, synthAgent.name)
 				snapshot := synthesisJobConfig{}
@@ -201,24 +201,29 @@ func TestCICheckStoredReview(t *testing.T) {
 					assert.Equal(t, "checker progress", progress.Text)
 
 					assert.Equal(t, job.ID, got.ID)
-					assert.Equal(t, "high", got.MinSeverity)
+					assert.Equal(t, job.MinSeverity, got.MinSeverity)
 					assert.Equal(t, "high", cfg.Reasoning)
 					require.Len(t, doc.Findings, 2)
 					if mode == "failure" {
 						return structuredreview.Document{}, fmt.Errorf("forced checker failure")
 					}
+					if mode == "keep" {
+						return applyCICheck(doc, jsontext.Value(`{"verdicts":[{"finding":1,"keep":true,"evidence":"failed","reason":"reproduced"},{"finding":2,"keep":true,"evidence":"failed","reason":"reproduced"}]}`), out)
+					}
 					return applyCICheck(doc, jsontext.Value(`{"verdicts":[{"finding":1,"keep":false,"evidence":"build succeeds","reason":"refuted"},{"finding":2,"keep":true,"evidence":"data lost","reason":"reproduced"}]}`), out)
 				}
 				tc.Pool.processSynthesisJob(t.Context(), testWorkerID, job)
-				assert.Equal(t, map[bool]int{true: 0, false: 1}[mode == "off" || mode == "below threshold"], calls)
+				assert.Equal(t, map[bool]int{true: 0, false: 1}[mode == "off"], calls)
 				stored, err := tc.DB.GetReviewByJobID(job.ID)
 				require.NoError(t, err)
 				finished, err := tc.DB.GetJobByID(job.ID)
 				require.NoError(t, err)
 				assert.Equal(t, storage.JobStatusDone, finished.Status)
-				results[mode] = result{stored.Output, stored.StructuredOutput, finished.Verdict}
+				var structured string
+				require.NoError(t, tc.DB.QueryRow("SELECT structured_output FROM reviews WHERE job_id = ?", job.ID).Scan(&structured))
+				results[mode] = result{stored.Output, structured, stored.Verdict()}
 				if mode == "below threshold" {
-					assert.Contains(t, stored.Output, "Build claim")
+					assert.NotContains(t, stored.Output, "Build claim")
 					assert.Contains(t, stored.Output, "Data loss")
 					assert.Equal(t, storage.VerdictPass, stored.Verdict())
 				}
@@ -241,6 +246,7 @@ func TestCICheckStoredReview(t *testing.T) {
 				}
 			}
 			assert.Equal(t, results["off"], results["failure"])
+			assert.Equal(t, results["off"], results["keep"])
 		})
 	}
 }
@@ -252,7 +258,7 @@ func TestCICheckCompletionContext(t *testing.T) {
 	doc, err := reviewpkg.DecodeStructuredReview(raw)
 	require.NoError(t, err)
 	original := synthesisResult{review: reviewpkg.ReviewResult{Agent: "test", Output: doc.Markdown(""), Verdict: storage.VerdictFail, StructuredOutput: raw}}
-	for _, mode := range []string{"off canceled", "checker canceled", "checker deadline"} {
+	for _, mode := range []string{"off canceled", "empty canceled", "unable canceled", "checker canceled", "checker deadline"} {
 		t.Run(mode, func(t *testing.T) {
 			tc := newWorkerTestContext(t, 1)
 			run, members, _ := enqueuePanelRun(t, tc, "context-panel", []memberSpec{{name: "one", agent: "test"}})
@@ -261,7 +267,9 @@ func TestCICheckCompletionContext(t *testing.T) {
 			if mode != "off canceled" {
 				job.PanelMemberConfigJSON = `{"check":{}}`
 			}
+			calls := 0
 			tc.Pool.ciCheck = func(ctx context.Context, _ *storage.ReviewJob, _ ciCheckConfig, _ structuredreview.Document, _ []string, _ io.Writer) (structuredreview.Document, error) {
+				calls++
 				return structuredreview.Document{}, ctx.Err()
 			}
 			ctx, cancel := context.WithCancel(t.Context())
@@ -276,7 +284,23 @@ func TestCICheckCompletionContext(t *testing.T) {
 			if mode != "off canceled" {
 				check = &ciCheckConfig{}
 			}
-			tc.Pool.checkAndCompleteSynthesis(ctx, testWorkerID, job, original, check)
+			inputDoc, input := doc, original
+			if mode == "empty canceled" || mode == "unable canceled" {
+				inputDoc.Findings = nil
+				inputDoc.Verdict = structuredreview.VerdictPass
+				if mode == "unable canceled" {
+					inputDoc.Verdict = structuredreview.VerdictUnableToReview
+				}
+				input.review.StructuredOutput, err = json.Marshal(inputDoc)
+				require.NoError(t, err)
+				input.review.Output = inputDoc.Markdown("")
+			}
+			tc.Pool.checkAndCompleteSynthesis(ctx, testWorkerID, job, input, inputDoc, check)
+			if mode == "checker canceled" || mode == "checker deadline" {
+				assert.Equal(t, 1, calls)
+			} else {
+				assert.Zero(t, calls)
+			}
 			finished, err := tc.DB.GetJobByID(job.ID)
 			require.NoError(t, err)
 			if mode == "checker canceled" {
@@ -286,10 +310,10 @@ func TestCICheckCompletionContext(t *testing.T) {
 			assert.Equal(t, storage.JobStatusDone, finished.Status)
 			stored, err := tc.DB.GetReviewByJobID(job.ID)
 			require.NoError(t, err)
-			assert.Equal(t, original.review.Output, stored.Output)
+			assert.Equal(t, input.review.Output, stored.Output)
 			encoded, err := json.Marshal(stored.StructuredOutput)
 			require.NoError(t, err)
-			assert.JSONEq(t, string(raw), string(encoded))
+			assert.JSONEq(t, string(input.review.StructuredOutput), string(encoded))
 		})
 	}
 }

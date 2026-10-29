@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -36,6 +37,10 @@ func resolveCICheckCodex(ctx context.Context, dir, command string) (resolved ciC
 	}
 	var header [2]byte
 	_, readErr := io.ReadFull(launcher, header[:])
+	var interpreter string
+	if string(header[:]) == "#!" {
+		interpreter, readErr = bufio.NewReader(launcher).ReadString('\n')
+	}
 	closeErr := launcher.Close()
 	if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
 		err = readErr
@@ -45,7 +50,13 @@ func resolveCICheckCodex(ctx context.Context, dir, command string) (resolved ciC
 		err = closeErr
 		return
 	}
-	if string(header[:]) == "#!" {
+	fields := strings.Fields(interpreter)
+	isNode := len(fields) > 0 && filepath.Base(fields[0]) == "node"
+	if len(fields) > 1 && filepath.Base(fields[0]) == "env" {
+		// env may use -S to split the interpreter and its options.
+		isNode = fields[1] == "node" || (len(fields) > 2 && fields[1] == "-S" && fields[2] == "node")
+	}
+	if isNode {
 		var node string
 		node, err = resolveCICheckCommand(ctx, dir, "node")
 		if err != nil {

@@ -126,3 +126,50 @@ func TestCICheckWarming(t *testing.T) {
 		assert.Contains(t, log.String(), "module warming failed")
 	})
 }
+
+func TestCICheckCredentialOverlap(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires symlinks")
+	}
+	for _, name := range []string{"codex equal", "codex child", "codex symlink", "home equal", "home child", "git directory", "separate"} {
+		t.Run(name, func(t *testing.T) {
+			tc := newWorkerTestContext(t, 1)
+			tools := t.TempDir()
+			command := filepath.Join(tools, "codex")
+			require.NoError(t, os.WriteFile(command, []byte("native fixture"), 0o700))
+			home, login := t.TempDir(), t.TempDir()
+			switch name {
+			case "codex equal":
+				login = tools
+			case "codex child", "codex symlink":
+				login = filepath.Join(tools, "login")
+				require.NoError(t, os.Mkdir(login, 0o700))
+				if name == "codex symlink" {
+					link := filepath.Join(t.TempDir(), "login")
+					require.NoError(t, os.Symlink(login, link))
+					login = link
+				}
+			case "git directory":
+				login = filepath.Join(tc.TmpDir, ".git")
+			case "home equal":
+				home = tools
+			case "home child":
+				home = filepath.Join(tools, "home")
+				require.NoError(t, os.Mkdir(home, 0o700))
+			}
+			t.Setenv("HOME", home)
+			t.Setenv("CODEX_HOME", login)
+			require.NoError(t, os.WriteFile(filepath.Join(login, "auth.json"), []byte(`{"tokens":{"access_token":"synthetic-token"}}`), 0o600))
+			sha := testutil.GetHeadSHA(t, tc.TmpDir)
+			run, err := tc.Pool.prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: tc.TmpDir, GitRef: sha + ".." + sha}, command, nil, io.Discard)
+			if err == nil {
+				t.Cleanup(run.cleanup)
+			}
+			if name == "separate" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, "read grant contains host")
+			}
+		})
+	}
+}

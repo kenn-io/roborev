@@ -67,10 +67,7 @@ func TestCICheckCodexResolution(t *testing.T) {
 				require.NoError(t, os.WriteFile(installed, []byte("#!/bin/sh\n[ \"${0##*/}\" = codex ] || exit 2\n"), 0o700))
 				command = filepath.Join(tools, "codex")
 				require.NoError(t, os.Symlink(installed, command))
-				require.NoError(t, os.WriteFile(filepath.Join(tools, "node"), []byte("native node fixture"), 0o700))
-				t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
-				wantPaths = append(wantPaths, tools)
-				wantPathDir = tools
+				t.Setenv("PATH", tools)
 			case "npm":
 				node, err := resolveCICheckCommand(t.Context(), tools, "node")
 				if err != nil {

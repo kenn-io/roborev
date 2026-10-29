@@ -116,7 +116,7 @@ func testCICheckSandboxIntegration(t *testing.T) {
 	tc.Pool.ciCheckUpstream = server.URL
 	raw, err := json.Marshal(doc)
 	require.NoError(t, err)
-	tc.Pool.checkAndCompleteSynthesis(t.Context(), testWorkerID, job, synthesisResult{review: reviewpkg.ReviewResult{Agent: "test", Output: doc.Markdown(""), StructuredOutput: raw, Verdict: storage.VerdictFail}}, &ciCheckConfig{Model: "test-model", Reasoning: "high"})
+	tc.Pool.checkAndCompleteSynthesis(t.Context(), testWorkerID, job, synthesisResult{review: reviewpkg.ReviewResult{Agent: "test", Output: doc.Markdown(""), StructuredOutput: raw, Verdict: storage.VerdictFail}}, doc, &ciCheckConfig{Model: "test-model", Reasoning: "high"})
 	stored, err := tc.DB.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
 	log, err := os.ReadFile(JobLogPath(job.ID))

@@ -90,7 +90,7 @@ func (wp *WorkerPool) processSynthesisJob(
 			return
 		}
 		single.Output = doc.Markdown(job.MinSeverity)
-		wp.checkAndCompleteSynthesis(ctx, workerID, job, synthesisResult{review: single}, cfg.Check)
+		wp.checkAndCompleteSynthesis(ctx, workerID, job, synthesisResult{review: single}, doc, cfg.Check)
 	default:
 		if allMembersPassed(results, succeeded) && !anyRetainedFindings(succeeded) {
 			wp.completeSynthesisDocument(workerID, job, structuredreview.Document{
@@ -164,7 +164,7 @@ func (wp *WorkerPool) synthesizeSucceededResults(
 		},
 		capturedSession: capturedSession,
 		captureUsage:    true,
-	}, check)
+	}, doc, check)
 }
 
 // synthesisJobConfig is the snapshot a panel synthesis job stores in its
