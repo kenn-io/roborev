@@ -14,6 +14,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+
+	"go.kenn.io/kit/pathresolve"
 )
 
 // Job describes the caller's filesystem, environment, network, and memory grants.
@@ -40,18 +42,27 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 	if j.MemoryMax <= 0 {
 		return nil, nil, nil, fmt.Errorf("sandbox MemoryMax must be positive")
 	}
-	workDir, err := ResolvePath(j.WorkDir)
+	workDir, err := filepath.Abs(j.WorkDir)
+	if err == nil {
+		workDir, err = pathresolve.EvalSymlinks(workDir)
+	}
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("resolve sandbox WorkDir: %w", err)
 	}
 	j.WorkDir = workDir
-	tempDir, err := ResolvePath(os.TempDir())
+	tempDir, err := filepath.Abs(os.TempDir())
+	if err == nil {
+		tempDir, err = pathresolve.EvalSymlinks(tempDir)
+	}
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("resolve sandbox temp dir: %w", err)
 	}
 	readPaths := make([]string, 0, len(j.ReadPaths))
 	for _, path := range j.ReadPaths {
-		resolved, err := ResolvePath(path)
+		resolved, err := filepath.Abs(path)
+		if err == nil {
+			resolved, err = pathresolve.EvalSymlinks(resolved)
+		}
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("resolve sandbox read path %q: %w", path, err)
 		}
@@ -76,7 +87,10 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("find sandbox nono: %w", err)
 	}
-	nono, err = ResolvePath(nono)
+	nono, err = filepath.Abs(nono)
+	if err == nil {
+		nono, err = pathresolve.EvalSymlinks(nono)
+	}
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("resolve sandbox nono: %w", err)
 	}
@@ -178,15 +192,6 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 	}
 	cmd = append([]string{cmd[0], "--unit=" + unit}, cmd[1:]...)
 	return append(cmd, argv...), env, cleanup, nil
-}
-
-// ResolvePath returns an absolute path with symlinks resolved for job commands and grants.
-func ResolvePath(path string) (string, error) {
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	return filepath.EvalSymlinks(absolute)
 }
 
 func killScope(unit string) {

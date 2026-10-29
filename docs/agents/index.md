@@ -365,6 +365,10 @@ and grant it read access, so commands can inspect history while commits and
 local configuration changes fail. Put temporary files and writable caches inside
 the work directory too.
 
+Grant read access to the Codex launcher and its runtime files, including any
+symlink targets. Codex runs through the absolute launcher path found on PATH or
+supplied by the caller, preserving its invocation name.
+
 Host requirements:
 
 - Linux x86_64.

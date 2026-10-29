@@ -33,8 +33,8 @@ func TestCodexSandboxIntegration(t *testing.T) {
 			t.Skipf("%s is required", command)
 		}
 	}
-	for _, relativeCommand := range []bool{false, true} {
-		t.Run(fmt.Sprintf("relative-command=%t", relativeCommand), func(t *testing.T) {
+	for _, commandType := range []string{"absolute", "relative", "symlink"} {
+		t.Run(commandType, func(t *testing.T) {
 			codex, err := exec.LookPath("codex")
 			require.NoError(t, err)
 			codex, err = filepath.EvalSymlinks(codex)
@@ -117,12 +117,21 @@ exit "$failed"
 				require.True(t, os.IsNotExist(err), "%v", err)
 			}
 			command := codex
-			if relativeCommand {
+			if commandType != "absolute" {
 				require.NoError(t, os.Mkdir(filepath.Join(work, "tools"), 0o700))
-				data, err := os.ReadFile(codex)
-				require.NoError(t, err)
-				require.NoError(t, os.WriteFile(filepath.Join(work, "tools", "codex"), data, 0o700))
-				command = "./" + filepath.Join(filepath.Base(work), "tools", "codex")
+				if commandType == "relative" {
+					data, err := os.ReadFile(codex)
+					require.NoError(t, err)
+					require.NoError(t, os.WriteFile(filepath.Join(work, "tools", "codex"), data, 0o700))
+					command = "./" + filepath.Join(filepath.Base(work), "tools", "codex")
+				} else {
+					launcher := filepath.Join(work, "tools", "launcher")
+					script := fmt.Sprintf("#!/bin/sh\n[ \"${0##*/}\" = codex ] || { echo 'launcher requires basename codex' >&2; exit 1; }\nexec %q \"$@\"\n", codex)
+					require.NoError(t, os.WriteFile(launcher, []byte(script), 0o700))
+					require.NoError(t, os.Symlink(launcher, filepath.Join(work, "tools", "codex")))
+					t.Setenv("PATH", filepath.Join(work, "tools")+string(os.PathListSeparator)+os.Getenv("PATH"))
+					command = "codex"
+				}
 			}
 			a := NewCodexAgent(command).WithSandbox(&CodexSandbox{Job: job, upstream: server.URL})
 			a.IgnoreUserConfig = true

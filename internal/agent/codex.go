@@ -16,7 +16,6 @@ import (
 	"sync"
 
 	"go.kenn.io/roborev/internal/config"
-	"go.kenn.io/roborev/internal/sandbox"
 )
 
 // CodexAgent runs code reviews using the Codex CLI
@@ -542,7 +541,7 @@ func (a *CodexAgent) review(
 		defer cleanup()
 		resolved, err := exec.LookPath(command)
 		if err == nil {
-			resolved, err = sandbox.ResolvePath(resolved)
+			resolved, err = filepath.Abs(resolved)
 		}
 		if err != nil {
 			return "", err

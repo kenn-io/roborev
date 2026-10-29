@@ -89,7 +89,7 @@ check git-config deny git config --local sandbox.probe changed
 check dbus-systemd deny env XDG_RUNTIME_DIR="$6" DBUS_SESSION_BUS_ADDRESS="unix:path=$6/bus" systemd-run --user --wait -q /usr/bin/true
 check external-domain deny curl -fsS https://example.com
 check other-loopback deny bash -c ': >/dev/tcp/127.0.0.1/"$1"' probe "$7"
-check direct-upstream deny curl -fsS https://chatgpt.com/backend-api/codex/responses
+check direct-upstream deny curl --fail-with-body -sS -o "$1/direct-upstream-response" https://chatgpt.com/backend-api/codex/responses
 check route-get deny bash -c 'curl -fsS "$CODEX_BASE_URL/other" -H "Authorization: Bearer $CODEX_PHANTOM"'
 check route-no-key deny bash -c 'curl -fsS -X POST "$CODEX_BASE_URL/responses"'
 check route-wrong-key deny bash -c 'curl -fsS -X POST "$CODEX_BASE_URL/responses" -H "Authorization: Bearer wrong-key"'
@@ -108,6 +108,10 @@ exit "$failed"
 		assert.Contains(t, string(out), "OK "+name)
 	}
 	assert.NoFileExists(t, filepath.Join(sibling, "overwritten"))
+	denial, err := os.ReadFile(filepath.Join(work, "direct-upstream-response"))
+	require.NoError(t, err)
+	// nono's TLS interceptor returns this body for an endpoint-policy denial.
+	assert.Equal(t, `{"error":"Forbidden"}`, string(denial))
 	t.Run("unenforceable-policy", func(t *testing.T) {
 		job := Job{WorkDir: t.TempDir(), Route: Route{Name: "codex", Upstream: "http://example.com", Path: "/responses", EnvVar: "CODEX_PHANTOM", Capture: []string{"/bin/echo", "fixture-token"}}, MemoryMax: 1 << 30,
 			Env: []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir()}}

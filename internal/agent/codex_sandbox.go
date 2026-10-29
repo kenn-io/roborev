@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/BurntSushi/toml"
+	"go.kenn.io/kit/pathresolve"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/sandbox"
@@ -26,11 +27,17 @@ func (a *CodexAgent) WithSandbox(s *CodexSandbox) *CodexAgent {
 
 func (s *CodexSandbox) prepare(repoPath string) (sandbox.Job, func(), error) {
 	job := s.Job
-	workDir, err := sandbox.ResolvePath(job.WorkDir)
+	workDir, err := filepath.Abs(job.WorkDir)
+	if err == nil {
+		workDir, err = pathresolve.EvalSymlinks(workDir)
+	}
 	if err != nil {
 		return job, nil, fmt.Errorf("resolve sandbox work dir: %w", err)
 	}
-	repo, err := sandbox.ResolvePath(repoPath)
+	repo, err := filepath.Abs(repoPath)
+	if err == nil {
+		repo, err = pathresolve.EvalSymlinks(repo)
+	}
 	if err != nil {
 		return job, nil, fmt.Errorf("resolve sandbox repo: %w", err)
 	}
