@@ -583,7 +583,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 			fmt.Printf("Addressing review (job %d)...\n", currentFailedReview.JobID)
 		}
 
-		if opts.plan && len(carriedAttempts) > 0 {
+		if len(carriedAttempts) > 0 {
 			if !refineReviewIncludes(ctx, repoPath, currentFailedReview, chainHead) {
 				carriedAttempts = nil
 				chainHead = ""
@@ -670,15 +670,12 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 			return dirtyRefineSubmodulesError(dirtySubmodules)
 		}
 
-		var cleanupPrompt func()
-		if opts.plan {
-			prepared, prepareErr := builder.Prepare(addressPrompt, prompt.SnapshotTarget{RepoPath: worktreePath, ConfigRepoPath: repoPath})
-			if prepareErr != nil {
-				_ = wt.Close(ctx)
-				return prepareErr
-			}
-			addressPrompt, cleanupPrompt = prepared.Prompt, prepared.Cleanup
+		prepared, prepareErr := builder.Prepare(addressPrompt, prompt.SnapshotTarget{RepoPath: worktreePath, ConfigRepoPath: repoPath})
+		if prepareErr != nil {
+			_ = wt.Close(ctx)
+			return prepareErr
 		}
+		addressPrompt = prepared.Prompt
 
 		// Determine output writer
 		var agentOutput io.Writer
@@ -702,8 +699,8 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 		fixCtx, fixCancel := withAgentCallTimeout(ctx)
 		output, agentErr := addressAgent.Review(fixCtx, worktreePath, "HEAD", addressPrompt, agentOutput)
 		fixCancel()
-		if cleanupPrompt != nil {
-			cleanupPrompt()
+		if prepared.Cleanup != nil {
+			prepared.Cleanup()
 		}
 		if fmtr != nil {
 			fmtr.Flush()
@@ -799,7 +796,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 			}
 
 			fmt.Println("Agent made no changes - skipping this review")
-			if err := client.AddComment(currentFailedReview.JobID, "roborev-refine", "Agent could not determine how to address findings"); err != nil {
+			if err := client.AddComment(currentFailedReview.JobID, "roborev-refine", "No changes made.\n\n"+output); err != nil {
 				fmt.Printf("Warning: failed to add comment to job %d: %v\n", currentFailedReview.JobID, err)
 			}
 			skippedReviews[currentFailedReview.ID] = true
@@ -833,10 +830,8 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 			fmt.Printf("Warning: failed to add comment to job %d: %v\n", currentFailedReview.JobID, err)
 		}
 
-		if opts.plan {
-			carriedAttempts = append(previousAttempts, storage.Response{Responder: "roborev-refine", Response: responseText, CreatedAt: time.Now()})
-			chainHead = newCommit
-		}
+		carriedAttempts = append(previousAttempts, storage.Response{Responder: "roborev-refine", Response: responseText, CreatedAt: time.Now()})
+		chainHead = newCommit
 
 		// Close old review
 		if err := client.MarkReviewClosed(currentFailedReview.JobID); err != nil {

@@ -117,7 +117,13 @@ Some flags are mutually exclusive: `--all-branches` cannot be combined with
 With `--plan`, each iteration first uses a fresh read-only agent session in a
 disposable worktree, stores the plan on the review, and passes it into the fix.
 Implementation follows your existing agent permission settings. Re-review
-attempts retain prior plans and implementation output.
+attempts retain earlier implementation output, trusted comments, and any stored
+plans during the same refine run, with or without `--plan`. This context follows
+the fix chain only while the new review covers the latest fix commit. Earlier
+comments stay on their original reviews. Oversized prompts use complete prompt
+files in the disposable worktree. When an agent leaves findings unresolved
+without changes, refine stores its full output as a comment and leaves the
+review open.
 
 `--plan-only` takes a finite snapshot of completed failed reviews. It prints and
 stores their plans, including with `--quiet`, without editing, committing,
