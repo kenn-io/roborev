@@ -754,15 +754,18 @@ model, and reasoning. Codex is the only supported checker agent. The daemon-free
 `roborev ci review` command ignores these checker settings.
 
 The host needs Linux on amd64, the pinned nono build, a systemd user manager,
-Codex with a host login, Go, Bash, and Python 3 at `/usr/bin/python3`. See
+Codex with a host login, Bash, and Python 3 at `/usr/bin/python3`. Go is needed
+to warm Go modules. See
 [sandboxed Codex runs](/docs/agents/#sandboxed-codex-runs) for the pinned nono
 build and host requirements.
 
-The host warms Go modules before the sandbox starts. Inside it, the checker can
-change its scratch files and read the checkout's Git metadata and warmed caches.
-Model calls use nono's credential route, which reads the host's current Codex
-login outside the sandbox. Tests that start loopback servers cannot run in this
-sandbox; the checker keeps findings it cannot try.
+The checker works in a copy of the PR checkout. The host warms Go modules in the
+original disposable checkout after making the copy, so warming cannot change the
+code being checked. Inside the sandbox, the checker can change its scratch files
+and read the shared clone's Git metadata and warmed caches. Model calls use
+nono's credential route, which reads the host's current Codex login outside the
+sandbox. Tests that start loopback servers cannot run in this sandbox; the
+checker keeps findings it cannot try.
 
 A finding drops only when one verdict supplies evidence and a reason to drop it.
 Missing or duplicate verdicts keep the finding. The job log records the
@@ -907,6 +910,7 @@ set, it takes priority over the matrix fields for that repo.
 | `min_severity` | string | `"low"` | Lowest severity that fails the review: `low`, `medium`, `high`, or `critical`. Lower findings remain in stored reviews but are hidden in PR comments |
 | `upsert_comments` | bool | global `upsert_comments` | Override global comment upsert setting for this repo |
 | `include_costs` | bool | global `include_costs` | Include token cost estimates in PR comment footers for this repo |
+| `check` | bool | global `check` | Try synthesized findings before posting and keep those that hold up |
 
 ## CI Options Reference
 
@@ -936,6 +940,10 @@ set, it takes priority over the matrix fields for that repo.
 | `synthesis_agent` | string | | Agent for combining implicit matrix results |
 | `synthesis_backup_agent` | string | | Backup agent for implicit matrix synthesis when the primary fails |
 | `synthesis_model` | string | | Model override for implicit matrix synthesis |
+| `check` | bool | `false` | Try synthesized findings before posting |
+| `check_agent` | string | `"codex"` | Checker agent; currently only Codex is supported. Global only |
+| `check_model` | string | | Model override for the checker. Global only |
+| `check_reasoning` | string | `"standard"` | Reasoning level for the checker. Global only |
 | `upsert_comments` | bool | `false` | Update existing PR comments instead of creating new ones |
 | `include_costs` | bool | `false` | Include token cost estimates in PR comment footers |
 | `discord_webhook_url` | string | | Discord webhook URL for best-effort CI job failure notifications |

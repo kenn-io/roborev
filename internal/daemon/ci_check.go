@@ -11,13 +11,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
-
-	gitcmd "go.kenn.io/kit/git/cmd"
-	gitworktree "go.kenn.io/kit/git/worktree"
 
 	"go.kenn.io/roborev/internal/agent"
-	"go.kenn.io/roborev/internal/config"
+	gitpkg "go.kenn.io/roborev/internal/git"
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/sandbox"
 	"go.kenn.io/roborev/internal/storage"
@@ -25,14 +21,13 @@ import (
 )
 
 type ciCheckConfig struct {
-	Agent     string `json:"agent,omitempty"`
 	Model     string `json:"model,omitempty"`
 	Reasoning string `json:"reasoning,omitempty"`
 }
 
 var ciCheckSchema = jsontext.Value(`{"type":"object","additionalProperties":false,"required":["verdicts"],"properties":{"verdicts":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["finding","keep","evidence","reason"],"properties":{"finding":{"type":"integer"},"keep":{"type":"boolean"},"evidence":{"type":"string"},"reason":{"type":"string"}}}}}}`)
 
-const ciCheckPrompt = `An automated reviewer posted the findings in ../findings.md on this pull request. You are its last step before the comment posts: keep each finding only if it holds up. The worktree you're in is the PR head; origin/%s is its base.
+const ciCheckPrompt = `An automated reviewer posted the findings in ../findings.md on this pull request. You are its last step before the comment posts: keep each finding only if it holds up. The worktree you're in is the PR head; %s is its frozen base commit.
 
 Work in a scratch copy (cp -a . ../check-$$). Leave this worktree unchanged.
 
@@ -58,7 +53,11 @@ func (wp *WorkerPool) checkAndCompleteSynthesis(ctx context.Context, workerID st
 					env = wp.ciGitEnv(panel.GithubRepo)
 				}
 			}
-			checked, checkErr := runCICheck(ctx, job, *snapshot.Check, doc, agent.CodexSandbox{}, env, jobLog)
+			checker := wp.ciCheck
+			if checker == nil {
+				checker = wp.runCICheck
+			}
+			checked, checkErr := checker(ctx, job, *snapshot.Check, doc, agent.CodexSandbox{}, env, jobLog)
 			if checkErr != nil {
 				fmt.Fprintf(jobLog, "CI checker failed; keeping original review: %v\n", checkErr)
 			} else {
@@ -79,146 +78,171 @@ func (wp *WorkerPool) checkAndCompleteSynthesis(ctx context.Context, workerID st
 }
 
 // runCICheck owns the disposable checkout and every process used by the checker.
-func runCICheck(ctx context.Context, job *storage.ReviewJob, cfg ciCheckConfig, doc structuredreview.Document, codexSandbox agent.CodexSandbox, gitEnv []string, out io.Writer) (structuredreview.Document, error) {
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Minute)
-	defer cancel()
+func (wp *WorkerPool) runCICheck(ctx context.Context, job *storage.ReviewJob, cfg ciCheckConfig, doc structuredreview.Document, codexSandbox agent.CodexSandbox, gitEnv []string, out io.Writer) (structuredreview.Document, error) {
+	repo, codex, spec, cleanup, err := wp.prepareCICheck(ctx, job, gitEnv, out)
+	if err != nil {
+		return structuredreview.Document{}, err
+	}
+	defer cleanup()
+	if err := os.WriteFile(filepath.Join(spec.WorkDir, "findings.md"), []byte(doc.Markdown(job.MinSeverity)), 0o600); err != nil {
+		return structuredreview.Document{}, err
+	}
+	codexSandbox.Job = spec
+	a := agent.NewCodexAgent(codex).WithSandbox(&codexSandbox)
+	a.IgnoreUserConfig = true
+	a.Model = cfg.Model
+	a.Reasoning = agent.ParseReasoningLevel(cfg.Reasoning)
+	base, _, _ := strings.Cut(job.GitRef, "..")
+	raw, err := a.ReviewWithSchema(ctx, repo, job.GitRef, fmt.Sprintf(ciCheckPrompt, base), ciCheckSchema, out)
+	if err != nil {
+		return structuredreview.Document{}, fmt.Errorf("run CI checker: %w", err)
+	}
+	return applyCICheck(doc, raw, job.MinSeverity, out)
+}
+
+// prepareCICheck copies the committed input before warming can update metadata.
+// Its caller owns both the copy and the exact checkout until cleanup returns.
+func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob, gitEnv []string, out io.Writer) (repo, codex string, spec sandbox.Job, cleanup func(), err error) {
 	root, err := os.MkdirTemp("", "roborev-ci-check-*")
 	if err != nil {
-		return structuredreview.Document{}, err
+		return
 	}
-	defer os.RemoveAll(root)
-	work, gitDir := filepath.Join(root, "work"), filepath.Join(root, "git")
-	clone := filepath.Join(root, "clone")
-	if err := os.MkdirAll(work, 0o700); err != nil {
-		return structuredreview.Document{}, err
-	}
-	// Explicit git dirs and a clean config keep host git operations independent of
-	// both the caller's environment and the checkout's .git file.
-	runner := gitcmd.New().WithConfig("core.hooksPath", os.DevNull)
-	gitRun := func(dir string, args ...string) error {
-		_, _, err := runner.Run(ctx, root, nil, append([]string{"--git-dir=" + dir}, args...)...)
-		return err
-	}
-	if err := gitRun(filepath.Join(job.RepoPath, ".git"), "clone", "--local", "--no-hardlinks", "--no-checkout", "--separate-git-dir="+gitDir, job.RepoPath, clone); err != nil {
-		return structuredreview.Document{}, err
-	}
-	wt, err := createWorkerWorktree(ctx, clone, headOf(job.GitRef), gitworktree.Options{
-		ParentDir: work, Prefix: "repo-", InitSubmodules: true, Runner: runner,
-	})
+	cleanup = func() { _ = os.RemoveAll(root) }
+	defer func() {
+		if err != nil {
+			cleanup()
+		}
+	}()
+	codex, err = resolveCICheckCommand(ctx, root, "codex")
 	if err != nil {
-		return structuredreview.Document{}, err
+		err = fmt.Errorf("find checker codex: %w", err)
+		return
 	}
-	repo := wt.Dir
-	base, _, ranged := strings.Cut(job.GitRef, "..")
-	if !ranged {
-		return structuredreview.Document{}, fmt.Errorf("CI checker requires frozen base..head range")
+	// A native executable needs only its own file. npm launchers load their package.
+	readPaths := []string{codex}
+	toolPath := os.Getenv("PATH")
+	launcher, openErr := os.Open(codex)
+	if openErr != nil {
+		err = openErr
+		return
 	}
-	if job.CIBaseBranch == "" {
-		return structuredreview.Document{}, fmt.Errorf("CI checker requires base branch")
+	var header [2]byte
+	_, readErr := io.ReadFull(launcher, header[:])
+	closeErr := launcher.Close()
+	if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
+		err = readErr
+		return
 	}
-	if err := gitRun(gitDir, "update-ref", "refs/remotes/origin/"+job.CIBaseBranch, base); err != nil {
-		return structuredreview.Document{}, err
+	if closeErr != nil {
+		err = closeErr
+		return
 	}
-	if err := os.WriteFile(filepath.Join(work, "findings.md"), []byte(doc.Markdown(job.MinSeverity)), 0o600); err != nil {
-		return structuredreview.Document{}, err
+	if string(header[:]) == "#!" {
+		var node string
+		node, err = resolveCICheckCommand(ctx, root, "node")
+		if err != nil {
+			err = fmt.Errorf("find checker node: %w", err)
+			return
+		}
+		if filepath.Ext(codex) == ".js" && filepath.Base(filepath.Dir(codex)) == "bin" {
+			readPaths[0] = filepath.Dir(filepath.Dir(codex))
+		}
+		readPaths = append(readPaths, filepath.Dir(node))
+		toolPath = filepath.Dir(node) + string(os.PathListSeparator) + toolPath
+	}
+	if _, statErr := os.Stat("/etc/codex"); statErr == nil {
+		readPaths = append(readPaths, "/etc/codex")
+	} else if !os.IsNotExist(statErr) {
+		err = statErr
+		return
+	}
+	var checkout string
+	var closeCheckout func()
+	checkout, closeCheckout, err = wp.createExactCheckout(ctx, "ci-checker", job)
+	if err != nil {
+		return
+	}
+	cleanup = func() { closeCheckout(); _ = os.RemoveAll(root) }
+	spec.WorkDir = filepath.Join(root, "work")
+	repo = filepath.Join(spec.WorkDir, "repo")
+	if err = os.MkdirAll(repo, 0o700); err != nil {
+		return
+	}
+	copyCmd := exec.CommandContext(ctx, "cp", "-a", checkout+"/.", repo)
+	if output, copyErr := copyCmd.CombinedOutput(); copyErr != nil {
+		err = fmt.Errorf("copy checker checkout: %w: %s", copyErr, output)
+		return
+	}
+	var commonDir string
+	commonDir, err = gitpkg.ResolveGitCommonDir(job.RepoPath)
+	if err != nil {
+		return
+	}
+	readPaths = append(readPaths, commonDir)
+	var goPaths []string
+	goPaths, err = warmGoModules(ctx, checkout, root, gitEnv, out)
+	if err != nil {
+		return
+	}
+	readPaths = append(readPaths, goPaths...)
+	env := []string{"PATH=" + toolPath, "HOME=" + filepath.Join(root, "home"), "TMPDIR=" + filepath.Join(spec.WorkDir, "tmp"), "GOCACHE=" + filepath.Join(spec.WorkDir, "gocache"), "GOPROXY=off", "LANG=C.UTF-8", "TERM=dumb"}
+	if len(goPaths) == 2 {
+		env[0] = "PATH=" + filepath.Join(goPaths[0], "bin") + string(os.PathListSeparator) + toolPath
+		env = append(env, "GOMODCACHE="+goPaths[1])
+	}
+	// nono protects HOME/.nono, so HOME sits outside its writable grant.
+	for _, dir := range []string{filepath.Join(root, "home"), filepath.Join(spec.WorkDir, "tmp"), filepath.Join(spec.WorkDir, "gocache")} {
+		if err = os.Mkdir(dir, 0o700); err != nil {
+			return
+		}
+	}
+	spec.ReadPaths = readPaths
+	// Matches the checker evaluation's 8 GiB process budget.
+	spec.MemoryMax = 8 << 30
+	spec.Env = env
+	return
+}
+
+func warmGoModules(ctx context.Context, checkout, root string, gitEnv []string, out io.Writer) ([]string, error) {
+	hasModule := false
+	for _, name := range []string{"go.mod", "go.work", "go.sum", "go.work.sum"} {
+		path := filepath.Join(checkout, name)
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !info.Mode().IsRegular() {
+			if err := os.RemoveAll(path); err != nil {
+				return nil, err
+			}
+		} else if name == "go.mod" || name == "go.work" {
+			hasModule = true
+		}
+	}
+	if !hasModule {
+		return nil, nil
 	}
 	goEnv := exec.CommandContext(ctx, "go", "env", "GOROOT", "GOMODCACHE")
 	goEnv.Dir = root
 	data, err := goEnv.Output()
 	if err != nil {
-		return structuredreview.Document{}, fmt.Errorf("checker go env: %w", err)
+		fmt.Fprintf(out, "CI checker go env failed: %v\n", err)
+		return nil, nil
 	}
 	paths := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(paths) != 2 {
-		return structuredreview.Document{}, fmt.Errorf("checker go env returned incomplete paths")
+	if len(paths) != 2 || paths[0] == "" || paths[1] == "" {
+		return nil, fmt.Errorf("checker go env returned incomplete paths")
 	}
-	goroot, modcache := paths[0], paths[1]
-	// Go reads and updates checksum files before sandbox entry. Refuse linked
-	// module metadata so those host operations stay in the disposable checkout.
-	for _, name := range []string{"go.mod", "go.work", "go.sum", "go.work.sum"} {
-		info, err := os.Lstat(filepath.Join(repo, name))
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return structuredreview.Document{}, err
-		}
-		if !info.Mode().IsRegular() {
-			return structuredreview.Document{}, fmt.Errorf("checker module metadata %s must be a regular file", name)
-		}
+	warm := exec.CommandContext(ctx, filepath.Join(paths[0], "bin", "go"), "mod", "download")
+	warm.Dir = checkout
+	warm.Env = gitEnv
+	if output, err := warm.CombinedOutput(); err != nil {
+		fmt.Fprintf(out, "CI checker module warming failed: %v: %s\n", err, output)
 	}
-	for _, name := range []string{"go.mod", "go.work"} {
-		if _, err := os.Stat(filepath.Join(repo, name)); err == nil {
-			sum := filepath.Join(repo, "go.sum")
-			original, readErr := os.ReadFile(sum)
-			warm := exec.CommandContext(ctx, filepath.Join(goroot, "bin", "go"), "mod", "download")
-			warm.Dir = repo
-			warm.Env = gitEnv
-			if _, err := warm.CombinedOutput(); err != nil {
-				fmt.Fprintf(out, "CI checker module warming failed: %v\n", err)
-			}
-			if readErr == nil {
-				err = os.WriteFile(sum, original, 0o600)
-			} else if os.IsNotExist(readErr) {
-				err = os.Remove(sum)
-				if os.IsNotExist(err) {
-					err = nil
-				}
-			} else {
-				err = readErr
-			}
-			if err != nil {
-				return structuredreview.Document{}, fmt.Errorf("restore go.sum: %w", err)
-			}
-			break
-		}
-	}
-	codex, err := resolveCICheckCommand(ctx, root, "codex")
-	if err != nil {
-		return structuredreview.Document{}, fmt.Errorf("find checker codex: %w", err)
-	}
-	readPaths := []string{gitDir, goroot, modcache, filepath.Dir(filepath.Dir(codex))}
-	toolPath := filepath.Join(goroot, "bin") + string(os.PathListSeparator) + os.Getenv("PATH")
-	// Codex loads its system config even with a fresh CODEX_HOME.
-	if _, err := os.Stat("/etc/codex"); err == nil {
-		readPaths = append(readPaths, "/etc/codex")
-	} else if !os.IsNotExist(err) {
-		return structuredreview.Document{}, err
-	}
-	// npm's launcher needs node as well as the Codex package.
-	if header, err := os.ReadFile(codex); err == nil && strings.HasPrefix(string(header), "#!") {
-		node, err := resolveCICheckCommand(ctx, root, "node")
-		if err != nil {
-			return structuredreview.Document{}, fmt.Errorf("find checker node: %w", err)
-		}
-		readPaths = append(readPaths, filepath.Dir(filepath.Dir(node)))
-		toolPath = filepath.Dir(node) + string(os.PathListSeparator) + toolPath
-	}
-	// nono protects HOME/.nono, so HOME must sit outside its writable grant.
-	if err := os.Mkdir(filepath.Join(root, "home"), 0o700); err != nil {
-		return structuredreview.Document{}, err
-	}
-	for _, dir := range []string{"tmp", "gocache"} {
-		if err := os.Mkdir(filepath.Join(work, dir), 0o700); err != nil {
-			return structuredreview.Document{}, err
-		}
-	}
-	codexSandbox.Job = sandbox.Job{
-		WorkDir: work, ReadPaths: readPaths,
-		// Matches the checker evaluation's 8 GiB process budget.
-		MemoryMax: 8 << 30,
-		Env:       []string{"PATH=" + toolPath, "HOME=" + filepath.Join(root, "home"), "TMPDIR=" + filepath.Join(work, "tmp"), "GOCACHE=" + filepath.Join(work, "gocache"), "GOMODCACHE=" + modcache, "GOPROXY=off", "LANG=C.UTF-8", "TERM=dumb"},
-	}
-	a := agent.NewCodexAgent(codex).WithSandbox(&codexSandbox)
-	a.IgnoreUserConfig = true
-	a.Model = cfg.Model
-	reasoning, _ := config.NormalizeReasoning(cfg.Reasoning)
-	a.Reasoning = agent.ParseReasoningLevel(reasoning)
-	raw, err := a.ReviewWithSchema(ctx, repo, job.GitRef, fmt.Sprintf(ciCheckPrompt, job.CIBaseBranch), ciCheckSchema, out)
-	if err != nil {
-		return structuredreview.Document{}, fmt.Errorf("run CI checker: %w", err)
-	}
-	return applyCICheck(doc, raw, job.MinSeverity, out)
+	return paths, nil
 }
 
 func resolveCICheckCommand(ctx context.Context, dir, name string) (string, error) {

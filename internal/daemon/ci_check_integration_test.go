@@ -3,8 +3,9 @@
 package daemon
 
 import (
-	"bytes"
+	"context"
 	"encoding/json/v2"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,7 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/agent"
-	"go.kenn.io/roborev/internal/config"
+	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/pkg/structuredreview"
@@ -32,17 +33,18 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 		_, err := exec.LookPath(name)
 		require.NoError(t, err)
 	}
-	repo := testutil.NewTestRepoWithCommit(t)
+	tc := newWorkerTestContext(t, 1)
+	repoRoot := tc.TmpDir
 	loginDir := t.TempDir()
 	t.Setenv("CODEX_HOME", loginDir)
 	require.NoError(t, os.WriteFile(filepath.Join(loginDir, "auth.json"), []byte(`{"tokens":{"access_token":"checker-test-token"}}`), 0o600))
-	beforeRefs, err := exec.CommandContext(t.Context(), "git", "-C", repo.Root, "show-ref").CombinedOutput()
+	beforeRefs, err := exec.CommandContext(t.Context(), "git", "-C", repoRoot, "show-ref").CombinedOutput()
 	require.NoError(t, err)
-	beforeStatus, err := exec.CommandContext(t.Context(), "git", "-C", repo.Root, "status", "--porcelain").CombinedOutput()
+	beforeStatus, err := exec.CommandContext(t.Context(), "git", "-C", repoRoot, "status", "--porcelain").CombinedOutput()
 	require.NoError(t, err)
 	oldRoots, err := filepath.Glob(filepath.Join(os.TempDir(), "roborev-ci-check-*"))
 	require.NoError(t, err)
-	var roots []string
+	var roots, checkouts []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer checker-test-token" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -75,33 +77,53 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 				roots = append(roots, root)
 			}
 		}
+		foundCheckouts, err := filepath.Glob(filepath.Join(ciWorktreeRepoDir(repoRoot), ciWorktreePrefix+"*"))
+		assert.NoError(t, err)
+		checkouts = append(checkouts, foundCheckouts...)
 		const final = `{"verdicts":[{"finding":1,"keep":false,"evidence":"go build succeeded","reason":"Build claim refuted"},{"finding":2,"keep":true,"evidence":"test reproduced data loss","reason":"Data is lost"}]}`
 		testutil.WriteCodexResponse(t, w, map[string]any{"type": "message", "role": "assistant", "id": "msg_test", "content": []any{map[string]any{"type": "output_text", "text": final}}})
 	}))
 	defer server.Close()
-	cfg := config.DefaultConfig()
-	cfg.CI.CheckReasoning = " HIGH "
-	require.NoError(t, cfg.Validate())
-	sha := testutil.GetHeadSHA(t, repo.Root)
+	sha := testutil.GetHeadSHA(t, repoRoot)
 	doc := structuredreview.Document{SchemaVersion: 3, SourceLabels: []string{"test"}, Summary: "The build claim and data loss need fixes", Verdict: "fail", Findings: []structuredreview.Finding{{Severity: "high", Problem: "build claim", Fix: "fix", Sources: []int{1}}, {Severity: "medium", Problem: "data loss", Fix: "fix", Sources: []int{1}}}}
-	job := &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha, CIBaseBranch: "main"}
-	var log bytes.Buffer
-	checked, err := runCICheck(t.Context(), job, ciCheckConfig{Model: "test-model", Reasoning: cfg.CI.CheckReasoning}, doc, agent.CodexSandbox{Upstream: server.URL}, nil, &log)
-	require.NoError(t, err, "%s", log.String())
-	output := checked.Markdown("")
-	assert.NotContains(t, output, "build claim", log.String())
-	assert.Contains(t, output, "data loss")
+	run, members, _ := enqueuePanelRun(t, tc, "checker-integration", []memberSpec{{name: "one", agent: "test"}})
+	completeMember(t, tc, members[0].ID, "test", "findings")
+	job := releaseAndClaimSynthesis(t, tc, run)
+	job.GitRef = sha + ".." + sha
+	job.PanelMemberConfigJSON = `{"check":{"model":"test-model","reasoning":"high"}}`
+	tc.Pool.ciCheck = func(ctx context.Context, job *storage.ReviewJob, cfg ciCheckConfig, doc structuredreview.Document, _ agent.CodexSandbox, env []string, out io.Writer) (structuredreview.Document, error) {
+		return tc.Pool.runCICheck(ctx, job, cfg, doc, agent.CodexSandbox{Upstream: server.URL}, env, out)
+	}
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	tc.Pool.checkAndCompleteSynthesis(t.Context(), testWorkerID, job, synthesisResult{review: reviewpkg.ReviewResult{Agent: "test", Output: doc.Markdown(""), StructuredOutput: raw, Verdict: storage.VerdictFail}})
+	stored, err := tc.DB.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+	log, err := os.ReadFile(JobLogPath(job.ID))
+	require.NoError(t, err)
+	assert.NotContains(t, stored.Output, "build claim", string(log))
+	assert.Contains(t, stored.Output, "data loss")
+	encoded, err := json.Marshal(stored.StructuredOutput)
+	require.NoError(t, err)
+	checked, err := reviewpkg.DecodeStructuredReview(encoded)
+	require.NoError(t, err)
 	assert.Equal(t, "1 finding.", checked.Summary)
-	assert.Equal(t, structuredreview.VerdictFail, checked.Verdict)
-	assert.Contains(t, log.String(), "go build succeeded")
-	require.NotEmpty(t, roots, log.String())
+	require.Len(t, checked.Findings, 1)
+	assert.Equal(t, "data loss", checked.Findings[0].Problem)
+	assert.Equal(t, storage.VerdictFail, stored.Verdict())
+	assert.Contains(t, string(log), "go build succeeded")
+	require.NotEmpty(t, checkouts, string(log))
+	for _, checkout := range checkouts {
+		assert.NoDirExists(t, checkout)
+	}
+	require.NotEmpty(t, roots, string(log))
 	for _, root := range roots {
 		assert.NoDirExists(t, root)
 	}
-	afterRefs, err := exec.CommandContext(t.Context(), "git", "-C", repo.Root, "show-ref").CombinedOutput()
+	afterRefs, err := exec.CommandContext(t.Context(), "git", "-C", repoRoot, "show-ref").CombinedOutput()
 	require.NoError(t, err)
 	assert.Equal(t, string(beforeRefs), string(afterRefs))
-	afterStatus, err := exec.CommandContext(t.Context(), "git", "-C", repo.Root, "status", "--porcelain").CombinedOutput()
+	afterStatus, err := exec.CommandContext(t.Context(), "git", "-C", repoRoot, "status", "--porcelain").CombinedOutput()
 	require.NoError(t, err)
 	assert.Equal(t, strings.TrimSpace(string(beforeStatus)), strings.TrimSpace(string(afterStatus)))
 }
