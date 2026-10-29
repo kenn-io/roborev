@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"math"
 	"testing"
 	"time"
 
@@ -568,10 +569,12 @@ func TestPercentile(t *testing.T) {
 	}{
 		{"empty", nil, 0.5, 0},
 		{"single", []float64{42}, 0.5, 42},
+		{"four_p25", []float64{1, 2, 3, 4}, 0.25, 1.75},
 		{"two_p50", []float64{10, 20}, 0.5, 15},
 		{"three_p50", []float64{10, 20, 30}, 0.5, 20},
 		{"five_p90", []float64{1, 2, 3, 4, 5}, 0.9, 4.6},
 		{"unsorted", []float64{5, 1, 3, 2, 4}, 0.5, 3},
+		{"opposite finite endpoints", []float64{-math.MaxFloat64, math.MaxFloat64}, 0.5, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

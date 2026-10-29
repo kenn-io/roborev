@@ -663,5 +663,5 @@ func percentileSorted(values []float64, p float64) float64 {
 		return values[n-1]
 	}
 	frac := rank - float64(lower)
-	return values[lower] + frac*(values[upper]-values[lower])
+	return values[lower]*(1-frac) + values[upper]*frac
 }

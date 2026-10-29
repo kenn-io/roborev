@@ -445,7 +445,11 @@ func (wp *WorkerPool) runSynthesisAgent(
 		GlobalConfig:   cfg,
 		// Mark the agent invoked only once it is about to run, so a checkout
 		// failure below is never miscounted as an agent run.
-		BeforeInvoke: func() { wp.markAgentInvoked(workerID, job, a) },
+		BeforeInvoke: func() {
+			if err := wp.db.MarkJobAgentInvokedAs(job.ID, workerID, agentName, synthesisAgentModel(job, agentName), a.CommandLine()); err != nil {
+				log.Printf("[%s] Error marking agent invoked for synthesis job %d: %v", workerID, job.ID, err)
+			}
+		},
 		// Synthesis follows the same isolation policy as its member reviews.
 		Checkout: func() (reviewpkg.SynthesisCheckout, error) {
 			checkout, err := wp.prepareJobCheckout(ctx, workerID, job, cfg)
@@ -532,10 +536,7 @@ func (wp *WorkerPool) configureSynthesisAgentContext(
 	}
 	reasoningLevel := agent.ParseReasoningLevel(reasoning)
 
-	model := job.Model
-	if synthesisSelectedBackupAgent(job, baseAgent.Name()) {
-		model = job.BackupModel
-	}
+	model := synthesisAgentModel(job, baseAgent.Name())
 
 	// Synthesis reads the repo to verify findings but must never edit it.
 	a := applyCodexReviewSettings(
@@ -557,6 +558,13 @@ func synthesisSelectedBackupAgent(job *storage.ReviewJob, selectedAgent string) 
 		return false
 	}
 	return !synthesisAgentNameMatches(selectedAgent, job.Agent)
+}
+
+func synthesisAgentModel(job *storage.ReviewJob, selectedAgent string) string {
+	if synthesisSelectedBackupAgent(job, selectedAgent) {
+		return job.BackupModel
+	}
+	return job.Model
 }
 
 func synthesisAgentNameMatches(selectedAgent, configuredAgent string) bool {

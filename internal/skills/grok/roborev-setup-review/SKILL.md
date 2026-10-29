@@ -288,6 +288,56 @@ review_type = "quotes"
 members = ["facts", "quotes"]
 ```
 
+## Compare review configurations
+
+When the user wants to compare a proposed review setup, offer a branch-scoped
+experiment with a success bar declared before enrollment. A review unit is one
+standalone review or an entire panel; the same source branch stays in one arm.
+The default arm uses normal settings and the experimental arm applies `config`.
+
+```toml
+# Experiment with an immutable success bar
+[experiments.session-v1]
+enabled = true
+ratio = 0.5
+workflows = ["review"]
+
+[experiments.session-v1.config]
+reuse_review_session = true
+
+[experiments.session-v1.success]
+metric = "cost_per_review"
+direction = "lower"
+min_effect = "20%"
+guards = ["job_failure_rate <= +0", "off_plan_rate <= +0"]
+```
+
+Use `higher` or `lower` for the objective. The minimum is a nonnegative absolute
+number in metric units (for example `min_effect = 0.2`) or a percent string.
+Guards are change bounds: `<metric> <= <signed number>` or
+`<metric> >= <signed number>`, optionally followed by `%`. Changes are
+experiment minus default; percentages use `abs(default)`. Zero baselines make
+relative conditions unavailable. The primary must have detected improvement,
+even with a zero minimum, and its conservative 95% improvement bound must meet
+the minimum. Each guard's conservative interval endpoint must meet its bound.
+
+Accepted metrics are `cost_per_review`, `duration_p50_seconds`,
+`duration_p90_seconds`, `job_failure_rate`, `off_plan_rate`,
+`fail_verdict_rate`, `findings_critical_per_review`, `findings_high_per_review`,
+`findings_medium_per_review`, `findings_low_per_review`, `refuted_per_100`,
+`confirmed_per_review`, and `cost_per_confirmed`. The last three need durable
+finding labels and remain unavailable today. More findings or fail verdicts do
+not establish correctness; never use review closure as a finding label.
+
+The bar is optional. Read it with
+`roborev experiments --from-skill report session-v1`: it returns `bar met`,
+`bar not met`, or `not enough data`, plus per-guard results. Integrity,
+reliability, complete required coverage, and enough contributing branch subjects
+still gate success. Unrelated unavailable label metrics do not block a cost
+objective. The report uses the enrolled definition. Changing the ratio,
+workflows, overlay, or bar after enrollment requires a new experiment ID.
+Repository overrides of global definitions may change only `enabled`.
+
 ## Write the rubrics
 
 A rubric is a Go template, usually 20 to 60 lines. Write it from the user's own

@@ -39,7 +39,10 @@ standalone, daemon-free `roborev ci review` command is not part of this design.
 
 ## Non-goals
 
-- Calculating statistical significance or experiment success.
+- Statistical readout was outside this enrollment design. The implemented
+    [experiment report contract](/docs/commands/#experiment-reports) now defines
+    exploratory arm comparisons. Declaring experiment success remains outside
+    that report.
 - Defining a quality metric, evaluator, or experiment dashboard.
 - Multi-arm experiments, adaptive allocation, or bandits.
 - Enrolling one review in several experiments in this version.

@@ -22,6 +22,7 @@ roborev unpause                  # Resume queue processing
 roborev cancel <job_id>          # Cancel one queued or running job
 roborev summary                  # Aggregate review statistics
 roborev cost                     # Approximate aggregate review cost
+roborev experiments report <id>  # Compare enrolled experiment arms
 roborev insights                 # Analyze review patterns
 roborev tui                      # Interactive terminal UI
                                  # --repo: pre-filter to repo
@@ -815,6 +816,125 @@ agents or models do not report cost. Human output shows coverage, for example
 
 See [Token Usage](#token-usage) for how per-job token and cost data is
 collected.
+
+## Experiment Reports
+
+```bash
+roborev experiments report review-session-resumption-v1
+roborev experiments report review-session-resumption-v1 --since 2026-01-01T00:00:00Z --until 2026-02-01T00:00:00Z
+roborev experiments report review-session-resumption-v1 --min-subjects 2 --json
+```
+
+| Flag | Description |
+|------|-------------|
+| `--since <RFC3339>` | Inclusive lower bound on assignment time; default: all time |
+| `--until <RFC3339>` | Exclusive upper bound on assignment time; default: all time |
+| `--min-subjects <N>` | Minimum contributing subjects per arm for each metric; positive integer, default: `4` |
+| `--json` | Full structured report, including costliest review units and their component job/session references |
+
+The daemon reports the immutable enrolled experiment, across repositories where
+that ID was used. Unknown IDs return an error. Bounds accept RFC3339 timestamps
+with offsets and are normalized to UTC. Reversed bounds and nonpositive minimums
+are rejected. These windows select enrollment cohorts using
+`experiment_assignments.assigned_at`, not historical result snapshots. `as_of`
+records when the report was read. A before/after-promotion comparison is
+descriptive and does not establish causality.
+
+Each assignment is one review unit: a standalone review or an entire panel.
+Subjects are repository-scoped branches identified by `subject_hash`. Most
+metrics first average eligible units within each subject, then weight subjects
+equally, so a busy branch counts once. Duration metrics instead calculate each
+subject's p50 or p90 review duration, then average those percentiles. Standalone
+duration runs from start to finish; panel duration runs from the earliest voting
+member start to synthesis completion. Values use USD, seconds, finding counts
+per review, or fractional rates as named below.
+
+Review completion timestamps stored with whole-second precision are rounded
+down. A finish within the start's second contributes zero seconds; a finish in
+an earlier second leaves duration coverage incomplete.
+
+The report separates enrolled subjects, review units, pending units, and
+failed/canceled/skipped units. It describes the **latest retained attempts**:
+automatic retries and standalone reruns can replace earlier failures, timing,
+and usage. It does not recover historical attempt spend. A panel's synthesis
+alone supplies verdicts and findings; every member, including non-voting
+members, and synthesis contributes spend. Missing components and running
+advisory members keep panel cost incomplete.
+
+| Metric | Meaning and direction |
+|--------|-----------------------|
+| `cost_per_review` | USD per review unit; lower is better |
+| `duration_p50_seconds`, `duration_p90_seconds` | Subject-weighted review duration percentiles in seconds; lower is better |
+| `job_failure_rate` | Fraction of terminal components failed or canceled in a complete unit; lower is better; skipped remains separate |
+| `off_plan_rate` | Fraction of matched invoked components whose final agent differs from the frozen plan; lower is better |
+| `fail_verdict_rate` | Fraction of readable review outputs with a fail verdict; descriptive higher/lower |
+| `findings_critical_per_review`, `findings_high_per_review`, `findings_medium_per_review`, `findings_low_per_review` | Findings by severity per readable structured review; descriptive higher/lower |
+| `refuted_per_100`, `confirmed_per_review`, `cost_per_confirmed` | Unavailable until durable finding labels can be read |
+
+Missing outputs, invalid verdicts, unknown plans, and unknown dollars stay
+unknown. Each metric shows its contributing subject and unit counts and
+coverage. Cost comparison requires complete units and full priced/eligible
+component coverage in both arms. Run `roborev backfill-tokens` when stored usage
+is missing; a provider may still lack prices. Off-plan attribution detects
+final-agent changes, not changed models or earlier retries.
+
+Finding labels and refuted-review lists are unavailable: current rebuttals lack
+durable finding identity and the original-review version needed to deduplicate
+labels. Their coverage and labeled metrics remain `null` in JSON. Closing a
+review does not confirm its findings. More findings or fail verdicts do not
+demonstrate greater correctness.
+
+Comparisons report experiment minus default. They use deterministic two-sided
+subject-label permutation tests and within-arm subject bootstrap 95% intervals,
+with 4,096 resamples. Permutations enumerate every allocation when at most 4,096
+are possible; larger samples use Monte Carlo with an add-one correction. The
+report identifies approximate permutation results. Bootstrap intervals always
+remain approximate, even with exact permutations. At p=0.05, 4,096 Monte Carlo
+resamples give standard error about 0.0034. The **95% randomization threshold**
+is the null 95th percentile of absolute differences, not a minimum detectable
+effect, power estimate, or A/A run. These are exploratory, unadjusted per-metric
+comparisons.
+
+The default minimum is four contributing subjects per arm. Balanced 3+3 samples
+allow only 20 label allocations and a smallest two-sided p-value of 0.10; 4+4
+allows 2/70, about 0.0286. Smaller positive minimums are accepted, but
+attainable p-values still govern significance. This minimum establishes
+eligibility, not statistical power.
+
+Conflicting subject arms or incomplete frozen attribution block inference.
+Allocation counts are compared with the stored ratio using a chi-square
+diagnostic; small expected counts are marked approximate. Imbalance is a
+warning, and ratios of zero or one cannot support two-arm inference.
+Insufficient subjects or required coverage yields `not enough data`. A detected
+increase in failure or off-plan rate gates other conclusions with
+`reliability worse`. Detection requires both two-sided p \<= 0.05 and a
+bootstrap interval excluding zero. Eligible metrics say `better`/`worse`, or
+descriptive `higher`/`lower`, and otherwise `no detectable difference`. The free
+comparisons declare no overall winner.
+
+When the enrolled definition includes a
+[success bar](/docs/configuration/#review-configuration-experiments), the report
+also prints `bar met`, `bar not met`, or `not enough data`, with a reason and
+per-guard results. The optional JSON `success` object is omitted when no bar was
+configured. Evaluation always uses the stored definition; current config edits
+cannot move the bar.
+
+The primary needs a detected improvement in its declared direction, including
+when its minimum is zero. Its conservative 95% improvement bound must meet the
+minimum effect. Guards bound experiment-minus-default changes using the upper
+interval endpoint for `<=` and the lower endpoint for `>=`. Percent conditions
+use `abs(default)`; a zero baseline makes them unavailable. Missing required
+metric observations, insufficient subjects, or incomplete integrity/reliability
+evidence yield `not enough data`. A detected reliability regression blocks
+success even when reliability itself is the primary objective. Unavailable label
+metrics only block bars that request them.
+
+See
+[Review configuration experiments](/docs/configuration/#review-configuration-experiments)
+to enroll reviews. The API is `GET /api/experiments/{id}/report`, with `since`,
+`until`, and `min_subjects` query parameters. Invalid options return HTTP 400;
+unknown IDs return HTTP 404. Reports exclude frozen configurations, prompts,
+review output, and local paths.
 
 ## Insights
 

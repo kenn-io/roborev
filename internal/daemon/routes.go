@@ -316,6 +316,22 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Tags = []string{"daemon"}
 		})
 
+	huma.Get(api, "/api/experiments/{id}/report", s.humaGetExperimentReport,
+		func(o *huma.Operation) {
+			o.OperationID = "get-experiment-report"
+			o.Summary = "Compare enrolled experiment arms"
+			o.Tags = []string{"experiments"}
+			o.Errors = []int{http.StatusBadRequest, http.StatusNotFound, http.StatusInternalServerError}
+		})
+	// Huma does not infer nullable object pointers and rejects nullable tags on
+	// object references. Unavailable inference emits a null interval, so express
+	// that union explicitly for generated clients.
+	comparisonSchema := api.OpenAPI().Components.Schemas.Map()["ExperimentMetricComparison"]
+	comparisonSchema.Properties["interval"] = &huma.Schema{
+		Type: huma.TypeObject, Nullable: true,
+		OneOf: []*huma.Schema{comparisonSchema.Properties["interval"], {Type: "null"}},
+	}
+
 	huma.Get(api, "/api/health", s.humaGetHealth,
 		func(o *huma.Operation) {
 			o.OperationID = "get-health"

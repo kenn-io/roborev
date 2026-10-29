@@ -1296,6 +1296,57 @@ func (s ErrorResponse) Error() string {
 	return "unmapped client error"
 }
 
+type ExperimentAllocation struct {
+	Approximate          bool     `json:"approximate"`
+	ChiSquare            *float64 `json:"chi_square,omitempty"`
+	DefaultSubjects      int64    `json:"default_subjects"`
+	ExpectedDefault      *float64 `json:"expected_default,omitempty"`
+	ExpectedExperimental *float64 `json:"expected_experimental,omitempty"`
+	ExperimentalSubjects int64    `json:"experimental_subjects"`
+	PValue               *float64 `json:"p_value,omitempty"`
+	Warning              *string  `json:"warning,omitempty"`
+}
+
+type ExperimentArmReport struct {
+	AttributionCompleteUnits int64                       `json:"attribution_complete_units"`
+	CanceledUnits            int64                       `json:"canceled_units"`
+	CanonicalStatuses        ExperimentCanonicalStatuses `json:"canonical_statuses"`
+	Cost                     ExperimentCostCoverage      `json:"cost"`
+	CostliestUnits           []ExperimentCostliestUnit   `json:"costliest_units" validate:"required"`
+	FailedUnits              int64                       `json:"failed_units"`
+	OutputUnits              int64                       `json:"output_units"`
+	PendingUnits             int64                       `json:"pending_units"`
+	ReviewUnits              int64                       `json:"review_units"`
+	SkippedUnits             int64                       `json:"skipped_units"`
+	Subjects                 int64                       `json:"subjects"`
+	TerminalUnits            int64                       `json:"terminal_units"`
+}
+
+func (e ExperimentArmReport) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(e.CanonicalStatuses).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("CanonicalStatuses", err)
+		}
+	}
+	if v, ok := any(e.Cost).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Cost", err)
+		}
+	}
+	for i, item := range e.CostliestUnits {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("CostliestUnits[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type ExperimentAssignment struct {
 	Arm                 string `json:"arm" validate:"required"`
 	DefinitionHash      string `json:"definition_hash" validate:"required"`
@@ -1306,6 +1357,313 @@ type ExperimentAssignment struct {
 
 func (e ExperimentAssignment) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+}
+
+type ExperimentCanonicalStatuses struct {
+	Applied  int64 `json:"applied"`
+	Canceled int64 `json:"canceled"`
+	Done     int64 `json:"done"`
+	Failed   int64 `json:"failed"`
+	Missing  int64 `json:"missing"`
+	Queued   int64 `json:"queued"`
+	Rebased  int64 `json:"rebased"`
+	Running  int64 `json:"running"`
+	Skipped  int64 `json:"skipped"`
+}
+
+type ExperimentComponentReference struct {
+	Agent              string   `json:"agent" validate:"required"`
+	JobID              int64    `json:"job_id"`
+	JobUUID            string   `json:"job_uuid" validate:"required"`
+	Provider           *string  `json:"provider,omitempty"`
+	ProviderSessionIds []string `json:"provider_session_ids,omitempty"`
+	Role               *string  `json:"role,omitempty"`
+	SessionID          *string  `json:"session_id,omitempty"`
+}
+
+func (e ExperimentComponentReference) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+}
+
+type ExperimentCostCoverage struct {
+	Complete           bool     `json:"complete"`
+	CompleteUnits      int64    `json:"complete_units"`
+	EligibleComponents int64    `json:"eligible_components"`
+	PricedComponents   int64    `json:"priced_components"`
+	Reason             *string  `json:"reason,omitempty"`
+	RecordedUsd        *float64 `json:"recorded_usd,omitempty"`
+}
+
+type ExperimentCostliestUnit struct {
+	Complete    bool                           `json:"complete"`
+	Components  []ExperimentComponentReference `json:"components" validate:"required"`
+	Kind        string                         `json:"kind" validate:"required"`
+	RecordedUsd float64                        `json:"recorded_usd"`
+	UUID        string                         `json:"uuid" validate:"required"`
+}
+
+func (e ExperimentCostliestUnit) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range e.Components {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Components[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(e.Kind, "required"); err != nil {
+		errors = errors.Append("Kind", err)
+	}
+	if err := typesValidator.Var(e.UUID, "required"); err != nil {
+		errors = errors.Append("UUID", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ExperimentGuardResult struct {
+	Guard  string `json:"guard" validate:"required"`
+	Reason string `json:"reason" validate:"required"`
+	State  string `json:"state" validate:"required"`
+}
+
+func (e ExperimentGuardResult) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+}
+
+type ExperimentIntegrity struct {
+	Complete            bool    `json:"complete"`
+	ConflictingSubjects int64   `json:"conflicting_subjects"`
+	IncompleteUnits     int64   `json:"incomplete_units"`
+	Reason              *string `json:"reason,omitempty"`
+}
+
+type ExperimentInterval struct {
+	High float64 `json:"high"`
+	Low  float64 `json:"low"`
+}
+
+type ExperimentLabelCoverage struct {
+	Available      bool                           `json:"available"`
+	Coverage       *float64                       `json:"coverage,omitempty"`
+	Reason         string                         `json:"reason" validate:"required"`
+	RefutedReviews []ExperimentComponentReference `json:"refuted_reviews" validate:"required"`
+}
+
+func (e ExperimentLabelCoverage) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(e.Reason, "required"); err != nil {
+		errors = errors.Append("Reason", err)
+	}
+	for i, item := range e.RefutedReviews {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("RefutedReviews[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ExperimentMetricComparison struct {
+	Approximate            bool                  `json:"approximate"`
+	Default                ExperimentMetricValue `json:"default"`
+	Delta                  *float64              `json:"delta,omitempty"`
+	Experiment             ExperimentMetricValue `json:"experiment"`
+	Interval               *ExperimentInterval   `json:"interval,omitempty"`
+	Metric                 string                `json:"metric" validate:"required"`
+	PValue                 *float64              `json:"p_value,omitempty"`
+	Permutations           int64                 `json:"permutations"`
+	RandomizationThreshold *float64              `json:"randomization_threshold,omitempty"`
+	Reason                 *string               `json:"reason,omitempty"`
+	State                  string                `json:"state" validate:"required"`
+}
+
+func (e ExperimentMetricComparison) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(e.Default).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Default", err)
+		}
+	}
+	if v, ok := any(e.Experiment).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Experiment", err)
+		}
+	}
+	if e.Interval != nil {
+		if v, ok := any(e.Interval).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Interval", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(e.Metric, "required"); err != nil {
+		errors = errors.Append("Metric", err)
+	}
+	if err := typesValidator.Var(e.State, "required"); err != nil {
+		errors = errors.Append("State", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ExperimentMetricValue struct {
+	Complete      bool     `json:"complete"`
+	Coverage      *float64 `json:"coverage,omitempty"`
+	ExpectedUnits int64    `json:"expected_units"`
+	Subjects      int64    `json:"subjects"`
+	Units         int64    `json:"units"`
+	Value         *float64 `json:"value,omitempty"`
+}
+
+type ExperimentReport struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema         *string                      `json:"$schema,omitempty"`
+	Allocation     ExperimentAllocation         `json:"allocation"`
+	AsOf           time.Time                    `json:"as_of" validate:"required"`
+	Default        ExperimentArmReport          `json:"default"`
+	DefinitionHash string                       `json:"definition_hash" validate:"required"`
+	Experiment     ExperimentArmReport          `json:"experiment"`
+	ID             string                       `json:"id" validate:"required"`
+	Integrity      ExperimentIntegrity          `json:"integrity"`
+	Labels         ExperimentLabelCoverage      `json:"labels"`
+	Method         ExperimentReportMethod       `json:"method"`
+	Metrics        []ExperimentMetricComparison `json:"metrics" validate:"required"`
+	MinSubjects    int64                        `json:"min_subjects"`
+	Ratio          *float64                     `json:"ratio,omitempty"`
+	Since          *time.Time                   `json:"since,omitempty" validate:"required"`
+	Success        *ExperimentSuccessResult     `json:"success,omitempty"`
+	Until          *time.Time                   `json:"until,omitempty" validate:"required"`
+}
+
+func (e ExperimentReport) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(e.Allocation).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Allocation", err)
+		}
+	}
+	if err := typesValidator.Var(e.AsOf, "required"); err != nil {
+		errors = errors.Append("AsOf", err)
+	}
+	if v, ok := any(e.Default).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Default", err)
+		}
+	}
+	if err := typesValidator.Var(e.DefinitionHash, "required"); err != nil {
+		errors = errors.Append("DefinitionHash", err)
+	}
+	if v, ok := any(e.Experiment).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Experiment", err)
+		}
+	}
+	if err := typesValidator.Var(e.ID, "required"); err != nil {
+		errors = errors.Append("ID", err)
+	}
+	if v, ok := any(e.Integrity).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Integrity", err)
+		}
+	}
+	if v, ok := any(e.Labels).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Labels", err)
+		}
+	}
+	if v, ok := any(e.Method).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Method", err)
+		}
+	}
+	for i, item := range e.Metrics {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Metrics[%d]", i), err)
+			}
+		}
+	}
+	if e.Since != nil {
+		if err := typesValidator.Var(e.Since, "required"); err != nil {
+			errors = errors.Append("Since", err)
+		}
+	}
+	if e.Success != nil {
+		if v, ok := any(e.Success).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Success", err)
+			}
+		}
+	}
+	if e.Until != nil {
+		if err := typesValidator.Var(e.Until, "required"); err != nil {
+			errors = errors.Append("Until", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ExperimentReportMethod struct {
+	Adjusted     bool    `json:"adjusted"`
+	Confidence   float64 `json:"confidence"`
+	Exploratory  bool    `json:"exploratory"`
+	OutcomeBasis string  `json:"outcome_basis" validate:"required"`
+	Resamples    int64   `json:"resamples"`
+}
+
+func (e ExperimentReportMethod) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+}
+
+type ExperimentSuccessResult struct {
+	Direction string                  `json:"direction" validate:"required"`
+	Guards    []ExperimentGuardResult `json:"guards" validate:"required"`
+	Metric    string                  `json:"metric" validate:"required"`
+	MinEffect string                  `json:"min_effect" validate:"required"`
+	Reason    string                  `json:"reason" validate:"required"`
+	State     string                  `json:"state" validate:"required"`
+}
+
+func (e ExperimentSuccessResult) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(e.Direction, "required"); err != nil {
+		errors = errors.Append("Direction", err)
+	}
+	for i, item := range e.Guards {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Guards[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(e.Metric, "required"); err != nil {
+		errors = errors.Append("Metric", err)
+	}
+	if err := typesValidator.Var(e.MinEffect, "required"); err != nil {
+		errors = errors.Append("MinEffect", err)
+	}
+	if err := typesValidator.Var(e.Reason, "required"); err != nil {
+		errors = errors.Append("Reason", err)
+	}
+	if err := typesValidator.Var(e.State, "required"); err != nil {
+		errors = errors.Append("State", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type ExportCICostDocument struct {

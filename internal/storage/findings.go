@@ -24,7 +24,14 @@ func ReviewFindingCounts(structuredOutput *string) *FindingCounts {
 		return nil
 	}
 	document, err := structuredreview.Decode(jsontext.Value(*structuredOutput))
-	if err != nil || document.Legacy != nil || document.UnableToReview() {
+	if err != nil {
+		return nil
+	}
+	return documentFindingCounts(document)
+}
+
+func documentFindingCounts(document structuredreview.Document) *FindingCounts {
+	if document.Legacy != nil || document.UnableToReview() {
 		return nil
 	}
 	counts := &FindingCounts{}
