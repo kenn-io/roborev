@@ -31,6 +31,7 @@ import (
 	"go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/tokens"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 const (
@@ -51,6 +52,7 @@ type WorkerPool struct {
 	db                   *storage.DB
 	cfgGetter            ConfigGetter
 	ciGitEnv             func(string) []string
+	ciCheck              func(context.Context, *storage.ReviewJob, ciCheckConfig, structuredreview.Document, agent.CodexSandbox, []string, io.Writer) (structuredreview.Document, error)
 	broadcaster          Broadcaster
 	errorLog             *ErrorLog
 	activityLog          *ActivityLog

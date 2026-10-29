@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -22,7 +23,6 @@ import (
 	"go.kenn.io/roborev/internal/prompt"
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
-	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
@@ -94,7 +94,7 @@ func TestCICheckSnapshot(t *testing.T) {
 	assert.Equal(t, `{"instructions":"merge"}`, off.PanelMemberConfigJSON) //nolint:testifylint // Checker off preserves the existing snapshot byte for byte.
 	cfg.CI.Check = true
 	cfg.CI.CheckModel = "checker-model"
-	cfg.CI.CheckReasoning = "high"
+	cfg.CI.CheckReasoning = " HIGH "
 	_, on, err := p.buildPanelOpts(t.Context(), in)
 	require.NoError(t, err)
 	var snapshot synthesisJobConfig
@@ -139,10 +139,9 @@ func TestCICheckFailurePreservesSynthesis(t *testing.T) {
 				require.NoError(t, tc.DB.CompleteJobResult(members[0].ID, "test", storage.ReviewCompletion{Output: "high finding", Verdict: storage.VerdictFail, StructuredOutput: jsontext.Value(synthAgent.result)}))
 				job := releaseAndClaimSynthesis(t, tc, run)
 				if check {
-					// Missing frozen base metadata stops only the checker.
-					sha := testutil.GetHeadSHA(t, tc.TmpDir)
-					job.GitRef = sha + ".." + sha
-					job.CIBaseBranch = ""
+					tc.Pool.ciCheck = func(context.Context, *storage.ReviewJob, ciCheckConfig, structuredreview.Document, agent.CodexSandbox, []string, io.Writer) (structuredreview.Document, error) {
+						return structuredreview.Document{}, fmt.Errorf("forced checker failure")
+					}
 				}
 				tc.Pool.processSynthesisJob(t.Context(), testWorkerID, job)
 				review, err := tc.DB.GetReviewByJobID(job.ID)
@@ -153,7 +152,7 @@ func TestCICheckFailurePreservesSynthesis(t *testing.T) {
 				if check {
 					log, err := os.ReadFile(JobLogPath(job.ID))
 					require.NoError(t, err)
-					assert.Contains(t, string(log), "CI checker failed; keeping original review: CI checker requires base branch")
+					assert.Contains(t, string(log), "CI checker failed; keeping original review: forced checker failure")
 				}
 			}
 			assert.Equal(t, results[0], results[1])
@@ -191,74 +190,99 @@ func TestCICheckCompletionContext(t *testing.T) {
 	}
 }
 
-// Each case puts fake tools on PATH and reads what the checker handed them.
-func TestCICheckInputs(t *testing.T) {
+func TestCICheckMiseShim(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("requires shell script fixtures")
+		t.Skip("requires shell fixture")
 	}
-	for _, tc := range []struct {
-		name  string
-		setup func(t *testing.T, repo *testutil.TestRepo, tools, observed string)
-		err   string
-		want  string
-	}{
-		{
-			name: "go.sum symlink",
-			setup: func(t *testing.T, repo *testutil.TestRepo, tools, observed string) {
-				repo.CommitFile("go.mod", "module example.com/check\n\ngo 1.26\n", "module")
-				require.NoError(t, os.Symlink(observed, filepath.Join(repo.Root, "go.sum")))
-				repo.RunGit("add", "go.sum")
-				repo.RunGit("commit", "-m", "checksum symlink")
-				goScript := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = env ]; then printf '%%s\\n' '%s' '%s'; else echo checksum > go.sum; fi\n", tools, tools)
-				require.NoError(t, os.Mkdir(filepath.Join(tools, "bin"), 0o700))
-				require.NoError(t, os.WriteFile(filepath.Join(tools, "bin", "go"), []byte(goScript), 0o700))
-				require.NoError(t, os.Symlink(filepath.Join("bin", "go"), filepath.Join(tools, "go")))
-			},
-			err: "go.sum must be a regular file",
-		},
-		{
-			name: "submodules",
-			setup: func(t *testing.T, repo *testutil.TestRepo, tools, observed string) {
-				sub := testutil.NewTestRepoWithCommit(t)
-				sub.CommitFile("present.txt", "submodule content", "content")
-				repo.RunGit("-c", "protocol.file.allow=always", "submodule", "add", sub.Root, "dependency")
-				repo.RunGit("commit", "-am", "submodule")
-				script := fmt.Sprintf("#!/bin/sh\ncat work/repo*/dependency/present.txt > '%s'\nexit 1\n", observed)
-				require.NoError(t, os.WriteFile(filepath.Join(tools, "go"), []byte(script), 0o700))
-			},
-			want: "submodule content",
-		},
-		{
-			name: "mise shim",
-			setup: func(t *testing.T, _ *testutil.TestRepo, tools, observed string) {
-				// A symlink shim dispatches on argv[0], just as mise does.
-				installed := filepath.Join(tools, "installed", "codex")
-				require.NoError(t, os.Mkdir(filepath.Dir(installed), 0o700))
-				require.NoError(t, os.WriteFile(installed, []byte(fmt.Sprintf("#!/bin/sh\necho codex > '%s'\nexit 1\n", observed)), 0o700))
-				script := fmt.Sprintf("#!/bin/sh\nif [ \"$1 $2\" = 'which codex' ]; then echo '%s'; exit 0; fi\ncase \"$0\" in */codex) exec '%s' \"$@\";; esac\nexit 1\n", installed, installed)
-				require.NoError(t, os.WriteFile(filepath.Join(tools, "mise"), []byte(script), 0o700))
-				require.NoError(t, os.Symlink("mise", filepath.Join(tools, "codex")))
-			},
-			want: "codex\n",
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			repo := testutil.NewTestRepoWithCommit(t)
-			tools := t.TempDir()
-			observed := filepath.Join(t.TempDir(), "observed")
-			tc.setup(t, repo, tools, observed)
-			t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
-			sha := testutil.GetHeadSHA(t, repo.Root)
-			_, err := runCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha, CIBaseBranch: "main"}, ciCheckConfig{}, structuredreview.Document{}, agent.CodexSandbox{}, nil, io.Discard)
-			require.Error(t, err)
-			if tc.err != "" {
-				require.ErrorContains(t, err, tc.err)
-				assert.NoFileExists(t, observed)
-				return
+	tools := t.TempDir()
+	installed := filepath.Join(tools, "installed", "codex")
+	require.NoError(t, os.Mkdir(filepath.Dir(installed), 0o700))
+	require.NoError(t, os.WriteFile(installed, []byte("native fixture"), 0o700))
+	script := fmt.Sprintf("#!/bin/sh\n[ \"$1 $2\" = 'which codex' ] || exit 1\nprintf '%%s\\n' '%s'\n", installed)
+	require.NoError(t, os.WriteFile(filepath.Join(tools, "mise"), []byte(script), 0o700))
+	require.NoError(t, os.Symlink("mise", filepath.Join(tools, "codex")))
+	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
+	got, err := resolveCICheckCommand(t.Context(), t.TempDir(), "codex")
+	require.NoError(t, err)
+	assert.Equal(t, installed, got)
+}
+
+func TestCICheckStoredFindings(t *testing.T) {
+	for _, path := range []string{"passthrough", "agent"} {
+		t.Run(path, func(t *testing.T) {
+			tc := newWorkerTestContext(t, 1)
+			synthAgent := &synthesisEntrypointTestAgent{name: "checker-success-" + path, result: `{"schema_version":3,"summary":"Two claims","verdict":"fail","findings":[{"severity":"high","kind":"defect","confidence":0.9,"problem":"Build claim","fix":"Fix build","sources":[1]},{"severity":"medium","kind":"defect","confidence":0.9,"problem":"Data loss","fix":"Preserve data","sources":[1]}]}`}
+			agent.RegisterForTest(t, synthAgent)
+			run, members, _ := enqueuePanelRun(t, tc, "checker-success", []memberSpec{{name: "one", agent: "test"}})
+			setSynthesisAgent(t, tc, run, synthAgent.name)
+			snapshot := synthesisJobConfig{Check: &ciCheckConfig{Reasoning: "high"}}
+			if path == "agent" {
+				snapshot.Instructions = "verify"
 			}
-			data, err := os.ReadFile(observed)
+			raw, err := snapshot.encode()
 			require.NoError(t, err)
-			assert.Equal(t, tc.want, string(data))
+			_, err = tc.DB.Exec("UPDATE review_jobs SET panel_member_config_json = ?, min_severity = 'high' WHERE panel_run_uuid = ? AND panel_role = 'synthesis'", raw, run)
+			require.NoError(t, err)
+			markMemberRunning(t, tc, members[0].ID)
+			require.NoError(t, tc.DB.CompleteJobResult(members[0].ID, "test", storage.ReviewCompletion{Output: "two claims", Verdict: storage.VerdictFail, StructuredOutput: jsontext.Value(synthAgent.result)}))
+			job := releaseAndClaimSynthesis(t, tc, run)
+			calls := 0
+			tc.Pool.ciCheck = func(ctx context.Context, got *storage.ReviewJob, cfg ciCheckConfig, doc structuredreview.Document, _ agent.CodexSandbox, _ []string, out io.Writer) (structuredreview.Document, error) {
+				calls++
+				assert.Equal(t, job.ID, got.ID)
+				assert.Equal(t, "high", got.MinSeverity)
+				assert.Equal(t, "high", cfg.Reasoning)
+				require.Len(t, doc.Findings, 2)
+				return applyCICheck(doc, jsontext.Value(`{"verdicts":[{"finding":1,"keep":false,"evidence":"build succeeds","reason":"refuted"},{"finding":2,"keep":true,"evidence":"data lost","reason":"reproduced"}]}`), got.MinSeverity, out)
+			}
+			tc.Pool.processSynthesisJob(t.Context(), testWorkerID, job)
+			assert.Equal(t, 1, calls)
+			stored, err := tc.DB.GetReviewByJobID(job.ID)
+			require.NoError(t, err)
+			encoded, err := json.Marshal(stored.StructuredOutput)
+			require.NoError(t, err)
+			doc, err := reviewpkg.DecodeStructuredReview(encoded)
+			require.NoError(t, err)
+			require.Len(t, doc.Findings, 1)
+			assert.Equal(t, "Data loss", doc.Findings[0].Problem)
+			assert.Equal(t, structuredreview.VerdictPass, doc.Verdict)
+			assert.NotContains(t, stored.Output, "Build claim")
+			assert.Equal(t, doc.Markdown("high"), stored.Output)
+			finished, err := tc.DB.GetJobByID(job.ID)
+			require.NoError(t, err)
+			assert.Equal(t, storage.JobStatusDone, finished.Status)
+			assert.Equal(t, storage.VerdictPass, stored.Verdict())
 		})
 	}
+}
+
+func TestCICheckDeadlinePreservesReview(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		tc := newWorkerTestContext(t, 1)
+		run, members, _ := enqueuePanelRun(t, tc, "deadline-panel", []memberSpec{{name: "one", agent: "test"}})
+		completeMember(t, tc, members[0].ID, "test", "finding")
+		job := releaseAndClaimSynthesis(t, tc, run)
+		job.PanelMemberConfigJSON = `{"check":{}}`
+		raw := jsontext.Value(`{"schema_version":3,"source_labels":["test"],"summary":"Original","verdict":"fail","findings":[{"severity":"high","problem":"Data loss","fix":"Preserve data","sources":[1]}]}`)
+		doc, err := reviewpkg.DecodeStructuredReview(raw)
+		require.NoError(t, err)
+		original := synthesisResult{review: reviewpkg.ReviewResult{Agent: "test", Output: doc.Markdown(""), Verdict: storage.VerdictFail, StructuredOutput: raw}}
+		tc.Pool.ciCheck = func(ctx context.Context, _ *storage.ReviewJob, _ ciCheckConfig, _ structuredreview.Document, _ agent.CodexSandbox, _ []string, _ io.Writer) (structuredreview.Document, error) {
+			<-ctx.Done()
+			return structuredreview.Document{}, ctx.Err()
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), time.Hour)
+		defer cancel()
+		tc.Pool.checkAndCompleteSynthesis(ctx, testWorkerID, job, original)
+		require.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
+		stored, err := tc.DB.GetReviewByJobID(job.ID)
+		require.NoError(t, err)
+		assert.Equal(t, original.review.Output, stored.Output)
+		encoded, err := json.Marshal(stored.StructuredOutput)
+		require.NoError(t, err)
+		assert.JSONEq(t, string(raw), string(encoded))
+		finished, err := tc.DB.GetJobByID(job.ID)
+		require.NoError(t, err)
+		assert.Equal(t, storage.JobStatusDone, finished.Status)
+	})
 }
