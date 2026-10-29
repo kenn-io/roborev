@@ -151,7 +151,7 @@ func waitFor(t *testing.T, timeout time.Duration, check func() bool) bool {
 		if check() {
 			return true
 		}
-		time.Sleep(50 * time.Millisecond) //nolint:kennlint // daemon startup shows only through its files and HTTP endpoint
+		time.Sleep(50 * time.Millisecond) //nolint:kennlint // sleeptest: daemon startup shows only through its files and HTTP endpoint
 	}
 	return false
 }

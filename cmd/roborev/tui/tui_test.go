@@ -313,7 +313,7 @@ func TestTUIHTTPTimeout(t *testing.T) {
 		// Hold the response until the client timeout cancels the request.
 		<-r.Context().Done()
 	})
-	m.client.Timeout = 50 * time.Millisecond
+	m.client.Timeout = 50 * time.Millisecond //nolint:kennlint // deadlinetest: the handler blocks until cancellation; fetching jobs must return a timeout error
 
 	msg := fetchJobsMessage(t, m)
 

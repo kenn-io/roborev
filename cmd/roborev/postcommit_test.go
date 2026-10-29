@@ -1259,7 +1259,7 @@ func TestPostCommitTimesOutOnSlowDaemon(t *testing.T) {
 	orig := hookHTTPClient
 	hookHTTPClient = func(daemon.DaemonEndpoint, time.Duration) *http.Client {
 		return &http.Client{
-			Timeout:   50 * time.Millisecond,
+			Timeout:   50 * time.Millisecond, //nolint:kennlint // deadlinetest: the transport blocks until the request deadline; the hook must return without failing the commit
 			Transport: rt,
 		}
 	}

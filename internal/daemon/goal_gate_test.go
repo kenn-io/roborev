@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -270,34 +271,36 @@ func (f goalGateRoundTripFunc) RoundTrip(request *http.Request) (*http.Response,
 }
 
 func TestGoalGateClientContext(t *testing.T) {
-	var receivedDeadline time.Time
-	transport := goalGateRoundTripFunc(func(request *http.Request) (*http.Response, error) {
-		assert.Equal(t, "/api/goal-review", request.URL.Path)
-		if deadline, ok := request.Context().Deadline(); ok {
-			receivedDeadline = deadline
-		}
-		if err := request.Context().Err(); err != nil {
-			return nil, err
-		}
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(`{"version":1,"mode":"block","status":"pass","findings":[]}`)),
-			Request:    request,
-		}, nil
+	synctest.Test(t, func(t *testing.T) {
+		var receivedDeadline time.Time
+		transport := goalGateRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+			assert.Equal(t, "/api/goal-review", request.URL.Path)
+			if deadline, ok := request.Context().Deadline(); ok {
+				receivedDeadline = deadline
+			}
+			if err := request.Context().Err(); err != nil {
+				return nil, err
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"version":1,"mode":"block","status":"pass","findings":[]}`)),
+				Request:    request,
+			}, nil
+		})
+		client := &HTTPClient{baseURL: "http://goal-gate.test", httpClient: &http.Client{Timeout: time.Millisecond, Transport: transport}}
+		deadline := time.Now().Add(15 * time.Minute)
+		ctx, cancel := context.WithDeadline(context.Background(), deadline)
+		defer cancel()
+		response, err := client.GoalReview(ctx, GoalGateRequest{RepoPath: "checkout"})
+		require.NoError(t, err)
+		assert.Equal(t, "pass", response.Status)
+		assert.Equal(t, deadline, receivedDeadline)
+		canceled, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err = client.GoalReview(canceled, GoalGateRequest{RepoPath: "checkout"})
+		require.ErrorIs(t, err, context.Canceled)
 	})
-	client := &HTTPClient{baseURL: "http://goal-gate.test", httpClient: &http.Client{Timeout: time.Millisecond, Transport: transport}}
-	deadline := time.Now().Add(15 * time.Minute)
-	ctx, cancel := context.WithDeadline(context.Background(), deadline)
-	defer cancel()
-	response, err := client.GoalReview(ctx, GoalGateRequest{RepoPath: "checkout"})
-	require.NoError(t, err)
-	assert.Equal(t, "pass", response.Status)
-	assert.Equal(t, deadline, receivedDeadline)
-	canceled, cancel := context.WithCancel(context.Background())
-	cancel()
-	_, err = client.GoalReview(canceled, GoalGateRequest{RepoPath: "checkout"})
-	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestGoalGateCandidateIsInMemory(t *testing.T) {

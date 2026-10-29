@@ -364,7 +364,7 @@ func TestApplyClassifyVerdict_PromoteDoesNotBroadcast(t *testing.T) {
 
 	tc.Pool.applyClassifyVerdict("worker-promote", claimed, true, "worth reviewing")
 
-	_, ok := waitForEvent(t, ch, 200*time.Millisecond)
+	_, ok := waitForEvent(t, ch, 200*time.Millisecond) //nolint:kennlint // deadlinetest: bounded absence check; promoting a job must emit no terminal event
 	assert.False(t, ok, "promote path must not broadcast a terminal event")
 	assert.True(t, consumeJobLogAppendMarker(jobID))
 	assert.False(t, consumeJobLogAppendMarker(jobID), "append marker must be one-shot")
