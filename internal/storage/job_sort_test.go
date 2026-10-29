@@ -256,3 +256,35 @@ func TestListJobsElapsedPagesKeepJobStartedInTheSameSecondAsReference(t *testing
 	require.NoError(t, err)
 	assert.Equal(t, []int64{jobs[1].ID}, jobIDs(rest))
 }
+
+func TestListJobsElapsedPagesKeepJobCompletedInTheSameSecondAsReference(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	_, jobs := seedJobs(t, db, "/tmp/sort/complete-same-second", 2)
+	asOf := time.Now()
+	// As of asOf, the running job has run 10s and the done job ran 9.5s.
+	_, err := db.Exec(`UPDATE review_jobs SET status = 'running', started_at = ? WHERE id = ?`,
+		preciseTimestampAt(asOf.Add(-10*time.Second)), jobs[0].ID)
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE review_jobs SET status = 'done', started_at = ?, finished_at = ? WHERE id = ?`,
+		preciseTimestampAt(asOf.Add(-20*time.Second)), preciseTimestampAt(asOf.Add(-10500*time.Millisecond)), jobs[1].ID)
+	require.NoError(t, err)
+	sort := WithSort(JobSort{Column: JobSortElapsed, Ascending: true, AsOf: asOf})
+
+	first, err := db.ListJobs("", "", 1, 0, sort)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{jobs[1].ID}, jobIDs(first))
+
+	// The running job completes just after asOf, usually in the same second.
+	// A finish time cut to whole seconds would end it before asOf, drop its
+	// elapsed time to the done job's 9s, and its lower ID would then sort it
+	// before the cursor and off the next page.
+	require.NoError(t, db.CompleteJob(jobs[0].ID, "test", `{"schema_version":2,"summary":"No issues found.","verdict":"pass","findings":[]}`))
+
+	last := first[len(first)-1]
+	rest, err := db.ListJobs("", "", 0, 0, sort,
+		WithSortAfter(JobSortPosition{Keys: last.SortKey, JobID: last.ID}))
+	require.NoError(t, err)
+	assert.Equal(t, []int64{jobs[0].ID}, jobIDs(rest))
+}

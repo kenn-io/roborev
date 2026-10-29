@@ -47,12 +47,13 @@ type BatchReviewResult struct {
 // message explaining why it was canceled. Returns sql.ErrNoRows if the
 // job is already terminal.
 func (db *DB) CancelJobWithError(jobID int64, errMsg string) error {
-	now := time.Now().Format(time.RFC3339)
+	finished := time.Now()
+	now := finished.Format(time.RFC3339)
 	result, err := db.Exec(`
 		UPDATE review_jobs
 		SET status = 'canceled', error = ?, finished_at = ?, updated_at = ?
 		WHERE id = ? AND status IN ('queued', 'running')
-	`, errMsg, now, now, jobID)
+	`, errMsg, preciseTimestampAt(finished), now, jobID)
 	if err != nil {
 		return err
 	}

@@ -644,7 +644,10 @@ export function createJobsStore(opts: JobsStoreOptions) {
 
   // The page reload builds its query when reconciliation starts. A query built
   // before the mutation would miss a sort or filter the user changed while it
-  // ran, and its newer generation would discard that change's reload.
+  // ran, and its newer generation would discard that change's reload. The
+  // reload holds the loading state, so a page of older jobs waits for it: a
+  // page appended first would change the list size the reload was built for,
+  // and publishing would discard the reload's rows.
   const reconcileJobMutation = <A>(
     id: number,
     acknowledged: Option.Option<A>,
@@ -657,7 +660,12 @@ export function createJobsStore(opts: JobsStoreOptions) {
         // replaced any pending sort reload, and only its outcome settles
         // that sort. The lookup failure is reported once both finish.
         target: Effect.result(fetchJobAuthority(id)),
-        page: Effect.suspend(() => refreshJobsAuthority(buildQuery())),
+        page: Effect.suspend(() => {
+          const request = startLoading();
+          return refreshJobsAuthority(buildQuery()).pipe(
+            Effect.ensuring(Effect.sync(() => finishLoading(request))),
+          );
+        }),
       },
       { concurrency: "unbounded" },
     ).pipe(
