@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -29,6 +30,7 @@ type CodexAgent struct {
 	ConfigOverrides           []string       // Extra `-c key=value` overrides injected from roborev config
 	omitThreadSource          bool           // True when this Codex CLI rejects --thread-source
 	userAuthOverrides         []string       // Sign-in keys forwarded from the ignored user config
+	sandbox                   *CodexSandbox
 }
 
 const (
@@ -81,6 +83,7 @@ func (a *CodexAgent) clone(opts ...agentCloneOption) *CodexAgent {
 		IgnoreUserConfig:          a.IgnoreUserConfig,
 		ConfigOverrides:           a.ConfigOverrides,
 		omitThreadSource:          a.omitThreadSource,
+		sandbox:                   a.sandbox,
 	}
 }
 
@@ -253,6 +256,9 @@ func (a *CodexAgent) commandArgs(opts codexArgOptions, goos string) []string {
 	// safety settings (skills, sandbox, reasoning) win on any key conflict.
 	for _, override := range a.ConfigOverrides {
 		args = append(args, "-c", override)
+	}
+	if a.sandbox != nil && !opts.preview {
+		args = append(args, "-c", `web_search="disabled"`, "-c", `model_provider="roborev-proxy"`)
 	}
 	if opts.agenticMode {
 		args = append(args, codexDangerousFlag)
@@ -442,12 +448,22 @@ func (a *CodexAgent) review(
 	output io.Writer,
 ) (string, error) {
 	sandboxBroken := CodexSandboxDisabled()
+	if planningReadOnly(ctx) && a.sandbox != nil {
+		return "", fmt.Errorf("planning requires the Codex read-only sandbox; agentic sandbox is configured")
+	}
 	if planningReadOnly(ctx) && sandboxBroken {
 		return "", fmt.Errorf("planning requires the Codex read-only sandbox; sandbox is disabled")
 	}
 	agenticMode := effectiveAgentic(ctx, a.Agentic)
 	runAgent := a
-	if a.IgnoreUserConfig {
+	if a.sandbox != nil {
+		clone := *a
+		clone.IgnoreUserConfig = false
+		clone.userAuthOverrides = nil
+		runAgent = &clone
+		agenticMode = true
+	}
+	if runAgent.IgnoreUserConfig {
 		supported, err := codexSupportsIgnoreUserConfig(ctx, a.Command)
 		if err != nil {
 			return "", err
@@ -507,12 +523,40 @@ func (a *CodexAgent) review(
 	args := runAgent.buildArgsWithSchema(
 		repoPath, agenticMode, autoApprove, sandboxBroken, schemaPath,
 	)
+	command := a.Command
+	var env []string
+	if a.sandbox != nil {
+		job, cleanup, err := a.sandbox.prepare(repoPath)
+		if err != nil {
+			return "", err
+		}
+		defer cleanup()
+		resolved, err := exec.LookPath(command)
+		if err != nil {
+			return "", err
+		}
+		resolved, err = filepath.Abs(resolved)
+		if err != nil {
+			return "", err
+		}
+		resolved, err = filepath.EvalSymlinks(resolved)
+		if err != nil {
+			return "", err
+		}
+		wrapped, wrappedEnv, cleanup, err := job.Command(ctx, append([]string{resolved}, args...))
+		if err != nil {
+			return "", err
+		}
+		defer cleanup()
+		command, args, env = wrapped[0], wrapped[1:], wrappedEnv
+	}
 	stdoutDiagnostics := newCodexDiagnosticCapture()
 
 	runResult, runErr := runStreamingCLI(ctx, streamingCLISpec{
 		Name:         "codex",
-		Command:      a.Command,
+		Command:      command,
 		Args:         args,
+		Env:          env,
 		Dir:          repoPath,
 		Stdin:        strings.NewReader(prompt),
 		Output:       output,
@@ -676,7 +720,11 @@ func (a *CodexAgent) ReviewWithSchema(
 	schema jsontext.Value,
 	out io.Writer,
 ) (jsontext.Value, error) {
-	schemaFile, err := os.CreateTemp("", "roborev-codex-review-schema-*.json")
+	schemaDir := ""
+	if a.sandbox != nil {
+		schemaDir = a.sandbox.Job.WorkDir
+	}
+	schemaFile, err := os.CreateTemp(schemaDir, "roborev-codex-review-schema-*.json")
 	if err != nil {
 		return nil, fmt.Errorf("create codex review schema: %w", err)
 	}

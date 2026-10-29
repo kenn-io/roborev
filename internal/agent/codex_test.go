@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -16,6 +17,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/sandbox"
 )
 
 func setupMockCodex(t *testing.T, unsafe bool, opts MockCLIOpts) (*CodexAgent, *MockCLIResult) {
@@ -1167,4 +1170,31 @@ exit 0
 	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.Error(t, err)
 	assert.True(t, IsUnavailable(err))
+}
+
+func TestCodexSandboxRefusesPlanningAndWrapperFailure(t *testing.T) {
+	for _, planning := range []bool{true, false} {
+		t.Run(fmt.Sprintf("planning=%t", planning), func(t *testing.T) {
+			dir := t.TempDir()
+			marker := filepath.Join(dir, "executed")
+			command := writeTempCommand(t, "#!/bin/sh\ncase \"$1\" in *etxtbsy*) exit 0;; esac\ncase \" $* \" in *' --help '*) echo '"+codexDangerousFlag+" "+codexThreadSourceFlag+"'; exit 0;; esac\n: >'"+marker+"'\n")
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "nono"), []byte("#!/bin/sh\nexit 0\n"), 0o700))
+			t.Setenv("PATH", dir)
+			a := NewCodexAgent(command).WithSandbox(&CodexSandbox{Job: sandbox.Job{WorkDir: dir, MemoryMax: 1 << 30}})
+			a = a.WithModel("test-model").(*CodexAgent)
+			ctx := context.WithValue(context.Background(), planningContextKey{}, planning)
+			_, err := a.Review(ctx, dir, "HEAD", "review", nil)
+			if planning {
+				require.ErrorContains(t, err, "planning requires")
+			} else if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+				require.ErrorContains(t, err, "requires linux/amd64")
+			} else {
+				require.ErrorContains(t, err, "checksum mismatch")
+			}
+			assert.NoFileExists(t, marker)
+			homes, err := filepath.Glob(filepath.Join(dir, ".codex-home-*"))
+			require.NoError(t, err)
+			assert.Empty(t, homes)
+		})
+	}
 }

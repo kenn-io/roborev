@@ -352,6 +352,45 @@ and commands):
 See [Custom Tasks & Agentic Mode](/docs/advanced/custom-tasks/) for details on
 review vs agentic modes.
 
+## Sandboxed Codex runs
+
+The Codex backend can run agentic jobs inside nono. This is an internal API for
+callers that supply a job directory, read-only paths, an explicit environment, a
+memory cap in bytes, and a credential proxy port and key.
+
+The job can write its work directory and read the caller's read-only paths plus
+nono's default system paths. Keep the Git directory outside the work directory
+and grant it read access, so commands can inspect history while commits and
+local configuration changes fail. Put temporary files and writable caches inside
+the work directory too.
+
+Host requirements:
+
+- Linux x86_64.
+- nono 0.80.0 on PATH, using the x86_64-gnu release binary with SHA-256
+    `e02d003d52b3f65e8c75358eb73e339ad952a2876529047e61183b46eff1287d`.
+- A systemd user manager reachable through `XDG_RUNTIME_DIR` and, when needed,
+    `DBUS_SESSION_BUS_ADDRESS`. Each run uses a scope with the caller's
+    `MemoryMax` and `MemorySwapMax=0`.
+- A credential proxy listening on 127.0.0.1 that holds the model login and
+    accepts the caller's client key through the Responses API.
+- Bash and Python 3 at `/usr/bin/python3` for the self-check.
+
+Before each run, roborev verifies nono's checksum and runs a probe under the
+same policy. The probe checks work-directory writes, read-only paths, secret
+reads, network access, environment filtering, and access to the user D-Bus. Any
+mismatch or unenforceable policy stops the run before Codex starts.
+
+Codex runs in agentic mode with a private `CODEX_HOME` inside the job directory.
+Its provider points to the proxy, and its proxy key stays in the private
+configuration file. Web search is disabled. The job receives only its explicit
+environment, and it can reach only the proxy port. The host login and user D-Bus
+stay outside the sandbox. Planning refuses this agentic mode.
+
+Tests that start a loopback server, such as `httptest.NewServer`, fail inside
+this sandbox. Run `make test-sandbox-integration` with nono and Codex on PATH to
+exercise the policy with real binaries and a local stand-in proxy.
+
 ## Pi
 
 Non-agentic Pi reviews use a positive read-only tool allowlist:
