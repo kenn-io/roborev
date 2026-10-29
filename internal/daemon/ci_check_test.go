@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -32,22 +33,21 @@ func TestCICheckApply(t *testing.T) {
 	for _, tc := range []struct {
 		name, raw string
 		want      []string
-		verdict   string
 		bad       bool
 	}{
-		{name: "drop with evidence", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":"build succeeded","reason":"claim refuted"}]}`, want: []string{"second"}, verdict: "pass"},
-		{name: "explicit keep", raw: `{"verdicts":[{"finding":1,"keep":true,"evidence":"failed","reason":"reproduced"}]}`, want: []string{"first", "second"}, verdict: "fail"},
-		{name: "missing verdict", raw: `{"verdicts":[]}`, want: []string{"first", "second"}, verdict: "fail"},
-		{name: "duplicate", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":"ok","reason":"refuted"},{"finding":1,"keep":false,"evidence":"ok","reason":"refuted"}]}`, want: []string{"first", "second"}, verdict: "fail"},
-		{name: "empty evidence", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":" ","reason":"refuted"}]}`, want: []string{"first", "second"}, verdict: "fail"},
-		{name: "empty reason", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":"ok","reason":""}]}`, want: []string{"first", "second"}, verdict: "fail"},
-		{name: "missing keep", raw: `{"verdicts":[{"finding":1,"evidence":"ok","reason":"refuted"}]}`, want: []string{"first", "second"}, verdict: "fail"},
-		{name: "all dropped", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":"ok","reason":"refuted"},{"finding":2,"keep":false,"evidence":"ok","reason":"refuted"}]}`, want: []string{}, verdict: "pass"},
+		{name: "drop with evidence", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":"build succeeded","reason":"claim refuted"}]}`, want: []string{"second"}},
+		{name: "explicit keep", raw: `{"verdicts":[{"finding":1,"keep":true,"evidence":"failed","reason":"reproduced"}]}`, want: []string{"first", "second"}},
+		{name: "missing verdict", raw: `{"verdicts":[]}`, want: []string{"first", "second"}},
+		{name: "duplicate", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":"ok","reason":"refuted"},{"finding":1,"keep":false,"evidence":"ok","reason":"refuted"}]}`, want: []string{"first", "second"}},
+		{name: "empty evidence", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":" ","reason":"refuted"}]}`, want: []string{"first", "second"}},
+		{name: "empty reason", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":"ok","reason":""}]}`, want: []string{"first", "second"}},
+		{name: "missing keep", raw: `{"verdicts":[{"finding":1,"evidence":"ok","reason":"refuted"}]}`, want: []string{"first", "second"}},
+		{name: "all dropped", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":"ok","reason":"refuted"},{"finding":2,"keep":false,"evidence":"ok","reason":"refuted"}]}`, want: []string{}},
 		{name: "malformed", raw: `{"verdicts":`, bad: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var log bytes.Buffer
-			got, err := applyCICheck(doc, jsontext.Value(tc.raw), "high", &log)
+			got, err := applyCICheck(doc, jsontext.Value(tc.raw), &log)
 			if tc.bad {
 				require.Error(t, err)
 				assert.Equal(t, doc, got)
@@ -59,7 +59,6 @@ func TestCICheckApply(t *testing.T) {
 				problems = append(problems, f.Problem)
 			}
 			assert.Equal(t, tc.want, problems)
-			assert.Equal(t, tc.verdict, got.Verdict)
 			if len(got.Findings) < len(doc.Findings) {
 				if len(got.Findings) == 1 {
 					assert.Equal(t, "1 finding.", got.Summary)
@@ -108,6 +107,34 @@ func TestCICheckSnapshot(t *testing.T) {
 	assert.Equal(t, off.PanelMemberConfigJSON, overridden.PanelMemberConfigJSON)
 }
 
+func TestCICheckInvalidReloadReasoning(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	p := &CIPoller{}
+	p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, prompt.PullRequest, *config.RepoConfig, string, *config.Config) (string, error) {
+		return "prompt", nil
+	}
+	cfg := config.DefaultConfig()
+	cfg.CI.Check = true
+	cfg.CI.CheckReasoning = "invalid"
+	var logs bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(previous) })
+	repo, err := tc.DB.GetOrCreateRepo(tc.TmpDir)
+	require.NoError(t, err)
+	members, synth, err := p.buildPanelOpts(t.Context(), buildPanelOptsInput{repo: repo, cfg: cfg, gitRef: "base..head", baseBranch: "main", members: []config.ResolvedMember{{Name: "one", Agent: "test"}}, synth: config.SynthesisSpec{Agent: "test", Instructions: "merge"}})
+	require.NoError(t, err)
+	created, _, job, err := tc.DB.CreateCIPanelRun("example/project", 1, "head", members, synth)
+	require.NoError(t, err)
+	require.True(t, created)
+	job, err = tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	var snapshot synthesisJobConfig
+	require.NoError(t, json.Unmarshal([]byte(job.PanelMemberConfigJSON), &snapshot))
+	assert.Nil(t, snapshot.Check)
+	assert.Contains(t, logs.String(), "CI checker disabled")
+}
+
 func TestCICheckMiseShim(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires shell fixture")
@@ -137,7 +164,7 @@ func TestCICheckStoredReview(t *testing.T) {
 				verdict    *string
 			}
 			results := make(map[string]result)
-			for _, mode := range []string{"off", "failure", "drop"} {
+			for _, mode := range []string{"off", "failure", "drop", "below threshold"} {
 				run, members, _ := enqueuePanelRun(t, tc, "checker-"+mode, []memberSpec{{name: "one", agent: "test"}})
 				setSynthesisAgent(t, tc, run, synthAgent.name)
 				snapshot := synthesisJobConfig{}
@@ -151,6 +178,10 @@ func TestCICheckStoredReview(t *testing.T) {
 				require.NoError(t, err)
 				_, err = tc.DB.Exec("UPDATE review_jobs SET panel_member_config_json = ?, min_severity = 'high' WHERE panel_run_uuid = ? AND panel_role = 'synthesis'", raw, run)
 				require.NoError(t, err)
+				if mode == "below threshold" {
+					_, err = tc.DB.Exec("UPDATE review_jobs SET min_severity = 'critical' WHERE panel_run_uuid = ? AND panel_role = 'synthesis'", run)
+					require.NoError(t, err)
+				}
 				markMemberRunning(t, tc, members[0].ID)
 				require.NoError(t, tc.DB.CompleteJobResult(members[0].ID, "test", storage.ReviewCompletion{Output: "two claims", Verdict: storage.VerdictFail, StructuredOutput: jsontext.Value(synthAgent.result)}))
 				job := releaseAndClaimSynthesis(t, tc, run)
@@ -164,16 +195,21 @@ func TestCICheckStoredReview(t *testing.T) {
 					if mode == "failure" {
 						return structuredreview.Document{}, fmt.Errorf("forced checker failure")
 					}
-					return applyCICheck(doc, jsontext.Value(`{"verdicts":[{"finding":1,"keep":false,"evidence":"build succeeds","reason":"refuted"},{"finding":2,"keep":true,"evidence":"data lost","reason":"reproduced"}]}`), got.MinSeverity, out)
+					return applyCICheck(doc, jsontext.Value(`{"verdicts":[{"finding":1,"keep":false,"evidence":"build succeeds","reason":"refuted"},{"finding":2,"keep":true,"evidence":"data lost","reason":"reproduced"}]}`), out)
 				}
 				tc.Pool.processSynthesisJob(t.Context(), testWorkerID, job)
-				assert.Equal(t, map[bool]int{true: 0, false: 1}[mode == "off"], calls)
+				assert.Equal(t, map[bool]int{true: 0, false: 1}[mode == "off" || mode == "below threshold"], calls)
 				stored, err := tc.DB.GetReviewByJobID(job.ID)
 				require.NoError(t, err)
 				finished, err := tc.DB.GetJobByID(job.ID)
 				require.NoError(t, err)
 				assert.Equal(t, storage.JobStatusDone, finished.Status)
 				results[mode] = result{stored.Output, stored.StructuredOutput, finished.Verdict}
+				if mode == "below threshold" {
+					assert.Contains(t, stored.Output, "Build claim")
+					assert.Contains(t, stored.Output, "Data loss")
+					assert.Equal(t, storage.VerdictPass, stored.Verdict())
+				}
 				if mode == "failure" {
 					log, err := os.ReadFile(JobLogPath(job.ID))
 					require.NoError(t, err)

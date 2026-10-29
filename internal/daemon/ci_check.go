@@ -44,7 +44,7 @@ func (wp *WorkerPool) checkAndCompleteSynthesis(ctx context.Context, workerID st
 	var snapshot synthesisJobConfig
 	if err := json.Unmarshal([]byte(job.PanelMemberConfigJSON), &snapshot); err == nil && snapshot.Check != nil {
 		doc, err := reviewpkg.DecodeStructuredReview(res.review.StructuredOutput)
-		if err == nil && doc.Legacy == nil && !doc.UnableToReview() && len(doc.Findings) > 0 {
+		if err == nil && doc.Legacy == nil && !doc.UnableToReview() && !doc.Passed(job.MinSeverity) {
 			jobLog := newAppendingJobLogWriter(job.ID)
 			defer jobLog.Close()
 			var env []string
@@ -61,11 +61,16 @@ func (wp *WorkerPool) checkAndCompleteSynthesis(ctx context.Context, workerID st
 			if checkErr != nil {
 				fmt.Fprintf(jobLog, "CI checker failed; keeping original review: %v\n", checkErr)
 			} else {
+				passed := checked.Passed(job.MinSeverity)
+				checked.Verdict = structuredreview.VerdictPass
+				if !passed {
+					checked.Verdict = structuredreview.VerdictFail
+				}
 				raw, encodeErr := json.Marshal(checked)
 				if encodeErr == nil {
 					res.review.StructuredOutput = raw
 					res.review.Output = checked.Markdown(job.MinSeverity)
-					res.review.Verdict = reviewpkg.SynthesisVerdict(checked, job.MinSeverity)
+					res.review.Verdict = storage.VerdictFromPassed(passed)
 				}
 			}
 		}
@@ -97,7 +102,7 @@ func (wp *WorkerPool) runCICheck(ctx context.Context, job *storage.ReviewJob, cf
 	if err != nil {
 		return structuredreview.Document{}, fmt.Errorf("run CI checker: %w", err)
 	}
-	return applyCICheck(doc, raw, job.MinSeverity, out)
+	return applyCICheck(doc, raw, out)
 }
 
 // prepareCICheck copies the committed input before warming can update metadata.
@@ -146,6 +151,29 @@ func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob
 		}
 		if filepath.Ext(codex) == ".js" && filepath.Base(filepath.Dir(codex)) == "bin" {
 			readPaths[0] = filepath.Dir(filepath.Dir(codex))
+			// Resolve the optional native package as the npm launcher does.
+			// It may be a sibling package or a package-manager symlink.
+			resolve := exec.CommandContext(ctx, node, "--input-type=module", "-e", `
+import { createRequire } from 'node:module';
+import { dirname } from 'node:path';
+const require = createRequire(process.argv[1]);
+try {
+  console.log(dirname(require.resolve('@openai/codex-' + process.platform + '-' + process.arch + '/package.json')));
+} catch (error) {
+  if (error.code !== 'MODULE_NOT_FOUND') throw error;
+  // The launcher's bundled vendor directory is already granted.
+}
+`, codex)
+			resolve.Dir = root
+			var nativePackage []byte
+			nativePackage, err = resolve.Output()
+			if err != nil {
+				err = fmt.Errorf("resolve checker native package: %w", err)
+				return
+			}
+			if path := strings.TrimSpace(string(nativePackage)); path != "" {
+				readPaths = append(readPaths, path)
+			}
 		}
 		readPaths = append(readPaths, filepath.Dir(node))
 		toolPath = filepath.Dir(node) + string(os.PathListSeparator) + toolPath
@@ -264,7 +292,7 @@ func resolveCICheckCommand(ctx context.Context, dir, name string) (string, error
 	return command, err
 }
 
-func applyCICheck(doc structuredreview.Document, raw jsontext.Value, minSeverity string, out io.Writer) (structuredreview.Document, error) {
+func applyCICheck(doc structuredreview.Document, raw jsontext.Value, out io.Writer) (structuredreview.Document, error) {
 	var response struct {
 		Verdicts []struct {
 			Finding  int    `json:"finding"`
@@ -296,10 +324,6 @@ func applyCICheck(doc structuredreview.Document, raw jsontext.Value, minSeverity
 	doc.Summary = fmt.Sprintf("%d findings.", len(kept))
 	if len(kept) == 1 {
 		doc.Summary = "1 finding."
-	}
-	doc.Verdict = structuredreview.VerdictPass
-	if !doc.Passed(minSeverity) {
-		doc.Verdict = structuredreview.VerdictFail
 	}
 	return doc, nil
 }
