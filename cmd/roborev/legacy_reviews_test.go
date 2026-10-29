@@ -154,12 +154,18 @@ func TestLegacyReviewsExportSchemasAcceptFaithfulConversions(t *testing.T) {
 		})
 	}
 
-	// Live reviewers must still state a kind and confidence.
+	// Live reviewers must still state a kind and confidence. The two
+	// documents differ only in those fields.
 	var live jsonschema.Schema
 	require.NoError(t, json.Unmarshal(structuredreview.Schema, &live))
 	validator, err := live.Resolve(nil)
 	require.NoError(t, err)
-	var value any
-	require.NoError(t, json.Unmarshal([]byte(single), &value))
-	require.Error(t, validator.Validate(value))
+	liveDoc := `{"schema_version":3,"summary":"Live review.","verdict":"fail","findings":[{"severity":"medium","kind":%s,"topic":null,"confidence":%s,"problem":"Retries never stop.","fix":"Cap the retries.","file":null,"start_line":null,"end_line":null}]}`
+	liveValue := func(kind, confidence string) any {
+		var value any
+		require.NoError(t, json.Unmarshal(fmt.Appendf(nil, liveDoc, kind, confidence), &value))
+		return value
+	}
+	require.NoError(t, validator.Validate(liveValue(`"defect"`, "0.8")))
+	require.Error(t, validator.Validate(liveValue("null", "null")))
 }
