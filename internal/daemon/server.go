@@ -1072,6 +1072,7 @@ func (s *Server) afterSyncPullWrite() {
 // processes when superseding stale batches.
 func (s *Server) SetCIPoller(cp *CIPoller) {
 	s.ciPoller = cp
+	s.workerPool.ciGitEnv = cp.gitEnvForRepo
 	cp.errorLog = s.errorLog
 	cp.jobCancelFn = func(jobID int64) {
 		s.workerPool.CancelJob(jobID)

@@ -184,7 +184,7 @@ test-integration:
 	go test -tags=integration ./...
 
 test-sandbox-integration:
-	ROBOREV_RUN_SANDBOX_INTEGRATION=1 go test -tags=integration ./internal/agent ./internal/sandbox -run Sandbox -count=1 -v
+	ROBOREV_RUN_SANDBOX_INTEGRATION=1 go test -tags=integration ./internal/agent ./internal/sandbox ./internal/daemon -run Sandbox -count=1 -v
 
 # ACP adapter integration smoke test (opt-in external dependency)
 # Usage:
