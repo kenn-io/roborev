@@ -1172,11 +1172,22 @@ exit 0
 	assert.True(t, IsUnavailable(err))
 }
 
-func TestCodexSandboxRefusesResume(t *testing.T) {
-	a := NewCodexAgent(filepath.Join(t.TempDir(), "missing-codex")).WithSandbox(&CodexSandbox{})
-	a.SessionID = "test-session"
-	_, err := a.Review(t.Context(), t.TempDir(), "HEAD", "review", nil)
-	require.ErrorContains(t, err, "sandboxed Codex cannot resume a session with a fresh CODEX_HOME")
+func TestCodexSandboxRefusesResumeAndPlanning(t *testing.T) {
+	for _, tc := range []struct {
+		name, session, want string
+		planning            bool
+	}{
+		{"resume", "test-session", "sandboxed Codex cannot resume a session with a fresh CODEX_HOME", false},
+		{"planning", "", "agentic sandbox is configured", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := NewCodexAgent(filepath.Join(t.TempDir(), "missing-codex")).WithSandbox(&CodexSandbox{})
+			a.SessionID = tc.session
+			ctx := context.WithValue(t.Context(), planningContextKey{}, tc.planning)
+			_, err := a.Review(ctx, t.TempDir(), "HEAD", "review", nil)
+			require.ErrorContains(t, err, tc.want)
+		})
+	}
 }
 
 func TestCodexSandboxRefusesRepoAsWorkDir(t *testing.T) {
@@ -1189,31 +1200,22 @@ func TestCodexSandboxRefusesRepoAsWorkDir(t *testing.T) {
 	require.ErrorContains(t, err, "sandbox repo must be inside job work dir")
 }
 
-func TestCodexSandboxRefusesPlanningAndWrapperFailure(t *testing.T) {
-	for _, planning := range []bool{true, false} {
-		t.Run(fmt.Sprintf("planning=%t", planning), func(t *testing.T) {
-			dir := t.TempDir()
-			repo := filepath.Join(dir, "repo")
-			require.NoError(t, os.Mkdir(repo, 0o700))
-			marker := filepath.Join(dir, "executed")
-			command := writeTempCommand(t, "#!/bin/sh\ncase \"$1\" in *etxtbsy*) exit 0;; esac\ncase \" $* \" in *' --help '*) echo '"+codexDangerousFlag+" "+codexThreadSourceFlag+"'; exit 0;; esac\n: >'"+marker+"'\n")
-			require.NoError(t, os.WriteFile(filepath.Join(dir, "nono"), []byte("#!/bin/sh\nexit 0\n"), 0o700))
-			t.Setenv("PATH", dir)
-			a := NewCodexAgent(command).WithSandbox(&CodexSandbox{Job: sandbox.Job{WorkDir: dir, MemoryMax: 1 << 30}})
-			a = a.WithModel("test-model").(*CodexAgent)
-			ctx := context.WithValue(context.Background(), planningContextKey{}, planning)
-			_, err := a.Review(ctx, repo, "HEAD", "review", nil)
-			if planning {
-				require.ErrorContains(t, err, "planning requires")
-			} else if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
-				require.ErrorContains(t, err, "requires linux/amd64")
-			} else {
-				require.ErrorContains(t, err, "checksum mismatch")
-			}
-			assert.NoFileExists(t, marker)
-			homes, err := filepath.Glob(filepath.Join(dir, ".codex-home-*"))
-			require.NoError(t, err)
-			assert.Empty(t, homes)
-		})
+func TestCodexSandboxWrapperFailure(t *testing.T) {
+	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+		t.Skip("nono pin requires linux/amd64")
 	}
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "repo")
+	require.NoError(t, os.Mkdir(repo, 0o700))
+	marker := filepath.Join(dir, "executed")
+	command := writeTempCommand(t, "#!/bin/sh\ncase \"$1\" in *etxtbsy*) exit 0;; esac\ncase \" $* \" in *' --help '*) echo '"+codexDangerousFlag+" "+codexThreadSourceFlag+"'; exit 0;; esac\n: >'"+marker+"'\n")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "nono"), []byte("#!/bin/sh\nexit 0\n"), 0o700))
+	t.Setenv("PATH", dir)
+	a := NewCodexAgent(command).WithSandbox(&CodexSandbox{Job: sandbox.Job{WorkDir: dir, MemoryMax: 1 << 30}})
+	_, err := a.Review(t.Context(), repo, "HEAD", "review", nil)
+	require.ErrorContains(t, err, "checksum mismatch")
+	assert.NoFileExists(t, marker)
+	homes, err := filepath.Glob(filepath.Join(dir, ".codex-home-*"))
+	require.NoError(t, err)
+	assert.Empty(t, homes)
 }

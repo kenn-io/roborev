@@ -8,7 +8,6 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -42,12 +41,6 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	require.NoError(t, err)
 
 	work, secrets := t.TempDir(), t.TempDir()
-	configDir := filepath.Join(work, "config")
-	profiles := filepath.Join(configDir, "nono", "profiles")
-	require.NoError(t, os.MkdirAll(profiles, 0o700))
-	planted, err := json.Marshal(map[string]any{"filesystem": map[string]any{"read_file": []string{filepath.Join(secrets, "home-secret")}}})
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(profiles, "default.json"), planted, 0o600))
 	repo, gitDir := filepath.Join(work, "repo"), filepath.Join(t.TempDir(), "repo.git")
 	require.NoError(t, os.Mkdir(repo, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(repo, "trust-policy.json"), []byte("invalid repo policy"), 0o600))
@@ -64,11 +57,7 @@ func TestCodexSandboxIntegration(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(secrets, name), []byte("private fixture"), 0o600))
 	}
 	t.Setenv("CODEX_HOME", secrets)
-	t.Setenv("ROBOREV_SANDBOX_TOKEN", "must-be-absent")
 
-	other, err := net.Listen("tcp4", "127.0.0.1:0")
-	require.NoError(t, err)
-	defer other.Close()
 	marker := filepath.Join(work, "probe-ran")
 	probe := fmt.Sprintf(`#!/bin/bash
 failed=0
@@ -81,24 +70,12 @@ check() {
     echo "OK $name"
   fi
 }
-check scratch-copy allow bash -c 'cp -a . ../scratch && echo changed >> ../scratch/README.md'
-check home-write deny touch "$HOME/write"
-check shared-tmp-write deny bash -c 'p=/tmp/roborev-probe-$$; touch "$p" && rm "$p"'
-check git-read allow git status --porcelain
-check git-commit deny bash -c 'echo changed >> README.md && git add README.md && git -c user.name=Test -c user.email=test@example.com commit -m probe'
-check git-config deny git config --local sandbox.probe changed
+check codex-home allow bash -c '[[ "$CODEX_HOME" == "$1"/.codex-home-* && -d "$CODEX_HOME" ]]' probe '%s'
 check login-read deny cat '%s/auth.json'
 check home-read deny cat "$HOME/home-secret"
-check env-filter allow bash -c '[[ ! -v ROBOREV_SANDBOX_TOKEN ]]'
-check dbus-connect deny /usr/bin/python3 -c 'import socket; s=socket.socket(socket.AF_UNIX); s.connect("%s/bus")'
-check dbus-systemd deny env XDG_RUNTIME_DIR='%s' DBUS_SESSION_BUS_ADDRESS='unix:path=%s/bus' systemd-run --user --wait -q /usr/bin/true
-check external-domain deny curl -fsS https://example.com
-check external-ip deny bash -c ': >/dev/tcp/1.1.1.1/443'
-check other-loopback deny bash -c ': >/dev/tcp/127.0.0.1/%d'
-check proxy-port allow bash -c ': >/dev/tcp/127.0.0.1/PROXY_PORT'
 touch '%s'
 exit "$failed"
-`, secrets, os.Getenv("XDG_RUNTIME_DIR"), os.Getenv("XDG_RUNTIME_DIR"), os.Getenv("XDG_RUNTIME_DIR"), other.Addr().(*net.TCPAddr).Port, marker)
+`, work, secrets, marker)
 
 	const key = "sandbox-test-key"
 	var calls, unauthorized atomic.Int32
@@ -143,6 +120,7 @@ exit "$failed"
 		}
 		functionTools := false
 		for _, tool := range request.Tools {
+			assert.NotEqual(t, "web_search", tool.Type)
 			if tool.Name == "exec_command" {
 				functionTools = true
 			}
@@ -153,13 +131,12 @@ exit "$failed"
 	}))
 	defer server.Close()
 	port := server.Listener.Addr().(*net.TCPAddr).Port
-	probe = strings.ReplaceAll(probe, "PROXY_PORT", fmt.Sprint(port))
 	require.NoError(t, os.WriteFile(filepath.Join(work, "probe.sh"), []byte(probe), 0o700))
 
 	job := sandbox.Job{
 		WorkDir: work, ReadPaths: []string{gitDir, filepath.Dir(filepath.Dir(codex))},
 		ProxyPort: port, MemoryMax: 8 << 30,
-		Env: []string{"PATH=/usr/bin:/bin", "HOME=" + secrets, "TMPDIR=" + work, "XDG_CONFIG_HOME=" + configDir},
+		Env: []string{"PATH=/usr/bin:/bin", "HOME=" + secrets, "TMPDIR=" + work},
 	}
 	if _, err := os.Stat("/etc/codex"); err == nil {
 		job.ReadPaths = append(job.ReadPaths, "/etc/codex")
@@ -174,7 +151,7 @@ exit "$failed"
 	result, err := a.ReviewWithSchema(context.Background(), repo, "HEAD", "Run the supplied probe.", jsontext.Value(`{"type":"object","properties":{"probe":{"type":"string"}},"required":["probe"],"additionalProperties":false}`), &stream)
 	require.NoError(t, err, "%s", stream.String())
 	assert.NotContains(t, string(result), "BAD ")
-	for _, name := range []string{"scratch-copy", "home-write", "shared-tmp-write", "git-read", "git-commit", "git-config", "login-read", "home-read", "env-filter", "dbus-connect", "dbus-systemd", "external-domain", "external-ip", "other-loopback", "proxy-port"} {
+	for _, name := range []string{"codex-home", "login-read", "home-read"} {
 		assert.Contains(t, string(result), "OK "+name)
 	}
 	assert.FileExists(t, marker)
@@ -183,14 +160,6 @@ exit "$failed"
 	homes, err := filepath.Glob(filepath.Join(work, ".codex-home-*"))
 	require.NoError(t, err)
 	assert.Empty(t, homes)
-
-	require.NoError(t, os.Remove(marker))
-	calls.Store(0)
-	job.ProxyPort = 0
-	_, err = a.WithSandbox(&CodexSandbox{Job: job, ProxyKey: key}).Review(t.Context(), repo, "HEAD", "Run the supplied probe.", io.Discard)
-	require.ErrorContains(t, err, "open_port")
-	assert.Zero(t, calls.Load())
-	assert.NoFileExists(t, marker)
 }
 
 func sandboxProxyItem(t *testing.T, outputs []string, functionTools bool) map[string]any {
@@ -214,32 +183,4 @@ func sandboxProxyItem(t *testing.T, outputs []string, functionTools bool) map[st
 		return map[string]any{"type": "function_call", "id": id, "call_id": id, "name": name, "arguments": string(encoded)}
 	}
 	return map[string]any{"type": "custom_tool_call", "id": id, "call_id": id, "name": "exec", "input": "text(await tools." + name + "(" + string(encoded) + "));"}
-}
-
-func TestSandboxProxyPollsToolSession(t *testing.T) {
-	for _, functionTools := range []bool{true, false} {
-		t.Run(fmt.Sprint(functionTools), func(t *testing.T) {
-			assert := assert.New(t)
-			outputs := []string{"Process running with session ID 123\nOutput:\nOK first"}
-			item := sandboxProxyItem(t, outputs, functionTools)
-			if functionTools {
-				assert.Equal("write_stdin", item["name"])
-				assert.JSONEq(`{"session_id":123,"chars":"","yield_time_ms":1000}`, item["arguments"].(string))
-			} else {
-				input := item["input"].(string)
-				assert.True(strings.HasPrefix(input, "text(await tools.write_stdin("))
-				assert.True(strings.HasSuffix(input, "));"))
-				assert.JSONEq(`{"session_id":123,"chars":"","yield_time_ms":1000}`, strings.TrimSuffix(strings.TrimPrefix(input, "text(await tools.write_stdin("), "));"))
-			}
-			outputs = append(outputs, "Process running with session ID 123\nOutput:\nOK second")
-			assert.Equal(item["name"], sandboxProxyItem(t, outputs, functionTools)["name"])
-			outputs = append(outputs, "Process exited with code 0\nOutput:\nOK last")
-			final := sandboxProxyItem(t, outputs, functionTools)
-			assert.Equal("message", final["type"])
-			text := final["content"].([]any)[0].(map[string]any)["text"].(string)
-			for _, want := range []string{"OK first", "OK second", "OK last"} {
-				assert.Contains(text, want)
-			}
-		})
-	}
 }

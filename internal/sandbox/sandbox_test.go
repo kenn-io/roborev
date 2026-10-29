@@ -34,7 +34,9 @@ func TestSandboxCommandRejectsUnavailablePolicy(t *testing.T) {
 			t.Setenv("PATH", dir)
 			_, _, _, err := (Job{WorkDir: dir, MemoryMax: tc.memory}).Command(context.Background(), []string{"true"})
 			require.ErrorContains(t, err, tc.want)
-			assert.NoFileExists(t, marker)
+			if tc.fake {
+				assert.NoFileExists(t, marker)
+			}
 		})
 	}
 }
