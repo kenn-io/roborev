@@ -13,6 +13,9 @@ import (
 	"strings"
 	"time"
 
+	gitcmd "go.kenn.io/kit/git/cmd"
+	gitworktree "go.kenn.io/kit/git/worktree"
+
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	reviewpkg "go.kenn.io/roborev/internal/review"
@@ -71,10 +74,10 @@ func (wp *WorkerPool) checkAndCompleteSynthesis(ctx context.Context, workerID st
 				}
 			}
 		}
-	}
-	if errors.Is(ctx.Err(), context.Canceled) {
-		wp.handleUpdateInterruption(ctx, workerID, job)
-		return
+		if errors.Is(ctx.Err(), context.Canceled) {
+			wp.handleUpdateInterruption(ctx, workerID, job)
+			return
+		}
 	}
 	wp.completeSynthesisContext(workerID, job, res)
 }
@@ -83,75 +86,78 @@ func (wp *WorkerPool) checkAndCompleteSynthesis(ctx context.Context, workerID st
 func runCICheck(ctx context.Context, job *storage.ReviewJob, cfg ciCheckConfig, doc structuredreview.Document, keyPath string, gitEnv []string, out io.Writer) (structuredreview.Document, error) {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Minute)
 	defer cancel()
-	if cfg.Agent != "" && cfg.Agent != "codex" {
-		return doc, fmt.Errorf("CI checker requires codex")
-	}
 	key, err := os.ReadFile(keyPath)
 	if err != nil {
-		return doc, fmt.Errorf("read credential proxy key: %w", err)
+		return structuredreview.Document{}, fmt.Errorf("read credential proxy key: %w", err)
 	}
 	if strings.TrimSpace(string(key)) == "" {
-		return doc, fmt.Errorf("credential proxy key is empty")
+		return structuredreview.Document{}, fmt.Errorf("credential proxy key is empty")
 	}
 	root, err := os.MkdirTemp("", "roborev-ci-check-*")
 	if err != nil {
-		return doc, err
+		return structuredreview.Document{}, err
 	}
 	defer os.RemoveAll(root)
 	work, gitDir := filepath.Join(root, "work"), filepath.Join(root, "git")
-	repo := filepath.Join(work, "repo")
+	clone := filepath.Join(root, "clone")
 	if err := os.MkdirAll(work, 0o700); err != nil {
-		return doc, err
+		return structuredreview.Document{}, err
 	}
 	// Explicit git dirs and a clean config keep host git operations independent of
 	// both the caller's environment and the checkout's .git file.
-	hostEnv := make([]string, 0)
-	for _, entry := range os.Environ() {
-		if !strings.HasPrefix(entry, "GIT_") {
-			hostEnv = append(hostEnv, entry)
-		}
-	}
-	hostEnv = append(hostEnv, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+	runner := gitcmd.New().WithConfig("core.hooksPath", os.DevNull)
 	gitRun := func(dir string, args ...string) error {
-		argv := append([]string{"--git-dir=" + dir, "-c", "core.hooksPath=/dev/null"}, args...)
-		cmd := exec.CommandContext(ctx, "git", argv...)
-		cmd.Env = hostEnv
-		data, err := cmd.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("checker git %s: %w: %s", args[0], err, data)
-		}
-		return nil
+		_, _, err := runner.Run(ctx, root, nil, append([]string{"--git-dir=" + dir}, args...)...)
+		return err
 	}
-	if err := gitRun(filepath.Join(job.RepoPath, ".git"), "clone", "--local", "--no-hardlinks", "--no-checkout", "--separate-git-dir="+gitDir, job.RepoPath, repo); err != nil {
-		return doc, err
+	if err := gitRun(filepath.Join(job.RepoPath, ".git"), "clone", "--local", "--no-hardlinks", "--no-checkout", "--separate-git-dir="+gitDir, job.RepoPath, clone); err != nil {
+		return structuredreview.Document{}, err
 	}
-	if err := gitRun(gitDir, "--work-tree="+repo, "checkout", "--detach", headOf(job.GitRef)); err != nil {
-		return doc, err
+	wt, err := createWorkerWorktree(ctx, clone, headOf(job.GitRef), gitworktree.Options{
+		ParentDir: work, Prefix: "repo-", InitSubmodules: true, Runner: runner,
+	})
+	if err != nil {
+		return structuredreview.Document{}, err
 	}
+	repo := wt.Dir
 	base, _, ranged := strings.Cut(job.GitRef, "..")
 	if !ranged {
-		return doc, fmt.Errorf("CI checker requires frozen base..head range")
+		return structuredreview.Document{}, fmt.Errorf("CI checker requires frozen base..head range")
 	}
 	if job.CIBaseBranch == "" {
-		return doc, fmt.Errorf("CI checker requires base branch")
+		return structuredreview.Document{}, fmt.Errorf("CI checker requires base branch")
 	}
 	if err := gitRun(gitDir, "update-ref", "refs/remotes/origin/"+job.CIBaseBranch, base); err != nil {
-		return doc, err
+		return structuredreview.Document{}, err
 	}
 	if err := os.WriteFile(filepath.Join(work, "findings.md"), []byte(doc.Markdown(job.MinSeverity)), 0o600); err != nil {
-		return doc, err
+		return structuredreview.Document{}, err
 	}
 	goEnv := exec.CommandContext(ctx, "go", "env", "GOROOT", "GOMODCACHE")
 	goEnv.Dir = root
 	data, err := goEnv.Output()
 	if err != nil {
-		return doc, fmt.Errorf("checker go env: %w", err)
+		return structuredreview.Document{}, fmt.Errorf("checker go env: %w", err)
 	}
 	paths := strings.Split(strings.TrimSpace(string(data)), "\n")
 	if len(paths) != 2 {
-		return doc, fmt.Errorf("checker go env returned incomplete paths")
+		return structuredreview.Document{}, fmt.Errorf("checker go env returned incomplete paths")
 	}
 	goroot, modcache := paths[0], paths[1]
+	// Go reads and updates checksum files before sandbox entry. Refuse linked
+	// module metadata so those host operations stay in the disposable checkout.
+	for _, name := range []string{"go.mod", "go.work", "go.sum", "go.work.sum"} {
+		info, err := os.Lstat(filepath.Join(repo, name))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return structuredreview.Document{}, err
+		}
+		if !info.Mode().IsRegular() {
+			return structuredreview.Document{}, fmt.Errorf("checker module metadata %s must be a regular file", name)
+		}
+	}
 	for _, name := range []string{"go.mod", "go.work"} {
 		if _, err := os.Stat(filepath.Join(repo, name)); err == nil {
 			sum := filepath.Join(repo, "go.sum")
@@ -173,60 +179,76 @@ func runCICheck(ctx context.Context, job *storage.ReviewJob, cfg ciCheckConfig, 
 				err = readErr
 			}
 			if err != nil {
-				return doc, fmt.Errorf("restore go.sum: %w", err)
+				return structuredreview.Document{}, fmt.Errorf("restore go.sum: %w", err)
 			}
 			break
 		}
 	}
-	codex, err := exec.LookPath("codex")
-	if err == nil {
-		codex, err = filepath.EvalSymlinks(codex)
-	}
+	codex, err := resolveCICheckCommand(ctx, root, "codex")
 	if err != nil {
-		return doc, fmt.Errorf("find checker codex: %w", err)
+		return structuredreview.Document{}, fmt.Errorf("find checker codex: %w", err)
 	}
 	readPaths := []string{gitDir, goroot, modcache, filepath.Dir(filepath.Dir(codex))}
+	toolPath := filepath.Join(goroot, "bin") + string(os.PathListSeparator) + os.Getenv("PATH")
 	// Codex loads its system config even with a fresh CODEX_HOME.
 	if _, err := os.Stat("/etc/codex"); err == nil {
 		readPaths = append(readPaths, "/etc/codex")
 	} else if !os.IsNotExist(err) {
-		return doc, err
+		return structuredreview.Document{}, err
 	}
 	// npm's launcher needs node as well as the Codex package.
 	if header, err := os.ReadFile(codex); err == nil && strings.HasPrefix(string(header), "#!") {
-		node, err := exec.LookPath("node")
-		if err == nil {
-			node, err = filepath.EvalSymlinks(node)
-		}
+		node, err := resolveCICheckCommand(ctx, root, "node")
 		if err != nil {
-			return doc, fmt.Errorf("find checker node: %w", err)
+			return structuredreview.Document{}, fmt.Errorf("find checker node: %w", err)
 		}
 		readPaths = append(readPaths, filepath.Dir(filepath.Dir(node)))
+		toolPath = filepath.Dir(node) + string(os.PathListSeparator) + toolPath
 	}
 	// nono protects HOME/.nono, so HOME must sit outside its writable grant.
 	if err := os.Mkdir(filepath.Join(root, "home"), 0o700); err != nil {
-		return doc, err
+		return structuredreview.Document{}, err
 	}
 	for _, dir := range []string{"tmp", "gocache"} {
 		if err := os.Mkdir(filepath.Join(work, dir), 0o700); err != nil {
-			return doc, err
+			return structuredreview.Document{}, err
 		}
 	}
 	sandboxJob := sandbox.Job{
 		WorkDir: work, ReadPaths: readPaths, ProxyPort: 8317,
 		// Matches the checker evaluation's 8 GiB process budget.
 		MemoryMax: 8 << 30,
-		Env:       []string{"PATH=" + filepath.Join(goroot, "bin") + ":" + os.Getenv("PATH"), "HOME=" + filepath.Join(root, "home"), "TMPDIR=" + filepath.Join(work, "tmp"), "GOCACHE=" + filepath.Join(work, "gocache"), "GOMODCACHE=" + modcache, "GOPROXY=off", "LANG=C.UTF-8", "TERM=dumb"},
+		Env:       []string{"PATH=" + toolPath, "HOME=" + filepath.Join(root, "home"), "TMPDIR=" + filepath.Join(work, "tmp"), "GOCACHE=" + filepath.Join(work, "gocache"), "GOMODCACHE=" + modcache, "GOPROXY=off", "LANG=C.UTF-8", "TERM=dumb"},
 	}
 	a := agent.NewCodexAgent(codex).WithSandbox(&agent.CodexSandbox{Job: sandboxJob, ProxyKey: strings.TrimSpace(string(key))})
 	a.IgnoreUserConfig = true
 	a.Model = cfg.Model
-	a.Reasoning = agent.ParseReasoningLevel(cfg.Reasoning)
+	reasoning, _ := config.NormalizeReasoning(cfg.Reasoning)
+	a.Reasoning = agent.ParseReasoningLevel(reasoning)
 	raw, err := a.ReviewWithSchema(ctx, repo, job.GitRef, fmt.Sprintf(ciCheckPrompt, job.CIBaseBranch), ciCheckSchema, out)
 	if err != nil {
-		return doc, fmt.Errorf("run CI checker: %w", err)
+		return structuredreview.Document{}, fmt.Errorf("run CI checker: %w", err)
 	}
 	return applyCICheck(doc, raw, job.MinSeverity, out)
+}
+
+func resolveCICheckCommand(ctx context.Context, dir, name string) (string, error) {
+	command, err := exec.LookPath(name)
+	if err == nil {
+		command, err = filepath.EvalSymlinks(command)
+	}
+	// mise's symlink shims dispatch by argv[0]. Resolve the installed command
+	// outside the checkout, where repository-owned mise config cannot select it.
+	if err == nil && filepath.Base(command) == "mise" {
+		which := exec.CommandContext(ctx, command, "which", name)
+		which.Dir = dir
+		path, err := which.Output()
+		if err != nil {
+			return "", err
+		}
+		return filepath.EvalSymlinks(strings.TrimSpace(string(path)))
+	}
+	return command, err
 }
 
 func applyCICheck(doc structuredreview.Document, raw jsontext.Value, minSeverity string, out io.Writer) (structuredreview.Document, error) {
@@ -258,14 +280,13 @@ func applyCICheck(doc structuredreview.Document, raw jsontext.Value, minSeverity
 		return doc, nil
 	}
 	doc.Findings = kept
-	if len(kept) == 0 {
-		doc.Summary = "No issues found."
-		doc.Verdict = structuredreview.VerdictPass
-	} else {
-		doc.Verdict = structuredreview.VerdictPass
-		if !doc.Passed(minSeverity) {
-			doc.Verdict = structuredreview.VerdictFail
-		}
+	doc.Summary = fmt.Sprintf("%d findings.", len(kept))
+	if len(kept) == 1 {
+		doc.Summary = "1 finding."
+	}
+	doc.Verdict = structuredreview.VerdictPass
+	if !doc.Passed(minSeverity) {
+		doc.Verdict = structuredreview.VerdictFail
 	}
 	return doc, nil
 }

@@ -4,7 +4,6 @@ package daemon
 
 import (
 	"encoding/json/v2"
-	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/config"
+	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/pkg/structuredreview"
@@ -54,6 +54,16 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
+		var request struct {
+			Reasoning struct {
+				Effort string `json:"effort"`
+			} `json:"reasoning"`
+		}
+		if err := json.UnmarshalRead(r.Body, &request); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		assert.Equal(t, "high", request.Reasoning.Effort)
 		found, err := filepath.Glob(filepath.Join(os.TempDir(), "roborev-ci-check-*"))
 		assert.NoError(t, err)
 		for _, root := range found {
@@ -68,20 +78,7 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 			}
 		}
 		const final = `{"verdicts":[{"finding":1,"keep":false,"evidence":"go build succeeded","reason":"Build claim refuted"},{"finding":2,"keep":true,"evidence":"test reproduced data loss","reason":"Data is lost"}]}`
-		w.Header().Set("Content-Type", "text/event-stream")
-		for _, event := range []struct {
-			name  string
-			value any
-		}{
-			{"response.created", map[string]any{"type": "response.created", "response": map[string]any{"id": "resp_test"}}},
-			{"response.output_item.done", map[string]any{"type": "response.output_item.done", "item": map[string]any{"type": "message", "role": "assistant", "id": "msg_test", "content": []any{map[string]any{"type": "output_text", "text": final}}}}},
-			{"response.completed", map[string]any{"type": "response.completed", "response": map[string]any{"id": "resp_test", "usage": map[string]int{"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}}}},
-		} {
-			raw, err := json.Marshal(event.value)
-			assert.NoError(t, err)
-			_, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.name, raw)
-			assert.NoError(t, err)
-		}
+		testutil.WriteCodexResponse(t, w, map[string]any{"type": "message", "role": "assistant", "id": "msg_test", "content": []any{map[string]any{"type": "output_text", "text": final}}})
 	}))
 	// Replace the unused listener allocated by httptest before starting.
 	require.NoError(t, server.Listener.Close())
@@ -89,12 +86,15 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 	server.Start()
 	defer server.Close()
 	run, members, _ := enqueuePanelRun(t, tc, "checker-panel", []memberSpec{{name: "one", agent: "test"}})
-	snapshot, err := synthesisJobConfig{Check: &ciCheckConfig{Model: "test-model"}}.encode()
+	cfg := config.DefaultConfig()
+	cfg.CI.CheckReasoning = " HIGH "
+	require.NoError(t, cfg.Validate())
+	snapshot, err := synthesisJobConfig{Check: &ciCheckConfig{Model: "test-model", Reasoning: cfg.CI.CheckReasoning}}.encode()
 	require.NoError(t, err)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	_, err = tc.DB.Exec("UPDATE review_jobs SET panel_member_config_json = ?, git_ref = ?, ci_base_branch = 'main' WHERE panel_run_uuid = ? AND panel_role = 'synthesis'", snapshot, sha+".."+sha, run)
 	require.NoError(t, err)
-	doc := structuredreview.Document{SchemaVersion: 3, Summary: "Two findings", Verdict: "fail", Findings: []structuredreview.Finding{{Severity: "high", Problem: "build claim", Fix: "fix"}, {Severity: "medium", Problem: "data loss", Fix: "fix"}}}
+	doc := structuredreview.Document{SchemaVersion: 3, Summary: "The build claim and data loss need fixes", Verdict: "fail", Findings: []structuredreview.Finding{{Severity: "high", Problem: "build claim", Fix: "fix"}, {Severity: "medium", Problem: "data loss", Fix: "fix"}}}
 	raw, err := json.Marshal(doc)
 	require.NoError(t, err)
 	markMemberRunning(t, tc, members[0].ID)
@@ -107,6 +107,12 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 	require.NoError(t, logErr)
 	assert.NotContains(t, string(log), "CI checker failed")
 	assert.NotContains(t, review.Output, "build claim", string(log))
+	stored, err := json.Marshal(review.StructuredOutput)
+	require.NoError(t, err)
+	checked, err := reviewpkg.DecodeStructuredReview(stored)
+	require.NoError(t, err)
+	assert.Equal(t, "1 finding.", checked.Summary)
+	assert.Equal(t, structuredreview.VerdictFail, checked.Verdict)
 	assert.Contains(t, review.Output, "data loss")
 	require.NotEmpty(t, roots, string(log))
 	for _, root := range roots {
