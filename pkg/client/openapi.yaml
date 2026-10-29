@@ -2065,6 +2065,9 @@ components:
             - "null"
         name:
           type: string
+        non_voting:
+          description: True when the panel member is advisory and does not affect the panel verdict.
+          type: boolean
         resume_source_job_uuid:
           format: uuid
           type:
@@ -2083,6 +2086,7 @@ components:
       required:
         - review_id
         - name
+        - non_voting
         - agent
         - model
         - review_type
