@@ -217,7 +217,14 @@ For each finding:
      mechanism.
 5. Give the finding exactly one disposition:
    - **Fix**: a reachable defect with real harm, removable by a small change
-     inside the current task. Make the smallest change you found in item 4.
+     inside the current task. For a claim about wrong behavior in code the
+     repository already tests, first write the smallest test of the reported
+     behavior and run it on the unfixed code. It must fail on the behavior
+     assertion, not on setup, compilation, imports, missing fixtures, or a
+     timeout. If it passes, mark the finding Invalid and cite the test.
+     Otherwise, make the smallest change you found in item 4 and rerun the
+     test. Skip this reproduction step for docs, config, performance, or code
+     with no test harness; make the smallest change from item 4.
    - **Decline**: true, but not worth its cost now. Typical cases: hardening
      for paths nothing reaches; compatibility, migration, or fallback code for
      behavior that has not shipped; new size, count, or time limits without
@@ -236,6 +243,11 @@ a previous review means a fix spiral has started. Fix it only if it is a
 regression that the earlier fix introduced. Otherwise, simplify or revert the
 earlier addition, or mark it Ask. Findings against the same fix code in three
 reviews mean the approach is wrong: mark them Ask.
+
+For Invalid and Decline, cite `file:line` plus what that code does, or the
+exact command you ran plus the line of output that disproves the finding.
+For Decline, keep the reason it is not worth fixing too. "Verified" or
+"I checked" alone is not evidence.
 
 Triage is complete when every finding in every candidate review has one
 disposition with its reason or evidence written down. Then apply the Fix
@@ -258,13 +270,13 @@ Decline, or Invalid. A review with any Ask finding stays open.
 
 For each closable review, record a comment with one line per finding: its
 severity, file, disposition, and what changed, why it was declined, or the
-evidence that it is invalid. Then close the review. Run these as **separate
-commands**, and only run `roborev close --from-skill` after confirming the
-comment succeeded:
+evidence that it is invalid. For Fix, name the test or command that now
+passes. Then close the review. Run these as **separate commands**, and only
+run `roborev close --from-skill` after confirming the comment succeeded:
 
 ```bash
 roborev comment --from-skill --commenter roborev-fix --job <job_id> -m "$(cat <<'ROBOREV_COMMENT'
-<one line per finding: severity, file, disposition, reason>
+- <severity> <file>: <Fix|Decline|Invalid|Ask>: <reason>
 ROBOREV_COMMENT
 )"
 # Only if the comment above succeeded:
@@ -330,7 +342,7 @@ Agent:
    a stale validation claim with the current code
 5. Runs `go test ./...` to verify
 6. Records comments and closes reviews:
-   - Records a heredoc comment for job 1019 with one line per finding: the fixed nil dereference and the declined retry limit
+   - Records a heredoc comment for job 1019 with one line per finding: the fixed nil dereference with the test that now passes, and the declined retry limit
    - `roborev close --from-skill 1019`
    - Records a heredoc comment for job 1021 with the evidence that its validation finding is stale
    - `roborev close --from-skill 1021`
@@ -348,7 +360,7 @@ Agent:
    one-line reason
 4. Runs `go test ./...` to verify
 5. Records comment and closes review:
-   - Records a heredoc comment for job 1019 with one line per finding: the fixed null check in `foo.go` and why the `bar.go` hardening was declined
+   - Records a heredoc comment for job 1019 with one line per finding: the fixed null check in `foo.go` with the test that now passes, and why the `bar.go` hardening was declined
    - `roborev close --from-skill 1019`
 6. Commits the changes per project conventions, or commits before step 5 if repository policy requires a SHA in close comments
 7. Audits job 1019 with `roborev show --from-skill --job 1019 --json` and verifies `closed=true`

@@ -27,7 +27,10 @@ For every selected review, the agent:
    what harm follows, and the smallest change that removes it. Each finding
    gets one disposition:
    - Fix: a reachable defect with real harm, removable by a small change inside
-     the current task. The agent makes that change and verifies it.
+     the current task. When the repository already tests that code, the agent
+     first writes a test that fails on the reported behavior. If the test
+     passes, the finding is Invalid. Otherwise the agent makes the change and
+     reruns the test.
    - Decline: true, but not worth its cost now, such as hardening for paths
      nothing reaches or design-review "missing considerations". The agent
      records why.
@@ -36,8 +39,14 @@ For every selected review, the agent:
    - Ask: outside the current task, unclear in scope, or a fix that adds new
      surface such as an endpoint, schema, or config option. The agent leaves
      the review open and asks the user.
-1. Comments with one line per finding, then closes a review when every finding
-   is Fix, Decline, or Invalid. Reviews with an Ask finding remain open.
+1. Cites evidence for every Decline and Invalid: a `file:line` and what that
+   code does, or a command and the output line that disproves the finding.
+   "I checked" alone is not evidence.
+1. Comments with one line per finding in the shape
+   `- <severity> <file>: <Fix|Decline|Invalid|Ask>: <reason>`. A Fix line names
+   the test or command that now passes. The agent then closes a review when
+   every finding is Fix, Decline, or Invalid. Reviews with an Ask finding
+   remain open.
 1. Audits the original job IDs and lists every Ask finding in its final
    response.
 
