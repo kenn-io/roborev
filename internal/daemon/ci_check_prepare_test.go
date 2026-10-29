@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -95,6 +97,43 @@ func TestCICheckPreparation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, hostPath, target)
 	assert.NoFileExists(t, hostPath)
+}
+
+func TestCICheckPreparationSubmoduleBuild(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires cp")
+	}
+	t.Setenv("GOWORK", "off")
+	t.Setenv("GOPROXY", "off")
+	sub := testutil.NewTestRepoWithCommit(t)
+	repo := testutil.NewTestRepoWithCommit(t)
+	repo.RunGit("-c", "protocol.file.allow=always", "submodule", "add", sub.Root, "dependency")
+	repo.RunGit("commit", "-am", "add submodule")
+	repo.CommitFile("go.mod", "module example.com/check\n\ngo 1.24.0\n", "module")
+	buildDir := t.TempDir()
+	build := exec.CommandContext(t.Context(), "go", "build", "-o", filepath.Join(buildDir, "original"), ".")
+	build.Dir = repo.Root
+	output, err := build.CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	wantHead := sub.HeadSHA()
+
+	command := filepath.Join(t.TempDir(), "codex")
+	require.NoError(t, os.WriteFile(command, []byte("native fixture"), 0o700))
+	sha := testutil.GetHeadSHA(t, repo.Root)
+	wp := &WorkerPool{}
+	run, err := wp.prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}, command, nil, io.Discard)
+	require.NoError(t, err)
+	t.Cleanup(run.cleanup)
+
+	git := exec.CommandContext(t.Context(), "git", "-C", filepath.Join(run.Repo, "dependency"), "rev-parse", "HEAD")
+	output, err = git.CombinedOutput()
+	if assert.NoError(t, err, "%s", output) {
+		assert.Equal(t, wantHead, strings.TrimSpace(string(output)))
+	}
+	build = exec.CommandContext(t.Context(), "go", "build", "-o", filepath.Join(buildDir, "copy"), ".")
+	build.Dir = run.Repo
+	output, err = build.CombinedOutput()
+	assert.NoError(t, err, "%s", output)
 }
 
 func TestCICheckWarming(t *testing.T) {
