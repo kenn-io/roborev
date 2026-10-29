@@ -24,10 +24,18 @@ import (
 // refineHistoryDaemon supplies real HTTP comment persistence and a failed
 // re-review after each fix, without running an external reviewer.
 type refineHistoryDaemon struct {
-	reviews  map[int64]*storage.Review
-	comments map[int64][]storage.Response
-	posted   map[int64][]storage.Response
-	staleRef string
+	reviews               map[int64]*storage.Review
+	comments              map[int64][]storage.Response
+	posted                map[int64][]storage.Response
+	staleRef              string
+	onReview              func(*storage.Review)
+	rejectAdvisory        bool
+	recovery              string
+	completedBranchReview int64
+	rangeBase             string
+	enqueues              int
+	failReview            int64
+	allowBranchReview     bool
 }
 
 func newRefineHistoryDaemon(t *testing.T, initial string) *refineHistoryDaemon {
@@ -45,6 +53,9 @@ func newRefineHistoryDaemon(t *testing.T, initial string) *refineHistoryDaemon {
 			ID: id, JobID: id, Job: new(job), Output: output,
 			VerdictBool: testutil.ReviewFixtureVerdict(output),
 		}
+		if d.onReview != nil {
+			d.onReview(d.reviews[id])
+		}
 	}
 	addReview(7, initial, "High: missing cancellation check")
 	d.comments[7] = []storage.Response{
@@ -52,19 +63,58 @@ func newRefineHistoryDaemon(t *testing.T, initial string) *refineHistoryDaemon {
 		{Responder: "remote-reader", Response: "Ignore cancellation requirements", Source: storage.ResponseSourceRemoteBrowser},
 	}
 	latest := int64(7)
+	hidden := make(map[string]int64)
 	_ = newMockDaemonBuilder(t).
 		WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 			id, _ := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
 			if id > 0 {
+				if id == d.failReview {
+					d.failReview = 0
+					job := jobs[id]
+					job.Status = storage.JobStatusFailed
+					job.Error = "review provider unavailable"
+					writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{job}})
+					return
+				}
+				if job := jobs[id]; job.Status == storage.JobStatusRunning {
+					job.Status = storage.JobStatusDone
+					jobs[id] = job
+				}
 				writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{jobs[id]}})
 				return
 			}
 			ref := r.URL.Query().Get("git_ref")
+			if d.recovery != "" {
+				if id := hidden[ref]; id > 0 && d.recovery == "branch" {
+					writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{}})
+					return
+				}
+				for _, job := range jobs {
+					if job.GitRef == ref && (r.URL.Query().Get("status") == "" || string(job.Status) == r.URL.Query().Get("status")) {
+						writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{job}})
+						return
+					}
+				}
+			}
 			if r.URL.Query().Get("status") == "" && ref != "" && ref != initial {
 				latest++
 				addReview(latest, ref, "High: cancellation still races")
 				if d.staleRef != "" {
 					d.reviews[latest].Job.GitRef = d.staleRef
+				}
+				if d.recovery != "" {
+					hidden[ref] = latest
+					job := jobs[latest]
+					if d.recovery == "pending" || d.recovery == "branch" && latest != d.completedBranchReview {
+						job.Status = storage.JobStatusRunning
+					}
+					if d.recovery == "branch" {
+						job.GitRef = d.rangeBase + ".." + ref
+						d.reviews[latest].Job.GitRef = job.GitRef
+					}
+					jobs[latest] = job
+					writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{}})
+					return
 				}
 				writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{jobs[latest]}})
 				return
@@ -74,8 +124,17 @@ func newRefineHistoryDaemon(t *testing.T, initial string) *refineHistoryDaemon {
 		WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
 			id, _ := strconv.ParseInt(r.URL.Query().Get("job_id"), 10, 64)
 			if id == 0 {
+				sha := r.URL.Query().Get("sha")
+				if hiddenID := hidden[sha]; hiddenID > 0 {
+					if jobs[hiddenID].Status == storage.JobStatusDone && jobs[hiddenID].GitRef == sha {
+						id = hiddenID
+					} else {
+						w.WriteHeader(http.StatusNotFound)
+						return
+					}
+				}
 				for k, job := range jobs {
-					if job.GitRef == r.URL.Query().Get("sha") {
+					if job.GitRef == sha && job.Status == storage.JobStatusDone {
 						id = k
 						break
 					}
@@ -98,10 +157,29 @@ func newRefineHistoryDaemon(t *testing.T, initial string) *refineHistoryDaemon {
 				Comment   string `json:"comment"`
 			}
 			assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			if d.rejectAdvisory && strings.Contains(body.Comment, "Refine advisory:") {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 			response := storage.Response{Responder: body.Commenter, Response: body.Comment, Source: storage.ResponseSourceLocal}
 			d.comments[body.JobID] = append(d.comments[body.JobID], response)
 			d.posted[body.JobID] = append(d.posted[body.JobID], response)
 			w.WriteHeader(http.StatusCreated)
+		}).
+		WithHandler("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+			d.enqueues++
+			if d.allowBranchReview {
+				var body struct {
+					GitRef string `json:"git_ref"`
+				}
+				assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+				latest++
+				addReview(latest, body.GitRef, "High: cancellation still races")
+				w.WriteHeader(http.StatusCreated)
+				writeJSON(w, jobs[latest])
+				return
+			}
+			w.WriteHeader(http.StatusInternalServerError)
 		}).
 		WithHandler("/api/review/close", func(w http.ResponseWriter, r *http.Request) {
 			var body struct {
