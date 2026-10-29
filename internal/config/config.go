@@ -747,6 +747,9 @@ func (c *Config) Validate() (err error) {
 	); err != nil {
 		return err
 	}
+	if err := validateCICommentMaxFindings(c.CI.CommentMaxFindings); err != nil {
+		return err
+	}
 	return ValidateEffectiveReviewConfig(c, nil)
 }
 
@@ -950,6 +953,9 @@ func (c *RepoConfig) Validate() (err error) {
 	if err := validateConfig(c, c.ACP); err != nil {
 		return err
 	}
+	if c.CI.CommentMaxFindings != nil && *c.CI.CommentMaxFindings < 0 {
+		return fmt.Errorf("ci.comment_max_findings must be non-negative")
+	}
 	reasoning := []namedConfigValue{
 		{key: "review_reasoning", value: c.ReviewReasoning},
 		{key: "refine_reasoning", value: c.RefineReasoning},
@@ -1149,7 +1155,9 @@ func applyDaemonSections(c *Config) []error {
 		validate func() error
 	}{
 		{"budget", c.Budget.Validate},
-		{"ci", c.CI.NormalizeInstallations},
+		{"ci", func() error {
+			return errors.Join(validateCICommentMaxFindings(c.CI.CommentMaxFindings), c.CI.NormalizeInstallations())
+		}},
 		{"search", func() error { return validateSearchConfig(c.Search) }},
 		{"remote", func() error { return validateRemoteConfig(c.Remote) }},
 		{"web", func() error { return normalizeWebConfig(&c.Web, c.AuthKey) }},

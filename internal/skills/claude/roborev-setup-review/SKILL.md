@@ -158,6 +158,8 @@ This mapping is for you, not the user. Use only what the conversation needs.
 | The whole branch each time | `post_commit_review = "branch"` |
 | Reviews on request | `[review] default_panel`, or `--type` and `--panel` |
 | Reviews on pull requests | `[ci] panel`; see <https://roborev.io/docs/advanced/subagent-review-panels/#ci-panels> |
+| Shorter synthesized GitHub daemon comments | `[ci] comment_max_findings` caps structured findings; `0` (default) is unlimited. Stored reviews stay complete. |
+| Silence on clean synthesized GitHub daemon reviews | `[ci] comment_when_clean = false`; default `true` posts clean comments. Stored reviews stay unchanged. |
 | Only serious findings fail | `review_min_severity`, plus severity guidance in each rubric |
 | Passing reviews close themselves | `auto_close_passing_reviews = true` |
 | Reviewers that see the task a commit is for, from Kata | `[kata_context]` with `mode = "current"`; commits name their issue, such as `Closes: kata#abc4` |

@@ -422,3 +422,42 @@ func TestCloneURL(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "https://github.com/owner/repo.git", plain)
 }
+
+// Silent cleanup must never create, including after an update loses its target.
+func TestUpdateExistingPRComment(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		existing         bool
+		status           int
+		updated, wantErr bool
+	}{
+		{"missing", false, 0, false, false},
+		{"updated", true, 200, true, false},
+		{"deleted", true, 404, false, false},
+		{"forbidden", true, 403, false, true},
+		{"transient", true, 500, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := newCommentAPIServer(t)
+			api.patchStatus = tc.status
+			if tc.existing {
+				api.issueCommentsByPR[1] = []*googlegithub.IssueComment{{ID: ptr(int64(42)), Body: ptr(CommentMarker + "\nstale")}}
+			}
+			server := httptest.NewServer(http.HandlerFunc(api.handler))
+			defer server.Close()
+			client := newTestGitHubClient(t, "token", server)
+			updated, err := client.UpdateExistingPRComment(context.Background(), "owner/repo", 1, "No findings.")
+			assert.Equal(t, tc.updated, updated)
+			if tc.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Empty(t, api.createdBodies)
+			if tc.existing {
+				require.Len(t, api.patchedBodies, 1)
+				assert.Equal(t, CommentMarker+"\nNo findings.", api.patchedBodies[0])
+			}
+		})
+	}
+}
