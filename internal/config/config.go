@@ -734,7 +734,11 @@ func (c *Config) Validate() (err error) {
 	if err := validateSearchConfig(c.Search); err != nil {
 		return err
 	}
+	if c.CI.CheckAgent != "" && c.CI.CheckAgent != "codex" {
+		return fmt.Errorf("ci.check_agent must be codex")
+	}
 	reasoning := []namedConfigValue{
+		{key: "ci.check_reasoning", value: c.CI.CheckReasoning},
 		{key: "review_reasoning", value: c.ReviewReasoning},
 		{key: "refine_reasoning", value: c.RefineReasoning},
 		{key: "fix_reasoning", value: c.FixReasoning},

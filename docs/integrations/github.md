@@ -735,6 +735,38 @@ of the global setting:
 upsert_comments = false   # Disable upsert for this repo even if globally enabled
 ```
 
+## Checking findings before posting
+
+Enable the checker to try synthesized findings in a disposable copy of the PR
+head before roborev stores and posts the review:
+
+```toml
+[ci]
+check = true
+check_agent = "codex"
+check_model = "gpt-6.1-sol"
+check_reasoning = "high"
+```
+
+The checker is off by default. A repository can override `check` in its
+`.roborev.toml` on the default branch. Only the global config selects the agent,
+model, and reasoning. Codex is the only supported checker agent.
+
+The host needs Linux on amd64, the pinned nono build, a systemd user manager,
+Codex, Go, and a credential proxy at `http://127.0.0.1:8317/v1`. Put its client
+key in `credential-proxy.key` beside the daemon's loaded global config, for
+example `/etc/roborev/credential-proxy.key`.
+
+The host warms Go modules before the sandbox starts. Inside it, the checker can
+change its scratch files and read the checkout's Git metadata and warmed caches.
+It can reach only the credential proxy. Tests that start loopback servers cannot
+run in this sandbox; the checker keeps findings it cannot try.
+
+A finding drops only when one verdict supplies evidence and a reason to drop it.
+Missing or duplicate verdicts keep the finding. The job log records the
+verdicts. If every finding drops, the stored review says "No issues found." A
+checker failure or timeout posts the original review unchanged.
+
 ## PR Throttling
 
 When contributors push frequently to the same PR, the poller can generate

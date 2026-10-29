@@ -50,6 +50,7 @@ type runningJobCancellation struct {
 type WorkerPool struct {
 	db                   *storage.DB
 	cfgGetter            ConfigGetter
+	ciGitEnv             func(string) []string
 	broadcaster          Broadcaster
 	errorLog             *ErrorLog
 	activityLog          *ActivityLog

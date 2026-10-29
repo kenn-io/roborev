@@ -90,7 +90,7 @@ func (wp *WorkerPool) processSynthesisJob(
 			return
 		}
 		single.Output = doc.Markdown(job.MinSeverity)
-		wp.completeSynthesisContext(workerID, job, synthesisResult{review: single})
+		wp.checkAndCompleteSynthesis(ctx, workerID, job, synthesisResult{review: single})
 	default:
 		if allMembersPassed(results, succeeded) && !anyRetainedFindings(succeeded) {
 			wp.completeSynthesisDocument(workerID, job, structuredreview.Document{
@@ -153,7 +153,7 @@ func (wp *WorkerPool) synthesizeSucceededResults(
 	if err != nil {
 		log.Printf("[%s] Error encoding synthesis document for job %d: %v", workerID, job.ID, err)
 	}
-	wp.completeSynthesisContext(workerID, job, synthesisResult{
+	wp.checkAndCompleteSynthesis(ctx, workerID, job, synthesisResult{
 		review: reviewpkg.ReviewResult{
 			Agent:            resolvedAgent,
 			Output:           doc.Markdown(job.MinSeverity),
@@ -171,13 +171,14 @@ func (wp *WorkerPool) synthesizeSucceededResults(
 // execution config there, which ciACPRepoConfig reads.
 type synthesisJobConfig struct {
 	ciACPExecutionConfig
-	Instructions string `json:"instructions,omitempty"`
+	Instructions string         `json:"instructions,omitempty"`
+	Check        *ciCheckConfig `json:"check,omitzero"`
 }
 
 // encode returns "" when nothing is set, so a synthesis job without
-// instructions or an ACP snapshot stores no config.
+// instructions, a checker, or an ACP snapshot stores no config.
 func (c synthesisJobConfig) encode() (string, error) {
-	if c.Instructions == "" && len(c.ACP) == 0 {
+	if c.Instructions == "" && len(c.ACP) == 0 && c.Check == nil {
 		return "", nil
 	}
 	raw, err := json.Marshal(c)
