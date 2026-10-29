@@ -32,7 +32,7 @@ linters:
         original-url: go.kenn.io/kit/lint/nolintdirective
       kennlint:
         type: module
-        description: Kit deadlinetest, sub-second wall-clock budgets in tests outside synctest.
+        description: Kit reports sub-second named time budgets, deadlines, timers, and testify polling budgets in test files outside a testing/synctest bubble.
         original-url: go.kenn.io/kit/lint
         settings:
           disable: [errtext, nohttpmux, rowserrcheck, sleeptest, sqlcheck, sqlclosecheck, testifyhelper]
