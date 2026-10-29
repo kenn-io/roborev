@@ -17,7 +17,7 @@ require (
 	github.com/coder/acp-go-sdk v0.13.5
 	github.com/coreos/go-systemd/v22 v22.7.0
 	github.com/danielgtaylor/huma/v2 v2.40.0
-	github.com/doordash-oss/oapi-codegen-dd/v3 v3.76.3
+	github.com/doordash-oss/oapi-codegen-dd/v3 v3.76.5
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-git/go-git/v5 v5.19.3
 	github.com/go-playground/validator/v10 v10.30.5
