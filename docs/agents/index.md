@@ -377,8 +377,8 @@ Host requirements:
 - A systemd user manager reachable through `XDG_RUNTIME_DIR` and, when needed,
     `DBUS_SESSION_BUS_ADDRESS`. Each run uses a scope with the caller's
     `MemoryMax` and `MemorySwapMax=0`.
-- A Codex login file with `tokens.access_token`, by
-    default in the host's `CODEX_HOME` or `~/.codex`.
+- A Codex login file with `tokens.access_token`, by default in the host's
+    `CODEX_HOME` or `~/.codex`.
 - Bash and Python 3 at `/usr/bin/python3` for the self-check.
 
 Before each run, roborev verifies nono's checksum and runs a probe under the
@@ -390,9 +390,9 @@ Codex runs in agentic mode with a private `CODEX_HOME` inside the job directory.
 Its provider uses nono's credential route. The nono supervisor reads the host
 login on demand and injects the access token into model requests. The job sees
 only a placeholder key and a loopback URL. Only `POST /responses` to the Codex
-upstream goes out. The configuration file contains provider settings. Web
-search is disabled. The host login and user D-Bus stay outside the sandbox.
-Planning refuses this agentic mode.
+upstream goes out. The configuration file contains provider settings. Web search
+is disabled. The host login and user D-Bus stay outside the sandbox. Planning
+refuses this agentic mode.
 
 Tests that start a loopback server, such as `httptest.NewServer`, fail inside
 this sandbox. Run `make test-sandbox-integration` with nono and Codex on PATH to
