@@ -3,7 +3,22 @@ title: Installation
 description: Install roborev on your system
 ---
 
-## Quick Install (Recommended)
+On macOS, use [Homebrew](#homebrew-macos). On Linux, use the
+[install script](#install-script) or a
+[DEB or RPM package](#linux-packages-deb-and-rpm).
+
+## Homebrew (macOS)
+
+Install roborev from [Homebrew core](https://formulae.brew.sh/formula/roborev):
+
+```bash
+brew install roborev
+```
+
+No extra tap is needed. The package includes the CLI, terminal UI, and browser
+application. Homebrew manages [updates](#update).
+
+## Install Script
 
 The install script downloads the latest release binary for your platform:
 
@@ -31,28 +46,6 @@ The install script downloads the latest release binary for your platform:
     | `ROBOREV_INSTALL_DIR` | Custom install directory (default: `%USERPROFILE%\.roborev\bin`) |
     | `ROBOREV_NO_MODIFY_PATH` | Set to skip adding install dir to PATH |
     | `ROBOREV_SKIP_CHECKSUM` | Set to skip checksum verification (not recommended) |
-
-## Homebrew (macOS / Linux)
-
-Install via Homebrew:
-
-```bash
-brew install kenn-io/tap/roborev
-```
-
-Or tap first, then install:
-
-```bash
-brew tap kenn-io/tap
-brew install roborev
-```
-
-This also works on Linux with
-[Linuxbrew](https://docs.brew.sh/Homebrew-on-Linux).
-
-The `kenn-io/tap` repository watches official Roborev releases and manages
-formula updates from their published checksums. Roborev release jobs do not need
-a cross-repository credential to update the formula.
 
 ## Linux Packages: DEB and RPM
 
@@ -119,7 +112,17 @@ roborev version
 
 ## Update
 
-Update to the latest version:
+For Homebrew installations:
+
+```bash
+brew upgrade roborev
+```
+
+Homebrew builds do not replace themselves with `roborev update`. Use your
+package manager to upgrade other
+[package-managed builds](/docs/development/#package-builds).
+
+For installations from the install script or a direct binary download:
 
 ```bash
 roborev update
@@ -129,11 +132,6 @@ This downloads and replaces the current binary with the latest release. Read the
 [changelog](/docs/changelog/) before updating, or press `U` in the terminal
 interface to read recent release notes. The browser application also has a
 release-notes viewer in its header.
-
-Package maintainers can
-[disable self-updates](/docs/development/#package-builds). If your build reports
-that self-update is disabled, upgrade through your package manager instead, such
-as `brew upgrade roborev` for Homebrew.
 
 ### Upgrading to 0.74.0
 

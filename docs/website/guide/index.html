@@ -74,12 +74,13 @@
             <h2>Install once, initialize per repo.</h2>
             <p>roborev is a single Go binary. <code>roborev init</code> installs a post-commit hook, starts the daemon if it is not running, and registers the repository. It detects hook managers like Husky through <code>core.hooksPath</code> and never edits tracked source.</p>
             <p>Point your coding agent at <code>roborev quickstart</code> and it will inspect the repo and finish the setup, including a machine-readable state for agents that prefer JSON.</p>
+            <p>On Linux, use the <a href="/docs/installation/#install-script">install script</a> or a <a href="/docs/installation/#linux-packages-deb-and-rpm">DEB or RPM package</a>.</p>
             <p><a href="/docs/quickstart/">Quick start</a> · <a href="/docs/installation/">Installation</a></p>
           </div>
           <div class="guide-media">
             <figure class="term">
-              <figcaption class="term-title"><span>install and initialize</span></figcaption>
-              <pre><code><span class="ps1">$</span> <span class="cmd">curl -fsSL https://roborev.io/install.sh | bash</span>
+              <figcaption class="term-title"><span>macOS: install and initialize</span></figcaption>
+              <pre><code><span class="ps1">$</span> <span class="cmd">brew install roborev</span>
 <span class="ps1">$</span> <span class="cmd">cd your-repo</span>
 <span class="ps1">$</span> <span class="cmd">roborev init</span>
 <span class="out"># post-commit hook installed, daemon started, repo registered</span>

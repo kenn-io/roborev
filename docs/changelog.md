@@ -1154,7 +1154,7 @@ ______________________________________________________________________
 - Homebrew updates now come directly from official Roborev releases. The tap
     owns its formula updates, removing a duplicate publishing path and its
     cross-repository credential. See
-    [Homebrew installation](/docs/installation/#homebrew-macos-linux).
+    [Homebrew installation](/docs/installation/#homebrew-macos).
 - Building Roborev from source now requires Go 1.26.6. Go, JavaScript,
     documentation, and GitHub Actions dependencies were also refreshed,
     including fixes for known Go toolchain and `go-git` vulnerabilities.
