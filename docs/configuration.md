@@ -2167,6 +2167,51 @@ default_model = "claude-opus-4-8"
 default_model = "anthropic/claude-opus-4-8"
 ```
 
+### AgentsView
+
+Configure a local or remote AgentsView server to fetch usage and cost over HTTP,
+including subagent totals. The daemon does not need the `agentsview` CLI when
+this provider is configured.
+
+```toml
+[agentsview]
+url = "https://agentsview.example/base"
+token_file = "~/.config/roborev/agentsview-token"
+
+[cost]
+timeout = "2s"
+```
+
+These settings are global-only. Repository configuration cannot choose where
+roborev sends your token. The URL must be absolute HTTP(S) with a host. A base
+path is allowed; embedded credentials, queries, and fragments are rejected.
+`agentsview.url` and `cost.endpoint` are mutually exclusive.
+
+`token_file` takes precedence over `AGENTSVIEW_SERVER_TOKEN` in the daemon's
+environment. File contents are trimmed, and `~/` expands to the daemon user's
+home directory. An unreadable or missing configured file is an error. There is
+no inline token setting. Servers without authentication need neither token
+source. Every request uses Bearer authentication when a token is configured.
+`[cost] timeout` governs the lookup, including session ID resolution, and
+defaults to `10s`.
+
+AgentsView must already have indexed the agent's session and its subagents.
+Against v0.46.1, roborev resolves a missing raw session ID through the server's
+session ID resolver and retries usage with the unique indexed ID. No matches
+leave the job unpriced for existing reconciliation to retry. Ambiguous matches
+and rejected tokens produce explicit errors. Roborev never falls back to the
+local CLI when this provider is selected. Resumed sessions remain excluded
+because AgentsView totals are cumulative.
+
+`roborev doctor` reports the running daemon's provider and probes AgentsView
+reachability and authentication using the daemon's environment. If the daemon
+cannot supply this diagnostic, doctor labels its result as shell-only and warns
+that the daemon's usage provider was not checked. `roborev backfill-tokens` uses
+the daemon's configured provider for older jobs as well. With no
+`agentsview.url`, the existing local CLI or `[cost] endpoint` behavior applies.
+
+See [the design discussion](https://github.com/kenn-io/roborev/issues/1543).
+
 ### Cost Usage Endpoint
 
 By default, roborev looks up token usage and cost estimates through the local
@@ -2186,9 +2231,9 @@ timeout = "2s"
 ```
 
 `endpoint` must include `{session_id}`, which roborev URL-escapes and replaces
-with the agent session ID. If `endpoint` is empty, roborev uses the `agentsview`
-CLI path. `timeout` defaults to `10s`; invalid, zero, or negative values also
-fall back to `10s`.
+with the agent session ID. If both `endpoint` and `agentsview.url` are empty,
+roborev uses the `agentsview` CLI path. `timeout` defaults to `10s`; invalid,
+zero, or negative values also fall back to `10s`.
 
 Usage indexing can lag behind job completion. The daemon retries fresh misses
 and periodically revisits terminal jobs from the past week that still lack a

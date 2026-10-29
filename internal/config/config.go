@@ -146,7 +146,7 @@ type AgentConfig struct {
 }
 
 type CostConfig struct {
-	Endpoint string `toml:"endpoint" comment:"HTTP usage endpoint template for cost/token lookup. Use {session_id}; set empty to use agentsview CLI lookup only."`
+	Endpoint string `toml:"endpoint" comment:"HTTP usage endpoint template for cost/token lookup. Use {session_id}; leave empty for the AgentsView URL or CLI provider."`
 	Timeout  string `toml:"timeout" comment:"Timeout for HTTP usage endpoint lookups."`
 }
 
@@ -425,7 +425,8 @@ type Config struct {
 	CI CIConfig `toml:"ci"`
 
 	// Cost/token usage lookup configuration
-	Cost CostConfig `toml:"cost"`
+	Cost       CostConfig       `toml:"cost"`
+	AgentsView AgentsViewConfig `toml:"agentsview"`
 
 	// Browser application configuration
 	Web WebConfig `toml:"web"`
@@ -721,6 +722,9 @@ func (c *Config) Validate() (err error) {
 		return markExperimentConfigError(err)
 	}
 	if err := validateConfig(c, c.ACP); err != nil {
+		return err
+	}
+	if err := c.AgentsView.Validate(c.Cost); err != nil {
 		return err
 	}
 	if err := c.Budget.Validate(); err != nil {
@@ -1148,6 +1152,7 @@ func applyDaemonSections(c *Config) []error {
 		name     string
 		validate func() error
 	}{
+		{"agentsview", func() error { return c.AgentsView.Validate(c.Cost) }},
 		{"budget", c.Budget.Validate},
 		{"ci", c.CI.NormalizeInstallations},
 		{"search", func() error { return validateSearchConfig(c.Search) }},
@@ -1474,7 +1479,7 @@ func LoadRepoConfigWithRaw(repoPath string) (*RepoConfig, map[string]any, error)
 }
 
 func validateRepoConfigScope(md toml.MetaData) error {
-	for _, key := range []string{"search", "review_mcp_config", "review_mcp_allowed_tools"} {
+	for _, key := range []string{"agentsview", "search", "review_mcp_config", "review_mcp_allowed_tools"} {
 		if md.IsDefined(key) {
 			return fmt.Errorf(
 				"repository config key %q is global-only; move it to ~/.roborev/config.toml",
