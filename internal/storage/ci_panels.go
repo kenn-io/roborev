@@ -70,7 +70,7 @@ func rerunCIPanelTx(ctx context.Context, conn *sql.Conn, sourceJobID int64, synt
 	if err := reserveReviewAttemptTx(ctx, conn, source.GithubRepo, source.PRNumber, source.HeadSHA, now); err != nil {
 		return err
 	}
-	succeeded := active != nil && active.Outcome != nil && *active.Outcome == PanelOutcomeReviewPosted
+	succeeded := active != nil && active.Outcome != nil && (*active.Outcome == PanelOutcomeReviewPosted || *active.Outcome == PanelOutcomeReviewSuppressed)
 	unresolved := ""
 	if active != nil && active.Outcome != nil {
 		switch *active.Outcome {
@@ -97,11 +97,12 @@ func rerunCIPanelTx(ctx context.Context, conn *sql.Conn, sourceJobID int64, synt
 // means the row was finalized before outcome persistence existed; exports
 // surface it as PanelOutcomeUnknown.
 const (
-	PanelOutcomeReviewPosted   = "review_posted"
-	PanelOutcomeNoReviewPosted = "no_review_posted"
-	PanelOutcomeGiveupPosted   = "giveup_posted"
-	PanelOutcomeAbandoned      = "abandoned"
-	PanelOutcomeUnknown        = "unknown"
+	PanelOutcomeReviewPosted     = "review_posted"
+	PanelOutcomeReviewSuppressed = "review_suppressed"
+	PanelOutcomeNoReviewPosted   = "no_review_posted"
+	PanelOutcomeGiveupPosted     = "giveup_posted"
+	PanelOutcomeAbandoned        = "abandoned"
+	PanelOutcomeUnknown          = "unknown"
 
 	// PanelOutcomeLegacyReview marks rows exported from the frozen pre-panel
 	// ci_pr_reviews table (ExportCIMetricsOptions.Legacy). It is never
@@ -235,13 +236,14 @@ func getActiveCIPanelByPRSHA(q querier, githubRepo string, prNumber int, headSHA
 }
 
 // HasPostedCIReview includes retired history so canceling a rerun cannot make
-// the normal poll forget a review already delivered for this commit.
+// the normal poll forget a review already delivered or intentionally suppressed
+// for this commit.
 func (db *DB) HasPostedCIReview(githubRepo string, prNumber int, headSHA string) (bool, error) {
 	var posted bool
 	err := db.QueryRow(`SELECT EXISTS (SELECT 1 FROM ci_pr_panels
 		WHERE github_repo = ? AND pr_number = ? AND head_sha = ?
-		  AND posted_at IS NOT NULL AND outcome = ?)`,
-		githubRepo, prNumber, headSHA, PanelOutcomeReviewPosted).Scan(&posted)
+		  AND posted_at IS NOT NULL AND outcome IN (?, ?))`,
+		githubRepo, prNumber, headSHA, PanelOutcomeReviewPosted, PanelOutcomeReviewSuppressed).Scan(&posted)
 	return posted, err
 }
 

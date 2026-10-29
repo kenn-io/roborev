@@ -16,15 +16,22 @@ import (
 // all findings; preparation never inherits policy from review data.
 type CommentConfig struct {
 	MinSeverity string
+	// MaxFindings limits structured findings; zero leaves them unlimited.
+	MaxFindings int
+	// FullReviewReference points to the complete review when findings are omitted.
+	FullReviewReference string
 }
 
 // PreparedComment is a publication-only copy of a review. Its fields are private
 // so formatting receives only findings selected by PrepareComment.
 type PreparedComment struct {
-	minSeverity string
-	structured  bool
-	verbatim    *string
-	findings    []commentFinding
+	minSeverity         string
+	legacy              bool
+	structured          bool
+	verbatim            *string
+	findings            []commentFinding
+	omitted             int
+	fullReviewReference string
 }
 
 type commentFinding struct {
@@ -38,7 +45,7 @@ type commentFinding struct {
 // PrepareComment ingests structured or prose review data and applies the
 // supplied publication policy. It never changes the review or its findings.
 func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
-	comment := PreparedComment{minSeverity: strings.ToLower(strings.TrimSpace(cfg.MinSeverity))}
+	comment := PreparedComment{minSeverity: strings.ToLower(strings.TrimSpace(cfg.MinSeverity)), fullReviewReference: cfg.FullReviewReference}
 	doc := r.Structured
 	if doc == nil && len(r.StructuredOutput) > 0 {
 		if decoded, err := DecodeStructuredReview(r.StructuredOutput); err == nil {
@@ -46,6 +53,7 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 		}
 	}
 	if doc != nil && doc.Legacy != nil {
+		comment.legacy = true
 		r.Output = doc.Legacy.Markdown
 		doc = nil
 	}
@@ -86,7 +94,22 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 			comment.findings = append(comment.findings, finding)
 		}
 	}
+	if comment.structured {
+		slices.SortStableFunc(comment.findings, func(a, b commentFinding) int {
+			return config.SeverityRank(b.severity) - config.SeverityRank(a.severity)
+		})
+		if cfg.MaxFindings > 0 && len(comment.findings) > cfg.MaxFindings {
+			comment.omitted = len(comment.findings) - cfg.MaxFindings
+			comment.findings = comment.findings[:cfg.MaxFindings]
+		}
+	}
 	return comment
+}
+
+// IsClean reports whether filtering proved there is nothing to publish.
+// Verbatim prose has no reliable finding metadata and remains publishable.
+func (comment PreparedComment) IsClean() bool {
+	return !comment.legacy && comment.verbatim == nil && len(comment.findings) == 0 && comment.omitted == 0
 }
 
 // FormatComment renders prepared findings. It does not resolve configuration,
@@ -137,7 +160,27 @@ func FormatComment(comment PreparedComment) string {
 			out.WriteString("\n")
 		}
 	}
+	if notice := comment.OmissionNotice(); notice != "" {
+		return strings.TrimRight(out.String(), "\n") + notice
+	}
 	return out.String()
+}
+
+// OmissionNotice returns the cap explanation separately so publishers can
+// reserve it alongside metadata when fitting the final transport byte limit.
+func (comment PreparedComment) OmissionNotice() string {
+	if comment.omitted == 0 {
+		return ""
+	}
+	noun := "findings"
+	if comment.omitted == 1 {
+		noun = "finding"
+	}
+	notice := fmt.Sprintf("\n\n%d more %s in the full review", comment.omitted, noun)
+	if comment.fullReviewReference != "" {
+		notice += fmt.Sprintf(": `%s`", comment.fullReviewReference)
+	}
+	return notice + "\n"
 }
 
 type proseFinding struct {

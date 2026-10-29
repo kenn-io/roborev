@@ -731,3 +731,17 @@ func TestExportCIMetricsLegacyAndPanelModesAreDisjoint(t *testing.T) {
 	assert.Equal(t, "sha-legacy-only", legacyPage.Panels[0].HeadSHA)
 	assert.Equal(t, PanelOutcomeLegacyReview, legacyPage.Panels[0].Outcome)
 }
+
+func TestExportCIMetricsSuppressedReview(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
+	seedPostedPanel(t, db, 71, "head-suppressed", "review_suppressed")
+	page, err := db.ExportCIMetrics(ExportCIMetricsOptions{})
+	require.NoError(t, err)
+	require.Len(t, page.Panels, 1)
+	assert.Equal(t, "review_suppressed", page.Panels[0].Outcome)
+	posted, err := db.HasPostedCIReview("o/r", 71, "head-suppressed")
+	require.NoError(t, err)
+	assert.True(t, posted, "suppression is completed usable review history")
+}

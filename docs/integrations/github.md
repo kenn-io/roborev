@@ -414,7 +414,7 @@ The status context is `roborev` and progresses through these states:
 | State | When |
 |-------|------|
 | `pending` | A panel is queued, running, throttled, or deferred for retry |
-| `success` | The review process completed and a comment was posted, including comments that contain findings |
+| `success` | Review execution completed, including reviews with findings or comments intentionally suppressed by display policy |
 | `failure` | At least one member failed to run for a genuine reason while another member still produced usable review output |
 | `error` | No reviewer produced usable output and no retry remains, or no agent is available |
 
@@ -614,6 +614,51 @@ panels use their own `synthesis_agent`, `synthesis_model`,
 `synthesis_instructions` fields under `[review.panels.<name>]`. The implicit
 matrix has no synthesis instructions setting; use a named panel for that.
 
+## Comment display policy
+
+The GitHub daemon poller can cap synthesized comments and stay silent when
+nothing survives the display filters. Defaults preserve existing behavior:
+
+```toml
+[ci]
+comment_max_findings = 0   # Unlimited structured findings
+comment_when_clean = true # Create comments even when no findings survive
+```
+
+Set `comment_max_findings` to a positive integer to show that many structured
+findings after severity filtering. Comments show critical findings first, then
+high, medium, and low, preserving the original order within each severity. An
+overflow line counts only findings omitted by the cap and points to
+`roborev show --job <synthesis-job-id>` for the complete review. Negative caps
+are invalid, including when loading, saving, or reloading global configuration.
+The omission count and retrieval command remain visible when a long finding
+requires comment truncation. Prose is not capped because it cannot be ranked
+reliably.
+
+Set `comment_when_clean = false` to avoid creating a comment when structured
+synthesis has no findings after filtering. Severity-parsed prose is also silent
+when no labelled findings or unlabelled blocks survive. Verbatim prose and
+legacy Markdown remain publishable, even if their text says the review is clean.
+Roborev does not infer cleanliness from text or the stored verdict. With
+`upsert_comments = true`, silent reviews update an existing marker comment to
+the no-findings line. Missing or deleted comments are successful no-ops; cleanup
+never creates a replacement. Permission and transient delivery errors keep the
+normal error and retry behavior.
+
+Both settings accept per-repo `[ci]` overrides in `.roborev.toml`. An explicit
+repo cap of `0` restores unlimited findings; an explicit `true` restores clean
+comments. These settings apply only to synthesized GitHub daemon comments. Raw
+member fallback diagnostics, daemon-free `roborev ci`, and GitLab keep existing
+behavior. Complete stored reviews, verdicts, prompts, and execution statuses are
+unchanged. Unlike these display settings, `ci.min_severity` also controls the
+synthesis verdict.
+
+Silence relies on commit statuses for visible execution completion. The token
+needs commit status-write permissions; personal tokens and GitHub App tokens can
+both publish statuses. If status delivery fails, a silent review can have no
+visible signal until the normal status retry succeeds. `roborev doctor` includes
+this permission advice when silence is enabled.
+
 ## Comment Upsert
 
 By default, each review run creates a new PR comment. When `upsert_comments` is
@@ -777,6 +822,8 @@ set, it takes priority over the matrix fields for that repo.
 | `reviews` | table | global `reviews` | Granular agent-to-review-type map (overrides `agents` and `review_types`; empty table disables reviews) |
 | `reasoning` | string | `"thorough"` | Legacy or exact reasoning level; see [Reasoning Levels](/docs/configuration/#reasoning-levels) |
 | `min_severity` | string | `"low"` | Lowest severity that fails the review: `low`, `medium`, `high`, or `critical`. Lower findings remain in stored reviews but are hidden in PR comments |
+| `comment_max_findings` | int | global `comment_max_findings` | Maximum structured findings in synthesized GitHub daemon comments; `0` restores unlimited |
+| `comment_when_clean` | bool | global `comment_when_clean` | Create synthesized GitHub daemon comments when no findings survive display filters |
 | `upsert_comments` | bool | global `upsert_comments` | Override global comment upsert setting for this repo |
 | `include_costs` | bool | global `include_costs` | Include token cost estimates in PR comment footers for this repo |
 
@@ -803,6 +850,8 @@ set, it takes priority over the matrix fields for that repo.
 | `synthesis_agent` | string | | Agent for combining implicit matrix results |
 | `synthesis_backup_agent` | string | | Backup agent for implicit matrix synthesis when the primary fails |
 | `synthesis_model` | string | | Model override for implicit matrix synthesis |
+| `comment_max_findings` | int | `0` | Maximum structured findings in synthesized GitHub daemon comments; `0` is unlimited |
+| `comment_when_clean` | bool | `true` | Create synthesized GitHub daemon comments when no findings survive display filters |
 | `upsert_comments` | bool | `false` | Update existing PR comments instead of creating new ones |
 | `include_costs` | bool | `false` | Include token cost estimates in PR comment footers |
 | `discord_webhook_url` | string | | Discord webhook URL for best-effort CI job failure notifications |

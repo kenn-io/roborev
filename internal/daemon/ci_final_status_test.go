@@ -15,7 +15,7 @@ import (
 )
 
 func TestCIPanelFinalStatusRecoveryAfterRestart(t *testing.T) {
-	for _, scenario := range []string{"review", "no review", "stale claim", "superseded", "removed repository"} {
+	for _, scenario := range []string{"review", "suppressed", "no review", "stale claim", "superseded", "removed repository"} {
 		t.Run(scenario, func(t *testing.T) {
 			assert := assert.New(t)
 			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
@@ -24,6 +24,11 @@ func TestCIPanelFinalStatusRecoveryAfterRestart(t *testing.T) {
 			spec := jobSpec{Agent: "test", Status: "done", Output: "No issues found."}
 			wantFinal := capturedStatus{Repo: "acme/api", SHA: "head-a", State: "success", Desc: "Review complete"}
 			wantComments := 1
+			if scenario == "suppressed" {
+				clean := false
+				h.Cfg.CI.CommentWhenClean = &clean
+				wantComments = 0
+			}
 			if scenario == "no review" {
 				spec = jobSpec{Agent: "test", Status: "canceled", Error: reviewpkg.TimeoutErrorPrefix + "deadline"}
 				wantFinal.State, wantFinal.Desc = "error", "No review output"

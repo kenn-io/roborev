@@ -608,3 +608,16 @@ func TestDoctorDaemonTLS(t *testing.T) {
 	assert.Equal(t, "config.daemon_tls", checks[0].ID)
 	assert.Contains(t, checks[0].Details[0], "load daemon_tls client certificate")
 }
+
+func TestDoctorCICommentSilenceAdvice(t *testing.T) {
+	clean := false
+	env := &doctorEnv{global: config.DefaultConfig()}
+	env.global.CI.Enabled = true
+	env.global.CI.Repos = []string{"example/project"}
+	env.global.CI.CommentWhenClean = &clean
+	got := findDoctorCheck(t, checkDoctorIntegrations(env), "integrations.ci_comments")
+	assert.Equal(t, doctorInfo, got.Status)
+	assert.Contains(t, strings.Join(got.Details, " "), "status-write")
+	assert.Contains(t, strings.Join(got.Details, " "), "personal")
+	assert.NotContains(t, got.Summary, "App required")
+}

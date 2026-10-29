@@ -170,6 +170,14 @@ type CIConfig struct {
 	// Valid values: critical, high, medium, low. Empty means no filter (include all).
 	MinSeverity string `toml:"min_severity"`
 
+	// CommentMaxFindings caps structured findings in synthesized GitHub daemon
+	// comments. Zero (the default) is unlimited. Stored reviews remain complete.
+	CommentMaxFindings int `toml:"comment_max_findings"`
+
+	// CommentWhenClean controls new comments when display filters leave no
+	// findings. Unset defaults to true, including a zero-valued CIConfig.
+	CommentWhenClean *bool `toml:"comment_when_clean"`
+
 	// Panel names a [review.panels.X] panel to run for CI reviews. When set,
 	// the CI poller resolves the panel (members + synthesis) from the config
 	// loaded off the PR's default branch instead of the agents x review_types
@@ -476,6 +484,12 @@ type RepoCIConfig struct {
 	// MinSeverity overrides the minimum severity filter for CI synthesis.
 	MinSeverity string `toml:"min_severity" comment:"Override the minimum CI severity included in synthesized output."`
 
+	// CommentMaxFindings overrides the global cap; an explicit zero disables it.
+	CommentMaxFindings *int `toml:"comment_max_findings" comment:"Maximum structured findings in synthesized GitHub daemon comments; zero is unlimited."`
+
+	// CommentWhenClean overrides whether display-clean synthesis creates comments.
+	CommentWhenClean *bool `toml:"comment_when_clean" comment:"Post synthesized GitHub daemon comments when no findings survive display filters. Default: true."`
+
 	// UpsertComments overrides the global ci.upsert_comments setting.
 	// Use a pointer so we can distinguish "not set" from "explicitly false".
 	UpsertComments *bool `toml:"upsert_comments" comment:"Override whether CI updates an existing PR comment instead of creating a new one."`
@@ -742,4 +756,37 @@ func ResolveCIWorkflowAgents(
 		globalCIAgents,
 		globalAgent,
 	)
+}
+
+// ResolveCICommentMaxFindings resolves the display cap. A repository zero
+// explicitly restores unlimited findings instead of inheriting the global cap.
+func ResolveCICommentMaxFindings(repoCfg *RepoConfig, globalCfg *Config) int {
+	if repoCfg != nil && repoCfg.CI.CommentMaxFindings != nil {
+		return *repoCfg.CI.CommentMaxFindings
+	}
+	if globalCfg != nil {
+		return globalCfg.CI.CommentMaxFindings
+	}
+	return 0
+}
+
+// ResolveCICommentWhenClean resolves the display-clean publication policy.
+func ResolveCICommentWhenClean(repoCfg *RepoConfig, globalCfg *Config) bool {
+	var repoVal, globalVal *bool
+	if repoCfg != nil {
+		repoVal = repoCfg.CI.CommentWhenClean
+	}
+	if globalCfg != nil {
+		globalVal = globalCfg.CI.CommentWhenClean
+	}
+	return resolveBool(true, repoVal, globalVal)
+}
+
+// validateCICommentMaxFindings is shared by explicit validation and global
+// daemon-section loading, saving, and watcher reloads.
+func validateCICommentMaxFindings(value int) error {
+	if value < 0 {
+		return fmt.Errorf("ci.comment_max_findings must be non-negative")
+	}
+	return nil
 }
