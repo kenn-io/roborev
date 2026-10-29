@@ -353,6 +353,8 @@ func TestFreezeReviewRefResolvesEachEndToACommit(t *testing.T) {
 		{"HEAD^..HEAD", first + ".." + second},
 		{"HEAD^..", first + ".." + second},
 		{"HEAD^...HEAD", first + "..." + second},
+		{":/first", first},
+		{":/first..:/second", first + ".." + second},
 	}
 	for _, tt := range tests {
 		t.Run(tt.ref, func(t *testing.T) {

@@ -45,7 +45,7 @@ func reviewedFiles(ctx context.Context, repoPath, gitRef string) fileReader {
 		rev = cmp.Or(strings.TrimPrefix(rev[i+2:], "."), "HEAD")
 	}
 	if rev != "" {
-		if sha, err := git.ResolveSHACtx(ctx, repoPath, rev+"^{commit}"); err == nil {
+		if sha, err := git.ResolveCommitCtx(ctx, repoPath, rev); err == nil {
 			return func(name string) ([]byte, error) {
 				file, err := git.ReadRefFile(repoPath, sha, name)
 				if errors.Is(err, git.ErrNotFile) {

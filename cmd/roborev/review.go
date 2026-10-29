@@ -479,7 +479,7 @@ Examples:
 // review. An empty end of a range means HEAD, as it does for git.
 func freezeReviewRef(ctx context.Context, repoPath, gitRef string) (string, error) {
 	resolve := func(ref string) (string, error) {
-		return git.ResolveSHACtx(ctx, repoPath, cmp.Or(ref, "HEAD")+"^{commit}")
+		return git.ResolveCommitCtx(ctx, repoPath, cmp.Or(ref, "HEAD"))
 	}
 	start, end, isRange := strings.Cut(gitRef, "..")
 	if !isRange {

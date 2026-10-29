@@ -957,6 +957,18 @@ func ResolveSHACtx(ctx context.Context, repoPath, ref string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// ResolveCommitCtx resolves ref to the SHA of the commit it names, peeling
+// an annotated tag. It resolves ref as written before peeling, because in a
+// message-search ref such as ":/fix login" git reads a ^{commit} suffix as
+// part of the search text.
+func ResolveCommitCtx(ctx context.Context, repoPath, ref string) (string, error) {
+	sha, err := ResolveSHACtx(ctx, repoPath, ref)
+	if err != nil {
+		return "", err
+	}
+	return ResolveSHACtx(ctx, repoPath, sha+"^{commit}")
+}
+
 // IsAncestor checks if ancestor is an ancestor of descendant.
 // Returns (true, nil) if ancestor is reachable from descendant via the commit graph.
 // Returns (false, nil) if ancestor is not an ancestor (git exits with status 1).
