@@ -62,6 +62,7 @@ type Server struct {
 	searchCancel            context.CancelFunc
 	searchSubscriberID      int
 	searchWG                sync.WaitGroup
+	agentHealth             agentHealthCache
 	searchStopped           bool
 	httpServer              *http.Server
 	remoteServer            *http.Server
@@ -520,7 +521,7 @@ func (s *Server) Start(ctx context.Context) error {
 		)
 	}
 
-	if agents := reviewAgentHealth(cfg); !agents.Healthy {
+	if agents := s.agentHealth.check(cfg); !agents.Healthy {
 		message := "reviews will be rejected until their agent can run: " + agents.Message
 		log.Printf("Warning: %s", message)
 		if s.errorLog != nil {
@@ -3982,7 +3983,7 @@ func (s *Server) humaGetHealth(
 		Message: workersMessage,
 	})
 
-	agents := reviewAgentHealth(s.configWatcher.Config())
+	agents := s.agentHealth.observe(s.configWatcher.Config())
 	if !agents.Healthy {
 		allHealthy = false
 	}

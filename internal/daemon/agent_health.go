@@ -5,6 +5,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -28,6 +29,55 @@ func reviewAgentHealth(cfg *config.Config) storage.ComponentHealth {
 	}
 }
 
+// agentHealthCache serves the agents health component without running the
+// check inside a health request. The check can run an agent executable to
+// identify it, and that can hang, while roborev status stops waiting for
+// health after two seconds. A request returns the last result and starts at
+// most one background refresh, so the result can be one request out of date.
+type agentHealthCache struct {
+	mu         sync.Mutex
+	latest     storage.ComponentHealth
+	checked    bool
+	refreshing bool
+	wg         sync.WaitGroup
+}
+
+// check runs the check, stores its result, and returns it.
+func (c *agentHealthCache) check(cfg *config.Config) storage.ComponentHealth {
+	health := reviewAgentHealth(cfg)
+	c.mu.Lock()
+	c.latest, c.checked = health, true
+	c.mu.Unlock()
+	return health
+}
+
+// observe returns the last result. Only when no check has run yet does it run
+// one itself, because nothing is known.
+func (c *agentHealthCache) observe(cfg *config.Config) storage.ComponentHealth {
+	c.mu.Lock()
+	if !c.checked {
+		c.mu.Unlock()
+		return c.check(cfg)
+	}
+	latest := c.latest
+	if !c.refreshing {
+		c.refreshing = true
+		c.wg.Add(1)
+		go func() {
+			defer c.wg.Done()
+			c.check(cfg)
+			c.mu.Lock()
+			c.refreshing = false
+			c.mu.Unlock()
+		}()
+	}
+	c.mu.Unlock()
+	return latest
+}
+
+// wait blocks until a running background refresh finishes.
+func (c *agentHealthCache) wait() { c.wg.Wait() }
+
 // reviewAgentProblems checks every kind of review the global config can start:
 // post-commit and manual reviews, in the default arm and in the experimental
 // arm of an enabled review experiment. Each one runs the panel it selects, or
@@ -44,6 +94,9 @@ func reviewAgentProblems(cfg *config.Config) []string {
 		}
 	}
 	for _, arm := range arms {
+		if !arm.Assignable {
+			continue
+		}
 		for _, src := range doctorPanelSources {
 			name := arm.PanelName(src.source)
 			if name == "" {

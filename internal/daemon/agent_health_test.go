@@ -1,12 +1,14 @@
 package daemon
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/config"
 )
 
@@ -25,7 +27,7 @@ synthesis_agent = "test"
 	const experiment = `
 [experiments.try]
 enabled = true
-ratio = 0.5
+ratio = %s
 workflows = ["review"]
 
 [experiments.try.config]
@@ -82,8 +84,29 @@ hook_review_panel = "guard"
 		},
 		{
 			name:    "experiment arm with a broken single agent",
-			config:  `default_agent = "test"` + experiment,
+			config:  `default_agent = "test"` + fmt.Sprintf(experiment, "0.5"),
 			problem: `"codex"`,
+		},
+		{
+			name:   "experiment arm that no review is assigned to is not checked",
+			config: `default_agent = "test"` + fmt.Sprintf(experiment, "0"),
+		},
+		{
+			name:    "experiment arm that every review is assigned to is checked",
+			config:  `default_agent = "test"` + fmt.Sprintf(experiment, "1"),
+			problem: `"codex"`,
+		},
+		{
+			name: "default arm that no review is assigned to is not checked",
+			config: `default_agent = "codex"
+[experiments.try]
+enabled = true
+ratio = 1
+workflows = ["review"]
+
+[experiments.try.config]
+agent = "test"
+`,
 		},
 	}
 	for _, tt := range tests {

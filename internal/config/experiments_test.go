@@ -904,4 +904,25 @@ func TestWorkflowExperimentArmsCarryTheirOwnPanelSelection(t *testing.T) {
 	arms, err = WorkflowExperimentArms(ExperimentWorkflowCI, global, nil, nil)
 	require.NoError(t, err)
 	assert.Len(t, arms, 1, "the experiment does not apply to CI")
+
+	for _, tt := range []struct {
+		ratio                  float64
+		defaultAssignable, exp bool
+	}{
+		{0, true, false},
+		{0.5, true, true},
+		{1, false, true},
+	} {
+		ratio := tt.ratio
+		global.Experiments["try"] = ExperimentDefinition{
+			Enabled: &enabled, Ratio: &ratio,
+			Workflows: []ExperimentWorkflow{ExperimentWorkflowReview},
+			Config:    map[string]any{"review": map[string]any{"hook_review_panel": "alt"}},
+		}
+		arms, err := WorkflowExperimentArms(ExperimentWorkflowReview, global, nil, nil)
+		require.NoError(t, err)
+		require.Len(t, arms, 2)
+		assert.Equal(t, tt.defaultAssignable, arms[0].Assignable, "default arm at ratio %v", tt.ratio)
+		assert.Equal(t, tt.exp, arms[1].Assignable, "experimental arm at ratio %v", tt.ratio)
+	}
 }

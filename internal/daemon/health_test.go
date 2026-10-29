@@ -445,6 +445,11 @@ func TestHealthReportsUnavailableReviewAgent(t *testing.T) {
 	require.NoError(t, os.WriteFile(codex, []byte(script), 0o755))
 	t.Setenv("PATH", binDir)
 
+	// A request returns the last result and starts a refresh.
+	health = decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
+	assert.False(t, agents(health).Healthy)
+	server.agentHealth.wait()
+
 	health = decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
 	assert.True(t, agents(health).Healthy)
 	assert.True(t, health.Healthy)
