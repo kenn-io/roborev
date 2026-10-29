@@ -641,9 +641,11 @@ export function createJobsStore(opts: JobsStoreOptions) {
     },
   );
 
+  // The page reload builds its query when reconciliation starts. A query built
+  // before the mutation would miss a sort or filter the user changed while it
+  // ran, and its newer generation would discard that change's reload.
   const reconcileJobMutation = <A>(
     id: number,
-    query: ListJobsQuery,
     acknowledged: Option.Option<A>,
     observedValue: A,
     isApplied: (job: ReviewJob) => boolean,
@@ -651,7 +653,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
     Effect.all(
       {
         target: fetchJobAuthority(id),
-        page: refreshJobsAuthority(query),
+        page: Effect.suspend(() => refreshJobsAuthority(buildQuery())),
       },
       { concurrency: "unbounded" },
     ).pipe(
@@ -665,7 +667,6 @@ export function createJobsStore(opts: JobsStoreOptions) {
   const cancelJobEffect = (id: number) =>
     Effect.gen(function* () {
       const workflow = yield* RoborevWorkflow;
-      const query = buildQuery();
       const observedValue = { success: true } satisfies CancelJobResponse;
       const response = yield* workflow.mutate({
         key: `job:${id}`,
@@ -685,7 +686,6 @@ export function createJobsStore(opts: JobsStoreOptions) {
         reconcile: (acknowledged) =>
           reconcileJobMutation(
             id,
-            query,
             acknowledged,
             observedValue,
             (job) => job.status === "canceled",
@@ -717,7 +717,6 @@ export function createJobsStore(opts: JobsStoreOptions) {
   const rerunJobEffect = (id: number) =>
     Effect.gen(function* () {
       const workflow = yield* RoborevWorkflow;
-      const query = buildQuery();
       const requestID = globalThis.crypto.randomUUID();
       const submit = executeRoborevRequest("rerun Roborev job", (signal) =>
         api.rerunJob({ job_id: id, request_id: requestID }, { signal }),
@@ -743,7 +742,6 @@ export function createJobsStore(opts: JobsStoreOptions) {
             Effect.flatMap((result) =>
               reconcileJobMutation(
                 result.job_id,
-                query,
                 Option.some(result),
                 result,
                 () => true,

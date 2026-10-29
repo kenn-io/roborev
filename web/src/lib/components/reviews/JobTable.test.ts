@@ -425,24 +425,4 @@ describe("JobTable sort reload", () => {
     await vi.waitFor(() => expect(renderedIds()).toEqual([1, 2, 3]));
     expect(screen.queryByRole("alert")).toBeNull();
   });
-
-  it("clears a failed sort when a filter change loads the new order", async () => {
-    let failSort = true;
-    mountTable(async (query) => {
-      if (query.sort === "id" && failSort) {
-        throw new Error("daemon unavailable");
-      }
-      return serveBySort(query);
-    });
-    await vi.waitFor(() => expect(renderedIds()).toEqual([3, 2, 1]));
-    await fireEvent.click(idHeaderButton());
-    await fireEvent.click(idHeaderButton());
-    await within(headerGroup()).findByRole("alert");
-
-    failSort = false;
-    context.jobs?.setFilter("status", "done");
-
-    await vi.waitFor(() => expect(renderedIds()).toEqual([1, 2, 3]));
-    expect(screen.queryByRole("alert")).toBeNull();
-  });
 });

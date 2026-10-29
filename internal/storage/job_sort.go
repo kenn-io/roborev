@@ -80,9 +80,11 @@ func WithSortAfter(position JobSortPosition) ListJobsOption {
 // jobSortKeys returns the SQL expressions a listing sorts by before the job
 // ID, and the arguments those expressions bind, in order. Expressions are
 // non-NULL so row-value comparisons against a resume position stay defined.
-// The enqueue time is the exception: it must match the expression of
-// idx_review_jobs_enqueued_position for the default listing to read the index
-// in order, and it is NULL only for timestamp text SQLite cannot parse.
+// NOT NULL columns appear bare, so a sort on an indexed column such as status
+// can read the index in order. The enqueue time is the one nullable
+// expression: it must match idx_review_jobs_enqueued_position for the default
+// listing to use that index, and it is NULL only for timestamp text SQLite
+// cannot parse.
 // The expressions reproduce what the web table showed when it sorted rows
 // itself, so the server order matches the displayed values.
 func jobSortKeys(sort JobSort, includeFindings bool) ([]string, []any) {
@@ -90,19 +92,19 @@ func jobSortKeys(sort JobSort, includeFindings bool) ([]string, []any) {
 	case JobSortID:
 		return nil, nil
 	case JobSortRepo:
-		return []string{"COALESCE(r.name, '')", "COALESCE(j.branch, '')"}, nil
+		return []string{"r.name", "COALESCE(j.branch, '')"}, nil
 	case JobSortAgent:
-		return []string{"COALESCE(j.agent, '')"}, nil
+		return []string{"j.agent"}, nil
 	case JobSortReviewType:
 		return []string{jobReviewTypeLabelExpr}, nil
 	case JobSortStatus:
-		return []string{"COALESCE(j.status, '')"}, nil
+		return []string{"j.status"}, nil
 	case JobSortVerdict:
 		return []string{jobVerdictSortExpr(includeFindings)}, nil
 	case JobSortClosed:
 		return []string{"COALESCE(rv.closed, -1)"}, nil
 	case JobSortElapsed:
-		asOf := sort.AsOf.UTC().Format(time.DateTime)
+		asOf := preciseTimestampAt(sort.AsOf)
 		return []string{jobElapsedSortExpr}, slices.Repeat([]any{asOf}, strings.Count(jobElapsedSortExpr, "?"))
 	case JobSortCost:
 		return []string{jobCostSortExpr}, nil
@@ -156,11 +158,12 @@ func jobVerdictSortExpr(includeFindings bool) string {
 // AsOf time, or -1 for a job that had not started by then. Every "?" binds
 // AsOf. Measuring at AsOf keeps a job in place when it starts or finishes
 // between pages: its real finish time would otherwise move it past the cursor
-// and out of every later page. A panel synthesis row starts with its earliest
-// member.
+// and out of every later page. Times keep their fractional seconds, so a job
+// that starts later in the same second as AsOf still counts as not started.
+// A panel synthesis row starts with its earliest member.
 var jobElapsedSortExpr = func() string {
 	startOf := func(column string) string {
-		started := "julianday(" + sqliteNormalizedTimestampExpr(column) + ")"
+		started := sqlitePreciseJulianExpr(column)
 		return "CASE WHEN " + started + " <= julianday(?) THEN " + started + " END"
 	}
 	ownStart := startOf("j.started_at")
@@ -168,8 +171,10 @@ var jobElapsedSortExpr = func() string {
 	start := "CASE WHEN " + jobPanelParentCond +
 		" THEN COALESCE(MIN(" + ownStart + ", " + memberStart + "), " + ownStart + ", " + memberStart + ")" +
 		" ELSE " + ownStart + " END"
-	end := "MIN(COALESCE(julianday(" + sqliteNormalizedTimestampExpr("j.finished_at") + "), julianday(?)), julianday(?))"
-	return "COALESCE(MAX(0, CAST(ROUND((" + end + " - (" + start + ")) * 86400) AS INTEGER)), -1)"
+	end := "MIN(COALESCE(" + sqlitePreciseJulianExpr("j.finished_at") + ", julianday(?)), julianday(?))"
+	// Julian days are floating point, so round to the millisecond before
+	// dropping the fraction; 100 seconds can otherwise come out as 99.
+	return "COALESCE(MAX(0, CAST(ROUND((" + end + " - (" + start + ")) * 86400, 3) AS INTEGER)), -1)"
 }()
 
 // jobCostSortExpr is a job's reported USD cost, or -1 when it reports none. A

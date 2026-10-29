@@ -69,6 +69,32 @@ func TestHumaListJobsSortedCursorPaging(t *testing.T) {
 	assert.Equal(t, []int64{ids[3], ids[2], ids[0], ids[4], ids[1]}, got)
 }
 
+func TestHumaListJobsPagesByRepoThroughNonUTF8Branch(t *testing.T) {
+	srv, db, _ := newTestServer(t)
+	repo := testutil.CreateTestRepo(t, db)
+	jobs := testutil.CreateTestJobs(t, db, repo, 3, "test-agent")
+	// Git allows branch names that are not valid UTF-8.
+	for i, branch := range []string{"main", "topic-\xff", "zz"} {
+		_, err := db.Exec(`UPDATE review_jobs SET branch = ? WHERE id = ?`, branch, jobs[i].ID)
+		require.NoError(t, err)
+	}
+
+	query := "sort=repo&direction=asc&limit=1"
+	var got []int64
+	page := fetchSortedJobsPage(t, srv, query)
+	for {
+		for _, job := range page.Jobs {
+			got = append(got, job.ID)
+		}
+		if !page.HasMore {
+			break
+		}
+		require.NotNil(t, page.NextCursor)
+		page = fetchSortedJobsPage(t, srv, query+"&cursor="+url.QueryEscape(*page.NextCursor))
+	}
+	assert.Equal(t, []int64{jobs[0].ID, jobs[1].ID, jobs[2].ID}, got)
+}
+
 func TestHumaListJobsRejectsInvalidSort(t *testing.T) {
 	srv, db, _ := newTestServer(t)
 	seedCostJobs(t, db)

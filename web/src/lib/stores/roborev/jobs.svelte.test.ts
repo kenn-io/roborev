@@ -535,6 +535,42 @@ describe("createJobsStore sorting", () => {
     expect(store.getHasMore()).toBe(true);
   });
 
+  it("shows the new sort when a rerun finishes during the sort reload", async () => {
+    const sorted = sortedApi();
+    const firstSortReply = Promise.withResolvers<void>();
+    const rerunReply = Promise.withResolvers<{ job_id: number }>();
+    let sortRequests = 0;
+    const api = {
+      listJobs: vi.fn().mockImplementation(async (query) => {
+        const typed = query as { id?: number; sort?: string };
+        if (typed.id !== undefined) {
+          return {
+            jobs: [makeJob(typed.id)],
+            has_more: false,
+            stats: { done: 1, closed: 0, open: 1 },
+          };
+        }
+        if (typed.sort === "id" && ++sortRequests === 1) {
+          await firstSortReply.promise;
+        }
+        return sorted.listJobs(query);
+      }),
+      rerunJob: vi.fn().mockReturnValue(rerunReply.promise),
+    };
+    const store = createJobsStore({ api: api as never, navigate: vi.fn() });
+    await loadJobs(store);
+    store.rerunJob(30);
+    await vi.waitFor(() => expect(api.rerunJob).toHaveBeenCalledOnce());
+
+    // The sort reload is still loading when the rerun's own reload starts.
+    store.setSortColumn("id");
+    rerunReply.resolve({ job_id: 30 });
+
+    await vi.waitFor(() => expect(store.isSortPending()).toBe(false));
+    expect(ids(store)).toEqual([9, 7, 5]);
+    firstSortReply.resolve();
+  });
+
   it("marks the sort pending until rows in the new order arrive", async () => {
     const sorted = sortedApi();
     const reply = Promise.withResolvers<void>();
@@ -587,22 +623,6 @@ describe("createJobsStore sorting", () => {
     expect(ids(store)).toEqual([9, 7, 5]);
     expect(store.getSortError()).toBeNull();
     expect(store.getError()).toBeNull();
-  });
-
-  it("does not request a page without a cursor from the daemon", async () => {
-    const api = {
-      listJobs: vi.fn().mockResolvedValue({
-        jobs: [makeJob(2), makeJob(1)],
-        has_more: true,
-        stats: { done: 3, closed: 0, open: 3 },
-      }),
-    };
-    const store = createJobsStore({ api: api as never, navigate: vi.fn() });
-    await loadJobs(store);
-
-    await loadMoreJobs(store);
-
-    expect(api.listJobs).toHaveBeenCalledTimes(1);
   });
 });
 

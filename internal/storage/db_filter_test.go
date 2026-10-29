@@ -1292,7 +1292,7 @@ func TestListJobsWithBeforeCursor(t *testing.T) {
 	})
 }
 
-func TestListJobsFirstPageUsesPositionIndex(t *testing.T) {
+func TestListJobsSortsReadTheirIndexes(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		name string
@@ -1318,15 +1318,18 @@ func TestListJobsFirstPageUsesPositionIndex(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			db := test.open(t)
-			// The web table's first page and a page resumed from a cursor.
+			// The web table's first page, a page resumed from a cursor, and a
+			// status sort, which reads idx_review_jobs_status in order.
 			for _, page := range []struct {
 				name  string
+				index string
 				extra []ListJobsOption
 			}{
-				{"first page", nil},
-				{"cursor page", []ListJobsOption{WithSortAfter(JobSortPosition{
+				{"first page", "idx_review_jobs_enqueued_position", nil},
+				{"cursor page", "idx_review_jobs_enqueued_position", []ListJobsOption{WithSortAfter(JobSortPosition{
 					Keys: []any{"2026-01-01 00:00:00"}, JobID: 10,
 				})}},
+				{"status sort", "idx_review_jobs_status", []ListJobsOption{WithSort(JobSort{Column: JobSortStatus})}},
 			} {
 				t.Run(page.name, func(t *testing.T) {
 					opts := append([]ListJobsOption{
@@ -1347,7 +1350,7 @@ func TestListJobsFirstPageUsesPositionIndex(t *testing.T) {
 					}
 					require.NoError(t, rows.Err())
 					plan := strings.Join(details, "\n")
-					assert.Contains(t, plan, "USING INDEX idx_review_jobs_enqueued_position")
+					assert.Contains(t, plan, "USING INDEX "+page.index)
 					assert.NotContains(t, plan, "USE TEMP B-TREE FOR ORDER BY")
 				})
 			}

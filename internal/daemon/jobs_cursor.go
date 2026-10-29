@@ -22,9 +22,17 @@ type jobListCursor struct {
 	Ascending  bool                  `json:"ascending"`
 	// AsOf is the elapsed-time reference shared by every page of an
 	// elapsed sort; other sorts leave it empty.
-	AsOf  string `json:"as_of,omitzero"`
-	Keys  []any  `json:"keys"`
-	JobID int64  `json:"job_id"`
+	AsOf  string             `json:"as_of,omitzero"`
+	Keys  []jobListCursorKey `json:"keys"`
+	JobID int64              `json:"job_id"`
+}
+
+// jobListCursorKey holds one sort key: a number, or text. Text travels as
+// bytes, which JSON writes as base64, because sort text such as a branch name
+// need not be valid UTF-8 and the JSON encoder rejects text that is not.
+type jobListCursorKey struct {
+	Text   []byte   `json:"text,omitzero"`
+	Number *float64 `json:"number,omitzero"`
 }
 
 // encodeJobListCursor returns a cursor that resumes the sorted listing after
@@ -37,12 +45,25 @@ func (s *Server) encodeJobListCursor(job storage.ReviewJob, sort storage.JobSort
 	if err != nil {
 		return "", fmt.Errorf("load database identity: %w", err)
 	}
+	keys := make([]jobListCursorKey, len(job.SortKey))
+	for i, key := range job.SortKey {
+		switch v := key.(type) {
+		case string:
+			keys[i].Text = []byte(v)
+		case int64:
+			keys[i].Number = new(float64(v))
+		case float64:
+			keys[i].Number = new(v)
+		default:
+			return "", fmt.Errorf("encode job cursor: unsupported sort key type %T", key)
+		}
+	}
 	cursor := jobListCursor{
 		Version:    jobListCursorVersion,
 		DatabaseID: databaseID,
 		Sort:       sort.Column,
 		Ascending:  sort.Ascending,
-		Keys:       job.SortKey,
+		Keys:       keys,
 		JobID:      job.ID,
 	}
 	if sort.Column == storage.JobSortElapsed {
@@ -97,5 +118,13 @@ func (s *Server) decodeJobListCursor(
 	if cursor.DatabaseID != databaseID {
 		return nil, time.Time{}, errors.New("invalid jobs cursor: database identity changed")
 	}
-	return &storage.JobSortPosition{Keys: cursor.Keys, JobID: cursor.JobID}, asOf, nil
+	keys := make([]any, len(cursor.Keys))
+	for i, key := range cursor.Keys {
+		if key.Number != nil {
+			keys[i] = *key.Number
+		} else {
+			keys[i] = string(key.Text)
+		}
+	}
+	return &storage.JobSortPosition{Keys: keys, JobID: cursor.JobID}, asOf, nil
 }

@@ -226,3 +226,33 @@ func TestListJobsElapsedPagesKeepJobsThatChangeBetweenPages(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []int64{ids[2], ids[0], ids[3], ids[4]}, jobIDs(rest))
 }
+
+func TestListJobsElapsedPagesKeepJobStartedInTheSameSecondAsReference(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	_, jobs := seedJobs(t, db, "/tmp/sort/same-second", 3)
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	asOf := base.Add(500 * time.Millisecond)
+	_, err := db.Exec(`UPDATE review_jobs SET status = 'done', started_at = ?, finished_at = ? WHERE id = ?`,
+		preciseTimestampAt(base.Add(-100*time.Second)), preciseTimestampAt(base), jobs[0].ID)
+	require.NoError(t, err)
+	sort := WithSort(JobSort{Column: JobSortElapsed, AsOf: asOf})
+
+	// The finished job, then the two queued jobs by descending ID.
+	first, err := db.ListJobs("", "", 2, 0, sort)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{jobs[0].ID, jobs[2].ID}, jobIDs(first))
+
+	// The last queued job starts 300ms after the reference time, in the same
+	// second. As of the reference time it has not started.
+	_, err = db.Exec(`UPDATE review_jobs SET status = 'running', started_at = ? WHERE id = ?`,
+		preciseTimestampAt(asOf.Add(300*time.Millisecond)), jobs[1].ID)
+	require.NoError(t, err)
+
+	last := first[len(first)-1]
+	rest, err := db.ListJobs("", "", 0, 0, sort,
+		WithSortAfter(JobSortPosition{Keys: last.SortKey, JobID: last.ID}))
+	require.NoError(t, err)
+	assert.Equal(t, []int64{jobs[1].ID}, jobIDs(rest))
+}
