@@ -16,6 +16,7 @@ func ghActionCmd() *cobra.Command {
 		agentFlag      string
 		outputPath     string
 		force          bool
+		includeDrafts  bool
 		roborevVersion string
 	)
 
@@ -45,7 +46,7 @@ After generating the workflow, add repository secrets ` +
 			}
 
 			cfg := resolveWorkflowConfig(
-				root, agentFlag, roborevVersion)
+				root, agentFlag, roborevVersion, includeDrafts)
 
 			if outputPath == "" {
 				outputPath = filepath.Join(
@@ -103,6 +104,8 @@ After generating the workflow, add repository secrets ` +
 	cmd.Flags().StringVar(&outputPath, "output", "",
 		"output path for workflow file "+
 			"(default: .github/workflows/roborev.yml)")
+	cmd.Flags().BoolVar(&includeDrafts, "include-drafts", false,
+		"review draft pull requests too")
 	cmd.Flags().BoolVar(&force, "force", false,
 		"overwrite existing workflow file")
 	cmd.Flags().StringVar(&roborevVersion, "roborev-version", "",
@@ -115,8 +118,10 @@ After generating the workflow, add repository secrets ` +
 // CLI flags with existing roborev configuration.
 func resolveWorkflowConfig(
 	repoRoot, agentFlag, roborevVersion string,
+	includeDrafts bool,
 ) ghaction.WorkflowConfig {
 	cfg := ghaction.DefaultConfig()
+	cfg.IncludeDrafts = includeDrafts
 
 	globalCfg, _ := loadClientConfig()
 	repoCfg, _ := config.LoadRepoConfig(repoRoot)

@@ -1176,7 +1176,21 @@ Add secrets in your repository's **Settings > Secrets and variables > Actions**.
 
 ### How the Generated Workflow Works
 
-The generated workflow triggers on `pull_request` events and:
+The generated workflow listens for `opened`, `synchronize`, `reopened`, and
+`ready_for_review` pull request events. It skips draft PRs by default and starts
+reviewing when a PR is marked ready. Generate with
+`roborev init gh-action --include-drafts` to review drafts too.
+
+Overlapping runs for the same workflow and PR are canceled. Returning a PR to
+draft alone does not trigger a run. Existing workflow files stay unchanged until
+you regenerate them with `roborev init gh-action --force`; add
+`--include-drafts` to keep reviewing drafts.
+
+If you generate multiple independent workflows, give each a distinct YAML `name`
+value. Generated workflows all use `name: roborev`; different output filenames
+alone do not isolate their concurrency groups.
+
+Each eligible run:
 
 1. Checks out the PR branch with full history, without persisting Git
     credentials
@@ -1237,7 +1251,11 @@ If you prefer full control over the workflow, create
 name: roborev
 on:
   pull_request:
-    types: [opened, synchronize]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: roborev-${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -1245,6 +1263,7 @@ permissions:
 
 jobs:
   review:
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

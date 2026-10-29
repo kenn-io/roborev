@@ -39,6 +39,9 @@ type WorkflowConfig struct {
 	// RoborevVersion is the roborev release version to
 	// install. Empty means "latest".
 	RoborevVersion string
+
+	// IncludeDrafts allows reviews to run on draft pull requests.
+	IncludeDrafts bool
 }
 
 // DefaultConfig returns a WorkflowConfig with sensible defaults.
@@ -220,6 +223,7 @@ func Generate(cfg WorkflowConfig) (string, error) {
 		RoborevVersion: cfg.RoborevVersion,
 		AgentCSV:       strings.Join(agentNames, ","),
 		SynthesisAgent: synthesis,
+		IncludeDrafts:  cfg.IncludeDrafts,
 	}
 
 	tmpl, err := template.New("workflow").Parse(
@@ -273,6 +277,7 @@ func WriteWorkflow(
 }
 
 type templateData struct {
+	IncludeDrafts  bool
 	Agents         []AgentInfo
 	EnvEntries     []AgentInfo
 	RoborevVersion string
@@ -310,7 +315,11 @@ name: roborev
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: roborev-${{"{{"}} github.workflow {{"}}"}}-${{"{{"}} github.event.pull_request.number {{"}}"}}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -318,6 +327,9 @@ permissions:
 
 jobs:
   review:
+    {{- if not .IncludeDrafts }}
+    if: ${{"{{"}} !github.event.pull_request.draft {{"}}"}}
+    {{- end }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
