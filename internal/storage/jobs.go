@@ -1355,10 +1355,10 @@ func (db *DB) completeJob(
 		}
 	}()
 
-	// Fetch output_prefix and job_type from job (if any)
+	// Fetch output_prefix, job_type and source from job (if any)
 	var outputPrefix sql.NullString
-	var jobType, storedThreshold string
-	err = conn.QueryRowContext(ctx, `SELECT output_prefix, job_type, COALESCE(min_severity, '') FROM review_jobs WHERE id = ?`, jobID).Scan(&outputPrefix, &jobType, &storedThreshold)
+	var jobType, source, storedThreshold string
+	err = conn.QueryRowContext(ctx, `SELECT output_prefix, job_type, COALESCE(source, ''), COALESCE(min_severity, '') FROM review_jobs WHERE id = ?`, jobID).Scan(&outputPrefix, &jobType, &source, &storedThreshold)
 	if completion.MinSeverity == "" {
 		completion.MinSeverity = storedThreshold
 	}
@@ -1393,13 +1393,19 @@ func (db *DB) completeJob(
 		finalOutput = outputPrefix.String + finalOutput
 	}
 
+	finishedAt := preciseTimestampAt(finished)
+	if jobType == JobTypeTask && source == JobSourceRebuttal {
+		// Latest-assessment selection needs the completion order within a
+		// second. Capture it while this transaction owns the write lock.
+		finishedAt = preciseTimestampAt(time.Now())
+	}
 	// Update job status only if still running (not canceled)
 	result, err := conn.ExecContext(ctx, `
 		UPDATE review_jobs
 		SET status = 'done', finished_at = ?, updated_at = ?,
 		    min_severity = COALESCE(NULLIF(?, ''), min_severity)
 		WHERE id = ? AND status = 'running'
-	`, preciseTimestampAt(finished), now, normalizeMinSeverityForWrite(completion.MinSeverity), jobID)
+	`, finishedAt, now, normalizeMinSeverityForWrite(completion.MinSeverity), jobID)
 	if err != nil {
 		return err
 	}
