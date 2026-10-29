@@ -1310,10 +1310,27 @@ hooks, or edits config.
 | Recent failures | Failed jobs queued in the last 7 days, grouped by agent; post-commit hook runs that failed to queue a review |
 | Repository | Registered with the daemon; git hooks installed and current; `snapshot_dir` usable |
 | Review guidelines | `review_guidelines` or `REVIEW.md` exist; when security reviews are enabled, the guidelines describe security or a threat model |
-| Integrations | `[[hooks]]` entries that can never fire or whose `kata` or `bd` CLI is missing from the daemon's `PATH`, `[sync]` problems, and an empty `ci.repos` or invalid `ci.quiet_hours` when the CI poller is enabled |
+| Integrations | `[[hooks]]` entries that can never fire or whose `kata` or `bd` CLI is missing from the daemon's `PATH`, `[sync]` problems, and CI poller settings and review load |
 
 Each check reports `ok`, `info`, `warn`, or `fail`. The command exits `1` when
 any check fails and `0` otherwise, including when there are only warnings.
+
+When CI polling is enabled, doctor checks the last 7 days of CI panel runs
+across all repositories, including when `--repo` selects a repository. The
+`integrations.ci_load` check warns when any PR has more than 5 runs or more than
+10% of panel runs were closed before posting. It reports the observed closed and
+total counts, including small samples. For excessive runs, it suggests
+`ci.throttle_interval`; for closed-before-post work, it suggests checking
+`max_workers` or using a narrower CI review panel.
+
+The CI load check skips disabled polling, a stopped daemon, and a summary
+without CI panel data. A summary API error produces an `info` check with the
+error. To inspect the warning counts, run
+`roborev summary --all --since 7d --json` and compare `ci.closed_before_post`
+with `ci.total_panels`. The text output's retirement counts also include
+finalized runs later retired, so they can differ from the warning numerator.
+Doctor also reports an empty `ci.repos` or invalid `ci.quiet_hours` when CI
+polling is enabled.
 
 Security reviews count as enabled for a repository when the panel selected by
 `review.default_panel` or `review.hook_review_panel`, in the default config or

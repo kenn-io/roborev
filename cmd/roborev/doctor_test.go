@@ -30,9 +30,12 @@ import (
 // fakeDoctorDaemon serves canned daemon responses. A nil ping means the
 // daemon is down.
 type fakeDoctorDaemon struct {
-	ping   *daemon.PingInfo
-	agents *doctorDaemonAgents
-	jobs   []generated.ReviewJob
+	ping         *daemon.PingInfo
+	agents       *doctorDaemonAgents
+	jobs         []generated.ReviewJob
+	summary      *generated.Summary
+	summaryErr   error
+	summaryCalls *int
 }
 
 func (f fakeDoctorDaemon) Ping() (*daemon.PingInfo, error) {
@@ -56,6 +59,13 @@ func (f fakeDoctorDaemon) Health(context.Context) (*generated.HealthStatus, erro
 
 func (f fakeDoctorDaemon) FailedJobs(context.Context, time.Time) ([]generated.ReviewJob, error) {
 	return f.jobs, nil
+}
+
+func (f fakeDoctorDaemon) Summary(context.Context) (*generated.Summary, error) {
+	if f.summaryCalls != nil {
+		*f.summaryCalls++
+	}
+	return f.summary, f.summaryErr
 }
 
 func (f fakeDoctorDaemon) RepoTracked(context.Context, string) (bool, error) {

@@ -77,6 +77,7 @@ type doctorDaemon interface {
 	Status(ctx context.Context) (*generated.DaemonStatus, error)
 	Health(ctx context.Context) (*generated.HealthStatus, error)
 	FailedJobs(ctx context.Context, since time.Time) ([]generated.ReviewJob, error)
+	Summary(ctx context.Context) (*generated.Summary, error)
 	RepoTracked(ctx context.Context, repo string) (bool, error)
 }
 
@@ -343,6 +344,19 @@ func (d liveDoctorDaemon) Health(ctx context.Context) (*generated.HealthStatus, 
 		return nil, daemonRequestError("get daemon health", err)
 	}
 	return health, nil
+}
+
+func (d liveDoctorDaemon) Summary(ctx context.Context) (*generated.Summary, error) {
+	summary, err := d.client().GetSummary(ctx, &generated.GetSummaryRequestOptions{
+		Query: &generated.GetSummaryQuery{
+			All:   new(generated.GetSummaryQueryAllTrue),
+			Since: new(fmt.Sprintf("%dh", doctorRecentWindow/time.Hour)),
+		},
+	})
+	if err != nil {
+		return nil, daemonRequestError("get review summary", err)
+	}
+	return summary, nil
 }
 
 // doctorFailedJobPage is the page size for the failed-job scan.
