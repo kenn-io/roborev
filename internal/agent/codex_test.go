@@ -1191,31 +1191,38 @@ func TestCodexSandboxRefusesResumeAndPlanning(t *testing.T) {
 }
 
 func TestCodexSandboxRelativeWorkDir(t *testing.T) {
-	dir, err := filepath.EvalSymlinks(t.TempDir())
-	require.NoError(t, err)
-	t.Chdir(dir)
-	t.Setenv("CODEX_HOME", dir)
-	work := filepath.Join(dir, "work")
-	repo := filepath.Join(work, "repo")
-	require.NoError(t, os.MkdirAll(repo, 0o700))
-	authFile := filepath.Join(dir, "auth.json")
-	require.NoError(t, os.WriteFile(authFile, []byte(`{"tokens":{"account_id":"fixture-account","access_token":"fixture-token"}}`), 0o600))
-	s := CodexSandbox{Job: sandbox.Job{WorkDir: "work"}}
-	_, _, err = s.prepare(work)
-	require.ErrorContains(t, err, "sandbox repo must be inside job work dir")
-	job, cleanup, err := s.prepare(repo)
-	require.NoError(t, err)
-	defer cleanup()
+	for _, relativeHome := range []bool{false, true} {
+		t.Run(fmt.Sprintf("relative-home=%t", relativeHome), func(t *testing.T) {
+			dir, err := filepath.EvalSymlinks(t.TempDir())
+			require.NoError(t, err)
+			t.Chdir(dir)
+			hostHome := filepath.Join(dir, ".login")
+			require.NoError(t, os.Mkdir(hostHome, 0o700))
+			if relativeHome {
+				t.Setenv("CODEX_HOME", ".login")
+			} else {
+				t.Setenv("CODEX_HOME", hostHome)
+			}
+			work := filepath.Join(dir, "work")
+			repo := filepath.Join(work, "repo")
+			require.NoError(t, os.MkdirAll(repo, 0o700))
+			authFile := filepath.Join(hostHome, "auth.json")
+			s := CodexSandbox{Job: sandbox.Job{WorkDir: "work"}}
+			_, _, err = s.prepare(work)
+			require.ErrorContains(t, err, "sandbox repo must be inside job work dir")
+			job, cleanup, err := s.prepare(repo)
+			require.NoError(t, err)
+			defer cleanup()
 
-	assert := assert.New(t)
-	assert.Equal(work, job.WorkDir)
-	require.Len(t, job.Env, 1)
-	home := strings.TrimPrefix(job.Env[0], "CODEX_HOME=")
-	assert.Equal(work, filepath.Dir(home))
-	data, err := os.ReadFile(filepath.Join(home, "config.toml"))
-	require.NoError(t, err)
-	assert.Contains(string(data), "fixture-account")
-	assert.NotContains(string(data), "fixture-token")
+			assert := assert.New(t)
+			assert.Equal(authFile, job.Route.Capture[len(job.Route.Capture)-1])
+			assert.Equal(work, job.WorkDir)
+			require.Len(t, job.Env, 1)
+			home := strings.TrimPrefix(job.Env[0], "CODEX_HOME=")
+			assert.Equal(work, filepath.Dir(home))
+			assert.FileExists(filepath.Join(home, "config.toml"))
+		})
+	}
 }
 
 func TestCodexSandboxWrapperFailure(t *testing.T) {

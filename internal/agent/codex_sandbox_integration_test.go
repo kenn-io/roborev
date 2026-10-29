@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/sandbox"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestCodexSandboxIntegration(t *testing.T) {
@@ -32,123 +33,116 @@ func TestCodexSandboxIntegration(t *testing.T) {
 			t.Skipf("%s is required", command)
 		}
 	}
-	codex, err := exec.LookPath("codex")
-	require.NoError(t, err)
-	codex, err = filepath.EvalSymlinks(codex)
-	require.NoError(t, err)
+	for _, relativeCommand := range []bool{false, true} {
+		t.Run(fmt.Sprintf("relative-command=%t", relativeCommand), func(t *testing.T) {
+			codex, err := exec.LookPath("codex")
+			require.NoError(t, err)
+			codex, err = filepath.EvalSymlinks(codex)
+			require.NoError(t, err)
 
-	work, secrets := t.TempDir(), t.TempDir()
-	t.Chdir(filepath.Dir(work))
-	repo, gitDir := filepath.Join(work, "repo"), filepath.Join(t.TempDir(), "repo.git")
-	require.NoError(t, os.Mkdir(repo, 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(repo, "trust-policy.json"), []byte("invalid repo policy"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(repo, "README.md"), []byte("sandbox fixture\n"), 0o600))
-	for _, args := range [][]string{
-		{"init", "--separate-git-dir=" + gitDir, repo},
-		{"-C", repo, "add", "README.md"},
-		{"-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "commit", "-m", "fixture"},
-	} {
-		out, err := exec.CommandContext(t.Context(), "git", args...).CombinedOutput()
-		require.NoError(t, err, "%s", out)
-	}
-	t.Setenv("CODEX_HOME", secrets)
-	require.NoError(t, os.WriteFile(filepath.Join(secrets, "auth.json"), []byte(`{"tokens":{"account_id":"fixture-account","access_token":"sandbox-test-token"}}`), 0o600))
+			work, secrets := t.TempDir(), t.TempDir()
+			t.Chdir(filepath.Dir(work))
+			repo, gitDir := filepath.Join(work, "repo"), filepath.Join(t.TempDir(), "repo.git")
+			testutil.InitSeparateGitRepo(t, repo, gitDir)
+			require.NoError(t, os.WriteFile(filepath.Join(repo, "trust-policy.json"), []byte("invalid repo policy"), 0o600))
+			t.Setenv("CODEX_HOME", secrets)
+			require.NoError(t, os.WriteFile(filepath.Join(secrets, "auth.json"), []byte(`{"tokens":{"access_token":"sandbox-test-token"}}`), 0o600))
 
-	marker := filepath.Join(work, "probe-ran")
-	probe := fmt.Sprintf(`#!/bin/bash
-failed=0
-check() {
-  name=$1 expected=$2; shift 2
-  "$@" >/dev/null 2>&1; actual=$?
-  if { [ "$expected" = allow ] && [ "$actual" -ne 0 ]; } || { [ "$expected" = deny ] && [ "$actual" -eq 0 ]; }; then
-    echo "BAD $name"; failed=1
-  else
-    echo "OK $name"
-  fi
-}
+			marker := filepath.Join(work, "probe-ran")
+			probe := fmt.Sprintf("#!/bin/bash\n"+testutil.SandboxShellChecks+`
 check codex-home allow bash -c '[[ "$CODEX_HOME" == "$1"/.codex-home-* && -d "$CODEX_HOME" ]]' probe '%s'
 check login-read deny cat '%s/auth.json'
 touch '%s'
 exit "$failed"
 `, work, secrets, marker)
 
-	const key = "sandbox-test-token"
-	var calls, unauthorized atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		if r.Header.Get("Authorization") != "Bearer "+key || r.Header.Get("chatgpt-account-id") != "fixture-account" {
-			unauthorized.Add(1)
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		if r.Method != http.MethodPost || r.URL.Path != "/responses" {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		var request struct {
-			Input []struct {
-				Type   string `json:"type"`
-				Output string `json:"output"`
-			} `json:"input"`
-			Tools []struct {
-				Type string `json:"type"`
-			} `json:"tools"`
-		}
-		if err := json.UnmarshalRead(r.Body, &request); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		send := func(event string, data any) {
-			encoded, err := json.Marshal(data)
-			assert.NoError(t, err) //nolint:testifylint // Runs in the HTTP server goroutine.
-			_, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, encoded)
-			assert.NoError(t, err)
-		}
-		send("response.created", map[string]any{"type": "response.created", "response": map[string]any{"id": "resp_test"}})
-		var outputs []string
-		for _, input := range request.Input {
-			if strings.HasSuffix(input.Type, "_call_output") {
-				outputs = append(outputs, input.Output)
-			}
-		}
-		for _, tool := range request.Tools {
-			assert.NotEqual(t, "web_search", tool.Type)
-		}
-		item := sandboxRouteItem(t, outputs)
-		send("response.output_item.done", map[string]any{"type": "response.output_item.done", "item": item})
-		send("response.completed", map[string]any{"type": "response.completed", "response": map[string]any{"id": "resp_test", "usage": map[string]int{"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}}})
-	}))
-	defer server.Close()
-	require.NoError(t, os.WriteFile(filepath.Join(work, "probe.sh"), []byte(probe), 0o700))
+			const key = "sandbox-test-token"
+			var calls, unauthorized atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				if r.Header.Get("Authorization") != "Bearer "+key {
+					unauthorized.Add(1)
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+				if r.Method != http.MethodPost || r.URL.Path != "/responses" {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				var request struct {
+					Input []struct {
+						Type   string `json:"type"`
+						Output string `json:"output"`
+					} `json:"input"`
+					Tools []struct {
+						Type string `json:"type"`
+					} `json:"tools"`
+				}
+				if err := json.UnmarshalRead(r.Body, &request); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				send := func(event string, data any) {
+					encoded, err := json.Marshal(data)
+					assert.NoError(t, err) //nolint:testifylint // Runs in the HTTP server goroutine.
+					_, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, encoded)
+					assert.NoError(t, err)
+				}
+				send("response.created", map[string]any{"type": "response.created", "response": map[string]any{"id": "resp_test"}})
+				var outputs []string
+				for _, input := range request.Input {
+					if strings.HasSuffix(input.Type, "_call_output") {
+						outputs = append(outputs, input.Output)
+					}
+				}
+				for _, tool := range request.Tools {
+					assert.NotEqual(t, "web_search", tool.Type)
+				}
+				item := sandboxRouteItem(t, outputs)
+				send("response.output_item.done", map[string]any{"type": "response.output_item.done", "item": item})
+				send("response.completed", map[string]any{"type": "response.completed", "response": map[string]any{"id": "resp_test", "usage": map[string]int{"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}}})
+			}))
+			defer server.Close()
+			require.NoError(t, os.WriteFile(filepath.Join(work, "probe.sh"), []byte(probe), 0o700))
 
-	job := sandbox.Job{
-		WorkDir: filepath.Base(work), ReadPaths: []string{gitDir, filepath.Dir(filepath.Dir(codex))},
-		MemoryMax: 8 << 30,
-		Env:       []string{"PATH=/usr/bin:/bin", "HOME=" + secrets, "TMPDIR=" + work},
+			job := sandbox.Job{
+				WorkDir: filepath.Base(work), ReadPaths: []string{gitDir, filepath.Dir(filepath.Dir(codex))},
+				MemoryMax: 8 << 30,
+				Env:       []string{"PATH=/usr/bin:/bin", "HOME=" + secrets, "TMPDIR=" + work},
+			}
+			if _, err := os.Stat("/etc/codex"); err == nil {
+				job.ReadPaths = append(job.ReadPaths, "/etc/codex")
+			} else {
+				require.True(t, os.IsNotExist(err), "%v", err)
+			}
+			command := codex
+			if relativeCommand {
+				require.NoError(t, os.Mkdir(filepath.Join(work, "tools"), 0o700))
+				data, err := os.ReadFile(codex)
+				require.NoError(t, err)
+				require.NoError(t, os.WriteFile(filepath.Join(work, "tools", "codex"), data, 0o700))
+				command = "./" + filepath.Join(filepath.Base(work), "tools", "codex")
+			}
+			a := NewCodexAgent(command).WithSandbox(&CodexSandbox{Job: job, upstream: server.URL})
+			a.IgnoreUserConfig = true
+			a.ConfigOverrides = []string{`web_search="live"`, `model_provider="wrong-provider"`}
+			a.Model = "test-model"
+			var stream bytes.Buffer
+			result, err := a.Review(context.Background(), filepath.Join(filepath.Base(work), "repo"), "HEAD", "Run the supplied probe.", &stream)
+			require.NoError(t, err, "%s", stream.String())
+			assert.NotContains(t, string(result), "BAD ")
+			for _, name := range []string{"codex-home", "login-read"} {
+				assert.Contains(t, string(result), "OK "+name)
+			}
+			assert.FileExists(t, marker)
+			assert.GreaterOrEqual(t, calls.Load(), int32(2))
+			assert.Zero(t, unauthorized.Load())
+			homes, err := filepath.Glob(filepath.Join(work, ".codex-home-*"))
+			require.NoError(t, err)
+			assert.Empty(t, homes)
+		})
 	}
-	if _, err := os.Stat("/etc/codex"); err == nil {
-		job.ReadPaths = append(job.ReadPaths, "/etc/codex")
-	} else {
-		require.True(t, os.IsNotExist(err), "%v", err)
-	}
-	a := NewCodexAgent(codex).WithSandbox(&CodexSandbox{Job: job, upstream: server.URL})
-	a.IgnoreUserConfig = true
-	a.ConfigOverrides = []string{`web_search="live"`, `model_provider="wrong-provider"`}
-	a.Model = "test-model"
-	var stream bytes.Buffer
-	result, err := a.Review(context.Background(), filepath.Join(filepath.Base(work), "repo"), "HEAD", "Run the supplied probe.", &stream)
-	require.NoError(t, err, "%s", stream.String())
-	assert.NotContains(t, string(result), "BAD ")
-	for _, name := range []string{"codex-home", "login-read"} {
-		assert.Contains(t, string(result), "OK "+name)
-	}
-	assert.FileExists(t, marker)
-	assert.GreaterOrEqual(t, calls.Load(), int32(2))
-	assert.Zero(t, unauthorized.Load())
-	homes, err := filepath.Glob(filepath.Join(work, ".codex-home-*"))
-	require.NoError(t, err)
-	assert.Empty(t, homes)
 }
 
 func sandboxRouteItem(t *testing.T, outputs []string) map[string]any {

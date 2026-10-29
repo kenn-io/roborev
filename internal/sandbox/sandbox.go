@@ -40,24 +40,18 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 	if j.MemoryMax <= 0 {
 		return nil, nil, nil, fmt.Errorf("sandbox MemoryMax must be positive")
 	}
-	workDir, err := filepath.Abs(j.WorkDir)
-	if err == nil {
-		workDir, err = filepath.EvalSymlinks(workDir)
-	}
+	workDir, err := ResolvePath(j.WorkDir)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("resolve sandbox WorkDir: %w", err)
 	}
 	j.WorkDir = workDir
-	tempDir, err := filepath.EvalSymlinks(os.TempDir())
+	tempDir, err := ResolvePath(os.TempDir())
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("resolve sandbox temp dir: %w", err)
 	}
 	readPaths := make([]string, 0, len(j.ReadPaths))
 	for _, path := range j.ReadPaths {
-		resolved, err := filepath.Abs(path)
-		if err == nil {
-			resolved, err = filepath.EvalSymlinks(resolved)
-		}
+		resolved, err := ResolvePath(path)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("resolve sandbox read path %q: %w", path, err)
 		}
@@ -82,7 +76,7 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("find sandbox nono: %w", err)
 	}
-	nono, err = filepath.EvalSymlinks(nono)
+	nono, err = ResolvePath(nono)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("resolve sandbox nono: %w", err)
 	}
@@ -131,7 +125,7 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 			}},
 		},
 		"credential_capture": map[string]any{j.Route.Name: map[string]any{
-			"command": j.Route.Capture, "timeout_secs": 5, "cache_ttl_secs": 300,
+			"command": j.Route.Capture, "cache_ttl_secs": 300,
 		}},
 		"environment": map[string]any{
 			"allow_vars": keys,
@@ -184,6 +178,15 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 	}
 	cmd = append([]string{cmd[0], "--unit=" + unit}, cmd[1:]...)
 	return append(cmd, argv...), env, cleanup, nil
+}
+
+// ResolvePath returns an absolute path with symlinks resolved for job commands and grants.
+func ResolvePath(path string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(absolute)
 }
 
 func killScope(unit string) {

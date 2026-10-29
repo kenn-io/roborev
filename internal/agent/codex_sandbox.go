@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,14 +26,11 @@ func (a *CodexAgent) WithSandbox(s *CodexSandbox) *CodexAgent {
 
 func (s *CodexSandbox) prepare(repoPath string) (sandbox.Job, func(), error) {
 	job := s.Job
-	workDir, err := filepath.Abs(job.WorkDir)
-	if err == nil {
-		workDir, err = filepath.EvalSymlinks(workDir)
-	}
+	workDir, err := sandbox.ResolvePath(job.WorkDir)
 	if err != nil {
 		return job, nil, fmt.Errorf("resolve sandbox work dir: %w", err)
 	}
-	repo, err := filepath.EvalSymlinks(repoPath)
+	repo, err := sandbox.ResolvePath(repoPath)
 	if err != nil {
 		return job, nil, fmt.Errorf("resolve sandbox repo: %w", err)
 	}
@@ -47,18 +43,9 @@ func (s *CodexSandbox) prepare(repoPath string) (sandbox.Job, func(), error) {
 	if err != nil {
 		return job, nil, err
 	}
-	authFile := filepath.Join(hostHome, "auth.json")
-	data, err := os.ReadFile(authFile)
+	authFile, err := filepath.Abs(filepath.Join(hostHome, "auth.json"))
 	if err != nil {
-		return job, nil, fmt.Errorf("read Codex login: %w", err)
-	}
-	var login struct {
-		Tokens struct {
-			AccountID string `json:"account_id"`
-		} `json:"tokens"`
-	}
-	if err := json.Unmarshal(data, &login); err != nil {
-		return job, nil, fmt.Errorf("parse Codex login: %w", err)
+		return job, nil, fmt.Errorf("resolve Codex login path: %w", err)
 	}
 	upstream := s.upstream
 	if upstream == "" {
@@ -77,10 +64,9 @@ func (s *CodexSandbox) prepare(repoPath string) (sandbox.Job, func(), error) {
 		"model_providers": map[string]any{"roborev-route": map[string]any{
 			"name": "roborev-route", "env_key": "CODEX_PHANTOM",
 			"requires_openai_auth": false, "wire_api": "responses",
-			"http_headers": map[string]string{"chatgpt-account-id": login.Tokens.AccountID},
 		}},
 	}
-	data, err = toml.Marshal(provider)
+	data, err := toml.Marshal(provider)
 	if err == nil {
 		err = os.WriteFile(filepath.Join(home, "config.toml"), data, 0o600)
 	}

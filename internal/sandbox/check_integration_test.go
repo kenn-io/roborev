@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/testenv"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestMain(m *testing.M) {
@@ -66,16 +67,7 @@ func TestSandboxLiteralGrants(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(profiles, "default.json"), planted, 0o600))
 	repo, gitDir := filepath.Join(work, "repo"), filepath.Join(read, "repo.git")
-	require.NoError(t, os.Mkdir(repo, 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(repo, "README.md"), []byte("sandbox fixture\n"), 0o600))
-	for _, args := range [][]string{
-		{"init", "--separate-git-dir=" + gitDir, repo},
-		{"-C", repo, "add", "README.md"},
-		{"-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "commit", "-m", "fixture"},
-	} {
-		out, err := exec.CommandContext(t.Context(), "git", args...).CombinedOutput()
-		require.NoError(t, err, "%s", out)
-	}
+	testutil.InitSeparateGitRepo(t, repo, gitDir)
 	authFile := filepath.Join(home, "auth.json")
 	require.NoError(t, os.WriteFile(authFile, []byte("fixture-token"), 0o600))
 	other, err := net.Listen("tcp4", "127.0.0.1:0")
@@ -83,17 +75,7 @@ func TestSandboxLiteralGrants(t *testing.T) {
 	defer other.Close()
 	job := Job{WorkDir: work, ReadPaths: []string{read}, Route: Route{Name: "codex", Upstream: "https://chatgpt.com/backend-api/codex", Path: "/responses", EnvVar: "CODEX_PHANTOM", Capture: []string{"/bin/cat", authFile}},
 		Env: []string{"PATH=/usr/bin:/bin", "HOME=" + home, "XDG_CONFIG_HOME=" + configDir}, MemoryMax: 1 << 30}
-	script := `
-failed=0
-check() {
-  name=$1 expected=$2; shift 2
-  "$@" >/dev/null 2>&1; actual=$?
-  if { [ "$expected" = allow ] && [ "$actual" -ne 0 ]; } || { [ "$expected" = deny ] && [ "$actual" -eq 0 ]; }; then
-    echo "BAD $name"; failed=1
-  else
-    echo "OK $name"
-  fi
-}
+	script := testutil.SandboxShellChecks + `
 check work-write allow touch "$1/allowed"
 check read-grant allow cat "$2/allowed"
 check sibling-write deny touch "$3/overwritten"
