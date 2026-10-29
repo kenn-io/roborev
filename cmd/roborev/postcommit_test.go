@@ -1269,7 +1269,12 @@ func TestPostCommitTimesOutOnSlowDaemon(t *testing.T) {
 
 	require.NoError(t, err)
 
-	require.Len(t, rt.hit, 1, "RoundTrip was never called; timeout not exercised")
+	select {
+	case <-rt.hit:
+		// RoundTrip was called — timeout path was exercised
+	default:
+		require.FailNow(t, "RoundTrip was never called; timeout not exercised")
+	}
 	assert.False(t, realHandlerCalled, "real handler should not be reached")
 
 	select {
