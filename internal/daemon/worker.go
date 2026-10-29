@@ -52,7 +52,8 @@ type WorkerPool struct {
 	db                   *storage.DB
 	cfgGetter            ConfigGetter
 	ciGitEnv             func(string) []string
-	ciCheck              func(context.Context, *storage.ReviewJob, ciCheckConfig, structuredreview.Document, agent.CodexSandbox, []string, io.Writer) (structuredreview.Document, error)
+	ciCheckUpstream      string
+	ciCheck              func(context.Context, *storage.ReviewJob, ciCheckConfig, structuredreview.Document, []string, io.Writer) (structuredreview.Document, error)
 	broadcaster          Broadcaster
 	errorLog             *ErrorLog
 	activityLog          *ActivityLog
