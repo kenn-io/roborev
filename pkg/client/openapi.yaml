@@ -1943,6 +1943,20 @@ components:
         - complete
         - components
       type: object
+    ExperimentGuardResult:
+      additionalProperties: false
+      properties:
+        guard:
+          type: string
+        reason:
+          type: string
+        state:
+          type: string
+      required:
+        - guard
+        - state
+        - reason
+      type: object
     ExperimentIntegrity:
       additionalProperties: false
       properties:
@@ -2126,6 +2140,8 @@ components:
           type:
             - string
             - "null"
+        success:
+          $ref: "#/components/schemas/ExperimentSuccessResult"
         until:
           format: date-time
           type:
@@ -2168,6 +2184,31 @@ components:
         - exploratory
         - adjusted
         - outcome_basis
+      type: object
+    ExperimentSuccessResult:
+      additionalProperties: false
+      properties:
+        direction:
+          type: string
+        guards:
+          items:
+            $ref: "#/components/schemas/ExperimentGuardResult"
+          type: array
+        metric:
+          type: string
+        min_effect:
+          type: string
+        reason:
+          type: string
+        state:
+          type: string
+      required:
+        - metric
+        - direction
+        - min_effect
+        - state
+        - reason
+        - guards
       type: object
     ExportCICostDocument:
       additionalProperties: false

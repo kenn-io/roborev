@@ -7,6 +7,7 @@ import type { ExperimentIntegrity } from "./experimentIntegrity";
 import type { ExperimentLabelCoverage } from "./experimentLabelCoverage";
 import type { ExperimentMetricComparison } from "./experimentMetricComparison";
 import type { ExperimentReportMethod } from "./experimentReportMethod";
+import type { ExperimentSuccessResult } from "./experimentSuccessResult";
 
 export interface ExperimentReport {
   /** A URL to the JSON Schema for this object. */
@@ -26,6 +27,7 @@ export interface ExperimentReport {
   ratio: number | null;
   /** @nullable */
   since: string | null;
+  success?: ExperimentSuccessResult;
   /** @nullable */
   until: string | null;
 }
