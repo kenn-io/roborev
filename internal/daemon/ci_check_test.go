@@ -5,8 +5,12 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +22,7 @@ import (
 	"go.kenn.io/roborev/internal/prompt"
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
@@ -56,8 +61,16 @@ func TestCICheckApply(t *testing.T) {
 			}
 			assert.Equal(t, tc.want, problems)
 			assert.Equal(t, tc.verdict, got.Verdict)
-			if len(got.Findings) == 0 {
-				assert.Equal(t, "No issues found.", got.Summary)
+			if len(got.Findings) < len(doc.Findings) {
+				if len(got.Findings) == 1 {
+					assert.Equal(t, "1 finding.", got.Summary)
+				} else {
+					assert.Equal(t, "0 findings.", got.Summary)
+				}
+				assert.NotContains(t, got.Markdown("high"), doc.Summary)
+				if len(got.Findings) == 0 {
+					assert.Equal(t, 1, strings.Count(got.Markdown("high"), "No issues found."))
+				}
 			} else {
 				assert.Equal(t, doc.Summary, got.Summary)
 			}
@@ -145,12 +158,15 @@ func TestCICheckFailurePreservesSynthesis(t *testing.T) {
 }
 
 func TestCICheckCompletionContext(t *testing.T) {
-	for _, mode := range []string{"canceled", "deadline"} {
+	for _, mode := range []string{"canceled", "deadline", "checker canceled"} {
 		t.Run(mode, func(t *testing.T) {
 			tc := newWorkerTestContext(t, 1)
 			run, members, _ := enqueuePanelRun(t, tc, "context-panel", []memberSpec{{name: "one", agent: "test"}})
 			completeMember(t, tc, members[0].ID, "test", "No issues found.")
 			job := releaseAndClaimSynthesis(t, tc, run)
+			if mode == "checker canceled" {
+				job.PanelMemberConfigJSON = `{"check":{}}`
+			}
 			ctx, cancel := context.WithCancel(t.Context())
 			if mode == "deadline" {
 				cancel()
@@ -162,11 +178,83 @@ func TestCICheckCompletionContext(t *testing.T) {
 			tc.Pool.checkAndCompleteSynthesis(ctx, testWorkerID, job, synthesisResult{review: reviewpkg.ReviewResult{Agent: "test", Output: "Original review", Verdict: storage.VerdictPass, StructuredOutput: jsontext.Value(`{"schema_version":2,"summary":"Original review","verdict":"pass","findings":[]}`)}})
 			finished, err := tc.DB.GetJobByID(job.ID)
 			require.NoError(t, err)
-			if mode == "canceled" {
+			if mode == "checker canceled" {
 				assert.Equal(t, storage.JobStatusRunning, finished.Status)
 			} else {
 				assert.Equal(t, storage.JobStatusDone, finished.Status)
 			}
 		})
 	}
+}
+
+func TestCICheckSumSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires shell script fixtures")
+	}
+	repo := testutil.NewTestRepoWithCommit(t)
+	repo.CommitFile("go.mod", "module example.com/check\n\ngo 1.26\n", "module")
+	target := filepath.Join(t.TempDir(), "host.sum")
+	require.NoError(t, os.Symlink(target, filepath.Join(repo.Root, "go.sum")))
+	repo.RunGit("add", "go.sum")
+	repo.RunGit("commit", "-m", "checksum symlink")
+	tools := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(tools, "bin"), 0o700))
+	goScript := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = env ]; then printf '%%s\\n' '%s' '%s'; else echo checksum > go.sum; fi\n", tools, tools)
+	require.NoError(t, os.WriteFile(filepath.Join(tools, "bin", "go"), []byte(goScript), 0o700))
+	t.Setenv("PATH", filepath.Join(tools, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
+	key := filepath.Join(t.TempDir(), "key")
+	require.NoError(t, os.WriteFile(key, []byte("test-key"), 0o600))
+	sha := testutil.GetHeadSHA(t, repo.Root)
+	_, err := runCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha, CIBaseBranch: "main"}, ciCheckConfig{}, structuredreview.Document{}, key, nil, io.Discard)
+	require.ErrorContains(t, err, "go.sum must be a regular file")
+	assert.NoFileExists(t, target)
+}
+
+func TestCICheckSubmodules(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires shell script fixtures")
+	}
+	sub := testutil.NewTestRepoWithCommit(t)
+	sub.CommitFile("present.txt", "submodule content", "content")
+	repo := testutil.NewTestRepoWithCommit(t)
+	repo.RunGit("-c", "protocol.file.allow=always", "submodule", "add", sub.Root, "dependency")
+	repo.RunGit("commit", "-am", "submodule")
+	tools := t.TempDir()
+	observed := filepath.Join(tools, "observed")
+	script := fmt.Sprintf("#!/bin/sh\ncat work/repo*/dependency/present.txt > '%s'\nexit 1\n", observed)
+	require.NoError(t, os.WriteFile(filepath.Join(tools, "go"), []byte(script), 0o700))
+	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
+	key := filepath.Join(tools, "key")
+	require.NoError(t, os.WriteFile(key, []byte("test-key"), 0o600))
+	sha := testutil.GetHeadSHA(t, repo.Root)
+	_, err := runCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha, CIBaseBranch: "main"}, ciCheckConfig{}, structuredreview.Document{}, key, nil, io.Discard)
+	require.Error(t, err)
+	data, err := os.ReadFile(observed)
+	require.NoError(t, err)
+	assert.Equal(t, "submodule content", string(data))
+}
+
+func TestCICheckMiseShim(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires shell script fixtures")
+	}
+	repo := testutil.NewTestRepoWithCommit(t)
+	tools := t.TempDir()
+	observed := filepath.Join(tools, "observed")
+	// A symlink shim dispatches on argv[0], just as mise does.
+	installed := filepath.Join(tools, "installed", "codex")
+	require.NoError(t, os.Mkdir(filepath.Dir(installed), 0o700))
+	require.NoError(t, os.WriteFile(installed, []byte(fmt.Sprintf("#!/bin/sh\necho codex > '%s'\nexit 1\n", observed)), 0o700))
+	script := fmt.Sprintf("#!/bin/sh\nif [ \"$1 $2\" = 'which codex' ]; then echo '%s'; exit 0; fi\ncase \"$0\" in */codex) exec '%s' \"$@\";; esac\nexit 1\n", installed, installed)
+	require.NoError(t, os.WriteFile(filepath.Join(tools, "mise"), []byte(script), 0o700))
+	require.NoError(t, os.Symlink("mise", filepath.Join(tools, "codex")))
+	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
+	key := filepath.Join(tools, "key")
+	require.NoError(t, os.WriteFile(key, []byte("test-key"), 0o600))
+	sha := testutil.GetHeadSHA(t, repo.Root)
+	_, err := runCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha, CIBaseBranch: "main"}, ciCheckConfig{}, structuredreview.Document{}, key, nil, io.Discard)
+	require.Error(t, err)
+	data, err := os.ReadFile(observed)
+	require.NoError(t, err)
+	assert.Equal(t, "codex\n", string(data))
 }

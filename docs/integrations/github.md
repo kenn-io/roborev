@@ -750,7 +750,8 @@ check_reasoning = "high"
 
 The checker is off by default. A repository can override `check` in its
 `.roborev.toml` on the default branch. Only the global config selects the agent,
-model, and reasoning. Codex is the only supported checker agent.
+model, and reasoning. Codex is the only supported checker agent. The daemon-free
+`roborev ci review` command ignores these checker settings.
 
 The host needs Linux on amd64, the pinned nono build, a systemd user manager,
 Codex, Go, and a credential proxy at `http://127.0.0.1:8317/v1`. Put its client

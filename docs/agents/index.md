@@ -356,8 +356,8 @@ review vs agentic modes.
 
 The Codex backend can run agentic jobs inside nono. This is an internal API for
 callers that supply a job directory, read-only paths, an explicit environment, a
-memory cap in bytes, and a host Codex login file. The CI checker will use this
-API; configuration doesn't expose it yet.
+memory cap in bytes, and a host Codex login file. The CI checker uses this API when
+[`ci.check` is enabled](/docs/integrations/github/#checking-findings-before-posting).
 
 The job can write its work directory and read the caller's read-only paths plus
 nono's default system paths. Keep the Git directory outside the work directory
