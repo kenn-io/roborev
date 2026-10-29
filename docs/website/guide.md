@@ -159,11 +159,12 @@ roborev compact
 
 ## 09 / Run the same panel on every pull request
 
-Enable the CI poller and the daemon lists open pull requests on GitHub or merge
-requests on GitLab, runs one panel per PR head against the frozen merge-base
-range, and posts one synthesized comment. Labels in `skip_labels` exempt drafts
-and generated updates. Authenticate as a GitHub App for a bot with
-repository-scoped permissions, or use your `gh` login.
+Enable the CI poller and the daemon lists open pull requests on GitHub, runs
+one panel per PR head against the frozen merge-base range, and posts one
+synthesized comment. The poller is GitHub-only; for GitLab merge requests, run
+`roborev ci review` in a GitLab CI job to post the review as an MR note. Labels
+in `skip_labels` exempt drafts and generated updates. Authenticate as a GitHub
+App for a bot with repository-scoped permissions, or use your `gh` login.
 
 ```toml
 [ci]
