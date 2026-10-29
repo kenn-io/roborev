@@ -38,3 +38,27 @@ func TestSandboxCommandRejectsUnavailablePolicy(t *testing.T) {
 		})
 	}
 }
+
+func TestSandboxCommandRejectsReadPaths(t *testing.T) {
+	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+		t.Skip("nono pin requires linux/amd64")
+	}
+	work := t.TempDir()
+	file := filepath.Join(work, "read-only")
+	require.NoError(t, os.WriteFile(file, []byte("fixture"), 0o600))
+	link := filepath.Join(t.TempDir(), "read-link")
+	require.NoError(t, os.Symlink(file, link))
+	for _, tc := range []struct {
+		name, path, want string
+	}{
+		{"file", file, "inside sandbox WorkDir"},
+		{"workdir", work, "inside sandbox WorkDir"},
+		{"symlink", link, "inside sandbox WorkDir"},
+		{"missing", filepath.Join(t.TempDir(), "missing"), "resolve sandbox read path"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, _, err := (Job{WorkDir: work, ReadPaths: []string{tc.path}, MemoryMax: 1 << 30}).Command(t.Context(), []string{"true"})
+			require.ErrorContains(t, err, tc.want)
+		})
+	}
+}

@@ -382,10 +382,11 @@ reads, network access, environment filtering, and access to the user D-Bus. Any
 mismatch or unenforceable policy stops the run before Codex starts.
 
 Codex runs in agentic mode with a private `CODEX_HOME` inside the job directory.
-Its provider points to the proxy, and its proxy key stays in the private
-configuration file. Web search is disabled. The job receives only its explicit
-environment, and it can reach only the proxy port. The host login and user D-Bus
-stay outside the sandbox. Planning refuses this agentic mode.
+Its provider points to the proxy. The job can read its proxy key from the
+configuration file, and the key works only against the proxy. Web search is
+disabled. The job receives only its explicit environment, and it can reach only
+the proxy port. The host login and user D-Bus stay outside the sandbox. Planning
+refuses this agentic mode.
 
 Tests that start a loopback server, such as `httptest.NewServer`, fail inside
 this sandbox. Run `make test-sandbox-integration` with nono and Codex on PATH to

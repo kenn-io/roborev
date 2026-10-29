@@ -1172,6 +1172,13 @@ exit 0
 	assert.True(t, IsUnavailable(err))
 }
 
+func TestCodexSandboxRefusesResume(t *testing.T) {
+	a := NewCodexAgent(filepath.Join(t.TempDir(), "missing-codex")).WithSandbox(&CodexSandbox{})
+	a.SessionID = "test-session"
+	_, err := a.Review(t.Context(), t.TempDir(), "HEAD", "review", nil)
+	require.ErrorContains(t, err, "sandboxed Codex cannot resume a session with a fresh CODEX_HOME")
+}
+
 func TestCodexSandboxRefusesPlanningAndWrapperFailure(t *testing.T) {
 	for _, planning := range []bool{true, false} {
 		t.Run(fmt.Sprintf("planning=%t", planning), func(t *testing.T) {

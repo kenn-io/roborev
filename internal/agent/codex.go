@@ -451,6 +451,9 @@ func (a *CodexAgent) review(
 	if planningReadOnly(ctx) && a.sandbox != nil {
 		return "", fmt.Errorf("planning requires the Codex read-only sandbox; agentic sandbox is configured")
 	}
+	if a.sandbox != nil && a.SessionID != "" {
+		return "", fmt.Errorf("sandboxed Codex cannot resume a session with a fresh CODEX_HOME")
+	}
 	if planningReadOnly(ctx) && sandboxBroken {
 		return "", fmt.Errorf("planning requires the Codex read-only sandbox; sandbox is disabled")
 	}

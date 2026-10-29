@@ -33,6 +33,33 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 	if j.MemoryMax <= 0 {
 		return nil, nil, nil, fmt.Errorf("sandbox MemoryMax must be positive")
 	}
+	workDir, err := filepath.Abs(j.WorkDir)
+	if err == nil {
+		workDir, err = filepath.EvalSymlinks(workDir)
+	}
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("resolve sandbox WorkDir: %w", err)
+	}
+	j.WorkDir = workDir
+	readPaths := make([]string, 0, len(j.ReadPaths))
+	for _, path := range j.ReadPaths {
+		resolved, err := filepath.Abs(path)
+		if err == nil {
+			resolved, err = filepath.EvalSymlinks(resolved)
+		}
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("resolve sandbox read path %q: %w", path, err)
+		}
+		rel, err := filepath.Rel(workDir, resolved)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("compare sandbox read path %q with WorkDir: %w", path, err)
+		}
+		if rel == "." || filepath.IsLocal(rel) {
+			return nil, nil, nil, fmt.Errorf("read path %q is inside sandbox WorkDir %q; read paths must be outside it", path, workDir)
+		}
+		readPaths = append(readPaths, resolved)
+	}
+	j.ReadPaths = readPaths
 	nono, err := exec.LookPath("nono")
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("find sandbox nono: %w", err)

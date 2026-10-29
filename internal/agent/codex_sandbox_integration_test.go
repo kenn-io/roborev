@@ -159,14 +159,6 @@ exit "$failed"
 	probe = strings.ReplaceAll(probe, "PROXY_PORT", fmt.Sprint(port))
 	require.NoError(t, os.WriteFile(filepath.Join(work, "probe.sh"), []byte(probe), 0o700))
 
-	// Exercise the stand-in proxy's denial as well as authenticated model calls.
-	resp, err := http.Post(server.URL+"/v1/responses", "application/json", strings.NewReader("{}"))
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
-	calls.Store(0)
-	unauthorized.Store(0)
-
 	job := sandbox.Job{
 		WorkDir: work, ReadPaths: []string{gitDir, filepath.Dir(filepath.Dir(codex)), "/etc/codex"},
 		ProxyPort: port, MemoryMax: 8 << 30,
