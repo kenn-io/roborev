@@ -191,68 +191,74 @@ func TestCICheckCompletionContext(t *testing.T) {
 	}
 }
 
-func TestCICheckSumSymlink(t *testing.T) {
+// Each case puts fake tools on PATH and reads what the checker handed them.
+func TestCICheckInputs(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires shell script fixtures")
 	}
-	repo := testutil.NewTestRepoWithCommit(t)
-	repo.CommitFile("go.mod", "module example.com/check\n\ngo 1.26\n", "module")
-	target := filepath.Join(t.TempDir(), "host.sum")
-	require.NoError(t, os.Symlink(target, filepath.Join(repo.Root, "go.sum")))
-	repo.RunGit("add", "go.sum")
-	repo.RunGit("commit", "-m", "checksum symlink")
-	tools := t.TempDir()
-	require.NoError(t, os.Mkdir(filepath.Join(tools, "bin"), 0o700))
-	goScript := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = env ]; then printf '%%s\\n' '%s' '%s'; else echo checksum > go.sum; fi\n", tools, tools)
-	require.NoError(t, os.WriteFile(filepath.Join(tools, "bin", "go"), []byte(goScript), 0o700))
-	t.Setenv("PATH", filepath.Join(tools, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
-	sha := testutil.GetHeadSHA(t, repo.Root)
-	_, err := runCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha, CIBaseBranch: "main"}, ciCheckConfig{}, structuredreview.Document{}, agent.CodexSandbox{}, nil, io.Discard)
-	require.ErrorContains(t, err, "go.sum must be a regular file")
-	assert.NoFileExists(t, target)
-}
-
-func TestCICheckSubmodules(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("requires shell script fixtures")
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, repo *testutil.TestRepo, tools, observed string)
+		err   string
+		want  string
+	}{
+		{
+			name: "go.sum symlink",
+			setup: func(t *testing.T, repo *testutil.TestRepo, tools, observed string) {
+				repo.CommitFile("go.mod", "module example.com/check\n\ngo 1.26\n", "module")
+				require.NoError(t, os.Symlink(observed, filepath.Join(repo.Root, "go.sum")))
+				repo.RunGit("add", "go.sum")
+				repo.RunGit("commit", "-m", "checksum symlink")
+				goScript := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = env ]; then printf '%%s\\n' '%s' '%s'; else echo checksum > go.sum; fi\n", tools, tools)
+				require.NoError(t, os.Mkdir(filepath.Join(tools, "bin"), 0o700))
+				require.NoError(t, os.WriteFile(filepath.Join(tools, "bin", "go"), []byte(goScript), 0o700))
+				require.NoError(t, os.Symlink(filepath.Join("bin", "go"), filepath.Join(tools, "go")))
+			},
+			err: "go.sum must be a regular file",
+		},
+		{
+			name: "submodules",
+			setup: func(t *testing.T, repo *testutil.TestRepo, tools, observed string) {
+				sub := testutil.NewTestRepoWithCommit(t)
+				sub.CommitFile("present.txt", "submodule content", "content")
+				repo.RunGit("-c", "protocol.file.allow=always", "submodule", "add", sub.Root, "dependency")
+				repo.RunGit("commit", "-am", "submodule")
+				script := fmt.Sprintf("#!/bin/sh\ncat work/repo*/dependency/present.txt > '%s'\nexit 1\n", observed)
+				require.NoError(t, os.WriteFile(filepath.Join(tools, "go"), []byte(script), 0o700))
+			},
+			want: "submodule content",
+		},
+		{
+			name: "mise shim",
+			setup: func(t *testing.T, _ *testutil.TestRepo, tools, observed string) {
+				// A symlink shim dispatches on argv[0], just as mise does.
+				installed := filepath.Join(tools, "installed", "codex")
+				require.NoError(t, os.Mkdir(filepath.Dir(installed), 0o700))
+				require.NoError(t, os.WriteFile(installed, []byte(fmt.Sprintf("#!/bin/sh\necho codex > '%s'\nexit 1\n", observed)), 0o700))
+				script := fmt.Sprintf("#!/bin/sh\nif [ \"$1 $2\" = 'which codex' ]; then echo '%s'; exit 0; fi\ncase \"$0\" in */codex) exec '%s' \"$@\";; esac\nexit 1\n", installed, installed)
+				require.NoError(t, os.WriteFile(filepath.Join(tools, "mise"), []byte(script), 0o700))
+				require.NoError(t, os.Symlink("mise", filepath.Join(tools, "codex")))
+			},
+			want: "codex\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := testutil.NewTestRepoWithCommit(t)
+			tools := t.TempDir()
+			observed := filepath.Join(t.TempDir(), "observed")
+			tc.setup(t, repo, tools, observed)
+			t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
+			sha := testutil.GetHeadSHA(t, repo.Root)
+			_, err := runCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha, CIBaseBranch: "main"}, ciCheckConfig{}, structuredreview.Document{}, agent.CodexSandbox{}, nil, io.Discard)
+			require.Error(t, err)
+			if tc.err != "" {
+				require.ErrorContains(t, err, tc.err)
+				assert.NoFileExists(t, observed)
+				return
+			}
+			data, err := os.ReadFile(observed)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, string(data))
+		})
 	}
-	sub := testutil.NewTestRepoWithCommit(t)
-	sub.CommitFile("present.txt", "submodule content", "content")
-	repo := testutil.NewTestRepoWithCommit(t)
-	repo.RunGit("-c", "protocol.file.allow=always", "submodule", "add", sub.Root, "dependency")
-	repo.RunGit("commit", "-am", "submodule")
-	tools := t.TempDir()
-	observed := filepath.Join(tools, "observed")
-	script := fmt.Sprintf("#!/bin/sh\ncat work/repo*/dependency/present.txt > '%s'\nexit 1\n", observed)
-	require.NoError(t, os.WriteFile(filepath.Join(tools, "go"), []byte(script), 0o700))
-	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
-	sha := testutil.GetHeadSHA(t, repo.Root)
-	_, err := runCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha, CIBaseBranch: "main"}, ciCheckConfig{}, structuredreview.Document{}, agent.CodexSandbox{}, nil, io.Discard)
-	require.Error(t, err)
-	data, err := os.ReadFile(observed)
-	require.NoError(t, err)
-	assert.Equal(t, "submodule content", string(data))
-}
-
-func TestCICheckMiseShim(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("requires shell script fixtures")
-	}
-	repo := testutil.NewTestRepoWithCommit(t)
-	tools := t.TempDir()
-	observed := filepath.Join(tools, "observed")
-	// A symlink shim dispatches on argv[0], just as mise does.
-	installed := filepath.Join(tools, "installed", "codex")
-	require.NoError(t, os.Mkdir(filepath.Dir(installed), 0o700))
-	require.NoError(t, os.WriteFile(installed, []byte(fmt.Sprintf("#!/bin/sh\necho codex > '%s'\nexit 1\n", observed)), 0o700))
-	script := fmt.Sprintf("#!/bin/sh\nif [ \"$1 $2\" = 'which codex' ]; then echo '%s'; exit 0; fi\ncase \"$0\" in */codex) exec '%s' \"$@\";; esac\nexit 1\n", installed, installed)
-	require.NoError(t, os.WriteFile(filepath.Join(tools, "mise"), []byte(script), 0o700))
-	require.NoError(t, os.Symlink("mise", filepath.Join(tools, "codex")))
-	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
-	sha := testutil.GetHeadSHA(t, repo.Root)
-	_, err := runCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha, CIBaseBranch: "main"}, ciCheckConfig{}, structuredreview.Document{}, agent.CodexSandbox{}, nil, io.Discard)
-	require.Error(t, err)
-	data, err := os.ReadFile(observed)
-	require.NoError(t, err)
-	assert.Equal(t, "codex\n", string(data))
 }
