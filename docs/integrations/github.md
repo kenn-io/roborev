@@ -598,6 +598,20 @@ the configured minimum. Full reviews retain all findings. CI `min_severity`
 overrides `review_min_severity` when set. The same filtering applies when
 synthesis is unavailable.
 
+Synthesized daemon comments rank a copy of structured findings by severity, then
+source count, then confidence, all descending. Ties keep their original order,
+and publication does not merge findings. Set `[ci] comment_min_confidence` to
+hide findings below a confidence floor; it is off by default. Findings with no
+stated confidence remain visible, while an explicit zero is hidden by a positive
+floor. If confidence filtering leaves no findings, the comment says that no
+findings match the comment filters.
+
+The floor applies only to synthesized GitHub daemon-poller comments. Full
+reviews, verdicts, prompts, raw-member fallback comments, daemon-free CI, and
+GitLab retain their existing behavior. For inheritance, valid values, and
+repository resets, see
+[CI comment confidence](/docs/configuration/#ci-comment-confidence).
+
 For implicit matrix CI, customize synthesis with `[ci]` settings:
 
 ```toml
@@ -777,6 +791,7 @@ set, it takes priority over the matrix fields for that repo.
 | `reviews` | table | global `reviews` | Granular agent-to-review-type map (overrides `agents` and `review_types`; empty table disables reviews) |
 | `reasoning` | string | `"thorough"` | Legacy or exact reasoning level; see [Reasoning Levels](/docs/configuration/#reasoning-levels) |
 | `min_severity` | string | `"low"` | Lowest severity that fails the review: `low`, `medium`, `high`, or `critical`. Lower findings remain in stored reviews but are hidden in PR comments |
+| `comment_min_confidence` | number | global value (unset = off) | Confidence floor for synthesized daemon comments; 0 resets a positive global floor |
 | `upsert_comments` | bool | global `upsert_comments` | Override global comment upsert setting for this repo |
 | `include_costs` | bool | global `include_costs` | Include token cost estimates in PR comment footers for this repo |
 
@@ -803,6 +818,7 @@ set, it takes priority over the matrix fields for that repo.
 | `synthesis_agent` | string | | Agent for combining implicit matrix results |
 | `synthesis_backup_agent` | string | | Backup agent for implicit matrix synthesis when the primary fails |
 | `synthesis_model` | string | | Model override for implicit matrix synthesis |
+| `comment_min_confidence` | number | unset (off) | Confidence floor from 0 to 1 for synthesized daemon comments; findings without confidence remain visible |
 | `upsert_comments` | bool | `false` | Update existing PR comments instead of creating new ones |
 | `include_costs` | bool | `false` | Include token cost estimates in PR comment footers |
 | `discord_webhook_url` | string | | Discord webhook URL for best-effort CI job failure notifications |

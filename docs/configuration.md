@@ -218,6 +218,21 @@ accepted by each affected agent when overriding a mixed-agent panel. Backup
 models retain their existing failover behavior. Settings for other projects are
 unaffected.
 
+## CI comment confidence
+
+Set `[ci] comment_min_confidence` in the global config to hide structured
+findings below a confidence floor in synthesized GitHub daemon-poller comments.
+The default is unset, which disables confidence filtering. Values must be finite
+numbers from 0 to 1. A repository's `[ci]` value overrides the global floor;
+`comment_min_confidence = 0` resets a positive global floor.
+
+Findings without stated confidence remain visible. An explicit confidence of
+zero is hidden by a positive floor. This setting changes publication only: full
+reviews, verdicts, and prompts retain all findings. Daemon-free CI, GitLab, and
+raw-member fallback comments keep their existing behavior. See
+[GitHub synthesis](/docs/integrations/github/#synthesis) for publication
+ordering.
+
 ## Per-Repository Configuration
 
 Create `.roborev.toml` in your repository root to customize behavior for that

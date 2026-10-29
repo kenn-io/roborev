@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"maps"
+	"math"
 	"os"
 	"slices"
 	"strings"
@@ -169,6 +170,10 @@ type CIConfig struct {
 	// MinSeverity filters out findings below this severity level during synthesis.
 	// Valid values: critical, high, medium, low. Empty means no filter (include all).
 	MinSeverity string `toml:"min_severity"`
+
+	// CommentMinConfidence is a display-only floor for synthesized daemon GitHub comments.
+	// Unset disables confidence filtering; zero includes explicit zero confidence.
+	CommentMinConfidence *float64 `toml:"comment_min_confidence"`
 
 	// Panel names a [review.panels.X] panel to run for CI reviews. When set,
 	// the CI poller resolves the panel (members + synthesis) from the config
@@ -476,6 +481,9 @@ type RepoCIConfig struct {
 	// MinSeverity overrides the minimum severity filter for CI synthesis.
 	MinSeverity string `toml:"min_severity" comment:"Override the minimum CI severity included in synthesized output."`
 
+	// CommentMinConfidence overrides the global floor; zero resets a positive global floor.
+	CommentMinConfidence *float64 `toml:"comment_min_confidence" comment:"Minimum confidence in synthesized daemon GitHub comments (0 to 1). Unset inherits; 0 disables filtering."`
+
 	// UpsertComments overrides the global ci.upsert_comments setting.
 	// Use a pointer so we can distinguish "not set" from "explicitly false".
 	UpsertComments *bool `toml:"upsert_comments" comment:"Override whether CI updates an existing PR comment instead of creating a new one."`
@@ -742,4 +750,26 @@ func ResolveCIWorkflowAgents(
 		globalCIAgents,
 		globalAgent,
 	)
+}
+
+// ResolveCICommentMinConfidence resolves the publication-only confidence floor.
+func ResolveCICommentMinConfidence(repoCfg *RepoConfig, globalCfg *Config) (*float64, error) {
+	var floor *float64
+	if globalCfg != nil {
+		floor = globalCfg.CI.CommentMinConfidence
+	}
+	if repoCfg != nil && repoCfg.CI.CommentMinConfidence != nil {
+		floor = repoCfg.CI.CommentMinConfidence
+	}
+	if err := validateCICommentMinConfidence(floor); err != nil {
+		return nil, err
+	}
+	return floor, nil
+}
+
+func validateCICommentMinConfidence(floor *float64) error {
+	if floor != nil && (math.IsNaN(*floor) || math.IsInf(*floor, 0) || *floor < 0 || *floor > 1) {
+		return fmt.Errorf("ci.comment_min_confidence must be finite and between 0 and 1")
+	}
+	return nil
 }

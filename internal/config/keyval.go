@@ -801,6 +801,12 @@ func setFieldValue(field reflect.Value, value string) error {
 			return fmt.Errorf("invalid integer value: %q", value)
 		}
 		field.SetInt(n)
+	case reflect.Float64:
+		n, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return fmt.Errorf("invalid floating-point value: %q", value)
+		}
+		field.SetFloat(n)
 	case reflect.Bool:
 		b, err := strconv.ParseBool(value)
 		if err != nil {
@@ -822,9 +828,9 @@ func setFieldValue(field reflect.Value, value string) error {
 			return fmt.Errorf("unsupported slice type for key")
 		}
 	case reflect.Pointer:
-		// Handle *bool and *int
+		// Handle optional scalar settings.
 		switch field.Type().Elem().Kind() {
-		case reflect.Bool, reflect.Int:
+		case reflect.Bool, reflect.Int, reflect.Float64:
 			elem := reflect.New(field.Type().Elem())
 			if err := setFieldValue(elem.Elem(), value); err != nil {
 				return err

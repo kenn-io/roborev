@@ -2768,10 +2768,15 @@ func (p *CIPoller) panelCommentBody(row *storage.CIPanel, members []storage.Batc
 	if err != nil || rev == nil {
 		return raw(), nil // review unexpectedly missing -> raw fallback
 	}
+	// Confidence and ranking apply only to usable synthesized publication.
+	// Keep the raw fallback's shared formatter policy unchanged.
+	synthesisConfig := commentConfig
+	synthesisConfig.MinConfidence = p.resolveCommentMinConfidence(row.GithubRepo)
+	synthesisConfig.RankFindings = true
 	includeCosts := p.resolveIncludeCosts(row.GithubRepo)
 	verdict := rev.Verdict()
 	return formatPanelPRCommentWithHead(
-		commentConfig, rev, string(verdict), members, includeCosts, row.HeadSHA,
+		synthesisConfig, rev, string(verdict), members, includeCosts, row.HeadSHA,
 	), nil
 }
 
@@ -4270,4 +4275,27 @@ func (p *CIPoller) resolveIncludeCosts(ghRepo string) bool {
 		}
 	}
 	return config.ResolveCIIncludeCosts(repoCfg, p.cfgGetter.Config())
+}
+
+// resolveCommentMinConfidence resolves the publication floor for this repository.
+func (p *CIPoller) resolveCommentMinConfidence(ghRepo string) *float64 {
+	var repoCfg *config.RepoConfig
+	repo, err := p.findLocalRepo(ghRepo)
+	if err == nil && repo != nil {
+		if loaded, loadErr := loadCIRepoConfig(repo.RootPath); loadErr == nil {
+			repoCfg = loaded.Config
+		}
+	}
+	cfg := p.cfgGetter.Config()
+	floor, err := config.ResolveCICommentMinConfidence(repoCfg, cfg)
+	if err == nil {
+		return floor
+	}
+	log.Printf("CI poller: invalid comment_min_confidence for %s, using global: %v", ghRepo, err)
+	floor, err = config.ResolveCICommentMinConfidence(nil, cfg)
+	if err != nil {
+		log.Printf("CI poller: invalid global comment_min_confidence, ignoring: %v", err)
+		return nil
+	}
+	return floor
 }

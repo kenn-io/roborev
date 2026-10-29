@@ -12,19 +12,24 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
-// CommentConfig is the resolved publication policy. An empty threshold shows
-// all findings; preparation never inherits policy from review data.
+// CommentConfig is the resolved publication policy. Its zero value includes all
+// findings; preparation never inherits policy from review data.
 type CommentConfig struct {
 	MinSeverity string
+	// MinConfidence is nil when confidence filtering is disabled.
+	MinConfidence *float64
+	// RankFindings opts synthesized daemon publication into synthesis ranking.
+	RankFindings bool
 }
 
 // PreparedComment is a publication-only copy of a review. Its fields are private
 // so formatting receives only findings selected by PrepareComment.
 type PreparedComment struct {
-	minSeverity string
-	structured  bool
-	verbatim    *string
-	findings    []commentFinding
+	minSeverity        string
+	confidenceFiltered bool
+	structured         bool
+	verbatim           *string
+	findings           []commentFinding
 }
 
 type commentFinding struct {
@@ -52,7 +57,16 @@ func PrepareComment(cfg CommentConfig, r ReviewResult) PreparedComment {
 	var findings []commentFinding
 	if doc != nil {
 		comment.structured = true
-		for _, finding := range doc.Findings {
+		structuredFindings := doc.Findings
+		if cfg.RankFindings {
+			structuredFindings = slices.Clone(structuredFindings)
+			slices.SortStableFunc(structuredFindings, compareFindings)
+		}
+		for _, finding := range structuredFindings {
+			if cfg.MinConfidence != nil && finding.Kind != "" && finding.Confidence < *cfg.MinConfidence {
+				comment.confidenceFiltered = true
+				continue
+			}
 			findings = append(findings, commentFinding{
 				severity: finding.Severity, problem: finding.Problem,
 				fix: finding.Fix, location: finding.Location,
@@ -96,6 +110,9 @@ func FormatComment(comment PreparedComment) string {
 		return *comment.verbatim
 	}
 	if len(comment.findings) == 0 {
+		if comment.confidenceFiltered {
+			return "**Verdict:** No findings match the comment filters.\n"
+		}
 		if comment.minSeverity != "" && comment.minSeverity != "low" {
 			return fmt.Sprintf("**Verdict:** No findings at or above %s severity.\n", comment.minSeverity)
 		}
