@@ -476,12 +476,8 @@ export function createJobsStore(opts: JobsStoreOptions) {
       const workflow = yield* RoborevWorkflow;
       const query = buildQuery();
       query.limit = DEFAULT_PAGE_LIMIT;
-      // A live update can replace the rows while this page loads, and the new
-      // rows may end at a different job. The page continues the list only if
-      // the list still ends where the page starts.
-      const after = nextCursor;
-      if (after) {
-        query.cursor = after;
+      if (nextCursor) {
+        query.cursor = nextCursor;
       } else {
         query.before = jobs.reduce((oldest, candidate) => {
           const candidateTime = Date.parse(candidate.enqueued_at);
