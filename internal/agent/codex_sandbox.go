@@ -25,7 +25,10 @@ func (a *CodexAgent) WithSandbox(s *CodexSandbox) *CodexAgent {
 
 func (s *CodexSandbox) prepare(repoPath string) (sandbox.Job, func(), error) {
 	job := s.Job
-	workDir, err := filepath.EvalSymlinks(job.WorkDir)
+	workDir, err := filepath.Abs(job.WorkDir)
+	if err == nil {
+		workDir, err = filepath.EvalSymlinks(workDir)
+	}
 	if err != nil {
 		return job, nil, fmt.Errorf("resolve sandbox work dir: %w", err)
 	}
@@ -37,6 +40,7 @@ func (s *CodexSandbox) prepare(repoPath string) (sandbox.Job, func(), error) {
 	if err != nil || rel == "." || !filepath.IsLocal(rel) {
 		return job, nil, fmt.Errorf("sandbox repo must be inside job work dir")
 	}
+	job.WorkDir = workDir
 	home, err := os.MkdirTemp(job.WorkDir, ".codex-home-")
 	if err != nil {
 		return job, nil, fmt.Errorf("create sandbox Codex home: %w", err)

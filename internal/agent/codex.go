@@ -460,6 +460,11 @@ func (a *CodexAgent) review(
 	agenticMode := effectiveAgentic(ctx, a.Agentic)
 	runAgent := a
 	if a.sandbox != nil {
+		var err error
+		repoPath, err = filepath.Abs(repoPath)
+		if err != nil {
+			return "", fmt.Errorf("resolve sandbox repo: %w", err)
+		}
 		clone := *a
 		clone.IgnoreUserConfig = false
 		clone.userAuthOverrides = nil
@@ -725,7 +730,11 @@ func (a *CodexAgent) ReviewWithSchema(
 ) (jsontext.Value, error) {
 	schemaDir := ""
 	if a.sandbox != nil {
-		schemaDir = a.sandbox.Job.WorkDir
+		var err error
+		schemaDir, err = filepath.Abs(a.sandbox.Job.WorkDir)
+		if err != nil {
+			return nil, fmt.Errorf("resolve sandbox work dir: %w", err)
+		}
 	}
 	schemaFile, err := os.CreateTemp(schemaDir, "roborev-codex-review-schema-*.json")
 	if err != nil {

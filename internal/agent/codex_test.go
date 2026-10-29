@@ -1200,6 +1200,26 @@ func TestCodexSandboxRefusesRepoAsWorkDir(t *testing.T) {
 	require.ErrorContains(t, err, "sandbox repo must be inside job work dir")
 }
 
+func TestCodexSandboxRelativeWorkDir(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	t.Chdir(dir)
+	work := filepath.Join(dir, "work")
+	repo := filepath.Join(work, "repo")
+	require.NoError(t, os.MkdirAll(repo, 0o700))
+	s := CodexSandbox{Job: sandbox.Job{WorkDir: "work"}, ProxyKey: "test-key"}
+	job, cleanup, err := s.prepare(repo)
+	require.NoError(t, err)
+	defer cleanup()
+
+	assert := assert.New(t)
+	assert.Equal(work, job.WorkDir)
+	require.Len(t, job.Env, 1)
+	home := strings.TrimPrefix(job.Env[0], "CODEX_HOME=")
+	assert.Equal(work, filepath.Dir(home))
+	assert.FileExists(filepath.Join(home, "config.toml"))
+}
+
 func TestCodexSandboxWrapperFailure(t *testing.T) {
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 		t.Skip("nono pin requires linux/amd64")

@@ -41,6 +41,7 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	require.NoError(t, err)
 
 	work, secrets := t.TempDir(), t.TempDir()
+	t.Chdir(filepath.Dir(work))
 	repo, gitDir := filepath.Join(work, "repo"), filepath.Join(t.TempDir(), "repo.git")
 	require.NoError(t, os.Mkdir(repo, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(repo, "trust-policy.json"), []byte("invalid repo policy"), 0o600))
@@ -134,7 +135,7 @@ exit "$failed"
 	require.NoError(t, os.WriteFile(filepath.Join(work, "probe.sh"), []byte(probe), 0o700))
 
 	job := sandbox.Job{
-		WorkDir: work, ReadPaths: []string{gitDir, filepath.Dir(filepath.Dir(codex))},
+		WorkDir: filepath.Base(work), ReadPaths: []string{gitDir, filepath.Dir(filepath.Dir(codex))},
 		ProxyPort: port, MemoryMax: 8 << 30,
 		Env: []string{"PATH=/usr/bin:/bin", "HOME=" + secrets, "TMPDIR=" + work},
 	}
@@ -148,7 +149,7 @@ exit "$failed"
 	a.ConfigOverrides = []string{`web_search="live"`, `model_provider="wrong-provider"`}
 	a.Model = "test-model"
 	var stream bytes.Buffer
-	result, err := a.ReviewWithSchema(context.Background(), repo, "HEAD", "Run the supplied probe.", jsontext.Value(`{"type":"object","properties":{"probe":{"type":"string"}},"required":["probe"],"additionalProperties":false}`), &stream)
+	result, err := a.ReviewWithSchema(context.Background(), filepath.Join(filepath.Base(work), "repo"), "HEAD", "Run the supplied probe.", jsontext.Value(`{"type":"object","properties":{"probe":{"type":"string"}},"required":["probe"],"additionalProperties":false}`), &stream)
 	require.NoError(t, err, "%s", stream.String())
 	assert.NotContains(t, string(result), "BAD ")
 	for _, name := range []string{"codex-home", "login-read", "home-read"} {
