@@ -602,6 +602,8 @@ func TestSynthesisSingleSuccessPassthrough(t *testing.T) {
 	const memberAOutput = "## Review\nNo issues found."
 	completeMember(t, tc, members[0].ID, memberAgent, memberAOutput)
 	failMember(t, tc, members[1].ID)
+	_, err := tc.DB.Exec("UPDATE review_jobs SET agent_invoked=1,token_usage=? WHERE id=?", `{"has_cost":true,"cost_usd":0.01}`, members[0].ID)
+	require.NoError(t, err)
 
 	synth := releaseAndClaimSynthesis(t, tc, runUUID)
 	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
@@ -613,6 +615,10 @@ func TestSynthesisSingleSuccessPassthrough(t *testing.T) {
 	assert.Equal(storage.VerdictPass, storage.ParseVerdict(review.Output), "verdict carried from member output")
 	assert.Equal(memberAgent, review.Agent, "review labeled with the surviving member's agent")
 	assert.False(synthCalled, "passthrough must not invoke an agent")
+	parent, err := tc.DB.GetJobByID(synth.ID)
+	require.NoError(t, err)
+	assert.Empty(parent.TokenUsage, "passthrough must not copy member usage into the no-agent parent")
+	assert.False(jobAgentInvoked(t, tc, synth.ID))
 }
 
 // TestSynthesisInstructionsRunAgentForSingleSuccess verifies a panel with
@@ -836,6 +842,8 @@ func TestSynthesisAllPassingSkipsAgent(t *testing.T) {
 	setSynthesisAgent(t, tc, runUUID, synthAgent)
 	completeMember(t, tc, members[0].ID, memberAgent, "No issues found.")
 	completeMember(t, tc, members[1].ID, memberAgent, "No findings to report.")
+	_, err := tc.DB.Exec("UPDATE review_jobs SET agent_invoked=1,token_usage=? WHERE id=?", `{"has_cost":true,"cost_usd":0.01}`, members[0].ID)
+	require.NoError(t, err)
 
 	synth := releaseAndClaimSynthesis(t, tc, runUUID)
 	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
@@ -846,6 +854,10 @@ func TestSynthesisAllPassingSkipsAgent(t *testing.T) {
 	assert.Equal("No issues found.", review.StructuredOutput["summary"])
 	assert.Equal(storage.VerdictPass, storage.ParseVerdict(review.Output))
 	assert.False(synthCalled, "clean panels must not invoke an extra synthesis agent")
+	parent, err := tc.DB.GetJobByID(synth.ID)
+	require.NoError(t, err)
+	assert.Empty(parent.TokenUsage, "clean synthesis must not copy member usage into the no-agent parent")
+	assert.False(jobAgentInvoked(t, tc, synth.ID))
 }
 
 func TestSynthesisUsesReviewEntrypoint(t *testing.T) {
