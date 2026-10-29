@@ -382,6 +382,56 @@ func TestConfigureSynthesisAgentUsesStoredBackupWhenPrimaryUnavailable(t *testin
 	assert.Equal("backup-model", configuredBackup.model)
 }
 
+func TestSynthesisAvailabilityFallbackExperimentReport(t *testing.T) {
+	for _, tc := range []struct{ name, planned, selected, model string }{
+		{"primary", "report-synthesis-primary", "report-synthesis-primary", "primary-model"},
+		{"backup", "report-synthesis-unavailable", "report-synthesis-backup", "backup-model"},
+		{"alias", "claude", "claude-code", "primary-model"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wc := newWorkerTestContext(t, 1)
+			const clean = `{"schema_version":2,"summary":"clean","verdict":"pass","findings":[]}`
+			agent.RegisterForTest(t, &synthesisEntrypointTestAgent{name: "report-synthesis-backup", result: clean})
+			switch tc.name {
+			case "backup":
+				agent.RegisterForTest(t, &unavailableSynthesisCommandAgent{name: tc.planned, command: "roborev-test-missing-report-primary"})
+			case "alias":
+				original, err := agent.Get("claude-code")
+				require.NoError(t, err)
+				t.Cleanup(func() { agent.Register(original) })
+				agent.Register(&synthesisEntrypointTestAgent{name: tc.selected, result: clean})
+			default:
+				agent.RegisterForTest(t, &synthesisEntrypointTestAgent{name: tc.planned, result: clean})
+			}
+			run := uuid.New()
+			sha := testutil.GetHeadSHA(t, wc.TmpDir)
+			opts, err := panelSynthesisOpts(targetDescriptor{}, "example", run, config.SynthesisSpec{Agent: tc.planned, Model: "primary-model", BackupAgent: "report-synthesis-backup", BackupModel: "backup-model"}, nil, wc.Pool.cfgGetter.Config())
+			require.NoError(t, err)
+			opts.RepoID, opts.GitRef = wc.Repo.ID, sha
+			memberOpts := []storage.EnqueueOpts{{RepoID: wc.Repo.ID, GitRef: sha, Agent: "test", PanelRunUUID: &run, PanelMemberName: "voter"}}
+			opts.Experiment, err = storageAssignmentForExperiment(&config.ExperimentAssignment{ID: "synthesis-v1", DefinitionHash: "definition", DefinitionJSON: `{"ratio":0.5}`, Arm: config.ExperimentArmExperimental, SubjectHash: "topic"}, experimentPlanForPanel(memberOpts, opts))
+			require.NoError(t, err)
+			members, synth, err := wc.DB.EnqueuePanelRun(memberOpts, opts)
+			require.NoError(t, err)
+			completeMember(t, wc, members[0].ID, "test", "No issues found.")
+			job := releaseAndClaimSynthesis(t, wc, run)
+			doc, selected, _, err := wc.Pool.runSynthesisAgent(context.Background(), testWorkerID, job, nil, "prompt")
+			require.NoError(t, err)
+			require.Equal(t, tc.selected, selected)
+			stored, err := wc.DB.GetJobByID(synth.ID)
+			require.NoError(t, err)
+			assert.Equal(t, tc.selected, stored.Agent, "executor must be persisted before completion")
+			assert.Equal(t, tc.model, stored.Model)
+			raw, err := json.Marshal(doc)
+			require.NoError(t, err)
+			require.NoError(t, wc.DB.CompleteJob(synth.ID, selected, string(raw)))
+			review, err := wc.DB.GetReviewByJobID(synth.ID)
+			require.NoError(t, err)
+			assert.Equal(t, tc.selected, review.Agent)
+		})
+	}
+}
+
 func TestConfigureSynthesisAgentKeepsPrimaryModelWhenBackupMatchesPrimary(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
