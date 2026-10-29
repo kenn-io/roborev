@@ -2103,6 +2103,7 @@ type FindingStats struct {
 	InvalidDocuments  int64                           `json:"invalid_documents"`
 	LegacyDocuments   int64                           `json:"legacy_documents"`
 	LogicalReviews    int64                           `json:"logical_reviews"`
+	Members           *MemberStats                    `json:"members,omitempty"`
 	MinSamples        int64                           `json:"min_samples"`
 	MissingDocuments  int64                           `json:"missing_documents"`
 	Rebuttals         RebuttalCoverage                `json:"rebuttals"`
@@ -2130,6 +2131,13 @@ func (f FindingStats) Validate() error {
 	}
 	if err := typesValidator.Var(f.GroupBy, "required"); err != nil {
 		errors = errors.Append("GroupBy", err)
+	}
+	if f.Members != nil {
+		if v, ok := any(f.Members).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Members", err)
+			}
+		}
 	}
 	if v, ok := any(f.Rebuttals).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
@@ -2684,6 +2692,87 @@ type Location struct {
 	File   *string `json:"file,omitempty"`
 	KataID *string `json:"kata_id,omitempty"`
 	Line   *int64  `json:"line,omitempty"`
+}
+
+type MemberStats struct {
+	Cost              CostAggregate    `json:"cost"`
+	Rows              []MemberStatsRow `json:"rows" validate:"required"`
+	SkippedCost       CostAggregate    `json:"skipped_cost"`
+	SkippedMemberRuns int64            `json:"skipped_member_runs"`
+	SkippedPanelRuns  int64            `json:"skipped_panel_runs"`
+}
+
+func (m MemberStats) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(m.Cost).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Cost", err)
+		}
+	}
+	for i, item := range m.Rows {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Rows[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(m.SkippedCost).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("SkippedCost", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type MemberStatsRow struct {
+	Agreed           int64         `json:"agreed"`
+	AttributedRuns   int64         `json:"attributed_runs"`
+	Cited            int64         `json:"cited"`
+	Cost             CostAggregate `json:"cost"`
+	CostPerAgreed    *float64      `json:"cost_per_agreed,omitempty"`
+	CostPerCited     *float64      `json:"cost_per_cited,omitempty"`
+	FindingsRaised   int64         `json:"findings_raised"`
+	MemberName       string        `json:"member_name" validate:"required"`
+	PanelName        string        `json:"panel_name" validate:"required"`
+	RepoPath         string        `json:"repo_path" validate:"required"`
+	Runs             int64         `json:"runs"`
+	SkippedCost      CostAggregate `json:"skipped_cost"`
+	SkippedRuns      int64         `json:"skipped_runs"`
+	Solo             int64         `json:"solo"`
+	SoloLabeled      int64         `json:"solo_labeled"`
+	SoloNegative     *int64        `json:"solo_negative,omitempty"`
+	SoloNegativeRate *float64      `json:"solo_negative_rate,omitempty"`
+	StructuredRuns   int64         `json:"structured_runs"`
+}
+
+func (m MemberStatsRow) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(m.Cost).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Cost", err)
+		}
+	}
+	if err := typesValidator.Var(m.MemberName, "required"); err != nil {
+		errors = errors.Append("MemberName", err)
+	}
+	if err := typesValidator.Var(m.PanelName, "required"); err != nil {
+		errors = errors.Append("PanelName", err)
+	}
+	if err := typesValidator.Var(m.RepoPath, "required"); err != nil {
+		errors = errors.Append("RepoPath", err)
+	}
+	if v, ok := any(m.SkippedCost).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("SkippedCost", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type MergeReposInputBody struct {

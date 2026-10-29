@@ -138,6 +138,8 @@ export * from "./listJobsParams";
 export * from "./listReposOutputBody";
 export * from "./listReposParams";
 export * from "./location";
+export * from "./memberStats";
+export * from "./memberStatsRow";
 export * from "./mergeReposInputBody";
 export * from "./mergeReposOutputBody";
 export * from "./migrateReviewInputBody";

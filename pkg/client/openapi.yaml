@@ -2224,6 +2224,8 @@ components:
         logical_reviews:
           format: int64
           type: integer
+        members:
+          $ref: "#/components/schemas/MemberStats"
         min_samples:
           format: int64
           type: integer
@@ -2849,6 +2851,110 @@ components:
         line:
           format: int64
           type: integer
+      type: object
+    MemberStats:
+      additionalProperties: false
+      properties:
+        cost:
+          $ref: "#/components/schemas/CostAggregate"
+        rows:
+          items:
+            $ref: "#/components/schemas/MemberStatsRow"
+          type: array
+        skipped_cost:
+          $ref: "#/components/schemas/CostAggregate"
+        skipped_member_runs:
+          format: int64
+          type: integer
+        skipped_panel_runs:
+          format: int64
+          type: integer
+      required:
+        - skipped_panel_runs
+        - skipped_member_runs
+        - cost
+        - skipped_cost
+        - rows
+      type: object
+    MemberStatsRow:
+      additionalProperties: false
+      properties:
+        agreed:
+          format: int64
+          type: integer
+        attributed_runs:
+          format: int64
+          type: integer
+        cited:
+          format: int64
+          type: integer
+        cost:
+          $ref: "#/components/schemas/CostAggregate"
+        cost_per_agreed:
+          format: double
+          type:
+            - number
+            - "null"
+        cost_per_cited:
+          format: double
+          type:
+            - number
+            - "null"
+        findings_raised:
+          format: int64
+          type: integer
+        member_name:
+          type: string
+        panel_name:
+          type: string
+        repo_path:
+          type: string
+        runs:
+          format: int64
+          type: integer
+        skipped_cost:
+          $ref: "#/components/schemas/CostAggregate"
+        skipped_runs:
+          format: int64
+          type: integer
+        solo:
+          format: int64
+          type: integer
+        solo_labeled:
+          format: int64
+          type: integer
+        solo_negative:
+          format: int64
+          type:
+            - integer
+            - "null"
+        solo_negative_rate:
+          format: double
+          type:
+            - number
+            - "null"
+        structured_runs:
+          format: int64
+          type: integer
+      required:
+        - repo_path
+        - panel_name
+        - member_name
+        - runs
+        - attributed_runs
+        - skipped_runs
+        - structured_runs
+        - findings_raised
+        - cited
+        - agreed
+        - solo
+        - solo_labeled
+        - solo_negative
+        - solo_negative_rate
+        - cost
+        - skipped_cost
+        - cost_per_cited
+        - cost_per_agreed
       type: object
     MergeReposInputBody:
       additionalProperties: false
@@ -7156,12 +7262,12 @@ paths:
               - "true"
               - "false"
             type: string
-        - description: "Finding grouping: severity, review-type, agent, model, arm"
+        - description: "Finding grouping: severity, review-type, agent, model, arm, member"
           explode: false
           in: query
           name: by
           schema:
-            description: "Finding grouping: severity, review-type, agent, model, arm"
+            description: "Finding grouping: severity, review-type, agent, model, arm, member"
             type: string
         - description: Minimum labeled findings for displaying a rate (default 5)
           explode: false

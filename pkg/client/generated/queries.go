@@ -405,7 +405,7 @@ type GetSummaryQuery struct {
 	// Findings Include finding outcomes
 	Findings *GetSummaryQueryFindings `json:"findings,omitempty"`
 
-	// By Finding grouping: severity, review-type, agent, model, arm
+	// By Finding grouping: severity, review-type, agent, model, arm, member
 	By *string `json:"by,omitempty"`
 
 	// MinSamples Minimum labeled findings for displaying a rate (default 5)

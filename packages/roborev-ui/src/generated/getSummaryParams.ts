@@ -10,7 +10,7 @@ export type GetSummaryParams = {
    */
   findings?: GetSummaryFindings;
   /**
-   * Finding grouping: severity, review-type, agent, model, arm
+   * Finding grouping: severity, review-type, agent, model, arm, member
    */
   by?: string;
   /**
