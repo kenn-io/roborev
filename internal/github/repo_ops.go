@@ -20,7 +20,10 @@ type OpenPullRequest struct {
 	Title       string
 	Body        string
 	AuthorLogin string
-	Labels      []string
+	// AuthorAssociation is GitHub's author_association, such as OWNER,
+	// MEMBER, COLLABORATOR, CONTRIBUTOR, or NONE.
+	AuthorAssociation string
+	Labels            []string
 }
 
 type PullRequestInfo struct {
@@ -32,7 +35,10 @@ type PullRequestInfo struct {
 	Title       string
 	Body        string
 	AuthorLogin string
-	Labels      []string
+	// AuthorAssociation is GitHub's author_association, such as OWNER,
+	// MEMBER, COLLABORATOR, CONTRIBUTOR, or NONE.
+	AuthorAssociation string
+	Labels            []string
 }
 
 // ListOpenPullRequests returns every open pull request, following all API pages.
@@ -56,14 +62,15 @@ func (c *Client) ListOpenPullRequests(ctx context.Context, ghRepo string) ([]Ope
 		}
 		for _, pr := range prs {
 			result = append(result, OpenPullRequest{
-				Number:      pr.GetNumber(),
-				HeadRefOID:  pr.GetHead().GetSHA(),
-				HeadRefName: pr.GetHead().GetRef(),
-				BaseRefName: pr.GetBase().GetRef(),
-				Title:       pr.GetTitle(),
-				Body:        pr.GetBody(),
-				AuthorLogin: pr.GetUser().GetLogin(),
-				Labels:      pullRequestLabelNames(pr.GetLabels()),
+				Number:            pr.GetNumber(),
+				HeadRefOID:        pr.GetHead().GetSHA(),
+				HeadRefName:       pr.GetHead().GetRef(),
+				BaseRefName:       pr.GetBase().GetRef(),
+				Title:             pr.GetTitle(),
+				Body:              pr.GetBody(),
+				AuthorLogin:       pr.GetUser().GetLogin(),
+				AuthorAssociation: pr.GetAuthorAssociation(),
+				Labels:            pullRequestLabelNames(pr.GetLabels()),
 			})
 		}
 		if resp.NextPage == 0 {
@@ -94,15 +101,16 @@ func (c *Client) GetPullRequest(ctx context.Context, ghRepo string, prNumber int
 		return PullRequestInfo{}, err
 	}
 	return PullRequestInfo{
-		Number:      pr.GetNumber(),
-		State:       pr.GetState(),
-		HeadRefOID:  pr.GetHead().GetSHA(),
-		HeadRefName: pr.GetHead().GetRef(),
-		BaseRefName: pr.GetBase().GetRef(),
-		Title:       pr.GetTitle(),
-		Body:        pr.GetBody(),
-		AuthorLogin: pr.GetUser().GetLogin(),
-		Labels:      pullRequestLabelNames(pr.GetLabels()),
+		Number:            pr.GetNumber(),
+		State:             pr.GetState(),
+		HeadRefOID:        pr.GetHead().GetSHA(),
+		HeadRefName:       pr.GetHead().GetRef(),
+		BaseRefName:       pr.GetBase().GetRef(),
+		Title:             pr.GetTitle(),
+		Body:              pr.GetBody(),
+		AuthorLogin:       pr.GetUser().GetLogin(),
+		AuthorAssociation: pr.GetAuthorAssociation(),
+		Labels:            pullRequestLabelNames(pr.GetLabels()),
 	}, nil
 }
 

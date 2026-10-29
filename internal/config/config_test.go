@@ -2910,6 +2910,92 @@ skip_labels = ["skip-review", "dependencies"]
 	assert.Equal(t, []string{"skip-review", "dependencies"}, cfg.CI.SkipLabels)
 }
 
+func TestCIConfigPRFilters(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(configPath, []byte(`
+[ci]
+allowed_authors = ["alice"]
+allowed_author_associations = ["member", "OWNER"]
+include_branches = ["feature/*"]
+exclude_branches = ["feature/wip-*"]
+`), 0o644))
+
+	cfg, err := LoadGlobalFrom(configPath)
+	require.NoError(t, err)
+	assert := assert.New(t)
+	assert.Equal([]string{"alice"}, cfg.CI.AllowedAuthors)
+	assert.Equal([]string{"member", "OWNER"}, cfg.CI.AllowedAuthorAssociations)
+	assert.Equal([]string{"feature/*"}, cfg.CI.IncludeBranches)
+	assert.Equal([]string{"feature/wip-*"}, cfg.CI.ExcludeBranches)
+}
+
+func TestCIConfigPRFiltersValidation(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		toml    string
+		wantErr string
+	}{
+		{name: "bad include pattern", toml: `include_branches = ["feature/["]`, wantErr: "[ci]: include_branches"},
+		{name: "bad exclude pattern", toml: `exclude_branches = ["x\\"]`, wantErr: "[ci]: exclude_branches"},
+		{name: "unknown association", toml: `allowed_author_associations = ["MAINTAINER"]`, wantErr: "[ci]: allowed_author_associations"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(t, os.WriteFile(configPath, []byte("[ci]\n"+tt.toml+"\n"), 0o644))
+			_, err := LoadGlobalFrom(configPath)
+			require.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
+func TestCIConfigIsPRAuthorAllowed(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		authors      []string
+		associations []string
+		login        string
+		association  string
+		want         bool
+	}{
+		{name: "no filter allows everyone", login: "stranger", association: "NONE", want: true},
+		{name: "listed login", authors: []string{"Alice"}, login: "alice", association: "NONE", want: true},
+		{name: "unlisted login", authors: []string{"alice"}, login: "bob", association: "MEMBER", want: false},
+		{name: "allowed association", associations: []string{"OWNER", "member"}, login: "bob", association: "MEMBER", want: true},
+		{name: "outside association", associations: []string{"OWNER", "MEMBER"}, login: "bob", association: "CONTRIBUTOR", want: false},
+		{name: "either list admits", authors: []string{"dependabot[bot]"}, associations: []string{"MEMBER"}, login: "dependabot[bot]", association: "NONE", want: true},
+		{name: "unknown association fails closed", associations: []string{"MEMBER"}, login: "bob", association: "", want: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ci := CIConfig{AllowedAuthors: tt.authors, AllowedAuthorAssociations: tt.associations}
+			assert.Equal(t, tt.want, ci.IsPRAuthorAllowed(tt.login, tt.association))
+		})
+	}
+}
+
+func TestCIConfigIsPRBranchAllowed(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		include []string
+		exclude []string
+		branch  string
+		want    bool
+	}{
+		{name: "no filter allows every branch", branch: "anything/goes", want: true},
+		{name: "star crosses slashes", exclude: []string{"dependabot/*"}, branch: "dependabot/npm_and_yarn/lodash-4.17.21", want: false},
+		{name: "exclude does not match other branch", exclude: []string{"dependabot/*", "renovate/*"}, branch: "feature/login", want: true},
+		{name: "include matches", include: []string{"feature/*", "fix/*"}, branch: "fix/crash", want: true},
+		{name: "include misses", include: []string{"feature/*", "fix/*"}, branch: "chore/cleanup", want: false},
+		{name: "exclude wins over include", include: []string{"feature/*"}, exclude: []string{"feature/wip-*"}, branch: "feature/wip-login", want: false},
+		{name: "exact name", include: []string{"main"}, branch: "main", want: true},
+		{name: "empty branch fails include", include: []string{"*"}, branch: "", want: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ci := CIConfig{IncludeBranches: tt.include, ExcludeBranches: tt.exclude}
+			assert.Equal(t, tt.want, ci.IsPRBranchAllowed(tt.branch))
+		})
+	}
+}
+
 func TestCIConfigDiscordWebhookURL(t *testing.T) {
 	t.Parallel()
 
