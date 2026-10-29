@@ -129,6 +129,11 @@ type CIConfig struct {
 	AllowedAuthors            []string `toml:"allowed_authors"`
 	AllowedAuthorAssociations []string `toml:"allowed_author_associations"`
 
+	// AllowCodeowners also admits PR authors that the repository's
+	// CODEOWNERS file on the PR base branch names as owners, directly or
+	// through a team. Setting it turns the author filter on.
+	AllowCodeowners bool `toml:"allow_codeowners"`
+
 	// IncludeBranches and ExcludeBranches filter PRs by head branch name
 	// using glob patterns in which * also matches "/". When IncludeBranches
 	// is set, only matching branches are reviewed. ExcludeBranches wins
@@ -466,10 +471,13 @@ var ciAuthorAssociations = []string{
 	"FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER", "MANNEQUIN", "NONE",
 }
 
-// IsPRAuthorAllowed reports whether CI may review a PR from this author.
-// With no author filter configured, every author is allowed.
+// IsPRAuthorAllowed reports whether AllowedAuthors or
+// AllowedAuthorAssociations admit this author. With no author filter
+// configured, every author is allowed. When AllowCodeowners is set, an
+// author this reports as not allowed may still be a code owner; the caller
+// checks CODEOWNERS.
 func (c *CIConfig) IsPRAuthorAllowed(login, association string) bool {
-	if len(c.AllowedAuthors) == 0 && len(c.AllowedAuthorAssociations) == 0 {
+	if len(c.AllowedAuthors) == 0 && len(c.AllowedAuthorAssociations) == 0 && !c.AllowCodeowners {
 		return true
 	}
 	if login != "" && containsUsername(c.AllowedAuthors, login) {

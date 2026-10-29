@@ -131,6 +131,7 @@ type CIPoller struct {
 	jobCancelFn         func(jobID int64)                      // kills running worker process (optional)
 	isPROpenFn          func(ghRepo string, prNumber int) bool // checks if a PR is still open
 	prPostTargetFn      func(context.Context, string, int) (panelPostTarget, error)
+	codeownersFn        func(ctx context.Context, ghRepo, ref string) (map[string]struct{}, error)
 
 	repoResolver *RepoResolver
 	errorLog     *ErrorLog
@@ -157,10 +158,16 @@ type CIPoller struct {
 	stopping           bool
 	pollStopping       bool
 	eventsStopping     bool
-	pollErrors         map[ciPollTarget]ciPollFailure // guarded by mu
-	monitoredRepos     []string                       // last successful discovery; guarded by mu
-	dispatchingRetries map[ciPollTarget]int           // live retry enqueue owners; guarded by mu
-	initialPollPending bool                           // guarded by mu; startup has not established health yet
+	pollErrors         map[ciPollTarget]ciPollFailure          // guarded by mu
+	monitoredRepos     []string                                // last successful discovery; guarded by mu
+	dispatchingRetries map[ciPollTarget]int                    // live retry enqueue owners; guarded by mu
+	codeowners         map[ciCodeownersKey]map[string]struct{} // logins per repo and base branch for the current poll; guarded by mu
+	initialPollPending bool                                    // guarded by mu; startup has not established health yet
+}
+
+type ciCodeownersKey struct {
+	repo string
+	ref  string
 }
 
 type ciPollTarget struct {
@@ -195,9 +202,11 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 		nowFn:              time.Now,
 		pollErrors:         make(map[ciPollTarget]ciPollFailure),
 		dispatchingRetries: make(map[ciPollTarget]int),
+		codeowners:         make(map[ciCodeownersKey]map[string]struct{}),
 	}
 	p.listOpenPRsFn = p.listOpenPRs
 	p.listTrustedActorsFn = p.listTrustedActors
+	p.codeownersFn = p.readCodeowners
 	p.listPRDiscussionFn = p.listPRDiscussionComments
 	p.gitFetchFn = gitFetchCtx
 	p.gitFetchPRHeadFn = gitFetchPRHead
@@ -506,6 +515,9 @@ func (p *CIPoller) poll(ctx context.Context) {
 }
 
 func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Config) error {
+	// Read CODEOWNERS again on each poll so ownership changes apply promptly.
+	p.forgetCodeowners(ghRepo)
+
 	// List open PRs via the GitHub API
 	prs, err := p.callListOpenPRs(ctx, ghRepo)
 	if err != nil {
@@ -566,7 +578,7 @@ func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Conf
 	// run that just went terminal this poll gets its recovery pass on the next one
 	// (never mid-enqueue); the posting CAS keeps it idempotent with the event path.
 	p.reconcilePanelPosting(ctx, ghRepo)
-	if err := p.reconcileRetryHealth(ghRepo, prs, cfg, unavailableHeads); err != nil {
+	if err := p.reconcileRetryHealth(ctx, ghRepo, prs, cfg, unavailableHeads); err != nil {
 		processingErrors = append(processingErrors, err)
 	}
 	p.retryFinalPanelStatuses(ghRepo)
@@ -579,7 +591,7 @@ func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Conf
 // holds heads that failed to enqueue during this poll; they have no attempt
 // row yet, so they stay failed until a later poll enqueues or retires them.
 func (p *CIPoller) reconcileRetryHealth(
-	ghRepo string, prs []ghPR, cfg *config.Config, unavailableHeads map[ciPollTarget]bool,
+	ctx context.Context, ghRepo string, prs []ghPR, cfg *config.Config, unavailableHeads map[ciPollTarget]bool,
 ) error {
 	attempts, err := p.db.GetFailedReviewAttempts(ghRepo)
 	if err != nil {
@@ -598,7 +610,11 @@ func (p *CIPoller) reconcileRetryHealth(
 		// Exhausted retries no longer enter the retry sweep. Retire their
 		// failure when the open PR has moved on or explicitly skips review.
 		if pr, open := openByNumber[attempt.PRNumber]; open && attempt.State == "done" {
-			reason, skip := ciPRSkip(pr, &cfg.CI)
+			reason, skip, err := p.ciPRSkip(ctx, ghRepo, pr, &cfg.CI)
+			if err != nil {
+				lookupErrors = append(lookupErrors, fmt.Errorf(
+					"check review filters for PR #%d: %w", attempt.PRNumber, err))
+			}
 			if pr.HeadRefOid != attempt.HeadSHA || skip {
 				var err error
 				if pr.HeadRefOid == attempt.HeadSHA {
@@ -666,7 +682,11 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	}
 	// Skip a deferred retry immediately, even during backoff. Active and
 	// completed reviews still belong to the normal deduplication gate below.
-	if reason, skip := ciPRSkip(pr, &cfg.CI); skip {
+	reason, skip, err := p.ciPRSkip(ctx, ghRepo, pr, &cfg.CI)
+	if err != nil {
+		return err
+	}
+	if skip {
 		attempt, err := p.db.GetReviewAttempt(ghRepo, pr.Number, pr.HeadRefOid)
 		if err != nil {
 			return fmt.Errorf("check skipped review attempt: %w", err)
@@ -683,7 +703,7 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	if reviewed {
 		return nil
 	}
-	if reason, skip := ciPRSkip(pr, &cfg.CI); skip {
+	if skip {
 		return p.skipPR(ghRepo, pr, reason, nil)
 	}
 
@@ -923,29 +943,77 @@ type ciSkip struct {
 }
 
 // ciPRSkip reports whether the [ci] skip_labels, author, or branch filters
-// exclude this PR from review.
-func ciPRSkip(pr ghPR, ci *config.CIConfig) (ciSkip, bool) {
+// exclude this PR from review. It returns an error, and no decision, when it
+// cannot read CODEOWNERS for the allow_codeowners check.
+func (p *CIPoller) ciPRSkip(ctx context.Context, ghRepo string, pr ghPR, ci *config.CIConfig) (ciSkip, bool, error) {
 	if label, skip := matchingCISkipLabel(pr.Labels, ci.SkipLabels); skip {
 		return ciSkip{
 			description: fmt.Sprintf("Review skipped: label %s", label),
 			reason:      fmt.Sprintf("it has label %q", label),
-		}, true
+		}, true, nil
 	}
-	if !ci.IsPRAuthorAllowed(pr.Author.Login, pr.AuthorAssociation) {
+	allowed := ci.IsPRAuthorAllowed(pr.Author.Login, pr.AuthorAssociation)
+	if !allowed && ci.AllowCodeowners && pr.Author.Login != "" {
+		owners, err := p.codeownerLogins(ctx, ghRepo, pr.BaseRefName)
+		if err != nil {
+			return ciSkip{}, false, fmt.Errorf("read CODEOWNERS for %s@%s: %w", ghRepo, pr.BaseRefName, err)
+		}
+		_, allowed = owners[strings.ToLower(pr.Author.Login)]
+	}
+	if !allowed {
 		return ciSkip{
 			description: "Review skipped: author not in allowed authors",
-			reason: fmt.Sprintf("author %q (association %q) is not allowed by ci.allowed_authors or ci.allowed_author_associations",
+			reason: fmt.Sprintf("author %q (association %q) is not allowed by the [ci] author filter",
 				pr.Author.Login, pr.AuthorAssociation),
-		}, true
+		}, true, nil
 	}
 	if !ci.IsPRBranchAllowed(pr.HeadRefName) {
 		return ciSkip{
 			description: "Review skipped: branch filtered",
 			reason: fmt.Sprintf("branch %q is filtered by ci.include_branches or ci.exclude_branches",
 				pr.HeadRefName),
-		}, true
+		}, true, nil
 	}
-	return ciSkip{}, false
+	return ciSkip{}, false, nil
+}
+
+// codeownerLogins returns the code owners named by CODEOWNERS on the ref
+// branch, read at most once per poll of the repository. It reads the PR base
+// branch, never the PR head, so a PR cannot add its own author.
+func (p *CIPoller) codeownerLogins(ctx context.Context, ghRepo, ref string) (map[string]struct{}, error) {
+	key := ciCodeownersKey{repo: ghRepo, ref: ref}
+	p.mu.Lock()
+	owners, ok := p.codeowners[key]
+	p.mu.Unlock()
+	if ok {
+		return owners, nil
+	}
+	owners, err := p.codeownersFn(ctx, ghRepo, ref)
+	if err != nil {
+		return nil, err
+	}
+	p.mu.Lock()
+	p.codeowners[key] = owners
+	p.mu.Unlock()
+	return owners, nil
+}
+
+func (p *CIPoller) forgetCodeowners(ghRepo string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for key := range p.codeowners {
+		if key.repo == ghRepo {
+			delete(p.codeowners, key)
+		}
+	}
+}
+
+func (p *CIPoller) readCodeowners(ctx context.Context, ghRepo, ref string) (map[string]struct{}, error) {
+	client, err := p.githubClientForRepo(ghRepo)
+	if err != nil {
+		return nil, err
+	}
+	return client.CodeownerLogins(ctx, ghRepo, ref)
 }
 
 func (p *CIPoller) skipPR(ghRepo string, pr ghPR, skip ciSkip, expected *storage.ReviewAttempt) error {
@@ -3128,7 +3196,14 @@ func (p *CIPoller) retryDueReviewAttempt(
 		}
 		return false // PR advanced; the new HEAD already has its own attempt
 	}
-	if reason, skip := ciPRSkip(pr, &cfg.CI); skip {
+	reason, skip, err := p.ciPRSkip(ctx, ghRepo, pr, &cfg.CI)
+	if err != nil {
+		log.Printf("CI poller: error checking review filters for deferred attempt %s#%d@%s: %v",
+			ghRepo, attempt.PRNumber, gitpkg.ShortSHA(attempt.HeadSHA), err)
+		p.recordPollResult(ghRepo, attempt.PRNumber, attempt.HeadSHA, err)
+		return false
+	}
+	if skip {
 		if err := p.skipPR(ghRepo, pr, reason, attempt); err != nil {
 			log.Printf("CI poller: error skipping deferred attempt for %s#%d@%s: %v",
 				ghRepo, attempt.PRNumber, gitpkg.ShortSHA(attempt.HeadSHA), err)

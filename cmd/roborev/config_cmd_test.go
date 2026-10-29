@@ -522,6 +522,7 @@ func TestSetConfigKey(t *testing.T) {
 		{"Integer", "max_workers", "8", int64(8)},
 		{"Boolean", "sync.enabled", "true", true},
 		{"NestedBoolean", "advanced.tasks_enabled", "true", true},
+		{"CIBoolean", "ci.allow_codeowners", "true", true},
 	}
 
 	for _, tt := range tests {
