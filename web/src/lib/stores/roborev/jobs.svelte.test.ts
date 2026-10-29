@@ -916,6 +916,89 @@ describe("createJobsStore event stream", () => {
     store.disconnectEventStream(eventOwner);
   });
 
+  it("drops a page that started before a pending reconciliation published", async () => {
+    const emitChunk = stubEventStream();
+
+    type JobsResponse = {
+      jobs: ReviewJob[];
+      has_more: boolean;
+      next_cursor?: string;
+      stats: { done: number; running: number; closed: number; open: number };
+    };
+    const pending: Array<{
+      resolve: (value: JobsResponse) => void;
+      reject: (reason: Error) => void;
+    }> = [];
+    const cursors: Array<string | undefined> = [];
+    const api = {
+      listJobs: vi.fn(
+        (query: { cursor?: string }) =>
+          new Promise<JobsResponse>((resolve, reject) => {
+            cursors.push(query.cursor);
+            pending.push({ resolve, reject });
+          }),
+      ),
+    };
+    const store = createJobsStore({
+      api: api as never,
+      navigate: vi.fn(),
+    });
+    const ids = (from: number, to: number) =>
+      Array.from({ length: from - to + 1 }, (_, index) => from - index);
+    const stats = { done: 11, running: 0, closed: 0, open: 11 };
+    const eventOwner = store.connectEventStream("/api/roborev");
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    pending[0]?.resolve({
+      jobs: ids(10, 6).map((id) => makeJob(id)),
+      has_more: true,
+      next_cursor: "after-6",
+      stats,
+    });
+    await vi.waitFor(() => expect(store.getJobs()).toHaveLength(5));
+
+    const firstPage = loadMoreJobs(store);
+    await vi.waitFor(() => expect(pending).toHaveLength(2));
+    emitChunk(
+      '{"type":"review.completed","ts":"2026-08-04T13:00:00Z","job_id":11,"repo":"/workspace/repo","repo_name":"repo","sha":"abc123"}\n',
+    );
+    await vi.waitFor(() => expect(pending).toHaveLength(3));
+    pending[1]?.resolve({
+      jobs: ids(5, 1).map((id) => makeJob(id)),
+      has_more: false,
+      stats,
+    });
+    await firstPage;
+
+    const secondPage = loadMoreJobs(store);
+    await vi.waitFor(() => expect(pending).toHaveLength(4));
+    expect(cursors.at(-1)).toBe("after-6");
+    pending[2]?.resolve({
+      jobs: ids(11, 7).map((id) => makeJob(id)),
+      has_more: true,
+      next_cursor: "after-7",
+      stats,
+    });
+    await vi.waitFor(() =>
+      expect(store.getJobs().map((job) => job.id)).toContain(11),
+    );
+    pending[3]?.resolve({
+      jobs: ids(5, 1).map((id) => makeJob(id)),
+      has_more: false,
+      stats,
+    });
+    await secondPage;
+
+    expect(
+      store
+        .getJobs()
+        .map((job) => job.id)
+        .sort((a, b) => b - a),
+    ).toEqual(ids(11, 7));
+    expect(store.getHasMore()).toBe(true);
+    expect(store.areAllJobsLoaded()).toBe(false);
+    store.disconnectEventStream(eventOwner);
+  });
+
   it("invalidates the selected review for commit-scoped comment events", async () => {
     const emitChunk = stubEventStream();
     const api = {

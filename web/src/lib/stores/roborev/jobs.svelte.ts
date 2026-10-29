@@ -181,6 +181,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
   let rerunningJobIds = $state<Set<number>>(new Set());
   let loadedLimit = DEFAULT_PAGE_LIMIT;
   let jobsAuthorityGeneration = 0;
+  let publishedJobsRevision = 0;
   let publishedJobsAuthority: JobsAuthority | undefined;
 
   // Filters
@@ -377,6 +378,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
     Effect.sync(() => {
       if (generation !== jobsAuthorityGeneration) return [];
       if (JSON.stringify(buildQuery()) !== authority.queryScope) return [];
+      publishedJobsRevision += 1;
       publishedJobsAuthority = authority;
       daemonOrder = new Map(
         authority.jobs.map((job, index) => [job.id, index]),
@@ -493,8 +495,13 @@ export function createJobsStore(opts: JobsStoreOptions) {
       // Live updates reload the list under their own owner, so they never
       // cancel this request. A page fetched for a list that a newer load has
       // since replaced would skip the rows between the two, so its result
-      // and its error are dropped.
+      // and its error are dropped. A reload that started before this request
+      // can still publish during it, so both counters are checked.
       const generation = jobsAuthorityGeneration;
+      const revision = publishedJobsRevision;
+      const pageStillApplies = () =>
+        generation === jobsAuthorityGeneration &&
+        revision === publishedJobsRevision;
       yield* workflow.jobs(
         opts.owner,
         Effect.gen(function* () {
@@ -517,7 +524,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
             ),
           );
           yield* Effect.sync(() => {
-            if (generation !== jobsAuthorityGeneration) return;
+            if (!pageStillApplies()) return;
             const existingIds = new Set(jobs.map((job) => job.id));
             const remaining = MAX_LOADED_JOBS - jobs.length;
             const fresh = (result.jobs ?? [])
@@ -534,7 +541,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
         }).pipe(
           Effect.catch((failure) =>
             Effect.sync(() => {
-              if (generation !== jobsAuthorityGeneration) return;
+              if (!pageStillApplies()) return;
               loadMoreError =
                 failure instanceof Error ? failure.message : String(failure);
             }),
