@@ -1906,15 +1906,25 @@ func TestMarkJobAgentInvoked_StaleWorkerIgnored(t *testing.T) {
 	claimJob(t, db, "worker-B")
 
 	// The stale worker-A write must not land on the row worker-B now owns.
-	require.NoError(t, db.MarkJobAgentInvoked(job.ID, "worker-A", "stale review x"),
+	before, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	require.NoError(t, db.MarkJobAgentInvokedAs(job.ID, "worker-A", "stale-agent", "stale-model", "stale review x"),
 		"MarkJobAgentInvoked (stale worker-A)")
 	assert.False(getJobAgentInvoked(t, db, job.ID),
 		"stale worker does not set the marker on the new attempt")
+	after, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(before.Agent, after.Agent)
+	assert.Equal(before.Model, after.Model)
 
 	// The current owner can still set it.
-	require.NoError(t, db.MarkJobAgentInvoked(job.ID, "worker-B", "codex review x"),
+	require.NoError(t, db.MarkJobAgentInvokedAs(job.ID, "worker-B", "backup-agent", "backup-model", "backup review x"),
 		"MarkJobAgentInvoked (worker-B)")
 	assert.True(getJobAgentInvoked(t, db, job.ID), "current owner sets the marker")
+	after, err = db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal("backup-agent", after.Agent)
+	assert.Equal("backup-model", after.Model)
 }
 
 func TestMinSeverityRoundTrip(t *testing.T) {

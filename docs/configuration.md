@@ -798,6 +798,15 @@ enabled = false
 At most one enabled experiment may apply to a workflow. Disabled experiments do
 not record assignments.
 
+Read an enrolled experiment with
+`roborev experiments report review-session-resumption-v1`. Reporting adds no
+configuration and does not change enrollment. The
+[experiment report contract](/docs/commands/#experiment-reports) explains UTC
+assignment cohorts, equally weighted branch subjects, full panel spend,
+latest-retained-attempt limits, metric coverage, and exploratory comparisons.
+Finding-level labels remain unavailable; the report declares no overall winner
+or configured success bar.
+
 Review, CI metrics, and CI cost exports include an `experiments` field. It is an
 array of assignments when an experiment applies and `null` otherwise. Each
 assignment records the experiment ID, arm, subject hash, definition hash, and

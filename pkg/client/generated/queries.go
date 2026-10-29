@@ -66,6 +66,17 @@ type DoctorAgentsQuery struct {
 	Agent []string `json:"agent,omitempty"`
 }
 
+type GetExperimentReportQuery struct {
+	// Since Inclusive assignment-time lower bound (RFC3339); default all time
+	Since *string `json:"since,omitempty"`
+
+	// Until Exclusive assignment-time upper bound (RFC3339); default all time
+	Until *string `json:"until,omitempty"`
+
+	// MinSubjects Positive minimum contributing subjects per arm; default 4
+	MinSubjects *string `json:"min_subjects,omitempty"`
+}
+
 type ExportCiCostsQuery struct {
 	// Format Output format; only json is supported
 	Format *string `json:"format,omitempty"`
