@@ -1,6 +1,5 @@
 name: CodeQL
 
-# Use the PR's workflow so CI changes are tested before merging.
 on:
   pull_request:
     branches: [main]
