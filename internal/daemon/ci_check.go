@@ -12,7 +12,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"go.kenn.io/kit/pathresolve"
+
 	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/config"
 	gitpkg "go.kenn.io/roborev/internal/git"
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/sandbox"
@@ -40,53 +43,51 @@ If the sandbox stops a finding from running, keep it.
 Return a JSON object with verdicts: [{"finding": 1, "keep": true, "evidence": "the command and its output, or what refutes it", "reason": "one sentence"}].
 Work alone: no sub-agents or background jobs.`
 
-func (wp *WorkerPool) checkAndCompleteSynthesis(ctx context.Context, workerID string, job *storage.ReviewJob, res synthesisResult, check *ciCheckConfig) {
-	res = wp.checkSynthesis(ctx, job, res, check)
-	if check != nil && errors.Is(ctx.Err(), context.Canceled) {
+func (wp *WorkerPool) checkAndCompleteSynthesis(ctx context.Context, workerID string, job *storage.ReviewJob, res synthesisResult, doc structuredreview.Document, check *ciCheckConfig) {
+	res, ran := wp.checkSynthesis(ctx, job, res, doc, check)
+	if ran && errors.Is(ctx.Err(), context.Canceled) {
 		wp.handleUpdateInterruption(ctx, workerID, job)
 		return
 	}
 	wp.completeSynthesisContext(workerID, job, res)
 }
 
-func (wp *WorkerPool) checkSynthesis(ctx context.Context, job *storage.ReviewJob, res synthesisResult, check *ciCheckConfig) synthesisResult {
-	if check != nil {
-		doc, err := reviewpkg.DecodeStructuredReview(res.review.StructuredOutput)
-		if err == nil && doc.Legacy == nil && !doc.UnableToReview() && !doc.Passed(job.MinSeverity) {
-			jobLog := newAppendingJobLogWriter(job.ID)
-			defer jobLog.Close()
-			outputWriter := wp.outputBuffers.Writer(job.ID, GetNormalizer("codex"))
-			defer outputWriter.Flush()
-			out := io.MultiWriter(jobLog, outputWriter)
-			var env []string
-			if wp.ciGitEnv != nil {
-				if panel, err := wp.db.GetCIPanelBySynthesisJobID(job.ID); err == nil && panel != nil {
-					env = wp.ciGitEnv(panel.GithubRepo)
-				}
-			}
-			checker := wp.ciCheck
-			if checker == nil {
-				checker = wp.runCICheck
-			}
-			checked, checkErr := checker(ctx, job, *check, doc, env, out)
-			if checkErr != nil {
-				fmt.Fprintf(out, "CI checker failed; keeping original review: %v\n", checkErr)
-			} else {
-				verdict := reviewpkg.SynthesisVerdict(checked, job.MinSeverity)
-				checked.Verdict = structuredreview.VerdictPass
-				if verdict == storage.VerdictFail {
-					checked.Verdict = structuredreview.VerdictFail
-				}
-				raw, encodeErr := json.Marshal(checked)
-				if encodeErr == nil {
-					res.review.StructuredOutput = raw
-					res.review.Output = checked.Markdown(job.MinSeverity)
-					res.review.Verdict = verdict
-				}
+func (wp *WorkerPool) checkSynthesis(ctx context.Context, job *storage.ReviewJob, res synthesisResult, doc structuredreview.Document, check *ciCheckConfig) (synthesisResult, bool) {
+	if check != nil && doc.Legacy == nil && !doc.UnableToReview() && len(doc.Findings) > 0 {
+		jobLog := newAppendingJobLogWriter(job.ID)
+		defer jobLog.Close()
+		outputWriter := wp.outputBuffers.Writer(job.ID, GetNormalizer("codex"))
+		defer outputWriter.Flush()
+		out := io.MultiWriter(jobLog, outputWriter)
+		var env []string
+		if wp.ciGitEnv != nil {
+			if panel, err := wp.db.GetCIPanelBySynthesisJobID(job.ID); err == nil && panel != nil {
+				env = wp.ciGitEnv(panel.GithubRepo)
 			}
 		}
+		checker := wp.ciCheck
+		if checker == nil {
+			checker = wp.runCICheck
+		}
+		checked, checkErr := checker(ctx, job, *check, doc, env, out)
+		if checkErr != nil {
+			fmt.Fprintf(out, "CI checker failed; keeping original review: %v\n", checkErr)
+		} else if len(checked.Findings) < len(doc.Findings) {
+			verdict := reviewpkg.SynthesisVerdict(checked, job.MinSeverity)
+			checked.Verdict = structuredreview.VerdictPass
+			if verdict == storage.VerdictFail {
+				checked.Verdict = structuredreview.VerdictFail
+			}
+			raw, encodeErr := json.Marshal(checked)
+			if encodeErr == nil {
+				res.review.StructuredOutput = raw
+				res.review.Output = checked.Markdown(job.MinSeverity)
+				res.review.Verdict = verdict
+			}
+		}
+		return res, true
 	}
-	return res
+	return res, false
 }
 
 // runCICheck owns the disposable checkout and every process used by the checker.
@@ -179,6 +180,9 @@ func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob
 		return
 	}
 	readPaths = append(readPaths, goPaths...)
+	if err = validateCICheckReadPaths(readPaths); err != nil {
+		return
+	}
 	env := []string{"PATH=" + toolPath, "HOME=" + filepath.Join(root, "home"), "TMPDIR=" + filepath.Join(run.Job.WorkDir, "tmp"), "GOCACHE=" + filepath.Join(run.Job.WorkDir, "gocache"), "GOPROXY=off", "LANG=C.UTF-8", "TERM=dumb"}
 	if len(goPaths) == 2 {
 		env[0] = "PATH=" + filepath.Join(goPaths[0], "bin") + string(os.PathListSeparator) + toolPath
@@ -195,6 +199,44 @@ func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob
 	run.Job.MemoryMax = 8 << 30
 	run.Job.Env = env
 	return
+}
+
+// Every read grant must leave host homes outside the checker's filesystem.
+func validateCICheckReadPaths(paths []string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	codexHome, err := config.CodexHomeDir()
+	if err != nil {
+		return err
+	}
+	for _, hostHome := range []string{home, codexHome} {
+		hostHome, err = filepath.Abs(hostHome)
+		if err == nil {
+			hostHome, err = pathresolve.EvalSymlinksAllowMissing(hostHome)
+		}
+		if err != nil {
+			return err
+		}
+		for _, path := range paths {
+			grant, err := filepath.Abs(path)
+			if err == nil {
+				grant, err = pathresolve.EvalSymlinksAllowMissing(grant)
+			}
+			if err != nil {
+				return err
+			}
+			rel, err := filepath.Rel(grant, hostHome)
+			if err != nil {
+				return err
+			}
+			if rel == "." || filepath.IsLocal(rel) {
+				return fmt.Errorf("checker read grant contains host home: %q", path)
+			}
+		}
+	}
+	return nil
 }
 
 func warmGoModules(ctx context.Context, checkout, root string, gitEnv []string, out io.Writer) ([]string, error) {
