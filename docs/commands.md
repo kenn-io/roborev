@@ -911,13 +911,43 @@ The agent produces:
 
 - Recurring finding patterns across reviews
 - Hotspot areas (files/packages with concentrated failures)
-- Noise candidates (findings consistently dismissed without code changes)
+- Noise candidates supported by validated refuted assessments
 - Guideline gaps (patterns flagged by reviews but not covered by guidelines)
-- Suggested guideline additions (concrete text for `.roborev.toml` or
-    `~/.roborev/config.toml`)
+- At most one suggested guideline line, supported by at least three distinct
+    review job IDs, or `No guideline change recommended` with a reason
 
-If no failing reviews match the time window and branch filter, the command exits
-with a message instead of queuing a job.
+The prompt includes a full-window finding-outcome table before the review
+excerpts. It uses the same completion-time population and labeled denominator as
+[`summary --findings`](#finding-outcomes). Counts and label coverage remain
+visible when there are fewer than five labeled findings; rates are suppressed
+below that evidence threshold. Confirmed means an agent confirmed the finding,
+not that someone applied a fix. Closure measures resolution only. Comments never
+supply outcome labels. K, D and panel R labels remain unavailable.
+
+The aggregate covers all matching logical code reviews, including passing
+reviews. Review excerpts remain a bounded sample of failing reviews. The prompt
+reports fetched reviews, included excerpts and truncated excerpts separately.
+Typed finding evidence is attached only when the review UUID matches the excerpt
+version. Counterexample checks therefore describe the supplied evidence, not the
+entire review corpus. A suggested change must name confirmed or still open
+findings it could suppress, state its expected effect, and check for private
+identifiers before proposing text.
+
+Insights also reads the latest completed analysis for the same repository and
+exact branch scope. An analysis without `--branch` matches only prior analyses
+across all branches. When section 5 can be recovered, the agent checks exact
+inclusion against the complete current guidelines and distinguishes equivalent
+wording. Stored measured counts and windows are supplied when available. Missing
+baselines, overlapping or otherwise noncomparable periods, incomplete coverage,
+and missing pattern denominators mean `insufficient comparable evidence`.
+Changes of one or two occurrences are `within noise`, a heuristic. A decrease
+establishes neither causation nor the date a guideline was adopted.
+
+If no failing reviews match the time window and branch filter, insights still
+queues an analysis when a prior suggestion can be recovered. It reports zero
+current failing excerpts and checks adoption without treating missing review
+denominators as improvement. With no recoverable prior suggestion, it exits with
+a message instead of queuing a job.
 
 ## Token Usage
 

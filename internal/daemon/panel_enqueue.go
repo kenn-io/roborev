@@ -180,7 +180,7 @@ func (s *Server) resolveInsightsPrompt(
 			ErrorResponse{Error: fmt.Sprintf("build insights prompt: %v", err)})
 		return "", out
 	}
-	if reviewCount == 0 {
+	if reviewCount == 0 && insightsPrompt == "" {
 		out, _ := rawJSONOutput(http.StatusOK, EnqueueSkippedResponse{
 			Skipped: true,
 			Reason:  "No failing reviews found in the specified time window.",
