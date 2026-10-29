@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/rebuttal"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -159,6 +160,10 @@ func TestRebuttalEnqueuePreservesOriginalSession(t *testing.T) {
 	a.Contains(stored.Prompt, "The caller checks it.")
 	a.Contains(stored.Prompt, `non-empty "explanation"`)
 	a.NotContains(stored.Prompt, "Another finding.")
+	selection, err := rebuttal.DecodeSelection(stored.Prompt)
+	require.NoError(t, err)
+	a.Equal(originalReview.UUID.String(), selection.ReviewUUID) //nolint:forbidigo // Assert the stored prompt text boundary.
+	a.Equal("The guard is missing.", selection.Finding)
 	a.False(stored.Agentic)
 	review, err := db.GetReviewByJobID(parent.ID)
 	require.NoError(t, err)

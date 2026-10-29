@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	gitpkg "go.kenn.io/roborev/internal/git"
+	"go.kenn.io/roborev/internal/rebuttal"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -116,6 +117,11 @@ superseded: the original finding is outdated or replaced. Explain any severity d
 Original finding: %q
 User explanation: %q
 `, req.Finding, req.Comment)
+	bound, err := rebuttal.EncodeSelection(rebuttal.Selection{ReviewUUID: review.UUID.String(), Finding: req.Finding}, focused) //nolint:forbidigo // Stored prompt metadata is a text boundary.
+	if err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
+	}
+	focused = bound
 	if _, err := s.db.AddCommentToJobWithSourceIfReviewUUID(
 		parent.ID, *review.UUID, req.Commenter, req.Comment, storage.ResponseSourceLocal,
 	); err != nil {

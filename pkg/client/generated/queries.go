@@ -402,6 +402,15 @@ type StreamEventsQuery struct {
 }
 
 type GetSummaryQuery struct {
+	// Findings Include finding outcomes
+	Findings *GetSummaryQueryFindings `json:"findings,omitempty"`
+
+	// By Finding grouping: severity, review-type, agent, model, arm
+	By *string `json:"by,omitempty"`
+
+	// MinSamples Minimum labeled findings for displaying a rate (default 5)
+	MinSamples *string `json:"min_samples,omitempty"`
+
 	// Since Time window (e.g. 7d, 24h). Default: 7d
 	Since *string `json:"since,omitempty"`
 
@@ -417,6 +426,13 @@ type GetSummaryQuery struct {
 
 func (g GetSummaryQuery) Validate() error {
 	var errors runtime.ValidationErrors
+	if g.Findings != nil {
+		if v, ok := any(g.Findings).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Findings", err)
+			}
+		}
+	}
 	if g.All != nil {
 		if v, ok := any(g.All).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {

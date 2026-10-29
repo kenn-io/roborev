@@ -18,6 +18,7 @@ type querier interface {
 
 // Summary holds aggregate review statistics for a time window.
 type Summary struct {
+	Findings *FindingStats  `json:"findings,omitempty"`
 	Since    time.Time      `json:"since"`
 	RepoPath string         `json:"repo_path,omitempty"`
 	Branch   string         `json:"branch,omitempty"`
@@ -110,15 +111,25 @@ const verdictJobFilter = "COALESCE(j.job_type, 'review') NOT IN ('task', 'fix')"
 
 // SummaryOptions configures the summary query.
 type SummaryOptions struct {
-	RepoPath string
-	Branch   string
-	Since    time.Time
-	AllRepos bool
+	Findings   bool      // Include the additive completion-window finding snapshot.
+	GroupBy    string    // Empty means severity.
+	MinSamples int       // Zero uses DefaultFindingMinSamples; a display threshold only.
+	AsOf       time.Time // Zero captures now once for the finding snapshot.
+	RepoPath   string
+	Branch     string
+	Since      time.Time
+	AllRepos   bool
 }
 
 // GetSummary computes aggregate review statistics.
 // All sub-queries run inside a single read transaction for snapshot consistency.
 func (db *DB) GetSummary(opts SummaryOptions) (*Summary, error) {
+	if err := ValidateFindingOptions(opts.Findings, opts.GroupBy, opts.MinSamples); err != nil {
+		return nil, err
+	}
+	if opts.AsOf.IsZero() {
+		opts.AsOf = time.Now()
+	}
 	if opts.RepoPath != "" {
 		opts.RepoPath = normalizeRepoPathBestEffort(opts.RepoPath)
 	}
@@ -204,6 +215,12 @@ func (db *DB) GetSummary(opts SummaryOptions) (*Summary, error) {
 		}
 	}
 
+	if opts.Findings {
+		s.Findings, err = findingStats(tx, opts, opts.GroupBy)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return s, nil
 }
 

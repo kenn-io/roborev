@@ -47,9 +47,9 @@ This is an LLM-powered command that:
 The agent produces:
 - Recurring finding patterns across reviews
 - Hotspot areas (files/packages that concentrate failures)
-- Noise candidates (findings consistently dismissed without code changes)
+- Noise candidates supported by validated refuted assessments
 - Guideline gaps (patterns flagged by reviews but not in guidelines)
-- Suggested guideline additions (concrete text for .roborev.toml or config.toml)
+- At most one suggested guideline line, or "No guideline change recommended" with a reason
 
 Examples:
   roborev insights                          # Analyze last 30 days of reviews

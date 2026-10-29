@@ -10,19 +10,17 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestCIReviewGitCapabilities(t *testing.T) {
 	skipIfWindows(t)
-	repo := testutil.NewTestRepoWithCommit(t)
-	remote := testutil.NewTestRepoWithCommit(t)
-	repo.RunGit("push", remote.Path(), "HEAD:refs/heads/local-probe")
+	repo := newPlanTestRepo(t)
+	remote := newPlanTestRepo(t)
+	planGit(t, repo, "push", remote, "HEAD:refs/heads/local-probe")
 	helper := writeTempCommand(t, "#!/bin/sh\nprintf 'username=fixture\\npassword=helper-sentinel\\n'\n")
 	// Both environment configuration and repository configuration must lose
 	// their helper. Local foreground commands still use the fixture helper.
-	repo.RunGit("config", "credential.helper", helper)
+	planGit(t, repo, "config", "credential.helper", helper)
 	t.Setenv("GIT_CONFIG_COUNT", "1")
 	t.Setenv("GIT_CONFIG_KEY_0", "credential.helper")
 	t.Setenv("GIT_CONFIG_VALUE_0", helper)
@@ -46,7 +44,7 @@ func TestCIReviewGitCapabilities(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			cmd := exec.CommandContext(ctx, "git", "credential", "fill")
-			cmd.Dir = repo.Path()
+			cmd.Dir = repo
 			cmd.Stdin = strings.NewReader(credentialInput)
 			configureSubprocess(ctx, cmd)
 			out, err := cmd.CombinedOutput()
@@ -61,24 +59,24 @@ func TestCIReviewGitCapabilities(t *testing.T) {
 	}
 	ctx := ciCtx
 	cmd := exec.CommandContext(ctx, "git", "config", "--get-all", "safe.directory")
-	cmd.Dir = repo.Path()
+	cmd.Dir = repo
 	configureSubprocess(ctx, cmd)
 	out, err := cmd.Output()
 	require.NoError(t, err)
-	assert.Equal(t, repo.Path()+"\n", string(out))
+	assert.Equal(t, repo+"\n", string(out))
 	for _, args := range [][]string{{"log", "-1", "--oneline"}, {"diff", "HEAD"}, {"status", "--porcelain"}} {
 		cmd := exec.CommandContext(ctx, "git", args...)
-		cmd.Dir = repo.Path()
+		cmd.Dir = repo
 		configureSubprocess(ctx, cmd)
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, "%v: %s", args, out)
 	}
 	for _, args := range [][]string{
 		{"commit", "--allow-empty", "-m", "should fail"},
-		{"push", remote.Path(), "HEAD:refs/heads/ci-probe"},
+		{"push", remote, "HEAD:refs/heads/ci-probe"},
 	} {
 		cmd := exec.CommandContext(ctx, "git", args...)
-		cmd.Dir = repo.Path()
+		cmd.Dir = repo
 		configureSubprocess(ctx, cmd)
 		out, err := cmd.CombinedOutput()
 		require.Error(t, err, "%v unexpectedly succeeded: %s", args, out)

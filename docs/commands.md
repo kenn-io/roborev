@@ -764,6 +764,8 @@ roborev summary --since 30d         # Last 30 days
 roborev summary --branch main       # Filter by branch
 roborev summary --repo /path/to/repo
 roborev summary --json              # Structured output for scripting
+roborev summary --findings          # Finding outcomes by severity
+roborev summary --findings --by agent --min-samples 5
 ```
 
 | Flag | Description |
@@ -772,6 +774,9 @@ roborev summary --json              # Structured output for scripting
 | `--branch <name>` | Scope to a single branch |
 | `--repo <path>` | Scope to a single repo (default: current repo) |
 | `--all` | Show summary across all repos (mutually exclusive with `--repo`) |
+| `--findings` | Include structured finding outcomes |
+| `--by <group>` | With `--findings`: `severity` (default), `review-type`, `agent`, `model`, or `arm` |
+| `--min-samples <n>` | With `--findings`: positive labeled sample threshold for displaying rates (default: `5`) |
 | `--json` | Structured output for scripting |
 
 The summary includes:
@@ -787,6 +792,58 @@ The summary includes:
 - **Failures**: Total failures, retries, and error categories
 - **Cost**: Approximate agent spend for eligible jobs in the same time window,
     with coverage when only some jobs reported cost
+
+### Finding outcomes
+
+`summary --findings` adds a completion-time snapshot of logical code reviews:
+standalone commit, range and dirty reviews, plus panel synthesis parents. Panel
+members, goal reviews, tasks, fixes, insights and compact jobs are excluded.
+Existing summary fields keep their enqueue-time window. The additive `findings`
+JSON block reports the repository, branch, since, as-of and `finished_at` time
+basis, all raw counts, coverage and nullable rates with a suppression state.
+Zero-finding structured reviews count toward document coverage. Missing,
+invalid, legacy and unable-to-review documents remain in the logical review
+denominator. All structured severities count, including findings below a passing
+review's configured threshold.
+
+- **Positive / negative (tier R)**: A completed rebuttal assessment confirms or
+    refutes one uniquely matched finding in the current review version. This is
+    an agent assertion, not proof that someone applied a fix. New rebuttals bind
+    their quoted finding and review UUID in their stored prompt. Old unbound,
+    stale, failed, malformed and ambiguous assessments do not label findings.
+    The latest valid assessment wins. Comments never create labels.
+- **Excluded**: Superseded findings remain visible but do not enter the labeled
+    denominator. Labeled is positive plus negative; unlabeled is separate.
+- **Acted-on rate**: Positive / labeled. A zero denominator is unavailable.
+    Fewer than `--min-samples` labels shows `n<5` with the default threshold
+    while preserving every underlying count. This display threshold is adapted
+    from
+    [lever's five-example evidence rule](https://github.com/github/lever/blob/f859d0a/automations/precision-review/improver-prompt.md).
+    It does not limit reads or agent execution.
+- **Review resolution**: Distinct closed failing reviews / distinct failing
+    reviews contributing to the cell. Each review counts once per cell. Closure
+    never turns a finding into a positive or negative label.
+- **Coverage**: Structured / logical reviews and labeled / total findings, with
+    effective tier counts and rejected rebuttal coverage. The R cohort coverage
+    denominator is structured findings from local standalone reviews; it does
+    not promise that every stored session can still be resumed. Tier K (typed
+    replies), tier D (fix dispositions), and panel-parent tier R are unavailable
+    today.
+
+Agent and model groups describe the logical parent's configuration, including
+panels that passed through one member's output. Arm groups use experiment ID,
+definition hash and arm; unassigned reviews have an explicit bucket.
+Non-severity groups retain zero-finding and unavailable-document reviews.
+
+Cost is approximate spend on distinct retained eligible execution rows, not all
+historical retries. Whole-panel cost includes parent and member work, including
+failed invoked and advisory members. Each execution is charged once per cell;
+severity cells overlap when a review contains several severities, so their spend
+is not additive. Runs that never invoked an agent do not reduce cost coverage. A
+recorded zero-dollar price is priced; missing prices are not free. Cost /
+positive is unavailable without positive findings. Partial prices show a lower
+bound such as `≥$2.00 (3/4 priced)`; human cost columns are omitted when no row
+has usable prices. JSON always preserves eligible and priced denominators.
 
 ## Aggregate Cost
 
@@ -845,17 +902,52 @@ improvements to review guidelines. The command queries completed reviews
 `review_guidelines` from global and repo config as context, and sends the batch
 to an agent for structured analysis.
 
+Each review panel contributes its synthesis review once; individual panel
+members are excluded. Panel entries include the panel name and configured member
+count, including advisory members. Closed reviews and trusted comments remain
+available as context.
+
 The agent produces:
 
 - Recurring finding patterns across reviews
 - Hotspot areas (files/packages with concentrated failures)
-- Noise candidates (findings consistently dismissed without code changes)
+- Noise candidates supported by validated refuted assessments
 - Guideline gaps (patterns flagged by reviews but not covered by guidelines)
-- Suggested guideline additions (concrete text for `.roborev.toml` or
-    `~/.roborev/config.toml`)
+- At most one suggested guideline line, supported by at least three distinct
+    review job IDs, or `No guideline change recommended` with a reason
 
-If no failing reviews match the time window and branch filter, the command exits
-with a message instead of queuing a job.
+The prompt includes a full-window finding-outcome table before the review
+excerpts. It uses the same completion-time population and labeled denominator as
+[`summary --findings`](#finding-outcomes). Counts and label coverage remain
+visible when there are fewer than five labeled findings; rates are suppressed
+below that evidence threshold. Confirmed means an agent confirmed the finding,
+not that someone applied a fix. Closure measures resolution only. Comments never
+supply outcome labels. K, D and panel R labels remain unavailable.
+
+The aggregate covers all matching logical code reviews, including passing
+reviews. Review excerpts remain a bounded sample of failing reviews. The prompt
+reports fetched reviews, included excerpts and truncated excerpts separately.
+Typed finding evidence is attached only when the review UUID matches the excerpt
+version. Counterexample checks therefore describe the supplied evidence, not the
+entire review corpus. A suggested change must name confirmed or still open
+findings it could suppress, state its expected effect, and check for private
+identifiers before proposing text.
+
+Insights also reads the latest completed analysis for the same repository and
+exact branch scope. An analysis without `--branch` matches only prior analyses
+across all branches. When section 5 can be recovered, the agent checks exact
+inclusion against the complete current guidelines and distinguishes equivalent
+wording. Stored measured counts and windows are supplied when available. Missing
+baselines, overlapping or otherwise noncomparable periods, incomplete coverage,
+and missing pattern denominators mean `insufficient comparable evidence`.
+Changes of one or two occurrences are `within noise`, a heuristic. A decrease
+establishes neither causation nor the date a guideline was adopted.
+
+If no failing reviews match the time window and branch filter, insights still
+queues an analysis when a prior suggestion can be recovered. It reports zero
+current failing excerpts and checks adoption without treating missing review
+denominators as improvement. With no recoverable prior suggestion, it exits with
+a message instead of queuing a job.
 
 ## Token Usage
 
