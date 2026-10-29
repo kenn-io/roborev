@@ -59,3 +59,17 @@ export async function selectStatus(page: Page, label: string): Promise<void> {
     .click();
   await page.locator(".kit-filter-dropdown__item", { hasText: label }).click();
 }
+
+export function olderJobsMarker(page: Page): Locator {
+  return page
+    .getByRole("region", { name: "Review jobs" })
+    .locator(".scroll-sentinel");
+}
+
+export async function scrollJobsToEnd(page: Page): Promise<void> {
+  await page
+    .getByRole("region", { name: "Review jobs" })
+    .evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+}

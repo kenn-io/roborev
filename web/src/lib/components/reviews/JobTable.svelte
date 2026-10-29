@@ -49,6 +49,57 @@
       ),
   );
 
+  let scroller = $state<HTMLDivElement>();
+  let sentinel = $state<HTMLDivElement>();
+
+  const canLoadMore = $derived(
+    jobsStore !== undefined &&
+      jobsStore.getHasMore() &&
+      jobsStore.getJobs().length > 0 &&
+      !jobsStore.isLoading() &&
+      jobsStore.getError() === null &&
+      jobsStore.getLoadMoreError() === null,
+  );
+
+  const hitJobLimit = $derived(
+    jobsStore !== undefined &&
+      !jobsStore.getHasMore() &&
+      !jobsStore.areAllJobsLoaded(),
+  );
+
+  // Row count when a page was requested from a full table. Under an
+  // oldest-first sort, older pages land above the view and the browser keeps
+  // the end in view, so the next page waits until the sentinel leaves view or
+  // the list is replaced with no more rows than this.
+  let rowsAtFullLoad = -1;
+
+  // A new observer reports the sentinel's position once on observe(). The
+  // effect builds one each time a load finishes, so a page that leaves the
+  // sentinel in view loads the next page until the table fills the scroll
+  // container or the daemon has no older jobs. Disconnecting before
+  // loadMore() keeps a second intersection from replacing the in-flight
+  // request.
+  $effect(() => {
+    if (!canLoadMore || !scroller || !sentinel) return;
+    const root = scroller;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) {
+          rowsAtFullLoad = -1;
+          return;
+        }
+        const rows = jobsStore.getJobs().length;
+        if (rowsAtFullLoad >= 0 && rows > rowsAtFullLoad) return;
+        observer.disconnect();
+        rowsAtFullLoad = root.scrollHeight > root.clientHeight ? rows : -1;
+        jobsStore.loadMore();
+      },
+      { root, rootMargin: "0px 0px 200px 0px" },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  });
+
   function sortDirection(col: ColumnDef) {
     return jobsStore?.getSortColumn() === col.key
       ? jobsStore.getSortDirection()
@@ -58,7 +109,13 @@
 
 <!-- Scrollable regions need keyboard access. -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-<div class="table-wrapper" role="region" aria-label="Review jobs" tabindex="0">
+<div
+  class="table-wrapper"
+  role="region"
+  aria-label="Review jobs"
+  tabindex="0"
+  bind:this={scroller}
+>
   <table class="job-table">
     <thead>
       <tr>
@@ -143,8 +200,12 @@
     </tbody>
   </table>
 
+  {#if jobsStore?.getHasMore()}
+    <div class="scroll-sentinel" aria-hidden="true" bind:this={sentinel}></div>
+  {/if}
+
   {#if jobsStore?.isLoading()}
-    <div class="loading-bar">Loading...</div>
+    <div class="loading-bar" role="status">Loading...</div>
   {/if}
 
   {#if jobsStore?.getError()}
@@ -157,24 +218,39 @@
     <EmptyState title="No jobs found" />
   {/if}
 
-  {#if jobsStore?.getHasMore() || partialSort}
+  {#if jobsStore && jobsStore.getLoadMoreError() !== null}
+    <div class="error-bar" role="alert">
+      Could not load more jobs.
+      <button
+        type="button"
+        class="load-more-retry"
+        onclick={() => jobsStore.loadMore()}
+      >
+        Retry
+      </button>
+    </div>
+  {/if}
+
+  {#if hitJobLimit && jobsStore}
+    <div class="loading-bar">
+      Showing the {jobsStore.getJobs().length.toLocaleString()} most recent jobs,
+      the most the table loads. Filter the list to reach older jobs.
+    </div>
+  {/if}
+
+  {#if partialSort && jobsStore}
     <div class="table-footer">
-      {#if partialSort && jobsStore}
-        <span class="sort-scope" role="status">
+      <span class="sort-scope" role="status">
+        {#if hitJobLimit}
+          Sorted by {sortLabels[jobsStore.getSortColumn()]}.
+        {:else}
           Sorted by {sortLabels[jobsStore.getSortColumn()]} across the
-          {jobsStore.getJobs().length} most recent jobs. Load more to include older
-          jobs.
-        </span>
-      {/if}
-      {#if jobsStore?.getHasMore()}
-        <button
-          class="load-more-btn"
-          disabled={jobsStore.isLoading()}
-          onclick={() => jobsStore.loadMore()}
-        >
-          Load more
-        </button>
-      {/if}
+          {jobsStore.getJobs().length} most recent jobs.
+          {#if jobsStore.getLoadMoreError() === null}
+            Scroll to the end to load older jobs.
+          {/if}
+        {/if}
+      </span>
     </div>
   {/if}
 </div>
@@ -242,7 +318,16 @@
     color: var(--accent-red);
   }
 
-  .members-retry {
+  /* Sticky so the sentinel stays inside the observed area when a wide table
+     is scrolled right by more than the wrapper's width. */
+  .scroll-sentinel {
+    position: sticky;
+    left: 0;
+    height: 1px;
+  }
+
+  .members-retry,
+  .load-more-retry {
     margin-left: 8px;
     border: 0;
     padding: 0;
@@ -262,26 +347,5 @@
     border-top: 1px solid var(--border-muted);
     color: var(--text-muted);
     font-size: var(--font-size-sm);
-  }
-
-  .load-more-btn {
-    padding: 4px 14px;
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-md);
-    background: var(--bg-surface);
-    color: var(--text-primary);
-    font-size: var(--font-size-sm);
-    font-weight: 500;
-    cursor: pointer;
-    transition: background var(--transition-fast);
-  }
-
-  .load-more-btn:hover {
-    background: var(--bg-surface-hover);
-  }
-
-  .load-more-btn:disabled {
-    opacity: var(--opacity-disabled);
-    cursor: default;
   }
 </style>

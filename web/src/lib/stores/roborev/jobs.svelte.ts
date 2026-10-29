@@ -174,12 +174,14 @@ export function createJobsStore(opts: JobsStoreOptions) {
   let filteredStatusCounts = $state<JobStatusCounts | undefined>(undefined);
   let filteredStatusCountsScope: string | undefined;
   let storeError = $state<string | null>(null);
+  let loadMoreError = $state<string | null>(null);
   let selectedJobId = $state<number | undefined>(undefined);
   let selectedReviewRevision = $state(0);
   let highlightedJobId = $state<number | undefined>(undefined);
   let rerunningJobIds = $state<Set<number>>(new Set());
   let loadedLimit = DEFAULT_PAGE_LIMIT;
   let jobsAuthorityGeneration = 0;
+  let publishedJobsRevision = 0;
   let publishedJobsAuthority: JobsAuthority | undefined;
 
   // Filters
@@ -376,6 +378,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
     Effect.sync(() => {
       if (generation !== jobsAuthorityGeneration) return [];
       if (JSON.stringify(buildQuery()) !== authority.queryScope) return [];
+      publishedJobsRevision += 1;
       publishedJobsAuthority = authority;
       daemonOrder = new Map(
         authority.jobs.map((job, index) => [job.id, index]),
@@ -399,13 +402,23 @@ export function createJobsStore(opts: JobsStoreOptions) {
       return Array.from(runs);
     });
 
-  const refreshJobsAuthority = (query: ListJobsQuery) =>
+  // A failed request reports its error only while no newer request has
+  // started. A newer request owns the rows, and its result replaces them.
+  const refreshJobsAuthority = (query: ListJobsQuery, reportFailure = false) =>
     Effect.gen(function* () {
       const generation = yield* Effect.sync(() => {
         jobsAuthorityGeneration += 1;
         return jobsAuthorityGeneration;
       });
-      const authority = yield* fetchJobsAuthority(query);
+      const authority = yield* fetchJobsAuthority(query).pipe(
+        Effect.tapError((failure) =>
+          Effect.sync(() => {
+            if (reportFailure && generation === jobsAuthorityGeneration)
+              storeError =
+                failure instanceof Error ? failure.message : String(failure);
+          }),
+        ),
+      );
       const expandedRuns = yield* publishJobsAuthority(authority, generation);
       yield* Effect.forEach(expandedRuns, fetchPanelMembersEffect, {
         discard: true,
@@ -413,7 +426,10 @@ export function createJobsStore(opts: JobsStoreOptions) {
       return authority;
     });
 
-  const loadJobsRequestEffect = (requestOwner = opts.owner) =>
+  const loadJobsRequestEffect = (
+    requestOwner = opts.owner,
+    reportFailure = true,
+  ) =>
     Effect.gen(function* () {
       const workflow = yield* RoborevWorkflow;
       const query = buildQuery();
@@ -422,11 +438,12 @@ export function createJobsStore(opts: JobsStoreOptions) {
         Effect.sync(() => {
           loading = true;
           storeError = null;
+          loadMoreError = null;
           const countScope = JSON.stringify(query);
           if (hasActiveFilters() && filteredStatusCountsScope !== countScope)
             filteredStatusCounts = undefined;
         }).pipe(
-          Effect.andThen(refreshJobsAuthority(query)),
+          Effect.andThen(refreshJobsAuthority(query, reportFailure)),
           Effect.ensuring(
             Effect.sync(() => {
               loading = false;
@@ -436,16 +453,10 @@ export function createJobsStore(opts: JobsStoreOptions) {
       );
     });
 
+  // The request has already reported its failure, if that failure still
+  // applies.
   const loadJobsEffect = (request = loadJobsRequestEffect()) =>
-    request.pipe(
-      Effect.asVoid,
-      Effect.catch((failure) =>
-        Effect.sync(() => {
-          storeError =
-            failure instanceof Error ? failure.message : String(failure);
-        }),
-      ),
-    );
+    request.pipe(Effect.ignore);
 
   function loadJobs(): void {
     opts.runtime.runCommand(loadJobsEffect(), {
@@ -477,12 +488,22 @@ export function createJobsStore(opts: JobsStoreOptions) {
             : oldest;
         }).id;
       }
+      // Live updates reload the list under their own owner, so they never
+      // cancel this request. A page fetched for a list that a newer load has
+      // since replaced would skip the rows between the two, so its result
+      // and its error are dropped. A reload that started before this request
+      // can still publish during it, so both counters are checked.
+      const generation = jobsAuthorityGeneration;
+      const revision = publishedJobsRevision;
+      const pageStillApplies = () =>
+        generation === jobsAuthorityGeneration &&
+        revision === publishedJobsRevision;
       yield* workflow.jobs(
         opts.owner,
         Effect.gen(function* () {
           yield* Effect.sync(() => {
             loading = true;
-            storeError = null;
+            loadMoreError = null;
           });
           const result = yield* executeRoborevRequest(
             "load more Roborev jobs",
@@ -499,6 +520,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
             ),
           );
           yield* Effect.sync(() => {
+            if (!pageStillApplies()) return;
             const existingIds = new Set(jobs.map((job) => job.id));
             const remaining = MAX_LOADED_JOBS - jobs.length;
             const fresh = (result.jobs ?? [])
@@ -515,7 +537,8 @@ export function createJobsStore(opts: JobsStoreOptions) {
         }).pipe(
           Effect.catch((failure) =>
             Effect.sync(() => {
-              storeError =
+              if (!pageStillApplies()) return;
+              loadMoreError =
                 failure instanceof Error ? failure.message : String(failure);
             }),
           ),
@@ -971,7 +994,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
       // but must never interrupt the stream callback that keeps live state in
       // sync.
       const reconcile = (owner: string) =>
-        loadJobsRequestEffect(owner).pipe(
+        loadJobsRequestEffect(owner, false).pipe(
           Effect.asVoid,
           Effect.provideService(RoborevWorkflow, workflow),
           Effect.mapError((cause) =>
@@ -1153,6 +1176,9 @@ export function createJobsStore(opts: JobsStoreOptions) {
   function getError(): string | null {
     return storeError;
   }
+  function getLoadMoreError(): string | null {
+    return loadMoreError;
+  }
   function getSelectedJobId(): number | undefined {
     return selectedJobId;
   }
@@ -1218,6 +1244,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
     getFilteredStatusCounts,
     usesFilteredStatusCounts,
     getError,
+    getLoadMoreError,
     getSelectedJobId,
     getSelectedReviewRevision,
     getHighlightedJobId,
