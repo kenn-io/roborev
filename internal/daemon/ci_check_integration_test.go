@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -91,7 +92,18 @@ func testCICheckSandboxIntegration(t *testing.T) {
 		assert.NoError(t, err)
 		checkouts = append(checkouts, foundCheckouts...)
 		const final = `{"verdicts":[{"finding":1,"keep":false,"evidence":"go build succeeded","reason":"Build claim refuted"},{"finding":2,"keep":true,"evidence":"test reproduced data loss","reason":"Data is lost"}]}`
-		testutil.WriteCodexResponse(t, w, map[string]any{"type": "message", "role": "assistant", "id": "msg_test", "content": []any{map[string]any{"type": "output_text", "text": final}}})
+		w.Header().Set("Content-Type", "text/event-stream")
+		item := map[string]any{"type": "message", "role": "assistant", "id": "msg_test", "content": []any{map[string]any{"type": "output_text", "text": final}}}
+		for _, event := range []map[string]any{
+			{"type": "response.created", "response": map[string]any{"id": "resp_test"}},
+			{"type": "response.output_item.done", "item": item},
+			{"type": "response.completed", "response": map[string]any{"id": "resp_test", "usage": map[string]int{"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}}},
+		} {
+			encoded, err := json.Marshal(event)
+			assert.NoError(t, err) //nolint:testifylint // Runs in the HTTP server goroutine.
+			_, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event["type"], encoded)
+			assert.NoError(t, err)
+		}
 	}))
 	defer server.Close()
 	sha := testutil.GetHeadSHA(t, repoRoot)

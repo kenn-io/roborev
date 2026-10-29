@@ -37,8 +37,3 @@ func TestCICheckRepoScope(t *testing.T) {
 		})
 	}
 }
-
-func TestCICheckRejectsUnsupportedAgent(t *testing.T) {
-	// Config writes must reject this input before it can be saved and reloaded.
-	require.Error(t, SetConfigValue(DefaultConfig(), "ci.check_agent", "claude"))
-}

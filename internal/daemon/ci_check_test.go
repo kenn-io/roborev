@@ -105,33 +105,16 @@ func TestCICheckSnapshot(t *testing.T) {
 	_, overridden, err := p.buildPanelOpts(t.Context(), in)
 	require.NoError(t, err)
 	assert.Equal(t, off.PanelMemberConfigJSON, overridden.PanelMemberConfigJSON)
-}
-
-func TestCICheckInvalidReloadReasoning(t *testing.T) {
-	tc := newWorkerTestContext(t, 1)
-	p := &CIPoller{}
-	p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, prompt.PullRequest, *config.RepoConfig, string, *config.Config) (string, error) {
-		return "prompt", nil
-	}
-	cfg := config.DefaultConfig()
-	cfg.CI.Check = true
+	// A reloaded invalid setting leaves the review unchecked rather than blocking the panel.
+	in.repoCfg = nil
 	cfg.CI.CheckReasoning = "invalid"
 	var logs bytes.Buffer
 	previous := log.Writer()
 	log.SetOutput(&logs)
 	t.Cleanup(func() { log.SetOutput(previous) })
-	repo, err := tc.DB.GetOrCreateRepo(tc.TmpDir)
+	_, invalid, err := p.buildPanelOpts(t.Context(), in)
 	require.NoError(t, err)
-	members, synth, err := p.buildPanelOpts(t.Context(), buildPanelOptsInput{repo: repo, cfg: cfg, gitRef: "base..head", baseBranch: "main", members: []config.ResolvedMember{{Name: "one", Agent: "test"}}, synth: config.SynthesisSpec{Agent: "test", Instructions: "merge"}})
-	require.NoError(t, err)
-	created, _, job, err := tc.DB.CreateCIPanelRun("example/project", 1, "head", members, synth)
-	require.NoError(t, err)
-	require.True(t, created)
-	job, err = tc.DB.GetJobByID(job.ID)
-	require.NoError(t, err)
-	var snapshot synthesisJobConfig
-	require.NoError(t, json.Unmarshal([]byte(job.PanelMemberConfigJSON), &snapshot))
-	assert.Nil(t, snapshot.Check)
+	assert.Equal(t, off.PanelMemberConfigJSON, invalid.PanelMemberConfigJSON)
 	assert.Contains(t, logs.String(), "CI checker disabled")
 }
 
