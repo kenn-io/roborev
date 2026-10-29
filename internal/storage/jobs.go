@@ -20,8 +20,8 @@ import (
 )
 
 // preciseTimestampLayout is a fixed-width timestamp layout used for the
-// retry_not_before column and attempt boundaries (started_at). Two reasons it
-// differs from RFC3339Nano:
+// retry_not_before column, attempt boundaries (started_at), and finished_at.
+// Two reasons it differs from RFC3339Nano:
 //   - The 9-digit padded fractional seconds avoid the RFC3339Nano quirk
 //     of stripping trailing zeros (".5" vs ".500000000"), which would
 //     break lexicographic SQL comparison around fractional widths.
@@ -31,9 +31,11 @@ import (
 const preciseTimestampLayout = "2006-01-02T15:04:05.000000000Z07:00"
 
 // preciseTimestampAt keeps retry boundaries ordered and attempt boundaries
-// distinct even when two attempts start within the same second. Always
-// normalizes to UTC so DST fall-back can't produce two ordered-differently-
-// but-equal local strings.
+// distinct even when two attempts start within the same second. finished_at
+// uses it too, so a job's elapsed time keeps the sub-second precision of its
+// start, and the elapsed sort measures a job the same way before and after it
+// finishes. Always normalizes to UTC so DST fall-back can't produce two
+// ordered-differently-but-equal local strings.
 func preciseTimestampAt(t time.Time) string {
 	return t.UTC().Format(preciseTimestampLayout)
 }
@@ -1216,7 +1218,8 @@ func (db *DB) BackfillJobTokenUsageIfCurrent(w TokenUsageWrite) (bool, error) {
 // and persists the patch in a single transaction. This prevents invalid
 // states where a patch is written but the job isn't done, or vice versa.
 func (db *DB) CompleteFixJob(jobID int64, agent, output, patch string) error {
-	now := time.Now().Format(time.RFC3339)
+	finished := time.Now()
+	now := finished.Format(time.RFC3339)
 	machineID, _ := db.GetMachineID()
 	reviewUUID := uuid.New()
 
@@ -1255,7 +1258,7 @@ func (db *DB) CompleteFixJob(jobID int64, agent, output, patch string) error {
 	// Set status=done and store the patch in the same transaction.
 	result, err := conn.ExecContext(ctx,
 		`UPDATE review_jobs SET status = 'done', finished_at = ?, updated_at = ? WHERE id = ? AND status = 'running'`,
-		now, now, jobID)
+		preciseTimestampAt(finished), now, jobID)
 	if err != nil {
 		return err
 	}
@@ -1326,7 +1329,8 @@ func (db *DB) completeJob(
 	}
 	// Get machine ID and generate UUIDs before starting transaction
 	// to avoid potential lock conflicts with GetMachineID's writes
-	now := time.Now().Format(time.RFC3339)
+	finished := time.Now()
+	now := finished.Format(time.RFC3339)
 	machineID, _ := db.GetMachineID()
 	reviewUUID := uuid.New()
 
@@ -1395,7 +1399,7 @@ func (db *DB) completeJob(
 		SET status = 'done', finished_at = ?, updated_at = ?,
 		    min_severity = COALESCE(NULLIF(?, ''), min_severity)
 		WHERE id = ? AND status = 'running'
-	`, now, now, normalizeMinSeverityForWrite(completion.MinSeverity), jobID)
+	`, preciseTimestampAt(finished), now, normalizeMinSeverityForWrite(completion.MinSeverity), jobID)
 	if err != nil {
 		return err
 	}
@@ -1473,8 +1477,9 @@ func (db *DB) FailJobAttempt(ctx context.Context, jobID int64, workerID, started
 }
 
 func (db *DB) failJob(ctx context.Context, jobID int64, errorMsg, predicate string, attemptArgs ...any) (bool, error) {
-	now := time.Now().Format(time.RFC3339)
-	args := append([]any{now, errorMsg, now, jobID}, attemptArgs...)
+	finished := time.Now()
+	now := finished.Format(time.RFC3339)
+	args := append([]any{preciseTimestampAt(finished), errorMsg, now, jobID}, attemptArgs...)
 	result, err := db.ExecContext(ctx, `UPDATE review_jobs SET status = 'failed', finished_at = ?, error = ?, updated_at = ? WHERE id = ? AND status = 'running'`+predicate, args...)
 	if err != nil {
 		return false, err
@@ -1488,12 +1493,13 @@ func (db *DB) failJob(ctx context.Context, jobID int64, errorMsg, predicate stri
 
 // CancelJob marks a running or queued job as canceled
 func (db *DB) CancelJob(jobID int64) error {
-	now := time.Now().Format(time.RFC3339)
+	finished := time.Now()
+	now := finished.Format(time.RFC3339)
 	result, err := db.Exec(`
 		UPDATE review_jobs
 		SET status = 'canceled', finished_at = ?, updated_at = ?
 		WHERE id = ? AND status IN ('queued', 'running')
-	`, now, now, jobID)
+	`, preciseTimestampAt(finished), now, jobID)
 	if err != nil {
 		return err
 	}
@@ -2820,7 +2826,8 @@ func (db *DB) PromoteClassifyToDesignReview(classifyJobID int64, workerID, agent
 // skip is caused by a classifier failure — pass "" on the clean "no
 // design review needed" path.
 func (db *DB) MarkClassifyAsSkippedDesign(classifyJobID int64, workerID, reason, errorDetail string) error {
-	now := time.Now().Format(time.RFC3339)
+	finished := time.Now()
+	now := finished.Format(time.RFC3339)
 	res, err := db.ExecContext(context.Background(), `
 		UPDATE review_jobs
 		SET job_type = 'review',
@@ -2834,7 +2841,7 @@ func (db *DB) MarkClassifyAsSkippedDesign(classifyJobID int64, workerID, reason,
 		  AND source = 'auto_design'
 		  AND status = 'running'
 		  AND worker_id = ?
-	`, sanitizeSkipReason(reason), nullString(errorDetail), now, now, classifyJobID, workerID)
+	`, sanitizeSkipReason(reason), nullString(errorDetail), preciseTimestampAt(finished), now, classifyJobID, workerID)
 	if err != nil {
 		return err
 	}
