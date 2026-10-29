@@ -653,12 +653,16 @@ export function createJobsStore(opts: JobsStoreOptions) {
   ) =>
     Effect.all(
       {
-        target: fetchJobAuthority(id),
+        // A failed lookup must not interrupt the page reload: the reload has
+        // replaced any pending sort reload, and only its outcome settles
+        // that sort. The lookup failure is reported once both finish.
+        target: Effect.result(fetchJobAuthority(id)),
         page: Effect.suspend(() => refreshJobsAuthority(buildQuery())),
       },
       { concurrency: "unbounded" },
     ).pipe(
-      Effect.map(({ target }) =>
+      Effect.flatMap(({ target }) => Effect.fromResult(target)),
+      Effect.map((target) =>
         target !== undefined && isApplied(target)
           ? Option.some(Option.getOrElse(acknowledged, () => observedValue))
           : Option.none<A>(),

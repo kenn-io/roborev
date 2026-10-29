@@ -617,6 +617,64 @@ describe("createJobsStore sorting", () => {
     expect(ids(store)).toEqual([30, 29]);
   });
 
+  it.each([
+    { reload: "succeeds", sortError: null, rows: [9, 7, 5] },
+    { reload: "fails", sortError: expect.any(String), rows: [30, 29] },
+  ])(
+    "settles the sort when a rerun's job lookup fails and its reload $reload",
+    async ({ reload, sortError, rows }) => {
+      const sorted = sortedApi();
+      const firstSortReply = Promise.withResolvers<void>();
+      const rerunReload = Promise.withResolvers<void>();
+      const rerunReply = Promise.withResolvers<{ job_id: number }>();
+      let sortRequests = 0;
+      const api = {
+        listJobs: vi.fn().mockImplementation(async (query) => {
+          const typed = query as { id?: number; sort?: string };
+          if (typed.id !== undefined) throw new Error("lookup failed");
+          if (typed.sort === "id") {
+            sortRequests += 1;
+            if (sortRequests === 1) {
+              await firstSortReply.promise;
+            } else {
+              await rerunReload.promise;
+              if (reload === "fails") throw new Error("daemon unavailable");
+            }
+          }
+          return sorted.listJobs(query);
+        }),
+        rerunJob: vi.fn().mockReturnValue(rerunReply.promise),
+      };
+      const onError = vi.fn();
+      const store = createJobsStore({
+        api: api as never,
+        navigate: vi.fn(),
+        onError,
+      });
+      await loadJobs(store);
+      store.rerunJob(30);
+      await vi.waitFor(() => expect(api.rerunJob).toHaveBeenCalledOnce());
+
+      // The rerun's reload replaces the sort reload, and its job lookup
+      // fails before the reload returns.
+      store.setSortColumn("id");
+      rerunReply.resolve({ job_id: 30 });
+      await vi.waitFor(() => expect(sortRequests).toBe(2));
+      await vi.waitFor(() =>
+        expect(
+          api.listJobs.mock.calls.some(([query]) => query.id !== undefined),
+        ).toBe(true),
+      );
+      rerunReload.resolve();
+
+      await vi.waitFor(() => expect(store.isSortPending()).toBe(false));
+      expect(store.getSortError()).toEqual(sortError);
+      expect(ids(store)).toEqual(rows);
+      await vi.waitFor(() => expect(onError).toHaveBeenCalled());
+      firstSortReply.resolve();
+    },
+  );
+
   it("marks the sort pending until rows in the new order arrive", async () => {
     const sorted = sortedApi();
     const reply = Promise.withResolvers<void>();
