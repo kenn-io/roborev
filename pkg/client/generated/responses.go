@@ -148,6 +148,16 @@ type EnqueueJobErrorResponseJSON500 = ErrorResponse
 
 type EnqueueJobErrorResponseJSON503 = ErrorResponse
 
+type GetExperimentReportResponse = ExperimentReport
+
+type GetExperimentReportErrorResponse = ErrorModel
+
+type GetExperimentReportErrorResponseApplicationProblemPlusJSON = ErrorModel
+
+type GetExperimentReportErrorResponseApplicationProblemPlusJSON422 = ErrorModel
+
+type GetExperimentReportErrorResponseApplicationProblemPlusJSON500 = ErrorModel
+
 type ExportCiCostsResponse = ExportCICostDocument
 
 type ExportCiCostsErrorResponse = ErrorModel
@@ -522,6 +532,17 @@ type EnqueueJobResp struct {
 	JSON413      *EnqueueJobErrorResponseJSON
 	JSON500      *EnqueueJobErrorResponseJSON500
 	JSON503      *EnqueueJobErrorResponseJSON503
+}
+
+type GetExperimentReportResp struct {
+	HTTPResponse                  *http.Response
+	Body                          []byte
+	StatusCode                    int
+	JSON200                       *GetExperimentReportResponse
+	ApplicationProblemPlusJSON400 *GetExperimentReportErrorResponse
+	ApplicationProblemPlusJSON404 *GetExperimentReportErrorResponseApplicationProblemPlusJSON
+	ApplicationProblemPlusJSON422 *GetExperimentReportErrorResponseApplicationProblemPlusJSON422
+	ApplicationProblemPlusJSON500 *GetExperimentReportErrorResponseApplicationProblemPlusJSON500
 }
 
 type ExportCiCostsResp struct {
@@ -1152,6 +1173,21 @@ func (c *RawClient) EnqueueJobRaw(ctx context.Context, options *EnqueueJobReques
 		Method:      "POST",
 		Options:     options,
 		ContentType: "application/json",
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) GetExperimentReportRaw(ctx context.Context, options *GetExperimentReportRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &GetExperimentReportRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/experiments/{id}/report",
+		Method:     "GET",
+		Options:    options,
 	}, reqEditors...)
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)

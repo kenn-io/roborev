@@ -79,6 +79,10 @@ type ClientInterface interface {
 	EnqueueJob(ctx context.Context, options *EnqueueJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EnqueueJobResponseJSON, error)
 	EnqueueJobWithResponse(ctx context.Context, options *EnqueueJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EnqueueJobResp, error)
 
+	// GetExperimentReport Compare enrolled experiment arms
+	GetExperimentReport(ctx context.Context, options *GetExperimentReportRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetExperimentReportResponse, error)
+	GetExperimentReportWithResponse(ctx context.Context, options *GetExperimentReportRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetExperimentReportResp, error)
+
 	// ExportCiCosts Export job-level CI costs
 	ExportCiCosts(ctx context.Context, options *ExportCiCostsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ExportCiCostsResponse, error)
 	ExportCiCostsWithResponse(ctx context.Context, options *ExportCiCostsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ExportCiCostsResp, error)
@@ -1083,6 +1087,76 @@ func (c *Client) EnqueueJob(ctx context.Context, options *EnqueueJobRequestOptio
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/enqueue")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetExperimentReport Compare enrolled experiment arms
+func (c *Client) GetExperimentReport(ctx context.Context, options *GetExperimentReportRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetExperimentReportResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"min_subjects": {Style: "form", Explode: &[]bool{false}[0]},
+		"since":        {Style: "form", Explode: &[]bool{false}[0]},
+		"until":        {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/experiments/{id}/report",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetExperimentReportResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetExperimentReportErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetExperimentReportErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetExperimentReportResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetExperimentReportResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/experiments/{id}/report")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
