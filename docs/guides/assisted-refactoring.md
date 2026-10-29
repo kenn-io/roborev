@@ -123,12 +123,12 @@ review. This is a one-shot fix. For an iterative loop with re-review, see
 
 To require the fix agent to verify suggestions rather than apply them blindly,
 set global [`fix_guidelines`](/docs/configuration/#fix-guidelines). The policy
-reaches direct fixes, batch fixes, and commit retries. It does not change the
-separate `analyze --fix` or `refine` workflows. When the agent intentionally
-leaves a finding unchanged, the job records the no-change outcome and the
-agent's explanation before it closes. A policy-aware batch records a neutral
-batch outcome and preserves the agent's fixed or skipped disposition for every
-job ID.
+reaches direct fixes, batch fixes, fix commit retries, and `refine`, including
+refine planning. It does not change the separate `analyze --fix` workflow. When
+the fix agent intentionally leaves a finding unchanged, the job records the
+no-change outcome and the agent's explanation before it closes. A policy-aware
+batch records a neutral batch outcome and preserves the agent's fixed or skipped
+disposition for every job ID.
 
 Use `--batch` to concatenate multiple reviews into a single prompt so the agent
 sees all findings at once. This is faster and gives the agent more context to
