@@ -89,6 +89,13 @@ func checkDoctorIntegrations(env *doctorEnv) []doctorCheck {
 		if _, err := ci.QuietHours.Resolve(); err != nil {
 			problems = append(problems, "ci.quiet_hours is invalid and ignored: "+err.Error())
 		}
+		if !config.ResolveCICommentWhenClean(env.repoCfg, env.global) {
+			out = append(out, doctorCheck{
+				ID: "integrations.ci_comments", Category: "integrations", Status: doctorInfo,
+				Summary: "clean GitHub daemon reviews rely on commit statuses for visibility",
+				Details: []string{"Silence for GitHub daemon reviews needs commit status-write permissions. GitHub App and personal tokens can both publish statuses; failed delivery uses the normal status retry path."},
+			})
+		}
 		if len(problems) > 0 {
 			out = append(out, doctorCheck{
 				ID: "integrations.ci", Category: "integrations", Status: status,

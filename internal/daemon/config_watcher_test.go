@@ -484,3 +484,19 @@ func TestConfigWatcherRejectsUnreadableWebTokenFile(t *testing.T) {
 	assert.Same(t, old, watcher.Config())
 	assert.Zero(t, watcher.ReloadCounter())
 }
+
+func TestConfigWatcherRejectsNegativeCICommentCap(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	old := config.DefaultConfig()
+	old.CI.CommentMaxFindings = 2
+	watcher := NewConfigWatcher(path, old, NewBroadcaster(), nil)
+	require.NoError(t, os.WriteFile(path, []byte("[ci]\ncomment_max_findings = -1\n"), 0o600))
+	watcher.reloadConfig()
+	assert.Same(t, old, watcher.Config(), "invalid cap must preserve active configuration")
+	assert.Equal(t, 2, watcher.Config().CI.CommentMaxFindings)
+	assert.Zero(t, watcher.ReloadCounter())
+	require.NoError(t, os.WriteFile(path, []byte("[ci]\ncomment_max_findings = 0\n"), 0o600))
+	watcher.reloadConfig()
+	assert.Equal(t, 0, watcher.Config().CI.CommentMaxFindings)
+	assert.Equal(t, uint64(1), watcher.ReloadCounter(), "an explicit unlimited cap remains a valid reload")
+}

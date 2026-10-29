@@ -31,6 +31,18 @@ failed reload keeps the previous configuration. `roborev config set --global`
 can repair an invalid setting, but rejects a write that leaves any daemon
 section invalid and keeps the file unchanged.
 
+## CI comment display
+
+The GitHub daemon poller accepts `[ci] comment_max_findings` (integer, default
+`0` for unlimited) and `comment_when_clean` (boolean, default `true`). Repo
+values override global values, including explicit `0` and `true` resets.
+Negative caps are rejected. These settings affect synthesized GitHub comments
+only; they preserve complete stored reviews, verdicts, and prompts. Prose is
+uncapped, and raw fallback comments, daemon-free CI, and GitLab retain their
+existing behavior. See
+[Comment display policy](/docs/integrations/github/#comment-display-policy) for
+filtering, complete review retrieval, silent upsert, and status permissions.
+
 ## The `config` Command
 
 The `roborev config` command lets you inspect and modify configuration from the
