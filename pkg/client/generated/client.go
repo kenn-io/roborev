@@ -3890,10 +3890,13 @@ func (c *Client) GetSummary(ctx context.Context, options *GetSummaryRequestOptio
 	var err error
 
 	queryEncoding := map[string]runtime.QueryEncoding{
-		"all":    {Style: "form", Explode: &[]bool{false}[0]},
-		"branch": {Style: "form", Explode: &[]bool{false}[0]},
-		"repo":   {Style: "form", Explode: &[]bool{false}[0]},
-		"since":  {Style: "form", Explode: &[]bool{false}[0]},
+		"all":         {Style: "form", Explode: &[]bool{false}[0]},
+		"branch":      {Style: "form", Explode: &[]bool{false}[0]},
+		"by":          {Style: "form", Explode: &[]bool{false}[0]},
+		"findings":    {Style: "form", Explode: &[]bool{false}[0]},
+		"min_samples": {Style: "form", Explode: &[]bool{false}[0]},
+		"repo":        {Style: "form", Explode: &[]bool{false}[0]},
+		"since":       {Style: "form", Explode: &[]bool{false}[0]},
 	}
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL:    c.apiClient.GetBaseURL() + "/api/summary",
