@@ -72,6 +72,7 @@ type RebuttalCoverage struct {
 // FindingStats is a completion-window snapshot of logical code reviews.
 // Evidence is reusable by insights without exporting full review text in summary.
 type FindingStats struct {
+	Members           *MemberStats                    `json:"members,omitempty"`
 	Since             time.Time                       `json:"since"`
 	AsOf              time.Time                       `json:"as_of"`
 	RepoPath          string                          `json:"repo_path,omitempty"`
@@ -104,7 +105,7 @@ func ValidateFindingOptions(enabled bool, group string, minimum int) error {
 		return fmt.Errorf("minimum samples must be nonnegative")
 	}
 	switch group {
-	case "", "severity", "review-type", "agent", "model", "arm":
+	case "", "severity", "review-type", "agent", "model", "arm", "member":
 		return nil
 	}
 	return fmt.Errorf("invalid findings grouping %q", group)
@@ -338,6 +339,12 @@ func findingStats(q querier, opts SummaryOptions, groupBy string) (*FindingStats
 			c.CostPerPositive = &v
 		}
 		f.Rows = append(f.Rows, *c)
+	}
+	if groupBy == "member" {
+		f.Members, err = findingMemberStats(q, reviews, opts.AsOf)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return f, nil
 }

@@ -177,29 +177,67 @@ func TestPrintFindingSummary(t *testing.T) {
 }
 
 func TestSummaryFindingRequest(t *testing.T) {
-	queries := make(chan string, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/ping" {
-			assert.NoError(t, json.MarshalWrite(w, daemon.PingInfo{OK: true, Service: "roborev"}))
-			return
-		}
-		assert.Equal(t, "/api/summary", r.URL.Path)
-		queries <- r.URL.RawQuery
-		assert.NoError(t, json.MarshalWrite(w, storage.Summary{Findings: &storage.FindingStats{GroupBy: "agent", MinSamples: 2}}))
-	}))
-	defer server.Close()
-	patchServerAddr(t, server.URL)
-	old := parsedServerEndpoint
-	parsedServerEndpoint = nil
-	t.Cleanup(func() { parsedServerEndpoint = old })
+	for _, tc := range []struct {
+		group   string
+		members *storage.MemberStats
+	}{
+		{group: "agent"},
+		{group: "member", members: &storage.MemberStats{Rows: []storage.MemberStatsRow{}}},
+	} {
+		t.Run(tc.group, func(t *testing.T) {
+			assert := assert.New(t)
+			queries := make(chan string, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/ping" {
+					assert.NoError(json.MarshalWrite(w, daemon.PingInfo{OK: true, Service: "roborev"}))
+					return
+				}
+				assert.Equal("/api/summary", r.URL.Path)
+				queries <- r.URL.RawQuery
+				assert.NoError(json.MarshalWrite(w, storage.Summary{Findings: &storage.FindingStats{GroupBy: tc.group, MinSamples: 2, Members: tc.members}}))
+			}))
+			defer server.Close()
+			patchServerAddr(t, server.URL)
+			old := parsedServerEndpoint
+			parsedServerEndpoint = nil
+			t.Cleanup(func() { parsedServerEndpoint = old })
+			cmd := summaryCmd()
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetArgs([]string{"--all", "--findings", "--by", tc.group, "--min-samples", "2"})
+			require.NoError(t, cmd.Execute())
+			query := <-queries
+			assert.Contains(query, "findings=true")
+			assert.Contains(query, "by="+tc.group)
+			assert.Contains(query, "min_samples=2")
+			assert.Contains(out.String(), "Finding outcomes by "+tc.group)
+			if tc.members != nil {
+				assert.Contains(out.String(), "Panel member contribution")
+			}
+		})
+	}
+}
+
+func TestPrintMemberFindingSummary(t *testing.T) {
 	cmd := summaryCmd()
 	var out bytes.Buffer
 	cmd.SetOut(&out)
-	cmd.SetArgs([]string{"--all", "--findings", "--by", "agent", "--min-samples", "2"})
-	require.NoError(t, cmd.Execute())
-	query := <-queries
-	assert.Contains(t, query, "findings=true")
-	assert.Contains(t, query, "by=agent")
-	assert.Contains(t, query, "min_samples=2")
-	assert.Contains(t, out.String(), "Finding outcomes by agent")
+	f := storage.FindingStats{GroupBy: "member", Members: &storage.MemberStats{SkippedPanelRuns: 1, SkippedMemberRuns: 2, Rows: []storage.MemberStatsRow{{RepoPath: "/tmp/sample", PanelName: "quality", MemberName: "first", Runs: 3, AttributedRuns: 2, SkippedRuns: 1, StructuredRuns: 1, FindingsRaised: 4, Cited: 3, Agreed: 2, Solo: 1, Cost: storage.CostAggregate{TotalUSD: 2, JobsTotal: 2, JobsWithCost: 1}, SkippedCost: storage.CostAggregate{TotalUSD: 7, JobsTotal: 1, JobsWithCost: 1}, CostPerCited: new(2.0 / 3), CostPerAgreed: new(1.0)}}}}
+	printFindingSummary(cmd, &f)
+	a := assert.New(t)
+	a.Contains(out.String(), "Panel member contribution")
+	a.Contains(out.String(), "quality")
+	a.Contains(out.String(), "first")
+	a.Contains(out.String(), "Structured runs")
+	a.Contains(out.String(), "Cost/cited")
+	a.Contains(out.String(), "≥$2.00 (1/2 priced)")
+	a.Contains(out.String(), "1 panel runs, 2 member runs excluded")
+	a.Contains(out.String(), "Solo labels unavailable")
+	a.Contains(out.String(), "Skipped spend")
+	out.Reset()
+	f.Members.Rows[0].Cost.JobsWithCost = 0
+	f.Members.Rows[0].SkippedCost.JobsWithCost = 0
+	printFindingSummary(cmd, &f)
+	a.NotContains(out.String(), "Cost/cited")
+	a.NotContains(out.String(), "Skipped spend")
 }

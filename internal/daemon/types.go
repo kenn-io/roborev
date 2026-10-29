@@ -592,7 +592,7 @@ type QueuePauseOutput struct {
 // GetSummaryInput holds query parameters for the summary endpoint.
 type GetSummaryInput struct {
 	Findings   string `query:"findings" doc:"Include finding outcomes" enum:"true,false"`
-	By         string `query:"by" doc:"Finding grouping: severity, review-type, agent, model, arm"`
+	By         string `query:"by" doc:"Finding grouping: severity, review-type, agent, model, arm, member"`
 	MinSamples string `query:"min_samples" doc:"Minimum labeled findings for displaying a rate (default 5)"`
 	Since      string `query:"since" doc:"Time window (e.g. 7d, 24h). Default: 7d"`
 	Repo       string `query:"repo" doc:"Filter by repo root path"`
