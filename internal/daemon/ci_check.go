@@ -52,17 +52,13 @@ func (wp *WorkerPool) checkAndCompleteSynthesis(ctx context.Context, workerID st
 		if err == nil && doc.Legacy == nil && !doc.UnableToReview() && len(doc.Findings) > 0 {
 			jobLog := newAppendingJobLogWriter(job.ID)
 			defer jobLog.Close()
-			path := config.GlobalConfigPath()
-			if watcher, ok := wp.cfgGetter.(*ConfigWatcher); ok && watcher.configPath != "" {
-				path = watcher.configPath
-			}
 			var env []string
 			if wp.ciGitEnv != nil {
 				if panel, err := wp.db.GetCIPanelBySynthesisJobID(job.ID); err == nil && panel != nil {
 					env = wp.ciGitEnv(panel.GithubRepo)
 				}
 			}
-			checked, checkErr := runCICheck(ctx, job, *snapshot.Check, doc, filepath.Join(filepath.Dir(path), "credential-proxy.key"), env, jobLog)
+			checked, checkErr := runCICheck(ctx, job, *snapshot.Check, doc, agent.CodexSandbox{}, env, jobLog)
 			if checkErr != nil {
 				fmt.Fprintf(jobLog, "CI checker failed; keeping original review: %v\n", checkErr)
 			} else {
@@ -83,16 +79,9 @@ func (wp *WorkerPool) checkAndCompleteSynthesis(ctx context.Context, workerID st
 }
 
 // runCICheck owns the disposable checkout and every process used by the checker.
-func runCICheck(ctx context.Context, job *storage.ReviewJob, cfg ciCheckConfig, doc structuredreview.Document, keyPath string, gitEnv []string, out io.Writer) (structuredreview.Document, error) {
+func runCICheck(ctx context.Context, job *storage.ReviewJob, cfg ciCheckConfig, doc structuredreview.Document, codexSandbox agent.CodexSandbox, gitEnv []string, out io.Writer) (structuredreview.Document, error) {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Minute)
 	defer cancel()
-	key, err := os.ReadFile(keyPath)
-	if err != nil {
-		return structuredreview.Document{}, fmt.Errorf("read credential proxy key: %w", err)
-	}
-	if strings.TrimSpace(string(key)) == "" {
-		return structuredreview.Document{}, fmt.Errorf("credential proxy key is empty")
-	}
 	root, err := os.MkdirTemp("", "roborev-ci-check-*")
 	if err != nil {
 		return structuredreview.Document{}, err
@@ -214,13 +203,13 @@ func runCICheck(ctx context.Context, job *storage.ReviewJob, cfg ciCheckConfig, 
 			return structuredreview.Document{}, err
 		}
 	}
-	sandboxJob := sandbox.Job{
-		WorkDir: work, ReadPaths: readPaths, ProxyPort: 8317,
+	codexSandbox.Job = sandbox.Job{
+		WorkDir: work, ReadPaths: readPaths,
 		// Matches the checker evaluation's 8 GiB process budget.
 		MemoryMax: 8 << 30,
 		Env:       []string{"PATH=" + toolPath, "HOME=" + filepath.Join(root, "home"), "TMPDIR=" + filepath.Join(work, "tmp"), "GOCACHE=" + filepath.Join(work, "gocache"), "GOMODCACHE=" + modcache, "GOPROXY=off", "LANG=C.UTF-8", "TERM=dumb"},
 	}
-	a := agent.NewCodexAgent(codex).WithSandbox(&agent.CodexSandbox{Job: sandboxJob, ProxyKey: strings.TrimSpace(string(key))})
+	a := agent.NewCodexAgent(codex).WithSandbox(&codexSandbox)
 	a.IgnoreUserConfig = true
 	a.Model = cfg.Model
 	reasoning, _ := config.NormalizeReasoning(cfg.Reasoning)

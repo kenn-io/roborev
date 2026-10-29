@@ -754,14 +754,15 @@ model, and reasoning. Codex is the only supported checker agent. The daemon-free
 `roborev ci review` command ignores these checker settings.
 
 The host needs Linux on amd64, the pinned nono build, a systemd user manager,
-Codex, Go, and a credential proxy at `http://127.0.0.1:8317/v1`. Put its client
-key in `credential-proxy.key` beside the daemon's loaded global config, for
-example `/etc/roborev/credential-proxy.key`.
+Codex with a host login, Go, Bash, and Python 3 at `/usr/bin/python3`. See
+[sandboxed Codex runs](/docs/agents/#sandboxed-codex-runs) for the pinned nono
+build and host requirements.
 
 The host warms Go modules before the sandbox starts. Inside it, the checker can
 change its scratch files and read the checkout's Git metadata and warmed caches.
-It can reach only the credential proxy. Tests that start loopback servers cannot
-run in this sandbox; the checker keeps findings it cannot try.
+Model calls use nono's credential route, which reads the host's current Codex
+login outside the sandbox. Tests that start loopback servers cannot run in this
+sandbox; the checker keeps findings it cannot try.
 
 A finding drops only when one verdict supplies evidence and a reason to drop it.
 Missing or duplicate verdicts keep the finding. The job log records the
