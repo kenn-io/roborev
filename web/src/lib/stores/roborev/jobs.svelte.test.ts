@@ -1229,21 +1229,25 @@ describe("createJobsStore event stream", () => {
     });
     await firstPage;
 
-    const secondPage = loadMoreJobs(store);
-    await vi.waitFor(() => expect(pending).toHaveLength(4));
-    expect(cursors.at(-1)).toBe("after-6");
+    // The dropped page leaves the reload's loading state alone, so the next
+    // page waits for the reload and continues from its list.
+    expect(store.isLoading()).toBe(true);
+    await loadMoreJobs(store);
+    expect(pending).toHaveLength(3);
     pending[2]?.resolve({
       jobs: ids(11, 7).map((id) => makeJob(id)),
       has_more: true,
       next_cursor: "after-7",
       stats,
     });
-    await vi.waitFor(() =>
-      expect(store.getJobs().map((job) => job.id)).toContain(11),
-    );
+    await vi.waitFor(() => expect(store.isLoading()).toBe(false));
+    const secondPage = loadMoreJobs(store);
+    await vi.waitFor(() => expect(pending).toHaveLength(4));
+    expect(cursors.at(-1)).toBe("after-7");
     pending[3]?.resolve({
-      jobs: ids(5, 1).map((id) => makeJob(id)),
-      has_more: false,
+      jobs: ids(6, 2).map((id) => makeJob(id)),
+      has_more: true,
+      next_cursor: "after-2",
       stats,
     });
     await secondPage;
@@ -1253,10 +1257,81 @@ describe("createJobsStore event stream", () => {
         .getJobs()
         .map((job) => job.id)
         .sort((a, b) => b - a),
+    ).toEqual(ids(11, 2));
+    store.disconnectEventStream(eventOwner);
+  });
+
+  it("drops a page that started while a rerun's reload was pending", async () => {
+    type JobsResponse = {
+      jobs: ReviewJob[];
+      has_more: boolean;
+      next_cursor?: string;
+      stats: { done: number; running: number; closed: number; open: number };
+    };
+    const pending: Array<(value: JobsResponse) => void> = [];
+    const cursors: Array<string | undefined> = [];
+    const stats = { done: 11, running: 0, closed: 0, open: 11 };
+    const api = {
+      listJobs: vi.fn((query: { id?: number; cursor?: string }) => {
+        if (query.id !== undefined) {
+          return Promise.resolve({
+            jobs: [makeJob(query.id)],
+            has_more: false,
+            stats,
+          });
+        }
+        cursors.push(query.cursor);
+        return new Promise<JobsResponse>((resolve) => pending.push(resolve));
+      }),
+      rerunJob: vi.fn().mockResolvedValue({ job_id: 8 }),
+    };
+    const store = createJobsStore({
+      api: api as never,
+      navigate: vi.fn(),
+    });
+    const ids = (from: number, to: number) =>
+      Array.from({ length: from - to + 1 }, (_, index) => from - index);
+    const initialLoad = loadJobs(store);
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    pending[0]?.({
+      jobs: ids(10, 6).map((id) => makeJob(id)),
+      has_more: true,
+      next_cursor: "after-6",
+      stats,
+    });
+    await initialLoad;
+
+    // A rerun's reload does not hold the loading state, so a page can start
+    // while it runs, from the list the reload is about to replace.
+    store.rerunJob(8);
+    await vi.waitFor(() => expect(pending).toHaveLength(2));
+    const page = loadMoreJobs(store);
+    await vi.waitFor(() => expect(pending).toHaveLength(3));
+    expect(cursors.at(-1)).toBe("after-6");
+    pending[1]?.({
+      jobs: ids(11, 7).map((id) => makeJob(id)),
+      has_more: true,
+      next_cursor: "after-7",
+      stats,
+    });
+    await vi.waitFor(() =>
+      expect(store.getJobs().map((job) => job.id)).toContain(11),
+    );
+    pending[2]?.({
+      jobs: ids(5, 1).map((id) => makeJob(id)),
+      has_more: false,
+      stats,
+    });
+    await page;
+
+    expect(
+      store
+        .getJobs()
+        .map((job) => job.id)
+        .sort((a, b) => b - a),
     ).toEqual(ids(11, 7));
     expect(store.getHasMore()).toBe(true);
     expect(store.areAllJobsLoaded()).toBe(false);
-    store.disconnectEventStream(eventOwner);
   });
 
   it("invalidates the selected review for commit-scoped comment events", async () => {
