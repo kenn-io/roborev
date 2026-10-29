@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -49,6 +50,7 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(profiles, "default.json"), planted, 0o600))
 	repo, gitDir := filepath.Join(work, "repo"), filepath.Join(t.TempDir(), "repo.git")
 	require.NoError(t, os.Mkdir(repo, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "trust-policy.json"), []byte("invalid repo policy"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(repo, "README.md"), []byte("sandbox fixture\n"), 0o600))
 	for _, args := range [][]string{
 		{"init", "--separate-git-dir=" + gitDir, repo},
@@ -133,24 +135,19 @@ exit "$failed"
 			assert.NoError(t, err)
 		}
 		send("response.created", map[string]any{"type": "response.created", "response": map[string]any{"id": "resp_test"}})
-		var item map[string]any
+		var outputs []string
 		for _, input := range request.Input {
 			if strings.HasSuffix(input.Type, "_call_output") {
-				final, err := json.Marshal(map[string]string{"probe": input.Output})
-				assert.NoError(t, err)
-				item = map[string]any{"type": "message", "role": "assistant", "id": "msg_test", "content": []any{map[string]any{"type": "output_text", "text": string(final)}}}
+				outputs = append(outputs, input.Output)
 			}
 		}
-		if item == nil {
-			args, err := json.Marshal(map[string]any{"cmd": "bash ../probe.sh", "yield_time_ms": 1000})
-			assert.NoError(t, err)
-			item = map[string]any{"type": "custom_tool_call", "id": "tool_test", "call_id": "call_test", "name": "exec", "input": "text(await tools.exec_command(" + string(args) + "));"}
-			for _, tool := range request.Tools {
-				if tool.Name == "exec_command" {
-					item = map[string]any{"type": "function_call", "id": "tool_test", "call_id": "call_test", "name": "exec_command", "arguments": string(args)}
-				}
+		functionTools := false
+		for _, tool := range request.Tools {
+			if tool.Name == "exec_command" {
+				functionTools = true
 			}
 		}
+		item := sandboxProxyItem(t, outputs, functionTools)
 		send("response.output_item.done", map[string]any{"type": "response.output_item.done", "item": item})
 		send("response.completed", map[string]any{"type": "response.completed", "response": map[string]any{"id": "resp_test", "usage": map[string]int{"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}}})
 	}))
@@ -160,9 +157,14 @@ exit "$failed"
 	require.NoError(t, os.WriteFile(filepath.Join(work, "probe.sh"), []byte(probe), 0o700))
 
 	job := sandbox.Job{
-		WorkDir: work, ReadPaths: []string{gitDir, filepath.Dir(filepath.Dir(codex)), "/etc/codex"},
+		WorkDir: work, ReadPaths: []string{gitDir, filepath.Dir(filepath.Dir(codex))},
 		ProxyPort: port, MemoryMax: 8 << 30,
 		Env: []string{"PATH=/usr/bin:/bin", "HOME=" + secrets, "TMPDIR=" + work, "XDG_CONFIG_HOME=" + configDir},
+	}
+	if _, err := os.Stat("/etc/codex"); err == nil {
+		job.ReadPaths = append(job.ReadPaths, "/etc/codex")
+	} else {
+		require.True(t, os.IsNotExist(err), "%v", err)
 	}
 	a := NewCodexAgent(codex).WithSandbox(&CodexSandbox{Job: job, ProxyKey: key})
 	a.IgnoreUserConfig = true
@@ -189,4 +191,55 @@ exit "$failed"
 	require.ErrorContains(t, err, "open_port")
 	assert.Zero(t, calls.Load())
 	assert.NoFileExists(t, marker)
+}
+
+func sandboxProxyItem(t *testing.T, outputs []string, functionTools bool) map[string]any {
+	t.Helper()
+	name := "exec_command"
+	args := map[string]any{"cmd": "bash ../probe.sh", "yield_time_ms": 1000}
+	if len(outputs) > 0 {
+		session := regexp.MustCompile(`Process running with session ID ([0-9]+)`).FindStringSubmatch(outputs[len(outputs)-1])
+		if session == nil {
+			final, err := json.Marshal(map[string]string{"probe": strings.Join(outputs, "\n")})
+			assert.NoError(t, err)
+			return map[string]any{"type": "message", "role": "assistant", "id": "msg_test", "content": []any{map[string]any{"type": "output_text", "text": string(final)}}}
+		}
+		name = "write_stdin"
+		args = map[string]any{"session_id": jsontext.Value(session[1]), "chars": "", "yield_time_ms": 1000}
+	}
+	encoded, err := json.Marshal(args)
+	assert.NoError(t, err)
+	id := fmt.Sprintf("tool_%d", len(outputs))
+	if functionTools {
+		return map[string]any{"type": "function_call", "id": id, "call_id": id, "name": name, "arguments": string(encoded)}
+	}
+	return map[string]any{"type": "custom_tool_call", "id": id, "call_id": id, "name": "exec", "input": "text(await tools." + name + "(" + string(encoded) + "));"}
+}
+
+func TestSandboxProxyPollsToolSession(t *testing.T) {
+	for _, functionTools := range []bool{true, false} {
+		t.Run(fmt.Sprint(functionTools), func(t *testing.T) {
+			assert := assert.New(t)
+			outputs := []string{"Process running with session ID 123\nOutput:\nOK first"}
+			item := sandboxProxyItem(t, outputs, functionTools)
+			if functionTools {
+				assert.Equal("write_stdin", item["name"])
+				assert.JSONEq(`{"session_id":123,"chars":"","yield_time_ms":1000}`, item["arguments"].(string))
+			} else {
+				input := item["input"].(string)
+				assert.True(strings.HasPrefix(input, "text(await tools.write_stdin("))
+				assert.True(strings.HasSuffix(input, "));"))
+				assert.JSONEq(`{"session_id":123,"chars":"","yield_time_ms":1000}`, strings.TrimSuffix(strings.TrimPrefix(input, "text(await tools.write_stdin("), "));"))
+			}
+			outputs = append(outputs, "Process running with session ID 123\nOutput:\nOK second")
+			assert.Equal(item["name"], sandboxProxyItem(t, outputs, functionTools)["name"])
+			outputs = append(outputs, "Process exited with code 0\nOutput:\nOK last")
+			final := sandboxProxyItem(t, outputs, functionTools)
+			assert.Equal("message", final["type"])
+			text := final["content"].([]any)[0].(map[string]any)["text"].(string)
+			for _, want := range []string{"OK first", "OK second", "OK last"} {
+				assert.Contains(text, want)
+			}
+		})
+	}
 }

@@ -95,8 +95,7 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 		"linux":    map[string]any{"af_unix_mediation": "pathname"},
 		"security": map[string]any{"signal_mode": "isolated", "process_info_mode": "isolated"},
 		"filesystem": map[string]any{
-			"allow":      []string{j.WorkDir},
-			"read":       append(append([]string{}, j.ReadPaths...), "/usr/libexec", "/usr/include"),
+			"read":       []string{"/usr/libexec", "/usr/include"},
 			"write_file": []string{"/dev/null", "/dev/zero", "/dev/full", "/dev/tty"},
 			"write":      []string{"/dev/pts"},
 		},
@@ -111,32 +110,38 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 			},
 		},
 	}
-	file, err := os.CreateTemp("", "roborev-sandbox-*.json")
+	dir, err := os.MkdirTemp("", "roborev-sandbox-*")
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("create sandbox profile: %w", err)
 	}
-	unit := filepath.Base(file.Name()) + ".scope"
+	unit := filepath.Base(dir) + ".scope"
 	cleanup = func() {
 		killScope(unit)
-		_ = os.Remove(file.Name())
+		_ = os.RemoveAll(dir)
 	}
-	if err = json.MarshalWrite(file, profile); err != nil {
-		_ = file.Close()
+	data, err := json.Marshal(profile)
+	if err != nil {
+		cleanup()
+		return nil, nil, nil, fmt.Errorf("render sandbox profile: %w", err)
+	}
+	profilePath := filepath.Join(dir, "profile.json")
+	if err = os.WriteFile(profilePath, data, 0o600); err != nil {
 		cleanup()
 		return nil, nil, nil, fmt.Errorf("write sandbox profile: %w", err)
 	}
-	if err = file.Close(); err != nil {
-		cleanup()
-		return nil, nil, nil, fmt.Errorf("close sandbox profile: %w", err)
+	cmd = []string{"systemd-run", "--working-directory=" + dir, "--user", "--scope", "-q", "-p", "MemoryMax=" + strconv.FormatInt(j.MemoryMax, 10), "-p", "MemorySwapMax=0", "--", nono, "run", "-s", "--profile", profilePath, "--no-rollback", "--no-audit", "--allow", j.WorkDir}
+	// CLI grants are literal paths; profile paths undergo template expansion.
+	for _, path := range j.ReadPaths {
+		cmd = append(cmd, "--read", path)
 	}
-	cmd = []string{"systemd-run", "--user", "--scope", "-q", "-p", "MemoryMax=" + strconv.FormatInt(j.MemoryMax, 10), "-p", "MemorySwapMax=0", "--", nono, "run", "-s", "--profile", file.Name(), "--no-rollback", "--no-audit", "--"}
+	cmd = append(cmd, "--")
 	env = append([]string{}, j.Env...)
 	for _, key := range []string{"XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"} {
 		if value, ok := os.LookupEnv(key); ok {
 			env = append(env, key+"="+value)
 		}
 	}
-	checkUnit := filepath.Base(file.Name()) + "-check.scope"
+	checkUnit := filepath.Base(dir) + "-check.scope"
 	checkCmd := append([]string{cmd[0], "--unit=" + checkUnit}, cmd[1:]...)
 	err = j.check(ctx, checkCmd, env)
 	killScope(checkUnit)

@@ -31,6 +31,7 @@ func TestSandboxSelfCheck(t *testing.T) {
 	require.NoError(t, err)
 	defer listener.Close()
 	work := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(work, "trust-policy.json"), []byte("invalid job policy"), 0o600))
 	job := Job{
 		WorkDir: work, ProxyPort: listener.Addr().(*net.TCPAddr).Port,
 		Env: []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir()}, MemoryMax: 1 << 30,
@@ -44,6 +45,44 @@ func TestSandboxSelfCheck(t *testing.T) {
 	out, err := process.CombinedOutput()
 	require.NoError(t, err, "%s", out)
 	assert.FileExists(t, marker)
+}
+
+func TestSandboxLiteralGrants(t *testing.T) {
+	if os.Getenv("ROBOREV_RUN_SANDBOX_INTEGRATION") != "1" || runtime.GOARCH != "amd64" {
+		t.Skip("requires opt-in linux/amd64 sandbox integration")
+	}
+	for _, grant := range []string{"work", "read"} {
+		t.Run(grant, func(t *testing.T) {
+			base := t.TempDir()
+			work, read := filepath.Join(base, "job"), filepath.Join(base, "read")
+			if grant == "work" {
+				work += "*"
+			} else {
+				read += "*"
+			}
+			sibling := filepath.Join(base, "job-private")
+			secret := filepath.Join(base, "read-secret")
+			for _, dir := range []string{work, read, sibling} {
+				require.NoError(t, os.Mkdir(dir, 0o700))
+			}
+			require.NoError(t, os.WriteFile(secret, []byte("secret"), 0o600))
+			require.NoError(t, os.WriteFile(filepath.Join(read, "allowed"), []byte("allowed"), 0o600))
+			listener, err := net.Listen("tcp4", "127.0.0.1:0")
+			require.NoError(t, err)
+			defer listener.Close()
+			job := Job{WorkDir: work, ReadPaths: []string{read}, ProxyPort: listener.Addr().(*net.TCPAddr).Port,
+				Env: []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir()}, MemoryMax: 1 << 30}
+			script := `touch "$1/allowed" && cat "$2/allowed" && ! touch "$3/overwritten" && ! cat "$4"`
+			cmd, env, cleanup, err := job.Command(t.Context(), []string{"bash", "-c", script, "probe", work, read, sibling, secret})
+			require.NoError(t, err)
+			defer cleanup()
+			process := exec.CommandContext(t.Context(), cmd[0], cmd[1:]...)
+			process.Env, process.Dir = env, work
+			out, err := process.CombinedOutput()
+			require.NoError(t, err, "%s", out)
+			assert.NoFileExists(t, filepath.Join(sibling, "overwritten"))
+		})
+	}
 }
 
 func TestSandboxProcessCleanup(t *testing.T) {
@@ -65,7 +104,7 @@ func TestSandboxProcessCleanup(t *testing.T) {
 			}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			script := `setsid /usr/bin/sleep 300 </dev/null >/dev/null 2>&1 & echo $! > child.pid`
+			script := `setsid /usr/bin/sleep 300 </dev/null >/dev/null 2>&1 & echo $! > '` + filepath.Join(work, "child.pid") + `'`
 			if cancelRun {
 				script += "; wait"
 			}

@@ -1179,10 +1179,22 @@ func TestCodexSandboxRefusesResume(t *testing.T) {
 	require.ErrorContains(t, err, "sandboxed Codex cannot resume a session with a fresh CODEX_HOME")
 }
 
+func TestCodexSandboxRefusesRepoAsWorkDir(t *testing.T) {
+	work := t.TempDir()
+	s := CodexSandbox{Job: sandbox.Job{WorkDir: work}}
+	_, cleanup, err := s.prepare(work)
+	if cleanup != nil {
+		defer cleanup()
+	}
+	require.ErrorContains(t, err, "sandbox repo must be inside job work dir")
+}
+
 func TestCodexSandboxRefusesPlanningAndWrapperFailure(t *testing.T) {
 	for _, planning := range []bool{true, false} {
 		t.Run(fmt.Sprintf("planning=%t", planning), func(t *testing.T) {
 			dir := t.TempDir()
+			repo := filepath.Join(dir, "repo")
+			require.NoError(t, os.Mkdir(repo, 0o700))
 			marker := filepath.Join(dir, "executed")
 			command := writeTempCommand(t, "#!/bin/sh\ncase \"$1\" in *etxtbsy*) exit 0;; esac\ncase \" $* \" in *' --help '*) echo '"+codexDangerousFlag+" "+codexThreadSourceFlag+"'; exit 0;; esac\n: >'"+marker+"'\n")
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "nono"), []byte("#!/bin/sh\nexit 0\n"), 0o700))
@@ -1190,7 +1202,7 @@ func TestCodexSandboxRefusesPlanningAndWrapperFailure(t *testing.T) {
 			a := NewCodexAgent(command).WithSandbox(&CodexSandbox{Job: sandbox.Job{WorkDir: dir, MemoryMax: 1 << 30}})
 			a = a.WithModel("test-model").(*CodexAgent)
 			ctx := context.WithValue(context.Background(), planningContextKey{}, planning)
-			_, err := a.Review(ctx, dir, "HEAD", "review", nil)
+			_, err := a.Review(ctx, repo, "HEAD", "review", nil)
 			if planning {
 				require.ErrorContains(t, err, "planning requires")
 			} else if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
