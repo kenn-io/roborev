@@ -1423,6 +1423,16 @@ func (e ExperimentCostliestUnit) Validate() error {
 	return errors
 }
 
+type ExperimentGuardResult struct {
+	Guard  string `json:"guard" validate:"required"`
+	Reason string `json:"reason" validate:"required"`
+	State  string `json:"state" validate:"required"`
+}
+
+func (e ExperimentGuardResult) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+}
+
 type ExperimentIntegrity struct {
 	Complete            bool    `json:"complete"`
 	ConflictingSubjects int64   `json:"conflicting_subjects"`
@@ -1530,6 +1540,7 @@ type ExperimentReport struct {
 	MinSubjects    int64                        `json:"min_subjects"`
 	Ratio          *float64                     `json:"ratio,omitempty"`
 	Since          *time.Time                   `json:"since,omitempty" validate:"required"`
+	Success        *ExperimentSuccessResult     `json:"success,omitempty"`
 	Until          *time.Time                   `json:"until,omitempty" validate:"required"`
 }
 
@@ -1586,6 +1597,13 @@ func (e ExperimentReport) Validate() error {
 			errors = errors.Append("Since", err)
 		}
 	}
+	if e.Success != nil {
+		if v, ok := any(e.Success).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Success", err)
+			}
+		}
+	}
 	if e.Until != nil {
 		if err := typesValidator.Var(e.Until, "required"); err != nil {
 			errors = errors.Append("Until", err)
@@ -1607,6 +1625,45 @@ type ExperimentReportMethod struct {
 
 func (e ExperimentReportMethod) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+}
+
+type ExperimentSuccessResult struct {
+	Direction string                  `json:"direction" validate:"required"`
+	Guards    []ExperimentGuardResult `json:"guards" validate:"required"`
+	Metric    string                  `json:"metric" validate:"required"`
+	MinEffect string                  `json:"min_effect" validate:"required"`
+	Reason    string                  `json:"reason" validate:"required"`
+	State     string                  `json:"state" validate:"required"`
+}
+
+func (e ExperimentSuccessResult) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(e.Direction, "required"); err != nil {
+		errors = errors.Append("Direction", err)
+	}
+	for i, item := range e.Guards {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Guards[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(e.Metric, "required"); err != nil {
+		errors = errors.Append("Metric", err)
+	}
+	if err := typesValidator.Var(e.MinEffect, "required"); err != nil {
+		errors = errors.Append("MinEffect", err)
+	}
+	if err := typesValidator.Var(e.Reason, "required"); err != nil {
+		errors = errors.Append("Reason", err)
+	}
+	if err := typesValidator.Var(e.State, "required"); err != nil {
+		errors = errors.Append("State", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type ExportCICostDocument struct {
