@@ -1142,6 +1142,9 @@ components:
           items:
             $ref: "#/components/schemas/Diagnosis"
           type: array
+        usage_provider:
+          $ref: "#/components/schemas/DoctorUsageProvider"
+          description: Usage provider and authenticated probe result from the daemon process
       required:
         - path_env
         - agents
@@ -1188,6 +1191,21 @@ components:
       required:
         - name
         - agent
+      type: object
+    DoctorUsageProvider:
+      additionalProperties: false
+      properties:
+        error:
+          description: Configuration or probe failure; empty means the diagnosis succeeded
+          type: string
+        provider:
+          description: "Selected provider: local_cli, cost_endpoint, or agentsview"
+          type: string
+        url:
+          description: Validated AgentsView base URL, when selected
+          type: string
+      required:
+        - provider
       type: object
     DurationStats:
       additionalProperties: false
