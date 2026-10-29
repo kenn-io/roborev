@@ -540,14 +540,9 @@ func (a *CodexAgent) review(
 		}
 		defer cleanup()
 		resolved, err := exec.LookPath(command)
-		if err != nil {
-			return "", err
+		if err == nil {
+			resolved, err = filepath.EvalSymlinks(resolved)
 		}
-		resolved, err = filepath.Abs(resolved)
-		if err != nil {
-			return "", err
-		}
-		resolved, err = filepath.EvalSymlinks(resolved)
 		if err != nil {
 			return "", err
 		}

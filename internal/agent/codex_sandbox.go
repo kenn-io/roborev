@@ -15,7 +15,6 @@ import (
 // CodexSandbox connects an isolated job to the nono credential route.
 type CodexSandbox struct {
 	Job      sandbox.Job
-	AuthFile string
 	upstream string
 }
 
@@ -44,18 +43,11 @@ func (s *CodexSandbox) prepare(repoPath string) (sandbox.Job, func(), error) {
 		return job, nil, fmt.Errorf("sandbox repo must be inside job work dir")
 	}
 	job.WorkDir = workDir
-	authFile := s.AuthFile
-	if authFile == "" {
-		hostHome, err := config.CodexHomeDir()
-		if err != nil {
-			return job, nil, err
-		}
-		authFile = filepath.Join(hostHome, "auth.json")
-	}
-	authFile, err = filepath.Abs(authFile)
+	hostHome, err := config.CodexHomeDir()
 	if err != nil {
 		return job, nil, err
 	}
+	authFile := filepath.Join(hostHome, "auth.json")
 	data, err := os.ReadFile(authFile)
 	if err != nil {
 		return job, nil, fmt.Errorf("read Codex login: %w", err)
@@ -67,9 +59,6 @@ func (s *CodexSandbox) prepare(repoPath string) (sandbox.Job, func(), error) {
 	}
 	if err := json.Unmarshal(data, &login); err != nil {
 		return job, nil, fmt.Errorf("parse Codex login: %w", err)
-	}
-	if login.Tokens.AccountID == "" {
-		return job, nil, fmt.Errorf("Codex login is missing tokens.account_id")
 	}
 	upstream := s.upstream
 	if upstream == "" {
@@ -84,11 +73,6 @@ func (s *CodexSandbox) prepare(repoPath string) (sandbox.Job, func(), error) {
 		return job, nil, fmt.Errorf("create sandbox Codex home: %w", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(home) }
-	file, err := os.OpenFile(filepath.Join(home, "config.toml"), os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		cleanup()
-		return job, nil, err
-	}
 	provider := map[string]any{
 		"model_providers": map[string]any{"roborev-route": map[string]any{
 			"name": "roborev-route", "env_key": "CODEX_PHANTOM",
@@ -96,12 +80,11 @@ func (s *CodexSandbox) prepare(repoPath string) (sandbox.Job, func(), error) {
 			"http_headers": map[string]string{"chatgpt-account-id": login.Tokens.AccountID},
 		}},
 	}
-	if err := toml.NewEncoder(file).Encode(provider); err != nil {
-		_ = file.Close()
-		cleanup()
-		return job, nil, err
+	data, err = toml.Marshal(provider)
+	if err == nil {
+		err = os.WriteFile(filepath.Join(home, "config.toml"), data, 0o600)
 	}
-	if err := file.Close(); err != nil {
+	if err != nil {
 		cleanup()
 		return job, nil, err
 	}

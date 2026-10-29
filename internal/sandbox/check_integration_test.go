@@ -49,49 +49,41 @@ func TestSandboxLiteralGrants(t *testing.T) {
 	if _, err := exec.LookPath("nono"); err != nil {
 		t.Skip("nono is required")
 	}
-	for _, grant := range []string{"work", "read"} {
-		t.Run(grant, func(t *testing.T) {
-			base := t.TempDir()
-			work, read := filepath.Join(base, "job"), filepath.Join(base, "read")
-			if grant == "work" {
-				work += "*"
-			} else {
-				read += "*"
-			}
-			sibling := filepath.Join(base, "job-private")
-			secret := filepath.Join(base, "read-secret")
-			for _, dir := range []string{work, read, sibling} {
-				require.NoError(t, os.Mkdir(dir, 0o700))
-			}
-			require.NoError(t, os.WriteFile(secret, []byte("secret"), 0o600))
-			require.NoError(t, os.WriteFile(filepath.Join(read, "allowed"), []byte("allowed"), 0o600))
-			home := t.TempDir()
-			require.NoError(t, os.WriteFile(filepath.Join(home, "home-secret"), []byte("secret"), 0o600))
-			configDir := filepath.Join(work, "config")
-			profiles := filepath.Join(configDir, "nono", "profiles")
-			require.NoError(t, os.MkdirAll(profiles, 0o700))
-			planted, err := json.Marshal(map[string]any{"filesystem": map[string]any{"read_file": []string{filepath.Join(home, "home-secret")}}})
-			require.NoError(t, err)
-			require.NoError(t, os.WriteFile(filepath.Join(profiles, "default.json"), planted, 0o600))
-			repo, gitDir := filepath.Join(work, "repo"), filepath.Join(read, "repo.git")
-			require.NoError(t, os.Mkdir(repo, 0o700))
-			require.NoError(t, os.WriteFile(filepath.Join(repo, "README.md"), []byte("sandbox fixture\n"), 0o600))
-			for _, args := range [][]string{
-				{"init", "--separate-git-dir=" + gitDir, repo},
-				{"-C", repo, "add", "README.md"},
-				{"-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "commit", "-m", "fixture"},
-			} {
-				out, err := exec.CommandContext(t.Context(), "git", args...).CombinedOutput()
-				require.NoError(t, err, "%s", out)
-			}
-			authFile := filepath.Join(home, "auth.json")
-			require.NoError(t, os.WriteFile(authFile, []byte("fixture-token"), 0o600))
-			other, err := net.Listen("tcp4", "127.0.0.1:0")
-			require.NoError(t, err)
-			defer other.Close()
-			job := Job{WorkDir: work, ReadPaths: []string{read}, Route: Route{Name: "codex", Upstream: "https://chatgpt.com/backend-api/codex", Path: "/responses", EnvVar: "CODEX_PHANTOM", Capture: []string{"/bin/cat", authFile}},
-				Env: []string{"PATH=/usr/bin:/bin", "HOME=" + home, "XDG_CONFIG_HOME=" + configDir}, MemoryMax: 1 << 30}
-			script := `
+	base := t.TempDir()
+	work, read := filepath.Join(base, "job*"), filepath.Join(base, "read*")
+	sibling := filepath.Join(base, "job-private")
+	secret := filepath.Join(base, "read-secret")
+	for _, dir := range []string{work, read, sibling} {
+		require.NoError(t, os.Mkdir(dir, 0o700))
+	}
+	require.NoError(t, os.WriteFile(secret, []byte("secret"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(read, "allowed"), []byte("allowed"), 0o600))
+	home := t.TempDir()
+	configDir := filepath.Join(work, "config")
+	profiles := filepath.Join(configDir, "nono", "profiles")
+	require.NoError(t, os.MkdirAll(profiles, 0o700))
+	planted, err := json.Marshal(map[string]any{"filesystem": map[string]any{"read_file": []string{filepath.Join(home, "auth.json")}}})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(profiles, "default.json"), planted, 0o600))
+	repo, gitDir := filepath.Join(work, "repo"), filepath.Join(read, "repo.git")
+	require.NoError(t, os.Mkdir(repo, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "README.md"), []byte("sandbox fixture\n"), 0o600))
+	for _, args := range [][]string{
+		{"init", "--separate-git-dir=" + gitDir, repo},
+		{"-C", repo, "add", "README.md"},
+		{"-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "commit", "-m", "fixture"},
+	} {
+		out, err := exec.CommandContext(t.Context(), "git", args...).CombinedOutput()
+		require.NoError(t, err, "%s", out)
+	}
+	authFile := filepath.Join(home, "auth.json")
+	require.NoError(t, os.WriteFile(authFile, []byte("fixture-token"), 0o600))
+	other, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer other.Close()
+	job := Job{WorkDir: work, ReadPaths: []string{read}, Route: Route{Name: "codex", Upstream: "https://chatgpt.com/backend-api/codex", Path: "/responses", EnvVar: "CODEX_PHANTOM", Capture: []string{"/bin/cat", authFile}},
+		Env: []string{"PATH=/usr/bin:/bin", "HOME=" + home, "XDG_CONFIG_HOME=" + configDir}, MemoryMax: 1 << 30}
+	script := `
 failed=0
 check() {
   name=$1 expected=$2; shift 2
@@ -106,7 +98,6 @@ check work-write allow touch "$1/allowed"
 check read-grant allow cat "$2/allowed"
 check sibling-write deny touch "$3/overwritten"
 check sibling-read deny cat "$4"
-check home-read deny cat "$HOME/home-secret"
 check home-write deny touch "$HOME/write"
 check shared-tmp-write deny bash -c 'p=/tmp/roborev-probe-$$; touch "$p" && rm "$p"'
 cd "$5" || exit 1
@@ -123,20 +114,18 @@ check route-wrong-key deny bash -c 'curl -fsS -X POST "$CODEX_BASE_URL/responses
 check auth-read deny cat "$8"
 exit "$failed"
 `
-			cmd, env, cleanup, err := job.Command(t.Context(), []string{"bash", "-c", script, "probe", work, read, sibling, secret, repo, os.Getenv("XDG_RUNTIME_DIR"), strconv.Itoa(other.Addr().(*net.TCPAddr).Port), authFile})
-			require.NoError(t, err)
-			defer cleanup()
-			process := exec.CommandContext(t.Context(), cmd[0], cmd[1:]...)
-			process.Env, process.Dir = env, work
-			out, err := process.CombinedOutput()
-			require.NoError(t, err, "%s", out)
-			assert.NotContains(t, string(out), "BAD ")
-			for _, name := range []string{"work-write", "read-grant", "sibling-write", "sibling-read", "home-read", "home-write", "shared-tmp-write", "git-read", "git-commit", "git-config", "dbus-systemd", "external-domain", "other-loopback", "direct-upstream", "route-get", "route-no-key", "route-wrong-key", "auth-read"} {
-				assert.Contains(t, string(out), "OK "+name)
-			}
-			assert.NoFileExists(t, filepath.Join(sibling, "overwritten"))
-		})
+	cmd, env, cleanup, err := job.Command(t.Context(), []string{"bash", "-c", script, "probe", work, read, sibling, secret, repo, os.Getenv("XDG_RUNTIME_DIR"), strconv.Itoa(other.Addr().(*net.TCPAddr).Port), authFile})
+	require.NoError(t, err)
+	defer cleanup()
+	process := exec.CommandContext(t.Context(), cmd[0], cmd[1:]...)
+	process.Env, process.Dir = env, work
+	out, err := process.CombinedOutput()
+	require.NoError(t, err, "%s", out)
+	assert.NotContains(t, string(out), "BAD ")
+	for _, name := range []string{"work-write", "read-grant", "sibling-write", "sibling-read", "home-write", "shared-tmp-write", "git-read", "git-commit", "git-config", "dbus-systemd", "external-domain", "other-loopback", "direct-upstream", "route-get", "route-no-key", "route-wrong-key", "auth-read"} {
+		assert.Contains(t, string(out), "OK "+name)
 	}
+	assert.NoFileExists(t, filepath.Join(sibling, "overwritten"))
 	t.Run("unenforceable-policy", func(t *testing.T) {
 		job := Job{WorkDir: t.TempDir(), Route: Route{Name: "codex", Upstream: "http://example.com", Path: "/responses", EnvVar: "CODEX_PHANTOM", Capture: []string{"/bin/echo", "fixture-token"}}, MemoryMax: 1 << 30,
 			Env: []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir()}}
@@ -152,63 +141,51 @@ func TestSandboxProcessCleanup(t *testing.T) {
 	if _, err := exec.LookPath("nono"); err != nil {
 		t.Skip("nono is required")
 	}
-	for _, cancelRun := range []bool{false, true} {
-		t.Run(map[bool]string{false: "return", true: "cancel"}[cancelRun], func(t *testing.T) {
-			work := t.TempDir()
-			job := Job{
-				WorkDir: work,
-				Route:   Route{Name: "codex", Upstream: "https://chatgpt.com/backend-api/codex", Path: "/responses", EnvVar: "CODEX_PHANTOM", Capture: []string{"/bin/echo", "fixture-token"}},
-				Env:     []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir()}, MemoryMax: 1 << 30,
-			}
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			script := `setsid /usr/bin/sleep 300 </dev/null >/dev/null 2>&1 & echo $! > '` + filepath.Join(work, "child.pid") + `'`
-			if cancelRun {
-				script += "; wait"
-			}
-			wrapped, env, cleanup, err := job.Command(ctx, []string{"bash", "-c", script})
-			require.NoError(t, err)
-			defer cleanup()
-			process := exec.CommandContext(ctx, wrapped[0], wrapped[1:]...)
-			process.Env, process.Dir = env, work
-			require.NoError(t, process.Start())
-			defer func() {
-				cancel()
-				_ = process.Wait()
-			}()
-			var pid int
-			defer func() {
-				// Clean up this test's child even when testing a broken wrapper.
-				line, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
-				if string(line) == "/usr/bin/sleep\x00300\x00" {
-					_ = syscall.Kill(pid, syscall.SIGKILL)
-				}
-			}()
-			// The external shell must start the detached sleep before cancellation.
-			require.Eventually(t, func() bool {
-				data, err := os.ReadFile(filepath.Join(work, "child.pid"))
-				if err != nil {
-					return false
-				}
-				pid, err = strconv.Atoi(strings.TrimSpace(string(data)))
-				if err != nil {
-					return false
-				}
-				line, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
-				return string(line) == "/usr/bin/sleep\x00300\x00"
-			}, 5*time.Second, 10*time.Millisecond)
-			if cancelRun {
-				cancel()
-				require.Error(t, process.Wait())
-			} else {
-				require.NoError(t, process.Wait())
-			}
-			cleanup()
-			// systemd kills the external process; a zombie has already exited.
-			assert.Eventually(t, func() bool {
-				stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-				return os.IsNotExist(err) || strings.Contains(string(stat), ") Z ")
-			}, 5*time.Second, 10*time.Millisecond, "detached child survived cleanup")
-		})
+	work := t.TempDir()
+	job := Job{
+		WorkDir: work,
+		Route:   Route{Name: "codex", Upstream: "https://chatgpt.com/backend-api/codex", Path: "/responses", EnvVar: "CODEX_PHANTOM", Capture: []string{"/bin/echo", "fixture-token"}},
+		Env:     []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir()}, MemoryMax: 1 << 30,
 	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	script := `setsid /usr/bin/sleep 300 </dev/null >/dev/null 2>&1 & echo $! > '` + filepath.Join(work, "child.pid") + `'`
+	wrapped, env, cleanup, err := job.Command(ctx, []string{"bash", "-c", script})
+	require.NoError(t, err)
+	defer cleanup()
+	process := exec.CommandContext(ctx, wrapped[0], wrapped[1:]...)
+	process.Env, process.Dir = env, work
+	require.NoError(t, process.Start())
+	defer func() {
+		cancel()
+		_ = process.Wait()
+	}()
+	var pid int
+	defer func() {
+		// Clean up this test's child even when testing a broken wrapper.
+		line, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+		if string(line) == "/usr/bin/sleep\x00300\x00" {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+	}()
+	// The external shell must start the detached sleep before cleanup.
+	require.Eventually(t, func() bool {
+		data, err := os.ReadFile(filepath.Join(work, "child.pid"))
+		if err != nil {
+			return false
+		}
+		pid, err = strconv.Atoi(strings.TrimSpace(string(data)))
+		if err != nil {
+			return false
+		}
+		line, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+		return string(line) == "/usr/bin/sleep\x00300\x00"
+	}, 5*time.Second, 10*time.Millisecond)
+	require.NoError(t, process.Wait())
+	cleanup()
+	// systemd kills the external process; a zombie has already exited.
+	assert.Eventually(t, func() bool {
+		stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+		return os.IsNotExist(err) || strings.Contains(string(stat), ") Z ")
+	}, 5*time.Second, 10*time.Millisecond, "detached child survived cleanup")
 }

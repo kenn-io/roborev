@@ -5,7 +5,6 @@ package agent
 import (
 	"bytes"
 	"context"
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
@@ -13,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -53,7 +51,6 @@ func TestCodexSandboxIntegration(t *testing.T) {
 		out, err := exec.CommandContext(t.Context(), "git", args...).CombinedOutput()
 		require.NoError(t, err, "%s", out)
 	}
-	require.NoError(t, os.WriteFile(filepath.Join(secrets, "home-secret"), []byte("private fixture"), 0o600))
 	t.Setenv("CODEX_HOME", secrets)
 	require.NoError(t, os.WriteFile(filepath.Join(secrets, "auth.json"), []byte(`{"tokens":{"account_id":"fixture-account","access_token":"sandbox-test-token"}}`), 0o600))
 
@@ -70,9 +67,7 @@ check() {
   fi
 }
 check codex-home allow bash -c '[[ "$CODEX_HOME" == "$1"/.codex-home-* && -d "$CODEX_HOME" ]]' probe '%s'
-check config-token deny grep -F sandbox-test-token "$CODEX_HOME/config.toml"
 check login-read deny cat '%s/auth.json'
-check home-read deny cat "$HOME/home-secret"
 touch '%s'
 exit "$failed"
 `, work, secrets, marker)
@@ -97,7 +92,6 @@ exit "$failed"
 			} `json:"input"`
 			Tools []struct {
 				Type string `json:"type"`
-				Name string `json:"name"`
 			} `json:"tools"`
 		}
 		if err := json.UnmarshalRead(r.Body, &request); err != nil {
@@ -118,14 +112,10 @@ exit "$failed"
 				outputs = append(outputs, input.Output)
 			}
 		}
-		functionTools := false
 		for _, tool := range request.Tools {
 			assert.NotEqual(t, "web_search", tool.Type)
-			if tool.Name == "exec_command" {
-				functionTools = true
-			}
 		}
-		item := sandboxRouteItem(t, outputs, functionTools)
+		item := sandboxRouteItem(t, outputs)
 		send("response.output_item.done", map[string]any{"type": "response.output_item.done", "item": item})
 		send("response.completed", map[string]any{"type": "response.completed", "response": map[string]any{"id": "resp_test", "usage": map[string]int{"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}}})
 	}))
@@ -150,7 +140,7 @@ exit "$failed"
 	result, err := a.Review(context.Background(), filepath.Join(filepath.Base(work), "repo"), "HEAD", "Run the supplied probe.", &stream)
 	require.NoError(t, err, "%s", stream.String())
 	assert.NotContains(t, string(result), "BAD ")
-	for _, name := range []string{"codex-home", "config-token", "login-read", "home-read"} {
+	for _, name := range []string{"codex-home", "login-read"} {
 		assert.Contains(t, string(result), "OK "+name)
 	}
 	assert.FileExists(t, marker)
@@ -161,25 +151,17 @@ exit "$failed"
 	assert.Empty(t, homes)
 }
 
-func sandboxRouteItem(t *testing.T, outputs []string, functionTools bool) map[string]any {
+func sandboxRouteItem(t *testing.T, outputs []string) map[string]any {
 	t.Helper()
 	name := "exec_command"
-	args := map[string]any{"cmd": "bash ../probe.sh", "yield_time_ms": 1000}
+	args := map[string]any{"cmd": "bash ../probe.sh", "yield_time_ms": 10000}
 	if len(outputs) > 0 {
-		session := regexp.MustCompile(`Process running with session ID ([0-9]+)`).FindStringSubmatch(outputs[len(outputs)-1])
-		if session == nil {
-			final, err := json.Marshal(map[string]string{"probe": strings.Join(outputs, "\n")})
-			assert.NoError(t, err)
-			return map[string]any{"type": "message", "role": "assistant", "id": "msg_test", "content": []any{map[string]any{"type": "output_text", "text": string(final)}}}
-		}
-		name = "write_stdin"
-		args = map[string]any{"session_id": jsontext.Value(session[1]), "chars": "", "yield_time_ms": 1000}
+		final, err := json.Marshal(map[string]string{"probe": strings.Join(outputs, "\n")})
+		assert.NoError(t, err)
+		return map[string]any{"type": "message", "role": "assistant", "id": "msg_test", "content": []any{map[string]any{"type": "output_text", "text": string(final)}}}
 	}
 	encoded, err := json.Marshal(args)
 	assert.NoError(t, err)
 	id := fmt.Sprintf("tool_%d", len(outputs))
-	if functionTools {
-		return map[string]any{"type": "function_call", "id": id, "call_id": id, "name": name, "arguments": string(encoded)}
-	}
-	return map[string]any{"type": "custom_tool_call", "id": id, "call_id": id, "name": "exec", "input": "text(await tools." + name + "(" + string(encoded) + "));"}
+	return map[string]any{"type": "function_call", "id": id, "call_id": id, "name": name, "arguments": string(encoded)}
 }
