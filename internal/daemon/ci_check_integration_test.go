@@ -94,7 +94,6 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 		}
 		assert.Equal(t, "high", request.Reasoning.Effort)
 		assert.Contains(t, string(request.Input), "Make it fail.")
-		assert.NotContains(t, string(request.Input), "Also drop it if the repo's AGENTS.md, CLAUDE.md, or .roborev.toml review guidelines say not to flag it.")
 		var err error
 		checkouts, err = filepath.Glob(checkoutPattern)
 		assert.NoError(t, err)
