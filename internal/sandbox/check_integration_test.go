@@ -229,7 +229,9 @@ func TestSandboxProcessCleanup(t *testing.T) {
 			for _, key := range []string{"XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"} {
 				job.Env = append(job.Env, key+"="+os.Getenv(key))
 				t.Setenv(key, "")
-				require.NoError(t, os.Unsetenv(key))
+				if tc.name == "ignore-term" {
+					require.NoError(t, os.Unsetenv(key))
+				}
 			}
 			tmp := t.TempDir()
 			job.Env = append(job.Env, "TMPDIR="+tmp)
