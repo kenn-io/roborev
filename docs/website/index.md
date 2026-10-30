@@ -52,7 +52,7 @@ working tree on its own.
 - **Layer 1, post-commit.** `roborev init` installs the hook, starts the
   daemon, and registers the repo. Each commit gets a verdict and, when it
   fails, findings with severities and file locations. `post_commit_batch_size`
-  reviews a run of small commits as one range.
+  and `post_commit_quiet_period` review a run of small commits as one range.
 - **Layer 2, agent hook.** `roborev agent-hook install` wires Claude Code,
   Codex, Copilot CLI, Cursor, Factory Droid, Gemini CLI, Hermes, and Qwen. After
   a configurable number of turns, commits, or failed reviews, the agent is told
