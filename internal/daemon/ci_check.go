@@ -57,9 +57,16 @@ func (wp *WorkerPool) checkSynthesis(ctx context.Context, job *storage.ReviewJob
 	if check != nil && doc.Legacy == nil && !doc.UnableToReview() && len(doc.Findings) > 0 {
 		jobLog := newAppendingJobLogWriter(job.ID)
 		defer jobLog.Close()
-		outputWriter := wp.outputBuffers.Writer(job.ID, GetNormalizer("codex"))
+		// Persist readable checker output because the job log keeps the synthesis provider.
+		outputWriter := wp.outputBuffers.Writer(job.ID, func(line string) *OutputLine {
+			normalized := NormalizeCodexOutput(line)
+			if normalized != nil {
+				fmt.Fprintln(jobLog, normalized.Text)
+			}
+			return normalized
+		})
 		defer outputWriter.Flush()
-		out := io.MultiWriter(jobLog, outputWriter)
+		out := outputWriter
 		var env []string
 		if wp.ciGitEnv != nil {
 			if panel, err := wp.db.GetCIPanelBySynthesisJobID(job.ID); err == nil && panel != nil {

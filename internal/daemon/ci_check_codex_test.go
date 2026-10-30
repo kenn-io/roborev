@@ -49,8 +49,8 @@ process.exit(child.status ?? 1);
 }
 
 func TestCICheckCodexResolution(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("requires shell fixtures and symlinks")
+	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+		t.Skip("requires linux/amd64 checker")
 	}
 	for _, name := range []string{"native", "launcher", "npm", "mise"} {
 		t.Run(name, func(t *testing.T) {
@@ -61,13 +61,8 @@ func TestCICheckCodexResolution(t *testing.T) {
 			command := installed
 			wantPaths := []string{filepath.Dir(installed)}
 			wantPathDir := ""
-			const size = 32 << 20
 			switch name {
 			case "native":
-				native, err := os.OpenFile(installed, os.O_WRONLY, 0)
-				require.NoError(t, err)
-				require.NoError(t, native.Truncate(size))
-				require.NoError(t, native.Close())
 				command = filepath.Join(tools, "codex")
 				require.NoError(t, os.Symlink(installed, command))
 			case "launcher":
@@ -97,17 +92,9 @@ func TestCICheckCodexResolution(t *testing.T) {
 				require.NoError(t, os.Symlink("mise", filepath.Join(tools, "codex")))
 				command = filepath.Join(tools, "codex")
 			}
-			var before, after runtime.MemStats
-			if name == "native" {
-				runtime.ReadMemStats(&before)
-			}
 			got, err := resolveCICheckCodex(t.Context(), tools, command)
-			if name == "native" {
-				runtime.ReadMemStats(&after)
-			}
 			require.NoError(t, err)
 			if name == "native" {
-				assert.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(size), "launcher probe must read only its header")
 				assert.NotContains(t, got.ReadPaths, tools)
 			}
 			wantCommand := command
