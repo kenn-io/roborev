@@ -13,6 +13,9 @@ import (
 func TestCICheckCodexResolution(t *testing.T) {
 	for _, name := range []string{"native", "mise npm", "mise"} {
 		t.Run(name, func(t *testing.T) {
+			if runtime.GOOS == "windows" {
+				t.Skip("requires symlinks and shell scripts")
+			}
 			if name == "mise npm" && (runtime.GOOS != "linux" || runtime.GOARCH != "amd64") {
 				t.Skip("requires linux/amd64 executable fixtures")
 			}
