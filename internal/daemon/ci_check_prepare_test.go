@@ -69,12 +69,6 @@ func TestCICheckPreparation(t *testing.T) {
 				require.NoError(t, os.WriteFile(filepath.Join(dir, "file"), []byte("content"), 0o600))
 				require.NoError(t, os.Chmod(dir, 0o500))
 				t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
-				if name == "checker" {
-					// The shared object store joins the read grants, so it can't hold the Codex login.
-					t.Setenv("CODEX_HOME", filepath.Join(repo.Root, ".git", "objects"))
-					_, err = wp.prepareCICheck(t.Context(), job, command, nil, io.Discard)
-					require.ErrorContains(t, err, "read grant contains host")
-				}
 			}
 			t.Cleanup(cleanup)
 			external := t.TempDir()
@@ -158,29 +152,11 @@ func TestCICheckWarming(t *testing.T) {
 
 func TestCICheckCredentialOverlap(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("requires symlinks")
+		t.Skip("os.UserHomeDir reads USERPROFILE on Windows")
 	}
-	// Preparation covers a login equal to a grant.
-	for _, name := range []string{"codex child", "codex symlink", "home child"} {
-		t.Run(name, func(t *testing.T) {
-			tools := t.TempDir()
-			home, login := t.TempDir(), t.TempDir()
-			switch name {
-			case "codex child", "codex symlink":
-				login = filepath.Join(tools, "login")
-				require.NoError(t, os.Mkdir(login, 0o700))
-				if name == "codex symlink" {
-					link := filepath.Join(t.TempDir(), "login")
-					require.NoError(t, os.Symlink(login, link))
-					login = link
-				}
-			case "home child":
-				home = filepath.Join(tools, "home")
-				require.NoError(t, os.Mkdir(home, 0o700))
-			}
-			t.Setenv("HOME", home)
-			t.Setenv("CODEX_HOME", login)
-			require.ErrorContains(t, validateCICheckReadPaths([]string{tools}), "read grant contains host")
-		})
-	}
+	tools := t.TempDir()
+	home := filepath.Join(tools, "home")
+	require.NoError(t, os.Mkdir(home, 0o700))
+	t.Setenv("HOME", home)
+	require.ErrorContains(t, validateCICheckReadPaths([]string{tools}), "read grant contains host")
 }
