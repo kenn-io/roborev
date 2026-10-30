@@ -418,13 +418,14 @@ The status context is `roborev` and progresses through these states:
 | `failure` | At least one member failed to run for a genuine reason while another member still produced usable review output |
 | `error` | No reviewer produced usable output and no retry remains, or no agent is available |
 
-Label-based bypasses use a GitHub check run instead of a commit status because
-commit statuses do not have a skipped state. The roborev check run completes
-with a `skipped` conclusion.
+Skipped PRs, whether from `skip_labels` or the
+[author and branch filters](#filtering-which-prs-get-reviewed), use a GitHub
+check run instead of a commit status because commit statuses do not have a
+skipped state. The roborev check run completes with a `skipped` conclusion.
 
-Status checks require **Commit statuses: Read and write**. Label-based skipped
-checks also require **Checks: Read and write**. The setup guide above includes
-both permissions. If your app predates either permission, add them:
+Status checks require **Commit statuses: Read and write**. Skipped checks also
+require **Checks: Read and write**. The setup guide above includes both
+permissions. If your app predates either permission, add them:
 
 1. Open your GitHub App settings and go to **Permissions & events**
 1. Under **Repository permissions**, set **Commit statuses** and **Checks** to
@@ -481,6 +482,99 @@ Explicit (non-wildcard) repos always take priority when `max_repos` is reached.
 
 Exclusion patterns in `exclude_repos` apply to both exact entries and
 wildcard-expanded entries.
+
+## Filtering Which PRs Get Reviewed
+
+By default the CI poller reviews every open PR. Five `[ci]` options narrow that
+set by PR author and by PR head branch:
+
+```toml
+[ci]
+# Review only PRs from these logins or from authors with these associations.
+allowed_authors = ["trusted-contractor", "dependabot[bot]"]
+allowed_author_associations = ["OWNER", "MEMBER", "COLLABORATOR"]
+# Also review PRs from anyone the repo's CODEOWNERS file names.
+allow_codeowners = true
+
+# Review only these head branches, and never these.
+include_branches = ["feature/*", "fix/*"]
+exclude_branches = ["dependabot/*", "renovate/*"]
+```
+
+### Author filter
+
+Use the author filter on public repos so that PRs from outside contributors are
+not sent to an AI agent automatically. Their PR text and code could contain
+prompt injection.
+
+- When `allowed_authors` and `allowed_author_associations` are both empty and
+    `allow_codeowners` is off, every author is reviewed.
+- When any of them is set, a PR is reviewed only if one of these is true:
+    - The author's login is in `allowed_authors`. Login matching is
+        case-insensitive.
+    - The author association is in `allowed_author_associations`.
+    - `allow_codeowners` is on and the author is a code owner. See
+        [CODEOWNERS](#codeowners).
+- The author association is the `author_association` value GitHub reports for
+    the PR: `OWNER`, `MEMBER`, `COLLABORATOR`, `CONTRIBUTOR`,
+    `FIRST_TIME_CONTRIBUTOR`, `FIRST_TIMER`, `MANNEQUIN`, or `NONE`.
+    `CONTRIBUTOR` means the author has committed to the repo before; it does not
+    mean they have write access. Unknown values fail `roborev config validate`,
+    and the daemon rejects them when it loads its config.
+- GitHub can report an organization member whose membership is private as
+    `CONTRIBUTOR` or `NONE` rather than `MEMBER`, depending on the credentials
+    roborev uses. List such people in `allowed_authors`.
+
+### CODEOWNERS
+
+With `allow_codeowners = true`, the poller trusts every user that the
+repository's `CODEOWNERS` file names as an owner, on any line.
+
+- The poller reads `CODEOWNERS` from the PR's base branch, never from the PR
+    head, so a PR cannot add its own author. It checks `.github/CODEOWNERS`,
+    then `CODEOWNERS`, then `docs/CODEOWNERS`, and uses the first file it finds,
+    as GitHub does.
+- `@user` owners are trusted directly. `@org/team` owners are expanded to the
+    team's members, including members of child teams. Email owners are ignored
+    because they do not identify a GitHub login.
+- A repository without a `CODEOWNERS` file has no code owners.
+- The poller reads `CODEOWNERS` only for authors that the other author options
+    do not already admit, and at most once per base branch on each poll.
+- Expanding a team needs permission to read organization members. Give the
+    GitHub App the **Members: Read-only** organization permission. Personal `gh`
+    logins need the `read:org` scope, which `gh auth login` requests by default.
+- If the poller cannot read `CODEOWNERS` or a team, it logs the error and
+    reports it in daemon health. It does not review the PR and does not mark it
+    skipped, and it tries again on the next poll.
+
+### Branch filters
+
+Use the branch filters to skip automated PRs, such as dependency updates, or to
+review only branches that follow a naming convention.
+
+- When `include_branches` is empty, every branch is included. When it is set,
+    only PR head branches matching one of its patterns are reviewed.
+- A head branch matching `exclude_branches` is never reviewed, even when it also
+    matches `include_branches`.
+- Patterns use Go's `path.Match` syntax, except that `*` and `?` also match `/`,
+    as in `git branch --list`. So `dependabot/*` matches
+    `dependabot/npm_and_yarn/lodash-4.17.21`. Matching is case-sensitive.
+    Malformed patterns fail `roborev config validate`, and the daemon rejects
+    them when it loads its config.
+- The PR author chooses the head branch name, including on forks. Branch filters
+    are a convenience, not a trust boundary. Use the author filter for trust.
+
+### What happens to a filtered PR
+
+A PR that fails the author or branch filter is handled exactly like a PR with a
+label in `skip_labels`: the poller logs the reason, creates no review, and marks
+the head commit as skipped. See [Commit Status Checks](#commit-status-checks).
+The filters are checked again on every poll, so a PR that later passes them, for
+example after a config change, is reviewed at its current head. A head that
+already has a review is not reviewed again.
+
+These options are global. Like `skip_labels`, they cannot be overridden in a
+repository's `.roborev.toml`.
 
 ## Named CI Panels
 
@@ -791,6 +885,11 @@ set, it takes priority over the matrix fields for that repo.
 | `repos` | array | `[]` | GitHub repos to poll in `"owner/repo"` format. Supports glob patterns (e.g. `"myorg/*"`, `"myorg/api-*"`). |
 | `exclude_repos` | array | `[]` | Glob patterns to exclude from the resolved repo list |
 | `skip_labels` | array | `[]` | GitHub PR labels that skip CI reviews (case-insensitive) |
+| `allowed_authors` | array | `[]` | GitHub logins whose PRs are reviewed (case-insensitive). See [Author filter](#author-filter). |
+| `allowed_author_associations` | array | `[]` | PR author associations that are reviewed, such as `OWNER`, `MEMBER`, `COLLABORATOR`. With `allowed_authors` also empty and `allow_codeowners` off, every author is reviewed. |
+| `allow_codeowners` | bool | `false` | Also review PRs from users the base branch's `CODEOWNERS` file names, directly or through a team. See [CODEOWNERS](#codeowners). |
+| `include_branches` | array | `[]` (all) | Glob patterns for PR head branches to review. `*` also matches `/`. See [Branch filters](#branch-filters). |
+| `exclude_branches` | array | `[]` | Glob patterns for PR head branches to skip. Wins over `include_branches`. |
 | `max_repos` | int | `100` | Safety cap on total expanded repos (explicit repos have priority over wildcard-expanded ones) |
 | `panel` | string | | Named `[review.panels.<name>]` panel for CI reviews. When set, overrides `agents`, `review_types`, and `reviews`. |
 | `review_types` | array | `["security"]` | Review types to run for each PR: `security`, `design`, `lookahead`, `test-value`, or `default`. `"review"` and `"general"` are accepted as aliases for `"default"`. |
