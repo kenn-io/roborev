@@ -804,6 +804,50 @@ The summary includes:
 - **Cost**: Approximate agent spend for eligible jobs in the same time window,
     with coverage when only some jobs reported cost
 
+### CI run health
+
+When the selected window contains CI panel runs, `summary` also shows a **CI Run
+Health** block. Use `roborev summary --all --since 7d` to inspect all
+repositories monitored by the daemon, including separate CI checkouts.
+
+- **Panels** counts one run per panel, including reruns. Panel size does not
+    change this count. Active, finalized, and retired-unposted counts partition
+    the selected runs.
+- **Outcomes** counts finalized runs by their recorded outcome. Finalization
+    means `posted_at` was recorded; an abandoned run can be finalized without a
+    review comment.
+- **Retirement reasons** counts all retired rows, including finalized history
+    retired to release ownership for a rerun. Reasons are `closed_pr`,
+    `superseded`, `stale_head`, `deferred_retry`, `repo_mismatch`, and
+    `canceled`. Older rows or unspecified ownership transitions appear as
+    `unknown`.
+- **Runs per PR** reports p50, p90, and maximum. A PR is identified by both its
+    GitHub repository and number. Every PR above five runs is listed, ordered by
+    descending run count, then repository and PR number. Fractional percentiles
+    use interpolation.
+- **Turnaround** measures the first review attempt through finalization,
+    including time spent queued, reviewing, and retrying. Only runs with valid,
+    nonnegative timestamps contribute. The sample count is displayed; no samples
+    means unavailable. Missing first-attempt timestamps are excluded.
+- **Cost** includes retained member and synthesis jobs for the selected panels.
+    Total, per-PR, and retired-unposted amounts each report priced/eligible job
+    coverage. Eligibility requires a terminal job with evidence that an agent
+    ran; synthesis passthroughs are excluded. Failed or canceled agent calls can
+    still contribute cost. Missing pricing is unavailable; a recorded free call
+    contributes a priced zero.
+- **Retired unposted cost** includes only runs retired before finalization.
+    Active work is excluded. This measures retained recorded spend in that
+    cohort, rather than every run that failed to produce a useful comment.
+
+CI runs enter the window by panel creation time. Their associated job costs
+remain included even when the jobs were queued outside the window. Repository
+and branch filters match the synthesis job exactly. Unfiltered results retain
+panel history whose synthesis job has been deleted; scoped results exclude
+history that can no longer be mapped to that repository or branch.
+
+JSON exposes this block as `ci`, omitted when no panels match. See
+[GitHub integration](/docs/integrations/github/) for CI polling and delivery.
+
 ## Aggregate Cost
 
 ```bash
