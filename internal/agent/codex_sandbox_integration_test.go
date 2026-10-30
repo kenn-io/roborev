@@ -115,11 +115,6 @@ func TestCodexSandboxIntegration(t *testing.T) {
 		MemoryMax: 8 << 30,
 		Env:       []string{"PATH=" + filepath.Join(toolchain, "bin") + ":/usr/bin:/bin", "HOME=" + secrets, "TMPDIR=" + tmp, "GOCACHE=" + filepath.Join(repo, ".cache", "go-build")},
 	}
-	if _, err := os.Stat("/etc/codex"); err == nil {
-		job.ReadPaths = append(job.ReadPaths, "/etc/codex")
-	} else {
-		require.True(t, os.IsNotExist(err), "%v", err)
-	}
 	a := NewCodexAgent(codex).WithSandbox(&CodexSandbox{Job: job, Upstream: server.URL})
 	a.IgnoreUserConfig = true
 	a.ConfigOverrides = []string{`web_search="live"`, `model_provider="wrong-provider"`, `model_providers.roborev-route.base_url="http://127.0.0.1:1"`}
