@@ -1227,7 +1227,9 @@ func TestCodexSandboxRepoContainmentAndSymlinkLogin(t *testing.T) {
 	}
 	job, cleanup, err := s.prepare(repo)
 	require.NoError(t, err)
-	assert.Contains(t, job.DenyReadPaths, filepath.Join(hostHome, "auth.json"))
+	resolvedHome, err := filepath.EvalSymlinks(hostHome)
+	require.NoError(t, err)
+	assert.Contains(t, job.DenyReadPaths, filepath.Join(resolvedHome, "auth.json"))
 	out, err := exec.CommandContext(t.Context(), job.Route.Capture[0], job.Route.Capture[1:]...).Output()
 	require.NoError(t, err)
 	assert.Equal(t, "requested-login\n", string(out))
