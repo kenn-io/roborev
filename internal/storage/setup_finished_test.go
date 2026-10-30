@@ -45,18 +45,30 @@ func TestClaimSetupFinishedRequiresReadableReview(t *testing.T) {
 			require.NoError(t, err)
 			if tc.name == "done" {
 				var wg sync.WaitGroup
-				results := make(chan SetupFinishedClaim, 8)
+				type result struct {
+					claim SetupFinishedClaim
+					err   error
+				}
+				results := make(chan result, 8)
 				for range 8 {
 					wg.Go(func() {
 						claimed, err := db.ClaimSetupFinished(t.Context())
-						assert.NoError(t, err)
-						results <- claimed
+						results <- result{claim: claimed, err: err}
 					})
 				}
 				wg.Wait()
 				close(results)
 				counts := make(map[SetupFinishedClaim]int)
-				for claimed := range results {
+				for result := range results {
+					claimed := result.claim
+					if result.err != nil {
+						require.True(t, IsSQLiteBusy(result.err), "unexpected claim error: %v", result.err)
+						// The short write wait can expire under contention. Retry
+						// after the concurrent writers finish, as the daemon does.
+						claimed, err = db.ClaimSetupFinished(t.Context())
+						require.NoError(t, err)
+						require.Equal(t, SetupFinishedExisting, claimed)
+					}
 					counts[claimed]++
 				}
 				assert.Equal(t, map[SetupFinishedClaim]int{SetupFinishedNewClaim: 1, SetupFinishedExisting: 7}, counts)
