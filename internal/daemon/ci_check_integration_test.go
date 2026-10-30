@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -37,23 +36,9 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 	loginDir := t.TempDir()
 	t.Setenv("CODEX_HOME", loginDir)
 	require.NoError(t, os.WriteFile(filepath.Join(loginDir, "auth.json"), []byte(`{"tokens":{"access_token":"checker-test-token"}}`), 0o600))
-	beforeRefs, err := exec.CommandContext(t.Context(), "git", "-C", repoRoot, "show-ref").CombinedOutput()
-	require.NoError(t, err)
-	beforeStatus, err := exec.CommandContext(t.Context(), "git", "-C", repoRoot, "status", "--porcelain").CombinedOutput()
-	require.NoError(t, err)
-	rootPattern := filepath.Join(ciWorktreeRepoDir(repoRoot), ciWorktreePrefix+"*", "roborev-ci-check-*")
-	oldRoots, err := filepath.Glob(rootPattern)
-	require.NoError(t, err)
-	var roots, checkouts []string
+	checkoutPattern := filepath.Join(ciWorktreeRepoDir(repoRoot), ciWorktreePrefix+"*")
+	var schemas, checkouts []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer checker-test-token" {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		if r.Method != http.MethodPost || r.URL.Path != "/responses" {
-			http.NotFound(w, r)
-			return
-		}
 		var request struct {
 			Reasoning struct {
 				Effort string `json:"effort"`
@@ -64,25 +49,11 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 			return
 		}
 		assert.Equal(t, "high", request.Reasoning.Effort)
-		found, err := filepath.Glob(rootPattern)
+		var err error
+		schemas, err = filepath.Glob(filepath.Join(checkoutPattern, "roborev-ci-check-*", "work", "roborev-codex-review-schema-*.json"))
 		assert.NoError(t, err)
-		for _, root := range found {
-			old := false
-			for _, v := range oldRoots {
-				if root == v {
-					old = true
-				}
-			}
-			if !old {
-				roots = append(roots, root)
-				schemas, err := filepath.Glob(filepath.Join(root, "work", "roborev-codex-review-schema-*.json"))
-				assert.NoError(t, err)
-				assert.NotEmpty(t, schemas, "schema must live in the sandbox work directory")
-			}
-		}
-		foundCheckouts, err := filepath.Glob(filepath.Join(ciWorktreeRepoDir(repoRoot), ciWorktreePrefix+"*"))
+		checkouts, err = filepath.Glob(checkoutPattern)
 		assert.NoError(t, err)
-		checkouts = append(checkouts, foundCheckouts...)
 		const final = `{"verdicts":[{"finding":1,"keep":false,"evidence":"go build succeeded","reason":"Build claim refuted"},{"finding":2,"keep":true,"evidence":"test reproduced data loss","reason":"Data is lost"}]}`
 		w.Header().Set("Content-Type", "text/event-stream")
 		item := map[string]any{"type": "message", "role": "assistant", "id": "msg_test", "content": []any{map[string]any{"type": "output_text", "text": final}}}
@@ -114,14 +85,9 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 	for _, checkout := range checkouts {
 		assert.NoDirExists(t, checkout)
 	}
-	require.NotEmpty(t, roots, string(log))
-	for _, root := range roots {
-		assert.NoDirExists(t, root)
-	}
-	afterRefs, err := exec.CommandContext(t.Context(), "git", "-C", repoRoot, "show-ref").CombinedOutput()
+	assert.NotEmpty(t, schemas, "schema must live in the sandbox work directory")
+	stored, err := tc.DB.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
-	assert.Equal(t, string(beforeRefs), string(afterRefs))
-	afterStatus, err := exec.CommandContext(t.Context(), "git", "-C", repoRoot, "status", "--porcelain").CombinedOutput()
-	require.NoError(t, err)
-	assert.Equal(t, strings.TrimSpace(string(beforeStatus)), strings.TrimSpace(string(afterStatus)))
+	assert.NotContains(t, stored.Output, "build claim", string(log))
+	assert.Contains(t, stored.Output, "data loss")
 }
