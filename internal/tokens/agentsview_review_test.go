@@ -48,17 +48,20 @@ func TestAgentsViewNestedAmbiguity(t *testing.T) {
 }
 
 func TestAgentsViewProbeIdentity(t *testing.T) {
-	for _, body := range []string{`<html>private-server-body</html>`, `{}`, `{"ok":false,"service":"agentsview"}`, `{"ok":true,"service":"other"}`, `{"ok":true,"service":"agentsview"}`} {
+	t.Run("agentsview", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprint(w, `{"ok":true,"service":"agentsview"}`)
+		}))
+		defer srv.Close()
+		require.NoError(t, (FetchConfig{AgentsViewURL: srv.URL}).ProbeAgentsView(t.Context()))
+	})
+	for _, body := range []string{`<html>private-server-body</html>`, `{}`, `{"ok":false,"service":"agentsview"}`, `{"ok":true,"service":"other"}`} {
 		t.Run(body, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, body) }))
 			defer srv.Close()
 			err := (FetchConfig{AgentsViewURL: srv.URL}).ProbeAgentsView(t.Context())
-			if body == `{"ok":true,"service":"agentsview"}` {
-				require.NoError(t, err)
-			} else {
-				require.Error(t, err)
-				assert.NotContains(t, err.Error(), "private-server-body")
-			}
+			require.ErrorContains(t, err, "expected service identity")
+			assert.NotContains(t, err.Error(), "private-server-body")
 		})
 	}
 }

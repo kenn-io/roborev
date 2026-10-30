@@ -2196,8 +2196,9 @@ source. Every request uses Bearer authentication when a token is configured.
 defaults to `10s`.
 
 AgentsView must already have indexed the agent's session and its subagents.
-Against v0.46.1, roborev resolves a missing raw session ID through the server's
-session ID resolver and retries usage with the unique indexed ID. No matches
+With AgentsView v0.46.1 or later, roborev resolves a missing raw session ID
+through the server's session ID resolver and retries usage with the unique
+indexed ID. Older servers report an error instead of guessing. No matches
 leave the job unpriced for existing reconciliation to retry. Ambiguous matches
 and rejected tokens produce explicit errors. Roborev never falls back to the
 local CLI when this provider is selected. Resumed sessions remain excluded
@@ -2209,8 +2210,6 @@ cannot supply this diagnostic, doctor labels its result as shell-only and warns
 that the daemon's usage provider was not checked. `roborev backfill-tokens` uses
 the daemon's configured provider for older jobs as well. With no
 `agentsview.url`, the existing local CLI or `[cost] endpoint` behavior applies.
-
-See [the design discussion](https://github.com/kenn-io/roborev/issues/1543).
 
 ### Cost Usage Endpoint
 

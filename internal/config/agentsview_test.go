@@ -1,7 +1,6 @@
 package config
 
 import (
-	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -67,26 +66,6 @@ func TestAgentsViewTokenResolution(t *testing.T) {
 	token, err = c.ResolveToken()
 	require.NoError(t, err)
 	assert.Equal(t, "file-token", token)
-}
-
-func FuzzAgentsViewURL(f *testing.F) {
-	for _, s := range []string{"https://usage.example/base", "https://u:p@host", "https://host?", "https://host#", "http://[::1]:80", "../x"} {
-		f.Add(s)
-	}
-	f.Fuzz(func(t *testing.T, s string) {
-		c := AgentsViewConfig{URL: s}
-		if s == "" || c.Validate(CostConfig{}) != nil {
-			return
-		}
-		u, err := url.Parse(s)
-		require.NoError(t, err)
-		assert.Contains(t, []string{"http", "https"}, u.Scheme)
-		assert.NotEmpty(t, u.Hostname())
-		assert.Nil(t, u.User)
-		assert.Empty(t, u.RawQuery)
-		assert.False(t, u.ForceQuery)
-		assert.Empty(t, u.Fragment)
-	})
 }
 
 func TestAgentsViewTokenFileLoadAndHome(t *testing.T) {

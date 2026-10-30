@@ -52,20 +52,21 @@ func TestAgentsViewResponses(t *testing.T) {
 		statuses []int
 		resolve  string
 		want     string
+		wantCost float64
 	}{
-		{"direct", []int{200}, "", ""},
-		{"not indexed", []int{404, 200}, `{"raw_suffix":true,"ids":[]}`, ""},
-		{"resolved missing", []int{404, 200, 404}, `{"raw_suffix":true,"ids":["codex:raw-id"]}`, ""},
-		{"ambiguous resolve", []int{404, 200}, `{"raw_suffix":true,"ids":["codex:a","host~codex:a"]}`, "ambiguous"},
-		{"ambiguous direct", []int{409}, "", "ambiguous"},
-		{"usage unauthorized", []int{401}, "", "rejected the token"},
-		{"usage forbidden", []int{403}, "", "rejected the token"},
-		{"resolve unauthorized", []int{404, 401}, "", "rejected the token"},
-		{"resolve forbidden", []int{404, 403}, "", "rejected the token"},
-		{"retry unauthorized", []int{404, 200, 401}, `{"raw_suffix":true,"ids":["codex:a"]}`, "rejected the token"},
-		{"retry forbidden", []int{404, 200, 403}, `{"raw_suffix":true,"ids":["codex:a"]}`, "rejected the token"},
-		{"server error", []int{500}, "", "HTTP"},
-		{"malformed resolve", []int{404, 200}, `{`, "parse"},
+		{"direct", []int{200}, "", "", 0.5},
+		{"not indexed", []int{404, 200}, `{"raw_suffix":true,"ids":[]}`, "", 0},
+		{"resolved missing", []int{404, 200, 404}, `{"raw_suffix":true,"ids":["codex:raw-id"]}`, "", 0},
+		{"ambiguous resolve", []int{404, 200}, `{"raw_suffix":true,"ids":["codex:a","host~codex:a"]}`, "ambiguous", 0},
+		{"ambiguous direct", []int{409}, "", "ambiguous", 0},
+		{"usage unauthorized", []int{401}, "", "rejected the token", 0},
+		{"usage forbidden", []int{403}, "", "rejected the token", 0},
+		{"resolve unauthorized", []int{404, 401}, "", "rejected the token", 0},
+		{"resolve forbidden", []int{404, 403}, "", "rejected the token", 0},
+		{"retry unauthorized", []int{404, 200, 401}, `{"raw_suffix":true,"ids":["codex:a"]}`, "rejected the token", 0},
+		{"retry forbidden", []int{404, 200, 403}, `{"raw_suffix":true,"ids":["codex:a"]}`, "rejected the token", 0},
+		{"server error", []int{500}, "", "HTTP", 0},
+		{"malformed resolve", []int{404, 200}, `{`, "parse", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0
@@ -94,11 +95,11 @@ func TestAgentsViewResponses(t *testing.T) {
 				assert.NotContains(t, err.Error(), "fixture-token")
 			} else {
 				require.NoError(t, err)
-				if tc.name == "direct" {
-					require.NotNil(t, usage)
-					assert.InDelta(t, 0.5, usage.CostUSD, 1e-9)
-				} else {
+				if tc.wantCost == 0 {
 					assert.Nil(t, usage)
+				} else {
+					require.NotNil(t, usage)
+					assert.InDelta(t, tc.wantCost, usage.CostUSD, 1e-9)
 				}
 			}
 			assert.Equal(t, len(tc.statuses), calls)
