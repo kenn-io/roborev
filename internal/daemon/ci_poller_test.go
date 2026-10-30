@@ -885,6 +885,93 @@ func TestCIPollerProcessPR_SkipsConfiguredLabel(t *testing.T) {
 	assert.True(t, h.hasPanel(t, "acme/api", 9, "skipped-head-sha"))
 }
 
+func TestCIPollerProcessPR_AuthorAndBranchFilters(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		ci       config.CIConfig
+		pr       ghPR
+		wantSkip string // expected skip description; empty means reviewed
+	}{
+		{
+			name: "no filters reviews everyone",
+			pr:   ghPR{Author: ghPRAuthor{Login: "stranger"}, AuthorAssociation: "NONE", HeadRefName: "dependabot/npm/lodash"},
+		},
+		{
+			name:     "outside author skipped",
+			ci:       config.CIConfig{AllowedAuthors: []string{"alice"}, AllowedAuthorAssociations: []string{"OWNER", "MEMBER", "COLLABORATOR"}},
+			pr:       ghPR{Author: ghPRAuthor{Login: "stranger"}, AuthorAssociation: "FIRST_TIME_CONTRIBUTOR", HeadRefName: "patch-1"},
+			wantSkip: "Review skipped: author not in allowed authors",
+		},
+		{
+			name: "listed author reviewed",
+			ci:   config.CIConfig{AllowedAuthors: []string{"Alice"}},
+			pr:   ghPR{Author: ghPRAuthor{Login: "alice"}, AuthorAssociation: "CONTRIBUTOR", HeadRefName: "patch-1"},
+		},
+		{
+			name: "member association reviewed",
+			ci:   config.CIConfig{AllowedAuthorAssociations: []string{"MEMBER"}},
+			pr:   ghPR{Author: ghPRAuthor{Login: "bob"}, AuthorAssociation: "MEMBER", HeadRefName: "patch-1"},
+		},
+		{
+			name:     "excluded branch skipped",
+			ci:       config.CIConfig{ExcludeBranches: []string{"dependabot/*", "renovate/*"}},
+			pr:       ghPR{Author: ghPRAuthor{Login: "dependabot[bot]"}, HeadRefName: "dependabot/npm_and_yarn/lodash-4.17.21"},
+			wantSkip: "Review skipped: branch filtered",
+		},
+		{
+			name:     "branch outside include skipped",
+			ci:       config.CIConfig{IncludeBranches: []string{"feature/*", "fix/*"}},
+			pr:       ghPR{Author: ghPRAuthor{Login: "alice"}, HeadRefName: "chore/cleanup"},
+			wantSkip: "Review skipped: branch filtered",
+		},
+		{
+			name: "included branch reviewed",
+			ci:   config.CIConfig{IncludeBranches: []string{"feature/*"}, ExcludeBranches: []string{"feature/wip-*"}},
+			pr:   ghPR{Author: ghPRAuthor{Login: "alice"}, HeadRefName: "feature/login"},
+		},
+		{
+			name:     "exclude wins over include",
+			ci:       config.CIConfig{IncludeBranches: []string{"feature/*"}, ExcludeBranches: []string{"feature/wip-*"}},
+			pr:       ghPR{Author: ghPRAuthor{Login: "alice"}, HeadRefName: "feature/wip-login"},
+			wantSkip: "Review skipped: branch filtered",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+			h.Cfg.CI.AllowedAuthors = tt.ci.AllowedAuthors
+			h.Cfg.CI.AllowedAuthorAssociations = tt.ci.AllowedAuthorAssociations
+			h.Cfg.CI.IncludeBranches = tt.ci.IncludeBranches
+			h.Cfg.CI.ExcludeBranches = tt.ci.ExcludeBranches
+			h.Cfg.CI.ReviewTypes = []string{"security"}
+			h.Cfg.CI.Agents = []string{"codex"}
+			h.stubProcessPRGit()
+			statuses := h.CaptureCommitStatuses()
+			skippedChecks := h.CaptureSkippedChecks()
+
+			const headSHA = "filtered-head-sha"
+			pr := tt.pr
+			pr.Number = 9
+			pr.HeadRefOid = headSHA
+			pr.BaseRefName = "main"
+			require.NoError(t, h.Poller.processPR(context.Background(), "acme/api", pr, h.Cfg))
+
+			if tt.wantSkip == "" {
+				assert.True(h.hasPanel(t, "acme/api", 9, headSHA))
+				assert.Empty(*skippedChecks)
+				return
+			}
+			assert.False(h.hasPanel(t, "acme/api", 9, headSHA))
+			assert.Equal([]capturedStatus{{
+				Repo: "acme/api", SHA: headSHA, State: "success", Desc: tt.wantSkip,
+			}}, *statuses)
+			assert.Equal([]capturedSkippedCheck{{
+				Repo: "acme/api", SHA: headSHA, Summary: tt.wantSkip,
+			}}, *skippedChecks)
+		})
+	}
+}
+
 // drivePanelOutcome resolves the panel run for a PR HEAD and drives every
 // member to terminal status with the spec'd outcome, then drives the synthesis
 // job: "transient" fails each member with an outage error and fails the
@@ -4807,6 +4894,80 @@ func TestRetryDueReviewAttemptSkipsConfiguredLabel(t *testing.T) {
 		Repo: "acme/api", SHA: headSHA,
 		Summary: "Review skipped: label Skip-Review",
 	}}, *skippedChecks)
+}
+
+// TestRetryDueReviewAttemptAppliesPRFilters checks that a deferred retry whose
+// PR is fetched directly still sees the author association and head branch.
+func TestRetryDueReviewAttemptAppliesPRFilters(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		target   panelPostTarget
+		wantSkip string // expected skip description; empty means retried
+	}{
+		{
+			name:   "member retried",
+			target: panelPostTarget{AuthorLogin: "bob", AuthorAssociation: "MEMBER", HeadRefName: "feature/retry"},
+		},
+		{
+			name:     "outside author skipped",
+			target:   panelPostTarget{AuthorLogin: "stranger", AuthorAssociation: "NONE", HeadRefName: "feature/retry"},
+			wantSkip: "Review skipped: author not in allowed authors",
+		},
+		{
+			name:     "excluded branch skipped",
+			target:   panelPostTarget{AuthorLogin: "bob", AuthorAssociation: "MEMBER", HeadRefName: "renovate/lodash-4.x"},
+			wantSkip: "Review skipped: branch filtered",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+			h.Cfg.CI.AllowedAuthorAssociations = []string{"MEMBER"}
+			h.Cfg.CI.ExcludeBranches = []string{"renovate/*"}
+			h.Cfg.CI.ReviewTypes = []string{"security"}
+			h.Cfg.CI.Agents = []string{"codex"}
+			h.stubProcessPRGit()
+			statuses := h.CaptureCommitStatuses()
+			skippedChecks := h.CaptureSkippedChecks()
+
+			const headSHA = "filtereddeferred1"
+			const prNum = 134
+			now := time.Now()
+			created, err := h.DB.ReserveReviewAttempt("acme/api", prNum, headSHA, now.Add(-time.Hour))
+			require.NoError(t, err)
+			require.True(t, created)
+			require.NoError(t, h.DB.DeferReviewAttempt(
+				"acme/api", prNum, headSHA, "transient", "provider unavailable",
+				testUUIDPtr("old-run"), now.Add(-time.Minute), false))
+
+			target := tt.target
+			target.Open = true
+			target.HeadSHA = headSHA
+			target.BaseRefName = "main"
+			h.Poller.prPostTargetFn = func(context.Context, string, int) (panelPostTarget, error) {
+				return target, nil
+			}
+			require.NoError(t, h.Poller.retryDueReviewAttempts(
+				context.Background(), "acme/api", nil, h.Cfg))
+
+			attempt, err := h.DB.GetReviewAttempt("acme/api", prNum, headSHA)
+			require.NoError(t, err)
+			if tt.wantSkip == "" {
+				require.NotNil(t, attempt)
+				assert.Equal("pending", attempt.State)
+				assert.True(h.hasPanel(t, "acme/api", prNum, headSHA))
+				return
+			}
+			assert.Nil(attempt)
+			assert.False(h.hasPanel(t, "acme/api", prNum, headSHA))
+			assert.Equal([]capturedStatus{{
+				Repo: "acme/api", SHA: headSHA, State: "success", Desc: tt.wantSkip,
+			}}, *statuses)
+			assert.Equal([]capturedSkippedCheck{{
+				Repo: "acme/api", SHA: headSHA, Summary: tt.wantSkip,
+			}}, *skippedChecks)
+		})
+	}
 }
 
 // TestReconcileStuckAttempt covers the crash/stuck reconcile: a pending attempt

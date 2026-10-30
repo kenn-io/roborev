@@ -1149,7 +1149,9 @@ func applyDaemonSections(c *Config) []error {
 		validate func() error
 	}{
 		{"budget", c.Budget.Validate},
-		{"ci", c.CI.NormalizeInstallations},
+		{"ci", func() error {
+			return errors.Join(c.CI.NormalizeInstallations(), validateCIPRFilters(c.CI))
+		}},
 		{"search", func() error { return validateSearchConfig(c.Search) }},
 		{"remote", func() error { return validateRemoteConfig(c.Remote) }},
 		{"web", func() error { return normalizeWebConfig(&c.Web, c.AuthKey) }},

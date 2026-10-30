@@ -81,18 +81,21 @@ type ghPR struct {
 	Title       string     `json:"title"`
 	Body        string     `json:"body"`
 	Author      ghPRAuthor `json:"author"`
-	Labels      []string   `json:"labels"`
+	// AuthorAssociation is GitHub's author_association for the PR author.
+	AuthorAssociation string   `json:"authorAssociation"`
+	Labels            []string `json:"labels"`
 }
 
 type panelPostTarget struct {
-	Open        bool
-	HeadSHA     string
-	HeadRefName string
-	BaseRefName string
-	Title       string
-	Body        string
-	AuthorLogin string
-	Labels      []string
+	Open              bool
+	HeadSHA           string
+	HeadRefName       string
+	BaseRefName       string
+	Title             string
+	Body              string
+	AuthorLogin       string
+	AuthorAssociation string
+	Labels            []string
 }
 
 const (
@@ -595,11 +598,11 @@ func (p *CIPoller) reconcileRetryHealth(
 		// Exhausted retries no longer enter the retry sweep. Retire their
 		// failure when the open PR has moved on or explicitly skips review.
 		if pr, open := openByNumber[attempt.PRNumber]; open && attempt.State == "done" {
-			label, skip := matchingCISkipLabel(pr.Labels, cfg.CI.SkipLabels)
+			reason, skip := ciPRSkip(pr, &cfg.CI)
 			if pr.HeadRefOid != attempt.HeadSHA || skip {
 				var err error
 				if pr.HeadRefOid == attempt.HeadSHA {
-					err = p.skipLabeledPR(ghRepo, pr, label, &attempt)
+					err = p.skipPR(ghRepo, pr, reason, &attempt)
 				} else {
 					err = p.db.DeleteReviewAttempt(ghRepo, attempt.PRNumber, attempt.HeadSHA)
 				}
@@ -663,13 +666,13 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	}
 	// Skip a deferred retry immediately, even during backoff. Active and
 	// completed reviews still belong to the normal deduplication gate below.
-	if label, skip := matchingCISkipLabel(pr.Labels, cfg.CI.SkipLabels); skip {
+	if reason, skip := ciPRSkip(pr, &cfg.CI); skip {
 		attempt, err := p.db.GetReviewAttempt(ghRepo, pr.Number, pr.HeadRefOid)
 		if err != nil {
 			return fmt.Errorf("check skipped review attempt: %w", err)
 		}
 		if attempt != nil && attempt.State == "deferred" {
-			return p.skipLabeledPR(ghRepo, pr, label, attempt)
+			return p.skipPR(ghRepo, pr, reason, attempt)
 		}
 	}
 	// Skip if this HEAD already has a panel run.
@@ -680,8 +683,8 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	if reviewed {
 		return nil
 	}
-	if label, skip := matchingCISkipLabel(pr.Labels, cfg.CI.SkipLabels); skip {
-		return p.skipLabeledPR(ghRepo, pr, label, nil)
+	if reason, skip := ciPRSkip(pr, &cfg.CI); skip {
+		return p.skipPR(ghRepo, pr, reason, nil)
 	}
 
 	// Throttle: skip if this PR was reviewed recently (any SHA).
@@ -913,7 +916,39 @@ func (p *CIPoller) setNoAgentStatus(ghRepo string, pr ghPR) {
 	}
 }
 
-func (p *CIPoller) skipLabeledPR(ghRepo string, pr ghPR, label string, expected *storage.ReviewAttempt) error {
+// ciSkip explains why the CI poller skips a PR instead of reviewing it.
+type ciSkip struct {
+	description string // commit status description and check summary
+	reason      string // log detail
+}
+
+// ciPRSkip reports whether the [ci] skip_labels, author, or branch filters
+// exclude this PR from review.
+func ciPRSkip(pr ghPR, ci *config.CIConfig) (ciSkip, bool) {
+	if label, skip := matchingCISkipLabel(pr.Labels, ci.SkipLabels); skip {
+		return ciSkip{
+			description: fmt.Sprintf("Review skipped: label %s", label),
+			reason:      fmt.Sprintf("it has label %q", label),
+		}, true
+	}
+	if !ci.IsPRAuthorAllowed(pr.Author.Login, pr.AuthorAssociation) {
+		return ciSkip{
+			description: "Review skipped: author not in allowed authors",
+			reason: fmt.Sprintf("author %q (association %q) is not allowed by ci.allowed_authors or ci.allowed_author_associations",
+				pr.Author.Login, pr.AuthorAssociation),
+		}, true
+	}
+	if !ci.IsPRBranchAllowed(pr.HeadRefName) {
+		return ciSkip{
+			description: "Review skipped: branch filtered",
+			reason: fmt.Sprintf("branch %q is filtered by ci.include_branches or ci.exclude_branches",
+				pr.HeadRefName),
+		}, true
+	}
+	return ciSkip{}, false
+}
+
+func (p *CIPoller) skipPR(ghRepo string, pr ghPR, skip ciSkip, expected *storage.ReviewAttempt) error {
 	panelID, err := p.db.ClaimPanelForSkip(ghRepo, pr.Number, pr.HeadRefOid, expected)
 	if err != nil {
 		return fmt.Errorf("claim skipped review: %w", err)
@@ -921,8 +956,8 @@ func (p *CIPoller) skipLabeledPR(ghRepo string, pr ghPR, label string, expected 
 	if panelID != 0 {
 		defer p.releasePanelClaim(panelID)
 	}
-	description := fmt.Sprintf("Review skipped: label %s", label)
-	log.Printf("CI poller: skipping %s#%d because it has label %q", ghRepo, pr.Number, label)
+	description := skip.description
+	log.Printf("CI poller: skipping %s#%d because %s", ghRepo, pr.Number, skip.reason)
 	if err := p.callSetSkippedCheck(ghRepo, pr.HeadRefOid, description); err != nil {
 		return fmt.Errorf("set skipped check: %w", err)
 	}
@@ -2263,14 +2298,15 @@ func (p *CIPoller) listOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, erro
 	prs := make([]ghPR, 0, len(openPRs))
 	for _, pr := range openPRs {
 		prs = append(prs, ghPR{
-			Number:      pr.Number,
-			HeadRefOid:  pr.HeadRefOID,
-			HeadRefName: pr.HeadRefName,
-			BaseRefName: pr.BaseRefName,
-			Title:       pr.Title,
-			Body:        pr.Body,
-			Author:      ghPRAuthor{Login: pr.AuthorLogin},
-			Labels:      pr.Labels,
+			Number:            pr.Number,
+			HeadRefOid:        pr.HeadRefOID,
+			HeadRefName:       pr.HeadRefName,
+			BaseRefName:       pr.BaseRefName,
+			Title:             pr.Title,
+			Body:              pr.Body,
+			Author:            ghPRAuthor{Login: pr.AuthorLogin},
+			AuthorAssociation: pr.AuthorAssociation,
+			Labels:            pr.Labels,
 		})
 	}
 	return prs, nil
@@ -3092,8 +3128,8 @@ func (p *CIPoller) retryDueReviewAttempt(
 		}
 		return false // PR advanced; the new HEAD already has its own attempt
 	}
-	if label, skip := matchingCISkipLabel(pr.Labels, cfg.CI.SkipLabels); skip {
-		if err := p.skipLabeledPR(ghRepo, pr, label, attempt); err != nil {
+	if reason, skip := ciPRSkip(pr, &cfg.CI); skip {
+		if err := p.skipPR(ghRepo, pr, reason, attempt); err != nil {
 			log.Printf("CI poller: error skipping deferred attempt for %s#%d@%s: %v",
 				ghRepo, attempt.PRNumber, gitpkg.ShortSHA(attempt.HeadSHA), err)
 			p.recordPollResult(ghRepo, attempt.PRNumber, attempt.HeadSHA, err)
@@ -3202,9 +3238,10 @@ func (p *CIPoller) retryAttemptPR(
 		Title:       target.Title,
 		Body:        target.Body,
 		Labels:      target.Labels,
-		// Preserve the author so kata trust gating in enqueuePanelRun does
-		// not fail closed for trusted authors on the retry path.
-		Author: ghPRAuthor{Login: target.AuthorLogin},
+		// Preserve the author so the [ci] author filter does not skip
+		// trusted authors on the retry path.
+		Author:            ghPRAuthor{Login: target.AuthorLogin},
+		AuthorAssociation: target.AuthorAssociation,
 	}, true
 }
 
@@ -3684,14 +3721,15 @@ func (p *CIPoller) panelPostTarget(
 		return panelPostTarget{}, err
 	}
 	return panelPostTarget{
-		Open:        strings.EqualFold(pr.State, "open"),
-		HeadSHA:     pr.HeadRefOID,
-		HeadRefName: pr.HeadRefName,
-		BaseRefName: pr.BaseRefName,
-		Title:       pr.Title,
-		Body:        pr.Body,
-		AuthorLogin: pr.AuthorLogin,
-		Labels:      pr.Labels,
+		Open:              strings.EqualFold(pr.State, "open"),
+		HeadSHA:           pr.HeadRefOID,
+		HeadRefName:       pr.HeadRefName,
+		BaseRefName:       pr.BaseRefName,
+		Title:             pr.Title,
+		Body:              pr.Body,
+		AuthorLogin:       pr.AuthorLogin,
+		AuthorAssociation: pr.AuthorAssociation,
+		Labels:            pr.Labels,
 	}, nil
 }
 
