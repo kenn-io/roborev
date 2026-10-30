@@ -94,16 +94,6 @@ func TestCICheckSnapshot(t *testing.T) {
 	require.ErrorContains(t, err, "CI checker reasoning")
 }
 
-func TestCICheckConfiguredCommand(t *testing.T) {
-	tc := newWorkerTestContext(t, 1)
-	cfg := config.DefaultConfig()
-	cfg.CodexCmd = "custom-codex"
-	tc.Pool.cfgGetter = NewStaticConfig(cfg)
-	t.Setenv("PATH", t.TempDir())
-	_, err := tc.Pool.runCICheck(t.Context(), &storage.ReviewJob{RepoPath: tc.TmpDir, GitRef: "HEAD"}, ciCheckConfig{}, structuredreview.Document{}, nil, io.Discard)
-	require.ErrorContains(t, err, "custom-codex")
-}
-
 func TestCICheckLog(t *testing.T) {
 	for _, provider := range []string{"codex", "claude-code"} {
 		t.Run(provider, func(t *testing.T) {
@@ -149,6 +139,7 @@ func TestCICheckCompletion(t *testing.T) {
 	for _, mode := range []string{"failure", "drop", "agent drop", "empty canceled", "checker canceled", "checker deadline"} {
 		t.Run(mode, func(t *testing.T) {
 			tc := newWorkerTestContext(t, 1)
+			tc.Pool.cfgGetter.Config().CodexCmd = "custom-codex"
 			synthAgent := &synthesisEntrypointTestAgent{name: "checker-agent", result: raw}
 			agent.RegisterForTest(t, synthAgent)
 			run, members, _ := enqueuePanelRun(t, tc, "checker", []memberSpec{{name: "one", agent: "test"}})
@@ -169,12 +160,13 @@ func TestCICheckCompletion(t *testing.T) {
 			require.NoError(t, tc.DB.CompleteJobResult(members[0].ID, "test", storage.ReviewCompletion{Output: "two claims", Verdict: storage.VerdictFail, StructuredOutput: jsontext.Value(raw)}))
 			job := releaseAndClaimSynthesis(t, tc, run)
 			calls := 0
-			tc.Pool.ciCheck = func(ctx context.Context, _ *storage.ReviewJob, cfg ciCheckConfig, doc structuredreview.Document, _ []string, out io.Writer) (structuredreview.Document, error) {
+			tc.Pool.ciCheck = func(ctx context.Context, job *storage.ReviewJob, cfg ciCheckConfig, doc structuredreview.Document, env []string, out io.Writer) (structuredreview.Document, error) {
 				calls++
 				assert.Equal(t, "high", cfg.Reasoning)
 				require.Len(t, doc.Findings, 2)
 				if mode == "failure" {
-					return structuredreview.Document{}, fmt.Errorf("forced checker failure")
+					// The configured Codex command isn't installed.
+					return tc.Pool.runCICheck(ctx, job, cfg, doc, env, out)
 				}
 				if ctx.Err() != nil {
 					return structuredreview.Document{}, ctx.Err()
@@ -240,7 +232,8 @@ func TestCICheckCompletion(t *testing.T) {
 			if mode == "failure" {
 				log, err := os.ReadFile(JobLogPath(job.ID))
 				require.NoError(t, err)
-				assert.Contains(t, string(log), "CI checker failed; keeping original review: forced checker failure")
+				assert.Contains(t, string(log), "CI checker failed; keeping original review: get checker codex")
+				assert.Contains(t, string(log), "custom-codex")
 			}
 		})
 	}
