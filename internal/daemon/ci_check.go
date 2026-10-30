@@ -7,9 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"log"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"go.kenn.io/kit/pathresolve"
@@ -145,7 +149,7 @@ func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob
 	if err != nil {
 		return
 	}
-	run.cleanup = closeCheckout
+	run.cleanup = ciCheckCleanup(checkout, closeCheckout)
 	defer func() {
 		if err != nil {
 			run.cleanup()
@@ -168,7 +172,7 @@ func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob
 	if run.Repo, closeRepo, err = wp.createExactCheckoutIn(ctx, "ci-checker", job, run.Job.WorkDir); err != nil {
 		return
 	}
-	run.cleanup = func() { closeRepo(); closeCheckout() }
+	run.cleanup = ciCheckCleanup(checkout, func() { closeRepo(); closeCheckout() })
 	var commonDir string
 	commonDir, err = gitpkg.ResolveGitCommonDir(job.RepoPath)
 	if err != nil {
@@ -200,6 +204,15 @@ func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob
 	run.Job.MemoryMax = 8 << 30
 	run.Job.Env = env
 	return
+}
+
+func ciCheckCleanup(checkout string, closeCheckout func()) func() {
+	return func() {
+		if err := makeCIWorktreeWritable(checkout); err != nil {
+			log.Printf("Warning: restore checker worktree permissions: %v", err)
+		}
+		closeCheckout()
+	}
 }
 
 // Every read grant must leave host homes outside the checker's filesystem.
@@ -240,26 +253,39 @@ func validateCICheckReadPaths(paths []string) error {
 	return nil
 }
 
-func warmGoModules(ctx context.Context, checkout string, gitEnv []string, out io.Writer) ([]string, error) {
-	hasModule := false
-	for _, name := range []string{"go.mod", "go.work", "go.sum", "go.work.sum"} {
-		path := filepath.Join(checkout, name)
-		info, err := os.Lstat(path)
-		if os.IsNotExist(err) {
-			continue
-		}
+// The warming checkout contains committed files and the disposable checker root.
+func ciCheckGoDirs(checkout string) ([]string, error) {
+	dirs := make(map[string]bool)
+	err := filepath.WalkDir(checkout, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
-			return nil, err
+			return err
 		}
-		if !info.Mode().IsRegular() {
-			if err := os.RemoveAll(path); err != nil {
-				return nil, err
+		if entry.IsDir() {
+			if path != checkout && (entry.Name() == ".git" || strings.HasPrefix(entry.Name(), "roborev-ci-check-")) {
+				return filepath.SkipDir
 			}
-		} else if name == "go.mod" || name == "go.work" {
-			hasModule = true
+			return nil
 		}
+		switch entry.Name() {
+		case "go.mod", "go.work", "go.sum", "go.work.sum":
+			if !entry.Type().IsRegular() {
+				return os.RemoveAll(path)
+			}
+			if entry.Name() == "go.mod" || entry.Name() == "go.work" {
+				dirs[filepath.Dir(path)] = true
+			}
+		}
+		return nil
+	})
+	return slices.Sorted(maps.Keys(dirs)), err
+}
+
+func warmGoModules(ctx context.Context, checkout string, gitEnv []string, out io.Writer) ([]string, error) {
+	dirs, err := ciCheckGoDirs(checkout)
+	if err != nil {
+		return nil, err
 	}
-	if !hasModule {
+	if len(dirs) == 0 {
 		return nil, nil
 	}
 	goEnv := exec.CommandContext(ctx, "go", "env", "GOROOT", "GOMODCACHE")
@@ -276,11 +302,13 @@ func warmGoModules(ctx context.Context, checkout string, gitEnv []string, out io
 	if len(paths) != 2 || paths[0] == "" || paths[1] == "" {
 		return nil, fmt.Errorf("checker go env returned incomplete paths")
 	}
-	warm := exec.CommandContext(ctx, filepath.Join(paths[0], "bin", "go"), "mod", "download")
-	warm.Dir = checkout
-	warm.Env = gitEnv
-	if output, err := warm.CombinedOutput(); err != nil {
-		fmt.Fprintf(out, "CI checker module warming failed: %v: %s\n", err, output)
+	for _, dir := range dirs {
+		warm := exec.CommandContext(ctx, filepath.Join(paths[0], "bin", "go"), "mod", "download")
+		warm.Dir = dir
+		warm.Env = gitEnv
+		if output, err := warm.CombinedOutput(); err != nil {
+			fmt.Fprintf(out, "CI checker module warming failed: %v: %s\n", err, output)
+		}
 	}
 	return paths, nil
 }

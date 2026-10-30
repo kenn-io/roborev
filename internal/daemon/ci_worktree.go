@@ -198,7 +198,7 @@ func isLinkedWorktree(dir string) bool {
 }
 
 func removeStaleCIWorktree(ctx context.Context, worktreeDir string) error {
-	if err := makeCIWorktreeWritable(worktreeDir); err != nil {
+	if err := makeCICheckRootsWritable(worktreeDir); err != nil {
 		return fmt.Errorf("restore CI worktree permissions: %w", err)
 	}
 	repoPath, err := readCIWorktreeMarker(worktreeDir)
@@ -225,6 +225,25 @@ func removeStaleCIWorktree(ctx context.Context, worktreeDir string) error {
 	}
 	if pruneErr != nil {
 		return fmt.Errorf("prune stale CI worktree metadata for %s: %w", repoPath, pruneErr)
+	}
+	return nil
+}
+
+// Only checker roots contain caches and scratch files that need permission repair.
+func makeCICheckRootsWritable(worktreeDir string) error {
+	entries, err := os.ReadDir(worktreeDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), "roborev-ci-check-") {
+			if err := makeCIWorktreeWritable(filepath.Join(worktreeDir, entry.Name())); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
