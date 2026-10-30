@@ -111,7 +111,7 @@ func TestCICheckLog(t *testing.T) {
 				fmt.Fprint(out, `{"type":"item.completed","item":{"type":"agent_message","text":"Checker progress"}}`)
 				return doc, nil
 			}
-			doc := structuredreview.Document{Findings: []structuredreview.Finding{{Problem: "claim"}}}
+			doc := structuredreview.Document{Findings: []structuredreview.Finding{{Severity: "high", Problem: "claim"}}}
 			_, ran := tc.Pool.checkSynthesis(t.Context(), job, synthesisResult{}, doc, &ciCheckConfig{})
 			require.True(t, ran)
 			for _, want := range []string{"[Command: go test ./example]", "Checker progress"} {
@@ -137,26 +137,27 @@ func TestCICheckCompletion(t *testing.T) {
 	t.Run("below severity threshold", func(t *testing.T) {
 		tc := newWorkerTestContext(t, 1)
 		run, members, _ := enqueuePanelRun(t, tc, "checker", []memberSpec{{name: "one", agent: "test"}})
+		_, err := tc.DB.Exec("UPDATE review_jobs SET min_severity = 'high' WHERE panel_run_uuid = ? AND panel_role = 'synthesis'", run)
+		require.NoError(t, err)
 		completeMember(t, tc, members[0].ID, "test", "low finding")
 		job := releaseAndClaimSynthesis(t, tc, run)
-		job.MinSeverity = "high"
 		tc.Pool.ciCheck = func(_ context.Context, job *storage.ReviewJob, _ ciCheckConfig, doc structuredreview.Document, _ []string, _ io.Writer) (structuredreview.Document, error) {
 			require.False(t, doc.Passed(job.MinSeverity), "checker called for a passing review")
 			return doc, nil
 		}
-		doc := structuredreview.Document{SchemaVersion: 3, Summary: "One claim", Verdict: "pass", Findings: []structuredreview.Finding{
-			{Severity: "low", Problem: "Minor claim", Fix: "Fix claim"},
+		doc := structuredreview.Document{SchemaVersion: 3, SourceLabels: []string{"test"}, Summary: "One claim", Verdict: "pass", Findings: []structuredreview.Finding{
+			{Severity: "low", Problem: "Minor claim", Fix: "Fix claim", Sources: []int{1}},
 		}}
 		encoded, err := json.Marshal(doc)
 		require.NoError(t, err)
-		original := synthesisResult{review: reviewpkg.ReviewResult{Agent: "test", Output: "Original low finding output", Verdict: storage.VerdictPass, StructuredOutput: encoded}}
+		original := synthesisResult{review: reviewpkg.ReviewResult{Agent: "test", Output: doc.Markdown("high"), Verdict: storage.VerdictPass, StructuredOutput: encoded}}
 		tc.Pool.checkAndCompleteSynthesis(t.Context(), testWorkerID, job, original, doc, &ciCheckConfig{})
 		finished, err := tc.DB.GetJobByID(job.ID)
 		require.NoError(t, err)
 		assert.Equal(t, storage.JobStatusDone, finished.Status)
 		stored, err := tc.DB.GetReviewByJobID(job.ID)
 		require.NoError(t, err)
-		assert.Equal(t, "Original low finding output", stored.Output)
+		assert.Equal(t, original.review.Output, stored.Output)
 		assert.Equal(t, storage.VerdictPass, stored.Verdict())
 	})
 
