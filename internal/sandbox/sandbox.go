@@ -6,12 +6,10 @@ import (
 	"crypto/sha256"
 	"encoding/json/v2"
 	"fmt"
-	"io"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 
@@ -39,33 +37,17 @@ type Route struct {
 // The caller must call cleanup after the command finishes.
 // The wrapped command starts in a private directory, so callers pass an absolute working directory, as Codex does with -C.
 func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cleanup func(), err error) {
-	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
-		return nil, nil, nil, fmt.Errorf("sandbox requires linux/amd64")
-	}
 	if j.MemoryMax <= 0 {
 		return nil, nil, nil, fmt.Errorf("sandbox MemoryMax must be positive")
 	}
-	workDir, err := filepath.Abs(j.WorkDir)
-	if err == nil {
-		workDir, err = pathresolve.EvalSymlinks(workDir)
-	}
+	workDir, err := ResolvePath(j.WorkDir)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("resolve sandbox WorkDir: %w", err)
 	}
 	j.WorkDir = workDir
-	tempDir, err := filepath.Abs(os.TempDir())
-	if err == nil {
-		tempDir, err = pathresolve.EvalSymlinks(tempDir)
-	}
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("resolve sandbox temp dir: %w", err)
-	}
 	readPaths := make([]string, 0, len(j.ReadPaths))
 	for _, path := range j.ReadPaths {
-		resolved, err := filepath.Abs(path)
-		if err == nil {
-			resolved, err = pathresolve.EvalSymlinks(resolved)
-		}
+		resolved, err := ResolvePath(path)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("resolve sandbox read path %q: %w", path, err)
 		}
@@ -76,13 +58,6 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 		if rel == "." || filepath.IsLocal(rel) {
 			return nil, nil, nil, fmt.Errorf("read path %q is inside sandbox WorkDir %q; read paths must be outside it", path, workDir)
 		}
-		rel, err = filepath.Rel(resolved, tempDir)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("compare sandbox read path %q with temp dir: %w", path, err)
-		}
-		if rel == "." || filepath.IsLocal(rel) {
-			return nil, nil, nil, fmt.Errorf("read path %q contains sandbox temp dir %q", path, tempDir)
-		}
 		readPaths = append(readPaths, resolved)
 	}
 	j.ReadPaths = readPaths
@@ -90,25 +65,16 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("find sandbox nono: %w", err)
 	}
-	nono, err = filepath.Abs(nono)
-	if err == nil {
-		nono, err = pathresolve.EvalSymlinks(nono)
-	}
+	nono, err = ResolvePath(nono)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("resolve sandbox nono: %w", err)
 	}
-	f, err := os.Open(nono)
+	binary, err := os.ReadFile(nono)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("open sandbox nono: %w", err)
-	}
-	hash := sha256.New()
-	_, err = io.Copy(hash, f)
-	_ = f.Close()
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("hash sandbox nono: %w", err)
+		return nil, nil, nil, fmt.Errorf("read sandbox nono: %w", err)
 	}
 	const pinnedSHA256 = "e02d003d52b3f65e8c75358eb73e339ad952a2876529047e61183b46eff1287d"
-	if fmt.Sprintf("%x", hash.Sum(nil)) != pinnedSHA256 {
+	if fmt.Sprintf("%x", sha256.Sum256(binary)) != pinnedSHA256 {
 		return nil, nil, nil, fmt.Errorf("sandbox nono checksum mismatch: requires pinned nono 0.80.0 linux/amd64")
 	}
 
@@ -216,4 +182,16 @@ func killScope(unit string) {
 	_ = exec.Command("systemctl", "--user", "kill", "--signal=KILL", "--kill-whom=all", unit).Run()
 	// Wait for the unit to stop before the caller removes the job's files.
 	_ = exec.Command("systemctl", "--user", "stop", unit).Run()
+}
+
+// ResolvePath rejects empty grants and resolves absolute paths through symlinks.
+func ResolvePath(path string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("empty path")
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return pathresolve.EvalSymlinks(absolute)
 }

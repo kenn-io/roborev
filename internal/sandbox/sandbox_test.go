@@ -41,6 +41,12 @@ func TestSandboxCommandRejectsUnavailablePolicy(t *testing.T) {
 	}
 }
 
+func TestSandboxCommandRejectsEmptyWorkDir(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	_, _, _, err := (Job{MemoryMax: 1 << 30}).Command(t.Context(), []string{"true"})
+	require.ErrorContains(t, err, "resolve sandbox WorkDir: empty path")
+}
+
 func TestSandboxCommandRejectsReadPaths(t *testing.T) {
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 		t.Skip("nono pin requires linux/amd64")
@@ -50,13 +56,9 @@ func TestSandboxCommandRejectsReadPaths(t *testing.T) {
 	require.NoError(t, os.WriteFile(file, []byte("fixture"), 0o600))
 	link := filepath.Join(t.TempDir(), "read-link")
 	require.NoError(t, os.Symlink(file, link))
-	tempParent := t.TempDir()
-	require.NoError(t, os.Mkdir(filepath.Join(tempParent, "tmp"), 0o700))
-	t.Setenv("TMPDIR", filepath.Join(tempParent, "tmp"))
 	for _, tc := range []struct {
 		name, path, want string
 	}{
-		{"temp-parent", tempParent, "contains sandbox temp dir"},
 		{"file", file, "inside sandbox WorkDir"},
 		{"workdir", work, "inside sandbox WorkDir"},
 		{"symlink", link, "inside sandbox WorkDir"},

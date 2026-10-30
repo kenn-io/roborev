@@ -543,14 +543,10 @@ func (a *CodexAgent) review(
 			return "", err
 		}
 		defer cleanup()
-		resolved, err := exec.LookPath(command)
-		if err == nil {
-			resolved, err = filepath.Abs(resolved)
+		if !filepath.IsAbs(command) {
+			return "", fmt.Errorf("sandbox Codex command must be absolute")
 		}
-		if err != nil {
-			return "", err
-		}
-		wrapped, wrappedEnv, cleanup, err := job.Command(ctx, append([]string{"/bin/sh", "-c", `exec "$0" "$@" -c "model_providers.roborev-route.base_url=\"$CODEX_BASE_URL\""`, resolved}, args...))
+		wrapped, wrappedEnv, cleanup, err := job.Command(ctx, append([]string{"/bin/sh", "-c", `exec "$0" "$@" -c "model_providers.roborev-route.base_url=\"$CODEX_BASE_URL\""`, command}, args...))
 		if err != nil {
 			return "", err
 		}

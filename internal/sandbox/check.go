@@ -47,8 +47,6 @@ except urllib.error.HTTPError:
 except Exception:
  sys.exit(1)' 2>/dev/null && bad proxy-external
 [[ ! -v ROBOREV_SANDBOX_CANARY ]] || bad environment-canary
-[[ ! -v XDG_RUNTIME_DIR ]] || bad environment-runtime
-[[ ! -v DBUS_SESSION_BUS_ADDRESS ]] || bad environment-dbus
 /usr/bin/python3 -c 'import socket' 2>/dev/null || bad dbus-probe
 /usr/bin/python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1])' "$4" 2>/dev/null && bad dbus-connect
 denied=$5

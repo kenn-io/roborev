@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -30,12 +29,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestSandboxSelfCheck(t *testing.T) {
-	if os.Getenv("ROBOREV_RUN_SANDBOX_INTEGRATION") != "1" || runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
-		t.Skip("requires opt-in linux/amd64 sandbox integration")
-	}
-	if _, err := exec.LookPath("nono"); err != nil {
-		t.Skip("nono is required")
-	}
+	testutil.RequireSandboxIntegration(t)
 	job := Job{WorkDir: t.TempDir()}
 	err := job.check(t.Context(), []string{"env"}, []string{"PATH=/usr/bin:/bin"})
 	require.ErrorContains(t, err, "sandbox self-check failed")
@@ -45,12 +39,7 @@ func TestSandboxSelfCheck(t *testing.T) {
 }
 
 func TestSandboxLiteralGrants(t *testing.T) {
-	if os.Getenv("ROBOREV_RUN_SANDBOX_INTEGRATION") != "1" || runtime.GOARCH != "amd64" {
-		t.Skip("requires opt-in linux/amd64 sandbox integration")
-	}
-	if _, err := exec.LookPath("nono"); err != nil {
-		t.Skip("nono is required")
-	}
+	testutil.RequireSandboxIntegration(t)
 	base := t.TempDir()
 	work, read := filepath.Join(base, "job*"), filepath.Join(base, "read*")
 	sibling := filepath.Join(base, "job-private")
@@ -85,13 +74,17 @@ check home-write deny touch "$HOME/write"
 check shared-tmp-write deny bash -c 'p=/tmp/roborev-probe-$$; touch "$p" && rm "$p"'
 cd "$5" || exit 1
 check git-read allow git status --porcelain
-check git-commit deny bash -c 'echo changed >> README.md && git add README.md && git -c user.name=Test -c user.email=test@example.com commit -m probe'
+check git-commit deny bash -c 'echo changed >> main.go && git add main.go && git -c user.name=Test -c user.email=test@example.com commit -m probe'
 check git-config deny git config --local sandbox.probe changed
 check dbus-systemd deny env XDG_RUNTIME_DIR="$6" DBUS_SESSION_BUS_ADDRESS="unix:path=$6/bus" systemd-run --user --wait -q /usr/bin/true
 check external-domain deny curl -fsS https://example.com
 check other-loopback deny bash -c ': >/dev/tcp/127.0.0.1/"$1"' probe "$7"
 check direct-upstream deny curl --fail-with-body -sS -o "$1/direct-upstream-response" https://chatgpt.com/backend-api/codex/responses
 check auth-read deny cat "$8"
+# Exercise the endpoint-only route beside /codex; DNS failure isn't a denial.
+base=$(dirname "$CODEX_BASE_URL")
+curl --fail-with-body -sS -H "Proxy-Authorization: Bearer $NONO_PROXY_TOKEN" -o "$1/direct-response" "$base/_ep_chatgpt.com/nono-no-direct-access"
+[ "$?" = 22 ] || failed=1
 exit "$failed"
 `
 	cmd, env, cleanup, err := job.Command(t.Context(), []string{"bash", "-c", script, "probe", work, read, sibling, secret, repo, os.Getenv("XDG_RUNTIME_DIR"), strconv.Itoa(other.Addr().(*net.TCPAddr).Port), authFile})
@@ -110,15 +103,13 @@ exit "$failed"
 	require.NoError(t, err)
 	// nono's TLS interceptor returns this body for an endpoint-policy denial.
 	assert.Equal(t, `{"error":"Forbidden"}`, string(denial))
+	denial, err = os.ReadFile(filepath.Join(work, "direct-response"))
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"error":"Forbidden"}`, string(denial))
 }
 
 func TestSandboxUnenforceablePolicy(t *testing.T) {
-	if os.Getenv("ROBOREV_RUN_SANDBOX_INTEGRATION") != "1" || runtime.GOARCH != "amd64" {
-		t.Skip("requires opt-in linux/amd64 sandbox integration")
-	}
-	if _, err := exec.LookPath("nono"); err != nil {
-		t.Skip("nono is required")
-	}
+	testutil.RequireSandboxIntegration(t)
 	job := Job{WorkDir: t.TempDir(), Route: Route{Name: "codex", Upstream: "http://example.com", Path: "/responses", EnvVar: "CODEX_PHANTOM", Capture: []string{"/bin/echo", "fixture-token"}}, MemoryMax: 1 << 30,
 		Env: []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir()}}
 	_, _, _, err := job.Command(t.Context(), []string{"true"})
@@ -126,9 +117,7 @@ func TestSandboxUnenforceablePolicy(t *testing.T) {
 }
 
 func TestSandboxHostPTYIsolation(t *testing.T) {
-	if os.Getenv("ROBOREV_RUN_SANDBOX_INTEGRATION") != "1" || runtime.GOARCH != "amd64" {
-		t.Skip("requires opt-in linux/amd64 sandbox integration")
-	}
+	testutil.RequireSandboxIntegration(t)
 	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|syscall.O_NOCTTY, 0)
 	require.NoError(t, err)
 	defer master.Close()
@@ -163,42 +152,8 @@ exit "$failed"
 	assert.Contains(t, string(out), "OK host-terminal-write")
 }
 
-func TestSandboxSentinelRoute(t *testing.T) {
-	if os.Getenv("ROBOREV_RUN_SANDBOX_INTEGRATION") != "1" || runtime.GOARCH != "amd64" {
-		t.Skip("requires opt-in linux/amd64 sandbox integration")
-	}
-	work := t.TempDir()
-	job := Job{WorkDir: work, MemoryMax: 1 << 30,
-		Route: Route{Name: "codex", Upstream: "https://example.invalid", Path: "/responses", EnvVar: "CODEX_PHANTOM", Capture: []string{"/bin/echo", "fixture-token"}},
-		Env:   []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir()}}
-	script := testutil.SandboxShellChecks + `
-check work-write allow touch "$1/allowed"
-# Exercise the endpoint-only route that allow_domain adds beside /codex.
-# A DNS or upstream failure must not count as a policy denial.
-base=$(dirname "$CODEX_BASE_URL")
-curl --fail-with-body -sS -H "Proxy-Authorization: Bearer $NONO_PROXY_TOKEN" -o "$1/direct-response" "$base/_ep_example.invalid/nono-no-direct-access"
-[ "$?" = 22 ] || failed=1
-exit "$failed"
-`
-	cmd, env, cleanup, err := job.Command(t.Context(), []string{"bash", "-c", script, "probe", work})
-	require.NoError(t, err)
-	defer cleanup()
-	process := exec.CommandContext(t.Context(), cmd[0], cmd[1:]...)
-	process.Env, process.Dir = env, work
-	out, err := process.CombinedOutput()
-	assert.NoError(t, err, "%s", out)
-	denial, err := os.ReadFile(filepath.Join(work, "direct-response"))
-	require.NoError(t, err)
-	assert.JSONEq(t, `{"error":"Forbidden"}`, string(denial))
-}
-
 func TestSandboxProcessCleanup(t *testing.T) {
-	if os.Getenv("ROBOREV_RUN_SANDBOX_INTEGRATION") != "1" || runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
-		t.Skip("requires opt-in linux/amd64 sandbox integration")
-	}
-	if _, err := exec.LookPath("nono"); err != nil {
-		t.Skip("nono is required")
-	}
+	testutil.RequireSandboxIntegration(t)
 	work := t.TempDir()
 	job := Job{
 		WorkDir: work,

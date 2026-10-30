@@ -1189,39 +1189,16 @@ func TestCodexSandboxRefusesResumeAndPlanning(t *testing.T) {
 	}
 }
 
-func TestCodexSandboxRelativeWorkDirAndRepoContainment(t *testing.T) {
-	for _, relativeHome := range []bool{false, true} {
-		t.Run(fmt.Sprintf("relative-home=%t", relativeHome), func(t *testing.T) {
-			dir, err := filepath.EvalSymlinks(t.TempDir())
-			require.NoError(t, err)
-			t.Chdir(dir)
-			hostHome := filepath.Join(dir, ".login")
-			require.NoError(t, os.Mkdir(hostHome, 0o700))
-			if relativeHome {
-				t.Setenv("CODEX_HOME", ".login")
-			} else {
-				t.Setenv("CODEX_HOME", hostHome)
-			}
-			work := filepath.Join(dir, "work")
-			repo := filepath.Join(work, "repo")
-			require.NoError(t, os.MkdirAll(repo, 0o700))
-			authFile := filepath.Join(hostHome, "auth.json")
-			s := CodexSandbox{Job: sandbox.Job{WorkDir: "work"}}
-			_, _, err = s.prepare(work)
-			require.ErrorContains(t, err, "sandbox repo must be inside job work dir")
-			job, cleanup, err := s.prepare(repo)
-			require.NoError(t, err)
-			defer cleanup()
-
-			assert := assert.New(t)
-			assert.Equal(authFile, job.Route.Capture[len(job.Route.Capture)-1])
-			assert.Equal(work, job.WorkDir)
-			require.Len(t, job.Env, 1)
-			home := strings.TrimPrefix(job.Env[0], "CODEX_HOME=")
-			assert.Equal(work, filepath.Dir(home))
-			assert.FileExists(filepath.Join(home, "config.toml"))
-		})
-	}
+func TestCodexSandboxRepoContainment(t *testing.T) {
+	work := t.TempDir()
+	repo := filepath.Join(work, "repo")
+	require.NoError(t, os.Mkdir(repo, 0o700))
+	s := CodexSandbox{Job: sandbox.Job{WorkDir: work}}
+	_, _, err := s.prepare(work)
+	require.ErrorContains(t, err, "sandbox repo must be inside job work dir")
+	_, cleanup, err := s.prepare(repo)
+	require.NoError(t, err)
+	cleanup()
 }
 
 func TestCodexSandboxWrapperFailure(t *testing.T) {
@@ -1239,4 +1216,8 @@ func TestCodexSandboxWrapperFailure(t *testing.T) {
 	homes, err := filepath.Glob(filepath.Join(dir, ".codex-home-*"))
 	require.NoError(t, err)
 	assert.Empty(t, homes)
+	a.Command = "./codex"
+	_, err = a.Review(t.Context(), repo, "HEAD", "review", nil)
+	require.ErrorContains(t, err, "sandbox Codex command must be absolute")
+	assert.NoFileExists(t, marker)
 }

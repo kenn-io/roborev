@@ -5,9 +5,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/BurntSushi/toml"
-	"go.kenn.io/kit/pathresolve"
-
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/sandbox"
 )
@@ -15,7 +12,7 @@ import (
 // CodexSandbox connects an isolated job to the nono credential route.
 type CodexSandbox struct {
 	Job      sandbox.Job
-	upstream string
+	Upstream string
 }
 
 // WithSandbox returns a copy configured to run inside the job's nono sandbox.
@@ -39,17 +36,11 @@ func (a *CodexAgent) schemaDir() string {
 
 func (s *CodexSandbox) prepare(repoPath string) (sandbox.Job, func(), error) {
 	job := s.Job
-	workDir, err := filepath.Abs(job.WorkDir)
-	if err == nil {
-		workDir, err = pathresolve.EvalSymlinks(workDir)
-	}
+	workDir, err := sandbox.ResolvePath(job.WorkDir)
 	if err != nil {
 		return job, nil, fmt.Errorf("resolve sandbox work dir: %w", err)
 	}
-	repo, err := filepath.Abs(repoPath)
-	if err == nil {
-		repo, err = pathresolve.EvalSymlinks(repo)
-	}
+	repo, err := sandbox.ResolvePath(repoPath)
 	if err != nil {
 		return job, nil, fmt.Errorf("resolve sandbox repo: %w", err)
 	}
@@ -67,7 +58,7 @@ func (s *CodexSandbox) prepare(repoPath string) (sandbox.Job, func(), error) {
 		return job, nil, fmt.Errorf("resolve Codex login path: %w", err)
 	}
 	job.DenyReadPaths = append(append([]string{}, job.DenyReadPaths...), authFile)
-	upstream := s.upstream
+	upstream := s.Upstream
 	if upstream == "" {
 		upstream = "https://chatgpt.com/backend-api/codex"
 	}
@@ -80,16 +71,13 @@ func (s *CodexSandbox) prepare(repoPath string) (sandbox.Job, func(), error) {
 		return job, nil, fmt.Errorf("create sandbox Codex home: %w", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(home) }
-	provider := map[string]any{
-		"model_providers": map[string]any{"roborev-route": map[string]any{
-			"name": "roborev-route", "env_key": "CODEX_PHANTOM",
-			"requires_openai_auth": false, "wire_api": "responses",
-		}},
-	}
-	data, err := toml.Marshal(provider)
-	if err == nil {
-		err = os.WriteFile(filepath.Join(home, "config.toml"), data, 0o600)
-	}
+	const provider = `[model_providers.roborev-route]
+name = "roborev-route"
+env_key = "CODEX_PHANTOM"
+requires_openai_auth = false
+wire_api = "responses"
+`
+	err = os.WriteFile(filepath.Join(home, "config.toml"), []byte(provider), 0o600)
 	if err != nil {
 		cleanup()
 		return job, nil, err
