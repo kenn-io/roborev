@@ -211,7 +211,7 @@ or build with `make install` for the embedded browser application.
 ## Developer Setup
 
 This repo uses [`prek`](https://prek.j178.dev/) for local Git hooks. Commits
-run only the Renovate config validator and actionlint, and only when
+run only the Renovate config validator and jactionlint, and only when
 `renovate.json` or a workflow file changes. The whole-repo checks run on push:
 a Git-test isolation guard, `make lint-ci` for non-mutating Go lint,
 `make markdown-ci` for Zensical Markdown formatting, and the web check and test

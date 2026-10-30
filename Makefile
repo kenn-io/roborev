@@ -318,11 +318,7 @@ check-renovate-config:
 
 # Validate GitHub Actions workflows.
 check-actions:
-	@if ! command -v actionlint >/dev/null 2>&1; then \
-		echo "actionlint not found. Install with: go install github.com/rhysd/actionlint/cmd/actionlint@latest" >&2; \
-		exit 1; \
-	fi
-	actionlint
+	mise exec -- jactionlint --profile=correctness --no-online --shellcheck= --pyflakes=
 
 # Install pre-commit and pre-push hooks via prek.
 install-hooks:
