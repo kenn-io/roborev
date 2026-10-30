@@ -742,12 +742,18 @@ func (c CISummary) Validate() error {
 			errors = errors.Append("Cost", err)
 		}
 	}
+	if err := typesValidator.Var(c.HotPrs, "required"); err != nil {
+		errors = errors.Append("HotPrs", err)
+	}
 	for i, item := range c.HotPrs {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("HotPrs[%d]", i), err)
 			}
 		}
+	}
+	if err := typesValidator.Var(c.Prs, "required"); err != nil {
+		errors = errors.Append("Prs", err)
 	}
 	for i, item := range c.Prs {
 		if v, ok := any(item).(runtime.Validator); ok {
