@@ -56,7 +56,13 @@ type WorkerPool struct {
 	budgetRouter         *BudgetRouter
 	captureSetupFinished func()
 
-	numWorkers    int
+	// workersMu guards numWorkers, liveWorkers, started, and stopped so a
+	// resize never adds to wg after Stop has begun waiting on it.
+	workersMu     sync.Mutex
+	numWorkers    int              // target pool size; workers with id >= numWorkers retire
+	liveWorkers   map[int]struct{} // worker ids whose goroutines are running
+	started       bool
+	stopped       bool
 	activeWorkers atomic.Int32
 	stopCh        chan struct{}
 	stopCtx       context.Context
@@ -98,7 +104,8 @@ type WorkerPool struct {
 	tokenUsageIndexRetryWindow   time.Duration
 	tokenUsageIndexRetryInterval time.Duration
 	tokenCostRetryCh             chan int64
-	wakeCh                       chan struct{}
+	wakeMu                       sync.Mutex
+	wakeCh                       chan struct{} // closed and replaced by wake
 	tokenCostScanInterval        time.Duration
 	tokenCostRetryInterval       time.Duration
 	tokenCostPageSize            int
@@ -135,6 +142,7 @@ func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broad
 		errorLog:                     errorLog,
 		activityLog:                  activityLog,
 		numWorkers:                   numWorkers,
+		liveWorkers:                  make(map[int]struct{}),
 		stopCh:                       make(chan struct{}),
 		stopCtx:                      stopCtx,
 		stopCancel:                   stopCancel,
@@ -151,7 +159,7 @@ func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broad
 		tokenUsageIndexRetryWindow:   tokenUsageIndexRetryWindow,
 		tokenUsageIndexRetryInterval: tokenUsageIndexRetryInterval,
 		tokenCostRetryCh:             make(chan int64, tokenCostRetryBufferSize),
-		wakeCh:                       make(chan struct{}, max(numWorkers, 0)),
+		wakeCh:                       make(chan struct{}),
 		tokenCostScanInterval:        tokenCostScanInterval,
 		tokenCostRetryInterval:       tokenCostRetryInterval,
 		tokenCostPageSize:            tokenCostPageSize,
@@ -167,30 +175,81 @@ func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broad
 
 // wake prompts every idle worker to check for newly claimable jobs.
 func (wp *WorkerPool) wake() {
-	for {
-		select {
-		case wp.wakeCh <- struct{}{}:
-		default:
-			return
-		}
-	}
+	wp.wakeMu.Lock()
+	defer wp.wakeMu.Unlock()
+	close(wp.wakeCh)
+	wp.wakeCh = make(chan struct{})
+}
+
+// wakeSignal returns a channel that the next wake closes. Workers fetch it
+// before trying to claim so a wake during the claim is not lost.
+func (wp *WorkerPool) wakeSignal() <-chan struct{} {
+	wp.wakeMu.Lock()
+	defer wp.wakeMu.Unlock()
+	return wp.wakeCh
 }
 
 // Start begins the worker pool. Safe to call multiple times;
 // only the first call spawns workers.
 func (wp *WorkerPool) Start() {
 	wp.startOnce.Do(func() {
+		wp.workersMu.Lock()
+		defer wp.workersMu.Unlock()
 		log.Printf(
 			"Starting worker pool with %d workers",
 			wp.numWorkers,
 		)
-		wp.wg.Add(wp.numWorkers + 1)
-		close(wp.readyCh)
+		wp.started = true
+		wp.wg.Add(1)
 		go wp.runTokenCostReconciler()
-		for i := 0; i < wp.numWorkers; i++ {
-			go wp.worker(i)
-		}
+		wp.spawnWorkersLocked()
+		close(wp.readyCh)
 	})
+}
+
+// SetMaxWorkers resizes the pool. Growing starts the new workers at once.
+// Shrinking retires the highest-numbered workers: an idle worker exits right
+// away, and a busy one finishes its current job first.
+func (wp *WorkerPool) SetMaxWorkers(n int) {
+	n = max(n, 0)
+	wp.workersMu.Lock()
+	old := wp.numWorkers
+	if n == old {
+		wp.workersMu.Unlock()
+		return
+	}
+	wp.numWorkers = n
+	if wp.started && !wp.stopped {
+		wp.spawnWorkersLocked()
+	}
+	wp.workersMu.Unlock()
+	log.Printf("Worker pool resized from %d to %d workers", old, n)
+	// Idle workers above the new size are waiting for a wake; let them retire.
+	wp.wake()
+}
+
+// spawnWorkersLocked starts a goroutine for every worker id below the target
+// size that is not already running. The caller holds workersMu.
+func (wp *WorkerPool) spawnWorkersLocked() {
+	for id := range wp.numWorkers {
+		if _, ok := wp.liveWorkers[id]; ok {
+			continue
+		}
+		wp.liveWorkers[id] = struct{}{}
+		wp.wg.Go(func() { wp.worker(id) })
+	}
+}
+
+// retireIfSurplus reports whether worker id is above the target size and, if
+// so, removes it from the live set so a later grow can start it again.
+func (wp *WorkerPool) retireIfSurplus(id int) bool {
+	wp.workersMu.Lock()
+	defer wp.workersMu.Unlock()
+	if id < wp.numWorkers {
+		return false
+	}
+	delete(wp.liveWorkers, id)
+	return true
 }
 
 // Stop gracefully shuts down the worker pool. Safe to call multiple times.
@@ -212,6 +271,9 @@ func (wp *WorkerPool) Stop() {
 // waiting for currently active workers to finish.
 func (wp *WorkerPool) BeginStop() {
 	wp.stopOnce.Do(func() {
+		wp.workersMu.Lock()
+		wp.stopped = true
+		wp.workersMu.Unlock()
 		wp.stopCancel()
 		close(wp.stopCh)
 	})
@@ -222,8 +284,11 @@ func (wp *WorkerPool) ActiveWorkers() int {
 	return int(wp.activeWorkers.Load())
 }
 
-// MaxWorkers returns the total number of workers in the pool
+// MaxWorkers returns the configured pool size. Right after a shrink, busy
+// workers above this size keep running until their current job ends.
 func (wp *WorkerPool) MaxWorkers() int {
+	wp.workersMu.Lock()
+	defer wp.workersMu.Unlock()
 	return wp.numWorkers
 }
 
@@ -810,7 +875,6 @@ func (wp *WorkerPool) createExactCheckout(
 }
 
 func (wp *WorkerPool) worker(id int) {
-	defer wp.wg.Done()
 	workerID := fmt.Sprintf("worker-%d", id)
 
 	log.Printf("[%s] Started", workerID)
@@ -822,7 +886,12 @@ func (wp *WorkerPool) worker(id int) {
 			return
 		default:
 		}
+		if wp.retireIfSurplus(id) {
+			log.Printf("[%s] Retired after pool shrank", workerID)
+			return
+		}
 
+		wakeCh := wp.wakeSignal()
 		job, err := backoff.Retry(wp.stopCtx, func() (*storage.ReviewJob, error) {
 			if err := wp.stopCtx.Err(); err != nil {
 				return nil, backoff.Permanent(err)
@@ -865,7 +934,7 @@ func (wp *WorkerPool) worker(id int) {
 			case <-wp.stopCh:
 				log.Printf("[%s] Shutting down", workerID)
 				return
-			case <-wp.wakeCh:
+			case <-wakeCh:
 			case <-time.After(2 * time.Second):
 			}
 			continue
