@@ -6,6 +6,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,11 +19,51 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/sandbox"
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
+
+func TestCICheckGitCredentialIsolationSandboxIntegration(t *testing.T) {
+	if os.Getenv("ROBOREV_RUN_SANDBOX_INTEGRATION") != "1" || runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+		t.Skip("requires opt-in linux/amd64 sandbox integration")
+	}
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	repo := testutil.NewTestRepoWithCommit(t)
+	repo.CommitFile("fixture.txt", "original\n", "checker history fixture")
+	repo.Run("config", "http.https://example.com/.extraheader", "Authorization: Bearer synthetic-git-credential")
+	command := filepath.Join(t.TempDir(), "codex")
+	require.NoError(t, os.WriteFile(command, []byte("#!/bin/sh\nexit 0\n"), 0o700))
+	sha := repo.HeadSHA()
+	wp := &WorkerPool{}
+	run, err := wp.prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}, command, nil, io.Discard)
+	require.NoError(t, err)
+	t.Cleanup(run.cleanup)
+	require.NoError(t, os.WriteFile(filepath.Join(run.Repo, "fixture.txt"), []byte("changed\n"), 0o600))
+	server := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(server.Close)
+	run.Job.Route = sandbox.Route{Name: "test", Upstream: server.URL, Path: "/responses", EnvVar: "TEST_TOKEN", Capture: []string{"/bin/echo", "synthetic-proxy-token"}}
+	const probe = `set -e
+git -C "$2" status --porcelain --untracked-files=no
+git -C "$2" diff -- fixture.txt
+git -C "$2" log -1 --format=%s
+if cat "$1"; then exit 1; fi
+`
+	argv, env, cleanup, err := run.Job.Command(t.Context(), []string{"bash", "--norc", "--noprofile", "-c", probe, "credential-probe", filepath.Join(repo.Root, ".git", "config"), run.Repo})
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	cmd := exec.CommandContext(t.Context(), argv[0], argv[1:]...)
+	cmd.Env = env
+	output, err := cmd.CombinedOutput()
+	assert := assert.New(t)
+	assert.NoError(err, "%s", output)
+	assert.NotContains(string(output), "synthetic-git-credential")
+	assert.Contains(string(output), " M fixture.txt")
+	assert.Contains(string(output), "+changed")
+	assert.Contains(string(output), "checker history fixture")
+}
 
 func TestCICheckSandboxIntegration(t *testing.T) {
 	if os.Getenv("ROBOREV_RUN_SANDBOX_INTEGRATION") != "1" || runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
