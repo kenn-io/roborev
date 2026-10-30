@@ -4,6 +4,8 @@ name: CI
 on:
   pull_request:
     branches: [main]
+  merge_group:
+    types: [checks_requested]
 
 permissions: read-all
 
@@ -11,3 +13,14 @@ jobs:
   run:
     cache-mode: read
     uses: ./.github/workflows/ci.yml
+
+  gate:
+    name: CI gate
+    needs: run
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require CI success
+        env:
+          RESULT: ${{ needs.run.result }}
+        run: test "$RESULT" = success

@@ -37,7 +37,6 @@ jobs:
         id: filter
         uses: step-security/paths-filter@5f3d1a83daa17363d18b529d60375e1e36566799  # v4.0.3
         with:
-          base: ${{ github.ref }}
           filters: |
             go:
               - '*.go'
@@ -117,7 +116,7 @@ jobs:
 
   api-breaking:
     needs: go-changes
-    if: github.event_name == 'pull_request' && needs.go-changes.outputs.changed == 'true'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.go-changes.outputs.changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -131,8 +130,8 @@ jobs:
 
       - name: Check for breaking API contract changes
         env:
-          BASE_REF: ${{ github.base_ref }}
-        run: make api-breaking BASE_REF="origin/$BASE_REF"
+          BASE_REF: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || format('origin/{0}', github.base_ref) }}
+        run: make api-breaking BASE_REF="$BASE_REF"
 
   web:
     needs: go-changes
