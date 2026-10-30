@@ -268,8 +268,11 @@ Full reference: <https://roborev.io/docs/agent-hook.md>.
 Offer these one at a time. Skip any the user declines.
 
 - **Batch small commits.** If the user commits very often, set
-    `post_commit_batch_size = 5` in `.roborev.toml` to review every five commits
-    as one range.
+    `post_commit_batch_size = 5` to review every five commits as one range, or
+    `post_commit_quiet_period = "5m"` to review a burst of commits once the
+    branch has gone five minutes without a new commit. Ask whether to set them
+    in `.roborev.toml` for this repository or in `~/.roborev/config.toml` for
+    every repository.
 
 - **Commit often.** roborev gives tighter feedback on small commits. If the
     user's agent tends to batch large changes, suggest adding a "commit after

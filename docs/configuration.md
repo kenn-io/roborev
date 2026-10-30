@@ -1084,8 +1084,9 @@ rebase or amend, the next review covers everything since the last commit still
 shared with the old history. Run `roborev init` after upgrading roborev to
 install or update the pre-push hook.
 
-When `post_commit_review = "branch"` is also set, the batch size controls when a
-review is queued, while the review still covers the entire branch.
+When `post_commit_review = "branch"` is also set, the batching thresholds
+control when a review is queued, while the review still covers the entire
+branch.
 
 ### Auto-Close Passing Reviews
 
@@ -1216,6 +1217,8 @@ filter_branch = false             # Show all branches on startup (default: curre
 | `job_timeout_minutes` | int | 30 | Per-job timeout in minutes of wall-clock time, so time the machine spends asleep counts against it. Plan-first background fixes add an equal planning budget | Yes |
 | `isolate_reviews` | bool | false | Run committed reviews in daemon-owned detached checkouts; see [Isolated Review Checkouts](#isolated-review-checkouts) | Yes |
 | `hook_timeout_seconds` | int | `3` (`30` on Windows) | Post-commit hook request timeout, in seconds. Raise it on Windows or large repos where the daemon's enqueue git calls are slow. Zero or negative values are ignored and fall back to the platform default | Yes |
+| `post_commit_batch_size` | int | `1` | Number of commits to accumulate before an automatic post-commit review. Values below `2` disable the count threshold. A repo `.roborev.toml` value overrides it. See [Post-commit review batching](#post-commit-review-batching) | Yes |
+| `post_commit_quiet_period` | string | - | Time without a new commit before reviewing a pending batch, as a Go duration such as `5m`. Empty or `0` disables the timer. A repo `.roborev.toml` value overrides it. See [Post-commit review batching](#post-commit-review-batching) | Yes |
 | `prompt_retention_days` | int | `0` | Delete the stored prompts of review and range jobs this many days after they finish. Zero or negative keeps prompts forever. See [Stored prompts and retention](#stored-prompts-and-retention) | Yes |
 | `job_log_retention_days` | int | `0` | Delete job log files older than this many days. Zero or negative keeps logs forever. See [Stored prompts and retention](#stored-prompts-and-retention) | Yes |
 | `agent_quota_cooldown` | string | `30m0s` | Maximum daemon-wide cooldown after an agent quota or session-limit error, as a Go duration such as `10m`, `30m`, or `1h` | Yes |

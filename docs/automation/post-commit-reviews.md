@@ -30,16 +30,33 @@ roborev show HEAD     # print the latest commit's review in the terminal
 
 ### Batch small commits
 
-If reviewing every commit creates too much noise, set a repository-local batch
-size in `.roborev.toml`:
+If reviewing every commit creates too much noise, combine bursts of commits into
+one review. Set these in `~/.roborev/config.toml` to apply them to every
+repository, or in a repository's `.roborev.toml` to override them there:
 
 ```toml
 post_commit_batch_size = 5
+post_commit_quiet_period = "5m"
 ```
 
-The post-commit hook then waits until five commits have accumulated and queues
-one review for the full range. Values below `2`, including the default of `1`,
-keep the usual one-review-per-commit behavior.
+roborev then queues one review for the accumulated range when either threshold
+is reached:
+
+- **Count.** Five commits are pending on the branch.
+- **Quiet period.** Five minutes pass without a new commit on the branch. Each
+    new commit restarts the timer.
+
+You can use either setting alone. A quiet period on its own combines a burst of
+any size into one review. A batch size below `2` turns off the count threshold,
+and an empty quiet period or `"0"` turns off the timer. With both off, the
+default, every commit is reviewed on its own. Each repository value overrides
+only its matching global value.
+
+The daemon runs quiet-period timers. If the daemon restarts before a timer
+fires, the pending commits stay recorded and the next commit or push retries
+them. See
+[Post-commit review batching](../configuration.md#post-commit-review-batching)
+for the full rules.
 
 Pending commits are tracked separately for each branch and shared across linked
 worktrees. The pre-push hook attempts to queue a partial batch before those
@@ -52,7 +69,7 @@ after upgrading roborev to install or update the pre-push hook.
 Batching changes review frequency, not review scope. With
 `post_commit_review = "commit"`, roborev reviews the accumulated commit range.
 With `post_commit_review = "branch"`, roborev still reviews the full branch, but
-only when the batch threshold is reached or pending work is flushed.
+only when a batch threshold is reached or pending work is flushed.
 
 Then act on the reviews in whichever way fits how you work:
 

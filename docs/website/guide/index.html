@@ -94,7 +94,7 @@
           <div class="guide-copy">
             <h2>Commit and keep going. The review runs behind you.</h2>
             <p>Each commit queues a background review through the daemon's worker pool and returns immediately; neither you nor the agent waits on it. The first installed agent in the fallback order picks it up, reads the diff, the commit message, your guidelines, and recent review history, and returns a verdict with findings, severities, and file locations.</p>
-            <p>Duplicate hook requests for the same target are coalesced, so several worktrees or editors committing at once still produce one review. Small commits can be batched into one range review with <code>post_commit_batch_size</code>.</p>
+            <p>Duplicate hook requests for the same target are coalesced, so several worktrees or editors committing at once still produce one review. Bursts of small commits can be batched into one range review with <code>post_commit_batch_size</code> or <code>post_commit_quiet_period</code>.</p>
             <p><a href="/docs/automation/post-commit-reviews/">Post-commit reviews</a> · <a href="/docs/guides/reviewing-code/">Reviewing code</a></p>
           </div>
           <div class="guide-media">
