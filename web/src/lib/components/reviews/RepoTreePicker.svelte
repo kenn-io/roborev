@@ -432,6 +432,9 @@
 
   .dropdown-list {
     overflow-y: auto;
+    /* Reserve the scrollbar's width up front so the right-aligned counts do
+       not shift left when expanding a repository makes the list scroll. */
+    scrollbar-gutter: stable;
     padding: 4px 0;
   }
 

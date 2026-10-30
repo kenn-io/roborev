@@ -217,7 +217,7 @@ func (a *ACPAgent) runPrompt(
 	// ACP agents do not go through configureSubprocess, so strip forge
 	// credentials here too (see forge_env.go). There is no opt-out, so log
 	// what was removed to keep a resulting auth failure diagnosable.
-	cmd.Env = StripUntrustedEnvLogged(cmd.Environ(), "acp agent "+a.Command)
+	cmd.Env = append(StripUntrustedEnvLogged(cmd.Environ(), "acp agent "+a.Command), hookSuppressEnvEntry)
 	if isCIReview(ctx) {
 		cmd.Env = ciReviewEnv(cmd.Env, ciReviewDir(ctx), repoPath)
 	}

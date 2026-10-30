@@ -20,18 +20,38 @@ command.
 For every selected review, the agent:
 
 1. Fetches the review with `roborev show --job <id> --json`.
-1. Treats each finding as an unverified claim and checks it against the current
-   code, relevant callers and data flow, repository instructions, tests, and
-   developer comments.
-1. Classifies each finding before editing:
-   - Valid and within the current user task: fix and verify it.
-   - Invalid, stale, already resolved, or inapplicable: make no code change and
-     retain the evidence for the review comment.
-   - Valid but outside the current task, or unclear in scope: make no code
-     change, leave the review open, and ask the user.
-1. Comments on and closes a review only when every finding was fixed in scope
-   or disproved with evidence. Reviews with deferred valid findings remain open.
-1. Audits the original job IDs before reporting completion.
+1. Checks each finding against the current code, relevant callers and data
+   flow, repository instructions, tests, and developer comments.
+1. Triages each finding before editing. A reviewer looks for gaps without
+   weighing what a fix costs, so the agent judges who reaches the path today,
+   what harm follows, and the smallest change that removes it. Each finding
+   gets one disposition:
+   - Fix: a reachable defect with real harm, removable by a small change inside
+     the current task. When the repository already tests that code, the agent
+     first writes a test that fails on the reported behavior. If the test
+     passes, the finding is Invalid. Otherwise the agent makes the change and
+     reruns the test.
+   - Decline: true, but not worth its cost now, such as hardening for paths
+     nothing reaches or design-review "missing considerations". The agent
+     records why.
+   - Invalid: stale, already resolved, unreachable, or wrong. The agent records
+     the evidence.
+   - Ask: outside the current task, unclear in scope, or a fix that adds new
+     surface such as an endpoint, schema, or config option. The agent leaves
+     the review open and asks the user.
+1. Cites evidence for every Decline and Invalid: a `file:line` and what that
+   code does, or a command and the output line that disproves the finding.
+   "I checked" alone is not evidence.
+1. Comments with one line per finding in the shape
+   `- <severity> <file>: <Fix|Decline|Invalid|Ask>: <reason>`. A Fix line names
+   the test or command that now passes. The agent then closes a review when
+   every finding is Fix, Decline, or Invalid. Reviews with an Ask finding
+   remain open.
+1. Audits the original job IDs and lists every Ask finding in its final
+   response.
+
+When the user asked to see findings before changes, the agent triages without
+editing and reports the dispositions.
 
 If the invoking prompt contains an `## Autofix Guidelines` section, the agent
 uses it as trusted user policy when evaluating and classifying findings. Review

@@ -168,6 +168,7 @@ func TestCancelCISynthesisRetiresPanelMapping(t *testing.T) {
 	assert.Equal(panel.ID, gotPanel.ID)
 	assert.Nil(gotPanel.PostedAt, "canceled panel is not marked posted")
 	assert.NotNil(gotPanel.RetiredAt, "canceled panel is retired for throttle memory")
+	assertPanelRetireReason(t, db, panel.ID, "canceled")
 	attempt, err := db.GetReviewAttempt("acme/api", 17, "headsha")
 	require.NoError(t, err)
 	assert.Nil(attempt, "canceled CI panel deletes the reserved retry attempt")

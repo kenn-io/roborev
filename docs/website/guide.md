@@ -35,7 +35,8 @@ returns immediately; neither you nor the agent waits on it. The
 first installed agent in the fallback order reads the diff, the commit message,
 your guidelines, and recent review history, and returns a verdict with findings,
 severities, and file locations. Duplicate hook requests for the same target are
-coalesced. Small commits can be batched with `post_commit_batch_size`.
+coalesced. Bursts of small commits can be batched with `post_commit_batch_size`
+or `post_commit_quiet_period`.
 
 ```sh
 git commit -m "Add retry to payment webhook"

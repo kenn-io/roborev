@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -473,27 +474,31 @@ func TestPerFileAnalysis(t *testing.T) {
 }
 
 func TestEnqueueAnalysisJob(t *testing.T) {
-	ts, _ := newMockServer(t, MockServerOpts{
-		JobIDStart: 42,
-		OnEnqueue: func(w http.ResponseWriter, r *http.Request) {
-			var req daemon.EnqueueRequest
-			_ = json.NewDecoder(r.Body).Decode(&req)
-			assert.True(t, req.Agentic, "agentic should be true for analysis")
-			assert.NotEmpty(t, req.CustomPrompt, "custom_prompt should be set")
+	for _, fix := range []bool{false, true} {
+		t.Run(fmt.Sprintf("fix=%t", fix), func(t *testing.T) {
+			ts, _ := newMockServer(t, MockServerOpts{
+				JobIDStart: 42,
+				OnEnqueue: func(w http.ResponseWriter, r *http.Request) {
+					var req daemon.EnqueueRequest
+					_ = json.NewDecoder(r.Body).Decode(&req)
+					assert.False(t, req.Agentic, "analysis must not request edit access")
+					assert.NotEmpty(t, req.CustomPrompt, "custom_prompt should be set")
 
-			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(storage.ReviewJob{
-				ID:     42,
-				Agent:  "test",
-				Status: storage.JobStatusQueued,
+					w.WriteHeader(http.StatusCreated)
+					_ = json.NewEncoder(w).Encode(storage.ReviewJob{
+						ID:     42,
+						Agent:  "test",
+						Status: storage.JobStatusQueued,
+					})
+				},
 			})
-		},
-	})
 
-	job, err := enqueueAnalysisJob(t.Context(), mustParseEndpoint(t, ts.URL), "/repo", "test prompt", "", "test-fixtures", nil, analyzeOptions{agentName: "test"})
-	require.NoError(t, err, "enqueueAnalysisJob")
+			job, err := enqueueAnalysisJob(t.Context(), mustParseEndpoint(t, ts.URL), "/repo", "test prompt", "", "test-fixtures", nil, analyzeOptions{agentName: "test", fix: fix})
+			require.NoError(t, err, "enqueueAnalysisJob")
 
-	assert.Equal(t, int64(42), job.ID, "job.ID")
+			assert.Equal(t, int64(42), job.ID, "job.ID")
+		})
+	}
 }
 
 func TestEnqueueAnalysisJobRecordsMetadata(t *testing.T) {
@@ -541,6 +546,7 @@ func TestAnalysisAttributionModes(t *testing.T) {
 					http.Error(w, "invalid request", http.StatusBadRequest)
 					return
 				}
+				assert.False(t, req.Agentic, "analysis must not request edit access")
 				requests = append(requests, req)
 				w.WriteHeader(http.StatusCreated)
 				_ = json.NewEncoder(w).Encode(storage.ReviewJob{ID: int64(len(requests)), Agent: "test", Status: storage.JobStatusQueued})

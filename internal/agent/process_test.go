@@ -130,6 +130,18 @@ func TestConfigureSubprocessSetsOptionalLocks(t *testing.T) {
 		"configureSubprocess should set GIT_OPTIONAL_LOCKS=0")
 }
 
+func TestConfigureSubprocessSuppressesAgentHook(t *testing.T) {
+	skipIfWindows(t)
+
+	cmd := exec.CommandContext(context.Background(), "sh", "-c", "echo $"+HookSuppressEnv)
+	configureSubprocess(context.Background(), cmd)
+
+	out, err := cmd.Output()
+	require.NoError(t, err)
+	require.Equal(t, "1\n", string(out),
+		"agents roborev launches must tell the user's Agent Hook to stay quiet")
+}
+
 func TestConfigureSubprocessPreservesExistingEnv(t *testing.T) {
 	skipIfWindows(t)
 

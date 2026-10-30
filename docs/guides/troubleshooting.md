@@ -12,9 +12,20 @@ run at any time. Use `roborev doctor --json` to hand the report to an agent.
 
 A common cause of failed reviews is a daemon that cannot find an agent your
 shell can run. This happens when the daemon started from a login item, a service
-manager, or a shell with a different `PATH`. Doctor lists those agents under
-`agents.daemon_path`; run `roborev daemon restart` from a shell where the agent
-works.
+manager, or a shell with a different `PATH`. On macOS and Linux the daemon adds
+common user tool directories to its `PATH` when it starts, if they exist:
+
+- `~/.local/bin`
+- mise and asdf shims
+- Nix profiles
+- Homebrew
+- `/usr/local/bin`
+- `~/.npm-global/bin`, `~/.bun/bin`, `~/.volta/bin`, and `~/.cargo/bin`
+
+An agent installed elsewhere can still be missing. `roborev status` then shows
+the `agents` health component as unhealthy, and doctor lists the agent under
+`agents.daemon_path`. Run `roborev daemon restart` from a shell where the agent
+works, or set the agent's `*_cmd` config key to an absolute path.
 
 See [Diagnosing Setup](/docs/commands/#diagnosing-setup) for the full list of
 checks.

@@ -74,6 +74,9 @@
 
 html {
   scroll-behavior: smooth;
+  /* Reserve the scrollbar's width up front so the centered header does not
+     shift between pages short enough to fit the window and pages that scroll. */
+  scrollbar-gutter: stable;
 }
 
 body {

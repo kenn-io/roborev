@@ -804,6 +804,50 @@ The summary includes:
 - **Cost**: Approximate agent spend for eligible jobs in the same time window,
     with coverage when only some jobs reported cost
 
+### CI run health
+
+When the selected window contains CI panel runs, `summary` also shows a **CI Run
+Health** block. Use `roborev summary --all --since 7d` to inspect all
+repositories monitored by the daemon, including separate CI checkouts.
+
+- **Panels** counts one run per panel, including reruns. Panel size does not
+    change this count. Active, finalized, and retired-unposted counts partition
+    the selected runs.
+- **Outcomes** counts finalized runs by their recorded outcome. Finalization
+    means `posted_at` was recorded; an abandoned run can be finalized without a
+    review comment.
+- **Retirement reasons** counts all retired rows, including finalized history
+    retired to release ownership for a rerun. Reasons are `closed_pr`,
+    `superseded`, `stale_head`, `deferred_retry`, `repo_mismatch`, and
+    `canceled`. Older rows or unspecified ownership transitions appear as
+    `unknown`.
+- **Runs per PR** reports p50, p90, and maximum. A PR is identified by both its
+    GitHub repository and number. Every PR above five runs is listed, ordered by
+    descending run count, then repository and PR number. Fractional percentiles
+    use interpolation.
+- **Turnaround** measures the first review attempt through finalization,
+    including time spent queued, reviewing, and retrying. Only runs with valid,
+    nonnegative timestamps contribute. The sample count is displayed; no samples
+    means unavailable. Missing first-attempt timestamps are excluded.
+- **Cost** includes retained member and synthesis jobs for the selected panels.
+    Total, per-PR, and retired-unposted amounts each report priced/eligible job
+    coverage. Eligibility requires a terminal job with evidence that an agent
+    ran; synthesis passthroughs are excluded. Failed or canceled agent calls can
+    still contribute cost. Missing pricing is unavailable; a recorded free call
+    contributes a priced zero.
+- **Retired unposted cost** includes only runs retired before finalization.
+    Active work is excluded. This measures retained recorded spend in that
+    cohort, rather than every run that failed to produce a useful comment.
+
+CI runs enter the window by panel creation time. Their associated job costs
+remain included even when the jobs were queued outside the window. Repository
+and branch filters match the synthesis job exactly. Unfiltered results retain
+panel history whose synthesis job has been deleted; scoped results exclude
+history that can no longer be mapped to that repository or branch.
+
+JSON exposes this block as `ci`, omitted when no panels match. See
+[GitHub integration](/docs/integrations/github/) for CI polling and delivery.
+
 ## Aggregate Cost
 
 ```bash
@@ -875,14 +919,14 @@ with a message instead of queuing a job.
 
 ## Token Usage
 
-Token usage is tracked automatically for completed jobs when `agentsview` is
-installed. Usage appears in the TUI review header and `roborev show` output
-(e.g. `118.0k ctx · 28.8k out`). When supported, roborev uses
-`session usage --no-sync` to read archived usage, including subagents, without
-synchronizing source transcripts. Run AgentsView's watcher or synchronize
-separately to keep the archive current. On older CLIs, roborev retries without
-`--no-sync` or uses the legacy `token-use` command when `session usage` is
-unavailable. These fallback commands may synchronize sources.
+Token usage is tracked automatically for completed jobs when the local
+`agentsview` CLI or a usage server is configured. Usage appears in the TUI
+review header and `roborev show` output (e.g. `118.0k ctx · 28.8k out`). When
+supported, roborev uses `session usage --no-sync` to read archived usage,
+including subagents, without synchronizing source transcripts. Run AgentsView's
+watcher or synchronize separately to keep the archive current. On older CLIs,
+roborev retries without `--no-sync` or uses the legacy `token-use` command when
+`session usage` is unavailable. These fallback commands may synchronize sources.
 
 When pricing is available, the usage summary also includes a model-pricing cost
 estimate (e.g. `118.0k ctx · 28.8k out · ~$0.42`), and the TUI queue displays a
@@ -906,8 +950,18 @@ appears later is stored without an operator running a backfill. If the database
 missed the session ID, the daemon first recovers it from the per-job JSONL log
 when that log is still available.
 
-If you run a central usage service, configure `[cost] endpoint` to fetch usage
-over HTTP instead of through the local `agentsview` CLI. See
+For local or remote AgentsView servers, configure global `[agentsview] url` and
+optionally `token_file` (or the daemon's `AGENTSVIEW_SERVER_TOKEN`). This uses
+authenticated HTTP, includes subagents, and supports raw session IDs on
+AgentsView v0.46.1 or later through session ID resolution. The server must index
+the sessions first. `roborev doctor` reports the running daemon's provider and
+probes reachability and authentication in the daemon's environment. When the
+daemon cannot supply this diagnostic, the shell-only result remains a warning.
+Backfill uses the same provider as live jobs. See
+[AgentsView](/docs/configuration/#agentsview).
+
+For other usage services, `[cost] endpoint` continues to provide a generic HTTP
+URL template. It cannot be combined with `agentsview.url`. See
 [Cost Usage Endpoint](/docs/configuration/#cost-usage-endpoint).
 
 To backfill token data for older jobs:
@@ -1229,16 +1283,19 @@ When set to `"branch"`, each commit triggers a `merge-base..HEAD` range review.
 On the base branch itself, detached HEAD, or any error, it falls back to a
 single-commit review.
 
-To reduce review noise from small commits, set a repository-local batch size:
+To reduce review noise from small commits, batch them globally in
+`~/.roborev/config.toml` or per repository in `.roborev.toml`:
 
 ```toml
-# .roborev.toml
 post_commit_batch_size = 5
+post_commit_quiet_period = "5m"
 ```
 
-The hook queues one review after five commits instead of one review per commit.
-The pre-push hook attempts to queue a partial batch before push, but it does not
-block the push if queueing fails. Values below `2` disable batching.
+The hook queues one review over the pending commits when five have accumulated
+or five minutes pass without a new commit, whichever comes first. Either setting
+works alone. The pre-push hook attempts to queue a partial batch before push,
+but it does not block the push if queueing fails. A batch size below `2` and an
+empty or `"0"` quiet period each turn off that threshold.
 
 See: [Configuration](/docs/configuration/#post-commit-review-mode) and
 [Post-Commit Review Batching](/docs/configuration/#post-commit-review-batching)

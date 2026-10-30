@@ -252,6 +252,9 @@
 
   .release-copy {
     overflow-y: auto;
+    /* Reserve the scrollbar's width up front so the centered column does not
+       shift left when a longer release makes the notes scroll. */
+    scrollbar-gutter: stable;
     max-height: min(520px, calc(100vh - 230px));
   }
 

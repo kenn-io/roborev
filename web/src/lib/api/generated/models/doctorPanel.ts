@@ -11,7 +11,7 @@ export interface DoctorPanel {
   experiment?: string;
   members: DoctorPanelMember[];
   name: string;
-  /** The agent that combines member results */
+  /** The agent that combines member results; its name is empty when the panel has one voting member, because that member's result is passed through */
   synthesis: Diagnosis;
   /** Which reviews select this panel: post_commit, manual, or both */
   used_for: string[];

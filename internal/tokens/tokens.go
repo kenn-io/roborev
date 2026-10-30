@@ -58,13 +58,16 @@ type Usage struct {
 
 // FetchConfig configures session usage lookup. When Endpoint is set,
 // roborev fetches usage over HTTP using a URL template containing
-// "{session_id}". An empty Endpoint preserves the agentsview CLI path.
+// "{session_id}". AgentsViewURL selects the authenticated AgentsView API.
+// With neither URL configured, lookup uses the agentsview CLI.
 type FetchConfig struct {
-	Endpoint string
-	Timeout  time.Duration
-	Client   *http.Client
+	AgentsViewURL   string
+	AgentsViewToken string
+	Endpoint        string
+	Timeout         time.Duration
+	Client          *http.Client
 	// RequireCLI reports a missing agentsview binary as an error when
-	// Endpoint is empty. By default CLI lookup is best-effort.
+	// neither HTTP provider is configured. By default CLI lookup is best-effort.
 	RequireCLI bool
 }
 
@@ -196,6 +199,9 @@ func FetchForSession(
 func FetchForSessionWithConfig(
 	ctx context.Context, sessionID string, cfg FetchConfig,
 ) (*Usage, error) {
+	if cfg.AgentsViewURL != "" {
+		return fetchForSessionAgentsView(ctx, sessionID, cfg)
+	}
 	if cfg.Endpoint != "" {
 		return fetchForSessionHTTP(ctx, sessionID, cfg)
 	}
@@ -350,23 +356,10 @@ func fetchForSessionHTTP(
 		return nil, err
 	}
 
-	timeout := cfg.Timeout
-	if timeout <= 0 {
-		timeout = 10 * time.Second
-	}
-	reqCtx, cancel := context.WithTimeout(ctx, timeout)
+	reqCtx, cancel := cfg.requestContext(ctx)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, fmt.Errorf("usage endpoint request: %w", err)
-	}
-	req.Header.Set("Accept", "application/json")
-	client := cfg.Client
-	if client == nil {
-		client = http.DefaultClient
-	}
-	resp, err := client.Do(req)
+	resp, err := cfg.request(reqCtx, endpoint)
 	if err != nil {
 		return nil, fmt.Errorf("usage endpoint request: %w", err)
 	}
