@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"encoding/pem"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -70,10 +71,36 @@ func TestSandboxSelfCheck(t *testing.T) {
 	cert := filepath.Join(t.TempDir(), "upstream.pem")
 	require.NoError(t, os.WriteFile(cert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: upstream.Certificate().Raw}), 0o600))
 	job := Job{WorkDir: t.TempDir(), Route: Route{Upstream: upstream.URL + "/responses"}}
-	err := job.check(t.Context(), []string{"env"}, []string{"PATH=/usr/bin:/bin", "SSL_CERT_FILE=" + cert}, nil)
-	require.ErrorContains(t, err, "sandbox self-check failed")
-	for _, name := range []string{"canary-read", "loopback-connect", "environment-canary", "proxy-upstream"} {
-		assert.Contains(t, err.Error(), name)
+	runtimeDir := t.TempDir()
+	bus, err := net.Listen("unix", filepath.Join(runtimeDir, "bus"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = bus.Close() })
+	for _, tc := range []struct {
+		name, parent string
+		runtimeEnv   []string
+		want         string
+	}{
+		{"env-only", "", []string{"XDG_RUNTIME_DIR=" + runtimeDir}, "dbus-connect"},
+		{"parent-differs", t.TempDir(), []string{"XDG_RUNTIME_DIR=" + runtimeDir}, "dbus-connect"},
+		{"last-value", "", []string{"XDG_RUNTIME_DIR=" + t.TempDir(), "XDG_RUNTIME_DIR=" + runtimeDir}, "dbus-connect"},
+		{"missing", runtimeDir, nil, "XDG_RUNTIME_DIR"},
+		{"empty-last-value", runtimeDir, []string{"XDG_RUNTIME_DIR=" + runtimeDir, "XDG_RUNTIME_DIR="}, "XDG_RUNTIME_DIR"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("XDG_RUNTIME_DIR", tc.parent)
+			if tc.parent == "" {
+				require.NoError(t, os.Unsetenv("XDG_RUNTIME_DIR"))
+			}
+			env := append([]string{"PATH=/usr/bin:/bin", "SSL_CERT_FILE=" + cert}, tc.runtimeEnv...)
+			err := job.check(t.Context(), []string{"env"}, env, nil)
+			require.ErrorContains(t, err, "sandbox self-check failed")
+			assert.Contains(t, err.Error(), tc.want)
+			if tc.want == "dbus-connect" {
+				for _, name := range []string{"canary-read", "loopback-connect", "environment-canary", "proxy-upstream"} {
+					assert.Contains(t, err.Error(), name)
+				}
+			}
+		})
 	}
 	work, secrets := t.TempDir(), t.TempDir()
 	hostHome := filepath.Join(secrets, "codex")
