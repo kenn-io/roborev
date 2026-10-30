@@ -171,6 +171,10 @@ type ClientInterface interface {
 	Ping(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*PingResponse, error)
 	PingWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*PingResp, error)
 
+	// SchedulePostCommit Schedule a pending post-commit batch after its quiet period
+	SchedulePostCommit(ctx context.Context, options *SchedulePostCommitRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error)
+	SchedulePostCommitWithResponse(ctx context.Context, options *SchedulePostCommitRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SchedulePostCommitResp, error)
+
 	// PauseQueue Pause queue processing
 	PauseQueue(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*PauseQueueResponse, error)
 	PauseQueueWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*PauseQueueResp, error)
@@ -2606,6 +2610,55 @@ func (c *Client) Ping(ctx context.Context, reqEditors ...runtime.RequestEditorFn
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/ping")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// SchedulePostCommit Schedule a pending post-commit batch after its quiet period
+func (c *Client) SchedulePostCommit(ctx context.Context, options *SchedulePostCommitRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/post-commit/schedule",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*struct{}, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 204 {
+			target := new(SchedulePostCommitErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "SchedulePostCommitErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		return nil, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/post-commit/schedule")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

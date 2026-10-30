@@ -5618,3 +5618,63 @@ auth_token = "weak"
 	require.NoError(t, err)
 	assert.False(t, cfg.Web.Enabled)
 }
+
+func TestPostCommitBatchGlobalDefaults(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.toml"), []byte(`post_commit_batch_size = 5`), 0o600))
+	for _, tt := range []struct {
+		name, repo string
+		want       int
+	}{
+		{"global", "", 5},
+		{"unrelated repo setting inherits", `agent = "test"`, 5},
+		{"repo overrides", `post_commit_batch_size = 3`, 3},
+		{"repo disables", `post_commit_batch_size = 1`, 1},
+		{"explicit zero disables", `post_commit_batch_size = 0`, 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newTempRepo(t, tt.repo)
+			got, err := ResolvePostCommitBatchSizeWithError(repo)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestResolvePostCommitQuietPeriod(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.toml"), []byte(`post_commit_quiet_period = "5m"`), 0o600))
+	for _, tt := range []struct {
+		name, repo string
+		want       time.Duration
+		invalid    bool
+	}{
+		{"global", "", 5 * time.Minute, false},
+		{"repo overrides", `post_commit_quiet_period = "30s"`, 30 * time.Second, false},
+		{"repo zero disables", `post_commit_quiet_period = "0"`, 0, false},
+		{"repo empty disables", `post_commit_quiet_period = ""`, 0, false},
+		{"negative rejected", `post_commit_quiet_period = "-1m"`, 0, true},
+		{"invalid rejected", `post_commit_quiet_period = "soon"`, 0, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ResolvePostCommitQuietPeriod(newTempRepo(t, tt.repo))
+			if tt.invalid {
+				require.ErrorContains(t, err, "post_commit_quiet_period")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestPostCommitQuietPeriodValidation(t *testing.T) {
+	for _, value := range []string{"-1m", "soon"} {
+		t.Run(value, func(t *testing.T) {
+			require.ErrorContains(t, (&Config{PostCommitQuietPeriod: value}).Validate(), "post_commit_quiet_period")
+			require.ErrorContains(t, (&RepoConfig{PostCommitQuietPeriod: value}).Validate(), "post_commit_quiet_period")
+		})
+	}
+}

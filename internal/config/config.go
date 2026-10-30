@@ -255,6 +255,8 @@ type Config struct {
 	DefaultBackupModel         string                          `toml:"default_backup_model"`
 	JobTimeoutMinutes          int                             `toml:"job_timeout_minutes"`
 	IsolateReviews             bool                            `toml:"isolate_reviews" comment:"Run committed reviews in daemon-owned detached checkouts."`
+	PostCommitBatchSize        int                             `toml:"post_commit_batch_size" comment:"Enqueue an automatic post-commit review after this many commits. Values below 2 disable the count threshold."`
+	PostCommitQuietPeriod      string                          `toml:"post_commit_quiet_period" comment:"Enqueue pending post-commit reviews after this long without a new commit, such as 5m. Empty or 0 disables the timer."`
 	HookTimeoutSeconds         int                             `toml:"hook_timeout_seconds" comment:"Post-commit hook request timeout in seconds. 0 or negative uses the platform default (3 on most systems, 30 on Windows where git subprocess spawns are slow)."`
 	PromptRetentionDays        int                             `toml:"prompt_retention_days" comment:"Delete stored prompts of finished review and range jobs after this many days; reviews are kept. 0 or negative keeps prompts forever."`
 	JobLogRetentionDays        int                             `toml:"job_log_retention_days" comment:"Delete job log files after this many days. 0 or negative keeps logs forever."`
@@ -723,6 +725,9 @@ func (c *Config) Validate() (err error) {
 	if err := validateConfig(c, c.ACP); err != nil {
 		return err
 	}
+	if _, err := parsePostCommitQuietPeriod(c.PostCommitQuietPeriod); err != nil {
+		return err
+	}
 	if err := c.Budget.Validate(); err != nil {
 		return err
 	}
@@ -779,7 +784,8 @@ type RepoConfig struct {
 	ExcludePatterns                 []string                        `toml:"exclude_patterns" comment:"Filenames or glob patterns to exclude from review diffs for this repo."`
 	SnapshotDir                     string                          `toml:"snapshot_dir" comment:"Repo-local directory for temporary diff and prior-review snapshots."`
 	PostCommitReview                string                          `toml:"post_commit_review" comment:"Automatic post-commit review mode for this repo: commit or branch."` // "commit" (default) or "branch"
-	PostCommitBatchSize             int                             `toml:"post_commit_batch_size" comment:"Enqueue one automatic post-commit review after this many commits. Values less than 2 review every commit."`
+	PostCommitBatchSize             int                             `toml:"post_commit_batch_size" comment:"Override the global post-commit batch size. Values below 2 disable the count threshold."`
+	PostCommitQuietPeriod           string                          `toml:"post_commit_quiet_period" comment:"Override the global post-commit quiet period, such as 5m. Empty or 0 disables the timer for this repo."`
 	ReuseReviewSession              *bool                           `toml:"reuse_review_session"`
 	ReuseReviewSessionLookback      int                             `toml:"reuse_review_session_lookback"` // 0 means no candidate cap
 	Experiments                     map[string]ExperimentDefinition `toml:"experiments"`
@@ -948,6 +954,9 @@ func (c *RepoConfig) Validate() (err error) {
 		err = markConfigValidationError(err)
 	}()
 	if err := validateConfig(c, c.ACP); err != nil {
+		return err
+	}
+	if _, err := parsePostCommitQuietPeriod(c.PostCommitQuietPeriod); err != nil {
 		return err
 	}
 	reasoning := []namedConfigValue{
@@ -1564,14 +1573,55 @@ func ResolvePostCommitBatchSize(repoPath string) int {
 // ResolvePostCommitBatchSizeWithError preserves config load errors so hooks do
 // not mistake a malformed batching config for an intentional disable.
 func ResolvePostCommitBatchSizeWithError(repoPath string) (int, error) {
-	cfg, err := LoadRepoConfig(repoPath)
+	cfg, raw, err := LoadRepoConfigWithRaw(repoPath)
 	if err != nil {
 		return DefaultPostCommitBatchSize, err
 	}
-	if cfg == nil || cfg.PostCommitBatchSize < 2 {
+	size := 0
+	if _, explicit := raw["post_commit_batch_size"]; explicit {
+		size = cfg.PostCommitBatchSize
+	} else {
+		global, err := LoadGlobal()
+		if err != nil {
+			return DefaultPostCommitBatchSize, err
+		}
+		size = global.PostCommitBatchSize
+	}
+	if size < 2 {
 		return DefaultPostCommitBatchSize, nil
 	}
-	return cfg.PostCommitBatchSize, nil
+	return size, nil
+}
+
+// ResolvePostCommitQuietPeriod returns the repo quiet period, falling back to
+// the global value. Explicit empty or zero repo values disable the timer.
+func ResolvePostCommitQuietPeriod(repoPath string) (time.Duration, error) {
+	cfg, raw, err := LoadRepoConfigWithRaw(repoPath)
+	if err != nil {
+		return 0, err
+	}
+	value := ""
+	if _, explicit := raw["post_commit_quiet_period"]; explicit {
+		value = cfg.PostCommitQuietPeriod
+	} else {
+		global, err := LoadGlobal()
+		if err != nil {
+			return 0, err
+		}
+		value = global.PostCommitQuietPeriod
+	}
+	return parsePostCommitQuietPeriod(value)
+}
+
+func parsePostCommitQuietPeriod(value string) (time.Duration, error) {
+	if value == "" {
+		return 0, nil
+	}
+	period, err := time.ParseDuration(value)
+	if err != nil || period < 0 {
+		return 0, fmt.Errorf("post_commit_quiet_period must be a non-negative duration, got %q", value)
+	}
+	return period, nil
 }
 
 // ResolveReuseReviewSession returns whether reviews should try to resume a

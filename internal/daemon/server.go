@@ -114,6 +114,7 @@ type Server struct {
 	goalWatchMu             sync.Mutex
 	goalWatchCancel         context.CancelFunc
 	goalWatchDone           chan struct{}
+	postCommitScheduler     *postCommitScheduler
 	goalGate                *goalGate
 
 	// Cached machine ID to avoid INSERT on every status request
@@ -252,6 +253,7 @@ func newServerWithLogs(
 	}
 	s.httpServer.RegisterOnShutdown(cancelRequests)
 
+	s.postCommitScheduler = newPostCommitScheduler(s.flushPostCommitBatch)
 	return s
 }
 
@@ -531,6 +533,7 @@ func (s *Server) Start(ctx context.Context) error {
 	if err := <-serveErrCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
 		s.configWatcher.Stop()
 		s.stopGoalWatcher()
+		s.postCommitScheduler.stop()
 		s.workerPool.BeginStop()
 		s.stopPanelSweep()
 		s.workerPool.Stop()
@@ -747,6 +750,7 @@ func (s *Server) stopOnce0() error {
 	}
 
 	s.stopGoalWatcher()
+	s.postCommitScheduler.stop()
 
 	// Cancel gate evaluations before draining HTTP connections.
 	s.goalGate.stop()
