@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/config"
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
@@ -32,6 +33,11 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 	}
 
 	tc := newWorkerTestContext(t, 1)
+	if command := os.Getenv("ROBOREV_TEST_CODEX_COMMAND"); command != "" {
+		cfg := config.DefaultConfig()
+		cfg.CodexCmd = command
+		tc.Pool.cfgGetter = NewStaticConfig(cfg)
+	}
 	repoRoot := tc.TmpDir
 	loginDir := t.TempDir()
 	t.Setenv("CODEX_HOME", loginDir)

@@ -255,6 +255,19 @@ func warmGoModules(ctx context.Context, checkout string, gitEnv []string, out io
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("checker root go.mod must be a regular file")
 	}
+	// Downloads run on the host and can read or rewrite workspace and checksum files.
+	for _, name := range []string{"go.sum", "go.work", "go.work.sum"} {
+		info, err := os.Lstat(filepath.Join(checkout, name))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("checker root %s must be a regular file", name)
+		}
+	}
 	goEnv := exec.CommandContext(ctx, "go", "env", "GOROOT", "GOMODCACHE")
 	// Version-manager shims must resolve Go without loading checkout config.
 	goEnv.Dir = os.TempDir()
