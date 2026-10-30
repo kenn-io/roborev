@@ -2371,8 +2371,8 @@ launching fix jobs and managing patches. See
 The `[agent.codex]` section controls Codex-specific behavior for review jobs.
 Both options default to `true` so Codex reviews start from a clean state without
 skill instructions or user-level Codex config. User-config isolation also
-applies to non-agentic tasks (including `analyze` and `run`), insights, and
-compact jobs. Agentic tasks and fix jobs keep loading user config.
+applies to non-agentic stored-prompt jobs, including `analyze`, `run`, and
+insights. Agentic stored-prompt jobs and fix jobs keep loading user config.
 
 ```toml
 # ~/.roborev/config.toml
@@ -2384,7 +2384,7 @@ ignore_review_user_config = true   # Ignore user config for reviews and non-edit
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `disable_review_skills` | bool | true | Run Codex review jobs with `skills.include_instructions=false` so model-visible skill instructions are stripped from the prompt |
-| `ignore_review_user_config` | bool | true | Pass `--ignore-user-config` to Codex reviews and non-agentic tasks, insights, and compact jobs so user-level Codex config is not loaded |
+| `ignore_review_user_config` | bool | true | Pass `--ignore-user-config` to Codex reviews and non-agentic stored-prompt jobs so user-level Codex config is not loaded |
 
 Set either to `false` to restore the prior behavior if you rely on Codex skill
 instructions or user-level Codex config during reviews.
