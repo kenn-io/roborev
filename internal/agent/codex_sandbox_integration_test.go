@@ -4,6 +4,7 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
@@ -41,7 +42,14 @@ func TestCodexSandboxIntegration(t *testing.T) {
 
 	const key = "sandbox-test-token"
 	var unauthorized atomic.Int32
+	var cancelling atomic.Bool
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if cancelling.Load() {
+			cancel()
+			return
+		}
 		if r.Header.Get("Authorization") != "Bearer "+key {
 			unauthorized.Add(1)
 			w.WriteHeader(http.StatusUnauthorized)
@@ -115,4 +123,9 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	homes, err := filepath.Glob(filepath.Join(work, ".codex-home-*"))
 	require.NoError(t, err)
 	assert.Empty(t, homes)
+	t.Run("cancellation", func(t *testing.T) {
+		cancelling.Store(true)
+		_, err := a.Review(ctx, repo, "HEAD", "review", nil)
+		require.ErrorIs(t, err, context.Canceled)
+	})
 }
