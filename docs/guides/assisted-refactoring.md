@@ -56,6 +56,13 @@ Results appear in the TUI as jobs labeled with their analysis type (e.g.
 findings. You can then run `roborev fix` to address open findings, or pass
 specific job IDs with `roborev fix <job_id>`.
 
+Analysis jobs use the agent's non-agentic permissions, including when large
+inputs are passed as file paths. Claude Code loads only `Read`, `Glob`, and
+`Grep` and blocks MCP tools. Codex uses its read-only sandbox and, by default,
+ignores user-level Codex config. The global `allow_unsafe_agents` and
+`codex_sandbox` overrides still apply. With `--fix`, a separate foreground agent
+gets edit access after analysis finishes.
+
 ## Branch Mode
 
 Use `--branch` to automatically analyze files changed on the current branch

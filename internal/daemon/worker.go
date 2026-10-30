@@ -1909,7 +1909,10 @@ func applyCodexReviewSettings(a agent.Agent, job *storage.ReviewJob, cfg *config
 		a,
 		config.ResolveDisableCodexReviewSkills(job.RepoPath, cfg),
 	)
-	if !job.IsReviewJob() && job.Source != storage.JobSourceRebuttal {
+	// Non-editing stored-prompt jobs (including analysis) use the same user
+	// config isolation as reviews. Explicit agentic tasks and fixes retain it.
+	if !job.IsReviewJob() && job.Source != storage.JobSourceRebuttal &&
+		(job.Agentic || job.IsFixJob()) {
 		return a
 	}
 	a = agent.WithCodexUserConfigIgnored(

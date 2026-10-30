@@ -560,7 +560,6 @@ func enqueueAnalysisJob(ctx context.Context, ep daemon.DaemonEndpoint, repoRoot,
 		AnalysisType:      label,
 		AnalysisFiles:     normalizeAnalysisFileList(files),
 		AnalysisCommitSHA: opts.analysisCommitSHA,
-		Agentic:           true, // Agentic mode needed for reading files when prompt exceeds size limit
 	})
 
 	resp, err := ep.APIClient(10*time.Second).EnqueueJobRaw(context.Background(), nil, roborevclient.WithBody(reqBody))
