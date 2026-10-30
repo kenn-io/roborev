@@ -477,7 +477,7 @@ func TestFetchReviewDeadlineExceededDoesNotRetryRecovery(t *testing.T) {
 	defer ts.Close()
 	patchServerAddr(t, ts.URL)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the handler blocks until the request context ends
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the handler blocks until the request context ends
 	defer cancel()
 
 	_, err := fetchReview(ctx, ts.URL, 42)
@@ -760,7 +760,7 @@ func TestAddJobResponseDeadlineExceededCancelsHTTPCall(t *testing.T) {
 	defer ts.Close()
 	patchServerAddr(t, ts.URL)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the handler blocks until the request context ends
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the handler blocks until the request context ends
 	defer cancel()
 
 	err := addJobResponse(ctx, ts.URL, 123, "roborev-fix", "Fix applied")
@@ -2698,7 +2698,7 @@ func TestEnqueueIfNeededDeadlineExceededCancelsProbeRequest(t *testing.T) {
 	defer ts.Close()
 	serverAddr = ts.URL
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the handler blocks until the request context ends
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the handler blocks until the request context ends
 	defer cancel()
 
 	err := enqueueIfNeeded(ctx, ts.URL, repo.Dir, sha)
@@ -2785,7 +2785,7 @@ func TestQueryOpenJobIDsDeadlineExceededCancelsRequest(t *testing.T) {
 	serverAddr = ts.URL
 	t.Cleanup(func() { serverAddr = oldServerAddr })
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the handler blocks until the request context ends
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the handler blocks until the request context ends
 	defer cancel()
 
 	_, err := queryOpenJobIDs(ctx, "/tmp/repo", "")
