@@ -886,7 +886,7 @@ set, it takes priority over the matrix fields for that repo.
 | `exclude_repos` | array | `[]` | Glob patterns to exclude from the resolved repo list |
 | `skip_labels` | array | `[]` | GitHub PR labels that skip CI reviews (case-insensitive) |
 | `allowed_authors` | array | `[]` | GitHub logins whose PRs are reviewed (case-insensitive). See [Author filter](#author-filter). |
-| `allowed_author_associations` | array | `[]` | PR author associations that are reviewed, such as `OWNER`, `MEMBER`, `COLLABORATOR`. With `allowed_authors` empty too, every author is reviewed. |
+| `allowed_author_associations` | array | `[]` | PR author associations that are reviewed, such as `OWNER`, `MEMBER`, `COLLABORATOR`. With `allowed_authors` also empty and `allow_codeowners` off, every author is reviewed. |
 | `allow_codeowners` | bool | `false` | Also review PRs from users the base branch's `CODEOWNERS` file names, directly or through a team. See [CODEOWNERS](#codeowners). |
 | `include_branches` | array | `[]` (all) | Glob patterns for PR head branches to review. `*` also matches `/`. See [Branch filters](#branch-filters). |
 | `exclude_branches` | array | `[]` | Glob patterns for PR head branches to skip. Wins over `include_branches`. |

@@ -47,41 +47,52 @@ func TestParseCodeowners(t *testing.T) {
 }
 
 func TestCodeownerLogins(t *testing.T) {
-	codeowners := "* @Alice @acme/core\n"
+	// The team appears twice, in different case, and its members span two pages.
+	codeowners := "* @Alice @acme/core\n/docs/ @ACME/core\n"
 	for _, tt := range []struct {
-		name       string
-		files      map[string]string // repo path -> CODEOWNERS content at the ref
-		teamStatus int
-		want       map[string]struct{}
-		wantErr    string
+		name        string
+		files       map[string]string // repo path -> CODEOWNERS content at the ref
+		page2Status int               // status of the second team-members page
+		want        map[string]struct{}
+		wantPages   map[string]int // team-members requests per page number
+		wantErr     string
 	}{
 		{
-			name:       "first location wins and teams expand",
-			files:      map[string]string{"CODEOWNERS": codeowners, "docs/CODEOWNERS": "* @mallory\n"},
-			teamStatus: http.StatusOK,
-			want:       map[string]struct{}{"alice": {}, "carol": {}, "dave": {}},
+			name:        "first location wins and teams expand",
+			files:       map[string]string{"CODEOWNERS": codeowners, "docs/CODEOWNERS": "* @mallory\n"},
+			page2Status: http.StatusOK,
+			want:        map[string]struct{}{"alice": {}, "carol": {}, "dave": {}},
+			wantPages:   map[string]int{"": 1, "2": 1}, // the repeated team is expanded once
 		},
 		{
-			name:  "no CODEOWNERS file",
-			files: map[string]string{},
-			want:  map[string]struct{}{},
+			name:      "no CODEOWNERS file",
+			files:     map[string]string{},
+			want:      map[string]struct{}{},
+			wantPages: map[string]int{},
 		},
 		{
-			name:       "unreadable team is an error",
-			files:      map[string]string{".github/CODEOWNERS": codeowners},
-			teamStatus: http.StatusForbidden,
-			wantErr:    "@acme/core",
+			name:        "failed later team page is an error",
+			files:       map[string]string{".github/CODEOWNERS": codeowners},
+			page2Status: http.StatusForbidden,
+			wantErr:     "@acme/core",
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
+			teamPages := map[string]int{}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				switch r.URL.Path {
-				case "/api/v3/orgs/acme/teams/core/members":
-					w.WriteHeader(tt.teamStatus)
-					if tt.teamStatus == http.StatusOK {
-						fmt.Fprint(w, `[{"login":"carol"},{"login":"Dave"}]`)
+				if r.URL.Path == "/api/v3/orgs/acme/teams/core/members" {
+					page := r.URL.Query().Get("page")
+					teamPages[page]++
+					if page == "" {
+						w.Header().Set("Link", fmt.Sprintf("<http://%s%s?page=2>; rel=\"next\"", r.Host, r.URL.Path))
+						fmt.Fprint(w, `[{"login":"carol"}]`)
+						return
+					}
+					w.WriteHeader(tt.page2Status)
+					if tt.page2Status == http.StatusOK {
+						fmt.Fprint(w, `[{"login":"Dave"}]`)
 					} else {
 						fmt.Fprint(w, `{"message":"Resource not accessible by integration"}`)
 					}
@@ -107,10 +118,12 @@ func TestCodeownerLogins(t *testing.T) {
 			got, err := client.CodeownerLogins(t.Context(), "acme/api", "main")
 			if tt.wantErr != "" {
 				require.ErrorContains(t, err, tt.wantErr)
+				assert.Nil(got)
 				return
 			}
 			require.NoError(t, err)
 			assert.Equal(tt.want, got)
+			assert.Equal(tt.wantPages, teamPages)
 		})
 	}
 }

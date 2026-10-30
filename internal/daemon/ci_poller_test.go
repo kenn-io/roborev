@@ -976,6 +976,7 @@ func TestCIPollerAllowCodeowners(t *testing.T) {
 	assert := assert.New(t)
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 	h.Cfg.CI.AllowCodeowners = true
+	h.Cfg.CI.ExcludeBranches = []string{"renovate/*"}
 	h.Cfg.CI.ReviewTypes = []string{"security"}
 	h.Cfg.CI.Agents = []string{"codex"}
 	h.stubProcessPRGit()
@@ -995,6 +996,8 @@ func TestCIPollerAllowCodeowners(t *testing.T) {
 		{Number: 1, HeadRefOid: "owner-head", BaseRefName: "main", Author: ghPRAuthor{Login: "Alice"}, AuthorAssociation: "CONTRIBUTOR"},
 		{Number: 2, HeadRefOid: "outsider-head", BaseRefName: "main", Author: ghPRAuthor{Login: "mallory"}, AuthorAssociation: "NONE"},
 		{Number: 3, HeadRefOid: "unreadable-head", BaseRefName: "release", Author: ghPRAuthor{Login: "alice"}, AuthorAssociation: "CONTRIBUTOR"},
+		{Number: 4, HeadRefOid: "unreadable-head-2", BaseRefName: "release", Author: ghPRAuthor{Login: "bob"}, AuthorAssociation: "NONE"},
+		{Number: 5, HeadRefOid: "excluded-head", BaseRefName: "release", HeadRefName: "renovate/lodash", Author: ghPRAuthor{Login: "renovate[bot]"}, AuthorAssociation: "NONE"},
 	}
 	h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return prs, nil }
 
@@ -1004,21 +1007,25 @@ func TestCIPollerAllowCodeowners(t *testing.T) {
 	assert.True(h.hasPanel(t, "acme/api", 1, "owner-head"), "code owner is reviewed")
 	assert.False(h.hasPanel(t, "acme/api", 2, "outsider-head"), "non-owner is skipped")
 	assert.False(h.hasPanel(t, "acme/api", 3, "unreadable-head"), "unreadable CODEOWNERS blocks review")
+	assert.False(h.hasPanel(t, "acme/api", 5, "excluded-head"))
 	var skipped, unreadable []capturedStatus
 	for _, status := range *statuses {
 		switch status.SHA {
-		case "outsider-head":
+		case "outsider-head", "excluded-head":
 			skipped = append(skipped, status)
-		case "unreadable-head":
+		case "unreadable-head", "unreadable-head-2":
 			unreadable = append(unreadable, status)
 		}
 	}
 	assert.Equal([]capturedStatus{{
 		Repo: "acme/api", SHA: "outsider-head", State: "success",
 		Desc: "Review skipped: author not in allowed authors",
-	}}, skipped)
+	}, {
+		Repo: "acme/api", SHA: "excluded-head", State: "success",
+		Desc: "Review skipped: branch filtered",
+	}}, skipped, "an excluded branch is skipped even when CODEOWNERS is unreadable")
 	assert.Empty(unreadable, "a read failure must not mark the PR skipped")
-	assert.Equal([]string{"main", "release"}, reads, "each base branch is read once per poll")
+	assert.Equal([]string{"main", "release"}, reads, "each base branch is read once per poll, even when the read fails")
 
 	require.ErrorContains(t, h.Poller.pollRepo(context.Background(), "acme/api", h.Cfg), "team members unavailable")
 	assert.Equal([]string{"main", "release", "main", "release"}, reads, "the next poll reads CODEOWNERS again")

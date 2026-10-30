@@ -158,16 +158,23 @@ type CIPoller struct {
 	stopping           bool
 	pollStopping       bool
 	eventsStopping     bool
-	pollErrors         map[ciPollTarget]ciPollFailure          // guarded by mu
-	monitoredRepos     []string                                // last successful discovery; guarded by mu
-	dispatchingRetries map[ciPollTarget]int                    // live retry enqueue owners; guarded by mu
-	codeowners         map[ciCodeownersKey]map[string]struct{} // logins per repo and base branch for the current poll; guarded by mu
-	initialPollPending bool                                    // guarded by mu; startup has not established health yet
+	pollErrors         map[ciPollTarget]ciPollFailure   // guarded by mu
+	monitoredRepos     []string                         // last successful discovery; guarded by mu
+	dispatchingRetries map[ciPollTarget]int             // live retry enqueue owners; guarded by mu
+	codeowners         map[ciCodeownersKey]ciCodeowners // CODEOWNERS reads per repo and base branch for the current poll; guarded by mu
+	initialPollPending bool                             // guarded by mu; startup has not established health yet
 }
 
 type ciCodeownersKey struct {
 	repo string
 	ref  string
+}
+
+// ciCodeowners is one CODEOWNERS read. A failed read is kept too, so other
+// PRs on the same base branch do not repeat it during the same poll.
+type ciCodeowners struct {
+	logins map[string]struct{}
+	err    error
 }
 
 type ciPollTarget struct {
@@ -202,7 +209,7 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 		nowFn:              time.Now,
 		pollErrors:         make(map[ciPollTarget]ciPollFailure),
 		dispatchingRetries: make(map[ciPollTarget]int),
-		codeowners:         make(map[ciCodeownersKey]map[string]struct{}),
+		codeowners:         make(map[ciCodeownersKey]ciCodeowners),
 	}
 	p.listOpenPRsFn = p.listOpenPRs
 	p.listTrustedActorsFn = p.listTrustedActors
@@ -952,6 +959,15 @@ func (p *CIPoller) ciPRSkip(ctx context.Context, ghRepo string, pr ghPR, ci *con
 			reason:      fmt.Sprintf("it has label %q", label),
 		}, true, nil
 	}
+	// Check branches before authors: an excluded branch must be skipped even
+	// when CODEOWNERS cannot be read.
+	if !ci.IsPRBranchAllowed(pr.HeadRefName) {
+		return ciSkip{
+			description: "Review skipped: branch filtered",
+			reason: fmt.Sprintf("branch %q is filtered by ci.include_branches or ci.exclude_branches",
+				pr.HeadRefName),
+		}, true, nil
+	}
 	allowed := ci.IsPRAuthorAllowed(pr.Author.Login, pr.AuthorAssociation)
 	if !allowed && ci.AllowCodeowners && pr.Author.Login != "" {
 		owners, err := p.codeownerLogins(ctx, ghRepo, pr.BaseRefName)
@@ -967,13 +983,6 @@ func (p *CIPoller) ciPRSkip(ctx context.Context, ghRepo string, pr ghPR, ci *con
 				pr.Author.Login, pr.AuthorAssociation),
 		}, true, nil
 	}
-	if !ci.IsPRBranchAllowed(pr.HeadRefName) {
-		return ciSkip{
-			description: "Review skipped: branch filtered",
-			reason: fmt.Sprintf("branch %q is filtered by ci.include_branches or ci.exclude_branches",
-				pr.HeadRefName),
-		}, true, nil
-	}
 	return ciSkip{}, false, nil
 }
 
@@ -983,19 +992,15 @@ func (p *CIPoller) ciPRSkip(ctx context.Context, ghRepo string, pr ghPR, ci *con
 func (p *CIPoller) codeownerLogins(ctx context.Context, ghRepo, ref string) (map[string]struct{}, error) {
 	key := ciCodeownersKey{repo: ghRepo, ref: ref}
 	p.mu.Lock()
-	owners, ok := p.codeowners[key]
+	read, ok := p.codeowners[key]
 	p.mu.Unlock()
-	if ok {
-		return owners, nil
+	if !ok {
+		read.logins, read.err = p.codeownersFn(ctx, ghRepo, ref)
+		p.mu.Lock()
+		p.codeowners[key] = read
+		p.mu.Unlock()
 	}
-	owners, err := p.codeownersFn(ctx, ghRepo, ref)
-	if err != nil {
-		return nil, err
-	}
-	p.mu.Lock()
-	p.codeowners[key] = owners
-	p.mu.Unlock()
-	return owners, nil
+	return read.logins, read.err
 }
 
 func (p *CIPoller) forgetCodeowners(ghRepo string) {

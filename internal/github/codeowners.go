@@ -54,7 +54,14 @@ func (c *Client) CodeownerLogins(ctx context.Context, ghRepo, ref string) (map[s
 	for _, user := range users {
 		logins[strings.ToLower(user)] = struct{}{}
 	}
+	expanded := make(map[string]bool, len(teams))
 	for _, team := range teams {
+		// CODEOWNERS often names the same team on many lines.
+		key := strings.ToLower(team)
+		if expanded[key] {
+			continue
+		}
+		expanded[key] = true
 		members, err := c.listTeamMembers(ctx, team)
 		if err != nil {
 			return nil, fmt.Errorf("list members of CODEOWNERS team @%s: %w", team, err)
