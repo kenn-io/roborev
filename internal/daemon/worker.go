@@ -885,6 +885,10 @@ func (wp *WorkerPool) createExactCheckoutIn(
 	cleanup := func() {
 		unlock := lockGitMetadata(job.RepoPath)
 		defer unlock()
+		if err := makeCIWorktreeWritable(wt.Dir); err != nil {
+			log.Printf("[%s] Warning: restore review worktree permissions for job %d: %v",
+				workerID, job.ID, err)
+		}
 		if err := wt.Close(context.Background()); err != nil {
 			log.Printf("[%s] Warning: remove review worktree for job %d: %v",
 				workerID, job.ID, err)
