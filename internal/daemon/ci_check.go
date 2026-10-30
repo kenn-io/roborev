@@ -117,7 +117,6 @@ func (wp *WorkerPool) runCICheck(ctx context.Context, job *storage.ReviewJob, cf
 	}
 	a := codex.WithSandbox(&agent.CodexSandbox{Job: run.Job, Upstream: wp.ciCheckUpstream})
 	a.Command = run.Command
-	a.IgnoreUserConfig = true
 	a.Model = cfg.Model
 	a.Reasoning = agent.ParseReasoningLevel(cfg.Reasoning)
 	base, _, _ := strings.Cut(job.GitRef, "..")
@@ -177,7 +176,7 @@ func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob
 	}
 	readPaths = append(readPaths, commonDir)
 	var goPaths []string
-	goPaths, err = warmGoModules(ctx, checkout, root, gitEnv, out)
+	goPaths, err = warmGoModules(ctx, checkout, gitEnv, out)
 	if err != nil {
 		return
 	}
@@ -241,7 +240,7 @@ func validateCICheckReadPaths(paths []string) error {
 	return nil
 }
 
-func warmGoModules(ctx context.Context, checkout, root string, gitEnv []string, out io.Writer) ([]string, error) {
+func warmGoModules(ctx context.Context, checkout string, gitEnv []string, out io.Writer) ([]string, error) {
 	hasModule := false
 	for _, name := range []string{"go.mod", "go.work", "go.sum", "go.work.sum"} {
 		path := filepath.Join(checkout, name)
@@ -264,10 +263,13 @@ func warmGoModules(ctx context.Context, checkout, root string, gitEnv []string, 
 		return nil, nil
 	}
 	goEnv := exec.CommandContext(ctx, "go", "env", "GOROOT", "GOMODCACHE")
-	goEnv.Dir = root
+	// Version-manager shims must resolve Go without loading checkout config.
+	goEnv.Dir = os.TempDir()
+	var stderr strings.Builder
+	goEnv.Stderr = &stderr
 	data, err := goEnv.Output()
 	if err != nil {
-		fmt.Fprintf(out, "CI checker go env failed: %v\n", err)
+		fmt.Fprintf(out, "CI checker go env failed: %v: %s\n", err, stderr.String())
 		return nil, nil
 	}
 	paths := strings.Split(strings.TrimSpace(string(data)), "\n")
