@@ -17,6 +17,7 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	gitpkg "go.kenn.io/roborev/internal/git"
+	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/sandbox"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/pkg/structuredreview"
@@ -52,7 +53,7 @@ func (wp *WorkerPool) checkAndCompleteSynthesis(ctx context.Context, workerID st
 }
 
 func (wp *WorkerPool) checkSynthesis(ctx context.Context, job *storage.ReviewJob, res synthesisResult, doc structuredreview.Document, check *ciCheckConfig) (synthesisResult, bool) {
-	if check != nil && !doc.UnableToReview() && len(doc.Findings) > 0 {
+	if check != nil && len(doc.Findings) > 0 {
 		jobLog := newAppendingJobLogWriter(job.ID)
 		defer jobLog.Close()
 		// Persist readable checker output because the job log keeps the synthesis provider.
@@ -78,10 +79,7 @@ func (wp *WorkerPool) checkSynthesis(ctx context.Context, job *storage.ReviewJob
 		if checkErr != nil {
 			fmt.Fprintf(outputWriter, "CI checker failed; keeping original review: %v\n", checkErr)
 		} else if len(checked.Findings) < len(doc.Findings) {
-			checked.Verdict = structuredreview.VerdictPass
-			if !checked.Passed(job.MinSeverity) {
-				checked.Verdict = structuredreview.VerdictFail
-			}
+			checked.Verdict = map[bool]string{true: structuredreview.VerdictPass, false: structuredreview.VerdictFail}[reviewpkg.SynthesisVerdict(checked, job.MinSeverity).Passed()]
 			if result, err := synthesisDocumentResult(job, checked); err == nil {
 				result.Agent = res.review.Agent
 				res.review = result

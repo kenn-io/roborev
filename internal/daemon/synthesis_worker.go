@@ -150,18 +150,13 @@ func (wp *WorkerPool) synthesizeSucceededResults(
 		// runSynthesisAgent already handled the failure/cancel.
 		return
 	}
-	structured, err := json.Marshal(doc)
+	result, err := synthesisDocumentResult(job, doc)
 	if err != nil {
 		log.Printf("[%s] Error encoding synthesis document for job %d: %v", workerID, job.ID, err)
 	}
+	result.Agent = resolvedAgent
 	wp.checkAndCompleteSynthesis(ctx, workerID, job, synthesisResult{
-		review: reviewpkg.ReviewResult{
-			Agent:            resolvedAgent,
-			Output:           doc.Markdown(job.MinSeverity),
-			Verdict:          reviewpkg.SynthesisVerdict(doc, job.MinSeverity),
-			StructuredOutput: structured,
-			MinSeverity:      job.MinSeverity,
-		},
+		review:          result,
 		capturedSession: capturedSession,
 		captureUsage:    true,
 	}, doc, check)
@@ -590,17 +585,14 @@ func (wp *WorkerPool) completeSynthesisDocument(workerID string, job *storage.Re
 
 func synthesisDocumentResult(job *storage.ReviewJob, doc structuredreview.Document) (reviewpkg.ReviewResult, error) {
 	raw, err := json.Marshal(doc)
-	if err != nil {
-		return reviewpkg.ReviewResult{}, err
-	}
 	verdict := storage.VerdictUnknown
 	if !doc.UnableToReview() {
-		verdict = storage.VerdictFromPassed(doc.Passed(job.MinSeverity))
+		verdict = reviewpkg.SynthesisVerdict(doc, job.MinSeverity)
 	}
 	return reviewpkg.ReviewResult{
 		Agent: job.Agent, Output: doc.Markdown(job.MinSeverity), Verdict: verdict,
 		StructuredOutput: raw, MinSeverity: job.MinSeverity,
-	}, nil
+	}, err
 }
 
 // needsExactCheckout reports whether a local committed review must run in a
