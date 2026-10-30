@@ -244,7 +244,7 @@
         <li class="guide-stop" id="ci">
           <div class="guide-copy">
             <h2>Run the same panel on every pull request.</h2>
-            <p>Enable the CI poller and the daemon lists open pull requests on GitHub or merge requests on GitLab, runs one panel per PR head against the frozen merge-base range, and posts one synthesized comment. Trusted collaborator discussion is included in the prompt; labels in <code>skip_labels</code> exempt drafts and generated updates.</p>
+            <p>Enable the CI poller and the daemon lists open pull requests on GitHub, runs one panel per PR head against the frozen merge-base range, and posts one synthesized comment. The poller is GitHub-only; for GitLab merge requests, run <code>roborev ci review</code> in a GitLab CI job to post the review as an MR note. Trusted collaborator discussion is included in the prompt; labels in <code>skip_labels</code> exempt drafts and generated updates.</p>
             <p>Authenticate as a GitHub App so comments and checks come from a bot with repository-scoped permissions, or use your <code>gh</code> login for a personal project. Per-repo <code>.roborev.toml</code> overrides the panel and agents for one project.</p>
             <p><a href="/docs/integrations/github/">GitHub integration</a> · <a href="/docs/integrations/gitlab/">GitLab integration</a></p>
           </div>
