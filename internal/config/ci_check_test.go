@@ -15,25 +15,18 @@ func TestCICheckConfig(t *testing.T) {
 		cfg.CI.Check = global
 		assert.Equal(t, global, ResolveCICheck(nil, cfg))
 		for _, override := range []bool{false, true} {
-			repo := &RepoConfig{CI: RepoCIConfig{Check: &override}}
-			assert.Equal(t, override, ResolveCICheck(repo, cfg))
+			assert.Equal(t, override, ResolveCICheck(&RepoConfig{CI: RepoCIConfig{Check: &override}}, cfg))
 		}
 	}
 	cfg := DefaultConfig()
 	cfg.CI.CheckReasoning = "invalid"
 	require.ErrorContains(t, cfg.Validate(), "ci.check_reasoning")
 	cfg.CI.CheckReasoning = "high"
-	assert.NoError(t, cfg.Validate())
-}
-
-func TestCICheckRepoScope(t *testing.T) {
+	require.NoError(t, cfg.Validate())
 	for _, key := range []string{"check_model", "check_reasoning"} {
-		t.Run(key, func(t *testing.T) {
-			dir := t.TempDir()
-			require.NoError(t, os.WriteFile(filepath.Join(dir, ".roborev.toml"), []byte("[ci]\n"+key+" = \"codex\"\n"), 0o600))
-			_, err := LoadRepoConfig(dir)
-			require.ErrorContains(t, err, "ci."+key)
-			require.ErrorContains(t, err, "global-only")
-		})
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, ".roborev.toml"), []byte("[ci]\n"+key+" = \"codex\"\n"), 0o600))
+		_, err := LoadRepoConfig(dir)
+		require.ErrorContains(t, err, "ci."+key+`" is global-only`)
 	}
 }
