@@ -248,6 +248,12 @@ Rules that matter:
     they apply only after the setup is pushed there. CI reads everything from
     its trusted base ref. Commit the whole setup to the default branch so all
     three agree, and tell the user the guidelines wait on that push.
+- For GitHub Actions reviews, `roborev init gh-action` generates a workflow
+    that skips draft PRs and reviews them when marked ready. Use
+    `--include-drafts` to review drafts too. Both modes cancel overlapping runs
+    for the same workflow and PR. Existing workflows need
+    `roborev init gh-action --force` to adopt the behavior; add
+    `--include-drafts` if the user wants draft reviews.
 - A `type = "kata"` hook files an issue for each reviewer's failing review as
     well as for the combined review. With a panel of several reviewers, one
     failing commit can open several issues. Say so when proposing it.

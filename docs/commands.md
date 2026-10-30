@@ -1000,6 +1000,7 @@ roborev init gh-action                          # Generate workflow file
 roborev init gh-action --agent codex            # Specify agents
 roborev init gh-action --output .github/workflows/review.yml
 roborev init gh-action --force                  # Overwrite existing
+roborev init gh-action --include-drafts         # Also review draft PRs
 roborev init gh-action --roborev-version 0.34.0 # Pin version
 ```
 
@@ -1008,13 +1009,20 @@ roborev init gh-action --roborev-version 0.34.0 # Pin version
 | `--agent <names>` | Agents to include in the workflow (repeatable) |
 | `--output <path>` | Output path (default: `.github/workflows/roborev.yml`) |
 | `--force` | Overwrite an existing workflow file |
+| `--include-drafts` | Review draft PRs too (default: skip drafts) |
 | `--roborev-version <ver>` | Pin roborev version in the workflow (default: latest) |
+
+Generated workflows skip draft PRs by default and run when a PR is marked ready
+for review. `--include-drafts` also permits draft reviews. Both modes cancel
+overlapping runs for the same workflow and PR. Regenerate existing files with
+`roborev init gh-action --force` to adopt this behavior; add `--include-drafts`
+if you want draft reviews.
 
 Generates a GitHub Actions workflow that:
 
 1. Checks out the repository
 1. Downloads and installs roborev with SHA256 verification
-1. Runs `roborev ci review --comment` on each PR
+1. Runs `roborev ci review --comment` on eligible PRs
 1. Posts review results as PR comments
 
 Agent API keys are read from repository secrets (e.g. `ANTHROPIC_API_KEY` for
