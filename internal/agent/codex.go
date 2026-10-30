@@ -490,7 +490,7 @@ func (a *CodexAgent) review(
 		}
 	}
 
-	// Sandboxed Codex validates its flags inside the verified policy, not on the host.
+	// Sandboxed Codex skips host-side capability probes.
 	if a.sandbox == nil {
 		threadSourceOK, err := codexSupportsThreadSource(
 			ctx, runAgent.Command, runAgent.IgnoreUserConfig,

@@ -21,13 +21,12 @@ func TestSandboxCommandRejectsUnavailablePolicy(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			marker := filepath.Join(dir, "executed")
 			if tc.fake {
 				name := "nono"
 				if runtime.GOOS == "windows" {
 					name += ".exe"
 				}
-				require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n: >'"+marker+"'\n"), 0o700))
+				require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\nexit 0\n"), 0o700))
 			}
 			t.Setenv("PATH", dir)
 			_, _, _, err := (Job{WorkDir: dir, MemoryMax: 1 << 30}).Command(context.Background(), []string{"true"})
