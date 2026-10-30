@@ -28,6 +28,15 @@ func (j Job) check(ctx context.Context, wrapper, env []string, cancel func()) er
 		}
 		denied = append(denied, resolved)
 	}
+	runtimeDir := ""
+	for _, entry := range env {
+		if value, ok := strings.CutPrefix(entry, "XDG_RUNTIME_DIR="); ok {
+			runtimeDir = value
+		}
+	}
+	if runtimeDir == "" {
+		return fmt.Errorf("sandbox self-check failed: XDG_RUNTIME_DIR is required to probe D-Bus")
+	}
 	canary, err := os.MkdirTemp("", "roborev-sandbox-canary-*")
 	if err != nil {
 		return fmt.Errorf("sandbox self-check setup: %w", err)
@@ -75,7 +84,7 @@ done
 exit "$failed"
 `
 	args := append([]string{}, wrapper[1:]...)
-	args = append(args, "/bin/bash", "--norc", "--noprofile", "-c", probe, "sandbox-check", j.WorkDir, secret, port, filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "bus"), j.Route.Upstream, strconv.Itoa(len(denied)))
+	args = append(args, "/bin/bash", "--norc", "--noprofile", "-c", probe, "sandbox-check", j.WorkDir, secret, port, filepath.Join(runtimeDir, "bus"), j.Route.Upstream, strconv.Itoa(len(denied)))
 	args = append(args, denied...)
 	cmd := exec.CommandContext(ctx, wrapper[0], args...)
 	if cancel != nil {
