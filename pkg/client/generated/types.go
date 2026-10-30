@@ -2933,6 +2933,18 @@ func (p PingInfo) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
+type PostCommitScheduleRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema   *string `json:"$schema,omitempty"`
+	Branch   string  `json:"branch" validate:"required,min=1"`
+	Head     string  `json:"head" validate:"required,min=1"`
+	RepoPath string  `json:"repo_path" validate:"required,min=1"`
+}
+
+func (p PostCommitScheduleRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
 type PostgresLegacyReview struct {
 	ID             uuid.UUID            `json:"id" validate:"required"`
 	JobType        string               `json:"job_type" validate:"required"`

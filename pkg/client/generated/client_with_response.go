@@ -2352,6 +2352,54 @@ func (c *Client) PingWithResponse(ctx context.Context, reqEditors ...runtime.Req
 	}
 }
 
+// SchedulePostCommit Schedule a pending post-commit batch after its quiet period
+func (c *Client) SchedulePostCommitWithResponse(ctx context.Context, options *SchedulePostCommitRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SchedulePostCommitResp, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/post-commit/schedule",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/post-commit/schedule")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+
+	out := &SchedulePostCommitResp{
+		HTTPResponse: resp.Raw,
+		Body:         resp.Content,
+		StatusCode:   resp.StatusCode,
+	}
+
+	switch resp.StatusCode {
+	case 204:
+		return out, nil
+	default:
+		out.ApplicationProblemPlusJSONDefault = new(SchedulePostCommitErrorResponse)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.ApplicationProblemPlusJSONDefault); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "SchedulePostCommitErrorResponse",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	}
+}
+
 // PauseQueue Pause queue processing
 func (c *Client) PauseQueueWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*PauseQueueResp, error) {
 	var err error

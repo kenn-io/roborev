@@ -246,6 +246,8 @@ type PingResponse = PingInfo
 
 type PingErrorResponse = ErrorModel
 
+type SchedulePostCommitErrorResponse = ErrorModel
+
 type PauseQueueResponse = QueuePauseOutputBody
 
 type PauseQueueErrorResponse = ErrorModel
@@ -725,6 +727,13 @@ type PingResp struct {
 	StatusCode                        int
 	JSON200                           *PingResponse
 	ApplicationProblemPlusJSONDefault *PingErrorResponse
+}
+
+type SchedulePostCommitResp struct {
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	ApplicationProblemPlusJSONDefault *SchedulePostCommitErrorResponse
 }
 
 type PauseQueueResp struct {
@@ -1556,6 +1565,22 @@ func (c *RawClient) PingRaw(ctx context.Context, reqEditors ...runtime.RequestEd
 	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
 		RequestURL: c.apiClient.GetBaseURL() + "/api/ping",
 		Method:     "GET",
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) SchedulePostCommitRaw(ctx context.Context, options *SchedulePostCommitRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &SchedulePostCommitRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/post-commit/schedule",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
 	}, reqEditors...)
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)

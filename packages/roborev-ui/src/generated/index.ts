@@ -142,6 +142,7 @@ export * from "./panelEnqueueResponse";
 export * from "./panelSummary";
 export * from "./pendingReminder";
 export * from "./pingInfo";
+export * from "./postCommitScheduleRequest";
 export * from "./postgresLegacyReview";
 export * from "./queuePauseOutputBody";
 export * from "./rebuttalRequest";
