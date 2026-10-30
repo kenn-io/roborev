@@ -184,68 +184,92 @@ exit "$failed"
 
 func TestSandboxProcessCleanup(t *testing.T) {
 	testutil.RequireSandboxIntegration(t)
-	work := t.TempDir()
-	job := routeJob(t, work)
-	t.Setenv("PATH", work+":"+os.Getenv("PATH"))
-	marker := filepath.Join(work, "host-tool-ran")
-	tool := []byte("#!/bin/sh\nprintf '%s\\n' \"$0\" >> '" + marker + "'\nexec /usr/bin/\"${0##*/}\" \"$@\"\n")
-	require.NoError(t, os.WriteFile(filepath.Join(work, "systemd-run"), tool, 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(work, "cleanup-tool"), tool, 0o700))
-	for _, key := range []string{"XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"} {
-		job.Env = append(job.Env, key+"="+os.Getenv(key))
-		t.Setenv(key, "")
-		require.NoError(t, os.Unsetenv(key))
+	for _, tc := range []struct{ name, child string }{
+		{"graceful", "/usr/bin/sleep 300"},
+		{"ignore-term", `sh -c "trap '' TERM; exec /usr/bin/sleep 300"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			work := t.TempDir()
+			job := routeJob(t, work)
+			t.Setenv("PATH", work+":"+os.Getenv("PATH"))
+			marker := filepath.Join(work, "host-tool-ran")
+			tool := []byte("#!/bin/sh\nprintf '%s\\n' \"$0\" >> '" + marker + "'\nexec /usr/bin/\"${0##*/}\" \"$@\"\n")
+			require.NoError(t, os.WriteFile(filepath.Join(work, "systemd-run"), tool, 0o700))
+			require.NoError(t, os.WriteFile(filepath.Join(work, "cleanup-tool"), tool, 0o700))
+			for _, key := range []string{"XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"} {
+				job.Env = append(job.Env, key+"="+os.Getenv(key))
+				t.Setenv(key, "")
+				require.NoError(t, os.Unsetenv(key))
+			}
+			tmp := t.TempDir()
+			job.Env = append(job.Env, "TMPDIR="+tmp)
+			pidFile := filepath.Join(work, "child.pid")
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			wrapped, env, cleanup, err := job.Command(ctx, []string{"bash", "-c", "cp '" + filepath.Join(work, "cleanup-tool") + "' '" + filepath.Join(work, "systemctl") + "'; setsid " + tc.child + " </dev/null >/dev/null 2>&1 & echo $! > '" + pidFile + "'; wait"})
+			require.NoError(t, err)
+			defer cleanup()
+			defer func() {
+				stop := exec.Command("/usr/bin/systemctl", "--user", "stop", strings.TrimPrefix(wrapped[1], "--unit="))
+				stop.Env = env
+				_ = stop.Run()
+			}()
+			process := exec.CommandContext(ctx, wrapped[0], wrapped[1:]...)
+			process.Cancel = func() error { cleanup(); return nil }
+			process.WaitDelay = time.Second // Bound waiting for the external wrapper when cleanup fails.
+			process.Env, process.Dir = env, work
+			require.NoError(t, process.Start())
+			done := make(chan struct{})
+			var waitErr error
+			go func() {
+				waitErr = process.Wait()
+				close(done)
+			}()
+			t.Cleanup(func() { <-done })
+			// The external sandbox process publishes its child PID after startup.
+			require.Eventually(t, func() bool { _, err := os.Stat(pidFile); return err == nil }, 5*time.Second, 10*time.Millisecond)
+			data, err := os.ReadFile(pidFile)
+			require.NoError(t, err)
+			pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+			require.NoError(t, err)
+			sleeping := func() bool {
+				line, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+				return string(line) == "/usr/bin/sleep\x00300\x00"
+			}
+			defer func() {
+				// Clean up this test's child even when testing a broken wrapper.
+				if sleeping() {
+					_ = syscall.Kill(pid, syscall.SIGKILL)
+				}
+			}()
+			// The detached sleep must be running before cleanup.
+			require.Eventually(t, sleeping, 5*time.Second, 10*time.Millisecond)
+			files, err := os.ReadDir(tmp)
+			require.NoError(t, err)
+			require.NotEmpty(t, files, "nono must create temporary files before cancellation")
+			cancel()
+			// Waiting depends on an external systemd scope stopping its processes.
+			require.Eventually(t, func() bool {
+				select {
+				case <-done:
+					return true
+				default:
+					return false
+				}
+			}, 15*time.Second, 10*time.Millisecond, "Wait did not return within 15s of cancellation")
+			require.Error(t, waitErr)
+			cleanup()
+			assert.NoFileExists(t, marker, "host launch and cleanup must bypass tools in the writable job directory")
+			if tc.name == "graceful" {
+				files, err = os.ReadDir(tmp)
+				require.NoError(t, err)
+				assert.Empty(t, files, "nono left temporary files after cancellation")
+			}
+			// systemd kills the external process; a zombie has already exited.
+			assert.Eventually(t, func() bool {
+				stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+				return os.IsNotExist(err) || strings.Contains(string(stat), ") Z ")
+			}, 5*time.Second, 10*time.Millisecond, "detached child survived cleanup")
+		})
 	}
-	tmp := t.TempDir()
-	job.Env = append(job.Env, "TMPDIR="+tmp)
-	pidFile := filepath.Join(work, "child.pid")
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	wrapped, env, cleanup, err := job.Command(ctx, []string{"bash", "-c", "cp '" + filepath.Join(work, "cleanup-tool") + "' '" + filepath.Join(work, "systemctl") + "'; setsid /usr/bin/sleep 300 </dev/null >/dev/null 2>&1 & echo $! > '" + pidFile + "'; wait"})
-	require.NoError(t, err)
-	defer cleanup()
-	defer func() {
-		stop := exec.Command("/usr/bin/systemctl", "--user", "stop", strings.TrimPrefix(wrapped[1], "--unit="))
-		stop.Env = env
-		_ = stop.Run()
-	}()
-	process := exec.CommandContext(ctx, wrapped[0], wrapped[1:]...)
-	process.Cancel = func() error { cleanup(); return nil }
-	process.WaitDelay = time.Second // Bound waiting for the external wrapper when cleanup fails.
-	process.Env, process.Dir = env, work
-	require.NoError(t, process.Start())
-	t.Cleanup(func() { _ = process.Wait() })
-	// The external sandbox process publishes its child PID after startup.
-	require.Eventually(t, func() bool { _, err := os.Stat(pidFile); return err == nil }, 5*time.Second, 10*time.Millisecond)
-	data, err := os.ReadFile(pidFile)
-	require.NoError(t, err)
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	require.NoError(t, err)
-	sleeping := func() bool {
-		line, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
-		return string(line) == "/usr/bin/sleep\x00300\x00"
-	}
-	defer func() {
-		// Clean up this test's child even when testing a broken wrapper.
-		if sleeping() {
-			_ = syscall.Kill(pid, syscall.SIGKILL)
-		}
-	}()
-	// The detached sleep must be running before cleanup.
-	require.Eventually(t, sleeping, 5*time.Second, 10*time.Millisecond)
-	files, err := os.ReadDir(tmp)
-	require.NoError(t, err)
-	require.NotEmpty(t, files, "nono must create temporary files before cancellation")
-	cancel()
-	require.Error(t, process.Wait())
-	cleanup()
-	assert.NoFileExists(t, marker, "host launch and cleanup must bypass tools in the writable job directory")
-	files, err = os.ReadDir(tmp)
-	require.NoError(t, err)
-	assert.Empty(t, files, "nono left temporary files after cancellation")
-	// systemd kills the external process; a zombie has already exited.
-	assert.Eventually(t, func() bool {
-		stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-		return os.IsNotExist(err) || strings.Contains(string(stat), ") Z ")
-	}, 5*time.Second, 10*time.Millisecond, "detached child survived cleanup")
 }
