@@ -591,49 +591,50 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 				}
 				rangeRef := mergeBase + ".." + headSHA
 
-				// Commit SHA lookups cannot find a post-commit branch review.
-				// Recover its completed result before enforcing the fix limit.
 				var review *storage.Review
-				if stall.pendingFixSHA != "" {
+				// Check for a pending branch review first. If it completed since
+				// its status was checked, recover the result before the limit or enqueue.
+				existingJob, err := client.FindPendingJobForRef(ctx, repoPath, rangeRef)
+				if err != nil {
+					return fmt.Errorf("error checking for existing branch review: %w", err)
+				}
+
+				var jobID int64
+				if existingJob != nil {
+					// Note: We don't filter by agent here because the --agent flag controls
+					// the ADDRESSING agent (which fixes code), not the REVIEW agent.
+					// We use the SHA-based rangeRef to ensure we only reuse jobs for the
+					// exact same HEAD - if HEAD has moved, we want a fresh review.
+					fmt.Printf("Waiting for in-progress branch review (job %d)...\n", existingJob.ID)
+					jobID = existingJob.ID
+				} else if stall.pendingFixSHA != "" {
+					// A completed range review is no longer a pending job. Read it
+					// after the pending lookup so a result completed between the two
+					// queries is recovered before the iteration limit or another enqueue.
 					review, err = client.GetReviewBySHA(rangeRef)
 					if err != nil {
 						return fmt.Errorf("fetch pending branch review: %w", err)
 					}
-					if review != nil && review.Closed {
+					if review != nil && review.Closed && review.Verdict() != "P" {
 						stall.reset()
 						review = nil
 					}
 				}
 
-				if review == nil {
-					// Check if a branch review job already exists (queued or running).
-					// Note: We don't filter by agent here because the --agent flag controls
-					// the ADDRESSING agent (which fixes code), not the REVIEW agent.
-					// We use the SHA-based rangeRef to ensure we only reuse jobs for the
-					// exact same HEAD - if HEAD has moved, we want a fresh review.
-					existingJob, err := client.FindPendingJobForRef(ctx, repoPath, rangeRef)
+				if review == nil && jobID == 0 {
+					if iteration > opts.maxIterations {
+						break
+					}
+					// No pending or completed branch review - enqueue a new one.
+					fmt.Println("No individual failed reviews - running branch review...")
+					jobID, err = client.EnqueueReview(repoPath, rangeRef, "")
 					if err != nil {
-						return fmt.Errorf("error checking for existing branch review: %w", err)
+						return fmt.Errorf("failed to enqueue branch review: %w", err)
 					}
+					fmt.Printf("Waiting for branch review (job %d)...\n", jobID)
+				}
 
-					var jobID int64
-					if existingJob != nil {
-						// Wait for existing pending branch review
-						fmt.Printf("Waiting for in-progress branch review (job %d)...\n", existingJob.ID)
-						jobID = existingJob.ID
-					} else {
-						if iteration > opts.maxIterations {
-							break
-						}
-						// No pending branch review - enqueue a new one
-						fmt.Println("No individual failed reviews - running branch review...")
-						jobID, err = client.EnqueueReview(repoPath, rangeRef, "")
-						if err != nil {
-							return fmt.Errorf("failed to enqueue branch review: %w", err)
-						}
-						fmt.Printf("Waiting for branch review (job %d)...\n", jobID)
-					}
-
+				if review == nil {
 					review, err = client.WaitForReview(jobID)
 					if err != nil {
 						return fmt.Errorf("branch review failed: %w", err)
