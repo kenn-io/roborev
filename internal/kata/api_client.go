@@ -522,7 +522,8 @@ func str(s *string) string {
 
 func commentFromAPI(c gen.CommentOut) Comment {
 	return Comment{
-		UID: c.UID, Handle: str(c.Handle), IssueUID: str(c.IssueUID), Body: c.Body,
+		CommentBody: DecodeCommentBody(CommentKind(str(c.ReplyKind)), c.Body),
+		UID:         c.UID, Handle: str(c.Handle), IssueUID: str(c.IssueUID), Body: c.Body,
 		CreatedAt: c.CreatedAt, EditedAt: c.EditedAt,
 		ReplyTo: str(c.ReplyToUID), Kind: CommentKind(str(c.ReplyKind)),
 		Attribution: attributionOf(c.Author, c.Teammate, c.SourceActor, c.AccountableActor),
@@ -660,7 +661,8 @@ func (c *APIClient) Comment(ctx context.Context, req CommentReq) (CommentResult,
 			ErrInvalidResponse, comment.Kind, comment.ReplyTo, req.Kind, req.ReplyTo)
 	}
 	return CommentResult{
-		UID: comment.UID, Body: comment.Body, EditedAt: comment.EditedAt, Changed: posted.Changed, Kind: comment.Kind, ReplyTo: comment.ReplyTo, Attribution: comment.Attribution,
+		CommentBody: comment.CommentBody,
+		UID:         comment.UID, Body: comment.Body, EditedAt: comment.EditedAt, Changed: posted.Changed, Kind: comment.Kind, ReplyTo: comment.ReplyTo, Attribution: comment.Attribution,
 	}, nil
 }
 

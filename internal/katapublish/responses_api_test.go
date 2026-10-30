@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/stretchr/testify/assert"
@@ -87,6 +88,119 @@ func TestResponseDeliveryThroughKataAPI(t *testing.T) {
 	assert.True(t, state.Done)
 	firstReceipt := state.Receipts[req.OperationID].UID
 	assert.NotEmpty(t, firstReceipt)
+	// Inspect the body actually posted by Deliver through the native API.
+	// Keep the publisher's true recovery suffix through every subsequent edit.
+	suffix := "\n\n" + marker(req, req.OperationID)
+	reader, err := kata.NewAPIClient("", config.KataIntegrationConfig{Enabled: true, Endpoint: server.URL(), APIKey: "test-credential", DefaultProject: "reviews"}, kata.WithoutWorkspace())
+	require.NoError(t, err)
+	defer reader.CloseIdleConnections()
+	shown, err := reader.ShowComplete(t.Context(), stored.Out.UID)
+	require.NoError(t, err)
+	require.Len(t, shown.Comments, 2)
+	assert.Equal(t, req.Responses[0].Body+suffix, shown.Comments[1].Body)
+	assert.Equal(t, req.Responses[0].Body, shown.Comments[1].Evidence)
+	assert.Equal(t, "unspecified", shown.Comments[1].Reason)
+	assert.Equal(t, "absent", shown.Comments[1].ReasonState)
+	assert.True(t, shown.Comments[1].EvidenceValid)
+	original := stored.Comments[1]
+	edited := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, reason := range []string{"", "false-positive", "spurious", "risk-accepted"} {
+		prefix := ""
+		state, wantReason := "absent", "unspecified"
+		if reason != "" {
+			prefix = "<!-- roborev-refute:v1 reason=" + reason + " -->\n"
+			state, wantReason = "explicit", reason
+		}
+		for _, evidence := range []string{"", "short", strings.Repeat("界", 39), strings.Repeat("界", 40)} {
+			raw := prefix + evidence + suffix
+			stored.Comments[1].Body = raw
+			stored.Comments[1].EditedAt = &edited
+			shown, err = reader.ShowComplete(t.Context(), stored.Out.UID)
+			require.NoError(t, err)
+			comment := shown.Comments[1]
+			assert.Equal(t, raw, comment.Body)
+			assert.Equal(t, evidence, comment.Evidence)
+			assert.Equal(t, wantReason, comment.Reason)
+			assert.Equal(t, state, comment.ReasonState)
+			assert.Equal(t, kata.EvidenceRunes(evidence) >= 40, comment.EvidenceValid)
+			assert.Equal(t, original.Author, comment.Author)
+			assert.Equal(t, &edited, comment.EditedAt)
+			thread, err := reader.Thread(t.Context(), kata.ThreadReq{Issue: stored.Out.UID, Root: root.UID})
+			require.NoError(t, err)
+			require.Len(t, thread.Comments, 2)
+			assert.Equal(t, comment.CommentBody, thread.Comments[1].CommentBody)
+		}
+	}
+	stored.Comments[1] = original
+	// Publish a genuine unmarked confirmation too, so both kinds traverse the
+	// actual delivery framing before native edits shorten their evidence.
+	confirmReq := req
+	confirmReq.OperationID = "confirmation-operation"
+	confirmReq.Responses = append([]Response{}, req.Responses...)
+	confirmReq.Responses[0].OperationID = confirmReq.OperationID
+	confirmReq.Responses[0].Fingerprint = "confirmation-intent"
+	confirmReq.Responses[0].Kind = "confirm"
+	confirmReq.Responses[0].Body = strings.Repeat("界", 40)
+	confirmed, err := Deliver(t.Context(), client, confirmReq, State{}, func(State) error { return nil })
+	require.NoError(t, err)
+	require.True(t, confirmed.Done)
+	require.Len(t, stored.Comments, 3)
+	for _, record := range []struct {
+		index  int
+		marker string
+	}{{1, marker(req, req.OperationID)}, {2, marker(confirmReq, confirmReq.OperationID)}} {
+		original := stored.Comments[record.index]
+		for _, separator := range []string{" ", "\r\n\r\n"} {
+			for _, evidence := range []string{"  short", strings.Repeat("界", 39), strings.Repeat("界", 40)} {
+				// Native edits normalize frame whitespace while retaining its true token.
+				raw := evidence + separator + record.marker + "\n"
+				stored.Comments[record.index].Body = raw
+				stored.Comments[record.index].EditedAt = &edited
+				shown, err = reader.ShowComplete(t.Context(), stored.Out.UID)
+				require.NoError(t, err)
+				assert.Equal(t, raw, shown.Comments[record.index].Body)
+				assert.Equal(t, evidence+separator+"\n", shown.Comments[record.index].Evidence)
+				assert.Equal(t, kata.EvidenceRunes(evidence) >= 40, shown.Comments[record.index].EvidenceValid)
+				assert.Equal(t, "absent", shown.Comments[record.index].ReasonState)
+			}
+		}
+		stored.Comments[record.index] = original
+	}
+
+	// Keep the real frame when appending human prose after an existing reply.
+	for _, record := range []struct {
+		index  int
+		marker string
+	}{{1, marker(req, req.OperationID)}, {2, marker(confirmReq, confirmReq.OperationID)}} {
+		original := stored.Comments[record.index]
+		reasons := []string{""}
+		if record.index == 1 {
+			reasons = append(reasons, "false-positive", "spurious", "risk-accepted")
+		}
+		for _, reason := range reasons {
+			prefix := ""
+			if reason != "" {
+				prefix = "<!-- roborev-refute:v1 reason=" + reason + " -->\n"
+			}
+			for _, after := range []string{"more", strings.Repeat("界", 33), strings.Repeat("界", 34)} {
+				raw := prefix + "short\n\n" + record.marker + "\n" + after
+				stored.Comments[record.index].Body = raw
+				stored.Comments[record.index].EditedAt = &edited
+				shown, err = reader.ShowComplete(t.Context(), stored.Out.UID)
+				require.NoError(t, err)
+				comment := shown.Comments[record.index]
+				assert.Equal(t, raw, comment.Body)
+				assert.Equal(t, "short\n"+after, comment.Evidence)
+				assert.Equal(t, kata.EvidenceRunes("short\n"+after) >= 40, comment.EvidenceValid)
+				assert.Equal(t, original.Author, comment.Author)
+				assert.Equal(t, &edited, comment.EditedAt)
+				thread, err := reader.Thread(t.Context(), kata.ThreadReq{Issue: stored.Out.UID, Root: root.UID})
+				require.NoError(t, err)
+				assert.Equal(t, comment.CommentBody, thread.Comments[record.index].CommentBody)
+			}
+		}
+		stored.Comments[record.index] = original
+	}
 	// A repeated refutation gets the provider's existing comment and remains
 	// unresolved. It never becomes an automatic reply to that comment.
 	req.OperationID = uuid.New().String()

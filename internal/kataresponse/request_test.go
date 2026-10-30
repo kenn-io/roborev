@@ -1,6 +1,9 @@
 package kataresponse
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json/v2"
 	"strings"
 	"testing"
 	"uuid"
@@ -90,5 +93,40 @@ func TestResponseTargetCanResolveItsOriginalJobInDaemon(t *testing.T) {
 	r.JobID = 0
 	require.NoError(t, r.Validate(), "a complete finding selector supplies the original job")
 	r.JobID = -1
+	require.Error(t, r.Validate())
+}
+
+func TestRequestReasonValidationAndLegacyFingerprint(t *testing.T) {
+	r := validRequest(t)
+	r.Kind, r.Body = "refute", strings.Repeat("界", 40)
+	// This is the pre-reason DTO's deterministic JSON shape.
+	raw := []byte(`{"job_id":42,"operation_id":"` + r.OperationID + `","finding_id":"` + r.FindingID + `","kind":"refute","body":"` + r.Body + `"}`)
+	sum := sha256.Sum256(raw)
+	original, err := r.Fingerprint()
+	require.NoError(t, err)
+	assert.Equal(t, hex.EncodeToString(sum[:]), original)
+	for _, reason := range []string{"false-positive", "spurious", "risk-accepted"} {
+		r.Reason = &reason
+		require.NoError(t, r.Validate())
+		got, err := r.Fingerprint()
+		require.NoError(t, err)
+		assert.NotEqual(t, original, got)
+		saved, err := json.Marshal(r)
+		require.NoError(t, err)
+		var restored Request
+		require.NoError(t, json.Unmarshal(saved, &restored))
+		assert.Equal(t, r, restored)
+	}
+	for _, reason := range []string{"", "unknown", "unspecified"} {
+		r.Reason = &reason
+		require.Error(t, r.Validate())
+	}
+	reason := "spurious"
+	r.Reason = &reason
+	for _, kind := range []string{"reply", "confirm", "supersede"} {
+		r.Kind = kind
+		require.Error(t, r.Validate())
+	}
+	r.Kind, r.Reason, r.Body = "refute", nil, "<!-- roborev-refute:v1 reason=spurious -->\n"+strings.Repeat("界", 40)
 	require.Error(t, r.Validate())
 }

@@ -98,7 +98,7 @@ func responseEnvelope(issue kata.Issue, req Request, state State) (Envelope, err
 			rootTeammate = comment.Teammate
 		}
 	}
-	receipt, ok, err := findComment(issue, selected.Body+"\n\n"+marker(parent, selected.Selector), "", "", rootTeammate, response.Root)
+	receipt, ok, err := findComment(issue, kata.FrameCommentBody(selected.Body, marker(parent, selected.Selector)), "", "", rootTeammate, response.Root)
 	if err != nil {
 		return env, err
 	}
@@ -213,7 +213,7 @@ func deliverResponse(ctx context.Context, api API, req Request, state State, che
 	if err = preflightLifecycle(env); err != nil {
 		return state, err
 	}
-	body := response.Body + "\n\n" + marker(req, req.OperationID)
+	body := kata.FrameCommentBody(response.Body, marker(req, req.OperationID))
 	receipt, ok, err := findComment(issue, body, response.Target, response.Kind, response.Teammate, env.Responses[slot].ReceiptUID)
 	if err != nil {
 		return state, err

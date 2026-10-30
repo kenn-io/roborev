@@ -132,7 +132,7 @@ func Fingerprint(req Request) (string, error) {
 }
 
 func marker(req Request, operation string) string {
-	return "[roborev:" + hash(req.Endpoint + "\x00" + req.ProjectUID + "\x00" + req.OperationID + "\x00" + operation)[:24] + "]"
+	return kata.CommentRecoveryMarker(hash(req.Endpoint + "\x00" + req.ProjectUID + "\x00" + req.OperationID + "\x00" + operation)[:24])
 }
 
 func action(req Request, projectUID string) string {

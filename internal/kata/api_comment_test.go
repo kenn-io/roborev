@@ -394,7 +394,12 @@ func TestAPIClientThread(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, got.Truncated)
 	assert.Equal(t, []Comment{
-		{UID: root.UID, Body: root.Body}, {UID: reply.UID, Body: reply.Body, ReplyTo: root.UID},
+		{
+			CommentBody: CommentBody{Reason: "unspecified", ReasonState: "absent", Evidence: root.Body, EvidenceValid: true},
+			UID:         root.UID, Body: root.Body},
+		{
+			CommentBody: CommentBody{Reason: "unspecified", ReasonState: "absent", Evidence: reply.Body, EvidenceValid: true},
+			UID:         reply.UID, Body: reply.Body, ReplyTo: root.UID},
 	}, got.Comments)
 
 	get := f.Requests()[len(f.Requests())-1]
@@ -433,12 +438,27 @@ func TestAPIClientThreadReportsTruncation(t *testing.T) {
 	got, err := c.Thread(t.Context(), ThreadReq{Issue: "abc4", Root: root.UID})
 	require.NoError(t, err)
 	assert.True(t, got.Truncated)
-	assert.Equal(t, []Comment{{UID: root.UID, Body: root.Body}, {UID: reply.UID, Body: reply.Body}}, got.Comments)
+	assert.Equal(t, []Comment{
+		{
+			CommentBody: CommentBody{Reason: "unspecified", ReasonState: "absent", Evidence: root.Body, EvidenceValid: true},
+			UID:         root.UID, Body: root.Body},
+		{
+			CommentBody: CommentBody{Reason: "unspecified", ReasonState: "absent", Evidence: reply.Body, EvidenceValid: true},
+			UID:         reply.UID, Body: reply.Body},
+	}, got.Comments)
 
 	whole, err := c.Show(t.Context(), "abc4")
 	require.NoError(t, err)
 	assert.Equal(t, []Comment{
-		{UID: root.UID, Body: root.Body}, {UID: reply.UID, Body: reply.Body}, {UID: other.UID, Body: other.Body},
+		{
+			CommentBody: CommentBody{Reason: "unspecified", ReasonState: "absent", Evidence: root.Body, EvidenceValid: true},
+			UID:         root.UID, Body: root.Body},
+		{
+			CommentBody: CommentBody{Reason: "unspecified", ReasonState: "absent", Evidence: reply.Body, EvidenceValid: true},
+			UID:         reply.UID, Body: reply.Body},
+		{
+			CommentBody: CommentBody{Reason: "unspecified", ReasonState: "absent", Evidence: other.Body, EvidenceValid: true},
+			UID:         other.UID, Body: other.Body},
 	}, whole.Comments)
 	assert.False(t, whole.CommentsTruncated)
 }

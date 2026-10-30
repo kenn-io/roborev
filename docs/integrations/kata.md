@@ -335,7 +335,7 @@ Copy the complete finding selector from `roborev show`, then submit a response
 through the daemon:
 
 ```bash
-roborev kata comment --refute <selector> \
+roborev kata comment --refute <selector> --reason false-positive \
   -m 'The caller checks this value before execution reaches the selected path.'
 ```
 
@@ -343,16 +343,53 @@ Use `--reply <selector>` for progress, `--confirm <selector>` for reproduced
 evidence, `--refute <selector>` for contradicting evidence, or
 `--supersede <selector> --replacement <selector>` to name a replacement finding.
 Confirm and refute require at least 40 Unicode characters after whitespace is
-normalized. Short evidence is rejected with its kind unchanged.
+normalized. Short evidence is rejected with its kind unchanged. Marker text does
+not count toward that minimum.
+
+For a refute, optionally add `--reason`:
+
+| Reason | Evidence explains |
+| ------ | ----------------- |
+| `false-positive` | Why the claimed failure cannot happen in the supported path |
+| `spurious` | Why the observation has no relevant user consequence |
+| `risk-accepted` | Why leaving a real failure costs less than fixing it |
+
+Omission leaves the reason unspecified. An explicit empty or unknown reason, or
+a reason on another reply kind, is rejected before delivery. Reasons are
+attributed assertions; they do not change verdicts or prove that a fix exists.
+
+Kata stores an explicit reason at the start of the native refute body:
+
+```text
+<!-- roborev-refute:v1 reason=spurious -->
+The observation has no relevant user consequence because this buffer is internal.
+```
+
+The marker must start at byte zero, use one of the three tokens, and end with
+` -->` followed by a newline. Caller evidence cannot start with the reserved
+`<!-- roborev-refute:` opening. Native comment and thread reads preserve the raw
+body, attribution and edit time, alongside decoded reason, `reason_state`
+(`absent`, `explicit` or `invalid`), evidence and evidence validity. Only typed
+refutes can carry a valid marker. Unknown, malformed or doubled markers remain
+untrusted invalid data; quoted markers elsewhere in prose carry no reason. Reads
+validate evidence again. An edit with insufficient evidence, or a bare marker,
+supplies no qualifying assertion.
 
 The CLI prints an idempotency key before contacting the daemon. Save it: retry
-an interrupted request with the same payload and `--idempotency-key <key>`.
+an interrupted request with the same payload, the same optional `--reason`, and
+`--idempotency-key <key>`. The CLI prints the optional reason beside the key.
 Caller-supplied keys are opaque and case-sensitive. If no key is supplied, the
 CLI generates a UUID. Reusing a key with changed content is rejected. Inspect
 pending operations with `roborev kata show <job_id|sha>`. A queued operation
 remains pending until the remote receipt is recorded durably.
 
 Responses use the finding's original comment, destination, and content policy.
+The `summary` policy still replaces evidence with a local-operation reference;
+the reason marker is added after that transformation. The full caller evidence
+and reason stay in the saved local intent. The `comments` policy sends the
+original evidence bytes beneath the marker. Omitting a reason adds no marker and
+preserves the existing retry fingerprint.
+
 They require a completed comment mapping from the API publication hook. Missing
 or ambiguous mappings are reported explicitly. A duplicate reply remains pending
 and reports the existing comment; roborev never forces it through or silently

@@ -17,13 +17,14 @@ import (
 // Request is the caller's immutable intent. Its fingerprint deliberately
 // excludes destination discovery: identical retries reuse the stored capture.
 type Request struct {
-	JobID         int64  `json:"job_id,omitempty" doc:"Optional original job ID; otherwise resolve the immutable finding or comment target"`
-	OperationID   string `json:"operation_id"`
-	FindingID     string `json:"finding_id" doc:"Complete finding selector or Kata comment reference"`
-	Kind          string `json:"kind"`
-	Body          string `json:"body"`
-	Replacement   string `json:"replacement,omitempty"`
-	TargetComment string `json:"target_comment,omitempty"`
+	JobID         int64   `json:"job_id,omitempty" doc:"Optional original job ID; otherwise resolve the immutable finding or comment target"`
+	OperationID   string  `json:"operation_id"`
+	FindingID     string  `json:"finding_id" doc:"Complete finding selector or Kata comment reference"`
+	Kind          string  `json:"kind"`
+	Body          string  `json:"body"`
+	Reason        *string `json:"reason,omitempty" doc:"Optional refute classification: false-positive, spurious or risk-accepted; omission is unspecified"`
+	Replacement   string  `json:"replacement,omitempty"`
+	TargetComment string  `json:"target_comment,omitempty"`
 }
 
 // ValidateOperationID requires a nonzero UUID in its complete hyphenated form.
@@ -65,6 +66,9 @@ func (r Request) Validate() error {
 	case "reply", "confirm", "refute", "supersede":
 	default:
 		return fmt.Errorf("select --reply, --confirm, --refute or --supersede")
+	}
+	if err := kata.ValidateRefuteReason(kata.CommentKind(r.Kind), r.Body, r.Reason); err != nil {
+		return err
 	}
 	if err := kata.ValidateEvidence(kata.CommentKind(r.Kind), r.Body); err != nil {
 		return err

@@ -15,7 +15,7 @@ import (
 )
 
 func kataCommentCmd() *cobra.Command {
-	var body, key, replacement string
+	var body, key, replacement, reason string
 	targets := map[string]*string{}
 	cmd := &cobra.Command{Use: "comment --<kind> <finding|comment> -m <text>", Short: "Respond to a published finding through Kata", Args: cobra.NoArgs}
 	for _, kind := range []string{"reply", "confirm", "refute", "supersede"} {
@@ -27,8 +27,12 @@ func kataCommentCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&body, "body", "m", "", "response evidence")
 	cmd.Flags().StringVar(&key, "idempotency-key", "", "opaque key for an identical response retry")
 	cmd.Flags().StringVar(&replacement, "replacement", "", "replacement finding selector for supersede")
+	cmd.Flags().StringVar(&reason, "reason", "", "refute reason: false-positive, spurious or risk-accepted")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		request := kataresponse.Request{OperationID: key, Body: body, Replacement: replacement}
+		if cmd.Flags().Changed("reason") {
+			request.Reason = &reason
+		}
 		for kind, target := range targets {
 			if cmd.Flags().Changed(kind) {
 				request.Kind, request.FindingID = kind, *target
@@ -47,6 +51,9 @@ func kataCommentCmd() *cobra.Command {
 			return usageErr(cmd, fmt.Errorf("response contains invalid text encoding"))
 		}
 		cmd.Printf("Idempotency key: %s\n", request.OperationID)
+		if request.Reason != nil {
+			cmd.Printf("Retry reason: --reason '%s'\n", *request.Reason)
+		}
 		return runKataResponse(cmd, request)
 	}
 	return cmd

@@ -229,7 +229,7 @@ func Deliver(ctx context.Context, api API, req Request, state State, checkpoint 
 	}
 	for i, entry := range req.Entries {
 		operation := entry.Selector
-		body := entry.Body + "\n\n" + marker(req, operation)
+		body := kata.FrameCommentBody(entry.Body, marker(req, operation))
 		receipt, ok, findErr := findComment(issue, body, "", "", req.Teammate, env.Entries[i].ReceiptUID)
 		if findErr != nil {
 			return state, findErr
@@ -463,7 +463,7 @@ func Lookup(ctx context.Context, api API, req Request, state State) (State, erro
 	}
 	done := true
 	for i, entry := range req.Entries {
-		body := entry.Body + "\n\n" + marker(req, entry.Selector)
+		body := kata.FrameCommentBody(entry.Body, marker(req, entry.Selector))
 		receipt, found, findErr := findComment(issue, body, "", "", req.Teammate, env.Entries[i].ReceiptUID)
 		if findErr != nil {
 			return state, findErr

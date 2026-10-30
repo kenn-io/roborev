@@ -109,6 +109,10 @@ func (s *Server) humaKataResponse(ctx context.Context, in *KataResponseInput) (*
 	if intent.Replacement != "" {
 		response.Body += "\n\nReplacement: " + intent.Replacement
 	}
+	response.Body, err = kata.EncodeRefuteReason(kata.CommentKind(intent.Kind), response.Body, intent.Reason)
+	if err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
+	}
 	if intent.TargetComment != "" {
 		// Continuations are resolved once against the frozen issue, never through
 		// current repository/project bindings. Delivery checks lineage again.

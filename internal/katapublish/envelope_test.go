@@ -116,3 +116,9 @@ func TestEnvelopeRefusesDuplicateEntries(t *testing.T) {
 	_, err = DecodeEnvelope(data)
 	require.ErrorIs(t, err, ErrPending)
 }
+
+func TestResponseRecoveryMarkerWireCompatibility(t *testing.T) {
+	// Freeze the historical digest inputs, lowercase width and wire framing.
+	req := fixtureRequest()
+	assert.Equal(t, "[roborev:da45f02d3da1b180aff307a3]", marker(req, "f:one"))
+}

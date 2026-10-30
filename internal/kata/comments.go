@@ -121,14 +121,19 @@ func EvidenceRunes(body string) int {
 }
 
 // ValidateEvidence checks the evidence rule for a reply of kind: a confirm or
-// refute needs MinEvidenceRunes runes of evidence, and the other kinds need
+// refute needs MinEvidenceRunes runes of decoded evidence; marker bytes do not
+// count. Invalid markers are rejected on every kind. The other kinds need
 // none. It never changes the kind. The error is ErrEvidenceTooShort and
 // ErrRequestRejected.
 func ValidateEvidence(kind CommentKind, body string) error {
+	view := DecodeCommentBody(kind, body)
+	if view.ReasonState == "invalid" {
+		return fmt.Errorf("%w: invalid refute reason marker", ErrRequestRejected)
+	}
 	if kind != CommentConfirm && kind != CommentRefute {
 		return nil
 	}
-	if n := EvidenceRunes(body); n < MinEvidenceRunes {
+	if n := EvidenceRunes(view.Evidence); n < MinEvidenceRunes {
 		return &CommentError{
 			Kind:   ErrEvidenceTooShort,
 			detail: fmt.Sprintf("a %s needs at least %d characters after whitespace is normalized, and this has %d", kind, MinEvidenceRunes, n),
@@ -153,6 +158,7 @@ type CommentReq struct {
 // CommentResult reports what Kata stored. Changed is false when Kata replayed
 // an earlier request with the same key and body, which is a success.
 type CommentResult struct {
+	CommentBody
 	UID         string
 	Body        string
 	EditedAt    *time.Time
@@ -164,6 +170,7 @@ type CommentResult struct {
 
 // Comment is one comment of an issue as Kata reports it.
 type Comment struct {
+	CommentBody
 	UID string
 	// Handle is Kata's short reference for the comment, such as c:ab12cd.
 	Handle string

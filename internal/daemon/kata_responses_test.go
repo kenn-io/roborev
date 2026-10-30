@@ -354,3 +354,62 @@ func TestReassessmentOfLocalSynthesisKeepsSessionAndDeliveryGuards(t *testing.T)
 		})
 	}
 }
+
+func TestKataResponseReasonFrozenAfterDisclosureAndExactRetry(t *testing.T) {
+	for _, policy := range []string{"comments", "summary"} {
+		for _, reason := range []string{"false-positive", "spurious", "risk-accepted"} {
+			t.Run(policy+"/"+reason, func(t *testing.T) {
+				s, db, _ := newTestServer(t)
+				jobID, findings := rebuttalFindingParent(t, s, db)
+				seedResponseMapping(t, s, db, jobID, findings[0].ID, policy)
+				intent := kataresponse.Request{JobID: jobID, OperationID: "reason-attempt", FindingID: findings[0].ID, Kind: "refute", Body: "Private evidence: " + strings.Repeat("界", 40), Reason: &reason}
+				raw, err := json.Marshal(intent)
+				require.NoError(t, err)
+				rr := serveHuma(t, s, http.MethodPost, "/api/kata/response", raw)
+				require.Equal(t, http.StatusAccepted, rr.Code, rr.Body.String())
+				handoffs, err := db.KataHandoffs(t.Context(), jobID)
+				require.NoError(t, err)
+				var frozen string
+				for _, h := range handoffs {
+					if len(h.Request.Responses) > 0 {
+						frozen = h.Request.Responses[0].Body
+					}
+				}
+				require.NotEmpty(t, frozen)
+				expected := intent.Body
+				if policy == "summary" {
+					expected = fmt.Sprintf("refute response for finding %s. Evidence is available locally under operation reason-attempt.", findings[0].ID)
+				}
+				assert.Equal(t, "<!-- roborev-refute:v1 reason="+reason+" -->\n"+expected, frozen)
+				saved, err := db.KataResponseIntent(t.Context(), intent.OperationID)
+				require.NoError(t, err)
+				assert.Equal(t, intent, saved)
+				s.configWatcher.Config().Integrations.Kata.Enabled = false
+				rr = serveHuma(t, s, http.MethodPost, "/api/kata/response", raw)
+				assert.Equal(t, http.StatusAccepted, rr.Code, rr.Body.String())
+				changed := "spurious"
+				if reason == changed {
+					changed = "false-positive"
+				}
+				intent.Reason = &changed
+				raw, err = json.Marshal(intent)
+				require.NoError(t, err)
+				rr = serveHuma(t, s, http.MethodPost, "/api/kata/response", raw)
+				assert.Equal(t, http.StatusConflict, rr.Code, rr.Body.String())
+			})
+		}
+	}
+}
+
+func TestKataResponseRejectsInvalidReasonBeforeMapping(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	for _, payload := range []string{
+		`"kind":"refute","reason":""`, `"kind":"refute","reason":"unknown"`,
+		`"kind":"reply","reason":"spurious"`, `"kind":"confirm","reason":"spurious"`,
+		`"kind":"supersede","reason":"spurious"`,
+	} {
+		raw := []byte(`{"operation_id":"invalid-reason","finding_id":"c:abcdef","body":"` + strings.Repeat("界", 40) + `",` + payload + `}`)
+		rr := serveHuma(t, s, http.MethodPost, "/api/kata/response", raw)
+		assert.Equal(t, http.StatusBadRequest, rr.Code, rr.Body.String())
+	}
+}
