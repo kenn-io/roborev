@@ -1190,6 +1190,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mdCache.glamourStyle = m.glamourStyle
 		m.mdCache.reviewWidth = -1
 		m.mdCache.promptWidth = -1
+		m.mdCache.releaseNotesWidth = -1
 		if m.currentView == viewHelp && m.helpFromView == viewLog {
 			// Hidden log responses are discarded. Rebuild after closing help.
 			m.logFmtr = nil
