@@ -337,8 +337,9 @@ func TestSinglePromptPreviousReviewsCarrySuppressionInstruction(t *testing.T) {
 	// persists in the current code, and not to undo the fix that resolved it.
 	assert.Contains(t, prompt, "unless it persists in the current code")
 	assert.Contains(t, prompt, "do not ask to undo")
-	// Suppression must not silence real problems in the fixed code.
-	assert.Contains(t, prompt, "introduced by such a change")
+	// Suppression must not silence real defects in the fixed code, but
+	// hardening requests against it belong in the summary.
+	assert.Contains(t, prompt, "to the defect bar")
 }
 
 // TestGoldenPrompt_PreviousReviewsWithComments exercises the review_comments

@@ -989,13 +989,11 @@ const (
 	DefaultReviewContextCount    = 3
 	DefaultPiJSONSchemaExtension = "npm:@nqbao/pi-json-schema@0.1.1"
 	DefaultAgentQuotaCooldown    = 30 * time.Minute
-	DefaultAgentHookInstruction  = `Invoke the roborev-fix skill for only the review job IDs named in this reminder.
-Do not discover or address any other reviews. Before editing, independently validate every finding
-against the current code and the user's current task; a review finding is not proof that a problem
-exists. Never expand the scope of that task. Fix and verify valid findings only when they are clearly
-within scope. For invalid, stale, already-resolved, or inapplicable findings, make no code change,
-record the evidence, and close the review. If a valid finding is outside the task or its scope is
-unclear, leave it open and ask the user for direction. Then continue the task that this hook interrupted.`
+	DefaultAgentHookInstruction  = `Triage the review job IDs named in this reminder with the roborev-fix skill,
+and only those IDs. Fix reachable defects with the smallest change that stays
+inside the user's current task, decline or disprove the rest with a recorded
+reason, and ask the user about anything that would grow the task. Then return
+to the work this reminder interrupted.`
 
 	// DefaultHookTimeout bounds how long the post-commit hook waits for the
 	// daemon's enqueue handler before giving up so a stalled daemon never

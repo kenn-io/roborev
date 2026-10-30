@@ -37,10 +37,20 @@ Agent Hook tracks three signals per session:
 - **Commits:** normalized shell `PreToolUse` and `PostToolUse` events. Kit maps
     each harness's native shell tool to the common `Bash` vocabulary.
 - **Failed reviews:** open, non-closed roborev reviews with a failed verdict.
+    Design reviews do not count. They grade a written design, so the agent
+    fixing the code usually cannot resolve their findings. To stop reviews whose
+    findings are all low from failing, and so from counting, set
+    [`review_min_severity`](configuration.md#per-repository-options) to
+    `medium`.
 
 Roborev scopes commit and failed-review accounting to repository lineage, so
 activity in one worktree does not consume another worktree's reminder. Outside a
 tracked git repository the hook returns an empty native response.
+
+Agents that roborev launches for reviews, synthesis, and fixes run with
+`ROBOREV_AGENT_HOOK_SUPPRESS=1`. The hook returns an empty native response in
+those sessions, so a review agent is never asked to triage roborev's own
+reviews. This relies on the harness passing its environment to hook commands.
 
 ### Review guidelines are required
 
@@ -64,22 +74,37 @@ them overengineers the code. Guidance alone does not prevent this; tune it on
 real reviews before relying on the hook. See
 [Review Guidelines](configuration.md#review-guidelines) for the options.
 
-The default instruction names the exact review job IDs and invokes the
-`roborev-fix` skill for only those jobs. It never runs `roborev fix --open` or
-discovers additional reviews. The skill treats every finding as an unverified
-claim. It documents and closes invalid findings without changing code. It fixes
-and verifies valid findings that fall within the current task. It leaves valid
-out-of-scope or unclear findings open until the user gives direction.
+Every reminder opens with a fixed preamble. It says the reminder is background
+maintenance, that the user's latest instruction comes first, and that findings
+are a reviewer's suggestions to triage, not requirements.
+
+The default instruction names the exact review job IDs and asks the agent to
+triage them with the `roborev-fix` skill. It never runs `roborev fix --open` or
+discovers additional reviews. The skill gives each finding one disposition:
+
+- **Fix:** a reachable defect with real harm, removable by a small change inside
+    the current task.
+- **Decline:** true, but not worth its cost now, such as hardening for paths
+    nothing reaches. The agent records why.
+- **Invalid:** stale, already resolved, unreachable, or wrong. The agent records
+    the evidence.
+- **Ask:** outside the current task, unclear in scope, or a fix that adds new
+    surface such as an endpoint, schema, or config option.
+
+A review closes when every finding is Fix, Decline, or Invalid. A review with an
+Ask finding stays open until the user gives direction. The skill weighs cost
+because a reviewer looks for gaps without weighing what a fix costs. An agent
+that fixes every true finding overbuilds the code.
 
 Delivered review IDs are acknowledged in the Agent Hook daemon's session state,
 scoped to the repository lineage. They do not trigger another reminder in that
 session, while newly created review IDs still do. Deferred reminders acknowledge
 their IDs only when delivered.
 
-`instruction` is a complete override. Custom instructions are emitted without
-the built-in scope or continuation guidance. When a reminder starts a fix
-session, roborev adds the required completion command after the custom
-instruction.
+`instruction` replaces the default instruction but not the preamble. Custom
+instructions are emitted without the built-in scope or continuation guidance.
+When a reminder starts a fix session, roborev adds the required completion
+command after the custom instruction.
 
 ### Coordinating hook-triggered fixes
 
@@ -101,9 +126,9 @@ daemon that granted ownership rather than the daemon found through runtime
 discovery.
 
 The bundled `roborev-fix` skill runs that command after its final review audit,
-including when no code changed or an out-of-scope finding remains open. The
-command releases ownership immediately. Repeating it for the same current fix
-session is safe, while an old ID cannot release a newer owner.
+including when no code changed or an Ask finding remains open. The command
+releases ownership immediately. Repeating it for the same current fix session is
+safe, while an old ID cannot release a newer owner.
 
 If the owner reaches a normal `Stop` event before completion, Agent Hook blocks
 with a reminder naming the original review job IDs and the same completion

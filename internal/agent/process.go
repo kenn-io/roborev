@@ -39,6 +39,15 @@ type subprocessConfig struct {
 
 type subprocessOption func(*subprocessConfig)
 
+// HookSuppressEnv is set on every agent roborev launches. The user's Agent
+// Hook is registered globally, so without it the hook fires inside review,
+// synthesis, and fix agents and asks them to triage roborev's own reviews.
+// `roborev agent-hook run` exits as a no-op when it sees this variable.
+const HookSuppressEnv = "ROBOREV_AGENT_HOOK_SUPPRESS"
+
+// hookSuppressEnvEntry is appended to agent environments.
+const hookSuppressEnvEntry = HookSuppressEnv + "=1"
+
 // withGitHubCredentials retains legacy GitHub authentication for local
 // Copilot and Kiro launches. CI reviews always strip publishing tokens.
 func withGitHubCredentials() subprocessOption {
@@ -76,7 +85,7 @@ func configureSubprocess(ctx context.Context, cmd *exec.Cmd, opts ...subprocessO
 		cmd.Env,
 		stripUntrustedEnv(cmd.Env, cfg.keepGitHubCredentials && !isCIReview(ctx)),
 		"agent "+filepath.Base(cmd.Path))
-	cmd.Env = append(cmd.Env, "GIT_OPTIONAL_LOCKS=0")
+	cmd.Env = append(cmd.Env, "GIT_OPTIONAL_LOCKS=0", hookSuppressEnvEntry)
 	if isCIReview(ctx) {
 		cmd.Env = ciReviewEnv(cmd.Env, ciReviewDir(ctx), cmd.Dir)
 	}
