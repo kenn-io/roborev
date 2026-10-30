@@ -19,6 +19,7 @@ env:
 jobs:
   go-changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       pull-requests: read
@@ -86,6 +87,7 @@ jobs:
     needs: go-changes
     if: needs.go-changes.outputs.changed == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -117,6 +119,7 @@ jobs:
     needs: go-changes
     if: github.event_name == 'pull_request' && needs.go-changes.outputs.changed == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -135,6 +138,7 @@ jobs:
     needs: go-changes
     if: needs.go-changes.outputs.web == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -187,37 +191,46 @@ jobs:
         include:
           - os: ubuntu-latest
             runner: ubuntu-latest
+            timeout-minutes: 39
           - os: macos-latest
             runner: macos-latest
+            timeout-minutes: 40
           - os: windows-latest
             runner: windows-2025
             shard: windows-remaining
+            timeout-minutes: 38
           - os: windows-latest
             runner: windows-2025
             shard: windows-daemon-a-f
+            timeout-minutes: 36
             package: ./internal/daemon
             pattern: &daemon-a-f '^(Test([A-F]|[^A-Z]|$)|Example|Fuzz)'
           - os: windows-latest
             runner: windows-2025
             shard: windows-daemon-g-m-t-z
+            timeout-minutes: 38
             package: ./internal/daemon
             pattern: &daemon-g-m-t-z '^Test[G-MT-Z]'
           - os: windows-latest
             runner: windows-2025
             shard: windows-daemon-n-s
+            timeout-minutes: 36
             package: ./internal/daemon
             pattern: &daemon-n-s '^Test[N-S]'
           - os: windows-latest
             runner: windows-2025
             shard: windows-cli-a-m-t-z
+            timeout-minutes: 38
             package: ./cmd/roborev
             pattern: '^(Test([A-MT-Z]|[^A-Z]|$)|Example|Fuzz)'
           - os: windows-latest
             runner: windows-2025
             shard: windows-cli-n-s
+            timeout-minutes: 38
             package: ./cmd/roborev
             pattern: '^Test[N-S]'
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.timeout-minutes }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -335,6 +348,7 @@ jobs:
           - name: n-s
             pattern: *daemon-n-s
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -365,6 +379,7 @@ jobs:
     needs: go-changes
     if: needs.go-changes.outputs.changed == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 51
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -405,6 +420,7 @@ jobs:
     needs: go-changes
     if: needs.go-changes.outputs.changed == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 14
     services:
       postgres:
         image: postgres:18-alpine
@@ -438,6 +454,7 @@ jobs:
     needs: go-changes
     if: needs.go-changes.outputs.lint == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 

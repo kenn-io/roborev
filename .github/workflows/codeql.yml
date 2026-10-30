@@ -16,6 +16,7 @@ jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
+    timeout-minutes: ${{ matrix.timeout-minutes }}
     permissions:
       actions: read
       contents: read
@@ -27,10 +28,13 @@ jobs:
         include:
           - language: actions
             build-mode: none
+            timeout-minutes: 10
           - language: go
             build-mode: manual
+            timeout-minutes: 11
           - language: javascript-typescript
             build-mode: none
+            timeout-minutes: 10
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
