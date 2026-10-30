@@ -134,6 +134,32 @@ func TestCICheckLog(t *testing.T) {
 }
 
 func TestCICheckCompletion(t *testing.T) {
+	t.Run("below severity threshold", func(t *testing.T) {
+		tc := newWorkerTestContext(t, 1)
+		run, members, _ := enqueuePanelRun(t, tc, "checker", []memberSpec{{name: "one", agent: "test"}})
+		completeMember(t, tc, members[0].ID, "test", "low finding")
+		job := releaseAndClaimSynthesis(t, tc, run)
+		job.MinSeverity = "high"
+		tc.Pool.ciCheck = func(_ context.Context, job *storage.ReviewJob, _ ciCheckConfig, doc structuredreview.Document, _ []string, _ io.Writer) (structuredreview.Document, error) {
+			require.False(t, doc.Passed(job.MinSeverity), "checker called for a passing review")
+			return doc, nil
+		}
+		doc := structuredreview.Document{SchemaVersion: 3, Summary: "One claim", Verdict: "pass", Findings: []structuredreview.Finding{
+			{Severity: "low", Problem: "Minor claim", Fix: "Fix claim"},
+		}}
+		encoded, err := json.Marshal(doc)
+		require.NoError(t, err)
+		original := synthesisResult{review: reviewpkg.ReviewResult{Agent: "test", Output: "Original low finding output", Verdict: storage.VerdictPass, StructuredOutput: encoded}}
+		tc.Pool.checkAndCompleteSynthesis(t.Context(), testWorkerID, job, original, doc, &ciCheckConfig{})
+		finished, err := tc.DB.GetJobByID(job.ID)
+		require.NoError(t, err)
+		assert.Equal(t, storage.JobStatusDone, finished.Status)
+		stored, err := tc.DB.GetReviewByJobID(job.ID)
+		require.NoError(t, err)
+		assert.Equal(t, "Original low finding output", stored.Output)
+		assert.Equal(t, storage.VerdictPass, stored.Verdict())
+	})
+
 	const raw = `{"schema_version":3,"source_labels":["test"],"summary":"Two claims","verdict":"fail","findings":[{"severity":"high","kind":"defect","confidence":0.9,"problem":"Build claim","fix":"Fix build","sources":[1]},{"severity":"medium","kind":"defect","confidence":0.9,"problem":"Data loss","fix":"Preserve data","sources":[1]}]}`
 	// "agent drop" reaches the checker through a synthesis agent and leaves no finding at its threshold; the rest pass one review through.
 	for _, mode := range []string{"failure", "drop", "agent drop", "empty canceled", "checker canceled", "checker deadline"} {
