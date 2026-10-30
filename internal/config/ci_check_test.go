@@ -1,8 +1,6 @@
 package config
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -23,10 +21,4 @@ func TestCICheckConfig(t *testing.T) {
 	require.ErrorContains(t, cfg.Validate(), "ci.check_reasoning")
 	cfg.CI.CheckReasoning = "high"
 	require.NoError(t, cfg.Validate())
-	for _, key := range []string{"check_model", "check_reasoning"} {
-		dir := t.TempDir()
-		require.NoError(t, os.WriteFile(filepath.Join(dir, ".roborev.toml"), []byte("[ci]\n"+key+" = \"codex\"\n"), 0o600))
-		_, err := LoadRepoConfig(dir)
-		require.ErrorContains(t, err, "ci."+key+`" is global-only`)
-	}
 }

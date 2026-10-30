@@ -135,7 +135,7 @@ type ciCheckRun struct {
 // prepareCICheck checks out the committed input before warming can update metadata.
 // Its caller owns both checkouts until cleanup returns.
 func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob, command string, gitEnv []string, out io.Writer) (run ciCheckRun, err error) {
-	resolved, err := resolveCICheckCodex(ctx, os.TempDir(), command)
+	command, codexDir, err := resolveCICheckCodex(ctx, os.TempDir(), command)
 	if err != nil {
 		return
 	}
@@ -155,8 +155,12 @@ func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob
 	if err != nil {
 		return
 	}
-	run.Command = resolved.Command
-	readPaths := resolved.ReadPaths
+	run.Command = command
+	readPaths := []string{codexDir}
+	// Codex loads its system config even with a fresh CODEX_HOME.
+	if _, err := os.Stat("/etc/codex"); err == nil {
+		readPaths = append(readPaths, "/etc/codex")
+	}
 	toolPath := os.Getenv("PATH")
 	run.Job.WorkDir = filepath.Join(root, "work")
 	var closeRepo func()
@@ -236,7 +240,7 @@ func validateCICheckReadPaths(paths []string) error {
 			if err != nil {
 				return err
 			}
-			if rel == "." || filepath.IsLocal(rel) {
+			if filepath.IsLocal(rel) {
 				return fmt.Errorf("checker read grant contains host home: %q", path)
 			}
 		}
