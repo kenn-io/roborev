@@ -65,3 +65,11 @@ func TestSandboxCommandRejectsReadPaths(t *testing.T) {
 		})
 	}
 }
+
+func TestSandboxSelfCheckRejectsDirectory(t *testing.T) {
+	hostHome := filepath.Join(t.TempDir(), "codex")
+	require.NoError(t, os.Mkdir(hostHome, 0o700))
+	job := Job{DenyReadPaths: []string{hostHome}}
+	err := job.check(t.Context(), nil, nil, nil)
+	require.ErrorContains(t, err, "deny-read path must be a file")
+}

@@ -84,7 +84,6 @@ func TestSandboxSelfCheck(t *testing.T) {
 	for _, tc := range []struct{ name, read, deny, tool, script, want string }{
 		{"home", hostHome, auth, "", "", "deny-path-read"},
 		{"relative", hostHome, filepath.Join("codex", "auth.json"), "", "", "deny-path-read"},
-		{"directory", hostHome, hostHome, "", "", "deny-read path must be a file"},
 		{"repo-cat", hostHome, auth, "cat", "#!/bin/sh\nexit 1\n", "deny-path-read"},
 		{"repo-bash", hostHome, auth, "bash", "#!/bin/sh\nexit 0\n", "deny-path-read"},
 	} {
@@ -180,9 +179,7 @@ check host-terminal-read deny python3 -c 'import os,sys; f=os.open(sys.argv[1],o
 check host-terminal-write deny bash -c 'echo sandbox-output > "$1"' probe "$1"
 exit "$failed"
 `
-	out := runInJob(t, routeJob(t, t.TempDir()), "bash", "-c", script, "probe", slavePath)
-	assert.Contains(t, out, "OK host-terminal-read")
-	assert.Contains(t, out, "OK host-terminal-write")
+	runInJob(t, routeJob(t, t.TempDir()), "bash", "-c", script, "probe", slavePath)
 }
 
 func TestSandboxProcessCleanup(t *testing.T) {

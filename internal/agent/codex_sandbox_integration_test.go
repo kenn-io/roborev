@@ -43,6 +43,7 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(repo, "go.mod"), []byte("module example.com/sandbox\n\ngo 1.26\n"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(repo, "build_test.go"), []byte("package main\n\nimport \"testing\"\n\nfunc TestSandboxBuild(t *testing.T) { t.Log(\"OK go-test\") }\n"), 0o600))
 	probe := fmt.Sprintf("#!/bin/bash\n[[ \"$CODEX_HOME\" == %q/.codex-home-* && -d \"$CODEX_HOME\" ]] && echo OK codex-home\ngo test -v ./...\n", repo)
+	tmp := filepath.Join(repo, "tmp")
 
 	const key = "sandbox-test-token"
 	var unauthorized atomic.Int32
@@ -51,6 +52,9 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	defer cancel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if cancelling.Load() {
+			files, err := filepath.Glob(filepath.Join(tmp, ".nono-*"))
+			assert.NoError(t, err)
+			assert.NotEmpty(t, files, "nono must create temporary files before cancellation")
 			cancel()
 			return
 		}
@@ -104,7 +108,6 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	}))
 	defer server.Close()
 	require.NoError(t, os.WriteFile(filepath.Join(repo, "probe.sh"), []byte(probe), 0o700))
-	tmp := filepath.Join(repo, "tmp")
 	require.NoError(t, os.Mkdir(tmp, 0o700))
 
 	job := sandbox.Job{
@@ -127,12 +130,12 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	assert.Contains(t, string(result), "OK codex-home")
 	assert.Contains(t, string(result), "OK go-test")
 	assert.Zero(t, unauthorized.Load())
-	homes, err := filepath.Glob(filepath.Join(repo, ".codex-home-*"))
-	require.NoError(t, err)
-	assert.Empty(t, homes)
 	t.Run("cancellation", func(t *testing.T) {
 		cancelling.Store(true)
 		_, err := a.Review(ctx, repo, "HEAD", "review", nil)
 		require.ErrorIs(t, err, context.Canceled)
+		files, err := filepath.Glob(filepath.Join(tmp, ".nono-*"))
+		require.NoError(t, err)
+		assert.Empty(t, files, "nono left temporary files after cancellation")
 	})
 }

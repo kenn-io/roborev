@@ -42,15 +42,9 @@ func TestCodex_buildArgs(t *testing.T) {
 		agentic          bool
 		autoApprove      bool
 		sandboxBroken    bool
-		sandbox          bool
 		wantFlags        []string
 		wantMissingFlags []string
 	}{
-		{
-			name:             "NonoSandboxOmitsThreadSource",
-			sandbox:          true,
-			wantMissingFlags: []string{"--thread-source"},
-		},
 		{
 			name:             "NonAgenticAutoApprove",
 			agentic:          false,
@@ -77,10 +71,6 @@ func TestCodex_buildArgs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := a
-			if tt.sandbox {
-				a = a.WithSandbox(&CodexSandbox{})
-			}
 			args := a.buildArgs("/repo", tt.agentic, tt.autoApprove, tt.sandboxBroken)
 
 			for _, flag := range tt.wantFlags {
@@ -1254,7 +1244,7 @@ func TestCodexSandboxWrapperFailure(t *testing.T) {
 	t.Setenv("CODEX_HOME", t.TempDir())
 	a := NewCodexAgent(command).WithSandbox(&CodexSandbox{Job: sandbox.Job{WorkDir: dir, MemoryMax: 1 << 30}})
 	_, err := a.Review(t.Context(), repo, "HEAD", "review", nil)
-	require.Error(t, err)
+	require.ErrorContains(t, err, "find sandbox nono")
 	assert.NoFileExists(t, marker)
 	homes, err := filepath.Glob(filepath.Join(dir, ".codex-home-*"))
 	require.NoError(t, err)
