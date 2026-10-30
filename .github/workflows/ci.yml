@@ -34,7 +34,7 @@ jobs:
       - name: Detect Go changes
         if: github.event_name != 'workflow_dispatch'
         id: filter
-        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d  # v4.0.3
+        uses: step-security/paths-filter@5f3d1a83daa17363d18b529d60375e1e36566799  # v4.0.3
         with:
           base: ${{ github.ref }}
           filters: |
@@ -396,7 +396,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload coverage
-        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5  # v7.1.1
+        uses: step-security/codecov-action@367bf7e789f1b8e452a759be81c791de8d69b2f6  # v7.1.1
         with:
           file: coverage.out
         continue-on-error: true
@@ -457,7 +457,7 @@ jobs:
 
       - name: golangci-lint
         if: needs.go-changes.outputs.changed == 'true'
-        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a  # v9.3.0
+        uses: step-security/golangci-lint-action@2697867e9c204558ca23d0decdd0039dc21f2b93  # v9.3.0
         with:
           version: ${{ steps.golangci.outputs.version }}
 
