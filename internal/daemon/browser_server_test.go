@@ -198,7 +198,7 @@ func TestServerBrowserLifecycleAndRuntimePublication(t *testing.T) {
 	stopTestServer(t, server, errCh)
 	// Wall-clock wait: real browser listener and runtime publication.
 	assert.Eventually(t, func() bool {
-		client := &http.Client{Timeout: 50 * time.Millisecond}
+		client := &http.Client{Timeout: time.Second}
 		coreResponse, coreErr := client.Get("http://" + runtime.Address + "/api/ping")
 		if coreResponse != nil {
 			_ = coreResponse.Body.Close()

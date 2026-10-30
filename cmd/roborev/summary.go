@@ -241,9 +241,68 @@ func printSummary(cmd *cobra.Command, s storage.Summary) {
 		cmd.Println()
 	}
 
-	if s.Overview.Total == 0 {
+	if s.CI != nil && s.CI.TotalPanels > 0 {
+		printCISummary(cmd, *s.CI)
+	}
+
+	if s.Overview.Total == 0 && (s.CI == nil || s.CI.TotalPanels == 0) {
 		cmd.Println("No review data for this time window.")
 	}
+}
+
+func printCISummary(cmd *cobra.Command, ci storage.CISummary) {
+	cmd.Println("CI Run Health")
+	cmd.Printf("  Panels: %d | Active: %d | Finalized: %d | Retired unposted: %d\n",
+		ci.TotalPanels, ci.ActivePanels, ci.PostedPanels, ci.RetiredUnpostedPanels)
+	for _, group := range []struct {
+		label  string
+		counts map[string]int
+	}{
+		{"Outcomes", ci.Outcomes}, {"Retirement reasons (all retired rows)", ci.RetiredByReason},
+	} {
+		if len(group.counts) == 0 {
+			continue
+		}
+		cmd.Printf("  %s:\n", group.label)
+		keys := make([]string, 0, len(group.counts))
+		for key := range group.counts {
+			keys = append(keys, key)
+		}
+		slices.Sort(keys)
+		for _, key := range keys {
+			cmd.Printf("    %s: %d\n", key, group.counts[key])
+		}
+	}
+	cmd.Printf("  Runs per PR (%d PRs): p50=%.1f  p90=%.1f  max=%d\n",
+		ci.DistinctPRs, ci.RunsPerPRP50, ci.RunsPerPRP90, ci.RunsPerPRMax)
+	if len(ci.HotPRs) > 0 {
+		cmd.Println("  PRs above 5 runs:")
+		for _, pr := range ci.HotPRs {
+			cmd.Printf("    %s#%d: %d runs\n", pr.GithubRepo, pr.PRNumber, pr.Runs)
+		}
+	}
+	if ci.TurnaroundSamples == 0 {
+		cmd.Println("  Turnaround: unavailable (0 samples)")
+	} else {
+		cmd.Printf("  Turnaround: p50=%s  p90=%s (%d samples)\n", formatDuration(ci.TurnaroundP50Secs), formatDuration(ci.TurnaroundP90Secs), ci.TurnaroundSamples)
+	}
+	cmd.Printf("  Total cost: %s\n", formatCICost(ci.Cost))
+	cmd.Printf("  Retired unposted cost: %s\n", formatCICost(ci.RetiredUnpostedCost))
+	if len(ci.PRs) > 0 {
+		cmd.Println("  Per PR (recorded cost):")
+		for _, pr := range ci.PRs {
+			cmd.Printf("    %s#%d: %d runs; %s\n", pr.GithubRepo, pr.PRNumber, pr.Runs, formatCICost(pr.Cost))
+		}
+	}
+	cmd.Println()
+}
+
+func formatCICost(cost storage.CostAggregate) string {
+	amount := "unavailable"
+	if cost.JobsWithCost > 0 {
+		amount = fmt.Sprintf("$%.2f", cost.TotalUSD)
+	}
+	return fmt.Sprintf("%s (%d/%d eligible jobs priced)", amount, cost.JobsWithCost, cost.JobsTotal)
 }
 
 // repoLabels returns display labels for repos, disambiguating duplicate names

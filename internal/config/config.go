@@ -124,7 +124,7 @@ type DroidHookConfig struct {
 }
 type CodexConfig struct {
 	DisableReviewSkills    bool `toml:"disable_review_skills" comment:"Disable Codex skill instructions for review jobs."`
-	IgnoreReviewUserConfig bool `toml:"ignore_review_user_config" comment:"Pass --ignore-user-config to Codex for review jobs."`
+	IgnoreReviewUserConfig bool `toml:"ignore_review_user_config" comment:"Pass --ignore-user-config to Codex for reviews and non-agentic stored-prompt jobs."`
 	// Config holds passthrough Codex options that ConfigOverrideArgs flattens
 	// into `-c key=value` overrides on every Codex job (see ConfigOverrideArgs).
 	Config map[string]any `toml:"config" comment:"Codex config injected as -c overrides on every Codex job (e.g. model_provider and [agent.codex.config.model_providers.*]). Survives --ignore-user-config."`
@@ -255,6 +255,8 @@ type Config struct {
 	DefaultBackupModel         string                          `toml:"default_backup_model"`
 	JobTimeoutMinutes          int                             `toml:"job_timeout_minutes"`
 	IsolateReviews             bool                            `toml:"isolate_reviews" comment:"Run committed reviews in daemon-owned detached checkouts."`
+	PostCommitBatchSize        int                             `toml:"post_commit_batch_size" comment:"Enqueue an automatic post-commit review after this many commits. Values below 2 disable the count threshold."`
+	PostCommitQuietPeriod      string                          `toml:"post_commit_quiet_period" comment:"Enqueue pending post-commit reviews after this long without a new commit, such as 5m. Empty or 0 disables the timer."`
 	HookTimeoutSeconds         int                             `toml:"hook_timeout_seconds" comment:"Post-commit hook request timeout in seconds. 0 or negative uses the platform default (3 on most systems, 30 on Windows where git subprocess spawns are slow)."`
 	PromptRetentionDays        int                             `toml:"prompt_retention_days" comment:"Delete stored prompts of finished review and range jobs after this many days; reviews are kept. 0 or negative keeps prompts forever."`
 	JobLogRetentionDays        int                             `toml:"job_log_retention_days" comment:"Delete job log files after this many days. 0 or negative keeps logs forever."`
@@ -724,6 +726,9 @@ func (c *Config) Validate() (err error) {
 	if err := validateConfig(c, c.ACP); err != nil {
 		return err
 	}
+	if _, err := parsePostCommitQuietPeriod(c.PostCommitQuietPeriod); err != nil {
+		return err
+	}
 	if err := c.AgentsView.Validate(c.Cost); err != nil {
 		return err
 	}
@@ -783,7 +788,8 @@ type RepoConfig struct {
 	ExcludePatterns                 []string                        `toml:"exclude_patterns" comment:"Filenames or glob patterns to exclude from review diffs for this repo."`
 	SnapshotDir                     string                          `toml:"snapshot_dir" comment:"Repo-local directory for temporary diff and prior-review snapshots."`
 	PostCommitReview                string                          `toml:"post_commit_review" comment:"Automatic post-commit review mode for this repo: commit or branch."` // "commit" (default) or "branch"
-	PostCommitBatchSize             int                             `toml:"post_commit_batch_size" comment:"Enqueue one automatic post-commit review after this many commits. Values less than 2 review every commit."`
+	PostCommitBatchSize             int                             `toml:"post_commit_batch_size" comment:"Override the global post-commit batch size. Values below 2 disable the count threshold."`
+	PostCommitQuietPeriod           string                          `toml:"post_commit_quiet_period" comment:"Override the global post-commit quiet period, such as 5m. Empty or 0 disables the timer for this repo."`
 	ReuseReviewSession              *bool                           `toml:"reuse_review_session"`
 	ReuseReviewSessionLookback      int                             `toml:"reuse_review_session_lookback"` // 0 means no candidate cap
 	Experiments                     map[string]ExperimentDefinition `toml:"experiments"`
@@ -954,6 +960,9 @@ func (c *RepoConfig) Validate() (err error) {
 	if err := validateConfig(c, c.ACP); err != nil {
 		return err
 	}
+	if _, err := parsePostCommitQuietPeriod(c.PostCommitQuietPeriod); err != nil {
+		return err
+	}
 	reasoning := []namedConfigValue{
 		{key: "review_reasoning", value: c.ReviewReasoning},
 		{key: "refine_reasoning", value: c.RefineReasoning},
@@ -984,13 +993,11 @@ const (
 	DefaultReviewContextCount    = 3
 	DefaultPiJSONSchemaExtension = "npm:@nqbao/pi-json-schema@0.1.1"
 	DefaultAgentQuotaCooldown    = 30 * time.Minute
-	DefaultAgentHookInstruction  = `Invoke the roborev-fix skill for only the review job IDs named in this reminder.
-Do not discover or address any other reviews. Before editing, independently validate every finding
-against the current code and the user's current task; a review finding is not proof that a problem
-exists. Never expand the scope of that task. Fix and verify valid findings only when they are clearly
-within scope. For invalid, stale, already-resolved, or inapplicable findings, make no code change,
-record the evidence, and close the review. If a valid finding is outside the task or its scope is
-unclear, leave it open and ask the user for direction. Then continue the task that this hook interrupted.`
+	DefaultAgentHookInstruction  = `Triage the review job IDs named in this reminder with the roborev-fix skill,
+and only those IDs. Fix reachable defects with the smallest change that stays
+inside the user's current task, decline or disprove the rest with a recorded
+reason, and ask the user about anything that would grow the task. Then return
+to the work this reminder interrupted.`
 
 	// DefaultHookTimeout bounds how long the post-commit hook waits for the
 	// daemon's enqueue handler before giving up so a stalled daemon never
@@ -1154,7 +1161,9 @@ func applyDaemonSections(c *Config) []error {
 	}{
 		{"agentsview", func() error { return c.AgentsView.Validate(c.Cost) }},
 		{"budget", c.Budget.Validate},
-		{"ci", c.CI.NormalizeInstallations},
+		{"ci", func() error {
+			return errors.Join(c.CI.NormalizeInstallations(), validateCIPRFilters(c.CI))
+		}},
 		{"search", func() error { return validateSearchConfig(c.Search) }},
 		{"remote", func() error { return validateRemoteConfig(c.Remote) }},
 		{"web", func() error { return normalizeWebConfig(&c.Web, c.AuthKey) }},
@@ -1569,14 +1578,55 @@ func ResolvePostCommitBatchSize(repoPath string) int {
 // ResolvePostCommitBatchSizeWithError preserves config load errors so hooks do
 // not mistake a malformed batching config for an intentional disable.
 func ResolvePostCommitBatchSizeWithError(repoPath string) (int, error) {
-	cfg, err := LoadRepoConfig(repoPath)
+	cfg, raw, err := LoadRepoConfigWithRaw(repoPath)
 	if err != nil {
 		return DefaultPostCommitBatchSize, err
 	}
-	if cfg == nil || cfg.PostCommitBatchSize < 2 {
+	size := 0
+	if _, explicit := raw["post_commit_batch_size"]; explicit {
+		size = cfg.PostCommitBatchSize
+	} else {
+		global, err := LoadGlobal()
+		if err != nil {
+			return DefaultPostCommitBatchSize, err
+		}
+		size = global.PostCommitBatchSize
+	}
+	if size < 2 {
 		return DefaultPostCommitBatchSize, nil
 	}
-	return cfg.PostCommitBatchSize, nil
+	return size, nil
+}
+
+// ResolvePostCommitQuietPeriod returns the repo quiet period, falling back to
+// the global value. Explicit empty or zero repo values disable the timer.
+func ResolvePostCommitQuietPeriod(repoPath string) (time.Duration, error) {
+	cfg, raw, err := LoadRepoConfigWithRaw(repoPath)
+	if err != nil {
+		return 0, err
+	}
+	value := ""
+	if _, explicit := raw["post_commit_quiet_period"]; explicit {
+		value = cfg.PostCommitQuietPeriod
+	} else {
+		global, err := LoadGlobal()
+		if err != nil {
+			return 0, err
+		}
+		value = global.PostCommitQuietPeriod
+	}
+	return parsePostCommitQuietPeriod(value)
+}
+
+func parsePostCommitQuietPeriod(value string) (time.Duration, error) {
+	if value == "" {
+		return 0, nil
+	}
+	period, err := time.ParseDuration(value)
+	if err != nil || period < 0 {
+		return 0, fmt.Errorf("post_commit_quiet_period must be a non-negative duration, got %q", value)
+	}
+	return period, nil
 }
 
 // ResolveReuseReviewSession returns whether reviews should try to resume a
@@ -1607,7 +1657,7 @@ func ResolveDisableCodexReviewSkills(_ string, globalCfg *Config) bool {
 	return true
 }
 
-// ResolveIgnoreCodexReviewUserConfig returns whether Codex review jobs should
+// ResolveIgnoreCodexReviewUserConfig returns whether Codex non-editing jobs should
 // pass --ignore-user-config. Priority: global > default true.
 func ResolveIgnoreCodexReviewUserConfig(_ string, globalCfg *Config) bool {
 	if globalCfg != nil {
@@ -2503,6 +2553,16 @@ func filterUnintendedZeroRepoConfigKeys(
 		!rawKeyPresent(raw, "reuse_review_session_lookback") &&
 		!explicit["reuse_review_session_lookback"] {
 		data = removeTopLevelTOMLAssignment(data, "reuse_review_session_lookback")
+	}
+	if cfg.PostCommitBatchSize == 0 &&
+		!rawKeyPresent(raw, "post_commit_batch_size") &&
+		!explicit["post_commit_batch_size"] {
+		data = removeTopLevelTOMLAssignment(data, "post_commit_batch_size")
+	}
+	if cfg.PostCommitQuietPeriod == "" &&
+		!rawKeyPresent(raw, "post_commit_quiet_period") &&
+		!explicit["post_commit_quiet_period"] {
+		data = removeTopLevelTOMLAssignment(data, "post_commit_quiet_period")
 	}
 	if cfg.ReviewGuidelines == "" &&
 		!rawKeyPresent(raw, "review_guidelines") &&

@@ -273,7 +273,8 @@ max_chars = 50000
 | `excluded_commit_patterns` | array | Commit message substrings to skip reviews on (case-insensitive) |
 | `exclude_patterns` | array | Filenames or glob patterns to exclude from review diffs for this repo |
 | `post_commit_review` | string | Post-commit hook behavior: `"commit"` (default) or `"branch"` |
-| `post_commit_batch_size` | int | Number of commits to accumulate before an automatic post-commit review. Values below `2` review every commit |
+| `post_commit_batch_size` | int | Number of commits to accumulate before an automatic post-commit review. Values below `2` disable the count threshold. Repo value overrides the global value |
+| `post_commit_quiet_period` | string | Time without a new commit before reviewing a pending batch, such as `"5m"`. Empty or `"0"` disables the timer. Repo value overrides the global value |
 | `hook_timeout_seconds` | int | Override the post-commit hook request timeout for this repo, in seconds. Useful for large repos where the daemon's enqueue git calls are slow. Read filesystem-only from this checkout's `.roborev.toml` (a linked worktree without its own file does not inherit the main checkout's value). Zero or negative values inherit the global / platform default |
 | `auto_close_passing_reviews` | bool | Automatically close reviews that pass, including reviews whose findings all fall below `review_min_severity` |
 | `review_reasoning` | string | Reasoning level for reviews. See [Reasoning Levels](#reasoning-levels) |
@@ -364,8 +365,8 @@ not gated on trailer support.
 ### Fix Guidelines
 
 Use the global-only `fix_guidelines` setting to tell Agent Hook and foreground
-`roborev fix` agents how to evaluate review findings instead of blindly applying
-every suggestion:
+`roborev fix` and `roborev refine` agents how to evaluate review findings
+instead of blindly applying every suggestion:
 
 ```toml
 # ~/.roborev/config.toml
@@ -375,19 +376,20 @@ project requirements. Explain findings that are intentionally not applied.
 """
 ```
 
-The value applies to direct fixes, batch fixes, and commit retries. It also
-appears at the end of triggered reminders for every Agent Hook profile. Missing
-or empty guidance preserves the existing automatic behavior. With guidance
-configured, direct `roborev fix` runs record whether changes were applied and
-preserve the agent's final explanation before closing each review. Batch runs
-record a neutral batch outcome, while the agent report gives every job ID a
-fixed or skipped disposition.
+The value applies to direct fixes, batch fixes, fix commit retries, and refine
+agents addressing findings. Fix and refine planning also receive it with
+`--plan` or `--plan-only`. It appears at the end of triggered reminders for
+every Agent Hook profile. Missing or empty guidance preserves the existing
+automatic behavior. With guidance configured, direct `roborev fix` runs record
+whether changes were applied and preserve the agent's final explanation before
+closing each review. Batch runs record a neutral batch outcome, while the agent
+report gives every job ID a fixed or skipped disposition.
 
 This key is not accepted in `.roborev.toml` and has no CLI or environment
 override. Agent Hook's `--config` option still controls profile thresholds and
 the full-replacement `instruction`, but it does not redirect `fix_guidelines`
-away from the standard global config. `roborev analyze --fix` and
-`roborev refine` keep their existing, separate prompt behavior.
+away from the standard global config. `roborev analyze --fix` keeps its
+existing, separate prompt behavior.
 
 ### Review Guidelines
 
@@ -1047,17 +1049,32 @@ by this option.
 
 ### Post-commit review batching
 
-By default, the post-commit hook queues a review after every commit. To combine
-several small commits into one automatic review, set a repository-local batch
-size:
+By default, the post-commit hook queues a review after every commit. Configure
+batching globally in `~/.roborev/config.toml` or per repository in
+`.roborev.toml`:
 
 ```toml
 post_commit_batch_size = 5
+post_commit_quiet_period = "5m"
 ```
 
-The hook returns without contacting the daemon until the configured number of
-commits has accumulated. It then queues one review over the accumulated range.
-Values below `2`, including the default of `1`, disable batching.
+With both settings, the hook queues one review over the accumulated range as
+soon as five commits are pending or five minutes pass without a new commit on
+that branch. Each new commit resets the quiet-period timer. The count threshold
+still queues immediately during a long burst of commits.
+
+Each repository setting overrides its global value independently. Values below
+`2` disable the count threshold. An empty quiet period or `"0"` disables the
+timer. With neither threshold enabled, every commit is reviewed immediately. Set
+only the quiet period to combine a burst of any size into one review. Durations
+use Go syntax, such as `"30s"` or `"5m"`; negative durations are invalid.
+
+Count-only batching returns without contacting the daemon until the threshold is
+reached. A quiet period starts or contacts the daemon to register a timer.
+Timers are per repository and branch, shared across linked worktrees. If timer
+registration fails, the hook attempts to enqueue the accumulated range
+immediately. Timers are canceled when the daemon stops; pending checkpoints
+remain on disk and the next commit or push retries them.
 
 Batch checkpoints are stored per branch in shared Git metadata, so linked
 worktrees use the same pending range. The pre-push hook attempts to queue a
@@ -1067,8 +1084,9 @@ rebase or amend, the next review covers everything since the last commit still
 shared with the old history. Run `roborev init` after upgrading roborev to
 install or update the pre-push hook.
 
-When `post_commit_review = "branch"` is also set, the batch size controls when a
-review is queued, while the review still covers the entire branch.
+When `post_commit_review = "branch"` is also set, the batching thresholds
+control when a review is queued, while the review still covers the entire
+branch.
 
 ### Auto-Close Passing Reviews
 
@@ -1195,10 +1213,12 @@ filter_branch = false             # Show all branches on startup (default: curre
 | `web.auth_mode` | string | - | Browser admission mode; set `proxy` to delegate admission to an external access boundary | No |
 | `web.auth_token` | string | - | Base64url-encoded 32-byte random token exchanged for a process-local browser session | No |
 | `web.auth_token_file` | string | - | Host-local file containing the browser token; mutually exclusive with `web.auth_token` | No |
-| `max_workers` | int | 4 | Number of parallel review workers | No |
+| `max_workers` | int | 4 | Number of parallel review workers. On reload, the daemon starts new workers right away; when the number drops, busy workers finish their current job before stopping. Starting the daemon with `--workers` fixes the count until restart | Yes |
 | `job_timeout_minutes` | int | 30 | Per-job timeout in minutes of wall-clock time, so time the machine spends asleep counts against it. Plan-first background fixes add an equal planning budget | Yes |
 | `isolate_reviews` | bool | false | Run committed reviews in daemon-owned detached checkouts; see [Isolated Review Checkouts](#isolated-review-checkouts) | Yes |
 | `hook_timeout_seconds` | int | `3` (`30` on Windows) | Post-commit hook request timeout, in seconds. Raise it on Windows or large repos where the daemon's enqueue git calls are slow. Zero or negative values are ignored and fall back to the platform default | Yes |
+| `post_commit_batch_size` | int | `1` | Number of commits to accumulate before an automatic post-commit review. Values below `2` disable the count threshold. A repo `.roborev.toml` value overrides it. See [Post-commit review batching](#post-commit-review-batching) | Yes |
+| `post_commit_quiet_period` | string | - | Time without a new commit before reviewing a pending batch, as a Go duration such as `5m`. Empty or `0` disables the timer. A repo `.roborev.toml` value overrides it. See [Post-commit review batching](#post-commit-review-batching) | Yes |
 | `prompt_retention_days` | int | `0` | Delete the stored prompts of review and range jobs this many days after they finish. Zero or negative keeps prompts forever. See [Stored prompts and retention](#stored-prompts-and-retention) | Yes |
 | `job_log_retention_days` | int | `0` | Delete job log files older than this many days. Zero or negative keeps logs forever. See [Stored prompts and retention](#stored-prompts-and-retention) | Yes |
 | `agent_quota_cooldown` | string | `30m0s` | Maximum daemon-wide cooldown after an agent quota or session-limit error, as a Go duration such as `10m`, `30m`, or `1h` | Yes |
@@ -1328,9 +1348,13 @@ behavior, health fields, and sidecar recovery.
 The daemon automatically watches `~/.roborev/config.toml` for changes. Most
 settings take effect immediately without restarting the daemon.
 
-**Settings that require daemon restart:** `server_addr`, `max_workers`, the
-`[web]` section, the `[mcp]` section, the `[sync]` section, and the `[search]`
-section.
+**Settings that require daemon restart:** `server_addr`, the `[web]` section,
+the `[mcp]` section, the `[sync]` section, and the `[search]` section.
+
+Changing `max_workers` resizes the worker pool without a restart. Lowering it
+never cancels a running job: each busy worker above the new limit finishes its
+job, then stops. If the daemon was started with `--workers`, that flag keeps the
+pool size fixed and the daemon logs that it ignored the new file value.
 
 ### Browser Application
 
@@ -2409,29 +2433,31 @@ launching fix jobs and managing patches. See
 
 The `[agent.codex]` section controls Codex-specific behavior for review jobs.
 Both options default to `true` so Codex reviews start from a clean state without
-skill instructions or user-level Codex config. Fix jobs are not affected.
+skill instructions or user-level Codex config. User-config isolation also
+applies to non-agentic stored-prompt jobs, including `analyze`, `run`, and
+insights. Agentic stored-prompt jobs and fix jobs keep loading user config.
 
 ```toml
 # ~/.roborev/config.toml
 [agent.codex]
 disable_review_skills = true       # Suppress Codex skill instructions on review jobs
-ignore_review_user_config = true   # Pass --ignore-user-config to Codex review jobs
+ignore_review_user_config = true   # Ignore user config for reviews and non-editing jobs
 ```
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `disable_review_skills` | bool | true | Run Codex review jobs with `skills.include_instructions=false` so model-visible skill instructions are stripped from the prompt |
-| `ignore_review_user_config` | bool | true | Pass `--ignore-user-config` to Codex review jobs so user-level Codex config is not loaded |
+| `ignore_review_user_config` | bool | true | Pass `--ignore-user-config` to Codex reviews and non-agentic stored-prompt jobs so user-level Codex config is not loaded |
 
 Set either to `false` to restore the prior behavior if you rely on Codex skill
 instructions or user-level Codex config during reviews.
 
 #### Custom Codex Config (Model Providers)
 
-`ignore_review_user_config` stops Codex review jobs from loading your
-`~/.codex/config.toml`, which also means a custom `model_provider` and its
-`[model_providers.*]` block defined there are not applied. To inject specific
-Codex options without loading your full user config, define an
+`ignore_review_user_config` stops Codex reviews and non-editing jobs from
+loading your `~/.codex/config.toml`, which also means a custom `model_provider`
+and its `[model_providers.*]` block defined there are not applied. To inject
+specific Codex options without loading your full user config, define an
 `[agent.codex.config]` table. Every key under it is passed to Codex as a
 `-c key=value` override on **every** Codex job (review, fix, refine, analyze),
 and these overrides apply even when `--ignore-user-config` is in effect.

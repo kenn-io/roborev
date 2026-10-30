@@ -154,6 +154,7 @@ This mapping is for you, not the user. Use only what the conversation needs.
 | One custom check after every commit or every N commits | A type, a subagent that uses it, and a one-member panel; set `hook_review_panel` under `[review]`. Automatic reviews use this panel and carry no review type. Set `post_commit_batch_size = N` for every N commits. |
 | Several custom checks after every commit or every N commits | A type and subagent per check, a panel listing those subagents, and `hook_review_panel` under `[review]`. Set `post_commit_batch_size = N` for every N commits. |
 | Keep the usual code review after commits too | Add a subagent with `review_type = "default"` to the hook panel |
+| Combine bursts of automatic reviews across repositories | Set `post_commit_batch_size` and/or `post_commit_quiet_period = "5m"` globally. Each repo can override either value. The count threshold or quiet period queues the accumulated range, whichever happens first. Values below 2 disable the count threshold; an empty quiet period or `"0"` disables the timer. Pushes flush pending commits. Daemon restarts cancel timers but preserve pending checkpoints for the next commit or push. |
 | The whole branch each time | `post_commit_review = "branch"` |
 | Reviews on request | `[review] default_panel`, or `--type` and `--panel` |
 | Reviews on pull requests | `[ci] panel`; see <https://roborev.io/docs/advanced/subagent-review-panels/#ci-panels> |
@@ -248,6 +249,12 @@ Rules that matter:
     they apply only after the setup is pushed there. CI reads everything from
     its trusted base ref. Commit the whole setup to the default branch so all
     three agree, and tell the user the guidelines wait on that push.
+- For GitHub Actions reviews, `roborev init gh-action` generates a workflow
+    that skips draft PRs and reviews them when marked ready. Use
+    `--include-drafts` to review drafts too. Both modes cancel overlapping runs
+    for the same workflow and PR. Existing workflows need
+    `roborev init gh-action --force` to adopt the behavior; add
+    `--include-drafts` if the user wants draft reviews.
 - A `type = "kata"` hook files an issue for each reviewer's failing review as
     well as for the combined review. With a panel of several reviewers, one
     failing commit can open several issues. Say so when proposing it.

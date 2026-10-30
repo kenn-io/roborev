@@ -19,12 +19,20 @@ IMPORTANT: Do NOT commit changes yourself. Just modify the files. The caller wil
 
 IMPORTANT: Do not modify files inside git submodules. You may read initialized submodules for context, but submodule contents must be changed by running roborev from inside that submodule repository or by fixing them manually.
 
-When finished, provide a brief summary in this format (this will be used in the commit message):
+When finished, provide a brief summary in this format (this will be used in the commit message). If the severity filter requires the exact marker, return only that marker instead.
 
 Changes:
 - <first change>
 - <second change>
 ...
+
+Not changed:
+- <finding intentionally left unchanged, reason, and evidence: file:line read or command run>
+
+Verification:
+- <command run and observed result>
+
+Use `none` for empty Changes or Not changed sections, and `not run` if no verification commands ran. Report only commands you ran.
 
 Keep the summary concise (under 10 bullet points). Put the most important changes first.{{.System.NoSkillsInstruction}}
 

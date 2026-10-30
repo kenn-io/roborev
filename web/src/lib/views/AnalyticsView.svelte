@@ -645,6 +645,9 @@
     width: 100%;
     min-width: 0;
     overflow: auto;
+    /* Reserve the scrollbar's width up front so the centered column does not
+       shift left when loaded data first makes the page scroll. */
+    scrollbar-gutter: stable;
   }
 
   .analytics-page {

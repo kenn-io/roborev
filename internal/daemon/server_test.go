@@ -304,7 +304,7 @@ func TestWaitForServerReadySurfacesServeError(t *testing.T) {
 	wantErr := errors.New("serve failed")
 	serveErrCh <- wantErr
 
-	ready, serveExited, err := waitForServerReady(context.Background(), DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, 50*time.Millisecond, serveErrCh, config.ClientAuth{})
+	ready, serveExited, err := waitForServerReady(context.Background(), DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, time.Second, serveErrCh, config.ClientAuth{})
 	if ready {
 		require.Condition(t, func() bool {
 			return false
@@ -329,7 +329,7 @@ func TestWaitForServerReadyLeavesServeExitUnreadWhenContextAlreadyCanceled(t *te
 	serveErrCh := make(chan error, 1)
 	serveErrCh <- http.ErrServerClosed
 
-	ready, serveExited, err := waitForServerReady(ctx, DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, 50*time.Millisecond, serveErrCh, config.ClientAuth{})
+	ready, serveExited, err := waitForServerReady(ctx, DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, time.Second, serveErrCh, config.ClientAuth{})
 	if ready {
 		require.Condition(t, func() bool {
 			return false

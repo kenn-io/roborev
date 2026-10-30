@@ -153,15 +153,14 @@ api-check:
 		cp pkg/client/generated/config.yaml "$$tmp/pkg/client/generated/config.yaml"; \
 		cp pkg/client/generated/native_uuid_overlay.yaml "$$tmp/pkg/client/generated/native_uuid_overlay.yaml"; \
 		cp pkg/client/generated/raw_json_overlay.yaml "$$tmp/pkg/client/generated/raw_json_overlay.yaml"; \
-		cp pkg/client/generated/native_uuid_header.tmpl "$$tmp/pkg/client/generated/native_uuid_header.tmpl"; \
 		cp pkg/client/generated/raw_responses.tmpl "$$tmp/pkg/client/generated/raw_responses.tmpl"; \
 		go run ./internal/daemon_client/openapi_generate -format yaml -o "$$tmp/pkg/client/openapi.yaml"; \
 		(cd "$$tmp/pkg/client/generated" && \
-			go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.75.14 \
+			go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.76.5 \
 				-config config.yaml ../openapi.yaml); \
 		diff -u pkg/client/openapi.yaml "$$tmp/pkg/client/openapi.yaml"; \
 		diff -ru --exclude=config.yaml --exclude=generate.go --exclude=native_uuid_overlay.yaml \
-			--exclude=native_uuid_header.tmpl --exclude=raw_json_overlay.yaml --exclude=raw_responses.tmpl \
+			--exclude=raw_json_overlay.yaml --exclude=raw_responses.tmpl \
 			pkg/client/generated "$$tmp/pkg/client/generated"
 	cd web && bun run generate:check
 
@@ -319,11 +318,7 @@ check-renovate-config:
 
 # Validate GitHub Actions workflows.
 check-actions:
-	@if ! command -v actionlint >/dev/null 2>&1; then \
-		echo "actionlint not found. Install with: go install github.com/rhysd/actionlint/cmd/actionlint@latest" >&2; \
-		exit 1; \
-	fi
-	actionlint
+	mise exec -- jactionlint --profile=correctness --no-online --shellcheck= --pyflakes=
 
 # Install pre-commit and pre-push hooks via prek.
 install-hooks:
@@ -337,3 +332,32 @@ install-hooks:
 test-postgres-ci:
 	go test -tags=postgres -v ./internal/storage/... -run Integration
 	go test -tags=postgres -v ./internal/daemon/... -run '^TestIntegration'
+
+# Workflow actions run at the commits in .github/workflows/actions.lock,
+# including actions that other actions call. The organization requires
+# SHA-pinned actions, and the lockfile is what satisfies that for nested refs.
+# The version comes from constraints.ghActionsLock in renovate.json.
+# Renovate uses the same version when it regenerates the lockfile after
+# bumping an action.
+GH_ACTIONS_LOCK_VERSION ?= $(shell sed -nE "s/^[[:space:]]*\"?ghActionsLock\"?:[[:space:]]*[\"']([^\"']*)[\"'].*/\1/p" renovate.json)
+
+.PHONY: gh-actions-lock-install actions-lock actions-lock-check-local actions-lock-check
+
+gh-actions-lock-install:
+	@test -n "$(GH_ACTIONS_LOCK_VERSION)" || { echo "constraints.ghActionsLock is missing from renovate.json" >&2; exit 1; }
+	@if [ "$$(gh actions-lock --version 2>/dev/null)" != "actions-lock version $(GH_ACTIONS_LOCK_VERSION)" ]; then \
+		gh extension remove actions-lock >/dev/null 2>&1 || true; \
+		gh extension install github/gh-actions-lock --pin $(GH_ACTIONS_LOCK_VERSION); \
+	fi
+
+# Lock every workflow action after adding or bumping a `uses:` line
+actions-lock: gh-actions-lock-install
+	gh actions-lock --no-interactive
+
+# Offline check that every workflow action has a lockfile entry
+actions-lock-check-local: gh-actions-lock-install
+	gh actions-lock --verify-local
+
+# Network check that the lockfile is complete and every locked commit is still valid
+actions-lock-check: gh-actions-lock-install
+	gh actions-lock --verify

@@ -80,12 +80,15 @@ default_panel = "guard"
 [review.subagents.ok]
 agent = "test"
 
+[review.subagents.second]
+agent = "test"
+
 [review.panels.guard]
-members = ["ok"]
+members = ["ok", "second"]
 synthesis_agent = "test"
 
 [review.panels.alt]
-members = ["ok"]
+members = ["ok", "second"]
 synthesis_agent = "test"
 `
 	const experiment = `
@@ -249,6 +252,52 @@ func TestDoctorAgentsUsageProvider(t *testing.T) {
 			}
 			assert.NotContains(t, w.Body.String(), "daemon-token")
 			assert.NotContains(t, w.Body.String(), "private-server-body")
+		})
+	}
+}
+
+func TestResolveDoctorPanelsSynthesisOnlyForSeveralVotingMembers(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	const panel = `
+[review]
+hook_review_panel = "guard"
+
+[review.subagents.one]
+agent = "test"
+
+[review.subagents.two]
+agent = "test"
+
+[review.subagents.watcher]
+agent = "test"
+non_voting = true
+
+[review.panels.guard]
+members = %s
+synthesis_agent = "codex"
+`
+	for _, tt := range []struct {
+		name          string
+		members       string
+		synthesisName string
+		available     bool
+	}{
+		{"one voting member passes its result through", `["one"]`, "", false},
+		{"one voting member with an observer", `["one", "watcher"]`, "", false},
+		{"several voting members need synthesis", `["one", "two"]`, "codex", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(repo, ".roborev.toml"), []byte(fmt.Sprintf(panel, tt.members)), 0o600))
+			repoCfg, rawRepo, err := config.LoadRepoConfigWithRaw(repo)
+			require.NoError(t, err)
+
+			panels, err := ResolveDoctorPanels(repo, repoCfg, rawRepo, config.DefaultConfig())
+			require.NoError(t, err)
+			require.Len(t, panels, 1)
+			assert.Empty(t, panels[0].Error)
+			assert.Equal(t, tt.synthesisName, panels[0].Synthesis.Name)
+			assert.Equal(t, tt.available, panels[0].Synthesis.Available)
 		})
 	}
 }

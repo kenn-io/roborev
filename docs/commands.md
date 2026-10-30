@@ -804,6 +804,50 @@ The summary includes:
 - **Cost**: Approximate agent spend for eligible jobs in the same time window,
     with coverage when only some jobs reported cost
 
+### CI run health
+
+When the selected window contains CI panel runs, `summary` also shows a **CI Run
+Health** block. Use `roborev summary --all --since 7d` to inspect all
+repositories monitored by the daemon, including separate CI checkouts.
+
+- **Panels** counts one run per panel, including reruns. Panel size does not
+    change this count. Active, finalized, and retired-unposted counts partition
+    the selected runs.
+- **Outcomes** counts finalized runs by their recorded outcome. Finalization
+    means `posted_at` was recorded; an abandoned run can be finalized without a
+    review comment.
+- **Retirement reasons** counts all retired rows, including finalized history
+    retired to release ownership for a rerun. Reasons are `closed_pr`,
+    `superseded`, `stale_head`, `deferred_retry`, `repo_mismatch`, and
+    `canceled`. Older rows or unspecified ownership transitions appear as
+    `unknown`.
+- **Runs per PR** reports p50, p90, and maximum. A PR is identified by both its
+    GitHub repository and number. Every PR above five runs is listed, ordered by
+    descending run count, then repository and PR number. Fractional percentiles
+    use interpolation.
+- **Turnaround** measures the first review attempt through finalization,
+    including time spent queued, reviewing, and retrying. Only runs with valid,
+    nonnegative timestamps contribute. The sample count is displayed; no samples
+    means unavailable. Missing first-attempt timestamps are excluded.
+- **Cost** includes retained member and synthesis jobs for the selected panels.
+    Total, per-PR, and retired-unposted amounts each report priced/eligible job
+    coverage. Eligibility requires a terminal job with evidence that an agent
+    ran; synthesis passthroughs are excluded. Failed or canceled agent calls can
+    still contribute cost. Missing pricing is unavailable; a recorded free call
+    contributes a priced zero.
+- **Retired unposted cost** includes only runs retired before finalization.
+    Active work is excluded. This measures retained recorded spend in that
+    cohort, rather than every run that failed to produce a useful comment.
+
+CI runs enter the window by panel creation time. Their associated job costs
+remain included even when the jobs were queued outside the window. Repository
+and branch filters match the synthesis job exactly. Unfiltered results retain
+panel history whose synthesis job has been deleted; scoped results exclude
+history that can no longer be mapped to that repository or branch.
+
+JSON exposes this block as `ci`, omitted when no panels match. See
+[GitHub integration](/docs/integrations/github/) for CI polling and delivery.
+
 ## Aggregate Cost
 
 ```bash
@@ -1010,6 +1054,7 @@ roborev init gh-action                          # Generate workflow file
 roborev init gh-action --agent codex            # Specify agents
 roborev init gh-action --output .github/workflows/review.yml
 roborev init gh-action --force                  # Overwrite existing
+roborev init gh-action --include-drafts         # Also review draft PRs
 roborev init gh-action --roborev-version 0.34.0 # Pin version
 ```
 
@@ -1018,13 +1063,20 @@ roborev init gh-action --roborev-version 0.34.0 # Pin version
 | `--agent <names>` | Agents to include in the workflow (repeatable) |
 | `--output <path>` | Output path (default: `.github/workflows/roborev.yml`) |
 | `--force` | Overwrite an existing workflow file |
+| `--include-drafts` | Review draft PRs too (default: skip drafts) |
 | `--roborev-version <ver>` | Pin roborev version in the workflow (default: latest) |
+
+Generated workflows skip draft PRs by default and run when a PR is marked ready
+for review. `--include-drafts` also permits draft reviews. Both modes cancel
+overlapping runs for the same workflow and PR. Regenerate existing files with
+`roborev init gh-action --force` to adopt this behavior; add `--include-drafts`
+if you want draft reviews.
 
 Generates a GitHub Actions workflow that:
 
 1. Checks out the repository
 1. Downloads and installs roborev with SHA256 verification
-1. Runs `roborev ci review --comment` on each PR
+1. Runs `roborev ci review --comment` on eligible PRs
 1. Posts review results as PR comments
 
 Agent API keys are read from repository secrets (e.g. `ANTHROPIC_API_KEY` for
@@ -1231,16 +1283,19 @@ When set to `"branch"`, each commit triggers a `merge-base..HEAD` range review.
 On the base branch itself, detached HEAD, or any error, it falls back to a
 single-commit review.
 
-To reduce review noise from small commits, set a repository-local batch size:
+To reduce review noise from small commits, batch them globally in
+`~/.roborev/config.toml` or per repository in `.roborev.toml`:
 
 ```toml
-# .roborev.toml
 post_commit_batch_size = 5
+post_commit_quiet_period = "5m"
 ```
 
-The hook queues one review after five commits instead of one review per commit.
-The pre-push hook attempts to queue a partial batch before push, but it does not
-block the push if queueing fails. Values below `2` disable batching.
+The hook queues one review over the pending commits when five have accumulated
+or five minutes pass without a new commit, whichever comes first. Either setting
+works alone. The pre-push hook attempts to queue a partial batch before push,
+but it does not block the push if queueing fails. A batch size below `2` and an
+empty or `"0"` quiet period each turn off that threshold.
 
 See: [Configuration](/docs/configuration/#post-commit-review-mode) and
 [Post-Commit Review Batching](/docs/configuration/#post-commit-review-batching)

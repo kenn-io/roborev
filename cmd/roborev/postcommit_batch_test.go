@@ -37,7 +37,7 @@ func TestAcquirePostCommitBatchLockWaitsForHolder(t *testing.T) {
 	}()
 	<-started
 
-	timer := time.NewTimer(50 * time.Millisecond) //nolint:kennlint // shows the second acquire does not happen; the held batch lock keeps it blocked
+	timer := time.NewTimer(50 * time.Millisecond) //nolint:kennlint // deadlinetest: shows the second acquire does not happen; the held batch lock keeps it blocked
 	defer timer.Stop()
 	var early result
 	returnedEarly := false
@@ -148,12 +148,12 @@ func TestPostCommitBatchStateKeepsBranchesSeparate(t *testing.T) {
 	base := repo.CommitFile("base.txt", "base", "base")
 	repo.CheckoutNewBranch("feature-one")
 	repo.CommitFile("one.txt", "one", "one")
-	one := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	one := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 	assert.Equal(t, base, one.Checkpoint)
 
 	repo.Run("checkout", "-b", "feature-two", base)
 	repo.CommitFile("two.txt", "two", "two")
-	two := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	two := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 	assert.Equal(t, base, two.Checkpoint)
 
 	state, exists, err := loadPostCommitBatchState(two.statePath)
@@ -168,16 +168,16 @@ func TestPlanPostCommitBatchMigratesCheckpointAfterBranchRename(t *testing.T) {
 	base := repo.CommitFile("base.txt", "base", "base")
 	repo.CheckoutNewBranch("old-name")
 	repo.CommitFile("one.txt", "one", "one")
-	first := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	first := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 	require.Equal(t, base, first.Checkpoint)
 
 	repo.CommitFile("two.txt", "two", "two")
-	second := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	second := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 	require.Equal(t, 2, second.Pending)
 	repo.Run("branch", "-m", "new-name")
 	head := repo.CommitFile("three.txt", "three", "three")
 
-	renamed := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	renamed := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 
 	assert.False(t, renamed.Ready)
 	assert.Equal(t, 3, renamed.Pending)
@@ -195,7 +195,7 @@ func TestPlanPostCommitBatchMigratesRenamedBranchWithoutReflog(t *testing.T) {
 	base := repo.CommitFile("base.txt", "base", "base")
 	repo.CheckoutNewBranch("old-name")
 	repo.CommitFile("one.txt", "one", "one")
-	first := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	first := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 	require.Equal(t, base, first.Checkpoint)
 	repo.Run("branch", "-m", "new-name")
 	gitDir := repo.Run("rev-parse", "--git-dir")
@@ -208,7 +208,7 @@ func TestPlanPostCommitBatchMigratesRenamedBranchWithoutReflog(t *testing.T) {
 	require.NoError(t, os.RemoveAll(filepath.Join(gitDir, "logs")))
 	head := repo.CommitFile("two.txt", "two", "two")
 
-	renamed := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	renamed := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 
 	assert.Equal(t, base, renamed.Checkpoint)
 	assert.Equal(t, 2, renamed.Pending)
@@ -225,13 +225,13 @@ func TestPlanPostCommitBatchMigratesAcrossConsecutiveRenames(t *testing.T) {
 	base := repo.CommitFile("base.txt", "base", "base")
 	repo.CheckoutNewBranch("old")
 	repo.CommitFile("one.txt", "one", "one")
-	first := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	first := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 	require.Equal(t, base, first.Checkpoint)
 	repo.Run("branch", "-m", "old", "middle")
 	repo.Run("branch", "-m", "middle", "new")
 	head := repo.CommitFile("two.txt", "two", "two")
 
-	renamed := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	renamed := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 
 	assert.Equal(t, base, renamed.Checkpoint)
 	assert.Equal(t, 2, renamed.Pending)
@@ -249,7 +249,7 @@ func TestPlanPostCommitBatchRecreatedSourceKeepsPendingRange(t *testing.T) {
 	base := repo.CommitFile("base.txt", "base", "base")
 	repo.CheckoutNewBranch("old")
 	repo.CommitFile("o1.txt", "o1", "o1")
-	first := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	first := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 	require.Equal(t, base, first.Checkpoint)
 	repo.Run("branch", "-m", "old", "new")
 
@@ -258,13 +258,13 @@ func TestPlanPostCommitBatchRecreatedSourceKeepsPendingRange(t *testing.T) {
 	// handed off there while the recreated branch tracks only its own commit.
 	repo.Run("checkout", "-b", "old", base)
 	repo.CommitFile("r1.txt", "r1", "r1")
-	recreated := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	recreated := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 	require.Equal(t, base, recreated.Checkpoint)
 	require.Equal(t, 1, recreated.Pending)
 
 	repo.Run("checkout", "new")
 	head := repo.CommitFile("n1.txt", "n1", "n1")
-	renamed := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	renamed := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 
 	assert := assert.New(t)
 	assert.Equal(base, renamed.Checkpoint,
@@ -284,11 +284,11 @@ func TestPlanPostCommitBatchParentDoesNotStealRenamedBranchRange(t *testing.T) {
 	repo.CommitFile("base.txt", "base", "base")
 	mainBranch := repo.Run("branch", "--show-current")
 	baseTwo := repo.CommitFile("b2.txt", "b2", "b2")
-	mainPlan := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	mainPlan := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 	require.True(t, mainPlan.Track)
 	repo.CheckoutNewBranch("work")
 	repo.CommitFile("x1.txt", "x1", "x1")
-	workPlan := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	workPlan := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 	require.Equal(t, baseTwo, workPlan.Checkpoint)
 	repo.Run("branch", "-m", "work", "renamed")
 
@@ -297,7 +297,7 @@ func TestPlanPostCommitBatchParentDoesNotStealRenamedBranchRange(t *testing.T) {
 	// branch, and the parent adopting (and deleting) the entry would strand it.
 	repo.Run("checkout", mainBranch)
 	repo.CommitFile("m1.txt", "m1", "m1")
-	parent := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	parent := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 	require.Equal(t, mainPlan.Checkpoint, parent.Checkpoint)
 	state, exists, err := loadPostCommitBatchState(parent.statePath)
 	require.NoError(t, err)
@@ -307,7 +307,7 @@ func TestPlanPostCommitBatchParentDoesNotStealRenamedBranchRange(t *testing.T) {
 
 	repo.Run("checkout", "renamed")
 	head := repo.CommitFile("y1.txt", "y1", "y1")
-	renamed := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	renamed := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 
 	assert.Equal(t, baseTwo, renamed.Checkpoint)
 	assert.Equal(t, 2, renamed.Pending)
@@ -321,13 +321,13 @@ func TestPlanPostCommitBatchForkAtEarlierTipDoesNotEatLaterCommits(
 	base := repo.CommitFile("base.txt", "base", "base")
 	repo.CheckoutNewBranch("work")
 	wOne := repo.CommitFile("w1.txt", "w1", "w1")
-	plan := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	plan := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 	require.Equal(t, base, plan.Checkpoint)
 	repo.CommitFile("w2.txt", "w2", "w2")
-	plan = planPostCommitBatch(t.Context(), repo.Dir, 5)
+	plan = planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 	require.Equal(t, 2, plan.Pending)
 	wThree := repo.CommitFile("w3.txt", "w3", "w3")
-	plan = planPostCommitBatch(t.Context(), repo.Dir, 5)
+	plan = planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 	require.Equal(t, 3, plan.Pending)
 
 	// A branch forked at an earlier pending commit sees the orphan's
@@ -338,7 +338,7 @@ func TestPlanPostCommitBatchForkAtEarlierTipDoesNotEatLaterCommits(
 	repo.Run("branch", "-m", "work", "renamed")
 	repo.Run("checkout", "fork")
 	repo.CommitFile("f1.txt", "f1", "f1")
-	fork := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	fork := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 
 	assert := assert.New(t)
 	assert.Equal(wOne, fork.Checkpoint)
@@ -352,7 +352,7 @@ func TestPlanPostCommitBatchForkAtEarlierTipDoesNotEatLaterCommits(
 
 	repo.Run("checkout", "renamed")
 	head := repo.CommitFile("r1.txt", "r1", "r1")
-	renamed := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	renamed := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 	assert.Equal(base, renamed.Checkpoint)
 	assert.Equal(4, renamed.Pending)
 	assert.Equal(base+".."+head, renamed.AccumulatedRef())
@@ -363,21 +363,21 @@ func TestPlanPostCommitBatchDoesNotAdoptRecreatedRenameSource(t *testing.T) {
 	base := repo.CommitFile("base.txt", "base", "base")
 	repo.CheckoutNewBranch("old")
 	firstHead := repo.CommitFile("one.txt", "one", "one")
-	first := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	first := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 	require.Equal(t, base, first.Checkpoint)
 	repo.Run("branch", "-m", "old", "new")
-	renamed := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	renamed := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 	require.Equal(t, base, renamed.Checkpoint)
 
 	repo.Run("checkout", "-b", "old", firstHead)
 	repo.CommitFile("recreated.txt", "recreated", "recreated")
-	recreated := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	recreated := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 	require.Equal(t, firstHead, recreated.Checkpoint)
 	repo.Run("checkout", "new")
 	repo.Run("branch", "-D", "old")
 	head := repo.CommitFile("two.txt", "two", "two")
 
-	decision := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	decision := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 
 	assert := assert.New(t)
 	assert.Equal(base, decision.Checkpoint)
@@ -393,7 +393,7 @@ func TestPlanPostCommitBatchKeepsBranchAndHeadConsistentDuringCheckout(t *testin
 	base := repo.CommitFile("base.txt", "base", "base")
 	repo.CheckoutNewBranch("feature")
 	featureHead := repo.CommitFile("feature.txt", "feature", "feature")
-	initial := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	initial := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 	require.Equal(t, base, initial.Checkpoint)
 	repo.Run("checkout", "-b", "other", base)
 	repo.CommitFile("other.txt", "other", "other")
@@ -413,7 +413,7 @@ exec "$REAL_GIT" "$@"
 	t.Setenv("REAL_GIT", realGit)
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	decision := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	decision := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 
 	assert := assert.New(t)
 	assert.Equal("feature", decision.Branch)
@@ -442,7 +442,7 @@ func TestPlanPostCommitBatchRecoversWhenBranchRecreationIsInconclusive(
 				"refs/heads/feature", oldOne, oldTwo)
 			repo.Run("update-ref", "-m", "commit: old two",
 				"refs/heads/feature", oldTwo, oldOne)
-			initial := planPostCommitBatch(t.Context(), repo.Dir, 5)
+			initial := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 			require.Equal(t, oldOne, initial.Checkpoint)
 
 			expectedCheckpoint := oldOne
@@ -459,7 +459,7 @@ func TestPlanPostCommitBatchRecoversWhenBranchRecreationIsInconclusive(
 			}
 			head := repo.CommitFile("new.txt", "new", "new")
 
-			decision := planPostCommitBatch(t.Context(), repo.Dir, 5)
+			decision := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 
 			assert := assert.New(t)
 			assert.Equal(expectedCheckpoint, decision.Checkpoint)
@@ -478,7 +478,7 @@ func TestPlanPostCommitBatchPreservesCheckpointAfterReflogPruning(t *testing.T) 
 		"refs/heads/feature", base, one)
 	repo.Run("update-ref", "-m", "restore",
 		"refs/heads/feature", one, base)
-	initial := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	initial := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 	require.Equal(t, base, initial.Checkpoint)
 
 	gitDir := repo.Run("rev-parse", "--git-dir")
@@ -493,7 +493,7 @@ func TestPlanPostCommitBatchPreservesCheckpointAfterReflogPruning(t *testing.T) 
 		"refs/heads/feature", one, head)
 	repo.Run("update-ref", "-m", "restore",
 		"refs/heads/feature", head, one)
-	decision := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	decision := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 
 	assert.Equal(t, base, decision.Checkpoint)
 	assert.Equal(t, 2, decision.Pending)
@@ -522,7 +522,7 @@ func TestPlanPostCommitBatchReconcilesRenameOntoStaleBranchName(t *testing.T) {
 	}))
 	repo.Run("branch", "-m", "work", "feature")
 
-	decision := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	decision := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 
 	assert := assert.New(t)
 	assert.Equal(base, decision.Checkpoint,
@@ -553,7 +553,7 @@ func TestPlanPostCommitBatchReconcilesOnChainCheckpointAfterRename(t *testing.T)
 	repo.Run("branch", "-m", "work", "feature")
 	head := repo.CommitFile("w3.txt", "w3", "w3")
 
-	decision := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	decision := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 
 	assert := assert.New(t)
 	assert.Equal(base, decision.Checkpoint)
@@ -585,7 +585,7 @@ func TestPlanPostCommitBatchAdoptsOrphanedOnChainCheckpoint(t *testing.T) {
 		},
 	}))
 
-	decision := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	decision := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 
 	assert := assert.New(t)
 	assert.Equal(base, decision.Checkpoint,
@@ -618,7 +618,7 @@ func TestPlanPostCommitBatchKeepsOffChainOrphanForItsOwnHistory(t *testing.T) {
 		},
 	}))
 
-	decision := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	decision := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 
 	assert.Equal(t, base, decision.Checkpoint,
 		"feature must seed at HEAD^1 and leave the off-chain orphan alone")
@@ -636,7 +636,7 @@ func TestPlanPostCommitBatchTracksWindows(t *testing.T) {
 	repo.CheckoutNewBranch("feature")
 	repo.CommitFile("one.txt", "one", "one")
 
-	decision := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	decision := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 	assert.False(t, decision.Ready)
 	assert.Equal(t, 1, decision.Pending)
 	assert.Equal(t, base, decision.Checkpoint)
@@ -646,20 +646,20 @@ func TestPlanPostCommitBatchTracksWindows(t *testing.T) {
 			filepath.Join("commits", string(rune('0'+i))+".txt"),
 			"change", "change",
 		)
-		decision = planPostCommitBatch(t.Context(), repo.Dir, 5)
+		decision = planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 		assert.False(t, decision.Ready)
 		assert.Equal(t, i, decision.Pending)
 	}
 
 	headFive := repo.CommitFile("five.txt", "five", "five")
-	decision = planPostCommitBatch(t.Context(), repo.Dir, 5)
+	decision = planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 	assert.True(t, decision.Ready)
 	assert.Equal(t, 5, decision.Pending)
 	assert.Equal(t, base+".."+headFive, decision.AccumulatedRef())
 	require.NoError(t, advancePostCommitBatch(t.Context(), repo.Dir, decision))
 
 	repo.CommitFile("six.txt", "six", "six")
-	next := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	next := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 	assert.False(t, next.Ready)
 	assert.Equal(t, 1, next.Pending)
 	assert.Equal(t, headFive, next.Checkpoint)
@@ -669,7 +669,7 @@ func TestPlanPostCommitBatchDisabledPreservesImmediateReview(t *testing.T) {
 	repo := newTestGitRepo(t)
 	repo.CommitFile("base.txt", "base", "base")
 
-	decision := planPostCommitBatch(t.Context(), repo.Dir, 1)
+	decision := planPostCommitBatch(t.Context(), repo.Dir, 1, false)
 
 	assert.False(t, decision.Enabled)
 	assert.False(t, decision.Track)
@@ -686,11 +686,11 @@ func TestPlanPostCommitBatchDisabledClearsExistingStateAfterDrain(t *testing.T) 
 	repo.CommitFile("base.txt", "base", "base")
 	repo.CheckoutNewBranch("feature")
 	repo.CommitFile("one.txt", "one", "one")
-	first := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	first := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 	require.True(t, first.Track)
 	head := repo.CommitFile("two.txt", "two", "two")
 
-	disabled := planPostCommitBatch(t.Context(), repo.Dir, 1)
+	disabled := planPostCommitBatch(t.Context(), repo.Dir, 1, false)
 	require.True(t, disabled.Ready)
 	assert.True(t, disabled.Enabled)
 	assert.True(t, disabled.Track)
@@ -708,7 +708,7 @@ func TestPlanPostCommitBatchDisabledDrainsOffChainCheckpoint(t *testing.T) {
 	base := repo.CommitFile("base.txt", "base", "base")
 	repo.CheckoutNewBranch("feature")
 	head := repo.CommitFile("feature.txt", "feature", "feature")
-	first := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	first := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 	require.True(t, first.Track)
 	repo.Run("checkout", "-b", "side", base)
 	side := repo.CommitFile("side.txt", "side", "side")
@@ -719,7 +719,7 @@ func TestPlanPostCommitBatchDisabledDrainsOffChainCheckpoint(t *testing.T) {
 	state.Branches["feature"] = postCommitBatchEntry{Checkpoint: side}
 	require.NoError(t, savePostCommitBatchState(first.statePath, state))
 
-	disabled := planPostCommitBatch(t.Context(), repo.Dir, 1)
+	disabled := planPostCommitBatch(t.Context(), repo.Dir, 1, false)
 
 	assert.True(t, disabled.Ready)
 	assert.True(t, disabled.Enabled)
@@ -746,7 +746,7 @@ func TestPlanPostCommitBatchDisabledPreservesUnreadableCheckpoint(t *testing.T) 
 		},
 	}))
 
-	disabled := planPostCommitBatch(t.Context(), repo.Dir, 1)
+	disabled := planPostCommitBatch(t.Context(), repo.Dir, 1, false)
 
 	assert.True(t, disabled.Ready)
 	assert.False(t, disabled.Enabled)
@@ -762,7 +762,7 @@ func TestPlanPostCommitBatchRootCommitFailsOpen(t *testing.T) {
 	repo := newTestGitRepo(t)
 	head := repo.CommitFile("root.txt", "root", "root")
 
-	decision := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	decision := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 
 	assert.True(t, decision.Enabled)
 	assert.True(t, decision.Ready)
@@ -783,7 +783,7 @@ func TestPlanPostCommitBatchCorruptStateFailsOpen(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
 	require.NoError(t, os.WriteFile(path, []byte("not json\n"), 0o600))
 
-	decision := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	decision := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 
 	assert.True(t, decision.Ready)
 	assert.Contains(t, decision.Reason, "state")
@@ -799,7 +799,7 @@ func TestPlanPostCommitBatchRecoversOffChainCheckpoint(t *testing.T) {
 	base := repo.CommitFile("base.txt", "base", "base")
 	repo.CheckoutNewBranch("feature")
 	head := repo.CommitFile("feature.txt", "feature", "feature")
-	decision := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	decision := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 
 	repo.Run("checkout", "-b", "side", base)
 	side := repo.CommitFile("side.txt", "side", "side")
@@ -810,7 +810,7 @@ func TestPlanPostCommitBatchRecoversOffChainCheckpoint(t *testing.T) {
 	state.Branches["feature"] = postCommitBatchEntry{Checkpoint: side}
 	require.NoError(t, savePostCommitBatchState(decision.statePath, state))
 
-	rewritten := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	rewritten := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 
 	assert.True(t, rewritten.Ready)
 	assert.False(t, rewritten.PreserveCheckpoint)
@@ -823,7 +823,7 @@ func TestPlanPostCommitBatchRecoversUnrelatedHistoryFromEmptyTree(t *testing.T) 
 	base := repo.CommitFile("base.txt", "base", "base")
 	repo.CheckoutNewBranch("feature")
 	repo.CommitFile("old.txt", "old", "old")
-	initial := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	initial := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 	require.Equal(t, base, initial.Checkpoint)
 
 	repo.Run("checkout", "--orphan", "rewritten")
@@ -832,7 +832,7 @@ func TestPlanPostCommitBatchRecoversUnrelatedHistoryFromEmptyTree(t *testing.T) 
 	repo.Run("branch", "-D", "feature")
 	repo.Run("branch", "-m", "feature")
 
-	decision := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	decision := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 
 	assert := assert.New(t)
 	assert.True(decision.Ready)
@@ -942,11 +942,11 @@ func TestAdvancePostCommitBatchRepairPreservesOtherBranches(t *testing.T) {
 	base := repo.CommitFile("base.txt", "base", "base")
 	repo.CheckoutNewBranch("feature-one")
 	repo.CommitFile("one.txt", "one", "one")
-	one := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	one := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 
 	repo.Run("checkout", "-b", "feature-two", base)
 	repo.CommitFile("two.txt", "two", "two")
-	two := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	two := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 
 	repo.Run("checkout", "-b", "side", base)
 	side := repo.CommitFile("side.txt", "side", "side")
@@ -957,7 +957,7 @@ func TestAdvancePostCommitBatchRepairPreservesOtherBranches(t *testing.T) {
 	state.Branches["feature-one"] = postCommitBatchEntry{Checkpoint: side}
 	require.NoError(t, savePostCommitBatchState(one.statePath, state))
 
-	repair := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	repair := planPostCommitBatch(t.Context(), repo.Dir, 5, false)
 	require.NotEmpty(t, repair.Reason)
 	require.NoError(t, advancePostCommitBatch(t.Context(), repo.Dir, repair))
 

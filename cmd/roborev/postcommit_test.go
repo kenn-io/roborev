@@ -1259,7 +1259,7 @@ func TestPostCommitTimesOutOnSlowDaemon(t *testing.T) {
 	orig := hookHTTPClient
 	hookHTTPClient = func(daemon.DaemonEndpoint, time.Duration) *http.Client {
 		return &http.Client{
-			Timeout:   50 * time.Millisecond,
+			Timeout:   50 * time.Millisecond, //nolint:kennlint // deadlinetest: the transport blocks until the request deadline; the hook must return without failing the commit
 			Transport: rt,
 		}
 	}
@@ -1273,7 +1273,7 @@ func TestPostCommitTimesOutOnSlowDaemon(t *testing.T) {
 	case <-rt.hit:
 		// RoundTrip was called — timeout path was exercised
 	default:
-		require.NoError(t, err, "RoundTrip was never called; timeout not exercised")
+		require.FailNow(t, "RoundTrip was never called; timeout not exercised")
 	}
 	assert.False(t, realHandlerCalled, "real handler should not be reached")
 

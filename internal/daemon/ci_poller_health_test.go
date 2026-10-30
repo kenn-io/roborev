@@ -703,7 +703,7 @@ func TestHealthCIPollerCleanupNonPullRequestTarget(t *testing.T) {
 				h.Cfg.CI.Repos = []string{"acme/api"}
 				panel, synth, members := h.seedBlockedPanelRun(t, "acme/api", 1, "head-a", "base..head-a",
 					[]jobSpec{{Agent: "test", ReviewType: "review"}})
-				require.NoError(t, h.DB.MarkPanelRetired(panel.ID))
+				require.NoError(t, h.DB.MarkPanelRetired(panel.ID, storage.PanelRetireReasonCanceled))
 				require.NoError(t, h.DB.DeferReviewAttempt("acme/api", 1, "head-a",
 					"genuine", "review failed", &panel.PanelRunUUID, time.Now().Add(time.Hour), true))
 				api := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -907,7 +907,7 @@ func TestHealthCIPollerRetiredCurrentRetryKeepsBackoff(t *testing.T) {
 	panel, synth, _ := h.seedBlockedPanelRun(t, "acme/api", pr.Number, pr.HeadRefOid, "base..head-a",
 		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "failed", Error: "provider unavailable"}})
 	h.markJobFailed(t, synth.ID, "provider unavailable")
-	require.NoError(t, h.DB.MarkPanelRetired(panel.ID))
+	require.NoError(t, h.DB.MarkPanelRetired(panel.ID, storage.PanelRetireReasonCanceled))
 	nextAt := time.Now().Add(time.Hour).Truncate(time.Second)
 	require.NoError(t, h.DB.DeferReviewAttempt("acme/api", pr.Number, pr.HeadRefOid,
 		"transient", "provider unavailable", &panel.PanelRunUUID, nextAt, false))

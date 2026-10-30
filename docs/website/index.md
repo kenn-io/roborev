@@ -52,7 +52,7 @@ working tree on its own.
 - **Layer 1, post-commit.** `roborev init` installs the hook, starts the
   daemon, and registers the repo. Each commit gets a verdict and, when it
   fails, findings with severities and file locations. `post_commit_batch_size`
-  reviews a run of small commits as one range.
+  and `post_commit_quiet_period` review a run of small commits as one range.
 - **Layer 2, agent hook.** `roborev agent-hook install` wires Claude Code,
   Codex, Copilot CLI, Cursor, Factory Droid, Gemini CLI, Hermes, and Qwen. After
   a configurable number of turns, commits, or failed reviews, the agent is told
@@ -108,14 +108,17 @@ writer, or a local model behind a proxy.
 
 ## 06 / Pull requests: the same panel on every PR
 
-The daemon polls GitHub and GitLab, runs one panel per PR head against the
+The daemon polls GitHub pull requests, runs one panel per PR head against the
 frozen merge-base range, and posts one synthesized comment with the member
-reviewers, runtimes, and costs in the footer.
+reviewers, runtimes, and costs in the footer. GitLab merge requests get a
+multi-agent review from a GitLab CI job instead.
 
 - **GitHub.** Install as a GitHub App for a bot with repository-scoped
   permissions and checks, or use your `gh` login for a personal project.
-- **GitLab.** Merge request notes from the same daemon, with quick-action
-  escaping.
+- **GitLab.** `roborev ci review` runs in a GitLab CI job and posts the
+  synthesized review as a merge request note, with quick-action escaping. The
+  daemon poller does not watch GitLab yet; see
+  [GitLab integration](https://roborev.io/docs/integrations/gitlab/).
 - **Control.** `[ci].skip_labels` exempts drafts and generated updates; per-repo
   `.roborev.toml` overrides the panel, agents, and reasoning for one project.
 - **Runs anywhere.** The CI poller is the roborev daemon under systemd or

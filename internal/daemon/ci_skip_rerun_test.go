@@ -16,6 +16,12 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
+// skipReviewLabel is the skip produced by a PR labeled skip-review.
+var skipReviewLabel = ciSkip{
+	description: "Review skipped: label skip-review",
+	reason:      `it has label "skip-review"`,
+}
+
 func TestCIPanelSkipRerunOrdering(t *testing.T) {
 	for _, phase := range []string{"deferred", "done"} {
 		for _, ordering := range []string{"skip first", "skip check fails", "skip status fails", "rerun queued", "rerun posted", "rerun no review", "expired skip claim"} {
@@ -126,10 +132,10 @@ func TestCIPanelSkipRerunOrdering(t *testing.T) {
 					statusCount := len(*statuses)
 					// The skip decision was made from the previous attempt before
 					// the rerun transferred ownership, possibly finishing already.
-					err = h.Poller.skipLabeledPR("acme/api", pr, "skip-review", before)
+					err = h.Poller.skipPR("acme/api", pr, skipReviewLabel, before)
 					require.ErrorIs(t, err, storage.ErrCIPanelActive)
 					if ordering == "rerun queued" {
-						err = h.Poller.skipLabeledPR("acme/api", pr, "skip-review", nil)
+						err = h.Poller.skipPR("acme/api", pr, skipReviewLabel, nil)
 						require.ErrorIs(t, err, storage.ErrCIPanelActive, "a previously absent attempt cannot erase a new owner")
 					}
 					assert.Zero(skipCalls)

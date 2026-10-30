@@ -1971,10 +1971,22 @@ func TestApplyCodexReviewSettings(t *testing.T) {
 			wantIgnore: true,
 		},
 		{
-			name:       "task job",
+			name:       "non-agentic task job",
 			job:        storage.ReviewJob{JobType: storage.JobTypeTask},
 			wantSkills: true,
+			wantIgnore: true,
+		},
+		{
+			name:       "agentic task job",
+			job:        storage.ReviewJob{JobType: storage.JobTypeTask, Agentic: true},
+			wantSkills: true,
 			wantIgnore: false,
+		},
+		{
+			name:       "compact job",
+			job:        storage.ReviewJob{JobType: storage.JobTypeCompact},
+			wantSkills: true,
+			wantIgnore: true,
 		},
 		{
 			name:       "classify job",
@@ -4511,11 +4523,9 @@ func TestServerWakesWorkerPoolWhenWorkBecomesClaimable(t *testing.T) {
 				return members[0], claimed
 			}
 			test.setup(t, f)
-			for len(server.workerPool.wakeCh) > 0 {
-				<-server.workerPool.wakeCh
-			}
+			wakeCh := server.workerPool.wakeSignal()
 			f.trigger()
-			assert.NotEmpty(t, server.workerPool.wakeCh, "claimable work must wake the worker pool")
+			assert.True(t, isClosed(wakeCh), "claimable work must wake the worker pool")
 		})
 	}
 }
@@ -4524,9 +4534,25 @@ func TestServerWakesWorkerPoolWhenWorkBecomesClaimable(t *testing.T) {
 // fan-out is checked on the wake channel alone.
 func TestWorkerPoolWakeReachesEveryIdleWorker(t *testing.T) {
 	pool := NewWorkerPool(nil, NewStaticConfig(config.DefaultConfig()), 4, NewBroadcaster(), nil, nil)
+	idle := make([]<-chan struct{}, 6)
+	for i := range idle {
+		idle[i] = pool.wakeSignal()
+	}
 	pool.wake()
 	pool.wake()
-	assert.Len(t, pool.wakeCh, 4, "one token per worker, and extra wakes don't block")
+	for i, ch := range idle {
+		assert.True(t, isClosed(ch), "idle worker %d must wake, even beyond the initial pool size", i)
+	}
+	assert.False(t, isClosed(pool.wakeSignal()), "a worker that starts waiting after the wake waits for the next one")
+}
+
+func isClosed(ch <-chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
 }
 
 func TestWorkerPoolNegativeWorkerCount(t *testing.T) {

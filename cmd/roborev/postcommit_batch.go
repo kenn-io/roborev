@@ -196,10 +196,11 @@ func planPostCommitBatch(
 	ctx context.Context,
 	root string,
 	batchSize int,
+	quietPeriod bool,
 ) postCommitBatchDecision {
 	decision := postCommitBatchDecision{Ready: true}
 	statePath, pathErr := postCommitBatchStatePath(root)
-	if batchSize < 2 {
+	if batchSize < 2 && !quietPeriod {
 		return planDisabledPostCommitBatch(ctx, root, statePath, pathErr, decision)
 	}
 
@@ -285,7 +286,7 @@ func planPostCommitBatch(
 		)
 	}
 
-	decision.Ready = pending >= batchSize
+	decision.Ready = batchSize >= 2 && pending >= batchSize
 	decision.Branch = branch
 	decision.Head = head
 	decision.Checkpoint = checkpoint

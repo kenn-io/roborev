@@ -140,7 +140,7 @@
           <article class="proof">
             <p class="proof-tag">Layer 1 · post-commit</p>
             <h3>Every commit, any agent.</h3>
-            <p><code>roborev init</code> installs the hook, starts the daemon, and registers the repo. Each commit gets a verdict and, when it fails, findings with severities and file locations. Set <code>post_commit_batch_size</code> to review a run of small commits as one range.</p>
+            <p><code>roborev init</code> installs the hook, starts the daemon, and registers the repo. Each commit gets a verdict and, when it fails, findings with severities and file locations. Set <code>post_commit_batch_size</code> or <code>post_commit_quiet_period</code> to review a run of small commits as one range.</p>
           </article>
           <article class="proof">
             <p class="proof-tag">Layer 2 · agent hook</p>
@@ -269,7 +269,7 @@
             <p class="section-index">06 / Pull requests</p>
             <h2 id="ci-title">The same panel on every pull request.</h2>
           </div>
-          <p>The daemon polls GitHub and GitLab for open pull and merge requests, runs one panel per PR head against the frozen merge-base range, and posts a single synthesized comment with the member reviewers, runtimes, and costs in the footer. Human discussion from trusted collaborators goes into the prompt; a fork's branch name never gets to pick which rules apply.</p>
+          <p>The daemon polls GitHub for open pull requests, runs one panel per PR head against the frozen merge-base range, and posts a single synthesized comment with the member reviewers, runtimes, and costs in the footer. GitLab merge requests get a multi-agent review from a GitLab CI job instead. Human discussion from trusted collaborators goes into the prompt; a fork's branch name never gets to pick which rules apply.</p>
         </div>
         <div class="proof-grid">
           <article class="proof">
@@ -279,8 +279,8 @@
           </article>
           <article class="proof">
             <p class="proof-tag">GitLab</p>
-            <h3>Merge request notes, same daemon.</h3>
-            <p>Point the poller at GitLab projects and the synthesized review lands as an MR note, with quick-action escaping so an agent's output cannot drive the MR.</p>
+            <h3>Merge request notes from GitLab CI.</h3>
+            <p>Run <code>roborev ci review</code> in a GitLab CI job and the synthesized review lands as an MR note, with quick-action escaping so an agent's output cannot drive the MR. The daemon poller does not watch GitLab yet; see the <a href="/docs/integrations/gitlab/">GitLab integration</a>.</p>
           </article>
           <article class="proof">
             <p class="proof-tag">Control</p>

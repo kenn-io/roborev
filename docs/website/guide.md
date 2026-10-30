@@ -35,7 +35,8 @@ returns immediately; neither you nor the agent waits on it. The
 first installed agent in the fallback order reads the diff, the commit message,
 your guidelines, and recent review history, and returns a verdict with findings,
 severities, and file locations. Duplicate hook requests for the same target are
-coalesced. Small commits can be batched with `post_commit_batch_size`.
+coalesced. Bursts of small commits can be batched with `post_commit_batch_size`
+or `post_commit_quiet_period`.
 
 ```sh
 git commit -m "Add retry to payment webhook"
@@ -159,11 +160,12 @@ roborev compact
 
 ## 09 / Run the same panel on every pull request
 
-Enable the CI poller and the daemon lists open pull requests on GitHub or merge
-requests on GitLab, runs one panel per PR head against the frozen merge-base
-range, and posts one synthesized comment. Labels in `skip_labels` exempt drafts
-and generated updates. Authenticate as a GitHub App for a bot with
-repository-scoped permissions, or use your `gh` login.
+Enable the CI poller and the daemon lists open pull requests on GitHub, runs
+one panel per PR head against the frozen merge-base range, and posts one
+synthesized comment. The poller is GitHub-only; for GitLab merge requests, run
+`roborev ci review` in a GitLab CI job to post the review as an MR note. Labels
+in `skip_labels` exempt drafts and generated updates. Authenticate as a GitHub
+App for a bot with repository-scoped permissions, or use your `gh` login.
 
 ```toml
 [ci]

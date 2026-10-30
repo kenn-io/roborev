@@ -52,6 +52,33 @@ operations, and token backfill. Most JSON endpoints are represented in the
 generated client; endpoints that stream or return raw bytes are exposed through
 raw helper methods.
 
+### Agent health
+
+`/api/health` reports the `agents` component as unhealthy when the daemon cannot
+run the agents that the global config selects for post-commit and manual
+reviews. Enqueue would reject those reviews. While this component is unhealthy,
+the daemon reports both `healthy` and `ready` as false. The message names the
+missing agents and includes the daemon's `PATH`. A repo config can select other
+agents; `roborev doctor` checks those for the current repo.
+
+The check covers each way a review can run:
+
+- Post-commit and manual reviews are checked separately, each with its panel or
+    its single agent, at the default review reasoning level.
+- When a review experiment is enabled, its experimental arm is checked too,
+    unless its ratio is 0 and no review can be assigned to it. The base config
+    is always checked, because reviews with no branch and prompt-based tasks are
+    not enrolled in the experiment.
+- A panel needs its synthesis agent only when it has more than one voting
+    member. A single voting member's result is passed through.
+
+Checking can run an agent executable to identify it, which can be slow, so a
+health request never runs the check itself. The daemon starts the first check
+when it starts, and until that check finishes the component reports that the
+check is still running. After that, each request returns the last result and
+starts one background refresh. After you install or remove an agent, the next
+request after the refresh shows the new state.
+
 ### Worker health
 
 `/api/health` reports stalled jobs through the `workers` component. A running

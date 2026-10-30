@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/kit/pathresolve"
 
 	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/autofix"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/git"
@@ -362,6 +363,15 @@ type RunContext struct {
 	PostCommitDelay time.Duration
 }
 
+// appendRefineFixGuidelines keeps trusted policy after all review context.
+func appendRefineFixGuidelines(addressPrompt, guidelines string) string {
+	if strings.TrimSpace(guidelines) == "" {
+		return addressPrompt
+	}
+	addressPrompt += "\n\n" + autofix.GuidelinesEvaluationInstruction
+	return autofix.AppendGuidelines(addressPrompt, guidelines)
+}
+
 func runRefine(runCtx RunContext, opts refineOptions) error {
 	ctx := runCtx.Context
 	if ctx == nil {
@@ -649,6 +659,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 			}
 			previousAttempts = append(carriedAttempts, previousAttempts...)
 		}
+		addressPrompt = appendRefineFixGuidelines(addressPrompt, cfg.FixGuidelines)
 
 		// Create temp worktree to isolate agent from user's working tree
 		wt, err := createRefineWorktreeAtRef(ctx, repoPath, headBefore)

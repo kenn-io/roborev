@@ -324,3 +324,31 @@ func TestGitAuthEnvForBase_PreservesExistingGitConfig(t *testing.T) {
 	assert.Contains(t, joined, "GIT_CONFIG_KEY_1=http.https://ghe.example.com/.extraheader")
 	assert.Contains(t, joined, "AUTHORIZATION: basic ")
 }
+
+func TestPullRequestAuthorAssociation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		pr := `{"number":7,"state":"open","user":{"login":"alice"},"author_association":"MEMBER"}`
+		switch r.URL.Path {
+		case "/api/v3/repos/acme/api/pulls":
+			fmt.Fprint(w, "["+pr+"]")
+		case "/api/v3/repos/acme/api/pulls/7":
+			fmt.Fprint(w, pr)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient("", WithBaseURL(server.URL+"/"))
+	require.NoError(t, err)
+
+	prs, err := client.ListOpenPullRequests(t.Context(), "acme/api")
+	require.NoError(t, err)
+	require.Len(t, prs, 1)
+	assert.Equal(t, "MEMBER", prs[0].AuthorAssociation)
+
+	info, err := client.GetPullRequest(t.Context(), "acme/api", 7)
+	require.NoError(t, err)
+	assert.Equal(t, "MEMBER", info.AuthorAssociation)
+}
