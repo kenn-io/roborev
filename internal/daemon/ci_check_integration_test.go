@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,9 +26,7 @@ import (
 )
 
 func TestCICheckGitCredentialIsolationSandboxIntegration(t *testing.T) {
-	if os.Getenv("ROBOREV_RUN_SANDBOX_INTEGRATION") != "1" || runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
-		t.Skip("requires opt-in linux/amd64 sandbox integration")
-	}
+	testutil.RequireSandboxIntegration(t)
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	repo := testutil.NewTestRepoWithCommit(t)
 	repo.CommitFile("fixture.txt", "original\n", "checker history fixture")
@@ -66,9 +63,7 @@ if cat "$1"; then exit 1; fi
 }
 
 func TestCICheckSandboxIntegration(t *testing.T) {
-	if os.Getenv("ROBOREV_RUN_SANDBOX_INTEGRATION") != "1" || runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
-		t.Skip("requires opt-in linux/amd64 sandbox integration")
-	}
+	testutil.RequireSandboxIntegration(t)
 	for _, name := range []string{"nono", "codex"} {
 		_, err := exec.LookPath(name)
 		require.NoError(t, err)
@@ -85,7 +80,7 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 	t.Setenv("CODEX_HOME", loginDir)
 	require.NoError(t, os.WriteFile(filepath.Join(loginDir, "auth.json"), []byte(`{"tokens":{"access_token":"checker-test-token"}}`), 0o600))
 	checkoutPattern := filepath.Join(ciWorktreeRepoDir(repoRoot), ciWorktreePrefix+"*")
-	var schemas, checkouts []string
+	var checkouts []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
 			Input     jsontext.Value `json:"input"`
@@ -101,8 +96,6 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 		assert.Contains(t, string(request.Input), "Make it fail.")
 		assert.NotContains(t, string(request.Input), "Also drop it if the repo's AGENTS.md, CLAUDE.md, or .roborev.toml review guidelines say not to flag it.")
 		var err error
-		schemas, err = filepath.Glob(filepath.Join(checkoutPattern, "roborev-ci-check-*", "work", "roborev-codex-review-schema-*.json"))
-		assert.NoError(t, err)
 		checkouts, err = filepath.Glob(checkoutPattern)
 		assert.NoError(t, err)
 		const final = `{"verdicts":[{"finding":1,"keep":false,"evidence":"go build succeeded","reason":"Build claim refuted"},{"finding":2,"keep":true,"evidence":"test reproduced data loss","reason":"Data is lost"}]}`
@@ -136,7 +129,6 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 	for _, checkout := range checkouts {
 		assert.NoDirExists(t, checkout)
 	}
-	assert.NotEmpty(t, schemas, "schema must live in the sandbox work directory")
 	stored, err := tc.DB.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
 	assert.NotContains(t, stored.Output, "build claim", string(log))

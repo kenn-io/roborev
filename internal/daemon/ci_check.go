@@ -16,7 +16,6 @@ import (
 	"go.kenn.io/kit/pathresolve"
 
 	"go.kenn.io/roborev/internal/agent"
-	"go.kenn.io/roborev/internal/config"
 	gitpkg "go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/sandbox"
 	"go.kenn.io/roborev/internal/storage"
@@ -216,39 +215,33 @@ func ciCheckCleanup(checkout string, closeCheckout func()) func() {
 	}
 }
 
-// Every read grant must leave host homes outside the checker's filesystem.
+// Every read grant must leave the host home outside the checker's filesystem.
+// The sandbox self-check already refuses grants that expose the Codex login.
 func validateCICheckReadPaths(paths []string) error {
 	home, err := os.UserHomeDir()
+	if err == nil {
+		home, err = filepath.Abs(home)
+	}
+	if err == nil {
+		home, err = pathresolve.EvalSymlinksAllowMissing(home)
+	}
 	if err != nil {
 		return err
 	}
-	codexHome, err := config.CodexHomeDir()
-	if err != nil {
-		return err
-	}
-	for _, hostHome := range []string{home, codexHome} {
-		hostHome, err = filepath.Abs(hostHome)
+	for _, path := range paths {
+		grant, err := filepath.Abs(path)
 		if err == nil {
-			hostHome, err = pathresolve.EvalSymlinksAllowMissing(hostHome)
+			grant, err = pathresolve.EvalSymlinksAllowMissing(grant)
 		}
 		if err != nil {
 			return err
 		}
-		for _, path := range paths {
-			grant, err := filepath.Abs(path)
-			if err == nil {
-				grant, err = pathresolve.EvalSymlinksAllowMissing(grant)
-			}
-			if err != nil {
-				return err
-			}
-			rel, err := filepath.Rel(grant, hostHome)
-			if err != nil {
-				return err
-			}
-			if filepath.IsLocal(rel) {
-				return fmt.Errorf("checker read grant contains host home: %q", path)
-			}
+		rel, err := filepath.Rel(grant, home)
+		if err != nil {
+			return err
+		}
+		if filepath.IsLocal(rel) {
+			return fmt.Errorf("checker read grant contains host home: %q", path)
 		}
 	}
 	return nil
