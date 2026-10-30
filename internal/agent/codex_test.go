@@ -337,6 +337,14 @@ func TestCodexCommandLineOmitsRuntimeOnlyArgs(t *testing.T) {
 	assert.False(t, strings.HasSuffix(cmdLine, " -"), "command line should omit stdin marker: %q", cmdLine)
 }
 
+func TestCodexSandboxCommandLine(t *testing.T) {
+	withUnsafeAgents(t, false)
+	a := NewCodexAgent("codex").WithSandbox(&CodexSandbox{})
+	a.IgnoreUserConfig = true
+
+	assert.Equal(t, `codex exec --json -c web_search="disabled" -c model_provider="roborev-route" --dangerously-bypass-approvals-and-sandbox`, a.CommandLine())
+}
+
 func TestCodexSupportsDangerousFlagAllowsNonZeroHelp(t *testing.T) {
 	cmdPath := writeTempCommand(t, "#!/bin/sh\necho \"usage "+codexDangerousFlag+"\"; exit 1\n")
 

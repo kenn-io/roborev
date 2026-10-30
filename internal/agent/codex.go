@@ -227,6 +227,10 @@ type codexArgOptions struct {
 }
 
 func (a *CodexAgent) commandArgs(opts codexArgOptions, goos string) []string {
+	if a.sandbox != nil {
+		opts.agenticMode, opts.autoApprove = true, false
+	}
+	ignoreUserConfig := a.IgnoreUserConfig && a.sandbox == nil
 	args := []string{"exec"}
 	if a.SessionID != "" {
 		args = append(args, "resume")
@@ -235,16 +239,16 @@ func (a *CodexAgent) commandArgs(opts codexArgOptions, goos string) []string {
 	if !a.omitThreadSource {
 		args = append(args, codexThreadSourceFlag, codexThreadSourceRoborev)
 	}
-	if a.IgnoreUserConfig {
+	if ignoreUserConfig {
 		args = append(args, codexIgnoreUserConfigFlag)
 	}
-	if goos == "windows" && a.IgnoreUserConfig && opts.autoApprove && !opts.agenticMode && !opts.sandboxBroken {
+	if goos == "windows" && ignoreUserConfig && opts.autoApprove && !opts.agenticMode && !opts.sandboxBroken {
 		// Ignoring user config also drops the native Windows sandbox selection.
 		// Supply a default before user overrides so an explicit unelevated
 		// setting still wins. The read-only policy is set separately below.
 		args = append(args, "-c", `windows.sandbox="elevated"`)
 	}
-	if a.IgnoreUserConfig {
+	if ignoreUserConfig {
 		// Ignoring user config also drops where the Codex login is stored.
 		// Like the Windows default, these go before user overrides so an
 		// explicit [agent.codex.config] setting still wins.
@@ -257,7 +261,7 @@ func (a *CodexAgent) commandArgs(opts codexArgOptions, goos string) []string {
 	for _, override := range a.ConfigOverrides {
 		args = append(args, "-c", override)
 	}
-	if a.sandbox != nil && !opts.preview {
+	if a.sandbox != nil {
 		args = append(args, "-c", `web_search="disabled"`, "-c", `model_provider="roborev-route"`)
 	}
 	if opts.agenticMode {
