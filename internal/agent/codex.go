@@ -511,8 +511,7 @@ func (a *CodexAgent) review(
 		}
 	}
 
-	// Non-agentic review mode uses --sandbox read-only for
-	// non-interactive sandboxed execution.
+	// Non-agentic reviews use Codex's read-only sandbox.
 	autoApprove := false
 	if !agenticMode {
 		supported, err := codexSupportsNonInteractive(ctx, a.Command, runAgent.IgnoreUserConfig)

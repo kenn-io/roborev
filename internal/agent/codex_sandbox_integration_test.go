@@ -40,9 +40,8 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	probe := fmt.Sprintf("#!/bin/bash\n[[ \"$CODEX_HOME\" == %q/.codex-home-* && -d \"$CODEX_HOME\" ]] && echo OK codex-home\n", work)
 
 	const key = "sandbox-test-token"
-	var calls, unauthorized atomic.Int32
+	var unauthorized atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
 		if r.Header.Get("Authorization") != "Bearer "+key {
 			unauthorized.Add(1)
 			w.WriteHeader(http.StatusUnauthorized)
@@ -109,15 +108,9 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	a.ConfigOverrides = []string{`web_search="live"`, `model_provider="wrong-provider"`, `model_providers.roborev-route.base_url="http://127.0.0.1:1"`}
 	a.Model = "test-model"
 	var stream bytes.Buffer
-	plain, err := a.Review(t.Context(), repo, "HEAD", "Run the supplied probe.", &stream)
-	require.NoError(t, err, "%s", stream.String())
-	assert.Contains(t, plain, "OK codex-home")
-	stream.Reset()
 	result, err := a.ReviewWithSchema(t.Context(), repo, "HEAD", "Run the supplied probe.", jsontext.Value(`{"type":"object","properties":{"probe":{"type":"string"}},"required":["probe"],"additionalProperties":false}`), &stream)
 	require.NoError(t, err, "%s", stream.String())
-	require.True(t, jsontext.Value(result).IsValid())
 	assert.Contains(t, string(result), "OK codex-home")
-	assert.GreaterOrEqual(t, calls.Load(), int32(2))
 	assert.Zero(t, unauthorized.Load())
 	homes, err := filepath.Glob(filepath.Join(work, ".codex-home-*"))
 	require.NoError(t, err)

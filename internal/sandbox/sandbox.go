@@ -20,7 +20,7 @@ import (
 type Job struct {
 	WorkDir   string
 	ReadPaths []string
-	// DenyReadPaths must be unreadable through both their names and symlink targets.
+	// DenyReadPaths names files that must be unreadable, including through symlinks.
 	DenyReadPaths []string
 	Route         Route
 	Env           []string
@@ -149,7 +149,16 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 	cmd = []string{"systemd-run", "--working-directory=" + dir, "--user", "--scope", "-q", "-p", "MemoryMax=" + strconv.FormatInt(j.MemoryMax, 10), "-p", "MemorySwapMax=0", "--", nono, "run", "-s", "--profile", profilePath, "--no-rollback", "--no-audit", "--allow", j.WorkDir}
 	// CLI grants are literal paths; profile paths undergo template expansion.
 	for _, path := range j.ReadPaths {
-		cmd = append(cmd, "--read", path)
+		info, err := os.Stat(path)
+		if err != nil {
+			cleanup()
+			return nil, nil, nil, fmt.Errorf("stat sandbox read path: %w", err)
+		}
+		flag := "--read-file"
+		if info.IsDir() {
+			flag = "--read"
+		}
+		cmd = append(cmd, flag, path)
 	}
 	cmd = append(cmd, "--")
 	env = append([]string{}, j.Env...)

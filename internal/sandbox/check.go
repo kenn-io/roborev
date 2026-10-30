@@ -9,11 +9,24 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-
-	"go.kenn.io/kit/pathresolve"
 )
 
 func (j Job) check(ctx context.Context, wrapper, env []string) error {
+	var denied []string
+	for _, path := range j.DenyReadPaths {
+		resolved, err := ResolvePath(path)
+		if err != nil {
+			return fmt.Errorf("resolve sandbox deny-read path: %w", err)
+		}
+		info, err := os.Stat(resolved)
+		if err != nil {
+			return fmt.Errorf("stat sandbox deny-read path: %w", err)
+		}
+		if info.IsDir() {
+			return fmt.Errorf("sandbox deny-read path must be a file: %q", path)
+		}
+		denied = append(denied, resolved)
+	}
 	canary, err := os.MkdirTemp("", "roborev-sandbox-canary-*")
 	if err != nil {
 		return fmt.Errorf("sandbox self-check setup: %w", err)
@@ -49,7 +62,7 @@ except Exception:
 denied=$5
 shift 5
 for ((i=0; i<denied; i++)); do
-  /usr/bin/python3 -c 'import os,sys; os.open(sys.argv[1], os.O_RDONLY)' "$1" >/dev/null 2>&1 && bad "deny-path-read: $1"
+  cat "$1" >/dev/null 2>&1 && bad "deny-path-read: $1"
   shift
 done
 for path in "$@"; do
@@ -60,14 +73,6 @@ done
 exit "$failed"
 `
 	args := append([]string{}, wrapper[1:]...)
-	var denied []string
-	for _, path := range j.DenyReadPaths {
-		resolved, err := pathresolve.EvalSymlinks(path)
-		if err != nil {
-			return fmt.Errorf("resolve sandbox deny-read path: %w", err)
-		}
-		denied = append(denied, path, resolved)
-	}
 	args = append(args, "bash", "--norc", "--noprofile", "-c", probe, "sandbox-check", j.WorkDir, secret, port, filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "bus"), strconv.Itoa(len(denied)))
 	args = append(args, denied...)
 	args = append(args, j.ReadPaths...)

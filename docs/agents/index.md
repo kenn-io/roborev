@@ -366,8 +366,8 @@ local configuration changes fail. Put temporary files and writable caches inside
 the work directory too.
 
 Grant read access to the Codex launcher and its runtime files, including any
-symlink targets. Codex runs through the absolute launcher path found on PATH or
-supplied by the caller, preserving its invocation name.
+symlink targets. Codex runs through the absolute launcher path the caller
+supplies, preserving its invocation name.
 
 Host requirements:
 

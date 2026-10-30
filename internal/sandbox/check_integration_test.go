@@ -67,32 +67,33 @@ func TestSandboxSelfCheck(t *testing.T) {
 	for _, name := range []string{"canary-read", "loopback-connect", "environment-canary"} {
 		assert.Contains(t, err.Error(), name)
 	}
-	for _, grant := range []string{"home", "auth-symlink", "directory", "directory-symlink"} {
-		t.Run(grant, func(t *testing.T) {
-			work, secrets := t.TempDir(), t.TempDir()
-			hostHome := filepath.Join(secrets, "codex")
-			require.NoError(t, os.Mkdir(hostHome, 0o700))
-			auth := filepath.Join(hostHome, "auth.json")
-			require.NoError(t, os.WriteFile(auth, []byte(`{"tokens":{"access_token":"synthetic-token"}}`), 0o600))
-			readPath := hostHome
-			if grant == "auth-symlink" {
-				readPath = t.TempDir()
-				target := filepath.Join(readPath, "login.json")
-				require.NoError(t, os.Rename(auth, target))
-				require.NoError(t, os.Symlink(target, auth))
-			}
-			if strings.HasPrefix(grant, "directory") {
-				auth = hostHome
-				if grant == "directory-symlink" {
-					auth = filepath.Join(secrets, "codex-link")
-					require.NoError(t, os.Symlink(hostHome, auth))
-				}
-			}
+	work, secrets := t.TempDir(), t.TempDir()
+	hostHome := filepath.Join(secrets, "codex")
+	child := filepath.Join(hostHome, "child")
+	require.NoError(t, os.MkdirAll(child, 0o700))
+	auth := filepath.Join(hostHome, "auth.json")
+	require.NoError(t, os.WriteFile(auth, []byte("synthetic-token"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(child, "token"), []byte("fixture"), 0o600))
+	authLink, dirLink := filepath.Join(secrets, "login-link"), filepath.Join(secrets, "codex-link")
+	require.NoError(t, os.Symlink(auth, authLink))
+	require.NoError(t, os.Symlink(hostHome, dirLink))
+	t.Chdir(secrets)
+	for _, tc := range []struct{ name, read, deny, want string }{
+		{"home", hostHome, auth, "deny-path-read"},
+		{"auth-symlink", hostHome, authLink, "deny-path-read"},
+		{"relative", hostHome, filepath.Join("codex", "auth.json"), "deny-path-read"},
+		{"directory", hostHome, hostHome, "deny-read path must be a file"},
+		{"directory-symlink", hostHome, dirLink, "deny-read path must be a file"},
+		{"directory-child", child, hostHome, "deny-read path must be a file"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			job := routeJob(t, work)
-			job.ReadPaths = []string{readPath}
-			job.DenyReadPaths = []string{auth}
-			_, _, _, err := job.Command(t.Context(), []string{"true"})
-			require.ErrorContains(t, err, "deny-path-read")
+			job.ReadPaths, job.DenyReadPaths = []string{tc.read}, []string{tc.deny}
+			_, _, cleanup, err := job.Command(t.Context(), []string{"true"})
+			if cleanup != nil {
+				t.Cleanup(cleanup)
+			}
+			require.ErrorContains(t, err, tc.want)
 		})
 	}
 }
@@ -107,6 +108,8 @@ func TestSandboxLiteralGrants(t *testing.T) {
 		require.NoError(t, os.Mkdir(dir, 0o700))
 	}
 	require.NoError(t, os.WriteFile(secret, []byte("secret"), 0o600))
+	readFile := filepath.Join(base, "single-file")
+	require.NoError(t, os.WriteFile(readFile, []byte("allowed-file"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(read, "allowed"), []byte("allowed"), 0o600))
 	home := t.TempDir()
 	configDir := filepath.Join(work, "config")
@@ -120,11 +123,13 @@ func TestSandboxLiteralGrants(t *testing.T) {
 	authFile := filepath.Join(home, "auth.json")
 	require.NoError(t, os.WriteFile(authFile, []byte("fixture-token"), 0o600))
 	job := Job{
-		WorkDir: work, ReadPaths: []string{read}, Route: Route{Name: "codex", Upstream: "https://chatgpt.com/backend-api/codex", Path: "/responses", EnvVar: "CODEX_PHANTOM", Capture: []string{"/bin/cat", authFile}},
+		WorkDir: work, ReadPaths: []string{read, readFile}, Route: Route{Name: "codex", Upstream: "https://chatgpt.com/backend-api/codex", Path: "/responses", EnvVar: "CODEX_PHANTOM", Capture: []string{"/bin/cat", authFile}},
 		Env: []string{"PATH=/usr/bin:/bin", "HOME=" + home, "XDG_CONFIG_HOME=" + configDir}, MemoryMax: 1 << 30,
 	}
 	script := shellChecks + `
 check read-grant allow cat "$2/allowed"
+check file-read allow cat "$8"
+check file-write deny bash -c 'echo changed >> "$1"' probe "$8"
 check sibling-write deny touch "$3/overwritten"
 check sibling-read deny cat "$4"
 check home-write deny touch "$HOME/write"
@@ -142,10 +147,7 @@ curl --fail-with-body -sS -H "Proxy-Authorization: Bearer $NONO_PROXY_TOKEN" -o 
 [ "$?" = 22 ] || failed=1
 exit "$failed"
 `
-	out := runInJob(t, job, "bash", "-c", script, "probe", work, read, sibling, secret, repo, os.Getenv("XDG_RUNTIME_DIR"), authFile)
-	for _, name := range []string{"read-grant", "sibling-write", "sibling-read", "home-write", "shared-tmp-write", "git-read", "git-commit", "git-config", "dbus-systemd", "direct-upstream", "auth-read"} {
-		assert.Contains(t, out, "OK "+name)
-	}
+	runInJob(t, job, "bash", "-c", script, "probe", work, read, sibling, secret, repo, os.Getenv("XDG_RUNTIME_DIR"), authFile, readFile)
 	assert.NoFileExists(t, filepath.Join(sibling, "overwritten"))
 	denial, err := os.ReadFile(filepath.Join(work, "direct-upstream-response"))
 	require.NoError(t, err)
