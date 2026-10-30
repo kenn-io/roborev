@@ -43,7 +43,7 @@ Severity definitions:
 
 - **High**: Will cause data loss, security breach, crash, or incorrect results in production
 - **Medium**: Will cause degraded behavior under specific conditions, or blocks future maintainability
-- **Low**: Minor improvement opportunity with no immediate functional impact
+- **Low**: A real problem with minor impact: a small defect such as cosmetic output or an unclear error message, or a code-quality issue with a named concrete alternative. Ideas without a concrete problem belong in the summary, not in findings.
 
 Name the concrete trigger for every Medium or High finding; a transient state that self-corrects without user-visible harm, or one you cannot plausibly reach, is Low.
 

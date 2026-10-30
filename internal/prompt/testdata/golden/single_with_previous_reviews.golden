@@ -32,7 +32,7 @@ Severity definitions:
 
 - **High**: Will cause data loss, security breach, crash, or incorrect results in production
 - **Medium**: Will cause degraded behavior under specific conditions, or blocks future maintainability
-- **Low**: Minor improvement opportunity with no immediate functional impact
+- **Low**: A real problem with minor impact: a small defect such as cosmetic output or an unclear error message, or a code-quality issue with a named concrete alternative. Ideas without a concrete problem belong in the summary, not in findings.
 
 Name the concrete trigger for every Medium or High finding; a transient state that self-corrects without user-visible harm, or one you cannot plausibly reach, is Low.
 
@@ -58,8 +58,10 @@ The following are reviews of recent commits in this repository. Use them as cont
 to understand ongoing work and to check if the current commit addresses previous feedback.
 Issues they raised may have been fixed since those reviews. Do not re-raise a
 previous finding unless it persists in the current code, and do not ask to undo a
-change made to address earlier feedback. Do report genuine problems in the code as
-it now stands, including ones introduced by such a change.
+change made to address earlier feedback. Hold code added to address earlier feedback
+to the defect bar: report the wrong results, crashes, data loss, or security holes it
+introduces. Further hardening, edge-case handling, and extra tests for that code belong
+in the summary, because asking for them as findings starts a fix spiral.
 
 **Important:** Reviews may include responses from developers. Pay attention to these responses -
 they may indicate known issues that should be ignored, explain why certain patterns exist,

@@ -1909,7 +1909,10 @@ func applyCodexReviewSettings(a agent.Agent, job *storage.ReviewJob, cfg *config
 		a,
 		config.ResolveDisableCodexReviewSkills(job.RepoPath, cfg),
 	)
-	if !job.IsReviewJob() && job.Source != storage.JobSourceRebuttal {
+	// Non-editing stored-prompt jobs (including analysis) use the same user
+	// config isolation as reviews. Explicit agentic tasks and fixes retain it.
+	if !job.IsReviewJob() && job.Source != storage.JobSourceRebuttal &&
+		(job.Agentic || job.IsFixJob()) {
 		return a
 	}
 	a = agent.WithCodexUserConfigIgnored(
@@ -2466,14 +2469,11 @@ func (wp *WorkerPool) fetchTokenUsage(
 		return wp.tokenUsageFetcher(ctx, sessionID)
 	}
 	cfg := wp.cfgGetter.Config()
-	return tokens.FetchForSessionWithConfig(
-		ctx, sessionID,
-		tokens.FetchConfig{
-			Endpoint:   cfg.Cost.Endpoint,
-			Timeout:    cfg.Cost.ResolvedTimeout(),
-			RequireCLI: true,
-		},
-	)
+	fetchConfig, err := tokens.FetchConfigFromConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return tokens.FetchForSessionWithConfig(ctx, sessionID, fetchConfig)
 }
 
 func (wp *WorkerPool) fetchFreshSessionUsage(
