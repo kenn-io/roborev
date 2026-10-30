@@ -131,6 +131,7 @@ For fully automated iteration (advanced feature), use `refine`:
 roborev refine                  # Fix, re-review, repeat until passing
 roborev refine --plan            # Plan each fix before editing
 roborev refine --plan-only       # Inspect plans for existing failed reviews
+roborev refine --skip-trivial-rereview # Skip eligible docs/test re-reviews
 ```
 
 `refine` runs in an isolated worktree and loops: fix findings, wait for
