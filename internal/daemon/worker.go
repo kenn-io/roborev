@@ -842,12 +842,6 @@ func (wp *WorkerPool) jobRequiresCIExactCheckout(job *storage.ReviewJob) (bool, 
 func (wp *WorkerPool) createExactCheckout(
 	ctx context.Context, workerID string, job *storage.ReviewJob,
 ) (string, func(), error) {
-	return wp.createExactCheckoutIn(ctx, workerID, job, ciWorktreeRepoDir(job.RepoPath))
-}
-
-func (wp *WorkerPool) createExactCheckoutIn(
-	ctx context.Context, workerID string, job *storage.ReviewJob, parentDir string,
-) (string, func(), error) {
 	headRef := strings.TrimSpace(headOf(job.GitRef))
 	if headRef == "" {
 		return "", nil, fmt.Errorf("job %d has empty checkout ref", job.ID)
@@ -856,6 +850,7 @@ func (wp *WorkerPool) createExactCheckoutIn(
 	if err != nil {
 		return "", nil, fmt.Errorf("resolve review repository: %w", err)
 	}
+	parentDir := ciWorktreeRepoDir(job.RepoPath)
 	if err := os.MkdirAll(parentDir, 0o755); err != nil {
 		return "", nil, fmt.Errorf("create review worktree parent: %w", err)
 	}
