@@ -46,6 +46,11 @@ func (s *CodexSandbox) prepare(repoPath string) (sandbox.Job, func(), error) {
 		return job, nil, fmt.Errorf("sandbox repo must be inside job work dir")
 	}
 	job.WorkDir = workDir
+	if _, err := os.Stat("/etc/codex"); err == nil {
+		job.ReadPaths = append(append([]string{}, job.ReadPaths...), "/etc/codex")
+	} else if !os.IsNotExist(err) {
+		return job, nil, fmt.Errorf("stat Codex system config: %w", err)
+	}
 	hostHome, err := config.CodexHomeDir()
 	if err != nil {
 		return job, nil, err

@@ -470,7 +470,6 @@ func (a *CodexAgent) review(
 		}
 		clone := *a
 		clone.IgnoreUserConfig = false
-		clone.userAuthOverrides = nil
 		runAgent = &clone
 		agenticMode = true
 	}
