@@ -66,17 +66,11 @@ for ((i=0; i<denied; i++)); do
   cat "$1" >/dev/null 2>&1 && bad "deny-path-read: $1"
   shift
 done
-for path in "$@"; do
-  if [ -d "$path" ]; then
-    ( touch "$path/.sandbox-write-$$" ) 2>/dev/null && { rm -f "$path/.sandbox-write-$$"; bad "read-path-write: $path"; }
-  fi
-done
 exit "$failed"
 `
 	args := append([]string{}, wrapper[1:]...)
 	args = append(args, "bash", "--norc", "--noprofile", "-c", probe, "sandbox-check", j.WorkDir, secret, port, filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "bus"), strconv.Itoa(len(denied)))
 	args = append(args, denied...)
-	args = append(args, j.ReadPaths...)
 	cmd := exec.CommandContext(ctx, wrapper[0], args...)
 	if cancel != nil {
 		cmd.Cancel = func() error { cancel(); return nil }

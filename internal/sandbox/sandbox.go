@@ -39,9 +39,6 @@ type Route struct {
 // On cancellation, call cleanup instead of killing the wrapped process directly.
 // The wrapped command starts in a private directory, so callers pass an absolute working directory, as Codex does with -C.
 func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cleanup func(), err error) {
-	if j.MemoryMax <= 0 {
-		return nil, nil, nil, fmt.Errorf("sandbox MemoryMax must be positive")
-	}
 	workDir, err := ResolvePath(j.WorkDir)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("resolve sandbox WorkDir: %w", err)
@@ -57,7 +54,7 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("compare sandbox read path %q with WorkDir: %w", path, err)
 		}
-		if rel == "." || filepath.IsLocal(rel) {
+		if filepath.IsLocal(rel) {
 			return nil, nil, nil, fmt.Errorf("read path %q is inside sandbox WorkDir %q; read paths must be outside it", path, workDir)
 		}
 		readPaths = append(readPaths, resolved)

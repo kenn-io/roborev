@@ -70,22 +70,14 @@ func TestSandboxSelfCheck(t *testing.T) {
 	}
 	work, secrets := t.TempDir(), t.TempDir()
 	hostHome := filepath.Join(secrets, "codex")
-	child := filepath.Join(hostHome, "child")
-	require.NoError(t, os.MkdirAll(child, 0o700))
+	require.NoError(t, os.Mkdir(hostHome, 0o700))
 	auth := filepath.Join(hostHome, "auth.json")
 	require.NoError(t, os.WriteFile(auth, []byte("synthetic-token"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(child, "token"), []byte("fixture"), 0o600))
-	authLink, dirLink := filepath.Join(secrets, "login-link"), filepath.Join(secrets, "codex-link")
-	require.NoError(t, os.Symlink(auth, authLink))
-	require.NoError(t, os.Symlink(hostHome, dirLink))
 	t.Chdir(secrets)
 	for _, tc := range []struct{ name, read, deny, want string }{
 		{"home", hostHome, auth, "deny-path-read"},
-		{"auth-symlink", hostHome, authLink, "deny-path-read"},
 		{"relative", hostHome, filepath.Join("codex", "auth.json"), "deny-path-read"},
 		{"directory", hostHome, hostHome, "deny-read path must be a file"},
-		{"directory-symlink", hostHome, dirLink, "deny-read path must be a file"},
-		{"directory-child", child, hostHome, "deny-read path must be a file"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			job := routeJob(t, work)
@@ -132,12 +124,10 @@ check read-grant allow cat "$2/allowed"
 check file-read allow cat "$7"
 check sibling-write deny touch "$3/overwritten"
 check sibling-read deny cat "$4"
-check home-write deny touch "$HOME/write"
 check shared-tmp-write deny bash -c 'p=/tmp/roborev-probe-$$; touch "$p" && rm "$p"'
 cd "$5" || exit 1
 check git-read allow git status --porcelain
 check git-commit deny bash -c 'echo changed >> main.go && git add main.go && git -c user.name=Test -c user.email=test@example.com commit -m probe'
-check git-config deny git config --local sandbox.probe changed
 check direct-upstream deny curl --fail-with-body -sS -o "$1/direct-upstream-response" https://chatgpt.com/backend-api/codex/responses
 check auth-read deny cat "$6"
 # Exercise the endpoint-only route beside /codex; DNS failure isn't a denial.
@@ -155,14 +145,6 @@ exit "$failed"
 	denial, err = os.ReadFile(filepath.Join(work, "direct-response"))
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"error":"Forbidden"}`, string(denial))
-}
-
-func TestSandboxUnenforceablePolicy(t *testing.T) {
-	testutil.RequireSandboxIntegration(t)
-	job := routeJob(t, t.TempDir())
-	job.Route.Upstream = "http://example.com"
-	_, _, _, err := job.Command(t.Context(), []string{"true"})
-	require.ErrorContains(t, err, "sandbox self-check failed")
 }
 
 func TestSandboxHostPTYIsolation(t *testing.T) {

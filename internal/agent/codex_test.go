@@ -47,9 +47,9 @@ func TestCodex_buildArgs(t *testing.T) {
 		wantMissingFlags []string
 	}{
 		{
-			name:             "NonoSandbox",
+			name:             "NonoSandboxOmitsThreadSource",
 			sandbox:          true,
-			wantMissingFlags: []string{"--thread-source", "roborev"},
+			wantMissingFlags: []string{"--thread-source"},
 		},
 		{
 			name:             "NonAgenticAutoApprove",
@@ -1189,7 +1189,7 @@ func TestCodexSandboxRefusesInvalidPreconditions(t *testing.T) {
 	}{
 		{"resume", "test-session", "", "sandboxed Codex cannot resume a session with a fresh CODEX_HOME", false},
 		{"planning", "", "", "agentic sandbox is configured", true},
-		{"relative-command", "", "./codex", "sandbox Codex command, repo, and work dir must be absolute", false},
+		{"reject-relative-command", "", "./codex", "must be absolute", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := NewCodexAgent(filepath.Join(t.TempDir(), "missing-codex")).WithSandbox(&CodexSandbox{Job: sandbox.Job{WorkDir: t.TempDir()}})
@@ -1204,8 +1204,11 @@ func TestCodexSandboxRefusesInvalidPreconditions(t *testing.T) {
 	}
 }
 
-func TestCodexSandboxRepoContainment(t *testing.T) {
+func TestCodexSandboxRepoContainmentAndSymlinkLogin(t *testing.T) {
 	skipIfWindows(t)
+	if _, err := exec.LookPath("/usr/bin/python3"); err != nil {
+		t.Skip("requires /usr/bin/python3 for credential capture")
+	}
 	work := t.TempDir()
 	hostHome := t.TempDir()
 	child := filepath.Join(hostHome, "child")

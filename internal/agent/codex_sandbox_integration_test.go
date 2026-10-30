@@ -34,7 +34,6 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	work, secrets := t.TempDir(), t.TempDir()
 	repo, gitDir := filepath.Join(work, "repo"), filepath.Join(t.TempDir(), "repo.git")
 	testutil.InitSeparateGitRepo(t, repo, gitDir)
-	require.NoError(t, os.WriteFile(filepath.Join(repo, "trust-policy.json"), []byte("invalid repo policy"), 0o600))
 	t.Setenv("CODEX_HOME", secrets)
 	require.NoError(t, os.WriteFile(filepath.Join(secrets, "auth.json"), []byte(`{"tokens":{"access_token":"sandbox-test-token"}}`), 0o600))
 

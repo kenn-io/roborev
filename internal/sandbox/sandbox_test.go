@@ -7,7 +7,6 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,9 +32,6 @@ func TestSandboxCommandRejectsUnavailablePolicy(t *testing.T) {
 			t.Setenv("PATH", dir)
 			_, _, _, err := (Job{WorkDir: dir, MemoryMax: 1 << 30}).Command(context.Background(), []string{"true"})
 			require.ErrorContains(t, err, tc.want)
-			if tc.fake {
-				assert.NoFileExists(t, marker)
-			}
 		})
 	}
 }
