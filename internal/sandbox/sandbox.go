@@ -193,9 +193,9 @@ func ResolvePath(path string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("empty path")
 	}
-	absolute, err := filepath.Abs(path)
+	resolved, err := pathresolve.EvalSymlinks(path)
 	if err != nil {
 		return "", err
 	}
-	return pathresolve.EvalSymlinks(absolute)
+	return filepath.Abs(resolved)
 }

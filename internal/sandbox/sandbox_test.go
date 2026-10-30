@@ -62,6 +62,9 @@ func TestSandboxCommandRejectsReadPaths(t *testing.T) {
 		{"missing", filepath.Join(t.TempDir(), "missing"), "resolve sandbox read path"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if runtime.GOOS == "windows" && (tc.name == "symlink-parent" || tc.name == "relative-symlink-parent") {
+				t.Skip("Windows resolves parent components before symlinks")
+			}
 			_, _, _, err := (Job{WorkDir: work, ReadPaths: []string{tc.path}, MemoryMax: 1 << 30}).Command(t.Context(), []string{"true"})
 			require.ErrorContains(t, err, tc.want)
 		})

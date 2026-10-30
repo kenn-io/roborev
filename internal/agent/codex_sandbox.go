@@ -50,18 +50,18 @@ func (s *CodexSandbox) prepare(repoPath string) (sandbox.Job, func(), error) {
 	if err != nil {
 		return job, nil, err
 	}
-	authFile, err := filepath.Abs(filepath.Join(hostHome, "auth.json"))
+	hostHome, err = sandbox.ResolvePath(hostHome)
 	if err != nil {
 		return job, nil, fmt.Errorf("resolve Codex login path: %w", err)
 	}
-	job.DenyReadPaths = append(append([]string{}, job.DenyReadPaths...), authFile)
+	job.DenyReadPaths = append(append([]string{}, job.DenyReadPaths...), filepath.Join(hostHome, "auth.json"))
 	upstream := s.Upstream
 	if upstream == "" {
 		upstream = "https://chatgpt.com/backend-api/codex"
 	}
 	job.Route = sandbox.Route{
 		Name: "codex", Upstream: upstream, Path: "/responses", EnvVar: "CODEX_PHANTOM",
-		Capture: []string{"/usr/bin/python3", "-I", "-c", `import json,sys; print(json.load(open(sys.argv[1]))["tokens"]["access_token"])`, authFile},
+		Capture: []string{"/usr/bin/python3", "-I", "-c", `import json,sys; print(json.load(open(sys.argv[1]))["tokens"]["access_token"])`, filepath.Join(hostHome, "auth.json")},
 	}
 	home, err := os.MkdirTemp(job.WorkDir, ".codex-home-")
 	if err != nil {
