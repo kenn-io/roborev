@@ -3,6 +3,7 @@
 package daemon
 
 import (
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
@@ -46,6 +47,7 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 	var schemas, checkouts []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
+			Input     jsontext.Value `json:"input"`
 			Reasoning struct {
 				Effort string `json:"effort"`
 			} `json:"reasoning"`
@@ -55,6 +57,8 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 			return
 		}
 		assert.Equal(t, "high", request.Reasoning.Effort)
+		assert.Contains(t, string(request.Input), "Make it fail.")
+		assert.NotContains(t, string(request.Input), "Also drop it if the repo's AGENTS.md, CLAUDE.md, or .roborev.toml review guidelines say not to flag it.")
 		var err error
 		schemas, err = filepath.Glob(filepath.Join(checkoutPattern, "roborev-ci-check-*", "work", "roborev-codex-review-schema-*.json"))
 		assert.NoError(t, err)

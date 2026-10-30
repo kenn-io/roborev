@@ -114,6 +114,21 @@ func TestCICheckWarming(t *testing.T) {
 	})
 }
 
+func TestCICheckWarmingWithoutDependencies(t *testing.T) {
+	checkout := t.TempDir()
+	cache := filepath.Join(t.TempDir(), "missing", "mod")
+	t.Setenv("GOMODCACHE", cache)
+	t.Setenv("GOTOOLCHAIN", "local")
+	t.Setenv("GOWORK", "off")
+	require.NoError(t, os.WriteFile(filepath.Join(checkout, "go.mod"), []byte("module example.com/check\n\ngo 1.25.0\n"), 0o600))
+	var log bytes.Buffer
+	paths, err := warmGoModules(t.Context(), checkout, os.Environ(), &log)
+	require.NoError(t, err)
+	require.Len(t, paths, 2, log.String())
+	assert.Equal(t, cache, paths[1])
+	assert.DirExists(t, paths[1], "the sandbox must be able to grant the module cache")
+}
+
 // Cleanup restores write access only inside checker roots, without following symlinks.
 func TestCICheckReadOnlyCleanup(t *testing.T) {
 	if runtime.GOOS == "windows" {
