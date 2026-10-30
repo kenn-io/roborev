@@ -40,8 +40,8 @@ files = "^renovate\\.json$"
 pass_filenames = false
 
 [[repos.hooks]]
-id = "actionlint"
-name = "actionlint"
+id = "jactionlint"
+name = "jactionlint"
 language = "system"
 entry = "make check-actions"
 files = "^\\.github/workflows/.*\\.ya?ml$"
