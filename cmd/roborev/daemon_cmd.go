@@ -383,6 +383,9 @@ func daemonRunCmd() *cobra.Command {
 				serverOptions = append(serverOptions, daemon.WithWebDevelopmentOrigin(webDevOrigin))
 			}
 			serverOptions = append(serverOptions, daemon.WithSearch(search.service, search.reconciler))
+			if workers > 0 {
+				serverOptions = append(serverOptions, daemon.WithPinnedMaxWorkers(workers))
+			}
 			server := daemon.NewServer(db, cfg, configPath, serverOptions...)
 			server.SetTelemetry(telemetryReporter)
 			if syncWorker != nil {

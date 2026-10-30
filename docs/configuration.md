@@ -1195,7 +1195,7 @@ filter_branch = false             # Show all branches on startup (default: curre
 | `web.auth_mode` | string | - | Browser admission mode; set `proxy` to delegate admission to an external access boundary | No |
 | `web.auth_token` | string | - | Base64url-encoded 32-byte random token exchanged for a process-local browser session | No |
 | `web.auth_token_file` | string | - | Host-local file containing the browser token; mutually exclusive with `web.auth_token` | No |
-| `max_workers` | int | 4 | Number of parallel review workers | No |
+| `max_workers` | int | 4 | Number of parallel review workers. On reload, the daemon starts new workers right away; when the number drops, busy workers finish their current job before stopping. Starting the daemon with `--workers` fixes the count until restart | Yes |
 | `job_timeout_minutes` | int | 30 | Per-job timeout in minutes of wall-clock time, so time the machine spends asleep counts against it. Plan-first background fixes add an equal planning budget | Yes |
 | `isolate_reviews` | bool | false | Run committed reviews in daemon-owned detached checkouts; see [Isolated Review Checkouts](#isolated-review-checkouts) | Yes |
 | `hook_timeout_seconds` | int | `3` (`30` on Windows) | Post-commit hook request timeout, in seconds. Raise it on Windows or large repos where the daemon's enqueue git calls are slow. Zero or negative values are ignored and fall back to the platform default | Yes |
@@ -1328,9 +1328,13 @@ behavior, health fields, and sidecar recovery.
 The daemon automatically watches `~/.roborev/config.toml` for changes. Most
 settings take effect immediately without restarting the daemon.
 
-**Settings that require daemon restart:** `server_addr`, `max_workers`, the
-`[web]` section, the `[mcp]` section, the `[sync]` section, and the `[search]`
-section.
+**Settings that require daemon restart:** `server_addr`, the `[web]` section,
+the `[mcp]` section, the `[sync]` section, and the `[search]` section.
+
+Changing `max_workers` resizes the worker pool without a restart. Lowering it
+never cancels a running job: each busy worker above the new limit finishes its
+job, then stops. If the daemon was started with `--workers`, that flag keeps the
+pool size fixed and the daemon logs that it ignored the new file value.
 
 ### Browser Application
 

@@ -136,6 +136,15 @@ var (
 // ServerOption customizes a daemon server before it starts.
 type ServerOption func(*Server)
 
+// WithPinnedMaxWorkers keeps the worker pool at n workers for the daemon's
+// lifetime, ignoring max_workers changes in the config file. The --workers
+// flag uses it.
+func WithPinnedMaxWorkers(n int) ServerOption {
+	return func(s *Server) {
+		s.configWatcher.pinnedMaxWorkers = n
+	}
+}
+
 // WithWebDevelopmentOrigin adds one exact loopback origin for the disposable
 // development server. Production callers must not set this option.
 func WithWebDevelopmentOrigin(origin string) ServerOption {
@@ -225,6 +234,9 @@ func newServerWithLogs(
 	}
 	s.updateCoordinator = &updateDrainCoordinator{server: s, now: time.Now}
 	s.workerPool.captureSetupFinished = s.captureSetupFinishedTelemetry
+	configWatcher.OnReload(func(cfg *config.Config) {
+		s.workerPool.SetMaxWorkers(cfg.MaxWorkers)
+	})
 	s.agentHookState, s.agentHookStateErr = agenthook.LoadState(
 		daemonAgentHookSource{db: db, errorLog: errorLog},
 	)
