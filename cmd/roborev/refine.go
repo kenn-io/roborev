@@ -522,27 +522,45 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 		// Recover and observe the pending fix before selecting any other
 		// failed commit, including when a previous review is still in memory.
 		if stall.pendingFixSHA != "" {
-			pendingReview, pendingJob, err := resolvePendingFixReview(ctx, client, repoPath, stall.pendingFixSHA)
+			headSHA, err := gitrepo.Resolve(ctx, repoPath, "HEAD")
 			if err != nil {
-				if pendingJob == nil {
-					return fmt.Errorf("fetch pending fix review: %w", err)
-				}
-				fmt.Printf("Warning: review failed: %v\n", err)
-				stall.resetSignals()
-			} else if pendingJob != nil && pendingReview == nil {
-				// A terminal job without a review is an unable re-review. Do
-				// not carry its signals into another commit's review chain.
-				stall.resetSignals()
+				return fmt.Errorf("cannot resolve HEAD: %w", err)
 			}
-			if pendingReview != nil && (pendingReview.Closed || pendingReview.Verdict() != "F") {
-				if currentFailedReview != nil && currentFailedReview.JobID == pendingReview.JobID {
-					currentFailedReview = nil
+			rangeRef := mergeBase + ".." + headSHA
+			pendingRefs := []string{stall.pendingFixSHA, rangeRef}
+			for _, pendingRef := range pendingRefs {
+				pendingReview, pendingJob, err := resolvePendingReviewRef(ctx, client, repoPath, pendingRef)
+				if err != nil {
+					if pendingJob == nil {
+						return fmt.Errorf("fetch pending fix review: %w", err)
+					}
+					fmt.Printf("Warning: review failed: %v\n", err)
+					stall.resetSignals()
+					continue
 				}
-				stall.reset()
-			} else if pendingReview != nil {
+				if pendingJob != nil && pendingReview == nil {
+					// A terminal job without a review is an unable re-review. Do
+					// not carry its signals into another commit's review chain.
+					stall.resetSignals()
+				}
+				if pendingReview == nil {
+					continue
+				}
+				if pendingReview.Closed || pendingReview.Verdict() != "F" {
+					if pendingRef == rangeRef && pendingReview.Verdict() == "P" {
+						fmt.Println("\nAll reviews passed! Branch is ready.")
+						return nil
+					}
+					if currentFailedReview != nil && currentFailedReview.JobID == pendingReview.JobID {
+						currentFailedReview = nil
+					}
+					stall.reset()
+					continue
+				}
 				// Finish observing this fix before another open review can
 				// replace its chain, including on the final iteration.
 				currentFailedReview = pendingReview
+				break
 			}
 		}
 
@@ -1342,12 +1360,11 @@ func findPendingJobForBranch(ctx context.Context, client daemon.Client, repoPath
 	return nil, nil
 }
 
-// resolvePendingFixReview recovers the exact review for a fix commit before
-// other branch reviews can replace its stall chain. The SHA lookup catches a
-// completed result; the job lookup then covers reviews that are queued, running,
-// or completed between those two reads.
-func resolvePendingFixReview(ctx context.Context, client daemon.Client, repoPath, sha string) (*storage.Review, *storage.ReviewJob, error) {
-	review, err := client.GetReviewBySHA(sha)
+// resolvePendingReviewRef recovers a review before another branch review can
+// replace the pending fix's stall chain. The SHA lookup catches completed
+// results; the job lookup covers queued, running, and completed reviews.
+func resolvePendingReviewRef(ctx context.Context, client daemon.Client, repoPath, gitRef string) (*storage.Review, *storage.ReviewJob, error) {
+	review, err := client.GetReviewBySHA(gitRef)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1355,11 +1372,11 @@ func resolvePendingFixReview(ctx context.Context, client daemon.Client, repoPath
 		return review, nil, nil
 	}
 
-	job, err := client.FindJobForCommit(ctx, repoPath, sha)
+	job, err := client.FindJobForCommit(ctx, repoPath, gitRef)
 	if err != nil {
 		return nil, nil, err
 	}
-	if job == nil || !job.IsReviewJob() {
+	if job == nil || !job.IsReadableReview() {
 		return nil, nil, nil
 	}
 
