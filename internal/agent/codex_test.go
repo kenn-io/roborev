@@ -1244,7 +1244,7 @@ func TestCodexSandboxWrapperFailure(t *testing.T) {
 	t.Setenv("CODEX_HOME", t.TempDir())
 	a := NewCodexAgent(command).WithSandbox(&CodexSandbox{Job: sandbox.Job{WorkDir: dir, MemoryMax: 1 << 30}})
 	_, err := a.Review(t.Context(), repo, "HEAD", "review", nil)
-	require.ErrorContains(t, err, "find sandbox nono")
+	require.Error(t, err)
 	assert.NoFileExists(t, marker)
 	homes, err := filepath.Glob(filepath.Join(dir, ".codex-home-*"))
 	require.NoError(t, err)

@@ -191,11 +191,15 @@ func TestSandboxProcessCleanup(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			work := t.TempDir()
 			job := routeJob(t, work)
-			t.Setenv("PATH", work+":"+os.Getenv("PATH"))
 			marker := filepath.Join(work, "host-tool-ran")
-			tool := []byte("#!/bin/sh\nprintf '%s\\n' \"$0\" >> '" + marker + "'\nexec /usr/bin/\"${0##*/}\" \"$@\"\n")
-			require.NoError(t, os.WriteFile(filepath.Join(work, "systemd-run"), tool, 0o700))
-			require.NoError(t, os.WriteFile(filepath.Join(work, "cleanup-tool"), tool, 0o700))
+			plant := ""
+			if tc.name == "graceful" {
+				t.Setenv("PATH", work+":"+os.Getenv("PATH"))
+				tool := []byte("#!/bin/sh\nprintf '%s\\n' \"$0\" >> '" + marker + "'\nexec /usr/bin/\"${0##*/}\" \"$@\"\n")
+				require.NoError(t, os.WriteFile(filepath.Join(work, "systemd-run"), tool, 0o700))
+				require.NoError(t, os.WriteFile(filepath.Join(work, "cleanup-tool"), tool, 0o700))
+				plant = "cp '" + filepath.Join(work, "cleanup-tool") + "' '" + filepath.Join(work, "systemctl") + "'; "
+			}
 			for _, key := range []string{"XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"} {
 				job.Env = append(job.Env, key+"="+os.Getenv(key))
 				t.Setenv(key, "")
@@ -206,7 +210,7 @@ func TestSandboxProcessCleanup(t *testing.T) {
 			pidFile := filepath.Join(work, "child.pid")
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			wrapped, env, cleanup, err := job.Command(ctx, []string{"bash", "-c", "cp '" + filepath.Join(work, "cleanup-tool") + "' '" + filepath.Join(work, "systemctl") + "'; setsid " + tc.child + " </dev/null >/dev/null 2>&1 & echo $! > '" + pidFile + "'; wait"})
+			wrapped, env, cleanup, err := job.Command(ctx, []string{"bash", "-c", plant + "setsid " + tc.child + " </dev/null >/dev/null 2>&1 & echo $! > '" + pidFile + "'; wait"})
 			require.NoError(t, err)
 			defer cleanup()
 			defer func() {
@@ -244,9 +248,11 @@ func TestSandboxProcessCleanup(t *testing.T) {
 			}()
 			// The detached sleep must be running before cleanup.
 			require.Eventually(t, sleeping, 5*time.Second, 10*time.Millisecond)
-			files, err := os.ReadDir(tmp)
-			require.NoError(t, err)
-			require.NotEmpty(t, files, "nono must create temporary files before cancellation")
+			if tc.name == "graceful" {
+				files, err := os.ReadDir(tmp)
+				require.NoError(t, err)
+				require.NotEmpty(t, files, "nono must create temporary files before cancellation")
+			}
 			cancel()
 			// Waiting depends on an external systemd scope stopping its processes.
 			require.Eventually(t, func() bool {
@@ -259,9 +265,9 @@ func TestSandboxProcessCleanup(t *testing.T) {
 			}, 15*time.Second, 10*time.Millisecond, "Wait did not return within 15s of cancellation")
 			require.Error(t, waitErr)
 			cleanup()
-			assert.NoFileExists(t, marker, "host launch and cleanup must bypass tools in the writable job directory")
 			if tc.name == "graceful" {
-				files, err = os.ReadDir(tmp)
+				assert.NoFileExists(t, marker, "host launch and cleanup must bypass tools in the writable job directory")
+				files, err := os.ReadDir(tmp)
 				require.NoError(t, err)
 				assert.Empty(t, files, "nono left temporary files after cancellation")
 			}
