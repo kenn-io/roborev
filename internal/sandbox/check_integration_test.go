@@ -5,7 +5,10 @@ package sandbox
 import (
 	"context"
 	"encoding/json/v2"
+	"encoding/pem"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -62,10 +65,14 @@ func runInJob(t *testing.T, job Job, argv ...string) string {
 
 func TestSandboxSelfCheck(t *testing.T) {
 	testutil.RequireSandboxIntegration(t)
-	job := Job{WorkDir: t.TempDir()}
-	err := job.check(t.Context(), []string{"env"}, []string{"PATH=/usr/bin:/bin"}, nil)
+	upstream := httptest.NewTLSServer(http.NotFoundHandler())
+	defer upstream.Close()
+	cert := filepath.Join(t.TempDir(), "upstream.pem")
+	require.NoError(t, os.WriteFile(cert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: upstream.Certificate().Raw}), 0o600))
+	job := Job{WorkDir: t.TempDir(), Route: Route{Upstream: upstream.URL + "/responses"}}
+	err := job.check(t.Context(), []string{"env"}, []string{"PATH=/usr/bin:/bin", "SSL_CERT_FILE=" + cert}, nil)
 	require.ErrorContains(t, err, "sandbox self-check failed")
-	for _, name := range []string{"canary-read", "loopback-connect", "environment-canary"} {
+	for _, name := range []string{"canary-read", "loopback-connect", "environment-canary", "proxy-upstream"} {
 		assert.Contains(t, err.Error(), name)
 	}
 	work, secrets := t.TempDir(), t.TempDir()
@@ -182,6 +189,11 @@ func TestSandboxProcessCleanup(t *testing.T) {
 	testutil.RequireSandboxIntegration(t)
 	work := t.TempDir()
 	job := routeJob(t, work)
+	for _, key := range []string{"XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"} {
+		job.Env = append(job.Env, key+"="+os.Getenv(key))
+		t.Setenv(key, "")
+		require.NoError(t, os.Unsetenv(key))
+	}
 	tmp := t.TempDir()
 	job.Env = append(job.Env, "TMPDIR="+tmp)
 	pidFile := filepath.Join(work, "child.pid")
@@ -190,8 +202,14 @@ func TestSandboxProcessCleanup(t *testing.T) {
 	wrapped, env, cleanup, err := job.Command(ctx, []string{"bash", "-c", "setsid /usr/bin/sleep 300 </dev/null >/dev/null 2>&1 & echo $! > '" + pidFile + "'; wait"})
 	require.NoError(t, err)
 	defer cleanup()
+	defer func() {
+		stop := exec.Command("systemctl", "--user", "stop", strings.TrimPrefix(wrapped[1], "--unit="))
+		stop.Env = env
+		_ = stop.Run()
+	}()
 	process := exec.CommandContext(ctx, wrapped[0], wrapped[1:]...)
 	process.Cancel = func() error { cleanup(); return nil }
+	process.WaitDelay = time.Second // Bound waiting for the external wrapper when cleanup fails.
 	process.Env, process.Dir = env, work
 	require.NoError(t, process.Start())
 	t.Cleanup(func() { _ = process.Wait() })

@@ -131,8 +131,14 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 		return nil, nil, nil, fmt.Errorf("create sandbox profile: %w", err)
 	}
 	unit := filepath.Base(dir) + ".scope"
+	env = append([]string{}, j.Env...)
+	for _, key := range []string{"XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"} {
+		if value, ok := os.LookupEnv(key); ok {
+			env = append(env, key+"="+value)
+		}
+	}
 	cleanup = func() {
-		killScope(unit)
+		killScope(unit, env)
 		_ = os.RemoveAll(dir)
 	}
 	data, err := json.Marshal(profile)
@@ -160,16 +166,10 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 		cmd = append(cmd, flag, path)
 	}
 	cmd = append(cmd, "--")
-	env = append([]string{}, j.Env...)
-	for _, key := range []string{"XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"} {
-		if value, ok := os.LookupEnv(key); ok {
-			env = append(env, key+"="+value)
-		}
-	}
 	checkUnit := filepath.Base(dir) + "-check.scope"
 	checkCmd := append([]string{cmd[0], "--unit=" + checkUnit}, cmd[1:]...)
-	err = j.check(ctx, checkCmd, env, func() { killScope(checkUnit) })
-	killScope(checkUnit)
+	err = j.check(ctx, checkCmd, env, func() { killScope(checkUnit, env) })
+	killScope(checkUnit, env)
 	if err != nil {
 		cleanup()
 		return nil, nil, nil, err
@@ -178,11 +178,13 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 	return append(cmd, argv...), env, cleanup, nil
 }
 
-func killScope(unit string) {
-	// Use the host environment and a fresh context: the job may be cancelled.
+func killScope(unit string, env []string) {
+	// Use the launch environment and a fresh context: the job may be cancelled.
 	// Stop sends SIGTERM so nono can remove its files, waits for the scope to
 	// exit, and escalates to SIGKILL after systemd's stop timeout.
-	_ = exec.Command("systemctl", "--user", "stop", unit).Run()
+	cmd := exec.Command("systemctl", "--user", "stop", unit)
+	cmd.Env = env
+	_ = cmd.Run()
 }
 
 // ResolvePath rejects empty grants and resolves absolute paths through symlinks.

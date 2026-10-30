@@ -50,18 +50,24 @@ bad() { echo "$1"; failed=1; }
 /bin/cat "$2" >/dev/null 2>&1 && bad canary-read
 ( : >/dev/tcp/127.0.0.1/"$3" ) 2>/dev/null && bad loopback-connect
 ( : >/dev/tcp/1.1.1.1/443 ) 2>/dev/null && bad external-connect
-/usr/bin/python3 -c 'import urllib.request,urllib.error,sys
+proxy_blocked() {
+/usr/bin/python3 -c 'import urllib.request,urllib.error,urllib.parse,sys
 try:
- urllib.request.urlopen("https://example.com", timeout=5)
-except urllib.error.HTTPError:
- pass
+ host=urllib.parse.urlsplit(sys.argv[1]).netloc
+ urllib.request.urlopen("https://"+host+"/", timeout=5)
+except urllib.error.HTTPError as e:
+ # The nono TLS interceptor uses this response for an endpoint-policy denial.
+ if e.code == 403 and e.read().strip() == b"{\"error\":\"Forbidden\"}": sys.exit(1)
 except Exception:
- sys.exit(1)' 2>/dev/null && bad proxy-external
+ sys.exit(1)' "$1" 2>/dev/null && bad "$2"
+}
+proxy_blocked https://example.com proxy-external
+proxy_blocked "$5" proxy-upstream
 [[ ! -v ROBOREV_SANDBOX_CANARY ]] || bad environment-canary
 /usr/bin/python3 -c 'import socket' 2>/dev/null || bad dbus-probe
 /usr/bin/python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1])' "$4" 2>/dev/null && bad dbus-connect
-denied=$5
-shift 5
+denied=$6
+shift 6
 for ((i=0; i<denied; i++)); do
   /bin/cat "$1" >/dev/null 2>&1 && bad "deny-path-read: $1"
   shift
@@ -69,7 +75,7 @@ done
 exit "$failed"
 `
 	args := append([]string{}, wrapper[1:]...)
-	args = append(args, "/bin/bash", "--norc", "--noprofile", "-c", probe, "sandbox-check", j.WorkDir, secret, port, filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "bus"), strconv.Itoa(len(denied)))
+	args = append(args, "/bin/bash", "--norc", "--noprofile", "-c", probe, "sandbox-check", j.WorkDir, secret, port, filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "bus"), j.Route.Upstream, strconv.Itoa(len(denied)))
 	args = append(args, denied...)
 	cmd := exec.CommandContext(ctx, wrapper[0], args...)
 	if cancel != nil {
