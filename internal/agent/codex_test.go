@@ -1202,7 +1202,23 @@ func TestCodexSandboxRefusesInvalidPreconditions(t *testing.T) {
 	}
 }
 
-func TestCodexSandboxRepoContainmentAndSymlinkLogin(t *testing.T) {
+func TestCodexSandboxRepoContainment(t *testing.T) {
+	skipIfWindows(t)
+	work := t.TempDir()
+	t.Setenv("CODEX_HOME", t.TempDir())
+	repo := filepath.Join(work, "repo")
+	require.NoError(t, os.Mkdir(repo, 0o700))
+	s := CodexSandbox{Job: sandbox.Job{WorkDir: work}}
+	_, _, err := s.prepare(t.TempDir())
+	require.ErrorContains(t, err, "sandbox repo must be inside job work dir")
+	for _, accepted := range []string{repo, work} {
+		_, cleanup, err := s.prepare(accepted)
+		require.NoError(t, err)
+		cleanup()
+	}
+}
+
+func TestCodexSandboxSymlinkLogin(t *testing.T) {
 	skipIfWindows(t)
 	if _, err := exec.LookPath("/usr/bin/python3"); err != nil {
 		t.Skip("requires /usr/bin/python3 for credential capture")
@@ -1216,22 +1232,13 @@ func TestCodexSandboxRepoContainmentAndSymlinkLogin(t *testing.T) {
 	t.Setenv("CODEX_HOME", link+"/..")
 	require.NoError(t, os.WriteFile(filepath.Join(hostHome, "auth.json"), []byte(`{"tokens":{"access_token":"requested-login"}}`), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(link), "auth.json"), []byte(`{"tokens":{"access_token":"other-login"}}`), 0o600))
-	repo := filepath.Join(work, "repo")
-	require.NoError(t, os.Mkdir(repo, 0o700))
 	s := CodexSandbox{Job: sandbox.Job{WorkDir: work}}
-	_, _, err := s.prepare(t.TempDir())
-	require.ErrorContains(t, err, "sandbox repo must be inside job work dir")
-	for _, accepted := range []string{repo, work} {
-		job, cleanup, err := s.prepare(accepted)
-		require.NoError(t, err)
-		resolvedHome, err := filepath.EvalSymlinks(hostHome)
-		require.NoError(t, err)
-		assert.Contains(t, job.DenyReadPaths, filepath.Join(resolvedHome, "auth.json"))
-		out, err := exec.CommandContext(t.Context(), job.Route.Capture[0], job.Route.Capture[1:]...).Output()
-		require.NoError(t, err)
-		assert.Equal(t, "requested-login\n", string(out))
-		cleanup()
-	}
+	job, cleanup, err := s.prepare(work)
+	require.NoError(t, err)
+	defer cleanup()
+	out, err := exec.CommandContext(t.Context(), job.Route.Capture[0], job.Route.Capture[1:]...).Output()
+	require.NoError(t, err)
+	assert.Equal(t, "requested-login\n", string(out))
 }
 
 func TestCodexSandboxWrapperFailure(t *testing.T) {

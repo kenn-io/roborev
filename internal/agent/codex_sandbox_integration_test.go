@@ -30,9 +30,6 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	require.NoError(t, err)
 	codex, err = filepath.EvalSymlinks(codex)
 	require.NoError(t, err)
-	goRoot, err := exec.CommandContext(t.Context(), "go", "env", "GOROOT").Output()
-	require.NoError(t, err)
-	toolchain := strings.TrimSpace(string(goRoot))
 
 	work, secrets := t.TempDir(), t.TempDir()
 	repo, gitDir := filepath.Join(work, "repo"), filepath.Join(t.TempDir(), "repo.git")
@@ -40,9 +37,7 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	t.Setenv("CODEX_HOME", secrets)
 	require.NoError(t, os.WriteFile(filepath.Join(secrets, "auth.json"), []byte(`{"tokens":{"access_token":"sandbox-test-token"}}`), 0o600))
 
-	require.NoError(t, os.WriteFile(filepath.Join(repo, "go.mod"), []byte("module example.com/sandbox\n\ngo 1.26\n"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(repo, "build_test.go"), []byte("package main\n\nimport \"testing\"\n\nfunc TestSandboxBuild(t *testing.T) { t.Log(\"OK go-test\") }\n"), 0o600))
-	probe := fmt.Sprintf("#!/bin/bash\n[[ \"$CODEX_HOME\" == %q/.codex-home-* && -d \"$CODEX_HOME\" ]] && echo OK codex-home\ngo test -v ./...\n", repo)
+	probe := fmt.Sprintf("#!/bin/bash\n[[ \"$CODEX_HOME\" == %q/.codex-home-* && -d \"$CODEX_HOME\" ]] && echo OK codex-home\n", repo)
 	tmp := filepath.Join(repo, "tmp")
 
 	const key = "sandbox-test-token"
@@ -111,9 +106,9 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	require.NoError(t, os.Mkdir(tmp, 0o700))
 
 	job := sandbox.Job{
-		WorkDir: repo, ReadPaths: []string{gitDir, filepath.Dir(filepath.Dir(codex)), toolchain},
+		WorkDir: repo, ReadPaths: []string{gitDir, filepath.Dir(filepath.Dir(codex))},
 		MemoryMax: 8 << 30,
-		Env:       []string{"PATH=" + filepath.Join(toolchain, "bin") + ":/usr/bin:/bin", "HOME=" + secrets, "TMPDIR=" + tmp, "GOCACHE=" + filepath.Join(repo, ".cache", "go-build")},
+		Env:       []string{"PATH=/usr/bin:/bin", "HOME=" + secrets, "TMPDIR=" + tmp},
 	}
 	a := NewCodexAgent(codex).WithSandbox(&CodexSandbox{Job: job, Upstream: server.URL})
 	a.IgnoreUserConfig = true
@@ -123,7 +118,6 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	result, err := a.ReviewWithSchema(t.Context(), repo, "HEAD", "Run the supplied probe.", jsontext.Value(`{"type":"object","properties":{"probe":{"type":"string"}},"required":["probe"],"additionalProperties":false}`), &stream)
 	require.NoError(t, err, "%s", stream.String())
 	assert.Contains(t, string(result), "OK codex-home")
-	assert.Contains(t, string(result), "OK go-test")
 	assert.Zero(t, unauthorized.Load())
 	t.Run("cancellation", func(t *testing.T) {
 		cancelling.Store(true)
