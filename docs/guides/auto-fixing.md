@@ -30,6 +30,7 @@ roborev refine --max-iterations 5    # Limit iterations (default: 10)
 roborev refine --plan                # Plan each fix before implementation
 roborev refine --plan-only           # Print plans for existing failed reviews
 roborev refine --quiet               # Show elapsed time instead of agent output
+roborev refine --stop-on-stall       # Stop after repeated-file advisory
 roborev refine --reasoning thorough  # Thorough reasoning (slower, more accurate)
 roborev refine --since abc123        # Refine commits since a specific commit
 roborev refine --since HEAD~3        # Refine the last 3 commits
@@ -57,7 +58,12 @@ flowchart TD
     Commit --> Wait[Wait for re-review]
     Wait --> Pass{Pass?}
     Pass -->|Yes| Find
-    Pass -->|No| MaxCheck{Max iterations?}
+    Pass -->|No| Repeated{Third repeated-file round?}
+    Repeated -->|No| MaxCheck{Max iterations?}
+    Repeated -->|Yes| Advisory[Print and save advisory]
+    Advisory --> Stop{Stop on stall?}
+    Stop -->|Yes| Stalled([Exit - review stays open])
+    Stop -->|No| MaxCheck
     MaxCheck -->|No| Fix
     MaxCheck -->|Yes| Fail([Exit - max reached])
 ```
@@ -81,6 +87,32 @@ Refine creates its own commits after applying agent changes. If
 those values directly with Git's `--author` and `--trailer` options. See
 [Fix Commit Metadata](/docs/configuration/#fix-commit-metadata).
 
+## Repeated finding files
+
+Refine prints and saves an advisory when three consecutive completed fix rounds
+receive failing re-reviews whose located files are subsets of the preceding
+review's files. The original review is the baseline, so the first advisory
+requires three new fix commits and their failing re-reviews. Shrinking file sets
+count; adding a different file starts a new streak. The advisory names the files
+and suggests inspecting the approach, simplifying or removing code, or recording
+a decision. Repeated files are a heuristic, not proof that the fixes are failing
+to make progress.
+
+Only valid stored structured findings with recognized locations in the reviewed
+revision contribute. All stored severities count; unlocated findings are
+ignored. Unknown locations, passing or closed reviews, skipped/no-change fixes,
+errors while running or waiting for a re-review, and unrelated chains reset the
+streak. Retries without a new commit do not count. Each fix commit counts at
+most once, including when its review is found later. The advisory appears once
+per streak, even with `--quiet` or on the last allowed iteration. A
+comment-write failure prints a warning.
+
+By default refine continues. With `--stop-on-stall`, it returns an error at the
+advisory, leaves the newly failed review open, and stops before another fix or a
+whole-branch fallback. With `--all-branches`, other branches still run and the
+original branch is restored; failures are aggregated. The flag has no effect
+with `--list` or `--plan-only`.
+
 ## Refine vs Fix
 
 | | `roborev fix` | `roborev refine` |
@@ -100,6 +132,7 @@ those values directly with Git's `--author` and `--trailer` options. See
 | `--plan` | Run a read-only planning phase before each fix |
 | `--plan-only` | Print and store plans for existing failed reviews, without starting the fix loop |
 | `--max-iterations <n>` | Maximum fix iterations (default: 10) |
+| `--stop-on-stall` | Stop with an error when the repeated-file advisory appears |
 | `--quiet` | Show elapsed time instead of agent output |
 | `--reasoning <level>` | Legacy or exact reasoning level; see [Reasoning Levels](/docs/configuration/#reasoning-levels) |
 | `--fast` | Shorthand for `--reasoning fast` |
@@ -117,7 +150,13 @@ Some flags are mutually exclusive: `--all-branches` cannot be combined with
 With `--plan`, each iteration first uses a fresh read-only agent session in a
 disposable worktree, stores the plan on the review, and passes it into the fix.
 Implementation follows your existing agent permission settings. Re-review
-attempts retain prior plans and implementation output.
+attempts retain earlier implementation output, trusted comments, and any stored
+plans during the same refine run, with or without `--plan`. This context follows
+the fix chain only while the new review covers the latest fix commit. Earlier
+comments stay on their original reviews. Oversized prompts use complete prompt
+files in the disposable worktree. When an agent leaves findings unresolved
+without changes, refine stores its full output as a comment and leaves the
+review open.
 
 `--plan-only` takes a finite snapshot of completed failed reviews. It prints and
 stores their plans, including with `--quiet`, without editing, committing,

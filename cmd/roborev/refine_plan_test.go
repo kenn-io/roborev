@@ -54,7 +54,7 @@ func TestRefinePlanFlags(t *testing.T) {
 }
 
 func TestRefinePlanOnlySnapshot(t *testing.T) {
-	for _, mode := range []string{"failed", "range", "three-dot-range", "passing", "pending", "all-branches", "all-branches-range", "rewritten-branch", "outside-range", "missing-branch", "renamed-branch", "other-branch", "merged-branch"} {
+	for _, mode := range []string{"failed", "stop-on-stall", "range", "three-dot-range", "passing", "pending", "all-branches", "all-branches-range", "rewritten-branch", "outside-range", "missing-branch", "renamed-branch", "other-branch", "merged-branch"} {
 		t.Run(mode, func(t *testing.T) {
 			repo := newPlanTestRepo(t, map[string]string{"source.go": "package source\n"})
 			base := repo.HeadSHA()
@@ -153,7 +153,17 @@ func TestRefinePlanOnlySnapshot(t *testing.T) {
 			if mode == "outside-range" || mode == "rewritten-branch" || mode == "missing-branch" || mode == "other-branch" {
 				opts.agentName = "unavailable-planning-agent"
 			}
-			out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error { return runRefinePlanOnly(cmd, opts) })
+			out, err := runWithOutput(t, repo.Dir, func(cmd *cobra.Command) error {
+				if mode == "stop-on-stall" {
+					public := refineCmd()
+					public.SetContext(cmd.Context())
+					public.SetOut(cmd.OutOrStdout())
+					public.SetErr(cmd.ErrOrStderr())
+					public.SetArgs([]string{"--plan-only", "--stop-on-stall", "--quiet", "--since", base, "--agent", name})
+					return public.Execute()
+				}
+				return runRefinePlanOnly(cmd, opts)
+			})
 			require.NoError(t, err)
 			expected := 1
 			if mode == "passing" || mode == "pending" || mode == "outside-range" || mode == "rewritten-branch" || mode == "missing-branch" || mode == "other-branch" {
