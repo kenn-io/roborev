@@ -349,7 +349,7 @@ Set `[ci] skip_drafts = true` to skip draft PRs. This global option defaults to
 `false` and has no repository override. The poller also skips open PRs with
 labels listed in `skip_labels`; label matching is case-insensitive. If both
 apply, the draft reason takes precedence. A draft skip message is
-`Review skipped: draft pull request`.
+`Review skipped: draft`.
 
 When the poller publishes a skipped result, GitHub App authentication uses a
 roborev check with a `skipped` conclusion. Personal authentication uses a

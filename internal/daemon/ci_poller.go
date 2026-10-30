@@ -951,12 +951,12 @@ type ciSkip struct {
 	reason      string // log detail
 }
 
-// ciPRSkip reports whether the [ci] skip_labels, author, or branch filters
+// ciPRSkip reports whether the [ci] draft, label, author, or branch filters
 // exclude this PR from review. It returns an error, and no decision, when it
 // cannot read CODEOWNERS for the allow_codeowners check.
 func (p *CIPoller) ciPRSkip(ctx context.Context, ghRepo string, pr ghPR, ci *config.CIConfig) (ciSkip, bool, error) {
 	if ci.SkipDrafts && pr.Draft {
-		return ciSkip{description: "Review skipped: draft pull request", reason: "it is a draft pull request"}, true, nil
+		return ciSkip{description: ciDraftSkipReason, reason: "it is a draft pull request"}, true, nil
 	}
 	if label, skip := matchingCISkipLabel(pr.Labels, ci.SkipLabels); skip {
 		return ciSkip{
@@ -1053,19 +1053,6 @@ func (p *CIPoller) skipPR(ghRepo string, pr ghPR, skip ciSkip, expected *storage
 	}
 	p.recordPollResult(ghRepo, pr.Number, pr.HeadRefOid, nil)
 	return nil
-}
-
-func matchingCISkipLabel(prLabels, skipLabels []string) (string, bool) {
-	for _, label := range prLabels {
-		label = strings.TrimSpace(label)
-		for _, configured := range skipLabels {
-			configured = strings.TrimSpace(configured)
-			if configured != "" && strings.EqualFold(label, configured) {
-				return label, true
-			}
-		}
-	}
-	return "", false
 }
 
 // loadCIRepoConfigFor loads typed and raw repo config through one loader. A
