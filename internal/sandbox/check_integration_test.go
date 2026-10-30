@@ -186,6 +186,11 @@ func TestSandboxProcessCleanup(t *testing.T) {
 	testutil.RequireSandboxIntegration(t)
 	work := t.TempDir()
 	job := routeJob(t, work)
+	t.Setenv("PATH", work+":"+os.Getenv("PATH"))
+	marker := filepath.Join(work, "host-tool-ran")
+	tool := []byte("#!/bin/sh\nprintf '%s\\n' \"$0\" >> '" + marker + "'\nexec /usr/bin/\"${0##*/}\" \"$@\"\n")
+	require.NoError(t, os.WriteFile(filepath.Join(work, "systemd-run"), tool, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(work, "cleanup-tool"), tool, 0o700))
 	for _, key := range []string{"XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"} {
 		job.Env = append(job.Env, key+"="+os.Getenv(key))
 		t.Setenv(key, "")
@@ -196,11 +201,11 @@ func TestSandboxProcessCleanup(t *testing.T) {
 	pidFile := filepath.Join(work, "child.pid")
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	wrapped, env, cleanup, err := job.Command(ctx, []string{"bash", "-c", "setsid /usr/bin/sleep 300 </dev/null >/dev/null 2>&1 & echo $! > '" + pidFile + "'; wait"})
+	wrapped, env, cleanup, err := job.Command(ctx, []string{"bash", "-c", "cp '" + filepath.Join(work, "cleanup-tool") + "' '" + filepath.Join(work, "systemctl") + "'; setsid /usr/bin/sleep 300 </dev/null >/dev/null 2>&1 & echo $! > '" + pidFile + "'; wait"})
 	require.NoError(t, err)
 	defer cleanup()
 	defer func() {
-		stop := exec.Command("systemctl", "--user", "stop", strings.TrimPrefix(wrapped[1], "--unit="))
+		stop := exec.Command("/usr/bin/systemctl", "--user", "stop", strings.TrimPrefix(wrapped[1], "--unit="))
 		stop.Env = env
 		_ = stop.Run()
 	}()
@@ -234,6 +239,7 @@ func TestSandboxProcessCleanup(t *testing.T) {
 	cancel()
 	require.Error(t, process.Wait())
 	cleanup()
+	assert.NoFileExists(t, marker, "host launch and cleanup must bypass tools in the writable job directory")
 	files, err = os.ReadDir(tmp)
 	require.NoError(t, err)
 	assert.Empty(t, files, "nono left temporary files after cancellation")
