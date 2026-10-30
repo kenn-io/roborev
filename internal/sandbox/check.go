@@ -49,7 +49,7 @@ except Exception:
 denied=$5
 shift 5
 for ((i=0; i<denied; i++)); do
-  cat "$1" >/dev/null 2>&1 && bad "deny-path-read: $1"
+  /usr/bin/python3 -c 'import os,sys; os.open(sys.argv[1], os.O_RDONLY)' "$1" >/dev/null 2>&1 && bad "deny-path-read: $1"
   shift
 done
 for path in "$@"; do

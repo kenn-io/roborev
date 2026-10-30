@@ -67,7 +67,7 @@ func TestSandboxSelfCheck(t *testing.T) {
 	for _, name := range []string{"canary-read", "loopback-connect", "environment-canary"} {
 		assert.Contains(t, err.Error(), name)
 	}
-	for _, grant := range []string{"home", "auth-symlink"} {
+	for _, grant := range []string{"home", "auth-symlink", "directory", "directory-symlink"} {
 		t.Run(grant, func(t *testing.T) {
 			work, secrets := t.TempDir(), t.TempDir()
 			hostHome := filepath.Join(secrets, "codex")
@@ -80,6 +80,13 @@ func TestSandboxSelfCheck(t *testing.T) {
 				target := filepath.Join(readPath, "login.json")
 				require.NoError(t, os.Rename(auth, target))
 				require.NoError(t, os.Symlink(target, auth))
+			}
+			if strings.HasPrefix(grant, "directory") {
+				auth = hostHome
+				if grant == "directory-symlink" {
+					auth = filepath.Join(secrets, "codex-link")
+					require.NoError(t, os.Symlink(hostHome, auth))
+				}
 			}
 			job := routeJob(t, work)
 			job.ReadPaths = []string{readPath}

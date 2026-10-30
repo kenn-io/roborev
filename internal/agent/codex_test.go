@@ -41,9 +41,15 @@ func TestCodex_buildArgs(t *testing.T) {
 		agentic          bool
 		autoApprove      bool
 		sandboxBroken    bool
+		sandbox          bool
 		wantFlags        []string
 		wantMissingFlags []string
 	}{
+		{
+			name:             "NonoSandbox",
+			sandbox:          true,
+			wantMissingFlags: []string{"--thread-source", "roborev"},
+		},
 		{
 			name:             "NonAgenticAutoApprove",
 			agentic:          false,
@@ -70,6 +76,10 @@ func TestCodex_buildArgs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			a := a
+			if tt.sandbox {
+				a = a.WithSandbox(&CodexSandbox{})
+			}
 			args := a.buildArgs("/repo", tt.agentic, tt.autoApprove, tt.sandboxBroken)
 
 			for _, flag := range tt.wantFlags {

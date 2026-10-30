@@ -19,6 +19,7 @@ type CodexSandbox struct {
 func (a *CodexAgent) WithSandbox(s *CodexSandbox) *CodexAgent {
 	clone := a.clone()
 	clone.sandbox = s
+	clone.omitThreadSource = true
 	return clone
 }
 
