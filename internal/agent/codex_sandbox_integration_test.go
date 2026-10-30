@@ -5,6 +5,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
@@ -147,6 +148,61 @@ exit "$failed"
 			assert.Empty(t, homes)
 		})
 	}
+}
+
+func TestReviewSandboxStructuredOutput(t *testing.T) {
+	if os.Getenv("ROBOREV_RUN_SANDBOX_INTEGRATION") != "1" || runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+		t.Skip("requires opt-in linux/amd64 sandbox integration")
+	}
+	for _, command := range []string{"nono", "codex"} {
+		if _, err := exec.LookPath(command); err != nil {
+			t.Skipf("%s is required", command)
+		}
+	}
+	codex, err := exec.LookPath("codex")
+	require.NoError(t, err)
+	codex, err = filepath.EvalSymlinks(codex)
+	require.NoError(t, err)
+	work, secrets := t.TempDir(), t.TempDir()
+	repo, gitDir := filepath.Join(work, "repo"), filepath.Join(t.TempDir(), "repo.git")
+	testutil.InitSeparateGitRepo(t, repo, gitDir)
+	t.Setenv("CODEX_HOME", secrets)
+	require.NoError(t, os.WriteFile(filepath.Join(secrets, "auth.json"), []byte(`{"tokens":{"access_token":"synthetic-token"}}`), 0o600))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer synthetic-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.Method != http.MethodPost || r.URL.Path != "/responses" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_test\"}}\n\n")
+		fmt.Fprint(w, "event: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"role\":\"assistant\",\"id\":\"msg_test\",\"content\":[{\"type\":\"output_text\",\"text\":\"{\\\"ok\\\":true}\"}]}}\n\n")
+		fmt.Fprint(w, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_test\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n")
+	}))
+	defer server.Close()
+	job := sandbox.Job{
+		WorkDir: work, ReadPaths: []string{gitDir, filepath.Dir(filepath.Dir(codex))},
+		MemoryMax: 8 << 30,
+		Env:       []string{"PATH=/usr/bin:/bin", "HOME=" + secrets, "TMPDIR=" + work},
+	}
+	if _, err := os.Stat("/etc/codex"); err == nil {
+		job.ReadPaths = append(job.ReadPaths, "/etc/codex")
+	} else {
+		require.True(t, os.IsNotExist(err), "%v", err)
+	}
+	a := NewCodexAgent(codex).WithSandbox(&CodexSandbox{Job: job, upstream: server.URL})
+	a.Model = "test-model"
+	var output bytes.Buffer
+	plain, err := a.Review(t.Context(), repo, "HEAD", "Return the object.", &output)
+	require.NoError(t, err, "%s", output.String())
+	require.JSONEq(t, `{"ok":true}`, plain)
+	output.Reset()
+	result, err := a.ReviewWithSchema(t.Context(), repo, "HEAD", "Return the object.", jsontext.Value(`{"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"],"additionalProperties":false}`), &output)
+	require.NoError(t, err, "%s", output.String())
+	assert.JSONEq(t, `{"ok":true}`, string(result))
 }
 
 func sandboxRouteItem(t *testing.T, outputs []string) map[string]any {
