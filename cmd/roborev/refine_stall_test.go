@@ -32,6 +32,7 @@ func TestRefineStallLoop(t *testing.T) {
 		name                      string
 		severityOnly, bothSignals bool
 		otherFailed               bool
+		pendingFixMode            string
 		rounds                    int
 		stop, commentFailure      bool
 		recovery                  string
@@ -63,6 +64,8 @@ func TestRefineStallLoop(t *testing.T) {
 		{name: "final recovered completed branch review advises", rounds: 3, recovery: "completed branch", wantCalls: 3, wantSignals: 1, wantError: "max iterations"},
 		{name: "recovered closed passing branch review completes", rounds: 3, stop: true, recovery: "completed branch", recoveredReset: "closed pass", resetJob: 10, wantCalls: 3},
 		{name: "branch review completes during pending lookup", severityOnly: true, rounds: 3, stop: true, recovery: "branch race", wantCalls: 3, wantSignals: 1, wantError: "stalled"},
+		{name: "pending fix review precedes other failed commit", severityOnly: true, otherFailed: true, pendingFixMode: "pending", rounds: 3, stop: true, wantCalls: 3, wantSignals: 1, wantError: "stalled"},
+		{name: "pending fix review completes between lookups", severityOnly: true, pendingFixMode: "race", rounds: 3, stop: true, wantCalls: 3, wantSignals: 1, wantError: "stalled"},
 		{name: "final recovered passing branch review resets", rounds: 3, stop: true, recovery: "completed branch", recoveredReset: "pass", resetJob: 10, wantCalls: 3},
 		{name: "recovered closed branch review resets before fallback", rounds: 4, stop: true, recovery: "completed branch", recoveredReset: "closed", wantEnqueues: 1, wantCalls: 4, wantError: "max iterations"},
 		{name: "failed re-review resets", rounds: 4, reviewFailure: true, wantCalls: 4, wantError: "max iterations"},
@@ -141,6 +144,10 @@ func TestRefineStallLoop(t *testing.T) {
 				if tc.otherFailed && calls == 3 {
 					d.recovery = "completed"
 				}
+				if tc.pendingFixMode != "" && calls == 3 {
+					d.recovery = "pending"
+					d.completePendingFixReviewOnLookup = tc.pendingFixMode == "race"
+				}
 				if tc.retry && calls == 2 {
 					return "", fmt.Errorf("provider unavailable")
 				}
@@ -180,10 +187,20 @@ func TestRefineStallLoop(t *testing.T) {
 			if tc.otherFailed {
 				a.Equal("4", repo.Run("rev-list", "--count", initial+"..HEAD"), "one other commit and exactly three fixes")
 			}
-			if tc.rounds == 3 && tc.recovery != "" {
-				a.Equal("3", repo.Run("rev-list", "--count", initial+"..HEAD"), "recovery cannot create a fourth fix commit")
+			if tc.rounds == 3 && (tc.recovery != "" || tc.pendingFixMode != "") {
+				wantCommits := "3"
+				if tc.otherFailed {
+					wantCommits = "4"
+				}
+				a.Equal(wantCommits, repo.Run("rev-list", "--count", initial+"..HEAD"), "recovery cannot create a fourth fix commit")
 			}
 			a.Equal(tc.wantEnqueues, d.enqueues, "stopping must not enqueue a whole-branch fallback")
+			if tc.pendingFixMode != "" {
+				a.Positive(d.jobReviewFetches[d.pendingFixReviewJobID], "the pending fix review must be recovered by job ID")
+			}
+			if tc.pendingFixMode == "race" {
+				a.True(d.completedPendingFixReviewOnLookup, "the review must complete between the SHA and job lookups")
+			}
 			a.Equal(tc.wantSignals, strings.Count(output, "Refine advisory:"))
 			var advisories []storage.Response
 			for _, responses := range d.posted {
