@@ -13,7 +13,7 @@ import (
 	"go.kenn.io/roborev/internal/daemon"
 )
 
-// doctorRecentWindow is how far back the failure checks look.
+// doctorRecentWindow is how far back failure and CI load checks look.
 const doctorRecentWindow = 7 * 24 * time.Hour
 
 // doctorRepeatedFailures is the count at which the same failure in the recent

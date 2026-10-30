@@ -7,6 +7,7 @@ import (
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/pkg/client/generated"
 )
 
 // doctorHookTools maps a [[hooks]] type to the CLI the daemon runs for it.
@@ -96,6 +97,64 @@ func checkDoctorIntegrations(env *doctorEnv) []doctorCheck {
 				Fix: "fix the [ci] section of your global config",
 			})
 		}
+		out = append(out, checkDoctorCILoad(env)...)
 	}
 	return out
+}
+
+// Lever flags >5 runs per PR and >10% retrospective reviews after merge:
+// https://github.com/github/lever/blob/f859d0aa2be96981157ee0480655c84877e3cd98/automations/precision-review/README.md
+// The share threshold is adapted here to closed-before-post panel runs, a
+// proxy for work that could not reach the PR in time. These are advice
+// thresholds, not execution limits; report every observed cohort size.
+const (
+	doctorCIRunsPerPR     = 5
+	doctorCIClosedDivisor = 10
+)
+
+func checkDoctorCILoad(env *doctorEnv) []doctorCheck {
+	if !env.daemonUp() {
+		return nil
+	}
+	summary, err := env.daemon.Summary(env.ctx)
+	if err != nil {
+		return []doctorCheck{{
+			ID: "integrations.ci_load", Category: "integrations", Status: doctorInfo,
+			Summary: "CI review load is unavailable", Details: []string{err.Error()},
+		}}
+	}
+	if summary == nil {
+		return nil
+	}
+	return doctorCILoadSummary(summary.Ci)
+}
+
+// doctorCILoadSummary evaluates observed counts without fetching state.
+func doctorCILoadSummary(ci *generated.CISummary) []doctorCheck {
+	if ci == nil || ci.TotalPanels <= 0 {
+		return nil
+	}
+	check := doctorCheck{
+		ID: "integrations.ci_load", Category: "integrations", Status: doctorOK,
+		Summary: "CI review load in the last 7 days is within advisory thresholds",
+		Details: []string{
+			fmt.Sprintf("maximum runs per PR: %d", ci.RunsPerPrMax),
+			fmt.Sprintf("%d of %d CI panel runs were closed before posting", ci.ClosedBeforePost, ci.TotalPanels),
+		},
+	}
+	var advice []string
+	if ci.RunsPerPrMax > doctorCIRunsPerPR {
+		advice = append(advice, "increase ci.throttle_interval to reduce repeated runs per PR")
+	}
+	// For positive integer counts, closed > total/10 is exactly >10%,
+	// without overflowing a multiplication of the numerator.
+	if ci.ClosedBeforePost > ci.TotalPanels/doctorCIClosedDivisor {
+		advice = append(advice, "check max_workers or use a narrower CI review panel so reviews finish sooner")
+	}
+	if len(advice) > 0 {
+		check.Status = doctorWarn
+		check.Summary = "CI review load in the last 7 days exceeds advisory thresholds"
+		check.Fix = strings.Join(advice, "; ")
+	}
+	return []doctorCheck{check}
 }

@@ -2488,7 +2488,7 @@ func (p *CIPoller) handleReviewCanceled(event Event) {
 		log.Printf("CI poller: error checking canceled CI panel for job %d: %v", event.JobID, err)
 		return
 	}
-	p.retirePanelAndDeleteAttempt(row, "canceled")
+	p.retirePanelAndDeleteAttempt(row, storage.PanelRetireReasonCanceled)
 }
 
 // routePanelEvent posts a panel run when jobID is its synthesis parent. Member
@@ -2595,7 +2595,7 @@ func (p *CIPoller) guardPanelPostTarget(ctx context.Context, row *storage.CIPane
 	if !target.Open {
 		log.Printf("CI poller: PR %s#%d is closed/merged, abandoning panel %d",
 			row.GithubRepo, row.PRNumber, row.ID)
-		p.retirePanelAndDeleteAttempt(row, "closed-PR")
+		p.retirePanelAndDeleteAttempt(row, storage.PanelRetireReasonClosedPR)
 		return false
 	}
 	if target.HeadSHA != "" && !strings.EqualFold(target.HeadSHA, row.HeadSHA) {
@@ -2604,7 +2604,7 @@ func (p *CIPoller) guardPanelPostTarget(ctx context.Context, row *storage.CIPane
 		// marking the panel during the target lookup above; the database
 		// serializes this against MarkPanelsAllowStalePost so exactly one
 		// side wins.
-		retired, err := p.db.MarkPanelRetiredIfStalePostDisallowed(row.ID)
+		retired, err := p.db.MarkPanelRetiredIfStalePostDisallowed(row.ID, storage.PanelRetireReasonStaleHead)
 		if err != nil {
 			log.Printf("CI poller: error retiring stale-head panel %d: %v", row.ID, err)
 			p.releasePanelClaim(row.ID)
@@ -2613,7 +2613,7 @@ func (p *CIPoller) guardPanelPostTarget(ctx context.Context, row *storage.CIPane
 		if retired {
 			log.Printf("CI poller: PR %s#%d advanced from reviewed HEAD %s to %s, retiring panel %d without posting",
 				row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA), gitpkg.ShortSHA(target.HeadSHA), row.ID)
-			if err := p.db.RetirePanelAndDeleteAttempt(row.ID); err != nil {
+			if err := p.db.RetirePanelAndDeleteAttempt(row.ID, storage.PanelRetireReasonStaleHead); err != nil {
 				log.Printf("CI poller: error deleting stale-head review attempt for %s#%d@%s: %v",
 					row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA), err)
 			}
@@ -2645,7 +2645,7 @@ func (p *CIPoller) guardPanelPostTarget(ctx context.Context, row *storage.CIPane
 	if !match {
 		log.Printf("CI poller: repo identity mismatch for panel %d (%s#%d@%s), retiring without posting",
 			row.ID, row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA))
-		p.retirePanelAndDeleteAttempt(row, "repo-mismatch")
+		p.retirePanelAndDeleteAttempt(row, storage.PanelRetireReasonRepoMismatch)
 		return false
 	}
 	return true
@@ -2692,7 +2692,7 @@ func (p *CIPoller) jobMatchesGithubRepo(job *storage.ReviewJob, ghRepo string) (
 }
 
 func (p *CIPoller) retirePanelAndDeleteAttempt(row *storage.CIPanel, reason string) {
-	if err := p.db.RetirePanelAndDeleteAttempt(row.ID); err != nil {
+	if err := p.db.RetirePanelAndDeleteAttempt(row.ID, reason); err != nil {
 		log.Printf("CI poller: error retiring %s panel %d: %v", reason, row.ID, err)
 	}
 }
@@ -2842,7 +2842,7 @@ func (p *CIPoller) recordDeferral(
 		log.Printf("CI poller: failed to set pending status for %s@%s: %v",
 			row.GithubRepo, gitpkg.ShortSHA(row.HeadSHA), err)
 	}
-	if err := p.db.MarkPanelRetired(row.ID); err != nil {
+	if err := p.db.MarkPanelRetired(row.ID, storage.PanelRetireReasonDeferredRetry); err != nil {
 		log.Printf("CI poller: error retiring deferred panel %d: %v", row.ID, err)
 	}
 	log.Printf("CI poller: deferred %s panel run for %s#%d@%s (panel %d, run %s, attempt %d, next_attempt_at %s, last_error=%q)",
@@ -2977,7 +2977,7 @@ func (p *CIPoller) supersedePriorPanels(ghRepo string, prNumber int, newHeadSHA 
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("supersede: get synthesis for %s: %w", row.PanelRunUUID, err))
 			continue
 		}
-		if err := p.db.MarkPanelRetired(row.ID); err != nil {
+		if err := p.db.MarkPanelRetired(row.ID, storage.PanelRetireReasonSuperseded); err != nil {
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("supersede: retire mapping %s: %w", row.PanelRunUUID, err))
 			continue
 		}
@@ -3444,7 +3444,7 @@ func (p *CIPoller) cancelClosedPRPanelRuns(ghRepo string, prNumber int) error {
 		}
 		// Retire before worker cancellation events can fire. The mapping
 		// remains available for cleanup retries and explicit review reruns.
-		if err := p.db.MarkPanelRetired(row.ID); err != nil {
+		if err := p.db.MarkPanelRetired(row.ID, storage.PanelRetireReasonClosedPR); err != nil {
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("retire panel %s: %w", row.PanelRunUUID, err))
 			continue
 		}

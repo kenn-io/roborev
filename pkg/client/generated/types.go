@@ -691,6 +691,82 @@ func (b BranchWithCount) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(b))
 }
 
+type CIPRSummary struct {
+	Cost       CostAggregate `json:"cost"`
+	GithubRepo string        `json:"github_repo" validate:"required"`
+	PrNumber   int64         `json:"pr_number"`
+	Runs       int64         `json:"runs"`
+}
+
+func (c CIPRSummary) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(c.Cost).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Cost", err)
+		}
+	}
+	if err := typesValidator.Var(c.GithubRepo, "required"); err != nil {
+		errors = errors.Append("GithubRepo", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CISummary struct {
+	ActivePanels          int64            `json:"active_panels"`
+	ClosedBeforePost      int64            `json:"closed_before_post"`
+	Cost                  CostAggregate    `json:"cost"`
+	DistinctPrs           int64            `json:"distinct_prs"`
+	HotPrs                []CIPRSummary    `json:"hot_prs" validate:"required"`
+	Outcomes              map[string]int64 `json:"outcomes"`
+	PostedPanels          int64            `json:"posted_panels"`
+	Prs                   []CIPRSummary    `json:"prs" validate:"required"`
+	RetiredByReason       map[string]int64 `json:"retired_by_reason"`
+	RetiredUnpostedCost   CostAggregate    `json:"retired_unposted_cost"`
+	RetiredUnpostedPanels int64            `json:"retired_unposted_panels"`
+	RunsPerPrMax          int64            `json:"runs_per_pr_max"`
+	RunsPerPrP50          float64          `json:"runs_per_pr_p50"`
+	RunsPerPrP90          float64          `json:"runs_per_pr_p90"`
+	TotalPanels           int64            `json:"total_panels"`
+	TurnaroundP50Secs     float64          `json:"turnaround_p50_secs"`
+	TurnaroundP90Secs     float64          `json:"turnaround_p90_secs"`
+	TurnaroundSamples     int64            `json:"turnaround_samples"`
+}
+
+func (c CISummary) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(c.Cost).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Cost", err)
+		}
+	}
+	for i, item := range c.HotPrs {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("HotPrs[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range c.Prs {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Prs[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(c.RetiredUnpostedCost).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("RetiredUnpostedCost", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type CancelJobOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema  *string `json:"$schema,omitempty"`
@@ -4074,6 +4150,7 @@ type Summary struct {
 	Schema   *string        `json:"$schema,omitempty"`
 	Agents   []AgentStats   `json:"agents" validate:"required"`
 	Branch   *string        `json:"branch,omitempty"`
+	Ci       *CISummary     `json:"ci,omitempty"`
 	Cost     CostAggregate  `json:"cost"`
 	Duration DurationStats  `json:"duration"`
 	Failures FailureStats   `json:"failures"`
@@ -4094,6 +4171,13 @@ func (s Summary) Validate() error {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Agents[%d]", i), err)
+			}
+		}
+	}
+	if s.Ci != nil {
+		if v, ok := any(s.Ci).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Ci", err)
 			}
 		}
 	}

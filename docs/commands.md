@@ -804,6 +804,50 @@ The summary includes:
 - **Cost**: Approximate agent spend for eligible jobs in the same time window,
     with coverage when only some jobs reported cost
 
+### CI run health
+
+When the selected window contains CI panel runs, `summary` also shows a **CI Run
+Health** block. Use `roborev summary --all --since 7d` to inspect all
+repositories monitored by the daemon, including separate CI checkouts.
+
+- **Panels** counts one run per panel, including reruns. Panel size does not
+    change this count. Active, finalized, and retired-unposted counts partition
+    the selected runs.
+- **Outcomes** counts finalized runs by their recorded outcome. Finalization
+    means `posted_at` was recorded; an abandoned run can be finalized without a
+    review comment.
+- **Retirement reasons** counts all retired rows, including finalized history
+    retired to release ownership for a rerun. Reasons are `closed_pr`,
+    `superseded`, `stale_head`, `deferred_retry`, `repo_mismatch`, and
+    `canceled`. Older rows or unspecified ownership transitions appear as
+    `unknown`.
+- **Runs per PR** reports p50, p90, and maximum. A PR is identified by both its
+    GitHub repository and number. Every PR above five runs is listed, ordered by
+    descending run count, then repository and PR number. Fractional percentiles
+    use interpolation.
+- **Turnaround** measures the first review attempt through finalization,
+    including time spent queued, reviewing, and retrying. Only runs with valid,
+    nonnegative timestamps contribute. The sample count is displayed; no samples
+    means unavailable. Missing first-attempt timestamps are excluded.
+- **Cost** includes retained member and synthesis jobs for the selected panels.
+    Total, per-PR, and retired-unposted amounts each report priced/eligible job
+    coverage. Eligibility requires a terminal job with evidence that an agent
+    ran; synthesis passthroughs are excluded. Failed or canceled agent calls can
+    still contribute cost. Missing pricing is unavailable; a recorded free call
+    contributes a priced zero.
+- **Retired unposted cost** includes only runs retired before finalization.
+    Active work is excluded. This measures retained recorded spend in that
+    cohort, rather than every run that failed to produce a useful comment.
+
+CI runs enter the window by panel creation time. Their associated job costs
+remain included even when the jobs were queued outside the window. Repository
+and branch filters match the synthesis job exactly. Unfiltered results retain
+panel history whose synthesis job has been deleted; scoped results exclude
+history that can no longer be mapped to that repository or branch.
+
+JSON exposes this block as `ci`, omitted when no panels match. See
+[GitHub integration](/docs/integrations/github/) for CI polling and delivery.
+
 ## Aggregate Cost
 
 ```bash
@@ -1297,10 +1341,27 @@ hooks, or edits config.
 | Recent failures | Failed jobs queued in the last 7 days, grouped by agent; post-commit hook runs that failed to queue a review |
 | Repository | Registered with the daemon; git hooks installed and current; `snapshot_dir` usable |
 | Review guidelines | `review_guidelines` or `REVIEW.md` exist; when security reviews are enabled, the guidelines describe security or a threat model |
-| Integrations | `[[hooks]]` entries that can never fire or whose `kata` or `bd` CLI is missing from the daemon's `PATH`, `[sync]` problems, and an empty `ci.repos` or invalid `ci.quiet_hours` when the CI poller is enabled |
+| Integrations | `[[hooks]]` entries that can never fire or whose `kata` or `bd` CLI is missing from the daemon's `PATH`, `[sync]` problems, and CI poller settings and review load |
 
 Each check reports `ok`, `info`, `warn`, or `fail`. The command exits `1` when
 any check fails and `0` otherwise, including when there are only warnings.
+
+When CI polling is enabled, doctor checks the last 7 days of CI panel runs
+across all repositories, including when `--repo` selects a repository. The
+`integrations.ci_load` check warns when any PR has more than 5 runs or more than
+10% of panel runs were closed before posting. It reports the observed closed and
+total counts, including small samples. For excessive runs, it suggests
+`ci.throttle_interval`; for closed-before-post work, it suggests checking
+`max_workers` or using a narrower CI review panel.
+
+The CI load check skips disabled polling, a stopped daemon, and a summary
+without CI panel data. A summary API error produces an `info` check with the
+error. To inspect the warning counts, run
+`roborev summary --all --since 7d --json` and compare `ci.closed_before_post`
+with `ci.total_panels`. The text output's retirement counts also include
+finalized runs later retired, so they can differ from the warning numerator.
+Doctor also reports an empty `ci.repos` or invalid `ci.quiet_hours` when CI
+polling is enabled.
 
 Security reviews count as enabled for a repository when the panel selected by
 `review.default_panel` or `review.hook_review_panel`, in the default config or
