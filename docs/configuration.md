@@ -273,7 +273,8 @@ max_chars = 50000
 | `excluded_commit_patterns` | array | Commit message substrings to skip reviews on (case-insensitive) |
 | `exclude_patterns` | array | Filenames or glob patterns to exclude from review diffs for this repo |
 | `post_commit_review` | string | Post-commit hook behavior: `"commit"` (default) or `"branch"` |
-| `post_commit_batch_size` | int | Number of commits to accumulate before an automatic post-commit review. Values below `2` review every commit |
+| `post_commit_batch_size` | int | Number of commits to accumulate before an automatic post-commit review. Values below `2` disable the count threshold. Repo value overrides the global value |
+| `post_commit_quiet_period` | string | Time without a new commit before reviewing a pending batch, such as `"5m"`. Empty or `"0"` disables the timer. Repo value overrides the global value |
 | `hook_timeout_seconds` | int | Override the post-commit hook request timeout for this repo, in seconds. Useful for large repos where the daemon's enqueue git calls are slow. Read filesystem-only from this checkout's `.roborev.toml` (a linked worktree without its own file does not inherit the main checkout's value). Zero or negative values inherit the global / platform default |
 | `auto_close_passing_reviews` | bool | Automatically close reviews that pass, including reviews whose findings all fall below `review_min_severity` |
 | `review_reasoning` | string | Reasoning level for reviews. See [Reasoning Levels](#reasoning-levels) |
@@ -1048,17 +1049,32 @@ by this option.
 
 ### Post-commit review batching
 
-By default, the post-commit hook queues a review after every commit. To combine
-several small commits into one automatic review, set a repository-local batch
-size:
+By default, the post-commit hook queues a review after every commit. Configure
+batching globally in `~/.roborev/config.toml` or per repository in
+`.roborev.toml`:
 
 ```toml
 post_commit_batch_size = 5
+post_commit_quiet_period = "5m"
 ```
 
-The hook returns without contacting the daemon until the configured number of
-commits has accumulated. It then queues one review over the accumulated range.
-Values below `2`, including the default of `1`, disable batching.
+With both settings, the hook queues one review over the accumulated range as
+soon as five commits are pending or five minutes pass without a new commit on
+that branch. Each new commit resets the quiet-period timer. The count threshold
+still queues immediately during a long burst of commits.
+
+Each repository setting overrides its global value independently. Values below
+`2` disable the count threshold. An empty quiet period or `"0"` disables the
+timer. With neither threshold enabled, every commit is reviewed immediately. Set
+only the quiet period to combine a burst of any size into one review. Durations
+use Go syntax, such as `"30s"` or `"5m"`; negative durations are invalid.
+
+Count-only batching returns without contacting the daemon until the threshold is
+reached. A quiet period starts or contacts the daemon to register a timer.
+Timers are per repository and branch, shared across linked worktrees. If timer
+registration fails, the hook attempts to enqueue the accumulated range
+immediately. Timers are canceled when the daemon stops; pending checkpoints
+remain on disk and the next commit or push retries them.
 
 Batch checkpoints are stored per branch in shared Git metadata, so linked
 worktrees use the same pending range. The pre-push hook attempts to queue a

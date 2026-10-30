@@ -663,7 +663,7 @@ func TestIsGlobalKey(t *testing.T) {
 		{"sync.repo_names", true},
 		{"hooks", true},
 		{"agent", false},
-		{"post_commit_batch_size", false},
+		{"post_commit_batch_size", true},
 		{"sync", false},
 		{"review_guidelines", true},
 		{"nonexistent", false},
