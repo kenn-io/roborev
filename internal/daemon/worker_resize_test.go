@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"path/filepath"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -137,4 +138,127 @@ func TestConfigReloadResizesWorkerPool(t *testing.T) {
 			assert.Equal(t, test.want, server.configWatcher.Config().MaxWorkers)
 		})
 	}
+}
+
+func TestConfigReloadAppliesWorkerCountsInOrder(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	writeTestFile(t, path, "max_workers = 1\n")
+	cfg, err := config.LoadGlobalFrom(path)
+	require.NoError(t, err)
+	watcher := NewConfigWatcher(path, cfg, NewBroadcaster(), nil)
+	pool := NewWorkerPool(nil, watcher, 1, NewBroadcaster(), nil, nil)
+	entered, release := make(chan struct{}), make(chan struct{})
+	watcher.OnReload(func(cfg *config.Config) {
+		if cfg.MaxWorkers == 0 {
+			close(entered)
+			<-release
+		}
+		pool.SetMaxWorkers(cfg.MaxWorkers)
+	})
+
+	writeTestFile(t, path, "max_workers = 0\n")
+	var reloads sync.WaitGroup
+	reloads.Go(watcher.reloadConfig)
+	<-entered
+	writeTestFile(t, path, "max_workers = 3\n")
+	reloads.Go(watcher.reloadConfig)
+	// Reloads perform filesystem I/O and contend on a mutex; synctest
+	// cannot treat either operation as durably blocked.
+	assert.Never(t, func() bool { return watcher.ReloadCounter() > 1 }, 100*time.Millisecond, time.Millisecond)
+	close(release)
+	reloads.Wait()
+
+	assert.Equal(t, 3, watcher.Config().MaxWorkers)
+	assert.Equal(t, 3, pool.MaxWorkers(), "an older callback must not overwrite the latest worker count")
+}
+
+func TestWorkerPoolShrinkDuringClaimBackoff(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		regrow bool
+		want   storage.JobStatus
+	}{
+		{"surplus worker retires", false, storage.JobStatusQueued},
+		{"immediate regrow resumes claiming", true, storage.JobStatusDone},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				assert := assert.New(t)
+				db := testutil.OpenTestDB(t)
+				repo, err := db.GetOrCreateRepo(t.TempDir())
+				require.NoError(t, err)
+				job, err := db.EnqueueJob(storage.EnqueueOpts{
+					RepoID: repo.ID, GitRef: "prompt", Agent: "test",
+					Prompt: "Review this codebase", JobType: storage.JobTypeTask,
+				})
+				require.NoError(t, err)
+				// A hydration error rolls the claim back and enters the worker's
+				// five-second retry backoff without a pending SQLite operation.
+				_, err = db.Exec("UPDATE review_jobs SET panel_member_index = 'invalid' WHERE id = ?", job.ID)
+				require.NoError(t, err)
+				errorLog := newTestErrorLog()
+				pool := NewWorkerPool(db, NewStaticConfig(config.DefaultConfig()), 1, NewBroadcaster(), errorLog, nil)
+				pool.Start()
+				defer pool.Stop()
+				synctest.Wait()
+				require.NotEmpty(t, errorLog.Recent())
+				assert.Contains(errorLog.Recent()[0].Message, "panel_member_index")
+				_, err = db.Exec("UPDATE review_jobs SET panel_member_index = NULL WHERE id = ?", job.ID)
+				require.NoError(t, err)
+
+				pool.SetMaxWorkers(0)
+				if test.regrow {
+					pool.SetMaxWorkers(1)
+				}
+				time.Sleep(10 * time.Second) // pass two claim retry intervals in virtual time
+				synctest.Wait()
+				stored, err := db.GetJobByID(job.ID)
+				require.NoError(t, err)
+				assert.Equal(test.want, stored.Status)
+			})
+		})
+	}
+}
+
+func TestWorkerPoolShrinkDuringBlockedClaim(t *testing.T) {
+	assert := assert.New(t)
+	db := testutil.OpenTestDB(t)
+	repo, err := db.GetOrCreateRepo(t.TempDir())
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID: repo.ID, GitRef: "prompt", Agent: "test",
+		Prompt: "Review this codebase", JobType: storage.JobTypeTask,
+	})
+	require.NoError(t, err)
+	// A separate SQLite write transaction blocks BEGIN IMMEDIATE in the
+	// worker while still allowing its queue-pause read in WAL mode.
+	lockConn, err := db.Conn(t.Context())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, lockConn.Close()) })
+	_, err = lockConn.ExecContext(t.Context(), "BEGIN IMMEDIATE")
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = lockConn.ExecContext(context.Background(), "ROLLBACK") })
+	pool := NewWorkerPool(db, NewStaticConfig(config.DefaultConfig()), 1, NewBroadcaster(), nil, nil)
+	pool.Start()
+	defer pool.Stop()
+	// SQLite lock waits run outside synctest's virtual clock.
+	require.Eventually(t, func() bool {
+		pool.runningJobsMu.Lock()
+		defer pool.runningJobsMu.Unlock()
+		return pool.workerJobs["worker-0"] == workerClaimingJobID
+	}, 10*time.Second, time.Millisecond)
+
+	pool.SetMaxWorkers(0)
+	_, err = lockConn.ExecContext(t.Context(), "COMMIT")
+	require.NoError(t, err)
+	// Let the blocked SQLite claim unwind and the surplus worker retire.
+	require.Eventually(t, func() bool {
+		pool.workersMu.Lock()
+		defer pool.workersMu.Unlock()
+		return len(pool.liveWorkers) == 0
+	}, 10*time.Second, time.Millisecond)
+	stored, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(storage.JobStatusQueued, stored.Status, "a pending claim must roll back when its worker becomes surplus")
+	assert.Empty(stored.WorkerID)
 }

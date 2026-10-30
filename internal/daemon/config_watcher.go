@@ -57,6 +57,7 @@ type ConfigWatcher struct {
 	configPath     string
 	cfg            *config.Config
 	cfgMu          sync.RWMutex
+	reloadMu       sync.Mutex // serialize loading, publication, and callbacks
 	broadcaster    Broadcaster
 	activityLog    *ActivityLog
 	watcher        *fsnotify.Watcher
@@ -213,6 +214,9 @@ func (cw *ConfigWatcher) watchLoop(ctx context.Context, configFile string) {
 }
 
 func (cw *ConfigWatcher) reloadConfig() {
+	cw.reloadMu.Lock()
+	defer cw.reloadMu.Unlock()
+
 	newCfg, err := config.LoadGlobalFrom(cw.configPath)
 	if err != nil {
 		log.Printf("Failed to reload config: %v", err)

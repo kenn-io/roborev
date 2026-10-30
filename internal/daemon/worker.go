@@ -56,11 +56,12 @@ type WorkerPool struct {
 	budgetRouter         *BudgetRouter
 	captureSetupFinished func()
 
-	// workersMu guards numWorkers, liveWorkers, started, and stopped so a
-	// resize never adds to wg after Stop has begun waiting on it.
+	// workersMu guards numWorkers, liveWorkers, claimCancels, started, and
+	// stopped so a resize never adds to wg after Stop has begun waiting on it.
 	workersMu     sync.Mutex
 	numWorkers    int              // target pool size; workers with id >= numWorkers retire
 	liveWorkers   map[int]struct{} // worker ids whose goroutines are running
+	claimCancels  map[int]context.CancelFunc
 	started       bool
 	stopped       bool
 	activeWorkers atomic.Int32
@@ -143,6 +144,7 @@ func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broad
 		activityLog:                  activityLog,
 		numWorkers:                   numWorkers,
 		liveWorkers:                  make(map[int]struct{}),
+		claimCancels:                 make(map[int]context.CancelFunc),
 		stopCh:                       make(chan struct{}),
 		stopCtx:                      stopCtx,
 		stopCancel:                   stopCancel,
@@ -219,6 +221,11 @@ func (wp *WorkerPool) SetMaxWorkers(n int) {
 		return
 	}
 	wp.numWorkers = n
+	for id, cancel := range wp.claimCancels {
+		if id >= n {
+			cancel()
+		}
+	}
 	if wp.started && !wp.stopped {
 		wp.spawnWorkersLocked()
 	}
@@ -240,16 +247,19 @@ func (wp *WorkerPool) spawnWorkersLocked() {
 	}
 }
 
-// retireIfSurplus reports whether worker id is above the target size and, if
-// so, removes it from the live set so a later grow can start it again.
-func (wp *WorkerPool) retireIfSurplus(id int) bool {
+// beginClaim registers cancellation under the resize lock so shrinking can
+// interrupt pending claims and retries without canceling a running job.
+// A surplus worker retires instead of starting another claim.
+func (wp *WorkerPool) beginClaim(id int) (context.Context, context.CancelFunc) {
 	wp.workersMu.Lock()
 	defer wp.workersMu.Unlock()
-	if id < wp.numWorkers {
-		return false
+	if id >= wp.numWorkers {
+		delete(wp.liveWorkers, id)
+		return nil, nil
 	}
-	delete(wp.liveWorkers, id)
-	return true
+	ctx, cancel := context.WithCancel(wp.stopCtx)
+	wp.claimCancels[id] = cancel
+	return ctx, cancel
 }
 
 // Stop gracefully shuts down the worker pool. Safe to call multiple times.
@@ -886,14 +896,15 @@ func (wp *WorkerPool) worker(id int) {
 			return
 		default:
 		}
-		if wp.retireIfSurplus(id) {
+		wakeCh := wp.wakeSignal()
+		claimCtx, cancelClaim := wp.beginClaim(id)
+		if claimCtx == nil {
 			log.Printf("[%s] Retired after pool shrank", workerID)
 			return
 		}
 
-		wakeCh := wp.wakeSignal()
-		job, err := backoff.Retry(wp.stopCtx, func() (*storage.ReviewJob, error) {
-			if err := wp.stopCtx.Err(); err != nil {
+		job, err := backoff.Retry(claimCtx, func() (*storage.ReviewJob, error) {
+			if err := claimCtx.Err(); err != nil {
 				return nil, backoff.Permanent(err)
 			}
 			paused, err := wp.db.IsQueuePaused()
@@ -910,7 +921,7 @@ func (wp *WorkerPool) worker(id int) {
 			wp.runningJobsMu.Lock()
 			wp.workerJobs[workerID] = workerClaimingJobID
 			wp.runningJobsMu.Unlock()
-			job, err := wp.db.ClaimJobContext(wp.stopCtx, workerID)
+			job, err := wp.db.ClaimJobContext(claimCtx, workerID)
 			wp.runningJobsMu.Lock()
 			if job != nil && err == nil {
 				wp.workerJobs[workerID] = job.ID
@@ -918,15 +929,20 @@ func (wp *WorkerPool) worker(id int) {
 				delete(wp.workerJobs, workerID)
 			}
 			wp.runningJobsMu.Unlock()
-			if err != nil {
+			if err != nil && claimCtx.Err() == nil {
 				wp.noteClaimError(workerID, err)
 			}
 			return job, err
 		}, backoff.WithBackOff(backoff.NewConstantBackOff(5*time.Second)),
 			backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0))
+		wp.workersMu.Lock()
+		delete(wp.claimCancels, id)
+		wp.workersMu.Unlock()
+		cancelClaim()
 		if err != nil {
-			log.Printf("[%s] Shutting down", workerID)
-			return
+			// A shrink cancels only the pending claim. Recheck the target in
+			// the next iteration, since the pool may already have grown again.
+			continue
 		}
 		if job == nil {
 			// Queue paused or no job available: poll again rather than retry a failure.
