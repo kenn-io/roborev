@@ -191,46 +191,38 @@ jobs:
         include:
           - os: ubuntu-latest
             runner: ubuntu-latest
-            timeout-minutes: 39
           - os: macos-latest
             runner: macos-latest
-            timeout-minutes: 40
           - os: windows-latest
             runner: windows-2025
             shard: windows-remaining
-            timeout-minutes: 38
           - os: windows-latest
             runner: windows-2025
             shard: windows-daemon-a-f
-            timeout-minutes: 36
             package: ./internal/daemon
             pattern: &daemon-a-f '^(Test([A-F]|[^A-Z]|$)|Example|Fuzz)'
           - os: windows-latest
             runner: windows-2025
             shard: windows-daemon-g-m-t-z
-            timeout-minutes: 38
             package: ./internal/daemon
             pattern: &daemon-g-m-t-z '^Test[G-MT-Z]'
           - os: windows-latest
             runner: windows-2025
             shard: windows-daemon-n-s
-            timeout-minutes: 36
             package: ./internal/daemon
             pattern: &daemon-n-s '^Test[N-S]'
           - os: windows-latest
             runner: windows-2025
             shard: windows-cli-a-m-t-z
-            timeout-minutes: 38
             package: ./cmd/roborev
             pattern: '^(Test([A-MT-Z]|[^A-Z]|$)|Example|Fuzz)'
           - os: windows-latest
             runner: windows-2025
             shard: windows-cli-n-s
-            timeout-minutes: 38
             package: ./cmd/roborev
             pattern: '^Test[N-S]'
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: ${{ matrix.timeout-minutes }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -268,7 +260,7 @@ jobs:
           # under the race detector, so dedicated jobs shard it below.
           go list ./... |
             grep -v '^go\.kenn\.io/roborev/internal/daemon$' |
-            xargs go test -json -timeout 30m -race -shuffle=on -tags integration 2>&1 |
+            xargs go test -json -timeout 15m -race -shuffle=on -tags integration 2>&1 |
             tee "test-results/${{ matrix.os }}-test.jsonl"
 
       - name: Test (macOS)
@@ -278,7 +270,7 @@ jobs:
           mkdir -p test-results
           # Go's race detector can intermittently hang/crash while spawning child
           # processes on darwin/arm64; Linux keeps the race coverage for CI.
-          go test -json -timeout 30m -shuffle=on -tags integration ./... 2>&1 |
+          go test -json -timeout 15m -shuffle=on -tags integration ./... 2>&1 |
             tee "test-results/${{ matrix.os }}-test.jsonl"
 
       - name: Test (Windows)
@@ -298,7 +290,7 @@ jobs:
           # ("go: remove ...\.exe: Access is denied") even when all
           # tests pass. Only suppress that specific pattern.
           $testResultPath = "test-results/${{ matrix.shard || matrix.os }}-test.jsonl"
-          go test -json -timeout 30m -shuffle=on -tags integration @testArgs @packages > $testResultPath 2>&1
+          go test -json -timeout 15m -shuffle=on -tags integration @testArgs @packages > $testResultPath 2>&1
           $exitCode = $LASTEXITCODE
           if ($exitCode -ne 0) {
             Write-Host "go test failed; recent output:"
@@ -348,7 +340,7 @@ jobs:
           - name: n-s
             pattern: *daemon-n-s
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -363,7 +355,7 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p test-results
-          go test -json -timeout 20m -race -shuffle=on -tags integration \
+          go test -json -timeout 10m -race -shuffle=on -tags integration \
             -run '${{ matrix.shard.pattern }}' ./internal/daemon 2>&1 |
             tee "test-results/daemon-${{ matrix.shard.name }}.jsonl"
 
@@ -379,7 +371,7 @@ jobs:
     needs: go-changes
     if: needs.go-changes.outputs.changed == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 51
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -399,7 +391,7 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p test-results
-          go test -json -timeout 45m -shuffle=on -tags integration -coverprofile=coverage.out ./... 2>&1 |
+          go test -json -timeout 10m -shuffle=on -tags integration -coverprofile=coverage.out ./... 2>&1 |
             tee test-results/coverage.jsonl
 
       - name: Upload coverage test timings
