@@ -24,6 +24,13 @@ func resolveCICheckCodex(ctx context.Context, dir, command string) (ciCheckCodex
 	if err != nil {
 		return ciCheckCodex{}, err
 	}
+	// mise's npm backend uses a shell shim beside the linked @openai package.
+	if filepath.Base(real) == "codex" && filepath.Base(filepath.Dir(real)) == ".bin" {
+		real, err = filepath.EvalSymlinks(filepath.Join(filepath.Dir(real), "..", "@openai", "codex", "bin", "codex.js"))
+		if err != nil {
+			return ciCheckCodex{}, err
+		}
+	}
 	// The supported npm install keeps the native package beside @openai/codex.
 	if filepath.Base(real) == "codex.js" && filepath.Base(filepath.Dir(real)) == "bin" && filepath.Base(filepath.Dir(filepath.Dir(real))) == "codex" {
 		scope := filepath.Dir(filepath.Dir(filepath.Dir(real)))

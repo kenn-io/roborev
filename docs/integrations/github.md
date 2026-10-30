@@ -763,13 +763,15 @@ build and host requirements.
 
 The checker works in a copy of the PR checkout. The host warms only the root
 `go.mod` in the original disposable checkout after making the copy. The root
-`go.mod` must be a regular file. Warming cannot change the code being checked.
-Nested modules and Go workspaces receive no separate warming; findings that need
-unavailable dependencies post unchecked. Inside the sandbox, the checker can
-change its scratch files and read the shared clone's Git metadata and warmed
-caches. Model calls use nono's credential route, which reads the host's current
-Codex login outside the sandbox. Tests that start loopback servers cannot run in
-this sandbox; the checker keeps findings it cannot try.
+`go.mod` must be a regular file. Any root `go.sum`, `go.work`, or `go.work.sum`
+must also be a regular file; otherwise the review posts unchecked. Warming
+cannot change the code being checked. Nested modules and Go workspaces receive
+no separate warming; findings that need unavailable dependencies post unchecked.
+Inside the sandbox, the checker can change its scratch files and read the shared
+clone's Git metadata and warmed caches. Model calls use nono's credential route,
+which reads the host's current Codex login outside the sandbox. Tests that start
+loopback servers cannot run in this sandbox; the checker keeps findings it
+cannot try.
 
 A finding drops only when one verdict supplies evidence and a reason to drop it.
 Missing or duplicate verdicts keep the finding. The job log records the
