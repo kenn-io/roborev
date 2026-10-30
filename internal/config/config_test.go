@@ -5678,3 +5678,18 @@ func TestPostCommitQuietPeriodValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestPostCommitBatchingInheritsGlobalAfterRepoSave(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.toml"), []byte("post_commit_batch_size = 5\npost_commit_quiet_period = \"5m\"\n"), 0o600))
+	repo := newTempRepo(t, "")
+	require.NoError(t, SaveRepoConfigTo(filepath.Join(repo, ".roborev.toml"), &RepoConfig{Agent: "test"}))
+
+	size, err := ResolvePostCommitBatchSizeWithError(repo)
+	require.NoError(t, err)
+	assert.Equal(t, 5, size)
+	period, err := ResolvePostCommitQuietPeriod(repo)
+	require.NoError(t, err)
+	assert.Equal(t, 5*time.Minute, period)
+}

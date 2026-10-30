@@ -2549,6 +2549,16 @@ func filterUnintendedZeroRepoConfigKeys(
 		!explicit["reuse_review_session_lookback"] {
 		data = removeTopLevelTOMLAssignment(data, "reuse_review_session_lookback")
 	}
+	if cfg.PostCommitBatchSize == 0 &&
+		!rawKeyPresent(raw, "post_commit_batch_size") &&
+		!explicit["post_commit_batch_size"] {
+		data = removeTopLevelTOMLAssignment(data, "post_commit_batch_size")
+	}
+	if cfg.PostCommitQuietPeriod == "" &&
+		!rawKeyPresent(raw, "post_commit_quiet_period") &&
+		!explicit["post_commit_quiet_period"] {
+		data = removeTopLevelTOMLAssignment(data, "post_commit_quiet_period")
+	}
 	if cfg.ReviewGuidelines == "" &&
 		!rawKeyPresent(raw, "review_guidelines") &&
 		!explicit["review_guidelines"] {
