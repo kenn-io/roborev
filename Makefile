@@ -301,11 +301,11 @@ CUSTOM_GCL := $(CURDIR)/.cache/golangci-lint/custom-gcl$(if $(filter Windows_NT,
 $(CUSTOM_GCL): .custom-gcl.yml
 	golangci-lint custom --destination "$(CURDIR)/.cache/golangci-lint" --name custom-gcl --version v$(GOLANGCI_LINT_VERSION)
 
-lint: check-golangci-lint $(CUSTOM_GCL)
+lint: check-golangci-lint $(CUSTOM_GCL) lint-workflow-retries
 	"$(CUSTOM_GCL)" run --fix ./...
 
 # Lint Go code without fixing (for CI)
-lint-ci: check-golangci-lint $(CUSTOM_GCL)
+lint-ci: check-golangci-lint $(CUSTOM_GCL) lint-workflow-retries
 	"$(CUSTOM_GCL)" run ./...
 
 # Validate Renovate config.
@@ -361,3 +361,7 @@ actions-lock-check-local: gh-actions-lock-install
 # Network check that the lockfile is complete and every locked commit is still valid
 actions-lock-check: gh-actions-lock-install
 	gh actions-lock --verify
+
+.PHONY: lint-workflow-retries
+lint-workflow-retries:
+	GOOS= GOARCH= go run go.kenn.io/kit/cmd/kennlint@v0.47.3 workflow-retries

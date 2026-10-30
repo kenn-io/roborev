@@ -90,8 +90,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+
       - name: Install SQLite headers
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
+        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
       - uses: actions/setup-go@v7.0.0
         with:
@@ -106,7 +108,7 @@ jobs:
           bun-version: '1.4.4'
 
       - name: Install frontend dependencies
-        run: bun install --frozen-lockfile
+        run: kit-retry 3 5 bun install --frozen-lockfile
 
       - name: Verify generated API contract
         run: make api-check
@@ -141,8 +143,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+
       - name: Install SQLite headers
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
+        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
       - uses: actions/setup-go@v7.0.0
         with:
@@ -157,7 +161,7 @@ jobs:
           bun-version: '1.4.4'
 
       - name: Install frontend dependencies
-        run: bun install --frozen-lockfile
+        run: kit-retry 3 5 bun install --frozen-lockfile
 
       - name: Verify generated API contract
         run: make api-check
@@ -225,9 +229,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+
       - name: Install SQLite headers
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
+        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
       - name: Configure Windows Go paths
         if: runner.os == 'Windows'
@@ -343,8 +349,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+
       - name: Install SQLite headers
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
+        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
       - uses: actions/setup-go@v7.0.0
         with:
@@ -374,8 +382,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+
       - name: Install SQLite headers
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
+        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
       - uses: actions/setup-go@v7.0.0
         with:
@@ -429,8 +439,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+
       - name: Install SQLite headers
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
+        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
       - uses: actions/setup-go@v7.0.0
         with:
@@ -449,9 +461,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+
       - name: Install SQLite headers
         if: needs.go-changes.outputs.changed == 'true'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
+        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
       - uses: actions/setup-go@v7.0.0
         if: needs.go-changes.outputs.changed == 'true'
