@@ -27,14 +27,14 @@ jobs:
       lint: ${{ github.event_name != 'workflow_dispatch' && steps.filter.outputs.lint == 'true' }}
       web: ${{ github.event_name != 'workflow_dispatch' && steps.filter.outputs.web == 'true' }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 
       - name: Detect Go changes
         if: github.event_name != 'workflow_dispatch'
         id: filter
-        uses: step-security/paths-filter@5f3d1a83daa17363d18b529d60375e1e36566799  # v4.0.3
+        uses: step-security/paths-filter@v4.0.3
         with:
           base: ${{ github.ref }}
           filters: |
@@ -87,20 +87,20 @@ jobs:
     if: needs.go-changes.outputs.changed == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@v7.0.1
 
       - name: Install SQLite headers
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version: '1.27.3'
 
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: '26.12.1'
 
-      - uses: step-security/setup-bun@f6f5dadeac34f70c7828f731569e8d6e8330b8fb  # v2.1.3
+      - uses: step-security/setup-bun@v2.1.3
         with:
           bun-version: '1.4.4'
 
@@ -118,11 +118,11 @@ jobs:
     if: github.event_name == 'pull_request' && needs.go-changes.outputs.changed == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version: '1.27.3'
 
@@ -136,20 +136,20 @@ jobs:
     if: needs.go-changes.outputs.web == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@v7.0.1
 
       - name: Install SQLite headers
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version: '1.27.3'
 
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: '26.12.1'
 
-      - uses: step-security/setup-bun@f6f5dadeac34f70c7828f731569e8d6e8330b8fb  # v2.1.3
+      - uses: step-security/setup-bun@v2.1.3
         with:
           bun-version: '1.4.4'
 
@@ -219,7 +219,7 @@ jobs:
             pattern: '^Test[N-S]'
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@v7.0.1
 
       - name: Install SQLite headers
         if: runner.os == 'Linux'
@@ -235,12 +235,12 @@ jobs:
             "$name=$path" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           }
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version: '1.27.3'
 
       # prepare-demo-db.sh tests run the uv pinned in mise.lock.
-      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550  # v5.2.2
+      - uses: jdx/mise-action@v5.2.2
 
       - name: Build
         if: runner.os != 'Windows' || matrix.shard == 'windows-remaining'
@@ -308,7 +308,7 @@ jobs:
 
       - name: Upload test JSON
         if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ matrix.shard || matrix.os }}-test-json
           path: test-results/${{ matrix.shard || matrix.os }}-test.jsonl
@@ -336,12 +336,12 @@ jobs:
             pattern: *daemon-n-s
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@v7.0.1
 
       - name: Install SQLite headers
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version: '1.27.3'
 
@@ -355,7 +355,7 @@ jobs:
 
       - name: Upload test JSON
         if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: daemon-${{ matrix.shard.name }}-test-json
           path: test-results/daemon-${{ matrix.shard.name }}.jsonl
@@ -366,17 +366,17 @@ jobs:
     if: needs.go-changes.outputs.changed == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@v7.0.1
 
       - name: Install SQLite headers
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version: '1.27.3'
 
       # prepare-demo-db.sh tests run the uv pinned in mise.lock.
-      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550  # v5.2.2
+      - uses: jdx/mise-action@v5.2.2
 
       - name: Test with coverage
         # Race coverage runs in the test and daemon-race jobs; repeating it here
@@ -389,14 +389,14 @@ jobs:
 
       - name: Upload coverage test timings
         if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: coverage-test-json
           path: test-results/coverage.jsonl
           if-no-files-found: ignore
 
       - name: Upload coverage
-        uses: step-security/codecov-action@367bf7e789f1b8e452a759be81c791de8d69b2f6  # v7.1.1
+        uses: step-security/codecov-action@v7.1.1
         with:
           file: coverage.out
         continue-on-error: true
@@ -420,12 +420,12 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@v7.0.1
 
       - name: Install SQLite headers
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version: '1.27.3'
 
@@ -439,13 +439,13 @@ jobs:
     if: needs.go-changes.outputs.lint == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@v7.0.1
 
       - name: Install SQLite headers
         if: needs.go-changes.outputs.changed == 'true'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+      - uses: actions/setup-go@v7.0.0
         if: needs.go-changes.outputs.changed == 'true'
         with:
           go-version: '1.27.3'
@@ -457,7 +457,7 @@ jobs:
 
       - name: golangci-lint
         if: needs.go-changes.outputs.changed == 'true'
-        uses: step-security/golangci-lint-action@2697867e9c204558ca23d0decdd0039dc21f2b93  # v9.3.0
+        uses: step-security/golangci-lint-action@v9.3.0
         with:
           version: ${{ steps.golangci.outputs.version }}
 
@@ -468,7 +468,7 @@ jobs:
           GOOS: windows
         run: ./custom-gcl run ./...
 
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e  # v10.3.2
+      - uses: astral-sh/setup-uv@v10.3.2
         with:
           version: '0.13.5'
           enable-cache: true
