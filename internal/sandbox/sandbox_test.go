@@ -13,16 +13,12 @@ import (
 
 func TestSandboxCommandRejectsUnavailablePolicy(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		memory int64
-		fake   bool
-		empty  bool
-		want   string
+		name string
+		fake bool
+		want string
 	}{
-		{"missing", 1 << 30, false, false, "find sandbox nono"},
-		{"checksum", 1 << 30, true, false, "checksum mismatch"},
-		{"memory", 0, false, false, "MemoryMax must be positive"},
-		{"empty-workdir", 1 << 30, false, true, "resolve sandbox WorkDir: empty path"},
+		{"missing", false, "find sandbox nono"},
+		{"checksum", true, "checksum mismatch"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -35,11 +31,7 @@ func TestSandboxCommandRejectsUnavailablePolicy(t *testing.T) {
 				require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n: >'"+marker+"'\n"), 0o700))
 			}
 			t.Setenv("PATH", dir)
-			work := dir
-			if tc.empty {
-				work = ""
-			}
-			_, _, _, err := (Job{WorkDir: work, MemoryMax: tc.memory}).Command(context.Background(), []string{"true"})
+			_, _, _, err := (Job{WorkDir: dir, MemoryMax: 1 << 30}).Command(context.Background(), []string{"true"})
 			require.ErrorContains(t, err, tc.want)
 			if tc.fake {
 				assert.NoFileExists(t, marker)

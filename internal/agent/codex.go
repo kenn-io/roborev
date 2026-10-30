@@ -534,6 +534,7 @@ func (a *CodexAgent) review(
 	)
 	command := a.Command
 	var env []string
+	var cancel func() error
 	if a.sandbox != nil {
 		job, cleanup, err := a.sandbox.prepare(repoPath)
 		if err != nil {
@@ -546,6 +547,7 @@ func (a *CodexAgent) review(
 		}
 		defer cleanup()
 		command, args, env = wrapped[0], wrapped[1:], wrappedEnv
+		cancel = func() error { cleanup(); return nil }
 	}
 	stdoutDiagnostics := newCodexDiagnosticCapture()
 
@@ -554,6 +556,7 @@ func (a *CodexAgent) review(
 		Command:      command,
 		Args:         args,
 		Env:          env,
+		Cancel:       cancel,
 		Dir:          repoPath,
 		Stdin:        strings.NewReader(prompt),
 		Output:       output,

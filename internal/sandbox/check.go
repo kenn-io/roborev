@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-func (j Job) check(ctx context.Context, wrapper, env []string) error {
+func (j Job) check(ctx context.Context, wrapper, env []string, cancel func()) error {
 	var denied []string
 	for _, path := range j.DenyReadPaths {
 		resolved, err := ResolvePath(path)
@@ -77,6 +77,9 @@ exit "$failed"
 	args = append(args, denied...)
 	args = append(args, j.ReadPaths...)
 	cmd := exec.CommandContext(ctx, wrapper[0], args...)
+	if cancel != nil {
+		cmd.Cancel = func() error { cancel(); return nil }
+	}
 	cmd.Dir = j.WorkDir
 	cmd.Env = append(append([]string{}, env...), "ROBOREV_SANDBOX_CANARY=planted")
 	output, err := cmd.CombinedOutput()

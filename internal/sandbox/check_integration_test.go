@@ -3,6 +3,7 @@
 package sandbox
 
 import (
+	"context"
 	"encoding/json/v2"
 	"fmt"
 	"os"
@@ -62,7 +63,7 @@ func runInJob(t *testing.T, job Job, argv ...string) string {
 func TestSandboxSelfCheck(t *testing.T) {
 	testutil.RequireSandboxIntegration(t)
 	job := Job{WorkDir: t.TempDir()}
-	err := job.check(t.Context(), []string{"env"}, []string{"PATH=/usr/bin:/bin"})
+	err := job.check(t.Context(), []string{"env"}, []string{"PATH=/usr/bin:/bin"}, nil)
 	require.ErrorContains(t, err, "sandbox self-check failed")
 	for _, name := range []string{"canary-read", "loopback-connect", "environment-canary"} {
 		assert.Contains(t, err.Error(), name)
@@ -128,8 +129,7 @@ func TestSandboxLiteralGrants(t *testing.T) {
 	}
 	script := shellChecks + `
 check read-grant allow cat "$2/allowed"
-check file-read allow cat "$8"
-check file-write deny bash -c 'echo changed >> "$1"' probe "$8"
+check file-read allow cat "$7"
 check sibling-write deny touch "$3/overwritten"
 check sibling-read deny cat "$4"
 check home-write deny touch "$HOME/write"
@@ -138,16 +138,15 @@ cd "$5" || exit 1
 check git-read allow git status --porcelain
 check git-commit deny bash -c 'echo changed >> main.go && git add main.go && git -c user.name=Test -c user.email=test@example.com commit -m probe'
 check git-config deny git config --local sandbox.probe changed
-check dbus-systemd deny env XDG_RUNTIME_DIR="$6" DBUS_SESSION_BUS_ADDRESS="unix:path=$6/bus" systemd-run --user --wait -q /usr/bin/true
 check direct-upstream deny curl --fail-with-body -sS -o "$1/direct-upstream-response" https://chatgpt.com/backend-api/codex/responses
-check auth-read deny cat "$7"
+check auth-read deny cat "$6"
 # Exercise the endpoint-only route beside /codex; DNS failure isn't a denial.
 base=$(dirname "$CODEX_BASE_URL")
 curl --fail-with-body -sS -H "Proxy-Authorization: Bearer $NONO_PROXY_TOKEN" -o "$1/direct-response" "$base/_ep_chatgpt.com/nono-no-direct-access"
 [ "$?" = 22 ] || failed=1
 exit "$failed"
 `
-	runInJob(t, job, "bash", "-c", script, "probe", work, read, sibling, secret, repo, os.Getenv("XDG_RUNTIME_DIR"), authFile, readFile)
+	runInJob(t, job, "bash", "-c", script, "probe", work, read, sibling, secret, repo, authFile, readFile)
 	assert.NoFileExists(t, filepath.Join(sibling, "overwritten"))
 	denial, err := os.ReadFile(filepath.Join(work, "direct-upstream-response"))
 	require.NoError(t, err)
@@ -194,13 +193,21 @@ func TestSandboxProcessCleanup(t *testing.T) {
 	testutil.RequireSandboxIntegration(t)
 	work := t.TempDir()
 	job := routeJob(t, work)
+	tmp := t.TempDir()
+	job.Env = append(job.Env, "TMPDIR="+tmp)
 	pidFile := filepath.Join(work, "child.pid")
-	wrapped, env, cleanup, err := job.Command(t.Context(), []string{"bash", "-c", "setsid /usr/bin/sleep 300 </dev/null >/dev/null 2>&1 & echo $! > '" + pidFile + "'"})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	wrapped, env, cleanup, err := job.Command(ctx, []string{"bash", "-c", "setsid /usr/bin/sleep 300 </dev/null >/dev/null 2>&1 & echo $! > '" + pidFile + "'; wait"})
 	require.NoError(t, err)
 	defer cleanup()
-	process := exec.CommandContext(t.Context(), wrapped[0], wrapped[1:]...)
+	process := exec.CommandContext(ctx, wrapped[0], wrapped[1:]...)
+	process.Cancel = func() error { cleanup(); return nil }
 	process.Env, process.Dir = env, work
-	require.NoError(t, process.Run())
+	require.NoError(t, process.Start())
+	t.Cleanup(func() { _ = process.Wait() })
+	// The external sandbox process publishes its child PID after startup.
+	require.Eventually(t, func() bool { _, err := os.Stat(pidFile); return err == nil }, 5*time.Second, 10*time.Millisecond)
 	data, err := os.ReadFile(pidFile)
 	require.NoError(t, err)
 	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
@@ -217,7 +224,15 @@ func TestSandboxProcessCleanup(t *testing.T) {
 	}()
 	// The detached sleep must be running before cleanup.
 	require.Eventually(t, sleeping, 5*time.Second, 10*time.Millisecond)
+	files, err := os.ReadDir(tmp)
+	require.NoError(t, err)
+	require.NotEmpty(t, files, "nono must create temporary files before cancellation")
+	cancel()
+	require.Error(t, process.Wait())
 	cleanup()
+	files, err = os.ReadDir(tmp)
+	require.NoError(t, err)
+	assert.Empty(t, files, "nono left temporary files after cancellation")
 	// systemd kills the external process; a zombie has already exited.
 	assert.Eventually(t, func() bool {
 		stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))

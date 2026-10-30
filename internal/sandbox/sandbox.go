@@ -17,6 +17,7 @@ import (
 )
 
 // Job describes the caller's filesystem, environment, network, and memory grants.
+// Env must give nono a job-private, disposable HOME for its session state.
 type Job struct {
 	WorkDir   string
 	ReadPaths []string
@@ -35,6 +36,7 @@ type Route struct {
 
 // Command verifies nono and the job policy before returning a wrapped command.
 // The caller must call cleanup after the command finishes.
+// On cancellation, call cleanup instead of killing the wrapped process directly.
 // The wrapped command starts in a private directory, so callers pass an absolute working directory, as Codex does with -C.
 func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cleanup func(), err error) {
 	if j.MemoryMax <= 0 {
@@ -169,7 +171,7 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 	}
 	checkUnit := filepath.Base(dir) + "-check.scope"
 	checkCmd := append([]string{cmd[0], "--unit=" + checkUnit}, cmd[1:]...)
-	err = j.check(ctx, checkCmd, env)
+	err = j.check(ctx, checkCmd, env, func() { killScope(checkUnit) })
 	killScope(checkUnit)
 	if err != nil {
 		cleanup()
@@ -181,8 +183,8 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 
 func killScope(unit string) {
 	// Use the host environment and a fresh context: the job may be cancelled.
-	_ = exec.Command("systemctl", "--user", "kill", "--signal=KILL", "--kill-whom=all", unit).Run()
-	// Wait for the unit to stop before the caller removes the job's files.
+	// Stop sends SIGTERM so nono can remove its files, waits for the scope to
+	// exit, and escalates to SIGKILL after systemd's stop timeout.
 	_ = exec.Command("systemctl", "--user", "stop", unit).Run()
 }
 
