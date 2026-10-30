@@ -2219,14 +2219,14 @@ source. Every request uses Bearer authentication when a token is configured.
 `[cost] timeout` governs the lookup, including session ID resolution, and
 defaults to `10s`.
 
-AgentsView must already have indexed the agent's session and its subagents.
-With AgentsView v0.46.1 or later, roborev resolves a missing raw session ID
-through the server's session ID resolver and retries usage with the unique
-indexed ID. Older servers report an error instead of guessing. No matches
-leave the job unpriced for existing reconciliation to retry. Ambiguous matches
-and rejected tokens produce explicit errors. Roborev never falls back to the
-local CLI when this provider is selected. Resumed sessions remain excluded
-because AgentsView totals are cumulative.
+AgentsView must already have indexed the agent's session and its subagents. With
+AgentsView v0.46.1 or later, roborev resolves a missing raw session ID through
+the server's session ID resolver and retries usage with the unique indexed ID.
+Older servers report an error instead of guessing. No matches leave the job
+unpriced for existing reconciliation to retry. Ambiguous matches and rejected
+tokens produce explicit errors. Roborev never falls back to the local CLI when
+this provider is selected. Resumed sessions remain excluded because AgentsView
+totals are cumulative.
 
 `roborev doctor` reports the running daemon's provider and probes AgentsView
 reachability and authentication using the daemon's environment. If the daemon

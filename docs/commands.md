@@ -953,8 +953,8 @@ when that log is still available.
 For local or remote AgentsView servers, configure global `[agentsview] url` and
 optionally `token_file` (or the daemon's `AGENTSVIEW_SERVER_TOKEN`). This uses
 authenticated HTTP, includes subagents, and supports raw session IDs on
-AgentsView v0.46.1 or later through session ID resolution. The server must index the
-sessions first. `roborev doctor` reports the running daemon's provider and
+AgentsView v0.46.1 or later through session ID resolution. The server must index
+the sessions first. `roborev doctor` reports the running daemon's provider and
 probes reachability and authentication in the daemon's environment. When the
 daemon cannot supply this diagnostic, the shell-only result remains a warning.
 Backfill uses the same provider as live jobs. See
