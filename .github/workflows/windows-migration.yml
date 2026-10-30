@@ -39,7 +39,7 @@ jobs:
 
       - name: Detect Go changes
         id: filter
-        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d  # v4.0.3
+        uses: step-security/paths-filter@5f3d1a83daa17363d18b529d60375e1e36566799  # v4.0.3
         with:
           base: ${{ github.ref }}
           filters: |
