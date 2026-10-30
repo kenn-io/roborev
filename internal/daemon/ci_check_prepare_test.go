@@ -72,8 +72,8 @@ func TestCICheckPreparation(t *testing.T) {
 					t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 				}
 				if name == "checker" {
-					// The repository's Git directory joins the read grants, so it can't hold the Codex login.
-					t.Setenv("CODEX_HOME", filepath.Join(repo.Root, ".git"))
+					// The shared object store joins the read grants, so it can't hold the Codex login.
+					t.Setenv("CODEX_HOME", filepath.Join(repo.Root, ".git", "objects"))
 					_, err = wp.prepareCICheck(t.Context(), job, command, nil, io.Discard)
 					require.ErrorContains(t, err, "read grant contains host")
 				}

@@ -19,8 +19,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/config"
-	"go.kenn.io/roborev/internal/sandbox"
 	reviewpkg "go.kenn.io/roborev/internal/review"
+	"go.kenn.io/roborev/internal/sandbox"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/pkg/structuredreview"

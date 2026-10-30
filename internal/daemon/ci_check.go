@@ -161,17 +161,11 @@ func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob
 	}
 	toolPath := os.Getenv("PATH")
 	run.Job.WorkDir = filepath.Join(root, "work")
-	var closeRepo func()
-	if run.Repo, closeRepo, err = wp.createExactCheckoutIn(ctx, "ci-checker", job, run.Job.WorkDir); err != nil {
+	var objects string
+	if run.Repo, objects, err = cloneCICheckRepo(ctx, job.RepoPath, checkout, run.Job.WorkDir); err != nil {
 		return
 	}
-	run.cleanup = ciCheckCleanup(checkout, func() { closeRepo(); closeCheckout() })
-	var commonDir string
-	commonDir, err = gitpkg.ResolveGitCommonDir(job.RepoPath)
-	if err != nil {
-		return
-	}
-	readPaths = append(readPaths, commonDir)
+	readPaths = append(readPaths, objects)
 	var goPaths []string
 	goPaths, err = warmGoModules(ctx, checkout, gitEnv, out)
 	if err != nil {
@@ -197,6 +191,20 @@ func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob
 	run.Job.MemoryMax = 8 << 30
 	run.Job.Env = env
 	return
+}
+
+// cloneCICheckRepo gives the checker its own Git config, since the shared clone's can hold credentials.
+// The clone borrows the shared object store, which is the only Git directory the checker needs to read.
+func cloneCICheckRepo(ctx context.Context, repoPath, checkout, dir string) (repo, objects string, err error) {
+	commonDir, err := gitpkg.ResolveGitCommonDir(repoPath)
+	if err != nil {
+		return "", "", err
+	}
+	repo = filepath.Join(dir, "repo")
+	if output, err := exec.CommandContext(ctx, "git", "clone", "--quiet", "--shared", checkout, repo).CombinedOutput(); err != nil {
+		return "", "", fmt.Errorf("clone checker repository: %w: %s", err, output)
+	}
+	return repo, filepath.Join(commonDir, "objects"), nil
 }
 
 func ciCheckCleanup(checkout string, closeCheckout func()) func() {
