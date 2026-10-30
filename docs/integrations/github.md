@@ -749,8 +749,8 @@ check_reasoning = "high"
 
 The checker is off by default. A repository can override `check` in its
 `.roborev.toml` on the default branch. Only the global config selects the model
-and reasoning. The checker uses the Codex command selected by `codex_cmd`.
-The daemon-free `roborev ci review` command ignores these checker settings.
+and reasoning. The checker uses the Codex command selected by `codex_cmd`. The
+daemon-free `roborev ci review` command ignores these checker settings.
 
 The host needs Linux on amd64, the pinned nono build, a systemd user manager,
 Codex with a host login, Bash, and Python 3 at `/usr/bin/python3`. Go is needed

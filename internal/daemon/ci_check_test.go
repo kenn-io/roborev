@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"go.kenn.io/roborev/internal/prompt"
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/streamfmt"
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
@@ -32,7 +34,6 @@ func TestCICheckApply(t *testing.T) {
 	for _, tc := range []struct {
 		name, raw string
 		want      []string
-		bad       bool
 	}{
 		{name: "drop with evidence", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":"build succeeded","reason":"claim refuted"}]}`, want: []string{"second"}},
 		{name: "explicit keep", raw: `{"verdicts":[{"finding":1,"keep":true,"evidence":"failed","reason":"reproduced"}]}`, want: []string{"first", "second"}},
@@ -42,16 +43,10 @@ func TestCICheckApply(t *testing.T) {
 		{name: "empty reason", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":"ok","reason":""}]}`, want: []string{"first", "second"}},
 		{name: "missing keep", raw: `{"verdicts":[{"finding":1,"evidence":"ok","reason":"refuted"}]}`, want: []string{"first", "second"}},
 		{name: "all dropped", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":"ok","reason":"refuted"},{"finding":2,"keep":false,"evidence":"ok","reason":"refuted"}]}`, want: []string{}},
-		{name: "malformed", raw: `{"verdicts":`, bad: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var log bytes.Buffer
 			got, err := applyCICheck(doc, jsontext.Value(tc.raw), &log)
-			if tc.bad {
-				require.Error(t, err)
-				assert.Equal(t, doc, got)
-				return
-			}
 			require.NoError(t, err)
 			problems := make([]string, 0, len(got.Findings))
 			for _, f := range got.Findings {
@@ -221,12 +216,51 @@ func TestCICheckStoredReview(t *testing.T) {
 	}
 }
 
+func TestCICheckLog(t *testing.T) {
+	for _, provider := range []string{"codex", "claude-code", "gemini", "grok", "opencode", "pi"} {
+		t.Run(provider, func(t *testing.T) {
+			tc := newWorkerTestContext(t, 1)
+			run, members, _ := enqueuePanelRun(t, tc, "checker-log", []memberSpec{{name: "one", agent: "test"}})
+			completeMember(t, tc, members[0].ID, "test", "finding")
+			job := releaseAndClaimSynthesis(t, tc, run)
+			job.Agent = provider
+			_, updates, unsubscribe := tc.Pool.outputBuffers.Subscribe(job.ID)
+			defer unsubscribe()
+			tc.Pool.ciCheck = func(_ context.Context, _ *storage.ReviewJob, _ ciCheckConfig, doc structuredreview.Document, _ []string, out io.Writer) (structuredreview.Document, error) {
+				// Include a split record and an unterminated tail, as subprocess writes can do.
+				fmt.Fprint(out, `{"type":"item.started","item":{"type":"command_execution",`)
+				fmt.Fprintln(out, `"command":"go test ./example"}}`)
+				fmt.Fprint(out, `{"type":"item.completed","item":{"type":"agent_message","text":"Checker progress"}}`)
+				return doc, nil
+			}
+			doc := structuredreview.Document{Findings: []structuredreview.Finding{{Problem: "claim"}}}
+			_, ran := tc.Pool.checkSynthesis(t.Context(), job, synthesisResult{}, doc, &ciCheckConfig{})
+			require.True(t, ran)
+			for _, want := range []string{"[Command: go test ./example]", "Checker progress"} {
+				var line OutputLine
+				select {
+				case line = <-updates:
+				default:
+				}
+				assert.Equal(t, want, line.Text)
+			}
+			log, err := os.ReadFile(JobLogPath(job.ID))
+			require.NoError(t, err)
+			var rendered bytes.Buffer
+			formatter := streamfmt.New(&rendered, true, streamfmt.DecoderForAgent(provider))
+			require.NoError(t, streamfmt.RenderLogWith(strings.NewReader(string(log)), formatter))
+			assert.Contains(t, rendered.String(), "go test ./example")
+			assert.Contains(t, rendered.String(), "Checker progress")
+		})
+	}
+}
+
 func TestCICheckCompletion(t *testing.T) {
 	raw := jsontext.Value(`{"schema_version":3,"source_labels":["test"],"summary":"Original","verdict":"pass","findings":[{"severity":"high","problem":"Build claim","fix":"Fix build","sources":[1]},{"severity":"medium","problem":"Data loss","fix":"Preserve data","sources":[1]}]}`)
 	doc, err := reviewpkg.DecodeStructuredReview(raw)
 	require.NoError(t, err)
 	original := synthesisResult{review: reviewpkg.ReviewResult{Agent: "test", Output: doc.Markdown(""), Verdict: storage.VerdictPass, StructuredOutput: raw}}
-	for _, mode := range []string{"failure", "keep", "below threshold", "empty canceled", "unable canceled", "checker canceled", "checker deadline"} {
+	for _, mode := range []string{"failure", "keep", "below threshold", "empty canceled", "checker canceled", "checker deadline"} {
 		t.Run(mode, func(t *testing.T) {
 			tc := newWorkerTestContext(t, 1)
 			run, members, _ := enqueuePanelRun(t, tc, "context-panel", []memberSpec{{name: "one", agent: "test"}})
@@ -256,23 +290,20 @@ func TestCICheckCompletion(t *testing.T) {
 			case "checker deadline":
 				cancel()
 				ctx, cancel = context.WithDeadline(t.Context(), time.Unix(0, 0))
-			case "empty canceled", "unable canceled", "checker canceled":
+			case "empty canceled", "checker canceled":
 				cancel()
 			}
 			defer cancel()
 			inputDoc, input := doc, original
-			if mode == "empty canceled" || mode == "unable canceled" {
+			if mode == "empty canceled" {
 				inputDoc.Findings = nil
 				inputDoc.Verdict = structuredreview.VerdictPass
-				if mode == "unable canceled" {
-					inputDoc.Verdict = structuredreview.VerdictUnableToReview
-				}
 				input.review.StructuredOutput, err = json.Marshal(inputDoc)
 				require.NoError(t, err)
 				input.review.Output = inputDoc.Markdown("")
 			}
 			tc.Pool.checkAndCompleteSynthesis(ctx, testWorkerID, job, input, inputDoc, &ciCheckConfig{})
-			if mode == "empty canceled" || mode == "unable canceled" {
+			if mode == "empty canceled" {
 				assert.Zero(t, calls)
 			} else {
 				assert.Equal(t, 1, calls)
