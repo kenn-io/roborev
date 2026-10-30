@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -1204,9 +1205,16 @@ func TestCodexSandboxRefusesInvalidPreconditions(t *testing.T) {
 }
 
 func TestCodexSandboxRepoContainment(t *testing.T) {
+	skipIfWindows(t)
 	work := t.TempDir()
 	hostHome := t.TempDir()
-	t.Setenv("CODEX_HOME", hostHome)
+	child := filepath.Join(hostHome, "child")
+	require.NoError(t, os.Mkdir(child, 0o700))
+	link := filepath.Join(t.TempDir(), "login-link")
+	require.NoError(t, os.Symlink(child, link))
+	t.Setenv("CODEX_HOME", link+"/..")
+	require.NoError(t, os.WriteFile(filepath.Join(hostHome, "auth.json"), []byte(`{"tokens":{"access_token":"requested-login"}}`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(link), "auth.json"), []byte(`{"tokens":{"access_token":"other-login"}}`), 0o600))
 	repo := filepath.Join(work, "repo")
 	require.NoError(t, os.Mkdir(repo, 0o700))
 	s := CodexSandbox{Job: sandbox.Job{WorkDir: work}}
@@ -1217,6 +1225,9 @@ func TestCodexSandboxRepoContainment(t *testing.T) {
 	job, cleanup, err := s.prepare(repo)
 	require.NoError(t, err)
 	assert.Contains(t, job.DenyReadPaths, filepath.Join(hostHome, "auth.json"))
+	out, err := exec.CommandContext(t.Context(), job.Route.Capture[0], job.Route.Capture[1:]...).Output()
+	require.NoError(t, err)
+	assert.Equal(t, "requested-login\n", string(out))
 	cleanup()
 }
 
