@@ -364,8 +364,8 @@ not gated on trailer support.
 ### Fix Guidelines
 
 Use the global-only `fix_guidelines` setting to tell Agent Hook and foreground
-`roborev fix` agents how to evaluate review findings instead of blindly applying
-every suggestion:
+`roborev fix` and `roborev refine` agents how to evaluate review findings
+instead of blindly applying every suggestion:
 
 ```toml
 # ~/.roborev/config.toml
@@ -375,19 +375,20 @@ project requirements. Explain findings that are intentionally not applied.
 """
 ```
 
-The value applies to direct fixes, batch fixes, and commit retries. It also
-appears at the end of triggered reminders for every Agent Hook profile. Missing
-or empty guidance preserves the existing automatic behavior. With guidance
-configured, direct `roborev fix` runs record whether changes were applied and
-preserve the agent's final explanation before closing each review. Batch runs
-record a neutral batch outcome, while the agent report gives every job ID a
-fixed or skipped disposition.
+The value applies to direct fixes, batch fixes, fix commit retries, and refine
+agents addressing findings. Fix and refine planning also receive it with
+`--plan` or `--plan-only`. It appears at the end of triggered reminders for
+every Agent Hook profile. Missing or empty guidance preserves the existing
+automatic behavior. With guidance configured, direct `roborev fix` runs record
+whether changes were applied and preserve the agent's final explanation before
+closing each review. Batch runs record a neutral batch outcome, while the agent
+report gives every job ID a fixed or skipped disposition.
 
 This key is not accepted in `.roborev.toml` and has no CLI or environment
 override. Agent Hook's `--config` option still controls profile thresholds and
 the full-replacement `instruction`, but it does not redirect `fix_guidelines`
-away from the standard global config. `roborev analyze --fix` and
-`roborev refine` keep their existing, separate prompt behavior.
+away from the standard global config. `roborev analyze --fix` keeps its
+existing, separate prompt behavior.
 
 ### Review Guidelines
 

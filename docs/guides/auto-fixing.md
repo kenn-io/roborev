@@ -81,6 +81,24 @@ Refine creates its own commits after applying agent changes. If
 those values directly with Git's `--author` and `--trailer` options. See
 [Fix Commit Metadata](/docs/configuration/#fix-commit-metadata).
 
+Set global [`fix_guidelines`](/docs/configuration/#fix-guidelines) to tell
+refine how to evaluate findings before changing code. The policy reaches the
+agent addressing findings and the planning agent with `--plan` or `--plan-only`.
+Blank guidelines add no policy instructions. The separate `analyze --fix`
+workflow does not use this setting.
+
+The default address prompt asks for `Changes:`, `Not changed:`, and
+`Verification:` sections. For findings left unchanged, it asks for a reason and
+evidence such as a file and line read or a command run. Verification lists only
+commands actually run and their observed results, or `not run`. Empty change
+sections use `none`. If the severity filter requires its exact marker, the agent
+returns only that marker.
+
+This report format does not change refine's no-change handling. If the agent
+makes no changes without returning the severity-filter marker, refine skips the
+review and records a generic comment; it does not retain the report or close the
+review.
+
 ## Refine vs Fix
 
 | | `roborev fix` | `roborev refine` |

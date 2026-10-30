@@ -1668,7 +1668,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 
 const (
 	batchPromptHeader               = "# Batch Fix Request\n\nThe following reviews found issues that need to be fixed.\nAddress all findings across all reviews in a single pass.\n\n"
-	batchPromptHeaderWithGuidelines = "# Batch Fix Request\n\nThe following reviews found issues that need to be evaluated and addressed.\nEvaluate each finding against the autofix guidelines. Apply changes for findings that warrant a fix, and record any finding intentionally not applied with the reason it was skipped.\n\n"
+	batchPromptHeaderWithGuidelines = "# Batch Fix Request\n\nThe following reviews found issues that need to be evaluated and addressed.\n" + autofix.GuidelinesEvaluationInstruction + "\n\n"
 	batchPromptFooter               = "## Instructions\n\nPlease apply fixes for all the findings above.\nFocus on the highest priority items first.\nAfter making changes, verify the code compiles/passes linting,\nrun relevant tests, and create a git commit summarizing all changes.\n"
 	batchPromptFooterWithGuidelines = "## Instructions\n\nApply fixes for findings that warrant a change and record intentionally skipped findings.\nFor each job ID, state whether it was fixed or skipped and explain why.\nFocus on the highest priority items first.\nAfter making changes, verify the code compiles/passes linting,\nrun relevant tests, and create a git commit summarizing all changes.\n"
 )
@@ -1988,8 +1988,8 @@ func buildGenericFixPromptWithMetadataForRef(
 		sb.WriteString("Please apply the suggested changes from the analysis above. ")
 		sb.WriteString("Make the necessary edits to address each finding. ")
 	} else {
-		sb.WriteString("Evaluate each finding against the autofix guidelines. ")
-		sb.WriteString("Apply changes for findings that warrant a fix, and record any finding intentionally not applied with the reason it was skipped. ")
+		sb.WriteString(autofix.GuidelinesEvaluationInstruction)
+		sb.WriteString(" ")
 	}
 	sb.WriteString("Focus on the highest priority items first.\n\n")
 	sb.WriteString("After making changes:\n")
