@@ -19,7 +19,8 @@ func TestCICheckCodexResolution(t *testing.T) {
 			if name == "mise npm" && (runtime.GOOS != "linux" || runtime.GOARCH != "amd64") {
 				t.Skip("requires linux/amd64 executable fixtures")
 			}
-			tools := t.TempDir()
+			tools, resolveErr := filepath.EvalSymlinks(t.TempDir())
+			require.NoError(t, resolveErr)
 			installed := filepath.Join(tools, "installed", "codex")
 			require.NoError(t, os.Mkdir(filepath.Dir(installed), 0o700))
 			require.NoError(t, os.WriteFile(installed, []byte("\x7fELFnative fixture"), 0o700))
