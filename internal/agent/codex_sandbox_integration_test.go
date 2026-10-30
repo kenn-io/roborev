@@ -37,7 +37,7 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	t.Setenv("CODEX_HOME", secrets)
 	require.NoError(t, os.WriteFile(filepath.Join(secrets, "auth.json"), []byte(`{"tokens":{"access_token":"sandbox-test-token"}}`), 0o600))
 
-	probe := fmt.Sprintf("#!/bin/bash\n[[ \"$CODEX_HOME\" == %q/.codex-home-* && -d \"$CODEX_HOME\" ]] && echo OK codex-home\n", work)
+	probe := fmt.Sprintf("#!/bin/bash\n[[ \"$CODEX_HOME\" == %q/.codex-home-* && -d \"$CODEX_HOME\" ]] && echo OK codex-home\n", repo)
 
 	const key = "sandbox-test-token"
 	var unauthorized atomic.Int32
@@ -88,7 +88,7 @@ func TestCodexSandboxIntegration(t *testing.T) {
 		for _, tool := range request.Tools {
 			assert.NotEqual(t, "web_search", tool.Type)
 		}
-		item := map[string]any{"type": "function_call", "id": "tool_test", "call_id": "tool_test", "name": "exec_command", "arguments": `{"cmd":"bash ../probe.sh","yield_time_ms":10000}`}
+		item := map[string]any{"type": "function_call", "id": "tool_test", "call_id": "tool_test", "name": "exec_command", "arguments": `{"cmd":"bash probe.sh","yield_time_ms":10000}`}
 		if len(outputs) > 0 {
 			final, err := json.Marshal(map[string]string{"probe": strings.Join(outputs, "\n")})
 			assert.NoError(t, err)
@@ -98,12 +98,12 @@ func TestCodexSandboxIntegration(t *testing.T) {
 		send("response.completed", map[string]any{"type": "response.completed", "response": map[string]any{"id": "resp_test", "usage": map[string]int{"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}}})
 	}))
 	defer server.Close()
-	require.NoError(t, os.WriteFile(filepath.Join(work, "probe.sh"), []byte(probe), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "probe.sh"), []byte(probe), 0o700))
 
 	job := sandbox.Job{
-		WorkDir: work, ReadPaths: []string{gitDir, filepath.Dir(filepath.Dir(codex))},
+		WorkDir: repo, ReadPaths: []string{gitDir, filepath.Dir(filepath.Dir(codex))},
 		MemoryMax: 8 << 30,
-		Env:       []string{"PATH=/usr/bin:/bin", "HOME=" + secrets, "TMPDIR=" + work},
+		Env:       []string{"PATH=/usr/bin:/bin", "HOME=" + secrets, "TMPDIR=" + repo},
 	}
 	if _, err := os.Stat("/etc/codex"); err == nil {
 		job.ReadPaths = append(job.ReadPaths, "/etc/codex")
@@ -119,7 +119,7 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	require.NoError(t, err, "%s", stream.String())
 	assert.Contains(t, string(result), "OK codex-home")
 	assert.Zero(t, unauthorized.Load())
-	homes, err := filepath.Glob(filepath.Join(work, ".codex-home-*"))
+	homes, err := filepath.Glob(filepath.Join(repo, ".codex-home-*"))
 	require.NoError(t, err)
 	assert.Empty(t, homes)
 	t.Run("cancellation", func(t *testing.T) {

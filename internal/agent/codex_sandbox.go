@@ -42,7 +42,7 @@ func (s *CodexSandbox) prepare(repoPath string) (sandbox.Job, func(), error) {
 		return job, nil, fmt.Errorf("resolve sandbox repo: %w", err)
 	}
 	rel, err := filepath.Rel(workDir, repo)
-	if err != nil || rel == "." || !filepath.IsLocal(rel) {
+	if err != nil || !filepath.IsLocal(rel) {
 		return job, nil, fmt.Errorf("sandbox repo must be inside job work dir")
 	}
 	job.WorkDir = workDir

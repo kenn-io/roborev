@@ -17,7 +17,7 @@ import (
 )
 
 // Job describes the caller's filesystem, environment, network, and memory grants.
-// Env must give nono a job-private, disposable HOME for its session state.
+// Env must give nono a job-private, disposable HOME outside WorkDir for its session state.
 type Job struct {
 	WorkDir   string
 	ReadPaths []string

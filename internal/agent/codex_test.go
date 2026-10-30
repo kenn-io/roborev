@@ -1221,19 +1221,19 @@ func TestCodexSandboxRepoContainmentAndSymlinkLogin(t *testing.T) {
 	repo := filepath.Join(work, "repo")
 	require.NoError(t, os.Mkdir(repo, 0o700))
 	s := CodexSandbox{Job: sandbox.Job{WorkDir: work}}
-	for _, rejected := range []string{t.TempDir(), work} {
-		_, _, err := s.prepare(rejected)
-		require.ErrorContains(t, err, "sandbox repo must be inside job work dir")
+	_, _, err := s.prepare(t.TempDir())
+	require.ErrorContains(t, err, "sandbox repo must be inside job work dir")
+	for _, accepted := range []string{repo, work} {
+		job, cleanup, err := s.prepare(accepted)
+		require.NoError(t, err)
+		resolvedHome, err := filepath.EvalSymlinks(hostHome)
+		require.NoError(t, err)
+		assert.Contains(t, job.DenyReadPaths, filepath.Join(resolvedHome, "auth.json"))
+		out, err := exec.CommandContext(t.Context(), job.Route.Capture[0], job.Route.Capture[1:]...).Output()
+		require.NoError(t, err)
+		assert.Equal(t, "requested-login\n", string(out))
+		cleanup()
 	}
-	job, cleanup, err := s.prepare(repo)
-	require.NoError(t, err)
-	resolvedHome, err := filepath.EvalSymlinks(hostHome)
-	require.NoError(t, err)
-	assert.Contains(t, job.DenyReadPaths, filepath.Join(resolvedHome, "auth.json"))
-	out, err := exec.CommandContext(t.Context(), job.Route.Capture[0], job.Route.Capture[1:]...).Output()
-	require.NoError(t, err)
-	assert.Equal(t, "requested-login\n", string(out))
-	cleanup()
 }
 
 func TestCodexSandboxWrapperFailure(t *testing.T) {

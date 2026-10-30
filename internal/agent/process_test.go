@@ -73,6 +73,14 @@ func TestContextProcessError(t *testing.T) {
 	require.ErrorIs(t, contextProcessError(ctx, tracker, exec.ErrWaitDelay, nil), context.Canceled, "expected context cancellation for wait delay")
 	require.ErrorIs(t, contextProcessError(ctx, tracker, nil, fs.ErrClosed), context.Canceled, "expected context cancellation for closed pipe parse error")
 	require.NoError(t, contextProcessError(ctx, tracker, errors.New("agent failed"), fs.ErrClosed), "real subprocess error should not be masked by closed pipe parse error")
+	t.Run("supervisor-exit-143", func(t *testing.T) {
+		skipIfWindows(t)
+		err := exec.Command("sh", "-c", "exit 143").Run()
+		require.Error(t, err)
+		require.NoError(t, contextProcessError(context.Background(), tracker, err, nil))
+		require.NoError(t, contextProcessError(ctx, nil, err, nil))
+		require.ErrorIs(t, contextProcessError(ctx, tracker, err, nil), context.Canceled)
+	})
 }
 
 func TestContextProcessErrorRunPathCancellation(t *testing.T) {

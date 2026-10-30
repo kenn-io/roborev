@@ -74,13 +74,20 @@ func TestSandboxSelfCheck(t *testing.T) {
 	auth := filepath.Join(hostHome, "auth.json")
 	require.NoError(t, os.WriteFile(auth, []byte("synthetic-token"), 0o600))
 	t.Chdir(secrets)
-	for _, tc := range []struct{ name, read, deny, want string }{
-		{"home", hostHome, auth, "deny-path-read"},
-		{"relative", hostHome, filepath.Join("codex", "auth.json"), "deny-path-read"},
-		{"directory", hostHome, hostHome, "deny-read path must be a file"},
+	for _, tc := range []struct{ name, read, deny, tool, script, want string }{
+		{"home", hostHome, auth, "", "", "deny-path-read"},
+		{"relative", hostHome, filepath.Join("codex", "auth.json"), "", "", "deny-path-read"},
+		{"directory", hostHome, hostHome, "", "", "deny-read path must be a file"},
+		{"repo-cat", hostHome, auth, "cat", "#!/bin/sh\nexit 1\n", "deny-path-read"},
+		{"repo-bash", hostHome, auth, "bash", "#!/bin/sh\nexit 0\n", "deny-path-read"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			job := routeJob(t, work)
+			if tc.tool != "" {
+				require.NoError(t, os.WriteFile(filepath.Join(work, tc.tool), []byte(tc.script), 0o700))
+				job.Env[0] = "PATH=" + work + ":/usr/bin:/bin"
+				defer os.Remove(filepath.Join(work, tc.tool))
+			}
 			job.ReadPaths, job.DenyReadPaths = []string{tc.read}, []string{tc.deny}
 			_, _, cleanup, err := job.Command(t.Context(), []string{"true"})
 			if cleanup != nil {

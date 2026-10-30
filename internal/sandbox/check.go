@@ -46,8 +46,8 @@ func (j Job) check(ctx context.Context, wrapper, env []string, cancel func()) er
 	const probe = `
 failed=0
 bad() { echo "$1"; failed=1; }
-touch "$1/.sandbox-write-$$" && rm "$1/.sandbox-write-$$" || bad workdir-write
-cat "$2" >/dev/null 2>&1 && bad canary-read
+/bin/touch "$1/.sandbox-write-$$" && /bin/rm "$1/.sandbox-write-$$" || bad workdir-write
+/bin/cat "$2" >/dev/null 2>&1 && bad canary-read
 ( : >/dev/tcp/127.0.0.1/"$3" ) 2>/dev/null && bad loopback-connect
 ( : >/dev/tcp/1.1.1.1/443 ) 2>/dev/null && bad external-connect
 /usr/bin/python3 -c 'import urllib.request,urllib.error,sys
@@ -63,13 +63,13 @@ except Exception:
 denied=$5
 shift 5
 for ((i=0; i<denied; i++)); do
-  cat "$1" >/dev/null 2>&1 && bad "deny-path-read: $1"
+  /bin/cat "$1" >/dev/null 2>&1 && bad "deny-path-read: $1"
   shift
 done
 exit "$failed"
 `
 	args := append([]string{}, wrapper[1:]...)
-	args = append(args, "bash", "--norc", "--noprofile", "-c", probe, "sandbox-check", j.WorkDir, secret, port, filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "bus"), strconv.Itoa(len(denied)))
+	args = append(args, "/bin/bash", "--norc", "--noprofile", "-c", probe, "sandbox-check", j.WorkDir, secret, port, filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "bus"), strconv.Itoa(len(denied)))
 	args = append(args, denied...)
 	cmd := exec.CommandContext(ctx, wrapper[0], args...)
 	if cancel != nil {
