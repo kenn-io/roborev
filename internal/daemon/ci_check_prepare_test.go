@@ -125,6 +125,31 @@ func TestCICheckWarming(t *testing.T) {
 	})
 }
 
+func TestCICheckRestartRecovery(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	repo := testutil.NewTestRepoWithCommit(t)
+	command := filepath.Join(t.TempDir(), "codex")
+	require.NoError(t, os.WriteFile(command, []byte("native fixture"), 0o700))
+	wp := &WorkerPool{}
+	run, err := wp.prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: repo.HeadSHA()}, command, nil, io.Discard)
+	require.NoError(t, err)
+	t.Cleanup(run.cleanup)
+	root := filepath.Dir(run.Job.WorkDir)
+	require.NoError(t, os.WriteFile(filepath.Join(run.Job.WorkDir, "gocache", "cached"), []byte("cache"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(run.Job.WorkDir, "scratch"), []byte("scratch"), 0o600))
+	before, err := exec.CommandContext(t.Context(), "git", "-C", repo.Root, "worktree", "list", "--porcelain").CombinedOutput()
+	require.NoError(t, err)
+	require.Contains(t, normalizeGitListOutput(string(before)), normalizeGitListPath(t, run.Repo))
+
+	// Startup recovery runs after an abrupt exit, without normal run cleanup.
+	require.NoError(t, cleanupStaleCIWorktrees(t.Context()))
+	assert.NoDirExists(t, run.Repo)
+	assert.NoDirExists(t, root)
+	after, err := exec.CommandContext(t.Context(), "git", "-C", repo.Root, "worktree", "list", "--porcelain").CombinedOutput()
+	require.NoError(t, err)
+	assert.NotContains(t, normalizeGitListOutput(string(after)), normalizeGitListPath(t, run.Repo))
+}
+
 func TestCICheckCredentialOverlap(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires symlinks")
