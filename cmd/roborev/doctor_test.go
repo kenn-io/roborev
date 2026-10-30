@@ -156,7 +156,9 @@ func TestDoctorHookToolsUseDaemonView(t *testing.T) {
 	assert.Equal(t, []string{`hook 1 (event "review.failed"): the kata CLI is not on the daemon's PATH`}, got.Details)
 
 	env.daemonAgents.HookTools[0] = agent.Diagnosis{Name: "kata", Available: true}
-	assert.Empty(t, checkDoctorIntegrations(env))
+	checks := checkDoctorIntegrations(env)
+	assert.Len(t, checks, 1)
+	assert.Equal(t, "integrations.usage", checks[0].ID)
 }
 
 func TestDoctorAgentsUnknownPreferredIgnoresBackup(t *testing.T) {

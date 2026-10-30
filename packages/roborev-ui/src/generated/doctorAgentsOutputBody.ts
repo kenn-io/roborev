@@ -3,6 +3,7 @@
  */
 import type { Diagnosis } from "./diagnosis";
 import type { DoctorPanel } from "./doctorPanel";
+import type { DoctorUsageProvider } from "./doctorUsageProvider";
 
 export interface DoctorAgentsOutputBody {
   /** A URL to the JSON Schema for this object. */
@@ -21,4 +22,6 @@ export interface DoctorAgentsOutputBody {
   repo_config_error?: string;
   /** The requested agent names, resolved by the daemon; unknown names report an error */
   requested: Diagnosis[];
+  /** Usage provider and authenticated probe result from the daemon process */
+  usage_provider?: DoctorUsageProvider;
 }

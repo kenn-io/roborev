@@ -61,6 +61,7 @@ export * from "./doctorAgentsOutputBody";
 export * from "./doctorAgentsParams";
 export * from "./doctorPanel";
 export * from "./doctorPanelMember";
+export * from "./doctorUsageProvider";
 export * from "./durationStats";
 export * from "./enqueueCreatedResponse";
 export * from "./enqueueRequest";
