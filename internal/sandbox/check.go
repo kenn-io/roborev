@@ -28,10 +28,7 @@ func (j Job) check(ctx context.Context, wrapper, env []string) error {
 		return fmt.Errorf("sandbox self-check setup: %w", err)
 	}
 	defer listener.Close()
-	_, port, err := net.SplitHostPort(listener.Addr().String())
-	if err != nil {
-		return fmt.Errorf("sandbox self-check setup: %w", err)
-	}
+	port := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
 	const probe = `
 failed=0
 bad() { echo "$1"; failed=1; }

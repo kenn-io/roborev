@@ -460,10 +460,9 @@ func (a *CodexAgent) review(
 	agenticMode := effectiveAgentic(ctx, a.Agentic)
 	runAgent := a
 	if a.sandbox != nil {
-		var err error
-		repoPath, err = filepath.Abs(repoPath)
-		if err != nil {
-			return "", fmt.Errorf("resolve sandbox repo: %w", err)
+		// The wrapped command starts in a private directory.
+		if !filepath.IsAbs(a.Command) || !filepath.IsAbs(repoPath) || !filepath.IsAbs(a.sandbox.Job.WorkDir) {
+			return "", fmt.Errorf("sandbox Codex command, repo, and work dir must be absolute")
 		}
 		clone := *a
 		clone.IgnoreUserConfig = false
@@ -487,8 +486,7 @@ func (a *CodexAgent) review(
 		}
 	}
 
-	// Sandboxed commands must run only after the job policy is verified.
-	// Let Codex validate its flags inside the sandbox instead of probing on the host.
+	// Sandboxed Codex validates its flags inside the verified policy, not on the host.
 	if a.sandbox == nil {
 		threadSourceOK, err := codexSupportsThreadSource(
 			ctx, runAgent.Command, runAgent.IgnoreUserConfig,
@@ -543,9 +541,6 @@ func (a *CodexAgent) review(
 			return "", err
 		}
 		defer cleanup()
-		if !filepath.IsAbs(command) {
-			return "", fmt.Errorf("sandbox Codex command must be absolute")
-		}
 		wrapped, wrappedEnv, cleanup, err := job.Command(ctx, append([]string{"/bin/sh", "-c", `exec "$0" "$@" -c "model_providers.roborev-route.base_url=\"$CODEX_BASE_URL\""`, command}, args...))
 		if err != nil {
 			return "", err

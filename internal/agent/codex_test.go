@@ -1206,7 +1206,7 @@ func TestCodexSandboxWrapperFailure(t *testing.T) {
 	repo := filepath.Join(dir, "repo")
 	require.NoError(t, os.Mkdir(repo, 0o700))
 	marker := filepath.Join(dir, "executed")
-	command := writeTempCommand(t, "#!/bin/sh\ncase \"$1\" in *etxtbsy*) exit 0;; esac\n: >'"+marker+"'\ncase \" $* \" in *' --help '*) echo '"+codexDangerousFlag+" "+codexThreadSourceFlag+"'; exit 0;; esac\n")
+	command := writeTempCommand(t, "#!/bin/sh\ncase \"$1\" in *etxtbsy*) exit 0;; esac\n: >'"+marker+"'\n")
 	t.Setenv("PATH", dir)
 	t.Setenv("CODEX_HOME", t.TempDir())
 	a := NewCodexAgent(command).WithSandbox(&CodexSandbox{Job: sandbox.Job{WorkDir: dir, MemoryMax: 1 << 30}})
@@ -1218,6 +1218,6 @@ func TestCodexSandboxWrapperFailure(t *testing.T) {
 	assert.Empty(t, homes)
 	a.Command = "./codex"
 	_, err = a.Review(t.Context(), repo, "HEAD", "review", nil)
-	require.ErrorContains(t, err, "sandbox Codex command must be absolute")
+	require.ErrorContains(t, err, "sandbox Codex command, repo, and work dir must be absolute")
 	assert.NoFileExists(t, marker)
 }

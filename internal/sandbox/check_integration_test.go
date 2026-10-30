@@ -3,7 +3,6 @@
 package sandbox
 
 import (
-	"context"
 	"encoding/json/v2"
 	"fmt"
 	"net"
@@ -15,10 +14,10 @@ import (
 	"syscall"
 	"testing"
 	"time"
-	"unsafe"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 
 	"go.kenn.io/roborev/internal/testenv"
 	"go.kenn.io/roborev/internal/testutil"
@@ -26,6 +25,39 @@ import (
 
 func TestMain(m *testing.M) {
 	os.Exit(testenv.RunIsolatedMain(m))
+}
+
+// shellChecks prints OK or BAD for each allow/deny probe and records any failure.
+const shellChecks = `
+failed=0
+check() {
+  name=$1 expected=$2; shift 2
+  "$@" >/dev/null 2>&1; actual=$?
+  if { [ "$expected" = allow ] && [ "$actual" -ne 0 ]; } || { [ "$expected" = deny ] && [ "$actual" -eq 0 ]; }; then
+    echo "BAD $name"; failed=1
+  else
+    echo "OK $name"
+  fi
+}
+`
+
+func routeJob(t *testing.T, work string) Job {
+	return Job{
+		WorkDir: work, MemoryMax: 1 << 30, Env: []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir()},
+		Route: Route{Name: "codex", Upstream: "https://chatgpt.com/backend-api/codex", Path: "/responses", EnvVar: "CODEX_PHANTOM", Capture: []string{"/bin/echo", "fixture-token"}},
+	}
+}
+
+func runInJob(t *testing.T, job Job, argv ...string) string {
+	t.Helper()
+	cmd, env, cleanup, err := job.Command(t.Context(), argv)
+	require.NoError(t, err)
+	defer cleanup()
+	process := exec.CommandContext(t.Context(), cmd[0], cmd[1:]...)
+	process.Env, process.Dir = env, job.WorkDir
+	out, err := process.CombinedOutput()
+	require.NoError(t, err, "%s", out)
+	return string(out)
 }
 
 func TestSandboxSelfCheck(t *testing.T) {
@@ -63,9 +95,11 @@ func TestSandboxLiteralGrants(t *testing.T) {
 	other, err := net.Listen("tcp4", "127.0.0.1:0")
 	require.NoError(t, err)
 	defer other.Close()
-	job := Job{WorkDir: work, ReadPaths: []string{read}, Route: Route{Name: "codex", Upstream: "https://chatgpt.com/backend-api/codex", Path: "/responses", EnvVar: "CODEX_PHANTOM", Capture: []string{"/bin/cat", authFile}},
-		Env: []string{"PATH=/usr/bin:/bin", "HOME=" + home, "XDG_CONFIG_HOME=" + configDir}, MemoryMax: 1 << 30}
-	script := testutil.SandboxShellChecks + `
+	job := Job{
+		WorkDir: work, ReadPaths: []string{read}, Route: Route{Name: "codex", Upstream: "https://chatgpt.com/backend-api/codex", Path: "/responses", EnvVar: "CODEX_PHANTOM", Capture: []string{"/bin/cat", authFile}},
+		Env: []string{"PATH=/usr/bin:/bin", "HOME=" + home, "XDG_CONFIG_HOME=" + configDir}, MemoryMax: 1 << 30,
+	}
+	script := shellChecks + `
 check work-write allow touch "$1/allowed"
 check read-grant allow cat "$2/allowed"
 check sibling-write deny touch "$3/overwritten"
@@ -87,22 +121,15 @@ curl --fail-with-body -sS -H "Proxy-Authorization: Bearer $NONO_PROXY_TOKEN" -o 
 [ "$?" = 22 ] || failed=1
 exit "$failed"
 `
-	cmd, env, cleanup, err := job.Command(t.Context(), []string{"bash", "-c", script, "probe", work, read, sibling, secret, repo, os.Getenv("XDG_RUNTIME_DIR"), strconv.Itoa(other.Addr().(*net.TCPAddr).Port), authFile})
-	require.NoError(t, err)
-	defer cleanup()
-	process := exec.CommandContext(t.Context(), cmd[0], cmd[1:]...)
-	process.Env, process.Dir = env, work
-	out, err := process.CombinedOutput()
-	require.NoError(t, err, "%s", out)
-	assert.NotContains(t, string(out), "BAD ")
+	out := runInJob(t, job, "bash", "-c", script, "probe", work, read, sibling, secret, repo, os.Getenv("XDG_RUNTIME_DIR"), strconv.Itoa(other.Addr().(*net.TCPAddr).Port), authFile)
 	for _, name := range []string{"work-write", "read-grant", "sibling-write", "sibling-read", "home-write", "shared-tmp-write", "git-read", "git-commit", "git-config", "dbus-systemd", "external-domain", "other-loopback", "direct-upstream", "auth-read"} {
-		assert.Contains(t, string(out), "OK "+name)
+		assert.Contains(t, out, "OK "+name)
 	}
 	assert.NoFileExists(t, filepath.Join(sibling, "overwritten"))
 	denial, err := os.ReadFile(filepath.Join(work, "direct-upstream-response"))
 	require.NoError(t, err)
 	// nono's TLS interceptor returns this body for an endpoint-policy denial.
-	assert.Equal(t, `{"error":"Forbidden"}`, string(denial))
+	assert.JSONEq(t, `{"error":"Forbidden"}`, string(denial))
 	denial, err = os.ReadFile(filepath.Join(work, "direct-response"))
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"error":"Forbidden"}`, string(denial))
@@ -110,8 +137,8 @@ exit "$failed"
 
 func TestSandboxUnenforceablePolicy(t *testing.T) {
 	testutil.RequireSandboxIntegration(t)
-	job := Job{WorkDir: t.TempDir(), Route: Route{Name: "codex", Upstream: "http://example.com", Path: "/responses", EnvVar: "CODEX_PHANTOM", Capture: []string{"/bin/echo", "fixture-token"}}, MemoryMax: 1 << 30,
-		Env: []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir()}}
+	job := routeJob(t, t.TempDir())
+	job.Route.Upstream = "http://example.com"
 	_, _, _, err := job.Command(t.Context(), []string{"true"})
 	require.ErrorContains(t, err, "must use HTTPS (HTTP only allowed for loopback addresses)")
 }
@@ -121,80 +148,52 @@ func TestSandboxHostPTYIsolation(t *testing.T) {
 	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|syscall.O_NOCTTY, 0)
 	require.NoError(t, err)
 	defer master.Close()
-	var unlocked, number uint32
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, master.Fd(), syscall.TIOCSPTLCK, uintptr(unsafe.Pointer(&unlocked)))
-	require.Zero(t, errno)
-	_, _, errno = syscall.Syscall(syscall.SYS_IOCTL, master.Fd(), syscall.TIOCGPTN, uintptr(unsafe.Pointer(&number)))
-	require.Zero(t, errno)
+	require.NoError(t, unix.IoctlSetPointerInt(int(master.Fd()), unix.TIOCSPTLCK, 0))
+	number, err := unix.IoctlGetInt(int(master.Fd()), unix.TIOCGPTN)
+	require.NoError(t, err)
 	slavePath := fmt.Sprintf("/dev/pts/%d", number)
 	slave, err := os.OpenFile(slavePath, os.O_RDWR|syscall.O_NOCTTY, 0)
 	require.NoError(t, err)
 	defer slave.Close()
 	_, err = master.WriteString("synthetic-host-input\n")
 	require.NoError(t, err)
-	work := t.TempDir()
-	job := Job{WorkDir: work, MemoryMax: 1 << 30,
-		Route: Route{Name: "codex", Upstream: "https://chatgpt.com/backend-api/codex", Path: "/responses", EnvVar: "CODEX_PHANTOM", Capture: []string{"/bin/echo", "fixture-token"}},
-		Env:   []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir()}}
-	script := testutil.SandboxShellChecks + `
+	script := shellChecks + `
 check host-terminal-read deny python3 -c 'import os,sys; f=os.open(sys.argv[1],os.O_RDONLY|os.O_NONBLOCK); print(os.read(f,1024))' "$1"
 check host-terminal-write deny bash -c 'echo sandbox-output > "$1"' probe "$1"
 exit "$failed"
 `
-	cmd, env, cleanup, err := job.Command(t.Context(), []string{"bash", "-c", script, "probe", slavePath})
-	require.NoError(t, err)
-	defer cleanup()
-	process := exec.CommandContext(t.Context(), cmd[0], cmd[1:]...)
-	process.Env, process.Dir = env, work
-	out, err := process.CombinedOutput()
-	require.NoError(t, err, "%s", out)
-	assert.Contains(t, string(out), "OK host-terminal-read")
-	assert.Contains(t, string(out), "OK host-terminal-write")
+	out := runInJob(t, routeJob(t, t.TempDir()), "bash", "-c", script, "probe", slavePath)
+	assert.Contains(t, out, "OK host-terminal-read")
+	assert.Contains(t, out, "OK host-terminal-write")
 }
 
 func TestSandboxProcessCleanup(t *testing.T) {
 	testutil.RequireSandboxIntegration(t)
 	work := t.TempDir()
-	job := Job{
-		WorkDir: work,
-		Route:   Route{Name: "codex", Upstream: "https://chatgpt.com/backend-api/codex", Path: "/responses", EnvVar: "CODEX_PHANTOM", Capture: []string{"/bin/echo", "fixture-token"}},
-		Env:     []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir()}, MemoryMax: 1 << 30,
-	}
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	script := `setsid /usr/bin/sleep 300 </dev/null >/dev/null 2>&1 & echo $! > '` + filepath.Join(work, "child.pid") + `'`
-	wrapped, env, cleanup, err := job.Command(ctx, []string{"bash", "-c", script})
+	job := routeJob(t, work)
+	pidFile := filepath.Join(work, "child.pid")
+	wrapped, env, cleanup, err := job.Command(t.Context(), []string{"bash", "-c", "setsid /usr/bin/sleep 300 </dev/null >/dev/null 2>&1 & echo $! > '" + pidFile + "'"})
 	require.NoError(t, err)
 	defer cleanup()
-	process := exec.CommandContext(ctx, wrapped[0], wrapped[1:]...)
+	process := exec.CommandContext(t.Context(), wrapped[0], wrapped[1:]...)
 	process.Env, process.Dir = env, work
-	require.NoError(t, process.Start())
-	defer func() {
-		cancel()
-		_ = process.Wait()
-	}()
-	var pid int
+	require.NoError(t, process.Run())
+	data, err := os.ReadFile(pidFile)
+	require.NoError(t, err)
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	require.NoError(t, err)
+	sleeping := func() bool {
+		line, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+		return string(line) == "/usr/bin/sleep\x00300\x00"
+	}
 	defer func() {
 		// Clean up this test's child even when testing a broken wrapper.
-		line, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
-		if string(line) == "/usr/bin/sleep\x00300\x00" {
+		if sleeping() {
 			_ = syscall.Kill(pid, syscall.SIGKILL)
 		}
 	}()
-	// The external shell must start the detached sleep before cleanup.
-	require.Eventually(t, func() bool {
-		data, err := os.ReadFile(filepath.Join(work, "child.pid"))
-		if err != nil {
-			return false
-		}
-		pid, err = strconv.Atoi(strings.TrimSpace(string(data)))
-		if err != nil {
-			return false
-		}
-		line, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
-		return string(line) == "/usr/bin/sleep\x00300\x00"
-	}, 5*time.Second, 10*time.Millisecond)
-	require.NoError(t, process.Wait())
+	// The detached sleep must be running before cleanup.
+	require.Eventually(t, sleeping, 5*time.Second, 10*time.Millisecond)
 	cleanup()
 	// systemd kills the external process; a zombie has already exited.
 	assert.Eventually(t, func() bool {

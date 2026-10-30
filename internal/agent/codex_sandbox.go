@@ -27,11 +27,7 @@ func (a *CodexAgent) schemaDir() string {
 	if a.sandbox == nil {
 		return ""
 	}
-	dir, err := filepath.Abs(a.sandbox.Job.WorkDir)
-	if err != nil {
-		return a.sandbox.Job.WorkDir
-	}
-	return dir
+	return a.sandbox.Job.WorkDir
 }
 
 func (s *CodexSandbox) prepare(repoPath string) (sandbox.Job, func(), error) {

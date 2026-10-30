@@ -24,7 +24,7 @@ import (
 )
 
 func TestCodexSandboxIntegration(t *testing.T) {
-	testutil.RequireSandboxIntegration(t, "codex")
+	testutil.RequireSandboxIntegration(t)
 	codex, err := exec.LookPath("codex")
 	require.NoError(t, err)
 	codex, err = filepath.EvalSymlinks(codex)
@@ -37,12 +37,7 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	t.Setenv("CODEX_HOME", secrets)
 	require.NoError(t, os.WriteFile(filepath.Join(secrets, "auth.json"), []byte(`{"tokens":{"access_token":"sandbox-test-token"}}`), 0o600))
 
-	marker := filepath.Join(work, "probe-ran")
-	probe := fmt.Sprintf("#!/bin/bash\n"+testutil.SandboxShellChecks+`
-check codex-home allow bash -c '[[ "$CODEX_HOME" == "$1"/.codex-home-* && -d "$CODEX_HOME" ]]' probe '%s'
-touch '%s'
-exit "$failed"
-`, work, marker)
+	probe := fmt.Sprintf("#!/bin/bash\n[[ \"$CODEX_HOME\" == %q/.codex-home-* && -d \"$CODEX_HOME\" ]] && echo OK codex-home\n", work)
 
 	const key = "sandbox-test-token"
 	var calls, unauthorized atomic.Int32
@@ -121,9 +116,7 @@ exit "$failed"
 	result, err := a.ReviewWithSchema(t.Context(), repo, "HEAD", "Run the supplied probe.", jsontext.Value(`{"type":"object","properties":{"probe":{"type":"string"}},"required":["probe"],"additionalProperties":false}`), &stream)
 	require.NoError(t, err, "%s", stream.String())
 	require.True(t, jsontext.Value(result).IsValid())
-	assert.NotContains(t, string(result), "BAD ")
 	assert.Contains(t, string(result), "OK codex-home")
-	assert.FileExists(t, marker)
 	assert.GreaterOrEqual(t, calls.Load(), int32(2))
 	assert.Zero(t, unauthorized.Load())
 	homes, err := filepath.Glob(filepath.Join(work, ".codex-home-*"))
@@ -143,8 +136,7 @@ func TestCodexSandboxRejectsLoginReadPaths(t *testing.T) {
 			auth := filepath.Join(hostHome, "auth.json")
 			require.NoError(t, os.WriteFile(auth, []byte(`{"tokens":{"access_token":"synthetic-token"}}`), 0o600))
 			readPath := hostHome
-			switch grant {
-			case "auth-symlink":
+			if grant == "auth-symlink" {
 				readPath = t.TempDir()
 				target := filepath.Join(readPath, "login.json")
 				require.NoError(t, os.Rename(auth, target))
@@ -152,14 +144,13 @@ func TestCodexSandboxRejectsLoginReadPaths(t *testing.T) {
 			}
 			marker := filepath.Join(work, "exposed-login")
 			launcher := filepath.Join(work, "codex-launcher")
-			script := fmt.Sprintf("#!/bin/sh\ncase \" $* \" in *' --help '*) echo '--thread-source --dangerously-bypass-approvals-and-sandbox'; exit 0;; esac\ncat %q > %q\necho '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"review\"}}'\n", auth, marker)
-			require.NoError(t, os.WriteFile(launcher, []byte(script), 0o700))
+			require.NoError(t, os.WriteFile(launcher, fmt.Appendf(nil, "#!/bin/sh\ncat %q > %q\n", auth, marker), 0o700))
 			a := NewCodexAgent(launcher).WithSandbox(&CodexSandbox{Job: sandbox.Job{
 				WorkDir: work, ReadPaths: []string{readPath}, MemoryMax: 1 << 30,
 				Env: []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir(), "TMPDIR=" + work},
 			}})
 			_, err := a.Review(t.Context(), repo, "HEAD", "review", nil)
-			assert.ErrorContains(t, err, "deny-path-read")
+			require.ErrorContains(t, err, "deny-path-read")
 			assert.NoFileExists(t, marker)
 		})
 	}

@@ -65,10 +65,6 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("find sandbox nono: %w", err)
 	}
-	nono, err = ResolvePath(nono)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("resolve sandbox nono: %w", err)
-	}
 	binary, err := os.ReadFile(nono)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("read sandbox nono: %w", err)
@@ -96,18 +92,15 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 		"filesystem": map[string]any{
 			// nono 0.80.0's core read group includes host terminals. Keep its other grants.
 			"read": []string{
-				"/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin",
-				"/lib", "/lib64", "/lib/x86_64-linux-gnu", "/lib/aarch64-linux-gnu",
-				"/usr/lib", "/usr/lib64", "/usr/lib/x86_64-linux-gnu", "/usr/lib/aarch64-linux-gnu", "/usr/local/lib", "/usr/local/lib64",
+				"/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin", "/lib", "/lib64",
+				"/usr/lib", "/usr/lib64", "/usr/local/lib", "/usr/local/lib64", "/usr/libexec", "/usr/include", "/usr/share",
 				"/etc/resolv.conf", "/run/systemd/resolve", "/etc/hosts", "/etc/nsswitch.conf", "/etc/gai.conf", "/etc/group",
 				"/etc/ssl", "/etc/pki", "/etc/ca-certificates", "/etc/crypto-policies", "/etc/fonts",
 				"/etc/ld.so.cache", "/etc/ld.so.conf", "/etc/ld.so.conf.d", "/etc/localtime", "/etc/timezone", "/etc/locale.conf", "/etc/locale.gen",
 				"/etc/alternatives", "/etc/os-release", "/etc/passwd", "/etc/services", "/etc/mime.types", "/etc/manpath.config", "/etc/man_db.conf",
-				"/var/cache/man", "/run/systemd/userdb",
-				"/usr/share", "/usr/share/locale", "/usr/share/locale-langpack", "/usr/share/zoneinfo", "/usr/share/terminfo", "/usr/share/ca-certificates", "/lib/terminfo", "/etc/terminfo",
+				"/etc/terminfo", "/var/cache/man", "/run/systemd/userdb",
 				"/dev/null", "/dev/zero", "/dev/random", "/dev/urandom", "/dev/full", "/dev/fd",
 				"/proc/self", "/proc/cpuinfo", "/proc/meminfo", "/proc/stat", "/proc/loadavg", "/proc/version", "/proc/filesystems",
-				"/usr/libexec", "/usr/include",
 			},
 			"write_file": []string{"/dev/null", "/dev/zero", "/dev/full"},
 		},
