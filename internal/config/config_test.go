@@ -2916,6 +2916,7 @@ func TestCIConfigPRFilters(t *testing.T) {
 [ci]
 allowed_authors = ["alice"]
 allowed_author_associations = ["member", "OWNER"]
+allow_codeowners = true
 include_branches = ["feature/*"]
 exclude_branches = ["feature/wip-*"]
 `), 0o644))
@@ -2925,6 +2926,7 @@ exclude_branches = ["feature/wip-*"]
 	assert := assert.New(t)
 	assert.Equal([]string{"alice"}, cfg.CI.AllowedAuthors)
 	assert.Equal([]string{"member", "OWNER"}, cfg.CI.AllowedAuthorAssociations)
+	assert.True(cfg.CI.AllowCodeowners)
 	assert.Equal([]string{"feature/*"}, cfg.CI.IncludeBranches)
 	assert.Equal([]string{"feature/wip-*"}, cfg.CI.ExcludeBranches)
 }
@@ -2953,6 +2955,7 @@ func TestCIConfigIsPRAuthorAllowed(t *testing.T) {
 		name         string
 		authors      []string
 		associations []string
+		codeowners   bool
 		login        string
 		association  string
 		want         bool
@@ -2964,9 +2967,11 @@ func TestCIConfigIsPRAuthorAllowed(t *testing.T) {
 		{name: "outside association", associations: []string{"OWNER", "MEMBER"}, login: "bob", association: "CONTRIBUTOR", want: false},
 		{name: "either list admits", authors: []string{"dependabot[bot]"}, associations: []string{"MEMBER"}, login: "dependabot[bot]", association: "NONE", want: true},
 		{name: "unknown association fails closed", associations: []string{"MEMBER"}, login: "bob", association: "", want: false},
+		{name: "codeowners alone leaves the decision to CODEOWNERS", codeowners: true, login: "bob", association: "OWNER", want: false},
+		{name: "codeowners with listed login", authors: []string{"bob"}, codeowners: true, login: "bob", association: "NONE", want: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			ci := CIConfig{AllowedAuthors: tt.authors, AllowedAuthorAssociations: tt.associations}
+			ci := CIConfig{AllowedAuthors: tt.authors, AllowedAuthorAssociations: tt.associations, AllowCodeowners: tt.codeowners}
 			assert.Equal(t, tt.want, ci.IsPRAuthorAllowed(tt.login, tt.association))
 		})
 	}

@@ -485,7 +485,7 @@ wildcard-expanded entries.
 
 ## Filtering Which PRs Get Reviewed
 
-By default the CI poller reviews every open PR. Four `[ci]` options narrow that
+By default the CI poller reviews every open PR. Five `[ci]` options narrow that
 set by PR author and by PR head branch:
 
 ```toml
@@ -493,6 +493,8 @@ set by PR author and by PR head branch:
 # Review only PRs from these logins or from authors with these associations.
 allowed_authors = ["trusted-contractor", "dependabot[bot]"]
 allowed_author_associations = ["OWNER", "MEMBER", "COLLABORATOR"]
+# Also review PRs from anyone the repo's CODEOWNERS file names.
+allow_codeowners = true
 
 # Review only these head branches, and never these.
 include_branches = ["feature/*", "fix/*"]
@@ -505,11 +507,14 @@ Use the author filter on public repos so that PRs from outside contributors are
 not sent to an AI agent automatically. Their PR text and code could contain
 prompt injection.
 
-- When `allowed_authors` and `allowed_author_associations` are both empty, every
-    author is reviewed.
-- When either is set, a PR is reviewed only if its author's login is in
-    `allowed_authors` or its author association is in
-    `allowed_author_associations`. Login matching is case-insensitive.
+- When `allowed_authors` and `allowed_author_associations` are both empty and
+    `allow_codeowners` is off, every author is reviewed.
+- When any of them is set, a PR is reviewed only if one of these is true:
+    - The author's login is in `allowed_authors`. Login matching is
+        case-insensitive.
+    - The author association is in `allowed_author_associations`.
+    - `allow_codeowners` is on and the author is a code owner. See
+        [CODEOWNERS](#codeowners).
 - The author association is the `author_association` value GitHub reports for
     the PR: `OWNER`, `MEMBER`, `COLLABORATOR`, `CONTRIBUTOR`,
     `FIRST_TIME_CONTRIBUTOR`, `FIRST_TIMER`, `MANNEQUIN`, or `NONE`.
@@ -519,6 +524,28 @@ prompt injection.
 - GitHub can report an organization member whose membership is private as
     `CONTRIBUTOR` or `NONE` rather than `MEMBER`, depending on the credentials
     roborev uses. List such people in `allowed_authors`.
+
+### CODEOWNERS
+
+With `allow_codeowners = true`, the poller trusts every user that the
+repository's `CODEOWNERS` file names as an owner, on any line.
+
+- The poller reads `CODEOWNERS` from the PR's base branch, never from the PR
+    head, so a PR cannot add its own author. It checks `.github/CODEOWNERS`,
+    then `CODEOWNERS`, then `docs/CODEOWNERS`, and uses the first file it finds,
+    as GitHub does.
+- `@user` owners are trusted directly. `@org/team` owners are expanded to the
+    team's members, including members of child teams. Email owners are ignored
+    because they do not identify a GitHub login.
+- A repository without a `CODEOWNERS` file has no code owners.
+- The poller reads `CODEOWNERS` only for authors that the other author options
+    do not already admit, and at most once per base branch on each poll.
+- Expanding a team needs permission to read organization members. Give the
+    GitHub App the **Members: Read-only** organization permission. Personal `gh`
+    logins need the `read:org` scope, which `gh auth login` requests by default.
+- If the poller cannot read `CODEOWNERS` or a team, it logs the error and
+    reports it in daemon health. It does not review the PR and does not mark it
+    skipped, and it tries again on the next poll.
 
 ### Branch filters
 
@@ -859,7 +886,8 @@ set, it takes priority over the matrix fields for that repo.
 | `exclude_repos` | array | `[]` | Glob patterns to exclude from the resolved repo list |
 | `skip_labels` | array | `[]` | GitHub PR labels that skip CI reviews (case-insensitive) |
 | `allowed_authors` | array | `[]` | GitHub logins whose PRs are reviewed (case-insensitive). See [Author filter](#author-filter). |
-| `allowed_author_associations` | array | `[]` | PR author associations that are reviewed, such as `OWNER`, `MEMBER`, `COLLABORATOR`. With `allowed_authors` empty too, every author is reviewed. |
+| `allowed_author_associations` | array | `[]` | PR author associations that are reviewed, such as `OWNER`, `MEMBER`, `COLLABORATOR`. With `allowed_authors` also empty and `allow_codeowners` off, every author is reviewed. |
+| `allow_codeowners` | bool | `false` | Also review PRs from users the base branch's `CODEOWNERS` file names, directly or through a team. See [CODEOWNERS](#codeowners). |
 | `include_branches` | array | `[]` (all) | Glob patterns for PR head branches to review. `*` also matches `/`. See [Branch filters](#branch-filters). |
 | `exclude_branches` | array | `[]` | Glob patterns for PR head branches to skip. Wins over `include_branches`. |
 | `max_repos` | int | `100` | Safety cap on total expanded repos (explicit repos have priority over wildcard-expanded ones) |
