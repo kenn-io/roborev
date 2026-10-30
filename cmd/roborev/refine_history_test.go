@@ -38,6 +38,7 @@ type refineHistoryDaemon struct {
 	completedPendingFixReviewOnLookup   bool
 	pendingFixReviewRef                 string
 	pendingFixReviewJobID               int64
+	pendingFixJobType                   string
 	pendingFixReviewMissed              bool
 	jobReviewFetches                    map[int64]int
 	rangeBase                           string
@@ -140,10 +141,16 @@ func newRefineHistoryDaemon(t *testing.T, initial string) *refineHistoryDaemon {
 					if d.recovery == "pending" {
 						d.pendingFixReviewRef = ref
 						d.pendingFixReviewJobID = latest
+						if d.pendingFixJobType != "" {
+							job.JobType = d.pendingFixJobType
+							d.reviews[latest].Job.JobType = d.pendingFixJobType
+						}
 					}
 					if d.recovery == "branch" {
 						job.GitRef = d.rangeBase + ".." + ref
 						d.reviews[latest].Job.GitRef = job.GitRef
+						d.pendingFixReviewRef = job.GitRef
+						d.pendingFixReviewJobID = latest
 					}
 					jobs[latest] = job
 					writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{}})

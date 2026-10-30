@@ -66,6 +66,8 @@ func TestRefineStallLoop(t *testing.T) {
 		{name: "branch review completes during pending lookup", severityOnly: true, rounds: 3, stop: true, recovery: "branch race", wantCalls: 3, wantSignals: 1, wantError: "stalled"},
 		{name: "pending fix review precedes other failed commit", severityOnly: true, otherFailed: true, pendingFixMode: "pending", rounds: 3, stop: true, wantCalls: 3, wantSignals: 1, wantError: "stalled"},
 		{name: "pending fix review completes between lookups", severityOnly: true, pendingFixMode: "race", rounds: 3, stop: true, wantCalls: 3, wantSignals: 1, wantError: "stalled"},
+		{name: "pending branch review precedes other failed commit", severityOnly: true, otherFailed: true, pendingFixMode: "branch", rounds: 3, stop: true, wantCalls: 3, wantSignals: 1, wantError: "stalled"},
+		{name: "pending synthesis review precedes other failed commit", severityOnly: true, otherFailed: true, pendingFixMode: "synthesis", rounds: 3, stop: true, wantCalls: 3, wantSignals: 1, wantError: "stalled"},
 		{name: "final recovered passing branch review resets", rounds: 3, stop: true, recovery: "completed branch", recoveredReset: "pass", resetJob: 10, wantCalls: 3},
 		{name: "recovered closed branch review resets before fallback", rounds: 4, stop: true, recovery: "completed branch", recoveredReset: "closed", wantEnqueues: 1, wantCalls: 4, wantError: "max iterations"},
 		{name: "failed re-review resets", rounds: 4, reviewFailure: true, wantCalls: 4, wantError: "max iterations"},
@@ -146,6 +148,12 @@ func TestRefineStallLoop(t *testing.T) {
 				}
 				if tc.pendingFixMode != "" && calls == 3 {
 					d.recovery = "pending"
+					if tc.pendingFixMode == "branch" {
+						d.recovery = "branch"
+					}
+					if tc.pendingFixMode == "synthesis" {
+						d.pendingFixJobType = storage.JobTypeSynthesis
+					}
 					d.completePendingFixReviewOnLookup = tc.pendingFixMode == "race"
 				}
 				if tc.retry && calls == 2 {
