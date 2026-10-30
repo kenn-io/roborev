@@ -27,7 +27,7 @@ func TestCICheckPreparation(t *testing.T) {
 		t.Skip("requires shell fixtures and symlinks")
 	}
 	if _, err := exec.LookPath("go"); err != nil {
-		t.Skip("requires go for module warming and build")
+		t.Skip("requires go for module warming")
 	}
 	proxy := t.TempDir()
 	versionDir := filepath.Join(proxy, "example.com", "dependency", "@v")
@@ -79,10 +79,6 @@ func TestCICheckPreparation(t *testing.T) {
 	output, err := git.CombinedOutput()
 	require.NoError(t, err, "%s", output)
 	assert.Equal(t, wantHead, strings.TrimSpace(string(output)))
-	build := exec.CommandContext(t.Context(), "go", "build", "-o", filepath.Join(t.TempDir(), "copy"), ".")
-	build.Dir = run.Repo
-	output, err = build.CombinedOutput()
-	require.NoError(t, err, "%s", output)
 	content, err := os.ReadFile(filepath.Join(run.Repo, "dependency", "present.txt"))
 	require.NoError(t, err)
 	assert.Equal(t, "submodule content", string(content))
@@ -96,9 +92,9 @@ func TestCICheckPreparation(t *testing.T) {
 }
 
 func TestCICheckWarming(t *testing.T) {
-	checkout := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(checkout, "go.mod"), []byte("module example.com/check\n"), 0o600))
 	t.Run("without go", func(t *testing.T) {
+		checkout := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(checkout, "go.mod"), []byte("module example.com/check\n"), 0o600))
 		t.Setenv("PATH", t.TempDir())
 		var log bytes.Buffer
 		paths, err := warmGoModules(t.Context(), checkout, nil, &log)
@@ -106,102 +102,40 @@ func TestCICheckWarming(t *testing.T) {
 		assert.Empty(t, paths)
 		assert.Contains(t, log.String(), "go env failed")
 	})
-	t.Run("download fails", func(t *testing.T) {
-		if runtime.GOOS == "windows" {
-			t.Skip("requires shell fixtures")
-		}
-		tools := t.TempDir()
-		require.NoError(t, os.Mkdir(filepath.Join(tools, "bin"), 0o700))
-		script := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = env ]; then printf '%%s\\n' '%s' '%s'; else [ \"$CHECKER_GIT_TOKEN\" = synthetic ] || exit 3; echo attempted > warmed; exit 1; fi\n", tools, tools)
-		require.NoError(t, os.WriteFile(filepath.Join(tools, "bin", "go"), []byte(script), 0o700))
-		require.NoError(t, os.Symlink(filepath.Join("bin", "go"), filepath.Join(tools, "go")))
-		t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
-		var log bytes.Buffer
-		paths, err := warmGoModules(t.Context(), checkout, append(os.Environ(), "CHECKER_GIT_TOKEN=synthetic"), &log)
-		require.NoError(t, err)
-		assert.Equal(t, []string{tools, tools}, paths)
-		assert.FileExists(t, filepath.Join(checkout, "warmed"))
-		assert.Contains(t, log.String(), "module warming failed")
-	})
-}
-
-func TestCICheckNestedModules(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("requires shell fixtures")
-	}
-	repo := testutil.NewTestRepoWithCommit(t)
-	for _, name := range []string{"backend/go.mod", "tools/go.mod", "workspace/go.work"} {
-		repo.CommitFile(name, "module example.com/check\n", "Go metadata")
-	}
-	tools := t.TempDir()
-	require.NoError(t, os.Mkdir(filepath.Join(tools, "bin"), 0o700))
-	script := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = env ]; then printf '%%s\\n' '%s' '%s'; else [ \"$CHECKER_GIT_TOKEN\" = synthetic ] || exit 3; echo attempted > warmed; fi\n", tools, tools)
-	require.NoError(t, os.WriteFile(filepath.Join(tools, "bin", "go"), []byte(script), 0o700))
-	require.NoError(t, os.Symlink(filepath.Join("bin", "go"), filepath.Join(tools, "go")))
-	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
-	var log bytes.Buffer
-	paths, err := warmGoModules(t.Context(), repo.Root, append(os.Environ(), "CHECKER_GIT_TOKEN=synthetic"), &log)
-	require.NoError(t, err)
-	assert.Equal(t, []string{tools, tools}, paths)
-	for _, dir := range []string{"backend", "tools", "workspace"} {
-		assert.FileExists(t, filepath.Join(repo.Root, dir, "warmed"))
-	}
-	assert.Empty(t, log.String())
-}
-
-func TestCICheckDisabledCleanupPermissions(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("requires Unix directory permissions")
-	}
-	for _, recovery := range []bool{false, true} {
-		t.Run(fmt.Sprintf("recovery=%t", recovery), func(t *testing.T) {
-			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-			repo := testutil.NewTestRepoWithCommit(t)
-			wp := &WorkerPool{}
-			checkout, cleanup, err := wp.createExactCheckout(t.Context(), "worker-1", &storage.ReviewJob{RepoPath: repo.Root, GitRef: repo.HeadSHA()})
-			require.NoError(t, err)
-			t.Cleanup(cleanup)
-			dir := filepath.Join(checkout, "readonly")
-			require.NoError(t, os.Mkdir(dir, 0o500))
-			opened, err := os.Open(dir)
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, opened.Close()) })
-			if recovery {
-				require.NoError(t, cleanupStaleCIWorktrees(t.Context()))
-			} else {
-				cleanup()
+	for _, fails := range []bool{false, true} {
+		t.Run(fmt.Sprintf("download fails=%t", fails), func(t *testing.T) {
+			if runtime.GOOS == "windows" {
+				t.Skip("requires shell fixtures")
 			}
-			assert.NoDirExists(t, checkout)
-			info, err := opened.Stat()
+			repo := testutil.NewTestRepoWithCommit(t)
+			for _, name := range []string{"backend/go.mod", "tools/go.mod"} {
+				repo.CommitFile(name, "module example.com/"+filepath.Dir(name)+"\n\ngo 1.25.0\n", "Go metadata")
+			}
+			repo.CommitFile("workspace/go.work", "go 1.25.0\n\nuse (\n\t../backend\n\t../tools\n)\n", "Go workspace")
+			tools := t.TempDir()
+			require.NoError(t, os.Mkdir(filepath.Join(tools, "bin"), 0o700))
+			exitCode := 0
+			if fails {
+				exitCode = 1
+			}
+			script := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = env ]; then printf '%%s\\n' '%s' '%s'; else [ \"$CHECKER_GIT_TOKEN\" = synthetic ] || exit 3; echo attempted > warmed; exit %d; fi\n", tools, tools, exitCode)
+			require.NoError(t, os.WriteFile(filepath.Join(tools, "bin", "go"), []byte(script), 0o700))
+			require.NoError(t, os.Symlink(filepath.Join("bin", "go"), filepath.Join(tools, "go")))
+			t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
+			var log bytes.Buffer
+			paths, err := warmGoModules(t.Context(), repo.Root, append(os.Environ(), "CHECKER_GIT_TOKEN=synthetic"), &log)
 			require.NoError(t, err)
-			assert.Equal(t, os.FileMode(0o500), info.Mode().Perm(), "checker-off cleanup changed directory permissions")
+			assert.Equal(t, []string{tools, tools}, paths)
+			for _, dir := range []string{"backend", "tools", "workspace"} {
+				assert.FileExists(t, filepath.Join(repo.Root, dir, "warmed"))
+			}
+			if fails {
+				assert.Contains(t, log.String(), "module warming failed")
+			} else {
+				assert.Empty(t, log.String())
+			}
 		})
 	}
-}
-
-func TestCICheckRestartRecovery(t *testing.T) {
-	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	repo := testutil.NewTestRepoWithCommit(t)
-	command := filepath.Join(t.TempDir(), "codex")
-	require.NoError(t, os.WriteFile(command, []byte("native fixture"), 0o700))
-	wp := &WorkerPool{}
-	run, err := wp.prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: repo.HeadSHA()}, command, nil, io.Discard)
-	require.NoError(t, err)
-	t.Cleanup(run.cleanup)
-	root := filepath.Dir(run.Job.WorkDir)
-	require.NoError(t, os.WriteFile(filepath.Join(run.Job.WorkDir, "gocache", "cached"), []byte("cache"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(run.Job.WorkDir, "scratch"), []byte("scratch"), 0o600))
-	before, err := exec.CommandContext(t.Context(), "git", "-C", repo.Root, "worktree", "list", "--porcelain").CombinedOutput()
-	require.NoError(t, err)
-	require.Contains(t, normalizeGitListOutput(string(before)), normalizeGitListPath(t, run.Repo))
-
-	// Startup recovery runs after an abrupt exit, without normal run cleanup.
-	require.NoError(t, cleanupStaleCIWorktrees(t.Context()))
-	assert.NoDirExists(t, run.Repo)
-	assert.NoDirExists(t, root)
-	after, err := exec.CommandContext(t.Context(), "git", "-C", repo.Root, "worktree", "list", "--porcelain").CombinedOutput()
-	require.NoError(t, err)
-	assert.NotContains(t, normalizeGitListOutput(string(after)), normalizeGitListPath(t, run.Repo))
 }
 
 func TestCICheckWarmingIgnoresMiseConfig(t *testing.T) {
@@ -249,40 +183,66 @@ func TestCICheckReadOnlyCleanup(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires Unix directory permissions")
 	}
-	for _, recovery := range []bool{false, true} {
-		t.Run(fmt.Sprintf("recovery=%t", recovery), func(t *testing.T) {
-			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-			repo := testutil.NewTestRepoWithCommit(t)
-			command := filepath.Join(t.TempDir(), "codex")
-			require.NoError(t, os.WriteFile(command, []byte("native fixture"), 0o700))
-			wp := &WorkerPool{}
-			run, err := wp.prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: repo.HeadSHA()}, command, nil, io.Discard)
-			require.NoError(t, err)
-			t.Cleanup(run.cleanup)
-			for _, parent := range []string{run.Repo, filepath.Join(run.Job.WorkDir, "gocache"), filepath.Join(run.Job.WorkDir, "tmp")} {
-				dir := filepath.Join(parent, "readonly")
-				require.NoError(t, os.Mkdir(dir, 0o700))
-				require.NoError(t, os.WriteFile(filepath.Join(dir, "file"), []byte("content"), 0o600))
-				require.NoError(t, os.Chmod(dir, 0o500))
-				t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	for _, checker := range []bool{false, true} {
+		t.Run(fmt.Sprintf("checker=%t", checker), func(t *testing.T) {
+			for _, recovery := range []bool{false, true} {
+				t.Run(fmt.Sprintf("recovery=%t", recovery), func(t *testing.T) {
+					t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+					repo := testutil.NewTestRepoWithCommit(t)
+					var checkout, root string
+					var cleanup func()
+					var opened *os.File
+					wp := &WorkerPool{}
+					if checker {
+						command := filepath.Join(t.TempDir(), "codex")
+						require.NoError(t, os.WriteFile(command, []byte("native fixture"), 0o700))
+						run, err := wp.prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: repo.HeadSHA()}, command, nil, io.Discard)
+						require.NoError(t, err)
+						checkout, root, cleanup = run.Repo, filepath.Dir(run.Job.WorkDir), run.cleanup
+						t.Cleanup(cleanup)
+						for _, parent := range []string{run.Repo, filepath.Join(run.Job.WorkDir, "gocache"), filepath.Join(run.Job.WorkDir, "tmp")} {
+							dir := filepath.Join(parent, "readonly")
+							require.NoError(t, os.Mkdir(dir, 0o700))
+							require.NoError(t, os.WriteFile(filepath.Join(dir, "file"), []byte("content"), 0o600))
+							require.NoError(t, os.Chmod(dir, 0o500))
+							t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+						}
+					} else {
+						var err error
+						checkout, cleanup, err = wp.createExactCheckout(t.Context(), "worker-1", &storage.ReviewJob{RepoPath: repo.Root, GitRef: repo.HeadSHA()})
+						require.NoError(t, err)
+						t.Cleanup(cleanup)
+						dir := filepath.Join(checkout, "readonly")
+						require.NoError(t, os.Mkdir(dir, 0o500))
+						opened, err = os.Open(dir)
+						require.NoError(t, err)
+						t.Cleanup(func() { require.NoError(t, opened.Close()) })
+					}
+					outside := t.TempDir()
+					require.NoError(t, os.Chmod(outside, 0o500))
+					t.Cleanup(func() { _ = os.Chmod(outside, 0o700) })
+					require.NoError(t, os.Symlink(outside, filepath.Join(checkout, "external")))
+					if recovery {
+						require.NoError(t, cleanupStaleCIWorktrees(t.Context()))
+					} else {
+						cleanup()
+					}
+					if checker {
+						assert.NoDirExists(t, root)
+					} else {
+						info, err := opened.Stat()
+						require.NoError(t, err)
+						assert.Equal(t, os.FileMode(0o500), info.Mode().Perm(), "checker-off cleanup changed directory permissions")
+					}
+					assert.NoDirExists(t, checkout)
+					info, err := os.Stat(outside)
+					require.NoError(t, err)
+					assert.Equal(t, os.FileMode(0o500), info.Mode().Perm())
+					output, err := exec.CommandContext(t.Context(), "git", "-C", repo.Root, "worktree", "list", "--porcelain").CombinedOutput()
+					require.NoError(t, err)
+					assert.NotContains(t, normalizeGitListOutput(string(output)), normalizeGitListPath(t, checkout))
+				})
 			}
-			outside := t.TempDir()
-			require.NoError(t, os.Chmod(outside, 0o500))
-			t.Cleanup(func() { _ = os.Chmod(outside, 0o700) })
-			require.NoError(t, os.Symlink(outside, filepath.Join(run.Repo, "external")))
-			if recovery {
-				require.NoError(t, cleanupStaleCIWorktrees(t.Context()))
-			} else {
-				run.cleanup()
-			}
-			assert.NoDirExists(t, filepath.Dir(run.Job.WorkDir))
-			assert.NoDirExists(t, run.Repo)
-			info, err := os.Stat(outside)
-			require.NoError(t, err)
-			assert.Equal(t, os.FileMode(0o500), info.Mode().Perm())
-			output, err := exec.CommandContext(t.Context(), "git", "-C", repo.Root, "worktree", "list", "--porcelain").CombinedOutput()
-			require.NoError(t, err)
-			assert.NotContains(t, normalizeGitListOutput(string(output)), normalizeGitListPath(t, run.Repo))
 		})
 	}
 }
