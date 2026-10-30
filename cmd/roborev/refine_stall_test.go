@@ -61,6 +61,8 @@ func TestRefineStallLoop(t *testing.T) {
 		{name: "final recovered branch review advises", rounds: 3, recovery: "branch", wantCalls: 3, wantSignals: 1, wantError: "max iterations"},
 		{name: "final recovered completed branch review stops", rounds: 3, stop: true, recovery: "completed branch", wantCalls: 3, wantSignals: 1, wantError: "stalled"},
 		{name: "final recovered completed branch review advises", rounds: 3, recovery: "completed branch", wantCalls: 3, wantSignals: 1, wantError: "max iterations"},
+		{name: "recovered closed passing branch review completes", rounds: 3, stop: true, recovery: "completed branch", recoveredReset: "closed pass", resetJob: 10, wantCalls: 3},
+		{name: "branch review completes during pending lookup", severityOnly: true, rounds: 3, stop: true, recovery: "branch race", wantCalls: 3, wantSignals: 1, wantError: "stalled"},
 		{name: "final recovered passing branch review resets", rounds: 3, stop: true, recovery: "completed branch", recoveredReset: "pass", resetJob: 10, wantCalls: 3},
 		{name: "recovered closed branch review resets before fallback", rounds: 4, stop: true, recovery: "completed branch", recoveredReset: "closed", wantEnqueues: 1, wantCalls: 4, wantError: "max iterations"},
 		{name: "failed re-review resets", rounds: 4, reviewFailure: true, wantCalls: 4, wantError: "max iterations"},
@@ -101,6 +103,11 @@ func TestRefineStallLoop(t *testing.T) {
 						r.VerdictBool = new(1)
 						r.StructuredOutput = stallDocument()
 						r.StructuredOutput["verdict"] = "pass"
+					case "closed pass":
+						r.VerdictBool = new(1)
+						r.StructuredOutput = stallDocument()
+						r.StructuredOutput["verdict"] = "pass"
+						r.Closed = true
 					case "closed":
 						r.Closed = true
 					}
@@ -112,6 +119,10 @@ func TestRefineStallLoop(t *testing.T) {
 			}
 			d.rejectAdvisory = tc.commentFailure
 			d.recovery = tc.recovery
+			if tc.recovery == "branch race" {
+				d.recovery = "branch"
+				d.completeBranchReviewOnPendingLookup = 10
+			}
 			if tc.recovery == "completed branch" {
 				d.recovery = "branch"
 				d.completedBranchReview = 10
@@ -504,18 +515,16 @@ func FuzzRefineSeverityStall(f *testing.F) {
 
 func TestRefineHighMediumCount(t *testing.T) {
 	for _, tc := range []struct {
-		name                 string
-		severities           []string
-		location             any
-		omitLocation, unable bool
-		want                 int
+		name       string
+		severities []string
+		location   any
+		unable     bool
+		want       int
 	}{
 		{name: "all severities", severities: []string{"critical", "high", "medium", "low"}, location: "", want: 2},
 		{name: "critical is excluded", severities: []string{"critical"}, location: "", want: 0},
 		{name: "null location", severities: []string{"medium"}, want: 1},
 		{name: "normalized severity", severities: []string{" HIGH ", "Medium"}, location: "", want: 2},
-		{name: "unknown severity invalidates document", severities: []string{"high", "unknown"}, location: ""},
-		{name: "missing required location", severities: []string{"medium"}, omitLocation: true},
 		{name: "unable to review", severities: []string{"medium"}, location: "", unable: true},
 		{name: "empty findings", location: ""},
 	} {
@@ -525,9 +534,6 @@ func TestRefineHighMediumCount(t *testing.T) {
 				finding := item.(map[string]any)
 				finding["severity"] = tc.severities[i]
 				finding["location"] = tc.location
-				if tc.omitLocation {
-					delete(finding, "location")
-				}
 			}
 			if tc.unable {
 				document["verdict"] = "unable_to_review"

@@ -24,19 +24,20 @@ import (
 // refineHistoryDaemon supplies real HTTP comment persistence and a failed
 // re-review after each fix, without running an external reviewer.
 type refineHistoryDaemon struct {
-	reviews               map[int64]*storage.Review
-	addReview             func(int64, string, string)
-	comments              map[int64][]storage.Response
-	posted                map[int64][]storage.Response
-	staleRef              string
-	onReview              func(*storage.Review)
-	rejectAdvisory        bool
-	recovery              string
-	completedBranchReview int64
-	rangeBase             string
-	enqueues              int
-	failReview            int64
-	allowBranchReview     bool
+	reviews                             map[int64]*storage.Review
+	addReview                           func(int64, string, string)
+	comments                            map[int64][]storage.Response
+	posted                              map[int64][]storage.Response
+	staleRef                            string
+	onReview                            func(*storage.Review)
+	rejectAdvisory                      bool
+	recovery                            string
+	completedBranchReview               int64
+	completeBranchReviewOnPendingLookup int64
+	rangeBase                           string
+	enqueues                            int
+	failReview                          int64
+	allowBranchReview                   bool
 }
 
 func newRefineHistoryDaemon(t *testing.T, initial string) *refineHistoryDaemon {
@@ -86,13 +87,22 @@ func newRefineHistoryDaemon(t *testing.T, initial string) *refineHistoryDaemon {
 				return
 			}
 			ref := r.URL.Query().Get("git_ref")
+			status := r.URL.Query().Get("status")
+			if id := d.completeBranchReviewOnPendingLookup; id > 0 && status != "" {
+				job := jobs[id]
+				if job.GitRef == ref {
+					job.Status = storage.JobStatusDone
+					jobs[id] = job
+					d.completeBranchReviewOnPendingLookup = 0
+				}
+			}
 			if d.recovery != "" {
 				if id := hidden[ref]; id > 0 && d.recovery == "branch" {
 					writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{}})
 					return
 				}
 				for _, job := range jobs {
-					if job.GitRef == ref && (r.URL.Query().Get("status") == "" || string(job.Status) == r.URL.Query().Get("status")) {
+					if job.GitRef == ref && (status == "" || string(job.Status) == status) {
 						writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{job}})
 						return
 					}
