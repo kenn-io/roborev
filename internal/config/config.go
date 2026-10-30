@@ -1486,11 +1486,6 @@ func LoadRepoConfigWithRaw(repoPath string) (*RepoConfig, map[string]any, error)
 }
 
 func validateRepoConfigScope(md toml.MetaData) error {
-	for _, key := range []string{"check_model", "check_reasoning"} {
-		if md.IsDefined("ci", key) {
-			return fmt.Errorf("repository config key %q is global-only; move it to ~/.roborev/config.toml", "ci."+key)
-		}
-	}
 	for _, key := range []string{"search", "review_mcp_config", "review_mcp_allowed_tools"} {
 		if md.IsDefined(key) {
 			return fmt.Errorf(

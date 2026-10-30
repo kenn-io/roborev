@@ -1816,10 +1816,9 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 	if config.ResolveCICheck(in.repoCfg, in.cfg) {
 		reasoning, err := config.NormalizeReasoning(in.cfg.CI.CheckReasoning)
 		if err != nil {
-			log.Printf("CI checker disabled; keeping review unchecked: %v", err)
-		} else {
-			check = &ciCheckConfig{Model: in.cfg.CI.CheckModel, Reasoning: reasoning}
+			return nil, storage.EnqueueOpts{}, fmt.Errorf("resolve CI checker reasoning: %w", err)
 		}
+		check = &ciCheckConfig{Model: in.cfg.CI.CheckModel, Reasoning: reasoning}
 	}
 	synthSnapshot, err := synthesisJobConfig{
 		Check:        check,

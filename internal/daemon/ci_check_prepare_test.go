@@ -73,10 +73,38 @@ func TestCICheckPreparation(t *testing.T) {
 	require.ErrorContains(t, err, "read grant contains host")
 }
 
+// Host-side warming refuses metadata that isn't a regular file and skips hosts without Go.
 func TestCICheckWarming(t *testing.T) {
-	t.Run("without go", func(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires symlinks")
+	}
+	metadata := []string{"go.mod", "go.sum", "go.work", "go.work.sum"}
+	newCheckout := func(t *testing.T) string {
 		checkout := t.TempDir()
-		require.NoError(t, os.WriteFile(filepath.Join(checkout, "go.mod"), []byte("module example.com/check\n"), 0o600))
+		for _, name := range metadata {
+			require.NoError(t, os.WriteFile(filepath.Join(checkout, name), []byte("go 1.26.0\n"), 0o600))
+		}
+		return checkout
+	}
+	for _, name := range metadata {
+		for _, kind := range []string{"symlink", "directory"} {
+			t.Run(name+"/"+kind, func(t *testing.T) {
+				path := filepath.Join(newCheckout(t), name)
+				require.NoError(t, os.Remove(path))
+				if kind == "symlink" {
+					outside := filepath.Join(t.TempDir(), "metadata")
+					require.NoError(t, os.WriteFile(outside, nil, 0o600))
+					require.NoError(t, os.Symlink(outside, path))
+				} else {
+					require.NoError(t, os.Mkdir(path, 0o700))
+				}
+				_, err := warmGoModules(t.Context(), filepath.Dir(path), nil, io.Discard)
+				require.ErrorContains(t, err, name+" must be a regular file")
+			})
+		}
+	}
+	t.Run("without go", func(t *testing.T) {
+		checkout := newCheckout(t)
 		t.Setenv("PATH", t.TempDir())
 		var log bytes.Buffer
 		paths, err := warmGoModules(t.Context(), checkout, nil, &log)
@@ -84,32 +112,6 @@ func TestCICheckWarming(t *testing.T) {
 		assert.Empty(t, paths)
 		assert.Contains(t, log.String(), "go env failed")
 	})
-}
-
-func TestCICheckWarmingMetadata(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("requires symlinks")
-	}
-	for _, name := range []string{"go.mod", "go.sum", "go.work", "go.work.sum"} {
-		for _, kind := range []string{"symlink", "directory"} {
-			t.Run(name+"/"+kind, func(t *testing.T) {
-				checkout := t.TempDir()
-				require.NoError(t, os.WriteFile(filepath.Join(checkout, "go.mod"), []byte("module example.com/check\n\ngo 1.26.0\n"), 0o600))
-				require.NoError(t, os.WriteFile(filepath.Join(checkout, "go.work"), []byte("go 1.26.0\n\nuse .\n"), 0o600))
-				path := filepath.Join(checkout, name)
-				require.NoError(t, os.RemoveAll(path))
-				outside := filepath.Join(t.TempDir(), "metadata")
-				require.NoError(t, os.WriteFile(outside, []byte(""), 0o600))
-				if kind == "symlink" {
-					require.NoError(t, os.Symlink(outside, path))
-				} else {
-					require.NoError(t, os.Mkdir(path, 0o700))
-				}
-				_, err := warmGoModules(t.Context(), checkout, os.Environ(), io.Discard)
-				require.ErrorContains(t, err, name+" must be a regular file")
-			})
-		}
-	}
 }
 
 // Cleanup restores write access only inside checker roots, without following symlinks.

@@ -7,7 +7,6 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"strings"
 	"testing"
@@ -87,17 +86,11 @@ func TestCICheckSnapshot(t *testing.T) {
 	_, overridden, err := p.buildPanelOpts(t.Context(), in)
 	require.NoError(t, err)
 	assert.Equal(t, off.PanelMemberConfigJSON, overridden.PanelMemberConfigJSON)
-	// A reloaded invalid setting leaves the review unchecked rather than blocking the panel.
+	// A reloaded invalid setting fails like the panel's other reasoning settings.
 	in.repoCfg = nil
 	cfg.CI.CheckReasoning = "invalid"
-	var logs bytes.Buffer
-	previous := log.Writer()
-	log.SetOutput(&logs)
-	t.Cleanup(func() { log.SetOutput(previous) })
-	_, invalid, err := p.buildPanelOpts(t.Context(), in)
-	require.NoError(t, err)
-	assert.Equal(t, off.PanelMemberConfigJSON, invalid.PanelMemberConfigJSON)
-	assert.Contains(t, logs.String(), "CI checker disabled")
+	_, _, err = p.buildPanelOpts(t.Context(), in)
+	require.ErrorContains(t, err, "CI checker reasoning")
 }
 
 func TestCICheckConfiguredCommand(t *testing.T) {
@@ -157,7 +150,7 @@ func TestCICheckLog(t *testing.T) {
 func TestCICheckCompletion(t *testing.T) {
 	const raw = `{"schema_version":3,"source_labels":["test"],"summary":"Two claims","verdict":"fail","findings":[{"severity":"high","kind":"defect","confidence":0.9,"problem":"Build claim","fix":"Fix build","sources":[1]},{"severity":"medium","kind":"defect","confidence":0.9,"problem":"Data loss","fix":"Preserve data","sources":[1]}]}`
 	// "agent drop" reaches the checker through a synthesis agent; the rest pass one review through.
-	for _, mode := range []string{"off", "failure", "keep", "drop", "agent drop", "below threshold", "empty canceled", "checker canceled", "checker deadline"} {
+	for _, mode := range []string{"off", "failure", "drop", "agent drop", "below threshold", "empty canceled", "checker canceled", "checker deadline"} {
 		t.Run(mode, func(t *testing.T) {
 			tc := newWorkerTestContext(t, 1)
 			synthAgent := &synthesisEntrypointTestAgent{name: "checker-agent", result: raw}
@@ -192,9 +185,6 @@ func TestCICheckCompletion(t *testing.T) {
 				}
 				if ctx.Err() != nil {
 					return structuredreview.Document{}, ctx.Err()
-				}
-				if mode == "keep" {
-					return doc, nil
 				}
 				return applyCICheck(doc, jsontext.Value(`{"verdicts":[{"finding":1,"keep":false,"evidence":"build succeeds","reason":"refuted"}]}`), out)
 			}
