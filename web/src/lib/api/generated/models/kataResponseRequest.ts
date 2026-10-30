@@ -12,6 +12,8 @@ export interface KataResponseRequest {
   job_id?: number;
   kind: string;
   operation_id: string;
+  /** Optional refute classification: false-positive, spurious or risk-accepted; omission is unspecified */
+  reason?: string;
   replacement?: string;
   target_comment?: string;
 }

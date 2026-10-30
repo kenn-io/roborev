@@ -2686,6 +2686,9 @@ components:
           type: string
         operation_id:
           type: string
+        reason:
+          description: "Optional refute classification: false-positive, spurious or risk-accepted; omission is unspecified"
+          type: string
         replacement:
           type: string
         target_comment:

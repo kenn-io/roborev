@@ -2545,9 +2545,12 @@ type KataResponseRequest struct {
 	FindingID string `json:"finding_id" validate:"required"`
 
 	// JobID Optional original job ID; otherwise resolve the immutable finding or comment target
-	JobID         *int64  `json:"job_id,omitempty"`
-	Kind          string  `json:"kind" validate:"required"`
-	OperationID   string  `json:"operation_id" validate:"required"`
+	JobID       *int64 `json:"job_id,omitempty"`
+	Kind        string `json:"kind" validate:"required"`
+	OperationID string `json:"operation_id" validate:"required"`
+
+	// Reason Optional refute classification: false-positive, spurious or risk-accepted; omission is unspecified
+	Reason        *string `json:"reason,omitempty"`
 	Replacement   *string `json:"replacement,omitempty"`
 	TargetComment *string `json:"target_comment,omitempty"`
 }
