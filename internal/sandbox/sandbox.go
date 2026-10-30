@@ -22,9 +22,11 @@ import (
 type Job struct {
 	WorkDir   string
 	ReadPaths []string
-	Route     Route
-	Env       []string
-	MemoryMax int64
+	// DenyReadPaths must be unreadable through both their names and symlink targets.
+	DenyReadPaths []string
+	Route         Route
+	Env           []string
+	MemoryMax     int64
 }
 
 // Route lets nono capture a host credential and inject it into matching requests.
@@ -121,18 +123,32 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 	}
 	// nono adds embedded default groups without resolving a named user profile.
 	profile := map[string]any{
-		"groups":   map[string]any{"exclude": []string{"system_write_linux"}},
+		"groups":   map[string]any{"exclude": []string{"system_write_linux", "system_read_linux_core"}},
 		"workdir":  map[string]any{"access": "none"},
 		"linux":    map[string]any{"af_unix_mediation": "pathname"},
 		"security": map[string]any{"signal_mode": "isolated", "process_info_mode": "isolated"},
 		"filesystem": map[string]any{
-			"read":       []string{"/usr/libexec", "/usr/include"},
-			"write_file": []string{"/dev/null", "/dev/zero", "/dev/full", "/dev/tty"},
-			"write":      []string{"/dev/pts"},
+			// nono 0.80.0's core read group includes host terminals. Keep its other grants.
+			"read": []string{
+				"/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin",
+				"/lib", "/lib64", "/lib/x86_64-linux-gnu", "/lib/aarch64-linux-gnu",
+				"/usr/lib", "/usr/lib64", "/usr/lib/x86_64-linux-gnu", "/usr/lib/aarch64-linux-gnu", "/usr/local/lib", "/usr/local/lib64",
+				"/etc/resolv.conf", "/run/systemd/resolve", "/etc/hosts", "/etc/nsswitch.conf", "/etc/gai.conf", "/etc/group",
+				"/etc/ssl", "/etc/pki", "/etc/ca-certificates", "/etc/crypto-policies", "/etc/fonts",
+				"/etc/ld.so.cache", "/etc/ld.so.conf", "/etc/ld.so.conf.d", "/etc/localtime", "/etc/timezone", "/etc/locale.conf", "/etc/locale.gen",
+				"/etc/alternatives", "/etc/os-release", "/etc/passwd", "/etc/services", "/etc/mime.types", "/etc/manpath.config", "/etc/man_db.conf",
+				"/var/cache/man", "/run/systemd/userdb",
+				"/usr/share", "/usr/share/locale", "/usr/share/locale-langpack", "/usr/share/zoneinfo", "/usr/share/terminfo", "/usr/share/ca-certificates", "/lib/terminfo", "/etc/terminfo",
+				"/dev/null", "/dev/zero", "/dev/random", "/dev/urandom", "/dev/full", "/dev/fd",
+				"/proc/self", "/proc/cpuinfo", "/proc/meminfo", "/proc/stat", "/proc/loadavg", "/proc/version", "/proc/filesystems",
+				"/usr/libexec", "/usr/include",
+			},
+			"write_file": []string{"/dev/null", "/dev/zero", "/dev/full"},
 		},
 		"network": map[string]any{
-			"credentials":  []string{j.Route.Name},
-			"allow_domain": []any{map[string]any{"domain": upstream.Hostname(), "endpoints": []any{map[string]any{"method": "GET", "path": "/nono-no-direct-access"}}}},
+			"credentials": []string{j.Route.Name},
+			// HTTP methods are nonempty, so this rule cannot authorize a request.
+			"allow_domain": []any{map[string]any{"domain": upstream.Hostname(), "endpoints": []any{map[string]any{"method": "", "path": "/nono-no-direct-access"}}}},
 			"custom_credentials": map[string]any{j.Route.Name: map[string]any{
 				"upstream": j.Route.Upstream, "credential_key": "cmd://" + j.Route.Name,
 				"env_var": j.Route.EnvVar, "credential_format": "Bearer {}",

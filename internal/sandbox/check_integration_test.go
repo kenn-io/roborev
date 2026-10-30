@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -122,6 +123,73 @@ func TestSandboxUnenforceablePolicy(t *testing.T) {
 		Env: []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir()}}
 	_, _, _, err := job.Command(t.Context(), []string{"true"})
 	require.ErrorContains(t, err, "must use HTTPS (HTTP only allowed for loopback addresses)")
+}
+
+func TestSandboxHostPTYIsolation(t *testing.T) {
+	if os.Getenv("ROBOREV_RUN_SANDBOX_INTEGRATION") != "1" || runtime.GOARCH != "amd64" {
+		t.Skip("requires opt-in linux/amd64 sandbox integration")
+	}
+	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|syscall.O_NOCTTY, 0)
+	require.NoError(t, err)
+	defer master.Close()
+	var unlocked, number uint32
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, master.Fd(), syscall.TIOCSPTLCK, uintptr(unsafe.Pointer(&unlocked)))
+	require.Zero(t, errno)
+	_, _, errno = syscall.Syscall(syscall.SYS_IOCTL, master.Fd(), syscall.TIOCGPTN, uintptr(unsafe.Pointer(&number)))
+	require.Zero(t, errno)
+	slavePath := fmt.Sprintf("/dev/pts/%d", number)
+	slave, err := os.OpenFile(slavePath, os.O_RDWR|syscall.O_NOCTTY, 0)
+	require.NoError(t, err)
+	defer slave.Close()
+	_, err = master.WriteString("synthetic-host-input\n")
+	require.NoError(t, err)
+	work := t.TempDir()
+	job := Job{WorkDir: work, MemoryMax: 1 << 30,
+		Route: Route{Name: "codex", Upstream: "https://chatgpt.com/backend-api/codex", Path: "/responses", EnvVar: "CODEX_PHANTOM", Capture: []string{"/bin/echo", "fixture-token"}},
+		Env:   []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir()}}
+	script := testutil.SandboxShellChecks + `
+check host-terminal-read deny python3 -c 'import os,sys; f=os.open(sys.argv[1],os.O_RDONLY|os.O_NONBLOCK); print(os.read(f,1024))' "$1"
+check host-terminal-write deny bash -c 'echo sandbox-output > "$1"' probe "$1"
+exit "$failed"
+`
+	cmd, env, cleanup, err := job.Command(t.Context(), []string{"bash", "-c", script, "probe", slavePath})
+	require.NoError(t, err)
+	defer cleanup()
+	process := exec.CommandContext(t.Context(), cmd[0], cmd[1:]...)
+	process.Env, process.Dir = env, work
+	out, err := process.CombinedOutput()
+	require.NoError(t, err, "%s", out)
+	assert.Contains(t, string(out), "OK host-terminal-read")
+	assert.Contains(t, string(out), "OK host-terminal-write")
+}
+
+func TestSandboxSentinelRoute(t *testing.T) {
+	if os.Getenv("ROBOREV_RUN_SANDBOX_INTEGRATION") != "1" || runtime.GOARCH != "amd64" {
+		t.Skip("requires opt-in linux/amd64 sandbox integration")
+	}
+	work := t.TempDir()
+	job := Job{WorkDir: work, MemoryMax: 1 << 30,
+		Route: Route{Name: "codex", Upstream: "https://example.invalid", Path: "/responses", EnvVar: "CODEX_PHANTOM", Capture: []string{"/bin/echo", "fixture-token"}},
+		Env:   []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir()}}
+	script := testutil.SandboxShellChecks + `
+check work-write allow touch "$1/allowed"
+# Exercise the endpoint-only route that allow_domain adds beside /codex.
+# A DNS or upstream failure must not count as a policy denial.
+base=$(dirname "$CODEX_BASE_URL")
+curl --fail-with-body -sS -H "Proxy-Authorization: Bearer $NONO_PROXY_TOKEN" -o "$1/direct-response" "$base/_ep_example.invalid/nono-no-direct-access"
+[ "$?" = 22 ] || failed=1
+exit "$failed"
+`
+	cmd, env, cleanup, err := job.Command(t.Context(), []string{"bash", "-c", script, "probe", work})
+	require.NoError(t, err)
+	defer cleanup()
+	process := exec.CommandContext(t.Context(), cmd[0], cmd[1:]...)
+	process.Env, process.Dir = env, work
+	out, err := process.CombinedOutput()
+	assert.NoError(t, err, "%s", out)
+	denial, err := os.ReadFile(filepath.Join(work, "direct-response"))
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"error":"Forbidden"}`, string(denial))
 }
 
 func TestSandboxProcessCleanup(t *testing.T) {

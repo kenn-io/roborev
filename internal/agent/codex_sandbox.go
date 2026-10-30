@@ -66,26 +66,7 @@ func (s *CodexSandbox) prepare(repoPath string) (sandbox.Job, func(), error) {
 	if err != nil {
 		return job, nil, fmt.Errorf("resolve Codex login path: %w", err)
 	}
-	hostHome, err = pathresolve.EvalSymlinks(filepath.Dir(authFile))
-	if err != nil {
-		return job, nil, fmt.Errorf("resolve Codex home: %w", err)
-	}
-	for _, path := range job.ReadPaths {
-		resolved, err := filepath.Abs(path)
-		if err == nil {
-			resolved, err = pathresolve.EvalSymlinks(resolved)
-		}
-		if err != nil {
-			return job, nil, fmt.Errorf("resolve sandbox read path %q: %w", path, err)
-		}
-		rel, err := filepath.Rel(resolved, hostHome)
-		if err != nil {
-			return job, nil, fmt.Errorf("compare sandbox read path %q with Codex home: %w", path, err)
-		}
-		if rel == "." || filepath.IsLocal(rel) {
-			return job, nil, fmt.Errorf("read path %q contains the Codex login", path)
-		}
-	}
+	job.DenyReadPaths = append(append([]string{}, job.DenyReadPaths...), authFile)
 	upstream := s.upstream
 	if upstream == "" {
 		upstream = "https://chatgpt.com/backend-api/codex"

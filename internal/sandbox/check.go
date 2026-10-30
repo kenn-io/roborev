@@ -7,7 +7,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+
+	"go.kenn.io/kit/pathresolve"
 )
 
 func (j Job) check(ctx context.Context, wrapper, env []string) error {
@@ -48,7 +51,12 @@ except Exception:
 [[ ! -v DBUS_SESSION_BUS_ADDRESS ]] || bad environment-dbus
 /usr/bin/python3 -c 'import socket' 2>/dev/null || bad dbus-probe
 /usr/bin/python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1])' "$4" 2>/dev/null && bad dbus-connect
-shift 4
+denied=$5
+shift 5
+for ((i=0; i<denied; i++)); do
+  cat "$1" >/dev/null 2>&1 && bad "deny-path-read: $1"
+  shift
+done
 for path in "$@"; do
   if [ -d "$path" ]; then
     ( touch "$path/.sandbox-write-$$" ) 2>/dev/null && { rm -f "$path/.sandbox-write-$$"; bad "read-path-write: $path"; }
@@ -57,7 +65,16 @@ done
 exit "$failed"
 `
 	args := append([]string{}, wrapper[1:]...)
-	args = append(args, "bash", "--norc", "--noprofile", "-c", probe, "sandbox-check", j.WorkDir, secret, port, filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "bus"))
+	var denied []string
+	for _, path := range j.DenyReadPaths {
+		resolved, err := pathresolve.EvalSymlinks(path)
+		if err != nil {
+			return fmt.Errorf("resolve sandbox deny-read path: %w", err)
+		}
+		denied = append(denied, path, resolved)
+	}
+	args = append(args, "bash", "--norc", "--noprofile", "-c", probe, "sandbox-check", j.WorkDir, secret, port, filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "bus"), strconv.Itoa(len(denied)))
+	args = append(args, denied...)
 	args = append(args, j.ReadPaths...)
 	cmd := exec.CommandContext(ctx, wrapper[0], args...)
 	cmd.Dir = j.WorkDir
