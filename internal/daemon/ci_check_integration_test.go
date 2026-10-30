@@ -31,16 +31,7 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 		_, err := exec.LookPath(name)
 		require.NoError(t, err)
 	}
-	t.Run("native", testCICheckSandboxIntegration)
-	t.Run("npm", func(t *testing.T) {
-		codex, err := resolveCICheckCommand(t.Context(), t.TempDir(), "codex")
-		require.NoError(t, err)
-		installCICheckNPM(t, codex)
-		testCICheckSandboxIntegration(t)
-	})
-}
 
-func testCICheckSandboxIntegration(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	repoRoot := tc.TmpDir
 	loginDir := t.TempDir()

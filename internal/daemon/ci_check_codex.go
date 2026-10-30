@@ -1,9 +1,7 @@
 package daemon
 
 import (
-	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,96 +13,49 @@ import (
 type ciCheckCodex struct {
 	Command   string
 	ReadPaths []string
-	PathDir   string
 }
 
-func resolveCICheckCodex(ctx context.Context, dir, command string) (resolved ciCheckCodex, err error) {
+func resolveCICheckCodex(ctx context.Context, dir, command string) (ciCheckCodex, error) {
 	codex, err := resolveCICheckCommand(ctx, dir, command)
 	if err != nil {
-		return resolved, fmt.Errorf("find checker codex: %w", err)
+		return ciCheckCodex{}, fmt.Errorf("find checker codex: %w", err)
 	}
 	real, err := filepath.EvalSymlinks(codex)
 	if err != nil {
-		return resolved, err
+		return ciCheckCodex{}, err
 	}
-	// Native Codex loads sibling helpers. npm launchers load their package.
-	readPaths := []string{filepath.Dir(real)}
-	pathDir := ""
-	launcher, openErr := os.Open(real)
-	if openErr != nil {
-		err = openErr
-		return
+	// The supported npm install keeps the native package beside @openai/codex.
+	if filepath.Base(real) == "codex.js" && filepath.Base(filepath.Dir(real)) == "bin" && filepath.Base(filepath.Dir(filepath.Dir(real))) == "codex" {
+		scope := filepath.Dir(filepath.Dir(filepath.Dir(real)))
+		if filepath.Base(scope) != "@openai" {
+			return ciCheckCodex{}, fmt.Errorf("unsupported checker Codex install: %s", real)
+		}
+		real = filepath.Join(scope, "codex-linux-x64", "vendor", "x86_64-unknown-linux-musl", "bin", "codex")
+		codex = real
 	}
-	var header [2]byte
-	_, readErr := io.ReadFull(launcher, header[:])
-	var interpreter string
-	if string(header[:]) == "#!" {
-		interpreter, readErr = bufio.NewReader(launcher).ReadString('\n')
+	binary, err := os.Open(real)
+	if err != nil {
+		return ciCheckCodex{}, err
 	}
-	closeErr := launcher.Close()
-	if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
-		err = readErr
-		return
+	var magic [4]byte
+	_, err = io.ReadFull(binary, magic[:])
+	closeErr := binary.Close()
+	if err != nil {
+		return ciCheckCodex{}, err
 	}
 	if closeErr != nil {
-		err = closeErr
-		return
+		return ciCheckCodex{}, closeErr
 	}
-	fields := strings.Fields(interpreter)
-	isNode := len(fields) > 0 && filepath.Base(fields[0]) == "node"
-	if len(fields) > 1 && filepath.Base(fields[0]) == "env" {
-		// env may use -S to split the interpreter and its options.
-		isNode = fields[1] == "node" || (len(fields) > 2 && fields[1] == "-S" && fields[2] == "node")
+	if string(magic[:]) != "\x7fELF" {
+		return ciCheckCodex{}, fmt.Errorf("unsupported checker Codex executable: %s", real)
 	}
-	if isNode {
-		var node string
-		node, err = resolveCICheckCommand(ctx, dir, "node")
-		if err != nil {
-			err = fmt.Errorf("find checker node: %w", err)
-			return
-		}
-		if filepath.Ext(real) == ".js" && filepath.Base(filepath.Dir(real)) == "bin" {
-			readPaths[0] = filepath.Dir(filepath.Dir(real))
-			// Resolve the optional native package as the npm launcher does.
-			// It may be a sibling package or a package-manager symlink.
-			resolve := exec.CommandContext(ctx, node, "--input-type=module", "-e", `
-import { createRequire } from 'node:module';
-import { dirname } from 'node:path';
-const require = createRequire(process.argv[1]);
-try {
-  console.log(dirname(require.resolve('@openai/codex-' + process.platform + '-' + process.arch + '/package.json')));
-} catch (error) {
-  if (error.code !== 'MODULE_NOT_FOUND') throw error;
-  // The launcher's bundled vendor directory is already granted.
-}
-`, real)
-			resolve.Dir = dir
-			var nativePackage []byte
-			nativePackage, err = resolve.Output()
-			if err != nil {
-				err = fmt.Errorf("resolve checker native package: %w", err)
-				return
-			}
-			if path := strings.TrimSpace(string(nativePackage)); path != "" {
-				readPaths = append(readPaths, path)
-			}
-		}
-		nodeReal, resolveErr := filepath.EvalSymlinks(node)
-		if resolveErr != nil {
-			err = resolveErr
-			return
-		}
-		readPaths = append(readPaths, filepath.Dir(nodeReal))
-		pathDir = filepath.Dir(node)
+	paths := []string{filepath.Dir(real)}
+	if _, err := os.Stat("/etc/codex"); err == nil {
+		paths = append(paths, "/etc/codex")
+	} else if !os.IsNotExist(err) {
+		return ciCheckCodex{}, err
 	}
-	if _, statErr := os.Stat("/etc/codex"); statErr == nil {
-		readPaths = append(readPaths, "/etc/codex")
-	} else if !os.IsNotExist(statErr) {
-		err = statErr
-		return
-	}
-	resolved = ciCheckCodex{Command: codex, ReadPaths: readPaths, PathDir: pathDir}
-	return
+	return ciCheckCodex{Command: codex, ReadPaths: paths}, nil
 }
 
 func resolveCICheckCommand(ctx context.Context, dir, name string) (string, error) {

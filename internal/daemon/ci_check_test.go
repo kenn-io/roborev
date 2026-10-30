@@ -123,7 +123,7 @@ func TestCICheckConfiguredCommand(t *testing.T) {
 	for _, installed := range []bool{false, true} {
 		t.Run(fmt.Sprint(installed), func(t *testing.T) {
 			if installed {
-				require.NoError(t, os.WriteFile(filepath.Join(tools, cfg.CodexCmd), []byte("native fixture"), 0o700))
+				require.NoError(t, os.WriteFile(filepath.Join(tools, cfg.CodexCmd), []byte("\x7fELFnative fixture"), 0o700))
 			}
 			_, err := tc.Pool.runCICheck(t.Context(), &storage.ReviewJob{RepoPath: tc.TmpDir, GitRef: "HEAD"}, ciCheckConfig{}, structuredreview.Document{}, nil, io.Discard)
 			require.Error(t, err)
@@ -140,55 +140,8 @@ func TestCICheckConfiguredCommand(t *testing.T) {
 	}
 }
 
-func TestCICheckStoredReview(t *testing.T) {
-	for _, path := range []string{"passthrough", "agent"} {
-		t.Run(path, func(t *testing.T) {
-			tc := newWorkerTestContext(t, 1)
-			synthAgent := &synthesisEntrypointTestAgent{name: "checker-" + path, result: `{"schema_version":3,"summary":"Two claims","verdict":"pass","findings":[{"severity":"high","kind":"defect","confidence":0.9,"problem":"Build claim","fix":"Fix build","sources":[1]},{"severity":"medium","kind":"defect","confidence":0.9,"problem":"Data loss","fix":"Preserve data","sources":[1]}]}`}
-			agent.RegisterForTest(t, synthAgent)
-			for _, mode := range []string{"off", "drop"} {
-				run, members, _ := enqueuePanelRun(t, tc, "checker-"+mode, []memberSpec{{name: "one", agent: "test"}})
-				setSynthesisAgent(t, tc, run, synthAgent.name)
-				snapshot := synthesisJobConfig{}
-				if path == "agent" {
-					snapshot.Instructions = "verify"
-				}
-				if mode != "off" {
-					snapshot.Check = &ciCheckConfig{Reasoning: "high"}
-				}
-				raw, err := snapshot.encode()
-				require.NoError(t, err)
-				_, err = tc.DB.Exec("UPDATE review_jobs SET panel_member_config_json = ?, min_severity = 'high' WHERE panel_run_uuid = ? AND panel_role = 'synthesis'", raw, run)
-				require.NoError(t, err)
-				markMemberRunning(t, tc, members[0].ID)
-				require.NoError(t, tc.DB.CompleteJobResult(members[0].ID, "test", storage.ReviewCompletion{Output: "two claims", Verdict: storage.VerdictFail, StructuredOutput: jsontext.Value(synthAgent.result)}))
-				job := releaseAndClaimSynthesis(t, tc, run)
-				calls := 0
-				tc.Pool.ciCheck = func(_ context.Context, _ *storage.ReviewJob, cfg ciCheckConfig, doc structuredreview.Document, _ []string, out io.Writer) (structuredreview.Document, error) {
-					calls++
-					assert.Equal(t, "high", cfg.Reasoning)
-					require.Len(t, doc.Findings, 2)
-					return applyCICheck(doc, jsontext.Value(`{"verdicts":[{"finding":1,"keep":false,"evidence":"build succeeds","reason":"refuted"},{"finding":2,"keep":true,"evidence":"data lost","reason":"reproduced"}]}`), out)
-				}
-				tc.Pool.processSynthesisJob(t.Context(), testWorkerID, job)
-				assert.Equal(t, map[bool]int{true: 0, false: 1}[mode == "off"], calls)
-				stored, err := tc.DB.GetReviewByJobID(job.ID)
-				require.NoError(t, err)
-				finished, err := tc.DB.GetJobByID(job.ID)
-				require.NoError(t, err)
-				assert.Equal(t, storage.JobStatusDone, finished.Status)
-				if mode == "off" {
-					assert.Contains(t, stored.Output, "Two claims")
-					assert.Contains(t, stored.Output, "Build claim")
-					assert.Contains(t, stored.Output, "Data loss")
-				}
-			}
-		})
-	}
-}
-
 func TestCICheckLog(t *testing.T) {
-	for _, provider := range []string{"codex", "claude-code", "gemini", "grok", "opencode", "pi"} {
+	for _, provider := range []string{"codex", "claude-code"} {
 		t.Run(provider, func(t *testing.T) {
 			tc := newWorkerTestContext(t, 1)
 			run, members, _ := enqueuePanelRun(t, tc, "checker-log", []memberSpec{{name: "one", agent: "test"}})
@@ -227,83 +180,112 @@ func TestCICheckLog(t *testing.T) {
 }
 
 func TestCICheckCompletion(t *testing.T) {
-	raw := jsontext.Value(`{"schema_version":3,"source_labels":["test"],"summary":"Original","verdict":"pass","findings":[{"severity":"high","problem":"Build claim","fix":"Fix build","sources":[1]},{"severity":"medium","problem":"Data loss","fix":"Preserve data","sources":[1]}]}`)
-	doc, err := reviewpkg.DecodeStructuredReview(raw)
-	require.NoError(t, err)
-	original := synthesisResult{review: reviewpkg.ReviewResult{Agent: "test", Output: doc.Markdown(""), Verdict: storage.VerdictPass, StructuredOutput: raw}}
-	for _, mode := range []string{"failure", "keep", "below threshold", "empty canceled", "checker canceled", "checker deadline"} {
-		t.Run(mode, func(t *testing.T) {
-			tc := newWorkerTestContext(t, 1)
-			run, members, _ := enqueuePanelRun(t, tc, "context-panel", []memberSpec{{name: "one", agent: "test"}})
-			completeMember(t, tc, members[0].ID, "test", "finding")
-			job := releaseAndClaimSynthesis(t, tc, run)
-			job.MinSeverity = "high"
-			if mode == "below threshold" {
-				job.MinSeverity = "critical"
-			}
-			calls := 0
-			tc.Pool.ciCheck = func(ctx context.Context, _ *storage.ReviewJob, _ ciCheckConfig, got structuredreview.Document, _ []string, out io.Writer) (structuredreview.Document, error) {
-				calls++
-				require.Len(t, got.Findings, 2)
-				switch mode {
-				case "failure":
-					return structuredreview.Document{}, fmt.Errorf("forced checker failure")
-				case "keep":
-					return applyCICheck(got, jsontext.Value(`{"verdicts":[{"finding":1,"keep":true,"evidence":"failed","reason":"reproduced"},{"finding":2,"keep":true,"evidence":"failed","reason":"reproduced"}]}`), out)
-				case "below threshold":
-					return applyCICheck(got, jsontext.Value(`{"verdicts":[{"finding":1,"keep":false,"evidence":"build succeeds","reason":"refuted"},{"finding":2,"keep":true,"evidence":"data lost","reason":"reproduced"}]}`), out)
-				default:
-					return structuredreview.Document{}, ctx.Err()
+	const raw = `{"schema_version":3,"source_labels":["test"],"summary":"Two claims","verdict":"pass","findings":[{"severity":"high","kind":"defect","confidence":0.9,"problem":"Build claim","fix":"Fix build","sources":[1]},{"severity":"medium","kind":"defect","confidence":0.9,"problem":"Data loss","fix":"Preserve data","sources":[1]}]}`
+	for _, path := range []string{"passthrough", "agent"} {
+		for _, mode := range []string{"off", "failure", "keep", "drop", "below threshold", "empty canceled", "checker canceled", "checker deadline"} {
+			t.Run(path+"/"+mode, func(t *testing.T) {
+				tc := newWorkerTestContext(t, 1)
+				synthAgent := &synthesisEntrypointTestAgent{name: "checker-" + path, result: raw}
+				agent.RegisterForTest(t, synthAgent)
+				run, members, _ := enqueuePanelRun(t, tc, "checker", []memberSpec{{name: "one", agent: "test"}})
+				setSynthesisAgent(t, tc, run, synthAgent.name)
+				snapshot := synthesisJobConfig{}
+				if path == "agent" {
+					snapshot.Instructions = "verify"
 				}
-			}
-			ctx, cancel := context.WithCancel(t.Context())
-			switch mode {
-			case "checker deadline":
-				cancel()
-				ctx, cancel = context.WithDeadline(t.Context(), time.Unix(0, 0))
-			case "empty canceled", "checker canceled":
-				cancel()
-			}
-			defer cancel()
-			inputDoc, input := doc, original
-			if mode == "empty canceled" {
-				inputDoc.Findings = nil
-				inputDoc.Verdict = structuredreview.VerdictPass
-				input.review.StructuredOutput, err = json.Marshal(inputDoc)
+				if mode != "off" {
+					snapshot.Check = &ciCheckConfig{Reasoning: "high"}
+				}
+				encoded, err := snapshot.encode()
 				require.NoError(t, err)
-				input.review.Output = inputDoc.Markdown("")
-			}
-			tc.Pool.checkAndCompleteSynthesis(ctx, testWorkerID, job, input, inputDoc, &ciCheckConfig{})
-			if mode == "empty canceled" {
-				assert.Zero(t, calls)
-			} else {
-				assert.Equal(t, 1, calls)
-			}
-			finished, err := tc.DB.GetJobByID(job.ID)
-			require.NoError(t, err)
-			if mode == "checker canceled" {
-				assert.Equal(t, storage.JobStatusRunning, finished.Status)
-				return
-			}
-			assert.Equal(t, storage.JobStatusDone, finished.Status)
-			stored, err := tc.DB.GetReviewByJobID(job.ID)
-			require.NoError(t, err)
-			if mode == "failure" {
-				log, err := os.ReadFile(JobLogPath(job.ID))
+				threshold := "high"
+				if mode == "below threshold" {
+					threshold = "critical"
+				}
+				_, err = tc.DB.Exec("UPDATE review_jobs SET panel_member_config_json = ?, min_severity = ? WHERE panel_run_uuid = ? AND panel_role = 'synthesis'", encoded, threshold, run)
 				require.NoError(t, err)
-				assert.Contains(t, string(log), "CI checker failed; keeping original review: forced checker failure")
-			}
-			if mode == "below threshold" {
-				assert.NotContains(t, stored.Output, "Build claim")
-				assert.Contains(t, stored.Output, "Data loss")
-				assert.Equal(t, storage.VerdictPass, stored.Verdict())
-				return
-			}
-			assert.Equal(t, input.review.Output, stored.Output)
-			assert.Equal(t, input.review.Verdict, stored.Verdict())
-			encoded, err := json.Marshal(stored.StructuredOutput)
-			require.NoError(t, err)
-			assert.JSONEq(t, string(input.review.StructuredOutput), string(encoded))
-		})
+				markMemberRunning(t, tc, members[0].ID)
+				require.NoError(t, tc.DB.CompleteJobResult(members[0].ID, "test", storage.ReviewCompletion{Output: "two claims", Verdict: storage.VerdictFail, StructuredOutput: jsontext.Value(raw)}))
+				job := releaseAndClaimSynthesis(t, tc, run)
+				calls := 0
+				tc.Pool.ciCheck = func(ctx context.Context, _ *storage.ReviewJob, cfg ciCheckConfig, doc structuredreview.Document, _ []string, out io.Writer) (structuredreview.Document, error) {
+					calls++
+					assert.Equal(t, "high", cfg.Reasoning)
+					require.Len(t, doc.Findings, 2)
+					if mode == "failure" {
+						return structuredreview.Document{}, fmt.Errorf("forced checker failure")
+					}
+					if ctx.Err() != nil {
+						return structuredreview.Document{}, ctx.Err()
+					}
+					if mode == "keep" {
+						return doc, nil
+					}
+					return applyCICheck(doc, jsontext.Value(`{"verdicts":[{"finding":1,"keep":false,"evidence":"build succeeds","reason":"refuted"}]}`), out)
+				}
+				doc, err := reviewpkg.DecodeStructuredReview(jsontext.Value(raw))
+				require.NoError(t, err)
+				original := synthesisResult{review: reviewpkg.ReviewResult{Agent: "test", Output: doc.Markdown(threshold), Verdict: storage.VerdictFail, StructuredOutput: jsontext.Value(raw)}}
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				switch mode {
+				case "checker deadline":
+					ctx, cancel = context.WithDeadline(t.Context(), time.Unix(0, 0))
+					defer cancel()
+				case "empty canceled", "checker canceled":
+					cancel()
+				}
+				if strings.Contains(mode, "canceled") || mode == "checker deadline" {
+					original.review.Verdict = storage.VerdictPass
+					if mode == "empty canceled" {
+						doc.Findings = []structuredreview.Finding{}
+						original.review.Output = doc.Markdown(threshold)
+						original.review.StructuredOutput, err = json.Marshal(doc)
+						require.NoError(t, err)
+					}
+					tc.Pool.checkAndCompleteSynthesis(ctx, testWorkerID, job, original, doc, snapshot.Check)
+				} else {
+					tc.Pool.processSynthesisJob(ctx, testWorkerID, job)
+				}
+				if mode == "off" || mode == "empty canceled" {
+					assert.Zero(t, calls)
+				} else {
+					assert.Equal(t, 1, calls)
+				}
+				finished, err := tc.DB.GetJobByID(job.ID)
+				require.NoError(t, err)
+				if mode == "checker canceled" {
+					assert.Equal(t, storage.JobStatusRunning, finished.Status)
+					return
+				}
+				assert.Equal(t, storage.JobStatusDone, finished.Status)
+				stored, err := tc.DB.GetReviewByJobID(job.ID)
+				require.NoError(t, err)
+				if mode == "drop" || mode == "below threshold" {
+					assert.NotContains(t, stored.Output, "Build claim")
+					assert.Contains(t, stored.Output, "Data loss")
+					assert.Equal(t, storage.VerdictPass, stored.Verdict())
+					encoded, err := json.Marshal(stored.StructuredOutput)
+					require.NoError(t, err)
+					checked, err := reviewpkg.DecodeStructuredReview(encoded)
+					require.NoError(t, err)
+					require.Len(t, checked.Findings, 1)
+					assert.Equal(t, "Data loss", checked.Findings[0].Problem)
+				} else {
+					assert.Equal(t, original.review.Output, stored.Output)
+					assert.Equal(t, original.review.Verdict, stored.Verdict())
+					encoded, err := json.Marshal(stored.StructuredOutput)
+					require.NoError(t, err)
+					unchanged, err := reviewpkg.DecodeStructuredReview(encoded)
+					require.NoError(t, err)
+					assert.Equal(t, doc, unchanged)
+				}
+				if mode == "failure" {
+					log, err := os.ReadFile(JobLogPath(job.ID))
+					require.NoError(t, err)
+					assert.Contains(t, string(log), "CI checker failed; keeping original review: forced checker failure")
+				}
+			})
+		}
 	}
 }

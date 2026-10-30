@@ -750,7 +750,10 @@ check_reasoning = "high"
 The checker is off by default. A repository can override `check` in its
 `.roborev.toml` on the default branch. Only the global config selects the model
 and reasoning. The checker uses the Codex command selected by `codex_cmd`. The
-daemon-free `roborev ci review` command ignores these checker settings.
+daemon-free `roborev ci review` command ignores these checker settings. The
+checker accepts a native Linux Codex binary or the npm `@openai/codex` layout
+installed by mise, with its sibling `@openai/codex-linux-x64` native package.
+Other launchers and package layouts post reviews unchecked.
 
 The host needs Linux on amd64, the pinned nono build, a systemd user manager,
 Codex with a host login, Bash, and Python 3 at `/usr/bin/python3`. Go is needed
@@ -758,13 +761,15 @@ to warm Go modules. See
 [sandboxed Codex runs](/docs/agents/#sandboxed-codex-runs) for the pinned nono
 build and host requirements.
 
-The checker works in a copy of the PR checkout. The host warms Go modules in the
-original disposable checkout after making the copy, so warming cannot change the
-code being checked. Inside the sandbox, the checker can change its scratch files
-and read the shared clone's Git metadata and warmed caches. Model calls use
-nono's credential route, which reads the host's current Codex login outside the
-sandbox. Tests that start loopback servers cannot run in this sandbox; the
-checker keeps findings it cannot try.
+The checker works in a copy of the PR checkout. The host warms only the root
+`go.mod` in the original disposable checkout after making the copy. The root
+`go.mod` must be a regular file. Warming cannot change the code being checked.
+Nested modules and Go workspaces receive no separate warming; findings that need
+unavailable dependencies post unchecked. Inside the sandbox, the checker can
+change its scratch files and read the shared clone's Git metadata and warmed
+caches. Model calls use nono's credential route, which reads the host's current
+Codex login outside the sandbox. Tests that start loopback servers cannot run in
+this sandbox; the checker keeps findings it cannot try.
 
 A finding drops only when one verdict supplies evidence and a reason to drop it.
 Missing or duplicate verdicts keep the finding. The job log records the

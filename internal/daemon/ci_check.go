@@ -7,13 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"log"
-	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"go.kenn.io/kit/pathresolve"
@@ -57,7 +54,7 @@ func (wp *WorkerPool) checkAndCompleteSynthesis(ctx context.Context, workerID st
 }
 
 func (wp *WorkerPool) checkSynthesis(ctx context.Context, job *storage.ReviewJob, res synthesisResult, doc structuredreview.Document, check *ciCheckConfig) (synthesisResult, bool) {
-	if check != nil && doc.Legacy == nil && !doc.UnableToReview() && len(doc.Findings) > 0 {
+	if check != nil && !doc.UnableToReview() && len(doc.Findings) > 0 {
 		jobLog := newAppendingJobLogWriter(job.ID)
 		defer jobLog.Close()
 		// Persist readable checker output because the job log keeps the synthesis provider.
@@ -84,16 +81,13 @@ func (wp *WorkerPool) checkSynthesis(ctx context.Context, job *storage.ReviewJob
 		if checkErr != nil {
 			fmt.Fprintf(out, "CI checker failed; keeping original review: %v\n", checkErr)
 		} else if len(checked.Findings) < len(doc.Findings) {
-			verdict := reviewpkg.SynthesisVerdict(checked, job.MinSeverity)
 			checked.Verdict = structuredreview.VerdictPass
-			if verdict == storage.VerdictFail {
+			if reviewpkg.SynthesisVerdict(checked, job.MinSeverity) == storage.VerdictFail {
 				checked.Verdict = structuredreview.VerdictFail
 			}
-			raw, encodeErr := json.Marshal(checked)
-			if encodeErr == nil {
-				res.review.StructuredOutput = raw
-				res.review.Output = checked.Markdown(job.MinSeverity)
-				res.review.Verdict = verdict
+			if result, err := synthesisDocumentResult(job, checked); err == nil {
+				result.Agent = res.review.Agent
+				res.review = result
 			}
 		}
 		return res, true
@@ -164,9 +158,6 @@ func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob
 	run.Command = resolved.Command
 	readPaths := resolved.ReadPaths
 	toolPath := os.Getenv("PATH")
-	if resolved.PathDir != "" {
-		toolPath = resolved.PathDir + string(os.PathListSeparator) + toolPath
-	}
 	run.Job.WorkDir = filepath.Join(root, "work")
 	var closeRepo func()
 	if run.Repo, closeRepo, err = wp.createExactCheckoutIn(ctx, "ci-checker", job, run.Job.WorkDir); err != nil {
@@ -253,40 +244,16 @@ func validateCICheckReadPaths(paths []string) error {
 	return nil
 }
 
-// The warming checkout contains committed files and the disposable checker root.
-func ciCheckGoDirs(checkout string) ([]string, error) {
-	dirs := make(map[string]bool)
-	err := filepath.WalkDir(checkout, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			if path != checkout && (entry.Name() == ".git" || strings.HasPrefix(entry.Name(), "roborev-ci-check-")) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		switch entry.Name() {
-		case "go.mod", "go.work", "go.sum", "go.work.sum":
-			if !entry.Type().IsRegular() {
-				return os.RemoveAll(path)
-			}
-			if entry.Name() == "go.mod" || entry.Name() == "go.work" {
-				dirs[filepath.Dir(path)] = true
-			}
-		}
-		return nil
-	})
-	return slices.Sorted(maps.Keys(dirs)), err
-}
-
 func warmGoModules(ctx context.Context, checkout string, gitEnv []string, out io.Writer) ([]string, error) {
-	dirs, err := ciCheckGoDirs(checkout)
+	info, err := os.Lstat(filepath.Join(checkout, "go.mod"))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
-	if len(dirs) == 0 {
-		return nil, nil
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("checker root go.mod must be a regular file")
 	}
 	goEnv := exec.CommandContext(ctx, "go", "env", "GOROOT", "GOMODCACHE")
 	// Version-manager shims must resolve Go without loading checkout config.
@@ -302,14 +269,13 @@ func warmGoModules(ctx context.Context, checkout string, gitEnv []string, out io
 	if len(paths) != 2 || paths[0] == "" || paths[1] == "" {
 		return nil, fmt.Errorf("checker go env returned incomplete paths")
 	}
-	for _, dir := range dirs {
-		warm := exec.CommandContext(ctx, filepath.Join(paths[0], "bin", "go"), "mod", "download")
-		warm.Dir = dir
-		warm.Env = gitEnv
-		if output, err := warm.CombinedOutput(); err != nil {
-			fmt.Fprintf(out, "CI checker module warming failed: %v: %s\n", err, output)
-		}
+	warm := exec.CommandContext(ctx, filepath.Join(paths[0], "bin", "go"), "mod", "download")
+	warm.Dir = checkout
+	warm.Env = gitEnv
+	if output, err := warm.CombinedOutput(); err != nil {
+		fmt.Fprintf(out, "CI checker module warming failed: %v: %s\n", err, output)
 	}
+
 	return paths, nil
 }
 

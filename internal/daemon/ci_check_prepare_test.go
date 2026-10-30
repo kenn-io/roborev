@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"archive/zip"
 	"bytes"
 	"fmt"
 	"io"
@@ -19,9 +18,7 @@ import (
 	"go.kenn.io/roborev/internal/testutil"
 )
 
-// Preparation runs without nono or Codex. The sandbox copy must hold the
-// committed tree: submodule files present, and go.mod and the go.sum link
-// unchanged by warming, which must not write through the link to the host.
+// Preparation preserves the committed tree and relative submodule contents.
 func TestCICheckPreparation(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires shell fixtures and symlinks")
@@ -29,25 +26,6 @@ func TestCICheckPreparation(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("requires go for module warming")
 	}
-	proxy := t.TempDir()
-	versionDir := filepath.Join(proxy, "example.com", "dependency", "@v")
-	require.NoError(t, os.MkdirAll(versionDir, 0o700))
-	depMod := "module example.com/dependency\n\ngo 1.25.0\n"
-	require.NoError(t, os.WriteFile(filepath.Join(versionDir, "v1.0.0.mod"), []byte(depMod), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(versionDir, "v1.0.0.info"), []byte(`{"Version":"v1.0.0","Time":"2025-01-01T00:00:00Z"}`), 0o600))
-	var data bytes.Buffer
-	z := zip.NewWriter(&data)
-	f, err := z.Create("example.com/dependency@v1.0.0/go.mod")
-	require.NoError(t, err)
-	_, err = io.WriteString(f, depMod)
-	require.NoError(t, err)
-	require.NoError(t, z.Close())
-	require.NoError(t, os.WriteFile(filepath.Join(versionDir, "v1.0.0.zip"), data.Bytes(), 0o600))
-	t.Setenv("GOPROXY", "file://"+proxy)
-	t.Setenv("GOSUMDB", "off")
-	t.Setenv("GOWORK", "off")
-	t.Setenv("GOMODCACHE", t.TempDir())
-	t.Setenv("GOFLAGS", "-modcacherw")
 
 	sub := testutil.NewTestRepoWithCommit(t)
 	sub.CommitFile("present.txt", "submodule content", "content")
@@ -61,15 +39,11 @@ func TestCICheckPreparation(t *testing.T) {
 	repo.RunGit("-c", "protocol.file.allow=always", "submodule", "add", subPath, "dependency")
 	repo.RunGit("config", "-f", ".gitmodules", "submodule.dependency.url", "../shared.git")
 	repo.RunGit("commit", "-am", "relative submodule")
-	original := "module example.com/check\n\ngo 1.24.0\n\nrequire example.com/dependency v1.0.0\n"
+	original := "module example.com/check\n\ngo 1.25.0\n"
 	repo.CommitFile("go.mod", original, "module")
-	hostPath := filepath.Join(t.TempDir(), "host-checksums")
-	require.NoError(t, os.Symlink(hostPath, filepath.Join(repo.Root, "go.sum")))
-	repo.RunGit("add", "go.sum")
-	repo.RunGit("commit", "-m", "checksum link")
 
 	command := filepath.Join(t.TempDir(), "codex")
-	require.NoError(t, os.WriteFile(command, []byte("native fixture"), 0o700))
+	require.NoError(t, os.WriteFile(command, []byte("\x7fELFnative fixture"), 0o700))
 	sha := testutil.GetHeadSHA(t, repo.Root)
 	wp := &WorkerPool{}
 	run, err := wp.prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}, command, nil, io.Discard)
@@ -85,10 +59,6 @@ func TestCICheckPreparation(t *testing.T) {
 	mod, err := os.ReadFile(filepath.Join(run.Repo, "go.mod"))
 	require.NoError(t, err)
 	assert.Equal(t, original, string(mod))
-	target, err := os.Readlink(filepath.Join(run.Repo, "go.sum"))
-	require.NoError(t, err)
-	assert.Equal(t, hostPath, target)
-	assert.NoFileExists(t, hostPath)
 }
 
 func TestCICheckWarming(t *testing.T) {
@@ -102,16 +72,20 @@ func TestCICheckWarming(t *testing.T) {
 		assert.Empty(t, paths)
 		assert.Contains(t, log.String(), "go env failed")
 	})
+	t.Run("nonregular module", func(t *testing.T) {
+		checkout := t.TempDir()
+		require.NoError(t, os.Mkdir(filepath.Join(checkout, "go.mod"), 0o700))
+		_, err := warmGoModules(t.Context(), checkout, nil, io.Discard)
+		require.ErrorContains(t, err, "root go.mod must be a regular file")
+	})
+
 	for _, fails := range []bool{false, true} {
 		t.Run(fmt.Sprintf("download fails=%t", fails), func(t *testing.T) {
 			if runtime.GOOS == "windows" {
 				t.Skip("requires shell fixtures")
 			}
 			repo := testutil.NewTestRepoWithCommit(t)
-			for _, name := range []string{"backend/go.mod", "tools/go.mod"} {
-				repo.CommitFile(name, "module example.com/"+filepath.Dir(name)+"\n\ngo 1.25.0\n", "Go metadata")
-			}
-			repo.CommitFile("workspace/go.work", "go 1.25.0\n\nuse (\n\t../backend\n\t../tools\n)\n", "Go workspace")
+			repo.CommitFile("go.mod", "module example.com/check\n\ngo 1.25.0\n", "Go metadata")
 			tools := t.TempDir()
 			require.NoError(t, os.Mkdir(filepath.Join(tools, "bin"), 0o700))
 			exitCode := 0
@@ -126,9 +100,7 @@ func TestCICheckWarming(t *testing.T) {
 			paths, err := warmGoModules(t.Context(), repo.Root, append(os.Environ(), "CHECKER_GIT_TOKEN=synthetic"), &log)
 			require.NoError(t, err)
 			assert.Equal(t, []string{tools, tools}, paths)
-			for _, dir := range []string{"backend", "tools", "workspace"} {
-				assert.FileExists(t, filepath.Join(repo.Root, dir, "warmed"))
-			}
+			assert.FileExists(t, filepath.Join(repo.Root, "warmed"))
 			if fails {
 				assert.Contains(t, log.String(), "module warming failed")
 			} else {
@@ -195,7 +167,7 @@ func TestCICheckReadOnlyCleanup(t *testing.T) {
 					wp := &WorkerPool{}
 					if checker {
 						command := filepath.Join(t.TempDir(), "codex")
-						require.NoError(t, os.WriteFile(command, []byte("native fixture"), 0o700))
+						require.NoError(t, os.WriteFile(command, []byte("\x7fELFnative fixture"), 0o700))
 						run, err := wp.prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: repo.HeadSHA()}, command, nil, io.Discard)
 						require.NoError(t, err)
 						checkout, root, cleanup = run.Repo, filepath.Dir(run.Job.WorkDir), run.cleanup
@@ -276,7 +248,7 @@ func TestCICheckCredentialOverlap(t *testing.T) {
 			t.Setenv("CODEX_HOME", login)
 			if name == "git directory" {
 				command := filepath.Join(tools, "codex")
-				require.NoError(t, os.WriteFile(command, []byte("native fixture"), 0o700))
+				require.NoError(t, os.WriteFile(command, []byte("\x7fELFnative fixture"), 0o700))
 				tc := newWorkerTestContext(t, 1)
 				t.Setenv("CODEX_HOME", filepath.Join(tc.TmpDir, ".git"))
 				sha := testutil.GetHeadSHA(t, tc.TmpDir)

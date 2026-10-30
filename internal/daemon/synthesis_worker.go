@@ -580,19 +580,27 @@ func synthesisAgentNameMatches(selectedAgent, configuredAgent string) bool {
 }
 
 func (wp *WorkerPool) completeSynthesisDocument(workerID string, job *storage.ReviewJob, doc structuredreview.Document) {
-	raw, err := json.Marshal(doc)
+	result, err := synthesisDocumentResult(job, doc)
 	if err != nil {
 		wp.failSynthesisWithoutReviewContext(context.Background(), workerID, job, err.Error())
 		return
 	}
+	wp.completeSynthesisContext(workerID, job, synthesisResult{review: result})
+}
+
+func synthesisDocumentResult(job *storage.ReviewJob, doc structuredreview.Document) (reviewpkg.ReviewResult, error) {
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		return reviewpkg.ReviewResult{}, err
+	}
 	verdict := storage.VerdictUnknown
 	if !doc.UnableToReview() {
-		verdict = storage.VerdictFromPassed(doc.Passed(job.MinSeverity))
+		verdict = reviewpkg.SynthesisVerdict(doc, job.MinSeverity)
 	}
-	wp.completeSynthesisContext(workerID, job, synthesisResult{review: reviewpkg.ReviewResult{
+	return reviewpkg.ReviewResult{
 		Agent: job.Agent, Output: doc.Markdown(job.MinSeverity), Verdict: verdict,
 		StructuredOutput: raw, MinSeverity: job.MinSeverity,
-	}})
+	}, nil
 }
 
 // needsExactCheckout reports whether a local committed review must run in a
