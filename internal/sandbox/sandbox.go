@@ -131,12 +131,13 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 		return nil, nil, nil, fmt.Errorf("create sandbox profile: %w", err)
 	}
 	unit := filepath.Base(dir) + ".scope"
-	env = append([]string{}, j.Env...)
+	env = []string{}
 	for _, key := range []string{"XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"} {
 		if value, ok := os.LookupEnv(key); ok {
 			env = append(env, key+"="+value)
 		}
 	}
+	env = append(env, j.Env...)
 	cleanup = func() {
 		killScope(unit, env)
 		_ = os.RemoveAll(dir)
