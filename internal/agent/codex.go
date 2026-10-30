@@ -550,7 +550,7 @@ func (a *CodexAgent) review(
 		if err != nil {
 			return "", err
 		}
-		wrapped, wrappedEnv, cleanup, err := job.Command(ctx, append([]string{"/bin/sh", "-c", `exec "$0" -c "model_providers.roborev-route.base_url=\"$CODEX_BASE_URL\"" "$@"`, resolved}, args...))
+		wrapped, wrappedEnv, cleanup, err := job.Command(ctx, append([]string{"/bin/sh", "-c", `exec "$0" "$@" -c "model_providers.roborev-route.base_url=\"$CODEX_BASE_URL\""`, resolved}, args...))
 		if err != nil {
 			return "", err
 		}

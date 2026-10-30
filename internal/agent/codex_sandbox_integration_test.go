@@ -133,7 +133,7 @@ exit "$failed"
 			}
 			a := NewCodexAgent(command).WithSandbox(&CodexSandbox{Job: job, upstream: server.URL})
 			a.IgnoreUserConfig = true
-			a.ConfigOverrides = []string{`web_search="live"`, `model_provider="wrong-provider"`}
+			a.ConfigOverrides = []string{`web_search="live"`, `model_provider="wrong-provider"`, `model_providers.roborev-route.base_url="http://127.0.0.1:1"`}
 			a.Model = "test-model"
 			var stream bytes.Buffer
 			result, err := a.Review(context.Background(), filepath.Join(filepath.Base(work), "repo"), "HEAD", "Run the supplied probe.", &stream)
