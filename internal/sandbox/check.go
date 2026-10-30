@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"net"
@@ -84,7 +85,7 @@ exit "$failed"
 	cmd.Env = append(append([]string{}, env...), "ROBOREV_SANDBOX_CANARY=planted")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("sandbox self-check failed: %s: %w", strings.TrimSpace(string(output)), err)
+		return fmt.Errorf("sandbox self-check failed: %s: %w", strings.TrimSpace(string(output)), cmp.Or(ctx.Err(), err))
 	}
 	if names := strings.TrimSpace(string(output)); names != "" {
 		return fmt.Errorf("sandbox self-check failed: %s", names)
