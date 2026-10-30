@@ -14,6 +14,22 @@ import (
 func installCICheckNPM(t *testing.T, codex string) (string, string) {
 	t.Helper()
 	prefix := t.TempDir()
+	resolved, err := resolveCICheckCodex(t.Context(), prefix, codex)
+	require.NoError(t, err)
+	codex, err = filepath.EvalSymlinks(resolved.Command)
+	require.NoError(t, err)
+	if filepath.Ext(codex) == ".js" {
+		var native string
+		for _, path := range resolved.ReadPaths {
+			candidate := filepath.Join(path, "vendor", "x86_64-unknown-linux-musl", "bin", "codex")
+			if _, err := os.Stat(candidate); err == nil {
+				native = candidate
+				break
+			}
+		}
+		require.NotEmpty(t, native, "installed npm launcher needs its native executable")
+		codex = native
+	}
 	packageDir := filepath.Join(prefix, "lib", "node_modules", "@openai", "codex")
 	arch := runtime.GOARCH
 	if arch == "amd64" {
@@ -112,4 +128,30 @@ func TestCICheckCodexResolution(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCICheckNPMFixtureAcceptsInstalledLauncher(t *testing.T) {
+	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+		t.Skip("requires linux/amd64 checker")
+	}
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("requires node")
+	}
+	native := filepath.Join(t.TempDir(), "codex")
+	require.NoError(t, os.WriteFile(native, []byte("#!/bin/sh\nprintf 'native fixture\\n'\n"), 0o700))
+	installCICheckNPM(t, native)
+	launcher, err := exec.LookPath("codex")
+	require.NoError(t, err)
+	_, nativePackage := installCICheckNPM(t, launcher)
+	// Inspect the executable before running it so a broken fixture cannot recurse.
+	got, err := os.ReadFile(filepath.Join(nativePackage, "vendor", "x86_64-unknown-linux-musl", "bin", "codex"))
+	require.NoError(t, err)
+	want, err := os.ReadFile(native)
+	require.NoError(t, err)
+	require.Equal(t, string(want), string(got))
+	command, err := exec.LookPath("codex")
+	require.NoError(t, err)
+	output, err := exec.CommandContext(t.Context(), command).CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	assert.Equal(t, "native fixture\n", string(output))
 }

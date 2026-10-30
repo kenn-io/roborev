@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	gitworktree "go.kenn.io/kit/git/worktree"
 	"go.kenn.io/kit/pathresolve"
 
 	"go.kenn.io/roborev/internal/agent"
@@ -139,17 +138,23 @@ type ciCheckRun struct {
 // prepareCICheck checks out the committed input before warming can update metadata.
 // Its caller owns both checkouts until cleanup returns.
 func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob, command string, gitEnv []string, out io.Writer) (run ciCheckRun, err error) {
-	root, err := os.MkdirTemp("", "roborev-ci-check-*")
+	resolved, err := resolveCICheckCodex(ctx, os.TempDir(), command)
 	if err != nil {
 		return
 	}
-	run.cleanup = func() { _ = os.RemoveAll(root) }
+	checkout, closeCheckout, err := wp.createExactCheckout(ctx, "ci-checker", job)
+	if err != nil {
+		return
+	}
+	run.cleanup = closeCheckout
 	defer func() {
 		if err != nil {
 			run.cleanup()
 		}
 	}()
-	resolved, err := resolveCICheckCodex(ctx, root, command)
+	// Startup recovery owns the warming checkout and everything beneath it,
+	// including the checker checkout, caches, and scratch files.
+	root, err := os.MkdirTemp(checkout, "roborev-ci-check-*")
 	if err != nil {
 		return
 	}
@@ -159,19 +164,12 @@ func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob
 	if resolved.PathDir != "" {
 		toolPath = resolved.PathDir + string(os.PathListSeparator) + toolPath
 	}
-	var checkout string
-	var closeCheckout func()
-	checkout, closeCheckout, err = wp.createExactCheckout(ctx, "ci-checker", job)
-	if err != nil {
-		return
-	}
-	run.cleanup = func() { closeCheckout(); _ = os.RemoveAll(root) }
 	run.Job.WorkDir = filepath.Join(root, "work")
 	var closeRepo func()
-	if run.Repo, closeRepo, err = createCICheckRepo(ctx, job, run.Job.WorkDir); err != nil {
+	if run.Repo, closeRepo, err = wp.createExactCheckoutIn(ctx, "ci-checker", job, run.Job.WorkDir); err != nil {
 		return
 	}
-	run.cleanup = func() { closeRepo(); closeCheckout(); _ = os.RemoveAll(root) }
+	run.cleanup = func() { closeRepo(); closeCheckout() }
 	var commonDir string
 	commonDir, err = gitpkg.ResolveGitCommonDir(job.RepoPath)
 	if err != nil {
@@ -203,25 +201,6 @@ func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob
 	run.Job.MemoryMax = 8 << 30
 	run.Job.Env = env
 	return
-}
-
-// createCICheckRepo gives the checker its own worktree in workDir, since a
-// copied checkout loses the relative Git links of its initialized submodules.
-func createCICheckRepo(ctx context.Context, job *storage.ReviewJob, workDir string) (string, func(), error) {
-	if err := os.Mkdir(workDir, 0o700); err != nil {
-		return "", nil, err
-	}
-	unlock := lockGitMetadata(job.RepoPath)
-	defer unlock()
-	wt, err := createWorkerWorktree(ctx, job.RepoPath, strings.TrimSpace(headOf(job.GitRef)), gitworktree.Options{ParentDir: workDir, Prefix: "repo-", InitSubmodules: true, PullLFS: true})
-	if err != nil {
-		return "", nil, err
-	}
-	return wt.Dir, func() {
-		unlock := lockGitMetadata(job.RepoPath)
-		defer unlock()
-		_ = wt.Close(context.Background())
-	}, nil
 }
 
 // Every read grant must leave host homes outside the checker's filesystem.
@@ -336,6 +315,8 @@ func applyCICheck(doc structuredreview.Document, raw jsontext.Value, out io.Writ
 	doc.Summary = fmt.Sprintf("%d findings.", len(kept))
 	if len(kept) == 1 {
 		doc.Summary = "1 finding."
+	} else if len(kept) == 0 {
+		doc.Summary = "No issues found."
 	}
 	return doc, nil
 }

@@ -50,7 +50,8 @@ func testCICheckSandboxIntegration(t *testing.T) {
 	require.NoError(t, err)
 	beforeStatus, err := exec.CommandContext(t.Context(), "git", "-C", repoRoot, "status", "--porcelain").CombinedOutput()
 	require.NoError(t, err)
-	oldRoots, err := filepath.Glob(filepath.Join(os.TempDir(), "roborev-ci-check-*"))
+	rootPattern := filepath.Join(ciWorktreeRepoDir(repoRoot), ciWorktreePrefix+"*", "roborev-ci-check-*")
+	oldRoots, err := filepath.Glob(rootPattern)
 	require.NoError(t, err)
 	var roots, checkouts []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -72,7 +73,7 @@ func testCICheckSandboxIntegration(t *testing.T) {
 			return
 		}
 		assert.Equal(t, "high", request.Reasoning.Effort)
-		found, err := filepath.Glob(filepath.Join(os.TempDir(), "roborev-ci-check-*"))
+		found, err := filepath.Glob(rootPattern)
 		assert.NoError(t, err)
 		for _, root := range found {
 			old := false

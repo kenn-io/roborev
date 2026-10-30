@@ -57,7 +57,7 @@ func TestCICheckApply(t *testing.T) {
 				if len(got.Findings) == 1 {
 					assert.Equal(t, "1 finding.", got.Summary)
 				} else {
-					assert.Equal(t, "0 findings.", got.Summary)
+					assert.Equal(t, "No issues found.", got.Summary)
 				}
 			} else {
 				assert.Equal(t, doc.Summary, got.Summary)
