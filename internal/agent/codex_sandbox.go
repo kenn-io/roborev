@@ -25,6 +25,18 @@ func (a *CodexAgent) WithSandbox(s *CodexSandbox) *CodexAgent {
 	return clone
 }
 
+// schemaDir places the review schema where a sandboxed Codex can read it.
+func (a *CodexAgent) schemaDir() string {
+	if a.sandbox == nil {
+		return ""
+	}
+	dir, err := filepath.Abs(a.sandbox.Job.WorkDir)
+	if err != nil {
+		return a.sandbox.Job.WorkDir
+	}
+	return dir
+}
+
 func (s *CodexSandbox) prepare(repoPath string) (sandbox.Job, func(), error) {
 	job := s.Job
 	workDir, err := filepath.Abs(job.WorkDir)

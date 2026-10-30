@@ -723,7 +723,7 @@ func (a *CodexAgent) ReviewWithSchema(
 	schema jsontext.Value,
 	out io.Writer,
 ) (jsontext.Value, error) {
-	schemaFile, err := os.CreateTemp("", "roborev-codex-review-schema-*.json")
+	schemaFile, err := os.CreateTemp(a.schemaDir(), "roborev-codex-review-schema-*.json")
 	if err != nil {
 		return nil, fmt.Errorf("create codex review schema: %w", err)
 	}

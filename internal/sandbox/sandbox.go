@@ -35,6 +35,7 @@ type Route struct {
 
 // Command verifies nono and the job policy before returning a wrapped command.
 // The caller must call cleanup after the command finishes.
+// The wrapped command starts in a private directory, so callers pass an absolute working directory, as Codex does with -C.
 func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cleanup func(), err error) {
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
 		return nil, nil, nil, fmt.Errorf("sandbox requires linux/amd64")
