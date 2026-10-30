@@ -2370,29 +2370,31 @@ launching fix jobs and managing patches. See
 
 The `[agent.codex]` section controls Codex-specific behavior for review jobs.
 Both options default to `true` so Codex reviews start from a clean state without
-skill instructions or user-level Codex config. Fix jobs are not affected.
+skill instructions or user-level Codex config. User-config isolation also
+applies to non-agentic tasks (including `analyze` and `run`), insights, and
+compact jobs. Agentic tasks and fix jobs keep loading user config.
 
 ```toml
 # ~/.roborev/config.toml
 [agent.codex]
 disable_review_skills = true       # Suppress Codex skill instructions on review jobs
-ignore_review_user_config = true   # Pass --ignore-user-config to Codex review jobs
+ignore_review_user_config = true   # Ignore user config for reviews and non-editing jobs
 ```
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `disable_review_skills` | bool | true | Run Codex review jobs with `skills.include_instructions=false` so model-visible skill instructions are stripped from the prompt |
-| `ignore_review_user_config` | bool | true | Pass `--ignore-user-config` to Codex review jobs so user-level Codex config is not loaded |
+| `ignore_review_user_config` | bool | true | Pass `--ignore-user-config` to Codex reviews and non-agentic tasks, insights, and compact jobs so user-level Codex config is not loaded |
 
 Set either to `false` to restore the prior behavior if you rely on Codex skill
 instructions or user-level Codex config during reviews.
 
 #### Custom Codex Config (Model Providers)
 
-`ignore_review_user_config` stops Codex review jobs from loading your
-`~/.codex/config.toml`, which also means a custom `model_provider` and its
-`[model_providers.*]` block defined there are not applied. To inject specific
-Codex options without loading your full user config, define an
+`ignore_review_user_config` stops Codex reviews and non-editing jobs from
+loading your `~/.codex/config.toml`, which also means a custom `model_provider`
+and its `[model_providers.*]` block defined there are not applied. To inject
+specific Codex options without loading your full user config, define an
 `[agent.codex.config]` table. Every key under it is passed to Codex as a
 `-c key=value` override on **every** Codex job (review, fix, refine, analyze),
 and these overrides apply even when `--ignore-user-config` is in effect.
