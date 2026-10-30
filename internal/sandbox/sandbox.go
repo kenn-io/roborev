@@ -151,7 +151,7 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 		cleanup()
 		return nil, nil, nil, fmt.Errorf("write sandbox profile: %w", err)
 	}
-	cmd = []string{"/usr/bin/systemd-run", "--working-directory=" + dir, "--user", "--scope", "-q", "-p", "MemoryMax=" + strconv.FormatInt(j.MemoryMax, 10), "-p", "MemorySwapMax=0", "--", nono, "run", "-s", "--profile", profilePath, "--no-rollback", "--no-audit", "--allow", j.WorkDir}
+	cmd = []string{"/usr/bin/systemd-run", "--working-directory=" + dir, "--user", "--scope", "-q", "-p", "MemoryMax=" + strconv.FormatInt(j.MemoryMax, 10), "-p", "MemorySwapMax=0", "-p", "TimeoutStopSec=5", "--", nono, "run", "-s", "--profile", profilePath, "--no-rollback", "--no-audit", "--allow", j.WorkDir}
 	// CLI grants are literal paths; profile paths undergo template expansion.
 	for _, path := range j.ReadPaths {
 		info, err := os.Stat(path)
@@ -181,7 +181,7 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 func killScope(unit string, env []string) {
 	// Use the launch environment and a fresh context: the job may be cancelled.
 	// Stop sends SIGTERM so nono can remove its files, waits for the scope to
-	// exit, and escalates to SIGKILL after systemd's stop timeout.
+	// exit, and escalates to SIGKILL after the scope's five-second stop timeout.
 	cmd := exec.Command("/usr/bin/systemctl", "--user", "stop", unit)
 	cmd.Env = env
 	_ = cmd.Run()
