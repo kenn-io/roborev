@@ -37,6 +37,7 @@ var postCommitWaitDelay = 1 * time.Second
 type refineOptions struct {
 	plan              bool
 	planOnly          bool
+	stopOnStall       bool
 	agentName         string
 	model             string
 	reasoning         string
@@ -155,6 +156,7 @@ Use --all-branches to discover and refine all branches with failed reviews.`,
 	cmd.Flags().BoolVar(&opts.planOnly, "plan-only", false, "print and store plans for existing failed reviews without edits or new reviews")
 	cmd.Flags().BoolVar(&fast, "fast", false, "shorthand for --reasoning fast")
 	cmd.Flags().IntVar(&opts.maxIterations, "max-iterations", 10, "maximum refinement iterations")
+	cmd.Flags().BoolVar(&opts.stopOnStall, "stop-on-stall", false, "stop with an error at a refine stall advisory")
 	cmd.Flags().BoolVar(&opts.quiet, "quiet", false, "suppress agent output, show elapsed time instead")
 	cmd.Flags().BoolVar(&opts.allowUnsafeAgents, "allow-unsafe-agents", false, "allow agents to run without sandboxing")
 	cmd.Flags().StringVar(&opts.since, "since", "", "base commit to refine from (exclusive, like git's .. range)")
@@ -469,10 +471,43 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 	var currentFailedReview *storage.Review
 	var carriedAttempts []storage.Response
 	var chainHead string
+	var stall refineStallTracker
+	observeStall := func(review *storage.Review) error {
+		if !stall.observeReview(ctx, repoPath, review) {
+			return nil
+		}
+		files := make([]string, 0, len(stall.previous))
+		for file := range stall.previous {
+			files = append(files, file)
+		}
+		sort.Strings(files)
+		var reasons []string
+		if stall.rounds == 3 {
+			reasons = append(reasons, "three consecutive fix rounds received failing findings in the same or fewer located files")
+		}
+		if stall.severityRounds == 3 {
+			reasons = append(reasons, "three consecutive fix rounds received no fewer High plus Medium findings")
+		}
+		advisory := "Refine advisory: " + strings.Join(reasons, "; ") + "."
+		if len(files) > 0 {
+			advisory += " Located files: " + strings.Join(files, ", ") + "."
+		}
+		advisory += " Change the plan, or split the change into smaller reviewable pieces."
+		fmt.Println(advisory)
+		if err := client.AddComment(review.JobID, "roborev-refine", advisory); err != nil {
+			fmt.Printf("Warning: failed to save refine advisory: %v\n", err)
+		}
+		if opts.stopOnStall {
+			return fmt.Errorf("refine stalled: review remains open")
+		}
+		return nil
+	}
 	// Track reviews we've given up on this run to avoid re-selecting them
 	skippedReviews := make(map[int64]bool)
 
-	for iteration := 1; iteration <= opts.maxIterations; {
+	// A final fix can still have a deferred review. Recover and observe it
+	// without permitting another fix or enqueueing a new branch review.
+	for iteration := 1; iteration <= opts.maxIterations || stall.pendingFixSHA != ""; {
 		// Get commits on current branch
 		commits, err := git.GetCommitsSince(repoPath, mergeBase)
 		if err != nil {
@@ -487,9 +522,27 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 		// Only search for a new failed review if we don't have one to work on
 		// (either first iteration, or previous fix passed)
 		if currentFailedReview == nil {
-			currentFailedReview, err = findFailedReviewForBranch(client, commits, skippedReviews)
-			if err != nil {
-				return fmt.Errorf("error finding reviews: %w", err)
+			// The finder closes passing reviews and skips closed ones. Observe
+			// a recovered resolution of our pending fix before it disappears
+			// from that result, so a later branch review starts a new streak.
+			if stall.pendingFixSHA != "" {
+				pendingReview, err := client.GetReviewBySHA(stall.pendingFixSHA)
+				if err != nil {
+					return fmt.Errorf("fetch pending fix review: %w", err)
+				}
+				if pendingReview != nil && (pendingReview.Closed || pendingReview.Verdict() != "F") {
+					stall.reset()
+				} else if pendingReview != nil {
+					// Finish observing this fix before another open review can
+					// replace its chain, including on the final iteration.
+					currentFailedReview = pendingReview
+				}
+			}
+			if currentFailedReview == nil {
+				currentFailedReview, err = findFailedReviewForBranch(client, commits, skippedReviews)
+				if err != nil {
+					return fmt.Errorf("error finding reviews: %w", err)
+				}
 			}
 		}
 
@@ -506,7 +559,14 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 				review, err := client.WaitForReview(pendingJob.ID)
 				if err != nil {
 					fmt.Printf("Warning: review failed: %v\n", err)
+					stall.resetSignals()
+					if iteration > opts.maxIterations {
+						break
+					}
 					continue // Loop back, will re-check
+				}
+				if err := observeStall(review); err != nil {
+					return err
 				}
 				verdict := review.Verdict()
 				if verdict == "F" && !review.Closed {
@@ -531,36 +591,58 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 				}
 				rangeRef := mergeBase + ".." + headSHA
 
-				// Check if a branch review job already exists (queued or running).
-				// Note: We don't filter by agent here because the --agent flag controls
-				// the ADDRESSING agent (which fixes code), not the REVIEW agent.
-				// We use the SHA-based rangeRef to ensure we only reuse jobs for the
-				// exact same HEAD - if HEAD has moved, we want a fresh review.
-				existingJob, err := client.FindPendingJobForRef(ctx, repoPath, rangeRef)
-				if err != nil {
-					return fmt.Errorf("error checking for existing branch review: %w", err)
-				}
-
-				var jobID int64
-				if existingJob != nil {
-					// Wait for existing pending branch review
-					fmt.Printf("Waiting for in-progress branch review (job %d)...\n", existingJob.ID)
-					jobID = existingJob.ID
-				} else {
-					// No pending branch review - enqueue a new one
-					fmt.Println("No individual failed reviews - running branch review...")
-					jobID, err = client.EnqueueReview(repoPath, rangeRef, "")
+				// Commit SHA lookups cannot find a post-commit branch review.
+				// Recover its completed result before enforcing the fix limit.
+				var review *storage.Review
+				if stall.pendingFixSHA != "" {
+					review, err = client.GetReviewBySHA(rangeRef)
 					if err != nil {
-						return fmt.Errorf("failed to enqueue branch review: %w", err)
+						return fmt.Errorf("fetch pending branch review: %w", err)
 					}
-					fmt.Printf("Waiting for branch review (job %d)...\n", jobID)
+					if review != nil && review.Closed {
+						stall.reset()
+						review = nil
+					}
 				}
 
-				review, err := client.WaitForReview(jobID)
-				if err != nil {
-					return fmt.Errorf("branch review failed: %w", err)
+				if review == nil {
+					// Check if a branch review job already exists (queued or running).
+					// Note: We don't filter by agent here because the --agent flag controls
+					// the ADDRESSING agent (which fixes code), not the REVIEW agent.
+					// We use the SHA-based rangeRef to ensure we only reuse jobs for the
+					// exact same HEAD - if HEAD has moved, we want a fresh review.
+					existingJob, err := client.FindPendingJobForRef(ctx, repoPath, rangeRef)
+					if err != nil {
+						return fmt.Errorf("error checking for existing branch review: %w", err)
+					}
+
+					var jobID int64
+					if existingJob != nil {
+						// Wait for existing pending branch review
+						fmt.Printf("Waiting for in-progress branch review (job %d)...\n", existingJob.ID)
+						jobID = existingJob.ID
+					} else {
+						if iteration > opts.maxIterations {
+							break
+						}
+						// No pending branch review - enqueue a new one
+						fmt.Println("No individual failed reviews - running branch review...")
+						jobID, err = client.EnqueueReview(repoPath, rangeRef, "")
+						if err != nil {
+							return fmt.Errorf("failed to enqueue branch review: %w", err)
+						}
+						fmt.Printf("Waiting for branch review (job %d)...\n", jobID)
+					}
+
+					review, err = client.WaitForReview(jobID)
+					if err != nil {
+						return fmt.Errorf("branch review failed: %w", err)
+					}
 				}
 
+				if err := observeStall(review); err != nil {
+					return err
+				}
 				verdict := review.Verdict()
 				if verdict == "P" {
 					fmt.Println("\nAll reviews passed! Branch is ready.")
@@ -571,6 +653,13 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 				fmt.Printf("\nBranch review failed. Addressing findings...\n")
 				currentFailedReview = review
 			}
+		}
+
+		if err := observeStall(currentFailedReview); err != nil {
+			return err
+		}
+		if iteration > opts.maxIterations {
+			break
 		}
 
 		// Now we have a review to address - this counts as an iteration
@@ -770,6 +859,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 
 		// Check if agent made changes in worktree
 		if git.IsWorkingTreeClean(worktreePath) {
+			stall.reset()
 			_ = wt.Close(ctx)
 
 			// When severity filtering is active and the agent
@@ -832,6 +922,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 
 		carriedAttempts = append(previousAttempts, storage.Response{Responder: "roborev-refine", Response: responseText, CreatedAt: time.Now()})
 		chainHead = newCommit
+		stall.pendingFixSHA = newCommit
 
 		// Close old review
 		if err := client.MarkReviewClosed(currentFailedReview.JobID); err != nil {
@@ -851,10 +942,15 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 		review, err := client.WaitForReview(newJob.ID)
 		if err != nil {
 			fmt.Printf("Warning: review failed: %v\n", err)
+			stall.reset()
+			stall.pendingFixSHA = newCommit
 			currentFailedReview = nil
 			continue
 		}
 
+		if err := observeStall(review); err != nil {
+			return err
+		}
 		verdict := review.Verdict()
 		if verdict == "P" {
 			carriedAttempts = nil

@@ -30,6 +30,7 @@ roborev refine --max-iterations 5    # Limit iterations (default: 10)
 roborev refine --plan                # Plan each fix before implementation
 roborev refine --plan-only           # Print plans for existing failed reviews
 roborev refine --quiet               # Show elapsed time instead of agent output
+roborev refine --stop-on-stall       # Stop after a stall advisory
 roborev refine --reasoning thorough  # Thorough reasoning (slower, more accurate)
 roborev refine --since abc123        # Refine commits since a specific commit
 roborev refine --since HEAD~3        # Refine the last 3 commits
@@ -57,7 +58,12 @@ flowchart TD
     Commit --> Wait[Wait for re-review]
     Wait --> Pass{Pass?}
     Pass -->|Yes| Find
-    Pass -->|No| MaxCheck{Max iterations?}
+    Pass -->|No| Repeated{Third stall-signal round?}
+    Repeated -->|No| MaxCheck{Max iterations?}
+    Repeated -->|Yes| Advisory[Print and save advisory]
+    Advisory --> Stop{Stop on stall?}
+    Stop -->|Yes| Stalled([Exit - review stays open])
+    Stop -->|No| MaxCheck
     MaxCheck -->|No| Fix
     MaxCheck -->|Yes| Fail([Exit - max reached])
 ```
@@ -81,6 +87,44 @@ Refine creates its own commits after applying agent changes. If
 those values directly with Git's `--author` and `--trailer` options. See
 [Fix Commit Metadata](/docs/configuration/#fix-commit-metadata).
 
+## Repeated finding files
+
+Refine prints and saves an advisory when either of two independent streaks
+reaches three consecutive completed fix/re-review rounds:
+
+- Failing re-reviews locate findings in the same or fewer files than the
+    preceding review. Shrinking file sets count; adding a different file resets
+    this streak. All stored severities contribute to the located file set.
+- Failing re-reviews have a positive High plus Medium finding count no smaller
+    than the preceding positive count. This signal needs no locations. A decline
+    or zero count resets this streak. Low and Critical findings are excluded
+    from this metric, so it does not measure overall severity progress.
+
+The original review is the baseline; either signal requires three new fix
+commits and their completed failing re-reviews. The advisory describes the
+triggered signal(s), names sorted located files when available, and says:
+"Change the plan, or split the change into smaller reviewable pieces." These are
+heuristics, not proof that the fixes are failing to make progress.
+
+Only valid stored structured findings contribute. Empty or unsupported locations
+reset only the file streak; valid findings with empty/null locations still
+contribute to the severity count. Legacy, invalid and unable-to-review output
+clears both baselines. Passing or closed reviews, skipped/no-change fixes,
+errors running or waiting for a re-review, and unrelated chains reset both
+streaks. A hook review that has not appeared yet preserves the pending fix.
+Retries without a new commit do not count; each fix commit counts at most once,
+including when its review is found later.
+
+Each signal advises once per streak, even with `--quiet` or on the last allowed
+iteration. Simultaneous signals produce one advisory; a later independent signal
+can advise again. A comment-write failure prints a warning.
+
+By default refine continues. With `--stop-on-stall`, it returns an error at the
+advisory, leaves the newly failed review open, and stops before another fix or a
+whole-branch fallback. With `--all-branches`, other branches still run and the
+original branch is restored; failures are aggregated. The flag has no effect
+with `--list` or `--plan-only`.
+
 ## Refine vs Fix
 
 | | `roborev fix` | `roborev refine` |
@@ -100,6 +144,7 @@ those values directly with Git's `--author` and `--trailer` options. See
 | `--plan` | Run a read-only planning phase before each fix |
 | `--plan-only` | Print and store plans for existing failed reviews, without starting the fix loop |
 | `--max-iterations <n>` | Maximum fix iterations (default: 10) |
+| `--stop-on-stall` | Stop with an error when either stall advisory appears |
 | `--quiet` | Show elapsed time instead of agent output |
 | `--reasoning <level>` | Legacy or exact reasoning level; see [Reasoning Levels](/docs/configuration/#reasoning-levels) |
 | `--fast` | Shorthand for `--reasoning fast` |

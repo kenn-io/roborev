@@ -587,6 +587,7 @@ roborev refine                   # Fix failed reviews on branch
 roborev refine --max-iterations 5
 roborev refine --since HEAD~3    # Refine specific range
 roborev refine --quiet           # Show elapsed time only
+roborev refine --stop-on-stall   # Stop on either stall advisory
 roborev refine --plan            # Plan each fix before editing
 roborev refine --plan-only       # Print plans for existing failures
 roborev refine --list            # Preview what would be refined
@@ -602,6 +603,7 @@ roborev refine --min-severity high  # Only fix high and critical findings
 | `--reasoning <level>` | Set reasoning depth |
 | `--fast` | Shorthand for `--reasoning fast` |
 | `--max-iterations <n>` | Limit fix attempts (default: 10) |
+| `--stop-on-stall` | Return an error at either stall advisory, leaving the new review open |
 | `--plan` | Produce and store a plan before each fix |
 | `--plan-only` | Print and store plans for existing failed reviews, without edits, commits, or new reviews |
 | `--since <commit>` | Refine commits since specific commit |
@@ -633,6 +635,22 @@ fix commit. Comments remain attached to their original reviews. Oversized
 prompts use complete prompt files in the disposable worktree. When an agent
 leaves findings unresolved without changes, refine stores its full output as a
 comment and leaves the review open.
+
+Three consecutive completed fix/re-review rounds trigger an advisory when
+located finding files stay within the preceding review's files, or when the
+positive High plus Medium finding count does not decrease. The severity signal
+needs no locations and excludes Low and Critical findings. The original review
+is baseline zero. Each signal advises once per streak, even with `--quiet` or on
+the final iteration; simultaneous signals produce one advisory. It names located
+files when available and suggests changing the plan or splitting the change into
+smaller reviewable pieces.
+
+Refine continues by default; `--stop-on-stall` exits before the next fix or
+whole-branch fallback. With `--all-branches`, other branches still run and the
+original branch is restored. The flag has no effect with `--list` or
+`--plan-only`. See
+[Repeated finding files](/docs/guides/auto-fixing/#repeated-finding-files) for
+location matching and independent streak resets.
 
 `refine` creates its own fix commits, so `fix_commit_author` and
 `fix_commit_co_authored_by` are applied directly with Git's `--author` and
