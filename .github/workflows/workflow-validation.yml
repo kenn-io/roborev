@@ -10,6 +10,10 @@ permissions:
 
 cache-mode: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   actionlint:
     runs-on: ubuntu-latest
