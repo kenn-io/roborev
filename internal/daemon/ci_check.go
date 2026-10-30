@@ -152,10 +152,6 @@ func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob
 	}
 	run.Command = command
 	readPaths := []string{codexDir}
-	// Codex loads its system config even with a fresh CODEX_HOME.
-	if _, err := os.Stat("/etc/codex"); err == nil {
-		readPaths = append(readPaths, "/etc/codex")
-	}
 	toolPath := os.Getenv("PATH")
 	run.Job.WorkDir = filepath.Join(root, "work")
 	var objects string
