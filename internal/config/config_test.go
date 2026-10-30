@@ -3142,6 +3142,7 @@ func TestConfigValidateRejectsInvalidReasoningAndSeverity(t *testing.T) {
 		{name: "review severity", key: "review_min_severity", set: func(cfg *Config) { cfg.ReviewMinSeverity = "urgent" }},
 		{name: "refine severity", key: "refine_min_severity", set: func(cfg *Config) { cfg.RefineMinSeverity = "urgent" }},
 		{name: "fix severity", key: "fix_min_severity", set: func(cfg *Config) { cfg.FixMinSeverity = "urgent" }},
+		{name: "ci check reasoning", key: "ci.check_reasoning", set: func(cfg *Config) { cfg.CI.CheckReasoning = "invalid" }},
 		{name: "ci severity", key: "ci.min_severity", set: func(cfg *Config) { cfg.CI.MinSeverity = "urgent" }},
 	}
 

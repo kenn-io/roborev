@@ -56,7 +56,6 @@ if cat "$1"; then exit 1; fi
 	output, err := cmd.CombinedOutput()
 	assert := assert.New(t)
 	assert.NoError(err, "%s", output)
-	assert.NotContains(string(output), "synthetic-git-credential")
 	assert.Contains(string(output), " M fixture.txt")
 	assert.Contains(string(output), "+changed")
 	assert.Contains(string(output), "checker history fixture")

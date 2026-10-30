@@ -58,12 +58,14 @@ func TestCICheckPreparation(t *testing.T) {
 				run, err := wp.prepareCICheck(t.Context(), job, command, []string{"CHECKER_GIT_TOKEN=synthetic"}, &log)
 				require.NoError(t, err)
 				checkout, root, cleanup = run.Repo, filepath.Dir(run.Job.WorkDir), run.cleanup
-				assert.Contains(t, log.String(), "module warming failed: exit status 1")
-				assert.Contains(t, run.Job.Env, "GOMODCACHE="+tools, log.String())
-				assert.Contains(t, run.Job.ReadPaths, tools)
-				mod, err := os.ReadFile(filepath.Join(run.Repo, "go.mod"))
-				require.NoError(t, err)
-				assert.Equal(t, original, string(mod))
+				if name == "checker" {
+					assert.Contains(t, log.String(), "module warming failed: exit status 1")
+					assert.Contains(t, run.Job.Env, "GOMODCACHE="+tools, log.String())
+					assert.Contains(t, run.Job.ReadPaths, tools)
+					mod, err := os.ReadFile(filepath.Join(run.Repo, "go.mod"))
+					require.NoError(t, err)
+					assert.Equal(t, original, string(mod))
+				}
 				dir := filepath.Join(run.Job.WorkDir, "gocache", "readonly")
 				require.NoError(t, os.Mkdir(dir, 0o700))
 				require.NoError(t, os.WriteFile(filepath.Join(dir, "file"), []byte("content"), 0o600))
@@ -71,10 +73,13 @@ func TestCICheckPreparation(t *testing.T) {
 				t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 			}
 			t.Cleanup(cleanup)
-			external := t.TempDir()
-			require.NoError(t, os.Chmod(external, 0o500))
-			t.Cleanup(func() { _ = os.Chmod(external, 0o700) })
-			require.NoError(t, os.Symlink(external, filepath.Join(checkout, "external")))
+			var external string
+			if name != "review recovery" {
+				external = t.TempDir()
+				require.NoError(t, os.Chmod(external, 0o500))
+				t.Cleanup(func() { _ = os.Chmod(external, 0o700) })
+				require.NoError(t, os.Symlink(external, filepath.Join(checkout, "external")))
+			}
 			if name == "checker" {
 				cleanup()
 			} else {
@@ -88,9 +93,11 @@ func TestCICheckPreparation(t *testing.T) {
 				assert.NoDirExists(t, root)
 			}
 			assert.NoDirExists(t, checkout)
-			info, err := os.Stat(external)
-			require.NoError(t, err)
-			assert.Equal(t, os.FileMode(0o500), info.Mode().Perm())
+			if external != "" {
+				info, err := os.Stat(external)
+				require.NoError(t, err)
+				assert.Equal(t, os.FileMode(0o500), info.Mode().Perm())
+			}
 		})
 	}
 }

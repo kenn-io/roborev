@@ -11,11 +11,11 @@ import (
 )
 
 func TestCICheckCodexResolution(t *testing.T) {
-	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
-		t.Skip("requires linux/amd64 executable fixtures")
-	}
 	for _, name := range []string{"native", "mise npm", "mise"} {
 		t.Run(name, func(t *testing.T) {
+			if name == "mise npm" && (runtime.GOOS != "linux" || runtime.GOARCH != "amd64") {
+				t.Skip("requires linux/amd64 executable fixtures")
+			}
 			tools := t.TempDir()
 			installed := filepath.Join(tools, "installed", "codex")
 			require.NoError(t, os.Mkdir(filepath.Dir(installed), 0o700))
