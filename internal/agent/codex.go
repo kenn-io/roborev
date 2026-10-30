@@ -468,12 +468,8 @@ func (a *CodexAgent) review(
 		if !filepath.IsAbs(a.Command) || !filepath.IsAbs(repoPath) || !filepath.IsAbs(a.sandbox.Job.WorkDir) {
 			return "", fmt.Errorf("sandbox Codex command, repo, and work dir must be absolute")
 		}
-		clone := *a
-		clone.IgnoreUserConfig = false
-		runAgent = &clone
-		agenticMode = true
 	}
-	if runAgent.IgnoreUserConfig {
+	if a.sandbox == nil && runAgent.IgnoreUserConfig {
 		supported, err := codexSupportsIgnoreUserConfig(ctx, a.Command)
 		if err != nil {
 			return "", err
@@ -516,7 +512,7 @@ func (a *CodexAgent) review(
 
 	// Non-agentic reviews use Codex's read-only sandbox.
 	autoApprove := false
-	if !agenticMode {
+	if !agenticMode && a.sandbox == nil {
 		supported, err := codexSupportsNonInteractive(ctx, a.Command, runAgent.IgnoreUserConfig)
 		if err != nil {
 			return "", MarkUnavailable(err)
