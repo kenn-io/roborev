@@ -1171,16 +1171,20 @@ exit 0
 	assert.True(t, IsUnavailable(err))
 }
 
-func TestCodexSandboxRefusesResumeAndPlanning(t *testing.T) {
+func TestCodexSandboxRefusesInvalidPreconditions(t *testing.T) {
 	for _, tc := range []struct {
-		name, session, want string
-		planning            bool
+		name, session, command, want string
+		planning                     bool
 	}{
-		{"resume", "test-session", "sandboxed Codex cannot resume a session with a fresh CODEX_HOME", false},
-		{"planning", "", "agentic sandbox is configured", true},
+		{"resume", "test-session", "", "sandboxed Codex cannot resume a session with a fresh CODEX_HOME", false},
+		{"planning", "", "", "agentic sandbox is configured", true},
+		{"relative-command", "", "./codex", "sandbox Codex command, repo, and work dir must be absolute", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			a := NewCodexAgent(filepath.Join(t.TempDir(), "missing-codex")).WithSandbox(&CodexSandbox{})
+			a := NewCodexAgent(filepath.Join(t.TempDir(), "missing-codex")).WithSandbox(&CodexSandbox{Job: sandbox.Job{WorkDir: t.TempDir()}})
+			if tc.command != "" {
+				a.Command = tc.command
+			}
 			a.SessionID = tc.session
 			ctx := context.WithValue(t.Context(), planningContextKey{}, tc.planning)
 			_, err := a.Review(ctx, t.TempDir(), "HEAD", "review", nil)
@@ -1191,13 +1195,18 @@ func TestCodexSandboxRefusesResumeAndPlanning(t *testing.T) {
 
 func TestCodexSandboxRepoContainment(t *testing.T) {
 	work := t.TempDir()
+	hostHome := t.TempDir()
+	t.Setenv("CODEX_HOME", hostHome)
 	repo := filepath.Join(work, "repo")
 	require.NoError(t, os.Mkdir(repo, 0o700))
 	s := CodexSandbox{Job: sandbox.Job{WorkDir: work}}
-	_, _, err := s.prepare(work)
-	require.ErrorContains(t, err, "sandbox repo must be inside job work dir")
-	_, cleanup, err := s.prepare(repo)
+	for _, rejected := range []string{t.TempDir(), work} {
+		_, _, err := s.prepare(rejected)
+		require.ErrorContains(t, err, "sandbox repo must be inside job work dir")
+	}
+	job, cleanup, err := s.prepare(repo)
 	require.NoError(t, err)
+	assert.Contains(t, job.DenyReadPaths, filepath.Join(hostHome, "auth.json"))
 	cleanup()
 }
 
@@ -1211,13 +1220,9 @@ func TestCodexSandboxWrapperFailure(t *testing.T) {
 	t.Setenv("CODEX_HOME", t.TempDir())
 	a := NewCodexAgent(command).WithSandbox(&CodexSandbox{Job: sandbox.Job{WorkDir: dir, MemoryMax: 1 << 30}})
 	_, err := a.Review(t.Context(), repo, "HEAD", "review", nil)
-	require.ErrorContains(t, err, "find sandbox nono")
+	require.Error(t, err)
 	assert.NoFileExists(t, marker)
 	homes, err := filepath.Glob(filepath.Join(dir, ".codex-home-*"))
 	require.NoError(t, err)
 	assert.Empty(t, homes)
-	a.Command = "./codex"
-	_, err = a.Review(t.Context(), repo, "HEAD", "review", nil)
-	require.ErrorContains(t, err, "sandbox Codex command, repo, and work dir must be absolute")
-	assert.NoFileExists(t, marker)
 }

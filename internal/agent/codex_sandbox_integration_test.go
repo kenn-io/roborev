@@ -123,35 +123,3 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, homes)
 }
-
-func TestCodexSandboxRejectsLoginReadPaths(t *testing.T) {
-	testutil.RequireSandboxIntegration(t)
-	for _, grant := range []string{"home", "auth-symlink"} {
-		t.Run(grant, func(t *testing.T) {
-			work, secrets := t.TempDir(), t.TempDir()
-			repo, hostHome := filepath.Join(work, "repo"), filepath.Join(secrets, "codex")
-			require.NoError(t, os.Mkdir(repo, 0o700))
-			require.NoError(t, os.Mkdir(hostHome, 0o700))
-			t.Setenv("CODEX_HOME", hostHome)
-			auth := filepath.Join(hostHome, "auth.json")
-			require.NoError(t, os.WriteFile(auth, []byte(`{"tokens":{"access_token":"synthetic-token"}}`), 0o600))
-			readPath := hostHome
-			if grant == "auth-symlink" {
-				readPath = t.TempDir()
-				target := filepath.Join(readPath, "login.json")
-				require.NoError(t, os.Rename(auth, target))
-				require.NoError(t, os.Symlink(target, auth))
-			}
-			marker := filepath.Join(work, "exposed-login")
-			launcher := filepath.Join(work, "codex-launcher")
-			require.NoError(t, os.WriteFile(launcher, fmt.Appendf(nil, "#!/bin/sh\ncat %q > %q\n", auth, marker), 0o700))
-			a := NewCodexAgent(launcher).WithSandbox(&CodexSandbox{Job: sandbox.Job{
-				WorkDir: work, ReadPaths: []string{readPath}, MemoryMax: 1 << 30,
-				Env: []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir(), "TMPDIR=" + work},
-			}})
-			_, err := a.Review(t.Context(), repo, "HEAD", "review", nil)
-			require.ErrorContains(t, err, "deny-path-read")
-			assert.NoFileExists(t, marker)
-		})
-	}
-}

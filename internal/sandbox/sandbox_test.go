@@ -12,27 +12,34 @@ import (
 )
 
 func TestSandboxCommandRejectsUnavailablePolicy(t *testing.T) {
-	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
-		t.Skip("nono pin requires linux/amd64")
-	}
 	for _, tc := range []struct {
 		name   string
 		memory int64
 		fake   bool
+		empty  bool
 		want   string
 	}{
-		{"missing", 1 << 30, false, "find sandbox nono"},
-		{"checksum", 1 << 30, true, "checksum mismatch"},
-		{"memory", 0, false, "MemoryMax must be positive"},
+		{"missing", 1 << 30, false, false, "find sandbox nono"},
+		{"checksum", 1 << 30, true, false, "checksum mismatch"},
+		{"memory", 0, false, false, "MemoryMax must be positive"},
+		{"empty-workdir", 1 << 30, false, true, "resolve sandbox WorkDir: empty path"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			marker := filepath.Join(dir, "executed")
 			if tc.fake {
-				require.NoError(t, os.WriteFile(filepath.Join(dir, "nono"), []byte("#!/bin/sh\n: >'"+marker+"'\n"), 0o700))
+				name := "nono"
+				if runtime.GOOS == "windows" {
+					name += ".exe"
+				}
+				require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n: >'"+marker+"'\n"), 0o700))
 			}
 			t.Setenv("PATH", dir)
-			_, _, _, err := (Job{WorkDir: dir, MemoryMax: tc.memory}).Command(context.Background(), []string{"true"})
+			work := dir
+			if tc.empty {
+				work = ""
+			}
+			_, _, _, err := (Job{WorkDir: work, MemoryMax: tc.memory}).Command(context.Background(), []string{"true"})
 			require.ErrorContains(t, err, tc.want)
 			if tc.fake {
 				assert.NoFileExists(t, marker)
@@ -41,16 +48,7 @@ func TestSandboxCommandRejectsUnavailablePolicy(t *testing.T) {
 	}
 }
 
-func TestSandboxCommandRejectsEmptyWorkDir(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
-	_, _, _, err := (Job{MemoryMax: 1 << 30}).Command(t.Context(), []string{"true"})
-	require.ErrorContains(t, err, "resolve sandbox WorkDir: empty path")
-}
-
 func TestSandboxCommandRejectsReadPaths(t *testing.T) {
-	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
-		t.Skip("nono pin requires linux/amd64")
-	}
 	work := t.TempDir()
 	file := filepath.Join(work, "read-only")
 	require.NoError(t, os.WriteFile(file, []byte("fixture"), 0o600))

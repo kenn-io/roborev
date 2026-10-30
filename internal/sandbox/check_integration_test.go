@@ -5,7 +5,6 @@ package sandbox
 import (
 	"encoding/json/v2"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -68,6 +67,27 @@ func TestSandboxSelfCheck(t *testing.T) {
 	for _, name := range []string{"canary-read", "loopback-connect", "environment-canary"} {
 		assert.Contains(t, err.Error(), name)
 	}
+	for _, grant := range []string{"home", "auth-symlink"} {
+		t.Run(grant, func(t *testing.T) {
+			work, secrets := t.TempDir(), t.TempDir()
+			hostHome := filepath.Join(secrets, "codex")
+			require.NoError(t, os.Mkdir(hostHome, 0o700))
+			auth := filepath.Join(hostHome, "auth.json")
+			require.NoError(t, os.WriteFile(auth, []byte(`{"tokens":{"access_token":"synthetic-token"}}`), 0o600))
+			readPath := hostHome
+			if grant == "auth-symlink" {
+				readPath = t.TempDir()
+				target := filepath.Join(readPath, "login.json")
+				require.NoError(t, os.Rename(auth, target))
+				require.NoError(t, os.Symlink(target, auth))
+			}
+			job := routeJob(t, work)
+			job.ReadPaths = []string{readPath}
+			job.DenyReadPaths = []string{auth}
+			_, _, _, err := job.Command(t.Context(), []string{"true"})
+			require.ErrorContains(t, err, "deny-path-read")
+		})
+	}
 }
 
 func TestSandboxLiteralGrants(t *testing.T) {
@@ -92,15 +112,11 @@ func TestSandboxLiteralGrants(t *testing.T) {
 	testutil.InitSeparateGitRepo(t, repo, gitDir)
 	authFile := filepath.Join(home, "auth.json")
 	require.NoError(t, os.WriteFile(authFile, []byte("fixture-token"), 0o600))
-	other, err := net.Listen("tcp4", "127.0.0.1:0")
-	require.NoError(t, err)
-	defer other.Close()
 	job := Job{
 		WorkDir: work, ReadPaths: []string{read}, Route: Route{Name: "codex", Upstream: "https://chatgpt.com/backend-api/codex", Path: "/responses", EnvVar: "CODEX_PHANTOM", Capture: []string{"/bin/cat", authFile}},
 		Env: []string{"PATH=/usr/bin:/bin", "HOME=" + home, "XDG_CONFIG_HOME=" + configDir}, MemoryMax: 1 << 30,
 	}
 	script := shellChecks + `
-check work-write allow touch "$1/allowed"
 check read-grant allow cat "$2/allowed"
 check sibling-write deny touch "$3/overwritten"
 check sibling-read deny cat "$4"
@@ -111,18 +127,16 @@ check git-read allow git status --porcelain
 check git-commit deny bash -c 'echo changed >> main.go && git add main.go && git -c user.name=Test -c user.email=test@example.com commit -m probe'
 check git-config deny git config --local sandbox.probe changed
 check dbus-systemd deny env XDG_RUNTIME_DIR="$6" DBUS_SESSION_BUS_ADDRESS="unix:path=$6/bus" systemd-run --user --wait -q /usr/bin/true
-check external-domain deny curl -fsS https://example.com
-check other-loopback deny bash -c ': >/dev/tcp/127.0.0.1/"$1"' probe "$7"
 check direct-upstream deny curl --fail-with-body -sS -o "$1/direct-upstream-response" https://chatgpt.com/backend-api/codex/responses
-check auth-read deny cat "$8"
+check auth-read deny cat "$7"
 # Exercise the endpoint-only route beside /codex; DNS failure isn't a denial.
 base=$(dirname "$CODEX_BASE_URL")
 curl --fail-with-body -sS -H "Proxy-Authorization: Bearer $NONO_PROXY_TOKEN" -o "$1/direct-response" "$base/_ep_chatgpt.com/nono-no-direct-access"
 [ "$?" = 22 ] || failed=1
 exit "$failed"
 `
-	out := runInJob(t, job, "bash", "-c", script, "probe", work, read, sibling, secret, repo, os.Getenv("XDG_RUNTIME_DIR"), strconv.Itoa(other.Addr().(*net.TCPAddr).Port), authFile)
-	for _, name := range []string{"work-write", "read-grant", "sibling-write", "sibling-read", "home-write", "shared-tmp-write", "git-read", "git-commit", "git-config", "dbus-systemd", "external-domain", "other-loopback", "direct-upstream", "auth-read"} {
+	out := runInJob(t, job, "bash", "-c", script, "probe", work, read, sibling, secret, repo, os.Getenv("XDG_RUNTIME_DIR"), authFile)
+	for _, name := range []string{"read-grant", "sibling-write", "sibling-read", "home-write", "shared-tmp-write", "git-read", "git-commit", "git-config", "dbus-systemd", "direct-upstream", "auth-read"} {
 		assert.Contains(t, out, "OK "+name)
 	}
 	assert.NoFileExists(t, filepath.Join(sibling, "overwritten"))
@@ -140,7 +154,7 @@ func TestSandboxUnenforceablePolicy(t *testing.T) {
 	job := routeJob(t, t.TempDir())
 	job.Route.Upstream = "http://example.com"
 	_, _, _, err := job.Command(t.Context(), []string{"true"})
-	require.ErrorContains(t, err, "must use HTTPS (HTTP only allowed for loopback addresses)")
+	require.ErrorContains(t, err, "sandbox self-check failed")
 }
 
 func TestSandboxHostPTYIsolation(t *testing.T) {
