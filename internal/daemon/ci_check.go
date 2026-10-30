@@ -18,7 +18,6 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	gitpkg "go.kenn.io/roborev/internal/git"
-	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/sandbox"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/pkg/structuredreview"
@@ -66,7 +65,6 @@ func (wp *WorkerPool) checkSynthesis(ctx context.Context, job *storage.ReviewJob
 			return normalized
 		})
 		defer outputWriter.Flush()
-		out := outputWriter
 		var env []string
 		if wp.ciGitEnv != nil {
 			if panel, err := wp.db.GetCIPanelBySynthesisJobID(job.ID); err == nil && panel != nil {
@@ -77,12 +75,12 @@ func (wp *WorkerPool) checkSynthesis(ctx context.Context, job *storage.ReviewJob
 		if checker == nil {
 			checker = wp.runCICheck
 		}
-		checked, checkErr := checker(ctx, job, *check, doc, env, out)
+		checked, checkErr := checker(ctx, job, *check, doc, env, outputWriter)
 		if checkErr != nil {
-			fmt.Fprintf(out, "CI checker failed; keeping original review: %v\n", checkErr)
+			fmt.Fprintf(outputWriter, "CI checker failed; keeping original review: %v\n", checkErr)
 		} else if len(checked.Findings) < len(doc.Findings) {
 			checked.Verdict = structuredreview.VerdictPass
-			if reviewpkg.SynthesisVerdict(checked, job.MinSeverity) == storage.VerdictFail {
+			if !checked.Passed(job.MinSeverity) {
 				checked.Verdict = structuredreview.VerdictFail
 			}
 			if result, err := synthesisDocumentResult(job, checked); err == nil {

@@ -595,7 +595,7 @@ func synthesisDocumentResult(job *storage.ReviewJob, doc structuredreview.Docume
 	}
 	verdict := storage.VerdictUnknown
 	if !doc.UnableToReview() {
-		verdict = reviewpkg.SynthesisVerdict(doc, job.MinSeverity)
+		verdict = storage.VerdictFromPassed(doc.Passed(job.MinSeverity))
 	}
 	return reviewpkg.ReviewResult{
 		Agent: job.Agent, Output: doc.Markdown(job.MinSeverity), Verdict: verdict,
