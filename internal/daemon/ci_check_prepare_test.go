@@ -64,13 +64,11 @@ func TestCICheckPreparation(t *testing.T) {
 				mod, err := os.ReadFile(filepath.Join(run.Repo, "go.mod"))
 				require.NoError(t, err)
 				assert.Equal(t, original, string(mod))
-				for _, parent := range []string{run.Repo, filepath.Join(run.Job.WorkDir, "gocache"), filepath.Join(run.Job.WorkDir, "tmp")} {
-					dir := filepath.Join(parent, "readonly")
-					require.NoError(t, os.Mkdir(dir, 0o700))
-					require.NoError(t, os.WriteFile(filepath.Join(dir, "file"), []byte("content"), 0o600))
-					require.NoError(t, os.Chmod(dir, 0o500))
-					t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
-				}
+				dir := filepath.Join(run.Job.WorkDir, "gocache", "readonly")
+				require.NoError(t, os.Mkdir(dir, 0o700))
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "file"), []byte("content"), 0o600))
+				require.NoError(t, os.Chmod(dir, 0o500))
+				t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 				if name == "checker" {
 					// The shared object store joins the read grants, so it can't hold the Codex login.
 					t.Setenv("CODEX_HOME", filepath.Join(repo.Root, ".git", "objects"))

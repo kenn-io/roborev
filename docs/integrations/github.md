@@ -761,17 +761,19 @@ to warm Go modules. See
 [sandboxed Codex runs](/docs/agents/#sandboxed-codex-runs) for the pinned nono
 build and host requirements.
 
-The checker works in a copy of the PR checkout. The host warms only the root
-`go.mod` in the original disposable checkout after making the copy. The root
-`go.mod` must be a regular file. Any root `go.sum`, `go.work`, or `go.work.sum`
-must also be a regular file; otherwise the review posts unchecked. Warming
-cannot change the code being checked. Nested modules and Go workspaces receive
-no separate warming; findings that need unavailable dependencies post unchecked.
-Inside the sandbox, the checker can change its scratch files and read the shared
-clone's Git metadata and warmed caches. Model calls use nono's credential route,
-which reads the host's current Codex login outside the sandbox. Tests that start
-loopback servers cannot run in this sandbox; the checker keeps findings it
-cannot try.
+The checker works in its own clone of the PR checkout. The clone borrows the
+host clone's object store and none of its Git config, so the checker can't read
+credentials stored there. It has no submodules or Git LFS files. The host warms
+only the root `go.mod` in the original disposable checkout after making the
+clone. The root `go.mod` must be a regular file. Any root `go.sum`, `go.work`,
+or `go.work.sum` must also be a regular file; otherwise the review posts
+unchecked. Warming cannot change the code being checked. Nested modules and Go
+workspaces receive no separate warming; findings that need unavailable
+dependencies post unchecked. Inside the sandbox, the checker can change its
+scratch files and read the shared object store and warmed caches. Model calls
+use nono's credential route, which reads the host's current Codex login outside
+the sandbox. Tests that start loopback servers cannot run in this sandbox; the
+checker keeps findings it cannot try.
 
 A finding drops only when one verdict supplies evidence and a reason to drop it.
 Missing or duplicate verdicts keep the finding. The job log records the
