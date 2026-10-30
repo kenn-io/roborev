@@ -519,30 +519,39 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 			return nil
 		}
 
-		// Only search for a new failed review if we don't have one to work on
-		// (either first iteration, or previous fix passed)
-		if currentFailedReview == nil {
-			// The finder closes passing reviews and skips closed ones. Observe
-			// a recovered resolution of our pending fix before it disappears
-			// from that result, so a later branch review starts a new streak.
-			if stall.pendingFixSHA != "" {
-				pendingReview, err := client.GetReviewBySHA(stall.pendingFixSHA)
-				if err != nil {
+		// Recover and observe the pending fix before selecting any other
+		// failed commit, including when a previous review is still in memory.
+		if stall.pendingFixSHA != "" {
+			pendingReview, pendingJob, err := resolvePendingFixReview(ctx, client, repoPath, stall.pendingFixSHA)
+			if err != nil {
+				if pendingJob == nil {
 					return fmt.Errorf("fetch pending fix review: %w", err)
 				}
-				if pendingReview != nil && (pendingReview.Closed || pendingReview.Verdict() != "F") {
-					stall.reset()
-				} else if pendingReview != nil {
-					// Finish observing this fix before another open review can
-					// replace its chain, including on the final iteration.
-					currentFailedReview = pendingReview
-				}
+				fmt.Printf("Warning: review failed: %v\n", err)
+				stall.resetSignals()
+			} else if pendingJob != nil && pendingReview == nil {
+				// A terminal job without a review is an unable re-review. Do
+				// not carry its signals into another commit's review chain.
+				stall.resetSignals()
 			}
-			if currentFailedReview == nil {
-				currentFailedReview, err = findFailedReviewForBranch(client, commits, skippedReviews)
-				if err != nil {
-					return fmt.Errorf("error finding reviews: %w", err)
+			if pendingReview != nil && (pendingReview.Closed || pendingReview.Verdict() != "F") {
+				if currentFailedReview != nil && currentFailedReview.JobID == pendingReview.JobID {
+					currentFailedReview = nil
 				}
+				stall.reset()
+			} else if pendingReview != nil {
+				// Finish observing this fix before another open review can
+				// replace its chain, including on the final iteration.
+				currentFailedReview = pendingReview
+			}
+		}
+
+		// Only search for a new failed review if we don't have one to work on
+		// (either first iteration, or previous fix passed).
+		if currentFailedReview == nil {
+			currentFailedReview, err = findFailedReviewForBranch(client, commits, skippedReviews)
+			if err != nil {
+				return fmt.Errorf("error finding reviews: %w", err)
 			}
 		}
 
@@ -1331,6 +1340,44 @@ func findPendingJobForBranch(ctx context.Context, client daemon.Client, repoPath
 		}
 	}
 	return nil, nil
+}
+
+// resolvePendingFixReview recovers the exact review for a fix commit before
+// other branch reviews can replace its stall chain. The SHA lookup catches a
+// completed result; the job lookup then covers reviews that are queued, running,
+// or completed between those two reads.
+func resolvePendingFixReview(ctx context.Context, client daemon.Client, repoPath, sha string) (*storage.Review, *storage.ReviewJob, error) {
+	review, err := client.GetReviewBySHA(sha)
+	if err != nil {
+		return nil, nil, err
+	}
+	if review != nil {
+		return review, nil, nil
+	}
+
+	job, err := client.FindJobForCommit(ctx, repoPath, sha)
+	if err != nil {
+		return nil, nil, err
+	}
+	if job == nil || !job.IsReviewJob() {
+		return nil, nil, nil
+	}
+
+	switch job.Status {
+	case storage.JobStatusQueued, storage.JobStatusRunning:
+		review, err = client.WaitForReview(job.ID)
+	case storage.JobStatusDone:
+		review, err = client.GetReviewByJobID(job.ID)
+		if err == nil && review == nil {
+			// The job can become visible before its decoded review is stored.
+			review, err = client.WaitForReview(job.ID)
+		}
+	default:
+		// Failed, canceled, skipped, and superseded jobs cannot produce a
+		// pending review result. Preserve a stored result if one exists.
+		review, err = client.GetReviewByJobID(job.ID)
+	}
+	return review, job, err
 }
 
 // summarizeAgentOutput extracts a short summary from agent output

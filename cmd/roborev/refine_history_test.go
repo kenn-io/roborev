@@ -34,6 +34,12 @@ type refineHistoryDaemon struct {
 	recovery                            string
 	completedBranchReview               int64
 	completeBranchReviewOnPendingLookup int64
+	completePendingFixReviewOnLookup    bool
+	completedPendingFixReviewOnLookup   bool
+	pendingFixReviewRef                 string
+	pendingFixReviewJobID               int64
+	pendingFixReviewMissed              bool
+	jobReviewFetches                    map[int64]int
 	rangeBase                           string
 	enqueues                            int
 	failReview                          int64
@@ -44,9 +50,10 @@ func newRefineHistoryDaemon(t *testing.T, initial string) *refineHistoryDaemon {
 	t.Helper()
 	jobs := map[int64]storage.ReviewJob{}
 	d := &refineHistoryDaemon{
-		reviews:  map[int64]*storage.Review{},
-		comments: map[int64][]storage.Response{},
-		posted:   map[int64][]storage.Response{},
+		reviews:          map[int64]*storage.Review{},
+		comments:         map[int64][]storage.Response{},
+		posted:           map[int64][]storage.Response{},
+		jobReviewFetches: map[int64]int{},
 	}
 	addReview := func(id int64, ref, output string) {
 		job := storage.ReviewJob{ID: id, GitRef: ref, Status: storage.JobStatusDone, JobType: storage.JobTypeReview}
@@ -88,6 +95,16 @@ func newRefineHistoryDaemon(t *testing.T, initial string) *refineHistoryDaemon {
 			}
 			ref := r.URL.Query().Get("git_ref")
 			status := r.URL.Query().Get("status")
+			if d.completePendingFixReviewOnLookup && d.pendingFixReviewMissed && d.pendingFixReviewJobID > 0 && ref == d.pendingFixReviewRef && status == "" {
+				job := jobs[d.pendingFixReviewJobID]
+				job.Status = storage.JobStatusDone
+				jobs[job.ID] = job
+				d.completePendingFixReviewOnLookup = false
+				d.completedPendingFixReviewOnLookup = true
+				d.pendingFixReviewMissed = false
+				writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{job}})
+				return
+			}
 			if id := d.completeBranchReviewOnPendingLookup; id > 0 && status != "" {
 				job := jobs[id]
 				if job.GitRef == ref {
@@ -120,6 +137,10 @@ func newRefineHistoryDaemon(t *testing.T, initial string) *refineHistoryDaemon {
 					if d.recovery == "pending" || d.recovery == "branch" && latest != d.completedBranchReview {
 						job.Status = storage.JobStatusRunning
 					}
+					if d.recovery == "pending" {
+						d.pendingFixReviewRef = ref
+						d.pendingFixReviewJobID = latest
+					}
 					if d.recovery == "branch" {
 						job.GitRef = d.rangeBase + ".." + ref
 						d.reviews[latest].Job.GitRef = job.GitRef
@@ -135,8 +156,14 @@ func newRefineHistoryDaemon(t *testing.T, initial string) *refineHistoryDaemon {
 		}).
 		WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
 			id, _ := strconv.ParseInt(r.URL.Query().Get("job_id"), 10, 64)
+			if id > 0 {
+				d.jobReviewFetches[id]++
+			}
 			if id == 0 {
 				sha := r.URL.Query().Get("sha")
+				if sha == d.pendingFixReviewRef && sha != "" && d.pendingFixReviewJobID > 0 && jobs[d.pendingFixReviewJobID].Status != storage.JobStatusDone {
+					d.pendingFixReviewMissed = true
+				}
 				if hiddenID := hidden[sha]; hiddenID > 0 {
 					if jobs[hiddenID].Status == storage.JobStatusDone && jobs[hiddenID].GitRef == sha {
 						id = hiddenID
