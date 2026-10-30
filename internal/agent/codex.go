@@ -487,19 +487,23 @@ func (a *CodexAgent) review(
 		}
 	}
 
-	threadSourceOK, err := codexSupportsThreadSource(
-		ctx, runAgent.Command, runAgent.IgnoreUserConfig,
-	)
-	if err != nil {
-		return "", err
-	}
-	if !threadSourceOK {
-		clone := *runAgent
-		clone.omitThreadSource = true
-		runAgent = &clone
+	// Sandboxed commands must run only after the job policy is verified.
+	// Let Codex validate its flags inside the sandbox instead of probing on the host.
+	if a.sandbox == nil {
+		threadSourceOK, err := codexSupportsThreadSource(
+			ctx, runAgent.Command, runAgent.IgnoreUserConfig,
+		)
+		if err != nil {
+			return "", err
+		}
+		if !threadSourceOK {
+			clone := *runAgent
+			clone.omitThreadSource = true
+			runAgent = &clone
+		}
 	}
 
-	if agenticMode {
+	if agenticMode && a.sandbox == nil {
 		supported, err := codexSupportsDangerousFlag(ctx, a.Command, runAgent.IgnoreUserConfig)
 		if err != nil {
 			return "", MarkUnavailable(err)

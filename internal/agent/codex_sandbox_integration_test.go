@@ -205,6 +205,73 @@ func TestReviewSandboxStructuredOutput(t *testing.T) {
 	assert.JSONEq(t, `{"ok":true}`, string(result))
 }
 
+func TestCodexSandboxLauncherReuse(t *testing.T) {
+	if os.Getenv("ROBOREV_RUN_SANDBOX_INTEGRATION") != "1" || runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+		t.Skip("requires opt-in linux/amd64 sandbox integration")
+	}
+	work, secrets := t.TempDir(), t.TempDir()
+	repo := filepath.Join(work, "repo")
+	require.NoError(t, os.Mkdir(repo, 0o700))
+	t.Setenv("CODEX_HOME", secrets)
+	marker := filepath.Join(secrets, "host-write")
+	launcher := filepath.Join(work, "codex")
+	replacement := filepath.Join(work, "replacement")
+	const reply = `echo '{"type":"item.completed","item":{"type":"agent_message","text":"contained"}}'`
+	help := "case \" $* \" in *' --help '*) echo '--thread-source --dangerously-bypass-approvals-and-sandbox'; exit 0;; esac\n"
+	require.NoError(t, os.WriteFile(replacement, []byte(fmt.Sprintf("#!/bin/sh\ntouch %q 2>/dev/null || :\n%s%s\n", marker, help, reply)), 0o700))
+	require.NoError(t, os.WriteFile(launcher, []byte(fmt.Sprintf("#!/bin/sh\n%s{\ncp %q \"$0\"\n%s\nexit\n}\n", help, replacement, reply)), 0o700))
+	a := NewCodexAgent(launcher).WithSandbox(&CodexSandbox{Job: sandbox.Job{
+		WorkDir: work, MemoryMax: 1 << 30,
+		Env: []string{"PATH=/usr/bin:/bin", "HOME=" + secrets, "TMPDIR=" + work},
+	}})
+	for range 2 {
+		result, err := a.Review(t.Context(), repo, "HEAD", "review", nil)
+		require.NoError(t, err)
+		assert.Equal(t, "contained", result)
+		assert.NoFileExists(t, marker)
+	}
+}
+
+func TestCodexSandboxRejectsLoginReadPaths(t *testing.T) {
+	if os.Getenv("ROBOREV_RUN_SANDBOX_INTEGRATION") != "1" || runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+		t.Skip("requires opt-in linux/amd64 sandbox integration")
+	}
+	for _, grant := range []string{"home", "parent", "symlink", "relative"} {
+		t.Run(grant, func(t *testing.T) {
+			work, secrets := t.TempDir(), t.TempDir()
+			repo, hostHome := filepath.Join(work, "repo"), filepath.Join(secrets, "codex")
+			require.NoError(t, os.Mkdir(repo, 0o700))
+			require.NoError(t, os.Mkdir(hostHome, 0o700))
+			t.Setenv("CODEX_HOME", hostHome)
+			auth := filepath.Join(hostHome, "auth.json")
+			require.NoError(t, os.WriteFile(auth, []byte(`{"tokens":{"access_token":"synthetic-token"}}`), 0o600))
+			readPath := hostHome
+			switch grant {
+			case "parent":
+				readPath = secrets
+			case "symlink":
+				readPath = filepath.Join(secrets, "link")
+				require.NoError(t, os.Symlink(hostHome, readPath))
+			case "relative":
+				t.Chdir(secrets)
+				readPath = "codex"
+				t.Setenv("CODEX_HOME", "codex")
+			}
+			marker := filepath.Join(work, "exposed-login")
+			launcher := filepath.Join(work, "codex")
+			script := fmt.Sprintf("#!/bin/sh\ncase \" $* \" in *' --help '*) echo '--thread-source --dangerously-bypass-approvals-and-sandbox'; exit 0;; esac\ncat %q > %q\necho '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"review\"}}'\n", auth, marker)
+			require.NoError(t, os.WriteFile(launcher, []byte(script), 0o700))
+			a := NewCodexAgent(launcher).WithSandbox(&CodexSandbox{Job: sandbox.Job{
+				WorkDir: work, ReadPaths: []string{readPath}, MemoryMax: 1 << 30,
+				Env: []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir(), "TMPDIR=" + work},
+			}})
+			_, err := a.Review(t.Context(), repo, "HEAD", "review", nil)
+			assert.ErrorContains(t, err, "contains the Codex login")
+			assert.NoFileExists(t, marker)
+		})
+	}
+}
+
 func sandboxRouteItem(t *testing.T, outputs []string) map[string]any {
 	t.Helper()
 	name := "exec_command"
