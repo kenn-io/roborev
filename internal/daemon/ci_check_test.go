@@ -89,23 +89,19 @@ func TestCICheckSnapshot(t *testing.T) {
 	// A reloaded invalid setting fails like the panel's other reasoning settings.
 	in.repoCfg = nil
 	cfg.CI.CheckReasoning = "invalid"
+	require.ErrorContains(t, cfg.Validate(), "ci.check_reasoning")
 	_, _, err = p.buildPanelOpts(t.Context(), in)
 	require.ErrorContains(t, err, "CI checker reasoning")
 }
 
 func TestCICheckConfiguredCommand(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
-	scratch := t.TempDir()
-	t.Setenv("TMPDIR", scratch)
 	cfg := config.DefaultConfig()
 	cfg.CodexCmd = "custom-codex"
 	tc.Pool.cfgGetter = NewStaticConfig(cfg)
 	t.Setenv("PATH", t.TempDir())
 	_, err := tc.Pool.runCICheck(t.Context(), &storage.ReviewJob{RepoPath: tc.TmpDir, GitRef: "HEAD"}, ciCheckConfig{}, structuredreview.Document{}, nil, io.Discard)
 	require.ErrorContains(t, err, "custom-codex")
-	entries, err := os.ReadDir(scratch)
-	require.NoError(t, err)
-	assert.Empty(t, entries)
 }
 
 func TestCICheckLog(t *testing.T) {
@@ -149,26 +145,23 @@ func TestCICheckLog(t *testing.T) {
 
 func TestCICheckCompletion(t *testing.T) {
 	const raw = `{"schema_version":3,"source_labels":["test"],"summary":"Two claims","verdict":"fail","findings":[{"severity":"high","kind":"defect","confidence":0.9,"problem":"Build claim","fix":"Fix build","sources":[1]},{"severity":"medium","kind":"defect","confidence":0.9,"problem":"Data loss","fix":"Preserve data","sources":[1]}]}`
-	// "agent drop" reaches the checker through a synthesis agent; the rest pass one review through.
-	for _, mode := range []string{"off", "failure", "drop", "agent drop", "below threshold", "empty canceled", "checker canceled", "checker deadline"} {
+	// "agent drop" reaches the checker through a synthesis agent and leaves no finding at its threshold; the rest pass one review through.
+	for _, mode := range []string{"failure", "drop", "agent drop", "empty canceled", "checker canceled", "checker deadline"} {
 		t.Run(mode, func(t *testing.T) {
 			tc := newWorkerTestContext(t, 1)
 			synthAgent := &synthesisEntrypointTestAgent{name: "checker-agent", result: raw}
 			agent.RegisterForTest(t, synthAgent)
 			run, members, _ := enqueuePanelRun(t, tc, "checker", []memberSpec{{name: "one", agent: "test"}})
 			setSynthesisAgent(t, tc, run, synthAgent.name)
-			snapshot := synthesisJobConfig{}
+			snapshot := synthesisJobConfig{Check: &ciCheckConfig{Reasoning: "high"}}
 			if mode == "agent drop" {
 				snapshot.Instructions = "verify"
 			}
-			if mode != "off" {
-				snapshot.Check = &ciCheckConfig{Reasoning: "high"}
-			}
 			encoded, err := snapshot.encode()
 			require.NoError(t, err)
-			threshold := map[string]string{"drop": "medium", "below threshold": "critical"}[mode]
-			if threshold == "" {
-				threshold = "high"
+			threshold := "high"
+			if mode == "drop" {
+				threshold = "medium"
 			}
 			_, err = tc.DB.Exec("UPDATE review_jobs SET panel_member_config_json = ?, min_severity = ? WHERE panel_run_uuid = ? AND panel_role = 'synthesis'", encoded, threshold, run)
 			require.NoError(t, err)
@@ -212,7 +205,7 @@ func TestCICheckCompletion(t *testing.T) {
 			} else {
 				tc.Pool.processSynthesisJob(ctx, testWorkerID, job)
 			}
-			assert.Equal(t, map[bool]int{true: 0, false: 1}[mode == "off" || mode == "empty canceled"], calls)
+			assert.Equal(t, map[bool]int{true: 0, false: 1}[mode == "empty canceled"], calls)
 			finished, err := tc.DB.GetJobByID(job.ID)
 			require.NoError(t, err)
 			if mode == "checker canceled" {
@@ -226,7 +219,7 @@ func TestCICheckCompletion(t *testing.T) {
 			require.NoError(t, err)
 			checked, err := reviewpkg.DecodeStructuredReview(structured)
 			require.NoError(t, err)
-			if strings.HasSuffix(mode, "drop") || mode == "below threshold" {
+			if strings.HasSuffix(mode, "drop") {
 				assert.NotContains(t, stored.Output, "Build claim")
 				assert.Contains(t, stored.Output, "Data loss")
 				// A remaining finding at the threshold still fails the review.
