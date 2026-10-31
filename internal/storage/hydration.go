@@ -15,6 +15,7 @@ type sqlScanner interface {
 }
 
 type reviewJobScanFields struct {
+	SessionProvenance sql.NullString
 	EnqueuedAt        string
 	StartedAt         sql.NullString
 	FinishedAt        sql.NullString
@@ -66,6 +67,7 @@ type reviewJobScanFields struct {
 }
 
 func applyReviewJobScan(job *ReviewJob, fields reviewJobScanFields) {
+	job.SessionProvenance, _ = decodeSessionProvenance(fields.SessionProvenance.String)
 	if fields.CommitID.Valid {
 		job.CommitID = &fields.CommitID.Int64
 	}

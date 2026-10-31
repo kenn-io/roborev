@@ -1589,6 +1589,7 @@ const limitNotProvided = -999999
 // what a not-yet-reviewed job was asked, matching ListJobs' WithoutPrompt.
 func stripJobPrompts(jobs []storage.ReviewJob) {
 	for i := range jobs {
+		jobs[i].SessionProvenance = nil
 		if jobs[i].Status != storage.JobStatusQueued && jobs[i].Status != storage.JobStatusRunning {
 			jobs[i].Prompt = ""
 		}

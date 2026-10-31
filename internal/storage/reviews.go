@@ -36,7 +36,7 @@ func (db *DB) getReviewByJobID(jobID int64, includeFindingCounts bool) (*Review,
 	diffContentExpr := findingCountsDiffContentExpr(includeFindingCounts)
 	err := db.QueryRow(`
 		SELECT `+reviewSelectColumns+`,
-		       `+jobSelectColumns(jobTextColumns{Prompt: "NULL", Diff: diffContentExpr, Patch: "NULL"})+`
+		       `+jobSelectColumns(jobTextColumns{Provenance: jobProvenanceExpr, Prompt: "NULL", Diff: diffContentExpr, Patch: "NULL"})+`
 		FROM reviews rv
 		JOIN review_jobs j ON j.id = rv.job_id
 		JOIN repos r ON r.id = j.repo_id

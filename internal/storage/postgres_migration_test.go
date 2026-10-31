@@ -57,6 +57,7 @@ func openTestPgPoolRawAtVersion(t *testing.T, version int) *PgPool {
 		17: postgresV17Schema,
 		18: postgresV18Schema,
 		23: postgresV23Schema,
+		24: provenancePostgresV24Schema,
 	}
 	schemaSQL, ok := schemas[version]
 	require.Truef(t, ok, "openTestPgPoolRawAtVersion: no embedded schema for version %d", version)

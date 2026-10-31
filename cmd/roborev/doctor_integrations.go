@@ -7,6 +7,7 @@ import (
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/provenance"
 )
 
 // doctorHookTools maps a [[hooks]] type to the CLI the daemon runs for it.
@@ -34,7 +35,7 @@ func (env *doctorEnv) hookToolProblem(tool string) string {
 }
 
 func checkDoctorIntegrations(env *doctorEnv) []doctorCheck {
-	out := []doctorCheck{checkDoctorUsageProvider(env)}
+	out := []doctorCheck{checkDoctorUsageProvider(env), checkDoctorSessionContext(env)}
 
 	hooks := append([]config.HookConfig{}, env.global.Hooks...)
 	if env.repoCfg != nil {
@@ -134,6 +135,37 @@ func checkDoctorUsageProvider(env *doctorEnv) doctorCheck {
 	check.Summary = "usage provider (" + source + "): " + provider
 	if result.Error != "" {
 		check.Status = doctorWarn
+		check.Details = append(check.Details, result.Error)
+	}
+	return check
+}
+
+func checkDoctorSessionContext(env *doctorEnv) doctorCheck {
+	check := doctorCheck{ID: "integrations.session_context", Category: "integrations", Status: doctorOK}
+	var result daemon.DoctorSessionContext
+	source := "daemon"
+	if env.daemonAgents != nil && env.daemonAgents.SessionContext != nil {
+		result = *env.daemonAgents.SessionContext
+	} else {
+		source = "this shell only; daemon capability was not checked"
+		if env.globalErr != nil {
+			check.Status = doctorWarn
+			check.Summary = "session context: configuration unavailable"
+			return check
+		}
+		result = daemon.ResolveDoctorSessionContext(env.ctx, env.repoPath, env.repoCfg, env.global, new(provenance.Client))
+		if result.Mode == "on" {
+			check.Status = doctorWarn
+		}
+	}
+	check.Summary = fmt.Sprintf("session context (%s): %s", source, result.Mode)
+	if result.Mode == "on" {
+		check.Summary += fmt.Sprintf("; %s lookup %s; trailers available", result.Provider, result.Status)
+		if result.Status != "supported" {
+			check.Status = doctorWarn
+		}
+	}
+	if result.Error != "" {
 		check.Details = append(check.Details, result.Error)
 	}
 	return check

@@ -311,6 +311,7 @@ max_chars = 50000
 | `review_guidelines` | string | Project-specific guidelines for the reviewer |
 | `review_md_fallback` | bool | Use `REVIEW.md` when `review_guidelines` is empty or unset (default: `true`) |
 | `review_guidelines_supersede_global` | bool | Use repo guidelines instead of appending global `review_guidelines` |
+| `session_context.mode` | string | Agent session intent for local commit/range reviews: `off` (default) or `on`. See [Agent session provenance](#agent-session-provenance) |
 | `kata_context.mode` | string | Kata task context in review prompts: `off`, `current`, or `open`. See [Kata Integration](#kata-integration) |
 | `kata_context.max_chars` | int | Maximum bytes of Kata issue context to include (default: `50000`) |
 | `goal_review.enabled` | bool | Automatically review Superpowers spec/plan and Kata changes (default: `false`; repo only) |
@@ -518,6 +519,49 @@ above the inline budget use complete file handoff through the agent adapter;
 Roborev does not trim or reject them for size. See
 [Engineering with Superpowers and Kata](/docs/integrations/goal-review/) for
 artifact selection, supported agents and the versioned candidate-gate API.
+
+### Agent session provenance
+
+Local commit and range reviews can include the agent sessions behind the
+reviewed commits and the writing prompts recorded for those sessions. This is
+off by default. Enable it globally or in the repository configuration:
+
+```toml
+[session_context]
+mode = "on" # "off" disables new captures
+```
+
+A repository mode overrides the global mode. `Agent-Session: <agent>:<id>` lines
+in commit messages work without agentsview. When available, agentsview adds
+recorded writing turns and session links through the configured `[agentsview]`
+HTTP provider, or its local CLI. Lookup never requests archive sync or starts an
+agentsview daemon. An older or unavailable provider leaves trailer evidence
+available. A legacy `[cost].endpoint` provides usage only, so it does not enrich
+commit provenance.
+
+HTTP lookup retains every returned source record. The CLI uses
+`agentsview why --commit <sha> --format json --no-sync`, whose selection
+contains up to three sessions and one source card per session. Reviews label
+that coverage explicitly and also retain every local trailer. Ambiguous prefix
+matches and unavailable sessions remain labeled; a commit call or trailer is
+evidence of intent, not proof that a session authored every staged change.
+
+Enabling this setting sends the captured writing prompts to the review agent and
+stores them with the review job. They also travel through PostgreSQL sync when
+enabled. `roborev show`, its JSON output, the TUI review view and the web review
+drawer display the stored capture without querying the archive again. These
+snippets remain after disabling new captures or pruning full review prompts with
+`prompt_retention_days`; deleting the job removes them. Metadata polling and
+exports do not include the capture.
+
+Daemon-free `roborev review --local` gets the same context without storing
+history. Local panel members capture their own context; the synthesis parent
+does not claim a separate capture. CI, dirty, goal, stored-prompt, fix,
+rebuttal, classifier and synthesis jobs do not query sessions. Oversized context
+uses the existing full-prompt snapshot transport without clipping.
+
+`roborev doctor` reports the effective mode and whether the selected archive
+provider supports commit lookup. Trailers remain usable when it does not.
 
 ### Kata Integration
 

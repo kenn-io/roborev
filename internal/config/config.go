@@ -464,7 +464,8 @@ type Config struct {
 	DroidHook DroidHookConfig `toml:"droid_hook"`
 
 	// Kata task-context integration for review prompts
-	KataContext KataContextConfig `toml:"kata_context"`
+	KataContext    KataContextConfig    `toml:"kata_context"`
+	SessionContext SessionContextConfig `toml:"session_context"`
 	// Candidate-gate policy. Keep this global so checkout config cannot weaken it.
 	GoalReview GoalReviewPolicyConfig `toml:"goal_review"`
 
@@ -624,6 +625,9 @@ func walkAgentReferences(value reflect.Value, path string, visit func(path, name
 
 func validateConfig(cfg any, acp ACPAgentConfigs) error {
 	if global, ok := cfg.(*Config); ok {
+		if err := global.SessionContext.Validate(); err != nil {
+			return err
+		}
 		if err := ValidateAuthKey(global.AuthKey); err != nil {
 			return err
 		}
@@ -635,6 +639,9 @@ func validateConfig(cfg any, acp ACPAgentConfigs) error {
 		}
 	}
 	if repo, ok := cfg.(*RepoConfig); ok {
+		if err := repo.SessionContext.Validate(); err != nil {
+			return err
+		}
 		if err := validateGoalReview(repo.GoalReview); err != nil {
 			return err
 		}
@@ -937,7 +944,8 @@ type RepoConfig struct {
 	Hooks []HookConfig `toml:"hooks,omitempty"`
 
 	// Kata task-context integration for review prompts (per-repo)
-	KataContext KataContextConfig `toml:"kata_context"`
+	KataContext    KataContextConfig    `toml:"kata_context"`
+	SessionContext SessionContextConfig `toml:"session_context"`
 
 	// Superpowers intent and open Kata graph review (per-repo, opt-in).
 	GoalReview GoalReviewConfig `toml:"goal_review"`
@@ -1046,7 +1054,8 @@ func DefaultConfig() *Config {
 			FailedReviewThreshold: 4,
 			Instruction:           DefaultAgentHookInstruction,
 		},
-		KataContext: KataContextConfig{Mode: KataModeOff, MaxChars: defaultKataMaxChars},
+		KataContext:    KataContextConfig{Mode: KataModeOff, MaxChars: defaultKataMaxChars},
+		SessionContext: SessionContextConfig{Mode: "off"},
 		Agent: AgentConfig{
 			Codex: CodexConfig{
 				DisableReviewSkills:    true,
