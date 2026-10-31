@@ -1819,6 +1819,10 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 			return nil, storage.EnqueueOpts{}, fmt.Errorf("resolve CI checker reasoning: %w", err)
 		}
 		check = &ciCheckConfig{Model: in.cfg.CI.CheckModel, Reasoning: reasoning}
+		if config.ResolveCIRewrite(in.repoCfg, in.cfg) {
+			check.Rewrite = true
+			check.Title, check.Description = in.pullRequest.Title, in.pullRequest.Description
+		}
 	}
 	synthSnapshot, err := synthesisJobConfig{
 		Check:        check,

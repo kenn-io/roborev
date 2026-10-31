@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -30,8 +32,9 @@ func TestCICheckApply(t *testing.T) {
 	for _, tc := range []struct {
 		name, raw, summary string
 		want               []string
+		kept               []int
 	}{
-		{name: "drop with evidence", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":"build succeeded","reason":"claim refuted"}]}`, summary: "1 finding.", want: []string{"second"}},
+		{name: "drop with evidence", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":"build succeeded","reason":"claim refuted"}]}`, summary: "1 finding.", want: []string{"second"}, kept: []int{2}},
 		{name: "explicit keep", raw: `{"verdicts":[{"finding":1,"keep":true,"evidence":"failed","reason":"reproduced"}]}`},
 		{name: "missing verdict", raw: `{"verdicts":[]}`},
 		{name: "duplicate", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":"ok","reason":"refuted"},{"finding":1,"keep":false,"evidence":"ok","reason":"refuted"}]}`},
@@ -42,16 +45,17 @@ func TestCICheckApply(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.want == nil {
-				tc.want, tc.summary = []string{"first", "second"}, doc.Summary
+				tc.want, tc.summary, tc.kept = []string{"first", "second"}, doc.Summary, []int{1, 2}
 			}
 			var log bytes.Buffer
-			got, err := applyCICheck(doc, jsontext.Value(tc.raw), &log)
+			got, notes, err := applyCICheck(doc, jsontext.Value(tc.raw), &log)
 			require.NoError(t, err)
 			problems := make([]string, 0, len(got.Findings))
 			for _, f := range got.Findings {
 				problems = append(problems, f.Problem)
 			}
 			assert.Equal(t, tc.want, problems)
+			assert.Equal(t, tc.kept, notes.Kept)
 			assert.Equal(t, tc.summary, got.Summary)
 			if len(got.Findings) != 2 {
 				assert.Contains(t, log.String(), `"evidence":"`)
@@ -70,16 +74,31 @@ func TestCICheckSnapshot(t *testing.T) {
 	_, off, err := p.buildPanelOpts(t.Context(), in)
 	require.NoError(t, err)
 	assert.Equal(t, `{"instructions":"merge"}`, off.PanelMemberConfigJSON) //nolint:testifylint // Checker off preserves the existing snapshot byte for byte.
+	cfg.CI.Rewrite = true
+	_, rewriteOnly, err := p.buildPanelOpts(t.Context(), in)
+	require.NoError(t, err)
+	assert.Equal(t, off.PanelMemberConfigJSON, rewriteOnly.PanelMemberConfigJSON)
+	cfg.CI.Rewrite = false
 	cfg.CI.Check = true
 	cfg.CI.CheckModel = "checker-model"
 	cfg.CI.CheckReasoning = " HIGH "
 	_, on, err := p.buildPanelOpts(t.Context(), in)
 	require.NoError(t, err)
+	assert.Equal(t, `{"instructions":"merge","check":{"model":"checker-model","reasoning":"high"}}`, on.PanelMemberConfigJSON) //nolint:testifylint // Rewrite off preserves the checker snapshot byte for byte.
 	var snapshot synthesisJobConfig
-	require.NoError(t, json.Unmarshal([]byte(on.PanelMemberConfigJSON), &snapshot))
+	in.pullRequest = prompt.PullRequest{Title: "Export files", Description: "Keep the user's files"}
+	cfg.CI.Rewrite = true
+	_, rewritten, err := p.buildPanelOpts(t.Context(), in)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(rewritten.PanelMemberConfigJSON), &snapshot))
 	require.NotNil(t, snapshot.Check)
-	assert.Equal(t, "checker-model", snapshot.Check.Model)
-	assert.Equal(t, "high", snapshot.Check.Reasoning)
+	assert.True(t, snapshot.Check.Rewrite)
+	assert.Equal(t, in.pullRequest.Title, snapshot.Check.Title)
+	assert.Equal(t, in.pullRequest.Description, snapshot.Check.Description)
+	in.repoCfg = &config.RepoConfig{CI: config.RepoCIConfig{Rewrite: new(false)}}
+	_, repoOff, err := p.buildPanelOpts(t.Context(), in)
+	require.NoError(t, err)
+	assert.Equal(t, on.PanelMemberConfigJSON, repoOff.PanelMemberConfigJSON)
 	override := false
 	in.repoCfg = &config.RepoConfig{CI: config.RepoCIConfig{Check: &override}}
 	_, overridden, err := p.buildPanelOpts(t.Context(), in)
@@ -125,7 +144,7 @@ func TestCICheckLog(t *testing.T) {
 func TestCICheckCompletion(t *testing.T) {
 	const raw = `{"schema_version":3,"source_labels":["test"],"summary":"Two claims","verdict":"fail","findings":[{"severity":"high","kind":"defect","confidence":0.9,"problem":"Build claim","fix":"Fix build","sources":[1]},{"severity":"medium","kind":"defect","confidence":0.9,"problem":"Data loss","fix":"Preserve data","sources":[1]}]}`
 	// "agent drop" reaches the checker through a synthesis agent and leaves no finding at its threshold; the rest pass one review through.
-	for _, mode := range []string{"failure", "drop", "agent drop", "below severity threshold", "empty canceled", "checker canceled", "checker deadline"} {
+	for _, mode := range []string{"failure", "drop", "agent drop", "rewrite all kept", "below severity threshold", "empty canceled", "checker canceled", "checker deadline"} {
 		t.Run(mode, func(t *testing.T) {
 			tc := newWorkerTestContext(t, 1)
 			tc.Pool.cfgGetter.Config().CodexCmd = "custom-codex"
@@ -133,7 +152,7 @@ func TestCICheckCompletion(t *testing.T) {
 			agent.RegisterForTest(t, synthAgent)
 			run, members, _ := enqueuePanelRun(t, tc, "checker", []memberSpec{{name: "one", agent: "test"}})
 			setSynthesisAgent(t, tc, run, synthAgent.name)
-			snapshot := synthesisJobConfig{Check: &ciCheckConfig{Reasoning: "high"}}
+			snapshot := synthesisJobConfig{Check: &ciCheckConfig{Reasoning: "high", Rewrite: mode == "rewrite all kept"}}
 			if mode == "agent drop" {
 				snapshot.Instructions = "verify"
 			}
@@ -160,7 +179,14 @@ func TestCICheckCompletion(t *testing.T) {
 				if ctx.Err() != nil {
 					return structuredreview.Document{}, ctx.Err()
 				}
-				return applyCICheck(doc, jsontext.Value(`{"verdicts":[{"finding":1,"keep":false,"evidence":"build succeeds","reason":"refuted"}]}`), out)
+				if mode == "rewrite all kept" {
+					doc.Findings = append([]structuredreview.Finding(nil), doc.Findings...)
+					doc.Findings[0].Problem = "Users cannot build the project."
+					doc.Findings[0].Fix = "Keep the build working. **Where:** `build`"
+					return doc, nil
+				}
+				checked, _, err := applyCICheck(doc, jsontext.Value(`{"verdicts":[{"finding":1,"keep":false,"evidence":"build succeeds","reason":"refuted"}]}`), out)
+				return checked, err
 			}
 			doc, err := reviewpkg.DecodeStructuredReview(jsontext.Value(raw))
 			require.NoError(t, err)
@@ -223,6 +249,10 @@ func TestCICheckCompletion(t *testing.T) {
 				}
 				require.Len(t, checked.Findings, 1)
 				assert.Equal(t, "Data loss", checked.Findings[0].Problem)
+			} else if mode == "rewrite all kept" {
+				assert.Contains(t, stored.Output, "Users cannot build the project.")
+				doc.Findings[0].Problem, doc.Findings[0].Fix = checked.Findings[0].Problem, checked.Findings[0].Fix
+				assert.Equal(t, doc, checked)
 			} else {
 				assert.Equal(t, original.review.Output, stored.Output)
 				assert.Equal(t, original.review.Verdict, stored.Verdict())
@@ -236,4 +266,89 @@ func TestCICheckCompletion(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCIRewriteValidationAndThreshold(t *testing.T) {
+	doc := structuredreview.Document{Findings: []structuredreview.Finding{{Severity: "high", Problem: "original", Fix: "original fix"}}}
+	for _, tc := range []struct {
+		name, notes, wantErr string
+		doc                  structuredreview.Document
+		responses            []string
+	}{
+		{
+			name:      "kept prompt context",
+			doc:       structuredreview.Document{Findings: []structuredreview.Finding{{Severity: "high", Problem: "build claim", Fix: "fix"}, {Severity: "medium", Location: "save.go:4", Problem: "data loss", Fix: "fix"}, {Severity: "low", Problem: "minor issue", Fix: "minor fix"}}},
+			notes:     `{"verdicts":[{"finding":1,"keep":false,"evidence":"go build succeeded","reason":"Build claim refuted"},{"finding":2,"keep":true,"evidence":"test reproduced data loss","reason":"Data is lost"}]}`,
+			responses: []string{`{"findings":[{"finding":2,"problem":"Users lose saved files.","fix":"Preserve files in saveFile."}]}`, `{"findings":[{"finding":2,"fix":"Keep saved files. **Where:** saveFile"}]}`},
+		},
+		{name: "missing", notes: `{"verdicts":[]}`, wantErr: "incomplete checker notes"},
+		{name: "duplicate", notes: `{"verdicts":[{"finding":1,"keep":true,"evidence":"failed","reason":"reproduced"},{"finding":1,"keep":true,"evidence":"failed","reason":"reproduced"}]}`, wantErr: "incomplete checker notes"},
+		{name: "blank evidence", notes: `{"verdicts":[{"finding":1,"keep":true,"evidence":" ","reason":"reproduced"}]}`, wantErr: "incomplete checker notes"},
+		{name: "blank reason", notes: `{"verdicts":[{"finding":1,"keep":true,"evidence":"failed","reason":" "}]}`, wantErr: "incomplete checker notes"},
+		{name: "missing ID", responses: []string{`{"findings":[]}`}, wantErr: "incomplete rewrite phase 1"},
+		{name: "duplicate ID", responses: []string{`{"findings":[{"finding":1,"problem":"one","fix":"fix"},{"finding":1,"problem":"two","fix":"fix"}]}`}, wantErr: "invalid rewrite finding 1 in phase 1"},
+		{name: "unknown ID", responses: []string{`{"findings":[{"finding":2,"problem":"wrong","fix":"fix"}]}`}, wantErr: "invalid rewrite finding 2 in phase 1"},
+		{name: "empty problem", responses: []string{`{"findings":[{"finding":1,"problem":" ","fix":"fix"}]}`}, wantErr: "invalid rewrite finding 1 in phase 1"},
+		{name: "empty fix", responses: []string{`{"findings":[{"finding":1,"problem":"new problem","fix":"fix"}]}`, `{"findings":[{"finding":1,"fix":" "}]}`}, wantErr: "invalid rewrite finding 1 in phase 2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var a *agent.CodexAgent
+			repo := ""
+			if len(tc.responses) > 0 {
+				if runtime.GOOS == "windows" {
+					t.Skip("synthetic agent uses a POSIX shell")
+				}
+				repo = t.TempDir()
+				command := filepath.Join(t.TempDir(), "codex")
+				events := make([]string, 2)
+				for i, response := range tc.responses {
+					event, err := json.Marshal(map[string]any{"type": "item.completed", "item": map[string]string{"type": "agent_message", "text": response}})
+					require.NoError(t, err)
+					events[i] = string(event)
+				}
+				script := fmt.Sprintf(`#!/bin/sh
+case "$*" in *--help*) echo "usage --sandbox --thread-source"; exit 0;; esac
+cat >> rewrite-prompts.txt
+if [ -f replied ]; then
+    printf '%%s\n' '%s'
+else
+    touch replied
+    printf '%%s\n' '%s'
+fi
+`, events[1], events[0])
+				require.NoError(t, os.WriteFile(command, []byte(script), 0o700))
+				a = agent.NewCodexAgent(command)
+				if tc.notes == "" {
+					tc.notes = `{"verdicts":[{"finding":1,"keep":true,"evidence":"failed","reason":"reproduced"}]}`
+				}
+			}
+			if tc.doc.Findings == nil {
+				tc.doc = doc
+			}
+			checked, notes, err := applyCICheck(tc.doc, jsontext.Value(tc.notes), io.Discard)
+			require.NoError(t, err)
+			description := "Complete rewrite context."
+			got, err := (&WorkerPool{}).rewriteCIFindings(t.Context(), &storage.ReviewJob{MinSeverity: "medium"}, ciCheckConfig{Description: description}, checked, notes, a, repo, io.Discard)
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+				prompts, err := os.ReadFile(filepath.Join(repo, "rewrite-prompts.txt"))
+				require.NoError(t, err)
+				assert.Contains(t, string(prompts), description)
+				assert.Contains(t, string(prompts), "## Finding 2 (medium)\n\n- `save.go:4`: data loss\n\n  **Fix:** fix")
+				assert.NotContains(t, string(prompts), "## Finding 1 (high)")
+				assert.NotContains(t, string(prompts), "## Finding 3 (low)")
+				assert.Contains(t, string(prompts), "test reproduced data loss")
+				assert.Contains(t, string(prompts), "Data is lost")
+				assert.Contains(t, string(prompts), "Users lose saved files.")
+				return
+			}
+			require.ErrorContains(t, err, tc.wantErr)
+			assert.Equal(t, checked, got)
+		})
+	}
+	checked, notes, err := applyCICheck(doc, jsontext.Value(`{"verdicts":[{"finding":1,"keep":true,"evidence":"failed","reason":"reproduced"}]}`), io.Discard)
+	require.NoError(t, err)
+	got, err := (&WorkerPool{}).rewriteCIFindings(t.Context(), &storage.ReviewJob{MinSeverity: "critical"}, ciCheckConfig{}, checked, notes, nil, "", io.Discard)
+	require.NoError(t, err)
+	assert.Equal(t, doc, got)
 }
