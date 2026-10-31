@@ -3380,8 +3380,12 @@ func (s *Server) enqueueSingleAgent(
 	if in.experiment != nil {
 		o.BackupAgent = execution.BackupAgent
 		o.BackupModel = execution.BackupModel
+		plan, planErr := experimentPlanForJob(o)
+		if planErr != nil {
+			return rawJSONOutput(http.StatusInternalServerError, ErrorResponse{Error: planErr.Error()})
+		}
 		assignment, assignErr := storageAssignmentForExperiment(
-			in.experiment, experimentPlanForJob(o),
+			in.experiment, plan,
 		)
 		if assignErr != nil {
 			return rawJSONOutput(http.StatusInternalServerError,

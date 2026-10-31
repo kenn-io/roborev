@@ -59,8 +59,11 @@ func rewriteCIFindings(checked structuredreview.Document, minSeverity, pullReque
 			return checked, err
 		}
 		seen := make(map[int]bool)
-		for _, f := range response.Findings {
-			if f.Finding < 1 || f.Finding > len(selected) || seen[f.Finding] || strings.TrimSpace(f.Fix) == "" || phase == 0 && strings.TrimSpace(f.Problem) == "" {
+		for i := range response.Findings {
+			f := &response.Findings[i]
+			f.Problem = strings.TrimSpace(f.Problem)
+			f.Fix = strings.TrimSpace(f.Fix)
+			if f.Finding < 1 || f.Finding > len(selected) || seen[f.Finding] || f.Fix == "" || phase == 0 && f.Problem == "" {
 				return checked, fmt.Errorf("invalid rewrite finding %d in phase %d", f.Finding, phase+1)
 			}
 			seen[f.Finding] = true

@@ -884,8 +884,12 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 		return false, err
 	}
 	if selection.Assignment != nil {
+		plan, planErr := experimentPlanForPanel(memberOpts, synthOpts)
+		if planErr != nil {
+			return false, planErr
+		}
 		assignment, assignErr := storageAssignmentForExperiment(
-			selection.Assignment, experimentPlanForPanel(memberOpts, synthOpts),
+			selection.Assignment, plan,
 		)
 		if assignErr != nil {
 			return false, fmt.Errorf("fingerprint experiment plan: %w", assignErr)

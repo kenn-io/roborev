@@ -14,6 +14,8 @@ import (
 func TestCodexSandboxPrepareRepoAccess(t *testing.T) {
 	t.Setenv("CODEX_HOME", t.TempDir())
 	work, read := t.TempDir(), t.TempDir()
+	wantWork, err := sandbox.ResolvePath(work)
+	require.NoError(t, err)
 	repo := filepath.Join(read, "repo")
 	require.NoError(t, os.Mkdir(repo, 0o700))
 	for _, tc := range []struct {
@@ -36,7 +38,15 @@ func TestCodexSandboxPrepareRepoAccess(t *testing.T) {
 			}
 			require.NoError(t, err)
 			t.Cleanup(cleanup)
-			assert.Equal(t, work, job.WorkDir)
+			assert.Equal(t, wantWork, job.WorkDir)
 		})
 	}
+}
+
+func TestCodexSandboxPrepareSymlinkedTMPDIR(t *testing.T) {
+	tmp := t.TempDir()
+	alias := filepath.Join(t.TempDir(), "tmp")
+	require.NoError(t, os.Symlink(tmp, alias))
+	t.Setenv("TMPDIR", alias)
+	t.Run("repo access", TestCodexSandboxPrepareRepoAccess)
 }

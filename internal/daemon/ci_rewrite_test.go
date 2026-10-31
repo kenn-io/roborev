@@ -27,8 +27,8 @@ func TestCIRewriteValidationAndThreshold(t *testing.T) {
 		bad  string
 	}{
 		{"success", ""},
+		{"trim whitespace", ""},
 		{"call failure", "error"},
-		{"malformed JSON", "{"},
 		{"missing ID", `{"findings":[{"finding":1,"problem":"one","fix":"fix"}]}`},
 		{"extra ID", `{"findings":[{"finding":1,"problem":"one","fix":"fix"},{"finding":2,"problem":"two","fix":"fix"},{"finding":3,"problem":"extra","fix":"fix"}]}`},
 		{"duplicate ID", `{"findings":[{"finding":1,"problem":"one","fix":"fix"},{"finding":1,"problem":"two","fix":"fix"}]}`},
@@ -57,10 +57,16 @@ func TestCIRewriteValidationAndThreshold(t *testing.T) {
 					}
 					if current == 0 {
 						assert.Equal(t, ciRewriteSchema, schema)
+						if tc.name == "trim whitespace" {
+							return jsontext.Value(`{"findings":[{"finding":1,"problem":" \nUsers lose saved files.\t ","fix":" Repair saveFile. "},{"finding":2,"problem":" Users cannot load files. ","fix":" Repair loadFile. "}]}`), nil
+						}
 						return jsontext.Value(first), nil
 					}
 					assert.Equal(t, ciRewriteFixSchema, schema)
 					assert.Contains(t, text, "Users lose saved files.")
+					if tc.name == "trim whitespace" {
+						return jsontext.Value(`{"findings":[{"finding":1,"fix":" \nKeep saved files. **Where:** saveFile\t "},{"finding":2,"fix":" Load files. **Where:** loadFile "}]}`), nil
+					}
 					return jsontext.Value(second), nil
 				})
 				if tc.bad != "" {

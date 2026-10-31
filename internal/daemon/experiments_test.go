@@ -128,11 +128,13 @@ func TestFrozenExperimentPlanSelectsPanelMember(t *testing.T) {
 		Agent: "test", JobType: storage.JobTypeSynthesis,
 		PanelName: "review", PanelRole: storage.PanelRoleSynthesis,
 	}
+	plan, err := experimentPlanForPanel(members, synthesis)
+	require.NoError(t, err)
 	assignment, err := storageAssignmentForExperiment(&config.ExperimentAssignment{
 		ID: "panel-clear-v1", DefinitionHash: "definition-hash",
 		DefinitionJSON: `{"ratio":1}`, Arm: config.ExperimentArmExperimental,
 		SubjectHash: "subject-hash",
-	}, experimentPlanForPanel(members, synthesis))
+	}, plan)
 	require.NoError(t, err)
 
 	job := &storage.ReviewJob{
@@ -533,4 +535,42 @@ func TestExperimentSessionReuseStaysOnSourceMachine(t *testing.T) {
 		assert.Empty(t, member.SessionID)
 		assert.Empty(t, member.ResumeSourceJobUUID)
 	}
+}
+
+func TestSynthesisExperimentPlanPullRequest(t *testing.T) {
+	jobConfig := synthesisJobConfig{Instructions: "Combine reviews", Check: &ciCheckConfig{Rewrite: true, Model: "checker", PullRequest: "first PR body"}}
+	firstConfig, err := jobConfig.encode()
+	require.NoError(t, err)
+	first := storage.EnqueueOpts{JobType: storage.JobTypeSynthesis, PanelRole: storage.PanelRoleSynthesis, PanelMemberConfigJSON: firstConfig}
+	jobConfig.Check.PullRequest = "second PR body"
+	secondConfig, err := jobConfig.encode()
+	require.NoError(t, err)
+	second := first
+	second.PanelMemberConfigJSON = secondConfig
+	firstPlan, err := experimentPlanForPanel(nil, first)
+	require.NoError(t, err)
+	secondPlan, err := experimentPlanForPanel(nil, second)
+	require.NoError(t, err)
+	firstHash, err := config.FingerprintExperimentConfig(firstPlan)
+	require.NoError(t, err)
+	secondHash, err := config.FingerprintExperimentConfig(secondPlan)
+	require.NoError(t, err)
+	assert.Equal(t, firstHash, secondHash)
+
+	t.Run("rerun", func(t *testing.T) {
+		require.NoError(t, applyExperimentJobPlan(&second, firstPlan.Synthesis))
+		got, err := synthesisConfig(&storage.ReviewJob{JobType: storage.JobTypeSynthesis, PanelMemberConfigJSON: second.PanelMemberConfigJSON})
+		require.NoError(t, err)
+		require.NotNil(t, got.Check)
+		assert.Equal(t, jobConfig, got)
+	})
+	t.Run("worker", func(t *testing.T) {
+		assignment, err := storageAssignmentForExperiment(&config.ExperimentAssignment{ID: "test"}, firstPlan)
+		require.NoError(t, err)
+		job := &storage.ReviewJob{JobType: storage.JobTypeSynthesis, PanelRole: storage.PanelRoleSynthesis, PanelRunUUID: testUUIDPtr("run"), PanelMemberConfigJSON: secondConfig}
+		require.NoError(t, applyFrozenExperimentSettings(job, assignment))
+		got, err := synthesisConfig(job)
+		require.NoError(t, err)
+		assert.Equal(t, jobConfig, got)
+	})
 }

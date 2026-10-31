@@ -432,7 +432,15 @@ type experimentReviewPlan struct {
 	Synthesis experimentJobPlan
 }
 
-func experimentPlanForJob(opts storage.EnqueueOpts) experimentJobPlan {
+func experimentPlanForJob(opts storage.EnqueueOpts) (experimentJobPlan, error) {
+	snapshot := opts.PanelMemberConfigJSON
+	if storage.JobTypeForEnqueue(opts) == storage.JobTypeSynthesis {
+		var err error
+		snapshot, err = synthesisExperimentConfig(snapshot)
+		if err != nil {
+			return experimentJobPlan{}, err
+		}
+	}
 	return experimentJobPlan{
 		Agent:                 opts.Agent,
 		Model:                 opts.Model,
@@ -445,23 +453,30 @@ func experimentPlanForJob(opts storage.EnqueueOpts) experimentJobPlan {
 		PanelName:             opts.PanelName,
 		PanelMemberName:       opts.PanelMemberName,
 		PanelMemberIndex:      opts.PanelMemberIndex,
-		PanelMemberConfigJSON: opts.PanelMemberConfigJSON,
+		PanelMemberConfigJSON: snapshot,
 		JobType:               storage.JobTypeForEnqueue(opts),
-	}
+	}, nil
 }
 
 func experimentPlanForPanel(
 	members []storage.EnqueueOpts,
 	synthesis storage.EnqueueOpts,
-) experimentReviewPlan {
+) (experimentReviewPlan, error) {
+	synthPlan, err := experimentPlanForJob(synthesis)
+	if err != nil {
+		return experimentReviewPlan{}, err
+	}
 	plan := experimentReviewPlan{
 		Members:   make([]experimentJobPlan, len(members)),
-		Synthesis: experimentPlanForJob(synthesis),
+		Synthesis: synthPlan,
 	}
 	for i := range members {
-		plan.Members[i] = experimentPlanForJob(members[i])
+		plan.Members[i], err = experimentPlanForJob(members[i])
+		if err != nil {
+			return experimentReviewPlan{}, err
+		}
 	}
-	return plan
+	return plan, nil
 }
 
 func applyFrozenExperimentSettings(
@@ -591,8 +606,12 @@ func (s *Server) enqueuePanelRun(ctx context.Context, in panelRunInputs) (*RawJS
 	}
 	members, memberOpts, synthOpts := plan.members, plan.memberOpts, plan.synthOpts
 	if in.experiment != nil {
+		plan, planErr := experimentPlanForPanel(memberOpts, synthOpts)
+		if planErr != nil {
+			return rawJSONOutput(http.StatusInternalServerError, ErrorResponse{Error: planErr.Error()})
+		}
 		assignment, assignErr := storageAssignmentForExperiment(
-			in.experiment, experimentPlanForPanel(memberOpts, synthOpts),
+			in.experiment, plan,
 		)
 		if assignErr != nil {
 			return rawJSONOutput(http.StatusInternalServerError,
