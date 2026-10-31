@@ -63,7 +63,14 @@ func rewriteCIFindings(checked structuredreview.Document, minSeverity, pullReque
 			f := &response.Findings[i]
 			f.Problem = strings.TrimSpace(f.Problem)
 			f.Fix = strings.TrimSpace(f.Fix)
-			if f.Finding < 1 || f.Finding > len(selected) || seen[f.Finding] || f.Fix == "" || phase == 0 && f.Problem == "" {
+			invalid := strings.Contains(f.Problem, "**Fix:**") || phase == 1 && !strings.Contains(f.Fix, "**Where:**")
+			for _, field := range []string{f.Problem, f.Fix} {
+				for line := range strings.SplitSeq(field, "\n") {
+					line = strings.TrimSpace(line)
+					invalid = invalid || field != "" && (line == "" || strings.HasPrefix(line, "#"))
+				}
+			}
+			if f.Finding < 1 || f.Finding > len(selected) || seen[f.Finding] || f.Fix == "" || phase == 0 && f.Problem == "" || invalid {
 				return checked, fmt.Errorf("invalid rewrite finding %d in phase %d", f.Finding, phase+1)
 			}
 			seen[f.Finding] = true
