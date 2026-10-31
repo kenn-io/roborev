@@ -18,6 +18,7 @@ import (
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/kata"
+	"go.kenn.io/roborev/internal/provenance"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -80,17 +81,19 @@ type HistoricalReviewContext struct {
 
 // Builder constructs review prompts
 type Builder struct {
-	db             *storage.DB
-	globalCfg      *config.Config // optional global config for exclude patterns
-	repoCfg        *config.RepoConfig
-	repoCfgSet     bool
-	repoCfgRef     string
-	ctx            context.Context
-	repoPath       string
-	configRepoPath string
-	planSkillRoot  string
-	repoID         int64
-	kataClient     kata.Client
+	db                *storage.DB
+	globalCfg         *config.Config // optional global config for exclude patterns
+	repoCfg           *config.RepoConfig
+	repoCfgSet        bool
+	repoCfgRef        string
+	ctx               context.Context
+	repoPath          string
+	configRepoPath    string
+	planSkillRoot     string
+	repoID            int64
+	kataClient        kata.Client
+	sessionLookup     provenance.Lookup
+	sessionProvenance []provenance.Commit
 	// structuredOutput appends the JSON output instruction to built-in
 	// review prompts when the agent will return schema-constrained findings.
 	structuredOutput bool
@@ -254,6 +257,7 @@ func (b *Builder) BuildWithAdditionalContext(gitRef string, contextCount int, ag
 }
 
 func (b *Builder) buildWithOpts(gitRef string, contextCount int, agentName, reviewType string, opts buildOpts) (string, error) {
+	b.sessionProvenance = nil
 	if git.IsRange(gitRef) {
 		return b.buildRangePrompt(gitRef, contextCount, agentName, reviewType, opts)
 	}
@@ -634,6 +638,7 @@ func (b *Builder) BuildDirty(diff string, contextCount int, agentName, reviewTyp
 // dirty file names for dependency metadata summaries. The diff itself may have
 // review exclusions applied.
 func (b *Builder) BuildDirtyWithFiles(diff string, changedFiles []string, contextCount int, agentName, reviewType, minSeverity string) (string, error) {
+	b.sessionProvenance = nil
 	if b.binaryEvidence {
 		return "", ErrBinaryEvidenceDirty
 	}
@@ -869,6 +874,9 @@ func measureOptionalSectionsLoss(original, trimmed ReviewOptionalContext) int {
 	if original.ProjectGuidelines != nil && trimmed.ProjectGuidelines == nil {
 		loss++
 	}
+	if original.SessionContext != nil && trimmed.SessionContext == nil {
+		loss++
+	}
 	if original.KataContext != nil && trimmed.KataContext == nil {
 		loss++
 	}
@@ -972,6 +980,12 @@ func (b *Builder) buildSinglePrompt(sha string, contextCount int, agentName, rev
 	}
 	ctx.optional.KataContext = kataView
 
+	sessionView, err := b.resolveSessionContext([]string{info.SHA})
+	if err != nil {
+		return "", err
+	}
+	ctx.optional.SessionContext = sessionView
+
 	currentView := currentCommitSectionView{
 		Commit:  shortSHA,
 		Subject: escapeXML(info.Subject),
@@ -1061,6 +1075,11 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 		return "", err
 	}
 	ctx.optional.KataContext = kataView
+	sessionView, err := b.resolveSessionContext(commits)
+	if err != nil {
+		return "", err
+	}
+	ctx.optional.SessionContext = sessionView
 	currentView := commitRangeSectionView{Count: len(commits), PullRequest: b.pullRequestContext(), Entries: entries}
 	diff, err := git.GetRangeDiffCtx(b.context(), b.repoPath, rangeRef, b.resolveExcludes(reviewType)...)
 	if err != nil {

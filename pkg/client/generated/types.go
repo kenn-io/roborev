@@ -869,6 +869,36 @@ func (c CloseReviewRequest) Validate() error {
 	return errors
 }
 
+type Commit struct {
+	CommitSha string    `json:"commit_sha" validate:"required"`
+	Coverage  string    `json:"coverage" validate:"required"`
+	Sessions  []Session `json:"sessions" validate:"required"`
+}
+
+func (c Commit) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.CommitSha, "required"); err != nil {
+		errors = errors.Append("CommitSha", err)
+	}
+	if err := typesValidator.Var(c.Coverage, "required"); err != nil {
+		errors = errors.Append("Coverage", err)
+	}
+	if err := typesValidator.Var(c.Sessions, "required"); err != nil {
+		errors = errors.Append("Sessions", err)
+	}
+	for i, item := range c.Sessions {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Sessions[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type ComponentHealth struct {
 	Healthy  bool               `json:"healthy"`
 	Message  *string            `json:"message,omitempty"`
@@ -1043,8 +1073,9 @@ type DoctorAgentsOutputBody struct {
 	RepoConfigError *string `json:"repo_config_error,omitempty"`
 
 	// Requested The requested agent names, resolved by the daemon; unknown names report an error
-	Requested     []Diagnosis          `json:"requested" validate:"required"`
-	UsageProvider *DoctorUsageProvider `json:"usage_provider,omitempty"`
+	Requested      []Diagnosis           `json:"requested" validate:"required"`
+	SessionContext *DoctorSessionContext `json:"session_context,omitempty"`
+	UsageProvider  *DoctorUsageProvider  `json:"usage_provider,omitempty"`
 }
 
 func (d DoctorAgentsOutputBody) Validate() error {
@@ -1089,6 +1120,13 @@ func (d DoctorAgentsOutputBody) Validate() error {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Requested[%d]", i), err)
+			}
+		}
+	}
+	if d.SessionContext != nil {
+		if v, ok := any(d.SessionContext).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SessionContext", err)
 			}
 		}
 	}
@@ -1154,6 +1192,17 @@ type DoctorPanelMember struct {
 }
 
 func (d DoctorPanelMember) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type DoctorSessionContext struct {
+	ErrorData *string `json:"error,omitempty"`
+	Mode      string  `json:"mode" validate:"required"`
+	Provider  string  `json:"provider" validate:"required"`
+	Status    string  `json:"status" validate:"required"`
+}
+
+func (d DoctorSessionContext) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(d))
 }
 
@@ -1233,6 +1282,7 @@ type EnqueueCreatedResponse struct {
 	RetryCount            int64                  `json:"retry_count"`
 	ReviewType            *string                `json:"review_type,omitempty"`
 	SessionID             *string                `json:"session_id,omitempty"`
+	SessionProvenance     []Commit               `json:"session_provenance,omitempty"`
 	SkipReason            *string                `json:"skip_reason,omitempty"`
 	Source                *string                `json:"source,omitempty"`
 	SourceMachineID       *uuid.UUID             `json:"source_machine_id,omitempty"`
@@ -1301,6 +1351,13 @@ func (e EnqueueCreatedResponse) Validate() error {
 		if v, ok := any(e.ResumeSourceJobUUID).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append("ResumeSourceJobUUID", err)
+			}
+		}
+	}
+	for i, item := range e.SessionProvenance {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("SessionProvenance[%d]", i), err)
 			}
 		}
 	}
@@ -2881,6 +2938,7 @@ type PanelEnqueueResponse struct {
 	RetryCount            int64                  `json:"retry_count"`
 	ReviewType            *string                `json:"review_type,omitempty"`
 	SessionID             *string                `json:"session_id,omitempty"`
+	SessionProvenance     []Commit               `json:"session_provenance,omitempty"`
 	SkipReason            *string                `json:"skip_reason,omitempty"`
 	Source                *string                `json:"source,omitempty"`
 	SourceMachineID       *uuid.UUID             `json:"source_machine_id,omitempty"`
@@ -2950,6 +3008,13 @@ func (p PanelEnqueueResponse) Validate() error {
 		if v, ok := any(p.ResumeSourceJobUUID).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append("ResumeSourceJobUUID", err)
+			}
+		}
+	}
+	for i, item := range p.SessionProvenance {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("SessionProvenance[%d]", i), err)
 			}
 		}
 	}
@@ -3613,6 +3678,7 @@ type ReviewJob struct {
 	RetryCount            int64                  `json:"retry_count"`
 	ReviewType            *string                `json:"review_type,omitempty"`
 	SessionID             *string                `json:"session_id,omitempty"`
+	SessionProvenance     []Commit               `json:"session_provenance,omitempty"`
 	SkipReason            *string                `json:"skip_reason,omitempty"`
 	Source                *string                `json:"source,omitempty"`
 	SourceMachineID       *uuid.UUID             `json:"source_machine_id,omitempty"`
@@ -3681,6 +3747,13 @@ func (r ReviewJob) Validate() error {
 		if v, ok := any(r.ResumeSourceJobUUID).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append("ResumeSourceJobUUID", err)
+			}
+		}
+	}
+	for i, item := range r.SessionProvenance {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("SessionProvenance[%d]", i), err)
 			}
 		}
 	}
@@ -3758,26 +3831,27 @@ func (r ReviewProjection) Validate() error {
 }
 
 type ReviewProjectionJob struct {
-	Agent           string        `json:"agent" validate:"required"`
-	Branch          *string       `json:"branch,omitempty"`
-	CommitSubject   *string       `json:"commit_subject,omitempty"`
-	EnqueuedAt      time.Time     `json:"enqueued_at" validate:"required"`
-	FinishedAt      *time.Time    `json:"finished_at,omitempty"`
-	GitRef          string        `json:"git_ref" validate:"required"`
-	ID              int64         `json:"id"`
-	Model           *string       `json:"model,omitempty"`
-	NonVoting       *bool         `json:"non_voting,omitempty"`
-	PanelMemberName *string       `json:"panel_member_name,omitempty"`
-	PanelName       *string       `json:"panel_name,omitempty"`
-	PanelRole       *string       `json:"panel_role,omitempty"`
-	PanelSummary    *PanelSummary `json:"panel_summary,omitempty"`
-	Project         string        `json:"project" validate:"required"`
-	ReviewType      *string       `json:"review_type,omitempty"`
-	Source          *string       `json:"source,omitempty"`
-	StartedAt       *time.Time    `json:"started_at,omitempty"`
-	Status          string        `json:"status" validate:"required"`
-	UUID            *uuid.UUID    `json:"uuid,omitempty"`
-	Verdict         *string       `json:"verdict,omitempty"`
+	Agent             string        `json:"agent" validate:"required"`
+	Branch            *string       `json:"branch,omitempty"`
+	CommitSubject     *string       `json:"commit_subject,omitempty"`
+	EnqueuedAt        time.Time     `json:"enqueued_at" validate:"required"`
+	FinishedAt        *time.Time    `json:"finished_at,omitempty"`
+	GitRef            string        `json:"git_ref" validate:"required"`
+	ID                int64         `json:"id"`
+	Model             *string       `json:"model,omitempty"`
+	NonVoting         *bool         `json:"non_voting,omitempty"`
+	PanelMemberName   *string       `json:"panel_member_name,omitempty"`
+	PanelName         *string       `json:"panel_name,omitempty"`
+	PanelRole         *string       `json:"panel_role,omitempty"`
+	PanelSummary      *PanelSummary `json:"panel_summary,omitempty"`
+	Project           string        `json:"project" validate:"required"`
+	ReviewType        *string       `json:"review_type,omitempty"`
+	SessionProvenance []Commit      `json:"session_provenance,omitempty"`
+	Source            *string       `json:"source,omitempty"`
+	StartedAt         *time.Time    `json:"started_at,omitempty"`
+	Status            string        `json:"status" validate:"required"`
+	UUID              *uuid.UUID    `json:"uuid,omitempty"`
+	Verdict           *string       `json:"verdict,omitempty"`
 }
 
 func (r ReviewProjectionJob) Validate() error {
@@ -3800,6 +3874,13 @@ func (r ReviewProjectionJob) Validate() error {
 	}
 	if err := typesValidator.Var(r.Project, "required"); err != nil {
 		errors = errors.Append("Project", err)
+	}
+	for i, item := range r.SessionProvenance {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("SessionProvenance[%d]", i), err)
+			}
+		}
 	}
 	if err := typesValidator.Var(r.Status, "required"); err != nil {
 		errors = errors.Append("Status", err)
@@ -4003,6 +4084,50 @@ func (s SearchResponse) Validate() error {
 	}
 	if err := typesValidator.Var(s.Query, "required"); err != nil {
 		errors = errors.Append("Query", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type Session struct {
+	Agent          string  `json:"agent" validate:"required"`
+	Ambiguous      *bool   `json:"ambiguous,omitempty"`
+	Availability   string  `json:"availability" validate:"required"`
+	CallIndex      *int64  `json:"call_index,omitempty"`
+	CommitSha      string  `json:"commit_sha" validate:"required"`
+	MessageOrdinal *int64  `json:"message_ordinal,omitempty"`
+	Resolved       bool    `json:"resolved"`
+	SessionID      string  `json:"session_id" validate:"required"`
+	Source         string  `json:"source" validate:"required"`
+	Turn           *Turn   `json:"turn,omitempty"`
+	WebURL         *string `json:"web_url,omitempty"`
+}
+
+func (s Session) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(s.Agent, "required"); err != nil {
+		errors = errors.Append("Agent", err)
+	}
+	if err := typesValidator.Var(s.Availability, "required"); err != nil {
+		errors = errors.Append("Availability", err)
+	}
+	if err := typesValidator.Var(s.CommitSha, "required"); err != nil {
+		errors = errors.Append("CommitSha", err)
+	}
+	if err := typesValidator.Var(s.SessionID, "required"); err != nil {
+		errors = errors.Append("SessionID", err)
+	}
+	if err := typesValidator.Var(s.Source, "required"); err != nil {
+		errors = errors.Append("Source", err)
+	}
+	if s.Turn != nil {
+		if v, ok := any(s.Turn).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Turn", err)
+			}
+		}
 	}
 	if len(errors) == 0 {
 		return nil
@@ -4353,6 +4478,17 @@ func (t TokenSummary) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type Turn struct {
+	At      *string `json:"at,omitempty"`
+	Ordinal int64   `json:"ordinal"`
+	Prompt  string  `json:"prompt" validate:"required"`
+	Why     string  `json:"why" validate:"required"`
+}
+
+func (t Turn) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(t))
 }
 
 type UpdateDrainRequestBody struct {
