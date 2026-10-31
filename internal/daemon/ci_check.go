@@ -24,8 +24,11 @@ import (
 )
 
 type ciCheckConfig struct {
-	Model     string `json:"model,omitempty"`
-	Reasoning string `json:"reasoning,omitempty"`
+	Rewrite     bool   `json:"rewrite,omitempty"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	Model       string `json:"model,omitempty"`
+	Reasoning   string `json:"reasoning,omitempty"`
 }
 
 var ciCheckSchema = jsontext.Value(`{"type":"object","additionalProperties":false,"required":["verdicts"],"properties":{"verdicts":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["finding","keep","evidence","reason"],"properties":{"finding":{"type":"integer"},"keep":{"type":"boolean"},"evidence":{"type":"string"},"reason":{"type":"string"}}}}}}`)
@@ -78,8 +81,10 @@ func (wp *WorkerPool) checkSynthesis(ctx context.Context, job *storage.ReviewJob
 		checked, checkErr := checker(ctx, job, *check, doc, env, outputWriter)
 		if checkErr != nil {
 			fmt.Fprintf(outputWriter, "CI checker failed; keeping original review: %v\n", checkErr)
-		} else if len(checked.Findings) < len(doc.Findings) {
-			checked.Verdict = map[bool]string{true: structuredreview.VerdictPass, false: structuredreview.VerdictFail}[reviewpkg.SynthesisVerdict(checked, job.MinSeverity).Passed()]
+		} else if len(checked.Findings) < len(doc.Findings) || check.Rewrite {
+			if len(checked.Findings) < len(doc.Findings) {
+				checked.Verdict = map[bool]string{true: structuredreview.VerdictPass, false: structuredreview.VerdictFail}[reviewpkg.SynthesisVerdict(checked, job.MinSeverity).Passed()]
+			}
 			if result, err := synthesisDocumentResult(job, checked); err == nil {
 				result.Agent = res.review.Agent
 				res.review = result
@@ -117,7 +122,20 @@ func (wp *WorkerPool) runCICheck(ctx context.Context, job *storage.ReviewJob, cf
 	if err != nil {
 		return structuredreview.Document{}, fmt.Errorf("run CI checker: %w", err)
 	}
-	return applyCICheck(doc, raw, out)
+	var response ciCheckResponse
+	if err := json.Unmarshal(raw, &response); err != nil {
+		return doc, fmt.Errorf("decode checker verdicts: %w", err)
+	}
+	checked := applyCICheckVerdicts(doc, response, out)
+	if cfg.Rewrite {
+		rewritten, err := wp.rewriteCIFindings(ctx, job, cfg, doc, checked, response, a, run.Repo, out)
+		if err != nil {
+			fmt.Fprintf(out, "CI rewrite failed; keeping checked review: %v\n", err)
+		} else {
+			checked = rewritten
+		}
+	}
+	return checked, nil
 }
 
 type ciCheckRun struct {
@@ -294,17 +312,23 @@ func warmGoModules(ctx context.Context, checkout string, gitEnv []string, out io
 }
 
 func applyCICheck(doc structuredreview.Document, raw jsontext.Value, out io.Writer) (structuredreview.Document, error) {
-	var response struct {
-		Verdicts []struct {
-			Finding  int    `json:"finding"`
-			Keep     *bool  `json:"keep"`
-			Evidence string `json:"evidence"`
-			Reason   string `json:"reason"`
-		} `json:"verdicts"`
-	}
+	var response ciCheckResponse
 	if err := json.Unmarshal(raw, &response); err != nil {
 		return doc, fmt.Errorf("decode checker verdicts: %w", err)
 	}
+	return applyCICheckVerdicts(doc, response, out), nil
+}
+
+type ciCheckResponse struct {
+	Verdicts []struct {
+		Finding  int    `json:"finding"`
+		Keep     *bool  `json:"keep"`
+		Evidence string `json:"evidence"`
+		Reason   string `json:"reason"`
+	} `json:"verdicts"`
+}
+
+func applyCICheckVerdicts(doc structuredreview.Document, response ciCheckResponse, out io.Writer) structuredreview.Document {
 	counts, drops := make(map[int]int), make(map[int]bool)
 	for _, v := range response.Verdicts {
 		encoded, _ := json.Marshal(v)
@@ -319,7 +343,7 @@ func applyCICheck(doc structuredreview.Document, raw jsontext.Value, out io.Writ
 		}
 	}
 	if len(kept) == len(doc.Findings) {
-		return doc, nil
+		return doc
 	}
 	doc.Findings = kept
 	doc.Summary = fmt.Sprintf("%d findings.", len(kept))
@@ -328,5 +352,5 @@ func applyCICheck(doc structuredreview.Document, raw jsontext.Value, out io.Writ
 	} else if len(kept) == 0 {
 		doc.Summary = "No issues found."
 	}
-	return doc, nil
+	return doc
 }

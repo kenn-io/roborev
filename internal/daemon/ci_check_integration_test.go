@@ -3,6 +3,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -68,67 +70,143 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	tc := newWorkerTestContext(t, 1)
-	if command := os.Getenv("ROBOREV_TEST_CODEX_COMMAND"); command != "" {
-		cfg := config.DefaultConfig()
-		cfg.CodexCmd = command
-		tc.Pool.cfgGetter = NewStaticConfig(cfg)
+	for _, mode := range []string{"rewrite", "first failure", "second failure", "missing ID", "duplicate ID", "unknown ID", "empty problem", "empty fix", "cancel second"} {
+		t.Run(mode, func(t *testing.T) {
+			tc := newWorkerTestContext(t, 1)
+			if command := os.Getenv("ROBOREV_TEST_CODEX_COMMAND"); command != "" {
+				cfg := config.DefaultConfig()
+				cfg.CodexCmd = command
+				tc.Pool.cfgGetter = NewStaticConfig(cfg)
+			}
+			repoRoot := tc.TmpDir
+			loginDir := t.TempDir()
+			t.Setenv("CODEX_HOME", loginDir)
+			require.NoError(t, os.WriteFile(filepath.Join(loginDir, "auth.json"), []byte(`{"tokens":{"access_token":"checker-test-token"}}`), 0o600))
+			checkoutPattern := filepath.Join(ciWorktreeRepoDir(repoRoot), ciWorktreePrefix+"*")
+			var checkouts []string
+			var calls atomic.Int32
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request struct {
+					Input     jsontext.Value `json:"input"`
+					Reasoning struct {
+						Effort string `json:"effort"`
+					} `json:"reasoning"`
+				}
+				if err := json.UnmarshalRead(r.Body, &request); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				assert.Equal(t, "high", request.Reasoning.Effort)
+				phase := calls.Add(1)
+				if phase == 1 {
+					assert.Contains(t, string(request.Input), "Make it fail.")
+				}
+				if phase == 2 {
+					assert.Contains(t, string(request.Input), "Export user files")
+					assert.Contains(t, string(request.Input), "test reproduced data loss")
+					assert.Contains(t, string(request.Input), "Data is lost")
+					assert.Contains(t, string(request.Input), "Do not build the project, run tests, or execute code.")
+				}
+				if phase == 3 {
+					assert.Contains(t, string(request.Input), "Users lose their files.")
+				}
+				if mode == "first failure" && phase == 2 || mode == "second failure" && phase == 3 {
+					http.Error(w, "synthetic rewrite failure", http.StatusBadRequest)
+					return
+				}
+				if mode == "cancel second" && phase == 3 {
+					cancel()
+					return
+				}
+				var err error
+				checkouts, err = filepath.Glob(checkoutPattern)
+				assert.NoError(t, err)
+				final := `{"verdicts":[{"finding":1,"keep":false,"evidence":"go build succeeded","reason":"Build claim refuted"},{"finding":2,"keep":true,"evidence":"test reproduced data loss","reason":"Data is lost"}]}`
+				if phase == 2 {
+					final = `{"findings":[{"finding":2,"problem":"Users lose their files.","fix":"Preserve data in saveFile."}]}`
+					switch mode {
+					case "missing ID":
+						final = `{"findings":[]}`
+					case "duplicate ID":
+						final = `{"findings":[{"finding":2,"problem":"one","fix":"fix"},{"finding":2,"problem":"two","fix":"fix"}]}`
+					case "unknown ID":
+						final = `{"findings":[{"finding":1,"problem":"wrong","fix":"fix"}]}`
+					case "empty problem":
+						final = `{"findings":[{"finding":2,"problem":" ","fix":"fix"}]}`
+					}
+				} else if phase == 3 {
+					final = `{"findings":[{"finding":2,"fix":"Keep the saved files. **Where:** ` + "`saveFile`" + `"}]}`
+					if mode == "empty fix" {
+						final = `{"findings":[{"finding":2,"fix":" "}]}`
+					}
+				}
+
+				w.Header().Set("Content-Type", "text/event-stream")
+				item := map[string]any{"type": "message", "role": "assistant", "id": "msg_test", "content": []any{map[string]any{"type": "output_text", "text": final}}}
+				for _, event := range []map[string]any{
+					{"type": "response.created", "response": map[string]any{"id": "resp_test"}},
+					{"type": "response.output_item.done", "item": item},
+					{"type": "response.completed", "response": map[string]any{"id": "resp_test", "usage": map[string]int{"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}}},
+				} {
+					encoded, err := json.Marshal(event)
+					assert.NoError(t, err) //nolint:testifylint // Runs in the HTTP server goroutine.
+					_, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event["type"], encoded)
+					assert.NoError(t, err)
+				}
+			}))
+			defer server.Close()
+			sha := testutil.GetHeadSHA(t, repoRoot)
+			doc := structuredreview.Document{SchemaVersion: 3, SourceLabels: []string{"test"}, Summary: "The build claim and data loss need fixes", Verdict: "fail", Findings: []structuredreview.Finding{{Severity: "high", Problem: "build claim", Fix: "fix", Sources: []int{1}}, {Severity: "medium", Kind: "defect", Confidence: .9, Location: "save.go:4", Problem: "data loss", Fix: "fix", Sources: []int{1}}, {Severity: "low", Problem: "minor issue", Fix: "minor fix", Sources: []int{1}}}}
+			run, members, _ := enqueuePanelRun(t, tc, "checker-integration", []memberSpec{{name: "one", agent: "test"}})
+			completeMember(t, tc, members[0].ID, "test", "findings")
+			job := releaseAndClaimSynthesis(t, tc, run)
+			job.GitRef = sha + ".." + sha
+			job.MinSeverity = "medium"
+			tc.Pool.ciCheckUpstream = server.URL
+			raw, err := json.Marshal(doc)
+			require.NoError(t, err)
+			tc.Pool.checkAndCompleteSynthesis(ctx, testWorkerID, job, synthesisResult{review: reviewpkg.ReviewResult{Agent: "test", Output: doc.Markdown(""), StructuredOutput: raw, Verdict: storage.VerdictFail}}, doc, &ciCheckConfig{Model: "test-model", Reasoning: "high", Rewrite: true, Description: "Export user files"})
+			log, err := os.ReadFile(JobLogPath(job.ID))
+			require.NoError(t, err)
+			require.NotEmpty(t, checkouts, string(log))
+			for _, checkout := range checkouts {
+				assert.NoDirExists(t, checkout)
+			}
+			if mode == "cancel second" {
+				finished, err := tc.DB.GetJobByID(job.ID)
+				require.NoError(t, err)
+				assert.Equal(t, storage.JobStatusRunning, finished.Status)
+				return
+			}
+			stored, err := tc.DB.GetReviewByJobID(job.ID)
+			require.NoError(t, err)
+			assert.NotContains(t, stored.Output, "build claim", string(log))
+			encoded, err := json.Marshal(stored.StructuredOutput)
+			require.NoError(t, err)
+			checked, err := reviewpkg.DecodeStructuredReview(encoded)
+			require.NoError(t, err)
+			require.Len(t, checked.Findings, 2)
+			expected := doc.Findings[1]
+			if mode == "rewrite" {
+				expected.Problem = "Users lose their files."
+				expected.Fix = "Keep the saved files. **Where:** `saveFile`"
+				assert.EqualValues(t, 3, calls.Load())
+			} else {
+				assert.Contains(t, string(log), "CI rewrite failed; keeping checked review:")
+				assert.NotContains(t, stored.Output, "Users lose their files.")
+			}
+			assert.Equal(t, expected, checked.Findings[0])
+			assert.Equal(t, doc.Findings[2], checked.Findings[1])
+			comment := reviewpkg.FormatComment(reviewpkg.PrepareComment(reviewpkg.CommentConfig{MinSeverity: "medium"}, reviewpkg.ReviewResult{StructuredOutput: encoded}))
+			assert.Contains(t, comment, expected.Fix)
+			assert.NotContains(t, comment, "minor issue")
+			assert.NotContains(t, comment, "build claim")
+			assert.Equal(t, doc.SourceLabels, checked.SourceLabels)
+			assert.Equal(t, doc.SchemaVersion, checked.SchemaVersion)
+			assert.Equal(t, structuredreview.VerdictFail, checked.Verdict)
+			assert.NotContains(t, string(log), "CI checker failed;")
+		})
 	}
-	repoRoot := tc.TmpDir
-	loginDir := t.TempDir()
-	t.Setenv("CODEX_HOME", loginDir)
-	require.NoError(t, os.WriteFile(filepath.Join(loginDir, "auth.json"), []byte(`{"tokens":{"access_token":"checker-test-token"}}`), 0o600))
-	checkoutPattern := filepath.Join(ciWorktreeRepoDir(repoRoot), ciWorktreePrefix+"*")
-	var checkouts []string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request struct {
-			Input     jsontext.Value `json:"input"`
-			Reasoning struct {
-				Effort string `json:"effort"`
-			} `json:"reasoning"`
-		}
-		if err := json.UnmarshalRead(r.Body, &request); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		assert.Equal(t, "high", request.Reasoning.Effort)
-		assert.Contains(t, string(request.Input), "Make it fail.")
-		var err error
-		checkouts, err = filepath.Glob(checkoutPattern)
-		assert.NoError(t, err)
-		const final = `{"verdicts":[{"finding":1,"keep":false,"evidence":"go build succeeded","reason":"Build claim refuted"},{"finding":2,"keep":true,"evidence":"test reproduced data loss","reason":"Data is lost"}]}`
-		w.Header().Set("Content-Type", "text/event-stream")
-		item := map[string]any{"type": "message", "role": "assistant", "id": "msg_test", "content": []any{map[string]any{"type": "output_text", "text": final}}}
-		for _, event := range []map[string]any{
-			{"type": "response.created", "response": map[string]any{"id": "resp_test"}},
-			{"type": "response.output_item.done", "item": item},
-			{"type": "response.completed", "response": map[string]any{"id": "resp_test", "usage": map[string]int{"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}}},
-		} {
-			encoded, err := json.Marshal(event)
-			assert.NoError(t, err) //nolint:testifylint // Runs in the HTTP server goroutine.
-			_, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event["type"], encoded)
-			assert.NoError(t, err)
-		}
-	}))
-	defer server.Close()
-	sha := testutil.GetHeadSHA(t, repoRoot)
-	doc := structuredreview.Document{SchemaVersion: 3, SourceLabels: []string{"test"}, Summary: "The build claim and data loss need fixes", Verdict: "fail", Findings: []structuredreview.Finding{{Severity: "high", Problem: "build claim", Fix: "fix", Sources: []int{1}}, {Severity: "medium", Problem: "data loss", Fix: "fix", Sources: []int{1}}}}
-	run, members, _ := enqueuePanelRun(t, tc, "checker-integration", []memberSpec{{name: "one", agent: "test"}})
-	completeMember(t, tc, members[0].ID, "test", "findings")
-	job := releaseAndClaimSynthesis(t, tc, run)
-	job.GitRef = sha + ".." + sha
-	tc.Pool.ciCheckUpstream = server.URL
-	raw, err := json.Marshal(doc)
-	require.NoError(t, err)
-	tc.Pool.checkAndCompleteSynthesis(t.Context(), testWorkerID, job, synthesisResult{review: reviewpkg.ReviewResult{Agent: "test", Output: doc.Markdown(""), StructuredOutput: raw, Verdict: storage.VerdictFail}}, doc, &ciCheckConfig{Model: "test-model", Reasoning: "high"})
-	log, err := os.ReadFile(JobLogPath(job.ID))
-	require.NoError(t, err)
-	require.NotEmpty(t, checkouts, string(log))
-	for _, checkout := range checkouts {
-		assert.NoDirExists(t, checkout)
-	}
-	stored, err := tc.DB.GetReviewByJobID(job.ID)
-	require.NoError(t, err)
-	assert.NotContains(t, stored.Output, "build claim", string(log))
-	assert.Contains(t, stored.Output, "data loss")
 }

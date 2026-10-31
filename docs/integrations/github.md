@@ -735,6 +735,20 @@ of the global setting:
 upsert_comments = false   # Disable upsert for this repo even if globally enabled
 ```
 
+## Rewriting checked findings
+
+Set `[ci] rewrite = true` alongside `check = true` to post checked findings in
+plain words. Rewrite is off by default. A repository can override it in its
+`.roborev.toml` on the default branch. Enabling rewrite alone leaves checking
+disabled.
+
+After checking, two additional Codex calls use the checker model, reasoning, and
+sandbox. The first explains the problem for the PR author. The second separates
+the fix sentence from the code names listed after **Where:** on the same line.
+Only kept findings at the publication severity threshold are rewritten. Missing
+checker notes or either rewrite failing preserves the checked text, including
+checker drops.
+
 ## Checking findings before posting
 
 Enable the checker to try synthesized findings in a disposable copy of the PR
@@ -949,6 +963,7 @@ set, it takes priority over the matrix fields for that repo.
 | `synthesis_backup_agent` | string | | Backup agent for implicit matrix synthesis when the primary fails |
 | `synthesis_model` | string | | Model override for implicit matrix synthesis |
 | `check` | bool | `false` | Try synthesized findings before posting |
+| `rewrite` | bool | `false` | Rewrite checked findings in plain words; requires `check` |
 | `check_model` | string | | Model override for the checker. Global only |
 | `check_reasoning` | string | `"standard"` | Reasoning level for the checker. Global only |
 | `upsert_comments` | bool | `false` | Update existing PR comments instead of creating new ones |
