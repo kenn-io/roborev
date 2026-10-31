@@ -30,30 +30,37 @@ var (
 func (wp *WorkerPool) rewriteCIFindings(ctx context.Context, job *storage.ReviewJob, cfg ciCheckConfig, checked structuredreview.Document, notes ciCheckResponse, a *agent.CodexAgent, repo string, out io.Writer) (structuredreview.Document, error) {
 	selected := make(map[int]int)
 	var input strings.Builder
+	picked := notes.Verdicts[:0:0]
 	for i, f := range checked.Findings {
 		if config.SeverityRank(f.Severity) < config.SeverityRank(job.MinSeverity) {
 			continue
 		}
 		id := notes.Kept[i]
 		var evidence, reason string
+		var match int
 		count := 0
-		for _, note := range notes.Verdicts {
+		for k, note := range notes.Verdicts {
 			if note.Finding == id {
 				count++
-				evidence, reason = note.Evidence, note.Reason
+				evidence, reason, match = note.Evidence, note.Reason, k
 			}
 		}
 		if count != 1 || strings.TrimSpace(evidence) == "" || strings.TrimSpace(reason) == "" {
 			return checked, fmt.Errorf("finding %d has incomplete checker notes", id)
 		}
 		selected[id] = i
-		fmt.Fprintf(&input, "## Finding %d (%s)\n\n- `%s`: %s\n\n  **Fix:** %s\n\nChecker evidence: %s\nChecker reason: %s\n\n", id, f.Severity, f.Location, f.Problem, f.Fix, evidence, reason)
+		picked = append(picked, notes.Verdicts[match])
+		fmt.Fprintf(&input, "## Finding %d (%s)\n\n- `%s`: %s\n\n  **Fix:** %s\n\n", id, f.Severity, f.Location, f.Problem, f.Fix)
 	}
 	if len(selected) == 0 {
 		return checked, nil
 	}
 	originalText := input.String()
-	firstPrompt := strings.NewReplacer("{{STYLE}}", ciRewriteStyle, "{{BODY}}", cfg.Title+"\n\n"+cfg.Description, "{{FINDINGS}}", originalText).Replace(ciRewritePrompt)
+	verdicts, err := json.Marshal(picked, jsontext.WithIndent("  "))
+	if err != nil {
+		return checked, err
+	}
+	firstPrompt := strings.NewReplacer("{{STYLE}}", ciRewriteStyle, "{{BODY}}", cfg.Title+"\n\n"+cfg.Description, "{{FINDINGS}}", originalText+"\n\n## Checker notes, from running the code in a sandbox\n\n```json\n"+string(verdicts)+"\n```").Replace(ciRewritePrompt)
 	var first []ciRewriteFinding
 	for phase := range 2 {
 		text, schema := firstPrompt, ciRewriteSchema
