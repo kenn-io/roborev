@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+env:
+  GOPROXY: https://proxy.golang.org|direct
+
 cache-mode: read
 
 concurrency:
