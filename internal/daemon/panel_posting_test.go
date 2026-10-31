@@ -245,11 +245,14 @@ func TestPanelCommitStatus(t *testing.T) {
 }
 
 func TestPanelTotalCostExcludesFlagWithoutAmount(t *testing.T) {
-	synth := &storage.ReviewJob{TokenUsage: `{"total_output_tokens":200,"has_cost":true}`}
+	synth := &storage.ReviewJob{
+		TokenUsage: `{"total_output_tokens":200,"has_cost":true}`,
+	}
 	members := []storage.BatchReviewResult{
 		{TokenUsage: `{"cost_usd":0.11,"has_cost":true}`},
 		{TokenUsage: `{"peak_context_tokens":100,"has_cost":true}`},
 	}
+
 	cost, priced, total := panelTotalCost(synth, members)
 	assert.InDelta(t, 0.11, cost, 1e-9)
 	assert.Equal(t, 1, priced,

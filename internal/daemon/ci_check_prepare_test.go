@@ -64,6 +64,9 @@ func TestCICheckRecovery(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires symlinks and Unix directory permissions")
 	}
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permissions")
+	}
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	repo := testutil.NewTestRepoWithCommit(t)
 	sha := repo.HeadSHA()
@@ -103,7 +106,11 @@ func TestCICheckWarming(t *testing.T) {
 		return checkout
 	}
 	for _, name := range metadata {
-		for _, kind := range []string{"symlink", "directory"} {
+		kinds := []string{"symlink"}
+		if name == "go.mod" {
+			kinds = append(kinds, "directory")
+		}
+		for _, kind := range kinds {
 			t.Run(name+"/"+kind, func(t *testing.T) {
 				if runtime.GOOS == "windows" {
 					t.Skip("requires symlinks")

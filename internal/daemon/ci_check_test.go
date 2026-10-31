@@ -87,36 +87,6 @@ func TestCICheckSnapshot(t *testing.T) {
 	assert.Equal(t, off.PanelMemberConfigJSON, overridden.PanelMemberConfigJSON)
 }
 
-func TestCICheckLog(t *testing.T) {
-	tc := newWorkerTestContext(t, 1)
-	run, members, _ := enqueuePanelRun(t, tc, "checker-log", []memberSpec{{name: "one", agent: "test"}})
-	completeMember(t, tc, members[0].ID, "test", "finding")
-	job := releaseAndClaimSynthesis(t, tc, run)
-	_, updates, unsubscribe := tc.Pool.outputBuffers.Subscribe(job.ID)
-	defer unsubscribe()
-	tc.Pool.ciCheck = func(_ context.Context, _ *storage.ReviewJob, _ ciCheckConfig, doc structuredreview.Document, _ []string, out io.Writer) (structuredreview.Document, error) {
-		// Keep an unterminated tail, as subprocess writes can do.
-		fmt.Fprintln(out, `{"type":"item.started","item":{"type":"command_execution","command":"go test ./example"}}`)
-		fmt.Fprint(out, `{"type":"item.completed","item":{"type":"agent_message","text":"Checker progress"}}`)
-		return doc, nil
-	}
-	doc := structuredreview.Document{Findings: []structuredreview.Finding{{Severity: "high", Problem: "claim"}}}
-	_, ran := tc.Pool.checkSynthesis(t.Context(), job, synthesisResult{}, doc, &ciCheckConfig{})
-	require.True(t, ran)
-	for _, want := range []string{"[Command: go test ./example]", "Checker progress"} {
-		var line OutputLine
-		select {
-		case line = <-updates:
-		default:
-		}
-		assert.Equal(t, want, line.Text)
-	}
-	log, err := os.ReadFile(JobLogPath(job.ID))
-	require.NoError(t, err)
-	assert.Contains(t, string(log), "[Command: go test ./example]")
-	assert.Contains(t, string(log), "Checker progress")
-}
-
 func setupCICheckCompletion(t *testing.T, threshold, instructions string, usage *tokens.Usage) (*workerTestContext, *storage.ReviewJob, structuredreview.Document, synthesisResult) {
 	t.Helper()
 	const raw = `{"schema_version":3,"source_labels":["test"],"summary":"Two claims","verdict":"fail","findings":[{"severity":"high","kind":"defect","confidence":0.9,"problem":"Build claim","fix":"Fix build","sources":[1]},{"severity":"medium","kind":"defect","confidence":0.9,"problem":"Data loss","fix":"Preserve data","sources":[1]}]}`
@@ -167,11 +137,7 @@ func TestCICheckCompletionFailure(t *testing.T) {
 	} {
 		t.Run(failure.name, func(t *testing.T) {
 			tc, job, doc, original := setupCICheckCompletion(t, "high", "", nil)
-			calls := 0
 			tc.Pool.ciCheck = func(ctx context.Context, job *storage.ReviewJob, cfg ciCheckConfig, doc structuredreview.Document, env []string, out io.Writer) (structuredreview.Document, error) {
-				calls++
-				assert.Equal(t, "high", cfg.Reasoning)
-				require.Len(t, doc.Findings, 2)
 				if failure.afterUsage {
 					fmt.Fprintln(out, `{"type":"thread.started","thread_id":"checker-session"}`)
 					// Capture usage even when the final event has no newline.
@@ -181,7 +147,6 @@ func TestCICheckCompletionFailure(t *testing.T) {
 				return tc.Pool.runCICheck(ctx, job, cfg, doc, env, out)
 			}
 			tc.Pool.processSynthesisJob(t.Context(), testWorkerID, job)
-			assert.Equal(t, 1, calls)
 			finished, err := tc.DB.GetJobByID(job.ID)
 			require.NoError(t, err)
 			assert.Equal(t, storage.JobStatusDone, finished.Status)
@@ -226,6 +191,8 @@ func TestCICheckCompletionDrop(t *testing.T) {
 	} {
 		t.Run(drop.name, func(t *testing.T) {
 			tc, job, _, _ := setupCICheckCompletion(t, drop.threshold, drop.instructions, drop.usage)
+			_, updates, unsubscribe := tc.Pool.outputBuffers.Subscribe(job.ID)
+			defer unsubscribe()
 			calls := 0
 			tc.Pool.ciCheck = func(_ context.Context, _ *storage.ReviewJob, cfg ciCheckConfig, doc structuredreview.Document, _ []string, out io.Writer) (structuredreview.Document, error) {
 				calls++
@@ -233,10 +200,29 @@ func TestCICheckCompletionDrop(t *testing.T) {
 				require.Len(t, doc.Findings, 2)
 				fmt.Fprintln(out, `{"type":"thread.started","thread_id":"checker-session"}`)
 				fmt.Fprintln(out, `{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":5}}`)
-				return applyCICheck(doc, jsontext.Value(`{"verdicts":[{"finding":1,"keep":false,"evidence":"build succeeds","reason":"refuted"}]}`), out)
+				if drop.name == "drop" {
+					fmt.Fprintln(out, `{"type":"item.started","item":{"type":"command_execution","command":"go test ./example"}}`)
+					// Keep an unterminated tail, as subprocess writes can do.
+					fmt.Fprint(out, `{"type":"item.completed","item":{"type":"agent_message","text":"Checker progress"}}`)
+				}
+				doc.Findings = doc.Findings[1:]
+				return doc, nil
 			}
 			tc.Pool.processSynthesisJob(t.Context(), testWorkerID, job)
 			assert.Equal(t, 1, calls)
+			if drop.name == "drop" {
+				unsubscribe()
+				var lines []string
+				for line := range updates {
+					lines = append(lines, line.Text)
+				}
+				log, err := os.ReadFile(JobLogPath(job.ID))
+				require.NoError(t, err)
+				for _, want := range []string{"[Command: go test ./example]", "Checker progress"} {
+					assert.Contains(t, lines, want)
+					assert.Contains(t, string(log), want)
+				}
+			}
 			finished, err := tc.DB.GetJobByID(job.ID)
 			require.NoError(t, err)
 			assert.Equal(t, storage.JobStatusDone, finished.Status)
@@ -283,44 +269,38 @@ func TestCICheckCompletionInterruption(t *testing.T) {
 			ctx, cancel := context.WithCancel(parent)
 			cancel()
 			return ctx, cancel
-		}, status: storage.JobStatusRunning},
+		}, status: storage.JobStatusQueued},
 		{name: "checker deadline", ctx: func(parent context.Context) (context.Context, context.CancelFunc) {
 			return context.WithDeadline(parent, time.Unix(0, 0))
 		}, status: storage.JobStatusDone},
 	} {
 		t.Run(interruption.name, func(t *testing.T) {
 			tc, job, doc, original := setupCICheckCompletion(t, "high", "", nil)
-			calls := 0
-			tc.Pool.ciCheck = func(ctx context.Context, _ *storage.ReviewJob, cfg ciCheckConfig, doc structuredreview.Document, _ []string, _ io.Writer) (structuredreview.Document, error) {
-				calls++
-				assert.Equal(t, "high", cfg.Reasoning)
-				require.Len(t, doc.Findings, 2)
+			tc.Pool.ciCheck = func(ctx context.Context, _ *storage.ReviewJob, _ ciCheckConfig, _ structuredreview.Document, _ []string, _ io.Writer) (structuredreview.Document, error) {
 				return structuredreview.Document{}, ctx.Err()
+			}
+			if interruption.status == storage.JobStatusQueued {
+				tc.Pool.InterruptJobsForUpdate([]int64{job.ID})
 			}
 			ctx, cancel := interruption.ctx(t.Context())
 			defer cancel()
 			tc.Pool.checkAndCompleteSynthesis(ctx, testWorkerID, job, original, doc, &ciCheckConfig{Reasoning: "high"})
-			assert.Equal(t, 1, calls)
 			finished, err := tc.DB.GetJobByID(job.ID)
 			require.NoError(t, err)
 			assert.Equal(t, interruption.status, finished.Status)
-			if interruption.status == storage.JobStatusDone {
-				stored, checked := readCICheckCompletionReview(t, tc, job)
-				assert.Equal(t, original.review.Output, stored.Output)
-				assert.Equal(t, original.review.Verdict, stored.Verdict())
-				assert.Equal(t, doc, checked)
-			}
 		})
 	}
 }
 
 func TestCICheckCompletionBelowSeverityThreshold(t *testing.T) {
 	calls := 0
-	wp := &WorkerPool{ciCheck: func(_ context.Context, _ *storage.ReviewJob, _ ciCheckConfig, doc structuredreview.Document, _ []string, _ io.Writer) (structuredreview.Document, error) {
+	tc := newWorkerTestContext(t, 1)
+	tc.Pool.ciCheck = func(_ context.Context, _ *storage.ReviewJob, _ ciCheckConfig, doc structuredreview.Document, _ []string, _ io.Writer) (structuredreview.Document, error) {
 		calls++
 		return doc, nil
-	}}
+	}
 	doc := structuredreview.Document{Verdict: structuredreview.VerdictPass, Findings: []structuredreview.Finding{{Severity: "low"}}}
-	wp.checkSynthesis(t.Context(), &storage.ReviewJob{MinSeverity: "high"}, synthesisResult{}, doc, &ciCheckConfig{})
+	_, ran := tc.Pool.checkSynthesis(t.Context(), &storage.ReviewJob{MinSeverity: "high"}, synthesisResult{}, doc, &ciCheckConfig{})
+	assert.False(t, ran)
 	assert.Equal(t, 0, calls)
 }

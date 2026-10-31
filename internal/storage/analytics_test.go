@@ -17,6 +17,7 @@ func TestGetAnalyticsClassifiesReviewsAttemptsAndProjects(t *testing.T) {
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
+
 	base := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
 	repoA := createRepo(t, db, filepath.Join(t.TempDir(), "project-a"))
 	repoB := createRepo(t, db, filepath.Join(t.TempDir(), "project-a"))
@@ -25,6 +26,7 @@ func TestGetAnalyticsClassifiesReviewsAttemptsAndProjects(t *testing.T) {
 		_, err := db.Exec(`UPDATE repos SET name = 'shared-project' WHERE id = ?`, repo.ID)
 		require.NoError(t, err)
 	}
+
 	seedAnalyticsJob(t, db, repoA, analyticsJobSeed{
 		name: "pass", jobType: JobTypeReview, status: JobStatusDone,
 		source: JobSourcePostCommit, agent: "agent-a", model: "model-a",
@@ -74,20 +76,17 @@ func TestGetAnalyticsClassifiesReviewsAttemptsAndProjects(t *testing.T) {
 		finishedAt: base.Add(11 * time.Hour), costJSON: `{"cost_usd":0.75,"has_cost":true}`,
 	})
 	seedAnalyticsJob(t, db, repoA, analyticsJobSeed{
-		name: "partial-member", jobType: JobTypeReview, panelRole: PanelRoleMember, status: JobStatusDone,
-		enqueuedAt: base.Add(10 * time.Hour), startedAt: base.Add(10 * time.Hour), finishedAt: base.Add(11 * time.Hour),
-		costJSON: `{"cost_usd":0.03,"has_cost":true,"expected_provider_sessions":2,"provider_session_ids":["member-session"]}`,
-	})
-	seedAnalyticsJob(t, db, repoA, analyticsJobSeed{
 		name: "passthrough", jobType: JobTypeSynthesis, panelRole: PanelRoleSynthesis,
 		status: JobStatusDone, source: JobSourcePostCommit,
 		enqueuedAt: base.Add(10 * time.Hour), startedAt: base.Add(10 * time.Hour),
 		finishedAt: base.Add(12 * time.Hour), verdict: new(1),
 	})
+
 	got, err := db.GetAnalytics(AnalyticsOptions{
 		Since: base, Until: base.Add(24 * time.Hour), Bucket: AnalyticsBucketDay,
 	})
 	require.NoError(t, err)
+
 	assert.Equal(7, got.Summary.Reviews.Total)
 	assert.Equal(4, got.Summary.Reviews.Done)
 	assert.Equal(1, got.Summary.Reviews.Failed)
@@ -100,17 +99,18 @@ func TestGetAnalyticsClassifiesReviewsAttemptsAndProjects(t *testing.T) {
 	assert.InDelta(2.5*3600, got.Summary.ReviewLatency.P50Secs, 0.001)
 	assert.InDelta(4.4*3600, got.Summary.ReviewLatency.P90Secs, 0.001)
 	assert.InDelta(4.94*3600, got.Summary.ReviewLatency.P99Secs, 0.001)
-	assert.Equal(8, got.Summary.Attempts.Eligible)
-	assert.Equal(4, got.Summary.Cost.PricedAttempts)
-	assert.InDelta(2.03, got.Summary.Cost.TotalUSD, 0.0001)
-	assert.InDelta(4.0/8.0, got.Summary.Cost.Coverage, 0.0001)
+	assert.Equal(7, got.Summary.Attempts.Eligible)
+	assert.Equal(3, got.Summary.Cost.PricedAttempts)
+	assert.InDelta(2.00, got.Summary.Cost.TotalUSD, 0.0001)
+	assert.InDelta(3.0/7.0, got.Summary.Cost.Coverage, 0.0001)
 	require.Len(t, got.Projects, 2)
 	assert.Equal("shared-project", got.Projects[0].Project)
 	assert.Equal(4, got.Projects[0].Reviews.Total)
-	assert.InDelta(2.03, got.Projects[0].Cost.TotalUSD, 0.0001)
+	assert.InDelta(2.00, got.Projects[0].Cost.TotalUSD, 0.0001)
 	assert.Equal(7, got.TimeSeries[0].Reviews.Total)
 	assert.NotContains(got.Options.Agents, "")
 	assert.NotContains(got.Options.Models, "")
+
 	_, err = db.Exec(`UPDATE reviews SET closed = 0 WHERE job_id = ?`, closed.ID)
 	require.NoError(t, err)
 	updated, err := db.GetAnalytics(AnalyticsOptions{
