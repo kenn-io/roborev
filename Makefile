@@ -156,7 +156,7 @@ api-check:
 		cp pkg/client/generated/raw_responses.tmpl "$$tmp/pkg/client/generated/raw_responses.tmpl"; \
 		go run ./internal/daemon_client/openapi_generate -format yaml -o "$$tmp/pkg/client/openapi.yaml"; \
 		(cd "$$tmp/pkg/client/generated" && \
-			go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.76.5 \
+			$(DOWNLOAD_RETRY) go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.76.5 \
 				-config config.yaml ../openapi.yaml); \
 		diff -u pkg/client/openapi.yaml "$$tmp/pkg/client/openapi.yaml"; \
 		diff -ru --exclude=config.yaml --exclude=generate.go --exclude=native_uuid_overlay.yaml \
@@ -305,7 +305,7 @@ lint: check-golangci-lint $(CUSTOM_GCL)
 	"$(CUSTOM_GCL)" run --fix ./...
 
 # Lint Go code without fixing (for CI)
-lint-ci: check-golangci-lint $(CUSTOM_GCL)
+lint-ci: check-golangci-lint $(CUSTOM_GCL) lint-workflow-retries
 	"$(CUSTOM_GCL)" run ./...
 
 # Validate Renovate config.
@@ -347,7 +347,7 @@ gh-actions-lock-install:
 	@test -n "$(GH_ACTIONS_LOCK_VERSION)" || { echo "constraints.ghActionsLock is missing from renovate.json" >&2; exit 1; }
 	@if [ "$$(gh actions-lock --version 2>/dev/null)" != "actions-lock version $(GH_ACTIONS_LOCK_VERSION)" ]; then \
 		gh extension remove actions-lock >/dev/null 2>&1 || true; \
-		gh extension install github/gh-actions-lock --pin $(GH_ACTIONS_LOCK_VERSION); \
+		$(DOWNLOAD_RETRY) gh extension install github/gh-actions-lock --pin $(GH_ACTIONS_LOCK_VERSION); \
 	fi
 
 # Lock every workflow action after adding or bumping a `uses:` line
@@ -361,3 +361,7 @@ actions-lock-check-local: gh-actions-lock-install
 # Network check that the lockfile is complete and every locked commit is still valid
 actions-lock-check: gh-actions-lock-install
 	gh actions-lock --verify
+
+.PHONY: lint-workflow-retries
+lint-workflow-retries:
+	GOOS= GOARCH= go run go.kenn.io/kit/cmd/kennlint@v0.47.3 workflow-retries

@@ -90,8 +90,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+
       - name: Install SQLite headers
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
+        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
       - uses: actions/setup-go@v7.0.0
         with:
@@ -106,10 +108,10 @@ jobs:
           bun-version: '1.4.4'
 
       - name: Install frontend dependencies
-        run: bun install --frozen-lockfile
+        run: kit-retry 3 5 bun install --frozen-lockfile
 
       - name: Verify generated API contract
-        run: make api-check
+        run: make api-check DOWNLOAD_RETRY="kit-retry 3 5"
 
       - name: Verify checks leave the tree unchanged
         run: git diff --exit-code
@@ -141,8 +143,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+
       - name: Install SQLite headers
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
+        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
       - uses: actions/setup-go@v7.0.0
         with:
@@ -157,10 +161,10 @@ jobs:
           bun-version: '1.4.4'
 
       - name: Install frontend dependencies
-        run: bun install --frozen-lockfile
+        run: kit-retry 3 5 bun install --frozen-lockfile
 
       - name: Verify generated API contract
-        run: make api-check
+        run: make api-check DOWNLOAD_RETRY="kit-retry 3 5"
 
       - name: Check frontend
         run: bun run web:check
@@ -169,7 +173,7 @@ jobs:
         run: bun run web:test
 
       - name: Install browser test runtime
-        run: bun run --cwd web playwright install --with-deps chromium
+        run: kit-retry 3 5 bun run --cwd web playwright install --with-deps chromium
 
       - name: Test embedded browser application
         run: bun run web:test:e2e
@@ -225,9 +229,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+        if: runner.os == 'Linux'
+
       - name: Install SQLite headers
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
+        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
       - name: Configure Windows Go paths
         if: runner.os == 'Windows'
@@ -343,8 +350,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+
       - name: Install SQLite headers
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
+        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
       - uses: actions/setup-go@v7.0.0
         with:
@@ -374,8 +383,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+
       - name: Install SQLite headers
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
+        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
       - uses: actions/setup-go@v7.0.0
         with:
@@ -429,8 +440,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+
       - name: Install SQLite headers
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
+        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
       - uses: actions/setup-go@v7.0.0
         with:
@@ -449,9 +462,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+
       - name: Install SQLite headers
         if: needs.go-changes.outputs.changed == 'true'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
+        run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
       - uses: actions/setup-go@v7.0.0
         if: needs.go-changes.outputs.changed == 'true'
@@ -483,7 +498,7 @@ jobs:
           cache-dependency-glob: docs/uv.lock
 
       - name: Install docs lint dependencies
-        run: uv sync --project docs --frozen
+        run: kit-retry 3 5 uv sync --project docs --frozen
 
       - name: Markdown format
         run: make markdown-ci
