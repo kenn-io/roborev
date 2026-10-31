@@ -11,7 +11,6 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
-	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
@@ -73,14 +72,7 @@ func (wp *WorkerPool) rewriteCIFindings(ctx context.Context, job *storage.Review
 			schema = ciRewriteFixSchema
 		}
 		fmt.Fprintf(out, "CI rewrite phase %d\n", phase+1)
-		prepared, err := prompt.NewBuilderWithConfig(wp.db, wp.cfgGetter.Config()).Prepare(text, prompt.SnapshotTarget{RepoPath: repo, ConfigRepoPath: job.RepoPath})
-		if err != nil {
-			return checked, err
-		}
-		raw, err := a.ReviewWithSchema(ctx, repo, job.GitRef, prepared.Prompt, schema, out)
-		if prepared.Cleanup != nil {
-			prepared.Cleanup()
-		}
+		raw, err := a.ReviewWithSchema(ctx, repo, job.GitRef, text, schema, out)
 		if err != nil {
 			return checked, err
 		}

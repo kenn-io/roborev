@@ -12,12 +12,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/sandbox"
@@ -193,4 +195,80 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 			assert.NotContains(t, string(log), "CI checker failed;")
 		})
 	}
+}
+
+func TestCIRewriteSandboxGitConfigStaysInsideJob(t *testing.T) {
+	testutil.RequireSandboxIntegration(t)
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	loginDir := t.TempDir()
+	t.Setenv("CODEX_HOME", loginDir)
+	require.NoError(t, os.WriteFile(filepath.Join(loginDir, "auth.json"), []byte(`{"tokens":{"access_token":"rewrite-test-token"}}`), 0o600))
+	repo := testutil.NewTestRepoWithCommit(t)
+	command := filepath.Join(t.TempDir(), "codex")
+	const fakeCodex = `#!/bin/sh
+set -e
+while [ "$#" -gt 0 ]; do
+    if [ "$1" = "-C" ]; then shift; cd "$1"; break; fi
+    shift
+done
+if [ ! -f rewrite-first.txt ]; then
+    cat > rewrite-first.txt
+    printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"{\"findings\":[{\"finding\":1,\"problem\":\"Users lose saved files.\",\"fix\":\"Preserve files in saveFile.\"}]}"}}'
+else
+    cat > rewrite-second.txt
+    printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"{\"findings\":[{\"finding\":1,\"fix\":\"Keep saved files. **Where:** saveFile\"}]}"}}'
+fi
+`
+	require.NoError(t, os.WriteFile(command, []byte(fakeCodex), 0o700))
+	sha := repo.HeadSHA()
+	job := &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha, MinSeverity: "high"}
+	run, err := (&WorkerPool{}).prepareCICheck(t.Context(), job, command, nil, io.Discard)
+	require.NoError(t, err)
+	t.Cleanup(run.cleanup)
+	marker := filepath.Join(t.TempDir(), "outside-job-marker")
+	server := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(server.Close)
+	run.Job.Route = sandbox.Route{Name: "test", Upstream: server.URL, Path: "/responses", EnvVar: "TEST_TOKEN", Capture: []string{"/bin/echo", "synthetic-token"}}
+	const install = `set -e
+cat > "$1/fsmonitor-probe" <<HOOK
+#!/bin/sh
+set -e
+printf host-executed > "$2"
+printf 'token\\0'
+HOOK
+chmod +x "$1/fsmonitor-probe"
+if "$1/fsmonitor-probe"; then
+    echo 'sandbox unexpectedly wrote outside its grant'
+    exit 1
+fi
+git -C "$1" config core.fsmonitor "$1/fsmonitor-probe"
+`
+	argv, env, cleanup, err := run.Job.Command(t.Context(), []string{"bash", "--norc", "--noprofile", "-c", install, "probe", run.Repo, marker})
+	require.NoError(t, err)
+	cmd := exec.CommandContext(t.Context(), argv[0], argv[1:]...)
+	cmd.Env = env
+	output, err := cmd.CombinedOutput()
+	cleanup()
+	require.NoError(t, err, "%s", output)
+	require.NoFileExists(t, marker)
+
+	cfg := config.DefaultConfig()
+	cfg.DefaultMaxPromptSize = 1
+	wp := &WorkerPool{cfgGetter: NewStaticConfig(cfg)}
+	doc := structuredreview.Document{Findings: []structuredreview.Finding{{Severity: "high", Problem: "Saved files disappear.", Fix: "Preserve files."}}}
+	checked, notes, err := applyCICheck(doc, jsontext.Value(`{"verdicts":[{"finding":1,"keep":true,"evidence":"Reproduced data loss.","reason":"Saved files disappear."}]}`), io.Discard)
+	require.NoError(t, err)
+	a := agent.NewCodexAgent(run.Command).WithSandbox(&agent.CodexSandbox{Job: run.Job, Upstream: server.URL})
+	description := strings.Repeat("Complete rewrite context. ", 100)
+	got, err := wp.rewriteCIFindings(t.Context(), job, ciCheckConfig{Description: description}, checked, notes, a, run.Repo, io.Discard)
+	require.NoError(t, err)
+	assert.NoFileExists(t, marker, "host Git executed the sandbox-installed fsmonitor")
+	first, err := os.ReadFile(filepath.Join(run.Repo, "rewrite-first.txt"))
+	require.NoError(t, err)
+	assert.Contains(t, string(first), description)
+	assert.Contains(t, string(first), "Saved files disappear.")
+	second, err := os.ReadFile(filepath.Join(run.Repo, "rewrite-second.txt"))
+	require.NoError(t, err)
+	assert.Contains(t, string(second), "Users lose saved files.")
+	assert.Equal(t, "Keep saved files. **Where:** saveFile", got.Findings[0].Fix)
 }
