@@ -239,7 +239,7 @@ func (b *Builder) context() context.Context {
 }
 
 // Build constructs a review prompt for a commit or range with context from previous reviews.
-// reviewType selects the system prompt variant (e.g., "security"); any default alias (see config.IsDefaultReviewType) uses the standard prompt.
+// reviewType selects the system prompt variant (e.g., "security"); any default alias (see config.IsDefaultReviewType) uses the standard prompt, and "exhaustive" adds a size-scaled instruction to it.
 func (b *Builder) Build(gitRef string, contextCount int, agentName, reviewType, minSeverity string) (string, error) {
 	return b.BuildWithAdditionalContext(gitRef, contextCount, agentName, reviewType, minSeverity, "")
 }
@@ -625,7 +625,7 @@ func (b *Builder) BuildDirtyWithSnapshotTargetAndFiles(
 
 // BuildDirty constructs a review prompt for uncommitted (dirty) changes.
 // The diff is provided directly since it was captured at enqueue time.
-// reviewType selects the system prompt variant (e.g., "security"); any default alias (see config.IsDefaultReviewType) uses the standard prompt.
+// reviewType selects the system prompt variant (e.g., "security"); any default alias (see config.IsDefaultReviewType) uses the standard prompt, and "exhaustive" adds a size-scaled instruction to it.
 func (b *Builder) BuildDirty(diff string, contextCount int, agentName, reviewType, minSeverity string) (string, error) {
 	return b.BuildDirtyWithFiles(diff, nil, contextCount, agentName, reviewType, minSeverity)
 }
@@ -679,7 +679,7 @@ func (b *Builder) BuildDirtyWithFiles(diff string, changedFiles []string, contex
 	if err != nil {
 		return "", err
 	}
-	return ctx.requiredPrefix + body, nil
+	return ctx.requiredPrefix + body + exhaustiveInstruction(reviewType, diff), nil
 }
 
 func fitPrefixWithSuffixVariants(prefix string, limit int, variants ...string) (string, error) {
@@ -742,7 +742,7 @@ type promptBuildContext struct {
 
 func (b *Builder) newPromptBuildContext(agentName, reviewType, minSeverity, defaultPromptType string, optional optionalSectionsView) (promptBuildContext, error) {
 	promptType := defaultPromptType
-	if !config.IsDefaultReviewType(reviewType) {
+	if !config.IsGeneralReviewType(reviewType) {
 		promptType = reviewType
 	}
 	if promptType == config.ReviewTypeDesign {
@@ -993,7 +993,7 @@ func (b *Builder) buildSinglePrompt(sha string, contextCount int, agentName, rev
 	if err != nil {
 		return "", err
 	}
-	return ctx.requiredPrefix + body, nil
+	return ctx.requiredPrefix + body + exhaustiveInstruction(reviewType, diff), nil
 }
 
 // buildRangePrompt constructs a prompt for a commit range
@@ -1077,7 +1077,7 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 	if err != nil {
 		return "", err
 	}
-	return ctx.requiredPrefix + body, nil
+	return ctx.requiredPrefix + body + exhaustiveInstruction(reviewType, diff), nil
 }
 
 func (b *Builder) pullRequestContext() *PullRequestContext {

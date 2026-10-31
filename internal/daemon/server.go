@@ -3454,7 +3454,7 @@ func (s *Server) finishSingleEnqueue(
 	agentName string, in singleAgentInputs,
 ) {
 	if job.JobType == storage.JobTypeReview &&
-		config.IsDefaultReviewType(in.req.ReviewType) {
+		config.IsGeneralReviewType(in.req.ReviewType) {
 		if err := s.maybeDispatchAutoDesign(ctx, job); err != nil {
 			log.Printf("auto-design dispatch failed: %v", err)
 		}
