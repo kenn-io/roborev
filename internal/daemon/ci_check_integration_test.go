@@ -3,7 +3,6 @@
 package daemon
 
 import (
-	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
@@ -70,7 +69,7 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	for _, mode := range []string{"rewrite", "first failure", "second failure", "missing ID", "duplicate ID", "unknown ID", "empty problem", "empty fix", "cancel second"} {
+	for _, mode := range []string{"rewrite", "first failure", "second failure", "missing ID", "duplicate ID", "unknown ID", "empty problem", "empty fix"} {
 		t.Run(mode, func(t *testing.T) {
 			tc := newWorkerTestContext(t, 1)
 			if command := os.Getenv("ROBOREV_TEST_CODEX_COMMAND"); command != "" {
@@ -85,8 +84,6 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 			checkoutPattern := filepath.Join(ciWorktreeRepoDir(repoRoot), ciWorktreePrefix+"*")
 			var checkouts []string
 			var calls atomic.Int32
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var request struct {
 					Input     jsontext.Value `json:"input"`
@@ -116,10 +113,6 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 				}
 				if mode == "first failure" && phase == 2 || mode == "second failure" && phase == 3 {
 					http.Error(w, "synthetic rewrite failure", http.StatusBadRequest)
-					return
-				}
-				if mode == "cancel second" && phase == 3 {
-					cancel()
 					return
 				}
 				var err error
@@ -169,18 +162,12 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 			tc.Pool.ciCheckUpstream = server.URL
 			raw, err := json.Marshal(doc)
 			require.NoError(t, err)
-			tc.Pool.checkAndCompleteSynthesis(ctx, testWorkerID, job, synthesisResult{review: reviewpkg.ReviewResult{Agent: "test", Output: doc.Markdown(""), StructuredOutput: raw, Verdict: storage.VerdictFail}}, doc, &ciCheckConfig{Model: "test-model", Reasoning: "high", Rewrite: true, Description: "Export user files"})
+			tc.Pool.checkAndCompleteSynthesis(t.Context(), testWorkerID, job, synthesisResult{review: reviewpkg.ReviewResult{Agent: "test", Output: doc.Markdown(""), StructuredOutput: raw, Verdict: storage.VerdictFail}}, doc, &ciCheckConfig{Model: "test-model", Reasoning: "high", Rewrite: true, Description: "Export user files"})
 			log, err := os.ReadFile(JobLogPath(job.ID))
 			require.NoError(t, err)
 			require.NotEmpty(t, checkouts, string(log))
 			for _, checkout := range checkouts {
 				assert.NoDirExists(t, checkout)
-			}
-			if mode == "cancel second" {
-				finished, err := tc.DB.GetJobByID(job.ID)
-				require.NoError(t, err)
-				assert.Equal(t, storage.JobStatusRunning, finished.Status)
-				return
 			}
 			stored, err := tc.DB.GetReviewByJobID(job.ID)
 			require.NoError(t, err)

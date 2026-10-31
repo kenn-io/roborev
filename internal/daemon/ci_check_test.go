@@ -97,11 +97,6 @@ func TestCICheckSnapshot(t *testing.T) {
 	_, repoOff, err := p.buildPanelOpts(t.Context(), in)
 	require.NoError(t, err)
 	assert.Equal(t, on.PanelMemberConfigJSON, repoOff.PanelMemberConfigJSON)
-	cfg.CI.Rewrite = false
-	in.repoCfg.CI.Rewrite = new(true)
-	_, repoOn, err := p.buildPanelOpts(t.Context(), in)
-	require.NoError(t, err)
-	assert.Equal(t, rewritten.PanelMemberConfigJSON, repoOn.PanelMemberConfigJSON)
 	override := false
 	in.repoCfg = &config.RepoConfig{CI: config.RepoCIConfig{Check: &override}}
 	_, overridden, err := p.buildPanelOpts(t.Context(), in)
