@@ -31,7 +31,7 @@ func TestHelpCoverage(t *testing.T) {
 		assert.NotEqual(cmd.Short, cmd.Long, "%s needs more than its summary", cmd.CommandPath())
 		assert.NotEmpty(cmd.Example, "%s needs a runnable example", cmd.CommandPath())
 		examples, err := advertisedCommands(helpShellLines(cmd.Example, true))
-		assert.NoError(err, "%s example shell syntax", cmd.CommandPath())
+		require.NoError(t, err, "%s example shell syntax", cmd.CommandPath())
 		assert.NotEmpty(examples, "%s needs an executable example", cmd.CommandPath())
 		assert.NotContains(cmd.Long, "\nExamples:", "%s should use Cobra Example", cmd.CommandPath())
 		if cmd.Parent() == root {
@@ -188,13 +188,13 @@ func validateHelpInvocation(args []string) error {
 func shellFences(source string) string {
 	var result strings.Builder
 	active := false
-	for _, line := range strings.Split(source, "\n") {
+	for line := range strings.SplitSeq(source, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "```") {
 			if active {
 				active = false
 			} else {
-				language := strings.TrimPrefix(trimmed, "```")
+				language, _ := strings.CutPrefix(trimmed, "```")
 				active = language == "bash" || language == "sh" || language == "shell"
 			}
 			continue
@@ -213,7 +213,7 @@ func helpShellLines(source string, unindented bool) string {
 	var out strings.Builder
 	continuation, previousCommand := false, false
 	previous := ""
-	for _, line := range strings.Split(source, "\n") {
+	for line := range strings.SplitSeq(source, "\n") {
 		trimmed := strings.TrimSpace(line)
 		candidate := strings.HasPrefix(trimmed, "roborev ") || trimmed == "roborev" || strings.Contains(trimmed, "| roborev ")
 		boundary := previous == "" || strings.HasSuffix(previous, ":") || strings.HasPrefix(previous, "#") || previousCommand
@@ -271,7 +271,7 @@ func TestHelpShellParsing(t *testing.T) {
 	}
 	for _, source := range []string{"roborev search 'broken", "roborev show \\"} {
 		_, err := advertisedCommands(source)
-		assert.Error(err)
+		require.Error(t, err)
 	}
 	for _, args := range [][]string{{"missing"}, {"config", "missing"}, {"show", "--missing"}, {"close"}, {"cancel", "42", "43"}, {"review", "--wait", "--missing"}, {"ci", "review", "--gh-repo", "example/repo", "--gl-repo", "example/repo"}} {
 		assert.Error(validateHelpInvocation(args), "%v", args)

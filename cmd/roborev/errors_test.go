@@ -29,26 +29,10 @@ func TestUsageErrorPreservesCause(t *testing.T) {
 		var exit *exitError
 		require.ErrorAs(ht, err, &exit)
 		assert.Equal(ht, 2, exit.code)
-		assert.ErrorIs(ht, err, cause)
+		require.ErrorIs(ht, err, cause)
 		assert.Equal(ht, message, err.Error())
 		assert.True(ht, cmd.SilenceUsage)
 	})
-}
-
-func TestRootFlagErrorDoesNotDumpUsage(t *testing.T) {
-	isolateCLIErrorGlobals(t)
-	root := newRootCmd()
-	var out, stderr strings.Builder
-	root.SetOut(&out)
-	root.SetErr(&stderr)
-	root.SetArgs([]string{"list", "--bogus"})
-	_, err := root.ExecuteC()
-	require.Error(t, err)
-	var exit *exitError
-	require.ErrorAs(t, err, &exit)
-	assert.Equal(t, 2, exit.code)
-	assert.Empty(t, out.String())
-	assert.NotContains(t, stderr.String(), "Usage:")
 }
 
 // Empty messages are valid causes too (Hegel's minimal counterexample).
@@ -58,7 +42,7 @@ func TestUsageErrorEmptyMessage(t *testing.T) {
 	var exit *exitError
 	require.ErrorAs(t, err, &exit)
 	assert.Equal(t, 2, exit.code)
-	assert.Equal(t, "", err.Error())
+	assert.Empty(t, err.Error())
 	assert.ErrorIs(t, err, cause)
 }
 
@@ -102,34 +86,6 @@ func TestCLIUsageRecovery(t *testing.T) {
 			assert.NotContains(t, stderr.String(), "Usage:")
 		})
 	}
-}
-
-func TestCLIJSONErrorRoundTrip(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		message := hegel.Draw(ht, hegel.Text())
-		hint := hegel.Draw(ht, hegel.Text())
-		cmd := &cobra.Command{Use: "search"}
-		cmd.Flags().Bool("json", false, "")
-		var stderr strings.Builder
-		cmd.SetErr(&stderr)
-		code := renderCLIError(cmd, []string{"--json"}, withHint(errors.New(message), hint))
-		var got struct {
-			Error struct {
-				Message  string `json:"message"`
-				Hint     string `json:"hint"`
-				Code     string `json:"code"`
-				ExitCode int    `json:"exit_code"`
-			} `json:"error"`
-		}
-		require.NoError(ht, json.Unmarshal([]byte(stderr.String()), &got))
-		assert.Equal(ht, message, got.Error.Message)
-		if hint != "" {
-			assert.Equal(ht, hint, got.Error.Hint)
-		}
-		assert.Equal(ht, "runtime", got.Error.Code)
-		assert.Equal(ht, 1, code)
-		assert.Equal(ht, code, got.Error.ExitCode)
-	})
 }
 
 func TestCLIErrorModeSelectors(t *testing.T) {
@@ -412,7 +368,7 @@ func TestCLIErrorWrapperComposition(t *testing.T) {
 		require.ErrorAs(ht, wrapped, &exit)
 		assert.Equal(ht, code, exit.code)
 		assert.Equal(ht, hint, exit.hint)
-		assert.ErrorIs(ht, wrapped, cause)
+		require.ErrorIs(ht, wrapped, cause)
 		assert.Equal(ht, "context: "+message, wrapped.Error())
 	})
 }

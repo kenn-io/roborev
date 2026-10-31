@@ -35,7 +35,7 @@ func applyRootHelp(root *cobra.Command) {
 		if before, after, ok := strings.Cut(cmd.Long, "\nExamples:\n"); ok {
 			var descriptions, examples []string
 			continuation := false
-			for _, line := range strings.Split(after, "\n") {
+			for line := range strings.SplitSeq(after, "\n") {
 				trimmed := strings.TrimSpace(line)
 				isExample := continuation || trimmed == "roborev" || strings.HasPrefix(trimmed, "roborev ") ||
 					strings.Contains(trimmed, "| roborev ") || strings.HasPrefix(trimmed, "#")

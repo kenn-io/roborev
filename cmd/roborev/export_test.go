@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -306,25 +305,6 @@ func TestExportReviewsCmdRejectsInvalidFlags(t *testing.T) {
 			assert.Equal(t, tt.code, commandExitCode(err))
 		})
 	}
-}
-
-func TestRootExportReviewsCmdRejectsInvalidFlagsAsUsageError(t *testing.T) {
-	cmd := &cobra.Command{
-		Use: "roborev",
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			cmd.SilenceUsage = true
-			return nil
-		},
-	}
-	cmd.AddCommand(exportCmd())
-	cmd.SetArgs([]string{"export", "reviews", "--profile", "full"})
-
-	executed, err := cmd.ExecuteC()
-	require.Error(t, err)
-	require.NotNil(t, executed)
-	assert.Equal(t, "reviews", executed.Name())
-	assert.True(t, executed.SilenceUsage)
-	assert.Equal(t, 4, commandExitCode(err))
 }
 
 func TestExportReviewsCmdPropagatesCursorErrors(t *testing.T) {

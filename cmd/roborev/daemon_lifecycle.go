@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/roborev/internal/auth"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/version"
 	roborevclient "go.kenn.io/roborev/pkg/client"
 )
@@ -416,6 +417,17 @@ func startDaemon() error {
 						return kitdaemon.RuntimeRecord{}, kitdaemon.PingInfo{}, false, err
 					}
 					if info == nil {
+						owned, ownerErr := daemonStartupContenderExists()
+						if ownerErr != nil {
+							return kitdaemon.RuntimeRecord{}, kitdaemon.PingInfo{}, false,
+								fmt.Errorf("check competing daemon state: %w", ownerErr)
+						}
+						if owned {
+							// A losing child can exit while the winning daemon is still
+							// initializing. Keep the manager polling until it publishes
+							// readiness or releases the database lock.
+							return kitdaemon.RuntimeRecord{}, kitdaemon.PingInfo{}, false, nil
+						}
 						cancelStartup()
 						return kitdaemon.RuntimeRecord{}, kitdaemon.PingInfo{}, false, childExit
 					}
@@ -482,6 +494,15 @@ func startDaemon() error {
 					if ready != nil {
 						return nil
 					}
+					owned, ownerErr := daemonStartupContenderExists()
+					if ownerErr != nil {
+						return fmt.Errorf("check competing daemon state: %w", ownerErr)
+					}
+					if owned {
+						// Let Manager.Ensure use its existing startup timeout while
+						// the database owner finishes initializing.
+						return nil
+					}
 					return fmt.Errorf("daemon exited during startup: %w%s", childExit,
 						daemonStartupLogSummary(startupLogPath, startupLogOffset))
 				case <-ctx.Done():
@@ -537,6 +558,38 @@ func findDaemonForStart(ctx context.Context) (*daemon.RuntimeInfo, error) {
 		return nil, nil
 	}
 	return info, err
+}
+
+// daemonStartupContenderExists reports whether a competing daemon is still
+// starting. Pre-v0.57 daemons do not use the database owner lock, so also
+// honor a live legacy runtime record from the data directory root. The legacy
+// endpoint is never probed here; it only identifies the recorded process.
+func daemonStartupContenderExists() (bool, error) {
+	// Logging starts before database setup, so check it first. Probing the
+	// database lock while another daemon owns the log lock could temporarily
+	// take ownership away from that daemon before it reaches database setup.
+	owned, err := daemonLogOwnerExists(config.DataDir())
+	if err != nil || owned {
+		return owned, err
+	}
+	owned, err = daemonDatabaseOwnerExists(storage.DefaultDBPath())
+	if err != nil || owned {
+		return owned, err
+	}
+	runtimes, err := listAllRuntimes()
+	if err != nil {
+		return false, err
+	}
+	dataDir := filepath.Clean(config.DataDir())
+	for _, info := range runtimes {
+		if info == nil || info.SourcePath == "" || filepath.Clean(filepath.Dir(info.SourcePath)) != dataDir {
+			continue
+		}
+		if !info.Stale() {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func openDetachedDaemonLogs() (*os.File, *os.File, func(), error) {

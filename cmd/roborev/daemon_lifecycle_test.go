@@ -579,6 +579,95 @@ func TestStartDaemonChildExitRecovery(t *testing.T) {
 	}
 }
 
+func TestStartDaemonWaitsForDatabaseOwnerAfterChildExit(t *testing.T) {
+	testenv.SetDataDir(t)
+	owner, err := lockDaemonDatabase(storage.DefaultDBPath())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, owner.Close()) })
+
+	oldGet, oldStart := getAnyRunningDaemonForStart, startDaemonDetached
+	t.Cleanup(func() { getAnyRunningDaemonForStart, startDaemonDetached = oldGet, oldStart })
+	synctest.Test(t, func(t *testing.T) {
+		readyAt := time.Now().Add(time.Second)
+		getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
+			if !time.Now().Before(readyAt) {
+				return &daemon.RuntimeInfo{PID: os.Getpid()}, nil
+			}
+			return nil, os.ErrNotExist
+		}
+		startDaemonDetached = func(_ context.Context, opts detachedDaemonOptions) error {
+			require.NotNil(t, opts.Exited)
+			opts.Exited(errors.New("synthetic duplicate daemon could not acquire database ownership"))
+			return nil
+		}
+
+		require.NoError(t, startDaemon())
+	})
+}
+
+func TestStartDaemonWaitsForLogOwnerAfterChildExit(t *testing.T) {
+	testenv.SetDataDir(t)
+	closeLogs, err := setupDaemonLogging(config.DataDir(), io.Discard, maxDaemonLogBytes)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, closeLogs()) })
+
+	oldGet, oldStart, oldList := getAnyRunningDaemonForStart, startDaemonDetached, listAllRuntimes
+	t.Cleanup(func() {
+		getAnyRunningDaemonForStart, startDaemonDetached, listAllRuntimes = oldGet, oldStart, oldList
+	})
+	synctest.Test(t, func(t *testing.T) {
+		readyAt := time.Now().Add(time.Second)
+		getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
+			if !time.Now().Before(readyAt) {
+				return &daemon.RuntimeInfo{PID: os.Getpid()}, nil
+			}
+			return nil, os.ErrNotExist
+		}
+		listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return nil, nil }
+		startDaemonDetached = func(_ context.Context, opts detachedDaemonOptions) error {
+			require.NotNil(t, opts.Exited)
+			opts.Exited(errors.New("synthetic duplicate daemon could not acquire logging ownership"))
+			return nil
+		}
+
+		require.NoError(t, startDaemon())
+		_, err := os.Stat(storage.DefaultDBPath() + ".daemon.lock")
+		require.ErrorIs(t, err, os.ErrNotExist, "a held log lock must be checked before probing database ownership")
+	})
+}
+
+func TestStartDaemonWaitsForLegacyRuntimeAfterChildExit(t *testing.T) {
+	testenv.SetDataDir(t)
+
+	oldGet, oldStart, oldList := getAnyRunningDaemonForStart, startDaemonDetached, listAllRuntimes
+	t.Cleanup(func() {
+		getAnyRunningDaemonForStart, startDaemonDetached, listAllRuntimes = oldGet, oldStart, oldList
+	})
+	synctest.Test(t, func(t *testing.T) {
+		readyAt := time.Now().Add(time.Second)
+		getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
+			if !time.Now().Before(readyAt) {
+				return &daemon.RuntimeInfo{PID: os.Getpid()}, nil
+			}
+			return nil, os.ErrNotExist
+		}
+		listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+			return []*daemon.RuntimeInfo{{
+				PID:        os.Getpid(),
+				Version:    "0.56.0",
+				SourcePath: filepath.Join(config.DataDir(), "daemon.1234.json"),
+			}}, nil
+		}
+		startDaemonDetached = func(_ context.Context, opts detachedDaemonOptions) error {
+			require.NotNil(t, opts.Exited)
+			opts.Exited(errors.New("synthetic child could not bind the recorded daemon endpoint"))
+			return nil
+		}
+
+		require.NoError(t, startDaemon())
+	})
+}
+
 func TestStartDaemonExitAfterTransientReady(t *testing.T) {
 	testenv.SetDataDir(t)
 	oldGet, oldStart := getAnyRunningDaemonForStart, startDaemonDetached
@@ -609,7 +698,7 @@ func TestFindDaemonForStartPreservesMissingCredentialError(t *testing.T) {
 	getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return nil, failure }
 	ready, err := findDaemonForStart(t.Context())
 	assert.Nil(t, ready)
-	assert.ErrorIs(t, err, daemon.ErrClientConfig)
+	require.ErrorIs(t, err, daemon.ErrClientConfig)
 	assert.ErrorIs(t, err, os.ErrNotExist)
 }
 
