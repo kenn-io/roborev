@@ -2077,22 +2077,60 @@ type FindingCounts struct {
 	Medium   int64 `json:"medium"`
 }
 
+type FindingKataCoverage struct {
+	Conflicting     int64      `json:"conflicting"`
+	Edited          int64      `json:"edited"`
+	Eligible        int64      `json:"eligible"`
+	Excluded        int64      `json:"excluded"`
+	ExplicitReasons int64      `json:"explicit_reasons"`
+	Incomplete      int64      `json:"incomplete"`
+	Ineligible      int64      `json:"ineligible"`
+	Invalid         int64      `json:"invalid"`
+	Labeled         int64      `json:"labeled"`
+	Mapped          int64      `json:"mapped"`
+	ReadFinishedAt  *time.Time `json:"read_finished_at,omitempty"`
+	ReadStartedAt   *time.Time `json:"read_started_at,omitempty"`
+	Readable        int64      `json:"readable"`
+	Refutes         int64      `json:"refutes"`
+	Stale           int64      `json:"stale"`
+	State           string     `json:"state" validate:"required"`
+	Unavailable     int64      `json:"unavailable"`
+	Unmapped        int64      `json:"unmapped"`
+}
+
+func (f FindingKataCoverage) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(f))
+}
+
 type FindingOutcomeCounts struct {
-	ActedOnRate    *float64 `json:"acted_on_rate,omitempty"`
-	ClosedReviews  int64    `json:"closed_reviews"`
-	Excluded       int64    `json:"excluded"`
-	FailingReviews int64    `json:"failing_reviews"`
-	Findings       int64    `json:"findings"`
-	Labeled        int64    `json:"labeled"`
-	Negative       int64    `json:"negative"`
-	Positive       int64    `json:"positive"`
-	RateState      string   `json:"rate_state" validate:"required"`
-	ResolutionRate *float64 `json:"resolution_rate,omitempty"`
-	Unlabeled      int64    `json:"unlabeled"`
+	ActedOnRate    *float64           `json:"acted_on_rate,omitempty"`
+	ClosedReviews  int64              `json:"closed_reviews"`
+	Excluded       int64              `json:"excluded"`
+	FailingReviews int64              `json:"failing_reviews"`
+	Findings       int64              `json:"findings"`
+	Labeled        int64              `json:"labeled"`
+	Negative       int64              `json:"negative"`
+	Positive       int64              `json:"positive"`
+	RateState      string             `json:"rate_state" validate:"required"`
+	RefuteReasons  RefuteReasonCounts `json:"refute_reasons"`
+	ResolutionRate *float64           `json:"resolution_rate,omitempty"`
+	Unlabeled      int64              `json:"unlabeled"`
 }
 
 func (f FindingOutcomeCounts) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(f))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(f.RateState, "required"); err != nil {
+		errors = errors.Append("RateState", err)
+	}
+	if v, ok := any(f.RefuteReasons).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("RefuteReasons", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type FindingStats struct {
@@ -2101,6 +2139,7 @@ type FindingStats struct {
 	Cost              CostAggregate                   `json:"cost"`
 	GroupBy           string                          `json:"group_by" validate:"required"`
 	InvalidDocuments  int64                           `json:"invalid_documents"`
+	Kata              FindingKataCoverage             `json:"kata"`
 	LegacyDocuments   int64                           `json:"legacy_documents"`
 	LogicalReviews    int64                           `json:"logical_reviews"`
 	MinSamples        int64                           `json:"min_samples"`
@@ -2130,6 +2169,11 @@ func (f FindingStats) Validate() error {
 	}
 	if err := typesValidator.Var(f.GroupBy, "required"); err != nil {
 		errors = errors.Append("GroupBy", err)
+	}
+	if v, ok := any(f.Kata).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Kata", err)
+		}
 	}
 	if v, ok := any(f.Rebuttals).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
@@ -2171,22 +2215,23 @@ func (f FindingStats) Validate() error {
 }
 
 type FindingStatsRow struct {
-	ActedOnRate       *float64      `json:"acted_on_rate,omitempty"`
-	ClosedReviews     int64         `json:"closed_reviews"`
-	Cost              CostAggregate `json:"cost"`
-	CostPerPositive   *float64      `json:"cost_per_positive,omitempty"`
-	Excluded          int64         `json:"excluded"`
-	FailingReviews    int64         `json:"failing_reviews"`
-	Findings          int64         `json:"findings"`
-	Key               string        `json:"key" validate:"required"`
-	Labeled           int64         `json:"labeled"`
-	Negative          int64         `json:"negative"`
-	Positive          int64         `json:"positive"`
-	RateState         string        `json:"rate_state" validate:"required"`
-	ResolutionRate    *float64      `json:"resolution_rate,omitempty"`
-	Reviews           int64         `json:"reviews"`
-	StructuredReviews int64         `json:"structured_reviews"`
-	Unlabeled         int64         `json:"unlabeled"`
+	ActedOnRate       *float64           `json:"acted_on_rate,omitempty"`
+	ClosedReviews     int64              `json:"closed_reviews"`
+	Cost              CostAggregate      `json:"cost"`
+	CostPerPositive   *float64           `json:"cost_per_positive,omitempty"`
+	Excluded          int64              `json:"excluded"`
+	FailingReviews    int64              `json:"failing_reviews"`
+	Findings          int64              `json:"findings"`
+	Key               string             `json:"key" validate:"required"`
+	Labeled           int64              `json:"labeled"`
+	Negative          int64              `json:"negative"`
+	Positive          int64              `json:"positive"`
+	RateState         string             `json:"rate_state" validate:"required"`
+	RefuteReasons     RefuteReasonCounts `json:"refute_reasons"`
+	ResolutionRate    *float64           `json:"resolution_rate,omitempty"`
+	Reviews           int64              `json:"reviews"`
+	StructuredReviews int64              `json:"structured_reviews"`
+	Unlabeled         int64              `json:"unlabeled"`
 }
 
 func (f FindingStatsRow) Validate() error {
@@ -2201,6 +2246,11 @@ func (f FindingStatsRow) Validate() error {
 	}
 	if err := typesValidator.Var(f.RateState, "required"); err != nil {
 		errors = errors.Append("RateState", err)
+	}
+	if v, ok := any(f.RefuteReasons).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("RefuteReasons", err)
+		}
 	}
 	if len(errors) == 0 {
 		return nil
@@ -3038,6 +3088,16 @@ type RebuttalRequest struct {
 
 func (r RebuttalRequest) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(r))
+}
+
+type RefuteReasonCounts struct {
+	Absent        int64 `json:"absent"`
+	Conflicting   int64 `json:"conflicting"`
+	FalsePositive int64 `json:"false_positive"`
+	Invalid       int64 `json:"invalid"`
+	RiskAccepted  int64 `json:"risk_accepted"`
+	Spurious      int64 `json:"spurious"`
+	Unspecified   int64 `json:"unspecified"`
 }
 
 type RegisterRepoRequest struct {

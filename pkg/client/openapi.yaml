@@ -2151,6 +2151,80 @@ components:
         - medium
         - low
       type: object
+    FindingKataCoverage:
+      additionalProperties: false
+      properties:
+        conflicting:
+          format: int64
+          type: integer
+        edited:
+          format: int64
+          type: integer
+        eligible:
+          format: int64
+          type: integer
+        excluded:
+          format: int64
+          type: integer
+        explicit_reasons:
+          format: int64
+          type: integer
+        incomplete:
+          format: int64
+          type: integer
+        ineligible:
+          format: int64
+          type: integer
+        invalid:
+          format: int64
+          type: integer
+        labeled:
+          format: int64
+          type: integer
+        mapped:
+          format: int64
+          type: integer
+        read_finished_at:
+          format: date-time
+          type: string
+        read_started_at:
+          format: date-time
+          type: string
+        readable:
+          format: int64
+          type: integer
+        refutes:
+          format: int64
+          type: integer
+        stale:
+          format: int64
+          type: integer
+        state:
+          type: string
+        unavailable:
+          format: int64
+          type: integer
+        unmapped:
+          format: int64
+          type: integer
+      required:
+        - state
+        - eligible
+        - ineligible
+        - mapped
+        - readable
+        - labeled
+        - refutes
+        - explicit_reasons
+        - unmapped
+        - unavailable
+        - incomplete
+        - stale
+        - invalid
+        - conflicting
+        - excluded
+        - edited
+      type: object
     FindingOutcomeCounts:
       additionalProperties: false
       properties:
@@ -2182,6 +2256,8 @@ components:
           type: integer
         rate_state:
           type: string
+        refute_reasons:
+          $ref: "#/components/schemas/RefuteReasonCounts"
         resolution_rate:
           format: double
           type:
@@ -2191,6 +2267,7 @@ components:
           format: int64
           type: integer
       required:
+        - refute_reasons
         - findings
         - labeled
         - positive
@@ -2218,6 +2295,8 @@ components:
         invalid_documents:
           format: int64
           type: integer
+        kata:
+          $ref: "#/components/schemas/FindingKataCoverage"
         legacy_documents:
           format: int64
           type: integer
@@ -2283,6 +2362,7 @@ components:
         - total
         - cost
         - rows
+        - kata
       type: object
     FindingStatsRow:
       additionalProperties: false
@@ -2324,6 +2404,8 @@ components:
           type: integer
         rate_state:
           type: string
+        refute_reasons:
+          $ref: "#/components/schemas/RefuteReasonCounts"
         resolution_rate:
           format: double
           type:
@@ -2344,6 +2426,7 @@ components:
         - structured_reviews
         - cost
         - cost_per_positive
+        - refute_reasons
         - findings
         - labeled
         - positive
@@ -3361,6 +3444,39 @@ components:
         - finding
         - comment
         - commenter
+      type: object
+    RefuteReasonCounts:
+      additionalProperties: false
+      properties:
+        absent:
+          format: int64
+          type: integer
+        conflicting:
+          format: int64
+          type: integer
+        false_positive:
+          format: int64
+          type: integer
+        invalid:
+          format: int64
+          type: integer
+        risk_accepted:
+          format: int64
+          type: integer
+        spurious:
+          format: int64
+          type: integer
+        unspecified:
+          format: int64
+          type: integer
+      required:
+        - false_positive
+        - spurious
+        - risk_accepted
+        - unspecified
+        - absent
+        - invalid
+        - conflicting
       type: object
     RegisterRepoRequest:
       additionalProperties: false
