@@ -32,6 +32,7 @@ workflows:
     '.github/workflows/workflow-validation.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
+        - 'kenn-io/kit@v0.47.3'
         - 'step-security/jactionlint@v2.2.0'
 dependencies:
     'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1':
