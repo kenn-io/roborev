@@ -537,68 +537,75 @@ func TestExperimentSessionReuseStaysOnSourceMachine(t *testing.T) {
 	}
 }
 
-func TestSynthesisExperimentPlanACPDeterministic(t *testing.T) {
-	jobConfig := synthesisJobConfig{
-		ciACPExecutionConfig: ciACPExecutionConfig{ACP: config.ACPAgentConfigs{
-			"primary": {Command: "primary-acp", Args: []string{"--review"}, Model: "primary-model"},
-			"backup":  {Command: "backup-acp", ReadOnlyMode: "plan", Model: "backup-model"},
-		}},
-		Instructions: "Combine reviews",
-		Check:        &ciCheckConfig{Rewrite: true, Model: "checker", PullRequest: "PR body"},
+func TestSynthesisExperimentPlan(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		jobConfig  synthesisJobConfig
+		agent      string
+		backup     string
+		iterations int
+	}{
+		{
+			name: "ACP deterministic",
+			jobConfig: synthesisJobConfig{
+				ciACPExecutionConfig: ciACPExecutionConfig{ACP: config.ACPAgentConfigs{
+					"primary": {Command: "primary-acp", Args: []string{"--review"}, Model: "primary-model"},
+					"backup":  {Command: "backup-acp", ReadOnlyMode: "plan", Model: "backup-model"},
+				}},
+				Instructions: "Combine reviews",
+				Check:        &ciCheckConfig{Rewrite: true, Model: "checker"},
+			},
+			agent: "acp.primary", backup: "acp.backup", iterations: 100,
+		},
+		{
+			name: "pull request",
+			jobConfig: synthesisJobConfig{
+				Instructions: "Combine reviews",
+				Check:        &ciCheckConfig{Rewrite: true, Model: "checker", PullRequest: "first PR body"},
+			},
+			iterations: 1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			jobConfig := tc.jobConfig
+			snapshot, err := jobConfig.encode()
+			require.NoError(t, err)
+			opts := storage.EnqueueOpts{
+				JobType: storage.JobTypeSynthesis, PanelRole: storage.PanelRoleSynthesis,
+				Agent: tc.agent, BackupAgent: tc.backup, PanelMemberConfigJSON: snapshot,
+			}
+			firstPlan, err := experimentPlanForPanel(nil, opts)
+			require.NoError(t, err)
+			firstHash, err := config.FingerprintExperimentConfig(firstPlan)
+			require.NoError(t, err)
+
+			if jobConfig.Check.PullRequest != "" {
+				jobConfig.Check.PullRequest = "second PR body"
+				opts.PanelMemberConfigJSON, err = jobConfig.encode()
+				require.NoError(t, err)
+			}
+			for i := range tc.iterations {
+				plan, err := experimentPlanForPanel(nil, opts)
+				require.NoError(t, err)
+				hash, err := config.FingerprintExperimentConfig(plan)
+				require.NoError(t, err)
+				require.Equal(t, firstHash, hash, "repeated plan %d", i)
+
+				rerun := opts
+				require.NoError(t, applyExperimentJobPlan(&rerun, firstPlan.Synthesis))
+				if jobConfig.Check.PullRequest != "" {
+					got, err := synthesisConfig(&storage.ReviewJob{JobType: storage.JobTypeSynthesis, PanelMemberConfigJSON: rerun.PanelMemberConfigJSON})
+					require.NoError(t, err)
+					require.NotNil(t, got.Check)
+					assert.Equal(t, jobConfig, got)
+				} else {
+					rerunPlan, err := experimentPlanForPanel(nil, rerun)
+					require.NoError(t, err)
+					rerunHash, err := config.FingerprintExperimentConfig(rerunPlan)
+					require.NoError(t, err)
+					require.Equal(t, firstHash, rerunHash, "rerun plan %d", i)
+				}
+			}
+		})
 	}
-	snapshot, err := jobConfig.encode()
-	require.NoError(t, err)
-	opts := storage.EnqueueOpts{
-		JobType: storage.JobTypeSynthesis, PanelRole: storage.PanelRoleSynthesis,
-		Agent: "acp.primary", BackupAgent: "acp.backup", PanelMemberConfigJSON: snapshot,
-	}
-	firstPlan, err := experimentPlanForPanel(nil, opts)
-	require.NoError(t, err)
-	firstHash, err := config.FingerprintExperimentConfig(firstPlan)
-	require.NoError(t, err)
-
-	for i := range 100 {
-		plan, err := experimentPlanForPanel(nil, opts)
-		require.NoError(t, err)
-		hash, err := config.FingerprintExperimentConfig(plan)
-		require.NoError(t, err)
-		require.Equal(t, firstHash, hash, "repeated plan %d", i)
-
-		rerun := opts
-		require.NoError(t, applyExperimentJobPlan(&rerun, firstPlan.Synthesis))
-		rerunPlan, err := experimentPlanForPanel(nil, rerun)
-		require.NoError(t, err)
-		rerunHash, err := config.FingerprintExperimentConfig(rerunPlan)
-		require.NoError(t, err)
-		require.Equal(t, firstHash, rerunHash, "rerun plan %d", i)
-	}
-}
-
-func TestSynthesisExperimentPlanPullRequest(t *testing.T) {
-	jobConfig := synthesisJobConfig{Instructions: "Combine reviews", Check: &ciCheckConfig{Rewrite: true, Model: "checker", PullRequest: "first PR body"}}
-	firstConfig, err := jobConfig.encode()
-	require.NoError(t, err)
-	first := storage.EnqueueOpts{JobType: storage.JobTypeSynthesis, PanelRole: storage.PanelRoleSynthesis, PanelMemberConfigJSON: firstConfig}
-	jobConfig.Check.PullRequest = "second PR body"
-	secondConfig, err := jobConfig.encode()
-	require.NoError(t, err)
-	second := first
-	second.PanelMemberConfigJSON = secondConfig
-	firstPlan, err := experimentPlanForPanel(nil, first)
-	require.NoError(t, err)
-	secondPlan, err := experimentPlanForPanel(nil, second)
-	require.NoError(t, err)
-	firstHash, err := config.FingerprintExperimentConfig(firstPlan)
-	require.NoError(t, err)
-	secondHash, err := config.FingerprintExperimentConfig(secondPlan)
-	require.NoError(t, err)
-	assert.Equal(t, firstHash, secondHash)
-
-	t.Run("rerun", func(t *testing.T) {
-		require.NoError(t, applyExperimentJobPlan(&second, firstPlan.Synthesis))
-		got, err := synthesisConfig(&storage.ReviewJob{JobType: storage.JobTypeSynthesis, PanelMemberConfigJSON: second.PanelMemberConfigJSON})
-		require.NoError(t, err)
-		require.NotNil(t, got.Check)
-		assert.Equal(t, jobConfig, got)
-	})
 }

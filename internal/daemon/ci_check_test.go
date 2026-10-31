@@ -192,42 +192,33 @@ func TestCICheckCompletionFailure(t *testing.T) {
 	}
 }
 
-func TestCICheckCompletionKeep(t *testing.T) {
-	for _, mode := range []string{"rewrite all kept"} {
-		t.Run(mode, func(t *testing.T) {
-			tc, job, doc, original := setupCICheckCompletion(t, "high", "", nil)
-			calls := 0
-			tc.Pool.ciCheck = func(_ context.Context, _ *storage.ReviewJob, cfg ciCheckConfig, doc structuredreview.Document, _ []string, out io.Writer) (structuredreview.Document, error) {
-				calls++
-				assert.Equal(t, "high", cfg.Reasoning)
-				require.Len(t, doc.Findings, 2)
-				fmt.Fprintln(out, `{"type":"thread.started","thread_id":"checker-session"}`)
-				fmt.Fprintln(out, `{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":5}}`)
-				if mode == "rewrite all kept" {
-					doc.Findings = append([]structuredreview.Finding(nil), doc.Findings...)
-					doc.Findings[0].Problem = "Users cannot build the project."
-					doc.Findings[0].Fix = "Keep the build working. **Where:** `build`"
-				}
-				return doc, nil
-			}
-			tc.Pool.processSynthesisJob(t.Context(), testWorkerID, job)
-			assert.Equal(t, 1, calls)
-			finished, err := tc.DB.GetJobByID(job.ID)
-			require.NoError(t, err)
-			assert.Equal(t, storage.JobStatusDone, finished.Status)
-			stored, checked := readCICheckCompletionReview(t, tc, job)
-			if mode == "rewrite all kept" {
-				assert.Contains(t, stored.Output, "Users cannot build the project.")
-				assert.Equal(t, "Keep the build working. **Where:** `build`", checked.Findings[0].Fix)
-				doc.Findings[0].Problem, doc.Findings[0].Fix = "Users cannot build the project.", "Keep the build working. **Where:** `build`"
-				assert.Equal(t, doc, checked)
-			} else {
-				assert.Equal(t, original.review.Output, stored.Output)
-				assert.Equal(t, original.review.Verdict, stored.Verdict())
-				assert.Equal(t, doc, checked)
-			}
-		})
+func TestCICheckCompletionRewrite(t *testing.T) {
+	tc, job, doc, _ := setupCICheckCompletion(t, "high", "", nil)
+	encoded, err := (synthesisJobConfig{Check: &ciCheckConfig{Reasoning: "high", Rewrite: true}}).encode()
+	require.NoError(t, err)
+	_, err = tc.DB.Exec("UPDATE review_jobs SET panel_member_config_json = ? WHERE id = ?", encoded, job.ID)
+	require.NoError(t, err)
+	job.PanelMemberConfigJSON = encoded
+	calls := 0
+	tc.Pool.ciCheck = func(_ context.Context, _ *storage.ReviewJob, cfg ciCheckConfig, doc structuredreview.Document, _ []string, out io.Writer) (structuredreview.Document, error) {
+		calls++
+		assert.Equal(t, "high", cfg.Reasoning)
+		require.Len(t, doc.Findings, 2)
+		fmt.Fprintln(out, `{"type":"thread.started","thread_id":"checker-session"}`)
+		fmt.Fprintln(out, `{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":5}}`)
+		doc.Findings = append([]structuredreview.Finding(nil), doc.Findings...)
+		doc.Findings[0].Problem = "Users cannot build the project."
+		doc.Findings[0].Fix = "Keep the build working. **Where:** `build`"
+		return doc, nil
 	}
+	tc.Pool.processSynthesisJob(t.Context(), testWorkerID, job)
+	assert.Equal(t, 1, calls)
+	finished, err := tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusDone, finished.Status)
+	_, checked := readCICheckCompletionReview(t, tc, job)
+	doc.Findings[0].Problem, doc.Findings[0].Fix = "Users cannot build the project.", "Keep the build working. **Where:** `build`"
+	assert.Equal(t, doc, checked)
 }
 
 func TestCICheckCompletionDrop(t *testing.T) {

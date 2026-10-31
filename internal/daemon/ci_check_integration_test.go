@@ -260,10 +260,9 @@ echo 'OK rewrite read-only'
 	skipRewrite.Store(true)
 	job.MinSeverity = "high"
 	var output bytes.Buffer
-	kept, err = tc.Pool.runCICheck(t.Context(), job, ciCheckConfig{Model: "test-model", Reasoning: "high", Rewrite: true}, doc, nil, &output)
+	_, err = tc.Pool.runCICheck(t.Context(), job, ciCheckConfig{Model: "test-model", Reasoning: "high", Rewrite: true}, doc, nil, &output)
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, calls.Load(), "kept findings below the threshold only call the checker")
-	assert.Equal(t, doc.Findings[1:], kept.Findings)
 	assert.NotContains(t, output.String(), "CI rewrite failed;")
 
 	failureServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

@@ -567,7 +567,10 @@ func TestBuildRangePromptIncludesPullRequest(t *testing.T) {
 		Description: "Stop after three attempts.\r\nLog each failure & move on.",
 	}).Build(base+".."+head, 0, "test", "review", "")
 	require.NoError(t, err)
-	assert.Contains(t, prompt, "<pull-request context-only=\"true\">")
+	assert.Contains(t, prompt, "<pull-request context-only=\"true\">\n"+
+		"**Title:** Cap retries &lt;for&gt; uploads\n"+
+		"**Description:**\nStop after three attempts.\nLog each failure &amp; move on.\n"+
+		"</pull-request>")
 
 	plain, err := builder.Build(base+".."+head, 0, "test", "review", "")
 	require.NoError(t, err)
