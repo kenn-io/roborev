@@ -527,7 +527,22 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 				return fmt.Errorf("cannot resolve HEAD: %w", err)
 			}
 			rangeRef := mergeBase + ".." + headSHA
-			pendingRefs := []string{stall.pendingFixSHA, rangeRef}
+			pendingRefs := []string{stall.pendingFixSHA}
+			if rangeRef != stall.pendingFixSHA {
+				pendingRefs = append(pendingRefs, rangeRef)
+			}
+
+			branchName := gitrepo.CurrentBranch(ctx, repoPath)
+			if config.ResolvePostCommitReview(repoPath) == "branch" ||
+				config.ResolvePostCommitBatchSize(repoPath) >= 2 {
+				hookJob, err := client.FindPostCommitRangeReviewForHead(ctx, repoPath, branchName, headSHA)
+				if err != nil {
+					return fmt.Errorf("fetch pending post-commit range review: %w", err)
+				}
+				if hookJob != nil && hookJob.GitRef != stall.pendingFixSHA && hookJob.GitRef != rangeRef {
+					pendingRefs = append(pendingRefs, hookJob.GitRef)
+				}
+			}
 			for _, pendingRef := range pendingRefs {
 				pendingReview, pendingJob, err := resolvePendingReviewRef(ctx, client, repoPath, pendingRef)
 				if err != nil {
@@ -547,7 +562,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 					continue
 				}
 				if pendingReview.Closed || pendingReview.Verdict() != "F" {
-					if pendingRef == rangeRef && pendingReview.Verdict() == "P" {
+					if strings.Contains(pendingRef, "..") && pendingReview.Verdict() == "P" {
 						fmt.Println("\nAll reviews passed! Branch is ready.")
 						return nil
 					}
