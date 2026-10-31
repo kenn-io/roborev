@@ -2383,11 +2383,21 @@ func (collected *sessionTokenUsage) withUnpricedPhase(sessionRan bool, u *tokens
 	}
 	collected.allowSessionless = true
 	aggregate := func(usage *tokens.Usage) *tokens.Usage {
-		phases := []*tokens.Usage{u}
+		var combined *tokens.Usage
 		if sessionRan {
-			phases = []*tokens.Usage{usage, u}
+			combined = &tokens.Usage{}
+			if usage != nil {
+				*combined = *usage
+			}
+			// Count checker tokens while preserving the synthesis's known cost.
+			combined.InputTokens += u.InputTokens
+			combined.CachedInputTokens += u.CachedInputTokens
+			combined.CacheCreationTokens += u.CacheCreationTokens
+			combined.OutputTokens += u.OutputTokens
+			combined.PeakContextTokens = max(combined.PeakContextTokens, u.PeakContextTokens)
+		} else {
+			combined = backfill.AggregateTokenUsages([]*tokens.Usage{u})
 		}
-		combined := backfill.AggregateTokenUsages(phases)
 		if combined != nil {
 			var sessionID string
 			var sessionIDs []string
@@ -2395,7 +2405,7 @@ func (collected *sessionTokenUsage) withUnpricedPhase(sessionRan bool, u *tokens
 				sessionID = collected.capturedSession
 				sessionIDs = []string{collected.capturedSession}
 			}
-			setTokenUsageSessions(combined, sessionID, sessionIDs, len(phases))
+			setTokenUsageSessions(combined, sessionID, sessionIDs, 1)
 		}
 		return combined
 	}

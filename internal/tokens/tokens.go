@@ -575,13 +575,6 @@ func (w *CodexUsageCaptureWriter) Usage() *Usage {
 	return w.aggregateUsage()
 }
 
-// Started reports whether the stream has identified a Codex thread.
-func (w *CodexUsageCaptureWriter) Started() bool {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.threadID != ""
-}
-
 func (w *CodexUsageCaptureWriter) aggregateUsage() *Usage {
 	w.mu.Lock()
 	defer w.mu.Unlock()

@@ -219,16 +219,6 @@ func TestParseCodexUsageJSONLAggregatesDistinctSessions(t *testing.T) {
 }
 
 func TestCodexUsageCaptureWriterMatchesJSONLParser(t *testing.T) {
-	t.Run("started without usage", func(t *testing.T) {
-		capture := NewCodexUsageCaptureWriter()
-		assert.False(t, capture.Started())
-		assert.Nil(t, capture.Usage())
-		_, err := capture.Write([]byte("{\"type\":\"thread.started\",\"thread_id\":\"checker-session\"}\n"))
-		require.NoError(t, err)
-		assert.True(t, capture.Started())
-		assert.Nil(t, capture.Usage())
-	})
-
 	log := strings.Join([]string{
 		`not json`,
 		`{"type":"thread.started","thread_id":"thread-123"}`,
