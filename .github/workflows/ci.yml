@@ -173,7 +173,7 @@ jobs:
         run: bun run web:test
 
       - name: Install browser test runtime
-        run: bun run --cwd web playwright install --with-deps chromium
+        run: kit-retry 3 5 bun run --cwd web playwright install --with-deps chromium
 
       - name: Test embedded browser application
         run: bun run web:test:e2e
@@ -497,7 +497,7 @@ jobs:
           cache-dependency-glob: docs/uv.lock
 
       - name: Install docs lint dependencies
-        run: uv sync --project docs --frozen
+        run: kit-retry 3 5 uv sync --project docs --frozen
 
       - name: Markdown format
         run: make markdown-ci
