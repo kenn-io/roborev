@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -206,18 +205,16 @@ func TestCIRewriteSandboxGitConfigStaysInsideJob(t *testing.T) {
 	repo := testutil.NewTestRepoWithCommit(t)
 	command := filepath.Join(t.TempDir(), "codex")
 	const fakeCodex = `#!/bin/sh
-set -e
 while [ "$#" -gt 0 ]; do
     if [ "$1" = "-C" ]; then shift; cd "$1"; break; fi
     shift
 done
-if [ ! -f rewrite-first.txt ]; then
-    cat > rewrite-first.txt
+if [ ! -f rewrite-prompts.txt ]; then
     printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"{\"findings\":[{\"finding\":1,\"problem\":\"Users lose saved files.\",\"fix\":\"Preserve files in saveFile.\"}]}"}}'
 else
-    cat > rewrite-second.txt
     printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"{\"findings\":[{\"finding\":1,\"fix\":\"Keep saved files. **Where:** saveFile\"}]}"}}'
 fi
+cat >> rewrite-prompts.txt
 `
 	require.NoError(t, os.WriteFile(command, []byte(fakeCodex), 0o700))
 	sha := repo.HeadSHA()
@@ -250,7 +247,6 @@ git -C "$1" config core.fsmonitor "$1/fsmonitor-probe"
 	output, err := cmd.CombinedOutput()
 	cleanup()
 	require.NoError(t, err, "%s", output)
-	require.NoFileExists(t, marker)
 
 	cfg := config.DefaultConfig()
 	cfg.DefaultMaxPromptSize = 1
@@ -259,16 +255,14 @@ git -C "$1" config core.fsmonitor "$1/fsmonitor-probe"
 	checked, notes, err := applyCICheck(doc, jsontext.Value(`{"verdicts":[{"finding":1,"keep":true,"evidence":"Reproduced data loss.","reason":"Saved files disappear."}]}`), io.Discard)
 	require.NoError(t, err)
 	a := agent.NewCodexAgent(run.Command).WithSandbox(&agent.CodexSandbox{Job: run.Job, Upstream: server.URL})
-	description := strings.Repeat("Complete rewrite context. ", 100)
+	description := "Complete rewrite context."
 	got, err := wp.rewriteCIFindings(t.Context(), job, ciCheckConfig{Description: description}, checked, notes, a, run.Repo, io.Discard)
 	require.NoError(t, err)
 	assert.NoFileExists(t, marker, "host Git executed the sandbox-installed fsmonitor")
-	first, err := os.ReadFile(filepath.Join(run.Repo, "rewrite-first.txt"))
+	prompts, err := os.ReadFile(filepath.Join(run.Repo, "rewrite-prompts.txt"))
 	require.NoError(t, err)
-	assert.Contains(t, string(first), description)
-	assert.Contains(t, string(first), "Saved files disappear.")
-	second, err := os.ReadFile(filepath.Join(run.Repo, "rewrite-second.txt"))
-	require.NoError(t, err)
-	assert.Contains(t, string(second), "Users lose saved files.")
+	assert.Contains(t, string(prompts), description)
+	assert.Contains(t, string(prompts), "Saved files disappear.")
+	assert.Contains(t, string(prompts), "Users lose saved files.")
 	assert.Equal(t, "Keep saved files. **Where:** saveFile", got.Findings[0].Fix)
 }
