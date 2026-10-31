@@ -272,8 +272,15 @@ func TestCIRewriteValidationAndThreshold(t *testing.T) {
 	doc := structuredreview.Document{Findings: []structuredreview.Finding{{Severity: "high", Problem: "original", Fix: "original fix"}}}
 	for _, tc := range []struct {
 		name, notes, wantErr string
+		doc                  structuredreview.Document
 		responses            []string
 	}{
+		{
+			name:      "kept prompt context",
+			doc:       structuredreview.Document{Findings: []structuredreview.Finding{{Severity: "high", Problem: "build claim", Fix: "fix"}, {Severity: "medium", Location: "save.go:4", Problem: "data loss", Fix: "fix"}, {Severity: "low", Problem: "minor issue", Fix: "minor fix"}}},
+			notes:     `{"verdicts":[{"finding":1,"keep":false,"evidence":"go build succeeded","reason":"Build claim refuted"},{"finding":2,"keep":true,"evidence":"test reproduced data loss","reason":"Data is lost"}]}`,
+			responses: []string{`{"findings":[{"finding":2,"problem":"Users lose saved files.","fix":"Preserve files in saveFile."}]}`, `{"findings":[{"finding":2,"fix":"Keep saved files. **Where:** saveFile"}]}`},
+		},
 		{name: "missing", notes: `{"verdicts":[]}`, wantErr: "incomplete checker notes"},
 		{name: "duplicate", notes: `{"verdicts":[{"finding":1,"keep":true,"evidence":"failed","reason":"reproduced"},{"finding":1,"keep":true,"evidence":"failed","reason":"reproduced"}]}`, wantErr: "incomplete checker notes"},
 		{name: "blank evidence", notes: `{"verdicts":[{"finding":1,"keep":true,"evidence":" ","reason":"reproduced"}]}`, wantErr: "incomplete checker notes"},
@@ -301,7 +308,7 @@ func TestCIRewriteValidationAndThreshold(t *testing.T) {
 				}
 				script := fmt.Sprintf(`#!/bin/sh
 case "$*" in *--help*) echo "usage --sandbox --thread-source"; exit 0;; esac
-cat > /dev/null
+cat >> rewrite-prompts.txt
 if [ -f replied ]; then
     printf '%%s\n' '%s'
 else
@@ -311,11 +318,30 @@ fi
 `, events[1], events[0])
 				require.NoError(t, os.WriteFile(command, []byte(script), 0o700))
 				a = agent.NewCodexAgent(command)
-				tc.notes = `{"verdicts":[{"finding":1,"keep":true,"evidence":"failed","reason":"reproduced"}]}`
+				if tc.notes == "" {
+					tc.notes = `{"verdicts":[{"finding":1,"keep":true,"evidence":"failed","reason":"reproduced"}]}`
+				}
 			}
-			checked, notes, err := applyCICheck(doc, jsontext.Value(tc.notes), io.Discard)
+			if tc.doc.Findings == nil {
+				tc.doc = doc
+			}
+			checked, notes, err := applyCICheck(tc.doc, jsontext.Value(tc.notes), io.Discard)
 			require.NoError(t, err)
-			got, err := (&WorkerPool{}).rewriteCIFindings(t.Context(), &storage.ReviewJob{MinSeverity: "high"}, ciCheckConfig{}, checked, notes, a, repo, io.Discard)
+			description := "Complete rewrite context."
+			got, err := (&WorkerPool{}).rewriteCIFindings(t.Context(), &storage.ReviewJob{MinSeverity: "medium"}, ciCheckConfig{Description: description}, checked, notes, a, repo, io.Discard)
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+				prompts, err := os.ReadFile(filepath.Join(repo, "rewrite-prompts.txt"))
+				require.NoError(t, err)
+				assert.Contains(t, string(prompts), description)
+				assert.Contains(t, string(prompts), "## Finding 2 (medium)\n\n- `save.go:4`: data loss\n\n  **Fix:** fix")
+				assert.NotContains(t, string(prompts), "## Finding 1 (high)")
+				assert.NotContains(t, string(prompts), "## Finding 3 (low)")
+				assert.Contains(t, string(prompts), "test reproduced data loss")
+				assert.Contains(t, string(prompts), "Data is lost")
+				assert.Contains(t, string(prompts), "Users lose saved files.")
+				return
+			}
 			require.ErrorContains(t, err, tc.wantErr)
 			assert.Equal(t, checked, got)
 		})
