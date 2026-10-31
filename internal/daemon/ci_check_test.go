@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -266,19 +268,55 @@ func TestCICheckCompletion(t *testing.T) {
 	}
 }
 
-func TestCIRewriteRequiresNotesAboveThreshold(t *testing.T) {
+func TestCIRewriteValidationAndThreshold(t *testing.T) {
 	doc := structuredreview.Document{Findings: []structuredreview.Finding{{Severity: "high", Problem: "original", Fix: "original fix"}}}
-	for _, tc := range []struct{ name, raw string }{
-		{"missing", `{"verdicts":[]}`},
-		{"duplicate", `{"verdicts":[{"finding":1,"keep":true,"evidence":"failed","reason":"reproduced"},{"finding":1,"keep":true,"evidence":"failed","reason":"reproduced"}]}`},
-		{"blank evidence", `{"verdicts":[{"finding":1,"keep":true,"evidence":" ","reason":"reproduced"}]}`},
-		{"blank reason", `{"verdicts":[{"finding":1,"keep":true,"evidence":"failed","reason":" "}]}`},
+	for _, tc := range []struct {
+		name, notes, wantErr string
+		responses            []string
+	}{
+		{name: "missing", notes: `{"verdicts":[]}`, wantErr: "incomplete checker notes"},
+		{name: "duplicate", notes: `{"verdicts":[{"finding":1,"keep":true,"evidence":"failed","reason":"reproduced"},{"finding":1,"keep":true,"evidence":"failed","reason":"reproduced"}]}`, wantErr: "incomplete checker notes"},
+		{name: "blank evidence", notes: `{"verdicts":[{"finding":1,"keep":true,"evidence":" ","reason":"reproduced"}]}`, wantErr: "incomplete checker notes"},
+		{name: "blank reason", notes: `{"verdicts":[{"finding":1,"keep":true,"evidence":"failed","reason":" "}]}`, wantErr: "incomplete checker notes"},
+		{name: "missing ID", responses: []string{`{"findings":[]}`}, wantErr: "incomplete rewrite phase 1"},
+		{name: "duplicate ID", responses: []string{`{"findings":[{"finding":1,"problem":"one","fix":"fix"},{"finding":1,"problem":"two","fix":"fix"}]}`}, wantErr: "invalid rewrite finding 1 in phase 1"},
+		{name: "unknown ID", responses: []string{`{"findings":[{"finding":2,"problem":"wrong","fix":"fix"}]}`}, wantErr: "invalid rewrite finding 2 in phase 1"},
+		{name: "empty problem", responses: []string{`{"findings":[{"finding":1,"problem":" ","fix":"fix"}]}`}, wantErr: "invalid rewrite finding 1 in phase 1"},
+		{name: "empty fix", responses: []string{`{"findings":[{"finding":1,"problem":"new problem","fix":"fix"}]}`, `{"findings":[{"finding":1,"fix":" "}]}`}, wantErr: "invalid rewrite finding 1 in phase 2"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			checked, notes, err := applyCICheck(doc, jsontext.Value(tc.raw), io.Discard)
+			var a *agent.CodexAgent
+			repo := ""
+			if len(tc.responses) > 0 {
+				if runtime.GOOS == "windows" {
+					t.Skip("synthetic agent uses a POSIX shell")
+				}
+				repo = t.TempDir()
+				command := filepath.Join(t.TempDir(), "codex")
+				events := make([]string, 2)
+				for i, response := range tc.responses {
+					event, err := json.Marshal(map[string]any{"type": "item.completed", "item": map[string]string{"type": "agent_message", "text": response}})
+					require.NoError(t, err)
+					events[i] = string(event)
+				}
+				script := fmt.Sprintf(`#!/bin/sh
+case "$*" in *--help*) echo "usage --sandbox --thread-source"; exit 0;; esac
+cat > /dev/null
+if [ -f replied ]; then
+    printf '%%s\n' '%s'
+else
+    touch replied
+    printf '%%s\n' '%s'
+fi
+`, events[1], events[0])
+				require.NoError(t, os.WriteFile(command, []byte(script), 0o700))
+				a = agent.NewCodexAgent(command)
+				tc.notes = `{"verdicts":[{"finding":1,"keep":true,"evidence":"failed","reason":"reproduced"}]}`
+			}
+			checked, notes, err := applyCICheck(doc, jsontext.Value(tc.notes), io.Discard)
 			require.NoError(t, err)
-			got, err := (&WorkerPool{}).rewriteCIFindings(t.Context(), &storage.ReviewJob{MinSeverity: "high"}, ciCheckConfig{}, checked, notes, nil, "", io.Discard)
-			require.ErrorContains(t, err, "incomplete checker notes")
+			got, err := (&WorkerPool{}).rewriteCIFindings(t.Context(), &storage.ReviewJob{MinSeverity: "high"}, ciCheckConfig{}, checked, notes, a, repo, io.Discard)
+			require.ErrorContains(t, err, tc.wantErr)
 			assert.Equal(t, checked, got)
 		})
 	}

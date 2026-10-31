@@ -70,7 +70,7 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	for _, mode := range []string{"rewrite", "first failure", "second failure", "missing ID", "duplicate ID", "unknown ID", "empty problem", "empty fix"} {
+	for _, mode := range []string{"rewrite", "second failure"} {
 		t.Run(mode, func(t *testing.T) {
 			tc := newWorkerTestContext(t, 1)
 			if command := os.Getenv("ROBOREV_TEST_CODEX_COMMAND"); command != "" {
@@ -101,18 +101,7 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 				if phase == 1 {
 					assert.Contains(t, string(request.Input), "Make it fail.")
 				}
-				if phase == 2 {
-					assert.Contains(t, string(request.Input), "Export user files")
-					assert.Contains(t, string(request.Input), "## Finding 2 (medium)\\n\\n- `save.go:4`: data loss\\n\\n  **Fix:** fix")
-					assert.NotContains(t, string(request.Input), "## Finding 1 (high)")
-					assert.NotContains(t, string(request.Input), "## Finding 3 (low)")
-					assert.Contains(t, string(request.Input), "test reproduced data loss")
-					assert.Contains(t, string(request.Input), "Data is lost")
-				}
-				if phase == 3 {
-					assert.Contains(t, string(request.Input), "Users lose their files.")
-				}
-				if mode == "first failure" && phase == 2 || mode == "second failure" && phase == 3 {
+				if mode == "second failure" && phase == 3 {
 					http.Error(w, "synthetic rewrite failure", http.StatusBadRequest)
 					return
 				}
@@ -122,21 +111,8 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 				final := `{"verdicts":[{"finding":1,"keep":false,"evidence":"go build succeeded","reason":"Build claim refuted"},{"finding":2,"keep":true,"evidence":"test reproduced data loss","reason":"Data is lost"}]}`
 				if phase == 2 {
 					final = `{"findings":[{"finding":2,"problem":"Users lose their files.","fix":"Preserve data in saveFile."}]}`
-					switch mode {
-					case "missing ID":
-						final = `{"findings":[]}`
-					case "duplicate ID":
-						final = `{"findings":[{"finding":2,"problem":"one","fix":"fix"},{"finding":2,"problem":"two","fix":"fix"}]}`
-					case "unknown ID":
-						final = `{"findings":[{"finding":1,"problem":"wrong","fix":"fix"}]}`
-					case "empty problem":
-						final = `{"findings":[{"finding":2,"problem":" ","fix":"fix"}]}`
-					}
 				} else if phase == 3 {
 					final = `{"findings":[{"finding":2,"fix":"Keep the saved files. **Where:** ` + "`saveFile`" + `"}]}`
-					if mode == "empty fix" {
-						final = `{"findings":[{"finding":2,"fix":" "}]}`
-					}
 				}
 
 				w.Header().Set("Content-Type", "text/event-stream")
@@ -210,15 +186,15 @@ while [ "$#" -gt 0 ]; do
     shift
 done
 if [ ! -f rewrite-prompts.txt ]; then
-    printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"{\"findings\":[{\"finding\":1,\"problem\":\"Users lose saved files.\",\"fix\":\"Preserve files in saveFile.\"}]}"}}'
+    printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"{\"findings\":[{\"finding\":2,\"problem\":\"Users lose saved files.\",\"fix\":\"Preserve files in saveFile.\"}]}"}}'
 else
-    printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"{\"findings\":[{\"finding\":1,\"fix\":\"Keep saved files. **Where:** saveFile\"}]}"}}'
+    printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"{\"findings\":[{\"finding\":2,\"fix\":\"Keep saved files. **Where:** saveFile\"}]}"}}'
 fi
 cat >> rewrite-prompts.txt
 `
 	require.NoError(t, os.WriteFile(command, []byte(fakeCodex), 0o700))
 	sha := repo.HeadSHA()
-	job := &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha, MinSeverity: "high"}
+	job := &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha, MinSeverity: "medium"}
 	run, err := (&WorkerPool{}).prepareCICheck(t.Context(), job, command, nil, io.Discard)
 	require.NoError(t, err)
 	t.Cleanup(run.cleanup)
@@ -249,10 +225,11 @@ git -C "$1" config core.fsmonitor "$1/fsmonitor-probe"
 	require.NoError(t, err, "%s", output)
 
 	cfg := config.DefaultConfig()
+	// Keep the old snapshot path oversized so reintroducing it triggers the host-Git regression.
 	cfg.DefaultMaxPromptSize = 1
 	wp := &WorkerPool{cfgGetter: NewStaticConfig(cfg)}
-	doc := structuredreview.Document{Findings: []structuredreview.Finding{{Severity: "high", Problem: "Saved files disappear.", Fix: "Preserve files."}}}
-	checked, notes, err := applyCICheck(doc, jsontext.Value(`{"verdicts":[{"finding":1,"keep":true,"evidence":"Reproduced data loss.","reason":"Saved files disappear."}]}`), io.Discard)
+	doc := structuredreview.Document{Findings: []structuredreview.Finding{{Severity: "high", Problem: "build claim", Fix: "fix"}, {Severity: "medium", Location: "save.go:4", Problem: "data loss", Fix: "fix"}, {Severity: "low", Problem: "minor issue", Fix: "minor fix"}}}
+	checked, notes, err := applyCICheck(doc, jsontext.Value(`{"verdicts":[{"finding":1,"keep":false,"evidence":"go build succeeded","reason":"Build claim refuted"},{"finding":2,"keep":true,"evidence":"test reproduced data loss","reason":"Data is lost"}]}`), io.Discard)
 	require.NoError(t, err)
 	a := agent.NewCodexAgent(run.Command).WithSandbox(&agent.CodexSandbox{Job: run.Job, Upstream: server.URL})
 	description := "Complete rewrite context."
@@ -262,7 +239,11 @@ git -C "$1" config core.fsmonitor "$1/fsmonitor-probe"
 	prompts, err := os.ReadFile(filepath.Join(run.Repo, "rewrite-prompts.txt"))
 	require.NoError(t, err)
 	assert.Contains(t, string(prompts), description)
-	assert.Contains(t, string(prompts), "Saved files disappear.")
+	assert.Contains(t, string(prompts), "## Finding 2 (medium)\n\n- `save.go:4`: data loss\n\n  **Fix:** fix")
+	assert.NotContains(t, string(prompts), "## Finding 1 (high)")
+	assert.NotContains(t, string(prompts), "## Finding 3 (low)")
+	assert.Contains(t, string(prompts), "test reproduced data loss")
+	assert.Contains(t, string(prompts), "Data is lost")
 	assert.Contains(t, string(prompts), "Users lose saved files.")
 	assert.Equal(t, "Keep saved files. **Where:** saveFile", got.Findings[0].Fix)
 }
