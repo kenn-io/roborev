@@ -780,6 +780,22 @@ Missing or duplicate verdicts keep the finding. The job log records the
 verdicts. If every finding drops, the stored review says "No issues found." A
 checker failure or timeout posts the original review unchanged.
 
+## Rewriting checked findings
+
+Set `[ci] rewrite = true` alongside `check = true` to post checked findings in
+plain words. Rewrite is off by default. A repository can override it in its
+`.roborev.toml` on the default branch. Enabling rewrite alone leaves checking
+disabled.
+
+After checking, two additional Codex calls use the checker model and reasoning
+in a fresh clone of the committed PR head. The sandbox grants read-only access
+to this clone, outside its writable directory. The first explains the
+problem for the PR author. The second separates the fix sentence from the code
+names listed after **Where:** on the same line. Only kept findings at the
+publication severity threshold are rewritten. Both calls receive the stored
+finding text and escaped PR title and body as context, without checker output.
+Either rewrite failing preserves the checked text, including checker drops.
+
 ## PR Throttling
 
 When contributors push frequently to the same PR, the poller can generate
@@ -919,6 +935,7 @@ set, it takes priority over the matrix fields for that repo.
 | `upsert_comments` | bool | global `upsert_comments` | Override global comment upsert setting for this repo |
 | `include_costs` | bool | global `include_costs` | Include token cost estimates in PR comment footers for this repo |
 | `check` | bool | global `check` | Try synthesized findings before posting and keep those that hold up |
+| `rewrite` | bool | global `rewrite` | Rewrite checked findings in plain words; requires `check` |
 
 ## CI Options Reference
 
@@ -949,6 +966,7 @@ set, it takes priority over the matrix fields for that repo.
 | `synthesis_backup_agent` | string | | Backup agent for implicit matrix synthesis when the primary fails |
 | `synthesis_model` | string | | Model override for implicit matrix synthesis |
 | `check` | bool | `false` | Try synthesized findings before posting |
+| `rewrite` | bool | `false` | Rewrite checked findings in plain words; requires `check` |
 | `check_model` | string | | Model override for the checker. Global only |
 | `check_reasoning` | string | `"standard"` | Reasoning level for the checker. Global only |
 | `upsert_comments` | bool | `false` | Update existing PR comments instead of creating new ones |

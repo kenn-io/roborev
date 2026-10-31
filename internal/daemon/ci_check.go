@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 
 	gitcmd "go.kenn.io/kit/git/cmd"
@@ -26,8 +28,10 @@ import (
 )
 
 type ciCheckConfig struct {
-	Model     string `json:"model,omitempty"`
-	Reasoning string `json:"reasoning,omitempty"`
+	Rewrite     bool   `json:"rewrite,omitzero"`
+	PullRequest string `json:"pull_request,omitempty"`
+	Model       string `json:"model,omitempty"`
+	Reasoning   string `json:"reasoning,omitempty"`
 }
 
 var ciCheckSchema = jsontext.Value(`{"type":"object","additionalProperties":false,"required":["verdicts"],"properties":{"verdicts":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["finding","keep","evidence","reason"],"properties":{"finding":{"type":"integer"},"keep":{"type":"boolean"},"evidence":{"type":"string"},"reason":{"type":"string"}}}}}}`)
@@ -89,8 +93,10 @@ func (wp *WorkerPool) checkSynthesis(ctx context.Context, job *storage.ReviewJob
 		}
 		if checkErr != nil {
 			fmt.Fprintf(outputWriter, "CI checker failed; keeping original review: %v\n", checkErr)
-		} else if len(checked.Findings) < len(doc.Findings) {
-			checked.Verdict = map[bool]string{true: structuredreview.VerdictPass, false: structuredreview.VerdictFail}[reviewpkg.SynthesisVerdict(checked, job.MinSeverity).Passed()]
+		} else if !reflect.DeepEqual(checked.Findings, doc.Findings) {
+			if len(checked.Findings) < len(doc.Findings) {
+				checked.Verdict = map[bool]string{true: structuredreview.VerdictPass, false: structuredreview.VerdictFail}[reviewpkg.SynthesisVerdict(checked, job.MinSeverity).Passed()]
+			}
 			if result, err := synthesisDocumentResult(job, checked); err == nil {
 				result.Agent = res.review.Agent
 				res.review = result
@@ -136,14 +142,51 @@ func (wp *WorkerPool) runCICheck(ctx context.Context, job *storage.ReviewJob, cf
 	if err != nil {
 		return structuredreview.Document{}, fmt.Errorf("run CI checker: %w", err)
 	}
-	return applyCICheck(doc, raw, out)
+	checked, err := applyCICheck(doc, raw, out)
+	if err != nil {
+		return doc, err
+	}
+	if cfg.Rewrite {
+		var repo string
+		var rewriteAgent *agent.CodexAgent
+		phase := 0
+		rewritten, err := rewriteCIFindings(checked, job.MinSeverity, cfg.PullRequest, func(text string, schema jsontext.Value) (jsontext.Value, error) {
+			// Prepare only when rewriteCIFindings selects eligible findings.
+			if phase == 0 {
+				root := filepath.Dir(run.Job.WorkDir)
+				rewriteJob := run.Job
+				rewriteJob.WorkDir = filepath.Join(root, "rewrite")
+				rewriteJob.Env = append(slices.Clone(run.Job.Env), "TMPDIR="+rewriteJob.WorkDir, "GOCACHE="+filepath.Join(rewriteJob.WorkDir, "gocache"))
+				var err error
+				repo, _, err = cloneCICheckRepo(ctx, job.RepoPath, run.checkout, filepath.Join(root, "rewrite-source"))
+				if err != nil {
+					return nil, err
+				}
+				if err := os.Mkdir(rewriteJob.WorkDir, 0o700); err != nil {
+					return nil, err
+				}
+				rewriteJob.ReadPaths = append(slices.Clone(run.Job.ReadPaths), repo)
+				rewriteAgent = a.WithSandbox(&agent.CodexSandbox{Job: rewriteJob, Upstream: wp.ciCheckUpstream})
+			}
+			phase++
+			fmt.Fprintf(out, "CI rewrite phase %d\n", phase)
+			return rewriteAgent.ReviewWithSchema(ctx, repo, job.GitRef, text, schema, out)
+		})
+		if err != nil {
+			fmt.Fprintf(out, "CI rewrite failed; keeping checked review: %v\n", err)
+		} else {
+			checked = rewritten
+		}
+	}
+	return checked, nil
 }
 
 type ciCheckRun struct {
-	Command string
-	Repo    string
-	Job     sandbox.Job
-	cleanup func()
+	Command  string
+	Repo     string
+	Job      sandbox.Job
+	checkout string
+	cleanup  func()
 }
 
 // prepareCICheck checks out the committed input before warming can update metadata.
@@ -157,6 +200,7 @@ func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob
 	if err != nil {
 		return
 	}
+	run.checkout = checkout
 	run.cleanup = ciCheckCleanup(checkout, closeCheckout)
 	defer func() {
 		if err != nil {

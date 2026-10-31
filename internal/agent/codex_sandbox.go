@@ -42,8 +42,19 @@ func (s *CodexSandbox) prepare(repoPath string) (sandbox.Job, func(), error) {
 		return job, nil, fmt.Errorf("resolve sandbox repo: %w", err)
 	}
 	rel, err := filepath.Rel(workDir, repo)
-	if err != nil || !filepath.IsLocal(rel) {
-		return job, nil, fmt.Errorf("sandbox repo must be inside job work dir")
+	allowed := err == nil && filepath.IsLocal(rel)
+	for _, path := range job.ReadPaths {
+		readPath, err := sandbox.ResolvePath(path)
+		if err != nil {
+			return job, nil, fmt.Errorf("resolve sandbox read path: %w", err)
+		}
+		rel, err := filepath.Rel(readPath, repo)
+		if err == nil && filepath.IsLocal(rel) {
+			allowed = true
+		}
+	}
+	if !allowed {
+		return job, nil, fmt.Errorf("sandbox repo must be inside job work dir or a read path")
 	}
 	job.WorkDir = workDir
 	if _, err := os.Stat("/etc/codex"); err == nil {
