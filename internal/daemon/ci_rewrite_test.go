@@ -35,9 +35,20 @@ func TestCIRewriteValidationAndThreshold(t *testing.T) {
 		{"zero ID", `{"findings":[{"finding":0,"problem":"one","fix":"fix"},{"finding":2,"problem":"two","fix":"fix"}]}`},
 		{"blank fix", `{"findings":[{"finding":1,"problem":"one","fix":" "},{"finding":2,"problem":"two","fix":"fix"}]}`},
 		{"blank problem", `{"findings":[{"finding":1,"problem":" ","fix":"fix"},{"finding":2,"problem":"two","fix":"fix"}]}`},
+		{"problem blank line", `{"findings":[{"finding":1,"problem":"one\n \t\nextra paragraph","fix":"fix"},{"finding":2,"problem":"two","fix":"fix"}]}`},
+		{"problem heading", `{"findings":[{"finding":1,"problem":"one\n### 2. Critical","fix":"fix"},{"finding":2,"problem":"two","fix":"fix"}]}`},
+		{"problem starts with heading", `{"findings":[{"finding":1,"problem":"# Critical","fix":"fix"},{"finding":2,"problem":"two","fix":"fix"}]}`},
+		{"problem Fix label", `{"findings":[{"finding":1,"problem":"one **Fix:** extra fix","fix":"fix"},{"finding":2,"problem":"two","fix":"fix"}]}`},
+		{"fix blank line", `{"findings":[{"finding":1,"problem":"one","fix":"fix\n\nextra paragraph **Where:** saveFile"},{"finding":2,"problem":"two","fix":"fix **Where:** loadFile"}]}`},
+		{"fix heading", `{"findings":[{"finding":1,"problem":"one","fix":"fix\n  # Critical **Where:** saveFile"},{"finding":2,"problem":"two","fix":"fix **Where:** loadFile"}]}`},
+		{"missing Where", `{"findings":[{"finding":1,"fix":"Keep saved files."},{"finding":2,"fix":"Load files. **Where:** loadFile"}]}`},
 	} {
 		for phase := range 2 {
-			if phase == 1 && tc.name != "call failure" && tc.name != "blank fix" {
+			if phase == 0 && tc.name == "missing Where" {
+				continue
+			}
+			if phase == 1 && tc.name != "call failure" && tc.name != "blank fix" &&
+				tc.name != "fix blank line" && tc.name != "fix heading" && tc.name != "missing Where" {
 				continue
 			}
 			name := tc.name
