@@ -134,14 +134,14 @@ global: running jobs continue, but workers do not claim new queued jobs until
 the queue is resumed. The same state is controlled from the CLI with:
 
 ```bash
-roborev pause
-roborev unpause
+roborev daemon pause
+roborev daemon resume
 ```
 
 When paused, the TUI shows a persistent `[PAUSED]` marker in the title so the
 state remains visible even with filters or compact mode enabled.
-`roborev status` also reports the paused state, and `roborev status --json`
-includes a `queue_paused` field.
+`roborev daemon status` also reports the paused state, and
+`roborev daemon status --json` includes a `queue_paused` field.
 
 ## Log View
 
@@ -174,7 +174,8 @@ The log view features:
     prefix for visual grouping.
 
 Logs are stored in `~/.roborev/logs/jobs/` and can also be viewed from the CLI
-with `roborev log <job-id>`. Use `roborev log clean` to remove old log files.
+with `roborev job log <job-id>`. Use `roborev job log clean` to remove old log
+files.
 
 ## Filtering
 
@@ -306,7 +307,7 @@ Until every member reports cost, the value is a lower-bound estimate.
 
 The queue status line also shows approximate aggregate cost for the active
 filter scope when the scope contains jobs where an agent ran. This is the same
-lower-bound coverage model as `roborev cost`: if only some eligible jobs
+lower-bound coverage model as `roborev report cost`: if only some eligible jobs
 reported cost, the status line includes the priced-job coverage.
 
 ## Mouse Interactions

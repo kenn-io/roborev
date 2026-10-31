@@ -993,8 +993,8 @@ func TestFixSkillsUseHeredocForCommentText(t *testing.T) {
 			assert.Contains(t, content, "never\nby interpolating dynamic text directly into a shell string")
 			assert.NotContains(t, content, `"<summary of changes>"`)
 			assert.NotContains(t, content, "Escape quotes and special characters in the bash command")
-			assert.Equal(t, 0, strings.Count(content, `roborev comment --from-skill --commenter roborev-fix --job 1019 "`))
-			assert.Equal(t, 0, strings.Count(content, `roborev comment --from-skill --commenter roborev-fix --job 1021 "`))
+			assert.Equal(t, 0, strings.Count(content, `roborev job comment --from-skill --commenter roborev-fix --job 1019 "`))
+			assert.Equal(t, 0, strings.Count(content, `roborev job comment --from-skill --commenter roborev-fix --job 1021 "`))
 		})
 	}
 }
@@ -1476,12 +1476,12 @@ func TestBundledSkillCommandsCarryFromSkill(t *testing.T) {
 			total := 0
 			for _, skill := range skills {
 				for _, command := range fencedRoborevCommands(string(skill.Content)) {
-					if command[0] == "agent-hook" {
+					if command[0] == "agent-hook" || (len(command) >= 3 && command[0] == "agent" && command[1] == "hook" && command[2] == "fix-done") {
 						continue
 					}
 					total++
 					require.GreaterOrEqual(t, len(command), 2, "%s: roborev %s", skill.DirName, command[0])
-					assert.Equal(t, "--from-skill", command[1], "%s: roborev %s", skill.DirName, strings.Join(command, " "))
+					assert.Contains(t, command, "--from-skill", "%s: roborev %s", skill.DirName, strings.Join(command, " "))
 				}
 			}
 			assert.NotZero(t, total)

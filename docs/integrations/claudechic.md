@@ -22,7 +22,7 @@ pip install claudechic        # alternative
 PATH. To use the `/roborev-fix` skill, install roborev's agent skills first:
 
 ```bash
-roborev skills install
+roborev agent skills install
 ```
 
 ## Review Sidebar
@@ -70,7 +70,7 @@ The entire loop happens without switching windows or terminals.
 ## See Also
 
 - [Agent Skills](/docs/guides/agent-skills/): Skills available to coding agents
-    including roborev skills
+    including roborev agent skills
 - [Responding to Reviews](/docs/guides/responding-to-reviews/): How to address
     and comment on review findings
 - [Auto-Fix with Refine](/docs/guides/auto-fixing/): Automated fix loops using

@@ -20,7 +20,7 @@ When the user invokes `/roborev-design-review <path-or-job-id>`:
 
 1. **Locate design documents**:
    - File path: read the file directly
-   - Job ID: fetch with `roborev show --job <id>`
+   - Job ID: fetch with `roborev job show --job <id>`
    - No argument: scan `docs/design/` for the most recent design doc
 
 2. **Review the PRD** for:

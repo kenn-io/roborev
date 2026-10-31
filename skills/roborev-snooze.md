@@ -16,10 +16,10 @@ the model must not select it automatically.
 Run the matching command:
 
 ```bash
-roborev snooze on                   # defaults to eight hours
-roborev snooze on --duration 2h     # custom duration
-roborev snooze off                  # resume immediately
+roborev agent hook snooze on                   # defaults to eight hours
+roborev agent hook snooze on --duration 2h     # custom duration
+roborev agent hook snooze off                  # resume immediately
 ```
 
-Do not use `roborev pause`; that pauses review processing, while snooze affects
+Do not use `roborev daemon pause`; that pauses review processing, while snooze affects
 only Agent Hook reminders.

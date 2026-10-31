@@ -4,8 +4,8 @@ description: Run shell commands automatically when reviews complete or fail
 ---
 
 roborev runs reviews in the background. Without hooks, you find out about
-results by checking the TUI or running `roborev status`. Hooks close that gap --
-they run shell commands automatically when reviews finish, so you can get
+results by checking the TUI or running `roborev daemon status`. Hooks close that
+gap -- they run shell commands automatically when reviews finish, so you can get
 notified, create issues, update dashboards, or trigger downstream workflows
 without polling.
 
@@ -199,8 +199,8 @@ What the `type = "beads"` hook does for each event:
 | `review.completed` | `P` (pass) | No action |
 
 The hook runs in the repo's working directory so `bd` finds the correct
-`.beads/` database. Issue titles include the `roborev show` command so you can
-jump straight to the full review.
+`.beads/` database. Issue titles include the compatible `roborev show` spelling
+of `roborev job show` so you can jump straight to the full review.
 
 ## Built-in: Kata Integration
 
@@ -223,7 +223,7 @@ What the `type = "kata"` hook does for each event:
 | Event | Verdict | Action |
 |-------|---------|--------|
 | `review.failed` | n/a | Creates a priority-1 Kata issue for the failed review job |
-| `review.completed` | `F` (fail) | Creates a priority-2 Kata issue for the review findings, including `roborev show` and `roborev fix` commands |
+| `review.completed` | `F` (fail) | Creates a priority-2 Kata issue for the review findings, including compatible `roborev show` and `roborev fix` commands |
 | `review.completed` | `P` (pass) | No action |
 
 The Kata hook runs in the repo's working directory and uses the repo's committed
@@ -275,11 +275,11 @@ write your own beads command using template variables:
 ```toml
 [[hooks]]
 event = "review.failed"
-command = "bd create 'Agent error on {sha}: run roborev show {job_id}' -p 1"
+command = "bd create 'Agent error on {sha}: run roborev job show {job_id}' -p 1"
 
 [[hooks]]
 event = "review.completed"
-command = "test {verdict} = F && bd create 'Review findings on {sha}: roborev show {job_id}' -p 3"
+command = "test {verdict} = F && bd create 'Review findings on {sha}: roborev job show {job_id}' -p 3"
 ```
 
 ## Examples
@@ -310,7 +310,7 @@ environment:
 event = "review.failed"
 command = """curl -sf -X POST \
   -H 'Content-Type: application/json' \
-  -d '{"text":"roborev: review failed for {repo_name} ({sha}). Run `roborev show {job_id}` for details."}' \
+  -d '{"text":"roborev: review failed for {repo_name} ({sha}). Run `roborev job show {job_id}` for details."}' \
   $SLACK_WEBHOOK_URL"""
 ```
 
@@ -321,14 +321,14 @@ For both failures and findings, use two hooks:
 event = "review.completed"
 command = """test {verdict} = F && curl -sf -X POST \
   -H 'Content-Type: application/json' \
-  -d '{"text":"roborev: review findings in {repo_name} ({sha}). Run `roborev show {job_id}`."}' \
+  -d '{"text":"roborev: review findings in {repo_name} ({sha}). Run `roborev job show {job_id}`."}' \
   $SLACK_WEBHOOK_URL"""
 
 [[hooks]]
 event = "review.failed"
 command = """curl -sf -X POST \
   -H 'Content-Type: application/json' \
-  -d '{"text":"roborev: review failed for {repo_name} ({sha}). Run `roborev show {job_id}`."}' \
+  -d '{"text":"roborev: review failed for {repo_name} ({sha}). Run `roborev job show {job_id}`."}' \
   $SLACK_WEBHOOK_URL"""
 ```
 
@@ -339,7 +339,7 @@ Create a GitHub issue when a review finds problems. Requires the `gh` CLI:
 ```toml
 [[hooks]]
 event = "review.failed"
-command = "gh issue create --title 'roborev: review failed for {sha}' --body 'Review job {job_id} failed. Run `roborev show {job_id}` for details.' --label bug"
+command = "gh issue create --title 'roborev: review failed for {sha}' --body 'Review job {job_id} failed. Run `roborev job show {job_id}` for details.' --label bug"
 ```
 
 ### Event Logging
@@ -374,7 +374,7 @@ command = "~/.roborev/hooks/on-review.sh {job_id} {verdict} {sha}"
 job_id=$1 verdict=$2 sha=$3
 
 if [ "$verdict" = "F" ]; then
-    roborev show --job "$job_id" >> ~/reviews/findings.log
+    roborev job show --job "$job_id" >> ~/reviews/findings.log
 fi
 ```
 
@@ -451,5 +451,5 @@ If a hook isn't firing, check:
 1. The config file is valid TOML (`cat ~/.roborev/config.toml | toml-lint` or
     similar)
 1. The command works when run manually from the repo directory
-1. The daemon has reloaded the config (check `roborev status` for the config
-    reload counter)
+1. The daemon has reloaded the config (check `roborev daemon status` for the
+    config reload counter)

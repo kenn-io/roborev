@@ -58,7 +58,7 @@ Run these read-only checks from the repository root:
 
 ```bash
 roborev quickstart --json
-roborev status
+roborev daemon status
 ```
 
 `roborev quickstart --json` reports whether the daemon is running, the git hook
@@ -102,8 +102,8 @@ Then run, with the chosen flags:
 roborev init
 ```
 
-Verify with `roborev status`. The daemon should be running and the repository
-should be listed.
+Verify with `roborev daemon status`. The daemon should be running and the
+repository should be listed.
 
 ### Step 4: Install the agent skills
 
@@ -122,15 +122,15 @@ Skills install into each agent's user configuration directory, such as
 Ask for approval, then run:
 
 ```bash
-roborev skills install
-roborev skills
+roborev agent skills install
+roborev agent skills
 ```
 
 The second command shows per-agent status. Every installed agent should show
 `installed`.
 
 If the user prefers MCP tools over CLI calls inside skills, use
-`roborev skills install --mcp` and see
+`roborev agent skills install --mcp` and see
 <https://roborev.io/docs/integrations/mcp.md>. The CLI mode is the default and
 works without further setup.
 
@@ -179,7 +179,7 @@ user whether to install it. Do not install it by default.
 
 **What it does:**
 
-- `roborev agent-hook install` adds a hook command to each detected coding
+- `roborev agent hook install` adds a hook command to each detected coding
     agent's user-level config (for example, `~/.claude/settings.json` or the
     Codex hooks config). It supports Claude Code, Codex, Copilot CLI, Cursor,
     Factory Droid, Gemini CLI, Hermes, Qwen, Grok Build, and ZCode.
@@ -224,15 +224,16 @@ user whether to install it. Do not install it by default.
     roborev, but it applies to every registered repository and every session of
     each hooked agent.
 - **Removal is manual.** There is no uninstall command. To remove the hook, edit
-    the agent's hook config and delete the `roborev agent-hook run` entry.
+    the agent's hook config and delete the `roborev agent hook run` entry.
 - **Coverage is uneven.** Cursor receives the events but cannot display the
     instruction, so the hook has no visible effect there. Claude Desktop and
     other apps without harness hooks are not supported.
 
 **Controls the user keeps:**
 
-- `roborev snooze` silences reminders for the current worktree and branch (eight
-    hours by default; `roborev snooze off` resumes). Reviews keep running.
+- `roborev agent hook snooze` silences reminders for the current worktree and
+    branch (eight hours by default; `roborev agent hook snooze off` resumes).
+    Reviews keep running.
 
 - Thresholds in `~/.roborev/config.toml` control how often it fires. Setting a
     threshold to `0` disables that trigger:
@@ -250,7 +251,7 @@ user whether to install it. Do not install it by default.
 If the user says yes, preview the changes first and show them the output:
 
 ```bash
-roborev agent-hook install --dry-run
+roborev agent hook install --dry-run
 ```
 
 Detection installs for every agent it finds. If the user wants only some agents,
@@ -297,6 +298,6 @@ Finish with a short summary:
     installed but guidelines are missing, say plainly that the hook will not
     fire in this repository.
 - Whether the Agent Hook is installed, and how to snooze or remove it if so.
-- How to see reviews: `roborev tui` in the terminal, or `roborev show HEAD` for
-    the latest commit.
+- How to see reviews: `roborev tui` in the terminal, or `roborev job show HEAD`
+    for the latest commit.
 - How to act on them: `/roborev-fix` (Codex: `$roborev-fix`) for open findings.

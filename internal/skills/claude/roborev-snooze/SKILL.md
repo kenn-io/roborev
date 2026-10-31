@@ -39,9 +39,9 @@ This skill requires you to execute the matching command and report its result.
 Defer to project-level CLAUDE.md instructions when they conflict with these
 steps.
 
-- With no action, or with `on`, run `roborev snooze --from-skill on`. If the user supplied a
+- With no action, or with `on`, run `roborev agent hook snooze --from-skill on`. If the user supplied a
   duration, add `--duration <duration>`.
-- With `off`, run `roborev snooze --from-skill off`.
+- With `off`, run `roborev agent hook snooze --from-skill off`.
 - Do not pause the review queue, disable post-commit hooks, or change review
   configuration. Snooze affects only Agent Hook reminders in the current
   worktree and branch.
@@ -51,7 +51,7 @@ steps.
 Examples:
 
 ```bash
-roborev snooze --from-skill on
-roborev snooze --from-skill on --duration 2h
-roborev snooze --from-skill off
+roborev agent hook snooze --from-skill on
+roborev agent hook snooze --from-skill on --duration 2h
+roborev agent hook snooze --from-skill off
 ```

@@ -22,10 +22,10 @@ common user tool directories to its `PATH` when it starts, if they exist:
 - `/usr/local/bin`
 - `~/.npm-global/bin`, `~/.bun/bin`, `~/.volta/bin`, and `~/.cargo/bin`
 
-An agent installed elsewhere can still be missing. `roborev status` then shows
-the `agents` health component as unhealthy, and doctor lists the agent under
-`agents.daemon_path`. Run `roborev daemon restart` from a shell where the agent
-works, or set the agent's `*_cmd` config key to an absolute path.
+An agent installed elsewhere can still be missing. `roborev daemon status` then
+shows the `agents` health component as unhealthy, and doctor lists the agent
+under `agents.daemon_path`. Run `roborev daemon restart` from a shell where the
+agent works, or set the agent's `*_cmd` config key to an absolute path.
 
 See [Diagnosing Setup](/docs/commands/#diagnosing-setup) for the full list of
 checks.
@@ -100,7 +100,7 @@ A healthy hook contains a `roborev enqueue` call. You should see something like:
 roborev enqueue --quiet 2>/dev/null
 ```
 
-If the file is missing, run `roborev install-hook` to create it.
+If the file is missing, run `roborev hook install` to create it.
 
 ### Check the daemon is running
 
@@ -108,7 +108,7 @@ The hook enqueues commits, but the daemon must be running to process the queue.
 Check with:
 
 ```bash
-roborev status
+roborev daemon status
 ```
 
 If the daemon is stopped, start it:
@@ -201,7 +201,7 @@ To diagnose, inspect the hook file and look for the `roborev enqueue` call. If
 it's missing or the file looks wrong, reinstall:
 
 ```bash
-roborev install-hook --force
+roborev hook install --force
 ```
 
 If your repo uses a hook manager, you may need to add the `roborev enqueue` call
@@ -216,7 +216,7 @@ If the above steps don't resolve the issue, reset everything:
 **Replace just the hook** with a known-good version:
 
 ```bash
-roborev install-hook --force
+roborev hook install --force
 ```
 
 This overwrites the existing post-commit hook entirely.
@@ -236,8 +236,9 @@ sure what's wrong and want a clean slate.
 The agent hook (mid-session fix nudges) relies on harness hooks (`PreToolUse` /
 `PostToolUse` / `Stop`) that the Claude Code CLI and Codex expose. Claude
 Desktop does not expose these hooks, so the agent-hook layer does not run there.
-Post-commit reviews still work in any environment - check `roborev status` and
-`roborev show HEAD` to confirm reviews are running.
+Post-commit reviews still work in any environment - check
+`roborev daemon status` and `roborev job show HEAD` to confirm reviews are
+running.
 
 ## See Also
 
