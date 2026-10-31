@@ -66,10 +66,24 @@ func TestSandboxCommandRejectsReadPaths(t *testing.T) {
 	}
 }
 
-func TestSandboxSelfCheckRejectsDirectory(t *testing.T) {
+func TestSandboxSelfCheckRejectsInvalidInput(t *testing.T) {
 	hostHome := filepath.Join(t.TempDir(), "codex")
 	require.NoError(t, os.Mkdir(hostHome, 0o700))
-	job := Job{DenyReadPaths: []string{hostHome}}
-	err := job.check(t.Context(), nil, nil, nil)
-	require.ErrorContains(t, err, "deny-read path must be a file")
+	runtimeDir := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
+	for _, tc := range []struct {
+		name string
+		job  Job
+		env  []string
+		want string
+	}{
+		{"directory", Job{DenyReadPaths: []string{hostHome}}, nil, "deny-read path must be a file"},
+		{"missing", Job{}, nil, "sandbox self-check failed: XDG_RUNTIME_DIR"},
+		{"empty-last-value", Job{}, []string{"XDG_RUNTIME_DIR=" + runtimeDir, "XDG_RUNTIME_DIR="}, "sandbox self-check failed: XDG_RUNTIME_DIR"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.job.check(t.Context(), nil, tc.env, nil)
+			require.ErrorContains(t, err, tc.want)
+		})
+	}
 }

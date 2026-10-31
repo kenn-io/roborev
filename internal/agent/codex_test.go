@@ -1241,7 +1241,7 @@ func TestCodexSandboxSymlinkLogin(t *testing.T) {
 	assert.Equal(t, "requested-login\n", string(out))
 }
 
-func TestCodexSandboxWrapperFailure(t *testing.T) {
+func TestCodexSandboxCleansHomeWhenJobCommandFails(t *testing.T) {
 	dir := t.TempDir()
 	repo := filepath.Join(dir, "repo")
 	require.NoError(t, os.Mkdir(repo, 0o700))

@@ -116,7 +116,7 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	job := sandbox.Job{
 		WorkDir: repo, ReadPaths: []string{gitDir, filepath.Dir(filepath.Dir(codex))},
 		MemoryMax: 8 << 30,
-		Env:       []string{"PATH=/usr/bin:/bin", "HOME=" + secrets, "TMPDIR=" + tmp},
+		Env:       []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir(), "TMPDIR=" + tmp},
 	}
 	a := NewCodexAgent(codex).WithSandbox(&CodexSandbox{Job: job, Upstream: server.URL})
 	a.IgnoreUserConfig = true

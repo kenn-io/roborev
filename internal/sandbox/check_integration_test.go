@@ -82,8 +82,6 @@ func TestSandboxSelfCheck(t *testing.T) {
 	}{
 		{"parent-differs", t.TempDir(), []string{"XDG_RUNTIME_DIR=" + runtimeDir}, "dbus-connect"},
 		{"last-value", "", []string{"XDG_RUNTIME_DIR=" + t.TempDir(), "XDG_RUNTIME_DIR=" + runtimeDir}, "dbus-connect"},
-		{"missing", runtimeDir, nil, "XDG_RUNTIME_DIR"},
-		{"empty-last-value", runtimeDir, []string{"XDG_RUNTIME_DIR=" + runtimeDir, "XDG_RUNTIME_DIR="}, "XDG_RUNTIME_DIR"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("XDG_RUNTIME_DIR", tc.parent)
@@ -95,6 +93,7 @@ func TestSandboxSelfCheck(t *testing.T) {
 			require.ErrorContains(t, err, "sandbox self-check failed")
 			assert.Contains(t, err.Error(), tc.want)
 			if tc.name == "parent-differs" {
+				// The unwrapped probe must also detect these four isolation failures.
 				for _, name := range []string{"canary-read", "loopback-connect", "environment-canary", "proxy-upstream"} {
 					assert.Contains(t, err.Error(), name)
 				}
