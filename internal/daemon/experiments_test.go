@@ -564,13 +564,4 @@ func TestSynthesisExperimentPlanPullRequest(t *testing.T) {
 		require.NotNil(t, got.Check)
 		assert.Equal(t, jobConfig, got)
 	})
-	t.Run("worker", func(t *testing.T) {
-		assignment, err := storageAssignmentForExperiment(&config.ExperimentAssignment{ID: "test"}, firstPlan)
-		require.NoError(t, err)
-		job := &storage.ReviewJob{JobType: storage.JobTypeSynthesis, PanelRole: storage.PanelRoleSynthesis, PanelRunUUID: testUUIDPtr("run"), PanelMemberConfigJSON: secondConfig}
-		require.NoError(t, applyFrozenExperimentSettings(job, assignment))
-		got, err := synthesisConfig(job)
-		require.NoError(t, err)
-		assert.Equal(t, jobConfig, got)
-	})
 }

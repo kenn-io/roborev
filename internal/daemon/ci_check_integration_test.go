@@ -206,7 +206,7 @@ echo 'OK rewrite read-only'
 	}))
 	defer server.Close()
 	sha := testutil.GetHeadSHA(t, repoRoot)
-	doc := structuredreview.Document{SchemaVersion: 3, SourceLabels: []string{"test"}, Summary: "The build claim and data loss need fixes", Verdict: "fail", Findings: []structuredreview.Finding{{Severity: "high", Problem: "build claim", Fix: "fix", Sources: []int{1}}, {Severity: "medium", Kind: "defect", Confidence: .9, Location: "save.go:4", Problem: "data loss", Fix: "fix", Sources: []int{1}}, {Severity: "low", Problem: "minor issue", Fix: "minor fix", Sources: []int{1}}}}
+	doc := structuredreview.Document{SchemaVersion: 3, SourceLabels: []string{"test"}, Summary: "The build claim and data loss need fixes", Verdict: "fail", Findings: []structuredreview.Finding{{Severity: "high", Kind: "defect", Confidence: .9, Problem: "build claim", Fix: "fix", Sources: []int{1}}, {Severity: "medium", Kind: "defect", Confidence: .9, Location: "save.go:4", Problem: "data loss", Fix: "fix", Sources: []int{1}}, {Severity: "low", Kind: "defect", Confidence: .9, Problem: "minor issue", Fix: "minor fix", Sources: []int{1}}}}
 	run, members, _ := enqueuePanelRun(t, tc, "checker-integration", []memberSpec{{name: "one", agent: "test"}})
 	completeMember(t, tc, members[0].ID, "test", "findings")
 	job := releaseAndClaimSynthesis(t, tc, run)

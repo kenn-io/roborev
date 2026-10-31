@@ -1216,6 +1216,23 @@ func TestCodexSandboxRepoContainment(t *testing.T) {
 		require.NoError(t, err)
 		cleanup()
 	}
+	read := t.TempDir()
+	readRepo := filepath.Join(read, "repo")
+	require.NoError(t, os.Mkdir(readRepo, 0o700))
+	for _, tc := range []struct {
+		name     string
+		readPath string
+	}{
+		{name: "read-only repo", readPath: readRepo},
+		{name: "repo under read path", readPath: read},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := CodexSandbox{Job: sandbox.Job{WorkDir: work, ReadPaths: []string{tc.readPath}}}
+			_, cleanup, err := s.prepare(readRepo)
+			require.NoError(t, err)
+			t.Cleanup(cleanup)
+		})
+	}
 }
 
 func TestCodexSandboxSymlinkLogin(t *testing.T) {

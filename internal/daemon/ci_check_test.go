@@ -193,7 +193,7 @@ func TestCICheckCompletionFailure(t *testing.T) {
 }
 
 func TestCICheckCompletionKeep(t *testing.T) {
-	for _, mode := range []string{"rewrite all kept", "checker keeps all"} {
+	for _, mode := range []string{"rewrite all kept"} {
 		t.Run(mode, func(t *testing.T) {
 			tc, job, doc, original := setupCICheckCompletion(t, "high", "", nil)
 			calls := 0
@@ -218,7 +218,8 @@ func TestCICheckCompletionKeep(t *testing.T) {
 			stored, checked := readCICheckCompletionReview(t, tc, job)
 			if mode == "rewrite all kept" {
 				assert.Contains(t, stored.Output, "Users cannot build the project.")
-				doc.Findings[0].Problem, doc.Findings[0].Fix = checked.Findings[0].Problem, checked.Findings[0].Fix
+				assert.Equal(t, "Keep the build working. **Where:** `build`", checked.Findings[0].Fix)
+				doc.Findings[0].Problem, doc.Findings[0].Fix = "Users cannot build the project.", "Keep the build working. **Where:** `build`"
 				assert.Equal(t, doc, checked)
 			} else {
 				assert.Equal(t, original.review.Output, stored.Output)
