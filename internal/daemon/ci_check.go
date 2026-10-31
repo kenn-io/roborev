@@ -24,7 +24,7 @@ import (
 )
 
 type ciCheckConfig struct {
-	Rewrite     bool   `json:"rewrite,omitempty"`
+	Rewrite     bool   `json:"rewrite,omitzero"`
 	Title       string `json:"title,omitempty"`
 	Description string `json:"description,omitempty"`
 	Model       string `json:"model,omitempty"`

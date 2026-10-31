@@ -80,6 +80,7 @@ func TestCICheckSnapshot(t *testing.T) {
 	cfg.CI.CheckReasoning = " HIGH "
 	_, on, err := p.buildPanelOpts(t.Context(), in)
 	require.NoError(t, err)
+	assert.Equal(t, `{"instructions":"merge","check":{"model":"checker-model","reasoning":"high"}}`, on.PanelMemberConfigJSON) //nolint:testifylint // Rewrite off preserves the checker snapshot byte for byte.
 	var snapshot synthesisJobConfig
 	require.NoError(t, json.Unmarshal([]byte(on.PanelMemberConfigJSON), &snapshot))
 	require.NotNil(t, snapshot.Check)
