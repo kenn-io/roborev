@@ -841,48 +841,80 @@ func TestCIPollerPollRepo_UsesPRListAndProcessesEach(t *testing.T) {
 		return []ghPR{
 			{Number: 7, HeadRefOid: "11111111aaaaaaaa", BaseRefName: "main"},
 			{Number: 8, HeadRefOid: "22222222bbbbbbbb", BaseRefName: "main"},
+			{Number: 9, HeadRefOid: "33333333cccccccc", BaseRefName: "main", Draft: true},
 		}, nil
 	}
+	h.Cfg.CI.SkipDrafts = true
 	h.stubProcessPRGit()
+	checks := h.CaptureSkippedChecks()
 
 	require.NoError(t, h.Poller.pollRepo(context.Background(), "acme/api", h.Cfg), "pollRepo")
 
 	assert.True(t, h.hasPanel(t, "acme/api", 7, "11111111aaaaaaaa"), "expected panel for PR 7")
 	assert.True(t, h.hasPanel(t, "acme/api", 8, "22222222bbbbbbbb"), "expected panel for PR 8")
+	assert.False(t, h.hasPanel(t, "acme/api", 9, "33333333cccccccc"), "draft PR 9 is skipped")
+	assert.Equal(t, []capturedSkippedCheck{{
+		Repo: "acme/api", SHA: "33333333cccccccc", Summary: "Review skipped: draft",
+	}}, *checks)
 }
 
 func TestCIPollerProcessPR_SkipsConfiguredLabel(t *testing.T) {
-	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-	h.Cfg.CI.SkipLabels = []string{"  do not review  "}
-	h.Cfg.CI.ReviewTypes = []string{"security"}
-	h.Cfg.CI.Agents = []string{"codex"}
-	h.stubProcessPRGit()
-	statuses := h.CaptureCommitStatuses()
-	skippedChecks := h.CaptureSkippedChecks()
-
-	pr := ghPR{
-		Number:      9,
-		HeadRefOid:  "skipped-head-sha",
-		BaseRefName: "main",
-		Labels:      []string{"Do Not Review"},
+	for _, tc := range []struct {
+		name                              string
+		draft, skipDrafts, backoff, label bool
+	}{
+		{name: "label"},
+		{name: "draft label default", draft: true, label: true},
+		{name: "draft", draft: true, skipDrafts: true},
+		{name: "draft default", draft: true},
+		{name: "draft backoff", draft: true, skipDrafts: true, backoff: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+			h.Cfg.CI.SkipLabels = []string{"  do not review  "}
+			h.Cfg.CI.SkipDrafts = tc.skipDrafts
+			h.Cfg.CI.ReviewTypes = []string{"security"}
+			h.Cfg.CI.Agents = []string{"test"}
+			h.stubProcessPRGit()
+			fetches := 0
+			h.Poller.gitFetchFn = func(context.Context, string, []string) error { fetches++; return nil }
+			statuses := h.CaptureCommitStatuses()
+			checks := h.CaptureSkippedChecks()
+			pr := ghPR{Number: 9, HeadRefOid: "skipped-head-sha", BaseRefName: "main", Draft: tc.draft}
+			reason := "Review skipped: draft"
+			if !tc.draft || tc.label {
+				pr.Labels = []string{"Do Not Review"}
+				reason = "Review skipped: label Do Not Review"
+			}
+			if tc.backoff {
+				_, err := h.DB.ReserveReviewAttempt("acme/api", pr.Number, pr.HeadRefOid, time.Now())
+				require.NoError(t, err)
+				require.NoError(t, h.DB.DeferReviewAttempt("acme/api", pr.Number, pr.HeadRefOid,
+					"transient", "provider unavailable", nil, time.Now().Add(time.Hour), false))
+			}
+			require.NoError(t, h.Poller.processPR(t.Context(), "acme/api", pr, h.Cfg))
+			skip := !tc.draft || tc.skipDrafts || tc.label
+			assert.Equal(!skip, h.hasPanel(t, "acme/api", pr.Number, pr.HeadRefOid))
+			if skip {
+				assert.Zero(fetches, "skip before fetching or preparing agent work")
+				assert.Equal([]capturedStatus{{Repo: "acme/api", SHA: pr.HeadRefOid, State: "success", Desc: reason}}, *statuses)
+				assert.Equal([]capturedSkippedCheck{{Repo: "acme/api", SHA: pr.HeadRefOid, Summary: reason}}, *checks)
+				attempt, err := h.DB.GetReviewAttempt("acme/api", pr.Number, pr.HeadRefOid)
+				require.NoError(t, err)
+				assert.Nil(attempt)
+			} else {
+				assert.Empty(*checks)
+			}
+			pr.Draft = false
+			pr.Labels = nil
+			for range 2 {
+				require.NoError(t, h.Poller.processPR(t.Context(), "acme/api", pr, h.Cfg))
+			}
+			assert.Equal(1, fetches, "ready at the same SHA enqueues exactly once")
+			assert.True(h.hasPanel(t, "acme/api", pr.Number, pr.HeadRefOid))
+		})
 	}
-	err := h.Poller.processPR(context.Background(), "acme/api", pr, h.Cfg)
-	require.NoError(t, err)
-
-	assert.False(t, h.hasPanel(t, "acme/api", 9, "skipped-head-sha"))
-	assert.Equal(t, []capturedStatus{{
-		Repo: "acme/api", SHA: "skipped-head-sha", State: "success",
-		Desc: "Review skipped: label Do Not Review",
-	}}, *statuses)
-	assert.Equal(t, []capturedSkippedCheck{{
-		Repo: "acme/api", SHA: "skipped-head-sha",
-		Summary: "Review skipped: label Do Not Review",
-	}}, *skippedChecks)
-
-	pr.Labels = nil
-	require.NoError(t, h.Poller.processPR(
-		context.Background(), "acme/api", pr, h.Cfg))
-	assert.True(t, h.hasPanel(t, "acme/api", 9, "skipped-head-sha"))
 }
 
 func TestCIPollerProcessPR_AuthorAndBranchFilters(t *testing.T) {
@@ -5402,7 +5434,7 @@ func TestBuildPanelOptsAbortsOnCanceledPrebuild(t *testing.T) {
 func TestRetryAttemptPRCarriesAuthor(t *testing.T) {
 	p := &CIPoller{}
 	p.prPostTargetFn = func(_ context.Context, _ string, _ int) (panelPostTarget, error) {
-		return panelPostTarget{Open: true, HeadSHA: "head000", BaseRefName: "main", AuthorLogin: "alice"}, nil
+		return panelPostTarget{Open: true, HeadSHA: "head000", BaseRefName: "main", AuthorLogin: "alice", Draft: true}, nil
 	}
 
 	pr, ok := p.retryAttemptPR(context.Background(), "acme/api",
@@ -5410,6 +5442,7 @@ func TestRetryAttemptPRCarriesAuthor(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "alice", pr.Author.Login,
 		"direct lookup must reconstruct the PR with its author preserved")
+	assert.True(t, pr.Draft, "direct lookup must preserve draft state for skip decisions")
 }
 
 func TestFormatPanelReviewerStatusLabelsNoVerdict(t *testing.T) {

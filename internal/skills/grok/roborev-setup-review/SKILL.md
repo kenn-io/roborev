@@ -159,6 +159,7 @@ This mapping is for you, not the user. Use only what the conversation needs.
 | The whole branch each time | `post_commit_review = "branch"` |
 | Reviews on request | `[review] default_panel`, or `--type` and `--panel` |
 | Reviews on pull requests | `[ci] panel`; see <https://roborev.io/docs/advanced/subagent-review-panels/#ci-panels> |
+| PR reviews only after a draft is marked ready | Ask whether draft PRs should be skipped. For the daemon poller, global `[ci] skip_drafts = true` in `~/.roborev/config.toml` (default `false`; no repo override). Ready PRs become eligible next poll without a push, under normal throttle, quiet-hours, and dedup rules. Active reviews are not canceled. |
 | Only serious findings fail | `review_min_severity`, plus severity guidance in each rubric |
 | Passing reviews close themselves | `auto_close_passing_reviews = true` |
 | Reviewers that see the task a commit is for, from Kata | `[kata_context]` with `mode = "current"`; commits name their issue, such as `Closes: kata#abc4` |
