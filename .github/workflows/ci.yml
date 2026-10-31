@@ -230,6 +230,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
 
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+        if: runner.os == 'Linux'
 
       - name: Install SQLite headers
         if: runner.os == 'Linux'
