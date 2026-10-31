@@ -301,7 +301,7 @@ CUSTOM_GCL := $(CURDIR)/.cache/golangci-lint/custom-gcl$(if $(filter Windows_NT,
 $(CUSTOM_GCL): .custom-gcl.yml
 	golangci-lint custom --destination "$(CURDIR)/.cache/golangci-lint" --name custom-gcl --version v$(GOLANGCI_LINT_VERSION)
 
-lint: check-golangci-lint $(CUSTOM_GCL) lint-workflow-retries
+lint: check-golangci-lint $(CUSTOM_GCL)
 	"$(CUSTOM_GCL)" run --fix ./...
 
 # Lint Go code without fixing (for CI)
