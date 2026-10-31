@@ -47,11 +47,7 @@ func (wp *WorkerPool) rewriteCIFindings(ctx context.Context, job *storage.Review
 			return checked, fmt.Errorf("finding %d has incomplete checker notes", id)
 		}
 		selected[id] = i
-		encoded, err := json.Marshal(f)
-		if err != nil {
-			return checked, err
-		}
-		fmt.Fprintf(&input, "## Finding %d\n%s\nChecker evidence: %s\nChecker reason: %s\n\n", id, encoded, evidence, reason)
+		fmt.Fprintf(&input, "## Finding %d (%s)\n\n- `%s`: %s\n\n  **Fix:** %s\n\nChecker evidence: %s\nChecker reason: %s\n\n", id, f.Severity, f.Location, f.Problem, f.Fix, evidence, reason)
 	}
 	if len(selected) == 0 {
 		return checked, nil
@@ -129,7 +125,7 @@ const ciRewritePrompt = `You are the final step of a code review. Reviewers alre
 
 Keep each finding's claim, severity, and location exactly. Add no new problems, drop none, and don't judge whether a finding is right or worth fixing.
 
-Return JSON with findings: [{"finding": N, "problem": "text before Fix", "fix": "fix sentence"}]. The problem field contains only the rewritten explanation, without severity, location, or a Fix label. The fix field contains only the sentence, without a Fix label. Preserve the input finding numbers.
+Return JSON with findings: [{"finding": N, "problem": "text before Fix", "fix": "fix sentence"}]. Put every pre-Fix style element in problem, including who is affected, the conditions they must meet, and how often; omit severity, location, and the Fix label. The fix field contains only the sentence, without a Fix label. Preserve the input finding numbers.
 
 ## Style rules
 

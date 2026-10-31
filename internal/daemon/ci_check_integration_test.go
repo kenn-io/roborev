@@ -105,6 +105,10 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 				}
 				if phase == 2 {
 					assert.Contains(t, string(request.Input), "Export user files")
+					assert.Contains(t, string(request.Input), "## Finding 2 (medium)\\n\\n- `save.go:4`: data loss\\n\\n  **Fix:** fix")
+					assert.Contains(t, string(request.Input), "Put every pre-Fix style element in problem")
+					assert.NotContains(t, string(request.Input), "## Finding 1 (high)")
+					assert.NotContains(t, string(request.Input), "## Finding 3 (low)")
 					assert.Contains(t, string(request.Input), "test reproduced data loss")
 					assert.Contains(t, string(request.Input), "Data is lost")
 					assert.Contains(t, string(request.Input), "Do not build the project, run tests, or execute code.")
