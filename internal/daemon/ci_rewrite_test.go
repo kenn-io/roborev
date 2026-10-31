@@ -42,13 +42,18 @@ func TestCIRewriteValidationAndThreshold(t *testing.T) {
 		{"fix blank line", `{"findings":[{"finding":1,"problem":"one","fix":"fix\n\nextra paragraph **Where:** saveFile"},{"finding":2,"problem":"two","fix":"fix **Where:** loadFile"}]}`},
 		{"fix heading", `{"findings":[{"finding":1,"problem":"one","fix":"fix\n  # Critical **Where:** saveFile"},{"finding":2,"problem":"two","fix":"fix **Where:** loadFile"}]}`},
 		{"missing Where", `{"findings":[{"finding":1,"fix":"Keep saved files."},{"finding":2,"fix":"Load files. **Where:** loadFile"}]}`},
+		{"empty Where names", `{"findings":[{"finding":1,"fix":"Keep saved files. **Where:**"},{"finding":2,"fix":"Load files. **Where:** loadFile"}]}`},
+		{"blank Where names", `{"findings":[{"finding":1,"fix":"Keep saved files. **Where:** \t"},{"finding":2,"fix":"Load files. **Where:** loadFile"}]}`},
+		{"empty fix sentence", "{\"findings\":[{\"finding\":1,\"fix\":\"**Where:** `name`\"},{\"finding\":2,\"fix\":\"Load files. **Where:** loadFile\"}]}"},
+		{"blank fix sentence", "{\"findings\":[{\"finding\":1,\"fix\":\" \\t**Where:** `name`\"},{\"finding\":2,\"fix\":\"Load files. **Where:** loadFile\"}]}"},
 	} {
 		for phase := range 2 {
-			if phase == 0 && tc.name == "missing Where" {
+			if phase == 0 && (tc.name == "missing Where" || tc.name == "empty Where names" || tc.name == "blank Where names" || tc.name == "empty fix sentence" || tc.name == "blank fix sentence") {
 				continue
 			}
 			if phase == 1 && tc.name != "call failure" && tc.name != "blank fix" &&
-				tc.name != "fix blank line" && tc.name != "fix heading" && tc.name != "missing Where" {
+				tc.name != "fix blank line" && tc.name != "fix heading" && tc.name != "missing Where" &&
+				tc.name != "empty Where names" && tc.name != "blank Where names" && tc.name != "empty fix sentence" && tc.name != "blank fix sentence" {
 				continue
 			}
 			name := tc.name
