@@ -1,9 +1,13 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -99,7 +103,7 @@ func TestTokenCostReconcilerAggregatesPlanPhaseSessions(t *testing.T) {
 		return &tokens.Usage{CostUSD: costs[sessionID], HasCost: true}, nil
 	}
 
-	resolved, err := tc.Pool.reconcileTokenCostCandidate(context.Background(), *candidate)
+	resolved, err := tc.Pool.reconcileTokenCostCandidate(context.Background(), *candidate, tc.Pool.fetchTokenUsage)
 	require.NoError(t, err)
 	assert.True(t, resolved)
 	assert.ElementsMatch(t, []string{"planner-session", "implementation-session"}, fetchedSessions)
@@ -127,7 +131,7 @@ func TestTokenCostReconcilerPreservesStoredCountsWhenPlanPhaseHasNoCounts(t *tes
 		return &tokens.Usage{InputTokens: 200, OutputTokens: 25, CostUSD: 0.29, HasCost: true}, nil
 	}
 
-	resolved, err := tc.Pool.reconcileTokenCostCandidate(context.Background(), *candidate)
+	resolved, err := tc.Pool.reconcileTokenCostCandidate(context.Background(), *candidate, tc.Pool.fetchTokenUsage)
 	require.NoError(t, err)
 	assert.True(t, resolved)
 	updated, err := tc.DB.GetJobByID(job.ID)
@@ -152,7 +156,7 @@ func TestTokenCostReconcilerDoesNotPriceMissingPlanSession(t *testing.T) {
 		return &tokens.Usage{CostUSD: 0.29, HasCost: true}, nil
 	}
 
-	resolved, err := tc.Pool.reconcileTokenCostCandidate(context.Background(), *candidate)
+	resolved, err := tc.Pool.reconcileTokenCostCandidate(context.Background(), *candidate, tc.Pool.fetchTokenUsage)
 	require.NoError(t, err)
 	assert.False(t, resolved)
 	assert.Zero(t, fetches)
@@ -251,7 +255,7 @@ func TestTokenCostReconcilerPreservesExpectedSessionsFromPlannerOnlyLog(t *testi
 	candidate, err := tc.DB.GetTokenCostCandidate(job.ID)
 	require.NoError(t, err)
 	require.NotNil(t, candidate)
-	resolved, err := tc.Pool.reconcileTokenCostCandidate(context.Background(), *candidate)
+	resolved, err := tc.Pool.reconcileTokenCostCandidate(context.Background(), *candidate, tc.Pool.fetchTokenUsage)
 	require.NoError(t, err)
 	assert.False(t, resolved)
 	assert.Zero(t, fetches)
@@ -471,4 +475,126 @@ func seedTokenCostCandidate(
 		require.True(t, updated)
 	}
 	return job
+}
+
+func TestTokenCostPageTracksMissesAndFallsBackWithoutBatchSupport(t *testing.T) {
+	for _, unsupported := range []bool{false, true} {
+		t.Run(fmt.Sprintf("unsupported=%t", unsupported), func(t *testing.T) {
+			tc := newWorkerTestContext(t, 1)
+			var jobs []*storage.ReviewJob
+			var ids []string
+			for i := range 21 {
+				id := fmt.Sprintf("session-%d", i)
+				ids = append(ids, id)
+				jobs = append(jobs, seedTokenCostCandidate(t, tc, id, `{}`))
+			}
+			var calls [][]string
+			tc.Pool.tokenUsageBatchFetcher = func(_ context.Context, ids []string) (map[string]tokens.SessionUsageResult, error) {
+				calls = append(calls, ids)
+				if unsupported {
+					return nil, tokens.ErrBatchUnsupported
+				}
+				results := make(map[string]tokens.SessionUsageResult, len(ids))
+				for _, id := range ids {
+					results[id] = tokens.SessionUsageResult{Usage: &tokens.Usage{HasCost: true, CostUSD: 0.25}}
+				}
+				return results, nil
+			}
+			var individualCalls []string
+			tc.Pool.tokenUsageFetcher = func(_ context.Context, id string) (*tokens.Usage, error) {
+				individualCalls = append(individualCalls, id)
+				return &tokens.Usage{HasCost: true, CostUSD: 0.25}, nil
+			}
+			misses := make(map[int64]tokenCostMiss)
+			cursor := tc.Pool.reconcileTokenCostPage(context.Background(), 0, misses)
+			require.Equal(t, jobs[19].ID, cursor)
+			assert.Zero(t, tc.Pool.reconcileTokenCostPage(context.Background(), cursor, misses))
+			assert.Equal(t, [][]string{ids[:20], ids[20:]}, calls)
+			if unsupported {
+				assert.Equal(t, ids, individualCalls)
+			} else {
+				assert.Empty(t, individualCalls)
+			}
+			assert.Empty(t, misses)
+			for _, job := range jobs {
+				updated, err := tc.DB.GetJobByID(job.ID)
+				require.NoError(t, err)
+				usage := tokens.ParseJSON(updated.TokenUsage)
+				require.NotNil(t, usage)
+				assert.True(t, usage.HasCost)
+				assert.InDelta(t, 0.25, usage.CostUSD, 1e-9)
+			}
+		})
+	}
+}
+
+func TestTokenCostPageStopsOnCancelOrUnavailable(t *testing.T) {
+	for _, canceled := range []bool{true, false} {
+		t.Run(fmt.Sprintf("canceled=%t", canceled), func(t *testing.T) {
+			tc := newWorkerTestContext(t, 1)
+			tc.Pool.tokenCostPageSize = 1
+			due := seedTokenCostCandidate(t, tc, "due", `{}`)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			tc.Pool.tokenUsageBatchFetcher = func(_ context.Context, ids []string) (map[string]tokens.SessionUsageResult, error) {
+				assert.Equal(t, []string{"due"}, ids)
+				if canceled {
+					cancel()
+					return map[string]tokens.SessionUsageResult{
+						"due": {Usage: &tokens.Usage{HasCost: true, CostUSD: 0.25}},
+					}, nil
+				}
+				return nil, tokens.ErrBatchUnsupported
+			}
+			var individualCalls []string
+			tc.Pool.tokenUsageFetcher = func(_ context.Context, id string) (*tokens.Usage, error) {
+				individualCalls = append(individualCalls, id)
+				return nil, tokens.ErrUsageProviderUnavailable
+			}
+			misses := make(map[int64]tokenCostMiss)
+			assert.Zero(t, tc.Pool.reconcileTokenCostPage(ctx, 0, misses))
+			assert.Empty(t, misses)
+			if canceled {
+				assert.Empty(t, individualCalls)
+			} else {
+				assert.Equal(t, []string{"due"}, individualCalls)
+			}
+			updated, err := tc.DB.GetJobByID(due.ID)
+			require.NoError(t, err)
+			assert.Equal(t, "{}", updated.TokenUsage)
+		})
+	}
+}
+
+func TestTokenCostPageBacksOffBatchFailure(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	first := seedTokenCostCandidate(t, tc, "first", `{}`)
+	second := seedTokenCostCandidate(t, tc, "second", `{}`)
+	var logOutput bytes.Buffer
+	origOutput := log.Writer()
+	log.SetOutput(&logOutput)
+	t.Cleanup(func() { log.SetOutput(origOutput) })
+	var calls [][]string
+	tc.Pool.tokenUsageBatchFetcher = func(_ context.Context, ids []string) (map[string]tokens.SessionUsageResult, error) {
+		calls = append(calls, ids)
+		return nil, fmt.Errorf("archive read failed")
+	}
+	var individualCalls []string
+	tc.Pool.tokenUsageFetcher = func(_ context.Context, id string) (*tokens.Usage, error) {
+		individualCalls = append(individualCalls, id)
+		return &tokens.Usage{HasCost: true, CostUSD: 0.37}, nil
+	}
+	misses := make(map[int64]tokenCostMiss)
+	assert.Zero(t, tc.Pool.reconcileTokenCostPage(context.Background(), 0, misses))
+	require.Len(t, misses, 2)
+	for _, job := range []*storage.ReviewJob{first, second} {
+		assert.Equal(t, 1, misses[job.ID].count)
+		unpriced, err := tc.DB.GetJobByID(job.ID)
+		require.NoError(t, err)
+		assert.Equal(t, "{}", unpriced.TokenUsage)
+	}
+	assert.Zero(t, tc.Pool.reconcileTokenCostPage(context.Background(), 0, misses))
+	assert.Equal(t, [][]string{{"first", "second"}}, calls)
+	assert.Empty(t, individualCalls)
+	assert.Equal(t, 1, strings.Count(logOutput.String(), "archive read failed"), logOutput.String())
 }
