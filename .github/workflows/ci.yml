@@ -111,7 +111,7 @@ jobs:
         run: kit-retry 3 5 bun install --frozen-lockfile
 
       - name: Verify generated API contract
-        run: make api-check
+        run: make api-check DOWNLOAD_RETRY="kit-retry 3 5"
 
       - name: Verify checks leave the tree unchanged
         run: git diff --exit-code
@@ -164,7 +164,7 @@ jobs:
         run: kit-retry 3 5 bun install --frozen-lockfile
 
       - name: Verify generated API contract
-        run: make api-check
+        run: make api-check DOWNLOAD_RETRY="kit-retry 3 5"
 
       - name: Check frontend
         run: bun run web:check
