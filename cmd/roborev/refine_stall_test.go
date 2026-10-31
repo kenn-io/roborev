@@ -32,8 +32,10 @@ func TestRefineStallLoop(t *testing.T) {
 		name                      string
 		severityOnly, bothSignals bool
 		otherFailed               bool
+		keepOtherFailed           bool
 		pendingFixMode            string
 		hookMode                  string
+		batchCheckpointAfterOther bool
 		rounds                    int
 		stop, commentFailure      bool
 		recovery                  string
@@ -74,6 +76,7 @@ func TestRefineStallLoop(t *testing.T) {
 		{name: "final branch hook range stalls with distinct since base", hookMode: "branch", severityOnly: true, rounds: 3, stop: true, recovery: "branch", wantCalls: 3, wantSignals: 1, wantError: "stalled"},
 		{name: "final batch hook range passes with distinct since base", hookMode: "batch", rounds: 3, stop: true, recovery: "branch", recoveredReset: "pass", resetJob: 10, wantCalls: 3},
 		{name: "final batch hook range stalls with distinct since base", hookMode: "batch", severityOnly: true, rounds: 3, stop: true, recovery: "branch", wantCalls: 3, wantSignals: 1, wantError: "stalled"},
+		{name: "final partial batch pass keeps older unresolved failure", hookMode: "batch", batchCheckpointAfterOther: true, otherFailed: true, keepOtherFailed: true, rounds: 3, stop: true, recovery: "branch", recoveredReset: "pass", resetJob: 10, wantCalls: 3, wantError: "max iterations"},
 		{name: "failed re-review resets", rounds: 4, reviewFailure: true, wantCalls: 4, wantError: "max iterations"},
 		{name: "provider retries do not count", rounds: 3, retry: true, wantCalls: 3, wantError: "max iterations"},
 		{name: "final iteration advises", rounds: 3, wantCalls: 3, wantSignals: 1, wantError: "max iterations"},
@@ -100,6 +103,9 @@ func TestRefineStallLoop(t *testing.T) {
 			var otherRef string
 			if tc.otherFailed {
 				otherRef = repo.CommitFile("other.go", "package source\n", "Add other source")
+			}
+			if tc.batchCheckpointAfterOther {
+				hookBase = otherRef
 			}
 			d := newRefineHistoryDaemon(t, initial)
 			resetJob := tc.resetJob
@@ -158,7 +164,7 @@ func TestRefineStallLoop(t *testing.T) {
 			calls := 0
 			fake := &agent.FakeAgent{NameStr: "refine-stall-test", ReviewFn: func(_ context.Context, path, _, _ string, _ io.Writer) (string, error) {
 				calls++
-				if tc.otherFailed && calls == 3 {
+				if tc.otherFailed && !tc.keepOtherFailed && calls == 3 {
 					d.recovery = "completed"
 				}
 				if tc.pendingFixMode != "" && calls == 3 {
@@ -200,6 +206,20 @@ func TestRefineStallLoop(t *testing.T) {
 				runErr = run()
 				return nil
 			})
+			a := assert.New(t)
+			if tc.batchCheckpointAfterOther {
+				a.Equal(otherRef, d.rangeBase)
+				a.NotEqual(base, d.rangeBase)
+				require.NotNil(t, d.reviews[10])
+				a.Equal("P", string(d.reviews[10].Verdict()))
+				require.NotNil(t, d.reviews[10].Job)
+				a.Contains(d.reviews[10].Job.GitRef, "..")
+				require.NotNil(t, d.reviews[100])
+				a.Equal("F", string(d.reviews[100].Verdict()))
+				a.False(d.reviews[100].Closed)
+				a.Positive(d.postCommitRangeQueries)
+				a.Positive(d.postCommitRangeMatches)
+			}
 			if tc.wantError == "" {
 				require.NoError(t, runErr)
 			} else {
@@ -208,7 +228,6 @@ func TestRefineStallLoop(t *testing.T) {
 					output, d.postCommitRangeQueries, d.postCommitRangeMatches, d.branchName,
 				)
 			}
-			a := assert.New(t)
 			a.Equal(tc.wantCalls, calls)
 			if tc.otherFailed {
 				a.Equal("4", repo.Run("rev-list", "--count", initial+"..HEAD"), "one other commit and exactly three fixes")
