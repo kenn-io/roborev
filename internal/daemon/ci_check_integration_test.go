@@ -172,7 +172,7 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 	}
 }
 
-func TestCIRewriteSandboxGitConfigStaysInsideJob(t *testing.T) {
+func TestCICheckRewriteSandboxIntegrationGitConfigStaysInsideJob(t *testing.T) {
 	testutil.RequireSandboxIntegration(t)
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	loginDir := t.TempDir()

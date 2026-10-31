@@ -735,20 +735,6 @@ of the global setting:
 upsert_comments = false   # Disable upsert for this repo even if globally enabled
 ```
 
-## Rewriting checked findings
-
-Set `[ci] rewrite = true` alongside `check = true` to post checked findings in
-plain words. Rewrite is off by default. A repository can override it in its
-`.roborev.toml` on the default branch. Enabling rewrite alone leaves checking
-disabled.
-
-After checking, two additional Codex calls use the checker model, reasoning, and
-sandbox. The first explains the problem for the PR author. The second separates
-the fix sentence from the code names listed after **Where:** on the same line.
-Only kept findings at the publication severity threshold are rewritten. Missing
-checker notes or either rewrite failing preserves the checked text, including
-checker drops.
-
 ## Checking findings before posting
 
 Enable the checker to try synthesized findings in a disposable copy of the PR
@@ -793,6 +779,20 @@ A finding drops only when one verdict supplies evidence and a reason to drop it.
 Missing or duplicate verdicts keep the finding. The job log records the
 verdicts. If every finding drops, the stored review says "No issues found." A
 checker failure or timeout posts the original review unchanged.
+
+## Rewriting checked findings
+
+Set `[ci] rewrite = true` alongside `check = true` to post checked findings in
+plain words. Rewrite is off by default. A repository can override it in its
+`.roborev.toml` on the default branch. Enabling rewrite alone leaves checking
+disabled.
+
+After checking, two additional Codex calls use the checker model, reasoning, and
+sandbox. The first explains the problem for the PR author. The second separates
+the fix sentence from the code names listed after **Where:** on the same line.
+Only kept findings at the publication severity threshold are rewritten. Missing
+checker notes or either rewrite failing preserves the checked text, including
+checker drops.
 
 ## PR Throttling
 
@@ -933,6 +933,7 @@ set, it takes priority over the matrix fields for that repo.
 | `upsert_comments` | bool | global `upsert_comments` | Override global comment upsert setting for this repo |
 | `include_costs` | bool | global `include_costs` | Include token cost estimates in PR comment footers for this repo |
 | `check` | bool | global `check` | Try synthesized findings before posting and keep those that hold up |
+| `rewrite` | bool | global `rewrite` | Rewrite checked findings in plain words; requires `check` |
 
 ## CI Options Reference
 
