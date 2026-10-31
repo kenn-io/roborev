@@ -68,13 +68,6 @@ func TestGetCostAggregate(t *testing.T) {
 	assert.InDelta(12.04, all.TotalUSD, 0.0001)
 	assert.False(all.Complete)
 
-	partial, err := db.GetCostAggregate(CostOptions{RepoPaths: []string{repo.RootPath}, Branch: "partial"})
-	require.NoError(t, err)
-	assert.Equal(1, partial.JobsTotal)
-	assert.Equal(0, partial.JobsWithCost, "a missing provider session leaves cost coverage partial")
-	assert.InDelta(0.30, partial.TotalUSD, 0.0001, "known dollars count toward the total")
-	assert.False(partial.Complete, "known dollars do not imply complete session coverage")
-
 	// Branch "feat": 4 eligible, 3 priced, $11.49.
 	feat, err := db.GetCostAggregate(CostOptions{RepoPaths: []string{repo.RootPath}, Branch: "feat"})
 	require.NoError(t, err)

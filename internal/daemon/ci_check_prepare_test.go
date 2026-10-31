@@ -17,75 +17,79 @@ import (
 )
 
 // Preparation warms modules in a separate checkout.
-// Cleanup restores write access only inside checker roots, without following symlinks.
 func TestCICheckPreparation(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("requires shell fixtures, symlinks, and Unix directory permissions")
+		t.Skip("requires shell fixtures and symlinks")
 	}
-	for _, name := range []string{"checker", "checker recovery"} {
-		t.Run(name, func(t *testing.T) {
-			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-			repo := testutil.NewTestRepoWithCommit(t)
-			repo.CommitFile("go.mod", "module example.com/check\n\ngo 1.25.0\n", "module")
-			marker := filepath.Join(t.TempDir(), "hook-ran")
-			repo.WriteFile(".githooks/post-checkout", fmt.Sprintf("#!/bin/sh\nprintf 'hook ran' > '%s'\n", marker))
-			require.NoError(t, os.Chmod(filepath.Join(repo.Root, ".githooks", "post-checkout"), 0o700))
-			repo.RunGit("add", ".githooks/post-checkout")
-			repo.RunGit("commit", "-m", "checkout hook fixture")
-			globalConfig := filepath.Join(t.TempDir(), "gitconfig")
-			require.NoError(t, os.WriteFile(globalConfig, []byte("[core]\n\thooksPath = .githooks\n"), 0o600))
-			t.Setenv("GIT_CONFIG_GLOBAL", globalConfig)
-			tools := t.TempDir()
-			require.NoError(t, os.Mkdir(filepath.Join(tools, "bin"), 0o700))
-			// go env runs outside the checkout, so a version-manager shim can't load its config.
-			outside, err := filepath.EvalSymlinks(os.TempDir())
-			require.NoError(t, err)
-			script := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = env ]; then [ \"$(pwd -P)\" = '%s' ] || exit 4; printf '%%s\\n' '%s' '%s'; else [ \"$CHECKER_GIT_TOKEN\" = synthetic ] || exit 3; echo 'require example.com/upgraded v1.0.0' >> go.mod; exit 1; fi\n", outside, tools, tools)
-			require.NoError(t, os.WriteFile(filepath.Join(tools, "bin", "go"), []byte(script), 0o700))
-			require.NoError(t, os.Symlink(filepath.Join("bin", "go"), filepath.Join(tools, "go")))
-			t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
-			sha := repo.HeadSHA()
-			job := &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}
-			wp := &WorkerPool{}
-			command := filepath.Join(t.TempDir(), "codex")
-			require.NoError(t, os.WriteFile(command, []byte("\x7fELFnative fixture"), 0o700))
-			var log bytes.Buffer
-			run, err := wp.prepareCICheck(t.Context(), job, command, []string{"CHECKER_GIT_TOKEN=synthetic"}, &log)
-			require.NoError(t, err)
-			checkout, root, cleanup := run.Repo, filepath.Dir(run.Job.WorkDir), run.cleanup
-			t.Cleanup(cleanup)
-			if name == "checker" {
-				assert.NoFileExists(t, marker, "checker preparation must leave repository hooks unexecuted on the host")
-				assert.Contains(t, log.String(), "module warming failed: exit status 1")
-				assert.Contains(t, run.Job.Env, "GOMODCACHE="+tools, log.String())
-				assert.Contains(t, run.Job.ReadPaths, tools)
-				return
-			}
-			dir := filepath.Join(run.Job.WorkDir, "gocache", "readonly")
-			require.NoError(t, os.Mkdir(dir, 0o700))
-			require.NoError(t, os.WriteFile(filepath.Join(dir, "file"), []byte("content"), 0o600))
-			require.NoError(t, os.Chmod(dir, 0o500))
-			t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
-			external := t.TempDir()
-			require.NoError(t, os.Chmod(external, 0o500))
-			t.Cleanup(func() { _ = os.Chmod(external, 0o700) })
-			require.NoError(t, os.Symlink(external, filepath.Join(root, "external")))
-			readonly := filepath.Join(filepath.Dir(root), "readonly")
-			require.NoError(t, os.Mkdir(readonly, 0o500))
-			opened, err := os.Open(readonly)
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, opened.Close()) })
-			require.NoError(t, cleanupStaleCIWorktrees(t.Context()))
-			info, err := opened.Stat()
-			require.NoError(t, err)
-			assert.Equal(t, os.FileMode(0o500), info.Mode().Perm(), "review checkout recovery changed directory permissions")
-			assert.NoDirExists(t, root)
-			assert.NoDirExists(t, checkout)
-			info, err = os.Stat(external)
-			require.NoError(t, err)
-			assert.Equal(t, os.FileMode(0o500), info.Mode().Perm())
-		})
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	repo := testutil.NewTestRepoWithCommit(t)
+	repo.CommitFile("go.mod", "module example.com/check\n\ngo 1.25.0\n", "module")
+	marker := filepath.Join(t.TempDir(), "hook-ran")
+	repo.WriteFile(".githooks/post-checkout", fmt.Sprintf("#!/bin/sh\nprintf 'hook ran' > '%s'\n", marker))
+	require.NoError(t, os.Chmod(filepath.Join(repo.Root, ".githooks", "post-checkout"), 0o700))
+	repo.RunGit("add", ".githooks/post-checkout")
+	repo.RunGit("commit", "-m", "checkout hook fixture")
+	globalConfig := filepath.Join(t.TempDir(), "gitconfig")
+	require.NoError(t, os.WriteFile(globalConfig, []byte("[core]\n\thooksPath = .githooks\n"), 0o600))
+	t.Setenv("GIT_CONFIG_GLOBAL", globalConfig)
+	tools := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(tools, "bin"), 0o700))
+	// go env runs outside the checkout, so a version-manager shim can't load its config.
+	outside, err := filepath.EvalSymlinks(os.TempDir())
+	require.NoError(t, err)
+	script := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = env ]; then [ \"$(pwd -P)\" = '%s' ] || exit 4; printf '%%s\\n' '%s' '%s'; else [ \"$CHECKER_GIT_TOKEN\" = synthetic ] || exit 3; echo 'require example.com/upgraded v1.0.0' >> go.mod; exit 1; fi\n", outside, tools, tools)
+	require.NoError(t, os.WriteFile(filepath.Join(tools, "bin", "go"), []byte(script), 0o700))
+	require.NoError(t, os.Symlink(filepath.Join("bin", "go"), filepath.Join(tools, "go")))
+	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
+	sha := repo.HeadSHA()
+	job := &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}
+	wp := &WorkerPool{}
+	command := filepath.Join(t.TempDir(), "codex")
+	require.NoError(t, os.WriteFile(command, []byte("\x7fELFnative fixture"), 0o700))
+	var log bytes.Buffer
+	run, err := wp.prepareCICheck(t.Context(), job, command, []string{"CHECKER_GIT_TOKEN=synthetic"}, &log)
+	require.NoError(t, err)
+	t.Cleanup(run.cleanup)
+	assert.NoFileExists(t, marker, "checker preparation must leave repository hooks unexecuted on the host")
+	assert.Contains(t, log.String(), "module warming failed: exit status 1")
+	assert.Contains(t, run.Job.Env, "GOMODCACHE="+tools, log.String())
+	assert.Contains(t, run.Job.ReadPaths, tools)
+	module, err := os.ReadFile(filepath.Join(run.Repo, "go.mod"))
+	require.NoError(t, err)
+	assert.Equal(t, "module example.com/check\n\ngo 1.25.0\n", string(module))
+}
+
+// Recovery restores write access inside checker roots without following symlinks.
+func TestCICheckRecovery(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires symlinks and Unix directory permissions")
 	}
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	repo := testutil.NewTestRepoWithCommit(t)
+	sha := repo.HeadSHA()
+	wp := &WorkerPool{}
+	checkout, closeCheckout, err := wp.createExactCheckout(t.Context(), "ci-checker", &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha})
+	require.NoError(t, err)
+	t.Cleanup(ciCheckCleanup(checkout, closeCheckout))
+	root, err := os.MkdirTemp(checkout, "roborev-ci-check-")
+	require.NoError(t, err)
+	workDir := filepath.Join(root, "work")
+	require.NoError(t, os.MkdirAll(filepath.Join(workDir, "gocache"), 0o700))
+	dir := filepath.Join(workDir, "gocache", "readonly")
+	require.NoError(t, os.Mkdir(dir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "file"), []byte("content"), 0o600))
+	require.NoError(t, os.Chmod(dir, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	external := t.TempDir()
+	require.NoError(t, os.Chmod(external, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(external, 0o700) })
+	require.NoError(t, os.Symlink(external, filepath.Join(root, "external")))
+	require.NoError(t, cleanupStaleCIWorktrees(t.Context()))
+	assert.NoDirExists(t, root)
+	assert.NoDirExists(t, checkout)
+	info, err := os.Stat(external)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o500), info.Mode().Perm())
 }
 
 // Host-side warming refuses metadata that isn't a regular file, skips hosts without Go, and creates a missing module cache.

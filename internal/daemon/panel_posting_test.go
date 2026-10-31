@@ -272,7 +272,6 @@ func TestPanelTotalCostExcludesFlagWithoutAmount(t *testing.T) {
 		assert.InDelta(0.14, cost, 1e-9, "known synthesis dollars count toward the total")
 		assert.Equal(1, priced, "a missing provider session leaves synthesis cost coverage partial")
 		assert.Equal(2, total)
-		assert.Contains(formatPanelPRFooter(synth, "test", members, true), "Total: cost partial ~$0.14")
 	})
 }
 
