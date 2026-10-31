@@ -2385,16 +2385,12 @@ func (collected *sessionTokenUsage) withUnpricedPhase(sessionRan bool, u *tokens
 	aggregate := func(usage *tokens.Usage) *tokens.Usage {
 		var combined *tokens.Usage
 		if sessionRan {
-			combined = &tokens.Usage{}
-			if usage != nil {
-				*combined = *usage
-			}
+			combined = backfill.AggregateTokenUsages([]*tokens.Usage{usage, u})
 			// Count checker tokens while preserving the synthesis's known cost.
-			combined.InputTokens += u.InputTokens
-			combined.CachedInputTokens += u.CachedInputTokens
-			combined.CacheCreationTokens += u.CacheCreationTokens
-			combined.OutputTokens += u.OutputTokens
-			combined.PeakContextTokens = max(combined.PeakContextTokens, u.PeakContextTokens)
+			if combined != nil && usage != nil {
+				combined.CostUSD = usage.CostUSD
+				combined.HasCost = usage.HasCost
+			}
 		} else {
 			combined = backfill.AggregateTokenUsages([]*tokens.Usage{u})
 		}
