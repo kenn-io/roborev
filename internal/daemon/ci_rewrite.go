@@ -63,7 +63,11 @@ func rewriteCIFindings(checked structuredreview.Document, minSeverity, pullReque
 			f := &response.Findings[i]
 			f.Problem = strings.TrimSpace(f.Problem)
 			f.Fix = strings.TrimSpace(f.Fix)
-			invalid := strings.Contains(f.Problem, "**Fix:**") || phase == 1 && !strings.Contains(f.Fix, "**Where:**")
+			invalid := strings.Contains(f.Problem, "**Fix:**")
+			if phase == 1 {
+				fix, where, found := strings.Cut(f.Fix, "**Where:**")
+				invalid = invalid || !found || strings.TrimSpace(fix) == "" || strings.TrimSpace(where) == ""
+			}
 			for _, field := range []string{f.Problem, f.Fix} {
 				for line := range strings.SplitSeq(field, "\n") {
 					line = strings.TrimSpace(line)
