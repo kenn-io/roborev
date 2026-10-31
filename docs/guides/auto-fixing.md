@@ -47,14 +47,18 @@ flowchart TD
     Find --> A{Found?}
     A -->|No| Branch[Run whole-branch review]
     Branch --> C{Pass?}
-    C -->|Yes| Done([Done - all reviews pass])
+    C -->|Yes| Done([Done - branch review passes])
     C -->|No| Fix
     A -->|Yes| Fix[AI agent addresses findings]
     Fix --> Changes{Changes made?}
     Changes -->|No| Skip[Skip review, try next]
     Skip --> Find
     Changes -->|Yes| Commit[Commit fix]
-    Commit --> Wait[Wait for re-review]
+    Commit --> Trivial{Skip flag and eligible fix?}
+    Trivial -->|Yes| Record[Record skip on original review]
+    Record -->|Saved| Find
+    Record -->|Save failed| Wait
+    Trivial -->|No| Wait[Wait for re-review]
     Wait --> Pass{Pass?}
     Pass -->|Yes| Find
     Pass -->|No| MaxCheck{Max iterations?}
@@ -67,9 +71,11 @@ flowchart TD
 1. Finds the **oldest failed review** on your branch
 1. Runs an agent in an **isolated worktree** to address the findings
 1. If the agent makes changes, applies them and **commits**
-1. **Waits for re-review** of the new commit
+1. **Waits for re-review** of the new commit, unless an eligible re-review is
+    skipped with `--skip-trivial-rereview`
 1. If the new commit fails review, addresses those findings too
-1. Once all per-commit reviews pass, runs a **whole-branch review**
+1. Once per-commit reviews pass or eligible re-reviews are skipped, runs a
+    **whole-branch review**
 1. If the branch review passes, exits successfully
 1. If the branch review fails, addresses those findings and loops back
 
@@ -118,6 +124,7 @@ review.
 | `--plan` | Run a read-only planning phase before each fix |
 | `--plan-only` | Print and store plans for existing failed reviews, without starting the fix loop |
 | `--max-iterations <n>` | Maximum fix iterations (default: 10) |
+| `--skip-trivial-rereview` | Skip eligible documentation/test fix re-reviews (default: off) |
 | `--quiet` | Show elapsed time instead of agent output |
 | `--reasoning <level>` | Legacy or exact reasoning level; see [Reasoning Levels](/docs/configuration/#reasoning-levels) |
 | `--fast` | Shorthand for `--reasoning fast` |
@@ -144,6 +151,29 @@ detached worktrees without checking out those branches. Planning flags cannot be
 combined with `--list`. Refine planning also has a clean-working-tree
 precondition; see the
 [refine command options](/docs/commands/#auto-fix-agentic-loop) for details.
+
+### Skipping trivial re-reviews
+
+Use `roborev refine --skip-trivial-rereview` to skip an individual fix re-review
+when both conditions hold:
+
+- Every changed path matches the existing documentation/test classification:
+    `**/*.md`, `**/*_test.go`, `**/*.spec.*`, or `**/testdata/**`.
+- The original review has valid structured findings, all Medium or Low, and is
+    neither a security review nor a panel synthesis review. A security-topic
+    finding also prevents a skip. All findings count, including those below
+    `--min-severity`.
+
+Refine checks the committed diff, including changes from commit hooks, rather
+than the agent's summary. Both sides of renames and deleted files must qualify.
+Empty diffs, executable files, symlinks, submodules, and unavailable review or
+Git data keep the normal re-review behavior.
+
+The skip reason is saved on the original review and printed even with `--quiet`.
+If saving fails, refine follows the normal re-review flow. Post-commit hooks and
+automatic reviews still run; refine neither waits on nor acts on those fix
+commits' individual reviews during this invocation. A later invocation considers
+them normally. Full branch review still runs, including the skipped commits.
 
 ## Targeting
 

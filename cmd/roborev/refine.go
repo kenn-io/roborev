@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -51,6 +52,8 @@ type refineOptions struct {
 	allBranches       bool
 	list              bool
 	newestFirst       bool
+
+	skipTrivialRereview bool
 }
 
 func refineCmd() *cobra.Command {
@@ -66,10 +69,10 @@ func refineCmd() *cobra.Command {
 
 Refine finds failed reviews on the current branch, runs an agent to fix
 them, commits the changes, then waits for re-review. If the new commit
-also fails review, it tries again. Once all per-commit reviews pass, it
-runs a branch-level review covering the full commit range and addresses
-any findings from that too. The loop continues until everything passes
-or --max-iterations is reached.
+also fails review, it tries again. Once per-commit reviews pass or eligible
+re-reviews are skipped, refine runs a branch-level review over the full
+commit range and addresses any findings there too. The loop continues until
+everything passes or --max-iterations is reached.
 
 Unlike 'roborev fix' (which is a single-pass fix with no re-review),
 refine is fully automated: it reviews, fixes, re-reviews, and iterates.
@@ -83,6 +86,10 @@ Prerequisites:
 
 Use --since to specify a starting commit when on the main branch or to
 limit how far back to look for reviews to address.
+
+Use --skip-trivial-rereview to skip individual re-reviews of documentation
+and test fixes with only Medium/Low non-security findings. Automatic hook
+reviews and the full branch review still run.
 
 Use --list to preview which reviews would be refined without running.
 Use --branch to validate the current branch before refining.
@@ -152,6 +159,10 @@ Use --all-branches to discover and refine all branches with failed reviews.`,
 	cmd.Flags().StringVar(&opts.model, "model", "", "model for agent (format varies: opencode uses provider/model, others use model name)")
 	cmd.Flags().StringVar(&opts.reasoning, "reasoning", "", "reasoning level: legacy presets fast, standard (default), thorough, maximum; exact tiers low, medium, high, xhigh, max")
 	cmd.Flags().StringVar(&opts.minSeverity, "min-severity", "", "minimum finding severity to address: critical, high, medium, or low")
+	cmd.Flags().BoolVar(
+		&opts.skipTrivialRereview, "skip-trivial-rereview", false,
+		"skip eligible docs/test re-reviews with Medium/Low, non-security findings",
+	)
 	cmd.Flags().BoolVar(&opts.plan, "plan", false, "plan each fix before implementing")
 	cmd.Flags().BoolVar(&opts.planOnly, "plan-only", false, "print and store plans for existing failed reviews without edits or new reviews")
 	cmd.Flags().BoolVar(&fast, "fast", false, "shorthand for --reasoning fast")
@@ -481,6 +492,8 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 	var chainHead string
 	// Track reviews we've given up on this run to avoid re-selecting them
 	skippedReviews := make(map[int64]bool)
+	// Automatic reviews remain untouched; skips last only for this invocation.
+	skippedFixes := make(map[string]bool)
 
 	for iteration := 1; iteration <= opts.maxIterations; {
 		// Get commits on current branch
@@ -494,10 +507,15 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 			return nil
 		}
 
+		reviewCommits := commits
+		if len(skippedFixes) > 0 {
+			reviewCommits = slices.DeleteFunc(slices.Clone(commits), func(sha string) bool { return skippedFixes[sha] })
+		}
+
 		// Only search for a new failed review if we don't have one to work on
 		// (either first iteration, or previous fix passed)
 		if currentFailedReview == nil {
-			currentFailedReview, err = findFailedReviewForBranch(client, commits, skippedReviews)
+			currentFailedReview, err = findFailedReviewForBranch(client, reviewCommits, skippedReviews)
 			if err != nil {
 				return fmt.Errorf("error finding reviews: %w", err)
 			}
@@ -505,7 +523,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 
 		if currentFailedReview == nil {
 			// Check for pending jobs before triggering a branch review
-			pendingJob, err := findPendingJobForBranch(ctx, client, repoPath, commits)
+			pendingJob, err := findPendingJobForBranch(ctx, client, repoPath, reviewCommits)
 			if err != nil {
 				return fmt.Errorf("error checking pending jobs: %w", err)
 			}
@@ -573,7 +591,11 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 
 				verdict := review.Verdict()
 				if verdict == "P" {
-					fmt.Println("\nAll reviews passed! Branch is ready.")
+					if len(skippedFixes) > 0 {
+						fmt.Printf("\nBranch review passed; individual re-reviews were skipped for %s.\n", plural(len(skippedFixes), "fix commit"))
+					} else {
+						fmt.Println("\nAll reviews passed! Branch is ready.")
+					}
 					return nil
 				}
 
@@ -840,7 +862,27 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 
 		// Add response recording what was done
 		responseText := fmt.Sprintf("Created commit %s to address findings\n\n%s", gitrepo.ShortSHA(newCommit), output)
+		var skippedCommitSHAs []string
+		skipRereview := false
+		if opts.skipTrivialRereview {
+			skippedCommitSHAs, skipRereview = refineTrivialFixCommits(
+				ctx, repoPath, headBefore, newCommit, currentFailedReview,
+			)
+		}
+		skipReason := ""
+		if skipRereview {
+			skipReason = fmt.Sprintf(
+				"Skipped individual re-review of %s: documentation/test-only fix; "+
+					"all findings Medium or lower in a non-security review.",
+				newCommit,
+			)
+			responseText += "\n\n" + skipReason
+		}
 		if err := client.AddComment(currentFailedReview.JobID, "roborev-refine", responseText); err != nil {
+			if skipRereview {
+				responseText = strings.TrimSuffix(responseText, "\n\n"+skipReason)
+			}
+			skipRereview = false
 			fmt.Printf("Warning: failed to add comment to job %d: %v\n", currentFailedReview.JobID, err)
 		}
 
@@ -852,6 +894,15 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 		// Close old review
 		if err := client.MarkReviewClosed(currentFailedReview.JobID); err != nil {
 			fmt.Printf("Warning: failed to close review (job %d): %v\n", currentFailedReview.JobID, err)
+		}
+
+		if skipRereview {
+			fmt.Println(skipReason)
+			for _, sha := range skippedCommitSHAs {
+				skippedFixes[sha] = true
+			}
+			currentFailedReview = nil
+			continue
 		}
 
 		// Wait for new commit to be reviewed
