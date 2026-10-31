@@ -33,6 +33,7 @@ func TestRefineStallLoop(t *testing.T) {
 		severityOnly, bothSignals bool
 		otherFailed               bool
 		pendingFixMode            string
+		hookMode                  string
 		rounds                    int
 		stop, commentFailure      bool
 		recovery                  string
@@ -63,13 +64,16 @@ func TestRefineStallLoop(t *testing.T) {
 		{name: "final recovered completed branch review stops", rounds: 3, stop: true, recovery: "completed branch", wantCalls: 3, wantSignals: 1, wantError: "stalled"},
 		{name: "final recovered completed branch review advises", rounds: 3, recovery: "completed branch", wantCalls: 3, wantSignals: 1, wantError: "max iterations"},
 		{name: "recovered closed passing branch review completes", rounds: 3, stop: true, recovery: "completed branch", recoveredReset: "closed pass", resetJob: 10, wantCalls: 3},
-		{name: "branch review completes during pending lookup", severityOnly: true, rounds: 3, stop: true, recovery: "branch race", wantCalls: 3, wantSignals: 1, wantError: "stalled"},
 		{name: "pending fix review precedes other failed commit", severityOnly: true, otherFailed: true, pendingFixMode: "pending", rounds: 3, stop: true, wantCalls: 3, wantSignals: 1, wantError: "stalled"},
 		{name: "pending fix review completes between lookups", severityOnly: true, pendingFixMode: "race", rounds: 3, stop: true, wantCalls: 3, wantSignals: 1, wantError: "stalled"},
 		{name: "pending branch review precedes other failed commit", severityOnly: true, otherFailed: true, pendingFixMode: "branch", rounds: 3, stop: true, wantCalls: 3, wantSignals: 1, wantError: "stalled"},
 		{name: "pending synthesis review precedes other failed commit", severityOnly: true, otherFailed: true, pendingFixMode: "synthesis", rounds: 3, stop: true, wantCalls: 3, wantSignals: 1, wantError: "stalled"},
 		{name: "final recovered passing branch review resets", rounds: 3, stop: true, recovery: "completed branch", recoveredReset: "pass", resetJob: 10, wantCalls: 3},
 		{name: "recovered closed branch review resets before fallback", rounds: 4, stop: true, recovery: "completed branch", recoveredReset: "closed", wantEnqueues: 1, wantCalls: 4, wantError: "max iterations"},
+		{name: "final branch hook range passes with distinct since base", hookMode: "branch", rounds: 3, stop: true, recovery: "branch", recoveredReset: "pass", resetJob: 10, wantCalls: 3},
+		{name: "final branch hook range stalls with distinct since base", hookMode: "branch", severityOnly: true, rounds: 3, stop: true, recovery: "branch", wantCalls: 3, wantSignals: 1, wantError: "stalled"},
+		{name: "final batch hook range passes with distinct since base", hookMode: "batch", rounds: 3, stop: true, recovery: "branch", recoveredReset: "pass", resetJob: 10, wantCalls: 3},
+		{name: "final batch hook range stalls with distinct since base", hookMode: "batch", severityOnly: true, rounds: 3, stop: true, recovery: "branch", wantCalls: 3, wantSignals: 1, wantError: "stalled"},
 		{name: "failed re-review resets", rounds: 4, reviewFailure: true, wantCalls: 4, wantError: "max iterations"},
 		{name: "provider retries do not count", rounds: 3, retry: true, wantCalls: 3, wantError: "max iterations"},
 		{name: "final iteration advises", rounds: 3, wantCalls: 3, wantSignals: 1, wantError: "max iterations"},
@@ -81,6 +85,17 @@ func TestRefineStallLoop(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := newPlanTestRepo(t, map[string]string{"source.go": "package source\n"})
 			base := repo.HeadSHA()
+			hookBase := base
+			if tc.hookMode != "" {
+				repo.Run("checkout", "-b", "feature")
+				config := map[string]string{
+					"branch": "post_commit_review = \"branch\"\n",
+					"batch":  "post_commit_batch_size = 2\n",
+				}[tc.hookMode]
+				writeRoborevConfig(t, repo, config)
+				repo.Run("add", ".roborev.toml")
+				base = repo.CommitFile("since.txt", "package source\n", "Advance refine since base")
+			}
 			initial := repo.CommitFile("next.go", "package source\n", "Add next source")
 			var otherRef string
 			if tc.otherFailed {
@@ -124,10 +139,6 @@ func TestRefineStallLoop(t *testing.T) {
 			}
 			d.rejectAdvisory = tc.commentFailure
 			d.recovery = tc.recovery
-			if tc.recovery == "branch race" {
-				d.recovery = "branch"
-				d.completeBranchReviewOnPendingLookup = 10
-			}
 			if tc.recovery == "completed branch" {
 				d.recovery = "branch"
 				d.completedBranchReview = 10
@@ -136,6 +147,10 @@ func TestRefineStallLoop(t *testing.T) {
 				}
 			}
 			d.rangeBase = base
+			if tc.hookMode != "" {
+				d.rangeBase = hookBase
+				d.branchName = repo.Run("branch", "--show-current")
+			}
 			d.allowBranchReview = tc.recoveredReset != ""
 			if tc.reviewFailure {
 				d.failReview = 9
@@ -188,14 +203,17 @@ func TestRefineStallLoop(t *testing.T) {
 			if tc.wantError == "" {
 				require.NoError(t, runErr)
 			} else {
-				require.ErrorContains(t, runErr, tc.wantError)
+				require.ErrorContains(t, runErr, tc.wantError,
+					"captured output:\n%s\npost-commit range queries=%d matches=%d branch=%q",
+					output, d.postCommitRangeQueries, d.postCommitRangeMatches, d.branchName,
+				)
 			}
 			a := assert.New(t)
 			a.Equal(tc.wantCalls, calls)
 			if tc.otherFailed {
 				a.Equal("4", repo.Run("rev-list", "--count", initial+"..HEAD"), "one other commit and exactly three fixes")
 			}
-			if tc.rounds == 3 && (tc.recovery != "" || tc.pendingFixMode != "") {
+			if tc.rounds == 3 && (tc.recovery != "" || tc.pendingFixMode != "" || tc.hookMode != "") {
 				wantCommits := "3"
 				if tc.otherFailed {
 					wantCommits = "4"
@@ -203,6 +221,11 @@ func TestRefineStallLoop(t *testing.T) {
 				a.Equal(wantCommits, repo.Run("rev-list", "--count", initial+"..HEAD"), "recovery cannot create a fourth fix commit")
 			}
 			a.Equal(tc.wantEnqueues, d.enqueues, "stopping must not enqueue a whole-branch fallback")
+			if tc.hookMode != "" {
+				a.NotEmpty(d.branchName)
+				a.Positive(d.postCommitRangeQueries, "configured post-commit range recovery must query jobs")
+				a.Positive(d.postCommitRangeMatches, "the final post-commit range job must be returned")
+			}
 			if tc.pendingFixMode != "" {
 				a.Positive(d.jobReviewFetches[d.pendingFixReviewJobID], "the pending fix review must be recovered by job ID")
 			}

@@ -126,7 +126,21 @@ func (m *mockDaemonClient) FindPendingJobForRef(ctx context.Context, repoPath, g
 	return nil, nil
 }
 
-func (m *mockDaemonClient) GetCommentsForJob(_ context.Context, jobID int64) ([]storage.Response, error) {
+func (m *mockDaemonClient) FindPostCommitRangeReviewForHead(ctx context.Context, repoPath, branch, headSHA string) (*storage.ReviewJob, error) {
+	for _, job := range m.jobs {
+		if job.Branch != branch || job.Source != storage.JobSourcePostCommit ||
+			!job.IsReadableReview() || job.PanelRole == storage.PanelRoleMember {
+			continue
+		}
+		base, end, ok := strings.Cut(job.GitRef, "..")
+		if ok && base != "" && (end == headSHA || end == "HEAD") {
+			return job, nil
+		}
+	}
+	return nil, nil
+}
+
+func (m *mockDaemonClient) GetCommentsForJob(ctx context.Context, jobID int64) ([]storage.Response, error) {
 	return m.responses[jobID], nil
 }
 

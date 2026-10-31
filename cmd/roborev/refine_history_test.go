@@ -24,27 +24,29 @@ import (
 // refineHistoryDaemon supplies real HTTP comment persistence and a failed
 // re-review after each fix, without running an external reviewer.
 type refineHistoryDaemon struct {
-	reviews                             map[int64]*storage.Review
-	addReview                           func(int64, string, string)
-	comments                            map[int64][]storage.Response
-	posted                              map[int64][]storage.Response
-	staleRef                            string
-	onReview                            func(*storage.Review)
-	rejectAdvisory                      bool
-	recovery                            string
-	completedBranchReview               int64
-	completeBranchReviewOnPendingLookup int64
-	completePendingFixReviewOnLookup    bool
-	completedPendingFixReviewOnLookup   bool
-	pendingFixReviewRef                 string
-	pendingFixReviewJobID               int64
-	pendingFixJobType                   string
-	pendingFixReviewMissed              bool
-	jobReviewFetches                    map[int64]int
-	rangeBase                           string
-	enqueues                            int
-	failReview                          int64
-	allowBranchReview                   bool
+	reviews                           map[int64]*storage.Review
+	addReview                         func(int64, string, string)
+	comments                          map[int64][]storage.Response
+	posted                            map[int64][]storage.Response
+	staleRef                          string
+	onReview                          func(*storage.Review)
+	rejectAdvisory                    bool
+	recovery                          string
+	completedBranchReview             int64
+	completePendingFixReviewOnLookup  bool
+	completedPendingFixReviewOnLookup bool
+	pendingFixReviewRef               string
+	pendingFixReviewJobID             int64
+	pendingFixJobType                 string
+	pendingFixReviewMissed            bool
+	jobReviewFetches                  map[int64]int
+	rangeBase                         string
+	branchName                        string
+	postCommitRangeQueries            int
+	postCommitRangeMatches            int
+	enqueues                          int
+	failReview                        int64
+	allowBranchReview                 bool
 }
 
 func newRefineHistoryDaemon(t *testing.T, initial string) *refineHistoryDaemon {
@@ -90,8 +92,27 @@ func newRefineHistoryDaemon(t *testing.T, initial string) *refineHistoryDaemon {
 				if job := jobs[id]; job.Status == storage.JobStatusRunning {
 					job.Status = storage.JobStatusDone
 					jobs[id] = job
+					if review := d.reviews[id]; review != nil {
+						review.Job = new(job)
+					}
 				}
 				writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{jobs[id]}})
+				return
+			}
+			branch := r.URL.Query().Get("branch")
+			if branch != "" {
+				jobType := r.URL.Query().Get("job_type")
+				if jobType == storage.JobTypeRange || jobType == storage.JobTypeSynthesis {
+					d.postCommitRangeQueries++
+				}
+				var matches []storage.ReviewJob
+				for _, job := range jobs {
+					if job.Branch == branch && string(job.JobType) == jobType {
+						matches = append(matches, job)
+					}
+				}
+				d.postCommitRangeMatches += len(matches)
+				writeJSON(w, map[string]any{"jobs": matches, "has_more": false, "next_cursor": nil})
 				return
 			}
 			ref := r.URL.Query().Get("git_ref")
@@ -106,14 +127,6 @@ func newRefineHistoryDaemon(t *testing.T, initial string) *refineHistoryDaemon {
 				writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{job}})
 				return
 			}
-			if id := d.completeBranchReviewOnPendingLookup; id > 0 && status != "" {
-				job := jobs[id]
-				if job.GitRef == ref {
-					job.Status = storage.JobStatusDone
-					jobs[id] = job
-					d.completeBranchReviewOnPendingLookup = 0
-				}
-			}
 			if d.recovery != "" {
 				if id := hidden[ref]; id > 0 && d.recovery == "branch" {
 					writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{}})
@@ -126,7 +139,7 @@ func newRefineHistoryDaemon(t *testing.T, initial string) *refineHistoryDaemon {
 					}
 				}
 			}
-			if r.URL.Query().Get("status") == "" && ref != "" && ref != initial {
+			if status == "" && ref != "" && !strings.Contains(ref, "..") && ref != initial {
 				latest++
 				addReview(latest, ref, "High: cancellation still races")
 				if d.staleRef != "" {
@@ -148,7 +161,10 @@ func newRefineHistoryDaemon(t *testing.T, initial string) *refineHistoryDaemon {
 					}
 					if d.recovery == "branch" {
 						job.GitRef = d.rangeBase + ".." + ref
-						d.reviews[latest].Job.GitRef = job.GitRef
+						job.JobType = storage.JobTypeRange
+						job.Source = storage.JobSourcePostCommit
+						job.Branch = d.branchName
+						d.reviews[latest].Job = new(job)
 						d.pendingFixReviewRef = job.GitRef
 						d.pendingFixReviewJobID = latest
 					}
