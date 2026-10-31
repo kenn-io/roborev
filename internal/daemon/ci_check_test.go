@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/roborev/internal/prompt"
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/tokens"
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
@@ -125,7 +126,7 @@ func TestCICheckLog(t *testing.T) {
 func TestCICheckCompletion(t *testing.T) {
 	const raw = `{"schema_version":3,"source_labels":["test"],"summary":"Two claims","verdict":"fail","findings":[{"severity":"high","kind":"defect","confidence":0.9,"problem":"Build claim","fix":"Fix build","sources":[1]},{"severity":"medium","kind":"defect","confidence":0.9,"problem":"Data loss","fix":"Preserve data","sources":[1]}]}`
 	// "agent drop" reaches the checker through a synthesis agent and leaves no finding at its threshold; the rest pass one review through.
-	for _, mode := range []string{"failure", "drop", "agent drop", "below severity threshold", "empty canceled", "checker canceled", "checker deadline"} {
+	for _, mode := range []string{"failure", "failure after usage", "drop", "agent drop", "below severity threshold", "empty canceled", "checker canceled", "checker deadline"} {
 		t.Run(mode, func(t *testing.T) {
 			tc := newWorkerTestContext(t, 1)
 			tc.Pool.cfgGetter.Config().CodexCmd = "custom-codex"
@@ -136,6 +137,11 @@ func TestCICheckCompletion(t *testing.T) {
 			snapshot := synthesisJobConfig{Check: &ciCheckConfig{Reasoning: "high"}}
 			if mode == "agent drop" {
 				snapshot.Instructions = "verify"
+				synthAgent.streamLine = "{\"type\":\"thread.started\",\"thread_id\":\"synthesis-session\"}\n" + `{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":20}}`
+				tc.Pool.tokenUsageFetcher = func(_ context.Context, sessionID string) (*tokens.Usage, error) {
+					assert.Equal(t, "synthesis-session", sessionID)
+					return &tokens.Usage{InputTokens: 12, OutputTokens: 24, CostUSD: 0.03, HasCost: true}, nil
+				}
 			}
 			encoded, err := snapshot.encode()
 			require.NoError(t, err)
@@ -160,6 +166,13 @@ func TestCICheckCompletion(t *testing.T) {
 				if ctx.Err() != nil {
 					return structuredreview.Document{}, ctx.Err()
 				}
+				fmt.Fprintln(out, `{"type":"thread.started","thread_id":"checker-session"}`)
+				// Capture usage even when the final event has no newline.
+				fmt.Fprint(out, `{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":5}}`)
+				if mode == "failure after usage" {
+					return structuredreview.Document{}, fmt.Errorf("checker failed after reporting usage")
+				}
+				fmt.Fprintln(out)
 				return applyCICheck(doc, jsontext.Value(`{"verdicts":[{"finding":1,"keep":false,"evidence":"build succeeds","reason":"refuted"}]}`), out)
 			}
 			doc, err := reviewpkg.DecodeStructuredReview(jsontext.Value(raw))
@@ -201,6 +214,27 @@ func TestCICheckCompletion(t *testing.T) {
 				return
 			}
 			assert.Equal(t, storage.JobStatusDone, finished.Status)
+			if mode == "drop" || mode == "agent drop" || mode == "failure after usage" {
+				usage := tokens.ParseJSON(finished.TokenUsage)
+				require.NotNil(t, usage)
+				assert := assert.New(t)
+				assert.False(usage.HasCost)
+				if mode == "agent drop" {
+					assert.EqualValues(15, usage.InputTokens)
+					assert.EqualValues(29, usage.OutputTokens)
+					assert.Equal("synthesis-session", finished.SessionID)
+					assert.Equal("synthesis-session", usage.ThreadID)
+					assert.Equal([]string{"synthesis-session"}, usage.ProviderSessionIDs)
+					assert.Equal(2, usage.ExpectedProviderSessions)
+				} else {
+					assert.EqualValues(3, usage.InputTokens)
+					assert.EqualValues(5, usage.OutputTokens)
+					assert.Empty(finished.SessionID)
+					assert.Empty(usage.ThreadID)
+					assert.Empty(usage.ProviderSessionIDs)
+					assert.Equal(1, usage.ExpectedProviderSessions)
+				}
+			}
 			if mode == "below severity threshold" {
 				return
 			}

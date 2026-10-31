@@ -2375,6 +2375,34 @@ type sessionTokenUsage struct {
 	providerUsage   *tokens.Usage
 }
 
+// withUnpricedPhase includes usage from a disposable session whose cost cannot be fetched.
+func (collected *sessionTokenUsage) withUnpricedPhase(sessionRan bool, u *tokens.Usage) {
+	if u == nil {
+		return
+	}
+	aggregate := func(usage *tokens.Usage) *tokens.Usage {
+		phases := []*tokens.Usage{u}
+		if sessionRan {
+			phases = []*tokens.Usage{usage, u}
+		}
+		combined := backfill.AggregateTokenUsages(phases)
+		if combined != nil {
+			combined.ThreadID = ""
+			combined.ProviderSessionIDs = nil
+			if collected.capturedSession != "" && !collected.wasResumed {
+				combined.ThreadID = collected.capturedSession
+				combined.ProviderSessionIDs = []string{collected.capturedSession}
+			}
+			combined.ExpectedProviderSessions = len(phases)
+		}
+		return combined
+	}
+	if collected.providerUsage != nil {
+		collected.providerUsage = aggregate(backfill.MergeTokenUsage(tokens.ToJSON(collected.logUsage), collected.providerUsage))
+	}
+	collected.logUsage = aggregate(collected.logUsage)
+}
+
 // collectTokenUsageForSession reads usage from the job log and the usage
 // provider. The provider lookup can run an external command, so callers must
 // not hold the attempt lock: claimed jobs wait for that lock before they
@@ -2433,7 +2461,7 @@ func (wp *WorkerPool) storeTokenUsageForSession(
 	if sessionID == "" {
 		sessionID = usage.ThreadID
 	}
-	if sessionID == "" {
+	if sessionID == "" && providerUsage != nil {
 		return
 	}
 	current, err := wp.db.GetJobByID(job.ID)

@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/roborev/internal/config"
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/tokens"
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
@@ -308,6 +309,7 @@ type synthesisResult struct {
 	review          reviewpkg.ReviewResult
 	capturedSession string
 	captureUsage    bool
+	checkerUsage    *tokens.Usage
 }
 
 // completeSynthesisContext stores the synthesis review, guards against the
@@ -317,10 +319,11 @@ func (wp *WorkerPool) completeSynthesisContext(
 	workerID string, job *storage.ReviewJob, res synthesisResult,
 ) {
 	var tokenUsage *sessionTokenUsage
-	if res.captureUsage {
+	if res.captureUsage || res.checkerUsage != nil {
 		collected := wp.collectTokenUsageForSession(
 			context.Background(), workerID, job, res.capturedSession,
 		)
+		collected.withUnpricedPhase(res.captureUsage, res.checkerUsage)
 		tokenUsage = &collected
 	}
 	wp.runAttemptTransition(workerID, job, func() {

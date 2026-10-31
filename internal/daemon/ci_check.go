@@ -20,6 +20,7 @@ import (
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/sandbox"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/tokens"
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
@@ -75,7 +76,16 @@ func (wp *WorkerPool) checkSynthesis(ctx context.Context, job *storage.ReviewJob
 		if checker == nil {
 			checker = wp.runCICheck
 		}
-		checked, checkErr := checker(ctx, job, *check, doc, env, outputWriter)
+		capture := tokens.NewCodexUsageCaptureWriter()
+		checked, checkErr := checker(ctx, job, *check, doc, env, io.MultiWriter(outputWriter, capture))
+		capture.Flush()
+		res.checkerUsage = capture.Usage()
+		if res.checkerUsage != nil {
+			// The checker's disposable CODEX_HOME cannot supply provider costs.
+			res.checkerUsage.ThreadID = ""
+			res.checkerUsage.ProviderSessionIDs = nil
+			res.checkerUsage.ExpectedProviderSessions = 0
+		}
 		if checkErr != nil {
 			fmt.Fprintf(outputWriter, "CI checker failed; keeping original review: %v\n", checkErr)
 		} else if len(checked.Findings) < len(doc.Findings) {
