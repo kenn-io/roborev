@@ -464,47 +464,103 @@ After approval:
         global Git configuration, do not run it; it would install into that
         shared directory. Tell the user reviews run only on request until those
         hooks call roborev, and list that as pending.
-    - **A trial review** (below).
+    - **Calibration** (below): approve the cases and repeat runs first.
 
-## Trial review and tuning
+## Calibrate, then tune
 
-A trial review is the fastest way to learn whether a rubric works. It spends
-agent calls and sends material to the agents, so ask first. Choose a commit or
-range that changes the material and contains every named source. With
-`isolate_reviews = true`, the daemon checks out the reviewed commit or range
-head, so a source added after the material commit is unavailable when reviewing
-only that older commit. Verify each source at the chosen target with
-`git show <target>:<path>`. If needed, review a range that includes the material
-change and ends at a commit containing the sources, such as the setup commit.
-Hooks review only commits made after setup, so material committed earlier is
-reviewed only when someone asks.
-Offer one review of the commit or range that holds it. Use `--panel none` for
-a standalone custom type so a configured `default_panel` cannot replace the
-rubric with its members. When providers are restricted and budget routing is
-on, use a panel instead; see [Confidential material](#confidential-material).
+Calibration checks whether the rubric catches a known mistake and accepts clean
+material. It spends agent calls and sends material to agents, so get approval
+for the cases, temporary settings, calls, and cleanup before starting.
 
-```bash
-roborev review --from-skill --type facts --panel none --wait
-roborev review --from-skill --panel brief --wait
-```
+1. Write the cases and expected results first: a **must-catch** mistake from
+    the conversation or seeded into a copy, with the finding and minimum
+    severity that must appear; a **must-pass** change the user considers clean;
+    optionally the same mistake inside a large real change. State the bar in
+    the user's words. Explain any later change to that bar before using it.
+1. Check side effects before enqueueing: repository and global Kata hooks,
+    webhooks, and enabled `review` experiments on the checkout's actual branch.
+    Agree how to contain them; a scratch ref does not change branch enrollment.
+    Keep [Confidential material](#confidential-material) restrictions in force.
+1. Record prior settings. In the source checkout's `.roborev.toml`, temporarily
+    set top-level `isolate_reviews = true` and `review_context_count = 0`.
+    Settings only in the trial tree do not control the daemon. Isolation makes
+    agents read the trial tree in fresh sessions; zero context removes history
+    before the target. Keep agent, model, rubric, and threshold unchanged within
+    each pair. Restore settings after all jobs finish, including on failure.
+1. Prepare each case as a Git tree without switching the user's branch or
+    editing their material. Use a temporary Git index (`GIT_INDEX_FILE`) to
+    assemble copied or seeded files, current rubrics, includes, and all named
+    sources. For one commit, keep its original parent. For a range, use the
+    original range base as `parent` and the prepared range-head tree as `tree`.
+    This intentionally collapses intermediate history while keeping the net
+    change: old commits' reviews enter range prompts even with zero context.
+    Verify sources with `git show <case-commit>:<path>`. With isolation, a source
+    added later is unavailable at an older head; extend the case through setup
+    when needed. Hooks cover only commits made after setup.
+1. Give **every run** a fresh commit, including the second run of the same case.
+    Set `parent` as above and `tree` to the prepared case's tree SHA.
+    Initialize `trial_time` once per calibration session,
+    then repeat the remaining commands for each run:
 
-Without a commit, these review `HEAD`. To review another commit or a range,
-verify each ref with `git rev-parse --verify` first and pass it as a quoted
-argument, or use `--since <commit>`. For a panel, the job printed at enqueue is the combined
-review. Read a member's own review with:
+    ```bash
+    trial_time=$(date +%s)
+    # Start each run here; deliberately advance the committer timestamp.
+    trial_time=$((trial_time + 1))
+    # Keep identities, author date, and message fixed within each pair.
+    trial_sha=$(GIT_AUTHOR_NAME=Calibration GIT_AUTHOR_EMAIL=calibration@example.invalid \
+      GIT_COMMITTER_NAME=Calibration GIT_COMMITTER_EMAIL=calibration@example.invalid \
+      GIT_AUTHOR_DATE='2000-01-01T00:00:00Z' GIT_COMMITTER_DATE="$trial_time +0000" \
+      git commit-tree "$tree" -p "$parent" -m 'Calibration case')
+    git update-ref "refs/heads/review-calibration/$trial_sha" "$trial_sha"
+    ```
 
-```bash
-roborev show --from-skill --job <member-job-id>
-```
+    Verify the two SHAs differ while parent, tree, message, and author match.
+    Check `roborev show --from-skill "$trial_sha" --json` before enqueueing:
+    require an explicit "no review found", not a connection error. If already
+    reviewed, advance the timestamp and create another commit. Also inspect all
+    jobs with `roborev list --from-skill --all-branches --json --limit 0`
+    (unlimited). Reject SHAs used by any job, including queued jobs
+    and range heads; a SHA lookup alone does not find range reviews.
+1. Run each required case **twice**. Resolve refs with `git rev-parse --verify`
+    first. For one commit, pass `"$trial_sha"`; for a range, pass
+    `"$base..$trial_sha"`. Before enqueueing, verify
+    `git rev-list "$base..$trial_sha"` lists only the fresh trial SHA, and its
+    tree and net diff match the prepared case. Every named source must remain
+    available at that head. Use `--panel none` for a standalone type so `default_panel`
+    cannot replace it. Restricted providers with budget routing need a panel;
+    see Confidential material above.
 
-Show the user the verdict and findings, then tune together:
+    ```bash
+    roborev review --from-skill --type facts --panel none --wait "$trial_sha"
+    roborev review --from-skill --panel brief --wait "$trial_sha"
+    ```
 
-- A finding they would reject becomes a "do not flag" line in that rubric.
-- A mistake the reviewer missed becomes a check.
-- A severity they disagree with changes the severity guidance.
-
-Show each rubric change, get approval, commit it, and request a new review.
-Rerunning an old job reuses its frozen settings.
+    Choose one command, recording every job ID. `--wait` returns nonzero for an
+    expected failing review: still read results and run cleanup. Read each
+    result with `roborev show --from-skill --job <id>` and its stored inputs with
+    `roborev show --from-skill --job <id> --prompt`. Confirm the intended rubric,
+    sources, and absence of earlier reviews; check panel members too. If either
+    verdict or expected finding flips within a pair, report calibration as
+    inconclusive and investigate before judging an edit. A miss alone does not
+    justify severity changes; require evidence of severity or threshold ambiguity.
+1. Read every mismatch before editing. Get session IDs from
+    `roborev show --from-skill --job <id> --json`; with agentsview installed,
+    open that session's transcript. Propose changes and get approval. Every
+    "do not flag" line must make sense without its motivating case, change that
+    case's result, and preserve the must-catch finding. After **every rubric
+    edit**, put the approved rubric and include changes in the source checkout,
+    where template files load, and rebuild case trees with those files and current
+    sources. Rerun the **whole set**, twice per case, on fresh sibling commits.
+    Rerunning an old job reuses its frozen settings.
+1. After reading each trial, run `roborev close --from-skill <id>`; for panels,
+    close the synthesis parent. Closure prevents later fix discovery but cannot
+    undo hooks already fired. Always restore settings and delete scratch refs
+    with `git update-ref -d <ref>` unless the user keeps the set. Report verdicts,
+    findings, actual agent calls, and the `Tokens:` usage from each result. Sum
+    panel members and actual synthesis usage: the parent shows only its own.
+    Report cost only when priced; label unavailable usage or costs as unknown.
+    With approval, save cases, expected results, and the bar in
+    `review-rubrics/calibration.md` for the next session.
 
 ## Hand off
 
@@ -513,9 +569,10 @@ Finish with a short summary:
 - Files created or changed, and whether they are committed on the default
     branch.
 - How reviews run: when they start, which reviewers, and which agents.
-- How to run one on request, and how to read results: `roborev tui`,
-    `roborev list`, or `roborev show --job <id>`.
-- How to tune: edit a rubric, commit, and review again.
+- How to run one on request, and how to read results: `roborev tui --from-skill`,
+    `roborev list --from-skill`, or `roborev show --from-skill --job <id>`.
+- Calibration results and how to tune: approve an edit, rebuild the cases,
+    and rerun the whole set on fresh commits.
 - How to add a source document: commit its text where the rubric expects it,
     and update the rubric or include when the path changes.
 - What is still pending, such as hooks, a stopped daemon, guidelines waiting
@@ -533,3 +590,6 @@ Finish with a short summary:
 | "`roborev fix` can apply the findings" | Fix and refine are code-framed. Prose is corrected by the user or a writing agent. |
 | "They said it sounds good" | Approval covers what you showed. Show the files before writing them. |
 | "The source is missing, so return `unable_to_review`" | That counts as an agent failure. Report a finding that names the missing source. |
+| "One clean run means the rubric works" | Check both the known mistake and clean material twice against the written bar. |
+| "Rerun the same commit after editing" | Earlier reviews can anchor it. Use fresh sibling commits with the current rubric and sources. |
+| "The reviewer missed it, so add a line" | Read the mismatch first and test the proposed line against all three counterexample checks. |

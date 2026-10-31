@@ -23,7 +23,11 @@ reasoning = "thorough"
 
 To have your coding agent interview you and write this setup, invoke
 `/roborev-setup-review` (`$roborev-setup-review` in Codex). See
-[Agent Skills](../guides/agent-skills.md#set-up-a-custom-review).
+[Agent Skills](../guides/agent-skills.md#set-up-a-custom-review). The skill also
+helps calibrate the rubric: agree on a known mistake, a clean case, and expected
+results before spending review calls. Run each case twice on fresh commits, then
+rerun the whole set after every rubric edit. Check hooks and enabled review
+experiments before trials; closing a trial cannot undo hooks that already ran.
 
 The template supplies instructions for what the reviewer should check. Roborev
 still constructs the commit or range context, project guidelines, diff, and
