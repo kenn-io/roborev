@@ -537,6 +537,43 @@ func TestExperimentSessionReuseStaysOnSourceMachine(t *testing.T) {
 	}
 }
 
+func TestSynthesisExperimentPlanACPDeterministic(t *testing.T) {
+	jobConfig := synthesisJobConfig{
+		ciACPExecutionConfig: ciACPExecutionConfig{ACP: config.ACPAgentConfigs{
+			"primary": {Command: "primary-acp", Args: []string{"--review"}, Model: "primary-model"},
+			"backup":  {Command: "backup-acp", ReadOnlyMode: "plan", Model: "backup-model"},
+		}},
+		Instructions: "Combine reviews",
+		Check:        &ciCheckConfig{Rewrite: true, Model: "checker", PullRequest: "PR body"},
+	}
+	snapshot, err := jobConfig.encode()
+	require.NoError(t, err)
+	opts := storage.EnqueueOpts{
+		JobType: storage.JobTypeSynthesis, PanelRole: storage.PanelRoleSynthesis,
+		Agent: "acp.primary", BackupAgent: "acp.backup", PanelMemberConfigJSON: snapshot,
+	}
+	firstPlan, err := experimentPlanForPanel(nil, opts)
+	require.NoError(t, err)
+	firstHash, err := config.FingerprintExperimentConfig(firstPlan)
+	require.NoError(t, err)
+
+	for i := range 100 {
+		plan, err := experimentPlanForPanel(nil, opts)
+		require.NoError(t, err)
+		hash, err := config.FingerprintExperimentConfig(plan)
+		require.NoError(t, err)
+		require.Equal(t, firstHash, hash, "repeated plan %d", i)
+
+		rerun := opts
+		require.NoError(t, applyExperimentJobPlan(&rerun, firstPlan.Synthesis))
+		rerunPlan, err := experimentPlanForPanel(nil, rerun)
+		require.NoError(t, err)
+		rerunHash, err := config.FingerprintExperimentConfig(rerunPlan)
+		require.NoError(t, err)
+		require.Equal(t, firstHash, rerunHash, "rerun plan %d", i)
+	}
+}
+
 func TestSynthesisExperimentPlanPullRequest(t *testing.T) {
 	jobConfig := synthesisJobConfig{Instructions: "Combine reviews", Check: &ciCheckConfig{Rewrite: true, Model: "checker", PullRequest: "first PR body"}}
 	firstConfig, err := jobConfig.encode()

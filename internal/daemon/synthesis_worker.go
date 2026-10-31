@@ -207,7 +207,7 @@ func (c synthesisJobConfig) encode() (string, error) {
 	if c.Instructions == "" && len(c.ACP) == 0 && c.Check == nil {
 		return "", nil
 	}
-	raw, err := json.Marshal(c)
+	raw, err := json.Marshal(c, json.Deterministic(true))
 	if err != nil {
 		return "", err
 	}
