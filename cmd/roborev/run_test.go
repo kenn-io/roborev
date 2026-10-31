@@ -210,10 +210,7 @@ func TestRunLaunchReceiptOutput(t *testing.T) {
 		assert.Equal(t, "branch excluded by config\n", out.String())
 	})
 
-	// Flag conflicts go through usageErr, so cobra prints the usage block.
-	// In production that lands on stderr; these bare subcommands redirect it
-	// into out via SetOut, so assert stdout carries no receipt instead of
-	// asserting emptiness.
+	// Conflicting output modes reject the invocation without a launch receipt.
 	for _, conflict := range []string{"--quiet", "--wait"} {
 		t.Run("json rejects conflicting mode "+conflict, func(t *testing.T) {
 			cmd := runCmd()

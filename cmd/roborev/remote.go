@@ -40,7 +40,7 @@ func signingInitCmd() *cobra.Command {
 	var secretFile string
 	cmd := &cobra.Command{Use: "signing-init", Short: "Create a private signing key file for a remote reader", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		if secretFile == "" {
-			return errors.New("--secret-file is required")
+			return usageErr(cmd, errors.New("--secret-file is required"))
 		}
 		if err := requestsigning.GenerateKey(secretFile); err != nil {
 			return err
@@ -49,5 +49,6 @@ func signingInitCmd() *cobra.Command {
 		return nil
 	}}
 	cmd.Flags().StringVar(&secretFile, "secret-file", "", "new private secret file (secret is never printed)")
+	_ = cmd.MarkFlagRequired("secret-file")
 	return cmd
 }

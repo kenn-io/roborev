@@ -41,7 +41,9 @@ as raw Markdown at /docs/<page>.md.
 - [Review event hooks](https://roborev.io/docs/guides/hooks.md): run shell
   commands, notifications, and the built-in kata and beads integrations on
   review events
-- [CLI commands](https://roborev.io/docs/commands.md): every command and flag
+- [CLI commands](https://roborev.io/docs/commands.md): direct agent workflow,
+  job IDs and refs, server selection, output modes, error recovery, exit codes,
+  environment variables, and command flags
 - [Terminal UI](https://roborev.io/docs/integrations/tui.md): the review queue
   in the terminal
 - [Browser UI](https://roborev.io/docs/web-ui.md): the review workspace and

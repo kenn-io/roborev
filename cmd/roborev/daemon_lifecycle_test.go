@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -531,4 +532,111 @@ func TestDaemonSearchCredentialFiles(t *testing.T) {
 			assert.NotContains(t, health.CredentialReason, "example-key")
 		})
 	}
+}
+
+func TestStartDaemonChildExitRecovery(t *testing.T) {
+	for _, takeover := range []bool{false, true} {
+		t.Run(fmt.Sprint(takeover), func(t *testing.T) {
+			testenv.SetDataDir(t)
+			oldGet, oldStart, oldOut := getAnyRunningDaemonForStart, startDaemonDetached, lifecycleOut
+			t.Cleanup(func() { getAnyRunningDaemonForStart, startDaemonDetached, lifecycleOut = oldGet, oldStart, oldOut })
+			synctest.Test(t, func(t *testing.T) {
+				var output bytes.Buffer
+				lifecycleOut = &output
+				var exited atomic.Bool
+				failure := errors.New("synthetic child failure")
+				getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
+					if exited.Load() && takeover {
+						return &daemon.RuntimeInfo{PID: os.Getpid()}, nil
+					}
+					return nil, os.ErrNotExist
+				}
+				startDaemonDetached = func(_ context.Context, opts detachedDaemonOptions) error {
+					require.NotNil(t, opts.Exited)
+					_, err := io.WriteString(opts.Stderr, "synthetic startup failure\n")
+					require.NoError(t, err)
+					go func() {
+						time.Sleep(time.Second)
+						exited.Store(true)
+						opts.Exited(failure)
+					}()
+					return nil
+				}
+				err := startDaemon()
+				if takeover {
+					require.NoError(t, err)
+				} else {
+					require.ErrorIs(t, err, failure)
+					assert.Contains(t, err.Error(), "synthetic startup failure")
+					assert.Contains(t, err.Error(), "Startup log:")
+					var exit *exitError
+					require.ErrorAs(t, err, &exit)
+					assert.Contains(t, exit.hint, "roborev doctor")
+				}
+				assert.Empty(t, output.String(), "child exit completes before a progress report")
+			})
+		})
+	}
+}
+
+func TestStartDaemonExitAfterTransientReady(t *testing.T) {
+	testenv.SetDataDir(t)
+	oldGet, oldStart := getAnyRunningDaemonForStart, startDaemonDetached
+	t.Cleanup(func() { getAnyRunningDaemonForStart, startDaemonDetached = oldGet, oldStart })
+	synctest.Test(t, func(t *testing.T) {
+		var options *detachedDaemonOptions
+		sawReady := false
+		failure := errors.New("synthetic child exited after readiness")
+		getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
+			if options != nil && !sawReady {
+				sawReady = true
+				options.Exited(failure)
+				return &daemon.RuntimeInfo{PID: os.Getpid()}, nil
+			}
+			return nil, os.ErrNotExist
+		}
+		startDaemonDetached = func(_ context.Context, opts detachedDaemonOptions) error { options = &opts; return nil }
+		err := startDaemon()
+		require.ErrorIs(t, err, failure)
+		assert.NotErrorIs(t, err, context.DeadlineExceeded)
+	})
+}
+
+func TestFindDaemonForStartPreservesMissingCredentialError(t *testing.T) {
+	oldGet := getAnyRunningDaemonForStart
+	t.Cleanup(func() { getAnyRunningDaemonForStart = oldGet })
+	failure := fmt.Errorf("%w: %w", daemon.ErrClientConfig, os.ErrNotExist)
+	getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return nil, failure }
+	ready, err := findDaemonForStart(t.Context())
+	assert.Nil(t, ready)
+	assert.ErrorIs(t, err, daemon.ErrClientConfig)
+	assert.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestStartDaemonTakeoverAfterTransientReady(t *testing.T) {
+	testenv.SetDataDir(t)
+	oldGet, oldStart := getAnyRunningDaemonForStart, startDaemonDetached
+	t.Cleanup(func() { getAnyRunningDaemonForStart, startDaemonDetached = oldGet, oldStart })
+	synctest.Test(t, func(t *testing.T) {
+		var options *detachedDaemonOptions
+		probes := 0
+		getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
+			if options == nil {
+				return nil, os.ErrNotExist
+			}
+			probes++
+			switch probes {
+			case 1:
+				return &daemon.RuntimeInfo{PID: os.Getpid()}, nil
+			case 2:
+				options.Exited(errors.New("synthetic losing starter"))
+				return nil, os.ErrNotExist
+			default:
+				return &daemon.RuntimeInfo{PID: os.Getpid()}, nil
+			}
+		}
+		startDaemonDetached = func(_ context.Context, opts detachedDaemonOptions) error { options = &opts; return nil }
+		require.NoError(t, startDaemon())
+		assert.Equal(t, 3, probes)
+	})
 }

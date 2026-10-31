@@ -108,7 +108,7 @@ func validateUIArgs(_ *cobra.Command, args []string) error {
 	if len(args) == 1 {
 		jobID, err := strconv.ParseInt(args[0], 10, 64)
 		if err != nil || jobID <= 0 {
-			return fmt.Errorf("job ID must be a positive integer")
+			return invalidValue(fmt.Errorf("job ID must be a positive integer"))
 		}
 	}
 	return nil
