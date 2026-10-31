@@ -33,7 +33,7 @@ func (db *DB) GetBudgetSpend(day time.Time) (CostAggregate, error) {
 		if usage == nil || !usage.HasCost || usage.CostUSD < 0 || math.IsNaN(usage.CostUSD) || math.IsInf(usage.CostUSD, 0) {
 			continue
 		}
-		result.JobsWithCost++
+		result.JobsWithCost += completeCount(*usage)
 		result.TotalUSD += usage.CostUSD
 	}
 	if err := rows.Err(); err != nil {
@@ -41,6 +41,15 @@ func (db *DB) GetBudgetSpend(day time.Time) (CostAggregate, error) {
 	}
 	result.Complete = result.JobsTotal > 0 && result.JobsTotal == result.JobsWithCost
 	return result, nil
+}
+
+// completeCount is 1 when usage's dollars cover every expected provider
+// session. Partial rows still add their known dollars to TotalUSD.
+func completeCount(usage tokens.Usage) int {
+	if usage.CostComplete() {
+		return 1
+	}
+	return 0
 }
 
 // SetJobBudgetAgent records a substitution only while the worker owns the job.

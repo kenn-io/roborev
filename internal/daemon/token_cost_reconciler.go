@@ -312,9 +312,6 @@ func (wp *WorkerPool) reconcileTokenCostCandidate(
 	ctx context.Context, candidate storage.TokenCostCandidate,
 ) (bool, error) {
 	sessionIDs, expectedSessions := tokenUsageProviderSessions(candidate)
-	if expectedSessions > len(sessionIDs) {
-		return false, nil
-	}
 	fetchedSessions := make([]*tokens.Usage, 0, len(sessionIDs))
 	for _, sessionID := range sessionIDs {
 		fetched, err := wp.fetchTokenUsage(ctx, sessionID)
@@ -330,9 +327,7 @@ func (wp *WorkerPool) reconcileTokenCostCandidate(
 	if fetched == nil {
 		return false, nil
 	}
-	fetched.ThreadID = candidate.SessionID
-	fetched.ProviderSessionIDs = sessionIDs
-	fetched.ExpectedProviderSessions = expectedSessions
+	setReconciledSessions(fetched, candidate.SessionID, sessionIDs, expectedSessions)
 	merged := backfill.MergeTokenUsage(candidate.TokenUsage, fetched)
 	if backfill.NeedsTokenCostBackfill(tokens.ToJSON(merged)) {
 		return false, nil
@@ -355,6 +350,18 @@ func (wp *WorkerPool) reconcileTokenCostCandidate(
 		wp.budgetRouter.Invalidate()
 	}
 	return updated, nil
+}
+
+// setReconciledSessions records the sessions reconciliation priced. When some
+// expected sessions have no ID, the stored row already counts every phase's
+// tokens, so only the fetched dollars are kept: MergeTokenUsage then refills
+// the stored counts and keeps the higher stored session count, so the row
+// keeps its known dollars while its coverage stays partial.
+func setReconciledSessions(fetched *tokens.Usage, sessionID string, sessionIDs []string, expectedSessions int) {
+	if expectedSessions > len(sessionIDs) {
+		*fetched = tokens.Usage{CostUSD: fetched.CostUSD, HasCost: fetched.HasCost}
+	}
+	setTokenUsageSessions(fetched, sessionID, sessionIDs, len(sessionIDs))
 }
 
 func tokenUsageProviderSessions(candidate storage.TokenCostCandidate) ([]string, int) {

@@ -222,8 +222,11 @@ func TestCICheckCompletion(t *testing.T) {
 				require.NotNil(t, usage)
 				assert.EqualValues(t, 13, usage.InputTokens)
 				assert.EqualValues(t, 25, usage.OutputTokens)
-				assert.False(t, usage.HasCost)
-				assert.False(t, resolved)
+				assert.True(t, usage.HasCost, "reconciliation recovers known synthesis dollars")
+				assert.InDelta(t, 0.03, usage.CostUSD, 1e-9)
+				assert.True(t, resolved, "the available synthesis session is priced")
+				assert.Equal(t, []string{"synthesis-session"}, usage.ProviderSessionIDs)
+				assert.Equal(t, 2, usage.ExpectedProviderSessions, "checker cost coverage stays partial")
 			}
 			if mode == "failure" {
 				var invoked bool

@@ -4293,23 +4293,23 @@ func formatPanelTotal(synth *storage.ReviewJob, members []storage.BatchReviewRes
 }
 
 func panelTotalCost(synth *storage.ReviewJob, members []storage.BatchReviewResult) (float64, int, int) {
-	total := len(members)
-	var cost float64
-	priced := 0
+	usages := make([]string, 0, len(members)+1)
 	if synth != nil {
-		total++
-		if usage := tokens.ParseJSON(synth.TokenUsage); usage != nil && usage.HasCost {
-			cost += usage.CostUSD
-			priced++
-		}
+		usages = append(usages, synth.TokenUsage)
 	}
 	for _, m := range members {
-		if usage := tokens.ParseJSON(m.TokenUsage); usage != nil && usage.HasCost {
+		usages = append(usages, m.TokenUsage)
+	}
+	cost, priced := 0.0, 0
+	for _, raw := range usages {
+		if usage := tokens.ParseJSON(raw); usage != nil && usage.HasCost {
 			cost += usage.CostUSD
-			priced++
+			if usage.CostComplete() {
+				priced++
+			}
 		}
 	}
-	return cost, priced, total
+	return cost, priced, len(usages)
 }
 
 func formatRuntime(startedAt, finishedAt *time.Time) string {

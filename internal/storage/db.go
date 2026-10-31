@@ -1468,7 +1468,7 @@ func (db *DB) migrate() error {
 	// analyticsJobsIndexSQL explains the job index. analyticsRowsQuery names
 	// idx_reviews_job_verdict with INDEXED BY, so the two must stay in sync.
 	if _, err = db.Exec(analyticsJobsIndexSQL()); err != nil {
-		return fmt.Errorf("create idx_review_jobs_analytics: %w", err)
+		return fmt.Errorf("create idx_review_jobs_analytics_v2: %w", err)
 	}
 	if _, err = db.Exec(analyticsReviewsIndexSQL); err != nil {
 		return fmt.Errorf("create idx_reviews_job_verdict: %w", err)

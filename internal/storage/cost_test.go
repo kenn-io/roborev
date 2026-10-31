@@ -43,6 +43,7 @@ func TestGetCostAggregate(t *testing.T) {
 	mkJob("sha-cancel-run", "feat", JobStatusCanceled, `{"cost_usd":0.50,"has_cost":true}`) // priced
 	// Eligible + priced on empty branch:
 	mkJob("sha-empty", "", JobStatusDone, `{"cost_usd":0.25,"has_cost":true}`)
+	mkJob("sha-partial", "partial", JobStatusDone, `{"cost_usd":0.30,"has_cost":true,"expected_provider_sessions":2,"provider_session_ids":["synthesis-session"]}`)
 
 	// Ineligible jobs:
 	mkJob("sha-running", "feat", JobStatusRunning, "") // no finished_at
@@ -59,14 +60,20 @@ func TestGetCostAggregate(t *testing.T) {
 	_, err = db.Exec(`UPDATE review_jobs SET status='canceled', started_at=NULL, finished_at=datetime('now') WHERE id=?`, cq.ID)
 	require.NoError(t, err)
 
-	// Whole repo: 5 eligible (done, failed, cancel-run, invoked skip, empty),
-	// 4 priced, $11.74.
+	// Whole repo: 6 eligible, 4 fully priced, $12.04 including partial cost.
 	all, err := db.GetCostAggregate(CostOptions{RepoPaths: []string{repo.RootPath}})
 	require.NoError(t, err)
-	assert.Equal(5, all.JobsTotal)
+	assert.Equal(6, all.JobsTotal)
 	assert.Equal(4, all.JobsWithCost)
-	assert.InDelta(11.74, all.TotalUSD, 0.0001)
+	assert.InDelta(12.04, all.TotalUSD, 0.0001)
 	assert.False(all.Complete)
+
+	partial, err := db.GetCostAggregate(CostOptions{RepoPaths: []string{repo.RootPath}, Branch: "partial"})
+	require.NoError(t, err)
+	assert.Equal(1, partial.JobsTotal)
+	assert.Equal(0, partial.JobsWithCost, "a missing provider session leaves cost coverage partial")
+	assert.InDelta(0.30, partial.TotalUSD, 0.0001, "known dollars count toward the total")
+	assert.False(partial.Complete, "known dollars do not imply complete session coverage")
 
 	// Branch "feat": 4 eligible, 3 priced, $11.49.
 	feat, err := db.GetCostAggregate(CostOptions{RepoPaths: []string{repo.RootPath}, Branch: "feat"})

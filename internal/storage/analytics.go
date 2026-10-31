@@ -243,7 +243,7 @@ func (q analyticsQuerier) Query(query string, args ...any) (*sql.Rows, error) {
 }
 
 // analyticsJobExprs are the values Analytics derives from each review_jobs
-// row. idx_review_jobs_analytics stores their results, so SQLite reads them
+// row. idx_review_jobs_analytics_v2 stores their results, so SQLite reads them
 // from the index instead of parsing timestamps and token_usage JSON for every
 // row. The index definition is built from the same strings because SQLite
 // only substitutes an indexed expression that matches exactly. Changing an
@@ -253,7 +253,7 @@ var analyticsJobExprs = []string{
 	"COALESCE(CAST((julianday(j.finished_at) - julianday(j.enqueued_at)) * 86400 AS REAL), 0)",
 	"COALESCE(CAST((julianday(j.finished_at) - julianday(j.started_at)) * 86400 AS REAL), 0)",
 	"CASE WHEN " + costEligible + " THEN 1 ELSE 0 END",
-	"CASE WHEN " + costEligible + " AND " + hasCost + " THEN 1 ELSE 0 END",
+	"CASE WHEN " + costEligible + " AND " + costComplete + " THEN 1 ELSE 0 END",
 	"CASE WHEN " + costEligible + " AND " + hasCost + " THEN json_extract(j.token_usage, '$.cost_usd') ELSE 0 END",
 }
 
@@ -263,7 +263,7 @@ var analyticsJobExprs = []string{
 // prompt's overflow pages. The leading datetime(finished_at), id key matches
 // the query's ORDER BY, so rows come out sorted.
 func analyticsJobsIndexSQL() string {
-	return `CREATE INDEX IF NOT EXISTS idx_review_jobs_analytics ON review_jobs(
+	return `DROP INDEX IF EXISTS idx_review_jobs_analytics; CREATE INDEX IF NOT EXISTS idx_review_jobs_analytics_v2 ON review_jobs(
 		datetime(finished_at), id, julianday(finished_at), repo_id, source, agent, model,
 		job_type, panel_role, status, finished_at, ` +
 		strings.ReplaceAll(strings.Join(analyticsJobExprs, ", "), "j.", "") + `)

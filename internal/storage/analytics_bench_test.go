@@ -180,7 +180,7 @@ func BenchmarkBuildAnalyticsIndexes(b *testing.B) {
 	db, _ := openAnalyticsBenchmarkDB(b)
 	for b.Loop() {
 		b.StopTimer()
-		_, err := db.Exec(`DROP INDEX idx_review_jobs_analytics`)
+		_, err := db.Exec(`DROP INDEX idx_review_jobs_analytics_v2`)
 		require.NoError(b, err)
 		_, err = db.Exec(`DROP INDEX idx_reviews_job_verdict`)
 		require.NoError(b, err)
