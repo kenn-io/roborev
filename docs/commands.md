@@ -729,11 +729,17 @@ detached worktrees without switching your checkout. Plans are printed even with
 `--quiet`. `--list` cannot be combined with either planning flag.
 
 Refine planning requires a clean working tree with no rebase in progress. Commit
-or stash changes, and finish or abort any rebase before planning. During the
-same refine run, later fixes receive earlier plans, implementation results, and
-trusted comments as context. Comments remain attached to their original reviews.
-If the caller's working tree, HEAD, or branch changes during planning, refine
-stops even when the planning agent fails.
+or stash changes, and finish or abort any rebase before planning. If the
+caller's working tree, HEAD, or branch changes during planning, refine stops
+even when the planning agent fails.
+
+During the same refine run, later fixes receive earlier implementation results,
+trusted comments, and any stored plans as context, with or without `--plan`.
+This history follows the fix chain only while the new review covers the latest
+fix commit. Comments remain attached to their original reviews. Oversized
+prompts use complete prompt files in the disposable worktree. When an agent
+leaves findings unresolved without changes, refine stores its full output as a
+comment and leaves the review open.
 
 `refine` creates its own fix commits, so `fix_commit_author` and
 `fix_commit_co_authored_by` are applied directly with Git's `--author` and
