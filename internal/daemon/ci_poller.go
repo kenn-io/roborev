@@ -4277,9 +4277,9 @@ func formatPanelTotal(synth *storage.ReviewJob, members []storage.BatchReviewRes
 
 	if includeCosts {
 		cost, priced, total := panelTotalCost(synth, members)
-		switch priced {
-		case 0:
-		case total:
+		switch {
+		case priced == 0 && cost == 0:
+		case priced == total:
 			parts = append(parts, tokens.Usage{CostUSD: cost, HasCost: true}.FormatCost())
 		default:
 			parts = append(parts, "cost partial "+tokens.Usage{CostUSD: cost, HasCost: true}.FormatCost())
