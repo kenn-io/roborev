@@ -27,6 +27,14 @@ func TestCICheckPreparation(t *testing.T) {
 			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 			repo := testutil.NewTestRepoWithCommit(t)
 			repo.CommitFile("go.mod", "module example.com/check\n\ngo 1.25.0\n", "module")
+			marker := filepath.Join(t.TempDir(), "hook-ran")
+			repo.WriteFile(".githooks/post-checkout", fmt.Sprintf("#!/bin/sh\nprintf 'hook ran' > '%s'\n", marker))
+			require.NoError(t, os.Chmod(filepath.Join(repo.Root, ".githooks", "post-checkout"), 0o700))
+			repo.RunGit("add", ".githooks/post-checkout")
+			repo.RunGit("commit", "-m", "checkout hook fixture")
+			globalConfig := filepath.Join(t.TempDir(), "gitconfig")
+			require.NoError(t, os.WriteFile(globalConfig, []byte("[core]\n\thooksPath = .githooks\n"), 0o600))
+			t.Setenv("GIT_CONFIG_GLOBAL", globalConfig)
 			tools := t.TempDir()
 			require.NoError(t, os.Mkdir(filepath.Join(tools, "bin"), 0o700))
 			// go env runs outside the checkout, so a version-manager shim can't load its config.
@@ -46,6 +54,7 @@ func TestCICheckPreparation(t *testing.T) {
 			require.NoError(t, err)
 			checkout, root, cleanup := run.Repo, filepath.Dir(run.Job.WorkDir), run.cleanup
 			t.Cleanup(cleanup)
+			assert.NoFileExists(t, marker, "checker preparation must leave repository hooks unexecuted on the host")
 			if name == "checker" {
 				assert.Contains(t, log.String(), "module warming failed: exit status 1")
 				assert.Contains(t, run.Job.Env, "GOMODCACHE="+tools, log.String())

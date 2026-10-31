@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	gitcmd "go.kenn.io/kit/git/cmd"
 	"go.kenn.io/kit/pathresolve"
 
 	"go.kenn.io/roborev/internal/agent"
@@ -212,7 +213,7 @@ func cloneCICheckRepo(ctx context.Context, repoPath, checkout, dir string) (repo
 		return "", "", err
 	}
 	repo = filepath.Join(dir, "repo")
-	if output, err := exec.CommandContext(ctx, "git", "clone", "--quiet", "--shared", checkout, repo).CombinedOutput(); err != nil {
+	if output, err := gitcmd.New().WithConfig("core.hooksPath", os.DevNull).Command(ctx, "", "clone", "--quiet", "--shared", checkout, repo).CombinedOutput(); err != nil {
 		return "", "", fmt.Errorf("clone checker repository: %w: %s", err, output)
 	}
 	return repo, filepath.Join(commonDir, "objects"), nil
