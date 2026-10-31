@@ -1216,7 +1216,12 @@ func TestCodexSandboxRepoContainment(t *testing.T) {
 		require.NoError(t, err)
 		cleanup()
 	}
-	read := t.TempDir()
+	tmp := t.TempDir()
+	alias := filepath.Join(t.TempDir(), "tmp")
+	require.NoError(t, os.Symlink(tmp, alias))
+	t.Setenv("TMPDIR", alias)
+	read := filepath.Join(alias, "read")
+	require.NoError(t, os.Mkdir(read, 0o700))
 	readRepo := filepath.Join(read, "repo")
 	require.NoError(t, os.Mkdir(readRepo, 0o700))
 	for _, tc := range []struct {
