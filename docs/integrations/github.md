@@ -789,12 +789,12 @@ disabled.
 
 After checking, two additional Codex calls use the checker model and reasoning
 in a fresh clone of the committed PR head. The sandbox grants read-only access
-to this clone, outside its writable directory. The first explains the
-problem for the PR author. The second separates the fix sentence from the code
-names listed after **Where:** on the same line. Only kept findings at the
-publication severity threshold are rewritten. Both calls receive the stored
-finding text and escaped PR title and body as context, without checker output.
-Either rewrite failing preserves the checked text, including checker drops.
+to this clone, outside its writable directory. The first explains the problem
+for the PR author. The second separates the fix sentence from the code names
+listed after **Where:** on the same line. Only kept findings at the publication
+severity threshold are rewritten. Both calls receive the stored finding text and
+escaped PR title and body as context, without checker output. Either rewrite
+failing preserves the checked text, including checker drops.
 
 ## PR Throttling
 
