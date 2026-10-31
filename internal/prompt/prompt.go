@@ -1080,6 +1080,19 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 	return ctx.requiredPrefix + body, nil
 }
 
+// PullRequestBlock renders escaped PR metadata as context-only data.
+func PullRequestBlock(pr PullRequest) string {
+	ctx := (&Builder{pullRequest: pr}).pullRequestContext()
+	if ctx == nil {
+		return ""
+	}
+	var block strings.Builder
+	if err := promptTemplates.ExecuteTemplate(&block, "pull_request_context", ctx); err != nil {
+		panic(err) // The embedded template and its context have fixed types.
+	}
+	return block.String()
+}
+
 func (b *Builder) pullRequestContext() *PullRequestContext {
 	title := strings.TrimSpace(b.pullRequest.Title)
 	description := strings.TrimSpace(strings.ReplaceAll(b.pullRequest.Description, "\r\n", "\n"))
