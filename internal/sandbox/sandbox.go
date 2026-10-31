@@ -114,7 +114,7 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 			}},
 		},
 		"credential_capture": map[string]any{j.Route.Name: map[string]any{
-			"command": j.Route.Capture, "cache_ttl_secs": 300,
+			"command": j.Route.Capture, "cache_ttl_secs": 0,
 		}},
 		"environment": map[string]any{
 			"allow_vars": keys,

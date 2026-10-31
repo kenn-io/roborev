@@ -40,7 +40,8 @@ func TestCodexSandboxIntegration(t *testing.T) {
 	probe := fmt.Sprintf("#!/bin/bash\n[[ \"$CODEX_HOME\" == %q/.codex-home-* && -d \"$CODEX_HOME\" ]] && echo OK codex-home\n", repo)
 	tmp := filepath.Join(repo, "tmp")
 
-	const key = "sandbox-test-token"
+	var key atomic.Value
+	key.Store("sandbox-test-token")
 	var unauthorized atomic.Int32
 	var cancelling atomic.Bool
 	ctx, cancel := context.WithCancel(t.Context())
@@ -53,7 +54,7 @@ func TestCodexSandboxIntegration(t *testing.T) {
 			cancel()
 			return
 		}
-		if r.Header.Get("Authorization") != "Bearer "+key {
+		if r.Header.Get("Authorization") != "Bearer "+key.Load().(string) {
 			unauthorized.Add(1)
 			w.WriteHeader(http.StatusUnauthorized)
 			return
@@ -88,6 +89,13 @@ func TestCodexSandboxIntegration(t *testing.T) {
 			if strings.HasSuffix(input.Type, "_call_output") {
 				outputs = append(outputs, input.Output)
 			}
+		}
+		if len(outputs) == 0 {
+			// Simulate a host login refresh before the next model request.
+			if !assert.NoError(t, os.WriteFile(filepath.Join(secrets, "auth.json"), []byte(`{"tokens":{"access_token":"sandbox-refreshed-token"}}`), 0o600)) {
+				return
+			}
+			key.Store("sandbox-refreshed-token")
 		}
 		for _, tool := range request.Tools {
 			assert.NotEqual(t, "web_search", tool.Type)
