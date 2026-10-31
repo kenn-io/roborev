@@ -15,9 +15,9 @@ import (
 
 func TestCIRewriteValidationAndThreshold(t *testing.T) {
 	doc := structuredreview.Document{SchemaVersion: 3, Summary: "original", Verdict: "fail", SourceLabels: []string{"reviewer"}, Findings: []structuredreview.Finding{
-		{Severity: "low", Problem: "minor", Fix: "minor fix"},
+		{Severity: "low", Kind: "defect", Confidence: .9, Problem: "minor", Fix: "minor fix", Sources: []int{1}},
 		{Severity: "high", Kind: "defect", Confidence: .9, Location: "save.go:4", Problem: "data loss", Fix: "preserve files", Sources: []int{1}},
-		{Severity: "medium", Location: "load.go:8", Problem: "load fails", Fix: "load files"},
+		{Severity: "medium", Kind: "defect", Confidence: .9, Location: "load.go:8", Problem: "load fails", Fix: "load files", Sources: []int{1}},
 	}}
 	const first = `{"findings":[{"finding":2,"problem":"Users cannot load files.","fix":"Repair loadFile."},{"finding":1,"problem":"Users lose saved files.","fix":"Repair saveFile."}]}`
 	const second = `{"findings":[{"finding":1,"fix":"Keep saved files. **Where:** saveFile"},{"finding":2,"fix":"Load files. **Where:** loadFile"}]}`
@@ -40,7 +40,11 @@ func TestCIRewriteValidationAndThreshold(t *testing.T) {
 			if phase == 1 && tc.name != "call failure" && tc.name != "blank fix" {
 				continue
 			}
-			t.Run(fmt.Sprintf("%s/phase%d", tc.name, phase+1), func(t *testing.T) {
+			name := tc.name
+			if tc.bad != "" {
+				name = fmt.Sprintf("%s/phase%d", tc.name, phase+1)
+			}
+			t.Run(name, func(t *testing.T) {
 				calls := 0
 				got, err := rewriteCIFindings(doc, "medium", pr, func(text string, schema jsontext.Value) (jsontext.Value, error) {
 					current := calls
