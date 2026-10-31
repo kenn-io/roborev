@@ -80,6 +80,9 @@ func (wp *WorkerPool) checkSynthesis(ctx context.Context, job *storage.ReviewJob
 		checked, checkErr := checker(ctx, job, *check, doc, env, io.MultiWriter(outputWriter, capture))
 		capture.Flush()
 		res.checkerUsage = capture.Usage()
+		if res.checkerUsage == nil && capture.Started() {
+			res.checkerUsage = &tokens.Usage{}
+		}
 		if res.checkerUsage != nil {
 			// The checker's disposable CODEX_HOME cannot supply provider costs.
 			res.checkerUsage.ThreadID = ""

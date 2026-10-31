@@ -125,8 +125,8 @@ func TestCICheckLog(t *testing.T) {
 
 func TestCICheckCompletion(t *testing.T) {
 	const raw = `{"schema_version":3,"source_labels":["test"],"summary":"Two claims","verdict":"fail","findings":[{"severity":"high","kind":"defect","confidence":0.9,"problem":"Build claim","fix":"Fix build","sources":[1]},{"severity":"medium","kind":"defect","confidence":0.9,"problem":"Data loss","fix":"Preserve data","sources":[1]}]}`
-	// "agent drop" reaches the checker through a synthesis agent and leaves no finding at its threshold; the rest pass one review through.
-	for _, mode := range []string{"failure", "failure after usage", "drop", "agent drop", "below severity threshold", "checker canceled", "checker deadline"} {
+	// Priced synthesis cases run an agent; the rest pass one review through.
+	for _, mode := range []string{"failure", "failure after start", "failure after usage", "drop", "agent drop", "below severity threshold", "checker canceled", "checker deadline"} {
 		t.Run(mode, func(t *testing.T) {
 			tc := newWorkerTestContext(t, 1)
 			tc.Pool.cfgGetter.Config().CodexCmd = "custom-codex"
@@ -135,7 +135,7 @@ func TestCICheckCompletion(t *testing.T) {
 			run, members, _ := enqueuePanelRun(t, tc, "checker", []memberSpec{{name: "one", agent: "test"}})
 			setSynthesisAgent(t, tc, run, synthAgent.name)
 			snapshot := synthesisJobConfig{Check: &ciCheckConfig{Reasoning: "high"}}
-			if mode == "agent drop" {
+			if mode == "agent drop" || mode == "failure after start" {
 				snapshot.Instructions = "verify"
 				synthAgent.streamLine = "{\"type\":\"thread.started\",\"thread_id\":\"synthesis-session\"}\n" + `{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":20}}`
 				tc.Pool.tokenUsageFetcher = func(_ context.Context, sessionID string) (*tokens.Usage, error) {
@@ -167,6 +167,9 @@ func TestCICheckCompletion(t *testing.T) {
 					return structuredreview.Document{}, ctx.Err()
 				}
 				fmt.Fprintln(out, `{"type":"thread.started","thread_id":"checker-session"}`)
+				if mode == "failure after start" {
+					return structuredreview.Document{}, context.DeadlineExceeded
+				}
 				// Capture usage even when the final event has no newline.
 				fmt.Fprint(out, `{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":5}}`)
 				if mode == "failure after usage" {
@@ -214,19 +217,23 @@ func TestCICheckCompletion(t *testing.T) {
 				require.NoError(t, tc.DB.QueryRow("SELECT agent_invoked FROM review_jobs WHERE id = ?", job.ID).Scan(&invoked))
 				assert.False(t, invoked)
 			}
-			if mode == "drop" || mode == "agent drop" || mode == "failure after usage" {
+			if mode == "drop" || mode == "agent drop" || mode == "failure after start" || mode == "failure after usage" {
 				usage := tokens.ParseJSON(finished.TokenUsage)
 				require.NotNil(t, usage)
 				assert := assert.New(t)
 				assert.False(usage.HasCost)
-				if mode == "agent drop" {
+				switch mode {
+				case "failure after start":
+					assert.InDelta(0.03, usage.CostUSD, 1e-9)
+					assert.Equal(2, usage.ExpectedProviderSessions)
+				case "agent drop":
 					assert.EqualValues(15, usage.InputTokens)
 					assert.EqualValues(29, usage.OutputTokens)
 					assert.Equal("synthesis-session", finished.SessionID)
 					assert.Equal("synthesis-session", usage.ThreadID)
 					assert.Equal([]string{"synthesis-session"}, usage.ProviderSessionIDs)
 					assert.Equal(2, usage.ExpectedProviderSessions)
-				} else {
+				default:
 					assert.EqualValues(3, usage.InputTokens)
 					assert.EqualValues(5, usage.OutputTokens)
 					assert.Empty(finished.SessionID)
