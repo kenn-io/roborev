@@ -10,7 +10,7 @@ workflows:
         - 'actions/setup-node@v7.1.0'
         - 'actions/upload-artifact@v7.0.2'
         - 'astral-sh/setup-uv@v10.3.2'
-        - 'jdx/mise-action@v5.2.2'
+        - 'jdx/mise-action@v5.2.3'
         - 'kenn-io/kit@v0.47.3'
         - 'step-security/codecov-action@v7.1.1'
         - 'step-security/golangci-lint-action@v9.3.0'
@@ -85,9 +85,9 @@ dependencies:
         commit: 'sha1-9b3254085494b55a0f7c4c2b3d2d52cc712ce370'
         owner_id: 9919
         repo_id: 259445878
-    'jdx/mise-action@v5.2.2':
-        ref: 'v5.2.2'
-        commit: 'sha1-8418fedb1110381a0d3ba51a7a415d7c1b884550'
+    'jdx/mise-action@v5.2.3':
+        ref: 'v5.2.3'
+        commit: 'sha1-82a612c5ab8bcda7cc5db6b7e81a8e7584c3dc6e'
         owner_id: 216188
         repo_id: 738284564
     'kenn-io/actions@main':
