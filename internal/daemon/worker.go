@@ -2405,7 +2405,12 @@ func (collected *sessionTokenUsage) withUnpricedPhase(sessionRan bool, u *tokens
 				sessionID = collected.capturedSession
 				sessionIDs = []string{collected.capturedSession}
 			}
-			setTokenUsageSessions(combined, sessionID, sessionIDs, 1)
+			combined.ThreadID = sessionID
+			combined.ProviderSessionIDs = sessionIDs
+			combined.ExpectedProviderSessions = 1
+			if sessionRan {
+				combined.ExpectedProviderSessions = 2
+			}
 		}
 		return combined
 	}

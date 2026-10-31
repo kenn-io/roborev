@@ -125,8 +125,8 @@ func TestCICheckLog(t *testing.T) {
 
 func TestCICheckCompletion(t *testing.T) {
 	const raw = `{"schema_version":3,"source_labels":["test"],"summary":"Two claims","verdict":"fail","findings":[{"severity":"high","kind":"defect","confidence":0.9,"problem":"Build claim","fix":"Fix build","sources":[1]},{"severity":"medium","kind":"defect","confidence":0.9,"problem":"Data loss","fix":"Preserve data","sources":[1]}]}`
-	// "agent drop" runs a priced synthesis agent; the rest pass one review through.
-	for _, mode := range []string{"failure", "failure after usage", "drop", "agent drop", "below severity threshold", "checker canceled", "checker deadline"} {
+	// Agent cases run synthesis; the rest pass one review through.
+	for _, mode := range []string{"failure", "failure after usage", "drop", "agent drop", "agent late pricing drop", "below severity threshold", "checker canceled", "checker deadline"} {
 		t.Run(mode, func(t *testing.T) {
 			tc := newWorkerTestContext(t, 1)
 			tc.Pool.cfgGetter.Config().CodexCmd = "custom-codex"
@@ -135,11 +135,14 @@ func TestCICheckCompletion(t *testing.T) {
 			run, members, _ := enqueuePanelRun(t, tc, "checker", []memberSpec{{name: "one", agent: "test"}})
 			setSynthesisAgent(t, tc, run, synthAgent.name)
 			snapshot := synthesisJobConfig{Check: &ciCheckConfig{Reasoning: "high"}}
-			if mode == "agent drop" {
+			if strings.HasPrefix(mode, "agent ") {
 				snapshot.Instructions = "verify"
 				synthAgent.streamLine = "{\"type\":\"thread.started\",\"thread_id\":\"synthesis-session\"}\n" + `{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":20}}`
 				tc.Pool.tokenUsageFetcher = func(_ context.Context, sessionID string) (*tokens.Usage, error) {
 					assert.Equal(t, "synthesis-session", sessionID)
+					if mode == "agent late pricing drop" {
+						return &tokens.Usage{InputTokens: 10, OutputTokens: 20}, nil
+					}
 					return &tokens.Usage{InputTokens: 12, OutputTokens: 24, CostUSD: 0.03, HasCost: true}, nil
 				}
 			}
@@ -209,6 +212,25 @@ func TestCICheckCompletion(t *testing.T) {
 				return
 			}
 			assert.Equal(t, storage.JobStatusDone, finished.Status)
+			if mode == "agent late pricing drop" {
+				tc.Pool.tokenUsageFetcher = func(_ context.Context, sessionID string) (*tokens.Usage, error) {
+					assert.Equal(t, "synthesis-session", sessionID)
+					return &tokens.Usage{InputTokens: 10, OutputTokens: 20, CostUSD: 0.03, HasCost: true}, nil
+				}
+				candidate, err := tc.DB.GetTokenCostCandidate(job.ID)
+				require.NoError(t, err)
+				require.NotNil(t, candidate)
+				resolved, err := tc.Pool.reconcileTokenCostCandidate(t.Context(), *candidate)
+				require.NoError(t, err)
+				finished, err = tc.DB.GetJobByID(job.ID)
+				require.NoError(t, err)
+				usage := tokens.ParseJSON(finished.TokenUsage)
+				require.NotNil(t, usage)
+				assert.EqualValues(t, 13, usage.InputTokens)
+				assert.EqualValues(t, 25, usage.OutputTokens)
+				assert.False(t, usage.HasCost)
+				assert.False(t, resolved)
+			}
 			if mode == "failure" {
 				var invoked bool
 				require.NoError(t, tc.DB.QueryRow("SELECT agent_invoked FROM review_jobs WHERE id = ?", job.ID).Scan(&invoked))
@@ -226,7 +248,7 @@ func TestCICheckCompletion(t *testing.T) {
 					assert.Equal("synthesis-session", finished.SessionID)
 					assert.Equal("synthesis-session", usage.ThreadID)
 					assert.Equal([]string{"synthesis-session"}, usage.ProviderSessionIDs)
-					assert.Equal(1, usage.ExpectedProviderSessions)
+					assert.Equal(2, usage.ExpectedProviderSessions)
 				} else {
 					assert.False(usage.HasCost)
 					assert.EqualValues(3, usage.InputTokens)
