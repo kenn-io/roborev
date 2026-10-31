@@ -44,6 +44,23 @@ func (w daemonLogOutput) Write(p []byte) (int, error) {
 	return min(n, m), errors.Join(err, fileErr)
 }
 
+func daemonLogLockPath(dir string) string {
+	return filepath.Join(dir, "daemon.log.lock")
+}
+
+// daemonLogOwnerExists checks whether another daemon owns the shared log lock.
+func daemonLogOwnerExists(dir string) (bool, error) {
+	owner := flock.New(daemonLogLockPath(dir))
+	locked, err := owner.TryLock()
+	if err != nil {
+		return false, errors.Join(fmt.Errorf("check daemon log owner: %w", err), owner.Close())
+	}
+	if !locked {
+		return true, owner.Close()
+	}
+	return false, owner.Close()
+}
+
 func setupDaemonLogging(dir string, stderr io.Writer, maxBytes int64) (_ func() error, setupErr error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("create daemon log directory: %w", err)
@@ -51,7 +68,7 @@ func setupDaemonLogging(dir string, stderr io.Writer, maxBytes int64) (_ func() 
 	path := filepath.Join(dir, "daemon.log")
 	// Database paths can differ while sharing DataDir and these log files.
 	// Hold a separate lock before inspecting or changing either file.
-	owner := flock.New(path + ".lock")
+	owner := flock.New(daemonLogLockPath(dir))
 	locked, err := owner.TryLock()
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("lock daemon logs: %w", err), owner.Close())

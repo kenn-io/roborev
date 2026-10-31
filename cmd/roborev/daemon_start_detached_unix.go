@@ -16,5 +16,6 @@ func startDetachedDaemon(ctx context.Context, opts detachedDaemonOptions) error 
 		Stdout:          opts.Stdout,
 		Stderr:          opts.Stderr,
 		RefuseEphemeral: opts.RefuseEphemeral,
+		Exited:          opts.Exited,
 	})
 }

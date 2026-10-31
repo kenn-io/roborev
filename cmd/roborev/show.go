@@ -113,6 +113,24 @@ Examples:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			ep := getDaemonEndpoint()
+			if forceJobID {
+				if len(args) == 0 {
+					return usageErr(cmd, fmt.Errorf("--job requires a job ID argument"))
+				}
+				id, err := strconv.ParseInt(args[0], 10, 64)
+				if err != nil || id <= 0 {
+					if ep.IsRemote() {
+						return validationErr(cmd, fmt.Errorf("remote show requires a positive numeric job ID"))
+					}
+					return validationErr(cmd, fmt.Errorf("invalid job ID: %s", args[0]))
+				}
+			}
+			if len(args) == 0 && !ep.IsRemote() {
+				if _, err := gitrepo.Root(ctx, "."); err != nil {
+					return withHint(invalidValue(fmt.Errorf("not in a git repository; use a job ID instead (e.g., roborev show 42)")),
+						"change into a git repository, or use a job ID: roborev show --job 42")
+				}
+			}
 			if ep.IsRemote() {
 				if !forceJobID || len(args) != 1 {
 					return usageErr(cmd, fmt.Errorf("remote show requires --job with a numeric job ID"))
@@ -124,7 +142,7 @@ Examples:
 			}
 			// Ensure daemon is running (and restart if version mismatch).
 			if err := ensureDaemon(); err != nil {
-				return fmt.Errorf("daemon not running: %w", err)
+				return fmt.Errorf("connect to daemon: %w", err)
 			}
 			ep = getDaemonEndpoint()
 			addr := ep.BaseURL()

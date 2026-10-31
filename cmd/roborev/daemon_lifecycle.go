@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/roborev/internal/auth"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/version"
 	roborevclient "go.kenn.io/roborev/pkg/client"
 )
@@ -95,6 +96,7 @@ type detachedDaemonOptions struct {
 	Stdout          io.Writer
 	Stderr          io.Writer
 	RefuseEphemeral bool
+	Exited          func(error)
 }
 
 // probeDaemonWithRetry probes ep several times before reporting failure, so
@@ -297,13 +299,29 @@ func registerRepo(repoPath string) error {
 // If daemon is running but has different version, restart it.
 // Set ROBOREV_SKIP_VERSION_CHECK=1 to accept any daemon version without
 // restarting (useful for development with go run).
-func ensureDaemon() error {
+func ensureDaemon() (err error) {
+	defer func() {
+		if err == nil {
+			return
+		}
+		if exit, ok := errors.AsType[*exitError](err); ok && exit.code != 1 {
+			return
+		}
+		hint := "start the local daemon with 'roborev daemon start', or run 'roborev doctor' to diagnose setup"
+		if serverAddr != "" {
+			hint = "check the --server address and that daemon's availability, or omit --server to use the local daemon"
+		}
+		if exit, ok := errors.AsType[*exitError](err); ok && exit.hint != "" {
+			hint = exit.hint
+		}
+		err = &exitError{code: 1, cause: err, kind: "daemon_unreachable", hint: hint}
+	}()
 	// An explicit endpoint is caller-managed. The command reports its request
 	// error without discovering, starting, or restarting a local daemon.
 	if serverAddr != "" {
 		ep, err := daemon.ParseEndpoint(serverAddr)
 		if err != nil {
-			return fmt.Errorf("invalid --server address %q: %w", serverAddr, err)
+			return invalidValue(fmt.Errorf("invalid --server address %q: %w", serverAddr, err))
 		}
 		_, err = daemon.ProbeDaemon(ep, 2*time.Second)
 		return err
@@ -366,6 +384,18 @@ func startDaemon() error {
 
 	var startupLogPath string
 	var startupLogOffset int64
+	// The launcher reports exactly one exit. Buffer it so a ready daemon can
+	// outlive this caller without blocking its eventual exit callback.
+	exited := make(chan error, 1)
+	var childExit error
+	startupCtx, cancelStartup := context.WithCancel(context.Background())
+	defer cancelStartup()
+	recordExit := func(err error) {
+		if err == nil {
+			err = errors.New("daemon exited before becoming ready")
+		}
+		childExit = err
+	}
 	manager := kitdaemon.Manager{
 		Store: daemon.RuntimeStore(),
 		FindFunc: func(ctx context.Context) (kitdaemon.RuntimeRecord, kitdaemon.PingInfo, bool, error) {
@@ -374,7 +404,37 @@ func startDaemon() error {
 				return kitdaemon.RuntimeRecord{}, kitdaemon.PingInfo{}, false, err
 			}
 			if info == nil {
-				return kitdaemon.RuntimeRecord{}, kitdaemon.PingInfo{}, false, nil
+				select {
+				case exitErr := <-exited:
+					recordExit(exitErr)
+				default:
+				}
+				if childExit != nil {
+					// A replacement can publish readiness while the exited child
+					// loses the runtime lock. Recheck before canceling the manager.
+					info, err = findDaemonForStart(ctx)
+					if err != nil {
+						return kitdaemon.RuntimeRecord{}, kitdaemon.PingInfo{}, false, err
+					}
+					if info == nil {
+						owned, ownerErr := daemonStartupContenderExists()
+						if ownerErr != nil {
+							return kitdaemon.RuntimeRecord{}, kitdaemon.PingInfo{}, false,
+								fmt.Errorf("check competing daemon state: %w", ownerErr)
+						}
+						if owned {
+							// A losing child can exit while the winning daemon is still
+							// initializing. Keep the manager polling until it publishes
+							// readiness or releases the database lock.
+							return kitdaemon.RuntimeRecord{}, kitdaemon.PingInfo{}, false, nil
+						}
+						cancelStartup()
+						return kitdaemon.RuntimeRecord{}, kitdaemon.PingInfo{}, false, childExit
+					}
+				}
+				if info == nil {
+					return kitdaemon.RuntimeRecord{}, kitdaemon.PingInfo{}, false, nil
+				}
 			}
 			return kitdaemon.RuntimeRecord{
 				PID: info.PID, Network: info.Network, Address: info.Address,
@@ -406,6 +466,7 @@ func startDaemon() error {
 				Stdout:          stdout,
 				Stderr:          stderr,
 				RefuseEphemeral: os.Getenv("ROBOREV_TEST_ALLOW_AUTOSTART") != "1",
+				Exited:          func(err error) { exited <- err },
 			}); err != nil {
 				return err
 			}
@@ -423,6 +484,27 @@ func startDaemon() error {
 					return nil
 				}
 				select {
+				case exitErr := <-exited:
+					recordExit(exitErr)
+					// Another starter can win the runtime lock while this child exits.
+					ready, err := findDaemonForStart(ctx)
+					if err != nil {
+						return err
+					}
+					if ready != nil {
+						return nil
+					}
+					owned, ownerErr := daemonStartupContenderExists()
+					if ownerErr != nil {
+						return fmt.Errorf("check competing daemon state: %w", ownerErr)
+					}
+					if owned {
+						// Let Manager.Ensure use its existing startup timeout while
+						// the database owner finishes initializing.
+						return nil
+					}
+					return fmt.Errorf("daemon exited during startup: %w%s", childExit,
+						daemonStartupLogSummary(startupLogPath, startupLogOffset))
 				case <-ctx.Done():
 					return ctx.Err()
 				case <-progress.C:
@@ -434,12 +516,17 @@ func startDaemon() error {
 			}
 		},
 	}
-	if _, _, err := manager.Ensure(context.Background(), daemonStartTimeout); err != nil {
-		if errors.Is(err, context.DeadlineExceeded) && startupLogPath != "" {
-			return fmt.Errorf("failed to start daemon: %w\nDaemon did not become ready within %s; it may still be initializing.%s",
-				err, daemonStartTimeout, daemonStartupLogSummary(startupLogPath, startupLogOffset))
+	if _, _, err := manager.Ensure(startupCtx, daemonStartTimeout); err != nil {
+		if childExit != nil && errors.Is(err, context.Canceled) {
+			err = fmt.Errorf("daemon exited during startup: %w%s", childExit,
+				daemonStartupLogSummary(startupLogPath, startupLogOffset))
 		}
-		return fmt.Errorf("failed to start daemon: %w", err)
+		if errors.Is(err, context.DeadlineExceeded) && startupLogPath != "" {
+			return withHint(fmt.Errorf("failed to start daemon: %w\nDaemon did not become ready within %s; it may still be initializing.%s",
+				err, daemonStartTimeout, daemonStartupLogSummary(startupLogPath, startupLogOffset)),
+				"inspect the startup log, then run 'roborev doctor' or 'roborev daemon status' before retrying")
+		}
+		return withHint(fmt.Errorf("failed to start daemon: %w", err), "inspect the startup log and run 'roborev doctor' or 'roborev daemon status' before retrying")
 	}
 	return nil
 }
@@ -467,10 +554,42 @@ func daemonStartupLogSummary(path string, offset int64) string {
 
 func findDaemonForStart(ctx context.Context) (*daemon.RuntimeInfo, error) {
 	info, err := getAnyRunningDaemonForStart(ctx)
-	if errors.Is(err, os.ErrNotExist) {
+	if errors.Is(err, os.ErrNotExist) && !daemon.IsDaemonAccessError(err) {
 		return nil, nil
 	}
 	return info, err
+}
+
+// daemonStartupContenderExists reports whether a competing daemon is still
+// starting. Pre-v0.57 daemons do not use the database owner lock, so also
+// honor a live legacy runtime record from the data directory root. The legacy
+// endpoint is never probed here; it only identifies the recorded process.
+func daemonStartupContenderExists() (bool, error) {
+	// Logging starts before database setup, so check it first. Probing the
+	// database lock while another daemon owns the log lock could temporarily
+	// take ownership away from that daemon before it reaches database setup.
+	owned, err := daemonLogOwnerExists(config.DataDir())
+	if err != nil || owned {
+		return owned, err
+	}
+	owned, err = daemonDatabaseOwnerExists(storage.DefaultDBPath())
+	if err != nil || owned {
+		return owned, err
+	}
+	runtimes, err := listAllRuntimes()
+	if err != nil {
+		return false, err
+	}
+	dataDir := filepath.Clean(config.DataDir())
+	for _, info := range runtimes {
+		if info == nil || info.SourcePath == "" || filepath.Clean(filepath.Dir(info.SourcePath)) != dataDir {
+			continue
+		}
+		if !info.Stale() {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func openDetachedDaemonLogs() (*os.File, *os.File, func(), error) {

@@ -178,34 +178,35 @@ func TestSearchCmdTranslatesStateAndModeSwitches(t *testing.T) {
 	}
 }
 
-func TestSearchCmdRejectsInvalidInputWithExitCodeTwoAndUsage(t *testing.T) {
+func TestSearchCmdRejectsInvalidInputWithRecoveryExitCode(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string
+		code int
 	}{
-		{name: "missing query"},
-		{name: "conflicting output", args: []string{"query", "--agent", "--json"}},
-		{name: "blank query", args: []string{" \t\n "}},
-		{name: "overlong query", args: []string{strings.Repeat("界", 2001)}},
-		{name: "invalid verdict", args: []string{"query", "--verdict", "PASS"}},
-		{name: "invalid since", args: []string{"query", "--since", "yesterday"}},
-		{name: "zero since duration", args: []string{"query", "--since", "0s"}},
-		{name: "negative since duration", args: []string{"query", "--since", "-1h"}},
-		{name: "nonnumeric limit", args: []string{"query", "--limit", "many"}},
-		{name: "zero limit", args: []string{"query", "--limit", "0"}},
-		{name: "large limit", args: []string{"query", "--limit", "101"}},
-		{name: "open and closed", args: []string{"query", "--open", "--closed"}},
-		{name: "lexical and hybrid", args: []string{"query", "--lexical", "--hybrid"}},
-		{name: "all search modes", args: []string{"query", "--lexical", "--hybrid", "--semantic"}},
+		{name: "missing query", code: 2},
+		{name: "conflicting output", code: 2, args: []string{"query", "--agent", "--json"}},
+		{name: "blank query", code: 4, args: []string{" \t\n "}},
+		{name: "overlong query", code: 4, args: []string{strings.Repeat("界", 2001)}},
+		{name: "invalid verdict", code: 4, args: []string{"query", "--verdict", "PASS"}},
+		{name: "invalid since", code: 4, args: []string{"query", "--since", "yesterday"}},
+		{name: "zero since duration", code: 4, args: []string{"query", "--since", "0s"}},
+		{name: "negative since duration", code: 4, args: []string{"query", "--since", "-1h"}},
+		{name: "nonnumeric limit", code: 2, args: []string{"query", "--limit", "many"}},
+		{name: "zero limit", code: 4, args: []string{"query", "--limit", "0"}},
+		{name: "large limit", code: 4, args: []string{"query", "--limit", "101"}},
+		{name: "open and closed", code: 2, args: []string{"query", "--open", "--closed"}},
+		{name: "lexical and hybrid", code: 2, args: []string{"query", "--lexical", "--hybrid"}},
+		{name: "all search modes", code: 2, args: []string{"query", "--lexical", "--hybrid", "--semantic"}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, executed, err := executeSearchCmd(t, tt.args...)
 			require.Error(t, err)
-			assert.Equal(t, 2, commandExitCode(err))
+			assert.Equal(t, tt.code, commandExitCode(err))
 			require.NotNil(t, executed)
-			assert.False(t, executed.SilenceUsage)
+			assert.True(t, executed.SilenceUsage)
 		})
 	}
 }
@@ -226,8 +227,8 @@ func TestSearchCmdValidatesSinceBeforeCallingDaemon(t *testing.T) {
 	for _, since := range []string{"yesterday", "0s", "-1h"} {
 		_, executed, err := executeSearchCmd(t, "query", "--since", since)
 		require.Error(t, err)
-		assert.Equal(t, 2, commandExitCode(err))
-		assert.False(t, executed.SilenceUsage)
+		assert.Equal(t, 4, commandExitCode(err))
+		assert.True(t, executed.SilenceUsage)
 	}
 	assert.Zero(t, calls)
 }

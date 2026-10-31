@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,8 @@ import (
 	"github.com/gofrs/flock"
 	"go.kenn.io/kit/pathresolve"
 )
+
+var errDaemonDatabaseOwned = errors.New("database is already owned by a daemon")
 
 type daemonDatabaseOwner struct {
 	*flock.Flock
@@ -69,7 +72,20 @@ func lockDaemonDatabase(dbPath string) (*daemonDatabaseOwner, error) {
 	}
 	if !locked {
 		_ = lock.Close()
-		return nil, fmt.Errorf("database is already owned by a daemon: %s", resolved)
+		return nil, fmt.Errorf("%w: %s", errDaemonDatabaseOwned, resolved)
 	}
 	return &daemonDatabaseOwner{Flock: lock, path: resolved}, nil
+}
+
+// daemonDatabaseOwnerExists checks whether another daemon currently owns the
+// database lock without changing the user-visible ownership error.
+func daemonDatabaseOwnerExists(dbPath string) (bool, error) {
+	owner, err := lockDaemonDatabase(dbPath)
+	if errors.Is(err, errDaemonDatabaseOwned) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return false, owner.Close()
 }

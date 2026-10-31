@@ -29,13 +29,14 @@ func initCmd() *cobra.Command {
   - Starts the daemon (unless --no-daemon)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			fmt.Println("Initializing roborev...")
 
 			// 1. Ensure we're in a git repo
 			root, err := gitrepo.Root(ctx, ".")
 			if err != nil {
-				return fmt.Errorf("not a git repository - run this from inside a git repo")
+				return withHint(invalidValue(fmt.Errorf("not a git repository - run this from inside a git repo")), "run 'git init' first, or change into an existing repository")
 			}
+
+			fmt.Println("Initializing roborev...")
 
 			// 2. Create config directory and default config
 			configDir := config.DataDir()

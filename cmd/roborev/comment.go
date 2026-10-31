@@ -58,12 +58,15 @@ Examples:
 				id, err := strconv.ParseInt(ref, 10, 64)
 				if err != nil {
 					if rebuttalOpts.enabled {
-						return usageErr(cmd, fmt.Errorf("--rebuttal requires a numeric review job ID, got %q", ref))
+						return validationErr(cmd, fmt.Errorf("--rebuttal requires a numeric review job ID, got %q", ref))
 					}
-					return usageErr(cmd, fmt.Errorf("--job requires numeric job ID, got %q", ref))
+					return validationErr(cmd, fmt.Errorf("--job requires numeric job ID, got %q", ref))
 				}
-				if rebuttalOpts.enabled && id <= 0 {
-					return usageErr(cmd, fmt.Errorf("--rebuttal requires a positive job ID"))
+				if id <= 0 {
+					if rebuttalOpts.enabled {
+						return validationErr(cmd, fmt.Errorf("--rebuttal requires a positive job ID"))
+					}
+					return validationErr(cmd, fmt.Errorf("--job requires a positive job ID"))
 				}
 				jobID = id
 			} else {
@@ -88,7 +91,7 @@ Examples:
 
 			// Ensure daemon is running
 			if err := ensureDaemon(); err != nil {
-				return fmt.Errorf("daemon not running: %w", err)
+				return fmt.Errorf("connect to daemon: %w", err)
 			}
 
 			// Message can be positional argument or flag
@@ -199,13 +202,13 @@ func closeCmd() *cobra.Command {
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Ensure daemon is running
-			if err := ensureDaemon(); err != nil {
-				return fmt.Errorf("daemon not running: %w", err)
-			}
-
 			jobID, err := strconv.ParseInt(args[0], 10, 64)
 			if err != nil || jobID <= 0 {
-				return fmt.Errorf("invalid job_id: %s", args[0])
+				return withHint(invalidValue(fmt.Errorf("invalid job_id: %s", args[0])), "use a positive job ID from 'roborev list'")
+			}
+
+			if err := ensureDaemon(); err != nil {
+				return fmt.Errorf("connect to daemon: %w", err)
 			}
 
 			closed := !reopen
