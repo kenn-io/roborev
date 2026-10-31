@@ -45,7 +45,7 @@ func TestCICheckApply(t *testing.T) {
 				tc.want, tc.summary = []string{"first", "second"}, doc.Summary
 			}
 			var log bytes.Buffer
-			got, err := applyCICheck(doc, jsontext.Value(tc.raw), &log)
+			got, _, err := applyCICheck(doc, jsontext.Value(tc.raw), &log)
 			require.NoError(t, err)
 			problems := make([]string, 0, len(got.Findings))
 			for _, f := range got.Findings {
@@ -188,7 +188,8 @@ func TestCICheckCompletion(t *testing.T) {
 					doc.Findings[0].Fix = "Keep the build working. **Where:** `build`"
 					return doc, nil
 				}
-				return applyCICheck(doc, jsontext.Value(`{"verdicts":[{"finding":1,"keep":false,"evidence":"build succeeds","reason":"refuted"}]}`), out)
+				checked, _, err := applyCICheck(doc, jsontext.Value(`{"verdicts":[{"finding":1,"keep":false,"evidence":"build succeeds","reason":"refuted"}]}`), out)
+				return checked, err
 			}
 			doc, err := reviewpkg.DecodeStructuredReview(jsontext.Value(raw))
 			require.NoError(t, err)
@@ -281,15 +282,14 @@ func TestCIRewriteRequiresCheckerNotes(t *testing.T) {
 		{"blank reason", `{"verdicts":[{"finding":1,"keep":true,"evidence":"failed","reason":" "}]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var notes ciCheckResponse
-			require.NoError(t, json.Unmarshal([]byte(tc.raw), &notes))
-			checked := applyCICheckVerdicts(doc, notes, io.Discard)
-			got, err := (&WorkerPool{}).rewriteCIFindings(t.Context(), &storage.ReviewJob{MinSeverity: "high"}, ciCheckConfig{}, doc, checked, notes, nil, "", io.Discard)
+			checked, notes, err := applyCICheck(doc, jsontext.Value(tc.raw), io.Discard)
+			require.NoError(t, err)
+			got, err := (&WorkerPool{}).rewriteCIFindings(t.Context(), &storage.ReviewJob{MinSeverity: "high"}, ciCheckConfig{}, checked, notes, nil, "", io.Discard)
 			require.ErrorContains(t, err, "incomplete checker notes")
 			assert.Equal(t, checked, got)
 		})
 	}
-	got, err := (&WorkerPool{}).rewriteCIFindings(t.Context(), &storage.ReviewJob{MinSeverity: "critical"}, ciCheckConfig{}, doc, doc, ciCheckResponse{}, nil, "", io.Discard)
+	got, err := (&WorkerPool{}).rewriteCIFindings(t.Context(), &storage.ReviewJob{MinSeverity: "critical"}, ciCheckConfig{}, doc, ciCheckResponse{}, nil, "", io.Discard)
 	require.NoError(t, err)
 	assert.Equal(t, doc, got)
 }

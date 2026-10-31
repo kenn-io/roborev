@@ -122,13 +122,12 @@ func (wp *WorkerPool) runCICheck(ctx context.Context, job *storage.ReviewJob, cf
 	if err != nil {
 		return structuredreview.Document{}, fmt.Errorf("run CI checker: %w", err)
 	}
-	var response ciCheckResponse
-	if err := json.Unmarshal(raw, &response); err != nil {
-		return doc, fmt.Errorf("decode checker verdicts: %w", err)
+	checked, response, err := applyCICheck(doc, raw, out)
+	if err != nil {
+		return doc, err
 	}
-	checked := applyCICheckVerdicts(doc, response, out)
 	if cfg.Rewrite {
-		rewritten, err := wp.rewriteCIFindings(ctx, job, cfg, doc, checked, response, a, run.Repo, out)
+		rewritten, err := wp.rewriteCIFindings(ctx, job, cfg, checked, response, a, run.Repo, out)
 		if err != nil {
 			fmt.Fprintf(out, "CI rewrite failed; keeping checked review: %v\n", err)
 		} else {
@@ -311,15 +310,8 @@ func warmGoModules(ctx context.Context, checkout string, gitEnv []string, out io
 	return paths, nil
 }
 
-func applyCICheck(doc structuredreview.Document, raw jsontext.Value, out io.Writer) (structuredreview.Document, error) {
-	var response ciCheckResponse
-	if err := json.Unmarshal(raw, &response); err != nil {
-		return doc, fmt.Errorf("decode checker verdicts: %w", err)
-	}
-	return applyCICheckVerdicts(doc, response, out), nil
-}
-
 type ciCheckResponse struct {
+	Kept     []int `json:"-"`
 	Verdicts []struct {
 		Finding  int    `json:"finding"`
 		Keep     *bool  `json:"keep"`
@@ -328,7 +320,11 @@ type ciCheckResponse struct {
 	} `json:"verdicts"`
 }
 
-func applyCICheckVerdicts(doc structuredreview.Document, response ciCheckResponse, out io.Writer) structuredreview.Document {
+func applyCICheck(doc structuredreview.Document, raw jsontext.Value, out io.Writer) (structuredreview.Document, ciCheckResponse, error) {
+	var response ciCheckResponse
+	if err := json.Unmarshal(raw, &response); err != nil {
+		return doc, response, fmt.Errorf("decode checker verdicts: %w", err)
+	}
 	counts, drops := make(map[int]int), make(map[int]bool)
 	for _, v := range response.Verdicts {
 		encoded, _ := json.Marshal(v)
@@ -340,10 +336,11 @@ func applyCICheckVerdicts(doc structuredreview.Document, response ciCheckRespons
 	for i, f := range doc.Findings {
 		if counts[i+1] != 1 || !drops[i+1] {
 			kept = append(kept, f)
+			response.Kept = append(response.Kept, i+1)
 		}
 	}
 	if len(kept) == len(doc.Findings) {
-		return doc
+		return doc, response, nil
 	}
 	doc.Findings = kept
 	doc.Summary = fmt.Sprintf("%d findings.", len(kept))
@@ -352,5 +349,5 @@ func applyCICheckVerdicts(doc structuredreview.Document, response ciCheckRespons
 	} else if len(kept) == 0 {
 		doc.Summary = "No issues found."
 	}
-	return doc
+	return doc, response, nil
 }

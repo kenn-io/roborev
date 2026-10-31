@@ -27,38 +27,31 @@ var (
 	ciRewriteFixSchema = jsontext.Value(`{"type":"object","additionalProperties":false,"required":["findings"],"properties":{"findings":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["finding","fix"],"properties":{"finding":{"type":"integer"},"fix":{"type":"string"}}}}}}`)
 )
 
-func (wp *WorkerPool) rewriteCIFindings(ctx context.Context, job *storage.ReviewJob, cfg ciCheckConfig, original, checked structuredreview.Document, notes ciCheckResponse, a *agent.CodexAgent, repo string, out io.Writer) (structuredreview.Document, error) {
-	counts := make(map[int]int)
-	for _, note := range notes.Verdicts {
-		counts[note.Finding]++
-	}
+func (wp *WorkerPool) rewriteCIFindings(ctx context.Context, job *storage.ReviewJob, cfg ciCheckConfig, checked structuredreview.Document, notes ciCheckResponse, a *agent.CodexAgent, repo string, out io.Writer) (structuredreview.Document, error) {
 	selected := make(map[int]int)
 	var input strings.Builder
-	keptIndex := 0
-	for i, f := range original.Findings {
-		var evidence, reason string
-		var drop bool
-		for _, note := range notes.Verdicts {
-			if note.Finding == i+1 {
-				evidence, reason = note.Evidence, note.Reason
-				drop = note.Keep != nil && !*note.Keep && strings.TrimSpace(evidence) != "" && strings.TrimSpace(reason) != ""
-			}
-		}
-		if counts[i+1] == 1 && drop {
+	for i, f := range checked.Findings {
+		if config.SeverityRank(f.Severity) < config.SeverityRank(job.MinSeverity) {
 			continue
 		}
-		if config.SeverityRank(f.Severity) >= config.SeverityRank(job.MinSeverity) {
-			if counts[i+1] != 1 || strings.TrimSpace(evidence) == "" || strings.TrimSpace(reason) == "" {
-				return checked, fmt.Errorf("finding %d has incomplete checker notes", i+1)
+		id := notes.Kept[i]
+		var evidence, reason string
+		count := 0
+		for _, note := range notes.Verdicts {
+			if note.Finding == id {
+				count++
+				evidence, reason = note.Evidence, note.Reason
 			}
-			selected[i+1] = keptIndex
-			encoded, err := json.Marshal(f)
-			if err != nil {
-				return checked, err
-			}
-			fmt.Fprintf(&input, "## Finding %d\n%s\nChecker evidence: %s\nChecker reason: %s\n\n", i+1, encoded, evidence, reason)
 		}
-		keptIndex++
+		if count != 1 || strings.TrimSpace(evidence) == "" || strings.TrimSpace(reason) == "" {
+			return checked, fmt.Errorf("finding %d has incomplete checker notes", id)
+		}
+		selected[id] = i
+		encoded, err := json.Marshal(f)
+		if err != nil {
+			return checked, err
+		}
+		fmt.Fprintf(&input, "## Finding %d\n%s\nChecker evidence: %s\nChecker reason: %s\n\n", id, encoded, evidence, reason)
 	}
 	if len(selected) == 0 {
 		return checked, nil
