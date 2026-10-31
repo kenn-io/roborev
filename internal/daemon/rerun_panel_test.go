@@ -454,11 +454,13 @@ func TestRerunSynthesisCreatesNewRun(t *testing.T) {
 		PanelRole: storage.PanelRoleSynthesis, PanelName: "panel",
 		JobType: storage.JobTypeSynthesis,
 	}
+	plan, err := experimentPlanForPanel(srcMembers, srcSynth)
+	require.NoError(t, err)
 	assignment, err := storageAssignmentForExperiment(&config.ExperimentAssignment{
 		ID: "panel-v1", DefinitionHash: "definition-hash",
 		DefinitionJSON: `{"ratio":1}`, Arm: config.ExperimentArmExperimental,
 		SubjectHash: subjectHash,
-	}, experimentPlanForPanel(srcMembers, srcSynth))
+	}, plan)
 	require.NoError(t, err)
 	srcSynth.Experiment = assignment
 	_, oldSynth, err := db.EnqueuePanelRun(srcMembers, srcSynth)
