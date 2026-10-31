@@ -562,7 +562,9 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 					continue
 				}
 				if pendingReview.Closed || pendingReview.Verdict() != "F" {
-					if strings.Contains(pendingRef, "..") && pendingReview.Verdict() == "P" {
+					if pendingReview.Verdict() == "P" && reviewRangeCoversRefineRange(
+						ctx, repoPath, pendingRef, mergeBase, headSHA,
+					) {
 						fmt.Println("\nAll reviews passed! Branch is ready.")
 						return nil
 					}
@@ -1410,6 +1412,24 @@ func resolvePendingReviewRef(ctx context.Context, client daemon.Client, repoPath
 		review, err = client.GetReviewByJobID(job.ID)
 	}
 	return review, job, err
+}
+
+// reviewRangeCoversRefineRange reports whether a passing range review includes
+// every commit requested by refine. A range starting after the requested base
+// only validates its suffix, as with a batch hook checkpoint.
+func reviewRangeCoversRefineRange(
+	ctx context.Context,
+	repoPath, reviewRef, refineBase, headSHA string,
+) bool {
+	reviewBase, reviewHead, ok := strings.Cut(reviewRef, "..")
+	if !ok || reviewBase == "" || (reviewHead != headSHA && reviewHead != "HEAD") {
+		return false
+	}
+	if reviewBase == refineBase {
+		return true
+	}
+	covers, err := gitrepo.IsAncestor(ctx, repoPath, reviewBase, refineBase)
+	return err == nil && covers
 }
 
 // summarizeAgentOutput extracts a short summary from agent output
