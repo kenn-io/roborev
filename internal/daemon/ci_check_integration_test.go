@@ -139,4 +139,35 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 	assert.EqualValues(t, 1, usage.OutputTokens)
 	assert.False(t, usage.HasCost)
 	assert.Empty(t, finished.SessionID)
+	var invoked bool
+	require.NoError(t, tc.DB.QueryRow("SELECT agent_invoked FROM review_jobs WHERE id = ?", job.ID).Scan(&invoked))
+	assert.True(t, invoked)
+	assert.NotEmpty(t, finished.CommandLine)
+
+	failureServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "synthetic provider failure", http.StatusBadRequest)
+	}))
+	defer failureServer.Close()
+	tc.Pool.ciCheckUpstream = failureServer.URL
+	for _, commandLine := range []string{"", "synthesis-agent --model test-model"} {
+		t.Run("provider failure/"+commandLine, func(t *testing.T) {
+			run, members, _ := enqueuePanelRun(t, tc, "checker-failure", []memberSpec{{name: "one", agent: "test"}})
+			completeMember(t, tc, members[0].ID, "test", "findings")
+			job := releaseAndClaimSynthesis(t, tc, run)
+			job.GitRef = sha + ".." + sha
+			if commandLine != "" {
+				require.NoError(t, tc.DB.MarkJobAgentInvoked(job.ID, testWorkerID, commandLine))
+			}
+			_, err := tc.Pool.runCICheck(t.Context(), job, ciCheckConfig{Model: "test-model", Reasoning: "high"}, doc, nil, io.Discard)
+			require.ErrorContains(t, err, "run CI checker")
+			require.NoError(t, tc.DB.QueryRow("SELECT agent_invoked FROM review_jobs WHERE id = ?", job.ID).Scan(&invoked))
+			assert.True(t, invoked)
+			finished, err := tc.DB.GetJobByID(job.ID)
+			require.NoError(t, err)
+			assert.Empty(t, finished.TokenUsage)
+			if commandLine != "" {
+				assert.Equal(t, commandLine, finished.CommandLine)
+			}
+		})
+	}
 }

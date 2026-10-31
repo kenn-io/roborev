@@ -2369,10 +2369,11 @@ func (wp *WorkerPool) releaseIfPanelMember(job *storage.ReviewJob) {
 
 // sessionTokenUsage is the usage gathered for one attempt before it is stored.
 type sessionTokenUsage struct {
-	capturedSession string
-	wasResumed      bool
-	logUsage        *tokens.Usage
-	providerUsage   *tokens.Usage
+	capturedSession  string
+	wasResumed       bool
+	logUsage         *tokens.Usage
+	providerUsage    *tokens.Usage
+	allowSessionless bool
 }
 
 // withUnpricedPhase includes usage from a disposable session whose cost cannot be fetched.
@@ -2380,6 +2381,7 @@ func (collected *sessionTokenUsage) withUnpricedPhase(sessionRan bool, u *tokens
 	if u == nil {
 		return
 	}
+	collected.allowSessionless = true
 	aggregate := func(usage *tokens.Usage) *tokens.Usage {
 		phases := []*tokens.Usage{u}
 		if sessionRan {
@@ -2387,13 +2389,13 @@ func (collected *sessionTokenUsage) withUnpricedPhase(sessionRan bool, u *tokens
 		}
 		combined := backfill.AggregateTokenUsages(phases)
 		if combined != nil {
-			combined.ThreadID = ""
-			combined.ProviderSessionIDs = nil
+			var sessionID string
+			var sessionIDs []string
 			if collected.capturedSession != "" && !collected.wasResumed {
-				combined.ThreadID = collected.capturedSession
-				combined.ProviderSessionIDs = []string{collected.capturedSession}
+				sessionID = collected.capturedSession
+				sessionIDs = []string{collected.capturedSession}
 			}
-			combined.ExpectedProviderSessions = len(phases)
+			setTokenUsageSessions(combined, sessionID, sessionIDs, len(phases))
 		}
 		return combined
 	}
@@ -2461,7 +2463,7 @@ func (wp *WorkerPool) storeTokenUsageForSession(
 	if sessionID == "" {
 		sessionID = usage.ThreadID
 	}
-	if sessionID == "" && providerUsage != nil {
+	if sessionID == "" && !collected.allowSessionless {
 		return
 	}
 	current, err := wp.db.GetJobByID(job.ID)

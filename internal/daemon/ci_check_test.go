@@ -214,6 +214,11 @@ func TestCICheckCompletion(t *testing.T) {
 				return
 			}
 			assert.Equal(t, storage.JobStatusDone, finished.Status)
+			if mode == "failure" {
+				var invoked bool
+				require.NoError(t, tc.DB.QueryRow("SELECT agent_invoked FROM review_jobs WHERE id = ?", job.ID).Scan(&invoked))
+				assert.False(t, invoked)
+			}
 			if mode == "drop" || mode == "agent drop" || mode == "failure after usage" {
 				usage := tokens.ParseJSON(finished.TokenUsage)
 				require.NotNil(t, usage)

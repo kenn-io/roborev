@@ -123,6 +123,14 @@ func (wp *WorkerPool) runCICheck(ctx context.Context, job *storage.ReviewJob, cf
 	a.Model = cfg.Model
 	a.Reasoning = agent.ParseReasoningLevel(cfg.Reasoning)
 	base, _, _ := strings.Cut(job.GitRef, "..")
+	current, err := wp.db.GetJobByID(job.ID)
+	if err != nil {
+		return structuredreview.Document{}, err
+	}
+	// An earlier synthesis invocation already recorded its command line.
+	if current.CommandLine == "" {
+		wp.markAgentInvoked(job.WorkerID, job, a)
+	}
 	raw, err := a.ReviewWithSchema(ctx, run.Repo, job.GitRef, fmt.Sprintf(ciCheckPrompt, base), ciCheckSchema, out)
 	if err != nil {
 		return structuredreview.Document{}, fmt.Errorf("run CI checker: %w", err)
