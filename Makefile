@@ -347,7 +347,7 @@ gh-actions-lock-install:
 	@test -n "$(GH_ACTIONS_LOCK_VERSION)" || { echo "constraints.ghActionsLock is missing from renovate.json" >&2; exit 1; }
 	@if [ "$$(gh actions-lock --version 2>/dev/null)" != "actions-lock version $(GH_ACTIONS_LOCK_VERSION)" ]; then \
 		gh extension remove actions-lock >/dev/null 2>&1 || true; \
-		gh extension install github/gh-actions-lock --pin $(GH_ACTIONS_LOCK_VERSION); \
+		$(DOWNLOAD_RETRY) gh extension install github/gh-actions-lock --pin $(GH_ACTIONS_LOCK_VERSION); \
 	fi
 
 # Lock every workflow action after adding or bumping a `uses:` line

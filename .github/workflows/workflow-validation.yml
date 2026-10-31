@@ -57,4 +57,5 @@ jobs:
       - name: Verify the workflow action lockfile
         env:
           GH_TOKEN: ${{ github.token }}
-        run: kit-retry 3 5 make gh-actions-lock-install && gh actions-lock --verify
+          DOWNLOAD_RETRY: kit-retry 3 5
+        run: make actions-lock-check
