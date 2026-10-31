@@ -168,6 +168,13 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 		} else if phase == 3 {
 			final = `{"findings":[{"finding":1,"fix":"Keep the saved files. **Where:** ` + "`saveFile`" + `"}]}`
 		}
+		// Distinct counts expose a missing checker or rewrite invocation.
+		usage := map[string]any{"input_tokens": 11, "output_tokens": 2, "total_tokens": 13, "input_tokens_details": map[string]int{"cached_tokens": 3}}
+		if phase == 2 {
+			usage = map[string]any{"input_tokens": 23, "output_tokens": 5, "total_tokens": 28, "input_tokens_details": map[string]int{"cached_tokens": 7}}
+		} else if phase == 3 {
+			usage = map[string]any{"input_tokens": 41, "output_tokens": 7, "total_tokens": 48, "input_tokens_details": map[string]int{"cached_tokens": 13}}
+		}
 
 		w.Header().Set("Content-Type", "text/event-stream")
 		item := map[string]any{"type": "message", "role": "assistant", "id": "msg_test", "content": []any{map[string]any{"type": "output_text", "text": final}}}
@@ -189,7 +196,7 @@ echo 'OK rewrite read-only'
 		for _, event := range []map[string]any{
 			{"type": "response.created", "response": map[string]any{"id": "resp_test"}},
 			{"type": "response.output_item.done", "item": item},
-			{"type": "response.completed", "response": map[string]any{"id": "resp_test", "usage": map[string]int{"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}}},
+			{"type": "response.completed", "response": map[string]any{"id": "resp_test", "usage": usage}},
 		} {
 			encoded, err := json.Marshal(event)
 			assert.NoError(t, err) //nolint:testifylint // Runs in the HTTP server goroutine.
@@ -221,7 +228,10 @@ echo 'OK rewrite read-only'
 	require.NoError(t, err)
 	usage := tokens.ParseJSON(finished.TokenUsage)
 	require.NotNil(t, usage)
-	assert.EqualValues(t, 5, usage.OutputTokens)
+	// The checker has one response; each rewrite has a tool call and a final response.
+	assert.EqualValues(t, 139, usage.InputTokens)
+	assert.EqualValues(t, 43, usage.CachedInputTokens)
+	assert.EqualValues(t, 26, usage.OutputTokens)
 	assert.False(t, usage.HasCost)
 	assert.Empty(t, finished.SessionID)
 	var invoked bool
