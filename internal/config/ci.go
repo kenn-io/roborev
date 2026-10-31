@@ -102,6 +102,11 @@ type AgentReviewType struct {
 
 // CIConfig holds configuration for the CI poller that watches GitHub PRs
 type CIConfig struct {
+	// Check runs a sandboxed Codex check before storing CI findings.
+	Check          bool   `toml:"check"`
+	CheckModel     string `toml:"check_model"`
+	CheckReasoning string `toml:"check_reasoning"`
+
 	// Enabled enables the CI poller
 	Enabled bool `toml:"enabled"`
 
@@ -551,6 +556,8 @@ func (c *CIConfig) ResolvedMaxRepos() int {
 // RepoCIConfig holds per-repo CI overrides (used by the CI poller for this repo).
 // These override the global [ci] settings when reviewing this specific repo.
 type RepoCIConfig struct {
+	Check *bool `toml:"check" comment:"Check CI findings before posting."`
+
 	// Agents overrides the list of agents for CI reviews of this repo.
 	Agents []string `toml:"agents" comment:"Override the agents used by CI for this repo."`
 
@@ -837,4 +844,16 @@ func ResolveCIWorkflowAgents(
 		globalCIAgents,
 		globalAgent,
 	)
+}
+
+// ResolveCICheck lets the repository override the global checker switch.
+func ResolveCICheck(repoCfg *RepoConfig, globalCfg *Config) bool {
+	var repoVal, globalVal *bool
+	if repoCfg != nil {
+		repoVal = repoCfg.CI.Check
+	}
+	if globalCfg != nil {
+		globalVal = &globalCfg.CI.Check
+	}
+	return resolveBool(false, repoVal, globalVal)
 }

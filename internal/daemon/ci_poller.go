@@ -1812,7 +1812,16 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 			"snapshot synthesis ACP config: %w", err,
 		)
 	}
+	var check *ciCheckConfig
+	if config.ResolveCICheck(in.repoCfg, in.cfg) {
+		reasoning, err := config.NormalizeReasoning(in.cfg.CI.CheckReasoning)
+		if err != nil {
+			return nil, storage.EnqueueOpts{}, fmt.Errorf("resolve CI checker reasoning: %w", err)
+		}
+		check = &ciCheckConfig{Model: in.cfg.CI.CheckModel, Reasoning: reasoning}
+	}
 	synthSnapshot, err := synthesisJobConfig{
+		Check:        check,
 		ACP:          synthACP,
 		Instructions: in.synth.Instructions,
 	}.encode()
