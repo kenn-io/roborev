@@ -838,22 +838,7 @@ func TestCleanupStaleCIWorktreesRemovesOrphanedDetachedWorktree(t *testing.T) {
 	listBefore := repo.Run("worktree", "list", "--porcelain")
 	require.Contains(t, normalizeGitListOutput(listBefore), normalizedWorktreeDir)
 
-	var opened *os.File
-	if runtime.GOOS != "windows" {
-		dir := filepath.Join(worktreeDir, "readonly")
-		require.NoError(t, os.Mkdir(dir, 0o500))
-		opened, err = os.Open(dir)
-		require.NoError(t, err)
-		t.Cleanup(func() { require.NoError(t, opened.Close()) })
-	}
-
 	require.NoError(t, cleanupStaleCIWorktrees(context.Background()))
-
-	if opened != nil {
-		info, err := opened.Stat()
-		require.NoError(t, err)
-		assert.Equal(t, os.FileMode(0o500), info.Mode().Perm(), "review checkout recovery changed directory permissions")
-	}
 
 	_, statErr := os.Stat(worktreeDir)
 	require.ErrorIs(t, statErr, os.ErrNotExist, "stale CI worktree directory should be removed")

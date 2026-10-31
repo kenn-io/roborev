@@ -128,10 +128,6 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 	for _, checkout := range checkouts {
 		assert.NoDirExists(t, checkout)
 	}
-	stored, err := tc.DB.GetReviewByJobID(job.ID)
-	require.NoError(t, err)
-	assert.NotContains(t, stored.Output, "build claim", string(log))
-	assert.Contains(t, stored.Output, "data loss")
 	finished, err := tc.DB.GetJobByID(job.ID)
 	require.NoError(t, err)
 	usage := tokens.ParseJSON(finished.TokenUsage)

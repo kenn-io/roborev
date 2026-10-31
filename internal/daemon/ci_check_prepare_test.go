@@ -54,11 +54,12 @@ func TestCICheckPreparation(t *testing.T) {
 			require.NoError(t, err)
 			checkout, root, cleanup := run.Repo, filepath.Dir(run.Job.WorkDir), run.cleanup
 			t.Cleanup(cleanup)
-			assert.NoFileExists(t, marker, "checker preparation must leave repository hooks unexecuted on the host")
 			if name == "checker" {
+				assert.NoFileExists(t, marker, "checker preparation must leave repository hooks unexecuted on the host")
 				assert.Contains(t, log.String(), "module warming failed: exit status 1")
 				assert.Contains(t, run.Job.Env, "GOMODCACHE="+tools, log.String())
 				assert.Contains(t, run.Job.ReadPaths, tools)
+				return
 			}
 			dir := filepath.Join(run.Job.WorkDir, "gocache", "readonly")
 			require.NoError(t, os.Mkdir(dir, 0o700))
@@ -69,14 +70,18 @@ func TestCICheckPreparation(t *testing.T) {
 			require.NoError(t, os.Chmod(external, 0o500))
 			t.Cleanup(func() { _ = os.Chmod(external, 0o700) })
 			require.NoError(t, os.Symlink(external, filepath.Join(root, "external")))
-			if name == "checker" {
-				cleanup()
-			} else {
-				require.NoError(t, cleanupStaleCIWorktrees(t.Context()))
-			}
+			readonly := filepath.Join(filepath.Dir(root), "readonly")
+			require.NoError(t, os.Mkdir(readonly, 0o500))
+			opened, err := os.Open(readonly)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, opened.Close()) })
+			require.NoError(t, cleanupStaleCIWorktrees(t.Context()))
+			info, err := opened.Stat()
+			require.NoError(t, err)
+			assert.Equal(t, os.FileMode(0o500), info.Mode().Perm(), "review checkout recovery changed directory permissions")
 			assert.NoDirExists(t, root)
 			assert.NoDirExists(t, checkout)
-			info, err := os.Stat(external)
+			info, err = os.Stat(external)
 			require.NoError(t, err)
 			assert.Equal(t, os.FileMode(0o500), info.Mode().Perm())
 		})

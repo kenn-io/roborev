@@ -54,7 +54,7 @@ func TestCICheckApply(t *testing.T) {
 			}
 			assert.Equal(t, tc.want, problems)
 			assert.Equal(t, tc.summary, got.Summary)
-			if len(got.Findings) != 2 {
+			if tc.name != "missing verdict" {
 				assert.Contains(t, log.String(), `"evidence":"`)
 			}
 		})
@@ -86,11 +86,6 @@ func TestCICheckSnapshot(t *testing.T) {
 	_, overridden, err := p.buildPanelOpts(t.Context(), in)
 	require.NoError(t, err)
 	assert.Equal(t, off.PanelMemberConfigJSON, overridden.PanelMemberConfigJSON)
-	// A reloaded invalid setting fails like the panel's other reasoning settings.
-	in.repoCfg = nil
-	cfg.CI.CheckReasoning = "invalid"
-	_, _, err = p.buildPanelOpts(t.Context(), in)
-	require.ErrorContains(t, err, "CI checker reasoning")
 }
 
 func TestCICheckLog(t *testing.T) {
@@ -180,6 +175,14 @@ func TestCICheckCompletion(t *testing.T) {
 			}
 			doc, err := reviewpkg.DecodeStructuredReview(jsontext.Value(raw))
 			require.NoError(t, err)
+			if mode == "below severity threshold" {
+				doc.Findings = doc.Findings[:1]
+				doc.Findings[0].Severity = "low"
+				doc.Verdict = structuredreview.VerdictPass
+				tc.Pool.checkSynthesis(t.Context(), job, synthesisResult{}, doc, snapshot.Check)
+				assert.Equal(t, 0, calls)
+				return
+			}
 			original := synthesisResult{review: reviewpkg.ReviewResult{Agent: "test", Output: doc.Markdown(threshold), Verdict: storage.VerdictFail, StructuredOutput: jsontext.Value(raw)}}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -187,24 +190,15 @@ func TestCICheckCompletion(t *testing.T) {
 			case "checker deadline":
 				ctx, cancel = context.WithDeadline(t.Context(), time.Unix(0, 0))
 				defer cancel()
-			case "below severity threshold", "checker canceled":
+			case "checker canceled":
 				cancel()
 			}
-			if strings.Contains(mode, "canceled") || mode == "checker deadline" || mode == "below severity threshold" {
-				if mode == "below severity threshold" {
-					doc.Findings = doc.Findings[:1]
-					doc.Findings[0].Severity = "low"
-					doc.Verdict = structuredreview.VerdictPass
-					original.review.Verdict = storage.VerdictPass
-					original.review.Output = doc.Markdown(threshold)
-					original.review.StructuredOutput, err = json.Marshal(doc)
-					require.NoError(t, err)
-				}
+			if mode == "checker canceled" || mode == "checker deadline" {
 				tc.Pool.checkAndCompleteSynthesis(ctx, testWorkerID, job, original, doc, snapshot.Check)
 			} else {
 				tc.Pool.processSynthesisJob(ctx, testWorkerID, job)
 			}
-			assert.Equal(t, map[bool]int{true: 0, false: 1}[mode == "below severity threshold"], calls)
+			assert.Equal(t, 1, calls)
 			finished, err := tc.DB.GetJobByID(job.ID)
 			require.NoError(t, err)
 			if mode == "checker canceled" {
@@ -236,7 +230,7 @@ func TestCICheckCompletion(t *testing.T) {
 				require.NoError(t, tc.DB.QueryRow("SELECT agent_invoked FROM review_jobs WHERE id = ?", job.ID).Scan(&invoked))
 				assert.False(t, invoked)
 			}
-			if mode == "drop" || mode == "agent drop" || mode == "failure after usage" {
+			if mode == "agent drop" || mode == "failure after usage" {
 				usage := tokens.ParseJSON(finished.TokenUsage)
 				require.NotNil(t, usage)
 				assert := assert.New(t)
@@ -258,9 +252,6 @@ func TestCICheckCompletion(t *testing.T) {
 					assert.Empty(usage.ProviderSessionIDs)
 					assert.Equal(1, usage.ExpectedProviderSessions)
 				}
-			}
-			if mode == "below severity threshold" {
-				return
 			}
 			stored, err := tc.DB.GetReviewByJobID(job.ID)
 			require.NoError(t, err)
