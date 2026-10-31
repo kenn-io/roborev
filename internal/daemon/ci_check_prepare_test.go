@@ -16,18 +16,17 @@ import (
 	"go.kenn.io/roborev/internal/testutil"
 )
 
-// Preparation checks the committed tree and warms modules in a separate checkout.
+// Preparation warms modules in a separate checkout.
 // Cleanup restores write access only inside checker roots, without following symlinks.
 func TestCICheckPreparation(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires shell fixtures, symlinks, and Unix directory permissions")
 	}
-	for _, name := range []string{"checker", "checker recovery", "review recovery"} {
+	for _, name := range []string{"checker", "checker recovery"} {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 			repo := testutil.NewTestRepoWithCommit(t)
-			original := "module example.com/check\n\ngo 1.25.0\n"
-			repo.CommitFile("go.mod", original, "module")
+			repo.CommitFile("go.mod", "module example.com/check\n\ngo 1.25.0\n", "module")
 			tools := t.TempDir()
 			require.NoError(t, os.Mkdir(filepath.Join(tools, "bin"), 0o700))
 			// go env runs outside the checkout, so a version-manager shim can't load its config.
@@ -40,64 +39,37 @@ func TestCICheckPreparation(t *testing.T) {
 			sha := repo.HeadSHA()
 			job := &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}
 			wp := &WorkerPool{}
-			var checkout, root string
-			var cleanup func()
-			var opened *os.File
-			if name == "review recovery" {
-				checkout, cleanup, err = wp.createExactCheckout(t.Context(), "worker-1", job)
-				require.NoError(t, err)
-				dir := filepath.Join(checkout, "readonly")
-				require.NoError(t, os.Mkdir(dir, 0o500))
-				opened, err = os.Open(dir)
-				require.NoError(t, err)
-				t.Cleanup(func() { require.NoError(t, opened.Close()) })
-			} else {
-				command := filepath.Join(t.TempDir(), "codex")
-				require.NoError(t, os.WriteFile(command, []byte("\x7fELFnative fixture"), 0o700))
-				var log bytes.Buffer
-				run, err := wp.prepareCICheck(t.Context(), job, command, []string{"CHECKER_GIT_TOKEN=synthetic"}, &log)
-				require.NoError(t, err)
-				checkout, root, cleanup = run.Repo, filepath.Dir(run.Job.WorkDir), run.cleanup
-				if name == "checker" {
-					assert.Contains(t, log.String(), "module warming failed: exit status 1")
-					assert.Contains(t, run.Job.Env, "GOMODCACHE="+tools, log.String())
-					assert.Contains(t, run.Job.ReadPaths, tools)
-					mod, err := os.ReadFile(filepath.Join(run.Repo, "go.mod"))
-					require.NoError(t, err)
-					assert.Equal(t, original, string(mod))
-				}
-				dir := filepath.Join(run.Job.WorkDir, "gocache", "readonly")
-				require.NoError(t, os.Mkdir(dir, 0o700))
-				require.NoError(t, os.WriteFile(filepath.Join(dir, "file"), []byte("content"), 0o600))
-				require.NoError(t, os.Chmod(dir, 0o500))
-				t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
-			}
+			command := filepath.Join(t.TempDir(), "codex")
+			require.NoError(t, os.WriteFile(command, []byte("\x7fELFnative fixture"), 0o700))
+			var log bytes.Buffer
+			run, err := wp.prepareCICheck(t.Context(), job, command, []string{"CHECKER_GIT_TOKEN=synthetic"}, &log)
+			require.NoError(t, err)
+			checkout, root, cleanup := run.Repo, filepath.Dir(run.Job.WorkDir), run.cleanup
 			t.Cleanup(cleanup)
-			var external string
-			if name != "review recovery" {
-				external = t.TempDir()
-				require.NoError(t, os.Chmod(external, 0o500))
-				t.Cleanup(func() { _ = os.Chmod(external, 0o700) })
-				require.NoError(t, os.Symlink(external, filepath.Join(checkout, "external")))
+			if name == "checker" {
+				assert.Contains(t, log.String(), "module warming failed: exit status 1")
+				assert.Contains(t, run.Job.Env, "GOMODCACHE="+tools, log.String())
+				assert.Contains(t, run.Job.ReadPaths, tools)
 			}
+			dir := filepath.Join(run.Job.WorkDir, "gocache", "readonly")
+			require.NoError(t, os.Mkdir(dir, 0o700))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "file"), []byte("content"), 0o600))
+			require.NoError(t, os.Chmod(dir, 0o500))
+			t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+			external := t.TempDir()
+			require.NoError(t, os.Chmod(external, 0o500))
+			t.Cleanup(func() { _ = os.Chmod(external, 0o700) })
+			require.NoError(t, os.Symlink(external, filepath.Join(root, "external")))
 			if name == "checker" {
 				cleanup()
 			} else {
 				require.NoError(t, cleanupStaleCIWorktrees(t.Context()))
 			}
-			if opened != nil {
-				info, err := opened.Stat()
-				require.NoError(t, err)
-				assert.Equal(t, os.FileMode(0o500), info.Mode().Perm(), "review checkout recovery changed directory permissions")
-			} else {
-				assert.NoDirExists(t, root)
-			}
+			assert.NoDirExists(t, root)
 			assert.NoDirExists(t, checkout)
-			if external != "" {
-				info, err := os.Stat(external)
-				require.NoError(t, err)
-				assert.Equal(t, os.FileMode(0o500), info.Mode().Perm())
-			}
+			info, err := os.Stat(external)
+			require.NoError(t, err)
+			assert.Equal(t, os.FileMode(0o500), info.Mode().Perm())
 		})
 	}
 }

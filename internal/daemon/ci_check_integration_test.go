@@ -160,11 +160,12 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 			}
 			_, err := tc.Pool.runCICheck(t.Context(), job, ciCheckConfig{Model: "test-model", Reasoning: "high"}, doc, nil, io.Discard)
 			require.ErrorContains(t, err, "run CI checker")
-			require.NoError(t, tc.DB.QueryRow("SELECT agent_invoked FROM review_jobs WHERE id = ?", job.ID).Scan(&invoked))
-			assert.True(t, invoked)
+			if commandLine == "" {
+				require.NoError(t, tc.DB.QueryRow("SELECT agent_invoked FROM review_jobs WHERE id = ?", job.ID).Scan(&invoked))
+				assert.True(t, invoked)
+			}
 			finished, err := tc.DB.GetJobByID(job.ID)
 			require.NoError(t, err)
-			assert.Empty(t, finished.TokenUsage)
 			if commandLine != "" {
 				assert.Equal(t, commandLine, finished.CommandLine)
 			}

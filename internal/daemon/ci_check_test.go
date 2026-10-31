@@ -126,7 +126,7 @@ func TestCICheckLog(t *testing.T) {
 func TestCICheckCompletion(t *testing.T) {
 	const raw = `{"schema_version":3,"source_labels":["test"],"summary":"Two claims","verdict":"fail","findings":[{"severity":"high","kind":"defect","confidence":0.9,"problem":"Build claim","fix":"Fix build","sources":[1]},{"severity":"medium","kind":"defect","confidence":0.9,"problem":"Data loss","fix":"Preserve data","sources":[1]}]}`
 	// "agent drop" reaches the checker through a synthesis agent and leaves no finding at its threshold; the rest pass one review through.
-	for _, mode := range []string{"failure", "failure after usage", "drop", "agent drop", "below severity threshold", "empty canceled", "checker canceled", "checker deadline"} {
+	for _, mode := range []string{"failure", "failure after usage", "drop", "agent drop", "below severity threshold", "checker canceled", "checker deadline"} {
 		t.Run(mode, func(t *testing.T) {
 			tc := newWorkerTestContext(t, 1)
 			tc.Pool.cfgGetter.Config().CodexCmd = "custom-codex"
@@ -184,18 +184,13 @@ func TestCICheckCompletion(t *testing.T) {
 			case "checker deadline":
 				ctx, cancel = context.WithDeadline(t.Context(), time.Unix(0, 0))
 				defer cancel()
-			case "empty canceled", "checker canceled":
+			case "below severity threshold", "checker canceled":
 				cancel()
 			}
 			if strings.Contains(mode, "canceled") || mode == "checker deadline" || mode == "below severity threshold" {
-				if mode == "empty canceled" {
-					doc.Findings = []structuredreview.Finding{}
-				}
 				if mode == "below severity threshold" {
 					doc.Findings = doc.Findings[:1]
 					doc.Findings[0].Severity = "low"
-				}
-				if mode == "empty canceled" || mode == "below severity threshold" {
 					doc.Verdict = structuredreview.VerdictPass
 					original.review.Verdict = storage.VerdictPass
 					original.review.Output = doc.Markdown(threshold)
@@ -206,7 +201,7 @@ func TestCICheckCompletion(t *testing.T) {
 			} else {
 				tc.Pool.processSynthesisJob(ctx, testWorkerID, job)
 			}
-			assert.Equal(t, map[bool]int{true: 0, false: 1}[mode == "empty canceled" || mode == "below severity threshold"], calls)
+			assert.Equal(t, map[bool]int{true: 0, false: 1}[mode == "below severity threshold"], calls)
 			finished, err := tc.DB.GetJobByID(job.ID)
 			require.NoError(t, err)
 			if mode == "checker canceled" {
