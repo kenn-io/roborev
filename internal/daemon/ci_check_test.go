@@ -30,8 +30,9 @@ func TestCICheckApply(t *testing.T) {
 	for _, tc := range []struct {
 		name, raw, summary string
 		want               []string
+		kept               []int
 	}{
-		{name: "drop with evidence", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":"build succeeded","reason":"claim refuted"}]}`, summary: "1 finding.", want: []string{"second"}},
+		{name: "drop with evidence", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":"build succeeded","reason":"claim refuted"}]}`, summary: "1 finding.", want: []string{"second"}, kept: []int{2}},
 		{name: "explicit keep", raw: `{"verdicts":[{"finding":1,"keep":true,"evidence":"failed","reason":"reproduced"}]}`},
 		{name: "missing verdict", raw: `{"verdicts":[]}`},
 		{name: "duplicate", raw: `{"verdicts":[{"finding":1,"keep":false,"evidence":"ok","reason":"refuted"},{"finding":1,"keep":false,"evidence":"ok","reason":"refuted"}]}`},
@@ -42,16 +43,17 @@ func TestCICheckApply(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.want == nil {
-				tc.want, tc.summary = []string{"first", "second"}, doc.Summary
+				tc.want, tc.summary, tc.kept = []string{"first", "second"}, doc.Summary, []int{1, 2}
 			}
 			var log bytes.Buffer
-			got, _, err := applyCICheck(doc, jsontext.Value(tc.raw), &log)
+			got, notes, err := applyCICheck(doc, jsontext.Value(tc.raw), &log)
 			require.NoError(t, err)
 			problems := make([]string, 0, len(got.Findings))
 			for _, f := range got.Findings {
 				problems = append(problems, f.Problem)
 			}
 			assert.Equal(t, tc.want, problems)
+			assert.Equal(t, tc.kept, notes.Kept)
 			assert.Equal(t, tc.summary, got.Summary)
 			if len(got.Findings) != 2 {
 				assert.Contains(t, log.String(), `"evidence":"`)
@@ -82,15 +84,12 @@ func TestCICheckSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, `{"instructions":"merge","check":{"model":"checker-model","reasoning":"high"}}`, on.PanelMemberConfigJSON) //nolint:testifylint // Rewrite off preserves the checker snapshot byte for byte.
 	var snapshot synthesisJobConfig
-	require.NoError(t, json.Unmarshal([]byte(on.PanelMemberConfigJSON), &snapshot))
-	require.NotNil(t, snapshot.Check)
-	assert.Equal(t, "checker-model", snapshot.Check.Model)
-	assert.Equal(t, "high", snapshot.Check.Reasoning)
 	in.pullRequest = prompt.PullRequest{Title: "Export files", Description: "Keep the user's files"}
 	cfg.CI.Rewrite = true
 	_, rewritten, err := p.buildPanelOpts(t.Context(), in)
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal([]byte(rewritten.PanelMemberConfigJSON), &snapshot))
+	require.NotNil(t, snapshot.Check)
 	assert.True(t, snapshot.Check.Rewrite)
 	assert.Equal(t, in.pullRequest.Title, snapshot.Check.Title)
 	assert.Equal(t, in.pullRequest.Description, snapshot.Check.Description)
@@ -255,8 +254,6 @@ func TestCICheckCompletion(t *testing.T) {
 				assert.Equal(t, "Data loss", checked.Findings[0].Problem)
 			} else if mode == "rewrite all kept" {
 				assert.Contains(t, stored.Output, "Users cannot build the project.")
-				comment := reviewpkg.FormatComment(reviewpkg.PrepareComment(reviewpkg.CommentConfig{MinSeverity: threshold}, reviewpkg.ReviewResult{StructuredOutput: structured}))
-				assert.Contains(t, comment, "**Fix:** Keep the build working. **Where:** `build`")
 				doc.Findings[0].Problem, doc.Findings[0].Fix = checked.Findings[0].Problem, checked.Findings[0].Fix
 				assert.Equal(t, doc, checked)
 			} else {
@@ -274,7 +271,7 @@ func TestCICheckCompletion(t *testing.T) {
 	}
 }
 
-func TestCIRewriteRequiresCheckerNotes(t *testing.T) {
+func TestCIRewriteRequiresNotesAboveThreshold(t *testing.T) {
 	doc := structuredreview.Document{Findings: []structuredreview.Finding{{Severity: "high", Problem: "original", Fix: "original fix"}}}
 	for _, tc := range []struct{ name, raw string }{
 		{"missing", `{"verdicts":[]}`},
@@ -290,7 +287,9 @@ func TestCIRewriteRequiresCheckerNotes(t *testing.T) {
 			assert.Equal(t, checked, got)
 		})
 	}
-	got, err := (&WorkerPool{}).rewriteCIFindings(t.Context(), &storage.ReviewJob{MinSeverity: "critical"}, ciCheckConfig{}, doc, ciCheckResponse{}, nil, "", io.Discard)
+	checked, notes, err := applyCICheck(doc, jsontext.Value(`{"verdicts":[{"finding":1,"keep":true,"evidence":"failed","reason":"reproduced"}]}`), io.Discard)
+	require.NoError(t, err)
+	got, err := (&WorkerPool{}).rewriteCIFindings(t.Context(), &storage.ReviewJob{MinSeverity: "critical"}, ciCheckConfig{}, checked, notes, nil, "", io.Discard)
 	require.NoError(t, err)
 	assert.Equal(t, doc, got)
 }

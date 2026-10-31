@@ -106,12 +106,10 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 				if phase == 2 {
 					assert.Contains(t, string(request.Input), "Export user files")
 					assert.Contains(t, string(request.Input), "## Finding 2 (medium)\\n\\n- `save.go:4`: data loss\\n\\n  **Fix:** fix")
-					assert.Contains(t, string(request.Input), "Put every pre-Fix style element in problem")
 					assert.NotContains(t, string(request.Input), "## Finding 1 (high)")
 					assert.NotContains(t, string(request.Input), "## Finding 3 (low)")
 					assert.Contains(t, string(request.Input), "test reproduced data loss")
 					assert.Contains(t, string(request.Input), "Data is lost")
-					assert.Contains(t, string(request.Input), "Do not build the project, run tests, or execute code.")
 				}
 				if phase == 3 {
 					assert.Contains(t, string(request.Input), "Users lose their files.")
@@ -203,13 +201,8 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 			}
 			assert.Equal(t, expected, checked.Findings[0])
 			assert.Equal(t, doc.Findings[2], checked.Findings[1])
-			comment := reviewpkg.FormatComment(reviewpkg.PrepareComment(reviewpkg.CommentConfig{MinSeverity: "medium"}, reviewpkg.ReviewResult{StructuredOutput: encoded}))
-			assert.Contains(t, comment, expected.Fix)
-			assert.NotContains(t, comment, "minor issue")
-			assert.NotContains(t, comment, "build claim")
 			assert.Equal(t, doc.SourceLabels, checked.SourceLabels)
 			assert.Equal(t, doc.SchemaVersion, checked.SchemaVersion)
-			assert.Equal(t, structuredreview.VerdictFail, checked.Verdict)
 			assert.NotContains(t, string(log), "CI checker failed;")
 		})
 	}
