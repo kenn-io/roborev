@@ -51,6 +51,7 @@ type Server struct {
 	authKey                 string                 // Immutable startup credential.
 	daemonTLS               config.DaemonTLSConfig // Immutable startup TLS settings.
 	tcpTLS                  bool                   // The TCP API listener requires mutual TLS.
+	findingKataReader       findingKataReader
 	db                      *storage.DB
 	configWatcher           *ConfigWatcher
 	broadcaster             Broadcaster
@@ -2508,6 +2509,12 @@ func (s *Server) humaGetSummary(
 	}
 
 	summary, err := s.db.GetSummary(opts)
+	if err == nil {
+		err = s.enrichFindingStats(ctx, summary.Findings)
+	}
+	if errors.Is(err, ErrFindingKataAccessDenied) {
+		return nil, huma.Error403Forbidden("finding context access denied")
+	}
 	if err != nil {
 		return nil, huma.Error500InternalServerError(
 			fmt.Sprintf("get summary: %v", err),

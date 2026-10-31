@@ -21,17 +21,18 @@ const DefaultFindingMinSamples = 5
 // FindingOutcomeCounts keeps raw denominators even when rates are unavailable.
 // Positive means agent-confirmed, not proof that a fix was applied.
 type FindingOutcomeCounts struct {
-	Findings       int      `json:"findings"`
-	Labeled        int      `json:"labeled"`
-	Positive       int      `json:"positive"`
-	Negative       int      `json:"negative"`
-	Excluded       int      `json:"excluded"`
-	Unlabeled      int      `json:"unlabeled"`
-	ActedOnRate    *float64 `json:"acted_on_rate"`
-	RateState      string   `json:"rate_state"`
-	FailingReviews int      `json:"failing_reviews"`
-	ClosedReviews  int      `json:"closed_reviews"`
-	ResolutionRate *float64 `json:"resolution_rate"`
+	RefuteReasons  RefuteReasonCounts `json:"refute_reasons"`
+	Findings       int                `json:"findings"`
+	Labeled        int                `json:"labeled"`
+	Positive       int                `json:"positive"`
+	Negative       int                `json:"negative"`
+	Excluded       int                `json:"excluded"`
+	Unlabeled      int                `json:"unlabeled"`
+	ActedOnRate    *float64           `json:"acted_on_rate"`
+	RateState      string             `json:"rate_state"`
+	FailingReviews int                `json:"failing_reviews"`
+	ClosedReviews  int                `json:"closed_reviews"`
+	ResolutionRate *float64           `json:"resolution_rate"`
 }
 
 // FindingStatsRow describes one stable grouping cell. Severity spend overlaps
@@ -53,10 +54,17 @@ type FindingEvidence struct {
 	Index           int
 	Finding         structuredreview.Finding
 	Outcome         string // confirmed, refuted, superseded, or unlabeled
-	Tier            string // R for validated rebuttals; empty otherwise
+	Tier            string // Effective R rebuttal or K assertion; empty when unlabeled
 	AssessmentJobID int64
 	AssessmentUUID  string
 	Explanation     string
+	Reason          string
+	ReasonState     string
+	KataRootUID     string
+	KataReplies     []FindingKataReply
+	KataDiscussion  []FindingKataReply
+	ROutcome        string
+	RExplanation    string
 }
 
 // RebuttalCoverage reports why retained assessments did not become labels.
@@ -93,6 +101,8 @@ type FindingStats struct {
 	Cost              CostAggregate                   `json:"cost"`
 	Rows              []FindingStatsRow               `json:"rows"`
 	Evidence          []FindingEvidence               `json:"-"`
+	Kata              FindingKataCoverage             `json:"kata"`
+	retained          []*findingReview
 }
 
 // ValidateFindingOptions is shared by storage and HTTP/CLI boundaries.
@@ -127,27 +137,28 @@ func (db *DB) GetFindingStats(opts SummaryOptions, groupBy string) (*FindingStat
 }
 
 type findingReview struct {
-	id         int64
-	repoID     int64
-	uuid       string
-	run        string
-	reviewUUID string
-	kind       string
-	agent      string
-	model      string
-	reviewType string
-	source     string
-	ciBase     string
-	finished   time.Time
-	finishRaw  string
-	enqueued   string
-	closed     bool
-	failed     bool
-	document   sql.NullString
-	doc        *structuredreview.Document
-	executions []findingExecutionCost
-	evidence   []FindingEvidence
-	keys       []string
+	id            int64
+	repoID        int64
+	uuid          string
+	run           string
+	reviewUUID    string
+	kind          string
+	agent         string
+	model         string
+	reviewType    string
+	source        string
+	ciBase        string
+	finished      time.Time
+	finishRaw     string
+	enqueued      string
+	closed        bool
+	failed        bool
+	document      sql.NullString
+	doc           *structuredreview.Document
+	executions    []findingExecutionCost
+	evidence      []FindingEvidence
+	localEvidence []FindingEvidence
+	keys          []string
 }
 
 type findingExecutionCost struct {
@@ -237,22 +248,18 @@ func findingStats(q querier, opts SummaryOptions, groupBy string) (*FindingStats
 		}
 		if r.doc != nil {
 			for i, found := range r.doc.Findings {
-				r.evidence = append(r.evidence, FindingEvidence{JobID: r.id, ReviewUUID: r.reviewUUID, Index: i, Finding: found, Outcome: "unlabeled"})
+				r.evidence = append(r.evidence, FindingEvidence{JobID: r.id, ReviewUUID: r.reviewUUID, Index: i, Finding: found, Outcome: "unlabeled", Reason: "unspecified", ReasonState: "absent"})
 			}
 		}
 	}
 	if err = applyFindingLabels(q, reviews, opts.AsOf, &f.Rebuttals); err != nil {
 		return nil, err
 	}
-	cells := map[string]*FindingStatsRow{}
-	totalExecutions := map[int64]bool{}
-	cellExecutions := map[string]map[int64]bool{}
 	for _, r := range reviews {
 		r.executions, err = findingReviewCosts(q, r, opts.AsOf)
 		if err != nil {
 			return nil, err
 		}
-		addDistinctFindingCost(&f.Cost, r.executions, totalExecutions)
 		if groupBy == "severity" {
 			seen := map[string]bool{}
 			for _, e := range r.evidence {
@@ -280,21 +287,55 @@ func findingStats(q querier, opts SummaryOptions, groupBy string) (*FindingStats
 				}
 			}
 		}
+
+		r.localEvidence = append([]FindingEvidence(nil), r.evidence...)
+	}
+	f.retained = reviews
+	f.initializeKata()
+	f.aggregateFindings()
+	return f, nil
+}
+
+func (f *FindingStats) aggregateFindings() {
+	reviews, groupBy, minimum := f.retained, f.GroupBy, f.MinSamples
+	f.Total = FindingOutcomeCounts{}
+	f.Cost = CostAggregate{}
+	f.Rows = []FindingStatsRow{}
+	f.Evidence = nil
+	f.TierLabeled = map[string]int{"R": 0, "K": 0}
+	f.TierCoverage = map[string]FindingOutcomeCounts{"R": {}, "K": {}}
+	cells := map[string]*FindingStatsRow{}
+	totalExecutions := map[int64]bool{}
+	cellExecutions := map[string]map[int64]bool{}
+	for _, r := range reviews {
+		addDistinctFindingCost(&f.Cost, r.executions, totalExecutions)
 		addReviewCounts(&f.Total, r)
 		// The R cohort is local standalone findings, not a promise that every
-		// stored session can still be resumed. K/D adapters remain unavailable.
+		// stored session can still be resumed. Keep its original R evidence.
 		if r.kind != JobTypeSynthesis && r.source != JobSourceCI && r.ciBase == "" {
 			cohort := f.TierCoverage["R"]
 			addReviewCounts(&cohort, r)
-			for _, e := range r.evidence {
-				addFindingOutcome(&cohort, e.Outcome)
+			for _, e := range r.localEvidence {
+				addFindingEvidence(&cohort, e)
 			}
 			f.TierCoverage["R"] = cohort
 		}
+		if kataEligible(r) {
+			kc := f.TierCoverage["K"]
+			addReviewCounts(&kc, r)
+			for _, e := range r.evidence {
+				if e.Tier == "K" {
+					addFindingEvidence(&kc, e)
+				} else {
+					addFindingEvidence(&kc, FindingEvidence{Outcome: "unlabeled", Reason: "unspecified", ReasonState: "absent"})
+				}
+			}
+			f.TierCoverage["K"] = kc
+		}
 		for _, e := range r.evidence {
-			addFindingOutcome(&f.Total, e.Outcome)
-			if e.Tier == "R" && (e.Outcome == "confirmed" || e.Outcome == "refuted") {
-				f.TierLabeled["R"]++
+			addFindingEvidence(&f.Total, e)
+			if e.Tier != "" && (e.Outcome == "confirmed" || e.Outcome == "refuted") {
+				f.TierLabeled[e.Tier]++
 			}
 		}
 		f.Evidence = append(f.Evidence, r.evidence...)
@@ -313,7 +354,7 @@ func findingStats(q querier, opts SummaryOptions, groupBy string) (*FindingStats
 			addDistinctFindingCost(&c.Cost, r.executions, cellExecutions[key])
 			for _, e := range r.evidence {
 				if groupBy != "severity" || e.Finding.Severity == key {
-					addFindingOutcome(&c.FindingOutcomeCounts, e.Outcome)
+					addFindingEvidence(&c.FindingOutcomeCounts, e)
 				}
 			}
 		}
@@ -339,7 +380,6 @@ func findingStats(q querier, opts SummaryOptions, groupBy string) (*FindingStats
 		}
 		f.Rows = append(f.Rows, *c)
 	}
-	return f, nil
 }
 
 func addReviewCounts(c *FindingOutcomeCounts, r *findingReview) {

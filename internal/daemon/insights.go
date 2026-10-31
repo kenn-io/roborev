@@ -32,7 +32,7 @@ func (s *Server) buildInsightsPrompt(
 		return "", 0, nil
 	}
 
-	measured, err := s.db.GetFindingStats(storage.SummaryOptions{
+	measured, err := s.findingStats(ctx, storage.SummaryOptions{
 		RepoPath: repoRoot, Branch: branch, Since: since, AsOf: asOf,
 	}, "severity")
 	if err != nil {
@@ -165,8 +165,13 @@ func (s *Server) fetchPriorInsights(repoRoot, branch string, asOf time.Time) (*p
 		return nil, nil
 	}
 	baseline := prompt.RecoverInsightsBaseline(job.Prompt)
-	if baseline != nil && (baseline.RepoPath != filepath.ToSlash(repoRoot) || baseline.Branch != branch || baseline.AsOf.After(*latest.FinishedAt)) {
-		baseline = nil
+	if baseline != nil {
+		// completeJob stores insights completion at RFC3339 second precision.
+		baselineAsOf := baseline.AsOf.Truncate(time.Second)
+		finishedAt := latest.FinishedAt.Truncate(time.Second)
+		if baseline.RepoPath != filepath.ToSlash(repoRoot) || baseline.Branch != branch || baselineAsOf.After(finishedAt) {
+			baseline = nil
+		}
 	}
 	return &prompt.InsightsPrior{
 		JobID: latest.ID, CompletedAt: *latest.FinishedAt,

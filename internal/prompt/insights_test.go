@@ -1,7 +1,9 @@
 package prompt
 
 import (
+	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 	"testing"
 	"time"
@@ -281,7 +283,6 @@ func TestBuildInsightsPrompt_MeasuredEvidenceAndCoverage(t *testing.T) {
 	assert.Contains(result, `"Closed": false`)
 	assert.Contains(result, "Version-matched evidence coverage: 1/12 full-window findings.")
 	assert.Contains(result, "Fetched failing reviews: 2; included excerpts: 1; truncated excerpts: 1")
-	assert.Contains(result, "none found in supplied evidence")
 }
 
 func TestBuildInsightsPrompt_PriorUsesCompleteGuidelines(t *testing.T) {
@@ -291,9 +292,6 @@ func TestBuildInsightsPrompt_PriorUsesCompleteGuidelines(t *testing.T) {
 		Prior: &InsightsPrior{JobID: 8, Suggestions: "Keep exact prior line."},
 	})
 	assert.Contains(t, result, full)
-	assert.Contains(t, result, "insufficient comparable evidence")
-	assert.Contains(t, result, "within noise")
-	assert.Contains(t, result, "No guideline change recommended")
 }
 
 func TestRecoverInsightsContext(t *testing.T) {
@@ -372,9 +370,72 @@ func FuzzRecoverInsightsBaseline(f *testing.F) {
 
 func TestBuildInsightsPrompt_PriorBaseline(t *testing.T) {
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	result := BuildInsightsPrompt(InsightsData{Prior: &InsightsPrior{Suggestions: "Check errors.", Baseline: &storage.FindingStats{Since: start, AsOf: start.Add(24 * time.Hour), LogicalReviews: 7}}})
+	result := BuildInsightsPrompt(InsightsData{Prior: &InsightsPrior{Suggestions: "Check errors.", Baseline: &InsightsBaseline{FindingStats: &storage.FindingStats{Since: start, AsOf: start.Add(24 * time.Hour), LogicalReviews: 7}}}})
 	assert.Contains(t, result, `"logical_reviews": 7`)
 	assert.Contains(t, result, `"since": "2026-01-01T00:00:00Z"`)
 	assert.Contains(t, result, "Suggestion-specific before/after pattern counts are unavailable")
-	assert.Contains(t, result, "insufficient comparable evidence")
+}
+
+// Recovery must distinguish unrecorded historical coverage from measured zeroes.
+func TestRecoverInsightsBaselineLegacyReasonsPriorPrompt(t *testing.T) {
+	for _, nullFields := range []bool{false, true} {
+		t.Run(fmt.Sprintf("null=%t", nullFields), func(t *testing.T) {
+			cell := map[string]any{"findings": 1, "labeled": 1, "positive": 0, "negative": 1, "excluded": 0, "unlabeled": 0}
+			if nullFields {
+				cell["refute_reasons"] = nil
+			}
+			row := maps.Clone(cell)
+			row["key"] = "high"
+			old := map[string]any{"since": "2026-01-01T00:00:00Z", "as_of": "2026-01-02T00:00:00Z", "time_basis": "finished_at", "logical_reviews": 1, "structured_reviews": 1, "total": cell, "rows": []any{row}, "tier_coverage": map[string]any{"R": cell}}
+			if nullFields {
+				old["kata"] = nil
+			}
+			encoded, err := json.Marshal(old)
+			require.NoError(t, err)
+			baseline := RecoverInsightsBaseline(measuredStart + string(encoded) + measuredEnd)
+			require.NotNil(t, baseline)
+			a := assert.New(t)
+			for _, counts := range []storage.FindingOutcomeCounts{baseline.Total, baseline.Rows[0].FindingOutcomeCounts, baseline.TierCoverage["R"]} {
+				a.Equal(1, counts.RefuteReasons.Unspecified)
+				a.Equal(counts.Negative, counts.RefuteReasons.Total())
+				a.Zero(counts.RefuteReasons.FalsePositive)
+				a.Zero(counts.RefuteReasons.Spurious)
+				a.Zero(counts.RefuteReasons.RiskAccepted)
+			}
+			result := BuildInsightsPrompt(InsightsData{Prior: &InsightsPrior{Suggestions: "Check errors.", Baseline: baseline}})
+			_, body, found := strings.Cut(result, "Baseline counts/window:\n")
+			require.True(t, found)
+			body, _, found = strings.Cut(body, "\nSuggestion-specific")
+			require.True(t, found)
+			var rendered map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal([]byte(body), &rendered))
+			var coverage map[string]any
+			require.NoError(t, json.Unmarshal(rendered["kata"], &coverage))
+			a.Equal(map[string]any{"state": "unavailable"}, coverage, "historical K cohort was never measured")
+			var prior storage.FindingStats
+			require.NoError(t, json.Unmarshal([]byte(body), &prior))
+			a.Equal(1, prior.Total.RefuteReasons.Unspecified)
+			a.Equal(1, prior.Rows[0].RefuteReasons.Unspecified)
+			a.Equal(1, prior.TierCoverage["R"].RefuteReasons.Unspecified)
+		})
+	}
+}
+
+func TestRecoverInsightsBaselinePreservesCurrentReasons(t *testing.T) {
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	counts := storage.FindingOutcomeCounts{Findings: 1, Labeled: 1, Negative: 1, RefuteReasons: storage.RefuteReasonCounts{RiskAccepted: 1}}
+	rCounts := counts
+	rCounts.RefuteReasons = storage.RefuteReasonCounts{Unspecified: 1, Absent: 1}
+	current := &storage.FindingStats{Since: start, AsOf: start.Add(time.Hour), TimeBasis: "finished_at", LogicalReviews: 1, StructuredReviews: 1, Total: counts, Rows: []storage.FindingStatsRow{{Key: "high", FindingOutcomeCounts: counts}}, TierCoverage: map[string]storage.FindingOutcomeCounts{"R": rCounts}, Kata: storage.FindingKataCoverage{State: "available", Eligible: 2, Mapped: 1, Readable: 1, Labeled: 1, Refutes: 1, ExplicitReasons: 1}}
+	baseline := RecoverInsightsBaseline(BuildInsightsPrompt(InsightsData{Measured: current}))
+	require.NotNil(t, baseline)
+	a := assert.New(t)
+	a.Equal(current.Total, baseline.Total)
+	a.Equal(current.Rows, baseline.Rows)
+	a.Equal(current.TierCoverage, baseline.TierCoverage)
+	a.Equal(current.Kata, baseline.Kata)
+	result := BuildInsightsPrompt(InsightsData{Prior: &InsightsPrior{Baseline: baseline}})
+	a.Contains(result, `"risk_accepted": 1`)
+	a.Contains(result, `"eligible": 2`)
+	a.Contains(result, `"state": "available"`)
 }

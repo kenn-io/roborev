@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -376,12 +377,25 @@ func formatSince(since time.Time) string {
 // printFindingSummary keeps unavailable rates separate from raw counts.
 func printFindingSummary(cmd *cobra.Command, f *storage.FindingStats) {
 	cmd.Printf("Finding outcomes by %s (finished_at; as of %s)\n", f.GroupBy, f.AsOf.UTC().Format(time.RFC3339))
-	cmd.Printf("  Structured reviews: %d/%d | Labeled findings: %d/%d (R: %d)\n", f.StructuredReviews, f.LogicalReviews, f.Total.Labeled, f.Total.Findings, f.TierLabeled["R"])
+	cmd.Printf("  Structured reviews: %d/%d | Labeled findings: %d/%d (R: %d, K: %d)\n", f.StructuredReviews, f.LogicalReviews, f.Total.Labeled, f.Total.Findings, f.TierLabeled["R"], f.TierLabeled["K"])
 	cohort := f.TierCoverage["R"]
 	cmd.Printf("  R cohort labeled findings: %d/%d (local standalone reviews)\n", cohort.Labeled, cohort.Findings)
 	cmd.Printf("  Documents unavailable: %d missing, %d invalid, %d legacy, %d unable to review\n", f.MissingDocuments, f.InvalidDocuments, f.LegacyDocuments, f.UnableDocuments)
 	cmd.Printf("  Rebuttals: %d valid, %d unbound, %d stale, %d unmatched/ambiguous, %d invalid, %d ineligible\n", f.Rebuttals.Valid, f.Rebuttals.Unbound, f.Rebuttals.Stale, f.Rebuttals.Ambiguous, f.Rebuttals.Invalid, f.Rebuttals.Ineligible)
-	cmd.Println("  R confirms/refutes agent assertions; closure is resolution only. K, D and panel R labels unavailable.")
+	k := f.Kata
+	state := k.State
+	if state == "" {
+		state = "unavailable"
+	}
+	cmd.Printf("  K coverage (%s): %d/%d mapped, %d/%d readable | labeled: %d | explicit reasons: %d/%d refutes\n", state, k.Mapped, k.Eligible, k.Readable, k.Eligible, k.Labeled, k.ExplicitReasons, k.Refutes)
+	cmd.Printf("  K evidence: %d ineligible, %d unmapped, %d unavailable (%d incomplete, %d stale), %d invalid, %d conflicting, %d excluded, %d edited\n", k.Ineligible, k.Unmapped, k.Unavailable, k.Incomplete, k.Stale, k.Invalid, k.Conflicting, k.Excluded, k.Edited)
+	reasons := f.Total.RefuteReasons
+	cmd.Printf("  Refutes: false-positive: %d | spurious: %d | risk-accepted: %d | unspecified: %d\n", reasons.FalsePositive, reasons.Spurious, reasons.RiskAccepted, reasons.Unspecified)
+	cmd.Printf("  Refute reason coverage: %d absent, %d invalid, %d conflicting\n", reasons.Absent, reasons.Invalid, reasons.Conflicting)
+	cmd.Println("  Confirmed share describes assertions; risk-accepted records a real tradeoff. Closure is resolution only.")
+	if len(f.UnavailableTiers) > 0 {
+		cmd.Printf("  Unavailable tiers: %s\n", strings.Join(f.UnavailableTiers, ", "))
+	}
 	priced := false
 	for _, r := range f.Rows {
 		if r.Cost.JobsWithCost > 0 {
@@ -390,7 +404,7 @@ func printFindingSummary(cmd *cobra.Command, f *storage.FindingStats) {
 		}
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprint(w, "  Group\tFindings\tLabeled\tPositive\tNegative\tExcluded\tUnlabeled\tActed-on\tResolution")
+	fmt.Fprint(w, "  Group\tFindings\tLabeled\tPositive\tNegative\tExcluded\tUnlabeled\tFalse-positive\tSpurious\tRisk-accepted\tUnspecified\tConfirmed share\tResolution")
 	if priced {
 		fmt.Fprint(w, "\tRetained spend\tCost/positive")
 	}
@@ -410,7 +424,7 @@ func printFindingSummary(cmd *cobra.Command, f *storage.FindingStats) {
 		if key == "" {
 			key = "(unspecified)"
 		}
-		fmt.Fprintf(w, "  %s\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s", key, r.Findings, r.Labeled, r.Positive, r.Negative, r.Excluded, r.Unlabeled, rate, resolution)
+		fmt.Fprintf(w, "  %s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s", key, r.Findings, r.Labeled, r.Positive, r.Negative, r.Excluded, r.Unlabeled, r.RefuteReasons.FalsePositive, r.RefuteReasons.Spurious, r.RefuteReasons.RiskAccepted, r.RefuteReasons.Unspecified, rate, resolution)
 		if priced {
 			spend, per := "-", "-"
 			if r.Cost.JobsWithCost > 0 {

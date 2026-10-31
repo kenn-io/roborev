@@ -10,7 +10,7 @@ List files, packages or directories with concentrated failures, the number of di
 
 ## 3. Noise Candidates
 
-Use validated refuted assessments as noise evidence. Confirmed findings are counterexamples to suppression. Closure is resolution only; neither closure nor free-text comments label a finding positive or negative. Report counts and provenance, and distinguish superseded and unlabeled findings. Positive means agent-confirmed, not proof that a fix was applied. Superseded and unlabeled findings do not enter the labeled-rate denominator.
+Use validated refutes and their reasons: false-positive supports precision investigation; spurious supports scope investigation; risk-accepted records a real risk and tradeoff, not proof of technical invalidity or a reason to suppress a real bug. Unspecified refutes cannot support a reason-specific claim; they support broad noise analysis. Confirmed findings are suppression counterexamples. Closure is resolution only; free-text comments never label findings. Report counts and provenance. Positive means confirmed, not proof of an applied fix. Superseded and unlabeled findings stay outside the labeled-rate denominator.
 
 ## 4. Guideline Gaps
 
@@ -18,7 +18,7 @@ Describe recurring issues absent from the current guidelines and explain the evi
 
 ## 5. Suggested Guideline Additions
 
-Recommend at most one concrete guideline line, only with at least three distinct review job IDs. Cite those IDs, the occurrence count and, for any relevant cell with at least five labeled findings, its positive / (positive + negative) rate. Respect suppressed or unavailable rates. List confirmed or still-open findings the change would suppress, or say exactly "none found in supplied evidence". Search only the evidence actually supplied, never claim a whole-corpus counterexample search from a partial sample. State the expected effect and a redaction check for private identifiers. Otherwise say exactly "No guideline change recommended" and explain why.
+Recommend at most one concrete guideline line, only with at least three distinct review job IDs. Cite those IDs, the occurrence count and, for any relevant cell with at least five labeled findings, its positive / (positive + negative) confirmed share. Respect suppressed or unavailable rates. List confirmed or still-open findings the change would suppress, or say exactly "none found in supplied evidence". Search only the evidence actually supplied, never claim a whole-corpus counterexample search from a partial sample. State the expected effect and a redaction check for private identifiers. Otherwise say exactly "No guideline change recommended" and explain why.
 
 When prior suggestions are supplied, assess each recoverable suggestion: report exact inclusion against the COMPLETE current guidelines, separately from any equivalent wording you judge adopted. Compare identifiable pattern counts only with usable before/after windows, comparable denominators and sufficient coverage; otherwise say "insufficient comparable evidence". Treat changes of one or two occurrences as "within noise" (a heuristic). Report missing sections, baselines or periods as unavailable. A decrease proves neither causation nor adoption date. Never infer improvement from missing data.
 
@@ -63,6 +63,15 @@ Check returned errors.
     "panel R"
   ],
   "total": {
+    "refute_reasons": {
+      "false_positive": 0,
+      "spurious": 0,
+      "risk_accepted": 0,
+      "unspecified": 0,
+      "absent": 0,
+      "invalid": 0,
+      "conflicting": 0
+    },
     "findings": 2,
     "labeled": 1,
     "positive": 1,
@@ -81,7 +90,25 @@ Check returned errors.
     "jobs_total": 0,
     "complete": false
   },
-  "rows": null
+  "rows": null,
+  "kata": {
+    "state": "",
+    "eligible": 0,
+    "ineligible": 0,
+    "mapped": 0,
+    "readable": 0,
+    "labeled": 0,
+    "refutes": 0,
+    "explicit_reasons": 0,
+    "unmapped": 0,
+    "unavailable": 0,
+    "incomplete": 0,
+    "stale": 0,
+    "invalid": 0,
+    "conflicting": 0,
+    "excluded": 0,
+    "edited": 0
+  }
 }
 <!-- /roborev-insights-measured-v1 -->
 Counts include passing logical reviews and all structured findings; excerpts below contain only fetched failing reviews. Evidence Index is zero-based within ReviewUUID, not a persistent finding ID.
@@ -104,6 +131,13 @@ Version-matched finding evidence for fetched reviews (complete findings, includi
     "AssessmentJobID": 3,
     "AssessmentUUID": "assessment-3",
     "Explanation": "The error path is reachable.",
+    "Reason": "",
+    "ReasonState": "",
+    "KataRootUID": "",
+    "KataReplies": null,
+    "KataDiscussion": null,
+    "ROutcome": "",
+    "RExplanation": "",
     "Closed": true,
     "FinishedAt": "2026-01-02T00:00:00Z"
   }

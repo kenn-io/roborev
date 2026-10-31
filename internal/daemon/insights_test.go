@@ -422,6 +422,40 @@ func TestPriorInsightsCompletionAndScope(t *testing.T) {
 	assert.Empty(t, missing.Suggestions, "do not fall back to an older recoverable section")
 }
 
+func TestFetchPriorInsightsKeepsBaselineWithinStoredCompletionSecond(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	repo, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo"))
+	require.NoError(t, err)
+
+	storedSecond := time.Date(2026, 10, 30, 23, 50, 0, 0, time.UTC)
+	baselineAsOf := storedSecond.Add(500 * time.Millisecond)
+	actualCompletion := storedSecond.Add(800 * time.Millisecond)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID: repo.ID, GitRef: "insights", Branch: "main", Agent: "test",
+		JobType: storage.JobTypeInsights, Prompt: "old prompt",
+	})
+	require.NoError(t, err)
+	claimed, err := db.ClaimJob("worker")
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", "old prompt", "## 5. Suggested Guideline Additions\n\nCheck returned errors."))
+
+	// Ordinary completion writes RFC3339 seconds, losing the subsecond part.
+	_, err = db.Exec(`UPDATE review_jobs SET finished_at=? WHERE id=?`, actualCompletion.Format(time.RFC3339), job.ID)
+	require.NoError(t, err)
+	baseline := &storage.FindingStats{
+		Since: baselineAsOf.Add(-24 * time.Hour), AsOf: baselineAsOf,
+		RepoPath: filepath.ToSlash(repo.RootPath), Branch: "main", TimeBasis: "finished_at", LogicalReviews: 7,
+	}
+	require.NoError(t, db.SaveJobPrompt(job.ID, prompt.BuildInsightsPrompt(prompt.InsightsData{Measured: baseline})))
+
+	prior, err := server.fetchPriorInsights(repo.RootPath, "main", actualCompletion.Add(time.Minute))
+	require.NoError(t, err)
+	require.NotNil(t, prior)
+	require.NotNil(t, prior.Baseline)
+	assert.Equal(t, 7, prior.Baseline.LogicalReviews)
+}
+
 func TestInsightsReviewSnapshotRejectsRerun(t *testing.T) {
 	asOf := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	since := asOf.Add(-24 * time.Hour)
@@ -476,7 +510,6 @@ func TestHandleEnqueueInsightsPriorWithQuotedNoopWithoutCurrentFailures(t *testi
 	assert.Contains(stored.Prompt, `"logical_reviews": 0`)
 	assert.Contains(stored.Prompt, "Check returned errors.")
 	assert.Contains(stored.Prompt, `Unlike the earlier "No guideline change recommended" result`)
-	assert.Contains(stored.Prompt, "insufficient comparable evidence")
 }
 
 func TestBuildInsightsPromptSkipsPriorNoopWithoutFailures(t *testing.T) {

@@ -811,13 +811,13 @@ review's configured threshold.
     an agent assertion, not proof that someone applied a fix. New rebuttals bind
     their quoted finding and review UUID in their stored prompt. Old unbound,
     stale, failed, malformed and ambiguous assessments do not label findings.
-    The latest valid assessment wins. Comments never create labels.
+    The latest valid assessment wins. Ordinary comments never create labels.
 - **Excluded**: Superseded findings remain visible but do not enter the labeled
     denominator. Labeled is positive plus negative; unlabeled is separate.
-- **Acted-on rate**: Positive / labeled. A zero denominator is unavailable.
-    Fewer than `--min-samples` labels shows `n<5` with the default threshold
-    while preserving every underlying count. This display threshold is adapted
-    from
+- **Confirmed share**: Positive / labeled (`acted_on_rate` in JSON for
+    compatibility). A zero denominator is unavailable. Fewer than
+    `--min-samples` labels shows `n<5` with the default threshold while
+    preserving every underlying count. This display threshold is adapted from
     [lever's five-example evidence rule](https://github.com/github/lever/blob/f859d0a/automations/precision-review/improver-prompt.md).
     It does not limit reads or agent execution.
 - **Review resolution**: Distinct closed failing reviews / distinct failing
@@ -828,7 +828,42 @@ review's configured threshold.
     denominator is structured findings from local standalone reviews; it does
     not promise that every stored session can still be resumed. Tier K (typed
     replies), tier D (fix dispositions), and panel-parent tier R are unavailable
-    today.
+    today. The outcome consumer supports validated typed-reply fixtures; a live
+    Kata mapper and complete reader are prerequisites for runtime K labels. The
+    default adapter remains unavailable and makes no Kata requests.
+
+The additive `refute_reasons` block in totals and each group distinguishes:
+
+- **false-positive**: The claimed failure cannot happen in the supported path.
+- **spurious**: The observation is real but has no relevant user consequence.
+- **risk-accepted**: A real risk remains because fixing it costs more than
+    leaving it. This records a tradeoff, not technical invalidity.
+- **unspecified**: Legacy/unmarked refutes, conflicting refute reasons and all R
+    refutes have no agreed explicit reason. Never infer false-positive.
+
+These four counts sum to effective negative findings. Reason coverage reports
+absent, invalid and conflicting states separately. Named reasons do not change
+review verdicts, closure, resolution or cost.
+
+For validated K fixtures, only direct typed assertions on a verified current
+finding root vote. The newest assertion per actual author and teammate is
+selected before qualification: an invalid current edit cannot revive an older
+decision or fall back to R. Confirm/refute evidence must contain at least 40
+normalized Unicode characters without marker bytes; supersede evidence must be
+nonblank. Nested confirmations remain discussion. Mixed assertion kinds are
+unlabeled; unanimous refutes with differing or absent reasons remain negative
+with unspecified reason coverage.
+
+K eligibility includes all findings in completed failing local standalone and
+synthesis reviews with a current UUID. Passing and CI findings are ineligible,
+and panel members are outside the logical cohort. Summary reports eligible,
+mapped, readable, labeled, unmapped, invalid, conflicting, edited and
+unavailable coverage, plus current read timestamps alongside the local
+completion as-of. An unavailable or incomplete read preserves R outcomes. A
+concurrent rerun or version mismatch cannot assign labels by index alone. Future
+live reads use one context per review UUID, a two-second total budget, at most
+two concurrent reads and no retries; caller cancellation and access denial fail
+explicitly.
 
 Agent and model groups describe the logical parent's configuration, including
 panels that passed through one member's output. Arm groups use experiment ID,
