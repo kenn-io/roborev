@@ -57,7 +57,9 @@ func TestCloseOnContextDoneStopPreventsClose(t *testing.T) {
 
 func TestCloseOnContextDoneBackgroundIsNoop(t *testing.T) {
 	closer := &countingCloser{}
-	stop := closeOnContextDone(t.Context(), closer, nil)
+	// The no-op branch needs a context whose Done channel is nil, which
+	// t.Context() never has.
+	stop := closeOnContextDone(context.Background(), closer, nil) //nolint:usetesting // see above
 	stop()
 
 	require.Equal(t, int32(0), closer.closed.Load(), "background context should not close the closer")

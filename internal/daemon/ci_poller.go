@@ -2005,6 +2005,11 @@ func isValidRepoSegment(s string) bool {
 // operational errors to avoid destructive action on transient failures.
 func cloneNeedsReplace(ctx context.Context, path, ghRepo, rawBaseURL string) (bool, error) {
 	if !isValidGitRepo(ctx, path) {
+		// A canceled context also makes the git probe fail; that says
+		// nothing about the clone, so it must not authorize deletion.
+		if err := ctx.Err(); err != nil {
+			return false, fmt.Errorf("validate clone at %s: %w", path, err)
+		}
 		return true, nil
 	}
 	matches, err := cloneRemoteMatches(ctx, path, ghRepo, rawBaseURL)

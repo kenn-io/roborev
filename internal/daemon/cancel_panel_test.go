@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"database/sql"
 	"testing"
 	"time"
@@ -109,6 +110,26 @@ func TestCancelSynthesisCascades(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(storage.JobStatusCanceled, gotSynth.Status, "synthesis should be canceled")
 	_ = runUUID
+}
+
+func TestCancelSynthesisCascadesAfterRequestEnds(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	_, members, synth := enqueueServerPanelRun(t, db, 2)
+
+	// A client that disconnects after sending the cancel ends the request
+	// context before the handler loads the job.
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err := server.humaCancelJob(ctx, &CancelJobInput{
+		Body: CancelJobRequest{JobID: synth.ID},
+	})
+	require.NoError(t, err)
+
+	for _, m := range members {
+		got, err := db.GetJobByID(m.ID)
+		require.NoError(t, err)
+		assert.Equal(t, storage.JobStatusCanceled, got.Status, "member should be canceled")
+	}
 }
 
 func TestCancelSynthesisBroadcastsEveryCanceledJob(t *testing.T) {
