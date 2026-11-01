@@ -104,8 +104,8 @@ func setupTestServer(t *testing.T) *Server {
 // recorder. The response can come from the last agents check while a refresh
 // runs in the background. The helper waits for that refresh, so no goroutine
 // reads the config after the request returns while a test changes it.
-func executeHealthCheck(server *Server, method string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(method, "/api/health", nil)
+func executeHealthCheck(ctx context.Context, server *Server, method string) *httptest.ResponseRecorder {
+	req := httptest.NewRequestWithContext(ctx, method, "/api/health", nil)
 	w := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(w, req)
 	server.agentHealth.wait()
@@ -124,7 +124,7 @@ func decodeHealthStatus(t *testing.T, w *httptest.ResponseRecorder) storage.Heal
 func TestHealth(t *testing.T) {
 	t.Run("Happy Path", func(t *testing.T) {
 		server := setupTestServer(t)
-		w := executeHealthCheck(server, http.MethodGet)
+		w := executeHealthCheck(t.Context(), server, http.MethodGet)
 		assert.Equal(t, http.StatusOK, w.Code)
 
 		health := decodeHealthStatus(t, w)
@@ -144,7 +144,7 @@ func TestHealth(t *testing.T) {
 			server.errorLog.LogError("worker", "test error 2", 456)
 		}
 
-		w := executeHealthCheck(server, http.MethodGet)
+		w := executeHealthCheck(t.Context(), server, http.MethodGet)
 		health := decodeHealthStatus(t, w)
 
 		assert.Positive(t, health.ErrorCount, "Expected error count > 0")
@@ -153,7 +153,7 @@ func TestHealth(t *testing.T) {
 
 	t.Run("Method Not Allowed", func(t *testing.T) {
 		server := setupTestServer(t)
-		w := executeHealthCheck(server, http.MethodPost)
+		w := executeHealthCheck(t.Context(), server, http.MethodPost)
 		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 	})
 }
@@ -212,7 +212,7 @@ func TestHealthAllowsRunningJobsWithinTheirTimeout(t *testing.T) {
 			require.Greater(t, time.Until(deadline), time.Hour)
 
 			// Simulate an old running attempt without waiting for the wall clock.
-			_, err = server.db.Exec("UPDATE review_jobs SET started_at = ? WHERE id = ?",
+			_, err = server.db.ExecContext(t.Context(), "UPDATE review_jobs SET started_at = ? WHERE id = ?",
 				time.Now().Add(-45*time.Minute).UTC().Format(time.RFC3339), job.ID)
 			require.NoError(t, err)
 			// Reloading config must not shorten the running attempt's deadline.
@@ -220,7 +220,7 @@ func TestHealthAllowsRunningJobsWithinTheirTimeout(t *testing.T) {
 			server.configWatcher.cfg = config.DefaultConfig()
 			server.configWatcher.cfgMu.Unlock()
 
-			response := executeHealthCheck(server, http.MethodGet)
+			response := executeHealthCheck(t.Context(), server, http.MethodGet)
 			require.Equal(t, http.StatusOK, response.Code)
 			health := decodeHealthStatus(t, response)
 			assert.True(t, health.Healthy)
@@ -244,14 +244,14 @@ func TestHealthReportsAbandonedAndOverdueJobs(t *testing.T) {
 			job, err := server.db.ClaimJob("worker-test")
 			require.NoError(t, err)
 			require.NotNil(t, job)
-			_, err = server.db.Exec("UPDATE review_jobs SET started_at = ? WHERE id = ?",
+			_, err = server.db.ExecContext(t.Context(), "UPDATE review_jobs SET started_at = ? WHERE id = ?",
 				time.Now().Add(-45*time.Minute).UTC().Format(time.RFC3339), job.ID)
 			require.NoError(t, err)
 			if tracked {
 				server.workerPool.registerRunningJob(job.ID, func() {}, time.Now().Add(-time.Minute))
 			}
 
-			response := executeHealthCheck(server, http.MethodGet)
+			response := executeHealthCheck(t.Context(), server, http.MethodGet)
 			require.Equal(t, http.StatusOK, response.Code)
 			health := decodeHealthStatus(t, response)
 			assert.False(t, health.Healthy)
@@ -280,7 +280,7 @@ func TestHealthIncludesOptionalSearchWithoutDegradingDaemon(t *testing.T) {
 	}
 	server.searchReconciler = reconciler
 
-	response := executeHealthCheck(server, http.MethodGet)
+	response := executeHealthCheck(t.Context(), server, http.MethodGet)
 	require.Equal(t, http.StatusOK, response.Code)
 	health := decodeHealthStatus(t, response)
 
@@ -293,7 +293,7 @@ func TestHealthIncludesOptionalSearchWithoutDegradingDaemon(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, health.Search.LastErrorStatus)
 
 	server.searchReconciler = nil
-	response = executeHealthCheck(server, http.MethodGet)
+	response = executeHealthCheck(t.Context(), server, http.MethodGet)
 	health = decodeHealthStatus(t, response)
 	assert.Nil(t, health.Search)
 }
@@ -406,7 +406,7 @@ func TestHealthReportsConcreteReconcilerReplacement(t *testing.T) {
 
 	server := setupTestServer(t)
 	server.searchReconciler = reconciler
-	response := executeHealthCheck(server, http.MethodGet)
+	response := executeHealthCheck(t.Context(), server, http.MethodGet)
 	require.Equal(t, http.StatusOK, response.Code)
 	health := decodeHealthStatus(t, response)
 	require.NotNil(t, health.Search)
@@ -437,11 +437,11 @@ func TestHealthReportsUnavailableReviewAgent(t *testing.T) {
 
 	// Before the first check finishes, health reports it is still running
 	// instead of probing in the request. The helper waits for that check.
-	health := decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
+	health := decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet))
 	assert.True(t, agents(health).Healthy)
 	assert.Contains(t, agents(health).Message, "still running")
 
-	health = decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
+	health = decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet))
 	assert.False(t, health.Healthy)
 	assert.False(t, health.Ready)
 	assert.False(t, agents(health).Healthy)
@@ -457,10 +457,10 @@ func TestHealthReportsUnavailableReviewAgent(t *testing.T) {
 
 	// A request returns the last result and starts a refresh; the helper
 	// waits for the refresh to finish.
-	health = decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
+	health = decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet))
 	assert.False(t, agents(health).Healthy)
 
-	health = decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
+	health = decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet))
 	assert.True(t, agents(health).Healthy)
 	assert.True(t, health.Healthy)
 }
@@ -500,7 +500,7 @@ func TestHealthCredentialAvailability(t *testing.T) {
 				Credential: tc.credential, CredentialSource: tc.source, CredentialReason: tc.reason, LastErrorStatus: tc.status,
 			}
 			server.searchReconciler = r
-			response := executeHealthCheck(server, http.MethodGet)
+			response := executeHealthCheck(t.Context(), server, http.MethodGet)
 			require.Equal(t, 200, response.Code)
 			var body map[string]any
 			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))

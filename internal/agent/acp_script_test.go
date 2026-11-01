@@ -31,7 +31,7 @@ func writeACPTestCommand(t *testing.T, dir, name, script string) {
 func runACPWrapperCommand(t *testing.T, commandPath string, env map[string]string, args ...string) (string, string, error) {
 	t.Helper()
 
-	cmd := exec.Command(commandPath, args...)
+	cmd := exec.CommandContext(t.Context(), commandPath, args...)
 	pathValue := os.Getenv("PATH")
 	if customPath, ok := env["PATH"]; ok {
 		pathValue = customPath

@@ -76,11 +76,11 @@ func openAnalyticsBenchmarkDB(b *testing.B) (*DB, time.Time) {
 
 	until := time.Date(2026, time.September, 1, 0, 0, 0, 0, time.UTC)
 	prompt := strings.Repeat("p", analyticsBenchmarkPrompt)
-	tx, err := db.Begin()
+	tx, err := db.BeginTx(b.Context(), nil)
 	require.NoError(b, err)
 	repoIDs := make([]int64, 8)
 	for i := range repoIDs {
-		result, err := tx.Exec(`INSERT INTO repos (root_path, name) VALUES (?, ?)`,
+		result, err := tx.ExecContext(b.Context(), `INSERT INTO repos (root_path, name) VALUES (?, ?)`,
 			fmt.Sprintf("/synthetic/repo-%d", i), fmt.Sprintf("repo-%d", i))
 		require.NoError(b, err)
 		repoIDs[i], err = result.LastInsertId()
@@ -91,7 +91,7 @@ func openAnalyticsBenchmarkDB(b *testing.B) (*DB, time.Time) {
 	for i := range analyticsBenchmarkJobs {
 		finished := until.Add(-time.Duration(i) * (historyDays * 24 * time.Hour / analyticsBenchmarkJobs))
 		started := finished.Add(-90 * time.Second)
-		result, err := tx.Exec(`INSERT INTO review_jobs
+		result, err := tx.ExecContext(b.Context(), `INSERT INTO review_jobs
 			(repo_id, git_ref, agent, model, status, enqueued_at, started_at, finished_at,
 			 job_type, source, token_usage, agent_invoked)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
@@ -103,9 +103,9 @@ func openAnalyticsBenchmarkDB(b *testing.B) (*DB, time.Time) {
 		require.NoError(b, err)
 		jobID, err := result.LastInsertId()
 		require.NoError(b, err)
-		_, err = tx.Exec(`INSERT INTO job_content (job_id, prompt) VALUES (?, zstd_compress(?))`, jobID, prompt)
+		_, err = tx.ExecContext(b.Context(), `INSERT INTO job_content (job_id, prompt) VALUES (?, zstd_compress(?))`, jobID, prompt)
 		require.NoError(b, err)
-		_, err = tx.Exec(`INSERT INTO reviews (job_id, agent, output, closed, verdict_bool)
+		_, err = tx.ExecContext(b.Context(), `INSERT INTO reviews (job_id, agent, output, closed, verdict_bool)
 			VALUES (?, 'agent', '', ?, ?)`, jobID, i%7 == 0, i%2)
 		require.NoError(b, err)
 	}
@@ -180,14 +180,14 @@ func BenchmarkBuildAnalyticsIndexes(b *testing.B) {
 	db, _ := openAnalyticsBenchmarkDB(b)
 	for b.Loop() {
 		b.StopTimer()
-		_, err := db.Exec(`DROP INDEX idx_review_jobs_analytics`)
+		_, err := db.ExecContext(b.Context(), `DROP INDEX idx_review_jobs_analytics`)
 		require.NoError(b, err)
-		_, err = db.Exec(`DROP INDEX idx_reviews_job_verdict`)
+		_, err = db.ExecContext(b.Context(), `DROP INDEX idx_reviews_job_verdict`)
 		require.NoError(b, err)
 		b.StartTimer()
-		_, err = db.Exec(analyticsJobsIndexSQL())
+		_, err = db.ExecContext(b.Context(), analyticsJobsIndexSQL())
 		require.NoError(b, err)
-		_, err = db.Exec(analyticsReviewsIndexSQL)
+		_, err = db.ExecContext(b.Context(), analyticsReviewsIndexSQL)
 		require.NoError(b, err)
 	}
 }

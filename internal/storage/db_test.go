@@ -66,19 +66,19 @@ func TestAutoDesignDedup_AutoRowsDedup(t *testing.T) {
 	repoID := createRepo(t, db, "/tmp/repo-dedup").ID
 	commitID := createCommit(t, db, repoID, "beef").ID
 
-	_, err := db.Exec(`
+	_, err := db.ExecContext(t.Context(), `
 		INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, review_type, source)
 		VALUES (?, ?, 'beef', 'queued', 'design', 'auto_design')
 	`, repoID, commitID)
 	require.NoError(t, err)
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, review_type, source)
 		VALUES (?, ?, 'beef', 'queued', 'design', 'auto_design')
 	`, repoID, commitID)
 	require.Error(t, err, "second auto_design insert must collide with the unique index")
 
-	res, err := db.Exec(`
+	res, err := db.ExecContext(t.Context(), `
 		INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, review_type, source)
 		VALUES (?, ?, 'beef', 'queued', 'design', 'auto_design')
 		ON CONFLICT DO NOTHING
@@ -96,19 +96,19 @@ func TestAutoDesignDedup_ExplicitRowsNotAffected(t *testing.T) {
 	repoID := createRepo(t, db, "/tmp/repo-dedup-explicit").ID
 	commitID := createCommit(t, db, repoID, "cafe").ID
 
-	_, err := db.Exec(`
+	_, err := db.ExecContext(t.Context(), `
 		INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, review_type, source, skip_reason)
 		VALUES (?, ?, 'cafe', 'skipped', 'design', 'auto_design', 'trivial')
 	`, repoID, commitID)
 	require.NoError(t, err)
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, review_type)
 		VALUES (?, ?, 'cafe', 'queued', 'design')
 	`, repoID, commitID)
 	require.NoError(t, err, "explicit design insert must not collide with auto_design row")
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, review_type)
 		VALUES (?, ?, 'cafe', 'queued', 'design')
 	`, repoID, commitID)
@@ -122,19 +122,19 @@ func TestAutoDesignDedup_CommitlessIndex(t *testing.T) {
 
 	repoID := createRepo(t, db, "/tmp/repo-dedup-commitless").ID
 
-	_, err := db.Exec(`
+	_, err := db.ExecContext(t.Context(), `
 		INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, review_type, source)
 		VALUES (?, NULL, 'dirty', 'queued', 'design', 'auto_design')
 	`, repoID)
 	require.NoError(t, err)
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, review_type, source)
 		VALUES (?, NULL, 'dirty', 'queued', 'design', 'auto_design')
 	`, repoID)
 	require.Error(t, err, "second commit-less auto_design insert must collide")
 
-	res, err := db.Exec(`
+	res, err := db.ExecContext(t.Context(), `
 		INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, review_type, source)
 		VALUES (?, NULL, 'dirty', 'queued', 'design', 'auto_design')
 		ON CONFLICT DO NOTHING
@@ -143,13 +143,13 @@ func TestAutoDesignDedup_CommitlessIndex(t *testing.T) {
 	n, _ := res.RowsAffected()
 	assert.EqualValues(t, 0, n)
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, review_type)
 		VALUES (?, NULL, 'dirty', 'queued', 'design')
 	`, repoID)
 	require.NoError(t, err, "explicit commit-less insert must not collide with auto_design")
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, review_type, source)
 		VALUES (?, NULL, 'dirty-other', 'queued', 'design', 'auto_design')
 	`, repoID)

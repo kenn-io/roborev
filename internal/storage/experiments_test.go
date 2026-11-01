@@ -52,9 +52,9 @@ func TestEnqueueJobStoresExperimentAtomically(t *testing.T) {
 	require.ErrorContains(t, err, "experiment definition conflict")
 
 	var jobs, definitions, assignments int
-	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM review_jobs`).Scan(&jobs))
-	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM experiment_definitions`).Scan(&definitions))
-	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM experiment_assignments`).Scan(&assignments))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM review_jobs`).Scan(&jobs))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM experiment_definitions`).Scan(&definitions))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM experiment_assignments`).Scan(&assignments))
 	assert.Equal(t, 1, jobs)
 	assert.Equal(t, 1, definitions)
 	assert.Equal(t, 1, assignments)
@@ -105,7 +105,7 @@ func TestPanelExperimentProjectsToEveryJob(t *testing.T) {
 	assert.Equal(t, assignment, stored)
 
 	var assignmentCount int
-	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM experiment_assignments`).Scan(&assignmentCount))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM experiment_assignments`).Scan(&assignmentCount))
 	assert.Equal(t, 1, assignmentCount)
 }
 

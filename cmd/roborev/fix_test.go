@@ -591,7 +591,9 @@ func TestWithFixDaemonRetryContextRecoversOnlyFromMissingDaemon(t *testing.T) {
 			})
 
 			_, err := withFixDaemonRetryContext(t.Context(), getDaemonEndpoint().BaseURL(), func(addr string) (struct{}, error) {
-				resp, err := getDaemonHTTPClientForURL(addr, time.Second).Get(addr + "/api/jobs")
+				getRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, addr+"/api/jobs", nil)
+				require.NoError(t, err)
+				resp, err := getDaemonHTTPClientForURL(addr, time.Second).Do(getRequest)
 				if resp != nil {
 					_ = resp.Body.Close()
 				}
@@ -1092,7 +1094,7 @@ func TestProcessFixBatchUsesNeutralStatusForMixedPolicyOutcome(t *testing.T) {
 		ReviewFn: func(_ context.Context, repoPath, _, _ string, _ io.Writer) (string, error) {
 			require.NoError(t, os.WriteFile(filepath.Join(repoPath, "fix.txt"), []byte("fixed\n"), 0o644))
 			for _, args := range [][]string{{"add", "fix.txt"}, {"commit", "-m", "fix: apply batch change"}} {
-				cmd := exec.Command("git", args...)
+				cmd := exec.CommandContext(t.Context(), "git", args...)
 				cmd.Dir = repoPath
 				output, err := cmd.CombinedOutput()
 				require.NoError(t, err, "git %v: %s", args, output)
@@ -1168,12 +1170,12 @@ func TestFixSingleJobRecoversPostFixDaemonCalls(t *testing.T) {
 			if err := os.WriteFile(fixPath, []byte("fixed\n"), 0o644); err != nil {
 				return "", fmt.Errorf("write fix: %w", err)
 			}
-			cmd := exec.Command("git", "add", "fix.txt")
+			cmd := exec.CommandContext(t.Context(), "git", "add", "fix.txt")
 			cmd.Dir = repoPath
 			if out, err := cmd.CombinedOutput(); err != nil {
 				return "", fmt.Errorf("git add: %w (%s)", err, out)
 			}
-			cmd = exec.Command("git", "commit", "-m", "fix: apply retry test")
+			cmd = exec.CommandContext(t.Context(), "git", "commit", "-m", "fix: apply retry test")
 			cmd.Dir = repoPath
 			if out, err := cmd.CombinedOutput(); err != nil {
 				return "", fmt.Errorf("git commit: %w (%s)", err, out)
@@ -2009,7 +2011,7 @@ func TestFixJobDirectUnbornHead(t *testing.T) {
 	t.Run("agent creates first commit", func(t *testing.T) {
 		// Create a fresh git repo with no commits (unborn HEAD)
 		dir := t.TempDir()
-		cmd := exec.Command("git", "init")
+		cmd := exec.CommandContext(t.Context(), "git", "init")
 		cmd.Dir = dir
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, "git init failed: %v", err)
@@ -2018,7 +2020,7 @@ func TestFixJobDirectUnbornHead(t *testing.T) {
 			{"config", "user.email", "test@test.com"},
 			{"config", "user.name", "Test"},
 		} {
-			c := exec.Command("git", args...)
+			c := exec.CommandContext(t.Context(), "git", args...)
 			c.Dir = dir
 			err := c.Run()
 			require.NoError(t, err, "git %v: %v", args, err)
@@ -2031,12 +2033,12 @@ func TestFixJobDirectUnbornHead(t *testing.T) {
 				if err := os.WriteFile(filepath.Join(repoPath, "fix.txt"), []byte("fixed"), 0o644); err != nil {
 					return "", fmt.Errorf("write file: %w", err)
 				}
-				c := exec.Command("git", "add", ".")
+				c := exec.CommandContext(ctx, "git", "add", ".")
 				c.Dir = repoPath
 				if err := c.Run(); err != nil {
 					return "", fmt.Errorf("git add: %w", err)
 				}
-				c = exec.Command("git", "commit", "-m", "first commit")
+				c = exec.CommandContext(ctx, "git", "commit", "-m", "first commit")
 				c.Dir = repoPath
 				if err := c.Run(); err != nil {
 					return "", fmt.Errorf("git commit: %w", err)
@@ -2058,7 +2060,7 @@ func TestFixJobDirectUnbornHead(t *testing.T) {
 
 	t.Run("agent makes no changes on unborn head", func(t *testing.T) {
 		dir := t.TempDir()
-		cmd := exec.Command("git", "init")
+		cmd := exec.CommandContext(t.Context(), "git", "init")
 		cmd.Dir = dir
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, "git init failed: %v\n%s", err, out)
@@ -2093,7 +2095,7 @@ func TestFixJobDirect_RetryThreadsCapturedSessionID(t *testing.T) {
 		{"config", "user.name", "Test"},
 		{"commit", "--allow-empty", "-m", "base"},
 	} {
-		c := exec.Command("git", args...)
+		c := exec.CommandContext(t.Context(), "git", args...)
 		c.Dir = dir
 		require.NoError(t, c.Run(), "git %v", args)
 	}
@@ -2137,7 +2139,7 @@ func TestFixJobDirect_RetryPreservesInitialAndFinalAgentOutput(t *testing.T) {
 				{"add", "fix.txt"},
 				{"commit", "-m", "fix: apply reviewed change"},
 			} {
-				cmd := exec.Command("git", args...)
+				cmd := exec.CommandContext(t.Context(), "git", args...)
 				cmd.Dir = repoPath
 				output, err := cmd.CombinedOutput()
 				if err != nil {
@@ -3071,7 +3073,7 @@ func TestFixSingleJobSkipsPassVerdict(t *testing.T) {
 			return
 		}
 		// Proxy to the original mock
-		proxy, err := http.NewRequest(r.Method, ts.URL+r.URL.String(), r.Body)
+		proxy, err := http.NewRequestWithContext(t.Context(), r.Method, ts.URL+r.URL.String(), r.Body)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -4139,23 +4141,23 @@ func TestRunFixOpenFiltersUnreachableJobs(t *testing.T) {
 	)
 
 	// Create a commit on the worktree branch
-	cmd := exec.Command("git", "checkout", "wt-branch")
+	cmd := exec.CommandContext(t.Context(), "git", "checkout", "wt-branch")
 	cmd.Dir = worktreeDir
 	require.NoError(t, cmd.Run(), "checkout wt-branch in worktree")
 
-	cmd = exec.Command("git", "add", ".")
+	cmd = exec.CommandContext(t.Context(), "git", "add", ".")
 	cmd.Dir = worktreeDir
 	_ = cmd.Run()
 	wtFile := filepath.Join(worktreeDir, "wt-file.txt")
 	require.NoError(t, os.WriteFile(wtFile, []byte("wt"), 0o644))
-	cmd = exec.Command("git", "add", "wt-file.txt")
+	cmd = exec.CommandContext(t.Context(), "git", "add", "wt-file.txt")
 	cmd.Dir = worktreeDir
 	require.NoError(t, cmd.Run())
-	cmd = exec.Command("git", "commit", "-m", "worktree commit")
+	cmd = exec.CommandContext(t.Context(), "git", "commit", "-m", "worktree commit")
 	cmd.Dir = worktreeDir
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "commit in worktree: %s", out)
-	cmd = exec.Command("git", "rev-parse", "HEAD")
+	cmd = exec.CommandContext(t.Context(), "git", "rev-parse", "HEAD")
 	cmd.Dir = worktreeDir
 	shaOut, err := cmd.Output()
 	require.NoError(t, err)
@@ -4785,7 +4787,7 @@ func TestFixJobDirect_RetryClassifiesAgentLimit(t *testing.T) {
 		{"config", "user.name", "Test"},
 		{"commit", "--allow-empty", "-m", "base"},
 	} {
-		c := exec.Command("git", args...)
+		c := exec.CommandContext(t.Context(), "git", args...)
 		c.Dir = dir
 		require.NoError(t, c.Run(), "git %v", args)
 	}

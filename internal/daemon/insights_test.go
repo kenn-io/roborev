@@ -28,7 +28,7 @@ func TestInsightsIncludesPanelParentOnce(t *testing.T) {
 	enqueueCompletedInsightsGoalReviewJob(t, db, repo.ID, "goal-review", "main", failingInsightsOutput("Goal finding"))
 	enqueueCompletedInsightsReviewJob(t, db, repo.ID, "feature", "feature", storage.JobTypeReview, failingInsightsOutput("Other branch finding"))
 	old := enqueueCompletedInsightsReviewJob(t, db, repo.ID, "old", "main", storage.JobTypeReview, failingInsightsOutput("Old finding"))
-	_, err = db.Exec(`UPDATE review_jobs SET finished_at = ? WHERE id = ?`, since.Add(-time.Hour).Format(time.RFC3339), old.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET finished_at = ? WHERE id = ?`, since.Add(-time.Hour).Format(time.RFC3339), old.ID)
 	require.NoError(t, err)
 	enqueueCompletedInsightsReviewJob(t, db, repo.ID, "pass", "main", storage.JobTypeReview, "No findings.")
 	enqueueCompletedInsightsReviewJob(t, db, repo.ID, "compact", "main", storage.JobTypeCompact, failingInsightsOutput("Compact finding"))
@@ -123,7 +123,7 @@ func TestHandleEnqueueInsightsBuildsPromptServerSide(t *testing.T) {
 	oldJob := enqueueCompletedInsightsReviewJob(t, db, repo.ID, "ccc333", "main", storage.JobTypeReview, failingInsightsOutput("Old finding"))
 
 	since := time.Now().Add(-24 * time.Hour)
-	_, err = db.Exec(
+	_, err = db.ExecContext(t.Context(),
 		`UPDATE review_jobs SET finished_at = ? WHERE id = ?`,
 		since.Add(-time.Hour).Format(time.RFC3339),
 		oldJob.ID,

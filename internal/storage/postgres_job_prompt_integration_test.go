@@ -69,9 +69,9 @@ func TestIntegrationImportedRerunSyncsContent(t *testing.T) { //nolint:parallelt
 	b := env.setupNode("rerun", "rerun-repository", "1h")
 	job, originalReview := createCompletedReview(t, a.DB, a.Repo.ID, "abc123", "Author", "Subject", "original prompt", "Original review.")
 	// The importing machine's clock is behind the original executor's.
-	_, err := a.DB.Exec(`UPDATE review_jobs SET enqueued_at = ? WHERE id = ?`, preciseTimestampAt(time.Now().Add(time.Hour)), job.ID)
+	_, err := a.DB.ExecContext(t.Context(), `UPDATE review_jobs SET enqueued_at = ? WHERE id = ?`, preciseTimestampAt(time.Now().Add(time.Hour)), job.ID)
 	require.NoError(t, err)
-	_, err = a.DB.Exec(`UPDATE reviews SET reviewed_file_count = 3, excluded_file_count = 1 WHERE id = ?`, originalReview.ID)
+	_, err = a.DB.ExecContext(t.Context(), `UPDATE reviews SET reviewed_file_count = 3, excluded_file_count = 1 WHERE id = ?`, originalReview.ID)
 	require.NoError(t, err)
 	_, err = a.Worker.SyncNow()
 	require.NoError(t, err)
@@ -85,7 +85,7 @@ func TestIntegrationImportedRerunSyncsContent(t *testing.T) { //nolint:parallelt
 	require.NoError(t, err)
 	require.Len(t, remote, 1)
 	var localID int64
-	require.NoError(t, b.DB.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&localID))
+	require.NoError(t, b.DB.QueryRowContext(t.Context(), `SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&localID))
 	require.NoError(t, b.DB.ReenqueueJob(localID, ReenqueueOpts{Agent: "second-agent"}))
 	claimed, err := b.DB.ClaimJob("rerun-worker")
 	require.NoError(t, err)
@@ -99,7 +99,7 @@ func TestIntegrationImportedRerunSyncsContent(t *testing.T) { //nolint:parallelt
 	require.NoError(t, err)
 	// Force the equal-second history case: PostgreSQL's later row ID must
 	// select the rerun even when both review creation timestamps are equal.
-	_, err = b.DB.Exec(`UPDATE reviews SET created_at = ? WHERE job_id = ?`, originalReview.CreatedAt.Format(time.RFC3339), localID)
+	_, err = b.DB.ExecContext(t.Context(), `UPDATE reviews SET created_at = ? WHERE job_id = ?`, originalReview.CreatedAt.Format(time.RFC3339), localID)
 	require.NoError(t, err)
 	changed, err := b.DB.upsertPulledJob(remote[0], b.Repo.ID, nil)
 	require.NoError(t, err)
@@ -122,7 +122,7 @@ func TestIntegrationImportedRerunSyncsContent(t *testing.T) { //nolint:parallelt
 	}
 	for _, db := range []*DB{a.DB, b.DB} {
 		var id int64
-		require.NoError(t, db.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&id))
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&id))
 		current, err := db.GetJobByID(id)
 		require.NoError(t, err)
 		assert.Equal("complete rerun prompt", current.Prompt)
@@ -136,7 +136,7 @@ func TestIntegrationImportedRerunSyncsContent(t *testing.T) { //nolint:parallelt
 		assert.Equal("Rerun review.", review.StructuredOutput["summary"])
 		assert.Equal("second-agent", review.Agent)
 		var reviewed, excluded sql.NullInt64
-		require.NoError(t, db.QueryRow(`SELECT reviewed_file_count, excluded_file_count FROM reviews WHERE id = ?`, review.ID).Scan(&reviewed, &excluded))
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT reviewed_file_count, excluded_file_count FROM reviews WHERE id = ?`, review.ID).Scan(&reviewed, &excluded))
 		assert.False(reviewed.Valid)
 		assert.False(excluded.Valid)
 		comments, err := db.GetCommentsForJob(id)
@@ -289,15 +289,15 @@ func TestIntegrationMigrationRepushesLegacyRerunPrompt(t *testing.T) { //nolint:
 			require.NoError(t, err)
 			assert.Equal("prompt of the first attempt", pulledJobPrompt(t, pool, jobUUID))
 
-			_, err = db.Exec(`INSERT OR REPLACE INTO sync_state (key, value) VALUES ('machine_id', ?)`, machineID)
+			_, err = db.ExecContext(t.Context(), `INSERT OR REPLACE INTO sync_state (key, value) VALUES ('machine_id', ?)`, machineID)
 			require.NoError(t, err)
-			_, err = db.Exec(`INSERT INTO review_jobs (uuid, repo_id, git_ref, agent, status, job_type, prompt,
+			_, err = db.ExecContext(t.Context(), `INSERT INTO review_jobs (uuid, repo_id, git_ref, agent, status, job_type, prompt,
 		source_machine_id, updated_at, synced_at, finished_at)
 		VALUES (?, ?, 'a..b', 'test', 'done', 'range', ?, ?, ?, ?, ?)`,
 				jobUUID, repo.ID, completePrompt, machineID, finished.Format(time.RFC3339),
 				finished.Format(time.RFC3339), finished.Format(time.RFC3339))
 			require.NoError(t, err)
-			_, err = db.Exec(`INSERT INTO reviews (uuid, synced_at, updated_at, updated_by_machine_id, job_id, agent, prompt, output, structured_output)
+			_, err = db.ExecContext(t.Context(), `INSERT INTO reviews (uuid, synced_at, updated_at, updated_by_machine_id, job_id, agent, prompt, output, structured_output)
 		SELECT ?, ?, ?, ?, id, 'test', ?, '', ? FROM review_jobs WHERE uuid = ?`, reviewUUID, finished.Format(time.RFC3339), finished.Format(time.RFC3339), machineID, handoff,
 				string(reviewFixtureJSON("No issues found.")), jobUUID)
 			require.NoError(t, err)
@@ -305,7 +305,7 @@ func TestIntegrationMigrationRepushesLegacyRerunPrompt(t *testing.T) { //nolint:
 			if status != "done" {
 				jobType = JobTypeFix
 			}
-			_, err = db.Exec(`UPDATE review_jobs SET status = ?, job_type = ? WHERE uuid = ?`, status, jobType, jobUUID)
+			_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status = ?, job_type = ? WHERE uuid = ?`, status, jobType, jobUUID)
 			require.NoError(t, err)
 			_, err = pool.pool.Exec(ctx, `UPDATE reviews SET closed = TRUE, updated_by_machine_id = $1, updated_at = clock_timestamp() WHERE uuid = $2`, uuid.New(), reviewUUID)
 			require.NoError(t, err)

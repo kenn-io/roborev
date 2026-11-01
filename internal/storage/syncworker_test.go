@@ -100,7 +100,7 @@ func TestSyncPullWritesDoNotNotifyRejectedRolledBackOrOrphanRows(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, before, notifications.Load(), "failed review transaction must not notify")
 
-	_, err = h.db.Exec(`UPDATE review_jobs SET status = 'applied' WHERE uuid = ?`, job.UUID)
+	_, err = h.db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'applied' WHERE uuid = ?`, job.UUID)
 	require.NoError(t, err)
 	stale := PulledJob{
 		UUID: job.UUID, RepoIdentity: job.RepoIdentity, GitRef: "stale", Agent: "test",
@@ -130,15 +130,15 @@ func TestSyncPullReviewRollsBackIntermediateWriteWithoutNotification(t *testing.
 	before := notifications.Load()
 
 	var jobID int64
-	require.NoError(t, h.db.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&jobID))
+	require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&jobID))
 	reviewUUID := testUUID("rollback-review")
-	_, err := h.db.Exec(`
+	_, err := h.db.ExecContext(t.Context(), `
 		INSERT INTO legacy_reviews (
 			job_id, agent, output, created_at, closed, uuid, migration_error
 		) VALUES (?, 'test', 'legacy', ?, 0, ?, 'pending conversion')
 	`, jobID, now.Format(time.RFC3339), reviewUUID)
 	require.NoError(t, err)
-	_, err = h.db.Exec(`
+	_, err = h.db.ExecContext(t.Context(), `
 		CREATE TRIGGER fail_pulled_review_legacy_resolution
 		BEFORE UPDATE OF resolved_at ON legacy_reviews
 		BEGIN
@@ -157,10 +157,10 @@ func TestSyncPullReviewRollsBackIntermediateWriteWithoutNotification(t *testing.
 	assert.Equal(t, before, notifications.Load(), "rolled-back review must not notify")
 
 	var reviewCount int
-	require.NoError(t, h.db.QueryRow(`SELECT count(*) FROM reviews WHERE uuid = ?`, reviewUUID).Scan(&reviewCount))
+	require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT count(*) FROM reviews WHERE uuid = ?`, reviewUUID).Scan(&reviewCount))
 	assert.Zero(t, reviewCount, "review insert before the injected failure must roll back")
 	var resolvedAt *string
-	require.NoError(t, h.db.QueryRow(`SELECT resolved_at FROM legacy_reviews WHERE uuid = ?`, reviewUUID).Scan(&resolvedAt))
+	require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT resolved_at FROM legacy_reviews WHERE uuid = ?`, reviewUUID).Scan(&resolvedAt))
 	assert.Nil(t, resolvedAt)
 }
 

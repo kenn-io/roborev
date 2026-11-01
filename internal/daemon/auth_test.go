@@ -46,7 +46,7 @@ func TestAuthProtectsAllRoutes(t *testing.T) {
 				// A canceled context keeps streaming routes from holding the subtest open.
 				ctx, cancel := context.WithCancel(t.Context())
 				cancel()
-				r := httptest.NewRequest(method, path, strings.NewReader(`{"anything":true}`)).WithContext(ctx)
+				r := httptest.NewRequestWithContext(t.Context(), method, path, strings.NewReader(`{"anything":true}`)).WithContext(ctx)
 				w := httptest.NewRecorder()
 				s.httpServer.Handler.ServeHTTP(w, r)
 				a := assert.New(t)
@@ -87,7 +87,7 @@ func TestAuthBearerCredentials(t *testing.T) {
 		{"query", nil, "?auth_key=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", 401},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := httptest.NewRequest(http.MethodGet, "/api/status"+tc.query, nil)
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/status"+tc.query, nil)
 			for _, h := range tc.headers {
 				r.Header.Add("Authorization", h)
 			}
@@ -101,14 +101,14 @@ func TestAuthBearerCredentials(t *testing.T) {
 func TestAuthDisabledAndPinnedAcrossReload(t *testing.T) {
 	s := newAuthTestServer(t, "")
 	w := httptest.NewRecorder()
-	s.httpServer.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/ping", nil))
+	s.httpServer.Handler.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/ping", nil))
 	assert.Equal(t, http.StatusOK, w.Code)
 	s = newAuthTestServer(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	s.configWatcher.cfgMu.Lock()
 	s.configWatcher.cfg = config.DefaultConfig()
 	s.configWatcher.cfgMu.Unlock()
 	w = httptest.NewRecorder()
-	s.httpServer.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/status", nil))
+	s.httpServer.Handler.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/status", nil))
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
@@ -116,7 +116,7 @@ func TestAuthLivenessRoutesWithoutCredentials(t *testing.T) {
 	const key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	s := newAuthTestServer(t, key)
 	get := func(path string, headers ...string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(http.MethodGet, path, nil)
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
 		for _, h := range headers {
 			r.Header.Add("Authorization", h)
 		}

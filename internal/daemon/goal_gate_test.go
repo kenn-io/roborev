@@ -233,7 +233,7 @@ func TestGoalGateErrorsAndAdmission(t *testing.T) {
 	assert.NotEmpty(t, response.Error)
 	for _, body := range []string{`{`, `{}`, `{"repo_path":"x","candidate":{}}`, `{"repo_path":"x","other":true}`} {
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/api/goal-review", strings.NewReader(body))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/goal-review", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		server.httpServer.Handler.ServeHTTP(w, req)
 		assert.Equal(t, 400, w.Code, w.Body.String())

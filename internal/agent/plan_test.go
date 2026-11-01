@@ -264,7 +264,7 @@ func newPlanTestRepo(t *testing.T) string {
 
 func planGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(t.Context(), "git", args...)
 	cmd.Dir = dir
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "%s", output)

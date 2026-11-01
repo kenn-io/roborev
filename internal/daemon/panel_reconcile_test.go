@@ -14,7 +14,7 @@ import (
 // lease as a crashed poster's and reclaims it.
 func (h *ciPollerHarness) backdatePanelPostClaim(t *testing.T, id int64) {
 	t.Helper()
-	_, err := h.DB.Exec(
+	_, err := h.DB.ExecContext(t.Context(),
 		"UPDATE ci_pr_panels SET posting_claimed_at = datetime('now','-10 minutes') WHERE id = ?", id)
 	require.NoError(t, err)
 }

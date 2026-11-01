@@ -49,7 +49,9 @@ func TestAuthStartupAndBothListeners(t *testing.T) {
 	// Both published listeners accept the key and enforce it.
 	for _, ep := range []DaemonEndpoint{unix, tcp} {
 		writeAuthClientConfig(t, "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210")
-		resp, err := ep.HTTPClient(time.Second).Get(ep.BaseURL() + "/api/ping")
+		getRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ep.BaseURL()+"/api/ping", nil)
+		require.NoError(t, err)
+		resp, err := ep.HTTPClient(time.Second).Do(getRequest)
 		require.NoError(t, err)
 		resp.Body.Close()
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
@@ -81,7 +83,7 @@ func TestAuthKillDaemonStopsThroughUnixSocket(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { os.RemoveAll(socketDir) })
 	socketPath := filepath.Join(socketDir, "d.sock")
-	listener, err := net.Listen("unix", socketPath)
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", socketPath)
 	require.NoError(t, err)
 	shutdownAuth := make(chan string, 1)
 	var unixServer *http.Server
@@ -117,7 +119,7 @@ func TestAuthKillDaemonFallsBackToTCPWhenSocketIsGone(t *testing.T) {
 	testenv.SetDataDir(t)
 	writeAuthClientConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	shutdownAuth := make(chan string, 1)
 	var tcpServer *http.Server

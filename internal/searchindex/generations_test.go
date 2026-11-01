@@ -331,7 +331,7 @@ func openGenerationTestIndex(t *testing.T) *Index {
 func generationTableOrdinal(t *testing.T, db *sql.DB, key string) int64 {
 	t.Helper()
 	var ordinal int64
-	require.NoError(t, db.QueryRow(`SELECT ordinal FROM review_vectors_generations WHERE gen_key = ?`, key).Scan(&ordinal))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT ordinal FROM review_vectors_generations WHERE gen_key = ?`, key).Scan(&ordinal))
 	return ordinal
 }
 
@@ -339,6 +339,6 @@ func generationVectorCount(t *testing.T, index *Index, key string) int {
 	t.Helper()
 	var count int
 	table := fmt.Sprintf("review_vectors_v%d", generationTableOrdinal(t, index.db, key))
-	require.NoError(t, index.db.QueryRow(`SELECT count(*) FROM `+table).Scan(&count))
+	require.NoError(t, index.db.QueryRowContext(t.Context(), `SELECT count(*) FROM `+table).Scan(&count))
 	return count
 }

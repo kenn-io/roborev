@@ -162,10 +162,10 @@ func TestCursorNeverReceivesPositionalProbe(t *testing.T) {
 	assert.False(t, commandLooksLikeGrok(cursor))
 
 	// Sanity: official flags work; bare positionals would mark.
-	out, err := exec.Command(cursor, "--version").CombinedOutput()
+	out, err := exec.CommandContext(t.Context(), cursor, "--version").CombinedOutput()
 	require.NoError(t, err)
 	assert.Contains(t, string(out), "cursor")
-	_, err = exec.Command(cursor, "version").CombinedOutput()
+	_, err = exec.CommandContext(t.Context(), cursor, "version").CombinedOutput()
 	require.Error(t, err)
 	data, err := os.ReadFile(marker)
 	require.NoError(t, err)
@@ -229,7 +229,7 @@ func TestIdentityProbe_OrphanPipeBounded(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "hang-orphan")
 	fifo := path + ".pipe"
-	require.NoError(t, exec.Command("mkfifo", fifo).Run())
+	require.NoError(t, exec.CommandContext(t.Context(), "mkfifo", fifo).Run())
 	hold, err := os.OpenFile(fifo, os.O_RDWR, 0)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, hold.Close()) })
@@ -582,11 +582,11 @@ func TestSameFileSymlink(t *testing.T) {
 func TestIdentityScriptsExecutable(t *testing.T) {
 	dir := t.TempDir()
 	p := writeProbeScript(t, dir, "probe", "ok")
-	out, err := exec.Command(p, "--version").CombinedOutput()
+	out, err := exec.CommandContext(t.Context(), p, "--version").CombinedOutput()
 	require.NoError(t, err)
 	assert.Contains(t, string(out), "ok")
 
-	_, err = exec.Command(p, "version").CombinedOutput()
+	_, err = exec.CommandContext(t.Context(), p, "version").CombinedOutput()
 	require.Error(t, err, "Cursor-shaped fixture must reject positional version")
 }
 

@@ -24,7 +24,7 @@ func TestGetSummaryIncludesCost(t *testing.T) {
 	// Since; if Since propagation were dropped, it would inflate the totals.
 	old := enqueueJob(t, db, repo.ID, createCommit(t, db, repo.ID, "old-sha").ID, "old-sha")
 	setJobStatus(t, db, old.ID, JobStatusDone)
-	_, err := db.Exec(`UPDATE review_jobs SET enqueued_at = datetime('now','-48 hours') WHERE id = ?`, old.ID)
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET enqueued_at = datetime('now','-48 hours') WHERE id = ?`, old.ID)
 	require.NoError(t, err)
 	seedCost(t, db, old.ID, `{"cost_usd":9.99,"has_cost":true}`)
 

@@ -113,7 +113,7 @@ func TestEmbeddedReleaseBasePathInjection(t *testing.T) {
 	handler, err := NewEmbeddedHandler("/review-ui")
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodGet, "/reviews/42", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/reviews/42", nil)
 	req.Header.Set("Accept", "text/html")
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, req)

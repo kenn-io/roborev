@@ -38,7 +38,10 @@ func TestSessionEndedCapturedThroughDaemonRoute(t *testing.T) {
 		}},
 		{telemetry.SurfaceWeb, telemetry.DurationUnder1m, func(t *testing.T, url string) {
 			body := `{"event":"session_ended","properties":{"surface":"web","duration_bucket":"under_1m"}}`
-			response, err := http.Post(url+daemon.TelemetryEventsPath, "application/json", strings.NewReader(body))
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, url+daemon.TelemetryEventsPath, strings.NewReader(body))
+			require.NoError(t, err)
+			request.Header.Set("Content-Type", "application/json")
+			response, err := http.DefaultClient.Do(request)
 			require.NoError(t, err)
 			require.NoError(t, response.Body.Close())
 			assert.Equal(t, http.StatusAccepted, response.StatusCode)

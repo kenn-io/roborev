@@ -27,14 +27,14 @@ func TestIsolateJobSession(t *testing.T) {
 			_, _, job := createJobChain(t, db, "/tmp/example-repo", "session-clear")
 			claimJob(t, db, "worker-a")
 			source := uuid.New()
-			_, err := db.Exec("UPDATE review_jobs SET session_id='old-session', session_resumed=1, resume_source_job_uuid=? WHERE id=?", source, job.ID)
+			_, err := db.ExecContext(t.Context(), "UPDATE review_jobs SET session_id='old-session', session_resumed=1, resume_source_job_uuid=? WHERE id=?", source, job.ID)
 			require.NoError(t, err)
 			if tc.canceled {
 				require.NoError(t, db.CancelJob(job.ID))
 			}
 			err = db.IsolateJobSession(job.ID, tc.worker)
 			var isolated bool
-			require.NoError(t, db.QueryRow("SELECT session_isolated FROM review_jobs WHERE id=?", job.ID).Scan(&isolated))
+			require.NoError(t, db.QueryRowContext(t.Context(), "SELECT session_isolated FROM review_jobs WHERE id=?", job.ID).Scan(&isolated))
 			if tc.wantErr {
 				require.ErrorIs(t, err, sql.ErrNoRows)
 				assert.False(t, isolated)
@@ -51,7 +51,7 @@ func TestIsolateJobSession(t *testing.T) {
 			assert.Empty(t, got.SessionID)
 			assert.Nil(t, got.ResumeSourceJobUUID)
 			var resumed int
-			require.NoError(t, db.QueryRow("SELECT session_resumed FROM review_jobs WHERE id=?", job.ID).Scan(&resumed))
+			require.NoError(t, db.QueryRowContext(t.Context(), "SELECT session_resumed FROM review_jobs WHERE id=?", job.ID).Scan(&resumed))
 			assert.Zero(t, resumed)
 			require.NoError(t, db.SaveJobSessionID(job.ID, "worker-a", "new-session"))
 			got, err = db.GetJobByID(job.ID)

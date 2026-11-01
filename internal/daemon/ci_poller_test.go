@@ -242,7 +242,7 @@ func TestCIPollerDiscordWebhookReadsURLAtEventTime(t *testing.T) {
 
 		_, _, members := h.seedCIPanelRun(t, "acme/api", 1, "headsha111", "base..headsha111",
 			[]jobSpec{{Agent: "codex", ReviewType: "security", Status: "failed", Error: "agent: failed"}})
-		_, err := h.DB.Exec(`UPDATE review_jobs SET retry_count = 2 WHERE id = ?`, members[0].ID)
+		_, err := h.DB.ExecContext(t.Context(), `UPDATE review_jobs SET retry_count = 2 WHERE id = ?`, members[0].ID)
 		require.NoError(t, err)
 
 		h.Poller.handleReviewFailed(ciEvent(members[0].ID, "review.failed"))
@@ -383,30 +383,30 @@ type jobSpec struct {
 // markJobDoneWithReview sets a job to "done" and inserts a review row.
 func (h *ciPollerHarness) markJobDoneWithReview(t *testing.T, jobID int64, agent, output string) {
 	t.Helper()
-	_, err := h.DB.Exec(`UPDATE review_jobs SET status='done' WHERE id = ?`, jobID)
+	_, err := h.DB.ExecContext(t.Context(), `UPDATE review_jobs SET status='done' WHERE id = ?`, jobID)
 	require.NoError(t, err, "mark done")
-	_, err = h.DB.Exec(`INSERT INTO reviews (job_id, agent, output, structured_output, verdict_bool) VALUES (?, ?, '', ?, ?)`, jobID, agent, string(testutil.ReviewFixtureJSON(output)), testutil.ReviewFixtureVerdict(output))
+	_, err = h.DB.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, output, structured_output, verdict_bool) VALUES (?, ?, '', ?, ?)`, jobID, agent, string(testutil.ReviewFixtureJSON(output)), testutil.ReviewFixtureVerdict(output))
 	require.NoError(t, err, "insert review")
 }
 
 // markJobFailed sets a job to "failed" with the given error text.
 func (h *ciPollerHarness) markJobFailed(t *testing.T, jobID int64, errText string) {
 	t.Helper()
-	_, err := h.DB.Exec(`UPDATE review_jobs SET status='failed', error=? WHERE id = ?`, errText, jobID)
+	_, err := h.DB.ExecContext(t.Context(), `UPDATE review_jobs SET status='failed', error=? WHERE id = ?`, errText, jobID)
 	require.NoError(t, err, "mark failed")
 }
 
 // markJobCanceled sets a job to "canceled" with the given error text.
 func (h *ciPollerHarness) markJobCanceled(t *testing.T, jobID int64, errText string) {
 	t.Helper()
-	_, err := h.DB.Exec(`UPDATE review_jobs SET status='canceled', error=? WHERE id = ?`, errText, jobID)
+	_, err := h.DB.ExecContext(t.Context(), `UPDATE review_jobs SET status='canceled', error=? WHERE id = ?`, errText, jobID)
 	require.NoError(t, err, "mark canceled")
 }
 
 // markJobRunning sets a job to "running" (a non-terminal in-flight member).
 func (h *ciPollerHarness) markJobRunning(t *testing.T, jobID int64) {
 	t.Helper()
-	_, err := h.DB.Exec(`UPDATE review_jobs SET status='running' WHERE id = ?`, jobID)
+	_, err := h.DB.ExecContext(t.Context(), `UPDATE review_jobs SET status='running' WHERE id = ?`, jobID)
 	require.NoError(t, err, "mark running")
 }
 
@@ -414,10 +414,10 @@ func stubGitCloneFn(t *testing.T, remoteURL string, called *bool) func(context.C
 	t.Helper()
 	return func(_ context.Context, _, targetPath string, _ []string) error {
 		*called = true
-		if err := exec.Command("git", "init", "-b", "main", targetPath).Run(); err != nil {
+		if err := exec.CommandContext(t.Context(), "git", "init", "-b", "main", targetPath).Run(); err != nil {
 			return err
 		}
-		return exec.Command("git", "-C", targetPath, "remote", "add", "origin", remoteURL).Run()
+		return exec.CommandContext(t.Context(), "git", "-C", targetPath, "remote", "add", "origin", remoteURL).Run()
 	}
 }
 
@@ -1112,7 +1112,7 @@ func TestRetrySweepReenqueuesAfterTransient(t *testing.T) {
 	require.NotNil(t, attempt.NextAttemptAt, "defer schedules a next attempt")
 
 	// Advance time: backdate next_attempt_at so the sweep sees it as due.
-	_, err = h.DB.Exec(`UPDATE ci_pr_review_attempts SET next_attempt_at = datetime('now','-1 hour')
+	_, err = h.DB.ExecContext(t.Context(), `UPDATE ci_pr_review_attempts SET next_attempt_at = datetime('now','-1 hour')
 		WHERE github_repo = ? AND pr_number = ? AND head_sha = ?`, "acme/api", 90, headSHA)
 	require.NoError(t, err)
 
@@ -1301,7 +1301,7 @@ func TestCIPollerFindLocalRepo_SkipsPlaceholders(t *testing.T) {
 
 	// Create a sync placeholder (root_path == identity)
 	identity := "git@github.com:acme/api.git"
-	_, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+	_, err := db.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
 		identity, "api", identity)
 	if err != nil {
 		require.Condition(t, func() bool {
@@ -1664,11 +1664,11 @@ func TestCIPollerFindLocalRepo_AmbiguousRepoResolved(t *testing.T) {
 	userCheckout := "/home/user/projects/api"
 
 	// Create a user checkout and an auto-clone with the same identity
-	_, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+	_, err := db.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
 		userCheckout, "api", "https://github.com/acme/api.git")
 	require.NoError(t, err, "insert user checkout")
 
-	_, err = db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+	_, err = db.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
 		autoClonePath, "api", "https://github.com/acme/api.git")
 	require.NoError(t, err, "insert auto-clone")
 
@@ -1685,11 +1685,11 @@ func TestCIPollerFindLocalRepo_AmbiguousRepoFallsBackToNewest(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 
 	// Create two user checkouts (no auto-clone) — should pick most recently created
-	_, err := db.Exec(`INSERT INTO repos (root_path, name, identity, created_at) VALUES (?, ?, ?, ?)`,
+	_, err := db.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity, created_at) VALUES (?, ?, ?, ?)`,
 		"/tmp/clone1", "api", "https://github.com/acme/api.git", "2024-01-01 00:00:00")
 	require.NoError(t, err, "insert repo1")
 
-	_, err = db.Exec(`INSERT INTO repos (root_path, name, identity, created_at) VALUES (?, ?, ?, ?)`,
+	_, err = db.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity, created_at) VALUES (?, ?, ?, ?)`,
 		"/tmp/clone2", "api", "https://github.com/acme/api.git", "2025-06-15 00:00:00")
 	require.NoError(t, err, "insert repo2")
 
@@ -1713,11 +1713,11 @@ func TestCIPollerFindLocalRepo_PartialIdentitySameHostResolved(t *testing.T) {
 	// Two repos with the same host (ghe.corp.com) but different URL
 	// schemes (SSH vs HTTPS). They share the same normalized identity
 	// so disambiguation should succeed — preferring the auto-clone.
-	_, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+	_, err := db.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
 		"/tmp/clone-ghe1", "widgets", "git@ghe.corp.com:acme/widgets.git")
 	require.NoError(t, err, "insert user checkout (SSH)")
 
-	_, err = db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+	_, err = db.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
 		autoClonePath, "widgets", "https://ghe.corp.com/acme/widgets.git")
 	require.NoError(t, err, "insert auto-clone (HTTPS)")
 
@@ -1735,11 +1735,11 @@ func TestCIPollerFindLocalRepo_PartialIdentityCrossHostAmbiguity(t *testing.T) {
 
 	// Two repos from different hosts that share the same owner/repo suffix.
 	// These are genuinely different repos — should remain an error.
-	_, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+	_, err := db.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
 		"/tmp/clone-ghe1", "widgets", "git@ghe.corp.com:acme/widgets.git")
 	require.NoError(t, err)
 
-	_, err = db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+	_, err = db.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
 		"/tmp/clone-ghe2", "widgets", "https://gitlab.com/acme/widgets")
 	require.NoError(t, err)
 
@@ -1922,13 +1922,13 @@ func TestCIPollerFindOrCloneRepo_ReusesExistingDir(t *testing.T) {
 			return false
 		}, "mkdir: %v", err)
 	}
-	cmd := exec.Command("git", "init", "-b", "main", clonePath)
+	cmd := exec.CommandContext(t.Context(), "git", "init", "-b", "main", clonePath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "git init: %s: %s", err, out)
 	}
-	cmd = exec.Command(
+	cmd = exec.CommandContext(t.Context(),
 		"git", "-C", clonePath, "remote", "add",
 		"origin", "https://github.com/acme/leftover.git",
 	)
@@ -1974,11 +1974,11 @@ func TestCIPollerFindOrCloneRepo_RewritesCredentialedOrigin(t *testing.T) {
 	clonePath := filepath.Join(dataDir, "clones", "acme", "secure")
 	require.NoError(t, os.MkdirAll(clonePath, 0o755))
 
-	cmd := exec.Command("git", "init", "-b", "main", clonePath)
+	cmd := exec.CommandContext(t.Context(), "git", "init", "-b", "main", clonePath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		require.NoError(t, err, "git init output: %s", out)
 	}
-	cmd = exec.Command(
+	cmd = exec.CommandContext(t.Context(),
 		"git", "-C", clonePath, "remote", "add",
 		"origin", "https://x-access-token:expired@github.com/acme/secure.git",
 	)
@@ -1990,7 +1990,7 @@ func TestCIPollerFindOrCloneRepo_RewritesCredentialedOrigin(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, repo)
 
-	out, err := exec.Command("git", "-C", clonePath, "remote", "get-url", "origin").CombinedOutput()
+	out, err := exec.CommandContext(t.Context(), "git", "-C", clonePath, "remote", "get-url", "origin").CombinedOutput()
 	require.NoError(t, err, "git remote get-url output: %s", out)
 	assert.Equal(t, "https://github.com/acme/secure.git", strings.TrimSpace(string(out)))
 }
@@ -2054,13 +2054,13 @@ func TestCIPollerFindOrCloneRepo_InvalidExistingDir(t *testing.T) {
 						return false
 					}, "mkdir: %v", err)
 				}
-				cmd := exec.Command("git", "init", "-b", "main", p)
+				cmd := exec.CommandContext(t.Context(), "git", "init", "-b", "main", p)
 				if out, err := cmd.CombinedOutput(); err != nil {
 					require.Condition(t, func() bool {
 						return false
 					}, "git init: %s: %s", err, out)
 				}
-				cmd = exec.Command("git", "-C", p, "remote", "add", "origin", "https://github.com/other/repo.git")
+				cmd = exec.CommandContext(t.Context(), "git", "-C", p, "remote", "add", "origin", "https://github.com/other/repo.git")
 				if out, err := cmd.CombinedOutput(); err != nil {
 					require.Condition(t, func() bool {
 						return false
@@ -2077,7 +2077,7 @@ func TestCIPollerFindOrCloneRepo_InvalidExistingDir(t *testing.T) {
 						return false
 					}, "mkdir: %v", err)
 				}
-				cmd := exec.Command("git", "init", "-b", "main", p)
+				cmd := exec.CommandContext(t.Context(), "git", "init", "-b", "main", p)
 				if out, err := cmd.CombinedOutput(); err != nil {
 					require.Condition(t, func() bool {
 						return false
@@ -2132,13 +2132,13 @@ func TestCIPollerFindOrCloneRepo_InvalidExistingDir(t *testing.T) {
 func TestCloneRemoteMatches(t *testing.T) {
 	t.Run("matching origin", func(t *testing.T) {
 		dir := t.TempDir()
-		cmd := exec.Command("git", "init", "-b", "main", dir)
+		cmd := exec.CommandContext(t.Context(), "git", "init", "-b", "main", dir)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, "git init: %s: %s", err, out)
 		}
-		cmd = exec.Command(
+		cmd = exec.CommandContext(t.Context(),
 			"git", "-C", dir, "remote", "add",
 			"origin", "https://github.com/acme/match.git",
 		)
@@ -2163,7 +2163,7 @@ func TestCloneRemoteMatches(t *testing.T) {
 
 	t.Run("missing origin returns false nil", func(t *testing.T) {
 		dir := t.TempDir()
-		cmd := exec.Command("git", "init", "-b", "main", dir)
+		cmd := exec.CommandContext(t.Context(), "git", "init", "-b", "main", dir)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -2185,13 +2185,13 @@ func TestCloneRemoteMatches(t *testing.T) {
 
 	t.Run("mismatched origin returns false nil", func(t *testing.T) {
 		dir := t.TempDir()
-		cmd := exec.Command("git", "init", "-b", "main", dir)
+		cmd := exec.CommandContext(t.Context(), "git", "init", "-b", "main", dir)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, "git init: %s: %s", err, out)
 		}
-		cmd = exec.Command(
+		cmd = exec.CommandContext(t.Context(),
 			"git", "-C", dir, "remote", "add",
 			"origin", "https://github.com/other/repo.git",
 		)
@@ -2236,7 +2236,7 @@ func TestCloneRemoteMatches(t *testing.T) {
 		// A repo where .git/config was deleted should be treated
 		// as no-origin (false, nil), not an operational error.
 		dir := t.TempDir()
-		cmd := exec.Command("git", "init", "-b", "main", dir)
+		cmd := exec.CommandContext(t.Context(), "git", "init", "-b", "main", dir)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -2267,7 +2267,7 @@ func TestCloneRemoteMatches(t *testing.T) {
 		// A repo with malformed .git/config is an operational
 		// failure, not a missing-origin signal.
 		dir := t.TempDir()
-		cmd := exec.Command("git", "init", "-b", "main", dir)
+		cmd := exec.CommandContext(t.Context(), "git", "init", "-b", "main", dir)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -2307,7 +2307,7 @@ func TestCloneRemoteMatches(t *testing.T) {
 			},
 		}
 		for _, args := range cmds {
-			cmd := exec.Command(args[0], args[1:]...)
+			cmd := exec.CommandContext(t.Context(), args[0], args[1:]...)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				require.Condition(t, func() bool {
 					return false
@@ -2335,7 +2335,7 @@ func TestCloneRemoteMatches(t *testing.T) {
 			{"git", "-C", dir, "remote", "add", "origin", "https://ghe.example.com/acme/enterprise.git"},
 		}
 		for _, args := range cmds {
-			cmd := exec.Command(args[0], args[1:]...)
+			cmd := exec.CommandContext(t.Context(), args[0], args[1:]...)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				require.Condition(t, func() bool {
 					return false
@@ -2432,7 +2432,7 @@ func TestEnsureCloneRemoteURL_RedactsCredentialedMismatch(t *testing.T) {
 		{"git", "-C", dir, "remote", "add", "origin", "https://x-access-token:secret-token@ghe.example.com/other/repo.git"},
 	}
 	for _, args := range cmds {
-		cmd := exec.Command(args[0], args[1:]...)
+		cmd := exec.CommandContext(t.Context(), args[0], args[1:]...)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -2480,14 +2480,14 @@ func TestCIPollerFindOrCloneRepo_ResolvesAmbiguity(t *testing.T) {
 
 	// Create two repos with the same identity — disambiguation should
 	// pick the most recently created one (no auto-clone prefix here).
-	_, err := db.Exec(
+	_, err := db.ExecContext(t.Context(),
 		`INSERT INTO repos (root_path, name, identity, created_at)
 		 VALUES (?, ?, ?, ?)`,
 		"/tmp/c1", "api", "https://github.com/acme/api.git", "2024-01-01 00:00:00",
 	)
 	require.NoError(t, err)
 
-	_, err = db.Exec(
+	_, err = db.ExecContext(t.Context(),
 		`INSERT INTO repos (root_path, name, identity, created_at)
 		 VALUES (?, ?, ?, ?)`,
 		"/tmp/c2", "api", "https://github.com/acme/api.git", "2025-06-15 00:00:00",
@@ -2716,7 +2716,7 @@ func initGitRepoWithOrigin(t *testing.T) (dir string, runGit func(args ...string
 	t.Helper()
 	dir = t.TempDir()
 	runGit = func(args ...string) string {
-		cmd := exec.Command("git", args...)
+		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(),
 			"GIT_AUTHOR_NAME=Test",
@@ -5059,7 +5059,7 @@ func TestReconcileStuckAttempt(t *testing.T) {
 	// Seed a non-zero genuine streak so the re-arm's preservation is observable:
 	// a failed re-enqueue is an infrastructure hiccup and must not reset progress
 	// toward genuine give-up.
-	_, err = h.DB.Exec(`UPDATE ci_pr_review_attempts
+	_, err = h.DB.ExecContext(t.Context(), `UPDATE ci_pr_review_attempts
 		SET state='pending', next_attempt_at=NULL, consecutive_genuine_attempts=2
 		WHERE github_repo=? AND pr_number=? AND head_sha=?`,
 		"acme/api", stuckPR, stuckSHA)

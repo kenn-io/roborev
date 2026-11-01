@@ -53,7 +53,7 @@ func TestGoalReviewDocumentStorage(t *testing.T) {
 				"fix": "Add the missing outcome.", "location": "plan.md:4",
 			}}, review.StructuredOutput["findings"])
 			var storedOutput string
-			require.NoError(t, db.QueryRow(`SELECT output FROM reviews WHERE job_id = ?`, job.ID).Scan(&storedOutput))
+			require.NoError(t, db.QueryRowContext(t.Context(), `SELECT output FROM reviews WHERE job_id = ?`, job.ID).Scan(&storedOutput))
 			assert.Empty(storedOutput)
 		})
 	}

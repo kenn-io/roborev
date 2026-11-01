@@ -14,7 +14,7 @@ func BenchmarkRangeReviewCandidates(b *testing.B) {
 	b.Cleanup(func() { require.NoError(b, db.Close()) })
 	repo, err := db.GetOrCreateRepo(b.TempDir())
 	require.NoError(b, err)
-	_, err = db.Exec(`
+	_, err = db.ExecContext(b.Context(), `
 		WITH RECURSIVE sequence(n) AS (
 			SELECT 1 UNION ALL SELECT n + 1 FROM sequence WHERE n < 5000
 		)
@@ -23,11 +23,11 @@ func BenchmarkRangeReviewCandidates(b *testing.B) {
 		       printf('00000000-0000-4000-8000-%012d', n)
 		FROM sequence`, repo.ID)
 	require.NoError(b, err)
-	_, err = db.Exec(`
+	_, err = db.ExecContext(b.Context(), `
 		INSERT INTO job_content (job_id, prompt) SELECT id, zstd_compress(?) FROM review_jobs`,
 		strings.Repeat("prompt\n", 2048))
 	require.NoError(b, err)
-	_, err = db.Exec(`
+	_, err = db.ExecContext(b.Context(), `
 		INSERT INTO reviews (job_id, agent, output, uuid)
 		SELECT id, agent, ?, uuid FROM review_jobs`, strings.Repeat("review\n", 2048))
 	require.NoError(b, err)

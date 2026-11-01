@@ -101,7 +101,7 @@ func TestHandleBatchJobs(t *testing.T) {
 	})
 
 	t.Run("wrong method fails", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/jobs/batch", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/jobs/batch", nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusMethodNotAllowed)
@@ -153,7 +153,7 @@ func TestHandleRemap(t *testing.T) {
 		{"config", "user.email", "test@test.com"},
 		{"config", "user.name", "Test"},
 	} {
-		cmd := exec.Command("git", args...)
+		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = repoDir
 		if out, err := cmd.CombinedOutput(); err != nil {
 			require.Condition(t, func() bool {
@@ -255,7 +255,7 @@ func TestHandleRemap(t *testing.T) {
 				return false
 			}, err)
 		}
-		cmd := exec.Command("git", "init")
+		cmd := exec.CommandContext(t.Context(), "git", "init")
 		cmd.Dir = unregistered
 		if out, err := cmd.CombinedOutput(); err != nil {
 			require.Condition(t, func() bool {
@@ -371,7 +371,7 @@ func TestHandleRemap(t *testing.T) {
 		}
 		body = append(body[:len(body)-1], []byte(`]}`)...)
 
-		req := httptest.NewRequest(
+		req := httptest.NewRequestWithContext(t.Context(),
 			http.MethodPost, "/api/remap",
 			bytes.NewReader(body),
 		)
@@ -475,7 +475,7 @@ func TestHandleGetReviewJobIDParsing(t *testing.T) {
 			if tt.query != "" {
 				url += "?" + tt.query
 			}
-			req := httptest.NewRequest(http.MethodGet, url, nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
 			w := httptest.NewRecorder()
 
 			server.httpServer.Handler.ServeHTTP(w, req)
@@ -617,7 +617,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 
 	t.Run("fix job inherits parent worktree path", func(t *testing.T) {
 		worktreePath := filepath.Join(tmpDir, "worktrees", "feature")
-		worktreeAdd := exec.Command(
+		worktreeAdd := exec.CommandContext(t.Context(),
 			"git", "-C", fixture.repoDir,
 			"worktree", "add", "--detach", worktreePath, "HEAD",
 		)
@@ -666,7 +666,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 
 	t.Run("fix job uses worktree config when present", func(t *testing.T) {
 		worktreePath := filepath.Join(tmpDir, "worktrees", "feature-config")
-		worktreeAdd := exec.Command(
+		worktreeAdd := exec.CommandContext(t.Context(),
 			"git", "-C", fixture.repoDir,
 			"worktree", "add", "--detach", worktreePath, "HEAD",
 		)
@@ -901,7 +901,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 				// Set status directly to avoid ClaimJob picking
 				// a different queued job from an earlier iteration.
 				if status != storage.JobStatusQueued {
-					_, err = db.Exec(
+					_, err = db.ExecContext(t.Context(),
 						`UPDATE review_jobs SET status = ? WHERE id = ?`,
 						string(status), fixJob.ID,
 					)

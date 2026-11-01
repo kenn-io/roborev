@@ -83,7 +83,7 @@ func TestReviewFileCoveragePersistenceMigrationAndCancellation(t *testing.T) {
 
 	legacy := prepareMigratedDB(t, "coverage-legacy.db", legacyReviewJobSchema, legacyReviewJobSeed)
 	var columns int
-	require.NoError(t, legacy.QueryRow(`
+	require.NoError(t, legacy.QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM pragma_table_info('reviews')
 		WHERE name IN ('reviewed_file_count', 'excluded_file_count')
 	`).Scan(&columns))
@@ -117,7 +117,7 @@ func TestReviewFileCoveragePartialAndSync(t *testing.T) {
 	machineID, err := db.GetMachineID()
 	require.NoError(t, err)
 	future := time.Now().Add(time.Hour)
-	_, err = db.Exec(`UPDATE review_jobs SET synced_at = ?, updated_at = ? WHERE id = ?`,
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET synced_at = ?, updated_at = ? WHERE id = ?`,
 		future.Format(time.RFC3339), future.Format(time.RFC3339), job.ID)
 	require.NoError(t, err)
 	pushed, err := db.GetReviewsToSync(machineID, 10)

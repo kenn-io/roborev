@@ -1198,7 +1198,7 @@ func TestRemoveStaleSocket_StaleSocketRemoved(t *testing.T) {
 	t.Parallel()
 	// Use a short path to stay within the Unix socket length limit.
 	path := shortSocketPath(t, "stale")
-	ln, err := net.Listen("unix", path)
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", path)
 	require.NoError(t, err)
 	ln.Close()
 
@@ -1210,7 +1210,7 @@ func TestRemoveStaleSocket_StaleSocketRemoved(t *testing.T) {
 func TestRemoveStaleSocket_LiveSocketRefused(t *testing.T) {
 	t.Parallel()
 	path := shortSocketPath(t, "live")
-	ln, err := net.Listen("unix", path)
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", path)
 	require.NoError(t, err)
 	defer ln.Close()
 
@@ -1296,7 +1296,7 @@ func TestCleanupStaleTUIRuntimes(t *testing.T) { //nolint:paralleltest // os.Set
 
 	// Create a real stale socket (listener closed, PID dead).
 	sockPath := shortSocketPath(t, "stale")
-	ln, err := net.Listen("unix", sockPath)
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", sockPath)
 	require.NoError(err)
 	ln.Close() // leave stale socket file behind
 
@@ -1352,8 +1352,9 @@ func sendControlCommand(
 ) controlResponse {
 	t.Helper()
 
-	conn, err := net.DialTimeout(
-		"unix", socketPath, 2*time.Second,
+	dialer := net.Dialer{Timeout: 2 * time.Second}
+	conn, err := dialer.DialContext(
+		t.Context(), "unix", socketPath,
 	)
 	require.NoError(t, err, "dial socket")
 	defer conn.Close()

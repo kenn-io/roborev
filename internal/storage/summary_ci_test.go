@@ -15,7 +15,7 @@ var ciSummarySince = time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 
 func summaryPanel(t *testing.T, db *DB, repo string, pr int, key string, synthesis any) int64 {
 	t.Helper()
-	result, err := db.Exec(`INSERT INTO ci_pr_panels (github_repo, pr_number, head_sha, panel_run_uuid, synthesis_job_id, created_at) VALUES (?, ?, ?, ?, ?, '2026-01-03T00:00:00Z')`, repo, pr, key, testUUID(key), synthesis)
+	result, err := db.ExecContext(t.Context(), `INSERT INTO ci_pr_panels (github_repo, pr_number, head_sha, panel_run_uuid, synthesis_job_id, created_at) VALUES (?, ?, ?, ?, ?, '2026-01-03T00:00:00Z')`, repo, pr, key, testUUID(key), synthesis)
 	require.NoError(t, err)
 	id, err := result.LastInsertId()
 	require.NoError(t, err)
@@ -32,16 +32,16 @@ func TestGetSummary_CI(t *testing.T) {
 	reasons := []string{"closed_pr", "superseded", "stale_head", "deferred_retry", "repo_mismatch", "canceled", ""}
 	for i, reason := range reasons {
 		id := summaryPanel(t, db, "acme/api", 7, fmt.Sprint("retired", i), nil)
-		_, err := db.Exec(`UPDATE ci_pr_panels SET retired_at='2026-01-04', retire_reason=NULLIF(?, '') WHERE id=?`, reason, id)
+		_, err := db.ExecContext(t.Context(), `UPDATE ci_pr_panels SET retired_at='2026-01-04', retire_reason=NULLIF(?, '') WHERE id=?`, reason, id)
 		require.NoError(t, err)
 	}
 	id := summaryPanel(t, db, "acme/api", 7, "posted", nil)
-	_, err = db.Exec(`UPDATE ci_pr_panels SET retired_at='2026-01-04', posted_at='2026-01-03 00:02:00', first_attempt_at='2026-01-03 00:00:00', outcome='review_posted' WHERE id=?`, id)
+	_, err = db.ExecContext(t.Context(), `UPDATE ci_pr_panels SET retired_at='2026-01-04', posted_at='2026-01-03 00:02:00', first_attempt_at='2026-01-03 00:00:00', outcome='review_posted' WHERE id=?`, id)
 	require.NoError(t, err)
 	// Same PR number in another repository is a separate PR.
 	summaryPanel(t, db, "acme/web", 7, "active", nil)
 	old := summaryPanel(t, db, "acme/old", 9, "old", nil)
-	_, err = db.Exec(`UPDATE ci_pr_panels SET created_at='2026-01-01' WHERE id=?`, old)
+	_, err = db.ExecContext(t.Context(), `UPDATE ci_pr_panels SET created_at='2026-01-01' WHERE id=?`, old)
 	require.NoError(t, err)
 	s, err = db.GetSummary(SummaryOptions{Since: ciSummarySince})
 	require.NoError(t, err)
@@ -75,13 +75,13 @@ func TestGetSummary_CIFiltersAndCost(t *testing.T) {
 	addJob := func(repoID int64, branch, key, status, usage string, invoked bool) int64 {
 		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repoID, GitRef: key, Agent: "test", Branch: branch})
 		require.NoError(t, err)
-		_, err = db.Exec(`UPDATE review_jobs SET panel_run_uuid=?, status=?, token_usage=?, agent_invoked=?, started_at='2025-12-01', finished_at='2025-12-02', enqueued_at='2025-12-01' WHERE id=?`, testUUID(key), status, usage, invoked, job.ID)
+		_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET panel_run_uuid=?, status=?, token_usage=?, agent_invoked=?, started_at='2025-12-01', finished_at='2025-12-02', enqueued_at='2025-12-01' WHERE id=?`, testUUID(key), status, usage, invoked, job.ID)
 		require.NoError(t, err)
 		return job.ID
 	}
 	syn := addJob(repo.ID, "feature", "cost", "done", "", false) // passthrough
 	id := summaryPanel(t, db, "acme/api", 3, "cost", syn)
-	_, err := db.Exec(`UPDATE ci_pr_panels SET retired_at='2026-01-04', retire_reason='closed_pr' WHERE id=?`, id)
+	_, err := db.ExecContext(t.Context(), `UPDATE ci_pr_panels SET retired_at='2026-01-04', retire_reason='closed_pr' WHERE id=?`, id)
 	require.NoError(t, err)
 	addJob(repo.ID, "feature", "cost", "done", `{"has_cost":true,"cost_usd":2}`, true)
 	addJob(other.ID, "other-branch", "cost", "canceled", `{"has_cost":true,"cost_usd":3}`, true)
@@ -124,7 +124,7 @@ func TestGetSummary_CITurnaroundUnavailable(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	for i, stamp := range []string{"", "invalid", "2026-01-04"} {
 		id := summaryPanel(t, db, "acme/api", i+1, fmt.Sprint(i), nil)
-		_, err := db.Exec(`UPDATE ci_pr_panels SET posted_at='2026-01-03',first_attempt_at=NULLIF(?, '') WHERE id=?`, stamp, id)
+		_, err := db.ExecContext(t.Context(), `UPDATE ci_pr_panels SET posted_at='2026-01-03',first_attempt_at=NULLIF(?, '') WHERE id=?`, stamp, id)
 		require.NoError(t, err)
 	}
 	s, err := db.GetSummary(SummaryOptions{Since: ciSummarySince})
@@ -201,13 +201,13 @@ func TestGetSummary_CIPostedRetirementAndOldCosts(t *testing.T) {
 	for _, key := range []string{"finalized", "outside"} {
 		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: key, Agent: "test"})
 		require.NoError(t, err)
-		_, err = db.Exec(`UPDATE review_jobs SET panel_run_uuid=?,status='done',agent_invoked=1,token_usage='{"has_cost":true,"cost_usd":2}',started_at='2026-01-04',finished_at='2026-01-04' WHERE id=?`, testUUID(key), job.ID)
+		_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET panel_run_uuid=?,status='done',agent_invoked=1,token_usage='{"has_cost":true,"cost_usd":2}',started_at='2026-01-04',finished_at='2026-01-04' WHERE id=?`, testUUID(key), job.ID)
 		require.NoError(t, err)
 		id := summaryPanel(t, db, "acme/api", 1, key, job.ID)
 		if key == "outside" {
-			_, err = db.Exec(`UPDATE ci_pr_panels SET created_at='2026-01-01' WHERE id=?`, id)
+			_, err = db.ExecContext(t.Context(), `UPDATE ci_pr_panels SET created_at='2026-01-01' WHERE id=?`, id)
 		} else {
-			_, err = db.Exec(`UPDATE ci_pr_panels SET posted_at='2026-01-04',retired_at='2026-01-05',outcome='abandoned' WHERE id=?`, id)
+			_, err = db.ExecContext(t.Context(), `UPDATE ci_pr_panels SET posted_at='2026-01-04',retired_at='2026-01-05',outcome='abandoned' WHERE id=?`, id)
 		}
 		require.NoError(t, err)
 	}

@@ -124,7 +124,7 @@ func TestCreateMockRefineHandler_MethodEnforcement(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(tt.method, tt.path, nil)
+			req := httptest.NewRequestWithContext(t.Context(), tt.method, tt.path, nil)
 			w := httptest.NewRecorder()
 			handler.ServeHTTP(w, req)
 			assert.Equal(t, tt.wantStatus, w.Code, "got status %d, want %d", w.Code, tt.wantStatus)
@@ -136,7 +136,7 @@ func TestCreateMockRefineHandler_405ResponseBody(t *testing.T) {
 	state := newMockRefineState()
 	handler := createMockRefineHandler(state)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/status", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/status", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -389,7 +389,7 @@ func mustNewRequest(
 	t *testing.T, method, url string,
 ) *http.Request {
 	t.Helper()
-	req, err := http.NewRequest(method, url, nil)
+	req, err := http.NewRequestWithContext(t.Context(), method, url, nil)
 	require.NoError(t, err, "creating request: %v")
 
 	return req

@@ -274,11 +274,11 @@ func TestRunRefineFailsOnInvalidRepoConfigBeforeDaemonStartup(t *testing.T) {
 		0o644,
 	)
 	require.NoError(t, err, "write invalid repo config: %v", err)
-	gitAdd := exec.Command("git", "add", ".roborev.toml")
+	gitAdd := exec.CommandContext(t.Context(), "git", "add", ".roborev.toml")
 	gitAdd.Dir = repoDir
 	out, err := gitAdd.CombinedOutput()
 	require.NoError(t, err, "git add failed: %s", out)
-	gitCommit := exec.Command("git", "commit", "-m", "add invalid repo config")
+	gitCommit := exec.CommandContext(t.Context(), "git", "commit", "-m", "add invalid repo config")
 	gitCommit.Dir = repoDir
 	out, err = gitCommit.CombinedOutput()
 	require.NoError(t, err, "git commit failed: %s", out)
@@ -903,7 +903,7 @@ func main() {
 `), 0o644))
 
 	newBinary := updatedRoborevBinary(binDir)
-	build := exec.Command("go", "build", "-o", newBinary, fakeSource)
+	build := exec.CommandContext(t.Context(), "go", "build", "-o", newBinary, fakeSource)
 	build.Env = os.Environ()
 	out, err := build.CombinedOutput()
 	require.NoError(t, err, "build fake roborev: %s", out)

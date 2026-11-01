@@ -13,7 +13,7 @@ import (
 
 func TestWithStderrKeepsCommandStderr(t *testing.T) {
 	dir := t.TempDir()
-	cmd := exec.Command("git", "-C", dir, "rev-parse", "HEAD")
+	cmd := exec.CommandContext(t.Context(), "git", "-C", dir, "rev-parse", "HEAD")
 	cmd.Env = append(os.Environ(), "LC_ALL=C", "GIT_CEILING_DIRECTORIES="+filepath.Dir(dir))
 	_, err := cmd.Output()
 	require.Error(t, err)

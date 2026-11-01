@@ -40,7 +40,7 @@ type listJobsResponse struct {
 // decodes the JSON body, and returns the parsed response.
 func fetchJobs(t *testing.T, server *Server, query string) listJobsResponse {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, "/api/jobs?"+query, nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/jobs?"+query, nil)
 	w := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code, "GET /api/jobs?%s: %s", query, w.Body.String())
@@ -98,7 +98,7 @@ func TestListJobsFindingCountsHTTP(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", "prompt", "No issues found."))
 	structured := `{"schema_version":2,"summary":"review","verdict":"fail","findings":[{"severity":"critical","problem":"p","fix":"f","location":null},{"severity":"low","problem":"p","fix":"f","location":null}]}`
-	_, err = db.Exec("UPDATE reviews SET structured_output = ? WHERE job_id = ?", structured, job.ID)
+	_, err = db.ExecContext(t.Context(), "UPDATE reviews SET structured_output = ? WHERE job_id = ?", structured, job.ID)
 	require.NoError(t, err)
 
 	without := fetchJobs(t, server, "limit=0")
@@ -136,7 +136,7 @@ func TestListJobsFindingCountsHTTP(t *testing.T) {
 	_, err = db.ClaimJob("daemon-panel-worker")
 	require.NoError(t, err)
 	require.NoError(t, testutil.CompleteReviewFixture(db, members[0].ID, "test", "prompt", "No issues found."))
-	_, err = db.Exec("UPDATE reviews SET structured_output = ? WHERE job_id = ?", structured, members[0].ID)
+	_, err = db.ExecContext(t.Context(), "UPDATE reviews SET structured_output = ? WHERE job_id = ?", structured, members[0].ID)
 	require.NoError(t, err)
 
 	panelWithoutCounts := fetchJobs(t, server, "panel_run="+url.QueryEscape(runUUID.String()))
@@ -706,7 +706,7 @@ func TestBuildTargetDescriptorExcludedCommitPattern(t *testing.T) {
 			repo.CheckoutNewBranch("corrupt-range")
 			base := repo.HeadSHA()
 
-			treeOut, err := exec.Command("git", "-C", repoDir,
+			treeOut, err := exec.CommandContext(t.Context(), "git", "-C", repoDir,
 				"rev-parse", "HEAD^{tree}").Output()
 			require.NoError(t, err, "rev-parse tree")
 			tree := strings.TrimSpace(string(treeOut))
@@ -718,7 +718,7 @@ func TestBuildTargetDescriptorExcludedCommitPattern(t *testing.T) {
 					"committer test <t@example.com> 1700000000 +0000\n"+
 					"\nbroken parent\n",
 				tree, fakeParent)
-			hashCmd := exec.Command("git", "-C", repoDir,
+			hashCmd := exec.CommandContext(t.Context(), "git", "-C", repoDir,
 				"hash-object", "-w", "-t", "commit", "--stdin")
 			hashCmd.Stdin = strings.NewReader(content)
 			hashOut, err := hashCmd.Output()
@@ -798,7 +798,7 @@ func TestHandleEnqueueReusesPreviousBranchSessionWhenEnabled(t *testing.T) {
 			return false
 		}, "CompleteJob failed: %v", err)
 	}
-	if _, err := db.Exec(`UPDATE review_jobs SET session_id = ? WHERE id = ?`, "session-123", prevJob.ID); err != nil {
+	if _, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = ? WHERE id = ?`, "session-123", prevJob.ID); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "failed to seed session_id: %v", err)
@@ -903,7 +903,7 @@ func TestFindReusableSessionIDUsesDirtyBaseCommit(t *testing.T) {
 	require.NotNil(t, claimed)
 	require.Equal(t, prevJob.ID, claimed.ID)
 	require.NoError(t, testutil.CompleteReviewFixture(db, prevJob.ID, "test", "prompt", "No issues found."))
-	_, err = db.Exec(`UPDATE review_jobs SET session_id = ? WHERE id = ?`, "session-dirty", prevJob.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = ? WHERE id = ?`, "session-dirty", prevJob.ID)
 	require.NoError(t, err)
 
 	reused := server.findReusableSessionID(
@@ -969,7 +969,7 @@ func TestFindReusableSessionIDRejectsReusedBranchNameFromUnrelatedHistory(t *tes
 			return false
 		}, "CompleteJob failed: %v", err)
 	}
-	if _, err := db.Exec(`UPDATE review_jobs SET session_id = ? WHERE id = ?`, "session-old", prevJob.ID); err != nil {
+	if _, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = ? WHERE id = ?`, "session-old", prevJob.ID); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "failed to seed session_id: %v", err)
@@ -1039,7 +1039,7 @@ func TestFindReusableSessionIDRejectsCandidateThatIsTooOldOnBranch(t *testing.T)
 			return false
 		}, "CompleteJob failed: %v", err)
 	}
-	if _, err := db.Exec(`UPDATE review_jobs SET session_id = ? WHERE id = ?`, "session-old", prevJob.ID); err != nil {
+	if _, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = ? WHERE id = ?`, "session-old", prevJob.ID); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "failed to seed session_id: %v", err)
@@ -1115,7 +1115,7 @@ func TestFindReusableSessionIDFallsBackToOlderValidCandidate(t *testing.T) {
 			return false
 		}, "CompleteJob failed: %v", err)
 	}
-	if _, err := db.Exec(`UPDATE review_jobs SET session_id = ?, finished_at = datetime('now', '-1 minute') WHERE id = ?`, "session-valid", validJob.ID); err != nil {
+	if _, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = ?, finished_at = datetime('now', '-1 minute') WHERE id = ?`, "session-valid", validJob.ID); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "failed to seed valid session_id: %v", err)
@@ -1151,7 +1151,7 @@ func TestFindReusableSessionIDFallsBackToOlderValidCandidate(t *testing.T) {
 			return false
 		}, "CompleteJob failed: %v", err)
 	}
-	if _, err := db.Exec(`UPDATE review_jobs SET session_id = ?, finished_at = datetime('now') WHERE id = ?`, "session-invalid", invalidJob.ID); err != nil {
+	if _, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = ?, finished_at = datetime('now') WHERE id = ?`, "session-invalid", invalidJob.ID); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "failed to seed invalid session_id: %v", err)
@@ -1222,7 +1222,7 @@ func TestFindReusableSessionIDUsesConfigurableLookback(t *testing.T) {
 			return false
 		}, "CompleteJob failed: %v", err)
 	}
-	if _, err := db.Exec(`UPDATE review_jobs SET session_id = ?, finished_at = datetime('now', '-4 minutes') WHERE id = ?`, "session-valid", validJob.ID); err != nil {
+	if _, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = ?, finished_at = datetime('now', '-4 minutes') WHERE id = ?`, "session-valid", validJob.ID); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "failed to seed valid session_id: %v", err)
@@ -1260,7 +1260,7 @@ func TestFindReusableSessionIDUsesConfigurableLookback(t *testing.T) {
 			}, "CompleteJob failed: %v", err)
 		}
 		offsetMinutes := 3 - i
-		if _, err := db.Exec(`UPDATE review_jobs SET session_id = ?, finished_at = datetime('now', ?) WHERE id = ?`, fmt.Sprintf("session-invalid-%02d", i), fmt.Sprintf("-%d minutes", offsetMinutes), invalidJob.ID); err != nil {
+		if _, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = ?, finished_at = datetime('now', ?) WHERE id = ?`, fmt.Sprintf("session-invalid-%02d", i), fmt.Sprintf("-%d minutes", offsetMinutes), invalidJob.ID); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, "failed to seed invalid session_id: %v", err)
@@ -1345,7 +1345,7 @@ func TestFindReusableSessionIDLookbackIgnoresUnusableRefs(t *testing.T) {
 			return false
 		}, "CompleteJob failed: %v", err)
 	}
-	if _, err := db.Exec(`UPDATE review_jobs SET session_id = ?, finished_at = datetime('now', '-2 minutes') WHERE id = ?`, "session-valid", validJob.ID); err != nil {
+	if _, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = ?, finished_at = datetime('now', '-2 minutes') WHERE id = ?`, "session-valid", validJob.ID); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "failed to seed valid session_id: %v", err)
@@ -1373,7 +1373,7 @@ func TestFindReusableSessionIDLookbackIgnoresUnusableRefs(t *testing.T) {
 			return false
 		}, "CompleteJob failed: %v", err)
 	}
-	if _, err := db.Exec(`UPDATE review_jobs SET session_id = ?, finished_at = datetime('now') WHERE id = ?`, "session-dirty", dirtyJob.ID); err != nil {
+	if _, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = ?, finished_at = datetime('now') WHERE id = ?`, "session-dirty", dirtyJob.ID); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "failed to seed dirty session_id: %v", err)
@@ -1402,7 +1402,7 @@ func TestFindReusableSessionIDLookbackIgnoresUnusableRefs(t *testing.T) {
 			return false
 		}, "CompleteJob failed: %v", err)
 	}
-	if _, err := db.Exec(`UPDATE review_jobs SET git_ref = ?, session_id = ?, finished_at = datetime('now', '-1 minute') WHERE id = ?`, targetSHA+"..", "session-malformed", malformedJob.ID); err != nil {
+	if _, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET git_ref = ?, session_id = ?, finished_at = datetime('now', '-1 minute') WHERE id = ?`, targetSHA+"..", "session-malformed", malformedJob.ID); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "failed to seed malformed session candidate: %v", err)
@@ -1471,7 +1471,7 @@ func TestFindReusableSessionIDAcceptsOpaqueStoredSessionID(t *testing.T) {
 			return false
 		}, "CompleteJob failed: %v", err)
 	}
-	if _, err := db.Exec(`UPDATE review_jobs SET session_id = ?, finished_at = datetime('now', '-1 minute') WHERE id = ?`, "session-valid", validJob.ID); err != nil {
+	if _, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = ?, finished_at = datetime('now', '-1 minute') WHERE id = ?`, "session-valid", validJob.ID); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "failed to seed valid session_id: %v", err)
@@ -1500,7 +1500,7 @@ func TestFindReusableSessionIDAcceptsOpaqueStoredSessionID(t *testing.T) {
 			return false
 		}, "CompleteJob failed: %v", err)
 	}
-	if _, err := db.Exec(`UPDATE review_jobs SET session_id = ?, finished_at = datetime('now') WHERE id = ?`, "-opaque-session", opaqueJob.ID); err != nil {
+	if _, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = ?, finished_at = datetime('now') WHERE id = ?`, "-opaque-session", opaqueJob.ID); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "failed to seed opaque session_id: %v", err)
@@ -1520,7 +1520,7 @@ func TestHandleEnqueueBranchFallback(t *testing.T) {
 	testutil.InitTestGitRepo(t, repoDir)
 
 	// Switch to a named branch
-	branchCmd := exec.Command("git", "-C", repoDir, "checkout", "-b", "my-feature")
+	branchCmd := exec.CommandContext(t.Context(), "git", "-C", repoDir, "checkout", "-b", "my-feature")
 	if out, err := branchCmd.CombinedOutput(); err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -1647,7 +1647,7 @@ func TestHandleListJobsByID(t *testing.T) {
 
 	t.Run("fetches specific job by ID", func(t *testing.T) {
 		// Request job 1 specifically
-		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/jobs?id=%d", job1ID), nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/jobs?id=%d", job1ID), nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 
@@ -1677,7 +1677,7 @@ func TestHandleListJobsByID(t *testing.T) {
 
 	t.Run("fetches middle job correctly", func(t *testing.T) {
 		// Request job 2 specifically (the middle job)
-		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/jobs?id=%d", job2ID), nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/jobs?id=%d", job2ID), nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 
@@ -1706,7 +1706,7 @@ func TestHandleListJobsByID(t *testing.T) {
 
 	t.Run("returns empty for non-existent job ID", func(t *testing.T) {
 		// Request a job ID that doesn't exist
-		req := httptest.NewRequest(http.MethodGet, "/api/jobs?id=99999", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/jobs?id=99999", nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 
@@ -1729,7 +1729,7 @@ func TestHandleListJobsByID(t *testing.T) {
 	})
 
 	t.Run("returns error for invalid job ID", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/jobs?id=notanumber", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/jobs?id=notanumber", nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 
@@ -1740,7 +1740,7 @@ func TestHandleListJobsByID(t *testing.T) {
 
 	t.Run("without id param returns all jobs", func(t *testing.T) {
 		// Request without id param should return all jobs
-		req := httptest.NewRequest(http.MethodGet, "/api/jobs", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/jobs", nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 
@@ -2120,7 +2120,7 @@ func TestHandleEnqueueWorktreeGitDirIsolation(t *testing.T) {
 
 	// Create a worktree
 	worktreeDir := filepath.Join(tmpDir, "worktree")
-	wtCmd := exec.Command("git", "-C", mainRepo, "worktree", "add", "-b", "wt-branch", worktreeDir)
+	wtCmd := exec.CommandContext(t.Context(), "git", "-C", mainRepo, "worktree", "add", "-b", "wt-branch", worktreeDir)
 	if out, err := wtCmd.CombinedOutput(); err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -2138,7 +2138,7 @@ func TestHandleEnqueueWorktreeGitDirIsolation(t *testing.T) {
 		{"git", "-C", worktreeDir, "add", "."},
 		{"git", "-C", worktreeDir, "commit", "-m", "worktree commit"},
 	} {
-		cmd := exec.Command(args[0], args[1:]...)
+		cmd := exec.CommandContext(t.Context(), args[0], args[1:]...)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -2222,7 +2222,7 @@ func TestHandleEnqueueRangeFromRootCommit(t *testing.T) {
 		{"git", "-C", repoDir, "add", "."},
 		{"git", "-C", repoDir, "commit", "-m", "second"},
 	} {
-		cmd := exec.Command(args[0], args[1:]...)
+		cmd := exec.CommandContext(t.Context(), args[0], args[1:]...)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -2283,7 +2283,7 @@ func TestHandleEnqueueRangeNonCommitObjectRejects(t *testing.T) {
 	}
 
 	// Get a blob SHA (the test.txt file created by InitTestGitRepo)
-	cmd := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD:test.txt")
+	cmd := exec.CommandContext(t.Context(), "git", "-C", repoDir, "rev-parse", "HEAD:test.txt")
 	out, err := cmd.Output()
 	if err != nil {
 		require.Condition(t, func() bool {
@@ -2357,7 +2357,7 @@ func TestHandleListJobsJobTypeFilter(t *testing.T) {
 		JobType:     storage.JobTypeFix,
 		ParentJobID: reviewJob.ID,
 	})
-	_, err := db.Exec(
+	_, err := db.ExecContext(t.Context(),
 		`UPDATE review_jobs SET status = 'running' WHERE id IN (?, ?)`,
 		reviewJob.ID, fixJob.ID,
 	)
@@ -2366,7 +2366,7 @@ func TestHandleListJobsJobTypeFilter(t *testing.T) {
 	require.NoError(t, testutil.CompleteReviewFixture(db, fixJob.ID, "test", "prompt", "fix done"))
 
 	t.Run("job_type=fix returns only fix jobs", func(t *testing.T) {
-		req := httptest.NewRequest(
+		req := httptest.NewRequestWithContext(t.Context(),
 			http.MethodGet, "/api/jobs?job_type=fix", nil,
 		)
 		w := httptest.NewRecorder()
@@ -2397,7 +2397,7 @@ func TestHandleListJobsJobTypeFilter(t *testing.T) {
 	})
 
 	t.Run("no job_type returns all jobs", func(t *testing.T) {
-		req := httptest.NewRequest(
+		req := httptest.NewRequestWithContext(t.Context(),
 			http.MethodGet, "/api/jobs", nil,
 		)
 		w := httptest.NewRecorder()
@@ -2423,7 +2423,7 @@ func TestHandleListJobsJobTypeFilter(t *testing.T) {
 	})
 
 	t.Run("exclude_job_type=fix returns only non-fix jobs", func(t *testing.T) {
-		req := httptest.NewRequest(
+		req := httptest.NewRequestWithContext(t.Context(),
 			http.MethodGet, "/api/jobs?exclude_job_type=fix", nil,
 		)
 		w := httptest.NewRecorder()
@@ -2465,7 +2465,7 @@ func TestHandleListJobsJobTypeFilter(t *testing.T) {
 		// means each auto_design row needs a distinct commit.
 		classifyCommit, err := db.GetOrCreateCommit(repo.ID, "jt-classify", "Author", "Subject", time.Now())
 		require.NoError(t, err)
-		_, err = db.Exec(`
+		_, err = db.ExecContext(t.Context(), `
 			INSERT INTO review_jobs
 			  (repo_id, commit_id, git_ref, agent, status, job_type, review_type, source, worker_id, started_at, enqueued_at, updated_at)
 			VALUES (?, ?, 'jt-classify', 'test', 'running', 'classify', 'design', 'auto_design', 'w1', datetime('now'), datetime('now'), datetime('now'))
@@ -2474,14 +2474,14 @@ func TestHandleListJobsJobTypeFilter(t *testing.T) {
 
 		skippedCommit, err := db.GetOrCreateCommit(repo.ID, "jt-skipped", "Author", "Subject", time.Now())
 		require.NoError(t, err)
-		_, err = db.Exec(`
+		_, err = db.ExecContext(t.Context(), `
 			INSERT INTO review_jobs
 			  (repo_id, commit_id, git_ref, agent, status, job_type, review_type, source, skip_reason, enqueued_at, finished_at, updated_at)
 			VALUES (?, ?, 'jt-skipped', 'test', 'skipped', 'review', 'design', 'auto_design', 'trivial diff', datetime('now'), datetime('now'), datetime('now'))
 		`, repo.ID, skippedCommit.ID)
 		require.NoError(t, err)
 
-		req := httptest.NewRequest(
+		req := httptest.NewRequestWithContext(t.Context(),
 			http.MethodGet, "/api/jobs?hide_classify_jobs=true", nil,
 		)
 		w := httptest.NewRecorder()
@@ -2515,7 +2515,7 @@ func TestHandleListJobsRepoPrefixFilter(t *testing.T) {
 	seedRepoWithJobs(t, db, filepath.Join(tmpDir, "outside-repo"), 1, "outside")
 
 	t.Run("repo_prefix returns only child repos", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/jobs?repo_prefix="+url.QueryEscape(workspace), nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/jobs?repo_prefix="+url.QueryEscape(workspace), nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
@@ -2544,7 +2544,7 @@ func TestHandleListJobsRepoPrefixFilter(t *testing.T) {
 	t.Run("repo_prefix does not match parent directory itself", func(t *testing.T) {
 		// A repo AT the workspace path shouldn't match (must be a child)
 		seedRepoWithJobs(t, db, workspace, 1, "exact")
-		req := httptest.NewRequest(http.MethodGet, "/api/jobs?repo_prefix="+url.QueryEscape(workspace), nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/jobs?repo_prefix="+url.QueryEscape(workspace), nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
@@ -2564,7 +2564,7 @@ func TestHandleListJobsRepoPrefixFilter(t *testing.T) {
 
 	t.Run("repo param takes precedence over repo_prefix", func(t *testing.T) {
 		exactRepo := filepath.Join(workspace, "repo-a")
-		req := httptest.NewRequest(http.MethodGet, "/api/jobs?repo="+url.QueryEscape(exactRepo)+"&repo_prefix="+url.QueryEscape(workspace), nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/jobs?repo="+url.QueryEscape(exactRepo)+"&repo_prefix="+url.QueryEscape(workspace), nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
@@ -2582,7 +2582,7 @@ func TestHandleListJobsRepoPrefixFilter(t *testing.T) {
 	})
 
 	t.Run("repo_prefix trailing slash is normalized", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/jobs?repo_prefix="+url.QueryEscape(workspace+"/"), nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/jobs?repo_prefix="+url.QueryEscape(workspace+"/"), nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
@@ -2602,7 +2602,7 @@ func TestHandleListJobsRepoPrefixFilter(t *testing.T) {
 	t.Run("repo_prefix with dot-dot is normalized", func(t *testing.T) {
 		// workspace/../workspace should normalize to workspace
 		dotdotPrefix := workspace + "/../" + filepath.Base(workspace)
-		req := httptest.NewRequest(http.MethodGet, "/api/jobs?repo_prefix="+url.QueryEscape(dotdotPrefix), nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/jobs?repo_prefix="+url.QueryEscape(dotdotPrefix), nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
@@ -2950,7 +2950,7 @@ func TestHandleEnqueueUsesWorktreeConfigWhenPresent(t *testing.T) {
 	testutil.InitTestGitRepo(t, mainRepo)
 
 	worktreeDir := filepath.Join(tmpDir, "worktree")
-	wtCmd := exec.Command(
+	wtCmd := exec.CommandContext(t.Context(),
 		"git", "-C", mainRepo, "worktree", "add", "-b", "wt-branch",
 		worktreeDir,
 	)
@@ -3006,7 +3006,7 @@ func TestHandleListJobsSlashNormalization(t *testing.T) {
 	seedRepoWithJobs(t, db, filepath.ToSlash(tmpDir)+"/other-c", 1, "sc")
 
 	t.Run("forward-slash prefix matches stored paths", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet,
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 			"/api/jobs?repo_prefix="+url.QueryEscape(ws), nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
@@ -3348,11 +3348,11 @@ func TestHandleListJobsByIDWithArchivedReview(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 	_, jobs := seedRepoWithJobs(t, db, filepath.Join(tmpDir, "archived"), 1, "archive")
 	job := jobs[0]
-	_, archiveErr := db.Exec(`INSERT INTO legacy_reviews (job_id, agent, output, created_at, closed, uuid, migration_error) VALUES (?, 'test', ?, datetime('now'), 0, ?, 'AI conversion required')`, job.ID, "Legacy review", uuid.New())
+	_, archiveErr := db.ExecContext(t.Context(), `INSERT INTO legacy_reviews (job_id, agent, output, created_at, closed, uuid, migration_error) VALUES (?, 'test', ?, datetime('now'), 0, ?, 'AI conversion required')`, job.ID, "Legacy review", uuid.New())
 	require.NoError(t, archiveErr)
 	_, err := db.GetReviewByJobID(job.ID)
 	require.ErrorIs(t, err, storage.ErrLegacyReviewMigration)
-	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/jobs?id=%d", job.ID), nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/jobs?id=%d", job.ID), nil)
 	w := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())

@@ -59,7 +59,7 @@ func chdir(t *testing.T, dir string) {
 // It isolates git from the user's global config to prevent flaky tests.
 func (r *TestGitRepo) Run(args ...string) string {
 	r.t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(r.t.Context(), "git", args...)
 	cmd.Dir = r.Dir
 	// Build a clean environment with only the variables git needs,
 	// avoiding conflicts from inherited duplicates.
@@ -261,7 +261,7 @@ func canCommitInProcess(dir string) bool {
 
 func runGitForCommit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(t.Context(), "git", args...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "git %v failed:\n%s", args, out)

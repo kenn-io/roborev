@@ -12,7 +12,7 @@ import (
 
 func TestGoalGateEmptyBodyReturnsGoalGateResponse(t *testing.T) {
 	server, _, _ := newTestServer(t)
-	request := httptest.NewRequest(http.MethodPost, "/api/goal-review", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/goal-review", nil)
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(response, request)

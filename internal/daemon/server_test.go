@@ -108,7 +108,7 @@ func setJobStatus(t *testing.T, db *storage.DB, jobID int64, status storage.JobS
 			return false
 		}, "unsupported status in helper: %v", status)
 	}
-	res, err := db.Exec(query, jobID)
+	res, err := db.ExecContext(t.Context(), query, jobID)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -429,7 +429,7 @@ func TestServerStartRefusesLegacyLivePID(t *testing.T) {
 }
 
 func TestServerStartSupportsIPv6LoopbackBindAddr(t *testing.T) {
-	ln, err := net.Listen("tcp", "[::1]:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "[::1]:0")
 	if err != nil {
 		t.Skipf("IPv6 loopback not available: %v", err)
 	}
@@ -509,7 +509,7 @@ func TestServerSocketActivationSkipsAuxiliaryListener(t *testing.T) {
 	testenv.SetDataDir(t)
 	setShortRuntimeDir(t)
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	endpoint := DaemonEndpoint{Network: "tcp", Address: listener.Addr().String()}
 	origSystemd := getSystemdListenerForServer
@@ -637,7 +637,7 @@ func seedRepoWithJobs(t *testing.T, db *storage.DB, repoPath string, jobCount in
 // setJobBranch directly updates a job's branch in the DB (for test setup).
 func setJobBranch(t *testing.T, db *storage.DB, jobID int64, branch string) {
 	t.Helper()
-	if _, err := db.Exec("UPDATE review_jobs SET branch = ? WHERE id = ?", branch, jobID); err != nil {
+	if _, err := db.ExecContext(t.Context(), "UPDATE review_jobs SET branch = ? WHERE id = ?", branch, jobID); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "setJobBranch failed: %v", err)
@@ -816,10 +816,10 @@ func TestServerServesPprof(t *testing.T) {
 	server, _, _ := newTestServer(t)
 
 	index := httptest.NewRecorder()
-	server.httpServer.Handler.ServeHTTP(index, httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil))
+	server.httpServer.Handler.ServeHTTP(index, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/debug/pprof/", nil))
 	assert.Equal(http.StatusOK, index.Code)
 
 	heap := httptest.NewRecorder()
-	server.httpServer.Handler.ServeHTTP(heap, httptest.NewRequest(http.MethodGet, "/debug/pprof/heap", nil))
+	server.httpServer.Handler.ServeHTTP(heap, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/debug/pprof/heap", nil))
 	assert.Equal(http.StatusOK, heap.Code)
 }

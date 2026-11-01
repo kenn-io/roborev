@@ -41,7 +41,7 @@ func NewGitTestRepo(t *testing.T) *GitTestRepo {
 // Run executes a git command in the repository.
 func (r *GitTestRepo) Run(args ...string) string {
 	r.t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(r.t.Context(), "git", args...)
 	cmd.Dir = r.Dir
 	out, err := cmd.CombinedOutput()
 	require.NoError(r.t, err, "git %v failed\n%s", args, out)

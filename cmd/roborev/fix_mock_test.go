@@ -47,7 +47,9 @@ func TestMockDaemonBuilderMultipleReviews(t *testing.T) {
 			if tt.query != "" {
 				u.RawQuery = tt.query
 			}
-			resp, err := http.Get(u.String())
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, u.String(), nil)
+			require.NoError(t, err)
+			resp, err := http.DefaultClient.Do(req)
 			require.NoError(t, err, "failed to make request: %v")
 
 			defer resp.Body.Close()

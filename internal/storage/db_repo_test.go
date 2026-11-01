@@ -116,7 +116,7 @@ func TestGetOrCreateCommitConcurrentInsert(t *testing.T) {
 	assert.Equal(t, first.commit.ID, second.commit.ID)
 
 	var count int
-	require.NoError(t, db.QueryRow(`
+	require.NoError(t, db.QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM commits WHERE repo_id = ? AND sha = ?
 	`, repo.ID, "concurrent-sha").Scan(&count))
 	assert.Equal(t, 1, count)

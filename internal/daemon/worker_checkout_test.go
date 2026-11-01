@@ -308,7 +308,7 @@ func TestPrepareLocalReviewCheckout(t *testing.T) {
 			require.NotEqual(t, caller, checkout.agentRepoPath)
 			assert.Equal(t, checkout.agentRepoPath, checkout.promptRepoPath)
 			assert.Equal(t, caller, checkout.configRepoPath)
-			cmd := exec.Command("git", "rev-parse", "HEAD")
+			cmd := exec.CommandContext(t.Context(), "git", "rev-parse", "HEAD")
 			cmd.Dir = checkout.agentRepoPath
 			output, err := cmd.Output()
 			require.NoError(t, err)
@@ -524,7 +524,7 @@ func TestWorkerIsolatedReviewStartsFreshSession(t *testing.T) {
 	sha := tc.GitRepo.HeadSHA()
 	job := tc.createJob(t, sha)
 	source := uuid.New()
-	_, err := tc.DB.Exec("UPDATE review_jobs SET session_id='prior-session',session_resumed=1,resume_source_job_uuid=? WHERE id=?", source, job.ID)
+	_, err := tc.DB.ExecContext(t.Context(), "UPDATE review_jobs SET session_id='prior-session',session_resumed=1,resume_source_job_uuid=? WHERE id=?", source, job.ID)
 	require.NoError(t, err)
 	claimed, err := tc.DB.ClaimJob(testWorkerID)
 	require.NoError(t, err)
@@ -536,7 +536,7 @@ func TestWorkerIsolatedReviewStartsFreshSession(t *testing.T) {
 	assert.NotEqual(t, "prior-session", got.SessionID)
 	assert.Nil(t, got.ResumeSourceJobUUID)
 	var resumed int
-	require.NoError(t, tc.DB.QueryRow("SELECT session_resumed FROM review_jobs WHERE id=?", job.ID).Scan(&resumed))
+	require.NoError(t, tc.DB.QueryRowContext(t.Context(), "SELECT session_resumed FROM review_jobs WHERE id=?", job.ID).Scan(&resumed))
 	assert.Zero(t, resumed)
 }
 

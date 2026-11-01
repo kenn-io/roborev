@@ -14,7 +14,7 @@ import (
 
 func TestSeedCreatesRepresentativeDatabase(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "reviews.db")
-	require.NoError(t, Seed(path))
+	require.NoError(t, Seed(t.Context(), path))
 
 	db, err := storage.Open(path)
 	require.NoError(t, err)
@@ -53,20 +53,20 @@ func TestSeedCreatesRepresentativeDatabase(t *testing.T) {
 	assert.False(cost.Complete)
 
 	var queuedStatus string
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(t.Context(),
 		`SELECT status FROM review_jobs WHERE id = ?`, CancelJobID,
 	).Scan(&queuedStatus))
 	assert.Equal("queued", queuedStatus)
 
 	var closed, verdict int
-	require.NoError(t, db.QueryRow(`
+	require.NoError(t, db.QueryRowContext(t.Context(), `
 		SELECT closed, verdict_bool FROM reviews WHERE job_id = ?`,
 		CloseReviewJobID,
 	).Scan(&closed, &verdict))
 	assert.Equal(0, closed)
 	assert.Equal(0, verdict)
 
-	rows, err := db.Query(`SELECT root_path FROM repos ORDER BY id`)
+	rows, err := db.QueryContext(t.Context(), `SELECT root_path FROM repos ORDER BY id`)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, rows.Close()) })
 	var roots []string
@@ -81,13 +81,13 @@ func TestSeedCreatesRepresentativeDatabase(t *testing.T) {
 
 func TestSeedRejectsExistingData(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "reviews.db")
-	require.NoError(t, Seed(path))
-	require.ErrorContains(t, Seed(path), "already contains fixture data")
+	require.NoError(t, Seed(t.Context(), path))
+	require.ErrorContains(t, Seed(t.Context(), path), "already contains fixture data")
 }
 
 func TestSeedRerunnableJobUsesBuiltInAgent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "reviews.db")
-	require.NoError(t, Seed(path))
+	require.NoError(t, Seed(t.Context(), path))
 
 	db, err := storage.Open(path)
 	require.NoError(t, err)
@@ -104,6 +104,6 @@ func TestSeedRerunnableJobUsesBuiltInAgent(t *testing.T) {
 func scalarInt(t *testing.T, db *sql.DB, query string) int {
 	t.Helper()
 	var value int
-	require.NoError(t, db.QueryRow(query).Scan(&value))
+	require.NoError(t, db.QueryRowContext(t.Context(), query).Scan(&value))
 	return value
 }

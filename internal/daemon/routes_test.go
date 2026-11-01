@@ -33,12 +33,12 @@ func serveHuma(
 	t.Helper()
 	var req *http.Request
 	if body != nil {
-		req = httptest.NewRequest(
+		req = httptest.NewRequestWithContext(t.Context(),
 			method, path, bytes.NewReader(body),
 		)
 		req.Header.Set("Content-Type", "application/json")
 	} else {
-		req = httptest.NewRequest(method, path, nil)
+		req = httptest.NewRequestWithContext(t.Context(), method, path, nil)
 	}
 	rr := httptest.NewRecorder()
 	srv.httpServer.Handler.ServeHTTP(rr, req)
@@ -47,14 +47,14 @@ func serveHuma(
 
 func seedHumaExportReviews(t *testing.T, db *storage.DB, repoID int64, count int) {
 	t.Helper()
-	tx, err := db.Begin()
+	tx, err := db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
 	defer tx.Rollback()
 
 	for i := range count {
 		sha := fmt.Sprintf("%040x", i+1)
 		createdAt := time.Date(2026, 6, 29, 0, 0, i, 0, time.UTC).Format(time.RFC3339)
-		res, err := tx.Exec(
+		res, err := tx.ExecContext(t.Context(),
 			`INSERT INTO commits (repo_id, sha, author, subject, timestamp)
 			 VALUES (?, ?, 'Test User', 'test commit', ?)`,
 			repoID, sha, createdAt,
@@ -62,7 +62,7 @@ func seedHumaExportReviews(t *testing.T, db *storage.DB, repoID int64, count int
 		require.NoError(t, err)
 		commitID, err := res.LastInsertId()
 		require.NoError(t, err)
-		res, err = tx.Exec(
+		res, err = tx.ExecContext(t.Context(),
 			`INSERT INTO review_jobs
 			 (repo_id, commit_id, uuid, git_ref, agent, status, enqueued_at, started_at, finished_at, job_type)
 			 VALUES (?, ?, ?, ?, 'test-agent', 'done', ?, ?, ?, 'review')`,
@@ -71,7 +71,7 @@ func seedHumaExportReviews(t *testing.T, db *storage.DB, repoID int64, count int
 		require.NoError(t, err)
 		jobID, err := res.LastInsertId()
 		require.NoError(t, err)
-		_, err = tx.Exec(
+		_, err = tx.ExecContext(t.Context(),
 			`INSERT INTO reviews
 			 (job_id, uuid, agent, output, created_at, updated_at, verdict_bool)
 			 VALUES (?, ?, 'test-agent', 'No issues found.', ?, ?, 1)`,
@@ -131,7 +131,7 @@ func TestHumaListJobsCursorPaginationRemainsStableAcrossRerun(t *testing.T) {
 	jobs := testutil.CreateTestJobs(t, db, repo, 5, "test-agent")
 	base := time.Now().Add(-5 * time.Hour).UTC().Truncate(time.Second)
 	for index, job := range jobs {
-		_, err := db.Exec(
+		_, err := db.ExecContext(t.Context(),
 			"UPDATE review_jobs SET status = 'done', enqueued_at = ? WHERE id = ?",
 			base.Add(time.Duration(index)*time.Hour).Format(time.RFC3339), job.ID,
 		)
@@ -244,7 +244,7 @@ func TestHumaGetStatusUsesEmptyActiveSnoozeArray(t *testing.T) {
 
 func TestHumaGetStatusFailsWhenActiveSnoozesCannotBeRead(t *testing.T) {
 	srv, db, _ := newTestServer(t)
-	_, err := db.Exec(`DROP TABLE agent_hook_snoozes`)
+	_, err := db.ExecContext(t.Context(), `DROP TABLE agent_hook_snoozes`)
 	require.NoError(t, err)
 
 	rr := serveHuma(t, srv, http.MethodGet, "/api/status", nil)
@@ -287,9 +287,9 @@ func TestHumaExportReviews(t *testing.T) {
 	second := testutil.CreateCompletedReview(
 		t, db, repo.ID, "export-b", "test-agent", "- Medium — issue",
 	)
-	_, err := db.Exec(`UPDATE reviews SET created_at = '2026-06-29 00:00:00' WHERE job_id = ?`, first.ID)
+	_, err := db.ExecContext(t.Context(), `UPDATE reviews SET created_at = '2026-06-29 00:00:00' WHERE job_id = ?`, first.ID)
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE reviews SET created_at = '2026-06-29 00:00:01' WHERE job_id = ?`, second.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE reviews SET created_at = '2026-06-29 00:00:01' WHERE job_id = ?`, second.ID)
 	require.NoError(t, err)
 
 	rr := serveHuma(t, srv, http.MethodGet,
@@ -356,14 +356,14 @@ func TestHumaExportReviewsExportsDocumentInContentProfileOnly(t *testing.T) {
 	withoutDocument := testutil.CreateCompletedReview(t, db, repo.ID, "export-no-document", "test-agent", "No issues found.")
 	// Stored bytes are not canonical: padded text, upper-case severity, and
 	// keys out of order.
-	_, err := db.Exec(`UPDATE reviews SET created_at = '2026-06-29 00:00:00', structured_output = ? WHERE job_id = ?`,
+	_, err := db.ExecContext(t.Context(), `UPDATE reviews SET created_at = '2026-06-29 00:00:00', structured_output = ? WHERE job_id = ?`,
 		`{"findings":[`+
 			`{"location":"auth/login.go:42","fix":"Redact the token.","problem":" The token is logged. ","severity":"HIGH"},`+
 			`{"severity":"low","problem":"Typo in a comment.","fix":"Fix the spelling.","location":null}],`+
 			`"verdict":"fail","summary":" Two problems. ","schema_version":2}`,
 		withDocument.ID)
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE reviews SET created_at = '2026-06-29 00:00:01', structured_output = NULL WHERE job_id = ?`, withoutDocument.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE reviews SET created_at = '2026-06-29 00:00:01', structured_output = NULL WHERE job_id = ?`, withoutDocument.ID)
 	require.NoError(t, err)
 
 	export := func(profile string) []map[string]jsontext.Value {
@@ -423,9 +423,9 @@ func TestHumaExportReviewsUpdatedSincePicksUpLaterClose(t *testing.T) {
 	repo := testutil.CreateTestRepo(t, db)
 	untouched := testutil.CreateCompletedReview(t, db, repo.ID, "export-untouched", "test-agent", "No issues found.")
 	closedLater := testutil.CreateCompletedReview(t, db, repo.ID, "export-closed-later", "test-agent", "- Medium — issue")
-	_, err := db.Exec(`UPDATE reviews SET created_at = '2026-01-05 00:00:00', updated_at = '2026-01-05T00:00:00Z' WHERE job_id = ?`, untouched.ID)
+	_, err := db.ExecContext(t.Context(), `UPDATE reviews SET created_at = '2026-01-05 00:00:00', updated_at = '2026-01-05T00:00:00Z' WHERE job_id = ?`, untouched.ID)
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE reviews SET created_at = '2026-01-06 00:00:00', updated_at = '2026-01-06T00:00:00Z' WHERE job_id = ?`, closedLater.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE reviews SET created_at = '2026-01-06 00:00:00', updated_at = '2026-01-06T00:00:00Z' WHERE job_id = ?`, closedLater.ID)
 	require.NoError(t, err)
 
 	type exportBody struct {
@@ -482,10 +482,10 @@ func TestHumaExportReviewsUpdatedSincePaginatesWithCursor(t *testing.T) {
 	seedHumaExportReviews(t, db, repo.ID, 6)
 	// Seeded reviews carry updated_at equal to their 2026-06-29 completion
 	// time. Move every other one past the bound.
-	_, err := db.Exec(`UPDATE reviews SET updated_at = '2026-08-01T00:00:00Z' WHERE id % 2 = 0`)
+	_, err := db.ExecContext(t.Context(), `UPDATE reviews SET updated_at = '2026-08-01T00:00:00Z' WHERE id % 2 = 0`)
 	require.NoError(t, err)
 	var want int
-	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM reviews WHERE id % 2 = 0`).Scan(&want))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM reviews WHERE id % 2 = 0`).Scan(&want))
 	require.Equal(t, 3, want)
 
 	var reviewIDs []uuid.UUID
@@ -527,7 +527,7 @@ func TestHumaExportReviewsRejectsDifferentDatabaseCursorWithConflict(t *testing.
 	job := testutil.CreateCompletedReview(
 		t, db, repo.ID, "export-reset", "test-agent", "No issues found.",
 	)
-	_, err := db.Exec(`UPDATE reviews SET created_at = '2026-06-29 00:00:00' WHERE job_id = ?`, job.ID)
+	_, err := db.ExecContext(t.Context(), `UPDATE reviews SET created_at = '2026-06-29 00:00:00' WHERE job_id = ?`, job.ID)
 	require.NoError(t, err)
 	review, err := db.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
@@ -550,7 +550,7 @@ func TestHumaExportReviewsRejectsCursorAfterDatabaseRecreation(t *testing.T) {
 	firstJob := testutil.CreateCompletedReview(
 		t, firstDB, firstRepo.ID, "export-before-reset", "test-agent", "No issues found.",
 	)
-	_, err = firstDB.Exec(`UPDATE reviews SET created_at = '2026-06-29 00:00:00' WHERE job_id = ?`, firstJob.ID)
+	_, err = firstDB.ExecContext(t.Context(), `UPDATE reviews SET created_at = '2026-06-29 00:00:00' WHERE job_id = ?`, firstJob.ID)
 	require.NoError(t, err)
 
 	firstRR := serveHuma(t, firstServer, http.MethodGet, "/api/export/reviews?limit=10", nil)
@@ -576,7 +576,7 @@ func TestHumaExportReviewsRejectsCursorAfterDatabaseRecreation(t *testing.T) {
 	secondJob := testutil.CreateCompletedReview(
 		t, secondDB, secondRepo.ID, "export-after-reset", "test-agent", "No issues found.",
 	)
-	_, err = secondDB.Exec(`UPDATE reviews SET created_at = '2026-06-29 00:00:00' WHERE job_id = ?`, secondJob.ID)
+	_, err = secondDB.ExecContext(t.Context(), `UPDATE reviews SET created_at = '2026-06-29 00:00:00' WHERE job_id = ?`, secondJob.ID)
 	require.NoError(t, err)
 
 	resetRR := serveHuma(t, secondServer, http.MethodGet,
@@ -714,7 +714,7 @@ func TestHumaExportCIMetricsLegacy(t *testing.T) {
 
 	// Panel activity starting 2026-06-01 bounds the pre-panel era; the
 	// seeded jobs below predate it.
-	_, err := db.Exec(`INSERT INTO ci_pr_panels
+	_, err := db.ExecContext(t.Context(), `INSERT INTO ci_pr_panels
 		(github_repo, pr_number, head_sha, panel_run_uuid, created_at)
 		VALUES ('era/marker', 999999, 'sha-era', 'era-uuid', '2026-06-01 00:00:00')`)
 	require.NoError(t, err)
@@ -727,7 +727,7 @@ func TestHumaExportCIMetricsLegacy(t *testing.T) {
 			RepoID: repo.ID, GitRef: "legacy-sha", Agent: agent, Model: "legacy-model",
 		})
 		require.NoError(t, err)
-		_, err = db.Exec(`UPDATE review_jobs
+		_, err = db.ExecContext(t.Context(), `UPDATE review_jobs
 			SET status = 'done', enqueued_at = ?, started_at = ?, finished_at = ?
 			WHERE id = ?`,
 			"2026-03-01 10:00:00", "2026-03-01 10:00:00",
@@ -886,7 +886,7 @@ func TestHumaBackfillTokensUpdatesMatchingEligibleJob(t *testing.T) {
 		t, db, repo.ID, "usage-sha", "test-agent", "review text",
 	)
 	existing := `{"total_output_tokens":28800,"peak_context_tokens":118000}`
-	_, err := db.Exec(
+	_, err := db.ExecContext(t.Context(),
 		`UPDATE review_jobs SET session_id = ?, token_usage = ? WHERE id = ?`,
 		"session-1", existing, job.ID,
 	)
@@ -949,7 +949,7 @@ func TestHumaBackfillTokensSkipsReusedSession(t *testing.T) {
 	second := testutil.CreateCompletedReview(
 		t, db, repo.ID, "reuse-2", "test-agent", "review text",
 	)
-	_, err := db.Exec(
+	_, err := db.ExecContext(t.Context(),
 		`UPDATE review_jobs SET session_id = ? WHERE id IN (?, ?)`,
 		"reused-session", first.ID, second.ID,
 	)
@@ -1009,7 +1009,7 @@ func TestHumaBackfillTokensSkipsJobWithoutAgentRunEvidence(t *testing.T) {
 	job := testutil.CreateCompletedReview(
 		t, db, repo.ID, "pre-agent-failure", "test-agent", "review text",
 	)
-	_, err := db.Exec(
+	_, err := db.ExecContext(t.Context(),
 		`UPDATE review_jobs SET session_id = ?, token_usage = NULL, agent_invoked = 0 WHERE id = ?`,
 		"uninvoked-session", job.ID,
 	)

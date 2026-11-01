@@ -60,12 +60,12 @@ func TestLocalSynthesisCheckoutSurvivesCallerRemoval(t *testing.T) {
 	}})
 	run, members, _ := enqueuePanelRun(t, tc, "isolated-panel", []memberSpec{{name: "first", agent: "test"}, {name: "second", agent: "test"}})
 	setSynthesisAgent(t, tc, run, synthAgent)
-	_, err := tc.DB.Exec("UPDATE review_jobs SET worktree_path=? WHERE panel_run_uuid=?", caller, run)
+	_, err := tc.DB.ExecContext(t.Context(), "UPDATE review_jobs SET worktree_path=? WHERE panel_run_uuid=?", caller, run)
 	require.NoError(t, err)
 	completeMember(t, tc, members[0].ID, "test", strings.Repeat("member finding ", 1000))
 	completeMember(t, tc, members[1].ID, "test", strings.Repeat("another member finding ", 1000))
 	synth := releaseAndClaimSynthesis(t, tc, run)
-	_, err = tc.DB.Exec("UPDATE review_jobs SET session_id='old-synthesis-session',session_resumed=1,resume_source_job_uuid=uuid WHERE id=?", synth.ID)
+	_, err = tc.DB.ExecContext(t.Context(), "UPDATE review_jobs SET session_id='old-synthesis-session',session_resumed=1,resume_source_job_uuid=uuid WHERE id=?", synth.ID)
 	require.NoError(t, err)
 	synth.SessionID = "old-synthesis-session"
 	go func() { defer close(done); tc.Pool.processJob(testWorkerID, synth) }()
@@ -103,7 +103,7 @@ func TestLocalSynthesisCheckoutSurvivesCallerRemoval(t *testing.T) {
 	assert.Equal(t, "fresh-synthesis-session", got.SessionID)
 	assert.Nil(t, got.ResumeSourceJobUUID)
 	var resumed int
-	require.NoError(t, tc.DB.QueryRow("SELECT session_resumed FROM review_jobs WHERE id=?", synth.ID).Scan(&resumed))
+	require.NoError(t, tc.DB.QueryRowContext(t.Context(), "SELECT session_resumed FROM review_jobs WHERE id=?", synth.ID).Scan(&resumed))
 	assert.Zero(t, resumed)
 	assert.Equal(t, caller, got.WorktreePath)
 	assert.NoDirExists(t, path)

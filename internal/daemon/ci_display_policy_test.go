@@ -42,7 +42,7 @@ func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
 						{name: "first", agent: "test"},
 						{name: "second", agent: "test"},
 					})
-					_, err := tc.DB.Exec("UPDATE review_jobs SET min_severity = ? WHERE id = ?", policy.ci, synthJob.ID)
+					_, err := tc.DB.ExecContext(t.Context(), "UPDATE review_jobs SET min_severity = ? WHERE id = ?", policy.ci, synthJob.ID)
 					require.NoError(t, err)
 					output := "Review notes."
 					document := jsontext.Value(`{"schema_version":2,"summary":"Review notes.","verdict":"fail","findings":[{"severity":"low","problem":"Minor naming issue.","fix":"Rename it.","location":null},{"severity":"medium","problem":"Missing cleanup.","fix":"Close it.","location":null},{"severity":"high","problem":"State is lost.","fix":"Persist it.","location":null}]}`)
@@ -119,7 +119,7 @@ func TestSuccessfulPanelSynthesisInheritsThreshold(t *testing.T) {
 			agent.RegisterForTest(t, a)
 			runUUID, members, synthJob := enqueuePanelRun(t, tc, "threshold-synthesis", []memberSpec{{name: "first", agent: "test"}, {name: "second", agent: "test"}})
 			setSynthesisAgent(t, tc, runUUID, a.name)
-			_, err := tc.DB.Exec("UPDATE review_jobs SET min_severity=? WHERE id=?", policy.ci, synthJob.ID)
+			_, err := tc.DB.ExecContext(t.Context(), "UPDATE review_jobs SET min_severity=? WHERE id=?", policy.ci, synthJob.ID)
 			require.NoError(t, err)
 			for i, m := range members {
 				markMemberRunning(t, tc, m.ID)
@@ -185,7 +185,7 @@ func TestPanelDisplayPolicyAcrossOutcomes(t *testing.T) {
 				agent.RegisterForTest(t, a)
 				runUUID, members, synthJob := enqueuePanelRun(t, tc, "policy-outcome", []memberSpec{{name: "first", agent: "test"}, {name: "second", agent: "test"}})
 				setSynthesisAgent(t, tc, runUUID, a.Name())
-				_, err = tc.DB.Exec("UPDATE review_jobs SET min_severity=? WHERE id=?", policy.ci, synthJob.ID)
+				_, err = tc.DB.ExecContext(t.Context(), "UPDATE review_jobs SET min_severity=? WHERE id=?", policy.ci, synthJob.ID)
 				require.NoError(t, err)
 				for i, m := range members {
 					completion := storage.ReviewCompletion{

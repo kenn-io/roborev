@@ -116,7 +116,7 @@ func TestSessionIsolationMigration(t *testing.T) {
 
 	raw, err := openRawDB(dbPath)
 	require.NoError(t, err)
-	_, err = raw.Exec("ALTER TABLE review_jobs DROP COLUMN session_isolated")
+	_, err = raw.ExecContext(t.Context(), "ALTER TABLE review_jobs DROP COLUMN session_isolated")
 	require.NoError(t, err)
 	require.NoError(t, raw.Close())
 
@@ -124,7 +124,7 @@ func TestSessionIsolationMigration(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	var isolated bool
-	require.NoError(t, db.QueryRow("SELECT session_isolated FROM review_jobs WHERE id=?", job.ID).Scan(&isolated))
+	require.NoError(t, db.QueryRowContext(t.Context(), "SELECT session_isolated FROM review_jobs WHERE id=?", job.ID).Scan(&isolated))
 	assert.False(t, isolated, "migration preserves eligibility of existing sessions")
 	stored, err := db.GetJobByID(job.ID)
 	require.NoError(t, err)
@@ -134,7 +134,7 @@ func TestSessionIsolationMigration(t *testing.T) {
 
 	db, err = Open(dbPath)
 	require.NoError(t, err)
-	require.NoError(t, db.QueryRow("SELECT session_isolated FROM review_jobs WHERE id=?", job.ID).Scan(&isolated))
+	require.NoError(t, db.QueryRowContext(t.Context(), "SELECT session_isolated FROM review_jobs WHERE id=?", job.ID).Scan(&isolated))
 	assert.True(t, isolated, "reopening preserves the attempt's isolation marker")
 }
 
@@ -172,7 +172,7 @@ func TestClaimJobStartsFreshSessionWhileAnotherJobResumesIt(t *testing.T) {
 	var sessionID sql.NullString
 	var resumed, isolated bool
 	var resumeSource sql.NullString
-	require.NoError(t, db.QueryRow(`
+	require.NoError(t, db.QueryRowContext(t.Context(), `
 		SELECT session_id, session_resumed, session_isolated, resume_source_job_uuid
 		FROM review_jobs WHERE id = ?`, second.ID,
 	).Scan(&sessionID, &resumed, &isolated, &resumeSource))

@@ -63,7 +63,7 @@ func TestBrowserEndpointResolution(t *testing.T) {
 }
 
 func TestBrowserDialAddressUsesLoopbackForUnspecifiedBind(t *testing.T) {
-	listener, err := net.Listen("tcp", "0.0.0.0:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "0.0.0.0:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, listener.Close()) })
 	assert.True(t, net.ParseIP(dialAddress(listener.Addr()).Hostname()).IsLoopback())

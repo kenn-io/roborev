@@ -20,7 +20,7 @@ func TestMigrateReviewEndpoint(t *testing.T) {
 	repo := testutil.CreateTestRepo(t, db)
 	job := testutil.CreateCompletedReview(t, db, repo.ID, "legacy-head", "test", "No issues found.")
 	raw := `{"schema_version":0,"legacy":{"markdown":"The write loses data.","recorded_verdict":false}}`
-	_, err := db.Exec(`UPDATE reviews SET structured_output = ?, closed = 1, verdict_bool = 0 WHERE job_id = ?`, raw, job.ID)
+	_, err := db.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ?, closed = 1, verdict_bool = 0 WHERE job_id = ?`, raw, job.ID)
 	require.NoError(t, err)
 	review, err := db.GetReviewByJobID(job.ID)
 	require.NoError(t, err)

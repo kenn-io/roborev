@@ -16,7 +16,7 @@ func TestJobIDsSurviveRepositoryDeletion(t *testing.T) {
 	old := seedLegacyMarkdownReview(t, env.db, env.repo.ID, "archived", "Preserve this original review text.", 0, false)
 	require.NoError(t, env.db.migrateLegacyReviews())
 	var archives int
-	require.NoError(t, env.db.QueryRow(`SELECT count(*) FROM legacy_reviews WHERE job_id = ?`, old.jobID).Scan(&archives))
+	require.NoError(t, env.db.QueryRowContext(t.Context(), `SELECT count(*) FROM legacy_reviews WHERE job_id = ?`, old.jobID).Scan(&archives))
 	require.Equal(t, 1, archives)
 	require.NoError(t, env.db.DeleteRepo(env.repo.ID, true))
 	repo, err := env.db.GetOrCreateRepo(t.TempDir())
@@ -27,7 +27,7 @@ func TestJobIDsSurviveRepositoryDeletion(t *testing.T) {
 	require.NoError(t, env.db.restoreLegacyReviews())
 	_, err = env.db.GetReviewByJobID(job.ID)
 	require.ErrorIs(t, err, sql.ErrNoRows)
-	require.NoError(t, env.db.QueryRow(`SELECT count(*) FROM legacy_reviews WHERE job_id = ?`, old.jobID).Scan(&archives))
+	require.NoError(t, env.db.QueryRowContext(t.Context(), `SELECT count(*) FROM legacy_reviews WHERE job_id = ?`, old.jobID).Scan(&archives))
 	assert.Zero(t, archives)
 }
 
@@ -52,10 +52,10 @@ func TestMigrateJobIDsPreservesHistory(t *testing.T) {
 	}
 	orphan := seedLegacyMarkdownReview(t, db, repo.ID, "orphan", "An orphan archive reserves its old ID.", 0, false)
 	require.NoError(t, db.migrateLegacyReviews())
-	_, err = db.Exec(`DELETE FROM review_jobs WHERE id = ?`, orphan.jobID)
+	_, err = db.ExecContext(t.Context(), `DELETE FROM review_jobs WHERE id = ?`, orphan.jobID)
 	require.NoError(t, err)
 	var indexesBefore int
-	require.NoError(t, db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'index' AND tbl_name = 'review_jobs'`).Scan(&indexesBefore))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM sqlite_master WHERE type = 'index' AND tbl_name = 'review_jobs'`).Scan(&indexesBefore))
 	require.NoError(t, db.Close())
 	db, err = Open(path)
 	require.NoError(t, err)
@@ -65,13 +65,13 @@ func TestMigrateJobIDsPreservesHistory(t *testing.T) {
 	assert.Contains(t, review.Output, original.markdown)
 	assert.True(t, review.Closed)
 	var copied int
-	require.NoError(t, db.QueryRow(`SELECT count(*) FROM review_jobs WHERE git_ref LIKE 'copy-%'`).Scan(&copied))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM review_jobs WHERE git_ref LIKE 'copy-%'`).Scan(&copied))
 	assert.Equal(t, 205, copied)
 	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "after-upgrade", Agent: "test"})
 	require.NoError(t, err)
 	assert.Greater(t, job.ID, orphan.jobID)
 	var indexesAfter int
-	require.NoError(t, db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'index' AND tbl_name = 'review_jobs'`).Scan(&indexesAfter))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM sqlite_master WHERE type = 'index' AND tbl_name = 'review_jobs'`).Scan(&indexesAfter))
 	assert.Equal(t, indexesBefore, indexesAfter)
 	require.NoError(t, db.migrateJobIDs())
 	next, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "second-open", Agent: "test"})

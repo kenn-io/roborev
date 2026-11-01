@@ -152,7 +152,7 @@ func TestFindAvailablePort_Ephemeral(t *testing.T) {
 }
 
 func TestFindAvailablePort_IPv6Loopback(t *testing.T) {
-	ln, err := net.Listen("tcp", "[::1]:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "[::1]:0")
 	if err != nil {
 		t.Skipf("IPv6 loopback not available: %v", err)
 	}
@@ -525,7 +525,7 @@ func TestCleanupZombieDaemonsPreservesTargetSocket(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { os.RemoveAll(socketDir) })
 	socketPath := filepath.Join(socketDir, "d.sock")
-	ln, err := net.Listen("unix", socketPath)
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", socketPath)
 	require.NoError(t, err)
 	defer ln.Close()
 
@@ -992,7 +992,7 @@ func TestRequestGracefulDaemonShutdownRetriesServerErrors(t *testing.T) {
 
 func TestKillDaemonCleansDeadRuntimeWhenEndpointIsUnavailable(t *testing.T) {
 	testenv.SetDataDir(t)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	address := listener.Addr().String()
 	require.NoError(t, listener.Close())
@@ -1020,7 +1020,7 @@ func TestKillDaemonDoesNotRemoveReusedUnixSocket(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
 	socketPath := filepath.Join(socketDir, "daemon.sock")
-	listener, err := net.Listen("unix", socketPath)
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", socketPath)
 	require.NoError(t, err)
 	defer listener.Close()
 
@@ -1086,7 +1086,7 @@ func TestKillDaemonDoesNotStopAnotherDaemonOnThePort(t *testing.T) {
 func TestKillDaemonKeepsRecordWhenUnknownProcessDoesNotAnswer(t *testing.T) {
 	testenv.SetDataDir(t)
 	// Reserve a loopback port and close it so nothing answers there.
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	address := listener.Addr().String()
 	require.NoError(t, listener.Close())

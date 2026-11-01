@@ -65,7 +65,7 @@ func TestProcessJobStoresCoverageWithoutChangingPrompt(t *testing.T) {
 
 	sha := tc.GitRepo.CommitFile("coverage.go", "package coverage\n", "coverage review")
 	job := tc.createJobWithAgent(t, sha, baseline.NameStr)
-	_, err := tc.DB.Exec(`UPDATE review_jobs SET min_severity = ? WHERE id = ?`, "medium", job.ID)
+	_, err := tc.DB.ExecContext(t.Context(), `UPDATE review_jobs SET min_severity = ? WHERE id = ?`, "medium", job.ID)
 	require.NoError(t, err)
 	cfg := config.DefaultConfig()
 	excludes := config.ResolveExcludePatterns(t.Context(), tc.TmpDir, cfg, job.ReviewType)
@@ -129,7 +129,7 @@ func TestReviewFileCoverageForUnsupportedCompletionStaysUnknown(t *testing.T) {
 		RepoID: tc.Repo.ID, Agent: "test", GitRef: "fix", JobType: storage.JobTypeFix,
 	})
 	require.NoError(t, err)
-	_, err = tc.DB.Exec(`UPDATE review_jobs SET status = 'running' WHERE id = ?`, fix.ID)
+	_, err = tc.DB.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'running' WHERE id = ?`, fix.ID)
 	require.NoError(t, err)
 	require.NoError(t, tc.DB.CompleteFixJob(fix.ID, "test", "fix output", ""))
 	fixReview, err := tc.DB.GetReviewByJobID(fix.ID)

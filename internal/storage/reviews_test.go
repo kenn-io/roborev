@@ -148,7 +148,7 @@ func TestReviewUUIDGuards(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, review.UUID)
 		replacedUUID := uuid.New()
-		_, err = env.db.Exec(`UPDATE reviews SET uuid = ?, closed = 0 WHERE job_id = ?`, replacedUUID, env.job.ID)
+		_, err = env.db.ExecContext(t.Context(), `UPDATE reviews SET uuid = ?, closed = 0 WHERE job_id = ?`, replacedUUID, env.job.ID)
 		require.NoError(t, err)
 
 		_, err = env.db.AddCommentToJobWithSourceIfReviewUUID(
@@ -223,14 +223,14 @@ func TestGetAllCommentsForJob(t *testing.T) {
 	t2 := "2026-03-15T11:00:00Z"
 	t3 := "2026-03-15T12:00:00Z"
 
-	_, err := db.Exec(
+	_, err := db.ExecContext(t.Context(),
 		`INSERT INTO responses (job_id, responder, response, uuid, source_machine_id, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
 		job.ID, "alice", "Job-based comment", uuid.New(), machineID, t1,
 	)
 	require.NoError(t, err)
 
-	_, err = db.Exec(
+	_, err = db.ExecContext(t.Context(),
 		`INSERT INTO responses (commit_id, responder, response, uuid, source_machine_id, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
 		commit.ID, "bob", "Legacy commit comment", uuid.New(), machineID, t2,
@@ -271,7 +271,7 @@ func TestGetAllCommentsForJob(t *testing.T) {
 			DiffContent: diff,
 		})
 		require.NoError(t, err)
-		_, err = db.Exec(
+		_, err = db.ExecContext(t.Context(),
 			`INSERT INTO responses (job_id, responder, response, uuid, source_machine_id, created_at)
 			 VALUES (?, ?, ?, ?, ?, ?)`,
 			dirtyJob.ID, "dana", "Dirty job comment", uuid.New(), machineID, t3,
@@ -295,7 +295,7 @@ func TestGetAllCommentsForJob(t *testing.T) {
 	t.Run("deduplicates overlapping comments", func(t *testing.T) {
 		// Insert a response linked to both job_id AND commit_id to
 		// exercise the dedup branch — it appears in both queries.
-		_, err := db.Exec(
+		_, err := db.ExecContext(t.Context(),
 			`INSERT INTO responses (job_id, commit_id, responder, response, uuid, source_machine_id, created_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 			job.ID, commit.ID, "charlie", "Dual-linked comment",
@@ -600,7 +600,7 @@ func TestGetReviewByJobIDUsesStoredVerdict(t *testing.T) {
 		}, "No issues found.")
 
 		// Simulate legacy row by setting verdict_bool to NULL
-		if _, err := db.Exec(`UPDATE reviews SET verdict_bool = NULL WHERE job_id = ?`, job.ID); err != nil {
+		if _, err := db.ExecContext(t.Context(), `UPDATE reviews SET verdict_bool = NULL WHERE job_id = ?`, job.ID); err != nil {
 			require.NoError(t, err, "nullify verdict_bool: %v")
 		}
 
@@ -1093,7 +1093,7 @@ func TestFindCompatibleReusableSessionCandidatesMatchesBranchAndSource(t *testin
 		require.NoError(t, claimErr)
 		require.Equal(t, job.ID, claimed.ID)
 		require.NoError(t, completeReviewFixture(db, job.ID, "test", "prompt", "No issues found."))
-		_, updateErr := db.Exec(`UPDATE review_jobs SET session_id = ? WHERE id = ?`, sessionID, job.ID)
+		_, updateErr := db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = ? WHERE id = ?`, sessionID, job.ID)
 		require.NoError(t, updateErr)
 		return *job
 	}
@@ -1160,7 +1160,7 @@ func TestFindCompatibleReusableSessionCandidatesMatchesCIPRNumber(t *testing.T) 
 
 func setJobSession(t *testing.T, db *DB, jobID int64, sessionID string) {
 	t.Helper()
-	_, err := db.Exec(`UPDATE review_jobs SET session_id = ? WHERE id = ?`, sessionID, jobID)
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = ? WHERE id = ?`, sessionID, jobID)
 	require.NoError(t, err)
 }
 

@@ -68,14 +68,14 @@ func seedSortJobs(t *testing.T, db *DB, base time.Time) []int64 {
 	for i, spec := range jobs {
 		sha := fmt.Sprintf("sort-sha%d", i)
 		job := enqueueJob(t, db, spec.repo.ID, createCommit(t, db, spec.repo.ID, sha).ID, sha)
-		_, err := db.Exec(`UPDATE review_jobs SET branch = ?, agent = ?, job_type = ?, review_type = ?,
+		_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET branch = ?, agent = ?, job_type = ?, review_type = ?,
 			panel_role = NULLIF(?, ''), panel_run_uuid = CASE WHEN ? = '' THEN NULL ELSE ? END,
 			status = ?, enqueued_at = ?, started_at = ?, finished_at = ?, token_usage = ? WHERE id = ?`,
 			spec.branch, spec.agent, spec.jobType, spec.reviewType, spec.panelRole, spec.panelRole, run,
 			spec.status, spec.enqueued, spec.started, spec.finished, spec.usage, job.ID)
 		require.NoError(t, err)
 		if spec.review != nil {
-			_, err = db.Exec(`INSERT INTO reviews (job_id, agent, output, closed, verdict_bool) VALUES (?, ?, ?, ?, ?)`,
+			_, err = db.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, output, closed, verdict_bool) VALUES (?, ?, ?, ?, ?)`,
 				job.ID, spec.agent, spec.review.output, spec.review.closed, spec.review.verdict)
 			require.NoError(t, err)
 		}
@@ -85,7 +85,7 @@ func seedSortJobs(t *testing.T, db *DB, base time.Time) []int64 {
 	for i, usage := range []any{`{"has_cost":true,"cost_usd":0.2}`, nil} {
 		sha := fmt.Sprintf("sort-member%d", i)
 		member := enqueueJob(t, db, beta.ID, createCommit(t, db, beta.ID, sha).ID, sha)
-		_, err := db.Exec(`UPDATE review_jobs SET panel_role = ?, panel_run_uuid = ?, status = 'done',
+		_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET panel_role = ?, panel_run_uuid = ?, status = 'done',
 			started_at = ?, finished_at = ?, token_usage = ? WHERE id = ?`,
 			PanelRoleMember, run, at(0), at(150*time.Second), usage, member.ID)
 		require.NoError(t, err)
@@ -213,10 +213,10 @@ func TestListJobsElapsedPagesKeepJobsThatChangeBetweenPages(t *testing.T) {
 	// After the first page, the running job (50s at asOf) finishes an hour
 	// later, and the queued job starts and runs for two hours. Measured at
 	// their real times, both would sort above the cursor and be skipped.
-	_, err = db.Exec(`UPDATE review_jobs SET status = 'done', finished_at = ? WHERE id = ?`,
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'done', finished_at = ? WHERE id = ?`,
 		asOf.Add(time.Hour).Format(time.RFC3339), ids[3])
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE review_jobs SET status = 'done', started_at = ?, finished_at = ? WHERE id = ?`,
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'done', started_at = ?, finished_at = ? WHERE id = ?`,
 		asOf.Add(time.Minute).Format(time.RFC3339), asOf.Add(2*time.Hour).Format(time.RFC3339), ids[4])
 	require.NoError(t, err)
 
@@ -234,7 +234,7 @@ func TestListJobsElapsedPagesKeepJobStartedInTheSameSecondAsReference(t *testing
 	_, jobs := seedJobs(t, db, "/tmp/sort/same-second", 3)
 	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	asOf := base.Add(500 * time.Millisecond)
-	_, err := db.Exec(`UPDATE review_jobs SET status = 'done', started_at = ?, finished_at = ? WHERE id = ?`,
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'done', started_at = ?, finished_at = ? WHERE id = ?`,
 		preciseTimestampAt(base.Add(-100*time.Second)), preciseTimestampAt(base), jobs[0].ID)
 	require.NoError(t, err)
 	sort := WithSort(JobSort{Column: JobSortElapsed, AsOf: asOf})
@@ -246,7 +246,7 @@ func TestListJobsElapsedPagesKeepJobStartedInTheSameSecondAsReference(t *testing
 
 	// The last queued job starts 300ms after the reference time, in the same
 	// second. As of the reference time it has not started.
-	_, err = db.Exec(`UPDATE review_jobs SET status = 'running', started_at = ? WHERE id = ?`,
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'running', started_at = ? WHERE id = ?`,
 		preciseTimestampAt(asOf.Add(300*time.Millisecond)), jobs[1].ID)
 	require.NoError(t, err)
 
@@ -264,10 +264,10 @@ func TestListJobsElapsedPagesKeepJobCompletedInTheSameSecondAsReference(t *testi
 	_, jobs := seedJobs(t, db, "/tmp/sort/complete-same-second", 2)
 	asOf := time.Now()
 	// As of asOf, the running job has run 10s and the done job ran 9.5s.
-	_, err := db.Exec(`UPDATE review_jobs SET status = 'running', started_at = ? WHERE id = ?`,
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'running', started_at = ? WHERE id = ?`,
 		preciseTimestampAt(asOf.Add(-10*time.Second)), jobs[0].ID)
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE review_jobs SET status = 'done', started_at = ?, finished_at = ? WHERE id = ?`,
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'done', started_at = ?, finished_at = ? WHERE id = ?`,
 		preciseTimestampAt(asOf.Add(-20*time.Second)), preciseTimestampAt(asOf.Add(-10500*time.Millisecond)), jobs[1].ID)
 	require.NoError(t, err)
 	sort := WithSort(JobSort{Column: JobSortElapsed, Ascending: true, AsOf: asOf})

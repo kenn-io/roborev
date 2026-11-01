@@ -366,7 +366,7 @@ func TestWorkerStoresStructuredCustomReviewWithEveryFinding(t *testing.T) {
 
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	job := tc.createJobWithAgent(t, sha, agentName)
-	_, err := tc.DB.Exec(
+	_, err := tc.DB.ExecContext(t.Context(),
 		`UPDATE review_jobs SET review_type = ?, min_severity = ? WHERE id = ?`,
 		"custom-state", "high", job.ID,
 	)
@@ -466,7 +466,7 @@ func TestWorkerUsesConfiguredSeverityForStructuredVerdict(t *testing.T) {
 
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	job := tc.createJobWithAgent(t, sha, agentName)
-	_, err := tc.DB.Exec(
+	_, err := tc.DB.ExecContext(t.Context(),
 		`UPDATE review_jobs SET review_type = ? WHERE id = ?`,
 		"custom-state", job.ID,
 	)
@@ -1257,7 +1257,7 @@ func TestCaptureTokenUsageForSessionRejectsReenqueuedJob(t *testing.T) {
 	))
 
 	tc.Pool.tokenUsageFetcher = func(context.Context, string) (*tokens.Usage, error) {
-		_, err := tc.DB.Exec(`
+		_, err := tc.DB.ExecContext(t.Context(), `
 			UPDATE review_jobs
 			SET status = 'done', started_at = '2026-08-20T16:00:00.987654321Z',
 			    finished_at = '2026-08-20T16:00:02Z', session_id = NULL,
@@ -1835,7 +1835,7 @@ func TestProcessJob_PromotedAutoDesignAppendsExistingClassifierLog(t *testing.T)
 	})
 	require.NoError(t, err)
 	require.NotZero(t, jobID)
-	_, err = tc.DB.Exec("UPDATE review_jobs SET prompt_prebuilt = 1 WHERE id = ?", jobID)
+	_, err = tc.DB.ExecContext(t.Context(), "UPDATE review_jobs SET prompt_prebuilt = 1 WHERE id = ?", jobID)
 	require.NoError(t, err)
 	require.NoError(t, tc.DB.SaveJobPrompt(jobID, "prebuilt design review prompt"))
 	require.NoError(t, os.MkdirAll(JobLogDir(), 0o700))
@@ -1902,7 +1902,7 @@ func TestProcessJob_RetriedAutoDesignTruncatesPreviousReviewLog(t *testing.T) {
 		ReviewType: "design",
 	})
 	require.NoError(t, err)
-	_, err = tc.DB.Exec("UPDATE review_jobs SET prompt_prebuilt = 1 WHERE id = ?", jobID)
+	_, err = tc.DB.ExecContext(t.Context(), "UPDATE review_jobs SET prompt_prebuilt = 1 WHERE id = ?", jobID)
 	require.NoError(t, err)
 	require.NoError(t, tc.DB.SaveJobPrompt(jobID, "prebuilt design review prompt"))
 	require.NoError(t, os.MkdirAll(JobLogDir(), 0o700))
@@ -2103,22 +2103,23 @@ func TestWriteDiffSnapshot_WritesExternalReadableTempFile(t *testing.T) {
 	repo := testutil.NewTestRepoWithCommit(t)
 	worktreeDir := filepath.Join(t.TempDir(), "feature-worktree")
 
-	cmd := exec.Command("git", "-C", repo.Root, "worktree", "add", "-b", "feature/worktree", worktreeDir, "HEAD")
+	cmd := exec.CommandContext(t.Context(), "git", "-C", repo.Root, "worktree", "add", "-b", "feature/worktree", worktreeDir, "HEAD")
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "git worktree add failed: %s", out)
 	t.Cleanup(func() {
-		_ = exec.Command("git", "-C", repo.Root, "worktree", "remove", "--force", worktreeDir).Run()
+		// t.Context is already canceled when cleanups run.
+		_ = exec.CommandContext(context.WithoutCancel(t.Context()), "git", "-C", repo.Root, "worktree", "remove", "--force", worktreeDir).Run()
 	})
 
 	require.NoError(t, os.WriteFile(filepath.Join(worktreeDir, "feature.txt"), []byte("feature change\n"), 0o644))
-	cmd = exec.Command("git", "-C", worktreeDir, "add", "feature.txt")
+	cmd = exec.CommandContext(t.Context(), "git", "-C", worktreeDir, "add", "feature.txt")
 	out, err = cmd.CombinedOutput()
 	require.NoError(t, err, "git add failed: %s", out)
-	cmd = exec.Command("git", "-C", worktreeDir, "commit", "-m", "worktree change")
+	cmd = exec.CommandContext(t.Context(), "git", "-C", worktreeDir, "commit", "-m", "worktree change")
 	out, err = cmd.CombinedOutput()
 	require.NoError(t, err, "git commit failed: %s", out)
 
-	shaBytes, err := exec.Command("git", "-C", worktreeDir, "rev-parse", "HEAD").Output()
+	shaBytes, err := exec.CommandContext(t.Context(), "git", "-C", worktreeDir, "rev-parse", "HEAD").Output()
 	require.NoError(t, err)
 	sha := strings.TrimSpace(string(shaBytes))
 
@@ -2127,7 +2128,7 @@ func TestWriteDiffSnapshot_WritesExternalReadableTempFile(t *testing.T) {
 	require.NotEmpty(t, diffFile, "expected diff file for worktree-backed review")
 	require.NotNil(t, cleanup)
 
-	gitDirBytes, err := exec.Command("git", "-C", worktreeDir, "rev-parse", "--git-dir").Output()
+	gitDirBytes, err := exec.CommandContext(t.Context(), "git", "-C", worktreeDir, "rev-parse", "--git-dir").Output()
 	require.NoError(t, err)
 	gitDir := strings.TrimSpace(string(gitDirBytes))
 	if !filepath.IsAbs(gitDir) {
@@ -2468,7 +2469,7 @@ func TestProcessJob_TaskAllowsFreeFormOutputWithUnknownVerdict(t *testing.T) {
 	assert.Equal(t, "Task completed successfully.", reviewRow.Output)
 
 	var verdict sql.NullInt64
-	require.NoError(t, tc.DB.QueryRow(
+	require.NoError(t, tc.DB.QueryRowContext(t.Context(),
 		`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID,
 	).Scan(&verdict))
 	assert.False(t, verdict.Valid)
@@ -2773,7 +2774,7 @@ func TestFailOrRetryInner_CIQuotaFailsOverToBackup(t *testing.T) {
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 
 	job := tc.createJobWithAgent(t, sha, "codex")
-	_, err := tc.DB.Exec(
+	_, err := tc.DB.ExecContext(t.Context(),
 		`UPDATE review_jobs
 		 SET source = ?, ci_base_branch = ?, backup_agent = ?, backup_model = ?
 		 WHERE id = ?`,
@@ -3721,7 +3722,7 @@ func TestFailOrRetryInner_SetsRetryNotBefore(t *testing.T) {
 	tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
 
 	var stored sql.NullString
-	require.NoError(t, tc.DB.QueryRow(`SELECT retry_not_before FROM review_jobs WHERE id = ?`, job.ID).Scan(&stored))
+	require.NoError(t, tc.DB.QueryRowContext(t.Context(), `SELECT retry_not_before FROM review_jobs WHERE id = ?`, job.ID).Scan(&stored))
 	require.True(t, stored.Valid, "retry_not_before should be set with non-zero retryBackoff")
 
 	parsed, err := time.Parse(time.RFC3339Nano, stored.String)
@@ -4183,7 +4184,7 @@ func TestProcessCompactJobStoresCompactVerdict(t *testing.T) {
 
 	tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
 	var verdict sql.NullInt64
-	require.NoError(t, tc.DB.QueryRow(
+	require.NoError(t, tc.DB.QueryRowContext(t.Context(),
 		`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID,
 	).Scan(&verdict))
 	require.True(t, verdict.Valid)
@@ -4341,7 +4342,7 @@ func (c *workerTestContext) createAndClaimClassifyJob(
 	})
 	require.NoError(t, err)
 	// Mark the job as auto_design source so it participates in dedup.
-	_, err = c.DB.Exec(`UPDATE review_jobs SET source = 'auto_design' WHERE id = ?`, job.ID)
+	_, err = c.DB.ExecContext(t.Context(), `UPDATE review_jobs SET source = 'auto_design' WHERE id = ?`, job.ID)
 	require.NoError(t, err)
 	claimed, err := c.DB.ClaimJob(testWorkerID)
 	require.NoError(t, err)
@@ -4370,7 +4371,7 @@ func TestWorker_ClassifyJob_Yes_PromotesToDesignReview(t *testing.T) {
 	assert.Nil(after.StartedAt, "started_at cleared")
 
 	var n int
-	require.NoError(t, tc.DB.QueryRow(
+	require.NoError(t, tc.DB.QueryRowContext(t.Context(),
 		`SELECT COUNT(*) FROM review_jobs rj JOIN commits c ON rj.commit_id = c.id
 		 WHERE rj.repo_id = ? AND c.sha = ? AND rj.source = 'auto_design'`,
 		tc.Repo.ID, "feedcafe").Scan(&n))
@@ -4477,7 +4478,7 @@ func TestServerWakesWorkerPoolWhenWorkBecomesClaimable(t *testing.T) {
 		}},
 		{"rebuttal", func(t *testing.T, f *fixture) {
 			parent := makeParent(t, f, "test")
-			_, err := f.DB.Exec("UPDATE review_jobs SET session_id = 'original-session' WHERE id = ?", parent.ID)
+			_, err := f.DB.ExecContext(t.Context(), "UPDATE review_jobs SET session_id = 'original-session' WHERE id = ?", parent.ID)
 			require.NoError(t, err)
 			f.postTrigger("/api/rebuttal", RebuttalRequest{JobID: parent.ID, Finding: "The guard is missing.", Comment: "Check the caller.", Commenter: "operator"}, http.StatusCreated)
 		}},
@@ -4600,7 +4601,7 @@ func TestWorker_ClassifyJob_No_MarksSkipped(t *testing.T) {
 	assert.Equal("local rename only", after.SkipReason)
 
 	var n int
-	require.NoError(t, tc.DB.QueryRow(
+	require.NoError(t, tc.DB.QueryRowContext(t.Context(),
 		`SELECT COUNT(*) FROM review_jobs rj JOIN commits c ON rj.commit_id = c.id
 		 WHERE rj.repo_id = ? AND c.sha = ? AND rj.source = 'auto_design'`,
 		tc.Repo.ID, "beefc0de").Scan(&n))
@@ -4616,7 +4617,7 @@ func TestProcessJob_PromptSaveFailureRetriesBeforeAgentRuns(t *testing.T) {
 		calls++
 		return "No issues found.", nil
 	}})
-	_, err := tc.DB.Exec(`CREATE TRIGGER reject_prompt BEFORE INSERT ON job_content
+	_, err := tc.DB.ExecContext(t.Context(), `CREATE TRIGGER reject_prompt BEFORE INSERT ON job_content
 		BEGIN SELECT RAISE(ABORT, 'prompt write rejected'); END`)
 	require.NoError(t, err)
 	job := tc.createAndClaimJobWithAgent(t, testutil.GetHeadSHA(t, tc.TmpDir), testWorkerID, agentName)

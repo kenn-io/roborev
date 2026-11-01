@@ -34,7 +34,7 @@ func TestUpsertPulledResponse_MissingParentJob(t *testing.T) {
 
 	// Verify no response was inserted
 	var count int
-	err = db.QueryRow(`SELECT COUNT(*) FROM responses WHERE uuid = ?`, response.UUID).Scan(&count)
+	err = db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM responses WHERE uuid = ?`, response.UUID).Scan(&count)
 	require.NoError(t, err, "Failed to count responses")
 	assert.Equal(t, 0, count, "Expected 0 responses for missing parent job")
 }
@@ -62,7 +62,7 @@ func TestUpsertPulledResponse_WithParentJob(t *testing.T) {
 	// Verify response was inserted
 	var count int
 	var source string
-	err = h.db.QueryRow(
+	err = h.db.QueryRowContext(t.Context(),
 		`SELECT COUNT(*), MAX(source) FROM responses WHERE uuid = ?`, response.UUID,
 	).Scan(&count, &source)
 	require.NoError(t, err, "Failed to count responses: %v")
@@ -268,7 +268,7 @@ func TestMarkJobsSyncedSkipsRowsChangedSinceSnapshot(t *testing.T) {
 	require.NoError(t, h.db.MarkJobsSynced([]JobSyncMark{NewJobSyncMark(snapshot[0])}))
 
 	var syncedAt sql.NullString
-	require.NoError(t, h.db.QueryRow(`SELECT synced_at FROM review_jobs WHERE id = ?`, job.ID).Scan(&syncedAt))
+	require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT synced_at FROM review_jobs WHERE id = ?`, job.ID).Scan(&syncedAt))
 	assert.False(t, syncedAt.Valid, "synced_at must stay NULL for a row changed since the snapshot")
 
 	stillToSync, err := h.db.GetJobsToSync(h.machineID, 100)
@@ -297,7 +297,7 @@ func TestMarkJobsSyncedSkipsCostWrittenInSameSecond(t *testing.T) {
 	// Pin the row to a fixed second with no token usage, as the terminal write
 	// leaves it during the capture window.
 	const terminalUpdatedAt = "2026-06-07T15:26:10Z"
-	_, err := h.db.Exec(
+	_, err := h.db.ExecContext(t.Context(),
 		`UPDATE review_jobs SET updated_at = ?, token_usage = NULL, synced_at = NULL WHERE id = ?`,
 		terminalUpdatedAt, job.ID)
 	require.NoError(t, err)
@@ -311,7 +311,7 @@ func TestMarkJobsSyncedSkipsCostWrittenInSameSecond(t *testing.T) {
 
 	// Token usage is captured in the same second: token_usage changes but the
 	// formatted updated_at second is unchanged (identical string).
-	_, err = h.db.Exec(
+	_, err = h.db.ExecContext(t.Context(),
 		`UPDATE review_jobs SET token_usage = ?, updated_at = ? WHERE id = ?`,
 		`{"has_cost":true,"total_cost_usd":0.5}`, terminalUpdatedAt, job.ID)
 	require.NoError(t, err)
@@ -320,7 +320,7 @@ func TestMarkJobsSyncedSkipsCostWrittenInSameSecond(t *testing.T) {
 	require.NoError(t, h.db.MarkJobsSynced([]JobSyncMark{NewJobSyncMark(snapshot[0])}))
 
 	var syncedAt sql.NullString
-	require.NoError(t, h.db.QueryRow(`SELECT synced_at FROM review_jobs WHERE id = ?`, job.ID).Scan(&syncedAt))
+	require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT synced_at FROM review_jobs WHERE id = ?`, job.ID).Scan(&syncedAt))
 	assert.False(t, syncedAt.Valid, "synced_at must stay NULL when token usage changed in the same second")
 
 	stillToSync, err := h.db.GetJobsToSync(h.machineID, 100)
@@ -342,7 +342,7 @@ func TestMarkJobsSyncedSkipsReenqueuedRowInSameSecond(t *testing.T) {
 
 	// Pin the terminal row to a fixed second with no cost (unpriced done).
 	const sameSecond = "2026-06-07T15:26:10Z"
-	_, err := h.db.Exec(
+	_, err := h.db.ExecContext(t.Context(),
 		`UPDATE review_jobs SET updated_at = ?, token_usage = NULL, synced_at = NULL WHERE id = ?`,
 		sameSecond, job.ID)
 	require.NoError(t, err)
@@ -357,13 +357,13 @@ func TestMarkJobsSyncedSkipsReenqueuedRowInSameSecond(t *testing.T) {
 	// ReenqueueJob also sets updated_at, so pin it back to the same second; now
 	// updated_at and token_usage alone would still match the snapshot.
 	require.NoError(t, h.db.ReenqueueJob(job.ID, ReenqueueOpts{}))
-	_, err = h.db.Exec(`UPDATE review_jobs SET updated_at = ? WHERE id = ?`, sameSecond, job.ID)
+	_, err = h.db.ExecContext(t.Context(), `UPDATE review_jobs SET updated_at = ? WHERE id = ?`, sameSecond, job.ID)
 	require.NoError(t, err)
 
 	require.NoError(t, h.db.MarkJobsSynced([]JobSyncMark{mark}))
 
 	var syncedAt sql.NullString
-	require.NoError(t, h.db.QueryRow(`SELECT synced_at FROM review_jobs WHERE id = ?`, job.ID).Scan(&syncedAt))
+	require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT synced_at FROM review_jobs WHERE id = ?`, job.ID).Scan(&syncedAt))
 	assert.False(t, syncedAt.Valid,
 		"reset synced_at=NULL must survive: a stale mark cannot match the re-enqueued row")
 }
@@ -382,28 +382,28 @@ func TestMarkJobsSyncedSkipsRowWithChangedAttemptMarkers(t *testing.T) {
 		{
 			name: "session_id changed",
 			diverge: func(t *testing.T, h *syncTestHelper, jobID int64) {
-				_, err := h.db.Exec(`UPDATE review_jobs SET session_id = 's2' WHERE id = ?`, jobID)
+				_, err := h.db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = 's2' WHERE id = ?`, jobID)
 				require.NoError(t, err)
 			},
 		},
 		{
 			name: "agent_invoked changed",
 			diverge: func(t *testing.T, h *syncTestHelper, jobID int64) {
-				_, err := h.db.Exec(`UPDATE review_jobs SET agent_invoked = 0 WHERE id = ?`, jobID)
+				_, err := h.db.ExecContext(t.Context(), `UPDATE review_jobs SET agent_invoked = 0 WHERE id = ?`, jobID)
 				require.NoError(t, err)
 			},
 		},
 		{
 			name: "enqueue time changed",
 			diverge: func(t *testing.T, h *syncTestHelper, jobID int64) {
-				_, err := h.db.Exec(`UPDATE review_jobs SET enqueued_at = ? WHERE id = ?`, preciseTimestampAt(time.Now().Add(time.Hour)), jobID)
+				_, err := h.db.ExecContext(t.Context(), `UPDATE review_jobs SET enqueued_at = ? WHERE id = ?`, preciseTimestampAt(time.Now().Add(time.Hour)), jobID)
 				require.NoError(t, err)
 			},
 		},
 		{
 			name: "producing machine changed",
 			diverge: func(t *testing.T, h *syncTestHelper, jobID int64) {
-				_, err := h.db.Exec(`UPDATE review_jobs SET source_machine_id = ? WHERE id = ?`, testUUID("other-executor"), jobID)
+				_, err := h.db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = ? WHERE id = ?`, testUUID("other-executor"), jobID)
 				require.NoError(t, err)
 			},
 		},
@@ -415,7 +415,7 @@ func TestMarkJobsSyncedSkipsRowWithChangedAttemptMarkers(t *testing.T) {
 			job := h.createCompletedJob("attempt-marker-sha")
 
 			// A pushed terminal attempt with a known session and agent marker.
-			_, err := h.db.Exec(
+			_, err := h.db.ExecContext(t.Context(),
 				`UPDATE review_jobs SET updated_at = ?, token_usage = NULL,
 				     session_id = 's1', agent_invoked = 1, synced_at = NULL WHERE id = ?`,
 				fixedSecond, job.ID)
@@ -432,7 +432,7 @@ func TestMarkJobsSyncedSkipsRowWithChangedAttemptMarkers(t *testing.T) {
 			require.NoError(t, h.db.MarkJobsSynced([]JobSyncMark{mark}))
 
 			var syncedAt sql.NullString
-			require.NoError(t, h.db.QueryRow(
+			require.NoError(t, h.db.QueryRowContext(t.Context(),
 				`SELECT synced_at FROM review_jobs WHERE id = ?`, job.ID).Scan(&syncedAt))
 			assert.False(t, syncedAt.Valid,
 				"synced_at must stay NULL when %s since the snapshot", tc.name)
@@ -468,7 +468,7 @@ func TestMarkJobsSyncedSkipsSameSecondRecompletionWithChangedAttemptMetadata(t *
 			h := newSyncTestHelper(t)
 			job := h.createCompletedJob("same-second-recompletion-sha")
 
-			_, err := h.db.Exec(
+			_, err := h.db.ExecContext(t.Context(),
 				`UPDATE review_jobs SET updated_at = ?, token_usage = NULL,
 				     status = 'failed', session_id = NULL, agent_invoked = 1,
 				     agent = 'codex', model = 'o3', provider = 'openai',
@@ -483,7 +483,7 @@ func TestMarkJobsSyncedSkipsSameSecondRecompletionWithChangedAttemptMetadata(t *
 			require.Len(t, snapshot, 1)
 			mark := NewJobSyncMark(snapshot[0])
 
-			_, err = h.db.Exec(
+			_, err = h.db.ExecContext(t.Context(),
 				`UPDATE review_jobs SET `+tc.diverge+`,
 				     updated_at = ?, token_usage = NULL,
 				     status = 'failed', session_id = NULL, agent_invoked = 1
@@ -494,7 +494,7 @@ func TestMarkJobsSyncedSkipsSameSecondRecompletionWithChangedAttemptMetadata(t *
 			require.NoError(t, h.db.MarkJobsSynced([]JobSyncMark{mark}))
 
 			var syncedAt sql.NullString
-			require.NoError(t, h.db.QueryRow(
+			require.NoError(t, h.db.QueryRowContext(t.Context(),
 				`SELECT synced_at FROM review_jobs WHERE id = ?`, job.ID).Scan(&syncedAt))
 			assert.False(t, syncedAt.Valid,
 				"synced_at must stay NULL when %s since the pushed snapshot", tc.name)
@@ -516,7 +516,7 @@ func TestSaveJobTokenUsageInvalidatesSyncCursor(t *testing.T) {
 	// in the same second as synced_at, so the cursor would never re-select it
 	// on its own.
 	const sameSecond = "2026-06-07T15:26:10Z"
-	_, err := h.db.Exec(
+	_, err := h.db.ExecContext(t.Context(),
 		`UPDATE review_jobs SET session_id = ?, synced_at = ?, updated_at = ? WHERE id = ?`,
 		"sess-1", sameSecond, sameSecond, job.ID)
 	require.NoError(t, err)
@@ -529,7 +529,7 @@ func TestSaveJobTokenUsageInvalidatesSyncCursor(t *testing.T) {
 	require.NoError(t, h.db.SaveJobTokenUsage(job.ID, "sess-1", `{"has_cost":true,"total_cost_usd":0.5}`))
 
 	var syncedAt sql.NullString
-	require.NoError(t, h.db.QueryRow(`SELECT synced_at FROM review_jobs WHERE id = ?`, job.ID).Scan(&syncedAt))
+	require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT synced_at FROM review_jobs WHERE id = ?`, job.ID).Scan(&syncedAt))
 	assert.False(t, syncedAt.Valid, "token-usage write must clear synced_at")
 
 	after, err := h.db.GetJobsToSync(h.machineID, 100)
@@ -658,7 +658,7 @@ func TestGetJobsToSync_RequiresRepoIdentity(t *testing.T) {
 
 	// Verify repo has no identity initially (GetOrCreateRepo doesn't set one)
 	var identity sql.NullString
-	err := h.db.QueryRow(`SELECT identity FROM repos WHERE id = ?`, h.repo.ID).Scan(&identity)
+	err := h.db.QueryRowContext(t.Context(), `SELECT identity FROM repos WHERE id = ?`, h.repo.ID).Scan(&identity)
 	require.NoError(t, err, "Failed to query repo: %v")
 
 	assert.False(t, identity.Valid && identity.String != "")
@@ -809,7 +809,7 @@ func TestUpsertPulledReviewLeavesTaskOutputUnrated(t *testing.T) {
 	}))
 
 	var verdict sql.NullInt64
-	require.NoError(t, h.db.QueryRow(`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID).Scan(&verdict))
+	require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID).Scan(&verdict))
 	assert.False(t, verdict.Valid, "task output must stay unrated on pull, as it does locally")
 }
 
@@ -821,9 +821,9 @@ func TestGetReviewsToSyncSkipsMarkdown(t *testing.T) {
 			h := newSyncTestHelper(t)
 			job := h.createCompletedJob("markdown-sync")
 			require.NoError(t, h.db.MarkJobSynced(job.ID))
-			_, err := h.db.Exec(`UPDATE review_jobs SET job_type = ? WHERE id = ?`, jobType, job.ID)
+			_, err := h.db.ExecContext(t.Context(), `UPDATE review_jobs SET job_type = ? WHERE id = ?`, jobType, job.ID)
 			require.NoError(t, err)
-			_, err = h.db.Exec(`UPDATE reviews SET structured_output = NULL, output = 'Legacy Markdown' WHERE job_id = ?`, job.ID)
+			_, err = h.db.ExecContext(t.Context(), `UPDATE reviews SET structured_output = NULL, output = 'Legacy Markdown' WHERE job_id = ?`, job.ID)
 			require.NoError(t, err)
 			reviews, err := h.db.GetReviewsToSync(h.machineID, 10)
 			require.NoError(t, err)

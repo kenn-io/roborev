@@ -33,7 +33,7 @@ func seedExportCICostJob(t *testing.T, db *DB, repoID int64, seed ciCostJobSeed)
 		PanelRunUUID: &runUUID, PanelRole: seed.role,
 	})
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE review_jobs
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs
 		SET status = ?, started_at = '2026-08-01 00:00:00', finished_at = ?,
 		    updated_at = ?, agent_invoked = ?, token_usage = ?
 		WHERE id = ?`, seed.status, seed.finishedAt, seed.finishedAt, seed.agentInvoked,
@@ -52,7 +52,7 @@ func TestExportCICostsIncludesMappedPanelJobWithoutSource(t *testing.T) {
 		agentInvoked: true, tokenUsage: `{"has_cost":true,"cost_usd":0.5}`,
 		finishedAt: "2026-08-01 01:00:00",
 	})
-	_, err := db.Exec(`INSERT INTO ci_pr_panels
+	_, err := db.ExecContext(t.Context(), `INSERT INTO ci_pr_panels
 		(github_repo, pr_number, head_sha, panel_run_uuid, created_at)
 		VALUES ('owner/project', 1, 'head', ?, '2026-08-01 00:00:00')`, testUUID("run-mapped-panel"))
 	require.NoError(t, err)
@@ -66,7 +66,7 @@ func TestExportCICostsIncludesMappedPanelJobWithoutSource(t *testing.T) {
 		},
 		testUUID("test-machine"), time.Now(),
 	))
-	_, err = db.Exec(`UPDATE review_jobs SET resume_source_job_uuid = ? WHERE id = ?`,
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET resume_source_job_uuid = ? WHERE id = ?`,
 		testUUID("source-job-uuid"), job.ID)
 	require.NoError(t, err)
 
@@ -107,7 +107,7 @@ func TestExportCICostsLatePricingAppearsOnFreshRescan(t *testing.T) {
 	assert.Equal(t, reviewJobUUIDs(firstJob), costJobUUIDs(first.Jobs))
 	require.NotNil(t, first.NextCursor)
 
-	_, err = db.Exec(`UPDATE review_jobs
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs
 		SET token_usage = '{"has_cost":true,"cost_usd":0.75}',
 		    updated_at = '2026-08-01 01:00:00'
 		WHERE id = ?`, firstJob.ID)
@@ -157,7 +157,7 @@ func TestExportCICostsCursorPreservesWindow(t *testing.T) {
 	assert.Equal(t, reviewJobUUIDs(firstJob), costJobUUIDs(first.Jobs))
 	require.NotNil(t, first.NextCursor)
 
-	_, err = db.Exec(`UPDATE review_jobs
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs
 		SET token_usage = '{"has_cost":true,"cost_usd":0.75}'
 		WHERE id = ?`, oldJob.ID)
 	require.NoError(t, err)
@@ -337,7 +337,7 @@ func TestExportCICostsPaginationAndCursorSafety(t *testing.T) {
 	})
 	require.ErrorIs(t, err, ErrExportCursorDatabaseMismatch)
 
-	_, err = db.Exec(`DELETE FROM review_jobs WHERE id = ?`, secondJob.ID)
+	_, err = db.ExecContext(t.Context(), `DELETE FROM review_jobs WHERE id = ?`, secondJob.ID)
 	require.NoError(t, err)
 	_, err = db.ExportCICosts(ExportCICostOptions{Cursor: *first.NextCursor})
 	require.ErrorIs(t, err, ErrExportCursorNotFound)
@@ -355,7 +355,7 @@ func TestExportCICostsIncludesRetiredRetryJobs(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, created)
 	require.Len(t, firstMembers, 1)
-	_, err = db.Exec(`UPDATE review_jobs SET status = 'failed', started_at = '2026-08-01 01:00:00',
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'failed', started_at = '2026-08-01 01:00:00',
 		finished_at = '2026-08-01 01:01:00', agent_invoked = 1,
 		token_usage = '{"has_cost":true,"cost_usd":0.5}', source = NULL WHERE id = ?`, firstMembers[0].ID)
 	require.NoError(t, err)
@@ -367,7 +367,7 @@ func TestExportCICostsIncludesRetiredRetryJobs(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, created)
 	require.Len(t, replacementMembers, 1)
-	_, err = db.Exec(`UPDATE review_jobs SET status = 'done', started_at = '2026-08-01 02:00:00',
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'done', started_at = '2026-08-01 02:00:00',
 		finished_at = '2026-08-01 02:01:00', agent_invoked = 1,
 		token_usage = '{"has_cost":true,"cost_usd":0.25}' WHERE id = ?`, replacementMembers[0].ID)
 	require.NoError(t, err)
@@ -380,7 +380,7 @@ func TestExportCICostsIncludesRetiredRetryJobs(t *testing.T) {
 func seedLegacyCICostJob(t *testing.T, db *DB, repoID int64, gitRef, agent, enqueued, finished, usage string) *ReviewJob {
 	t.Helper()
 	job := seedLegacyCIJob(t, db, repoID, gitRef, agent, enqueued, finished)
-	_, err := db.Exec(`UPDATE review_jobs SET agent_invoked = 1, token_usage = ? WHERE id = ?`, usage, job.ID)
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET agent_invoked = 1, token_usage = ? WHERE id = ?`, usage, job.ID)
 	require.NoError(t, err)
 	return job
 }
@@ -398,7 +398,7 @@ func TestExportCICostsLegacyInfersDoneJobInvocation(t *testing.T) {
 		"2026-03-01 10:00:10", "2026-03-01 10:06:00")
 	failed := seedLegacyCIJob(t, db, repo.ID, "base..legacy", "agent-c",
 		"2026-03-01 10:00:20", "2026-03-01 10:07:00")
-	_, err := db.Exec(`UPDATE review_jobs SET status = 'failed' WHERE id = ?`, failed.ID)
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'failed' WHERE id = ?`, failed.ID)
 	require.NoError(t, err)
 
 	page, err := db.ExportCICosts(ExportCICostOptions{Legacy: true})
@@ -418,7 +418,7 @@ func TestExportCICostsLegacyReconstructionAndPagination(t *testing.T) {
 
 	jobA := seedLegacyCICostJob(t, db, repo.ID, "base..head-a", "agent-a", "2026-03-01 10:00:00", "2026-03-01 10:05:00", `{"has_cost":true,"cost_usd":0.4}`)
 	jobB := seedLegacyCICostJob(t, db, repo.ID, "base..head-a", "agent-b", "2026-03-01 10:00:10", "2026-03-01 10:06:00", `{}`)
-	_, err := db.Exec(`UPDATE review_jobs SET status = 'failed' WHERE id = ?`, jobB.ID)
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'failed' WHERE id = ?`, jobB.ID)
 	require.NoError(t, err)
 	jobC := seedLegacyCICostJob(t, db, repo.ID, "base..head-b", "agent-a", "2026-03-02 10:00:00", "2026-03-02 10:05:00", `{"has_cost":true,"cost_usd":0}`)
 	jobD := seedLegacyCICostJob(t, db, repo.ID, "base..head-b", "agent-b", "2026-03-02 10:00:10", "2026-03-02 10:06:00", `{"total_output_tokens":3}`)

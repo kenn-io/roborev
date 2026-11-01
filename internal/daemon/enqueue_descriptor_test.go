@@ -369,7 +369,7 @@ func TestEnqueuePostCommitConcurrentRequestsCreateOneJob(t *testing.T) {
 	for range requestCount {
 		go func() {
 			<-start
-			req := httptest.NewRequest(
+			req := httptest.NewRequestWithContext(t.Context(),
 				http.MethodPost, "/api/enqueue", strings.NewReader(string(payload)),
 			)
 			req.Header.Set("Content-Type", "application/json")

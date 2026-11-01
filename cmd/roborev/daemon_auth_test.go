@@ -182,7 +182,9 @@ func TestAuthOriginDenialIsNotAConnectionFailure(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	endpoint, err := daemon.ParseEndpoint("127.0.0.1:7373")
 	require.NoError(t, err)
-	_, err = endpoint.HTTPClient(time.Second).Get("http://127.0.0.1:7374/api/ping")
+	getRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://127.0.0.1:7374/api/ping", nil)
+	require.NoError(t, err)
+	_, err = endpoint.HTTPClient(time.Second).Do(getRequest)
 	require.Error(t, err)
 	assert.False(t, isConnectionError(err))
 }

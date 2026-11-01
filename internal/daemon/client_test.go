@@ -30,7 +30,7 @@ func createTestGitRepo(t *testing.T) (string, func(args ...string)) {
 	require.NoError(t, os.MkdirAll(repoDir, 0o755))
 	run := func(args ...string) {
 		t.Helper()
-		cmd := exec.Command("git", args...)
+		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = repoDir
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, "git %v\n%s", args, out)

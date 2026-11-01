@@ -22,7 +22,7 @@ func TestRestoreLegacyHistoryAndImport(t *testing.T) {
 			}
 			var seq int
 			var name, path string
-			require.NoError(t, env.db.QueryRow("PRAGMA database_list").Scan(&seq, &name, &path))
+			require.NoError(t, env.db.QueryRowContext(t.Context(), "PRAGMA database_list").Scan(&seq, &name, &path))
 			require.NoError(t, env.db.Close())
 			db, err := Open(path)
 			require.NoError(t, err)
@@ -100,7 +100,7 @@ func TestMigrateLegacySynthesisValidatesSources(t *testing.T) {
 	t.Parallel()
 	env := setupJobEnv(t, t.TempDir(), "synthesis-head")
 	jobID := seedLegacyPanel(t, env, "legacy-source-check")
-	_, err := env.db.Exec(`INSERT INTO reviews (job_id, agent, output, verdict_bool, uuid) VALUES (?, 'test', ?, 0, ?)`, jobID, legacyFindingsMarkdown, testUUID("legacy-source-check"))
+	_, err := env.db.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, output, verdict_bool, uuid) VALUES (?, 'test', ?, 0, ?)`, jobID, legacyFindingsMarkdown, testUUID("legacy-source-check"))
 	require.NoError(t, err)
 	require.NoError(t, env.db.migrateLegacyReviews())
 	require.NoError(t, env.db.restoreLegacyReviews())
@@ -123,7 +123,7 @@ func TestRestoreSynthesisKeepsExistingFindings(t *testing.T) {
 	env := setupJobEnv(t, t.TempDir(), "synthesis-existing-json")
 	jobID := seedLegacyPanel(t, env, "existing-json")
 	raw := `{"schema_version":2,"summary":"Existing assessment.","verdict":"fail","findings":[{"severity":"high","problem":"The write loses data.","fix":"Keep the old file.","location":null,"sources":[2]}]}`
-	_, err := env.db.Exec(`INSERT INTO reviews (job_id, agent, output, structured_output, verdict_bool, uuid) VALUES (?, 'test', 'Older rendered text without machine-readable attribution.', ?, 0, ?)`, jobID, raw, testUUID("existing-json-review"))
+	_, err := env.db.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, output, structured_output, verdict_bool, uuid) VALUES (?, 'test', 'Older rendered text without machine-readable attribution.', ?, 0, ?)`, jobID, raw, testUUID("existing-json-review"))
 	require.NoError(t, err)
 	require.NoError(t, env.db.migrateLegacyReviews())
 	require.NoError(t, env.db.restoreLegacyReviews())
@@ -133,7 +133,7 @@ func TestRestoreSynthesisKeepsExistingFindings(t *testing.T) {
 	assert.Contains(t, review.Output, "The write loses data.")
 	assert.Contains(t, review.Output, "Reported by:** test (design)")
 	var stored string
-	require.NoError(t, env.db.QueryRow(`SELECT structured_output FROM reviews WHERE job_id = ?`, jobID).Scan(&stored))
+	require.NoError(t, env.db.QueryRowContext(t.Context(), `SELECT structured_output FROM reviews WHERE job_id = ?`, jobID).Scan(&stored))
 	// Adding source labels rewrites the document, so it is stored in the
 	// current version; the finding itself is unchanged.
 	assert.JSONEq(t, `{"schema_version":3,"summary":"Existing assessment.","verdict":"fail","findings":[{"severity":"high","kind":null,"topic":null,"confidence":null,"problem":"The write loses data.","fix":"Keep the old file.","file":null,"start_line":null,"end_line":null,"location":null,"sources":[2]}],"source_labels":["test (security)","test (design)"]}`, stored)

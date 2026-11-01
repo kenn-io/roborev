@@ -29,7 +29,7 @@ func TestHandleResolveRepo(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("tracked repo returns repo metadata", func(t *testing.T) {
-		req := httptest.NewRequest(
+		req := httptest.NewRequestWithContext(t.Context(),
 			http.MethodGet,
 			"/api/repos/resolve?path="+url.QueryEscape(repo.Root),
 			nil,
@@ -60,7 +60,7 @@ func TestHandleResolveRepo(t *testing.T) {
 	t.Run("path inside tracked repo resolves to root", func(t *testing.T) {
 		nestedPath := filepath.Join(stored.RootPath, "src", "pkg")
 		require.NoError(t, os.MkdirAll(nestedPath, 0o755))
-		req := httptest.NewRequest(
+		req := httptest.NewRequestWithContext(t.Context(),
 			http.MethodGet,
 			"/api/repos/resolve?path="+url.QueryEscape(nestedPath),
 			nil,
@@ -86,7 +86,7 @@ func TestHandleResolveRepo(t *testing.T) {
 
 	t.Run("unknown repo returns untracked", func(t *testing.T) {
 		unknownPath := filepath.Join(t.TempDir(), "unknown-repo")
-		req := httptest.NewRequest(
+		req := httptest.NewRequestWithContext(t.Context(),
 			http.MethodGet,
 			"/api/repos/resolve?path="+url.QueryEscape(unknownPath),
 			nil,
@@ -111,7 +111,7 @@ func TestHandleResolveRepo(t *testing.T) {
 		require.NoError(t, os.WriteFile(
 			filepath.Join(registeredRoot, ".roborev-id"), []byte("replacement\n"), 0o644,
 		))
-		req := httptest.NewRequest(
+		req := httptest.NewRequestWithContext(t.Context(),
 			http.MethodGet,
 			"/api/repos/resolve?path="+url.QueryEscape(repo.Root),
 			nil,
@@ -131,7 +131,7 @@ func TestHandleResolveRepo(t *testing.T) {
 	})
 
 	t.Run("missing path returns client error", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/repos/resolve", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/repos/resolve", nil)
 		w := httptest.NewRecorder()
 
 		server.httpServer.Handler.ServeHTTP(w, req)
@@ -145,7 +145,7 @@ func TestHandleListRepos(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 
 	t.Run("empty database", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/repos", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/repos", nil)
 		w := httptest.NewRecorder()
 
 		server.httpServer.Handler.ServeHTTP(w, req)
@@ -175,7 +175,7 @@ func TestHandleListRepos(t *testing.T) {
 	seedRepoWithJobs(t, db, filepath.Join(tmpDir, "repo2"), 2, "repo2")
 
 	t.Run("repos with jobs", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/repos", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/repos", nil)
 		w := httptest.NewRecorder()
 
 		server.httpServer.Handler.ServeHTTP(w, req)
@@ -224,7 +224,7 @@ func TestHandleListRepos(t *testing.T) {
 		identity := "https://github.com/test/repo1.git"
 		require.NoError(t, db.SetRepoIdentity(repo.ID, identity))
 
-		req := httptest.NewRequest(http.MethodGet, "/api/repos", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/repos", nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
@@ -248,7 +248,7 @@ func TestHandleListRepos(t *testing.T) {
 	})
 
 	t.Run("wrong method fails", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/repos", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/repos", nil)
 		w := httptest.NewRecorder()
 
 		server.httpServer.Handler.ServeHTTP(w, req)
@@ -292,7 +292,7 @@ func TestHandleListReposWithBranchFilter(t *testing.T) {
 	}
 
 	t.Run("filter by main branch", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/repos?branch=main", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/repos?branch=main", nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
@@ -318,7 +318,7 @@ func TestHandleListReposWithBranchFilter(t *testing.T) {
 	})
 
 	t.Run("filter by feature branch", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/repos?branch=feature", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/repos?branch=feature", nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
@@ -340,7 +340,7 @@ func TestHandleListReposWithBranchFilter(t *testing.T) {
 	})
 
 	t.Run("nonexistent branch returns empty", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/repos?branch=nonexistent", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/repos?branch=nonexistent", nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
@@ -370,7 +370,7 @@ func TestHandleListReposWithPrefixFilter(t *testing.T) {
 	}
 
 	t.Run("prefix returns only child repos", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/repos?prefix="+url.QueryEscape(workspace), nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/repos?prefix="+url.QueryEscape(workspace), nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
@@ -390,7 +390,7 @@ func TestHandleListReposWithPrefixFilter(t *testing.T) {
 	})
 
 	t.Run("prefix excludes non-matching repos", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/repos?prefix="+url.QueryEscape(filepath.Join(tmpDir, "nonexistent")), nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/repos?prefix="+url.QueryEscape(filepath.Join(tmpDir, "nonexistent")), nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
@@ -412,7 +412,7 @@ func TestHandleListReposWithPrefixFilter(t *testing.T) {
 	setJobBranch(t, db, 5, "main")
 
 	t.Run("prefix + branch combined filter", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet,
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 			"/api/repos?prefix="+url.QueryEscape(workspace)+"&branch=main", nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
@@ -433,7 +433,7 @@ func TestHandleListReposWithPrefixFilter(t *testing.T) {
 	})
 
 	t.Run("prefix + feature branch narrows results", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet,
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 			"/api/repos?prefix="+url.QueryEscape(workspace)+"&branch=feature", nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
@@ -454,7 +454,7 @@ func TestHandleListReposWithPrefixFilter(t *testing.T) {
 	})
 
 	t.Run("prefix with trailing slash is normalized", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet,
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 			"/api/repos?prefix="+url.QueryEscape(workspace+"/"), nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
@@ -471,7 +471,7 @@ func TestHandleListReposWithPrefixFilter(t *testing.T) {
 
 	t.Run("prefix with dot-dot is normalized", func(t *testing.T) {
 		dotdotPrefix := workspace + "/../" + filepath.Base(workspace)
-		req := httptest.NewRequest(http.MethodGet,
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 			"/api/repos?prefix="+url.QueryEscape(dotdotPrefix), nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
@@ -506,7 +506,7 @@ func TestHandleListReposSlashNormalization(t *testing.T) {
 	}
 
 	t.Run("forward-slash prefix matches stored paths", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet,
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 			"/api/repos?prefix="+url.QueryEscape(ws), nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
@@ -563,7 +563,7 @@ func TestHandleListBranches(t *testing.T) {
 	}
 
 	t.Run("list all branches", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/branches", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/branches", nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
@@ -589,7 +589,7 @@ func TestHandleListBranches(t *testing.T) {
 
 	t.Run("filter by repo", func(t *testing.T) {
 		repoPath := filepath.Join(tmpDir, "repo1")
-		req := httptest.NewRequest(http.MethodGet, "/api/branches?repo="+repoPath, nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/branches?repo="+repoPath, nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
@@ -611,7 +611,7 @@ func TestHandleListBranches(t *testing.T) {
 	t.Run("filter by multiple repos", func(t *testing.T) {
 		repo1Path := filepath.Join(tmpDir, "repo1")
 		repo2Path := filepath.Join(tmpDir, "repo2")
-		req := httptest.NewRequest(http.MethodGet,
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 			"/api/branches?repo="+url.QueryEscape(repo1Path)+"&repo="+url.QueryEscape(repo2Path), nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
@@ -632,7 +632,7 @@ func TestHandleListBranches(t *testing.T) {
 	})
 
 	t.Run("empty repo param treated as no filter", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/branches?repo=", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/branches?repo=", nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusOK)
@@ -652,7 +652,7 @@ func TestHandleListBranches(t *testing.T) {
 	})
 
 	t.Run("wrong method fails", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/branches", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/branches", nil)
 		w := httptest.NewRecorder()
 
 		server.httpServer.Handler.ServeHTTP(w, req)
@@ -668,7 +668,7 @@ func TestHandleListBranches(t *testing.T) {
 func TestHandleRegisterRepo(t *testing.T) {
 	t.Run("GET returns 405", func(t *testing.T) {
 		server, _, _ := newTestServer(t)
-		req := httptest.NewRequest(http.MethodGet, "/api/repos/register", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/repos/register", nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 		if w.Code != http.StatusMethodNotAllowed {
@@ -711,7 +711,7 @@ func TestHandleRegisterRepo(t *testing.T) {
 		testutil.InitTestGitRepo(t, repoDir)
 
 		// Add a remote so identity resolves to something meaningful
-		remoteCmd := exec.Command("git", "-C", repoDir, "remote", "add", "origin", "https://github.com/test/testrepo.git")
+		remoteCmd := exec.CommandContext(t.Context(), "git", "-C", repoDir, "remote", "add", "origin", "https://github.com/test/testrepo.git")
 		if out, err := remoteCmd.CombinedOutput(); err != nil {
 			require.Condition(t, func() bool {
 				return false
