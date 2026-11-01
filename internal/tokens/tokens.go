@@ -170,6 +170,14 @@ func (u Usage) FormatCost() string {
 	return fmt.Sprintf("~$%.2f", u.CostUSD)
 }
 
+// CostComplete reports whether the recorded dollars cover every expected
+// provider session. A row can carry known dollars for some phases while
+// another phase's session, and so its cost, is missing; such a row counts
+// toward spend but leaves coverage partial.
+func (u Usage) CostComplete() bool {
+	return u.HasCost && u.ExpectedProviderSessions <= len(u.ProviderSessionIDs)
+}
+
 func formatCount(n int64) string {
 	switch {
 	case n >= 1_000_000:

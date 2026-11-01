@@ -1812,7 +1812,16 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 			"snapshot synthesis ACP config: %w", err,
 		)
 	}
+	var check *ciCheckConfig
+	if config.ResolveCICheck(in.repoCfg, in.cfg) {
+		reasoning, err := config.NormalizeReasoning(in.cfg.CI.CheckReasoning)
+		if err != nil {
+			return nil, storage.EnqueueOpts{}, fmt.Errorf("resolve CI checker reasoning: %w", err)
+		}
+		check = &ciCheckConfig{Model: in.cfg.CI.CheckModel, Reasoning: reasoning}
+	}
 	synthSnapshot, err := synthesisJobConfig{
+		Check:        check,
 		ACP:          synthACP,
 		Instructions: in.synth.Instructions,
 	}.encode()
@@ -4268,9 +4277,9 @@ func formatPanelTotal(synth *storage.ReviewJob, members []storage.BatchReviewRes
 
 	if includeCosts {
 		cost, priced, total := panelTotalCost(synth, members)
-		switch priced {
-		case 0:
-		case total:
+		switch {
+		case priced == 0 && cost == 0:
+		case priced == total:
 			parts = append(parts, tokens.Usage{CostUSD: cost, HasCost: true}.FormatCost())
 		default:
 			parts = append(parts, "cost partial "+tokens.Usage{CostUSD: cost, HasCost: true}.FormatCost())
@@ -4284,23 +4293,23 @@ func formatPanelTotal(synth *storage.ReviewJob, members []storage.BatchReviewRes
 }
 
 func panelTotalCost(synth *storage.ReviewJob, members []storage.BatchReviewResult) (float64, int, int) {
-	total := len(members)
-	var cost float64
-	priced := 0
+	usages := make([]string, 0, len(members)+1)
 	if synth != nil {
-		total++
-		if usage := tokens.ParseJSON(synth.TokenUsage); usage != nil && usage.HasCost {
-			cost += usage.CostUSD
-			priced++
-		}
+		usages = append(usages, synth.TokenUsage)
 	}
 	for _, m := range members {
-		if usage := tokens.ParseJSON(m.TokenUsage); usage != nil && usage.HasCost {
+		usages = append(usages, m.TokenUsage)
+	}
+	cost, priced := 0.0, 0
+	for _, raw := range usages {
+		if usage := tokens.ParseJSON(raw); usage != nil && usage.HasCost {
 			cost += usage.CostUSD
-			priced++
+			if usage.CostComplete() {
+				priced++
+			}
 		}
 	}
-	return cost, priced, total
+	return cost, priced, len(usages)
 }
 
 func formatRuntime(startedAt, finishedAt *time.Time) string {

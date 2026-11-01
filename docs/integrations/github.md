@@ -743,6 +743,51 @@ of the global setting:
 upsert_comments = false   # Disable upsert for this repo even if globally enabled
 ```
 
+## Checking findings before posting
+
+Enable the checker to try synthesized findings in a disposable copy of the PR
+head before roborev stores and posts the review:
+
+```toml
+[ci]
+check = true
+check_model = "gpt-6.1-sol"
+check_reasoning = "high"
+```
+
+The checker is off by default. A repository can override `check` in its
+`.roborev.toml` on the default branch. Only the global config selects the model
+and reasoning. The checker uses the Codex command selected by `codex_cmd`. The
+daemon-free `roborev ci review` command ignores these checker settings. The
+checker accepts a native Linux Codex binary or the npm `@openai/codex` layout
+installed by mise, with its sibling `@openai/codex-linux-x64` native package.
+Other launchers and package layouts post reviews unchecked.
+
+The host needs Linux on amd64, the pinned nono build, a systemd user manager,
+Codex with a host login, Bash, and Python 3 at `/usr/bin/python3`. Go is needed
+to warm Go modules. See
+[sandboxed Codex runs](/docs/agents/#sandboxed-codex-runs) for the pinned nono
+build and host requirements.
+
+The checker works in its own clone of the PR checkout. The clone borrows the
+host clone's object store and none of its Git config, so the checker can't read
+credentials stored there. It has no submodules or Git LFS files. The host warms
+only the root `go.mod` in the original disposable checkout after making the
+clone. The root `go.mod` must be a regular file. Any root `go.sum`, `go.work`,
+or `go.work.sum` must also be a regular file; otherwise the review posts
+unchecked. Warming cannot change the code being checked. Nested modules and Go
+workspaces receive no separate warming; findings that need unavailable
+dependencies post unchecked. Inside the sandbox, the checker can change its
+scratch files and read the shared object store and warmed caches. Model calls
+use nono's credential route, which reads the host's current Codex login outside
+the sandbox. Tests that start loopback servers cannot run in this sandbox; the
+checker keeps findings it cannot try.
+
+A finding drops only when one verdict supplies evidence and a reason to drop it.
+Missing or duplicate verdicts keep the finding. The job log records the
+verdicts. If every finding drops, the stored review says "No issues found." A
+checker failure or timeout posts the original review unchanged.
+
 ## PR Throttling
 
 When contributors push frequently to the same PR, the poller can generate
@@ -881,6 +926,7 @@ set, it takes priority over the matrix fields for that repo.
 | `min_severity` | string | `"low"` | Lowest severity that fails the review: `low`, `medium`, `high`, or `critical`. Lower findings remain in stored reviews but are hidden in PR comments |
 | `upsert_comments` | bool | global `upsert_comments` | Override global comment upsert setting for this repo |
 | `include_costs` | bool | global `include_costs` | Include token cost estimates in PR comment footers for this repo |
+| `check` | bool | global `check` | Try synthesized findings before posting and keep those that hold up |
 
 ## CI Options Reference
 
@@ -910,6 +956,9 @@ set, it takes priority over the matrix fields for that repo.
 | `synthesis_agent` | string | | Agent for combining implicit matrix results |
 | `synthesis_backup_agent` | string | | Backup agent for implicit matrix synthesis when the primary fails |
 | `synthesis_model` | string | | Model override for implicit matrix synthesis |
+| `check` | bool | `false` | Try synthesized findings before posting |
+| `check_model` | string | | Model override for the checker. Global only |
+| `check_reasoning` | string | `"standard"` | Reasoning level for the checker. Global only |
 | `upsert_comments` | bool | `false` | Update existing PR comments instead of creating new ones |
 | `include_costs` | bool | `false` | Include token cost estimates in PR comment footers |
 | `discord_webhook_url` | string | | Discord webhook URL for best-effort CI job failure notifications |

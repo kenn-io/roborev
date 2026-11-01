@@ -739,6 +739,7 @@ func (c *Config) Validate() (err error) {
 		return err
 	}
 	reasoning := []namedConfigValue{
+		{key: "ci.check_reasoning", value: c.CI.CheckReasoning},
 		{key: "review_reasoning", value: c.ReviewReasoning},
 		{key: "refine_reasoning", value: c.RefineReasoning},
 		{key: "fix_reasoning", value: c.FixReasoning},

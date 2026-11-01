@@ -24,7 +24,7 @@ type CostOptions struct {
 }
 
 // hasCost is the SQL predicate for a row carrying a recorded dollar cost. It
-// gates the priced numerator (jobs_with_cost) and total_usd. Requires
+// gates total_usd; costComplete gates the priced numerator (jobs_with_cost). Requires
 // review_jobs aliased as "j".
 //
 // The flag alone is not enough: rows written while agentsview reported cost in a
@@ -35,6 +35,14 @@ type CostOptions struct {
 const hasCost = "json_valid(j.token_usage) AND " +
 	"COALESCE(json_extract(j.token_usage, '$.has_cost'), 0) " +
 	"AND json_extract(j.token_usage, '$.cost_usd') IS NOT NULL"
+
+// costComplete narrows hasCost to rows whose dollars cover every expected
+// provider session, matching tokens.Usage.CostComplete. A priced row missing a
+// session still adds to total_usd but stays out of jobs_with_cost, so coverage
+// reads partial. Requires review_jobs aliased as "j".
+const costComplete = hasCost + " AND " +
+	"COALESCE(json_extract(j.token_usage, '$.expected_provider_sessions'), 0) <= " +
+	"COALESCE(json_array_length(j.token_usage, '$.provider_session_ids'), 0)"
 
 // agentRanByUsage is the fallback agent-ran signal: a token_usage blob that
 // records real consumption — a cost flag, output tokens, peak context, or a
@@ -108,7 +116,7 @@ func costAggregate(q querier, opts CostOptions) (CostAggregate, error) {
 		SELECT
 			COALESCE(SUM(CASE WHEN ` + costEligible + ` THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN ` + costEligible + `
-				AND ` + hasCost + ` THEN 1 ELSE 0 END), 0),
+				AND ` + costComplete + ` THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN ` + costEligible + `
 				AND ` + hasCost + `
 				THEN json_extract(j.token_usage, '$.cost_usd') ELSE 0 END), 0)

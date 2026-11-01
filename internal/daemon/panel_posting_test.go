@@ -258,6 +258,22 @@ func TestPanelTotalCostExcludesFlagWithoutAmount(t *testing.T) {
 	assert.Equal(t, 1, priced,
 		"amount-less flags must not make panel pricing look complete")
 	assert.Equal(t, 3, total)
+	t.Run("priced synthesis with missing session", func(t *testing.T) {
+		assert := assert.New(t)
+		synth := &storage.ReviewJob{TokenUsage: `{"cost_usd":0.03,"has_cost":true,"expected_provider_sessions":2,"provider_session_ids":["synthesis-session"]}`}
+		members := []storage.BatchReviewResult{
+			{TokenUsage: `{"cost_usd":0.11,"has_cost":true}`},
+		}
+		cost, priced, total := panelTotalCost(synth, members)
+		assert.InDelta(0.14, cost, 1e-9, "known synthesis dollars count toward the total")
+		assert.Equal(1, priced, "a missing provider session leaves synthesis cost coverage partial")
+		assert.Equal(2, total)
+	})
+	t.Run("partial synthesis with unpriced member", func(t *testing.T) {
+		synth := &storage.ReviewJob{TokenUsage: `{"cost_usd":0.03,"has_cost":true,"expected_provider_sessions":2,"provider_session_ids":["synthesis-session"]}`}
+		members := []storage.BatchReviewResult{{}}
+		assert.Equal(t, "cost partial ~$0.03", formatPanelTotal(synth, members, true))
+	})
 }
 
 // TestSynthesisCompletedPostsOnce verifies a synthesis review.completed posts

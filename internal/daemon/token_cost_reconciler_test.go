@@ -140,27 +140,33 @@ func TestTokenCostReconcilerPreservesStoredCountsWhenPlanPhaseHasNoCounts(t *tes
 	assert.InDelta(t, 0.42, usage.CostUSD, 1e-9)
 }
 
-func TestTokenCostReconcilerDoesNotPriceMissingPlanSession(t *testing.T) {
+func TestTokenCostReconcilerPricesAvailableSessionWithMissingPlanSession(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
-	job := seedTokenCostCandidate(t, tc, "implementation-session", `{"input_tokens":300,"provider_session_ids":["implementation-session"],"expected_provider_sessions":2}`)
+	job := seedTokenCostCandidate(t, tc, "implementation-session", `{"input_tokens":300,"total_output_tokens":40,"provider_session_ids":["implementation-session"],"expected_provider_sessions":2}`)
 	candidate, err := tc.DB.GetTokenCostCandidate(job.ID)
 	require.NoError(t, err)
 	require.NotNil(t, candidate)
 	fetches := 0
-	tc.Pool.tokenUsageFetcher = func(context.Context, string) (*tokens.Usage, error) {
+	tc.Pool.tokenUsageFetcher = func(_ context.Context, sessionID string) (*tokens.Usage, error) {
 		fetches++
-		return &tokens.Usage{CostUSD: 0.29, HasCost: true}, nil
+		assert.Equal(t, "implementation-session", sessionID)
+		return &tokens.Usage{InputTokens: 200, OutputTokens: 25, CostUSD: 0.29, HasCost: true}, nil
 	}
 
 	resolved, err := tc.Pool.reconcileTokenCostCandidate(context.Background(), *candidate)
 	require.NoError(t, err)
-	assert.False(t, resolved)
-	assert.Zero(t, fetches)
+	assert.True(t, resolved, "the available implementation session is priced")
+	assert.Equal(t, 1, fetches)
 	updated, err := tc.DB.GetJobByID(job.ID)
 	require.NoError(t, err)
 	usage := tokens.ParseJSON(updated.TokenUsage)
 	require.NotNil(t, usage)
-	assert.False(t, usage.HasCost)
+	assert.True(t, usage.HasCost, "reconciliation recovers known implementation dollars")
+	assert.InDelta(t, 0.29, usage.CostUSD, 1e-9)
+	assert.EqualValues(t, 300, usage.InputTokens, "combined phase tokens stay unchanged")
+	assert.EqualValues(t, 40, usage.OutputTokens, "combined phase tokens stay unchanged")
+	assert.Equal(t, []string{"implementation-session"}, usage.ProviderSessionIDs)
+	assert.Equal(t, 2, usage.ExpectedProviderSessions, "planner cost coverage stays partial")
 }
 
 func TestTokenCostReconcilerRecoversSessionFromJobLogAtStartup(t *testing.T) {
@@ -240,27 +246,6 @@ func TestTokenCostReconcilerPreservesExpectedSessionsFromPlannerOnlyLog(t *testi
 	usage := tokens.ParseJSON(recovered.TokenUsage)
 	require.NotNil(t, usage)
 	assert.Equal(t, []string{"planner-session"}, usage.ProviderSessionIDs)
-	assert.Equal(t, 2, usage.ExpectedProviderSessions)
-
-	fetches := 0
-	tc.Pool.tokenUsageFetcher = func(_ context.Context, sessionID string) (*tokens.Usage, error) {
-		fetches++
-		assert.Equal(t, "planner-session", sessionID)
-		return &tokens.Usage{HasCost: true, CostUSD: 0.13}, nil
-	}
-	candidate, err := tc.DB.GetTokenCostCandidate(job.ID)
-	require.NoError(t, err)
-	require.NotNil(t, candidate)
-	resolved, err := tc.Pool.reconcileTokenCostCandidate(context.Background(), *candidate)
-	require.NoError(t, err)
-	assert.False(t, resolved)
-	assert.Zero(t, fetches)
-
-	unchanged, err := tc.DB.GetJobByID(job.ID)
-	require.NoError(t, err)
-	usage = tokens.ParseJSON(unchanged.TokenUsage)
-	require.NotNil(t, usage)
-	assert.False(t, usage.HasCost)
 	assert.Equal(t, 2, usage.ExpectedProviderSessions)
 }
 
