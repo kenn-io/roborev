@@ -50,7 +50,11 @@ func applyRootHelp(root *cobra.Command) {
 			cmd.Long = strings.TrimSpace(before + "\n\n" + strings.Join(descriptions, "\n"))
 			cmd.Example = strings.Trim(strings.Join(examples, "\n"), "\n")
 		}
-		if help, ok := roborevCommandHelp[strings.TrimPrefix(stableCommandPath(cmd), "roborev ")]; ok {
+		help, ok := roborevCommandHelp[strings.TrimPrefix(cmd.CommandPath(), "roborev ")]
+		if !ok {
+			help, ok = roborevCommandHelp[strings.TrimPrefix(stableCommandPath(cmd), "roborev ")]
+		}
+		if ok {
 			if help.long != "" {
 				if cmd.Long == "" || cmd.Long == cmd.Short {
 					cmd.Long = help.long
