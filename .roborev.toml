@@ -12,12 +12,12 @@ roborev is a single-user local CLI. The daemon binds to 127.0.0.1, the
 database is local SQLite, and all data (repo names, paths, review content,
 hook output, job metadata) originates from the operator's own filesystem and
 git repos. Only flag injection/sanitization issues for data from external
-sources (e.g., commit messages from shared repos, API responses from remote
-services). The following are all local-data-in-local-tool and are NOT
-security findings:
+sources (e.g., commit messages from shared repos, pull request content and
+discussion fetched by the CI poller, API responses from remote services). The
+following are all local-data-in-local-tool and are NOT security findings:
 
-- Missing auth on daemon endpoints (only client is the local CLI; OS-level
-  access control is sufficient)
+- Missing auth on daemon endpoints when `auth_key` is unset, the default
+  (OS-level access control is the boundary; see the opt-in surfaces below)
 - "DoS" from request bodies or thundering-herd on loopback (bounded by the
   user's own repos, not external input)
 - "Data exposure" from endpoints returning review content (user's own data
@@ -29,8 +29,6 @@ security findings:
 - "Untrusted remap data" or "history tampering" from the remap endpoint (the
   client is the user's own post-rewrite hook, data comes from the user's own
   git repo, and the daemon is localhost-only)
-- .githooks/ tracked as a supply-chain risk (source templates only; installed
-  hooks are frozen copies in .git/hooks/, unaffected by branch switches)
 - "Argument injection" on internal helpers (e.g., git.GetPatchID,
   git.GetCommitInfo) that receive SHAs already validated or resolved at the
   call site — validation belongs at trust boundaries, not every internal call
@@ -42,6 +40,29 @@ security findings:
   append logic refuses to add shell snippets to non-shell hooks
 - Symlink-following in hook read/write under .git/hooks/ (controlled by the
   local user; a compromised local filesystem is out of scope)
+
+## Opt-in authenticated surfaces
+
+Some opt-in features add real authentication boundaries. Their contracts are in
+docs/configuration.md (daemon authentication, transport security, browser
+application) and docs/advanced/request-signing.md:
+
+- `auth_key` requires a shared key on every native daemon API except
+  `/api/ping` and `/api/health`. `[daemon_tls]` adds mutual TLS on the TCP
+  listener. Clients send the key only to an address a running daemon published
+  or the user gave, and do not follow redirects.
+- The browser application has a separate listener that must stay on loopback.
+  It admits browsers by token or by a configured reverse proxy, checks the exact
+  Host and Origin, and requires the tab-scoped CSRF credential for mutations.
+- The `[remote]` listener accepts signed read requests limited by each key's
+  operation and repository grants. It exposes no execution, configuration, or
+  administrative routes and never receives `auth_key`.
+
+Report a concrete bypass of these: a route that skips a configured check, a
+credential logged or sent to an unintended endpoint, or a signed request that
+reaches a route or repository its grants deny. `auth_key` does not isolate
+processes that run as the daemon owner or can read its config, so same-account
+access is not a bypass.
 
 ## Docs publication assets
 
@@ -58,21 +79,23 @@ expected files, or accidentally publishing unintended local files.
 
 ## Agent tool permissions
 
-Review agents run with shell access to inspect diffs and source files. Codex
-runs with --sandbox danger-full-access because the bwrap sandbox (used by both
-read-only and workspace-write modes) blocks loopback networking, which prevents
-git commands (git diff, git log, git show) from working in CI review jobs.
-This is intentional — roborev is a local-only tool that runs in trusted
-environments where the code is the operator's own. The allow-all-tools plus
-deny-list approach used by agents like Copilot matches this trust level. The
-deny-list is defense-in-depth, not a security boundary. Users reviewing
-untrusted code are expected to run roborev in a sandboxed environment
-(container, VM). Do not flag agent sandbox or tool permission patterns as
-security vulnerabilities when they follow this model.
+Non-agentic reviews restrict each agent with that agent's own mechanism. Codex
+runs with `--sandbox read-only`, Claude Code loads only `Read`, `Glob`, and
+`Grep`, Pi and Muse Code use read-only tool allowlists, and Copilot allows all
+tools minus a deny-list. `disable_codex_sandbox` (for hosts where bwrap is
+broken) and `allow_unsafe_agents` lift these limits, and agentic jobs such as
+fix and refine run with full tool access. docs/agents/index.md lists each
+agent's flags. These restrictions are defense in depth: roborev is designed for
+trusted codebases, and users reviewing untrusted code are expected to run it in
+a sandboxed environment (container, VM). Do not flag agent sandbox or tool
+permission patterns as security vulnerabilities when they follow this model.
+Do flag a change that silently drops a review restriction, for example by
+letting user config overrides or launch arguments replace roborev's read-only
+settings.
 
 ## Config loading and filesystem fallback
 
-Config loading (loadGuidelines, loadCIRepoConfig) reads .roborev.toml from
+Config loading (loadRepoGuidelines, loadCIRepoConfig) reads .roborev.toml from
 the default branch and falls back to the working-tree filesystem when the
 default branch has no config (no remote, config not yet committed). The
 daemon never checks out PR branches — the working tree is always the
@@ -151,12 +174,17 @@ arbitrary narrative text.
 ## Compilation, imports, and build errors
 
 Do not flag suspected compile errors, missing imports, undeclared
-identifiers, type mismatches, or other build-level issues. The local
-toolchain (go build, go vet, golangci-lint) and the pre-commit hook
-catch these before any commit lands; if the diff actually fails to
+identifiers, type mismatches, or other build-level issues. The
+toolchain (go build, go vet, golangci-lint), the pre-push hook, and CI
+catch these before a change merges; if the diff actually fails to
 compile, the PR cannot merge regardless of what the review says.
 Reviews see only the diff, not the rest of the package, so claims like
 "function X is not defined" or "package Y is not imported" are almost
 always wrong — the symbol exists elsewhere in the file or package.
 Focus reviews on logic, architecture, and behavior; trust the build.
+
+A new or tighter size, count, memory, or time limit needs cited evidence: an
+upstream source, a protocol requirement, or a measured failure. Do not
+recommend a limit without that evidence, and do not report memory use alone
+as a defect; preserving complete requested data is the default.
 """
