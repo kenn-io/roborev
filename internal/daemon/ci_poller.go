@@ -83,6 +83,7 @@ type ghPR struct {
 	Author      ghPRAuthor `json:"author"`
 	// AuthorAssociation is GitHub's author_association for the PR author.
 	AuthorAssociation string   `json:"authorAssociation"`
+	Draft             bool     `json:"draft"`
 	Labels            []string `json:"labels"`
 }
 
@@ -95,6 +96,7 @@ type panelPostTarget struct {
 	Body              string
 	AuthorLogin       string
 	AuthorAssociation string
+	Draft             bool
 	Labels            []string
 }
 
@@ -949,10 +951,13 @@ type ciSkip struct {
 	reason      string // log detail
 }
 
-// ciPRSkip reports whether the [ci] skip_labels, author, or branch filters
+// ciPRSkip reports whether the [ci] draft, label, author, or branch filters
 // exclude this PR from review. It returns an error, and no decision, when it
 // cannot read CODEOWNERS for the allow_codeowners check.
 func (p *CIPoller) ciPRSkip(ctx context.Context, ghRepo string, pr ghPR, ci *config.CIConfig) (ciSkip, bool, error) {
+	if ci.SkipDrafts && pr.Draft {
+		return ciSkip{description: ciDraftSkipReason, reason: "it is a draft pull request"}, true, nil
+	}
 	if label, skip := matchingCISkipLabel(pr.Labels, ci.SkipLabels); skip {
 		return ciSkip{
 			description: fmt.Sprintf("Review skipped: label %s", label),
@@ -1048,19 +1053,6 @@ func (p *CIPoller) skipPR(ghRepo string, pr ghPR, skip ciSkip, expected *storage
 	}
 	p.recordPollResult(ghRepo, pr.Number, pr.HeadRefOid, nil)
 	return nil
-}
-
-func matchingCISkipLabel(prLabels, skipLabels []string) (string, bool) {
-	for _, label := range prLabels {
-		label = strings.TrimSpace(label)
-		for _, configured := range skipLabels {
-			configured = strings.TrimSpace(configured)
-			if configured != "" && strings.EqualFold(label, configured) {
-				return label, true
-			}
-		}
-	}
-	return "", false
 }
 
 // loadCIRepoConfigFor loads typed and raw repo config through one loader. A
@@ -2379,6 +2371,7 @@ func (p *CIPoller) listOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, erro
 			Body:              pr.Body,
 			Author:            ghPRAuthor{Login: pr.AuthorLogin},
 			AuthorAssociation: pr.AuthorAssociation,
+			Draft:             pr.Draft,
 			Labels:            pr.Labels,
 		})
 	}
@@ -3317,6 +3310,7 @@ func (p *CIPoller) retryAttemptPR(
 		BaseRefName: baseRefName,
 		Title:       target.Title,
 		Body:        target.Body,
+		Draft:       target.Draft,
 		Labels:      target.Labels,
 		// Preserve the author so the [ci] author filter does not skip
 		// trusted authors on the retry path.
@@ -3809,6 +3803,7 @@ func (p *CIPoller) panelPostTarget(
 		Body:              pr.Body,
 		AuthorLogin:       pr.AuthorLogin,
 		AuthorAssociation: pr.AuthorAssociation,
+		Draft:             pr.Draft,
 		Labels:            pr.Labels,
 	}, nil
 }

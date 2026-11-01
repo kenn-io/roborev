@@ -121,6 +121,9 @@ type CIConfig struct {
 	// Label matching is case-insensitive.
 	SkipLabels []string `toml:"skip_labels"`
 
+	// SkipDrafts prevents CI reviews of draft pull requests. Default: false.
+	SkipDrafts bool `toml:"skip_drafts"`
+
 	// AllowedAuthors and AllowedAuthorAssociations limit CI reviews to PRs
 	// from trusted authors. When either is set, a PR is reviewed only if its
 	// author's login is in AllowedAuthors (case-insensitive) or its GitHub
