@@ -2425,6 +2425,33 @@ func TestCIPollerEnsureClone_RejectsMalformedRepo(t *testing.T) {
 	}
 }
 
+func TestCIPollerEnsureClone_CancellationKeepsExistingClone(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	p := NewCIPoller(db, NewStaticConfig(config.DefaultConfig()), nil)
+	dataDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+
+	clonePath := filepath.Join(dataDir, "clones", "acme", "kept")
+	out, err := exec.CommandContext(t.Context(), "git", "init", "-b", "main", clonePath).CombinedOutput()
+	require.NoError(t, err, "git init: %s", out)
+	marker := filepath.Join(clonePath, "local-only.txt")
+	require.NoError(t, os.WriteFile(marker, []byte("keep"), 0o644))
+
+	cloned := false
+	p.gitCloneFn = func(_ context.Context, _, _ string, _ []string) error {
+		cloned = true
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = p.ensureClone(ctx, "acme/kept")
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.FileExists(t, marker, "cancellation must not delete a valid clone")
+	assert.False(t, cloned, "cancellation must not re-clone")
+}
+
 func TestEnsureCloneRemoteURL_RedactsCredentialedMismatch(t *testing.T) {
 	dir := t.TempDir()
 	cmds := [][]string{

@@ -2614,7 +2614,13 @@ func (s *Server) humaCancelJob(
 	// below still returns the correct 404/500 for the target. A not-found here
 	// is expected (the cancel reports it); log only a real lookup failure so a
 	// transient DB error that downgrades a panel cancel leaves a trace.
-	job, jobErr := s.db.GetJobByIDContext(ctx, input.Body.JobID)
+	// The cancel below does not take a context, so once the request is
+	// accepted it always lands. Detach these lookups from the request too:
+	// a client disconnecting mid-lookup would otherwise leave job nil and
+	// skip panel retirement and member cancellation for a parent that is
+	// still canceled.
+	lookupCtx := context.WithoutCancel(ctx)
+	job, jobErr := s.db.GetJobByIDContext(lookupCtx, input.Body.JobID)
 	if jobErr != nil && !errors.Is(jobErr, sql.ErrNoRows) {
 		log.Printf("cancel job %d: panel routing lookup failed: %v",
 			input.Body.JobID, jobErr)
@@ -2658,7 +2664,7 @@ func (s *Server) humaCancelJob(
 	s.releaseSynthesisIfCanceledMember(job)
 
 	if job == nil {
-		job, _ = s.db.GetJobByIDContext(ctx, input.Body.JobID)
+		job, _ = s.db.GetJobByIDContext(lookupCtx, input.Body.JobID)
 	}
 	s.broadcaster.Broadcast(eventForMutationPrincipal(
 		ctx, eventForJob(jobEventType(job, "canceled"), job, input.Body.JobID),

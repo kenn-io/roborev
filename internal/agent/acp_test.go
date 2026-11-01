@@ -687,11 +687,10 @@ func TestACPNoDoubleMutexUnlockPanics(t *testing.T) {
 	}
 
 	_, err := client.WaitForTerminalExit(t.Context(), acp.WaitForTerminalExitRequest{
+		SessionId:  "test-session",
 		TerminalId: "non-existent-terminal",
 	})
-	if err != nil {
-		t.Logf("Expected error for non-existent terminal: %v", err)
-	}
+	require.ErrorContains(t, err, "terminal non-existent-terminal not found")
 }
 
 func TestBoundedWriter(t *testing.T) {
