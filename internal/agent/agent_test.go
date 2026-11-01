@@ -2,7 +2,6 @@ package agent
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -126,7 +125,7 @@ func TestTestAgentStreaming(t *testing.T) {
 		agent := setup()
 
 		var buf bytes.Buffer
-		result, err := agent.Review(context.Background(), "/tmp", "abc1234567", "prompt", &buf)
+		result, err := agent.Review(t.Context(), "/tmp", "abc1234567", "prompt", &buf)
 		require.NoError(t, err)
 		// The streamed output is the returned body prefixed by a synthetic
 		// session JSONL line (consumed by SessionCaptureWriter). Verify the
@@ -137,7 +136,7 @@ func TestTestAgentStreaming(t *testing.T) {
 	t.Run("nil output writer works", func(t *testing.T) {
 		agent := setup()
 
-		result, err := agent.Review(context.Background(), "/tmp", "abc1234567", "prompt", nil)
+		result, err := agent.Review(t.Context(), "/tmp", "abc1234567", "prompt", nil)
 		require.NoError(t, err)
 		assert.NotEmpty(t, result)
 	})
@@ -146,7 +145,7 @@ func TestTestAgentStreaming(t *testing.T) {
 		agent := setup()
 
 		errWriter := &FailingWriter{Err: errors.New("write failed")}
-		_, err := agent.Review(context.Background(), "/tmp", "abc1234567", "prompt", errWriter)
+		_, err := agent.Review(t.Context(), "/tmp", "abc1234567", "prompt", errWriter)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, errWriter.Err)
 	})
@@ -640,7 +639,7 @@ func TestSmartAgentReviewPassesModelFlag(t *testing.T) {
 			mock := mockAgentCLI(t, opts)
 
 			agent := tt.factory(mock.CmdPath).WithModel(tt.testModel)
-			_, err := agent.Review(context.Background(), t.TempDir(), "head", "prompt", nil)
+			_, err := agent.Review(t.Context(), t.TempDir(), "head", "prompt", nil)
 			require.NoError(t, err)
 
 			argsBytes, err := os.ReadFile(mock.ArgsFile)

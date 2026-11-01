@@ -25,8 +25,8 @@ import (
 )
 
 // postThroughLimiter builds the handler per request, as the daemon route does, so only the limiter carries state.
-func postThroughLimiter(limiter *AppOpenedLimiter, reporter *Reporter, body string) *httptest.ResponseRecorder {
-	return postCaptureEvent(limiter.Handler(reporter), body)
+func postThroughLimiter(ctx context.Context, limiter *AppOpenedLimiter, reporter *Reporter, body string) *httptest.ResponseRecorder {
+	return postCaptureEvent(ctx, limiter.Handler(reporter), body)
 }
 
 func surfacesOf(messages []testutil.PostHogMessage) []string {
@@ -58,7 +58,7 @@ func TestAppOpenedLimiterSendsOncePerSurfacePerDay(t *testing.T) {
 			`{"event":"app_opened","properties":{"surface":["tui"]}}`,
 			`{"event":"app_opened"}`,
 		} {
-			recorder := postThroughLimiter(limiter, reporter, body)
+			recorder := postThroughLimiter(t.Context(), limiter, reporter, body)
 			assert.Equal(http.StatusAccepted, recorder.Code, body)
 			assert.JSONEq(`{"status":"queued"}`, recorder.Body.String(), body)
 		}
@@ -82,11 +82,11 @@ func TestAppOpenedLimiterSendsOncePerSurfacePerDay(t *testing.T) {
 		limiter := &AppOpenedLimiter{now: func() time.Time { return now }}
 		body := `{"event":"app_opened","properties":{"surface":"cli"}}`
 
-		assert.Equal(http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
-		assert.Equal(http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
+		assert.Equal(http.StatusAccepted, postThroughLimiter(t.Context(), limiter, reporter, body).Code)
+		assert.Equal(http.StatusAccepted, postThroughLimiter(t.Context(), limiter, reporter, body).Code)
 		// 00:00 UTC on the next day starts a new claim.
 		now = time.Date(2026, 3, 2, 0, 0, 0, 0, time.UTC)
-		assert.Equal(http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
+		assert.Equal(http.StatusAccepted, postThroughLimiter(t.Context(), limiter, reporter, body).Code)
 		require.NoError(t, reporter.Close())
 		assert.Equal([]string{"app_opened:cli", "app_opened:cli"}, surfacesOf(messages()))
 	})
@@ -98,7 +98,7 @@ func TestSessionEndedBypassesDailyLimiter(t *testing.T) {
 	reporter, messages := newPostHogStubReporter(t)
 	limiter := &AppOpenedLimiter{}
 	for range 2 {
-		rec := postThroughLimiter(limiter, reporter, `{"event":"session_ended","properties":{"surface":"web","duration_bucket":"1_to_5m"}}`)
+		rec := postThroughLimiter(t.Context(), limiter, reporter, `{"event":"session_ended","properties":{"surface":"web","duration_bucket":"1_to_5m"}}`)
 		assert.Equal(t, http.StatusAccepted, rec.Code)
 	}
 	require.NoError(t, reporter.Close())
@@ -113,7 +113,7 @@ func TestAppOpenedLimiterIgnoresRequestsThatSendNothing(t *testing.T) {
 	t.Setenv(EnabledEnv, "0")
 	optedOut, err := NewReporter(Options{})
 	require.NoError(t, err)
-	recorder := postThroughLimiter(limiter, optedOut, cli)
+	recorder := postThroughLimiter(t.Context(), limiter, optedOut, cli)
 	assert.Equal(http.StatusAccepted, recorder.Code)
 	assert.JSONEq(`{"status":"disabled"}`, recorder.Body.String())
 
@@ -122,7 +122,7 @@ func TestAppOpenedLimiterIgnoresRequestsThatSendNothing(t *testing.T) {
 		`{"event":""}`,
 		`{"event":"agent_active"}`,
 	} {
-		recorder := postThroughLimiter(limiter, optedOut, body)
+		recorder := postThroughLimiter(t.Context(), limiter, optedOut, body)
 		assert.Equal(http.StatusBadRequest, recorder.Code)
 		assert.Contains(recorder.Body.String(), ErrUnsupportedEvent.Error())
 	}
@@ -136,16 +136,16 @@ func TestAppOpenedLimiterIgnoresRequestsThatSendNothing(t *testing.T) {
 	brokenRecorder := httptest.NewRecorder()
 	limiter.Handler(reporter).ServeHTTP(brokenRecorder, broken)
 	assert.Equal(http.StatusBadRequest, brokenRecorder.Code)
-	assert.Equal(http.StatusBadRequest, postThroughLimiter(limiter, reporter, `{"event":`).Code)
-	assert.Equal(http.StatusBadRequest, postThroughLimiter(limiter, reporter, cli+`{"event":"app_opened"}`).Code)
+	assert.Equal(http.StatusBadRequest, postThroughLimiter(t.Context(), limiter, reporter, `{"event":`).Code)
+	assert.Equal(http.StatusBadRequest, postThroughLimiter(t.Context(), limiter, reporter, cli+`{"event":"app_opened"}`).Code)
 	oversized := `{"event":"app_opened","properties":{"surface":"cli"}}` + strings.Repeat(" ", appOpenedMaxBodyBytes)
-	assert.Equal(http.StatusRequestEntityTooLarge, postThroughLimiter(limiter, reporter, oversized).Code)
-	plain := httptest.NewRequest(http.MethodPost, "/api/telemetry/events", strings.NewReader(cli))
+	assert.Equal(http.StatusRequestEntityTooLarge, postThroughLimiter(t.Context(), limiter, reporter, oversized).Code)
+	plain := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/telemetry/events", strings.NewReader(cli))
 	plain.Header.Set("Content-Type", "text/plain")
 	plainRecorder := httptest.NewRecorder()
 	limiter.Handler(reporter).ServeHTTP(plainRecorder, plain)
 	assert.Equal(http.StatusUnsupportedMediaType, plainRecorder.Code)
-	recorder = postThroughLimiter(limiter, reporter, cli)
+	recorder = postThroughLimiter(t.Context(), limiter, reporter, cli)
 	assert.Equal(http.StatusAccepted, recorder.Code)
 	assert.JSONEq(`{"status":"queued"}`, recorder.Body.String())
 	require.NoError(t, reporter.Close())
@@ -162,7 +162,7 @@ func TestAppOpenedLimiterConcurrentFirstRequestsSendOnce(t *testing.T) {
 	var wg sync.WaitGroup
 	codes := make([]int, 8)
 	for i := range codes {
-		wg.Go(func() { codes[i] = postThroughLimiter(limiter, reporter, body).Code })
+		wg.Go(func() { codes[i] = postThroughLimiter(t.Context(), limiter, reporter, body).Code })
 	}
 	wg.Wait()
 	require.NoError(t, reporter.Close())
@@ -183,7 +183,7 @@ func TestPostAppOpened(t *testing.T) {
 		}))
 		t.Cleanup(srv.Close)
 
-		new(ClientGate).PostAppOpened(context.Background(), srv.Client(), srv.URL+"/api/telemetry/events", SurfaceCLI)
+		new(ClientGate).PostAppOpened(t.Context(), srv.Client(), srv.URL+"/api/telemetry/events", SurfaceCLI)
 		assert.Equal(http.MethodPost, method)
 		assert.Equal("/api/telemetry/events", path)
 		assert.Equal("application/json", contentType)
@@ -194,15 +194,15 @@ func TestPostAppOpened(t *testing.T) {
 		srv := httptest.NewServer(http.NotFoundHandler())
 		t.Cleanup(srv.Close)
 		assert.NotPanics(t, func() {
-			new(ClientGate).PostAppOpened(context.Background(), srv.Client(), srv.URL+"/api/telemetry/events", SurfaceCLI)
+			new(ClientGate).PostAppOpened(t.Context(), srv.Client(), srv.URL+"/api/telemetry/events", SurfaceCLI)
 		})
 
-		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 		require.NoError(t, err)
 		closedURL := "http://" + ln.Addr().String() + "/api/telemetry/events"
 		require.NoError(t, ln.Close())
 		assert.NotPanics(t, func() {
-			new(ClientGate).PostAppOpened(context.Background(), http.DefaultClient, closedURL, SurfaceCLI)
+			new(ClientGate).PostAppOpened(t.Context(), http.DefaultClient, closedURL, SurfaceCLI)
 		})
 	})
 
@@ -215,7 +215,7 @@ func TestPostAppOpened(t *testing.T) {
 			mu.Unlock()
 		}))
 		t.Cleanup(srv.Close)
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 
 		new(ClientGate).PostAppOpened(ctx, srv.Client(), srv.URL+"/api/telemetry/events", SurfaceCLI)
@@ -259,15 +259,15 @@ func TestScreenViewedDailyClaims(t *testing.T) {
 					if pass == 0 {
 						installID, err = db.GetSyncState(installIDMetadataKey)
 						require.NoError(t, err)
-						assert.Equal(t, http.StatusInternalServerError, postThroughLimiter(limiter, reporter, body).Code)
+						assert.Equal(t, http.StatusInternalServerError, postThroughLimiter(t.Context(), limiter, reporter, body).Code)
 						require.NoError(t, reporter.Close())
 						require.NoError(t, os.Remove(opts.DailyClaimsPath))
 						continue
 					}
-					_, err = db.Exec("ALTER TABLE sync_state RENAME TO unavailable_sync_state")
+					_, err = db.ExecContext(t.Context(), "ALTER TABLE sync_state RENAME TO unavailable_sync_state")
 					require.NoError(t, err)
-					assert.Equal(t, http.StatusInternalServerError, postThroughLimiter(limiter, reporter, body).Code)
-					_, err = db.Exec("ALTER TABLE unavailable_sync_state RENAME TO sync_state")
+					assert.Equal(t, http.StatusInternalServerError, postThroughLimiter(t.Context(), limiter, reporter, body).Code)
+					_, err = db.ExecContext(t.Context(), "ALTER TABLE unavailable_sync_state RENAME TO sync_state")
 					require.NoError(t, err)
 				}
 				for range attempts {
@@ -282,7 +282,7 @@ func TestScreenViewedDailyClaims(t *testing.T) {
 						assert.NotContains(t, normalized.Properties, " screen ")
 						assert.NotContains(t, normalized.Properties, " surface ")
 					}
-					assert.Equal(t, http.StatusAccepted, postThroughLimiter(limiter, reporter, body).Code)
+					assert.Equal(t, http.StatusAccepted, postThroughLimiter(t.Context(), limiter, reporter, body).Code)
 				}
 				require.NoError(t, reporter.Close())
 			}

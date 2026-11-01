@@ -122,7 +122,7 @@ func TestPostAgentHookPreservesRegularDaemonEndpointInOwnerCloseout(t *testing.T
 	serverAddr := strings.TrimPrefix(server.URL, "http://")
 
 	response, err := postAgentHook(
-		context.Background(), serverAddr,
+		t.Context(), serverAddr,
 		agenthook.Request{Event: agenthook.Input{SessionID: "session-1"}},
 	)
 
@@ -151,7 +151,7 @@ func TestRunAgentHookFixDoneRejectsMalformedUUIDBeforeDaemonStart(t *testing.T) 
 	}
 	t.Cleanup(func() { agentHookEnsureDaemon = originalEnsure })
 
-	err := runAgentHookFixDone(context.Background(), "not-a-uuid", "", io.Discard)
+	err := runAgentHookFixDone(t.Context(), "not-a-uuid", "", io.Discard)
 
 	require.ErrorContains(t, err, "parse fix session ID")
 	assert.False(t, ensureCalled)
@@ -247,7 +247,7 @@ func TestManualAgentHookCommandsEnsureDaemon(t *testing.T) {
 		}},
 		{name: "fix done", run: func() error {
 			return runAgentHookFixDone(
-				context.Background(), "00000000-0000-4000-8000-000000000001", "", io.Discard,
+				t.Context(), "00000000-0000-4000-8000-000000000001", "", io.Discard,
 			)
 		}},
 	}

@@ -53,7 +53,7 @@ func TestSearchEligibilityAndStablePaging(t *testing.T) {
 	for i, fixture := range fixtures {
 		reviewID := seedSearchFeedReview(t, db, repoID, commitID, i+1, fixture)
 		var jobID int64
-		require.NoError(t, db.QueryRow(`SELECT job_id FROM reviews WHERE id = ?`, reviewID).Scan(&jobID))
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT job_id FROM reviews WHERE id = ?`, reviewID).Scan(&jobID))
 		source, err := db.GetSearchDocumentForJob(t.Context(), jobID)
 		require.NoError(t, err)
 		if i < 7 {
@@ -64,10 +64,10 @@ func TestSearchEligibilityAndStablePaging(t *testing.T) {
 		}
 	}
 
-	first, err := db.ListSearchDocuments(context.Background(), 0, 3)
+	first, err := db.ListSearchDocuments(t.Context(), 0, 3)
 	require.NoError(t, err)
 	require.Len(t, first, 3)
-	second, err := db.ListSearchDocuments(context.Background(), first[len(first)-1].ReviewID, 10)
+	second, err := db.ListSearchDocuments(t.Context(), first[len(first)-1].ReviewID, 10)
 	require.NoError(t, err)
 
 	all := append(first, second...)
@@ -96,7 +96,7 @@ func TestSearchFeedIncludesGoalReview(t *testing.T) {
 		noCommit: true,
 	})
 	var jobID int64
-	require.NoError(t, db.QueryRow(`SELECT job_id FROM reviews WHERE id = ?`, reviewID).Scan(&jobID))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT job_id FROM reviews WHERE id = ?`, reviewID).Scan(&jobID))
 
 	byJob, err := db.GetSearchDocumentForJob(t.Context(), jobID)
 	require.NoError(t, err)
@@ -137,12 +137,12 @@ func TestSearchFeedLimitSkipsSemanticallyEmptyStructuredRows(t *testing.T) {
 		output:  "later eligible review",
 	})
 
-	firstPage, err := db.ListSearchDocuments(context.Background(), 0, 1)
+	firstPage, err := db.ListSearchDocuments(t.Context(), 0, 1)
 	require.NoError(t, err)
 	require.Len(t, firstPage, 1)
 	assert.Equal(t, firstID, firstPage[0].ReviewID)
 
-	secondPage, err := db.ListSearchDocuments(context.Background(), firstPage[0].ReviewID, 1)
+	secondPage, err := db.ListSearchDocuments(t.Context(), firstPage[0].ReviewID, 1)
 	require.NoError(t, err)
 	require.Len(t, secondPage, 1)
 	assert.Equal(t, laterID, secondPage[0].ReviewID)
@@ -162,13 +162,13 @@ func TestSearchFeedUsesLegacyCommentTargetAndStableResponseOrdering(t *testing.T
 		output:  "dirty review",
 	})
 	var jobID int64
-	require.NoError(t, db.QueryRow(`SELECT job_id FROM reviews WHERE id = ?`, reviewID).Scan(&jobID))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT job_id FROM reviews WHERE id = ?`, reviewID).Scan(&jobID))
 
-	_, err := db.Exec(`
+	_, err := db.ExecContext(t.Context(), `
 		INSERT INTO responses (id, commit_id, responder, response, uuid, created_at)
 		VALUES (90, ?, 'legacy', 'must stay out', '00000000-0000-4000-8000-000000000090', '2026-09-15T10:00:00Z')`, commitID)
 	require.NoError(t, err)
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		INSERT INTO responses (id, job_id, responder, response, uuid, created_at)
 		VALUES
 			(13, ?, 'third', 'third response', '00000000-0000-4000-8000-000000000013', '2026-09-15T12:00:00Z'),
@@ -212,7 +212,7 @@ func TestSearchFeedUsesLegacyCommentTargetAndStableResponseOrdering(t *testing.T
 	require.NotNil(t, got)
 	assert.Equal(t, ordinary.Responses, got.Responses)
 
-	_, err = db.Exec(`DELETE FROM reviews WHERE job_id = ?`, jobID)
+	_, err = db.ExecContext(t.Context(), `DELETE FROM reviews WHERE job_id = ?`, jobID)
 	require.NoError(t, err)
 	got, err = db.GetSearchDocumentForJob(t.Context(), jobID)
 	require.NoError(t, err)
@@ -231,16 +231,16 @@ func TestSearchFeedSelectsOnlyAllowlistedSourceColumns(t *testing.T) {
 		output:  "safe review output",
 	})
 	var jobID int64
-	require.NoError(t, db.QueryRow(`SELECT job_id FROM reviews WHERE id = ?`, reviewID).Scan(&jobID))
-	_, err := db.Exec(`UPDATE review_jobs SET
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT job_id FROM reviews WHERE id = ?`, reviewID).Scan(&jobID))
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET
 		command_line = 'excluded-command', token_usage = 'excluded-token-data',
 		worktree_path = 'excluded-worktree-path', error = 'excluded-log'
 		WHERE id = ?`, jobID)
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO job_content (job_id, prompt, diff_content, patch)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO job_content (job_id, prompt, diff_content, patch)
 		VALUES (?, zstd_compress('excluded-prompt'), zstd_compress('excluded-diff'), zstd_compress('excluded-patch'))`, jobID)
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE repos SET root_path = 'excluded-repository-path', identity = 'excluded-remote-identity' WHERE id = ?`, repoID)
+	_, err = db.ExecContext(t.Context(), `UPDATE repos SET root_path = 'excluded-repository-path', identity = 'excluded-remote-identity' WHERE id = ?`, repoID)
 	require.NoError(t, err)
 
 	source, err := feedDocument(db, "00000000-0000-4000-8000-000000000101")
@@ -266,7 +266,7 @@ func TestSearchDocumentLookupSupportsUUIDAndLegacyLocalKey(t *testing.T) {
 	legacyID := seedSearchFeedReview(t, db, repoID, commitID, 2, searchFeedFixture{jobType: "", status: JobStatusDone, output: "legacy", legacy: true})
 
 	legacyKey := fmt.Sprintf("local:%d", legacyID)
-	found, err := db.GetSearchReviews(context.Background(), []string{
+	found, err := db.GetSearchReviews(t.Context(), []string{
 		"00000000-0000-4000-8000-000000000101", legacyKey, "missing", "local:999999",
 	})
 	require.NoError(t, err)
@@ -291,11 +291,11 @@ func feedDocument(db *DB, key string) (*SearchReviewSource, error) {
 
 func seedSearchFeedBase(t *testing.T, db *DB) (int64, int64) {
 	t.Helper()
-	repoResult, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES ('/synthetic/widgets', 'widgets', 'https://example.invalid/widgets.git')`)
+	repoResult, err := db.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity) VALUES ('/synthetic/widgets', 'widgets', 'https://example.invalid/widgets.git')`)
 	require.NoError(t, err)
 	repoID, err := repoResult.LastInsertId()
 	require.NoError(t, err)
-	commitResult, err := db.Exec(`INSERT INTO commits (repo_id, sha, author, subject, timestamp)
+	commitResult, err := db.ExecContext(t.Context(), `INSERT INTO commits (repo_id, sha, author, subject, timestamp)
 		VALUES (?, 'abc1234567890abcdef1234567890abcdef12345', 'Example Author', 'Improve retry persistence', '2026-09-15T09:00:00Z')`, repoID)
 	require.NoError(t, err)
 	commitID, err := commitResult.LastInsertId()
@@ -314,7 +314,7 @@ func seedSearchFeedReview(t *testing.T, db *DB, repoID, commitID int64, sequence
 		selectedCommit = nil
 	}
 	jobUUID := fmt.Sprintf("00000000-0000-4000-8000-%012d", sequence)
-	jobResult, err := db.Exec(`
+	jobResult, err := db.ExecContext(t.Context(), `
 		INSERT INTO review_jobs
 			(repo_id, commit_id, git_ref, branch, agent, status, enqueued_at, finished_at,
 			 job_type, review_type, uuid, panel_role, panel_run_uuid)
@@ -334,7 +334,7 @@ func seedSearchFeedReview(t *testing.T, db *DB, repoID, commitID int64, sequence
 	if fixture.structured != "" {
 		structured = fixture.structured
 	}
-	reviewResult, err := db.Exec(`
+	reviewResult, err := db.ExecContext(t.Context(), `
 		INSERT INTO reviews (job_id, agent, output, structured_output, created_at, closed, uuid)
 		VALUES (?, 'codex', ?, ?, '2026-09-15T11:00:00Z', 0, ?)`,
 		jobID, fixture.output, structured, reviewUUID)

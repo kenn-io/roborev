@@ -41,7 +41,7 @@ func TestClaimSetupFinishedRequiresReadableReview(t *testing.T) {
 			if tc.remote {
 				machineID = uuid.New()
 			}
-			_, err = db.Exec(`UPDATE review_jobs SET source_machine_id = ? WHERE id = (SELECT job_id FROM reviews WHERE id = ?)`, machineID, reviewID)
+			_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = ? WHERE id = (SELECT job_id FROM reviews WHERE id = ?)`, machineID, reviewID)
 			require.NoError(t, err)
 			if tc.name == "done" {
 				var wg sync.WaitGroup
@@ -135,7 +135,7 @@ func TestClaimSetupFinishedKeepsCommittedResultAfterCancellation(t *testing.T) {
 	repoID, commitID := seedSearchFeedBase(t, db)
 	seedSearchFeedReview(t, db, repoID, commitID, 1, searchFeedFixture{jobType: JobTypeReview, status: JobStatusDone, output: "Review"})
 	var path string
-	require.NoError(t, db.QueryRow(`SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&path))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&path))
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 	pool := sql.OpenDB(cancelSetupClaimConnector{driver: db.Driver(), dsn: path + "?_pragma=busy_timeout(30000)", cancel: cancel})

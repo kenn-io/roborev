@@ -173,7 +173,8 @@ func (wp *WorkerPool) processGoalReview(ctx context.Context, workerID string, jo
 	}()
 	findings, err := runner(ctx, a, root, snapshot, prepared, io.MultiWriter(jobLog, outputWriter))
 	if ctx.Err() != nil {
-		if current, getErr := wp.db.GetJobByID(job.ID); getErr == nil && current.Status == storage.JobStatusCanceled {
+		// ctx has ended; this lookup decides how to report that.
+		if current, getErr := wp.db.GetJobByIDContext(context.WithoutCancel(ctx), job.ID); getErr == nil && current.Status == storage.JobStatusCanceled {
 			wp.runAttemptTransition(workerID, job, func() {
 				event.Type = "goal_review.canceled"
 				event.TS = time.Now()

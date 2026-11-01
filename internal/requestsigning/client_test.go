@@ -44,7 +44,7 @@ func TestClientClosesBodyBeforeTransportOnSigningFailure(t *testing.T) {
 				target = "https://reviews.example.com/elsewhere"
 			}
 			body := &trackedRequestBody{Reader: strings.NewReader("{}")}
-			r, err := http.NewRequest("GET", target, body)
+			r, err := http.NewRequestWithContext(t.Context(), "GET", target, body)
 			require.NoError(t, err)
 			_, err = client.Transport.RoundTrip(r)
 			require.Error(t, err)
@@ -76,7 +76,7 @@ func TestClientHTTPSOriginPrefixRedirectAndReconnect(t *testing.T) {
 	client, err := HTTPClient(server.URL+"/history", server.Client(), func() (Key, error) { return key, nil })
 	require.NoError(t, err)
 	for range 2 {
-		r, err := http.NewRequest("GET", server.URL+"/history/api/ping", nil)
+		r, err := http.NewRequestWithContext(t.Context(), "GET", server.URL+"/history/api/ping", nil)
 		require.NoError(t, err)
 		resp, err := client.Do(r)
 		require.NoError(t, err)
@@ -86,13 +86,15 @@ func TestClientHTTPSOriginPrefixRedirectAndReconnect(t *testing.T) {
 	mu.Lock()
 	assert.NotEqual(t, nonces[0], nonces[1])
 	mu.Unlock()
-	r, _ := http.NewRequest("GET", server.URL+"/history/redirect", nil)
+	r, _ := http.NewRequestWithContext(t.Context(), "GET", server.URL+"/history/redirect", nil)
 	resp, err := client.Do(r)
 	require.NoError(t, err)
 	resp.Body.Close()
 	assert.Equal(t, 307, resp.StatusCode)
 	for _, url := range []string{server.URL + "/elsewhere", server.URL + "/history-other/api/ping", "https://other.example/history/api/ping"} {
-		_, err = client.Get(url)
+		getRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
+		require.NoError(t, err)
+		_, err = client.Do(getRequest)
 		require.Error(t, err)
 	}
 	_, err = HTTPClient("http://example.com", nil, func() (Key, error) { return key, nil })
@@ -125,7 +127,7 @@ func TestClientDoesNotRetryAdmittedRequestImplicitly(t *testing.T) {
 			client, err := HTTPClient(server.URL+"/history", server.Client(), func() (Key, error) { return key, nil })
 			require.NoError(t, err)
 			request := func(path string) (*http.Response, error) {
-				r, err := http.NewRequest("GET", server.URL+"/history/"+path, nil)
+				r, err := http.NewRequestWithContext(t.Context(), "GET", server.URL+"/history/"+path, nil)
 				require.NoError(t, err)
 				return client.Do(r)
 			}

@@ -308,7 +308,7 @@ func TestGetSummary_RFC3339Timestamps(t *testing.T) {
 
 	j := enqueueJob(t, db, repo.ID, commit.ID, "abc123")
 	rfc3339Time := time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339)
-	_, err := db.Exec("UPDATE review_jobs SET enqueued_at = ? WHERE id = ?", rfc3339Time, j.ID)
+	_, err := db.ExecContext(t.Context(), "UPDATE review_jobs SET enqueued_at = ? WHERE id = ?", rfc3339Time, j.ID)
 	require.NoError(t, err)
 
 	s, err := db.GetSummary(SummaryOptions{
@@ -461,10 +461,10 @@ func TestBackfillVerdictBool(t *testing.T) {
 	require.NoError(t, completeReviewFixture(db, j3.ID, "codex", "p", "I am unable to read the diff file because it is ignored by configured ignore patterns."))
 
 	// Simulate legacy rows by nullifying verdict_bool
-	_, err := db.Exec(`UPDATE reviews SET verdict_bool = NULL`)
+	_, err := db.ExecContext(t.Context(), `UPDATE reviews SET verdict_bool = NULL`)
 	require.NoError(t, err)
 	// Older parsers recorded unreadable-diff output as a failed review.
-	_, err = db.Exec(`UPDATE reviews SET verdict_bool = 0 WHERE job_id = ?`, j3.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE reviews SET verdict_bool = 0 WHERE job_id = ?`, j3.ID)
 	require.NoError(t, err)
 
 	// Before backfill the summary sees only the bogus fail on the unreadable row
@@ -486,7 +486,7 @@ func TestBackfillVerdictBool(t *testing.T) {
 	assert.Equal(t, 1, s.Verdicts.Failed)
 
 	var unknownVerdict sql.NullInt64
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(t.Context(),
 		`SELECT verdict_bool FROM reviews WHERE job_id = ?`, j3.ID,
 	).Scan(&unknownVerdict))
 	assert.False(t, unknownVerdict.Valid, "unknown verdict must remain NULL")
@@ -514,7 +514,7 @@ func TestBackfillVerdictBoolSkipsFreeFormJobs(t *testing.T) {
 	claimJob(t, db, "w1")
 	require.NoError(t, completeReviewFixture(db, job.ID, "test", "prompt", "The code has issues."))
 	// An older release parsed a verdict out of this prose.
-	_, err = db.Exec(`UPDATE reviews SET verdict_bool = 0 WHERE job_id = ?`, job.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE reviews SET verdict_bool = 0 WHERE job_id = ?`, job.ID)
 	require.NoError(t, err)
 
 	count, err := db.BackfillVerdictBool()
@@ -522,7 +522,7 @@ func TestBackfillVerdictBoolSkipsFreeFormJobs(t *testing.T) {
 	assert.Equal(t, 1, count, "the legacy task verdict is cleared")
 
 	var verdict sql.NullInt64
-	require.NoError(t, db.QueryRow(`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID).Scan(&verdict))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID).Scan(&verdict))
 	assert.False(t, verdict.Valid, "task output must not be re-parsed into a verdict")
 
 	count, err = db.BackfillVerdictBool()
@@ -542,7 +542,7 @@ func TestBackfillVerdictBoolClearsEmptyOutputVerdicts(t *testing.T) {
 	require.NoError(t, completeReviewFixture(db, job.ID, "codex", "p", "No issues found."))
 
 	// Simulate a legacy empty-output row that still carries a verdict.
-	_, err := db.Exec(`UPDATE reviews SET output = '', structured_output = NULL, verdict_bool = 0 WHERE job_id = ?`, job.ID)
+	_, err := db.ExecContext(t.Context(), `UPDATE reviews SET output = '', structured_output = NULL, verdict_bool = 0 WHERE job_id = ?`, job.ID)
 	require.NoError(t, err)
 
 	count, err := db.BackfillVerdictBool()
@@ -550,7 +550,7 @@ func TestBackfillVerdictBoolClearsEmptyOutputVerdicts(t *testing.T) {
 	assert.Equal(t, 1, count)
 
 	var vb sql.NullInt64
-	require.NoError(t, db.QueryRow(`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID).Scan(&vb))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID).Scan(&vb))
 	assert.False(t, vb.Valid, "empty-output rows must not keep a verdict")
 
 	count, err = db.BackfillVerdictBool()

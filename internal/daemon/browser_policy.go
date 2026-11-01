@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -156,7 +157,7 @@ func normalizeAuthority(raw string) (string, error) {
 	}
 	port := parsed.Port()
 	if port != "" {
-		if _, err := net.LookupPort("tcp", port); err != nil {
+		if _, err := strconv.ParseUint(port, 10, 16); err != nil {
 			return "", fmt.Errorf("invalid authority")
 		}
 		return strings.ToLower(net.JoinHostPort(hostname, port)), nil

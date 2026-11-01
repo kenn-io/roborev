@@ -72,7 +72,7 @@ func TestAnalysisMetadata(t *testing.T) {
 	} {
 		job, enqueueErr := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, Prompt: "invalid files", Agent: "test"})
 		require.NoError(t, enqueueErr)
-		_, updateErr := db.Exec("UPDATE review_jobs SET analysis_files = ? WHERE id = ?", value, job.ID)
+		_, updateErr := db.ExecContext(t.Context(), "UPDATE review_jobs SET analysis_files = ? WHERE id = ?", value, job.ID)
 		require.NoError(t, updateErr)
 
 		hydrated, getErr := db.GetJobByID(job.ID)
@@ -94,7 +94,7 @@ func TestMigrateAddsAnalysisColumns(t *testing.T) {
 
 	for _, name := range []string{"analysis_type", "analysis_files", "analysis_commit_sha"} {
 		var count int
-		err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = ?", name).Scan(&count)
+		err := db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = ?", name).Scan(&count)
 		require.NoError(t, err)
 		assert.Equal(t, 1, count, name)
 	}
@@ -121,7 +121,7 @@ func TestAnalysisMetadataLocalOnlySyncBoundary(t *testing.T) {
 	}, repo.ID, nil))
 
 	var id int64
-	require.NoError(t, db.QueryRow("SELECT id FROM review_jobs WHERE uuid = ?", pulledUUID).Scan(&id))
+	require.NoError(t, db.QueryRowContext(t.Context(), "SELECT id FROM review_jobs WHERE uuid = ?", pulledUUID).Scan(&id))
 	pulled, err := db.GetJobByID(id)
 	require.NoError(t, err)
 	assert.Empty(t, pulled.AnalysisType)

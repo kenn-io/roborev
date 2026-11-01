@@ -125,7 +125,7 @@ func TestCanceledWaitingClaimKeepsCallerEventOwnership(t *testing.T) {
 	require.NotNil(t, next)
 	require.NoError(t, tc.DB.CancelJob(job.ID))
 	require.True(t, tc.Pool.cancelJob(job.ID, true))
-	tc.Pool.finishRunningJob("old-worker", job.ID)
+	tc.Pool.finishRunningJob(t.Context(), "old-worker", job.ID)
 	release()
 	tc.Pool.processJob("new-worker", next)
 	assert.Empty(t, events, "the caller already emitted the cancellation event")
@@ -133,7 +133,7 @@ func TestCanceledWaitingClaimKeepsCallerEventOwnership(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, current.WorkerID)
 	var invoked bool
-	require.NoError(t, tc.DB.QueryRow(`SELECT agent_invoked FROM review_jobs WHERE id = ?`, job.ID).Scan(&invoked))
+	require.NoError(t, tc.DB.QueryRowContext(t.Context(), `SELECT agent_invoked FROM review_jobs WHERE id = ?`, job.ID).Scan(&invoked))
 	assert.False(t, invoked)
 }
 
@@ -157,7 +157,7 @@ func TestRejectedWaitingClaimReleasesCanceledOwnership(t *testing.T) {
 		Agent: "test", JobType: job.JobType, Status: "canceled",
 		EnqueuedAt: job.EnqueuedAt.Add(time.Hour), UpdatedAt: time.Now(),
 	}, job.RepoID, job.CommitID))
-	tc.Pool.finishRunningJob("old-worker", job.ID)
+	tc.Pool.finishRunningJob(t.Context(), "old-worker", job.ID)
 	release()
 	tc.Pool.processJob("new-worker", next)
 	current, err := tc.DB.GetJobByID(job.ID)
@@ -206,7 +206,7 @@ func TestWaitingClaimTimeoutCleansOnlyItsOwnClaim(t *testing.T) {
 				}
 				assert.True(t, tc.Pool.CancelJob(job.ID), "the previous handler must remain registered")
 				require.ErrorIs(t, ctx.Err(), context.Canceled)
-				tc.Pool.finishRunningJob("old-worker", job.ID)
+				tc.Pool.finishRunningJob(t.Context(), "old-worker", job.ID)
 			})
 		})
 	}

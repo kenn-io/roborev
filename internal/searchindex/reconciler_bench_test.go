@@ -18,7 +18,7 @@ func BenchmarkReconcilerReviewEvent(b *testing.B) {
 	db, err := storage.Open(filepath.Join(b.TempDir(), "reviews.db"))
 	require.NoError(b, err)
 	b.Cleanup(func() { require.NoError(b, db.Close()) })
-	_, err = db.Exec(`
+	_, err = db.ExecContext(b.Context(), `
 		BEGIN;
 		INSERT INTO repos (id, root_path, name) VALUES (1, '/synthetic/repo', 'repo');
 		INSERT INTO commits (id, repo_id, sha, author, subject, timestamp)
@@ -45,7 +45,7 @@ func BenchmarkReconcilerReviewEvent(b *testing.B) {
 	for _, mode := range []string{"full", "job"} {
 		b.Run(mode, func(b *testing.B) {
 			for b.Loop() {
-				_, err := db.Exec(`UPDATE reviews SET closed = NOT closed WHERE job_id = 1`)
+				_, err := db.ExecContext(b.Context(), `UPDATE reviews SET closed = NOT closed WHERE job_id = 1`)
 				require.NoError(b, err)
 				if mode == "job" {
 					r.WakeJob(1)

@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -100,7 +99,7 @@ func TestCIPollerProjectPanelOverrides(t *testing.T) {
 				base := repo.HeadSHA()
 				head := repo.CommitFile("db/migrations/001_widgets.sql", "CREATE TABLE widgets(id INT);\n", "Add widgets table")
 				p.mergeBaseFn = func(_, _, _ string) (string, error) { return base, nil }
-				err := p.processPR(context.Background(), "acme/api", ghPR{
+				err := p.processPR(t.Context(), "acme/api", ghPR{
 					Number: 1, HeadRefOid: head, BaseRefName: "main",
 				}, cfg)
 				require.NoError(t, err)

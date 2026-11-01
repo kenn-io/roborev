@@ -61,7 +61,7 @@ func newMockDaemonClient() *mockDaemonClient {
 	}
 }
 
-func (m *mockDaemonClient) GetReviewBySHA(sha string) (*storage.Review, error) {
+func (m *mockDaemonClient) GetReviewBySHA(_ context.Context, sha string) (*storage.Review, error) {
 	if m.getReviewBySHAErr != nil {
 		return nil, m.getReviewBySHAErr
 	}
@@ -72,7 +72,7 @@ func (m *mockDaemonClient) GetReviewBySHA(sha string) (*storage.Review, error) {
 	return review, nil
 }
 
-func (m *mockDaemonClient) GetReviewByJobID(jobID int64) (*storage.Review, error) {
+func (m *mockDaemonClient) GetReviewByJobID(_ context.Context, jobID int64) (*storage.Review, error) {
 	job, ok := m.jobs[jobID]
 	if !ok {
 		return nil, nil
@@ -80,7 +80,7 @@ func (m *mockDaemonClient) GetReviewByJobID(jobID int64) (*storage.Review, error
 	return m.reviews[job.GitRef], nil
 }
 
-func (m *mockDaemonClient) MarkReviewClosed(jobID int64) error {
+func (m *mockDaemonClient) MarkReviewClosed(_ context.Context, jobID int64) error {
 	if m.markClosedErr != nil {
 		return m.markClosedErr
 	}
@@ -88,17 +88,17 @@ func (m *mockDaemonClient) MarkReviewClosed(jobID int64) error {
 	return nil
 }
 
-func (m *mockDaemonClient) AddComment(jobID int64, commenter, comment string) error {
+func (m *mockDaemonClient) AddComment(_ context.Context, jobID int64, commenter, comment string) error {
 	m.addedComments = append(m.addedComments, addedComment{jobID, commenter, comment})
 	return nil
 }
 
-func (m *mockDaemonClient) EnqueueReview(repoPath, gitRef, agentName string) (int64, error) {
+func (m *mockDaemonClient) EnqueueReview(_ context.Context, repoPath, gitRef, agentName string) (int64, error) {
 	m.enqueuedReviews = append(m.enqueuedReviews, enqueuedReview{repoPath, gitRef, agentName})
 	return int64(len(m.enqueuedReviews)), nil
 }
 
-func (m *mockDaemonClient) WaitForReview(jobID int64) (*storage.Review, error) {
+func (m *mockDaemonClient) WaitForReview(_ context.Context, jobID int64) (*storage.Review, error) {
 	job, ok := m.jobs[jobID]
 	if !ok {
 		return nil, nil
@@ -126,11 +126,11 @@ func (m *mockDaemonClient) FindPendingJobForRef(ctx context.Context, repoPath, g
 	return nil, nil
 }
 
-func (m *mockDaemonClient) GetCommentsForJob(jobID int64) ([]storage.Response, error) {
+func (m *mockDaemonClient) GetCommentsForJob(_ context.Context, jobID int64) ([]storage.Response, error) {
 	return m.responses[jobID], nil
 }
 
-func (m *mockDaemonClient) Remap(req daemon.RemapRequest) (*daemon.RemapResult, error) {
+func (m *mockDaemonClient) Remap(_ context.Context, req daemon.RemapRequest) (*daemon.RemapResult, error) {
 	return &daemon.RemapResult{}, nil
 }
 
@@ -431,7 +431,7 @@ func TestFindFailedReviewForBranch(t *testing.T) {
 			client := newMockDaemonClient()
 			tt.setup(client)
 
-			found, err := findFailedReviewForBranch(client, tt.commits, tt.skip)
+			found, err := findFailedReviewForBranch(t.Context(), client, tt.commits, tt.skip)
 
 			if len(tt.wantErrs) > 0 {
 				require.Error(t, err)
@@ -864,7 +864,7 @@ func TestCreateRefineWorktreeInitializesSubmoduleResolvedFromUserGitConfig(t *te
 	submoduleSource.Run("add", "--chmod=+x", ".githooks/post-checkout")
 	submoduleSHA := submoduleSource.CommitFile("sub.txt", "submodule content\n", "submodule base")
 	barePath := filepath.Join(t.TempDir(), "sub.git")
-	clone := exec.Command("git", "clone", "--bare", submoduleSource.Dir, barePath)
+	clone := exec.CommandContext(t.Context(), "git", "clone", "--bare", submoduleSource.Dir, barePath)
 	require.NoError(t, clone.Run())
 
 	parent := NewGitTestRepo(t)
@@ -876,9 +876,9 @@ func TestCreateRefineWorktreeInitializesSubmoduleResolvedFromUserGitConfig(t *te
 	parent.Run("commit", "-m", "add submodule")
 
 	rewriteKey := "url.file://" + filepath.ToSlash(barePath) + ".insteadOf"
-	config := exec.Command("git", "config", "--file", globalConfig, rewriteKey, "file:///roborev-test-placeholder/sub.git")
+	config := exec.CommandContext(t.Context(), "git", "config", "--file", globalConfig, rewriteKey, "file:///roborev-test-placeholder/sub.git")
 	require.NoError(t, config.Run())
-	config = exec.Command("git", "config", "--file", globalConfig, "core.hooksPath", ".githooks")
+	config = exec.CommandContext(t.Context(), "git", "config", "--file", globalConfig, "core.hooksPath", ".githooks")
 	require.NoError(t, config.Run())
 
 	wt, err := createRefineWorktree(t.Context(), parent.Dir)
@@ -927,7 +927,7 @@ func TestCreateRefineWorktreeDoesNotRunUserHooksOnWorktreeAdd(t *testing.T) {
 	t.Setenv("ROBOREV_HOOK_MARKER", filepath.ToSlash(markerPath))
 	hookScript := "#!/bin/sh\nprintf 'hook ran\\n' > \"$ROBOREV_HOOK_MARKER\"\n"
 	require.NoError(t, os.WriteFile(filepath.Join(hookDir, "post-checkout"), []byte(hookScript), 0o755))
-	config := exec.Command("git", "config", "--file", globalConfig, "core.hooksPath", hookDir)
+	config := exec.CommandContext(t.Context(), "git", "config", "--file", globalConfig, "core.hooksPath", hookDir)
 	require.NoError(t, config.Run())
 
 	wt, err := createRefineWorktree(t.Context(), parent.Dir)
@@ -949,7 +949,7 @@ func TestRefineGitRunnerCredentialHelper(t *testing.T) {
 	store := "https://synthetic-user:synthetic-password@credential-test.invalid/private/repo.git\n"
 	require.NoError(t, os.WriteFile(storePath, []byte(store), 0o600))
 	helper := "store --file=\"" + filepath.ToSlash(storePath) + "\""
-	config := exec.Command("git", "config", "--file", globalConfig, "credential.https://credential-test.invalid.helper", helper)
+	config := exec.CommandContext(t.Context(), "git", "config", "--file", globalConfig, "credential.https://credential-test.invalid.helper", helper)
 	require.NoError(t, config.Run())
 
 	request := strings.NewReader("protocol=https\nhost=credential-test.invalid\npath=private/repo.git\n\n")
@@ -993,9 +993,9 @@ func TestCreateRefineWorktreeDoesNotRunConfiguredAskPass(t *testing.T) {
 		askPassScript = "@echo off\r\n>\"%ROBOREV_ASKPASS_MARKER%\" echo askpass ran\r\necho synthetic-user\r\n"
 	}
 	require.NoError(t, os.WriteFile(askPassPath, []byte(askPassScript), 0o755))
-	config := exec.Command("git", "config", "--file", globalConfig, "core.askPass", filepath.ToSlash(askPassPath))
+	config := exec.CommandContext(t.Context(), "git", "config", "--file", globalConfig, "core.askPass", filepath.ToSlash(askPassPath))
 	require.NoError(t, config.Run())
-	config = exec.Command("git", "config", "--file", globalConfig, "credential.helper", "")
+	config = exec.CommandContext(t.Context(), "git", "config", "--file", globalConfig, "credential.helper", "")
 	require.NoError(t, config.Run())
 
 	wt, err := createRefineWorktree(t.Context(), parent.Dir)

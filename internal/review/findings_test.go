@@ -1,7 +1,6 @@
 package review
 
 import (
-	"context"
 	"encoding/json/jsontext"
 	"os"
 	"path/filepath"
@@ -48,7 +47,7 @@ func TestSettleFindingsChecksLocationsAgainstTheReviewedCommit(t *testing.T) {
 		located("missing.go", 2, 2),
 		located("../outside.go", 1, 1),
 	}}
-	settleFindings(context.Background(), repo.Path(), sha, &doc)
+	settleFindings(t.Context(), repo.Path(), sha, &doc)
 
 	require.Len(t, doc.Findings, 5)
 	got := make(map[string]string)
@@ -69,7 +68,7 @@ func TestSettleFindingsUsesTheEndOfARange(t *testing.T) {
 	head := repo.CommitFile("added.go", numberedLines(5), "add file")
 
 	doc := structuredreview.Document{Findings: []structuredreview.Finding{located("added.go", 2, 3)}}
-	settleFindings(context.Background(), repo.Path(), base+".."+head, &doc)
+	settleFindings(t.Context(), repo.Path(), base+".."+head, &doc)
 
 	assert.Equal(t, "added.go:2-3", doc.Findings[0].Location)
 }
@@ -86,7 +85,7 @@ func TestSettleFindingsReadsCommittedRangesNotTheWorkingTree(t *testing.T) {
 	for _, ref := range []string{base + "..", base + "..dirty"} {
 		t.Run(ref, func(t *testing.T) {
 			doc := structuredreview.Document{Findings: []structuredreview.Finding{located("added.go", 2, 3)}}
-			settleFindings(context.Background(), repo.Path(), ref, &doc)
+			settleFindings(t.Context(), repo.Path(), ref, &doc)
 
 			assert.Equal(t, "added.go:2-3", doc.Findings[0].Location)
 		})
@@ -98,7 +97,7 @@ func TestSettleFindingsReadsTheWorkingTreeForUncommittedChanges(t *testing.T) {
 	repo.WriteFile("new.go", numberedLines(4))
 
 	doc := structuredreview.Document{Findings: []structuredreview.Finding{located("new.go", 3, 9)}}
-	settleFindings(context.Background(), repo.Path(), "dirty", &doc)
+	settleFindings(t.Context(), repo.Path(), "dirty", &doc)
 
 	assert.Equal(t, "new.go:3-4", doc.Findings[0].Location)
 }
@@ -124,7 +123,7 @@ func TestSettleFindingsDropsWorkingTreeLocationsOnlyForMissingFiles(t *testing.T
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			doc := structuredreview.Document{Findings: []structuredreview.Finding{located(tc.file, 2, 3)}}
-			settleFindings(context.Background(), repo.Path(), "dirty", &doc)
+			settleFindings(t.Context(), repo.Path(), "dirty", &doc)
 
 			assert.Equal(t, tc.want, doc.Findings[0].Location)
 		})
@@ -133,7 +132,7 @@ func TestSettleFindingsDropsWorkingTreeLocationsOnlyForMissingFiles(t *testing.T
 
 func TestSettleFindingsLeavesLocationsWhenTheCheckoutIsMissing(t *testing.T) {
 	doc := structuredreview.Document{Findings: []structuredreview.Finding{located("main.go", 3, 4)}}
-	settleFindings(context.Background(), filepath.Join(t.TempDir(), "gone"), "dirty", &doc)
+	settleFindings(t.Context(), filepath.Join(t.TempDir(), "gone"), "dirty", &doc)
 
 	assert.Equal(t, "main.go:3-4", doc.Findings[0].Location)
 }
@@ -273,7 +272,7 @@ func TestRunAgentReviewStoresSettledFindings(t *testing.T) {
 }`),
 	}
 
-	got, err := RunAgentReview(context.Background(), a, repo.Path(), repo.HeadSHA(), "prompt", "", "low", nil, nil)
+	got, err := RunAgentReview(t.Context(), a, repo.Path(), repo.HeadSHA(), "prompt", "", "low", nil, nil)
 	require.NoError(t, err)
 
 	stored, err := structuredreview.Decode(got.StructuredOutput)

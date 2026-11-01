@@ -82,7 +82,7 @@ func (e *autoDesignE2E) runWorkersUntilEvent(sha string) Event {
 
 func (e *autoDesignE2E) completeParentReview(job *storage.ReviewJob) {
 	e.t.Helper()
-	_, err := e.db.Exec(`UPDATE review_jobs SET status = ? WHERE id = ?`, storage.JobStatusDone, job.ID)
+	_, err := e.db.ExecContext(e.t.Context(), `UPDATE review_jobs SET status = ? WHERE id = ?`, storage.JobStatusDone, job.ID)
 	require.NoError(e.t, err)
 }
 
@@ -285,7 +285,7 @@ func TestE2EAutoDesign_ClassifierPath_PromotesToDesignReview(t *testing.T) {
 	// Exactly one auto_design row for this commit — a bug would have
 	// left both a classify and a design row behind.
 	var rowCount int
-	require.NoError(t, e.db.QueryRow(`
+	require.NoError(t, e.db.QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM review_jobs rj
 		JOIN commits c ON rj.commit_id = c.id
 		WHERE rj.repo_id = ? AND c.sha = ? AND rj.source = 'auto_design'
@@ -391,7 +391,7 @@ func TestE2EAutoDesign_Dedup_SecondDispatchNoOp(t *testing.T) {
 	e.enqueueReviewFor(sha, "feat: add foo table")
 
 	var n int
-	require.NoError(t, e.db.QueryRow(`
+	require.NoError(t, e.db.QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM review_jobs rj
 		JOIN commits c ON rj.commit_id = c.id
 		WHERE rj.repo_id = ? AND c.sha = ?
@@ -452,7 +452,7 @@ classifier_timeout_seconds = 1
 func e2eAutoDesignAgentCols(t *testing.T, db *storage.DB, repoID int64, sha string) (string, string) {
 	t.Helper()
 	var ag, model string
-	require.NoError(t, db.QueryRow(`
+	require.NoError(t, db.QueryRowContext(t.Context(), `
 		SELECT COALESCE(rj.agent,''), COALESCE(rj.model,'')
 		FROM review_jobs rj JOIN commits c ON rj.commit_id = c.id
 		WHERE rj.repo_id = ? AND c.sha = ?
@@ -496,7 +496,7 @@ enabled = true
 	job.RepoPath = row.RootPath
 	job.CommitSubject = "feat: t table"
 
-	require.NoError(t, srv.maybeDispatchAutoDesign(context.Background(), job))
+	require.NoError(t, srv.maybeDispatchAutoDesign(t.Context(), job))
 
 	ag, model := e2eAutoDesignAgentCols(t, db, row.ID, sha)
 	assert := assert.New(t)
@@ -541,7 +541,7 @@ func TestE2EAutoDesign_HTTP_ExplicitDesignBypasses(t *testing.T) {
 	dbRepo, err := db.GetOrCreateRepo(repoDir)
 	require.NoError(t, err)
 	var autoCount int
-	require.NoError(t, db.QueryRow(`
+	require.NoError(t, db.QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM review_jobs WHERE repo_id = ? AND source = 'auto_design'
 	`, dbRepo.ID).Scan(&autoCount))
 	assert.Equal(t, 0, autoCount,
@@ -588,7 +588,7 @@ func TestE2EAutoDesign_HTTP_RangeReviewBypasses(t *testing.T) {
 	dbRepo, err := db.GetOrCreateRepo(repoDir)
 	require.NoError(t, err)
 	var autoCount int
-	require.NoError(t, db.QueryRow(`
+	require.NoError(t, db.QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM review_jobs WHERE repo_id = ? AND source = 'auto_design'
 	`, dbRepo.ID).Scan(&autoCount))
 	assert.Equal(t, 0, autoCount,
@@ -622,7 +622,7 @@ func TestE2EAutoDesign_HTTP_SecurityReviewBypasses(t *testing.T) {
 	dbRepo, err := db.GetOrCreateRepo(repoDir)
 	require.NoError(t, err)
 	var autoCount int
-	require.NoError(t, db.QueryRow(`
+	require.NoError(t, db.QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM review_jobs WHERE repo_id = ? AND source = 'auto_design'
 	`, dbRepo.ID).Scan(&autoCount))
 	assert.Equal(t, 0, autoCount,
@@ -655,7 +655,7 @@ func TestE2EAutoDesign_Disabled_NoOp(t *testing.T) {
 	job.RepoPath = row.RootPath
 	job.CommitSubject = "feat: add x table"
 
-	require.NoError(t, srv.maybeDispatchAutoDesign(context.Background(), job))
+	require.NoError(t, srv.maybeDispatchAutoDesign(t.Context(), job))
 
 	// Sweep every status — no auto_design rows must exist for this repo.
 	for _, st := range []storage.JobStatus{

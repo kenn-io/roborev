@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
@@ -124,7 +125,7 @@ func ListAllTUIRuntimes() ([]*TUIRuntimeInfo, error) {
 
 // CleanupStaleTUIRuntimes removes socket and metadata files for
 // TUI processes that are no longer running.
-func CleanupStaleTUIRuntimes() int {
+func CleanupStaleTUIRuntimes(ctx context.Context) int {
 	runtimes, err := ListAllTUIRuntimes()
 	if err != nil {
 		return 0
@@ -142,7 +143,7 @@ func CleanupStaleTUIRuntimes() int {
 		// at a shared custom path or a non-socket file.
 		// Errors are ignored: the metadata is still cleaned
 		// since the owning PID is dead.
-		_ = removeStaleSocket(info.SocketPath)
+		_ = removeStaleSocket(ctx, info.SocketPath)
 		os.Remove(tuiRuntimePath(info.PID))
 		cleaned++
 	}

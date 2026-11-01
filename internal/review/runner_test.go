@@ -33,7 +33,7 @@ func TestRunAgentReviewKeepsCustomVerdictWithRenderedOutput(t *testing.T) {
 	var streamed strings.Builder
 
 	got, err := RunAgentReview(
-		context.Background(), a, t.TempDir(), "HEAD", "prompt",
+		t.Context(), a, t.TempDir(), "HEAD", "prompt",
 		"custom", "medium", nil, &streamed,
 	)
 	require.NoError(t, err)
@@ -67,7 +67,7 @@ func TestRunAgentReviewUsesSchemaForBuiltInTypesWhenSupported(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte(strings.Repeat("// line\n", 12)), 0o644))
 
 	got, err := RunAgentReview(
-		context.Background(), a, dir, "HEAD", "prompt",
+		t.Context(), a, dir, "HEAD", "prompt",
 		"default", "", nil, nil,
 	)
 	require.NoError(t, err)
@@ -137,7 +137,7 @@ func TestRunAgentReviewTreatsUnableToReviewAsFailure(t *testing.T) {
 	}
 
 	_, err := RunAgentReview(
-		context.Background(), a, t.TempDir(), "HEAD", "prompt",
+		t.Context(), a, t.TempDir(), "HEAD", "prompt",
 		"default", "", nil, nil,
 	)
 	require.ErrorContains(t, err, "could not review the change")
@@ -156,7 +156,7 @@ func TestRunAgentReviewRendersAgentVerdict(t *testing.T) {
 	}
 
 	got, err := RunAgentReview(
-		context.Background(), a, t.TempDir(), "HEAD", "prompt",
+		t.Context(), a, t.TempDir(), "HEAD", "prompt",
 		"default", "", nil, nil,
 	)
 	require.NoError(t, err)
@@ -171,7 +171,7 @@ func TestRunAgentReviewRejectsOldSchemaFromLiveAgent(t *testing.T) {
 		result: jsontext.Value(`{"schema_version":1,"summary":"Clean.","findings":[]}`),
 	}
 	_, err := RunAgentReview(
-		context.Background(), a, t.TempDir(), "HEAD", "prompt", "default", "", nil, nil,
+		t.Context(), a, t.TempDir(), "HEAD", "prompt", "default", "", nil, nil,
 	)
 	require.ErrorContains(t, err, "schema_version 1, want 3")
 }
@@ -182,7 +182,7 @@ func TestRunAgentReviewRejectsFailWithoutFindings(t *testing.T) {
 		result: jsontext.Value(`{"schema_version":3,"summary":"Bad.","verdict":"fail","findings":[]}`),
 	}
 	_, err := RunAgentReview(
-		context.Background(), a, t.TempDir(), "HEAD", "prompt", "default", "", nil, nil,
+		t.Context(), a, t.TempDir(), "HEAD", "prompt", "default", "", nil, nil,
 	)
 	require.ErrorContains(t, err, "failing verdict without any finding")
 }

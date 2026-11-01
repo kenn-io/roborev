@@ -881,7 +881,7 @@ func CleanupZombieDaemons(target DaemonEndpoint) int {
 // FindAvailablePort finds an available port starting from the configured port.
 // After zombie cleanup, this should usually succeed on the first try.
 // Falls back to searching if the port is still in use (e.g., by another service).
-func FindAvailablePort(startAddr string) (string, int, error) {
+func FindAvailablePort(ctx context.Context, startAddr string) (string, int, error) {
 	host, port, err := parseDaemonBindAddr(startAddr)
 	if err != nil {
 		return "", 0, err
@@ -890,7 +890,7 @@ func FindAvailablePort(startAddr string) (string, int, error) {
 	// Try ports starting from the configured one
 	for i := range 100 {
 		addr := net.JoinHostPort(host, strconv.Itoa(port+i))
-		ln, err := net.Listen("tcp", addr)
+		ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
 		if err == nil {
 			actualPort := ln.Addr().(*net.TCPAddr).Port
 			ln.Close()

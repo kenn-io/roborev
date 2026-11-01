@@ -114,7 +114,7 @@ func TestCIPollerRestartRecoversExhaustedReview(t *testing.T) {
 	// A fetch failure after claiming the recovery must not strand it behind
 	// the previous terminal panel's posted_at marker.
 	h.Poller.gitFetchFn = func(context.Context, string, []string) error { return errors.New("fetch unavailable") }
-	require.NoError(t, h.Poller.retryDueReviewAttempts(context.Background(), "acme/api", []ghPR{pr}, h.Cfg))
+	require.NoError(t, h.Poller.retryDueReviewAttempts(t.Context(), "acme/api", []ghPR{pr}, h.Cfg))
 	require.NoError(t, h.Poller.reconcileStuckAttempts("acme/api"))
 	attempt, err = h.DB.GetReviewAttempt("acme/api", pr.Number, pr.HeadRefOid)
 	require.NoError(t, err)
@@ -123,9 +123,9 @@ func TestCIPollerRestartRecoversExhaustedReview(t *testing.T) {
 
 	// If repair did not help, the normal three-failure budget still stops work.
 	for range 3 {
-		_, err = h.DB.Exec(`UPDATE ci_pr_review_attempts SET next_attempt_at = datetime('now','-1 hour')`)
+		_, err = h.DB.ExecContext(t.Context(), `UPDATE ci_pr_review_attempts SET next_attempt_at = datetime('now','-1 hour')`)
 		require.NoError(t, err)
-		require.NoError(t, h.Poller.retryDueReviewAttempts(context.Background(), "acme/api", []ghPR{pr}, h.Cfg))
+		require.NoError(t, h.Poller.retryDueReviewAttempts(t.Context(), "acme/api", []ghPR{pr}, h.Cfg))
 		current, err := h.DB.GetActiveCIPanelByPRSHA("acme/api", pr.Number, pr.HeadRefOid)
 		require.NoError(t, err)
 		members, err := h.DB.GetPanelMembers(current.PanelRunUUID)
@@ -139,15 +139,15 @@ func TestCIPollerRestartRecoversExhaustedReview(t *testing.T) {
 	attempt, err = h.DB.GetReviewAttempt("acme/api", pr.Number, pr.HeadRefOid)
 	require.NoError(t, err)
 	require.Equal(t, "done", attempt.State)
-	require.NoError(t, h.Poller.processPR(context.Background(), "acme/api", pr, h.Cfg))
-	require.NoError(t, h.Poller.retryDueReviewAttempts(context.Background(), "acme/api", []ghPR{pr}, h.Cfg))
+	require.NoError(t, h.Poller.processPR(t.Context(), "acme/api", pr, h.Cfg))
+	require.NoError(t, h.Poller.retryDueReviewAttempts(t.Context(), "acme/api", []ghPR{pr}, h.Cfg))
 	attempt, err = h.DB.GetReviewAttempt("acme/api", pr.Number, pr.HeadRefOid)
 	require.NoError(t, err)
 	require.Equal(t, "done", attempt.State, "normal polling must not reset an exhausted budget")
 
 	require.NoError(t, h.Poller.Start())
 	h.Poller.Stop()
-	require.NoError(t, h.Poller.retryDueReviewAttempts(context.Background(), "acme/api", []ghPR{pr}, h.Cfg))
+	require.NoError(t, h.Poller.retryDueReviewAttempts(t.Context(), "acme/api", []ghPR{pr}, h.Cfg))
 	id := h.drivePanelOutcome(t, "acme/api", pr.Number, pr.HeadRefOid, "done")
 	h.Poller.handleReviewCompleted(ciEvent(id, "review.completed"))
 	require.Len(t, *comments, 1)
@@ -193,7 +193,7 @@ func TestCIPanelRerunDoesNotPostToAdvancedHead(t *testing.T) {
 	require.NoError(t, h.DB.MarkPanelPosted(panel.ID, storage.PanelOutcomeNoReviewPosted, "", ""))
 	server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
 	t.Cleanup(func() { require.NoError(t, server.Close()) })
-	rerun, err := server.humaRerunJob(context.Background(), &RerunJobInput{Body: RerunJobRequest{JobID: synth.ID}})
+	rerun, err := server.humaRerunJob(t.Context(), &RerunJobInput{Body: RerunJobRequest{JobID: synth.ID}})
 	require.NoError(t, err)
 	members, err := h.DB.GetPanelMembers(*rerun.Body.RunUUID)
 	require.NoError(t, err)
@@ -257,7 +257,7 @@ func TestCIPanelRerunIgnoresCanceledPredecessor(t *testing.T) {
 			h.markJobCanceled(t, synth.ID, "canceled by user")
 			server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
 			t.Cleanup(func() { require.NoError(t, server.Close()) })
-			rerun, err := server.humaRerunJob(context.Background(), &RerunJobInput{Body: RerunJobRequest{JobID: synth.ID}})
+			rerun, err := server.humaRerunJob(t.Context(), &RerunJobInput{Body: RerunJobRequest{JobID: synth.ID}})
 			require.NoError(t, err)
 			if successorState == "done" {
 				panel, err := h.DB.GetCIPanelByRunUUID(*rerun.Body.RunUUID)
@@ -299,7 +299,7 @@ func TestCIPanelCanceledRerunKeepsPostedReview(t *testing.T) {
 			}
 			server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
 			t.Cleanup(func() { require.NoError(t, server.Close()) })
-			rerun, err := server.humaRerunJob(context.Background(), &RerunJobInput{Body: RerunJobRequest{JobID: synth.ID}})
+			rerun, err := server.humaRerunJob(t.Context(), &RerunJobInput{Body: RerunJobRequest{JobID: synth.ID}})
 			require.NoError(t, err)
 			cancelID := rerun.Body.JobID
 			if scenario == "reviewed retry" {
@@ -310,22 +310,22 @@ func TestCIPanelCanceledRerunKeepsPostedReview(t *testing.T) {
 				}
 				h.markJobFailed(t, rerun.Body.JobID, "no member output")
 				h.Poller.handleReviewFailed(ciEvent(rerun.Body.JobID, "review.failed"))
-				_, err = h.DB.Exec(`UPDATE ci_pr_review_attempts SET next_attempt_at = datetime('now', '-1 hour')`)
+				_, err = h.DB.ExecContext(t.Context(), `UPDATE ci_pr_review_attempts SET next_attempt_at = datetime('now', '-1 hour')`)
 				require.NoError(t, err)
-				require.NoError(t, h.Poller.retryDueReviewAttempts(context.Background(), "acme/api", []ghPR{pr}, h.Cfg))
+				require.NoError(t, h.Poller.retryDueReviewAttempts(t.Context(), "acme/api", []ghPR{pr}, h.Cfg))
 				retry, err := h.DB.GetActiveCIPanelByPRSHA("acme/api", 7, "head-a")
 				require.NoError(t, err)
 				require.NotEqual(t, *rerun.Body.RunUUID, retry.PanelRunUUID)
 				cancelID = *retry.SynthesisJobID
 			}
-			_, err = server.humaCancelJob(context.Background(), &CancelJobInput{Body: CancelJobRequest{JobID: cancelID}})
+			_, err = server.humaCancelJob(t.Context(), &CancelJobInput{Body: CancelJobRequest{JobID: cancelID}})
 			require.NoError(t, err)
 
 			reviewed, err := h.Poller.alreadyReviewedPR("acme/api", pr)
 			require.NoError(t, err)
 			assert.Equal(posted, reviewed, "only a delivered review suppresses a new automatic run after cancellation")
 			if posted {
-				require.NoError(t, h.Poller.processPR(context.Background(), "acme/api", pr, h.Cfg))
+				require.NoError(t, h.Poller.processPR(t.Context(), "acme/api", pr, h.Cfg))
 				assert.Equal([]capturedStatus{{Repo: "acme/api", SHA: "head-a", State: "success", Desc: "Review complete"}}, *statuses,
 					"reruns and automatic retries must preserve the delivered status when canceled")
 			}
@@ -351,12 +351,12 @@ func TestCIPanelRerunRetainsFailureHealthUntilDelivery(t *testing.T) {
 			} else {
 				h.Poller.handleReviewFailed(ciEvent(synth.ID, "review.failed"))
 			}
-			h.Poller.poll(context.Background())
-			require.False(t, decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy)
-			rerun, err := server.humaRerunJob(context.Background(), &RerunJobInput{Body: RerunJobRequest{JobID: synth.ID}})
+			h.Poller.poll(t.Context())
+			require.False(t, decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet)).Healthy)
+			rerun, err := server.humaRerunJob(t.Context(), &RerunJobInput{Body: RerunJobRequest{JobID: synth.ID}})
 			require.NoError(t, err)
-			h.Poller.poll(context.Background())
-			assert.False(t, decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy,
+			h.Poller.poll(t.Context())
+			assert.False(t, decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet)).Healthy,
 				"queueing a rerun does not deliver a review")
 
 			members, err := h.DB.GetPanelMembers(*rerun.Body.RunUUID)
@@ -367,8 +367,8 @@ func TestCIPanelRerunRetainsFailureHealthUntilDelivery(t *testing.T) {
 			h.completeSynthesisWithReview(t, rerun.Body.JobID, "No issues found.")
 			h.Poller.handleReviewCompleted(ciEvent(rerun.Body.JobID, "review.completed"))
 			require.Len(t, *comments, 1)
-			h.Poller.poll(context.Background())
-			assert.True(t, decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy)
+			h.Poller.poll(t.Context())
+			assert.True(t, decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet)).Healthy)
 		})
 	}
 }
@@ -379,14 +379,14 @@ func TestCIPanelRerunAfterClosedPRCleanup(t *testing.T) {
 	_, synth, _ := h.seedBlockedPanelRun(t, "acme/api", 7, "head-a", "base..head-a",
 		[]jobSpec{{Agent: "test"}})
 	h.Poller.isPROpenFn = func(string, int) bool { return false }
-	require.NoError(t, h.Poller.cleanupClosedPRPanels(context.Background(), "acme/api", nil))
+	require.NoError(t, h.Poller.cleanupClosedPRPanels(t.Context(), "acme/api", nil))
 	candidates, err := h.Poller.closedPRCleanupCandidates("acme/api")
 	require.NoError(t, err)
 	assert.Empty(t, candidates, "finished cleanup must not keep checking a closed PR")
 	h.Poller.isPROpenFn = func(string, int) bool { return true }
 	server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
 	t.Cleanup(func() { require.NoError(t, server.Close()) })
-	rerun, err := server.humaRerunJob(context.Background(), &RerunJobInput{Body: RerunJobRequest{JobID: synth.ID}})
+	rerun, err := server.humaRerunJob(t.Context(), &RerunJobInput{Body: RerunJobRequest{JobID: synth.ID}})
 	require.NoError(t, err)
 	members, err := h.DB.GetPanelMembers(*rerun.Body.RunUUID)
 	require.NoError(t, err)
@@ -406,9 +406,9 @@ func TestCIPanelRerunRejectsMissingDeliveryTarget(t *testing.T) {
 		[]jobSpec{{Agent: "test", Status: "done", Output: "No issues found."}})
 	h.completeSynthesisWithReview(t, synth.ID, "No issues found.")
 	// Older closed-PR cleanup removed mappings but preserved CI job ownership.
-	_, err := h.DB.Exec(`UPDATE review_jobs SET source = ? WHERE panel_run_uuid = ?`, storage.JobSourceCI, panel.PanelRunUUID)
+	_, err := h.DB.ExecContext(t.Context(), `UPDATE review_jobs SET source = ? WHERE panel_run_uuid = ?`, storage.JobSourceCI, panel.PanelRunUUID)
 	require.NoError(t, err)
-	_, err = h.DB.Exec(`DELETE FROM ci_pr_panels WHERE id = ?`, panel.ID)
+	_, err = h.DB.ExecContext(t.Context(), `DELETE FROM ci_pr_panels WHERE id = ?`, panel.ID)
 	require.NoError(t, err)
 	server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
 	t.Cleanup(func() { require.NoError(t, server.Close()) })

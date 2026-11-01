@@ -16,7 +16,6 @@ import (
 // MigrationTestEnv manages the environment for schema migration tests.
 type MigrationTestEnv struct {
 	t    *testing.T
-	ctx  context.Context
 	pool *pgxpool.Pool
 }
 
@@ -31,20 +30,19 @@ func NewMigrationTestEnv(t *testing.T) *MigrationTestEnv {
 
 	return &MigrationTestEnv{
 		t:    t,
-		ctx:  t.Context(),
 		pool: p,
 	}
 }
 
 func (e *MigrationTestEnv) DropSchema(schema string) {
 	e.t.Helper()
-	_, err := e.pool.Exec(e.ctx, "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
+	_, err := e.pool.Exec(e.t.Context(), "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
 	require.NoError(e.t, err, "Failed to drop schema %s", schema)
 }
 
 func (e *MigrationTestEnv) DropTable(schema, table string) {
 	e.t.Helper()
-	_, err := e.pool.Exec(e.ctx, "DROP TABLE IF EXISTS "+pgx.Identifier{schema, table}.Sanitize())
+	_, err := e.pool.Exec(e.t.Context(), "DROP TABLE IF EXISTS "+pgx.Identifier{schema, table}.Sanitize())
 	require.NoError(e.t, err, "Failed to drop table %s.%s", schema, table)
 }
 
@@ -77,7 +75,7 @@ func (e *MigrationTestEnv) CleanupDropTable(schema, table string) {
 func (e *MigrationTestEnv) SkipIfTableInSchema(schema, table string) {
 	e.t.Helper()
 	var exists bool
-	err := e.pool.QueryRow(e.ctx, `
+	err := e.pool.QueryRow(e.t.Context(), `
 		SELECT EXISTS(
 			SELECT 1 FROM information_schema.tables
 			WHERE table_schema = $1 AND table_name = $2
@@ -91,13 +89,13 @@ func (e *MigrationTestEnv) SkipIfTableInSchema(schema, table string) {
 
 func (e *MigrationTestEnv) Exec(sql string, args ...any) {
 	e.t.Helper()
-	_, err := e.pool.Exec(e.ctx, sql, args...)
+	_, err := e.pool.Exec(e.t.Context(), sql, args...)
 	require.NoError(e.t, err, "Failed to execute SQL\nSQL: %s", sql)
 }
 
 func (e *MigrationTestEnv) QueryRow(sql string, args ...any) pgx.Row {
 	e.t.Helper()
-	return e.pool.QueryRow(e.ctx, sql, args...)
+	return e.pool.QueryRow(e.t.Context(), sql, args...)
 }
 
 // Data Factory Helpers

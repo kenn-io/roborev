@@ -18,7 +18,7 @@ import (
 // query must start with "?" or be empty.
 func listJobsViaHTTP(t *testing.T, server *Server, query string) []storage.ReviewJob {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, "/api/jobs"+query, nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/jobs"+query, nil)
 	w := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
@@ -112,7 +112,7 @@ func TestListJobsPanelRunScopesStats(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			server.httpServer.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/jobs"+tc.query, nil))
+			server.httpServer.Handler.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/jobs"+tc.query, nil))
 			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 			var body struct {
 				Jobs          []storage.ReviewJob `json:"jobs"`
@@ -214,7 +214,7 @@ func TestListJobsByIDAttachesPresentationMetadata(t *testing.T) {
 	server, db, _ := newTestServer(t)
 
 	_, synthID, _ := enqueueTrioPanel(t, server)
-	_, err := db.Exec(`UPDATE review_jobs SET status = 'running' WHERE id = ?`, synthID)
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'running' WHERE id = ?`, synthID)
 	require.NoError(t, err)
 	require.NoError(t, testutil.CompleteReviewFixture(db, synthID, "test", "prompt", "PASS\n\nPanel review"))
 
@@ -237,10 +237,10 @@ func TestListJobsStatsExcludeMembers(t *testing.T) {
 	runUUID, _, _ := enqueueTrioPanel(t, server)
 
 	// Mark the whole run done so it counts toward stats (3 members + 1 synth).
-	_, err := db.Exec(`UPDATE review_jobs SET status = 'done' WHERE panel_run_uuid = ?`, runUUID)
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'done' WHERE panel_run_uuid = ?`, runUUID)
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/jobs", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/jobs", nil)
 	w := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())

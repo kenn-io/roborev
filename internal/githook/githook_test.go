@@ -129,7 +129,7 @@ func TestEmbeddablePrePushReplaysStdinToExistingHook(t *testing.T) {
 	require.NoError(t, os.WriteFile(hookPath, []byte(hook), 0o755))
 
 	input := "refs/heads/feature abc refs/heads/feature def\n"
-	cmd := exec.Command("sh", hookPath)
+	cmd := exec.CommandContext(t.Context(), "sh", hookPath)
 	cmd.Stdin = strings.NewReader(input)
 	cmd.Env = append(os.Environ(),
 		"ROBOREV_CAPTURE="+roborevCapture,
@@ -160,7 +160,7 @@ func TestPrePushHookMasksFlushFailure(t *testing.T) {
 		hookPath, []byte(GeneratePrePushWithBinary(fakeRoborev)), 0o755,
 	))
 
-	cmd := exec.Command("sh", hookPath)
+	cmd := exec.CommandContext(t.Context(), "sh", hookPath)
 	cmd.Stdin = strings.NewReader(
 		"refs/heads/feature abc refs/heads/feature def\n",
 	)
@@ -186,7 +186,7 @@ func TestEmbeddablePrePushMasksFlushFailureUnderSetE(t *testing.T) {
 	hookPath := filepath.Join(tmpDir, "pre-push")
 	require.NoError(t, os.WriteFile(hookPath, []byte(hook), 0o755))
 
-	cmd := exec.Command("sh", hookPath)
+	cmd := exec.CommandContext(t.Context(), "sh", hookPath)
 	cmd.Stdin = strings.NewReader(
 		"refs/heads/feature abc refs/heads/feature def\n",
 	)
@@ -991,7 +991,7 @@ func TestInstallWithOptionsUpdatesCurrentHookBinary(t *testing.T) {
 			string(content), "_roborev_input=$(mktemp",
 		))
 		assert.Contains(t, string(content), "cat > downstream-input")
-		cmd := exec.Command("sh", "-n", hookPath)
+		cmd := exec.CommandContext(t.Context(), "sh", "-n", hookPath)
 		assert.NoError(t, cmd.Run())
 	})
 }

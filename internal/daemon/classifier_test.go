@@ -65,7 +65,7 @@ func TestClassifierAdapter_Yes(t *testing.T) {
 	ad := newClassifierAdapter(&fakeSchemaAgent{
 		result: []byte(`{"design_review": true, "reason": "new package"}`),
 	}, 20*1024, nil)
-	yes, reason, err := ad.Decide(context.Background(), autotype.Input{})
+	yes, reason, err := ad.Decide(t.Context(), autotype.Input{})
 	require.NoError(t, err)
 	assert.True(t, yes)
 	assert.Equal(t, "new package", reason)
@@ -75,7 +75,7 @@ func TestClassifierAdapter_No(t *testing.T) {
 	ad := newClassifierAdapter(&fakeSchemaAgent{
 		result: []byte(`{"design_review": false, "reason": "local fix"}`),
 	}, 20*1024, nil)
-	yes, reason, err := ad.Decide(context.Background(), autotype.Input{})
+	yes, reason, err := ad.Decide(t.Context(), autotype.Input{})
 	require.NoError(t, err)
 	assert.False(t, yes)
 	assert.Equal(t, "local fix", reason)
@@ -88,7 +88,7 @@ func TestClassifierAdapter_ForwardsProgressOutput(t *testing.T) {
 		logOutput: "classifier progress\n",
 	}, 20*1024, &out)
 
-	yes, reason, err := ad.Decide(context.Background(), autotype.Input{})
+	yes, reason, err := ad.Decide(t.Context(), autotype.Input{})
 
 	require.NoError(t, err)
 	assert.False(t, yes)
@@ -98,13 +98,13 @@ func TestClassifierAdapter_ForwardsProgressOutput(t *testing.T) {
 
 func TestClassifierAdapter_AgentError(t *testing.T) {
 	ad := newClassifierAdapter(&fakeSchemaAgent{err: errors.New("boom")}, 20*1024, nil)
-	_, _, err := ad.Decide(context.Background(), autotype.Input{})
+	_, _, err := ad.Decide(t.Context(), autotype.Input{})
 	assert.ErrorContains(t, err, "boom")
 }
 
 func TestClassifierAdapter_InvalidJSON(t *testing.T) {
 	ad := newClassifierAdapter(&fakeSchemaAgent{result: []byte(`not json`)}, 20*1024, nil)
-	_, _, err := ad.Decide(context.Background(), autotype.Input{})
+	_, _, err := ad.Decide(t.Context(), autotype.Input{})
 	assert.ErrorContains(t, err, "invalid")
 }
 
@@ -117,14 +117,14 @@ func TestClassifierAdapter_MarksInvocationOnlyAfterPromptBuild(t *testing.T) {
 		invoked = true
 	})
 
-	_, _, err := ad.Decide(context.Background(), autotype.Input{})
+	_, _, err := ad.Decide(t.Context(), autotype.Input{})
 	require.Error(t, err)
 	assert.False(t, invoked)
 
 	ad = newClassifierAdapter(fake, 20*1024, nil).withBeforeInvoke(func() {
 		invoked = true
 	})
-	_, _, err = ad.Decide(context.Background(), autotype.Input{})
+	_, _, err = ad.Decide(t.Context(), autotype.Input{})
 	require.NoError(t, err)
 	assert.True(t, invoked)
 }
@@ -184,7 +184,7 @@ func TestClassifierAdapter_SanitizesReason_Length(t *testing.T) {
 	ad := newClassifierAdapter(&fakeSchemaAgent{
 		result: []byte(`{"design_review":false,"reason":"` + long + `"}`),
 	}, 20*1024, nil)
-	_, reason, err := ad.Decide(context.Background(), autotype.Input{})
+	_, reason, err := ad.Decide(t.Context(), autotype.Input{})
 	require.NoError(t, err)
 	assert.LessOrEqual(t, len(reason), classifyReasonMaxLen)
 }
@@ -193,7 +193,7 @@ func TestClassifierAdapter_SanitizesReason_StripsControlChars(t *testing.T) {
 	ad := newClassifierAdapter(&fakeSchemaAgent{
 		result: []byte(`{"design_review":false,"reason":"hello\u0007world\nlocal"}`),
 	}, 20*1024, nil)
-	_, reason, err := ad.Decide(context.Background(), autotype.Input{})
+	_, reason, err := ad.Decide(t.Context(), autotype.Input{})
 	require.NoError(t, err)
 	// BEL control char dropped; \n folded to space.
 	assert.NotContains(t, reason, "\x07")
@@ -210,7 +210,7 @@ func TestClassifierAdapter_RespectsMaxBytes(t *testing.T) {
 	ad := newClassifierAdapter(&fakeSchemaAgent{
 		result: []byte(`{"design_review": false, "reason": "ok"}`),
 	}, 4096, nil)
-	_, _, err := ad.Decide(context.Background(), autotype.Input{
+	_, _, err := ad.Decide(t.Context(), autotype.Input{
 		Diff:    strings.Repeat("+line\n", 1000),
 		Message: "feat: something",
 	})

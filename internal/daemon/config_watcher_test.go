@@ -46,7 +46,7 @@ func newConfigWatcherHarness(t *testing.T, initialConfig string) *configWatcherH
 	_, ch := bc.Subscribe("")
 	cw := NewConfigWatcher(path, cfg, bc, nil)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 
 	if err := cw.Start(ctx); err != nil {
@@ -404,7 +404,7 @@ func TestConfigWatcher_StartAfterStopErrors(t *testing.T) {
 	broadcaster := NewBroadcaster()
 	cw := NewConfigWatcher(configPath, cfg, broadcaster, nil)
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Start and stop
 	if err := cw.Start(ctx); err != nil {

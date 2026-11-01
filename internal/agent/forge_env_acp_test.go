@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -73,13 +72,13 @@ func TestACPCreateTerminalStripsForgeCredentials(t *testing.T) {
 			cmdPath := writeTempCommand(t, echoTerminalEnvScript)
 			client := newTerminalTestClient(t, t.TempDir())
 			if tt.ci {
-				ctx, cleanup, err := WithCIReview(context.Background())
+				ctx, cleanup, err := WithCIReview(t.Context())
 				require.NoError(t, err)
 				t.Cleanup(cleanup)
 				client.ciReviewDir = ciReviewDir(ctx)
 			}
 
-			created, err := client.CreateTerminal(context.Background(),
+			created, err := client.CreateTerminal(t.Context(),
 				acp.CreateTerminalRequest{
 					SessionId: acp.SessionId("session-1"),
 					Command:   cmdPath,
@@ -87,14 +86,14 @@ func TestACPCreateTerminalStripsForgeCredentials(t *testing.T) {
 				})
 			require.NoError(t, err)
 
-			_, err = client.WaitForTerminalExit(context.Background(),
+			_, err = client.WaitForTerminalExit(t.Context(),
 				acp.WaitForTerminalExitRequest{
 					SessionId:  acp.SessionId("session-1"),
 					TerminalId: created.TerminalId,
 				})
 			require.NoError(t, err)
 
-			out, err := client.TerminalOutput(context.Background(),
+			out, err := client.TerminalOutput(t.Context(),
 				acp.TerminalOutputRequest{
 					SessionId:  acp.SessionId("session-1"),
 					TerminalId: created.TerminalId,

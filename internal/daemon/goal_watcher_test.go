@@ -73,27 +73,27 @@ func TestGoalWatchCoalescesAndRetries(t *testing.T) {
 		},
 		report: func(_ string, err error) { reported = append(reported, err) },
 	})
-	watcher.poll(context.Background())
+	watcher.poll(t.Context())
 	assert.Zero(t, admitted)
 	require.Len(t, reported, 1)
 	enqueueErr = nil
-	watcher.poll(context.Background())
+	watcher.poll(t.Context())
 	assert.Equal(t, 1, admitted)
 	snapshot.Artifacts[0].Content += "More requirements\n"
-	watcher.poll(context.Background())
+	watcher.poll(t.Context())
 	assert.Equal(t, 1, admitted)
 	pending = false
-	watcher.poll(context.Background())
+	watcher.poll(t.Context())
 	assert.Equal(t, 2, admitted)
 	pending = false
 	captureErr = errors.New("ambiguous history")
-	watcher.poll(context.Background())
+	watcher.poll(t.Context())
 	assert.Equal(t, 2, admitted)
 	captureErr = nil
-	watcher.poll(context.Background())
+	watcher.poll(t.Context())
 	assert.Equal(t, 2, admitted)
 	enabled = false
-	watcher.poll(context.Background())
+	watcher.poll(t.Context())
 	assert.Empty(t, watcher.fingerprints)
 }
 
@@ -124,13 +124,13 @@ func TestGoalWatchDoesNotEnqueueSnapshotAlreadyPendingAtStartup(t *testing.T) {
 		report: func(string, error) {},
 	})
 
-	watcher.poll(context.Background())
+	watcher.poll(t.Context())
 	assert.Zero(t, enqueued)
 	snapshot.Artifacts[0].Content += "Changed while the first review is pending\n"
-	watcher.poll(context.Background())
+	watcher.poll(t.Context())
 	assert.Zero(t, enqueued, "a changed snapshot waits for the pending review")
 	pending = false
-	watcher.poll(context.Background())
+	watcher.poll(t.Context())
 	assert.Equal(t, 1, enqueued, "the changed snapshot should be reviewed after the pending one finishes")
 }
 
@@ -158,19 +158,19 @@ func TestGoalWatchDoesNotRepeatCompletedSnapshotAfterRestart(t *testing.T) {
 		},
 		report: func(_ string, err error) { require.NoError(t, err) },
 	}
-	newGoalWatcher(deps).poll(context.Background())
+	newGoalWatcher(deps).poll(t.Context())
 	job, err := db.ClaimJob("worker")
 	require.NoError(t, err)
 	require.NotNil(t, job)
 	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "pi", job.Prompt, "No issues found."))
 
 	watcher := newGoalWatcher(deps)
-	watcher.poll(context.Background())
+	watcher.poll(t.Context())
 	jobs, err := db.ListJobs("", "", 0, 0, storage.WithJobType(storage.JobTypeGoalReview))
 	require.NoError(t, err)
 	assert.Len(t, jobs, 1, "restarting must not review unchanged completed evidence again")
 	snapshot.Artifacts[0].Content += "New requirement\n"
-	watcher.poll(context.Background())
+	watcher.poll(t.Context())
 	jobs, err = db.ListJobs("queued", "", 0, 0, storage.WithJobType(storage.JobTypeGoalReview))
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
@@ -212,14 +212,14 @@ func TestGoalWatchReportsErrorAgainOnlyAfterRecovery(t *testing.T) {
 				report: func(_ string, err error) { reported = append(reported, err) },
 			}
 			watcher := newGoalWatcher(deps)
-			watcher.poll(context.Background())
-			watcher.poll(context.Background())
+			watcher.poll(t.Context())
+			watcher.poll(t.Context())
 			assert.Len(t, reported, 1)
 			failure = nil
-			watcher.poll(context.Background())
+			watcher.poll(t.Context())
 			failure = errors.New("service unavailable")
-			watcher.poll(context.Background())
-			watcher.poll(context.Background())
+			watcher.poll(t.Context())
+			watcher.poll(t.Context())
 			assert.Len(t, reported, 2)
 		})
 	}
@@ -233,7 +233,7 @@ func TestGoalWatchSkipsDiscoveryWhenDisabled(t *testing.T) {
 			require.NoError(t, os.WriteFile(filepath.Join(root, ".roborev.toml"), []byte(contents), 0o600))
 			_, err := db.GetOrCreateRepo(root)
 			require.NoError(t, err)
-			roots, err := server.goalCheckouts(context.Background())
+			roots, err := server.goalCheckouts(t.Context())
 			require.NoError(t, err)
 			assert.Empty(t, roots)
 			assert.Empty(t, server.errorLog.Recent(), "disabled repositories must not run git discovery")
@@ -249,16 +249,16 @@ func TestGoalWatchWaitsForAutoDiscoveredSpec(t *testing.T) {
 	_, err := db.GetOrCreateRepo(repo.Path())
 	require.NoError(t, err)
 	watcher := server.newGoalWatcher()
-	watcher.poll(context.Background())
+	watcher.poll(t.Context())
 	assert.Empty(t, server.errorLog.Recent(), "no auto-discovered spec means the watcher is idle")
 	jobs, err := db.ListJobs("", "", 0, 0, storage.WithJobType(storage.JobTypeGoalReview))
 	require.NoError(t, err)
 	assert.Empty(t, jobs)
-	manual, err := server.enqueueGoalReview(context.Background(), EnqueueRequest{RepoPath: repo.Path()})
+	manual, err := server.enqueueGoalReview(t.Context(), EnqueueRequest{RepoPath: repo.Path()})
 	require.NoError(t, err)
 	assert.Equal(t, 400, manual.Status, "manual review still needs a spec")
 	goalArtifacts(t, repo.Path())
-	watcher.poll(context.Background())
+	watcher.poll(t.Context())
 	jobs, err = db.ListJobs("queued", "", 0, 0, storage.WithJobType(storage.JobTypeGoalReview))
 	require.NoError(t, err)
 	assert.Len(t, jobs, 1)
@@ -278,7 +278,7 @@ func TestGoalWatchEnqueuesInspectedSnapshot(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), "docs/superpowers/specs/feature-design.md"), []byte("# Changed after inspection\n"), 0o600))
 		return enqueue(ctx, checkout, snapshot)
 	}
-	watcher.poll(context.Background())
+	watcher.poll(t.Context())
 	jobs, err := db.ListJobs("queued", "", 0, 0, storage.WithJobType(storage.JobTypeGoalReview))
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
@@ -327,7 +327,7 @@ func TestGoalWatchInspectUsesCallerContextWithoutAddingDeadline(t *testing.T) {
 		report: func(string, error) {},
 	})
 
-	watcher.poll(context.Background())
+	watcher.poll(t.Context())
 	assert.False(t, deadlineAdded, "inspection should run until the watcher is canceled")
 }
 
@@ -344,7 +344,7 @@ func TestGoalWatchDiscoversWorktreesDespiteInvalidRepo(t *testing.T) {
 	repo.RunGit("commit", "--allow-empty", "-m", "Initial test commit")
 	linked := filepath.Join(t.TempDir(), "linked")
 	repo.RunGit("worktree", "add", "--detach", linked)
-	roots, err := server.goalCheckouts(context.Background())
+	roots, err := server.goalCheckouts(t.Context())
 	require.NoError(t, err)
 	var discovered []string
 	for _, checkout := range roots {
@@ -357,8 +357,8 @@ func TestGoalWatchDiscoversWorktreesDespiteInvalidRepo(t *testing.T) {
 		canonicalGoalCheckoutPaths(t, discovered),
 	)
 	watcher := server.newGoalWatcher()
-	watcher.poll(context.Background())
-	watcher.poll(context.Background())
+	watcher.poll(t.Context())
+	watcher.poll(t.Context())
 	require.Len(t, server.errorLog.Recent(), 1, "a persistent git discovery error should be reported once")
 	assert.Contains(t, server.errorLog.Recent()[0].Message, "list goal review checkouts")
 }
@@ -381,7 +381,7 @@ func TestGoalWatchUsesRegisteredCheckoutConfig(t *testing.T) {
 
 	subscriberID, events := server.broadcaster.Subscribe("")
 	defer server.broadcaster.Unsubscribe(subscriberID)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	server.startGoalWatcher(ctx)
 	t.Cleanup(func() {
 		cancel()
@@ -432,7 +432,7 @@ func TestGoalWatchUsesRegisteredCheckoutConfig(t *testing.T) {
 
 func TestGoalWatchStopJoinsActivePoll(t *testing.T) {
 	server, _, _ := newTestServer(t)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	server.startGoalWatcher(ctx)
 	server.goalWatchMu.Lock()
 	done := server.goalWatchDone
@@ -475,17 +475,17 @@ func TestGoalWatchStagesAndCheckboxes(t *testing.T) {
 		},
 		report: func(string, error) {},
 	})
-	watcher.poll(context.Background())
+	watcher.poll(t.Context())
 	assert.Equal(t, map[string]int{"main": 1, "linked": 1}, calls)
 	snapshot.Stage = "plan"
 	snapshot.Artifacts = append(snapshot.Artifacts, goalreview.Artifact{Kind: "plan", Path: "plan.md", Content: "**Goal:** Feature\n### Task 1: Work\n- [ ] Test\n"})
-	watcher.poll(context.Background())
+	watcher.poll(t.Context())
 	assert.Equal(t, map[string]int{"main": 2, "linked": 2}, calls)
 	snapshot.Artifacts[1].Content = "**Goal:** Feature\n### Task 1: Work\n- [x] Test\n"
-	watcher.poll(context.Background())
+	watcher.poll(t.Context())
 	assert.Equal(t, map[string]int{"main": 2, "linked": 2}, calls)
 	roots = roots[:1]
-	watcher.poll(context.Background())
+	watcher.poll(t.Context())
 	assert.NotContains(t, watcher.fingerprints, "linked")
 }
 
@@ -509,14 +509,14 @@ func TestGoalWatchSelectedComponents(t *testing.T) {
 				},
 				report: func(string, error) {},
 			})
-			watcher.poll(context.Background())
+			watcher.poll(t.Context())
 			initial := 0
 			if len(watch) != 0 {
 				initial = 1
 			}
 			assert.Equal(t, initial, calls)
 			snapshot.Artifacts[0].Content += "Additional requirement\n"
-			watcher.poll(context.Background())
+			watcher.poll(t.Context())
 			afterArtifact := initial
 			if slices.Contains(watch, "goal") {
 				afterArtifact++
@@ -524,7 +524,7 @@ func TestGoalWatchSelectedComponents(t *testing.T) {
 			assert.Equal(t, afterArtifact, calls)
 			snapshot.Project = "project"
 			snapshot.Issues = []kata.Issue{{ShortID: "aaaa", Title: "Task", Body: "Requirement", Status: "open"}}
-			watcher.poll(context.Background())
+			watcher.poll(t.Context())
 			afterGraph := afterArtifact
 			if slices.Contains(watch, "kata_graph") {
 				afterGraph++
@@ -545,7 +545,7 @@ func TestGoalWatchSkipsBareRepositoryAndKeepsLinkedCheckout(t *testing.T) {
 	repo.RunGit("-C", bare, "worktree", "add", "--detach", linked)
 	_, err := db.GetOrCreateRepo(bare)
 	require.NoError(t, err)
-	roots, err := server.goalCheckouts(context.Background())
+	roots, err := server.goalCheckouts(t.Context())
 	require.NoError(t, err)
 	assert.Equal(
 		t,

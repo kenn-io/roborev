@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"encoding/json"
 	"encoding/json/jsontext"
 	"fmt"
@@ -43,7 +42,7 @@ func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
 						{name: "first", agent: "test"},
 						{name: "second", agent: "test"},
 					})
-					_, err := tc.DB.Exec("UPDATE review_jobs SET min_severity = ? WHERE id = ?", policy.ci, synthJob.ID)
+					_, err := tc.DB.ExecContext(t.Context(), "UPDATE review_jobs SET min_severity = ? WHERE id = ?", policy.ci, synthJob.ID)
 					require.NoError(t, err)
 					output := "Review notes."
 					document := jsontext.Value(`{"schema_version":2,"summary":"Review notes.","verdict":"fail","findings":[{"severity":"low","problem":"Minor naming issue.","fix":"Rename it.","location":null},{"severity":"medium","problem":"Missing cleanup.","fix":"Close it.","location":null},{"severity":"high","problem":"State is lost.","fix":"Persist it.","location":null}]}`)
@@ -55,7 +54,7 @@ func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
 					failMember(t, tc, members[0].ID)
 					synth := releaseAndClaimSynthesis(t, tc, runUUID)
 					if mode == "passthrough" {
-						tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+						tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synth)
 						stored, err := tc.DB.GetReviewByJobID(synth.ID)
 						require.NoError(t, err)
 						assert.Contains(stored.Output, "Minor naming issue.", "storage retains the finding")
@@ -120,14 +119,14 @@ func TestSuccessfulPanelSynthesisInheritsThreshold(t *testing.T) {
 			agent.RegisterForTest(t, a)
 			runUUID, members, synthJob := enqueuePanelRun(t, tc, "threshold-synthesis", []memberSpec{{name: "first", agent: "test"}, {name: "second", agent: "test"}})
 			setSynthesisAgent(t, tc, runUUID, a.name)
-			_, err := tc.DB.Exec("UPDATE review_jobs SET min_severity=? WHERE id=?", policy.ci, synthJob.ID)
+			_, err := tc.DB.ExecContext(t.Context(), "UPDATE review_jobs SET min_severity=? WHERE id=?", policy.ci, synthJob.ID)
 			require.NoError(t, err)
 			for i, m := range members {
 				markMemberRunning(t, tc, m.ID)
 				require.NoError(t, tc.DB.CompleteJobResult(m.ID, "test", storage.ReviewCompletion{Output: "### Low\nMinor naming issue.", StructuredOutput: document, Verdict: storage.ParseVerdictAtSeverity("### Low\nMinor naming issue.", policy.members[i]), MinSeverity: policy.members[i]}))
 			}
 			synth := releaseAndClaimSynthesis(t, tc, runUUID)
-			tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+			tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synth)
 			stored, err := tc.DB.GetReviewByJobID(synth.ID)
 			require.NoError(t, err)
 			assert.Contains(a.synthPrompt, "Minor naming issue.", "successful synthesis uses the full member review")
@@ -186,7 +185,7 @@ func TestPanelDisplayPolicyAcrossOutcomes(t *testing.T) {
 				agent.RegisterForTest(t, a)
 				runUUID, members, synthJob := enqueuePanelRun(t, tc, "policy-outcome", []memberSpec{{name: "first", agent: "test"}, {name: "second", agent: "test"}})
 				setSynthesisAgent(t, tc, runUUID, a.Name())
-				_, err = tc.DB.Exec("UPDATE review_jobs SET min_severity=? WHERE id=?", policy.ci, synthJob.ID)
+				_, err = tc.DB.ExecContext(t.Context(), "UPDATE review_jobs SET min_severity=? WHERE id=?", policy.ci, synthJob.ID)
 				require.NoError(t, err)
 				for i, m := range members {
 					completion := storage.ReviewCompletion{
@@ -202,7 +201,7 @@ func TestPanelDisplayPolicyAcrossOutcomes(t *testing.T) {
 				}
 				synth := releaseAndClaimSynthesis(t, tc, runUUID)
 				if outcome == "synthesis" {
-					tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+					tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synth)
 					stored, err := tc.DB.GetReviewByJobID(synth.ID)
 					require.NoError(t, err)
 					require.NotNil(t, stored)

@@ -89,7 +89,7 @@ func TestEnqueueIfNeeded(t *testing.T) {
 			defer ts.Close()
 			patchServerAddr(t, ts.URL)
 
-			err := enqueueIfNeeded(context.Background(), ts.URL, tmpDir, sha)
+			err := enqueueIfNeeded(t.Context(), ts.URL, tmpDir, sha)
 			require.NoError(t, err, "enqueueIfNeeded: %v")
 
 			if tt.checkExact {

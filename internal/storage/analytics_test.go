@@ -23,7 +23,7 @@ func TestGetAnalyticsClassifiesReviewsAttemptsAndProjects(t *testing.T) {
 	repoB := createRepo(t, db, filepath.Join(t.TempDir(), "project-a"))
 	repoC := createRepo(t, db, filepath.Join(t.TempDir(), "project-c"))
 	for _, repo := range []*Repo{repoA, repoB} {
-		_, err := db.Exec(`UPDATE repos SET name = 'shared-project' WHERE id = ?`, repo.ID)
+		_, err := db.ExecContext(t.Context(), `UPDATE repos SET name = 'shared-project' WHERE id = ?`, repo.ID)
 		require.NoError(t, err)
 	}
 
@@ -111,7 +111,7 @@ func TestGetAnalyticsClassifiesReviewsAttemptsAndProjects(t *testing.T) {
 	assert.NotContains(got.Options.Agents, "")
 	assert.NotContains(got.Options.Models, "")
 
-	_, err = db.Exec(`UPDATE reviews SET closed = 0 WHERE job_id = ?`, closed.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE reviews SET closed = 0 WHERE job_id = ?`, closed.ID)
 	require.NoError(t, err)
 	updated, err := db.GetAnalytics(AnalyticsOptions{
 		Since: base, Until: base.Add(24 * time.Hour), Bucket: AnalyticsBucketDay,
@@ -231,7 +231,7 @@ func TestGetAnalyticsPreservesFractionalSecondBounds(t *testing.T) {
 		name: "fractional", jobType: JobTypeReview, status: JobStatusDone,
 		enqueuedAt: base, startedAt: base, finishedAt: base, verdict: new(1),
 	})
-	_, err := db.Exec(
+	_, err := db.ExecContext(t.Context(),
 		`UPDATE review_jobs SET finished_at = ? WHERE id = ?`,
 		"2026-08-03 00:00:00.500", job.ID,
 	)
@@ -457,7 +457,7 @@ func TestGetAnalyticsFiltersPopulationsIndependently(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	base := time.Date(2026, time.August, 2, 0, 0, 0, 0, time.UTC)
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "project"))
-	_, err := db.Exec(`UPDATE repos SET name = 'project' WHERE id = ?`, repo.ID)
+	_, err := db.ExecContext(t.Context(), `UPDATE repos SET name = 'project' WHERE id = ?`, repo.ID)
 	require.NoError(t, err)
 
 	seedAnalyticsJob(t, db, repo, analyticsJobSeed{
@@ -597,17 +597,17 @@ func seedAnalyticsJob(t *testing.T, db *DB, repo *Repo, seed analyticsJobSeed) *
 	if !seed.finishedAt.IsZero() {
 		finished = seed.finishedAt.UTC().Format("2006-01-02 15:04:05")
 	}
-	_, err = db.Exec(`UPDATE review_jobs SET status = ?, enqueued_at = ?, started_at = ?, finished_at = ?,
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status = ?, enqueued_at = ?, started_at = ?, finished_at = ?,
 		agent_invoked = ?, source = ?, agent = ?, model = ? WHERE id = ?`,
 		seed.status, seed.enqueuedAt.UTC().Format("2006-01-02 15:04:05"), started, finished,
 		seed.invoked || seed.costJSON != "", seed.source, seed.agent, seed.model, job.ID)
 	require.NoError(t, err)
 	if seed.costJSON != "" {
-		_, err = db.Exec(`UPDATE review_jobs SET token_usage = ? WHERE id = ?`, seed.costJSON, job.ID)
+		_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET token_usage = ? WHERE id = ?`, seed.costJSON, job.ID)
 		require.NoError(t, err)
 	}
 	if seed.verdict != nil {
-		_, err = db.Exec(`INSERT INTO reviews (job_id, agent, output, created_at, closed, verdict_bool)
+		_, err = db.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, output, created_at, closed, verdict_bool)
 			VALUES (?, ?, '', ?, ?, ?)`, job.ID, seed.agent,
 			seed.finishedAt.UTC().Format("2006-01-02 15:04:05"), seed.closed, *seed.verdict)
 		require.NoError(t, err)
@@ -688,7 +688,7 @@ func TestGetAnalyticsWindowsOffsetTimestampsByInstant(t *testing.T) {
 	})
 	// 01:30 at +02:00 is 23:30 UTC on the previous day; a lexical comparison
 	// would place it after midnight UTC.
-	_, err := db.Exec(`UPDATE review_jobs SET finished_at = ? WHERE id = ?`,
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET finished_at = ? WHERE id = ?`,
 		"2026-08-03T01:30:00+02:00", job.ID)
 	require.NoError(t, err)
 	midnight := time.Date(2026, time.August, 3, 0, 0, 0, 0, time.UTC)
@@ -722,7 +722,7 @@ func TestAnalyticsRowsQueryReadsOnlyAnalyticsIndexes(t *testing.T) {
 		"all-time": {Until: until},
 	} {
 		query, args := analyticsRowsQuery(opts)
-		rows, err := db.Query("EXPLAIN QUERY PLAN "+query, args...)
+		rows, err := db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+query, args...)
 		require.NoError(t, err)
 		var details []string
 		for rows.Next() {

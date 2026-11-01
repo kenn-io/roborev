@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -35,13 +34,13 @@ func TestAuthTUIQueriesAndStreaming(t *testing.T) {
 	m := newTuiModel(server.URL)
 	assert.IsType(t, statusMsg{}, m.fetchStatus()())
 	events := make(chan struct{}, 1)
-	connected, err := sseReadLoop(context.Background(), testEndpointFromURL(server.URL), events)
+	connected, err := sseReadLoop(t.Context(), testEndpointFromURL(server.URL), events)
 	require.ErrorIs(t, err, io.EOF)
 	assert.True(t, connected)
 	assert.Len(t, events, 1)
 	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte(`auth_key = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"`), 0o600))
 	assert.IsType(t, statusErrMsg{}, m.fetchStatus()())
-	connected, err = sseReadLoop(context.Background(), testEndpointFromURL(server.URL), events)
+	connected, err = sseReadLoop(t.Context(), testEndpointFromURL(server.URL), events)
 	require.Error(t, err)
 	assert.False(t, connected)
 }

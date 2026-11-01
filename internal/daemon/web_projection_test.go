@@ -18,7 +18,7 @@ func TestReviewProjectionByJobID(t *testing.T) {
 	server, db, tempDir := newTestServer(t)
 	repo, jobs := seedRepoWithJobs(t, db, filepath.Join(tempDir, "project-a"), 1, "project-a")
 	job := jobs[0]
-	_, err := db.Exec(`UPDATE review_jobs SET status = 'running', branch = 'main', model = 'model-a' WHERE id = ?`, job.ID)
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'running', branch = 'main', model = 'model-a' WHERE id = ?`, job.ID)
 	require.NoError(t, err)
 	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", "prompt", "PASS\n\nReview output"))
 	_, err = db.AddCommentToJob(job.ID, "reviewer-a", "Existing response")
@@ -47,7 +47,7 @@ func TestReviewProjectionSelectsNewestContextualReview(t *testing.T) {
 	server, db, tempDir := newTestServer(t)
 	repo, jobs := seedRepoWithJobs(t, db, filepath.Join(tempDir, "project-a"), 2, "project-a")
 	for _, job := range jobs {
-		_, err := db.Exec(`UPDATE review_jobs SET status = 'running', branch = 'feature' WHERE id = ?`, job.ID)
+		_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'running', branch = 'feature' WHERE id = ?`, job.ID)
 		require.NoError(t, err)
 		require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", "prompt", "PASS"))
 	}

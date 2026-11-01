@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -15,7 +14,7 @@ import (
 // lease as a crashed poster's and reclaims it.
 func (h *ciPollerHarness) backdatePanelPostClaim(t *testing.T, id int64) {
 	t.Helper()
-	_, err := h.DB.Exec(
+	_, err := h.DB.ExecContext(t.Context(),
 		"UPDATE ci_pr_panels SET posting_claimed_at = datetime('now','-10 minutes') WHERE id = ?", id)
 	require.NoError(t, err)
 }
@@ -37,14 +36,14 @@ func TestReconcilePanelPostingDroppedEvent(t *testing.T) {
 	h.completeSynthesisWithReview(t, synth.ID, "## Combined\nVerified finding R.")
 	require.False(t, h.panelPostedAt(t, panel.ID), "precondition: not yet posted")
 
-	h.Poller.reconcilePanelPosting(context.Background(), "acme/api")
+	h.Poller.reconcilePanelPosting(t.Context(), "acme/api")
 
 	assert.Len(*comments, 1, "dropped-event recovery posts exactly one comment")
 	assert.True(h.panelPostedAt(t, panel.ID), "panel finalized (posted_at set)")
 	assert.NotEmpty(*statuses, "commit status set")
 
 	// Second pass: the posting CAS bars a re-post (idempotent with the event path).
-	h.Poller.reconcilePanelPosting(context.Background(), "acme/api")
+	h.Poller.reconcilePanelPosting(t.Context(), "acme/api")
 	assert.Len(*comments, 1, "still exactly one comment after a second reconcile")
 }
 
@@ -60,7 +59,7 @@ func TestReconcilePanelPostingBackfillsMissingAttempt(t *testing.T) {
 	h.completeSynthesisWithReview(t, synth.ID, "## Combined\nVerified finding U.")
 	require.NoError(t, h.DB.DeleteReviewAttempt("acme/api", 23, headSHA))
 
-	h.Poller.reconcilePanelPosting(context.Background(), "acme/api")
+	h.Poller.reconcilePanelPosting(t.Context(), "acme/api")
 
 	assert.Len(*comments, 1, "reconcile posts terminal panel after attempt backfill")
 	assert.True(h.panelPostedAt(t, panel.ID), "panel finalized after reconcile")
@@ -86,7 +85,7 @@ func TestReconcilePanelPostingStaleClaim(t *testing.T) {
 	// A crashed poster left a stale claim; posted_at is still NULL.
 	h.backdatePanelPostClaim(t, panel.ID)
 
-	h.Poller.reconcilePanelPosting(context.Background(), "acme/api")
+	h.Poller.reconcilePanelPosting(t.Context(), "acme/api")
 
 	assert.Len(*comments, 1, "stale-claim recovery reclaims and posts one comment")
 	assert.True(h.panelPostedAt(t, panel.ID), "panel finalized after reclaim")
@@ -104,7 +103,7 @@ func TestReconcilePanelPostingNoop(t *testing.T) {
 	h.completeSynthesisWithReview(t, synth.ID, "## Combined\nVerified finding T.")
 	require.NoError(t, h.DB.MarkPanelPosted(panel.ID, storage.PanelOutcomeReviewPosted, "", ""))
 
-	h.Poller.reconcilePanelPosting(context.Background(), "acme/api")
+	h.Poller.reconcilePanelPosting(t.Context(), "acme/api")
 
 	assert.Empty(*comments, "already-posted run is not re-posted")
 }

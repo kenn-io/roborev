@@ -276,7 +276,7 @@ func TestWaitForAnalysisJob_Timeout(t *testing.T) {
 	// but good practice if waitForAnalysisJob used the global.
 	// Here waitForAnalysisJob takes the url arg.
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the job stays queued, so only the context ends the poll
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the job stays queued, so only the context ends the poll
 	defer cancel()
 
 	_, err := waitForAnalysisJob(ctx, mustParseEndpoint(t, ts.URL), 42)
@@ -319,7 +319,7 @@ func TestMarkJobClosed(t *testing.T) {
 			defer ts.Close()
 			patchServerAddr(t, ts.URL)
 
-			err := markJobClosed(context.Background(), ts.URL, 123)
+			err := markJobClosed(t.Context(), ts.URL, 123)
 
 			if tt.wantErr {
 				require.Error(t, err, "expected error, got nil")

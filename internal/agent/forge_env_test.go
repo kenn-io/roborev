@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"context"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -224,12 +223,12 @@ func TestConfigureSubprocessStripsForgeCredentials(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
 
-			cmd := exec.CommandContext(context.Background(), "does-not-run")
+			cmd := exec.CommandContext(t.Context(), "does-not-run")
 			var opts []subprocessOption
 			if tt.keepGitHub {
 				opts = append(opts, withGitHubCredentials())
 			}
-			configureSubprocess(context.Background(), cmd, opts...)
+			configureSubprocess(t.Context(), cmd, opts...)
 
 			require.NotEmpty(t, cmd.Env, "configureSubprocess must populate cmd.Env")
 			require.NotEmpty(t, tt.absent)
@@ -310,7 +309,7 @@ func TestAgentSubprocessForgeCredentialVisibility(t *testing.T) {
 			assert := assert.New(t)
 
 			result, err := tt.agent.Review(
-				context.Background(), t.TempDir(), "deadbeef", "review this", nil)
+				t.Context(), t.TempDir(), "deadbeef", "review this", nil)
 			require.NoError(t, err)
 
 			for _, key := range tt.absentKeys {
@@ -413,8 +412,8 @@ func TestConfigureCapabilityProbeStripsForgeCredentials(t *testing.T) {
 	forgeCredentialTestEnv(t)
 	assert := assert.New(t)
 
-	cmd := exec.CommandContext(context.Background(), "does-not-run")
-	configureCapabilityProbe(context.Background(), cmd)
+	cmd := exec.CommandContext(t.Context(), "does-not-run")
+	configureCapabilityProbe(t.Context(), cmd)
 
 	require.NotEmpty(t, cmd.Env, "configureCapabilityProbe must populate cmd.Env")
 	for _, key := range ForgeCredentialEnvKeys() {
@@ -457,8 +456,8 @@ func TestSpawnPathsStripPreloadEnv(t *testing.T) {
 		name      string
 		configure func(*exec.Cmd)
 	}{
-		{"Subprocess", func(cmd *exec.Cmd) { configureSubprocess(context.Background(), cmd) }},
-		{"CapabilityProbe", func(cmd *exec.Cmd) { configureCapabilityProbe(context.Background(), cmd) }},
+		{"Subprocess", func(cmd *exec.Cmd) { configureSubprocess(t.Context(), cmd) }},
+		{"CapabilityProbe", func(cmd *exec.Cmd) { configureCapabilityProbe(t.Context(), cmd) }},
 	}
 
 	for _, tt := range tests {
@@ -466,7 +465,7 @@ func TestSpawnPathsStripPreloadEnv(t *testing.T) {
 			t.Setenv("NODE_OPTIONS", "--require=/tmp/evil.js")
 			t.Setenv("LD_PRELOAD", "/tmp/evil.so")
 
-			cmd := exec.CommandContext(context.Background(), "does-not-run")
+			cmd := exec.CommandContext(t.Context(), "does-not-run")
 			tt.configure(cmd)
 
 			require.NotEmpty(t, cmd.Env)

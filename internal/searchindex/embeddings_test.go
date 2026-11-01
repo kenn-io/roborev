@@ -1,7 +1,6 @@
 package searchindex
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -52,7 +51,7 @@ func TestEmbeddingsProviderErrorsAreClassifiedWithoutClientRetries(t *testing.T)
 			embeddings, err := NewEmbeddings(embedconfig.Embedder{BaseURL: server.URL, Model: "embed-large", Dims: 2}, "", searchdoc.RecipeVersion)
 			require.NoError(t, err)
 
-			_, err = embeddings.EncodeFunc(embedconfig.RoleDocument)(context.Background(), []string{"text"})
+			_, err = embeddings.EncodeFunc(embedconfig.RoleDocument)(t.Context(), []string{"text"})
 			require.Error(t, err)
 			assert.NotContains(t, err.Error(), "provider-secret-detail")
 			assert.Equal(t, int32(1), requests.Load(), "the reconciler owns retries")

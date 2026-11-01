@@ -16,9 +16,9 @@ func TestNewAttemptRetiresLegacyReview(t *testing.T) {
 			t.Parallel()
 			assert := assert.New(t)
 			env := setupJobEnv(t, t.TempDir(), "legacy-attempt")
-			_, err := env.db.Exec(`UPDATE review_jobs SET status = 'done' WHERE id = ?`, env.job.ID)
+			_, err := env.db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'done' WHERE id = ?`, env.job.ID)
 			require.NoError(t, err)
-			_, err = env.db.Exec(`INSERT INTO reviews (job_id, uuid, agent, output) VALUES (?, ?, 'test', 'Historical review to preserve.')`, env.job.ID, testUUID("archived-attempt"))
+			_, err = env.db.ExecContext(t.Context(), `INSERT INTO reviews (job_id, uuid, agent, output) VALUES (?, ?, 'test', 'Historical review to preserve.')`, env.job.ID, testUUID("archived-attempt"))
 			require.NoError(t, err)
 			require.NoError(t, env.db.migrateLegacyReviews())
 			records, err := env.db.UnresolvedLegacyReviews()
@@ -31,7 +31,7 @@ func TestNewAttemptRetiresLegacyReview(t *testing.T) {
 			accepted := action == "rerun" || action == "pull"
 			if action == "rerun" || action == "rejected rerun" {
 				if !accepted {
-					_, err = env.db.Exec(`UPDATE review_jobs SET status = 'running' WHERE id = ?`, env.job.ID)
+					_, err = env.db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'running' WHERE id = ?`, env.job.ID)
 					require.NoError(t, err)
 				}
 				err = env.db.ReenqueueJob(env.job.ID, ReenqueueOpts{})
@@ -54,7 +54,7 @@ func TestNewAttemptRetiresLegacyReview(t *testing.T) {
 				assert.Equal(accepted, changed)
 			}
 			var original string
-			require.NoError(t, env.db.QueryRow(`SELECT output FROM legacy_reviews WHERE archive_id = ?`, records[0].ID).Scan(&original))
+			require.NoError(t, env.db.QueryRowContext(t.Context(), `SELECT output FROM legacy_reviews WHERE archive_id = ?`, records[0].ID).Scan(&original))
 			assert.Equal("Historical review to preserve.", original)
 			err = env.db.ResolveLegacyReview(records[0].ID, reviewFixtureJSON("Converted historical review."))
 			if accepted {

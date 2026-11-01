@@ -48,7 +48,7 @@ func TestCommitPatchWithMetadata(t *testing.T) {
 	patch := repo.Run("diff", "--", "base.txt")
 	require.NotEmpty(t, patch)
 
-	err := commitPatch(repo.Root, patch, "apply patch", robogit.CommitOptions{
+	err := commitPatch(t.Context(), repo.Root, patch, "apply patch", robogit.CommitOptions{
 		Author:    "Fix Author <fix@example.com>",
 		CoAuthors: []string{"Pair Reviewer <pair@example.com>"},
 	})

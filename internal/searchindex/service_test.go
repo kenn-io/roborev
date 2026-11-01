@@ -25,7 +25,7 @@ import (
 )
 
 func TestServiceSearchModesAndCoverage(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index := openQueryTestIndex(t)
 	doc := queryTestDocument(1, "group", "literal needle", queryDocOptions{})
 	_, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{doc}, nil)
@@ -62,7 +62,7 @@ func TestServiceSearchModesAndCoverage(t *testing.T) {
 }
 
 func TestServiceReportsUnavailableVectorLegAndAutoDegrades(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index := openQueryTestIndex(t)
 	doc := queryTestDocument(1, "group", "literal needle", queryDocOptions{})
 	_, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{doc}, nil)
@@ -90,7 +90,7 @@ func TestServiceReportsUnavailableVectorLegAndAutoDegrades(t *testing.T) {
 }
 
 func TestServiceCoverageMarksAnIncompleteMirrorPartial(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index := openQueryTestIndex(t)
 	doc := queryTestDocument(1, "group", "needle", queryDocOptions{})
 	_, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{doc}, nil)
@@ -109,7 +109,7 @@ func TestServiceCoverageMarksAnIncompleteMirrorPartial(t *testing.T) {
 }
 
 func TestServiceSemanticUsesCosineFloorAndVersionedChunkExcerpt(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index := openQueryTestIndex(t)
 	longOutput := strings.Repeat("x", 2100) + " semantic-target \x1b[31mcolored\x1b[0m \x01end"
 	matching := queryTestDocument(1, "match", longOutput, queryDocOptions{})
@@ -142,7 +142,7 @@ func TestServiceSemanticUsesCosineFloorAndVersionedChunkExcerpt(t *testing.T) {
 }
 
 func TestServiceLexicalExcerptIsEscapedSanitizedAndRuneBounded(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index := openQueryTestIndex(t)
 	output := "<script>alert(1)</script> needle \x1b[31mcolored\x1b[0m \x02 " + strings.Repeat("tail ", 300)
 	doc := queryTestDocument(1, "group", output, queryDocOptions{})
@@ -212,7 +212,7 @@ func lexicalExcerptContentRunes(excerpt string) int {
 }
 
 func TestServiceHybridGroupsPanelMembersBeforeFusionAndFiltersMembers(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index := openQueryTestIndex(t)
 	panel := "00000000-0000-4000-8000-000000009999"
 	lexicalMember := queryTestDocument(1, panel, "retry-safe lexical winner", queryDocOptions{verdict: "pass"})
@@ -246,7 +246,7 @@ func TestServiceHybridGroupsPanelMembersBeforeFusionAndFiltersMembers(t *testing
 }
 
 func TestServicePageDropsReviewsThatNoLongerMatchCanonically(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	cutoff := time.Date(2026, 9, 15, 11, 0, 0, 0, time.UTC)
 	base := queryTestDocument(1, "group", "needle", queryDocOptions{
 		repoID: 7, branch: "main", verdict: "pass", finished: cutoff.Add(time.Hour),
@@ -300,7 +300,7 @@ func TestServicePageDropsReviewsThatNoLongerMatchCanonically(t *testing.T) {
 }
 
 func TestServiceKeepsPanelAlternateWhenTopCandidateWasDeleted(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	panel := "00000000-0000-4000-8000-000000009999"
 	older := queryTestDocument(1, panel, "older panel member", queryDocOptions{})
 	newer := queryTestDocument(2, panel, "newer panel member", queryDocOptions{})
@@ -344,7 +344,7 @@ func TestServiceKeepsPanelAlternateWhenTopCandidateWasDeleted(t *testing.T) {
 }
 
 func TestServiceSemanticCandidateCeilingIsErrorForExplicitAndBoundedForAuto(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index := openQueryTestIndex(t)
 	const count = semanticDeepLimit + 1
 	docs := make([]searchdoc.Document, 0, count)
@@ -380,7 +380,7 @@ func TestServiceSemanticCandidateCeilingIsErrorForExplicitAndBoundedForAuto(t *t
 }
 
 func TestServiceSemanticRefillsAfterCanonicalDeletions(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index := openQueryTestIndex(t)
 	target := candidateTarget(1)
 	stale := make([]searchdoc.Document, 0, target)
@@ -419,7 +419,7 @@ func TestServiceSemanticRefillsAfterCanonicalDeletions(t *testing.T) {
 }
 
 func TestServiceFullPageAtSemanticCeilingIsPartialButNotBounded(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index := openQueryTestIndex(t)
 	const count = semanticDeepLimit + 1
 	docs := make([]searchdoc.Document, 0, count)
@@ -458,7 +458,7 @@ func TestSemanticCeilingRequiresShortPageAndAboveFloorProbe(t *testing.T) {
 
 func TestServiceQueryEmbeddingHasIndependentThreeSecondTimeout(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		ctx := context.Background()
+		ctx := t.Context()
 		index := openQueryTestIndex(t)
 		doc := queryTestDocument(1, "group", "literal needle", queryDocOptions{})
 		_, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{doc}, nil)
@@ -586,7 +586,7 @@ func seedActiveGeneration(
 	t *testing.T, index *Index, model embedmodel.Descriptor, vectors map[string][]vector.ChunkVector,
 ) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	key, err := index.ResolveGeneration(ctx, model)
 	require.NoError(t, err)
 	pending, err := index.PendingGeneration(ctx, key, len(vectors)+1)
@@ -605,7 +605,7 @@ func seedActiveGeneration(
 func TestSemanticLegIgnoresVectorsForReplacedContent(t *testing.T) {
 	for _, reembed := range []bool{false, true} {
 		t.Run(fmt.Sprintf("reembed=%t", reembed), func(t *testing.T) {
-			ctx := context.Background()
+			ctx := t.Context()
 			index := openQueryTestIndex(t)
 			original := queryTestDocument(1, "group", "original matching content", queryDocOptions{})
 			_, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{original}, nil)
@@ -642,7 +642,7 @@ func TestSemanticLegIgnoresVectorsForReplacedContent(t *testing.T) {
 }
 
 func TestServiceHybridBreaksEqualFusedScoresByRecencyAndLoadsThePageOnce(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index := openQueryTestIndex(t)
 	older := queryTestDocument(1, "older-group", "lexical needle only", queryDocOptions{
 		finished: time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC),
@@ -674,7 +674,7 @@ func TestServiceHybridBreaksEqualFusedScoresByRecencyAndLoadsThePageOnce(t *test
 }
 
 func TestServiceSinceFilterIsExactWithinOneSecondOnBothLegs(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index := openQueryTestIndex(t)
 	second := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
 	// RFC3339Nano stores these as "...12:00:00Z" and "...12:00:00.9Z"; as
@@ -746,7 +746,7 @@ func TestServiceCredentialRejectedReasonAndRecovery(t *testing.T) {
 }
 
 func TestServiceHybridDeletedReviewContributesNoEvidence(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index := openQueryTestIndex(t)
 	panel := "00000000-0000-4000-8000-000000009999"
 	deleted := queryTestDocument(1, panel, "needle needle needle", queryDocOptions{})

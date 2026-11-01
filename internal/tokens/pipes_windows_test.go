@@ -1,6 +1,7 @@
 package tokens
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -52,7 +53,8 @@ func runTokenPipeHelper(mode string) int {
 	if err != nil {
 		return 1
 	}
-	cmd := exec.Command(exe)
+	// The helper process runs outside any test, so it has no test context.
+	cmd := exec.CommandContext(context.Background(), exe)
 	cmd.Env = append(os.Environ(), "ROBOREV_TOKEN_PIPE_HELPER="+next)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	procutil.HideConsole(cmd)

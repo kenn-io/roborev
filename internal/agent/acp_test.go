@@ -365,7 +365,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 
 	t.Run("Terminal creation and storage", func(t *testing.T) {
 		cmd, args := acpTestEchoCommand("test")
-		resp, err := client.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
+		resp, err := client.CreateTerminal(t.Context(), acp.CreateTerminalRequest{
 			SessionId: "test-session",
 			Command:   cmd,
 			Args:      args,
@@ -376,7 +376,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 
 		assert.Equal(t, 1, terminalCount(client))
 
-		_, err = client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{
+		_, err = client.ReleaseTerminal(t.Context(), acp.ReleaseTerminalRequest{
 			SessionId:  "test-session",
 			TerminalId: resp.TerminalId,
 		})
@@ -385,7 +385,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 
 	t.Run("Output truncation", func(t *testing.T) {
 		cmd, args := acpTestEchoCommand("test output")
-		resp, err := client.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
+		resp, err := client.CreateTerminal(t.Context(), acp.CreateTerminalRequest{
 			SessionId:       "test-session",
 			Command:         cmd,
 			Args:            args,
@@ -393,7 +393,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 		})
 		require.NoError(t, err, "Failed to create terminal: %v")
 
-		waitCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		waitCtx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 		defer cancel()
 		if _, err := client.WaitForTerminalExit(waitCtx, acp.WaitForTerminalExitRequest{
 			SessionId:  "test-session",
@@ -402,7 +402,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 			require.NoError(t, err, "WaitForTerminalExit failed: %v")
 		}
 
-		outputResp, err := client.TerminalOutput(context.Background(), acp.TerminalOutputRequest{
+		outputResp, err := client.TerminalOutput(t.Context(), acp.TerminalOutputRequest{
 			SessionId:  "test-session",
 			TerminalId: resp.TerminalId,
 		})
@@ -410,7 +410,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 		assert.LessOrEqual(t, len(outputResp.Output), 5)
 		assert.True(t, outputResp.Truncated, "Expected output to be marked truncated when output exceeds byte limit")
 
-		_, err = client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{
+		_, err = client.ReleaseTerminal(t.Context(), acp.ReleaseTerminalRequest{
 			SessionId:  "test-session",
 			TerminalId: resp.TerminalId,
 		})
@@ -419,14 +419,14 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 
 	t.Run("Terminal release with context cancellation", func(t *testing.T) {
 		cmd, args := acpTestEchoCommand("test")
-		resp, err := client.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
+		resp, err := client.CreateTerminal(t.Context(), acp.CreateTerminalRequest{
 			SessionId: "test-session",
 			Command:   cmd,
 			Args:      args,
 		})
 		require.NoError(t, err, "Failed to create terminal: %v")
 
-		_, err = client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{
+		_, err = client.ReleaseTerminal(t.Context(), acp.ReleaseTerminalRequest{
 			SessionId:  "test-session",
 			TerminalId: resp.TerminalId,
 		})
@@ -437,21 +437,21 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 
 	t.Run("Session ID validation", func(t *testing.T) {
 		cmd, args := acpTestEchoCommand("test")
-		resp, err := client.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
+		resp, err := client.CreateTerminal(t.Context(), acp.CreateTerminalRequest{
 			SessionId: "test-session",
 			Command:   cmd,
 			Args:      args,
 		})
 		require.NoError(t, err, "Failed to create terminal: %v")
 
-		_, err = client.TerminalOutput(context.Background(), acp.TerminalOutputRequest{
+		_, err = client.TerminalOutput(t.Context(), acp.TerminalOutputRequest{
 			SessionId:  "wrong-session",
 			TerminalId: resp.TerminalId,
 		})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "session ID mismatch", "unexpected error")
 
-		_, err = client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{
+		_, err = client.ReleaseTerminal(t.Context(), acp.ReleaseTerminalRequest{
 			SessionId:  "test-session",
 			TerminalId: resp.TerminalId,
 		})
@@ -460,7 +460,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 
 	t.Run("Terminal lifecycle - persists after command completion", func(t *testing.T) {
 		cmd, args := acpTestEchoCommand("test")
-		resp, err := client.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
+		resp, err := client.CreateTerminal(t.Context(), acp.CreateTerminalRequest{
 			SessionId: "test-session",
 			Command:   cmd,
 			Args:      args,
@@ -469,7 +469,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 
 		assert.Equal(t, 1, terminalCount(client))
 
-		waitCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		waitCtx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 		defer cancel()
 		waitResp, err := client.WaitForTerminalExit(waitCtx, acp.WaitForTerminalExitRequest{
 			SessionId:  "test-session",
@@ -481,7 +481,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 
 		require.True(t, terminalExists(client, resp.TerminalId), "Expected terminal %s to persist after completion", resp.TerminalId)
 
-		outputResp, err := client.TerminalOutput(context.Background(), acp.TerminalOutputRequest{
+		outputResp, err := client.TerminalOutput(t.Context(), acp.TerminalOutputRequest{
 			SessionId:  "test-session",
 			TerminalId: resp.TerminalId,
 		})
@@ -489,7 +489,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 
 		require.Equal(t, new(0), outputResp.ExitStatus.ExitCode, "Expected terminal output to include exit status 0, got %+v", outputResp.ExitStatus)
 
-		_, err = client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{
+		_, err = client.ReleaseTerminal(t.Context(), acp.ReleaseTerminalRequest{
 			SessionId:  "test-session",
 			TerminalId: resp.TerminalId,
 		})
@@ -502,7 +502,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 		client.repoRoot = tempDir
 
 		cmd, args := acpTestEchoCommand("cwd")
-		resp, err := client.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
+		resp, err := client.CreateTerminal(t.Context(), acp.CreateTerminalRequest{
 			SessionId: "test-session",
 			Command:   cmd,
 			Args:      args,
@@ -516,7 +516,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 
 		require.True(t, pathWithinRoot(term.cmd.Dir, resolvedTempDir), "Expected terminal cwd %q to be within %q", term.cmd.Dir, resolvedTempDir)
 
-		_, err = client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{
+		_, err = client.ReleaseTerminal(t.Context(), acp.ReleaseTerminalRequest{
 			SessionId:  "test-session",
 			TerminalId: resp.TerminalId,
 		})
@@ -534,7 +534,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 
 		relative := "sub"
 		cmd, args := acpTestEchoCommand("cwd")
-		resp, err := client.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
+		resp, err := client.CreateTerminal(t.Context(), acp.CreateTerminalRequest{
 			SessionId: "test-session",
 			Command:   cmd,
 			Args:      args,
@@ -549,7 +549,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 
 		require.Equal(t, resolvedSubdir, term.cmd.Dir, "Expected terminal cwd %q, got %q", resolvedSubdir, term.cmd.Dir)
 
-		_, err = client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{
+		_, err = client.ReleaseTerminal(t.Context(), acp.ReleaseTerminalRequest{
 			SessionId:  "test-session",
 			TerminalId: resp.TerminalId,
 		})
@@ -568,7 +568,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 
 		relative := "../outside"
 		cmd, args := acpTestEchoCommand("cwd")
-		_, err := client.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
+		_, err := client.CreateTerminal(t.Context(), acp.CreateTerminalRequest{
 			SessionId: "test-session",
 			Command:   cmd,
 			Args:      args,
@@ -589,7 +589,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 		client.agent.repoRoot = ""
 		client.repoRoot = ""
 
-		reqCtx, reqCancel := context.WithCancel(context.Background())
+		reqCtx, reqCancel := context.WithCancel(t.Context())
 		resp, err := client.CreateTerminal(reqCtx, acp.CreateTerminalRequest{
 			SessionId: "test-session",
 			Command:   cmd,
@@ -602,13 +602,13 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 		term, exists := client.getTerminal(resp.TerminalId)
 		require.True(t, exists, "terminal %s not found", resp.TerminalId)
 		select {
-		case <-term.context.Done():
-			require.Condition(t, func() bool { return false }, "terminal context canceled by request context cancellation")
-		case <-time.After(50 * time.Millisecond): //nolint:kennlint // deadlinetest: shows the terminal context is not canceled; the running sleep command keeps it alive
+		case <-term.done:
+			require.Condition(t, func() bool { return false }, "terminal process stopped by request context cancellation")
+		case <-time.After(50 * time.Millisecond): //nolint:kennlint // deadlinetest: shows the terminal process keeps running; the sleep command outlives this wait
 
 		}
 
-		_, err = client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{
+		_, err = client.ReleaseTerminal(t.Context(), acp.ReleaseTerminalRequest{
 			SessionId:  "test-session",
 			TerminalId: resp.TerminalId,
 		})
@@ -630,7 +630,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 			waitErr := make(chan error, 1)
 			waitResp := make(chan acp.WaitForTerminalExitResponse, 1)
 			go func() {
-				resp, err := client.WaitForTerminalExit(context.Background(), acp.WaitForTerminalExitRequest{
+				resp, err := client.WaitForTerminalExit(t.Context(), acp.WaitForTerminalExitRequest{
 					SessionId:  "test-session",
 					TerminalId: "blocked",
 				})
@@ -686,12 +686,11 @@ func TestACPNoDoubleMutexUnlockPanics(t *testing.T) {
 		nextTerminalID: 1,
 	}
 
-	_, err := client.WaitForTerminalExit(context.Background(), acp.WaitForTerminalExitRequest{
+	_, err := client.WaitForTerminalExit(t.Context(), acp.WaitForTerminalExitRequest{
+		SessionId:  "test-session",
 		TerminalId: "non-existent-terminal",
 	})
-	if err != nil {
-		t.Logf("Expected error for non-existent terminal: %v", err)
-	}
+	require.ErrorContains(t, err, "terminal non-existent-terminal not found")
 }
 
 func TestBoundedWriter(t *testing.T) {
@@ -1317,15 +1316,16 @@ func TestACPTerminalOnlyLimitsOutputWhenRequested(t *testing.T) {
 	for _, limit := range []*int{nil, new(0), new(31)} {
 		t.Run(fmt.Sprint(limit), func(t *testing.T) {
 			client := setupTestClient("auto-approve", root)
-			response, err := client.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
+			response, err := client.CreateTerminal(t.Context(), acp.CreateTerminalRequest{
 				Command: "cat", Args: []string{"output.txt"}, OutputByteLimit: limit,
 			})
 			require.NoError(t, err)
 			t.Cleanup(func() {
-				_, err := client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{TerminalId: response.TerminalId})
+				// t.Context is already canceled when cleanups run.
+				_, err := client.ReleaseTerminal(context.WithoutCancel(t.Context()), acp.ReleaseTerminalRequest{TerminalId: response.TerminalId})
 				require.NoError(t, err)
 			})
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
 			_, err = client.WaitForTerminalExit(ctx, acp.WaitForTerminalExitRequest{TerminalId: response.TerminalId})
 			require.NoError(t, err)
@@ -1344,7 +1344,7 @@ func TestACPTerminalOnlyLimitsOutputWhenRequested(t *testing.T) {
 func TestACPAgentErrorIncludesAgentStderr(t *testing.T) {
 	cmd := writeTempCommand(t, "#!/bin/sh\ncase \"$1\" in *etxtbsy*) exit 0;; esac\necho 'acp boot failed: missing credentials' >&2\nexit 3\n")
 
-	_, err := NewACPAgent(cmd).Review(context.Background(), t.TempDir(), "HEAD", "review", nil)
+	_, err := NewACPAgent(cmd).Review(t.Context(), t.TempDir(), "HEAD", "review", nil)
 
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "acp boot failed: missing credentials")

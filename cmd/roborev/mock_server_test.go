@@ -26,7 +26,7 @@ func TestMockServerHandler_HandleEnqueue_MethodRouting(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.method, func(t *testing.T) {
-			req := httptest.NewRequest(tt.method, "/api/enqueue", nil)
+			req := httptest.NewRequestWithContext(t.Context(), tt.method, "/api/enqueue", nil)
 			w := httptest.NewRecorder()
 
 			h.handleEnqueue(w, req)

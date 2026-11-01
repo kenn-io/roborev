@@ -274,7 +274,7 @@ func TestGetReviewsToSync_PendingLocalEdits(t *testing.T) {
 	assert.Empty(t, pending)
 	// A future server timestamp is not a local edit. The explicit local
 	// closure below must still queue an upload even if the clock is behind.
-	_, err = h.db.Exec(`UPDATE reviews SET updated_at = ? WHERE job_id = ?`, preciseTimestampAt(time.Now().Add(time.Hour)), job.ID)
+	_, err = h.db.ExecContext(t.Context(), `UPDATE reviews SET updated_at = ? WHERE job_id = ?`, preciseTimestampAt(time.Now().Add(time.Hour)), job.ID)
 	require.NoError(t, err)
 	pending, err = h.db.GetReviewsToSync(h.machineID, 10)
 	require.NoError(t, err)
@@ -292,7 +292,7 @@ func TestSessionID_SyncRoundTrip(t *testing.T) {
 	src := newSyncTestHelper(t)
 
 	job := src.createCompletedJob("session-sync-sha")
-	_, err := src.db.Exec(
+	_, err := src.db.ExecContext(t.Context(),
 		`UPDATE review_jobs SET session_id = ? WHERE id = ?`,
 		"agent-session-abc", job.ID)
 	require.NoError(t, err, "set session_id: %v")
@@ -342,7 +342,7 @@ func TestSessionID_SyncRoundTrip(t *testing.T) {
 	}
 
 	var gotSessionID sql.NullString
-	err = dst.db.QueryRow(
+	err = dst.db.QueryRowContext(t.Context(),
 		`SELECT session_id FROM review_jobs WHERE uuid = ?`,
 		syncJob.UUID).Scan(&gotSessionID)
 	require.NoError(t, err, "query imported session_id: %v")
@@ -406,7 +406,7 @@ func TestAgentInvoked_SyncRoundTrip(t *testing.T) {
 		"UpsertPulledJob: %v")
 
 	var gotInvoked int
-	require.NoError(t, dst.db.QueryRow(
+	require.NoError(t, dst.db.QueryRowContext(t.Context(),
 		`SELECT agent_invoked FROM review_jobs WHERE uuid = ?`, syncJob.UUID).Scan(&gotInvoked),
 		"query imported agent_invoked: %v")
 	assert.Equal(t, 1, gotInvoked, "pull side imports the agent_invoked marker")
@@ -451,7 +451,7 @@ func TestUpsertPulledJob_SessionTerminalOverwrite(t *testing.T) {
 
 	sessionOf := func(label string) string {
 		var s sql.NullString
-		require.NoError(t, dst.db.QueryRow(
+		require.NoError(t, dst.db.QueryRowContext(t.Context(),
 			`SELECT session_id FROM review_jobs WHERE uuid = ?`, testUUID(label)).Scan(&s))
 		return s.String
 	}
@@ -520,7 +520,7 @@ func TestUpsertPulledJob_SkippedRerunOverwritesStaleMarkers(t *testing.T) {
 
 	var session, tokenUsage sql.NullString
 	var invoked int
-	require.NoError(t, dst.db.QueryRow(
+	require.NoError(t, dst.db.QueryRowContext(t.Context(),
 		`SELECT session_id, token_usage, agent_invoked FROM review_jobs WHERE uuid = ?`,
 		jobUUID).Scan(&session, &tokenUsage, &invoked))
 
@@ -557,7 +557,7 @@ func TestReenqueueClearsSyncedAtForSameSecondRerun(t *testing.T) {
 	// It was synced. Pin updated_at and synced_at to the same RFC3339 second —
 	// the worst case for the second-precise sync comparison.
 	const sameSecond = "2024-01-01T00:00:00Z"
-	_, err := h.db.Exec(
+	_, err := h.db.ExecContext(t.Context(),
 		`UPDATE review_jobs SET updated_at = ?, synced_at = ? WHERE id = ?`,
 		sameSecond, sameSecond, job.ID)
 	require.NoError(t, err)
@@ -573,7 +573,7 @@ func TestReenqueueClearsSyncedAtForSameSecondRerun(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 	require.NoError(t, completeReviewFixture(h.db, job.ID, "test", "prompt", "output"))
-	_, err = h.db.Exec(`UPDATE review_jobs SET updated_at = ? WHERE id = ?`, sameSecond, job.ID)
+	_, err = h.db.ExecContext(t.Context(), `UPDATE review_jobs SET updated_at = ? WHERE id = ?`, sameSecond, job.ID)
 	require.NoError(t, err)
 
 	assert.Contains(pending(), job.ID,
@@ -671,14 +671,14 @@ func TestResetPathsClearSyncedAt(t *testing.T) {
 			defer db.Close()
 
 			jobID := tc.setup(t, db)
-			_, err := db.Exec(`UPDATE review_jobs SET synced_at = ? WHERE id = ?`,
+			_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET synced_at = ? WHERE id = ?`,
 				"2024-01-01T00:00:00Z", jobID)
 			require.NoError(t, err)
 
 			tc.reset(t, db, jobID)
 
 			var syncedAt sql.NullString
-			require.NoError(t, db.QueryRow(
+			require.NoError(t, db.QueryRowContext(t.Context(),
 				`SELECT synced_at FROM review_jobs WHERE id = ?`, jobID).Scan(&syncedAt))
 			assert.False(t, syncedAt.Valid,
 				"%s must clear synced_at when it clears cost metadata", tc.name)
@@ -705,7 +705,7 @@ func TestGetCommentsToSync_LegacyCommentsExcluded(t *testing.T) {
 	)
 	require.NoError(t, err, "AddCommentToJob failed: %v")
 
-	result, err := h.db.Exec(`
+	result, err := h.db.ExecContext(t.Context(), `
 		INSERT INTO responses (commit_id, responder, response, uuid, source_machine_id, created_at)
 		VALUES (?, 'human', 'This is a legacy response', ?, ?, datetime('now'))
 	`, commit.ID, testUUID("legacy-response"), h.machineID)
@@ -741,7 +741,7 @@ func TestGetJobsToSync_IncludesSkipped(t *testing.T) {
 	commitID := createCommit(t, db, repoID, "deadf00d").ID
 	jobUUID := testUUID("sync-skipped-job")
 	machineID := testUUID("sync-skipped-machine")
-	_, err := db.Exec(`
+	_, err := db.ExecContext(t.Context(), `
 		INSERT INTO review_jobs
 		  (repo_id, commit_id, git_ref, status, review_type, uuid, source_machine_id, updated_at)
 		VALUES (?, ?, 'deadf00d', 'skipped', 'design', ?, ?, datetime('now'))

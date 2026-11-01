@@ -56,7 +56,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 			},
 			checkSQL: func(t *testing.T, db *DB, jobID int64) {
 				var gitRef string
-				err := db.QueryRow("SELECT git_ref FROM review_jobs WHERE id = ?", jobID).Scan(&gitRef)
+				err := db.QueryRowContext(t.Context(), "SELECT git_ref FROM review_jobs WHERE id = ?", jobID).Scan(&gitRef)
 				require.NoError(t, err, "Failed to query git_ref: %v")
 
 				assert.Equal(t, "prompt", gitRef)
@@ -101,7 +101,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 			},
 			checkSQL: func(t *testing.T, db *DB, jobID int64) {
 				var agentic bool
-				err := db.QueryRow("SELECT agentic FROM review_jobs WHERE id = ?", jobID).Scan(&agentic)
+				err := db.QueryRowContext(t.Context(), "SELECT agentic FROM review_jobs WHERE id = ?", jobID).Scan(&agentic)
 				require.NoError(t, err, "Failed to query agentic: %v")
 
 				assert.True(t, agentic, "DB agentic = false, want true")
@@ -123,7 +123,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 			},
 			checkSQL: func(t *testing.T, db *DB, jobID int64) {
 				var agentic bool
-				err := db.QueryRow("SELECT agentic FROM review_jobs WHERE id = ?", jobID).Scan(&agentic)
+				err := db.QueryRowContext(t.Context(), "SELECT agentic FROM review_jobs WHERE id = ?", jobID).Scan(&agentic)
 				require.NoError(t, err, "Failed to query agentic: %v")
 
 				assert.False(t, agentic, "DB agentic = true, want false")
@@ -169,7 +169,7 @@ func TestEnqueuePromptJob(t *testing.T) {
 			},
 			checkSQL: func(t *testing.T, db *DB, jobID int64) {
 				var gitRef string
-				err := db.QueryRow("SELECT git_ref FROM review_jobs WHERE id = ?", jobID).Scan(&gitRef)
+				err := db.QueryRowContext(t.Context(), "SELECT git_ref FROM review_jobs WHERE id = ?", jobID).Scan(&gitRef)
 				require.NoError(t, err, "Failed to query git_ref: %v")
 
 				assert.Equal(t, "test-fixtures", gitRef)
@@ -369,7 +369,7 @@ func TestMoveRepo(t *testing.T) {
 
 		// Verify a job exists for this repo
 		var beforeCount int
-		err := db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, repo.ID).Scan(&beforeCount)
+		err := db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM commits WHERE repo_id = ?`, repo.ID).Scan(&beforeCount)
 		require.NoError(t, err)
 		assert.Equal(t, 1, beforeCount)
 
@@ -379,7 +379,7 @@ func TestMoveRepo(t *testing.T) {
 
 		// Commits remain associated by repo_id
 		var afterCount int
-		err = db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, repo.ID).Scan(&afterCount)
+		err = db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM commits WHERE repo_id = ?`, repo.ID).Scan(&afterCount)
 		require.NoError(t, err)
 		assert.Equal(t, 1, afterCount)
 	})
@@ -405,7 +405,7 @@ func TestMoveRepo(t *testing.T) {
 		t.Cleanup(func() { db.Close() })
 
 		repoA := createRepo(t, db, filepath.Join(t.TempDir(), "repo-a"))
-		_, err := db.Exec(
+		_, err := db.ExecContext(t.Context(),
 			`INSERT INTO repos (root_path, name) VALUES (?, ?)`,
 			`C:/Users/dev/workspace/repo-b`,
 			"repo-b",
@@ -664,7 +664,7 @@ func TestGetRepoStats(t *testing.T) {
 		job := enqueueJob(t, db, repo.ID, commit.ID, "stats-stored-verdict-sha")
 		completeTestJob(t, db, job.ID, "**Verdict: PASS**\nLooks good!")
 
-		_, err := db.Exec(`UPDATE reviews SET verdict_bool = 0 WHERE job_id = ?`, job.ID)
+		_, err := db.ExecContext(t.Context(), `UPDATE reviews SET verdict_bool = 0 WHERE job_id = ?`, job.ID)
 		require.NoError(t, err, "force stored verdict_bool failed: %v")
 
 		stats, err := db.GetRepoStats(repo.ID)
@@ -681,7 +681,7 @@ func TestGetRepoStats(t *testing.T) {
 		job := enqueueJob(t, db, repo.ID, commit.ID, "stats-legacy-verdict-sha")
 		completeTestJob(t, db, job.ID, "**Verdict: PASS**\nLooks good!")
 
-		_, err := db.Exec(`UPDATE reviews SET verdict_bool = NULL WHERE job_id = ?`, job.ID)
+		_, err := db.ExecContext(t.Context(), `UPDATE reviews SET verdict_bool = NULL WHERE job_id = ?`, job.ID)
 		require.NoError(t, err, "clear stored verdict_bool failed: %v")
 
 		stats, err := db.GetRepoStats(repo.ID)
@@ -697,7 +697,7 @@ func TestDeleteRepo(t *testing.T) {
 	t.Run("delete empty repo", func(t *testing.T) {
 		db, repo := setupDBAndRepo(t, "delete-empty")
 		db.SetMaxOpenConns(1)
-		_, err := db.Exec(`PRAGMA foreign_keys = OFF`)
+		_, err := db.ExecContext(t.Context(), `PRAGMA foreign_keys = OFF`)
 		require.NoError(t, err)
 		_, err = db.SetAgentHookSnooze(
 			repo.RootPath, repo.RootPath, "main", time.Now().Add(time.Hour),
@@ -711,7 +711,7 @@ func TestDeleteRepo(t *testing.T) {
 		_, err = db.GetRepoByID(repo.ID)
 		require.Error(t, err)
 		var snoozeCount int
-		require.NoError(t, db.QueryRow(
+		require.NoError(t, db.QueryRowContext(t.Context(),
 			`SELECT COUNT(*) FROM agent_hook_snoozes WHERE repo_id = ?`, repo.ID,
 		).Scan(&snoozeCount))
 		assert.Zero(t, snoozeCount)
@@ -843,7 +843,7 @@ func TestMergeRepos(t *testing.T) {
 
 		// Verify commits belong to source before merge
 		var sourceCommitCount int
-		db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, source.ID).Scan(&sourceCommitCount)
+		db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM commits WHERE repo_id = ?`, source.ID).Scan(&sourceCommitCount)
 		assert.Equal(t, 2, sourceCommitCount)
 
 		_, err := db.MergeRepos(source.ID, target.ID)
@@ -851,12 +851,12 @@ func TestMergeRepos(t *testing.T) {
 
 		// Verify commits now belong to target
 		var targetCommitCount int
-		db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, target.ID).Scan(&targetCommitCount)
+		db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM commits WHERE repo_id = ?`, target.ID).Scan(&targetCommitCount)
 		assert.Equal(t, 2, targetCommitCount)
 
 		// Verify no commits remain with source ID (source is deleted)
 		var orphanedCount int
-		db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, source.ID).Scan(&orphanedCount)
+		db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM commits WHERE repo_id = ?`, source.ID).Scan(&orphanedCount)
 		assert.Equal(t, 0, orphanedCount)
 	})
 
@@ -898,7 +898,7 @@ func TestMergeRepos(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, unique)
 		var sourceCount int
-		require.NoError(t, db.QueryRow(
+		require.NoError(t, db.QueryRowContext(t.Context(),
 			`SELECT COUNT(*) FROM agent_hook_snoozes WHERE repo_id = ?`, source.ID,
 		).Scan(&sourceCount))
 		assert.Zero(t, sourceCount)
@@ -915,7 +915,7 @@ func TestDeleteRepoCascadeDeletesCommits(t *testing.T) {
 
 	// Verify commits exist before delete
 	var beforeCount int
-	db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, repo.ID).Scan(&beforeCount)
+	db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM commits WHERE repo_id = ?`, repo.ID).Scan(&beforeCount)
 	assert.Equal(t, 2, beforeCount)
 
 	err := db.DeleteRepo(repo.ID, true)
@@ -923,7 +923,7 @@ func TestDeleteRepoCascadeDeletesCommits(t *testing.T) {
 
 	// Verify commits are deleted
 	var afterCount int
-	db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, repo.ID).Scan(&afterCount)
+	db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM commits WHERE repo_id = ?`, repo.ID).Scan(&afterCount)
 	assert.Equal(t, 0, afterCount)
 }
 
@@ -938,7 +938,7 @@ func TestDeleteRepoCascadeDeletesLegacyCommitResponses(t *testing.T) {
 
 	// Verify comment exists
 	var beforeCount int
-	db.QueryRow(`SELECT COUNT(*) FROM responses WHERE commit_id = ?`, commit.ID).Scan(&beforeCount)
+	db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM responses WHERE commit_id = ?`, commit.ID).Scan(&beforeCount)
 	assert.Equal(t, 1, beforeCount)
 
 	err = db.DeleteRepo(repo.ID, true)
@@ -946,7 +946,7 @@ func TestDeleteRepoCascadeDeletesLegacyCommitResponses(t *testing.T) {
 
 	// Verify legacy responses are deleted (by checking all responses - commit is gone)
 	var afterCount int
-	db.QueryRow(`SELECT COUNT(*) FROM responses WHERE commit_id = ?`, commit.ID).Scan(&afterCount)
+	db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM responses WHERE commit_id = ?`, commit.ID).Scan(&afterCount)
 	assert.Equal(t, 0, afterCount)
 }
 
@@ -1008,7 +1008,7 @@ func TestVerdictSuppressionForPromptJobs(t *testing.T) {
 		commit := createCommit(t, db, repo.ID, "branch-prompt-sha")
 
 		// Enqueue with git_ref = "prompt" but WITH a commit_id (simulating review of branch "prompt")
-		result, _ := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, reasoning, status) VALUES (?, ?, 'prompt', 'codex', 'thorough', 'queued')`,
+		result, _ := db.ExecContext(t.Context(), `INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, reasoning, status) VALUES (?, ?, 'prompt', 'codex', 'thorough', 'queued')`,
 			repo.ID, commit.ID)
 		jobID, _ := result.LastInsertId()
 

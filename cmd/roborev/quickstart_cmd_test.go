@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -70,7 +69,7 @@ func TestDetectStateUsesGlobalWorkflowReviewAgent(t *testing.T) {
 		0o600,
 	))
 
-	state := detectState(context.Background(), repo, true)
+	state := detectState(t.Context(), repo, true)
 	configured := quickstartCheckByID(t, state, "configured_agent")
 	repoConfig := quickstartCheckByID(t, state, "repo_config")
 
@@ -98,11 +97,11 @@ func TestCheckRepoConfigUsesResolvedRepoConfigPath(t *testing.T) {
 	mainRepo := newTempGitRepo(t)
 	configureTempGitIdentity(t, mainRepo)
 	require.NoError(t, os.WriteFile(filepath.Join(mainRepo, "README.md"), []byte("test\n"), 0o644))
-	cmd := exec.Command("git", "add", "README.md")
+	cmd := exec.CommandContext(t.Context(), "git", "add", "README.md")
 	cmd.Dir = mainRepo
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(output))
-	cmd = exec.Command("git", "commit", "-m", "initial")
+	cmd = exec.CommandContext(t.Context(), "git", "commit", "-m", "initial")
 	cmd.Dir = mainRepo
 	output, err = cmd.CombinedOutput()
 	require.NoError(t, err, string(output))
@@ -114,7 +113,7 @@ func TestCheckRepoConfigUsesResolvedRepoConfigPath(t *testing.T) {
 	))
 
 	worktree := filepath.Join(t.TempDir(), "linked")
-	cmd = exec.Command("git", "worktree", "add", worktree)
+	cmd = exec.CommandContext(t.Context(), "git", "worktree", "add", worktree)
 	cmd.Dir = mainRepo
 	output, err = cmd.CombinedOutput()
 	require.NoError(t, err, string(output))
@@ -272,7 +271,7 @@ func configureTempGitIdentity(t *testing.T, repo string) {
 		{"config", "user.name", "Test User"},
 		{"config", "user.email", "test@example.invalid"},
 	} {
-		cmd := exec.Command("git", args...)
+		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = repo
 		output, err := cmd.CombinedOutput()
 		require.NoError(t, err, string(output))
@@ -282,7 +281,7 @@ func configureTempGitIdentity(t *testing.T, repo string) {
 func newTempGitRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	cmd := exec.Command("git", "init")
+	cmd := exec.CommandContext(t.Context(), "git", "init")
 	cmd.Dir = dir
 	require.NoError(t, cmd.Run())
 	return dir
@@ -294,7 +293,7 @@ func TestDetectStateSchema(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	repo := newTempGitRepo(t)
 
-	state := detectState(context.Background(), repo, true)
+	state := detectState(t.Context(), repo, true)
 
 	assert.True(state.InGitRepo)
 
@@ -319,7 +318,7 @@ func TestDetectStateSchema(t *testing.T) {
 func TestDetectStateOutsideRepoMarksRepoChecksUnknown(t *testing.T) {
 	setupFastPolling(t)
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	state := detectState(context.Background(), "", false)
+	state := detectState(t.Context(), "", false)
 
 	assert.False(t, state.InGitRepo)
 	repoDependent := map[string]bool{
@@ -342,7 +341,7 @@ func TestDetectStateIsReadOnly(t *testing.T) {
 	_, errBefore := os.Stat(hookPath)
 	require.True(t, os.IsNotExist(errBefore), "precondition: no hook yet")
 
-	_ = detectState(context.Background(), repo, true)
+	_ = detectState(t.Context(), repo, true)
 
 	// Detection must not create a post-commit hook.
 	_, errAfter := os.Stat(hookPath)

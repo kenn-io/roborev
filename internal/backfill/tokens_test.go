@@ -70,7 +70,7 @@ func TestStoreCapturedTokenUsageRejectsReenqueuedJob(t *testing.T) {
 	selected, err := db.GetJobByID(job.ID)
 	require.NoError(t, err)
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		UPDATE review_jobs
 		SET started_at = '2026-08-20T16:00:00.987654321Z',
 		    finished_at = '2026-08-20T16:00:02Z'

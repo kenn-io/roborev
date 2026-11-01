@@ -43,7 +43,7 @@ func (s *observedSearchStore) GetSearchDocumentForJob(ctx context.Context, id in
 func incrementalFixture(t *testing.T, config ReconcilerConfig) (*Reconciler, *observedSearchStore, *Index) {
 	t.Helper()
 	db := testutil.OpenTestDB(t)
-	_, err := db.Exec(`
+	_, err := db.ExecContext(t.Context(), `
 		INSERT INTO repos (id, root_path, name) VALUES (1, '/synthetic/repo', 'repo');
 		INSERT INTO review_jobs (id, repo_id, git_ref, agent, status, job_type)
 		VALUES (1, 1, 'main', 'test', 'done', 'review'),
@@ -76,15 +76,15 @@ func TestReconcilerJobUpdatesDoNotReadUnrelatedHistory(t *testing.T) {
 	assert.Equal(t, int64(1), store.fullReads.Load())
 	assert.Equal(t, []int64{1}, store.jobReads)
 	var key string
-	require.NoError(t, index.db.QueryRow(`SELECT doc_key FROM review_fts WHERE review_fts MATCH 'incrementalcomment'`).Scan(&key))
+	require.NoError(t, index.db.QueryRowContext(t.Context(), `SELECT doc_key FROM review_fts WHERE review_fts MATCH 'incrementalcomment'`).Scan(&key))
 	assert.Equal(t, "local:1", key)
 	var closed bool
-	require.NoError(t, index.db.QueryRow(`SELECT closed FROM review_mirror WHERE doc_key = 'local:1'`).Scan(&closed))
+	require.NoError(t, index.db.QueryRowContext(t.Context(), `SELECT closed FROM review_mirror WHERE doc_key = 'local:1'`).Scan(&closed))
 	assert.True(t, closed)
 	assert.Equal(t, int64(2), r.Health().Indexed)
 
 	// A sync-assigned UUID replaces the old local key, including its vectors.
-	_, err = store.Exec(`UPDATE reviews SET uuid = '00000000-0000-4000-8000-000000000001' WHERE job_id = 1`)
+	_, err = store.ExecContext(t.Context(), `UPDATE reviews SET uuid = '00000000-0000-4000-8000-000000000001' WHERE job_id = 1`)
 	require.NoError(t, err)
 	r.WakeJob(1)
 	_, err = r.reconcileTurn(t.Context())
@@ -95,7 +95,7 @@ func TestReconcilerJobUpdatesDoNotReadUnrelatedHistory(t *testing.T) {
 		assert.Equal(t, 1, countRowsForDoc(t, index.db, table, "00000000-0000-4000-8000-000000000001"), table)
 	}
 
-	_, err = store.Exec(`DELETE FROM reviews WHERE job_id = 1`)
+	_, err = store.ExecContext(t.Context(), `DELETE FROM reviews WHERE job_id = 1`)
 	require.NoError(t, err)
 	r.WakeJob(1)
 	_, err = r.reconcileTurn(t.Context())
@@ -113,7 +113,7 @@ func TestReconcilerKeepsJobWakesDuringScansAndRefreshes(t *testing.T) {
 	more, err := r.reconcileTurn(t.Context())
 	require.NoError(t, err)
 	require.True(t, more)
-	_, err = store.Exec(`UPDATE reviews SET output = 'during scan' WHERE job_id = 1`)
+	_, err = store.ExecContext(t.Context(), `UPDATE reviews SET output = 'during scan' WHERE job_id = 1`)
 	require.NoError(t, err)
 	r.WakeJob(1)
 	for range 4 {
@@ -122,11 +122,11 @@ func TestReconcilerKeepsJobWakesDuringScansAndRefreshes(t *testing.T) {
 	}
 	assert.Equal(t, []int64{1}, store.jobReads)
 	var content string
-	require.NoError(t, index.db.QueryRow(`SELECT content FROM review_mirror WHERE doc_key = 'local:1'`).Scan(&content))
+	require.NoError(t, index.db.QueryRowContext(t.Context(), `SELECT content FROM review_mirror WHERE doc_key = 'local:1'`).Scan(&content))
 	assert.Contains(t, content, "during scan")
 
 	store.afterRead = func() {
-		_, err := store.Exec(`UPDATE reviews SET output = 'during refresh' WHERE job_id = 1`)
+		_, err := store.ExecContext(t.Context(), `UPDATE reviews SET output = 'during refresh' WHERE job_id = 1`)
 		require.NoError(t, err)
 		r.WakeJob(1)
 		store.afterRead = nil
@@ -137,7 +137,7 @@ func TestReconcilerKeepsJobWakesDuringScansAndRefreshes(t *testing.T) {
 	assert.True(t, more)
 	_, err = r.reconcileTurn(t.Context())
 	require.NoError(t, err)
-	require.NoError(t, index.db.QueryRow(`SELECT content FROM review_mirror WHERE doc_key = 'local:1'`).Scan(&content))
+	require.NoError(t, index.db.QueryRowContext(t.Context(), `SELECT content FROM review_mirror WHERE doc_key = 'local:1'`).Scan(&content))
 	assert.Contains(t, content, "during refresh")
 	assert.Equal(t, int64(3), store.fullReads.Load())
 
@@ -160,7 +160,7 @@ func TestReconcilerJobWakesDoNotPostponeSafetySweep(t *testing.T) {
 		synctest.Wait()
 		assert.Equal(t, int64(1), store.fullReads.Load())
 		// A change without an event must still be found by the safety sweep.
-		_, err := store.Exec(`UPDATE reviews SET output = 'sweptchange' WHERE job_id = 2`)
+		_, err := store.ExecContext(t.Context(), `UPDATE reviews SET output = 'sweptchange' WHERE job_id = 2`)
 		require.NoError(t, err)
 		for range 3 {
 			time.Sleep(15 * time.Second)
@@ -172,7 +172,7 @@ func TestReconcilerJobWakesDoNotPostponeSafetySweep(t *testing.T) {
 		synctest.Wait()
 		assert.Equal(t, int64(2), store.fullReads.Load())
 		var key string
-		require.NoError(t, index.db.QueryRow(`SELECT doc_key FROM review_fts WHERE review_fts MATCH 'sweptchange'`).Scan(&key))
+		require.NoError(t, index.db.QueryRowContext(t.Context(), `SELECT doc_key FROM review_fts WHERE review_fts MATCH 'sweptchange'`).Scan(&key))
 		assert.Equal(t, "local:2", key)
 		cancel()
 		assert.ErrorIs(t, <-done, context.Canceled)

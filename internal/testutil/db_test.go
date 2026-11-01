@@ -19,7 +19,7 @@ func TestOpenTestDBIsolatesFixtures(t *testing.T) {
 	// or database identity, and must outlive the earlier fixture's connection.
 	second := OpenTestDB(t)
 	var repos int
-	require.NoError(t, second.QueryRow("SELECT COUNT(*) FROM repos").Scan(&repos))
+	require.NoError(t, second.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM repos").Scan(&repos))
 	assert.Equal(t, 0, repos)
 	secondID, err := second.GetDatabaseID()
 	require.NoError(t, err)

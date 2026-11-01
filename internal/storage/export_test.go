@@ -32,7 +32,7 @@ func TestExportReviewsContentProfile(t *testing.T) {
 	job := enqueueJob(t, db, repo.ID, commit.ID, commit.SHA)
 	claimJob(t, db, "w1")
 	require.NoError(t, completeReviewFixture(db, job.ID, "codex", "SYSTEM PROMPT MUST NOT EXPORT", "No issues found."))
-	_, err := db.Exec(`
+	_, err := db.ExecContext(t.Context(), `
 		UPDATE review_jobs
 		SET branch = 'main',
 		    model = 'gpt-test',
@@ -44,7 +44,7 @@ func TestExportReviewsContentProfile(t *testing.T) {
 		WHERE id = ?`, job.ID)
 	require.NoError(t, err)
 	require.NoError(t, setJobContent(t.Context(), db, job.ID, jobContentDiff, "RAW DIFF MUST NOT EXPORT"))
-	_, err = db.Exec(`UPDATE reviews SET created_at = '2026-06-29 00:00:03' WHERE job_id = ?`, job.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE reviews SET created_at = '2026-06-29 00:00:03' WHERE job_id = ?`, job.ID)
 	require.NoError(t, err)
 
 	page, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileContent, Limit: 10})
@@ -280,19 +280,19 @@ func TestExportReviewsFiltersAndOrdering(t *testing.T) {
 	includedA := seedCompletedExportReview(t, db, repo.ID, "2222222222222222222222222222222222222222", "2026-06-29 00:00:00", false)
 	includedB := seedCompletedExportReview(t, db, repo.ID, "3333333333333333333333333333333333333333", "2026-06-29T00:00:00Z", true)
 	unfinished := enqueueJob(t, db, repo.ID, createCommit(t, db, repo.ID, "4444444444444444444444444444444444444444").ID, "4444444444444444444444444444444444444444")
-	_, err := db.Exec(`UPDATE review_jobs SET status = 'done', job_type = 'task' WHERE id = ?`, older.ID)
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'done', job_type = 'task' WHERE id = ?`, older.ID)
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE review_jobs SET status = 'queued' WHERE id = ?`, unfinished.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'queued' WHERE id = ?`, unfinished.ID)
 	require.NoError(t, err)
 	for i, jobType := range []string{JobTypeTask, JobTypeInsights, JobTypeFix, JobTypeClassify, JobTypeCompact} {
 		excluded := seedCompletedExportReview(t, db, repo.ID, fmt.Sprintf("%040x", 50+i), "2026-06-29 00:00:00", false)
-		_, err = db.Exec(`UPDATE review_jobs SET job_type = ? WHERE id = ?`, jobType, excluded.JobID)
+		_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET job_type = ? WHERE id = ?`, jobType, excluded.JobID)
 		require.NoError(t, err)
 	}
 	empty := enqueueJob(t, db, repo.ID, createCommit(t, db, repo.ID, "5555555555555555555555555555555555555555").ID, "5555555555555555555555555555555555555555")
 	claimJob(t, db, "w-empty")
 	require.NoError(t, completeReviewFixture(db, empty.ID, "codex", "prompt", ""))
-	_, err = db.Exec(`UPDATE reviews SET created_at = '2026-06-29 00:00:00' WHERE job_id = ?`, empty.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE reviews SET created_at = '2026-06-29 00:00:00' WHERE job_id = ?`, empty.ID)
 	require.NoError(t, err)
 
 	since := time.Date(2026, 6, 29, 0, 0, 0, 0, time.UTC)
@@ -766,7 +766,7 @@ func TestExportReviewsPanelSubagents(t *testing.T) {
 	memberA := seedPanelExportJob(t, db, repo.ID, panelRun, "member", "security", 0, "codex", "security", "2026-06-29 00:00:01", "- High — issue")
 	memberB := seedPanelExportJob(t, db, repo.ID, panelRun, "member", "style", 1, "claude", "style", "2026-06-29 00:00:02", "No issues found.")
 	synthesis := seedPanelExportJob(t, db, repo.ID, panelRun, "synthesis", "", 0, "codex", "", "2026-06-29 00:00:03", "- Medium — synthesized")
-	_, err := db.Exec(`
+	_, err := db.ExecContext(t.Context(), `
 		UPDATE review_jobs
 		SET token_usage = '{"input_tokens":7,"total_output_tokens":9,"cost_usd":0.12,"has_cost":true}'
 		WHERE id = ?`, memberA.JobID)
@@ -781,7 +781,7 @@ func TestExportReviewsPanelSubagents(t *testing.T) {
 		PanelMemberIndex: 2,
 	})
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE review_jobs SET job_type = 'range' WHERE id = ?`, queuedMember.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET job_type = 'range' WHERE id = ?`, queuedMember.ID)
 	require.NoError(t, err)
 	seedPanelMemberWithoutExportableReview(t, db, repo.ID, panelRun, "failed", 3, JobStatusFailed)
 	seedPanelMemberWithoutExportableReview(t, db, repo.ID, panelRun, "skipped", 4, JobStatusSkipped)
@@ -846,13 +846,13 @@ func TestExportReviewsCISynthesisFields(t *testing.T) {
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
 	panelRun := testUUID("ci-panel-run")
 	synthesis := seedPanelExportJob(t, db, repo.ID, panelRun, "synthesis", "", 0, "codex", "", "2026-06-29 00:00:03", "- Medium — synthesized")
-	_, err := db.Exec(`
+	_, err := db.ExecContext(t.Context(), `
 		UPDATE review_jobs
 		SET ci_base_branch = 'main',
 		    git_ref = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa..bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
 		WHERE id = ?`, synthesis.JobID)
 	require.NoError(t, err)
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		INSERT INTO ci_pr_panels (github_repo, pr_number, head_sha, panel_run_uuid, synthesis_job_id)
 		VALUES ('acme/widgets', 42, 'cccccccccccccccccccccccccccccccccccccccc', ?, ?)`,
 		panelRun, synthesis.JobID)
@@ -902,7 +902,7 @@ func TestOpenBackfillsVerdictBoolForExport(t *testing.T) {
 	job := enqueueJob(t, db, repo.ID, commit.ID, commit.SHA)
 	claimJob(t, db, "w1")
 	require.NoError(t, completeReviewFixture(db, job.ID, "codex", "prompt", "No issues found."))
-	_, err = db.Exec(`UPDATE reviews SET verdict_bool = NULL WHERE job_id = ?`, job.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE reviews SET verdict_bool = NULL WHERE job_id = ?`, job.ID)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 
@@ -922,7 +922,7 @@ func seedCompletedExportReview(t *testing.T, db *DB, repoID int64, sha, complete
 	job := enqueueJob(t, db, repoID, commit.ID, sha)
 	markExportJobRunning(t, db, job.ID)
 	require.NoError(t, completeReviewFixture(db, job.ID, "codex", "prompt", "No issues found."))
-	_, err := db.Exec(`UPDATE reviews SET uuid = ?, created_at = ?, closed = ? WHERE job_id = ?`, testUUID("review-"+sha), completedAt, boolInt(closed), job.ID)
+	_, err := db.ExecContext(t.Context(), `UPDATE reviews SET uuid = ?, created_at = ?, closed = ? WHERE job_id = ?`, testUUID("review-"+sha), completedAt, boolInt(closed), job.ID)
 	require.NoError(t, err)
 	review, err := db.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
@@ -933,7 +933,7 @@ func seedCompletedExportReview(t *testing.T, db *DB, repoID int64, sha, complete
 // test controls exactly what is in the column. A nil value stores NULL.
 func setExportReviewStructuredOutput(t *testing.T, db *DB, jobID int64, document any) {
 	t.Helper()
-	_, err := db.Exec(`UPDATE reviews SET structured_output = ? WHERE job_id = ?`, document, jobID)
+	_, err := db.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ? WHERE job_id = ?`, document, jobID)
 	require.NoError(t, err)
 }
 
@@ -941,7 +941,7 @@ func setExportReviewStructuredOutput(t *testing.T, db *DB, jobID int64, document
 // stores NULL, matching rows written before the column existed.
 func setExportReviewUpdatedAt(t *testing.T, db *DB, jobID int64, updatedAt any) {
 	t.Helper()
-	_, err := db.Exec(`UPDATE reviews SET updated_at = ? WHERE job_id = ?`, updatedAt, jobID)
+	_, err := db.ExecContext(t.Context(), `UPDATE reviews SET updated_at = ? WHERE job_id = ?`, updatedAt, jobID)
 	require.NoError(t, err)
 }
 
@@ -957,7 +957,7 @@ func seedPanelMemberWithoutExportableReview(t *testing.T, db *DB, repoID int64, 
 		PanelMemberIndex: memberIndex,
 	})
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE review_jobs SET job_type = 'range', status = ? WHERE id = ?`, status, job.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET job_type = 'range', status = ? WHERE id = ?`, status, job.ID)
 	require.NoError(t, err)
 }
 
@@ -986,11 +986,11 @@ func seedPanelExportJob(
 		PanelMemberIndex: memberIndex,
 	})
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE review_jobs SET job_type = ?, started_at = '2026-06-29T00:00:00Z' WHERE id = ?`, panelJobType(role), job.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET job_type = ?, started_at = '2026-06-29T00:00:00Z' WHERE id = ?`, panelJobType(role), job.ID)
 	require.NoError(t, err)
 	markExportJobRunning(t, db, job.ID)
 	require.NoError(t, completeReviewFixture(db, job.ID, agentName, "prompt", output))
-	_, err = db.Exec(`UPDATE reviews SET created_at = ? WHERE job_id = ?`, completedAt, job.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE reviews SET created_at = ? WHERE job_id = ?`, completedAt, job.ID)
 	require.NoError(t, err)
 	review, err := db.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
@@ -999,7 +999,7 @@ func seedPanelExportJob(
 
 func markExportJobRunning(t *testing.T, db *DB, jobID int64) {
 	t.Helper()
-	_, err := db.Exec(`UPDATE review_jobs SET status = 'running', worker_id = 'export-test', started_at = '2026-06-29T00:00:00Z' WHERE id = ?`, jobID)
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'running', worker_id = 'export-test', started_at = '2026-06-29T00:00:00Z' WHERE id = ?`, jobID)
 	require.NoError(t, err)
 }
 
@@ -1113,11 +1113,11 @@ func TestExportReviewsUnknownLegacyVerdict(t *testing.T) {
 	panelRun := testUUID("legacy-export-panel")
 	member := seedPanelExportJob(t, env.db, env.repo.ID, panelRun, "member", "historical", 0, "codex", "", "2026-06-29 00:00:01", "No issues found.")
 	synthesis := seedPanelExportJob(t, env.db, env.repo.ID, panelRun, "synthesis", "", 0, "codex", "", "2026-06-29 00:00:03", "No issues found.")
-	_, err := env.db.Exec(`UPDATE reviews SET structured_output = NULL, output = 'Historical panel prose.', verdict_bool = NULL WHERE job_id = ?`, member.JobID)
+	_, err := env.db.ExecContext(t.Context(), `UPDATE reviews SET structured_output = NULL, output = 'Historical panel prose.', verdict_bool = NULL WHERE job_id = ?`, member.JobID)
 	require.NoError(t, err)
 	require.NoError(t, env.db.migrateLegacyReviews())
 	require.NoError(t, env.db.restoreLegacyReviews())
-	_, err = env.db.Exec(`UPDATE reviews SET created_at = '2026-06-29 00:00:00' WHERE job_id = ?`, fixture.jobID)
+	_, err = env.db.ExecContext(t.Context(), `UPDATE reviews SET created_at = '2026-06-29 00:00:00' WHERE job_id = ?`, fixture.jobID)
 	require.NoError(t, err)
 
 	for _, profile := range []ExportProfile{ExportProfileContent, ExportProfileMetadata} {

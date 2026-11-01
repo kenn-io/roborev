@@ -766,9 +766,9 @@ func TestWriteDiffSnapshotRejectsTrackedSnapshotDir(t *testing.T) {
 	targetSHA := commits[len(commits)-1]
 	require.NoError(t, os.MkdirAll(filepath.Join(repoPath, ".roborev"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(repoPath, ".roborev", "tracked.txt"), []byte("tracked\n"), 0o644))
-	cmd := exec.Command("git", "-C", repoPath, "add", "-f", ".roborev/tracked.txt")
+	cmd := exec.CommandContext(t.Context(), "git", "-C", repoPath, "add", "-f", ".roborev/tracked.txt")
 	require.NoError(t, cmd.Run())
-	cmd = exec.Command("git", "-C", repoPath, "commit", "-m", "track snapshot dir")
+	cmd = exec.CommandContext(t.Context(), "git", "-C", repoPath, "commit", "-m", "track snapshot dir")
 	require.NoError(t, cmd.Run())
 	builder := NewBuilder(nil).ForRepo(repoPath, 0)
 
@@ -858,9 +858,9 @@ func TestCleanupStaleSnapshotsRejectsTrackedSnapshotDir(t *testing.T) {
 	require.NoError(t, os.MkdirAll(snapshotDir, 0o755))
 	require.NoError(t, writeSnapshotMarker(snapshotDir))
 	require.NoError(t, os.WriteFile(filepath.Join(snapshotDir, "tracked.txt"), []byte("tracked\n"), 0o644))
-	cmd := exec.Command("git", "-C", repoPath, "add", "-f", ".roborev/roborev-snapshot-tracked/tracked.txt")
+	cmd := exec.CommandContext(t.Context(), "git", "-C", repoPath, "add", "-f", ".roborev/roborev-snapshot-tracked/tracked.txt")
 	require.NoError(t, cmd.Run())
-	cmd = exec.Command("git", "-C", repoPath, "commit", "-m", "track snapshot-like dir")
+	cmd = exec.CommandContext(t.Context(), "git", "-C", repoPath, "commit", "-m", "track snapshot-like dir")
 	require.NoError(t, cmd.Run())
 	oldTime := time.Now().Add(-2 * time.Hour)
 	require.NoError(t, os.Chtimes(snapshotDir, oldTime, oldTime))
@@ -1519,7 +1519,7 @@ func TestBuildCanceledContextFails(t *testing.T) {
 	sha := repo.CommitFile("f.txt", "x\n", "Second commit")
 	db, _ := setupDBWithCommits(t, repo.Path(), []string{firstSHA, sha})
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	b := NewBuilder(db).WithContext(ctx).ForRepo(repo.Path(), 0)
 

@@ -1,7 +1,6 @@
 package katatest
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -16,7 +15,7 @@ func TestFakeClientImplementsInterface(t *testing.T) {
 
 func TestFakeShowRecordsRefs(t *testing.T) {
 	f := &FakeClient{Issues: map[string]kata.Issue{"abc4": {ShortID: "abc4", Title: "T"}}}
-	iss, err := f.Show(context.Background(), "abc4")
+	iss, err := f.Show(t.Context(), "abc4")
 	require.NoError(t, err)
 	assert.Equal(t, "T", iss.Title)
 	assert.Equal(t, []string{"abc4"}, f.ShowRefs)
@@ -24,7 +23,7 @@ func TestFakeShowRecordsRefs(t *testing.T) {
 
 func TestFakeCreateRecordsReqs(t *testing.T) {
 	f := &FakeClient{CreateResult: kata.CreateResult{ShortID: "z1"}}
-	_, err := f.Create(context.Background(), kata.CreateReq{Title: "t"})
+	_, err := f.Create(t.Context(), kata.CreateReq{Title: "t"})
 	require.NoError(t, err)
 	require.Len(t, f.CreateReqs, 1)
 	assert.Equal(t, "t", f.CreateReqs[0].Title)

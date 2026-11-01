@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -37,8 +38,8 @@ func serveTelemetryCapture(handler http.Handler, request *http.Request) *httptes
 	return recorder
 }
 
-func newTelemetryCaptureRequest(method string, body []byte) *http.Request {
-	request := httptest.NewRequest(method, TelemetryEventsPath, bytes.NewReader(body))
+func newTelemetryCaptureRequest(ctx context.Context, method string, body []byte) *http.Request {
+	request := httptest.NewRequestWithContext(ctx, method, TelemetryEventsPath, bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	return request
 }
@@ -51,7 +52,7 @@ func TestTelemetryCaptureRouteOnCoreMux(t *testing.T) {
 	server.SetTelemetry(reporter)
 	handler := server.httpServer.Handler
 
-	unknownLength := newTelemetryCaptureRequest(http.MethodPost, nil)
+	unknownLength := newTelemetryCaptureRequest(t.Context(), http.MethodPost, nil)
 	unknownLength.Body = io.NopCloser(sizeHiddenReader{bytes.NewReader(trailingPaddedTelemetryBody(65537))})
 	unknownLength.ContentLength = -1
 
@@ -63,49 +64,49 @@ func TestTelemetryCaptureRouteOnCoreMux(t *testing.T) {
 	}{
 		{
 			name:       "allowed event",
-			request:    newTelemetryCaptureRequest(http.MethodPost, []byte(`{"event":"app_opened"}`)),
+			request:    newTelemetryCaptureRequest(t.Context(), http.MethodPost, []byte(`{"event":"app_opened"}`)),
 			wantStatus: http.StatusAccepted,
 			wantBody:   `{"status":"disabled"}`,
 		},
 		{
 			name:       "tui body with surface",
-			request:    newTelemetryCaptureRequest(http.MethodPost, []byte(`{"event":"app_opened","properties":{"surface":"tui"}}`)),
+			request:    newTelemetryCaptureRequest(t.Context(), http.MethodPost, []byte(`{"event":"app_opened","properties":{"surface":"tui"}}`)),
 			wantStatus: http.StatusAccepted,
 			wantBody:   `{"status":"disabled"}`,
 		},
 		{
 			name:       "cli body with surface",
-			request:    newTelemetryCaptureRequest(http.MethodPost, []byte(`{"event":"app_opened","properties":{"surface":"cli"}}`)),
+			request:    newTelemetryCaptureRequest(t.Context(), http.MethodPost, []byte(`{"event":"app_opened","properties":{"surface":"cli"}}`)),
 			wantStatus: http.StatusAccepted,
 			wantBody:   `{"status":"disabled"}`,
 		},
 		{
 			name:       "unknown event",
-			request:    newTelemetryCaptureRequest(http.MethodPost, []byte(`{"event":"search_run"}`)),
+			request:    newTelemetryCaptureRequest(t.Context(), http.MethodPost, []byte(`{"event":"search_run"}`)),
 			wantStatus: http.StatusBadRequest,
 			wantBody:   telemetry.ErrUnsupportedEvent.Error(),
 		},
 		{
 			name:       "wrong case",
-			request:    newTelemetryCaptureRequest(http.MethodPost, []byte(`{"event":"App_Opened"}`)),
+			request:    newTelemetryCaptureRequest(t.Context(), http.MethodPost, []byte(`{"event":"App_Opened"}`)),
 			wantStatus: http.StatusBadRequest,
 			wantBody:   telemetry.ErrUnsupportedEvent.Error(),
 		},
 		{
 			name:       "body at the 65536 byte cap",
-			request:    newTelemetryCaptureRequest(http.MethodPost, paddedTelemetryBody(t, 65536)),
+			request:    newTelemetryCaptureRequest(t.Context(), http.MethodPost, paddedTelemetryBody(t, 65536)),
 			wantStatus: http.StatusAccepted,
 			wantBody:   `{"status":"disabled"}`,
 		},
 		{
 			name:       "body one byte over the cap",
-			request:    newTelemetryCaptureRequest(http.MethodPost, paddedTelemetryBody(t, 65537)),
+			request:    newTelemetryCaptureRequest(t.Context(), http.MethodPost, paddedTelemetryBody(t, 65537)),
 			wantStatus: http.StatusRequestEntityTooLarge,
 			wantBody:   "too large",
 		},
 		{
 			name:       "valid event with trailing padding over the cap",
-			request:    newTelemetryCaptureRequest(http.MethodPost, trailingPaddedTelemetryBody(65537)),
+			request:    newTelemetryCaptureRequest(t.Context(), http.MethodPost, trailingPaddedTelemetryBody(65537)),
 			wantStatus: http.StatusRequestEntityTooLarge,
 			wantBody:   "too large",
 		},
@@ -117,7 +118,7 @@ func TestTelemetryCaptureRouteOnCoreMux(t *testing.T) {
 		},
 		{
 			name:       "get",
-			request:    newTelemetryCaptureRequest(http.MethodGet, nil),
+			request:    newTelemetryCaptureRequest(t.Context(), http.MethodGet, nil),
 			wantStatus: http.StatusMethodNotAllowed,
 			wantBody:   "Method Not Allowed",
 		},
@@ -139,14 +140,14 @@ func TestTelemetryCaptureRouteWithoutReporterAdmitsNothing(t *testing.T) {
 	bodies := [][]byte{[]byte(`{"event":"app_opened"}`), []byte(`{"event":"app_opened","properties":{"surface":"cli"}}`)}
 
 	for _, body := range bodies {
-		recorder := serveTelemetryCapture(handler, newTelemetryCaptureRequest(http.MethodPost, body))
+		recorder := serveTelemetryCapture(handler, newTelemetryCaptureRequest(t.Context(), http.MethodPost, body))
 		assert.Equal(http.StatusBadRequest, recorder.Code, "telemetry unset: %s", body)
 	}
 
 	fake := &fakeTelemetryClient{enabled: true}
 	server.SetTelemetry(fake)
 	for _, body := range bodies {
-		recorder := serveTelemetryCapture(handler, newTelemetryCaptureRequest(http.MethodPost, body))
+		recorder := serveTelemetryCapture(handler, newTelemetryCaptureRequest(t.Context(), http.MethodPost, body))
 		assert.Equal(http.StatusBadRequest, recorder.Code, "non-Reporter client: %s", body)
 	}
 	assert.Empty(fake.events)
@@ -172,7 +173,7 @@ func TestBrowserHandlerTelemetryCaptureRoute(t *testing.T) {
 		withSession(request).Header.Set(WebCSRFHeader, credentials.CSRF)
 		return request
 	}
-	foreignOrigin := withCredentials(browserRequest(http.MethodPost, TelemetryEventsPath, appOpened))
+	foreignOrigin := withCredentials(browserRequest(t.Context(), http.MethodPost, TelemetryEventsPath, appOpened))
 	foreignOrigin.Header.Set("Origin", "http://evil.example")
 
 	tests := []struct {
@@ -183,13 +184,13 @@ func TestBrowserHandlerTelemetryCaptureRoute(t *testing.T) {
 	}{
 		{
 			name:       "no session",
-			request:    browserRequest(http.MethodPost, TelemetryEventsPath, appOpened),
+			request:    browserRequest(t.Context(), http.MethodPost, TelemetryEventsPath, appOpened),
 			wantStatus: http.StatusUnauthorized,
 			wantBody:   "web_session_required",
 		},
 		{
 			name:       "session without csrf",
-			request:    withSession(browserRequest(http.MethodPost, TelemetryEventsPath, appOpened)),
+			request:    withSession(browserRequest(t.Context(), http.MethodPost, TelemetryEventsPath, appOpened)),
 			wantStatus: http.StatusForbidden,
 			wantBody:   "csrf_invalid",
 		},
@@ -201,31 +202,31 @@ func TestBrowserHandlerTelemetryCaptureRoute(t *testing.T) {
 		},
 		{
 			name:       "full credentials",
-			request:    withCredentials(browserRequest(http.MethodPost, TelemetryEventsPath, appOpened)),
+			request:    withCredentials(browserRequest(t.Context(), http.MethodPost, TelemetryEventsPath, appOpened)),
 			wantStatus: http.StatusAccepted,
 			wantBody:   `{"status":"disabled"}`,
 		},
 		{
 			name:       "unknown event",
-			request:    withCredentials(browserRequest(http.MethodPost, TelemetryEventsPath, map[string]string{"event": "search_run"})),
+			request:    withCredentials(browserRequest(t.Context(), http.MethodPost, TelemetryEventsPath, map[string]string{"event": "search_run"})),
 			wantStatus: http.StatusBadRequest,
 			wantBody:   telemetry.ErrUnsupportedEvent.Error(),
 		},
 		{
 			name:       "get is not listed",
-			request:    withCredentials(browserRequest(http.MethodGet, TelemetryEventsPath, nil)),
+			request:    withCredentials(browserRequest(t.Context(), http.MethodGet, TelemetryEventsPath, nil)),
 			wantStatus: http.StatusNotFound,
 			wantBody:   "404 page not found",
 		},
 		{
 			name:       "parent path is not listed",
-			request:    withCredentials(browserRequest(http.MethodPost, "/api/telemetry", appOpened)),
+			request:    withCredentials(browserRequest(t.Context(), http.MethodPost, "/api/telemetry", appOpened)),
 			wantStatus: http.StatusNotFound,
 			wantBody:   "404 page not found",
 		},
 		{
 			name:       "agent activity path is not listed",
-			request:    withCredentials(browserRequest(http.MethodPost, TelemetryAgentCallPath, nil)),
+			request:    withCredentials(browserRequest(t.Context(), http.MethodPost, TelemetryAgentCallPath, nil)),
 			wantStatus: http.StatusNotFound,
 			wantBody:   "404 page not found",
 		},

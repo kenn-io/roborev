@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"database/sql"
 	"strings"
 	"testing"
@@ -79,7 +78,7 @@ func (h *ciPollerHarness) synthBlocked(t *testing.T, runUUID *uuid.UUID) bool {
 // the timeout sweep selects it.
 func (h *ciPollerHarness) backdatePanelCreatedAt(t *testing.T, id int64) {
 	t.Helper()
-	_, err := h.DB.Exec("UPDATE ci_pr_panels SET created_at = datetime('now','-1 hour') WHERE id = ?", id)
+	_, err := h.DB.ExecContext(t.Context(), "UPDATE ci_pr_panels SET created_at = datetime('now','-1 hour') WHERE id = ?", id)
 	require.NoError(t, err)
 }
 
@@ -87,7 +86,7 @@ func (h *ciPollerHarness) backdatePanelCreatedAt(t *testing.T, id int64) {
 // beyond the CI batch timeout.
 func (h *ciPollerHarness) backdateJobStartedAt(t *testing.T, jobID int64) {
 	t.Helper()
-	_, err := h.DB.Exec("UPDATE review_jobs SET started_at = datetime('now','-1 hour') WHERE id = ?", jobID)
+	_, err := h.DB.ExecContext(t.Context(), "UPDATE review_jobs SET started_at = datetime('now','-1 hour') WHERE id = ?", jobID)
 	require.NoError(t, err)
 }
 
@@ -430,7 +429,7 @@ func TestCleanupClosedPRPanels(t *testing.T) {
 	require.Len(t, members, 1)
 
 	openPRs := map[int]bool{} // PR 10 absent → not open
-	h.Poller.cleanupClosedPRPanels(context.Background(), "acme/api", openPRs)
+	h.Poller.cleanupClosedPRPanels(t.Context(), "acme/api", openPRs)
 
 	assert.Equal(storage.JobStatusCanceled, h.jobStatus(t, synth.ID), "synthesis canceled")
 	assert.Equal(storage.JobStatusCanceled, h.jobStatus(t, members[0].ID), "member canceled")
@@ -461,7 +460,7 @@ func TestCleanupClosedPRPanelsKeepsOpenPR(t *testing.T) {
 		[]jobSpec{{Agent: "test", ReviewType: "review"}})
 
 	openPRs := map[int]bool{} // absent from list, but callIsPROpen confirms open
-	h.Poller.cleanupClosedPRPanels(context.Background(), "acme/api", openPRs)
+	h.Poller.cleanupClosedPRPanels(t.Context(), "acme/api", openPRs)
 
 	assert.NotEqual(t, storage.JobStatusCanceled, h.jobStatus(t, synth.ID), "open-PR synthesis kept")
 	assert.Equal(t, storage.JobStatusQueued, h.jobStatus(t, members[0].ID), "open-PR member kept")

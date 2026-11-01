@@ -113,7 +113,7 @@ func TestOpenAddsAgentHookSnoozesToExistingDatabase(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "existing.db")
 	db, err := Open(dbPath)
 	require.NoError(t, err)
-	_, err = db.Exec(`DROP TABLE agent_hook_snoozes`)
+	_, err = db.ExecContext(t.Context(), `DROP TABLE agent_hook_snoozes`)
 	require.NoError(t, err)
 	forgetSchemaVersion(t, db)
 	require.NoError(t, db.Close())

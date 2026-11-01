@@ -2,7 +2,6 @@ package agent
 
 import (
 	"bytes"
-	"context"
 	"encoding/json/jsontext"
 	"path/filepath"
 	"testing"
@@ -14,7 +13,7 @@ import (
 func TestPiReviewMissingSessionFailsBeforeLaunch(t *testing.T) {
 	t.Setenv("PI_CODING_AGENT_DIR", t.TempDir())
 	a := NewPiAgent("nonexistent-test-agent").WithSessionID("missing-session").(*PiAgent)
-	_, err := a.Review(context.Background(), t.TempDir(), "HEAD", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "HEAD", "prompt", nil)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "session not found")
 }
@@ -22,7 +21,7 @@ func TestPiReviewMissingSessionFailsBeforeLaunch(t *testing.T) {
 func TestPiReviewWithSchemaMissingSessionFailsBeforeLaunch(t *testing.T) {
 	t.Setenv("PI_CODING_AGENT_DIR", t.TempDir())
 	a := NewPiAgent("nonexistent-test-agent").WithSessionID("missing-session").(*PiAgent)
-	_, err := a.ReviewWithSchema(context.Background(), t.TempDir(), "HEAD", "prompt", jsontext.Value(`{}`), nil)
+	_, err := a.ReviewWithSchema(t.Context(), t.TempDir(), "HEAD", "prompt", jsontext.Value(`{}`), nil)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "session not found")
 }
@@ -68,7 +67,7 @@ printf '%s\n' "$result" > "$output"
 	a := NewPiAgent(writeTempCommand(t, script))
 	repoDir := t.TempDir()
 	capture := NewSessionCaptureWriter(&bytes.Buffer{}, nil)
-	result, err := a.ReviewWithSchema(context.Background(), repoDir, "HEAD", "original review", jsontext.Value(`{}`), capture)
+	result, err := a.ReviewWithSchema(t.Context(), repoDir, "HEAD", "original review", jsontext.Value(`{}`), capture)
 	require.NoError(t, err)
 	assert.JSONEq(`{"review":"fresh"}`, string(result))
 	assert.Equal(sessionID, capture.SessionID())
@@ -76,7 +75,7 @@ printf '%s\n' "$result" > "$output"
 	require.FileExists(t, sessionPath)
 	resumed := a.WithSessionID(capture.SessionID()).(*PiAgent)
 	resumeCapture := NewSessionCaptureWriter(&bytes.Buffer{}, nil)
-	result, err = resumed.ReviewWithSchema(context.Background(), repoDir, "HEAD", "focused follow-up", jsontext.Value(`{}`), resumeCapture)
+	result, err = resumed.ReviewWithSchema(t.Context(), repoDir, "HEAD", "focused follow-up", jsontext.Value(`{}`), resumeCapture)
 	require.NoError(t, err)
 	assert.JSONEq(`{"review":"resumed"}`, string(result))
 	assert.Equal(sessionID, resumeCapture.SessionID())

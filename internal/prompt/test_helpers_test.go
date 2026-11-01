@@ -72,7 +72,7 @@ func TestNewTestRepoDisablesGitAutoMaintenance(t *testing.T) {
 
 func (r *testRepo) git(args ...string) string {
 	r.t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(r.t.Context(), "git", args...)
 	cmd.Dir = r.dir
 	cmd.Env = append(os.Environ(),
 		"GIT_AUTHOR_NAME="+testGitUser,
@@ -156,7 +156,7 @@ func setupTestRepo(t *testing.T) (string, []string) {
 
 func commitWithRepoConfig(t *testing.T, repoDir, messageFile string) {
 	t.Helper()
-	cmd := exec.Command("git", "commit", "-F", messageFile)
+	cmd := exec.CommandContext(t.Context(), "git", "commit", "-F", messageFile)
 	cmd.Dir = repoDir
 	var env []string
 	for _, kv := range os.Environ() {

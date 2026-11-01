@@ -10,7 +10,7 @@ import (
 )
 
 func TestRoborevStartupAvoidsTerminalProbeImports(t *testing.T) {
-	cmd := exec.Command("go", "list", "-deps", ".")
+	cmd := exec.CommandContext(t.Context(), "go", "list", "-deps", ".")
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "go list -deps failed:\n%s", out)
 

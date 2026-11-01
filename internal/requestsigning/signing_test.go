@@ -27,7 +27,7 @@ func testKey(t *testing.T) Key {
 
 func signedRequest(t *testing.T, key Key, body string) *http.Request {
 	t.Helper()
-	r, err := http.NewRequest("POST", "https://example.com/history/api/review?b=2&a=%2F", strings.NewReader(body))
+	r, err := http.NewRequestWithContext(t.Context(), "POST", "https://example.com/history/api/review?b=2&a=%2F", strings.NewReader(body))
 	require.NoError(t, err)
 	require.NoError(t, Sign(r, key, time.Now()))
 	return r
@@ -86,7 +86,7 @@ func FuzzSignatureInputStrict(f *testing.F) {
 	f.Add("escaped\\\"id")
 	f.Fuzz(func(t *testing.T, id string) {
 		key := Key{ID: id, Secret: bytes.Repeat([]byte{7}, 64)}
-		r, _ := http.NewRequest("GET", "https://example.com/api/ping", nil)
+		r, _ := http.NewRequestWithContext(t.Context(), "GET", "https://example.com/api/ping", nil)
 		err := Sign(r, key, time.Unix(1000, 0))
 		if err != nil {
 			return
@@ -111,7 +111,7 @@ func TestSignatureFreshnessAndCanonicalParameters(t *testing.T) {
 		{"expired", -31 * time.Second, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r, _ := http.NewRequest("GET", "https://example.com/api/ping?", nil)
+			r, _ := http.NewRequestWithContext(t.Context(), "GET", "https://example.com/api/ping?", nil)
 			now := time.Unix(1000, 0)
 			require.NoError(t, Sign(r, key, now.Add(tc.offset)))
 			_, err := VerifyHeaders(r, r.URL.String(), map[string]Key{key.ID: key}, now)

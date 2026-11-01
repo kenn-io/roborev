@@ -22,7 +22,7 @@ func TestBrowserServerStartsReadyAndKeepsShutdownPrivate(t *testing.T) {
 	server.allowWebCompilationStub = true
 	cfg := config.DefaultConfig()
 	cfg.Web.Listen = "127.0.0.1:0"
-	runtime, err := server.startBrowserServer(cfg.Web)
+	runtime, err := server.startBrowserServer(t.Context(), cfg.Web)
 	require.NoError(t, err)
 	require.NotNil(t, runtime)
 	assert.NotEmpty(t, runtime.Address)
@@ -34,12 +34,14 @@ func TestBrowserServerStartsReadyAndKeepsShutdownPrivate(t *testing.T) {
 	assert.Equal(t, 2*time.Minute, server.browserServer.IdleTimeout)
 	assert.Zero(t, server.browserServer.WriteTimeout, "streaming responses must not have a server write deadline")
 
-	response, err := http.Get("http://" + runtime.Address + "/api/ping")
+	pingRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+runtime.Address+"/api/ping", nil)
+	require.NoError(t, err)
+	response, err := http.DefaultClient.Do(pingRequest)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, response.Body.Close()) })
 	assert.Equal(t, http.StatusOK, response.StatusCode)
 
-	shutdownRequest, err := http.NewRequest(http.MethodPost, "http://"+runtime.Address+"/api/shutdown", nil)
+	shutdownRequest, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://"+runtime.Address+"/api/shutdown", nil)
 	require.NoError(t, err)
 	shutdownResponse, err := http.DefaultClient.Do(shutdownRequest)
 	require.NoError(t, err)
@@ -53,11 +55,11 @@ func TestBrowserServerUsesConfiguredBasePathForRequestsAndCookies(t *testing.T) 
 	cfg := config.DefaultConfig()
 	cfg.Web.Listen = "127.0.0.1:0"
 	cfg.Web.BasePath = "/roborev-ci"
-	runtime, err := server.startBrowserServer(cfg.Web)
+	runtime, err := server.startBrowserServer(t.Context(), cfg.Web)
 	require.NoError(t, err)
 	require.NotNil(t, runtime)
 
-	request, err := http.NewRequest(
+	request, err := http.NewRequestWithContext(t.Context(),
 		http.MethodPost, runtime.Origin+"/roborev-ci/api/ui/session/bootstrap", bytes.NewBufferString("{}"),
 	)
 	require.NoError(t, err)
@@ -81,11 +83,11 @@ func TestBrowserServerProxyAuthBootstrapsWithoutToken(t *testing.T) {
 	cfg.Web.Listen = "127.0.0.1:0"
 	cfg.Web.PublicOrigin = "https://reviews.example.com"
 	cfg.Web.AuthMode = config.WebAuthModeProxy
-	runtime, err := server.startBrowserServer(cfg.Web)
+	runtime, err := server.startBrowserServer(t.Context(), cfg.Web)
 	require.NoError(t, err)
 	require.NotNil(t, runtime)
 
-	request, err := http.NewRequest(
+	request, err := http.NewRequestWithContext(t.Context(),
 		http.MethodPost,
 		"http://"+runtime.Address+"/api/ui/session/bootstrap",
 		bytes.NewBufferString("{}"),
@@ -114,7 +116,7 @@ func TestBrowserServerSkipsCompilationStubOutsideDevelopment(t *testing.T) {
 	}
 	server, _, _ := newTestServer(t)
 	server.allowWebCompilationStub = false
-	runtime, err := server.startBrowserServer(config.DefaultConfig().Web)
+	runtime, err := server.startBrowserServer(t.Context(), config.DefaultConfig().Web)
 	require.NoError(t, err)
 	require.NotNil(t, runtime)
 	assert.Empty(t, runtime.Origin)
@@ -125,13 +127,13 @@ func TestBrowserServerCannotStartAfterStop(t *testing.T) {
 	server, _, _ := newTestServer(t)
 	server.allowWebCompilationStub = true
 	require.NoError(t, server.Stop())
-	runtime, err := server.startBrowserServer(config.DefaultConfig().Web)
+	runtime, err := server.startBrowserServer(t.Context(), config.DefaultConfig().Web)
 	require.ErrorIs(t, err, http.ErrServerClosed)
 	assert.Nil(t, runtime)
 }
 
 func TestBrowserServerClosesListenerWhenStartupRacesWithStop(t *testing.T) {
-	reserved, err := net.Listen("tcp", "127.0.0.1:0")
+	reserved, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	address := reserved.Addr().String()
 	require.NoError(t, reserved.Close())
@@ -141,18 +143,18 @@ func TestBrowserServerClosesListenerWhenStartupRacesWithStop(t *testing.T) {
 	require.NoError(t, server.Stop())
 	cfg := config.DefaultConfig()
 	cfg.Web.Listen = address
-	runtime, err := server.startBrowserServer(cfg.Web)
+	runtime, err := server.startBrowserServer(t.Context(), cfg.Web)
 	require.ErrorIs(t, err, http.ErrServerClosed)
 	assert.Nil(t, runtime)
 
-	rebound, err := net.Listen("tcp", address)
+	rebound, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", address)
 	require.NoError(t, err)
 	require.NoError(t, rebound.Close())
 }
 
 func TestBrowserServerDisabled(t *testing.T) {
 	server, _, _ := newTestServer(t)
-	runtime, err := server.startBrowserServer(config.WebConfig{Enabled: false})
+	runtime, err := server.startBrowserServer(t.Context(), config.WebConfig{Enabled: false})
 	require.NoError(t, err)
 	require.NotNil(t, runtime)
 	assert.Empty(t, runtime.Origin)
@@ -179,7 +181,7 @@ func TestServerBrowserLifecycleAndRuntimePublication(t *testing.T) {
 	assert.Equal(t, "http://"+runtime.WebAddress, runtime.WebOrigin)
 	assert.ElementsMatch(t, browserCapabilities, runtime.WebCapabilities)
 
-	request, err := http.NewRequest(http.MethodGet, runtime.WebOrigin+"/reviews/7", nil)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, runtime.WebOrigin+"/reviews/7", nil)
 	require.NoError(t, err)
 	request.Header.Set("Accept", "text/html")
 	response, err := http.DefaultClient.Do(request)
@@ -190,7 +192,9 @@ func TestServerBrowserLifecycleAndRuntimePublication(t *testing.T) {
 	assert.Equal(t, http.StatusOK, response.StatusCode)
 	assert.Contains(t, string(body), "Roborev")
 
-	response, err = http.Get(runtime.WebOrigin + "/api/status")
+	statusRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, runtime.WebOrigin+"/api/status", nil)
+	require.NoError(t, err)
+	response, err = http.DefaultClient.Do(statusRequest)
 	require.NoError(t, err)
 	require.NoError(t, response.Body.Close())
 	assert.Equal(t, http.StatusUnauthorized, response.StatusCode)
@@ -199,11 +203,19 @@ func TestServerBrowserLifecycleAndRuntimePublication(t *testing.T) {
 	// Wall-clock wait: real browser listener and runtime publication.
 	assert.Eventually(t, func() bool {
 		client := &http.Client{Timeout: time.Second}
-		coreResponse, coreErr := client.Get("http://" + runtime.Address + "/api/ping")
+		coreRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+runtime.Address+"/api/ping", nil)
+		if err != nil {
+			return false
+		}
+		coreResponse, coreErr := client.Do(coreRequest)
 		if coreResponse != nil {
 			_ = coreResponse.Body.Close()
 		}
-		browserResponse, browserErr := client.Get(runtime.WebOrigin + "/api/ping")
+		browserRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, runtime.WebOrigin+"/api/ping", nil)
+		if err != nil {
+			return false
+		}
+		browserResponse, browserErr := client.Do(browserRequest)
 		if browserResponse != nil {
 			_ = browserResponse.Body.Close()
 		}
@@ -221,7 +233,7 @@ func TestServerBrowserShutdownCancelsActiveEventStream(t *testing.T) {
 	errCh, runtime := startServerAndWaitForRuntime(t, server)
 	credentials, cookie := bootstrapLocalBrowserSession(t, runtime.WebOrigin)
 
-	request, err := http.NewRequest(http.MethodGet, runtime.WebOrigin+"/api/stream/events", nil)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, runtime.WebOrigin+"/api/stream/events", nil)
 	require.NoError(t, err)
 	request.AddCookie(cookie)
 	request.Header.Set(WebSessionHeader, credentials.Session)
@@ -270,7 +282,7 @@ func TestServerBrowserShutdownCancelsActiveEventStream(t *testing.T) {
 }
 
 func TestServerBrowserBindFailureAbortsWithoutRuntime(t *testing.T) {
-	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	occupied, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, occupied.Close()) })
 	db, _ := testutil.OpenTestDBWithDir(t)
@@ -319,7 +331,7 @@ func TestServerRestartInvalidatesBrowserSession(t *testing.T) {
 	assert.NotEqual(t, firstCookie.Name, secondCookie.Name)
 	assert.NotEqual(t, firstCredentials.Session, secondCredentials.Session)
 
-	request, err := http.NewRequest(http.MethodGet, secondRuntime.WebOrigin+"/api/status", nil)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, secondRuntime.WebOrigin+"/api/status", nil)
 	require.NoError(t, err)
 	request.AddCookie(firstCookie)
 	request.Header.Set(WebSessionHeader, firstCredentials.Session)
@@ -332,7 +344,7 @@ func TestServerRestartInvalidatesBrowserSession(t *testing.T) {
 
 func bootstrapLocalBrowserSession(t *testing.T, origin string) (WebSessionCredentials, *http.Cookie) {
 	t.Helper()
-	request, err := http.NewRequest(
+	request, err := http.NewRequestWithContext(t.Context(),
 		http.MethodPost, origin+"/api/ui/session/bootstrap", bytes.NewBufferString("{}"),
 	)
 	require.NoError(t, err)

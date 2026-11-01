@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"os"
@@ -65,8 +66,8 @@ func templateFor(key string, build func(dir string)) string {
 // Templates are built once and a failure is unrecoverable, so a panic (rather
 // than a *testing.T error) keeps this usable from the cached, test-independent
 // build path.
-func mustGit(dir string, args ...string) {
-	cmd := exec.Command("git", args...)
+func mustGit(ctx context.Context, dir string, args ...string) {
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		panic(fmt.Sprintf("testutil: template git %v failed: %v\n%s", args, err, out))
@@ -83,11 +84,11 @@ func mustWrite(dir, name, content string) {
 	}
 }
 
-func configureTemplateUser(dir string) {
-	mustGit(dir, "config", "user.email", GitUserEmail)
-	mustGit(dir, "config", "user.name", GitUserName)
-	mustGit(dir, "config", "gc.auto", "0")
-	mustGit(dir, "config", "maintenance.auto", "false")
+func configureTemplateUser(ctx context.Context, dir string) {
+	mustGit(ctx, dir, "config", "user.email", GitUserEmail)
+	mustGit(ctx, dir, "config", "user.name", GitUserName)
+	mustGit(ctx, dir, "config", "gc.auto", "0")
+	mustGit(ctx, dir, "config", "maintenance.auto", "false")
 }
 
 // copyTree recursively copies the contents of src into dst. Files are written
@@ -151,7 +152,7 @@ func newRepoFromTemplate(t *testing.T, key string, resolvePath bool, build func(
 func runGit(t *testing.T, dir string, env []string, args ...string) string {
 	t.Helper()
 
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(t.Context(), "git", args...)
 	cmd.Dir = dir
 	if len(env) > 0 {
 		cmd.Env = append(os.Environ(), env...)
@@ -179,7 +180,7 @@ func (r *TestRepo) Run(args ...string) string {
 func NewTestRepo(t *testing.T) *TestRepo {
 	t.Helper()
 	return newRepoFromTemplate(t, "init", false, func(dir string) {
-		mustGit(dir, "init")
+		mustGit(t.Context(), dir, "init")
 	})
 }
 
@@ -188,11 +189,11 @@ func NewTestRepo(t *testing.T) *TestRepo {
 func NewTestRepoWithCommit(t *testing.T) *TestRepo {
 	t.Helper()
 	return newRepoFromTemplate(t, "with-commit", false, func(dir string) {
-		mustGit(dir, "init")
-		configureTemplateUser(dir)
+		mustGit(t.Context(), dir, "init")
+		configureTemplateUser(t.Context(), dir)
 		mustWrite(dir, "main.go", mainGoContent)
-		mustGit(dir, "add", "main.go")
-		mustGit(dir, "commit", "-m", "initial commit")
+		mustGit(t.Context(), dir, "add", "main.go")
+		mustGit(t.Context(), dir, "commit", "-m", "initial commit")
 	})
 }
 
@@ -200,12 +201,12 @@ func NewTestRepoWithCommit(t *testing.T) *TestRepo {
 func InitTestRepo(t *testing.T) *TestRepo {
 	t.Helper()
 	return newRepoFromTemplate(t, "main-base", false, func(dir string) {
-		mustGit(dir, "init")
-		configureTemplateUser(dir)
-		mustGit(dir, "symbolic-ref", "HEAD", "refs/heads/main")
+		mustGit(t.Context(), dir, "init")
+		configureTemplateUser(t.Context(), dir)
+		mustGit(t.Context(), dir, "symbolic-ref", "HEAD", "refs/heads/main")
 		mustWrite(dir, "base.txt", "base")
-		mustGit(dir, "add", "base.txt")
-		mustGit(dir, "commit", "-m", "base commit")
+		mustGit(t.Context(), dir, "add", "base.txt")
+		mustGit(t.Context(), dir, "commit", "-m", "base commit")
 	})
 }
 
@@ -586,8 +587,8 @@ func (r *TestRepo) SymbolicRef(ref, target string) {
 func NewGitRepo(t *testing.T) *TestRepo {
 	t.Helper()
 	return newRepoFromTemplate(t, "init-main", true, func(dir string) {
-		mustGit(dir, "init", "-b", "main")
-		configureTemplateUser(dir)
+		mustGit(t.Context(), dir, "init", "-b", "main")
+		configureTemplateUser(t.Context(), dir)
 	})
 }
 
@@ -598,7 +599,7 @@ func NewBareTestRepo(t *testing.T) *TestRepo {
 	t.Helper()
 	dir := t.TempDir()
 	instantiateInto(t, dir, "bare", func(d string) {
-		mustGit(d, "init", "--bare")
+		mustGit(t.Context(), d, "init", "--bare")
 	})
 	resolved, err := filepath.EvalSymlinks(dir)
 	if err != nil {
@@ -623,11 +624,11 @@ func InitTestGitRepo(t *testing.T, dir string) *TestRepo {
 		t.Fatalf("create repo dir %q: %v", dir, err)
 	}
 	instantiateInto(t, dir, "test-commit", func(d string) {
-		mustGit(d, "init")
-		configureTemplateUser(d)
+		mustGit(t.Context(), d, "init")
+		configureTemplateUser(t.Context(), d)
 		mustWrite(d, "test.txt", "test content")
-		mustGit(d, "add", "test.txt")
-		mustGit(d, "commit", "-m", "initial commit")
+		mustGit(t.Context(), d, "add", "test.txt")
+		mustGit(t.Context(), d, "commit", "-m", "initial commit")
 	})
 	return &TestRepo{
 		Root:     dir,

@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"context"
 	"os"
 	"runtime"
 	"slices"
@@ -22,7 +21,7 @@ func verifyAgentPassesFlag(t *testing.T, createAgent func(cmdPath string) Agent,
 	cmdPath := writeTempCommand(t, script)
 	agent := createAgent(cmdPath)
 
-	result, err := agent.Review(context.Background(), t.TempDir(), "head", "test prompt", nil)
+	result, err := agent.Review(t.Context(), t.TempDir(), "head", "test prompt", nil)
 	if err != nil {
 		t.Fatalf("Review failed: %v", err)
 	}

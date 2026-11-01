@@ -57,7 +57,7 @@ func TestCIHealthSafeReadDiagnosticsAndRecovery(t *testing.T) {
 			h.Poller.errorLog = errorLog
 			h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return nil, readErr }
 			h.Poller.poll(t.Context())
-			health := decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
+			health := decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet))
 			message := "polling failed for acme/api: list pull requests: " + category
 			assert.False(t, health.Healthy)
 			assert.False(t, health.Ready)
@@ -71,7 +71,7 @@ func TestCIHealthSafeReadDiagnosticsAndRecovery(t *testing.T) {
 			assert.NotContains(t, string(data), "synthetic-token")
 			h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return nil, nil }
 			h.Poller.poll(t.Context())
-			health = decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
+			health = decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet))
 			assert.True(t, health.Healthy)
 			assert.True(t, health.Ready)
 			assert.NotEmpty(t, health.RecentErrors)
@@ -94,7 +94,7 @@ func TestCIHealthSafeDiscoveryDiagnosticsAndRecovery(t *testing.T) {
 	h.Cfg.CI.Repos = []string{"acme/*"}
 	h.Poller.repoResolver.listReposFn = func(context.Context, string, string) ([]string, error) { return nil, readErr }
 	h.Poller.poll(t.Context())
-	health := decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
+	health := decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet))
 	assert.False(t, health.Healthy)
 	assert.Contains(t, health.Components, storage.ComponentHealth{Name: "ci", Healthy: false, Message: "repository discovery failed: list organization repositories: HTTP 503"})
 	require.NotEmpty(t, health.RecentErrors)
@@ -103,7 +103,7 @@ func TestCIHealthSafeDiscoveryDiagnosticsAndRecovery(t *testing.T) {
 	h.Poller.repoResolver.listReposFn = func(context.Context, string, string) ([]string, error) { return []string{"acme/api"}, nil }
 	h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return nil, nil }
 	h.Poller.poll(t.Context())
-	assert.True(t, decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy)
+	assert.True(t, decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet)).Healthy)
 	h.Poller.repoResolver.mu.Lock()
 	h.Poller.repoResolver.cachedAt = time.Now().Add(-2 * time.Hour)
 	h.Poller.repoResolver.mu.Unlock()

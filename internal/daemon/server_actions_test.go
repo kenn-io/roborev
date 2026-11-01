@@ -49,7 +49,7 @@ func TestHandleStatus(t *testing.T) {
 	server, db, _ := newTestServer(t)
 
 	t.Run("returns status with version", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/status", nil)
 		w := httptest.NewRecorder()
 
 		server.httpServer.Handler.ServeHTTP(w, req)
@@ -72,7 +72,7 @@ func TestHandleStatus(t *testing.T) {
 	})
 
 	t.Run("wrong method fails", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/status", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/status", nil)
 		w := httptest.NewRecorder()
 
 		server.httpServer.Handler.ServeHTTP(w, req)
@@ -85,7 +85,7 @@ func TestHandleStatus(t *testing.T) {
 	})
 
 	t.Run("returns max_workers from pool not config", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/status", nil)
 		w := httptest.NewRecorder()
 
 		server.httpServer.Handler.ServeHTTP(w, req)
@@ -104,7 +104,7 @@ func TestHandleStatus(t *testing.T) {
 
 	t.Run("includes queue paused state", func(t *testing.T) {
 		require.NoError(t, db.SetQueuePaused(true))
-		req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/status", nil)
 		w := httptest.NewRecorder()
 
 		server.httpServer.Handler.ServeHTTP(w, req)
@@ -116,7 +116,7 @@ func TestHandleStatus(t *testing.T) {
 	})
 
 	t.Run("config_reloaded_at empty initially", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/status", nil)
 		w := httptest.NewRecorder()
 
 		server.httpServer.Handler.ServeHTTP(w, req)
@@ -136,7 +136,7 @@ func TestHandleStatus(t *testing.T) {
 func TestHandleQueuePause(t *testing.T) {
 	server, db, _ := newTestServer(t)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/queue/pause", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/queue/pause", nil)
 	w := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
@@ -145,7 +145,7 @@ func TestHandleQueuePause(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, paused)
 
-	req = httptest.NewRequest(http.MethodPost, "/api/queue/unpause", nil)
+	req = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/queue/unpause", nil)
 	w = httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
@@ -159,7 +159,7 @@ func TestHandlePing(t *testing.T) {
 	server, _, _ := newTestServer(t)
 
 	t.Run("returns daemon identity", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/ping", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/ping", nil)
 		w := httptest.NewRecorder()
 
 		server.httpServer.Handler.ServeHTTP(w, req)
@@ -190,7 +190,7 @@ func TestHandlePing(t *testing.T) {
 	})
 
 	t.Run("wrong method fails", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/ping", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/ping", nil)
 		w := httptest.NewRecorder()
 
 		server.httpServer.Handler.ServeHTTP(w, req)
@@ -270,7 +270,7 @@ func TestHandleCancelJob(t *testing.T) {
 				return 0
 			},
 			request: func(t *testing.T, jobID int64) *http.Request {
-				return httptest.NewRequest(http.MethodGet, "/api/job/cancel", nil)
+				return httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/job/cancel", nil)
 			},
 			wantStatus: http.StatusMethodNotAllowed,
 		},
@@ -817,7 +817,7 @@ func TestHandleRerunJob(t *testing.T) {
 	})
 
 	t.Run("rerun with invalid method fails", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/job/rerun", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/job/rerun", nil)
 		w := httptest.NewRecorder()
 
 		server.httpServer.Handler.ServeHTTP(w, req)
@@ -907,7 +907,7 @@ func TestResolveRerunModelProviderUsesWorktreeConfig(t *testing.T) {
 	mainRepo := t.TempDir()
 	testutil.InitTestGitRepo(t, mainRepo)
 	worktreeRepo := filepath.Join(t.TempDir(), "worktree")
-	worktreeAdd := exec.Command(
+	worktreeAdd := exec.CommandContext(t.Context(),
 		"git", "-C", mainRepo, "worktree", "add", "--detach", worktreeRepo, "HEAD",
 	)
 	out, err := worktreeAdd.CombinedOutput()
@@ -1311,7 +1311,7 @@ func TestHandleAddCommentBroadcastsEvent(t *testing.T) {
 		job := createTestGoalReviewJob(t, db, t.TempDir())
 		_, eventCh := server.broadcaster.Subscribe("")
 
-		_, err := server.humaAddComment(context.Background(), &AddCommentInput{
+		_, err := server.humaAddComment(t.Context(), &AddCommentInput{
 			Body: AddCommentRequest{
 				JobID: job.ID, Commenter: "reviewer", Comment: "Review complete",
 			},

@@ -82,7 +82,7 @@ func (s *Server) humaGetReviewProjection(
 	var job *storage.ReviewJob
 	var err error
 	if hasJob {
-		job, err = s.db.GetJobByID(input.JobID)
+		job, err = s.db.GetJobByIDContext(ctx, input.JobID)
 	} else {
 		job, err = s.db.GetLatestLogicalReviewJob(input.Repo, input.Branch)
 	}

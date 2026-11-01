@@ -1,7 +1,6 @@
 package gitlab
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -243,7 +242,7 @@ func TestFindExistingMRComment_NoMatch(t *testing.T) {
 	api, client := startNoteAPI(t)
 	api.notesByMR[1] = []*gogitlab.Note{note(10, "ordinary note", false)}
 
-	id, err := client.FindExistingMRComment(context.Background(), testProject, 1)
+	id, err := client.FindExistingMRComment(t.Context(), testProject, 1)
 	require.NoError(t, err)
 	assert.Zero(t, id)
 }
@@ -256,7 +255,7 @@ func TestFindExistingMRComment_FoundNewestMatch(t *testing.T) {
 		note(30, CommentMarker+"\nnew", false),
 	}
 
-	id, err := client.FindExistingMRComment(context.Background(), testProject, 1)
+	id, err := client.FindExistingMRComment(t.Context(), testProject, 1)
 	require.NoError(t, err)
 	assert.Equal(t, int64(30), id)
 }
@@ -268,7 +267,7 @@ func TestFindExistingMRComment_IgnoresSystemNotes(t *testing.T) {
 		note(30, CommentMarker+"\nsystem echo", true),
 	}
 
-	id, err := client.FindExistingMRComment(context.Background(), testProject, 1)
+	id, err := client.FindExistingMRComment(t.Context(), testProject, 1)
 	require.NoError(t, err)
 	assert.Equal(t, int64(20), id)
 }
@@ -280,7 +279,7 @@ func TestFindExistingMRComment_FollowsPagination(t *testing.T) {
 		{note(30, "another note", false), note(40, CommentMarker+"\nnew", false)},
 	}
 
-	id, err := client.FindExistingMRComment(context.Background(), testProject, 1)
+	id, err := client.FindExistingMRComment(t.Context(), testProject, 1)
 	require.NoError(t, err)
 	assert.Equal(t, int64(40), id)
 	assert.Equal(t, []int{1, 2}, api.listedPages)
@@ -293,7 +292,7 @@ func TestFindExistingMRComment_KeepsMatchFromEarlierPage(t *testing.T) {
 		{note(30, "unrelated note", false)},
 	}
 
-	id, err := client.FindExistingMRComment(context.Background(), testProject, 1)
+	id, err := client.FindExistingMRComment(t.Context(), testProject, 1)
 	require.NoError(t, err)
 	assert.Equal(t, int64(20), id)
 	assert.Equal(t, []int{1, 2}, api.listedPages)
@@ -303,7 +302,7 @@ func TestFindExistingMRComment_Error(t *testing.T) {
 	api, client := startNoteAPI(t)
 	api.listStatus = http.StatusInternalServerError
 
-	_, err := client.FindExistingMRComment(context.Background(), testProject, 1)
+	_, err := client.FindExistingMRComment(t.Context(), testProject, 1)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "list merge request notes")
 }
@@ -311,7 +310,7 @@ func TestFindExistingMRComment_Error(t *testing.T) {
 func TestFindExistingMRComment_InvalidProject(t *testing.T) {
 	_, client := startNoteAPI(t)
 
-	_, err := client.FindExistingMRComment(context.Background(), "no-group", 1)
+	_, err := client.FindExistingMRComment(t.Context(), "no-group", 1)
 	require.ErrorContains(t, err, "invalid GitLab project")
 }
 
@@ -319,7 +318,7 @@ func TestCreateMRComment_URLEncodesProjectPath(t *testing.T) {
 	api, client := startNoteAPI(t)
 
 	require.NoError(t, client.CreateMRComment(
-		context.Background(), testProject, 1, "review body"))
+		t.Context(), testProject, 1, "review body"))
 	require.Len(t, api.createdBodies, 1)
 	require.NotEmpty(t, api.requestPaths)
 	assert.Contains(t, api.requestPaths[0], testProjectEscaped)
@@ -331,7 +330,7 @@ func TestUpsertMRComment_Create(t *testing.T) {
 	api, client := startNoteAPI(t)
 
 	require.NoError(t, client.UpsertMRComment(
-		context.Background(), testProject, 1, "review body"))
+		t.Context(), testProject, 1, "review body"))
 	require.Len(t, api.createdBodies, 1)
 	assert.Empty(t, api.updatedBodies)
 	assert.True(t, strings.HasPrefix(api.createdBodies[0], CommentMarker+"\n"))
@@ -344,7 +343,7 @@ func TestUpsertMRComment_Update(t *testing.T) {
 	api.notesByMR[1] = []*gogitlab.Note{note(42, CommentMarker+"\nold", false)}
 
 	require.NoError(t, client.UpsertMRComment(
-		context.Background(), testProject, 1, "updated body"))
+		t.Context(), testProject, 1, "updated body"))
 	require.Len(t, api.updatedBodies, 1)
 	assert.Empty(t, api.createdBodies)
 	assert.True(t, strings.HasPrefix(api.updatedBodies[0], CommentMarker+"\n"))
@@ -367,7 +366,7 @@ func TestUpsertMRComment_UpdateForbiddenOrMissingFallsBackToCreate(t *testing.T)
 			api.updateStatus = tt.status
 
 			require.NoError(t, client.UpsertMRComment(
-				context.Background(), testProject, 1, "updated body"))
+				t.Context(), testProject, 1, "updated body"))
 			require.Len(t, api.updatedBodies, 1)
 			require.Len(t, api.createdBodies, 1)
 			assert.Equal(t, 1, strings.Count(api.createdBodies[0], CommentMarker))
@@ -380,7 +379,7 @@ func TestUpsertMRComment_UpdateErrorReturnsError(t *testing.T) {
 	api.notesByMR[1] = []*gogitlab.Note{note(42, CommentMarker+"\nold", false)}
 	api.updateStatus = http.StatusInternalServerError
 
-	err := client.UpsertMRComment(context.Background(), testProject, 1, "updated body")
+	err := client.UpsertMRComment(t.Context(), testProject, 1, "updated body")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "update note")
 }
@@ -392,7 +391,7 @@ func TestUpsertMRComment_CreateIsNotRetriedByTheLibrary(t *testing.T) {
 	api, client := startNoteAPIRetrying(t)
 	api.createStatus = http.StatusInternalServerError
 
-	err := client.UpsertMRComment(context.Background(), testProject, 1, "review body")
+	err := client.UpsertMRComment(t.Context(), testProject, 1, "review body")
 	require.Error(t, err)
 	// One original attempt plus one deliberate recovery attempt after the
 	// list came back empty. The library's default RetryMax would make this 12.
@@ -426,7 +425,7 @@ func TestUpsertMRComment_RecoversWhenFailedCreateLanded(t *testing.T) {
 		"setup: the input must be large enough that preparing twice is observable")
 
 	require.NoError(t, client.UpsertMRComment(
-		context.Background(), testProject, 1, body))
+		t.Context(), testProject, 1, body))
 
 	assert.Len(api.createdBodies, 1, "must not post a second note")
 	assert.Empty(api.updatedBodies,
@@ -455,7 +454,7 @@ func TestUpsertMRComment_RecoveryLeavesAConcurrentNoteAlone(t *testing.T) {
 	api.recoverCreateStatus = http.StatusCreated
 
 	require.NoError(t, client.UpsertMRComment(
-		context.Background(), testProject, 1, "review body"))
+		t.Context(), testProject, 1, "review body"))
 
 	assert.Empty(api.updatedBodies,
 		"the other pipeline's note must not be overwritten")
@@ -472,7 +471,7 @@ func TestUpsertMRComment_RetriesCreateOnceWhenNothingLanded(t *testing.T) {
 	api.recoverCreateStatus = http.StatusCreated
 
 	require.NoError(t, client.UpsertMRComment(
-		context.Background(), testProject, 1, "review body"))
+		t.Context(), testProject, 1, "review body"))
 	assert.Len(t, api.createdBodies, 2)
 	assert.Empty(t, api.updatedBodies)
 }
@@ -487,7 +486,7 @@ func TestUpsertMRComment_RecoveryIgnoresPreExistingNote(t *testing.T) {
 	api.updateStatus = http.StatusForbidden
 	api.createStatus = http.StatusInternalServerError
 
-	err := client.UpsertMRComment(context.Background(), testProject, 1, "review body")
+	err := client.UpsertMRComment(t.Context(), testProject, 1, "review body")
 	require.Error(t, err)
 	// The create was retried once instead of re-updating note 42.
 	assert.Len(api.createdBodies, 2, "recovery must retry the create")
@@ -509,7 +508,7 @@ func TestUpsertMRComment_LandedNoteRecognizedDespitePreExistingOne(t *testing.T)
 	api.createLandsAnyway = true
 
 	require.NoError(t, client.UpsertMRComment(
-		context.Background(), testProject, 1, "review body"))
+		t.Context(), testProject, 1, "review body"))
 
 	assert.Len(api.createdBodies, 1, "the landed note must not be posted again")
 	// Only the rejected update of note 42 — recovery writes nothing.
@@ -543,7 +542,7 @@ func TestUpsertMRComment_PermanentFailureIsNotRetried(t *testing.T) {
 			api.createStatus = tt.status
 
 			err := client.UpsertMRComment(
-				context.Background(), testProject, 1, "review body")
+				t.Context(), testProject, 1, "review body")
 			require.Error(t, err)
 			assert.Len(api.createdBodies, 1, "a %d create must not be retried", tt.status)
 			assert.NotContains(err.Error(), "transient",
@@ -572,7 +571,7 @@ func TestUpsertMRComment_TransientFailureReachingRecoveryIsRetried(t *testing.T)
 			api.recoverCreateStatus = http.StatusCreated
 
 			require.NoError(t, client.UpsertMRComment(
-				context.Background(), testProject, 1, "review body"))
+				t.Context(), testProject, 1, "review body"))
 			assert.Len(t, api.createdBodies, 2,
 				"recovery must still retry a transient create failure")
 			// Two listings means the second POST came from recovery. Without
@@ -592,7 +591,7 @@ func TestUpsertMRComment_RateLimitedCreateIsRetried(t *testing.T) {
 	api.recoverCreateStatus = http.StatusCreated
 
 	require.NoError(t, client.UpsertMRComment(
-		context.Background(), testProject, 1, "review body"))
+		t.Context(), testProject, 1, "review body"))
 	assert.Len(t, api.createdBodies, 2)
 	assert.Empty(t, api.updatedBodies)
 	// Both POSTs came from one create call, so only the initial upsert lookup
@@ -609,7 +608,7 @@ func TestCreateMRComment_WithoutRetriesSuppressesRateLimitRetry(t *testing.T) {
 	api, client := startNoteAPI(t)
 	api.createStatus = http.StatusTooManyRequests
 
-	err := client.CreateMRComment(context.Background(), testProject, 1, "review body")
+	err := client.CreateMRComment(t.Context(), testProject, 1, "review body")
 	require.Error(t, err)
 	assert.Len(t, api.createdBodies, 1, "WithoutRetries must not replay the 429")
 }
@@ -622,7 +621,7 @@ func TestCreateMRComment_SendsPrivateTokenHeader(t *testing.T) {
 
 	client := newTestGitLabClient(t, "secret-token", srv)
 	require.NoError(t, client.CreateMRComment(
-		context.Background(), testProject, 1, "body"))
+		t.Context(), testProject, 1, "body"))
 	require.Len(t, api.createdBodies, 1)
 }
 
@@ -763,7 +762,7 @@ func TestCreateMRComment_NeutralizesQuickActions(t *testing.T) {
 	api, client := startNoteAPI(t)
 
 	require.NoError(t, client.CreateMRComment(
-		context.Background(), testProject, 1, "/approve\nreview body"))
+		t.Context(), testProject, 1, "/approve\nreview body"))
 	require.Len(t, api.createdBodies, 1)
 	assert.Contains(t, api.createdBodies[0], `\/approve`)
 	assert.NotContains(t, api.createdBodies[0], "\n/approve")
@@ -792,7 +791,7 @@ func TestUpsertMRComment_NeutralizesQuickActionsOnBothPaths(t *testing.T) {
 			api.notesByMR[1] = tt.existing
 
 			require.NoError(t, client.UpsertMRComment(
-				context.Background(), testProject, 1,
+				t.Context(), testProject, 1,
 				"/approve\n/close\nfindings"))
 			bodies := tt.bodies(api)
 			require.Len(t, bodies, 1)
@@ -841,7 +840,7 @@ func TestCreateMRComment_TruncationUTF8Safe(t *testing.T) {
 		"\U0001f600" + strings.Repeat("y", 100)
 
 	require.NoError(t, client.CreateMRComment(
-		context.Background(), testProject, 1, input))
+		t.Context(), testProject, 1, input))
 	require.Len(t, api.createdBodies, 1)
 	body := api.createdBodies[0]
 	assert.True(t, strings.HasPrefix(body, CommentMarker))
@@ -874,7 +873,7 @@ func TestMergeRequestRefs(t *testing.T) {
 	require.NoError(t, err)
 
 	refs, err := client.MergeRequestRefs(
-		context.Background(), "group/project", 7)
+		t.Context(), "group/project", 7)
 	require.NoError(t, err)
 	assert.Equal(t, "feedface00000000000000000000000000000000", refs.HeadSHA)
 	assert.Equal(t, "ba5e0000000000000000000000000000000000ba", refs.BaseSHA,
@@ -905,7 +904,7 @@ func TestMergeRequestRefs_RejectsDiffRefsForAnotherHead(t *testing.T) {
 	client, err := NewClient("token", WithBaseURL(srv.URL))
 	require.NoError(t, err)
 
-	_, err = client.MergeRequestRefs(context.Background(), "group/project", 7)
+	_, err = client.MergeRequestRefs(t.Context(), "group/project", 7)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), head)
 	assert.Contains(t, err.Error(), staleHead)
@@ -915,6 +914,6 @@ func TestMergeRequestRefs_RejectsBadProject(t *testing.T) {
 	client, err := NewClient("token")
 	require.NoError(t, err)
 
-	_, err = client.MergeRequestRefs(context.Background(), "nogroup", 7)
+	_, err = client.MergeRequestRefs(t.Context(), "nogroup", 7)
 	require.ErrorContains(t, err, "invalid GitLab project")
 }

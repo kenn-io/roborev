@@ -176,7 +176,8 @@ func TestGitHubLongRetryAfterSurfacesRateLimit(t *testing.T) {
 	})
 }
 
-type timeoutBody struct{ ctx context.Context }
+// A response body lives only as long as its request context.
+type timeoutBody struct{ ctx context.Context } //nolint:containedctx // mirrors net/http body lifetime
 
 func (b *timeoutBody) Read([]byte) (int, error) { <-b.ctx.Done(); return 0, b.ctx.Err() }
 func (b *timeoutBody) Close() error             { return nil }

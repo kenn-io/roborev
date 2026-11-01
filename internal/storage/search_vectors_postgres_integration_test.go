@@ -101,7 +101,7 @@ func startSharingDaemon(t *testing.T, postgresURL, name, providerURL string) *sh
 	worker.SetAfterReviewPush(reconciler.ReviewsPushed)
 	worker.SetAfterPullWrite(reconciler.Wake)
 
-	runCtx, cancel := context.WithCancel(context.Background())
+	runCtx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() { done <- reconciler.Run(runCtx) }()
 	t.Cleanup(func() {

@@ -115,7 +115,7 @@ func setJobStatus(t *testing.T, db *DB, jobID int64, status JobStatus) {
 			return false
 		}, "Unknown job status: %s", status)
 	}
-	res, err := db.Exec(query, jobID)
+	res, err := db.ExecContext(t.Context(), query, jobID)
 	require.NoError(t, err, "Failed to set job status to %s: %v", status)
 
 	rows, err := res.RowsAffected()
@@ -127,20 +127,20 @@ func setJobStatus(t *testing.T, db *DB, jobID int64, status JobStatus) {
 func backdateJobStart(t *testing.T, db *DB, jobID int64, d time.Duration) {
 	t.Helper()
 	startTime := time.Now().Add(-d).UTC().Format(time.RFC3339)
-	_, err := db.Exec(`UPDATE review_jobs SET status = 'running', started_at = ? WHERE id = ?`, startTime, jobID)
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'running', started_at = ? WHERE id = ?`, startTime, jobID)
 	require.NoError(t, err, "failed to backdate job: %v")
 }
 
 func backdateJobStartWithOffset(t *testing.T, db *DB, jobID int64, d time.Duration, loc *time.Location) {
 	t.Helper()
 	startTime := time.Now().Add(-d).In(loc).Format(time.RFC3339)
-	_, err := db.Exec(`UPDATE review_jobs SET status = 'running', started_at = ? WHERE id = ?`, startTime, jobID)
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'running', started_at = ? WHERE id = ?`, startTime, jobID)
 	require.NoError(t, err, "failed to backdate job with offset: %v")
 }
 
 func setJobBranch(t *testing.T, db *DB, jobID int64, branch string) {
 	t.Helper()
-	_, err := db.Exec(`UPDATE review_jobs SET branch = ? WHERE id = ?`, branch, jobID)
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET branch = ? WHERE id = ?`, branch, jobID)
 	require.NoError(t, err, "failed to set job branch: %v")
 }
 
@@ -153,7 +153,7 @@ func setJobBranch(t *testing.T, db *DB, jobID int64, branch string) {
 // by TestMarkJobAgentInvoked_StaleWorkerIgnored.
 func setJobAgentInvoked(t *testing.T, db *DB, jobID int64) {
 	t.Helper()
-	_, err := db.Exec(
+	_, err := db.ExecContext(t.Context(),
 		`UPDATE review_jobs SET command_line = ?, agent_invoked = 1 WHERE id = ?`,
 		fmt.Sprintf("test-agent review %d", jobID), jobID)
 	require.NoError(t, err, "failed to mark job agent-invoked")
@@ -165,7 +165,7 @@ func setJobAgentInvoked(t *testing.T, db *DB, jobID int64) {
 func getJobAgentInvoked(t *testing.T, db *DB, jobID int64) bool {
 	t.Helper()
 	var invoked int
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(t.Context(),
 		`SELECT agent_invoked FROM review_jobs WHERE id = ?`, jobID).Scan(&invoked),
 		"failed to read agent_invoked")
 	return invoked == 1

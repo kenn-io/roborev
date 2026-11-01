@@ -338,10 +338,10 @@ func TestInstallHookRepairCmdWithRegisteredWhileDatabaseWriterActive(t *testing.
 
 	// Daemon startup can hold a write lock while migrating. Reading the
 	// registered repositories must not compete for that lock.
-	tx, err := db.Begin()
+	tx, err := db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
 	defer tx.Rollback()
-	_, err = tx.Exec(`UPDATE repos SET name = 'pending'`)
+	_, err = tx.ExecContext(t.Context(), `UPDATE repos SET name = 'pending'`)
 	require.NoError(t, err)
 
 	require.NoError(t, os.MkdirAll(repo.HooksDir, 0o755))
@@ -718,7 +718,7 @@ func TestInitNoDaemonEnsuresDefaultSnapshotDirGitignored(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "# roborev snapshots\n/.roborev/\n")
 
-	check := exec.Command("git", "-C", repo.Root, "check-ignore", "--quiet", "--no-index", ".roborev/roborev-snapshot-x/file.diff")
+	check := exec.CommandContext(t.Context(), "git", "-C", repo.Root, "check-ignore", "--quiet", "--no-index", ".roborev/roborev-snapshot-x/file.diff")
 	require.NoError(t, check.Run())
 }
 
@@ -768,7 +768,7 @@ func TestInitNoDaemonEnsuresConfiguredSnapshotDirGitignored(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "# roborev snapshots\n/var/roborev/\n")
 
-	check := exec.Command("git", "-C", repo.Root, "check-ignore", "--quiet", "--no-index", "var/roborev/roborev-snapshot-x/file.diff")
+	check := exec.CommandContext(t.Context(), "git", "-C", repo.Root, "check-ignore", "--quiet", "--no-index", "var/roborev/roborev-snapshot-x/file.diff")
 	require.NoError(t, check.Run())
 }
 
@@ -874,7 +874,7 @@ func TestInstallHookFromLinkedWorktree(t *testing.T) {
 
 	runGit := func(dir string, args ...string) string {
 		t.Helper()
-		cmd := exec.Command("git", args...)
+		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		cmd.Env = append(
 			os.Environ(),
@@ -929,7 +929,7 @@ func TestInstallHookFromLinkedWorktreeWithTrackedHooks(t *testing.T) {
 
 	runGit := func(dir string, args ...string) string {
 		t.Helper()
-		cmd := exec.Command("git", args...)
+		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		cmd.Env = append(
 			os.Environ(),
@@ -984,7 +984,7 @@ func TestUninstallHookFromLinkedWorktree(t *testing.T) {
 
 	runGit := func(dir string, args ...string) string {
 		t.Helper()
-		cmd := exec.Command("git", args...)
+		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		cmd.Env = append(
 			os.Environ(),

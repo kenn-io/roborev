@@ -85,7 +85,7 @@ type Builder struct {
 	repoCfg        *config.RepoConfig
 	repoCfgSet     bool
 	repoCfgRef     string
-	ctx            context.Context
+	ctx            context.Context //nolint:containedctx // WithContext scopes one build, as http.Request.WithContext does
 	repoPath       string
 	configRepoPath string
 	planSkillRoot  string

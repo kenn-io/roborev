@@ -1,7 +1,6 @@
 package git
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,7 +24,7 @@ func newTextconvTestRepo(t *testing.T) (*TestRepo, string) {
 }
 
 func TestReviewDiffsFallBackWhenTextconvFails(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	repo, base := newTextconvTestRepo(t)
 	repo.WriteFile("report.pdf", "%PDF\x00v2")
 	repo.WriteFile("notes.txt", "new note\n")
@@ -62,7 +61,7 @@ func TestReviewDiffsFallBackWhenTextconvFails(t *testing.T) {
 }
 
 func TestReviewDiffsKeepWorkingTextconvOutput(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	repo, base := newTextconvTestRepo(t)
 	repo.WriteFile("notes.txt", "new note\n")
 

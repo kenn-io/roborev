@@ -191,7 +191,7 @@ func (h *remoteHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	clone.URL.RawQuery = q.Encode()
 	if clone.URL.Path == "/api/comments" {
 		id, _ := strconv.ParseInt(q.Get("job_id"), 10, 64)
-		job, err := h.server.db.GetJobByID(id)
+		job, err := h.server.db.GetJobByIDContext(clone.Context(), id)
 		if err != nil {
 			remoteError(w, 404, "job not found")
 			return
@@ -281,7 +281,7 @@ func (h *remoteHandler) authorize(r *http.Request, q url.Values, g remoteGrant) 
 		if err != nil || id <= 0 {
 			return false
 		}
-		job, err := h.server.db.GetJobByID(id)
+		job, err := h.server.db.GetJobByIDContext(r.Context(), id)
 		if err != nil || !g.allRepos && !g.repoIDs[job.RepoID] {
 			return false
 		}
@@ -314,7 +314,7 @@ func (h *remoteHandler) stream(w http.ResponseWriter, r *http.Request, g remoteG
 			}
 			// Resolve owning job server-side; events without an authorized job (including
 			// global configuration/hook events) never cross the remote boundary.
-			job, err := h.server.db.GetJobByID(event.JobID)
+			job, err := h.server.db.GetJobByIDContext(r.Context(), event.JobID)
 			if err != nil || !g.allRepos && !g.repoIDs[job.RepoID] {
 				continue
 			}
@@ -331,7 +331,7 @@ func (h *remoteHandler) stream(w http.ResponseWriter, r *http.Request, g remoteG
 	}
 }
 
-func (s *Server) startRemoteServer(cfg config.RemoteConfig) error {
+func (s *Server) startRemoteServer(ctx context.Context, cfg config.RemoteConfig) error {
 	if !cfg.Enabled {
 		return nil
 	}
@@ -343,7 +343,7 @@ func (s *Server) startRemoteServer(cfg config.RemoteConfig) error {
 	if address == "" {
 		address = "127.0.0.1:7375"
 	}
-	listener, err := net.Listen("tcp", address)
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", address)
 	if err != nil {
 		return err
 	}

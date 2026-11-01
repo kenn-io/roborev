@@ -96,7 +96,7 @@ func TestCancelSynthesisCascades(t *testing.T) {
 
 	runUUID, members, synth := enqueueServerPanelRun(t, db, 2)
 
-	_, err := server.humaCancelJob(context.Background(), &CancelJobInput{
+	_, err := server.humaCancelJob(t.Context(), &CancelJobInput{
 		Body: CancelJobRequest{JobID: synth.ID},
 	})
 	require.NoError(t, err)
@@ -112,12 +112,32 @@ func TestCancelSynthesisCascades(t *testing.T) {
 	_ = runUUID
 }
 
+func TestCancelSynthesisCascadesAfterRequestEnds(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	_, members, synth := enqueueServerPanelRun(t, db, 2)
+
+	// A client that disconnects after sending the cancel ends the request
+	// context before the handler loads the job.
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err := server.humaCancelJob(ctx, &CancelJobInput{
+		Body: CancelJobRequest{JobID: synth.ID},
+	})
+	require.NoError(t, err)
+
+	for _, m := range members {
+		got, err := db.GetJobByID(m.ID)
+		require.NoError(t, err)
+		assert.Equal(t, storage.JobStatusCanceled, got.Status, "member should be canceled")
+	}
+}
+
 func TestCancelSynthesisBroadcastsEveryCanceledJob(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	_, members, synth := enqueueServerPanelRun(t, db, 2)
 	_, eventCh := server.broadcaster.Subscribe("")
 
-	_, err := server.humaCancelJob(context.Background(), &CancelJobInput{
+	_, err := server.humaCancelJob(t.Context(), &CancelJobInput{
 		Body: CancelJobRequest{JobID: synth.ID},
 	})
 	require.NoError(t, err)
@@ -149,7 +169,7 @@ func TestCancelCISynthesisRetiresPanelMapping(t *testing.T) {
 
 	panel, members, synth := enqueueServerCIPanelRun(t, db, 1)
 
-	_, err := server.humaCancelJob(context.Background(), &CancelJobInput{
+	_, err := server.humaCancelJob(t.Context(), &CancelJobInput{
 		Body: CancelJobRequest{JobID: synth.ID},
 	})
 	require.NoError(t, err)
@@ -179,7 +199,7 @@ func TestCancelQueuedMemberReleasesSynthesis(t *testing.T) {
 
 	runUUID, members, _ := enqueueServerPanelRun(t, db, 1)
 
-	_, err := server.humaCancelJob(context.Background(), &CancelJobInput{
+	_, err := server.humaCancelJob(t.Context(), &CancelJobInput{
 		Body: CancelJobRequest{JobID: members[0].ID},
 	})
 	require.NoError(t, err)
@@ -200,7 +220,7 @@ func TestCancelMemberDoesNotCascade(t *testing.T) {
 
 	runUUID, members, _ := enqueueServerPanelRun(t, db, 2)
 
-	_, err := server.humaCancelJob(context.Background(), &CancelJobInput{
+	_, err := server.humaCancelJob(t.Context(), &CancelJobInput{
 		Body: CancelJobRequest{JobID: members[0].ID},
 	})
 	require.NoError(t, err)
@@ -224,7 +244,7 @@ func TestCancelGoalReviewBroadcastsGoalEvent(t *testing.T) {
 	job := createTestGoalReviewJob(t, db, t.TempDir())
 	_, events := server.broadcaster.Subscribe("")
 
-	_, err := server.humaCancelJob(context.Background(), &CancelJobInput{
+	_, err := server.humaCancelJob(t.Context(), &CancelJobInput{
 		Body: CancelJobRequest{JobID: job.ID},
 	})
 	require.NoError(t, err)
@@ -251,7 +271,7 @@ func TestListPanelRunReturnsFullRun(t *testing.T) {
 	runUUID, _, _ := enqueueServerPanelRun(t, db, memberCount)
 
 	// Mirror huma's query defaults for a request that omits id/limit/offset.
-	out, err := server.humaListJobs(context.Background(), &ListJobsInput{
+	out, err := server.humaListJobs(t.Context(), &ListJobsInput{
 		ID:       -1,
 		PanelRun: runUUID,
 		Limit:    limitNotProvided,

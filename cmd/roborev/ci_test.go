@@ -711,11 +711,11 @@ func TestTrustedCIRepoConfigRefUsesPreReviewCommit(t *testing.T) {
 	base := repo.HeadSHA()
 	head := repo.CommitFile("feature.txt", "feature", "feature work")
 
-	got, err := trustedCIRepoConfigRef(repo.Path(), base+".."+head)
+	got, err := trustedCIRepoConfigRef(t.Context(), repo.Path(), base+".."+head)
 	require.NoError(t, err)
 	assert.Equal(t, base, got)
 
-	got, err = trustedCIRepoConfigRef(repo.Path(), head)
+	got, err = trustedCIRepoConfigRef(t.Context(), repo.Path(), head)
 	require.NoError(t, err)
 	assert.Equal(t, base, got)
 }
@@ -1194,7 +1194,7 @@ func TestPostGitLabCIComment_MissingProject(t *testing.T) {
 	clearForgeCIEnv(t)
 
 	err := postGitLabCIComment(
-		context.Background(), ciReviewOpts{}, "body", false, "", stubMRRef)
+		t.Context(), ciReviewOpts{}, "body", false, "", stubMRRef)
 	require.ErrorContains(t, err, "--gl-repo")
 }
 
@@ -1203,7 +1203,7 @@ func TestPostGitLabCIComment_MissingMRIID(t *testing.T) {
 	t.Setenv("CI_PROJECT_PATH", "group/project")
 
 	err := postGitLabCIComment(
-		context.Background(), ciReviewOpts{}, "body", false, "", stubMRRef)
+		t.Context(), ciReviewOpts{}, "body", false, "", stubMRRef)
 	require.ErrorContains(t, err, "CI_MERGE_REQUEST_IID")
 }
 
@@ -1334,7 +1334,7 @@ func TestPostCIReviewComment(t *testing.T) {
 			api.start(t)
 
 			err := postCIReviewComment(
-				context.Background(), ciForgeGitLab, ciReviewOpts{},
+				t.Context(), ciForgeGitLab, ciReviewOpts{},
 				[]review.ReviewResult{tt.result}, "local diagnostic summary",
 				false, "", stubMRRef,
 			)
@@ -1354,7 +1354,7 @@ func TestPostCIReviewComment(t *testing.T) {
 		}
 		comment := review.FormatRawBatchComment(review.CommentConfig{}, results, stubMRHead)
 		err := postCIReviewComment(
-			context.Background(), ciForgeGitLab, ciReviewOpts{}, results,
+			t.Context(), ciForgeGitLab, ciReviewOpts{}, results,
 			comment, false, "", stubMRRef,
 		)
 		require.NoError(t, err)
@@ -1371,7 +1371,7 @@ func TestPostCIReviewComment(t *testing.T) {
 			Agent: "codex", Status: review.ResultDone, Output: "## Review\nNo findings.",
 		}}
 		err := postCIReviewComment(
-			context.Background(), ciForgeGitLab, ciReviewOpts{}, results,
+			t.Context(), ciForgeGitLab, ciReviewOpts{}, results,
 			"complete review", false, "", stubMRRef,
 		)
 		require.NoError(t, err)
@@ -1385,7 +1385,7 @@ func TestPostGitLabCIComment_CreatesNewNote(t *testing.T) {
 	api.start(t)
 
 	require.NoError(t, postGitLabCIComment(
-		context.Background(), ciReviewOpts{}, "review body", false, "", stubMRRef))
+		t.Context(), ciReviewOpts{}, "review body", false, "", stubMRRef))
 	require.Len(t, api.createdBodies, 1)
 	assert.Empty(t, api.updatedBodies)
 	assert.Contains(t, api.createdBodies[0], glpkg.CommentMarker)
@@ -1401,7 +1401,7 @@ func TestPostGitLabCIComment_UpsertUpdatesExistingNote(t *testing.T) {
 	api.start(t)
 
 	require.NoError(t, postGitLabCIComment(
-		context.Background(), ciReviewOpts{}, "review body", true, "", stubMRRef))
+		t.Context(), ciReviewOpts{}, "review body", true, "", stubMRRef))
 	require.Len(t, api.updatedBodies, 1)
 	assert.Empty(t, api.createdBodies)
 	assert.Contains(t, api.updatedBodies[0], "review body")
@@ -1416,7 +1416,7 @@ func TestPostGitLabCIComment_WithoutUpsertIgnoresExistingNote(t *testing.T) {
 	api.start(t)
 
 	require.NoError(t, postGitLabCIComment(
-		context.Background(), ciReviewOpts{}, "review body", false, "", stubMRRef))
+		t.Context(), ciReviewOpts{}, "review body", false, "", stubMRRef))
 	require.Len(t, api.createdBodies, 1)
 	assert.Empty(t, api.updatedBodies)
 }
@@ -1432,7 +1432,7 @@ func TestPostGitLabCIComment_UsesExplicitFlagsOverEnv(t *testing.T) {
 	// An explicit --pr also turns on the head binding, so the reviewed head
 	// has to be the one the merge request reports.
 	require.NoError(t, postGitLabCIComment(
-		context.Background(),
+		t.Context(),
 		ciReviewOpts{glRepo: "group/subgroup/project", pr: 11},
 		"review body", false, "", mrBase+".."+mrHead))
 	require.Len(t, api.createdBodies, 1)
@@ -1446,7 +1446,7 @@ func TestPostGitLabCIComment_UsesEnvProjectAndIID(t *testing.T) {
 	api.start(t)
 
 	require.NoError(t, postGitLabCIComment(
-		context.Background(), ciReviewOpts{}, "review body", false, "", stubMRRef))
+		t.Context(), ciReviewOpts{}, "review body", false, "", stubMRRef))
 	require.Len(t, api.requestPaths, 1)
 	assert.Contains(t, api.requestPaths[0],
 		"group%2Fproject/merge_requests/7/notes")
@@ -1461,7 +1461,7 @@ func TestPostGitLabCIComment_PrefersMRTargetProject(t *testing.T) {
 	t.Setenv("CI_MERGE_REQUEST_PROJECT_PATH", "group/project")
 
 	require.NoError(t, postGitLabCIComment(
-		context.Background(), ciReviewOpts{}, "review body", false, "", stubMRRef))
+		t.Context(), ciReviewOpts{}, "review body", false, "", stubMRRef))
 	require.Len(t, api.requestPaths, 1)
 	assert.Contains(t, api.requestPaths[0],
 		"group%2Fproject/merge_requests/7/notes")
@@ -1481,7 +1481,7 @@ func TestPostGitLabCIComment_GLHostFlagBeatsEnv(t *testing.T) {
 	decoy.start(t)
 
 	require.NoError(t, postGitLabCIComment(
-		context.Background(),
+		t.Context(),
 		ciReviewOpts{glHost: pinnedURL},
 		"review body", false, "", stubMRRef))
 	require.Len(t, pinned.createdBodies, 1)
@@ -1496,7 +1496,7 @@ func TestCIGitLabClient_RejectsPlaintextHTTPOrigin(t *testing.T) {
 	t.Setenv("GITLAB_TOKEN", "token")
 	t.Setenv("CI_SERVER_URL", "http://gitlab.example.com")
 
-	_, err := ciGitLabClient(context.Background(), "")
+	_, err := ciGitLabClient(t.Context(), "")
 	require.ErrorContains(t, err, "https")
 }
 
@@ -1504,7 +1504,7 @@ func TestCIGitLabClient_UsesGlabAuthTokenFallback(t *testing.T) {
 	clearForgeCIEnv(t)
 	installFakeGlabAuthToken(t, "glab-auth-token")
 
-	client, err := ciGitLabClient(context.Background(), "")
+	client, err := ciGitLabClient(t.Context(), "")
 	require.NoError(t, err)
 	require.NotNil(t, client)
 }
@@ -1514,7 +1514,7 @@ func TestCIGitLabClient_UsesCIServerURLForSelfHostedHost(t *testing.T) {
 	installFakeGlabAuthToken(t, "self-hosted-token")
 	t.Setenv("CI_SERVER_URL", "https://gitlab.example.com")
 
-	client, err := ciGitLabClient(context.Background(), "")
+	client, err := ciGitLabClient(t.Context(), "")
 	require.NoError(t, err)
 	require.NotNil(t, client)
 }
@@ -1524,7 +1524,7 @@ func TestCIGitLabClient_MissingTokenErrors(t *testing.T) {
 	// Point PATH at an empty dir so no real glab CLI can answer.
 	t.Setenv("PATH", t.TempDir())
 
-	_, err := ciGitLabClient(context.Background(), "")
+	_, err := ciGitLabClient(t.Context(), "")
 	require.ErrorContains(t, err, "GitLab authentication required")
 }
 
@@ -1674,7 +1674,7 @@ func TestCIGitHubClient_UsesGHAuthTokenFallback(t *testing.T) {
 	t.Setenv("GH_TOKEN", "")
 	t.Setenv("GITHUB_TOKEN", "")
 
-	client, err := ciGitHubClient(context.Background())
+	client, err := ciGitHubClient(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, client)
 }
@@ -1686,7 +1686,7 @@ func TestCIGitHubClient_UsesGitHubAPIURLForHostname(t *testing.T) {
 	t.Setenv("GH_HOST", "")
 	t.Setenv("GITHUB_API_URL", "https://ghe.example.com/api/v3/")
 
-	client, err := ciGitHubClient(context.Background())
+	client, err := ciGitHubClient(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, client)
 }
@@ -1924,7 +1924,7 @@ func TestVerifyGitLabMRRange(t *testing.T) {
 		api.start(t)
 
 		require.NoError(t, verifyMRRangeErr(
-			context.Background(), ciReviewOpts{pr: 7},
+			t.Context(), ciReviewOpts{pr: 7},
 			repo.Path(), base+".."+head, false))
 	})
 
@@ -1940,7 +1940,7 @@ func TestVerifyGitLabMRRange(t *testing.T) {
 		api.start(t)
 
 		err := verifyMRRangeErr(
-			context.Background(), ciReviewOpts{pr: 7},
+			t.Context(), ciReviewOpts{pr: 7},
 			repo.Path(), base+".."+head, false)
 		require.ErrorContains(t, err, mrBase)
 	})
@@ -1954,7 +1954,7 @@ func TestVerifyGitLabMRRange(t *testing.T) {
 		api.start(t)
 
 		err := verifyMRRangeErr(
-			context.Background(), ciReviewOpts{pr: 7},
+			t.Context(), ciReviewOpts{pr: 7},
 			repo.Path(), base+".."+head, false)
 		require.ErrorContains(t, err, "no diff base")
 	})
@@ -1968,7 +1968,7 @@ func TestVerifyGitLabMRRange(t *testing.T) {
 		// commit while still ending at the right head.
 		narrowed := strings.TrimSpace(repo.RevParse("HEAD~1"))
 		err := verifyMRRangeErr(
-			context.Background(), ciReviewOpts{pr: 7},
+			t.Context(), ciReviewOpts{pr: 7},
 			repo.Path(), narrowed+".."+head, false)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), base,
@@ -1981,7 +1981,7 @@ func TestVerifyGitLabMRRange(t *testing.T) {
 		api.start(t)
 
 		err := verifyMRRangeErr(
-			context.Background(), ciReviewOpts{pr: 7}, repo.Path(), head, false)
+			t.Context(), ciReviewOpts{pr: 7}, repo.Path(), head, false)
 		require.ErrorContains(t, err, "BASE..HEAD")
 	})
 
@@ -1991,7 +1991,7 @@ func TestVerifyGitLabMRRange(t *testing.T) {
 		api.start(t)
 
 		err := verifyMRRangeErr(
-			context.Background(), ciReviewOpts{pr: 7},
+			t.Context(), ciReviewOpts{pr: 7},
 			repo.Path(), head+".."+head, false)
 		require.Error(t, err)
 	})
@@ -2003,7 +2003,7 @@ func TestVerifyGitLabMRRange(t *testing.T) {
 		api.start(t)
 
 		err := verifyMRRangeErr(
-			context.Background(), ciReviewOpts{pr: 7},
+			t.Context(), ciReviewOpts{pr: 7},
 			repo.Path(), base+".."+head, false)
 		require.ErrorContains(t, err, otherHead)
 	})
@@ -2031,7 +2031,7 @@ func TestVerifyGitLabMRRange_DerivedRangeIsChecked(t *testing.T) {
 		t.Setenv("CI_MERGE_REQUEST_IID", "7")
 
 		canonical, err := verifyGitLabMRRange(
-			context.Background(), ciReviewOpts{}, repo.Path(),
+			t.Context(), ciReviewOpts{}, repo.Path(),
 			base+".."+head, false)
 		require.NoError(t, err)
 		assert.Equal(t, base+".."+head, canonical)
@@ -2045,7 +2045,7 @@ func TestVerifyGitLabMRRange_DerivedRangeIsChecked(t *testing.T) {
 
 		narrowed := strings.TrimSpace(repo.RevParse("HEAD~1"))
 		err := verifyMRRangeErr(
-			context.Background(), ciReviewOpts{}, repo.Path(),
+			t.Context(), ciReviewOpts{}, repo.Path(),
 			narrowed+".."+head, false)
 		require.ErrorContains(t, err, base)
 	})
@@ -2061,7 +2061,7 @@ func TestVerifyGitLabMRRange_DerivedRangeIsChecked(t *testing.T) {
 		t.Setenv("CI_MERGE_REQUEST_IID", "7")
 
 		err := verifyMRRangeErr(
-			context.Background(), ciReviewOpts{}, repo.Path(),
+			t.Context(), ciReviewOpts{}, repo.Path(),
 			base+".."+head, false)
 		require.Error(t, err)
 		require.NotErrorIs(t, err, errMRHeadMoved)
@@ -2077,7 +2077,7 @@ func TestVerifyGitLabMRRange_MissingMRIIDFailsEarly(t *testing.T) {
 	t.Setenv("CI_PROJECT_PATH", "group/project")
 
 	err := verifyMRRangeErr(
-		context.Background(), ciReviewOpts{}, t.TempDir(), "base..head", false)
+		t.Context(), ciReviewOpts{}, t.TempDir(), "base..head", false)
 	require.ErrorContains(t, err, "CI_MERGE_REQUEST_IID")
 	assert.Contains(t, err.Error(), "--pr")
 }
@@ -2095,7 +2095,7 @@ func TestVerifyGitLabMRRange_ReturnsResolvedRange(t *testing.T) {
 	api.start(t)
 
 	canonical, err := verifyGitLabMRRange(
-		context.Background(), ciReviewOpts{pr: 7}, repo.Path(),
+		t.Context(), ciReviewOpts{pr: 7}, repo.Path(),
 		base+"..feature", false)
 	require.NoError(t, err)
 	assert.Equal(t, base+".."+head, canonical,
@@ -2119,12 +2119,12 @@ func TestVerifyGitLabMRRange_RecheckTreatsMovedHeadAsRace(t *testing.T) {
 	opts := ciReviewOpts{pr: 7}
 	gitRef := base + ".." + head
 
-	err := verifyMRRangeErr(context.Background(), opts, repo.Path(), gitRef, false)
+	err := verifyMRRangeErr(t.Context(), opts, repo.Path(), gitRef, false)
 	require.Error(t, err)
 	require.NotErrorIs(t, err, errMRHeadMoved,
 		"a first-pass mismatch is bad input and must fail loudly")
 
-	err = verifyMRRangeErr(context.Background(), opts, repo.Path(), gitRef, true)
+	err = verifyMRRangeErr(t.Context(), opts, repo.Path(), gitRef, true)
 	require.ErrorIs(t, err, errMRHeadMoved)
 }
 
@@ -2139,7 +2139,7 @@ func TestPostGitLabCIComment_RefusesStaleHead(t *testing.T) {
 	api.start(t)
 
 	err := postGitLabCIComment(
-		context.Background(),
+		t.Context(),
 		ciReviewOpts{pr: 7}, "body", false, "", reviewed)
 	require.Error(t, err)
 	assert.False(t, api.posted,

@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"fmt"
 	"math"
 	"net/http"
@@ -41,7 +40,7 @@ func TestAuthEndpointClientAndProbe(t *testing.T) {
 	writeAuthClientConfig(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	require.NoError(t, WriteRuntime(ep, nil, "test-version", nil))
 	client := ep.HTTPClient(time.Second)
-	req, err := http.NewRequest(http.MethodGet, ep.BaseURL()+"/api/ping", nil)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ep.BaseURL()+"/api/ping", nil)
 	require.NoError(t, err)
 	resp, err := client.Do(req)
 	require.NoError(t, err)
@@ -59,7 +58,7 @@ func TestAuthEndpointClientAndProbe(t *testing.T) {
 	_, err = ProbeDaemon(ep, time.Second)
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrDaemonAccessDenied)
-	_, err = GetAnyRunningDaemonContext(context.Background())
+	_, err = GetAnyRunningDaemonContext(t.Context())
 	assert.ErrorIs(t, err, ErrDaemonAccessDenied)
 }
 
@@ -74,10 +73,15 @@ func TestAuthClientRefusesOtherOriginsAndRedirects(t *testing.T) {
 	}))
 	defer origin.Close()
 	client := authEndpoint(t, origin.URL).HTTPClient(time.Second)
-	resp, err := client.Get(target.URL)
+	getRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, target.URL, nil)
+	require.NoError(t, err)
+	resp, err := client.Do(getRequest)
 	assert.Nil(t, resp)
 	require.Error(t, err)
-	resp, err = client.Post(origin.URL, "application/json", strings.NewReader(`{"secret":"review"}`))
+	postRequest, err := http.NewRequestWithContext(t.Context(), http.MethodPost, origin.URL, strings.NewReader(`{"secret":"review"}`))
+	require.NoError(t, err)
+	postRequest.Header.Set("Content-Type", "application/json")
+	resp, err = client.Do(postRequest)
 	require.NoError(t, err)
 	resp.Body.Close()
 	assert.Equal(t, http.StatusTemporaryRedirect, resp.StatusCode)
@@ -94,9 +98,14 @@ func TestAuthClientKeepsKeyOffGuessedTCPAddress(t *testing.T) {
 	}))
 	defer server.Close()
 	enqueue := func(ep DaemonEndpoint) (*http.Response, error) {
-		return ep.HTTPClient(time.Second).Post(
-			server.URL+"/api/enqueue", "application/json", strings.NewReader(`{"repo_path":"/synthetic/repo"}`),
+		request, err := http.NewRequestWithContext(
+			t.Context(), http.MethodPost, server.URL+"/api/enqueue", strings.NewReader(`{"repo_path":"/synthetic/repo"}`),
 		)
+		if err != nil {
+			return nil, err
+		}
+		request.Header.Set("Content-Type", "application/json")
+		return ep.HTTPClient(time.Second).Do(request)
 	}
 
 	// While no daemon has published the address, another local account
@@ -116,7 +125,7 @@ func TestAuthClientKeepsKeyOffGuessedTCPAddress(t *testing.T) {
 func TestAuthClientConfigFailureIsTerminal(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte("auth_key = secret-never-print"), 0o600))
-	_, err := GetAnyRunningDaemonContext(context.Background())
+	_, err := GetAnyRunningDaemonContext(t.Context())
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrClientConfig)
 	assert.True(t, IsDaemonAccessError(err))
@@ -152,7 +161,9 @@ func TestAuthClientIgnoresUnrelatedConfigErrors(t *testing.T) {
 			s := newAuthTestServer(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 			server := httptest.NewServer(s.httpServer.Handler)
 			defer server.Close()
-			resp, err := authEndpoint(t, server.URL).HTTPClient(time.Second).Get(server.URL + "/api/ping")
+			getRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL+"/api/ping", nil)
+			require.NoError(t, err)
+			resp, err := authEndpoint(t, server.URL).HTTPClient(time.Second).Do(getRequest)
 			require.NoError(t, err)
 			resp.Body.Close()
 			assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -176,7 +187,9 @@ func TestAuthClientRejectsInvalidKeyConfigBeforeRequest(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			}))
 			defer server.Close()
-			resp, err := authEndpoint(t, server.URL).HTTPClient(time.Second).Get(server.URL + "/api/ping")
+			getRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL+"/api/ping", nil)
+			require.NoError(t, err)
+			resp, err := authEndpoint(t, server.URL).HTTPClient(time.Second).Do(getRequest)
 			require.ErrorIs(t, err, ErrClientConfig)
 			assert.Nil(t, resp)
 			assert.Zero(t, requests.Load())
@@ -192,7 +205,7 @@ func TestAuthReadinessUsesCapturedCustomConfigKey(t *testing.T) {
 	server := httptest.NewServer(s.httpServer.Handler)
 	defer server.Close()
 	ep := authEndpoint(t, server.URL)
-	ready, exited, err := waitForServerReady(context.Background(), ep, time.Second, make(chan error), config.ClientAuth{Key: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"})
+	ready, exited, err := waitForServerReady(t.Context(), ep, time.Second, make(chan error), config.ClientAuth{Key: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"})
 	require.NoError(t, err)
 	assert.True(t, ready)
 	assert.False(t, exited)
@@ -207,9 +220,11 @@ func TestAuthDeniedRuntimeIsPreserved(t *testing.T) {
 	require.NoError(t, WriteRuntime(ep, nil, "test-version", nil))
 	// Ping answers callers without a key, so discovery finds the daemon and
 	// the first request that needs the key reports the denial.
-	info, err := GetAnyRunningDaemonContext(context.Background())
+	info, err := GetAnyRunningDaemonContext(t.Context())
 	require.NoError(t, err)
-	resp, err := info.Endpoint().HTTPClient(time.Second).Get(server.URL + "/api/status")
+	getRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL+"/api/status", nil)
+	require.NoError(t, err)
+	resp, err := info.Endpoint().HTTPClient(time.Second).Do(getRequest)
 	require.NoError(t, err)
 	resp.Body.Close()
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)

@@ -46,7 +46,7 @@ func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
 	dbPath, configPath := setupTestDaemon(t)
 
 	// Create context for cancellation
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
 	// Create the daemon run command with custom flags
@@ -183,7 +183,7 @@ func TestDaemonShutdownBySignal(t *testing.T) {
 	binPath := filepath.Join(tmpDir, "roborev-test")
 	// Use "." since we are in cmd/roborev package. The built daemon runs in a
 	// subprocess, so compile kit's test telemetry disable tag into that binary.
-	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
+	buildCmd := exec.CommandContext(t.Context(), "go", "build", "-o", binPath, ".")
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -192,7 +192,7 @@ func TestDaemonShutdownBySignal(t *testing.T) {
 
 	// 2. Start daemon in subprocess
 	// Use an ephemeral port (0) to avoid conflicts
-	cmd := exec.Command(binPath, "daemon", "run",
+	cmd := exec.CommandContext(t.Context(), binPath, "daemon", "run",
 		"--db", dbPath,
 		"--config", configPath,
 		"--addr", "127.0.0.1:0",
@@ -299,7 +299,7 @@ func TestDaemonSignalCleanup(t *testing.T) {
 
 	dbPath, configPath := setupTestDaemon(t)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
 	cmd := daemonRunCmd()
@@ -360,11 +360,11 @@ func TestDaemonLifecycleEndToEnd(t *testing.T) {
 	}
 	// The built daemon runs in a subprocess, so compile kit's test telemetry
 	// disable tag into that binary.
-	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
+	buildCmd := exec.CommandContext(t.Context(), "go", "build", "-o", binPath, ".")
 	out, err := buildCmd.CombinedOutput()
 	require.NoError(t, err, "failed to build test binary: %s", out)
 
-	cmd := exec.Command(binPath, "daemon", "run",
+	cmd := exec.CommandContext(t.Context(), binPath, "daemon", "run",
 		"--db", dbPath,
 		"--config", configPath,
 		"--addr", "127.0.0.1:0",
@@ -413,13 +413,18 @@ func TestDaemonLifecycleEndToEnd(t *testing.T) {
 
 	// A live daemon must serve database-backed endpoints, not just ping.
 	client := ep.HTTPClient(10 * time.Second)
-	resp, err := client.Get(ep.BaseURL() + "/api/status")
+	statusRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ep.BaseURL()+"/api/status", nil)
+	require.NoError(t, err)
+	resp, err := client.Do(statusRequest)
 	require.NoError(t, err, "daemon must serve /api/status. Output:\n%s", outputBuffer.String())
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	resp.Body.Close()
 
 	// Stop via HTTP shutdown, the path the CLI uses on every platform.
-	resp, err = client.Post(ep.BaseURL()+"/api/shutdown", "application/json", nil)
+	shutdownRequest, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ep.BaseURL()+"/api/shutdown", nil)
+	require.NoError(t, err)
+	shutdownRequest.Header.Set("Content-Type", "application/json")
+	resp, err = client.Do(shutdownRequest)
 	require.NoError(t, err, "shutdown request failed")
 	resp.Body.Close()
 
@@ -465,21 +470,21 @@ func TestUpdateDrainCutoverIntegration(t *testing.T) {
 			waitForUpdateJobStatus(t, old.endpoint, active.ID, storage.JobStatusRunning, 10*time.Second)
 
 			session, err := prepareUpdateDaemon(
-				context.Background(), old.endpoint, "integration-owner", policy, io.Discard,
+				t.Context(), old.endpoint, "integration-owner", policy, io.Discard,
 			)
 			require.NoError(t, err)
 			secondSHA := repo.CommitFile("second.txt", "second\n", "second")
 			queued := enqueueUpdateJob(t, old.endpoint, repo.Path(), secondSHA)
 			// Wall-clock wait: HTTP status from a separately built daemon process.
 			assert.Never(t, func() bool {
-				job, err := readUpdateJob(old.endpoint, queued.ID)
+				job, err := readUpdateJob(t.Context(), old.endpoint, queued.ID)
 				return err != nil || job.Status != storage.JobStatusQueued
 			}, 250*time.Millisecond, 25*time.Millisecond)
 
-			drainCtx, cancelDrain := context.WithTimeout(context.Background(), 20*time.Second)
+			drainCtx, cancelDrain := context.WithTimeout(t.Context(), 20*time.Second)
 			defer cancelDrain()
 			require.NoError(t, waitForPreparedDrain(drainCtx, session, io.Discard))
-			require.NoError(t, session.shutdown(context.Background()))
+			require.NoError(t, session.shutdown(t.Context()))
 			waitForIsolatedUpdateDaemonExit(t, old, 10*time.Second)
 
 			replacement := startIsolatedUpdateDaemon(t, newBinary, dataDir, dbPath, configPath)
@@ -496,7 +501,7 @@ func TestUpdateDrainCutoverIntegration(t *testing.T) {
 func buildVersionedUpdateDaemon(t *testing.T, dir, name, version string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
-	cmd := exec.Command(
+	cmd := exec.CommandContext(t.Context(),
 		"go", "build",
 		"-ldflags", "-X go.kenn.io/roborev/internal/version.Version="+version,
 		"-o", path, ".",
@@ -526,7 +531,7 @@ func startIsolatedUpdateDaemon(
 	t *testing.T, binary, dataDir, dbPath, configPath string,
 ) *isolatedUpdateDaemon {
 	t.Helper()
-	cmd := exec.Command(binary, "daemon", "run",
+	cmd := exec.CommandContext(t.Context(), binary, "daemon", "run",
 		"--db", dbPath,
 		"--config", configPath,
 		"--addr", "127.0.0.1:0",
@@ -579,7 +584,10 @@ func waitForIsolatedUpdateDaemonExit(
 func shutdownIsolatedUpdateDaemon(t *testing.T, instance *isolatedUpdateDaemon) {
 	t.Helper()
 	client := instance.endpoint.HTTPClient(5 * time.Second)
-	resp, err := client.Post(instance.endpoint.BaseURL()+"/api/shutdown", "application/json", nil)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, instance.endpoint.BaseURL()+"/api/shutdown", nil)
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(request)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -597,7 +605,10 @@ func enqueueUpdateJob(
 	})
 	require.NoError(t, err)
 	client := endpoint.HTTPClient(5 * time.Second)
-	resp, err := client.Post(endpoint.BaseURL()+"/api/enqueue", "application/json", bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, endpoint.BaseURL()+"/api/enqueue", bytes.NewReader(body))
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(request)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
@@ -610,16 +621,20 @@ func getUpdateJob(
 	t *testing.T, endpoint daemon.DaemonEndpoint, jobID int64,
 ) storage.ReviewJob {
 	t.Helper()
-	job, err := readUpdateJob(endpoint, jobID)
+	job, err := readUpdateJob(t.Context(), endpoint, jobID)
 	require.NoError(t, err)
 	return job
 }
 
 func readUpdateJob(
-	endpoint daemon.DaemonEndpoint, jobID int64,
+	ctx context.Context, endpoint daemon.DaemonEndpoint, jobID int64,
 ) (storage.ReviewJob, error) {
 	client := endpoint.HTTPClient(5 * time.Second)
-	resp, err := client.Get(fmt.Sprintf("%s/api/jobs?id=%d", endpoint.BaseURL(), jobID))
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/api/jobs?id=%d", endpoint.BaseURL(), jobID), nil)
+	if err != nil {
+		return storage.ReviewJob{}, err
+	}
+	resp, err := client.Do(request)
 	if err != nil {
 		return storage.ReviewJob{}, err
 	}
@@ -648,7 +663,7 @@ func waitForUpdateJobStatus(
 ) {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		job, err := readUpdateJob(endpoint, jobID)
+		job, err := readUpdateJob(t.Context(), endpoint, jobID)
 		return err == nil && job.Status == want
 	}, timeout, 50*time.Millisecond)
 }

@@ -16,7 +16,7 @@ func TestJobStatsQueryReadsMetadataIndexes(t *testing.T) {
 	for _, phase := range []string{"fresh", "upgrade", "repeat"} {
 		t.Run(phase, func(t *testing.T) {
 			if phase == "upgrade" {
-				_, err := db.Exec("DROP INDEX idx_review_jobs_queue_stats")
+				_, err := db.ExecContext(t.Context(), "DROP INDEX idx_review_jobs_queue_stats")
 				require.NoError(t, err)
 			}
 			if phase != "fresh" {
@@ -36,7 +36,7 @@ func TestJobStatsQueryReadsMetadataIndexes(t *testing.T) {
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					query, args := jobStatsQuery(tc.status, "", tc.opts...)
-					rows, err := db.Query("EXPLAIN QUERY PLAN "+query, args...)
+					rows, err := db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+query, args...)
 					require.NoError(t, err)
 					var details []string
 					for rows.Next() {

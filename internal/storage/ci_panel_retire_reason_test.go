@@ -12,7 +12,7 @@ import (
 func panelRetireReason(t *testing.T, db *DB, id int64) sql.NullString {
 	t.Helper()
 	var reason sql.NullString
-	require.NoError(t, db.QueryRow(`SELECT retire_reason FROM ci_pr_panels WHERE id = ?`, id).Scan(&reason))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT retire_reason FROM ci_pr_panels WHERE id = ?`, id).Scan(&reason))
 	return reason
 }
 
@@ -36,7 +36,7 @@ func TestPanelRetirementPreservesFirstReason(t *testing.T) {
 			id := seedPanelRow(t, db, "acme/api", i+1, tc.want)
 			require.NoError(t, db.MarkPanelRetired(id, tc.reason))
 			var firstRetiredAt string
-			require.NoError(t, db.QueryRow(`SELECT retired_at FROM ci_pr_panels WHERE id = ?`, id).Scan(&firstRetiredAt))
+			require.NoError(t, db.QueryRowContext(t.Context(), `SELECT retired_at FROM ci_pr_panels WHERE id = ?`, id).Scan(&firstRetiredAt))
 			assert.Equal(sql.NullString{String: tc.want, Valid: true}, panelRetireReason(t, db, id))
 			for _, later := range cases {
 				require.NoError(t, db.MarkPanelRetired(id, later.reason))
@@ -47,7 +47,7 @@ func TestPanelRetirementPreservesFirstReason(t *testing.T) {
 				assert.Equal(sql.NullString{String: tc.want, Valid: true}, panelRetireReason(t, db, id))
 			}
 			var retiredAt string
-			require.NoError(t, db.QueryRow(`SELECT retired_at FROM ci_pr_panels WHERE id = ?`, id).Scan(&retiredAt))
+			require.NoError(t, db.QueryRowContext(t.Context(), `SELECT retired_at FROM ci_pr_panels WHERE id = ?`, id).Scan(&retiredAt))
 			assert.Equal(firstRetiredAt, retiredAt)
 		})
 	}
@@ -73,7 +73,7 @@ func TestPanelRetirementPreservesUnknownHistoryAndPostedRows(t *testing.T) {
 	t.Parallel()
 	db := openReviewAttemptsTestDB(t)
 	unknown := seedPanelRow(t, db, "acme/api", 7, "unknown")
-	_, err := db.Exec(`UPDATE ci_pr_panels SET retired_at = datetime('now') WHERE id = ?`, unknown)
+	_, err := db.ExecContext(t.Context(), `UPDATE ci_pr_panels SET retired_at = datetime('now') WHERE id = ?`, unknown)
 	require.NoError(t, err)
 	posted := seedPanelRow(t, db, "acme/api", 7, "posted")
 	require.NoError(t, db.MarkPanelPosted(posted, PanelOutcomeAbandoned, "", ""))

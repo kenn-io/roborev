@@ -48,7 +48,7 @@ func TestRepeatedPrePushInstallPreservesShell(t *testing.T) {
 				}
 				previous = content
 				// Parse without running the hook or its baked binary.
-				cmd := exec.Command(shell, "-n")
+				cmd := exec.CommandContext(t.Context(), shell, "-n")
 				cmd.Stdin = strings.NewReader(string(content))
 				output, err := cmd.CombinedOutput()
 				require.NoError(t, err, "%s", output)

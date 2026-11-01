@@ -281,7 +281,7 @@ Examples:
 
 				// Validate has commits
 				rangeRef := mergeBase + ".." + targetRef
-				commits, err := git.GetRangeCommits(root, rangeRef)
+				commits, err := git.GetRangeCommitsCtx(ctx, root, rangeRef)
 				if err != nil {
 					return fmt.Errorf("cannot get commits: %w", err)
 				}
@@ -721,7 +721,7 @@ func tryBranchReviewForRef(
 	}
 
 	rangeRef := mergeBase + ".." + headRef
-	commits, err := git.GetRangeCommits(root, rangeRef)
+	commits, err := git.GetRangeCommitsCtx(ctx, root, rangeRef)
 	if err != nil || len(commits) == 0 {
 		return "", false
 	}

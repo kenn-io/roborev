@@ -539,7 +539,7 @@ func TestDaemonServiceReplacedCLIIsAnotherInstallation(t *testing.T) {
 	require.NoError(t, err)
 	copyPath := filepath.Join(t.TempDir(), "roborev-test")
 	require.NoError(t, os.WriteFile(copyPath, data, 0o700))
-	cmd := exec.Command(copyPath, "-test.run=^TestDaemonServiceReplacedCLIIsAnotherInstallation$")
+	cmd := exec.CommandContext(t.Context(), copyPath, "-test.run=^TestDaemonServiceReplacedCLIIsAnotherInstallation$")
 	cmd.Env = append(os.Environ(), "ROBOREV_TEST_EXECUTABLE_REPLACEMENT=1")
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "%s", output)

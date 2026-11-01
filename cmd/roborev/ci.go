@@ -248,7 +248,7 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	gitRef, refErr := freezeReviewRef(ctx, root, gitRef)
 	var repoCfgRef string
 	if refErr == nil {
-		repoCfgRef, refErr = trustedCIRepoConfigRef(root, gitRef)
+		repoCfgRef, refErr = trustedCIRepoConfigRef(ctx, root, gitRef)
 	}
 	if refErr != nil {
 		// Preserve the flag-validation diagnostic when a plainly unknown type
@@ -620,9 +620,9 @@ func detectGitRefForForge(forge ciForge, repoPath string) (string, error) {
 // allowed to control a daemon-free CI review. Ranges use their base commit. A
 // single-commit review uses its first parent, or the empty tree for a root
 // commit, so the reviewed commit cannot alter its own gate.
-func trustedCIRepoConfigRef(repoPath, gitRef string) (string, error) {
+func trustedCIRepoConfigRef(ctx context.Context, repoPath, gitRef string) (string, error) {
 	if git.IsRange(gitRef) {
-		return git.GetRangeStart(repoPath, gitRef)
+		return git.GetRangeStartCtx(ctx, repoPath, gitRef)
 	}
 	parents, err := git.GetCommitParents(repoPath, gitRef)
 	if err != nil {
@@ -735,7 +735,7 @@ func verifyGitLabMRRange(
 	// Resolved once, here, and handed back for the review to use. Passing the
 	// original expressions on would let a revision like ":/fix" name one
 	// commit while it is checked and another while it is reviewed.
-	base, head = resolveRev(repoPath, base), resolveRev(repoPath, head)
+	base, head = resolveRev(ctx, repoPath, base), resolveRev(ctx, repoPath, head)
 	if strings.EqualFold(base, head) {
 		return "", fmt.Errorf(
 			"--comment on merge request !%d requires a non-empty range, but "+
@@ -758,7 +758,7 @@ func verifyGitLabMRRange(
 				"the current one)",
 			head, mrIID, refs.HeadSHA)
 	}
-	if err := verifyRangeCoversMR(repoPath, base, mrIID, refs.BaseSHA); err != nil {
+	if err := verifyRangeCoversMR(ctx, repoPath, base, mrIID, refs.BaseSHA); err != nil {
 		return "", err
 	}
 	return base + ".." + head, nil
@@ -779,7 +779,7 @@ func verifyGitLabMRRange(
 // not finished preparing, and accepting any base in that window would let a
 // narrowed range post a verdict covering part of the change.
 func verifyRangeCoversMR(
-	repoPath, base string, mrIID int, mrBase string,
+	ctx context.Context, repoPath, base string, mrIID int, mrBase string,
 ) error {
 	mrBase = strings.TrimSpace(mrBase)
 	if mrBase == "" {
@@ -789,7 +789,7 @@ func verifyRangeCoversMR(
 				"still be preparing the merge request — re-run once it is "+
 				"ready)", mrIID)
 	}
-	if !strings.EqualFold(resolveRev(repoPath, base), resolveRev(repoPath, mrBase)) {
+	if !strings.EqualFold(resolveRev(ctx, repoPath, base), resolveRev(ctx, repoPath, mrBase)) {
 		return fmt.Errorf(
 			"refusing to post: the reviewed range starts at %s but merge "+
 				"request !%d's diff starts at %s, so the note would not "+
@@ -802,11 +802,11 @@ func verifyRangeCoversMR(
 // resolveRev expands a ref or abbreviated SHA to a full commit SHA, returning
 // it unchanged when the clone cannot resolve it so the caller compares — and
 // reports — what was actually asked for.
-func resolveRev(repoPath, rev string) string {
+func resolveRev(ctx context.Context, repoPath, rev string) string {
 	if repoPath == "" || rev == "" {
 		return rev
 	}
-	if full, err := git.ResolveSHA(repoPath, rev+"^{commit}"); err == nil {
+	if full, err := git.ResolveSHACtx(ctx, repoPath, rev+"^{commit}"); err == nil {
 		return full
 	}
 	return rev

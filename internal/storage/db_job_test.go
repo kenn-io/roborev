@@ -66,7 +66,7 @@ func TestJobLifecycle(t *testing.T) {
 func TestGetJobByIDRejectsInvalidUUID(t *testing.T) {
 	t.Parallel()
 	env := setupJobEnv(t, "/tmp/invalid-job-uuid", "invalid-uuid")
-	_, err := env.db.Exec(`UPDATE review_jobs SET uuid = 'not-a-uuid' WHERE id = ?`, env.job.ID)
+	_, err := env.db.ExecContext(t.Context(), `UPDATE review_jobs SET uuid = 'not-a-uuid' WHERE id = ?`, env.job.ID)
 	require.NoError(t, err)
 
 	_, err = env.db.GetJobByID(env.job.ID)
@@ -88,7 +88,7 @@ func TestCompleteJobResultStoresCanonicalReview(t *testing.T) {
 		}))
 	var verdict sql.NullInt64
 	var storedStructured string
-	require.NoError(t, env.db.QueryRow(
+	require.NoError(t, env.db.QueryRowContext(t.Context(),
 		`SELECT verdict_bool, structured_output FROM reviews WHERE job_id = ?`, env.job.ID,
 	).Scan(&verdict, &storedStructured))
 	assert.Equal(t, sql.NullInt64{Int64: 0, Valid: true}, verdict)
@@ -110,7 +110,7 @@ func TestCompleteJobTaskOutputLeavesVerdictNull(t *testing.T) {
 	require.NoError(t, completeReviewFixture(db, job.ID, "test", "prompt", "The code has issues."))
 
 	var verdict sql.NullInt64
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(t.Context(),
 		`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID,
 	).Scan(&verdict))
 	assert.False(t, verdict.Valid, "task output must not carry a parsed verdict")
@@ -126,7 +126,7 @@ func TestCompleteJobUnreadableOutputLeavesVerdictNull(t *testing.T) {
 	))
 
 	var verdict sql.NullInt64
-	require.NoError(t, env.db.QueryRow(
+	require.NoError(t, env.db.QueryRowContext(t.Context(),
 		`SELECT verdict_bool FROM reviews WHERE job_id = ?`, env.job.ID,
 	).Scan(&verdict))
 	assert.False(t, verdict.Valid)
@@ -174,12 +174,12 @@ func TestClaimJobOrdersMixedEnqueueTimestampFormats(t *testing.T) {
 	defer db.Close()
 	_, jobs := seedJobs(t, db, "/tmp/mixed-enqueue-order", 2)
 
-	_, err := db.Exec(
+	_, err := db.ExecContext(t.Context(),
 		`UPDATE review_jobs SET enqueued_at = ? WHERE id = ?`,
 		"2026-08-14T08:00:00Z", jobs[0].ID,
 	)
 	require.NoError(t, err)
-	_, err = db.Exec(
+	_, err = db.ExecContext(t.Context(),
 		`UPDATE review_jobs SET enqueued_at = ? WHERE id = ?`,
 		"2026-08-14 09:00:00", jobs[1].ID,
 	)
@@ -199,7 +199,7 @@ func TestClaimJobPersistsPreciseAttemptStart(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 	var startedAt string
-	require.NoError(t, env.db.QueryRow(
+	require.NoError(t, env.db.QueryRowContext(t.Context(),
 		`SELECT started_at FROM review_jobs WHERE id = ?`, claimed.ID,
 	).Scan(&startedAt))
 
@@ -217,7 +217,7 @@ func TestClaimJobReturnsClaimedRowWhenWorkerHasNewerOrphan(t *testing.T) {
 	require.NotNil(t, orphan)
 	require.Equal(t, jobs[0].ID, orphan.ID)
 	// A clock rollback leaves the orphan with a later start than the next claim.
-	_, err = db.Exec(
+	_, err = db.ExecContext(t.Context(),
 		`UPDATE review_jobs SET started_at = ? WHERE id = ?`,
 		preciseTimestampAt(time.Now().Add(time.Hour)), orphan.ID,
 	)
@@ -229,7 +229,7 @@ func TestClaimJobReturnsClaimedRowWhenWorkerHasNewerOrphan(t *testing.T) {
 
 	assert.Equal(jobs[1].ID, claimed.ID)
 	var startedAt string
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(t.Context(),
 		`SELECT started_at FROM review_jobs WHERE id = ?`, claimed.ID,
 	).Scan(&startedAt))
 	assert.Equal(startedAt, claimed.StartedAtRaw)
@@ -238,7 +238,7 @@ func TestClaimJobReturnsClaimedRowWhenWorkerHasNewerOrphan(t *testing.T) {
 func TestClaimJobRollsBackWhenHydrationFails(t *testing.T) {
 	t.Parallel()
 	env := setupJobEnv(t, "/tmp/claim-hydration-rollback", "claim-hydration-rollback")
-	_, err := env.db.Exec(`UPDATE review_jobs SET panel_member_index = ? WHERE id = ?`, "invalid", env.job.ID)
+	_, err := env.db.ExecContext(t.Context(), `UPDATE review_jobs SET panel_member_index = ? WHERE id = ?`, "invalid", env.job.ID)
 	require.NoError(t, err)
 
 	claimed, err := env.db.ClaimJob("worker-hydration-rollback")
@@ -246,13 +246,13 @@ func TestClaimJobRollsBackWhenHydrationFails(t *testing.T) {
 	assert.Nil(t, claimed)
 
 	var status string
-	require.NoError(t, env.db.QueryRow(`SELECT status FROM review_jobs WHERE id = ?`, env.job.ID).Scan(&status))
+	require.NoError(t, env.db.QueryRowContext(t.Context(), `SELECT status FROM review_jobs WHERE id = ?`, env.job.ID).Scan(&status))
 	assert.Equal(t, string(JobStatusQueued), status)
 }
 
 func TestClaimJobCancellationBeforeCommitRollsBack(t *testing.T) { //nolint:paralleltest // assigns claimJobBeforeCommitForTest, which every ClaimJob reads
 	env := setupJobEnv(t, "/tmp/claim-cancel-before-commit", "claim-cancel-before-commit")
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	commitStarted := make(chan struct{})
 	releaseCommit := make(chan struct{})
@@ -290,7 +290,7 @@ func TestClaimJobCancellationBeforeCommitRollsBack(t *testing.T) { //nolint:para
 	require.ErrorIs(t, result.err, context.Canceled)
 	assert.Nil(t, result.job)
 	var status string
-	require.NoError(t, env.db.QueryRow(
+	require.NoError(t, env.db.QueryRowContext(t.Context(),
 		`SELECT status FROM review_jobs WHERE id = ?`, env.job.ID,
 	).Scan(&status))
 	assert.Equal(t, string(JobStatusQueued), status)
@@ -305,7 +305,7 @@ func TestClaimJobRetriesAfterBusyTransactionTimeout(t *testing.T) {
 	_, err = lockConn.ExecContext(t.Context(), "BEGIN IMMEDIATE")
 	require.NoError(t, err)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	resultCh := make(chan struct {
 		job *ReviewJob
@@ -321,7 +321,7 @@ func TestClaimJobRetriesAfterBusyTransactionTimeout(t *testing.T) {
 
 	time.Sleep(claimJobBusyAttemptTimeout + 100*time.Millisecond) //nolint:kennlint // sleeptest: holds a SQLite file lock while the claim sleeps in the busy handler
 	var status string
-	require.NoError(t, env.db.QueryRow(
+	require.NoError(t, env.db.QueryRowContext(t.Context(),
 		`SELECT status FROM review_jobs WHERE id = ?`, env.job.ID,
 	).Scan(&status))
 	assert.Equal(t, string(JobStatusQueued), status)
@@ -396,12 +396,12 @@ func TestFailJobAttemptGuard(t *testing.T) {
 		{name: "wrong attempt", workerID: job.WorkerID, startedAt: "2000-01-01T00:00:00Z"},
 	} {
 		t.Run(attempt.name, func(t *testing.T) {
-			updated, err := env.db.FailJobAttempt(context.Background(), job.ID, attempt.workerID, attempt.startedAt, "failed attempt")
+			updated, err := env.db.FailJobAttempt(t.Context(), job.ID, attempt.workerID, attempt.startedAt, "failed attempt")
 			require.NoError(t, err)
 			require.False(t, updated)
 		})
 	}
-	updated, err := env.db.FailJobAttempt(context.Background(), job.ID, job.WorkerID, job.StartedAtRaw, "failed attempt")
+	updated, err := env.db.FailJobAttempt(t.Context(), job.ID, job.WorkerID, job.StartedAtRaw, "failed attempt")
 	require.NoError(t, err)
 	assert.True(updated)
 	failed, err := env.db.GetJobByID(job.ID)
@@ -409,7 +409,7 @@ func TestFailJobAttemptGuard(t *testing.T) {
 	assert.Equal(JobStatusFailed, failed.Status)
 	assert.Equal("failed attempt", failed.Error)
 	assert.NotNil(failed.FinishedAt)
-	updated, err = env.db.FailJobAttempt(context.Background(), job.ID, job.WorkerID, job.StartedAtRaw, "second failure")
+	updated, err = env.db.FailJobAttempt(t.Context(), job.ID, job.WorkerID, job.StartedAtRaw, "second failure")
 	require.NoError(t, err)
 	assert.False(updated)
 }
@@ -423,12 +423,12 @@ func TestListRunningAttemptsOnlyReturnsLocalClaims(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 	require.Equal(t, jobs[0].ID, claimed.ID)
-	_, err = db.Exec(
+	_, err = db.ExecContext(t.Context(),
 		`UPDATE review_jobs SET status = 'running', worker_id = NULL WHERE id = ?`, jobs[1].ID,
 	)
 	require.NoError(t, err)
 
-	attempts, err := db.ListRunningAttemptsContext(context.Background())
+	attempts, err := db.ListRunningAttemptsContext(t.Context())
 	require.NoError(t, err)
 
 	assert.Equal(t, []RunningAttempt{{JobID: claimed.ID, WorkerID: "worker-a"}}, attempts)
@@ -440,7 +440,7 @@ func TestRecoveryDatabaseCallsHonorCanceledContext(t *testing.T) {
 	job, err := env.db.ClaimJob("worker-a")
 	require.NoError(t, err)
 	require.NotNil(t, job)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err = env.db.ListRunningAttemptsContext(ctx)
 	require.ErrorIs(t, err, context.Canceled)
@@ -500,7 +500,7 @@ func TestRequeueUpdateInterruptedJobResetsAttemptWithoutRetry(t *testing.T) {
 	require.NoError(t, env.db.SaveJobSessionID(
 		env.job.ID, "worker-A", "session-1",
 	))
-	_, err = env.db.Exec(
+	_, err = env.db.ExecContext(t.Context(),
 		`UPDATE review_jobs SET resume_source_job_uuid = ? WHERE id = ?`,
 		"source-job-uuid", env.job.ID,
 	)
@@ -626,7 +626,7 @@ func TestReviewVerdictComputation(t *testing.T) {
 
 		// Manually insert a passing review to simulate edge case; only the
 		// job's error may remove its verdict.
-		_, err = env.db.Exec(
+		_, err = env.db.ExecContext(t.Context(),
 			`INSERT INTO reviews (job_id, agent, output, structured_output, verdict_bool) VALUES (?, 'codex', '', ?, 1)`,
 			env.job.ID, string(reviewFixtureJSON("No issues found.")),
 		)
@@ -782,7 +782,7 @@ func TestRetryJob(t *testing.T) {
 	// gates cost eligibility, so a stale marker could miscount a re-attempt
 	// that fails before selecting an agent.
 	require.NoError(t, db.MarkJobAgentInvoked(job.ID, "worker-1", "codex review retry123"))
-	_, err := db.Exec(
+	_, err := db.ExecContext(t.Context(),
 		`UPDATE review_jobs SET session_id = ?, resume_source_job_uuid = ? WHERE id = ?`,
 		"session-before-retry", "source-before-retry", job.ID,
 	)
@@ -892,7 +892,7 @@ func TestRetryJobBackoffDefersClaim(t *testing.T) {
 	// column directly instead of sleeping a real backoff — we're testing
 	// the predicate, not the clock.
 	past := preciseTimestampAt(time.Now().Add(-time.Minute))
-	_, err = db.Exec(`UPDATE review_jobs SET retry_not_before = ? WHERE id = ?`, past, job.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET retry_not_before = ? WHERE id = ?`, past, job.ID)
 	require.NoError(t, err)
 
 	claimed, err := db.ClaimJob("worker-2")
@@ -914,7 +914,7 @@ func TestRetryJobZeroBackoffLeavesNotBeforeNull(t *testing.T) {
 	require.True(t, retried)
 
 	var stored sql.NullString
-	require.NoError(t, db.QueryRow(`SELECT retry_not_before FROM review_jobs WHERE id = ?`, job.ID).Scan(&stored))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT retry_not_before FROM review_jobs WHERE id = ?`, job.ID).Scan(&stored))
 	assert.False(t, stored.Valid, "zero backoff should leave retry_not_before NULL")
 
 	claimed, err := db.ClaimJob("worker-2")
@@ -943,7 +943,7 @@ func TestFailoverJob(t *testing.T) {
 		// Claim to make it running
 		claimJob(t, db, "worker-1")
 		require.NoError(t, db.MarkJobAgentInvoked(job.ID, "worker-1", "primary review fo-abc123"))
-		_, err = db.Exec(
+		_, err = db.ExecContext(t.Context(),
 			`UPDATE review_jobs SET session_id = ?, resume_source_job_uuid = ? WHERE id = ?`,
 			"session-before-failover", "source-before-failover", job.ID,
 		)
@@ -982,7 +982,7 @@ func TestFailoverJob(t *testing.T) {
 		// Stamp a far-future retry_not_before to simulate a job that
 		// hit its retry backoff right before failover took over.
 		future := time.Now().Add(30 * time.Second).Format(time.RFC3339)
-		_, err := db.Exec(`UPDATE review_jobs SET retry_not_before = ? WHERE id = ?`, future, job.ID)
+		_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET retry_not_before = ? WHERE id = ?`, future, job.ID)
 		require.NoError(t, err)
 
 		ok, err := db.FailoverJob(job.ID, "worker-1", "backup", "")
@@ -1387,7 +1387,7 @@ func TestReenqueueJob(t *testing.T) {
 		err = isolatedDB.ReenqueueJob(job.ID, ReenqueueOpts{})
 		require.ErrorIs(t, err, sql.ErrNoRows)
 
-		_, err = isolatedDB.Exec(
+		_, err = isolatedDB.ExecContext(t.Context(),
 			`UPDATE review_jobs SET worker_id = NULL WHERE id = ?`,
 			job.ID,
 		)
@@ -1422,7 +1422,7 @@ func TestReenqueueJob(t *testing.T) {
 		defer isolatedDB.Close()
 		_, _, job := createJobChain(t, isolatedDB, "/tmp/test-repo", "rerun-enqueue-time")
 		oldEnqueuedAt := time.Now().Add(-30 * 24 * time.Hour).UTC().Truncate(time.Second)
-		_, err := isolatedDB.Exec(
+		_, err := isolatedDB.ExecContext(t.Context(),
 			`UPDATE review_jobs SET status = 'done', enqueued_at = ? WHERE id = ?`,
 			oldEnqueuedAt.Format(time.RFC3339), job.ID,
 		)
@@ -1437,7 +1437,7 @@ func TestReenqueueJob(t *testing.T) {
 		assert.False(t, updated.EnqueuedAt.After(after), "enqueued_at %v is after the rerun returned at %v", updated.EnqueuedAt, after)
 
 		var storedEnqueuedAt string
-		err = isolatedDB.QueryRow(
+		err = isolatedDB.QueryRowContext(t.Context(),
 			`SELECT enqueued_at FROM review_jobs WHERE id = ?`, job.ID,
 		).Scan(&storedEnqueuedAt)
 		require.NoError(t, err)
@@ -1994,7 +1994,7 @@ func TestReenqueueJob_AcceptsSkipped(t *testing.T) {
 	repoID := createRepo(t, db, "/tmp/repo-rerun-skipped").ID
 	commitID := createCommit(t, db, repoID, "feed").ID
 
-	res, err := db.Exec(`
+	res, err := db.ExecContext(t.Context(), `
 		INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, status, review_type, skip_reason)
 		VALUES (?, ?, 'feed', 'codex', 'skipped', 'design', 'trivial')
 	`, repoID, commitID)
@@ -2014,7 +2014,7 @@ func seedRunningClassify(t *testing.T, db *DB, path, sha, workerID string) int64
 	repo := createRepo(t, db, path)
 	commit := createCommit(t, db, repo.ID, sha)
 	var jobID int64
-	require.NoError(t, db.QueryRow(`
+	require.NoError(t, db.QueryRowContext(t.Context(), `
 		INSERT INTO review_jobs
 		  (repo_id, commit_id, git_ref, agent, status, job_type, review_type, source, worker_id, started_at, enqueued_at, updated_at)
 		VALUES (?, ?, ?, 'auto-design', 'running', 'classify', 'design', 'auto_design', ?, datetime('now'), datetime('now'), datetime('now'))
@@ -2030,7 +2030,7 @@ func TestPromoteClassifyToDesignReview_HappyPath(t *testing.T) {
 
 	jobID := seedRunningClassify(t, db, "/tmp/repo-promote", "abc", "w1")
 
-	_, err := db.Exec(`UPDATE review_jobs SET error = ? WHERE id = ?`,
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET error = ? WHERE id = ?`,
 		"classifier retry: timeout", jobID)
 	require.NoError(t, err)
 
@@ -2082,7 +2082,7 @@ func TestPromoteClassifyToDesignReview_CanceledNoOps(t *testing.T) {
 	repo := createRepo(t, db, "/tmp/repo-promote-cancel")
 	commit := createCommit(t, db, repo.ID, "abc")
 	var jobID int64
-	require.NoError(t, db.QueryRow(`
+	require.NoError(t, db.QueryRowContext(t.Context(), `
 		INSERT INTO review_jobs
 		  (repo_id, commit_id, git_ref, status, job_type, review_type, source, worker_id, enqueued_at, updated_at)
 		VALUES (?, ?, 'abc', 'canceled', 'classify', 'design', 'auto_design', 'w1', datetime('now'), datetime('now'))
@@ -2179,7 +2179,7 @@ func TestMarkClassifyAsSkippedDesign_CanceledNoOps(t *testing.T) {
 	repo := createRepo(t, db, "/tmp/repo-skip-cancel")
 	commit := createCommit(t, db, repo.ID, "abc")
 	var jobID int64
-	require.NoError(t, db.QueryRow(`
+	require.NoError(t, db.QueryRowContext(t.Context(), `
 		INSERT INTO review_jobs
 		  (repo_id, commit_id, git_ref, status, job_type, review_type, source, worker_id, enqueued_at, updated_at)
 		VALUES (?, ?, 'abc', 'canceled', 'classify', 'design', 'auto_design', 'w1', datetime('now'), datetime('now'))
@@ -2266,7 +2266,7 @@ func TestHasAutoDesignSlotForCommit(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, has)
 
-	_, err = db.Exec(
+	_, err = db.ExecContext(t.Context(),
 		`INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, review_type, source)
 		 VALUES (?, (SELECT id FROM commits WHERE sha=?), ?, 'queued', 'design', 'auto_design')`,
 		repoID, "cafef00d", "cafef00d")
@@ -2277,7 +2277,7 @@ func TestHasAutoDesignSlotForCommit(t *testing.T) {
 
 	repoIDExplicit := createRepo(t, db, "/tmp/repo-hasdesign-explicit").ID
 	createCommit(t, db, repoIDExplicit, "beef")
-	_, err = db.Exec(
+	_, err = db.ExecContext(t.Context(),
 		`INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, review_type)
 		 VALUES (?, (SELECT id FROM commits WHERE sha=?), ?, 'queued', 'design')`,
 		repoIDExplicit, "beef", "beef")
@@ -2288,7 +2288,7 @@ func TestHasAutoDesignSlotForCommit(t *testing.T) {
 
 	repoIDCls := createRepo(t, db, "/tmp/repo-hasdesign-cls").ID
 	createCommit(t, db, repoIDCls, "abc")
-	_, err = db.Exec(
+	_, err = db.ExecContext(t.Context(),
 		`INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, job_type, review_type, source)
 		 VALUES (?, (SELECT id FROM commits WHERE sha=?), ?, 'queued', 'classify', 'design', 'auto_design')`,
 		repoIDCls, "abc", "abc")
@@ -2299,7 +2299,7 @@ func TestHasAutoDesignSlotForCommit(t *testing.T) {
 
 	repoIDSk := createRepo(t, db, "/tmp/repo-hasdesign-skipped").ID
 	createCommit(t, db, repoIDSk, "feed")
-	_, err = db.Exec(
+	_, err = db.ExecContext(t.Context(),
 		`INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, review_type, skip_reason, source)
 		 VALUES (?, (SELECT id FROM commits WHERE sha=?), ?, 'skipped', 'design', 'trivial', 'auto_design')`,
 		repoIDSk, "feed", "feed")
@@ -2330,7 +2330,7 @@ func TestHasAutoDesignSlotForCommit_CommitlessRowOccupiesByGitRef(t *testing.T) 
 
 	// First dispatch: commit metadata unavailable, row inserted
 	// without commit_id but with git_ref set.
-	_, err = db.Exec(
+	_, err = db.ExecContext(t.Context(),
 		`INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, job_type, review_type, source)
 		 VALUES (?, NULL, ?, 'queued', 'classify', 'design', 'auto_design')`,
 		repoID, "deadbeef")
@@ -2355,7 +2355,7 @@ func TestGetJobCounts_IncludesSkipped(t *testing.T) {
 	repoID := createRepo(t, db, "/tmp/repo-counts").ID
 	commitID := createCommit(t, db, repoID, "abc").ID
 
-	_, err := db.Exec(`
+	_, err := db.ExecContext(t.Context(), `
 		INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, review_type, skip_reason)
 		VALUES (?, ?, 'abc', 'skipped', 'design', 'trivial')
 	`, repoID, commitID)
@@ -2459,7 +2459,7 @@ func TestUpsertPulledJobRoundTripsBackupColumns(t *testing.T) {
 	require.NoError(t, db.UpsertPulledJob(pulled, repo.ID, nil))
 
 	var ba, bm string
-	row := db.QueryRow(
+	row := db.QueryRowContext(t.Context(),
 		`SELECT COALESCE(backup_agent,''), COALESCE(backup_model,'') FROM review_jobs WHERE uuid = ?`, pulled.UUID,
 	)
 	require.NoError(t, row.Scan(&ba, &bm))
@@ -2512,7 +2512,7 @@ func TestEnqueuePostCommitJobDeduplicatesNonCanceled(t *testing.T) {
 			assert.True(t, duplicate)
 
 			var count int
-			err = db.QueryRow(`
+			err = db.QueryRowContext(t.Context(), `
 				SELECT COUNT(*) FROM review_jobs
 				WHERE repo_id = ? AND git_ref = ? AND job_type = ?
 			`, repo.ID, "abc123", JobTypeReview).Scan(&count)
@@ -2566,7 +2566,7 @@ func TestCompleteFixJobEmptyOutputLeavesVerdictNull(t *testing.T) {
 	require.NoError(t, db.CompleteFixJob(job.ID, "codex", "", "patch content"))
 
 	var vb sql.NullInt64
-	require.NoError(t, db.QueryRow(`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID).Scan(&vb))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID).Scan(&vb))
 	assert.False(t, vb.Valid, "empty output must not store a verdict")
 }
 
@@ -2584,7 +2584,7 @@ func TestCompleteFixJobUnknownOutputLeavesVerdictNull(t *testing.T) {
 		job.ID, "codex", "I am unable to read the diff file because it is ignored by configured ignore patterns.", "patch content"))
 
 	var verdict sql.NullInt64
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(t.Context(),
 		`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID,
 	).Scan(&verdict))
 	assert.False(t, verdict.Valid)

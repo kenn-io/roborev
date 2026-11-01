@@ -24,7 +24,7 @@ func BenchmarkClassify_HeuristicTrigger(b *testing.B) {
 	h := DefaultHeuristics()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = Classify(context.Background(), in, h, nil)
+		_, _ = Classify(b.Context(), in, h, nil)
 	}
 }
 
@@ -39,7 +39,7 @@ func BenchmarkClassify_HeuristicSkip(b *testing.B) {
 	h := DefaultHeuristics()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = Classify(context.Background(), in, h, nil)
+		_, _ = Classify(b.Context(), in, h, nil)
 	}
 }
 
@@ -55,7 +55,7 @@ func BenchmarkClassify_Ambiguous(b *testing.B) {
 	cls := nilClassifier{}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := Classify(context.Background(), in, h, cls)
+		_, err := Classify(b.Context(), in, h, cls)
 		if err != nil && !errors.Is(err, ErrNeedsClassifier) {
 			b.Fatal(err)
 		}

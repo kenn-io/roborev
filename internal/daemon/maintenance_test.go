@@ -410,7 +410,7 @@ func maintenanceRequest(t *testing.T, server *Server, path string, body any) *ht
 	t.Helper()
 	raw, err := json.Marshal(body)
 	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(raw))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, bytes.NewReader(raw))
 	req.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(response, req)
@@ -428,20 +428,20 @@ func TestMaintenanceLegacyReviewLifecycle(t *testing.T) {
 			"- **Problem**: The write is not atomic.\n- **Fix**: Rename a temporary file.\n\n## Summary\n\nThe change adds a save routine.",
 		prose.ID: "The save routine looks risky. Consider a rename.",
 	} {
-		_, err := db.Exec(`INSERT INTO legacy_reviews (id, job_id, agent, output, created_at, closed, verdict_bool, uuid, updated_at, migration_error)
+		_, err := db.ExecContext(t.Context(), `INSERT INTO legacy_reviews (id, job_id, agent, output, created_at, closed, verdict_bool, uuid, updated_at, migration_error)
  SELECT id, job_id, agent, ?, created_at, closed, 0, uuid, updated_at, 'No valid review JSON document; AI conversion required'
  FROM reviews WHERE job_id = ?`, markdown, jobID)
 		require.NoError(t, err)
-		_, err = db.Exec(`DELETE FROM reviews WHERE job_id = ?`, jobID)
+		_, err = db.ExecContext(t.Context(), `DELETE FROM reviews WHERE job_id = ?`, jobID)
 		require.NoError(t, err)
 	}
 
 	// Exporting a synthesis must retain the completed member's document.
 	source := testutil.CreateCompletedReview(t, db, repo.ID, "source-head", "test", "Source assessment.")
 	runID := uuid.New()
-	_, err = db.Exec("UPDATE review_jobs SET job_type = 'synthesis', panel_role = 'synthesis', panel_run_uuid = ? WHERE id = ?", runID, prose.ID)
+	_, err = db.ExecContext(t.Context(), "UPDATE review_jobs SET job_type = 'synthesis', panel_role = 'synthesis', panel_run_uuid = ? WHERE id = ?", runID, prose.ID)
 	require.NoError(t, err)
-	_, err = db.Exec("UPDATE review_jobs SET panel_role = 'member', panel_run_uuid = ?, panel_member_index = 0 WHERE id = ?", runID, source.ID)
+	_, err = db.ExecContext(t.Context(), "UPDATE review_jobs SET panel_role = 'member', panel_run_uuid = ?, panel_member_index = 0 WHERE id = ?", runID, source.ID)
 	require.NoError(t, err)
 	sourceReview, err := db.GetReviewByJobID(source.ID)
 	require.NoError(t, err)
@@ -503,7 +503,7 @@ func TestMaintenanceLegacyReviewLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "Converted review.", restored.StructuredOutput["summary"])
 	var original string
-	require.NoError(t, db.QueryRow("SELECT output FROM legacy_reviews WHERE archive_id = ?", record.ID).Scan(&original))
+	require.NoError(t, db.QueryRowContext(t.Context(), "SELECT output FROM legacy_reviews WHERE archive_id = ?", record.ID).Scan(&original))
 	assert.Equal(t, record.Output, original)
 
 	response = maintenanceRequest(t, server, "/api/maintenance/legacy/convert", map[string]any{"dry_run": false})
@@ -525,7 +525,7 @@ func TestMaintenanceBackfillVerdicts(t *testing.T) {
 	repo, err := db.GetOrCreateRepo(filepath.Join(dir, "repo"))
 	require.NoError(t, err)
 	job := testutil.CreateCompletedReview(t, db, repo.ID, "test-head", "test", "No issues found.")
-	_, err = db.Exec("UPDATE reviews SET verdict_bool = NULL WHERE job_id = ?", job.ID)
+	_, err = db.ExecContext(t.Context(), "UPDATE reviews SET verdict_bool = NULL WHERE job_id = ?", job.ID)
 	require.NoError(t, err)
 	response := maintenanceRequest(t, server, "/api/maintenance/verdicts/backfill", nil)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
@@ -533,7 +533,7 @@ func TestMaintenanceBackfillVerdicts(t *testing.T) {
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result.Body))
 	assert.Equal(t, 1, result.Body.Count)
 	var verdict bool
-	require.NoError(t, db.QueryRow("SELECT verdict_bool FROM reviews WHERE job_id = ?", job.ID).Scan(&verdict))
+	require.NoError(t, db.QueryRowContext(t.Context(), "SELECT verdict_bool FROM reviews WHERE job_id = ?", job.ID).Scan(&verdict))
 	assert.True(t, verdict)
 }
 
@@ -569,7 +569,7 @@ func TestSyncStatusReportsDaemonPendingWork(t *testing.T) {
 	require.NoError(t, err)
 	testutil.CreateCompletedReview(t, db, repo.ID, "pending-job-head", "test", "No issues found.")
 	synced := testutil.CreateCompletedReview(t, db, repo.ID, "synced-job-head", "test", "No issues found.")
-	_, err = db.Exec("UPDATE review_jobs SET synced_at = updated_at WHERE id = ?", synced.ID)
+	_, err = db.ExecContext(t.Context(), "UPDATE review_jobs SET synced_at = updated_at WHERE id = ?", synced.ID)
 	require.NoError(t, err)
 	_, err = db.AddCommentToJob(synced.ID, "tester", "First pending comment")
 	require.NoError(t, err)
@@ -578,7 +578,7 @@ func TestSyncStatusReportsDaemonPendingWork(t *testing.T) {
 	machineID, err := db.GetMachineID()
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/sync/status", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/sync/status", nil)
 	response := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(response, req)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())

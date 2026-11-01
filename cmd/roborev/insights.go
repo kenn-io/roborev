@@ -147,7 +147,7 @@ func runInsights(ctx context.Context, cmd *cobra.Command, opts insightsOptions) 
 	})
 
 	ep := getDaemonEndpoint()
-	resp, err := ep.APIClient(30*time.Second).EnqueueJobRaw(context.Background(), nil, roborevclient.WithBody(reqBody))
+	resp, err := ep.APIClient(30*time.Second).EnqueueJobRaw(ctx, nil, roborevclient.WithBody(reqBody))
 	if err != nil {
 		return fmt.Errorf("failed to connect to daemon: %w", err)
 	}

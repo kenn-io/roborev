@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -18,7 +19,7 @@ func TestFailedReviewAttemptStatesDuringDelivery(t *testing.T) {
 		_, err := db.ReserveReviewAttempt("acme/api", pr, head, time.Now())
 		require.NoError(t, err)
 	}
-	_, err := db.Exec(`UPDATE ci_pr_review_attempts SET last_error_class = 'transient'`)
+	_, err := db.ExecContext(t.Context(), `UPDATE ci_pr_review_attempts SET last_error_class = 'transient'`)
 	require.NoError(t, err)
 
 	// Delivery changes the attempt and panel atomically. Every observation must
@@ -26,7 +27,7 @@ func TestFailedReviewAttemptStatesDuringDelivery(t *testing.T) {
 	stop := make(chan struct{})
 	writerErrors := make(chan error, 1)
 	go func() {
-		writerErrors <- toggleReviewDelivery(db, stop)
+		writerErrors <- toggleReviewDelivery(t.Context(), db, stop)
 	}()
 	defer func() { close(stop); require.NoError(t, <-writerErrors) }()
 	for range 100 {
@@ -39,7 +40,7 @@ func TestFailedReviewAttemptStatesDuringDelivery(t *testing.T) {
 	}
 }
 
-func toggleReviewDelivery(db *DB, stop <-chan struct{}) error {
+func toggleReviewDelivery(ctx context.Context, db *DB, stop <-chan struct{}) error {
 	for {
 		select {
 		case <-stop:
@@ -47,7 +48,7 @@ func toggleReviewDelivery(db *DB, stop <-chan struct{}) error {
 		default:
 		}
 		for _, delivered := range []bool{true, false} {
-			tx, err := db.Begin()
+			tx, err := db.BeginTx(ctx, nil)
 			if err != nil {
 				return err
 			}
@@ -55,9 +56,9 @@ func toggleReviewDelivery(db *DB, stop <-chan struct{}) error {
 			if delivered {
 				state, posted = "done", time.Now().Format(time.RFC3339)
 			}
-			_, err = tx.Exec(`UPDATE ci_pr_review_attempts SET state = ?`, state)
+			_, err = tx.ExecContext(ctx, `UPDATE ci_pr_review_attempts SET state = ?`, state)
 			if err == nil {
-				_, err = tx.Exec(`UPDATE ci_pr_panels SET posted_at = ?, outcome = ?`, posted, PanelOutcomeReviewPosted)
+				_, err = tx.ExecContext(ctx, `UPDATE ci_pr_panels SET posted_at = ?, outcome = ?`, posted, PanelOutcomeReviewPosted)
 			}
 			if err != nil {
 				_ = tx.Rollback()

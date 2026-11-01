@@ -272,7 +272,7 @@ exit 0
 	cmdPath := writeTempCommand(t, script)
 	a := NewGrokAgent(cmdPath)
 
-	result, err := a.Review(context.Background(), t.TempDir(), "abc", "review", nil)
+	result, err := a.Review(t.Context(), t.TempDir(), "abc", "review", nil)
 	assert.Equal(t, "partial review", result)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "turn failed")
@@ -303,7 +303,7 @@ exit 0
 	cmdPath := writeTempCommand(t, script)
 	a := NewGrokAgent(cmdPath)
 
-	result, err := a.Review(context.Background(), t.TempDir(), "abc123", "review this", nil)
+	result, err := a.Review(t.Context(), t.TempDir(), "abc123", "review this", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "REVIEW_OK", result)
 }
@@ -324,7 +324,7 @@ exit 1
 	cmdPath := writeTempCommand(t, script)
 	a := NewGrokAgent(cmdPath).WithAgentic(true).(*GrokAgent)
 
-	result, err := a.Review(context.Background(), t.TempDir(), "abc", "fix it", nil)
+	result, err := a.Review(t.Context(), t.TempDir(), "abc", "fix it", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "agentic", result)
 }
@@ -360,7 +360,7 @@ exit 1
 	cmdPath := writeTempCommand(t, script)
 	a := NewGrokAgent(cmdPath)
 
-	result, err := a.Review(context.Background(), t.TempDir(), "abc", "review", nil)
+	result, err := a.Review(t.Context(), t.TempDir(), "abc", "review", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "readonly", result)
 }
@@ -542,7 +542,7 @@ exit 0
 	cmdPath := writeTempCommand(t, script)
 	a := NewGrokAgent(cmdPath)
 	schema := jsontext.Value(`{"type":"object","properties":{"design_review":{"type":"boolean"},"reason":{"type":"string"}}}`)
-	got, err := a.ClassifyWithSchema(context.Background(), t.TempDir(), "HEAD", "classify me", schema, nil)
+	got, err := a.ClassifyWithSchema(t.Context(), t.TempDir(), "HEAD", "classify me", schema, nil)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"design_review":true,"reason":"needs design"}`, string(got))
 }
@@ -594,7 +594,7 @@ func TestGrokClassifyCLISmoke_SchemaAndSideEffect(t *testing.T) {
 
 	a := NewGrokAgent(grokPath)
 	const smokeTimeout = 2 * time.Minute
-	ctx, cancel := context.WithTimeout(context.Background(), smokeTimeout)
+	ctx, cancel := context.WithTimeout(t.Context(), smokeTimeout)
 	defer cancel()
 
 	var outBuf bytes.Buffer
@@ -685,15 +685,15 @@ func grokEntryPoints(t *testing.T) map[string]func(a *GrokAgent) error {
 	schema := jsontext.Value(`{"type":"object"}`)
 	return map[string]func(a *GrokAgent) error{
 		"review": func(a *GrokAgent) error {
-			_, err := a.Review(context.Background(), t.TempDir(), "sha", "review", nil)
+			_, err := a.Review(t.Context(), t.TempDir(), "sha", "review", nil)
 			return err
 		},
 		"structured review": func(a *GrokAgent) error {
-			_, err := a.ReviewWithSchema(context.Background(), t.TempDir(), "sha", "review", schema, nil)
+			_, err := a.ReviewWithSchema(t.Context(), t.TempDir(), "sha", "review", schema, nil)
 			return err
 		},
 		"classify": func(a *GrokAgent) error {
-			_, err := a.ClassifyWithSchema(context.Background(), t.TempDir(), "sha", "classify", schema, nil)
+			_, err := a.ClassifyWithSchema(t.Context(), t.TempDir(), "sha", "classify", schema, nil)
 			return err
 		},
 	}

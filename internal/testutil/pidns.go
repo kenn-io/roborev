@@ -32,7 +32,9 @@ func runPIDNamespaceCommand(t *testing.T, command []string, readyPath string) {
 	if output, err := probe.CombinedOutput(); err != nil {
 		t.Skipf("PID namespaces unavailable: %v: %s", err, output)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// The sandbox runs until cleanup closes its stdin, which happens after
+	// t.Context is canceled.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 30*time.Second)
 	t.Cleanup(cancel)
 	cmd := exec.CommandContext(ctx, bwrap, append(args, command...)...)
 	if readyPath == "" {

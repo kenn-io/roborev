@@ -23,7 +23,7 @@ func TestStreamEventsMethodNotAllowed(t *testing.T) {
 	cfg := config.DefaultConfig()
 	server := NewServer(db, cfg, "")
 
-	req := httptest.NewRequest("POST", "/api/stream/events", nil)
+	req := httptest.NewRequestWithContext(t.Context(), "POST", "/api/stream/events", nil)
 	rec := httptest.NewRecorder()
 
 	server.httpServer.Handler.ServeHTTP(rec, req)

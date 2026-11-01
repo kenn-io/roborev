@@ -41,7 +41,7 @@ func TestWorkerIsolatedCheckoutCleanupOnFailureOrCancel(t *testing.T) {
 			}})
 			job := tc.createJobWithAgent(t, tc.GitRepo.HeadSHA(), name)
 			jobID = job.ID
-			_, err := tc.DB.Exec("UPDATE review_jobs SET retry_count=? WHERE id=?", maxRetries, job.ID)
+			_, err := tc.DB.ExecContext(t.Context(), "UPDATE review_jobs SET retry_count=? WHERE id=?", maxRetries, job.ID)
 			require.NoError(t, err)
 			claimed, err := tc.DB.ClaimJob(testWorkerID)
 			require.NoError(t, err)

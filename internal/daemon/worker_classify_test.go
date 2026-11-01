@@ -151,7 +151,7 @@ func TestResolveClassifyDiff_UsesDiffContentWhenSet(t *testing.T) {
 		RepoPath:    "/nonexistent",
 		DiffContent: &prebuilt,
 	}
-	got := resolveClassifyDiff("worker-1", job)
+	got := resolveClassifyDiff(t.Context(), "worker-1", job)
 	assert.Equal(t, prebuilt, got,
 		"DiffContent must take precedence over the git fallback")
 }
@@ -171,7 +171,7 @@ func TestResolveClassifyDiff_FetchesFromGitWhenEmpty(t *testing.T) {
 		// DiffContent intentionally nil — this is the auto-design
 		// classify row's enqueue-time state.
 	}
-	got := resolveClassifyDiff("worker-2", job)
+	got := resolveClassifyDiff(t.Context(), "worker-2", job)
 	require.NotEmpty(t, got, "diff must be fetched from git when DiffContent is nil")
 	assert.Contains(t, got, "+package x")
 	assert.Contains(t, got, "+func X()")
@@ -186,7 +186,7 @@ func TestResolveClassifyDiff_SkipsFetchForDirty(t *testing.T) {
 		GitRef:   "dirty",
 		RepoPath: "/somewhere",
 	}
-	assert.Empty(t, resolveClassifyDiff("worker-3", job))
+	assert.Empty(t, resolveClassifyDiff(t.Context(), "worker-3", job))
 }
 
 func TestResolveClassifyDiff_SkipsFetchForEmptyRef(t *testing.T) {
@@ -195,7 +195,7 @@ func TestResolveClassifyDiff_SkipsFetchForEmptyRef(t *testing.T) {
 		GitRef:   "",
 		RepoPath: "/somewhere",
 	}
-	assert.Empty(t, resolveClassifyDiff("worker-4", job))
+	assert.Empty(t, resolveClassifyDiff(t.Context(), "worker-4", job))
 }
 
 func TestProcessClassifyJob_WritesStandardLogAndCommandLine(t *testing.T) {
@@ -229,7 +229,7 @@ func TestProcessClassifyJob_WritesStandardLogAndCommandLine(t *testing.T) {
 	require.Equal(t, jobID, claimed.ID)
 	_, events := tc.Broadcaster.Subscribe("")
 
-	tc.Pool.processClassifyJob(context.Background(), "worker-classify-log", claimed)
+	tc.Pool.processClassifyJob(t.Context(), "worker-classify-log", claimed)
 
 	data, err := os.ReadFile(JobLogPath(jobID))
 	require.NoError(t, err)
@@ -288,7 +288,7 @@ func TestProcessClassifyJobUsesStoredAgent(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, jobID, claimed.ID)
 
-	tc.Pool.processClassifyJob(context.Background(), "worker-stored-agent", claimed)
+	tc.Pool.processClassifyJob(t.Context(), "worker-stored-agent", claimed)
 
 	assert.Equal(t, 0, configuredCalls)
 	assert.Equal(t, 1, selectedCalls)
@@ -406,7 +406,7 @@ func TestCompleteClassifyAsSkip_BroadcastsTerminalEvent(t *testing.T) {
 // the recovery path also fail.
 func breakClassifySource(t *testing.T, tc *workerTestContext, jobID int64) {
 	t.Helper()
-	res, err := tc.DB.Exec("UPDATE review_jobs SET source = 'manual' WHERE id = ?", jobID)
+	res, err := tc.DB.ExecContext(t.Context(), "UPDATE review_jobs SET source = 'manual' WHERE id = ?", jobID)
 	require.NoError(t, err)
 	rows, err := res.RowsAffected()
 	require.NoError(t, err)

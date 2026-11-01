@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -1449,7 +1448,7 @@ esac
 // the ROBOREV= line patched to point at a mock binary.
 func installMockHook(t *testing.T, repoDir, mockBinDir string) {
 	t.Helper()
-	hooksDir, err := gitrepo.HooksPath(context.Background(), repoDir)
+	hooksDir, err := gitrepo.HooksPath(t.Context(), repoDir)
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(hooksDir, 0o755))
 
@@ -1524,7 +1523,7 @@ func TestPostCommitDoesNotEnqueueDuringRebase(t *testing.T) {
 			//   current: C -- D -- E (branch files)
 			gitCmd := func(args ...string) {
 				t.Helper()
-				cmd := exec.Command("git", args...)
+				cmd := exec.CommandContext(t.Context(), "git", args...)
 				cmd.Dir = r.repo.Dir
 				cmd.Env = gitEnv
 				out, err := cmd.CombinedOutput()
@@ -1556,7 +1555,7 @@ func TestPostCommitDoesNotEnqueueDuringRebase(t *testing.T) {
 				"hook must fire at least once before rebase to prove it works")
 
 			// Run a full clean rebase — all 3 feature commits replay.
-			cmd := exec.Command("git", "rebase", "rebase-base")
+			cmd := exec.CommandContext(t.Context(), "git", "rebase", "rebase-base")
 			cmd.Dir = r.repo.Dir
 			cmd.Env = gitEnv
 			out, err := cmd.CombinedOutput()

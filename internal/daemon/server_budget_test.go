@@ -27,7 +27,7 @@ func TestRerunRefreshesBudgetSpend(t *testing.T) {
 		RepoID: tc.Repo.ID, GitRef: testutil.GetHeadSHA(t, tc.TmpDir), Agent: "codex",
 	})
 	require.NoError(t, err)
-	_, err = tc.DB.Exec(`UPDATE review_jobs SET status='done',started_at=?,finished_at=?,
+	_, err = tc.DB.ExecContext(t.Context(), `UPDATE review_jobs SET status='done',started_at=?,finished_at=?,
 		agent_invoked=1,token_usage='{"has_cost":true,"cost_usd":1}' WHERE id=?`,
 		now.Format(time.RFC3339), now.Format(time.RFC3339), job.ID)
 	require.NoError(t, err)

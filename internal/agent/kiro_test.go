@@ -2,7 +2,6 @@ package agent
 
 import (
 	"bytes"
-	"context"
 	"os"
 	"strings"
 	"testing"
@@ -171,7 +170,7 @@ func TestKiroReviewSuccess(t *testing.T) {
 	cmdPath := writeTempCommand(t, script)
 	a := NewKiroAgent(cmdPath)
 
-	result, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "review this commit", nil)
+	result, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "review this commit", nil)
 	require.NoError(t, err)
 	if !strings.Contains(result, output) {
 		require.Contains(t, result, output, "expected result to contain %q, got %q", output, result)
@@ -187,7 +186,7 @@ func TestKiroReviewWritesOutputWriter(t *testing.T) {
 	a := NewKiroAgent(cmdPath)
 
 	var buf bytes.Buffer
-	result, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "review", &buf)
+	result, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "review", &buf)
 	require.NoError(t, err)
 	if !strings.Contains(result, output) {
 		require.Contains(t, result, output, "expected result to contain output, got: %q", result)
@@ -207,7 +206,7 @@ func TestKiroReviewFailure(t *testing.T) {
 	cmdPath := writeTempCommand(t, script)
 	a := NewKiroAgent(cmdPath)
 
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "review this commit", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "review this commit", nil)
 	require.Error(t, err)
 
 	if !strings.Contains(err.Error(), "kiro failed") {
@@ -222,7 +221,7 @@ func TestKiroReviewEmptyOutput(t *testing.T) {
 	cmdPath := writeTempCommand(t, script)
 	a := NewKiroAgent(cmdPath)
 
-	result, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "review this commit", nil)
+	result, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "review this commit", nil)
 	require.NoError(t, err)
 	require.Equal(t, "No review output generated", result, "unexpected result: %q", result)
 }
@@ -237,7 +236,7 @@ func TestKiroPassesPromptAsArg(t *testing.T) {
 
 	a := NewKiroAgent(mock.CmdPath)
 	prompt := "Review this commit for issues"
-	_, err := a.Review(context.Background(), t.TempDir(), "HEAD", prompt, nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "HEAD", prompt, nil)
 	require.NoError(t, err, "Review failed")
 
 	args, err := os.ReadFile(mock.ArgsFile)
@@ -264,7 +263,7 @@ func TestKiroReviewAgenticMode(t *testing.T) {
 	a := NewKiroAgent(mock.CmdPath)
 	a2 := a.WithAgentic(true).(*KiroAgent)
 
-	_, err := a2.Review(context.Background(), t.TempDir(), "HEAD", "prompt", nil)
+	_, err := a2.Review(t.Context(), t.TempDir(), "HEAD", "prompt", nil)
 	require.NoError(t, err, "Review failed")
 
 	args, err := os.ReadFile(mock.ArgsFile)
@@ -283,7 +282,7 @@ func TestKiroReviewAgenticModeFromGlobal(t *testing.T) {
 	})
 
 	a := NewKiroAgent(mock.CmdPath)
-	_, err := a.Review(context.Background(), t.TempDir(), "HEAD", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "HEAD", "prompt", nil)
 	require.NoError(t, err, "Review failed")
 
 	args, err := os.ReadFile(mock.ArgsFile)
@@ -304,7 +303,7 @@ func TestKiroReviewStderrFallback(t *testing.T) {
 	cmdPath := writeTempCommand(t, script)
 	a := NewKiroAgent(cmdPath)
 
-	result, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "review", nil)
+	result, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "review", nil)
 	require.NoError(t, err)
 	if !strings.Contains(result, "review on stderr") {
 		require.Contains(t, result, "review on stderr", "expected stderr fallback, got: %q", result)
@@ -328,7 +327,7 @@ func TestKiroReviewStderrFallbackMarkerOnlyStdout(t *testing.T) {
 	a := NewKiroAgent(cmdPath)
 
 	result, err := a.Review(
-		context.Background(), t.TempDir(),
+		t.Context(), t.TempDir(),
 		"deadbeef", "review", nil,
 	)
 	require.NoError(t, err)
@@ -349,7 +348,7 @@ func TestKiroReviewStderrPreferredOverStdoutNoise(t *testing.T) {
 	a := NewKiroAgent(cmdPath)
 
 	result, err := a.Review(
-		context.Background(), t.TempDir(),
+		t.Context(), t.TempDir(),
 		"deadbeef", "review", nil,
 	)
 	require.NoError(t, err)
@@ -371,7 +370,7 @@ func TestKiroReviewStderrFallbackNoMarker(t *testing.T) {
 	a := NewKiroAgent(cmdPath)
 
 	result, err := a.Review(
-		context.Background(), t.TempDir(),
+		t.Context(), t.TempDir(),
 		"deadbeef", "review", nil,
 	)
 	require.NoError(t, err)
@@ -391,7 +390,7 @@ func TestKiroReviewStdoutPreservedOverStderrNoise(t *testing.T) {
 	a := NewKiroAgent(cmdPath)
 
 	result, err := a.Review(
-		context.Background(), t.TempDir(),
+		t.Context(), t.TempDir(),
 		"deadbeef", "review", nil,
 	)
 	require.NoError(t, err)
@@ -406,7 +405,7 @@ func TestKiroReviewStdoutPreservedOverStderrNoise(t *testing.T) {
 func TestKiroReviewPromptTooLarge(t *testing.T) {
 	a := NewKiroAgent("kiro-cli")
 	bigPrompt := strings.Repeat("x", maxPromptArgLen+1)
-	_, err := a.Review(context.Background(), t.TempDir(), "HEAD", bigPrompt, nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "HEAD", bigPrompt, nil)
 	require.Error(t, err)
 
 	if !strings.Contains(err.Error(), "too large") {

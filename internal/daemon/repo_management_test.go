@@ -20,7 +20,7 @@ func postRepoManagement(t *testing.T, server *Server, action string, body any) *
 	t.Helper()
 	data, err := json.Marshal(body)
 	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodPost, "/api/repos/"+action, bytes.NewReader(data))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/repos/"+action, bytes.NewReader(data))
 	req.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(recorder, req)
@@ -32,7 +32,7 @@ func TestRepoManagementDetailsAndRename(t *testing.T) {
 	job := createTestJob(t, db, dir, "repo-management-details", "test")
 	repo, err := db.GetRepoByID(job.RepoID)
 	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodGet, "/api/repos/detail?identifier="+url.QueryEscape(repo.Name), nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/repos/detail?identifier="+url.QueryEscape(repo.Name), nil)
 	recorder := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(recorder, req)
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
@@ -152,7 +152,7 @@ func TestRepoManagementNameDoesNotResolveAgainstDaemonDirectory(t *testing.T) {
 	_, err = db.RenameRepo(namedRepo.RootPath, name)
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/repos/detail?identifier="+url.QueryEscape(name), nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/repos/detail?identifier="+url.QueryEscape(name), nil)
 	recorder := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(recorder, req)
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
@@ -168,7 +168,7 @@ func TestRepoManagementNameDoesNotResolveAgainstDaemonDirectory(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "path-owner", storedPathRepo.Name)
 
-	pathRequest := httptest.NewRequest(http.MethodGet, "/api/repos/detail?by_path=true&identifier="+url.QueryEscape(pathRepo.RootPath), nil)
+	pathRequest := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/repos/detail?by_path=true&identifier="+url.QueryEscape(pathRepo.RootPath), nil)
 	pathRecorder := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(pathRecorder, pathRequest)
 	require.Equal(t, http.StatusOK, pathRecorder.Code, pathRecorder.Body.String())
@@ -206,7 +206,7 @@ func TestRepoManagementPathDoesNotFallBackToName(t *testing.T) {
 	_, err = db.RenameRepo(repo.RootPath, untracked)
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/repos/detail?by_path=true&identifier="+url.QueryEscape(untracked), nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/repos/detail?by_path=true&identifier="+url.QueryEscape(untracked), nil)
 	recorder := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(recorder, req)
 	assert.Equal(http.StatusNotFound, recorder.Code, recorder.Body.String())
@@ -240,7 +240,7 @@ func TestRepoManagementAmbiguousName(t *testing.T) {
 		require.NoError(t, err)
 		repos = append(repos, repo)
 	}
-	req := httptest.NewRequest(http.MethodGet, "/api/repos/detail?identifier=widgets", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/repos/detail?identifier=widgets", nil)
 	w := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(w, req)
 	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
@@ -258,7 +258,7 @@ func TestRepoManagementAmbiguousName(t *testing.T) {
 		}
 	}
 	// These registered paths never existed on disk; paths still select exactly one.
-	req = httptest.NewRequest(http.MethodGet, "/api/repos/detail?by_path=true&identifier="+url.QueryEscape(repos[1].RootPath), nil)
+	req = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/repos/detail?by_path=true&identifier="+url.QueryEscape(repos[1].RootPath), nil)
 	w = httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())

@@ -234,7 +234,7 @@ func TestRefineReviewIncludesThreeDotRange(t *testing.T) {
 	head := repo.CommitFile("next.go", "package source\n", "Add next source")
 	review := &storage.Review{Job: &storage.ReviewJob{GitRef: base + "..." + head}}
 
-	assert.True(t, refineReviewIncludes(context.Background(), repo.Dir, review, base))
+	assert.True(t, refineReviewIncludes(t.Context(), repo.Dir, review, base))
 }
 
 type refinePlanReasoningAgent struct {
@@ -408,7 +408,7 @@ func TestRefinePlanStopsAfterCallerChangesDuringPlanning(t *testing.T) {
 			var runErr error
 			stdout := captureOutput(t, func() error {
 				runErr = runRefine(
-					RunContext{Context: context.Background(), WorkingDir: repo.Dir},
+					t.Context(), RunContext{WorkingDir: repo.Dir},
 					refineOptions{plan: true, since: base, agentName: name, maxIterations: 4, unsafeFlagChanged: true, allowUnsafeAgents: false},
 				)
 				return nil
@@ -510,7 +510,7 @@ func TestRefinePlanRetriesAfterPlanningFailureAndKeepsAttemptContext(t *testing.
 	t.Cleanup(func() { agent.Unregister(name) })
 	var runErr error
 	stdout := captureOutput(t, func() error {
-		runErr = runRefine(RunContext{Context: context.Background(), WorkingDir: repo.Dir, PostCommitDelay: time.Millisecond}, refineOptions{plan: true, since: base, agentName: name, maxIterations: 4, unsafeFlagChanged: true, allowUnsafeAgents: false})
+		runErr = runRefine(t.Context(), RunContext{WorkingDir: repo.Dir, PostCommitDelay: time.Millisecond}, refineOptions{plan: true, since: base, agentName: name, maxIterations: 4, unsafeFlagChanged: true, allowUnsafeAgents: false})
 		return nil
 	})
 	require.ErrorContains(t, runErr, "max iterations")

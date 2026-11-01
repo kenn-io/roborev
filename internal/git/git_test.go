@@ -107,8 +107,8 @@ func copyTestRepoTree(dst, src string) error {
 	})
 }
 
-func mustTemplateGit(dir string, args ...string) {
-	cmd := exec.Command("git", args...)
+func mustTemplateGit(ctx context.Context, dir string, args ...string) {
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		panic(fmt.Sprintf("git template %v failed: %v\n%s", args, err, out))
@@ -124,7 +124,7 @@ func NewTestRepoWithAuthor(t *testing.T, author string) *TestRepo {
 	t.Helper()
 	dir := t.TempDir()
 	instantiateTestRepoTemplate(t, "init", func(d string) {
-		mustTemplateGit(d, "init")
+		mustTemplateGit(t.Context(), d, "init")
 	}, dir)
 	r := &TestRepo{T: t, Dir: dir, Author: author}
 	r.writeConfig(author)
@@ -142,7 +142,7 @@ func NewBareTestRepo(t *testing.T) *TestRepo {
 	t.Helper()
 	dir := t.TempDir()
 	instantiateTestRepoTemplate(t, "bare", func(d string) {
-		mustTemplateGit(d, "init", "--bare")
+		mustTemplateGit(t.Context(), d, "init", "--bare")
 	}, dir)
 	return &TestRepo{T: t, Dir: dir, Author: "Test"}
 }
@@ -385,7 +385,8 @@ func (r *TestRepo) AddWorktree(branchName string) *TestRepo {
 	wtDir := r.T.TempDir()
 	r.Run("worktree", "add", wtDir, "-b", branchName)
 	r.T.Cleanup(func() {
-		cmd := exec.Command("git", "worktree", "remove", wtDir)
+		// T.Context is already canceled when cleanups run.
+		cmd := exec.CommandContext(context.WithoutCancel(r.T.Context()), "git", "worktree", "remove", wtDir)
 		cmd.Dir = r.Dir
 		_ = cmd.Run()
 	})
@@ -457,7 +458,7 @@ func runGit(t *testing.T, dir string, args ...string) string {
 	var out []byte
 	var err error
 	for attempt := 0; ; attempt++ {
-		cmd := exec.Command("git", args...)
+		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		out, err = cmd.CombinedOutput()
 		if err == nil || attempt >= gitTransientRetries || !isTransientGitError(out) {
@@ -655,7 +656,7 @@ func TestEnsureAbsoluteHooksPath(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify core.hooksPath is still unset.
-		cmd := exec.Command(
+		cmd := exec.CommandContext(t.Context(),
 			"git", "config", "--local", "core.hooksPath",
 		)
 		cmd.Dir = repo.Dir
@@ -760,7 +761,7 @@ func TestEnsureAbsoluteHooksPath(t *testing.T) {
 			repo := NewTestRepo(t)
 
 			// Verify no local override exists yet.
-			check := exec.Command(
+			check := exec.CommandContext(t.Context(),
 				"git", "config", "--local", "core.hooksPath",
 			)
 			check.Dir = repo.Dir
@@ -845,7 +846,8 @@ func TestGetMainRepoRootForBareBackedWorktree(t *testing.T) {
 	worktreeDir := t.TempDir()
 	bareRepo.Run("worktree", "add", worktreeDir, "main")
 	t.Cleanup(func() {
-		cmd := exec.Command("git", "-C", bareRepo.Dir, "worktree", "remove", worktreeDir)
+		// t.Context is already canceled when cleanups run.
+		cmd := exec.CommandContext(context.WithoutCancel(t.Context()), "git", "-C", bareRepo.Dir, "worktree", "remove", worktreeDir)
 		_ = cmd.Run()
 	})
 
@@ -1174,7 +1176,7 @@ func TestGetCurrentBranch(t *testing.T) {
 }
 
 func TestInferBranchForCommit(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	t.Run("exact tip match", func(t *testing.T) {
 		repo := NewTestRepoWithCommit(t)
@@ -2468,7 +2470,7 @@ func TestCreateCommitPreCommitHookOutput(t *testing.T) {
 	repo.WriteFile("new.txt", "content")
 	repo.Run("add", "new.txt")
 
-	_, err := CreateCommit(repo.Dir, "should fail")
+	_, err := CreateCommit(t.Context(), repo.Dir, "should fail")
 	require.Error(t, err, "expected CreateCommit to fail with pre-commit hook")
 
 	assert.
@@ -2491,7 +2493,7 @@ func TestCreateCommitExecutableHookReceivesRepoPWD(t *testing.T) {
 
 	repo.WriteFile("pwd.txt", "content")
 
-	sha, err := CreateCommit(repo.Dir, "commit with pwd hook")
+	sha, err := CreateCommit(t.Context(), repo.Dir, "commit with pwd hook")
 	require.NoError(t, err)
 	assert.Equal(t, sha, repo.HeadSHA())
 }
@@ -2535,7 +2537,7 @@ func TestCreateCommitHookFailedProbePreservesEnvOnlyIdentity(t *testing.T) {
 
 	repo.WriteFile("new.txt", "content")
 
-	_, err = CreateCommit(repo.Dir, "should fail")
+	_, err = CreateCommit(t.Context(), repo.Dir, "should fail")
 	require.Error(t, err, "expected CreateCommit to fail with pre-commit hook")
 
 	var commitErr *CommitError
@@ -2596,7 +2598,7 @@ func TestCreateCommitWithOptionsAuthor(t *testing.T) {
 	repo := NewTestRepoWithCommit(t)
 	repo.WriteFile("new.txt", "content")
 
-	sha, err := CreateCommitWithOptions(repo.Dir, "commit with author", CommitOptions{
+	sha, err := CreateCommitWithOptions(t.Context(), repo.Dir, "commit with author", CommitOptions{
 		Author: "Fix Author <fix-author@example.com>",
 	})
 	require.NoError(t, err)
@@ -2610,7 +2612,7 @@ func TestCreateCommitWithOptionsCoAuthors(t *testing.T) {
 	repo := NewTestRepoWithCommit(t)
 	repo.WriteFile("new.txt", "content")
 
-	_, err := CreateCommitWithOptions(repo.Dir, "commit with trailers", CommitOptions{
+	_, err := CreateCommitWithOptions(t.Context(), repo.Dir, "commit with trailers", CommitOptions{
 		CoAuthors: []string{
 			"Reviewer One <one@example.com>",
 			"Reviewer Two <two@example.com>",
@@ -2638,7 +2640,7 @@ func TestCreateCommitWithOptionsHookFailure(t *testing.T) {
 
 	repo.WriteFile("new.txt", "content")
 
-	_, err := CreateCommitWithOptions(repo.Dir, "should fail", CommitOptions{
+	_, err := CreateCommitWithOptions(t.Context(), repo.Dir, "should fail", CommitOptions{
 		Author: "Fix Author <fix-author@example.com>",
 	})
 	require.Error(t, err, "expected CreateCommitWithOptions to fail with pre-commit hook")
@@ -2653,7 +2655,7 @@ func TestCommitErrorHookFailedFalseWhenNothingToCommit(t *testing.T) {
 
 	repo.InstallHook("pre-commit", "#!/bin/sh\nexit 0\n")
 
-	_, err := CreateCommit(repo.Dir, "empty commit")
+	_, err := CreateCommit(t.Context(), repo.Dir, "empty commit")
 	require.Error(t, err, "expected CreateCommit to fail")
 
 	var commitErr *CommitError
@@ -2670,7 +2672,7 @@ func TestCommitErrorHookFailedCommitMsgHook(t *testing.T) {
 	repo.WriteFile("new.txt", "content")
 	repo.Run("add", "new.txt")
 
-	_, err := CreateCommit(repo.Dir, "should fail")
+	_, err := CreateCommit(t.Context(), repo.Dir, "should fail")
 	require.Error(t, err, "expected CreateCommit to fail with commit-msg hook")
 
 	var commitErr *CommitError
@@ -2699,7 +2701,7 @@ func TestCommitErrorHookFailedFalseForGPGSigningFailure(t *testing.T) {
 	repo.WriteFile("new.txt", "content")
 	repo.Run("add", "new.txt")
 
-	_, err := CreateCommit(repo.Dir, "should fail from gpg")
+	_, err := CreateCommit(t.Context(), repo.Dir, "should fail from gpg")
 	require.Error(t, err, "expected commit to fail due to gpg.program=false")
 
 	var commitErr *CommitError
@@ -2722,7 +2724,7 @@ func TestCreateCommitPreservesGitIdentityEnvWhileIgnoringRepoEnv(t *testing.T) {
 	t.Setenv("GIT_COMMITTER_EMAIL", "env-committer@example.com")
 
 	target.WriteFile("created.txt", "content")
-	sha, err := CreateCommit(target.Dir, "commit with env identity")
+	sha, err := CreateCommit(t.Context(), target.Dir, "commit with env identity")
 	require.NoError(t, err)
 
 	os.Unsetenv("GIT_DIR")
@@ -2754,7 +2756,7 @@ func TestCreateCommitPreservesGitConfigEnvWhileIgnoringRepoEnv(t *testing.T) {
 	t.Setenv("GIT_CONFIG_VALUE_2", "config-author@example.com")
 
 	target.WriteFile("created.txt", "content")
-	sha, err := CreateCommit(target.Dir, "commit with env config")
+	sha, err := CreateCommit(t.Context(), target.Dir, "commit with env config")
 	require.NoError(t, err)
 
 	os.Unsetenv("GIT_DIR")
@@ -2779,7 +2781,7 @@ func TestCreateCommitPreservesGitConfigParametersIdentity(t *testing.T) {
 		"'core.worktree'='"+leaked.Dir+"' 'core.fileMode'= 'color.ui' 'user.name'='Param O'\\''Connor' 'user.email'='param@example.com'")
 
 	target.WriteFile("created.txt", "content")
-	sha, err := CreateCommit(target.Dir, "commit with parameters identity")
+	sha, err := CreateCommit(t.Context(), target.Dir, "commit with parameters identity")
 	require.NoError(t, err)
 
 	os.Unsetenv("GIT_DIR")
@@ -2803,7 +2805,7 @@ func TestCreateCommitPreservesGlobalConfigEnv(t *testing.T) {
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 
 	repo.WriteFile("created.txt", "content")
-	sha, err := CreateCommit(repo.Dir, "commit with global identity")
+	sha, err := CreateCommit(t.Context(), repo.Dir, "commit with global identity")
 	require.NoError(t, err)
 
 	assert.Equal(t, "Global Author <global@example.com>", repo.Run("show", "-s", "--format=%an <%ae>", sha))
@@ -2994,10 +2996,10 @@ func TestRefMatchesBranchLineage(t *testing.T) {
 		repo.CommitFile("main.txt", "main", "main commit")
 		headSHA := repo.HeadSHA()
 
-		matcher, err := NewHeadAncestryMatcherCtx(context.Background(), repo.Dir, headSHA)
+		matcher, err := NewHeadAncestryMatcherCtx(t.Context(), repo.Dir, headSHA)
 		require.NoError(t, err)
 		refs := []string{reachableTag, baseSHA + ".." + reachableTag, baseSHA[:12], sideSHA, "no-such-ref"}
-		require.NoError(t, matcher.ResolveRefs(context.Background(), refs))
+		require.NoError(t, matcher.ResolveRefs(t.Context(), refs))
 
 		assert.True(t, matcher.Matches(headSHA))
 		assert.True(t, matcher.Matches(reachableTag))
@@ -3128,7 +3130,7 @@ func TestLocalBranchSet(t *testing.T) {
 		repo.CheckoutNewBranch("feature/nested-name")
 		repo.CheckoutNewBranch("other")
 
-		got, err := LocalBranchSet(context.Background(), repo.Dir)
+		got, err := LocalBranchSet(t.Context(), repo.Dir)
 		require.NoError(t, err)
 		assert.Equal(t, map[string]struct{}{
 			current:               {},
@@ -3138,7 +3140,7 @@ func TestLocalBranchSet(t *testing.T) {
 	})
 
 	t.Run("errors outside a repository", func(t *testing.T) {
-		_, err := LocalBranchSet(context.Background(), t.TempDir())
+		_, err := LocalBranchSet(t.Context(), t.TempDir())
 		assert.Error(t, err)
 	})
 }
@@ -3157,16 +3159,16 @@ func TestBranchesContaining(t *testing.T) {
 
 	want := []string{current, "feature"}
 	sort.Strings(want)
-	got, err := BranchesContaining(context.Background(), repo.Dir, shared)
+	got, err := BranchesContaining(t.Context(), repo.Dir, shared)
 	require.NoError(t, err)
 	assert.Equal(t, want, got)
 
-	got, err = BranchesContaining(context.Background(), repo.Dir, featureOnly)
+	got, err = BranchesContaining(t.Context(), repo.Dir, featureOnly)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"feature"}, got)
 
 	_, err = BranchesContaining(
-		context.Background(), repo.Dir, strings.Repeat("f", 40),
+		t.Context(), repo.Dir, strings.Repeat("f", 40),
 	)
 	assert.Error(t, err, "an unresolvable SHA must not report zero branches")
 }
@@ -3238,7 +3240,8 @@ func TestWorktreePathForBranch(t *testing.T) {
 		wtDir := t.TempDir()
 		repo.Run("worktree", "add", wtDir, "wt-preexist")
 		t.Cleanup(func() {
-			rmCmd := exec.Command("git", "-C", repo.Dir, "worktree", "remove", wtDir)
+			// t.Context is already canceled when cleanups run.
+			rmCmd := exec.CommandContext(context.WithoutCancel(t.Context()), "git", "-C", repo.Dir, "worktree", "remove", wtDir)
 			_ = rmCmd.Run()
 		})
 
@@ -3543,7 +3546,7 @@ func TestCtxVariantsHonorCancellation(t *testing.T) {
 	repo := NewTestRepoWithCommit(t)
 	sha := strings.TrimSpace(repo.Run("rev-parse", "HEAD"))
 	rangeRef := sha + ".." + sha
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	tests := []struct {

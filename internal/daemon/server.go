@@ -373,7 +373,7 @@ func (s *Server) Start(ctx context.Context) error {
 			}
 		} else {
 			// TCP: find an available port first
-			addr, _, err := FindAvailablePort(ep.Address)
+			addr, _, err := FindAvailablePort(ctx, ep.Address)
 			if err != nil {
 				s.configWatcher.Stop()
 				return fmt.Errorf("find available port: %w", err)
@@ -474,14 +474,14 @@ func (s *Server) Start(ctx context.Context) error {
 	s.alternateEndpoint = alternate
 	s.endpointMu.Unlock()
 
-	if err := s.startRemoteServer(cfg.Remote); err != nil {
+	if err := s.startRemoteServer(ctx, cfg.Remote); err != nil {
 		_ = s.httpServer.Close()
 		s.configWatcher.Stop()
 		s.workerPool.Stop()
 		s.stopSearch()
 		return err
 	}
-	browserRuntime, err := s.startBrowserServer(cfg.Web)
+	browserRuntime, err := s.startBrowserServer(ctx, cfg.Web)
 	if err != nil {
 		s.abortRemoteServer()
 		_ = s.httpServer.Close()
@@ -513,7 +513,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	s.browserMu.Unlock()
 
-	s.captureDaemonStartedTelemetry(cfg)
+	s.captureDaemonStartedTelemetry(ctx, cfg)
 	s.startDailyTelemetryLoop(ctx, cfg)
 
 	// Notify systemd that the daemon is ready. No-op when not running
@@ -927,8 +927,8 @@ func (s *Server) SetTelemetry(client telemetry.Client) {
 	s.telemetry = client
 }
 
-func (s *Server) captureDaemonStartedTelemetry(cfg *config.Config) {
-	s.captureTelemetryEvent(telemetry.EventDaemonStarted, cfg)
+func (s *Server) captureDaemonStartedTelemetry(ctx context.Context, cfg *config.Config) {
+	s.captureTelemetryEvent(ctx, telemetry.EventDaemonStarted, cfg)
 	s.captureSetupFinishedTelemetry()
 }
 
@@ -1000,7 +1000,7 @@ func (s *Server) startDailyTelemetryLoop(ctx context.Context, cfg *config.Config
 			return
 		}
 
-		s.captureDailyTelemetry(cfg)
+		s.captureDailyTelemetry(ctx, cfg)
 
 		go func() {
 			ticker := time.NewTicker(dailyTelemetryInterval)
@@ -1013,29 +1013,29 @@ func (s *Server) startDailyTelemetryLoop(ctx context.Context, cfg *config.Config
 				case <-s.telemetryStop:
 					return
 				case <-ticker.C:
-					s.captureDailyTelemetry(cfg)
+					s.captureDailyTelemetry(ctx, cfg)
 				}
 			}
 		}()
 	})
 }
 
-func (s *Server) captureDailyTelemetry(cfg *config.Config) {
-	s.captureTelemetryEvent(telemetry.EventDaemonActive, cfg)
+func (s *Server) captureDailyTelemetry(ctx context.Context, cfg *config.Config) {
+	s.captureTelemetryEvent(ctx, telemetry.EventDaemonActive, cfg)
 }
 
-func (s *Server) captureTelemetryEvent(event string, cfg *config.Config) {
+func (s *Server) captureTelemetryEvent(ctx context.Context, event string, cfg *config.Config) {
 	if s.telemetry == nil || !s.telemetry.Enabled() {
 		return
 	}
 
-	props := s.telemetryProperties(cfg)
+	props := s.telemetryProperties(ctx, cfg)
 	if err := s.telemetry.Capture(event, props); err != nil {
 		log.Printf("Warning: capture telemetry event: %v", err)
 	}
 }
 
-func (s *Server) telemetryProperties(cfg *config.Config) map[string]any {
+func (s *Server) telemetryProperties(ctx context.Context, cfg *config.Config) map[string]any {
 	repoCount := 0
 	if repos, err := s.db.ListRepos(); err != nil {
 		log.Printf("Warning: failed to count repos for telemetry: %v", err)
@@ -1043,7 +1043,7 @@ func (s *Server) telemetryProperties(cfg *config.Config) map[string]any {
 		repoCount = len(repos)
 	}
 	reviewCount := 0
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM reviews`).Scan(&reviewCount); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM reviews`).Scan(&reviewCount); err != nil {
 		log.Printf("Warning: failed to count reviews for telemetry: %v", err)
 	}
 
@@ -1293,7 +1293,7 @@ func (s *Server) findReusableSessionID(
 		if !isAncestor {
 			continue
 		}
-		commitsSinceCandidate, err := git.GetRangeCommits(repoPath, candidateSHA+".."+targetSHA)
+		commitsSinceCandidate, err := git.GetRangeCommitsCtx(ctx, repoPath, candidateSHA+".."+targetSHA)
 		if err != nil {
 			log.Printf("enqueue: compute reusable session distance failed for job %d (%q -> %q): %v", candidate.ID, candidateSHA, targetSHA, err)
 			continue
@@ -1369,7 +1369,7 @@ func findCompatibleReusableSession(
 		if err != nil || !isAncestor {
 			continue
 		}
-		commitsSinceCandidate, err := git.GetRangeCommits(repoPath, candidateSHA+".."+targetSHA)
+		commitsSinceCandidate, err := git.GetRangeCommitsCtx(ctx, repoPath, candidateSHA+".."+targetSHA)
 		if err != nil || len(commitsSinceCandidate) > maxSessionReuseDistance {
 			continue
 		}
@@ -1610,7 +1610,7 @@ func (s *Server) humaListJobs(
 	// Single job lookup by ID (>= 0 because ID=0 should
 	// return empty, not fall through to the list path).
 	if input.ID >= 0 {
-		job, err := s.db.GetJobByID(input.ID)
+		job, err := s.db.GetJobByIDContext(ctx, input.ID)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				resp := &ListJobsOutput{}
@@ -2614,7 +2614,13 @@ func (s *Server) humaCancelJob(
 	// below still returns the correct 404/500 for the target. A not-found here
 	// is expected (the cancel reports it); log only a real lookup failure so a
 	// transient DB error that downgrades a panel cancel leaves a trace.
-	job, jobErr := s.db.GetJobByID(input.Body.JobID)
+	// The cancel below does not take a context, so once the request is
+	// accepted it always lands. Detach these lookups from the request too:
+	// a client disconnecting mid-lookup would otherwise leave job nil and
+	// skip panel retirement and member cancellation for a parent that is
+	// still canceled.
+	lookupCtx := context.WithoutCancel(ctx)
+	job, jobErr := s.db.GetJobByIDContext(lookupCtx, input.Body.JobID)
 	if jobErr != nil && !errors.Is(jobErr, sql.ErrNoRows) {
 		log.Printf("cancel job %d: panel routing lookup failed: %v",
 			input.Body.JobID, jobErr)
@@ -2658,7 +2664,7 @@ func (s *Server) humaCancelJob(
 	s.releaseSynthesisIfCanceledMember(job)
 
 	if job == nil {
-		job, _ = s.db.GetJobByID(input.Body.JobID)
+		job, _ = s.db.GetJobByIDContext(lookupCtx, input.Body.JobID)
 	}
 	s.broadcaster.Broadcast(eventForMutationPrincipal(
 		ctx, eventForJob(jobEventType(job, "canceled"), job, input.Body.JobID),
@@ -2683,7 +2689,7 @@ func (s *Server) humaRerunJob(
 			"job_id is required",
 		)
 	}
-	job, err := s.db.GetJobByID(input.Body.JobID)
+	job, err := s.db.GetJobByIDContext(ctx, input.Body.JobID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, huma.Error404NotFound(
@@ -2819,7 +2825,7 @@ func (s *Server) humaCloseReview(
 		)
 	}
 
-	job, jobErr := s.db.GetJobByID(input.Body.JobID)
+	job, jobErr := s.db.GetJobByIDContext(ctx, input.Body.JobID)
 	if jobErr != nil && !errors.Is(jobErr, sql.ErrNoRows) {
 		return nil, huma.Error500InternalServerError(
 			fmt.Sprintf("get job: %v", jobErr),
@@ -2912,7 +2918,7 @@ func (s *Server) humaAddComment(
 				fmt.Sprintf("add comment: %v", err),
 			)
 		}
-		job, jobErr := s.db.GetJobByID(input.Body.JobID)
+		job, jobErr := s.db.GetJobByIDContext(ctx, input.Body.JobID)
 		if jobErr != nil {
 			log.Printf("comment on job %d: load event metadata: %v", input.Body.JobID, jobErr)
 		}
@@ -3686,7 +3692,7 @@ func (s *Server) humaFixJob(
 		)
 	}
 
-	parentJob, err := s.db.GetJobByID(req.ParentJobID)
+	parentJob, err := s.db.GetJobByIDContext(ctx, req.ParentJobID)
 	if err != nil {
 		return rawJSONOutput(
 			http.StatusNotFound,
@@ -3707,7 +3713,7 @@ func (s *Server) humaFixJob(
 	var planReview *storage.Review
 	var planComments []storage.Response
 	if req.StaleJobID > 0 {
-		staleJob, err := s.db.GetJobByID(req.StaleJobID)
+		staleJob, err := s.db.GetJobByIDContext(ctx, req.StaleJobID)
 		if err != nil {
 			return rawJSONOutput(
 				http.StatusNotFound,
@@ -3896,7 +3902,7 @@ func (s *Server) humaFixJob(
 		if planReview != nil {
 			review := *planReview
 			review.Job = parentJob
-			findings = prompt.FixPlanReviewContext(resolutionPath, &review)
+			findings = prompt.FixPlanReviewContext(ctx, resolutionPath, &review)
 		}
 		planningPrompt, planErr := prompt.BuildFixPlanPrompt(resolutionPath, cfg, findings, fixMinSev, planComments, req.Prompt)
 		if planErr != nil {
@@ -3999,7 +4005,7 @@ func (s *Server) humaGetHealth(
 
 	dbHealthy := true
 	dbMessage := ""
-	if err := s.db.Ping(); err != nil {
+	if err := s.db.PingContext(ctx); err != nil {
 		dbHealthy = false
 		dbMessage = err.Error()
 		allHealthy = false

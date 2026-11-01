@@ -87,7 +87,7 @@ func TestRefineFixGuidelinesReachAgent(t *testing.T) {
 				if opts.planOnly {
 					return runRefinePlanOnly(cmd, opts)
 				}
-				return runRefine(RunContext{Context: t.Context(), WorkingDir: repo.Dir}, opts)
+				return runRefine(t.Context(), RunContext{WorkingDir: repo.Dir}, opts)
 			})
 			if opts.planOnly {
 				require.NoError(t, err)

@@ -1547,7 +1547,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 		var cleanupPrompt func()
 		fixPrompt := buildBatchFixPromptWithMetadata(batch, minSev, metadata, cfg.FixGuidelines)
 		if opts.plan || opts.planOnly {
-			findings := batchPlanningContext(roots.worktreeRoot, batch)
+			findings := batchPlanningContext(ctx, roots.worktreeRoot, batch)
 			planningPrompt, planErr := prompt.BuildFixPlanPrompt(roots.worktreeRoot, cfg, findings, minSev, nil, "")
 			if planErr != nil {
 				return planErr

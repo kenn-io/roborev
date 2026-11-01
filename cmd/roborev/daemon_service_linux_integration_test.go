@@ -35,7 +35,7 @@ func installRoborev(t *testing.T, binary, path string) {
 
 func serviceMainPIDForTest(t *testing.T, unit string) int {
 	t.Helper()
-	output, err := exec.Command("systemctl", "--user", "show", "--property=MainPID", "--value", unit).CombinedOutput()
+	output, err := exec.CommandContext(t.Context(), "systemctl", "--user", "show", "--property=MainPID", "--value", unit).CombinedOutput()
 	require.NoError(t, err, "%s", output)
 	pid, err := strconv.Atoi(strings.TrimSpace(string(output)))
 	require.NoError(t, err)
@@ -46,7 +46,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 	if _, err := exec.LookPath("systemctl"); err != nil {
 		t.Skip("systemctl unavailable")
 	}
-	if err := exec.Command("systemctl", "--user", "show-environment").Run(); err != nil {
+	if err := exec.CommandContext(t.Context(), "systemctl", "--user", "show-environment").Run(); err != nil {
 		t.Skip("user manager unavailable")
 	}
 	buildDir := t.TempDir()
@@ -117,13 +117,15 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				require.NoError(t, os.WriteFile(socketPath, []byte("[Socket]\nListenStream="+listen+"\nSocketMode=0600\n"), 0o600))
 			}
 			t.Cleanup(func() {
+				// t.Context is already canceled when cleanups run.
+				ctx := context.WithoutCancel(t.Context())
 				// Release our test agent before asking its service to drain.
 				assert.NoError(t, os.WriteFile(releaseReview, nil, 0o600))
 				units := []string{unit}
 				if socketActivated {
 					units = append([]string{name + ".socket"}, units...)
 				}
-				output, err := exec.Command("systemctl", append([]string{"--user", "stop"}, units...)...).CombinedOutput()
+				output, err := exec.CommandContext(ctx, "systemctl", append([]string{"--user", "stop"}, units...)...).CombinedOutput()
 				assert.NoError(t, err, "%s", output)
 				if info, err := daemon.GetAnyRunningDaemon(); err == nil {
 					assert.NoError(t, daemon.KillDaemon(info))
@@ -132,12 +134,12 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				if socketActivated {
 					assert.NoError(t, os.Remove(socketPath))
 				}
-				assert.NoError(t, exec.Command("systemctl", "--user", "daemon-reload").Run())
+				assert.NoError(t, exec.CommandContext(ctx, "systemctl", "--user", "daemon-reload").Run())
 			})
-			require.NoError(t, exec.Command("systemctl", "--user", "daemon-reload").Run())
-			starter := exec.Command("systemctl", "--user", "start", unit)
+			require.NoError(t, exec.CommandContext(t.Context(), "systemctl", "--user", "daemon-reload").Run())
+			starter := exec.CommandContext(t.Context(), "systemctl", "--user", "start", unit)
 			if socketActivated {
-				starter = exec.Command("systemctl", "--user", "start", name+".socket", unit)
+				starter = exec.CommandContext(t.Context(), "systemctl", "--user", "start", name+".socket", unit)
 			}
 			output, err := starter.CombinedOutput()
 			require.NoError(t, err, "%s", output)
@@ -171,7 +173,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				require.NoError(t, os.Symlink(newBinary, link+".next"))
 				require.NoError(t, os.Rename(link+".next", link))
 				require.NoError(t, os.Remove(oldTarget))
-				output, err := exec.Command("systemctl", "--user", "show", "--property=ExecStart", unit).Output()
+				output, err := exec.CommandContext(t.Context(), "systemctl", "--user", "show", "--property=ExecStart", unit).Output()
 				require.NoError(t, err)
 				assert.Contains(t, string(output), "ExecStart={ path="+link+" ; argv[]=", "systemd must retain the configured link after retargeting")
 			} else {
@@ -186,7 +188,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				require.NoError(t, process.Kill())
 				// Wait for our unit to enter its real RestartSec gap and reap the old PID.
 				require.Eventually(t, func() bool {
-					state, err := exec.Command("systemctl", "--user", "show", "--property=SubState", "--value", unit).Output()
+					state, err := exec.CommandContext(t.Context(), "systemctl", "--user", "show", "--property=SubState", "--value", unit).Output()
 					_, statErr := os.Stat(fmt.Sprintf("/proc/%d", original.PID))
 					return err == nil && strings.TrimSpace(string(state)) == "auto-restart" && os.IsNotExist(statErr)
 				}, time.Second, 10*time.Millisecond)
@@ -203,9 +205,9 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				assert.Equal(t, replacement.PID, serviceMainPIDForTest(t, unit))
 				return
 			}
-			cli := exec.Command(cliBinary, "status", "--json")
+			cli := exec.CommandContext(t.Context(), cliBinary, "status", "--json")
 			if pausing {
-				cli = exec.Command(cliBinary, "pause")
+				cli = exec.CommandContext(t.Context(), cliBinary, "pause")
 			}
 			if scenario == "missing bus environment" {
 				for _, entry := range os.Environ() {
@@ -223,7 +225,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				require.NoError(t, json.Unmarshal(stdout.Bytes(), &result))
 				assert.True(t, result.Running)
 				assert.Empty(t, result.Error)
-				pauseOutput, pauseErr := exec.Command(cliBinary, "pause").CombinedOutput()
+				pauseOutput, pauseErr := exec.CommandContext(t.Context(), cliBinary, "pause").CombinedOutput()
 				require.NoError(t, pauseErr, "%s", pauseOutput)
 				assert.Contains(t, string(pauseOutput), "systemctl --user restart "+unit)
 				current, err := daemon.GetAnyRunningDaemon()
@@ -239,7 +241,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				defer cli.Process.Kill()
 				// The pause CLI persists its state before the old daemon drains.
 				require.Eventually(t, func() bool { return strings.Contains(stderr.String(), "Waiting for daemon shutdown") }, 10*time.Second, 10*time.Millisecond)
-				status, err := original.Endpoint().APIClient(time.Second).GetStatus(context.Background())
+				status, err := original.Endpoint().APIClient(time.Second).GetStatus(t.Context())
 				require.NoError(t, err)
 				assert.True(t, status.QueuePaused)
 				require.NoError(t, os.WriteFile(releaseReview, nil, 0o600))
@@ -249,7 +251,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				require.NoError(t, cli.Start())
 				require.Eventually(t, func() bool { return strings.Contains(stderr.String(), "Waiting for daemon shutdown") }, 10*time.Second, 10*time.Millisecond)
 				installRoborev(t, oldBinary, link)
-				second := exec.Command(link, "status", "--json")
+				second := exec.CommandContext(t.Context(), link, "status", "--json")
 				require.NoError(t, second.Start())
 				defer second.Process.Kill()
 				require.NoError(t, cli.Wait(), "%s", stderr.String())
@@ -272,18 +274,18 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			}
 			assertDaemonUpdateVersion(t, replacement.Endpoint(), expectedVersion)
 			if pausing {
-				status, err := replacement.Endpoint().APIClient(time.Second).GetStatus(context.Background())
+				status, err := replacement.Endpoint().APIClient(time.Second).GetStatus(t.Context())
 				require.NoError(t, err)
 				assert.True(t, status.QueuePaused)
 				assert.Equal(t, storage.JobStatusQueued, getUpdateJob(t, replacement.Endpoint(), queued.ID).Status)
-				output, err := exec.Command(link, "unpause").CombinedOutput()
+				output, err := exec.CommandContext(t.Context(), link, "unpause").CombinedOutput()
 				require.NoError(t, err, "%s", output)
 				waitForUpdateJobStatus(t, replacement.Endpoint(), queued.ID, storage.JobStatusDone, 10*time.Second)
 			}
 			if scenario == "selection advances" {
 				waitForUpdateJobStatus(t, replacement.Endpoint(), active.ID, storage.JobStatusDone, 10*time.Second)
 			}
-			output, err = exec.Command("systemctl", "--user", "start", unit).CombinedOutput()
+			output, err = exec.CommandContext(t.Context(), "systemctl", "--user", "start", unit).CombinedOutput()
 			require.NoError(t, err, "%s", output)
 			assert.Equal(t, replacement.PID, serviceMainPIDForTest(t, unit))
 		})
@@ -356,7 +358,7 @@ func assertSocketReplacementKept(t *testing.T, original *daemon.RuntimeInfo, uni
 		if err := daemon.KillDaemon(info); err != nil {
 			return err
 		}
-		conn, err := net.Dial("unix", listen)
+		conn, err := (&net.Dialer{}).DialContext(t.Context(), "unix", listen)
 		require.NoError(t, err)
 		defer conn.Close()
 		// systemd starts the replacement in a separate process.

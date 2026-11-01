@@ -37,7 +37,7 @@ func TestForgeAPIGuardTransportBlocksForgeHosts(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			baseCalls := 0
 			transport := newCountingGuard(&baseCalls)
-			req, err := http.NewRequest(http.MethodGet, tt.url, nil)
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, tt.url, nil)
 			require.NoError(t, err)
 
 			resp, err := transport.RoundTrip(req)
@@ -62,7 +62,7 @@ func TestForgeAPIGuardTransportAllowsOtherHosts(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			baseCalls := 0
 			transport := newCountingGuard(&baseCalls)
-			req, err := http.NewRequest(http.MethodGet, tt.url, nil)
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, tt.url, nil)
 			require.NoError(t, err)
 
 			resp, err := transport.RoundTrip(req)
@@ -78,11 +78,15 @@ func TestForgeAPIGuardTransportAllowsOtherHosts(t *testing.T) {
 func TestInstalledForgeAPIGuardBlocksDefaultClient(t *testing.T) {
 	assert.True(t, ForgeAPIGuardInstalled())
 
-	resp, err := http.Get("https://api.github.com/rate_limit")
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://api.github.com/rate_limit", nil)
+	require.NoError(t, err)
+	resp, err := http.DefaultClient.Do(req)
 	require.ErrorIs(t, err, ErrGitHubAPIBlocked)
 	assert.Nil(t, resp)
 
-	resp, err = http.Get("https://gitlab.com/api/v4/version")
+	req, err = http.NewRequestWithContext(t.Context(), http.MethodGet, "https://gitlab.com/api/v4/version", nil)
+	require.NoError(t, err)
+	resp, err = http.DefaultClient.Do(req)
 	require.ErrorIs(t, err, ErrGitLabAPIBlocked)
 	assert.Nil(t, resp)
 }
