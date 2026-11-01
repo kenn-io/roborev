@@ -45,8 +45,8 @@ github.com/bmatcuk/doublestar/v4 v4.10.4 h1:oTKkRmRuOsKMqFe1AQazd9gGBFNEpOmgKp/x
 github.com/bmatcuk/doublestar/v4 v4.10.4/go.mod h1:xBQ8jztBU6kakFMg+8WGxn0c6z1fTSPVIjEY1Wr7jzc=
 github.com/buger/jsonparser v1.6.1 h1:I0phFv0PlbLHnM7TZAVjZ2MJ2/eWRTDyuO7GLR98IEs=
 github.com/buger/jsonparser v1.6.1/go.mod h1:6RYKKt7H4d4+iWqouImQ9R2FZql3VbhNgx27UK13J/0=
-github.com/cenkalti/backoff/v7 v7.0.1 h1:+ulHti5s1d9QnfyOnLWVmQ/SaZ+TJQF9OdOI0i9BGZI=
-github.com/cenkalti/backoff/v7 v7.0.1/go.mod h1:qcKBGwsu4hpxHtQ8tWYsQ+ifzx2+sS+Xx/3jfe30lI8=
+github.com/cenkalti/backoff/v7 v7.0.2 h1:BNsyJsriOksnzphDFm5hBB51nl9AQaedacdrC9mXsi0=
+github.com/cenkalti/backoff/v7 v7.0.2/go.mod h1:qcKBGwsu4hpxHtQ8tWYsQ+ifzx2+sS+Xx/3jfe30lI8=
 github.com/charmbracelet/colorprofile v0.4.3 h1:QPa1IWkYI+AOB+fE+mg/5/4HRMZcaXex9t5KX76i20Q=
 github.com/charmbracelet/colorprofile v0.4.3/go.mod h1:/zT4BhpD5aGFpqQQqw7a+VtHCzu+zrQtt1zhMt9mR4Q=
 github.com/charmbracelet/ultraviolet v0.0.0-20261008173134-6b8d4baf91b4 h1:hISLzUbwcvJbGoNR6A3L/TpguRRnACBmZOee8LcHLJw=
