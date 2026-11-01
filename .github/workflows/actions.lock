@@ -11,7 +11,7 @@ workflows:
         - 'actions/upload-artifact@v7.0.2'
         - 'astral-sh/setup-uv@v10.3.2'
         - 'jdx/mise-action@v5.2.3'
-        - 'kenn-io/kit@v0.47.3'
+        - 'kenn-io/kit@v0.47.5'
         - 'step-security/codecov-action@v7.1.1'
         - 'step-security/golangci-lint-action@v9.3.0'
         - 'step-security/paths-filter@v4.0.3'
@@ -27,12 +27,12 @@ workflows:
     '.github/workflows/windows-migration.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
-        - 'kenn-io/kit@v0.47.3'
+        - 'kenn-io/kit@v0.47.5'
         - 'step-security/paths-filter@v4.0.3'
     '.github/workflows/workflow-validation.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
-        - 'kenn-io/kit@v0.47.3'
+        - 'kenn-io/kit@v0.47.5'
         - 'step-security/jactionlint@v2.2.0'
 dependencies:
     'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1':
@@ -98,9 +98,9 @@ dependencies:
         uses:
             - 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1'
             - 'actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e'
-    'kenn-io/kit@v0.47.3':
-        ref: 'v0.47.3'
-        commit: 'sha1-19ca4ee42e3452f57ba6d72cf07ce5963b26219b'
+    'kenn-io/kit@v0.47.5':
+        ref: 'v0.47.5'
+        commit: 'sha1-b2c1b6f25ec8f521899e7cc0eb03d266fa9f44ba'
         owner_id: 259885253
         repo_id: 1238000987
     'step-security/codecov-action@v7.1.1':
