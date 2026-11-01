@@ -490,6 +490,7 @@ func PreferAutoClone(repos []Repo) *Repo {
 
 // SyncableJob contains job data needed for sync
 type SyncableJob struct {
+	SessionProvenance     string
 	ID                    int64
 	UUID                  uuid.UUID
 	RepoID                int64
@@ -552,7 +553,7 @@ func (db *DB) GetJobsToSync(machineID uuid.UUID, limit int) ([]SyncableJob, erro
 			j.commit_id, COALESCE(c.sha, ''), COALESCE(c.author, ''), COALESCE(c.subject, ''), COALESCE(c.timestamp, ''),
 			j.git_ref, COALESCE(j.branch, ''), COALESCE(j.session_id, ''), NULLIF(j.resume_source_job_uuid, ''), j.agent, COALESCE(j.model, ''), COALESCE(j.provider, ''), COALESCE(j.requested_model, ''), COALESCE(j.requested_provider, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic, j.agent_invoked,
 			j.enqueued_at, COALESCE(j.started_at, ''), COALESCE(j.finished_at, ''),
-			COALESCE(zstd_decompress(jc.prompt), ''), zstd_decompress(jc.diff_content), j.dirty_files, COALESCE(j.error, ''), COALESCE(j.token_usage, ''),
+			COALESCE(zstd_decompress(jc.session_provenance), ''), COALESCE(zstd_decompress(jc.prompt), ''), zstd_decompress(jc.diff_content), j.dirty_files, COALESCE(j.error, ''), COALESCE(j.token_usage, ''),
 			COALESCE(j.worktree_path, ''), COALESCE(j.source, ''), COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
 			NULLIF(j.panel_run_uuid, ''), COALESCE(j.panel_role, ''), COALESCE(j.panel_name, ''), COALESCE(j.panel_member_name, ''), COALESCE(j.panel_member_index, 0), COALESCE(j.panel_member_config_json, ''), COALESCE(j.non_voting, 0),
 			j.source_machine_id, j.updated_at
@@ -585,7 +586,7 @@ func (db *DB) GetJobsToSync(machineID uuid.UUID, limit int) ([]SyncableJob, erro
 			&commitID, &j.CommitSHA, &j.CommitAuthor, &j.CommitSubject, &commitTimestamp,
 			&j.GitRef, &j.Branch, &j.SessionID, &j.ResumeSourceJobUUID, &j.Agent, &j.Model, &j.Provider, &j.RequestedModel, &j.RequestedProvider, &j.Reasoning, &j.JobType, &j.ReviewType, &j.PatchID, &j.Status, &j.Agentic, &j.AgentInvoked,
 			&enqueuedAt, &startedAt, &finishedAt,
-			&j.Prompt, &diffContent, &dirtyFiles, &j.Error, &j.TokenUsage,
+			&j.SessionProvenance, &j.Prompt, &diffContent, &dirtyFiles, &j.Error, &j.TokenUsage,
 			&j.WorktreePath, &j.Source, &j.MinSeverity, &j.BackupAgent, &j.BackupModel,
 			&j.PanelRunUUID, &j.PanelRole, &j.PanelName, &j.PanelMemberName, &j.PanelMemberIndex, &j.PanelMemberConfigJSON, &j.NonVoting,
 			&j.SourceMachineID, &updatedAt,
@@ -641,20 +642,21 @@ func (db *DB) MarkJobSynced(jobID int64) error {
 // the exact terminal attempt that was pushed. MarkJobsSynced restores synced_at
 // only when the row still matches all of them.
 type JobSyncMark struct {
-	EnqueuedAtRaw   string
-	SourceMachineID uuid.UUID
-	ID              int64
-	UpdatedAt       string // raw updated_at string from the pushed snapshot
-	TokenUsage      string // token_usage from the pushed snapshot ("" when NULL)
-	Status          string // status from the pushed snapshot (always terminal)
-	SessionID       string // session_id from the pushed snapshot ("" when NULL)
-	AgentInvoked    bool   // agent_invoked from the pushed snapshot
-	Agent           string // agent from the pushed snapshot
-	Model           string // model from the pushed snapshot ("" when NULL)
-	Provider        string // provider from the pushed snapshot ("" when NULL)
-	Error           string // error from the pushed snapshot ("" when NULL)
-	StartedAtRaw    string // raw started_at string from the pushed snapshot ("" when NULL)
-	FinishedAtRaw   string // raw finished_at string from the pushed snapshot ("" when NULL)
+	SessionProvenance string
+	EnqueuedAtRaw     string
+	SourceMachineID   uuid.UUID
+	ID                int64
+	UpdatedAt         string // raw updated_at string from the pushed snapshot
+	TokenUsage        string // token_usage from the pushed snapshot ("" when NULL)
+	Status            string // status from the pushed snapshot (always terminal)
+	SessionID         string // session_id from the pushed snapshot ("" when NULL)
+	AgentInvoked      bool   // agent_invoked from the pushed snapshot
+	Agent             string // agent from the pushed snapshot
+	Model             string // model from the pushed snapshot ("" when NULL)
+	Provider          string // provider from the pushed snapshot ("" when NULL)
+	Error             string // error from the pushed snapshot ("" when NULL)
+	StartedAtRaw      string // raw started_at string from the pushed snapshot ("" when NULL)
+	FinishedAtRaw     string // raw finished_at string from the pushed snapshot ("" when NULL)
 }
 
 // NewJobSyncMark captures the snapshot fields MarkJobsSynced compares to confirm
@@ -662,20 +664,21 @@ type JobSyncMark struct {
 // the push loop and the WHERE clause in agreement.
 func NewJobSyncMark(j SyncableJob) JobSyncMark {
 	return JobSyncMark{
-		EnqueuedAtRaw:   j.EnqueuedAtRaw,
-		SourceMachineID: j.SourceMachineID,
-		ID:              j.ID,
-		UpdatedAt:       j.UpdatedAtRaw,
-		TokenUsage:      j.TokenUsage,
-		Status:          j.Status,
-		SessionID:       j.SessionID,
-		AgentInvoked:    j.AgentInvoked,
-		Agent:           j.Agent,
-		Model:           j.Model,
-		Provider:        j.Provider,
-		Error:           j.Error,
-		StartedAtRaw:    j.StartedAtRaw,
-		FinishedAtRaw:   j.FinishedAtRaw,
+		SessionProvenance: j.SessionProvenance,
+		EnqueuedAtRaw:     j.EnqueuedAtRaw,
+		SourceMachineID:   j.SourceMachineID,
+		ID:                j.ID,
+		UpdatedAt:         j.UpdatedAtRaw,
+		TokenUsage:        j.TokenUsage,
+		Status:            j.Status,
+		SessionID:         j.SessionID,
+		AgentInvoked:      j.AgentInvoked,
+		Agent:             j.Agent,
+		Model:             j.Model,
+		Provider:          j.Provider,
+		Error:             j.Error,
+		StartedAtRaw:      j.StartedAtRaw,
+		FinishedAtRaw:     j.FinishedAtRaw,
 	}
 }
 
@@ -723,7 +726,8 @@ func (db *DB) MarkJobsSynced(marks []JobSyncMark) error {
 		   AND status = ? AND COALESCE(session_id, '') = ? AND agent_invoked = ?
 		   AND agent = ? AND COALESCE(model, '') = ? AND COALESCE(provider, '') = ?
 		   AND COALESCE(error, '') = ? AND COALESCE(started_at, '') = ?
-		   AND COALESCE(finished_at, '') = ? AND enqueued_at = ? AND source_machine_id = ?`)
+		   AND COALESCE(finished_at, '') = ? AND enqueued_at = ? AND source_machine_id = ?
+ AND COALESCE((SELECT zstd_decompress(session_provenance) FROM job_content WHERE job_id=review_jobs.id),'')=?`)
 	if err != nil {
 		return fmt.Errorf("prepare mark jobs synced: %w", err)
 	}
@@ -736,7 +740,7 @@ func (db *DB) MarkJobsSynced(marks []JobSyncMark) error {
 		}
 		if _, err := stmt.Exec(
 			now, m.ID, m.UpdatedAt, m.TokenUsage, m.Status, m.SessionID, invoked,
-			m.Agent, m.Model, m.Provider, m.Error, m.StartedAtRaw, m.FinishedAtRaw, m.EnqueuedAtRaw, m.SourceMachineID,
+			m.Agent, m.Model, m.Provider, m.Error, m.StartedAtRaw, m.FinishedAtRaw, m.EnqueuedAtRaw, m.SourceMachineID, m.SessionProvenance,
 		); err != nil {
 			return fmt.Errorf("mark job %d synced: %w", m.ID, err)
 		}
@@ -997,6 +1001,25 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 	if err == nil && attemptOrder > 0 {
 		return false, nil
 	}
+	if _, err := decodeSessionProvenance(j.SessionProvenance); err != nil {
+		return false, err
+	}
+	var previousProvenance string
+	if localID != 0 {
+		err := tx.QueryRow(`SELECT COALESCE(zstd_decompress(session_provenance),'') FROM job_content WHERE job_id=?`, localID).Scan(&previousProvenance)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return false, err
+		}
+	}
+	incomingProvenance := j.SessionProvenance
+	if strings.TrimSpace(incomingProvenance) == "null" {
+		incomingProvenance = ""
+	}
+	nextProvenance := incomingProvenance
+	if localID != 0 && attemptOrder == 0 && incomingProvenance == "" {
+		nextProvenance = previousProvenance
+	}
+	provenanceChanged := nextProvenance != previousProvenance
 	keepReview := false
 	if localID != 0 && attemptOrder < 0 && (j.Status == "done" || j.Status == "applied" || j.Status == "rebased") {
 		// Upload limits and edits after the final push query can leave pending
@@ -1055,7 +1078,7 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 			synced_at = ?
 			WHERE (? OR review_jobs.status NOT IN ('applied', 'rebased')
 				OR `+sqliteNormalizedTimestampExpr("review_jobs.updated_at")+` < `+sqliteNormalizedTimestampExpr("excluded.updated_at")+`)
-			AND NOT (
+			AND (? OR NOT (
 				review_jobs.status IS excluded.status
 				AND review_jobs.agent IS excluded.agent
 				AND review_jobs.started_at IS excluded.started_at
@@ -1091,20 +1114,29 @@ func (db *DB) upsertPulledJob(j PulledJob, repoID int64, commitID *int64) (bool,
 				AND review_jobs.panel_member_config_json IS excluded.panel_member_config_json
 				AND review_jobs.non_voting IS excluded.non_voting
 				AND review_jobs.updated_at IS excluded.updated_at
-			)
+			))
 	`, j.UUID, repoID, commitID, j.GitRef, nullStr(j.Branch), nullStr(j.SessionID), j.ResumeSourceJobUUID, j.Agent, nullStr(j.Model), nullStr(j.Provider), nullStr(j.RequestedModel), nullStr(j.RequestedProvider), j.Reasoning, j.JobType,
 		j.ReviewType, nullStr(j.PatchID), j.Status, j.Agentic, j.AgentInvoked, j.EnqueuedAt.Format(time.RFC3339Nano),
 		nullTimeStr(j.StartedAt), nullTimeStr(j.FinishedAt),
 		nullStr(dirtyFilesJSON), nullStr(j.Error), nullStr(j.TokenUsage),
 		nullStr(j.WorktreePath), nullStr(j.Source), normalizeMinSeverityForWrite(j.MinSeverity), j.BackupAgent, j.BackupModel,
 		j.PanelRunUUID, nullStr(j.PanelRole), nullStr(j.PanelName), nullStr(j.PanelMemberName), j.PanelMemberIndex, nullStr(j.PanelMemberConfigJSON), j.NonVoting,
-		j.SourceMachineID, j.UpdatedAt.Format(time.RFC3339Nano), now, db.attempts.active[localID] != nil, now, attemptOrder < 0)
+		j.SourceMachineID, j.UpdatedAt.Format(time.RFC3339Nano), now, db.attempts.active[localID] != nil, now, attemptOrder < 0, provenanceChanged)
 	if err != nil {
 		return false, err
 	}
 	rows, err := result.RowsAffected()
 	if err != nil {
 		return false, fmt.Errorf("read pulled job rows affected: %w", err)
+	}
+	if rows > 0 && (provenanceChanged || localID == 0) {
+		var pulledID int64
+		if err := tx.QueryRow(`SELECT id FROM review_jobs WHERE uuid=?`, j.UUID).Scan(&pulledID); err != nil {
+			return false, err
+		}
+		if err := setJobContent(context.Background(), tx, pulledID, jobContentProvenance, nextProvenance); err != nil {
+			return false, err
+		}
 	}
 	if rows > 0 && localID != 0 && attemptOrder < 0 {
 		// Retire a different attempt, but retain the same canonical review

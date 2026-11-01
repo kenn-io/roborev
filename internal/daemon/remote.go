@@ -393,6 +393,7 @@ func sanitizeRemoteJobs(jobs []storage.ReviewJob) {
 }
 
 func sanitizeRemoteJob(job *storage.ReviewJob) {
+	job.SessionProvenance = nil
 	job.PanelSummary = nil
 	job.PanelMemberConfigJSON = ""
 	job.CommandLine = ""

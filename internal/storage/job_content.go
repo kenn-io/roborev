@@ -109,9 +109,10 @@ func sqlZstdDecompress(_ *sqlite.FunctionContext, args []driver.Value) (driver.V
 type jobContentColumn string
 
 const (
-	jobContentPrompt jobContentColumn = "prompt"
-	jobContentDiff   jobContentColumn = "diff_content"
-	jobContentPatch  jobContentColumn = "patch"
+	jobContentPrompt     jobContentColumn = "prompt"
+	jobContentProvenance jobContentColumn = "session_provenance"
+	jobContentDiff       jobContentColumn = "diff_content"
+	jobContentPatch      jobContentColumn = "patch"
 )
 
 // setJobContent stores one payload for a job, compressing it. An empty value

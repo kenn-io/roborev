@@ -990,6 +990,22 @@ components:
         - job_id
         - closed
       type: object
+    Commit:
+      additionalProperties: false
+      properties:
+        commit_sha:
+          type: string
+        coverage:
+          type: string
+        sessions:
+          items:
+            $ref: "#/components/schemas/Session"
+          type: array
+      required:
+        - commit_sha
+        - coverage
+        - sessions
+      type: object
     ComponentHealth:
       additionalProperties: false
       properties:
@@ -1242,6 +1258,9 @@ components:
           items:
             $ref: "#/components/schemas/Diagnosis"
           type: array
+        session_context:
+          $ref: "#/components/schemas/DoctorSessionContext"
+          description: Opt-in author-session context and read-only provider capability
         usage_provider:
           $ref: "#/components/schemas/DoctorUsageProvider"
           description: Usage provider and authenticated probe result from the daemon process
@@ -1291,6 +1310,22 @@ components:
       required:
         - name
         - agent
+      type: object
+    DoctorSessionContext:
+      additionalProperties: false
+      properties:
+        error:
+          type: string
+        mode:
+          type: string
+        provider:
+          type: string
+        status:
+          type: string
+      required:
+        - mode
+        - provider
+        - status
       type: object
     DoctorUsageProvider:
       additionalProperties: false
@@ -1458,6 +1493,10 @@ components:
           type: string
         session_id:
           type: string
+        session_provenance:
+          items:
+            $ref: "#/components/schemas/Commit"
+          type: array
         skip_reason:
           type: string
         source:
@@ -3023,6 +3062,10 @@ components:
           type: string
         session_id:
           type: string
+        session_provenance:
+          items:
+            $ref: "#/components/schemas/Commit"
+          type: array
         skip_reason:
           type: string
         source:
@@ -3939,6 +3982,10 @@ components:
           type: string
         session_id:
           type: string
+        session_provenance:
+          items:
+            $ref: "#/components/schemas/Commit"
+          type: array
         skip_reason:
           type: string
         source:
@@ -4049,6 +4096,10 @@ components:
           type: string
         review_type:
           type: string
+        session_provenance:
+          items:
+            $ref: "#/components/schemas/Commit"
+          type: array
         source:
           type: string
         started_at:
@@ -4359,6 +4410,41 @@ components:
         - partial
         - coverage
         - hits
+      type: object
+    Session:
+      additionalProperties: false
+      properties:
+        agent:
+          type: string
+        ambiguous:
+          type: boolean
+        availability:
+          type: string
+        call_index:
+          format: int64
+          type: integer
+        commit_sha:
+          type: string
+        message_ordinal:
+          format: int64
+          type: integer
+        resolved:
+          type: boolean
+        session_id:
+          type: string
+        source:
+          type: string
+        turn:
+          $ref: "#/components/schemas/Turn"
+        web_url:
+          type: string
+      required:
+        - agent
+        - session_id
+        - source
+        - commit_sha
+        - resolved
+        - availability
       type: object
     SessionState:
       additionalProperties: false
@@ -4752,6 +4838,23 @@ components:
         - skipped
         - failed
         - results
+      type: object
+    Turn:
+      additionalProperties: false
+      properties:
+        at:
+          type: string
+        ordinal:
+          format: int64
+          type: integer
+        prompt:
+          type: string
+        why:
+          type: string
+      required:
+        - ordinal
+        - prompt
+        - why
       type: object
     UpdateDrainRequestBody:
       additionalProperties: false

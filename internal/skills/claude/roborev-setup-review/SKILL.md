@@ -161,6 +161,7 @@ This mapping is for you, not the user. Use only what the conversation needs.
 | Reviews on pull requests | `[ci] panel`; see <https://roborev.io/docs/advanced/subagent-review-panels/#ci-panels> |
 | Only serious findings fail | `review_min_severity`, plus severity guidance in each rubric |
 | Passing reviews close themselves | `auto_close_passing_reviews = true` |
+| Reviewers that see the agent session and writing prompt behind a commit | `[session_context]` with `mode = "on"` (default `off`); reads `Agent-Session:` commit lines and optionally agentsview. Local commit/range reviews only; panel members carry their own capture. Writing prompts are sent to the reviewer, stored and synced with review history, and retained after prompt pruning or mode off. CLI enrichment is a labeled selection of up to three sessions per commit; HTTP retains all returned evidence. |
 | Reviewers that see the task a commit is for, from Kata | `[kata_context]` with `mode = "current"`; commits name their issue, such as `Closes: kata#abc4` |
 | Failed reviews and findings filed as Kata issues | A `[[hooks]]` entry with `event = "review.*"` and `type = "kata"` |
 | Reviewers that read changed PDFs, scans, or images | `binary_evidence = true` on the type; see <https://roborev.io/docs/advanced/custom-review-types/#binary-evidence> |

@@ -10,6 +10,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"go.kenn.io/roborev/internal/provenance"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -22,26 +23,27 @@ type ReviewProjectionInput struct {
 }
 
 type ReviewProjectionJob struct {
-	ID              int64                 `json:"id"`
-	UUID            *uuid.UUID            `json:"uuid,omitempty"`
-	Project         string                `json:"project"`
-	GitRef          string                `json:"git_ref"`
-	Branch          string                `json:"branch,omitempty"`
-	CommitSubject   string                `json:"commit_subject,omitempty"`
-	Agent           string                `json:"agent"`
-	Model           string                `json:"model,omitempty"`
-	Status          storage.JobStatus     `json:"status"`
-	Verdict         string                `json:"verdict,omitempty"`
-	ReviewType      string                `json:"review_type,omitempty"`
-	Source          string                `json:"source,omitempty"`
-	EnqueuedAt      time.Time             `json:"enqueued_at"`
-	StartedAt       *time.Time            `json:"started_at,omitempty"`
-	FinishedAt      *time.Time            `json:"finished_at,omitempty"`
-	PanelRole       string                `json:"panel_role,omitempty"`
-	PanelName       string                `json:"panel_name,omitempty"`
-	PanelMemberName string                `json:"panel_member_name,omitempty"`
-	NonVoting       bool                  `json:"non_voting,omitempty"`
-	PanelSummary    *storage.PanelSummary `json:"panel_summary,omitempty"`
+	SessionProvenance []provenance.Commit   `json:"session_provenance,omitempty"`
+	ID                int64                 `json:"id"`
+	UUID              *uuid.UUID            `json:"uuid,omitempty"`
+	Project           string                `json:"project"`
+	GitRef            string                `json:"git_ref"`
+	Branch            string                `json:"branch,omitempty"`
+	CommitSubject     string                `json:"commit_subject,omitempty"`
+	Agent             string                `json:"agent"`
+	Model             string                `json:"model,omitempty"`
+	Status            storage.JobStatus     `json:"status"`
+	Verdict           string                `json:"verdict,omitempty"`
+	ReviewType        string                `json:"review_type,omitempty"`
+	Source            string                `json:"source,omitempty"`
+	EnqueuedAt        time.Time             `json:"enqueued_at"`
+	StartedAt         *time.Time            `json:"started_at,omitempty"`
+	FinishedAt        *time.Time            `json:"finished_at,omitempty"`
+	PanelRole         string                `json:"panel_role,omitempty"`
+	PanelName         string                `json:"panel_name,omitempty"`
+	PanelMemberName   string                `json:"panel_member_name,omitempty"`
+	NonVoting         bool                  `json:"non_voting,omitempty"`
+	PanelSummary      *storage.PanelSummary `json:"panel_summary,omitempty"`
 }
 
 type ReviewProjectionReview struct {
@@ -140,7 +142,8 @@ func projectReviewJob(job storage.ReviewJob) ReviewProjectionJob {
 		verdict = *job.Verdict
 	}
 	return ReviewProjectionJob{
-		ID: job.ID, UUID: job.UUID, Project: job.RepoName,
+		SessionProvenance: job.SessionProvenance,
+		ID:                job.ID, UUID: job.UUID, Project: job.RepoName,
 		GitRef: job.GitRef, Branch: job.Branch, CommitSubject: job.CommitSubject,
 		Agent: job.Agent, Model: job.Model, Status: job.Status, Verdict: verdict,
 		ReviewType: job.ReviewType, Source: job.Source, EnqueuedAt: job.EnqueuedAt,

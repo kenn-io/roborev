@@ -24,9 +24,10 @@ import "database/sql"
 // pulls prompts, diffs, or patches it will not show. The scan shape is the
 // same whichever expressions are used.
 type jobTextColumns struct {
-	Prompt string
-	Diff   string
-	Patch  string
+	Provenance string
+	Prompt     string
+	Diff       string
+	Patch      string
 }
 
 const (
@@ -36,9 +37,9 @@ const (
 
 var (
 	// jobTextAll loads every payload: the worker and single-job lookups need them.
-	jobTextAll = jobTextColumns{Prompt: jobPromptExpr, Diff: jobDiffExpr, Patch: "zstd_decompress(jc.patch)"}
+	jobTextAll = jobTextColumns{Provenance: jobProvenanceExpr, Prompt: jobPromptExpr, Diff: jobDiffExpr, Patch: "zstd_decompress(jc.patch)"}
 	// jobTextPrompt loads only the prompt: panel member views show it inline.
-	jobTextPrompt = jobTextColumns{Prompt: jobPromptExpr, Diff: "NULL", Patch: "NULL"}
+	jobTextPrompt = jobTextColumns{Provenance: jobProvenanceExpr, Prompt: jobPromptExpr, Diff: "NULL", Patch: "NULL"}
 	// jobTextNone loads no payload: batch metadata reads.
 	jobTextNone = jobTextColumns{Prompt: "NULL", Diff: "NULL", Patch: "NULL"}
 )
@@ -59,7 +60,11 @@ const jobSelectColumnsBase = `
 // jobSelectColumns is the job-only column list. text chooses which large
 // payloads are loaded.
 func jobSelectColumns(text jobTextColumns) string {
-	return jobSelectColumnsBase + text.Prompt + ", " + text.Diff + ", " + text.Patch
+	provenanceExpr := text.Provenance
+	if provenanceExpr == "" {
+		provenanceExpr = "NULL"
+	}
+	return jobSelectColumnsBase + text.Prompt + ", " + text.Diff + ", " + text.Patch + ", " + provenanceExpr
 }
 
 // jobWithReviewSelectColumns is the job column list plus the review summary
@@ -89,7 +94,7 @@ func jobScanDestinations(j *ReviewJob, f *reviewJobScanFields) []any {
 		&j.BudgetOriginalAgent, &j.BudgetOriginalBackupAgent, &j.BudgetOriginalBackupModel,
 		&j.RepoPath, &j.RepoName, &f.CommitSubject,
 		&f.DirtyFiles, &f.AnalysisType, &f.AnalysisFiles, &f.AnalysisCommitSHA,
-		&f.Prompt, &f.DiffContent, &f.Patch,
+		&f.Prompt, &f.DiffContent, &f.Patch, &f.SessionProvenance,
 	}
 }
 

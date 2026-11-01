@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"slices"
@@ -10,6 +11,7 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/provenance"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/tokens"
 )
@@ -42,6 +44,12 @@ func (s *Server) humaDoctorAgents(
 			repoCfg, rawRepo = loaded, raw
 		}
 	}
+	sessionClient := new(provenance.Client)
+	if s.workerPool != nil {
+		sessionClient = &s.workerPool.sessionContextClient
+	}
+	sessionContext := ResolveDoctorSessionContext(ctx, repo, repoCfg, cfg, sessionClient)
+	resp.Body.SessionContext = &sessionContext
 	resp.Body.PathEnv = os.Getenv("PATH")
 	resp.Body.Agents = agent.DiagnoseAll(repoCfg, cfg)
 	for _, name := range input.Agent {
@@ -194,4 +202,32 @@ func ResolveDoctorUsageProvider(ctx context.Context, cfg *config.Config) DoctorU
 		}
 	}
 	return result
+}
+
+// ResolveDoctorSessionContext probes capability without reading archive records.
+// An empty HTTP batch or CLI help never syncs or starts an agentsview daemon.
+func ResolveDoctorSessionContext(ctx context.Context, repo string, repoCfg *config.RepoConfig, cfg *config.Config, client *provenance.Client) DoctorSessionContext {
+	out := DoctorSessionContext{Mode: config.ResolveSessionContextFrom(repoCfg, cfg).Mode, Provider: "cli", Status: "off"}
+	if cfg != nil && cfg.AgentsView.URL != "" {
+		out.Provider = "http"
+	} else if cfg != nil && cfg.Cost.Endpoint != "" {
+		out.Provider = "cost_endpoint"
+	}
+	if out.Mode != "on" {
+		return out
+	}
+	if client == nil {
+		client = new(provenance.Client)
+	}
+	err := client.Probe(ctx, repo, cfg)
+	switch {
+	case err == nil:
+		out.Status = "supported"
+	case errors.Is(err, provenance.ErrUnsupported):
+		out.Status = "unsupported"
+	default:
+		out.Status = "unavailable"
+		out.Error = err.Error()
+	}
+	return out
 }

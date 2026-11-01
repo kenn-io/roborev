@@ -13,6 +13,7 @@ import (
 	"uuid"
 
 	"go.kenn.io/roborev/internal/prompt"
+	"go.kenn.io/roborev/internal/provenance"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -196,48 +197,49 @@ func browserStreamContext(
 // arguments can contain credentials. Error is populated only for failed jobs
 // so the Review tab can explain missing output.
 type browserReviewJob struct {
-	Readable         bool                  `json:"readable"`
-	ID               int64                 `json:"id"`
-	RepoID           int64                 `json:"repo_id"`
-	CommitID         *int64                `json:"commit_id,omitempty"`
-	GitRef           string                `json:"git_ref"`
-	Branch           string                `json:"branch,omitempty"`
-	Agent            string                `json:"agent"`
-	Model            string                `json:"model,omitempty"`
-	Provider         string                `json:"provider,omitempty"`
-	Reasoning        string                `json:"reasoning,omitempty"`
-	CommandLine      string                `json:"command_line,omitempty"`
-	JobType          string                `json:"job_type"`
-	Status           storage.JobStatus     `json:"status"`
-	Error            string                `json:"error,omitempty"`
-	EnqueuedAt       time.Time             `json:"enqueued_at"`
-	StartedAt        *time.Time            `json:"started_at,omitempty"`
-	FinishedAt       *time.Time            `json:"finished_at,omitempty"`
-	Prompt           string                `json:"prompt,omitempty"`
-	RetryCount       int                   `json:"retry_count"`
-	Agentic          bool                  `json:"agentic"`
-	PromptPrebuilt   bool                  `json:"prompt_prebuilt"`
-	ReviewType       string                `json:"review_type,omitempty"`
-	PatchID          string                `json:"patch_id,omitempty"`
-	OutputPrefix     string                `json:"output_prefix,omitempty"`
-	SkipReason       string                `json:"skip_reason,omitempty"`
-	Source           string                `json:"source,omitempty"`
-	ParentJobID      *int64                `json:"parent_job_id,omitempty"`
-	MinSeverity      string                `json:"min_severity,omitempty"`
-	PanelRunUUID     *uuid.UUID            `json:"panel_run_uuid,omitempty"`
-	PanelRole        string                `json:"panel_role,omitempty"`
-	PanelName        string                `json:"panel_name,omitempty"`
-	PanelMemberName  string                `json:"panel_member_name,omitempty"`
-	PanelMemberIndex int                   `json:"panel_member_index,omitempty"`
-	NonVoting        bool                  `json:"non_voting,omitempty"`
-	TokenUsage       string                `json:"token_usage,omitempty"`
-	UUID             *uuid.UUID            `json:"uuid,omitempty"`
-	RepoPath         string                `json:"repo_path,omitempty"`
-	RepoName         string                `json:"repo_name,omitempty"`
-	CommitSubject    string                `json:"commit_subject,omitempty"`
-	Closed           *bool                 `json:"closed,omitempty"`
-	Verdict          *string               `json:"verdict,omitempty"`
-	PanelSummary     *storage.PanelSummary `json:"panel_summary,omitempty"`
+	SessionProvenance []provenance.Commit   `json:"session_provenance,omitempty"`
+	Readable          bool                  `json:"readable"`
+	ID                int64                 `json:"id"`
+	RepoID            int64                 `json:"repo_id"`
+	CommitID          *int64                `json:"commit_id,omitempty"`
+	GitRef            string                `json:"git_ref"`
+	Branch            string                `json:"branch,omitempty"`
+	Agent             string                `json:"agent"`
+	Model             string                `json:"model,omitempty"`
+	Provider          string                `json:"provider,omitempty"`
+	Reasoning         string                `json:"reasoning,omitempty"`
+	CommandLine       string                `json:"command_line,omitempty"`
+	JobType           string                `json:"job_type"`
+	Status            storage.JobStatus     `json:"status"`
+	Error             string                `json:"error,omitempty"`
+	EnqueuedAt        time.Time             `json:"enqueued_at"`
+	StartedAt         *time.Time            `json:"started_at,omitempty"`
+	FinishedAt        *time.Time            `json:"finished_at,omitempty"`
+	Prompt            string                `json:"prompt,omitempty"`
+	RetryCount        int                   `json:"retry_count"`
+	Agentic           bool                  `json:"agentic"`
+	PromptPrebuilt    bool                  `json:"prompt_prebuilt"`
+	ReviewType        string                `json:"review_type,omitempty"`
+	PatchID           string                `json:"patch_id,omitempty"`
+	OutputPrefix      string                `json:"output_prefix,omitempty"`
+	SkipReason        string                `json:"skip_reason,omitempty"`
+	Source            string                `json:"source,omitempty"`
+	ParentJobID       *int64                `json:"parent_job_id,omitempty"`
+	MinSeverity       string                `json:"min_severity,omitempty"`
+	PanelRunUUID      *uuid.UUID            `json:"panel_run_uuid,omitempty"`
+	PanelRole         string                `json:"panel_role,omitempty"`
+	PanelName         string                `json:"panel_name,omitempty"`
+	PanelMemberName   string                `json:"panel_member_name,omitempty"`
+	PanelMemberIndex  int                   `json:"panel_member_index,omitempty"`
+	NonVoting         bool                  `json:"non_voting,omitempty"`
+	TokenUsage        string                `json:"token_usage,omitempty"`
+	UUID              *uuid.UUID            `json:"uuid,omitempty"`
+	RepoPath          string                `json:"repo_path,omitempty"`
+	RepoName          string                `json:"repo_name,omitempty"`
+	CommitSubject     string                `json:"commit_subject,omitempty"`
+	Closed            *bool                 `json:"closed,omitempty"`
+	Verdict           *string               `json:"verdict,omitempty"`
+	PanelSummary      *storage.PanelSummary `json:"panel_summary,omitempty"`
 }
 
 // browserTokenUsage is the numeric presentation subset of persisted token
@@ -287,8 +289,9 @@ func projectBrowserReviewJob(job storage.ReviewJob, principal BrowserPrincipal) 
 		displayPrompt = prompt.DisplayFixPlanPrompt(displayPrompt)
 	}
 	return browserReviewJob{
-		Readable: job.IsReadableReview(),
-		ID:       job.ID, RepoID: job.RepoID, CommitID: job.CommitID,
+		SessionProvenance: job.SessionProvenance,
+		Readable:          job.IsReadableReview(),
+		ID:                job.ID, RepoID: job.RepoID, CommitID: job.CommitID,
 		GitRef: job.GitRef, Branch: job.Branch, Agent: job.Agent,
 		Model: job.Model, Provider: job.Provider, Reasoning: job.Reasoning,
 		CommandLine: commandLine,
