@@ -261,7 +261,7 @@ func TestProcessExistsUsesWin32APIWithoutSpawning(t *testing.T) {
 
 func TestProcessExistsDetectsExitedProcess(t *testing.T) {
 	// Spawn a short-lived hidden process and wait for it to exit.
-	cmd := HiddenCommand("cmd.exe", "/c", "exit 0")
+	cmd := HiddenCommand(t.Context(), "cmd.exe", "/c", "exit 0")
 	require.NoError(t, cmd.Start())
 	pid := cmd.Process.Pid
 	require.NoError(t, cmd.Wait())

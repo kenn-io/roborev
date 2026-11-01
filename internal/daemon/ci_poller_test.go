@@ -21,6 +21,7 @@ import (
 
 	googlegithub "github.com/google/go-github/v93/github"
 	"github.com/stretchr/testify/assert"
+
 	// ciPollerHarness bundles DB, repo, config, and poller for CI poller tests.
 	"github.com/stretchr/testify/require"
 
@@ -1318,7 +1319,7 @@ func TestCIPollerStartMakesTransientAttemptsDue(t *testing.T) {
 func TestCIPollerFindLocalRepo_PartialIdentityFallback(t *testing.T) {
 	h := newCIPollerHarness(t, "ssh://git@github.com/acme/api.git")
 
-	found, err := h.Poller.findLocalRepo("acme/api")
+	found, err := h.Poller.findLocalRepo(t.Context(), "acme/api")
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -1348,7 +1349,7 @@ func TestCIPollerFindLocalRepo_SkipsPlaceholders(t *testing.T) {
 	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
 
 	// With only a placeholder, should get errLocalRepoNotFound
-	_, err = p.findLocalRepo("acme/api")
+	_, err = p.findLocalRepo(t.Context(), "acme/api")
 	if err == nil {
 		require.Condition(t, func() bool {
 			return false
@@ -1369,7 +1370,7 @@ func TestCIPollerFindLocalRepo_SkipsPlaceholders(t *testing.T) {
 		}, "GetOrCreateRepo: %v", err)
 	}
 
-	found, err := p.findLocalRepo("acme/api")
+	found, err := p.findLocalRepo(t.Context(), "acme/api")
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -1710,7 +1711,7 @@ func TestCIPollerFindLocalRepo_AmbiguousRepoResolved(t *testing.T) {
 	cfg := config.DefaultConfig()
 	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
 
-	found, err := p.findLocalRepo("acme/api")
+	found, err := p.findLocalRepo(t.Context(), "acme/api")
 	require.NoError(t, err)
 	require.NotNil(t, found)
 	assert.Equal(t, autoClonePath, found.RootPath, "should prefer auto-clone over user checkout")
@@ -1731,7 +1732,7 @@ func TestCIPollerFindLocalRepo_AmbiguousRepoFallsBackToNewest(t *testing.T) {
 	cfg := config.DefaultConfig()
 	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
 
-	found, err := p.findLocalRepo("acme/api")
+	found, err := p.findLocalRepo(t.Context(), "acme/api")
 	require.NoError(t, err)
 	require.NotNil(t, found)
 	assert.Equal(t, "/tmp/clone2", found.RootPath, "should pick most recently created repo")
@@ -1759,7 +1760,7 @@ func TestCIPollerFindLocalRepo_PartialIdentitySameHostResolved(t *testing.T) {
 	cfg := config.DefaultConfig()
 	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
 
-	found, err := p.findLocalRepo("acme/widgets")
+	found, err := p.findLocalRepo(t.Context(), "acme/widgets")
 	require.NoError(t, err)
 	require.NotNil(t, found)
 	assert.Equal(t, autoClonePath, found.RootPath, "should prefer auto-clone in partial identity match")
@@ -1781,7 +1782,7 @@ func TestCIPollerFindLocalRepo_PartialIdentityCrossHostAmbiguity(t *testing.T) {
 	cfg := config.DefaultConfig()
 	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
 
-	_, err = p.findLocalRepo("acme/widgets")
+	_, err = p.findLocalRepo(t.Context(), "acme/widgets")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ambiguous")
 }
@@ -2183,7 +2184,7 @@ func TestCloneRemoteMatches(t *testing.T) {
 			}, "git remote add: %s: %s", err, out)
 		}
 
-		ok, err := cloneRemoteMatches(dir, "acme/match", "")
+		ok, err := cloneRemoteMatches(t.Context(), dir, "acme/match", "")
 		if err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -2205,7 +2206,7 @@ func TestCloneRemoteMatches(t *testing.T) {
 			}, "git init: %s: %s", err, out)
 		}
 
-		ok, err := cloneRemoteMatches(dir, "acme/any", "")
+		ok, err := cloneRemoteMatches(t.Context(), dir, "acme/any", "")
 		if err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -2236,7 +2237,7 @@ func TestCloneRemoteMatches(t *testing.T) {
 			}, "git remote add: %s: %s", err, out)
 		}
 
-		ok, err := cloneRemoteMatches(dir, "acme/different", "")
+		ok, err := cloneRemoteMatches(t.Context(), dir, "acme/different", "")
 		if err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -2254,7 +2255,7 @@ func TestCloneRemoteMatches(t *testing.T) {
 		// so this is treated as confirmed mismatch (false, nil).
 		// The caller (cloneNeedsReplace) checks isValidGitRepo first.
 		dir := t.TempDir()
-		ok, err := cloneRemoteMatches(dir, "acme/any", "")
+		ok, err := cloneRemoteMatches(t.Context(), dir, "acme/any", "")
 		if err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -2284,7 +2285,7 @@ func TestCloneRemoteMatches(t *testing.T) {
 			}, "remove .git/config: %v", err)
 		}
 
-		ok, err := cloneRemoteMatches(dir, "acme/any", "")
+		ok, err := cloneRemoteMatches(t.Context(), dir, "acme/any", "")
 		if err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -2317,7 +2318,7 @@ func TestCloneRemoteMatches(t *testing.T) {
 			}, "write corrupt config: %v", err)
 		}
 
-		_, err := cloneRemoteMatches(dir, "acme/any", "")
+		_, err := cloneRemoteMatches(t.Context(), dir, "acme/any", "")
 		if err == nil {
 			require.Condition(t, func() bool {
 				return false
@@ -2350,7 +2351,7 @@ func TestCloneRemoteMatches(t *testing.T) {
 			}
 		}
 
-		ok, err := cloneRemoteMatches(dir, "acme/rewritten", "")
+		ok, err := cloneRemoteMatches(t.Context(), dir, "acme/rewritten", "")
 		if err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -2378,7 +2379,7 @@ func TestCloneRemoteMatches(t *testing.T) {
 			}
 		}
 
-		ok, err := cloneRemoteMatches(dir, "acme/enterprise", "https://ghe.example.com/api/v3/")
+		ok, err := cloneRemoteMatches(t.Context(), dir, "acme/enterprise", "https://ghe.example.com/api/v3/")
 		require.NoError(t, err)
 		assert.True(t, ok)
 	})
@@ -2475,7 +2476,7 @@ func TestEnsureCloneRemoteURL_RedactsCredentialedMismatch(t *testing.T) {
 		}
 	}
 
-	err := ensureCloneRemoteURL(dir, "acme/api", "https://ghe.example.com/api/v3/")
+	err := ensureCloneRemoteURL(t.Context(), dir, "acme/api", "https://ghe.example.com/api/v3/")
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "secret-token")
 	assert.Contains(t, err.Error(), "https://ghe.example.com/other/repo.git")
@@ -4021,7 +4022,7 @@ func newCIPanelGitHarness(t *testing.T) (*CIPoller, *storage.DB, *storage.Repo, 
 	t.Helper()
 	repo := testutil.NewTestRepoWithCommit(t)
 	db := testutil.OpenTestDB(t)
-	// Register with an explicit identity so findLocalRepo("acme/api") resolves
+	// Register with an explicit identity so findLocalRepo(t.Context(), "acme/api") resolves
 	// this checkout instead of trying to auto-clone from GitHub.
 	row, err := db.GetOrCreateRepo(repo.Path(), "git@github.com:acme/api.git")
 	require.NoError(t, err)
@@ -4690,12 +4691,12 @@ func TestListCommitsInRange(t *testing.T) {
 	c1 := repo.CommitFile("a.go", "package a\n", "first")
 	c2 := repo.CommitFile("b.go", "package b\n", "second")
 
-	shas, err := listCommitsInRange(repo.Path(), base, c2)
+	shas, err := listCommitsInRange(t.Context(), repo.Path(), base, c2)
 	require.NoError(t, err)
 	assert.Equal([]string{c1, c2}, shas, "range is oldest-first (reverse chronological)")
 
 	// Empty range (head == base): fall back to the head SHA, never empty.
-	empty, err := listCommitsInRange(repo.Path(), c2, c2)
+	empty, err := listCommitsInRange(t.Context(), repo.Path(), c2, c2)
 	require.NoError(t, err)
 	assert.Equal([]string{c2}, empty, "empty range falls back to [head]")
 }
@@ -4738,7 +4739,7 @@ func TestProcessPRIgnoresWorkingTreeAutoDesignConfig(t *testing.T) {
 
 func TestResolveUpsertComments_DefaultFalse(t *testing.T) {
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-	if h.Poller.resolveUpsertComments("acme/api") {
+	if h.Poller.resolveUpsertComments(t.Context(), "acme/api") {
 		require.Condition(t, func() bool {
 			return false
 		}, "expected false by default")
@@ -4748,7 +4749,7 @@ func TestResolveUpsertComments_DefaultFalse(t *testing.T) {
 func TestResolveUpsertComments_GlobalTrue(t *testing.T) {
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 	h.Cfg.CI.UpsertComments = true
-	if !h.Poller.resolveUpsertComments("acme/api") {
+	if !h.Poller.resolveUpsertComments(t.Context(), "acme/api") {
 		require.Condition(t, func() bool {
 			return false
 		}, "expected true from global config")
@@ -4770,7 +4771,7 @@ func TestResolveUpsertComments_RepoOverridesGlobal(t *testing.T) {
 		}, err)
 	}
 
-	if h.Poller.resolveUpsertComments("acme/api") {
+	if h.Poller.resolveUpsertComments(t.Context(), "acme/api") {
 		require.Condition(t, func() bool {
 			return false
 		}, "expected repo config (false) to override global (true)")
@@ -4792,7 +4793,7 @@ func TestResolveUpsertComments_RepoEnablesOverGlobal(t *testing.T) {
 		}, err)
 	}
 
-	if !h.Poller.resolveUpsertComments("acme/api") {
+	if !h.Poller.resolveUpsertComments(t.Context(), "acme/api") {
 		require.Condition(t, func() bool {
 			return false
 		}, "expected repo config (true) to override global (false)")
@@ -4801,13 +4802,13 @@ func TestResolveUpsertComments_RepoEnablesOverGlobal(t *testing.T) {
 
 func TestResolveIncludeCosts_DefaultFalse(t *testing.T) {
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-	assert.False(t, h.Poller.resolveIncludeCosts("acme/api"))
+	assert.False(t, h.Poller.resolveIncludeCosts(t.Context(), "acme/api"))
 }
 
 func TestResolveIncludeCosts_GlobalTrue(t *testing.T) {
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 	h.Cfg.CI.IncludeCosts = true
-	assert.True(t, h.Poller.resolveIncludeCosts("acme/api"))
+	assert.True(t, h.Poller.resolveIncludeCosts(t.Context(), "acme/api"))
 }
 
 func TestResolveIncludeCosts_RepoOverridesGlobal(t *testing.T) {
@@ -4820,7 +4821,7 @@ func TestResolveIncludeCosts_RepoOverridesGlobal(t *testing.T) {
 	), 0o644)
 	require.NoError(t, err)
 
-	assert.False(t, h.Poller.resolveIncludeCosts("acme/api"))
+	assert.False(t, h.Poller.resolveIncludeCosts(t.Context(), "acme/api"))
 }
 
 func TestResolveIncludeCosts_RepoEnablesOverGlobal(t *testing.T) {
@@ -4832,7 +4833,7 @@ func TestResolveIncludeCosts_RepoEnablesOverGlobal(t *testing.T) {
 	), 0o644)
 	require.NoError(t, err)
 
-	assert.True(t, h.Poller.resolveIncludeCosts("acme/api"))
+	assert.True(t, h.Poller.resolveIncludeCosts(t.Context(), "acme/api"))
 }
 
 // TestClosedPRCleansUpDeferredAttempt verifies that closing a PR removes its

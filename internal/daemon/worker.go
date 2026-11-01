@@ -1050,7 +1050,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Register for cancellation tracking
 	deadline, _ := ctx.Deadline()
 	wp.registerRunningJob(job.ID, cancel, deadline)
-	defer wp.finishRunningJob(workerID, job.ID)
+	// Cleanup must still reach the database after the job context ends.
+	defer wp.finishRunningJob(context.WithoutCancel(ctx), workerID, job.ID)
 	// Every attempt owns the lifetime of its output stream, including paths that
 	// fail before an agent starts and synthesis paths that do not invoke one.
 	defer wp.outputBuffers.CloseJob(job.ID)
@@ -1839,7 +1840,7 @@ func (wp *WorkerPool) finishCanceledAttempt(workerID string, job *storage.Review
 	})
 }
 
-func (wp *WorkerPool) finishRunningJob(workerID string, jobID int64) {
+func (wp *WorkerPool) finishRunningJob(ctx context.Context, workerID string, jobID int64) {
 	// Remove the old cancellation handler before releasing the database row.
 	// Once worker_id becomes NULL, a rerun may be claimed and register a new
 	// handler for the same job ID.
@@ -1849,7 +1850,7 @@ func (wp *WorkerPool) finishRunningJob(workerID string, jobID int64) {
 		// A failover can be claimed before this worker finishes cleanup. A
 		// cancellation during that wait reaches this handler, but its event
 		// ownership belongs to the new claim as well.
-		err := wp.db.QueryRow(`SELECT EXISTS (
+		err := wp.db.QueryRowContext(ctx, `SELECT EXISTS (
 			SELECT 1 FROM review_jobs WHERE id = ? AND status = 'canceled'
 			AND worker_id IS NOT NULL AND worker_id != ?
 		)`, jobID, workerID).Scan(&canceledSuccessor)

@@ -381,7 +381,7 @@ func TestRemoteKeyRevocationAndNewIDRotation(t *testing.T) {
 func TestRemoteListenerShutdownCancelsRequests(t *testing.T) {
 	s, cfg, _ := remoteFixture(t)
 	cfg.Listen = "127.0.0.1:0"
-	require.NoError(t, s.startRemoteServer(cfg))
+	require.NoError(t, s.startRemoteServer(t.Context(), cfg))
 	defer s.abortRemoteServer()
 	require.NotNil(t, s.remoteServer.BaseContext)
 	ctx := s.remoteServer.BaseContext(nil)

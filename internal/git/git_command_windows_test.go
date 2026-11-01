@@ -24,7 +24,7 @@ func TestNewGitCmdHidesConsole(t *testing.T) {
 }
 
 func TestNewGitCommitCmdHidesConsole(t *testing.T) {
-	cmd := newGitCommitCmd("", "commit", "-m", "test")
+	cmd := newGitCommitCmd(t.Context(), "", "commit", "-m", "test")
 	require.NotNil(t, cmd.SysProcAttr)
 	assert.NotZero(t, cmd.SysProcAttr.CreationFlags&testCreateNoWindow)
 }

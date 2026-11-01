@@ -105,7 +105,7 @@ func mockIdentifyProcess(t *testing.T, mock func(int) processIdentity) {
 
 func TestFindAvailablePort(t *testing.T) {
 	// Test finding an available port
-	addr, port, err := FindAvailablePort(defaultTestAddr)
+	addr, port, err := FindAvailablePort(t.Context(), defaultTestAddr)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -126,7 +126,7 @@ func TestFindAvailablePort(t *testing.T) {
 
 func TestFindAvailablePort_Ephemeral(t *testing.T) {
 	// Test finding an available port with ephemeral :0
-	addr, port, err := FindAvailablePort("127.0.0.1:0")
+	addr, port, err := FindAvailablePort(t.Context(), "127.0.0.1:0")
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -158,7 +158,7 @@ func TestFindAvailablePort_IPv6Loopback(t *testing.T) {
 	}
 	ln.Close()
 
-	addr, port, err := FindAvailablePort("[::1]:0")
+	addr, port, err := FindAvailablePort(t.Context(), "[::1]:0")
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false

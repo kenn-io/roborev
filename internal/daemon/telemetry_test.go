@@ -96,7 +96,7 @@ func TestCaptureDaemonStartedTelemetry(t *testing.T) {
 	cfg.CI.Enabled = true
 	cfg.AutoDesignReview.Enabled = true
 
-	server.captureDaemonStartedTelemetry(cfg)
+	server.captureDaemonStartedTelemetry(t.Context(), cfg)
 	waitSetupFinished(t, client)
 
 	require.Equal([]string{"daemon_started", "setup_finished"}, client.recordedEvents())
@@ -133,7 +133,7 @@ func TestCaptureDaemonStartedTelemetryDisabledNoops(t *testing.T) {
 	client := &fakeTelemetryClient{enabled: false}
 	server.SetTelemetry(client)
 
-	server.captureDaemonStartedTelemetry(config.DefaultConfig())
+	server.captureDaemonStartedTelemetry(t.Context(), config.DefaultConfig())
 
 	assert.Empty(client.recordedEvents())
 	assert.Nil(client.recordedProperties())

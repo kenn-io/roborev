@@ -2470,7 +2470,7 @@ func TestCreateCommitPreCommitHookOutput(t *testing.T) {
 	repo.WriteFile("new.txt", "content")
 	repo.Run("add", "new.txt")
 
-	_, err := CreateCommit(repo.Dir, "should fail")
+	_, err := CreateCommit(t.Context(), repo.Dir, "should fail")
 	require.Error(t, err, "expected CreateCommit to fail with pre-commit hook")
 
 	assert.
@@ -2493,7 +2493,7 @@ func TestCreateCommitExecutableHookReceivesRepoPWD(t *testing.T) {
 
 	repo.WriteFile("pwd.txt", "content")
 
-	sha, err := CreateCommit(repo.Dir, "commit with pwd hook")
+	sha, err := CreateCommit(t.Context(), repo.Dir, "commit with pwd hook")
 	require.NoError(t, err)
 	assert.Equal(t, sha, repo.HeadSHA())
 }
@@ -2537,7 +2537,7 @@ func TestCreateCommitHookFailedProbePreservesEnvOnlyIdentity(t *testing.T) {
 
 	repo.WriteFile("new.txt", "content")
 
-	_, err = CreateCommit(repo.Dir, "should fail")
+	_, err = CreateCommit(t.Context(), repo.Dir, "should fail")
 	require.Error(t, err, "expected CreateCommit to fail with pre-commit hook")
 
 	var commitErr *CommitError
@@ -2598,7 +2598,7 @@ func TestCreateCommitWithOptionsAuthor(t *testing.T) {
 	repo := NewTestRepoWithCommit(t)
 	repo.WriteFile("new.txt", "content")
 
-	sha, err := CreateCommitWithOptions(repo.Dir, "commit with author", CommitOptions{
+	sha, err := CreateCommitWithOptions(t.Context(), repo.Dir, "commit with author", CommitOptions{
 		Author: "Fix Author <fix-author@example.com>",
 	})
 	require.NoError(t, err)
@@ -2612,7 +2612,7 @@ func TestCreateCommitWithOptionsCoAuthors(t *testing.T) {
 	repo := NewTestRepoWithCommit(t)
 	repo.WriteFile("new.txt", "content")
 
-	_, err := CreateCommitWithOptions(repo.Dir, "commit with trailers", CommitOptions{
+	_, err := CreateCommitWithOptions(t.Context(), repo.Dir, "commit with trailers", CommitOptions{
 		CoAuthors: []string{
 			"Reviewer One <one@example.com>",
 			"Reviewer Two <two@example.com>",
@@ -2640,7 +2640,7 @@ func TestCreateCommitWithOptionsHookFailure(t *testing.T) {
 
 	repo.WriteFile("new.txt", "content")
 
-	_, err := CreateCommitWithOptions(repo.Dir, "should fail", CommitOptions{
+	_, err := CreateCommitWithOptions(t.Context(), repo.Dir, "should fail", CommitOptions{
 		Author: "Fix Author <fix-author@example.com>",
 	})
 	require.Error(t, err, "expected CreateCommitWithOptions to fail with pre-commit hook")
@@ -2655,7 +2655,7 @@ func TestCommitErrorHookFailedFalseWhenNothingToCommit(t *testing.T) {
 
 	repo.InstallHook("pre-commit", "#!/bin/sh\nexit 0\n")
 
-	_, err := CreateCommit(repo.Dir, "empty commit")
+	_, err := CreateCommit(t.Context(), repo.Dir, "empty commit")
 	require.Error(t, err, "expected CreateCommit to fail")
 
 	var commitErr *CommitError
@@ -2672,7 +2672,7 @@ func TestCommitErrorHookFailedCommitMsgHook(t *testing.T) {
 	repo.WriteFile("new.txt", "content")
 	repo.Run("add", "new.txt")
 
-	_, err := CreateCommit(repo.Dir, "should fail")
+	_, err := CreateCommit(t.Context(), repo.Dir, "should fail")
 	require.Error(t, err, "expected CreateCommit to fail with commit-msg hook")
 
 	var commitErr *CommitError
@@ -2701,7 +2701,7 @@ func TestCommitErrorHookFailedFalseForGPGSigningFailure(t *testing.T) {
 	repo.WriteFile("new.txt", "content")
 	repo.Run("add", "new.txt")
 
-	_, err := CreateCommit(repo.Dir, "should fail from gpg")
+	_, err := CreateCommit(t.Context(), repo.Dir, "should fail from gpg")
 	require.Error(t, err, "expected commit to fail due to gpg.program=false")
 
 	var commitErr *CommitError
@@ -2724,7 +2724,7 @@ func TestCreateCommitPreservesGitIdentityEnvWhileIgnoringRepoEnv(t *testing.T) {
 	t.Setenv("GIT_COMMITTER_EMAIL", "env-committer@example.com")
 
 	target.WriteFile("created.txt", "content")
-	sha, err := CreateCommit(target.Dir, "commit with env identity")
+	sha, err := CreateCommit(t.Context(), target.Dir, "commit with env identity")
 	require.NoError(t, err)
 
 	os.Unsetenv("GIT_DIR")
@@ -2756,7 +2756,7 @@ func TestCreateCommitPreservesGitConfigEnvWhileIgnoringRepoEnv(t *testing.T) {
 	t.Setenv("GIT_CONFIG_VALUE_2", "config-author@example.com")
 
 	target.WriteFile("created.txt", "content")
-	sha, err := CreateCommit(target.Dir, "commit with env config")
+	sha, err := CreateCommit(t.Context(), target.Dir, "commit with env config")
 	require.NoError(t, err)
 
 	os.Unsetenv("GIT_DIR")
@@ -2781,7 +2781,7 @@ func TestCreateCommitPreservesGitConfigParametersIdentity(t *testing.T) {
 		"'core.worktree'='"+leaked.Dir+"' 'core.fileMode'= 'color.ui' 'user.name'='Param O'\\''Connor' 'user.email'='param@example.com'")
 
 	target.WriteFile("created.txt", "content")
-	sha, err := CreateCommit(target.Dir, "commit with parameters identity")
+	sha, err := CreateCommit(t.Context(), target.Dir, "commit with parameters identity")
 	require.NoError(t, err)
 
 	os.Unsetenv("GIT_DIR")
@@ -2805,7 +2805,7 @@ func TestCreateCommitPreservesGlobalConfigEnv(t *testing.T) {
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 
 	repo.WriteFile("created.txt", "content")
-	sha, err := CreateCommit(repo.Dir, "commit with global identity")
+	sha, err := CreateCommit(t.Context(), repo.Dir, "commit with global identity")
 	require.NoError(t, err)
 
 	assert.Equal(t, "Global Author <global@example.com>", repo.Run("show", "-s", "--format=%an <%ae>", sha))
