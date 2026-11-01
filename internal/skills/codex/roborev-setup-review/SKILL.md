@@ -159,6 +159,7 @@ This mapping is for you, not the user. Use only what the conversation needs.
 | Reviews on request | `[review] default_panel`, or `--type` and `--panel` |
 | Reviews on pull requests | `[ci] panel`; see <https://roborev.io/docs/advanced/subagent-review-panels/#ci-panels> |
 | Verify CI findings before posting | `[ci] check = true`, off by default; Codex checks findings in a sandbox and keeps the original review if checking fails. Global `[ci] check_model` and `check_reasoning` select its model and effort. |
+| Rewrite checked CI findings | `[ci] rewrite = true` requires `check = true`. Two additional Codex calls use stored findings and escaped PR context, without checker output, in a fresh read-only clone; failure keeps the checked text. |
 | Only serious findings fail | `review_min_severity`, plus severity guidance in each rubric |
 | Passing reviews close themselves | `auto_close_passing_reviews = true` |
 | Reviewers that see the task a commit is for, from Kata | `[kata_context]` with `mode = "current"`; commits name their issue, such as `Closes: kata#abc4` |

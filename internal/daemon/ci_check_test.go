@@ -70,16 +70,30 @@ func TestCICheckSnapshot(t *testing.T) {
 	_, off, err := p.buildPanelOpts(t.Context(), in)
 	require.NoError(t, err)
 	assert.Equal(t, `{"instructions":"merge"}`, off.PanelMemberConfigJSON) //nolint:testifylint // Checker off preserves the existing snapshot byte for byte.
+	cfg.CI.Rewrite = true
+	_, rewriteOnly, err := p.buildPanelOpts(t.Context(), in)
+	require.NoError(t, err)
+	assert.Equal(t, off.PanelMemberConfigJSON, rewriteOnly.PanelMemberConfigJSON)
+	cfg.CI.Rewrite = false
 	cfg.CI.Check = true
 	cfg.CI.CheckModel = "checker-model"
 	cfg.CI.CheckReasoning = " HIGH "
 	_, on, err := p.buildPanelOpts(t.Context(), in)
 	require.NoError(t, err)
+	assert.Equal(t, `{"instructions":"merge","check":{"model":"checker-model","reasoning":"high"}}`, on.PanelMemberConfigJSON) //nolint:testifylint // Rewrite off preserves the checker snapshot byte for byte.
 	var snapshot synthesisJobConfig
-	require.NoError(t, json.Unmarshal([]byte(on.PanelMemberConfigJSON), &snapshot))
+	in.pullRequest = prompt.PullRequest{Title: "Export files", Description: "Keep the user's files"}
+	cfg.CI.Rewrite = true
+	_, rewritten, err := p.buildPanelOpts(t.Context(), in)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(rewritten.PanelMemberConfigJSON), &snapshot))
 	require.NotNil(t, snapshot.Check)
-	assert.Equal(t, "checker-model", snapshot.Check.Model)
-	assert.Equal(t, "high", snapshot.Check.Reasoning)
+	assert.True(t, snapshot.Check.Rewrite)
+	assert.Equal(t, prompt.PullRequestBlock(in.pullRequest), snapshot.Check.PullRequest)
+	in.repoCfg = &config.RepoConfig{CI: config.RepoCIConfig{Rewrite: new(false)}}
+	_, repoOff, err := p.buildPanelOpts(t.Context(), in)
+	require.NoError(t, err)
+	assert.Equal(t, on.PanelMemberConfigJSON, repoOff.PanelMemberConfigJSON)
 	override := false
 	in.repoCfg = &config.RepoConfig{CI: config.RepoCIConfig{Check: &override}}
 	_, overridden, err := p.buildPanelOpts(t.Context(), in)
@@ -176,6 +190,35 @@ func TestCICheckCompletionFailure(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCICheckCompletionRewrite(t *testing.T) {
+	tc, job, doc, _ := setupCICheckCompletion(t, "high", "", nil)
+	encoded, err := (synthesisJobConfig{Check: &ciCheckConfig{Reasoning: "high", Rewrite: true}}).encode()
+	require.NoError(t, err)
+	_, err = tc.DB.Exec("UPDATE review_jobs SET panel_member_config_json = ? WHERE id = ?", encoded, job.ID)
+	require.NoError(t, err)
+	job.PanelMemberConfigJSON = encoded
+	calls := 0
+	tc.Pool.ciCheck = func(_ context.Context, _ *storage.ReviewJob, cfg ciCheckConfig, doc structuredreview.Document, _ []string, out io.Writer) (structuredreview.Document, error) {
+		calls++
+		assert.Equal(t, "high", cfg.Reasoning)
+		require.Len(t, doc.Findings, 2)
+		fmt.Fprintln(out, `{"type":"thread.started","thread_id":"checker-session"}`)
+		fmt.Fprintln(out, `{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":5}}`)
+		doc.Findings = append([]structuredreview.Finding(nil), doc.Findings...)
+		doc.Findings[0].Problem = "Users cannot build the project."
+		doc.Findings[0].Fix = "Keep the build working. **Where:** `build`"
+		return doc, nil
+	}
+	tc.Pool.processSynthesisJob(t.Context(), testWorkerID, job)
+	assert.Equal(t, 1, calls)
+	finished, err := tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusDone, finished.Status)
+	_, checked := readCICheckCompletionReview(t, tc, job)
+	doc.Findings[0].Problem, doc.Findings[0].Fix = "Users cannot build the project.", "Keep the build working. **Where:** `build`"
+	assert.Equal(t, doc, checked)
 }
 
 func TestCICheckCompletionDrop(t *testing.T) {

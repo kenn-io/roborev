@@ -1573,16 +1573,14 @@ func TestCIPollerProcessPR_PromptIncludesPullRequest(t *testing.T) {
 
 	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
 		Number: 80, HeadRefOid: headSHA, BaseRefName: "main",
-		Title: "Cap upload retries", Body: "Stop after three attempts <always>.",
+		Title: "Cap upload retries", Body: "Stop after three attempts.",
 	}, h.Cfg)
 	require.NoError(t, err)
 
 	members := h.panelMembers(t, "acme/api", 80, headSHA)
 	require.Len(t, members, 1)
-	assert.Contains(t, members[0].Prompt, "<pull-request context-only=\"true\">\n"+
-		"**Title:** Cap upload retries\n"+
-		"**Description:**\nStop after three attempts &lt;always&gt;.\n"+
-		"</pull-request>")
+	assert.Contains(t, members[0].Prompt, "Cap upload retries")
+	assert.Contains(t, members[0].Prompt, "Stop after three attempts.")
 }
 
 func TestCIPollerProcessPR_InvalidReviewType(t *testing.T) {

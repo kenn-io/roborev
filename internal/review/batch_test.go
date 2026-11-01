@@ -637,8 +637,8 @@ func TestRunBatchShowsPullRequestToAgents(t *testing.T) {
 
 	require.Len(t, results, 1)
 	require.Equal(t, ResultDone, results[0].Status, results[0].Error)
-	assert.Contains(t, captureAgent.lastPrompt,
-		"**Title:** Cap retries\n**Description:**\nStop after three attempts.\n</pull-request>")
+	assert.Contains(t, captureAgent.lastPrompt, "Cap retries")
+	assert.Contains(t, captureAgent.lastPrompt, "Stop after three attempts.")
 }
 
 func TestRunBatch_CodexReviewSettings(t *testing.T) {

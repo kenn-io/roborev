@@ -127,11 +127,15 @@ responses from developers. Use this context to:
 Reviewing {{if gt .Count 0}}{{.Count}}{{else}}{{len .Entries}}{{end}} commits:
 
 {{end}}
-{{define "commit_range_overflow"}}{{with .PullRequest}}<pull-request context-only="true">
+{{define "pull_request_context"}}{{template "commit_message_context" .}}
+
+{{template "pull_request_block" .}}{{end}}
+{{define "pull_request_block"}}<pull-request context-only="true">
 {{if .Title}}**Title:** {{.Title}}
 {{end}}{{if .Description}}**Description:**
 {{.Description}}
-{{end}}</pull-request>
+{{end}}</pull-request>{{end}}
+{{define "commit_range_overflow"}}{{with .PullRequest}}{{template "pull_request_block" .}}
 
 {{end}}{{if .Entries}}<commit-messages context-only="true">
 {{range .Entries}}- {{.Commit}}{{if .Subject}} {{.Subject}}{{end}}

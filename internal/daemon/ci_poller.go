@@ -884,8 +884,12 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 		return false, err
 	}
 	if selection.Assignment != nil {
+		plan, planErr := experimentPlanForPanel(memberOpts, synthOpts)
+		if planErr != nil {
+			return false, planErr
+		}
 		assignment, assignErr := storageAssignmentForExperiment(
-			selection.Assignment, experimentPlanForPanel(memberOpts, synthOpts),
+			selection.Assignment, plan,
 		)
 		if assignErr != nil {
 			return false, fmt.Errorf("fingerprint experiment plan: %w", assignErr)
@@ -1819,6 +1823,10 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 			return nil, storage.EnqueueOpts{}, fmt.Errorf("resolve CI checker reasoning: %w", err)
 		}
 		check = &ciCheckConfig{Model: in.cfg.CI.CheckModel, Reasoning: reasoning}
+		if config.ResolveCIRewrite(in.repoCfg, in.cfg) {
+			check.Rewrite = true
+			check.PullRequest = prompt.PullRequestBlock(in.pullRequest)
+		}
 	}
 	synthSnapshot, err := synthesisJobConfig{
 		Check:        check,
