@@ -224,7 +224,8 @@ user whether to install it. Do not install it by default.
     roborev, but it applies to every registered repository and every session of
     each hooked agent.
 - **Removal is manual.** There is no uninstall command. To remove the hook, edit
-    the agent's hook config and delete the `roborev agent hook run` entry.
+    the agent's hook config and delete the installed `roborev agent-hook run`
+    entry. The installer writes this compatible spelling.
 - **Coverage is uneven.** Cursor receives the events but cannot display the
     instruction, so the hook has no visible effect there. Claude Desktop and
     other apps without harness hooks are not supported.

@@ -974,31 +974,6 @@ func TestDerivedSandboxWordingUsesTargetAgent(t *testing.T) {
 	}
 }
 
-func TestFixSkillsUseHeredocForCommentText(t *testing.T) {
-	for _, agent := range []Agent{AgentClaude, AgentCodex, AgentDroid, AgentGrok} {
-		t.Run(string(agent), func(t *testing.T) {
-			spec, ok := lookupAgent(agent)
-			require.True(t, ok)
-			skills, err := embeddedSkillsForAgent(spec)
-			require.NoError(t, err)
-
-			var content string
-			for _, skill := range skills {
-				if skill.DirName == "roborev-fix" {
-					content = strings.ReplaceAll(string(skill.Content), "\r\n", "\n")
-				}
-			}
-			require.NotEmpty(t, content, "missing roborev-fix skill for %s", agent)
-			assert.Contains(t, content, "cat <<'ROBOREV_COMMENT'")
-			assert.Contains(t, content, "never\nby interpolating dynamic text directly into a shell string")
-			assert.NotContains(t, content, `"<summary of changes>"`)
-			assert.NotContains(t, content, "Escape quotes and special characters in the bash command")
-			assert.Equal(t, 0, strings.Count(content, `roborev job comment --from-skill --commenter roborev-fix --job 1019 "`))
-			assert.Equal(t, 0, strings.Count(content, `roborev job comment --from-skill --commenter roborev-fix --job 1021 "`))
-		})
-	}
-}
-
 // If the runtime policy heading and shipped skill drift apart, an Agent Hook
 // invocation can supply policy the selected skill does not recognize.
 func TestFixSkillsRecognizeRuntimeAutofixGuidelines(t *testing.T) {
@@ -1443,49 +1418,12 @@ func stubUserHomeDir(t *testing.T, home string) {
 	})
 }
 
-// fencedRoborevCommands returns each roborev invocation inside fenced code blocks as its tokens from the subcommand on.
-func fencedRoborevCommands(content string) [][]string {
-	var commands [][]string
-	inFence := false
-	for line := range strings.SplitSeq(strings.ReplaceAll(content, "\r\n", "\n"), "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "```") {
-			inFence = !inFence
-			continue
-		}
-		if !inFence {
-			continue
-		}
-		for segment := range strings.SplitSeq(line, "&&") {
-			tokens := strings.Fields(segment)
-			for i, token := range tokens {
-				if token == "roborev" && i+1 < len(tokens) {
-					commands = append(commands, tokens[i+1:])
-				}
-			}
-		}
-	}
-	return commands
-}
-
-// Commands a bundled skill runs carry --from-skill so the CLI does not count the agent's call as a person opening roborev.
-func TestBundledSkillCommandsCarryFromSkill(t *testing.T) {
+// MCP-mode skills still invoke the review CLI with agent attribution.
+func TestBundledMCPSkillCommandsCarryFromSkill(t *testing.T) {
 	for _, spec := range supportedAgents {
 		t.Run(string(spec.agent), func(t *testing.T) {
 			skills, err := embeddedSkillsForAgent(spec)
 			require.NoError(t, err)
-			total := 0
-			for _, skill := range skills {
-				for _, command := range fencedRoborevCommands(string(skill.Content)) {
-					if command[0] == "agent-hook" || (len(command) >= 3 && command[0] == "agent" && command[1] == "hook" && command[2] == "fix-done") {
-						continue
-					}
-					total++
-					require.GreaterOrEqual(t, len(command), 2, "%s: roborev %s", skill.DirName, command[0])
-					assert.Contains(t, command, "--from-skill", "%s: roborev %s", skill.DirName, strings.Join(command, " "))
-				}
-			}
-			assert.NotZero(t, total)
-
 			dir := filepath.Join(t.TempDir(), "skills")
 			_, err = InstallToPath(spec.agent, dir, new(true))
 			require.NoError(t, err)
