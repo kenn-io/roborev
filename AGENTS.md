@@ -228,6 +228,31 @@ Test conventions:
   tautological and should be replaced with real execution, parser/tool-native
   validation, or a documented manual release check.
 
+## Context Use
+
+- A function that runs git or another process, calls GitHub, the daemon API
+  or PostgreSQL, waits on a timer or channel, or polls takes
+  `ctx context.Context` as its first parameter. Pass the nearest caller's
+  context: `cmd.Context()` in Cobra commands, the handler's `ctx` or
+  `r.Context()` in the daemon, and the job context in workers.
+- When a caller has a context, use the helper variant that takes it, such as
+  `git.GetDiffCtx` or `db.GetJobByIDContext`, not the wrapper that starts
+  its own.
+- Most SQLite storage methods take no context yet. Give new storage methods a
+  context parameter; `noctx` skips `database/sql` calls in `internal/storage`
+  only until that API is converted.
+- Detach on purpose and say why in a comment. Use `context.WithoutCancel` for
+  cleanup that must finish after cancellation, such as worktree removal, job
+  finalization, rollbacks and canceling an abandoned review job. Hooks and
+  the detached daemon process outlive the code that starts them. Start a
+  `context.Background()` root only in `main`, in helper processes that tests
+  launch, and where no caller context exists yet; name the gap.
+- Tests use `t.Context()`. It is already canceled when `t.Cleanup` functions
+  run, so cleanups use `context.WithoutCancel(t.Context())`.
+- golangci-lint enforces the rest through `noctx`, `usetesting`,
+  `containedctx`, `fatcontext` and govet's `lostcancel`. A stored context
+  needs a `//nolint:containedctx` comment that names the lifetime it owns.
+
 ## Search Shortcuts
 
 - Commands: `rg '^func .*Cmd\(' cmd/roborev`
