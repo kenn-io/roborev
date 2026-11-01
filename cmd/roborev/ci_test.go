@@ -711,11 +711,11 @@ func TestTrustedCIRepoConfigRefUsesPreReviewCommit(t *testing.T) {
 	base := repo.HeadSHA()
 	head := repo.CommitFile("feature.txt", "feature", "feature work")
 
-	got, err := trustedCIRepoConfigRef(repo.Path(), base+".."+head)
+	got, err := trustedCIRepoConfigRef(t.Context(), repo.Path(), base+".."+head)
 	require.NoError(t, err)
 	assert.Equal(t, base, got)
 
-	got, err = trustedCIRepoConfigRef(repo.Path(), head)
+	got, err = trustedCIRepoConfigRef(t.Context(), repo.Path(), head)
 	require.NoError(t, err)
 	assert.Equal(t, base, got)
 }

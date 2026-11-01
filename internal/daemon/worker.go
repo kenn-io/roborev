@@ -863,7 +863,8 @@ func (wp *WorkerPool) createExactCheckout(
 		wt.Repo = commonDir
 		createErr = writeCIWorktreeMarker(wt.Dir, commonDir)
 		if createErr != nil {
-			_ = wt.Close(context.Background())
+			// Remove the checkout even when the job was canceled.
+			_ = wt.Close(context.WithoutCancel(ctx))
 			createErr = fmt.Errorf("write review worktree marker: %w", createErr)
 		}
 	}
@@ -876,7 +877,8 @@ func (wp *WorkerPool) createExactCheckout(
 	cleanup := func() {
 		unlock := lockGitMetadata(job.RepoPath)
 		defer unlock()
-		if err := wt.Close(context.Background()); err != nil {
+		// Cleanup runs after the job ends and must not inherit its cancellation.
+		if err := wt.Close(context.WithoutCancel(ctx)); err != nil {
 			log.Printf("[%s] Warning: remove review worktree for job %d: %v",
 				workerID, job.ID, err)
 		}

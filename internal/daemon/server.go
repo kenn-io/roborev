@@ -1293,7 +1293,7 @@ func (s *Server) findReusableSessionID(
 		if !isAncestor {
 			continue
 		}
-		commitsSinceCandidate, err := git.GetRangeCommits(repoPath, candidateSHA+".."+targetSHA)
+		commitsSinceCandidate, err := git.GetRangeCommitsCtx(ctx, repoPath, candidateSHA+".."+targetSHA)
 		if err != nil {
 			log.Printf("enqueue: compute reusable session distance failed for job %d (%q -> %q): %v", candidate.ID, candidateSHA, targetSHA, err)
 			continue
@@ -1369,7 +1369,7 @@ func findCompatibleReusableSession(
 		if err != nil || !isAncestor {
 			continue
 		}
-		commitsSinceCandidate, err := git.GetRangeCommits(repoPath, candidateSHA+".."+targetSHA)
+		commitsSinceCandidate, err := git.GetRangeCommitsCtx(ctx, repoPath, candidateSHA+".."+targetSHA)
 		if err != nil || len(commitsSinceCandidate) > maxSessionReuseDistance {
 			continue
 		}
@@ -1610,7 +1610,7 @@ func (s *Server) humaListJobs(
 	// Single job lookup by ID (>= 0 because ID=0 should
 	// return empty, not fall through to the list path).
 	if input.ID >= 0 {
-		job, err := s.db.GetJobByID(input.ID)
+		job, err := s.db.GetJobByIDContext(ctx, input.ID)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				resp := &ListJobsOutput{}
@@ -2614,7 +2614,7 @@ func (s *Server) humaCancelJob(
 	// below still returns the correct 404/500 for the target. A not-found here
 	// is expected (the cancel reports it); log only a real lookup failure so a
 	// transient DB error that downgrades a panel cancel leaves a trace.
-	job, jobErr := s.db.GetJobByID(input.Body.JobID)
+	job, jobErr := s.db.GetJobByIDContext(ctx, input.Body.JobID)
 	if jobErr != nil && !errors.Is(jobErr, sql.ErrNoRows) {
 		log.Printf("cancel job %d: panel routing lookup failed: %v",
 			input.Body.JobID, jobErr)
@@ -2658,7 +2658,7 @@ func (s *Server) humaCancelJob(
 	s.releaseSynthesisIfCanceledMember(job)
 
 	if job == nil {
-		job, _ = s.db.GetJobByID(input.Body.JobID)
+		job, _ = s.db.GetJobByIDContext(ctx, input.Body.JobID)
 	}
 	s.broadcaster.Broadcast(eventForMutationPrincipal(
 		ctx, eventForJob(jobEventType(job, "canceled"), job, input.Body.JobID),
@@ -2683,7 +2683,7 @@ func (s *Server) humaRerunJob(
 			"job_id is required",
 		)
 	}
-	job, err := s.db.GetJobByID(input.Body.JobID)
+	job, err := s.db.GetJobByIDContext(ctx, input.Body.JobID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, huma.Error404NotFound(
@@ -2819,7 +2819,7 @@ func (s *Server) humaCloseReview(
 		)
 	}
 
-	job, jobErr := s.db.GetJobByID(input.Body.JobID)
+	job, jobErr := s.db.GetJobByIDContext(ctx, input.Body.JobID)
 	if jobErr != nil && !errors.Is(jobErr, sql.ErrNoRows) {
 		return nil, huma.Error500InternalServerError(
 			fmt.Sprintf("get job: %v", jobErr),
@@ -2912,7 +2912,7 @@ func (s *Server) humaAddComment(
 				fmt.Sprintf("add comment: %v", err),
 			)
 		}
-		job, jobErr := s.db.GetJobByID(input.Body.JobID)
+		job, jobErr := s.db.GetJobByIDContext(ctx, input.Body.JobID)
 		if jobErr != nil {
 			log.Printf("comment on job %d: load event metadata: %v", input.Body.JobID, jobErr)
 		}
@@ -3686,7 +3686,7 @@ func (s *Server) humaFixJob(
 		)
 	}
 
-	parentJob, err := s.db.GetJobByID(req.ParentJobID)
+	parentJob, err := s.db.GetJobByIDContext(ctx, req.ParentJobID)
 	if err != nil {
 		return rawJSONOutput(
 			http.StatusNotFound,
@@ -3707,7 +3707,7 @@ func (s *Server) humaFixJob(
 	var planReview *storage.Review
 	var planComments []storage.Response
 	if req.StaleJobID > 0 {
-		staleJob, err := s.db.GetJobByID(req.StaleJobID)
+		staleJob, err := s.db.GetJobByIDContext(ctx, req.StaleJobID)
 		if err != nil {
 			return rawJSONOutput(
 				http.StatusNotFound,
@@ -3896,7 +3896,7 @@ func (s *Server) humaFixJob(
 		if planReview != nil {
 			review := *planReview
 			review.Job = parentJob
-			findings = prompt.FixPlanReviewContext(resolutionPath, &review)
+			findings = prompt.FixPlanReviewContext(ctx, resolutionPath, &review)
 		}
 		planningPrompt, planErr := prompt.BuildFixPlanPrompt(resolutionPath, cfg, findings, fixMinSev, planComments, req.Prompt)
 		if planErr != nil {
