@@ -24,8 +24,8 @@ Now every commit you make is reviewed automatically. Each review gets a verdict
 locations. Check that it is running:
 
 ```bash
-roborev status        # daemon + queue
-roborev show HEAD     # print the latest commit's review in the terminal
+roborev daemon status        # daemon + queue
+roborev job show HEAD     # print the latest commit's review in the terminal
 ```
 
 ### Batch small commits
@@ -84,9 +84,10 @@ Then act on the reviews in whichever way fits how you work:
     (Codex: `$roborev-refine`) reviews the branch, fixes findings, and
     re-reviews until every review passes.
 
-The `roborev-fix` and `roborev-refine` skills come from `roborev skills install`
-(see [Agent Skills](../guides/agent-skills.md)). Agent Hook installation updates
-the bundled skills automatically for supported profiles.
+The `roborev-fix` and `roborev-refine` skills come from
+`roborev agent skills install` (see [Agent Skills](../guides/agent-skills.md)).
+Agent Hook installation updates the bundled skills automatically for supported
+profiles.
 
 ## Layer 2 - Agent hook
 
@@ -97,7 +98,7 @@ stays silent in repositories without their own review guidelines, because an
 agent that fixes every generic finding tends to overengineer the code.
 
 ```bash
-roborev agent-hook install    # wire harnesses and update supported bundled skills
+roborev agent hook install    # wire harnesses and update supported bundled skills
 ```
 
 See [Agent Hook](../agent-hook.md) for thresholds and configuration.

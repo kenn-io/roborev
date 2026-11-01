@@ -93,7 +93,7 @@ version selected by the version manager.
 
 Keep upgrade work within the user's authorization. Hook reminders do not
 request installation or daemon restarts. Follow repository approval rules for
-restarting an existing daemon; `roborev status` may restart it automatically.
+restarting an existing daemon; `roborev daemon status` may restart it automatically.
 
 ## IMPORTANT
 
@@ -120,7 +120,7 @@ If job IDs are provided and findings are NOT already in the conversation,
 fetch them:
 
 ```bash
-roborev show --from-skill --job <job_id> --json
+roborev job show --from-skill --job <job_id> --json
 ```
 
 If no job IDs are provided and no findings are in the conversation, discover
@@ -145,7 +145,7 @@ Skip this step if findings are already available from step 1.
 For each job ID, fetch the full review as JSON:
 
 ```bash
-roborev show --from-skill --job <job_id> --json
+roborev job show --from-skill --job <job_id> --json
 ```
 
 If the command fails for a job ID, report the error and continue with the remaining jobs.
@@ -272,15 +272,15 @@ For each closable review, record a comment with one line per finding: its
 severity, file, disposition, and what changed, why it was declined, or the
 evidence that it is invalid. For Fix, name the test or command that now
 passes. Then close the review. Run these as **separate commands**, and only
-run `roborev close --from-skill` after confirming the comment succeeded:
+run `roborev job close --from-skill` after confirming the comment succeeded:
 
 ```bash
-roborev comment --from-skill --commenter roborev-fix --job <job_id> -m "$(cat <<'ROBOREV_COMMENT'
+roborev job comment --from-skill --commenter roborev-fix --job <job_id> -m "$(cat <<'ROBOREV_COMMENT'
 - <severity> <file>: <Fix|Decline|Invalid|Ask>: <reason>
 ROBOREV_COMMENT
 )"
 # Only if the comment above succeeded:
-roborev close --from-skill <job_id>
+roborev job close --from-skill <job_id>
 ```
 
 **Important:** Always pass the comment text via a heredoc as shown above, never
@@ -298,12 +298,12 @@ commit when no finding needed a code change.
 Before the final response, inspect every original candidate job ID:
 
 ```bash
-roborev show --from-skill --job <job_id> --json
+roborev job show --from-skill --job <job_id> --json
 ```
 
 Verify that each review whose findings are all Fix, Decline, or Invalid
 reports `closed=true`, and each review with an Ask finding reports
-`closed=false`. Do not rely on `roborev list --open`; unrelated reviews can
+`closed=false`. Do not rely on `roborev job list --open`; unrelated reviews can
 obscure the original set.
 
 In the final response, list every Ask finding with its job ID, severity, file,
@@ -312,7 +312,8 @@ one line on what it claims, and your recommendation.
 ### Complete an Agent Hook fix session
 
 When the current invocation came directly from Agent Hook and its instruction
-contains an exact `roborev agent-hook fix-done` command with a fix-session ID
+contains an exact `roborev agent hook fix-done` command (or the compatible
+`roborev agent-hook fix-done` spelling) with a fix-session ID
 and any emitted `--roborev-server` option, run
 that exact command after the original review audit. Run it even when no code
 changed or an Ask finding remains open. Do not invent or discover
@@ -335,7 +336,7 @@ User: `$roborev-fix`
 
 Agent:
 1. Runs `roborev fix --from-skill --list` and finds 2 open failing reviews: job 1019 and job 1021
-2. Fetches both reviews with `roborev show --from-skill --job 1019 --json` and `roborev show --from-skill --job 1021 --json`
+2. Fetches both reviews with `roborev job show --from-skill --job 1019 --json` and `roborev job show --from-skill --job 1021 --json`
 3. Runs `git show <git_ref>` for one review where the finding lacked enough context
 4. Triages 3 findings: fixes a reachable nil dereference in `foo.go`, declines
    a request for a configurable retry limit (no measured need), and disproves
@@ -343,11 +344,11 @@ Agent:
 5. Runs `go test ./...` to verify
 6. Records comments and closes reviews:
    - Records a heredoc comment for job 1019 with one line per finding: the fixed nil dereference with the test that now passes, and the declined retry limit
-   - `roborev close --from-skill 1019`
+   - `roborev job close --from-skill 1019`
    - Records a heredoc comment for job 1021 with the evidence that its validation finding is stale
-   - `roborev close --from-skill 1021`
+   - `roborev job close --from-skill 1021`
 7. Commits the changes per project conventions, or commits before step 6 if repository policy requires a SHA in close comments
-8. Audits jobs 1019 and 1021 with `roborev show --from-skill --job <job_id> --json` and verifies `closed=true`
+8. Audits jobs 1019 and 1021 with `roborev job show --from-skill --job <job_id> --json` and verifies `closed=true`
 
 **Explicit job IDs:**
 
@@ -361,9 +362,9 @@ Agent:
 4. Runs `go test ./...` to verify
 5. Records comment and closes review:
    - Records a heredoc comment for job 1019 with one line per finding: the fixed null check in `foo.go` with the test that now passes, and why the `bar.go` hardening was declined
-   - `roborev close --from-skill 1019`
+   - `roborev job close --from-skill 1019`
 6. Commits the changes per project conventions, or commits before step 5 if repository policy requires a SHA in close comments
-7. Audits job 1019 with `roborev show --from-skill --job 1019 --json` and verifies `closed=true`
+7. Audits job 1019 with `roborev job show --from-skill --job 1019 --json` and verifies `closed=true`
 
 **Agent Hook job IDs:**
 

@@ -41,11 +41,11 @@ completed while the job was queued.
 
 ## Monitor review load
 
-Run `roborev summary --all --since 7d` to inspect panel counts, retirement
-reasons, runs per PR, posting turnaround, and recorded cost with coverage. The
-[CI run health summary](/docs/commands/#ci-run-health) explains the cohorts and
-how unavailable pricing or timing data is displayed. Use `--all` to include CI
-checkouts outside your current working repository.
+Run `roborev report summary --all --since 7d` to inspect panel counts,
+retirement reasons, runs per PR, posting turnaround, and recorded cost with
+coverage. The [CI run health summary](/docs/commands/#ci-run-health) explains
+the cohorts and how unavailable pricing or timing data is displayed. Use `--all`
+to include CI checkouts outside your current working repository.
 
 ## What to Expect
 
@@ -151,8 +151,8 @@ Before enabling the CI poller, you need:
     what's available with:
 
     ```bash
-    roborev check-agents             # smoke-test all installed agents
-    roborev check-agents --agent codex  # test a specific agent
+    roborev agent check             # smoke-test all installed agents
+    roborev agent check --agent codex  # test a specific agent
     ```
 
     Or set a specific agent in the `[ci]` config (see below).
@@ -403,7 +403,7 @@ completes, you'll see:
 CI poller: posted review comment on myorg/myrepo#42 (job 123, verdict=P)
 ```
 
-Use `roborev status` to check the daemon and queue state at any time.
+Use `roborev daemon status` to check the daemon and queue state at any time.
 
 !!! note "CI reasoning level"
 
@@ -983,9 +983,9 @@ matched case-insensitively, so `wesm` and `Wesm` are equivalent.
 `~/.roborev/config.toml`. CI config is hot-reloaded; starting or stopping the
 poller may still require normal daemon lifecycle if CI was never running.
 
-**Reviews enqueue but never complete** Check `roborev status` to see if jobs are
-queued/running. The agent may be failing -- check the daemon logs for error
-messages from the agent.
+**Reviews enqueue but never complete** Check `roborev daemon status` to see if
+jobs are queued/running. The agent may be failing -- check the daemon logs for
+error messages from the agent.
 
 **Unexpected review burst on first start** This is normal. The poller reviews
 all open PRs on first startup. After the initial run, only PRs with new commits

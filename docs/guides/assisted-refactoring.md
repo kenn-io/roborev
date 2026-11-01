@@ -52,8 +52,8 @@ roborev analyze architecture internal/storage/
 ```
 
 Results appear in the TUI as jobs labeled with their analysis type (e.g.
-`test-fixtures`, `duplication`). Use `roborev show <job_id>` or the TUI to read
-findings. You can then run `roborev fix` to address open findings, or pass
+`test-fixtures`, `duplication`). Use `roborev job show <job_id>` or the TUI to
+read findings. You can then run `roborev fix` to address open findings, or pass
 specific job IDs with `roborev fix <job_id>`.
 
 Analysis jobs use the agent's non-agentic permissions, including when large
@@ -179,8 +179,8 @@ Run analysis first, review the results, then apply fixes for specific jobs:
 roborev analyze test-fixtures 'internal/storage/*_test.go'
 # => Job 42
 
-# Step 2: Review findings in TUI or with roborev show
-roborev show 42
+# Step 2: Review findings in TUI or with roborev job show
+roborev job show 42
 
 # Step 3: Apply fixes
 roborev fix 42

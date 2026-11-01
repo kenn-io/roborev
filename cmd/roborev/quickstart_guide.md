@@ -1,17 +1,17 @@
 ## Direct CLI review workflow
 
 You can work from the CLI help without installing a skill. Run these in the git
-checkout, replacing job `42` with the ID returned by `review` or `list`:
+checkout, replacing job `42` with the ID returned by `review` or `job list`:
 
 ```bash
 roborev doctor
 roborev init
 roborev review HEAD
-roborev wait --job 42
-roborev show --job 42
+roborev job wait --job 42
+roborev job show --job 42
 roborev fix 42
-roborev comment --job 42 "Fixed and verified the findings"
-roborev close 42
+roborev job comment --job 42 "Fixed and verified the findings"
+roborev job close 42
 ```
 
 `doctor` reads setup state without starting the daemon. `init` configures the
@@ -46,14 +46,14 @@ the agent (or you) can fix them. There are two automation layers:
 
 **Layer 1 - Post-commit reviews (works everywhere).**
 A git post-commit hook enqueues a background review of every commit. This works
-with any editor or agent. Findings land in `roborev tui`, `roborev show HEAD`,
+with any editor or agent. Findings land in `roborev tui`, `roborev job show HEAD`,
 and the daemon API.
 
 **Layer 2 - Agent hook (CLI harnesses, optional).**
 The agent hook watches your coding-agent session (turns, commits, failed
 reviews). When review work piles up, it returns a self-contained fix instruction
 before the session goes cold. The write -> review -> fix loop closes without you
-asking. `roborev agent-hook install` auto-detects Claude Code, Codex,
+asking. `roborev agent hook install` auto-detects Claude Code, Codex,
 Copilot CLI, Cursor, Factory Droid, Gemini CLI, Hermes, Qwen, and Grok Build.
 Hook installation updates bundled skills for every supported profile.
 The hook never fires in a repo without its own review guidance
@@ -63,13 +63,13 @@ overengineer. Set and tune guidelines before relying on the hook.
 Claude Desktop does not expose harness hooks, so only Layer 1 runs there.
 
 Quickstart health checks cover Claude Code, Codex, and Grok Build. Use
-`roborev agent-hook install` and agent-native config inspection to manage the
+`roborev agent hook install` and agent-native config inspection to manage the
 other supported profiles.
 
 ## Skills: drive roborev from your coding agent
 
 Skills are the main way you and your agent use roborev from inside a session,
-with or without the agent hook. `roborev skills install` adds them to Claude
+with or without the agent hook. `roborev agent skills install` adds them to Claude
 Code and Codex as commands (Claude Code invokes them with `/`, Codex with `$`):
 
 - `/roborev-review` - review the current commit; `/roborev-review-branch` reviews every commit on the branch

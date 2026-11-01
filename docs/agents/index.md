@@ -539,9 +539,9 @@ against the auditable pins in source (`grokToolsCLIVersion`, `grokToolsRepoRev`,
 
 ### Skills, hooks, and streaming
 
-Install roborev skills into `~/.grok/skills` with `roborev skills install` (full
-review/design/fix/refine/respond surface). Optional mid-session fix hooks:
-`roborev agent-hook install --agent grok`. Headless `streaming-json` events
+Install roborev skills into `~/.grok/skills` with `roborev agent skills install`
+(full review/design/fix/refine/respond surface). Optional mid-session fix hooks:
+`roborev agent hook install --agent grok`. Headless `streaming-json` events
 (`text`, `thought`, `tool_call`, …) render through the shared TTY formatter.
 
 ### Cursor identity note

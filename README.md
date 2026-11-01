@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-17
+last_edited: 2026-10-31
 ---
 
 <picture>
@@ -36,8 +36,8 @@ your agentic loop while context is fresh.
 
 ```bash
 roborev init                  # layer 1: per-commit reviews
-roborev agent-hook install    # layer 2: wire agents and bundled skills
-roborev agent-hook install --agent all  # or wire every supported profile
+roborev agent hook install    # layer 2: wire agents and bundled skills
+roborev agent hook install --agent all  # or wire every supported profile
 ```
 
 Before you ship, run the `/roborev-refine` skill: it re-reviews and fixes your
@@ -56,10 +56,10 @@ roborev ui            # Open reviews in the native browser UI
 ```
 
 If roborev is managed by a version manager, `roborev init` and
-`roborev agent-hook install` try to install hooks with the stable shim/symlink.
+`roborev agent hook install` try to install hooks with the stable shim/symlink.
 You can also choose the exact binary path with
 `roborev init --binary ~/.local/share/mise/shims/roborev`, or
-`roborev agent-hook install --binary ~/.local/share/mise/shims/roborev`.
+`roborev agent hook install --binary ~/.local/share/mise/shims/roborev`.
 
 ![roborev review](https://roborev.io/docs/assets/generated/tui-review.svg)
 
@@ -90,7 +90,7 @@ You can also choose the exact binary path with
 - **Native Browser UI** - Browse, filter, inspect, comment on, close, cancel,
   and rerun reviews from the application embedded in the local daemon, then
   explore cost, latency, reliability, and outcomes in Analytics.
-- **Review Verification** - `roborev compact` verifies findings against
+- **Review Verification** - `roborev job compact` verifies findings against
   current code, filters false positives, and consolidates related issues
   into a single review.
 - **Review History Search** - Search completed reviews across repositories by
@@ -111,7 +111,7 @@ command line non-interactively with `roborev fix`.
 changes and commits. The new commit gets reviewed automatically,
 closing the loop.
 
-`roborev agent-hook install` auto-detects installed Claude Code, Codex, Copilot
+`roborev agent hook install` auto-detects installed Claude Code, Codex, Copilot
 CLI, Cursor, Factory Droid, Gemini CLI, Hermes, Qwen, Grok Build, and ZCode
 harnesses
 and adds optional hooks after configured turn, commit, or failed-review
@@ -141,7 +141,7 @@ re-review, fix again, until all reviews pass or `--max-iterations` is hit.
 Use a stored reviewer session to re-evaluate one finding with your explanation:
 
 ```bash
-roborev comment 42 --rebuttal --finding "Missing null check in handler." \
+roborev job comment 42 --rebuttal --finding "Missing null check in handler." \
   -m "The caller rejects null input before invoking the handler."
 ```
 
@@ -237,26 +237,25 @@ leaving Markdown tables unchanged. Use `make check-renovate-config` to validate
 | `roborev init` | Initialize roborev in current repo |
 | `roborev tui` | Interactive terminal UI |
 | `roborev daemon status` | Show daemon, browser UI, and queue status |
-| `roborev status` | Backward-compatible status alias |
 | `roborev review <sha>` | Queue a commit for review |
 | `roborev review --branch` | Review all commits on current branch |
 | `roborev review --dirty` | Review uncommitted changes |
 | `roborev fix` | Fix open reviews (or specify job IDs) |
 | `roborev refine` | Auto-fix loop: fix, re-review, repeat |
 | `roborev analyze <type>` | Run code analysis with optional auto-fix |
-| `roborev agent-hook install` | Install hooks for detected coding agents |
-| `roborev agent-hook install --agent all` | Install all nine supported integrations |
-| `roborev snooze` | Silence Agent Hook reminders in the current worktree and branch |
-| `roborev snooze off` | Resume Agent Hook reminders in the current worktree and branch |
-| `roborev compact` | Verify and consolidate open review findings |
-| `roborev show [sha]` | Display review for commit |
-| `roborev search <query>...` | Search completed review history across repositories |
+| `roborev agent hook install` | Install hooks for detected coding agents |
+| `roborev agent hook install --agent all` | Install all nine supported integrations |
+| `roborev agent hook snooze` | Silence Agent Hook reminders in the current worktree and branch |
+| `roborev agent hook snooze off` | Resume Agent Hook reminders in the current worktree and branch |
+| `roborev job compact` | Verify and consolidate open review findings |
+| `roborev job show [sha]` | Display review for commit |
+| `roborev job search <query>...` | Search completed review history across repositories |
 | `roborev export reviews` | Export completed reviews as JSON |
 | `roborev export ci-metrics` | Export finalized CI panel metrics as JSON |
 | `roborev export ci-costs` | Export job-level CI costs as JSON |
 | `roborev run "<task>"` | Execute a task with an AI agent |
-| `roborev close <id>` | Close a review |
-| `roborev skills install` | Install bundled skills for supported agent profiles |
+| `roborev job close <id>` | Close a review |
+| `roborev agent skills install` | Install bundled skills for supported agent profiles |
 
 See [full command reference](https://roborev.io/docs/commands/) for all options.
 
@@ -399,7 +398,7 @@ hook, so a configured integration never goes dark unnoticed.
 |----------|-------------|
 | `ROBOREV_DATA_DIR` | Override default data directory (`~/.roborev`) |
 | `ROBOREV_TELEMETRY_ENABLED` | Set to `0` to disable anonymous usage telemetry |
-| `EDITOR` | Editor used by `roborev comment` when no message is supplied |
+| `EDITOR` | Editor used by `roborev job comment` when no message is supplied |
 | `GH_TOKEN`, `GITHUB_TOKEN` | GitHub authentication for CI commands |
 | `GITLAB_TOKEN`, `GL_TOKEN` | GitLab authentication for CI commands |
 | `ROBOREV_COLOR_MODE` | TUI color theme: `auto` (default), `dark`, `light`, `none` |

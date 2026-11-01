@@ -494,7 +494,7 @@ argument, or use `--since <commit>`. For a panel, the job printed at enqueue is 
 review. Read a member's own review with:
 
 ```bash
-roborev show --from-skill --job <member-job-id>
+roborev job show --from-skill --job <member-job-id>
 ```
 
 Show the user the verdict and findings, then tune together:
@@ -514,7 +514,7 @@ Finish with a short summary:
     branch.
 - How reviews run: when they start, which reviewers, and which agents.
 - How to run one on request, and how to read results: `roborev tui`,
-    `roborev list`, or `roborev show --job <id>`.
+    `roborev job list`, or `roborev job show --job <id>`.
 - How to tune: edit a rubric, commit, and review again.
 - How to add a source document: commit its text where the rubric expects it,
     and update the rubric or include when the path changes.

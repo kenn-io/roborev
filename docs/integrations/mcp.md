@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-02
+last_edited: 2026-10-31
 title: MCP Server
 description: Expose roborev review data to AI agents over the Model Context Protocol using stdio or streamable HTTP
 ---
@@ -65,15 +65,15 @@ when `GEMINI_CLI_HOME` is set. With `CLAUDE_CONFIG_DIR`, Claude's file is
 ## Opt into MCP skills and hooks
 
 ```bash
-roborev skills install --mcp
-roborev agent-hook install --mcp
+roborev agent skills install --mcp
+roborev agent hook install --mcp
 ```
 
 Hook installation with `--mcp` also installs the MCP configuration and bundled
 MCP skills for each selected agent. For an existing daemon HTTP endpoint:
 
 ```bash
-roborev agent-hook install --agent codex --mcp --mcp-transport http --mcp-url http://127.0.0.1:7373/mcp
+roborev agent hook install --agent codex --mcp --mcp-transport http --mcp-url http://127.0.0.1:7373/mcp
 ```
 
 The HTTP URL also selects the hook's daemon and must use plain HTTP on a
@@ -81,15 +81,15 @@ loopback address supported by the daemon client. `--roborev-server` can
 explicitly select a daemon for a stdio installation. Hook dry runs show the
 final MCP configuration and planned skill directory. Claude MCP configuration is
 resolved independently of a hook `--config` path, using its normal home or
-`CLAUDE_CONFIG_DIR` location. `agent-hook run --mcp` emits MCP instructions, and
-`agent-hook dump --mcp` prints hooks that pass that flag.
+`CLAUDE_CONFIG_DIR` location. `agent hook run --mcp` emits MCP instructions, and
+`agent hook dump --mcp` prints hooks that pass that flag.
 
 Skill updates preserve the installed mode unless `--mcp` or `--mcp=false` is
-explicitly supplied. Use `roborev skills install --mcp=false` and reinstall
-hooks without `--mcp` to return to CLI mode. Existing MCP registrations remain.
-Review creation and the refine CLI still use the CLI; no MCP tool starts a
-review. Missing MCP tools produce a connection error rather than silently
-switching the skill back to CLI reads.
+explicitly supplied. Use `roborev agent skills install --mcp=false` and
+reinstall hooks without `--mcp` to return to CLI mode. Existing MCP
+registrations remain. Review creation and the refine CLI still use the CLI; no
+MCP tool starts a review. Missing MCP tools produce a connection error rather
+than silently switching the skill back to CLI reads.
 
 ## Stdio
 
@@ -219,7 +219,7 @@ needed.
 Job listings and review results include `web_url` when the daemon has a browser
 listener. Use that URL when linking to a review. It includes the daemon's public
 browser origin and configured base path. The same field appears in
-`roborev list --json` and `roborev show --json`.
+`roborev job list --json` and `roborev job show --json`.
 
 Review IDs are local to a daemon. Do not construct a link using another daemon's
 origin. When the browser listener is disabled, `web_url` is omitted.

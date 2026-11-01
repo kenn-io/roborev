@@ -42,12 +42,12 @@ When the user invokes `/roborev-respond <job_id> [message]`:
 
 ### 1. Validate input
 
-If no job_id is provided, inform the user that a job ID is required. Suggest `roborev status` or `roborev fix --list` to find job IDs. Discovery surfaces synthesis parents (and non-panel reviews), never individual panel members, so the job ID you comment on and close is the parent.
+If no job_id is provided, inform the user that a job ID is required. Suggest `roborev daemon status` or `roborev fix --list` to find job IDs. Discovery surfaces synthesis parents (and non-panel reviews), never individual panel members, so the job ID you comment on and close is the parent.
 
 If a job_id is provided, inspect it before closing:
 
 ```bash
-roborev show --from-skill --job <job_id> --json
+roborev job show --from-skill --job <job_id> --json
 ```
 
 If `job.panel_role` is `"member"`, do **not** comment on or close that job.
@@ -60,7 +60,7 @@ parent or a non-panel review.
 
 **If a message is provided**, immediately execute:
 ```bash
-roborev comment --from-skill --job <resolved_job_id> "<message>" && roborev close --from-skill <resolved_job_id>
+roborev job comment --from-skill --job <resolved_job_id> "<message>" && roborev job close --from-skill <resolved_job_id>
 ```
 
 If the message contains quotes or special characters, escape them properly in the bash command.
@@ -75,7 +75,7 @@ Both commands will output confirmation. If either fails, report the error to the
 - The repo is not initialized (suggest `roborev init`)
 - The review is already closed (not an error, but worth noting to the user)
 
-The comment is recorded in roborev's database and the review is closed. View results with `roborev show`.
+The comment is recorded in roborev's database and the review is closed. View results with `roborev job show`.
 
 ## Examples
 
@@ -85,7 +85,7 @@ User: `/roborev-respond 1019 Fixed all issues`
 
 Agent action:
 ```bash
-roborev comment --from-skill --job 1019 "Fixed all issues" && roborev close --from-skill 1019
+roborev job comment --from-skill --job 1019 "Fixed all issues" && roborev job close --from-skill 1019
 ```
 Then confirm: "Comment recorded and review #1019 closed."
 
@@ -101,7 +101,7 @@ User: "The null check was a false positive"
 
 Agent action:
 ```bash
-roborev comment --from-skill --job 1019 "The null check was a false positive" && roborev close --from-skill 1019
+roborev job comment --from-skill --job 1019 "The null check was a false positive" && roborev job close --from-skill 1019
 ```
 Then confirm: "Comment recorded and review #1019 closed."
 

@@ -51,7 +51,7 @@ See [Installation](installation.md) for upgrades, packages, and uninstall.
 ```bash
 cd your-repo
 roborev init                  # post-commit hook, daemon, repo registration
-roborev agent-hook install    # optional: wire coding-agent sessions and skills
+roborev agent hook install    # optional: wire coding-agent sessions and skills
 # do some work, generate commits
 roborev tui                   # browse reviews in the terminal
 roborev ui                    # or in the native browser application

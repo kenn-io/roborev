@@ -77,7 +77,7 @@ priority = 2
 | Event | Verdict | Action |
 |-------|---------|--------|
 | `review.failed` | n/a | Creates a priority-1 Kata issue for the failed review job |
-| `review.completed` | `F` (fail) | Creates a priority-2 Kata issue for the review findings, including `roborev show` and `roborev fix` commands |
+| `review.completed` | `F` (fail) | Creates a priority-2 Kata issue for the review findings, including compatible `roborev show` and `roborev fix` commands |
 | `review.completed` | `P` (pass) | No action |
 
 The hook uses the repo's committed `.kata.toml` binding by default; set

@@ -12,7 +12,8 @@ Reviews are designed to be fed back into your AI coding agent sessions to
 address findings. The quickest way is `roborev fix`, which runs an agent to
 apply changes automatically. You can also copy reviews into an agent session
 manually, or add comments for context. Once a finding is resolved, close the
-review in the TUI (`a`) or via `roborev close` to remove it from your backlog.
+review in the TUI (`a`) or via `roborev job close` to remove it from your
+backlog.
 
 ## Auto-Fix with `roborev fix`
 
@@ -44,7 +45,7 @@ about known issues, false positives, and prior discussion. You can also share
 reviews with teammates, include them in GitHub issues, or reference them in
 commit messages.
 
-`roborev show` also displays comments after the review output.
+`roborev job show` also displays comments after the review output.
 
 <figure class="screenshot" data-lightbox>
   <img src="/docs/assets/generated/tui-copy.svg" alt="roborev TUI copy review to clipboard" loading="lazy">
@@ -69,13 +70,13 @@ modal:
 ### From the CLI
 
 ```bash
-roborev comment <review-id> "Your comment text"
+roborev job comment <review-id> "Your comment text"
 ```
 
 Or interactively:
 
 ```bash
-roborev comment <review-id>
+roborev job comment <review-id>
 # Opens your $EDITOR for multi-line input
 ```
 
@@ -122,7 +123,7 @@ Good catch on the race condition! I'll add a mutex in the next commit.
 Send an explanation back to the agent that wrote a finding:
 
 ```bash
-roborev comment 42 --rebuttal --finding "Missing null check in handler." \
+roborev job comment 42 --rebuttal --finding "Missing null check in handler." \
   -m "The caller rejects null input before invoking the handler."
 ```
 
@@ -154,7 +155,7 @@ automatically retried or rerun with a fresh session; submit a new rebuttal on
 the original review to try again.
 
 The command prints its assessment job ID before waiting. If interrupted, the job
-remains in the queue: inspect it with `roborev show <assessment-job-id>`. You
-can record its completed assessment manually with `roborev comment` and close
-the original review once satisfied. A daemon restart can invalidate an
+remains in the queue: inspect it with `roborev job show <assessment-job-id>`.
+You can record its completed assessment manually with `roborev job comment` and
+close the original review once satisfied. A daemon restart can invalidate an
 interrupted session; submit a new rebuttal in that case.

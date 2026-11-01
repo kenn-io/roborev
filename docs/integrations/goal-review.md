@@ -22,8 +22,8 @@ piece of evidence alongside tests and the feature's observed success criteria.
 
 ## Let an agent run the engineering loop
 
-Install the bundled skills with `roborev skills install`. With Superpowers and
-Kata available, explicitly invoke the workflow in your implementing agent:
+Install the bundled skills with `roborev agent skills install`. With Superpowers
+and Kata available, explicitly invoke the workflow in your implementing agent:
 
 ```text
 $roborev-superpowers Add request validation to the service.

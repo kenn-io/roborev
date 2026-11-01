@@ -76,7 +76,7 @@ side panel resolution.
 
 A panel run creates one member job per configured reviewer and one synthesis
 parent job. The synthesis job is blocked until all members reach a terminal
-state. Normal job lists and `roborev list` show the synthesis parent as the
+state. Normal job lists and `roborev job list` show the synthesis parent as the
 actionable review. The TUI can expand that parent row to inspect individual
 reviewers.
 
@@ -247,13 +247,13 @@ failed/unavailable review instead of passing.
 `non_voting` is how you trial a new agent or model without letting it shape the
 authoritative result. A non-voting member runs with the same prompt as every
 other member and its review is stored on its own job, so you can read it in the
-TUI, `roborev show`, and the daemon API. It is never fed to the synthesis agent,
-never counted toward the panel verdict or CI commit status, and never rendered
-in the PR comment body; the comment footer only counts it separately. Its stored
-review starts with a banner noting that it was advisory, and member listings
-label it `(non-voting)` in the TUI, the web UI, and `roborev show`. The flag is
-stored on the job and syncs between machines, so the banner and labels render
-everywhere.
+TUI, `roborev job show`, and the daemon API. It is never fed to the synthesis
+agent, never counted toward the panel verdict or CI commit status, and never
+rendered in the PR comment body; the comment footer only counts it separately.
+Its stored review starts with a banner noting that it was advisory, and member
+listings label it `(non-voting)` in the TUI, the web UI, and `roborev job show`.
+The flag is stored on the job and syncs between machines, so the banner and
+labels render everywhere.
 
 Synthesis does not wait for non-voting members. Once every voting member has
 finished, the synthesized review, the PR comment, and the CI commit status
@@ -352,14 +352,14 @@ to expand the row and inspect member reviewers; press `Space` or `Left` to
 collapse it. The parent row shows progress while reviewers are running and a
 compact member summary after completion.
 
-`roborev show` includes a reviewer summary above the synthesized output for
+`roborev job show` includes a reviewer summary above the synthesized output for
 panel parents:
 
 ```text
 3 reviewers: bug P, security F, design -
 ```
 
-`roborev show --json` adds a `panel` block for synthesis parents:
+`roborev job show --json` adds a `panel` block for synthesis parents:
 
 ```json
 {

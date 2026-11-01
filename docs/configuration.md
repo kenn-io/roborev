@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-17
+last_edited: 2026-10-31
 title: Configuration
 description: Configure roborev behavior globally and per-repository
 ---
@@ -1593,7 +1593,7 @@ job_log_retention_days = 30  # remove job log files older than 30 days
     prompt that PostgreSQL lacks. Retention removes no prompts until sync has
     connected, because a new sync database resets which jobs count as pushed.
 - `job_log_retention_days` deletes log files by modification time, the same
-    files that `roborev log clean --days N` removes. Logs that a running job
+    files that `roborev job log clean --days N` removes. Logs that a running job
     still writes to are kept.
 
 ### Unix Domain Socket
@@ -1927,8 +1927,8 @@ user manager cannot answer. Otherwise recovery waits up to two minutes for a
 managed replacement.
 
 Before managed recovery drains reviews or starts the service, local
-`roborev pause` must save the pause through the current daemon, even if the
-initial version check failed. If rediscovery misses the daemon, the command
+`roborev daemon pause` must save the pause through the current daemon, even if
+the initial version check failed. If rediscovery misses the daemon, the command
 tries its last known runtime API unless ownership lookup confirms the process
 has exited. In that case, recovery returns an error without dialing an
 activation socket that could start unpaused workers. This keeps replacement
@@ -2011,16 +2011,16 @@ browser quits, crashes, or discards the tab before the page closes normally.
 
 The web UI asks the daemon to report anonymous `app_opened` once per UTC day per
 browser profile, on load or focus. `roborev tui` asks each time it starts.
-Commands that work through the daemon, such as `roborev review`, `roborev list`
-and `roborev show`, ask once their first daemon request succeeds, and they never
-start a daemon to do so. Git hook, agent hook, MCP and daemon management
-commands never report it. Commands run by the bundled agent skills pass
-`--from-skill` and count as agent activity. Unmarked eligible commands still
-count as app opens. The daemon sends `app_opened` with the same install ID,
-version, OS and architecture plus `surface`, which is `web`, `tui` or `cli` and
-nothing else. It sends at most one `app_opened` per surface per UTC day, so
-repeated loads, tabs, launches and commands on the same day count once. It
-forgets which surfaces it sent on restart. The browser, the TUI and the CLI
+Commands that work through the daemon, such as `roborev review`,
+`roborev job list` and `roborev job show`, ask once their first daemon request
+succeeds, and they never start a daemon to do so. Git hook, agent hook, MCP and
+daemon management commands never report it. Commands run by the bundled agent
+skills pass `--from-skill` and count as agent activity. Unmarked eligible
+commands still count as app opens. The daemon sends `app_opened` with the same
+install ID, version, OS and architecture plus `surface`, which is `web`, `tui`
+or `cli` and nothing else. It sends at most one `app_opened` per surface per UTC
+day, so repeated loads, tabs, launches and commands on the same day count once.
+It forgets which surfaces it sent on restart. The browser, the TUI and the CLI
 never contact PostHog. The same environment variables turn it off; the daemon
 reads them, and so do the `roborev tui` and CLI processes.
 
@@ -2231,9 +2231,10 @@ totals are cumulative.
 `roborev doctor` reports the running daemon's provider and probes AgentsView
 reachability and authentication using the daemon's environment. If the daemon
 cannot supply this diagnostic, doctor labels its result as shell-only and warns
-that the daemon's usage provider was not checked. `roborev backfill-tokens` uses
-the daemon's configured provider for older jobs as well. With no
-`agentsview.url`, the existing local CLI or `[cost] endpoint` behavior applies.
+that the daemon's usage provider was not checked.
+`roborev storage backfill-tokens` uses the daemon's configured provider for
+older jobs as well. With no `agentsview.url`, the existing local CLI or
+`[cost] endpoint` behavior applies.
 
 ### Cost Usage Endpoint
 
@@ -2269,7 +2270,7 @@ recovers the ID and token counts from the per-job JSONL log before retrying the
 provider. Provider failures do not change the completed job result. Deleted
 sessions and sessions reused by multiple started jobs can remain unpriced; jobs
 older than the one-week scan window are reachable with
-`roborev backfill-tokens`.
+`roborev storage backfill-tokens`.
 
 The endpoint should return JSON compatible with
 `agentsview session usage --format json`:

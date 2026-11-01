@@ -6,11 +6,11 @@ found in code reviews.
 ## Installation
 
 ```bash
-roborev skills install
+roborev agent skills install
 ```
 
 Skills are updated automatically when you run `roborev update`.
-`roborev agent-hook install` also installs or updates the matching bundled
+`roborev agent hook install` also installs or updates the matching bundled
 skills for Claude Code, Codex, Factory Droid, Grok Build, Copilot, Cursor,
 Gemini, Hermes, and Qwen.
 
