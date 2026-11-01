@@ -225,7 +225,7 @@ func TestWorkerPlanPhaseSessionsArePersistedBeforeTerminalReconciliation(t *test
 		candidate, err := worker.DB.GetTokenCostCandidate(jobID)
 		require.NoError(t, err)
 		require.NotNil(t, candidate)
-		resolved, reconcileErr := worker.Pool.reconcileTokenCostCandidate(t.Context(), *candidate)
+		resolved, reconcileErr := worker.Pool.reconcileTokenCostCandidate(t.Context(), *candidate, worker.Pool.fetchTokenUsage)
 		require.Error(t, reconcileErr)
 		assert.False(t, resolved)
 		return "", agent.MarkUnavailable(errors.New("implementation unavailable"))
