@@ -1,0 +1,103 @@
+package sandbox
+
+import (
+	"cmp"
+	"context"
+	"fmt"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+)
+
+func (j Job) check(ctx context.Context, wrapper, env []string, cancel func()) error {
+	var denied []string
+	for _, path := range j.DenyReadPaths {
+		resolved, err := ResolvePath(path)
+		if err != nil {
+			return fmt.Errorf("resolve sandbox deny-read path: %w", err)
+		}
+		info, err := os.Stat(resolved)
+		if err != nil {
+			return fmt.Errorf("stat sandbox deny-read path: %w", err)
+		}
+		if info.IsDir() {
+			return fmt.Errorf("sandbox deny-read path must be a file: %q", path)
+		}
+		denied = append(denied, resolved)
+	}
+	runtimeDir := ""
+	for _, entry := range env {
+		if value, ok := strings.CutPrefix(entry, "XDG_RUNTIME_DIR="); ok {
+			runtimeDir = value
+		}
+	}
+	if runtimeDir == "" {
+		return fmt.Errorf("sandbox self-check failed: XDG_RUNTIME_DIR is required to probe D-Bus")
+	}
+	canary, err := os.MkdirTemp("", "roborev-sandbox-canary-*")
+	if err != nil {
+		return fmt.Errorf("sandbox self-check setup: %w", err)
+	}
+	defer os.RemoveAll(canary)
+	secret := filepath.Join(canary, "secret")
+	if err := os.WriteFile(secret, []byte("canary"), 0o600); err != nil {
+		return fmt.Errorf("sandbox self-check setup: %w", err)
+	}
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		return fmt.Errorf("sandbox self-check setup: %w", err)
+	}
+	defer listener.Close()
+	port := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
+	const probe = `
+failed=0
+bad() { echo "$1"; failed=1; }
+/bin/touch "$1/.sandbox-write-$$" && /bin/rm "$1/.sandbox-write-$$" || bad workdir-write
+/bin/cat "$2" >/dev/null 2>&1 && bad canary-read
+( : >/dev/tcp/127.0.0.1/"$3" ) 2>/dev/null && bad loopback-connect
+( : >/dev/tcp/1.1.1.1/443 ) 2>/dev/null && bad external-connect
+proxy_blocked() {
+/usr/bin/python3 -c 'import urllib.request,urllib.error,urllib.parse,sys
+try:
+ host=urllib.parse.urlsplit(sys.argv[1]).netloc
+ urllib.request.urlopen("https://"+host+"/", timeout=5)
+except urllib.error.HTTPError as e:
+ # The nono TLS interceptor uses this response for an endpoint-policy denial.
+ if e.code == 403 and e.read().strip() == b"{\"error\":\"Forbidden\"}": sys.exit(1)
+except Exception:
+ sys.exit(1)' "$1" 2>/dev/null && bad "$2"
+}
+proxy_blocked https://example.com proxy-external
+proxy_blocked "$5" proxy-upstream
+[[ ! -v ROBOREV_SANDBOX_CANARY ]] || bad environment-canary
+/usr/bin/python3 -c 'import socket' 2>/dev/null || bad dbus-probe
+/usr/bin/python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1])' "$4" 2>/dev/null && bad dbus-connect
+denied=$6
+shift 6
+for ((i=0; i<denied; i++)); do
+  /bin/cat "$1" >/dev/null 2>&1 && bad "deny-path-read: $1"
+  shift
+done
+exit "$failed"
+`
+	args := append([]string{}, wrapper[1:]...)
+	args = append(args, "/bin/bash", "--norc", "--noprofile", "-c", probe, "sandbox-check", j.WorkDir, secret, port, filepath.Join(runtimeDir, "bus"), j.Route.Upstream, strconv.Itoa(len(denied)))
+	args = append(args, denied...)
+	cmd := exec.CommandContext(ctx, wrapper[0], args...)
+	if cancel != nil {
+		cmd.Cancel = func() error { cancel(); return nil }
+	}
+	cmd.Dir = j.WorkDir
+	cmd.Env = append(append([]string{}, env...), "ROBOREV_SANDBOX_CANARY=planted")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("sandbox self-check failed: %s: %w", strings.TrimSpace(string(output)), cmp.Or(ctx.Err(), err))
+	}
+	if names := strings.TrimSpace(string(output)); names != "" {
+		return fmt.Errorf("sandbox self-check failed: %s", names)
+	}
+	return nil
+}
