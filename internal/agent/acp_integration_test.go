@@ -4,7 +4,6 @@ package agent
 
 import (
 	"bytes"
-	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -97,7 +96,7 @@ func TestACPReviewViaExternalAdapter(t *testing.T) {
 
 	var streamOutput bytes.Buffer
 	result, err := agent.Review(
-		context.Background(),
+		t.Context(),
 		repoPath,
 		commitSHA,
 		"Connectivity smoke test: respond with exactly 'ACP_OK' after reading README.md. Do not run roborev commands.",

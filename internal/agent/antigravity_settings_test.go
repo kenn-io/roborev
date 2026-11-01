@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -17,7 +16,7 @@ import (
 func TestEnsureAntigravityReviewPermissionsCreatesFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 
-	require.NoError(t, ensureAntigravityReviewPermissions(context.Background(), path))
+	require.NoError(t, ensureAntigravityReviewPermissions(t.Context(), path))
 
 	assertSettingsAllow(t, path, antigravityReviewAllowPermissions...)
 }
@@ -26,7 +25,7 @@ func TestEnsureAntigravityReviewPermissionsHandlesNullRoot(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	require.NoError(t, os.WriteFile(path, []byte("null\n"), 0o644))
 
-	require.NoError(t, ensureAntigravityReviewPermissions(context.Background(), path))
+	require.NoError(t, ensureAntigravityReviewPermissions(t.Context(), path))
 	assertSettingsAllow(t, path, antigravityReviewAllowPermissions...)
 }
 
@@ -38,7 +37,7 @@ func TestEnsureAntigravityReviewPermissionsPreservesLargeNumbers(t *testing.T) {
 }
 `), 0o644))
 
-	require.NoError(t, ensureAntigravityReviewPermissions(context.Background(), path))
+	require.NoError(t, ensureAntigravityReviewPermissions(t.Context(), path))
 
 	assert.Contains(t, string(readRaw(t, path)), `"large": 9007199254740993`)
 }
@@ -57,7 +56,7 @@ func TestEnsureAntigravityReviewPermissionsPreservesSymlinkAndMode(t *testing.T)
 	require.NoError(t, os.Chmod(target, 0o600))
 	require.NoError(t, os.Symlink(target, path))
 
-	require.NoError(t, ensureAntigravityReviewPermissions(context.Background(), path))
+	require.NoError(t, ensureAntigravityReviewPermissions(t.Context(), path))
 
 	linkInfo, err := os.Lstat(path)
 	require.NoError(t, err)
@@ -83,7 +82,7 @@ func TestEnsureAntigravityReviewPermissionsWaitsForConcurrentWriter(t *testing.T
 
 	done := make(chan error, 1)
 	go func() {
-		done <- ensureAntigravityReviewPermissions(context.Background(), path)
+		done <- ensureAntigravityReviewPermissions(t.Context(), path)
 	}()
 
 	completed := false
@@ -112,7 +111,7 @@ func TestEnsureAntigravityReviewPermissionsMergesAllow(t *testing.T) {
 		"enableTerminalSandbox": true,
 	})
 
-	require.NoError(t, ensureAntigravityReviewPermissions(context.Background(), path))
+	require.NoError(t, ensureAntigravityReviewPermissions(t.Context(), path))
 
 	doc := readSettings(t, path)
 	assert.Equal(t, "gemini-3.1-pro-preview", doc["model"])
@@ -133,10 +132,10 @@ func TestEnsureAntigravityReviewPermissionsMergesAllow(t *testing.T) {
 
 func TestEnsureAntigravityReviewPermissionsIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
-	require.NoError(t, ensureAntigravityReviewPermissions(context.Background(), path))
+	require.NoError(t, ensureAntigravityReviewPermissions(t.Context(), path))
 	first := readRaw(t, path)
 
-	require.NoError(t, ensureAntigravityReviewPermissions(context.Background(), path))
+	require.NoError(t, ensureAntigravityReviewPermissions(t.Context(), path))
 	second := readRaw(t, path)
 	assert.Equal(t, first, second)
 }
@@ -145,7 +144,7 @@ func TestEnsureAntigravityReviewPermissionsDoesNotClobberInvalidJSON(t *testing.
 	path := filepath.Join(t.TempDir(), "settings.json")
 	require.NoError(t, os.WriteFile(path, []byte("{not-json"), 0o644))
 
-	err := ensureAntigravityReviewPermissions(context.Background(), path)
+	err := ensureAntigravityReviewPermissions(t.Context(), path)
 	require.Error(t, err)
 	assert.Equal(t, "{not-json", string(readRaw(t, path)))
 }
@@ -154,14 +153,14 @@ func TestEnsureAntigravityReviewPermissionsRejectsNonObjectPermissions(t *testin
 	path := filepath.Join(t.TempDir(), "settings.json")
 	writeSettings(t, path, map[string]any{"permissions": "always-proceed"})
 
-	err := ensureAntigravityReviewPermissions(context.Background(), path)
+	err := ensureAntigravityReviewPermissions(t.Context(), path)
 	require.Error(t, err)
 	doc := readSettings(t, path)
 	assert.Equal(t, "always-proceed", doc["permissions"])
 }
 
 func TestEnsureAntigravityReviewPermissionsEmptyPathIsNoop(t *testing.T) {
-	require.NoError(t, ensureAntigravityReviewPermissions(context.Background(), ""))
+	require.NoError(t, ensureAntigravityReviewPermissions(t.Context(), ""))
 }
 
 func TestAntigravityReviewAllowPermissionsCoverProdFailures(t *testing.T) {

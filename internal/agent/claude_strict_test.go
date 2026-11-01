@@ -65,7 +65,7 @@ func TestClaudeStrictReviewRunsLockedDownSession(t *testing.T) {
 
 	// A session set after preparation must not resume either.
 	strict := prepared.(*ClaudeAgent).WithSessionID("later-session").(*ClaudeAgent)
-	out, err := strict.ReviewWithSchema(context.Background(), t.TempDir(), "HEAD", "prompt", jsontext.Value(`{"type":"object"}`), nil)
+	out, err := strict.ReviewWithSchema(t.Context(), t.TempDir(), "HEAD", "prompt", jsontext.Value(`{"type":"object"}`), nil)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"findings":[]}`, string(out))
 	assert.Equal(t, []string{
@@ -108,7 +108,7 @@ func TestClaudeStrictSchemaReviewKeepsQuotaError(t *testing.T) {
 	})
 	strict := NewClaudeAgent(mock.CmdPath).WithStrictReview(config.ReviewToolPolicy{Mode: "read-only"}, ReviewMCP{ConfigPath: "mcp.json"}).(*ClaudeAgent)
 
-	_, err := strict.ReviewWithSchema(context.Background(), t.TempDir(), "HEAD", "prompt", jsontext.Value(`{"type":"object"}`), nil)
+	_, err := strict.ReviewWithSchema(t.Context(), t.TempDir(), "HEAD", "prompt", jsontext.Value(`{"type":"object"}`), nil)
 
 	require.ErrorContains(t, err, "You've hit your weekly limit")
 	assert.Equal(t, LimitKindQuota, ClassifyLimit("claude-code", "agent: "+err.Error()).Kind)
@@ -122,7 +122,7 @@ func TestClaudeStrictReviewRequiresStrictFlags(t *testing.T) {
 	})
 	strict := NewClaudeAgent(mock.CmdPath).WithStrictReview(config.ReviewToolPolicy{Mode: "read-only"}, ReviewMCP{ConfigPath: "mcp.json"})
 
-	_, err := strict.Review(context.Background(), t.TempDir(), "HEAD", "prompt", nil)
+	_, err := strict.Review(t.Context(), t.TempDir(), "HEAD", "prompt", nil)
 
 	require.ErrorIs(t, err, ErrReviewToolPolicy)
 	require.ErrorContains(t, err, "--restricted; upgrade claude")
@@ -226,7 +226,7 @@ exec sleep 60
 `)
 	strict := NewClaudeAgent(cmd).WithStrictReview(config.ReviewToolPolicy{Mode: "read-only"}, ReviewMCP{ConfigPath: "mcp.json"})
 
-	_, err := strict.Review(context.Background(), t.TempDir(), "HEAD", "prompt", nil)
+	_, err := strict.Review(t.Context(), t.TempDir(), "HEAD", "prompt", nil)
 
 	require.ErrorIs(t, err, ErrReviewToolPolicy)
 	require.ErrorContains(t, err, "started with tools [Bash Glob Grep Read]")
@@ -234,7 +234,7 @@ exec sleep 60
 
 func TestParseClaudeStrictStreamStopsClaudeOnBadStartup(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		runCtx, cancel := context.WithCancel(context.Background())
+		runCtx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		// Claude keeps its stdout open after a startup report that breaks the policy.
 		stdout, claude := io.Pipe()

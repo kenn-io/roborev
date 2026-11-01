@@ -815,7 +815,7 @@ func TestCleanupStaleCIWorktreesRemovesOrphanedDetachedWorktree(t *testing.T) {
 	headSHA := repo.CommitFile("marker.txt", "head\n", "head")
 
 	pool := NewWorkerPool(nil, NewStaticConfig(config.DefaultConfig()), 1, NewBroadcaster(), nil, nil)
-	worktreeDir, normalCleanup, err := pool.createExactCheckout(context.Background(), testWorkerID, &storage.ReviewJob{
+	worktreeDir, normalCleanup, err := pool.createExactCheckout(t.Context(), testWorkerID, &storage.ReviewJob{
 		ID:       42,
 		RepoPath: repo.Path(),
 		GitRef:   headSHA,
@@ -838,7 +838,7 @@ func TestCleanupStaleCIWorktreesRemovesOrphanedDetachedWorktree(t *testing.T) {
 	listBefore := repo.Run("worktree", "list", "--porcelain")
 	require.Contains(t, normalizeGitListOutput(listBefore), normalizedWorktreeDir)
 
-	require.NoError(t, cleanupStaleCIWorktrees(context.Background()))
+	require.NoError(t, cleanupStaleCIWorktrees(t.Context()))
 
 	_, statErr := os.Stat(worktreeDir)
 	require.ErrorIs(t, statErr, os.ErrNotExist, "stale CI worktree directory should be removed")
@@ -1231,7 +1231,7 @@ func TestCaptureTokenUsageForSessionUsesCodexJobLog(t *testing.T) {
 	}
 
 	tc.Pool.captureTokenUsageForSession(
-		context.Background(), testWorkerID, job, "thread-123",
+		t.Context(), testWorkerID, job, "thread-123",
 	)
 
 	updated, err := tc.DB.GetJobByID(job.ID)
@@ -1270,7 +1270,7 @@ func TestCaptureTokenUsageForSessionRejectsReenqueuedJob(t *testing.T) {
 	}
 
 	tc.Pool.captureTokenUsageForSession(
-		context.Background(), testWorkerID, job, "prior-session",
+		t.Context(), testWorkerID, job, "prior-session",
 	)
 
 	updated, err := tc.DB.GetJobByID(job.ID)
@@ -1303,7 +1303,7 @@ func TestCaptureTokenUsageForSessionKeepsJobLogWhenSessionIsReused(t *testing.T)
 	}
 
 	tc.Pool.captureTokenUsageForSession(
-		context.Background(), testWorkerID, job, "shared-session",
+		t.Context(), testWorkerID, job, "shared-session",
 	)
 
 	updated, err := tc.DB.GetJobByID(job.ID)
@@ -1336,7 +1336,7 @@ func TestCaptureTokenUsageForSessionRetriesUntilFreshSessionIsIndexed(t *testing
 	}
 
 	tc.Pool.captureTokenUsageForSession(
-		context.Background(), testWorkerID, job, "fresh-session-123",
+		t.Context(), testWorkerID, job, "fresh-session-123",
 	)
 
 	updated, err := tc.DB.GetJobByID(job.ID)
@@ -1366,7 +1366,7 @@ func TestCaptureTokenUsageForSessionDoesNotRetryUnavailableProvider(t *testing.T
 
 	started := time.Now()
 	tc.Pool.captureTokenUsageForSession(
-		context.Background(), testWorkerID, job, "fresh-session-789",
+		t.Context(), testWorkerID, job, "fresh-session-789",
 	)
 
 	assert.Less(t, time.Since(started), 100*time.Millisecond)
@@ -1378,7 +1378,7 @@ func TestFetchFreshSessionUsageStopsRetryingAtDeadline(t *testing.T) {
 			tokenUsageIndexRetryWindow:   time.Minute,
 			tokenUsageIndexRetryInterval: time.Second,
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
+		ctx, cancel := context.WithTimeout(t.Context(), 2500*time.Millisecond)
 		defer cancel()
 		attempts := 0
 		usage, err := pool.fetchFreshSessionUsage(ctx, func(context.Context, string) (*tokens.Usage, error) {
@@ -1413,7 +1413,7 @@ func TestCaptureTokenUsageForSessionStopsRetryingAtContextDeadline(t *testing.T)
 		return nil, ctx.Err()
 	}
 
-	ctx, cancel := context.WithDeadline(context.Background(), time.Time{})
+	ctx, cancel := context.WithDeadline(t.Context(), time.Time{})
 	defer cancel()
 	require.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
 	tc.Pool.captureTokenUsageForSession(
@@ -2157,7 +2157,7 @@ func TestPreparePrebuiltPrompt_ReplacesDiffFilePlaceholder(t *testing.T) {
 	job := &storage.ReviewJob{ID: 73, Agent: "codex", GitRef: sha}
 
 	reviewPrompt, cleanup, err := preparePrebuiltPrompt(
-		context.Background(), tc.TmpDir,
+		t.Context(), tc.TmpDir,
 		prompt.SnapshotTarget{},
 		job,
 		"## Pull Request Discussion\n\n### Diff\n\nRead the diff from: `"+prompt.DiffFilePathPlaceholder+"`\n",
@@ -2182,7 +2182,7 @@ func TestPreparePrebuiltPrompt_RequotesDiffPathWithSingleQuote(t *testing.T) {
 	job := &storage.ReviewJob{ID: 74, Agent: "codex", GitRef: sha}
 
 	reviewPrompt, cleanup, err := preparePrebuiltPrompt(
-		context.Background(), repoPath,
+		t.Context(), repoPath,
 		prompt.SnapshotTarget{},
 		job,
 		"### Diff\n\nRead the diff from: `"+prompt.DiffFilePathPlaceholder+"`\n",
@@ -2208,7 +2208,7 @@ func TestPreparePrebuiltPrompt_AllowsUnsafeModeByStillWritingDiffFile(t *testing
 	job := &storage.ReviewJob{ID: 75, Agent: "codex", GitRef: sha}
 
 	reviewPrompt, cleanup, err := preparePrebuiltPrompt(
-		context.Background(), tc.TmpDir,
+		t.Context(), tc.TmpDir,
 		prompt.SnapshotTarget{},
 		job,
 		"### Diff\n\nRead the diff from: `"+prompt.DiffFilePathPlaceholder+"`\n",
@@ -3509,7 +3509,7 @@ func TestNonRetryableAgentErrorsSkipRetries(t *testing.T) {
 			job.RepoPath = tc.TmpDir
 
 			tc.Pool.failOrRetryAgentExecutionContext(
-				context.Background(), testWorkerID, job, "codex", tt.executionErr,
+				t.Context(), testWorkerID, job, "codex", tt.executionErr,
 			)
 
 			updated := tc.assertJobStatus(t, job.ID, tt.wantStatus)
@@ -3545,7 +3545,7 @@ func TestClaudeWeeklyLimitFailsOverToBackupWithoutRetry(t *testing.T) {
 	assert.Zero(t, classification.CooldownFor)
 
 	tc.Pool.failOrRetryAgentExecutionContext(
-		context.Background(), testWorkerID, job, "claude-code", executionErr,
+		t.Context(), testWorkerID, job, "claude-code", executionErr,
 	)
 
 	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
@@ -3572,7 +3572,7 @@ func TestUnavailableAgentErrorSkipsCoolingBackup(t *testing.T) {
 	job.RepoPath = tc.TmpDir
 
 	tc.Pool.failOrRetryAgentExecutionContext(
-		context.Background(), testWorkerID, job, "codex",
+		t.Context(), testWorkerID, job, "codex",
 		agent.MarkUnavailable(errors.New("native package missing")),
 	)
 
@@ -3672,7 +3672,7 @@ func TestUnavailableAgentErrorPreservesLimitClassification(t *testing.T) {
 			job.RepoPath = tc.TmpDir
 
 			tc.Pool.failOrRetryAgentExecutionContext(
-				context.Background(), testWorkerID, job, tt.agentName,
+				t.Context(), testWorkerID, job, tt.agentName,
 				agent.MarkUnavailable(errors.New(tt.errorText)),
 			)
 
@@ -3695,7 +3695,7 @@ func TestUnavailableAgentErrorUsesAttachedLimitClassification(t *testing.T) {
 	job.RepoPath = tc.TmpDir
 
 	tc.Pool.failOrRetryAgentExecutionContext(
-		context.Background(), testWorkerID, job, "codex",
+		t.Context(), testWorkerID, job, "codex",
 		agent.MarkUnavailable(agent.WithLimitClassification(
 			errors.New("bounded diagnostics"),
 			agent.LimitClassification{Kind: agent.LimitKindQuota, Agent: "codex"},
@@ -4487,7 +4487,7 @@ func TestServerWakesWorkerPoolWhenWorkBecomesClaimable(t *testing.T) {
 			updated, err := f.DB.FailJob(member.ID, claimed.WorkerID, "synthetic member failure")
 			require.NoError(t, err)
 			require.True(t, updated)
-			f.trigger = func() { f.server.sweepStuckPanels(context.Background()) }
+			f.trigger = func() { f.server.sweepStuckPanels(t.Context()) }
 		}},
 		{"unpause", func(t *testing.T, f *fixture) {
 			require.NoError(t, f.DB.SetQueuePaused(true))

@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"os/exec"
 	"testing"
 
@@ -32,7 +31,7 @@ func TestCIFetchPrunesRenamedRemoteBranches(t *testing.T) {
 			remote.RunGit("branch", "-D", tc.old)
 			remote.RunGit("branch", tc.new)
 
-			require.NoError(t, gitFetchCtx(context.Background(), local.Root, nil))
+			require.NoError(t, gitFetchCtx(t.Context(), local.Root, nil))
 			assert.Equal(t, remote.HeadSHA(), local.RevParse("refs/remotes/origin/"+tc.new))
 			err := exec.Command("git", "-C", local.Root, "show-ref", "--verify", "--quiet",
 				"refs/remotes/origin/"+tc.old).Run()

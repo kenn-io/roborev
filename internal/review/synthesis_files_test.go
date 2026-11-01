@@ -75,7 +75,7 @@ func TestSynthesisReadsCompleteReviewsFromFiles(t *testing.T) {
 				if schema {
 					selected = &fileSchemaSynthesisAgent{a}
 				}
-				doc, err := RunSynthesisAgent(context.Background(), selected, reviews, BuildSynthesisPrompt(reviews, false, ""), "", nil, SynthesisHooks{
+				doc, err := RunSynthesisAgent(t.Context(), selected, reviews, BuildSynthesisPrompt(reviews, false, ""), "", nil, SynthesisHooks{
 					ConfigRepoPath: repo,
 					GlobalConfig:   &config.Config{DefaultMaxPromptSize: 4096},
 					Checkout:       func() (SynthesisCheckout, error) { return SynthesisCheckout{RepoPath: repo}, nil },
@@ -127,7 +127,7 @@ func TestSynthesisUsesConfigPathResolvedWithCheckout(t *testing.T) {
 		return `{"schema_version":3,"summary":"combined","verdict":"pass","findings":[]}`, nil
 	}
 
-	_, err := RunSynthesisAgent(context.Background(), a, reviews, fullPrompt, "", nil, SynthesisHooks{
+	_, err := RunSynthesisAgent(t.Context(), a, reviews, fullPrompt, "", nil, SynthesisHooks{
 		ConfigRepoPath: caller,
 		GlobalConfig:   &config.Config{DefaultMaxPromptSize: 4096},
 		Checkout: func() (SynthesisCheckout, error) {

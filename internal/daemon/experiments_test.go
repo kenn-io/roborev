@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -426,7 +425,7 @@ func TestCIPollerUsesStoredRepoAndSourceBranchExperimentIdentity(t *testing.T) {
 	base := repo.HeadSHA()
 	head := repo.CommitFile("review.go", "package review\n", "add CI review")
 	poller.mergeBaseFn = func(_, _, _ string) (string, error) { return base, nil }
-	err := poller.processPR(context.Background(), "acme/api", ghPR{
+	err := poller.processPR(t.Context(), "acme/api", ghPR{
 		Number:      41,
 		HeadRefOid:  head,
 		HeadRefName: "feature/ci-experiment",
@@ -479,7 +478,7 @@ func TestCIPollerExperimentFreezesSynthesisSeverity(t *testing.T) {
 	base := repo.HeadSHA()
 	head := repo.CommitFile("review.go", "package review\n", "add CI review")
 	poller.mergeBaseFn = func(_, _, _ string) (string, error) { return base, nil }
-	err := poller.processPR(context.Background(), "acme/api", ghPR{
+	err := poller.processPR(t.Context(), "acme/api", ghPR{
 		Number:      42,
 		HeadRefOid:  head,
 		HeadRefName: "feature/ci-severity",

@@ -13,13 +13,13 @@ func TestBeginImmediateFailureDoesNotPoolOpenTransaction(t *testing.T) {
 	defer db.Close()
 	db.SetMaxOpenConns(1)
 
-	conn, err := db.Conn(context.Background())
+	conn, err := db.Conn(t.Context())
 	require.NoError(t, err)
 	// Stand in for a BEGIN that SQLite started before cancellation surfaced.
-	_, err = conn.ExecContext(context.Background(), "BEGIN IMMEDIATE")
+	_, err = conn.ExecContext(t.Context(), "BEGIN IMMEDIATE")
 	require.NoError(t, err)
 
-	canceled, cancel := context.WithCancel(context.Background())
+	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
 	require.Error(t, beginImmediate(canceled, conn))
 	_ = conn.Close()

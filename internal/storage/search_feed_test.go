@@ -64,10 +64,10 @@ func TestSearchEligibilityAndStablePaging(t *testing.T) {
 		}
 	}
 
-	first, err := db.ListSearchDocuments(context.Background(), 0, 3)
+	first, err := db.ListSearchDocuments(t.Context(), 0, 3)
 	require.NoError(t, err)
 	require.Len(t, first, 3)
-	second, err := db.ListSearchDocuments(context.Background(), first[len(first)-1].ReviewID, 10)
+	second, err := db.ListSearchDocuments(t.Context(), first[len(first)-1].ReviewID, 10)
 	require.NoError(t, err)
 
 	all := append(first, second...)
@@ -137,12 +137,12 @@ func TestSearchFeedLimitSkipsSemanticallyEmptyStructuredRows(t *testing.T) {
 		output:  "later eligible review",
 	})
 
-	firstPage, err := db.ListSearchDocuments(context.Background(), 0, 1)
+	firstPage, err := db.ListSearchDocuments(t.Context(), 0, 1)
 	require.NoError(t, err)
 	require.Len(t, firstPage, 1)
 	assert.Equal(t, firstID, firstPage[0].ReviewID)
 
-	secondPage, err := db.ListSearchDocuments(context.Background(), firstPage[0].ReviewID, 1)
+	secondPage, err := db.ListSearchDocuments(t.Context(), firstPage[0].ReviewID, 1)
 	require.NoError(t, err)
 	require.Len(t, secondPage, 1)
 	assert.Equal(t, laterID, secondPage[0].ReviewID)
@@ -266,7 +266,7 @@ func TestSearchDocumentLookupSupportsUUIDAndLegacyLocalKey(t *testing.T) {
 	legacyID := seedSearchFeedReview(t, db, repoID, commitID, 2, searchFeedFixture{jobType: "", status: JobStatusDone, output: "legacy", legacy: true})
 
 	legacyKey := fmt.Sprintf("local:%d", legacyID)
-	found, err := db.GetSearchReviews(context.Background(), []string{
+	found, err := db.GetSearchReviews(t.Context(), []string{
 		"00000000-0000-4000-8000-000000000101", legacyKey, "missing", "local:999999",
 	})
 	require.NoError(t, err)

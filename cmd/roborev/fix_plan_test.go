@@ -406,7 +406,7 @@ func TestFixPlanFailureStopsImplementation(t *testing.T) {
 			cfg.DefaultMaxPromptSize = 1000
 			planning, implementation := "Analyze cancellation", "## Review Findings\n\nMissing cancellation check"
 			cmd, _ := newTestCmd(t)
-			_, err := planFix(context.Background(), cmd, repo.Dir, a, planning, implementation, []int64{7}, fixOptions{plan: true}, cfg)
+			_, err := planFix(t.Context(), cmd, repo.Dir, a, planning, implementation, []int64{7}, fixOptions{plan: true}, cfg)
 			require.Error(t, err)
 			assert.Equal(t, 1, calls)
 			assert.Zero(t, state.Closes())

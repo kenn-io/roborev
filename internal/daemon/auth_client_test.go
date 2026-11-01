@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"fmt"
 	"math"
 	"net/http"
@@ -59,7 +58,7 @@ func TestAuthEndpointClientAndProbe(t *testing.T) {
 	_, err = ProbeDaemon(ep, time.Second)
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrDaemonAccessDenied)
-	_, err = GetAnyRunningDaemonContext(context.Background())
+	_, err = GetAnyRunningDaemonContext(t.Context())
 	assert.ErrorIs(t, err, ErrDaemonAccessDenied)
 }
 
@@ -116,7 +115,7 @@ func TestAuthClientKeepsKeyOffGuessedTCPAddress(t *testing.T) {
 func TestAuthClientConfigFailureIsTerminal(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	require.NoError(t, os.WriteFile(config.GlobalConfigPath(), []byte("auth_key = secret-never-print"), 0o600))
-	_, err := GetAnyRunningDaemonContext(context.Background())
+	_, err := GetAnyRunningDaemonContext(t.Context())
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrClientConfig)
 	assert.True(t, IsDaemonAccessError(err))
@@ -192,7 +191,7 @@ func TestAuthReadinessUsesCapturedCustomConfigKey(t *testing.T) {
 	server := httptest.NewServer(s.httpServer.Handler)
 	defer server.Close()
 	ep := authEndpoint(t, server.URL)
-	ready, exited, err := waitForServerReady(context.Background(), ep, time.Second, make(chan error), config.ClientAuth{Key: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"})
+	ready, exited, err := waitForServerReady(t.Context(), ep, time.Second, make(chan error), config.ClientAuth{Key: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"})
 	require.NoError(t, err)
 	assert.True(t, ready)
 	assert.False(t, exited)
@@ -207,7 +206,7 @@ func TestAuthDeniedRuntimeIsPreserved(t *testing.T) {
 	require.NoError(t, WriteRuntime(ep, nil, "test-version", nil))
 	// Ping answers callers without a key, so discovery finds the daemon and
 	// the first request that needs the key reports the denial.
-	info, err := GetAnyRunningDaemonContext(context.Background())
+	info, err := GetAnyRunningDaemonContext(t.Context())
 	require.NoError(t, err)
 	resp, err := info.Endpoint().HTTPClient(time.Second).Get(server.URL + "/api/status")
 	require.NoError(t, err)

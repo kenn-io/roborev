@@ -1,7 +1,6 @@
 package github
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -190,7 +189,7 @@ func TestFindExistingComment_NoMatch(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestGitHubClient(t, "", srv)
-	id, err := client.FindExistingComment(context.Background(), "owner/repo", 1)
+	id, err := client.FindExistingComment(t.Context(), "owner/repo", 1)
 	require.NoError(t, err)
 	assert.Zero(t, id)
 }
@@ -206,7 +205,7 @@ func TestFindExistingComment_FoundNewestMatch(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestGitHubClient(t, "", srv)
-	id, err := client.FindExistingComment(context.Background(), "owner/repo", 1)
+	id, err := client.FindExistingComment(t.Context(), "owner/repo", 1)
 	require.NoError(t, err)
 	assert.Equal(t, int64(30), id)
 }
@@ -218,7 +217,7 @@ func TestFindExistingComment_Error(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestGitHubClient(t, "", srv)
-	_, err := client.FindExistingComment(context.Background(), "owner/repo", 1)
+	_, err := client.FindExistingComment(t.Context(), "owner/repo", 1)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "list issue comments")
 }
@@ -229,7 +228,7 @@ func TestUpsertPRComment_Create(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestGitHubClient(t, "", srv)
-	require.NoError(t, client.UpsertPRComment(context.Background(), "owner/repo", 1, "review body"))
+	require.NoError(t, client.UpsertPRComment(t.Context(), "owner/repo", 1, "review body"))
 	require.Len(t, api.createdBodies, 1)
 	assert.Empty(t, api.patchedBodies)
 	assert.True(t, strings.HasPrefix(api.createdBodies[0], CommentMarker+"\n"))
@@ -244,7 +243,7 @@ func TestUpsertPRComment_Update(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestGitHubClient(t, "", srv)
-	require.NoError(t, client.UpsertPRComment(context.Background(), "owner/repo", 1, "updated body"))
+	require.NoError(t, client.UpsertPRComment(t.Context(), "owner/repo", 1, "updated body"))
 	require.Len(t, api.patchedBodies, 1)
 	assert.Empty(t, api.createdBodies)
 	assert.True(t, strings.HasPrefix(api.patchedBodies[0], CommentMarker+"\n"))
@@ -277,7 +276,7 @@ func TestUpsertPRComment_PatchFallsBackToCreate(t *testing.T) {
 
 				client := newTestGitHubClient(t, "", srv)
 				require.NoError(t, client.UpsertPRComment(
-					context.Background(), "owner/repo", 1, "updated body"))
+					t.Context(), "owner/repo", 1, "updated body"))
 				require.Len(t, api.patchedBodies, 1)
 				require.Len(t, api.createdBodies, 1)
 				assert.Equal(1, strings.Count(api.createdBodies[0], CommentMarker))
@@ -296,7 +295,7 @@ func TestUpsertPRComment_PatchFallsBackToCreate(t *testing.T) {
 				defer srv.Close()
 
 				client := newTestGitHubClient(t, "", srv)
-				require.NoError(t, client.UpsertPRComment(context.Background(),
+				require.NoError(t, client.UpsertPRComment(t.Context(),
 					"owner/repo", 1, strings.Repeat("x", review.MaxCommentLen+500)))
 				require.Len(t, api.createdBodies, 1)
 
@@ -319,7 +318,7 @@ func TestUpsertPRComment_PatchErrorReturnsError(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestGitHubClient(t, "", srv)
-	err := client.UpsertPRComment(context.Background(), "owner/repo", 1, "updated body")
+	err := client.UpsertPRComment(t.Context(), "owner/repo", 1, "updated body")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "patch comment")
 }
@@ -335,7 +334,7 @@ func TestCreatePRComment_TruncationUTF8Safe(t *testing.T) {
 	input := strings.Repeat("x", maxBody-markerOverhead-2) + "\U0001f600" + strings.Repeat("y", 100)
 
 	client := newTestGitHubClient(t, "", srv)
-	require.NoError(t, client.CreatePRComment(context.Background(), "owner/repo", 1, input))
+	require.NoError(t, client.CreatePRComment(t.Context(), "owner/repo", 1, input))
 	require.Len(t, api.createdBodies, 1)
 	body := api.createdBodies[0]
 	assert.True(t, strings.HasPrefix(body, CommentMarker))
@@ -361,7 +360,7 @@ func TestListPRDiscussionComments_FiltersAndSorts(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestGitHubClient(t, "", srv)
-	comments, err := client.ListPRDiscussionComments(context.Background(), "owner/repo", 17)
+	comments, err := client.ListPRDiscussionComments(t.Context(), "owner/repo", 17)
 	require.NoError(t, err)
 	require.Len(t, comments, 3)
 
@@ -390,7 +389,7 @@ func TestListPRDiscussionComments_AllowsMissingTimestamps(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestGitHubClient(t, "", srv)
-	comments, err := client.ListPRDiscussionComments(context.Background(), "owner/repo", 17)
+	comments, err := client.ListPRDiscussionComments(t.Context(), "owner/repo", 17)
 	require.NoError(t, err)
 	require.Len(t, comments, 3)
 
@@ -410,7 +409,7 @@ func TestListTrustedRepoCollaborators_FiltersToMaintainAndAdmin(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestGitHubClient(t, "", srv)
-	trusted, err := client.ListTrustedRepoCollaborators(context.Background(), "owner/repo")
+	trusted, err := client.ListTrustedRepoCollaborators(t.Context(), "owner/repo")
 	require.NoError(t, err)
 	assert.Contains(t, trusted, "alice")
 	assert.Contains(t, trusted, "bob")

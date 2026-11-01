@@ -63,7 +63,7 @@ func TestPrepareUpdateDaemonLegacyPolicies(t *testing.T) {
 				http.NotFound(w, r)
 			}))
 			session, err := prepareUpdateDaemon(
-				context.Background(), endpoint, "owner", tc.policy, io.Discard,
+				t.Context(), endpoint, "owner", tc.policy, io.Discard,
 			)
 			if tc.wantErr {
 				require.Error(t, err)
@@ -96,15 +96,15 @@ func TestUpdateDaemonLeaseRoundTrip(t *testing.T) {
 		}
 	}))
 	session, err := prepareUpdateDaemon(
-		context.Background(), endpoint, "owner", policyWait, io.Discard,
+		t.Context(), endpoint, "owner", policyWait, io.Discard,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, session)
 	assert.True(t, session.Prepared)
 	assert.Equal(t, "lease-1", session.Token)
 
-	require.NoError(t, waitForPreparedDrain(context.Background(), session, io.Discard))
-	released, err := session.release(context.Background())
+	require.NoError(t, waitForPreparedDrain(t.Context(), session, io.Discard))
+	released, err := session.release(t.Context())
 	require.NoError(t, err)
 	assert.True(t, released)
 	assert.Equal(t, int32(1), renewCalls.Load())
@@ -124,11 +124,11 @@ func TestUpdateDaemonRenewDoesNotMutateSharedStatus(t *testing.T) {
 		}
 	}))
 	session, err := prepareUpdateDaemon(
-		context.Background(), endpoint, "owner", policyWait, io.Discard,
+		t.Context(), endpoint, "owner", policyWait, io.Discard,
 	)
 	require.NoError(t, err)
 
-	status, err := session.renew(context.Background())
+	status, err := session.renew(t.Context())
 
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), status.RunningJobs)
@@ -151,14 +151,14 @@ func TestUpdateDaemonHeartbeatReportsLeaseLoss(t *testing.T) {
 		http.NotFound(w, r)
 	}))
 	session, err := prepareUpdateDaemon(
-		context.Background(), endpoint, "owner", policyWait, io.Discard,
+		t.Context(), endpoint, "owner", policyWait, io.Discard,
 	)
 	require.NoError(t, err)
 	oldInterval := updateLeaseRenewInterval
 	updateLeaseRenewInterval = time.Millisecond
 	t.Cleanup(func() { updateLeaseRenewInterval = oldInterval })
 
-	errCh := session.startHeartbeat(context.Background())
+	errCh := session.startHeartbeat(t.Context())
 	heartbeatErr := <-errCh
 
 	require.Error(t, heartbeatErr)
@@ -183,14 +183,14 @@ func TestUpdateDaemonHeartbeatCancellationIsNotLeaseFailure(t *testing.T) {
 		}
 	}))
 	session, err := prepareUpdateDaemon(
-		context.Background(), endpoint, "owner", policyWait, io.Discard,
+		t.Context(), endpoint, "owner", policyWait, io.Discard,
 	)
 	require.NoError(t, err)
 	oldInterval := updateLeaseRenewInterval
 	updateLeaseRenewInterval = time.Millisecond
 	t.Cleanup(func() { updateLeaseRenewInterval = oldInterval })
 
-	errCh := session.startHeartbeat(context.Background())
+	errCh := session.startHeartbeat(t.Context())
 	require.True(t, waitForUpdateTestSignal(started, time.Second))
 	session.stopHeartbeat()
 	close(release)
@@ -218,7 +218,7 @@ func TestWaitForPreparedInterruptReportsWorkerUnwindAndTerminatesLine(t *testing
 	t.Cleanup(func() { updateDrainPollInterval = oldPoll })
 	var out bytes.Buffer
 
-	require.NoError(t, waitForPreparedDrain(context.Background(), session, &out))
+	require.NoError(t, waitForPreparedDrain(t.Context(), session, &out))
 	assert.Contains(t, out.String(), "waiting for 1 worker to unwind")
 	assert.True(t, strings.HasSuffix(out.String(), "\n"))
 }
@@ -236,7 +236,7 @@ func TestWaitForLegacyDaemonExitRespectsCancellation(t *testing.T) {
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
 		return []*daemon.RuntimeInfo{{PID: 42}}, nil
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	err := waitForLegacyDaemonExit(ctx, 42)
@@ -260,7 +260,7 @@ func TestRestartAndVerifyUpdatedDaemonStartsAndChecksVersion(t *testing.T) {
 	}
 
 	err := restartAndVerifyUpdatedDaemon(
-		context.Background(), "/tmp/bin", "0.65.0",
+		t.Context(), "/tmp/bin", "0.65.0",
 		&daemon.RuntimeInfo{PID: 100},
 	)
 
@@ -299,7 +299,7 @@ func TestRestartAndVerifyUpdatedDaemonWaitsBeyondReadinessTimeoutForShutdown(
 		started.Store(true)
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
 	err := restartAndVerifyUpdatedDaemon(
@@ -317,7 +317,7 @@ func TestRestartAndVerifyUpdatedDaemonRejectsWrongVersion(t *testing.T) {
 	}
 
 	err := restartAndVerifyUpdatedDaemon(
-		context.Background(), "/tmp/bin", "v0.65.0",
+		t.Context(), "/tmp/bin", "v0.65.0",
 		&daemon.RuntimeInfo{PID: 100},
 	)
 
@@ -337,7 +337,7 @@ func TestPrepareUpdateDaemonConflictIncludesDetail(t *testing.T) {
 	}))
 
 	_, err := prepareUpdateDaemon(
-		context.Background(), endpoint, "owner", policyWait, io.Discard,
+		t.Context(), endpoint, "owner", policyWait, io.Discard,
 	)
 
 	require.Error(t, err)

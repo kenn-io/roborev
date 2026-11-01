@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -94,7 +93,7 @@ func TestMaybeDispatchAutoDesign_HeuristicTrigger(t *testing.T) {
 		DiffContent:   &diff,
 	}
 
-	require.NoError(t, srv.maybeDispatchAutoDesign(context.Background(), parent))
+	require.NoError(t, srv.maybeDispatchAutoDesign(t.Context(), parent))
 
 	queued, err := srv.db.ListJobsByStatus(repo.ID, storage.JobStatusQueued)
 	require.NoError(t, err)
@@ -146,7 +145,7 @@ enabled = true
 		DiffContent:   &diff,
 	}
 
-	require.NoError(t, srv.maybeDispatchAutoDesign(context.Background(), parent))
+	require.NoError(t, srv.maybeDispatchAutoDesign(t.Context(), parent))
 
 	queued, err := srv.db.ListJobsByStatus(repo.ID, storage.JobStatusQueued)
 	require.NoError(t, err)
@@ -188,7 +187,7 @@ func TestMaybeDispatchAutoDesign_HeuristicSkip_TrivialDiff(t *testing.T) {
 		DiffContent:   &tiny,
 	}
 
-	require.NoError(t, srv.maybeDispatchAutoDesign(context.Background(), parent))
+	require.NoError(t, srv.maybeDispatchAutoDesign(t.Context(), parent))
 
 	skipped, err := srv.db.ListJobsByStatus(repo.ID, storage.JobStatusSkipped)
 	require.NoError(t, err)
@@ -225,7 +224,7 @@ func TestMaybeDispatchAutoDesign_HookEnabledRequiresPostCommitSource(t *testing.
 		DiffContent:   &diff,
 	}
 
-	require.NoError(t, srv.maybeDispatchAutoDesign(context.Background(), parent))
+	require.NoError(t, srv.maybeDispatchAutoDesign(t.Context(), parent))
 
 	for _, s := range []storage.JobStatus{storage.JobStatusQueued, storage.JobStatusSkipped} {
 		jobs, err := srv.db.ListJobsByStatus(repo.ID, s)
@@ -259,7 +258,7 @@ func TestMaybeDispatchAutoDesign_HookEnabledRunsForPostCommitSource(t *testing.T
 		Source:        "post_commit",
 	}
 
-	require.NoError(t, srv.maybeDispatchAutoDesign(context.Background(), parent))
+	require.NoError(t, srv.maybeDispatchAutoDesign(t.Context(), parent))
 
 	queued, err := srv.db.ListJobsByStatus(repo.ID, storage.JobStatusQueued)
 	require.NoError(t, err)
@@ -329,7 +328,7 @@ func TestAutoDesignMetrics_RecordHeuristic(t *testing.T) {
 		EnqueuedAt: time.Now(), RepoPath: repo.RootPath,
 		CommitSubject: "refactor: rework", DiffContent: &bigDiff,
 	}
-	require.NoError(t, srv.maybeDispatchAutoDesign(context.Background(), parent))
+	require.NoError(t, srv.maybeDispatchAutoDesign(t.Context(), parent))
 
 	snap := AutoDesignMetricsSnapshot()
 	assert.EqualValues(t, 1, snap.TriggeredHeuristic)
@@ -407,7 +406,7 @@ func TestMaybeDispatchAutoDesign_InvalidConfig_NoRow(t *testing.T) {
 		CommitSubject: "feat: x", DiffContent: &d,
 	}
 
-	require.NoError(t, srv.maybeDispatchAutoDesign(context.Background(), parent))
+	require.NoError(t, srv.maybeDispatchAutoDesign(t.Context(), parent))
 
 	for _, s := range []storage.JobStatus{storage.JobStatusQueued, storage.JobStatusSkipped} {
 		jobs, err := srv.db.ListJobsByStatus(repo.ID, s)
@@ -434,7 +433,7 @@ func TestMaybeDispatchAutoDesign_Disabled_NoOp(t *testing.T) {
 		CommitSubject: "feat: x", DiffContent: &d,
 	}
 
-	require.NoError(t, srv.maybeDispatchAutoDesign(context.Background(), parent))
+	require.NoError(t, srv.maybeDispatchAutoDesign(t.Context(), parent))
 
 	for _, s := range []storage.JobStatus{storage.JobStatusQueued, storage.JobStatusSkipped} {
 		jobs, err := srv.db.ListJobsByStatus(repo.ID, s)

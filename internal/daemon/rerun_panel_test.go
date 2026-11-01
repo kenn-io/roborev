@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -70,7 +69,7 @@ func rerunAndLoadNewRun(
 	t.Helper()
 	markPanelMembersStatus(t, db, oldUUID, storage.JobStatusDone)
 	markJobStatus(t, db, synthID, storage.JobStatusDone)
-	_, err := server.humaRerunJob(context.Background(), &RerunJobInput{
+	_, err := server.humaRerunJob(t.Context(), &RerunJobInput{
 		Body: RerunJobRequest{JobID: synthID},
 	})
 	require.NoError(t, err)
@@ -88,7 +87,7 @@ func TestRerunSynthesisRejectsNonTerminal(t *testing.T) {
 	runUUID, _, synth := enqueueServerPanelRun(t, db, 2)
 
 	// synth is queued + claim-blocked (members still pending), not terminal.
-	_, err := server.humaRerunJob(context.Background(), &RerunJobInput{
+	_, err := server.humaRerunJob(t.Context(), &RerunJobInput{
 		Body: RerunJobRequest{JobID: synth.ID},
 	})
 	require.Error(t, err, "rerunning a non-terminal synthesis must be rejected")
@@ -107,7 +106,7 @@ func TestRerunPanelRejectsSelectedAgent(t *testing.T) {
 	markPanelMembersStatus(t, db, runUUID, storage.JobStatusDone)
 	markJobStatus(t, db, synth.ID, storage.JobStatusDone)
 
-	_, err := server.humaRerunJob(context.Background(), &RerunJobInput{
+	_, err := server.humaRerunJob(t.Context(), &RerunJobInput{
 		Body: RerunJobRequest{JobID: synth.ID, Agent: "test"},
 	})
 	require.ErrorContains(t, err, "panel synthesis jobs cannot change agents")
@@ -132,7 +131,7 @@ func TestRerunPanelRejectsMemberStillStopping(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	_, err = server.humaRerunJob(context.Background(), &RerunJobInput{
+	_, err = server.humaRerunJob(t.Context(), &RerunJobInput{
 		Body: RerunJobRequest{JobID: synth.ID},
 	})
 	require.ErrorContains(t, err, "still stopping")
@@ -157,7 +156,7 @@ func TestRerunPanelRejectsActiveMembers(t *testing.T) {
 			markJobStatus(t, db, members[0].ID, status)
 			markJobStatus(t, db, members[1].ID, storage.JobStatusDone)
 
-			_, err := server.humaRerunJob(context.Background(), &RerunJobInput{
+			_, err := server.humaRerunJob(t.Context(), &RerunJobInput{
 				Body: RerunJobRequest{JobID: synth.ID},
 			})
 			require.ErrorContains(t, err, "panel member is not rerunnable")
@@ -182,7 +181,7 @@ func TestRerunPanelAllowsCompletedClaimedMember(t *testing.T) {
 	require.NoError(t, testutil.CompleteReviewFixture(db, claimed.ID, "test", "prompt", "P"))
 	markJobStatus(t, db, synth.ID, storage.JobStatusDone)
 
-	_, err = server.humaRerunJob(context.Background(), &RerunJobInput{
+	_, err = server.humaRerunJob(t.Context(), &RerunJobInput{
 		Body: RerunJobRequest{JobID: synth.ID},
 	})
 	require.NoError(t, err)
@@ -205,7 +204,7 @@ func TestRerunPanelRequestIsIdempotent(t *testing.T) {
 		JobID: synth.ID, RequestID: &requestID,
 	}}
 
-	first, err := server.humaRerunJob(context.Background(), input)
+	first, err := server.humaRerunJob(t.Context(), input)
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	event := <-events
@@ -215,7 +214,7 @@ func TestRerunPanelRequestIsIdempotent(t *testing.T) {
 	assert.Equal(t, source.RepoName, event.RepoName)
 	assert.Equal(t, source.GitRef, event.SHA)
 	markJobStatus(t, db, synth.ID, storage.JobStatusRunning)
-	second, err := server.humaRerunJob(context.Background(), input)
+	second, err := server.humaRerunJob(t.Context(), input)
 	require.NoError(t, err)
 	assert.Empty(t, events, "idempotent replay must not broadcast again")
 
@@ -243,7 +242,7 @@ func TestRerunPanelConcurrentRequestsShareSuccessor(t *testing.T) {
 	for _, requestID := range []uuid.UUID{testUUID("panel-request-one"), testUUID("panel-request-two")} {
 		workers.Go(func() {
 			<-start
-			output, err := server.humaRerunJob(context.Background(), &RerunJobInput{
+			output, err := server.humaRerunJob(t.Context(), &RerunJobInput{
 				Body: RerunJobRequest{JobID: synth.ID, RequestID: &requestID},
 			})
 			outputs <- output
@@ -280,14 +279,14 @@ func TestRerunPanelCoalescedRequestRemainsIdempotent(t *testing.T) {
 	markPanelMembersStatus(t, db, originalRunUUID, storage.JobStatusDone)
 	markJobStatus(t, db, synth.ID, storage.JobStatusDone)
 
-	first, err := server.humaRerunJob(context.Background(), &RerunJobInput{
+	first, err := server.humaRerunJob(t.Context(), &RerunJobInput{
 		Body: RerunJobRequest{JobID: synth.ID, RequestID: testUUIDPtr("panel-request-one")},
 	})
 	require.NoError(t, err)
 	coalescedInput := &RerunJobInput{Body: RerunJobRequest{
 		JobID: synth.ID, RequestID: testUUIDPtr("panel-request-two"),
 	}}
-	coalesced, err := server.humaRerunJob(context.Background(), coalescedInput)
+	coalesced, err := server.humaRerunJob(t.Context(), coalescedInput)
 	require.NoError(t, err)
 	require.Equal(t, first.Body.JobID, coalesced.Body.JobID)
 	require.Equal(t, first.Body.RunUUID, coalesced.Body.RunUUID)
@@ -295,7 +294,7 @@ func TestRerunPanelCoalescedRequestRemainsIdempotent(t *testing.T) {
 	require.NotNil(t, first.Body.RunUUID)
 	markPanelMembersStatus(t, db, *first.Body.RunUUID, storage.JobStatusDone)
 	markJobStatus(t, db, first.Body.JobID, storage.JobStatusDone)
-	replayed, err := server.humaRerunJob(context.Background(), coalescedInput)
+	replayed, err := server.humaRerunJob(t.Context(), coalescedInput)
 	require.NoError(t, err)
 	assert.Equal(t, coalesced.Body, replayed.Body)
 
@@ -315,20 +314,20 @@ func TestRerunPanelCompletedSuccessorAllowsFreshRequest(t *testing.T) {
 	firstInput := &RerunJobInput{Body: RerunJobRequest{
 		JobID: synth.ID, RequestID: testUUIDPtr("panel-request-one"),
 	}}
-	first, err := server.humaRerunJob(context.Background(), firstInput)
+	first, err := server.humaRerunJob(t.Context(), firstInput)
 	require.NoError(t, err)
 	require.NotNil(t, first.Body.RunUUID)
 	markPanelMembersStatus(t, db, *first.Body.RunUUID, storage.JobStatusDone)
 	markJobStatus(t, db, first.Body.JobID, storage.JobStatusDone)
 
-	second, err := server.humaRerunJob(context.Background(), &RerunJobInput{
+	second, err := server.humaRerunJob(t.Context(), &RerunJobInput{
 		Body: RerunJobRequest{JobID: synth.ID, RequestID: testUUIDPtr("panel-request-two")},
 	})
 	require.NoError(t, err)
 	assert.NotEqual(t, first.Body.JobID, second.Body.JobID)
 	assert.NotEqual(t, first.Body.RunUUID, second.Body.RunUUID)
 
-	replayedFirst, err := server.humaRerunJob(context.Background(), firstInput)
+	replayedFirst, err := server.humaRerunJob(t.Context(), firstInput)
 	require.NoError(t, err)
 	assert.Equal(t, first.Body, replayedFirst.Body)
 
@@ -344,7 +343,7 @@ func TestRerunPanelMemberRejectsDirectRerun(t *testing.T) {
 	runUUID, members, _ := enqueueServerPanelRun(t, db, 2)
 	markJobStatus(t, db, members[0].ID, storage.JobStatusDone)
 
-	_, err := server.humaRerunJob(context.Background(), &RerunJobInput{
+	_, err := server.humaRerunJob(t.Context(), &RerunJobInput{
 		Body: RerunJobRequest{JobID: members[0].ID},
 	})
 	require.Error(t, err, "panel members must not rerun independently")
@@ -395,7 +394,7 @@ func TestRerunPanelRejectsStaleWorktrees(t *testing.T) {
 			markJobStatus(t, db, createdMembers[0].ID, storage.JobStatusDone)
 			markJobStatus(t, db, synthJob.ID, storage.JobStatusDone)
 
-			_, err = server.humaRerunJob(context.Background(), &RerunJobInput{
+			_, err = server.humaRerunJob(t.Context(), &RerunJobInput{
 				Body: RerunJobRequest{JobID: synthJob.ID},
 			})
 			require.ErrorContains(t, err, "worktree path is stale or invalid")

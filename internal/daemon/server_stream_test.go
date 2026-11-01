@@ -24,7 +24,7 @@ import (
 // Returns a cancel function, the recorder, and a done channel.
 func startStreamHandler(t *testing.T, server *Server, url string) (context.CancelFunc, *safeRecorder, chan struct{}) {
 	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	req := httptest.NewRequest(http.MethodGet, url, nil).WithContext(ctx)
 	w := newSafeRecorder()

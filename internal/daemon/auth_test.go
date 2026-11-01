@@ -44,7 +44,7 @@ func TestAuthProtectsAllRoutes(t *testing.T) {
 			}
 			t.Run(method+path, func(t *testing.T) {
 				// A canceled context keeps streaming routes from holding the subtest open.
-				ctx, cancel := context.WithCancel(context.Background())
+				ctx, cancel := context.WithCancel(t.Context())
 				cancel()
 				r := httptest.NewRequest(method, path, strings.NewReader(`{"anything":true}`)).WithContext(ctx)
 				w := httptest.NewRecorder()

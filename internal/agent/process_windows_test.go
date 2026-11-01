@@ -3,7 +3,6 @@
 package agent
 
 import (
-	"context"
 	"os/exec"
 	"testing"
 
@@ -15,7 +14,7 @@ const testCreateNoWindow = 0x08000000
 
 func TestConfigureSubprocessHidesConsole(t *testing.T) {
 	cmd := exec.Command("git", "status")
-	_ = configureSubprocess(context.Background(), cmd)
+	_ = configureSubprocess(t.Context(), cmd)
 	require.NotNil(t, cmd.SysProcAttr)
 	assert.NotZero(t, cmd.SysProcAttr.CreationFlags&testCreateNoWindow)
 }

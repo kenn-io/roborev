@@ -95,7 +95,7 @@ func TestGoalPromptAndResults(t *testing.T) {
 }
 
 func TestGoalSafeInvocation(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	snapshot := exampleSnapshot()
 	calls := 0
 	findings, err := runPrepared(snapshot, prompt.SnapshotResult{Prompt: BuildPrompt(snapshot)}, func(text string) (jsontext.Value, error) {
@@ -142,7 +142,7 @@ printf '%%s\n' '{"findings":[]}' > "$json_output"
 	require.NoError(t, os.WriteFile(command, []byte(script), 0o700))
 	pi := agent.NewPiAgent(command)
 	snapshot := Snapshot{Source: "superpowers", Stage: "spec", Artifacts: []Artifact{{Kind: "spec", Path: "spec.md", Content: "# Feature\n"}}}
-	findings, err := RunPrepared(context.Background(), pi, repo.Path(), snapshot, prepared, nil)
+	findings, err := RunPrepared(t.Context(), pi, repo.Path(), snapshot, prepared, nil)
 	require.NoError(t, err)
 	assert.Empty(t, findings)
 	captured, err := os.ReadFile(capturePath)

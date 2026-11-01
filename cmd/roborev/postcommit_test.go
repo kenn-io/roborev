@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -1449,7 +1448,7 @@ esac
 // the ROBOREV= line patched to point at a mock binary.
 func installMockHook(t *testing.T, repoDir, mockBinDir string) {
 	t.Helper()
-	hooksDir, err := gitrepo.HooksPath(context.Background(), repoDir)
+	hooksDir, err := gitrepo.HooksPath(t.Context(), repoDir)
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(hooksDir, 0o755))
 

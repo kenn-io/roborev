@@ -351,7 +351,7 @@ func TestSearchHealthMapsReconcilerStateToPublicVectorState(t *testing.T) {
 }
 
 func TestHealthReportsConcreteReconcilerReplacement(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	sources := []storage.SearchReviewSource{
 		{
 			ReviewID: 1, JobID: 101, RepoID: 7,

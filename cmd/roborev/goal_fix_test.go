@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -90,7 +89,7 @@ func TestFixBatchRejectsGoalReviewsBeforeProcessing(t *testing.T) {
 				cmd, _ := newTestCmd(t)
 				tester := agent.NewTestAgent()
 				roots := currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}
-				err := processFixBatch(context.Background(), cmd, roots, tc.ids, 0,
+				err := processFixBatch(t.Context(), cmd, roots, tc.ids, 0,
 					fixOptions{agentName: "test", quiet: true},
 					&fixSessionTracker{base: tester, out: io.Discard})
 				require.ErrorContains(t, err, "goal reviews cannot be fixed as code")

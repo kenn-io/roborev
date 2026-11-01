@@ -23,7 +23,7 @@ func TestHandleUpdateInterruptionRequeuesAttemptWithoutRetry(t *testing.T) {
 	job := tc.createAndClaimJob(t, "update-interrupt", "worker-update")
 
 	tc.Pool.InterruptJobsForUpdate([]int64{job.ID})
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	requeued := tc.Pool.handleUpdateInterruption(ctx, "worker-update", job)
@@ -41,7 +41,7 @@ func TestHandleUpdateInterruptionRequeuesTargetBeforeContextCancellation(t *test
 	tc.Pool.InterruptJobsForUpdate([]int64{job.ID})
 
 	handled := tc.Pool.handleUpdateInterruption(
-		context.Background(), "worker-update", job,
+		t.Context(), "worker-update", job,
 	)
 
 	assert.True(t, handled)
@@ -55,7 +55,7 @@ func TestHandleUpdateInterruptionDoesNotOverrideUserCancel(t *testing.T) {
 
 	tc.Pool.InterruptJobsForUpdate([]int64{job.ID})
 	require.NoError(t, tc.DB.CancelJob(job.ID))
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	requeued := tc.Pool.handleUpdateInterruption(ctx, "worker-update", job)
@@ -68,7 +68,7 @@ func TestHandleUpdateInterruptionSuppressesSideEffectsWhenRequeueFails(t *testin
 	tc := newWorkerTestContext(t, 1)
 	job := tc.createAndClaimJob(t, "update-requeue-failure", "worker-update")
 	tc.Pool.InterruptJobsForUpdate([]int64{job.ID})
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	require.NoError(t, tc.DB.Close())
 
@@ -221,7 +221,7 @@ func TestUpdateInterruptionPreemptsQuotaCooldown(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	job := tc.createAndClaimJobWithAgent(t, "update-quota", "worker-update", "codex")
 	tc.Pool.InterruptJobsForUpdate([]int64{job.ID})
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	tc.Pool.failOrRetryAgentContext(
@@ -236,7 +236,7 @@ func TestUpdateInterruptionPreemptsClassifierTerminalPath(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	job := tc.createAndClaimJob(t, "update-classifier", "worker-update")
 	tc.Pool.InterruptJobsForUpdate([]int64{job.ID})
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	tc.Pool.completeClassifyAsSkipContext(

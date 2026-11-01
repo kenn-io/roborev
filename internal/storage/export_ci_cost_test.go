@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"path/filepath"
@@ -58,7 +57,7 @@ func TestExportCICostsIncludesMappedPanelJobWithoutSource(t *testing.T) {
 		VALUES ('owner/project', 1, 'head', ?, '2026-08-01 00:00:00')`, testUUID("run-mapped-panel"))
 	require.NoError(t, err)
 	require.NoError(t, insertExperimentAssignmentTx(
-		context.Background(), db, ReviewUnitPanel, testUUID("run-mapped-panel"),
+		t.Context(), db, ReviewUnitPanel, testUUID("run-mapped-panel"),
 		&ExperimentAssignmentInput{
 			ExperimentID: "ci-v1", DefinitionHash: "definition-hash",
 			DefinitionJSON: `{"ratio":1}`, Arm: "experiment",

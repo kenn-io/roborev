@@ -1311,7 +1311,7 @@ func TestHandleAddCommentBroadcastsEvent(t *testing.T) {
 		job := createTestGoalReviewJob(t, db, t.TempDir())
 		_, eventCh := server.broadcaster.Subscribe("")
 
-		_, err := server.humaAddComment(context.Background(), &AddCommentInput{
+		_, err := server.humaAddComment(t.Context(), &AddCommentInput{
 			Body: AddCommentRequest{
 				JobID: job.ID, Commenter: "reviewer", Comment: "Review complete",
 			},

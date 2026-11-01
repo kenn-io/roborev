@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -90,7 +89,7 @@ func TestCursorReviewPassesModelFlag(t *testing.T) {
 	cursor, ok := b.(*CursorAgent)
 	require.True(t, ok, "expected *CursorAgent, got %T", b)
 
-	_, err := cursor.Review(context.Background(), t.TempDir(), "head", "test prompt", nil)
+	_, err := cursor.Review(t.Context(), t.TempDir(), "head", "test prompt", nil)
 	require.NoError(t, err, "Review failed: %v")
 
 	args := readMockArgs(t, mock.ArgsFile)
@@ -156,7 +155,7 @@ func TestCursorReviewPipesPromptViaStdin(t *testing.T) {
 
 	prompt := "Review this commit carefully"
 	_, err := a.Review(
-		context.Background(), t.TempDir(), "HEAD", prompt, nil,
+		t.Context(), t.TempDir(), "HEAD", prompt, nil,
 	)
 	require.NoError(t, err, "Review failed: %v")
 
@@ -171,7 +170,7 @@ func TestCursorReviewEmptyOutput(t *testing.T) {
 	})
 
 	result, err := a.Review(
-		context.Background(), t.TempDir(), "abc123", "review this", nil,
+		t.Context(), t.TempDir(), "abc123", "review this", nil,
 	)
 	require.NoError(t, err)
 
@@ -188,7 +187,7 @@ func TestCursorReviewStreamsProgressToOutput(t *testing.T) {
 
 	var output strings.Builder
 	result, err := a.Review(
-		context.Background(), t.TempDir(), "abc123", "review this", &output,
+		t.Context(), t.TempDir(), "abc123", "review this", &output,
 	)
 	require.NoError(t, err)
 
@@ -206,7 +205,7 @@ func TestCursorReviewErrorResult(t *testing.T) {
 	})
 
 	_, err := a.Review(
-		context.Background(), t.TempDir(), "abc123", "review this", nil,
+		t.Context(), t.TempDir(), "abc123", "review this", nil,
 	)
 	require.Error(t, err)
 
@@ -223,7 +222,7 @@ func TestCursorReviewErrorResultNonZeroExit(t *testing.T) {
 	})
 
 	_, err := a.Review(
-		context.Background(), t.TempDir(), "abc123", "review this", nil,
+		t.Context(), t.TempDir(), "abc123", "review this", nil,
 	)
 	require.Error(t, err)
 

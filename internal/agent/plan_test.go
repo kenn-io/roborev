@@ -21,9 +21,9 @@ func TestRunPlanIsolation(t *testing.T) {
 	for _, action := range []string{"read", "edit", "commit", "branch", "empty", "no-output", "error", "cancel"} {
 		t.Run(action, func(t *testing.T) {
 			repoPath := newPlanTestRepo(t)
-			before, err := gitrepo.Resolve(context.Background(), repoPath, "HEAD")
+			before, err := gitrepo.Resolve(t.Context(), repoPath, "HEAD")
 			require.NoError(t, err)
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			var planningDir string
 			a := &FakeAgent{NameStr: "planner", ReviewFn: func(ctx context.Context, dir, ref, p string, w io.Writer) (string, error) {
@@ -68,7 +68,7 @@ func TestRunPlanIsolation(t *testing.T) {
 			}
 			_, statErr := os.Stat(planningDir)
 			require.ErrorIs(t, statErr, os.ErrNotExist)
-			after, err := gitrepo.Resolve(context.Background(), repoPath, "HEAD")
+			after, err := gitrepo.Resolve(t.Context(), repoPath, "HEAD")
 			require.NoError(t, err)
 			assert.Equal(t, before, after)
 			data, err := os.ReadFile(filepath.Join(repoPath, "source.go"))
@@ -81,7 +81,7 @@ func TestRunPlanIsolation(t *testing.T) {
 func TestRunPlanFreshSession(t *testing.T) {
 	repoPath := newPlanTestRepo(t)
 	a := NewTestAgent()
-	_, err := RunPlan(context.Background(), a.WithSessionID("implementation-session"), repoPath, "HEAD", "plan", io.Discard, nil)
+	_, err := RunPlan(t.Context(), a.WithSessionID("implementation-session"), repoPath, "HEAD", "plan", io.Discard, nil)
 	require.NoError(t, err)
 	require.Len(t, a.Calls(), 1)
 	assert.Empty(t, a.Calls()[0].SessionID)
@@ -122,7 +122,7 @@ func TestPlanningOverridesUnsafeMode(t *testing.T) {
 			case "grok":
 				a = NewGrokAgent(command)
 			}
-			_, err := RunPlan(context.Background(), a.WithAgentic(true), repoPath, "HEAD", "plan", io.Discard, nil)
+			_, err := RunPlan(t.Context(), a.WithAgentic(true), repoPath, "HEAD", "plan", io.Discard, nil)
 			require.Error(t, err) // The controlled CLI exits after recording its arguments.
 			data, err := os.ReadFile(argsPath)
 			require.NoError(t, err)
@@ -174,7 +174,7 @@ func TestGrokPlanningOverridesWritableSandboxProfiles(t *testing.T) {
 			a := NewGrokAgent(command).WithAgentic(true).(*GrokAgent)
 			a.Sandbox = sandbox
 
-			result, err := RunPlan(context.Background(), a, repoPath, "HEAD", "plan", io.Discard, nil)
+			result, err := RunPlan(t.Context(), a, repoPath, "HEAD", "plan", io.Discard, nil)
 			require.NoError(t, err)
 			assert.Equal(t, "plan", result)
 
@@ -206,7 +206,7 @@ func TestGrokPlanningSandboxRefusalFallsBackWhenUnsafeEnabled(t *testing.T) {
 	command := writeTempCommand(t, script)
 	a := NewGrokAgent(command).WithAgentic(true)
 
-	result, err := RunPlan(context.Background(), a, repoPath, "HEAD", "plan", io.Discard, nil)
+	result, err := RunPlan(t.Context(), a, repoPath, "HEAD", "plan", io.Discard, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "plan", result)
 
@@ -243,7 +243,7 @@ func TestPlanningRejectsDisabledCodexSandbox(t *testing.T) {
 	SetCodexSandboxDisabled(true)
 	t.Cleanup(func() { SetCodexSandboxDisabled(false) })
 	repoPath := newPlanTestRepo(t)
-	_, err := RunPlan(context.Background(), NewCodexAgent("missing-codex"), repoPath, "HEAD", "plan", io.Discard, nil)
+	_, err := RunPlan(t.Context(), NewCodexAgent("missing-codex"), repoPath, "HEAD", "plan", io.Discard, nil)
 	require.ErrorContains(t, err, "read-only sandbox")
 }
 
@@ -331,7 +331,7 @@ func TestReviewPlanningCodexConfigReloadKeepsReadOnly(t *testing.T) {
 	argsFile := filepath.Join(dir, "args")
 	script := "#!/bin/sh\ncase \"$1\" in *etxtbsy*) exit 0;; esac\ncase \"$*\" in\n*--help*) touch '" + started + "'; while [ ! -f '" + released + "' ]; do sleep 0.01; done; echo '--sandbox --thread-source'; exit 0;;\nesac\nprintf '%s\\n' \"$@\" > '" + argsFile + "'\nexit 1\n"
 	command := writeTempCommand(t, script)
-	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), planningContextKey{}, true))
+	ctx, cancel := context.WithCancel(context.WithValue(t.Context(), planningContextKey{}, true))
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {

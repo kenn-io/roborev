@@ -4,7 +4,6 @@ package agent
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -300,7 +299,7 @@ func executeReviewTest(t *testing.T, opts reviewTestOpts) (string, string, strin
 	}
 
 	out, err := a.Review(
-		context.Background(), t.TempDir(),
+		t.Context(), t.TempDir(),
 		"HEAD", opts.Prompt, opts.Writer,
 	)
 

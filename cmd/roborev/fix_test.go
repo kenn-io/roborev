@@ -243,7 +243,7 @@ func TestFetchCommentsSkipsLegacyLookupForDirtyJob(t *testing.T) {
 	defer server.Close()
 	patchServerAddr(t, server.URL)
 
-	got, err := fetchComments(context.Background(), server.URL, 11, 42, "dirty")
+	got, err := fetchComments(t.Context(), server.URL, 11, 42, "dirty")
 	require.NoError(t, err)
 
 	require.Len(t, got, 1)
@@ -381,7 +381,7 @@ func TestFetchJob(t *testing.T) {
 			defer ts.Close()
 			patchServerAddr(t, ts.URL)
 
-			job, err := fetchJob(context.Background(), ts.URL, 42)
+			job, err := fetchJob(t.Context(), ts.URL, 42)
 
 			if tt.wantErr {
 				require.Error(t, err, "expected error")
@@ -402,7 +402,7 @@ func TestFetchJobCanceledContextDoesNotRetryRecovery(t *testing.T) {
 		return nil
 	})
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	_, err := fetchJob(ctx, "http://127.0.0.1:1", 42)
@@ -449,7 +449,7 @@ func TestFetchReview(t *testing.T) {
 			defer ts.Close()
 			patchServerAddr(t, ts.URL)
 
-			review, err := fetchReview(context.Background(), ts.URL, 42)
+			review, err := fetchReview(t.Context(), ts.URL, 42)
 
 			if tt.wantErr {
 				require.Error(t, err, "expected error")
@@ -477,7 +477,7 @@ func TestFetchReviewDeadlineExceededDoesNotRetryRecovery(t *testing.T) {
 	defer ts.Close()
 	patchServerAddr(t, ts.URL)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the handler blocks until the request context ends
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the handler blocks until the request context ends
 	defer cancel()
 
 	_, err := fetchReview(ctx, ts.URL, 42)
@@ -493,7 +493,7 @@ func TestWithFixDaemonRetryContextRetriesClientTimeoutWhenCallerContextActive(t 
 	})
 
 	var attempts atomic.Int32
-	value, err := withFixDaemonRetryContext(context.Background(), "http://127.0.0.1:1", func(addr string) (string, error) {
+	value, err := withFixDaemonRetryContext(t.Context(), "http://127.0.0.1:1", func(addr string) (string, error) {
 		if attempts.Add(1) == 1 {
 			return "", &neturl.Error{Op: "Get", URL: addr, Err: context.DeadlineExceeded}
 		}
@@ -519,7 +519,7 @@ func TestWithFixDaemonRetryContextStopsAfterCancellationDuringRecovery(t *testin
 		fixDaemonSleep = oldSleep
 	})
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	var ensureCalls atomic.Int32
 	fixDaemonEnsure = func() error {
 		ensureCalls.Add(1)
@@ -560,7 +560,7 @@ func TestWithFixDaemonRetryContextReturnsRecoveryFailure(t *testing.T) {
 	})
 
 	var attempts atomic.Int32
-	_, err := withFixDaemonRetryContext(context.Background(), "http://127.0.0.1:1", func(addr string) (string, error) {
+	_, err := withFixDaemonRetryContext(t.Context(), "http://127.0.0.1:1", func(addr string) (string, error) {
 		attempts.Add(1)
 		return "", &neturl.Error{Op: "Get", URL: addr, Err: syscall.ECONNREFUSED}
 	})
@@ -590,7 +590,7 @@ func TestWithFixDaemonRetryContextRecoversOnlyFromMissingDaemon(t *testing.T) {
 				return nil
 			})
 
-			_, err := withFixDaemonRetryContext(context.Background(), getDaemonEndpoint().BaseURL(), func(addr string) (struct{}, error) {
+			_, err := withFixDaemonRetryContext(t.Context(), getDaemonEndpoint().BaseURL(), func(addr string) (struct{}, error) {
 				resp, err := getDaemonHTTPClientForURL(addr, time.Second).Get(addr + "/api/jobs")
 				if resp != nil {
 					_ = resp.Body.Close()
@@ -624,7 +624,7 @@ func TestAddJobResponse(t *testing.T) {
 	defer ts.Close()
 	patchServerAddr(t, ts.URL)
 
-	err := addJobResponse(context.Background(), ts.URL, 123, "roborev-fix", "Fix applied")
+	err := addJobResponse(t.Context(), ts.URL, 123, "roborev-fix", "Fix applied")
 	require.NoError(t, err, "addJobResponse")
 
 	assert.EqualValues(t, 123, gotJobID)
@@ -639,7 +639,7 @@ func TestAddJobResponseReturnsAccessDeniedOnUnauthorized(t *testing.T) {
 	defer ts.Close()
 	patchServerAddr(t, ts.URL)
 
-	err := addJobResponse(context.Background(), ts.URL, 123, "roborev-fix", "Fix applied")
+	err := addJobResponse(t.Context(), ts.URL, 123, "roborev-fix", "Fix applied")
 	require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
 }
 
@@ -670,10 +670,10 @@ func TestPostFixWritesAuthDenialDoesNotAttemptRecovery(t *testing.T) {
 
 			var err error
 			if endpoint == "/api/comment" {
-				err = addJobResponse(context.Background(), server.URL, 42, "roborev-fix", "Fix applied")
+				err = addJobResponse(t.Context(), server.URL, 42, "roborev-fix", "Fix applied")
 			} else {
 				repo := createTestRepo(t, map[string]string{"f.txt": "x"})
-				err = enqueueIfNeeded(context.Background(), server.URL, repo.Dir, repo.Run("rev-parse", "HEAD"))
+				err = enqueueIfNeeded(t.Context(), server.URL, repo.Dir, repo.Run("rev-parse", "HEAD"))
 			}
 
 			require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
@@ -735,7 +735,7 @@ func TestAddJobResponseAvoidsDuplicatePostAfterConnectionDrop(t *testing.T) {
 	})
 	serverAddr = startServer.URL
 
-	err := addJobResponse(context.Background(), startServer.URL, 123, "roborev-fix", "Fix applied")
+	err := addJobResponse(t.Context(), startServer.URL, 123, "roborev-fix", "Fix applied")
 	require.NoError(t, err, "addJobResponse: %v")
 
 	assert.EqualValues(t, 1, firstPostCount.Load())
@@ -760,7 +760,7 @@ func TestAddJobResponseDeadlineExceededCancelsHTTPCall(t *testing.T) {
 	defer ts.Close()
 	patchServerAddr(t, ts.URL)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the handler blocks until the request context ends
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the handler blocks until the request context ends
 	defer cancel()
 
 	err := addJobResponse(ctx, ts.URL, 123, "roborev-fix", "Fix applied")
@@ -877,7 +877,7 @@ func TestProcessFixBatchPassesGlobalFixGuidelinesToAgent(t *testing.T) {
 	tracker := &fixSessionTracker{base: tester, out: io.Discard}
 	cmd, _ := newTestCmd(t)
 	roots := currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}
-	require.NoError(t, processFixBatch(context.Background(), cmd, roots, []int64{99}, 0, fixOptions{agentName: "test", reasoning: "fast"}, tracker))
+	require.NoError(t, processFixBatch(t.Context(), cmd, roots, []int64{99}, 0, fixOptions{agentName: "test", reasoning: "fast"}, tracker))
 
 	calls := tester.Calls()
 	require.NotEmpty(t, calls)
@@ -986,7 +986,7 @@ func TestProcessFixBatchKeepsJobOpenWhenOutcomeCommentFails(t *testing.T) {
 	cmd, _ := newTestCmd(t)
 	roots := currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}
 	err := processFixBatch(
-		context.Background(), cmd, roots, []int64{99}, 0,
+		t.Context(), cmd, roots, []int64{99}, 0,
 		fixOptions{agentName: "test", quiet: true},
 		&fixSessionTracker{base: fixAgent, out: io.Discard},
 	)
@@ -1036,7 +1036,7 @@ func TestProcessFixBatchPreservesLegacyCloseWhenCommentFailsWithoutGuidelines(t 
 	cmd, _ := newTestCmd(t)
 	roots := currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}
 	err := processFixBatch(
-		context.Background(), cmd, roots, []int64{99}, 0,
+		t.Context(), cmd, roots, []int64{99}, 0,
 		fixOptions{agentName: "test", quiet: true},
 		&fixSessionTracker{base: fixAgent, out: io.Discard},
 	)
@@ -1103,7 +1103,7 @@ func TestProcessFixBatchUsesNeutralStatusForMixedPolicyOutcome(t *testing.T) {
 	cmd, _ := newTestCmd(t)
 	roots := currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}
 	err := processFixBatch(
-		context.Background(), cmd, roots, []int64{99, 100}, 0,
+		t.Context(), cmd, roots, []int64{99, 100}, 0,
 		fixOptions{agentName: "test", quiet: true},
 		&fixSessionTracker{base: fixAgent, out: io.Discard},
 	)
@@ -1145,7 +1145,7 @@ func TestFixFlowsRejectMalformedGlobalBeforeAgent(t *testing.T) {
 				err = fixSingleJob(cmd, repo.Dir, 99, fixOptions{agentName: "test"}, tracker)
 			} else {
 				roots := currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}
-				err = processFixBatch(context.Background(), cmd, roots, []int64{99}, 0, fixOptions{agentName: "test"}, tracker)
+				err = processFixBatch(t.Context(), cmd, roots, []int64{99}, 0, fixOptions{agentName: "test"}, tracker)
 			}
 
 			require.ErrorContains(t, err, configPath)
@@ -2045,7 +2045,7 @@ func TestFixJobDirectUnbornHead(t *testing.T) {
 			},
 		}
 
-		result, err := fixJobDirect(context.Background(), fixJobParams{
+		result, err := fixJobDirect(t.Context(), fixJobParams{
 			RepoRoot: dir,
 			Agent:    ag,
 		}, "fix things")
@@ -2070,7 +2070,7 @@ func TestFixJobDirectUnbornHead(t *testing.T) {
 			},
 		}
 
-		result, err := fixJobDirect(context.Background(), fixJobParams{
+		result, err := fixJobDirect(t.Context(), fixJobParams{
 			RepoRoot: dir,
 			Agent:    ag,
 		}, "fix things")
@@ -2102,7 +2102,7 @@ func TestFixJobDirect_RetryThreadsCapturedSessionID(t *testing.T) {
 	tester := agent.NewTestAgent()
 	capture := agent.NewSessionCaptureWriter(io.Discard, nil)
 
-	_, err := fixJobDirect(context.Background(), fixJobParams{
+	_, err := fixJobDirect(t.Context(), fixJobParams{
 		RepoRoot:      dir,
 		Agent:         tester,
 		Output:        capture,
@@ -2148,7 +2148,7 @@ func TestFixJobDirect_RetryPreservesInitialAndFinalAgentOutput(t *testing.T) {
 		},
 	}
 
-	result, err := fixJobDirect(context.Background(), fixJobParams{
+	result, err := fixJobDirect(t.Context(), fixJobParams{
 		RepoRoot:      repo.Dir,
 		Agent:         ag,
 		FixGuidelines: "Verify the finding before committing.",
@@ -2469,7 +2469,7 @@ func TestEnqueueIfNeededSkipsWhenJobExists(t *testing.T) {
 	defer ts.Close()
 	patchServerAddr(t, ts.URL)
 
-	err := enqueueIfNeeded(context.Background(), ts.URL, repo.Dir, sha)
+	err := enqueueIfNeeded(t.Context(), ts.URL, repo.Dir, sha)
 	require.NoError(t, err, "enqueueIfNeeded: %v")
 
 	assert.EqualValues(t, 0, enqueueCalls.Load())
@@ -2501,7 +2501,7 @@ func TestEnqueueIfNeededReturnsAuthDeniedDuringJobProbe(t *testing.T) {
 	defer ts.Close()
 	serverAddr = ts.URL
 
-	err := enqueueIfNeeded(context.Background(), ts.URL, repo.Dir, sha)
+	err := enqueueIfNeeded(t.Context(), ts.URL, repo.Dir, sha)
 	require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
 
 	assert := assert.New(t)
@@ -2517,7 +2517,7 @@ func TestVerifyJobForSHAContextReturnsAccessDeniedOnUnauthorized(t *testing.T) {
 	defer ts.Close()
 	patchServerAddr(t, ts.URL)
 
-	_, err := verifyJobForSHAContext(context.Background(), ts.URL, "synthetic-sha")
+	_, err := verifyJobForSHAContext(t.Context(), ts.URL, "synthetic-sha")
 	require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
 }
 
@@ -2528,7 +2528,7 @@ func TestHasJobResponseContextReturnsAccessDeniedOnUnauthorized(t *testing.T) {
 	defer ts.Close()
 	patchServerAddr(t, ts.URL)
 
-	_, err := hasJobResponseContext(context.Background(), ts.URL, 123, "roborev-fix", "Fix applied")
+	_, err := hasJobResponseContext(t.Context(), ts.URL, 123, "roborev-fix", "Fix applied")
 	require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
 }
 
@@ -2577,7 +2577,7 @@ func TestEnqueueIfNeededAvoidsDuplicatePostAfterConnectionDrop(t *testing.T) {
 	})
 	serverAddr = startServer.URL
 
-	err := enqueueIfNeeded(context.Background(), startServer.URL, repo.Dir, sha)
+	err := enqueueIfNeeded(t.Context(), startServer.URL, repo.Dir, sha)
 	require.NoError(t, err, "enqueueIfNeeded: %v")
 
 	assert.EqualValues(t, 1, firstPostCount.Load())
@@ -2620,7 +2620,7 @@ func TestEnqueueIfNeededSkipsEnqueueAfterTransientProbeFailure(t *testing.T) {
 	defer ts.Close()
 	serverAddr = ts.URL
 
-	err := enqueueIfNeeded(context.Background(), ts.URL, repo.Dir, sha)
+	err := enqueueIfNeeded(t.Context(), ts.URL, repo.Dir, sha)
 	require.NoError(t, err, "enqueueIfNeeded: %v")
 
 	assert.EqualValues(t, 0, enqueueCalls.Load())
@@ -2666,7 +2666,7 @@ func TestEnqueueIfNeededVerificationFailureReturnsErrorWithoutDuplicatePost(t *t
 	})
 	serverAddr = startServer.URL
 
-	err := enqueueIfNeeded(context.Background(), startServer.URL, repo.Dir, sha)
+	err := enqueueIfNeeded(t.Context(), startServer.URL, repo.Dir, sha)
 	require.Error(t, err)
 
 	require.Contains(t, err.Error(), "verify enqueue after retryable failure")
@@ -2698,7 +2698,7 @@ func TestEnqueueIfNeededDeadlineExceededCancelsProbeRequest(t *testing.T) {
 	defer ts.Close()
 	serverAddr = ts.URL
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the handler blocks until the request context ends
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the handler blocks until the request context ends
 	defer cancel()
 
 	err := enqueueIfNeeded(ctx, ts.URL, repo.Dir, sha)
@@ -2744,7 +2744,7 @@ func TestEnqueueIfNeededRefreshesProbeAddressAfterConnectionError(t *testing.T) 
 		return nil
 	})
 
-	err := enqueueIfNeeded(context.Background(), "http://127.0.0.1:1", repo.Dir, sha)
+	err := enqueueIfNeeded(t.Context(), "http://127.0.0.1:1", repo.Dir, sha)
 	require.NoError(t, err, "enqueueIfNeeded: %v")
 
 	if ensureCalls.Load() == 0 {
@@ -2785,7 +2785,7 @@ func TestQueryOpenJobIDsDeadlineExceededCancelsRequest(t *testing.T) {
 	serverAddr = ts.URL
 	t.Cleanup(func() { serverAddr = oldServerAddr })
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the handler blocks until the request context ends
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the handler blocks until the request context ends
 	defer cancel()
 
 	_, err := queryOpenJobIDs(ctx, "/tmp/repo", "")
@@ -4820,7 +4820,7 @@ func TestFixJobDirect_RetryClassifiesAgentLimit(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	_, err := fixJobDirect(context.Background(), fixJobParams{
+	_, err := fixJobDirect(t.Context(), fixJobParams{
 		RepoRoot: dir,
 		Agent:    ag,
 		Output:   &buf,
@@ -4882,7 +4882,7 @@ func TestCoreActionFixReadAndCommit(t *testing.T) {
 				output, confirmation := captureStdoutStderr(t, func() {
 					if batch {
 						roots := currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}
-						err = processFixBatch(context.Background(), cmd, roots, []int64{99, 100}, 1, opts, tracker)
+						err = processFixBatch(t.Context(), cmd, roots, []int64{99, 100}, 1, opts, tracker)
 					} else {
 						err = fixSingleJob(cmd, repo.Dir, 99, opts, tracker)
 					}

@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"encoding/json/jsontext"
 	"net/http"
 	"net/http/httptest"
@@ -23,7 +22,7 @@ import (
 func TestHandleResolveRepo(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	repo := testutil.NewTestRepo(t)
-	registeredRoot, err := gitrepo.MainRoot(context.Background(), repo.Root)
+	registeredRoot, err := gitrepo.MainRoot(t.Context(), repo.Root)
 	require.NoError(t, err)
 	identity := config.ResolveRepoIdentity(registeredRoot, nil)
 	stored, err := db.GetOrCreateRepo(registeredRoot, identity)

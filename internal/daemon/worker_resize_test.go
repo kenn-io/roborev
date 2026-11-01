@@ -237,7 +237,8 @@ func TestWorkerPoolShrinkDuringBlockedClaim(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, lockConn.Close()) })
 	_, err = lockConn.ExecContext(t.Context(), "BEGIN IMMEDIATE")
 	require.NoError(t, err)
-	t.Cleanup(func() { _, _ = lockConn.ExecContext(context.Background(), "ROLLBACK") })
+	// t.Context is already canceled when cleanups run.
+	t.Cleanup(func() { _, _ = lockConn.ExecContext(context.WithoutCancel(t.Context()), "ROLLBACK") })
 	pool := NewWorkerPool(db, NewStaticConfig(config.DefaultConfig()), 1, NewBroadcaster(), nil, nil)
 	pool.Start()
 	defer pool.Stop()

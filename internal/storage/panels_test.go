@@ -908,7 +908,7 @@ func TestEnqueuePanelRunRollback(t *testing.T) {
 		ClaimBlocked: true,
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	// Resolve the machine id before opening the write transaction: GetMachineID
 	// writes on a pooled connection, which would deadlock against the dedicated
 	// BEGIN IMMEDIATE lock until the busy timeout fires.

@@ -1,7 +1,6 @@
 package git
 
 import (
-	"context"
 	"sort"
 	"strconv"
 	"strings"
@@ -37,17 +36,17 @@ func TestDiffPathsCtxMatchesReviewDiffProducers(t *testing.T) {
 		producer func() string
 	}{
 		{name: "root", ref: root, producer: func() string {
-			diff, err := GetDiffCtx(context.Background(), repo.Dir, root, "excluded.txt")
+			diff, err := GetDiffCtx(t.Context(), repo.Dir, root, "excluded.txt")
 			require.NoError(t, err)
 			return diff
 		}},
 		{name: "commit with configured exclude", ref: commit, producer: func() string {
-			diff, err := GetDiffCtx(context.Background(), repo.Dir, commit, "excluded.txt")
+			diff, err := GetDiffCtx(t.Context(), repo.Dir, commit, "excluded.txt")
 			require.NoError(t, err)
 			return diff
 		}},
 		{name: "range with configured exclude", ref: root + ".." + commit, producer: func() string {
-			diff, err := GetRangeDiffCtx(context.Background(), repo.Dir, root+".."+commit, "excluded.txt")
+			diff, err := GetRangeDiffCtx(t.Context(), repo.Dir, root+".."+commit, "excluded.txt")
 			require.NoError(t, err)
 			return diff
 		}},
@@ -55,7 +54,7 @@ func TestDiffPathsCtxMatchesReviewDiffProducers(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := DiffPathsCtx(context.Background(), repo.Dir, test.ref, ReviewPathspecArgs("excluded.txt"))
+			got, err := DiffPathsCtx(t.Context(), repo.Dir, test.ref, ReviewPathspecArgs("excluded.txt"))
 			require.NoError(t, err)
 			want := producerHeaderPaths(test.producer())
 			assert.Equal(t, want, got)
@@ -67,7 +66,7 @@ func TestDiffPathsCtxRootAndMergeDivergeFromGetFilesChanged(t *testing.T) {
 	repo := NewTestRepo(t)
 	repo.CommitFile("root.txt", "root", "root")
 	root := repo.HeadSHA()
-	rootPaths, err := DiffPathsCtx(context.Background(), repo.Dir, root, ReviewPathspecArgs())
+	rootPaths, err := DiffPathsCtx(t.Context(), repo.Dir, root, ReviewPathspecArgs())
 	require.NoError(t, err)
 	changed, err := GetFilesChanged(repo.Dir, root)
 	require.NoError(t, err)
@@ -82,9 +81,9 @@ func TestDiffPathsCtxRootAndMergeDivergeFromGetFilesChanged(t *testing.T) {
 	repo.Run("merge", "--no-ff", "coverage-side", "-m", "merge")
 	merge := repo.HeadSHA()
 
-	mergePaths, err := DiffPathsCtx(context.Background(), repo.Dir, merge, ReviewPathspecArgs())
+	mergePaths, err := DiffPathsCtx(t.Context(), repo.Dir, merge, ReviewPathspecArgs())
 	require.NoError(t, err)
-	mergeDiff, err := GetDiffCtx(context.Background(), repo.Dir, merge)
+	mergeDiff, err := GetDiffCtx(t.Context(), repo.Dir, merge)
 	require.NoError(t, err)
 	assert.Empty(t, mergePaths)
 	assert.Empty(t, mergeDiff)

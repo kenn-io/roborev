@@ -30,7 +30,7 @@ func TestWallClockDeadlineCountsMachineSleep(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		clock := &sleepingClock{}
 		start := time.Now()
-		ctx, cancel := newWallClockDeadline(context.Background(), clock.now().Add(30*time.Minute), clock.now)
+		ctx, cancel := newWallClockDeadline(t.Context(), clock.now().Add(30*time.Minute), clock.now)
 		defer cancel()
 		child, cancelChild := context.WithCancel(ctx)
 		defer cancelChild()
@@ -50,7 +50,7 @@ func TestWallClockDeadlineCountsMachineSleep(t *testing.T) {
 func TestWallClockDeadlineWithoutSleep(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		start := time.Now()
-		ctx, cancel := withWallClockTimeout(context.Background(), 30*time.Minute)
+		ctx, cancel := withWallClockTimeout(t.Context(), 30*time.Minute)
 		defer cancel()
 
 		<-ctx.Done()
@@ -62,10 +62,10 @@ func TestWallClockDeadlineWithoutSleep(t *testing.T) {
 
 func TestWallClockDeadlineCancel(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		parent, cancelParent := context.WithCancel(context.Background())
+		parent, cancelParent := context.WithCancel(t.Context())
 		fromParent, cancelFromParent := withWallClockTimeout(parent, 30*time.Minute)
 		defer cancelFromParent()
-		direct, cancelDirect := withWallClockTimeout(context.Background(), 30*time.Minute)
+		direct, cancelDirect := withWallClockTimeout(t.Context(), 30*time.Minute)
 
 		cancelParent()
 		cancelDirect()

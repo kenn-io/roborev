@@ -982,7 +982,7 @@ func TestRequestGracefulDaemonShutdownRetriesServerErrors(t *testing.T) {
 	}))
 	defer server.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 	ep := DaemonEndpoint{Network: "tcp", Address: strings.TrimPrefix(server.URL, "http://")}
 

@@ -127,7 +127,7 @@ echo "unexpected args: $*" >&2
 exit 1
 `)
 
-	supported, err := codexSupportsThreadSource(context.Background(), cmdPath, false)
+	supported, err := codexSupportsThreadSource(t.Context(), cmdPath, false)
 	require.NoError(t, err)
 	assert.True(t, supported, "expected thread-source support")
 }
@@ -138,7 +138,7 @@ echo "unknown flag --thread-source" >&2
 exit 2
 `)
 
-	supported, err := codexSupportsThreadSource(context.Background(), cmdPath, false)
+	supported, err := codexSupportsThreadSource(t.Context(), cmdPath, false)
 	require.NoError(t, err)
 	assert.False(t, supported)
 }
@@ -327,7 +327,7 @@ func TestCodexCommandLineOmitsRuntimeOnlyArgs(t *testing.T) {
 func TestCodexSupportsDangerousFlagAllowsNonZeroHelp(t *testing.T) {
 	cmdPath := writeTempCommand(t, "#!/bin/sh\necho \"usage "+codexDangerousFlag+"\"; exit 1\n")
 
-	supported, err := codexSupportsDangerousFlag(context.Background(), cmdPath, false)
+	supported, err := codexSupportsDangerousFlag(t.Context(), cmdPath, false)
 	require.NoError(t, err)
 	assert.True(t, supported, "expected dangerous flag support")
 }
@@ -341,7 +341,7 @@ echo "unexpected args: $*" >&2
 exit 1
 `)
 
-	supported, err := codexSupportsIgnoreUserConfig(context.Background(), cmdPath)
+	supported, err := codexSupportsIgnoreUserConfig(t.Context(), cmdPath)
 	require.NoError(t, err)
 	assert.True(t, supported, "expected ignore-user-config support")
 }
@@ -369,7 +369,7 @@ exit 1
 `, tc.errorMsg)
 			cmdPath := writeTempCommand(t, script)
 
-			supported, err := codexSupportsIgnoreUserConfig(context.Background(), cmdPath)
+			supported, err := codexSupportsIgnoreUserConfig(t.Context(), cmdPath)
 			require.NoError(t, err)
 			assert.False(t, supported, "expected %q to be treated as unsupported", tc.errorMsg)
 		})
@@ -380,7 +380,7 @@ func TestCodexReviewUnsafeMissingFlagErrors(t *testing.T) {
 	a, _ := setupMockCodex(t, true, MockCLIOpts{
 		HelpOutput: "usage",
 	})
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does not support")
 }
@@ -391,7 +391,7 @@ func TestCodexReviewMarksPropagatedCapabilityProbeErrorUnavailable(t *testing.T)
 		StderrLines: []string{"native package missing"},
 	})
 
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.Error(t, err)
 	assert.True(t, IsUnavailable(err))
 	assert.Contains(t, err.Error(), "native package missing")
@@ -407,7 +407,7 @@ func TestCodexReviewIncludesIgnoreUserConfigWhenSupported(t *testing.T) {
 	})
 	a = WithCodexUserConfigIgnored(a, true).(*CodexAgent)
 
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.NoError(t, err)
 
 	args := readMockArgs(t, mock.ArgsFile)
@@ -429,7 +429,7 @@ echo '{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}'
 `)
 	a := WithCodexUserConfigIgnored(NewCodexAgent(cmdPath), true).(*CodexAgent)
 
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.NoError(t, err)
 }
 
@@ -442,7 +442,7 @@ func TestCodexReviewPassesThreadSourceWhenSupported(t *testing.T) {
 		},
 	})
 
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.NoError(t, err)
 
 	args := readMockArgs(t, mock.ArgsFile)
@@ -460,7 +460,7 @@ func TestCodexReviewOmitsIgnoreUserConfigWhenUnsupported(t *testing.T) {
 	})
 	a = WithCodexUserConfigIgnored(a, true).(*CodexAgent)
 
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.NoError(t, err)
 
 	args := readMockArgs(t, mock.ArgsFile)
@@ -532,7 +532,7 @@ command = "docs-mcp"
 			a = WithCodexUserConfigIgnored(a, tt.ignoreConfig).(*CodexAgent)
 			a.ConfigOverrides = tt.overrides
 
-			_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+			_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 			require.NoError(t, err)
 
 			args := readMockArgs(t, mock.ArgsFile)
@@ -559,7 +559,7 @@ func TestCodexReviewRunsWhenUserConfigIsInvalid(t *testing.T) {
 	t.Cleanup(func() { log.SetOutput(prevOutput) })
 
 	for range 2 {
-		result, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+		result, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 		require.NoError(t, err)
 		assert.Equal(t, "ok", result)
 
@@ -580,7 +580,7 @@ func TestCodexReviewMissingAuthIsPermanent(t *testing.T) {
 		},
 	})
 
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.ErrorIs(t, err, errCodexStreamFailed)
 	assert.Contains(t, err.Error(), unauthorized)
 	assert.Contains(t, err.Error(), "cli_auth_credentials_store")
@@ -597,7 +597,7 @@ func TestCodexReviewUsesSandboxNone(t *testing.T) {
 		},
 	})
 
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.NoError(t, err)
 
 	args, err := os.ReadFile(mock.ArgsFile)
@@ -619,7 +619,7 @@ func TestCodexReviewWithSessionResumePassesResumeArgs(t *testing.T) {
 	})
 
 	a = a.WithSessionID("session-123").(*CodexAgent)
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.NoError(t, err)
 
 	args := readMockArgs(t, mock.ArgsFile)
@@ -644,7 +644,7 @@ exit 0
 `)
 
 	a := NewCodexAgent(cmdPath)
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the fake codex runs for 200ms, past it
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the fake codex runs for 200ms, past it
 	defer cancel()
 
 	start := time.Now()
@@ -935,7 +935,7 @@ func TestCodexReviewPipesPromptViaStdin(t *testing.T) {
 	})
 
 	testPrompt := "This is a test prompt with special chars: <>&\nand newlines"
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", testPrompt, nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", testPrompt, nil)
 	require.NoError(t, err)
 
 	received, err := os.ReadFile(mock.StdinFile)
@@ -955,7 +955,7 @@ func TestCodexReviewWithSchemaUsesFinalAgentMessage(t *testing.T) {
 		},
 	})
 
-	got, err := a.ReviewWithSchema(context.Background(), t.TempDir(), "deadbeef", "prompt", jsontext.Value(`{"type":"object"}`), nil)
+	got, err := a.ReviewWithSchema(t.Context(), t.TempDir(), "deadbeef", "prompt", jsontext.Value(`{"type":"object"}`), nil)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"schema_version":2,"summary":"s","verdict":"pass","findings":[]}`, string(got))
 }
@@ -970,7 +970,7 @@ func TestCodexReviewWithSchemaRejectsNonJSONFinalMessage(t *testing.T) {
 		},
 	})
 
-	_, err := a.ReviewWithSchema(context.Background(), t.TempDir(), "deadbeef", "prompt", jsontext.Value(`{"type":"object"}`), nil)
+	_, err := a.ReviewWithSchema(t.Context(), t.TempDir(), "deadbeef", "prompt", jsontext.Value(`{"type":"object"}`), nil)
 	require.EqualError(t, err, "codex structured review output is not a JSON object")
 }
 
@@ -984,7 +984,7 @@ func TestCodexReviewJoinsMessagesWithoutSchema(t *testing.T) {
 		},
 	})
 
-	got, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	got, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "alpha note\nbeta note", got)
 }
@@ -995,7 +995,7 @@ func TestCodexReviewNoValidJSONReturnsError(t *testing.T) {
 		StdoutLines: []string{"plain text output"},
 	})
 
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "did not emit valid --json events")
 	require.ErrorIs(t, err, errNoCodexJSON)
@@ -1009,7 +1009,7 @@ func TestCodexReviewMarksNonzeroNoJSONUnavailable(t *testing.T) {
 		StderrLines: []string{"503 Service Unavailable"},
 	})
 
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.Error(t, err)
 	assert.True(t, IsUnavailable(err))
 	require.ErrorIs(t, err, errNoCodexJSON)
@@ -1042,7 +1042,7 @@ func TestCodexReviewNoJSONPreservesStdoutClassificationSignals(t *testing.T) {
 				StdoutLines: []string{tt.stdout},
 			})
 
-			_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+			_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 			require.Error(t, err)
 			assert.True(t, IsUnavailable(err))
 			assert.Contains(t, err.Error(), tt.stdout)
@@ -1060,7 +1060,7 @@ func TestCodexReviewPreservesNoJSONStdoutDiagnostic(t *testing.T) {
 		StdoutLines: []string{stdout},
 	})
 
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.Error(t, err)
 	assert.Equal(t, LimitKindTransient, ClassifyLimit("codex", err.Error()).Kind)
 	assert.Contains(t, err.Error(), stdout)
@@ -1096,7 +1096,7 @@ func TestCodexReviewClassifiesNoJSONSignalsAtEndOfDiagnostics(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			a, _ := setupMockCodex(t, false, tt.opts)
 
-			_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+			_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 			require.Error(t, err)
 			classification, ok := LimitClassificationFromError(err)
 			require.True(t, ok)
@@ -1150,7 +1150,7 @@ func TestCodexReviewNonzeroAfterValidJSONIsNotUnavailable(t *testing.T) {
 		},
 	})
 
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.Error(t, err)
 	assert.False(t, IsUnavailable(err))
 }
@@ -1164,7 +1164,7 @@ exit 0
 `)
 	a := NewCodexAgent(cmdPath)
 
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.Error(t, err)
 	assert.True(t, IsUnavailable(err))
 }

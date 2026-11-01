@@ -3,7 +3,6 @@
 package tokens
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,7 +12,7 @@ import (
 const testCreateNoWindow = 0x08000000
 
 func TestBuildAgentsviewCmdHidesConsole(t *testing.T) {
-	cmd := buildAgentsviewCmd(context.Background(), "agentsview", "--version")
+	cmd := buildAgentsviewCmd(t.Context(), "agentsview", "--version")
 	require.NotNil(t, cmd.SysProcAttr)
 	assert.NotZero(t, cmd.SysProcAttr.CreationFlags&testCreateNoWindow)
 }

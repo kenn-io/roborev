@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"context"
 	"database/sql"
 	"sort"
 	"sync"
@@ -716,7 +715,7 @@ func TestCreateCIPanelRunAtomicity(t *testing.T) {
 	}
 	synthesis := EnqueueOpts{RepoID: repo.ID, GitRef: "b..h", Agent: "test"}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	// Resolve the machine id before opening the write transaction: GetMachineID
 	// writes on a pooled connection, which would deadlock against the dedicated
 	// BEGIN IMMEDIATE lock until the busy timeout fires.

@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -36,7 +35,7 @@ exit 1
 	cleanup := testutil.MockBinaryInPath(t, "git", script)
 	t.Cleanup(cleanup)
 
-	err := pullGitLFS(context.Background(), gitcmd.New(), t.TempDir())
+	err := pullGitLFS(t.Context(), gitcmd.New(), t.TempDir())
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "git lfs pull")
@@ -47,7 +46,7 @@ func TestCheckoutUsesGitLFS(t *testing.T) {
 		repo := testutil.NewGitRepo(t)
 		repo.CommitFile("README.md", "base\n", "base")
 
-		assert.False(t, checkoutUsesGitLFS(context.Background(), repo.Path()))
+		assert.False(t, checkoutUsesGitLFS(t.Context(), repo.Path()))
 	})
 
 	t.Run("tracked root attributes", func(t *testing.T) {
@@ -57,7 +56,7 @@ func TestCheckoutUsesGitLFS(t *testing.T) {
 			"file.bin":       "placeholder\n",
 		}, "lfs attrs")
 
-		assert.True(t, checkoutUsesGitLFS(context.Background(), repo.Path()))
+		assert.True(t, checkoutUsesGitLFS(t.Context(), repo.Path()))
 	})
 
 	t.Run("tracked nested attributes", func(t *testing.T) {
@@ -67,7 +66,7 @@ func TestCheckoutUsesGitLFS(t *testing.T) {
 			"assets/file.bin":       "placeholder\n",
 		}, "nested lfs attrs")
 
-		assert.True(t, checkoutUsesGitLFS(context.Background(), repo.Path()))
+		assert.True(t, checkoutUsesGitLFS(t.Context(), repo.Path()))
 	})
 
 	t.Run("tracked symlink attributes fail open", func(t *testing.T) {
@@ -79,20 +78,20 @@ func TestCheckoutUsesGitLFS(t *testing.T) {
 		repo.RunGit("commit", "-m", "symlink attrs")
 		repo.WriteFile(".gitattributes", "*.bin text\n")
 
-		assert.True(t, checkoutUsesGitLFS(context.Background(), repo.Path()))
+		assert.True(t, checkoutUsesGitLFS(t.Context(), repo.Path()))
 	})
 
 	t.Run("oversized tracked attributes fail open", func(t *testing.T) {
 		repo := testutil.NewGitRepo(t)
 		repo.CommitFile(".gitattributes", strings.Repeat("x", maxGitAttributeFileBytes+1), "large attrs")
 
-		assert.True(t, checkoutUsesGitLFS(context.Background(), repo.Path()))
+		assert.True(t, checkoutUsesGitLFS(t.Context(), repo.Path()))
 	})
 
 	t.Run("git info attributes", func(t *testing.T) {
 		repo := testutil.NewGitRepo(t)
 		repo.CommitFile("file.bin", "placeholder\n", "base")
-		out, err := gitOutput(context.Background(), repo.Path(), "rev-parse", "--git-path", "info/attributes")
+		out, err := gitOutput(t.Context(), repo.Path(), "rev-parse", "--git-path", "info/attributes")
 		require.NoError(t, err)
 		attrPath := filepath.Clean(strings.TrimSpace(string(out)))
 		if !filepath.IsAbs(attrPath) {
@@ -100,7 +99,7 @@ func TestCheckoutUsesGitLFS(t *testing.T) {
 		}
 		require.NoError(t, os.WriteFile(attrPath, []byte("*.bin filter=lfs diff=lfs merge=lfs -text\n"), 0o644))
 
-		assert.True(t, checkoutUsesGitLFS(context.Background(), repo.Path()))
+		assert.True(t, checkoutUsesGitLFS(t.Context(), repo.Path()))
 	})
 
 	t.Run("configured attributes file", func(t *testing.T) {
@@ -110,7 +109,7 @@ func TestCheckoutUsesGitLFS(t *testing.T) {
 		require.NoError(t, os.WriteFile(attrPath, []byte("*.bin filter=lfs diff=lfs merge=lfs -text\n"), 0o644))
 		repo.Config("core.attributesFile", attrPath)
 
-		assert.True(t, checkoutUsesGitLFS(context.Background(), repo.Path()))
+		assert.True(t, checkoutUsesGitLFS(t.Context(), repo.Path()))
 	})
 
 	t.Run("configured symlink attributes file without lfs", func(t *testing.T) {
@@ -124,7 +123,7 @@ func TestCheckoutUsesGitLFS(t *testing.T) {
 		}
 		repo.Config("core.attributesFile", attrPath)
 
-		assert.False(t, checkoutUsesGitLFS(context.Background(), repo.Path()))
+		assert.False(t, checkoutUsesGitLFS(t.Context(), repo.Path()))
 	})
 
 	t.Run("default global attributes file", func(t *testing.T) {
@@ -137,7 +136,7 @@ func TestCheckoutUsesGitLFS(t *testing.T) {
 		require.NoError(t, os.MkdirAll(filepath.Dir(attrPath), 0o755))
 		require.NoError(t, os.WriteFile(attrPath, []byte("*.bin filter=lfs diff=lfs merge=lfs -text\n"), 0o644))
 
-		assert.True(t, checkoutUsesGitLFS(context.Background(), repo.Path()))
+		assert.True(t, checkoutUsesGitLFS(t.Context(), repo.Path()))
 	})
 
 	t.Run("default global symlink attributes file without lfs", func(t *testing.T) {
@@ -154,6 +153,6 @@ func TestCheckoutUsesGitLFS(t *testing.T) {
 			t.Skipf("symlink attributes file: %v", err)
 		}
 
-		assert.False(t, checkoutUsesGitLFS(context.Background(), repo.Path()))
+		assert.False(t, checkoutUsesGitLFS(t.Context(), repo.Path()))
 	})
 }

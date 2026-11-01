@@ -1174,7 +1174,7 @@ func TestGetCurrentBranch(t *testing.T) {
 }
 
 func TestInferBranchForCommit(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	t.Run("exact tip match", func(t *testing.T) {
 		repo := NewTestRepoWithCommit(t)
@@ -2994,10 +2994,10 @@ func TestRefMatchesBranchLineage(t *testing.T) {
 		repo.CommitFile("main.txt", "main", "main commit")
 		headSHA := repo.HeadSHA()
 
-		matcher, err := NewHeadAncestryMatcherCtx(context.Background(), repo.Dir, headSHA)
+		matcher, err := NewHeadAncestryMatcherCtx(t.Context(), repo.Dir, headSHA)
 		require.NoError(t, err)
 		refs := []string{reachableTag, baseSHA + ".." + reachableTag, baseSHA[:12], sideSHA, "no-such-ref"}
-		require.NoError(t, matcher.ResolveRefs(context.Background(), refs))
+		require.NoError(t, matcher.ResolveRefs(t.Context(), refs))
 
 		assert.True(t, matcher.Matches(headSHA))
 		assert.True(t, matcher.Matches(reachableTag))
@@ -3128,7 +3128,7 @@ func TestLocalBranchSet(t *testing.T) {
 		repo.CheckoutNewBranch("feature/nested-name")
 		repo.CheckoutNewBranch("other")
 
-		got, err := LocalBranchSet(context.Background(), repo.Dir)
+		got, err := LocalBranchSet(t.Context(), repo.Dir)
 		require.NoError(t, err)
 		assert.Equal(t, map[string]struct{}{
 			current:               {},
@@ -3138,7 +3138,7 @@ func TestLocalBranchSet(t *testing.T) {
 	})
 
 	t.Run("errors outside a repository", func(t *testing.T) {
-		_, err := LocalBranchSet(context.Background(), t.TempDir())
+		_, err := LocalBranchSet(t.Context(), t.TempDir())
 		assert.Error(t, err)
 	})
 }
@@ -3157,16 +3157,16 @@ func TestBranchesContaining(t *testing.T) {
 
 	want := []string{current, "feature"}
 	sort.Strings(want)
-	got, err := BranchesContaining(context.Background(), repo.Dir, shared)
+	got, err := BranchesContaining(t.Context(), repo.Dir, shared)
 	require.NoError(t, err)
 	assert.Equal(t, want, got)
 
-	got, err = BranchesContaining(context.Background(), repo.Dir, featureOnly)
+	got, err = BranchesContaining(t.Context(), repo.Dir, featureOnly)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"feature"}, got)
 
 	_, err = BranchesContaining(
-		context.Background(), repo.Dir, strings.Repeat("f", 40),
+		t.Context(), repo.Dir, strings.Repeat("f", 40),
 	)
 	assert.Error(t, err, "an unresolvable SHA must not report zero branches")
 }
@@ -3543,7 +3543,7 @@ func TestCtxVariantsHonorCancellation(t *testing.T) {
 	repo := NewTestRepoWithCommit(t)
 	sha := strings.TrimSpace(repo.Run("rev-parse", "HEAD"))
 	rangeRef := sha + ".." + sha
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	tests := []struct {

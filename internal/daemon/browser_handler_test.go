@@ -971,7 +971,7 @@ func TestBrowserHandlerStreamsStopWithSession(t *testing.T) {
 		credentials SessionCredentials,
 	) (context.CancelFunc, <-chan struct{}) {
 		t.Helper()
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		request := browserRequest(http.MethodGet, "/api/stream/events", nil).WithContext(ctx)
 		request.AddCookie(sessions.Cookie(credentials.Ambient))
 		request.Header.Set(WebSessionHeader, credentials.Tab)

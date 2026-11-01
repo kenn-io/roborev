@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -71,7 +70,7 @@ func setupTestClient(mode string, repoRoot string) *acpClient {
 // to test the nil-Kind path.
 func assertPermissionOutcome(t *testing.T, client *acpClient, toolKind *acp.ToolKind, expectedOptionID acp.PermissionOptionId) {
 	t.Helper()
-	response, err := client.RequestPermission(context.Background(), acp.RequestPermissionRequest{
+	response, err := client.RequestPermission(t.Context(), acp.RequestPermissionRequest{
 		Options: authTestPermissionOptions(),
 		ToolCall: acp.ToolCallUpdate{
 			Kind: toolKind,
@@ -158,7 +157,7 @@ func TestACPAuthDirectEnforcement(t *testing.T) {
 	client := setupTestClient("plan", tempDir)
 
 	t.Run("H2: WriteTextFile authorization in read-only mode", func(t *testing.T) {
-		_, err := client.WriteTextFile(context.Background(), acp.WriteTextFileRequest{
+		_, err := client.WriteTextFile(t.Context(), acp.WriteTextFileRequest{
 			Path:    "test.txt",
 			Content: "test content",
 		})
@@ -168,7 +167,7 @@ func TestACPAuthDirectEnforcement(t *testing.T) {
 
 	t.Run("H2: CreateTerminal authorization in read-only mode", func(t *testing.T) {
 		cmd, args := acpTestEchoCommand("test")
-		_, err := client.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
+		_, err := client.CreateTerminal(t.Context(), acp.CreateTerminalRequest{
 			Command: cmd,
 			Args:    args,
 		})
@@ -184,7 +183,7 @@ func TestACPAuthDirectEnforcement(t *testing.T) {
 			{
 				name: "WriteTextFile direct call",
 				exec: func() error {
-					_, err := client.WriteTextFile(context.Background(), acp.WriteTextFileRequest{
+					_, err := client.WriteTextFile(t.Context(), acp.WriteTextFileRequest{
 						Path:    "malicious.txt",
 						Content: "malicious content",
 					})
@@ -194,7 +193,7 @@ func TestACPAuthDirectEnforcement(t *testing.T) {
 			{
 				name: "CreateTerminal direct call",
 				exec: func() error {
-					_, err := client.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
+					_, err := client.CreateTerminal(t.Context(), acp.CreateTerminalRequest{
 						Command: "rm",
 						Args:    []string{"-rf", "/"},
 					})
@@ -217,7 +216,7 @@ func TestACPAuthDirectEnforcement(t *testing.T) {
 
 		// Test that WriteTextFile is allowed in auto-approve mode
 		tempFile := filepath.Join(tempDir, "auto-approve-test.txt")
-		_, err := autoApproveClient.WriteTextFile(context.Background(), acp.WriteTextFileRequest{
+		_, err := autoApproveClient.WriteTextFile(t.Context(), acp.WriteTextFileRequest{
 			Path:    "auto-approve-test.txt",
 			Content: "test content",
 		})
@@ -242,7 +241,7 @@ func TestACPAuthDirectEnforcement(t *testing.T) {
 			require.NoError(t, err, "Failed to stat original file: %v", err)
 			originalMode := originalInfo.Mode().Perm()
 
-			if _, err := autoApproveClient.WriteTextFile(context.Background(), acp.WriteTextFileRequest{
+			if _, err := autoApproveClient.WriteTextFile(t.Context(), acp.WriteTextFileRequest{
 				Path:    "exec-mode.sh",
 				Content: "#!/bin/sh\necho new\n",
 			}); err != nil {
@@ -276,7 +275,7 @@ func TestACPAuthDirectEnforcement(t *testing.T) {
 				t.Skip("environment allows writes to read-only files")
 			}
 
-			if _, err := autoApproveClient.WriteTextFile(context.Background(), acp.WriteTextFileRequest{
+			if _, err := autoApproveClient.WriteTextFile(t.Context(), acp.WriteTextFileRequest{
 				Path:    "read-only.txt",
 				Content: "new",
 			}); err == nil {
@@ -286,7 +285,7 @@ func TestACPAuthDirectEnforcement(t *testing.T) {
 
 		// Test that CreateTerminal is allowed in auto-approve mode
 		cmd, args := acpTestEchoCommand("test")
-		_, err = autoApproveClient.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
+		_, err = autoApproveClient.CreateTerminal(t.Context(), acp.CreateTerminalRequest{
 			Command: cmd,
 			Args:    args,
 		})
@@ -297,7 +296,7 @@ func TestACPAuthDirectEnforcement(t *testing.T) {
 		switchableClient := setupTestClient("plan", tempDir)
 
 		// Should be blocked in read-only mode
-		_, err := switchableClient.WriteTextFile(context.Background(), acp.WriteTextFileRequest{
+		_, err := switchableClient.WriteTextFile(t.Context(), acp.WriteTextFileRequest{
 			Path:    "test.txt",
 			Content: "test",
 		})
@@ -308,7 +307,7 @@ func TestACPAuthDirectEnforcement(t *testing.T) {
 
 		// Should now be allowed
 		tempFile := filepath.Join(tempDir, "switch-test.txt")
-		_, err = switchableClient.WriteTextFile(context.Background(), acp.WriteTextFileRequest{
+		_, err = switchableClient.WriteTextFile(t.Context(), acp.WriteTextFileRequest{
 			Path:    "switch-test.txt",
 			Content: "test",
 		})
@@ -319,7 +318,7 @@ func TestACPAuthDirectEnforcement(t *testing.T) {
 	t.Run("H2: Non-read-only custom mode still blocks mutating operations", func(t *testing.T) {
 		customModeClient := setupTestClient("custom-mode", tempDir)
 
-		_, err := customModeClient.WriteTextFile(context.Background(), acp.WriteTextFileRequest{
+		_, err := customModeClient.WriteTextFile(t.Context(), acp.WriteTextFileRequest{
 			Path:    "custom-mode.txt",
 			Content: "test",
 		})
@@ -327,7 +326,7 @@ func TestACPAuthDirectEnforcement(t *testing.T) {
 		require.Contains(t, err.Error(), "auto-approve mode is explicitly enabled")
 
 		cmd, args := acpTestEchoCommand("test")
-		_, err = customModeClient.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
+		_, err = customModeClient.CreateTerminal(t.Context(), acp.CreateTerminalRequest{
 			Command: cmd,
 			Args:    args,
 		})
@@ -416,19 +415,19 @@ func TestACPAuthEdgeCases(t *testing.T) {
 	})
 
 	t.Run("Numeric parameter validation", func(t *testing.T) {
-		_, err := client.ReadTextFile(context.Background(), acp.ReadTextFileRequest{
+		_, err := client.ReadTextFile(t.Context(), acp.ReadTextFileRequest{
 			Path: "test.txt",
 			Line: new(-1),
 		})
 		require.Error(t, err, "Expected error for negative line number, got nil")
 
-		_, err = client.ReadTextFile(context.Background(), acp.ReadTextFileRequest{
+		_, err = client.ReadTextFile(t.Context(), acp.ReadTextFileRequest{
 			Path:  "test.txt",
 			Limit: new(-1),
 		})
 		require.Error(t, err, "Expected error for negative limit, got nil")
 
-		_, err = client.ReadTextFile(context.Background(), acp.ReadTextFileRequest{
+		_, err = client.ReadTextFile(t.Context(), acp.ReadTextFileRequest{
 			Path: "",
 		})
 		require.Error(t, err, "Expected error for empty path, got nil")
@@ -437,7 +436,7 @@ func TestACPAuthEdgeCases(t *testing.T) {
 	t.Run("WriteTextFile input validation", func(t *testing.T) {
 		validationClient := setupTestClient("auto-approve", "")
 
-		_, err := validationClient.WriteTextFile(context.Background(), acp.WriteTextFileRequest{
+		_, err := validationClient.WriteTextFile(t.Context(), acp.WriteTextFileRequest{
 			Path:    "",
 			Content: "test content",
 		})
@@ -461,12 +460,12 @@ func TestACPFileOperationsPreserveLargeContent(t *testing.T) {
 	root := t.TempDir()
 	client := setupTestClient("auto-approve", root)
 	content := strings.Repeat("x", 11_000_000) + "\n" + strings.Repeat("\n", 1_000_000) + "target\n"
-	_, err := client.WriteTextFile(context.Background(), acp.WriteTextFileRequest{Path: "large.txt", Content: content})
+	_, err := client.WriteTextFile(t.Context(), acp.WriteTextFileRequest{Path: "large.txt", Content: content})
 	require.NoError(t, err)
-	response, err := client.ReadTextFile(context.Background(), acp.ReadTextFileRequest{Path: "large.txt"})
+	response, err := client.ReadTextFile(t.Context(), acp.ReadTextFileRequest{Path: "large.txt"})
 	require.NoError(t, err)
 	require.Equal(t, content, response.Content)
-	response, err = client.ReadTextFile(context.Background(), acp.ReadTextFileRequest{Path: "large.txt", Line: new(1_000_002), Limit: new(2_000_000)})
+	response, err = client.ReadTextFile(t.Context(), acp.ReadTextFileRequest{Path: "large.txt", Line: new(1_000_002), Limit: new(2_000_000)})
 	require.NoError(t, err)
 	require.Equal(t, "target\n", response.Content)
 }

@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -24,7 +23,7 @@ func TestSSEReadLoopReturnsAccessDeniedOnUnauthorized(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	connected, err := sseReadLoop(context.Background(), testEndpointFromURL(ts.URL), make(chan struct{}, 1))
+	connected, err := sseReadLoop(t.Context(), testEndpointFromURL(ts.URL), make(chan struct{}, 1))
 	require.ErrorIs(t, err, daemon.ErrDaemonAccessDenied)
 	assert.False(t, connected)
 }

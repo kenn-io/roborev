@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -129,7 +128,7 @@ func TestDroidReviewOutcomes(t *testing.T) {
 			mock := mockAgentCLI(t, tt.mockOpts)
 			a := NewDroidAgent(mock.CmdPath)
 
-			result, err := a.Review(context.Background(), t.TempDir(), "HEAD", "review this commit", nil)
+			result, err := a.Review(t.Context(), t.TempDir(), "HEAD", "review this commit", nil)
 
 			if tt.wantError {
 				require.Error(t, err)
@@ -166,7 +165,7 @@ func TestDroidReviewWithProgress(t *testing.T) {
 
 	defer f.Close()
 
-	_, err = a.Review(context.Background(), tmpDir, "deadbeef", "review this commit", f)
+	_, err = a.Review(t.Context(), tmpDir, "deadbeef", "review this commit", f)
 	require.NoError(t, err)
 
 	progress, _ := os.ReadFile(progressFile)
@@ -187,7 +186,7 @@ func TestDroidReviewPipesPromptViaStdin(t *testing.T) {
 	a := NewDroidAgent(mock.CmdPath)
 	prompt := "Review this commit carefully"
 	_, err := a.Review(
-		context.Background(), t.TempDir(), "HEAD", prompt, nil,
+		t.Context(), t.TempDir(), "HEAD", prompt, nil,
 	)
 	require.NoError(t, err, "Review failed: %v")
 
@@ -205,7 +204,7 @@ func TestDroidReviewAgenticModeFromGlobal(t *testing.T) {
 	})
 
 	a := NewDroidAgent(mock.CmdPath)
-	if _, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil); err != nil {
+	if _, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil); err != nil {
 		require.NoError(t, err)
 	}
 

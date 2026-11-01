@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"encoding/json"
 	"encoding/json/jsontext"
 	"fmt"
@@ -55,7 +54,7 @@ func TestSingleSurvivorDisplayPolicyHandoff(t *testing.T) {
 					failMember(t, tc, members[0].ID)
 					synth := releaseAndClaimSynthesis(t, tc, runUUID)
 					if mode == "passthrough" {
-						tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+						tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synth)
 						stored, err := tc.DB.GetReviewByJobID(synth.ID)
 						require.NoError(t, err)
 						assert.Contains(stored.Output, "Minor naming issue.", "storage retains the finding")
@@ -127,7 +126,7 @@ func TestSuccessfulPanelSynthesisInheritsThreshold(t *testing.T) {
 				require.NoError(t, tc.DB.CompleteJobResult(m.ID, "test", storage.ReviewCompletion{Output: "### Low\nMinor naming issue.", StructuredOutput: document, Verdict: storage.ParseVerdictAtSeverity("### Low\nMinor naming issue.", policy.members[i]), MinSeverity: policy.members[i]}))
 			}
 			synth := releaseAndClaimSynthesis(t, tc, runUUID)
-			tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+			tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synth)
 			stored, err := tc.DB.GetReviewByJobID(synth.ID)
 			require.NoError(t, err)
 			assert.Contains(a.synthPrompt, "Minor naming issue.", "successful synthesis uses the full member review")
@@ -202,7 +201,7 @@ func TestPanelDisplayPolicyAcrossOutcomes(t *testing.T) {
 				}
 				synth := releaseAndClaimSynthesis(t, tc, runUUID)
 				if outcome == "synthesis" {
-					tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+					tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synth)
 					stored, err := tc.DB.GetReviewByJobID(synth.ID)
 					require.NoError(t, err)
 					require.NotNil(t, stored)
