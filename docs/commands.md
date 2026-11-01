@@ -416,7 +416,9 @@ every review nested under `subagents`:
 `document` when you need the summary, verdict, or findings as data.
 
 The `metadata` profile keeps the same review metadata. Both keys stay present,
-and `document` and `content` are always `null`.
+and `document` and `content` are always `null`. Both profiles include
+`non_voting` on each panel member: `true` for advisory members and `false` for
+voting members.
 
 A `document` has these members:
 

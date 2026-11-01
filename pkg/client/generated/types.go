@@ -2092,13 +2092,16 @@ type ExportSubagent struct {
 	Cost        ExportReviewCost `json:"cost"`
 
 	// Document The stored review document in canonical JSON. Null in the metadata profile and for reviews stored without a document. content is the Markdown rendering of this document.
-	Document            ExportSubagent_Document `json:"document"`
-	DurationMs          *int64                  `json:"duration_ms"`
-	Model               *string                 `json:"model" validate:"required"`
-	Name                string                  `json:"name" validate:"required"`
-	ResumeSourceJobUUID *uuid.UUID              `json:"resume_source_job_uuid" validate:"required"`
-	ReviewID            uuid.UUID               `json:"review_id" validate:"required"`
-	ReviewType          *string                 `json:"review_type" validate:"required"`
+	Document   ExportSubagent_Document `json:"document"`
+	DurationMs *int64                  `json:"duration_ms"`
+	Model      *string                 `json:"model" validate:"required"`
+	Name       string                  `json:"name" validate:"required"`
+
+	// NonVoting True when the panel member is advisory and does not affect the panel verdict.
+	NonVoting           bool       `json:"non_voting"`
+	ResumeSourceJobUUID *uuid.UUID `json:"resume_source_job_uuid" validate:"required"`
+	ReviewID            uuid.UUID  `json:"review_id" validate:"required"`
+	ReviewType          *string    `json:"review_type" validate:"required"`
 
 	// Verdict pass, fail, or unknown when a legacy review has no recorded verdict.
 	Verdict string `json:"verdict" validate:"required"`

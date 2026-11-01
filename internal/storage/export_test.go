@@ -3,12 +3,14 @@ package storage
 import (
 	"encoding/base64"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 	"uuid"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -759,7 +761,7 @@ func TestExportReviewsPanelSubagents(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
-	assert := assert.New(t)
+	check := assert.New(t)
 
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
 	panelRun := testUUID("panel-run-1")
@@ -770,6 +772,8 @@ func TestExportReviewsPanelSubagents(t *testing.T) {
 		UPDATE review_jobs
 		SET token_usage = '{"input_tokens":7,"total_output_tokens":9,"cost_usd":0.12,"has_cost":true}'
 		WHERE id = ?`, memberA.JobID)
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE review_jobs SET non_voting = 1 WHERE id = ?`, memberB.JobID)
 	require.NoError(t, err)
 	queuedMember, err := db.EnqueueJob(EnqueueOpts{
 		RepoID:           repo.ID,
@@ -793,29 +797,84 @@ func TestExportReviewsPanelSubagents(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, page.Reviews, 1)
 	got := page.Reviews[0]
-	assert.Equal(*synthesis.UUID, got.ReviewID)
-	assert.Equal("dddddddddddddddddddddddddddddddddddddddd", derefString(got.CommitSHA))
-	assert.Nil(got.PRNumber)
-	assert.Nil(got.PRURL)
+	check.Equal(*synthesis.UUID, got.ReviewID)
+	check.Equal("dddddddddddddddddddddddddddddddddddddddd", derefString(got.CommitSHA))
+	check.Nil(got.PRNumber)
+	check.Nil(got.PRURL)
 	require.Len(t, got.Subagents, 2)
-	assert.Equal(*memberA.UUID, got.Subagents[0].ReviewID)
-	assert.Equal("security", got.Subagents[0].Name)
-	assert.Equal("fail", got.Subagents[0].Verdict)
-	assert.Equal("security", derefString(got.Subagents[0].ReviewType))
-	assert.Contains(derefString(got.Subagents[0].Content), "- High — issue")
-	assert.Equal(int64(7), derefInt64(got.Subagents[0].Cost.TokensIn))
-	assert.Equal(int64(9), derefInt64(got.Subagents[0].Cost.TokensOut))
-	assert.InDelta(0.12, derefFloat64(got.Subagents[0].Cost.USD), 1e-9)
-	assert.Equal(*memberB.UUID, got.Subagents[1].ReviewID)
-	assert.Equal("style", got.Subagents[1].Name)
-	assert.Equal("pass", got.Subagents[1].Verdict)
+	check.Equal(*memberA.UUID, got.Subagents[0].ReviewID)
+	check.Equal("security", got.Subagents[0].Name)
+	check.Equal("fail", got.Subagents[0].Verdict)
+	check.Equal("security", derefString(got.Subagents[0].ReviewType))
+	check.Contains(derefString(got.Subagents[0].Content), "- High — issue")
+	check.Equal(int64(7), derefInt64(got.Subagents[0].Cost.TokensIn))
+	check.Equal(int64(9), derefInt64(got.Subagents[0].Cost.TokensOut))
+	check.InDelta(0.12, derefFloat64(got.Subagents[0].Cost.USD), 1e-9)
+	check.Equal(*memberB.UUID, got.Subagents[1].ReviewID)
+	check.Equal("style", got.Subagents[1].Name)
+	check.Equal("pass", got.Subagents[1].Verdict)
 
 	metadata, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileMetadata, Limit: 10})
 	require.NoError(t, err)
 	require.Len(t, metadata.Reviews, 1)
 	require.Len(t, metadata.Reviews[0].Subagents, 2)
-	assert.Nil(metadata.Reviews[0].Content)
-	assert.Nil(metadata.Reviews[0].Subagents[0].Content)
+	check.Nil(metadata.Reviews[0].Content)
+	check.Nil(metadata.Reviews[0].Subagents[0].Content)
+	for _, profile := range []struct {
+		name string
+		page ExportReviewsPage
+	}{
+		{"content", page},
+		{"metadata", metadata},
+	} {
+		t.Run(profile.name, func(t *testing.T) {
+			encoded, err := jsonv2.Marshal(profile.page.Reviews[0].Subagents)
+			require.NoError(t, err)
+			var members []map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(encoded, &members))
+			require.Len(t, members, 2)
+			require.Contains(t, members[0], "non_voting")
+			assert.JSONEq(t, `false`, string(members[0]["non_voting"]))
+			require.Contains(t, members[1], "non_voting")
+			assert.JSONEq(t, `true`, string(members[1]["non_voting"]))
+		})
+	}
+}
+
+func FuzzExportSubagentNonVoting(f *testing.F) {
+	f.Add("security", false)
+	f.Add("advisory", true)
+	f.Add("", false)
+	f.Add("quote\"\\\n世界", true)
+	f.Fuzz(func(t *testing.T, name string, nonVoting bool) {
+		// JSON v2 rejects invalid UTF-8; member names must be valid JSON strings.
+		if !utf8.ValidString(name) {
+			t.Skip()
+		}
+		db := openTestDB(t)
+		defer db.Close()
+		repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+		panelRun := testUUID("fuzz-panel")
+		member := seedPanelExportJob(t, db, repo.ID, panelRun, "member", name, 0, "codex", "", "2026-06-29 00:00:01", "No issues found.")
+		_, err := db.Exec(`UPDATE review_jobs SET non_voting = ? WHERE id = ?`, nonVoting, member.JobID)
+		require.NoError(t, err)
+		subagents, err := db.exportSubagents(panelRun, ExportProfileMetadata)
+		require.NoError(t, err)
+		require.Len(t, subagents, 1)
+		encoded, err := jsonv2.Marshal(subagents[0])
+		require.NoError(t, err)
+		var wire struct {
+			Name      string `json:"name"`
+			NonVoting *bool  `json:"non_voting"`
+		}
+		require.NoError(t, jsonv2.Unmarshal(encoded, &wire))
+		require.NotNil(t, wire.NonVoting, "non_voting must be explicit, including false")
+		assert.Equal(t, nonVoting, *wire.NonVoting)
+		if name == "" {
+			name = "codex"
+		}
+		assert.Equal(t, name, wire.Name)
+	})
 }
 
 func TestExportReviewsSynthesisWithoutMembersUsesEmptySubagentsArray(t *testing.T) {
