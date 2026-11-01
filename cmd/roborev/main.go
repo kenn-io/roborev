@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"os"
 	// Embed the IANA timezone database as a last-resort fallback for
 	// time.LoadLocation: releases are static CGO_ENABLED=0 binaries, and
@@ -19,37 +18,34 @@ var (
 )
 
 func main() {
-	err := newRootCmd().Execute()
+	code := executeCLI(newRootCmd(), os.Args[1:])
 	waitCLIUse()
-	if err != nil {
-		// exitError carries a specific exit code; the RunE that returned
-		// it has already silenced cobra's error printing via silentExit.
-		if exitErr, ok := errors.AsType[*exitError](err); ok {
-			os.Exit(exitErr.code)
-		}
-		// All other errors: cobra already printed them.
-		os.Exit(1)
+	if code != 0 {
+		os.Exit(code)
 	}
 }
 
 func newRootCmd() *cobra.Command {
 	rootCmd := &cobra.Command{
-		Use:   "roborev",
-		Short: "Automatic code review for git commits",
-		Long:  "roborev automatically reviews git commits using AI agents (Codex, Claude Code, Gemini, Copilot, OpenCode, Cursor, Kiro, Pi)",
+		Use:           "roborev",
+		Short:         "Automatic code review for git commits",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Long:          "roborev automatically reviews git commits using AI agents (Codex, Claude Code, Gemini, Copilot, OpenCode, Cursor, Kiro, Pi)",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			// validateServerFlag is itself part of the invocation contract
-			// (an invalid --server value is a usage problem, not a runtime
-			// problem), so run it first while SilenceUsage is still false.
 			if err := validateServerFlag(); err != nil {
-				return err
+				if isCLIHook(cmd) {
+					return err
+				}
+				return validationErr(cmd, err)
 			}
 			if err := validateRemoteCommandFor(cmd); err != nil {
-				return err
+				if isCLIHook(cmd) {
+					return err
+				}
+				return usageErr(cmd, err)
 			}
-			// Past this point cobra has validated everything it can, so
-			// errors from RunE just get a plain "Error: ..." line without
-			// the usage wall.
+			// Runtime failures are rendered centrally without a usage block.
 			cmd.SilenceUsage = true
 			armCLIUse(cmd)
 			return nil
@@ -113,5 +109,7 @@ func newRootCmd() *cobra.Command {
 	rootCmd.AddCommand(versionCmd())
 	rootCmd.AddCommand(verifyWebAssetsCmd())
 
+	applyRootHelp(rootCmd)
+	configureCLIErrors(rootCmd)
 	return rootCmd
 }

@@ -834,14 +834,22 @@ type DoctorAgentsInput struct {
 // differ from a user's shell when the daemon started with a different PATH.
 type DoctorAgentsOutput struct {
 	Body struct {
-		PathEnv         string            `json:"path_env" doc:"PATH environment variable of the daemon process"`
-		Agents          []agent.Diagnosis `json:"agents" doc:"Every agent the daemon knows"`
-		Requested       []agent.Diagnosis `json:"requested" doc:"The requested agent names, resolved by the daemon; unknown names report an error"`
-		HookTools       []agent.Diagnosis `json:"hook_tools" doc:"CLI tools that configured kata and beads hooks run, resolved on the daemon PATH"`
-		Panels          []DoctorPanel     `json:"panels" doc:"Review panels selected for this repository, resolved the way the daemon resolves them when queueing a panel review"`
-		PanelsError     string            `json:"panels_error,omitempty" doc:"Why the review experiment configuration could not be applied; panels were not checked"`
-		RepoConfigError string            `json:"repo_config_error,omitempty" doc:"Why the repository config could not be loaded; results use global config only"`
+		PathEnv         string               `json:"path_env" doc:"PATH environment variable of the daemon process"`
+		Agents          []agent.Diagnosis    `json:"agents" doc:"Every agent the daemon knows"`
+		Requested       []agent.Diagnosis    `json:"requested" doc:"The requested agent names, resolved by the daemon; unknown names report an error"`
+		HookTools       []agent.Diagnosis    `json:"hook_tools" doc:"CLI tools that configured kata and beads hooks run, resolved on the daemon PATH"`
+		Panels          []DoctorPanel        `json:"panels" doc:"Review panels selected for this repository, resolved the way the daemon resolves them when queueing a panel review"`
+		UsageProvider   *DoctorUsageProvider `json:"usage_provider,omitempty" doc:"Usage provider and authenticated probe result from the daemon process"`
+		PanelsError     string               `json:"panels_error,omitempty" doc:"Why the review experiment configuration could not be applied; panels were not checked"`
+		RepoConfigError string               `json:"repo_config_error,omitempty" doc:"Why the repository config could not be loaded; results use global config only"`
 	}
+}
+
+// DoctorUsageProvider is the daemon's secret-free usage provider diagnosis.
+type DoctorUsageProvider struct {
+	Provider string `json:"provider" doc:"Selected provider: local_cli, cost_endpoint, or agentsview"`
+	URL      string `json:"url,omitempty" doc:"Validated AgentsView base URL, when selected"`
+	Error    string `json:"error,omitempty" doc:"Configuration or probe failure; empty means the diagnosis succeeded"`
 }
 
 // DoctorPanel is one selected review panel as the daemon would queue it.

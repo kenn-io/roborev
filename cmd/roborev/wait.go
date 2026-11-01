@@ -69,7 +69,7 @@ Examples:
 				for _, arg := range args {
 					id, err := strconv.ParseInt(arg, 10, 64)
 					if err != nil || id <= 0 {
-						return usageErr(cmd, fmt.Errorf("remote wait requires positive numeric job IDs"))
+						return validationErr(cmd, fmt.Errorf("remote wait requires positive numeric job IDs"))
 					}
 				}
 			}
@@ -92,7 +92,7 @@ Examples:
 					// --job flag: treat as job ID directly
 					id, err := strconv.ParseInt(arg, 10, 64)
 					if err != nil || id <= 0 {
-						return fmt.Errorf("invalid job ID: %s", arg)
+						return validationErr(cmd, fmt.Errorf("invalid job ID: %s", arg))
 					}
 					jobID = id
 				} else {
@@ -107,7 +107,7 @@ Examples:
 						if id, err := strconv.ParseInt(arg, 10, 64); err == nil && id > 0 {
 							jobID = id
 						} else {
-							return fmt.Errorf("argument %q is not a valid git ref or job ID", arg)
+							return validationErr(cmd, fmt.Errorf("argument %q is not a valid git ref or job ID", arg))
 						}
 					}
 				}
@@ -121,14 +121,14 @@ Examples:
 				repoRoot, _ := gitrepo.Root(ctx, ".")
 				resolved, err := gitrepo.Resolve(ctx, repoRoot, ref)
 				if err != nil {
-					return fmt.Errorf("invalid git ref: %s", ref)
+					return withHint(invalidValue(fmt.Errorf("invalid git ref: %s", ref)), "check the ref and commit first if the repository has no commits, or pass a job ID: roborev wait --job 42")
 				}
 				sha = resolved
 			}
 
 			// All local validation passed — now ensure daemon is running
 			if err := ensureDaemon(); err != nil {
-				return fmt.Errorf("daemon not running: %w", err)
+				return fmt.Errorf("connect to daemon: %w", err)
 			}
 
 			// If we have a ref to resolve, use findJobForCommit
@@ -199,7 +199,7 @@ func waitMultiple(
 		if forceJobID {
 			id, err := strconv.ParseInt(arg, 10, 64)
 			if err != nil || id <= 0 {
-				return fmt.Errorf("invalid job ID: %s", arg)
+				return validationErr(cmd, fmt.Errorf("invalid job ID: %s", arg))
 			}
 			resolved = append(resolved, resolvedArg{jobID: id})
 		} else {
@@ -215,10 +215,8 @@ func waitMultiple(
 			} else {
 				id, err := strconv.ParseInt(arg, 10, 64)
 				if err != nil || id <= 0 {
-					return fmt.Errorf(
-						"argument %q is not a valid git ref or job ID",
-						arg,
-					)
+					return validationErr(cmd, fmt.Errorf(
+						"argument %q is not a valid git ref or job ID", arg))
 				}
 				resolved = append(resolved, resolvedArg{jobID: id})
 			}
@@ -227,7 +225,7 @@ func waitMultiple(
 
 	// Phase 2: Ensure daemon is running.
 	if err := ensureDaemon(); err != nil {
-		return fmt.Errorf("daemon not running: %w", err)
+		return fmt.Errorf("connect to daemon: %w", err)
 	}
 
 	// Phase 3: Resolve git refs to job IDs via daemon.

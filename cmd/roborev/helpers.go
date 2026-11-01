@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 
@@ -18,28 +19,34 @@ import (
 
 var clientConfigWarnings sync.Map
 
+// cliWarningOut follows lifecycle diagnostics when JSON errors are buffered.
+var cliWarningOut io.Writer
+
 func loadClientConfig() (*config.Config, error) {
 	cfg, err := config.LoadGlobal()
 	if err == nil {
 		for _, warning := range cfg.DaemonConfigWarnings() {
 			message := fmt.Sprintf("Warning: ignoring invalid daemon config %v\n", warning)
 			if _, loaded := clientConfigWarnings.LoadOrStore(message, struct{}{}); !loaded {
-				fmt.Fprint(os.Stderr, message)
+				out := cliWarningOut
+				if out == nil {
+					out = os.Stderr
+				}
+				fmt.Fprint(out, message)
 			}
 		}
 	}
 	return cfg, err
 }
 
-// exitError signals a specific exit code with no further error output.
-// Always construct via silentExit so cobra's "Error: ..." line is suppressed
-// for this command — the caller has already printed any user-facing message.
-// If cause is set, Error()/Unwrap() expose it so programmatic callers can
-// still inspect the underlying failure; cobra's printing is still silenced
-// via the SilenceErrors flag that silentExit sets.
+// exitError carries a process status and optional CLI recovery metadata.
+// A cause-less result or an explicitly silent result has already been displayed.
 type exitError struct {
-	code  int
-	cause error
+	code   int
+	cause  error
+	hint   string
+	kind   string
+	silent bool
 }
 
 func (e *exitError) Error() string {
@@ -58,7 +65,7 @@ func (e *exitError) Unwrap() error { return e.cause }
 // not from goroutines that share cmd.
 func silentExit(cmd *cobra.Command, code int) error {
 	cmd.SilenceErrors = true
-	return &exitError{code: code}
+	return &exitError{code: code, silent: true}
 }
 
 // silenceIfExit silences cobra's error output for cmd when err is an
@@ -66,20 +73,17 @@ func silentExit(cmd *cobra.Command, code int) error {
 // points whose error may have originated in concurrent code that could
 // not safely mutate cmd itself.
 func silenceIfExit(cmd *cobra.Command, err error) error {
-	if _, ok := errors.AsType[*exitError](err); ok {
+	if exit, ok := errors.AsType[*exitError](err); ok && (exit.cause == nil || exit.silent) {
 		cmd.SilenceErrors = true
 	}
 	return err
 }
 
-// usageErr re-enables the usage block for cmd and returns err. Use inside
-// RunE for validation that's semantically part of the invocation contract
-// (mutually exclusive flags, missing required values, bad enum values).
-// PersistentPreRunE on the root silences usage for runtime errors; this
-// flips it back for the specific case of "the user invoked me wrong."
+// usageErr marks missing arguments and conflicting options as invocation errors.
+// Typed validation failures keep their own status when passed through this helper.
 func usageErr(cmd *cobra.Command, err error) error {
-	cmd.SilenceUsage = false
-	return err
+	cmd.SilenceUsage = true
+	return commandError(cmd, err, 2, "usage")
 }
 
 // quietExit prepares a --quiet command's error for return. It silences

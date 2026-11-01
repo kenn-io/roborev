@@ -398,6 +398,10 @@ hook, so a configured integration never goes dark unnoticed.
 | Variable | Description |
 |----------|-------------|
 | `ROBOREV_DATA_DIR` | Override default data directory (`~/.roborev`) |
+| `ROBOREV_TELEMETRY_ENABLED` | Set to `0` to disable anonymous usage telemetry |
+| `EDITOR` | Editor used by `roborev comment` when no message is supplied |
+| `GH_TOKEN`, `GITHUB_TOKEN` | GitHub authentication for CI commands |
+| `GITLAB_TOKEN`, `GL_TOKEN` | GitLab authentication for CI commands |
 | `ROBOREV_COLOR_MODE` | TUI color theme: `auto` (default), `dark`, `light`, `none` |
 | `ROBOREV_SYNC_CURSOR_LOOKBACK` | PostgreSQL sync cursor overlap duration (default `5m`) |
 | `ROBOREV_AGENT_HOOK_TURN_THRESHOLD` | Override agent-hook Stop threshold |

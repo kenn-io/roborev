@@ -4,9 +4,13 @@ on:
   pull_request:
     paths:
       - ".github/workflows/**"
+      - "Makefile"
 
 permissions:
   contents: read
+
+env:
+  GOPROXY: https://proxy.golang.org|direct
 
 cache-mode: read
 
@@ -20,6 +24,15 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - name: Check workflow download retries
+        run: |
+          GOFLAGS="${GOFLAGS:+$GOFLAGS }-n" kit-retry 3 5 make lint-workflow-retries
+          make lint-workflow-retries
       - uses: step-security/jactionlint@v2.2.0
         with:
           version: 2.3.0
@@ -39,7 +52,10 @@ jobs:
         with:
           persist-credentials: false
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+
       - name: Verify the workflow action lockfile
         env:
           GH_TOKEN: ${{ github.token }}
+          DOWNLOAD_RETRY: kit-retry 3 5
         run: make actions-lock-check

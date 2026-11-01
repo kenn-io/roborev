@@ -147,12 +147,18 @@ func TestUpdateInterruptionDoesNotReleasePanelSynthesis(t *testing.T) {
 	})
 	job := claimNext(t, tc)
 	done := make(chan struct{})
+	t.Cleanup(func() {
+		tc.Pool.InterruptJobsForUpdate([]int64{job.ID})
+		require.True(t, waitForUpdateSignal(done, 30*time.Second), "panel member did not stop during cleanup")
+	})
 	go func() {
 		defer close(done)
 		tc.Pool.processJob(testWorkerID, job)
 	}()
 
-	require.True(t, waitForUpdateSignal(started, 5*time.Second), "panel member did not start")
+	// Startup includes real Git, database, and filesystem work, which can
+	// exceed five seconds on parallel Windows CI runners.
+	require.True(t, waitForUpdateSignal(started, 30*time.Second), "panel member did not start")
 	tc.Pool.InterruptJobsForUpdate([]int64{job.ID})
 	require.True(t, waitForUpdateSignal(done, 5*time.Second), "panel member did not unwind")
 

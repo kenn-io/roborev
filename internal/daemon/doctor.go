@@ -11,6 +11,7 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/tokens"
 )
 
 // hookTools maps a [[hooks]] type to the CLI the daemon runs for it.
@@ -20,7 +21,7 @@ var hookTools = map[string]string{
 }
 
 // humaDoctorAgents reports which agents and hook tools the daemon process can
-// run. The CLI's doctor command compares this with its own view to find
+// run, and probes its usage provider. The CLI compares this with its own view to find
 // commands that are on the user's PATH but not on the daemon's.
 func (s *Server) humaDoctorAgents(
 	ctx context.Context, input *DoctorAgentsInput,
@@ -28,6 +29,8 @@ func (s *Server) humaDoctorAgents(
 	repo := strings.TrimSpace(input.Repo)
 	cfg := s.configWatcher.Config()
 	resp := &DoctorAgentsOutput{}
+	usage := ResolveDoctorUsageProvider(ctx, cfg)
+	resp.Body.UsageProvider = &usage
 	var repoCfg *config.RepoConfig
 	var rawRepo map[string]any
 	if repo != "" {
@@ -171,4 +174,24 @@ func mergeDoctorPanel(panels []DoctorPanel, p DoctorPanel, use string) []DoctorP
 func sameDoctorPanelOutcome(a, b DoctorPanel) bool {
 	return a.Name == b.Name && a.Error == b.Error &&
 		slices.Equal(a.Members, b.Members) && a.Synthesis == b.Synthesis
+}
+
+// ResolveDoctorUsageProvider diagnoses the provider in the calling process.
+// Doctor uses the daemon result when available, and labels a CLI fallback.
+func ResolveDoctorUsageProvider(ctx context.Context, cfg *config.Config) DoctorUsageProvider {
+	result := DoctorUsageProvider{Provider: "local_cli"}
+	if cfg.AgentsView.URL != "" {
+		result.Provider, result.URL = "agentsview", cfg.AgentsView.URL
+	} else if cfg.Cost.Endpoint != "" {
+		result.Provider = "cost_endpoint"
+	}
+	fetch, err := tokens.FetchConfigFromConfig(cfg)
+	if err != nil {
+		result.Error = err.Error()
+	} else if result.Provider == "agentsview" {
+		if err := fetch.ProbeAgentsView(ctx); err != nil {
+			result.Error = err.Error()
+		}
+	}
+	return result
 }

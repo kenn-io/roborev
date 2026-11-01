@@ -250,6 +250,9 @@
   .table-wrapper {
     background: var(--bg-surface);
     overflow: auto;
+    /* Reserve the scrollbar's width up front so the columns do not shift left
+       when opening a review shortens the table enough to make it scroll. */
+    scrollbar-gutter: stable;
     flex: 1;
     min-height: 0;
   }

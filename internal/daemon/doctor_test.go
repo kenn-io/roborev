@@ -200,6 +200,62 @@ synthesis_agent = "test"
 		"queueing selects every member's agent, so allow_failure does not help")
 }
 
+func TestDoctorAgentsUsageProvider(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		status       int
+		missingToken bool
+	}{
+		{name: "authenticated", status: 200}, {name: "rejected", status: 401}, {name: "file error", missingToken: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("AGENTSVIEW_SERVER_TOKEN", "daemon-token")
+			calls := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				assert.Equal(t, "/base/api/ping", r.URL.Path)
+				assert.Equal(t, "Bearer daemon-token", r.Header.Get("Authorization"))
+				w.WriteHeader(tc.status)
+				fmt.Fprint(w, `{"ok":true,"service":"agentsview","detail":"private-server-body"}`)
+			}))
+			defer srv.Close()
+			server, _, _ := newTestServer(t)
+			cfg := config.DefaultConfig()
+			cfg.AgentsView.URL = srv.URL + "/base"
+			if tc.missingToken {
+				cfg.AgentsView.TokenFile = filepath.Join(t.TempDir(), "missing")
+			}
+			server.configWatcher.cfgMu.Lock()
+			server.configWatcher.cfg = cfg
+			server.configWatcher.cfgMu.Unlock()
+			w := httptest.NewRecorder()
+			server.httpServer.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/doctor/agents", nil))
+			require.Equal(t, http.StatusOK, w.Code)
+			var out struct {
+				UsageProvider *struct {
+					Provider string `json:"provider"`
+					URL      string `json:"url"`
+					Error    string `json:"error"`
+				} `json:"usage_provider"`
+			}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+			require.NotNil(t, out.UsageProvider)
+			assert.Equal(t, "agentsview", out.UsageProvider.Provider)
+			assert.Equal(t, cfg.AgentsView.URL, out.UsageProvider.URL)
+			if tc.missingToken {
+				assert.Contains(t, out.UsageProvider.Error, "token_file")
+				assert.Zero(t, calls)
+			} else if tc.status == 401 {
+				assert.Contains(t, out.UsageProvider.Error, "rejected the token")
+			} else {
+				assert.Empty(t, out.UsageProvider.Error)
+			}
+			assert.NotContains(t, w.Body.String(), "daemon-token")
+			assert.NotContains(t, w.Body.String(), "private-server-body")
+		})
+	}
+}
+
 func TestResolveDoctorPanelsSynthesisOnlyForSeveralVotingMembers(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	const panel = `

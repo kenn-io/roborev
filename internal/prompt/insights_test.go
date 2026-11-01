@@ -54,6 +54,34 @@ func TestBuildInsightsPrompt_Basic(t *testing.T) {
 	assert.Contains(t, result, "codex")
 }
 
+func TestBuildInsightsPrompt_PanelMetadata(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		jobType string
+		role    string
+		panel   string
+	}{
+		{"panel", storage.JobTypeSynthesis, storage.PanelRoleSynthesis, "careful"},
+		{"standalone", storage.JobTypeReview, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			review := InsightsReviewFromJob(storage.ReviewJob{
+				ID: 1, Agent: "test", JobType: tc.jobType, PanelRole: tc.role,
+				PanelName: tc.panel, PanelSummary: &storage.PanelSummary{MembersTotal: 3},
+			}, "Review finding", nil, false)
+			result := BuildInsightsPrompt(InsightsData{Reviews: []InsightsReview{review}})
+			assert.Contains(t, result, "Review finding")
+			if tc.panel != "" {
+				assert.Contains(t, result, "**Panel:** careful (3 configured members)")
+			} else {
+				assert.NotContains(t, result, "**Panel:**")
+			}
+		})
+	}
+}
+
 func TestBuildInsightsPrompt_IncludesComments(t *testing.T) {
 	t.Parallel()
 

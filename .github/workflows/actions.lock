@@ -10,7 +10,8 @@ workflows:
         - 'actions/setup-node@v7.1.0'
         - 'actions/upload-artifact@v7.0.2'
         - 'astral-sh/setup-uv@v10.3.2'
-        - 'jdx/mise-action@v5.2.2'
+        - 'jdx/mise-action@v5.2.3'
+        - 'kenn-io/kit@v0.47.3'
         - 'step-security/codecov-action@v7.1.1'
         - 'step-security/golangci-lint-action@v9.3.0'
         - 'step-security/paths-filter@v4.0.3'
@@ -26,9 +27,12 @@ workflows:
     '.github/workflows/windows-migration.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
+        - 'kenn-io/kit@v0.47.3'
         - 'step-security/paths-filter@v4.0.3'
     '.github/workflows/workflow-validation.yml':
         - 'actions/checkout@v7.0.1'
+        - 'actions/setup-go@v7.0.0'
+        - 'kenn-io/kit@v0.47.3'
         - 'step-security/jactionlint@v2.2.0'
 dependencies:
     'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1':
@@ -81,9 +85,9 @@ dependencies:
         commit: 'sha1-9b3254085494b55a0f7c4c2b3d2d52cc712ce370'
         owner_id: 9919
         repo_id: 259445878
-    'jdx/mise-action@v5.2.2':
-        ref: 'v5.2.2'
-        commit: 'sha1-8418fedb1110381a0d3ba51a7a415d7c1b884550'
+    'jdx/mise-action@v5.2.3':
+        ref: 'v5.2.3'
+        commit: 'sha1-82a612c5ab8bcda7cc5db6b7e81a8e7584c3dc6e'
         owner_id: 216188
         repo_id: 738284564
     'kenn-io/actions@main':
@@ -94,6 +98,11 @@ dependencies:
         uses:
             - 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1'
             - 'actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e'
+    'kenn-io/kit@v0.47.3':
+        ref: 'v0.47.3'
+        commit: 'sha1-19ca4ee42e3452f57ba6d72cf07ce5963b26219b'
+        owner_id: 259885253
+        repo_id: 1238000987
     'step-security/codecov-action@v7.1.1':
         ref: 'v7.1.1'
         commit: 'sha1-367bf7e789f1b8e452a759be81c791de8d69b2f6'

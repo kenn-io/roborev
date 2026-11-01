@@ -742,12 +742,18 @@ func (c CISummary) Validate() error {
 			errors = errors.Append("Cost", err)
 		}
 	}
+	if err := typesValidator.Var(c.HotPrs, "required"); err != nil {
+		errors = errors.Append("HotPrs", err)
+	}
 	for i, item := range c.HotPrs {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("HotPrs[%d]", i), err)
 			}
 		}
+	}
+	if err := typesValidator.Var(c.Prs, "required"); err != nil {
+		errors = errors.Append("Prs", err)
 	}
 	for i, item := range c.Prs {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -1037,7 +1043,8 @@ type DoctorAgentsOutputBody struct {
 	RepoConfigError *string `json:"repo_config_error,omitempty"`
 
 	// Requested The requested agent names, resolved by the daemon; unknown names report an error
-	Requested []Diagnosis `json:"requested" validate:"required"`
+	Requested     []Diagnosis          `json:"requested" validate:"required"`
+	UsageProvider *DoctorUsageProvider `json:"usage_provider,omitempty"`
 }
 
 func (d DoctorAgentsOutputBody) Validate() error {
@@ -1082,6 +1089,13 @@ func (d DoctorAgentsOutputBody) Validate() error {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Requested[%d]", i), err)
+			}
+		}
+	}
+	if d.UsageProvider != nil {
+		if v, ok := any(d.UsageProvider).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("UsageProvider", err)
 			}
 		}
 	}
@@ -1140,6 +1154,21 @@ type DoctorPanelMember struct {
 }
 
 func (d DoctorPanelMember) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type DoctorUsageProvider struct {
+	// ErrorData Configuration or probe failure; empty means the diagnosis succeeded
+	ErrorData *string `json:"error,omitempty"`
+
+	// Provider Selected provider: local_cli, cost_endpoint, or agentsview
+	Provider string `json:"provider" validate:"required"`
+
+	// URL Validated AgentsView base URL, when selected
+	URL *string `json:"url,omitempty"`
+}
+
+func (d DoctorUsageProvider) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(d))
 }
 

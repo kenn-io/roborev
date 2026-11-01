@@ -46,7 +46,7 @@ Examples:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			if err := ensureDaemon(); err != nil {
-				return fmt.Errorf("daemon not running: %w", err)
+				return fmt.Errorf("connect to daemon: %w", err)
 			}
 
 			ep := getDaemonEndpoint()

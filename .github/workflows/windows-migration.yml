@@ -66,6 +66,12 @@ jobs:
         with:
           go-version: '1.27.3'
 
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+
+      - name: Download v0.56 Windows release archive
+        shell: bash
+        run: kit-download "https://github.com/kenn-io/roborev/releases/download/v0.56.0/roborev_0.56.0_windows_amd64.tar.gz" "$RUNNER_TEMP/roborev_0.56.0_windows_amd64.tar.gz"
+
       - name: Download v0.56 Windows release binary
         id: old
         shell: pwsh
@@ -73,9 +79,6 @@ jobs:
           $archive = Join-Path $env:RUNNER_TEMP "roborev_0.56.0_windows_amd64.tar.gz"
           $extractDir = Join-Path $env:RUNNER_TEMP "roborev-v0.56.0"
           New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
-          Invoke-WebRequest `
-            -Uri "https://github.com/kenn-io/roborev/releases/download/v0.56.0/roborev_0.56.0_windows_amd64.tar.gz" `
-            -OutFile $archive
           tar -xzf $archive -C $extractDir
           "old_binary=$extractDir\roborev.exe" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 

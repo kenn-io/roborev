@@ -239,7 +239,7 @@ func listAnalysisTypes(cmd *cobra.Command) error {
 func showAnalysisPrompt(cmd *cobra.Command, typeName string) error {
 	analysisType := analyze.GetType(typeName)
 	if analysisType == nil {
-		return fmt.Errorf("unknown analysis type %q (use --list to see available types)", typeName)
+		return validationErr(cmd, fmt.Errorf("unknown analysis type %q (use --list to see available types)", typeName))
 	}
 
 	prompt, err := analysisType.GetPrompt()
@@ -261,7 +261,7 @@ func runAnalysis(cmd *cobra.Command, typeName string, filePatterns []string, opt
 	// Validate analysis type
 	analysisType := analyze.GetType(typeName)
 	if analysisType == nil {
-		return fmt.Errorf("unknown analysis type %q (use --list to see available types)", typeName)
+		return validationErr(cmd, fmt.Errorf("unknown analysis type %q (use --list to see available types)", typeName))
 	}
 
 	// Get working directory and repo root

@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-17
+last_edited: 2026-10-30
 title: Command Cheat Sheet
 description: Quick reference for all roborev commands and flags
 ---
@@ -8,10 +8,101 @@ description: Quick reference for all roborev commands and flags
   <img src="/docs/assets/generated/cli-help.svg" alt="roborev help output" loading="lazy">
 </figure>
 
+Run `roborev --help` for a self-contained agent workflow, grouped commands,
+repository and server selection, output modes, and exit codes. Every visible
+command has an example; `roborev <command> --help` describes its local flags.
+Subcommands list inherited flags compactly; root help has full descriptions.
+
+## Direct CLI workflow
+
+Run these from your git checkout. Replace job `42` with the job ID printed by
+`review` or `list`:
+
+```bash
+roborev doctor
+roborev init
+roborev review HEAD
+roborev wait --job 42
+roborev show --job 42
+roborev fix 42
+roborev comment --job 42 "Fixed and verified the findings"
+roborev close 42
+```
+
+`fix` runs a foreground agent that can edit and commit code and closes completed
+jobs automatically. Re-review the resulting commit for fresh verification.
+`fix --list` previews work, and `refine` automates repeated review and fix
+cycles.
+
+### IDs, repositories and servers
+
+Job IDs are positive integers scoped to the selected daemon. `show`, `wait`, and
+`comment` try a local git ref first, then a numeric job ID; add `--job` to force
+a job ID. `show` and `wait` default to `HEAD`. `fix`, `close`, and `cancel` take
+job IDs; `review` takes git refs.
+
+Start in the repository checkout. Where supported, `--repo` chooses a path,
+stored repository identity, or filter as described by that command. Outside a
+checkout, `list` also discovers repositories in immediate child directories.
+Without `--server`, commands discover the local daemon through its runtime file
+under `ROBOREV_DATA_DIR` (default `~/.roborev`) and start it when needed.
+`doctor` diagnoses setup without starting a daemon.
+
+`--server` selects an existing loopback address, `unix://` socket, or remote
+HTTPS base URL. The CLI does not start or replace explicit targets. Remote HTTPS
+supports `list`, `show --job`, `wait --job`, and `stream`, with configured
+signing credentials and repository grants; foreground fixes and daemon
+management need local access. Remote commands do not resolve local git refs.
+
+```bash
+roborev --server 127.0.0.1:7373 list
+roborev --server https://reviews.example.com list
+roborev --server https://reviews.example.com show --job 42
+```
+
+### Output, errors and exit codes
+
+Output flags belong to commands. There is no global `--json` or `--agent`. For
+example, `list --json` includes job status and verdict, while `show --json`
+returns the review record with its stored document. `search --agent` prints
+concise text; the `--agent` flags on review, fix and setup commands select an AI
+provider or integration profile. Export commands emit JSON through their own
+`--format` option.
+
+Errors go to stderr and include an actionable recovery hint. Commands supporting
+`--json` emit a JSON error envelope with `error.code`, `error.message`,
+`error.hint`, and `error.exit_code`. `search --agent` uses a separate `Hint:`
+line; human errors use `hint:`. Quiet and hook commands keep their reduced
+output.
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Success, including displaying a completed FAIL review with `show`. |
+| 1 | Runtime failure, failed diagnosis, or a completed FAIL verdict from a waiting review command. |
+| 2 | Invocation error, such as unknown flags, missing arguments, or incompatible flags. |
+| 3 | Export cursor belongs to another database; discard the cursor and backfill. |
+| 4 | Invalid user-supplied value. |
+
+### Environment
+
+| Variable | Purpose |
+| --- | --- |
+| `ROBOREV_DATA_DIR` | Local config, runtime, database and logs; default `~/.roborev`. |
+| `ROBOREV_COLOR_MODE` | Color theme: `auto`, `dark`, `light`, or `none`. |
+| `NO_COLOR` | Disable color output. |
+| `ROBOREV_TELEMETRY_ENABLED` | Set to `0` to disable anonymous usage telemetry. |
+| `EDITOR` | Editor opened by `comment` when no message is supplied. |
+| `GH_TOKEN`, `GITHUB_TOKEN` | GitHub authentication for CI commands. |
+| `GITLAB_TOKEN`, `GL_TOKEN` | GitLab authentication for CI commands. |
+
+The [configuration reference](/docs/configuration/) covers provider settings and
+the [README](https://github.com/kenn-io/roborev#environment-variables) lists
+specialized hook and sync overrides.
+
 ## Essentials
 
 ```bash
-roborev init [--agent <name>]    # Initialize repo + daemon + hook
+roborev init --agent codex    # Initialize repo + daemon + hook
                                  # --no-daemon: skip auto-starting daemon
 roborev fix                      # Fix open reviews
 roborev daemon status            # Check daemon, web UI, and queue
@@ -19,7 +110,7 @@ roborev status                   # Backward-compatible status alias
 roborev search "query"           # Search completed review history
 roborev pause                    # Pause queue processing
 roborev unpause                  # Resume queue processing
-roborev cancel <job_id>          # Cancel one queued or running job
+roborev cancel 42          # Cancel one queued or running job
 roborev summary                  # Aggregate review statistics
 roborev cost                     # Approximate aggregate review cost
 roborev insights                 # Analyze review patterns
@@ -64,11 +155,11 @@ Consumers should ignore additional fields so the contract can grow compatibly.
 ```bash
 # Single commits
 roborev review                   # Review HEAD
-roborev review <sha>             # Review specific commit
+roborev review HEAD~1             # Review specific commit
 
 # Commit ranges
-roborev review <start> <end>     # Review range (inclusive)
-roborev review --since <commit>  # Review since commit (exclusive)
+roborev review HEAD~2 HEAD     # Review range (inclusive)
+roborev review --since HEAD~1  # Review since commit (exclusive)
 roborev review --since HEAD~5    # Review last 5 commits
 
 # Branch reviews
@@ -145,10 +236,10 @@ See: [Reviewing Code](/docs/guides/reviewing-code/)
 
 ```bash
 roborev show                     # Show review for HEAD
-roborev show <sha>               # Show review for commit
-roborev show <job_id>            # Show review by job ID
-roborev show --job <id>          # Force interpretation as job ID
-roborev show --prompt <job_id>   # Show the prompt sent to the agent
+roborev show HEAD~1               # Show review for commit
+roborev show 42            # Show review by job ID
+roborev show --job 42          # Force interpretation as job ID
+roborev show --prompt 42   # Show the prompt sent to the agent
 roborev list                     # List jobs for current repo/branch
 roborev list --all-branches      # List jobs for every branch in the current repo
 roborev list --open              # List open reviews; failed and canceled
@@ -161,7 +252,7 @@ roborev tui                      # Interactive terminal UI
 roborev tui --repo --branch      # Pre-filtered to current repo+branch
 roborev ui                       # Open the browser review workspace
 roborev ui 42                    # Deep-link to browser review detail
-roborev log <job_id>             # View job log
+roborev log 42             # View job log
 ```
 
 | Flag | Description |
@@ -544,10 +635,10 @@ panel-era cursors are namespaced and cannot be resumed against each other.
 ## Job Logs
 
 ```bash
-roborev log <job-id>             # Human-friendly rendered output
-roborev log --raw <job-id>       # Raw NDJSON bytes
-roborev log --path <job-id>      # Print the log file path
-roborev --server 127.0.0.1:7373 log <job-id> # Select a running daemon
+roborev log 42             # Human-friendly rendered output
+roborev log --raw 42       # Raw NDJSON bytes
+roborev log --path 42      # Print the log file path
+roborev --server 127.0.0.1:7373 log 42 # Select a running daemon
 
 roborev log clean                # Remove logs older than 7 days
 roborev log clean --days 3       # Remove logs older than 3 days
@@ -575,10 +666,10 @@ the specified number of days (default: 7).
 ## Commenting on Reviews
 
 ```bash
-roborev comment <job_id> "message"   # Add comment with message
-roborev comment <job_id>             # Opens editor
-roborev close <job_id>               # Mark as closed
-roborev close <job_id> --reopen      # Reopen a closed review
+roborev comment 42 "message"   # Add comment with message
+roborev comment 42             # Opens editor
+roborev close 42               # Mark as closed
+roborev close 42 --reopen      # Reopen a closed review
 ```
 
 | Flag | Description |
@@ -905,6 +996,11 @@ improvements to review guidelines. The command queries completed reviews
 `review_guidelines` from global and repo config as context, and sends the batch
 to an agent for structured analysis.
 
+Each review panel contributes its synthesis review once; individual panel
+members are excluded. Panel entries include the panel name and configured member
+count, including advisory members. Closed reviews and trusted comments remain
+available as context.
+
 The agent produces:
 
 - Recurring finding patterns across reviews
@@ -919,14 +1015,14 @@ with a message instead of queuing a job.
 
 ## Token Usage
 
-Token usage is tracked automatically for completed jobs when `agentsview` is
-installed. Usage appears in the TUI review header and `roborev show` output
-(e.g. `118.0k ctx · 28.8k out`). When supported, roborev uses
-`session usage --no-sync` to read archived usage, including subagents, without
-synchronizing source transcripts. Run AgentsView's watcher or synchronize
-separately to keep the archive current. On older CLIs, roborev retries without
-`--no-sync` or uses the legacy `token-use` command when `session usage` is
-unavailable. These fallback commands may synchronize sources.
+Token usage is tracked automatically for completed jobs when the local
+`agentsview` CLI or a usage server is configured. Usage appears in the TUI
+review header and `roborev show` output (e.g. `118.0k ctx · 28.8k out`). When
+supported, roborev uses `session usage --no-sync` to read archived usage,
+including subagents, without synchronizing source transcripts. Run AgentsView's
+watcher or synchronize separately to keep the archive current. On older CLIs,
+roborev retries without `--no-sync` or uses the legacy `token-use` command when
+`session usage` is unavailable. These fallback commands may synchronize sources.
 
 When pricing is available, the usage summary also includes a model-pricing cost
 estimate (e.g. `118.0k ctx · 28.8k out · ~$0.42`), and the TUI queue displays a
@@ -950,8 +1046,18 @@ appears later is stored without an operator running a backfill. If the database
 missed the session ID, the daemon first recovers it from the per-job JSONL log
 when that log is still available.
 
-If you run a central usage service, configure `[cost] endpoint` to fetch usage
-over HTTP instead of through the local `agentsview` CLI. See
+For local or remote AgentsView servers, configure global `[agentsview] url` and
+optionally `token_file` (or the daemon's `AGENTSVIEW_SERVER_TOKEN`). This uses
+authenticated HTTP, includes subagents, and supports raw session IDs on
+AgentsView v0.46.1 or later through session ID resolution. The server must index
+the sessions first. `roborev doctor` reports the running daemon's provider and
+probes reachability and authentication in the daemon's environment. When the
+daemon cannot supply this diagnostic, the shell-only result remains a warning.
+Backfill uses the same provider as live jobs. See
+[AgentsView](/docs/configuration/#agentsview).
+
+For other usage services, `[cost] endpoint` continues to provide a generic HTTP
+URL template. It cannot be combined with `agentsview.url`. See
 [Cost Usage Endpoint](/docs/configuration/#cost-usage-endpoint).
 
 To backfill token data for older jobs:
@@ -1133,12 +1239,12 @@ See: [Custom Agent Tasks](/docs/advanced/custom-tasks/)
 ## Configuration
 
 ```bash
-roborev config get <key>             # Get value (merged: local then global)
-roborev config get <key> --global    # Get from global config only
-roborev config get <key> --local     # Get from repo config only
+roborev config get agent             # Get value (merged: local then global)
+roborev config get default_agent --global    # Get from global config only
+roborev config get agent --local     # Get from repo config only
 
-roborev config set <key> <value>     # Set in repo config (default)
-roborev config set <key> <value> --global  # Set in global config
+roborev config set agent codex     # Set in repo config (default)
+roborev config set default_agent codex --global  # Set in global config
 
 roborev config list                  # List merged config
 roborev config list --show-origin    # Show where each value comes from
@@ -1160,11 +1266,11 @@ See: [Configuration](/docs/configuration/)
 
 ```bash
 roborev repo list                       # List all repos
-roborev repo show <name>                # Show repo details
-roborev repo rename <old> <new>         # Rename display name
-roborev repo move <name-or-path> <new>  # Update root path after a directory move
-roborev repo delete <name>              # Remove from tracking
-roborev repo merge <src> <dst>          # Merge reviews between repos
+roborev repo show example                # Show repo details
+roborev repo rename example renamed         # Rename display name
+roborev repo move example renamed  # Update root path after a directory move
+roborev repo delete example              # Remove from tracking
+roborev repo merge source target          # Merge reviews between repos
 ```
 
 See: [Repository Management](/docs/guides/repository-management/)
@@ -1189,7 +1295,7 @@ roborev daemon status            # Show daemon, web UI, and queue status
 roborev daemon run               # Run in foreground
 roborev pause                    # Pause queue processing
 roborev unpause                  # Resume queue processing
-roborev cancel <job_id>          # Cancel one queued or running job
+roborev cancel 42          # Cancel one queued or running job
 
 roborev status                   # Backward-compatible status alias
 roborev daemon status --json     # Structured status for scripting
@@ -1299,9 +1405,9 @@ roborev agent-hook install --agent hermes --config ~/.hermes/config.yaml
 roborev agent-hook install --binary ~/.local/bin/roborev
 roborev agent-hook dump --agent qwen    # Native JSON config on stdout
 roborev agent-hook dump --agent hermes  # Native YAML config on stdout
-roborev agent-hook run ...              # Internal harness runtime installed by agent-hook install
+roborev agent-hook run --agent codex --source roborev-agent-hook              # Internal harness runtime installed by agent-hook install
 roborev agent-hook status               # Tracked session counters as JSON
-roborev agent-hook reset <session-id>   # Reset one session (or --all)
+roborev agent-hook reset example-session   # Reset one session (or --all)
 ```
 
 | Flag | Description |
@@ -1326,7 +1432,7 @@ configuration, the exact-ID fix workflow, and declarative config details.
 ```bash
 roborev doctor                 # Check config, daemon, agents, and this repo
 roborev doctor --json          # Machine-readable report for scripts and agents
-roborev doctor --repo <path>   # Check a different repository
+roborev doctor --repo /path/to/repo   # Check a different repository
 ```
 
 `roborev doctor` reads configuration and daemon state and reports problems with

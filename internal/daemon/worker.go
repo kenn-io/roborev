@@ -2469,14 +2469,11 @@ func (wp *WorkerPool) fetchTokenUsage(
 		return wp.tokenUsageFetcher(ctx, sessionID)
 	}
 	cfg := wp.cfgGetter.Config()
-	return tokens.FetchForSessionWithConfig(
-		ctx, sessionID,
-		tokens.FetchConfig{
-			Endpoint:   cfg.Cost.Endpoint,
-			Timeout:    cfg.Cost.ResolvedTimeout(),
-			RequireCLI: true,
-		},
-	)
+	fetchConfig, err := tokens.FetchConfigFromConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return tokens.FetchForSessionWithConfig(ctx, sessionID, fetchConfig)
 }
 
 func (wp *WorkerPool) fetchFreshSessionUsage(
