@@ -61,7 +61,7 @@ func TestACPReviewViaExternalAdapter(t *testing.T) {
 
 	gitRun := func(arguments ...string) string {
 		t.Helper()
-		cmd := exec.Command("git", arguments...)
+		cmd := exec.CommandContext(t.Context(), "git", arguments...)
 		cmd.Dir = repoPath
 		out, err := cmd.CombinedOutput()
 		assert.Equal(t, false, err != nil)

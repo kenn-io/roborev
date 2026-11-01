@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,12 +15,12 @@ type activityResponse struct {
 	Entries []ActivityEntry `json:"entries"`
 }
 
-func requestActivity(server *Server, method, query string) *httptest.ResponseRecorder {
+func requestActivity(ctx context.Context, server *Server, method, query string) *httptest.ResponseRecorder {
 	url := "/api/activity"
 	if query != "" {
 		url += "?" + query
 	}
-	req := httptest.NewRequest(method, url, nil)
+	req := httptest.NewRequestWithContext(ctx, method, url, nil)
 	w := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(w, req)
 	return w
@@ -36,7 +37,7 @@ func decodeActivityResponse(t *testing.T, w *httptest.ResponseRecorder) activity
 
 func TestHandleActivity_MethodNotAllowed(t *testing.T) {
 	s := setupTestServer(t)
-	w := requestActivity(s, http.MethodPost, "")
+	w := requestActivity(t.Context(), s, http.MethodPost, "")
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code,
 		"assertion failed", "expected 405, got %d", w.Code)
 }
@@ -63,7 +64,7 @@ func TestHandleActivity_Limits(t *testing.T) {
 				s.activityLog.Log("test", "test", "msg", nil)
 			}
 
-			w := requestActivity(s, http.MethodGet, tt.query)
+			w := requestActivity(t.Context(), s, http.MethodGet, tt.query)
 			assert.Equal(t, http.StatusOK, w.Code, "expected 200, got %d", w.Code)
 
 			resp := decodeActivityResponse(t, w)
@@ -79,7 +80,7 @@ func TestHandleActivity_NilActivityLog(t *testing.T) {
 	s.activityLog.Close()
 	s.activityLog = nil
 
-	w := requestActivity(s, http.MethodGet, "")
+	w := requestActivity(t.Context(), s, http.MethodGet, "")
 	assert.Equal(t, http.StatusOK, w.Code,
 		"assertion failed", "expected 200, got %d", w.Code)
 

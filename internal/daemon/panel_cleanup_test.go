@@ -78,7 +78,7 @@ func (h *ciPollerHarness) synthBlocked(t *testing.T, runUUID *uuid.UUID) bool {
 // the timeout sweep selects it.
 func (h *ciPollerHarness) backdatePanelCreatedAt(t *testing.T, id int64) {
 	t.Helper()
-	_, err := h.DB.Exec("UPDATE ci_pr_panels SET created_at = datetime('now','-1 hour') WHERE id = ?", id)
+	_, err := h.DB.ExecContext(t.Context(), "UPDATE ci_pr_panels SET created_at = datetime('now','-1 hour') WHERE id = ?", id)
 	require.NoError(t, err)
 }
 
@@ -86,7 +86,7 @@ func (h *ciPollerHarness) backdatePanelCreatedAt(t *testing.T, id int64) {
 // beyond the CI batch timeout.
 func (h *ciPollerHarness) backdateJobStartedAt(t *testing.T, jobID int64) {
 	t.Helper()
-	_, err := h.DB.Exec("UPDATE review_jobs SET started_at = datetime('now','-1 hour') WHERE id = ?", jobID)
+	_, err := h.DB.ExecContext(t.Context(), "UPDATE review_jobs SET started_at = datetime('now','-1 hour') WHERE id = ?", jobID)
 	require.NoError(t, err)
 }
 

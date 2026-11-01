@@ -67,7 +67,7 @@ func writeTempCommand(t *testing.T, script string) string {
 	}
 	const maxRetries = 10
 	for i := range maxRetries {
-		_, err = exec.Command(path, "--help-probe-etxtbsy").CombinedOutput()
+		_, err = exec.CommandContext(t.Context(), path, "--help-probe-etxtbsy").CombinedOutput()
 		if err == nil || !strings.Contains(err.Error(), "text file busy") {
 			break
 		}

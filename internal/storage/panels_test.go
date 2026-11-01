@@ -18,7 +18,7 @@ import (
 func hasReviewJobsColumn(t *testing.T, db *DB, name string) bool {
 	t.Helper()
 	var count int
-	err := db.QueryRow(
+	err := db.QueryRowContext(t.Context(),
 		`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = ?`, name,
 	).Scan(&count)
 	require.NoError(t, err)
@@ -42,7 +42,7 @@ func TestPanelColumnsMigration(t *testing.T) {
 	// claim_blocked defaults to 0 and is NOT NULL.
 	var dflt string
 	var notNull int
-	err := db.QueryRow(`
+	err := db.QueryRowContext(t.Context(), `
 		SELECT COALESCE("dflt_value", ''), "notnull"
 		FROM pragma_table_info('review_jobs') WHERE name = 'claim_blocked'
 	`).Scan(&dflt, &notNull)
@@ -52,7 +52,7 @@ func TestPanelColumnsMigration(t *testing.T) {
 
 	// The composite index exists.
 	var idxCount int
-	err = db.QueryRow(`
+	err = db.QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM sqlite_master
 		WHERE type = 'index' AND name = 'idx_review_jobs_panel'
 	`).Scan(&idxCount)
@@ -202,13 +202,13 @@ func enqueuePanelRun(t *testing.T, db *DB, repoID int64, runUUID string, n int) 
 
 func setStatus(t *testing.T, db *DB, jobID int64, status JobStatus) {
 	t.Helper()
-	_, err := db.Exec(`UPDATE review_jobs SET status = ? WHERE id = ?`, string(status), jobID)
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET status = ? WHERE id = ?`, string(status), jobID)
 	require.NoError(t, err)
 }
 
 func setStartedAt(t *testing.T, db *DB, jobID int64, startedAt time.Time) {
 	t.Helper()
-	_, err := db.Exec(
+	_, err := db.ExecContext(t.Context(),
 		`UPDATE review_jobs SET started_at = ? WHERE id = ?`,
 		startedAt.UTC().Format(time.RFC3339), jobID)
 	require.NoError(t, err)
@@ -217,7 +217,7 @@ func setStartedAt(t *testing.T, db *DB, jobID int64, startedAt time.Time) {
 func claimBlockedOf(t *testing.T, db *DB, jobID int64) bool {
 	t.Helper()
 	var cb int
-	require.NoError(t, db.QueryRow(`SELECT claim_blocked FROM review_jobs WHERE id = ?`, jobID).Scan(&cb))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT claim_blocked FROM review_jobs WHERE id = ?`, jobID).Scan(&cb))
 	return cb != 0
 }
 
@@ -293,7 +293,7 @@ func TestApplyJobVerdictForSynthesis(t *testing.T) {
 	require.NoError(t, err)
 
 	// Move to running so CompleteJob persists the review + verdict.
-	_, err = db.Exec(`UPDATE review_jobs SET status='running', worker_id='w1' WHERE id=?`, synth.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status='running', worker_id='w1' WHERE id=?`, synth.ID)
 	require.NoError(t, err)
 	require.NoError(t, completeReviewFixture(db, synth.ID, "test", "prompt", "Critical — boom"))
 
@@ -374,7 +374,7 @@ func TestPanelIndexSurvivesLegacyRebuild(t *testing.T) {
 	db := prepareMigratedDB(t, "panel_legacy.db", legacyReviewJobSchema, legacyReviewJobSeed)
 
 	var idxCount int
-	require.NoError(t, db.QueryRow(`
+	require.NoError(t, db.QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM sqlite_master
 		WHERE type = 'index' AND name = 'idx_review_jobs_panel'
 	`).Scan(&idxCount))
@@ -405,7 +405,7 @@ func TestReviewHydrationIncludesPanelFields(t *testing.T) {
 		PanelMemberConfigJSON: `{"agent":"test"}`,
 	})
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE review_jobs SET status='running', worker_id='w1' WHERE id=?`, member.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status='running', worker_id='w1' WHERE id=?`, member.ID)
 	require.NoError(t, err)
 	require.NoError(t, completeReviewFixture(db, member.ID, "test", "prompt", "No issues found."))
 
@@ -439,7 +439,7 @@ func TestReviewHydrationIncludesPanelFields(t *testing.T) {
 		PanelName: "branch_final",
 	})
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE review_jobs SET status='running', worker_id='w1' WHERE id=?`, synth.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status='running', worker_id='w1' WHERE id=?`, synth.ID)
 	require.NoError(t, err)
 	require.NoError(t, completeReviewFixture(db, synth.ID, "test", "prompt", "Synthesized."))
 
@@ -627,7 +627,7 @@ func TestUpsertPulledJobRoundTripsPanelColumns(t *testing.T) {
 
 	var got ReviewJob
 	var cb int
-	row := db.QueryRow(`
+	row := db.QueryRowContext(t.Context(), `
 		SELECT COALESCE(panel_run_uuid,''), COALESCE(panel_role,''), COALESCE(panel_name,''),
 		       COALESCE(panel_member_name,''), panel_member_index, COALESCE(panel_member_config_json,''),
 		       COALESCE(claim_blocked,0), COALESCE(non_voting,0)
@@ -701,7 +701,7 @@ func TestGetPanelMemberReviews(t *testing.T) {
 
 	// Member 0 has a completed review so its output/status surface.
 	m0 := byIndex[0]
-	_, err = db.Exec(`UPDATE review_jobs SET status='running', worker_id='w1' WHERE id=?`, m0.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status='running', worker_id='w1' WHERE id=?`, m0.ID)
 	require.NoError(t, err)
 	require.NoError(t, db.CompleteJobResult(
 		m0.ID, "test", ReviewCompletion{
@@ -813,7 +813,7 @@ func TestEnqueuePanelRunAtomic(t *testing.T) {
 
 	// Total rows for the run is n+1.
 	var count int
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(t.Context(),
 		`SELECT COUNT(*) FROM review_jobs WHERE panel_run_uuid = ?`, runUUID).Scan(&count))
 	assert.Equal(n+1, count)
 }
@@ -850,7 +850,7 @@ func TestEnqueuePanelRunEnforcesSynthesisGate(t *testing.T) {
 	// Synthesis gate enforced in the persisted row.
 	assert.True(claimBlockedOf(t, db, gotSynth.ID), "synthesis must be gated even if caller omits ClaimBlocked")
 	var jobType, role string
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(t.Context(),
 		`SELECT job_type, COALESCE(panel_role, '') FROM review_jobs WHERE id = ?`, gotSynth.ID).
 		Scan(&jobType, &role))
 	assert.Equal(JobTypeSynthesis, jobType)
@@ -858,7 +858,7 @@ func TestEnqueuePanelRunEnforcesSynthesisGate(t *testing.T) {
 
 	// Member stored with panel_role=member even though the caller omitted it.
 	var memberRole string
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(t.Context(),
 		`SELECT COALESCE(panel_role, '') FROM review_jobs WHERE id = ?`, gotMembers[0].ID).
 		Scan(&memberRole))
 	assert.Equal(PanelRoleMember, memberRole)
@@ -931,7 +931,7 @@ func TestEnqueuePanelRunRollback(t *testing.T) {
 
 	// The members inserted in calls 1..n are rolled back with the synthesis.
 	var count int
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(t.Context(),
 		`SELECT COUNT(*) FROM review_jobs WHERE panel_run_uuid = ?`, runUUID).Scan(&count))
 	assert.Equal(t, 0, count, "rolled-back run must leave zero rows")
 }
@@ -945,7 +945,7 @@ func TestSynthBlockedIndexExists(t *testing.T) {
 	require.NoError(t, db.migrate())
 
 	var idxCount int
-	require.NoError(t, db.QueryRow(`
+	require.NoError(t, db.QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM sqlite_master
 		WHERE type = 'index' AND name = 'idx_review_jobs_synth_blocked'
 	`).Scan(&idxCount))
@@ -1014,7 +1014,7 @@ func TestGetReviewByCommitSHAPendingSynthesisHidesStaleReview(t *testing.T) {
 	// (left queued); members complete but must not surface for the SHA.
 	synth, members := enqueuePanelRun(t, db, repo.ID, "run-pending", 2)
 	// Pin the panel rows to the same git_ref as the standalone review.
-	_, err = db.Exec(`UPDATE review_jobs SET git_ref = 'abc123' WHERE panel_run_uuid = ?`, testUUID("run-pending"))
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET git_ref = 'abc123' WHERE panel_run_uuid = ?`, testUUID("run-pending"))
 	require.NoError(t, err)
 	complete := func(jobID int64, output string) {
 		setStatus(t, db, jobID, JobStatusRunning)
@@ -1077,7 +1077,7 @@ func TestEnqueuePostCommitPanelRunDeduplicatesTarget(t *testing.T) {
 	assert.True(t, duplicate)
 
 	var count int
-	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM review_jobs`).Scan(&count))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM review_jobs`).Scan(&count))
 	assert.Equal(t, 3, count)
 }
 

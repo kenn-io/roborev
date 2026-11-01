@@ -91,7 +91,7 @@ func TestDeterministicEmbeddingServerStopsBlockedRequestOnCancellation(t *testin
 	fake.blockModel = "cancel-model"
 	body := strings.NewReader(`{"model":"cancel-model","input":["document"],"input_type":"document"}`)
 	ctx, cancel := context.WithCancel(t.Context())
-	request := httptest.NewRequest(http.MethodPost, "/embeddings", body).WithContext(ctx)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/embeddings", body).WithContext(ctx)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -247,7 +247,7 @@ func TestSearchIntegrationLocalReviewResponseRevisionAndModelCutover(t *testing.
 		{mode: "semantic", query: "original concept"},
 		{mode: "hybrid", query: "racewindow"},
 	} {
-		result := executeSearch(server, url.Values{"q": {testCase.query}, "mode": {testCase.mode}})
+		result := executeSearch(t.Context(), server, url.Values{"q": {testCase.query}, "mode": {testCase.mode}})
 		require.Equal(t, http.StatusOK, result.Code, result.Body.String())
 		var decoded SearchResponse
 		require.NoError(t, json.Unmarshal(result.Body.Bytes(), &decoded))
@@ -260,7 +260,7 @@ func TestSearchIntegrationLocalReviewResponseRevisionAndModelCutover(t *testing.
 	require.NotNil(t, before)
 	beforeHash := searchdoc.Render(*before).ContentHash
 	fake.blockModel = "model-a"
-	_, err = db.Exec(`UPDATE responses SET response = ? WHERE id = ?`, "edited response axis", response.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE responses SET response = ? WHERE id = ?`, "edited response axis", response.ID)
 	require.NoError(t, err)
 	reconcilerA.Wake()
 	replacementStarted := false
@@ -412,7 +412,7 @@ func TestSearchIntegrationProviderRejectionIsSanitized(t *testing.T) {
 	server := newServerWithLogs(db, config.DefaultConfig(), "", newTestErrorLog(), newTestActivityLog())
 	server.search = service
 	t.Cleanup(func() { _ = server.Close() })
-	response := executeSearch(server, url.Values{"q": {"query-secret"}, "mode": {"semantic"}})
+	response := executeSearch(t.Context(), server, url.Values{"q": {"query-secret"}, "mode": {"semantic"}})
 	require.Equal(t, http.StatusServiceUnavailable, response.Code)
 	health, err := json.Marshal(reconciler.Health())
 	require.NoError(t, err)

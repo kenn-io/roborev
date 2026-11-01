@@ -864,7 +864,7 @@ func TestCreateRefineWorktreeInitializesSubmoduleResolvedFromUserGitConfig(t *te
 	submoduleSource.Run("add", "--chmod=+x", ".githooks/post-checkout")
 	submoduleSHA := submoduleSource.CommitFile("sub.txt", "submodule content\n", "submodule base")
 	barePath := filepath.Join(t.TempDir(), "sub.git")
-	clone := exec.Command("git", "clone", "--bare", submoduleSource.Dir, barePath)
+	clone := exec.CommandContext(t.Context(), "git", "clone", "--bare", submoduleSource.Dir, barePath)
 	require.NoError(t, clone.Run())
 
 	parent := NewGitTestRepo(t)
@@ -876,9 +876,9 @@ func TestCreateRefineWorktreeInitializesSubmoduleResolvedFromUserGitConfig(t *te
 	parent.Run("commit", "-m", "add submodule")
 
 	rewriteKey := "url.file://" + filepath.ToSlash(barePath) + ".insteadOf"
-	config := exec.Command("git", "config", "--file", globalConfig, rewriteKey, "file:///roborev-test-placeholder/sub.git")
+	config := exec.CommandContext(t.Context(), "git", "config", "--file", globalConfig, rewriteKey, "file:///roborev-test-placeholder/sub.git")
 	require.NoError(t, config.Run())
-	config = exec.Command("git", "config", "--file", globalConfig, "core.hooksPath", ".githooks")
+	config = exec.CommandContext(t.Context(), "git", "config", "--file", globalConfig, "core.hooksPath", ".githooks")
 	require.NoError(t, config.Run())
 
 	wt, err := createRefineWorktree(t.Context(), parent.Dir)
@@ -927,7 +927,7 @@ func TestCreateRefineWorktreeDoesNotRunUserHooksOnWorktreeAdd(t *testing.T) {
 	t.Setenv("ROBOREV_HOOK_MARKER", filepath.ToSlash(markerPath))
 	hookScript := "#!/bin/sh\nprintf 'hook ran\\n' > \"$ROBOREV_HOOK_MARKER\"\n"
 	require.NoError(t, os.WriteFile(filepath.Join(hookDir, "post-checkout"), []byte(hookScript), 0o755))
-	config := exec.Command("git", "config", "--file", globalConfig, "core.hooksPath", hookDir)
+	config := exec.CommandContext(t.Context(), "git", "config", "--file", globalConfig, "core.hooksPath", hookDir)
 	require.NoError(t, config.Run())
 
 	wt, err := createRefineWorktree(t.Context(), parent.Dir)
@@ -949,7 +949,7 @@ func TestRefineGitRunnerCredentialHelper(t *testing.T) {
 	store := "https://synthetic-user:synthetic-password@credential-test.invalid/private/repo.git\n"
 	require.NoError(t, os.WriteFile(storePath, []byte(store), 0o600))
 	helper := "store --file=\"" + filepath.ToSlash(storePath) + "\""
-	config := exec.Command("git", "config", "--file", globalConfig, "credential.https://credential-test.invalid.helper", helper)
+	config := exec.CommandContext(t.Context(), "git", "config", "--file", globalConfig, "credential.https://credential-test.invalid.helper", helper)
 	require.NoError(t, config.Run())
 
 	request := strings.NewReader("protocol=https\nhost=credential-test.invalid\npath=private/repo.git\n\n")
@@ -993,9 +993,9 @@ func TestCreateRefineWorktreeDoesNotRunConfiguredAskPass(t *testing.T) {
 		askPassScript = "@echo off\r\n>\"%ROBOREV_ASKPASS_MARKER%\" echo askpass ran\r\necho synthetic-user\r\n"
 	}
 	require.NoError(t, os.WriteFile(askPassPath, []byte(askPassScript), 0o755))
-	config := exec.Command("git", "config", "--file", globalConfig, "core.askPass", filepath.ToSlash(askPassPath))
+	config := exec.CommandContext(t.Context(), "git", "config", "--file", globalConfig, "core.askPass", filepath.ToSlash(askPassPath))
 	require.NoError(t, config.Run())
-	config = exec.Command("git", "config", "--file", globalConfig, "credential.helper", "")
+	config = exec.CommandContext(t.Context(), "git", "config", "--file", globalConfig, "credential.helper", "")
 	require.NoError(t, config.Run())
 
 	wt, err := createRefineWorktree(t.Context(), parent.Dir)

@@ -219,7 +219,7 @@ func TestContextPipeCloseClassifiesSIGPIPEWithoutKill(t *testing.T) {
 	// A real SIGPIPE death: Wait returns an ExitError with
 	// "signal: broken pipe", the same shape as an agent killed by the
 	// context-driven pipe close.
-	cmd := exec.Command("sh", "-c", "kill -PIPE $$")
+	cmd := exec.CommandContext(t.Context(), "sh", "-c", "kill -PIPE $$")
 	runErr := cmd.Run()
 	require.Error(t, runErr)
 	require.Contains(t, runErr.Error(), "signal: broken pipe")

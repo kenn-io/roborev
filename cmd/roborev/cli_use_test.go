@@ -323,7 +323,7 @@ func stubStartupSeams(t *testing.T) *startupSeamCounts {
 
 func closedLoopbackAddr(t *testing.T) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	addr := ln.Addr().String()
 	require.NoError(t, ln.Close())
@@ -350,7 +350,7 @@ func TestCLIUseWithoutDaemonStartsNothing(t *testing.T) {
 		ep, err := daemon.ParseEndpoint(srv.URL)
 		require.NoError(t, err)
 
-		observeCLIUse(ep, httptest.NewRequest(http.MethodGet, "/api/jobs", nil), &http.Response{StatusCode: http.StatusOK})
+		observeCLIUse(ep, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/jobs", nil), &http.Response{StatusCode: http.StatusOK})
 		// The activity post crosses the test-server socket.
 		require.Eventually(t, func() bool { return len(received) == 1 }, 5*time.Second, 10*time.Millisecond)
 		assert.Equal([5]int32{}, counts.snapshot())
@@ -361,7 +361,7 @@ func TestCLIUseWithoutDaemonStartsNothing(t *testing.T) {
 		clearCLIUseState()
 		closed, err := daemon.ParseEndpoint("http://" + closedLoopbackAddr(t))
 		require.NoError(t, err)
-		observeCLIUse(closed, httptest.NewRequest(http.MethodGet, "/api/jobs", nil), &http.Response{StatusCode: http.StatusOK})
+		observeCLIUse(closed, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/jobs", nil), &http.Response{StatusCode: http.StatusOK})
 		waitCLIUse()
 		assert.Equal([5]int32{}, counts.snapshot())
 	})
@@ -623,7 +623,7 @@ func TestCLIUseRecoveryShutdownDoesNotCount(t *testing.T) {
 			{http.MethodGet, "/api/status", 404, false},
 			{http.MethodGet, "/api/jobs", 500, false},
 		} {
-			req := httptest.NewRequest(tc.method, tc.path, nil)
+			req := httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil)
 			got := cliUseEligible(req, &http.Response{StatusCode: tc.status})
 			assert.Equal(t, tc.want, got, "%s %s %d", tc.method, tc.path, tc.status)
 		}
@@ -736,7 +736,7 @@ func TestCLIUseWaitBoundsExit(t *testing.T) {
 		}
 		start := time.Now()
 		ep := daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}
-		observeCLIUse(ep, httptest.NewRequest(http.MethodGet, "/api/status", nil), &http.Response{StatusCode: http.StatusOK})
+		observeCLIUse(ep, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/status", nil), &http.Response{StatusCode: http.StatusOK})
 		waitCLIUse()
 		synctest.Wait()
 
@@ -869,7 +869,7 @@ func TestCoreActionRemoteLocalFallback(t *testing.T) {
 				cliUsePost = func(context.Context, *http.Client, string, string) {}
 				second, secondPosts := newCLIUseDaemon(t, MockRefineHooks{}, nil)
 				for _, server := range []string{md.Server.URL, second.Server.URL} {
-					observeCLIUse(mustParseEndpoint(t, server), httptest.NewRequest(http.MethodGet, "/api/jobs", nil), &http.Response{StatusCode: http.StatusOK})
+					observeCLIUse(mustParseEndpoint(t, server), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/jobs", nil), &http.Response{StatusCode: http.StatusOK})
 				}
 				waitCLIUse()
 				assert.Empty(t, rec.telemetryPosts())
@@ -981,7 +981,7 @@ func TestCLIActionHonorsDisabledReceipt(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	ep := mustParseEndpoint(t, srv.URL)
-	observeCLIUse(ep, httptest.NewRequest(http.MethodGet, "/api/jobs", nil), &http.Response{StatusCode: http.StatusOK})
+	observeCLIUse(ep, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/jobs", nil), &http.Response{StatusCode: http.StatusOK})
 	drainCLIReports()
 	reportMCPActivity(t.Context(), ep)
 	drainCLIReports()

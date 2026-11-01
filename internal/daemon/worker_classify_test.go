@@ -406,7 +406,7 @@ func TestCompleteClassifyAsSkip_BroadcastsTerminalEvent(t *testing.T) {
 // the recovery path also fail.
 func breakClassifySource(t *testing.T, tc *workerTestContext, jobID int64) {
 	t.Helper()
-	res, err := tc.DB.Exec("UPDATE review_jobs SET source = 'manual' WHERE id = ?", jobID)
+	res, err := tc.DB.ExecContext(t.Context(), "UPDATE review_jobs SET source = 'manual' WHERE id = ?", jobID)
 	require.NoError(t, err)
 	rows, err := res.RowsAffected()
 	require.NoError(t, err)

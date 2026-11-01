@@ -97,11 +97,11 @@ func TestCheckRepoConfigUsesResolvedRepoConfigPath(t *testing.T) {
 	mainRepo := newTempGitRepo(t)
 	configureTempGitIdentity(t, mainRepo)
 	require.NoError(t, os.WriteFile(filepath.Join(mainRepo, "README.md"), []byte("test\n"), 0o644))
-	cmd := exec.Command("git", "add", "README.md")
+	cmd := exec.CommandContext(t.Context(), "git", "add", "README.md")
 	cmd.Dir = mainRepo
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(output))
-	cmd = exec.Command("git", "commit", "-m", "initial")
+	cmd = exec.CommandContext(t.Context(), "git", "commit", "-m", "initial")
 	cmd.Dir = mainRepo
 	output, err = cmd.CombinedOutput()
 	require.NoError(t, err, string(output))
@@ -113,7 +113,7 @@ func TestCheckRepoConfigUsesResolvedRepoConfigPath(t *testing.T) {
 	))
 
 	worktree := filepath.Join(t.TempDir(), "linked")
-	cmd = exec.Command("git", "worktree", "add", worktree)
+	cmd = exec.CommandContext(t.Context(), "git", "worktree", "add", worktree)
 	cmd.Dir = mainRepo
 	output, err = cmd.CombinedOutput()
 	require.NoError(t, err, string(output))
@@ -271,7 +271,7 @@ func configureTempGitIdentity(t *testing.T, repo string) {
 		{"config", "user.name", "Test User"},
 		{"config", "user.email", "test@example.invalid"},
 	} {
-		cmd := exec.Command("git", args...)
+		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = repo
 		output, err := cmd.CombinedOutput()
 		require.NoError(t, err, string(output))
@@ -281,7 +281,7 @@ func configureTempGitIdentity(t *testing.T, repo string) {
 func newTempGitRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	cmd := exec.Command("git", "init")
+	cmd := exec.CommandContext(t.Context(), "git", "init")
 	cmd.Dir = dir
 	require.NoError(t, cmd.Run())
 	return dir

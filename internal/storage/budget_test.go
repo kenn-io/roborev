@@ -27,7 +27,7 @@ func TestBudgetSpendCompletionDay(t *testing.T) {
 	} {
 		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "HEAD", Agent: "test"})
 		require.NoError(t, err)
-		_, err = db.Exec(`UPDATE review_jobs SET status='done',enqueued_at='2026-01-01T12:00:00Z', started_at='2026-01-01T23:00:00Z',finished_at=?,agent_invoked=1,token_usage=? WHERE id=?`, tc.finished, tc.usage, job.ID)
+		_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status='done',enqueued_at='2026-01-01T12:00:00Z', started_at='2026-01-01T23:00:00Z',finished_at=?,agent_invoked=1,token_usage=? WHERE id=?`, tc.finished, tc.usage, job.ID)
 		require.NoError(t, err, "case %d", i)
 	}
 	got, err := db.GetBudgetSpend(day)
@@ -118,7 +118,7 @@ func TestBudgetSpendRerunReplacesPriorCost(t *testing.T) {
 	repo := createRepo(t, db, "/tmp/budget-rerun-repo")
 	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "HEAD", Agent: "test"})
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE review_jobs SET status='done',started_at=datetime('now'),finished_at=datetime('now'),agent_invoked=1,token_usage='{"has_cost":true,"cost_usd":5}' WHERE id=?`, job.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status='done',started_at=datetime('now'),finished_at=datetime('now'),agent_invoked=1,token_usage='{"has_cost":true,"cost_usd":5}' WHERE id=?`, job.ID)
 	require.NoError(t, err)
 	spend, err := db.GetBudgetSpend(time.Now())
 	require.NoError(t, err)
@@ -135,7 +135,7 @@ func TestBudgetFailoverLockSurvivesRestart(t *testing.T) {
 	db := openTestDB(t)
 	var seq int
 	var name, path string
-	require.NoError(t, db.QueryRow("PRAGMA database_list").Scan(&seq, &name, &path))
+	require.NoError(t, db.QueryRowContext(t.Context(), "PRAGMA database_list").Scan(&seq, &name, &path))
 	repo := createRepo(t, db, "/tmp/budget-restart-repo")
 	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "HEAD", Agent: "codex"})
 	require.NoError(t, err)
@@ -169,7 +169,7 @@ func TestBudgetSpendIncludesPaidSkippedAttempts(t *testing.T) {
 	for _, usage := range []string{`{"has_cost":true,"cost_usd":0.25}`, ""} {
 		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "HEAD", Agent: "test"})
 		require.NoError(t, err)
-		_, err = db.Exec(`UPDATE review_jobs SET status='skipped',started_at=datetime('now'),finished_at=datetime('now'),agent_invoked=?,token_usage=? WHERE id=?`, usage != "", usage, job.ID)
+		_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status='skipped',started_at=datetime('now'),finished_at=datetime('now'),agent_invoked=?,token_usage=? WHERE id=?`, usage != "", usage, job.ID)
 		require.NoError(t, err)
 	}
 	spend, err := db.GetBudgetSpend(time.Now())
@@ -194,7 +194,7 @@ func TestBudgetSpendCountsHistoricalUnpricedInvocations(t *testing.T) {
 	} {
 		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "HEAD", Agent: "test"})
 		require.NoError(t, err)
-		_, err = db.Exec(`UPDATE review_jobs SET status='done',started_at='2026-01-02T10:00:00Z',
+		_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status='done',started_at='2026-01-02T10:00:00Z',
 			finished_at='2026-01-02T11:00:00Z',agent_invoked=0,token_usage=? WHERE id=?`, usage, job.ID)
 		require.NoError(t, err)
 	}

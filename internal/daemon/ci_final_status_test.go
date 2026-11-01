@@ -54,7 +54,7 @@ func TestCIPanelFinalStatusRecoveryAfterRestart(t *testing.T) {
 			}
 
 			var dbPath string
-			require.NoError(t, h.DB.QueryRow(`SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&dbPath))
+			require.NoError(t, h.DB.QueryRowContext(t.Context(), `SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&dbPath))
 			require.NoError(t, h.DB.Close())
 			db, err := storage.Open(dbPath)
 			require.NoError(t, err)
@@ -164,7 +164,7 @@ func TestCIPanelFinalStatusWithoutTokenRemainsPending(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, attempt, "an undelivered skip must retain the attempt")
 	var state string
-	require.NoError(t, h.DB.QueryRow(`SELECT final_status_state FROM ci_pr_panels WHERE id = ?`, panel.ID).Scan(&state))
+	require.NoError(t, h.DB.QueryRowContext(t.Context(), `SELECT final_status_state FROM ci_pr_panels WHERE id = ?`, panel.ID).Scan(&state))
 	assert.Equal(t, "success", state, "an undelivered final must remain retryable")
 	statuses := h.CaptureCommitStatuses()
 	h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) {

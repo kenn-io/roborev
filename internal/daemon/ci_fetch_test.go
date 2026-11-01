@@ -33,7 +33,7 @@ func TestCIFetchPrunesRenamedRemoteBranches(t *testing.T) {
 
 			require.NoError(t, gitFetchCtx(t.Context(), local.Root, nil))
 			assert.Equal(t, remote.HeadSHA(), local.RevParse("refs/remotes/origin/"+tc.new))
-			err := exec.Command("git", "-C", local.Root, "show-ref", "--verify", "--quiet",
+			err := exec.CommandContext(t.Context(), "git", "-C", local.Root, "show-ref", "--verify", "--quiet",
 				"refs/remotes/origin/"+tc.old).Run()
 			var exitErr *exec.ExitError
 			require.ErrorAs(t, err, &exitErr)

@@ -40,7 +40,7 @@ func (b *observingBroadcaster) Broadcast(event Event) {
 // status-guarded CompleteJob/FailJob transitions take effect by ID.
 func markMemberRunning(t *testing.T, tc *workerTestContext, jobID int64) {
 	t.Helper()
-	_, err := tc.DB.Exec(
+	_, err := tc.DB.ExecContext(t.Context(),
 		"UPDATE review_jobs SET status = 'running', worker_id = ? WHERE id = ?",
 		testWorkerID, jobID,
 	)
@@ -73,7 +73,7 @@ func failMemberWithError(t *testing.T, tc *workerTestContext, jobID int64, errMs
 // agent that the rest of the package relies on.
 func setSynthesisAgent(t *testing.T, tc *workerTestContext, runUUID uuid.UUID, agentName string) {
 	t.Helper()
-	_, err := tc.DB.Exec(
+	_, err := tc.DB.ExecContext(t.Context(),
 		"UPDATE review_jobs SET agent = ? WHERE panel_run_uuid = ? AND panel_role = 'synthesis'",
 		agentName, runUUID,
 	)
@@ -86,7 +86,7 @@ func setSynthesisInstructions(t *testing.T, tc *workerTestContext, runUUID uuid.
 	t.Helper()
 	raw, err := synthesisJobConfig{Instructions: instructions}.encode()
 	require.NoError(t, err)
-	_, err = tc.DB.Exec(
+	_, err = tc.DB.ExecContext(t.Context(),
 		"UPDATE review_jobs SET panel_member_config_json = ? WHERE panel_run_uuid = ? AND panel_role = 'synthesis'",
 		raw, runUUID,
 	)
@@ -199,7 +199,7 @@ func TestFilterSucceededRejectsUnreadableDiffWithoutVerdict(t *testing.T) {
 func jobAgentInvoked(t *testing.T, tc *workerTestContext, jobID int64) bool {
 	t.Helper()
 	var invoked int
-	require.NoError(t, tc.DB.QueryRow(
+	require.NoError(t, tc.DB.QueryRowContext(t.Context(),
 		`SELECT agent_invoked FROM review_jobs WHERE id = ?`, jobID).Scan(&invoked))
 	return invoked == 1
 }
@@ -224,7 +224,7 @@ func TestRunSynthesisAgentMarksInvokedOnlyWhenAgentRuns(t *testing.T) {
 		// retries pre-exhausted and no backup so the failure is terminal: FailJob
 		// preserves agent_invoked, whereas a requeue would clear it and mask a
 		// marker leaked during agent configuration.
-		_, err := tc.DB.Exec(
+		_, err := tc.DB.ExecContext(t.Context(),
 			`UPDATE review_jobs SET status='running', worker_id=?, retry_count=?, agent=?, backup_agent='', source=?, git_ref=? WHERE id=?`,
 			testWorkerID, maxRetries, synthAgent, storage.JobSourceCI,
 			"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", synth.ID)
@@ -256,7 +256,7 @@ func TestRunSynthesisAgentMarksInvokedOnlyWhenAgentRuns(t *testing.T) {
 			{name: "m0", agent: "test"},
 		})
 		sha := testutil.GetHeadSHA(t, tc.TmpDir)
-		_, err := tc.DB.Exec(
+		_, err := tc.DB.ExecContext(t.Context(),
 			`UPDATE review_jobs SET status='running', worker_id=?, agent=?, source='', git_ref=? WHERE id=?`,
 			testWorkerID, synthAgent, sha, synth.ID)
 		require.NoError(t, err)
@@ -360,7 +360,7 @@ func TestConfigureSynthesisAgentUsesStoredBackupWhenPrimaryUnavailable(t *testin
 	agent.Register(&agent.FakeAgent{NameStr: "codex"})
 	t.Cleanup(func() { agent.Register(originalCodex) })
 
-	_, err = tc.DB.Exec(
+	_, err = tc.DB.ExecContext(t.Context(),
 		`UPDATE review_jobs
 		 SET status = 'running', worker_id = ?, agent = ?, model = ?, backup_agent = ?, backup_model = ?
 		 WHERE id = ?`,
@@ -394,7 +394,7 @@ func TestConfigureSynthesisAgentKeepsPrimaryModelWhenBackupMatchesPrimary(t *tes
 	_, _, synthJob := enqueuePanelRun(t, tc, "same-agent-backup-panel", []memberSpec{
 		{name: "m0", agent: "test"},
 	})
-	_, err := tc.DB.Exec(
+	_, err := tc.DB.ExecContext(t.Context(),
 		`UPDATE review_jobs
 		 SET status = 'running', worker_id = ?, agent = ?, model = ?, backup_agent = ?, backup_model = ?
 		 WHERE id = ?`,
@@ -434,7 +434,7 @@ func TestConfigureSynthesisAgentKeepsPrimaryModelForConfiguredACPAlias(t *testin
 	_, _, synthJob := enqueuePanelRun(t, tc, "configured-acp-panel", []memberSpec{
 		{name: "m0", agent: "test"},
 	})
-	_, err := tc.DB.Exec(
+	_, err := tc.DB.ExecContext(t.Context(),
 		`UPDATE review_jobs
 		 SET status = 'running', worker_id = ?, agent = ?, model = ?, backup_agent = ?, backup_model = ?
 		 WHERE id = ?`,
@@ -472,7 +472,7 @@ func TestConfigureSynthesisAgentUsesBackupModelForNamedACPBackup(t *testing.T) {
 	_, _, synthJob := enqueuePanelRun(t, tc, "named-acp-backup-panel", []memberSpec{
 		{name: "m0", agent: "test"},
 	})
-	_, err := tc.DB.Exec(
+	_, err := tc.DB.ExecContext(t.Context(),
 		`UPDATE review_jobs
 		 SET status = 'running', worker_id = ?, agent = ?, model = ?, backup_agent = ?, backup_model = ?
 		 WHERE id = ?`,
@@ -513,7 +513,7 @@ func TestConfigureSynthesisAgentUsesCISnapshottedACPConfig(t *testing.T) {
 	_, _, synthJob := enqueuePanelRun(t, tc, "ci-acp-synthesis", []memberSpec{
 		{name: "m0", agent: "test"},
 	})
-	_, err = tc.DB.Exec(
+	_, err = tc.DB.ExecContext(t.Context(),
 		`UPDATE review_jobs
 		 SET status = 'running', worker_id = ?, source = ?, agent = ?, panel_member_config_json = ?
 		 WHERE id = ?`,
@@ -690,7 +690,7 @@ func TestSynthesisSingleSuccessWithMinSeverityPassesThroughBelowThreshold(t *tes
 		{name: "m1", agent: memberAgent},
 	})
 	setSynthesisAgent(t, tc, runUUID, synthAgent)
-	_, err := tc.DB.Exec(
+	_, err := tc.DB.ExecContext(t.Context(),
 		"UPDATE review_jobs SET min_severity = ? WHERE id = ?",
 		"medium", synthJob.ID,
 	)
@@ -729,7 +729,7 @@ func TestSynthesisSinglePassingSuccessWithMinSeverityPassthrough(t *testing.T) {
 		{name: "m1", agent: memberAgent},
 	})
 	setSynthesisAgent(t, tc, runUUID, synthAgent)
-	_, err := tc.DB.Exec(
+	_, err := tc.DB.ExecContext(t.Context(),
 		"UPDATE review_jobs SET min_severity = CASE WHEN id = ? THEN 'low' ELSE 'medium' END WHERE id IN (?, ?)",
 		members[0].ID, members[0].ID, synthJob.ID,
 	)
@@ -790,7 +790,7 @@ func TestSynthesisPassingMembersWithRetainedFindingsStillSynthesize(t *testing.T
 		{name: "m1", agent: memberAgent},
 	})
 	setSynthesisAgent(t, tc, runUUID, synthAgent.name)
-	_, err := tc.DB.Exec(
+	_, err := tc.DB.ExecContext(t.Context(),
 		"UPDATE review_jobs SET min_severity = ? WHERE id = ?", "medium", synthJob.ID,
 	)
 	require.NoError(t, err)
@@ -1184,7 +1184,7 @@ func TestSynthesisMemberFetchErrorRetries(t *testing.T) {
 	// Drop the reviews table so GetPanelMemberReviews errors mid-query while the
 	// review_jobs table (and the failover path) stays intact. This drives the
 	// real load-error branch rather than mocking it.
-	_, err := tc.DB.Exec("DROP TABLE reviews")
+	_, err := tc.DB.ExecContext(t.Context(), "DROP TABLE reviews")
 	require.NoError(t, err)
 
 	tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synth)
@@ -1251,7 +1251,7 @@ func TestSynthesisCIReviewCooldownFailsOverToBackup(t *testing.T) {
 		{name: "m1", agent: memberAgent},
 	})
 	setSynthesisAgent(t, tc, runUUID, synthAgent)
-	_, err := tc.DB.Exec(
+	_, err := tc.DB.ExecContext(t.Context(),
 		`UPDATE review_jobs
 		 SET source = ?, ci_base_branch = ?, backup_agent = ?
 		 WHERE panel_run_uuid = ? AND panel_role = 'synthesis'`,
@@ -1281,7 +1281,7 @@ func TestSynthesisRunsAgainstWorktree(t *testing.T) {
 			tc := newWorkerTestContext(t, 1)
 
 			worktreePath := filepath.Join(t.TempDir(), "wt")
-			out, err := exec.Command(
+			out, err := exec.CommandContext(t.Context(),
 				"git", "-C", tc.TmpDir, "worktree", "add", "--detach", worktreePath, "HEAD",
 			).CombinedOutput()
 			require.NoError(t, err, "git worktree add failed: %s", out)
@@ -1319,7 +1319,7 @@ func TestSynthesisRunsAgainstWorktree(t *testing.T) {
 				{name: "m1", agent: memberAgent},
 			})
 			setSynthesisAgent(t, tc, runUUID, synthAgent)
-			_, err = tc.DB.Exec(
+			_, err = tc.DB.ExecContext(t.Context(),
 				"UPDATE review_jobs SET worktree_path = ? WHERE panel_run_uuid = ? AND panel_role = 'synthesis'",
 				worktreePath, runUUID,
 			)
@@ -1461,9 +1461,9 @@ func TestSynthesisImportedUnableReview(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	runID, members, _ := enqueuePanelRun(t, tc, "imported-unable", []memberSpec{{name: "member", agent: "test"}})
 	member := members[0]
-	_, err := tc.DB.Exec(`UPDATE review_jobs SET status='done' WHERE id=?`, member.ID)
+	_, err := tc.DB.ExecContext(t.Context(), `UPDATE review_jobs SET status='done' WHERE id=?`, member.ID)
 	require.NoError(t, err)
-	_, archiveErr := tc.DB.Exec(`INSERT INTO legacy_reviews (job_id, agent, output, created_at, closed, uuid, migration_error) VALUES (?, 'test', ?, datetime('now'), 0, ?, 'AI conversion required')`, member.ID, "Legacy failed attempt", uuid.New())
+	_, archiveErr := tc.DB.ExecContext(t.Context(), `INSERT INTO legacy_reviews (job_id, agent, output, created_at, closed, uuid, migration_error) VALUES (?, 'test', ?, datetime('now'), 0, ?, 'AI conversion required')`, member.ID, "Legacy failed attempt", uuid.New())
 	require.NoError(t, archiveErr)
 	records, err := tc.DB.UnresolvedLegacyReviews()
 	require.NoError(t, err)
@@ -1505,7 +1505,7 @@ func TestSynthesisNeutralFramingUsesVotingMembers(t *testing.T) {
 			})
 			setSynthesisAgent(t, tc, run, synthAgent.Name())
 			for i, rubric := range []string{"citations", "security", "design"} {
-				_, err := tc.DB.Exec("UPDATE review_jobs SET review_type = ? WHERE id = ?", rubric, members[i].ID)
+				_, err := tc.DB.ExecContext(t.Context(), "UPDATE review_jobs SET review_type = ? WHERE id = ?", rubric, members[i].ID)
 				require.NoError(t, err)
 			}
 			if tt.observer {

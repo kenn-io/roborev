@@ -33,7 +33,7 @@ func recoveringCIHealth(t *testing.T) (*ciPollerHarness, *Server, ghPR) {
 
 func readCIHealth(t *testing.T, server *Server) (storage.HealthStatus, storage.ComponentHealth) {
 	t.Helper()
-	health := decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
+	health := decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet))
 	i := slices.IndexFunc(health.Components, func(component storage.ComponentHealth) bool { return component.Name == "ci" })
 	require.NotEqual(t, -1, i, "CI health must be present")
 	return health, health.Components[i]
@@ -106,7 +106,7 @@ func TestCIHealthRecoveryExpiresWithoutAnotherPoll(t *testing.T) {
 		_, err := h.DB.MakeTransientReviewAttemptsDue(time.Now())
 		require.NoError(t, err)
 		h.Poller.poll(t.Context())
-		_, err = h.DB.Exec(`UPDATE ci_pr_review_attempts SET first_attempt_at = ?`, time.Now().Add(-72*time.Hour+time.Minute).Format(time.RFC3339))
+		_, err = h.DB.ExecContext(t.Context(), `UPDATE ci_pr_review_attempts SET first_attempt_at = ?`, time.Now().Add(-72*time.Hour+time.Minute).Format(time.RFC3339))
 		require.NoError(t, err)
 		_, ci := readCIHealth(t, server)
 		require.NotNil(t, ci.Recovery)
@@ -149,7 +149,7 @@ func TestCIHealthRejectsUnverifiedRetryRecovery(t *testing.T) {
 			h, server, _ := recoveringCIHealth(t)
 			_, ci := readCIHealth(t, server)
 			require.NotNil(t, ci.Recovery)
-			_, err := h.DB.Exec(tc.change)
+			_, err := h.DB.ExecContext(t.Context(), tc.change)
 			require.NoError(t, err)
 			health, ci := readCIHealth(t, server)
 			assert.False(t, health.Healthy)
@@ -278,9 +278,9 @@ func TestCIHealthTerminalPanelDoesNotProveRecovery(t *testing.T) {
 			h.Poller.poll(t.Context())
 			_, ci := readCIHealth(t, server)
 			require.NotNil(t, ci.Recovery)
-			_, err = h.DB.Exec(`UPDATE review_jobs SET status = 'failed'`)
+			_, err = h.DB.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'failed'`)
 			require.NoError(t, err)
-			_, err = h.DB.Exec(`UPDATE review_jobs SET status = ?, claim_blocked = 1 WHERE job_type = ?`, synthStatus, storage.JobTypeSynthesis)
+			_, err = h.DB.ExecContext(t.Context(), `UPDATE review_jobs SET status = ?, claim_blocked = 1 WHERE job_type = ?`, synthStatus, storage.JobTypeSynthesis)
 			require.NoError(t, err)
 			health, ci := readCIHealth(t, server)
 			assert.False(t, health.Healthy)

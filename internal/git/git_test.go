@@ -107,8 +107,8 @@ func copyTestRepoTree(dst, src string) error {
 	})
 }
 
-func mustTemplateGit(dir string, args ...string) {
-	cmd := exec.Command("git", args...)
+func mustTemplateGit(ctx context.Context, dir string, args ...string) {
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		panic(fmt.Sprintf("git template %v failed: %v\n%s", args, err, out))
@@ -124,7 +124,7 @@ func NewTestRepoWithAuthor(t *testing.T, author string) *TestRepo {
 	t.Helper()
 	dir := t.TempDir()
 	instantiateTestRepoTemplate(t, "init", func(d string) {
-		mustTemplateGit(d, "init")
+		mustTemplateGit(t.Context(), d, "init")
 	}, dir)
 	r := &TestRepo{T: t, Dir: dir, Author: author}
 	r.writeConfig(author)
@@ -142,7 +142,7 @@ func NewBareTestRepo(t *testing.T) *TestRepo {
 	t.Helper()
 	dir := t.TempDir()
 	instantiateTestRepoTemplate(t, "bare", func(d string) {
-		mustTemplateGit(d, "init", "--bare")
+		mustTemplateGit(t.Context(), d, "init", "--bare")
 	}, dir)
 	return &TestRepo{T: t, Dir: dir, Author: "Test"}
 }
@@ -385,7 +385,8 @@ func (r *TestRepo) AddWorktree(branchName string) *TestRepo {
 	wtDir := r.T.TempDir()
 	r.Run("worktree", "add", wtDir, "-b", branchName)
 	r.T.Cleanup(func() {
-		cmd := exec.Command("git", "worktree", "remove", wtDir)
+		// T.Context is already canceled when cleanups run.
+		cmd := exec.CommandContext(context.WithoutCancel(r.T.Context()), "git", "worktree", "remove", wtDir)
 		cmd.Dir = r.Dir
 		_ = cmd.Run()
 	})
@@ -457,7 +458,7 @@ func runGit(t *testing.T, dir string, args ...string) string {
 	var out []byte
 	var err error
 	for attempt := 0; ; attempt++ {
-		cmd := exec.Command("git", args...)
+		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		out, err = cmd.CombinedOutput()
 		if err == nil || attempt >= gitTransientRetries || !isTransientGitError(out) {
@@ -655,7 +656,7 @@ func TestEnsureAbsoluteHooksPath(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify core.hooksPath is still unset.
-		cmd := exec.Command(
+		cmd := exec.CommandContext(t.Context(),
 			"git", "config", "--local", "core.hooksPath",
 		)
 		cmd.Dir = repo.Dir
@@ -760,7 +761,7 @@ func TestEnsureAbsoluteHooksPath(t *testing.T) {
 			repo := NewTestRepo(t)
 
 			// Verify no local override exists yet.
-			check := exec.Command(
+			check := exec.CommandContext(t.Context(),
 				"git", "config", "--local", "core.hooksPath",
 			)
 			check.Dir = repo.Dir
@@ -845,7 +846,8 @@ func TestGetMainRepoRootForBareBackedWorktree(t *testing.T) {
 	worktreeDir := t.TempDir()
 	bareRepo.Run("worktree", "add", worktreeDir, "main")
 	t.Cleanup(func() {
-		cmd := exec.Command("git", "-C", bareRepo.Dir, "worktree", "remove", worktreeDir)
+		// t.Context is already canceled when cleanups run.
+		cmd := exec.CommandContext(context.WithoutCancel(t.Context()), "git", "-C", bareRepo.Dir, "worktree", "remove", worktreeDir)
 		_ = cmd.Run()
 	})
 
@@ -3238,7 +3240,8 @@ func TestWorktreePathForBranch(t *testing.T) {
 		wtDir := t.TempDir()
 		repo.Run("worktree", "add", wtDir, "wt-preexist")
 		t.Cleanup(func() {
-			rmCmd := exec.Command("git", "-C", repo.Dir, "worktree", "remove", wtDir)
+			// t.Context is already canceled when cleanups run.
+			rmCmd := exec.CommandContext(context.WithoutCancel(t.Context()), "git", "-C", repo.Dir, "worktree", "remove", wtDir)
 			_ = rmCmd.Run()
 		})
 

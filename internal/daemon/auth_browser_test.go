@@ -46,7 +46,7 @@ func TestAuthBrowserRequiresLoginAndAllowsAuthenticatedAPI(t *testing.T) {
 			require.NoError(t, err)
 			request := func(path, body string) *http.Response {
 				t.Helper()
-				req, err := http.NewRequest(http.MethodPost, base+path, bytes.NewBufferString(body))
+				req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, base+path, bytes.NewBufferString(body))
 				require.NoError(t, err)
 				req.Host = origin.Host
 				req.Header.Set("Content-Type", "application/json")
@@ -72,7 +72,7 @@ func TestAuthBrowserRequiresLoginAndAllowsAuthenticatedAPI(t *testing.T) {
 			require.NoError(t, json.UnmarshalRead(login.Body, &credentials))
 			a.Equal(WebSessionCapabilities{CancelAnyJob: tc.local, CancelReviewJob: true, RerunJob: tc.local}, credentials.Capabilities)
 			for _, path := range []string{"/api/status", "/api/ping"} {
-				req, err := http.NewRequest(http.MethodGet, base+path, nil)
+				req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, base+path, nil)
 				require.NoError(t, err)
 				req.Host = origin.Host
 				require.Len(t, login.Cookies(), 1)
@@ -87,7 +87,7 @@ func TestAuthBrowserRequiresLoginAndAllowsAuthenticatedAPI(t *testing.T) {
 			_, events := s.broadcaster.Subscribe("")
 			body, err := json.Marshal(AddCommentRequest{JobID: job.ID, Commenter: "reviewer", Comment: "Review note"})
 			require.NoError(t, err)
-			req, err := http.NewRequest(http.MethodPost, base+"/api/comment", bytes.NewReader(body))
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, base+"/api/comment", bytes.NewReader(body))
 			require.NoError(t, err)
 			req.Host = origin.Host
 			req.Header.Set("Content-Type", "application/json")
@@ -100,7 +100,7 @@ func TestAuthBrowserRequiresLoginAndAllowsAuthenticatedAPI(t *testing.T) {
 			resp.Body.Close()
 			require.Equal(t, http.StatusCreated, resp.StatusCode)
 			var source string
-			require.NoError(t, s.db.QueryRow(`SELECT source FROM responses WHERE job_id = ?`, job.ID).Scan(&source))
+			require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT source FROM responses WHERE job_id = ?`, job.ID).Scan(&source))
 			wantSource := storage.ResponseSourceRemoteBrowser
 			if tc.local {
 				wantSource = storage.ResponseSourceLocal
@@ -138,7 +138,7 @@ func TestAuthProxyBrowserRequiresSharedKeyForSession(t *testing.T) {
 	base := "http://" + runtime.Address
 	bootstrap := func(key string) *http.Response {
 		t.Helper()
-		req := proxyBrowserRequest(http.MethodPost, "/api/ui/session/bootstrap", map[string]any{})
+		req := proxyBrowserRequest(t.Context(), http.MethodPost, "/api/ui/session/bootstrap", map[string]any{})
 		req.URL.Scheme = "http"
 		req.URL.Host = runtime.Address
 		req.RequestURI = ""
@@ -159,7 +159,7 @@ func TestAuthProxyBrowserRequiresSharedKeyForSession(t *testing.T) {
 	require.Equal(t, http.StatusOK, login.StatusCode)
 	var credentials WebSessionCredentials
 	require.NoError(t, json.UnmarshalRead(login.Body, &credentials))
-	req, err := http.NewRequest(http.MethodGet, base+"/api/status", nil)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, base+"/api/status", nil)
 	require.NoError(t, err)
 	req.Host = "reviews.example.com"
 	require.Len(t, login.Cookies(), 1)

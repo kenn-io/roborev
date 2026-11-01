@@ -55,7 +55,7 @@ func TestMigrationBackfillsPanelTerminalMetrics(t *testing.T) {
 
 	// (e) Member rows gone entirely: the outcome is unrecoverable.
 	noJobs := seedPostedPanel(t, db, 64, "sha-no-jobs", PanelOutcomeReviewPosted)
-	_, err = db.Exec(`DELETE FROM review_jobs WHERE panel_run_uuid = ?`, noJobs.PanelRunUUID)
+	_, err = db.ExecContext(t.Context(), `DELETE FROM review_jobs WHERE panel_run_uuid = ?`, noJobs.PanelRunUUID)
 	require.NoError(t, err)
 	require.NoError(t, db.DeleteReviewAttempt("o/r", 64, "sha-no-jobs"))
 
@@ -75,7 +75,7 @@ func TestMigrationBackfillsPanelTerminalMetrics(t *testing.T) {
 	failSynthesisWithError(t, db, *quotaGiveup.SynthesisJobID, "quota: session limit reached")
 
 	// Simulate rows finalized before the terminal-metrics columns existed.
-	_, err = db.Exec(`UPDATE ci_pr_panels
+	_, err = db.ExecContext(t.Context(), `UPDATE ci_pr_panels
 		SET outcome = NULL, first_attempt_at = NULL, attempt_count = NULL`)
 	require.NoError(t, err)
 	forgetSchemaVersion(t, db)
@@ -128,7 +128,7 @@ func TestMigrationBackfillsPanelTerminalMetrics(t *testing.T) {
 // synthesis failure that still posted the raw member fallback.
 func failSynthesisWithError(t *testing.T, db *DB, jobID int64, errText string) {
 	t.Helper()
-	_, err := db.Exec(`UPDATE review_jobs SET status = 'failed', error = ? WHERE id = ?`,
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'failed', error = ? WHERE id = ?`,
 		errText, jobID)
 	require.NoError(t, err)
 }
@@ -165,7 +165,7 @@ func TestMigrationBackfillsSynthesisSnapshotSurvivesCascade(t *testing.T) {
 	require.NoError(t, db.MarkPanelPosted(panel.ID, PanelOutcomeReviewPosted, "", ""))
 	// Simulate a row finalized before the snapshot columns existed: clear
 	// the snapshot so only the live synthesis job carries the model.
-	_, err = db.Exec(`UPDATE ci_pr_panels
+	_, err = db.ExecContext(t.Context(), `UPDATE ci_pr_panels
 		SET synthesis_agent = NULL, synthesis_model = NULL WHERE id = ?`, panel.ID)
 	require.NoError(t, err)
 	forgetSchemaVersion(t, db)
@@ -192,7 +192,7 @@ func TestMigrationBackfillsSynthesisSnapshotSurvivesCascade(t *testing.T) {
 func panelMemberID(t *testing.T, db *DB, runUUID uuid.UUID) int64 {
 	t.Helper()
 	var id int64
-	require.NoError(t, db.QueryRow(`SELECT id FROM review_jobs
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT id FROM review_jobs
 		WHERE panel_run_uuid = ? AND panel_role = 'member'`, runUUID).Scan(&id))
 	return id
 }
@@ -204,7 +204,7 @@ func completeMemberWithOutput(t *testing.T, db *DB, runUUID uuid.UUID, output st
 	t.Helper()
 	id := panelMemberID(t, db, runUUID)
 	setStatus(t, db, id, JobStatusDone)
-	_, err := db.Exec(`INSERT INTO reviews (job_id, agent, output)
+	_, err := db.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, output)
 		VALUES (?, 'test', ?)`, id, output)
 	require.NoError(t, err)
 }
@@ -242,7 +242,7 @@ func TestExportCIMetricsIncludesOnlyPostedPanels(t *testing.T) {
 	members, err := db.GetPanelMembers(posted.PanelRunUUID)
 	require.NoError(t, err)
 	require.NotEmpty(t, members)
-	_, err = db.Exec(`UPDATE review_jobs SET resume_source_job_uuid = ? WHERE id = ?`,
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET resume_source_job_uuid = ? WHERE id = ?`,
 		testUUID("source-job"), members[0].ID)
 	require.NoError(t, err)
 	// An unposted panel must not export.
@@ -288,7 +288,7 @@ func TestExportCIMetricsLegacyRowsAreUnknown(t *testing.T) {
 
 	panel := seedPostedPanel(t, db, 3, "sha-legacy", PanelOutcomeReviewPosted)
 	// Simulate a row finalized before outcome persistence existed.
-	_, err := db.Exec(`UPDATE ci_pr_panels
+	_, err := db.ExecContext(t.Context(), `UPDATE ci_pr_panels
 		SET outcome = NULL, first_attempt_at = NULL, attempt_count = NULL
 		WHERE id = ?`, panel.ID)
 	require.NoError(t, err)
@@ -395,7 +395,7 @@ func seedLegacyCIJob(t *testing.T, db *DB, repoID int64, gitRef, agent string, e
 		Agent: agent, Model: "legacy-model", Provider: "legacy-provider",
 	})
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE review_jobs
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs
 		SET status = 'done', enqueued_at = ?, started_at = ?, finished_at = ?
 		WHERE id = ?`, enqueued, enqueued, finished, job.ID)
 	require.NoError(t, err)
@@ -407,7 +407,7 @@ func seedLegacyCIJob(t *testing.T, db *DB, repoID int64, gitRef, agent string, e
 // only legacy jobs enqueued earlier remain exportable.
 func seedPanelEraMarker(t *testing.T, db *DB, createdAt string) {
 	t.Helper()
-	_, err := db.Exec(`INSERT INTO ci_pr_panels
+	_, err := db.ExecContext(t.Context(), `INSERT INTO ci_pr_panels
 		(github_repo, pr_number, head_sha, panel_run_uuid, created_at)
 		VALUES ('era/marker', 999999, ?, ?, ?)`,
 		"sha-era-"+createdAt, "era-"+createdAt, createdAt)
@@ -429,7 +429,7 @@ func TestExportCIMetricsLegacyCombinesPseudopanel(t *testing.T) {
 	// every member was terminal, so its finish extends the wall clock.
 	failed := seedLegacyCIJob(t, db, repo.ID, "base..head-legacy", "codex",
 		"2026-03-01 10:00:00", "2026-03-01 10:30:00")
-	_, err := db.Exec(`UPDATE review_jobs SET status = 'failed' WHERE id = ?`, failed.ID)
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'failed' WHERE id = ?`, failed.ID)
 	require.NoError(t, err)
 	// A singleton review of another ref is a manual one-off, not a
 	// pseudopanel, and must not export.
@@ -502,11 +502,11 @@ func TestExportCIMetricsLegacyPartialSuccessUnit(t *testing.T) {
 	allFailedB := seedLegacyCIJob(t, db, repo.ID, "base..head-all-failed", "gemini",
 		"2026-03-02 10:00:00", "2026-03-02 10:06:00")
 	for _, id := range []int64{partialFailed.ID, allFailedA.ID} {
-		_, err := db.Exec(`UPDATE review_jobs SET status = 'failed' WHERE id = ?`, id)
+		_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'failed' WHERE id = ?`, id)
 		require.NoError(t, err)
 	}
 	for _, id := range []int64{canceledSibling.ID, allFailedB.ID} {
-		_, err := db.Exec(`UPDATE review_jobs SET status = 'canceled' WHERE id = ?`, id)
+		_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'canceled' WHERE id = ?`, id)
 		require.NoError(t, err)
 	}
 
@@ -548,7 +548,7 @@ func TestExportCIMetricsLegacyExcludesUnfinishedMigrationCancels(t *testing.T) {
 		"2026-03-01 10:00:00", "2026-03-01 10:05:00")
 	superseded := seedLegacyCIJob(t, db, repo.ID, "base..head-inflight", "gemini",
 		"2026-03-01 10:00:00", "2026-03-01 10:06:00")
-	_, err := db.Exec(`UPDATE review_jobs
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs
 		SET status = 'canceled', error = 'superseded by panel migration', finished_at = NULL
 		WHERE id = ?`, superseded.ID)
 	require.NoError(t, err)

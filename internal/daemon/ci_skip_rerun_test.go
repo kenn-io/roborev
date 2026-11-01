@@ -106,7 +106,7 @@ func TestCIPanelSkipRerunOrdering(t *testing.T) {
 					require.NoError(t, json.Unmarshal(response.Body.Bytes(), &rerun.Body))
 				} else {
 					if ordering == "expired skip claim" {
-						_, err := h.DB.Exec(`UPDATE ci_pr_panels SET posting_claimed_at = datetime('now', '-1 hour') WHERE id = ?`, panel.ID)
+						_, err := h.DB.ExecContext(t.Context(), `UPDATE ci_pr_panels SET posting_claimed_at = datetime('now', '-1 hour') WHERE id = ?`, panel.ID)
 						require.NoError(t, err)
 					}
 					response := serveHuma(t, server, http.MethodPost, "/api/job/rerun", request)

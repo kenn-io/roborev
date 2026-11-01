@@ -22,13 +22,13 @@ func setupOldSchemaDB(t *testing.T, dbPath string, schema string, seedData strin
 	}
 	defer rawDB.Close()
 
-	if _, err := rawDB.Exec(schema); err != nil {
+	if _, err := rawDB.ExecContext(t.Context(), schema); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "Failed to create old schema: %v", err)
 	}
 	if seedData != "" {
-		if _, err := rawDB.Exec(seedData); err != nil {
+		if _, err := rawDB.ExecContext(t.Context(), seedData); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, "Failed to insert seed data: %v", err)
@@ -58,19 +58,19 @@ func TestCIPanelHistoryMigration(t *testing.T) {
 		require.NoError(t, err)
 		var outcome string
 		var count int
-		require.NoError(t, db.QueryRow(`SELECT outcome, attempt_count FROM ci_pr_panels WHERE id = 1`).Scan(&outcome, &count))
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT outcome, attempt_count FROM ci_pr_panels WHERE id = 1`).Scan(&outcome, &count))
 		assert.Equal(t, "no_review_posted", outcome)
 		assert.Equal(t, 3, count)
 		var reason sql.NullString
-		require.NoError(t, db.QueryRow(`SELECT retire_reason FROM ci_pr_panels WHERE id = 1`).Scan(&reason))
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT retire_reason FROM ci_pr_panels WHERE id = 1`).Scan(&reason))
 		assert.False(t, reason.Valid, "legacy table rebuild preserves unspecified retirement")
-		_, err = db.Exec(`INSERT INTO ci_pr_panels (github_repo, pr_number, head_sha, panel_run_uuid)
+		_, err = db.ExecContext(t.Context(), `INSERT INTO ci_pr_panels (github_repo, pr_number, head_sha, panel_run_uuid)
 			VALUES ('acme/api', 7, 'head-a', '00000000-0000-4000-8000-000000000002')`)
 		require.NoError(t, err, "retired history must not occupy the active review slot")
-		_, err = db.Exec(`INSERT INTO ci_pr_panels (github_repo, pr_number, head_sha, panel_run_uuid)
+		_, err = db.ExecContext(t.Context(), `INSERT INTO ci_pr_panels (github_repo, pr_number, head_sha, panel_run_uuid)
 			VALUES ('acme/api', 7, 'head-a', '00000000-0000-4000-8000-000000000003')`)
 		require.Error(t, err, "only one active panel may own a PR HEAD")
-		_, err = db.Exec(`DELETE FROM ci_pr_panels WHERE id != 1`)
+		_, err = db.ExecContext(t.Context(), `DELETE FROM ci_pr_panels WHERE id != 1`)
 		require.NoError(t, err)
 		require.NoError(t, db.Close())
 	}
@@ -102,7 +102,7 @@ func TestCIPanelFinalStatusMigration(t *testing.T) {
 	statuses, err := db.GetCIPanelFinalStatuses("acme/api")
 	require.NoError(t, err)
 	assert.Empty(t, statuses, "historical delivery must not be replayed")
-	_, err = db.Exec(`INSERT INTO ci_pr_panels
+	_, err = db.ExecContext(t.Context(), `INSERT INTO ci_pr_panels
 		(github_repo, pr_number, head_sha, panel_run_uuid)
 		VALUES ('acme/api', 7, 'head-a', '00000000-0000-4000-8000-000000000002')`)
 	require.NoError(t, err)
@@ -143,7 +143,7 @@ func TestOpenReadOnly(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, job.Agent, got.Agent)
 
-	_, err = readOnly.Exec(`DELETE FROM review_jobs WHERE id = ?`, job.ID)
+	_, err = readOnly.ExecContext(t.Context(), `DELETE FROM review_jobs WHERE id = ?`, job.ID)
 	require.Error(t, err)
 }
 
@@ -353,13 +353,13 @@ func TestMigrationPreservesOutputPrefixDuringRebuild(t *testing.T) {
 	// The rebuild must have replaced the old CHECK constraint (proves the
 	// rebuild path actually ran, so this is not a false pass).
 	var tableSQL string
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(t.Context(),
 		`SELECT sql FROM sqlite_master WHERE type='table' AND name='review_jobs'`,
 	).Scan(&tableSQL))
 	assert.Contains(t, tableSQL, "'canceled'", "rebuild updated the status CHECK constraint")
 
 	var outputPrefix string
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(t.Context(),
 		`SELECT output_prefix FROM review_jobs WHERE id = 1`,
 	).Scan(&outputPrefix))
 	assert.Equal(t, "PREFIX: design review", outputPrefix,
@@ -395,7 +395,7 @@ func TestMigrationFromOldSchema(t *testing.T) {
 	// have all columns that the high-level EnqueueJob function requires.
 	repo, _ := db.GetOrCreateRepo("/tmp/test2")
 	commit, _ := db.GetOrCreateCommit(repo.ID, "def456", "A", "S", time.Now())
-	result, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, status) VALUES (?, ?, 'def456', 'codex', 'queued')`,
+	result, err := db.ExecContext(t.Context(), `INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, status) VALUES (?, ?, 'def456', 'codex', 'queued')`,
 		repo.ID, commit.ID)
 	if err != nil {
 		require.Condition(t, func() bool {
@@ -405,7 +405,7 @@ func TestMigrationFromOldSchema(t *testing.T) {
 	jobID, _ := result.LastInsertId()
 
 	// Claim the job so we can cancel it
-	_, err = db.Exec(`UPDATE review_jobs SET status = 'running', worker_id = 'worker-1' WHERE id = ?`, jobID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'running', worker_id = 'worker-1' WHERE id = ?`, jobID)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -413,7 +413,7 @@ func TestMigrationFromOldSchema(t *testing.T) {
 	}
 
 	// This should succeed with new schema (would fail with old constraint)
-	_, err = db.Exec(`UPDATE review_jobs SET status = 'canceled' WHERE id = ?`, jobID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'canceled' WHERE id = ?`, jobID)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -422,7 +422,7 @@ func TestMigrationFromOldSchema(t *testing.T) {
 
 	// Verify the status was set correctly
 	var status string
-	err = db.QueryRow(`SELECT status FROM review_jobs WHERE id = ?`, jobID).Scan(&status)
+	err = db.QueryRowContext(t.Context(), `SELECT status FROM review_jobs WHERE id = ?`, jobID).Scan(&status)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -435,25 +435,25 @@ func TestMigrationFromOldSchema(t *testing.T) {
 	}
 
 	// Verify 'applied' and 'rebased' statuses work after migration
-	_, err = db.Exec(`UPDATE review_jobs SET status = 'done' WHERE id = ?`, jobID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'done' WHERE id = ?`, jobID)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "Failed to set done status: %v", err)
 	}
-	_, err = db.Exec(`UPDATE review_jobs SET status = 'applied' WHERE id = ?`, jobID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'applied' WHERE id = ?`, jobID)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "Setting applied status failed after migration: %v", err)
 	}
-	_, err = db.Exec(`UPDATE review_jobs SET status = 'done' WHERE id = ?`, jobID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'done' WHERE id = ?`, jobID)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "Failed to reset to done: %v", err)
 	}
-	_, err = db.Exec(`UPDATE review_jobs SET status = 'rebased' WHERE id = ?`, jobID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'rebased' WHERE id = ?`, jobID)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -461,7 +461,7 @@ func TestMigrationFromOldSchema(t *testing.T) {
 	}
 
 	// Verify constraint still rejects invalid status
-	_, err = db.Exec(`UPDATE review_jobs SET status = 'invalid' WHERE id = ?`, jobID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'invalid' WHERE id = ?`, jobID)
 	if err == nil {
 		assert.Condition(t, func() bool {
 			return false
@@ -526,7 +526,7 @@ func TestReviewJobPositionIndexSurvivesLegacyRebuild(t *testing.T) {
 func assertReviewJobPositionIndexExists(t *testing.T, db *DB) {
 	t.Helper()
 	var count int
-	require.NoError(t, db.QueryRow(`
+	require.NoError(t, db.QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM sqlite_master
 		WHERE type = 'index' AND name = 'idx_review_jobs_enqueued_position'
 	`).Scan(&count))
@@ -547,28 +547,28 @@ func TestMigrationNormalizesWindowsRepoRootPathConflicts(t *testing.T) {
 		sourceJobID    = int64(100)
 		targetJobID    = int64(200)
 	)
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		INSERT INTO repos (id, root_path, name, identity)
 		VALUES
 			(?, 'C:\Users\dev\workspace\repo', 'repo', 'https://github.com/test/repo.git'),
 			(?, 'C:/Users/dev/workspace/repo', 'repo', NULL)
 	`, sourceRepoID, targetRepoID)
 	require.NoError(t, err)
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		INSERT INTO commits (id, repo_id, sha, author, subject, timestamp)
 		VALUES
 			(?, ?, 'abc123', 'A', 'source commit', '2024-01-01T00:00:00Z'),
 			(?, ?, 'abc123', 'A', 'target commit', '2024-01-01T00:00:00Z')
 	`, sourceCommitID, sourceRepoID, targetCommitID, targetRepoID)
 	require.NoError(t, err)
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		INSERT INTO review_jobs (id, repo_id, commit_id, git_ref, agent, status, review_type, source)
 		VALUES
 			(?, ?, ?, 'abc123', 'codex', 'done', 'design', 'auto_design'),
 			(?, ?, ?, 'abc123', 'codex', 'done', 'design', 'auto_design')
 	`, sourceJobID, sourceRepoID, sourceCommitID, targetJobID, targetRepoID, targetCommitID)
 	require.NoError(t, err)
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		INSERT INTO responses (id, commit_id, job_id, responder, response)
 		VALUES (1, ?, ?, 'codex', 'source response')
 	`, sourceCommitID, sourceJobID)
@@ -586,31 +586,31 @@ func TestMigrationNormalizesWindowsRepoRootPathConflicts(t *testing.T) {
 	assert.Equal(t, "C:/Users/dev/workspace/repo", repo.RootPath)
 
 	var identity string
-	err = db.QueryRow(`SELECT COALESCE(identity, '') FROM repos WHERE id = ?`, targetRepoID).Scan(&identity)
+	err = db.QueryRowContext(t.Context(), `SELECT COALESCE(identity, '') FROM repos WHERE id = ?`, targetRepoID).Scan(&identity)
 	require.NoError(t, err)
 	assert.Equal(t, "https://github.com/test/repo.git", identity)
 
 	var repoCount int
-	err = db.QueryRow(`SELECT COUNT(*) FROM repos WHERE root_path IN (?, ?)`,
+	err = db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM repos WHERE root_path IN (?, ?)`,
 		`C:\Users\dev\workspace\repo`, `C:/Users/dev/workspace/repo`).Scan(&repoCount)
 	require.NoError(t, err)
 	assert.Equal(t, 1, repoCount)
 
 	var sourceJobRepoID, sourceJobCommitID int64
-	err = db.QueryRow(`SELECT repo_id, commit_id FROM review_jobs WHERE id = ?`, sourceJobID).
+	err = db.QueryRowContext(t.Context(), `SELECT repo_id, commit_id FROM review_jobs WHERE id = ?`, sourceJobID).
 		Scan(&sourceJobRepoID, &sourceJobCommitID)
 	require.NoError(t, err)
 	assert.Equal(t, targetRepoID, sourceJobRepoID)
 	assert.Equal(t, targetCommitID, sourceJobCommitID)
 
 	var sourceCommitCount int
-	err = db.QueryRow(`SELECT COUNT(*) FROM commits WHERE id = ?`, sourceCommitID).
+	err = db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM commits WHERE id = ?`, sourceCommitID).
 		Scan(&sourceCommitCount)
 	require.NoError(t, err)
 	assert.Equal(t, 0, sourceCommitCount)
 
 	var responseCommitID int64
-	err = db.QueryRow(`SELECT commit_id FROM responses WHERE id = 1`).Scan(&responseCommitID)
+	err = db.QueryRowContext(t.Context(), `SELECT commit_id FROM responses WHERE id = 1`).Scan(&responseCommitID)
 	require.NoError(t, err)
 	assert.Equal(t, targetCommitID, responseCommitID)
 }
@@ -621,7 +621,7 @@ func TestMigrationAddsCanonicalReviewColumns(t *testing.T) {
 	defer db.Close()
 
 	var count int
-	require.NoError(t, db.QueryRow(`
+	require.NoError(t, db.QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM pragma_table_info('reviews')
 		WHERE name IN ('verdict_bool', 'structured_output')
 	`).Scan(&count))
@@ -629,7 +629,7 @@ func TestMigrationAddsCanonicalReviewColumns(t *testing.T) {
 
 	// Verify the index exists
 	var indexCount int
-	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_reviews_verdict_bool'`).Scan(&indexCount))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_reviews_verdict_bool'`).Scan(&indexCount))
 	assert.Equal(t, 1, indexCount)
 }
 
@@ -659,7 +659,7 @@ func TestCommentsForCommitUseCommitIDIndex(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			db := test.open(t)
-			rows, err := db.Query(`
+			rows, err := db.QueryContext(t.Context(), `
 				EXPLAIN QUERY PLAN
 				SELECT id, commit_id, job_id, responder, response, source, created_at, uuid
 				FROM responses
@@ -700,7 +700,7 @@ func TestBudgetMigrationResumesColumnAdditions(t *testing.T) {
 			// Reproduce a startup interrupted after the lock column and any
 			// preceding original-agent columns have committed.
 			for _, column := range columns[i:] {
-				_, err := db.Exec(`ALTER TABLE review_jobs DROP COLUMN ` + column)
+				_, err := db.ExecContext(t.Context(), `ALTER TABLE review_jobs DROP COLUMN `+column)
 				require.NoError(t, err)
 			}
 			forgetSchemaVersion(t, db)
@@ -723,7 +723,7 @@ func TestMigrationAddsSessionIDColumn(t *testing.T) {
 	defer db.Close()
 
 	var count int
-	err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'session_id'`).Scan(&count)
+	err := db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'session_id'`).Scan(&count)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -766,7 +766,7 @@ func TestCompleteJobPopulatesVerdictBool(t *testing.T) {
 		}
 
 		var verdictBool sql.NullInt64
-		err = db.QueryRow(`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID).Scan(&verdictBool)
+		err = db.QueryRowContext(t.Context(), `SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID).Scan(&verdictBool)
 		if err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -802,7 +802,7 @@ func TestCompleteJobPopulatesVerdictBool(t *testing.T) {
 		}
 
 		var verdictBool sql.NullInt64
-		err = db.QueryRow(`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID).Scan(&verdictBool)
+		err = db.QueryRowContext(t.Context(), `SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID).Scan(&verdictBool)
 		if err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -834,7 +834,7 @@ func TestMigrationQuotedTableWithOrphanedFK(t *testing.T) {
 	}
 
 	// Create base schema
-	_, err = rawDB.Exec(`
+	_, err = rawDB.ExecContext(t.Context(), `
 		CREATE TABLE repos (
 			id INTEGER PRIMARY KEY,
 			root_path TEXT UNIQUE NOT NULL,
@@ -877,7 +877,7 @@ func TestMigrationQuotedTableWithOrphanedFK(t *testing.T) {
 	// Simulate a prior migration that rebuilt the table via RENAME,
 	// which causes SQLite to quote the table name in sqlite_master.
 	// Use the 'canceled' constraint (pre-applied/rebased).
-	_, err = rawDB.Exec(`
+	_, err = rawDB.ExecContext(t.Context(), `
 		CREATE TABLE review_jobs_temp (
 			id INTEGER PRIMARY KEY,
 			repo_id INTEGER NOT NULL REFERENCES repos(id),
@@ -921,7 +921,7 @@ func TestMigrationQuotedTableWithOrphanedFK(t *testing.T) {
 
 	// Verify the table name is quoted in sqlite_master
 	var tableSql string
-	if err := rawDB.QueryRow(
+	if err := rawDB.QueryRowContext(t.Context(),
 		`SELECT sql FROM sqlite_master WHERE type='table' AND name='review_jobs'`,
 	).Scan(&tableSql); err != nil {
 		rawDB.Close()
@@ -939,7 +939,7 @@ func TestMigrationQuotedTableWithOrphanedFK(t *testing.T) {
 	}
 
 	// Insert valid data
-	_, err = rawDB.Exec(`
+	_, err = rawDB.ExecContext(t.Context(), `
 		INSERT INTO repos (id, root_path, name)
 			VALUES (1, '/tmp/test', 'test');
 		INSERT INTO commits (id, repo_id, sha, author, subject, timestamp)
@@ -958,7 +958,7 @@ func TestMigrationQuotedTableWithOrphanedFK(t *testing.T) {
 
 	// Insert an orphaned row (repo_id=999 doesn't exist) to simulate
 	// pre-existing FK violations
-	_, err = rawDB.Exec(`
+	_, err = rawDB.ExecContext(t.Context(), `
 		INSERT INTO review_jobs (id, repo_id, commit_id, git_ref, agent, status)
 			VALUES (2, 999, NULL, 'orphan', 'codex', 'done');
 	`)
@@ -989,7 +989,7 @@ func TestMigrationQuotedTableWithOrphanedFK(t *testing.T) {
 	assert.True(t, job.Agentic, "agentic flag should survive rebuild migration")
 
 	// Verify applied/rebased statuses work
-	_, err = db.Exec(
+	_, err = db.ExecContext(t.Context(),
 		`UPDATE review_jobs SET status = 'applied' WHERE id = 1`,
 	)
 	if err != nil {
@@ -997,7 +997,7 @@ func TestMigrationQuotedTableWithOrphanedFK(t *testing.T) {
 			return false
 		}, "Setting applied status failed: %v", err)
 	}
-	_, err = db.Exec(
+	_, err = db.ExecContext(t.Context(),
 		`UPDATE review_jobs SET status = 'rebased' WHERE id = 1`,
 	)
 	if err != nil {
@@ -1008,7 +1008,7 @@ func TestMigrationQuotedTableWithOrphanedFK(t *testing.T) {
 
 	// Verify orphaned row still exists (migration didn't drop data)
 	var count int
-	db.QueryRow(`SELECT count(*) FROM review_jobs WHERE id = 2`).Scan(&count)
+	db.QueryRowContext(t.Context(), `SELECT count(*) FROM review_jobs WHERE id = 2`).Scan(&count)
 	if count != 1 {
 		assert.Condition(t, func() bool {
 			return false
@@ -1030,7 +1030,7 @@ func TestMigrationCleansUpStaleTemp(t *testing.T) {
 		}, "Failed to open raw DB: %v", err)
 	}
 
-	_, err = rawDB.Exec(`
+	_, err = rawDB.ExecContext(t.Context(), `
 		CREATE TABLE repos (
 			id INTEGER PRIMARY KEY,
 			root_path TEXT UNIQUE NOT NULL,
@@ -1119,7 +1119,7 @@ func TestMigrationCleansUpStaleTemp(t *testing.T) {
 
 	// Verify stale temp table was cleaned up
 	var tempCount int
-	err = db.QueryRow(
+	err = db.QueryRowContext(t.Context(),
 		`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='review_jobs_new'`,
 	).Scan(&tempCount)
 	if err != nil {
@@ -1134,7 +1134,7 @@ func TestMigrationCleansUpStaleTemp(t *testing.T) {
 	}
 
 	// Verify applied works and row was preserved
-	res, err := db.Exec(
+	res, err := db.ExecContext(t.Context(),
 		`UPDATE review_jobs SET status = 'applied' WHERE id = 1`,
 	)
 	if err != nil {
@@ -1156,7 +1156,7 @@ func TestMigrationCleansUpStaleTemp(t *testing.T) {
 
 	// Confirm status was actually set
 	var status string
-	err = db.QueryRow(
+	err = db.QueryRowContext(t.Context(),
 		`SELECT status FROM review_jobs WHERE id = 1`,
 	).Scan(&status)
 	if err != nil {
@@ -1265,7 +1265,7 @@ INSERT INTO reviews (id, job_id, agent, prompt, output)
 
 	// Verify retry_count was preserved (query directly since GetJobByID doesn't load it)
 	var retryCount int
-	err = db.QueryRow(`SELECT retry_count FROM review_jobs WHERE id = 1`).Scan(&retryCount)
+	err = db.QueryRowContext(t.Context(), `SELECT retry_count FROM review_jobs WHERE id = 1`).Scan(&retryCount)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -1279,7 +1279,7 @@ INSERT INTO reviews (id, job_id, agent, prompt, output)
 
 	// Verify prompt was preserved
 	var prompt string
-	err = db.QueryRow(`SELECT zstd_decompress(prompt) FROM job_content WHERE job_id = 1`).Scan(&prompt)
+	err = db.QueryRowContext(t.Context(), `SELECT zstd_decompress(prompt) FROM job_content WHERE job_id = 1`).Scan(&prompt)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -1311,7 +1311,7 @@ INSERT INTO reviews (id, job_id, agent, prompt, output)
 			return false
 		}, "GetOrCreateCommit failed: %v", err)
 	}
-	result2, err := db.Exec(`INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, status) VALUES (?, ?, 'newsha', 'codex', 'queued')`,
+	result2, err := db.ExecContext(t.Context(), `INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, status) VALUES (?, ?, 'newsha', 'codex', 'queued')`,
 		repo2.ID, commit2.ID)
 	if err != nil {
 		require.Condition(t, func() bool {
@@ -1321,7 +1321,7 @@ INSERT INTO reviews (id, job_id, agent, prompt, output)
 	newJobID, _ := result2.LastInsertId()
 
 	// Claim the job
-	_, err = db.Exec(`UPDATE review_jobs SET status = 'running', worker_id = 'worker-1' WHERE id = ?`, newJobID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'running', worker_id = 'worker-1' WHERE id = ?`, newJobID)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -1330,7 +1330,7 @@ INSERT INTO reviews (id, job_id, agent, prompt, output)
 
 	// Verify the claimed status
 	var claimedStatus string
-	err = db.QueryRow(`SELECT status FROM review_jobs WHERE id = ?`, newJobID).Scan(&claimedStatus)
+	err = db.QueryRowContext(t.Context(), `SELECT status FROM review_jobs WHERE id = ?`, newJobID).Scan(&claimedStatus)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -1343,7 +1343,7 @@ INSERT INTO reviews (id, job_id, agent, prompt, output)
 	}
 
 	// Cancel - this should succeed with new schema (would fail with old constraint)
-	_, err = db.Exec(`UPDATE review_jobs SET status = 'canceled' WHERE id = ?`, newJobID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'canceled' WHERE id = ?`, newJobID)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -1362,7 +1362,7 @@ func TestMigrationReasoningColumn(t *testing.T) {
 		)
 
 		var reasoning string
-		err := db.QueryRow(
+		err := db.QueryRowContext(t.Context(),
 			`SELECT reasoning FROM review_jobs WHERE id = 1`,
 		).Scan(&reasoning)
 		require.NoError(t, err, "Failed to read reasoning")
@@ -1378,7 +1378,7 @@ func TestMigrationReasoningColumn(t *testing.T) {
 		)
 
 		var reasoning string
-		err := db.QueryRow(
+		err := db.QueryRowContext(t.Context(),
 			`SELECT reasoning FROM review_jobs WHERE id = 1`,
 		).Scan(&reasoning)
 		require.NoError(t, err, "Failed to read reasoning")
@@ -1392,7 +1392,7 @@ func TestMigrationReasoningColumn(t *testing.T) {
 // done job. Only the columns the drain query touches are declared.
 func seedLegacyBatchWithJobs(t *testing.T, db *DB) {
 	t.Helper()
-	_, err := db.Exec(`
+	_, err := db.ExecContext(t.Context(), `
 		CREATE TABLE ci_pr_batches (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			github_repo TEXT,
@@ -1418,7 +1418,7 @@ func seedLegacyBatchWithJobs(t *testing.T, db *DB) {
 	setJobStatus(t, db, running.ID, JobStatusRunning)
 	setJobStatus(t, db, done.ID, JobStatusDone)
 
-	res, err := db.Exec(
+	res, err := db.ExecContext(t.Context(),
 		`INSERT INTO ci_pr_batches (github_repo, pr_number, head_sha, total_jobs)
 		 VALUES ('owner/repo', 1, 'headsha', 2)`)
 	require.NoError(t, err, "insert legacy batch")
@@ -1426,7 +1426,7 @@ func seedLegacyBatchWithJobs(t *testing.T, db *DB) {
 	require.NoError(t, err)
 
 	for _, jobID := range []int64{queued.ID, running.ID} {
-		_, err = db.Exec(
+		_, err = db.ExecContext(t.Context(),
 			`INSERT INTO ci_pr_batch_jobs (batch_id, job_id) VALUES (?, ?)`, batchID, jobID)
 		require.NoError(t, err, "link batch job %d", jobID)
 	}
@@ -1435,7 +1435,7 @@ func seedLegacyBatchWithJobs(t *testing.T, db *DB) {
 func legacyTableExists(t *testing.T, db *DB, name string) bool {
 	t.Helper()
 	var count int
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(t.Context(),
 		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, name).Scan(&count))
 	return count > 0
 }
@@ -1451,7 +1451,7 @@ func TestDrainAndDropOldCIBatchTables(t *testing.T) {
 	require.NoError(t, db.drainAndDropOldCIBatchTables())
 
 	var canceled int
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(t.Context(),
 		`SELECT COUNT(*) FROM review_jobs WHERE status='canceled' AND error='superseded by panel migration'`).Scan(&canceled))
 	assert.Equal(2, canceled, "queued+running batch jobs are canceled")
 	assert.False(legacyTableExists(t, db, "ci_pr_batches"))
@@ -1466,7 +1466,7 @@ func TestDrainAndDropOldCIBatchTablesHandlesMissingJoinTable(t *testing.T) {
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 
-	_, err := db.Exec(`
+	_, err := db.ExecContext(t.Context(), `
 		CREATE TABLE ci_pr_batches (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			github_repo TEXT,
@@ -1488,7 +1488,7 @@ func TestPatchIDMigration(t *testing.T) {
 	defer db.Close()
 
 	var count int
-	err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'patch_id'`).Scan(&count)
+	err := db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'patch_id'`).Scan(&count)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -1506,9 +1506,9 @@ func TestRepoNameMigration(t *testing.T) {
 	assert := assert.New(t)
 	db := openTestDB(t)
 	dbPath := ""
-	require.NoError(t, db.QueryRow("SELECT file FROM pragma_database_list WHERE name = 'main'").Scan(&dbPath))
+	require.NoError(t, db.QueryRowContext(t.Context(), "SELECT file FROM pragma_database_list WHERE name = 'main'").Scan(&dbPath))
 	// Seed the names stored by released versions, without requiring any checkout.
-	_, err := db.Exec("DELETE FROM sync_state WHERE key = 'repo_names_from_identity'")
+	_, err := db.ExecContext(t.Context(), "DELETE FROM sync_state WHERE key = 'repo_names_from_identity'")
 	require.NoError(t, err)
 	root := filepath.ToSlash(t.TempDir())
 	fixtures := []struct{ root, name, identity, want string }{
@@ -1520,7 +1520,7 @@ func TestRepoNameMigration(t *testing.T) {
 	}
 	var jobIDs []int64
 	for _, f := range fixtures {
-		result, err := db.Exec("INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)", f.root, f.name, f.identity)
+		result, err := db.ExecContext(t.Context(), "INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)", f.root, f.name, f.identity)
 		require.NoError(t, err)
 		id, err := result.LastInsertId()
 		require.NoError(t, err)

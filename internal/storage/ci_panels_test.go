@@ -28,7 +28,7 @@ func boolCount(s []bool, v bool) int {
 func countRepoJobs(t *testing.T, db *DB, repoID int64) int {
 	t.Helper()
 	var n int
-	err := db.QueryRow(`SELECT COUNT(*) FROM review_jobs WHERE repo_id = ?`, repoID).Scan(&n)
+	err := db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM review_jobs WHERE repo_id = ?`, repoID).Scan(&n)
 	require.NoError(t, err, "count review_jobs")
 	return n
 }
@@ -37,7 +37,7 @@ func countRepoJobs(t *testing.T, db *DB, repoID int64) int {
 func countCIPanels(t *testing.T, db *DB, githubRepo string, prNumber int) int {
 	t.Helper()
 	var n int
-	err := db.QueryRow(
+	err := db.QueryRowContext(t.Context(),
 		`SELECT COUNT(*) FROM ci_pr_panels WHERE github_repo = ? AND pr_number = ?`,
 		githubRepo, prNumber).Scan(&n)
 	require.NoError(t, err, "count ci_pr_panels")
@@ -49,7 +49,7 @@ func countCIPanels(t *testing.T, db *DB, githubRepo string, prNumber int) int {
 // seeds rows so the read queries can be exercised in isolation.
 func insertTestCIPanel(t *testing.T, db *DB, githubRepo string, prNumber int, headSHA string, panelRunUUID uuid.UUID, synthesisJobID int64) int64 {
 	t.Helper()
-	res, err := db.Exec(
+	res, err := db.ExecContext(t.Context(),
 		`INSERT INTO ci_pr_panels (github_repo, pr_number, head_sha, panel_run_uuid, synthesis_job_id) VALUES (?,?,?,?,?)`,
 		githubRepo, prNumber, headSHA, panelRunUUID, synthesisJobID)
 	require.NoError(t, err, "insert ci_pr_panels row")
@@ -62,7 +62,7 @@ func insertTestCIPanel(t *testing.T, db *DB, githubRepo string, prNumber int, he
 // tests) and returns its id.
 func seedPanelRow(t *testing.T, db *DB, githubRepo string, pr int, headSHA string) int64 {
 	t.Helper()
-	res, err := db.Exec(`INSERT INTO ci_pr_panels (github_repo, pr_number, head_sha, panel_run_uuid, created_at)
+	res, err := db.ExecContext(t.Context(), `INSERT INTO ci_pr_panels (github_repo, pr_number, head_sha, panel_run_uuid, created_at)
 		VALUES (?, ?, ?, ?, datetime('now'))`, githubRepo, pr, headSHA, testUUID("run-"+headSHA))
 	require.NoError(t, err)
 	id, err := res.LastInsertId()
@@ -172,7 +172,7 @@ func TestClaimPanelForPostingStaleReclaim(t *testing.T) {
 
 	// Force the claim to be older than the stale window: a crashed poster's
 	// lease becomes reclaimable.
-	_, err = db.Exec("UPDATE ci_pr_panels SET posting_claimed_at = datetime('now','-10 minutes') WHERE id = ?", id)
+	_, err = db.ExecContext(t.Context(), "UPDATE ci_pr_panels SET posting_claimed_at = datetime('now','-10 minutes') WHERE id = ?", id)
 	require.NoError(t, err)
 	gotStale, err := db.ClaimPanelForPosting(id, staleWindow)
 	require.NoError(t, err)
@@ -284,7 +284,7 @@ func TestGetTimedOutPanels(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, created)
 		require.Len(t, memberJobs, 1)
-		_, err = db.Exec(`UPDATE review_jobs SET status = 'running', started_at = ? WHERE id = ?`,
+		_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'running', started_at = ? WHERE id = ?`,
 			startedAt, memberJobs[0].ID)
 		require.NoError(t, err)
 		panel, err := db.GetCIPanelByPRSHA("o/r", pr, head)
@@ -296,7 +296,7 @@ func TestGetTimedOutPanels(t *testing.T) {
 	recentUnposted, _ := seedRun(2, "recent-unposted", time.Now().Format(time.RFC3339))
 	oldPosted, _ := seedRun(3, "old-posted", time.Now().Add(-1*time.Hour).Format(time.RFC3339))
 	queuedOld, queuedMember := seedRun(4, "queued-old", time.Now().Add(-1*time.Hour).Format(time.RFC3339))
-	_, err := db.Exec(`UPDATE review_jobs SET status = 'queued', started_at = NULL WHERE id = ?`, queuedMember.ID)
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'queued', started_at = NULL WHERE id = ?`, queuedMember.ID)
 	require.NoError(t, err)
 	require.NoError(t, db.MarkPanelPosted(oldPosted.ID, PanelOutcomeReviewPosted, "", ""))
 	_ = recentUnposted
@@ -326,7 +326,7 @@ func TestResetStaleJobsPreservesCIPanelCreatedAtAndClearsTimeoutRuntime(t *testi
 	require.True(t, created)
 	require.Len(t, memberJobs, 1)
 
-	_, err = db.Exec("UPDATE ci_pr_panels SET created_at = datetime('now','-1 hour') WHERE github_repo = 'o/r' AND pr_number = 12")
+	_, err = db.ExecContext(t.Context(), "UPDATE ci_pr_panels SET created_at = datetime('now','-1 hour') WHERE github_repo = 'o/r' AND pr_number = 12")
 	require.NoError(t, err)
 	createdBefore, err := db.LatestPanelTimeForPR("o/r", 12)
 	require.NoError(t, err)
@@ -336,7 +336,7 @@ func TestResetStaleJobsPreservesCIPanelCreatedAtAndClearsTimeoutRuntime(t *testi
 	require.NotNil(t, claimed)
 	assert.Equal(memberJobs[0].ID, claimed.ID)
 	assert.Equal(JobStatusRunning, claimed.Status)
-	_, err = db.Exec("UPDATE review_jobs SET started_at = datetime('now','-1 hour') WHERE id = ?", memberJobs[0].ID)
+	_, err = db.ExecContext(t.Context(), "UPDATE review_jobs SET started_at = datetime('now','-1 hour') WHERE id = ?", memberJobs[0].ID)
 	require.NoError(t, err)
 
 	rows, err := db.GetTimedOutPanels("o/r", 5*time.Minute)
@@ -439,9 +439,9 @@ func TestLatestPanelTimeForPR(t *testing.T) {
 	newer := seedPanelRow(t, db, "o/r", 7, "new")
 	seedPanelRow(t, db, "o/r", 8, "other-pr")
 	seedPanelRow(t, db, "x/y", 7, "other-repo")
-	_, err = db.Exec("UPDATE ci_pr_panels SET created_at = datetime('now','-10 minutes') WHERE id = ?", older)
+	_, err = db.ExecContext(t.Context(), "UPDATE ci_pr_panels SET created_at = datetime('now','-10 minutes') WHERE id = ?", older)
 	require.NoError(t, err)
-	_, err = db.Exec("UPDATE ci_pr_panels SET created_at = datetime('now','-1 minutes') WHERE id = ?", newer)
+	_, err = db.ExecContext(t.Context(), "UPDATE ci_pr_panels SET created_at = datetime('now','-1 minutes') WHERE id = ?", newer)
 	require.NoError(t, err)
 
 	got, err = db.LatestPanelTimeForPR("o/r", 7)
@@ -460,10 +460,10 @@ func TestLatestPanelTimeForPRHandlesMixedTimestampFormats(t *testing.T) {
 
 	older := seedPanelRow(t, db, "o/r", 7, "old-rfc3339")
 	newer := seedPanelRow(t, db, "o/r", 7, "new-sqlite")
-	_, err := db.Exec("UPDATE ci_pr_panels SET created_at = ? WHERE id = ?",
+	_, err := db.ExecContext(t.Context(), "UPDATE ci_pr_panels SET created_at = ? WHERE id = ?",
 		"2026-06-01T18:16:42Z", older)
 	require.NoError(t, err)
-	_, err = db.Exec("UPDATE ci_pr_panels SET created_at = ? WHERE id = ?",
+	_, err = db.ExecContext(t.Context(), "UPDATE ci_pr_panels SET created_at = ? WHERE id = ?",
 		"2026-06-01 18:51:02", newer)
 	require.NoError(t, err)
 
@@ -668,7 +668,7 @@ func TestCIPanelTerminalMetricsRoundTrip(t *testing.T) {
 	defer db.Close()
 
 	id := seedPanelRow(t, db, "o/r", 42, "headsha42")
-	_, err := db.Exec(`UPDATE ci_pr_panels
+	_, err := db.ExecContext(t.Context(), `UPDATE ci_pr_panels
 		SET outcome = ?, first_attempt_at = '2026-07-01T00:00:00Z', attempt_count = 3
 		WHERE id = ?`, PanelOutcomeReviewPosted, id)
 	require.NoError(t, err)
@@ -904,7 +904,7 @@ func TestMarkPanelsAllowStalePost(t *testing.T) {
 
 	flagged := func(id int64) bool {
 		var v bool
-		require.NoError(t, db.QueryRow(
+		require.NoError(t, db.QueryRowContext(t.Context(),
 			`SELECT allow_stale_post FROM ci_pr_panels WHERE id = ?`, id).Scan(&v))
 		return v
 	}

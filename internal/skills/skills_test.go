@@ -1209,7 +1209,7 @@ func TestReviewBranchSkillRefValidationBehavior(t *testing.T) {
 				"refs/remotes/team/upstream/main",
 				"refs/remotes/origin/main",
 			} {
-				precondition := exec.Command("git", "rev-parse", "--verify", "--end-of-options", ref)
+				precondition := exec.CommandContext(t.Context(), "git", "rev-parse", "--verify", "--end-of-options", ref)
 				precondition.Dir = work.Path()
 				require.Error(t, precondition.Run(), "%s must start unfetched", ref)
 			}
@@ -1221,7 +1221,7 @@ func TestReviewBranchSkillRefValidationBehavior(t *testing.T) {
 			}
 
 			localHeadRefs := func() string {
-				cmd := exec.Command("git", "for-each-ref", "--format=%(refname)", "refs/heads")
+				cmd := exec.CommandContext(t.Context(), "git", "for-each-ref", "--format=%(refname)", "refs/heads")
 				cmd.Dir = work.Path()
 				output, err := cmd.Output()
 				require.NoError(t, err)
@@ -1246,7 +1246,7 @@ func TestReviewBranchSkillRefValidationBehavior(t *testing.T) {
 			require.NoError(t, os.WriteFile(scriptPath, []byte(script), 0o600))
 
 			var stdout, stderr strings.Builder
-			cmd := exec.Command(bash, scriptPath)
+			cmd := exec.CommandContext(t.Context(), bash, scriptPath)
 			cmd.Dir = work.Path()
 			cmd.Stdout = &stdout
 			cmd.Stderr = &stderr
@@ -1275,7 +1275,7 @@ func TestReviewBranchSkillRefValidationBehavior(t *testing.T) {
 				"refs/remotes/team/upstream/main",
 				"refs/remotes/origin/main",
 			} {
-				remoteRef := exec.Command("git", "rev-parse", "--verify", "--end-of-options", ref)
+				remoteRef := exec.CommandContext(t.Context(), "git", "rev-parse", "--verify", "--end-of-options", ref)
 				remoteRef.Dir = work.Path()
 				output, err := remoteRef.Output()
 				wantSHA, wantRef := tc.wantRemoteRefs[ref]
@@ -1322,7 +1322,7 @@ func TestSkillRefValidationBlocksAcceptValidRefs(t *testing.T) {
 	run := func(t *testing.T, block, ref string) (bool, string) {
 		script := refLineRE.ReplaceAllLiteralString(block, "<<'ROBOREV_REF'\n"+ref+"\n")
 		script = roborevLineRE.ReplaceAllLiteralString(script, `printf 'ROBOREV_WOULD_RUN\n'`)
-		cmd := exec.Command(bash, "-c", script)
+		cmd := exec.CommandContext(t.Context(), bash, "-c", script)
 		cmd.Dir = work.Path()
 		out, err := cmd.CombinedOutput()
 		return err == nil && strings.Contains(string(out), "ROBOREV_WOULD_RUN"), string(out)

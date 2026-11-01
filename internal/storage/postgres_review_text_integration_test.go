@@ -114,7 +114,7 @@ func TestIntegrationReviewSyncPreservesSQLiteText(t *testing.T) { //nolint:paral
 		RepoID: repo.ID, CommitID: commit.ID, GitRef: "HEAD", Agent: "test", JobType: JobTypeTask,
 	})
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job.ID)
 	require.NoError(t, err)
 	prompt, output := "café\xe9\x00", "résumé\xff"
 	require.NoError(t, db.SaveJobPrompt(job.ID, prompt))
@@ -128,7 +128,7 @@ func TestIntegrationReviewSyncPreservesSQLiteText(t *testing.T) { //nolint:paral
 	require.NoError(t, err)
 	assert.Equal(1, stats.PushedReviews)
 	var pgPrompt, pgOutput string
-	require.NoError(t, env.Pool.Pool().QueryRow(env.Ctx,
+	require.NoError(t, env.Pool.Pool().QueryRow(env.T.Context(),
 		`SELECT j.prompt, r.output FROM reviews r JOIN review_jobs j ON j.uuid = r.job_uuid WHERE r.uuid = $1`, *review.UUID,
 	).Scan(&pgPrompt, &pgOutput))
 	assert.Equal("café\uFFFD\uFFFD", pgPrompt)
@@ -143,6 +143,6 @@ func TestIntegrationReviewSyncPreservesSQLiteText(t *testing.T) { //nolint:paral
 	require.NoError(t, err)
 	assert.Equal([]byte(prompt), []byte(stored.Prompt))
 	var sqliteOutput string
-	require.NoError(t, db.QueryRow(`SELECT output FROM reviews WHERE id = ?`, review.ID).Scan(&sqliteOutput))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT output FROM reviews WHERE id = ?`, review.ID).Scan(&sqliteOutput))
 	assert.Equal([]byte(output), []byte(sqliteOutput))
 }

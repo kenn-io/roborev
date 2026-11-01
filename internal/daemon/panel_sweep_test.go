@@ -179,7 +179,7 @@ func TestPanelSweepClaimOwnership(t *testing.T) {
 			}
 			tc.Pool.runningJobsMu.Unlock()
 			if test.clockRollback {
-				_, err := tc.DB.Exec(`UPDATE review_jobs SET started_at = ? WHERE id = ?`, time.Now().Add(-time.Hour).Format(time.RFC3339Nano), claimed.ID)
+				_, err := tc.DB.ExecContext(t.Context(), `UPDATE review_jobs SET started_at = ? WHERE id = ?`, time.Now().Add(-time.Hour).Format(time.RFC3339Nano), claimed.ID)
 				require.NoError(t, err)
 			}
 			server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: tc.Broadcaster}
@@ -224,10 +224,10 @@ func TestPanelSweepRecoversRejectedWorkerFailure(t *testing.T) {
 			})
 			_, members, synth := enqueuePanelRun(t, tc, "sweep-panel", []memberSpec{{name: "m0", agent: agentName}})
 			if test.err != nil {
-				_, err := tc.DB.Exec(`UPDATE review_jobs SET retry_count = ? WHERE id = ?`, maxRetries, members[0].ID)
+				_, err := tc.DB.ExecContext(t.Context(), `UPDATE review_jobs SET retry_count = ? WHERE id = ?`, maxRetries, members[0].ID)
 				require.NoError(t, err)
 			}
-			_, err := tc.DB.Exec("CREATE TRIGGER reject_worker_write " + fmt.Sprintf(test.trigger, members[0].ID) + " BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END")
+			_, err := tc.DB.ExecContext(t.Context(), "CREATE TRIGGER reject_worker_write "+fmt.Sprintf(test.trigger, members[0].ID)+" BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END")
 			require.NoError(t, err)
 			subscriber, events := tc.Broadcaster.Subscribe(tc.Repo.RootPath)
 			defer tc.Broadcaster.Unsubscribe(subscriber)
@@ -264,7 +264,7 @@ func TestPanelSweepRecoversRejectedWorkerFailure(t *testing.T) {
 			before := tc.assertJobStatus(t, members[0].ID, storage.JobStatusRunning)
 			_, err = tc.DB.GetReviewByJobID(members[0].ID)
 			require.Error(t, err)
-			_, err = tc.DB.Exec(`DROP TRIGGER reject_worker_write`)
+			_, err = tc.DB.ExecContext(t.Context(), `DROP TRIGGER reject_worker_write`)
 			require.NoError(t, err)
 
 			// The worker can already be claiming its next job in SQLite after

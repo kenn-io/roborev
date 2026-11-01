@@ -103,7 +103,7 @@ func TestEnqueuePanelPersistsOneExperimentForWholeRun(t *testing.T) {
 	}
 
 	var assignmentCount int
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(t.Context(),
 		`SELECT COUNT(*) FROM experiment_assignments WHERE review_unit_uuid = ?`,
 		response.PanelRunUUID,
 	).Scan(&assignmentCount))
@@ -373,7 +373,7 @@ func TestPanelExperimentResumesCompatibleMemberSession(t *testing.T) {
 		claimed.ID, "test", "prompt", "No issues found.",
 	))
 	const sessionID = "session-panel-1"
-	_, err = db.Exec(`UPDATE review_jobs SET session_id = ? WHERE id = ?`, sessionID, claimed.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = ? WHERE id = ?`, sessionID, claimed.ID)
 	require.NoError(t, err)
 
 	repo.WriteFile(".roborev.toml", strings.Replace(
@@ -517,7 +517,7 @@ func TestExperimentSessionReuseStaysOnSourceMachine(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, &first.PanelRunUUID, claimed.PanelRunUUID)
 	require.NoError(t, testutil.CompleteReviewFixture(db, claimed.ID, "test", "prompt", "No issues found."))
-	_, err = db.Exec(`UPDATE review_jobs SET session_id = ?, source_machine_id = ? WHERE id = ?`,
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = ?, source_machine_id = ? WHERE id = ?`,
 		"foreign-session", testUUID("foreign-machine"), claimed.ID)
 	require.NoError(t, err)
 

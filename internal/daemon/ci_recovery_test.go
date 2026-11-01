@@ -123,7 +123,7 @@ func TestCIPollerRestartRecoversExhaustedReview(t *testing.T) {
 
 	// If repair did not help, the normal three-failure budget still stops work.
 	for range 3 {
-		_, err = h.DB.Exec(`UPDATE ci_pr_review_attempts SET next_attempt_at = datetime('now','-1 hour')`)
+		_, err = h.DB.ExecContext(t.Context(), `UPDATE ci_pr_review_attempts SET next_attempt_at = datetime('now','-1 hour')`)
 		require.NoError(t, err)
 		require.NoError(t, h.Poller.retryDueReviewAttempts(t.Context(), "acme/api", []ghPR{pr}, h.Cfg))
 		current, err := h.DB.GetActiveCIPanelByPRSHA("acme/api", pr.Number, pr.HeadRefOid)
@@ -310,7 +310,7 @@ func TestCIPanelCanceledRerunKeepsPostedReview(t *testing.T) {
 				}
 				h.markJobFailed(t, rerun.Body.JobID, "no member output")
 				h.Poller.handleReviewFailed(ciEvent(rerun.Body.JobID, "review.failed"))
-				_, err = h.DB.Exec(`UPDATE ci_pr_review_attempts SET next_attempt_at = datetime('now', '-1 hour')`)
+				_, err = h.DB.ExecContext(t.Context(), `UPDATE ci_pr_review_attempts SET next_attempt_at = datetime('now', '-1 hour')`)
 				require.NoError(t, err)
 				require.NoError(t, h.Poller.retryDueReviewAttempts(t.Context(), "acme/api", []ghPR{pr}, h.Cfg))
 				retry, err := h.DB.GetActiveCIPanelByPRSHA("acme/api", 7, "head-a")
@@ -352,11 +352,11 @@ func TestCIPanelRerunRetainsFailureHealthUntilDelivery(t *testing.T) {
 				h.Poller.handleReviewFailed(ciEvent(synth.ID, "review.failed"))
 			}
 			h.Poller.poll(t.Context())
-			require.False(t, decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy)
+			require.False(t, decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet)).Healthy)
 			rerun, err := server.humaRerunJob(t.Context(), &RerunJobInput{Body: RerunJobRequest{JobID: synth.ID}})
 			require.NoError(t, err)
 			h.Poller.poll(t.Context())
-			assert.False(t, decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy,
+			assert.False(t, decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet)).Healthy,
 				"queueing a rerun does not deliver a review")
 
 			members, err := h.DB.GetPanelMembers(*rerun.Body.RunUUID)
@@ -368,7 +368,7 @@ func TestCIPanelRerunRetainsFailureHealthUntilDelivery(t *testing.T) {
 			h.Poller.handleReviewCompleted(ciEvent(rerun.Body.JobID, "review.completed"))
 			require.Len(t, *comments, 1)
 			h.Poller.poll(t.Context())
-			assert.True(t, decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy)
+			assert.True(t, decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet)).Healthy)
 		})
 	}
 }
@@ -406,9 +406,9 @@ func TestCIPanelRerunRejectsMissingDeliveryTarget(t *testing.T) {
 		[]jobSpec{{Agent: "test", Status: "done", Output: "No issues found."}})
 	h.completeSynthesisWithReview(t, synth.ID, "No issues found.")
 	// Older closed-PR cleanup removed mappings but preserved CI job ownership.
-	_, err := h.DB.Exec(`UPDATE review_jobs SET source = ? WHERE panel_run_uuid = ?`, storage.JobSourceCI, panel.PanelRunUUID)
+	_, err := h.DB.ExecContext(t.Context(), `UPDATE review_jobs SET source = ? WHERE panel_run_uuid = ?`, storage.JobSourceCI, panel.PanelRunUUID)
 	require.NoError(t, err)
-	_, err = h.DB.Exec(`DELETE FROM ci_pr_panels WHERE id = ?`, panel.ID)
+	_, err = h.DB.ExecContext(t.Context(), `DELETE FROM ci_pr_panels WHERE id = ?`, panel.ID)
 	require.NoError(t, err)
 	server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
 	t.Cleanup(func() { require.NoError(t, server.Close()) })

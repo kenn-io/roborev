@@ -133,7 +133,7 @@ func TestCanceledWaitingClaimKeepsCallerEventOwnership(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, current.WorkerID)
 	var invoked bool
-	require.NoError(t, tc.DB.QueryRow(`SELECT agent_invoked FROM review_jobs WHERE id = ?`, job.ID).Scan(&invoked))
+	require.NoError(t, tc.DB.QueryRowContext(t.Context(), `SELECT agent_invoked FROM review_jobs WHERE id = ?`, job.ID).Scan(&invoked))
 	assert.False(t, invoked)
 }
 
