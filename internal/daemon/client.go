@@ -22,22 +22,22 @@ import (
 // This abstraction allows for easy mocking in tests.
 type Client interface {
 	// GetReviewBySHA retrieves a review by commit SHA
-	GetReviewBySHA(sha string) (*storage.Review, error)
+	GetReviewBySHA(ctx context.Context, sha string) (*storage.Review, error)
 
 	// GetReviewByJobID retrieves a review by job ID
-	GetReviewByJobID(jobID int64) (*storage.Review, error)
+	GetReviewByJobID(ctx context.Context, jobID int64) (*storage.Review, error)
 
 	// MarkReviewClosed marks a review as closed by job ID
-	MarkReviewClosed(jobID int64) error
+	MarkReviewClosed(ctx context.Context, jobID int64) error
 
 	// AddComment adds a comment to a job
-	AddComment(jobID int64, commenter, comment string) error
+	AddComment(ctx context.Context, jobID int64, commenter, comment string) error
 
 	// EnqueueReview enqueues a review job and returns the job ID
-	EnqueueReview(repoPath, gitRef, agentName string) (int64, error)
+	EnqueueReview(ctx context.Context, repoPath, gitRef, agentName string) (int64, error)
 
 	// WaitForReview waits for a job to complete and returns the review
-	WaitForReview(jobID int64) (*storage.Review, error)
+	WaitForReview(ctx context.Context, jobID int64) (*storage.Review, error)
 
 	// FindJobForCommit finds a job for a specific commit in a repo
 	FindJobForCommit(ctx context.Context, repoPath, sha string) (*storage.ReviewJob, error)
@@ -46,10 +46,10 @@ type Client interface {
 	FindPendingJobForRef(ctx context.Context, repoPath, gitRef string) (*storage.ReviewJob, error)
 
 	// GetCommentsForJob fetches comments for a job
-	GetCommentsForJob(jobID int64) ([]storage.Response, error)
+	GetCommentsForJob(ctx context.Context, jobID int64) ([]storage.Response, error)
 
 	// Remap updates git_ref for jobs whose commits were rewritten
-	Remap(req RemapRequest) (*RemapResult, error)
+	Remap(ctx context.Context, req RemapRequest) (*RemapResult, error)
 }
 
 // DefaultPollInterval is the default polling interval for WaitForReview.
@@ -73,8 +73,8 @@ func NewHTTPClient(ep DaemonEndpoint) *HTTPClient {
 }
 
 // NewHTTPClientFromRuntime creates an HTTP client using daemon runtime info
-func NewHTTPClientFromRuntime() (*HTTPClient, error) {
-	client, err := backoff.Retry(context.Background(), func() (*HTTPClient, error) {
+func NewHTTPClientFromRuntime(ctx context.Context) (*HTTPClient, error) {
+	client, err := backoff.Retry(ctx, func() (*HTTPClient, error) {
 		info, err := GetAnyRunningDaemon()
 		if err != nil {
 			return nil, err
@@ -93,8 +93,8 @@ func (c *HTTPClient) SetPollInterval(interval time.Duration) {
 	c.pollInterval = interval
 }
 
-func (c *HTTPClient) getReview(query *generated.GetReviewQuery) (*storage.Review, error) {
-	resp, err := c.apiClient().GetReviewRaw(context.Background(), &generated.GetReviewRequestOptions{Query: query})
+func (c *HTTPClient) getReview(ctx context.Context, query *generated.GetReviewQuery) (*storage.Review, error) {
+	resp, err := c.apiClient().GetReviewRaw(ctx, &generated.GetReviewRequestOptions{Query: query})
 	if err != nil {
 		return nil, err
 	}
@@ -114,21 +114,21 @@ func (c *HTTPClient) getReview(query *generated.GetReviewQuery) (*storage.Review
 	return &review, nil
 }
 
-func (c *HTTPClient) GetReviewBySHA(sha string) (*storage.Review, error) {
-	return c.getReview(&generated.GetReviewQuery{Sha: &sha})
+func (c *HTTPClient) GetReviewBySHA(ctx context.Context, sha string) (*storage.Review, error) {
+	return c.getReview(ctx, &generated.GetReviewQuery{Sha: &sha})
 }
 
-func (c *HTTPClient) GetReviewByJobID(jobID int64) (*storage.Review, error) {
-	return c.getReview(&generated.GetReviewQuery{JobID: &jobID})
+func (c *HTTPClient) GetReviewByJobID(ctx context.Context, jobID int64) (*storage.Review, error) {
+	return c.getReview(ctx, &generated.GetReviewQuery{JobID: &jobID})
 }
 
-func (c *HTTPClient) MarkReviewClosed(jobID int64) error {
+func (c *HTTPClient) MarkReviewClosed(ctx context.Context, jobID int64) error {
 	reqBody, _ := json.Marshal(map[string]any{
 		"job_id": jobID,
 		"closed": true,
 	})
 
-	resp, err := c.apiClient().CloseReviewRaw(context.Background(), nil, roborevclient.WithBody(reqBody))
+	resp, err := c.apiClient().CloseReviewRaw(ctx, nil, roborevclient.WithBody(reqBody))
 	if err != nil {
 		return err
 	}
@@ -142,14 +142,14 @@ func (c *HTTPClient) MarkReviewClosed(jobID int64) error {
 	return nil
 }
 
-func (c *HTTPClient) AddComment(jobID int64, commenter, comment string) error {
+func (c *HTTPClient) AddComment(ctx context.Context, jobID int64, commenter, comment string) error {
 	reqBody, _ := json.Marshal(map[string]any{
 		"job_id":    jobID,
 		"commenter": commenter,
 		"comment":   comment,
 	})
 
-	resp, err := c.apiClient().AddCommentRaw(context.Background(), nil, roborevclient.WithBody(reqBody))
+	resp, err := c.apiClient().AddCommentRaw(ctx, nil, roborevclient.WithBody(reqBody))
 	if err != nil {
 		return err
 	}
@@ -163,14 +163,14 @@ func (c *HTTPClient) AddComment(jobID int64, commenter, comment string) error {
 	return nil
 }
 
-func (c *HTTPClient) EnqueueReview(repoPath, gitRef, agentName string) (int64, error) {
+func (c *HTTPClient) EnqueueReview(ctx context.Context, repoPath, gitRef, agentName string) (int64, error) {
 	reqBody, _ := json.Marshal(EnqueueRequest{
 		RepoPath: repoPath,
 		GitRef:   gitRef,
 		Agent:    agentName,
 	})
 
-	resp, err := c.apiClient().EnqueueJobRaw(context.Background(), nil, roborevclient.WithBody(reqBody))
+	resp, err := c.apiClient().EnqueueJobRaw(ctx, nil, roborevclient.WithBody(reqBody))
 	if err != nil {
 		return 0, err
 	}
@@ -189,8 +189,8 @@ func (c *HTTPClient) EnqueueReview(repoPath, gitRef, agentName string) (int64, e
 	return job.ID, nil
 }
 
-func (c *HTTPClient) getJobByID(jobID int64) (*storage.ReviewJob, error) {
-	resp, err := c.apiClient().ListJobsRaw(context.Background(), &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{ID: &jobID}})
+func (c *HTTPClient) getJobByID(ctx context.Context, jobID int64) (*storage.ReviewJob, error) {
+	resp, err := c.apiClient().ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{ID: &jobID}})
 	if err != nil {
 		return nil, fmt.Errorf("polling job %d: %w", jobID, err)
 	}
@@ -212,16 +212,16 @@ func (c *HTTPClient) getJobByID(jobID int64) (*storage.ReviewJob, error) {
 	return &result.Jobs[0], nil
 }
 
-func (c *HTTPClient) WaitForReview(jobID int64) (*storage.Review, error) {
+func (c *HTTPClient) WaitForReview(ctx context.Context, jobID int64) (*storage.Review, error) {
 	missingReviewAttempts := 0
 	for {
-		job, err := c.getJobByID(jobID)
+		job, err := c.getJobByID(ctx, jobID)
 		if err != nil {
 			return nil, err
 		}
 		switch job.Status {
 		case storage.JobStatusDone:
-			review, err := c.GetReviewByJobID(jobID)
+			review, err := c.GetReviewByJobID(ctx, jobID)
 			if err != nil {
 				return nil, err
 			}
@@ -238,7 +238,11 @@ func (c *HTTPClient) WaitForReview(jobID int64) (*storage.Review, error) {
 			return nil, fmt.Errorf("job %d was canceled", jobID)
 		}
 
-		time.Sleep(c.pollInterval)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(c.pollInterval):
+		}
 	}
 }
 
@@ -258,7 +262,7 @@ func (c *HTTPClient) FindJobForCommit(ctx context.Context, repoPath, sha string)
 	}
 
 	// Query by git_ref and repo to avoid matching jobs from different repos
-	resp, err := c.apiClient().ListJobsRaw(context.Background(), &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{GitRef: &sha, Repo: []string{normalizedRepo}, Limit: new(int64(1))}})
+	resp, err := c.apiClient().ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{GitRef: &sha, Repo: []string{normalizedRepo}, Limit: new(int64(1))}})
 	if err != nil {
 		return nil, err
 	}
@@ -282,7 +286,7 @@ func (c *HTTPClient) FindJobForCommit(ctx context.Context, repoPath, sha string)
 	// Fallback: if repo filter yielded no results, try git_ref only.
 	// This handles worktrees where daemon stores the main repo root path
 	// but the caller uses the worktree path.
-	fallbackResp, err := c.apiClient().ListJobsRaw(context.Background(), &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{GitRef: &sha, Limit: new(int64(100))}})
+	fallbackResp, err := c.apiClient().ListJobsRaw(ctx, &generated.ListJobsRequestOptions{Query: &generated.ListJobsQuery{GitRef: &sha, Limit: new(int64(100))}})
 	if err != nil {
 		return nil, fmt.Errorf("fallback query for %s: %w", sha, err)
 	}
@@ -361,8 +365,8 @@ func (c *HTTPClient) FindPendingJobForRef(ctx context.Context, repoPath, gitRef 
 	return nil, nil
 }
 
-func (c *HTTPClient) GetCommentsForJob(jobID int64) ([]storage.Response, error) {
-	resp, err := c.apiClient().ListCommentsRaw(context.Background(), &generated.ListCommentsRequestOptions{Query: &generated.ListCommentsQuery{JobID: &jobID}})
+func (c *HTTPClient) GetCommentsForJob(ctx context.Context, jobID int64) ([]storage.Response, error) {
+	resp, err := c.apiClient().ListCommentsRaw(ctx, &generated.ListCommentsRequestOptions{Query: &generated.ListCommentsQuery{JobID: &jobID}})
 	if err != nil {
 		return nil, err
 	}
@@ -386,8 +390,8 @@ func (c *HTTPClient) GetCommentsForJob(jobID int64) ([]storage.Response, error) 
 // commit-based comments via storage.MergeResponses. When commitID > 0,
 // fetches legacy by commit ID. Otherwise, if gitRef looks like a SHA,
 // fetches by SHA. Callers may pre-validate gitRef via git.LooksLikeSHA.
-func (c *HTTPClient) GetAllCommentsForJob(jobID, commitID int64, gitRef string) ([]storage.Response, error) {
-	responses, err := c.GetCommentsForJob(jobID)
+func (c *HTTPClient) GetAllCommentsForJob(ctx context.Context, jobID, commitID int64, gitRef string) ([]storage.Response, error) {
+	responses, err := c.GetCommentsForJob(ctx, jobID)
 	if err != nil {
 		return nil, err
 	}
@@ -403,7 +407,7 @@ func (c *HTTPClient) GetAllCommentsForJob(jobID, commitID int64, gitRef string) 
 		legacyQuery = &generated.ListCommentsQuery{Sha: &gitRef}
 	}
 	if legacyQuery != nil {
-		legacyResp, err := c.apiClient().ListCommentsRaw(context.Background(), &generated.ListCommentsRequestOptions{Query: legacyQuery})
+		legacyResp, err := c.apiClient().ListCommentsRaw(ctx, &generated.ListCommentsRequestOptions{Query: legacyQuery})
 		if err == nil {
 			defer legacyResp.Body.Close()
 			if legacyResp.StatusCode == http.StatusOK {
@@ -439,13 +443,13 @@ type RemapResult struct {
 
 // Remap sends rewritten commit mappings to the daemon so that
 // review jobs are updated to point at the new SHAs.
-func (c *HTTPClient) Remap(req RemapRequest) (*RemapResult, error) {
+func (c *HTTPClient) Remap(ctx context.Context, req RemapRequest) (*RemapResult, error) {
 	reqBody, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
 	}
 
-	resp, err := c.apiClient().RemapJobsRaw(context.Background(), nil, roborevclient.WithBody(reqBody))
+	resp, err := c.apiClient().RemapJobsRaw(ctx, nil, roborevclient.WithBody(reqBody))
 	if err != nil {
 		return nil, err
 	}

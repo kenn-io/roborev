@@ -138,7 +138,7 @@ func TestEnqueueReviewRefine(t *testing.T) {
 		})
 		defer md.Close()
 
-		jobID, err := enqueueReview("/test/repo", "abc..def", "codex")
+		jobID, err := enqueueReview(t.Context(), "/test/repo", "abc..def", "codex")
 		require.NoError(t, err)
 
 		assert.EqualValues(t, 123, jobID)
@@ -154,7 +154,7 @@ func TestEnqueueReviewRefine(t *testing.T) {
 		})
 		defer md.Close()
 
-		_, err := enqueueReview("/bad/repo", "HEAD", "codex")
+		_, err := enqueueReview(t.Context(), "/bad/repo", "HEAD", "codex")
 		require.Error(t, err, "expected error")
 	})
 }
@@ -379,7 +379,7 @@ func TestRefineLoopFindFailedReviewPath(t *testing.T) {
 		}
 
 		commits := []string{"commit1sha", "commit2sha", "commit3sha"}
-		review, err := findFailedReviewForBranch(client, commits, nil)
+		review, err := findFailedReviewForBranch(t.Context(), client, commits, nil)
 
 		require.NoError(t, err)
 
@@ -396,7 +396,7 @@ func TestRefineLoopFindFailedReviewPath(t *testing.T) {
 		}
 
 		commits := []string{"commit1sha"}
-		review, err := findFailedReviewForBranch(client, commits, nil)
+		review, err := findFailedReviewForBranch(t.Context(), client, commits, nil)
 
 		require.NoError(t, err)
 
@@ -450,7 +450,7 @@ func TestRefineLoopBranchReviewPath(t *testing.T) {
 		}
 
 		commits := []string{"commit1", "commit2"}
-		review, err := findFailedReviewForBranch(client, commits, nil)
+		review, err := findFailedReviewForBranch(t.Context(), client, commits, nil)
 
 		// Should return nil since all pass
 		require.NoError(t, err)
@@ -469,7 +469,7 @@ func TestRefineLoopEnqueueBranchReview(t *testing.T) {
 		md := NewMockDaemon(t, MockRefineHooks{})
 		defer md.Close()
 
-		jobID, err := enqueueReview("/test/repo", "abc123..HEAD", "codex")
+		jobID, err := enqueueReview(t.Context(), "/test/repo", "abc123..HEAD", "codex")
 		require.NoError(t, err)
 
 		assert.NotEqual(t, 0, jobID)
@@ -493,7 +493,7 @@ func TestRefineLoopWaitForReviewCompletion(t *testing.T) {
 			ID:          1, JobID: 42, Output: "All tests pass. No issues found.", Closed: false,
 		}
 
-		review, err := waitForReviewWithInterval(42, 1*time.Millisecond)
+		review, err := waitForReviewWithInterval(t.Context(), 42, 1*time.Millisecond)
 		require.NoError(t, err)
 
 		require.NotNil(t, review, "expected review")
@@ -511,7 +511,7 @@ func TestRefineLoopWaitForReviewCompletion(t *testing.T) {
 			Error:  "Agent timeout after 10 minutes",
 		}
 
-		_, err := waitForReviewWithInterval(42, 1*time.Millisecond)
+		_, err := waitForReviewWithInterval(t.Context(), 42, 1*time.Millisecond)
 		require.Error(t, err, "expected error for failed job")
 		assert.Contains(t, err.Error(), "timeout")
 	})

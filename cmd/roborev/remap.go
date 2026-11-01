@@ -110,7 +110,7 @@ new commits. Called automatically by the post-rewrite hook.`,
 			ep := getDaemonEndpoint()
 			client := daemon.NewHTTPClient(ep)
 
-			result, err := client.Remap(daemon.RemapRequest{
+			result, err := client.Remap(cmd.Context(), daemon.RemapRequest{
 				RepoPath: repoRoot,
 				Mappings: mappings,
 			})

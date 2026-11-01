@@ -130,7 +130,7 @@ func TestWaitForReview(t *testing.T) {
 
 		daemonFromHandler(t, mux)
 
-		review, err := waitForReview(1)
+		review, err := waitForReview(t.Context(), 1)
 		require.NoError(t, err)
 
 		assert.Equal(t, "Review complete", review.Output)
@@ -156,7 +156,7 @@ func TestWaitForReview(t *testing.T) {
 
 		daemonFromHandler(t, mux)
 
-		review, err := waitForReviewWithInterval(1, 1*time.Millisecond)
+		review, err := waitForReviewWithInterval(t.Context(), 1, 1*time.Millisecond)
 		require.NoError(t, err)
 
 		assert.Equal(t, "Review after polling", review.Output)
@@ -169,7 +169,7 @@ func TestWaitForReview(t *testing.T) {
 		}
 		daemonFromHandler(t, newMockHandler(t, "GET", "/api/jobs", resp, 0))
 
-		_, err := waitForReview(1)
+		_, err := waitForReview(t.Context(), 1)
 		require.Error(t, err)
 
 		assert.Contains(t, err.Error(), "agent crashed")
@@ -181,7 +181,7 @@ func TestWaitForReview(t *testing.T) {
 		}
 		daemonFromHandler(t, newMockHandler(t, "GET", "/api/jobs", resp, 0))
 
-		_, err := waitForReview(1)
+		_, err := waitForReview(t.Context(), 1)
 		require.Error(t, err)
 
 		assert.Contains(t, err.Error(), "canceled")

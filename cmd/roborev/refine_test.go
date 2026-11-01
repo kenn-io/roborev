@@ -61,7 +61,7 @@ func newMockDaemonClient() *mockDaemonClient {
 	}
 }
 
-func (m *mockDaemonClient) GetReviewBySHA(sha string) (*storage.Review, error) {
+func (m *mockDaemonClient) GetReviewBySHA(_ context.Context, sha string) (*storage.Review, error) {
 	if m.getReviewBySHAErr != nil {
 		return nil, m.getReviewBySHAErr
 	}
@@ -72,7 +72,7 @@ func (m *mockDaemonClient) GetReviewBySHA(sha string) (*storage.Review, error) {
 	return review, nil
 }
 
-func (m *mockDaemonClient) GetReviewByJobID(jobID int64) (*storage.Review, error) {
+func (m *mockDaemonClient) GetReviewByJobID(_ context.Context, jobID int64) (*storage.Review, error) {
 	job, ok := m.jobs[jobID]
 	if !ok {
 		return nil, nil
@@ -80,7 +80,7 @@ func (m *mockDaemonClient) GetReviewByJobID(jobID int64) (*storage.Review, error
 	return m.reviews[job.GitRef], nil
 }
 
-func (m *mockDaemonClient) MarkReviewClosed(jobID int64) error {
+func (m *mockDaemonClient) MarkReviewClosed(_ context.Context, jobID int64) error {
 	if m.markClosedErr != nil {
 		return m.markClosedErr
 	}
@@ -88,17 +88,17 @@ func (m *mockDaemonClient) MarkReviewClosed(jobID int64) error {
 	return nil
 }
 
-func (m *mockDaemonClient) AddComment(jobID int64, commenter, comment string) error {
+func (m *mockDaemonClient) AddComment(_ context.Context, jobID int64, commenter, comment string) error {
 	m.addedComments = append(m.addedComments, addedComment{jobID, commenter, comment})
 	return nil
 }
 
-func (m *mockDaemonClient) EnqueueReview(repoPath, gitRef, agentName string) (int64, error) {
+func (m *mockDaemonClient) EnqueueReview(_ context.Context, repoPath, gitRef, agentName string) (int64, error) {
 	m.enqueuedReviews = append(m.enqueuedReviews, enqueuedReview{repoPath, gitRef, agentName})
 	return int64(len(m.enqueuedReviews)), nil
 }
 
-func (m *mockDaemonClient) WaitForReview(jobID int64) (*storage.Review, error) {
+func (m *mockDaemonClient) WaitForReview(_ context.Context, jobID int64) (*storage.Review, error) {
 	job, ok := m.jobs[jobID]
 	if !ok {
 		return nil, nil
@@ -126,11 +126,11 @@ func (m *mockDaemonClient) FindPendingJobForRef(ctx context.Context, repoPath, g
 	return nil, nil
 }
 
-func (m *mockDaemonClient) GetCommentsForJob(jobID int64) ([]storage.Response, error) {
+func (m *mockDaemonClient) GetCommentsForJob(_ context.Context, jobID int64) ([]storage.Response, error) {
 	return m.responses[jobID], nil
 }
 
-func (m *mockDaemonClient) Remap(req daemon.RemapRequest) (*daemon.RemapResult, error) {
+func (m *mockDaemonClient) Remap(_ context.Context, req daemon.RemapRequest) (*daemon.RemapResult, error) {
 	return &daemon.RemapResult{}, nil
 }
 
@@ -431,7 +431,7 @@ func TestFindFailedReviewForBranch(t *testing.T) {
 			client := newMockDaemonClient()
 			tt.setup(client)
 
-			found, err := findFailedReviewForBranch(client, tt.commits, tt.skip)
+			found, err := findFailedReviewForBranch(t.Context(), client, tt.commits, tt.skip)
 
 			if len(tt.wantErrs) > 0 {
 				require.Error(t, err)
