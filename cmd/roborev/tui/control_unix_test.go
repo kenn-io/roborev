@@ -19,7 +19,7 @@ func TestControlSocketPermissions(t *testing.T) {
 	tmpDir := t.TempDir()
 	socketPath := filepath.Join(tmpDir, "test.sock")
 
-	cleanup, err := startControlListener(
+	cleanup, err := startControlListener(t.Context(),
 		socketPath, newTestProgramUnix(t),
 	)
 	require.NoError(t, err, "startControlListener")
@@ -64,7 +64,7 @@ func TestRemoveStaleSocket_IncompatibleSocketRefused(t *testing.T) {
 		"bind dgram socket")
 	t.Cleanup(func() { os.Remove(path) })
 
-	err = removeStaleSocket(path)
+	err = removeStaleSocket(t.Context(), path)
 	require.Error(t, err,
 		"expected error for incompatible socket")
 	assert.FileExists(t, path,

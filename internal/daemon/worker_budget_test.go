@@ -580,7 +580,7 @@ func TestBudgetRoutingInvalidatesSpendAfterUnpricedAgentCancellation(t *testing.
 
 	require.NoError(t, tc.DB.CancelJob(job.ID))
 	require.True(t, tc.Pool.CancelJob(job.ID))
-	tc.Pool.finishRunningJob(testWorkerID, job.ID)
+	tc.Pool.finishRunningJob(t.Context(), testWorkerID, job.ID)
 
 	spend, err := tc.DB.GetBudgetSpend(now)
 	require.NoError(t, err)

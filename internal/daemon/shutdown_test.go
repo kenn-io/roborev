@@ -219,7 +219,7 @@ func TestStopKeepsBrowserAvailableUntilWorkersFinish(t *testing.T) {
 	server.allowWebCompilationStub = true
 	web := config.DefaultConfig().Web
 	web.Listen = "127.0.0.1:0"
-	runtime, err := server.startBrowserServer(web)
+	runtime, err := server.startBrowserServer(t.Context(), web)
 	require.NoError(t, err)
 	require.NotNil(t, runtime)
 

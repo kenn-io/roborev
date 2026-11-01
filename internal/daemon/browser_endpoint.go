@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/url"
@@ -18,7 +19,7 @@ type BrowserEndpoint struct {
 	authentication string
 }
 
-func ResolveBrowserEndpoint(web config.WebConfig) (BrowserEndpoint, error) {
+func ResolveBrowserEndpoint(ctx context.Context, web config.WebConfig) (BrowserEndpoint, error) {
 	if !web.Enabled {
 		return BrowserEndpoint{}, nil
 	}
@@ -29,7 +30,7 @@ func ResolveBrowserEndpoint(web config.WebConfig) (BrowserEndpoint, error) {
 	if !isLoopbackListenerHost(host) {
 		return BrowserEndpoint{}, fmt.Errorf("browser listener must use a loopback address")
 	}
-	listener, err := net.Listen("tcp", web.Listen)
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", web.Listen)
 	if err != nil {
 		return BrowserEndpoint{}, fmt.Errorf("listen for browser traffic: %w", err)
 	}

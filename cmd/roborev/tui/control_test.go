@@ -1088,7 +1088,7 @@ func TestControlSocketRoundtrip(t *testing.T) {
 	case <-runDone:
 	}
 
-	cleanup, err := startControlListener(socketPath, p)
+	cleanup, err := startControlListener(t.Context(), socketPath, p)
 	require.NoError(t, err, "startControlListener")
 	t.Cleanup(cleanup)
 
@@ -1156,7 +1156,7 @@ func TestControlSocketInvalidJSON(t *testing.T) {
 
 	// Invalid JSON is rejected at the socket handler level before
 	// Program.Send(), so no real HTTP server needed.
-	cleanup, err := startControlListener(
+	cleanup, err := startControlListener(t.Context(),
 		socketPath, newTestProgram(t),
 	)
 	require.NoError(t, err, "startControlListener")
@@ -1181,7 +1181,7 @@ func newTestProgram(t *testing.T) *tea.Program {
 func TestRemoveStaleSocket_NonexistentPath(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "nosuch.sock")
-	assert.NoError(t, removeStaleSocket(path))
+	assert.NoError(t, removeStaleSocket(t.Context(), path))
 }
 
 func TestRemoveStaleSocket_RegularFileRefused(t *testing.T) {
@@ -1189,7 +1189,7 @@ func TestRemoveStaleSocket_RegularFileRefused(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "file.txt")
 	require.NoError(t, os.WriteFile(path, []byte("data"), 0o600))
 
-	err := removeStaleSocket(path)
+	err := removeStaleSocket(t.Context(), path)
 	require.Error(t, err, "expected error for regular file")
 	assert.FileExists(t, path, "regular file should not be deleted")
 }
@@ -1202,7 +1202,7 @@ func TestRemoveStaleSocket_StaleSocketRemoved(t *testing.T) {
 	require.NoError(t, err)
 	ln.Close()
 
-	require.NoError(t, removeStaleSocket(path),
+	require.NoError(t, removeStaleSocket(t.Context(), path),
 		"expected stale socket to be removed")
 	assert.NoFileExists(t, path, "stale socket should be removed")
 }
@@ -1214,7 +1214,7 @@ func TestRemoveStaleSocket_LiveSocketRefused(t *testing.T) {
 	require.NoError(t, err)
 	defer ln.Close()
 
-	err = removeStaleSocket(path)
+	err = removeStaleSocket(t.Context(), path)
 	require.Error(t, err, "expected error for live socket")
 	assert.FileExists(t, path, "live socket should not be deleted")
 }
@@ -1244,7 +1244,7 @@ func TestStartControlListener_CreatesCustomParentDir(t *testing.T) {
 	socketPath := filepath.Join(base, "sub", "t.sock")
 	t.Cleanup(func() { os.RemoveAll(base) })
 
-	cleanup, err := startControlListener(
+	cleanup, err := startControlListener(t.Context(),
 		socketPath, newTestProgram(t),
 	)
 	require.NoError(t, err,
@@ -1307,7 +1307,7 @@ func TestCleanupStaleTUIRuntimes(t *testing.T) { //nolint:paralleltest // os.Set
 	}
 	require.NoError(WriteTUIRuntime(info))
 
-	cleaned := CleanupStaleTUIRuntimes()
+	cleaned := CleanupStaleTUIRuntimes(t.Context())
 	assert.Equal(1, cleaned)
 
 	runtimes, _ := ListAllTUIRuntimes()
@@ -1334,7 +1334,7 @@ func TestCleanupStaleTUIRuntimes_NonSocketPreserved(t *testing.T) { //nolint:par
 	}
 	require.NoError(WriteTUIRuntime(info))
 
-	cleaned := CleanupStaleTUIRuntimes()
+	cleaned := CleanupStaleTUIRuntimes(t.Context())
 	assert.Equal(1, cleaned)
 
 	// Metadata should be gone.

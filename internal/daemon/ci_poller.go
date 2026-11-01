@@ -1622,7 +1622,7 @@ func (p *CIPoller) maybeAppendDesignMember(
 	}
 	hh := autotype.Heuristics(h)
 
-	shas, err := listCommitsInRange(repo.RootPath, mergeBase, headSHA)
+	shas, err := listCommitsInRange(ctx, repo.RootPath, mergeBase, headSHA)
 	if err != nil {
 		log.Printf("CI poller: list commits in range failed (%v); falling back to head SHA only", err)
 		shas = []string{headSHA}
@@ -1840,8 +1840,8 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 	return memberOpts, synthOpts, nil
 }
 
-func listCommitsInRange(repoPath, base, head string) ([]string, error) {
-	cmd := exec.Command("git", "rev-list", "--reverse", base+".."+head)
+func listCommitsInRange(ctx context.Context, repoPath, base, head string) ([]string, error) {
+	cmd := exec.CommandContext(ctx, "git", "rev-list", "--reverse", base+".."+head)
 	procutil.HideConsole(cmd)
 	cmd.Dir = repoPath
 	out, err := cmd.Output()
@@ -1866,7 +1866,7 @@ func listCommitsInRange(repoPath, base, head string) ([]string, error) {
 func (p *CIPoller) findOrCloneRepo(
 	ctx context.Context, ghRepo string,
 ) (*storage.Repo, error) {
-	repo, err := p.findLocalRepo(ghRepo)
+	repo, err := p.findLocalRepo(ctx, ghRepo)
 	if err == nil {
 		return repo, nil
 	}
@@ -1881,7 +1881,7 @@ func (p *CIPoller) findOrCloneRepo(
 // findLocalRepo finds the local repo that corresponds to a GitHub "owner/repo" identifier.
 // It looks for repos whose identity contains the owner/repo pattern.
 // Matching is case-insensitive since GitHub owner/repo names are case-insensitive.
-func (p *CIPoller) findLocalRepo(ghRepo string) (*storage.Repo, error) {
+func (p *CIPoller) findLocalRepo(ctx context.Context, ghRepo string) (*storage.Repo, error) {
 	// Try common identity patterns (case-insensitive via DB query):
 	// - git@github.com:owner/repo.git
 	// - https://github.com/owner/repo.git
@@ -1909,7 +1909,7 @@ func (p *CIPoller) findLocalRepo(ghRepo string) (*storage.Repo, error) {
 	}
 
 	// Fall back: search all repos and check if identity ends with owner/repo
-	return p.findRepoByPartialIdentity(ghRepo)
+	return p.findRepoByPartialIdentity(ctx, ghRepo)
 }
 
 // ensureClone clones a GitHub repo into {DataDir}/clones/{owner}/{repo}
@@ -1937,7 +1937,7 @@ func (p *CIPoller) ensureClone(
 	} else if err != nil {
 		return nil, fmt.Errorf("stat clone path %s: %w", clonePath, err)
 	} else {
-		needsClone, err = cloneNeedsReplace(clonePath, ghRepo, p.githubAPIBaseURL())
+		needsClone, err = cloneNeedsReplace(ctx, clonePath, ghRepo, p.githubAPIBaseURL())
 		if err != nil {
 			return nil, err
 		}
@@ -1974,7 +1974,7 @@ func (p *CIPoller) ensureClone(
 		)
 	}
 
-	if err := ensureCloneRemoteURL(clonePath, ghRepo, p.githubAPIBaseURL()); err != nil {
+	if err := ensureCloneRemoteURL(ctx, clonePath, ghRepo, p.githubAPIBaseURL()); err != nil {
 		return nil, fmt.Errorf("sanitize clone remote for %s: %w", ghRepo, err)
 	}
 
@@ -2003,11 +2003,11 @@ func isValidRepoSegment(s string) bool {
 // and re-cloned. Returns (true, nil) if the path is not a valid git
 // repo or has a confirmed remote mismatch. Returns (false, err) on
 // operational errors to avoid destructive action on transient failures.
-func cloneNeedsReplace(path, ghRepo, rawBaseURL string) (bool, error) {
-	if !isValidGitRepo(path) {
+func cloneNeedsReplace(ctx context.Context, path, ghRepo, rawBaseURL string) (bool, error) {
+	if !isValidGitRepo(ctx, path) {
 		return true, nil
 	}
-	matches, err := cloneRemoteMatches(path, ghRepo, rawBaseURL)
+	matches, err := cloneRemoteMatches(ctx, path, ghRepo, rawBaseURL)
 	if err != nil {
 		return false, err
 	}
@@ -2015,8 +2015,9 @@ func cloneNeedsReplace(path, ghRepo, rawBaseURL string) (bool, error) {
 }
 
 // isValidGitRepo checks whether a path is a usable git working tree.
-func isValidGitRepo(path string) bool {
-	cmd := exec.Command(
+func isValidGitRepo(ctx context.Context, path string) bool {
+	cmd := exec.CommandContext(
+		ctx,
 		"git", "-C", path, "rev-parse", "--is-inside-work-tree",
 	)
 	procutil.HideConsole(cmd)
@@ -2033,11 +2034,12 @@ func isValidGitRepo(path string) bool {
 // Two-step approach: "git config --get" for locale-independent
 // origin-existence check (exit 1 = missing key), then
 // "git remote get-url" for the resolved URL (handles insteadOf).
-func cloneRemoteMatches(path, ghRepo, rawBaseURL string) (bool, error) {
+func cloneRemoteMatches(ctx context.Context, path, ghRepo, rawBaseURL string) (bool, error) {
 	// Step 1: check origin existence (locale-independent exit code).
 	// Use --local to avoid matching global/system config that could
 	// define remote.origin.url outside this repo.
-	cfgCmd := exec.Command(
+	cfgCmd := exec.CommandContext(
+		ctx,
 		"git", "-C", path,
 		"config", "--local", "--get", "remote.origin.url",
 	)
@@ -2072,7 +2074,8 @@ func cloneRemoteMatches(path, ghRepo, rawBaseURL string) (bool, error) {
 	}
 
 	// Step 2: get the resolved URL (expands insteadOf rewrites).
-	urlCmd := exec.Command(
+	urlCmd := exec.CommandContext(
+		ctx,
 		"git", "-C", path, "remote", "get-url", "origin",
 	)
 	procutil.HideConsole(urlCmd)
@@ -2086,13 +2089,13 @@ func cloneRemoteMatches(path, ghRepo, rawBaseURL string) (bool, error) {
 	return strings.EqualFold(got, ghRepo), nil
 }
 
-func ensureCloneRemoteURL(path, ghRepo, rawBaseURL string) error {
+func ensureCloneRemoteURL(ctx context.Context, path, ghRepo, rawBaseURL string) error {
 	want, err := ghpkg.CloneURLForBase(ghRepo, rawBaseURL)
 	if err != nil {
 		return err
 	}
 
-	cmd := exec.Command("git", "-C", path, "remote", "get-url", "origin")
+	cmd := exec.CommandContext(ctx, "git", "-C", path, "remote", "get-url", "origin")
 	procutil.HideConsole(cmd)
 	out, err := cmd.Output()
 	if err != nil {
@@ -2106,7 +2109,7 @@ func ensureCloneRemoteURL(path, ghRepo, rawBaseURL string) error {
 		return fmt.Errorf("origin %q does not match %s", redactRemoteURL(current), ghRepo)
 	}
 
-	cmd = exec.Command("git", "-C", path, "remote", "set-url", "origin", want)
+	cmd = exec.CommandContext(ctx, "git", "-C", path, "remote", "set-url", "origin", want)
 	procutil.HideConsole(cmd)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("set origin URL for %s: %w: %s", path, err, string(out))
@@ -2204,8 +2207,8 @@ func (p *CIPoller) callGitClone(
 // findRepoByPartialIdentity searches repos for a matching GitHub owner/repo pattern.
 // Matching is case-insensitive since GitHub owner/repo names are case-insensitive.
 // Returns an ambiguity error if multiple repos match.
-func (p *CIPoller) findRepoByPartialIdentity(ghRepo string) (*storage.Repo, error) {
-	rows, err := p.db.Query(`SELECT id, root_path, name, created_at, identity FROM repos WHERE identity IS NOT NULL AND identity != ''`)
+func (p *CIPoller) findRepoByPartialIdentity(ctx context.Context, ghRepo string) (*storage.Repo, error) {
+	rows, err := p.db.QueryContext(ctx, `SELECT id, root_path, name, created_at, identity FROM repos WHERE identity IS NOT NULL AND identity != ''`)
 	if err != nil {
 		return nil, err
 	}
@@ -2321,6 +2324,9 @@ func defaultPortForScheme(scheme string) string {
 }
 
 func (p *CIPoller) githubTokenForRepo(ghRepo string) string {
+	// The GitHub client helpers that call this do not carry the poll context
+	// yet, so token exchange and lookup start their own.
+	ctx := context.Background()
 	// Extract owner from "owner/repo"
 	owner, _, _ := strings.Cut(ghRepo, "/")
 	if p.tokenProvider != nil {
@@ -2328,14 +2334,14 @@ func (p *CIPoller) githubTokenForRepo(ghRepo string) string {
 		installationID := cfg.CI.InstallationIDForOwner(owner)
 		if installationID == 0 {
 			log.Printf("CI poller: no installation ID for owner %q, using fallback GitHub token", owner)
-		} else if token, err := p.tokenProvider.TokenForInstallation(installationID); err != nil {
+		} else if token, err := p.tokenProvider.TokenForInstallation(ctx, installationID); err != nil {
 			log.Printf("CI poller: WARNING: GitHub App token failed for %q, falling back to environment token: %v", owner, err)
 		} else {
 			return token
 		}
 	}
 	host, _ := gitHostForBaseURL(p.githubAPIBaseURL())
-	return ghpkg.ResolveAuthToken(context.Background(), ghpkg.EnvironmentToken(), host)
+	return ghpkg.ResolveAuthToken(ctx, ghpkg.EnvironmentToken(), host)
 }
 
 func (p *CIPoller) gitEnvForRepo(ghRepo string) []string {
@@ -2877,7 +2883,8 @@ func (p *CIPoller) panelCommentBody(row *storage.CIPanel, members []storage.Batc
 	if err != nil || rev == nil {
 		return raw(), nil // review unexpectedly missing -> raw fallback
 	}
-	includeCosts := p.resolveIncludeCosts(row.GithubRepo)
+	// Panel comment rendering has no caller context yet.
+	includeCosts := p.resolveIncludeCosts(context.Background(), row.GithubRepo)
 	verdict := rev.Verdict()
 	return formatPanelPRCommentWithHead(
 		commentConfig, rev, string(verdict), members, includeCosts, row.HeadSHA,
@@ -4357,7 +4364,7 @@ func (p *CIPoller) postPRComment(ghRepo string, prNumber int, body string) error
 	if err != nil {
 		return err
 	}
-	if p.resolveUpsertComments(ghRepo) {
+	if p.resolveUpsertComments(ctx, ghRepo) {
 		return client.UpsertPRComment(ctx, ghRepo, prNumber, body)
 	}
 	return client.CreatePRComment(ctx, ghRepo, prNumber, body)
@@ -4365,8 +4372,8 @@ func (p *CIPoller) postPRComment(ghRepo string, prNumber int, body string) error
 
 // resolveUpsertComments determines whether to upsert PR comments
 // for the given repo. Per-repo config takes priority over global.
-func (p *CIPoller) resolveUpsertComments(ghRepo string) bool {
-	repo, err := p.findLocalRepo(ghRepo)
+func (p *CIPoller) resolveUpsertComments(ctx context.Context, ghRepo string) bool {
+	repo, err := p.findLocalRepo(ctx, ghRepo)
 	if err == nil && repo != nil {
 		repoConfig, err := loadCIRepoConfig(repo.RootPath)
 		if err == nil && repoConfig.Config != nil &&
@@ -4379,9 +4386,9 @@ func (p *CIPoller) resolveUpsertComments(ghRepo string) bool {
 
 // resolveIncludeCosts determines whether CI PR comments should include token
 // cost estimates for the given repo. Per-repo config takes priority over global.
-func (p *CIPoller) resolveIncludeCosts(ghRepo string) bool {
+func (p *CIPoller) resolveIncludeCosts(ctx context.Context, ghRepo string) bool {
 	var repoCfg *config.RepoConfig
-	repo, err := p.findLocalRepo(ghRepo)
+	repo, err := p.findLocalRepo(ctx, ghRepo)
 	if err == nil && repo != nil {
 		if loaded, loadErr := loadCIRepoConfig(repo.RootPath); loadErr == nil {
 			repoCfg = loaded.Config

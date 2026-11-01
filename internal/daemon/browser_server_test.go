@@ -22,7 +22,7 @@ func TestBrowserServerStartsReadyAndKeepsShutdownPrivate(t *testing.T) {
 	server.allowWebCompilationStub = true
 	cfg := config.DefaultConfig()
 	cfg.Web.Listen = "127.0.0.1:0"
-	runtime, err := server.startBrowserServer(cfg.Web)
+	runtime, err := server.startBrowserServer(t.Context(), cfg.Web)
 	require.NoError(t, err)
 	require.NotNil(t, runtime)
 	assert.NotEmpty(t, runtime.Address)
@@ -55,7 +55,7 @@ func TestBrowserServerUsesConfiguredBasePathForRequestsAndCookies(t *testing.T) 
 	cfg := config.DefaultConfig()
 	cfg.Web.Listen = "127.0.0.1:0"
 	cfg.Web.BasePath = "/roborev-ci"
-	runtime, err := server.startBrowserServer(cfg.Web)
+	runtime, err := server.startBrowserServer(t.Context(), cfg.Web)
 	require.NoError(t, err)
 	require.NotNil(t, runtime)
 
@@ -83,7 +83,7 @@ func TestBrowserServerProxyAuthBootstrapsWithoutToken(t *testing.T) {
 	cfg.Web.Listen = "127.0.0.1:0"
 	cfg.Web.PublicOrigin = "https://reviews.example.com"
 	cfg.Web.AuthMode = config.WebAuthModeProxy
-	runtime, err := server.startBrowserServer(cfg.Web)
+	runtime, err := server.startBrowserServer(t.Context(), cfg.Web)
 	require.NoError(t, err)
 	require.NotNil(t, runtime)
 
@@ -116,7 +116,7 @@ func TestBrowserServerSkipsCompilationStubOutsideDevelopment(t *testing.T) {
 	}
 	server, _, _ := newTestServer(t)
 	server.allowWebCompilationStub = false
-	runtime, err := server.startBrowserServer(config.DefaultConfig().Web)
+	runtime, err := server.startBrowserServer(t.Context(), config.DefaultConfig().Web)
 	require.NoError(t, err)
 	require.NotNil(t, runtime)
 	assert.Empty(t, runtime.Origin)
@@ -127,7 +127,7 @@ func TestBrowserServerCannotStartAfterStop(t *testing.T) {
 	server, _, _ := newTestServer(t)
 	server.allowWebCompilationStub = true
 	require.NoError(t, server.Stop())
-	runtime, err := server.startBrowserServer(config.DefaultConfig().Web)
+	runtime, err := server.startBrowserServer(t.Context(), config.DefaultConfig().Web)
 	require.ErrorIs(t, err, http.ErrServerClosed)
 	assert.Nil(t, runtime)
 }
@@ -143,7 +143,7 @@ func TestBrowserServerClosesListenerWhenStartupRacesWithStop(t *testing.T) {
 	require.NoError(t, server.Stop())
 	cfg := config.DefaultConfig()
 	cfg.Web.Listen = address
-	runtime, err := server.startBrowserServer(cfg.Web)
+	runtime, err := server.startBrowserServer(t.Context(), cfg.Web)
 	require.ErrorIs(t, err, http.ErrServerClosed)
 	assert.Nil(t, runtime)
 
@@ -154,7 +154,7 @@ func TestBrowserServerClosesListenerWhenStartupRacesWithStop(t *testing.T) {
 
 func TestBrowserServerDisabled(t *testing.T) {
 	server, _, _ := newTestServer(t)
-	runtime, err := server.startBrowserServer(config.WebConfig{Enabled: false})
+	runtime, err := server.startBrowserServer(t.Context(), config.WebConfig{Enabled: false})
 	require.NoError(t, err)
 	require.NotNil(t, runtime)
 	assert.Empty(t, runtime.Origin)

@@ -3,6 +3,7 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"strconv"
 	"strings"
@@ -24,15 +25,18 @@ const (
 var identifyProcess = identifyProcessImpl
 
 func identifyProcessImpl(pid int) processIdentity {
+	// Callers check PID identity from daemon lifecycle and update paths that
+	// do not carry a context; the probe ends on its own.
+	ctx := context.Background()
 	pidStr := strconv.Itoa(pid)
 
 	// Try wmic first (available on most Windows versions)
-	if cmdLine := getCommandLineWmic(pidStr); cmdLine != "" {
+	if cmdLine := getCommandLineWmic(ctx, pidStr); cmdLine != "" {
 		return classifyCommandLine(cmdLine)
 	}
 
 	// Fall back to PowerShell Get-CimInstance (Win11 and newer without wmic)
-	if cmdLine := getCommandLinePowerShell(pidStr); cmdLine != "" {
+	if cmdLine := getCommandLinePowerShell(ctx, pidStr); cmdLine != "" {
 		return classifyCommandLine(cmdLine)
 	}
 
@@ -42,8 +46,8 @@ func identifyProcessImpl(pid int) processIdentity {
 
 // getCommandLineWmic tries to get process command line via wmic.
 // Returns empty string on failure or if no command line data.
-func getCommandLineWmic(pidStr string) string {
-	cmd := HiddenCommand("wmic", "process", "where", "ProcessId="+pidStr, "get", "commandline")
+func getCommandLineWmic(ctx context.Context, pidStr string) string {
+	cmd := HiddenCommand(ctx, "wmic", "process", "where", "ProcessId="+pidStr, "get", "commandline")
 	output, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -54,12 +58,12 @@ func getCommandLineWmic(pidStr string) string {
 
 // getCommandLinePowerShell tries to get process command line via PowerShell.
 // Returns empty string on failure or if no command line data.
-func getCommandLinePowerShell(pidStr string) string {
+func getCommandLinePowerShell(ctx context.Context, pidStr string) string {
 	// Use Get-CimInstance which is the modern replacement for wmic
 	// Force UTF-8 output to avoid UTF-16LE encoding issues when capturing stdout
 	script := `[Console]::OutputEncoding=[Text.Encoding]::UTF8;` +
 		`(Get-CimInstance Win32_Process -Filter "ProcessId=` + pidStr + `").CommandLine`
-	cmd := HiddenCommand("powershell", "-NoProfile", "-Command", script)
+	cmd := HiddenCommand(ctx, "powershell", "-NoProfile", "-Command", script)
 	output, err := cmd.Output()
 	if err != nil {
 		return ""

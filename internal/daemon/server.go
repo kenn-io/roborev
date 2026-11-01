@@ -373,7 +373,7 @@ func (s *Server) Start(ctx context.Context) error {
 			}
 		} else {
 			// TCP: find an available port first
-			addr, _, err := FindAvailablePort(ep.Address)
+			addr, _, err := FindAvailablePort(ctx, ep.Address)
 			if err != nil {
 				s.configWatcher.Stop()
 				return fmt.Errorf("find available port: %w", err)
@@ -474,14 +474,14 @@ func (s *Server) Start(ctx context.Context) error {
 	s.alternateEndpoint = alternate
 	s.endpointMu.Unlock()
 
-	if err := s.startRemoteServer(cfg.Remote); err != nil {
+	if err := s.startRemoteServer(ctx, cfg.Remote); err != nil {
 		_ = s.httpServer.Close()
 		s.configWatcher.Stop()
 		s.workerPool.Stop()
 		s.stopSearch()
 		return err
 	}
-	browserRuntime, err := s.startBrowserServer(cfg.Web)
+	browserRuntime, err := s.startBrowserServer(ctx, cfg.Web)
 	if err != nil {
 		s.abortRemoteServer()
 		_ = s.httpServer.Close()
@@ -513,7 +513,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	s.browserMu.Unlock()
 
-	s.captureDaemonStartedTelemetry(cfg)
+	s.captureDaemonStartedTelemetry(ctx, cfg)
 	s.startDailyTelemetryLoop(ctx, cfg)
 
 	// Notify systemd that the daemon is ready. No-op when not running
@@ -927,8 +927,8 @@ func (s *Server) SetTelemetry(client telemetry.Client) {
 	s.telemetry = client
 }
 
-func (s *Server) captureDaemonStartedTelemetry(cfg *config.Config) {
-	s.captureTelemetryEvent(telemetry.EventDaemonStarted, cfg)
+func (s *Server) captureDaemonStartedTelemetry(ctx context.Context, cfg *config.Config) {
+	s.captureTelemetryEvent(ctx, telemetry.EventDaemonStarted, cfg)
 	s.captureSetupFinishedTelemetry()
 }
 
@@ -1000,7 +1000,7 @@ func (s *Server) startDailyTelemetryLoop(ctx context.Context, cfg *config.Config
 			return
 		}
 
-		s.captureDailyTelemetry(cfg)
+		s.captureDailyTelemetry(ctx, cfg)
 
 		go func() {
 			ticker := time.NewTicker(dailyTelemetryInterval)
@@ -1013,29 +1013,29 @@ func (s *Server) startDailyTelemetryLoop(ctx context.Context, cfg *config.Config
 				case <-s.telemetryStop:
 					return
 				case <-ticker.C:
-					s.captureDailyTelemetry(cfg)
+					s.captureDailyTelemetry(ctx, cfg)
 				}
 			}
 		}()
 	})
 }
 
-func (s *Server) captureDailyTelemetry(cfg *config.Config) {
-	s.captureTelemetryEvent(telemetry.EventDaemonActive, cfg)
+func (s *Server) captureDailyTelemetry(ctx context.Context, cfg *config.Config) {
+	s.captureTelemetryEvent(ctx, telemetry.EventDaemonActive, cfg)
 }
 
-func (s *Server) captureTelemetryEvent(event string, cfg *config.Config) {
+func (s *Server) captureTelemetryEvent(ctx context.Context, event string, cfg *config.Config) {
 	if s.telemetry == nil || !s.telemetry.Enabled() {
 		return
 	}
 
-	props := s.telemetryProperties(cfg)
+	props := s.telemetryProperties(ctx, cfg)
 	if err := s.telemetry.Capture(event, props); err != nil {
 		log.Printf("Warning: capture telemetry event: %v", err)
 	}
 }
 
-func (s *Server) telemetryProperties(cfg *config.Config) map[string]any {
+func (s *Server) telemetryProperties(ctx context.Context, cfg *config.Config) map[string]any {
 	repoCount := 0
 	if repos, err := s.db.ListRepos(); err != nil {
 		log.Printf("Warning: failed to count repos for telemetry: %v", err)
@@ -1043,7 +1043,7 @@ func (s *Server) telemetryProperties(cfg *config.Config) map[string]any {
 		repoCount = len(repos)
 	}
 	reviewCount := 0
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM reviews`).Scan(&reviewCount); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM reviews`).Scan(&reviewCount); err != nil {
 		log.Printf("Warning: failed to count reviews for telemetry: %v", err)
 	}
 
@@ -3999,7 +3999,7 @@ func (s *Server) humaGetHealth(
 
 	dbHealthy := true
 	dbMessage := ""
-	if err := s.db.Ping(); err != nil {
+	if err := s.db.PingContext(ctx); err != nil {
 		dbHealthy = false
 		dbMessage = err.Error()
 		allHealthy = false

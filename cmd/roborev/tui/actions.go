@@ -405,13 +405,13 @@ func (m model) applyFixPatchInWorktree(jobID int64) tea.Cmd {
 		}
 
 		removeWorktree := func() {
-			if err := exec.Command("git", "-C", jobDetail.RepoPath, "worktree", "remove", "--force", wtDir).Run(); err != nil {
+			if err := exec.CommandContext(ctx, "git", "-C", jobDetail.RepoPath, "worktree", "remove", "--force", wtDir).Run(); err != nil {
 				os.RemoveAll(wtDir)
-				_ = exec.Command("git", "-C", jobDetail.RepoPath, "worktree", "prune").Run()
+				_ = exec.CommandContext(ctx, "git", "-C", jobDetail.RepoPath, "worktree", "prune").Run()
 			}
 		}
 
-		cmd := exec.Command("git", "-C", jobDetail.RepoPath, "worktree", "add", wtDir, jobDetail.Branch)
+		cmd := exec.CommandContext(ctx, "git", "-C", jobDetail.RepoPath, "worktree", "add", wtDir, jobDetail.Branch)
 		if out, cmdErr := cmd.CombinedOutput(); cmdErr != nil {
 			os.RemoveAll(wtDir)
 			return applyPatchResultMsg{
@@ -456,7 +456,7 @@ func (m model) checkApplyCommitPatch(ctx context.Context, jobID int64, jobDetail
 	if pfErr != nil {
 		return applyPatchResultMsg{jobID: jobID, err: pfErr}
 	}
-	dirty, dirtyErr := dirtyPatchFiles(targetDir, patchedFiles)
+	dirty, dirtyErr := dirtyPatchFiles(ctx, targetDir, patchedFiles)
 	if dirtyErr != nil {
 		return applyPatchResultMsg{
 			jobID: jobID,
@@ -507,7 +507,7 @@ func (m model) checkApplyCommitPatch(ctx context.Context, jobID int64, jobDetail
 		ref := gitrepo.ShortSHA(jobDetail.GitRef)
 		commitMsg = fmt.Sprintf("fix: apply roborev fix for %s (job #%d)", ref, jobID)
 	}
-	if err := commitPatch(targetDir, patch, commitMsg, commitOpts); err != nil {
+	if err := commitPatch(ctx, targetDir, patch, commitMsg, commitOpts); err != nil {
 		return applyPatchResultMsg{
 			jobID: jobID, parentJobID: parentJobID, success: true,
 			commitFailed: true, err: fmt.Errorf("patch applied but commit failed: %w", err),
@@ -516,7 +516,7 @@ func (m model) checkApplyCommitPatch(ctx context.Context, jobID int64, jobDetail
 
 	// Mark the fix job as applied on the server
 	resp, err := m.api.MarkJobAppliedWithResponse(
-		m.apiContext(),
+		ctx,
 		&daemonclient.MarkJobAppliedRequestOptions{
 			Body: &daemonclient.JobIDRequest{JobID: jobID},
 		},
@@ -535,7 +535,7 @@ func (m model) checkApplyCommitPatch(ctx context.Context, jobID int64, jobDetail
 }
 
 // commitPatch stages only the files touched by patch and commits them.
-func commitPatch(repoPath, patch, message string, opts robogit.CommitOptions) error {
+func commitPatch(ctx context.Context, repoPath, patch, message string, opts robogit.CommitOptions) error {
 	files, err := patchFiles(patch)
 	if err != nil {
 		return err
@@ -544,7 +544,7 @@ func commitPatch(repoPath, patch, message string, opts robogit.CommitOptions) er
 		return fmt.Errorf("no files found in patch")
 	}
 	args := append([]string{"-C", repoPath, "add", "--"}, files...)
-	addCmd := exec.Command("git", args...)
+	addCmd := exec.CommandContext(ctx, "git", args...)
 	addCmd.Env = append(os.Environ(), "GIT_LITERAL_PATHSPECS=1")
 	if out, err := addCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git add: %w: %s", err, out)
@@ -558,7 +558,7 @@ func commitPatch(repoPath, patch, message string, opts robogit.CommitOptions) er
 	}
 	commitArgs = append(commitArgs, "--only", "-m", message, "--")
 	commitArgs = append(commitArgs, files...)
-	commitCmd := exec.Command("git", commitArgs...)
+	commitCmd := exec.CommandContext(ctx, "git", commitArgs...)
 	commitCmd.Env = append(os.Environ(), "GIT_LITERAL_PATHSPECS=1")
 	if out, err := commitCmd.CombinedOutput(); err != nil {
 		if len(opts.CoAuthors) > 0 && robogit.IsUnsupportedCommitTrailerError(string(out)) {
@@ -573,9 +573,9 @@ func commitPatch(repoPath, patch, message string, opts robogit.CommitOptions) er
 }
 
 // dirtyPatchFiles returns the subset of files that have uncommitted changes.
-func dirtyPatchFiles(repoPath string, files []string) ([]string, error) {
+func dirtyPatchFiles(ctx context.Context, repoPath string, files []string) ([]string, error) {
 	// git diff --name-only shows unstaged changes; --cached shows staged
-	cmd := exec.Command("git", "-C", repoPath, "diff", "--name-only", "HEAD", "--")
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "diff", "--name-only", "HEAD", "--")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("git diff: %w", procutil.WithStderr(err))

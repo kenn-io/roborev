@@ -331,7 +331,7 @@ func (h *remoteHandler) stream(w http.ResponseWriter, r *http.Request, g remoteG
 	}
 }
 
-func (s *Server) startRemoteServer(cfg config.RemoteConfig) error {
+func (s *Server) startRemoteServer(ctx context.Context, cfg config.RemoteConfig) error {
 	if !cfg.Enabled {
 		return nil
 	}
@@ -343,7 +343,7 @@ func (s *Server) startRemoteServer(cfg config.RemoteConfig) error {
 	if address == "" {
 		address = "127.0.0.1:7375"
 	}
-	listener, err := net.Listen("tcp", address)
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", address)
 	if err != nil {
 		return err
 	}

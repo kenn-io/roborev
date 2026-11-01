@@ -1300,7 +1300,7 @@ func commitWithHookRetry(
 	}
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		sha, err := git.CreateCommitWithOptions(repoPath, commitMsg, commitOpts)
+		sha, err := git.CreateCommitWithOptions(ctx, repoPath, commitMsg, commitOpts)
 		if err == nil {
 			changedSubmodules, err := changedRefineSubmodules(
 				ctx, repoPath, submodulesBeforeRetry,

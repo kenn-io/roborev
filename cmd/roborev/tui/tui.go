@@ -1455,8 +1455,12 @@ func programOptionsForModel(m model) []tea.ProgramOption {
 
 // Run starts the interactive TUI.
 func Run(cfg Config) error {
+	ctx := cfg.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	// Clean up sockets from dead TUI processes before starting
-	CleanupStaleTUIRuntimes()
+	CleanupStaleTUIRuntimes(ctx)
 
 	var opts []option
 	if cfg.Context != nil {
@@ -1517,7 +1521,7 @@ func Run(cfg Config) error {
 				return
 			}
 
-			cleanup, err := startControlListener(socketPath, p)
+			cleanup, err := startControlListener(ctx, socketPath, p)
 			if err != nil {
 				log.Printf(
 					"warning: control socket disabled: %v", err,

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -36,24 +37,27 @@ func isPIDAliveForUpdateDefault(pid int) bool {
 }
 
 func identifyPIDForUpdate(pid int) updatePIDIdentity {
+	// Callers check PID identity from daemon lifecycle and update paths that
+	// do not carry a context; the probe ends on its own.
+	ctx := context.Background()
 	pidStr := strconv.Itoa(pid)
 
 	// Try WMIC first for older Windows environments.
-	if cmdLine := getCommandLineWmicForUpdate(pidStr); cmdLine != "" {
+	if cmdLine := getCommandLineWmicForUpdate(ctx, pidStr); cmdLine != "" {
 		return classifyCommandLineForUpdate(cmdLine)
 	}
 	// Fall back to PowerShell CIM query on newer systems.
-	if cmdLine := getCommandLinePowerShellForUpdate(pidStr); cmdLine != "" {
+	if cmdLine := getCommandLinePowerShellForUpdate(ctx, pidStr); cmdLine != "" {
 		return classifyCommandLineForUpdate(cmdLine)
 	}
 
 	return updatePIDUnknown
 }
 
-func getCommandLineWmicForUpdate(pidStr string) string {
+func getCommandLineWmicForUpdate(ctx context.Context, pidStr string) string {
 	// Use an absolute path to avoid PATH/CWD binary hijacking.
 	cmd := daemon.HiddenCommand(
-		wmicPath(), "process", "where", "ProcessId="+pidStr, "get", "commandline",
+		ctx, wmicPath(), "process", "where", "ProcessId="+pidStr, "get", "commandline",
 	)
 	output, err := cmd.Output()
 	if err != nil {
@@ -62,12 +66,12 @@ func getCommandLineWmicForUpdate(pidStr string) string {
 	return parseWmicOutputForUpdate(output)
 }
 
-func getCommandLinePowerShellForUpdate(pidStr string) string {
+func getCommandLinePowerShellForUpdate(ctx context.Context, pidStr string) string {
 	// Force UTF-8 output to avoid UTF-16LE capture issues.
 	script := `[Console]::OutputEncoding=[Text.Encoding]::UTF8;` +
 		`(Get-CimInstance Win32_Process -Filter "ProcessId=` + pidStr + `").CommandLine`
 	cmd := daemon.HiddenCommand(
-		powershellPath(), "-NoProfile", "-NonInteractive", "-Command", script,
+		ctx, powershellPath(), "-NoProfile", "-NonInteractive", "-Command", script,
 	)
 	output, err := cmd.Output()
 	if err != nil {

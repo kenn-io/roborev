@@ -63,8 +63,8 @@ func stubUpdateCommand(t *testing.T) *update.UpdateInfo {
 		reporter.Progress(got.Size, got.Size)
 		return nil
 	}
-	repairHooksForUpdateCommand = func(string, repairHookRunner) error { return nil }
-	updateSkillsForUpdateCommand = func(string) error { return nil }
+	repairHooksForUpdateCommand = func(context.Context, string, repairHookRunner) error { return nil }
+	updateSkillsForUpdateCommand = func(context.Context, string) error { return nil }
 	installedSkillsForUpdateCommand = func() bool { return true }
 	waitLegacyDaemonExitForCommand = func(context.Context, int) error { return nil }
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return nil, nil }
@@ -311,12 +311,12 @@ func TestUpdateCommandCancelDuringHookRepairSuppressesSuccess(t *testing.T) {
 		return nil, errors.New("not running")
 	}
 	ctx, cancel := context.WithCancel(t.Context())
-	repairHooksForUpdateCommand = func(string, repairHookRunner) error {
+	repairHooksForUpdateCommand = func(context.Context, string, repairHookRunner) error {
 		cancel()
 		return nil
 	}
 	var skillCalls atomic.Int32
-	updateSkillsForUpdateCommand = func(string) error {
+	updateSkillsForUpdateCommand = func(context.Context, string) error {
 		skillCalls.Add(1)
 		return nil
 	}

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -49,8 +50,10 @@ func identifyPIDForUpdate(pid int) updatePIDIdentity {
 		return updatePIDNotRoborev
 	}
 
+	// Callers check PID identity from daemon lifecycle and update paths that
+	// do not carry a context; the probe ends on its own.
 	// Use -ww to request untruncated command output on BSD/macOS ps.
-	cmd := exec.Command("ps", "-ww", "-p", strconv.Itoa(pid), "-o", "command=")
+	cmd := exec.CommandContext(context.Background(), "ps", "-ww", "-p", strconv.Itoa(pid), "-o", "command=")
 	output, err := cmd.Output()
 	if err != nil {
 		return updatePIDUnknown

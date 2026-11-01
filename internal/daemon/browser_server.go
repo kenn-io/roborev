@@ -17,7 +17,7 @@ import (
 
 var browserCapabilities = []string{"web-ui-v1", "web-session-v1", "analytics-v1"}
 
-func (s *Server) startBrowserServer(web config.WebConfig) (*BrowserRuntimeInfo, error) {
+func (s *Server) startBrowserServer(ctx context.Context, web config.WebConfig) (*BrowserRuntimeInfo, error) {
 	if !web.Enabled {
 		return &BrowserRuntimeInfo{DisabledReason: WebDisabledReasonConfig}, nil
 	}
@@ -35,7 +35,7 @@ func (s *Server) startBrowserServer(web config.WebConfig) (*BrowserRuntimeInfo, 
 	if authToken == "" && web.AuthMode != config.WebAuthModeProxy {
 		sharedKey = s.authKey
 	}
-	endpoint, err := ResolveBrowserEndpoint(web)
+	endpoint, err := ResolveBrowserEndpoint(ctx, web)
 	if err != nil {
 		return nil, err
 	}

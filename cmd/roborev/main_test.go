@@ -845,7 +845,7 @@ func TestInstalledSkillsNeedUpdateForQwenOnlyInstall(t *testing.T) {
 
 func TestRepairHooksAfterUpdateUsesRegisteredRepos(t *testing.T) {
 	var gotOpts repairHookOptions
-	repairHooksAfterUpdate("/tmp/bin", false, func(opts repairHookOptions) error {
+	repairHooksAfterUpdate(t.Context(), "/tmp/bin", false, func(opts repairHookOptions) error {
 		gotOpts = opts
 		return nil
 	})
@@ -864,7 +864,7 @@ func TestRepairHooksAfterUpdateUsesRegisteredRepos(t *testing.T) {
 func TestRepairHooksAfterUpdateSkipsWhenNoRestart(t *testing.T) {
 	called := false
 	output := captureStdout(t, func() {
-		repairHooksAfterUpdate("/tmp/bin", true, func(opts repairHookOptions) error {
+		repairHooksAfterUpdate(t.Context(), "/tmp/bin", true, func(opts repairHookOptions) error {
 			called = true
 			return nil
 		})
@@ -909,7 +909,7 @@ func main() {
 	require.NoError(t, err, "build fake roborev: %s", out)
 	t.Setenv("ROBOREV_FAKE_ARGS", argsPath)
 
-	repairHooksAfterUpdate(binDir, false, nil)
+	repairHooksAfterUpdate(t.Context(), binDir, false, nil)
 
 	gotBytes, err := os.ReadFile(argsPath)
 	require.NoError(t, err)

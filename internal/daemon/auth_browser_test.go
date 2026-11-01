@@ -39,7 +39,7 @@ func TestAuthBrowserRequiresLoginAndAllowsAuthenticatedAPI(t *testing.T) {
 			marker := filepath.Join(t.TempDir(), "comment-hook")
 			s.configWatcher.Config().Hooks = []config.HookConfig{{Event: "review.commented", Command: touchCmd(marker)}}
 			s.allowWebCompilationStub = true
-			runtime, err := s.startBrowserServer(cfg.Web)
+			runtime, err := s.startBrowserServer(t.Context(), cfg.Web)
 			require.NoError(t, err)
 			base := "http://" + runtime.Address
 			origin, err := url.Parse(runtime.Origin)
@@ -133,7 +133,7 @@ func TestAuthProxyBrowserRequiresSharedKeyForSession(t *testing.T) {
 	cfg.Web.Listen = "127.0.0.1:0"
 	cfg.Web.PublicOrigin = "https://reviews.example.com"
 	cfg.Web.AuthMode = config.WebAuthModeProxy
-	runtime, err := s.startBrowserServer(cfg.Web)
+	runtime, err := s.startBrowserServer(t.Context(), cfg.Web)
 	require.NoError(t, err)
 	base := "http://" + runtime.Address
 	bootstrap := func(key string) *http.Response {

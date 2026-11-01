@@ -342,15 +342,18 @@ func shellEscape(s string) string {
 // Errors are logged but never propagated.
 func (hr *HookRunner) runHook(command, workDir string) {
 	defer hr.wg.Done()
+	// Hooks run detached from the event that fired them: Stop waits for
+	// running hooks to finish instead of canceling them.
+	ctx := context.Background()
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
 		// Use PowerShell for reliable path handling and command execution.
 		// -NoProfile avoids loading user profiles that could slow or alter execution.
 		// -Command takes the rest as a PowerShell script string.
-		cmd = exec.Command("powershell", "-NoProfile", "-Command", command)
+		cmd = exec.CommandContext(ctx, "powershell", "-NoProfile", "-Command", command)
 		procutil.HideConsole(cmd)
 	} else {
-		cmd = exec.Command("sh", "-c", command)
+		cmd = exec.CommandContext(ctx, "sh", "-c", command)
 	}
 	if workDir != "" {
 		cmd.Dir = workDir
@@ -368,6 +371,8 @@ func (hr *HookRunner) runHook(command, workDir string) {
 
 func (hr *HookRunner) postWebhook(webhookURL string, event Event) {
 	defer hr.wg.Done()
+	// Hooks run detached from the event that fired them: Stop waits for
+	// running hooks to finish instead of canceling them.
 	safeURL := redactWebhookURL(webhookURL)
 
 	payload, err := json.Marshal(event)
@@ -376,7 +381,7 @@ func (hr *HookRunner) postWebhook(webhookURL string, event Event) {
 		return
 	}
 
-	req, err := http.NewRequest(http.MethodPost, webhookURL, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, webhookURL, bytes.NewReader(payload))
 	if err != nil {
 		hr.logger.Printf("Webhook error (url=%q): build request: %v", safeURL, redactURLError(err))
 		return

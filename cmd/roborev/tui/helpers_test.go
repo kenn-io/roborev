@@ -1050,7 +1050,7 @@ func TestDirtyPatchFilesError(t *testing.T) {
 	// dirtyPatchFiles should return an error when git diff fails
 	// (e.g., invalid repo path), not silently return nil.
 	missingPath := filepath.Join(t.TempDir(), "missing")
-	_, err := dirtyPatchFiles(missingPath, []string{"file.go"})
+	_, err := dirtyPatchFiles(t.Context(), missingPath, []string{"file.go"})
 	require.Error(t, err)
 
 	assert.Contains(t, err.Error(), "git diff")
