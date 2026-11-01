@@ -20,7 +20,7 @@ func initTestGitRepo(t *testing.T) string {
 
 func gitRevParse(t *testing.T, dir string, ref string) string {
 	t.Helper()
-	cmd := exec.Command("git", "-C", dir, "rev-parse", ref)
+	cmd := exec.CommandContext(t.Context(), "git", "-C", dir, "rev-parse", ref)
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("git rev-parse failed: %v", err)
@@ -32,7 +32,6 @@ func defaultTestRunContext(t *testing.T, repoDir string) RunContext {
 	t.Helper()
 
 	return RunContext{
-		Context:         t.Context(),
 		WorkingDir:      repoDir,
 		PollInterval:    1 * time.Millisecond,
 		PostCommitDelay: 1 * time.Millisecond,
@@ -41,7 +40,7 @@ func defaultTestRunContext(t *testing.T, repoDir string) RunContext {
 
 func execGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(t.Context(), "git", args...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {

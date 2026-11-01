@@ -30,7 +30,9 @@ func startDetachedDaemon(ctx context.Context, opts detachedDaemonOptions) error 
 	if opts.RefuseEphemeral && kitdaemon.IsEphemeralExecutable(exe) {
 		return fmt.Errorf("refusing to auto-start daemon from ephemeral binary %s", filepath.Base(exe))
 	}
-	cmd := exec.Command(exe, opts.Args...)
+	// The daemon outlives the command that starts it, so canceling ctx must
+	// not kill it.
+	cmd := exec.CommandContext(context.WithoutCancel(ctx), exe, opts.Args...)
 	cmd.Env = opts.Env
 	cmd.Stdout = opts.Stdout
 	cmd.Stderr = opts.Stderr

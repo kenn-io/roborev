@@ -413,13 +413,18 @@ func TestDaemonLifecycleEndToEnd(t *testing.T) {
 
 	// A live daemon must serve database-backed endpoints, not just ping.
 	client := ep.HTTPClient(10 * time.Second)
-	resp, err := client.Get(ep.BaseURL() + "/api/status")
+	statusRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ep.BaseURL()+"/api/status", nil)
+	require.NoError(t, err)
+	resp, err := client.Do(statusRequest)
 	require.NoError(t, err, "daemon must serve /api/status. Output:\n%s", outputBuffer.String())
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	resp.Body.Close()
 
 	// Stop via HTTP shutdown, the path the CLI uses on every platform.
-	resp, err = client.Post(ep.BaseURL()+"/api/shutdown", "application/json", nil)
+	shutdownRequest, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ep.BaseURL()+"/api/shutdown", nil)
+	require.NoError(t, err)
+	shutdownRequest.Header.Set("Content-Type", "application/json")
+	resp, err = client.Do(shutdownRequest)
 	require.NoError(t, err, "shutdown request failed")
 	resp.Body.Close()
 
@@ -472,7 +477,7 @@ func TestUpdateDrainCutoverIntegration(t *testing.T) {
 			queued := enqueueUpdateJob(t, old.endpoint, repo.Path(), secondSHA)
 			// Wall-clock wait: HTTP status from a separately built daemon process.
 			assert.Never(t, func() bool {
-				job, err := readUpdateJob(old.endpoint, queued.ID)
+				job, err := readUpdateJob(t.Context(), old.endpoint, queued.ID)
 				return err != nil || job.Status != storage.JobStatusQueued
 			}, 250*time.Millisecond, 25*time.Millisecond)
 
@@ -579,7 +584,10 @@ func waitForIsolatedUpdateDaemonExit(
 func shutdownIsolatedUpdateDaemon(t *testing.T, instance *isolatedUpdateDaemon) {
 	t.Helper()
 	client := instance.endpoint.HTTPClient(5 * time.Second)
-	resp, err := client.Post(instance.endpoint.BaseURL()+"/api/shutdown", "application/json", nil)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, instance.endpoint.BaseURL()+"/api/shutdown", nil)
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(request)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -597,7 +605,10 @@ func enqueueUpdateJob(
 	})
 	require.NoError(t, err)
 	client := endpoint.HTTPClient(5 * time.Second)
-	resp, err := client.Post(endpoint.BaseURL()+"/api/enqueue", "application/json", bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, endpoint.BaseURL()+"/api/enqueue", bytes.NewReader(body))
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(request)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
@@ -610,16 +621,20 @@ func getUpdateJob(
 	t *testing.T, endpoint daemon.DaemonEndpoint, jobID int64,
 ) storage.ReviewJob {
 	t.Helper()
-	job, err := readUpdateJob(endpoint, jobID)
+	job, err := readUpdateJob(t.Context(), endpoint, jobID)
 	require.NoError(t, err)
 	return job
 }
 
 func readUpdateJob(
-	endpoint daemon.DaemonEndpoint, jobID int64,
+	ctx context.Context, endpoint daemon.DaemonEndpoint, jobID int64,
 ) (storage.ReviewJob, error) {
 	client := endpoint.HTTPClient(5 * time.Second)
-	resp, err := client.Get(fmt.Sprintf("%s/api/jobs?id=%d", endpoint.BaseURL(), jobID))
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/api/jobs?id=%d", endpoint.BaseURL(), jobID), nil)
+	if err != nil {
+		return storage.ReviewJob{}, err
+	}
+	resp, err := client.Do(request)
 	if err != nil {
 		return storage.ReviewJob{}, err
 	}
@@ -648,7 +663,7 @@ func waitForUpdateJobStatus(
 ) {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		job, err := readUpdateJob(endpoint, jobID)
+		job, err := readUpdateJob(t.Context(), endpoint, jobID)
 		return err == nil && job.Status == want
 	}, timeout, 50*time.Millisecond)
 }

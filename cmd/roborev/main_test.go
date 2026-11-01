@@ -115,7 +115,6 @@ func newFastRunContext(t *testing.T, repoDir string) RunContext {
 	t.Helper()
 
 	return RunContext{
-		Context:         t.Context(),
 		WorkingDir:      repoDir,
 		PollInterval:    1 * time.Millisecond,
 		PostCommitDelay: 1 * time.Millisecond,
@@ -235,7 +234,7 @@ func TestRunRefineSurfacesResponseErrors(t *testing.T) {
 
 	ctx := newFastRunContext(t, repoDir)
 
-	err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true})
+	err := runRefine(t.Context(), ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true})
 	require.Error(t, err, "expected error, got nil")
 }
 
@@ -260,7 +259,7 @@ func TestRunRefineFailsOnInvalidGlobalConfigBeforeDaemonStartup(t *testing.T) {
 
 	ctx := newFastRunContext(t, repoDir)
 
-	err = runRefine(ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true})
+	err = runRefine(t.Context(), ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true})
 	require.Error(t, err, "expected config load error")
 	assert.Contains(t, err.Error(), "load config:")
 }
@@ -294,7 +293,7 @@ func TestRunRefineFailsOnInvalidRepoConfigBeforeDaemonStartup(t *testing.T) {
 
 	ctx := newFastRunContext(t, repoDir)
 
-	err = runRefine(ctx, refineOptions{
+	err = runRefine(t.Context(), ctx, refineOptions{
 		agentName:     "test",
 		reasoning:     "fast",
 		maxIterations: 1,
@@ -321,7 +320,7 @@ func TestRunRefineQuietNonTTYTimerOutput(t *testing.T) {
 	ctx := newFastRunContext(t, repoDir)
 
 	output := captureStdout(t, func() {
-		err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true})
+		err := runRefine(t.Context(), ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true})
 		require.Error(t, err, "expected error, got nil")
 	})
 
@@ -351,7 +350,7 @@ func TestRunRefineStopsLiveTimerOnAgentError(t *testing.T) {
 	ctx := newFastRunContext(t, repoDir)
 
 	output := captureStdout(t, func() {
-		err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true})
+		err := runRefine(t.Context(), ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true})
 		require.Error(t, err, "expected error, got nil")
 	})
 
@@ -623,7 +622,7 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 	// an iteration, this would fail with "max iterations reached". Since the
 	// pending job transitions to Done with a passing review (and no failed
 	// reviews exist), refine should succeed.
-	err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true})
+	err := runRefine(t.Context(), ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true})
 
 	// Should succeed - all reviews pass after waiting for the pending one
 	require.NoError(t, err, "expected refine to succeed (pending wait should not consume iteration), got: %v")
