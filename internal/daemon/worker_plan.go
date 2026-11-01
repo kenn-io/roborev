@@ -127,7 +127,7 @@ func (wp *WorkerPool) capturePlanTokenUsageForTerminalAttempt(
 	job *storage.ReviewJob,
 	phases []planTokenPhase,
 ) {
-	current, err := wp.db.GetJobByID(job.ID)
+	current, err := wp.db.GetJobByIDContext(ctx, job.ID)
 	if err != nil {
 		log.Printf("[%s] Warning: reload job %d before terminal plan usage capture: %v",
 			workerID, job.ID, err)

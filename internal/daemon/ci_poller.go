@@ -1676,22 +1676,22 @@ func (p *CIPoller) maybeAppendDesignMember(
 func (p *CIPoller) commitWarrantsDesign(
 	ctx context.Context, repoPath, sha string, hh autotype.Heuristics,
 ) bool {
-	files, filesErr := gitpkg.GetFilesChanged(repoPath, sha)
-	diff, diffErr := gitpkg.GetDiff(repoPath, sha)
+	files, filesErr := gitpkg.GetFilesChangedCtx(ctx, repoPath, sha)
+	diff, diffErr := gitpkg.GetDiffCtx(ctx, repoPath, sha)
 	if filesErr != nil || diffErr != nil {
 		// Missing inputs would otherwise produce a bogus "trivial diff" skip;
 		// fail open to a design review rather than risk dropping one.
 		return true
 	}
 	subject := ""
-	if info, err := gitpkg.GetCommitInfo(repoPath, sha); err == nil && info != nil {
+	if info, err := gitpkg.GetCommitInfoCtx(ctx, repoPath, sha); err == nil && info != nil {
 		subject = info.Subject
 	}
 	in := autotype.Input{
 		RepoPath:     repoPath,
 		GitRef:       sha,
 		Diff:         diff,
-		Message:      classifierCommitMessage(repoPath, sha, subject),
+		Message:      classifierCommitMessage(ctx, repoPath, sha, subject),
 		ChangedFiles: files,
 	}
 	d, err := autotype.Classify(ctx, in, hh, autotype.ErrOnClassifier{})

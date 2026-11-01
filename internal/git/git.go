@@ -2864,7 +2864,7 @@ func CreateCommitWithOptions(ctx context.Context, repoPath, message string, opts
 	}
 
 	// Get the SHA of the new commit
-	sha, err := ResolveSHA(repoPath, "HEAD")
+	sha, err := ResolveSHACtx(ctx, repoPath, "HEAD")
 	if err != nil {
 		return "", fmt.Errorf("get new commit SHA: %w", err)
 	}

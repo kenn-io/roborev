@@ -151,7 +151,7 @@ func TestResolveClassifyDiff_UsesDiffContentWhenSet(t *testing.T) {
 		RepoPath:    "/nonexistent",
 		DiffContent: &prebuilt,
 	}
-	got := resolveClassifyDiff("worker-1", job)
+	got := resolveClassifyDiff(t.Context(), "worker-1", job)
 	assert.Equal(t, prebuilt, got,
 		"DiffContent must take precedence over the git fallback")
 }
@@ -171,7 +171,7 @@ func TestResolveClassifyDiff_FetchesFromGitWhenEmpty(t *testing.T) {
 		// DiffContent intentionally nil — this is the auto-design
 		// classify row's enqueue-time state.
 	}
-	got := resolveClassifyDiff("worker-2", job)
+	got := resolveClassifyDiff(t.Context(), "worker-2", job)
 	require.NotEmpty(t, got, "diff must be fetched from git when DiffContent is nil")
 	assert.Contains(t, got, "+package x")
 	assert.Contains(t, got, "+func X()")
@@ -186,7 +186,7 @@ func TestResolveClassifyDiff_SkipsFetchForDirty(t *testing.T) {
 		GitRef:   "dirty",
 		RepoPath: "/somewhere",
 	}
-	assert.Empty(t, resolveClassifyDiff("worker-3", job))
+	assert.Empty(t, resolveClassifyDiff(t.Context(), "worker-3", job))
 }
 
 func TestResolveClassifyDiff_SkipsFetchForEmptyRef(t *testing.T) {
@@ -195,7 +195,7 @@ func TestResolveClassifyDiff_SkipsFetchForEmptyRef(t *testing.T) {
 		GitRef:   "",
 		RepoPath: "/somewhere",
 	}
-	assert.Empty(t, resolveClassifyDiff("worker-4", job))
+	assert.Empty(t, resolveClassifyDiff(t.Context(), "worker-4", job))
 }
 
 func TestProcessClassifyJob_WritesStandardLogAndCommandLine(t *testing.T) {

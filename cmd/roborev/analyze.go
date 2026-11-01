@@ -562,7 +562,7 @@ func enqueueAnalysisJob(ctx context.Context, ep daemon.DaemonEndpoint, repoRoot,
 		AnalysisCommitSHA: opts.analysisCommitSHA,
 	})
 
-	resp, err := ep.APIClient(10*time.Second).EnqueueJobRaw(context.Background(), nil, roborevclient.WithBody(reqBody))
+	resp, err := ep.APIClient(10*time.Second).EnqueueJobRaw(ctx, nil, roborevclient.WithBody(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to daemon: %w", err)
 	}
@@ -1175,7 +1175,7 @@ func getBranchFiles(ctx context.Context, cmd *cobra.Command, repoRoot string, op
 
 	// Validate has commits
 	rangeRef := mergeBase + ".." + targetSHA
-	commits, err := git.GetRangeCommits(repoRoot, rangeRef)
+	commits, err := git.GetRangeCommitsCtx(ctx, repoRoot, rangeRef)
 	if err != nil {
 		return nil, "", fmt.Errorf("cannot get commits: %w", err)
 	}
@@ -1184,7 +1184,7 @@ func getBranchFiles(ctx context.Context, cmd *cobra.Command, repoRoot string, op
 	}
 
 	// Get changed files
-	changedFiles, err := git.GetRangeFilesChanged(repoRoot, rangeRef)
+	changedFiles, err := git.GetRangeFilesChangedCtx(ctx, repoRoot, rangeRef)
 	if err != nil {
 		return nil, "", fmt.Errorf("cannot get changed files: %w", err)
 	}

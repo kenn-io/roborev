@@ -86,12 +86,12 @@ func planFixAtRevision(ctx context.Context, cmd *cobra.Command, repoPath, ref st
 	return implementationPrompt, nil
 }
 
-func batchPlanningContext(repoPath string, entries []batchEntry) string {
+func batchPlanningContext(ctx context.Context, repoPath string, entries []batchEntry) string {
 	var findings strings.Builder
 	for _, entry := range entries {
 		review := *entry.review
 		review.Job = entry.job
-		fmt.Fprintf(&findings, "## Job %d\n\n%s\n\n", entry.jobID, prompt.FixPlanReviewContext(repoPath, &review))
+		fmt.Fprintf(&findings, "## Job %d\n\n%s\n\n", entry.jobID, prompt.FixPlanReviewContext(ctx, repoPath, &review))
 		attempts, comments, plans := prompt.SplitResponses(entry.comments)
 		findings.WriteString(prompt.FormatPlans(plans))
 		findings.WriteString(prompt.FormatToolAttempts(attempts))
