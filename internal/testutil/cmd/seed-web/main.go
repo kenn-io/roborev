@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/signal"
 	"path/filepath"
 
 	"go.kenn.io/roborev/internal/testutil/webfixture"
@@ -24,9 +23,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "seed-web: resolve output path: %v\n", err)
 		os.Exit(1)
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-	if err := webfixture.Seed(ctx, path); err != nil {
+	if err := webfixture.Seed(context.Background(), path); err != nil {
 		fmt.Fprintf(os.Stderr, "seed-web: %v\n", err)
 		os.Exit(1)
 	}

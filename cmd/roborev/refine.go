@@ -141,8 +141,7 @@ Use --all-branches to discover and refine all branches with failed reviews.`,
 				return fmt.Errorf("get working directory: %w", err)
 			}
 
-			return runRefine(RunContext{
-				Context:    cmd.Context(),
+			return runRefine(cmd.Context(), RunContext{
 				WorkingDir: cwd,
 			}, opts)
 		},
@@ -357,7 +356,6 @@ func validateRefineContext(
 // RunContext encapsulates the runtime context for the refine command,
 // allowing tests to override the working directory and polling interval.
 type RunContext struct {
-	Context         context.Context
 	WorkingDir      string
 	PollInterval    time.Duration
 	PostCommitDelay time.Duration
@@ -372,12 +370,7 @@ func appendRefineFixGuidelines(addressPrompt, guidelines string) string {
 	return autofix.AppendGuidelines(addressPrompt, guidelines)
 }
 
-func runRefine(runCtx RunContext, opts refineOptions) error {
-	ctx := runCtx.Context
-	if ctx == nil {
-		return fmt.Errorf("run refine: missing context")
-	}
-
+func runRefine(ctx context.Context, runCtx RunContext, opts refineOptions) error {
 	// 1. Validate git and branch context (before touching daemon)
 	repoPath, currentBranch, base, mergeBase, err := validateRefineContext(
 		ctx, runCtx.WorkingDir, opts.since, opts.branch,
@@ -1117,8 +1110,7 @@ func runRefineAllBranches(
 		branchOpts.branch = b
 		branchOpts.allBranches = false
 
-		if err := runRefine(RunContext{
-			Context:    ctx,
+		if err := runRefine(ctx, RunContext{
 			WorkingDir: repoPath,
 		}, branchOpts); err != nil {
 			if _, changed := errors.AsType[*planningStateError](err); changed {

@@ -408,7 +408,7 @@ func TestRefinePlanStopsAfterCallerChangesDuringPlanning(t *testing.T) {
 			var runErr error
 			stdout := captureOutput(t, func() error {
 				runErr = runRefine(
-					RunContext{Context: t.Context(), WorkingDir: repo.Dir},
+					t.Context(), RunContext{WorkingDir: repo.Dir},
 					refineOptions{plan: true, since: base, agentName: name, maxIterations: 4, unsafeFlagChanged: true, allowUnsafeAgents: false},
 				)
 				return nil
@@ -510,7 +510,7 @@ func TestRefinePlanRetriesAfterPlanningFailureAndKeepsAttemptContext(t *testing.
 	t.Cleanup(func() { agent.Unregister(name) })
 	var runErr error
 	stdout := captureOutput(t, func() error {
-		runErr = runRefine(RunContext{Context: t.Context(), WorkingDir: repo.Dir, PostCommitDelay: time.Millisecond}, refineOptions{plan: true, since: base, agentName: name, maxIterations: 4, unsafeFlagChanged: true, allowUnsafeAgents: false})
+		runErr = runRefine(t.Context(), RunContext{WorkingDir: repo.Dir, PostCommitDelay: time.Millisecond}, refineOptions{plan: true, since: base, agentName: name, maxIterations: 4, unsafeFlagChanged: true, allowUnsafeAgents: false})
 		return nil
 	})
 	require.ErrorContains(t, runErr, "max iterations")

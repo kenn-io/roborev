@@ -602,9 +602,9 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 		term, exists := client.getTerminal(resp.TerminalId)
 		require.True(t, exists, "terminal %s not found", resp.TerminalId)
 		select {
-		case <-term.context.Done():
-			require.Condition(t, func() bool { return false }, "terminal context canceled by request context cancellation")
-		case <-time.After(50 * time.Millisecond): //nolint:kennlint // deadlinetest: shows the terminal context is not canceled; the running sleep command keeps it alive
+		case <-term.done:
+			require.Condition(t, func() bool { return false }, "terminal process stopped by request context cancellation")
+		case <-time.After(50 * time.Millisecond): //nolint:kennlint // deadlinetest: shows the terminal process keeps running; the sleep command outlives this wait
 
 		}
 

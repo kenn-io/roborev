@@ -66,7 +66,7 @@ type WorkerPool struct {
 	stopped       bool
 	activeWorkers atomic.Int32
 	stopCh        chan struct{}
-	stopCtx       context.Context
+	stopCtx       context.Context //nolint:containedctx // pool lifetime; Stop cancels blocked claims
 	stopCancel    context.CancelFunc
 	readyCh       chan struct{} // closed after wg.Add in Start
 	startOnce     sync.Once

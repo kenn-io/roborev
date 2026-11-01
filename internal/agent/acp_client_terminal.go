@@ -24,7 +24,6 @@ type acpTerminal struct {
 	cmd             *exec.Cmd
 	output          *bytes.Buffer
 	outputWriter    *boundedWriter
-	context         context.Context
 	cancel          context.CancelFunc
 	outputByteLimit int
 	truncated       bool
@@ -409,7 +408,6 @@ func (c *acpClient) CreateTerminal(ctx context.Context, params acp.CreateTermina
 		cmd:             cmd,
 		output:          output,
 		outputWriter:    boundedOutput,
-		context:         terminalCtx,
 		cancel:          cancelFunc,
 		outputByteLimit: outputLimit,
 		truncated:       false,

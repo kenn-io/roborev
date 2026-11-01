@@ -562,17 +562,17 @@ func withCwdRepoIdentity(identity string) option {
 
 // options holds optional overrides for the TUI model, set from CLI flags.
 type options struct {
-	ctx               context.Context
-	repoFilter        string // --repo flag: lock filter to this repo path
-	branchFilter      string // --branch flag: lock filter to this branch
-	noQuit            bool   // --no-quit flag: suppress keyboard quit
-	disableExternalIO bool   // tests: disable daemon/config/git calls
-	autoFilterRepo    bool   // tests: simulate [tui] filter_repo config
-	autoFilterBranch  bool   // tests: simulate [tui] filter_branch config
-	cwdRepoRoot       string // tests: simulate detected repo root
-	cwdRepoIdentity   string // tests: simulate detected repo identity
-	cwdWorktreePath   string // tests: simulate detected worktree path
-	cwdBranch         string // tests: simulate detected branch
+	ctx               context.Context //nolint:containedctx // Bubble Tea builds the model before its program starts
+	repoFilter        string          // --repo flag: lock filter to this repo path
+	branchFilter      string          // --branch flag: lock filter to this branch
+	noQuit            bool            // --no-quit flag: suppress keyboard quit
+	disableExternalIO bool            // tests: disable daemon/config/git calls
+	autoFilterRepo    bool            // tests: simulate [tui] filter_repo config
+	autoFilterBranch  bool            // tests: simulate [tui] filter_branch config
+	cwdRepoRoot       string          // tests: simulate detected repo root
+	cwdRepoIdentity   string          // tests: simulate detected repo identity
+	cwdWorktreePath   string          // tests: simulate detected worktree path
+	cwdBranch         string          // tests: simulate detected branch
 }
 
 // withNoQuit disables keyboard-initiated quit (q key).

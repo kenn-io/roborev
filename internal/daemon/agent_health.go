@@ -38,7 +38,7 @@ func reviewAgentHealth(ctx context.Context, cfg *config.Config) storage.Componen
 // one exists, and starts a refresh. Stopping the cache cancels its context and
 // waits for the running check, so no check outlives the daemon.
 type agentHealthCache struct {
-	ctx    context.Context
+	ctx    context.Context //nolint:containedctx // cache lifetime; Stop cancels it and waits for the check
 	cancel context.CancelFunc
 	// run performs one check; it is a field so tests can control it.
 	run func(ctx context.Context, cfg *config.Config) storage.ComponentHealth

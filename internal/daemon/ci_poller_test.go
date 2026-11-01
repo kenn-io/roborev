@@ -21,7 +21,6 @@ import (
 
 	googlegithub "github.com/google/go-github/v93/github"
 	"github.com/stretchr/testify/assert"
-
 	// ciPollerHarness bundles DB, repo, config, and poller for CI poller tests.
 	"github.com/stretchr/testify/require"
 

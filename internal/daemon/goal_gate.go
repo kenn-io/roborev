@@ -46,7 +46,7 @@ type goalGateOutput struct {
 }
 
 type goalGate struct {
-	ctx    context.Context
+	ctx    context.Context //nolint:containedctx // gate lifetime; stop cancels admitted goal reviews
 	cancel context.CancelFunc
 	mu     sync.Mutex
 	closed bool
