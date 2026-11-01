@@ -2,7 +2,6 @@ package agent
 
 import (
 	"bytes"
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,13 +12,13 @@ func TestTestAgent_FreshCallsEmitDistinctSessionIDs(t *testing.T) {
 	a := NewTestAgent()
 
 	var buf1 bytes.Buffer
-	_, err := a.Review(context.Background(), "/repo", "abc", "prompt 1", &buf1)
+	_, err := a.Review(t.Context(), "/repo", "abc", "prompt 1", &buf1)
 	require.NoError(t, err)
 	id1 := ExtractSessionID(buf1.String())
 	assert.Equal(t, "test-session-1", id1)
 
 	var buf2 bytes.Buffer
-	_, err = a.Review(context.Background(), "/repo", "def", "prompt 2", &buf2)
+	_, err = a.Review(t.Context(), "/repo", "def", "prompt 2", &buf2)
 	require.NoError(t, err)
 	id2 := ExtractSessionID(buf2.String())
 	assert.Equal(t, "test-session-2", id2)
@@ -35,7 +34,7 @@ func TestTestAgent_WithSessionIDEchoesReceivedID(t *testing.T) {
 	resumed := a.WithSessionID("test-session-1").(*TestAgent)
 
 	var buf bytes.Buffer
-	_, err := resumed.Review(context.Background(), "/repo", "abc", "prompt", &buf)
+	_, err := resumed.Review(t.Context(), "/repo", "abc", "prompt", &buf)
 	require.NoError(t, err)
 
 	id := ExtractSessionID(buf.String())
@@ -49,13 +48,13 @@ func TestTestAgent_WithSessionIDEchoesReceivedID(t *testing.T) {
 func TestTestAgent_NewInstanceResetsCounter(t *testing.T) {
 	a1 := NewTestAgent()
 	var buf bytes.Buffer
-	_, err := a1.Review(context.Background(), "/repo", "abc", "p", &buf)
+	_, err := a1.Review(t.Context(), "/repo", "abc", "p", &buf)
 	require.NoError(t, err)
 	assert.Equal(t, "test-session-1", ExtractSessionID(buf.String()))
 
 	a2 := NewTestAgent()
 	buf.Reset()
-	_, err = a2.Review(context.Background(), "/repo", "abc", "p", &buf)
+	_, err = a2.Review(t.Context(), "/repo", "abc", "p", &buf)
 	require.NoError(t, err)
 	assert.Equal(t, "test-session-1", ExtractSessionID(buf.String()),
 		"new instance starts its own counter at 1")

@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -70,7 +69,7 @@ func TestDetectStateUsesGlobalWorkflowReviewAgent(t *testing.T) {
 		0o600,
 	))
 
-	state := detectState(context.Background(), repo, true)
+	state := detectState(t.Context(), repo, true)
 	configured := quickstartCheckByID(t, state, "configured_agent")
 	repoConfig := quickstartCheckByID(t, state, "repo_config")
 
@@ -294,7 +293,7 @@ func TestDetectStateSchema(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	repo := newTempGitRepo(t)
 
-	state := detectState(context.Background(), repo, true)
+	state := detectState(t.Context(), repo, true)
 
 	assert.True(state.InGitRepo)
 
@@ -319,7 +318,7 @@ func TestDetectStateSchema(t *testing.T) {
 func TestDetectStateOutsideRepoMarksRepoChecksUnknown(t *testing.T) {
 	setupFastPolling(t)
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	state := detectState(context.Background(), "", false)
+	state := detectState(t.Context(), "", false)
 
 	assert.False(t, state.InGitRepo)
 	repoDependent := map[string]bool{
@@ -342,7 +341,7 @@ func TestDetectStateIsReadOnly(t *testing.T) {
 	_, errBefore := os.Stat(hookPath)
 	require.True(t, os.IsNotExist(errBefore), "precondition: no hook yet")
 
-	_ = detectState(context.Background(), repo, true)
+	_ = detectState(t.Context(), repo, true)
 
 	// Detection must not create a post-commit hook.
 	_, errAfter := os.Stat(hookPath)

@@ -239,7 +239,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 				defer cli.Process.Kill()
 				// The pause CLI persists its state before the old daemon drains.
 				require.Eventually(t, func() bool { return strings.Contains(stderr.String(), "Waiting for daemon shutdown") }, 10*time.Second, 10*time.Millisecond)
-				status, err := original.Endpoint().APIClient(time.Second).GetStatus(context.Background())
+				status, err := original.Endpoint().APIClient(time.Second).GetStatus(t.Context())
 				require.NoError(t, err)
 				assert.True(t, status.QueuePaused)
 				require.NoError(t, os.WriteFile(releaseReview, nil, 0o600))
@@ -272,7 +272,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 			}
 			assertDaemonUpdateVersion(t, replacement.Endpoint(), expectedVersion)
 			if pausing {
-				status, err := replacement.Endpoint().APIClient(time.Second).GetStatus(context.Background())
+				status, err := replacement.Endpoint().APIClient(time.Second).GetStatus(t.Context())
 				require.NoError(t, err)
 				assert.True(t, status.QueuePaused)
 				assert.Equal(t, storage.JobStatusQueued, getUpdateJob(t, replacement.Endpoint(), queued.ID).Status)

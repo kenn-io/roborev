@@ -105,7 +105,7 @@ func TestInterruptPreparationLinearizesWithRetryTransition(t *testing.T) {
 	go func() {
 		defer close(transitionDone)
 		server.workerPool.failOrRetryAgentContext(
-			context.Background(), "worker-update", job, "test", "provider error",
+			t.Context(), "worker-update", job, "test", "provider error",
 		)
 	}()
 	require.True(t, waitForUpdateSignal(checked, time.Second))
@@ -202,15 +202,16 @@ func TestReleaseClearsInterruptTargetsBeforeOpeningClaimGate(t *testing.T) {
 	const targetID int64 = 42
 	server.workerPool.InterruptJobsForUpdate([]int64{targetID})
 
-	conn, err := db.Conn(context.Background())
+	conn, err := db.Conn(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, conn.Close()) })
-	_, err = conn.ExecContext(context.Background(), "BEGIN IMMEDIATE")
+	_, err = conn.ExecContext(t.Context(), "BEGIN IMMEDIATE")
 	require.NoError(t, err)
 	locked := true
 	t.Cleanup(func() {
 		if locked {
-			_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+			// t.Context is already canceled when cleanups run.
+			_, _ = conn.ExecContext(context.WithoutCancel(t.Context()), "ROLLBACK")
 		}
 	})
 
@@ -227,7 +228,7 @@ func TestReleaseClearsInterruptTargetsBeforeOpeningClaimGate(t *testing.T) {
 		return !targeted
 	}, 5*time.Second, 10*time.Millisecond)
 
-	_, err = conn.ExecContext(context.Background(), "ROLLBACK")
+	_, err = conn.ExecContext(t.Context(), "ROLLBACK")
 	require.NoError(t, err)
 	locked = false
 	require.NoError(t, <-releaseDone)
@@ -287,7 +288,7 @@ func TestInterruptDrainRetriesFailedAttemptRequeue(t *testing.T) {
 		END
 	`, job.ID))
 	require.NoError(t, err)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	assert.True(t, server.workerPool.handleUpdateInterruption(ctx, "worker-update", job))

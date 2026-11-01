@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"context"
 	"database/sql"
 	"path/filepath"
 	"strings"
@@ -474,7 +473,7 @@ func TestMigrationFromOldSchema(t *testing.T) {
 	// "left FKs enabled" in the pool. What we CAN verify is:
 	// 1. The migration succeeded (which includes the FK check at the end)
 	// 2. FK enforcement works when enabled on a connection
-	ctx := context.Background()
+	ctx := t.Context()
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		require.Condition(t, func() bool {

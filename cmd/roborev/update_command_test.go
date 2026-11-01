@@ -310,7 +310,7 @@ func TestUpdateCommandCancelDuringHookRepairSuppressesSuccess(t *testing.T) {
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		return nil, errors.New("not running")
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	repairHooksForUpdateCommand = func(string, repairHookRunner) error {
 		cancel()
 		return nil
@@ -365,7 +365,7 @@ func TestUpdateCommandCancelAfterInstallReleasesLease(t *testing.T) {
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		return &daemon.RuntimeInfo{PID: 42, Network: endpoint.Network, Address: endpoint.Address}, nil
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	performUpdateForCommand = func(context.Context, *update.UpdateInfo, update.Reporter) error {
 		cancel()
 		return nil
@@ -394,7 +394,7 @@ func TestUpdateCommandCancelAfterShutdownReportsFinishingState(t *testing.T) {
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		return &daemon.RuntimeInfo{PID: 42, Network: endpoint.Network, Address: endpoint.Address}, nil
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	restartUpdatedDaemonForCommand = func(
 		context.Context, string, string, *daemon.RuntimeInfo,
 	) error {

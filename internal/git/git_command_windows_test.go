@@ -3,7 +3,6 @@
 package git
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -19,7 +18,7 @@ func TestNewGitCmdHidesConsole(t *testing.T) {
 	require.NotNil(t, cmd.SysProcAttr)
 	assert.NotZero(cmd.SysProcAttr.CreationFlags & testCreateNoWindow)
 
-	ctxCmd := newGitCmdContext(context.Background(), "status")
+	ctxCmd := newGitCmdContext(t.Context(), "status")
 	require.NotNil(t, ctxCmd.SysProcAttr)
 	assert.NotZero(ctxCmd.SysProcAttr.CreationFlags & testCreateNoWindow)
 }

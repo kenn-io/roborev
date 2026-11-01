@@ -496,7 +496,7 @@ enabled = true
 	job.RepoPath = row.RootPath
 	job.CommitSubject = "feat: t table"
 
-	require.NoError(t, srv.maybeDispatchAutoDesign(context.Background(), job))
+	require.NoError(t, srv.maybeDispatchAutoDesign(t.Context(), job))
 
 	ag, model := e2eAutoDesignAgentCols(t, db, row.ID, sha)
 	assert := assert.New(t)
@@ -655,7 +655,7 @@ func TestE2EAutoDesign_Disabled_NoOp(t *testing.T) {
 	job.RepoPath = row.RootPath
 	job.CommitSubject = "feat: add x table"
 
-	require.NoError(t, srv.maybeDispatchAutoDesign(context.Background(), job))
+	require.NoError(t, srv.maybeDispatchAutoDesign(t.Context(), job))
 
 	// Sweep every status — no auto_design rows must exist for this repo.
 	for _, st := range []storage.JobStatus{

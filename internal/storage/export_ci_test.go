@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"os"
@@ -237,7 +236,7 @@ func TestExportCIMetricsIncludesOnlyPostedPanels(t *testing.T) {
 		EffectiveConfigJSON: `{"members":[]}`,
 	}
 	require.NoError(t, insertExperimentAssignmentTx(
-		context.Background(), db, ReviewUnitPanel, posted.PanelRunUUID,
+		t.Context(), db, ReviewUnitPanel, posted.PanelRunUUID,
 		assignment, testUUID("test-machine"), time.Now(),
 	))
 	members, err := db.GetPanelMembers(posted.PanelRunUUID)

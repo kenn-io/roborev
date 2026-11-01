@@ -1,7 +1,6 @@
 package searchindex
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -95,7 +94,7 @@ func TestCredentialMissingConfigurationHealth(t *testing.T) {
 	r := NewReconciler(&reconcilerStore{}, openGenerationTestIndex(t), nil, ReconcilerConfig{
 		CredentialSource: "env:EMBEDDING_KEY", CredentialReason: "no embedding API key (env EMBEDDING_KEY is unset)",
 	})
-	_, err := r.refreshMirror(context.Background())
+	_, err := r.refreshMirror(t.Context())
 	require.NoError(t, err)
 	health := r.Health()
 	assert.True(t, health.EmbeddingsConfigured)

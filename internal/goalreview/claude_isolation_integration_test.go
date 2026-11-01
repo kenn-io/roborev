@@ -46,7 +46,7 @@ func TestClaudeGoalReviewSuppressesRepositoryHooks(t *testing.T) {
 	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
 	t.Setenv("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
 	t.Setenv("CLAUDE_CODE_SAFE_MODE", "")
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	snapshot := Snapshot{Source: "superpowers", Stage: "spec", Artifacts: []Artifact{{Kind: "spec", Path: "spec.md", Content: "# Feature\n"}}}
 	_, err = Run(ctx, agent.NewClaudeAgent(binary).WithModel("synthetic@"+server.URL), root, snapshot, io.Discard)

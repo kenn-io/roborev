@@ -1519,7 +1519,7 @@ func TestBuildCanceledContextFails(t *testing.T) {
 	sha := repo.CommitFile("f.txt", "x\n", "Second commit")
 	db, _ := setupDBWithCommits(t, repo.Path(), []string{firstSHA, sha})
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	b := NewBuilder(db).WithContext(ctx).ForRepo(repo.Path(), 0)
 

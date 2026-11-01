@@ -211,7 +211,7 @@ func setShortRuntimeDir(t *testing.T) string {
 func startServerAndWaitForRuntime(t *testing.T, server *Server) (<-chan error, *RuntimeInfo) {
 	t.Helper()
 	errCh := make(chan error, 1)
-	go func() { errCh <- server.Start(context.Background()) }()
+	go func() { errCh <- server.Start(t.Context()) }()
 
 	var info *RuntimeInfo
 	var startErr error
@@ -265,7 +265,7 @@ func TestServerStartRejectsNonLoopbackBindAddr(t *testing.T) {
 			cfg.ServerAddr = tt.addr
 
 			server := NewServer(db, cfg, "")
-			err := server.Start(context.Background())
+			err := server.Start(t.Context())
 			if err == nil {
 				require.Condition(t, func() bool {
 					return false
@@ -304,7 +304,7 @@ func TestWaitForServerReadySurfacesServeError(t *testing.T) {
 	wantErr := errors.New("serve failed")
 	serveErrCh <- wantErr
 
-	ready, serveExited, err := waitForServerReady(context.Background(), DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, time.Second, serveErrCh, config.ClientAuth{})
+	ready, serveExited, err := waitForServerReady(t.Context(), DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, time.Second, serveErrCh, config.ClientAuth{})
 	if ready {
 		require.Condition(t, func() bool {
 			return false
@@ -323,7 +323,7 @@ func TestWaitForServerReadySurfacesServeError(t *testing.T) {
 }
 
 func TestWaitForServerReadyLeavesServeExitUnreadWhenContextAlreadyCanceled(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	serveErrCh := make(chan error, 1)
@@ -392,7 +392,7 @@ func TestServerStartReadinessFailureDoesNotLeavePanelSweep(t *testing.T) {
 
 	server.httpServer.Handler = http.NotFoundHandler()
 
-	err := server.Start(context.Background())
+	err := server.Start(t.Context())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to become ready")
 

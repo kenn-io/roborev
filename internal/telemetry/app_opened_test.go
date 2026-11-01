@@ -183,7 +183,7 @@ func TestPostAppOpened(t *testing.T) {
 		}))
 		t.Cleanup(srv.Close)
 
-		new(ClientGate).PostAppOpened(context.Background(), srv.Client(), srv.URL+"/api/telemetry/events", SurfaceCLI)
+		new(ClientGate).PostAppOpened(t.Context(), srv.Client(), srv.URL+"/api/telemetry/events", SurfaceCLI)
 		assert.Equal(http.MethodPost, method)
 		assert.Equal("/api/telemetry/events", path)
 		assert.Equal("application/json", contentType)
@@ -194,7 +194,7 @@ func TestPostAppOpened(t *testing.T) {
 		srv := httptest.NewServer(http.NotFoundHandler())
 		t.Cleanup(srv.Close)
 		assert.NotPanics(t, func() {
-			new(ClientGate).PostAppOpened(context.Background(), srv.Client(), srv.URL+"/api/telemetry/events", SurfaceCLI)
+			new(ClientGate).PostAppOpened(t.Context(), srv.Client(), srv.URL+"/api/telemetry/events", SurfaceCLI)
 		})
 
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -202,7 +202,7 @@ func TestPostAppOpened(t *testing.T) {
 		closedURL := "http://" + ln.Addr().String() + "/api/telemetry/events"
 		require.NoError(t, ln.Close())
 		assert.NotPanics(t, func() {
-			new(ClientGate).PostAppOpened(context.Background(), http.DefaultClient, closedURL, SurfaceCLI)
+			new(ClientGate).PostAppOpened(t.Context(), http.DefaultClient, closedURL, SurfaceCLI)
 		})
 	})
 
@@ -215,7 +215,7 @@ func TestPostAppOpened(t *testing.T) {
 			mu.Unlock()
 		}))
 		t.Cleanup(srv.Close)
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 
 		new(ClientGate).PostAppOpened(ctx, srv.Client(), srv.URL+"/api/telemetry/events", SurfaceCLI)

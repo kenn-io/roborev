@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -3115,7 +3114,7 @@ func TestListJobsOmitPrompt(t *testing.T) {
 	client, err := roborevclient.NewWithHTTPClient(ts.URL, ts.Client())
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	repoFilter := []string{repo.RootPath}
 	omit := daemonclient.ListJobsQueryOmitPromptTrue
 

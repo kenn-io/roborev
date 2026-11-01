@@ -1,7 +1,6 @@
 package github
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -153,11 +152,11 @@ func TestListOwnerRepos_FiltersArchivedAndPRDisabled(t *testing.T) {
 	client, err := NewClient("", WithBaseURL(srv.URL+"/"))
 	require.NoError(t, err)
 
-	orgRepos, err := client.ListOwnerRepos(context.Background(), "acme", 1000)
+	orgRepos, err := client.ListOwnerRepos(t.Context(), "acme", 1000)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"acme/api", "acme/unknown"}, orgRepos)
 
-	userRepos, err := client.ListOwnerRepos(context.Background(), "jane", 1000)
+	userRepos, err := client.ListOwnerRepos(t.Context(), "jane", 1000)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"jane/app", "jane/enabled", "jane/private", "jane/unknown"}, userRepos)
 }
@@ -180,7 +179,7 @@ func TestListOwnerRepos_KeepsPublicReposWhenAuthenticatedListingFails(t *testing
 	client, err := NewClient("", WithBaseURL(srv.URL+"/"))
 	require.NoError(t, err)
 
-	repos, err := client.ListOwnerRepos(context.Background(), "jane", 1000)
+	repos, err := client.ListOwnerRepos(t.Context(), "jane", 1000)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"jane/app"}, repos)
 }
@@ -227,7 +226,7 @@ func TestEnsureSkippedCheckRunCreatesSkippedConclusionOnce(t *testing.T) {
 	require.NoError(t, err)
 	for range 2 {
 		require.NoError(t, client.EnsureSkippedCheckRun(
-			context.Background(), "acme/api", "head-sha",
+			t.Context(), "acme/api", "head-sha",
 			"Review skipped: label do-not-review",
 		))
 	}

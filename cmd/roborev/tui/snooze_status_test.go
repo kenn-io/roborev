@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -78,7 +77,7 @@ func TestDetectCwdRepoContextPreservesLinkedWorktree(t *testing.T) {
 	repo.Run("worktree", "add", "-b", "feature/status", worktree)
 
 	repoRoot, _, worktreePath, branch := detectCwdRepoContext(
-		context.Background(), worktree,
+		t.Context(), worktree,
 	)
 	expectedRepoRoot, err := filepath.EvalSymlinks(repo.Path())
 	require.NoError(t, err)

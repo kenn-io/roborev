@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"database/sql"
 	"strings"
 	"testing"
@@ -430,7 +429,7 @@ func TestCleanupClosedPRPanels(t *testing.T) {
 	require.Len(t, members, 1)
 
 	openPRs := map[int]bool{} // PR 10 absent → not open
-	h.Poller.cleanupClosedPRPanels(context.Background(), "acme/api", openPRs)
+	h.Poller.cleanupClosedPRPanels(t.Context(), "acme/api", openPRs)
 
 	assert.Equal(storage.JobStatusCanceled, h.jobStatus(t, synth.ID), "synthesis canceled")
 	assert.Equal(storage.JobStatusCanceled, h.jobStatus(t, members[0].ID), "member canceled")
@@ -461,7 +460,7 @@ func TestCleanupClosedPRPanelsKeepsOpenPR(t *testing.T) {
 		[]jobSpec{{Agent: "test", ReviewType: "review"}})
 
 	openPRs := map[int]bool{} // absent from list, but callIsPROpen confirms open
-	h.Poller.cleanupClosedPRPanels(context.Background(), "acme/api", openPRs)
+	h.Poller.cleanupClosedPRPanels(t.Context(), "acme/api", openPRs)
 
 	assert.NotEqual(t, storage.JobStatusCanceled, h.jobStatus(t, synth.ID), "open-PR synthesis kept")
 	assert.Equal(t, storage.JobStatusQueued, h.jobStatus(t, members[0].ID), "open-PR member kept")

@@ -402,7 +402,7 @@ func requireLocalJobByUUID(t *testing.T, db *DB, jobUUID *uuid.UUID) ReviewJob {
 // exists at an old version but data tables were created fresh.
 func TestIntegration_MigrationV6Idempotent(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	url := getIntegrationPostgresURL()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 
 	pool, err := NewPgPool(ctx, url, DefaultPgPoolConfig())
@@ -491,7 +491,8 @@ func TestIntegration_SyncOutageFromSwallowedWrite(t *testing.T) { //nolint:paral
 				FOR EACH ROW EXECUTE FUNCTION roborev.reject_job_write()`)
 			require.NoError(t, err)
 			t.Cleanup(func() {
-				_, _ = env.Pool.pool.Exec(context.Background(), `
+				// t.Context is already canceled when cleanups run.
+				_, _ = env.Pool.pool.Exec(context.WithoutCancel(t.Context()), `
 					DROP TRIGGER IF EXISTS reject_job_write ON roborev.review_jobs;
 					DROP FUNCTION IF EXISTS roborev.reject_job_write()`)
 			})

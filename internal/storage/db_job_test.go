@@ -252,7 +252,7 @@ func TestClaimJobRollsBackWhenHydrationFails(t *testing.T) {
 
 func TestClaimJobCancellationBeforeCommitRollsBack(t *testing.T) { //nolint:paralleltest // assigns claimJobBeforeCommitForTest, which every ClaimJob reads
 	env := setupJobEnv(t, "/tmp/claim-cancel-before-commit", "claim-cancel-before-commit")
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	commitStarted := make(chan struct{})
 	releaseCommit := make(chan struct{})
@@ -305,7 +305,7 @@ func TestClaimJobRetriesAfterBusyTransactionTimeout(t *testing.T) {
 	_, err = lockConn.ExecContext(t.Context(), "BEGIN IMMEDIATE")
 	require.NoError(t, err)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	resultCh := make(chan struct {
 		job *ReviewJob
@@ -396,12 +396,12 @@ func TestFailJobAttemptGuard(t *testing.T) {
 		{name: "wrong attempt", workerID: job.WorkerID, startedAt: "2000-01-01T00:00:00Z"},
 	} {
 		t.Run(attempt.name, func(t *testing.T) {
-			updated, err := env.db.FailJobAttempt(context.Background(), job.ID, attempt.workerID, attempt.startedAt, "failed attempt")
+			updated, err := env.db.FailJobAttempt(t.Context(), job.ID, attempt.workerID, attempt.startedAt, "failed attempt")
 			require.NoError(t, err)
 			require.False(t, updated)
 		})
 	}
-	updated, err := env.db.FailJobAttempt(context.Background(), job.ID, job.WorkerID, job.StartedAtRaw, "failed attempt")
+	updated, err := env.db.FailJobAttempt(t.Context(), job.ID, job.WorkerID, job.StartedAtRaw, "failed attempt")
 	require.NoError(t, err)
 	assert.True(updated)
 	failed, err := env.db.GetJobByID(job.ID)
@@ -409,7 +409,7 @@ func TestFailJobAttemptGuard(t *testing.T) {
 	assert.Equal(JobStatusFailed, failed.Status)
 	assert.Equal("failed attempt", failed.Error)
 	assert.NotNil(failed.FinishedAt)
-	updated, err = env.db.FailJobAttempt(context.Background(), job.ID, job.WorkerID, job.StartedAtRaw, "second failure")
+	updated, err = env.db.FailJobAttempt(t.Context(), job.ID, job.WorkerID, job.StartedAtRaw, "second failure")
 	require.NoError(t, err)
 	assert.False(updated)
 }
@@ -428,7 +428,7 @@ func TestListRunningAttemptsOnlyReturnsLocalClaims(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	attempts, err := db.ListRunningAttemptsContext(context.Background())
+	attempts, err := db.ListRunningAttemptsContext(t.Context())
 	require.NoError(t, err)
 
 	assert.Equal(t, []RunningAttempt{{JobID: claimed.ID, WorkerID: "worker-a"}}, attempts)
@@ -440,7 +440,7 @@ func TestRecoveryDatabaseCallsHonorCanceledContext(t *testing.T) {
 	job, err := env.db.ClaimJob("worker-a")
 	require.NoError(t, err)
 	require.NotNil(t, job)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err = env.db.ListRunningAttemptsContext(ctx)
 	require.ErrorIs(t, err, context.Canceled)

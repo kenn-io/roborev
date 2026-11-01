@@ -48,7 +48,7 @@ func TestCIPanelFinalStatusRecoveryAfterRestart(t *testing.T) {
 			}
 			if scenario == "superseded" {
 				server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
-				_, err := server.humaRerunJob(context.Background(), &RerunJobInput{Body: RerunJobRequest{JobID: synth.ID}})
+				_, err := server.humaRerunJob(t.Context(), &RerunJobInput{Body: RerunJobRequest{JobID: synth.ID}})
 				require.NoError(t, err, "a failed status write releases ownership for a successor")
 				require.NoError(t, server.Close())
 			}
@@ -79,14 +79,14 @@ func TestCIPanelFinalStatusRecoveryAfterRestart(t *testing.T) {
 				statuses = append(statuses, capturedStatus{repo, sha, state, desc})
 				return nil
 			}
-			poller.poll(context.Background())
+			poller.poll(t.Context())
 			var want []capturedStatus
 			if scenario != "superseded" && scenario != "removed repository" {
 				want = []capturedStatus{wantFinal}
 			}
 			assert.Equal(want, statuses)
 			assert.Len(*comments, wantComments, "status retry must not repost the comment")
-			poller.poll(context.Background())
+			poller.poll(t.Context())
 			assert.Equal(want, statuses, "acknowledged or superseded statuses must not retry")
 			assert.Len(*comments, wantComments)
 		})
@@ -136,7 +136,7 @@ func TestCIPanelFinalStatusDoesNotOverwriteSkip(t *testing.T) {
 			failSkip = false
 			require.NoError(t, h.Poller.skipPR("acme/api", pr, skipReviewLabel, attempt))
 			h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return nil, nil }
-			require.NoError(t, h.Poller.pollRepo(context.Background(), "acme/api", h.Cfg))
+			require.NoError(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg))
 			assert.Equal(1, finalAttempts)
 			assert.Equal([]capturedStatus{{Repo: "acme/api", SHA: "head-a", State: "success", Desc: "Review skipped: label skip-review"}}, statuses)
 		})
@@ -170,7 +170,7 @@ func TestCIPanelFinalStatusWithoutTokenRemainsPending(t *testing.T) {
 	h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) {
 		return []ghPR{{Number: 7, HeadRefOid: "head-a"}}, nil
 	}
-	require.NoError(t, h.Poller.pollRepo(context.Background(), "acme/api", h.Cfg))
+	require.NoError(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg))
 	assert.Equal(t, []capturedStatus{{Repo: "acme/api", SHA: "head-a", State: "success", Desc: "Review complete"}}, *statuses)
 	assert.Len(t, *comments, 1)
 }

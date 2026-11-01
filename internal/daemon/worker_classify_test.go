@@ -229,7 +229,7 @@ func TestProcessClassifyJob_WritesStandardLogAndCommandLine(t *testing.T) {
 	require.Equal(t, jobID, claimed.ID)
 	_, events := tc.Broadcaster.Subscribe("")
 
-	tc.Pool.processClassifyJob(context.Background(), "worker-classify-log", claimed)
+	tc.Pool.processClassifyJob(t.Context(), "worker-classify-log", claimed)
 
 	data, err := os.ReadFile(JobLogPath(jobID))
 	require.NoError(t, err)
@@ -288,7 +288,7 @@ func TestProcessClassifyJobUsesStoredAgent(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, jobID, claimed.ID)
 
-	tc.Pool.processClassifyJob(context.Background(), "worker-stored-agent", claimed)
+	tc.Pool.processClassifyJob(t.Context(), "worker-stored-agent", claimed)
 
 	assert.Equal(t, 0, configuredCalls)
 	assert.Equal(t, 1, selectedCalls)

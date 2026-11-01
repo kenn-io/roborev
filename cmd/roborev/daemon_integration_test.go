@@ -46,7 +46,7 @@ func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
 	dbPath, configPath := setupTestDaemon(t)
 
 	// Create context for cancellation
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
 	// Create the daemon run command with custom flags
@@ -299,7 +299,7 @@ func TestDaemonSignalCleanup(t *testing.T) {
 
 	dbPath, configPath := setupTestDaemon(t)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
 	cmd := daemonRunCmd()
@@ -465,7 +465,7 @@ func TestUpdateDrainCutoverIntegration(t *testing.T) {
 			waitForUpdateJobStatus(t, old.endpoint, active.ID, storage.JobStatusRunning, 10*time.Second)
 
 			session, err := prepareUpdateDaemon(
-				context.Background(), old.endpoint, "integration-owner", policy, io.Discard,
+				t.Context(), old.endpoint, "integration-owner", policy, io.Discard,
 			)
 			require.NoError(t, err)
 			secondSHA := repo.CommitFile("second.txt", "second\n", "second")
@@ -476,10 +476,10 @@ func TestUpdateDrainCutoverIntegration(t *testing.T) {
 				return err != nil || job.Status != storage.JobStatusQueued
 			}, 250*time.Millisecond, 25*time.Millisecond)
 
-			drainCtx, cancelDrain := context.WithTimeout(context.Background(), 20*time.Second)
+			drainCtx, cancelDrain := context.WithTimeout(t.Context(), 20*time.Second)
 			defer cancelDrain()
 			require.NoError(t, waitForPreparedDrain(drainCtx, session, io.Discard))
-			require.NoError(t, session.shutdown(context.Background()))
+			require.NoError(t, session.shutdown(t.Context()))
 			waitForIsolatedUpdateDaemonExit(t, old, 10*time.Second)
 
 			replacement := startIsolatedUpdateDaemon(t, newBinary, dataDir, dbPath, configPath)

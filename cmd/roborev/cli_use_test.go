@@ -652,7 +652,7 @@ func TestCLIUseRecoveryShutdownDoesNotCount(t *testing.T) {
 			if _, err := daemon.ProbeDaemonPing(epA, 2*time.Second); err != nil {
 				return err
 			}
-			resp, err := epA.APIClient(0).ShutdownRaw(context.Background())
+			resp, err := epA.APIClient(0).ShutdownRaw(t.Context())
 			if err != nil {
 				return err
 			}

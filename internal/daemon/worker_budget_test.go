@@ -172,7 +172,7 @@ func TestBudgetRoutingPreservesTestAgent(t *testing.T) {
 	cfg, _ := configureUnpricedBudgetRouting(t, tc)
 	job := tc.createAndClaimJobWithAgent(t, testutil.GetHeadSHA(t, tc.TmpDir), testWorkerID, "test")
 
-	selected, proceed := tc.Pool.selectBudgetJobAgent(context.Background(), testWorkerID, job, cfg)
+	selected, proceed := tc.Pool.selectBudgetJobAgent(t.Context(), testWorkerID, job, cfg)
 
 	require.True(t, proceed)
 	assert.Nil(t, selected)
@@ -217,7 +217,7 @@ func TestBudgetRoutingPreservesGoalReviewAgent(t *testing.T) {
 	require.NotNil(t, job)
 	require.Equal(t, queued.ID, job.ID)
 
-	selected, proceed := ctx.Pool.selectBudgetJobAgent(context.Background(), testWorkerID, job, cfg)
+	selected, proceed := ctx.Pool.selectBudgetJobAgent(t.Context(), testWorkerID, job, cfg)
 
 	assert := assert.New(t)
 	require.True(t, proceed)
@@ -371,7 +371,7 @@ func TestBudgetReconciliationInvalidatesCachedSpend(t *testing.T) {
 	tc.Pool.tokenUsageFetcher = func(context.Context, string) (*tokens.Usage, error) {
 		return &tokens.Usage{HasCost: true, CostUSD: 5}, nil
 	}
-	updated, err := tc.Pool.reconcileTokenCostJob(context.Background(), job.ID)
+	updated, err := tc.Pool.reconcileTokenCostJob(t.Context(), job.ID)
 	require.NoError(t, err)
 	require.True(t, updated)
 	after, err := tc.Pool.budgetRouter.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault, nil)
@@ -409,7 +409,7 @@ func TestBudgetRoutingSkipsUnsupportedCustomReviewCandidates(t *testing.T) {
 
 			job := ctx.createAndClaimJobWithAgent(t, testutil.GetHeadSHA(t, ctx.TmpDir), testWorkerID, "codex")
 			job.ReviewType = "custom"
-			selected, proceed := ctx.Pool.selectBudgetJobAgent(context.Background(), testWorkerID, job, cfg)
+			selected, proceed := ctx.Pool.selectBudgetJobAgent(t.Context(), testWorkerID, job, cfg)
 			require.True(t, proceed)
 			if tc.want == "" {
 				assert.Nil(t, selected)

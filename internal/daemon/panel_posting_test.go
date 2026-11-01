@@ -1206,7 +1206,7 @@ func TestPanelWithoutReviewFinalizesAfterStatusError(t *testing.T) {
 				}
 			}
 			h.Poller.handleReviewFailed(ciEvent(synth.ID, "review.failed"))
-			h.Poller.reconcilePanelPosting(context.Background(), "example/project")
+			h.Poller.reconcilePanelPosting(t.Context(), "example/project")
 			assert.Equal(1, writes, "terminal panels do not retry status writes")
 			assert.True(h.panelPostedAt(t, panel.ID))
 			assert.Empty(*comments)
@@ -1264,7 +1264,7 @@ func TestPanelWithoutReviewOnlyNotifiesMemberFailures(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, synth)
 		require.True(t, synth.IsSynthesisJob())
-		pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+		pool.processSynthesisJob(t.Context(), testWorkerID, synth)
 		event := <-events
 		assert.Equal("review.failed", event.Type)
 		assert.Empty(event.Agent, "an uncalled synthesis agent is not blamed")

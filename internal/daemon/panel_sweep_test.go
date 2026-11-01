@@ -80,7 +80,7 @@ func TestPanelSweepReleasesStuck(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(synth.ClaimBlocked, "synthesis should remain blocked before the sweep")
 
-	server.sweepStuckPanels(context.Background())
+	server.sweepStuckPanels(t.Context())
 
 	synth, err = db.GetSynthesisJob(runUUID)
 	require.NoError(t, err)
@@ -129,7 +129,7 @@ func TestPanelSweepRecoversOrphanedMember(t *testing.T) {
 			defer tc.Broadcaster.Unsubscribe(subscriber)
 			server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: tc.Broadcaster}
 
-			server.sweepStuckPanels(context.Background())
+			server.sweepStuckPanels(t.Context())
 
 			job := tc.assertJobStatus(t, claimed.ID, storage.JobStatusFailed)
 			assert.Equal("daemon did not save the job's outcome", job.Error)
@@ -183,7 +183,7 @@ func TestPanelSweepClaimOwnership(t *testing.T) {
 				require.NoError(t, err)
 			}
 			server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: tc.Broadcaster}
-			server.sweepStuckPanels(context.Background())
+			server.sweepStuckPanels(t.Context())
 
 			job := tc.assertJobStatus(t, claimed.ID, storage.JobStatusRunning)
 			assert.Empty(job.Error)
@@ -242,7 +242,7 @@ func TestPanelSweepRecoversRejectedWorkerFailure(t *testing.T) {
 			require.Equal(t, "review.started", startedEvent.Type)
 			server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: tc.Broadcaster}
 
-			server.sweepStuckPanels(context.Background())
+			server.sweepStuckPanels(t.Context())
 			live := tc.assertJobStatus(t, members[0].ID, storage.JobStatusRunning)
 			assert.Empty(live.Error)
 			assert.Empty(events, "sweeping a live worker must not announce a failure")
@@ -271,7 +271,7 @@ func TestPanelSweepRecoversRejectedWorkerFailure(t *testing.T) {
 			// announcing the probe's completion. A sweep skips that claim gap;
 			// retry until the database operation finishes and recovery can run.
 			require.Eventually(t, func() bool {
-				server.sweepStuckPanels(context.Background())
+				server.sweepStuckPanels(t.Context())
 				job, err := tc.DB.GetJobByID(members[0].ID)
 				return err == nil && job.Status == storage.JobStatusFailed
 			}, 10*time.Second, 10*time.Millisecond)
@@ -320,7 +320,7 @@ func TestPanelSweepPreservesReclaimedAttempt(t *testing.T) {
 		require.NotEqual(t, stale.StartedAtRaw, reclaimed.StartedAtRaw)
 		server := &Server{db: tc.DB, workerPool: tc.Pool, broadcaster: tc.Broadcaster}
 
-		server.failOrphanedJob(context.Background(), stale)
+		server.failOrphanedJob(t.Context(), stale)
 
 		job := tc.assertJobStatus(t, reclaimed.ID, storage.JobStatusRunning)
 		assert.Empty(job.Error)
@@ -354,7 +354,7 @@ func TestStopPanelSweepWaitsForInFlightSweep(t *testing.T) {
 			db: tc.DB, workerPool: tc.Pool, broadcaster: b,
 			configWatcher: NewConfigWatcher("", tc.Pool.cfgGetter.Config(), b, nil),
 		}
-		server.startPanelSweep(context.Background())
+		server.startPanelSweep(t.Context())
 		time.Sleep(panelSweepInterval)
 		event := <-entered
 		assert.Equal(t, jobs[0].ID, event.JobID)
@@ -417,11 +417,11 @@ func TestStopCancelsPanelSweepBeforeWorkerDrain(t *testing.T) {
 				defer releaseWork()
 				if test.blockedSweep {
 					synctest.Wait()
-					server.startPanelSweep(context.Background())
+					server.startPanelSweep(t.Context())
 					time.Sleep(panelSweepInterval)
 					<-entered
 				} else {
-					server.startPanelSweep(context.Background())
+					server.startPanelSweep(t.Context())
 					server.workerPool.wg.Go(func() { <-release })
 					require.NoError(t, server.beginShutdownDrain())
 				}
@@ -465,7 +465,7 @@ func TestStopCancelsPanelSweepBeforeWorkerDrain(t *testing.T) {
 func TestRunPanelSweepStopsOnContextCancel(t *testing.T) {
 	server, _, _ := newTestServer(t)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	go func() {
 		server.runPanelSweep(ctx, 5*time.Millisecond)
