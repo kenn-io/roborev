@@ -1134,6 +1134,44 @@ func TestLoadGuidelines(t *testing.T) {
 	}
 }
 
+func TestLoadGuidelinesForAgentHookCancellationSkipsFilesystemFallback(t *testing.T) {
+	repo := setupGuidelinesRepo(t, "main", "", "", nil)
+	require.NoError(t, os.WriteFile(filepath.Join(repo.Dir, ".roborev.toml"),
+		[]byte("review_guidelines = \"Filesystem rule.\"\n"), 0o644))
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	assert.Empty(t, LoadGuidelinesForAgentHook(ctx, repo.Dir))
+}
+
+func TestAgentHookGuidelinesAndFlowUseRemoteDefaultBranchWhenLocalNameShadows(t *testing.T) {
+	r := newTestRepoWithBranch(t, "main")
+	trustedFlow := `digraph roborev_trusted {
+  node [shape=box];
+  start [shape=oval label="Trusted review"];
+  back [shape=oval label="Back to roborev_triage"];
+  start -> back;
+}`
+	trustedConfig := "review_guidelines = \"Trusted review guidance\"\n[agent_hook]\nreview_flow = '''\n" + trustedFlow + "\n'''\n"
+	r.fastCommitFile(".roborev.toml", trustedConfig, "trusted review config")
+	r.git("remote", "add", "origin", r.dir)
+	r.git("fetch", "origin")
+	r.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+	r.git("checkout", "-b", "origin/main")
+	r.fastCommitFile(".roborev.toml", "review_guidelines = \"Untrusted local guidance\"\n", "shadow remote default branch")
+
+	flow, err := config.LoadAgentHookReviewFlow(t.Context(), r.dir)
+	require.NoError(t, err)
+	assert.Equal(t, trustedFlow, flow.Text)
+
+	guidelines := LoadGuidelinesForAgentHook(t.Context(), r.dir)
+	assert.Contains(t, guidelines, "Trusted review guidance")
+	assert.NotContains(t, guidelines, "Untrusted local guidance")
+	reviewGuidelines := LoadGuidelines(t.Context(), r.dir)
+	assert.Contains(t, reviewGuidelines, "Trusted review guidance")
+	assert.NotContains(t, reviewGuidelines, "Untrusted local guidance")
+}
+
 func TestLoadGuidelinesLocalReviewMDFallback(t *testing.T) {
 	repoPath := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(repoPath, ".roborev.toml"),

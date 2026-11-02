@@ -309,6 +309,7 @@ max_chars = 50000
 | `security_backup_agent` | string | Fallback agent for security reviews |
 | `design_backup_agent` | string | Fallback agent for design reviews |
 | `review_guidelines` | string | Project-specific guidelines for the reviewer |
+| `agent_hook.review_flow` | string | Bare DOT flow appended to Agent Hook review reminders when the built-in instruction is used. Read from the default branch, with the same working-tree fallback as review guidelines. See [Repository review flow](agent-hook.md#repository-review-flow) |
 | `review_md_fallback` | bool | Use `REVIEW.md` when `review_guidelines` is empty or unset (default: `true`) |
 | `review_guidelines_supersede_global` | bool | Use repo guidelines instead of appending global `review_guidelines` |
 | `kata_context.mode` | string | Kata task context in review prompts: `off`, `current`, or `open`. See [Kata Integration](#kata-integration) |

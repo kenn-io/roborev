@@ -22,7 +22,9 @@ reasoning = "thorough"
 ```
 
 To have your coding agent interview you and write this setup, invoke
-`/roborev-setup-review` (`$roborev-setup-review` in Codex). See
+`/roborev-setup-review` (`$roborev-setup-review` in Codex). The skill can also
+write a repository review flow for a coding agent that handles automatic
+findings through the [Agent Hook](../agent-hook.md#repository-review-flow). See
 [Agent Skills](../guides/agent-skills.md#set-up-a-custom-review).
 
 The template supplies instructions for what the reviewer should check. Roborev

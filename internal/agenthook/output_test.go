@@ -6,6 +6,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/config"
 )
 
 func TestPostToolUseAdditionalContextPreservesResolvedInstruction(t *testing.T) {
@@ -60,4 +62,13 @@ func TestBuildOutputInjectsAdditionalContextForScheduledZCodeEvents(t *testing.T
 	// Lifecycle events keep the stop-decision form.
 	stop := BuildOutput(Input{HookEventName: "Stop"}, resp)
 	assert.Equal("block", stop["decision"])
+}
+
+func TestBuildOutputWithFixGuidelinesFollowsRepoReviewFlow(t *testing.T) {
+	reason := withReviewFlow("Reminder.", config.AgentHookReviewFlow{Text: testRepoFlow})
+	got := BuildOutputWithFixGuidelines(Input{HookEventName: "Stop"}, Response{Triggered: true, Reason: reason}, "G")
+	text, ok := got["reason"].(string)
+	require.True(t, ok)
+	assert.True(t, strings.HasSuffix(text, "## Autofix Guidelines\n\nG"))
+	assert.Less(t, strings.Index(text, "Repository review flow"), strings.Index(text, "## Autofix Guidelines"))
 }

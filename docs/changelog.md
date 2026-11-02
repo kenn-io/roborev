@@ -7,6 +7,12 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
+- **Repository review flows for the Agent Hook.** Set `[agent_hook] review_flow`
+    in `.roborev.toml` to a DOT diagram of how to handle repository findings.
+    The hook adds it after the built-in triage diagram. The setup-review skill
+    writes one from its interview, and `roborev doctor` explains whether the
+    hook will use it.
+
 - Agent Hook reminders carry the triage flow as a DOT diagram. Stop, commit,
     failed-review and injected reminders use the same flow. Custom instructions
     still replace it, and changing facts stay outside the diagram.

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"go.kenn.io/roborev/internal/agenthook"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/prompt"
 )
@@ -129,4 +130,73 @@ func isSecurityReviewType(env *doctorEnv, reviewType string) bool {
 	}
 	canonical, err := config.ValidateReviewTypesFromConfig([]string{reviewType}, env.repoCfg, env.global)
 	return err == nil && len(canonical) == 1 && canonical[0] == config.ReviewTypeSecurity
+}
+
+// checkDoctorAgentHookFlow reports the same trusted source reminders use.
+func checkDoctorAgentHookFlow(env *doctorEnv) []doctorCheck {
+	if env.repoPath == "" || env.repoErr != nil {
+		return nil
+	}
+	flow, err := config.LoadAgentHookReviewFlow(env.ctx, env.repoPath)
+	if err != nil {
+		return []doctorCheck{{
+			ID: "repo.agent_hook_flow", Category: "repo", Status: doctorFail,
+			Summary: "trusted Agent Hook review flow could not be loaded",
+			Details: []string{err.Error()}, Fix: "fix .roborev.toml on the default branch, then run roborev doctor",
+		}}
+	}
+	working := ""
+	if env.repoCfg != nil {
+		working = strings.TrimSpace(env.repoCfg.AgentHook.ReviewFlow)
+	}
+	if flow.Text == "" && working == "" {
+		return nil
+	}
+	c := doctorCheck{ID: "repo.agent_hook_flow", Category: "repo", Status: doctorOK}
+	source := "the working tree"
+	if flow.Ref != "" {
+		source = flow.Ref
+	}
+	c.Summary = fmt.Sprintf("Agent Hook review flow is set (%d bytes, from %s)", len(flow.Text), source)
+	if flow.Ref != "" && working != flow.Text {
+		c.Status = doctorWarn
+		c.Summary = fmt.Sprintf("the Agent Hook uses the review flow on %s; the working tree's differs", source)
+		if flow.Text == "" {
+			c.Summary = fmt.Sprintf("no repository flow is injected from %s; the working tree has one", source)
+		}
+		c.Fix = fmt.Sprintf("commit the intended flow and merge it into %s", source)
+	}
+	var agentInstruction, droidInstruction string
+	if env.global != nil {
+		agentInstruction = env.global.AgentHook.Instruction
+		droidInstruction = env.global.DroidHook.Instruction
+	}
+	var custom []string
+	if source := customAgentHookInstructionSource(agentInstruction, agenthook.InstructionEnv, "agent_hook.instruction"); source != "" {
+		custom = append(custom, source)
+	}
+	if source := customAgentHookInstructionSource(droidInstruction, agenthook.DroidInstructionEnv, "droid_hook.instruction"); source != "" {
+		custom = append(custom, source)
+	}
+	if len(custom) > 0 {
+		c.Status = doctorWarn
+		c.Details = append(c.Details, c.Summary)
+		c.Summary = "a custom Agent Hook instruction is set; the affected profile does not add this repository's review flow"
+		c.Details = append(c.Details, custom...)
+		c.Fix = "return the affected profile to the built-in instruction to include repository review flows"
+	}
+	return []doctorCheck{c}
+}
+
+func customAgentHookInstructionSource(configured, envKey, configKey string) string {
+	if override := os.Getenv(envKey); override != "" {
+		if !agenthook.IsBuiltinInstruction(override) {
+			return envKey
+		}
+		return ""
+	}
+	if !agenthook.IsBuiltinInstruction(configured) {
+		return configKey
+	}
+	return ""
 }

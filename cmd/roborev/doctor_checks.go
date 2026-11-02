@@ -150,11 +150,22 @@ func runDoctorChecks(env *doctorEnv) []doctorCheck {
 		checkDoctorEnqueueFailures,
 		checkDoctorRepo,
 		checkDoctorGuidelines,
+		checkDoctorAgentHookFlow,
 		checkDoctorIntegrations,
 	}
 	var out []doctorCheck
+	defaultBranchConfigFailed := false
 	for _, check := range checks {
-		out = append(out, runDoctorCheck(env, check)...)
+		results := runDoctorCheck(env, check)
+		for _, result := range results {
+			if result.ID == "repo.agent_hook_flow" && result.Status == doctorFail && defaultBranchConfigFailed {
+				continue
+			}
+			out = append(out, result)
+			if result.ID == "config.repo_default_branch" && result.Status == doctorFail {
+				defaultBranchConfigFailed = true
+			}
+		}
 	}
 	return out
 }

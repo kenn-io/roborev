@@ -22,7 +22,7 @@ import (
 	"github.com/BurntSushi/toml"
 	tomlv2 "github.com/pelletier/go-toml/v2"
 	"go.kenn.io/kit/atomicfile"
-	gitrepo "go.kenn.io/kit/git/repo"
+	gitcmd "go.kenn.io/kit/git/cmd"
 
 	"go.kenn.io/roborev/internal/agentname"
 	"go.kenn.io/roborev/internal/git"
@@ -761,6 +761,7 @@ func (c *Config) Validate() (err error) {
 
 // RepoConfig holds per-repo overrides
 type RepoConfig struct {
+	AgentHook                       RepoAgentHookConfig `toml:"agent_hook"`
 	experimentOverlay               map[string]any
 	Agent                           string                          `toml:"agent" comment:"Default agent for this repo when no workflow-specific agent is set."`
 	Model                           string                          `toml:"model" comment:"Default model for this repo when no workflow-specific model is set."` // Model for agents (format varies by agent)
@@ -950,13 +951,26 @@ type RepoConfig struct {
 }
 
 // Validate checks values that cannot be constrained by TOML decoding alone.
-func (c *RepoConfig) Validate() (err error) {
+func (c *RepoConfig) Validate() error {
+	return c.validate(false)
+}
+
+func (c *RepoConfig) validateForAgentHookGuidelines() error {
+	return c.validate(true)
+}
+
+func (c *RepoConfig) validate(ignoreAgentHookReviewFlow bool) (err error) {
 	if c == nil {
 		return nil
 	}
 	defer func() {
 		err = markConfigValidationError(err)
 	}()
+	if !ignoreAgentHookReviewFlow {
+		if e := ValidateAgentHookReviewFlow(c.AgentHook.ReviewFlow); e != nil {
+			return e
+		}
+	}
 	if err := validateConfig(c, c.ACP); err != nil {
 		return err
 	}
@@ -1447,6 +1461,21 @@ func LoadRepoConfig(repoPath string) (*RepoConfig, error) {
 // same file contents. The raw map is authoritative for explicit zero-value
 // presence when experiment overlays are merged.
 func LoadRepoConfigWithRaw(repoPath string) (*RepoConfig, map[string]any, error) {
+	return loadRepoConfigWithRaw(repoPath, false)
+}
+
+// LoadRepoConfigForAgentHookGuidelines loads validated repository settings for
+// the Agent Hook's reminder eligibility check, where an invalid optional
+// review flow must not hide otherwise valid review guidelines.
+func LoadRepoConfigForAgentHookGuidelines(repoPath string) (*RepoConfig, error) {
+	cfg, _, err := loadRepoConfigWithRaw(repoPath, true)
+	if cfg != nil {
+		cfg.AgentHook.ReviewFlow = ""
+	}
+	return cfg, err
+}
+
+func loadRepoConfigWithRaw(repoPath string, ignoreAgentHookReviewFlow bool) (*RepoConfig, map[string]any, error) {
 	path := RepoConfigPath(repoPath)
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -1475,8 +1504,14 @@ func LoadRepoConfigWithRaw(repoPath string) (*RepoConfig, map[string]any, error)
 	if err := validateExperimentEntries(cfg.Experiments, false); err != nil {
 		return nil, nil, fmt.Errorf("config: %w", markExperimentConfigError(err))
 	}
-	if err := cfg.Validate(); err != nil {
-		return nil, nil, fmt.Errorf("config: %w", err)
+	var validationErr error
+	if ignoreAgentHookReviewFlow {
+		validationErr = cfg.validateForAgentHookGuidelines()
+	} else {
+		validationErr = cfg.Validate()
+	}
+	if validationErr != nil {
+		return nil, nil, fmt.Errorf("config: %w", validationErr)
 	}
 
 	return &cfg, raw, nil
@@ -1700,7 +1735,29 @@ func LoadRepoConfigFromRef(repoPath, ref string) (*RepoConfig, error) {
 // from a git ref. The raw map preserves whether zero values were explicitly
 // configured, which experiment overlays need for recursive merging.
 func LoadRepoConfigFromRefWithRaw(repoPath, ref string) (*RepoConfig, map[string]any, error) {
-	data, err := git.ReadFile(repoPath, ref, ".roborev.toml")
+	return loadRepoConfigFromRefWithRawContext(context.Background(), repoPath, ref)
+}
+
+// LoadRepoConfigFromRefForAgentHookGuidelines loads the trusted config used to
+// decide whether an Agent Hook reminder has repository guidance. It ignores
+// only review_flow validation, since the hook treats that flow as optional.
+func LoadRepoConfigFromRefForAgentHookGuidelines(ctx context.Context, repoPath, ref string) (*RepoConfig, error) {
+	cfg, _, err := loadRepoConfigFromRefWithRawContextMode(ctx, repoPath, ref, true)
+	if cfg != nil {
+		cfg.AgentHook.ReviewFlow = ""
+	}
+	return cfg, err
+}
+
+func loadRepoConfigFromRefWithRawContext(ctx context.Context, repoPath, ref string) (*RepoConfig, map[string]any, error) {
+	return loadRepoConfigFromRefWithRawContextMode(ctx, repoPath, ref, false)
+}
+
+func loadRepoConfigFromRefWithRawContextMode(ctx context.Context, repoPath, ref string, ignoreAgentHookReviewFlow bool) (*RepoConfig, map[string]any, error) {
+	data, err := gitcmd.New().Output(ctx, repoPath, "show", ref+":.roborev.toml")
+	if ctx.Err() != nil {
+		return nil, nil, ctx.Err()
+	}
 	if err != nil {
 		if git.IsMissingPathError(err) {
 			return nil, nil, nil
@@ -1721,8 +1778,14 @@ func LoadRepoConfigFromRefWithRaw(repoPath, ref string) (*RepoConfig, map[string
 			"experiment config at %s: %w", ref, markExperimentConfigError(err),
 		)
 	}
-	if err := cfg.Validate(); err != nil {
-		return nil, nil, &ConfigParseError{Ref: ref, Err: err}
+	var validationErr error
+	if ignoreAgentHookReviewFlow {
+		validationErr = cfg.validateForAgentHookGuidelines()
+	} else {
+		validationErr = cfg.Validate()
+	}
+	if validationErr != nil {
+		return nil, nil, &ConfigParseError{Ref: ref, Err: validationErr}
 	}
 	raw := make(map[string]any)
 	if _, err := toml.Decode(string(data), &raw); err != nil {
@@ -1747,15 +1810,27 @@ type RepoConfigSource struct {
 func LoadRepoConfigWithFallback(
 	repoPath, ref string,
 ) (RepoConfigSource, error) {
+	return LoadRepoConfigWithFallbackContext(context.Background(), repoPath, ref)
+}
+
+// LoadRepoConfigWithFallbackContext observes cancellation during Git reads and
+// before falling back to the working tree.
+func LoadRepoConfigWithFallbackContext(ctx context.Context, repoPath, ref string) (RepoConfigSource, error) {
+	if err := ctx.Err(); err != nil {
+		return RepoConfigSource{Ref: ref}, err
+	}
 	ref = strings.TrimSpace(ref)
 	if ref != "" {
-		cfg, raw, err := LoadRepoConfigFromRefWithRaw(repoPath, ref)
+		cfg, raw, err := loadRepoConfigFromRefWithRawContext(ctx, repoPath, ref)
 		if err != nil {
 			return RepoConfigSource{Ref: ref}, err
 		}
 		if cfg != nil {
 			return RepoConfigSource{Config: cfg, Raw: raw, Ref: ref}, nil
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return RepoConfigSource{Ref: ref}, err
 	}
 	cfg, raw, err := LoadRepoConfigWithRaw(repoPath)
 	return RepoConfigSource{Config: cfg, Raw: raw}, err
@@ -2043,8 +2118,8 @@ func ResolveExcludePatternsLocal(
 // .roborev.toml not yet committed). This mirrors loadGuidelines
 // to prevent untrusted branches from controlling review scope.
 func loadRepoExcludePatterns(ctx context.Context, repoPath string) []string {
-	if defaultBranch, err := gitrepo.DefaultBranch(ctx, repoPath); err == nil {
-		cfg, err := LoadRepoConfigFromRef(repoPath, defaultBranch)
+	if _, revision, err := ResolveDefaultBranchRevision(ctx, repoPath); err == nil && revision != "" {
+		cfg, err := LoadRepoConfigFromRef(repoPath, revision)
 		if err != nil {
 			if IsConfigParseError(err) {
 				return nil
@@ -2053,6 +2128,9 @@ func loadRepoExcludePatterns(ctx context.Context, repoPath string) []string {
 		} else if cfg != nil {
 			return cfg.ExcludePatterns
 		}
+	}
+	if ctx.Err() != nil {
+		return nil
 	}
 	if fsCfg, err := LoadRepoConfig(repoPath); err == nil && fsCfg != nil {
 		return fsCfg.ExcludePatterns
