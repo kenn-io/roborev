@@ -1244,6 +1244,12 @@ func LoadGuidelines(ctx context.Context, repoPath string) string {
 	return loadRepoGuidelines(ctx, repoPath).text
 }
 
+// LoadGuidelinesForAgentHook keeps valid repository guidance available to
+// reminders when an invalid optional review flow is omitted.
+func LoadGuidelinesForAgentHook(ctx context.Context, repoPath string) string {
+	return loadRepoGuidelinesForAgentHook(ctx, repoPath).text
+}
+
 // LoadGuidelinesWithConfig merges global review guidelines with repo
 // guidelines. Repo guidelines append to global guidelines by default;
 // review_guidelines_supersede_global in repo config disables the global
@@ -1293,6 +1299,14 @@ func mergeGuidelines(global, repo string, repoSupersedesGlobal bool) string {
 }
 
 func loadRepoGuidelines(ctx context.Context, repoPath string) loadedGuidelines {
+	return loadRepoGuidelinesUsing(ctx, repoPath, false)
+}
+
+func loadRepoGuidelinesForAgentHook(ctx context.Context, repoPath string) loadedGuidelines {
+	return loadRepoGuidelinesUsing(ctx, repoPath, true)
+}
+
+func loadRepoGuidelinesUsing(ctx context.Context, repoPath string, ignoreAgentHookReviewFlow bool) loadedGuidelines {
 	// REVIEW.md comes from the same place as .roborev.toml: the default
 	// branch when one resolves, so an untrusted branch cannot supply review
 	// instructions; the working tree only in a repo with no default branch,
@@ -1302,9 +1316,22 @@ func loadRepoGuidelines(ctx context.Context, repoPath string) loadedGuidelines {
 	// Load review guidelines from the default branch (origin/main,
 	// origin/master, etc.). Branch-specific guidelines are intentionally
 	// ignored to prevent prompt injection from untrusted PR authors.
-	if defaultBranch, err := gitrepo.DefaultBranch(ctx, repoPath); err == nil {
-		readReviewMD = func() string { return reviewMDFromRef(repoPath, defaultBranch) }
-		cfg, err := config.LoadRepoConfigFromRef(repoPath, defaultBranch)
+	defaultBranch, configRef, err := config.ResolveDefaultBranchRevision(ctx, repoPath)
+	if err != nil {
+		log.Printf("prompt: failed to resolve default branch for .roborev.toml: %v", err)
+		if ignoreAgentHookReviewFlow || ctx.Err() != nil || defaultBranch != "" {
+			return loadedGuidelines{}
+		}
+		defaultBranch, configRef = "", ""
+	}
+	if defaultBranch != "" {
+		readReviewMD = func() string { return reviewMDFromRef(repoPath, configRef) }
+		var cfg *config.RepoConfig
+		if ignoreAgentHookReviewFlow {
+			cfg, err = config.LoadRepoConfigFromRefForAgentHookGuidelines(ctx, repoPath, configRef)
+		} else {
+			cfg, err = config.LoadRepoConfigFromRef(repoPath, configRef)
+		}
 		if err != nil {
 			if config.IsConfigParseError(err) {
 				// A broken config suppresses every fallback, REVIEW.md
@@ -1325,12 +1352,22 @@ func loadRepoGuidelines(ctx context.Context, repoPath string) loadedGuidelines {
 		}
 	}
 
+	if ctx.Err() != nil {
+		return loadedGuidelines{}
+	}
+
 	// Fall back to filesystem config when default branch has no config
 	// (e.g., no remote, or .roborev.toml not yet committed). Configured
 	// review_guidelines still win over REVIEW.md here, including the
 	// supersede flag that comes with them.
 	var fs loadedGuidelines
-	if fsCfg, err := config.LoadRepoConfig(repoPath); err == nil && fsCfg != nil {
+	var fsCfg *config.RepoConfig
+	if ignoreAgentHookReviewFlow {
+		fsCfg, err = config.LoadRepoConfigForAgentHookGuidelines(repoPath)
+	} else {
+		fsCfg, err = config.LoadRepoConfig(repoPath)
+	}
+	if err == nil && fsCfg != nil {
 		fs = loadedGuidelines{
 			text:            fsCfg.ReviewGuidelines,
 			configured:      strings.TrimSpace(fsCfg.ReviewGuidelines) != "" || !fsCfg.UsesReviewMDFallback(),

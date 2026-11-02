@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1132,6 +1133,77 @@ func TestLoadGuidelines(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLoadGuidelinesForAgentHookCancellationSkipsFilesystemFallback(t *testing.T) {
+	repo := setupGuidelinesRepo(t, "main", "", "", nil)
+	require.NoError(t, os.WriteFile(filepath.Join(repo.Dir, ".roborev.toml"),
+		[]byte("review_guidelines = \"Filesystem rule.\"\n"), 0o644))
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	assert.Empty(t, LoadGuidelinesForAgentHook(ctx, repo.Dir))
+}
+
+func TestAgentHookGuidelinesAndFlowUseRemoteDefaultBranchWhenLocalNameShadows(t *testing.T) {
+	r := newTestRepoWithBranch(t, "main")
+	trustedFlow := `digraph roborev_trusted {
+  node [shape=box];
+  start [shape=oval label="Trusted review"];
+  back [shape=oval label="Back to roborev_triage"];
+  start -> back;
+}`
+	trustedConfig := "review_guidelines = \"Trusted review guidance\"\n[agent_hook]\nreview_flow = '''\n" + trustedFlow + "\n'''\n"
+	r.fastCommitFile(".roborev.toml", trustedConfig, "trusted review config")
+	r.git("remote", "add", "origin", r.dir)
+	r.git("fetch", "origin")
+	r.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+	r.git("checkout", "-b", "origin/main")
+	r.fastCommitFile(".roborev.toml", "review_guidelines = \"Untrusted local guidance\"\n", "shadow remote default branch")
+
+	flow, err := config.LoadAgentHookReviewFlow(t.Context(), r.dir)
+	require.NoError(t, err)
+	assert.Equal(t, trustedFlow, flow.Text)
+
+	guidelines := LoadGuidelinesForAgentHook(t.Context(), r.dir)
+	assert.Contains(t, guidelines, "Trusted review guidance")
+	assert.NotContains(t, guidelines, "Untrusted local guidance")
+	reviewGuidelines := LoadGuidelines(t.Context(), r.dir)
+	assert.Contains(t, reviewGuidelines, "Trusted review guidance")
+	assert.NotContains(t, reviewGuidelines, "Untrusted local guidance")
+}
+
+func TestTrustedConfigReadersDoNotUseWorkingTreeAfterDefaultRefPinFailure(t *testing.T) {
+	r := newTestRepoWithBranch(t, "main")
+	r.fastCommitFile(".roborev.toml", "review_guidelines = \"Trusted guidance\"\nexclude_patterns = [\"trusted.lock\"]\n", "trusted config")
+	r.git("remote", "add", "origin", r.dir)
+	r.git("fetch", "origin")
+	r.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+	r.git("checkout", "-b", "feature")
+	r.writeFile(".roborev.toml", "review_guidelines = \"Untrusted guidance\"\nexclude_patterns = [\"untrusted.lock\"]\n")
+
+	realGit, err := exec.LookPath("git")
+	require.NoError(t, err)
+	shimPath := filepath.Join(t.TempDir(), "git")
+	shim := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "rev-parse" ] && [ "$2" = "--verify" ] && [ "$3" = "refs/remotes/origin/main^{commit}" ]; then
+	echo 'synthetic pinned ref failure' >&2
+	exit 1
+fi
+exec %q "$@"
+`, realGit)
+	require.NoError(t, os.WriteFile(shimPath, []byte(shim), 0o755))
+	t.Setenv("PATH", filepath.Dir(shimPath)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	ref, revision, err := config.ResolveDefaultBranchRevision(t.Context(), r.dir)
+	require.Error(t, err)
+	assert.Equal(t, "origin/main", ref)
+	assert.Empty(t, revision)
+	assert.Empty(t, LoadGuidelines(t.Context(), r.dir), "failed trusted pin must not load branch-local guidelines")
+	assert.Empty(t, config.ResolveExcludePatterns(t.Context(), r.dir, nil, "review"), "failed trusted pin must not load branch-local exclusion patterns")
+	r.writeFile(".roborev.toml", "review_guidelines = \"\"\nreview_md_fallback = true\n")
+	r.writeFile("REVIEW.md", "Untrusted feature instructions")
+	assert.Empty(t, LoadGuidelines(t.Context(), r.dir), "failed trusted pin must not load branch-local REVIEW.md")
 }
 
 func TestLoadGuidelinesLocalReviewMDFallback(t *testing.T) {

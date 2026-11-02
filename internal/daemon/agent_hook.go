@@ -39,7 +39,7 @@ func (s daemonAgentHookSource) ResolveTrackedRepo(
 		// Global guidelines alone do not count; they are not tuned to
 		// this repo.
 		resolved.ReviewGuidelinesMissing =
-			strings.TrimSpace(prompt.LoadGuidelines(ctx, resolved.RootPath)) == ""
+			strings.TrimSpace(prompt.LoadGuidelinesForAgentHook(ctx, resolved.RootPath)) == ""
 	}
 	return resolved, true
 }

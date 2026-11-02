@@ -443,6 +443,81 @@ the profile `instruction`, which remains a full replacement for workflow text.
 If `agent-hook run --config` selects another file for thresholds or instruction,
 fix guidelines still come from the standard global config.
 
+### Repository review flow
+
+A repository can set `[agent_hook] review_flow` in `.roborev.toml` to a bare DOT
+digraph describing how to handle its review findings. Follow the
+[DOT flow conventions](#dot-flow-conventions). The setup-review skill writes one
+from its interview when a coding agent handles automatic review findings.
+
+#### DOT flow conventions
+
+When the hook appends a flow to a reminder, it wraps the bare
+`digraph roborev_<name>` in a `~~~dot` fence. The first statement is
+`node [shape=box];`. Declare nodes before their edges. An oval marks the entry
+or an exit; a diamond asks a question and has labeled outgoing edges. Actions
+use boxes with at most one outgoing edge. Every node must be reachable from the
+single entry.
+
+Use lowercase snake case node IDs and double-quoted labels. Write line breaks as
+`\n`, keep commands verbatim, and put changing values outside the graph.
+Subgraphs, HTML labels, templates, and escaped quotes are outside this subset.
+
+The hook appends this flow after the trigger facts and any triggering-worktree
+sentence, and before the completion command, MCP hints, and fix guidelines. It
+refines the built-in triage diagram's Which disposition step and ends by handing
+back to `roborev_triage`. A custom `instruction` suppresses repository flows for
+that profile, including a custom `droid_hook.instruction` for Droid. Fix-session
+continuations do not repeat the flow.
+
+Like review guidelines, the flow comes from `.roborev.toml` on the default
+branch. The working tree is used only when that branch has no config or no
+default branch resolves. A feature branch cannot change it while the default
+branch has a config. Invalid trusted config never falls back to working-tree
+text; the reminder continues without a repository flow.
+
+`roborev config validate` checks the supported DOT grammar and rejects fenced
+text or the reserved graph name `roborev_triage`. Invalid flows fail repository
+configuration validation. Keep flows compact and refer to source files instead
+of repeating rubrics. `roborev doctor` reports the source, working-tree changes,
+and custom instructions that suppress the flow.
+
+The reminder eligibility check ignores only `agent_hook.review_flow` while
+loading repository settings. An invalid flow value therefore does not hide
+otherwise valid `review_guidelines`; normal config loading and validation remain
+strict, and `roborev doctor` reports trusted flow load failures.
+
+```toml
+[agent_hook]
+review_flow = '''
+digraph roborev_brief {
+  node [shape=box];
+  start [shape=oval label="Findings from the brief panel;\neach job covers up to 5 commits"];
+  read [label="Read each: roborev show --from-skill --job <job_id>"];
+  who [shape=diamond label="Which reviewer reported it?"];
+  facts [label="Compare the date or event with\nevidence/timeline.md and the\nexhibit text copy in exhibits/"];
+  quotes [label="Compare the quoted words with the\nexhibit text copy, word for word"];
+  holds [shape=diamond label="What does the source show?"];
+  fix [label="Fix: correct the sentence, drafts/ only;\nnew commit, never amend reviewed ones"];
+  invalid [label="Invalid: record the source line\nthat shows the draft is right"];
+  decline [label="Decline: imprecise, misleads no one;\nrecord why it can wait"];
+  ask [label="Ask: a source is missing or two disagree;\nask the user, do not guess"];
+  back [shape=oval label="Back to roborev_triage:\nrecord each disposition"];
+  start -> read -> who;
+  who -> facts [label="facts"];
+  who -> quotes [label="quotes"];
+  facts -> holds; quotes -> holds;
+  holds -> fix [label="finding is right"];
+  holds -> invalid [label="draft is right"];
+  holds -> decline [label="imprecise only"];
+  holds -> ask [label="source missing\nor conflicting"];
+  fix -> back; invalid -> back; decline -> back; ask -> back;
+}
+'''
+```
+
+### Global profile options
+
 All profiles except Factory Droid use `[agent_hook]` in the global config:
 
 ```toml

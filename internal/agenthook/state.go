@@ -243,7 +243,13 @@ func cloneSessionState(state SessionState) SessionState {
 	return state
 }
 
-func (s *StateStore) RecordContext(ctx context.Context, req Request) (Response, error) {
+func (s *StateStore) RecordContext(ctx context.Context, req Request) (resp Response, err error) {
+	defer func() {
+		if err == nil && resp.Triggered && resp.reviewFlowRepo != "" && IsBuiltinInstruction(resp.reviewFlowInstruction) {
+			resp.Reason = withReviewFlow(resp.Reason, s.reviewFlow(ctx, resp.reviewFlowRepo))
+		}
+	}()
+
 	if err := ctx.Err(); err != nil {
 		return Response{}, err
 	}
@@ -384,6 +390,7 @@ func (s *StateStore) recordUserPrompt(ctx context.Context, req Request) (Respons
 	if failedReviewTriggered {
 		resp.TriggeredBy = "failed_reviews"
 		resp.Reason = buildUserPromptReason(req, scope, openFailedJobs, actionableReviewIDs)
+		resp.reviewFlowRepo, resp.reviewFlowInstruction = scope.TrackedRepoRoot, req.Instruction
 	}
 	return resp, nil
 }
@@ -535,9 +542,11 @@ func (s *StateStore) recordStop(ctx context.Context, req Request) (Response, err
 	case failedReviewTriggered:
 		resp.TriggeredBy = "failed_reviews"
 		resp.Reason = buildFailedReviewReason(req, st, actionableReviewIDs)
+		resp.reviewFlowRepo, resp.reviewFlowInstruction = scope.TrackedRepoRoot, req.Instruction
 	case stopTriggered:
 		resp.TriggeredBy = "stop"
 		resp.Reason = buildStopReason(req, stopCountSincePrompt, actionableReviewIDs)
+		resp.reviewFlowRepo, resp.reviewFlowInstruction = scope.TrackedRepoRoot, req.Instruction
 	}
 	return resp, nil
 }
@@ -831,9 +840,11 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 	case failedReviewTriggered:
 		resp.TriggeredBy = "failed_reviews"
 		resp.Reason = buildFailedReviewReason(req, st, actionableReviewIDs)
+		resp.reviewFlowRepo, resp.reviewFlowInstruction = scope.TrackedRepoRoot, req.Instruction
 	case commitTriggered:
 		resp.TriggeredBy = "commit"
 		resp.Reason = buildCommitReason(req, triggeringCommitCount, scope.WorktreeRoot, actionableReviewIDs)
+		resp.reviewFlowRepo, resp.reviewFlowInstruction = scope.TrackedRepoRoot, req.Instruction
 	}
 	return resp, nil
 }
@@ -1121,6 +1132,8 @@ func (s *StateStore) deliverPendingReminder(
 			Triggered:             true,
 			TriggeredBy:           pending.TriggeredBy,
 			Reason:                pending.Reason,
+			reviewFlowRepo:        pending.TrackedRepoRoot,
+			reviewFlowInstruction: pending.Instruction,
 		}
 		if fixSession != nil {
 			response.FixSessionID = new(fixSession.ID)
