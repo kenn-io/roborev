@@ -3684,7 +3684,11 @@ func TestResolveSHAsCtx(t *testing.T) {
 	repo.Run("tag", "-a", "batch-tag", "-m", "annotated tag")
 	tag, err := ResolveSHACtx(t.Context(), repo.Dir, "batch-tag")
 	require.NoError(t, err)
-	refs := []string{head, head[:12], "batch-ref", "batch-tag", "no-such-ref", "", "HEAD\nHEAD", "batch-ref"}
+	missing := strings.Repeat("1", len(head))
+	missingSHA, err := ResolveSHACtx(t.Context(), repo.Dir, missing)
+	require.NoError(t, err)
+	assert.Equal(missing, missingSHA)
+	refs := []string{head, head[:12], "batch-ref", "batch-tag", missing, "no-such-ref", "", "HEAD\nHEAD", "batch-ref"}
 	resolved, err := ResolveSHAsCtx(t.Context(), repo.Dir, refs)
 	require.NoError(t, err)
 	assert.Equal(map[string]string{
@@ -3692,6 +3696,7 @@ func TestResolveSHAsCtx(t *testing.T) {
 		head[:12]:     head,
 		"batch-ref":   head,
 		"batch-tag":   tag,
+		missing:       missing,
 		"no-such-ref": "",
 		"":            "",
 		"HEAD\nHEAD":  "",

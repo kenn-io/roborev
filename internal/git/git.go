@@ -957,7 +957,7 @@ func ResolveSHACtx(ctx context.Context, repoPath, ref string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// ResolveSHAsCtx resolves refs to object IDs in one git process, without peeling
+// ResolveSHAsCtx resolves refs to object IDs in at most one git process, without peeling
 // annotated tags. Empty, newline-containing, and unresolved refs map to "".
 func ResolveSHAsCtx(ctx context.Context, repoPath string, refs []string) (map[string]string, error) {
 	resolved := make(map[string]string, len(refs))
@@ -968,6 +968,12 @@ func ResolveSHAsCtx(ctx context.Context, repoPath string, refs []string) (map[st
 		}
 		resolved[ref] = ""
 		if ref == "" || strings.Contains(ref, "\n") {
+			continue
+		}
+		// Like rev-parse, accept full IDs without checking the object store.
+		// In partial clones, cat-file can fetch missing objects one at a time.
+		if isFullObjectID(ref) {
+			resolved[ref] = ref
 			continue
 		}
 		pending = append(pending, ref)

@@ -33,19 +33,7 @@ func BenchmarkPriorRangeReviewViews(b *testing.B) {
 	b.Cleanup(func() { require.NoError(b, db.Close()) })
 	repo, err := db.GetOrCreateRepo(repoPath)
 	require.NoError(b, err)
-	_, err = db.ExecContext(b.Context(), `
-		WITH RECURSIVE sequence(n) AS (
-			SELECT 1 UNION ALL SELECT n + 1 FROM sequence WHERE n < 5000
-		)
-		INSERT INTO review_jobs (repo_id, git_ref, agent, status, job_type, uuid)
-		SELECT ?, printf('start-%d..end-%d', n, n), 'test', 'done', 'range',
-		       printf('00000000-0000-4000-8000-%012d', n)
-		FROM sequence`, repo.ID)
-	require.NoError(b, err)
-	_, err = db.ExecContext(b.Context(), `
-		INSERT INTO reviews (job_id, agent, output, uuid)
-		SELECT id, agent, 'unrelated review', uuid FROM review_jobs`)
-	require.NoError(b, err)
+	seedUnrelatedRangeReviews(b, db, repo.ID, 5000)
 	builder := NewBuilder(db).WithContext(b.Context()).ForRepo(repoPath, repo.ID)
 
 	for b.Loop() {

@@ -196,6 +196,24 @@ func TestPrebuiltPriorRangeReviewsDocument_TargetAndRetry(t *testing.T) {
 	assert.Empty(snapshots)
 }
 
+func seedUnrelatedRangeReviews(t testing.TB, db *storage.DB, repoID int64, count int) {
+	t.Helper()
+	_, err := db.ExecContext(t.Context(), `
+		WITH RECURSIVE sequence(n) AS (
+			SELECT 1 UNION ALL SELECT n + 1 FROM sequence WHERE n < ?
+		)
+		INSERT INTO review_jobs (repo_id, git_ref, agent, status, job_type, uuid)
+		SELECT ?, printf('start-%d..end-%d', n, n), 'test', 'done', 'range',
+		       printf('00000000-0000-4000-8000-%012d', n)
+		FROM sequence`, count, repoID)
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), `
+		INSERT INTO reviews (job_id, agent, output, uuid)
+		SELECT id, agent, 'unrelated review', uuid FROM review_jobs
+		WHERE git_ref LIKE 'start-%'`)
+	require.NoError(t, err)
+}
+
 func TestPriorRangeReviewViewsGitProcessesStayFlat(t *testing.T) {
 	repo := testutil.NewTestRepoWithCommit(t)
 	base := repo.HeadSHA()
@@ -215,20 +233,7 @@ func TestPriorRangeReviewViewsGitProcessesStayFlat(t *testing.T) {
 	for _, count := range []int{10, 500} {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
 			assert := assert.New(t)
-			_, err := db.ExecContext(t.Context(), `
-				WITH RECURSIVE sequence(n) AS (
-					SELECT 1 UNION ALL SELECT n + 1 FROM sequence WHERE n < ?
-				)
-				INSERT INTO review_jobs (repo_id, git_ref, agent, status, job_type, uuid)
-				SELECT ?, printf('start-%d..end-%d', n, n), 'test', 'done', 'range',
-				       printf('00000000-0000-4000-8000-%012d', n)
-				FROM sequence`, count, dbRepo.ID)
-			require.NoError(t, err)
-			_, err = db.ExecContext(t.Context(), `
-				INSERT INTO reviews (job_id, agent, output, uuid)
-				SELECT id, agent, 'unrelated review', uuid FROM review_jobs
-				WHERE git_ref LIKE 'start-%'`)
-			require.NoError(t, err)
+			seedUnrelatedRangeReviews(t, db, dbRepo.ID, count)
 
 			gitCalls := testutil.CountGitProcesses(t)
 			views := builder.WithContext(t.Context()).priorRangeReviewsForRef(base+".."+third, 3)
@@ -245,7 +250,7 @@ func TestPriorRangeReviewViewsGitProcessesStayFlat(t *testing.T) {
 			previousViews, previousCalls = views, calls
 			t.Logf("candidates=%d git processes=%d", count, calls)
 
-			_, err = db.ExecContext(t.Context(), "DELETE FROM reviews WHERE job_id IN (SELECT id FROM review_jobs WHERE git_ref LIKE 'start-%')")
+			_, err := db.ExecContext(t.Context(), "DELETE FROM reviews WHERE job_id IN (SELECT id FROM review_jobs WHERE git_ref LIKE 'start-%')")
 			require.NoError(t, err)
 			_, err = db.ExecContext(t.Context(), "DELETE FROM review_jobs WHERE git_ref LIKE 'start-%'")
 			require.NoError(t, err)
