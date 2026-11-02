@@ -261,6 +261,37 @@ func (wp *WorkerPool) reconcileTokenCostPage(
 		return 0
 	}
 
+	var ids []string
+	for _, candidate := range candidates {
+		miss, missed := misses[candidate.JobID]
+		if missed && now.Sub(miss.checkedAt) < wp.tokenCostMissDelay(miss.count) {
+			continue
+		}
+		sessionIDs, expected := tokenUsageProviderSessions(candidate)
+		if expected <= len(sessionIDs) {
+			ids = append(ids, sessionIDs...)
+		}
+	}
+	fetch := wp.fetchTokenUsage
+	if len(ids) > 0 {
+		results, batchErr := wp.fetchTokenUsageBatch(ctx, ids)
+		if !errors.Is(batchErr, tokens.ErrBatchUnsupported) {
+			if batchErr != nil && !errors.Is(batchErr, context.Canceled) {
+				log.Printf("token cost reconciliation: batch usage lookup: %v", batchErr)
+			}
+			fetch = func(ctx context.Context, id string) (*tokens.Usage, error) {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				if batchErr != nil {
+					return nil, nil
+				}
+				result := results[id]
+				return result.Usage, result.Err
+			}
+		}
+	}
+
 	cursor := afterJobID
 	for _, candidate := range candidates {
 		miss, missed := misses[candidate.JobID]
@@ -268,7 +299,7 @@ func (wp *WorkerPool) reconcileTokenCostPage(
 			cursor = candidate.JobID
 			continue
 		}
-		resolved, err := wp.reconcileTokenCostCandidate(ctx, candidate)
+		resolved, err := wp.reconcileTokenCostCandidate(ctx, candidate, fetch)
 		if resolved {
 			delete(misses, candidate.JobID)
 		}
@@ -305,11 +336,12 @@ func (wp *WorkerPool) reconcileTokenCostJob(
 	if candidate == nil {
 		return true, nil
 	}
-	return wp.reconcileTokenCostCandidate(ctx, *candidate)
+	return wp.reconcileTokenCostCandidate(ctx, *candidate, wp.fetchTokenUsage)
 }
 
 func (wp *WorkerPool) reconcileTokenCostCandidate(
 	ctx context.Context, candidate storage.TokenCostCandidate,
+	fetch func(context.Context, string) (*tokens.Usage, error),
 ) (bool, error) {
 	sessionIDs, expectedSessions := tokenUsageProviderSessions(candidate)
 	if expectedSessions > len(sessionIDs) {
@@ -317,7 +349,7 @@ func (wp *WorkerPool) reconcileTokenCostCandidate(
 	}
 	fetchedSessions := make([]*tokens.Usage, 0, len(sessionIDs))
 	for _, sessionID := range sessionIDs {
-		fetched, err := wp.fetchTokenUsage(ctx, sessionID)
+		fetched, err := fetch(ctx, sessionID)
 		if err != nil {
 			return false, err
 		}

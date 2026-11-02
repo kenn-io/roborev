@@ -959,3 +959,79 @@ func TestFetchForSessionReturnsUsageWhenHelperKeepsPipesOpen(t *testing.T) {
 	assert.Equal(t, int64(42), result.usage.OutputTokens)
 	assert.InDelta(t, 0.07, result.usage.CostUSD, 1e-9)
 }
+
+func TestFetchForSessionsBatchMapsRequestedIDs(t *testing.T) {
+	calls := filepath.Join(t.TempDir(), "calls")
+	t.Setenv("BATCH_CALLS", calls)
+	installFakeAgentsview(t, `#!/bin/sh
+printf '%s\n' "$*" >> "$BATCH_CALLS"
+echo '{"results":[{"requested_id":"b","exit_code":0,"usage":{"session_id":"resolved-b","cost_usd":0.23,"has_cost":true}},{"requested_id":"a","exit_code":0,"usage":{"cost_usd":0.11,"has_cost":true}},{"requested_id":"missing","exit_code":2},{"requested_id":"failed","exit_code":1,"error":"read failed"}]}'
+`)
+	results, err := FetchForSessionsWithConfig(context.Background(), []string{"a", "b", "a", "missing", "failed"}, FetchConfig{})
+	require.NoError(t, err)
+	require.Len(t, results, 4)
+	assert.InDelta(t, 0.11, results["a"].Usage.CostUSD, 1e-9)
+	assert.InDelta(t, 0.23, results["b"].Usage.CostUSD, 1e-9)
+	assert.Nil(t, results["missing"].Usage)
+	require.ErrorContains(t, results["failed"].Err, "read failed")
+	invocations, err := os.ReadFile(calls)
+	require.NoError(t, err)
+	assert.Equal(t, "session usage-batch a b missing failed --format json --no-sync\n", string(invocations))
+}
+
+func TestFetchForSessionsBatchSyntaxFallback(t *testing.T) {
+	for _, rejection := range []string{`unknown command "usage-batch" for "agentsview session"`, "unknown flag: --no-sync"} {
+		t.Run(rejection, func(t *testing.T) {
+			target := filepath.Join(t.TempDir(), "target")
+			t.Setenv("AGENTSVIEW_TARGET", target)
+			installFakeAgentsview(t, `#!/bin/sh
+exec "$AGENTSVIEW_TARGET" "$@"
+`)
+			require.NoError(t, os.WriteFile(target, []byte(fmt.Sprintf(`#!/bin/sh
+echo '%s' >&2
+exit 1
+`, rejection)), 0o755))
+			results, err := FetchForSessionsWithConfig(context.Background(), []string{"a"}, FetchConfig{})
+			require.ErrorIs(t, err, ErrBatchUnsupported)
+			assert.Nil(t, results)
+		})
+	}
+}
+
+func TestFetchForSessionsBatchDoesNotFallbackOnDataErrors(t *testing.T) {
+	for _, tc := range []struct{ name, output, wantStderr string }{
+		{"process failure", "echo 'archive read failed' >&2; exit 1", "archive read failed"},
+		{"unrelated flag", "echo 'unknown flag: --other' >&2; exit 1", ""},
+		{"process exit 2", "exit 2", ""},
+		{"malformed", "echo '{'", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := filepath.Join(t.TempDir(), "calls")
+			t.Setenv("BATCH_CALLS", calls)
+			installFakeAgentsview(t, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$BATCH_CALLS\"\n"+tc.output+"\n")
+			results, err := FetchForSessionsWithConfig(context.Background(), []string{"a", "b"}, FetchConfig{})
+			require.Error(t, err)
+			require.NotErrorIs(t, err, ErrBatchUnsupported)
+			if tc.wantStderr != "" {
+				require.ErrorContains(t, err, tc.wantStderr)
+			}
+			assert.Nil(t, results)
+			invocations, err := os.ReadFile(calls)
+			require.NoError(t, err)
+			assert.Equal(t, "session usage-batch a b --format json --no-sync\n", string(invocations))
+		})
+	}
+}
+
+func TestFetchForSessionsConfiguredHTTP(t *testing.T) {
+	calls := filepath.Join(t.TempDir(), "calls")
+	t.Setenv("BATCH_CALLS", calls)
+	installFakeAgentsview(t, `#!/bin/sh
+printf '%s\n' "$*" >> "$BATCH_CALLS"
+`)
+	results, err := FetchForSessionsWithConfig(context.Background(), []string{"a", "b"}, FetchConfig{Endpoint: "https://example.com/{session_id}"})
+	require.ErrorIs(t, err, ErrBatchUnsupported)
+	assert.Nil(t, results)
+	_, err = os.Stat(calls)
+	assert.ErrorIs(t, err, os.ErrNotExist)
+}
