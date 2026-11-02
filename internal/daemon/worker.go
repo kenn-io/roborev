@@ -2384,10 +2384,10 @@ func (collected *sessionTokenUsage) withUnpricedPhase(sessionRan bool, u *tokens
 	collected.allowSessionless = true
 	aggregate := func(usage *tokens.Usage) *tokens.Usage {
 		var combined *tokens.Usage
-		if sessionRan {
+		if sessionRan && usage != nil {
 			combined = backfill.AggregateTokenUsages([]*tokens.Usage{usage, u})
 			// Count checker tokens while preserving the synthesis's known cost.
-			if combined != nil && usage != nil {
+			if combined != nil {
 				combined.CostUSD = usage.CostUSD
 				combined.HasCost = usage.HasCost
 			}

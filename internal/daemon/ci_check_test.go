@@ -259,6 +259,25 @@ func TestCICheckCompletionDrop(t *testing.T) {
 	}
 }
 
+func TestReviewCheckerUsageAcrossUnpricedSynthesis(t *testing.T) {
+	tc, job, _, _ := setupCICheckCompletion(t, "", "verify", nil)
+	tc.Pool.tokenUsageFetcher = func(context.Context, string) (*tokens.Usage, error) {
+		return nil, fmt.Errorf("usage provider unavailable")
+	}
+	tc.Pool.ciCheck = func(_ context.Context, _ *storage.ReviewJob, _ ciCheckConfig, doc structuredreview.Document, _ []string, out io.Writer) (structuredreview.Document, error) {
+		fmt.Fprintln(out, `{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":5}}`)
+		return doc, nil
+	}
+	tc.Pool.processSynthesisJob(t.Context(), testWorkerID, job)
+	finished, err := tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	require.Equal(t, storage.JobStatusDone, finished.Status)
+	usage := tokens.ParseJSON(finished.TokenUsage)
+	require.NotNil(t, usage)
+	assert.EqualValues(t, 3, usage.InputTokens)
+	assert.EqualValues(t, 5, usage.OutputTokens)
+}
+
 func TestCICheckCompletionInterruption(t *testing.T) {
 	for _, interruption := range []struct {
 		name   string
