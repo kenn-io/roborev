@@ -195,7 +195,7 @@ func TestCICheckCompletionRewrite(t *testing.T) {
 	tc, job, doc, _ := setupCICheckCompletion(t, "high", "", nil)
 	encoded, err := (synthesisJobConfig{Check: &ciCheckConfig{Reasoning: "high", Rewrite: true}}).encode()
 	require.NoError(t, err)
-	_, err = tc.DB.Exec("UPDATE review_jobs SET panel_member_config_json = ? WHERE id = ?", encoded, job.ID)
+	_, err = tc.DB.ExecContext(t.Context(), "UPDATE review_jobs SET panel_member_config_json = ? WHERE id = ?", encoded, job.ID)
 	require.NoError(t, err)
 	job.PanelMemberConfigJSON = encoded
 	calls := 0
