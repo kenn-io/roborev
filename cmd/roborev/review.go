@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/roborev/internal/goalreview"
 	"go.kenn.io/roborev/internal/kata"
 	"go.kenn.io/roborev/internal/prompt"
+	"go.kenn.io/roborev/internal/provenance"
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 	roborevclient "go.kenn.io/roborev/pkg/client"
@@ -607,6 +608,7 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, di
 		ForRepo(repoPath, 0).
 		WithRepoConfig(repoCfg, "").
 		WithKataClient(kata.NewCLIClient(repoPath)).
+		WithSessionContext(new(provenance.Client)).
 		WithBinaryEvidence(settings.BinaryEvidence).
 		WithStructuredOutput(true)
 	contextCount := config.ResolveReviewContextCount(repoCfg, cfg)

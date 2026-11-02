@@ -114,7 +114,7 @@ func TestOpenBaselinesDatabaseFromBeforeNumberedMigrations(t *testing.T) {
 	db, err := Open(path)
 	require.NoError(t, err)
 	defer db.Close()
-	assert.Equal(t, []int{1, 2, 3}, appliedVersions(t, db))
+	assert.Equal(t, []int{1, 2, 3, 4}, appliedVersions(t, db))
 	var name string
 	require.NoError(t, db.QueryRow(`SELECT name FROM repos WHERE root_path = '/synthetic/repo'`).Scan(&name))
 	assert.Equal(t, "repo", name)
@@ -174,7 +174,7 @@ func TestCIPanelRetireReasonMigration(t *testing.T) {
 	require.NoError(t, err)
 
 	for range 2 {
-		require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
+		require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:3]))
 		var reason sql.NullString
 		var retiredAt string
 		require.NoError(t, db.QueryRow(`SELECT CAST(retired_at AS TEXT), retire_reason FROM ci_pr_panels WHERE id = 1`).Scan(&retiredAt, &reason))

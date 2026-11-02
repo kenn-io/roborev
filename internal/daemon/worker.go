@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/roborev/internal/goalreview"
 	"go.kenn.io/roborev/internal/kata"
 	"go.kenn.io/roborev/internal/prompt"
+	"go.kenn.io/roborev/internal/provenance"
 	"go.kenn.io/roborev/internal/rebuttal"
 	"go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
@@ -48,6 +49,7 @@ type runningJobCancellation struct {
 
 // WorkerPool manages a pool of review workers
 type WorkerPool struct {
+	sessionContextClient provenance.Client
 	db                   *storage.DB
 	cfgGetter            ConfigGetter
 	broadcaster          Broadcaster
@@ -790,6 +792,9 @@ func (wp *WorkerPool) basePromptBuilderForJob(
 			kata.NewCLIClient(checkout.resolvedConfigRepoPath()),
 		)
 	}
+	if !job.IsCIReview() && job.IsReviewJob() && !job.IsDirtyJob() && !job.IsGoalReviewJob() && job.Source != storage.JobSourceRebuttal {
+		builder = builder.WithSessionContext(&wp.sessionContextClient)
+	}
 	return builder
 }
 
@@ -1332,6 +1337,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 
 	// The job's stored prompt is the only copy the prompt views read, so a
 	// failed save retries the job instead of running the agent without it.
+	job.SessionProvenance = pb.SessionProvenance()
 	if saved, err := wp.db.SaveJobPromptForAttempt(job, workerID, promptToPersist); err != nil {
 		log.Printf("[%s] Error saving prompt: %v", workerID, err)
 		wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("save prompt: %v", err))

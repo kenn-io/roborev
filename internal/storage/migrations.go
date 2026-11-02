@@ -36,6 +36,7 @@ var schemaMigrations = []schemaMigration{
 	{1, "baseline", migrateBaseline},
 	{2, "compress job content", migrateJobContent},
 	{3, "CI panel retirement reasons", migrateCIPanelRetireReason},
+	{4, "review session provenance", migrateSessionProvenance},
 }
 
 // ErrSchemaTooNew reports a database written by a newer roborev release.

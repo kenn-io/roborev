@@ -3,6 +3,7 @@
  */
 import type { Diagnosis } from "./diagnosis";
 import type { DoctorPanel } from "./doctorPanel";
+import type { DoctorSessionContext } from "./doctorSessionContext";
 import type { DoctorUsageProvider } from "./doctorUsageProvider";
 
 export interface DoctorAgentsOutputBody {
@@ -22,6 +23,8 @@ export interface DoctorAgentsOutputBody {
   repo_config_error?: string;
   /** The requested agent names, resolved by the daemon; unknown names report an error */
   requested: Diagnosis[];
+  /** Opt-in author-session context and read-only provider capability */
+  session_context?: DoctorSessionContext;
   /** Usage provider and authenticated probe result from the daemon process */
   usage_provider?: DoctorUsageProvider;
 }

@@ -157,8 +157,8 @@ func TestDoctorHookToolsUseDaemonView(t *testing.T) {
 
 	env.daemonAgents.HookTools[0] = agent.Diagnosis{Name: "kata", Available: true}
 	checks := checkDoctorIntegrations(env)
-	assert.Len(t, checks, 1)
-	assert.Equal(t, "integrations.usage", checks[0].ID)
+	assert.Equal(t, "integrations.usage", findDoctorCheck(t, checks, "integrations.usage").ID)
+	assert.Equal(t, "integrations.session_context", findDoctorCheck(t, checks, "integrations.session_context").ID)
 }
 
 func TestDoctorAgentsUnknownPreferredIgnoresBackup(t *testing.T) {

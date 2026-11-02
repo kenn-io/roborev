@@ -19,6 +19,7 @@
   import ResponseList from "./ResponseList.svelte";
   import LogViewer from "./LogViewer.svelte";
   import PromptViewer from "./PromptViewer.svelte";
+  import SessionProvenance from "./SessionProvenance.svelte";
   import {
     canCancelJob,
     canRerunJob,
@@ -306,6 +307,11 @@
     {#if selectedJob?.status === "skipped" && selectedJob.skip_reason}
       <div class="skip-reason">Skipped: {selectedJob.skip_reason}</div>
     {/if}
+    <SessionProvenance
+      commits={stores.roborevReview?.getSelectedJob()?.session_provenance ??
+        selectedJob?.session_provenance ??
+        []}
+    />
     <ReviewContent bind:visibleJobId />
     <div class="responses-section">
       <ResponseList />

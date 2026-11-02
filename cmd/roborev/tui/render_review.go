@@ -11,6 +11,7 @@ import (
 	"go.kenn.io/kit/tui/helplayout"
 	"go.kenn.io/kit/tui/helprender"
 
+	"go.kenn.io/roborev/internal/provenance"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/tokens"
 )
@@ -47,6 +48,12 @@ func panelReviewHeader(job storage.ReviewJob, members []storage.ReviewJob) strin
 // Shared by the full-screen review view and the split detail pane.
 func (m model) reviewContentString(review *storage.Review) string {
 	var content strings.Builder
+	if review.Job != nil {
+		if context := provenance.FormatText(review.Job.SessionProvenance); context != "" {
+			content.WriteString(sanitizeForDisplay(context))
+			content.WriteString("\n\n")
+		}
+	}
 	if review.Job != nil && review.Job.IsSynthesisJob() {
 		var members []storage.ReviewJob
 		if review.Job.PanelRunUUID != nil {

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"sync"
+	"time"
 )
 
 // The daemon owns one DB. Pulls and reruns take the write lock; worker
@@ -189,7 +190,27 @@ func (db *DB) RunJobAttempt(job *ReviewJob, workerID string, transition func()) 
 func (db *DB) SaveJobPromptForAttempt(job *ReviewJob, workerID, prompt string) (bool, error) {
 	var saveErr error
 	current, err := db.RunJobAttempt(job, workerID, func() {
-		saveErr = db.SaveJobPrompt(job.ID, prompt)
+		raw, encodeErr := encodeSessionProvenance(job.SessionProvenance)
+		if encodeErr != nil {
+			saveErr = encodeErr
+			return
+		}
+		tx, beginErr := db.Begin()
+		if beginErr != nil {
+			saveErr = beginErr
+			return
+		}
+		defer func() { _ = tx.Rollback() }()
+		if saveErr = setJobContent(context.Background(), tx, job.ID, jobContentPrompt, prompt); saveErr != nil {
+			return
+		}
+		if saveErr = setJobContent(context.Background(), tx, job.ID, jobContentProvenance, raw); saveErr != nil {
+			return
+		}
+		if _, saveErr = tx.Exec(`UPDATE review_jobs SET synced_at=NULL,updated_at=? WHERE id=?`, preciseTimestampAt(time.Now()), job.ID); saveErr != nil {
+			return
+		}
+		saveErr = tx.Commit()
 	})
 	return current, errors.Join(err, saveErr)
 }

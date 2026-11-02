@@ -290,18 +290,26 @@ func buildAgentsviewCmd(ctx context.Context, binPath string, args ...string) *ex
 	return cmd
 }
 
-func runAgentsviewCommand(
-	ctx context.Context, timeout time.Duration, binPath string, args ...string,
-) ([]byte, error) {
-	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	out, err := agentsviewOutput(buildAgentsviewCmd(cmdCtx, binPath, args...))
+// RunAgentsviewCommand runs a bounded agentsview process tree and collects its
+// output. Callers provide a context with the appropriate operation deadline.
+func RunAgentsviewCommand(ctx context.Context, dir, binPath string, args ...string) ([]byte, error) {
+	cmd := buildAgentsviewCmd(ctx, binPath, args...)
+	cmd.Dir = dir
+	out, err := agentsviewOutput(cmd)
 	// ErrWaitDelay means agentsview exited successfully but a descendant kept
 	// the pipes open; the output agentsview wrote is complete.
 	if errors.Is(err, exec.ErrWaitDelay) {
 		err = nil
 	}
 	return out, err
+}
+
+func runAgentsviewCommand(
+	ctx context.Context, timeout time.Duration, binPath string, args ...string,
+) ([]byte, error) {
+	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return RunAgentsviewCommand(cmdCtx, "", binPath, args...)
 }
 
 func shouldFallbackToTokenUse(err error) bool {

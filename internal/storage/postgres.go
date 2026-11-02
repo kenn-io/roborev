@@ -20,12 +20,12 @@ import (
 )
 
 // PostgreSQL schema version - increment when schema changes
-const pgSchemaVersion = 24
+const pgSchemaVersion = 25
 
 // pgSchemaName is the PostgreSQL schema used to isolate roborev tables
 const pgSchemaName = "roborev"
 
-//go:embed schemas/postgres_v24.sql
+//go:embed schemas/postgres_v25.sql
 var pgSchemaSQL string
 
 // pgSchemaStatements returns the individual DDL statements for schema creation.
@@ -542,7 +542,17 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 		return err
 	}
 	if currentVersion < 24 {
-		return p.migrateReviewAttempts(ctx)
+		if err := p.migrateReviewAttempts(ctx); err != nil {
+			return err
+		}
+	}
+	if currentVersion < 25 {
+		if _, err := p.pool.Exec(ctx, `ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS session_provenance TEXT`); err != nil {
+			return err
+		}
+		if _, err := p.pool.Exec(ctx, `INSERT INTO schema_version(version) VALUES(25) ON CONFLICT DO NOTHING`); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -812,8 +822,8 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 			enqueued_at, started_at, finished_at, prompt, diff_content, dirty_files, error, token_usage,
 			worktree_path, source, min_severity,
 			panel_run_uuid, panel_role, panel_name, panel_member_name, panel_member_index, panel_member_config_json,
-			source_machine_id, backup_agent, backup_model, agent_invoked, non_voting, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, clock_timestamp())
+			source_machine_id, backup_agent, backup_model, agent_invoked, non_voting, session_provenance, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, clock_timestamp())
 		ON CONFLICT (uuid) DO UPDATE SET
 			status = EXCLUDED.status,
 			agent = EXCLUDED.agent,
@@ -850,13 +860,14 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 			panel_member_index = EXCLUDED.panel_member_index,
 			panel_member_config_json = EXCLUDED.panel_member_config_json,
 			non_voting = EXCLUDED.non_voting,
+ session_provenance = CASE WHEN (review_jobs.enqueued_at,review_jobs.source_machine_id) < (EXCLUDED.enqueued_at,EXCLUDED.source_machine_id) THEN EXCLUDED.session_provenance ELSE COALESCE(EXCLUDED.session_provenance,review_jobs.session_provenance) END,
 			updated_at = clock_timestamp()
 		WHERE (review_jobs.enqueued_at, review_jobs.source_machine_id) <= (EXCLUDED.enqueued_at, EXCLUDED.source_machine_id)
 	`, j.UUID, pgRepoID, pgCommitID, j.GitRef, nullString(j.Branch), nullString(j.SessionID), j.ResumeSourceJobUUID, j.Agent, nullString(j.Model), nullString(j.Provider), nullString(j.RequestedModel), nullString(j.RequestedProvider), nullString(j.Reasoning),
 		defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), postgresJobStatus(j.Status), j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
 		nullString(j.Prompt), j.DiffContent, nullString(dirtyFilesJSON), nullString(j.Error), nullString(j.TokenUsage), nullString(j.WorktreePath), nullString(j.Source), normalizeMinSeverityForWrite(j.MinSeverity),
 		j.PanelRunUUID, nullString(j.PanelRole), nullString(j.PanelName), nullString(j.PanelMemberName), j.PanelMemberIndex, nullString(j.PanelMemberConfigJSON),
-		j.SourceMachineID, j.BackupAgent, j.BackupModel, j.AgentInvoked, j.NonVoting)
+		j.SourceMachineID, j.BackupAgent, j.BackupModel, j.AgentInvoked, j.NonVoting, nullString(j.SessionProvenance))
 	return err
 }
 
@@ -1156,6 +1167,7 @@ func (p *PgPool) InsertResponse(ctx context.Context, r SyncableResponse) error {
 
 // PulledJob represents a job pulled from PostgreSQL
 type PulledJob struct {
+	SessionProvenance string
 	// CurrentReviewUUID identifies the canonical review in the same snapshot
 	// as the parent, so a historical attempt repair can retain local edits.
 	CurrentReviewUUID     *uuid.UUID
@@ -1249,7 +1261,7 @@ func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID uuid.UUID, curso
 			j.git_ref, COALESCE(j.branch, ''), COALESCE(j.session_id, ''), NULLIF(j.resume_source_job_uuid, '')::uuid, j.agent, COALESCE(j.model, ''), COALESCE(j.provider, ''), COALESCE(j.requested_model, ''), COALESCE(j.requested_provider, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic, COALESCE(j.agent_invoked, FALSE),
 			j.enqueued_at, j.started_at, j.finished_at,
 			`+pgPulledJobPromptExpr+`,
-			j.diff_content, j.dirty_files, COALESCE(j.error, ''), COALESCE(j.token_usage, ''),
+			j.diff_content, j.dirty_files, COALESCE(j.error, ''), COALESCE(j.token_usage, ''), COALESCE(j.session_provenance,''),
 			COALESCE(j.worktree_path, ''), COALESCE(j.source, ''), COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
 			NULLIF(j.panel_run_uuid, '')::uuid, COALESCE(j.panel_role, ''), COALESCE(j.panel_name, ''), COALESCE(j.panel_member_name, ''), COALESCE(j.panel_member_index, 0), COALESCE(j.panel_member_config_json, ''), COALESCE(j.non_voting, FALSE),
 			j.source_machine_id, j.updated_at, j.id,
@@ -1282,7 +1294,7 @@ func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID uuid.UUID, curso
 			&j.UUID, &j.RepoIdentity, &j.CommitSHA, &j.CommitAuthor, &j.CommitSubject, &j.CommitTimestamp,
 			&j.GitRef, &j.Branch, &j.SessionID, &j.ResumeSourceJobUUID, &j.Agent, &j.Model, &j.Provider, &j.RequestedModel, &j.RequestedProvider, &j.Reasoning, &j.JobType, &j.ReviewType, &j.PatchID, &j.Status, &j.Agentic, &j.AgentInvoked,
 			&j.EnqueuedAt, &j.StartedAt, &j.FinishedAt,
-			&j.Prompt, &diffContent, &dirtyFiles, &j.Error, &j.TokenUsage,
+			&j.Prompt, &diffContent, &dirtyFiles, &j.Error, &j.TokenUsage, &j.SessionProvenance,
 			&j.WorktreePath, &j.Source, &j.MinSeverity, &j.BackupAgent, &j.BackupModel,
 			&j.PanelRunUUID, &j.PanelRole, &j.PanelName, &j.PanelMemberName, &j.PanelMemberIndex, &j.PanelMemberConfigJSON, &j.NonVoting,
 			&j.SourceMachineID, &j.UpdatedAt, &lastID, &j.CurrentReviewUUID,
@@ -1754,8 +1766,8 @@ func queueJobUpsert(batch *pgx.Batch, jw JobWithPgIDs) error {
 				enqueued_at, started_at, finished_at, prompt, diff_content, dirty_files, error, token_usage,
 				worktree_path, source, min_severity,
 				panel_run_uuid, panel_role, panel_name, panel_member_name, panel_member_index, panel_member_config_json,
-				source_machine_id, backup_agent, backup_model, agent_invoked, non_voting, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, clock_timestamp())
+				source_machine_id, backup_agent, backup_model, agent_invoked, non_voting, session_provenance, updated_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, clock_timestamp())
 			ON CONFLICT (uuid) DO UPDATE SET
 				status = EXCLUDED.status,
 			agent = EXCLUDED.agent,
@@ -1792,12 +1804,13 @@ func queueJobUpsert(batch *pgx.Batch, jw JobWithPgIDs) error {
 				panel_member_index = EXCLUDED.panel_member_index,
 				panel_member_config_json = EXCLUDED.panel_member_config_json,
 			non_voting = EXCLUDED.non_voting,
+ session_provenance = CASE WHEN (review_jobs.enqueued_at,review_jobs.source_machine_id) < (EXCLUDED.enqueued_at,EXCLUDED.source_machine_id) THEN EXCLUDED.session_provenance ELSE COALESCE(EXCLUDED.session_provenance,review_jobs.session_provenance) END,
 				updated_at = clock_timestamp()
 			WHERE (review_jobs.enqueued_at, review_jobs.source_machine_id) <= (EXCLUDED.enqueued_at, EXCLUDED.source_machine_id)
 		`, j.UUID, jw.PgRepoID, jw.PgCommitID, j.GitRef, nullString(j.Branch), nullString(j.SessionID), j.ResumeSourceJobUUID, j.Agent, nullString(j.Model), nullString(j.Provider), nullString(j.RequestedModel), nullString(j.RequestedProvider), nullString(j.Reasoning),
 		defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), postgresJobStatus(j.Status), j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
 		nullString(sanitizePostgresText(j.Prompt)), sanitizePostgresTextPointer(j.DiffContent), nullString(dirtyFilesJSON), nullString(sanitizePostgresText(j.Error)), nullString(j.TokenUsage), nullString(j.WorktreePath), nullString(j.Source), normalizeMinSeverityForWrite(j.MinSeverity),
 		j.PanelRunUUID, nullString(j.PanelRole), nullString(j.PanelName), nullString(j.PanelMemberName), j.PanelMemberIndex, nullString(j.PanelMemberConfigJSON),
-		j.SourceMachineID, j.BackupAgent, j.BackupModel, j.AgentInvoked, j.NonVoting)
+		j.SourceMachineID, j.BackupAgent, j.BackupModel, j.AgentInvoked, j.NonVoting, nullString(j.SessionProvenance))
 	return nil
 }

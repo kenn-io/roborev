@@ -60,6 +60,7 @@ const (
 type ReviewOptionalContext struct {
 	ProjectGuidelines     *MarkdownSection
 	KataContext           *MarkdownSection
+	SessionContext        *MarkdownSection
 	AdditionalContext     string
 	DependencyMetadata    string
 	Toolchain             string
@@ -74,6 +75,10 @@ func (o ReviewOptionalContext) Clone() ReviewOptionalContext {
 	if o.ProjectGuidelines != nil {
 		section := *o.ProjectGuidelines
 		cloned.ProjectGuidelines = &section
+	}
+	if o.SessionContext != nil {
+		section := *o.SessionContext
+		cloned.SessionContext = &section
 	}
 	if o.KataContext != nil {
 		section := *o.KataContext
@@ -96,7 +101,7 @@ func (o ReviewOptionalContext) Clone() ReviewOptionalContext {
 
 func (o ReviewOptionalContext) IsEmpty() bool {
 	return o.ProjectGuidelines == nil &&
-		o.KataContext == nil &&
+		o.KataContext == nil && o.SessionContext == nil &&
 		o.AdditionalContext == "" &&
 		o.DependencyMetadata == "" &&
 		o.Toolchain == "" &&
@@ -136,6 +141,8 @@ func (o *ReviewOptionalContext) TrimNext() bool {
 		o.AdditionalContext = ""
 	case o.ProjectGuidelines != nil:
 		o.ProjectGuidelines = nil
+	case o.SessionContext != nil:
+		o.SessionContext = nil
 	case o.KataContext != nil:
 		o.KataContext = nil
 	case o.Toolchain != "":

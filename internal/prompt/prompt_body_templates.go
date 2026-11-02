@@ -146,6 +146,7 @@ func reviewOptionalContextFromView(view optionalSectionsView) ReviewOptionalCont
 	return ReviewOptionalContext{
 		ProjectGuidelines:     markdownSectionFromView(view.ProjectGuidelines),
 		KataContext:           markdownSectionFromView(view.KataContext),
+		SessionContext:        markdownSectionFromView(view.SessionContext),
 		AdditionalContext:     view.AdditionalContext,
 		DependencyMetadata:    view.DependencyMetadata,
 		Toolchain:             view.Toolchain,

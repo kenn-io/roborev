@@ -18,7 +18,9 @@ import (
 	"github.com/spf13/cobra"
 	gitrepo "go.kenn.io/kit/git/repo"
 
+	"go.kenn.io/roborev/internal/provenance"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/streamfmt"
 	"go.kenn.io/roborev/internal/telemetry"
 	"go.kenn.io/roborev/internal/tokens"
 	roborevclient "go.kenn.io/roborev/pkg/client"
@@ -294,6 +296,9 @@ Examples:
 			if showPrompt {
 				fmt.Println(review.Prompt)
 			} else {
+				if context := formatShowSessionProvenance(review.Job); context != "" {
+					fmt.Println(context)
+				}
 				fmt.Println(review.Output)
 			}
 
@@ -450,4 +455,11 @@ func fetchShowComments(client *http.Client, addr string, review storage.Review) 
 	}
 
 	return responses
+}
+
+func formatShowSessionProvenance(job *storage.ReviewJob) string {
+	if job == nil {
+		return ""
+	}
+	return streamfmt.SanitizeControlKeepNewlines(provenance.FormatText(job.SessionProvenance))
 }
