@@ -788,6 +788,14 @@ func TestZcodeUserPromptSubmitDropsDefaultInstruction(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, captured.Instruction, "default-filled instruction must not override injected guidance")
 
+	for _, builtin := range []string{"\n" + agenthook.DefaultInstruction + "\n", "Invoke the $roborev-fix skill now."} {
+		opts.Instruction = builtin
+		require.NoError(t, runLocalAgentHook(agenthook.AgentZcode, opts,
+			strings.NewReader(`{"session_id":"s1","hook_event_name":"UserPromptSubmit","cwd":"/repo"}`),
+			&bytes.Buffer{}, io.Discard))
+		assert.Empty(t, captured.Instruction)
+	}
+
 	opts.Instruction = "Custom injected instruction."
 	err = runLocalAgentHook(
 		agenthook.AgentZcode, opts,
@@ -804,4 +812,24 @@ func TestZcodeUserPromptSubmitDropsDefaultInstruction(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.Equal(t, "Custom injected instruction.", captured.Instruction)
+}
+
+func TestPostAgentHookFixReasonAfterFence(t *testing.T) {
+	id := uuid.MustParse("00000000-0000-4000-8000-000000000001")
+	reason := "Reminder.\n\n" + agenthook.DefaultInstruction + "\n\n5 Stop hooks reached. Review job IDs: 7."
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.NoError(t, json.NewEncoder(w).Encode(agenthook.Response{Triggered: true, FixSessionID: new(id), Reason: reason}))
+	}))
+	t.Cleanup(server.Close)
+	for _, mcp := range []bool{false, true} {
+		response, err := postAgentHookRequest(t.Context(), server.URL, agenthook.Request{MCP: mcp})
+		require.NoError(t, err)
+		assert.Contains(t, response.Reason, "\n~~~\n\n5 Stop hooks reached. Review job IDs: 7.\n\n")
+		assert.Less(t, strings.Index(response.Reason, "Review job IDs:"), strings.Index(response.Reason, "After "))
+		if mcp {
+			assert.Contains(t, response.Reason, "roborev_complete_fix")
+		} else {
+			assert.Contains(t, response.Reason, "agent-hook fix-done")
+		}
+	}
 }

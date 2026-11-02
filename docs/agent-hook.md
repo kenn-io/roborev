@@ -78,9 +78,48 @@ Every reminder opens with a fixed preamble. It says the reminder is background
 maintenance, that the user's latest instruction comes first, and that findings
 are a reviewer's suggestions to triage, not requirements.
 
+### Triage diagram
+
 The default instruction names the exact review job IDs and asks the agent to
-triage them with the `roborev-fix` skill. It never runs `roborev fix --open` or
-discovers additional reviews. The skill gives each finding one disposition:
+triage them with the `roborev-fix` skill. Each reminder carries the following
+triage flow:
+
+```dot
+digraph roborev_triage {
+  node [shape=box];
+  start [shape=oval label="Agent Hook reminder"];
+  busy [shape=diamond label="User's request unfinished?"];
+  finish [label="Finish it first"];
+  scope [label="Open only the named job IDs;\nnever roborev fix --open or --list"];
+  hold [shape=diamond label="User asked to see findings first,\nto pause, or waiting on the user's answer?"];
+  report [label="Triage without editing;\nreport each disposition"];
+  triage [shape=diamond label="Which disposition fits\neach finding?"];
+  fix [label="Fix: smallest change, tested"];
+  decline [label="Decline: record why"];
+  invalid [label="Invalid: record evidence"];
+  ask [label="Ask: keep open, recommend"];
+  record [label="Comment per finding;\nclose reviews with no Ask"];
+  done [label="Run the completion command\nor tool, if given"];
+  resume [shape=oval label="Return to the interrupted work"];
+  start -> hold;
+  busy -> finish [label="yes"];
+  busy -> scope [label="no"];
+  finish -> scope;
+  scope -> triage;
+  hold -> report [label="yes"];
+  hold -> busy [label="no"];
+  triage -> fix [label="reachable defect,\nsmall fix in the task"];
+  triage -> decline [label="true, not worth it now"];
+  triage -> invalid [label="stale, unreachable, wrong"];
+  triage -> ask [label="outside the task, unclear,\nor new surface"];
+  fix -> record; decline -> record; invalid -> record; ask -> record;
+  record -> done; report -> done; done -> resume;
+}
+```
+
+The trigger count and review job IDs follow the diagram. It never runs
+`roborev fix --open` or discovers additional reviews. The skill gives each
+finding one disposition:
 
 - **Fix:** a reachable defect with real harm, removable by a small change inside
     the current task.
@@ -101,10 +140,26 @@ scoped to the repository lineage. They do not trigger another reminder in that
 session, while newly created review IDs still do. Deferred reminders acknowledge
 their IDs only when delivered.
 
-`instruction` replaces the default instruction but not the preamble. Custom
-instructions are emitted without the built-in scope or continuation guidance.
-When a reminder starts a fix session, roborev adds the required completion
-command after the custom instruction.
+An empty `instruction` uses the built-in workflow. So does a saved copy of any
+earlier built-in instruction: older versions wrote the default into
+`config.toml`. Custom text still replaces the workflow.
+
+`instruction` replaces the default instruction, diagram included, but not the
+preamble. A reminder separates the preamble, instruction, and trigger facts with
+blank lines. When it starts a fix session, roborev adds the completion command
+after those facts.
+
+### DOT flow conventions
+
+Flows use a `digraph roborev_<name>` inside a `~~~dot` fence. The first
+statement is `node [shape=box];`. Declare nodes before their edges. An oval
+marks the entry or an exit; a diamond asks a question and has labeled outgoing
+edges. Actions use boxes with at most one outgoing edge. Every node must be
+reachable from the single entry.
+
+Use lowercase snake case node IDs and double-quoted labels. Write line breaks as
+`\n`, keep commands verbatim, and put changing values outside the graph.
+Subgraphs, HTML labels, templates, and escaped quotes are outside this subset.
 
 ### Coordinating hook-triggered fixes
 
@@ -396,6 +451,63 @@ the profile `instruction`, which remains a full replacement for workflow text.
 If `agent-hook run --config` selects another file for thresholds or instruction,
 fix guidelines still come from the standard global config.
 
+### Repository review flow
+
+A repository can set `[agent_hook] review_flow` in `.roborev.toml` to a bare DOT
+digraph describing how to handle its review findings. Follow the
+[DOT flow conventions](#dot-flow-conventions). The setup-review skill writes one
+from its interview when a coding agent handles automatic review findings.
+
+The hook appends this flow after the trigger facts and any triggering-worktree
+sentence, and before the completion command, MCP hints, and fix guidelines. It
+refines the built-in triage diagram's Which disposition step and ends by handing
+back to `roborev_triage`. A custom `instruction` suppresses repository flows for
+that profile, including a custom `droid_hook.instruction` for Droid. Fix-session
+continuations do not repeat the flow.
+
+Like review guidelines, the flow comes from `.roborev.toml` on the default
+branch. The working tree is used only when that branch has no config or no
+default branch resolves. A feature branch cannot change it while the default
+branch has a config. Invalid trusted config never falls back to working-tree
+text; the reminder continues without a repository flow.
+
+`roborev config validate` checks the supported DOT grammar and rejects fenced
+text or the reserved graph name `roborev_triage`. Invalid flows fail repository
+configuration validation. Keep flows compact and refer to source files instead
+of repeating rubrics. `roborev doctor` reports the source, working-tree changes,
+and custom instructions that suppress the flow.
+
+```toml
+[agent_hook]
+review_flow = '''
+digraph roborev_brief {
+  node [shape=box];
+  start [shape=oval label="Findings from the brief panel;\neach job covers up to 5 commits"];
+  read [label="Read each: roborev show --from-skill --job <job_id>"];
+  who [shape=diamond label="Which reviewer reported it?"];
+  facts [label="Compare the date or event with\nevidence/timeline.md and the\nexhibit text copy in exhibits/"];
+  quotes [label="Compare the quoted words with the\nexhibit text copy, word for word"];
+  holds [shape=diamond label="What does the source show?"];
+  fix [label="Fix: correct the sentence, drafts/ only;\nnew commit, never amend reviewed ones"];
+  invalid [label="Invalid: record the source line\nthat shows the draft is right"];
+  decline [label="Decline: imprecise, misleads no one;\nrecord why it can wait"];
+  ask [label="Ask: a source is missing or two disagree;\nask the user, do not guess"];
+  back [shape=oval label="Back to roborev_triage:\nrecord each disposition"];
+  start -> read -> who;
+  who -> facts [label="facts"];
+  who -> quotes [label="quotes"];
+  facts -> holds; quotes -> holds;
+  holds -> fix [label="finding is right"];
+  holds -> invalid [label="draft is right"];
+  holds -> decline [label="imprecise only"];
+  holds -> ask [label="source missing\nor conflicting"];
+  fix -> back; invalid -> back; decline -> back; ask -> back;
+}
+'''
+```
+
+### Global profile options
+
 All profiles except Factory Droid use `[agent_hook]` in the global config:
 
 ```toml
@@ -411,7 +523,7 @@ instruction = "Resolve open roborev findings now."
 | Stop hooks | `5` | `turn_threshold` | `--turn-threshold` | `ROBOREV_AGENT_HOOK_TURN_THRESHOLD` |
 | Commits | `0` | `commit_threshold` | `--commit-threshold` | `ROBOREV_AGENT_HOOK_COMMIT_THRESHOLD` |
 | Open failed reviews | `4` | `failed_review_threshold` | `--failed-review-threshold` | `ROBOREV_AGENT_HOOK_FAILED_REVIEW_THRESHOLD` |
-| Instruction | self-contained fix workflow | `instruction` | `--instruction` | `ROBOREV_AGENT_HOOK_INSTRUCTION` |
+| Instruction | built-in triage flow (empty) | `instruction` | `--instruction` | `ROBOREV_AGENT_HOOK_INSTRUCTION` |
 | Main daemon address | runtime discovery | | `--roborev-server` | `ROBOREV_AGENT_HOOK_ROBOREV_ADDR` |
 
 Factory Droid keeps `[droid_hook]` and the existing `ROBOREV_DROID_HOOK_*`

@@ -243,7 +243,13 @@ func cloneSessionState(state SessionState) SessionState {
 	return state
 }
 
-func (s *StateStore) RecordContext(ctx context.Context, req Request) (Response, error) {
+func (s *StateStore) RecordContext(ctx context.Context, req Request) (resp Response, err error) {
+	defer func() {
+		if err == nil && resp.Triggered && resp.reviewFlowRepo != "" && IsBuiltinInstruction(resp.reviewFlowInstruction) {
+			resp.Reason = withReviewFlow(resp.Reason, s.reviewFlow(ctx, resp.reviewFlowRepo))
+		}
+	}()
+
 	if err := ctx.Err(); err != nil {
 		return Response{}, err
 	}
@@ -384,6 +390,7 @@ func (s *StateStore) recordUserPrompt(ctx context.Context, req Request) (Respons
 	if failedReviewTriggered {
 		resp.TriggeredBy = "failed_reviews"
 		resp.Reason = buildUserPromptReason(req, scope, openFailedJobs, actionableReviewIDs)
+		resp.reviewFlowRepo, resp.reviewFlowInstruction = scope.TrackedRepoRoot, req.Instruction
 	}
 	return resp, nil
 }
@@ -535,9 +542,11 @@ func (s *StateStore) recordStop(ctx context.Context, req Request) (Response, err
 	case failedReviewTriggered:
 		resp.TriggeredBy = "failed_reviews"
 		resp.Reason = buildFailedReviewReason(req, st, actionableReviewIDs)
+		resp.reviewFlowRepo, resp.reviewFlowInstruction = scope.TrackedRepoRoot, req.Instruction
 	case stopTriggered:
 		resp.TriggeredBy = "stop"
 		resp.Reason = buildStopReason(req, stopCountSincePrompt, actionableReviewIDs)
+		resp.reviewFlowRepo, resp.reviewFlowInstruction = scope.TrackedRepoRoot, req.Instruction
 	}
 	return resp, nil
 }
@@ -763,7 +772,7 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 			queuePendingReminder(&st, PendingReminder{
 				TriggeredBy:         "failed_reviews",
 				Reason:              deferredReminderReason(buildFailedReviewReason(req, st, actionableReviewIDs), scope.WorktreeRoot),
-				Instruction:         req.Instruction,
+				Instruction:         customInstruction(req.Instruction),
 				TrackedRepoRoot:     scope.TrackedRepoRoot,
 				TrackedRepoIdentity: scope.TrackedRepoIdentity,
 				WorktreeRoot:        scope.WorktreeRoot,
@@ -778,7 +787,7 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 			queuePendingReminder(&st, PendingReminder{
 				TriggeredBy:         "commit",
 				Reason:              deferredReminderReason(buildCommitReason(req, triggeringCommitCount, scope.WorktreeRoot, actionableReviewIDs), scope.WorktreeRoot),
-				Instruction:         req.Instruction,
+				Instruction:         customInstruction(req.Instruction),
 				TrackedRepoRoot:     scope.TrackedRepoRoot,
 				TrackedRepoIdentity: scope.TrackedRepoIdentity,
 				WorktreeRoot:        scope.WorktreeRoot,
@@ -831,9 +840,11 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 	case failedReviewTriggered:
 		resp.TriggeredBy = "failed_reviews"
 		resp.Reason = buildFailedReviewReason(req, st, actionableReviewIDs)
+		resp.reviewFlowRepo, resp.reviewFlowInstruction = scope.TrackedRepoRoot, req.Instruction
 	case commitTriggered:
 		resp.TriggeredBy = "commit"
 		resp.Reason = buildCommitReason(req, triggeringCommitCount, scope.WorktreeRoot, actionableReviewIDs)
+		resp.reviewFlowRepo, resp.reviewFlowInstruction = scope.TrackedRepoRoot, req.Instruction
 	}
 	return resp, nil
 }
@@ -1121,6 +1132,8 @@ func (s *StateStore) deliverPendingReminder(
 			Triggered:             true,
 			TriggeredBy:           pending.TriggeredBy,
 			Reason:                pending.Reason,
+			reviewFlowRepo:        pending.TrackedRepoRoot,
+			reviewFlowInstruction: pending.Instruction,
 		}
 		if fixSession != nil {
 			response.FixSessionID = new(fixSession.ID)
@@ -1463,16 +1476,6 @@ func buildFailedReviewReason(req Request, st SessionState, reviewIDs reviewIDSet
 	return buildPromptReason(req, detail+"."+formatReviewJobIDs(reviewIDs))
 }
 
-// userPromptGuidance is the triage contract for injected reminders. Unlike a
-// stop-decision reminder, injected context reaches the model next to a fresh
-// user message, so it must explicitly yield to that task and scope the review
-// work instead of telling the model to start fixing immediately.
-const userPromptGuidance = "Guidance: finish the user's current task first, then triage these reviews " +
-	"with the roborev-fix skill, and only the named jobs. " +
-	"Fix reachable defects with the smallest change that stays inside the user's task, " +
-	"decline or disprove the rest with a recorded reason, " +
-	"and ask the user about anything that would grow the task."
-
 // userPromptDiagnosis summarizes the failed-review evaluation for one
 // injected reminder so an empty reminder is explainable from hook stderr.
 func userPromptDiagnosis(available bool, openFailed, actionable, threshold int, scope hookScope) string {
@@ -1492,10 +1495,7 @@ func userPromptDiagnosis(available bool, openFailed, actionable, threshold int, 
 // instruction replaces the default guidance verbatim, mirroring the
 // stop-decision reminder's instruction handling.
 func buildUserPromptReason(req Request, scope hookScope, jobs []storage.ReviewJob, reviewIDs reviewIDSet) string {
-	guidance := strings.TrimSpace(req.Instruction)
-	if guidance == "" {
-		guidance = userPromptGuidance
-	}
+	guidance := effectiveInstruction(req.Instruction)
 	repo := repoDisplayName(scope.TrackedRepoRoot)
 	var b strings.Builder
 	fmt.Fprintf(&b, "[roborev] %s has %s.",
@@ -1510,9 +1510,9 @@ func buildUserPromptReason(req Request, scope hookScope, jobs []storage.ReviewJo
 		}
 		fmt.Fprintf(&b, "\n- job %d (%s, verdict %s)", job.ID, shortReviewRef(job.GitRef), verdict)
 	}
-	b.WriteString("\n")
+	b.WriteString("\n\n")
 	b.WriteString(reminderPreamble)
-	b.WriteString(" ")
+	b.WriteString("\n\n")
 	b.WriteString(guidance)
 	return b.String()
 }
@@ -1614,15 +1614,12 @@ const reminderPreamble = "roborev Agent Hook reminder. This is background mainte
 	"suggestions to triage, not requirements."
 
 func buildPromptReason(req Request, detail string) string {
-	instruction := strings.TrimSpace(req.Instruction)
-	if instruction == "" {
-		instruction = DefaultInstruction
-	}
-	reason := reminderPreamble + " " + instruction
+	instruction := effectiveInstruction(req.Instruction)
+	reason := reminderPreamble + "\n\n" + instruction
 	if strings.TrimSpace(detail) == "" {
 		return reason
 	}
-	return reason + " " + detail
+	return reason + "\n\n" + strings.TrimSpace(detail)
 }
 
 func countPhrase(count int, singular, plural string) string {

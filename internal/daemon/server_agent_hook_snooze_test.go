@@ -88,6 +88,9 @@ func TestAgentHookSourceReportsMissingReviewGuidelines(t *testing.T) {
 		{name: "no guidance", files: map[string]string{"main.go": "package main\n"}, missing: true},
 		{name: "empty review_guidelines", files: map[string]string{".roborev.toml": "agent = \"test\"\n"}, missing: true},
 		{name: "review_guidelines", files: map[string]string{".roborev.toml": "review_guidelines = \"Flag missing tests.\"\n"}},
+		{name: "review_guidelines with invalid review flow", files: map[string]string{
+			".roborev.toml": "review_guidelines = \"Flag missing tests.\"\n[agent_hook]\nreview_flow = 'not dot'\n",
+		}},
 		{name: "REVIEW.md fallback", files: map[string]string{"REVIEW.md": "Flag missing tests.\n"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
