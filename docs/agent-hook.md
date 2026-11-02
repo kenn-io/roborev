@@ -101,6 +101,10 @@ scoped to the repository lineage. They do not trigger another reminder in that
 session, while newly created review IDs still do. Deferred reminders acknowledge
 their IDs only when delivered.
 
+An empty `instruction` uses the built-in workflow. So does a saved copy of any
+earlier built-in instruction: older versions wrote the default into
+`config.toml`. Custom text still replaces the workflow.
+
 `instruction` replaces the default instruction but not the preamble. Custom
 instructions are emitted without the built-in scope or continuation guidance.
 When a reminder starts a fix session, roborev adds the required completion

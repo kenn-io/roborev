@@ -134,7 +134,7 @@ func runLocalAgentHook(agent kitagenthook.Agent, opts agenthook.Options, stdin i
 		// The CLI default-fills Instruction with the stop-decision text,
 		// which would override it, so only explicitly configured
 		// instructions travel for these events.
-		if strings.TrimSpace(instruction) == strings.TrimSpace(agenthook.DefaultInstruction) {
+		if agenthook.IsBuiltinInstruction(instruction) {
 			instruction = ""
 		}
 	}

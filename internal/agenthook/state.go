@@ -763,7 +763,7 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 			queuePendingReminder(&st, PendingReminder{
 				TriggeredBy:         "failed_reviews",
 				Reason:              deferredReminderReason(buildFailedReviewReason(req, st, actionableReviewIDs), scope.WorktreeRoot),
-				Instruction:         req.Instruction,
+				Instruction:         customInstruction(req.Instruction),
 				TrackedRepoRoot:     scope.TrackedRepoRoot,
 				TrackedRepoIdentity: scope.TrackedRepoIdentity,
 				WorktreeRoot:        scope.WorktreeRoot,
@@ -778,7 +778,7 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 			queuePendingReminder(&st, PendingReminder{
 				TriggeredBy:         "commit",
 				Reason:              deferredReminderReason(buildCommitReason(req, triggeringCommitCount, scope.WorktreeRoot, actionableReviewIDs), scope.WorktreeRoot),
-				Instruction:         req.Instruction,
+				Instruction:         customInstruction(req.Instruction),
 				TrackedRepoRoot:     scope.TrackedRepoRoot,
 				TrackedRepoIdentity: scope.TrackedRepoIdentity,
 				WorktreeRoot:        scope.WorktreeRoot,
@@ -1492,7 +1492,7 @@ func userPromptDiagnosis(available bool, openFailed, actionable, threshold int, 
 // instruction replaces the default guidance verbatim, mirroring the
 // stop-decision reminder's instruction handling.
 func buildUserPromptReason(req Request, scope hookScope, jobs []storage.ReviewJob, reviewIDs reviewIDSet) string {
-	guidance := strings.TrimSpace(req.Instruction)
+	guidance := customInstruction(req.Instruction)
 	if guidance == "" {
 		guidance = userPromptGuidance
 	}
@@ -1614,10 +1614,7 @@ const reminderPreamble = "roborev Agent Hook reminder. This is background mainte
 	"suggestions to triage, not requirements."
 
 func buildPromptReason(req Request, detail string) string {
-	instruction := strings.TrimSpace(req.Instruction)
-	if instruction == "" {
-		instruction = DefaultInstruction
-	}
+	instruction := effectiveInstruction(req.Instruction)
 	reason := reminderPreamble + " " + instruction
 	if strings.TrimSpace(detail) == "" {
 		return reason

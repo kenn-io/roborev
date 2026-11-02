@@ -788,6 +788,14 @@ func TestZcodeUserPromptSubmitDropsDefaultInstruction(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, captured.Instruction, "default-filled instruction must not override injected guidance")
 
+	for _, builtin := range []string{"\n" + agenthook.DefaultInstruction + "\n", "Invoke the $roborev-fix skill now."} {
+		opts.Instruction = builtin
+		require.NoError(t, runLocalAgentHook(agenthook.AgentZcode, opts,
+			strings.NewReader(`{"session_id":"s1","hook_event_name":"UserPromptSubmit","cwd":"/repo"}`),
+			&bytes.Buffer{}, io.Discard))
+		assert.Empty(t, captured.Instruction)
+	}
+
 	opts.Instruction = "Custom injected instruction."
 	err = runLocalAgentHook(
 		agenthook.AgentZcode, opts,
