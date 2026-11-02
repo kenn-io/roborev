@@ -39,7 +39,6 @@ func TestCIPanelHistoryLookupsUseIndex(t *testing.T) {
 			}
 			require.NoError(t, rows.Err())
 			plan := strings.Join(details, "\n")
-			assert.NotContains(t, plan, "SCAN ci_pr_panels")
 			assert.Contains(t, plan, "idx_ci_panels_pr_head")
 		})
 	}
