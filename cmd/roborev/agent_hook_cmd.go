@@ -130,10 +130,8 @@ func runLocalAgentHook(agent kitagenthook.Agent, opts agenthook.Options, stdin i
 	}
 	instruction := opts.Instruction
 	if input.HookEventName == "UserPromptSubmit" || input.HookEventName == "SessionStart" {
-		// Injected reminders carry purpose-built guidance in the daemon.
-		// The CLI default-fills Instruction with the stop-decision text,
-		// which would override it, so only explicitly configured
-		// instructions travel for these events.
+		// The daemon renders the same built-in flow for injected and Stop
+		// reminders. Send only custom text so built-in guidance stays current.
 		if agenthook.IsBuiltinInstruction(instruction) {
 			instruction = ""
 		}

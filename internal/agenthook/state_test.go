@@ -473,7 +473,7 @@ func TestCountOpenFailedReviewsExcludesNonReviewJobTypes(t *testing.T) {
 func TestBuildPromptReasonKeepsPreambleWithCustomInstruction(t *testing.T) {
 	reason := buildStopReason(Request{Instruction: "Run the fix skill now."}, 5, nil)
 
-	assert.Equal(t, reminderPreamble+" Run the fix skill now. 5 Stop hooks reached.", reason)
+	assert.Equal(t, reminderPreamble+"\n\nRun the fix skill now.\n\n5 Stop hooks reached.", reason)
 }
 
 func TestBuildHookReasonsDoNotExposeInternalContext(t *testing.T) {
@@ -495,17 +495,17 @@ func TestBuildHookReasonsDoNotExposeInternalContext(t *testing.T) {
 	}
 
 	failed := buildFailedReviewReason(req, st, nil)
-	assert.Equal(reminderPreamble+" "+DefaultInstruction+` 1 open failed roborev review on "agent-hook-integration".`, failed)
+	assert.Equal(reminderPreamble+"\n\n"+DefaultInstruction+"\n\n"+`1 open failed roborev review on "agent-hook-integration".`, failed)
 	assert.NotContains(failed, req.Event.SessionID)
 	assert.NotContains(failed, "/workspace/roborev")
 
 	stop := buildStopReason(req, st.Count, nil)
-	assert.Equal(reminderPreamble+" "+DefaultInstruction+" 4 Stop hooks reached.", stop)
+	assert.Equal(reminderPreamble+"\n\n"+DefaultInstruction+"\n\n4 Stop hooks reached.", stop)
 	assert.NotContains(stop, req.Event.SessionID)
 	assert.NotContains(stop, "/workspace/roborev")
 
 	commit := buildCommitReason(req, st.CommitCount, st.LastCommitRepo, nil)
-	assert.Equal(reminderPreamble+" "+DefaultInstruction+` 2 commits reached in "agent-hook-integration".`, commit)
+	assert.Equal(reminderPreamble+"\n\n"+DefaultInstruction+"\n\n"+`2 commits reached in "agent-hook-integration".`, commit)
 	assert.NotContains(commit, req.Event.SessionID)
 	assert.NotContains(commit, "/workspace/roborev")
 }
@@ -559,9 +559,9 @@ func TestBuildFailedReviewReasonSanitizesUntrustedBranch(t *testing.T) {
 
 	reason := buildFailedReviewReason(req, st, nil)
 
-	assert.NotContains(reason, "\n", "no control characters reach the agent")
+	assert.NotContains(reason, "main\n", "branch control characters do not reach the agent")
 	assert.Equal(2, strings.Count(reason, `"`), "branch renders as one quoted token with no breakout")
-	trusted := reminderPreamble + " Run roborev fix. "
+	trusted := reminderPreamble + "\n\nRun roborev fix.\n\n"
 	assert.True(strings.HasPrefix(reason, trusted), "the trusted preamble and instruction stay first")
 
 	long := SessionState{FailedReviewCount: 1, LastFailedReviewBranch: strings.Repeat("A", 500)}
@@ -3014,8 +3014,8 @@ func TestRecordUserPromptSubmitInjectsSelfContainedReminder(t *testing.T) {
 	assert.Contains(first.Reason, "verdict F")
 	assert.Contains(first.Reason, head[:12])
 	assert.Contains(first.Reason, reminderPreamble)
-	assert.Contains(first.Reason, "finish the user's current task first")
-	assert.Contains(first.Reason, "triage these reviews with the roborev-fix skill")
+	assert.Contains(first.Reason, "Finish it first")
+	assert.Contains(first.Reason, "Triage the review job IDs named in this reminder with the roborev-fix skill")
 
 	// The failed-review reminder is acknowledged. The next prompt still
 	// triggers, but only through the active fix session (matching the Stop

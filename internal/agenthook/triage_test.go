@@ -1,14 +1,21 @@
 package agenthook
 
 import (
-	"github.com/stretchr/testify/require"
-	"go.kenn.io/roborev/internal/testutil"
+	"errors"
+	"flag"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"hegel.dev/go/hegel"
+
+	"go.kenn.io/roborev/internal/agentguide"
+	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestIsBuiltinInstructionLegacy(t *testing.T) {
@@ -52,4 +59,68 @@ func TestDeferredReminderWithLegacyInstructionRendersCurrentDefault(t *testing.T
 	require.True(t, resp.Triggered)
 	assert.Contains(t, resp.Reason, DefaultInstruction)
 	assert.NotContains(t, resp.Reason, legacyDefaultInstructions[0])
+}
+
+var updateGolden = flag.Bool("update-golden", false, "regenerate agent hook golden files")
+
+func TestDefaultStopReasonGolden(t *testing.T) {
+	reason := buildStopReason(Request{}, 5, reviewIDSet{1201: {}, 1204: {}, 1207: {}})
+	path := filepath.Join("testdata", "golden", "stop_reason_default.golden")
+	if *updateGolden {
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte(reason), 0o600))
+	}
+	want, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, string(want), reason)
+}
+
+func TestDefaultInstructionDOTSemantics(t *testing.T) {
+	graph, err := agentguide.LintDOT(DefaultInstruction)
+	require.NoError(t, err)
+	assert.Equal(t, "roborev_triage", graph.Name)
+	for id, words := range map[string][]string{"scope": {"named job IDs", "--open", "--list"}, "hold": {"waiting on the user's answer"}, "fix": {"Fix:"}, "decline": {"Decline:"}, "invalid": {"Invalid:"}, "ask": {"Ask:"}, "done": {"completion command"}} {
+		node, ok := graph.Node(id)
+		require.True(t, ok, id)
+		for _, word := range words {
+			assert.Contains(t, node.Label, word)
+		}
+	}
+	assert.Equal(t, "hold", graph.Out("start")[0].To, "pause/wait guard precedes instructions to work")
+	assert.Empty(t, graph.Out("resume"))
+	assert.Len(t, graph.Out("triage"), 4)
+	body, err := agentguide.ExtractDOT(DefaultInstruction)
+	require.NoError(t, err)
+	err = agentguide.CanonWithGraphviz(t.Context(), body)
+	if errors.Is(err, agentguide.ErrGraphvizUnavailable) {
+		t.Skip("graphviz not installed")
+	}
+	require.NoError(t, err)
+}
+
+func TestReasonsCloseFenceOnOwnLine(t *testing.T) {
+	ids := reviewIDSet{7: {}}
+	req := Request{}
+	for name, reason := range map[string]string{
+		"stop":     buildStopReason(req, 5, ids),
+		"commit":   buildCommitReason(req, 2, "/workspace/demo", ids),
+		"failed":   buildFailedReviewReason(req, SessionState{FailedReviewCount: 1}, ids),
+		"deferred": deferredReminderReason(buildStopReason(req, 5, ids), "/workspace/demo"),
+		"injected": buildUserPromptReason(req, hookScope{TrackedRepoRoot: "/workspace/demo"}, []storage.ReviewJob{{ID: 7, GitRef: "abc"}}, ids),
+	} {
+		t.Run(name, func(t *testing.T) {
+			for line := range strings.SplitSeq(reason, "\n") {
+				if strings.Contains(line, "~~~") {
+					assert.True(t, slices.Contains([]string{"~~~dot", "~~~"}, line), line)
+				}
+			}
+			_, err := agentguide.LintDOT(reason)
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestBuildPromptReasonCustomInstructionWithFenceIsVerbatim(t *testing.T) {
+	custom := "Do this:\n\n~~~dot\ndigraph mine { a -> b; }\n~~~"
+	assert.Equal(t, reminderPreamble+"\n\n"+custom+"\n\n5 Stop hooks reached.", buildStopReason(Request{Instruction: custom}, 5, nil))
 }
