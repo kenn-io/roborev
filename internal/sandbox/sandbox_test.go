@@ -1,7 +1,6 @@
 package sandbox
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -29,7 +28,7 @@ func TestSandboxCommandRejectsUnavailablePolicy(t *testing.T) {
 				require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\nexit 0\n"), 0o700))
 			}
 			t.Setenv("PATH", dir)
-			_, _, _, err := (Job{WorkDir: dir, MemoryMax: 1 << 30}).Command(context.Background(), []string{"true"})
+			_, _, _, err := (Job{WorkDir: dir, MemoryMax: 1 << 30}).Command(t.Context(), []string{"true"})
 			require.ErrorContains(t, err, tc.want)
 		})
 	}

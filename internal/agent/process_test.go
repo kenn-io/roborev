@@ -77,7 +77,7 @@ func TestContextProcessError(t *testing.T) {
 	require.NoError(t, contextProcessError(ctx, tracker, errors.New("agent failed"), fs.ErrClosed), "real subprocess error should not be masked by closed pipe parse error")
 	t.Run("supervisor-exit-143", func(t *testing.T) {
 		skipIfWindows(t)
-		err := exec.Command("sh", "-c", "exit 143").Run()
+		err := exec.CommandContext(t.Context(), "sh", "-c", "exit 143").Run()
 		require.ErrorIs(t, contextProcessError(ctx, tracker, err, nil), context.Canceled)
 	})
 }
