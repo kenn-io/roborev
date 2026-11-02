@@ -458,6 +458,7 @@ func TestSynthesisRecoverableFailureDefersInsteadOfRawFallback(t *testing.T) {
 			assert.Equal("pending", (*statuses)[0].State, "recoverable synthesis defer status is pending")
 			assert.False(h.panelPostedAt(t, panel.ID), "deferred panel is not marked posted")
 			assert.True(h.panelRetiredAt(t, panel.ID), "deferred panel is retired")
+			assertPanelRetireReason(t, h.DB, panel.ID, "deferred_retry")
 
 			attempt, err := h.DB.GetReviewAttempt("acme/api", pr, headSHA)
 			require.NoError(t, err)
@@ -484,6 +485,7 @@ func TestSynthesisCanceledDoesNotPostRawFallback(t *testing.T) {
 	close(eventCh)
 	doneCh := make(chan struct{})
 	h.Poller.listenForEvents(eventCh, doneCh)
+	assertPanelRetireReason(t, h.DB, panel.ID, "canceled")
 
 	assert.Empty(*comments, "canceled synthesis must not post stale raw fallback")
 	assert.Empty(*statuses, "canceled synthesis must not set commit status")
@@ -516,6 +518,7 @@ func TestPanelClosedPRPostsNothing(t *testing.T) {
 	panel, err := h.DB.GetCIPanelByPRSHA("acme/api", 7, "headsha333")
 	require.NoError(t, err)
 	assert.NotNil(panel.RetiredAt, "closed PR retains a non-postable delivery target")
+	assertPanelRetireReason(t, h.DB, panel.ID, "closed_pr")
 	reviewed, err := h.Poller.alreadyReviewedPR("acme/api", ghPR{Number: 7, HeadRefOid: "headsha333"})
 	require.NoError(t, err)
 	assert.False(reviewed, "same-HEAD reopen must be reviewable")
@@ -536,6 +539,7 @@ func TestPanelStalePRHeadPostsNothing(t *testing.T) {
 	h.completeSynthesisWithReview(t, synth.ID, "## Combined\nstale finding")
 
 	h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
+	assertPanelRetireReason(t, h.DB, panel.ID, "stale_head")
 
 	assert.Empty(*comments, "stale-head panel must not post a PR comment")
 	assert.Empty(*statuses, "stale-head panel must not set commit status")
@@ -562,6 +566,7 @@ func TestPanelRepoIdentityMismatchPostsNothing(t *testing.T) {
 	h.completeSynthesisWithReview(t, synth.ID, "## Combined\nprivate finding")
 
 	h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
+	assertPanelRetireReason(t, h.DB, panel.ID, "repo_mismatch")
 
 	assert.Empty(*comments, "repo mismatch must not post a PR comment")
 	assert.Empty(*statuses, "repo mismatch must not set commit status")
@@ -1003,6 +1008,7 @@ func TestPostPanelRunDefersTransient(t *testing.T) {
 	h.markJobFailed(t, synth.ID, "synthesis released after all members failed")
 
 	h.Poller.handleReviewFailed(ciEvent(synth.ID, "review.failed"))
+	assertPanelRetireReason(t, h.DB, panel.ID, "deferred_retry")
 
 	assert.Empty(*comments, "transient defer must not post a comment")
 	require.Len(t, *statuses, 1, "transient defer sets exactly one status")
@@ -1074,6 +1080,7 @@ func TestPostPanelRunDefersGenuine(t *testing.T) {
 	h.markJobFailed(t, synth.ID, "synthesis released after all members failed")
 
 	h.Poller.handleReviewFailed(ciEvent(synth.ID, "review.failed"))
+	assertPanelRetireReason(t, h.DB, panel.ID, "deferred_retry")
 
 	assert.Empty(*comments, "genuine defer must not post a comment")
 	require.Len(t, *statuses, 1)

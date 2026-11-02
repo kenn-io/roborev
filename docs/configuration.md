@@ -2191,6 +2191,50 @@ default_model = "claude-opus-4-8"
 default_model = "anthropic/claude-opus-4-8"
 ```
 
+### AgentsView
+
+Configure a local or remote AgentsView server to fetch usage and cost over HTTP,
+including subagent totals. The daemon does not need the `agentsview` CLI when
+this provider is configured.
+
+```toml
+[agentsview]
+url = "https://agentsview.example/base"
+token_file = "~/.config/roborev/agentsview-token"
+
+[cost]
+timeout = "2s"
+```
+
+These settings are global-only. Repository configuration cannot choose where
+roborev sends your token. The URL must be absolute HTTP(S) with a host. A base
+path is allowed; embedded credentials, queries, and fragments are rejected.
+`agentsview.url` and `cost.endpoint` are mutually exclusive.
+
+`token_file` takes precedence over `AGENTSVIEW_SERVER_TOKEN` in the daemon's
+environment. File contents are trimmed, and `~/` expands to the daemon user's
+home directory. An unreadable or missing configured file is an error. There is
+no inline token setting. Servers without authentication need neither token
+source. Every request uses Bearer authentication when a token is configured.
+`[cost] timeout` governs the lookup, including session ID resolution, and
+defaults to `10s`.
+
+AgentsView must already have indexed the agent's session and its subagents. With
+AgentsView v0.46.1 or later, roborev resolves a missing raw session ID through
+the server's session ID resolver and retries usage with the unique indexed ID.
+Older servers report an error instead of guessing. No matches leave the job
+unpriced for existing reconciliation to retry. Ambiguous matches and rejected
+tokens produce explicit errors. Roborev never falls back to the local CLI when
+this provider is selected. Resumed sessions remain excluded because AgentsView
+totals are cumulative.
+
+`roborev doctor` reports the running daemon's provider and probes AgentsView
+reachability and authentication using the daemon's environment. If the daemon
+cannot supply this diagnostic, doctor labels its result as shell-only and warns
+that the daemon's usage provider was not checked. `roborev backfill-tokens` uses
+the daemon's configured provider for older jobs as well. With no
+`agentsview.url`, the existing local CLI or `[cost] endpoint` behavior applies.
+
 ### Cost Usage Endpoint
 
 By default, roborev looks up token usage and cost estimates through the local
@@ -2210,9 +2254,9 @@ timeout = "2s"
 ```
 
 `endpoint` must include `{session_id}`, which roborev URL-escapes and replaces
-with the agent session ID. If `endpoint` is empty, roborev uses the `agentsview`
-CLI path. `timeout` defaults to `10s`; invalid, zero, or negative values also
-fall back to `10s`.
+with the agent session ID. If both `endpoint` and `agentsview.url` are empty,
+roborev uses the `agentsview` CLI path. `timeout` defaults to `10s`; invalid,
+zero, or negative values also fall back to `10s`.
 
 Usage indexing can lag behind job completion. The daemon retries fresh misses
 and periodically revisits terminal jobs from the past week that still lack a
@@ -2389,29 +2433,31 @@ launching fix jobs and managing patches. See
 
 The `[agent.codex]` section controls Codex-specific behavior for review jobs.
 Both options default to `true` so Codex reviews start from a clean state without
-skill instructions or user-level Codex config. Fix jobs are not affected.
+skill instructions or user-level Codex config. User-config isolation also
+applies to non-agentic stored-prompt jobs, including `analyze`, `run`, and
+insights. Agentic stored-prompt jobs and fix jobs keep loading user config.
 
 ```toml
 # ~/.roborev/config.toml
 [agent.codex]
 disable_review_skills = true       # Suppress Codex skill instructions on review jobs
-ignore_review_user_config = true   # Pass --ignore-user-config to Codex review jobs
+ignore_review_user_config = true   # Ignore user config for reviews and non-editing jobs
 ```
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `disable_review_skills` | bool | true | Run Codex review jobs with `skills.include_instructions=false` so model-visible skill instructions are stripped from the prompt |
-| `ignore_review_user_config` | bool | true | Pass `--ignore-user-config` to Codex review jobs so user-level Codex config is not loaded |
+| `ignore_review_user_config` | bool | true | Pass `--ignore-user-config` to Codex reviews and non-agentic stored-prompt jobs so user-level Codex config is not loaded |
 
 Set either to `false` to restore the prior behavior if you rely on Codex skill
 instructions or user-level Codex config during reviews.
 
 #### Custom Codex Config (Model Providers)
 
-`ignore_review_user_config` stops Codex review jobs from loading your
-`~/.codex/config.toml`, which also means a custom `model_provider` and its
-`[model_providers.*]` block defined there are not applied. To inject specific
-Codex options without loading your full user config, define an
+`ignore_review_user_config` stops Codex reviews and non-editing jobs from
+loading your `~/.codex/config.toml`, which also means a custom `model_provider`
+and its `[model_providers.*]` block defined there are not applied. To inject
+specific Codex options without loading your full user config, define an
 `[agent.codex.config]` table. Every key under it is passed to Codex as a
 `-c key=value` override on **every** Codex job (review, fix, refine, analyze),
 and these overrides apply even when `--ignore-user-config` is in effect.

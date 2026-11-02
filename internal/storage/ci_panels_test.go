@@ -589,7 +589,7 @@ func TestCreateCIPanelRunReclaimsRetiredSameHead(t *testing.T) {
 	require.True(t, created, "first create")
 	firstPanel, err := db.GetCIPanelByPRSHA("o/r", 6, "headsha")
 	require.NoError(t, err)
-	require.NoError(t, db.MarkPanelRetired(firstPanel.ID))
+	require.NoError(t, db.MarkPanelRetired(firstPanel.ID, PanelRetireReasonCanceled))
 
 	created, mems, syn, err := db.CreateCIPanelRun("o/r", 6, "headsha", members, synthesis)
 	require.NoError(t, err)
@@ -610,7 +610,7 @@ func TestMarkPanelRetiredDoesNotRetirePostedPanel(t *testing.T) {
 
 	id := seedPanelRow(t, db, "o/r", 6, "posted-head")
 	require.NoError(t, db.MarkPanelPosted(id, PanelOutcomeReviewPosted, "", ""))
-	require.NoError(t, db.MarkPanelRetired(id))
+	require.NoError(t, db.MarkPanelRetired(id, PanelRetireReasonCanceled))
 
 	panel, err := db.GetActiveCIPanelByPRSHA("o/r", 6, "posted-head")
 	require.NoError(t, err)
@@ -864,7 +864,7 @@ func TestMarkPanelPostedRetiredPanelErrors(t *testing.T) {
 	require.True(t, created)
 
 	id := seedPanelRow(t, db, "o/r", 10, "headsha10")
-	require.NoError(t, db.MarkPanelRetired(id))
+	require.NoError(t, db.MarkPanelRetired(id, PanelRetireReasonCanceled))
 
 	err = db.MarkPanelPosted(id, PanelOutcomeReviewPosted, "", "")
 	require.Error(t, err)
@@ -895,7 +895,7 @@ func TestMarkPanelsAllowStalePost(t *testing.T) {
 	postedID := seedPanelRow(t, db, "o/r", 7, "posted-head")
 	require.NoError(t, db.MarkPanelPosted(postedID, PanelOutcomeReviewPosted, "", ""))
 	retiredID := seedPanelRow(t, db, "o/r", 7, "retired-head")
-	require.NoError(t, db.MarkPanelRetired(retiredID))
+	require.NoError(t, db.MarkPanelRetired(retiredID, PanelRetireReasonCanceled))
 	otherPRID := seedPanelRow(t, db, "o/r", 8, "old-head")
 	otherRepoID := seedPanelRow(t, db, "x/y", 7, "old-head")
 
@@ -930,7 +930,7 @@ func TestMarkPanelRetiredIfStalePostDisallowed(t *testing.T) {
 	t.Cleanup(func() { db.Close() })
 
 	unflaggedID := seedPanelRow(t, db, "o/r", 7, "unflagged")
-	retired, err := db.MarkPanelRetiredIfStalePostDisallowed(unflaggedID)
+	retired, err := db.MarkPanelRetiredIfStalePostDisallowed(unflaggedID, PanelRetireReasonStaleHead)
 	require.NoError(t, err)
 	assert.True(retired, "unflagged active row is retired")
 	row, err := db.GetCIPanelByPRSHA("o/r", 7, "unflagged")
@@ -940,20 +940,20 @@ func TestMarkPanelRetiredIfStalePostDisallowed(t *testing.T) {
 	flaggedID := seedPanelRow(t, db, "o/r", 7, "flagged")
 	_, err = db.MarkPanelsAllowStalePost("o/r", 7, "other-head")
 	require.NoError(t, err)
-	retired, err = db.MarkPanelRetiredIfStalePostDisallowed(flaggedID)
+	retired, err = db.MarkPanelRetiredIfStalePostDisallowed(flaggedID, PanelRetireReasonStaleHead)
 	require.NoError(t, err)
 	assert.False(retired, "flagged row is not retired")
 	row, err = db.GetCIPanelByPRSHA("o/r", 7, "flagged")
 	require.NoError(t, err)
 	assert.Nil(row.RetiredAt, "flagged row stays active")
 
-	retired, err = db.MarkPanelRetiredIfStalePostDisallowed(unflaggedID)
+	retired, err = db.MarkPanelRetiredIfStalePostDisallowed(unflaggedID, PanelRetireReasonStaleHead)
 	require.NoError(t, err)
 	assert.False(retired, "already-retired row is not retired again")
 
 	postedID := seedPanelRow(t, db, "o/r", 8, "posted")
 	require.NoError(t, db.MarkPanelPosted(postedID, PanelOutcomeReviewPosted, "", ""))
-	retired, err = db.MarkPanelRetiredIfStalePostDisallowed(postedID)
+	retired, err = db.MarkPanelRetiredIfStalePostDisallowed(postedID, PanelRetireReasonStaleHead)
 	require.NoError(t, err)
 	assert.False(retired, "posted row is not retired")
 }

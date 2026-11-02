@@ -41,6 +41,11 @@ func startDetachedDaemon(ctx context.Context, opts detachedDaemonOptions) error 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start hidden daemon: %w", err)
 	}
-	go func() { _ = cmd.Wait() }()
+	go func() {
+		err := cmd.Wait()
+		if opts.Exited != nil {
+			opts.Exited(err)
+		}
+	}()
 	return nil
 }

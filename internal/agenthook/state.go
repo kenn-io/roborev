@@ -1467,11 +1467,11 @@ func buildFailedReviewReason(req Request, st SessionState, reviewIDs reviewIDSet
 // stop-decision reminder, injected context reaches the model next to a fresh
 // user message, so it must explicitly yield to that task and scope the review
 // work instead of telling the model to start fixing immediately.
-const userPromptGuidance = "Guidance: finish the user's current task first, then address these reviews. " +
-	"Invoke the roborev-fix skill for only the named jobs. " +
-	"Re-verify each finding independently before changing code. " +
-	"Keep out-of-scope findings open and tell the user. " +
-	"Close invalid, stale, or already-resolved findings and record the evidence."
+const userPromptGuidance = "Guidance: finish the user's current task first, then triage these reviews " +
+	"with the roborev-fix skill, and only the named jobs. " +
+	"Fix reachable defects with the smallest change that stays inside the user's task, " +
+	"decline or disprove the rest with a recorded reason, " +
+	"and ask the user about anything that would grow the task."
 
 // userPromptDiagnosis summarizes the failed-review evaluation for one
 // injected reminder so an empty reminder is explainable from hook stderr.
@@ -1511,6 +1511,8 @@ func buildUserPromptReason(req Request, scope hookScope, jobs []storage.ReviewJo
 		fmt.Fprintf(&b, "\n- job %d (%s, verdict %s)", job.ID, shortReviewRef(job.GitRef), verdict)
 	}
 	b.WriteString("\n")
+	b.WriteString(reminderPreamble)
+	b.WriteString(" ")
 	b.WriteString(guidance)
 	return b.String()
 }
@@ -1604,15 +1606,23 @@ func quotedLabel(raw string) string {
 	return fmt.Sprintf("%q", clean)
 }
 
+// reminderPreamble opens every review reminder, including ones whose
+// instruction the user replaced, because a custom instruction would otherwise
+// drop the only text that ranks review work below the user's own request.
+const reminderPreamble = "roborev Agent Hook reminder. This is background maintenance: " +
+	"the user's latest instruction comes first, and review findings are a reviewer's " +
+	"suggestions to triage, not requirements."
+
 func buildPromptReason(req Request, detail string) string {
 	instruction := strings.TrimSpace(req.Instruction)
 	if instruction == "" {
 		instruction = DefaultInstruction
 	}
+	reason := reminderPreamble + " " + instruction
 	if strings.TrimSpace(detail) == "" {
-		return instruction
+		return reason
 	}
-	return instruction + " " + detail
+	return reason + " " + detail
 }
 
 func countPhrase(count int, singular, plural string) string {
@@ -2044,7 +2054,15 @@ func cleanShellToken(token string) string {
 // (see storage.DB.CompleteFixJob), so counting it would make the hook keep
 // prompting $roborev-fix for a job that is not a failing review. The empty
 // job_type is counted for legacy jobs recorded before job_type existed.
+//
+// Design reviews do not count either. They grade a written design, so their
+// findings are mostly completeness gaps that the agent fixing the code cannot
+// resolve, and reminding about them sent agents building whatever the design
+// review asked for.
 func countsAsFailedReview(job storage.ReviewJob) bool {
+	if job.ReviewType == config.ReviewTypeDesign {
+		return false
+	}
 	switch job.JobType {
 	case storage.JobTypeReview, storage.JobTypeRange, storage.JobTypeDirty,
 		storage.JobTypeCompact, storage.JobTypeSynthesis, "":

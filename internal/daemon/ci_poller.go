@@ -83,6 +83,7 @@ type ghPR struct {
 	Author      ghPRAuthor `json:"author"`
 	// AuthorAssociation is GitHub's author_association for the PR author.
 	AuthorAssociation string   `json:"authorAssociation"`
+	Draft             bool     `json:"draft"`
 	Labels            []string `json:"labels"`
 }
 
@@ -95,6 +96,7 @@ type panelPostTarget struct {
 	Body              string
 	AuthorLogin       string
 	AuthorAssociation string
+	Draft             bool
 	Labels            []string
 }
 
@@ -949,10 +951,13 @@ type ciSkip struct {
 	reason      string // log detail
 }
 
-// ciPRSkip reports whether the [ci] skip_labels, author, or branch filters
+// ciPRSkip reports whether the [ci] draft, label, author, or branch filters
 // exclude this PR from review. It returns an error, and no decision, when it
 // cannot read CODEOWNERS for the allow_codeowners check.
 func (p *CIPoller) ciPRSkip(ctx context.Context, ghRepo string, pr ghPR, ci *config.CIConfig) (ciSkip, bool, error) {
+	if ci.SkipDrafts && pr.Draft {
+		return ciSkip{description: ciDraftSkipReason, reason: "it is a draft pull request"}, true, nil
+	}
 	if label, skip := matchingCISkipLabel(pr.Labels, ci.SkipLabels); skip {
 		return ciSkip{
 			description: fmt.Sprintf("Review skipped: label %s", label),
@@ -1021,6 +1026,14 @@ func (p *CIPoller) readCodeowners(ctx context.Context, ghRepo, ref string) (map[
 	return client.CodeownerLogins(ctx, ghRepo, ref)
 }
 
+// skipPR publishes a skipped result for this PR head instead of reviewing it.
+//
+// GitHub attaches the roborev check and commit status to the commit, not the
+// PR, so a skip also appears on every other open PR with the same head commit,
+// including one whose review is pending or failed. This is accepted design for
+// every skip reason (draft, label, author, branch), not a defect: the skip path
+// does not coordinate status publication across PRs that share a commit. Do not
+// add a shared-commit guard here without the maintainers asking for one.
 func (p *CIPoller) skipPR(ghRepo string, pr ghPR, skip ciSkip, expected *storage.ReviewAttempt) error {
 	panelID, err := p.db.ClaimPanelForSkip(ghRepo, pr.Number, pr.HeadRefOid, expected)
 	if err != nil {
@@ -1048,19 +1061,6 @@ func (p *CIPoller) skipPR(ghRepo string, pr ghPR, skip ciSkip, expected *storage
 	}
 	p.recordPollResult(ghRepo, pr.Number, pr.HeadRefOid, nil)
 	return nil
-}
-
-func matchingCISkipLabel(prLabels, skipLabels []string) (string, bool) {
-	for _, label := range prLabels {
-		label = strings.TrimSpace(label)
-		for _, configured := range skipLabels {
-			configured = strings.TrimSpace(configured)
-			if configured != "" && strings.EqualFold(label, configured) {
-				return label, true
-			}
-		}
-	}
-	return "", false
 }
 
 // loadCIRepoConfigFor loads typed and raw repo config through one loader. A
@@ -2388,6 +2388,7 @@ func (p *CIPoller) listOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, erro
 			Body:              pr.Body,
 			Author:            ghPRAuthor{Login: pr.AuthorLogin},
 			AuthorAssociation: pr.AuthorAssociation,
+			Draft:             pr.Draft,
 			Labels:            pr.Labels,
 		})
 	}
@@ -2497,7 +2498,7 @@ func (p *CIPoller) handleReviewCanceled(event Event) {
 		log.Printf("CI poller: error checking canceled CI panel for job %d: %v", event.JobID, err)
 		return
 	}
-	p.retirePanelAndDeleteAttempt(row, "canceled")
+	p.retirePanelAndDeleteAttempt(row, storage.PanelRetireReasonCanceled)
 }
 
 // routePanelEvent posts a panel run when jobID is its synthesis parent. Member
@@ -2604,7 +2605,7 @@ func (p *CIPoller) guardPanelPostTarget(ctx context.Context, row *storage.CIPane
 	if !target.Open {
 		log.Printf("CI poller: PR %s#%d is closed/merged, abandoning panel %d",
 			row.GithubRepo, row.PRNumber, row.ID)
-		p.retirePanelAndDeleteAttempt(row, "closed-PR")
+		p.retirePanelAndDeleteAttempt(row, storage.PanelRetireReasonClosedPR)
 		return false
 	}
 	if target.HeadSHA != "" && !strings.EqualFold(target.HeadSHA, row.HeadSHA) {
@@ -2613,7 +2614,7 @@ func (p *CIPoller) guardPanelPostTarget(ctx context.Context, row *storage.CIPane
 		// marking the panel during the target lookup above; the database
 		// serializes this against MarkPanelsAllowStalePost so exactly one
 		// side wins.
-		retired, err := p.db.MarkPanelRetiredIfStalePostDisallowed(row.ID)
+		retired, err := p.db.MarkPanelRetiredIfStalePostDisallowed(row.ID, storage.PanelRetireReasonStaleHead)
 		if err != nil {
 			log.Printf("CI poller: error retiring stale-head panel %d: %v", row.ID, err)
 			p.releasePanelClaim(row.ID)
@@ -2622,7 +2623,7 @@ func (p *CIPoller) guardPanelPostTarget(ctx context.Context, row *storage.CIPane
 		if retired {
 			log.Printf("CI poller: PR %s#%d advanced from reviewed HEAD %s to %s, retiring panel %d without posting",
 				row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA), gitpkg.ShortSHA(target.HeadSHA), row.ID)
-			if err := p.db.RetirePanelAndDeleteAttempt(row.ID); err != nil {
+			if err := p.db.RetirePanelAndDeleteAttempt(row.ID, storage.PanelRetireReasonStaleHead); err != nil {
 				log.Printf("CI poller: error deleting stale-head review attempt for %s#%d@%s: %v",
 					row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA), err)
 			}
@@ -2654,7 +2655,7 @@ func (p *CIPoller) guardPanelPostTarget(ctx context.Context, row *storage.CIPane
 	if !match {
 		log.Printf("CI poller: repo identity mismatch for panel %d (%s#%d@%s), retiring without posting",
 			row.ID, row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA))
-		p.retirePanelAndDeleteAttempt(row, "repo-mismatch")
+		p.retirePanelAndDeleteAttempt(row, storage.PanelRetireReasonRepoMismatch)
 		return false
 	}
 	return true
@@ -2701,7 +2702,7 @@ func (p *CIPoller) jobMatchesGithubRepo(job *storage.ReviewJob, ghRepo string) (
 }
 
 func (p *CIPoller) retirePanelAndDeleteAttempt(row *storage.CIPanel, reason string) {
-	if err := p.db.RetirePanelAndDeleteAttempt(row.ID); err != nil {
+	if err := p.db.RetirePanelAndDeleteAttempt(row.ID, reason); err != nil {
 		log.Printf("CI poller: error retiring %s panel %d: %v", reason, row.ID, err)
 	}
 }
@@ -2851,7 +2852,7 @@ func (p *CIPoller) recordDeferral(
 		log.Printf("CI poller: failed to set pending status for %s@%s: %v",
 			row.GithubRepo, gitpkg.ShortSHA(row.HeadSHA), err)
 	}
-	if err := p.db.MarkPanelRetired(row.ID); err != nil {
+	if err := p.db.MarkPanelRetired(row.ID, storage.PanelRetireReasonDeferredRetry); err != nil {
 		log.Printf("CI poller: error retiring deferred panel %d: %v", row.ID, err)
 	}
 	log.Printf("CI poller: deferred %s panel run for %s#%d@%s (panel %d, run %s, attempt %d, next_attempt_at %s, last_error=%q)",
@@ -2986,7 +2987,7 @@ func (p *CIPoller) supersedePriorPanels(ghRepo string, prNumber int, newHeadSHA 
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("supersede: get synthesis for %s: %w", row.PanelRunUUID, err))
 			continue
 		}
-		if err := p.db.MarkPanelRetired(row.ID); err != nil {
+		if err := p.db.MarkPanelRetired(row.ID, storage.PanelRetireReasonSuperseded); err != nil {
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("supersede: retire mapping %s: %w", row.PanelRunUUID, err))
 			continue
 		}
@@ -3326,6 +3327,7 @@ func (p *CIPoller) retryAttemptPR(
 		BaseRefName: baseRefName,
 		Title:       target.Title,
 		Body:        target.Body,
+		Draft:       target.Draft,
 		Labels:      target.Labels,
 		// Preserve the author so the [ci] author filter does not skip
 		// trusted authors on the retry path.
@@ -3453,7 +3455,7 @@ func (p *CIPoller) cancelClosedPRPanelRuns(ghRepo string, prNumber int) error {
 		}
 		// Retire before worker cancellation events can fire. The mapping
 		// remains available for cleanup retries and explicit review reruns.
-		if err := p.db.MarkPanelRetired(row.ID); err != nil {
+		if err := p.db.MarkPanelRetired(row.ID, storage.PanelRetireReasonClosedPR); err != nil {
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("retire panel %s: %w", row.PanelRunUUID, err))
 			continue
 		}
@@ -3818,6 +3820,7 @@ func (p *CIPoller) panelPostTarget(
 		Body:              pr.Body,
 		AuthorLogin:       pr.AuthorLogin,
 		AuthorAssociation: pr.AuthorAssociation,
+		Draft:             pr.Draft,
 		Labels:            pr.Labels,
 	}, nil
 }
