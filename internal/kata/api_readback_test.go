@@ -39,7 +39,7 @@ func TestAPIReadbackPreservesUnavailableLinks(t *testing.T) {
 		})
 		return true
 	}
-	c := apiClientFor(t, f, bindWorkspace(t, "reviews"))
+	c := apiClientFor(t, f, namedWorkspace(t, "reviews"))
 	issue, err := c.Show(t.Context(), "abc4")
 	require.NoError(t, err)
 	thread, err := c.Thread(t.Context(), ThreadReq{Issue: "abc4", Root: root.UID})

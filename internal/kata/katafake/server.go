@@ -355,6 +355,7 @@ func (f *Server) createIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	short := fmt.Sprintf("n%03d", f.nextID)
 	issue := f.AddIssue(pid, short, req.Title, deref(req.Body), req.Labels...)
+	maps.Copy(issue.Out.Metadata, req.Metadata)
 	issue.Out.Author = author
 	if len(req.Metadata) > 0 {
 		issue.Out.Metadata = req.Metadata

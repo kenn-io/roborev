@@ -428,6 +428,19 @@ func TestAPIClientCreateSendsWireFieldsAndRecordsAttribution(t *testing.T) {
 	}
 }
 
+func TestAPIClientCreatePersistsMetadataInFake(t *testing.T) {
+	f := katafake.New(t)
+	c := apiClientFor(t, f, namedWorkspace(t, "reviews"))
+	want := map[string]any{"roborev.action": "synthetic-marker"}
+	created, err := c.Create(t.Context(), CreateReq{
+		Title: "Review failed", Project: "reviews", Metadata: want, IdempotencyKey: "metadata-persistence",
+	})
+	require.NoError(t, err)
+	issue, err := c.Show(t.Context(), "reviews#"+created.ShortID)
+	require.NoError(t, err)
+	assert.Equal(t, want, issue.Metadata)
+}
+
 func TestAPIClientAuthenticationFailureNeverEchoesTheKey(t *testing.T) {
 	f := katafake.New(t)
 	f.Token = "a-different-credential"
