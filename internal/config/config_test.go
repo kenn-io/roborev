@@ -393,6 +393,34 @@ func TestRepoConfigLoadersRejectGlobalOnlyFixGuidelines(t *testing.T) {
 	}
 }
 
+func TestRepoConfigLoadersRejectGlobalOnlyCICheckSettings(t *testing.T) {
+	for _, key := range []string{"check_model", "check_reasoning"} {
+		t.Run(key, func(t *testing.T) {
+			dir := t.TempDir()
+			writeTestFile(t, dir, ".roborev.toml", "[ci]\n"+key+" = \"high\"\n")
+			execGit(t, dir, "init")
+			execGit(t, dir, "config", "user.email", "test@example.com")
+			execGit(t, dir, "config", "user.name", "Test")
+			execGit(t, dir, "add", ".roborev.toml")
+			execGit(t, dir, "commit", "-m", "add config")
+			for _, loader := range []struct {
+				name string
+				load func() (*RepoConfig, error)
+			}{
+				{name: "filesystem", load: func() (*RepoConfig, error) { return LoadRepoConfig(dir) }},
+				{name: "git ref", load: func() (*RepoConfig, error) { return LoadRepoConfigFromRef(dir, "HEAD") }},
+			} {
+				t.Run(loader.name, func(t *testing.T) {
+					_, err := loader.load()
+					require.ErrorContains(t, err, "ci."+key)
+					assert.ErrorContains(t, err, "global-only")
+					assert.ErrorContains(t, err, "~/.roborev/config.toml")
+				})
+			}
+		})
+	}
+}
+
 func TestLoadRepoConfigWithGuidelines(t *testing.T) {
 	tmpDir := newTempRepo(t, `
 agent = "claude-code"
