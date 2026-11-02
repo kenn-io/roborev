@@ -316,7 +316,7 @@ func TestLocalReviewProjectReasoning(t *testing.T) {
 	for _, explicit := range []string{"", "high"} {
 		t.Run(explicit, func(t *testing.T) {
 			h := newReviewHarness(t)
-			gitCmd := exec.Command("git", "-C", h.Dir, "remote", "add", "origin", "https://example.com/team/project-a.git")
+			gitCmd := exec.CommandContext(t.Context(), "git", "-C", h.Dir, "remote", "add", "origin", "https://example.com/team/project-a.git")
 			gitOutput, err := gitCmd.CombinedOutput()
 			require.NoError(t, err, "%s", gitOutput)
 			dataDir := testenv.SetDataDir(t)

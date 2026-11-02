@@ -95,7 +95,7 @@ func TestGetMachineID_EmptyValueRegeneration(t *testing.T) {
 	defer db.Close()
 
 	// Insert an empty machine ID (simulating manual edit or past bug)
-	_, err := db.Exec(`INSERT OR REPLACE INTO sync_state (key, value) VALUES (?, '')`, SyncStateMachineID)
+	_, err := db.ExecContext(t.Context(), `INSERT OR REPLACE INTO sync_state (key, value) VALUES (?, '')`, SyncStateMachineID)
 	r.NoError(err, "Failed to insert empty machine ID: %v", err)
 
 	// GetMachineID should regenerate when value is empty
@@ -105,7 +105,7 @@ func TestGetMachineID_EmptyValueRegeneration(t *testing.T) {
 
 	// Verify it's now stored
 	var stored uuid.UUID
-	err = db.QueryRow(`SELECT value FROM sync_state WHERE key = ?`, SyncStateMachineID).Scan(&stored)
+	err = db.QueryRowContext(t.Context(), `SELECT value FROM sync_state WHERE key = ?`, SyncStateMachineID).Scan(&stored)
 	r.NoError(err, "Failed to query stored ID: %v", err)
 	a.Equal(id, stored, "Stored ID %q doesn't match returned ID %q", stored, id)
 }

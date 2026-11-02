@@ -33,7 +33,7 @@ type RepoResolver interface {
 }
 
 type defaultRepoResolver struct {
-	ctx context.Context
+	ctx context.Context //nolint:containedctx // built per command from cmd.Context()
 }
 
 func (r defaultRepoResolver) RepoRoot() (string, error) {

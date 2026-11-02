@@ -151,7 +151,7 @@ func TestGoalReviewCLI(t *testing.T) {
 			require.NoError(t, os.WriteFile(filepath.Join(repo.Dir, name), []byte(text), 0o600))
 		}
 		cmd := reviewCmd()
-		cmd.SetContext(context.Background())
+		cmd.SetContext(t.Context())
 		var output bytes.Buffer
 		cmd.SetOut(&output)
 		cmd.SetErr(&output)
@@ -231,7 +231,7 @@ func TestGoalReviewCLIAcceptsPromptAboveInlineBudget(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(repo.Dir, ".roborev.toml"), []byte("max_prompt_size = 1024\n"), 0o600))
 
 	cmd := reviewCmd()
-	cmd.SetContext(context.Background())
+	cmd.SetContext(t.Context())
 	var captured string
 	err := runGoalReviewWithRunner(cmd, repo.Dir, goalreview.AgentOptions{Agent: "pi"}, true, false, false, &spec, nil,
 		goalReviewTestRunner(func(_ goalreview.Snapshot, prepared prompt.SnapshotResult) ([]goalreview.Finding, error) {
@@ -264,7 +264,7 @@ func TestGoalReviewCLIFindingsAndMalformedOutput(t *testing.T) {
 			require.NoError(t, os.WriteFile(filepath.Join(repo.Dir, spec), []byte("# Feature\n"), 0o600))
 			require.NoError(t, os.WriteFile(filepath.Join(repo.Dir, plan), []byte("### Task 1: Change\n"), 0o600))
 			cmd := reviewCmd()
-			cmd.SetContext(context.Background())
+			cmd.SetContext(t.Context())
 			var output bytes.Buffer
 			cmd.SetOut(&output)
 			cmd.SetErr(&output)

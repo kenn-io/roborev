@@ -23,7 +23,7 @@ func TestGoalGraphUnlimitedAndLinks(t *testing.T) {
 	data, err := json.Marshal(map[string]any{"issues": rows})
 	require.NoError(t, err)
 	client, args := stubClient(string(data), nil)
-	issues, err := client.List(context.Background(), ListOpts{Status: "open", Unlimited: true})
+	issues, err := client.List(t.Context(), ListOpts{Status: "open", Unlimited: true})
 	require.NoError(t, err)
 	require.Len(t, issues, 240)
 	assert.Equal(t, []string{"list", "--json", "--status", "open", "--limit", "0"}, *args)
@@ -37,7 +37,7 @@ func TestGoalGraphUnlimitedAndLinks(t *testing.T) {
 
 func TestGoalGraphShowLinks(t *testing.T) {
 	client, _ := stubClient(`{"issue":{"short_id":"abcd","qualified_id":"project#abcd","title":"Task","status":"open"},"links":[{"type":"parent","from":{"short_id":"abcd","qualified_id":"project#abcd"},"to":{"short_id":"root","qualified_id":"project#root"}},{"type":"blocks","from":{"short_id":"peer","qualified_id":"project#peer"},"to":{"short_id":"abcd","qualified_id":"project#abcd"}},{"type":"related","from":{"short_id":"peer","qualified_id":"project#peer"},"to":{"short_id":"abcd","qualified_id":"project#abcd"}}]}`, nil)
-	issue, err := client.Show(context.Background(), "abcd")
+	issue, err := client.Show(t.Context(), "abcd")
 	require.NoError(t, err)
 	require.NotNil(t, issue.Parent)
 	assert.Equal(t, "root", issue.Parent.ShortID)
@@ -57,7 +57,7 @@ func TestGoalGraphHydratesIncompleteRows(t *testing.T) {
 		}
 		return []byte(`{"issue":{"short_id":"abcd","qualified_id":"project#abcd","title":"Task","body":"Complete requirement","status":"open"},"links":[{"type":"blocks","from":{"short_id":"abcd","qualified_id":"project#abcd"},"to":{"short_id":"peer","qualified_id":"project#peer"}}]}`), nil
 	}
-	issues, err := client.List(context.Background(), ListOpts{Unlimited: true})
+	issues, err := client.List(t.Context(), ListOpts{Unlimited: true})
 	require.NoError(t, err)
 	require.Len(t, issues, 1)
 	assert.Equal(t, "Complete requirement", issues[0].Body)

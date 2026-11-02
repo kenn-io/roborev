@@ -223,21 +223,21 @@ func reviewsCommit(job storage.ReviewJob) bool {
 }
 
 // waitForReview waits for a review to complete and returns it
-func waitForReview(jobID int64) (*storage.Review, error) {
-	return waitForReviewWithInterval(jobID, pollStartInterval)
+func waitForReview(ctx context.Context, jobID int64) (*storage.Review, error) {
+	return waitForReviewWithInterval(ctx, jobID, pollStartInterval)
 }
 
-func waitForReviewWithInterval(jobID int64, pollInterval time.Duration) (*storage.Review, error) {
-	client, err := daemon.NewHTTPClientFromRuntime()
+func waitForReviewWithInterval(ctx context.Context, jobID int64, pollInterval time.Duration) (*storage.Review, error) {
+	client, err := daemon.NewHTTPClientFromRuntime(ctx)
 	if err != nil {
 		return nil, err
 	}
 	client.SetPollInterval(pollInterval)
-	return client.WaitForReview(jobID)
+	return client.WaitForReview(ctx, jobID)
 }
 
 // enqueueReview enqueues a review job and returns the job ID
-func enqueueReview(repoPath, gitRef, agentName string) (int64, error) {
+func enqueueReview(ctx context.Context, repoPath, gitRef, agentName string) (int64, error) {
 	ep := getDaemonEndpoint()
 
 	reqBody, _ := json.Marshal(daemon.EnqueueRequest{
@@ -246,7 +246,7 @@ func enqueueReview(repoPath, gitRef, agentName string) (int64, error) {
 		Agent:    agentName,
 	})
 
-	resp, err := ep.APIClient(10*time.Second).EnqueueJobRaw(context.Background(), nil, roborevclient.WithBody(reqBody))
+	resp, err := ep.APIClient(10*time.Second).EnqueueJobRaw(ctx, nil, roborevclient.WithBody(reqBody))
 	if err != nil {
 		return 0, err
 	}

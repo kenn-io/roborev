@@ -270,7 +270,7 @@ func planPostCommitBatch(
 			ctx, root, checkpoint+"^{commit}",
 		); resolveErr == nil {
 			return recoverOffChainPostCommitBatch(
-				root, branch, head, checkpoint, statePath,
+				ctx, root, branch, head, checkpoint, statePath,
 				"count first-parent commits: "+err.Error(), state,
 			)
 		}
@@ -281,7 +281,7 @@ func planPostCommitBatch(
 	}
 	if !onChain {
 		return recoverOffChainPostCommitBatch(
-			root, branch, head, checkpoint, statePath,
+			ctx, root, branch, head, checkpoint, statePath,
 			"checkpoint is not on HEAD first-parent chain", state,
 		)
 	}
@@ -558,7 +558,7 @@ func planDisabledPostCommitBatch(
 		mergeBase, err := git.GetMergeBase(root, checkpoint, head)
 		var commits []string
 		if err == nil {
-			commits, err = git.GetRangeCommits(root, mergeBase+".."+head)
+			commits, err = git.GetRangeCommitsCtx(ctx, root, mergeBase+".."+head)
 		}
 		if err != nil {
 			decision.PreserveCheckpoint = true
@@ -629,7 +629,7 @@ func planStoredPostCommitBatch(
 			ctx, root, checkpoint+"^{commit}",
 		); resolveErr == nil {
 			return recoverOffChainPostCommitBatch(
-				root, branch, head, checkpoint, statePath,
+				ctx, root, branch, head, checkpoint, statePath,
 				"count first-parent commits: "+err.Error(), state,
 			)
 		}
@@ -640,7 +640,7 @@ func planStoredPostCommitBatch(
 	}
 	if !onChain {
 		return recoverOffChainPostCommitBatch(
-			root, branch, head, checkpoint, statePath,
+			ctx, root, branch, head, checkpoint, statePath,
 			"checkpoint is not on branch first-parent chain", state,
 		)
 	}
@@ -817,19 +817,19 @@ func failOpenPostCommitBatchWithState(
 // It reviews everything from the last shared commit so pending work is never
 // silently skipped, at the cost of possibly re-reviewing rewritten commits.
 func recoverOffChainPostCommitBatch(
-	root, branch, head, checkpoint, statePath, reason string,
+	ctx context.Context, root, branch, head, checkpoint, statePath, reason string,
 	state postCommitBatchState,
 ) postCommitBatchDecision {
 	mergeBase, err := git.GetMergeBase(root, checkpoint, head)
 	var commits []string
 	if err != nil {
-		commits, err = git.GetRangeCommits(root, head)
+		commits, err = git.GetRangeCommitsCtx(ctx, root, head)
 		if err == nil && len(commits) > 0 {
 			mergeBase = commits[0] + "^"
 			reason += "; merge-base unavailable, recovering from root"
 		}
 	} else {
-		commits, err = git.GetRangeCommits(root, mergeBase+".."+head)
+		commits, err = git.GetRangeCommitsCtx(ctx, root, mergeBase+".."+head)
 	}
 	if err != nil || len(commits) == 0 {
 		if err == nil {

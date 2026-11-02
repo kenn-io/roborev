@@ -134,7 +134,7 @@ func TestRunSynthesisAgentPrefersSchemaReviewOverPlainReview(t *testing.T) {
 	reviews := []ReviewResult{{Agent: "codex", Status: ResultDone, Output: "Found issue A"}}
 	cleaned := false
 
-	doc, err := RunSynthesisAgent(context.Background(), a, reviews, "prompt", "", nil, SynthesisHooks{
+	doc, err := RunSynthesisAgent(t.Context(), a, reviews, "prompt", "", nil, SynthesisHooks{
 		Checkout: func() (SynthesisCheckout, error) {
 			return SynthesisCheckout{RepoPath: "/repo", GitRef: "HEAD", Cleanup: func() { cleaned = true }}, nil
 		},
@@ -344,7 +344,7 @@ func TestSynthesize_Formatting(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			synthesis, err := Synthesize(
-				context.Background(), tt.results, SynthesizeOpts{
+				t.Context(), tt.results, SynthesizeOpts{
 					HeadSHA: "abc123456789",
 				})
 			comment := synthesis.GitHubComment
@@ -386,7 +386,7 @@ func TestSynthesize_MultipleResults_FallsBackToRaw(t *testing.T) {
 	}
 
 	synthesis, err := Synthesize(
-		context.Background(), results, SynthesizeOpts{
+		t.Context(), results, SynthesizeOpts{
 			Agent:   "failing-synth",
 			HeadSHA: "def456789012",
 		})
@@ -411,7 +411,7 @@ func TestSynthesize_InvalidJSONFallsBackToRaw(t *testing.T) {
 		{Status: ResultDone, Output: "Finding A"},
 		{Status: ResultDone, Output: "Finding B"},
 	}
-	synthesis, err := Synthesize(context.Background(), results, SynthesizeOpts{
+	synthesis, err := Synthesize(t.Context(), results, SynthesizeOpts{
 		Agent: ag.Name(), HeadSHA: "def456789012",
 	})
 	comment := synthesis.GitHubComment
@@ -438,7 +438,7 @@ func TestSynthesize_MixedSuccessAndFailure(t *testing.T) {
 	}
 
 	synthesis, err := Synthesize(
-		context.Background(), results, SynthesizeOpts{
+		t.Context(), results, SynthesizeOpts{
 			Agent:   "nonexistent-synthesis-agent",
 			HeadSHA: "abc123456789",
 		})
@@ -471,7 +471,7 @@ func TestSynthesize_PassesGitRefToAgent(t *testing.T) {
 	}
 
 	_, err := Synthesize(
-		context.Background(), results, SynthesizeOpts{
+		t.Context(), results, SynthesizeOpts{
 			Agent:   "capture",
 			GitRef:  "aaa111..bbb222",
 			HeadSHA: "bbb222",
@@ -500,7 +500,7 @@ func TestSynthesize_UsesReviewEntrypoint(t *testing.T) {
 		},
 	}
 
-	synthesis, err := Synthesize(context.Background(), results, SynthesizeOpts{
+	synthesis, err := Synthesize(t.Context(), results, SynthesizeOpts{
 		Agent:   "synthesis-entrypoint",
 		GitRef:  "aaa111..bbb222",
 		HeadSHA: "bbb222",
@@ -530,7 +530,7 @@ func TestSynthesizeFiltersStructuredResultWithoutReparsingSummary(t *testing.T) 
 		Structured: &structured,
 	}.ApplyMinSeverity("low")
 
-	synthesis, err := Synthesize(context.Background(), []ReviewResult{result}, SynthesizeOpts{
+	synthesis, err := Synthesize(t.Context(), []ReviewResult{result}, SynthesizeOpts{
 		MinSeverity: "high",
 		HeadSHA:     "abc123",
 	})
@@ -546,7 +546,7 @@ func TestSynthesizePreservesCompleteOutput(t *testing.T) {
 	doc := StructuredReview{SchemaVersion: 2, Summary: "Complete review.", Findings: []StructuredFinding{
 		{Severity: "low", Problem: "Minor naming issue.", Fix: "Rename it."},
 	}}
-	output, err := Synthesize(context.Background(), []ReviewResult{{Status: ResultDone, Structured: &doc}}, SynthesizeOpts{MinSeverity: "high"})
+	output, err := Synthesize(t.Context(), []ReviewResult{{Status: ResultDone, Structured: &doc}}, SynthesizeOpts{MinSeverity: "high"})
 	require.NoError(t, err)
 	assert.Contains(t, output.Output, "Minor naming issue.")
 }
@@ -567,7 +567,7 @@ func TestSynthesizeCommentsInheritReviewThreshold(t *testing.T) {
 				if fallback {
 					results = append(results, result)
 				}
-				synthesis, err := Synthesize(context.Background(), results, SynthesizeOpts{
+				synthesis, err := Synthesize(t.Context(), results, SynthesizeOpts{
 					Agent: "nonexistent-synthesis-agent", MinSeverity: ciSeverity,
 				})
 				require.NoError(t, err)
@@ -613,7 +613,7 @@ func TestSynthesizeGroupsVisibleFindings(t *testing.T) {
 			if mode != "single" {
 				results = append(results, result)
 			}
-			synthesis, err := Synthesize(context.Background(), results, SynthesizeOpts{Agent: synth.Name(), MinSeverity: "medium"})
+			synthesis, err := Synthesize(t.Context(), results, SynthesizeOpts{Agent: synth.Name(), MinSeverity: "medium"})
 			comment := synthesis.GitHubComment
 			require.NoError(t, err)
 			assert := assert.New(t)
@@ -650,7 +650,7 @@ func TestSynthesize_EmptyAgentAutoSelectsAvailableAgent(t *testing.T) {
 		},
 	}
 
-	synthesis, err := Synthesize(context.Background(), results, SynthesizeOpts{
+	synthesis, err := Synthesize(t.Context(), results, SynthesizeOpts{
 		GitRef:  "aaa111..bbb222",
 		HeadSHA: "bbb222",
 	})
@@ -693,7 +693,7 @@ func TestSynthesize_PassesGlobalConfigToResolver(t *testing.T) {
 		},
 	}
 
-	synthesis, err := Synthesize(context.Background(), results, SynthesizeOpts{
+	synthesis, err := Synthesize(t.Context(), results, SynthesizeOpts{
 		Agent:        "custom-acp",
 		GlobalConfig: cfg,
 		HeadSHA:      "abc123",
@@ -728,7 +728,7 @@ func TestSuccessfulSynthesisInheritsThreshold(t *testing.T) {
 			for i, threshold := range policy.members {
 				results[i] = ReviewResult{Status: ResultDone, Structured: &doc}.ApplyMinSeverity(threshold)
 			}
-			result, err := Synthesize(context.Background(), results, SynthesizeOpts{Agent: a.Name(), MinSeverity: policy.ci})
+			result, err := Synthesize(t.Context(), results, SynthesizeOpts{Agent: a.Name(), MinSeverity: policy.ci})
 			require.NoError(t, err)
 			assert.Contains(t, result.Output, "Minor naming issue.")
 			if policy.visible {
@@ -775,7 +775,7 @@ func TestSynthesisDisplayPolicyAcrossOutcomes(t *testing.T) {
 					{Status: ResultDone, Output: doc.Markdown(""), Structured: &doc, MinSeverity: policy.members[0]},
 					{Status: ResultDone, Output: "No issues found.", MinSeverity: policy.members[1]},
 				}
-				result, err := Synthesize(context.Background(), results, SynthesizeOpts{Agent: a.Name(), MinSeverity: policy.ci})
+				result, err := Synthesize(t.Context(), results, SynthesizeOpts{Agent: a.Name(), MinSeverity: policy.ci})
 				require.NoError(t, err)
 				assert := assert.New(t)
 				assert.Equal(outcome == "fallback", strings.Contains(result.GitHubComment, "Synthesis unavailable."))

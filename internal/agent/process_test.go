@@ -26,7 +26,7 @@ func (c *countingCloser) Close() error {
 
 func TestCloseOnContextDoneClosesOnCancel(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
 		closer := &countingCloser{}
@@ -42,7 +42,7 @@ func TestCloseOnContextDoneClosesOnCancel(t *testing.T) {
 
 func TestCloseOnContextDoneStopPreventsClose(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
 		closer := &countingCloser{}
@@ -57,14 +57,16 @@ func TestCloseOnContextDoneStopPreventsClose(t *testing.T) {
 
 func TestCloseOnContextDoneBackgroundIsNoop(t *testing.T) {
 	closer := &countingCloser{}
-	stop := closeOnContextDone(context.Background(), closer, nil)
+	// The no-op branch needs a context whose Done channel is nil, which
+	// t.Context() never has.
+	stop := closeOnContextDone(context.Background(), closer, nil) //nolint:usetesting // see above
 	stop()
 
 	require.Equal(t, int32(0), closer.closed.Load(), "background context should not close the closer")
 }
 
 func TestContextProcessError(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	tracker := &subprocessTracker{}
 	tracker.canceledByContext.Store(true)
@@ -88,11 +90,11 @@ func TestContextProcessErrorRunPathCancellation(t *testing.T) {
 	// The etxtbsy guard prevents Go 1.25's ETXTBSY probe from running
 	// the full script in a second child process that is never killed.
 	cmdPath := writeTempCommand(t, "#!/bin/sh\ncase \"$1\" in *etxtbsy*) exit 0;; esac\nsleep 5\n")
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the script sleeps 5s, so only the context ends it
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the script sleeps 5s, so only the context ends it
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, cmdPath)
-	tracker := configureSubprocess(context.Background(), cmd)
+	tracker := configureSubprocess(t.Context(), cmd)
 
 	err := cmd.Run()
 	require.Error(t, err, "expected command cancellation")
@@ -103,9 +105,9 @@ func TestContextProcessErrorRunPathCancellation(t *testing.T) {
 func TestContextProcessErrorDoesNotMaskSignalExitAfterContextDone(t *testing.T) {
 	skipIfWindows(t)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cmd := exec.CommandContext(ctx, "sh", "-c", "kill -KILL $$")
-	tracker := configureSubprocess(context.Background(), cmd)
+	tracker := configureSubprocess(t.Context(), cmd)
 
 	err := cmd.Run()
 	require.Error(t, err, "expected signal exit")
@@ -121,8 +123,8 @@ func TestContextProcessErrorDoesNotMaskSignalExitAfterContextDone(t *testing.T) 
 func TestConfigureSubprocessSetsOptionalLocks(t *testing.T) {
 	skipIfWindows(t)
 
-	cmd := exec.CommandContext(context.Background(), "sh", "-c", "echo $GIT_OPTIONAL_LOCKS")
-	configureSubprocess(context.Background(), cmd)
+	cmd := exec.CommandContext(t.Context(), "sh", "-c", "echo $GIT_OPTIONAL_LOCKS")
+	configureSubprocess(t.Context(), cmd)
 
 	out, err := cmd.Output()
 	require.NoError(t, err)
@@ -133,8 +135,8 @@ func TestConfigureSubprocessSetsOptionalLocks(t *testing.T) {
 func TestConfigureSubprocessSuppressesAgentHook(t *testing.T) {
 	skipIfWindows(t)
 
-	cmd := exec.CommandContext(context.Background(), "sh", "-c", "echo $"+HookSuppressEnv)
-	configureSubprocess(context.Background(), cmd)
+	cmd := exec.CommandContext(t.Context(), "sh", "-c", "echo $"+HookSuppressEnv)
+	configureSubprocess(t.Context(), cmd)
 
 	out, err := cmd.Output()
 	require.NoError(t, err)
@@ -145,10 +147,10 @@ func TestConfigureSubprocessSuppressesAgentHook(t *testing.T) {
 func TestConfigureSubprocessPreservesExistingEnv(t *testing.T) {
 	skipIfWindows(t)
 
-	cmd := exec.CommandContext(context.Background(),
+	cmd := exec.CommandContext(t.Context(),
 		"sh", "-c", "echo $MY_TEST_VAR:$GIT_OPTIONAL_LOCKS")
 	cmd.Env = append(os.Environ(), "MY_TEST_VAR=hello")
-	configureSubprocess(context.Background(), cmd)
+	configureSubprocess(t.Context(), cmd)
 
 	out, err := cmd.Output()
 	require.NoError(t, err)
@@ -160,9 +162,9 @@ func TestConfigureSubprocessPreservesPWD(t *testing.T) {
 	skipIfWindows(t)
 
 	dir := t.TempDir()
-	cmd := exec.CommandContext(context.Background(), "sh", "-c", "echo $PWD")
+	cmd := exec.CommandContext(t.Context(), "sh", "-c", "echo $PWD")
 	cmd.Dir = dir
-	configureSubprocess(context.Background(), cmd)
+	configureSubprocess(t.Context(), cmd)
 
 	out, err := cmd.Output()
 	require.NoError(t, err)
@@ -180,8 +182,8 @@ func TestConfigureCapabilityProbePreservesRelativeCommandPath(t *testing.T) {
 	require.NoError(t, os.WriteFile(commandPath, []byte("#!/bin/sh\necho probe-ok\n"), 0o755))
 	t.Chdir(repoDir)
 
-	cmd := exec.CommandContext(context.Background(), "./bin/codex", "--help")
-	configureCapabilityProbe(context.Background(), cmd)
+	cmd := exec.CommandContext(t.Context(), "./bin/codex", "--help")
+	configureCapabilityProbe(t.Context(), cmd)
 
 	out, err := cmd.Output()
 	require.NoError(t, err)
@@ -192,11 +194,11 @@ func TestConfigureCapabilityProbePreservesRelativeCommandPath(t *testing.T) {
 func TestConfigureSubprocessDoesNotMarkCanceledWhenProcessAlreadyExited(t *testing.T) {
 	skipIfWindows(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", "exit 0")
-	tracker := configureSubprocess(context.Background(), cmd)
+	tracker := configureSubprocess(t.Context(), cmd)
 
 	require.NoError(t, cmd.Run())
 	require.NotNil(t, cmd.Cancel, "expected wrapped cancel")
@@ -219,14 +221,14 @@ func TestContextPipeCloseClassifiesSIGPIPEWithoutKill(t *testing.T) {
 	// A real SIGPIPE death: Wait returns an ExitError with
 	// "signal: broken pipe", the same shape as an agent killed by the
 	// context-driven pipe close.
-	cmd := exec.Command("sh", "-c", "kill -PIPE $$")
+	cmd := exec.CommandContext(t.Context(), "sh", "-c", "kill -PIPE $$")
 	runErr := cmd.Run()
 	require.Error(t, runErr)
 	require.Contains(t, runErr.Error(), "signal: broken pipe")
 
 	synctest.Test(t, func(t *testing.T) {
 		tracker := &subprocessTracker{}
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 		closer := &countingCloser{}
 		stop := closeOnContextDone(ctx, closer, tracker)

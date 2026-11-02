@@ -40,7 +40,7 @@ func seedCostJobs(t *testing.T, db *storage.DB) []int64 {
 		`{"has_cost":true,"cost_usd":0.3}`, nil, `{"has_cost":true,"cost_usd":0.3}`,
 		`{"has_cost":true,"cost_usd":1.25}`, nil,
 	} {
-		_, err := db.Exec(`UPDATE review_jobs SET token_usage = ? WHERE id = ?`, usage, jobs[i].ID)
+		_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET token_usage = ? WHERE id = ?`, usage, jobs[i].ID)
 		require.NoError(t, err)
 		ids[i] = jobs[i].ID
 	}
@@ -75,7 +75,7 @@ func TestHumaListJobsPagesByRepoThroughNonUTF8Branch(t *testing.T) {
 	jobs := testutil.CreateTestJobs(t, db, repo, 3, "test-agent")
 	// Git allows branch names that are not valid UTF-8.
 	for i, branch := range []string{"main", "topic-\xff", "zz"} {
-		_, err := db.Exec(`UPDATE review_jobs SET branch = ? WHERE id = ?`, branch, jobs[i].ID)
+		_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET branch = ? WHERE id = ?`, branch, jobs[i].ID)
 		require.NoError(t, err)
 	}
 

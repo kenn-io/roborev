@@ -108,7 +108,7 @@ func setJobStatus(t *testing.T, db *storage.DB, jobID int64, status storage.JobS
 			return false
 		}, "unsupported status in helper: %v", status)
 	}
-	res, err := db.Exec(query, jobID)
+	res, err := db.ExecContext(t.Context(), query, jobID)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -211,7 +211,7 @@ func setShortRuntimeDir(t *testing.T) string {
 func startServerAndWaitForRuntime(t *testing.T, server *Server) (<-chan error, *RuntimeInfo) {
 	t.Helper()
 	errCh := make(chan error, 1)
-	go func() { errCh <- server.Start(context.Background()) }()
+	go func() { errCh <- server.Start(t.Context()) }()
 
 	var info *RuntimeInfo
 	var startErr error
@@ -265,7 +265,7 @@ func TestServerStartRejectsNonLoopbackBindAddr(t *testing.T) {
 			cfg.ServerAddr = tt.addr
 
 			server := NewServer(db, cfg, "")
-			err := server.Start(context.Background())
+			err := server.Start(t.Context())
 			if err == nil {
 				require.Condition(t, func() bool {
 					return false
@@ -304,7 +304,7 @@ func TestWaitForServerReadySurfacesServeError(t *testing.T) {
 	wantErr := errors.New("serve failed")
 	serveErrCh <- wantErr
 
-	ready, serveExited, err := waitForServerReady(context.Background(), DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, time.Second, serveErrCh, config.ClientAuth{})
+	ready, serveExited, err := waitForServerReady(t.Context(), DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, time.Second, serveErrCh, config.ClientAuth{})
 	if ready {
 		require.Condition(t, func() bool {
 			return false
@@ -323,7 +323,7 @@ func TestWaitForServerReadySurfacesServeError(t *testing.T) {
 }
 
 func TestWaitForServerReadyLeavesServeExitUnreadWhenContextAlreadyCanceled(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	serveErrCh := make(chan error, 1)
@@ -392,7 +392,7 @@ func TestServerStartReadinessFailureDoesNotLeavePanelSweep(t *testing.T) {
 
 	server.httpServer.Handler = http.NotFoundHandler()
 
-	err := server.Start(context.Background())
+	err := server.Start(t.Context())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to become ready")
 
@@ -429,7 +429,7 @@ func TestServerStartRefusesLegacyLivePID(t *testing.T) {
 }
 
 func TestServerStartSupportsIPv6LoopbackBindAddr(t *testing.T) {
-	ln, err := net.Listen("tcp", "[::1]:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "[::1]:0")
 	if err != nil {
 		t.Skipf("IPv6 loopback not available: %v", err)
 	}
@@ -509,7 +509,7 @@ func TestServerSocketActivationSkipsAuxiliaryListener(t *testing.T) {
 	testenv.SetDataDir(t)
 	setShortRuntimeDir(t)
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	endpoint := DaemonEndpoint{Network: "tcp", Address: listener.Addr().String()}
 	origSystemd := getSystemdListenerForServer
@@ -637,7 +637,7 @@ func seedRepoWithJobs(t *testing.T, db *storage.DB, repoPath string, jobCount in
 // setJobBranch directly updates a job's branch in the DB (for test setup).
 func setJobBranch(t *testing.T, db *storage.DB, jobID int64, branch string) {
 	t.Helper()
-	if _, err := db.Exec("UPDATE review_jobs SET branch = ? WHERE id = ?", branch, jobID); err != nil {
+	if _, err := db.ExecContext(t.Context(), "UPDATE review_jobs SET branch = ? WHERE id = ?", branch, jobID); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "setJobBranch failed: %v", err)
@@ -816,10 +816,10 @@ func TestServerServesPprof(t *testing.T) {
 	server, _, _ := newTestServer(t)
 
 	index := httptest.NewRecorder()
-	server.httpServer.Handler.ServeHTTP(index, httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil))
+	server.httpServer.Handler.ServeHTTP(index, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/debug/pprof/", nil))
 	assert.Equal(http.StatusOK, index.Code)
 
 	heap := httptest.NewRecorder()
-	server.httpServer.Handler.ServeHTTP(heap, httptest.NewRequest(http.MethodGet, "/debug/pprof/heap", nil))
+	server.httpServer.Handler.ServeHTTP(heap, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/debug/pprof/heap", nil))
 	assert.Equal(http.StatusOK, heap.Code)
 }

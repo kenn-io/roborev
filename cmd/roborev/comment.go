@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json/v2"
 	"fmt"
 	"io"
@@ -113,7 +112,7 @@ Examples:
 				tmpfile.Close()
 				defer os.Remove(tmpfile.Name())
 
-				editorCmd := exec.Command(editor, tmpfile.Name())
+				editorCmd := exec.CommandContext(cmd.Context(), editor, tmpfile.Name())
 				editorCmd.Stdin = os.Stdin
 				editorCmd.Stdout = os.Stdout
 				editorCmd.Stderr = os.Stderr
@@ -157,7 +156,7 @@ Examples:
 			reqBody, _ := json.Marshal(reqData)
 
 			ep := getDaemonEndpoint()
-			resp, err := ep.APIClient(5*time.Second).AddCommentRaw(context.Background(), nil, roborevclient.WithBody(reqBody))
+			resp, err := ep.APIClient(5*time.Second).AddCommentRaw(cmd.Context(), nil, roborevclient.WithBody(reqBody))
 			if err != nil {
 				return fmt.Errorf("failed to connect to daemon: %w", err)
 			}
@@ -218,7 +217,7 @@ func closeCmd() *cobra.Command {
 			})
 
 			ep := getDaemonEndpoint()
-			resp, err := ep.APIClient(5*time.Second).CloseReviewRaw(context.Background(), nil, roborevclient.WithBody(reqBody))
+			resp, err := ep.APIClient(5*time.Second).CloseReviewRaw(cmd.Context(), nil, roborevclient.WithBody(reqBody))
 			if err != nil {
 				return fmt.Errorf("failed to connect to daemon: %w", err)
 			}

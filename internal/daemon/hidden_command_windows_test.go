@@ -14,7 +14,7 @@ const createNoWindow = 0x08000000
 func TestHiddenCommandNeverFlashesConsoleWindows(t *testing.T) {
 	assert := assert.New(t)
 
-	cmd := HiddenCommand("taskkill", "/PID", "1", "/F")
+	cmd := HiddenCommand(t.Context(), "taskkill", "/PID", "1", "/F")
 
 	require.NotNil(t, cmd.SysProcAttr)
 	assert.True(cmd.SysProcAttr.HideWindow, "HideWindow must be set")

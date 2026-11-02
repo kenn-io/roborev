@@ -17,7 +17,7 @@ import (
 func TestSandboxTUICleanupKeepsHostRuntime(t *testing.T) { //nolint:paralleltest // t.Setenv isolates the shared runtime directory.
 	if dataDir := os.Getenv("ROBOREV_TEST_HOST_TUI_DATA"); dataDir != "" {
 		t.Setenv("ROBOREV_DATA_DIR", dataDir)
-		assert.Zero(t, CleanupStaleTUIRuntimes())
+		assert.Zero(t, CleanupStaleTUIRuntimes(t.Context()))
 		return
 	}
 

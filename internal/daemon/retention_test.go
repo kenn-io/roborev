@@ -35,7 +35,7 @@ func TestApplyRetention(t *testing.T) {
 			finishedJob := func(finishedAt time.Time) int64 {
 				job, err := db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, GitRef: "a..b", Agent: "test"})
 				require.NoError(t, err)
-				_, err = db.Exec(`UPDATE review_jobs SET status = 'done', finished_at = ? WHERE id = ?`,
+				_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'done', finished_at = ? WHERE id = ?`,
 					finishedAt.Format(time.RFC3339), job.ID)
 				require.NoError(t, err)
 				require.NoError(t, db.SaveJobPrompt(job.ID, "range prompt"))
@@ -100,7 +100,7 @@ func TestApplyRetentionKeepsPromptsUntilSyncConnects(t *testing.T) {
 			require.NoError(t, err)
 			// Marked as pushed, possibly to a previous sync database, whose
 			// markers the worker clears only once it connects.
-			_, err = db.Exec(`UPDATE review_jobs SET status = 'done', finished_at = ?, updated_at = ?, synced_at = ?
+			_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'done', finished_at = ?, updated_at = ?, synced_at = ?
 				WHERE id = ?`, finished, finished, finished, job.ID)
 			require.NoError(t, err)
 			require.NoError(t, db.SaveJobPrompt(job.ID, "old prompt"))
