@@ -1306,6 +1306,30 @@ func TestHandleAddCommentBroadcastsEvent(t *testing.T) {
 		}
 	})
 
+	t.Run("request ends after the comment is saved", func(t *testing.T) {
+		server, db, tmpDir := newTestServer(t)
+		job := createTestJob(t, db, filepath.Join(tmpDir, "test-repo"), "abc123", "test")
+		_, eventCh := server.broadcaster.Subscribe("")
+
+		// The insert takes no context, so a client that disconnects mid-request
+		// still saves its comment; the event must still carry the repository.
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		_, err := server.humaAddComment(ctx, &AddCommentInput{
+			Body: AddCommentRequest{JobID: job.ID, Commenter: "reviewer", Comment: "Looks good"},
+		})
+		require.NoError(t, err)
+
+		var event Event
+		select {
+		case event = <-eventCh:
+		default:
+		}
+		assert.Equal(t, "review.commented", event.Type)
+		assert.NotEmpty(t, event.Repo)
+		assert.Equal(t, "abc123", event.SHA)
+	})
+
 	t.Run("goal review job comment", func(t *testing.T) {
 		server, db, _ := newTestServer(t)
 		job := createTestGoalReviewJob(t, db, t.TempDir())

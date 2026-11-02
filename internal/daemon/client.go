@@ -75,7 +75,7 @@ func NewHTTPClient(ep DaemonEndpoint) *HTTPClient {
 // NewHTTPClientFromRuntime creates an HTTP client using daemon runtime info
 func NewHTTPClientFromRuntime(ctx context.Context) (*HTTPClient, error) {
 	client, err := backoff.Retry(ctx, func() (*HTTPClient, error) {
-		info, err := GetAnyRunningDaemon()
+		info, err := GetAnyRunningDaemonContext(ctx)
 		if err != nil {
 			return nil, err
 		}

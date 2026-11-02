@@ -2918,7 +2918,10 @@ func (s *Server) humaAddComment(
 				fmt.Sprintf("add comment: %v", err),
 			)
 		}
-		job, jobErr := s.db.GetJobByIDContext(ctx, input.Body.JobID)
+		// The comment is already saved. Load its event metadata even if the
+		// client has gone away, so subscribers and hooks still see the
+		// repository and branch.
+		job, jobErr := s.db.GetJobByIDContext(context.WithoutCancel(ctx), input.Body.JobID)
 		if jobErr != nil {
 			log.Printf("comment on job %d: load event metadata: %v", input.Body.JobID, jobErr)
 		}
