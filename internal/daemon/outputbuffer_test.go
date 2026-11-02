@@ -1,6 +1,9 @@
 package daemon
 
 import (
+	"bytes"
+	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +16,87 @@ import (
 // simpleNormalizer matches the common pattern used in Writer tests.
 func simpleNormalizer(line string) *OutputLine {
 	return &OutputLine{Text: line, Type: "text"}
+}
+
+func TestOutputWriterLongLineAllocationGrowth(t *testing.T) {
+	chunk := bytes.Repeat([]byte("x"), 4096)
+	var allocated [2]uint64
+	for i, size := range []int{256 << 10, 1 << 20} {
+		ob := NewOutputBuffer(size, size)
+		w := ob.Writer(1, simpleNormalizer)
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		for offset := 0; offset < size; offset += len(chunk) {
+			_, err := w.Write(chunk)
+			require.NoError(t, err)
+		}
+		runtime.ReadMemStats(&after)
+		allocated[i] = after.TotalAlloc - before.TotalAlloc
+		assert.Empty(t, ob.GetLines(1))
+		w.Flush()
+		assertLines(t, ob.GetLines(1), OutputLine{Text: strings.Repeat("x", size), Type: "text"})
+	}
+	// Quadrupling the input should grow allocations linearly. Allow twice
+	// that growth for buffer capacity rounding and runtime bookkeeping.
+	assert.Less(t, allocated[1], 8*allocated[0], "allocated bytes for 256KiB and 1MiB: %v", allocated)
+}
+
+func TestOutputWriterChunking(t *testing.T) {
+	const input = "first\r\n\nsecond\r\nthird\ntrailing\r"
+	for chunkSize := 1; chunkSize <= len(input); chunkSize++ {
+		t.Run(fmt.Sprintf("chunk=%d", chunkSize), func(t *testing.T) {
+			ob := NewOutputBuffer(1024, 4096)
+			w := ob.Writer(1, simpleNormalizer)
+			for offset := 0; offset < len(input); offset += chunkSize {
+				chunk := []byte(input[offset:min(offset+chunkSize, len(input))])
+				n, err := w.Write(chunk)
+				require.NoError(t, err)
+				assert.Equal(t, len(chunk), n)
+			}
+			assertLines(t, ob.GetLines(1),
+				OutputLine{Text: "first", Type: "text"},
+				OutputLine{Text: "", Type: "text"},
+				OutputLine{Text: "second", Type: "text"},
+				OutputLine{Text: "third", Type: "text"})
+			w.Flush()
+			assertLines(t, ob.GetLines(1),
+				OutputLine{Text: "first", Type: "text"},
+				OutputLine{Text: "", Type: "text"},
+				OutputLine{Text: "second", Type: "text"},
+				OutputLine{Text: "third", Type: "text"},
+				OutputLine{Text: "trailing\r", Type: "text"})
+		})
+	}
+}
+
+func BenchmarkOutputWriterLineLength(b *testing.B) {
+	for _, size := range []int{1 << 20, 4 << 20, 16 << 20} {
+		for _, shortLines := range []bool{false, true} {
+			name := "unterminated"
+			if shortLines {
+				name = "short"
+			}
+			b.Run(fmt.Sprintf("%s/%dMiB", name, size>>20), func(b *testing.B) {
+				data := bytes.Repeat([]byte("x"), size)
+				if shortLines {
+					for i := 69; i < len(data); i += 70 {
+						data[i] = '\n'
+					}
+				}
+				b.ReportAllocs()
+				b.SetBytes(int64(size))
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					ob := NewOutputBuffer(size, size)
+					w := ob.Writer(1, simpleNormalizer)
+					for offset := 0; offset < len(data); offset += 4096 {
+						_, _ = w.Write(data[offset:min(offset+4096, len(data))])
+					}
+					w.Flush()
+				}
+			})
+		}
+	}
 }
 
 // assertLines verifies the count and content of lines for a job.
