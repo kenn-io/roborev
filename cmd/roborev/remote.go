@@ -33,7 +33,7 @@ func validateRemoteCommand(name string) error {
 	case "list", "show", "wait", "stream", "help", "completion", "version":
 		return nil
 	}
-	return errors.New("remote HTTPS supports list, show --job, wait and stream; other commands require a local daemon")
+	return errors.New("remote HTTPS supports job list, job show --job, job wait and job stream; other commands require a local daemon")
 }
 
 func signingInitCmd() *cobra.Command {

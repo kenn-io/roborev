@@ -397,7 +397,7 @@ agent. An explicit `--model` wins on the single-agent path (if `default_panel`
 is configured, panel member jobs choose their own models — add `--panel none`;
 see below), and a generic `model` or `default_model` still applies when the
 selected ACP agent is also the matching default agent. To confirm which agent
-and model served a job, run `roborev show --job <id> --json` and inspect
+and model served a job, run `roborev job show --job <id> --json` and inspect
 `job.agent` and `job.model`.
 
 Backup models follow the same pairing rule. A global `default_backup_model`

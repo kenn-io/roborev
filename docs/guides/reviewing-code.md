@@ -71,7 +71,7 @@ Before creating a pull request, review your entire branch:
 git checkout feature-branch
 roborev review --branch          # Enqueue branch review (runs in background)
 roborev tui                      # Browse results as they arrive
-roborev compact                  # Consolidate findings across commits
+roborev job compact                  # Consolidate findings across commits
 roborev fix                      # Address consolidated findings
 ```
 
@@ -441,15 +441,15 @@ and distance checks already filter out stale candidates.
 ## Waiting for a Review Without Enqueuing
 
 When a post-commit hook already triggers `roborev review`, you don't need
-`review --wait` (which enqueues a duplicate job). Use `roborev wait` to block
-until the existing job completes:
+`review --wait` (which enqueues a duplicate job). Use `roborev job wait` to
+block until the existing job completes:
 
 ```bash
-roborev wait                     # Wait for most recent job for HEAD
-roborev wait abc123              # Wait for job matching a specific commit
-roborev wait --sha HEAD~1        # Explicit git ref
-roborev wait --job 42            # Wait for a specific job ID
-roborev wait --quiet             # Suppress output (exit code only)
+roborev job wait                     # Wait for most recent job for HEAD
+roborev job wait abc123              # Wait for job matching a specific commit
+roborev job wait --sha HEAD~1        # Explicit git ref
+roborev job wait --job 42            # Wait for a specific job ID
+roborev job wait --quiet             # Suppress output (exit code only)
 ```
 
 Exit codes: 0 for PASS, 1 for FAIL or no job found.
@@ -462,15 +462,15 @@ A positional argument is resolved as a git ref first (so numeric SHAs like
 
 ### Agent Review-Fix Loops
 
-`roborev wait` is designed for coding agents running review-fix refinement
+`roborev job wait` is designed for coding agents running review-fix refinement
 loops. The agent commits, the hook enqueues the review, and the agent calls
 `wait` to block until the verdict is ready. This avoids wasting tokens on
-repeated `roborev list` or `roborev show` invocations.
+repeated `roborev job list` or `roborev job show` invocations.
 
 ```bash
 # Typical agent loop
 git commit -m "Fix auth validation"   # Hook triggers review
-roborev wait --quiet                  # Block until verdict
+roborev job wait --quiet                  # Block until verdict
 # Exit code 0 = pass, 1 = fail
 ```
 
@@ -596,7 +596,7 @@ The deterministic converter is also available through the daemon API.
 changing archived reviews:
 
 ```bash
-roborev legacy-reviews convert --dry-run
+roborev storage legacy-reviews convert --dry-run
 ```
 
 The daemon owns database access and performs automatic history recovery at
@@ -612,7 +612,7 @@ agent for this task. Your agent can read the exported input and submit a
 complete structured document. Use the daemon for the intended installation:
 
 ```bash
-roborev legacy-reviews export > migration-input.json
+roborev storage legacy-reviews export > migration-input.json
 ```
 
 Give that file to your agent. It contains the original records, the conversion
@@ -624,7 +624,7 @@ unresolved. Import each completed JSON document using the archive ID from the
 export:
 
 ```bash
-roborev legacy-reviews import 1 < converted-review.json
+roborev storage legacy-reviews import 1 < converted-review.json
 ```
 
 Import sends the document to the selected daemon. It accepts every structured
@@ -671,10 +671,10 @@ automatically. Use `--postgres-url` to ask the daemon to convert, export, and
 import these records. PostgreSQL archive IDs are UUIDs:
 
 ```bash
-roborev legacy-reviews --postgres-url "$POSTGRES_URL" convert --dry-run
-roborev legacy-reviews --postgres-url "$POSTGRES_URL" convert
-roborev legacy-reviews --postgres-url "$POSTGRES_URL" export > migration-input.json
-roborev legacy-reviews --postgres-url "$POSTGRES_URL" import <archive-uuid> < converted-review.json
+roborev storage legacy-reviews --postgres-url "$POSTGRES_URL" convert --dry-run
+roborev storage legacy-reviews --postgres-url "$POSTGRES_URL" convert
+roborev storage legacy-reviews --postgres-url "$POSTGRES_URL" export > migration-input.json
+roborev storage legacy-reviews --postgres-url "$POSTGRES_URL" import <archive-uuid> < converted-review.json
 ```
 
 ## See Also

@@ -156,7 +156,7 @@ Tell the user that the branch review has been submitted and they can continue wo
 
 When the background task completes, read the output.
 
-If the command output contains an error (e.g., daemon not running, repo not initialized, review errored), report it to the user. Suggest `roborev status` to check the daemon, `roborev init` if the repo is not initialized, or re-running the review.
+If the command output contains an error (e.g., daemon not running, repo not initialized, review errored), report it to the user. Suggest `roborev daemon status` to check the daemon, `roborev init` if the repo is not initialized, or re-running the review.
 
 Otherwise, present the review to the user:
 - Show the verdict prominently (Pass or Fail)
@@ -170,7 +170,7 @@ reviews, the review fans out to a panel of reviewers. In that case the
 `Enqueued job <id>` is the **synthesis (parent)** job that aggregates them, and
 its verdict and findings are the synthesized result across the whole panel.
 Present that synthesized verdict/findings, and offer fix on that parent id —
-never an individual reviewer. `roborev show` prints a one-line reviewers summary
+never an individual reviewer. `roborev job show` prints a one-line reviewers summary
 (e.g. `3 reviewers: bug P, security F`) for a synthesis job. `--panel none`
 forces a single-agent review, and automatic post-commit hook reviews stay
 single-agent regardless of `default_panel`.
