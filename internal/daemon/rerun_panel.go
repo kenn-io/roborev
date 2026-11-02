@@ -67,7 +67,9 @@ func restoreExperimentPanelPlan(
 			return fmt.Errorf("frozen experiment panel plan identity does not match member %q at index %d",
 				key.name, key.index)
 		}
-		applyExperimentJobPlan(&members[i], memberPlan)
+		if err := applyExperimentJobPlan(&members[i], memberPlan); err != nil {
+			return err
+		}
 		delete(plansByMember, key)
 	}
 	if len(plansByMember) != 0 {
@@ -77,11 +79,18 @@ func restoreExperimentPanelPlan(
 		plan.Synthesis.JobType != synthesis.JobType {
 		return errors.New("frozen experiment panel synthesis identity does not match rerun")
 	}
-	applyExperimentJobPlan(synthesis, plan.Synthesis)
-	return nil
+	return applyExperimentJobPlan(synthesis, plan.Synthesis)
 }
 
-func applyExperimentJobPlan(opts *storage.EnqueueOpts, plan experimentJobPlan) {
+func applyExperimentJobPlan(opts *storage.EnqueueOpts, plan experimentJobPlan) error {
+	snapshot := plan.PanelMemberConfigJSON
+	if storage.JobTypeForEnqueue(*opts) == storage.JobTypeSynthesis {
+		var err error
+		snapshot, err = restoreSynthesisExperimentConfig(snapshot, opts.PanelMemberConfigJSON)
+		if err != nil {
+			return err
+		}
+	}
 	opts.Agent = plan.Agent
 	opts.Model = plan.Model
 	opts.Provider = plan.Provider
@@ -90,7 +99,8 @@ func applyExperimentJobPlan(opts *storage.EnqueueOpts, plan experimentJobPlan) {
 	opts.MinSeverity = plan.MinSeverity
 	opts.BackupAgent = plan.BackupAgent
 	opts.BackupModel = plan.BackupModel
-	opts.PanelMemberConfigJSON = plan.PanelMemberConfigJSON
+	opts.PanelMemberConfigJSON = snapshot
+	return nil
 }
 
 // isRerunnableStatus reports whether a job in this status may be rerun. It

@@ -172,13 +172,42 @@ type synthesisJobConfig struct {
 	Check        *ciCheckConfig `json:"check,omitzero"`
 }
 
+func synthesisExperimentConfig(snapshot string) (string, error) {
+	c, err := synthesisConfig(&storage.ReviewJob{JobType: storage.JobTypeSynthesis, PanelMemberConfigJSON: snapshot})
+	if err != nil {
+		return "", err
+	}
+	if c.Check != nil {
+		c.Check.PullRequest = ""
+	}
+	return c.encode()
+}
+
+func restoreSynthesisExperimentConfig(frozen, snapshot string) (string, error) {
+	c, err := synthesisConfig(&storage.ReviewJob{JobType: storage.JobTypeSynthesis, PanelMemberConfigJSON: frozen})
+	if err != nil {
+		return "", err
+	}
+	job, err := synthesisConfig(&storage.ReviewJob{JobType: storage.JobTypeSynthesis, PanelMemberConfigJSON: snapshot})
+	if err != nil {
+		return "", err
+	}
+	if c.Check != nil {
+		c.Check.PullRequest = ""
+		if job.Check != nil {
+			c.Check.PullRequest = job.Check.PullRequest
+		}
+	}
+	return c.encode()
+}
+
 // encode returns "" when nothing is set, so a synthesis job without
 // instructions, a checker, or an ACP snapshot stores no config.
 func (c synthesisJobConfig) encode() (string, error) {
 	if c.Instructions == "" && len(c.ACP) == 0 && c.Check == nil {
 		return "", nil
 	}
-	raw, err := json.Marshal(c)
+	raw, err := json.Marshal(c, json.Deterministic(true))
 	if err != nil {
 		return "", err
 	}
