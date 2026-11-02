@@ -36,6 +36,8 @@ func BenchmarkCIPollPanelHistory(b *testing.B) {
 						panels, err := db.GetUnpostedPanelsForPR("acme/api", pr)
 						require.NoError(b, err)
 						require.Empty(b, panels)
+						_, err = db.GetCIPanelByPRSHA("acme/api", pr, "head")
+						require.ErrorIs(b, err, sql.ErrNoRows)
 						_, err = db.GetActiveCIPanelByPRSHA("acme/api", pr, "head")
 						require.ErrorIs(b, err, sql.ErrNoRows)
 						posted, err := db.HasPostedCIReview("acme/api", pr, "head")
