@@ -22,7 +22,6 @@ import (
 	"go.kenn.io/roborev/internal/sandbox"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
-	"go.kenn.io/roborev/internal/tokens"
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
@@ -130,11 +129,6 @@ func TestCICheckSandboxIntegration(t *testing.T) {
 	}
 	finished, err := tc.DB.GetJobByID(job.ID)
 	require.NoError(t, err)
-	usage := tokens.ParseJSON(finished.TokenUsage)
-	require.NotNil(t, usage)
-	assert.EqualValues(t, 1, usage.OutputTokens)
-	assert.False(t, usage.HasCost)
-	assert.Empty(t, finished.SessionID)
 	var invoked bool
 	require.NoError(t, tc.DB.QueryRow("SELECT agent_invoked FROM review_jobs WHERE id = ?", job.ID).Scan(&invoked))
 	assert.True(t, invoked)

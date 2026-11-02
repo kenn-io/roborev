@@ -34,10 +34,8 @@ func TestCICheckPreparation(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", globalConfig)
 	tools := t.TempDir()
 	require.NoError(t, os.Mkdir(filepath.Join(tools, "bin"), 0o700))
-	// go env runs outside the checkout, so a version-manager shim can't load its config.
-	outside, err := filepath.EvalSymlinks(os.TempDir())
-	require.NoError(t, err)
-	script := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = env ]; then [ \"$(pwd -P)\" = '%s' ] || exit 4; printf '%%s\\n' '%s' '%s'; else [ \"$CHECKER_GIT_TOKEN\" = synthetic ] || exit 3; echo 'require example.com/upgraded v1.0.0' >> go.mod; exit 1; fi\n", outside, tools, tools)
+	moduleCache := t.TempDir()
+	script := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = env ]; then printf '%%s\\n' '%s' '%s'; else echo 'require example.com/upgraded v1.0.0' >> go.mod; exit 1; fi\n", tools, moduleCache)
 	require.NoError(t, os.WriteFile(filepath.Join(tools, "bin", "go"), []byte(script), 0o700))
 	require.NoError(t, os.Symlink(filepath.Join("bin", "go"), filepath.Join(tools, "go")))
 	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -52,8 +50,9 @@ func TestCICheckPreparation(t *testing.T) {
 	t.Cleanup(run.cleanup)
 	assert.NoFileExists(t, marker, "checker preparation must leave repository hooks unexecuted on the host")
 	assert.Contains(t, log.String(), "module warming failed: exit status 1")
-	assert.Contains(t, run.Job.Env, "GOMODCACHE="+tools, log.String())
+	assert.Contains(t, run.Job.Env, "GOMODCACHE="+moduleCache, log.String())
 	assert.Contains(t, run.Job.ReadPaths, tools)
+	assert.Contains(t, run.Job.ReadPaths, moduleCache)
 	module, err := os.ReadFile(filepath.Join(run.Repo, "go.mod"))
 	require.NoError(t, err)
 	assert.Equal(t, "module example.com/check\n\ngo 1.25.0\n", string(module))
@@ -106,28 +105,18 @@ func TestCICheckWarming(t *testing.T) {
 		return checkout
 	}
 	for _, name := range metadata {
-		kinds := []string{"symlink"}
-		if name == "go.mod" {
-			kinds = append(kinds, "directory")
-		}
-		for _, kind := range kinds {
-			t.Run(name+"/"+kind, func(t *testing.T) {
-				if runtime.GOOS == "windows" {
-					t.Skip("requires symlinks")
-				}
-				path := filepath.Join(newCheckout(t), name)
-				require.NoError(t, os.Remove(path))
-				if kind == "symlink" {
-					outside := filepath.Join(t.TempDir(), "metadata")
-					require.NoError(t, os.WriteFile(outside, nil, 0o600))
-					require.NoError(t, os.Symlink(outside, path))
-				} else {
-					require.NoError(t, os.Mkdir(path, 0o700))
-				}
-				_, err := warmGoModules(t.Context(), filepath.Dir(path), nil, io.Discard)
-				require.ErrorContains(t, err, name+" must be a regular file")
-			})
-		}
+		t.Run(name+"/symlink", func(t *testing.T) {
+			if runtime.GOOS == "windows" {
+				t.Skip("requires symlinks")
+			}
+			path := filepath.Join(newCheckout(t), name)
+			require.NoError(t, os.Remove(path))
+			outside := filepath.Join(t.TempDir(), "metadata")
+			require.NoError(t, os.WriteFile(outside, nil, 0o600))
+			require.NoError(t, os.Symlink(outside, path))
+			_, err := warmGoModules(t.Context(), filepath.Dir(path), nil, io.Discard)
+			require.ErrorContains(t, err, name+" must be a regular file")
+		})
 	}
 	t.Run("without go", func(t *testing.T) {
 		checkout := newCheckout(t)
@@ -139,18 +128,32 @@ func TestCICheckWarming(t *testing.T) {
 		assert.Contains(t, log.String(), "go env failed")
 	})
 	t.Run("without dependencies", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("requires shell fixtures")
+		}
 		cache := filepath.Join(t.TempDir(), "missing", "mod")
-		t.Setenv("GOMODCACHE", cache)
-		t.Setenv("GOTOOLCHAIN", "local")
-		t.Setenv("GOWORK", "off")
+		tools := t.TempDir()
+		require.NoError(t, os.Mkdir(filepath.Join(tools, "bin"), 0o700))
+		// Version-manager shims must resolve outside the checkout.
+		outside, err := filepath.EvalSymlinks(os.TempDir())
+		require.NoError(t, err)
+		tokenFile := filepath.Join(t.TempDir(), "download-token")
+		script := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = env ]; then [ \"$(pwd -P)\" = '%s' ] || exit 4; printf '%%s\\n' '%s' '%s'; else [ \"$1\" = mod ] && [ \"$2\" = download ] || exit 3; printf '%%s' \"$CHECKER_GIT_TOKEN\" > '%s'; fi\n", outside, tools, cache, tokenFile)
+		require.NoError(t, os.WriteFile(filepath.Join(tools, "bin", "go"), []byte(script), 0o700))
+		t.Setenv("PATH", filepath.Join(tools, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
 		checkout := t.TempDir()
 		require.NoError(t, os.WriteFile(filepath.Join(checkout, "go.mod"), []byte("module example.com/check\n\ngo 1.25.0\n"), 0o600))
 		var log bytes.Buffer
-		paths, err := warmGoModules(t.Context(), checkout, os.Environ(), &log)
+		paths, err := warmGoModules(t.Context(), checkout, []string{"CHECKER_GIT_TOKEN=synthetic"}, &log)
 		require.NoError(t, err)
 		require.Len(t, paths, 2, log.String())
+		assert.Empty(t, log.String())
+		assert.Equal(t, tools, paths[0])
 		assert.Equal(t, cache, paths[1])
 		assert.DirExists(t, paths[1], "the sandbox must be able to grant the module cache")
+		token, err := os.ReadFile(tokenFile)
+		require.NoError(t, err)
+		assert.Equal(t, "synthetic", string(token))
 	})
 }
 

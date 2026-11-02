@@ -258,6 +258,9 @@ func TestPanelTotalCostExcludesFlagWithoutAmount(t *testing.T) {
 	assert.Equal(t, 1, priced,
 		"amount-less flags must not make panel pricing look complete")
 	assert.Equal(t, 3, total)
+}
+
+func TestPanelTotalCostPartialSessionCoverage(t *testing.T) {
 	t.Run("priced synthesis with missing session", func(t *testing.T) {
 		assert := assert.New(t)
 		synth := &storage.ReviewJob{TokenUsage: `{"cost_usd":0.03,"has_cost":true,"expected_provider_sessions":2,"provider_session_ids":["synthesis-session"]}`}

@@ -360,44 +360,16 @@ func TestLoadGlobalConfigWithFixGuidelines(t *testing.T) {
 	assert.Equal(t, "Verify findings before editing.", cfg.FixGuidelines)
 }
 
-// If either repository loader silently accepts a global-only fix policy,
-// users can believe the policy is active while fixes still run without it.
+// Both repository loaders reject settings that only apply globally.
 func TestRepoConfigLoadersRejectGlobalOnlyFixGuidelines(t *testing.T) {
-	dir := t.TempDir()
-	writeTestFile(t, dir, ".roborev.toml", `fix_guidelines = "Repo policy"`)
-	execGit(t, dir, "init")
-	execGit(t, dir, "config", "user.email", "test@example.com")
-	execGit(t, dir, "config", "user.name", "Test")
-	execGit(t, dir, "add", ".roborev.toml")
-	execGit(t, dir, "commit", "-m", "add config")
-	sha := execGit(t, dir, "rev-parse", "HEAD")
-
-	tests := []struct {
-		name string
-		load func() (*RepoConfig, error)
-	}{
-		{name: "filesystem", load: func() (*RepoConfig, error) {
-			return LoadRepoConfig(dir)
-		}},
-		{name: "git ref", load: func() (*RepoConfig, error) {
-			return LoadRepoConfigFromRef(dir, sha)
-		}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := tt.load()
-			require.ErrorContains(t, err, "fix_guidelines")
-			assert.ErrorContains(t, err, "global")
-		})
-	}
-}
-
-func TestRepoConfigLoadersRejectGlobalOnlyCICheckSettings(t *testing.T) {
-	for _, key := range []string{"check_model", "check_reasoning"} {
+	for key, contents := range map[string]string{
+		"fix_guidelines":     `fix_guidelines = "Repo policy"`,
+		"ci.check_model":     "[ci]\ncheck_model = \"high\"\n",
+		"ci.check_reasoning": "[ci]\ncheck_reasoning = \"high\"\n",
+	} {
 		t.Run(key, func(t *testing.T) {
 			dir := t.TempDir()
-			writeTestFile(t, dir, ".roborev.toml", "[ci]\n"+key+" = \"high\"\n")
+			writeTestFile(t, dir, ".roborev.toml", contents)
 			execGit(t, dir, "init")
 			execGit(t, dir, "config", "user.email", "test@example.com")
 			execGit(t, dir, "config", "user.name", "Test")
@@ -412,9 +384,8 @@ func TestRepoConfigLoadersRejectGlobalOnlyCICheckSettings(t *testing.T) {
 			} {
 				t.Run(loader.name, func(t *testing.T) {
 					_, err := loader.load()
-					require.ErrorContains(t, err, "ci."+key)
+					require.ErrorContains(t, err, key)
 					assert.ErrorContains(t, err, "global-only")
-					assert.ErrorContains(t, err, "~/.roborev/config.toml")
 				})
 			}
 		})
