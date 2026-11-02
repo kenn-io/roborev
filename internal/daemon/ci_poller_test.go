@@ -876,6 +876,16 @@ func TestCIPollerSkippedPRsPublishOncePerHead(t *testing.T) {
 				assert.Len(t, *checks, want)
 				assert.Len(t, *statuses, want)
 			}
+			require.NoError(t, h.Poller.callSetCommitStatus("acme/api", "head-0", "pending", "Review pending"))
+			assert.Equal(t, []capturedStatus{{Repo: "acme/api", SHA: "head-0", State: "pending", Desc: "Review pending"}}, *statuses)
+			*statuses = nil
+			require.NoError(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg))
+			assert.Equal(t, []capturedStatus{{Repo: "acme/api", SHA: "head-0", State: "success", Desc: "Review skipped: draft"}}, *statuses)
+			assert.Empty(t, *checks)
+			*statuses = nil
+			require.NoError(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg))
+			assert.Empty(t, *statuses)
+			assert.Empty(t, *checks)
 		})
 	}
 }
