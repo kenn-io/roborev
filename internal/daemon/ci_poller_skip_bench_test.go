@@ -12,17 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// useCISkipAPI shares the health test's in-memory GitHub transport setup.
-func useCISkipAPI(t testing.TB, p *CIPoller, handler http.Handler) {
-	t.Helper()
-	api := httptest.NewTestServer(t, handler)
-	transport := http.DefaultTransport
-	http.DefaultTransport = api.Client().Transport
-	t.Cleanup(func() { http.DefaultTransport = transport })
-	p.githubAPIURL = api.URL + "/api/v3"
-	p.setCommitStatusFn = nil
-}
-
 func BenchmarkCIPollSkippedPRs(b *testing.B) {
 	for _, n := range []int{10, 100, 1000} {
 		b.Run(fmt.Sprint(n), func(b *testing.B) {
@@ -35,7 +24,7 @@ func BenchmarkCIPollSkippedPRs(b *testing.B) {
 			}
 			h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return prs, nil }
 			var reads atomic.Int64
-			useCISkipAPI(b, h.Poller, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			api := httptest.NewTestServer(b, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				switch {
 				case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/status"):
@@ -49,6 +38,11 @@ func BenchmarkCIPollSkippedPRs(b *testing.B) {
 					http.NotFound(w, r)
 				}
 			}))
+			transport := http.DefaultTransport
+			http.DefaultTransport = api.Client().Transport
+			b.Cleanup(func() { http.DefaultTransport = transport })
+			h.Poller.githubAPIURL = api.URL + "/api/v3"
+			h.Poller.setCommitStatusFn = nil
 			// Exercise the real Checks API without provisioning GitHub App credentials.
 			h.Poller.setSkippedCheckFn = func(repo, sha, summary string) error {
 				client, err := h.Poller.githubClientForRepo(repo)

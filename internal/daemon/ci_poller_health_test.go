@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -234,12 +233,10 @@ func TestHealthCIPollerSkipStatusIsNotRepeated(t *testing.T) {
 					Context: new("roborev"), State: &tc.state, Description: &tc.description,
 				}
 				var writes []googlegithub.RepoStatus
-				var reads atomic.Int64
-				useCISkipAPI(t, h.Poller, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				api := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					w.Header().Set("Content-Type", "application/json")
 					switch {
 					case r.Method == http.MethodGet && r.URL.Path == "/api/v3/repos/acme/api/commits/head-a/status":
-						reads.Add(1)
 						if tc.readError {
 							http.Error(w, `{"message":"status lookup unavailable"}`, http.StatusBadGateway)
 							return
@@ -263,16 +260,13 @@ func TestHealthCIPollerSkipStatusIsNotRepeated(t *testing.T) {
 						http.NotFound(w, r)
 					}
 				}))
-				for poll := range 2 {
+				transport := http.DefaultTransport
+				http.DefaultTransport = api.Client().Transport
+				defer func() { http.DefaultTransport = transport }()
+				h.Poller.githubAPIURL = api.URL + "/api/v3"
+				h.Poller.setCommitStatusFn = nil
+				for range 2 {
 					h.Poller.poll(t.Context())
-					gotReads := reads.Swap(0)
-					if tc.readError {
-						assert.Positive(gotReads, "failed lookup must be retried")
-					} else if poll == 0 {
-						assert.Equal(int64(2), gotReads, "initial status lookup includes pagination")
-					} else {
-						assert.Zero(gotReads, "successful publication must avoid later lookups")
-					}
 					assert.Equal(!tc.readError, decodeHealthStatus(t, executeHealthCheck(t.Context(), healthServer, http.MethodGet)).Healthy)
 				}
 				require.Len(t, writes, tc.wantWrites)

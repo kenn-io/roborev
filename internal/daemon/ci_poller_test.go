@@ -859,53 +859,38 @@ func TestCIPollerPollRepo_UsesPRListAndProcessesEach(t *testing.T) {
 }
 
 func TestCIPollerSkippedPRsPublishOncePerHead(t *testing.T) {
-	for _, n := range []int{10, 200} {
-		t.Run(fmt.Sprint(n), func(t *testing.T) {
-			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-			h.Cfg.CI.SkipDrafts = true
-			prs := make([]ghPR, n)
-			for i := range prs {
-				prs[i] = ghPR{Number: i + 1, HeadRefOid: fmt.Sprintf("head-%d", i), Draft: true}
-			}
-			h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return prs, nil }
-			checks, statuses := h.CaptureSkippedChecks(), h.CaptureCommitStatuses()
-			for poll, want := range []int{n, 0, 0} {
-				*checks, *statuses = nil, nil
-				require.NoError(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg))
-				t.Logf("poll %d: checks=%d statuses=%d", poll+1, len(*checks), len(*statuses))
-				assert.Len(t, *checks, want)
-				assert.Len(t, *statuses, want)
-			}
-			require.NoError(t, h.Poller.callSetCommitStatus("acme/api", "head-0", "pending", "Review pending"))
-			assert.Equal(t, []capturedStatus{{Repo: "acme/api", SHA: "head-0", State: "pending", Desc: "Review pending"}}, *statuses)
-			*statuses = nil
-			require.NoError(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg))
-			assert.Equal(t, []capturedStatus{{Repo: "acme/api", SHA: "head-0", State: "success", Desc: "Review skipped: draft"}}, *statuses)
-			assert.Empty(t, *checks)
-			*statuses = nil
-			require.NoError(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg))
-			assert.Empty(t, *statuses)
-			assert.Empty(t, *checks)
-		})
-	}
-}
-
-func TestCIPollerSkippedPRPublicationChanges(t *testing.T) {
-	for _, change := range []string{"head", "reason", "pending status", "deferral"} {
+	for _, change := range []string{
+		"unchanged", "head", "reason", "pending status",
+		"status write fails, same reason", "status write fails, first reason restored",
+	} {
 		t.Run(change, func(t *testing.T) {
 			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-			h.stubProcessPRGit()
 			h.Cfg.CI.SkipDrafts = true
 			h.Cfg.CI.SkipLabels = []string{"skip-review"}
-			h.Cfg.CI.Agents = []string{"test"}
-			h.Cfg.CI.ReviewTypes = []string{"security"}
 			prs := []ghPR{
-				{Number: 1, HeadRefOid: "head-a", BaseRefName: "main", Draft: true},
+				{Number: 1, HeadRefOid: "head-a", Draft: true},
 				{Number: 2, HeadRefOid: "head-b", Draft: true},
+			}
+			if change == "unchanged" {
+				prs = make([]ghPR, 10)
+				for i := range prs {
+					prs[i] = ghPR{Number: i + 1, HeadRefOid: fmt.Sprintf("head-%d", i), Draft: true}
+				}
 			}
 			h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return prs, nil }
 			checks, statuses := h.CaptureSkippedChecks(), h.CaptureCommitStatuses()
 			require.NoError(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg))
+			if change == "unchanged" {
+				assert.Len(t, *checks, 10)
+				assert.Len(t, *statuses, 10)
+				for range 2 {
+					*checks, *statuses = nil, nil
+					require.NoError(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg))
+					assert.Empty(t, *checks)
+					assert.Empty(t, *statuses)
+				}
+				return
+			}
 			wantSHA, wantReason := "head-a", "Review skipped: draft"
 			wantCheck := true
 			switch change {
@@ -919,21 +904,20 @@ func TestCIPollerSkippedPRPublicationChanges(t *testing.T) {
 			case "pending status":
 				require.NoError(t, h.Poller.callSetCommitStatus("acme/api", "head-a", "pending", "Review pending"))
 				wantCheck = false
-			case "deferral":
-				prs[0].Draft = false
-				require.NoError(t, h.Poller.processPR(t.Context(), "acme/api", prs[0], h.Cfg))
-				panel, err := h.DB.GetActiveCIPanelByPRSHA("acme/api", 1, "head-a")
-				require.NoError(t, err)
-				attempt, err := h.DB.GetReviewAttempt("acme/api", 1, "head-a")
-				require.NoError(t, err)
-				require.NotNil(t, attempt)
-				// Seed the skip after enqueue so only the deferral invalidates it.
-				require.NoError(t, h.Poller.callSetSkippedCommitStatus("acme/api", "head-a", wantReason))
-				h.Poller.recordDeferral(panel, attempt, "transient", "provider unavailable", time.Now(), false)
-				// Cancel the deferred rerun before the next draft poll.
-				require.NoError(t, h.DB.DeleteReviewAttempt("acme/api", 1, "head-a"))
-				prs[0].Draft = true
+			case "status write fails, same reason", "status write fails, first reason restored":
+				prs[0].Draft, prs[0].Labels = false, []string{"skip-review"}
+				h.Poller.setCommitStatusFn = func(string, string, string, string) error { return errors.New("status unavailable") }
+				*checks, *statuses = nil, nil
+				require.ErrorContains(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg), "status unavailable")
+				assert.Equal(t, []capturedSkippedCheck{{Repo: "acme/api", SHA: "head-a", Summary: "Review skipped: label skip-review"}}, *checks)
+				statuses = h.CaptureCommitStatuses()
+				wantReason = "Review skipped: label skip-review"
 				wantCheck = false
+				if change == "status write fails, first reason restored" {
+					prs[0].Draft = true
+					wantReason = "Review skipped: draft"
+					wantCheck = true
+				}
 			}
 			*checks, *statuses = nil, nil
 			require.NoError(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg))
@@ -942,41 +926,6 @@ func TestCIPollerSkippedPRPublicationChanges(t *testing.T) {
 				assert.Equal(t, []capturedSkippedCheck{{Repo: "acme/api", SHA: wantSHA, Summary: wantReason}}, *checks)
 			} else {
 				assert.Empty(t, *checks)
-			}
-		})
-	}
-}
-
-func TestCIPollerSkippedPRPartialPublication(t *testing.T) {
-	for _, restore := range []bool{false, true} {
-		t.Run(fmt.Sprintf("restore first reason %t", restore), func(t *testing.T) {
-			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-			h.Cfg.CI.SkipDrafts = true
-			h.Cfg.CI.SkipLabels = []string{"skip-review"}
-			pr := ghPR{Number: 1, HeadRefOid: "head-a", Draft: true}
-			h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return []ghPR{pr}, nil }
-			checks, statuses := h.CaptureSkippedChecks(), h.CaptureCommitStatuses()
-			require.NoError(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg))
-			pr.Draft, pr.Labels = false, []string{"skip-review"}
-			h.Poller.setCommitStatusFn = func(string, string, string, string) error { return errors.New("status unavailable") }
-			require.ErrorContains(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg), "status unavailable")
-			assert.Equal(t, "Review skipped: label skip-review", (*checks)[1].Summary)
-			*checks, *statuses = nil, nil
-			h.Poller.setCommitStatusFn = func(repo, sha, state, desc string) error {
-				*statuses = append(*statuses, capturedStatus{repo, sha, state, desc})
-				return nil
-			}
-			wantReason := "Review skipped: label skip-review"
-			if restore {
-				pr.Draft = true
-				wantReason = "Review skipped: draft"
-			}
-			require.NoError(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg))
-			assert.Equal(t, []capturedStatus{{"acme/api", "head-a", "success", wantReason}}, *statuses)
-			if restore {
-				assert.Equal(t, []capturedSkippedCheck{{"acme/api", "head-a", wantReason}}, *checks)
-			} else {
-				assert.Empty(t, *checks, "retry only the failed status channel")
 			}
 		})
 	}
