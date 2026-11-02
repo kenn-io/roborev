@@ -375,7 +375,7 @@ func testHealthCIPollerExhaustedRetry(t *testing.T, draft bool) {
 				require.NoError(t, err)
 				assert.Nil(attempt, "successful publication removes the failed attempt")
 				var finalStatus string
-				require.NoError(t, h.DB.QueryRow(`SELECT final_status_state FROM ci_pr_panels WHERE id = ?`, failedPanel.ID).Scan(&finalStatus))
+				require.NoError(t, h.DB.QueryRowContext(t.Context(), `SELECT final_status_state FROM ci_pr_panels WHERE id = ?`, failedPanel.ID).Scan(&finalStatus))
 				assert.Empty(finalStatus, "obsolete panel status cannot overwrite the skip")
 				assert.Contains(*skipped, capturedSkippedCheck{
 					Repo: "acme/api", SHA: "head-a", Summary: reason,
