@@ -26,7 +26,6 @@ type CISummary struct {
 	RunsPerPRP50     float64        `json:"runs_per_pr_p50"`
 	RunsPerPRP90     float64        `json:"runs_per_pr_p90"`
 	RunsPerPRMax     int            `json:"runs_per_pr_max"`
-	HotPRs           []CIPRSummary  `json:"hot_prs"`
 	PRs              []CIPRSummary  `json:"prs"`
 	// Zero TurnaroundSamples makes the turnaround percentiles unavailable.
 	TurnaroundSamples   int           `json:"turnaround_samples"`
@@ -37,20 +36,26 @@ type CISummary struct {
 }
 
 // CIPRSummary counts runs and recorded cost for one repository-scoped PR.
-// PRs and HotPRs are ordered by descending Runs, then GithubRepo and PRNumber.
+// PRs are ordered by descending Runs, then GithubRepo and PRNumber.
+// PeakHourRuns is the most runs created within any one hour of each other.
 // A Cost with zero JobsWithCost is unavailable, including zero eligible jobs.
 type CIPRSummary struct {
-	GithubRepo string        `json:"github_repo"`
-	PRNumber   int           `json:"pr_number"`
-	Runs       int           `json:"runs"`
-	Cost       CostAggregate `json:"cost"`
+	GithubRepo   string        `json:"github_repo"`
+	PRNumber     int           `json:"pr_number"`
+	Runs         int           `json:"runs"`
+	PeakHourRuns int           `json:"peak_hour_runs"`
+	Cost         CostAggregate `json:"cost"`
 }
+
+// ciPeakWindowSecs is the span PeakHourRuns counts runs within.
+const ciPeakWindowSecs = 3600
 
 type ciSummaryPanel struct {
 	githubRepo            string
 	prNumber              int
 	posted, retired       bool
 	outcome, retireReason string
+	createdAt             sql.NullFloat64 // Unix seconds
 	turnaround            sql.NullFloat64
 	cost                  CostAggregate
 }
@@ -84,6 +89,7 @@ func summaryCI(q querier, opts SummaryOptions) (*CISummary, error) {
  )
  SELECT cp.github_repo, cp.pr_number, cp.posted_at IS NOT NULL, cp.retired_at IS NOT NULL,
   COALESCE(cp.outcome,'unknown'), COALESCE(cp.retire_reason,'unknown'),
+  (julianday(cp.created_at) - 2440587.5) * 86400,
   (julianday(cp.posted_at) - julianday(cp.first_attempt_at)) * 86400,
   COALESCE(c.eligible,0), COALESCE(c.priced,0), COALESCE(c.usd,0)
  FROM selected cp LEFT JOIN costs c ON c.panel_run_uuid = cp.panel_run_uuid`, args...)
@@ -94,7 +100,7 @@ func summaryCI(q querier, opts SummaryOptions) (*CISummary, error) {
 	var panels []ciSummaryPanel
 	for rows.Next() {
 		var p ciSummaryPanel
-		if err := rows.Scan(&p.githubRepo, &p.prNumber, &p.posted, &p.retired, &p.outcome, &p.retireReason, &p.turnaround, &p.cost.JobsTotal, &p.cost.JobsWithCost, &p.cost.TotalUSD); err != nil {
+		if err := rows.Scan(&p.githubRepo, &p.prNumber, &p.posted, &p.retired, &p.outcome, &p.retireReason, &p.createdAt, &p.turnaround, &p.cost.JobsTotal, &p.cost.JobsWithCost, &p.cost.TotalUSD); err != nil {
 			return nil, err
 		}
 		panels = append(panels, p)
@@ -109,12 +115,13 @@ func aggregateCIPanels(panels []ciSummaryPanel) *CISummary {
 	if len(panels) == 0 {
 		return nil
 	}
-	s := &CISummary{TotalPanels: len(panels), Outcomes: map[string]int{}, RetiredByReason: map[string]int{}, PRs: []CIPRSummary{}, HotPRs: []CIPRSummary{}}
+	s := &CISummary{TotalPanels: len(panels), Outcomes: map[string]int{}, RetiredByReason: map[string]int{}, PRs: []CIPRSummary{}}
 	type prKey struct {
 		repo   string
 		number int
 	}
 	prs := map[prKey]*CIPRSummary{}
+	created := map[prKey][]float64{}
 	var turnaround []float64
 	// Sort before floating point addition for reproducible aggregation regardless
 	// of query order. The caller owns this temporary row slice.
@@ -162,11 +169,15 @@ func aggregateCIPanels(panels []ciSummaryPanel) *CISummary {
 			prs[key] = &CIPRSummary{GithubRepo: p.githubRepo, PRNumber: p.prNumber}
 		}
 		prs[key].Runs++
+		if p.createdAt.Valid {
+			created[key] = append(created[key], p.createdAt.Float64)
+		}
 		addCICost(&prs[key].Cost, p.cost)
 		addCICost(&s.Cost, p.cost)
 	}
 	var runs []float64
-	for _, pr := range prs {
+	for key, pr := range prs {
+		pr.PeakHourRuns = peakRunsWithin(created[key], ciPeakWindowSecs)
 		s.PRs = append(s.PRs, *pr)
 		runs = append(runs, float64(pr.Runs))
 		s.RunsPerPRMax = max(s.RunsPerPRMax, pr.Runs)
@@ -180,14 +191,6 @@ func aggregateCIPanels(panels []ciSummaryPanel) *CISummary {
 		}
 		return cmp.Compare(a.PRNumber, b.PRNumber)
 	})
-	for _, pr := range s.PRs {
-		// Lever's precision-review README uses >5 runs per PR:
-		// https://github.com/github/lever/blob/f859d0aa2be96981157ee0480655c84877e3cd98/automations/precision-review/README.md
-		// This is a reporting threshold, not a data limit.
-		if pr.Runs > 5 {
-			s.HotPRs = append(s.HotPRs, pr)
-		}
-	}
 	s.DistinctPRs = len(prs)
 	s.RunsPerPRP50 = percentile(runs, 0.5)
 	s.RunsPerPRP90 = percentile(runs, 0.9)
@@ -195,6 +198,20 @@ func aggregateCIPanels(panels []ciSummaryPanel) *CISummary {
 	s.TurnaroundP50Secs = percentile(turnaround, 0.5)
 	s.TurnaroundP90Secs = percentile(turnaround, 0.9)
 	return s
+}
+
+// peakRunsWithin returns the most timestamps that fall within window seconds
+// of the earliest one in the group. It sorts times in place.
+func peakRunsWithin(times []float64, window float64) int {
+	slices.Sort(times)
+	peak, start := 0, 0
+	for end, t := range times {
+		for t-times[start] >= window {
+			start++
+		}
+		peak = max(peak, end-start+1)
+	}
+	return peak
 }
 
 func addCICost(total *CostAggregate, cost CostAggregate) {

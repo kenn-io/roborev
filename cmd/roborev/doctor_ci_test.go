@@ -2,10 +2,7 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"maps"
-	"math"
-	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -24,52 +21,50 @@ import (
 	"go.kenn.io/roborev/pkg/client/generated"
 )
 
-// These cases catch inclusive thresholds, a missing denominator guard, an
-// unsupported sample floor, and losing one warning when both conditions hold.
-func TestDoctorCILoadThresholds(t *testing.T) {
+// The threshold is per PR and exclusive; a PR with many runs spread over
+// the week is healthy, and every PR above the threshold is listed.
+func TestDoctorCIBursts(t *testing.T) {
+	pr := func(number int64, runs, peak int64) generated.CIPRSummary {
+		return generated.CIPRSummary{GithubRepo: "acme/api", PrNumber: number, Runs: runs, PeakHourRuns: peak}
+	}
 	tests := []struct {
-		name               string
-		total, closed, max int64
-		wantStatus         doctorStatus
-		wantThrottle       bool
-		wantWorkers        bool
+		name        string
+		prs         []generated.CIPRSummary
+		wantStatus  doctorStatus
+		wantDetails []string
 	}{
-		{name: "five runs is healthy", total: 10, max: 5, wantStatus: doctorOK},
-		{name: "six runs warns", total: 10, max: 6, wantStatus: doctorWarn, wantThrottle: true},
-		{name: "exactly ten percent is healthy", total: 20, closed: 2, max: 5, wantStatus: doctorOK},
-		{name: "above ten percent warns", total: 20, closed: 3, max: 5, wantStatus: doctorWarn, wantWorkers: true},
-		{name: "low sample above ten percent warns", total: 9, closed: 1, max: 2, wantStatus: doctorWarn, wantWorkers: true},
-		{name: "low sample exactly ten percent is healthy", total: 10, closed: 1, max: 2, wantStatus: doctorOK},
-		{name: "one closed panel warns", total: 1, closed: 1, max: 1, wantStatus: doctorWarn, wantWorkers: true},
-		{name: "both warnings survive", total: 9, closed: 1, max: 6, wantStatus: doctorWarn, wantThrottle: true, wantWorkers: true},
-		{name: "large denominator does not overflow", total: math.MaxInt64, closed: math.MaxInt64 / 10, max: 5, wantStatus: doctorOK},
-		{name: "large numerator does not overflow", total: math.MaxInt64, closed: math.MaxInt64/10 + 1, max: 5, wantStatus: doctorWarn, wantWorkers: true},
+		{
+			name: "many runs over the week is healthy", prs: []generated.CIPRSummary{pr(1, 40, 3)},
+			wantStatus: doctorOK, wantDetails: []string{"busiest: acme/api#1 with 3 runs within an hour"},
+		},
+		{
+			name: "ten in an hour is healthy", prs: []generated.CIPRSummary{pr(1, 12, 10), pr(2, 2, 2)},
+			wantStatus: doctorOK, wantDetails: []string{"busiest: acme/api#1 with 10 runs within an hour"},
+		},
+		{
+			name: "eleven in an hour warns", prs: []generated.CIPRSummary{pr(1, 11, 11)},
+			wantStatus: doctorWarn, wantDetails: []string{"acme/api#1: 11 runs within an hour"},
+		},
+		{
+			name: "every burst PR is listed by peak", prs: []generated.CIPRSummary{pr(1, 50, 4), pr(2, 20, 12), pr(3, 15, 15)},
+			wantStatus: doctorWarn, wantDetails: []string{"acme/api#3: 15 runs within an hour", "acme/api#2: 12 runs within an hour"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			env := doctorCIEnv(t, &generated.CISummary{
-				TotalPanels: tt.total, ClosedBeforePost: tt.closed, RunsPerPrMax: tt.max,
-			})
-			got := findDoctorCheck(t, checkDoctorIntegrations(env), "integrations.ci_load")
+			env := doctorCIEnv(t, &generated.CISummary{TotalPanels: 1, Prs: tt.prs})
+			got := findDoctorCheck(t, checkDoctorIntegrations(env), "integrations.ci_bursts")
 			assert := assert.New(t)
 			assert.Equal(tt.wantStatus, got.Status)
 			assert.Equal("integrations", got.Category)
-			assert.Equal([]string{
-				fmt.Sprintf("maximum runs per PR: %d", tt.max),
-				fmt.Sprintf("%d of %d CI panel runs were closed before posting", tt.closed, tt.total),
-			}, got.Details)
+			assert.Equal(tt.wantDetails, got.Details)
 			assert.Contains(got.Summary, "7 days")
-			assert.Equal(tt.wantThrottle, strings.Contains(got.Fix, "throttle_interval"))
-			assert.Equal(tt.wantWorkers, strings.Contains(got.Fix, "max_workers"))
-			assert.NotContains(got.Fix, "skip_drafts")
-			if tt.wantWorkers {
-				assert.Contains(got.Fix, "panel")
-			}
+			assert.Equal(tt.wantStatus == doctorWarn, got.Fix != "")
 		})
 	}
 }
 
-func TestDoctorCILoadUnavailable(t *testing.T) {
+func TestDoctorCIBurstsUnavailable(t *testing.T) {
 	tests := []struct {
 		name      string
 		ci        *generated.CISummary
@@ -83,9 +78,9 @@ func TestDoctorCILoadUnavailable(t *testing.T) {
 		{name: "disabled", disabled: true},
 		{name: "daemon down", down: true},
 		{name: "old daemon omits CI", wantCalls: 1},
-		{name: "no panels", ci: &generated.CISummary{}, wantCalls: 1},
+		{name: "no PRs", ci: &generated.CISummary{}, wantCalls: 1},
 		{name: "API unavailable", apiErr: errors.New("summary unavailable"), wantCalls: 1, wantInfo: true},
-		{name: "settings and load warnings coexist", ci: &generated.CISummary{TotalPanels: 6, RunsPerPrMax: 6}, noRepos: true, wantCalls: 1},
+		{name: "settings and burst warnings coexist", ci: &generated.CISummary{TotalPanels: 11, Prs: []generated.CIPRSummary{{GithubRepo: "acme/api", PrNumber: 1, Runs: 11, PeakHourRuns: 11}}}, noRepos: true, wantCalls: 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -105,21 +100,21 @@ func TestDoctorCILoadUnavailable(t *testing.T) {
 			assert.Equal(t, tt.wantCalls, calls)
 			if tt.noRepos {
 				assert.Equal(t, doctorWarn, findDoctorCheck(t, checks, "integrations.ci").Status)
-				assert.Equal(t, doctorWarn, findDoctorCheck(t, checks, "integrations.ci_load").Status)
+				assert.Equal(t, doctorWarn, findDoctorCheck(t, checks, "integrations.ci_bursts").Status)
 				return
 			}
 			if tt.wantInfo {
-				got := findDoctorCheck(t, checks, "integrations.ci_load")
+				got := findDoctorCheck(t, checks, "integrations.ci_bursts")
 				assert.Equal(t, doctorInfo, got.Status)
 				assert.Contains(t, strings.Join(got.Details, "\n"), "summary unavailable")
 				return
 			}
-			assert.False(t, slices.ContainsFunc(checks, func(c doctorCheck) bool { return c.ID == "integrations.ci_load" }))
+			assert.False(t, slices.ContainsFunc(checks, func(c doctorCheck) bool { return c.ID == "integrations.ci_bursts" }))
 		})
 	}
 }
 
-func TestDoctorCILoadReadOnlyReportKeepsFailures(t *testing.T) {
+func TestDoctorCIBurstsReadOnlyReportKeepsFailures(t *testing.T) {
 	dataDir := t.TempDir()
 	t.Setenv("ROBOREV_DATA_DIR", dataDir)
 	configPath := filepath.Join(dataDir, "config.toml")
@@ -131,11 +126,11 @@ func TestDoctorCILoadReadOnlyReportKeepsFailures(t *testing.T) {
 	}
 	env := loadDoctorEnv(t.Context(), "", fakeDoctorDaemon{
 		ping: &daemon.PingInfo{OK: true}, agents: &doctorDaemonAgents{}, jobs: jobs,
-		summary: &generated.Summary{Ci: &generated.CISummary{TotalPanels: 6, RunsPerPrMax: 6}},
+		summary: &generated.Summary{Ci: &generated.CISummary{TotalPanels: 11, Prs: []generated.CIPRSummary{{GithubRepo: "acme/api", PrNumber: 1, Runs: 11, PeakHourRuns: 11}}}},
 	})
 	report := buildDoctorReport(env)
 	assert := assert.New(t)
-	assert.Equal(doctorWarn, findDoctorCheck(t, report.Checks, "integrations.ci_load").Status)
+	assert.Equal(doctorWarn, findDoctorCheck(t, report.Checks, "integrations.ci_bursts").Status)
 	assert.Equal(doctorWarn, findDoctorCheck(t, report.Checks, "jobs.failed").Status)
 	// A read-only report must not create a database, daemon runtime, logs,
 	// or modified configuration in its isolated data directory.
@@ -150,7 +145,7 @@ func TestDoctorCILoadReadOnlyReportKeepsFailures(t *testing.T) {
 
 // The live adapter must read the all-repository cohort with a duration the real
 // daemon accepts. Summary aggregation and warning policy have their own tests.
-func TestLiveDoctorCILoadRequestsAllRepos(t *testing.T) {
+func TestLiveDoctorCIBurstsRequestsAllRepos(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	db := testutil.OpenTestDB(t)
 	server := daemon.NewServer(db, config.DefaultConfig(), "")
@@ -182,44 +177,6 @@ func TestLiveDoctorCILoadRequestsAllRepos(t *testing.T) {
 	assert.Equal("168h", since)
 	assert.Empty(repo)
 	assert.Empty(branch)
-}
-
-func FuzzDoctorCILoadThresholds(f *testing.F) {
-	for _, seed := range [][3]int64{
-		{1, 0, 1},
-		{1, 1, 1},
-		{10, 1, 5},
-		{10, 2, 6},
-		{9, 1, 2},
-		{20, 2, 5},
-		{20, 3, 6},
-		{math.MaxInt64, math.MaxInt64 / 10, 5},
-		{math.MaxInt64, math.MaxInt64/10 + 1, 6},
-	} {
-		f.Add(seed[0], seed[1], seed[2])
-	}
-	f.Fuzz(func(t *testing.T, total, closed, max int64) {
-		if total <= 0 || closed < 0 || closed > total || max < 1 || max > total {
-			t.Skip("summary counters must respect panel aggregation invariants")
-		}
-		got := doctorCILoadSummary(&generated.CISummary{
-			TotalPanels: total, ClosedBeforePost: closed, RunsPerPrMax: max,
-		})
-		require.Len(t, got, 1)
-		// Arbitrary precision multiplication provides an independent oracle
-		// for strict share comparisons, including at the int64 boundaries.
-		numerator := new(big.Int).Mul(big.NewInt(closed), big.NewInt(10))
-		wantClosed := numerator.Cmp(big.NewInt(total)) > 0
-		wantRuns := max > 5
-		wantStatus := doctorOK
-		if wantClosed || wantRuns {
-			wantStatus = doctorWarn
-		}
-		assert := assert.New(t)
-		assert.Equal(wantStatus, got[0].Status)
-		assert.Equal(wantRuns, strings.Contains(got[0].Fix, "throttle_interval"))
-		assert.Equal(wantClosed, strings.Contains(got[0].Fix, "max_workers"))
-	})
 }
 
 func doctorCIEnv(t *testing.T, ci *generated.CISummary) *doctorEnv {

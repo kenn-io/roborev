@@ -665,10 +665,11 @@ func (b BranchWithCount) Validate() error {
 }
 
 type CIPRSummary struct {
-	Cost       CostAggregate `json:"cost"`
-	GithubRepo string        `json:"github_repo" validate:"required"`
-	PrNumber   int64         `json:"pr_number"`
-	Runs       int64         `json:"runs"`
+	Cost         CostAggregate `json:"cost"`
+	GithubRepo   string        `json:"github_repo" validate:"required"`
+	PeakHourRuns int64         `json:"peak_hour_runs"`
+	PrNumber     int64         `json:"pr_number"`
+	Runs         int64         `json:"runs"`
 }
 
 func (c CIPRSummary) Validate() error {
@@ -692,7 +693,6 @@ type CISummary struct {
 	ClosedBeforePost      int64            `json:"closed_before_post"`
 	Cost                  CostAggregate    `json:"cost"`
 	DistinctPrs           int64            `json:"distinct_prs"`
-	HotPrs                []CIPRSummary    `json:"hot_prs" validate:"required"`
 	Outcomes              map[string]int64 `json:"outcomes"`
 	PostedPanels          int64            `json:"posted_panels"`
 	Prs                   []CIPRSummary    `json:"prs" validate:"required"`
@@ -713,13 +713,6 @@ func (c CISummary) Validate() error {
 	if v, ok := any(c.Cost).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Cost", err)
-		}
-	}
-	for i, item := range c.HotPrs {
-		if v, ok := any(item).(runtime.Validator); ok {
-			if err := v.Validate(); err != nil {
-				errors = errors.Append(fmt.Sprintf("HotPrs[%d]", i), err)
-			}
 		}
 	}
 	for i, item := range c.Prs {

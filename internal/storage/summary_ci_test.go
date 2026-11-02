@@ -58,9 +58,11 @@ func TestGetSummary_CI(t *testing.T) {
 	a.InDelta(4.5, s.CI.RunsPerPRP50, 0)
 	a.InDelta(7.3, s.CI.RunsPerPRP90, 1e-9)
 	a.Equal(8, s.CI.RunsPerPRMax)
-	require.Len(t, s.CI.HotPRs, 1)
-	a.Equal("acme/api", s.CI.HotPRs[0].GithubRepo)
-	a.Equal(8, s.CI.HotPRs[0].Runs)
+	require.Len(t, s.CI.PRs, 2)
+	a.Equal("acme/api", s.CI.PRs[0].GithubRepo)
+	a.Equal(8, s.CI.PRs[0].Runs)
+	a.Equal(8, s.CI.PRs[0].PeakHourRuns)
+	a.Equal(1, s.CI.PRs[1].PeakHourRuns)
 	a.Equal(1, s.CI.TurnaroundSamples)
 	a.InDelta(120, s.CI.TurnaroundP50Secs, 0.001)
 	a.Equal(CostAggregate{}, s.CI.Cost)
@@ -146,6 +148,7 @@ func FuzzAggregateCIPanels(f *testing.F) {
 			rows = append(rows, ciSummaryPanel{
 				githubRepo: fmt.Sprint(b % 2), prNumber: int(b % 7), posted: b&2 != 0, retired: b&1 != 0,
 				turnaround: sql.NullFloat64{Valid: b&4 != 0, Float64: float64(int8(b))},
+				createdAt:  sql.NullFloat64{Valid: true, Float64: float64(b) * 600},
 				cost:       CostAggregate{TotalUSD: float64(b) / 100, JobsTotal: 2, JobsWithCost: 1},
 			})
 		}
@@ -167,12 +170,14 @@ func FuzzAggregateCIPanels(f *testing.F) {
 		total := 0
 		for _, pr := range got.PRs {
 			total += pr.Runs
+			assert.GreaterOrEqual(t, pr.PeakHourRuns, 1)
+			assert.LessOrEqual(t, pr.PeakHourRuns, pr.Runs)
 		}
 		assert.Equal(t, len(rows), total)
 	})
 }
 
-func TestAggregateCIPanels_AllHotPRsAndTies(t *testing.T) {
+func TestAggregateCIPanels_PRTies(t *testing.T) {
 	t.Parallel()
 	var rows []ciSummaryPanel
 	for pr := 13; pr >= 1; pr-- {
@@ -185,12 +190,46 @@ func TestAggregateCIPanels_AllHotPRsAndTies(t *testing.T) {
 	}
 	rows = append(rows, ciSummaryPanel{githubRepo: "acme/api", prNumber: 13})
 	s := aggregateCIPanels(rows)
-	require.Len(t, s.HotPRs, 13)
-	assert.Equal(t, 13, s.HotPRs[0].PRNumber)
-	assert.Equal(t, 7, s.HotPRs[0].Runs)
-	assert.Equal(t, 1, s.HotPRs[1].PRNumber)
-	assert.Equal(t, 12, s.HotPRs[12].PRNumber)
-	assert.Len(t, s.PRs, 14)
+	require.Len(t, s.PRs, 14)
+	assert.Equal(t, 13, s.PRs[0].PRNumber)
+	assert.Equal(t, 7, s.PRs[0].Runs)
+	assert.Equal(t, 1, s.PRs[1].PRNumber)
+	assert.Equal(t, 12, s.PRs[12].PRNumber)
+	assert.Equal(t, "acme/web", s.PRs[13].GithubRepo)
+}
+
+// Runs spread over a week count toward Runs but not PeakHourRuns; only runs
+// started within one hour of each other form a peak.
+func TestGetSummary_CIPeakHourRuns(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	stamps := map[int][]string{
+		// Twelve runs, one per day or more apart: no burst.
+		1: {"2026-01-03 00:00:00", "2026-01-04 00:00:00", "2026-01-05 00:00:00", "2026-01-06 00:00:00", "2026-01-07 00:00:00", "2026-01-08 00:00:00",
+			"2026-01-08 02:00:00", "2026-01-08 04:00:00", "2026-01-08 06:00:00", "2026-01-08 08:00:00", "2026-01-08 10:00:00", "2026-01-08 12:00:00"},
+		// Four runs inside one hour in mixed timestamp formats; a fifth exactly
+		// one hour after the first starts a new window.
+		2: {"2026-01-03T10:00:00Z", "2026-01-03 10:20:00", "2026-01-03T10:40:00Z", "2026-01-03 10:59:59", "2026-01-03 11:00:00"},
+	}
+	for pr, list := range stamps {
+		for i, stamp := range list {
+			id := summaryPanel(t, db, "acme/api", pr, fmt.Sprint(pr, "-", i), nil)
+			_, err := db.Exec(`UPDATE ci_pr_panels SET created_at=? WHERE id=?`, stamp, id)
+			require.NoError(t, err)
+		}
+	}
+	s, err := db.GetSummary(SummaryOptions{Since: ciSummarySince})
+	require.NoError(t, err)
+	require.NotNil(t, s.CI)
+	require.Len(t, s.CI.PRs, 2)
+	a := assert.New(t)
+	a.Equal(1, s.CI.PRs[0].PRNumber)
+	a.Equal(12, s.CI.PRs[0].Runs)
+	a.Equal(1, s.CI.PRs[0].PeakHourRuns)
+	a.Equal(2, s.CI.PRs[1].PRNumber)
+	a.Equal(5, s.CI.PRs[1].Runs)
+	a.Equal(4, s.CI.PRs[1].PeakHourRuns)
 }
 
 func TestGetSummary_CIPostedRetirementAndOldCosts(t *testing.T) {

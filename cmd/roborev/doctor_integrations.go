@@ -1,8 +1,10 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
 	"os/exec"
+	"slices"
 	"strings"
 
 	"go.kenn.io/roborev/internal/config"
@@ -102,15 +104,13 @@ func checkDoctorIntegrations(env *doctorEnv) []doctorCheck {
 	return out
 }
 
-// Lever flags >5 runs per PR and >10% retrospective reviews after merge:
-// https://github.com/github/lever/blob/f859d0aa2be96981157ee0480655c84877e3cd98/automations/precision-review/README.md
-// The share threshold is adapted here to closed-before-post panel runs, a
-// proxy for work that could not reach the PR in time. These are advice
-// thresholds, not execution limits; report every observed cohort size.
-const (
-	doctorCIRunsPerPR     = 5
-	doctorCIClosedDivisor = 10
-)
+// doctorCIBurstRuns is the most CI panel runs one PR may start within an
+// hour before doctor warns. A fast refinement loop by a throttle-bypass author
+// runs a round every 5-10 minutes, and the default ci.throttle_interval allows
+// one run per hour for everyone else, so more than 10 points at repeated
+// reruns or a poller re-enqueuing the PR rather than ordinary iteration. The
+// total number of runs on a PR is not a problem by itself.
+const doctorCIBurstRuns = 10
 
 func checkDoctorCILoad(env *doctorEnv) []doctorCheck {
 	if !env.daemonUp() {
@@ -119,42 +119,43 @@ func checkDoctorCILoad(env *doctorEnv) []doctorCheck {
 	summary, err := env.daemon.Summary(env.ctx)
 	if err != nil {
 		return []doctorCheck{{
-			ID: "integrations.ci_load", Category: "integrations", Status: doctorInfo,
-			Summary: "CI review load is unavailable", Details: []string{err.Error()},
+			ID: "integrations.ci_bursts", Category: "integrations", Status: doctorInfo,
+			Summary: "CI run history is unavailable", Details: []string{err.Error()},
 		}}
 	}
 	if summary == nil {
 		return nil
 	}
-	return doctorCILoadSummary(summary.Ci)
+	return doctorCIBursts(summary.Ci)
 }
 
-// doctorCILoadSummary evaluates observed counts without fetching state.
-func doctorCILoadSummary(ci *generated.CISummary) []doctorCheck {
-	if ci == nil || ci.TotalPanels <= 0 {
+// doctorCIBursts reports PRs whose busiest hour exceeded doctorCIBurstRuns.
+func doctorCIBursts(ci *generated.CISummary) []doctorCheck {
+	if ci == nil || len(ci.Prs) == 0 {
 		return nil
 	}
+	prs := slices.Clone(ci.Prs)
+	slices.SortStableFunc(prs, func(a, b generated.CIPRSummary) int {
+		return cmp.Compare(b.PeakHourRuns, a.PeakHourRuns)
+	})
+	busiest := prs[0]
 	check := doctorCheck{
-		ID: "integrations.ci_load", Category: "integrations", Status: doctorOK,
-		Summary: "CI review load in the last 7 days is within advisory thresholds",
-		Details: []string{
-			fmt.Sprintf("maximum runs per PR: %d", ci.RunsPerPrMax),
-			fmt.Sprintf("%d of %d CI panel runs were closed before posting", ci.ClosedBeforePost, ci.TotalPanels),
-		},
+		ID: "integrations.ci_bursts", Category: "integrations", Status: doctorOK,
+		Summary: fmt.Sprintf("no PR started more than %d CI runs within an hour in the last 7 days", doctorCIBurstRuns),
+		Details: []string{fmt.Sprintf("busiest: %s#%d with %d runs within an hour", busiest.GithubRepo, busiest.PrNumber, busiest.PeakHourRuns)},
 	}
-	var advice []string
-	if ci.RunsPerPrMax > doctorCIRunsPerPR {
-		advice = append(advice, "increase ci.throttle_interval to reduce repeated runs per PR")
+	var bursts []string
+	for _, pr := range prs {
+		if pr.PeakHourRuns <= doctorCIBurstRuns {
+			break
+		}
+		bursts = append(bursts, fmt.Sprintf("%s#%d: %d runs within an hour", pr.GithubRepo, pr.PrNumber, pr.PeakHourRuns))
 	}
-	// For positive integer counts, closed > total/10 is exactly >10%,
-	// without overflowing a multiplication of the numerator.
-	if ci.ClosedBeforePost > ci.TotalPanels/doctorCIClosedDivisor {
-		advice = append(advice, "check max_workers or use a narrower CI review panel so reviews finish sooner")
-	}
-	if len(advice) > 0 {
+	if len(bursts) > 0 {
 		check.Status = doctorWarn
-		check.Summary = "CI review load in the last 7 days exceeds advisory thresholds"
-		check.Fix = strings.Join(advice, "; ")
+		check.Summary = fmt.Sprintf("%d PR(s) started more than %d CI runs within an hour in the last 7 days", len(bursts), doctorCIBurstRuns)
+		check.Details = bursts
+		check.Fix = "check whether these PRs were really pushed or rerun that often; if not, look in the daemon log for the CI poller re-enqueuing them"
 	}
 	return []doctorCheck{check}
 }

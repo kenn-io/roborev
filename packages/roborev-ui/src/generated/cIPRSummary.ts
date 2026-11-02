@@ -6,6 +6,7 @@ import type { CostAggregate } from "./costAggregate";
 export interface CIPRSummary {
   cost: CostAggregate;
   github_repo: string;
+  peak_hour_runs: number;
   pr_number: number;
   runs: number;
 }
