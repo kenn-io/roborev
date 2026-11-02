@@ -75,6 +75,7 @@ CLI (roborev) -> HTTP API -> Daemon -> Worker Pool -> Agent adapters
 | `internal/daemon/` | HTTP server, handlers, worker pool, SSE, hooks, runtime, CI poller | `server.go`, `worker.go`, `client.go`, `runtime.go`, `ci_poller.go` |
 | `internal/storage/` | SQLite models/queries/migrations, sync logic, PostgreSQL mirror | `db.go`, `models.go`, `jobs.go`, `reviews.go`, `sync.go`, `postgres.go` |
 | `internal/agent/` | Agent interface, registry, command-backed implementations, ACP support | `agent.go`, `codex.go`, `claude.go`, `acp.go`, `test_agent.go` |
+| `internal/sandbox/` | nono command wrapping, policy self-checks, and process cleanup | `sandbox.go`, `check.go` |
 | `internal/config/` | Global config, repo config, validation, key metadata, resolve helpers | `config.go`, `keyval.go` |
 | `internal/prompt/` | Review prompt builder and template loading | `prompt.go`, `templates.go`, `prompt/analyze/` |
 | `internal/review/` | Daemon-free batch review, synthesis, comment sizing/formatting | `batch.go`, `synthesis.go`, `result.go` |

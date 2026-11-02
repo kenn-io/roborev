@@ -205,17 +205,16 @@ func parseErrIndicatesClosedPipe(err error) bool {
 }
 
 func processErrIndicatesContextTermination(err error) bool {
-	if _, ok := errors.AsType[*exec.ExitError](err); !ok {
-		return false
-	}
+	exitErr, ok := errors.AsType[*exec.ExitError](err)
 	msg := err.Error()
-	return strings.Contains(msg, "signal: killed") ||
-		strings.Contains(msg, "signal: terminated") ||
+	return ok && (strings.Contains(msg, "signal: killed") ||
+		// A sandbox supervisor exits 128+SIGTERM after a graceful scope stop.
+		strings.Contains(msg, "signal: terminated") || exitErr.ExitCode() == 143 ||
 		// A subprocess that writes to its stdout pipe AFTER the
 		// context-cancel path closed it dies of SIGPIPE before the kill
 		// signal can land -- the same context-caused termination through a
 		// different delivery race. Safe to classify here because the call
 		// site additionally requires canceledByContext: a broken pipe is
 		// only treated as context termination when WE closed the pipe.
-		strings.Contains(msg, "signal: broken pipe")
+		strings.Contains(msg, "signal: broken pipe"))
 }
