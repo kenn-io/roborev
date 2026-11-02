@@ -480,6 +480,37 @@ func TestGetPanelSummariesExcludesMembersWithNoCostAmount(t *testing.T) {
 		"member cost is not complete while dollars are missing")
 }
 
+func TestIndependentPartialCostPanelSummary(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	repo := createRepo(t, db, "/tmp/panel-partial-cost")
+	runUUID := testUUID("run-partial-cost")
+	_, members := enqueuePanelRun(t, db, repo.ID, "run-partial-cost", 2)
+	for _, member := range members {
+		setStatus(t, db, member.ID, JobStatusDone)
+	}
+	seedCost(t, db, members[0].ID, `{"cost_usd":0.30,"has_cost":true,"expected_provider_sessions":2,"provider_session_ids":["review-session"]}`)
+	seedCost(t, db, members[1].ID, `{"cost_usd":0.20,"has_cost":true}`)
+
+	got, err := db.GetPanelSummaries([]uuid.UUID{runUUID})
+	require.NoError(t, err)
+	require.Contains(t, got, runUUID)
+	sum := got[runUUID]
+	assert.False(sum.MembersCostComplete, "missing planner session leaves member cost partial")
+	assert.Equal(1, sum.MembersWithCost)
+	assert.InDelta(0.50, sum.MembersCostUSD, 0.000001, "known partial dollars still count")
+
+	seedCost(t, db, members[0].ID, `{"cost_usd":0.40,"has_cost":true,"expected_provider_sessions":2,"provider_session_ids":["review-session","planner-session"]}`)
+	got, err = db.GetPanelSummaries([]uuid.UUID{runUUID})
+	require.NoError(t, err)
+	sum = got[runUUID]
+	assert.True(sum.MembersCostComplete)
+	assert.Equal(2, sum.MembersWithCost)
+	assert.InDelta(0.60, sum.MembersCostUSD, 0.000001)
+}
+
 func TestGetPanelSummaries(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
