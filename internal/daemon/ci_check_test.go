@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/backfill"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/prompt"
 	reviewpkg "go.kenn.io/roborev/internal/review"
@@ -240,7 +241,7 @@ func TestCICheckCompletionDrop(t *testing.T) {
 				assert.Equal("synthesis-session", finished.SessionID)
 				assert.Equal("synthesis-session", usage.ThreadID)
 				assert.Equal([]string{"synthesis-session"}, usage.ProviderSessionIDs)
-				assert.Equal(2, usage.ExpectedProviderSessions)
+				assert.Equal(1, usage.ExpectedProviderSessions)
 				if drop.usage.HasCost {
 					assert.True(usage.HasCost)
 					assert.InDelta(0.03, usage.CostUSD, 1e-9)
@@ -276,6 +277,26 @@ func TestReviewCheckerUsageAcrossUnpricedSynthesis(t *testing.T) {
 	require.NotNil(t, usage)
 	assert.EqualValues(t, 3, usage.InputTokens)
 	assert.EqualValues(t, 5, usage.OutputTokens)
+}
+
+func TestReviewCheckerManualBackfillPreservesKnownCosts(t *testing.T) {
+	tc, job, _, _ := setupCICheckCompletion(t, "", "verify", &tokens.Usage{InputTokens: 10, OutputTokens: 20})
+	tc.Pool.ciCheck = func(_ context.Context, _ *storage.ReviewJob, _ ciCheckConfig, doc structuredreview.Document, _ []string, out io.Writer) (structuredreview.Document, error) {
+		fmt.Fprintln(out, `{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":5}}`)
+		return doc, nil
+	}
+	tc.Pool.processSynthesisJob(t.Context(), testWorkerID, job)
+	summary, err := backfill.ApplyTokenUsage(tc.DB, []backfill.SessionUsage{{
+		SessionID: "synthesis-session",
+		Usage:     &tokens.Usage{InputTokens: 10, OutputTokens: 20, CostUSD: 0.03, HasCost: true},
+	}}, false)
+	require.NoError(t, err)
+	assert.Equal(t, 1, summary.Updated, "%+v", summary.Results)
+	finished, err := tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	usage := tokens.ParseJSON(finished.TokenUsage)
+	require.NotNil(t, usage)
+	assert.InDelta(t, 0.03, usage.CostUSD, 1e-9)
 }
 
 func TestCICheckCompletionInterruption(t *testing.T) {

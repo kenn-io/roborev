@@ -2404,9 +2404,6 @@ func (collected *sessionTokenUsage) withUnpricedPhase(sessionRan bool, u *tokens
 			combined.ThreadID = sessionID
 			combined.ProviderSessionIDs = sessionIDs
 			combined.ExpectedProviderSessions = 1
-			if sessionRan {
-				combined.ExpectedProviderSessions = 2
-			}
 		}
 		return combined
 	}
