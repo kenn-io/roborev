@@ -30,8 +30,6 @@ func getIntegrationPostgresURL() string {
 // integrationEnv manages Postgres connection, schema, and temp directory for integration tests.
 type integrationEnv struct {
 	T      *testing.T
-	Ctx    context.Context
-	cancel context.CancelFunc
 	Pool   *PgPool
 	TmpDir string
 	pgURL  string
@@ -42,11 +40,10 @@ type integrationEnv struct {
 func newIntegrationEnv(t *testing.T) *integrationEnv {
 	t.Helper()
 	url := getIntegrationPostgresURL()
-	ctx, cancel := context.WithCancel(t.Context())
+	ctx := t.Context()
 
 	pool, err := NewPgPool(ctx, url, DefaultPgPoolConfig())
 	if err != nil {
-		cancel()
 		require.Condition(t, func() bool {
 			return false
 		}, "Failed to connect to postgres: %v (is docker-compose running?)", err)
@@ -55,7 +52,6 @@ func newIntegrationEnv(t *testing.T) *integrationEnv {
 	_, _ = pool.pool.Exec(ctx, "DROP SCHEMA IF EXISTS roborev CASCADE")
 	if err := pool.EnsureSchema(ctx); err != nil {
 		pool.Close()
-		cancel()
 		require.Condition(t, func() bool {
 			return false
 		}, "EnsureSchema failed: %v", err)
@@ -63,15 +59,12 @@ func newIntegrationEnv(t *testing.T) *integrationEnv {
 
 	env := &integrationEnv{
 		T:      t,
-		Ctx:    ctx,
-		cancel: cancel,
 		Pool:   pool,
 		TmpDir: t.TempDir(),
 		pgURL:  url,
 	}
 	t.Cleanup(func() {
 		pool.Close()
-		cancel()
 	})
 	return env
 }
@@ -133,7 +126,7 @@ func (e *integrationEnv) assertPgCount(table string, expected int) {
 		e.T.Fatalf("assertPgCount: invalid table name %q", table)
 	}
 	var count int
-	err := e.Pool.pool.QueryRow(e.Ctx, fmt.Sprintf("SELECT COUNT(*) FROM roborev.%s", table)).Scan(&count)
+	err := e.Pool.pool.QueryRow(e.T.Context(), fmt.Sprintf("SELECT COUNT(*) FROM roborev.%s", table)).Scan(&count)
 	if err != nil {
 		e.T.Fatalf("Failed to query postgres %s count: %v", table, err)
 	}
@@ -151,7 +144,7 @@ func (e *integrationEnv) assertPgCountWhere(table, where string, args []any, exp
 	}
 	var count int
 	query := fmt.Sprintf("SELECT COUNT(*) FROM roborev.%s WHERE %s", table, where)
-	err := e.Pool.pool.QueryRow(e.Ctx, query, args...).Scan(&count)
+	err := e.Pool.pool.QueryRow(e.T.Context(), query, args...).Scan(&count)
 	if err != nil {
 		e.T.Fatalf("Failed to query postgres %s: %v", table, err)
 	}
@@ -164,7 +157,7 @@ func (e *integrationEnv) assertPgCountWhere(table, where string, args []any, exp
 func (e *integrationEnv) pgQueryUUID(query string, args ...any) uuid.UUID {
 	e.T.Helper()
 	var val uuid.UUID
-	if err := e.Pool.pool.QueryRow(e.Ctx, query, args...).Scan(&val); err != nil {
+	if err := e.Pool.pool.QueryRow(e.T.Context(), query, args...).Scan(&val); err != nil {
 		e.T.Fatalf("pgQueryUUID failed: %v", err)
 	}
 	return val
@@ -172,7 +165,7 @@ func (e *integrationEnv) pgQueryUUID(query string, args ...any) uuid.UUID {
 
 // tryCreateCompletedReview creates a repo, commit, enqueues a job, marks it running, and completes it.
 // Returns the job, review, and any error. Safe to call from goroutines (does not call t.Fatalf).
-func tryCreateCompletedReview(db *DB, repoID int64, sha, author, subject, prompt, output string) (*ReviewJob, *Review, error) {
+func tryCreateCompletedReview(ctx context.Context, db *DB, repoID int64, sha, author, subject, prompt, output string) (*ReviewJob, *Review, error) {
 	commit, err := db.GetOrCreateCommit(repoID, sha, author, subject, time.Now())
 	if err != nil {
 		return nil, nil, fmt.Errorf("GetOrCreateCommit failed: %w", err)
@@ -181,7 +174,7 @@ func tryCreateCompletedReview(db *DB, repoID int64, sha, author, subject, prompt
 	if err != nil {
 		return nil, nil, fmt.Errorf("EnqueueJob failed: %w", err)
 	}
-	if _, err := db.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job.ID); err != nil {
+	if _, err := db.ExecContext(ctx, `UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job.ID); err != nil {
 		return nil, nil, fmt.Errorf("failed to set job running: %w", err)
 	}
 	if err := completeReviewFixture(db, job.ID, "test", prompt, output); err != nil {
@@ -206,12 +199,12 @@ func tryCreateCompletedReview(db *DB, repoID int64, sha, author, subject, prompt
 }
 
 // tryCreateCompletedReviewWithoutCommit creates a job and completes it without an underlying commit.
-func tryCreateCompletedReviewWithoutCommit(db *DB, repoID int64) (*ReviewJob, error) {
+func tryCreateCompletedReviewWithoutCommit(ctx context.Context, db *DB, repoID int64) (*ReviewJob, error) {
 	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repoID, CommitID: 0, GitRef: "HEAD", Agent: "test"})
 	if err != nil {
 		return nil, fmt.Errorf("EnqueueJob failed: %w", err)
 	}
-	if _, err := db.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job.ID); err != nil {
+	if _, err := db.ExecContext(ctx, `UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, job.ID); err != nil {
 		return nil, fmt.Errorf("failed to set job running: %w", err)
 	}
 	if err := completeReviewFixture(db, job.ID, "test", "prompt", "output"); err != nil {
@@ -224,7 +217,7 @@ func tryCreateCompletedReviewWithoutCommit(db *DB, repoID int64) (*ReviewJob, er
 // Returns the job and review. Must NOT be called from a goroutine (uses t.Fatalf).
 func createCompletedReview(t *testing.T, db *DB, repoID int64, sha, author, subject, prompt, output string) (*ReviewJob, *Review) {
 	t.Helper()
-	job, review, err := tryCreateCompletedReview(db, repoID, sha, author, subject, prompt, output)
+	job, review, err := tryCreateCompletedReview(t.Context(), db, repoID, sha, author, subject, prompt, output)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -402,7 +395,7 @@ func requireLocalJobByUUID(t *testing.T, db *DB, jobUUID *uuid.UUID) ReviewJob {
 // exists at an old version but data tables were created fresh.
 func TestIntegration_MigrationV6Idempotent(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	url := getIntegrationPostgresURL()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 
 	pool, err := NewPgPool(ctx, url, DefaultPgPoolConfig())
@@ -484,14 +477,15 @@ func TestIntegration_SyncOutageFromSwallowedWrite(t *testing.T) { //nolint:paral
 			job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "HEAD", Agent: "test"})
 			require.NoError(t, err)
 			require.NoError(t, db.CancelJob(job.ID))
-			_, err = env.Pool.pool.Exec(env.Ctx, `
+			_, err = env.Pool.pool.Exec(env.T.Context(), `
 				CREATE FUNCTION roborev.reject_job_write() RETURNS trigger LANGUAGE plpgsql AS $$
 				BEGIN RAISE EXCEPTION 'invalid job row' USING ERRCODE = '23514'; END $$;
 				CREATE TRIGGER reject_job_write BEFORE INSERT OR UPDATE ON roborev.review_jobs
 				FOR EACH ROW EXECUTE FUNCTION roborev.reject_job_write()`)
 			require.NoError(t, err)
 			t.Cleanup(func() {
-				_, _ = env.Pool.pool.Exec(context.Background(), `
+				// t.Context is already canceled when cleanups run.
+				_, _ = env.Pool.pool.Exec(context.WithoutCancel(t.Context()), `
 					DROP TRIGGER IF EXISTS reject_job_write ON roborev.review_jobs;
 					DROP FUNCTION IF EXISTS roborev.reject_job_write()`)
 			})
@@ -499,7 +493,7 @@ func TestIntegration_SyncOutageFromSwallowedWrite(t *testing.T) { //nolint:paral
 				require.NoError(t, pass(), "row errors remain swallowed")
 				assert.Empty(t, reasons, "a constraint violation is not an outage")
 			}
-			_, err = env.Pool.pool.Exec(env.Ctx, `
+			_, err = env.Pool.pool.Exec(env.T.Context(), `
 				CREATE OR REPLACE FUNCTION roborev.reject_job_write() RETURNS trigger LANGUAGE plpgsql AS $$
 				BEGIN RAISE EXCEPTION 'job writes denied' USING ERRCODE = '42501'; END $$`)
 			require.NoError(t, err)
@@ -508,7 +502,7 @@ func TestIntegration_SyncOutageFromSwallowedWrite(t *testing.T) { //nolint:paral
 				assert.Equal(t, []string{"auth"}, reasons)
 			}
 			env.assertPgCount("review_jobs", 0)
-			_, err = env.Pool.pool.Exec(env.Ctx, "ALTER TABLE roborev.review_jobs DISABLE TRIGGER reject_job_write")
+			_, err = env.Pool.pool.Exec(env.T.Context(), "ALTER TABLE roborev.review_jobs DISABLE TRIGGER reject_job_write")
 			require.NoError(t, err)
 			require.NoError(t, pass())
 			env.assertPgCount("review_jobs", 1)
@@ -516,7 +510,7 @@ func TestIntegration_SyncOutageFromSwallowedWrite(t *testing.T) { //nolint:paral
 			job, err = db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "HEAD", Agent: "test"})
 			require.NoError(t, err)
 			require.NoError(t, db.CancelJob(job.ID))
-			_, err = env.Pool.pool.Exec(env.Ctx, "ALTER TABLE roborev.review_jobs ENABLE TRIGGER reject_job_write")
+			_, err = env.Pool.pool.Exec(env.T.Context(), "ALTER TABLE roborev.review_jobs ENABLE TRIGGER reject_job_write")
 			require.NoError(t, err)
 			require.NoError(t, pass())
 			assert.Equal(t, []string{"auth", "auth"}, reasons)
@@ -545,7 +539,7 @@ func TestIntegration_SyncOutageIgnoresUnsyncableReview(t *testing.T) { //nolint:
 	}))
 	// Truncated JSON decodes with io.ErrUnexpectedEOF, which would otherwise
 	// read as a dropped connection.
-	_, err = db.Exec(`UPDATE reviews SET structured_output = ? WHERE job_id = ?`, `{"summary":`, job.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ? WHERE job_id = ?`, `{"summary":`, job.ID)
 	require.NoError(t, err)
 	require.ErrorIs(t, worker.doSync(), errSyncRowRejected)
 	assert.Empty(t, reasons)
@@ -602,7 +596,7 @@ func TestIntegration_PullFromRemote(t *testing.T) { //nolint:paralleltest // sha
 
 	// Insert data directly into postgres (simulating another machine's sync)
 	remoteMachineUUID := testUUID("pull-from-remote-machine")
-	_, err := env.Pool.pool.Exec(env.Ctx, `
+	_, err := env.Pool.pool.Exec(env.T.Context(), `
 		INSERT INTO roborev.machines (machine_id, name, last_seen_at)
 		VALUES ($1, 'remote-test', NOW())
 	`, remoteMachineUUID)
@@ -612,7 +606,7 @@ func TestIntegration_PullFromRemote(t *testing.T) { //nolint:paralleltest // sha
 		}, "Failed to insert machine: %v", err)
 	}
 
-	_, err = env.Pool.pool.Exec(env.Ctx, `
+	_, err = env.Pool.pool.Exec(env.T.Context(), `
 		INSERT INTO roborev.repos (identity, created_at)
 		VALUES ('git@github.com:test/pull-test.git', NOW())
 	`)
@@ -623,10 +617,10 @@ func TestIntegration_PullFromRemote(t *testing.T) { //nolint:paralleltest // sha
 	}
 
 	var pgRepoID int64
-	env.Pool.pool.QueryRow(env.Ctx, "SELECT id FROM roborev.repos WHERE identity = $1", "git@github.com:test/pull-test.git").Scan(&pgRepoID)
+	env.Pool.pool.QueryRow(env.T.Context(), "SELECT id FROM roborev.repos WHERE identity = $1", "git@github.com:test/pull-test.git").Scan(&pgRepoID)
 
 	remoteJobUUID := testUUID("pull-from-remote-job")
-	_, err = env.Pool.pool.Exec(env.Ctx, `
+	_, err = env.Pool.pool.Exec(env.T.Context(), `
 		INSERT INTO roborev.review_jobs (uuid, repo_id, git_ref, status, agent, reasoning, job_type, review_type, source_machine_id, enqueued_at, created_at, updated_at)
 		VALUES ($1, $2, 'main', 'done', 'test', '', 'review', '', $3, NOW(), NOW(), NOW())
 	`, remoteJobUUID, pgRepoID, remoteMachineUUID)
@@ -699,7 +693,7 @@ func TestIntegration_SearchWakeFollowsCommittedPullsWithoutPostgresSidecars(t *t
 	assert.Equal(t, "synced response", document.Responses[0].Response)
 
 	var sidecarTables int
-	err = env.Pool.pool.QueryRow(env.Ctx, `
+	err = env.Pool.pool.QueryRow(env.T.Context(), `
 		SELECT COUNT(*)
 		  FROM information_schema.tables
 		 WHERE table_schema = 'roborev'
@@ -734,7 +728,7 @@ func TestIntegration_SearchWakeKeepsEarlierCommittedWritesWhenReviewPullFails(t 
 	_, err = source.Worker.SyncNow()
 	require.NoError(t, err)
 
-	_, err = targetDB.Exec(`
+	_, err = targetDB.ExecContext(t.Context(), `
 		CREATE TRIGGER fail_pulled_review_insert
 		BEFORE INSERT ON reviews
 		BEGIN
@@ -758,8 +752,8 @@ func TestIntegration_SearchWakeKeepsEarlierCommittedWritesWhenReviewPullFails(t 
 	assert.Equal(t, int64(2), wakes.Load(), "committed commit and job writes must notify before review failure")
 
 	var jobCount, reviewCount int
-	require.NoError(t, targetDB.QueryRow(`SELECT count(*) FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&jobCount))
-	require.NoError(t, targetDB.QueryRow(`SELECT count(*) FROM reviews WHERE uuid = ?`, review.UUID).Scan(&reviewCount))
+	require.NoError(t, targetDB.QueryRowContext(t.Context(), `SELECT count(*) FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&jobCount))
+	require.NoError(t, targetDB.QueryRowContext(t.Context(), `SELECT count(*) FROM reviews WHERE uuid = ?`, review.UUID).Scan(&reviewCount))
 	assert.Equal(t, 1, jobCount)
 	assert.Zero(t, reviewCount)
 }
@@ -785,10 +779,10 @@ func TestIntegration_SyncPullsLateVisibleJobBeforeCursor(t *testing.T) { //nolin
 
 	machineB, err := nodeB.DB.GetMachineID()
 	require.NoError(t, err)
-	pgRepoID, err := env.Pool.GetOrCreateRepo(env.Ctx, repoIdentity)
+	pgRepoID, err := env.Pool.GetOrCreateRepo(env.T.Context(), repoIdentity)
 	require.NoError(t, err)
 	lateUUID := testUUID("late-visible-job")
-	_, err = env.Pool.pool.Exec(env.Ctx, `
+	_, err = env.Pool.pool.Exec(env.T.Context(), `
 		INSERT INTO roborev.review_jobs (
 			uuid, repo_id, git_ref, agent, job_type, review_type, status,
 			enqueued_at, source_machine_id, updated_at
@@ -822,7 +816,7 @@ func TestIntegration_SyncLookbackDoesNotRevertAppliedFixJob(t *testing.T) {
 		JobType:  JobTypeFix,
 	})
 	require.NoError(t, err)
-	_, err = nodeB.DB.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, fixJob.ID)
+	_, err = nodeB.DB.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, fixJob.ID)
 	require.NoError(t, err)
 	require.NoError(t, completeReviewFixture(nodeB.DB, fixJob.ID, "test", "prompt", "patch output"))
 
@@ -859,19 +853,19 @@ func TestIntegration_SyncPullsLateVisibleResponseBeforeCursor(t *testing.T) { //
 	machineB, err := nodeB.DB.GetMachineID()
 	require.NoError(t, err)
 
-	tx, err := env.Pool.pool.Begin(env.Ctx)
+	tx, err := env.Pool.pool.Begin(env.T.Context())
 	require.NoError(t, err)
-	defer tx.Rollback(env.Ctx)
+	defer tx.Rollback(env.T.Context())
 
 	lateUUID := testUUID("late-visible-response")
-	_, err = tx.Exec(env.Ctx, `
+	_, err = tx.Exec(env.T.Context(), `
 		INSERT INTO roborev.responses (uuid, job_uuid, responder, response, source_machine_id, created_at)
 		VALUES ($1, $2, 'human', 'late response', $3, clock_timestamp())
 	`, lateUUID, jobB.UUID, machineB)
 	require.NoError(t, err)
 
 	highUUID := testUUID("high-visible-response")
-	_, err = env.Pool.pool.Exec(env.Ctx, `
+	_, err = env.Pool.pool.Exec(env.T.Context(), `
 		INSERT INTO roborev.responses (uuid, job_uuid, responder, response, source_machine_id, created_at)
 		VALUES ($1, $2, 'human', 'high response', $3, clock_timestamp())
 	`, highUUID, jobB.UUID, machineB)
@@ -880,13 +874,13 @@ func TestIntegration_SyncPullsLateVisibleResponseBeforeCursor(t *testing.T) { //
 	_, err = nodeA.Worker.SyncNow()
 	require.NoError(t, err)
 
-	err = tx.Commit(env.Ctx)
+	err = tx.Commit(env.T.Context())
 	require.NoError(t, err)
 
 	_, err = nodeA.Worker.SyncNow()
 	require.NoError(t, err)
 
-	rows, err := nodeA.DB.Query(`SELECT uuid FROM responses WHERE uuid IN (?, ?)`, lateUUID, highUUID)
+	rows, err := nodeA.DB.QueryContext(t.Context(), `SELECT uuid FROM responses WHERE uuid IN (?, ?)`, lateUUID, highUUID)
 	require.NoError(t, err)
 	defer rows.Close()
 
@@ -918,7 +912,7 @@ func TestIntegration_ExperimentAssignmentConflictLeavesOriginalRow(t *testing.T)
 			SourceMachineID: machineID,
 		},
 	} {
-		require.NoError(t, env.Pool.UpsertExperimentDefinition(env.Ctx, definition))
+		require.NoError(t, env.Pool.UpsertExperimentDefinition(env.T.Context(), definition))
 	}
 
 	original := SyncableExperimentAssignment{
@@ -928,18 +922,18 @@ func TestIntegration_ExperimentAssignmentConflictLeavesOriginalRow(t *testing.T)
 		EffectiveConfigJSON: `{"agent":"codex"}`,
 		AssignedAt:          assignedAt, SourceMachineID: machineID,
 	}
-	require.NoError(t, env.Pool.UpsertExperimentAssignment(env.Ctx, original))
-	require.NoError(t, env.Pool.UpsertExperimentAssignment(env.Ctx, original))
+	require.NoError(t, env.Pool.UpsertExperimentAssignment(env.T.Context(), original))
+	require.NoError(t, env.Pool.UpsertExperimentAssignment(env.T.Context(), original))
 
 	conflicting := original
 	conflicting.ExperimentID = "model-v1"
 	conflicting.SubjectHash = "subject-b"
 	conflicting.EffectiveConfigHash = "config-b"
-	require.Error(t, env.Pool.UpsertExperimentAssignment(env.Ctx, conflicting))
+	require.Error(t, env.Pool.UpsertExperimentAssignment(env.T.Context(), conflicting))
 
 	var experimentID, arm, subjectHash, effectiveConfigHash string
 	var assignmentCount int
-	err := env.Pool.pool.QueryRow(env.Ctx, `
+	err := env.Pool.pool.QueryRow(env.T.Context(), `
 		SELECT experiment_id, arm, subject_hash, effective_config_hash, COUNT(*) OVER ()
 		FROM roborev.experiment_assignments
 		WHERE review_unit_kind = $1 AND review_unit_uuid = $2`,
@@ -963,7 +957,7 @@ func TestIntegration_PullExperimentAssignmentsUsesInsertionCursor(t *testing.T) 
 		DefinitionJSON: `{"ratio":0.5}`, FirstSeenAt: assignedAt,
 		SourceMachineID: sourceMachineID,
 	}
-	require.NoError(t, env.Pool.UpsertExperimentDefinition(env.Ctx, definition))
+	require.NoError(t, env.Pool.UpsertExperimentDefinition(env.T.Context(), definition))
 
 	for i := range 3 {
 		assignment := SyncableExperimentAssignment{
@@ -976,18 +970,18 @@ func TestIntegration_PullExperimentAssignmentsUsesInsertionCursor(t *testing.T) 
 			EffectiveConfigJSON: `{"agent":"codex"}`,
 			AssignedAt:          assignedAt, SourceMachineID: sourceMachineID,
 		}
-		require.NoError(t, env.Pool.UpsertExperimentAssignment(env.Ctx, assignment))
+		require.NoError(t, env.Pool.UpsertExperimentAssignment(env.T.Context(), assignment))
 	}
 
 	first, cursor, err := env.Pool.PullExperimentAssignments(
-		env.Ctx, excludeMachineID, "", 2,
+		env.T.Context(), excludeMachineID, "", 2,
 	)
 	require.NoError(t, err)
 	require.Len(t, first, 2)
 	require.NotEmpty(t, cursor)
 
 	second, cursor, err := env.Pool.PullExperimentAssignments(
-		env.Ctx, excludeMachineID, cursor, 2,
+		env.T.Context(), excludeMachineID, cursor, 2,
 	)
 	require.NoError(t, err)
 	require.Len(t, second, 1)
@@ -1000,10 +994,10 @@ func TestIntegration_PullExperimentAssignmentsUsesInsertionCursor(t *testing.T) 
 		EffectiveConfigJSON: `{"agent":"codex"}`,
 		AssignedAt:          assignedAt.Add(-24 * time.Hour), SourceMachineID: sourceMachineID,
 	}
-	require.NoError(t, env.Pool.UpsertExperimentAssignment(env.Ctx, late))
+	require.NoError(t, env.Pool.UpsertExperimentAssignment(env.T.Context(), late))
 
 	third, _, err := env.Pool.PullExperimentAssignments(
-		env.Ctx, excludeMachineID, cursor, 2,
+		env.T.Context(), excludeMachineID, cursor, 2,
 	)
 	require.NoError(t, err)
 	require.Len(t, third, 1)
@@ -1019,7 +1013,7 @@ func TestIntegration_FinalPush(t *testing.T) { //nolint:paralleltest // shares t
 	// One more than a full batch proves FinalPush drains multiple batches.
 	jobCount := syncBatchSize + 1
 	for range jobCount {
-		if _, err := tryCreateCompletedReviewWithoutCommit(db, repo.ID); err != nil {
+		if _, err := tryCreateCompletedReviewWithoutCommit(t.Context(), db, repo.ID); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, "tryCreateCompletedReviewWithoutCommit failed: %v", err)
@@ -1054,7 +1048,7 @@ func TestIntegration_FinalPush_NoCommit(t *testing.T) { //nolint:paralleltest //
 	}
 
 	// Create a job without a commit (CommitID=0)
-	_, err = tryCreateCompletedReviewWithoutCommit(db, repo.ID)
+	_, err = tryCreateCompletedReviewWithoutCommit(t.Context(), db, repo.ID)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -1082,7 +1076,7 @@ func TestIntegration_SchemaCreation(t *testing.T) { //nolint:paralleltest // sha
 	tables := []string{"machines", "repos", "commits", "review_jobs", "reviews", "responses"}
 	for _, table := range tables {
 		var exists bool
-		err := env.Pool.pool.QueryRow(env.Ctx, `
+		err := env.Pool.pool.QueryRow(env.T.Context(), `
 			SELECT EXISTS (
 				SELECT FROM information_schema.tables
 				WHERE table_schema = 'roborev' AND table_name = $1
@@ -1116,7 +1110,7 @@ func TestIntegration_Multiplayer(t *testing.T) { //nolint:paralleltest // shares
 	jobB, reviewB := createCompletedReview(t, dbB, nodeB.Repo.ID, "bbbb2222", "Bob", "Feature B", "prompt B", "Review from Machine B")
 	require.NotNil(t, jobA.UUID)
 	require.NotNil(t, jobB.UUID)
-	_, err := dbB.Exec(
+	_, err := dbB.ExecContext(t.Context(),
 		`UPDATE reviews
 		 SET verdict_bool = 0, structured_output = ?, synced_at = NULL,
 		     updated_at = datetime('now')
@@ -1403,12 +1397,12 @@ func TestIntegration_MultiplayerSameCommit(t *testing.T) { //nolint:paralleltest
 	t.Log("Same-commit multiplayer verified: both reviews preserved with unique UUIDs")
 }
 
-func runConcurrentReviewsAndSync(start <-chan struct{}, db *DB, repoID int64, worker *SyncWorker, prefix, author string, count int, results chan<- uuid.UUID, errs chan<- error, done chan<- bool) {
+func runConcurrentReviewsAndSync(ctx context.Context, start <-chan struct{}, db *DB, repoID int64, worker *SyncWorker, prefix, author string, count int, results chan<- uuid.UUID, errs chan<- error, done chan<- bool) {
 	go func() {
 		defer func() { done <- true }()
 		<-start
 		for i := range count {
-			job, _, err := tryCreateCompletedReview(db, repoID, fmt.Sprintf("%s_%02d", prefix, i), author, fmt.Sprintf("%s concurrent %d", author, i), "prompt", fmt.Sprintf("Review %s-%d", prefix, i))
+			job, _, err := tryCreateCompletedReview(ctx, db, repoID, fmt.Sprintf("%s_%02d", prefix, i), author, fmt.Sprintf("%s concurrent %d", author, i), "prompt", fmt.Sprintf("Review %s-%d", prefix, i))
 			if err != nil {
 				errs <- err
 				continue
@@ -1513,9 +1507,9 @@ func TestIntegration_MultiplayerRealistic(t *testing.T) { //nolint:paralleltest 
 		done := make(chan bool, 3)
 		start := make(chan struct{})
 
-		runConcurrentReviewsAndSync(start, dbA, repoA.ID, workerA, "a3", "Alice", 10, jobResultsA, syncErrsA, done)
-		runConcurrentReviewsAndSync(start, dbB, repoB.ID, workerB, "b3", "Bob", 10, jobResultsB, syncErrsB, done)
-		runConcurrentReviewsAndSync(start, dbC, repoC.ID, workerC, "c3", "Carol", 10, jobResultsC, syncErrsC, done)
+		runConcurrentReviewsAndSync(t.Context(), start, dbA, repoA.ID, workerA, "a3", "Alice", 10, jobResultsA, syncErrsA, done)
+		runConcurrentReviewsAndSync(t.Context(), start, dbB, repoB.ID, workerB, "b3", "Bob", 10, jobResultsB, syncErrsB, done)
+		runConcurrentReviewsAndSync(t.Context(), start, dbC, repoC.ID, workerC, "c3", "Carol", 10, jobResultsC, syncErrsC, done)
 		// Release all machines together so their writes and syncs overlap.
 		close(start)
 
@@ -1833,7 +1827,7 @@ func TestIntegration_SyncNowPushesAllBatches(t *testing.T) { //nolint:parallelte
 	}
 
 	var pgJobCount int
-	if err := env.Pool.pool.QueryRow(env.Ctx, "SELECT COUNT(*) FROM roborev.review_jobs").Scan(&pgJobCount); err != nil {
+	if err := env.Pool.pool.QueryRow(env.T.Context(), "SELECT COUNT(*) FROM roborev.review_jobs").Scan(&pgJobCount); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "Failed to count jobs in postgres: %v", err)
@@ -1845,7 +1839,7 @@ func TestIntegration_SyncNowPushesAllBatches(t *testing.T) { //nolint:parallelte
 	}
 
 	var pgReviewCount int
-	if err := env.Pool.pool.QueryRow(env.Ctx, "SELECT COUNT(*) FROM roborev.reviews").Scan(&pgReviewCount); err != nil {
+	if err := env.Pool.pool.QueryRow(env.T.Context(), "SELECT COUNT(*) FROM roborev.reviews").Scan(&pgReviewCount); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "Failed to count reviews in postgres: %v", err)
@@ -2031,7 +2025,7 @@ func TestIntegration_AfterPullNotifiesAfterFreshBulkPull(t *testing.T) { //nolin
 		require.True(t, target.syncMu.TryLock(), "pull callback must follow syncMu release")
 		target.syncMu.Unlock()
 		var reviews int
-		require.NoError(t, targetDB.QueryRow(`SELECT count(*) FROM reviews`).Scan(&reviews))
+		require.NoError(t, targetDB.QueryRowContext(t.Context(), `SELECT count(*) FROM reviews`).Scan(&reviews))
 		assert.Equal(t, 499+pulls, reviews, "callback follows the job and review phases")
 	})
 	stats, err := target.SyncNow()

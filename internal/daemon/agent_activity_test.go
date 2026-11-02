@@ -26,7 +26,7 @@ func TestAgentActivityBucketsRestartAndUTC(t *testing.T) {
 			assert := assert.New(t)
 			server, db, _ := newTestServer(t)
 			db.SetMaxOpenConns(1)
-			_, err := db.Exec(`PRAGMA synchronous = OFF`)
+			_, err := db.ExecContext(t.Context(), `PRAGMA synchronous = OFF`)
 			require.NoError(t, err)
 			client := &fakeTelemetryClient{enabled: true}
 			server.SetTelemetry(client)
@@ -90,7 +90,7 @@ func TestAgentActivityRoutesRejectBrowserCapture(t *testing.T) {
 		{"application/json", "null", http.StatusForbidden},
 		{"application/json; charset=utf-8", "", http.StatusAccepted},
 	} {
-		req := httptest.NewRequest(http.MethodPost, TelemetryAgentCallPath, nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, TelemetryAgentCallPath, nil)
 		req.Header.Set("Content-Type", tc.contentType)
 		req.Header.Set("Origin", tc.origin)
 		assert.Equal(t, tc.status, serveTelemetryCapture(server.httpServer.Handler, req).Code)
@@ -105,7 +105,7 @@ func TestAgentActivityRouteReceipts(t *testing.T) {
 	client := &fakeTelemetryClient{}
 	server.SetTelemetry(client)
 	t.Run("opted out", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, TelemetryAgentCallPath, nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, TelemetryAgentCallPath, nil)
 		req.Header.Set("Content-Type", "application/json")
 		recorder := serveTelemetryCapture(server.httpServer.Handler, req)
 		assert.Equal(t, http.StatusAccepted, recorder.Code)
@@ -115,7 +115,7 @@ func TestAgentActivityRouteReceipts(t *testing.T) {
 	t.Run("queued then skipped", func(t *testing.T) {
 		client.enabled = true
 		for _, status := range []string{"queued", "skipped"} {
-			req := httptest.NewRequest(http.MethodPost, TelemetryAgentCallPath, nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, TelemetryAgentCallPath, nil)
 			req.Header.Set("Content-Type", "application/json")
 			recorder := serveTelemetryCapture(server.httpServer.Handler, req)
 			assert.Equal(t, http.StatusAccepted, recorder.Code)
@@ -131,7 +131,7 @@ func TestAgentActivityRouteReceipts(t *testing.T) {
 			if failure == "storage" {
 				require.NoError(t, db.Close())
 			}
-			req := httptest.NewRequest(http.MethodPost, TelemetryAgentCallPath, nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, TelemetryAgentCallPath, nil)
 			req.Header.Set("Content-Type", "application/json")
 			recorder := serveTelemetryCapture(server.httpServer.Handler, req)
 			assert.Equal(t, http.StatusInternalServerError, recorder.Code)

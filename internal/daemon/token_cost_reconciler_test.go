@@ -37,7 +37,7 @@ func TestDelayedTokenCostRetriesAfterImmediateCaptureMiss(t *testing.T) {
 	}
 
 	tc.Pool.captureTokenUsageForSession(
-		context.Background(), testWorkerID, job, "delayed-session",
+		t.Context(), testWorkerID, job, "delayed-session",
 	)
 	indexed.Store(true)
 	tc.Pool.Start()
@@ -99,7 +99,7 @@ func TestTokenCostReconcilerAggregatesPlanPhaseSessions(t *testing.T) {
 		return &tokens.Usage{CostUSD: costs[sessionID], HasCost: true}, nil
 	}
 
-	resolved, err := tc.Pool.reconcileTokenCostCandidate(context.Background(), *candidate)
+	resolved, err := tc.Pool.reconcileTokenCostCandidate(t.Context(), *candidate)
 	require.NoError(t, err)
 	assert.True(t, resolved)
 	assert.ElementsMatch(t, []string{"planner-session", "implementation-session"}, fetchedSessions)
@@ -127,7 +127,7 @@ func TestTokenCostReconcilerPreservesStoredCountsWhenPlanPhaseHasNoCounts(t *tes
 		return &tokens.Usage{InputTokens: 200, OutputTokens: 25, CostUSD: 0.29, HasCost: true}, nil
 	}
 
-	resolved, err := tc.Pool.reconcileTokenCostCandidate(context.Background(), *candidate)
+	resolved, err := tc.Pool.reconcileTokenCostCandidate(t.Context(), *candidate)
 	require.NoError(t, err)
 	assert.True(t, resolved)
 	updated, err := tc.DB.GetJobByID(job.ID)
@@ -153,7 +153,7 @@ func TestTokenCostReconcilerPricesAvailableSessionWithMissingPlanSession(t *test
 		return &tokens.Usage{InputTokens: 200, OutputTokens: 25, CostUSD: 0.29, HasCost: true}, nil
 	}
 
-	resolved, err := tc.Pool.reconcileTokenCostCandidate(context.Background(), *candidate)
+	resolved, err := tc.Pool.reconcileTokenCostCandidate(t.Context(), *candidate)
 	require.NoError(t, err)
 	assert.True(t, resolved, "the available implementation session is priced")
 	assert.Equal(t, 1, fetches)
@@ -195,7 +195,7 @@ func TestTokenCostReconcilerRecoversSessionFromJobLogAtStartup(t *testing.T) {
 		assert.Equal(t, "recovered-session", sessionID)
 		return &tokens.Usage{HasCost: true, CostUSD: 0.21}, nil
 	}
-	tc.Pool.recoverTokenUsageLogs(context.Background())
+	tc.Pool.recoverTokenUsageLogs(t.Context())
 	recovered, err := tc.DB.GetJobByID(job.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "recovered-session", recovered.SessionID)
@@ -238,7 +238,7 @@ func TestTokenCostReconcilerPreservesExpectedSessionsFromPlannerOnlyLog(t *testi
 
 	// Reconciliation's startup pass recovers the planner-only log after the
 	// canceled attempt has been released from its former worker.
-	tc.Pool.recoverTokenUsageLogs(context.Background())
+	tc.Pool.recoverTokenUsageLogs(t.Context())
 
 	recovered, err := tc.DB.GetJobByID(job.ID)
 	require.NoError(t, err)
@@ -271,7 +271,7 @@ func TestTokenCostReconcilerRejectsJobLogFromPriorAttempt(t *testing.T) {
 	priorAttempt := completed.StartedAt.Add(-time.Minute)
 	require.NoError(t, os.Chtimes(logPath, priorAttempt, priorAttempt))
 
-	tc.Pool.recoverTokenUsageLogs(context.Background())
+	tc.Pool.recoverTokenUsageLogs(t.Context())
 
 	recovered, err := tc.DB.GetJobByID(job.ID)
 	require.NoError(t, err)

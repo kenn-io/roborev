@@ -122,7 +122,7 @@ func TestRebuttalEnqueuePreservesOriginalSession(t *testing.T) {
 	originalReview, err := db.GetReviewByJobID(parent.ID)
 	require.NoError(t, err)
 	require.NotNil(t, originalReview.UUID)
-	_, err = db.Exec(`UPDATE review_jobs SET session_id='original-session', model='original-model', provider='original-provider', reasoning='thorough', branch='review-branch', git_ref='review-ref' WHERE id=?`, parent.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id='original-session', model='original-model', provider='original-provider', reasoning='thorough', branch='review-branch', git_ref='review-ref' WHERE id=?`, parent.ID)
 	require.NoError(t, err)
 	body, err := json.Marshal(map[string]any{"job_id": parent.ID, "finding": "The guard is missing.", "comment": "The caller checks it.", "commenter": "operator"})
 	require.NoError(t, err)
@@ -169,7 +169,7 @@ func TestRebuttalFindingMatchIgnoresWhitespaceWraps(t *testing.T) {
 	s, db, _ := newTestServer(t)
 	repo := testutil.CreateTestRepo(t, db)
 	parent := testutil.CreateCompletedReview(t, db, repo.ID, "abc123", "test", "The guard is missing\nat this path.")
-	_, err := db.Exec(`UPDATE review_jobs SET session_id='original-session' WHERE id=?`, parent.ID)
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id='original-session' WHERE id=?`, parent.ID)
 	require.NoError(t, err)
 	body, err := json.Marshal(map[string]any{
 		"job_id": parent.ID, "finding": "The guard is missing at this path.",
@@ -208,7 +208,7 @@ func TestRebuttalRejectsAssessmentAndCloseAfterReviewReplacement(t *testing.T) {
 	review, err := db.GetReviewByJobID(parent.ID)
 	require.NoError(t, err)
 	require.NotNil(t, review.UUID)
-	_, err = db.Exec(`UPDATE review_jobs SET session_id='original-session' WHERE id=?`, parent.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id='original-session' WHERE id=?`, parent.ID)
 	require.NoError(t, err)
 
 	body := fmt.Appendf(nil, `{"job_id":%d,"finding":"The guard is missing.","comment":"The caller checks it.","commenter":"operator"}`, parent.ID)
@@ -219,7 +219,7 @@ func TestRebuttalRejectsAssessmentAndCloseAfterReviewReplacement(t *testing.T) {
 	assert.Equal(t, review.UUID, job.OriginalReviewUUID)
 
 	replacementUUID := uuid.New()
-	_, err = db.Exec(`UPDATE reviews SET uuid = ?, closed = 0 WHERE job_id = ?`, replacementUUID, parent.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE reviews SET uuid = ?, closed = 0 WHERE job_id = ?`, replacementUUID, parent.ID)
 	require.NoError(t, err)
 
 	commentBody, err := json.Marshal(AddCommentRequest{
@@ -273,13 +273,13 @@ func TestRebuttalInvalidRequestDoesNotQueue(t *testing.T) {
 			s, db, _ := newTestServer(t)
 			repo := testutil.CreateTestRepo(t, db)
 			parent := testutil.CreateCompletedReview(t, db, repo.ID, "abc123", "test", "The guard is missing.")
-			_, err := db.Exec(`UPDATE review_jobs SET session_id=? WHERE id=?`, tc.session, parent.ID)
+			_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id=? WHERE id=?`, tc.session, parent.ID)
 			require.NoError(t, err)
 			body := fmt.Appendf(nil, `{"job_id":%d,"finding":%q,"comment":"Explanation","commenter":"operator"}`, parent.ID, tc.finding)
 			rr := serveHuma(t, s, http.MethodPost, "/api/rebuttal", body)
 			assert.Equal(t, http.StatusBadRequest, rr.Code, rr.Body.String())
 			var count int
-			require.NoError(t, db.QueryRow(`SELECT count(*) FROM review_jobs`).Scan(&count))
+			require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM review_jobs`).Scan(&count))
 			assert.Equal(t, 1, count)
 		})
 	}
@@ -294,7 +294,7 @@ func TestRebuttalRejectsSessionAgentWithoutReadOnlySupport(t *testing.T) {
 	s, db, _ := newTestServer(t)
 	repo := testutil.CreateTestRepo(t, db)
 	parent := testutil.CreateCompletedReview(t, db, repo.ID, "abc123", "test", "The guard is missing.")
-	_, err = db.Exec(`UPDATE review_jobs SET session_id='original-session' WHERE id=?`, parent.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id='original-session' WHERE id=?`, parent.ID)
 	require.NoError(t, err)
 	body := fmt.Appendf(nil, `{"job_id":%d,"finding":"The guard is missing.","comment":"The caller checks it.","commenter":"operator"}`, parent.ID)
 
@@ -303,7 +303,7 @@ func TestRebuttalRejectsSessionAgentWithoutReadOnlySupport(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rr.Code, rr.Body.String())
 	assert.Contains(t, rr.Body.String(), "cannot enforce read-only review permissions")
 	var count int
-	require.NoError(t, db.QueryRow(`SELECT count(*) FROM review_jobs`).Scan(&count))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM review_jobs`).Scan(&count))
 	assert.Equal(t, 1, count)
 }
 
@@ -372,23 +372,23 @@ func TestRebuttalRejectsIneligibleParents(t *testing.T) {
 			s, db, _ := newTestServer(t)
 			repo := testutil.CreateTestRepo(t, db)
 			parent := testutil.CreateCompletedReview(t, db, repo.ID, "abc123", "test", "Missing guard.")
-			_, err := db.Exec(`UPDATE review_jobs SET session_id='original-session' WHERE id=?`, parent.ID)
+			_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id='original-session' WHERE id=?`, parent.ID)
 			require.NoError(t, err)
 			switch field {
 			case "status":
-				_, err = db.Exec(`UPDATE review_jobs SET status='running' WHERE id=?`, parent.ID)
+				_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status='running' WHERE id=?`, parent.ID)
 			case "isolated":
-				_, err = db.Exec(`UPDATE review_jobs SET session_isolated=1 WHERE id=?`, parent.ID)
+				_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET session_isolated=1 WHERE id=?`, parent.ID)
 			case "source":
-				_, err = db.Exec(`UPDATE review_jobs SET source='ci' WHERE id=?`, parent.ID)
+				_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET source='ci' WHERE id=?`, parent.ID)
 			case "job_type":
-				_, err = db.Exec(`UPDATE review_jobs SET job_type='task' WHERE id=?`, parent.ID)
+				_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET job_type='task' WHERE id=?`, parent.ID)
 			case "agent":
-				_, err = db.Exec(`UPDATE review_jobs SET agent='missing-agent' WHERE id=?`, parent.ID)
+				_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET agent='missing-agent' WHERE id=?`, parent.ID)
 			case "closed":
 				err = db.MarkReviewClosedByJobID(parent.ID, true)
 			case "repo_path":
-				_, err = db.Exec(`UPDATE repos SET root_path=? WHERE id=?`, filepath.Join(t.TempDir(), "missing"), repo.ID)
+				_, err = db.ExecContext(t.Context(), `UPDATE repos SET root_path=? WHERE id=?`, filepath.Join(t.TempDir(), "missing"), repo.ID)
 			}
 			require.NoError(t, err)
 			body := fmt.Appendf(nil, `{"job_id":%d,"finding":"Missing guard.","comment":"The caller checks it.","commenter":"operator"}`, parent.ID)
@@ -402,7 +402,7 @@ func TestRebuttalCannotRerunWithoutSession(t *testing.T) {
 	s, db, _ := newTestServer(t)
 	repo := testutil.CreateTestRepo(t, db)
 	j := testutil.CreateCompletedReview(t, db, repo.ID, "abc123", "test", "original")
-	_, err := db.Exec(`UPDATE review_jobs SET source='rebuttal' WHERE id=?`, j.ID)
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET source='rebuttal' WHERE id=?`, j.ID)
 	require.NoError(t, err)
 	rr := serveHuma(t, s, http.MethodPost, "/api/job/rerun", fmt.Appendf(nil, `{"job_id":%d}`, j.ID))
 	assert.Equal(t, http.StatusBadRequest, rr.Code, rr.Body.String())

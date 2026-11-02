@@ -53,7 +53,7 @@ func withHint(err error, hint string) error {
 }
 
 func isCLIHook(cmd *cobra.Command) bool {
-	switch cmd.CommandPath() {
+	switch stableCommandPath(cmd) {
 	case "roborev post-commit", "roborev agent-hook run", "roborev agent-hook fix-done":
 		return true
 	}
@@ -139,9 +139,6 @@ func executeCLI(root *cobra.Command, args []string) int {
 	if selected == nil {
 		selected = root
 	}
-	if findErr != nil {
-		return renderCLIError(selected, args, usageErr(selected, findErr))
-	}
 	var diagnostics bytes.Buffer
 	if cliBoolFlag(selected, args, "json") {
 		oldLifecycle, oldWarning := lifecycleOut, cliWarningOut
@@ -153,8 +150,14 @@ func executeCLI(root *cobra.Command, args []string) int {
 		cmd = selected
 	}
 	if err == nil {
+		legacyCommandWarning(cmd, args)
 		_, _ = io.Copy(root.ErrOrStderr(), &diagnostics)
 		return 0
+	}
+	if findErr != nil {
+		// Cobra registers its hidden shell-completion command during ExecuteC,
+		// so an initial Find failure must not prevent successful completion.
+		err = usageErr(cmd, err)
 	}
 	return renderCLIError(cmd, args, err)
 }
@@ -179,7 +182,7 @@ func renderCLIError(cmd *cobra.Command, args []string, err error) int {
 	if isCLIHook(cmd) {
 		// These hook failures were brief Cobra diagnostics before shared
 		// rendering. Only post-commit suppresses its returned errors.
-		if cmd.CommandPath() != "roborev post-commit" {
+		if stableCommandPath(cmd) != "roborev post-commit" {
 			fmt.Fprintln(cmd.ErrOrStderr(), "Error:", err)
 		}
 		return code

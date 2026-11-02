@@ -14,7 +14,7 @@ func TestLegacyReviewArchiveAndExplicitConversion(t *testing.T) {
 	t.Parallel()
 	env := setupJobEnv(t, "/tmp/legacy-review", "legacy-head")
 	claimJob(t, env.db, "worker")
-	_, err := env.db.Exec(`INSERT INTO reviews (job_id, agent, output, uuid)
+	_, err := env.db.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, output, uuid)
  VALUES (?, 'test', 'A finding without a severity or fix.', '11111111-1111-4111-8111-111111111111')`, env.job.ID)
 	require.NoError(t, err)
 	require.NoError(t, env.db.migrateLegacyReviews())
@@ -37,9 +37,9 @@ func TestLegacyReviewArchiveAndExplicitConversion(t *testing.T) {
 	assert.Equal(t, VerdictFail, got.Verdict())
 	assert.Contains(t, got.Output, "The operation loses a record.")
 	var stored, original string
-	require.NoError(t, env.db.QueryRow(`SELECT output FROM reviews WHERE job_id = ?`, env.job.ID).Scan(&stored))
+	require.NoError(t, env.db.QueryRowContext(t.Context(), `SELECT output FROM reviews WHERE job_id = ?`, env.job.ID).Scan(&stored))
 	assert.Empty(t, stored)
-	require.NoError(t, env.db.QueryRow(`SELECT output FROM legacy_reviews WHERE archive_id = ?`, records[0].ID).Scan(&original))
+	require.NoError(t, env.db.QueryRowContext(t.Context(), `SELECT output FROM legacy_reviews WHERE archive_id = ?`, records[0].ID).Scan(&original))
 	assert.Equal(t, "A finding without a severity or fix.", original)
 	remaining, err := env.db.UnresolvedLegacyReviews()
 	require.NoError(t, err)
@@ -55,7 +55,7 @@ func TestReviewWritesRequireJSON(t *testing.T) {
 	require.NoError(t, env.db.CompleteJobResult(env.job.ID, "test", ReviewCompletion{Output: "rendered Markdown must not be stored", StructuredOutput: raw}))
 	var output string
 	var document []byte
-	require.NoError(t, env.db.QueryRow(`SELECT output, structured_output FROM reviews WHERE job_id = ?`, env.job.ID).Scan(&output, &document))
+	require.NoError(t, env.db.QueryRowContext(t.Context(), `SELECT output, structured_output FROM reviews WHERE job_id = ?`, env.job.ID).Scan(&output, &document))
 	assert.Empty(t, output)
 	assert.JSONEq(t, string(raw), string(document))
 	got, err := env.db.GetReviewByJobID(env.job.ID)
@@ -68,7 +68,7 @@ func TestLegacyReviewWithJSONUsesDocument(t *testing.T) {
 	t.Parallel()
 	env := setupJobEnv(t, "/tmp/dual-review", "dual-head")
 	raw := `{"schema_version":2,"summary":"Canonical summary.","verdict":"pass","findings":[]}`
-	_, err := env.db.Exec(`INSERT INTO reviews (job_id, agent, output, structured_output, uuid)
+	_, err := env.db.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, output, structured_output, uuid)
  VALUES (?, 'test', 'Obsolete Markdown', ?, '22222222-2222-4222-8222-222222222222')`, env.job.ID, raw)
 	require.NoError(t, err)
 	require.NoError(t, env.db.migrateLegacyReviews())
@@ -80,7 +80,7 @@ func TestLegacyReviewWithJSONUsesDocument(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, records)
 	var original string
-	require.NoError(t, env.db.QueryRow(`SELECT output FROM legacy_reviews WHERE job_id = ?`, env.job.ID).Scan(&original))
+	require.NoError(t, env.db.QueryRowContext(t.Context(), `SELECT output FROM legacy_reviews WHERE job_id = ?`, env.job.ID).Scan(&original))
 	assert.Equal(t, "Obsolete Markdown", original)
 }
 
@@ -88,24 +88,24 @@ func TestLegacySynthesisRequiresKnownSources(t *testing.T) {
 	t.Parallel()
 	env := setupJobEnv(t, "/tmp/legacy-synthesis", "synthesis-head")
 	runID := testUUID("legacy-synthesis")
-	_, err := env.db.Exec(`UPDATE review_jobs SET job_type = 'synthesis', panel_run_uuid = ?, panel_role = 'synthesis' WHERE id = ?`, runID, env.job.ID)
+	_, err := env.db.ExecContext(t.Context(), `UPDATE review_jobs SET job_type = 'synthesis', panel_run_uuid = ?, panel_role = 'synthesis' WHERE id = ?`, runID, env.job.ID)
 	require.NoError(t, err)
 	for i, status := range []string{"failed", "done", "done"} {
 		member, err := env.db.EnqueueJob(EnqueueOpts{RepoID: env.repo.ID, GitRef: "synthesis-head", Agent: "test", ReviewType: []string{"", "security", "design"}[i], PanelRunUUID: &runID, PanelRole: PanelRoleMember, PanelMemberIndex: i})
 		require.NoError(t, err)
-		_, err = env.db.Exec(`UPDATE review_jobs SET status = ? WHERE id = ?`, status, member.ID)
+		_, err = env.db.ExecContext(t.Context(), `UPDATE review_jobs SET status = ? WHERE id = ?`, status, member.ID)
 		require.NoError(t, err)
 		if status == "done" {
-			_, err = env.db.Exec(`INSERT INTO reviews (job_id, agent, output, structured_output, uuid) VALUES (?, 'test', '', ?, ?)`, member.ID, `{"schema_version":2,"summary":"Clean change.","verdict":"pass","findings":[]}`, testUUID(status+member.ReviewType))
+			_, err = env.db.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, output, structured_output, uuid) VALUES (?, 'test', '', ?, ?)`, member.ID, `{"schema_version":2,"summary":"Clean change.","verdict":"pass","findings":[]}`, testUUID(status+member.ReviewType))
 			require.NoError(t, err)
 			for _, suffix := range []string{"old-a", "old-b"} {
-				_, err = env.db.Exec(`INSERT INTO legacy_reviews (job_id, agent, output, created_at, closed, uuid, migration_error, resolved_at) VALUES (?, 'test', 'No issues found.', datetime('now'), 0, ?, '', datetime('now'))`, member.ID, testUUID(member.ReviewType+suffix))
+				_, err = env.db.ExecContext(t.Context(), `INSERT INTO legacy_reviews (job_id, agent, output, created_at, closed, uuid, migration_error, resolved_at) VALUES (?, 'test', 'No issues found.', datetime('now'), 0, ?, '', datetime('now'))`, member.ID, testUUID(member.ReviewType+suffix))
 				require.NoError(t, err)
 			}
 		}
 	}
 	raw := `{"schema_version":2,"summary":"Synthesis finding.","verdict":"fail","findings":[{"severity":"high","problem":"The operation loses a record.","fix":"Keep the record until completion.","location":null,"sources":[1]}]}`
-	_, err = env.db.Exec(`INSERT INTO reviews (job_id, agent, output, structured_output, uuid) VALUES (?, 'test', 'Original synthesis', ?, ?)`, env.job.ID, raw, testUUID("synthesis-review"))
+	_, err = env.db.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, output, structured_output, uuid) VALUES (?, 'test', 'Original synthesis', ?, ?)`, env.job.ID, raw, testUUID("synthesis-review"))
 	require.NoError(t, err)
 	require.NoError(t, env.db.migrateLegacyReviews())
 	records, err := env.db.UnresolvedLegacyReviews()
@@ -125,7 +125,7 @@ func TestLegacySynthesisRequiresKnownSources(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, got.Output, "test")
 	var stored string
-	require.NoError(t, env.db.QueryRow(`SELECT structured_output FROM reviews WHERE job_id = ?`, env.job.ID).Scan(&stored))
+	require.NoError(t, env.db.QueryRowContext(t.Context(), `SELECT structured_output FROM reviews WHERE job_id = ?`, env.job.ID).Scan(&stored))
 	assert.Contains(t, stored, `"source_labels":["test (security)","test (design)"]`)
 }
 
@@ -139,7 +139,7 @@ func TestLegacyReviewResolvedBySync(t *testing.T) {
 		Agent: "test", Output: "Unstructured review.",
 		UpdatedByMachineID: testUUID("remote-machine"), CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
-	_, seedErr := env.db.Exec(`INSERT INTO reviews (job_id, agent, output, uuid) VALUES (?, 'test', ?, ?)`, env.job.ID, incoming.Output, incoming.UUID)
+	_, seedErr := env.db.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, output, uuid) VALUES (?, 'test', ?, ?)`, env.job.ID, incoming.Output, incoming.UUID)
 	require.NoError(t, seedErr)
 	require.NoError(t, env.db.migrateLegacyReviews())
 	_, err := env.db.GetReviewByJobID(env.job.ID)
@@ -153,7 +153,7 @@ func TestLegacyReviewResolvedBySync(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, remaining)
 	var original string
-	require.NoError(t, env.db.QueryRow(`SELECT output FROM legacy_reviews WHERE uuid = ?`, incoming.UUID).Scan(&original))
+	require.NoError(t, env.db.QueryRowContext(t.Context(), `SELECT output FROM legacy_reviews WHERE uuid = ?`, incoming.UUID).Scan(&original))
 	assert.Equal(t, "Unstructured review.", original)
 }
 

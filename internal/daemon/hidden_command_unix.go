@@ -2,10 +2,13 @@
 
 package daemon
 
-import "os/exec"
+import (
+	"context"
+	"os/exec"
+)
 
-// HiddenCommand returns exec.Command(name, arg...). Console windows are a
+// HiddenCommand returns exec.CommandContext(ctx, name, arg...). Console windows are a
 // Windows-only concern.
-func HiddenCommand(name string, arg ...string) *exec.Cmd {
-	return exec.Command(name, arg...)
+func HiddenCommand(ctx context.Context, name string, arg ...string) *exec.Cmd {
+	return exec.CommandContext(ctx, name, arg...)
 }

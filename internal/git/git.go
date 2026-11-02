@@ -113,8 +113,8 @@ type gitConfigEntry struct {
 	value string
 }
 
-func newGitCommitCmd(repoPath string, args ...string) *exec.Cmd {
-	cmd := exec.Command("git", args...)
+func newGitCommitCmd(ctx context.Context, repoPath string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = repoPath
 	procutil.HideConsole(cmd)
 	cmd.Env = append(filterGitCommitEnv(cmd.Environ()), "GIT_TERMINAL_PROMPT=0")
@@ -2432,11 +2432,11 @@ func hasCommitHooks(repoPath string) bool {
 //     succeed, confirming the commit is otherwise viable.
 //
 // Both conditions must hold to classify the failure as hook-caused.
-func isHookCausingFailure(repoPath string) bool {
+func isHookCausingFailure(ctx context.Context, repoPath string) bool {
 	if !hasCommitHooks(repoPath) {
 		return false
 	}
-	cmd := newGitCommitCmd(repoPath, "commit", "--dry-run", "--no-verify", "-m", "probe")
+	cmd := newGitCommitCmd(ctx, repoPath, "commit", "--dry-run", "--no-verify", "-m", "probe")
 	return cmd.Run() == nil
 }
 
@@ -2821,15 +2821,15 @@ type CommitOptions struct {
 
 // CreateCommit stages all changes and creates a commit with the given message
 // Returns the SHA of the new commit
-func CreateCommit(repoPath, message string) (string, error) {
-	return CreateCommitWithOptions(repoPath, message, CommitOptions{})
+func CreateCommit(ctx context.Context, repoPath, message string) (string, error) {
+	return CreateCommitWithOptions(ctx, repoPath, message, CommitOptions{})
 }
 
 // CreateCommitWithOptions stages all changes and creates a commit with the
 // given message and optional commit metadata. Returns the SHA of the new commit.
-func CreateCommitWithOptions(repoPath, message string, opts CommitOptions) (string, error) {
+func CreateCommitWithOptions(ctx context.Context, repoPath, message string, opts CommitOptions) (string, error) {
 	// Stage all changes (respects .gitignore)
-	cmd := newGitCommitCmd(repoPath, "add", "-A")
+	cmd := newGitCommitCmd(ctx, repoPath, "add", "-A")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -2847,7 +2847,7 @@ func CreateCommitWithOptions(repoPath, message string, opts CommitOptions) (stri
 	}
 	args = append(args, "-m", message)
 	// Create commit.
-	cmd = newGitCommitCmd(repoPath, args...)
+	cmd = newGitCommitCmd(ctx, repoPath, args...)
 	stderr.Reset()
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -2856,7 +2856,7 @@ func CreateCommitWithOptions(repoPath, message string, opts CommitOptions) (stri
 			IsUnsupportedCommitTrailerError(stderrText)
 		return "", &CommitError{
 			Phase:              "commit",
-			HookFailed:         !unsupportedTrailer && isHookCausingFailure(repoPath),
+			HookFailed:         !unsupportedTrailer && isHookCausingFailure(ctx, repoPath),
 			UnsupportedTrailer: unsupportedTrailer,
 			Stderr:             stderrText,
 			Err:                err,
@@ -2864,7 +2864,7 @@ func CreateCommitWithOptions(repoPath, message string, opts CommitOptions) (stri
 	}
 
 	// Get the SHA of the new commit
-	sha, err := ResolveSHA(repoPath, "HEAD")
+	sha, err := ResolveSHACtx(ctx, repoPath, "HEAD")
 	if err != nil {
 		return "", fmt.Errorf("get new commit SHA: %w", err)
 	}

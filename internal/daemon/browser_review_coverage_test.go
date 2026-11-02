@@ -18,7 +18,7 @@ func TestBrowserReviewProjectionOmitsFileCoverage(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	repo := testutil.CreateTestRepo(t, db)
 	job := testutil.CreateCompletedReview(t, db, repo.ID, "coverage-api", "test", "PASS")
-	_, err := db.Exec(`UPDATE reviews SET reviewed_file_count = 0, excluded_file_count = 3 WHERE job_id = ?`, job.ID)
+	_, err := db.ExecContext(t.Context(), `UPDATE reviews SET reviewed_file_count = 0, excluded_file_count = 3 WHERE job_id = ?`, job.ID)
 	require.NoError(t, err)
 	loopbackResponse := serveHuma(t, server, http.MethodGet,
 		fmt.Sprintf("/api/review?job_id=%d", job.ID), nil)
@@ -26,7 +26,7 @@ func TestBrowserReviewProjectionOmitsFileCoverage(t *testing.T) {
 	assert.Contains(t, loopbackResponse.Body.String(), "file_coverage")
 
 	browserResponse := httptest.NewRecorder()
-	serveBrowserReview(browserResponse, httptest.NewRequest(
+	serveBrowserReview(browserResponse, httptest.NewRequestWithContext(t.Context(),
 		http.MethodGet, "/api/review?job_id="+fmt.Sprint(job.ID), nil,
 	), http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(loopbackResponse.Body.Bytes())
@@ -48,7 +48,7 @@ func TestBrowserReviewProjectionOmitsFileCoverage(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(loopback)
 	})
-	request := httptest.NewRequest(http.MethodGet, "/api/review?job_id=2", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/review?job_id=2", nil)
 	recorder := httptest.NewRecorder()
 	serveBrowserReview(recorder, request, core)
 	assert.Equal(t, http.StatusOK, recorder.Code)

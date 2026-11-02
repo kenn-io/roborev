@@ -153,7 +153,7 @@ echo "Review after settings merge"
 	a.Command = filepath.Join(filepath.Dir(scriptPath), "agy")
 	require.NoError(t, os.Rename(scriptPath, a.Command))
 
-	res, err := a.Review(context.Background(), t.TempDir(), "sha", "prompt", &bytes.Buffer{})
+	res, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", &bytes.Buffer{})
 	require.NoError(t, err)
 	assert.Equal(t, "Review after settings merge", res)
 
@@ -189,7 +189,7 @@ echo "Workspace review"
 	a := NewGeminiAgent(filepath.Join(filepath.Dir(scriptPath), "agy"))
 	require.NoError(t, os.Rename(scriptPath, a.Command))
 
-	res, err := a.Review(context.Background(), repoPath, "sha", "prompt", &bytes.Buffer{})
+	res, err := a.Review(t.Context(), repoPath, "sha", "prompt", &bytes.Buffer{})
 	require.NoError(t, err)
 	assert.Equal(t, "Workspace review", res)
 
@@ -233,7 +233,7 @@ exit 0
 	require.NoError(t, os.Rename(scriptPath, commandPath))
 
 	synctest.Test(t, func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 		defer cancel()
 
 		_, reviewErr := NewGeminiAgent(commandPath).Review(ctx, t.TempDir(), "sha", "prompt", &bytes.Buffer{})
@@ -430,7 +430,7 @@ echo "No issues found."
 	require.NoError(t, os.Rename(scriptPath, a.Command))
 
 	var output bytes.Buffer
-	res, err := a.Review(context.Background(), t.TempDir(), "sha", "prompt", &output)
+	res, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", &output)
 
 	require.NoError(t, err)
 	assert.Equal(t, "Plain text review output\nNo issues found.", res)
@@ -471,7 +471,7 @@ echo "No issues found."
 	require.NoError(t, os.Rename(scriptPath, a.Command))
 
 	var output bytes.Buffer
-	res, err := a.Review(context.Background(), t.TempDir(), "sha", "prompt", &output)
+	res, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", &output)
 
 	require.NoError(t, err)
 	assert.Equal(t, "Legacy review output\nNo issues found.", res)
@@ -551,7 +551,7 @@ exit 0
 			}
 
 			var output bytes.Buffer
-			res, err := a.Review(context.Background(), t.TempDir(), "sha", "prompt", &output)
+			res, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", &output)
 
 			if tt.wantInError == nil {
 				require.NoError(t, err)
@@ -598,7 +598,7 @@ echo "No issues found."
 	require.NoError(t, os.Rename(scriptPath, a.Command))
 
 	big := strings.Repeat("x", antigravityMaxPromptArgLen()+1)
-	res, err := a.Review(context.Background(), t.TempDir(), "sha", big, &bytes.Buffer{})
+	res, err := a.Review(t.Context(), t.TempDir(), "sha", big, &bytes.Buffer{})
 
 	require.NoError(t, err)
 	assert.Equal(t, "Large prompt review output\nNo issues found.", res)
@@ -637,7 +637,7 @@ echo "No issues found."
 	a.Command = filepath.Join(filepath.Dir(scriptPath), "agy")
 	require.NoError(t, os.Rename(scriptPath, a.Command))
 
-	res, err := a.Review(context.Background(), t.TempDir(), "sha", "prompt", &bytes.Buffer{})
+	res, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", &bytes.Buffer{})
 
 	require.NoError(t, err)
 	assert.Equal(t, "Review output\nNo issues found.", res)
@@ -678,7 +678,7 @@ func TestAntigravityVersionUsesPromptFlag(t *testing.T) {
 func TestGeminiAntigravityExplicitModelFailsClearly(t *testing.T) {
 	a := NewGeminiAgent("agy").WithModel("gemini-1.5-pro")
 
-	_, err := a.Review(context.Background(), t.TempDir(), "sha", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", nil)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does not support explicit Gemini model selection")
@@ -698,7 +698,7 @@ echo "unexpected antigravity invocation"
 	a.CommandAuto = true
 	a = a.WithModel("gemini-1.5-pro").(*GeminiAgent)
 
-	_, err := a.Review(context.Background(), t.TempDir(), "sha", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", nil)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does not support explicit Gemini model selection")
@@ -786,7 +786,7 @@ exit 1
 			a := NewGeminiAgent(scriptPath)
 			var output bytes.Buffer
 
-			res, err := a.Review(context.Background(), t.TempDir(), "sha", "prompt", &output)
+			res, err := a.Review(t.Context(), t.TempDir(), "sha", "prompt", &output)
 
 			if tc.checkErr != nil {
 				tc.checkErr(t, err)
@@ -816,7 +816,7 @@ echo '{"type":"result","result":"Review from default model"}'
 	a := NewGeminiAgent(scriptPath)
 	var output bytes.Buffer
 	res, err := a.Review(
-		context.Background(), t.TempDir(), "sha", "prompt", &output,
+		t.Context(), t.TempDir(), "sha", "prompt", &output,
 	)
 	require.NoError(t, err)
 	assert.Equal(t, "Review from default model", res)
@@ -843,7 +843,7 @@ exit 1
 	// exits 1, but the important thing is that stderr is captured
 	// correctly and the model-not-found detection triggers the retry.
 	_, err := a.Review(
-		context.Background(), t.TempDir(), "sha", "prompt", &output,
+		t.Context(), t.TempDir(), "sha", "prompt", &output,
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "gemini failed",
@@ -863,7 +863,7 @@ exit 1
 	a.Model = ""
 	var output bytes.Buffer
 	_, err := a.Review(
-		context.Background(), t.TempDir(), "sha", "prompt", &output,
+		t.Context(), t.TempDir(), "sha", "prompt", &output,
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "gemini failed")
@@ -885,7 +885,7 @@ exit 1
 	a := NewGeminiAgent(scriptPath).WithModel("user-specified-model")
 	var output bytes.Buffer
 	_, err := a.Review(
-		context.Background(), t.TempDir(), "sha", "prompt", &output,
+		t.Context(), t.TempDir(), "sha", "prompt", &output,
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "gemini failed")
@@ -932,7 +932,7 @@ echo '{"type":"result","result":"Done"}'
 	a := NewGeminiAgent(scriptPath)
 	var output bytes.Buffer
 	expectedPrompt := "Please review this code for security issues"
-	_, err := a.Review(context.Background(), t.TempDir(), "abc123", expectedPrompt, &output)
+	_, err := a.Review(t.Context(), t.TempDir(), "abc123", expectedPrompt, &output)
 	require.NoError(t, err, "Review failed")
 
 	// Verify the prompt was received

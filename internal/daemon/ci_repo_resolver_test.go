@@ -243,7 +243,7 @@ func TestRepoResolver_Matching(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			r := &RepoResolver{listReposFn: tt.listReposFn, canonicalRepoFn: tt.canonicalFn}
 
-			repos, err := r.Resolve(context.Background(), tt.ci, nil)
+			repos, err := r.Resolve(t.Context(), tt.ci, nil)
 			require.ErrorIs(t, err, tt.wantErr)
 
 			if tt.wantRepos != nil {
@@ -273,7 +273,7 @@ func TestRepoResolver_TokenFnCalled(t *testing.T) {
 		return "test-token"
 	}
 
-	_, err := r.Resolve(context.Background(), ci, tokenFn)
+	_, err := r.Resolve(t.Context(), ci, tokenFn)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"acme"}, tokenOwners, "expected tokenFn called with [acme]")
 }
@@ -291,7 +291,7 @@ func TestRepoResolver_CacheHit(t *testing.T) {
 		Repos: []string{"acme/*"},
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	repos1, err := r.Resolve(ctx, ci, nil)
 	require.NoError(t, err)
@@ -312,7 +312,7 @@ func TestRepoResolver_CacheInvalidationOnConfigChange(t *testing.T) {
 		},
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	_, err := r.Resolve(ctx, &config.CIConfig{Repos: []string{"acme/*"}}, nil)
 	require.NoError(t, err)
@@ -336,7 +336,7 @@ func TestRepoResolver_CacheInvalidationOnTTLExpiry(t *testing.T) {
 		Repos: []string{"acme/*"},
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	_, err := r.Resolve(ctx, ci, nil)
 	require.NoError(t, err)
 
@@ -367,7 +367,7 @@ func TestRepoResolver_CacheInvalidationOnMaxReposChange(t *testing.T) {
 		},
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	repos1, err := r.Resolve(ctx, &config.CIConfig{Repos: []string{"acme/*"}, MaxRepos: 5}, nil)
 	require.NoError(t, err)
@@ -393,7 +393,7 @@ func TestRepoResolver_APIFailureFallback(t *testing.T) {
 		Repos: []string{"acme/*", "acme/explicit-repo"},
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	repos, err := r.Resolve(ctx, ci, nil)
 	require.ErrorIs(t, err, errRepoDiscoveryIncomplete)
@@ -421,7 +421,7 @@ func TestRepoResolver_EmptyResultsCached(t *testing.T) {
 		ExcludeRepos: []string{},
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	repos1, err := r.Resolve(ctx, ci, nil)
 	require.NoError(t, err)
@@ -449,7 +449,7 @@ func TestRepoResolver_DegradedFallsBackToStaleCache(t *testing.T) {
 	ci := &config.CIConfig{
 		Repos: []string{"acme/*"},
 	}
-	ctx := context.Background()
+	ctx := t.Context()
 
 	repos1, err := r.Resolve(ctx, ci, nil)
 	require.NoError(t, err)
@@ -477,7 +477,7 @@ func TestRepoResolver_CancelledContextReturnsError(t *testing.T) {
 		Repos: []string{"acme/*"},
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	_, err := r.Resolve(ctx, ci, nil)
@@ -495,7 +495,7 @@ func TestRepoResolver_DeadlineExceededReturnsError(t *testing.T) {
 		Repos: []string{"acme/*"},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 0)
+	ctx, cancel := context.WithTimeout(t.Context(), 0)
 	defer cancel()
 
 	_, err := r.Resolve(ctx, ci, nil)

@@ -19,7 +19,7 @@ command.
 
 For every selected review, the agent:
 
-1. Fetches the review with `roborev show --job <id> --json`.
+1. Fetches the review with `roborev job show --job <id> --json`.
 1. Checks each finding against the current code, relevant callers and data
    flow, repository instructions, tests, and developer comments.
 1. Triages each finding before editing. A reviewer looks for gaps without

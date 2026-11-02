@@ -428,7 +428,7 @@ func TestTUITickNoRefreshWhileLoadingJobs(t *testing.T) {
 
 func TestTUIDisplayTickDoesNotTriggerRefresh(t *testing.T) {
 	t.Parallel()
-	m := newModel(testEndpointFromURL("http://localhost"))
+	m := newModel(testEndpointFromURL("http://localhost"), withExternalIODisabled())
 	m.loadingJobs = false
 	m.loadingMore = false
 
@@ -709,6 +709,7 @@ func TestTUIHideClosedMalformedConfigNotOverwritten(t *testing.T) { //nolint:par
 	}
 
 	m := newModel(testEndpoint)
+	t.Cleanup(func() { close(m.sseStop) })
 	m.currentView = viewQueue
 
 	// Toggle hide closed ON
@@ -1645,6 +1646,7 @@ func TestNewModelLoadsMouseDisabledFromConfig(t *testing.T) { //nolint:parallelt
 	}
 
 	m := newModel(testEndpoint)
+	t.Cleanup(func() { close(m.sseStop) })
 	if m.mouseEnabled {
 		require.Condition(t, func() bool {
 			return false
@@ -1766,6 +1768,7 @@ func TestTUIHideClosed(t *testing.T) { //nolint:paralleltest // os.Setenv of ROB
 		}
 
 		m := newModel(testEndpoint)
+		t.Cleanup(func() { close(m.sseStop) })
 		if !m.hideClosed {
 			assert.Condition(t, func() bool {
 				return false
@@ -2114,6 +2117,7 @@ func TestTUIHideClosed(t *testing.T) { //nolint:paralleltest // os.Setenv of ROB
 		}
 
 		m := newModel(testEndpoint)
+		t.Cleanup(func() { close(m.sseStop) })
 		m.currentView = viewQueue
 
 		// Verify the default was loaded

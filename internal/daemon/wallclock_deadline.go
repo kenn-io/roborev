@@ -29,14 +29,14 @@ func withWallClockTimeout(parent context.Context, timeout time.Duration) (contex
 // propagates this context's Err, not the wrapped context's Canceled, to
 // derived contexts.
 type wallClockDeadlineCtx struct {
-	context.Context
-	cancelInner context.CancelCauseFunc
-	deadline    time.Time
-	now         func() time.Time
-	done        chan struct{}
-	once        sync.Once
-	mu          sync.Mutex
-	err         error
+	context.Context //nolint:containedctx // this type is a context.Context implementation
+	cancelInner     context.CancelCauseFunc
+	deadline        time.Time
+	now             func() time.Time
+	done            chan struct{}
+	once            sync.Once
+	mu              sync.Mutex
+	err             error
 }
 
 func newWallClockDeadline(parent context.Context, deadline time.Time, now func() time.Time) (context.Context, context.CancelFunc) {

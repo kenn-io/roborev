@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"net"
@@ -60,7 +59,9 @@ func TestClientResponseObserver(t *testing.T) {
 		_, wrapped := client.Transport.(observedTransport)
 		assert.False(wrapped)
 
-		resp, err := client.Get(ep.BaseURL() + "/api/status")
+		getRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ep.BaseURL()+"/api/status", nil)
+		require.NoError(t, err)
+		resp, err := client.Do(getRequest)
 		require.NoError(t, err)
 		body, err := io.ReadAll(resp.Body)
 		require.NoError(t, err)
@@ -74,7 +75,9 @@ func TestClientResponseObserver(t *testing.T) {
 		client := ep.HTTPClient(2 * time.Second)
 
 		for _, path := range []string{"/api/status", "/api/jobs"} {
-			resp, err := client.Get(ep.BaseURL() + path)
+			getRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ep.BaseURL()+path, nil)
+			require.NoError(t, err)
+			resp, err := client.Do(getRequest)
 			require.NoError(t, err)
 			body, err := io.ReadAll(resp.Body)
 			require.NoError(t, err)
@@ -89,12 +92,14 @@ func TestClientResponseObserver(t *testing.T) {
 
 	t.Run("not called on a transport error", func(t *testing.T) {
 		calls := recordObserver(t)
-		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 		require.NoError(t, err)
 		closed := DaemonEndpoint{Network: "tcp", Address: ln.Addr().String()}
 		require.NoError(t, ln.Close())
 
-		_, err = closed.HTTPClient(2 * time.Second).Get(closed.BaseURL() + "/api/status")
+		getRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, closed.BaseURL()+"/api/status", nil)
+		require.NoError(t, err)
+		_, err = closed.HTTPClient(2 * time.Second).Do(getRequest)
 		require.Error(t, err)
 		assert.Empty(t, calls())
 	})
@@ -107,7 +112,7 @@ func TestClientResponseObserverUnixSocket(t *testing.T) {
 	assert := assert.New(t)
 	sockPath := filepath.Join("/tmp", fmt.Sprintf("roborev-observer-%d.sock", os.Getpid()))
 	t.Cleanup(func() { os.Remove(sockPath) })
-	ln, err := net.Listen("unix", sockPath)
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", sockPath)
 	require.NoError(t, err)
 	defer ln.Close()
 
@@ -133,12 +138,14 @@ func TestClientResponseObserverUnixSocket(t *testing.T) {
 			return
 		}
 		observedEP = ep
-		new(telemetry.ClientGate).PostAppOpened(context.Background(), ep.HTTPClient(0), ep.BaseURL()+TelemetryEventsPath, telemetry.SurfaceCLI)
+		new(telemetry.ClientGate).PostAppOpened(t.Context(), ep.HTTPClient(0), ep.BaseURL()+TelemetryEventsPath, telemetry.SurfaceCLI)
 	})
 	t.Cleanup(func() { SetClientResponseObserver(nil) })
 
 	ep := DaemonEndpoint{Network: "unix", Address: sockPath}
-	resp, err := ep.HTTPClient(2 * time.Second).Get(ep.BaseURL() + "/test")
+	getRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ep.BaseURL()+"/test", nil)
+	require.NoError(t, err)
+	resp, err := ep.HTTPClient(2 * time.Second).Do(getRequest)
 	require.NoError(t, err)
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)

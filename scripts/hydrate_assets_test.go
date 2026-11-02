@@ -55,7 +55,7 @@ func TestHydrateAssetsForceFetchesRemoteAssetBranches(t *testing.T) {
 	scriptPath := filepath.Join(docsAssetsDir, "hydrate-assets.sh")
 	require.NoError(t, os.WriteFile(scriptPath, script, 0o755))
 
-	cmd := exec.Command("bash", bashPath(t, scriptPath))
+	cmd := exec.CommandContext(t.Context(), "bash", bashPath(t, scriptPath))
 	cmd.Dir = localRepo
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(output))
@@ -98,7 +98,7 @@ func TestAssetPublishersRejectUnexpectedFiles(t *testing.T) {
 			require.NoError(t, os.WriteFile(filepath.Join(sourceDir, ".env.local"), []byte("TOKEN=secret\n"), 0o600))
 
 			scriptPath := installAssetScript(t, repo, tc.scriptRel)
-			cmd := exec.Command("bash", bashPath(t, scriptPath), "--source", bashPath(t, sourceDir))
+			cmd := exec.CommandContext(t.Context(), "bash", bashPath(t, scriptPath), "--source", bashPath(t, sourceDir))
 			cmd.Dir = repo
 			output, err := cmd.CombinedOutput()
 
@@ -119,7 +119,7 @@ func TestGeneratedAssetPublisherRequiresBrowserScreenshot(t *testing.T) {
 	require.NoError(t, os.Remove(filepath.Join(sourceDir, "web-ui.png")))
 
 	scriptPath := installAssetScript(t, repo, filepath.Join("docs", "screenshots", "update-generated-assets-branch.sh"))
-	cmd := exec.Command("bash", bashPath(t, scriptPath), "--source", bashPath(t, sourceDir))
+	cmd := exec.CommandContext(t.Context(), "bash", bashPath(t, scriptPath), "--source", bashPath(t, sourceDir))
 	cmd.Dir = repo
 	output, err := cmd.CombinedOutput()
 
@@ -198,7 +198,7 @@ func writeAssetFiles(t *testing.T, dir string, files []string, content string) {
 
 func git(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(t.Context(), "git", args...)
 	cmd.Dir = dir
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(output))
@@ -206,7 +206,7 @@ func git(t *testing.T, dir string, args ...string) {
 
 func gitOutput(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(t.Context(), "git", args...)
 	cmd.Dir = dir
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(output))

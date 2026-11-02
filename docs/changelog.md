@@ -7,6 +7,12 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
+- Find review records under `job`, aggregate reports under `report`, Git hooks
+    under `hook`, and provider checks and integrations under `agent`. Queue
+    controls live under `daemon`; repair commands live under `storage` and
+    remote key creation under `signing init`. Previous spellings remain hidden
+    compatibility commands for at least one release. See the
+    [command mapping](/docs/commands/#command-groups-and-migration).
 - Use root help as a guide to the review workflow, job IDs, target selection,
     output modes and recovery. Commands are grouped by purpose and include
     examples; `ls` aliases `list` and `resolve` aliases `close`.

@@ -40,8 +40,8 @@ or `post_commit_quiet_period`.
 
 ```sh
 git commit -m "Add retry to payment webhook"
-roborev status                       # daemon, queue depth, running jobs
-roborev show HEAD                    # the rendered review for the latest commit
+roborev daemon status                       # daemon, queue depth, running jobs
+roborev job show HEAD                    # the rendered review for the latest commit
 roborev review --branch --type security   # or ask for one explicitly
 ```
 
@@ -72,12 +72,12 @@ that applies changes and commits; the new commit is reviewed automatically.
 
 ## 05 / Let the session fix its own reviews
 
-`roborev agent-hook install` detects Claude Code, Codex, Copilot CLI, Cursor,
+`roborev agent hook install` detects Claude Code, Codex, Copilot CLI, Cursor,
 Factory Droid, Gemini CLI, Hermes, and Qwen and installs their native lifecycle
 hooks. The daemon counts turns, commits, and failed reviews per session; when a
 threshold trips, the agent is reminded to run the fix skill for exactly the
 review IDs that are open. Reminders never run `roborev fix` on their own, and
-`roborev snooze` silences a worktree while you focus.
+`roborev agent hook snooze` silences a worktree while you focus.
 
 ```toml
 # ~/.roborev/config.toml
@@ -134,7 +134,7 @@ review type, instructions, and timeout, and a synthesis agent merges them into
 one review. Built-in `security`, `design`, `lookahead`, and `test-value` types
 swap the rubric; custom types wrap your own Go template. `roborev analyze` runs
 duplication, complexity, dead-code, refactoring, API-design, architecture,
-security, and test-fixture passes over existing code, and `roborev compact`
+security, and test-fixture passes over existing code, and `roborev job compact`
 verifies open findings against the current tree.
 
 ```toml
@@ -151,7 +151,7 @@ synthesis_agent = "codex"
 ```sh
 roborev review --branch --panel branch_final
 roborev analyze dead-code ./... --fix
-roborev compact
+roborev job compact
 ```
 
 → [Review panels](https://roborev.io/docs/advanced/subagent-review-panels/),

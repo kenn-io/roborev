@@ -7,20 +7,24 @@ run:
 linters:
   default: none
   enable:
+    - containedctx
     - errcheck
     - depguard
     - errorlint
+    - fatcontext
     - forbidigo
     - govet
     - ineffassign
     - kennlint
     - kennnolint
     - modernize
+    - noctx
     - nolintlint
     - paralleltest
     - staticcheck
     - testifylint
     - unused
+    - usetesting
   settings:
     nolintlint:
       require-specific: true
@@ -39,6 +43,15 @@ linters:
     paralleltest:
       # Subtests inside a parallel test share its fixture, so only top-level tests must opt in.
       ignore-missing-subtests: true
+    usetesting:
+      # Only the context checks for now; moving tests to t.Chdir, t.Setenv and
+      # t.TempDir is separate work.
+      os-create-temp: false
+      os-mkdir-temp: false
+      os-setenv: false
+      os-chdir: false
+      context-background: true
+      context-todo: true
     errcheck:
       check-type-assertions: false
       check-blank: false
@@ -75,6 +88,14 @@ linters:
       - linters:
           - modernize
         text: "omitzero:"
+      # The SQLite storage API predates context propagation: most exported
+      # storage methods take no context, so their database/sql calls cannot
+      # pass one yet. Threading contexts through that API is separate work.
+      # The rule also covers storage tests, which already pass t.Context().
+      - linters:
+          - noctx
+        path: ^internal/storage/
+        text: database/sql
       # Only the storage and tui tests run in parallel so far.
       - linters:
           - paralleltest
