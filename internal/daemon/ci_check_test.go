@@ -107,7 +107,7 @@ func setupCICheckCompletion(t *testing.T, threshold, instructions string, usage 
 	}
 	encoded, err := (synthesisJobConfig{Instructions: instructions, Check: &ciCheckConfig{Reasoning: "high"}}).encode()
 	require.NoError(t, err)
-	_, err = tc.DB.Exec("UPDATE review_jobs SET panel_member_config_json = ?, min_severity = ? WHERE panel_run_uuid = ? AND panel_role = 'synthesis'", encoded, threshold, run)
+	_, err = tc.DB.ExecContext(t.Context(), "UPDATE review_jobs SET panel_member_config_json = ?, min_severity = ? WHERE panel_run_uuid = ? AND panel_role = 'synthesis'", encoded, threshold, run)
 	require.NoError(t, err)
 	markMemberRunning(t, tc, members[0].ID)
 	require.NoError(t, tc.DB.CompleteJobResult(members[0].ID, "test", storage.ReviewCompletion{Output: "two claims", Verdict: storage.VerdictFail, StructuredOutput: jsontext.Value(raw)}))
@@ -141,7 +141,7 @@ func TestCICheckCompletionFailure(t *testing.T) {
 	assert.Equal(t, original.review.Verdict, stored.Verdict())
 	assert.Equal(t, doc, checked)
 	var invoked bool
-	require.NoError(t, tc.DB.QueryRow("SELECT agent_invoked FROM review_jobs WHERE id = ?", job.ID).Scan(&invoked))
+	require.NoError(t, tc.DB.QueryRowContext(t.Context(), "SELECT agent_invoked FROM review_jobs WHERE id = ?", job.ID).Scan(&invoked))
 	assert.False(t, invoked)
 	log, err := os.ReadFile(JobLogPath(job.ID))
 	require.NoError(t, err)
