@@ -64,7 +64,7 @@ func TestWaitForJobCompletionReturnsNotFoundImmediately(t *testing.T) {
 	defer server.Close()
 	patchServerAddr(t, server.URL)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 1500*time.Millisecond)
 	defer cancel()
 
 	review, err := waitForJobCompletion(ctx, server.URL, 123, nil)
@@ -103,7 +103,7 @@ func TestAuthJobPollingStopsOnTerminalDenial(t *testing.T) {
 			}))
 			defer server.Close()
 			patchServerAddr(t, server.URL)
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 			defer cancel()
 			review, err := waitForJobCompletion(ctx, server.URL, 23, io.Discard)
 			wantErr := daemon.ErrDaemonAccessDenied

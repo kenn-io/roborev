@@ -188,26 +188,56 @@ The schema is fixed by roborev. The agent must return:
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "summary": "Overall assessment",
   "verdict": "fail",
   "findings": [
     {
       "severity": "high",
+      "kind": "defect",
+      "topic": "security",
+      "confidence": 0.8,
       "problem": "What is wrong and why it matters",
       "fix": "A concrete correction",
-      "location": "optional/file.go:42"
+      "file": "internal/file.go",
+      "start_line": 42,
+      "end_line": 45
     }
   ]
 }
 ```
 
 `schema_version`, `summary`, `verdict`, and `findings` are required. The current
-schema version is `2`; stored version `1` documents (without a verdict) still
-load, and Roborev rejects missing or unsupported versions. `verdict` is `pass`,
-`fail`, or `unable_to_review`. Every finding requires `severity`, `problem`,
-`fix`, and `location`; use `null` when a finding has no location. Severity must
-be one of `critical`, `high`, `medium`, or `low`.
+schema version is `3`. Stored version `1` and `2` documents still load, and
+Roborev rejects missing or unsupported versions. `verdict` is `pass`, `fail`, or
+`unable_to_review`.
+
+Every finding requires these members:
+
+- `severity`: `critical`, `high`, `medium`, or `low`.
+- `kind`: `defect` when the code behaves wrongly in a case the finding names, or
+    `improvement` when the code works but should still change, such as a missing
+    or weak test, wrong documentation, or structure that will cost later work.
+- `topic`: `tests`, `documentation`, `security`, `performance`, or `design` when
+    the finding is about one of those areas, otherwise `null`. A defect can have
+    a topic, and so can an improvement.
+- `confidence`: a number from 0 to 1. Roborev uses it only to break ties when it
+    orders findings.
+- `problem` and `fix`.
+- `file`, `start_line`, and `end_line`: the path relative to the repository root
+    and the line range in the reviewed code. Use `null` for the lines when a
+    finding covers a whole file, and `null` for all three when it has no file.
+
+`kind`, `topic`, and `confidence` are stored in the review document and exported
+with it. They never appear in the rendered review or in pull request comments.
+
+Before storing a review, Roborev checks every cited file against the reviewed
+commit, or the working tree for uncommitted changes. A finding whose file does
+not exist there keeps its text but loses its location, and a line range past the
+end of the file is shortened. Roborev then merges findings with identical
+problem and fix text at nearly the same lines of the same file. It orders the
+rest by severity, then by how many panel members reported them, then by
+confidence.
 
 The agent's verdict is shown in the review as an assessment but does not change
 the outcome: the findings and the severity threshold decide pass or fail. The
@@ -257,6 +287,134 @@ implement threshold filtering.
 When CI has no command-line `--reasoning` value or repository `[ci].reasoning`,
 a custom type's `reasoning` field controls that type. An explicit CI value
 applies to every review in the matrix.
+
+## One-shot simplify recipe
+
+Use `simplify` to review **over-engineering in the diff**, once per change. It
+asks what can be cut while preserving behavior. It does not review correctness
+or propose new requirements, abstractions, or ownership changes. Unlike
+`roborev analyze refactor`, `dead-code`, or `complexity`, which inspect whole
+selected files, this rubric reports only changed lines. It may read surrounding
+code to check whether a simplification preserves behavior.
+
+Add this definition to `.roborev.toml`, merging it with any existing tables:
+
+```toml
+[review.types.simplify]
+template = "rubrics/simplify.md"
+agent = "codex"
+reasoning = "thorough"
+```
+
+Save the following rubric as `rubrics/simplify.md`, outside `snapshot_dir` so it
+can be committed:
+
+```markdown
+Review over-engineering only, not correctness. Review the supplied diff and
+report only concrete simplifications on changed lines. Read surrounding code
+and real callers as needed to establish that behavior stays the same.
+
+Do not change observable behavior, redesign ownership, add abstractions,
+broaden scope, invent future requirements, or make style-only comments.
+If you cannot establish an equivalent smaller replacement, omit the finding.
+
+For each unit the diff adds, name the existing unit in the codebase or this
+diff that already does the same job, if one exists. Include that name when
+reporting duplication, including checks another layer already makes.
+Walk guards, special cases, and new state through their real callers. Count
+as extra anything that never changes what a user sees. Name smaller designs
+by what they drop, and state the behavior-preserving replacement.
+
+Choose exactly one tag per finding:
+- delete: dead or speculative code
+- stdlib: a replacement from the standard library
+- native: an existing platform facility that replaces custom code
+- yagni: an unused abstraction or flexibility
+- shrink: the same behavior in fewer lines
+
+Use roborev's required JSON schema. Set kind to improvement, topic to design,
+and severity to low. Put the whole recommendation on one line in problem:
+<file>:L<line>: <tag>: <what to cut>. <replacement>.
+Also put the replacement in fix, and set file, start_line, and end_line to
+that changed location. Do not add line breaks inside problem or fix.
+With no concrete simplifications, return an empty findings array and pass.
+```
+
+For example, a finding's `problem` could be:
+
+```text
+lookup.go:L18: stdlib: Drop the manual membership scan. Use slices.Contains.
+```
+
+That is the recommendation's format, not a new output mode. Custom reviews
+always return Roborev's structured schema; its normal Markdown renderer adds
+severity, fix, and location formatting. A template cannot make the rendered
+review exactly one line per finding.
+
+Run it explicitly on a commit or the branch diff:
+
+```bash
+roborev review HEAD --type simplify --panel none --wait
+roborev review --branch --type simplify --panel none --wait
+```
+
+Choose one target and run once, then decide which suggestions to take by hand.
+Do not repeat until clean. Normal agent execution retries can still occur.
+`--panel none` bypasses configured default panels for this standalone run.
+
+### Optional manual panel
+
+For a named, single-member panel, add:
+
+```toml
+[review.subagents.simplify]
+review_type = "simplify"
+
+[review.panels.simplify-once]
+members = ["simplify"]
+synthesis_agent = "codex"
+```
+
+Select it only when wanted:
+
+```bash
+roborev review --branch --panel simplify-once --wait
+```
+
+You can also add the member to a manually selected mixed panel. Read its
+individual output for the tagged recommendations: synthesis may rewrite them. A
+`non_voting = true` member keeps its findings out of synthesis and the panel
+verdict, so read that member separately.
+
+### Keep it out of automatic loops
+
+Defining `simplify` does not schedule it. Keep it out of panels selected by
+`[review].default_panel` and `[review].hook_review_panel`, and out of CI's
+`[ci].panel`, `[ci].review_types`, and `[ci.reviews]` matrix. Check global as
+well as repository configuration: omitting a repository setting can inherit a
+global selection. Keep your usual correctness reviews in those automatic
+selections.
+
+A custom type has no per-type setting that excludes it from `fix` or `refine`
+discovery. An open failing standalone simplify review, or a failing panel parent
+containing it, can be picked up. After reading the suggestions and deciding what
+to apply, close that job before running broad fix/refine discovery:
+
+```bash
+roborev show 123
+roborev close 123
+```
+
+Use the job ID returned by your review; for a panel, close the parent. Closing
+records your decision, not proof that every suggestion was implemented. Do not
+pass that job explicitly to `roborev fix` or an automated fixing agent.
+
+`fix` does not iterate, but it can enqueue a review of its fix commit. `refine`
+re-reviews fixes in a loop. Those enqueue requests do not preserve the original
+custom type; configured default panels or post-commit hooks can still run it
+again if they include it. CI also reruns its selected panel or matrix on new
+heads. Keeping simplify out of those selections and closing its one-shot review
+are separate steps; there is no configuration switch that enforces both.
 
 ## Document review example
 

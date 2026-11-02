@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	ghpkg "go.kenn.io/roborev/internal/github"
+	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
@@ -138,7 +139,7 @@ func TestCIPollerHarnessProcessPRGitStubsGitHubSideEffects(t *testing.T) {
 
 	h.stubProcessPRGit()
 
-	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
+	err := h.Poller.processPR(t.Context(), "acme/api", ghPR{
 		Number:      42,
 		HeadRefOid:  "head-sha-123",
 		BaseRefName: "main",
@@ -241,7 +242,7 @@ func TestCIPollerDiscordWebhookReadsURLAtEventTime(t *testing.T) {
 
 		_, _, members := h.seedCIPanelRun(t, "acme/api", 1, "headsha111", "base..headsha111",
 			[]jobSpec{{Agent: "codex", ReviewType: "security", Status: "failed", Error: "agent: failed"}})
-		_, err := h.DB.Exec(`UPDATE review_jobs SET retry_count = 2 WHERE id = ?`, members[0].ID)
+		_, err := h.DB.ExecContext(t.Context(), `UPDATE review_jobs SET retry_count = 2 WHERE id = ?`, members[0].ID)
 		require.NoError(t, err)
 
 		h.Poller.handleReviewFailed(ciEvent(members[0].ID, "review.failed"))
@@ -382,30 +383,30 @@ type jobSpec struct {
 // markJobDoneWithReview sets a job to "done" and inserts a review row.
 func (h *ciPollerHarness) markJobDoneWithReview(t *testing.T, jobID int64, agent, output string) {
 	t.Helper()
-	_, err := h.DB.Exec(`UPDATE review_jobs SET status='done' WHERE id = ?`, jobID)
+	_, err := h.DB.ExecContext(t.Context(), `UPDATE review_jobs SET status='done' WHERE id = ?`, jobID)
 	require.NoError(t, err, "mark done")
-	_, err = h.DB.Exec(`INSERT INTO reviews (job_id, agent, output, structured_output, verdict_bool) VALUES (?, ?, '', ?, ?)`, jobID, agent, string(testutil.ReviewFixtureJSON(output)), testutil.ReviewFixtureVerdict(output))
+	_, err = h.DB.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, output, structured_output, verdict_bool) VALUES (?, ?, '', ?, ?)`, jobID, agent, string(testutil.ReviewFixtureJSON(output)), testutil.ReviewFixtureVerdict(output))
 	require.NoError(t, err, "insert review")
 }
 
 // markJobFailed sets a job to "failed" with the given error text.
 func (h *ciPollerHarness) markJobFailed(t *testing.T, jobID int64, errText string) {
 	t.Helper()
-	_, err := h.DB.Exec(`UPDATE review_jobs SET status='failed', error=? WHERE id = ?`, errText, jobID)
+	_, err := h.DB.ExecContext(t.Context(), `UPDATE review_jobs SET status='failed', error=? WHERE id = ?`, errText, jobID)
 	require.NoError(t, err, "mark failed")
 }
 
 // markJobCanceled sets a job to "canceled" with the given error text.
 func (h *ciPollerHarness) markJobCanceled(t *testing.T, jobID int64, errText string) {
 	t.Helper()
-	_, err := h.DB.Exec(`UPDATE review_jobs SET status='canceled', error=? WHERE id = ?`, errText, jobID)
+	_, err := h.DB.ExecContext(t.Context(), `UPDATE review_jobs SET status='canceled', error=? WHERE id = ?`, errText, jobID)
 	require.NoError(t, err, "mark canceled")
 }
 
 // markJobRunning sets a job to "running" (a non-terminal in-flight member).
 func (h *ciPollerHarness) markJobRunning(t *testing.T, jobID int64) {
 	t.Helper()
-	_, err := h.DB.Exec(`UPDATE review_jobs SET status='running' WHERE id = ?`, jobID)
+	_, err := h.DB.ExecContext(t.Context(), `UPDATE review_jobs SET status='running' WHERE id = ?`, jobID)
 	require.NoError(t, err, "mark running")
 }
 
@@ -413,10 +414,10 @@ func stubGitCloneFn(t *testing.T, remoteURL string, called *bool) func(context.C
 	t.Helper()
 	return func(_ context.Context, _, targetPath string, _ []string) error {
 		*called = true
-		if err := exec.Command("git", "init", "-b", "main", targetPath).Run(); err != nil {
+		if err := exec.CommandContext(t.Context(), "git", "init", "-b", "main", targetPath).Run(); err != nil {
 			return err
 		}
-		return exec.Command("git", "-C", targetPath, "remote", "add", "origin", remoteURL).Run()
+		return exec.CommandContext(t.Context(), "git", "-C", targetPath, "remote", "add", "origin", remoteURL).Run()
 	}
 }
 
@@ -438,7 +439,7 @@ func TestBuildSynthesisPrompt(t *testing.T) {
 		{Agent: "codex", ReviewType: "review", Status: "failed", Error: "timeout"},
 	}
 
-	prompt := review.BuildSynthesisPrompt(reviews, "", false, "")
+	prompt := review.BuildSynthesisPrompt(reviews, false, "")
 
 	assertContainsAll(t, prompt, "prompt",
 		"Deduplicate findings",
@@ -647,7 +648,7 @@ func TestGitHubClientForRepo_UsesEnterpriseBaseURL(t *testing.T) {
 		githubAPIURL:  provider.baseURL,
 	}
 
-	prs, err := p.listOpenPRs(context.Background(), "acme/api")
+	prs, err := p.listOpenPRs(t.Context(), "acme/api")
 	require.NoError(t, err)
 	require.Len(t, prs, 1)
 	assert.Equal(t, "Bearer ghs_enterprise_token", authHeader)
@@ -692,7 +693,7 @@ func TestNewCIPoller_GitHubAppUsesConfiguredEnterpriseAPIURL(t *testing.T) {
 	defer reloadedSrv.Close()
 	cfg.CI.GitHubAPIURL = reloadedSrv.URL + "/api/v3"
 
-	prs, err := p.listOpenPRs(context.Background(), "acme/api")
+	prs, err := p.listOpenPRs(t.Context(), "acme/api")
 	require.NoError(t, err)
 	assert.Empty(t, prs)
 	assert.Zero(t, reloadedRequests.Load())
@@ -797,7 +798,7 @@ func TestCIPollerProcessPR_EnqueuesMatrix(t *testing.T) {
 		return "base-sha-999", nil
 	}
 
-	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
+	err := h.Poller.processPR(t.Context(), "acme/api", ghPR{
 		Number:      42,
 		HeadRefOid:  "head-sha-123",
 		BaseRefName: "main",
@@ -840,48 +841,229 @@ func TestCIPollerPollRepo_UsesPRListAndProcessesEach(t *testing.T) {
 		return []ghPR{
 			{Number: 7, HeadRefOid: "11111111aaaaaaaa", BaseRefName: "main"},
 			{Number: 8, HeadRefOid: "22222222bbbbbbbb", BaseRefName: "main"},
+			{Number: 9, HeadRefOid: "33333333cccccccc", BaseRefName: "main", Draft: true},
 		}, nil
 	}
+	h.Cfg.CI.SkipDrafts = true
 	h.stubProcessPRGit()
+	checks := h.CaptureSkippedChecks()
 
-	require.NoError(t, h.Poller.pollRepo(context.Background(), "acme/api", h.Cfg), "pollRepo")
+	require.NoError(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg), "pollRepo")
 
 	assert.True(t, h.hasPanel(t, "acme/api", 7, "11111111aaaaaaaa"), "expected panel for PR 7")
 	assert.True(t, h.hasPanel(t, "acme/api", 8, "22222222bbbbbbbb"), "expected panel for PR 8")
+	assert.False(t, h.hasPanel(t, "acme/api", 9, "33333333cccccccc"), "draft PR 9 is skipped")
+	assert.Equal(t, []capturedSkippedCheck{{
+		Repo: "acme/api", SHA: "33333333cccccccc", Summary: "Review skipped: draft",
+	}}, *checks)
 }
 
 func TestCIPollerProcessPR_SkipsConfiguredLabel(t *testing.T) {
+	for _, tc := range []struct {
+		name                              string
+		draft, skipDrafts, backoff, label bool
+	}{
+		{name: "label"},
+		{name: "draft label default", draft: true, label: true},
+		{name: "draft", draft: true, skipDrafts: true},
+		{name: "draft default", draft: true},
+		{name: "draft backoff", draft: true, skipDrafts: true, backoff: true},
+		{name: "draft precedence", draft: true, skipDrafts: true, label: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+			h.Cfg.CI.SkipLabels = []string{"  do not review  "}
+			h.Cfg.CI.SkipDrafts = tc.skipDrafts
+			h.Cfg.CI.ReviewTypes = []string{"security"}
+			h.Cfg.CI.Agents = []string{"test"}
+			h.stubProcessPRGit()
+			fetches := 0
+			h.Poller.gitFetchFn = func(context.Context, string, []string) error { fetches++; return nil }
+			statuses := h.CaptureCommitStatuses()
+			checks := h.CaptureSkippedChecks()
+			pr := ghPR{Number: 9, HeadRefOid: "skipped-head-sha", BaseRefName: "main", Draft: tc.draft}
+			if !tc.draft || tc.label {
+				pr.Labels = []string{"Do Not Review"}
+			}
+			reason := "Review skipped: label Do Not Review"
+			if tc.draft && tc.skipDrafts {
+				reason = "Review skipped: draft"
+			}
+			if tc.backoff {
+				_, err := h.DB.ReserveReviewAttempt("acme/api", pr.Number, pr.HeadRefOid, time.Now())
+				require.NoError(t, err)
+				require.NoError(t, h.DB.DeferReviewAttempt("acme/api", pr.Number, pr.HeadRefOid,
+					"transient", "provider unavailable", nil, time.Now().Add(time.Hour), false))
+			}
+			require.NoError(t, h.Poller.processPR(t.Context(), "acme/api", pr, h.Cfg))
+			skip := !tc.draft || tc.skipDrafts || tc.label
+			assert.Equal(!skip, h.hasPanel(t, "acme/api", pr.Number, pr.HeadRefOid))
+			if skip {
+				assert.Zero(fetches, "skip before fetching or preparing agent work")
+				assert.Equal([]capturedStatus{{Repo: "acme/api", SHA: pr.HeadRefOid, State: "success", Desc: reason}}, *statuses)
+				assert.Equal([]capturedSkippedCheck{{Repo: "acme/api", SHA: pr.HeadRefOid, Summary: reason}}, *checks)
+				attempt, err := h.DB.GetReviewAttempt("acme/api", pr.Number, pr.HeadRefOid)
+				require.NoError(t, err)
+				assert.Nil(attempt)
+			} else {
+				assert.Empty(*checks)
+			}
+			pr.Draft = false
+			pr.Labels = nil
+			for range 2 {
+				require.NoError(t, h.Poller.processPR(t.Context(), "acme/api", pr, h.Cfg))
+			}
+			assert.Equal(1, fetches, "ready at the same SHA enqueues exactly once")
+			assert.True(h.hasPanel(t, "acme/api", pr.Number, pr.HeadRefOid))
+		})
+	}
+}
+
+func TestCIPollerProcessPR_AuthorAndBranchFilters(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		ci       config.CIConfig
+		pr       ghPR
+		wantSkip string // expected skip description; empty means reviewed
+	}{
+		{
+			name: "no filters reviews everyone",
+			pr:   ghPR{Author: ghPRAuthor{Login: "stranger"}, AuthorAssociation: "NONE", HeadRefName: "dependabot/npm/lodash"},
+		},
+		{
+			name:     "outside author skipped",
+			ci:       config.CIConfig{AllowedAuthors: []string{"alice"}, AllowedAuthorAssociations: []string{"OWNER", "MEMBER", "COLLABORATOR"}},
+			pr:       ghPR{Author: ghPRAuthor{Login: "stranger"}, AuthorAssociation: "FIRST_TIME_CONTRIBUTOR", HeadRefName: "patch-1"},
+			wantSkip: "Review skipped: author not in allowed authors",
+		},
+		{
+			name: "listed author reviewed",
+			ci:   config.CIConfig{AllowedAuthors: []string{"Alice"}},
+			pr:   ghPR{Author: ghPRAuthor{Login: "alice"}, AuthorAssociation: "CONTRIBUTOR", HeadRefName: "patch-1"},
+		},
+		{
+			name: "member association reviewed",
+			ci:   config.CIConfig{AllowedAuthorAssociations: []string{"MEMBER"}},
+			pr:   ghPR{Author: ghPRAuthor{Login: "bob"}, AuthorAssociation: "MEMBER", HeadRefName: "patch-1"},
+		},
+		{
+			name:     "excluded branch skipped",
+			ci:       config.CIConfig{ExcludeBranches: []string{"dependabot/*", "renovate/*"}},
+			pr:       ghPR{Author: ghPRAuthor{Login: "dependabot[bot]"}, HeadRefName: "dependabot/npm_and_yarn/lodash-4.17.21"},
+			wantSkip: "Review skipped: branch filtered",
+		},
+		{
+			name:     "branch outside include skipped",
+			ci:       config.CIConfig{IncludeBranches: []string{"feature/*", "fix/*"}},
+			pr:       ghPR{Author: ghPRAuthor{Login: "alice"}, HeadRefName: "chore/cleanup"},
+			wantSkip: "Review skipped: branch filtered",
+		},
+		{
+			name: "included branch reviewed",
+			ci:   config.CIConfig{IncludeBranches: []string{"feature/*"}, ExcludeBranches: []string{"feature/wip-*"}},
+			pr:   ghPR{Author: ghPRAuthor{Login: "alice"}, HeadRefName: "feature/login"},
+		},
+		{
+			name:     "exclude wins over include",
+			ci:       config.CIConfig{IncludeBranches: []string{"feature/*"}, ExcludeBranches: []string{"feature/wip-*"}},
+			pr:       ghPR{Author: ghPRAuthor{Login: "alice"}, HeadRefName: "feature/wip-login"},
+			wantSkip: "Review skipped: branch filtered",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+			h.Cfg.CI.AllowedAuthors = tt.ci.AllowedAuthors
+			h.Cfg.CI.AllowedAuthorAssociations = tt.ci.AllowedAuthorAssociations
+			h.Cfg.CI.IncludeBranches = tt.ci.IncludeBranches
+			h.Cfg.CI.ExcludeBranches = tt.ci.ExcludeBranches
+			h.Cfg.CI.ReviewTypes = []string{"security"}
+			h.Cfg.CI.Agents = []string{"codex"}
+			h.stubProcessPRGit()
+			statuses := h.CaptureCommitStatuses()
+			skippedChecks := h.CaptureSkippedChecks()
+
+			const headSHA = "filtered-head-sha"
+			pr := tt.pr
+			pr.Number = 9
+			pr.HeadRefOid = headSHA
+			pr.BaseRefName = "main"
+			require.NoError(t, h.Poller.processPR(t.Context(), "acme/api", pr, h.Cfg))
+
+			if tt.wantSkip == "" {
+				assert.True(h.hasPanel(t, "acme/api", 9, headSHA))
+				assert.Empty(*skippedChecks)
+				return
+			}
+			assert.False(h.hasPanel(t, "acme/api", 9, headSHA))
+			assert.Equal([]capturedStatus{{
+				Repo: "acme/api", SHA: headSHA, State: "success", Desc: tt.wantSkip,
+			}}, *statuses)
+			assert.Equal([]capturedSkippedCheck{{
+				Repo: "acme/api", SHA: headSHA, Summary: tt.wantSkip,
+			}}, *skippedChecks)
+		})
+	}
+}
+
+func TestCIPollerAllowCodeowners(t *testing.T) {
+	assert := assert.New(t)
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-	h.Cfg.CI.SkipLabels = []string{"  do not review  "}
+	h.Cfg.CI.AllowCodeowners = true
+	h.Cfg.CI.ExcludeBranches = []string{"renovate/*"}
 	h.Cfg.CI.ReviewTypes = []string{"security"}
 	h.Cfg.CI.Agents = []string{"codex"}
 	h.stubProcessPRGit()
 	statuses := h.CaptureCommitStatuses()
-	skippedChecks := h.CaptureSkippedChecks()
+	h.CaptureSkippedChecks()
 
-	pr := ghPR{
-		Number:      9,
-		HeadRefOid:  "skipped-head-sha",
-		BaseRefName: "main",
-		Labels:      []string{"Do Not Review"},
+	var reads []string
+	h.Poller.codeownersFn = func(_ context.Context, ghRepo, ref string) (map[string]struct{}, error) {
+		assert.Equal("acme/api", ghRepo)
+		reads = append(reads, ref)
+		if ref == "release" {
+			return nil, errors.New("team members unavailable")
+		}
+		return map[string]struct{}{"alice": {}}, nil
 	}
-	err := h.Poller.processPR(context.Background(), "acme/api", pr, h.Cfg)
-	require.NoError(t, err)
+	prs := []ghPR{
+		{Number: 1, HeadRefOid: "owner-head", BaseRefName: "main", Author: ghPRAuthor{Login: "Alice"}, AuthorAssociation: "CONTRIBUTOR"},
+		{Number: 2, HeadRefOid: "outsider-head", BaseRefName: "main", Author: ghPRAuthor{Login: "mallory"}, AuthorAssociation: "NONE"},
+		{Number: 3, HeadRefOid: "unreadable-head", BaseRefName: "release", Author: ghPRAuthor{Login: "alice"}, AuthorAssociation: "CONTRIBUTOR"},
+		{Number: 4, HeadRefOid: "unreadable-head-2", BaseRefName: "release", Author: ghPRAuthor{Login: "bob"}, AuthorAssociation: "NONE"},
+		{Number: 5, HeadRefOid: "excluded-head", BaseRefName: "release", HeadRefName: "renovate/lodash", Author: ghPRAuthor{Login: "renovate[bot]"}, AuthorAssociation: "NONE"},
+	}
+	h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return prs, nil }
 
-	assert.False(t, h.hasPanel(t, "acme/api", 9, "skipped-head-sha"))
-	assert.Equal(t, []capturedStatus{{
-		Repo: "acme/api", SHA: "skipped-head-sha", State: "success",
-		Desc: "Review skipped: label Do Not Review",
-	}}, *statuses)
-	assert.Equal(t, []capturedSkippedCheck{{
-		Repo: "acme/api", SHA: "skipped-head-sha",
-		Summary: "Review skipped: label Do Not Review",
-	}}, *skippedChecks)
+	err := h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg)
+	require.ErrorContains(t, err, "team members unavailable")
 
-	pr.Labels = nil
-	require.NoError(t, h.Poller.processPR(
-		context.Background(), "acme/api", pr, h.Cfg))
-	assert.True(t, h.hasPanel(t, "acme/api", 9, "skipped-head-sha"))
+	assert.True(h.hasPanel(t, "acme/api", 1, "owner-head"), "code owner is reviewed")
+	assert.False(h.hasPanel(t, "acme/api", 2, "outsider-head"), "non-owner is skipped")
+	assert.False(h.hasPanel(t, "acme/api", 3, "unreadable-head"), "unreadable CODEOWNERS blocks review")
+	assert.False(h.hasPanel(t, "acme/api", 5, "excluded-head"))
+	var skipped, unreadable []capturedStatus
+	for _, status := range *statuses {
+		switch status.SHA {
+		case "outsider-head", "excluded-head":
+			skipped = append(skipped, status)
+		case "unreadable-head", "unreadable-head-2":
+			unreadable = append(unreadable, status)
+		}
+	}
+	assert.Equal([]capturedStatus{{
+		Repo: "acme/api", SHA: "outsider-head", State: "success",
+		Desc: "Review skipped: author not in allowed authors",
+	}, {
+		Repo: "acme/api", SHA: "excluded-head", State: "success",
+		Desc: "Review skipped: branch filtered",
+	}}, skipped, "an excluded branch is skipped even when CODEOWNERS is unreadable")
+	assert.Empty(unreadable, "a read failure must not mark the PR skipped")
+	assert.Equal([]string{"main", "release"}, reads, "each base branch is read once per poll, even when the read fails")
+
+	require.ErrorContains(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg), "team members unavailable")
+	assert.Equal([]string{"main", "release", "main", "release"}, reads, "the next poll reads CODEOWNERS again")
 }
 
 // drivePanelOutcome resolves the panel run for a PR HEAD and drives every
@@ -944,7 +1126,7 @@ func TestRetrySweepReenqueuesAfterTransient(t *testing.T) {
 	pr := ghPR{Number: 90, HeadRefOid: headSHA, BaseRefName: "main"}
 
 	// First run: reserve-on-enqueue creates the attempt row (pending).
-	require.NoError(t, h.Poller.processPR(context.Background(), "acme/api", pr, h.Cfg))
+	require.NoError(t, h.Poller.processPR(t.Context(), "acme/api", pr, h.Cfg))
 	first, err := h.DB.GetCIPanelByPRSHA("acme/api", 90, headSHA)
 	require.NoError(t, err)
 	attempt, err := h.DB.GetReviewAttempt("acme/api", 90, headSHA)
@@ -965,12 +1147,12 @@ func TestRetrySweepReenqueuesAfterTransient(t *testing.T) {
 	require.NotNil(t, attempt.NextAttemptAt, "defer schedules a next attempt")
 
 	// Advance time: backdate next_attempt_at so the sweep sees it as due.
-	_, err = h.DB.Exec(`UPDATE ci_pr_review_attempts SET next_attempt_at = datetime('now','-1 hour')
+	_, err = h.DB.ExecContext(t.Context(), `UPDATE ci_pr_review_attempts SET next_attempt_at = datetime('now','-1 hour')
 		WHERE github_repo = ? AND pr_number = ? AND head_sha = ?`, "acme/api", 90, headSHA)
 	require.NoError(t, err)
 
 	// Retry sweep re-enqueues a fresh panel run for the same (repo, pr, sha).
-	require.NoError(t, h.Poller.retryDueReviewAttempts(context.Background(), "acme/api", []ghPR{pr}, h.Cfg))
+	require.NoError(t, h.Poller.retryDueReviewAttempts(t.Context(), "acme/api", []ghPR{pr}, h.Cfg))
 
 	attempt, err = h.DB.GetReviewAttempt("acme/api", 90, headSHA)
 	require.NoError(t, err)
@@ -1136,7 +1318,7 @@ func TestCIPollerStartMakesTransientAttemptsDue(t *testing.T) {
 func TestCIPollerFindLocalRepo_PartialIdentityFallback(t *testing.T) {
 	h := newCIPollerHarness(t, "ssh://git@github.com/acme/api.git")
 
-	found, err := h.Poller.findLocalRepo("acme/api")
+	found, err := h.Poller.findLocalRepo(t.Context(), "acme/api")
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -1154,7 +1336,7 @@ func TestCIPollerFindLocalRepo_SkipsPlaceholders(t *testing.T) {
 
 	// Create a sync placeholder (root_path == identity)
 	identity := "git@github.com:acme/api.git"
-	_, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+	_, err := db.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
 		identity, "api", identity)
 	if err != nil {
 		require.Condition(t, func() bool {
@@ -1166,7 +1348,7 @@ func TestCIPollerFindLocalRepo_SkipsPlaceholders(t *testing.T) {
 	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
 
 	// With only a placeholder, should get errLocalRepoNotFound
-	_, err = p.findLocalRepo("acme/api")
+	_, err = p.findLocalRepo(t.Context(), "acme/api")
 	if err == nil {
 		require.Condition(t, func() bool {
 			return false
@@ -1187,7 +1369,7 @@ func TestCIPollerFindLocalRepo_SkipsPlaceholders(t *testing.T) {
 		}, "GetOrCreateRepo: %v", err)
 	}
 
-	found, err := p.findLocalRepo("acme/api")
+	found, err := p.findLocalRepo(t.Context(), "acme/api")
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -1219,7 +1401,7 @@ func TestCIPollerProcessPR_WhitespaceReasoning(t *testing.T) {
 		}, "write .roborev.toml: %v", err)
 	}
 
-	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
+	err := h.Poller.processPR(t.Context(), "acme/api", ghPR{
 		Number: 50, HeadRefOid: "whitespace-reasoning-sha", BaseRefName: "main",
 	}, h.Cfg)
 	require.NoError(t, err, "processPR")
@@ -1245,7 +1427,7 @@ func TestCIPollerProcessPR_InvalidReasoning(t *testing.T) {
 	}
 	statuses := h.CaptureCommitStatuses()
 
-	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
+	err := h.Poller.processPR(t.Context(), "acme/api", ghPR{
 		Number: 51, HeadRefOid: "invalid-reasoning-sha", BaseRefName: "main",
 	}, h.Cfg)
 	require.ErrorContains(t, err, "ci.reasoning")
@@ -1298,7 +1480,7 @@ func TestCIPollerProcessPR_IncludesHumanPRDiscussion(t *testing.T) {
 		}, nil
 	}
 
-	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
+	err := h.Poller.processPR(t.Context(), "acme/api", ghPR{
 		Number: 77, HeadRefOid: headSHA, BaseRefName: "main",
 	}, h.Cfg)
 	require.NoError(t, err)
@@ -1348,11 +1530,11 @@ func TestCIPollerProcessPR_FallsBackWhenPromptPrebuildFails(t *testing.T) {
 			CreatedAt: time.Date(2026, time.March, 27, 12, 0, 0, 0, time.UTC),
 		}}, nil
 	}
-	h.Poller.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.RepoConfig, string, *config.Config) (string, error) {
+	h.Poller.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, prompt.PullRequest, *config.RepoConfig, string, *config.Config) (string, error) {
 		return "", errors.New("prompt prebuild exploded")
 	}
 
-	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
+	err := h.Poller.processPR(t.Context(), "acme/api", ghPR{
 		Number: 78, HeadRefOid: headSHA, BaseRefName: "main",
 	}, h.Cfg)
 	require.NoError(t, err)
@@ -1395,7 +1577,7 @@ func TestCIPollerProcessPR_PrebuildsCompletePrompt(t *testing.T) {
 		}}, nil
 	}
 
-	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
+	err := h.Poller.processPR(t.Context(), "acme/api", ghPR{
 		Number: 79, HeadRefOid: headSHA, BaseRefName: "main",
 	}, h.Cfg)
 	require.NoError(t, err)
@@ -1412,6 +1594,32 @@ func TestCIPollerProcessPR_PrebuildsCompletePrompt(t *testing.T) {
 	assert.NotContains(prompt, "git diff --unified=80")
 }
 
+func TestCIPollerProcessPR_PromptIncludesPullRequest(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	h.Cfg.CI.ReviewTypes = []string{"review"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.Poller = NewCIPoller(h.DB, NewStaticConfig(h.Cfg), nil)
+	h.stubProcessPRGit()
+
+	repo := testutil.InitTestGitRepo(t, h.RepoPath)
+	baseSHA := repo.HeadSHA()
+	headSHA := repo.CommitFile("retry.txt", "retry", "Add retry limit")
+	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return baseSHA, nil }
+
+	err := h.Poller.processPR(t.Context(), "acme/api", ghPR{
+		Number: 80, HeadRefOid: headSHA, BaseRefName: "main",
+		Title: "Cap upload retries", Body: "Stop after three attempts <always>.",
+	}, h.Cfg)
+	require.NoError(t, err)
+
+	members := h.panelMembers(t, "acme/api", 80, headSHA)
+	require.Len(t, members, 1)
+	assert.Contains(t, members[0].Prompt, "<pull-request context-only=\"true\">\n"+
+		"**Title:** Cap upload retries\n"+
+		"**Description:**\nStop after three attempts &lt;always&gt;.\n"+
+		"</pull-request>")
+}
+
 func TestCIPollerProcessPR_InvalidReviewType(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
 	h.Cfg.CI.ReviewTypes = []string{"security", "typo-type"}
@@ -1419,7 +1627,7 @@ func TestCIPollerProcessPR_InvalidReviewType(t *testing.T) {
 	h.stubProcessPRGit()
 	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return "base-sha", nil }
 
-	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
+	err := h.Poller.processPR(t.Context(), "acme/api", ghPR{
 		Number: 1, HeadRefOid: "head-sha", BaseRefName: "main",
 	}, h.Cfg)
 	require.Error(t, err, "expected error for invalid review type")
@@ -1436,7 +1644,7 @@ func TestCIPollerProcessPR_EmptyReviewType(t *testing.T) {
 	h.stubProcessPRGit()
 	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return "base-sha", nil }
 
-	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
+	err := h.Poller.processPR(t.Context(), "acme/api", ghPR{
 		Number: 2, HeadRefOid: "head-sha-2", BaseRefName: "main",
 	}, h.Cfg)
 	require.Error(t, err, "expected error for empty review type")
@@ -1452,7 +1660,7 @@ func TestCIPollerProcessPR_DesignReviewType(t *testing.T) {
 	h.stubProcessPRGit()
 	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return "base-sha", nil }
 
-	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
+	err := h.Poller.processPR(t.Context(), "acme/api", ghPR{
 		Number: 10, HeadRefOid: "design-head", BaseRefName: "main",
 	}, h.Cfg)
 	require.NoError(t, err, "processPR")
@@ -1471,7 +1679,7 @@ func TestCIPollerProcessPR_AliasDeduplication(t *testing.T) {
 	h.stubProcessPRGit()
 	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return "base-sha", nil }
 
-	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
+	err := h.Poller.processPR(t.Context(), "acme/api", ghPR{
 		Number: 11, HeadRefOid: "dedup-head", BaseRefName: "main",
 	}, h.Cfg)
 	require.NoError(t, err, "processPR")
@@ -1491,18 +1699,18 @@ func TestCIPollerFindLocalRepo_AmbiguousRepoResolved(t *testing.T) {
 	userCheckout := "/home/user/projects/api"
 
 	// Create a user checkout and an auto-clone with the same identity
-	_, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+	_, err := db.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
 		userCheckout, "api", "https://github.com/acme/api.git")
 	require.NoError(t, err, "insert user checkout")
 
-	_, err = db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+	_, err = db.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
 		autoClonePath, "api", "https://github.com/acme/api.git")
 	require.NoError(t, err, "insert auto-clone")
 
 	cfg := config.DefaultConfig()
 	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
 
-	found, err := p.findLocalRepo("acme/api")
+	found, err := p.findLocalRepo(t.Context(), "acme/api")
 	require.NoError(t, err)
 	require.NotNil(t, found)
 	assert.Equal(t, autoClonePath, found.RootPath, "should prefer auto-clone over user checkout")
@@ -1512,18 +1720,18 @@ func TestCIPollerFindLocalRepo_AmbiguousRepoFallsBackToNewest(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 
 	// Create two user checkouts (no auto-clone) — should pick most recently created
-	_, err := db.Exec(`INSERT INTO repos (root_path, name, identity, created_at) VALUES (?, ?, ?, ?)`,
+	_, err := db.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity, created_at) VALUES (?, ?, ?, ?)`,
 		"/tmp/clone1", "api", "https://github.com/acme/api.git", "2024-01-01 00:00:00")
 	require.NoError(t, err, "insert repo1")
 
-	_, err = db.Exec(`INSERT INTO repos (root_path, name, identity, created_at) VALUES (?, ?, ?, ?)`,
+	_, err = db.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity, created_at) VALUES (?, ?, ?, ?)`,
 		"/tmp/clone2", "api", "https://github.com/acme/api.git", "2025-06-15 00:00:00")
 	require.NoError(t, err, "insert repo2")
 
 	cfg := config.DefaultConfig()
 	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
 
-	found, err := p.findLocalRepo("acme/api")
+	found, err := p.findLocalRepo(t.Context(), "acme/api")
 	require.NoError(t, err)
 	require.NotNil(t, found)
 	assert.Equal(t, "/tmp/clone2", found.RootPath, "should pick most recently created repo")
@@ -1540,18 +1748,18 @@ func TestCIPollerFindLocalRepo_PartialIdentitySameHostResolved(t *testing.T) {
 	// Two repos with the same host (ghe.corp.com) but different URL
 	// schemes (SSH vs HTTPS). They share the same normalized identity
 	// so disambiguation should succeed — preferring the auto-clone.
-	_, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+	_, err := db.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
 		"/tmp/clone-ghe1", "widgets", "git@ghe.corp.com:acme/widgets.git")
 	require.NoError(t, err, "insert user checkout (SSH)")
 
-	_, err = db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+	_, err = db.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
 		autoClonePath, "widgets", "https://ghe.corp.com/acme/widgets.git")
 	require.NoError(t, err, "insert auto-clone (HTTPS)")
 
 	cfg := config.DefaultConfig()
 	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
 
-	found, err := p.findLocalRepo("acme/widgets")
+	found, err := p.findLocalRepo(t.Context(), "acme/widgets")
 	require.NoError(t, err)
 	require.NotNil(t, found)
 	assert.Equal(t, autoClonePath, found.RootPath, "should prefer auto-clone in partial identity match")
@@ -1562,18 +1770,18 @@ func TestCIPollerFindLocalRepo_PartialIdentityCrossHostAmbiguity(t *testing.T) {
 
 	// Two repos from different hosts that share the same owner/repo suffix.
 	// These are genuinely different repos — should remain an error.
-	_, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+	_, err := db.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
 		"/tmp/clone-ghe1", "widgets", "git@ghe.corp.com:acme/widgets.git")
 	require.NoError(t, err)
 
-	_, err = db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+	_, err = db.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
 		"/tmp/clone-ghe2", "widgets", "https://gitlab.com/acme/widgets")
 	require.NoError(t, err)
 
 	cfg := config.DefaultConfig()
 	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
 
-	_, err = p.findLocalRepo("acme/widgets")
+	_, err = p.findLocalRepo(t.Context(), "acme/widgets")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ambiguous")
 }
@@ -1693,7 +1901,7 @@ func TestCIPollerFindOrCloneRepo_AutoClones(t *testing.T) {
 	}
 
 	repo, err := p.findOrCloneRepo(
-		context.Background(), "acme/newrepo",
+		t.Context(), "acme/newrepo",
 	)
 	if err != nil {
 		require.Condition(t, func() bool {
@@ -1713,7 +1921,7 @@ func TestCIPollerFindOrCloneRepo_AutoClones(t *testing.T) {
 	// Second call should reuse the clone (no re-clone)
 	cloneCalled = false
 	repo2, err := p.findOrCloneRepo(
-		context.Background(), "acme/newrepo",
+		t.Context(), "acme/newrepo",
 	)
 	if err != nil {
 		require.Condition(t, func() bool {
@@ -1749,13 +1957,13 @@ func TestCIPollerFindOrCloneRepo_ReusesExistingDir(t *testing.T) {
 			return false
 		}, "mkdir: %v", err)
 	}
-	cmd := exec.Command("git", "init", "-b", "main", clonePath)
+	cmd := exec.CommandContext(t.Context(), "git", "init", "-b", "main", clonePath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "git init: %s: %s", err, out)
 	}
-	cmd = exec.Command(
+	cmd = exec.CommandContext(t.Context(),
 		"git", "-C", clonePath, "remote", "add",
 		"origin", "https://github.com/acme/leftover.git",
 	)
@@ -1776,7 +1984,7 @@ func TestCIPollerFindOrCloneRepo_ReusesExistingDir(t *testing.T) {
 	}
 
 	repo, err := p.findOrCloneRepo(
-		context.Background(), "acme/leftover",
+		t.Context(), "acme/leftover",
 	)
 	if err != nil {
 		require.Condition(t, func() bool {
@@ -1801,11 +2009,11 @@ func TestCIPollerFindOrCloneRepo_RewritesCredentialedOrigin(t *testing.T) {
 	clonePath := filepath.Join(dataDir, "clones", "acme", "secure")
 	require.NoError(t, os.MkdirAll(clonePath, 0o755))
 
-	cmd := exec.Command("git", "init", "-b", "main", clonePath)
+	cmd := exec.CommandContext(t.Context(), "git", "init", "-b", "main", clonePath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		require.NoError(t, err, "git init output: %s", out)
 	}
-	cmd = exec.Command(
+	cmd = exec.CommandContext(t.Context(),
 		"git", "-C", clonePath, "remote", "add",
 		"origin", "https://x-access-token:expired@github.com/acme/secure.git",
 	)
@@ -1813,11 +2021,11 @@ func TestCIPollerFindOrCloneRepo_RewritesCredentialedOrigin(t *testing.T) {
 		require.NoError(t, err, "git remote add output: %s", out)
 	}
 
-	repo, err := p.findOrCloneRepo(context.Background(), "acme/secure")
+	repo, err := p.findOrCloneRepo(t.Context(), "acme/secure")
 	require.NoError(t, err)
 	require.NotNil(t, repo)
 
-	out, err := exec.Command("git", "-C", clonePath, "remote", "get-url", "origin").CombinedOutput()
+	out, err := exec.CommandContext(t.Context(), "git", "-C", clonePath, "remote", "get-url", "origin").CombinedOutput()
 	require.NoError(t, err, "git remote get-url output: %s", out)
 	assert.Equal(t, "https://github.com/acme/secure.git", strings.TrimSpace(string(out)))
 }
@@ -1881,13 +2089,13 @@ func TestCIPollerFindOrCloneRepo_InvalidExistingDir(t *testing.T) {
 						return false
 					}, "mkdir: %v", err)
 				}
-				cmd := exec.Command("git", "init", "-b", "main", p)
+				cmd := exec.CommandContext(t.Context(), "git", "init", "-b", "main", p)
 				if out, err := cmd.CombinedOutput(); err != nil {
 					require.Condition(t, func() bool {
 						return false
 					}, "git init: %s: %s", err, out)
 				}
-				cmd = exec.Command("git", "-C", p, "remote", "add", "origin", "https://github.com/other/repo.git")
+				cmd = exec.CommandContext(t.Context(), "git", "-C", p, "remote", "add", "origin", "https://github.com/other/repo.git")
 				if out, err := cmd.CombinedOutput(); err != nil {
 					require.Condition(t, func() bool {
 						return false
@@ -1904,7 +2112,7 @@ func TestCIPollerFindOrCloneRepo_InvalidExistingDir(t *testing.T) {
 						return false
 					}, "mkdir: %v", err)
 				}
-				cmd := exec.Command("git", "init", "-b", "main", p)
+				cmd := exec.CommandContext(t.Context(), "git", "init", "-b", "main", p)
 				if out, err := cmd.CombinedOutput(); err != nil {
 					require.Condition(t, func() bool {
 						return false
@@ -1929,7 +2137,7 @@ func TestCIPollerFindOrCloneRepo_InvalidExistingDir(t *testing.T) {
 			cloneCalled := false
 			p.gitCloneFn = stubGitCloneFn(t, "https://github.com/"+tt.repoName+".git", &cloneCalled)
 
-			repo, err := p.findOrCloneRepo(context.Background(), tt.repoName)
+			repo, err := p.findOrCloneRepo(t.Context(), tt.repoName)
 			if err != nil {
 				require.Condition(t, func() bool {
 					return false
@@ -1959,13 +2167,13 @@ func TestCIPollerFindOrCloneRepo_InvalidExistingDir(t *testing.T) {
 func TestCloneRemoteMatches(t *testing.T) {
 	t.Run("matching origin", func(t *testing.T) {
 		dir := t.TempDir()
-		cmd := exec.Command("git", "init", "-b", "main", dir)
+		cmd := exec.CommandContext(t.Context(), "git", "init", "-b", "main", dir)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, "git init: %s: %s", err, out)
 		}
-		cmd = exec.Command(
+		cmd = exec.CommandContext(t.Context(),
 			"git", "-C", dir, "remote", "add",
 			"origin", "https://github.com/acme/match.git",
 		)
@@ -1975,7 +2183,7 @@ func TestCloneRemoteMatches(t *testing.T) {
 			}, "git remote add: %s: %s", err, out)
 		}
 
-		ok, err := cloneRemoteMatches(dir, "acme/match", "")
+		ok, err := cloneRemoteMatches(t.Context(), dir, "acme/match", "")
 		if err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -1990,14 +2198,14 @@ func TestCloneRemoteMatches(t *testing.T) {
 
 	t.Run("missing origin returns false nil", func(t *testing.T) {
 		dir := t.TempDir()
-		cmd := exec.Command("git", "init", "-b", "main", dir)
+		cmd := exec.CommandContext(t.Context(), "git", "init", "-b", "main", dir)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, "git init: %s: %s", err, out)
 		}
 
-		ok, err := cloneRemoteMatches(dir, "acme/any", "")
+		ok, err := cloneRemoteMatches(t.Context(), dir, "acme/any", "")
 		if err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -2012,13 +2220,13 @@ func TestCloneRemoteMatches(t *testing.T) {
 
 	t.Run("mismatched origin returns false nil", func(t *testing.T) {
 		dir := t.TempDir()
-		cmd := exec.Command("git", "init", "-b", "main", dir)
+		cmd := exec.CommandContext(t.Context(), "git", "init", "-b", "main", dir)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, "git init: %s: %s", err, out)
 		}
-		cmd = exec.Command(
+		cmd = exec.CommandContext(t.Context(),
 			"git", "-C", dir, "remote", "add",
 			"origin", "https://github.com/other/repo.git",
 		)
@@ -2028,7 +2236,7 @@ func TestCloneRemoteMatches(t *testing.T) {
 			}, "git remote add: %s: %s", err, out)
 		}
 
-		ok, err := cloneRemoteMatches(dir, "acme/different", "")
+		ok, err := cloneRemoteMatches(t.Context(), dir, "acme/different", "")
 		if err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -2046,7 +2254,7 @@ func TestCloneRemoteMatches(t *testing.T) {
 		// so this is treated as confirmed mismatch (false, nil).
 		// The caller (cloneNeedsReplace) checks isValidGitRepo first.
 		dir := t.TempDir()
-		ok, err := cloneRemoteMatches(dir, "acme/any", "")
+		ok, err := cloneRemoteMatches(t.Context(), dir, "acme/any", "")
 		if err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -2063,7 +2271,7 @@ func TestCloneRemoteMatches(t *testing.T) {
 		// A repo where .git/config was deleted should be treated
 		// as no-origin (false, nil), not an operational error.
 		dir := t.TempDir()
-		cmd := exec.Command("git", "init", "-b", "main", dir)
+		cmd := exec.CommandContext(t.Context(), "git", "init", "-b", "main", dir)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -2076,7 +2284,7 @@ func TestCloneRemoteMatches(t *testing.T) {
 			}, "remove .git/config: %v", err)
 		}
 
-		ok, err := cloneRemoteMatches(dir, "acme/any", "")
+		ok, err := cloneRemoteMatches(t.Context(), dir, "acme/any", "")
 		if err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -2094,7 +2302,7 @@ func TestCloneRemoteMatches(t *testing.T) {
 		// A repo with malformed .git/config is an operational
 		// failure, not a missing-origin signal.
 		dir := t.TempDir()
-		cmd := exec.Command("git", "init", "-b", "main", dir)
+		cmd := exec.CommandContext(t.Context(), "git", "init", "-b", "main", dir)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -2109,7 +2317,7 @@ func TestCloneRemoteMatches(t *testing.T) {
 			}, "write corrupt config: %v", err)
 		}
 
-		_, err := cloneRemoteMatches(dir, "acme/any", "")
+		_, err := cloneRemoteMatches(t.Context(), dir, "acme/any", "")
 		if err == nil {
 			require.Condition(t, func() bool {
 				return false
@@ -2134,7 +2342,7 @@ func TestCloneRemoteMatches(t *testing.T) {
 			},
 		}
 		for _, args := range cmds {
-			cmd := exec.Command(args[0], args[1:]...)
+			cmd := exec.CommandContext(t.Context(), args[0], args[1:]...)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				require.Condition(t, func() bool {
 					return false
@@ -2142,7 +2350,7 @@ func TestCloneRemoteMatches(t *testing.T) {
 			}
 		}
 
-		ok, err := cloneRemoteMatches(dir, "acme/rewritten", "")
+		ok, err := cloneRemoteMatches(t.Context(), dir, "acme/rewritten", "")
 		if err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -2162,7 +2370,7 @@ func TestCloneRemoteMatches(t *testing.T) {
 			{"git", "-C", dir, "remote", "add", "origin", "https://ghe.example.com/acme/enterprise.git"},
 		}
 		for _, args := range cmds {
-			cmd := exec.Command(args[0], args[1:]...)
+			cmd := exec.CommandContext(t.Context(), args[0], args[1:]...)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				require.Condition(t, func() bool {
 					return false
@@ -2170,7 +2378,7 @@ func TestCloneRemoteMatches(t *testing.T) {
 			}
 		}
 
-		ok, err := cloneRemoteMatches(dir, "acme/enterprise", "https://ghe.example.com/api/v3/")
+		ok, err := cloneRemoteMatches(t.Context(), dir, "acme/enterprise", "https://ghe.example.com/api/v3/")
 		require.NoError(t, err)
 		assert.True(t, ok)
 	})
@@ -2243,13 +2451,40 @@ func TestCIPollerEnsureClone_RejectsMalformedRepo(t *testing.T) {
 		"acme/..",
 	}
 	for _, input := range bad {
-		_, err := p.ensureClone(context.Background(), input)
+		_, err := p.ensureClone(t.Context(), input)
 		if err == nil {
 			assert.Condition(t, func() bool {
 				return false
 			}, "ensureClone(%q) should have failed", input)
 		}
 	}
+}
+
+func TestCIPollerEnsureClone_CancellationKeepsExistingClone(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	p := NewCIPoller(db, NewStaticConfig(config.DefaultConfig()), nil)
+	dataDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+
+	clonePath := filepath.Join(dataDir, "clones", "acme", "kept")
+	out, err := exec.CommandContext(t.Context(), "git", "init", "-b", "main", clonePath).CombinedOutput()
+	require.NoError(t, err, "git init: %s", out)
+	marker := filepath.Join(clonePath, "local-only.txt")
+	require.NoError(t, os.WriteFile(marker, []byte("keep"), 0o644))
+
+	cloned := false
+	p.gitCloneFn = func(_ context.Context, _, _ string, _ []string) error {
+		cloned = true
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = p.ensureClone(ctx, "acme/kept")
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.FileExists(t, marker, "cancellation must not delete a valid clone")
+	assert.False(t, cloned, "cancellation must not re-clone")
 }
 
 func TestEnsureCloneRemoteURL_RedactsCredentialedMismatch(t *testing.T) {
@@ -2259,7 +2494,7 @@ func TestEnsureCloneRemoteURL_RedactsCredentialedMismatch(t *testing.T) {
 		{"git", "-C", dir, "remote", "add", "origin", "https://x-access-token:secret-token@ghe.example.com/other/repo.git"},
 	}
 	for _, args := range cmds {
-		cmd := exec.Command(args[0], args[1:]...)
+		cmd := exec.CommandContext(t.Context(), args[0], args[1:]...)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -2267,7 +2502,7 @@ func TestEnsureCloneRemoteURL_RedactsCredentialedMismatch(t *testing.T) {
 		}
 	}
 
-	err := ensureCloneRemoteURL(dir, "acme/api", "https://ghe.example.com/api/v3/")
+	err := ensureCloneRemoteURL(t.Context(), dir, "acme/api", "https://ghe.example.com/api/v3/")
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "secret-token")
 	assert.Contains(t, err.Error(), "https://ghe.example.com/other/repo.git")
@@ -2288,7 +2523,7 @@ func TestCIPollerFindOrCloneRepo_CloneFailure(t *testing.T) {
 	}
 
 	_, err := p.findOrCloneRepo(
-		context.Background(), "acme/private",
+		t.Context(), "acme/private",
 	)
 	if err == nil {
 		require.Condition(t, func() bool {
@@ -2307,14 +2542,14 @@ func TestCIPollerFindOrCloneRepo_ResolvesAmbiguity(t *testing.T) {
 
 	// Create two repos with the same identity — disambiguation should
 	// pick the most recently created one (no auto-clone prefix here).
-	_, err := db.Exec(
+	_, err := db.ExecContext(t.Context(),
 		`INSERT INTO repos (root_path, name, identity, created_at)
 		 VALUES (?, ?, ?, ?)`,
 		"/tmp/c1", "api", "https://github.com/acme/api.git", "2024-01-01 00:00:00",
 	)
 	require.NoError(t, err)
 
-	_, err = db.Exec(
+	_, err = db.ExecContext(t.Context(),
 		`INSERT INTO repos (root_path, name, identity, created_at)
 		 VALUES (?, ?, ?, ?)`,
 		"/tmp/c2", "api", "https://github.com/acme/api.git", "2025-06-15 00:00:00",
@@ -2333,7 +2568,7 @@ func TestCIPollerFindOrCloneRepo_ResolvesAmbiguity(t *testing.T) {
 	}
 
 	found, err := p.findOrCloneRepo(
-		context.Background(), "acme/api",
+		t.Context(), "acme/api",
 	)
 	require.NoError(t, err)
 	require.NotNil(t, found)
@@ -2370,7 +2605,7 @@ func TestCIPollerProcessPR_AutoClonesUnknownRepo(t *testing.T) {
 	cloneCalled := false
 	p.gitCloneFn = stubGitCloneFn(t, "https://github.com/org/newrepo.git", &cloneCalled)
 
-	err := p.processPR(context.Background(), "org/newrepo", ghPR{
+	err := p.processPR(t.Context(), "org/newrepo", ghPR{
 		Number:      1,
 		HeadRefOid:  "abc123",
 		BaseRefName: "main",
@@ -2396,7 +2631,7 @@ func TestCIPollerProcessPR_RepoOverrides(t *testing.T) {
 		}, "write .roborev.toml: %v", err)
 	}
 
-	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
+	err := h.Poller.processPR(t.Context(), "acme/api", ghPR{
 		Number: 99, HeadRefOid: "repo-override-sha", BaseRefName: "main",
 	}, h.Cfg)
 	require.NoError(t, err, "processPR")
@@ -2423,7 +2658,7 @@ func TestCIPollerProcessPR_MalformedRepoConfigFallsBackToGlobal(t *testing.T) {
 		0o644,
 	))
 
-	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
+	err := h.Poller.processPR(t.Context(), "acme/api", ghPR{
 		Number:      100,
 		HeadRefOid:  "repo-bad-config-sha",
 		BaseRefName: "main",
@@ -2448,7 +2683,7 @@ func TestCIPollerProcessPR_RepoConfigLoadFailureDoesNotSetConfigurationStatus(t 
 		return ciRepoConfigSource{}, errors.New("read .roborev.toml at origin/main: git show failed")
 	}
 
-	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
+	err := h.Poller.processPR(t.Context(), "acme/api", ghPR{
 		Number:      101,
 		HeadRefOid:  "repo-config-read-failed-sha",
 		BaseRefName: "main",
@@ -2465,7 +2700,7 @@ func TestBuildSynthesisPrompt_SanitizesErrors(t *testing.T) {
 	reviews := []review.ReviewResult{
 		{Agent: "codex", ReviewType: "security", Status: "failed", Error: "secret-token-abc123: auth error"},
 	}
-	prompt := review.BuildSynthesisPrompt(reviews, "", false, "")
+	prompt := review.BuildSynthesisPrompt(reviews, false, "")
 	if strings.Contains(prompt, "secret-token-abc123") {
 		assert.Condition(t, func() bool {
 			return false
@@ -2475,18 +2710,6 @@ func TestBuildSynthesisPrompt_SanitizesErrors(t *testing.T) {
 		assert.Condition(t, func() bool {
 			return false
 		}, "expected [FAILED] marker in synthesis prompt")
-	}
-}
-
-func TestBuildSynthesisPrompt_NeverMentionsMinSeverity(t *testing.T) {
-	reviews := []review.ReviewResult{
-		{Agent: "codex", ReviewType: "security", Output: "No issues found.", Status: "done"},
-	}
-	for _, severity := range []string{"", "low", "medium", "high", "critical"} {
-		prompt := review.BuildSynthesisPrompt(reviews, severity, false, "")
-		assert.NotContains(t, prompt, "Severity threshold", "min_severity=%q", severity)
-		assert.NotContains(t, prompt, "Omit findings below", "min_severity=%q", severity)
-		assert.Contains(t, prompt, "No issues found.")
 	}
 }
 
@@ -2555,7 +2778,7 @@ func initGitRepoWithOrigin(t *testing.T) (dir string, runGit func(args ...string
 	t.Helper()
 	dir = t.TempDir()
 	runGit = func(args ...string) string {
-		cmd := exec.Command("git", args...)
+		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(),
 			"GIT_AUTHOR_NAME=Test",
@@ -2681,7 +2904,7 @@ func TestCIPollerProcessPR_SetsPendingCommitStatus(t *testing.T) {
 
 	captured := h.CaptureCommitStatuses()
 
-	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
+	err := h.Poller.processPR(t.Context(), "acme/api", ghPR{
 		Number: 60, HeadRefOid: "status-test-sha", BaseRefName: "main",
 	}, h.Cfg)
 	if err != nil {
@@ -2760,7 +2983,7 @@ func TestBuildSynthesisPrompt_QuotaSkippedLabel(t *testing.T) {
 		{Agent: "gemini", ReviewType: "security", Status: "failed", Error: review.QuotaErrorPrefix + "quota exhausted"},
 	}
 
-	prompt := review.BuildSynthesisPrompt(reviews, "", false, "")
+	prompt := review.BuildSynthesisPrompt(reviews, false, "")
 
 	assertContainsAll(t, prompt, "prompt",
 		"[SKIPPED]",
@@ -2842,7 +3065,7 @@ func TestCIPollerProcessPR_ThrottlesRecentPR(t *testing.T) {
 	// First push — reviewed (no prior run).
 	captured := h.CaptureCommitStatuses()
 	err := h.Poller.processPR(
-		context.Background(), "acme/api",
+		t.Context(), "acme/api",
 		ghPR{Number: 70, HeadRefOid: "first-sha", BaseRefName: "main"}, h.Cfg)
 	require.NoError(t, err, "first processPR")
 	assert.True(h.hasPanel(t, "acme/api", 70, "first-sha"), "expected panel for first push")
@@ -2860,7 +3083,7 @@ func TestCIPollerProcessPR_ThrottlesRecentPR(t *testing.T) {
 	// it cannot later post stale results for the previous HEAD.
 	*captured = nil
 	err = h.Poller.processPR(
-		context.Background(), "acme/api",
+		t.Context(), "acme/api",
 		ghPR{Number: 70, HeadRefOid: "second-sha", BaseRefName: "main"}, h.Cfg)
 	require.NoError(t, err, "second processPR")
 
@@ -2880,7 +3103,7 @@ func TestCIPollerProcessPR_ThrottlesRecentPR(t *testing.T) {
 	// though the first active run was retired.
 	*captured = nil
 	err = h.Poller.processPR(
-		context.Background(), "acme/api",
+		t.Context(), "acme/api",
 		ghPR{Number: 70, HeadRefOid: "third-sha", BaseRefName: "main"}, h.Cfg)
 	require.NoError(t, err, "third processPR")
 
@@ -2906,7 +3129,7 @@ func TestCIPollerProcessPR_ThrottlesAfterCompletedReview(t *testing.T) {
 
 	// First push — reviewed normally, recording the run's created_at.
 	err := h.Poller.processPR(
-		context.Background(), "acme/api",
+		t.Context(), "acme/api",
 		ghPR{Number: 71, HeadRefOid: "first-sha", BaseRefName: "main"}, h.Cfg)
 	require.NoError(t, err, "first processPR")
 	require.True(t, h.hasPanel(t, "acme/api", 71, "first-sha"), "expected panel for first push")
@@ -2916,7 +3139,7 @@ func TestCIPollerProcessPR_ThrottlesAfterCompletedReview(t *testing.T) {
 	// run, deferred status set.
 	captured := h.CaptureCommitStatuses()
 	err = h.Poller.processPR(
-		context.Background(), "acme/api",
+		t.Context(), "acme/api",
 		ghPR{Number: 71, HeadRefOid: "second-sha", BaseRefName: "main"}, h.Cfg)
 	require.NoError(t, err, "second processPR")
 
@@ -2941,7 +3164,7 @@ func TestCIPollerProcessPR_PostedSameHeadIsAlreadyReviewed(t *testing.T) {
 	}
 
 	err := h.Poller.processPR(
-		context.Background(), "acme/api",
+		t.Context(), "acme/api",
 		ghPR{Number: 72, HeadRefOid: "same-sha", BaseRefName: "main"}, h.Cfg)
 	require.NoError(t, err, "first processPR")
 	panel, err := h.DB.GetCIPanelByPRSHA("acme/api", 72, "same-sha")
@@ -2950,7 +3173,7 @@ func TestCIPollerProcessPR_PostedSameHeadIsAlreadyReviewed(t *testing.T) {
 
 	captured := h.CaptureCommitStatuses()
 	err = h.Poller.processPR(
-		context.Background(), "acme/api",
+		t.Context(), "acme/api",
 		ghPR{Number: 72, HeadRefOid: "same-sha", BaseRefName: "main"}, h.Cfg)
 	require.NoError(t, err, "second processPR")
 
@@ -2972,7 +3195,7 @@ func TestCIPollerProcessPR_DistinguishesSameHeadReplayFromCrossHeadThrottle(t *t
 	}
 
 	err := h.Poller.processPR(
-		context.Background(), "acme/api",
+		t.Context(), "acme/api",
 		ghPR{Number: 73, HeadRefOid: "reviewed-sha", BaseRefName: "main"}, h.Cfg)
 	require.NoError(t, err, "first processPR")
 	panel, err := h.DB.GetCIPanelByPRSHA("acme/api", 73, "reviewed-sha")
@@ -2981,7 +3204,7 @@ func TestCIPollerProcessPR_DistinguishesSameHeadReplayFromCrossHeadThrottle(t *t
 
 	captured := h.CaptureCommitStatuses()
 	err = h.Poller.processPR(
-		context.Background(), "acme/api",
+		t.Context(), "acme/api",
 		ghPR{Number: 73, HeadRefOid: "reviewed-sha", BaseRefName: "main"}, h.Cfg)
 	require.NoError(t, err, "same-head replay")
 
@@ -2989,7 +3212,7 @@ func TestCIPollerProcessPR_DistinguishesSameHeadReplayFromCrossHeadThrottle(t *t
 
 	*captured = nil
 	err = h.Poller.processPR(
-		context.Background(), "acme/api",
+		t.Context(), "acme/api",
 		ghPR{Number: 73, HeadRefOid: "new-sha", BaseRefName: "main"}, h.Cfg)
 	require.NoError(t, err, "cross-head retry")
 
@@ -3024,7 +3247,7 @@ func TestCIPollerProcessPR_LegacyCIReviewDoesNotSuppressPanel(t *testing.T) {
 	require.NoError(t, h.DB.RecordCIReview("acme/api", 73, "legacy-sha", legacyJob.ID))
 
 	err = h.Poller.processPR(
-		context.Background(), "acme/api",
+		t.Context(), "acme/api",
 		ghPR{Number: 73, HeadRefOid: "legacy-sha", BaseRefName: "main"}, h.Cfg)
 	require.NoError(t, err, "processPR")
 
@@ -3048,7 +3271,7 @@ func TestCIPollerProcessPR_ThrottleBypassUser(t *testing.T) {
 
 	// First push — reviewed normally
 	err := h.Poller.processPR(
-		context.Background(), "acme/api",
+		t.Context(), "acme/api",
 		ghPR{
 			Number:      80,
 			HeadRefOid:  "first-sha",
@@ -3060,7 +3283,7 @@ func TestCIPollerProcessPR_ThrottleBypassUser(t *testing.T) {
 
 	// Second push within throttle window — bypass user is reviewed immediately.
 	err = h.Poller.processPR(
-		context.Background(), "acme/api",
+		t.Context(), "acme/api",
 		ghPR{
 			Number:      80,
 			HeadRefOid:  "second-sha",
@@ -3087,7 +3310,7 @@ func TestCIPollerProcessPR_ThrottleDisabled(t *testing.T) {
 
 	// First push
 	err := h.Poller.processPR(
-		context.Background(), "acme/api",
+		t.Context(), "acme/api",
 		ghPR{
 			Number:      71,
 			HeadRefOid:  "first-sha",
@@ -3097,7 +3320,7 @@ func TestCIPollerProcessPR_ThrottleDisabled(t *testing.T) {
 
 	// Second push — should NOT be throttled (throttle disabled).
 	err = h.Poller.processPR(
-		context.Background(), "acme/api",
+		t.Context(), "acme/api",
 		ghPR{
 			Number:      71,
 			HeadRefOid:  "second-sha",
@@ -3125,7 +3348,7 @@ func TestCIPollerProcessPR_ReviewsMapMatrix(t *testing.T) {
 	}
 
 	err := h.Poller.processPR(
-		context.Background(), "acme/api",
+		t.Context(), "acme/api",
 		ghPR{
 			Number:      72,
 			HeadRefOid:  "matrix-sha",
@@ -3547,7 +3770,7 @@ func TestCIPollerProcessPR_RepoReviewsMapOverride(
 	}
 
 	err := h.Poller.processPR(
-		context.Background(), "acme/api",
+		t.Context(), "acme/api",
 		ghPR{
 			Number:      73,
 			HeadRefOid:  "repo-matrix-sha",
@@ -3591,7 +3814,7 @@ func TestCIPollerProcessPR_RepoEmptyReviewsDisables(
 	}
 
 	err := h.Poller.processPR(
-		context.Background(), "acme/api",
+		t.Context(), "acme/api",
 		ghPR{
 			Number:      74,
 			HeadRefOid:  "empty-reviews-sha",
@@ -3619,7 +3842,7 @@ func TestCIPollerProcessPR_EmptyMatrixSkipsRun(t *testing.T) {
 	}
 
 	err := h.Poller.processPR(
-		context.Background(), "acme/api",
+		t.Context(), "acme/api",
 		ghPR{
 			Number:      90,
 			HeadRefOid:  "head-sha",
@@ -3658,7 +3881,7 @@ func TestCIPollerProcessPR_AgentFailureSetsErrorStatus(t *testing.T) {
 	statuses := h.CaptureCommitStatuses()
 
 	err := h.Poller.processPR(
-		context.Background(), "acme/api",
+		t.Context(), "acme/api",
 		ghPR{
 			Number:      91,
 			HeadRefOid:  "head-sha-91",
@@ -3690,7 +3913,7 @@ func TestCIPollerProcessPR_TransientEnqueueFailureDoesNotSetConfigurationStatus(
 	statuses := h.CaptureCommitStatuses()
 
 	err := h.Poller.processPR(
-		context.Background(), "acme/api",
+		t.Context(), "acme/api",
 		ghPR{Number: 93, HeadRefOid: "head-sha-93", BaseRefName: "main"}, h.Cfg)
 
 	require.ErrorContains(t, err, "temporary fetch failure")
@@ -3716,7 +3939,7 @@ func TestCIPollerProcessPR_ExperimentValidationFailureSetsConfigurationStatus(t 
 	h.stubProcessPRGit()
 	statuses := h.CaptureCommitStatuses()
 
-	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
+	err := h.Poller.processPR(t.Context(), "acme/api", ghPR{
 		Number: 94, HeadRefOid: "head-sha-94", HeadRefName: "feature",
 		BaseRefName: "main",
 	}, h.Cfg)
@@ -3750,7 +3973,7 @@ func TestCIPollerProcessPR_RepoExperimentValidationFailureSetsConfigurationStatu
 	}
 	statuses := h.CaptureCommitStatuses()
 
-	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
+	err := h.Poller.processPR(t.Context(), "acme/api", ghPR{
 		Number: 95, HeadRefOid: "head-sha-95", HeadRefName: "feature",
 		BaseRefName: "main",
 	}, h.Cfg)
@@ -3794,7 +4017,7 @@ func TestCIPollerProcessPR_NoAgentStillSupersedes(t *testing.T) {
 	statuses := h.CaptureCommitStatuses()
 
 	err := h.Poller.processPR(
-		context.Background(), "acme/api",
+		t.Context(), "acme/api",
 		ghPR{Number: 92, HeadRefOid: "new-sha", BaseRefName: "main"}, h.Cfg)
 	require.ErrorIs(t, err, errNoCIAgent, "expected errNoCIAgent from processPR")
 
@@ -3825,7 +4048,7 @@ func newCIPanelGitHarness(t *testing.T) (*CIPoller, *storage.DB, *storage.Repo, 
 	t.Helper()
 	repo := testutil.NewTestRepoWithCommit(t)
 	db := testutil.OpenTestDB(t)
-	// Register with an explicit identity so findLocalRepo("acme/api") resolves
+	// Register with an explicit identity so findLocalRepo(t.Context(), "acme/api") resolves
 	// this checkout instead of trying to auto-clone from GitHub.
 	row, err := db.GetOrCreateRepo(repo.Path(), "git@github.com:acme/api.git")
 	require.NoError(t, err)
@@ -3876,7 +4099,7 @@ func TestProcessPRCreatesPanelRun(t *testing.T) {
 		"CREATE TABLE users(id INT);\n", "feat: add users table")
 	p.mergeBaseFn = func(_, _, _ string) (string, error) { return base, nil }
 
-	err := p.processPR(context.Background(), "acme/api", ghPR{
+	err := p.processPR(t.Context(), "acme/api", ghPR{
 		Number: 5, HeadRefOid: head, BaseRefName: "main",
 	}, cfg)
 	require.NoError(t, err, "processPR")
@@ -3927,7 +4150,7 @@ func TestProcessPRAutoDesignUsesConfiguredBackupModel(t *testing.T) {
 		"CREATE TABLE orders(id INT);\n", "feat: add orders table")
 	p.mergeBaseFn = func(_, _, _ string) (string, error) { return base, nil }
 
-	err := p.processPR(context.Background(), "acme/api", ghPR{
+	err := p.processPR(t.Context(), "acme/api", ghPR{
 		Number: 14, HeadRefOid: head, BaseRefName: "main",
 	}, cfg)
 	require.NoError(t, err, "processPR")
@@ -3970,7 +4193,7 @@ func TestProcessPRAutoDesignPersistsNamedACPBackupSnapshot(t *testing.T) {
 		"CREATE TABLE invoices(id INT);\n", "feat: add invoices table")
 	p.mergeBaseFn = func(_, _, _ string) (string, error) { return base, nil }
 
-	err := p.processPR(context.Background(), "acme/api", ghPR{
+	err := p.processPR(t.Context(), "acme/api", ghPR{
 		Number: 16, HeadRefOid: head, BaseRefName: "main",
 	}, cfg)
 	require.NoError(t, err)
@@ -4011,7 +4234,7 @@ func TestProcessPRAutoDesignUsesCIModelOverride(t *testing.T) {
 		"CREATE TABLE payments(id INT);\n", "feat: add payments table")
 	p.mergeBaseFn = func(_, _, _ string) (string, error) { return base, nil }
 
-	err := p.processPR(context.Background(), "acme/api", ghPR{
+	err := p.processPR(t.Context(), "acme/api", ghPR{
 		Number: 15, HeadRefOid: head, BaseRefName: "main",
 	}, cfg)
 	require.NoError(t, err, "processPR")
@@ -4102,7 +4325,7 @@ func TestProcessPRSynthesisAndMembersUseSeparateMinSeverity(t *testing.T) {
 	head := repo.CommitFile("app.go", "package app\n", "feat: app")
 	p.mergeBaseFn = func(_, _, _ string) (string, error) { return base, nil }
 
-	err := p.processPR(context.Background(), "acme/api", ghPR{
+	err := p.processPR(t.Context(), "acme/api", ghPR{
 		Number: 12, HeadRefOid: head, BaseRefName: "main",
 	}, cfg)
 	require.NoError(t, err, "processPR")
@@ -4141,7 +4364,7 @@ func TestProcessPRMemberMinSeverityInvalidRepoReportsConfigurationError(t *testi
 	head := repo.CommitFile("app.go", "package app\n", "feat: app")
 	p.mergeBaseFn = func(_, _, _ string) (string, error) { return base, nil }
 
-	err := p.processPR(context.Background(), "acme/api", ghPR{
+	err := p.processPR(t.Context(), "acme/api", ghPR{
 		Number: 13, HeadRefOid: head, BaseRefName: "main",
 	}, cfg)
 	require.ErrorContains(t, err, "review_min_severity")
@@ -4173,7 +4396,7 @@ func TestProcessPRNamedPanelMembers(t *testing.T) {
 	head := repo.CommitFile("app.go", "package app\n", "feat: app")
 	p.mergeBaseFn = func(_, _, _ string) (string, error) { return base, nil }
 
-	err := p.processPR(context.Background(), "acme/api", ghPR{
+	err := p.processPR(t.Context(), "acme/api", ghPR{
 		Number: 6, HeadRefOid: head, BaseRefName: "main",
 	}, cfg)
 	require.NoError(t, err, "processPR")
@@ -4214,7 +4437,7 @@ func TestProcessPRNamedPanelACPMemberReplacesInheritedWorkflowModel(t *testing.T
 	head := repo.CommitFile("app.go", "package app\n", "feat: app")
 	p.mergeBaseFn = func(_, _, _ string) (string, error) { return base, nil }
 
-	err := p.processPR(context.Background(), "acme/api", ghPR{
+	err := p.processPR(t.Context(), "acme/api", ghPR{
 		Number: 17, HeadRefOid: head, BaseRefName: "main",
 	}, cfg)
 	require.NoError(t, err)
@@ -4263,7 +4486,7 @@ func TestProcessPRNamedPanelMemberUsesBackupModelWhenPreferredUnavailable(t *tes
 	head := repo.CommitFile("app.go", "package app\n", "feat: app")
 	p.mergeBaseFn = func(_, _, _ string) (string, error) { return base, nil }
 
-	err := p.processPR(context.Background(), "acme/api", ghPR{
+	err := p.processPR(t.Context(), "acme/api", ghPR{
 		Number: 15, HeadRefOid: head, BaseRefName: "main",
 	}, cfg)
 	require.NoError(t, err, "processPR")
@@ -4309,7 +4532,7 @@ func TestProcessPRNamedPanelOmittedAgentAutoDetectsAvailableAgent(t *testing.T) 
 	head := repo.CommitFile("app.go", "package app\n", "feat: app")
 	p.mergeBaseFn = func(_, _, _ string) (string, error) { return base, nil }
 
-	err := p.processPR(context.Background(), "acme/api", ghPR{
+	err := p.processPR(t.Context(), "acme/api", ghPR{
 		Number: 16, HeadRefOid: head, BaseRefName: "main",
 	}, cfg)
 	require.NoError(t, err, "processPR")
@@ -4341,7 +4564,7 @@ func TestProcessPRAutoDesignAppendsNoneWhenNotWarranted(t *testing.T) {
 	head := repo.CommitFile("pkg/util_test.go", "package pkg\n", "test: add util test")
 	p.mergeBaseFn = func(_, _, _ string) (string, error) { return base, nil }
 
-	err := p.processPR(context.Background(), "acme/api", ghPR{
+	err := p.processPR(t.Context(), "acme/api", ghPR{
 		Number: 7, HeadRefOid: head, BaseRefName: "main",
 	}, cfg)
 	require.NoError(t, err, "processPR")
@@ -4382,7 +4605,7 @@ func TestProcessPRAutoDesignIgnoresNonVotingDesignMember(t *testing.T) {
 	head := repo.CommitFile("migrations/001.sql", "create table t(id integer);\n", "feat: add migration")
 	p.mergeBaseFn = func(_, _, _ string) (string, error) { return base, nil }
 
-	err := p.processPR(context.Background(), "acme/api", ghPR{
+	err := p.processPR(t.Context(), "acme/api", ghPR{
 		Number: 9, HeadRefOid: head, BaseRefName: "main",
 	}, cfg)
 	require.NoError(t, err, "processPR")
@@ -4426,7 +4649,7 @@ func TestProcessPRAutoDesignFailsOpenOnAmbiguous(t *testing.T) {
 	head := repo.CommitFile("service.go", "package svc\n"+body.String(), "update service")
 	p.mergeBaseFn = func(_, _, _ string) (string, error) { return base, nil }
 
-	err := p.processPR(context.Background(), "acme/api", ghPR{
+	err := p.processPR(t.Context(), "acme/api", ghPR{
 		Number: 8, HeadRefOid: head, BaseRefName: "main",
 	}, cfg)
 	require.NoError(t, err, "processPR")
@@ -4463,7 +4686,7 @@ func TestProcessPRAutoDesignMultiCommitEarlierWarrants(t *testing.T) {
 	head := repo.CommitFile("pkg/cart_test.go", "package pkg\n", "test: add cart test")
 	p.mergeBaseFn = func(_, _, _ string) (string, error) { return base, nil }
 
-	err := p.processPR(context.Background(), "acme/api", ghPR{
+	err := p.processPR(t.Context(), "acme/api", ghPR{
 		Number: 30, HeadRefOid: head, BaseRefName: "main",
 	}, cfg)
 	require.NoError(t, err, "processPR")
@@ -4494,12 +4717,12 @@ func TestListCommitsInRange(t *testing.T) {
 	c1 := repo.CommitFile("a.go", "package a\n", "first")
 	c2 := repo.CommitFile("b.go", "package b\n", "second")
 
-	shas, err := listCommitsInRange(repo.Path(), base, c2)
+	shas, err := listCommitsInRange(t.Context(), repo.Path(), base, c2)
 	require.NoError(t, err)
 	assert.Equal([]string{c1, c2}, shas, "range is oldest-first (reverse chronological)")
 
 	// Empty range (head == base): fall back to the head SHA, never empty.
-	empty, err := listCommitsInRange(repo.Path(), c2, c2)
+	empty, err := listCommitsInRange(t.Context(), repo.Path(), c2, c2)
 	require.NoError(t, err)
 	assert.Equal([]string{c2}, empty, "empty range falls back to [head]")
 }
@@ -4527,7 +4750,7 @@ func TestProcessPRIgnoresWorkingTreeAutoDesignConfig(t *testing.T) {
 
 	p.mergeBaseFn = func(_, _, _ string) (string, error) { return base, nil }
 
-	err := p.processPR(context.Background(), "acme/api", ghPR{
+	err := p.processPR(t.Context(), "acme/api", ghPR{
 		Number: 9, HeadRefOid: head, BaseRefName: "main",
 	}, cfg)
 	require.NoError(t, err, "processPR")
@@ -4542,7 +4765,7 @@ func TestProcessPRIgnoresWorkingTreeAutoDesignConfig(t *testing.T) {
 
 func TestResolveUpsertComments_DefaultFalse(t *testing.T) {
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-	if h.Poller.resolveUpsertComments("acme/api") {
+	if h.Poller.resolveUpsertComments(t.Context(), "acme/api") {
 		require.Condition(t, func() bool {
 			return false
 		}, "expected false by default")
@@ -4552,7 +4775,7 @@ func TestResolveUpsertComments_DefaultFalse(t *testing.T) {
 func TestResolveUpsertComments_GlobalTrue(t *testing.T) {
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 	h.Cfg.CI.UpsertComments = true
-	if !h.Poller.resolveUpsertComments("acme/api") {
+	if !h.Poller.resolveUpsertComments(t.Context(), "acme/api") {
 		require.Condition(t, func() bool {
 			return false
 		}, "expected true from global config")
@@ -4574,7 +4797,7 @@ func TestResolveUpsertComments_RepoOverridesGlobal(t *testing.T) {
 		}, err)
 	}
 
-	if h.Poller.resolveUpsertComments("acme/api") {
+	if h.Poller.resolveUpsertComments(t.Context(), "acme/api") {
 		require.Condition(t, func() bool {
 			return false
 		}, "expected repo config (false) to override global (true)")
@@ -4596,7 +4819,7 @@ func TestResolveUpsertComments_RepoEnablesOverGlobal(t *testing.T) {
 		}, err)
 	}
 
-	if !h.Poller.resolveUpsertComments("acme/api") {
+	if !h.Poller.resolveUpsertComments(t.Context(), "acme/api") {
 		require.Condition(t, func() bool {
 			return false
 		}, "expected repo config (true) to override global (false)")
@@ -4605,13 +4828,13 @@ func TestResolveUpsertComments_RepoEnablesOverGlobal(t *testing.T) {
 
 func TestResolveIncludeCosts_DefaultFalse(t *testing.T) {
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-	assert.False(t, h.Poller.resolveIncludeCosts("acme/api"))
+	assert.False(t, h.Poller.resolveIncludeCosts(t.Context(), "acme/api"))
 }
 
 func TestResolveIncludeCosts_GlobalTrue(t *testing.T) {
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 	h.Cfg.CI.IncludeCosts = true
-	assert.True(t, h.Poller.resolveIncludeCosts("acme/api"))
+	assert.True(t, h.Poller.resolveIncludeCosts(t.Context(), "acme/api"))
 }
 
 func TestResolveIncludeCosts_RepoOverridesGlobal(t *testing.T) {
@@ -4624,7 +4847,7 @@ func TestResolveIncludeCosts_RepoOverridesGlobal(t *testing.T) {
 	), 0o644)
 	require.NoError(t, err)
 
-	assert.False(t, h.Poller.resolveIncludeCosts("acme/api"))
+	assert.False(t, h.Poller.resolveIncludeCosts(t.Context(), "acme/api"))
 }
 
 func TestResolveIncludeCosts_RepoEnablesOverGlobal(t *testing.T) {
@@ -4636,7 +4859,7 @@ func TestResolveIncludeCosts_RepoEnablesOverGlobal(t *testing.T) {
 	), 0o644)
 	require.NoError(t, err)
 
-	assert.True(t, h.Poller.resolveIncludeCosts("acme/api"))
+	assert.True(t, h.Poller.resolveIncludeCosts(t.Context(), "acme/api"))
 }
 
 // TestClosedPRCleansUpDeferredAttempt verifies that closing a PR removes its
@@ -4670,7 +4893,7 @@ func TestClosedPRCleansUpDeferredAttempt(t *testing.T) {
 
 	// PR 5 has closed: absent from openPRs and the PR-open check returns false.
 	h.Poller.isPROpenFn = func(string, int) bool { return false }
-	require.NoError(t, h.Poller.cleanupClosedPRPanels(context.Background(), "acme/api", map[int]bool{}))
+	require.NoError(t, h.Poller.cleanupClosedPRPanels(t.Context(), "acme/api", map[int]bool{}))
 
 	attempt, err = h.DB.GetReviewAttempt("acme/api", prNum, headSHA)
 	require.NoError(t, err)
@@ -4691,7 +4914,7 @@ func TestRetryDueReviewAttemptDeletesAdvancedHead(t *testing.T) {
 	require.NoError(t, h.DB.DeferReviewAttempt("acme/api", prNum, oldSHA,
 		"transient", "provider unavailable", testUUIDPtr("old-run"), now.Add(-time.Minute), false))
 
-	require.NoError(t, h.Poller.retryDueReviewAttempts(context.Background(), "acme/api",
+	require.NoError(t, h.Poller.retryDueReviewAttempts(t.Context(), "acme/api",
 		[]ghPR{{Number: prNum, HeadRefOid: newSHA, BaseRefName: "main"}}, h.Cfg))
 
 	attempt, err := h.DB.GetReviewAttempt("acme/api", prNum, oldSHA)
@@ -4724,7 +4947,7 @@ func TestRetryDueReviewAttemptFetchesPRMissingFromOpenPage(t *testing.T) {
 		return panelPostTarget{Open: true, HeadSHA: headSHA, HeadRefName: "feature/retry", BaseRefName: baseBranch}, nil
 	}
 
-	require.NoError(t, h.Poller.retryDueReviewAttempts(context.Background(), "acme/api",
+	require.NoError(t, h.Poller.retryDueReviewAttempts(t.Context(), "acme/api",
 		[]ghPR{{Number: 1, HeadRefOid: "other-head", BaseRefName: "main"}}, h.Cfg))
 
 	assert.Equal([]int{prNum}, lookedUp, "missing PR is checked directly before skipping")
@@ -4778,7 +5001,7 @@ func TestRetryDueReviewAttemptSkipsConfiguredLabel(t *testing.T) {
 		}, nil
 	}
 	require.NoError(t, h.Poller.retryDueReviewAttempts(
-		context.Background(), "acme/api", nil, h.Cfg))
+		t.Context(), "acme/api", nil, h.Cfg))
 
 	attempt, err := h.DB.GetReviewAttempt("acme/api", prNum, headSHA)
 	require.NoError(t, err)
@@ -4792,6 +5015,80 @@ func TestRetryDueReviewAttemptSkipsConfiguredLabel(t *testing.T) {
 		Repo: "acme/api", SHA: headSHA,
 		Summary: "Review skipped: label Skip-Review",
 	}}, *skippedChecks)
+}
+
+// TestRetryDueReviewAttemptAppliesPRFilters checks that a deferred retry whose
+// PR is fetched directly still sees the author association and head branch.
+func TestRetryDueReviewAttemptAppliesPRFilters(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		target   panelPostTarget
+		wantSkip string // expected skip description; empty means retried
+	}{
+		{
+			name:   "member retried",
+			target: panelPostTarget{AuthorLogin: "bob", AuthorAssociation: "MEMBER", HeadRefName: "feature/retry"},
+		},
+		{
+			name:     "outside author skipped",
+			target:   panelPostTarget{AuthorLogin: "stranger", AuthorAssociation: "NONE", HeadRefName: "feature/retry"},
+			wantSkip: "Review skipped: author not in allowed authors",
+		},
+		{
+			name:     "excluded branch skipped",
+			target:   panelPostTarget{AuthorLogin: "bob", AuthorAssociation: "MEMBER", HeadRefName: "renovate/lodash-4.x"},
+			wantSkip: "Review skipped: branch filtered",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+			h.Cfg.CI.AllowedAuthorAssociations = []string{"MEMBER"}
+			h.Cfg.CI.ExcludeBranches = []string{"renovate/*"}
+			h.Cfg.CI.ReviewTypes = []string{"security"}
+			h.Cfg.CI.Agents = []string{"codex"}
+			h.stubProcessPRGit()
+			statuses := h.CaptureCommitStatuses()
+			skippedChecks := h.CaptureSkippedChecks()
+
+			const headSHA = "filtereddeferred1"
+			const prNum = 134
+			now := time.Now()
+			created, err := h.DB.ReserveReviewAttempt("acme/api", prNum, headSHA, now.Add(-time.Hour))
+			require.NoError(t, err)
+			require.True(t, created)
+			require.NoError(t, h.DB.DeferReviewAttempt(
+				"acme/api", prNum, headSHA, "transient", "provider unavailable",
+				testUUIDPtr("old-run"), now.Add(-time.Minute), false))
+
+			target := tt.target
+			target.Open = true
+			target.HeadSHA = headSHA
+			target.BaseRefName = "main"
+			h.Poller.prPostTargetFn = func(context.Context, string, int) (panelPostTarget, error) {
+				return target, nil
+			}
+			require.NoError(t, h.Poller.retryDueReviewAttempts(
+				t.Context(), "acme/api", nil, h.Cfg))
+
+			attempt, err := h.DB.GetReviewAttempt("acme/api", prNum, headSHA)
+			require.NoError(t, err)
+			if tt.wantSkip == "" {
+				require.NotNil(t, attempt)
+				assert.Equal("pending", attempt.State)
+				assert.True(h.hasPanel(t, "acme/api", prNum, headSHA))
+				return
+			}
+			assert.Nil(attempt)
+			assert.False(h.hasPanel(t, "acme/api", prNum, headSHA))
+			assert.Equal([]capturedStatus{{
+				Repo: "acme/api", SHA: headSHA, State: "success", Desc: tt.wantSkip,
+			}}, *statuses)
+			assert.Equal([]capturedSkippedCheck{{
+				Repo: "acme/api", SHA: headSHA, Summary: tt.wantSkip,
+			}}, *skippedChecks)
+		})
+	}
 }
 
 // TestReconcileStuckAttempt covers the crash/stuck reconcile: a pending attempt
@@ -4824,7 +5121,7 @@ func TestReconcileStuckAttempt(t *testing.T) {
 	// Seed a non-zero genuine streak so the re-arm's preservation is observable:
 	// a failed re-enqueue is an infrastructure hiccup and must not reset progress
 	// toward genuine give-up.
-	_, err = h.DB.Exec(`UPDATE ci_pr_review_attempts
+	_, err = h.DB.ExecContext(t.Context(), `UPDATE ci_pr_review_attempts
 		SET state='pending', next_attempt_at=NULL, consecutive_genuine_attempts=2
 		WHERE github_repo=? AND pr_number=? AND head_sha=?`,
 		"acme/api", stuckPR, stuckSHA)
@@ -4858,12 +5155,12 @@ func TestReconcileStuckAttempt(t *testing.T) {
 func TestBuildPanelOpts_RecordsPRBranchOnJobs(t *testing.T) {
 	p := &CIPoller{}
 	var promptConfigRef string
-	p.buildReviewPromptFn = func(_ context.Context, _, _ string, _ int64, _ int, _, _, _, _ string, _ *config.RepoConfig, configRef string, _ *config.Config) (string, error) {
+	p.buildReviewPromptFn = func(_ context.Context, _, _ string, _ int64, _ int, _, _, _, _ string, _ prompt.PullRequest, _ *config.RepoConfig, configRef string, _ *config.Config) (string, error) {
 		promptConfigRef = configRef
 		return "prebuilt prompt", nil
 	}
 
-	memberOpts, synthOpts, panelErr := p.buildPanelOpts(context.Background(), buildPanelOptsInput{
+	memberOpts, synthOpts, panelErr := p.buildPanelOpts(t.Context(), buildPanelOptsInput{
 		repo:       &storage.Repo{ID: 1, RootPath: t.TempDir()},
 		repoCfgRef: "origin/main",
 		cfg:        config.DefaultConfig(),
@@ -4904,11 +5201,11 @@ func TestBuildPanelOptsUsesDefaultBranchReviewContextCount(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			p := &CIPoller{}
 			gotCount := -1
-			p.buildReviewPromptFn = func(_ context.Context, _, _ string, _ int64, contextCount int, _, _, _, _ string, _ *config.RepoConfig, _ string, _ *config.Config) (string, error) {
+			p.buildReviewPromptFn = func(_ context.Context, _, _ string, _ int64, contextCount int, _, _, _, _ string, _ prompt.PullRequest, _ *config.RepoConfig, _ string, _ *config.Config) (string, error) {
 				gotCount = contextCount
 				return "prebuilt prompt", nil
 			}
-			_, _, err := p.buildPanelOpts(context.Background(), buildPanelOptsInput{
+			_, _, err := p.buildPanelOpts(t.Context(), buildPanelOptsInput{
 				repo:       &storage.Repo{ID: 1, RootPath: t.TempDir()},
 				repoCfg:    tt.repoCfg,
 				repoCfgRef: "origin/main",
@@ -4927,7 +5224,7 @@ func TestBuildPanelOptsUsesDefaultBranchReviewContextCount(t *testing.T) {
 
 func TestBuildPanelOptsSnapshotsEffectiveACPExecutionConfig(t *testing.T) {
 	p := &CIPoller{}
-	p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.RepoConfig, string, *config.Config) (string, error) {
+	p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, prompt.PullRequest, *config.RepoConfig, string, *config.Config) (string, error) {
 		return "prebuilt prompt", nil
 	}
 	cfg := config.DefaultConfig()
@@ -4939,7 +5236,7 @@ func TestBuildPanelOptsSnapshotsEffectiveACPExecutionConfig(t *testing.T) {
 		"goose": {Command: "default-branch-goose", Args: []string{"acp"}},
 	}}
 
-	memberOpts, synthOpts, err := p.buildPanelOpts(context.Background(), buildPanelOptsInput{
+	memberOpts, synthOpts, err := p.buildPanelOpts(t.Context(), buildPanelOptsInput{
 		repo:    &storage.Repo{ID: 1, RootPath: t.TempDir()},
 		repoCfg: repoCfg,
 		cfg:     cfg,
@@ -4980,7 +5277,8 @@ func TestBuildPanelOptsSnapshotsEffectiveACPExecutionConfig(t *testing.T) {
 
 	// The synthesis worker reads both parts of the same snapshot.
 	synthJob := &storage.ReviewJob{
-		Source: storage.JobSourceCI, PanelMemberConfigJSON: synthOpts.PanelMemberConfigJSON,
+		JobType: storage.JobTypeSynthesis, Source: storage.JobSourceCI,
+		PanelMemberConfigJSON: synthOpts.PanelMemberConfigJSON,
 	}
 	instructions, err := synthesisInstructions(synthJob)
 	require.NoError(t, err)
@@ -5038,11 +5336,11 @@ func TestBuildPanelOptsRejectsACPReferencesMissingFromDefaultBranch(t *testing.T
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := &CIPoller{}
-			p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.RepoConfig, string, *config.Config) (string, error) {
+			p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, prompt.PullRequest, *config.RepoConfig, string, *config.Config) (string, error) {
 				return "prebuilt prompt", nil
 			}
 			memberOpts, synthOpts, err := p.buildPanelOpts(
-				context.Background(), buildPanelOptsInput{
+				t.Context(), buildPanelOptsInput{
 					repo:    &storage.Repo{ID: 1, RootPath: repoPath},
 					repoCfg: &config.RepoConfig{},
 					cfg:     config.DefaultConfig(),
@@ -5123,7 +5421,7 @@ func TestCIPromptPrebuildNeverIncludesKataContext(t *testing.T) {
 	cfg.KataContext.Mode = config.KataModeOpen
 	p := NewCIPoller(nil, NewStaticConfig(cfg), nil)
 
-	out, err := p.callBuildReviewPrompt(context.Background(), repo.Path(), sha, 0, 0, "test", "", "", "", nil, "", cfg)
+	out, err := p.callBuildReviewPrompt(t.Context(), repo.Path(), sha, 0, 0, "test", "", "", "", prompt.PullRequest{}, nil, "", cfg)
 	require.NoError(t, err)
 	assert.NotContains(t, out, "Task Context (kata)",
 		"CI prompt prebuilds must never include kata task-ledger content")
@@ -5143,19 +5441,19 @@ func TestBuildPanelOptsAbortsOnCanceledPrebuild(t *testing.T) {
 
 	t.Run("cancellation aborts the run", func(t *testing.T) {
 		p := &CIPoller{}
-		p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.RepoConfig, string, *config.Config) (string, error) {
+		p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, prompt.PullRequest, *config.RepoConfig, string, *config.Config) (string, error) {
 			return "", fmt.Errorf("building prompt: %w", context.Canceled)
 		}
-		_, _, err := p.buildPanelOpts(context.Background(), in)
+		_, _, err := p.buildPanelOpts(t.Context(), in)
 		require.ErrorIs(t, err, context.Canceled, "canceled prebuild must abort instead of enqueuing promptless jobs")
 	})
 
 	t.Run("other prebuild errors still enqueue without stored prompt", func(t *testing.T) {
 		p := &CIPoller{}
-		p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.RepoConfig, string, *config.Config) (string, error) {
+		p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, prompt.PullRequest, *config.RepoConfig, string, *config.Config) (string, error) {
 			return "", errors.New("prompt prebuild exploded")
 		}
-		memberOpts, _, err := p.buildPanelOpts(context.Background(), in)
+		memberOpts, _, err := p.buildPanelOpts(t.Context(), in)
 		require.NoError(t, err)
 		require.Len(t, memberOpts, 1)
 		assert.Empty(t, memberOpts[0].Prompt)
@@ -5166,14 +5464,15 @@ func TestBuildPanelOptsAbortsOnCanceledPrebuild(t *testing.T) {
 func TestRetryAttemptPRCarriesAuthor(t *testing.T) {
 	p := &CIPoller{}
 	p.prPostTargetFn = func(_ context.Context, _ string, _ int) (panelPostTarget, error) {
-		return panelPostTarget{Open: true, HeadSHA: "head000", BaseRefName: "main", AuthorLogin: "alice"}, nil
+		return panelPostTarget{Open: true, HeadSHA: "head000", BaseRefName: "main", AuthorLogin: "alice", Draft: true}, nil
 	}
 
-	pr, ok := p.retryAttemptPR(context.Background(), "acme/api",
+	pr, ok := p.retryAttemptPR(t.Context(), "acme/api",
 		&storage.ReviewAttempt{PRNumber: 7, HeadSHA: "head000"}, nil)
 	require.True(t, ok)
 	assert.Equal(t, "alice", pr.Author.Login,
 		"direct lookup must reconstruct the PR with its author preserved")
+	assert.True(t, pr.Draft, "direct lookup must preserve draft state for skip decisions")
 }
 
 func TestFormatPanelReviewerStatusLabelsNoVerdict(t *testing.T) {

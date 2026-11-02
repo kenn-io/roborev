@@ -302,10 +302,13 @@ Install the default extension in Pi:
 pi install npm:@nqbao/pi-json-schema
 ```
 
-roborev passes the configured extension source explicitly when it invokes
-reviews or classifier jobs. Installing it in Pi makes setup visible in `pi list`
-and avoids runtime package-fetch surprises in offline or locked-down
-environments.
+When your global Pi settings or the repository's `.pi/settings.json` install
+that npm package, at any version, reviews use the installed copy. Loading a
+second copy would make Pi exit with a flag conflict. Otherwise roborev passes
+the configured extension source explicitly. Classifier jobs and planning runs
+turn off other extensions, so they always pass it explicitly. Installing it in
+Pi makes setup visible in `pi list` and avoids runtime package-fetch surprises
+in offline or locked-down environments.
 
 Override the extension source in global config if you vendor or mirror it:
 
@@ -536,9 +539,9 @@ against the auditable pins in source (`grokToolsCLIVersion`, `grokToolsRepoRev`,
 
 ### Skills, hooks, and streaming
 
-Install roborev skills into `~/.grok/skills` with `roborev skills install` (full
-review/design/fix/refine/respond surface). Optional mid-session fix hooks:
-`roborev agent-hook install --agent grok`. Headless `streaming-json` events
+Install roborev skills into `~/.grok/skills` with `roborev agent skills install`
+(full review/design/fix/refine/respond surface). Optional mid-session fix hooks:
+`roborev agent hook install --agent grok`. Headless `streaming-json` events
 (`text`, `thought`, `tool_call`, …) render through the shared TTY formatter.
 
 ### Cursor identity note

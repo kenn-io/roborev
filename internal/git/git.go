@@ -113,8 +113,8 @@ type gitConfigEntry struct {
 	value string
 }
 
-func newGitCommitCmd(repoPath string, args ...string) *exec.Cmd {
-	cmd := exec.Command("git", args...)
+func newGitCommitCmd(ctx context.Context, repoPath string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = repoPath
 	procutil.HideConsole(cmd)
 	cmd.Env = append(filterGitCommitEnv(cmd.Environ()), "GIT_TERMINAL_PROMPT=0")
@@ -957,6 +957,18 @@ func ResolveSHACtx(ctx context.Context, repoPath, ref string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// ResolveCommitCtx resolves ref to the SHA of the commit it names, peeling
+// an annotated tag. It resolves ref as written before peeling, because in a
+// message-search ref such as ":/fix login" git reads a ^{commit} suffix as
+// part of the search text.
+func ResolveCommitCtx(ctx context.Context, repoPath, ref string) (string, error) {
+	sha, err := ResolveSHACtx(ctx, repoPath, ref)
+	if err != nil {
+		return "", err
+	}
+	return ResolveSHACtx(ctx, repoPath, sha+"^{commit}")
+}
+
 // IsAncestor checks if ancestor is an ancestor of descendant.
 // Returns (true, nil) if ancestor is reachable from descendant via the commit graph.
 // Returns (false, nil) if ancestor is not an ancestor (git exits with status 1).
@@ -1397,6 +1409,10 @@ func ReadFile(repoPath, sha, filePath string) ([]byte, error) {
 	return stdout.Bytes(), nil
 }
 
+// ErrNotFile reports that a path names no file at a commit: it is missing,
+// or it is a directory or submodule.
+var ErrNotFile = errors.New("not a file")
+
 // RefFile is a blob read from a commit. Symlink is true when the tree entry
 // stores a link target instead of regular file contents.
 type RefFile struct {
@@ -1422,7 +1438,7 @@ func ReadRefFile(repoPath, sha, filePath string) (RefFile, error) {
 	if !ok || len(fields) != 3 || string(entryPath) != filePath ||
 		string(fields[1]) != "blob" {
 		return RefFile{}, fmt.Errorf(
-			"git path %s:%s is not a file", sha, filePath,
+			"git path %s:%s is %w", sha, filePath, ErrNotFile,
 		)
 	}
 	symlink := string(fields[0]) == "120000"
@@ -2416,11 +2432,11 @@ func hasCommitHooks(repoPath string) bool {
 //     succeed, confirming the commit is otherwise viable.
 //
 // Both conditions must hold to classify the failure as hook-caused.
-func isHookCausingFailure(repoPath string) bool {
+func isHookCausingFailure(ctx context.Context, repoPath string) bool {
 	if !hasCommitHooks(repoPath) {
 		return false
 	}
-	cmd := newGitCommitCmd(repoPath, "commit", "--dry-run", "--no-verify", "-m", "probe")
+	cmd := newGitCommitCmd(ctx, repoPath, "commit", "--dry-run", "--no-verify", "-m", "probe")
 	return cmd.Run() == nil
 }
 
@@ -2805,15 +2821,15 @@ type CommitOptions struct {
 
 // CreateCommit stages all changes and creates a commit with the given message
 // Returns the SHA of the new commit
-func CreateCommit(repoPath, message string) (string, error) {
-	return CreateCommitWithOptions(repoPath, message, CommitOptions{})
+func CreateCommit(ctx context.Context, repoPath, message string) (string, error) {
+	return CreateCommitWithOptions(ctx, repoPath, message, CommitOptions{})
 }
 
 // CreateCommitWithOptions stages all changes and creates a commit with the
 // given message and optional commit metadata. Returns the SHA of the new commit.
-func CreateCommitWithOptions(repoPath, message string, opts CommitOptions) (string, error) {
+func CreateCommitWithOptions(ctx context.Context, repoPath, message string, opts CommitOptions) (string, error) {
 	// Stage all changes (respects .gitignore)
-	cmd := newGitCommitCmd(repoPath, "add", "-A")
+	cmd := newGitCommitCmd(ctx, repoPath, "add", "-A")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -2831,7 +2847,7 @@ func CreateCommitWithOptions(repoPath, message string, opts CommitOptions) (stri
 	}
 	args = append(args, "-m", message)
 	// Create commit.
-	cmd = newGitCommitCmd(repoPath, args...)
+	cmd = newGitCommitCmd(ctx, repoPath, args...)
 	stderr.Reset()
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -2840,7 +2856,7 @@ func CreateCommitWithOptions(repoPath, message string, opts CommitOptions) (stri
 			IsUnsupportedCommitTrailerError(stderrText)
 		return "", &CommitError{
 			Phase:              "commit",
-			HookFailed:         !unsupportedTrailer && isHookCausingFailure(repoPath),
+			HookFailed:         !unsupportedTrailer && isHookCausingFailure(ctx, repoPath),
 			UnsupportedTrailer: unsupportedTrailer,
 			Stderr:             stderrText,
 			Err:                err,
@@ -2848,7 +2864,7 @@ func CreateCommitWithOptions(repoPath, message string, opts CommitOptions) (stri
 	}
 
 	// Get the SHA of the new commit
-	sha, err := ResolveSHA(repoPath, "HEAD")
+	sha, err := ResolveSHACtx(ctx, repoPath, "HEAD")
 	if err != nil {
 		return "", fmt.Errorf("get new commit SHA: %w", err)
 	}

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/config"
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/pkg/structuredreview"
@@ -140,7 +141,7 @@ func (wp *WorkerPool) synthesizeSucceededResults(
 			fmt.Sprintf("agent %s quota cooldown active", canonicalAgent))
 		return
 	}
-	prompt := reviewpkg.BuildSynthesisPrompt(succeeded, job.MinSeverity, neutral, instructions)
+	prompt := reviewpkg.BuildSynthesisPrompt(succeeded, neutral, instructions)
 	doc, resolvedAgent, capturedSession, runErr := wp.runSynthesisAgent(
 		ctx, workerID, job, succeeded, prompt,
 	)
@@ -187,9 +188,10 @@ func (c synthesisJobConfig) encode() (string, error) {
 }
 
 // synthesisInstructions returns the panel synthesis instructions frozen with
-// the job, or "" when it has none.
+// the job, or "" when it has none. Only a synthesis job's config holds them:
+// a member's config uses the same key for its own reviewer instructions.
 func synthesisInstructions(job *storage.ReviewJob) (string, error) {
-	if job.PanelMemberConfigJSON == "" {
+	if !job.IsSynthesisJob() || job.PanelMemberConfigJSON == "" {
 		return "", nil
 	}
 	var c synthesisJobConfig
@@ -587,4 +589,16 @@ func (wp *WorkerPool) completeSynthesisDocument(workerID string, job *storage.Re
 		Agent: job.Agent, Output: doc.Markdown(job.MinSeverity), Verdict: verdict,
 		StructuredOutput: raw, MinSeverity: job.MinSeverity,
 	}})
+}
+
+// needsExactCheckout reports whether a local committed review must run in a
+// temporary checkout of the reviewed commit instead of the working tree:
+// isolate_reviews asks for it, and synthesis instructions may tell the agent
+// to read the code, which must be the code that was reviewed.
+func needsExactCheckout(job *storage.ReviewJob, repoPath string, cfg *config.Config) (bool, error) {
+	if config.ResolveIsolateReviews(repoPath, cfg) {
+		return true, nil
+	}
+	instructions, err := synthesisInstructions(job)
+	return instructions != "", err
 }

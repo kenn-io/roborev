@@ -79,8 +79,7 @@ func searchCmd() *cobra.Command {
 }
 
 func searchUsageError(cmd *cobra.Command, err error) error {
-	cmd.SilenceUsage = false
-	return &exitError{code: 2, cause: err}
+	return usageErr(cmd, err)
 }
 
 func validateSearchOpts(query string, opts searchOpts) error {
@@ -88,19 +87,19 @@ func validateSearchOpts(query string, opts searchOpts) error {
 		return errors.New("--agent and --json are mutually exclusive")
 	}
 	if query == "" {
-		return errors.New("query must not be blank")
+		return invalidValue(errors.New("query must not be blank"))
 	}
 	if utf8.RuneCountInString(query) > searchMaxQueryRunes {
-		return fmt.Errorf("query must be at most %d UTF-8 runes", searchMaxQueryRunes)
+		return invalidValue(fmt.Errorf("query must be at most %d UTF-8 runes", searchMaxQueryRunes))
 	}
 	if opts.verdict != "" && opts.verdict != "pass" && opts.verdict != "fail" {
-		return errors.New("--verdict must be pass or fail")
+		return invalidValue(errors.New("--verdict must be pass or fail"))
 	}
 	if err := validateSearchSince(opts.since); err != nil {
-		return err
+		return invalidValue(err)
 	}
 	if opts.limit < 1 || opts.limit > searchMaxLimit {
-		return fmt.Errorf("--limit must be between 1 and %d", searchMaxLimit)
+		return invalidValue(fmt.Errorf("--limit must be between 1 and %d", searchMaxLimit))
 	}
 	if boolCount(opts.open, opts.closed) > 1 {
 		return errors.New("--open and --closed are mutually exclusive")
@@ -137,7 +136,7 @@ func boolCount(values ...bool) int {
 
 func runSearch(cmd *cobra.Command, query string, opts searchOpts) error {
 	if err := ensureDaemon(); err != nil {
-		return fmt.Errorf("daemon not running: %w", err)
+		return fmt.Errorf("connect to daemon: %w", err)
 	}
 
 	endpoint := getDaemonEndpoint()

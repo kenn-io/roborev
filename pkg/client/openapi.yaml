@@ -1241,6 +1241,9 @@ components:
           items:
             $ref: "#/components/schemas/Diagnosis"
           type: array
+        usage_provider:
+          $ref: "#/components/schemas/DoctorUsageProvider"
+          description: Usage provider and authenticated probe result from the daemon process
       required:
         - path_env
         - agents
@@ -1265,7 +1268,7 @@ components:
           type: string
         synthesis:
           $ref: "#/components/schemas/Diagnosis"
-          description: The agent that combines member results
+          description: The agent that combines member results; its name is empty when the panel has one voting member, because that member's result is passed through
         used_for:
           description: "Which reviews select this panel: post_commit, manual, or both"
           items:
@@ -1287,6 +1290,21 @@ components:
       required:
         - name
         - agent
+      type: object
+    DoctorUsageProvider:
+      additionalProperties: false
+      properties:
+        error:
+          description: Configuration or probe failure; empty means the diagnosis succeeded
+          type: string
+        provider:
+          description: "Selected provider: local_cli, cost_endpoint, or agentsview"
+          type: string
+        url:
+          description: Validated AgentsView base URL, when selected
+          type: string
+      required:
+        - provider
       type: object
     DurationStats:
       additionalProperties: false
@@ -2164,6 +2182,9 @@ components:
             - "null"
         name:
           type: string
+        non_voting:
+          description: True when the panel member is advisory and does not affect the panel verdict.
+          type: boolean
         resume_source_job_uuid:
           format: uuid
           type:
@@ -2182,6 +2203,7 @@ components:
       required:
         - review_id
         - name
+        - non_voting
         - agent
         - model
         - review_type
@@ -3157,6 +3179,30 @@ components:
         - ok
         - service
         - version
+      type: object
+    PostCommitScheduleRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/PostCommitScheduleRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        branch:
+          minLength: 1
+          type: string
+        head:
+          minLength: 1
+          type: string
+        repo_path:
+          minLength: 1
+          type: string
+      required:
+        - repo_path
+        - branch
+        - head
       type: object
     PostgresLegacyReview:
       additionalProperties: false
@@ -4461,9 +4507,9 @@ components:
             $ref: "#/components/schemas/StructuredReviewFinding"
           type: array
         schema_version:
-          description: Version of the document format, separate from the export schema_version.
+          description: Version of the document format, separate from the export schema_version. Export writes every document in the current version, 3.
           format: int64
-          maximum: 2
+          maximum: 3
           minimum: 1
           type: integer
         source_labels:
@@ -4474,7 +4520,7 @@ components:
         summary:
           type: string
         verdict:
-          description: "The agent's own assessment: pass, fail, or unable_to_review. Omitted by version 1 documents."
+          description: "The agent's own assessment: pass, fail, or unable_to_review. Omitted when the review stated none, as in converted version 1 reviews."
           type: string
       required:
         - schema_version
@@ -4485,10 +4531,34 @@ components:
       additionalProperties: false
       description: One finding in a structured review document.
       properties:
+        confidence:
+          description: The reviewer's estimate, from 0 to 1, that the problem is real. Null exactly when kind is null. Present on version 3 documents.
+          format: double
+          maximum: 1
+          minimum: 0
+          type:
+            - number
+            - "null"
+        end_line:
+          description: Last line of the problem in the reviewed file, or null. Present on version 3 documents.
+          format: int64
+          type:
+            - integer
+            - "null"
+        file:
+          description: Path relative to the repository root, or null. Present on version 3 documents.
+          type:
+            - string
+            - "null"
         fix:
           type: string
+        kind:
+          description: defect when the code behaves wrongly, or improvement when it works but should still change. Null when the producer did not classify the finding, as in goal reviews and converted historical reviews. Present on version 3 documents.
+          type:
+            - string
+            - "null"
         location:
-          description: Where the problem is, or null when the finding has no location.
+          description: Where the problem is, or null when the finding has no location. Derived from file, start_line, and end_line when file is set; otherwise free text.
           type:
             - string
             - "null"
@@ -4503,6 +4573,17 @@ components:
             format: int64
             type: integer
           type: array
+        start_line:
+          description: First line of the problem in the reviewed file, or null. Present on version 3 documents.
+          format: int64
+          type:
+            - integer
+            - "null"
+        topic:
+          description: One of tests, documentation, security, performance, or design, or null when no topic applies. Present on version 3 documents.
+          type:
+            - string
+            - "null"
       required:
         - severity
         - problem
@@ -6088,12 +6169,26 @@ paths:
             description: Deprecated numeric job cursor retained for compatibility
             format: int64
             type: integer
-        - description: Opaque next_cursor from a previous page; resumes after its immutable enqueue-time position
+        - description: Opaque next_cursor from a previous page with the same sort; resumes after its last job
           explode: false
           in: query
           name: cursor
           schema:
-            description: Opaque next_cursor from a previous page; resumes after its immutable enqueue-time position
+            description: Opaque next_cursor from a previous page with the same sort; resumes after its last job
+            type: string
+        - description: Order by id, repo, agent, review_type, status, verdict, closed, elapsed, cost, or enqueued_at (default); ties break by id
+          explode: false
+          in: query
+          name: sort
+          schema:
+            description: Order by id, repo, agent, review_type, status, verdict, closed, elapsed, cost, or enqueued_at (default); ties break by id
+            type: string
+        - description: "Sort direction: asc or desc (default)"
+          explode: false
+          in: query
+          name: direction
+          schema:
+            description: "Sort direction: asc or desc (default)"
             type: string
       responses:
         "200":
@@ -6295,6 +6390,27 @@ paths:
       summary: Get daemon liveness identity
       tags:
         - daemon
+  /api/post-commit/schedule:
+    post:
+      operationId: schedule-post-commit
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PostCommitScheduleRequest"
+        required: true
+      responses:
+        "204":
+          description: No Content
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Schedule a pending post-commit batch after its quiet period
+      tags:
+        - jobs
   /api/queue/pause:
     post:
       operationId: pause-queue

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json/v2"
 	"errors"
@@ -70,7 +71,7 @@ func reviewCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "review [commit] or review [start] [end]",
+		Use:   "review [commit | start end]",
 		Short: "Review a commit, commit range, or uncommitted changes",
 		Long: `Review a commit, commit range, or uncommitted changes.
 
@@ -124,7 +125,7 @@ Examples:
 					}
 					return fmt.Errorf("%s", b.String())
 				}
-				return fmt.Errorf("not a git repository: %w", err)
+				return withHint(invalidValue(fmt.Errorf("not a git repository: %w", err)), "change into a git repository, or pass --repo <path>; then run 'roborev init' for setup")
 			}
 
 			if reviewType == config.ReviewTypeGoal {
@@ -184,12 +185,12 @@ Examples:
 				if loadErr != nil {
 					return fmt.Errorf("load repository config: %w", loadErr)
 				}
-				canonical, validationErr := config.ValidateReviewTypesFromConfig(
+				canonical, reviewTypeErr := config.ValidateReviewTypesFromConfig(
 					[]string{reviewType}, repoCfg, globalCfg,
 				)
-				if validationErr != nil {
-					return usageErr(cmd, fmt.Errorf(
-						"invalid --type %q: %w", reviewType, validationErr,
+				if reviewTypeErr != nil {
+					return validationErr(cmd, fmt.Errorf(
+						"invalid --type %q: %w", reviewType, reviewTypeErr,
 					))
 				}
 				reviewType = canonical[0]
@@ -280,7 +281,7 @@ Examples:
 
 				// Validate has commits
 				rangeRef := mergeBase + ".." + targetRef
-				commits, err := git.GetRangeCommits(root, rangeRef)
+				commits, err := git.GetRangeCommitsCtx(ctx, root, rangeRef)
 				if err != nil {
 					return fmt.Errorf("cannot get commits: %w", err)
 				}
@@ -472,9 +473,44 @@ Examples:
 	return cmd
 }
 
+// freezeReviewRef resolves each end of a review ref, such as HEAD or
+// X..HEAD, to a commit SHA. The prompt, the agent, and the check of finding
+// locations then all see the same commits, even if HEAD moves during the
+// review. An empty end of a range means HEAD, as it does for git.
+func freezeReviewRef(ctx context.Context, repoPath, gitRef string) (string, error) {
+	resolve := func(ref string) (string, error) {
+		return git.ResolveCommitCtx(ctx, repoPath, cmp.Or(ref, "HEAD"))
+	}
+	start, end, isRange := strings.Cut(gitRef, "..")
+	if !isRange {
+		return resolve(gitRef)
+	}
+	separator := ".."
+	if rest, ok := strings.CutPrefix(end, "."); ok {
+		separator, end = "...", rest
+	}
+	start, err := resolve(start)
+	if err != nil {
+		return "", err
+	}
+	end, err = resolve(end)
+	if err != nil {
+		return "", err
+	}
+	return start + separator + end, nil
+}
+
 // runLocalReview runs a review directly without the daemon
 func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, dirtyFiles []string, agentName, model, provider, reasoning, reviewType string, quiet bool, minSeverity string) error {
 	ctx := cmd.Context()
+	dirty := diffContent != "" || len(dirtyFiles) > 0
+	if !dirty {
+		frozen, err := freezeReviewRef(ctx, repoPath, gitRef)
+		if err != nil {
+			return fmt.Errorf("resolve %s: %w", gitRef, err)
+		}
+		gitRef = frozen
+	}
 
 	// Load config
 	cfg, err := loadClientConfig()
@@ -497,13 +533,13 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, di
 		reasoning, repoCfg, cfg, reviewType,
 	)
 	if err != nil {
-		return fmt.Errorf("invalid reasoning: %w", err)
+		return invalidValue(fmt.Errorf("invalid reasoning: %w", err))
 	}
 
 	// Resolve review min-severity
 	resolvedMinSev, err := config.ResolveReviewMinSeverity(minSeverity, repoPath, cfg)
 	if err != nil {
-		return fmt.Errorf("invalid min-severity: %w", err)
+		return invalidValue(fmt.Errorf("invalid min-severity: %w", err))
 	}
 
 	// Map review_type to config workflow (matches daemon behavior)
@@ -576,7 +612,7 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, di
 	contextCount := config.ResolveReviewContextCount(repoCfg, cfg)
 	var reviewPrompt string
 	var snapshotCleanup func()
-	if diffContent != "" || len(dirtyFiles) > 0 {
+	if dirty {
 		// Dirty review
 		dirtyResult, dirtyErr := pb.BuildDirtyWithSnapshotAndFiles(diffContent, dirtyFiles, contextCount, a.Name(), reviewType, resolvedMinSev)
 		reviewPrompt = dirtyResult.Prompt
@@ -685,7 +721,7 @@ func tryBranchReviewForRef(
 	}
 
 	rangeRef := mergeBase + ".." + headRef
-	commits, err := git.GetRangeCommits(root, rangeRef)
+	commits, err := git.GetRangeCommitsCtx(ctx, root, rangeRef)
 	if err != nil || len(commits) == 0 {
 		return "", false
 	}

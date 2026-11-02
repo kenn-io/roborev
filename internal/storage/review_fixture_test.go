@@ -61,7 +61,10 @@ func reviewFixtureJSON(summary string) jsontext.Value {
 			severity = "medium"
 		}
 		doc.Verdict = structuredreview.VerdictFail
-		doc.Findings = []structuredreview.Finding{{Severity: severity, Problem: summary, Fix: "Apply the correction described in the test finding."}}
+		doc.Findings = []structuredreview.Finding{{
+			Severity: severity, Kind: structuredreview.KindDefect, Confidence: 0.8,
+			Problem: summary, Fix: "Apply the correction described in the test finding.",
+		}}
 	case VerdictUnknown:
 		doc.Verdict = structuredreview.VerdictUnableToReview
 	}

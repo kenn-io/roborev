@@ -42,9 +42,12 @@ Examples:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			jobID, err := strconv.ParseInt(args[0], 10, 64)
 			if err != nil {
-				return fmt.Errorf("invalid job ID: %w", err)
+				return validationErr(cmd, fmt.Errorf("invalid job ID: %w", err))
 			}
 
+			if jobID <= 0 {
+				return validationErr(cmd, fmt.Errorf("job ID must be a positive integer"))
+			}
 			if err := ensureDaemon(); err != nil {
 				return err
 			}

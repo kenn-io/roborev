@@ -24,9 +24,9 @@ import (
 // Returns a cancel function, the recorder, and a done channel.
 func startStreamHandler(t *testing.T, server *Server, url string) (context.CancelFunc, *safeRecorder, chan struct{}) {
 	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
-	req := httptest.NewRequest(http.MethodGet, url, nil).WithContext(ctx)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, url, nil).WithContext(ctx)
 	w := newSafeRecorder()
 
 	initialCount := server.broadcaster.SubscriberCount()
@@ -87,7 +87,7 @@ func TestHandleStreamEvents(t *testing.T) {
 
 	t.Run("wrong method fails", func(t *testing.T) {
 		server, _, _ := newTestServer(t)
-		req := httptest.NewRequest(http.MethodPost, "/api/stream/events", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/stream/events", nil)
 		w := httptest.NewRecorder()
 
 		server.httpServer.Handler.ServeHTTP(w, req)
@@ -497,7 +497,9 @@ func TestServerShutdownCancelsActiveEventStream(t *testing.T) {
 	t.Cleanup(func() { _ = server.httpServer.Close() })
 
 	initialSubscribers := server.broadcaster.SubscriberCount()
-	response, err := http.Get("http://" + runtime.Address + "/api/stream/events")
+	streamRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+runtime.Address+"/api/stream/events", nil)
+	require.NoError(t, err)
+	response, err := http.DefaultClient.Do(streamRequest)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = response.Body.Close() })
 	require.Equal(t, http.StatusOK, response.StatusCode)

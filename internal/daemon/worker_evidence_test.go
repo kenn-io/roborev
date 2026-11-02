@@ -48,7 +48,7 @@ func TestProcessJobBinaryEvidenceOnlyForEnablingType(t *testing.T) {
 			var savedData []byte
 			agent.RegisterForTest(t, &structuredWorkerTestAgent{
 				name:   agentName,
-				result: jsontext.Value(`{"schema_version":2,"summary":"No findings.","verdict":"pass","findings":[]}`),
+				result: jsontext.Value(`{"schema_version":3,"summary":"No findings.","verdict":"pass","findings":[]}`),
 				onPrompt: func(_, prompt string) {
 					if !tt.evidence {
 						assert.NotContains(t, prompt, "Committed review evidence")

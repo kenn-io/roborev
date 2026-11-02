@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/testutil"
@@ -130,32 +131,84 @@ func TestGhActionCmd(t *testing.T) {
 	}
 }
 
+func TestGhActionCmd_DraftPolicy(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		flags     []string
+		wantGuard string
+	}{
+		{name: "default", wantGuard: "${{ !github.event.pull_request.draft }}"},
+		{name: "include drafts", flags: []string{"--include-drafts"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, outPath := setupGhActionTest(t)
+			cmd := ghActionCmd()
+			cmd.SetArgs(append([]string{"--output", outPath}, tt.flags...))
+			require.NoError(t, cmd.Execute())
+			content, err := os.ReadFile(outPath)
+			require.NoError(t, err)
+			var workflow struct {
+				Jobs map[string]struct {
+					If *string `yaml:"if"`
+				} `yaml:"jobs"`
+			}
+			require.NoError(t, yaml.Unmarshal(content, &workflow))
+			review, ok := workflow.Jobs["review"]
+			require.True(t, ok)
+			if tt.wantGuard == "" {
+				assert.Nil(t, review.If)
+			} else {
+				assert.Equal(t, &tt.wantGuard, review.If)
+			}
+		})
+	}
+}
+
 func TestGhActionCmd_ForceOverwrite(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("skipping on Windows")
 	}
 
-	_, outPath := setupGhActionTest(t)
+	for _, tt := range []struct {
+		name      string
+		flags     []string
+		wantGuard string
+	}{
+		{name: "default", wantGuard: "${{ !github.event.pull_request.draft }}"},
+		{name: "include drafts", flags: []string{"--include-drafts"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, outPath := setupGhActionTest(t)
+			require.NoError(t, os.MkdirAll(filepath.Dir(outPath), 0o755))
+			require.NoError(t, os.WriteFile(outPath, []byte("existing content"), 0o644))
 
-	require.NoError(t, os.MkdirAll(filepath.Dir(outPath), 0o755), "failed to create directory")
-	require.NoError(t, os.WriteFile(outPath, []byte("existing content"), 0o644), "failed to write existing content")
+			cmd := ghActionCmd()
+			cmd.SetArgs(append([]string{"--output", outPath}, tt.flags...))
+			require.ErrorContains(t, cmd.Execute(), "use --force to overwrite")
+			content, err := os.ReadFile(outPath)
+			require.NoError(t, err)
+			assert.Equal(t, "existing content", string(content))
 
-	// Without --force should fail
-	cmd := ghActionCmd()
-	cmd.SetArgs([]string{"--output", outPath})
-	err := cmd.Execute()
-	require.Error(t, err, "expected error without --force flag")
-
-	content, _ := os.ReadFile(outPath)
-	assert.Equal(t, "existing content", string(content), "original content should be preserved")
-
-	// With --force should succeed
-	cmd2 := ghActionCmd()
-	cmd2.SetArgs([]string{"--output", outPath, "--force"})
-	require.NoError(t, cmd2.Execute(), "force should succeed")
-
-	content, _ = os.ReadFile(outPath)
-	assert.Contains(t, string(content), "name: roborev", "force should have overwritten with workflow")
+			cmd = ghActionCmd()
+			cmd.SetArgs(append([]string{"--output", outPath, "--force"}, tt.flags...))
+			require.NoError(t, cmd.Execute())
+			content, err = os.ReadFile(outPath)
+			require.NoError(t, err)
+			var workflow struct {
+				Jobs map[string]struct {
+					If *string `yaml:"if"`
+				} `yaml:"jobs"`
+			}
+			require.NoError(t, yaml.Unmarshal(content, &workflow))
+			review, ok := workflow.Jobs["review"]
+			require.True(t, ok)
+			if tt.wantGuard == "" {
+				assert.Nil(t, review.If)
+			} else {
+				assert.Equal(t, &tt.wantGuard, review.If)
+			}
+		})
+	}
 }
 
 func TestGhActionCmd_NotGitRepo(t *testing.T) {

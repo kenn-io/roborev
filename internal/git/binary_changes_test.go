@@ -1,7 +1,6 @@
 package git
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -9,7 +8,7 @@ import (
 )
 
 func TestChangedBinaryFiles(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	repo := NewTestRepo(t)
 	repo.WriteFile("keep.txt", "text")
 	repo.WriteFile("exhibit.pdf", "%PDF\x00v1")
@@ -46,7 +45,7 @@ func TestChangedBinaryFiles(t *testing.T) {
 }
 
 func TestChangedBinaryFilesMergeConflictResolution(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	repo := NewTestRepo(t)
 	repo.WriteFile("exhibit.pdf", "%PDF\x00base")
 	repo.Run("add", "-A")

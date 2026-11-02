@@ -18,6 +18,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  GOTRACEBACK: all
   # "|" falls back to the source repo on any proxy error, including HTTP/2 stream resets mid-download.
   GOPROXY: https://proxy.golang.org|direct
   # Module-relative source paths keep build cache entries independent of the checkout path.
@@ -26,19 +27,20 @@ env:
 jobs:
   go-changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       pull-requests: read
     outputs:
       changed: ${{ steps.filter.outputs.go }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 
       - name: Detect Go changes
         id: filter
-        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d  # v4.0.3
+        uses: step-security/paths-filter@v4.0.3
         with:
           base: ${{ github.ref }}
           filters: |
@@ -58,11 +60,17 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@v7.0.1
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version: '1.27.3'
+
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
+
+      - name: Download v0.56 Windows release archive
+        shell: bash
+        run: kit-download "https://github.com/kenn-io/roborev/releases/download/v0.56.0/roborev_0.56.0_windows_amd64.tar.gz" "$RUNNER_TEMP/roborev_0.56.0_windows_amd64.tar.gz"
 
       - name: Download v0.56 Windows release binary
         id: old
@@ -71,9 +79,6 @@ jobs:
           $archive = Join-Path $env:RUNNER_TEMP "roborev_0.56.0_windows_amd64.tar.gz"
           $extractDir = Join-Path $env:RUNNER_TEMP "roborev-v0.56.0"
           New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
-          Invoke-WebRequest `
-            -Uri "https://github.com/kenn-io/roborev/releases/download/v0.56.0/roborev_0.56.0_windows_amd64.tar.gz" `
-            -OutFile $archive
           tar -xzf $archive -C $extractDir
           "old_binary=$extractDir\roborev.exe" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 

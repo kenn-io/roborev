@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -19,8 +20,8 @@ import (
 )
 
 // preciseTimestampLayout is a fixed-width timestamp layout used for the
-// retry_not_before column and attempt boundaries (started_at). Two reasons it
-// differs from RFC3339Nano:
+// retry_not_before column, attempt boundaries (started_at), and finished_at.
+// Two reasons it differs from RFC3339Nano:
 //   - The 9-digit padded fractional seconds avoid the RFC3339Nano quirk
 //     of stripping trailing zeros (".5" vs ".500000000"), which would
 //     break lexicographic SQL comparison around fractional widths.
@@ -30,9 +31,11 @@ import (
 const preciseTimestampLayout = "2006-01-02T15:04:05.000000000Z07:00"
 
 // preciseTimestampAt keeps retry boundaries ordered and attempt boundaries
-// distinct even when two attempts start within the same second. Always
-// normalizes to UTC so DST fall-back can't produce two ordered-differently-
-// but-equal local strings.
+// distinct even when two attempts start within the same second. finished_at
+// uses it too, so a job's elapsed time keeps the sub-second precision of its
+// start, and the elapsed sort measures a job the same way before and after it
+// finishes. Always normalizes to UTC so DST fall-back can't produce two
+// ordered-differently-but-equal local strings.
 func preciseTimestampAt(t time.Time) string {
 	return t.UTC().Format(preciseTimestampLayout)
 }
@@ -1215,7 +1218,8 @@ func (db *DB) BackfillJobTokenUsageIfCurrent(w TokenUsageWrite) (bool, error) {
 // and persists the patch in a single transaction. This prevents invalid
 // states where a patch is written but the job isn't done, or vice versa.
 func (db *DB) CompleteFixJob(jobID int64, agent, output, patch string) error {
-	now := time.Now().Format(time.RFC3339)
+	finished := time.Now()
+	now := finished.Format(time.RFC3339)
 	machineID, _ := db.GetMachineID()
 	reviewUUID := uuid.New()
 
@@ -1254,7 +1258,7 @@ func (db *DB) CompleteFixJob(jobID int64, agent, output, patch string) error {
 	// Set status=done and store the patch in the same transaction.
 	result, err := conn.ExecContext(ctx,
 		`UPDATE review_jobs SET status = 'done', finished_at = ?, updated_at = ? WHERE id = ? AND status = 'running'`,
-		now, now, jobID)
+		preciseTimestampAt(finished), now, jobID)
 	if err != nil {
 		return err
 	}
@@ -1325,7 +1329,8 @@ func (db *DB) completeJob(
 	}
 	// Get machine ID and generate UUIDs before starting transaction
 	// to avoid potential lock conflicts with GetMachineID's writes
-	now := time.Now().Format(time.RFC3339)
+	finished := time.Now()
+	now := finished.Format(time.RFC3339)
 	machineID, _ := db.GetMachineID()
 	reviewUUID := uuid.New()
 
@@ -1394,7 +1399,7 @@ func (db *DB) completeJob(
 		SET status = 'done', finished_at = ?, updated_at = ?,
 		    min_severity = COALESCE(NULLIF(?, ''), min_severity)
 		WHERE id = ? AND status = 'running'
-	`, now, now, normalizeMinSeverityForWrite(completion.MinSeverity), jobID)
+	`, preciseTimestampAt(finished), now, normalizeMinSeverityForWrite(completion.MinSeverity), jobID)
 	if err != nil {
 		return err
 	}
@@ -1472,8 +1477,9 @@ func (db *DB) FailJobAttempt(ctx context.Context, jobID int64, workerID, started
 }
 
 func (db *DB) failJob(ctx context.Context, jobID int64, errorMsg, predicate string, attemptArgs ...any) (bool, error) {
-	now := time.Now().Format(time.RFC3339)
-	args := append([]any{now, errorMsg, now, jobID}, attemptArgs...)
+	finished := time.Now()
+	now := finished.Format(time.RFC3339)
+	args := append([]any{preciseTimestampAt(finished), errorMsg, now, jobID}, attemptArgs...)
 	result, err := db.ExecContext(ctx, `UPDATE review_jobs SET status = 'failed', finished_at = ?, error = ?, updated_at = ? WHERE id = ? AND status = 'running'`+predicate, args...)
 	if err != nil {
 		return false, err
@@ -1487,12 +1493,13 @@ func (db *DB) failJob(ctx context.Context, jobID int64, errorMsg, predicate stri
 
 // CancelJob marks a running or queued job as canceled
 func (db *DB) CancelJob(jobID int64) error {
-	now := time.Now().Format(time.RFC3339)
+	finished := time.Now()
+	now := finished.Format(time.RFC3339)
 	result, err := db.Exec(`
 		UPDATE review_jobs
 		SET status = 'canceled', finished_at = ?, updated_at = ?
 		WHERE id = ? AND status IN ('queued', 'running')
-	`, now, now, jobID)
+	`, preciseTimestampAt(finished), now, jobID)
 	if err != nil {
 		return err
 	}
@@ -1941,16 +1948,12 @@ type listJobsOptions struct {
 	repoIDs            []int64
 	repoIDsSet         bool
 	beforeCursor       *int64
-	beforePosition     *jobListPosition
+	sort               JobSort
+	sortAfter          *JobSortPosition
 	panelRun           uuid.UUID
 	excludePanelRole   string
 	omitPrompt         bool
 	includeFindings    bool
-}
-
-type jobListPosition struct {
-	enqueuedAt time.Time
-	id         int64
 }
 
 // WithGitRef filters jobs by git ref.
@@ -2035,14 +2038,6 @@ func WithHideClassifyJobs() ListJobsOption {
 // Unknown cursor IDs retain the legacy numeric-ID fallback.
 func WithBeforeCursor(id int64) ListJobsOption {
 	return func(o *listJobsOptions) { o.beforeCursor = &id }
-}
-
-// WithBeforePosition resumes after an immutable enqueue-time ordering
-// position. Unlike WithBeforeCursor, it does not reload mutable job state.
-func WithBeforePosition(enqueuedAt time.Time, id int64) ListJobsOption {
-	return func(o *listJobsOptions) {
-		o.beforePosition = &jobListPosition{enqueuedAt: enqueuedAt, id: id}
-	}
 }
 
 // WithRepoPrefix filters jobs to repos whose root_path starts with the given prefix.
@@ -2230,11 +2225,7 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 		conditions = append(conditions, "COALESCE(j.panel_role, '') != ?")
 		args = append(args, o.excludePanelRole)
 	}
-	if o.beforePosition != nil {
-		conditions = append(conditions, "("+
-			sqliteNormalizedTimestampExpr("j.enqueued_at")+", j.id) < (datetime(?), ?)")
-		args = append(args, o.beforePosition.enqueuedAt.UTC().Format(time.RFC3339Nano), o.beforePosition.id)
-	} else if o.beforeCursor != nil {
+	if o.beforeCursor != nil {
 		conditions = append(conditions, "("+
 			"(EXISTS (SELECT 1 FROM review_jobs cursor WHERE cursor.id = ?) AND ("+
 			sqliteNormalizedTimestampExpr("j.enqueued_at")+", j.id) < (SELECT "+
@@ -2250,9 +2241,9 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 	return " WHERE " + strings.Join(conditions, " AND "), args
 }
 
-// ListJobs returns jobs with optional status, repo, branch, and closed filters.
-func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int, opts ...ListJobsOption) ([]ReviewJob, error) {
-	options := collectListJobsOptions(opts...)
+// listJobsQuery builds the ListJobs query. It returns the query, its
+// arguments, and how many sort key columns follow the job columns.
+func listJobsQuery(statusFilter, repoFilter string, limit, offset int, options listJobsOptions) (string, []any, int, error) {
 	// Metadata-only listings skip the prompt column for terminal jobs; the
 	// scan still binds the same positional field, it just never touches the
 	// large TEXT payload. Queued/running rows keep their prompt: the active
@@ -2266,23 +2257,56 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 	if options.includeFindings {
 		structuredOutputExpr = "rv.structured_output"
 	}
+	// Each row also selects its sort keys, so the caller can resume after the
+	// last row from the values this query ordered by.
+	sortKeys, sortKeyArgs := jobSortKeys(options.sort, options.includeFindings)
+	if options.sortAfter != nil && len(options.sortAfter.Keys) != len(sortKeys) {
+		return "", nil, 0, fmt.Errorf("%w: %s sort takes %d keys, got %d",
+			ErrInvalidSortPosition, options.sort.Column, len(sortKeys), len(options.sortAfter.Keys))
+	}
+	var sortKeyColumns strings.Builder
+	for i, expr := range sortKeys {
+		fmt.Fprintf(&sortKeyColumns, ",\n\t\t       %s AS sort_key_%d", expr, i)
+	}
 	// Stored verdicts avoid loading a result body in queue listings. Review
 	// verdicts come from JSON at write time; only free-form job types may
 	// still need their output here. Keep the large text expressions lazy.
 	query := `
 		SELECT ` + jobWithReviewSelectColumns(
 		jobTextColumns{Prompt: promptExpr, Diff: diffContentExpr, Patch: "NULL"}, structuredOutputExpr,
-	) + `
+	) + sortKeyColumns.String() + `
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
 		LEFT JOIN job_content jc ON jc.job_id = j.id
 		LEFT JOIN reviews rv ON rv.job_id = j.id
 	`
-	queryFilters, args := buildJobFilterClause(statusFilter, repoFilter, options)
+	queryFilters, filterArgs := buildJobFilterClause(statusFilter, repoFilter, options)
+	args := append(slices.Clone(sortKeyArgs), filterArgs...)
 	query += queryFilters
 
-	query += " ORDER BY " + sqliteNormalizedTimestampExpr("j.enqueued_at") + " DESC, j.id DESC"
+	direction, after := " DESC", "<"
+	if options.sort.Ascending {
+		direction, after = " ASC", ">"
+	}
+	if position := options.sortAfter; position != nil {
+		if queryFilters == "" {
+			query += " WHERE "
+		} else {
+			query += " AND "
+		}
+		query += "(" + strings.Join(append(slices.Clone(sortKeys), "j.id"), ", ") + ") " + after +
+			" (" + strings.Repeat("?, ", len(sortKeys)) + "?)"
+		args = append(args, sortKeyArgs...)
+		args = append(args, position.Keys...)
+		args = append(args, position.JobID)
+	}
+
+	orderBy := make([]string, 0, len(sortKeys)+1)
+	for i := range sortKeys {
+		orderBy = append(orderBy, fmt.Sprintf("sort_key_%d%s", i, direction))
+	}
+	query += " ORDER BY " + strings.Join(append(orderBy, "j.id"+direction), ", ")
 
 	if limit > 0 {
 		query += " LIMIT ?"
@@ -2294,6 +2318,16 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		}
 	}
 
+	return query, args, len(sortKeys), nil
+}
+
+// ListJobs returns jobs with optional status, repo, branch, and closed filters.
+func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int, opts ...ListJobsOption) ([]ReviewJob, error) {
+	options := collectListJobsOptions(opts...)
+	query, args, sortKeyCount, err := listJobsQuery(statusFilter, repoFilter, limit, offset, options)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err
@@ -2305,7 +2339,12 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		var j ReviewJob
 		var fields reviewJobScanFields
 		var review jobReviewScanFields
-		if err := rows.Scan(jobWithReviewScanDestinations(&j, &fields, &review)...); err != nil {
+		j.SortKey = make([]any, sortKeyCount)
+		destinations := jobWithReviewScanDestinations(&j, &fields, &review)
+		for i := range j.SortKey {
+			destinations = append(destinations, &j.SortKey[i])
+		}
+		if err := rows.Scan(destinations...); err != nil {
 			return nil, err
 		}
 		applyJobWithReviewScan(&j, fields, review, options.includeFindings)
@@ -2787,7 +2826,8 @@ func (db *DB) PromoteClassifyToDesignReview(classifyJobID int64, workerID, agent
 // skip is caused by a classifier failure — pass "" on the clean "no
 // design review needed" path.
 func (db *DB) MarkClassifyAsSkippedDesign(classifyJobID int64, workerID, reason, errorDetail string) error {
-	now := time.Now().Format(time.RFC3339)
+	finished := time.Now()
+	now := finished.Format(time.RFC3339)
 	res, err := db.ExecContext(context.Background(), `
 		UPDATE review_jobs
 		SET job_type = 'review',
@@ -2801,7 +2841,7 @@ func (db *DB) MarkClassifyAsSkippedDesign(classifyJobID int64, workerID, reason,
 		  AND source = 'auto_design'
 		  AND status = 'running'
 		  AND worker_id = ?
-	`, sanitizeSkipReason(reason), nullString(errorDetail), now, now, classifyJobID, workerID)
+	`, sanitizeSkipReason(reason), nullString(errorDetail), preciseTimestampAt(finished), now, classifyJobID, workerID)
 	if err != nil {
 		return err
 	}

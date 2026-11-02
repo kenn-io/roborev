@@ -152,13 +152,19 @@ type ExportCiCostsResponse = ExportCICostDocument
 
 type ExportCiCostsErrorResponse = ErrorModel
 
+type ExportCiCostsErrorResponseApplicationProblemPlusJSON = ErrorModel
+
 type ExportCiMetricsResponse = ExportCIMetricsDocument
 
 type ExportCiMetricsErrorResponse = ErrorModel
 
+type ExportCiMetricsErrorResponseApplicationProblemPlusJSON = ErrorModel
+
 type ExportReviewsResponse = ExportReviewsDocument
 
 type ExportReviewsErrorResponse = ErrorModel
+
+type ExportReviewsErrorResponseApplicationProblemPlusJSON = ErrorModel
 
 type GoalReviewResponse = GoalGateResponse
 
@@ -239,6 +245,8 @@ type BackfillVerdictsErrorResponse = ErrorModel
 type PingResponse = PingInfo
 
 type PingErrorResponse = ErrorModel
+
+type SchedulePostCommitErrorResponse = ErrorModel
 
 type PauseQueueResponse = QueuePauseOutputBody
 
@@ -431,52 +439,59 @@ type RenewUpdateResponse = UpdateDrainStatus
 type RenewUpdateErrorResponse = ErrorModel
 
 type ListActivityResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ListActivityResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *ListActivityResponse
+	ApplicationProblemPlusJSONDefault *ListActivityErrorResponse
 }
 
 type RecordAgentHookEventResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *RecordAgentHookEventResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *RecordAgentHookEventResponse
+	ApplicationProblemPlusJSONDefault *RecordAgentHookEventErrorResponse
 }
 
 type CompleteAgentHookFixResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *CompleteAgentHookFixResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *CompleteAgentHookFixResponse
+	ApplicationProblemPlusJSONDefault *CompleteAgentHookFixErrorResponse
 }
 
 type ResetAgentHookSessionsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ResetAgentHookSessionsResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *ResetAgentHookSessionsResponse
+	ApplicationProblemPlusJSONDefault *ResetAgentHookSessionsErrorResponse
 }
 
 type ListAgentHookSessionsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ListAgentHookSessionsResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *ListAgentHookSessionsResponse
+	ApplicationProblemPlusJSONDefault *ListAgentHookSessionsErrorResponse
 }
 
 type SetAgentHookSnoozeResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *SetAgentHookSnoozeResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *SetAgentHookSnoozeResponse
+	ApplicationProblemPlusJSONDefault *SetAgentHookSnoozeErrorResponse
 }
 
 type ListBranchesResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ListBranchesResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *ListBranchesResponse
+	ApplicationProblemPlusJSONDefault *ListBranchesErrorResponse
 }
 
 type AddCommentResp struct {
@@ -492,24 +507,27 @@ type AddCommentResp struct {
 }
 
 type ListCommentsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ListCommentsResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *ListCommentsResponse
+	ApplicationProblemPlusJSONDefault *ListCommentsErrorResponse
 }
 
 type GetCostResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GetCostResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *GetCostResponse
+	ApplicationProblemPlusJSONDefault *GetCostErrorResponse
 }
 
 type DoctorAgentsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *DoctorAgentsResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *DoctorAgentsResponse
+	ApplicationProblemPlusJSONDefault *DoctorAgentsErrorResponse
 }
 
 type EnqueueJobResp struct {
@@ -525,27 +543,30 @@ type EnqueueJobResp struct {
 }
 
 type ExportCiCostsResp struct {
-	HTTPResponse                  *http.Response
-	Body                          []byte
-	StatusCode                    int
-	JSON200                       *ExportCiCostsResponse
-	ApplicationProblemPlusJSON409 *ExportCiCostsErrorResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *ExportCiCostsResponse
+	ApplicationProblemPlusJSON409     *ExportCiCostsErrorResponse
+	ApplicationProblemPlusJSONDefault *ExportCiCostsErrorResponseApplicationProblemPlusJSON
 }
 
 type ExportCiMetricsResp struct {
-	HTTPResponse                  *http.Response
-	Body                          []byte
-	StatusCode                    int
-	JSON200                       *ExportCiMetricsResponse
-	ApplicationProblemPlusJSON409 *ExportCiMetricsErrorResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *ExportCiMetricsResponse
+	ApplicationProblemPlusJSON409     *ExportCiMetricsErrorResponse
+	ApplicationProblemPlusJSONDefault *ExportCiMetricsErrorResponseApplicationProblemPlusJSON
 }
 
 type ExportReviewsResp struct {
-	HTTPResponse                  *http.Response
-	Body                          []byte
-	StatusCode                    int
-	JSON200                       *ExportReviewsResponse
-	ApplicationProblemPlusJSON409 *ExportReviewsErrorResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *ExportReviewsResponse
+	ApplicationProblemPlusJSON409     *ExportReviewsErrorResponse
+	ApplicationProblemPlusJSONDefault *ExportReviewsErrorResponseApplicationProblemPlusJSON
 }
 
 type GoalReviewResp struct {
@@ -558,24 +579,27 @@ type GoalReviewResp struct {
 }
 
 type GetHealthResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GetHealthResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *GetHealthResponse
+	ApplicationProblemPlusJSONDefault *GetHealthErrorResponse
 }
 
 type MarkJobAppliedResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *MarkJobAppliedResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *MarkJobAppliedResponse
+	ApplicationProblemPlusJSONDefault *MarkJobAppliedErrorResponse
 }
 
 type CancelJobResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *CancelJobResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *CancelJobResponse
+	ApplicationProblemPlusJSONDefault *CancelJobErrorResponse
 }
 
 type CreateFixJobResp struct {
@@ -590,118 +614,142 @@ type CreateFixJobResp struct {
 }
 
 type GetJobLogResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	ApplicationProblemPlusJSONDefault *GetJobLogErrorResponse
 }
 
 type GetJobOutputResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	ApplicationProblemPlusJSONDefault *GetJobOutputErrorResponse
 }
 
 type GetJobPatchResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	ApplicationProblemPlusJSONDefault *GetJobPatchErrorResponse
 }
 
 type MarkJobRebasedResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *MarkJobRebasedResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *MarkJobRebasedResponse
+	ApplicationProblemPlusJSONDefault *MarkJobRebasedErrorResponse
 }
 
 type RerunJobResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *RerunJobResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *RerunJobResponse
+	ApplicationProblemPlusJSONDefault *RerunJobErrorResponse
 }
 
 type UpdateJobBranchResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *UpdateJobBranchResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *UpdateJobBranchResponse
+	ApplicationProblemPlusJSONDefault *UpdateJobBranchErrorResponse
 }
 
 type ListJobsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ListJobsResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *ListJobsResponse
+	ApplicationProblemPlusJSONDefault *ListJobsErrorResponse
 }
 
 type BatchJobsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *BatchJobsResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *BatchJobsResponse
+	ApplicationProblemPlusJSONDefault *BatchJobsErrorResponse
 }
 
 type CleanJobLogsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *CleanJobLogsResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *CleanJobLogsResponse
+	ApplicationProblemPlusJSONDefault *CleanJobLogsErrorResponse
 }
 
 type ConvertLegacyReviewsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ConvertLegacyReviewsResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *ConvertLegacyReviewsResponse
+	ApplicationProblemPlusJSONDefault *ConvertLegacyReviewsErrorResponse
 }
 
 type ExportLegacyReviewsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ExportLegacyReviewsResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *ExportLegacyReviewsResponse
+	ApplicationProblemPlusJSONDefault *ExportLegacyReviewsErrorResponse
 }
 
 type ImportLegacyReviewResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	ApplicationProblemPlusJSONDefault *ImportLegacyReviewErrorResponse
 }
 
 type ScanTokenUsageResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ScanTokenUsageResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *ScanTokenUsageResponse
+	ApplicationProblemPlusJSONDefault *ScanTokenUsageErrorResponse
 }
 
 type BackfillVerdictsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *BackfillVerdictsResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *BackfillVerdictsResponse
+	ApplicationProblemPlusJSONDefault *BackfillVerdictsErrorResponse
 }
 
 type PingResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *PingResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *PingResponse
+	ApplicationProblemPlusJSONDefault *PingErrorResponse
+}
+
+type SchedulePostCommitResp struct {
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	ApplicationProblemPlusJSONDefault *SchedulePostCommitErrorResponse
 }
 
 type PauseQueueResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *PauseQueueResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *PauseQueueResponse
+	ApplicationProblemPlusJSONDefault *PauseQueueErrorResponse
 }
 
 type UnpauseQueueResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *UnpauseQueueResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *UnpauseQueueResponse
+	ApplicationProblemPlusJSONDefault *UnpauseQueueErrorResponse
 }
 
 type RebuttalResp struct {
@@ -717,24 +765,27 @@ type RebuttalResp struct {
 }
 
 type ListReleasesResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ListReleasesResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *ListReleasesResponse
+	ApplicationProblemPlusJSONDefault *ListReleasesErrorResponse
 }
 
 type RemapJobsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *RemapJobsResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *RemapJobsResponse
+	ApplicationProblemPlusJSONDefault *RemapJobsErrorResponse
 }
 
 type ListReposResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ListReposResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *ListReposResponse
+	ApplicationProblemPlusJSONDefault *ListReposErrorResponse
 }
 
 type DeleteRepoResp struct {
@@ -759,10 +810,11 @@ type GetRepoResp struct {
 }
 
 type MergeReposResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *MergeReposResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *MergeReposResponse
+	ApplicationProblemPlusJSONDefault *MergeReposErrorResponse
 }
 
 type MoveRepoResp struct {
@@ -776,10 +828,11 @@ type MoveRepoResp struct {
 }
 
 type RegisterRepoResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *RegisterRepoResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *RegisterRepoResponse
+	ApplicationProblemPlusJSONDefault *RegisterRepoErrorResponse
 }
 
 type RenameRepoResp struct {
@@ -794,17 +847,19 @@ type RenameRepoResp struct {
 }
 
 type ResolveRepoResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ResolveRepoResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *ResolveRepoResponse
+	ApplicationProblemPlusJSONDefault *ResolveRepoErrorResponse
 }
 
 type GetReviewResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GetReviewResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *GetReviewResponse
+	ApplicationProblemPlusJSONDefault *GetReviewErrorResponse
 }
 
 type CloseReviewResp struct {
@@ -820,10 +875,11 @@ type CloseReviewResp struct {
 }
 
 type MigrateReviewResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *MigrateReviewResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *MigrateReviewResponse
+	ApplicationProblemPlusJSONDefault *MigrateReviewErrorResponse
 }
 
 type SearchReviewsResp struct {
@@ -839,43 +895,49 @@ type SearchReviewsResp struct {
 }
 
 type ShutdownResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ShutdownResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *ShutdownResponse
+	ApplicationProblemPlusJSONDefault *ShutdownErrorResponse
 }
 
 type GetStatusResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GetStatusResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *GetStatusResponse
+	ApplicationProblemPlusJSONDefault *GetStatusErrorResponse
 }
 
 type StreamEventsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	ApplicationProblemPlusJSONDefault *StreamEventsErrorResponse
 }
 
 type GetSummaryResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GetSummaryResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *GetSummaryResponse
+	ApplicationProblemPlusJSONDefault *GetSummaryErrorResponse
 }
 
 type SyncNowResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	ApplicationProblemPlusJSONDefault *SyncNowErrorResponse
 }
 
 type GetSyncStatusResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GetSyncStatusResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *GetSyncStatusResponse
+	ApplicationProblemPlusJSONDefault *GetSyncStatusErrorResponse
 }
 
 type BackfillTokensResp struct {
@@ -888,17 +950,19 @@ type BackfillTokensResp struct {
 }
 
 type GetWebAnalyticsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GetWebAnalyticsResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *GetWebAnalyticsResponse
+	ApplicationProblemPlusJSONDefault *GetWebAnalyticsErrorResponse
 }
 
 type GetReviewProjectionResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GetReviewProjectionResponse
+	HTTPResponse                      *http.Response
+	Body                              []byte
+	StatusCode                        int
+	JSON200                           *GetReviewProjectionResponse
+	ApplicationProblemPlusJSONDefault *GetReviewProjectionErrorResponse
 }
 
 type LogoutWebSessionResp struct {
@@ -1501,6 +1565,22 @@ func (c *RawClient) PingRaw(ctx context.Context, reqEditors ...runtime.RequestEd
 	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
 		RequestURL: c.apiClient.GetBaseURL() + "/api/ping",
 		Method:     "GET",
+	}, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	return c.doer.Do(ctx, req)
+}
+
+func (c *RawClient) SchedulePostCommitRaw(ctx context.Context, options *SchedulePostCommitRequestOptions, reqEditors ...runtime.RequestEditorFn) (*http.Response, error) {
+	if options == nil {
+		options = &SchedulePostCommitRequestOptions{}
+	}
+	req, err := c.apiClient.CreateRequest(ctx, runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/post-commit/schedule",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
 	}, reqEditors...)
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)

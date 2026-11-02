@@ -22,7 +22,7 @@ import (
 // TestE2EEnqueueAndReview tests the full flow of enqueueing and reviewing a commit
 func TestE2EEnqueueAndReview(t *testing.T) {
 	// Skip if not in a git repo (CI might not have one)
-	if _, err := exec.Command("git", "rev-parse", "--git-dir").Output(); err != nil {
+	if _, err := exec.CommandContext(t.Context(), "git", "rev-parse", "--git-dir").Output(); err != nil {
 		t.Skip("not in a git repo, skipping e2e test")
 	}
 
@@ -62,7 +62,9 @@ func TestE2EEnqueueAndReview(t *testing.T) {
 	defer s.Close()
 
 	// Test status endpoint
-	resp, err := http.Get(s.URL + "/api/status")
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, s.URL+"/api/status", nil)
+	require.NoError(t, err)
+	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err, "Status request failed")
 	defer resp.Body.Close()
 

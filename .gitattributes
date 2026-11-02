@@ -3,3 +3,36 @@
 *.golden text eol=lf
 internal/skills/*/*/SKILL.md text eol=lf
 internal/skills/*/*/agents/openai.yaml text eol=lf
+
+# Generated files. GitHub collapses them in pull request diffs and leaves them
+# out of language stats.
+
+# Lockfiles.
+go.sum linguist-generated=true
+bun.lock linguist-generated=true
+mise.lock linguist-generated=true
+docs/uv.lock linguist-generated=true
+docs/screenshots/package-lock.json linguist-generated=true
+
+# make api-generate: OpenAPI document and Go client. config.yaml, the overlays,
+# the templates, and generate.go are hand-written generator inputs.
+pkg/client/openapi.yaml linguist-generated=true
+pkg/client/generated/*.go linguist-generated=true
+pkg/client/generated/generate.go -linguist-generated
+
+# make api-generate: browser API clients from web/scripts/generate-api.ts.
+web/src/lib/api/generated/** linguist-generated=true
+packages/roborev-ui/src/generated/** linguist-generated=true
+
+# go generate ./internal/skills/: skills derived from the codex sources.
+internal/skills/droid/*/SKILL.md linguist-generated=true
+internal/skills/grok/*/SKILL.md linguist-generated=true
+internal/skills/claude/roborev-fix/SKILL.md linguist-generated=true
+internal/skills/claude/roborev-refine/SKILL.md linguist-generated=true
+internal/skills/claude/roborev-respond/SKILL.md linguist-generated=true
+internal/skills/claude/roborev-setup-review/SKILL.md linguist-generated=true
+internal/skills/claude/roborev-snooze/SKILL.md linguist-generated=true
+internal/skills/claude/roborev-superpowers/SKILL.md linguist-generated=true
+
+# make web-restore: placeholder written by web/scripts/embed-assets.ts.
+internal/web/dist/index.html linguist-generated=true

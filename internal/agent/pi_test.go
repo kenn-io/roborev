@@ -78,7 +78,7 @@ func TestPiReviewSessionFlag(t *testing.T) {
 	})
 
 	a := NewPiAgent(mock.CmdPath).WithSessionID(sessionID).(*PiAgent)
-	result, err := a.Review(context.Background(), t.TempDir(), "HEAD", "prompt", &bytes.Buffer{})
+	result, err := a.Review(t.Context(), t.TempDir(), "HEAD", "prompt", &bytes.Buffer{})
 	require.NoError(t, err)
 	assert.Equal(t, "ok", result)
 
@@ -139,8 +139,8 @@ func TestPiLaunchArgsPrecedeManagedArgsForEveryInvocation(t *testing.T) {
 		},
 		{
 			name:          "structured review",
-			withoutLaunch: base.structuredReviewArgs("prompt.md", "result.json", schema, false, ""),
-			withLaunch:    configured.structuredReviewArgs("prompt.md", "result.json", schema, false, ""),
+			withoutLaunch: base.structuredReviewArgs("prompt.md", "result.json", schema, false, "", false),
+			withLaunch:    configured.structuredReviewArgs("prompt.md", "result.json", schema, false, "", false),
 			managed: []string{
 				"--mode", "json", "--extension", config.DefaultPiJSONSchemaExtension,
 				"--json-schema", string(schema), "--json-output", "result.json",
@@ -152,8 +152,8 @@ func TestPiLaunchArgsPrecedeManagedArgsForEveryInvocation(t *testing.T) {
 		},
 		{
 			name:          "structured resumed review",
-			withoutLaunch: base.structuredReviewArgs("prompt.md", "result.json", schema, false, "/tmp/pi-session.jsonl"),
-			withLaunch:    configured.structuredReviewArgs("prompt.md", "result.json", schema, false, "/tmp/pi-session.jsonl"),
+			withoutLaunch: base.structuredReviewArgs("prompt.md", "result.json", schema, false, "/tmp/pi-session.jsonl", false),
+			withLaunch:    configured.structuredReviewArgs("prompt.md", "result.json", schema, false, "/tmp/pi-session.jsonl", false),
 			managed: []string{
 				"--mode", "json", "--session", "/tmp/pi-session.jsonl", "--extension", config.DefaultPiJSONSchemaExtension,
 				"--json-schema", string(schema), "--json-output", "result.json",
@@ -213,7 +213,7 @@ func TestPiReviewToolPermissions(t *testing.T) {
 			})
 
 			a := NewPiAgent(mock.CmdPath).WithAgentic(tt.agentic)
-			_, err := a.Review(context.Background(), t.TempDir(), "HEAD", "prompt", nil)
+			_, err := a.Review(t.Context(), t.TempDir(), "HEAD", "prompt", nil)
 			require.NoError(t, err)
 
 			args := readMockArgs(t, mock.ArgsFile)
@@ -240,6 +240,7 @@ func TestPiStructuredReviewToolPermissions(t *testing.T) {
 				jsonRaw(`{"type":"object"}`),
 				tt.agenticMode,
 				"",
+				false,
 			)
 			assert.Equal(t, tt.wantTools, argAfter(args, "--tools"))
 		})
@@ -293,7 +294,7 @@ printf '%%s\n' '{"design_review":false,"reason":"pi schema"}' > "$json_output"
 
 	schema := jsonRaw(`{"type":"object","additionalProperties":false,"required":["design_review","reason"],"properties":{"design_review":{"type":"boolean"},"reason":{"type":"string"}}}`)
 	var output bytes.Buffer
-	result, err := agent.ClassifyWithSchema(context.Background(), t.TempDir(), "HEAD", "classify me", schema, &output)
+	result, err := agent.ClassifyWithSchema(t.Context(), t.TempDir(), "HEAD", "classify me", schema, &output)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"design_review":false,"reason":"pi schema"}`, string(result))
 	assert.JSONEq(t, `{"type":"message_end","message":{"role":"assistant","usage":{"input":100,"output":10,"cost":{"total":0.25}}}}`, output.String())
@@ -344,7 +345,7 @@ printf '%s\n' 'not json' > "$json_output"
 `
 
 	_, err := NewPiAgent(writeTempCommand(t, script)).ClassifyWithSchema(
-		context.Background(),
+		t.Context(),
 		t.TempDir(),
 		"HEAD",
 		"classify me",
@@ -365,7 +366,7 @@ exit 12
 `
 
 	_, err := NewPiAgent(writeTempCommand(t, script)).ClassifyWithSchema(
-		context.Background(),
+		t.Context(),
 		t.TempDir(),
 		"HEAD",
 		"classify me",
@@ -387,7 +388,7 @@ exit 2
 `
 
 	_, err := NewPiAgent(writeTempCommand(t, script)).ClassifyWithSchema(
-		context.Background(),
+		t.Context(),
 		t.TempDir(),
 		"HEAD",
 		"classify me",
@@ -427,4 +428,69 @@ func argAfter(args []string, flag string) string {
 		}
 	}
 	return ""
+}
+
+func TestPiReviewWithSchemaUsesAnInstalledSchemaExtension(t *testing.T) {
+	skipIfWindows(t)
+
+	const otherVersion = `{"packages":["npm:@nqbao/pi-json-schema@0.0.9"]}`
+	const unrelated = `{"packages":["npm:@other/pi-tools@1.0.0"]}`
+	tests := []struct {
+		name           string
+		globalSettings string
+		repoSettings   string
+		planning       bool
+		launchArgs     []string
+		wantExplicit   bool
+	}{
+		{name: "nothing installed", wantExplicit: true},
+		{name: "installed globally at another version", globalSettings: otherVersion},
+		{name: "installed for the repository", repoSettings: `{"packages":[{"source":"npm:@nqbao/pi-json-schema"}]}`},
+		{name: "other packages installed", globalSettings: unrelated, wantExplicit: true},
+		{name: "planning disables discovered extensions", globalSettings: otherVersion, planning: true, wantExplicit: true},
+		{name: "launch args disable discovered extensions", globalSettings: otherVersion, launchArgs: []string{"--no-extensions"}, wantExplicit: true},
+		{name: "launch args disable discovered extensions by short flag", globalSettings: otherVersion, launchArgs: []string{"-ne"}, wantExplicit: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			argsFile := filepath.Join(tmpDir, "args.txt")
+			cli := writeTempCommand(t, fmt.Sprintf(`#!/bin/sh
+case "$1" in *etxtbsy*) exit 0;; esac
+: > %[1]q
+prev=""
+for arg in "$@"; do
+  printf '%%s\n' "$arg" >> %[1]q
+  if [ "$prev" = "--json-output" ]; then printf '{}\n' > "$arg"; fi
+  prev="$arg"
+done
+`, argsFile))
+			dataDir := t.TempDir()
+			t.Setenv("PI_CODING_AGENT_DIR", dataDir)
+			if tt.globalSettings != "" {
+				require.NoError(t, os.WriteFile(filepath.Join(dataDir, "settings.json"), []byte(tt.globalSettings), 0o600))
+			}
+			repoDir := t.TempDir()
+			if tt.repoSettings != "" {
+				require.NoError(t, os.MkdirAll(filepath.Join(repoDir, ".pi"), 0o755))
+				require.NoError(t, os.WriteFile(filepath.Join(repoDir, ".pi", "settings.json"), []byte(tt.repoSettings), 0o600))
+			}
+			ctx := t.Context()
+			if tt.planning {
+				ctx = context.WithValue(ctx, planningContextKey{}, true)
+			}
+
+			pi := NewPiAgent(cli)
+			pi.LaunchArgs = tt.launchArgs
+			_, err := pi.ReviewWithSchema(ctx, repoDir, "HEAD", "review", jsonRaw(`{"type":"object"}`), nil)
+			require.NoError(t, err)
+
+			args := readLineFile(t, argsFile)
+			if tt.wantExplicit {
+				assert.Equal(t, config.DefaultPiJSONSchemaExtension, argAfter(args, "--extension"))
+			} else {
+				assert.NotContains(t, args, "--extension", "a second copy of an installed extension makes pi exit with a flag conflict")
+			}
+		})
+	}
 }

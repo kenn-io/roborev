@@ -62,6 +62,7 @@ type Server struct {
 	searchCancel            context.CancelFunc
 	searchSubscriberID      int
 	searchWG                sync.WaitGroup
+	agentHealth             *agentHealthCache
 	searchStopped           bool
 	httpServer              *http.Server
 	remoteServer            *http.Server
@@ -114,6 +115,7 @@ type Server struct {
 	goalWatchMu             sync.Mutex
 	goalWatchCancel         context.CancelFunc
 	goalWatchDone           chan struct{}
+	postCommitScheduler     *postCommitScheduler
 	goalGate                *goalGate
 
 	// Cached machine ID to avoid INSERT on every status request
@@ -135,6 +137,15 @@ var (
 
 // ServerOption customizes a daemon server before it starts.
 type ServerOption func(*Server)
+
+// WithPinnedMaxWorkers keeps the worker pool at n workers for the daemon's
+// lifetime, ignoring max_workers changes in the config file. The --workers
+// flag uses it.
+func WithPinnedMaxWorkers(n int) ServerOption {
+	return func(s *Server) {
+		s.configWatcher.pinnedMaxWorkers = n
+	}
+}
 
 // WithWebDevelopmentOrigin adds one exact loopback origin for the disposable
 // development server. Production callers must not set this option.
@@ -205,6 +216,7 @@ func newServerWithLogs(
 		authKey:            cfg.AuthKey,
 		syncEnabledAtStart: cfg.Sync.Enabled,
 		goalGate:           newGoalGate(),
+		agentHealth:        newAgentHealthCache(),
 		daemonTLS:          cfg.DaemonTLS,
 		db:                 db,
 		appOpened:          telemetry.AppOpenedLimiter{Database: db},
@@ -225,6 +237,9 @@ func newServerWithLogs(
 	}
 	s.updateCoordinator = &updateDrainCoordinator{server: s, now: time.Now}
 	s.workerPool.captureSetupFinished = s.captureSetupFinishedTelemetry
+	configWatcher.OnReload(func(cfg *config.Config) {
+		s.workerPool.SetMaxWorkers(cfg.MaxWorkers)
+	})
 	s.agentHookState, s.agentHookStateErr = agenthook.LoadState(
 		daemonAgentHookSource{db: db, errorLog: errorLog},
 	)
@@ -252,6 +267,7 @@ func newServerWithLogs(
 	}
 	s.httpServer.RegisterOnShutdown(cancelRequests)
 
+	s.postCommitScheduler = newPostCommitScheduler(s.flushPostCommitBatch)
 	return s
 }
 
@@ -357,7 +373,7 @@ func (s *Server) Start(ctx context.Context) error {
 			}
 		} else {
 			// TCP: find an available port first
-			addr, _, err := FindAvailablePort(ep.Address)
+			addr, _, err := FindAvailablePort(ctx, ep.Address)
 			if err != nil {
 				s.configWatcher.Stop()
 				return fmt.Errorf("find available port: %w", err)
@@ -458,14 +474,14 @@ func (s *Server) Start(ctx context.Context) error {
 	s.alternateEndpoint = alternate
 	s.endpointMu.Unlock()
 
-	if err := s.startRemoteServer(cfg.Remote); err != nil {
+	if err := s.startRemoteServer(ctx, cfg.Remote); err != nil {
 		_ = s.httpServer.Close()
 		s.configWatcher.Stop()
 		s.workerPool.Stop()
 		s.stopSearch()
 		return err
 	}
-	browserRuntime, err := s.startBrowserServer(cfg.Web)
+	browserRuntime, err := s.startBrowserServer(ctx, cfg.Web)
 	if err != nil {
 		s.abortRemoteServer()
 		_ = s.httpServer.Close()
@@ -497,7 +513,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	s.browserMu.Unlock()
 
-	s.captureDaemonStartedTelemetry(cfg)
+	s.captureDaemonStartedTelemetry(ctx, cfg)
 	s.startDailyTelemetryLoop(ctx, cfg)
 
 	// Notify systemd that the daemon is ready. No-op when not running
@@ -520,6 +536,20 @@ func (s *Server) Start(ctx context.Context) error {
 		)
 	}
 
+	// The first agents check runs in the background so startup and health
+	// requests never wait for an executable probe.
+	s.agentHealth.onFirst = func(agents storage.ComponentHealth) {
+		if agents.Healthy {
+			return
+		}
+		message := "reviews will be rejected until their agent can run: " + agents.Message
+		log.Printf("Warning: %s", message)
+		if s.errorLog != nil {
+			s.errorLog.LogError("agents", message, 0)
+		}
+	}
+	s.agentHealth.start(cfg)
+
 	// Repair stale roborev-managed hooks in registered repos (skip in CI
 	// mode where repos are fetch-only and don't need local hooks).
 	if s.ciPoller == nil {
@@ -531,6 +561,7 @@ func (s *Server) Start(ctx context.Context) error {
 	if err := <-serveErrCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
 		s.configWatcher.Stop()
 		s.stopGoalWatcher()
+		s.postCommitScheduler.stop()
 		s.workerPool.BeginStop()
 		s.stopPanelSweep()
 		s.workerPool.Stop()
@@ -713,6 +744,7 @@ func (s *Server) stopOnce0() error {
 	}
 	// Stop telemetry loop
 	close(s.telemetryStop)
+	s.agentHealth.stop()
 	s.setupWorkerMu.Lock()
 	if s.setupWorkerCancel != nil {
 		s.setupWorkerCancel()
@@ -747,6 +779,7 @@ func (s *Server) stopOnce0() error {
 	}
 
 	s.stopGoalWatcher()
+	s.postCommitScheduler.stop()
 
 	// Cancel gate evaluations before draining HTTP connections.
 	s.goalGate.stop()
@@ -894,8 +927,8 @@ func (s *Server) SetTelemetry(client telemetry.Client) {
 	s.telemetry = client
 }
 
-func (s *Server) captureDaemonStartedTelemetry(cfg *config.Config) {
-	s.captureTelemetryEvent(telemetry.EventDaemonStarted, cfg)
+func (s *Server) captureDaemonStartedTelemetry(ctx context.Context, cfg *config.Config) {
+	s.captureTelemetryEvent(ctx, telemetry.EventDaemonStarted, cfg)
 	s.captureSetupFinishedTelemetry()
 }
 
@@ -967,7 +1000,7 @@ func (s *Server) startDailyTelemetryLoop(ctx context.Context, cfg *config.Config
 			return
 		}
 
-		s.captureDailyTelemetry(cfg)
+		s.captureDailyTelemetry(ctx, cfg)
 
 		go func() {
 			ticker := time.NewTicker(dailyTelemetryInterval)
@@ -980,29 +1013,29 @@ func (s *Server) startDailyTelemetryLoop(ctx context.Context, cfg *config.Config
 				case <-s.telemetryStop:
 					return
 				case <-ticker.C:
-					s.captureDailyTelemetry(cfg)
+					s.captureDailyTelemetry(ctx, cfg)
 				}
 			}
 		}()
 	})
 }
 
-func (s *Server) captureDailyTelemetry(cfg *config.Config) {
-	s.captureTelemetryEvent(telemetry.EventDaemonActive, cfg)
+func (s *Server) captureDailyTelemetry(ctx context.Context, cfg *config.Config) {
+	s.captureTelemetryEvent(ctx, telemetry.EventDaemonActive, cfg)
 }
 
-func (s *Server) captureTelemetryEvent(event string, cfg *config.Config) {
+func (s *Server) captureTelemetryEvent(ctx context.Context, event string, cfg *config.Config) {
 	if s.telemetry == nil || !s.telemetry.Enabled() {
 		return
 	}
 
-	props := s.telemetryProperties(cfg)
+	props := s.telemetryProperties(ctx, cfg)
 	if err := s.telemetry.Capture(event, props); err != nil {
 		log.Printf("Warning: capture telemetry event: %v", err)
 	}
 }
 
-func (s *Server) telemetryProperties(cfg *config.Config) map[string]any {
+func (s *Server) telemetryProperties(ctx context.Context, cfg *config.Config) map[string]any {
 	repoCount := 0
 	if repos, err := s.db.ListRepos(); err != nil {
 		log.Printf("Warning: failed to count repos for telemetry: %v", err)
@@ -1010,7 +1043,7 @@ func (s *Server) telemetryProperties(cfg *config.Config) map[string]any {
 		repoCount = len(repos)
 	}
 	reviewCount := 0
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM reviews`).Scan(&reviewCount); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM reviews`).Scan(&reviewCount); err != nil {
 		log.Printf("Warning: failed to count reviews for telemetry: %v", err)
 	}
 
@@ -1260,7 +1293,7 @@ func (s *Server) findReusableSessionID(
 		if !isAncestor {
 			continue
 		}
-		commitsSinceCandidate, err := git.GetRangeCommits(repoPath, candidateSHA+".."+targetSHA)
+		commitsSinceCandidate, err := git.GetRangeCommitsCtx(ctx, repoPath, candidateSHA+".."+targetSHA)
 		if err != nil {
 			log.Printf("enqueue: compute reusable session distance failed for job %d (%q -> %q): %v", candidate.ID, candidateSHA, targetSHA, err)
 			continue
@@ -1336,7 +1369,7 @@ func findCompatibleReusableSession(
 		if err != nil || !isAncestor {
 			continue
 		}
-		commitsSinceCandidate, err := git.GetRangeCommits(repoPath, candidateSHA+".."+targetSHA)
+		commitsSinceCandidate, err := git.GetRangeCommitsCtx(ctx, repoPath, candidateSHA+".."+targetSHA)
 		if err != nil || len(commitsSinceCandidate) > maxSessionReuseDistance {
 			continue
 		}
@@ -1577,7 +1610,7 @@ func (s *Server) humaListJobs(
 	// Single job lookup by ID (>= 0 because ID=0 should
 	// return empty, not fall through to the list path).
 	if input.ID >= 0 {
-		job, err := s.db.GetJobByID(input.ID)
+		job, err := s.db.GetJobByIDContext(ctx, input.ID)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				resp := &ListJobsOutput{}
@@ -1746,14 +1779,36 @@ func (s *Server) humaListJobs(
 	if input.Cursor != "" && input.Before > 0 {
 		return nil, huma.Error400BadRequest("cursor and before are mutually exclusive")
 	}
-	position, enqueuedAt, cursorErr := s.decodeJobListCursor(input.Cursor)
+	sortColumn, sortErr := storage.ParseJobSortColumn(input.Sort)
+	if sortErr != nil {
+		return nil, huma.Error400BadRequest(sortErr.Error())
+	}
+	sort := storage.JobSort{Column: sortColumn}
+	switch input.Direction {
+	case "", "desc":
+	case "asc":
+		sort.Ascending = true
+	default:
+		return nil, huma.Error400BadRequest(
+			fmt.Sprintf("unknown sort direction %q", input.Direction),
+		)
+	}
+	if input.Before > 0 && (sort.Column != storage.JobSortEnqueuedAt || sort.Ascending) {
+		return nil, huma.Error400BadRequest("before requires the default enqueued_at desc sort; use cursor")
+	}
+	position, asOf, cursorErr := s.decodeJobListCursor(input.Cursor, sort)
 	if cursorErr != nil {
 		return nil, huma.Error400BadRequest(cursorErr.Error())
 	}
+	if sort.Column == storage.JobSortElapsed {
+		sort.AsOf = asOf
+		if position == nil {
+			sort.AsOf = time.Now()
+		}
+	}
+	listOpts = append(listOpts, storage.WithSort(sort))
 	if position != nil {
-		listOpts = append(
-			listOpts, storage.WithBeforePosition(enqueuedAt, position.JobID),
-		)
+		listOpts = append(listOpts, storage.WithSortAfter(*position))
 	} else if input.Before > 0 {
 		listOpts = append(
 			listOpts, storage.WithBeforeCursor(input.Before),
@@ -1779,6 +1834,9 @@ func (s *Server) humaListJobs(
 	jobs, err := s.db.ListJobs(
 		input.Status, repo, fetchLimit, offset, listOpts...,
 	)
+	if errors.Is(err, storage.ErrInvalidSortPosition) {
+		return nil, huma.Error400BadRequest(fmt.Sprintf("invalid jobs cursor: %v", err))
+	}
 	if err != nil {
 		return nil, huma.Error500InternalServerError(
 			fmt.Sprintf("list jobs: %v", err),
@@ -1792,7 +1850,7 @@ func (s *Server) humaListJobs(
 	}
 	var nextCursor *string
 	if hasMore && len(jobs) > 0 {
-		encoded, cursorErr := s.encodeJobListCursor(jobs[len(jobs)-1])
+		encoded, cursorErr := s.encodeJobListCursor(jobs[len(jobs)-1], sort)
 		if cursorErr != nil {
 			return nil, huma.Error500InternalServerError(
 				fmt.Sprintf("encode jobs cursor: %v", cursorErr),
@@ -2556,7 +2614,13 @@ func (s *Server) humaCancelJob(
 	// below still returns the correct 404/500 for the target. A not-found here
 	// is expected (the cancel reports it); log only a real lookup failure so a
 	// transient DB error that downgrades a panel cancel leaves a trace.
-	job, jobErr := s.db.GetJobByID(input.Body.JobID)
+	// The cancel below does not take a context, so once the request is
+	// accepted it always lands. Detach these lookups from the request too:
+	// a client disconnecting mid-lookup would otherwise leave job nil and
+	// skip panel retirement and member cancellation for a parent that is
+	// still canceled.
+	lookupCtx := context.WithoutCancel(ctx)
+	job, jobErr := s.db.GetJobByIDContext(lookupCtx, input.Body.JobID)
 	if jobErr != nil && !errors.Is(jobErr, sql.ErrNoRows) {
 		log.Printf("cancel job %d: panel routing lookup failed: %v",
 			input.Body.JobID, jobErr)
@@ -2600,7 +2664,7 @@ func (s *Server) humaCancelJob(
 	s.releaseSynthesisIfCanceledMember(job)
 
 	if job == nil {
-		job, _ = s.db.GetJobByID(input.Body.JobID)
+		job, _ = s.db.GetJobByIDContext(lookupCtx, input.Body.JobID)
 	}
 	s.broadcaster.Broadcast(eventForMutationPrincipal(
 		ctx, eventForJob(jobEventType(job, "canceled"), job, input.Body.JobID),
@@ -2625,7 +2689,7 @@ func (s *Server) humaRerunJob(
 			"job_id is required",
 		)
 	}
-	job, err := s.db.GetJobByID(input.Body.JobID)
+	job, err := s.db.GetJobByIDContext(ctx, input.Body.JobID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, huma.Error404NotFound(
@@ -2761,7 +2825,7 @@ func (s *Server) humaCloseReview(
 		)
 	}
 
-	job, jobErr := s.db.GetJobByID(input.Body.JobID)
+	job, jobErr := s.db.GetJobByIDContext(ctx, input.Body.JobID)
 	if jobErr != nil && !errors.Is(jobErr, sql.ErrNoRows) {
 		return nil, huma.Error500InternalServerError(
 			fmt.Sprintf("get job: %v", jobErr),
@@ -2854,7 +2918,10 @@ func (s *Server) humaAddComment(
 				fmt.Sprintf("add comment: %v", err),
 			)
 		}
-		job, jobErr := s.db.GetJobByID(input.Body.JobID)
+		// The comment is already saved. Load its event metadata even if the
+		// client has gone away, so subscribers and hooks still see the
+		// repository and branch.
+		job, jobErr := s.db.GetJobByIDContext(context.WithoutCancel(ctx), input.Body.JobID)
 		if jobErr != nil {
 			log.Printf("comment on job %d: load event metadata: %v", input.Body.JobID, jobErr)
 		}
@@ -3628,7 +3695,7 @@ func (s *Server) humaFixJob(
 		)
 	}
 
-	parentJob, err := s.db.GetJobByID(req.ParentJobID)
+	parentJob, err := s.db.GetJobByIDContext(ctx, req.ParentJobID)
 	if err != nil {
 		return rawJSONOutput(
 			http.StatusNotFound,
@@ -3649,7 +3716,7 @@ func (s *Server) humaFixJob(
 	var planReview *storage.Review
 	var planComments []storage.Response
 	if req.StaleJobID > 0 {
-		staleJob, err := s.db.GetJobByID(req.StaleJobID)
+		staleJob, err := s.db.GetJobByIDContext(ctx, req.StaleJobID)
 		if err != nil {
 			return rawJSONOutput(
 				http.StatusNotFound,
@@ -3838,7 +3905,7 @@ func (s *Server) humaFixJob(
 		if planReview != nil {
 			review := *planReview
 			review.Job = parentJob
-			findings = prompt.FixPlanReviewContext(resolutionPath, &review)
+			findings = prompt.FixPlanReviewContext(ctx, resolutionPath, &review)
 		}
 		planningPrompt, planErr := prompt.BuildFixPlanPrompt(resolutionPath, cfg, findings, fixMinSev, planComments, req.Prompt)
 		if planErr != nil {
@@ -3941,7 +4008,7 @@ func (s *Server) humaGetHealth(
 
 	dbHealthy := true
 	dbMessage := ""
-	if err := s.db.Ping(); err != nil {
+	if err := s.db.PingContext(ctx); err != nil {
 		dbHealthy = false
 		dbMessage = err.Error()
 		allHealthy = false
@@ -3973,6 +4040,12 @@ func (s *Server) humaGetHealth(
 		Healthy: workersHealthy,
 		Message: workersMessage,
 	})
+
+	agents := s.agentHealth.observe(s.configWatcher.Config())
+	if !agents.Healthy {
+		allHealthy = false
+	}
+	components = append(components, agents)
 
 	if s.syncWorker != nil {
 		syncHealthy, syncMessage := s.syncWorker.HealthCheck()

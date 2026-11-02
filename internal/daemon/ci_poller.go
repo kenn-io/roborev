@@ -79,17 +79,25 @@ type ghPR struct {
 	HeadRefName string     `json:"headRefName"`
 	BaseRefName string     `json:"baseRefName"`
 	Title       string     `json:"title"`
+	Body        string     `json:"body"`
 	Author      ghPRAuthor `json:"author"`
-	Labels      []string   `json:"labels"`
+	// AuthorAssociation is GitHub's author_association for the PR author.
+	AuthorAssociation string   `json:"authorAssociation"`
+	Draft             bool     `json:"draft"`
+	Labels            []string `json:"labels"`
 }
 
 type panelPostTarget struct {
-	Open        bool
-	HeadSHA     string
-	HeadRefName string
-	BaseRefName string
-	AuthorLogin string
-	Labels      []string
+	Open              bool
+	HeadSHA           string
+	HeadRefName       string
+	BaseRefName       string
+	Title             string
+	Body              string
+	AuthorLogin       string
+	AuthorAssociation string
+	Draft             bool
+	Labels            []string
 }
 
 const (
@@ -117,7 +125,7 @@ type CIPoller struct {
 	gitCloneFn          func(ctx context.Context, ghRepo, targetPath string, env []string) error
 	mergeBaseFn         func(string, string, string) (string, error)
 	loadRepoConfigFn    func(string) (ciRepoConfigSource, error)
-	buildReviewPromptFn func(context.Context, string, string, int64, int, string, string, string, string, *config.RepoConfig, string, *config.Config) (string, error)
+	buildReviewPromptFn func(context.Context, string, string, int64, int, string, string, string, string, prompt.PullRequest, *config.RepoConfig, string, *config.Config) (string, error)
 	postPRCommentFn     func(string, int, string) error
 	setCommitStatusFn   func(ghRepo, sha, state, description string) error
 	setSkippedCheckFn   func(ghRepo, sha, summary string) error
@@ -125,6 +133,7 @@ type CIPoller struct {
 	jobCancelFn         func(jobID int64)                      // kills running worker process (optional)
 	isPROpenFn          func(ghRepo string, prNumber int) bool // checks if a PR is still open
 	prPostTargetFn      func(context.Context, string, int) (panelPostTarget, error)
+	codeownersFn        func(ctx context.Context, ghRepo, ref string) (map[string]struct{}, error)
 
 	repoResolver *RepoResolver
 	errorLog     *ErrorLog
@@ -151,10 +160,23 @@ type CIPoller struct {
 	stopping           bool
 	pollStopping       bool
 	eventsStopping     bool
-	pollErrors         map[ciPollTarget]ciPollFailure // guarded by mu
-	monitoredRepos     []string                       // last successful discovery; guarded by mu
-	dispatchingRetries map[ciPollTarget]int           // live retry enqueue owners; guarded by mu
-	initialPollPending bool                           // guarded by mu; startup has not established health yet
+	pollErrors         map[ciPollTarget]ciPollFailure   // guarded by mu
+	monitoredRepos     []string                         // last successful discovery; guarded by mu
+	dispatchingRetries map[ciPollTarget]int             // live retry enqueue owners; guarded by mu
+	codeowners         map[ciCodeownersKey]ciCodeowners // CODEOWNERS reads per repo and base branch for the current poll; guarded by mu
+	initialPollPending bool                             // guarded by mu; startup has not established health yet
+}
+
+type ciCodeownersKey struct {
+	repo string
+	ref  string
+}
+
+// ciCodeowners is one CODEOWNERS read. A failed read is kept too, so other
+// PRs on the same base branch do not repeat it during the same poll.
+type ciCodeowners struct {
+	logins map[string]struct{}
+	err    error
 }
 
 type ciPollTarget struct {
@@ -189,9 +211,11 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 		nowFn:              time.Now,
 		pollErrors:         make(map[ciPollTarget]ciPollFailure),
 		dispatchingRetries: make(map[ciPollTarget]int),
+		codeowners:         make(map[ciCodeownersKey]ciCodeowners),
 	}
 	p.listOpenPRsFn = p.listOpenPRs
 	p.listTrustedActorsFn = p.listTrustedActors
+	p.codeownersFn = p.readCodeowners
 	p.listPRDiscussionFn = p.listPRDiscussionComments
 	p.gitFetchFn = gitFetchCtx
 	p.gitFetchPRHeadFn = gitFetchPRHead
@@ -204,12 +228,13 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 	// task-ledger content stays out of CI prompts entirely (it could
 	// otherwise surface in publicly posted PR comments). Kata context is a
 	// local-review feature; the worker also skips it for CI jobs.
-	p.buildReviewPromptFn = func(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, repoCfg *config.RepoConfig, repoCfgRef string, cfg *config.Config) (string, error) {
+	p.buildReviewPromptFn = func(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, pr prompt.PullRequest, repoCfg *config.RepoConfig, repoCfgRef string, cfg *config.Config) (string, error) {
 		builder := prompt.NewBuilderWithConfig(p.db, cfg).
 			WithContext(ctx).
 			ForRepo(repoPath, repoID).
 			WithRepoConfig(repoCfg, repoCfgRef).
-			WithStructuredOutput(true)
+			WithStructuredOutput(true).
+			WithPullRequest(pr)
 		return builder.BuildWithAdditionalContext(
 			gitRef,
 			contextCount,
@@ -499,6 +524,9 @@ func (p *CIPoller) poll(ctx context.Context) {
 }
 
 func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Config) error {
+	// Read CODEOWNERS again on each poll so ownership changes apply promptly.
+	p.forgetCodeowners(ghRepo)
+
 	// List open PRs via the GitHub API
 	prs, err := p.callListOpenPRs(ctx, ghRepo)
 	if err != nil {
@@ -559,7 +587,7 @@ func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Conf
 	// run that just went terminal this poll gets its recovery pass on the next one
 	// (never mid-enqueue); the posting CAS keeps it idempotent with the event path.
 	p.reconcilePanelPosting(ctx, ghRepo)
-	if err := p.reconcileRetryHealth(ghRepo, prs, cfg, unavailableHeads); err != nil {
+	if err := p.reconcileRetryHealth(ctx, ghRepo, prs, cfg, unavailableHeads); err != nil {
 		processingErrors = append(processingErrors, err)
 	}
 	p.retryFinalPanelStatuses(ghRepo)
@@ -572,7 +600,7 @@ func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Conf
 // holds heads that failed to enqueue during this poll; they have no attempt
 // row yet, so they stay failed until a later poll enqueues or retires them.
 func (p *CIPoller) reconcileRetryHealth(
-	ghRepo string, prs []ghPR, cfg *config.Config, unavailableHeads map[ciPollTarget]bool,
+	ctx context.Context, ghRepo string, prs []ghPR, cfg *config.Config, unavailableHeads map[ciPollTarget]bool,
 ) error {
 	attempts, err := p.db.GetFailedReviewAttempts(ghRepo)
 	if err != nil {
@@ -591,11 +619,15 @@ func (p *CIPoller) reconcileRetryHealth(
 		// Exhausted retries no longer enter the retry sweep. Retire their
 		// failure when the open PR has moved on or explicitly skips review.
 		if pr, open := openByNumber[attempt.PRNumber]; open && attempt.State == "done" {
-			label, skip := matchingCISkipLabel(pr.Labels, cfg.CI.SkipLabels)
+			reason, skip, err := p.ciPRSkip(ctx, ghRepo, pr, &cfg.CI)
+			if err != nil {
+				lookupErrors = append(lookupErrors, fmt.Errorf(
+					"check review filters for PR #%d: %w", attempt.PRNumber, err))
+			}
 			if pr.HeadRefOid != attempt.HeadSHA || skip {
 				var err error
 				if pr.HeadRefOid == attempt.HeadSHA {
-					err = p.skipLabeledPR(ghRepo, pr, label, &attempt)
+					err = p.skipPR(ghRepo, pr, reason, &attempt)
 				} else {
 					err = p.db.DeleteReviewAttempt(ghRepo, attempt.PRNumber, attempt.HeadSHA)
 				}
@@ -659,13 +691,17 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	}
 	// Skip a deferred retry immediately, even during backoff. Active and
 	// completed reviews still belong to the normal deduplication gate below.
-	if label, skip := matchingCISkipLabel(pr.Labels, cfg.CI.SkipLabels); skip {
+	reason, skip, err := p.ciPRSkip(ctx, ghRepo, pr, &cfg.CI)
+	if err != nil {
+		return err
+	}
+	if skip {
 		attempt, err := p.db.GetReviewAttempt(ghRepo, pr.Number, pr.HeadRefOid)
 		if err != nil {
 			return fmt.Errorf("check skipped review attempt: %w", err)
 		}
 		if attempt != nil && attempt.State == "deferred" {
-			return p.skipLabeledPR(ghRepo, pr, label, attempt)
+			return p.skipPR(ghRepo, pr, reason, attempt)
 		}
 	}
 	// Skip if this HEAD already has a panel run.
@@ -676,8 +712,8 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	if reviewed {
 		return nil
 	}
-	if label, skip := matchingCISkipLabel(pr.Labels, cfg.CI.SkipLabels); skip {
-		return p.skipLabeledPR(ghRepo, pr, label, nil)
+	if skip {
+		return p.skipPR(ghRepo, pr, reason, nil)
 	}
 
 	// Throttle: skip if this PR was reviewed recently (any SHA).
@@ -843,6 +879,7 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 			baseBranch: pr.BaseRefName,
 			prNumber:   pr.Number, panelName: ciPanelName(repoCfg, cfg),
 			prDiscussionContext: prDiscussionContext,
+			pullRequest:         prompt.PullRequest{Title: pr.Title, Description: pr.Body},
 			members:             members, synth: synth,
 		})
 	if err != nil {
@@ -908,7 +945,96 @@ func (p *CIPoller) setNoAgentStatus(ghRepo string, pr ghPR) {
 	}
 }
 
-func (p *CIPoller) skipLabeledPR(ghRepo string, pr ghPR, label string, expected *storage.ReviewAttempt) error {
+// ciSkip explains why the CI poller skips a PR instead of reviewing it.
+type ciSkip struct {
+	description string // commit status description and check summary
+	reason      string // log detail
+}
+
+// ciPRSkip reports whether the [ci] draft, label, author, or branch filters
+// exclude this PR from review. It returns an error, and no decision, when it
+// cannot read CODEOWNERS for the allow_codeowners check.
+func (p *CIPoller) ciPRSkip(ctx context.Context, ghRepo string, pr ghPR, ci *config.CIConfig) (ciSkip, bool, error) {
+	if ci.SkipDrafts && pr.Draft {
+		return ciSkip{description: ciDraftSkipReason, reason: "it is a draft pull request"}, true, nil
+	}
+	if label, skip := matchingCISkipLabel(pr.Labels, ci.SkipLabels); skip {
+		return ciSkip{
+			description: fmt.Sprintf("Review skipped: label %s", label),
+			reason:      fmt.Sprintf("it has label %q", label),
+		}, true, nil
+	}
+	// Check branches before authors: an excluded branch must be skipped even
+	// when CODEOWNERS cannot be read.
+	if !ci.IsPRBranchAllowed(pr.HeadRefName) {
+		return ciSkip{
+			description: "Review skipped: branch filtered",
+			reason: fmt.Sprintf("branch %q is filtered by ci.include_branches or ci.exclude_branches",
+				pr.HeadRefName),
+		}, true, nil
+	}
+	allowed := ci.IsPRAuthorAllowed(pr.Author.Login, pr.AuthorAssociation)
+	if !allowed && ci.AllowCodeowners && pr.Author.Login != "" {
+		owners, err := p.codeownerLogins(ctx, ghRepo, pr.BaseRefName)
+		if err != nil {
+			return ciSkip{}, false, fmt.Errorf("read CODEOWNERS for %s@%s: %w", ghRepo, pr.BaseRefName, err)
+		}
+		_, allowed = owners[strings.ToLower(pr.Author.Login)]
+	}
+	if !allowed {
+		return ciSkip{
+			description: "Review skipped: author not in allowed authors",
+			reason: fmt.Sprintf("author %q (association %q) is not allowed by the [ci] author filter",
+				pr.Author.Login, pr.AuthorAssociation),
+		}, true, nil
+	}
+	return ciSkip{}, false, nil
+}
+
+// codeownerLogins returns the code owners named by CODEOWNERS on the ref
+// branch, read at most once per poll of the repository. It reads the PR base
+// branch, never the PR head, so a PR cannot add its own author.
+func (p *CIPoller) codeownerLogins(ctx context.Context, ghRepo, ref string) (map[string]struct{}, error) {
+	key := ciCodeownersKey{repo: ghRepo, ref: ref}
+	p.mu.Lock()
+	read, ok := p.codeowners[key]
+	p.mu.Unlock()
+	if !ok {
+		read.logins, read.err = p.codeownersFn(ctx, ghRepo, ref)
+		p.mu.Lock()
+		p.codeowners[key] = read
+		p.mu.Unlock()
+	}
+	return read.logins, read.err
+}
+
+func (p *CIPoller) forgetCodeowners(ghRepo string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for key := range p.codeowners {
+		if key.repo == ghRepo {
+			delete(p.codeowners, key)
+		}
+	}
+}
+
+func (p *CIPoller) readCodeowners(ctx context.Context, ghRepo, ref string) (map[string]struct{}, error) {
+	client, err := p.githubClientForRepo(ghRepo)
+	if err != nil {
+		return nil, err
+	}
+	return client.CodeownerLogins(ctx, ghRepo, ref)
+}
+
+// skipPR publishes a skipped result for this PR head instead of reviewing it.
+//
+// GitHub attaches the roborev check and commit status to the commit, not the
+// PR, so a skip also appears on every other open PR with the same head commit,
+// including one whose review is pending or failed. This is accepted design for
+// every skip reason (draft, label, author, branch), not a defect: the skip path
+// does not coordinate status publication across PRs that share a commit. Do not
+// add a shared-commit guard here without the maintainers asking for one.
+func (p *CIPoller) skipPR(ghRepo string, pr ghPR, skip ciSkip, expected *storage.ReviewAttempt) error {
 	panelID, err := p.db.ClaimPanelForSkip(ghRepo, pr.Number, pr.HeadRefOid, expected)
 	if err != nil {
 		return fmt.Errorf("claim skipped review: %w", err)
@@ -916,8 +1042,8 @@ func (p *CIPoller) skipLabeledPR(ghRepo string, pr ghPR, label string, expected 
 	if panelID != 0 {
 		defer p.releasePanelClaim(panelID)
 	}
-	description := fmt.Sprintf("Review skipped: label %s", label)
-	log.Printf("CI poller: skipping %s#%d because it has label %q", ghRepo, pr.Number, label)
+	description := skip.description
+	log.Printf("CI poller: skipping %s#%d because %s", ghRepo, pr.Number, skip.reason)
 	if err := p.callSetSkippedCheck(ghRepo, pr.HeadRefOid, description); err != nil {
 		return fmt.Errorf("set skipped check: %w", err)
 	}
@@ -935,19 +1061,6 @@ func (p *CIPoller) skipLabeledPR(ghRepo string, pr ghPR, label string, expected 
 	}
 	p.recordPollResult(ghRepo, pr.Number, pr.HeadRefOid, nil)
 	return nil
-}
-
-func matchingCISkipLabel(prLabels, skipLabels []string) (string, bool) {
-	for _, label := range prLabels {
-		label = strings.TrimSpace(label)
-		for _, configured := range skipLabels {
-			configured = strings.TrimSpace(configured)
-			if configured != "" && strings.EqualFold(label, configured) {
-				return label, true
-			}
-		}
-	}
-	return "", false
 }
 
 // loadCIRepoConfigFor loads typed and raw repo config through one loader. A
@@ -1509,7 +1622,7 @@ func (p *CIPoller) maybeAppendDesignMember(
 	}
 	hh := autotype.Heuristics(h)
 
-	shas, err := listCommitsInRange(repo.RootPath, mergeBase, headSHA)
+	shas, err := listCommitsInRange(ctx, repo.RootPath, mergeBase, headSHA)
 	if err != nil {
 		log.Printf("CI poller: list commits in range failed (%v); falling back to head SHA only", err)
 		shas = []string{headSHA}
@@ -1563,22 +1676,22 @@ func (p *CIPoller) maybeAppendDesignMember(
 func (p *CIPoller) commitWarrantsDesign(
 	ctx context.Context, repoPath, sha string, hh autotype.Heuristics,
 ) bool {
-	files, filesErr := gitpkg.GetFilesChanged(repoPath, sha)
-	diff, diffErr := gitpkg.GetDiff(repoPath, sha)
+	files, filesErr := gitpkg.GetFilesChangedCtx(ctx, repoPath, sha)
+	diff, diffErr := gitpkg.GetDiffCtx(ctx, repoPath, sha)
 	if filesErr != nil || diffErr != nil {
 		// Missing inputs would otherwise produce a bogus "trivial diff" skip;
 		// fail open to a design review rather than risk dropping one.
 		return true
 	}
 	subject := ""
-	if info, err := gitpkg.GetCommitInfo(repoPath, sha); err == nil && info != nil {
+	if info, err := gitpkg.GetCommitInfoCtx(ctx, repoPath, sha); err == nil && info != nil {
 		subject = info.Subject
 	}
 	in := autotype.Input{
 		RepoPath:     repoPath,
 		GitRef:       sha,
 		Diff:         diff,
-		Message:      classifierCommitMessage(repoPath, sha, subject),
+		Message:      classifierCommitMessage(ctx, repoPath, sha, subject),
 		ChangedFiles: files,
 	}
 	d, err := autotype.Classify(ctx, in, hh, autotype.ErrOnClassifier{})
@@ -1611,8 +1724,11 @@ type buildPanelOptsInput struct {
 	prNumber            int
 	panelName           string // config panel name ("" for the implicit matrix)
 	prDiscussionContext string
-	members             []config.ResolvedMember
-	synth               config.SynthesisSpec
+	// pullRequest is the PR's title and description. Like commit messages,
+	// it is author-written and untrusted; the prompt frames it that way.
+	pullRequest prompt.PullRequest
+	members     []config.ResolvedMember
+	synth       config.SynthesisSpec
 }
 
 // buildPanelOpts builds the member and synthesis EnqueueOpts for a CI panel run.
@@ -1631,7 +1747,7 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 		storedPrompt, err := p.callBuildReviewPrompt(
 			ctx, in.repo.RootPath, in.gitRef, in.repo.ID, contextCount,
 			m.Agent, m.ReviewType, reviewMinSeverity, in.prDiscussionContext,
-			in.repoCfg, in.repoCfgRef, in.cfg,
+			in.pullRequest, in.repoCfg, in.repoCfgRef, in.cfg,
 		)
 		if err != nil {
 			// A canceled poller (Stop or shutdown) must abort the whole run
@@ -1724,8 +1840,8 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 	return memberOpts, synthOpts, nil
 }
 
-func listCommitsInRange(repoPath, base, head string) ([]string, error) {
-	cmd := exec.Command("git", "rev-list", "--reverse", base+".."+head)
+func listCommitsInRange(ctx context.Context, repoPath, base, head string) ([]string, error) {
+	cmd := exec.CommandContext(ctx, "git", "rev-list", "--reverse", base+".."+head)
 	procutil.HideConsole(cmd)
 	cmd.Dir = repoPath
 	out, err := cmd.Output()
@@ -1750,7 +1866,7 @@ func listCommitsInRange(repoPath, base, head string) ([]string, error) {
 func (p *CIPoller) findOrCloneRepo(
 	ctx context.Context, ghRepo string,
 ) (*storage.Repo, error) {
-	repo, err := p.findLocalRepo(ghRepo)
+	repo, err := p.findLocalRepo(ctx, ghRepo)
 	if err == nil {
 		return repo, nil
 	}
@@ -1765,7 +1881,7 @@ func (p *CIPoller) findOrCloneRepo(
 // findLocalRepo finds the local repo that corresponds to a GitHub "owner/repo" identifier.
 // It looks for repos whose identity contains the owner/repo pattern.
 // Matching is case-insensitive since GitHub owner/repo names are case-insensitive.
-func (p *CIPoller) findLocalRepo(ghRepo string) (*storage.Repo, error) {
+func (p *CIPoller) findLocalRepo(ctx context.Context, ghRepo string) (*storage.Repo, error) {
 	// Try common identity patterns (case-insensitive via DB query):
 	// - git@github.com:owner/repo.git
 	// - https://github.com/owner/repo.git
@@ -1793,7 +1909,7 @@ func (p *CIPoller) findLocalRepo(ghRepo string) (*storage.Repo, error) {
 	}
 
 	// Fall back: search all repos and check if identity ends with owner/repo
-	return p.findRepoByPartialIdentity(ghRepo)
+	return p.findRepoByPartialIdentity(ctx, ghRepo)
 }
 
 // ensureClone clones a GitHub repo into {DataDir}/clones/{owner}/{repo}
@@ -1821,7 +1937,7 @@ func (p *CIPoller) ensureClone(
 	} else if err != nil {
 		return nil, fmt.Errorf("stat clone path %s: %w", clonePath, err)
 	} else {
-		needsClone, err = cloneNeedsReplace(clonePath, ghRepo, p.githubAPIBaseURL())
+		needsClone, err = cloneNeedsReplace(ctx, clonePath, ghRepo, p.githubAPIBaseURL())
 		if err != nil {
 			return nil, err
 		}
@@ -1858,7 +1974,7 @@ func (p *CIPoller) ensureClone(
 		)
 	}
 
-	if err := ensureCloneRemoteURL(clonePath, ghRepo, p.githubAPIBaseURL()); err != nil {
+	if err := ensureCloneRemoteURL(ctx, clonePath, ghRepo, p.githubAPIBaseURL()); err != nil {
 		return nil, fmt.Errorf("sanitize clone remote for %s: %w", ghRepo, err)
 	}
 
@@ -1887,11 +2003,16 @@ func isValidRepoSegment(s string) bool {
 // and re-cloned. Returns (true, nil) if the path is not a valid git
 // repo or has a confirmed remote mismatch. Returns (false, err) on
 // operational errors to avoid destructive action on transient failures.
-func cloneNeedsReplace(path, ghRepo, rawBaseURL string) (bool, error) {
-	if !isValidGitRepo(path) {
+func cloneNeedsReplace(ctx context.Context, path, ghRepo, rawBaseURL string) (bool, error) {
+	if !isValidGitRepo(ctx, path) {
+		// A canceled context also makes the git probe fail; that says
+		// nothing about the clone, so it must not authorize deletion.
+		if err := ctx.Err(); err != nil {
+			return false, fmt.Errorf("validate clone at %s: %w", path, err)
+		}
 		return true, nil
 	}
-	matches, err := cloneRemoteMatches(path, ghRepo, rawBaseURL)
+	matches, err := cloneRemoteMatches(ctx, path, ghRepo, rawBaseURL)
 	if err != nil {
 		return false, err
 	}
@@ -1899,8 +2020,9 @@ func cloneNeedsReplace(path, ghRepo, rawBaseURL string) (bool, error) {
 }
 
 // isValidGitRepo checks whether a path is a usable git working tree.
-func isValidGitRepo(path string) bool {
-	cmd := exec.Command(
+func isValidGitRepo(ctx context.Context, path string) bool {
+	cmd := exec.CommandContext(
+		ctx,
 		"git", "-C", path, "rev-parse", "--is-inside-work-tree",
 	)
 	procutil.HideConsole(cmd)
@@ -1917,11 +2039,12 @@ func isValidGitRepo(path string) bool {
 // Two-step approach: "git config --get" for locale-independent
 // origin-existence check (exit 1 = missing key), then
 // "git remote get-url" for the resolved URL (handles insteadOf).
-func cloneRemoteMatches(path, ghRepo, rawBaseURL string) (bool, error) {
+func cloneRemoteMatches(ctx context.Context, path, ghRepo, rawBaseURL string) (bool, error) {
 	// Step 1: check origin existence (locale-independent exit code).
 	// Use --local to avoid matching global/system config that could
 	// define remote.origin.url outside this repo.
-	cfgCmd := exec.Command(
+	cfgCmd := exec.CommandContext(
+		ctx,
 		"git", "-C", path,
 		"config", "--local", "--get", "remote.origin.url",
 	)
@@ -1956,7 +2079,8 @@ func cloneRemoteMatches(path, ghRepo, rawBaseURL string) (bool, error) {
 	}
 
 	// Step 2: get the resolved URL (expands insteadOf rewrites).
-	urlCmd := exec.Command(
+	urlCmd := exec.CommandContext(
+		ctx,
 		"git", "-C", path, "remote", "get-url", "origin",
 	)
 	procutil.HideConsole(urlCmd)
@@ -1970,13 +2094,13 @@ func cloneRemoteMatches(path, ghRepo, rawBaseURL string) (bool, error) {
 	return strings.EqualFold(got, ghRepo), nil
 }
 
-func ensureCloneRemoteURL(path, ghRepo, rawBaseURL string) error {
+func ensureCloneRemoteURL(ctx context.Context, path, ghRepo, rawBaseURL string) error {
 	want, err := ghpkg.CloneURLForBase(ghRepo, rawBaseURL)
 	if err != nil {
 		return err
 	}
 
-	cmd := exec.Command("git", "-C", path, "remote", "get-url", "origin")
+	cmd := exec.CommandContext(ctx, "git", "-C", path, "remote", "get-url", "origin")
 	procutil.HideConsole(cmd)
 	out, err := cmd.Output()
 	if err != nil {
@@ -1990,7 +2114,7 @@ func ensureCloneRemoteURL(path, ghRepo, rawBaseURL string) error {
 		return fmt.Errorf("origin %q does not match %s", redactRemoteURL(current), ghRepo)
 	}
 
-	cmd = exec.Command("git", "-C", path, "remote", "set-url", "origin", want)
+	cmd = exec.CommandContext(ctx, "git", "-C", path, "remote", "set-url", "origin", want)
 	procutil.HideConsole(cmd)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("set origin URL for %s: %w: %s", path, err, string(out))
@@ -2088,8 +2212,8 @@ func (p *CIPoller) callGitClone(
 // findRepoByPartialIdentity searches repos for a matching GitHub owner/repo pattern.
 // Matching is case-insensitive since GitHub owner/repo names are case-insensitive.
 // Returns an ambiguity error if multiple repos match.
-func (p *CIPoller) findRepoByPartialIdentity(ghRepo string) (*storage.Repo, error) {
-	rows, err := p.db.Query(`SELECT id, root_path, name, created_at, identity FROM repos WHERE identity IS NOT NULL AND identity != ''`)
+func (p *CIPoller) findRepoByPartialIdentity(ctx context.Context, ghRepo string) (*storage.Repo, error) {
+	rows, err := p.db.QueryContext(ctx, `SELECT id, root_path, name, created_at, identity FROM repos WHERE identity IS NOT NULL AND identity != ''`)
 	if err != nil {
 		return nil, err
 	}
@@ -2205,6 +2329,9 @@ func defaultPortForScheme(scheme string) string {
 }
 
 func (p *CIPoller) githubTokenForRepo(ghRepo string) string {
+	// The GitHub client helpers that call this do not carry the poll context
+	// yet, so token exchange and lookup start their own.
+	ctx := context.Background()
 	// Extract owner from "owner/repo"
 	owner, _, _ := strings.Cut(ghRepo, "/")
 	if p.tokenProvider != nil {
@@ -2212,14 +2339,14 @@ func (p *CIPoller) githubTokenForRepo(ghRepo string) string {
 		installationID := cfg.CI.InstallationIDForOwner(owner)
 		if installationID == 0 {
 			log.Printf("CI poller: no installation ID for owner %q, using fallback GitHub token", owner)
-		} else if token, err := p.tokenProvider.TokenForInstallation(installationID); err != nil {
+		} else if token, err := p.tokenProvider.TokenForInstallation(ctx, installationID); err != nil {
 			log.Printf("CI poller: WARNING: GitHub App token failed for %q, falling back to environment token: %v", owner, err)
 		} else {
 			return token
 		}
 	}
 	host, _ := gitHostForBaseURL(p.githubAPIBaseURL())
-	return ghpkg.ResolveAuthToken(context.Background(), ghpkg.EnvironmentToken(), host)
+	return ghpkg.ResolveAuthToken(ctx, ghpkg.EnvironmentToken(), host)
 }
 
 func (p *CIPoller) gitEnvForRepo(ghRepo string) []string {
@@ -2255,13 +2382,16 @@ func (p *CIPoller) listOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, erro
 	prs := make([]ghPR, 0, len(openPRs))
 	for _, pr := range openPRs {
 		prs = append(prs, ghPR{
-			Number:      pr.Number,
-			HeadRefOid:  pr.HeadRefOID,
-			HeadRefName: pr.HeadRefName,
-			BaseRefName: pr.BaseRefName,
-			Title:       pr.Title,
-			Author:      ghPRAuthor{Login: pr.AuthorLogin},
-			Labels:      pr.Labels,
+			Number:            pr.Number,
+			HeadRefOid:        pr.HeadRefOID,
+			HeadRefName:       pr.HeadRefName,
+			BaseRefName:       pr.BaseRefName,
+			Title:             pr.Title,
+			Body:              pr.Body,
+			Author:            ghPRAuthor{Login: pr.AuthorLogin},
+			AuthorAssociation: pr.AuthorAssociation,
+			Draft:             pr.Draft,
+			Labels:            pr.Labels,
 		})
 	}
 	return prs, nil
@@ -2759,7 +2889,8 @@ func (p *CIPoller) panelCommentBody(row *storage.CIPanel, members []storage.Batc
 	if err != nil || rev == nil {
 		return raw(), nil // review unexpectedly missing -> raw fallback
 	}
-	includeCosts := p.resolveIncludeCosts(row.GithubRepo)
+	// Panel comment rendering has no caller context yet.
+	includeCosts := p.resolveIncludeCosts(context.Background(), row.GithubRepo)
 	verdict := rev.Verdict()
 	return formatPanelPRCommentWithHead(
 		commentConfig, rev, string(verdict), members, includeCosts, row.HeadSHA,
@@ -3083,8 +3214,15 @@ func (p *CIPoller) retryDueReviewAttempt(
 		}
 		return false // PR advanced; the new HEAD already has its own attempt
 	}
-	if label, skip := matchingCISkipLabel(pr.Labels, cfg.CI.SkipLabels); skip {
-		if err := p.skipLabeledPR(ghRepo, pr, label, attempt); err != nil {
+	reason, skip, err := p.ciPRSkip(ctx, ghRepo, pr, &cfg.CI)
+	if err != nil {
+		log.Printf("CI poller: error checking review filters for deferred attempt %s#%d@%s: %v",
+			ghRepo, attempt.PRNumber, gitpkg.ShortSHA(attempt.HeadSHA), err)
+		p.recordPollResult(ghRepo, attempt.PRNumber, attempt.HeadSHA, err)
+		return false
+	}
+	if skip {
+		if err := p.skipPR(ghRepo, pr, reason, attempt); err != nil {
 			log.Printf("CI poller: error skipping deferred attempt for %s#%d@%s: %v",
 				ghRepo, attempt.PRNumber, gitpkg.ShortSHA(attempt.HeadSHA), err)
 			p.recordPollResult(ghRepo, attempt.PRNumber, attempt.HeadSHA, err)
@@ -3190,10 +3328,14 @@ func (p *CIPoller) retryAttemptPR(
 		HeadRefOid:  headSHA,
 		HeadRefName: target.HeadRefName,
 		BaseRefName: baseRefName,
+		Title:       target.Title,
+		Body:        target.Body,
+		Draft:       target.Draft,
 		Labels:      target.Labels,
-		// Preserve the author so kata trust gating in enqueuePanelRun does
-		// not fail closed for trusted authors on the retry path.
-		Author: ghPRAuthor{Login: target.AuthorLogin},
+		// Preserve the author so the [ci] author filter does not skip
+		// trusted authors on the retry path.
+		Author:            ghPRAuthor{Login: target.AuthorLogin},
+		AuthorAssociation: target.AuthorAssociation,
 	}, true
 }
 
@@ -3563,15 +3705,16 @@ func (p *CIPoller) callMergeBase(repoPath, baseRef, headRef string) (string, err
 	return gitpkg.GetMergeBase(repoPath, baseRef, headRef)
 }
 
-func (p *CIPoller) callBuildReviewPrompt(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, repoCfg *config.RepoConfig, repoCfgRef string, cfg *config.Config) (string, error) {
+func (p *CIPoller) callBuildReviewPrompt(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, pr prompt.PullRequest, repoCfg *config.RepoConfig, repoCfgRef string, cfg *config.Config) (string, error) {
 	if p.buildReviewPromptFn != nil {
-		return p.buildReviewPromptFn(ctx, repoPath, gitRef, repoID, contextCount, agentName, reviewType, minSeverity, additionalContext, repoCfg, repoCfgRef, cfg)
+		return p.buildReviewPromptFn(ctx, repoPath, gitRef, repoID, contextCount, agentName, reviewType, minSeverity, additionalContext, pr, repoCfg, repoCfgRef, cfg)
 	}
 	builder := prompt.NewBuilderWithConfig(p.db, cfg).
 		WithContext(ctx).
 		ForRepo(repoPath, repoID).
 		WithRepoConfig(repoCfg, repoCfgRef).
-		WithStructuredOutput(true)
+		WithStructuredOutput(true).
+		WithPullRequest(pr)
 	return builder.BuildWithAdditionalContext(
 		gitRef,
 		contextCount,
@@ -3672,12 +3815,16 @@ func (p *CIPoller) panelPostTarget(
 		return panelPostTarget{}, err
 	}
 	return panelPostTarget{
-		Open:        strings.EqualFold(pr.State, "open"),
-		HeadSHA:     pr.HeadRefOID,
-		HeadRefName: pr.HeadRefName,
-		BaseRefName: pr.BaseRefName,
-		AuthorLogin: pr.AuthorLogin,
-		Labels:      pr.Labels,
+		Open:              strings.EqualFold(pr.State, "open"),
+		HeadSHA:           pr.HeadRefOID,
+		HeadRefName:       pr.HeadRefName,
+		BaseRefName:       pr.BaseRefName,
+		Title:             pr.Title,
+		Body:              pr.Body,
+		AuthorLogin:       pr.AuthorLogin,
+		AuthorAssociation: pr.AuthorAssociation,
+		Draft:             pr.Draft,
+		Labels:            pr.Labels,
 	}, nil
 }
 
@@ -4225,7 +4372,7 @@ func (p *CIPoller) postPRComment(ghRepo string, prNumber int, body string) error
 	if err != nil {
 		return err
 	}
-	if p.resolveUpsertComments(ghRepo) {
+	if p.resolveUpsertComments(ctx, ghRepo) {
 		return client.UpsertPRComment(ctx, ghRepo, prNumber, body)
 	}
 	return client.CreatePRComment(ctx, ghRepo, prNumber, body)
@@ -4233,8 +4380,8 @@ func (p *CIPoller) postPRComment(ghRepo string, prNumber int, body string) error
 
 // resolveUpsertComments determines whether to upsert PR comments
 // for the given repo. Per-repo config takes priority over global.
-func (p *CIPoller) resolveUpsertComments(ghRepo string) bool {
-	repo, err := p.findLocalRepo(ghRepo)
+func (p *CIPoller) resolveUpsertComments(ctx context.Context, ghRepo string) bool {
+	repo, err := p.findLocalRepo(ctx, ghRepo)
 	if err == nil && repo != nil {
 		repoConfig, err := loadCIRepoConfig(repo.RootPath)
 		if err == nil && repoConfig.Config != nil &&
@@ -4247,9 +4394,9 @@ func (p *CIPoller) resolveUpsertComments(ghRepo string) bool {
 
 // resolveIncludeCosts determines whether CI PR comments should include token
 // cost estimates for the given repo. Per-repo config takes priority over global.
-func (p *CIPoller) resolveIncludeCosts(ghRepo string) bool {
+func (p *CIPoller) resolveIncludeCosts(ctx context.Context, ghRepo string) bool {
 	var repoCfg *config.RepoConfig
-	repo, err := p.findLocalRepo(ghRepo)
+	repo, err := p.findLocalRepo(ctx, ghRepo)
 	if err == nil && repo != nil {
 		if loaded, loadErr := loadCIRepoConfig(repo.RootPath); loadErr == nil {
 			repoCfg = loaded.Config

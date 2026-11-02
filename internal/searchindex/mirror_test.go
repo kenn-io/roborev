@@ -1,7 +1,6 @@
 package searchindex
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"path/filepath"
@@ -18,7 +17,7 @@ import (
 )
 
 func TestMirrorRefreshReplacesMirrorAndFTSInOneTransaction(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index, err := Open(ctx, filepath.Join(t.TempDir(), "reviews.search.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, index.Close()) })
@@ -61,7 +60,7 @@ func TestMirrorRefreshReplacesMirrorAndFTSInOneTransaction(t *testing.T) {
 }
 
 func TestMirrorRefreshUpdatesLocalMetadataWithoutInvalidatingVectors(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index, err := Open(ctx, filepath.Join(t.TempDir(), "reviews.search.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, index.Close()) })
@@ -101,7 +100,7 @@ func TestMirrorRefreshUpdatesLocalMetadataWithoutInvalidatingVectors(t *testing.
 }
 
 func TestMirrorRefreshDetectsIdentifierOnlyChange(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index, err := Open(ctx, filepath.Join(t.TempDir(), "reviews.search.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, index.Close()) })
@@ -130,7 +129,7 @@ func TestMirrorRefreshDetectsIdentifierOnlyChange(t *testing.T) {
 }
 
 func TestMirrorRowLookupAvoidsFullScans(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index, err := Open(ctx, filepath.Join(t.TempDir(), "reviews.search.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, index.Close()) })
@@ -155,7 +154,7 @@ func TestMirrorRowLookupAvoidsFullScans(t *testing.T) {
 }
 
 func TestMirrorDeleteMissingRemovesFTSAndEveryVectorGeneration(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index, err := Open(ctx, filepath.Join(t.TempDir(), "reviews.search.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, index.Close()) })
@@ -225,7 +224,7 @@ func testDocument(id int64, output string) searchdoc.Document {
 func countRowsForDoc(t *testing.T, db *sql.DB, table, docKey string) int {
 	t.Helper()
 	var count int
-	err := db.QueryRowContext(context.Background(),
+	err := db.QueryRowContext(t.Context(),
 		fmt.Sprintf(`SELECT count(*) FROM %s WHERE doc_key = ?`, table), docKey).Scan(&count)
 	require.NoError(t, err)
 	return count

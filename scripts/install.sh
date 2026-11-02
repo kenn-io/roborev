@@ -235,7 +235,7 @@ main() {
     echo "  roborev init"
     echo
     echo "For AI agent skills (Claude Code, Codex):"
-    echo "  roborev skills install"
+    echo "  roborev agent skills install"
 }
 
 main "$@"

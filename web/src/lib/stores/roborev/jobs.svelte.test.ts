@@ -260,7 +260,13 @@ describe("createJobsStore filter preferences", () => {
     expect(restoredStore.getFilterHideClosed()).toBe(true);
     expect(restoredStore.getFilterShowAutoDesign()).toBe(true);
     expect(api.listJobs).toHaveBeenCalledWith(
-      { closed: "false", limit: 50, omit_prompt: "true" },
+      {
+        closed: "false",
+        limit: 50,
+        omit_prompt: "true",
+        sort: "enqueued_at",
+        direction: "desc",
+      },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
@@ -296,7 +302,13 @@ describe("createJobsStore filter preferences", () => {
     expect(secondStore.getFilterShowAutoDesign()).toBe(true);
     await vi.waitFor(() =>
       expect(secondApi.listJobs).toHaveBeenCalledWith(
-        { closed: "false", limit: 50, omit_prompt: "true" },
+        {
+          closed: "false",
+          limit: 50,
+          omit_prompt: "true",
+          sort: "enqueued_at",
+          direction: "desc",
+        },
         expect.objectContaining({ signal: expect.any(AbortSignal) }),
       ),
     );
@@ -347,7 +359,13 @@ describe("createJobsStore filter preferences", () => {
       expect(secondStore.getFilterHideClosed()).toBe(true);
       expect(secondStore.getFilterShowAutoDesign()).toBe(true);
       expect(secondApi.listJobs).toHaveBeenCalledWith(
-        { closed: "false", limit: 50, omit_prompt: "true" },
+        {
+          closed: "false",
+          limit: 50,
+          omit_prompt: "true",
+          sort: "enqueued_at",
+          direction: "desc",
+        },
         expect.objectContaining({ signal: expect.any(AbortSignal) }),
       );
     } finally {
@@ -357,120 +375,371 @@ describe("createJobsStore filter preferences", () => {
   });
 });
 
-describe("createJobsStore cost sorting", () => {
-  function makeCostJob(id: number, tokenUsage?: string): ReviewJob {
+describe("createJobsStore sorting", () => {
+  function costJob(id: number, costUsd: number): ReviewJob {
     return {
       ...makeJob(id),
-      ...(tokenUsage !== undefined ? { token_usage: tokenUsage } : {}),
+      token_usage: JSON.stringify({ has_cost: true, cost_usd: costUsd }),
     };
   }
 
-  it("sorts missing cost before zero-dollar jobs", async () => {
-    const jobs: ReviewJob[] = [
-      makeCostJob(8),
-      makeCostJob(2, JSON.stringify({ has_cost: true, cost_usd: 0.5 })),
-      makeCostJob(6, JSON.stringify({ has_cost: true, cost_usd: 0 })),
-      makeCostJob(5, "not json"),
-    ];
-    const api = {
-      listJobs: vi.fn().mockResolvedValue({
-        jobs,
-        has_more: false,
-        stats: { done: 1, closed: 0, open: 0 },
+  function sortedApi() {
+    // Each sort serves two pages linked by a cursor that names the sort, so a
+    // request that mixes one sort's cursor with another sort is visible. Like
+    // the daemon, each page is in sort order and the second page resumes
+    // strictly after the first.
+    const pages: Record<string, ReviewJob[][]> = {
+      "enqueued_at:desc": [
+        [makeJob(30), makeJob(29)],
+        [makeJob(28), makeJob(27)],
+      ],
+      "id:desc": [
+        [makeJob(9), makeJob(7), makeJob(5)],
+        [makeJob(2), makeJob(1)],
+      ],
+      "id:asc": [
+        [makeJob(1), makeJob(2), makeJob(5)],
+        [makeJob(7), makeJob(9)],
+      ],
+      // Highest cost first, so the IDs are out of numeric order.
+      "cost:desc": [
+        [costJob(3, 0.9), costJob(8, 0.5)],
+        [costJob(1, 0.4), costJob(6, 0.1)],
+      ],
+    };
+    return {
+      listJobs: vi.fn().mockImplementation(async (query) => {
+        const typed = query as {
+          sort?: string;
+          direction?: string;
+          cursor?: string;
+        };
+        const key = `${typed.sort}:${typed.direction}`;
+        const sortPages = pages[key];
+        if (sortPages === undefined) throw new Error(`unexpected sort ${key}`);
+        const second = typed.cursor === `${key}:1`;
+        if (typed.cursor !== undefined && !second) {
+          throw new Error(`cursor ${typed.cursor} does not match ${key}`);
+        }
+        return {
+          jobs: sortPages[second ? 1 : 0],
+          has_more: !second,
+          next_cursor: second ? null : `${key}:1`,
+          stats: { done: 4, closed: 0, open: 4 },
+        };
       }),
     };
+  }
 
-    const store = createJobsStore({
-      api: api as never,
-      navigate: vi.fn(),
+  function ids(store: JobsStore): number[] {
+    return store.getJobs().map((job) => job.id);
+  }
+
+  it("reloads the first page with the new sort when the sort changes", async () => {
+    const api = sortedApi();
+    const store = createJobsStore({ api: api as never, navigate: vi.fn() });
+    await loadJobs(store);
+    await loadMoreJobs(store);
+    expect(ids(store)).toEqual([30, 29, 28, 27]);
+
+    store.setSortColumn("id");
+
+    await vi.waitFor(() => expect(ids(store)).toEqual([9, 7, 5]));
+    const reload = api.listJobs.mock.calls.at(-1)?.[0];
+    expect(reload).toMatchObject({ sort: "id", direction: "desc", limit: 50 });
+    expect(reload.cursor).toBeUndefined();
+
+    store.setSortColumn("id");
+
+    await vi.waitFor(() => expect(ids(store)).toEqual([1, 2, 5]));
+    expect(api.listJobs.mock.calls.at(-1)?.[0]).toMatchObject({
+      sort: "id",
+      direction: "asc",
+    });
+  });
+
+  it("opens text columns ascending and numeric columns descending", async () => {
+    const api = {
+      listJobs: vi.fn().mockResolvedValue({
+        jobs: [makeJob(1)],
+        has_more: false,
+        stats: { done: 1, closed: 0, open: 1 },
+      }),
+    };
+    const store = createJobsStore({ api: api as never, navigate: vi.fn() });
+    await loadJobs(store);
+    expect(api.listJobs.mock.calls[0]?.[0]).toMatchObject({
+      sort: "enqueued_at",
+      direction: "desc",
     });
 
+    store.setSortColumn("agent");
+    await vi.waitFor(() =>
+      expect(api.listJobs.mock.calls.at(-1)?.[0]).toMatchObject({
+        sort: "agent",
+        direction: "asc",
+      }),
+    );
+
+    store.setSortColumn("cost");
+    await vi.waitFor(() =>
+      expect(api.listJobs.mock.calls.at(-1)?.[0]).toMatchObject({
+        sort: "cost",
+        direction: "desc",
+      }),
+    );
+  });
+
+  it("appends the next page in the daemon's order with the current sort", async () => {
+    const api = sortedApi();
+    const store = createJobsStore({ api: api as never, navigate: vi.fn() });
     await loadJobs(store);
     store.setSortColumn("cost");
+    await vi.waitFor(() => expect(ids(store)).toEqual([3, 8]));
 
-    expect(store.getSortColumn()).toBe("cost");
-    expect(store.getSortDirection()).toBe("desc");
-    expect(store.getJobs().map((job) => job.id)).toEqual([2, 6, 8, 5]);
+    await loadMoreJobs(store);
 
-    store.setSortColumn("cost");
-
-    expect(store.getSortDirection()).toBe("asc");
-    expect(store.getJobs().map((job) => job.id)).toEqual([8, 5, 6, 2]);
+    expect(api.listJobs.mock.calls.at(-1)?.[0]).toMatchObject({
+      sort: "cost",
+      direction: "desc",
+      cursor: "cost:desc:1",
+      limit: 50,
+    });
+    expect(store.getLoadMoreError()).toBeNull();
+    expect(ids(store)).toEqual([3, 8, 1, 6]);
+    expect(store.getHasMore()).toBe(false);
   });
-});
 
-describe("createJobsStore review type sorting", () => {
-  it("sorts synthesis jobs as panels", async () => {
-    const jobs: ReviewJob[] = [
-      { ...makeJob(1), review_type: "security" },
-      { ...makeJob(2), job_type: "synthesis", panel_role: "synthesis" },
-      makeJob(3),
-    ];
+  it("drops a page that was loading for the previous sort", async () => {
+    const sorted = sortedApi();
+    const stalled = Promise.withResolvers<void>();
     const api = {
-      listJobs: vi.fn().mockResolvedValue({
-        jobs,
-        has_more: false,
-        stats: { done: 3, closed: 0, open: 0 },
+      listJobs: vi.fn().mockImplementation(async (query) => {
+        if ((query as { cursor?: string }).cursor !== undefined) {
+          await stalled.promise;
+        }
+        return sorted.listJobs(query);
       }),
+    };
+    const store = createJobsStore({ api: api as never, navigate: vi.fn() });
+    await loadJobs(store);
+    store.loadMore();
+    await vi.waitFor(() => expect(api.listJobs).toHaveBeenCalledTimes(2));
+
+    store.setSortColumn("id");
+    await vi.waitFor(() => expect(ids(store)).toEqual([9, 7, 5]));
+    stalled.resolve();
+    await vi.waitFor(() => expect(store.isLoading()).toBe(false));
+
+    expect(ids(store)).toEqual([9, 7, 5]);
+    expect(store.getHasMore()).toBe(true);
+  });
+
+  it("shows the new sort when a rerun finishes during the sort reload", async () => {
+    const sorted = sortedApi();
+    const firstSortReply = Promise.withResolvers<void>();
+    const rerunReply = Promise.withResolvers<{ job_id: number }>();
+    let sortRequests = 0;
+    const api = {
+      listJobs: vi.fn().mockImplementation(async (query) => {
+        const typed = query as { id?: number; sort?: string };
+        if (typed.id !== undefined) {
+          return {
+            jobs: [makeJob(typed.id)],
+            has_more: false,
+            stats: { done: 1, closed: 0, open: 1 },
+          };
+        }
+        if (typed.sort === "id" && ++sortRequests === 1) {
+          await firstSortReply.promise;
+        }
+        return sorted.listJobs(query);
+      }),
+      rerunJob: vi.fn().mockReturnValue(rerunReply.promise),
+    };
+    const store = createJobsStore({ api: api as never, navigate: vi.fn() });
+    await loadJobs(store);
+    store.rerunJob(30);
+    await vi.waitFor(() => expect(api.rerunJob).toHaveBeenCalledOnce());
+
+    // The sort reload is still loading when the rerun's own reload starts.
+    store.setSortColumn("id");
+    rerunReply.resolve({ job_id: 30 });
+
+    await vi.waitFor(() => expect(store.isSortPending()).toBe(false));
+    expect(ids(store)).toEqual([9, 7, 5]);
+    firstSortReply.resolve();
+  });
+
+  it("reports a failed sort when a rerun's reload fails during the sort reload", async () => {
+    const sorted = sortedApi();
+    const firstSortReply = Promise.withResolvers<void>();
+    const rerunReply = Promise.withResolvers<{ job_id: number }>();
+    let sortRequests = 0;
+    const api = {
+      listJobs: vi.fn().mockImplementation(async (query) => {
+        const typed = query as { id?: number; sort?: string };
+        if (typed.id !== undefined) {
+          return {
+            jobs: [makeJob(typed.id)],
+            has_more: false,
+            stats: { done: 1, closed: 0, open: 1 },
+          };
+        }
+        if (typed.sort === "id") {
+          sortRequests += 1;
+          if (sortRequests === 1) await firstSortReply.promise;
+          else throw new Error("daemon unavailable");
+        }
+        return sorted.listJobs(query);
+      }),
+      rerunJob: vi.fn().mockReturnValue(rerunReply.promise),
     };
     const store = createJobsStore({
       api: api as never,
       navigate: vi.fn(),
+      onError: vi.fn(),
     });
-
     await loadJobs(store);
-    store.setSortColumn("review_type");
+    store.rerunJob(30);
+    await vi.waitFor(() => expect(api.rerunJob).toHaveBeenCalledOnce());
 
-    expect(store.getJobs().map((job) => job.id)).toEqual([3, 2, 1]);
+    // The rerun's reload replaces the sort reload, then fails.
+    store.setSortColumn("id");
+    rerunReply.resolve({ job_id: 30 });
+
+    await vi.waitFor(() =>
+      expect(store.getSortError()).toEqual(expect.any(String)),
+    );
+    expect(store.isSortPending()).toBe(false);
+    firstSortReply.resolve();
+    await vi.waitFor(() => expect(store.isLoading()).toBe(false));
+    expect(ids(store)).toEqual([30, 29]);
   });
-});
 
-describe("createJobsStore elapsed sorting", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-04-11T12:00:00Z"));
-  });
+  it.each([
+    { reload: "succeeds", sortError: null, rows: [9, 7, 5] },
+    { reload: "fails", sortError: expect.any(String), rows: [30, 29] },
+  ])(
+    "settles the sort when a rerun's job lookup fails and its reload $reload",
+    async ({ reload, sortError, rows }) => {
+      const sorted = sortedApi();
+      const firstSortReply = Promise.withResolvers<void>();
+      const rerunReload = Promise.withResolvers<void>();
+      const rerunReply = Promise.withResolvers<{ job_id: number }>();
+      let sortRequests = 0;
+      const api = {
+        listJobs: vi.fn().mockImplementation(async (query) => {
+          const typed = query as { id?: number; sort?: string };
+          if (typed.id !== undefined) throw new Error("lookup failed");
+          if (typed.sort === "id") {
+            sortRequests += 1;
+            if (sortRequests === 1) {
+              await firstSortReply.promise;
+            } else {
+              await rerunReload.promise;
+              if (reload === "fails") throw new Error("daemon unavailable");
+            }
+          }
+          return sorted.listJobs(query);
+        }),
+        rerunJob: vi.fn().mockReturnValue(rerunReply.promise),
+      };
+      const onError = vi.fn();
+      const store = createJobsStore({
+        api: api as never,
+        navigate: vi.fn(),
+        onError,
+      });
+      await loadJobs(store);
+      store.rerunJob(30);
+      await vi.waitFor(() => expect(api.rerunJob).toHaveBeenCalledOnce());
 
-  afterEach(() => {
-    vi.restoreAllMocks();
-    vi.useRealTimers();
-  });
+      // The rerun's reload replaces the sort reload, and its job lookup
+      // fails before the reload returns.
+      store.setSortColumn("id");
+      rerunReply.resolve({ job_id: 30 });
+      await vi.waitFor(() => expect(sortRequests).toBe(2));
+      await vi.waitFor(() =>
+        expect(
+          api.listJobs.mock.calls.some(([query]) => query.id !== undefined),
+        ).toBe(true),
+      );
+      rerunReload.resolve();
 
-  it("sorts missing elapsed before zero-second durations", async () => {
-    const jobs: ReviewJob[] = [
-      makeJob(8, "2026-04-11T11:45:00Z"),
-      makeJob(2, "2026-04-11T11:00:00Z", "2026-04-11T11:05:00Z"),
-      makeJob(6, "2026-04-11T11:30:00Z", "2026-04-11T11:30:00Z"),
-      makeJob(5),
-    ];
+      await vi.waitFor(() => expect(store.isSortPending()).toBe(false));
+      expect(store.getSortError()).toEqual(sortError);
+      expect(ids(store)).toEqual(rows);
+      await vi.waitFor(() => expect(onError).toHaveBeenCalled());
+      firstSortReply.resolve();
+    },
+  );
+
+  it("marks the sort pending until rows in the new order arrive", async () => {
+    const sorted = sortedApi();
+    const reply = Promise.withResolvers<void>();
     const api = {
-      listJobs: vi.fn().mockResolvedValue({
-        jobs,
-        has_more: false,
-        stats: { done: 1, closed: 0, open: 0 },
+      listJobs: vi.fn().mockImplementation(async (query) => {
+        if ((query as { sort?: string }).sort === "id") await reply.promise;
+        return sorted.listJobs(query);
       }),
     };
-
-    const store = createJobsStore({
-      api: api as never,
-      navigate: vi.fn(),
-    });
-
+    const store = createJobsStore({ api: api as never, navigate: vi.fn() });
     await loadJobs(store);
-    store.setSortColumn("elapsed");
+    expect(store.isSortPending()).toBe(false);
 
-    expect(store.getSortColumn()).toBe("elapsed");
-    expect(store.getSortDirection()).toBe("desc");
-    expect(store.getJobs().map((job) => job.id)).toEqual([8, 2, 6, 5]);
+    store.setSortColumn("id");
 
-    store.setSortColumn("elapsed");
+    expect(store.isSortPending()).toBe(true);
+    expect(ids(store)).toEqual([30, 29]);
+    reply.resolve();
+    await vi.waitFor(() => expect(ids(store)).toEqual([9, 7, 5]));
+    expect(store.isSortPending()).toBe(false);
+    expect(store.getSortError()).toBeNull();
+  });
 
-    expect(store.getSortDirection()).toBe("asc");
-    expect(store.getJobs().map((job) => job.id)).toEqual([5, 6, 2, 8]);
+  it("reports a failed sort reload apart from other load failures", async () => {
+    const sorted = sortedApi();
+    let failSort = true;
+    const api = {
+      listJobs: vi.fn().mockImplementation(async (query) => {
+        if ((query as { sort?: string }).sort === "id" && failSort) {
+          throw new Error("daemon unavailable");
+        }
+        return sorted.listJobs(query);
+      }),
+    };
+    const store = createJobsStore({ api: api as never, navigate: vi.fn() });
+    await loadJobs(store);
+
+    store.setSortColumn("id");
+
+    await vi.waitFor(() =>
+      expect(store.getSortError()).toEqual(expect.any(String)),
+    );
+    expect(store.isSortPending()).toBe(false);
+    expect(store.getError()).toBeNull();
+    expect(ids(store)).toEqual([30, 29]);
+
+    failSort = false;
+    await loadJobs(store);
+
+    expect(ids(store)).toEqual([9, 7, 5]);
+    expect(store.getSortError()).toBeNull();
+    expect(store.getError()).toBeNull();
   });
 });
 
 describe("createJobsStore event stream", () => {
+  type JobsResponse = {
+    jobs: ReviewJob[];
+    has_more: boolean;
+    next_cursor?: string;
+    stats: { done: number; running: number; closed: number; open: number };
+  };
+  const ids = (from: number, to: number) =>
+    Array.from({ length: from - to + 1 }, (_, index) => from - index);
+
   afterEach(() => {
     globalThis.fetch = originalFetch;
     vi.restoreAllMocks();
@@ -674,11 +943,6 @@ describe("createJobsStore event stream", () => {
   it("drains burst events while coalescing a slow reconciliation", async () => {
     const emitChunk = stubEventStream();
 
-    type JobsResponse = {
-      jobs: ReviewJob[];
-      has_more: boolean;
-      stats: { done: number; running: number; closed: number; open: number };
-    };
     const pending: Array<(value: JobsResponse) => void> = [];
     let requestCount = 0;
     const api = {
@@ -735,11 +999,6 @@ describe("createJobsStore event stream", () => {
   it("discards an older list response after event reconciliation publishes", async () => {
     const emitChunk = stubEventStream();
 
-    type JobsResponse = {
-      jobs: ReviewJob[];
-      has_more: boolean;
-      stats: { done: number; running: number; closed: number; open: number };
-    };
     const pending: Array<(value: JobsResponse) => void> = [];
     const api = {
       listJobs: vi.fn(
@@ -786,6 +1045,272 @@ describe("createJobsStore event stream", () => {
     expect(store.getJobs()[0]?.status).toBe("done");
     expect(store.getStats().running).toBe(0);
     store.disconnectEventStream(eventOwner);
+  });
+
+  it("ignores an older list failure after event reconciliation publishes", async () => {
+    const emitChunk = stubEventStream();
+
+    const pending: Array<{
+      resolve: (value: JobsResponse) => void;
+      reject: (reason: Error) => void;
+    }> = [];
+    const api = {
+      listJobs: vi.fn(
+        () =>
+          new Promise<JobsResponse>((resolve, reject) => {
+            pending.push({ resolve, reject });
+          }),
+      ),
+    };
+    const store = createJobsStore({
+      api: api as never,
+      navigate: vi.fn(),
+    });
+    const eventOwner = store.connectEventStream("/api/roborev");
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    pending[0]?.resolve({
+      jobs: [],
+      has_more: false,
+      stats: { done: 0, running: 0, closed: 0, open: 0 },
+    });
+    await vi.waitFor(() => expect(store.isEventStreamConnected()).toBe(true));
+
+    const olderLoad = loadJobs(store);
+    await vi.waitFor(() => expect(pending).toHaveLength(2));
+    emitChunk(
+      '{"type":"review.completed","ts":"2026-08-04T13:00:00Z","job_id":42,"repo":"/workspace/repo","repo_name":"repo","sha":"abc123"}\n',
+    );
+    await vi.waitFor(() => expect(pending).toHaveLength(3));
+
+    pending[2]?.resolve({
+      jobs: [makeJob(42)],
+      has_more: true,
+      stats: { done: 1, running: 0, closed: 0, open: 1 },
+    });
+    await vi.waitFor(() => expect(store.getJobs()).toHaveLength(1));
+
+    pending[1]?.reject(new Error("request failed"));
+    await olderLoad;
+
+    expect(store.getError()).toBeNull();
+    expect(store.getHasMore()).toBe(true);
+    store.disconnectEventStream(eventOwner);
+  });
+
+  it("drops an older page after event reconciliation replaces the list", async () => {
+    const emitChunk = stubEventStream();
+
+    const pending: Array<{
+      resolve: (value: JobsResponse) => void;
+      reject: (reason: Error) => void;
+    }> = [];
+    const api = {
+      listJobs: vi.fn(
+        () =>
+          new Promise<JobsResponse>((resolve, reject) => {
+            pending.push({ resolve, reject });
+          }),
+      ),
+    };
+    const store = createJobsStore({
+      api: api as never,
+      navigate: vi.fn(),
+    });
+    const stats = { done: 11, running: 0, closed: 0, open: 11 };
+    const eventOwner = store.connectEventStream("/api/roborev");
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    pending[0]?.resolve({
+      jobs: ids(10, 6).map((id) => makeJob(id)),
+      has_more: true,
+      next_cursor: "after-6",
+      stats,
+    });
+    await vi.waitFor(() => expect(store.getJobs()).toHaveLength(5));
+
+    const olderPage = loadMoreJobs(store);
+    await vi.waitFor(() => expect(pending).toHaveLength(2));
+    emitChunk(
+      '{"type":"review.completed","ts":"2026-08-04T13:00:00Z","job_id":11,"repo":"/workspace/repo","repo_name":"repo","sha":"abc123"}\n',
+    );
+    await vi.waitFor(() => expect(pending).toHaveLength(3));
+    pending[2]?.resolve({
+      jobs: ids(11, 7).map((id) => makeJob(id)),
+      has_more: true,
+      next_cursor: "after-7",
+      stats,
+    });
+    await vi.waitFor(() =>
+      expect(store.getJobs().map((job) => job.id)).toContain(11),
+    );
+
+    pending[1]?.resolve({
+      jobs: ids(5, 1).map((id) => makeJob(id)),
+      has_more: false,
+      stats,
+    });
+    await olderPage;
+
+    expect(
+      store
+        .getJobs()
+        .map((job) => job.id)
+        .sort((a, b) => b - a),
+    ).toEqual(ids(11, 7));
+    expect(store.getHasMore()).toBe(true);
+    expect(store.areAllJobsLoaded()).toBe(false);
+    expect(store.getLoadMoreError()).toBeNull();
+    store.disconnectEventStream(eventOwner);
+  });
+
+  it("drops a page that started before a pending reconciliation published", async () => {
+    const emitChunk = stubEventStream();
+
+    const pending: Array<{
+      resolve: (value: JobsResponse) => void;
+      reject: (reason: Error) => void;
+    }> = [];
+    const cursors: Array<string | undefined> = [];
+    const api = {
+      listJobs: vi.fn(
+        (query: { cursor?: string }) =>
+          new Promise<JobsResponse>((resolve, reject) => {
+            cursors.push(query.cursor);
+            pending.push({ resolve, reject });
+          }),
+      ),
+    };
+    const store = createJobsStore({
+      api: api as never,
+      navigate: vi.fn(),
+    });
+    const stats = { done: 11, running: 0, closed: 0, open: 11 };
+    const eventOwner = store.connectEventStream("/api/roborev");
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    pending[0]?.resolve({
+      jobs: ids(10, 6).map((id) => makeJob(id)),
+      has_more: true,
+      next_cursor: "after-6",
+      stats,
+    });
+    await vi.waitFor(() => expect(store.getJobs()).toHaveLength(5));
+
+    const firstPage = loadMoreJobs(store);
+    await vi.waitFor(() => expect(pending).toHaveLength(2));
+    emitChunk(
+      '{"type":"review.completed","ts":"2026-08-04T13:00:00Z","job_id":11,"repo":"/workspace/repo","repo_name":"repo","sha":"abc123"}\n',
+    );
+    await vi.waitFor(() => expect(pending).toHaveLength(3));
+    pending[1]?.resolve({
+      jobs: ids(5, 1).map((id) => makeJob(id)),
+      has_more: false,
+      stats,
+    });
+    await firstPage;
+
+    // The dropped page leaves the reload's loading state alone, so the next
+    // page waits for the reload and continues from its list.
+    expect(store.isLoading()).toBe(true);
+    await loadMoreJobs(store);
+    expect(pending).toHaveLength(3);
+    pending[2]?.resolve({
+      jobs: ids(11, 7).map((id) => makeJob(id)),
+      has_more: true,
+      next_cursor: "after-7",
+      stats,
+    });
+    await vi.waitFor(() => expect(store.isLoading()).toBe(false));
+    const secondPage = loadMoreJobs(store);
+    await vi.waitFor(() => expect(pending).toHaveLength(4));
+    expect(cursors.at(-1)).toBe("after-7");
+    pending[3]?.resolve({
+      jobs: ids(6, 2).map((id) => makeJob(id)),
+      has_more: true,
+      next_cursor: "after-2",
+      stats,
+    });
+    await secondPage;
+
+    expect(
+      store
+        .getJobs()
+        .map((job) => job.id)
+        .sort((a, b) => b - a),
+    ).toEqual(ids(11, 2));
+    store.disconnectEventStream(eventOwner);
+  });
+
+  it("waits for a rerun's reload before loading the next page", async () => {
+    const pending: Array<(value: JobsResponse) => void> = [];
+    const cursors: Array<string | undefined> = [];
+    const stats = { done: 11, running: 0, closed: 0, open: 11 };
+    const api = {
+      listJobs: vi.fn((query: { id?: number; cursor?: string }) => {
+        if (query.id !== undefined) {
+          return Promise.resolve({
+            jobs: [makeJob(query.id)],
+            has_more: false,
+            stats,
+          });
+        }
+        cursors.push(query.cursor);
+        return new Promise<JobsResponse>((resolve) => pending.push(resolve));
+      }),
+      rerunJob: vi.fn().mockResolvedValue({ job_id: 8 }),
+    };
+    const store = createJobsStore({
+      api: api as never,
+      navigate: vi.fn(),
+    });
+    const initialLoad = loadJobs(store);
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    pending[0]?.({
+      jobs: ids(10, 6).map((id) => makeJob(id)),
+      has_more: true,
+      next_cursor: "after-6",
+      stats,
+    });
+    await initialLoad;
+
+    // A page appended during the rerun's reload would change the list size
+    // the reload was built for, and the reload's rows would be discarded.
+    store.rerunJob(8);
+    await vi.waitFor(() => expect(pending).toHaveLength(2));
+    expect(store.isLoading()).toBe(true);
+    await loadMoreJobs(store);
+    expect(pending).toHaveLength(2);
+
+    pending[1]?.({
+      jobs: [
+        makeJob(11),
+        makeJob(10),
+        makeJob(9),
+        { ...makeJob(8), status: "queued" },
+        makeJob(7),
+      ],
+      has_more: true,
+      next_cursor: "after-7",
+      stats,
+    });
+    await vi.waitFor(() => expect(store.isLoading()).toBe(false));
+    expect(store.getJobs().find((job) => job.id === 8)?.status).toBe("queued");
+
+    const page = loadMoreJobs(store);
+    await vi.waitFor(() => expect(pending).toHaveLength(3));
+    expect(cursors.at(-1)).toBe("after-7");
+    pending[2]?.({
+      jobs: ids(6, 2).map((id) => makeJob(id)),
+      has_more: true,
+      next_cursor: "after-2",
+      stats,
+    });
+    await page;
+
+    expect(
+      store
+        .getJobs()
+        .map((job) => job.id)
+        .sort((a, b) => b - a),
+    ).toEqual(ids(11, 2));
   });
 
   it("invalidates the selected review for commit-scoped comment events", async () => {
@@ -1119,7 +1644,7 @@ describe("createJobsStore pagination", () => {
     return {
       listJobs: vi.fn().mockImplementation(async (query) => {
         const typedQuery = query as {
-          before?: number;
+          cursor?: string;
           limit?: number;
           status?: string;
         };
@@ -1130,16 +1655,20 @@ describe("createJobsStore pagination", () => {
             stats: { done: 0, closed: 0, open: 0 },
           };
         }
-        if (query.before !== undefined) {
+        if (typedQuery.cursor !== undefined) {
+          const second = typedQuery.cursor === "after-51";
           return {
-            jobs: query.before === 51 ? secondPage : [],
-            has_more: query.before === 51,
+            jobs: second ? secondPage : [],
+            has_more: second,
+            next_cursor: second ? "after-1" : null,
             stats: { done: 100, closed: 0, open: 100 },
           };
         }
+        const refreshed = typedQuery.limit === 100;
         return {
-          jobs: typedQuery.limit === 100 ? refreshedPage : firstPage,
+          jobs: refreshed ? refreshedPage : firstPage,
           has_more: true,
+          next_cursor: refreshed ? "after-2" : "after-51",
           stats: { done: 101, closed: 0, open: 101 },
         };
       }),
@@ -1192,7 +1721,7 @@ describe("createJobsStore pagination", () => {
     await loadMoreJobs(store);
 
     const paginationCalls = api.listJobs.mock.calls.filter(
-      (call) => call[0].before !== undefined,
+      (call) => call[0].cursor !== undefined,
     );
     expect(paginationCalls).toHaveLength(2);
     expect(paginationCalls[1]?.[0].limit).toBe(50);
@@ -1209,10 +1738,7 @@ describe("createJobsStore pagination", () => {
     };
     const api = {
       listJobs: vi.fn().mockImplementation(async (query) => {
-        const typedQuery = query as {
-          before?: number;
-          cursor?: string;
-        };
+        const typedQuery = query as { cursor?: string };
         return {
           jobs:
             typedQuery.cursor === undefined ? [recentlyRerun, olderHighId] : [],
@@ -1233,18 +1759,12 @@ describe("createJobsStore pagination", () => {
     expect(store.getJobs().map((job) => job.id)).toEqual([1, 100]);
     expect(store.getSortColumn()).toBe("enqueued_at");
     expect(store.areAllJobsLoaded()).toBe(false);
-    store.setSortColumn("id");
-    expect(store.getJobs().map((job) => job.id)).toEqual([100, 1]);
-    store.setSortColumn("enqueued_at");
-    expect(store.getSortDirection()).toBe("desc");
-    expect(store.getJobs().map((job) => job.id)).toEqual([1, 100]);
 
     await loadMoreJobs(store);
 
     expect(api.listJobs.mock.calls[1]?.[0].cursor).toBe(
       "stable-enqueue-cursor",
     );
-    expect(api.listJobs.mock.calls[1]?.[0].before).toBeUndefined();
   });
 
   it("does not load beyond the daemon result limit", async () => {
@@ -1629,46 +2149,6 @@ describe("createJobsStore panel expansion", () => {
       expect(panelCalls).toBe(2);
       expect(store.getPanelMembers("run-10")?.map((j) => j.id)).toEqual([12]);
     });
-  });
-
-  it("sorts panel parents by their displayed aggregate cost", async () => {
-    const expensive = {
-      ...makePanelParent(10),
-      token_usage: JSON.stringify({ has_cost: true, cost_usd: 0.01 }),
-      panel_summary: {
-        ...makePanelParent(10).panel_summary!,
-        members_with_cost: 2,
-        members_cost_usd: 1,
-        members_cost_complete: true,
-      },
-    };
-    const cheaper = {
-      ...makePanelParent(20),
-      token_usage: JSON.stringify({ has_cost: true, cost_usd: 0.5 }),
-      panel_summary: {
-        ...makePanelParent(20).panel_summary!,
-        members_with_cost: 2,
-        members_cost_usd: 0,
-        members_cost_complete: true,
-      },
-    };
-    const api = {
-      listJobs: vi.fn().mockResolvedValue({
-        jobs: [expensive, cheaper],
-        has_more: false,
-        stats: { done: 0, closed: 0, open: 0 },
-      }),
-    };
-    const store = createJobsStore({
-      api: api as never,
-      navigate: vi.fn(),
-    });
-    await loadJobs(store);
-
-    store.setSortColumn("cost");
-    expect(store.getJobs().map((j) => j.id)).toEqual([10, 20]);
-    store.setSortColumn("cost");
-    expect(store.getJobs().map((j) => j.id)).toEqual([20, 10]);
   });
 
   it("coalesces panel refreshes while a member request is in flight", async () => {

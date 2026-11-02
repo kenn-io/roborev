@@ -38,7 +38,7 @@ func TestPulledContentKeepsNewerLocalAttempt(t *testing.T) {
 				}
 				require.NoError(t, db.UpsertPulledJob(remote, repo.ID, nil))
 				var id int64
-				require.NoError(t, db.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, remote.UUID).Scan(&id))
+				require.NoError(t, db.QueryRowContext(t.Context(), `SELECT id FROM review_jobs WHERE uuid = ?`, remote.UUID).Scan(&id))
 				// Reruns must advance at PostgreSQL's microsecond precision,
 				// even in the same clock tick or behind the imported clock.
 				require.NoError(t, db.ReenqueueJob(id, ReenqueueOpts{}))
@@ -119,7 +119,7 @@ func TestPulledContentKeepsNewerLocalAttempt(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal("local rerun prompt", after.Prompt)
 				var reviews int
-				require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM reviews WHERE job_id = ?`, id).Scan(&reviews))
+				require.NoError(t, db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM reviews WHERE job_id = ?`, id).Scan(&reviews))
 				if status == JobStatusDone {
 					assert.Equal(1, reviews)
 					review, err := db.GetReviewByJobID(id)
@@ -167,7 +167,7 @@ func TestPulledContentAcceptsNewerRemoteAttempt(t *testing.T) {
 	remote.Status, remote.Prompt = "done", "second prompt"
 	require.NoError(t, db.UpsertPulledJob(remote, repo.ID, nil))
 	var id int64
-	require.NoError(t, db.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, remote.UUID).Scan(&id))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT id FROM review_jobs WHERE uuid = ?`, remote.UUID).Scan(&id))
 	job, err := db.GetJobByID(id)
 	require.NoError(t, err)
 	assert.Equal("second prompt", job.Prompt)
@@ -206,7 +206,7 @@ func TestReviewAttemptRepairWithinSameSecond(t *testing.T) {
 		// Old releases acknowledged reviews at whole-second precision. The
 		// migration's parent upload can finish in that very same second.
 		legacyMark := time.Now().UTC().Format(time.RFC3339)
-		_, err = env.db.Exec(`UPDATE reviews SET updated_at = ?, synced_at = ? WHERE job_id = ?`, legacyMark, legacyMark, env.job.ID)
+		_, err = env.db.ExecContext(t.Context(), `UPDATE reviews SET updated_at = ?, synced_at = ? WHERE job_id = ?`, legacyMark, legacyMark, env.job.ID)
 		require.NoError(t, err)
 		require.NoError(t, env.db.MarkJobSynced(env.job.ID))
 		reviews, err := env.db.GetReviewsToSync(machine, 10)
@@ -227,7 +227,7 @@ func TestNewerAttemptReplacesLaterAppliedState(t *testing.T) {
 			t.Parallel()
 			env := setupJobEnv(t, t.TempDir(), "applied-before-pull")
 			oldTime := env.job.EnqueuedAt
-			_, err := env.db.Exec(`UPDATE review_jobs SET job_type = 'fix', status = ?, updated_at = ? WHERE id = ?`, status, preciseTimestampAt(oldTime.Add(2*time.Hour)), env.job.ID)
+			_, err := env.db.ExecContext(t.Context(), `UPDATE review_jobs SET job_type = 'fix', status = ?, updated_at = ? WHERE id = ?`, status, preciseTimestampAt(oldTime.Add(2*time.Hour)), env.job.ID)
 			require.NoError(t, err)
 			incoming := PulledJob{
 				UUID: *env.job.UUID, SourceMachineID: testUUID("new-executor"), GitRef: env.job.GitRef,
@@ -277,7 +277,7 @@ func TestReviewAcknowledgmentKeepsReplacementAndEditsPending(t *testing.T) {
 				}
 				require.NoError(t, h.db.MarkReviewsSynced(pushed))
 				var mark sql.NullString
-				require.NoError(t, h.db.QueryRow(`SELECT synced_at FROM reviews WHERE job_id = ?`, job.ID).Scan(&mark))
+				require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT synced_at FROM reviews WHERE job_id = ?`, job.ID).Scan(&mark))
 				assert.False(t, mark.Valid, "the old upload must not acknowledge the new state")
 				pending, err := h.db.GetReviewsToSync(h.machineID, 10)
 				require.NoError(t, err)
@@ -355,7 +355,7 @@ func TestPulledOwnReviewWithFutureTimestampIsNotDirty(t *testing.T) {
 	review, err := h.db.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
 	producer := testUUID("remote-producer")
-	_, err = h.db.Exec(`UPDATE review_jobs SET source_machine_id = ? WHERE id = ?`, producer, job.ID)
+	_, err = h.db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = ? WHERE id = ?`, producer, job.ID)
 	require.NoError(t, err)
 	require.NoError(t, h.db.MarkJobSynced(job.ID))
 	// Imported jobs can echo this machine's own edit back with PostgreSQL's
@@ -405,7 +405,7 @@ func TestPulledParentReconcilesPendingReviewIdentity(t *testing.T) {
 			review, err := h.db.GetReviewByJobID(job.ID)
 			require.NoError(t, err)
 			producer := testUUID("parent-producer")
-			_, err = h.db.Exec(`UPDATE review_jobs SET source_machine_id = ? WHERE id = ?`, producer, job.ID)
+			_, err = h.db.ExecContext(t.Context(), `UPDATE review_jobs SET source_machine_id = ? WHERE id = ?`, producer, job.ID)
 			require.NoError(t, err)
 			require.NoError(t, h.db.MarkJobSynced(job.ID))
 			require.NoError(t, h.db.MarkReviewClosed(review.ID, true))

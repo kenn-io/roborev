@@ -1,3 +1,43 @@
+## Direct CLI review workflow
+
+You can work from the CLI help without installing a skill. Run these in the git
+checkout, replacing job `42` with the ID returned by `review` or `job list`:
+
+```bash
+roborev doctor
+roborev init
+roborev review HEAD
+roborev job wait --job 42
+roborev job show --job 42
+roborev fix 42
+roborev job comment --job 42 "Fixed and verified the findings"
+roborev job close 42
+```
+
+`doctor` reads setup state without starting the daemon. `init` configures the
+repository and git hooks. Reviews run in the background; `wait` follows an
+existing job. `fix` runs an agent in the foreground, edits and commits code,
+and closes completed jobs. Re-review the resulting commit for fresh verification.
+Use `fix --list` to preview work, or `refine` for repeated review and fix cycles.
+
+Job IDs are positive integers scoped to the selected daemon. `show`, `wait`,
+and `comment` try local git refs first; `--job` forces a numeric job ID.
+`show` and `wait` default to `HEAD`; `review` always takes git refs.
+Commands normally discover and auto-start a local daemon under
+`ROBOREV_DATA_DIR` (default `~/.roborev`). `--server` targets an existing
+loopback address, Unix socket, or remote HTTPS URL. Remote access supports only
+`list`, `show --job`, `wait --job`, and `stream`, with signing credentials and
+repository grants.
+
+Output flags are command-local. `list --json` includes job status and verdict;
+`show --json` returns the review record and stored document. Only `search`
+uses `--agent` for concise output; other commands use it to select a provider
+or integration. Errors go to stderr with a recovery hint. Exit codes are
+0 success, 1 runtime failure or a waiting command's FAIL verdict, 2 usage,
+3 export cursor database reset, and 4 invalid values. Displaying a FAIL with
+`show` succeeds. Use `roborev --help` for environment variables and command groups,
+and each command's `--help` for its flags and examples.
+
 ## How roborev works
 
 roborev gives your coding agent a second set of eyes. It reviews your code
@@ -6,14 +46,14 @@ the agent (or you) can fix them. There are two automation layers:
 
 **Layer 1 - Post-commit reviews (works everywhere).**
 A git post-commit hook enqueues a background review of every commit. This works
-with any editor or agent. Findings land in `roborev tui`, `roborev show HEAD`,
+with any editor or agent. Findings land in `roborev tui`, `roborev job show HEAD`,
 and the daemon API.
 
 **Layer 2 - Agent hook (CLI harnesses, optional).**
 The agent hook watches your coding-agent session (turns, commits, failed
 reviews). When review work piles up, it returns a self-contained fix instruction
 before the session goes cold. The write -> review -> fix loop closes without you
-asking. `roborev agent-hook install` auto-detects Claude Code, Codex,
+asking. `roborev agent hook install` auto-detects Claude Code, Codex,
 Copilot CLI, Cursor, Factory Droid, Gemini CLI, Hermes, Qwen, and Grok Build.
 Hook installation updates bundled skills for every supported profile.
 The hook never fires in a repo without its own review guidance
@@ -23,13 +63,13 @@ overengineer. Set and tune guidelines before relying on the hook.
 Claude Desktop does not expose harness hooks, so only Layer 1 runs there.
 
 Quickstart health checks cover Claude Code, Codex, and Grok Build. Use
-`roborev agent-hook install` and agent-native config inspection to manage the
+`roborev agent hook install` and agent-native config inspection to manage the
 other supported profiles.
 
 ## Skills: drive roborev from your coding agent
 
 Skills are the main way you and your agent use roborev from inside a session,
-with or without the agent hook. `roborev skills install` adds them to Claude
+with or without the agent hook. `roborev agent skills install` adds them to Claude
 Code and Codex as commands (Claude Code invokes them with `/`, Codex with `$`):
 
 - `/roborev-review` - review the current commit; `/roborev-review-branch` reviews every commit on the branch

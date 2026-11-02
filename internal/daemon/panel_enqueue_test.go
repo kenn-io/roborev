@@ -67,7 +67,7 @@ func enqueuePanelViaHTTP(t *testing.T, server *Server, body EnqueueRequest) Pane
 func autoDesignRowsForSHA(t *testing.T, db *storage.DB, repoID int64, sha string) int {
 	t.Helper()
 	var n int
-	require.NoError(t, db.QueryRow(`
+	require.NoError(t, db.QueryRowContext(t.Context(), `
 		SELECT COUNT(*)
 		  FROM review_jobs j
 		  JOIN commits c ON c.id = j.commit_id
@@ -1304,7 +1304,7 @@ synthesis_agent = "test"
 	assert.Empty(members[1].OutputPrefix, "the banner is composed at read time, never stored in the prefix")
 
 	// The banner is composed when the review is read, so it is never lost.
-	_, err = db.Exec(`UPDATE review_jobs SET status = 'running' WHERE id = ?`, members[1].ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'running' WHERE id = ?`, members[1].ID)
 	require.NoError(t, err)
 	require.NoError(t, testutil.CompleteReviewFixture(db, members[1].ID, "test", "", "- High: bug in a.go:1"))
 	review, err := db.GetReviewByJobID(members[1].ID)

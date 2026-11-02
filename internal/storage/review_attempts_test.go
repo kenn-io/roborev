@@ -33,12 +33,12 @@ func TestReviewAttemptsTableExists(t *testing.T) {
 		 last_error_class, consecutive_genuine_attempts, last_error_excerpt,
 		 last_panel_run_uuid, state, updated_at)
 		VALUES ('o/r', 1, 'sha', 1, datetime('now'), NULL, '', 0, '', '', 'pending', datetime('now'))`
-	_, err := db.Exec(insert)
+	_, err := db.ExecContext(t.Context(), insert)
 	require.NoError(t, err)
 
 	// UNIQUE(github_repo, pr_number, head_sha) must reject a duplicate HEAD.
 	// T7's compare-and-swap logic relies on this constraint.
-	_, err = db.Exec(insert)
+	_, err = db.ExecContext(t.Context(), insert)
 	require.Error(t, err)
 }
 

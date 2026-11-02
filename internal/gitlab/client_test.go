@@ -73,7 +73,7 @@ func TestResolveAuthToken_ExplicitTokenSkipsCLI(t *testing.T) {
 	clearGitLabEnv(t)
 	gotHost := stubGlabAuthToken(t, "cli-token", nil)
 
-	token := ResolveAuthToken(context.Background(), "explicit", "gitlab.com")
+	token := ResolveAuthToken(t.Context(), "explicit", "gitlab.com")
 
 	assert.Equal(t, "explicit", token)
 	assert.Empty(t, *gotHost, "glab CLI must not be consulted")
@@ -83,7 +83,7 @@ func TestResolveAuthToken_FallsBackToGlabCLI(t *testing.T) {
 	clearGitLabEnv(t)
 	gotHost := stubGlabAuthToken(t, "  cli-token\n", nil)
 
-	token := ResolveAuthToken(context.Background(), EnvironmentToken(), "gitlab.example.com")
+	token := ResolveAuthToken(t.Context(), EnvironmentToken(), "gitlab.example.com")
 
 	assert.Equal(t, "cli-token", token)
 	assert.Equal(t, "gitlab.example.com", *gotHost)
@@ -93,7 +93,7 @@ func TestResolveAuthToken_CLIFailureReturnsEmpty(t *testing.T) {
 	clearGitLabEnv(t)
 	stubGlabAuthToken(t, "", errors.New("glab: not logged in"))
 
-	assert.Empty(t, ResolveAuthToken(context.Background(), "", ""))
+	assert.Empty(t, ResolveAuthToken(t.Context(), "", ""))
 }
 
 func TestResolveAuthToken_EnvironmentTokenWinsOverCLI(t *testing.T) {
@@ -102,7 +102,7 @@ func TestResolveAuthToken_EnvironmentTokenWinsOverCLI(t *testing.T) {
 	stubGlabAuthToken(t, "cli-token", nil)
 
 	assert.Equal(t, "env-token",
-		ResolveAuthToken(context.Background(), EnvironmentToken()))
+		ResolveAuthToken(t.Context(), EnvironmentToken()))
 }
 
 func TestDefaultServerURL(t *testing.T) {

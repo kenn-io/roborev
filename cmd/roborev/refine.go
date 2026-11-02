@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/kit/pathresolve"
 
 	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/autofix"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/git"
@@ -140,8 +141,7 @@ Use --all-branches to discover and refine all branches with failed reviews.`,
 				return fmt.Errorf("get working directory: %w", err)
 			}
 
-			return runRefine(RunContext{
-				Context:    cmd.Context(),
+			return runRefine(cmd.Context(), RunContext{
 				WorkingDir: cwd,
 			}, opts)
 		},
@@ -356,18 +356,21 @@ func validateRefineContext(
 // RunContext encapsulates the runtime context for the refine command,
 // allowing tests to override the working directory and polling interval.
 type RunContext struct {
-	Context         context.Context
 	WorkingDir      string
 	PollInterval    time.Duration
 	PostCommitDelay time.Duration
 }
 
-func runRefine(runCtx RunContext, opts refineOptions) error {
-	ctx := runCtx.Context
-	if ctx == nil {
-		return fmt.Errorf("run refine: missing context")
+// appendRefineFixGuidelines keeps trusted policy after all review context.
+func appendRefineFixGuidelines(addressPrompt, guidelines string) string {
+	if strings.TrimSpace(guidelines) == "" {
+		return addressPrompt
 	}
+	addressPrompt += "\n\n" + autofix.GuidelinesEvaluationInstruction
+	return autofix.AppendGuidelines(addressPrompt, guidelines)
+}
 
+func runRefine(ctx context.Context, runCtx RunContext, opts refineOptions) error {
 	// 1. Validate git and branch context (before touching daemon)
 	repoPath, currentBranch, base, mergeBase, err := validateRefineContext(
 		ctx, runCtx.WorkingDir, opts.since, opts.branch,
@@ -410,10 +413,10 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 
 	// 2. Connect to daemon (only after all validation passes)
 	if err := ensureDaemon(); err != nil {
-		return fmt.Errorf("daemon not running: %w", err)
+		return fmt.Errorf("connect to daemon: %w", err)
 	}
 
-	client, err := daemon.NewHTTPClientFromRuntime()
+	client, err := daemon.NewHTTPClientFromRuntime(ctx)
 	if err != nil {
 		return fmt.Errorf("cannot connect to daemon: %w", err)
 	}
@@ -487,7 +490,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 		// Only search for a new failed review if we don't have one to work on
 		// (either first iteration, or previous fix passed)
 		if currentFailedReview == nil {
-			currentFailedReview, err = findFailedReviewForBranch(client, commits, skippedReviews)
+			currentFailedReview, err = findFailedReviewForBranch(ctx, client, commits, skippedReviews)
 			if err != nil {
 				return fmt.Errorf("error finding reviews: %w", err)
 			}
@@ -503,7 +506,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 				// Wait for the pending job to complete, then loop back to check its result
 				// This does NOT consume an iteration - we only count actual fix attempts
 				fmt.Printf("Waiting for in-progress review (job %d)...\n", pendingJob.ID)
-				review, err := client.WaitForReview(pendingJob.ID)
+				review, err := client.WaitForReview(ctx, pendingJob.ID)
 				if err != nil {
 					fmt.Printf("Warning: review failed: %v\n", err)
 					continue // Loop back, will re-check
@@ -512,7 +515,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 				if verdict == "F" && !review.Closed {
 					currentFailedReview = review
 				} else if verdict == "P" {
-					if err := client.MarkReviewClosed(review.JobID); err != nil {
+					if err := client.MarkReviewClosed(ctx, review.JobID); err != nil {
 						fmt.Printf("Warning: failed to close review (job %d): %v\n", review.JobID, err)
 					}
 					continue // Loop back to check for more
@@ -549,14 +552,14 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 				} else {
 					// No pending branch review - enqueue a new one
 					fmt.Println("No individual failed reviews - running branch review...")
-					jobID, err = client.EnqueueReview(repoPath, rangeRef, "")
+					jobID, err = client.EnqueueReview(ctx, repoPath, rangeRef, "")
 					if err != nil {
 						return fmt.Errorf("failed to enqueue branch review: %w", err)
 					}
 					fmt.Printf("Waiting for branch review (job %d)...\n", jobID)
 				}
 
-				review, err := client.WaitForReview(jobID)
+				review, err := client.WaitForReview(ctx, jobID)
 				if err != nil {
 					return fmt.Errorf("branch review failed: %w", err)
 				}
@@ -596,7 +599,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 		if currentFailedReview.Job != nil {
 			reviewCommitID, reviewGitRef = currentFailedReview.Job.LegacyCommentLookupTarget()
 		}
-		previousAttempts, err := client.GetAllCommentsForJob(currentFailedReview.JobID, reviewCommitID, reviewGitRef)
+		previousAttempts, err := client.GetAllCommentsForJob(ctx, currentFailedReview.JobID, reviewCommitID, reviewGitRef)
 		if err != nil {
 			return fmt.Errorf("fetch previous comments: %w", err)
 		}
@@ -643,12 +646,13 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 				continue
 			}
 			// The newly persisted plan is part of the next re-review's history.
-			previousAttempts, err = client.GetAllCommentsForJob(currentFailedReview.JobID, reviewCommitID, reviewGitRef)
+			previousAttempts, err = client.GetAllCommentsForJob(ctx, currentFailedReview.JobID, reviewCommitID, reviewGitRef)
 			if err != nil {
 				return err
 			}
 			previousAttempts = append(carriedAttempts, previousAttempts...)
 		}
+		addressPrompt = appendRefineFixGuidelines(addressPrompt, cfg.FixGuidelines)
 
 		// Create temp worktree to isolate agent from user's working tree
 		wt, err := createRefineWorktreeAtRef(ctx, repoPath, headBefore)
@@ -750,7 +754,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 		if agentErr != nil {
 			_ = wt.Close(ctx)
 			if opts.plan {
-				if saveErr := client.AddComment(currentFailedReview.JobID, "roborev-refine", fmt.Sprintf("Implementation failed: %v\n\n%s", agentErr, output)); saveErr != nil {
+				if saveErr := client.AddComment(ctx, currentFailedReview.JobID, "roborev-refine", fmt.Sprintf("Implementation failed: %v\n\n%s", agentErr, output)); saveErr != nil {
 					return saveErr
 				}
 			}
@@ -785,7 +789,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 					"All findings below severity " +
 						"threshold - closing review",
 				)
-				if err := client.MarkReviewClosed(
+				if err := client.MarkReviewClosed(ctx,
 					currentFailedReview.JobID,
 				); err != nil {
 					fmt.Printf(
@@ -799,7 +803,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 			}
 
 			fmt.Println("Agent made no changes - skipping this review")
-			if err := client.AddComment(currentFailedReview.JobID, "roborev-refine", "Agent could not determine how to address findings"); err != nil {
+			if err := client.AddComment(ctx, currentFailedReview.JobID, "roborev-refine", "Agent could not determine how to address findings"); err != nil {
 				fmt.Printf("Warning: failed to add comment to job %d: %v\n", currentFailedReview.JobID, err)
 			}
 			skippedReviews[currentFailedReview.ID] = true
@@ -829,7 +833,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 
 		// Add response recording what was done
 		responseText := fmt.Sprintf("Created commit %s to address findings\n\n%s", gitrepo.ShortSHA(newCommit), output)
-		if err := client.AddComment(currentFailedReview.JobID, "roborev-refine", responseText); err != nil {
+		if err := client.AddComment(ctx, currentFailedReview.JobID, "roborev-refine", responseText); err != nil {
 			fmt.Printf("Warning: failed to add comment to job %d: %v\n", currentFailedReview.JobID, err)
 		}
 
@@ -839,7 +843,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 		}
 
 		// Close old review
-		if err := client.MarkReviewClosed(currentFailedReview.JobID); err != nil {
+		if err := client.MarkReviewClosed(ctx, currentFailedReview.JobID); err != nil {
 			fmt.Printf("Warning: failed to close review (job %d): %v\n", currentFailedReview.JobID, err)
 		}
 
@@ -853,7 +857,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 		}
 
 		fmt.Printf("Waiting for review of new commit (job %d)...\n", newJob.ID)
-		review, err := client.WaitForReview(newJob.ID)
+		review, err := client.WaitForReview(ctx, newJob.ID)
 		if err != nil {
 			fmt.Printf("Warning: review failed: %v\n", err)
 			currentFailedReview = nil
@@ -865,7 +869,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 			carriedAttempts = nil
 			chainHead = ""
 			fmt.Println("New commit passed review!")
-			if err := client.MarkReviewClosed(review.JobID); err != nil {
+			if err := client.MarkReviewClosed(ctx, review.JobID); err != nil {
 				fmt.Printf("Warning: failed to close review (job %d): %v\n", review.JobID, err)
 			}
 			currentFailedReview = nil
@@ -884,7 +888,7 @@ func runRefineList(
 	cmd *cobra.Command, opts refineOptions,
 ) error {
 	if err := ensureDaemon(); err != nil {
-		return fmt.Errorf("daemon not running: %w", err)
+		return fmt.Errorf("connect to daemon: %w", err)
 	}
 	ctx := cmd.Context()
 
@@ -1016,7 +1020,7 @@ func runRefineAllBranches(
 	}
 
 	if err := ensureDaemon(); err != nil {
-		return fmt.Errorf("daemon not running: %w", err)
+		return fmt.Errorf("connect to daemon: %w", err)
 	}
 	// Use main repo root for API queries
 	apiRepoRoot := repoPath
@@ -1106,8 +1110,7 @@ func runRefineAllBranches(
 		branchOpts.branch = b
 		branchOpts.allBranches = false
 
-		if err := runRefine(RunContext{
-			Context:    ctx,
+		if err := runRefine(ctx, RunContext{
 			WorkingDir: repoPath,
 		}, branchOpts); err != nil {
 			if _, changed := errors.AsType[*planningStateError](err); changed {
@@ -1185,10 +1188,10 @@ func resolveAllowUnsafeAgents(flag bool, flagChanged bool, cfg *config.Config) b
 // Iterates oldest to newest so earlier commits are fixed before later ones.
 // Passing reviews are closed automatically.
 // Reviews in the skip set are ignored (used for reviews we've given up on this run).
-func findFailedReviewForBranch(client daemon.Client, commits []string, skip map[int64]bool) (*storage.Review, error) {
+func findFailedReviewForBranch(ctx context.Context, client daemon.Client, commits []string, skip map[int64]bool) (*storage.Review, error) {
 	// Iterate oldest to newest (commits are in chronological order)
 	for _, sha := range commits {
-		review, err := client.GetReviewBySHA(sha)
+		review, err := client.GetReviewBySHA(ctx, sha)
 		if err != nil {
 			return nil, fmt.Errorf("fetching review for %s: %w", gitrepo.ShortSHA(sha), err)
 		}
@@ -1213,7 +1216,7 @@ func findFailedReviewForBranch(client daemon.Client, commits []string, skip map[
 
 		// Close passing reviews so they don't need to be checked again
 		if verdict == "P" {
-			if err := client.MarkReviewClosed(review.JobID); err != nil {
+			if err := client.MarkReviewClosed(ctx, review.JobID); err != nil {
 				return nil, fmt.Errorf("closing review (job %d): %w", review.JobID, err)
 			}
 		}
@@ -1289,7 +1292,7 @@ func commitWithHookRetry(
 	}
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		sha, err := git.CreateCommitWithOptions(repoPath, commitMsg, commitOpts)
+		sha, err := git.CreateCommitWithOptions(ctx, repoPath, commitMsg, commitOpts)
 		if err == nil {
 			changedSubmodules, err := changedRefineSubmodules(
 				ctx, repoPath, submodulesBeforeRetry,

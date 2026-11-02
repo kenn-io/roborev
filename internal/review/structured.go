@@ -18,8 +18,9 @@ func DecodeStructuredReview(raw jsontext.Value) (StructuredReview, error) {
 }
 
 // validateLiveDocument rejects documents a live agent must not return. Stored
-// documents may be older versions, but a live agent must honor the schema it
-// was given: an older shape means the provider ignored it. A failing verdict
+// documents may be older versions, or come from producers without a verdict,
+// kind, or confidence, but a live agent must honor the schema it was given: an
+// older shape or a missing field means the provider ignored it. A failing verdict
 // with no finding says nothing actionable, and unable_to_review means the
 // agent never assessed the change; both are agent errors so retry and backup
 // failover run instead of recording a misleading review.
@@ -29,6 +30,17 @@ func validateLiveDocument(agentName string, doc StructuredReview) error {
 			"agent %s returned structured review schema_version %d, want %d",
 			agentName, doc.SchemaVersion, structuredreview.SchemaVersion,
 		)
+	}
+	if doc.Verdict == "" {
+		return fmt.Errorf("agent %s returned a structured review without a verdict", agentName)
+	}
+	for i, finding := range doc.Findings {
+		if finding.Kind == "" {
+			return fmt.Errorf(
+				"agent %s returned structured review finding %d without a kind or confidence",
+				agentName, i+1,
+			)
+		}
 	}
 	if doc.Verdict == structuredreview.VerdictFail && len(doc.Findings) == 0 {
 		return fmt.Errorf(

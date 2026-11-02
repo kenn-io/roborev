@@ -75,7 +75,7 @@ func TestPanelCommentLookupErrorDoesNotPostFallback(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, won)
 	// Make the synthesis query fail while the posting-claim table stays usable.
-	_, err = h.DB.Exec("ALTER TABLE review_jobs RENAME COLUMN min_severity TO unavailable_severity")
+	_, err = h.DB.ExecContext(t.Context(), "ALTER TABLE review_jobs RENAME COLUMN min_severity TO unavailable_severity")
 	require.NoError(t, err)
 	_, err = h.DB.GetSynthesisJob(panel.PanelRunUUID)
 	require.Error(t, err)
@@ -141,7 +141,7 @@ func (h *ciPollerHarness) completeSynthesisWithReview(t *testing.T, jobID int64,
 
 func setJobTiming(t *testing.T, db *storage.DB, jobID int64, startedAt, finishedAt string) {
 	t.Helper()
-	_, err := db.Exec(`UPDATE review_jobs SET started_at = ?, finished_at = ? WHERE id = ?`, startedAt, finishedAt, jobID)
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET started_at = ?, finished_at = ? WHERE id = ?`, startedAt, finishedAt, jobID)
 	require.NoError(t, err)
 }
 
@@ -151,7 +151,7 @@ func setJobTiming(t *testing.T, db *storage.DB, jobID int64, startedAt, finished
 func seedJobCost(t *testing.T, db *storage.DB, jobID int64, tokenUsageJSON string) {
 	t.Helper()
 	sessionID := fmt.Sprintf("sess-%d", jobID)
-	_, err := db.Exec(`UPDATE review_jobs SET session_id = ? WHERE id = ?`, sessionID, jobID)
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET session_id = ? WHERE id = ?`, sessionID, jobID)
 	require.NoError(t, err)
 	require.NoError(t, db.SaveJobTokenUsage(jobID, sessionID, tokenUsageJSON))
 }
@@ -160,7 +160,7 @@ func seedJobCost(t *testing.T, db *storage.DB, jobID int64, tokenUsageJSON strin
 func (h *ciPollerHarness) panelPostedAt(t *testing.T, id int64) bool {
 	t.Helper()
 	var postedAt *string
-	err := h.DB.QueryRow(`SELECT posted_at FROM ci_pr_panels WHERE id = ?`, id).Scan(&postedAt)
+	err := h.DB.QueryRowContext(t.Context(), `SELECT posted_at FROM ci_pr_panels WHERE id = ?`, id).Scan(&postedAt)
 	require.NoError(t, err)
 	return postedAt != nil
 }
@@ -681,7 +681,7 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 		_, synth, _ := h.seedCIPanelRun(t, "acme/api", 24, "headsha999", "base..headsha999",
 			[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "x"}})
 		h.completeSynthesisWithReview(t, synth.ID, `{"schema_version":2,"summary":"No issues found in the summary.","verdict":"fail","findings":[{"severity":"high","problem":"- High finding","fix":"Correct the issue.","location":null,"sources":[1]}],"source_labels":["test"]}`)
-		_, err := h.DB.Exec(`UPDATE reviews SET verdict_bool = 0 WHERE job_id = ?`, synth.ID)
+		_, err := h.DB.ExecContext(t.Context(), `UPDATE reviews SET verdict_bool = 0 WHERE job_id = ?`, synth.ID)
 		require.NoError(t, err)
 
 		h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
@@ -750,10 +750,10 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 				{Agent: "codex", ReviewType: "default", Status: "done", Output: "No issues found."},
 				{Agent: "codex", ReviewType: "security", Status: "done", Output: "No issues found."},
 			})
-		_, err := h.DB.Exec(`UPDATE review_jobs SET panel_name = ? WHERE id IN (?, ?, ?)`,
+		_, err := h.DB.ExecContext(t.Context(), `UPDATE review_jobs SET panel_name = ? WHERE id IN (?, ?, ?)`,
 			"ci_default_security", synth.ID, members[0].ID, members[1].ID)
 		require.NoError(t, err)
-		_, err = h.DB.Exec(`UPDATE review_jobs SET panel_member_name = ? WHERE id = ?`,
+		_, err = h.DB.ExecContext(t.Context(), `UPDATE review_jobs SET panel_member_name = ? WHERE id = ?`,
 			"codex_security", members[1].ID)
 		require.NoError(t, err)
 		h.completeSynthesisWithReview(t, synth.ID, "No issues found.")
@@ -777,7 +777,7 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 		const headSHA = "facefeed1234567"
 		_, synth, _ := h.seedCIPanelRun(t, "acme/api", 20, headSHA, "base.."+headSHA,
 			[]jobSpec{{Agent: "codex", ReviewType: "default", Status: "done", Output: "x"}})
-		_, err := h.DB.Exec(`UPDATE review_jobs SET agent = ? WHERE id = ?`, "codex", synth.ID)
+		_, err := h.DB.ExecContext(t.Context(), `UPDATE review_jobs SET agent = ? WHERE id = ?`, "codex", synth.ID)
 		require.NoError(t, err)
 		h.markJobDoneWithReview(t, synth.ID, "claude-code", "Medium issue found.")
 
@@ -963,7 +963,7 @@ func TestPanelRawFallbackRendersHeadSHA(t *testing.T) {
 func (h *ciPollerHarness) panelRetiredAt(t *testing.T, id int64) bool {
 	t.Helper()
 	var retiredAt *string
-	err := h.DB.QueryRow(`SELECT retired_at FROM ci_pr_panels WHERE id = ?`, id).Scan(&retiredAt)
+	err := h.DB.QueryRowContext(t.Context(), `SELECT retired_at FROM ci_pr_panels WHERE id = ?`, id).Scan(&retiredAt)
 	require.NoError(t, err)
 	return retiredAt != nil
 }
@@ -1087,7 +1087,7 @@ func TestPostPanelRunGenuineGiveUp(t *testing.T) {
 	_, err := h.DB.ReserveReviewAttempt("acme/api", 82, headSHA, time.Now())
 	require.NoError(t, err)
 	// Drive the streak to one below the cap so this attempt (streak+1) hits it.
-	_, err = h.DB.Exec(`UPDATE ci_pr_review_attempts SET consecutive_genuine_attempts = ?
+	_, err = h.DB.ExecContext(t.Context(), `UPDATE ci_pr_review_attempts SET consecutive_genuine_attempts = ?
 		WHERE github_repo = ? AND pr_number = ? AND head_sha = ?`,
 		reviewpkg.DefaultRetrySchedule.GenuineMax-1, "acme/api", 82, headSHA)
 	require.NoError(t, err)
@@ -1130,7 +1130,7 @@ func TestPostPanelRunTransientGiveUp(t *testing.T) {
 	// Backdate first_attempt_at past the transient wall so TransientExhausted is
 	// true (the wall is a strict threshold to exceed).
 	oldFirst := time.Now().Add(-(reviewpkg.DefaultRetrySchedule.TransientWall + time.Hour)).Format(time.RFC3339)
-	_, err = h.DB.Exec(`UPDATE ci_pr_review_attempts SET first_attempt_at = ?
+	_, err = h.DB.ExecContext(t.Context(), `UPDATE ci_pr_review_attempts SET first_attempt_at = ?
 		WHERE github_repo = ? AND pr_number = ? AND head_sha = ?`,
 		oldFirst, "acme/api", 85, headSHA)
 	require.NoError(t, err)
@@ -1206,7 +1206,7 @@ func TestPanelWithoutReviewFinalizesAfterStatusError(t *testing.T) {
 				}
 			}
 			h.Poller.handleReviewFailed(ciEvent(synth.ID, "review.failed"))
-			h.Poller.reconcilePanelPosting(context.Background(), "example/project")
+			h.Poller.reconcilePanelPosting(t.Context(), "example/project")
 			assert.Equal(1, writes, "terminal panels do not retry status writes")
 			assert.True(h.panelPostedAt(t, panel.ID))
 			assert.Empty(*comments)
@@ -1249,7 +1249,7 @@ func TestPanelWithoutReviewOnlyNotifiesMemberFailures(t *testing.T) {
 			[]jobSpec{{Agent: "test", Status: "failed", Error: "agent execution failed"}})
 		_, err := h.DB.ReserveReviewAttempt("example/project", 1, "no-output", time.Now())
 		require.NoError(t, err)
-		_, err = h.DB.Exec(`UPDATE ci_pr_review_attempts SET consecutive_genuine_attempts = ?`,
+		_, err = h.DB.ExecContext(t.Context(), `UPDATE ci_pr_review_attempts SET consecutive_genuine_attempts = ?`,
 			reviewpkg.DefaultRetrySchedule.GenuineMax-1)
 		require.NoError(t, err)
 		pool.broadcastFailed(members[0], "test", "agent execution failed")
@@ -1264,7 +1264,7 @@ func TestPanelWithoutReviewOnlyNotifiesMemberFailures(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, synth)
 		require.True(t, synth.IsSynthesisJob())
-		pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+		pool.processSynthesisJob(t.Context(), testWorkerID, synth)
 		event := <-events
 		assert.Equal("review.failed", event.Type)
 		assert.Empty(event.Agent, "an uncalled synthesis agent is not blamed")

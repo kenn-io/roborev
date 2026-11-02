@@ -40,7 +40,7 @@ func (b *observingBroadcaster) Broadcast(event Event) {
 // status-guarded CompleteJob/FailJob transitions take effect by ID.
 func markMemberRunning(t *testing.T, tc *workerTestContext, jobID int64) {
 	t.Helper()
-	_, err := tc.DB.Exec(
+	_, err := tc.DB.ExecContext(t.Context(),
 		"UPDATE review_jobs SET status = 'running', worker_id = ? WHERE id = ?",
 		testWorkerID, jobID,
 	)
@@ -73,9 +73,22 @@ func failMemberWithError(t *testing.T, tc *workerTestContext, jobID int64, errMs
 // agent that the rest of the package relies on.
 func setSynthesisAgent(t *testing.T, tc *workerTestContext, runUUID uuid.UUID, agentName string) {
 	t.Helper()
-	_, err := tc.DB.Exec(
+	_, err := tc.DB.ExecContext(t.Context(),
 		"UPDATE review_jobs SET agent = ? WHERE panel_run_uuid = ? AND panel_role = 'synthesis'",
 		agentName, runUUID,
+	)
+	require.NoError(t, err)
+}
+
+// setSynthesisInstructions stores panel synthesis instructions on the run's
+// synthesis job in the same encoding production writes.
+func setSynthesisInstructions(t *testing.T, tc *workerTestContext, runUUID uuid.UUID, instructions string) {
+	t.Helper()
+	raw, err := synthesisJobConfig{Instructions: instructions}.encode()
+	require.NoError(t, err)
+	_, err = tc.DB.ExecContext(t.Context(),
+		"UPDATE review_jobs SET panel_member_config_json = ? WHERE panel_run_uuid = ? AND panel_role = 'synthesis'",
+		raw, runUUID,
 	)
 	require.NoError(t, err)
 }
@@ -147,7 +160,7 @@ func TestSynthesisExcludesNonVotingMember(t *testing.T) {
 	completeMember(t, tc, members[1].ID, memberAgent, "- High: nil deref in a.go:1")
 
 	synth := releaseAndClaimSynthesis(t, tc, runUUID)
-	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+	tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synth)
 
 	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
 	review, err := tc.DB.GetReviewByJobID(synth.ID)
@@ -186,7 +199,7 @@ func TestFilterSucceededRejectsUnreadableDiffWithoutVerdict(t *testing.T) {
 func jobAgentInvoked(t *testing.T, tc *workerTestContext, jobID int64) bool {
 	t.Helper()
 	var invoked int
-	require.NoError(t, tc.DB.QueryRow(
+	require.NoError(t, tc.DB.QueryRowContext(t.Context(),
 		`SELECT agent_invoked FROM review_jobs WHERE id = ?`, jobID).Scan(&invoked))
 	return invoked == 1
 }
@@ -211,7 +224,7 @@ func TestRunSynthesisAgentMarksInvokedOnlyWhenAgentRuns(t *testing.T) {
 		// retries pre-exhausted and no backup so the failure is terminal: FailJob
 		// preserves agent_invoked, whereas a requeue would clear it and mask a
 		// marker leaked during agent configuration.
-		_, err := tc.DB.Exec(
+		_, err := tc.DB.ExecContext(t.Context(),
 			`UPDATE review_jobs SET status='running', worker_id=?, retry_count=?, agent=?, backup_agent='', source=?, git_ref=? WHERE id=?`,
 			testWorkerID, maxRetries, synthAgent, storage.JobSourceCI,
 			"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", synth.ID)
@@ -219,7 +232,7 @@ func TestRunSynthesisAgentMarksInvokedOnlyWhenAgentRuns(t *testing.T) {
 		job, err := tc.DB.GetJobByID(synth.ID)
 		require.NoError(t, err)
 
-		_, _, _, runErr := tc.Pool.runSynthesisAgent(context.Background(), testWorkerID, job, nil, "prompt")
+		_, _, _, runErr := tc.Pool.runSynthesisAgent(t.Context(), testWorkerID, job, nil, "prompt")
 		require.Error(t, runErr, "checkout must fail before the agent runs")
 
 		failed, err := tc.DB.GetJobByID(synth.ID)
@@ -235,7 +248,7 @@ func TestRunSynthesisAgentMarksInvokedOnlyWhenAgentRuns(t *testing.T) {
 		agent.RegisterForTest(t, &agent.FakeAgent{
 			NameStr: synthAgent,
 			ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
-				return `{"schema_version":2,"summary":"No issues found.","verdict":"pass","findings":[]}`, nil
+				return `{"schema_version":3,"summary":"No issues found.","verdict":"pass","findings":[]}`, nil
 			},
 		})
 
@@ -243,14 +256,14 @@ func TestRunSynthesisAgentMarksInvokedOnlyWhenAgentRuns(t *testing.T) {
 			{name: "m0", agent: "test"},
 		})
 		sha := testutil.GetHeadSHA(t, tc.TmpDir)
-		_, err := tc.DB.Exec(
+		_, err := tc.DB.ExecContext(t.Context(),
 			`UPDATE review_jobs SET status='running', worker_id=?, agent=?, source='', git_ref=? WHERE id=?`,
 			testWorkerID, synthAgent, sha, synth.ID)
 		require.NoError(t, err)
 		job, err := tc.DB.GetJobByID(synth.ID)
 		require.NoError(t, err)
 
-		_, _, _, runErr := tc.Pool.runSynthesisAgent(context.Background(), testWorkerID, job, nil, "prompt")
+		_, _, _, runErr := tc.Pool.runSynthesisAgent(t.Context(), testWorkerID, job, nil, "prompt")
 		require.NoError(t, runErr)
 		assert.True(t, jobAgentInvoked(t, tc, synth.ID),
 			"a synthesis agent that actually runs must be marked agent_invoked")
@@ -279,7 +292,7 @@ func (a *synthesisEntrypointTestAgent) Review(_ context.Context, _, _, prompt st
 	if a.result != "" {
 		return a.result, nil
 	}
-	return `{"schema_version":2,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","problem":"combined","fix":"fix","location":"file.go:1","sources":[1]}]}`, nil
+	return `{"schema_version":3,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"problem":"combined","fix":"fix","file":"test.txt","start_line":1,"end_line":1,"sources":[1]}]}`, nil
 }
 
 func (a *synthesisEntrypointTestAgent) WithReasoning(agent.ReasoningLevel) agent.Agent { return a }
@@ -347,7 +360,7 @@ func TestConfigureSynthesisAgentUsesStoredBackupWhenPrimaryUnavailable(t *testin
 	agent.Register(&agent.FakeAgent{NameStr: "codex"})
 	t.Cleanup(func() { agent.Register(originalCodex) })
 
-	_, err = tc.DB.Exec(
+	_, err = tc.DB.ExecContext(t.Context(),
 		`UPDATE review_jobs
 		 SET status = 'running', worker_id = ?, agent = ?, model = ?, backup_agent = ?, backup_model = ?
 		 WHERE id = ?`,
@@ -381,7 +394,7 @@ func TestConfigureSynthesisAgentKeepsPrimaryModelWhenBackupMatchesPrimary(t *tes
 	_, _, synthJob := enqueuePanelRun(t, tc, "same-agent-backup-panel", []memberSpec{
 		{name: "m0", agent: "test"},
 	})
-	_, err := tc.DB.Exec(
+	_, err := tc.DB.ExecContext(t.Context(),
 		`UPDATE review_jobs
 		 SET status = 'running', worker_id = ?, agent = ?, model = ?, backup_agent = ?, backup_model = ?
 		 WHERE id = ?`,
@@ -421,7 +434,7 @@ func TestConfigureSynthesisAgentKeepsPrimaryModelForConfiguredACPAlias(t *testin
 	_, _, synthJob := enqueuePanelRun(t, tc, "configured-acp-panel", []memberSpec{
 		{name: "m0", agent: "test"},
 	})
-	_, err := tc.DB.Exec(
+	_, err := tc.DB.ExecContext(t.Context(),
 		`UPDATE review_jobs
 		 SET status = 'running', worker_id = ?, agent = ?, model = ?, backup_agent = ?, backup_model = ?
 		 WHERE id = ?`,
@@ -459,7 +472,7 @@ func TestConfigureSynthesisAgentUsesBackupModelForNamedACPBackup(t *testing.T) {
 	_, _, synthJob := enqueuePanelRun(t, tc, "named-acp-backup-panel", []memberSpec{
 		{name: "m0", agent: "test"},
 	})
-	_, err := tc.DB.Exec(
+	_, err := tc.DB.ExecContext(t.Context(),
 		`UPDATE review_jobs
 		 SET status = 'running', worker_id = ?, agent = ?, model = ?, backup_agent = ?, backup_model = ?
 		 WHERE id = ?`,
@@ -500,7 +513,7 @@ func TestConfigureSynthesisAgentUsesCISnapshottedACPConfig(t *testing.T) {
 	_, _, synthJob := enqueuePanelRun(t, tc, "ci-acp-synthesis", []memberSpec{
 		{name: "m0", agent: "test"},
 	})
-	_, err = tc.DB.Exec(
+	_, err = tc.DB.ExecContext(t.Context(),
 		`UPDATE review_jobs
 		 SET status = 'running', worker_id = ?, source = ?, agent = ?, panel_member_config_json = ?
 		 WHERE id = ?`,
@@ -573,7 +586,7 @@ func TestSynthesisAllQuotaSkippedDoesNotStoreFailReview(t *testing.T) {
 	}
 
 	synth := releaseAndClaimSynthesis(t, tc, runUUID)
-	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+	tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synth)
 
 	got := tc.assertJobStatus(t, synth.ID, storage.JobStatusFailed)
 	assert.Contains(got.Error, reviewpkg.QuotaErrorPrefix)
@@ -604,7 +617,7 @@ func TestSynthesisSingleSuccessPassthrough(t *testing.T) {
 	failMember(t, tc, members[1].ID)
 
 	synth := releaseAndClaimSynthesis(t, tc, runUUID)
-	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+	tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synth)
 
 	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
 	review, err := tc.DB.GetReviewByJobID(synth.ID)
@@ -633,7 +646,7 @@ func TestSynthesisInstructionsRunAgentForSingleSuccess(t *testing.T) {
 		NameStr: synthAgent,
 		ReviewFn: func(_ context.Context, _, _, prompt string, _ io.Writer) (string, error) {
 			captured = prompt
-			return `{"schema_version":2,"summary":"Verified","verdict":"fail","findings":[{"severity":"high","problem":"Label: just fix. Nil map write.","fix":"Initialize the map.","location":"alpha.go:3","sources":[1]}]}`, nil
+			return `{"schema_version":3,"summary":"Verified","verdict":"fail","findings":[{"severity":"high","kind":"defect","confidence":0.9,"problem":"Label: just fix. Nil map write.","fix":"Initialize the map.","file":"alpha.go","start_line":3,"end_line":3,"sources":[1]}]}`, nil
 		},
 	})
 
@@ -642,16 +655,12 @@ func TestSynthesisInstructionsRunAgentForSingleSuccess(t *testing.T) {
 		{name: "m1", agent: memberAgent},
 	})
 	setSynthesisAgent(t, tc, runUUID, synthAgent)
-	_, err := tc.DB.Exec(
-		"UPDATE review_jobs SET panel_member_config_json = ? WHERE panel_run_uuid = ? AND panel_role = 'synthesis'",
-		`{"instructions":"Label each finding just fix or needs the user."}`, runUUID,
-	)
-	require.NoError(t, err)
+	setSynthesisInstructions(t, tc, runUUID, "Label each finding just fix or needs the user.")
 	completeMember(t, tc, members[0].ID, memberAgent, "High: nil map write in alpha.go:3")
 	failMember(t, tc, members[1].ID)
 
 	synth := releaseAndClaimSynthesis(t, tc, runUUID)
-	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+	tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synth)
 
 	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
 	review, err := tc.DB.GetReviewByJobID(synth.ID)
@@ -681,7 +690,7 @@ func TestSynthesisSingleSuccessWithMinSeverityPassesThroughBelowThreshold(t *tes
 		{name: "m1", agent: memberAgent},
 	})
 	setSynthesisAgent(t, tc, runUUID, synthAgent)
-	_, err := tc.DB.Exec(
+	_, err := tc.DB.ExecContext(t.Context(),
 		"UPDATE review_jobs SET min_severity = ? WHERE id = ?",
 		"medium", synthJob.ID,
 	)
@@ -691,7 +700,7 @@ func TestSynthesisSingleSuccessWithMinSeverityPassesThroughBelowThreshold(t *tes
 	failMember(t, tc, members[1].ID)
 
 	synth := releaseAndClaimSynthesis(t, tc, runUUID)
-	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+	tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synth)
 
 	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
 	review, err := tc.DB.GetReviewByJobID(synth.ID)
@@ -720,7 +729,7 @@ func TestSynthesisSinglePassingSuccessWithMinSeverityPassthrough(t *testing.T) {
 		{name: "m1", agent: memberAgent},
 	})
 	setSynthesisAgent(t, tc, runUUID, synthAgent)
-	_, err := tc.DB.Exec(
+	_, err := tc.DB.ExecContext(t.Context(),
 		"UPDATE review_jobs SET min_severity = CASE WHEN id = ? THEN 'low' ELSE 'medium' END WHERE id IN (?, ?)",
 		members[0].ID, members[0].ID, synthJob.ID,
 	)
@@ -744,7 +753,7 @@ func TestSynthesisSinglePassingSuccessWithMinSeverityPassthrough(t *testing.T) {
 	failMember(t, tc, members[1].ID)
 
 	synth := releaseAndClaimSynthesis(t, tc, runUUID)
-	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+	tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synth)
 
 	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
 	review, err := tc.DB.GetReviewByJobID(synth.ID)
@@ -772,7 +781,7 @@ func TestSynthesisPassingMembersWithRetainedFindingsStillSynthesize(t *testing.T
 
 	synthAgent := &synthesisEntrypointTestAgent{
 		name:   "panel-retained-findings-synth",
-		result: `{"schema_version":2,"summary":"Combined.","verdict":"pass","findings":[{"severity":"low","problem":"shared nit","fix":"tidy","location":null,"sources":[1,2]}]}`,
+		result: `{"schema_version":3,"summary":"Combined.","verdict":"pass","findings":[{"severity":"low","kind":"improvement","confidence":0.6,"problem":"shared nit","fix":"tidy","file":null,"start_line":null,"end_line":null,"sources":[1,2]}]}`,
 	}
 	agent.RegisterForTest(t, synthAgent)
 
@@ -781,7 +790,7 @@ func TestSynthesisPassingMembersWithRetainedFindingsStillSynthesize(t *testing.T
 		{name: "m1", agent: memberAgent},
 	})
 	setSynthesisAgent(t, tc, runUUID, synthAgent.name)
-	_, err := tc.DB.Exec(
+	_, err := tc.DB.ExecContext(t.Context(),
 		"UPDATE review_jobs SET min_severity = ? WHERE id = ?", "medium", synthJob.ID,
 	)
 	require.NoError(t, err)
@@ -804,7 +813,7 @@ func TestSynthesisPassingMembersWithRetainedFindingsStillSynthesize(t *testing.T
 	}
 
 	synth := releaseAndClaimSynthesis(t, tc, runUUID)
-	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+	tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synth)
 
 	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
 	review, err := tc.DB.GetReviewByJobID(synth.ID)
@@ -838,7 +847,7 @@ func TestSynthesisAllPassingSkipsAgent(t *testing.T) {
 	completeMember(t, tc, members[1].ID, memberAgent, "No findings to report.")
 
 	synth := releaseAndClaimSynthesis(t, tc, runUUID)
-	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+	tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synth)
 
 	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
 	review, err := tc.DB.GetReviewByJobID(synth.ID)
@@ -868,7 +877,7 @@ func TestSynthesisUsesReviewEntrypoint(t *testing.T) {
 	completeMember(t, tc, members[1].ID, memberAgent, "Review #2\n\n## Review Findings\n\n- Severity: Medium\n- Location: b.go:2\n- Problem: B\n- Fix: Fix B")
 
 	claimed := releaseAndClaimSynthesis(t, tc, runUUID)
-	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, claimed)
+	tc.Pool.processSynthesisJob(t.Context(), testWorkerID, claimed)
 
 	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
 	review, err := tc.DB.GetReviewByJobID(synth.ID)
@@ -902,7 +911,7 @@ func TestSynthesisInvalidJSONRetriesWithoutStoringReview(t *testing.T) {
 	completeMember(t, tc, members[1].ID, memberAgent, "**Verdict**: FAIL\n\nFinding B")
 
 	claimed := releaseAndClaimSynthesis(t, tc, runUUID)
-	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, claimed)
+	tc.Pool.processSynthesisJob(t.Context(), testWorkerID, claimed)
 
 	tc.assertJobStatus(t, synth.ID, storage.JobStatusQueued)
 	_, err := tc.DB.GetReviewByJobID(synth.ID)
@@ -956,7 +965,7 @@ func TestSynthesisCapturesTokenUsage(t *testing.T) {
 	processed := make(chan struct{})
 	go func() {
 		defer close(processed)
-		tc.Pool.processSynthesisJob(context.Background(), testWorkerID, claimed)
+		tc.Pool.processSynthesisJob(t.Context(), testWorkerID, claimed)
 	}()
 	defer func() {
 		unblockFetch()
@@ -1017,7 +1026,7 @@ func TestSynthesisRejectsProviderCostForReusedSession(t *testing.T) {
 		reused.ID, "worker-reuse", "shared-synth-session",
 	))
 	synthesis := releaseAndClaimSynthesis(t, tc, runUUID)
-	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synthesis)
+	tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synthesis)
 
 	updated := tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
 	usage := tokens.ParseJSON(updated.TokenUsage)
@@ -1050,7 +1059,7 @@ func TestSynthesisAutoClosesPassingReview(t *testing.T) {
 			completeMember(t, tc, members[0].ID, memberAgent, "No issues found.")
 
 			synth := releaseAndClaimSynthesis(t, tc, runUUID)
-			tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+			tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synth)
 
 			review, err := tc.DB.GetReviewByJobID(synth.ID)
 			require.NoError(t, err)
@@ -1073,7 +1082,7 @@ func TestSynthesisMultiVerifyDedupe(t *testing.T) {
 		NameStr: synthAgent,
 		ReviewFn: func(_ context.Context, _, _, prompt string, _ io.Writer) (string, error) {
 			captured = prompt
-			return `{"schema_version":2,"summary":"Combined","verdict":"pass","findings":[{"severity":"high","problem":"Consolidated finding.","fix":"Fix it.","location":"alpha.go:1","sources":[1,2]}]}`, nil
+			return `{"schema_version":3,"summary":"Combined","verdict":"pass","findings":[{"severity":"high","kind":"defect","confidence":0.9,"problem":"Consolidated finding.","fix":"Fix it.","file":"alpha.go","start_line":1,"end_line":1,"sources":[1,2]}]}`, nil
 		},
 	})
 
@@ -1089,7 +1098,7 @@ func TestSynthesisMultiVerifyDedupe(t *testing.T) {
 	completeMember(t, tc, members[1].ID, memberAgent, "Finding B in beta.go")
 
 	synth := releaseAndClaimSynthesis(t, tc, runUUID)
-	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+	tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synth)
 
 	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
 	review, err := tc.DB.GetReviewByJobID(synth.ID)
@@ -1149,7 +1158,7 @@ func TestSynthesisPassthroughIgnoresAgentCooldown(t *testing.T) {
 	failMember(t, tc, members[1].ID)
 
 	synth := releaseAndClaimSynthesis(t, tc, runUUID)
-	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+	tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synth)
 
 	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
 	assert.False(synthCalled, "cooldown must not block the no-agent passthrough branch")
@@ -1175,10 +1184,10 @@ func TestSynthesisMemberFetchErrorRetries(t *testing.T) {
 	// Drop the reviews table so GetPanelMemberReviews errors mid-query while the
 	// review_jobs table (and the failover path) stays intact. This drives the
 	// real load-error branch rather than mocking it.
-	_, err := tc.DB.Exec("DROP TABLE reviews")
+	_, err := tc.DB.ExecContext(t.Context(), "DROP TABLE reviews")
 	require.NoError(t, err)
 
-	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+	tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synth)
 
 	// A storage error must retry (queued), never complete the synthesis job as
 	// an all-failed review.
@@ -1215,7 +1224,7 @@ func TestSynthesisMultiSuccessRespectsCooldown(t *testing.T) {
 	completeMember(t, tc, members[1].ID, memberAgent, "Finding B")
 
 	synth := releaseAndClaimSynthesis(t, tc, runUUID)
-	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+	tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synth)
 
 	assert.False(t, called, "multi-success synthesis must not invoke an agent in cooldown")
 	got, err := tc.DB.GetJobByID(synth.ID)
@@ -1242,7 +1251,7 @@ func TestSynthesisCIReviewCooldownFailsOverToBackup(t *testing.T) {
 		{name: "m1", agent: memberAgent},
 	})
 	setSynthesisAgent(t, tc, runUUID, synthAgent)
-	_, err := tc.DB.Exec(
+	_, err := tc.DB.ExecContext(t.Context(),
 		`UPDATE review_jobs
 		 SET source = ?, ci_base_branch = ?, backup_agent = ?
 		 WHERE panel_run_uuid = ? AND panel_role = 'synthesis'`,
@@ -1253,7 +1262,7 @@ func TestSynthesisCIReviewCooldownFailsOverToBackup(t *testing.T) {
 	completeMember(t, tc, members[1].ID, memberAgent, "Finding B")
 
 	synth := releaseAndClaimSynthesis(t, tc, runUUID)
-	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+	tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synth)
 
 	assert.False(t, called, "CI synthesis must not invoke an agent in cooldown")
 	got := tc.assertJobStatus(t, synth.ID, storage.JobStatusQueued)
@@ -1272,7 +1281,7 @@ func TestSynthesisRunsAgainstWorktree(t *testing.T) {
 			tc := newWorkerTestContext(t, 1)
 
 			worktreePath := filepath.Join(t.TempDir(), "wt")
-			out, err := exec.Command(
+			out, err := exec.CommandContext(t.Context(),
 				"git", "-C", tc.TmpDir, "worktree", "add", "--detach", worktreePath, "HEAD",
 			).CombinedOutput()
 			require.NoError(t, err, "git worktree add failed: %s", out)
@@ -1301,7 +1310,7 @@ func TestSynthesisRunsAgainstWorktree(t *testing.T) {
 						require.NoError(t, err)
 						assert.Contains(string(content), strings.TrimSpace(strings.Repeat("finding ", 1000)))
 					}
-					return `{"schema_version":2,"summary":"Done.","verdict":"pass","findings":[]}`, nil
+					return `{"schema_version":3,"summary":"Done.","verdict":"pass","findings":[]}`, nil
 				},
 			})
 
@@ -1310,7 +1319,7 @@ func TestSynthesisRunsAgainstWorktree(t *testing.T) {
 				{name: "m1", agent: memberAgent},
 			})
 			setSynthesisAgent(t, tc, runUUID, synthAgent)
-			_, err = tc.DB.Exec(
+			_, err = tc.DB.ExecContext(t.Context(),
 				"UPDATE review_jobs SET worktree_path = ? WHERE panel_run_uuid = ? AND panel_role = 'synthesis'",
 				worktreePath, runUUID,
 			)
@@ -1321,7 +1330,7 @@ func TestSynthesisRunsAgainstWorktree(t *testing.T) {
 
 			synth := releaseAndClaimSynthesis(t, tc, runUUID)
 			require.Equal(t, worktreePath, synth.WorktreePath, "precondition: synthesis carries the worktree")
-			tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+			tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synth)
 
 			tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
 			if isolated {
@@ -1358,7 +1367,7 @@ func TestInstructedSynthesisReadsReviewedCommit(t *testing.T) {
 			content, err := os.ReadFile(filepath.Join(repoPath, "alpha.go"))
 			require.NoError(t, err)
 			seen = string(content)
-			return `{"schema_version":2,"summary":"Done.","verdict":"pass","findings":[]}`, nil
+			return `{"schema_version":3,"summary":"Done.","verdict":"pass","findings":[]}`, nil
 		},
 	})
 
@@ -1367,17 +1376,13 @@ func TestInstructedSynthesisReadsReviewedCommit(t *testing.T) {
 		{name: "m1", agent: memberAgent},
 	})
 	setSynthesisAgent(t, tc, runUUID, synthAgent)
-	_, err := tc.DB.Exec(
-		"UPDATE review_jobs SET panel_member_config_json = ? WHERE panel_run_uuid = ? AND panel_role = 'synthesis'",
-		`{"instructions":"Verify each finding against the code."}`, runUUID,
-	)
-	require.NoError(t, err)
+	setSynthesisInstructions(t, tc, runUUID, "Verify each finding against the code.")
 	completeMember(t, tc, members[0].ID, memberAgent, "High: bug in alpha.go:1")
 	completeMember(t, tc, members[1].ID, memberAgent, "High: other bug in alpha.go:1")
 	require.NoError(t, os.WriteFile(alpha, []byte("edited after review\n"), 0o600))
 
 	synth := releaseAndClaimSynthesis(t, tc, runUUID)
-	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+	tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synth)
 
 	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
 	assert.Equal(t, "reviewed\n", seen)
@@ -1395,7 +1400,7 @@ func TestSynthesisStoresFindingWithoutLocation(t *testing.T) {
 	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: synthAgent,
 		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
-			return `{"schema_version":2,"summary":"One finding without a location.","verdict":"pass","findings":[{"severity":"medium","problem":"Missing test","fix":"Add one","location":null,"sources":[1]}]}`, nil
+			return `{"schema_version":3,"summary":"One finding without a location.","verdict":"pass","findings":[{"severity":"medium","kind":"improvement","confidence":0.7,"problem":"Missing test","fix":"Add one","file":null,"start_line":null,"end_line":null,"sources":[1]}]}`, nil
 		},
 	})
 
@@ -1408,7 +1413,7 @@ func TestSynthesisStoresFindingWithoutLocation(t *testing.T) {
 	completeMember(t, tc, members[1].ID, memberAgent, "Finding B")
 
 	synth := releaseAndClaimSynthesis(t, tc, runUUID)
-	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+	tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synth)
 
 	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
 	review, err := tc.DB.GetReviewByJobID(synth.ID)
@@ -1444,7 +1449,7 @@ func TestSynthesisNoVerdictOutputFailsWithoutRetry(t *testing.T) {
 	completeMember(t, tc, members[1].ID, memberAgent, "Finding B")
 
 	synth := releaseAndClaimSynthesis(t, tc, runUUID)
-	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+	tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synth)
 
 	updated := tc.assertJobStatus(t, synth.ID, storage.JobStatusFailed)
 	assert.True(strings.HasPrefix(updated.Error, reviewpkg.NoVerdictErrorPrefix), updated.Error)
@@ -1456,9 +1461,9 @@ func TestSynthesisImportedUnableReview(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	runID, members, _ := enqueuePanelRun(t, tc, "imported-unable", []memberSpec{{name: "member", agent: "test"}})
 	member := members[0]
-	_, err := tc.DB.Exec(`UPDATE review_jobs SET status='done' WHERE id=?`, member.ID)
+	_, err := tc.DB.ExecContext(t.Context(), `UPDATE review_jobs SET status='done' WHERE id=?`, member.ID)
 	require.NoError(t, err)
-	_, archiveErr := tc.DB.Exec(`INSERT INTO legacy_reviews (job_id, agent, output, created_at, closed, uuid, migration_error) VALUES (?, 'test', ?, datetime('now'), 0, ?, 'AI conversion required')`, member.ID, "Legacy failed attempt", uuid.New())
+	_, archiveErr := tc.DB.ExecContext(t.Context(), `INSERT INTO legacy_reviews (job_id, agent, output, created_at, closed, uuid, migration_error) VALUES (?, 'test', ?, datetime('now'), 0, ?, 'AI conversion required')`, member.ID, "Legacy failed attempt", uuid.New())
 	require.NoError(t, archiveErr)
 	records, err := tc.DB.UnresolvedLegacyReviews()
 	require.NoError(t, err)
@@ -1500,7 +1505,7 @@ func TestSynthesisNeutralFramingUsesVotingMembers(t *testing.T) {
 			})
 			setSynthesisAgent(t, tc, run, synthAgent.Name())
 			for i, rubric := range []string{"citations", "security", "design"} {
-				_, err := tc.DB.Exec("UPDATE review_jobs SET review_type = ? WHERE id = ?", rubric, members[i].ID)
+				_, err := tc.DB.ExecContext(t.Context(), "UPDATE review_jobs SET review_type = ? WHERE id = ?", rubric, members[i].ID)
 				require.NoError(t, err)
 			}
 			if tt.observer {
@@ -1512,7 +1517,7 @@ func TestSynthesisNeutralFramingUsesVotingMembers(t *testing.T) {
 			completeMember(t, tc, members[2].ID, memberAgent, "Design finding.")
 
 			synth := releaseAndClaimSynthesis(t, tc, run)
-			tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+			tc.Pool.processSynthesisJob(t.Context(), testWorkerID, synth)
 			tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
 			require.True(t, synthAgent.reviewCalled)
 

@@ -213,7 +213,7 @@ func TestDaemonEndpoint_HTTPClient_UnixRoundTrip(t *testing.T) {
 	sockPath := filepath.Join("/tmp", fmt.Sprintf("roborev-test-%d.sock", os.Getpid()))
 	t.Cleanup(func() { os.Remove(sockPath) })
 
-	ln, err := net.Listen("unix", sockPath)
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", sockPath)
 	require.NoError(t, err)
 	defer ln.Close()
 
@@ -225,7 +225,9 @@ func TestDaemonEndpoint_HTTPClient_UnixRoundTrip(t *testing.T) {
 
 	ep := DaemonEndpoint{Network: "unix", Address: sockPath}
 	client := ep.HTTPClient(2 * time.Second)
-	resp, err := client.Get(ep.BaseURL() + "/test")
+	getRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ep.BaseURL()+"/test", nil)
+	require.NoError(t, err)
+	resp, err := client.Do(getRequest)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -238,7 +240,7 @@ func TestDaemonEndpoint_HTTPClient_UnixIgnoresProxy(t *testing.T) {
 	sockPath := filepath.Join("/tmp", fmt.Sprintf("roborev-test-%d.sock", os.Getpid()))
 	t.Cleanup(func() { os.Remove(sockPath) })
 
-	ln, err := net.Listen("unix", sockPath)
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", sockPath)
 	require.NoError(t, err)
 	defer ln.Close()
 
@@ -254,7 +256,9 @@ func TestDaemonEndpoint_HTTPClient_UnixIgnoresProxy(t *testing.T) {
 
 	ep := DaemonEndpoint{Network: "unix", Address: sockPath}
 	client := ep.HTTPClient(2 * time.Second)
-	resp, err := client.Get(ep.BaseURL() + "/test")
+	getRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ep.BaseURL()+"/test", nil)
+	require.NoError(t, err)
+	resp, err := client.Do(getRequest)
 	require.NoError(t, err, "Unix socket client should bypass HTTP_PROXY")
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)

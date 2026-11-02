@@ -524,7 +524,7 @@ func TestUpdaterPerformUpdateContextCancelsBeforeInstall(t *testing.T) {
 		Executable: func() (string, error) { return currentBinary, nil },
 		CacheDir:   t.TempDir,
 	})
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
 		done <- updater.PerformUpdateContext(ctx, &UpdateInfo{

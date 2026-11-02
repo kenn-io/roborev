@@ -19,7 +19,7 @@ func TestWebAnalyticsNormalizesFilters(t *testing.T) {
 	repo, jobs := seedRepoWithJobs(t, db, filepath.Join(tempDir, "project-a"), 1, "project-a")
 	job := jobs[0]
 	base := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
-	_, err := db.Exec(`UPDATE review_jobs SET status='done', source='post_commit', agent='agent-a', model='model-a',
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET status='done', source='post_commit', agent='agent-a', model='model-a',
 		enqueued_at=?, started_at=?, finished_at=?, agent_invoked=1,
 		token_usage='{"cost_usd":0.5,"has_cost":true}' WHERE id=?`,
 		base.Format(time.RFC3339), base.Add(time.Minute).Format(time.RFC3339),
@@ -122,7 +122,7 @@ func TestWebAnalyticsExplicitUntilWithoutSinceIsAllTime(t *testing.T) {
 
 func TestWebAnalyticsReportsStorageFailureForValidBucket(t *testing.T) {
 	server, db, _ := newTestServer(t)
-	_, err := db.Exec(`DROP TABLE review_jobs`)
+	_, err := db.ExecContext(t.Context(), `DROP TABLE review_jobs`)
 	require.NoError(t, err)
 
 	response := serveHuma(t, server, http.MethodGet,

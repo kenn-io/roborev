@@ -48,7 +48,7 @@ func TestCancelJob_ReturnsErrNoRowsForTerminalJobs(t *testing.T) {
 		require.NoError(t, db.CancelJob(job.ID), "CancelJob on queued job")
 
 		var status string
-		require.NoError(t, db.QueryRow(`SELECT status FROM review_jobs WHERE id = ?`, job.ID).Scan(&status), "query status")
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT status FROM review_jobs WHERE id = ?`, job.ID).Scan(&status), "query status")
 		assertEq(t, "status", status, "canceled")
 	})
 }

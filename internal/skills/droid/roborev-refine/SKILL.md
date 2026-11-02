@@ -112,7 +112,7 @@ pass/fail decision on the parent's verdict, and comment on and close that parent
 — never an individual member job. A re-review re-runs the same panel.
 
 If the command output contains an error (daemon not running, repo not
-initialized, review errored), report it. Suggest `roborev status` to check the
+initialized, review errored), report it. Suggest `roborev daemon status` to check the
 daemon or `roborev init` if the repo is not initialized.
 
 If the review **passed**, inform the user and stop. No fixes needed.
@@ -153,12 +153,12 @@ Commit first per the project's conventions (see AGENTS.md). Only after the
 commit succeeds, record a summary comment on the review and close it:
 
 ```bash
-roborev comment --from-skill --commenter roborev-refine --job <job_id> -m "$(cat <<'ROBOREV_COMMENT'
+roborev job comment --from-skill --commenter roborev-refine --job <job_id> -m "$(cat <<'ROBOREV_COMMENT'
 <summary of changes>
 ROBOREV_COMMENT
 )"
 # Only if the comment above succeeded:
-roborev close --from-skill <job_id>
+roborev job close --from-skill <job_id>
 ```
 
 For a panel review, `<job_id>` is the synthesis parent; closing it closes the
@@ -175,7 +175,7 @@ included in re-review prompts. Keep it concise.
 #### 3d. Re-review
 
 After committing, run an explicit full-scope re-review that matches the
-original refine scope. Do not treat a passing `roborev wait` result for the new
+original refine scope. Do not treat a passing `roborev job wait` result for the new
 commit as sufficient to stop — the full branch or commit-range review must pass
 before you report success.
 
@@ -183,13 +183,13 @@ If a post-commit hook is installed, the commit may have enqueued a
 commit-scoped review. Check for it so you can clean it up:
 
 ```bash
-roborev wait --from-skill
+roborev job wait --from-skill
 ```
 
-If `roborev wait` finds a job, remember its job ID (from the output) as the
+If `roborev job wait` finds a job, remember its job ID (from the output) as the
 hook review job. If it reports "No job found", continue without one.
 
-**Note:** `roborev wait` resolves HEAD to a single SHA, so it only finds
+**Note:** `roborev job wait` resolves HEAD to a single SHA, so it only finds
 commit-scoped hook reviews. Branch-mode hook reviews (stored under range refs)
 are not discoverable this way — they will be superseded by the explicit review
 below.
@@ -218,7 +218,7 @@ If you found a hook review job earlier, close it now so refine does not leave
 stale commit-level reviews open:
 
 ```bash
-roborev close --from-skill <hook_job_id>
+roborev job close --from-skill <hook_job_id>
 ```
 
 - If the explicit full-scope review **passed**: inform the user and stop. The
@@ -247,7 +247,7 @@ Agent:
 5. Runs `go test ./...` — passes
 6. Commits changes
 7. Records comment and closes the old review
-8. Runs `roborev wait --from-skill` — if hook review found, remembers job ID to close later
+8. Runs `roborev job wait --from-skill` — if hook review found, remembers job ID to close later
 9. Runs `roborev review --from-skill --branch --wait`
 10. Closes hook review job if one was found
 11. Full branch review returns Pass
@@ -262,7 +262,7 @@ Agent:
 2. Runs `roborev review --from-skill --since abc123 --wait`
 3. Review returns verdict Fail
 4. Fixes findings, tests, commits, comments, closes
-5. Checks for hook review via `roborev wait --from-skill` — if a commit-scoped hook review is found, remembers it to close after the next explicit `roborev review --from-skill --since abc123 --wait`
+5. Checks for hook review via `roborev job wait --from-skill` — if a commit-scoped hook review is found, remembers it to close after the next explicit `roborev review --from-skill --since abc123 --wait`
 6. Continues until the full requested range passes or 3 iterations are exhausted
 
 ## See also

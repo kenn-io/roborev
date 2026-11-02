@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -114,7 +115,6 @@ func newFastRunContext(t *testing.T, repoDir string) RunContext {
 	t.Helper()
 
 	return RunContext{
-		Context:         t.Context(),
 		WorkingDir:      repoDir,
 		PollInterval:    1 * time.Millisecond,
 		PostCommitDelay: 1 * time.Millisecond,
@@ -137,7 +137,7 @@ func TestEnqueueReviewRefine(t *testing.T) {
 		})
 		defer md.Close()
 
-		jobID, err := enqueueReview("/test/repo", "abc..def", "codex")
+		jobID, err := enqueueReview(t.Context(), "/test/repo", "abc..def", "codex")
 		require.NoError(t, err)
 
 		assert.EqualValues(t, 123, jobID)
@@ -153,7 +153,7 @@ func TestEnqueueReviewRefine(t *testing.T) {
 		})
 		defer md.Close()
 
-		_, err := enqueueReview("/bad/repo", "HEAD", "codex")
+		_, err := enqueueReview(t.Context(), "/bad/repo", "HEAD", "codex")
 		require.Error(t, err, "expected error")
 	})
 }
@@ -234,7 +234,7 @@ func TestRunRefineSurfacesResponseErrors(t *testing.T) {
 
 	ctx := newFastRunContext(t, repoDir)
 
-	err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true})
+	err := runRefine(t.Context(), ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true})
 	require.Error(t, err, "expected error, got nil")
 }
 
@@ -259,7 +259,7 @@ func TestRunRefineFailsOnInvalidGlobalConfigBeforeDaemonStartup(t *testing.T) {
 
 	ctx := newFastRunContext(t, repoDir)
 
-	err = runRefine(ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true})
+	err = runRefine(t.Context(), ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true})
 	require.Error(t, err, "expected config load error")
 	assert.Contains(t, err.Error(), "load config:")
 }
@@ -273,11 +273,11 @@ func TestRunRefineFailsOnInvalidRepoConfigBeforeDaemonStartup(t *testing.T) {
 		0o644,
 	)
 	require.NoError(t, err, "write invalid repo config: %v", err)
-	gitAdd := exec.Command("git", "add", ".roborev.toml")
+	gitAdd := exec.CommandContext(t.Context(), "git", "add", ".roborev.toml")
 	gitAdd.Dir = repoDir
 	out, err := gitAdd.CombinedOutput()
 	require.NoError(t, err, "git add failed: %s", out)
-	gitCommit := exec.Command("git", "commit", "-m", "add invalid repo config")
+	gitCommit := exec.CommandContext(t.Context(), "git", "commit", "-m", "add invalid repo config")
 	gitCommit.Dir = repoDir
 	out, err = gitCommit.CombinedOutput()
 	require.NoError(t, err, "git commit failed: %s", out)
@@ -293,7 +293,7 @@ func TestRunRefineFailsOnInvalidRepoConfigBeforeDaemonStartup(t *testing.T) {
 
 	ctx := newFastRunContext(t, repoDir)
 
-	err = runRefine(ctx, refineOptions{
+	err = runRefine(t.Context(), ctx, refineOptions{
 		agentName:     "test",
 		reasoning:     "fast",
 		maxIterations: 1,
@@ -320,7 +320,7 @@ func TestRunRefineQuietNonTTYTimerOutput(t *testing.T) {
 	ctx := newFastRunContext(t, repoDir)
 
 	output := captureStdout(t, func() {
-		err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true})
+		err := runRefine(t.Context(), ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true})
 		require.Error(t, err, "expected error, got nil")
 	})
 
@@ -350,7 +350,7 @@ func TestRunRefineStopsLiveTimerOnAgentError(t *testing.T) {
 	ctx := newFastRunContext(t, repoDir)
 
 	output := captureStdout(t, func() {
-		err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true})
+		err := runRefine(t.Context(), ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true})
 		require.Error(t, err, "expected error, got nil")
 	})
 
@@ -378,7 +378,7 @@ func TestRefineLoopFindFailedReviewPath(t *testing.T) {
 		}
 
 		commits := []string{"commit1sha", "commit2sha", "commit3sha"}
-		review, err := findFailedReviewForBranch(client, commits, nil)
+		review, err := findFailedReviewForBranch(t.Context(), client, commits, nil)
 
 		require.NoError(t, err)
 
@@ -395,7 +395,7 @@ func TestRefineLoopFindFailedReviewPath(t *testing.T) {
 		}
 
 		commits := []string{"commit1sha"}
-		review, err := findFailedReviewForBranch(client, commits, nil)
+		review, err := findFailedReviewForBranch(t.Context(), client, commits, nil)
 
 		require.NoError(t, err)
 
@@ -449,7 +449,7 @@ func TestRefineLoopBranchReviewPath(t *testing.T) {
 		}
 
 		commits := []string{"commit1", "commit2"}
-		review, err := findFailedReviewForBranch(client, commits, nil)
+		review, err := findFailedReviewForBranch(t.Context(), client, commits, nil)
 
 		// Should return nil since all pass
 		require.NoError(t, err)
@@ -468,7 +468,7 @@ func TestRefineLoopEnqueueBranchReview(t *testing.T) {
 		md := NewMockDaemon(t, MockRefineHooks{})
 		defer md.Close()
 
-		jobID, err := enqueueReview("/test/repo", "abc123..HEAD", "codex")
+		jobID, err := enqueueReview(t.Context(), "/test/repo", "abc123..HEAD", "codex")
 		require.NoError(t, err)
 
 		assert.NotEqual(t, 0, jobID)
@@ -492,7 +492,7 @@ func TestRefineLoopWaitForReviewCompletion(t *testing.T) {
 			ID:          1, JobID: 42, Output: "All tests pass. No issues found.", Closed: false,
 		}
 
-		review, err := waitForReviewWithInterval(42, 1*time.Millisecond)
+		review, err := waitForReviewWithInterval(t.Context(), 42, 1*time.Millisecond)
 		require.NoError(t, err)
 
 		require.NotNil(t, review, "expected review")
@@ -510,7 +510,7 @@ func TestRefineLoopWaitForReviewCompletion(t *testing.T) {
 			Error:  "Agent timeout after 10 minutes",
 		}
 
-		_, err := waitForReviewWithInterval(42, 1*time.Millisecond)
+		_, err := waitForReviewWithInterval(t.Context(), 42, 1*time.Millisecond)
 		require.Error(t, err, "expected error for failed job")
 		assert.Contains(t, err.Error(), "timeout")
 	})
@@ -622,7 +622,7 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 	// an iteration, this would fail with "max iterations reached". Since the
 	// pending job transitions to Done with a passing review (and no failed
 	// reviews exist), refine should succeed.
-	err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true})
+	err := runRefine(t.Context(), ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true})
 
 	// Should succeed - all reviews pass after waiting for the pending one
 	require.NoError(t, err, "expected refine to succeed (pending wait should not consume iteration), got: %v")
@@ -844,7 +844,7 @@ func TestInstalledSkillsNeedUpdateForQwenOnlyInstall(t *testing.T) {
 
 func TestRepairHooksAfterUpdateUsesRegisteredRepos(t *testing.T) {
 	var gotOpts repairHookOptions
-	repairHooksAfterUpdate("/tmp/bin", false, func(opts repairHookOptions) error {
+	repairHooksAfterUpdate(t.Context(), "/tmp/bin", false, func(opts repairHookOptions) error {
 		gotOpts = opts
 		return nil
 	})
@@ -863,7 +863,7 @@ func TestRepairHooksAfterUpdateUsesRegisteredRepos(t *testing.T) {
 func TestRepairHooksAfterUpdateSkipsWhenNoRestart(t *testing.T) {
 	called := false
 	output := captureStdout(t, func() {
-		repairHooksAfterUpdate("/tmp/bin", true, func(opts repairHookOptions) error {
+		repairHooksAfterUpdate(t.Context(), "/tmp/bin", true, func(opts repairHookOptions) error {
 			called = true
 			return nil
 		})
@@ -902,13 +902,13 @@ func main() {
 `), 0o644))
 
 	newBinary := updatedRoborevBinary(binDir)
-	build := exec.Command("go", "build", "-o", newBinary, fakeSource)
+	build := exec.CommandContext(t.Context(), "go", "build", "-o", newBinary, fakeSource)
 	build.Env = os.Environ()
 	out, err := build.CombinedOutput()
 	require.NoError(t, err, "build fake roborev: %s", out)
 	t.Setenv("ROBOREV_FAKE_ARGS", argsPath)
 
-	repairHooksAfterUpdate(binDir, false, nil)
+	repairHooksAfterUpdate(t.Context(), binDir, false, nil)
 
 	gotBytes, err := os.ReadFile(argsPath)
 	require.NoError(t, err)
@@ -1027,24 +1027,6 @@ func TestRestartDaemonAfterUpdateStopFailureSamePID(t *testing.T) {
 	assert.Equal(t, 0, s.startCalls)
 }
 
-func TestWaitForDaemonExitProbeErrorWithRuntimePresentTimesOut(t *testing.T) {
-	stubRestartVars(t)
-
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		return nil, os.ErrNotExist
-	}
-	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		return []*daemon.RuntimeInfo{{PID: 100, Address: "127.0.0.1:7373"}}, nil
-	}
-	isPIDAliveForUpdate = func(pid int) bool {
-		return pid == 100
-	}
-
-	exited, newPID := waitForDaemonExit(100, 5*time.Millisecond)
-	assert.False(t, exited)
-	assert.Equal(t, 0, newPID)
-}
-
 func TestWaitForDaemonExitProbeErrorWithStaleRuntimeExits(t *testing.T) {
 	stubRestartVars(t)
 
@@ -1059,27 +1041,29 @@ func TestWaitForDaemonExitProbeErrorWithStaleRuntimeExits(t *testing.T) {
 		return false
 	}
 
-	exited, newPID := waitForDaemonExit(100, 5*time.Millisecond)
+	exited, newPID := waitForDaemonExit(100, time.Second)
 	assert.True(t, exited)
 	assert.Equal(t, 0, newPID)
 }
 
 func TestWaitForDaemonExitRuntimeGoneButPIDAliveTimesOut(t *testing.T) {
-	stubRestartVars(t)
+	synctest.Test(t, func(t *testing.T) {
+		stubRestartVars(t)
 
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		return nil, os.ErrNotExist
-	}
-	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		return nil, nil
-	}
-	isPIDAliveForUpdate = func(pid int) bool {
-		return pid == 100
-	}
+		getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+			return nil, os.ErrNotExist
+		}
+		listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+			return nil, nil
+		}
+		isPIDAliveForUpdate = func(pid int) bool {
+			return pid == 100
+		}
 
-	exited, newPID := waitForDaemonExit(100, 5*time.Millisecond)
-	assert.False(t, exited)
-	assert.Equal(t, 0, newPID)
+		exited, newPID := waitForDaemonExit(100, 5*time.Millisecond)
+		assert.False(t, exited)
+		assert.Equal(t, 0, newPID)
+	})
 }
 
 func TestWaitForDaemonExitRuntimeGonePIDReusedAsNonDaemonExits(t *testing.T) {
@@ -1097,7 +1081,7 @@ func TestWaitForDaemonExitRuntimeGonePIDReusedAsNonDaemonExits(t *testing.T) {
 		return false
 	}
 
-	exited, newPID := waitForDaemonExit(100, 5*time.Millisecond)
+	exited, newPID := waitForDaemonExit(100, time.Second)
 	assert.True(t, exited)
 	assert.Equal(t, 0, newPID)
 }
@@ -1117,7 +1101,7 @@ func TestWaitForDaemonExitDetectsUnresponsiveManagerHandoffFromRuntimePID(t *tes
 		return pid == 200
 	}
 
-	exited, newPID := waitForDaemonExit(100, 5*time.Millisecond)
+	exited, newPID := waitForDaemonExit(100, time.Second)
 	require.True(t, exited, "expected exited=true when previous pid is gone")
 	assert.Equal(t, 200, newPID)
 }

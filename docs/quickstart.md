@@ -5,11 +5,19 @@ description: Get up and running with roborev in minutes
 
 ## Install
 
-=== "macOS / Linux"
+=== "macOS (Homebrew)"
+
+    ```bash
+    brew install roborev
+    ```
+
+=== "Linux"
 
     ```bash
     curl -fsSL https://roborev.io/install.sh | bash
     ```
+
+    Or install a [DEB or RPM package](installation.md#linux-packages-deb-and-rpm).
 
 === "Windows"
 
@@ -86,7 +94,7 @@ you've handled the feedback, press `a` in the TUI to mark the review as closed.
 If you use Claude Code or Codex, install the roborev agent skills:
 
 ```bash
-roborev skills install
+roborev agent skills install
 ```
 
 Then from your agent session, run the fix skill to discover and address all open
