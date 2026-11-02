@@ -445,7 +445,7 @@ func TestUpdateExistingPRComment(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(api.handler))
 			defer server.Close()
 			client := newTestGitHubClient(t, "token", server)
-			updated, err := client.UpdateExistingPRComment(context.Background(), "owner/repo", 1, "No findings.")
+			updated, err := client.UpdateExistingPRComment(t.Context(), "owner/repo", 1, "No findings.")
 			assert.Equal(t, tc.updated, updated)
 			if tc.wantErr {
 				require.Error(t, err)
