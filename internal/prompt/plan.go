@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -85,14 +86,14 @@ func buildFixPlanPrompt(repoPath, skillRoot string, cfg *config.Config, findings
 }
 
 // FixPlanReviewContext associates findings with the reviewed ref and available diff.
-func FixPlanReviewContext(repoPath string, review *storage.Review) string {
+func FixPlanReviewContext(ctx context.Context, repoPath string, review *storage.Review) string {
 	var context strings.Builder
 	if review.Job != nil && review.Job.GitRef != "" {
 		fmt.Fprintf(&context, "Reviewed reference: %q\n\n", review.Job.GitRef)
 	}
 	context.WriteString(review.Output)
 	if review.Job != nil && review.Job.GitRef != "" && review.Job.GitRef != "dirty" {
-		if diff, err := git.GetDiff(repoPath, review.Job.GitRef); err == nil && len(diff) > 0 {
+		if diff, err := git.GetDiffCtx(ctx, repoPath, review.Job.GitRef); err == nil && len(diff) > 0 {
 			context.WriteString("\n## Original Commit Diff (for context)\n\n```diff\n" + diff + "\n```\n")
 		}
 	}
@@ -107,7 +108,7 @@ func (b *Builder) BuildPlanPrompt(review *storage.Review, responses []storage.Re
 	}
 	return buildFixPlanPrompt(
 		b.repoPath, skillRoot, b.globalCfg,
-		FixPlanReviewContext(b.repoPath, review), minSeverity, responses, "",
+		FixPlanReviewContext(b.context(), b.repoPath, review), minSeverity, responses, "",
 	)
 }
 

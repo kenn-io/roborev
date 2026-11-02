@@ -50,14 +50,14 @@ func TestGetCostAggregate(t *testing.T) {
 	mkJob("sha-queued", "feat", JobStatusQueued, "")   // never ran
 
 	skipped := mkJob("sha-skip", "feat", JobStatusDone, `{"cost_usd":9.99,"has_cost":true}`)
-	_, err := db.Exec(`UPDATE review_jobs SET status='skipped' WHERE id=?`, skipped.ID)
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET status='skipped' WHERE id=?`, skipped.ID)
 	require.NoError(t, err)
 	nonTerminal := mkJob("sha-running-finished", "feat", JobStatusDone, `{"cost_usd":8.88,"has_cost":true}`)
-	_, err = db.Exec(`UPDATE review_jobs SET status='running' WHERE id=?`, nonTerminal.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status='running' WHERE id=?`, nonTerminal.ID)
 	require.NoError(t, err)
 
 	cq := mkJob("sha-cancel-queue", "feat", JobStatusQueued, "")
-	_, err = db.Exec(`UPDATE review_jobs SET status='canceled', started_at=NULL, finished_at=datetime('now') WHERE id=?`, cq.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status='canceled', started_at=NULL, finished_at=datetime('now') WHERE id=?`, cq.ID)
 	require.NoError(t, err)
 
 	// Whole repo: 6 eligible, 4 fully priced, $12.04 including partial cost.
@@ -388,7 +388,7 @@ func TestResetStaleJobsClearsCostMetadata(t *testing.T) {
 		t, db, repo.ID, createCommit(t, db, repo.ID, "reset-canceled-sha").ID,
 		"reset-canceled-sha",
 	)
-	_, err := db.Exec(`
+	_, err := db.ExecContext(t.Context(), `
 		UPDATE review_jobs
 		SET status = 'canceled', worker_id = 'stale-canceled-worker'
 		WHERE id = ?

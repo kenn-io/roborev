@@ -35,7 +35,7 @@ func TestHandlerServesNavigationAndAssets(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(tt.method, tt.path, nil)
+			req := httptest.NewRequestWithContext(t.Context(), tt.method, tt.path, nil)
 			if tt.accept != "" {
 				req.Header.Set("Accept", tt.accept)
 			}
@@ -57,7 +57,7 @@ func TestHandlerCompressesStaticAssetsForBrowsers(t *testing.T) {
 	handler, err := NewHandler(distribution, "")
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodGet, "/assets/index-a1b2c3.js", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/assets/index-a1b2c3.js", nil)
 	req.Header.Set("Accept-Encoding", "gzip, deflate")
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, req)
@@ -79,7 +79,7 @@ func TestHandlerDoesNotCompressWhenBrowserRejectsGzip(t *testing.T) {
 	handler, err := NewHandler(distribution, "")
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodGet, "/assets/index-a1b2c3.js", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/assets/index-a1b2c3.js", nil)
 	req.Header.Set("Accept-Encoding", "gzip; q=0.0")
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, req)
@@ -96,13 +96,13 @@ func TestHandlerInjectsBasePathAndPrefixesRootRedirect(t *testing.T) {
 	handler, err := NewHandler(distribution, "/review-ui")
 	require.NoError(t, err)
 
-	rootRequest := httptest.NewRequest(http.MethodGet, "/", nil)
+	rootRequest := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
 	rootRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(rootRecorder, rootRequest)
 	assert.Equal(t, http.StatusTemporaryRedirect, rootRecorder.Code)
 	assert.Equal(t, "/review-ui/reviews", rootRecorder.Header().Get("Location"))
 
-	deepLinkRequest := httptest.NewRequest(http.MethodGet, "/reviews/42", nil)
+	deepLinkRequest := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/reviews/42", nil)
 	deepLinkRequest.Header.Set("Accept", "text/html")
 	deepLinkRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(deepLinkRecorder, deepLinkRequest)
@@ -163,7 +163,7 @@ func TestHandlerRejectsNonNavigationFallbacks(t *testing.T) {
 	}
 	for _, requestPath := range paths {
 		t.Run(requestPath, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, requestPath, nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, requestPath, nil)
 			req.Header.Set("Accept", "text/html")
 			recorder := httptest.NewRecorder()
 			handler.ServeHTTP(recorder, req)
@@ -171,7 +171,7 @@ func TestHandlerRejectsNonNavigationFallbacks(t *testing.T) {
 		})
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/analytics", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/analytics", nil)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, req)
 	assert.Equal(t, http.StatusNotFound, recorder.Code)

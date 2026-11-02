@@ -115,7 +115,9 @@ func TestDaemonSelectionMissingRuntimeRejectsRequests(t *testing.T) {
 	isolateDaemonSelection(t)
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
 	ep := getDaemonEndpoint()
-	resp, err := ep.HTTPClient(time.Second).Get(ep.BaseURL() + "/api/jobs")
+	getRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ep.BaseURL()+"/api/jobs", nil)
+	require.NoError(t, err)
+	resp, err := ep.HTTPClient(time.Second).Do(getRequest)
 	if resp != nil {
 		_ = resp.Body.Close()
 	}
@@ -128,7 +130,9 @@ func TestDaemonSelectionDiscoveryIOErrorRejectsRequests(t *testing.T) {
 	wantErr := errors.New("runtime directory read failed")
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, wantErr }
 	ep := getDaemonEndpoint()
-	resp, err := ep.HTTPClient(time.Second).Get(ep.BaseURL() + "/api/jobs")
+	getRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ep.BaseURL()+"/api/jobs", nil)
+	require.NoError(t, err)
+	resp, err := ep.HTTPClient(time.Second).Do(getRequest)
 	if resp != nil {
 		_ = resp.Body.Close()
 	}
@@ -143,7 +147,7 @@ func TestDaemonURLHelperDoesNotPromoteMissingRuntimeAddress(t *testing.T) {
 		return &daemon.RuntimeInfo{Network: "tcp", Address: "127.0.0.1:2"}, nil
 	}
 	client := getDaemonHTTPClientForURL(baseURL, time.Second)
-	req, err := http.NewRequest(http.MethodGet, baseURL+"/api/jobs", nil)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, baseURL+"/api/jobs", nil)
 	require.NoError(t, err)
 	resp, err := client.Do(req)
 	if resp != nil {
@@ -157,7 +161,9 @@ func TestDaemonURLHelperPreservesDiscoveryErrorForPreviousAddress(t *testing.T) 
 	wantErr := errors.New("runtime directory read failed")
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, wantErr }
 	baseURL := "http://127.0.0.1:2"
-	resp, err := getDaemonHTTPClientForURL(baseURL, time.Second).Get(baseURL + "/api/jobs")
+	getRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, baseURL+"/api/jobs", nil)
+	require.NoError(t, err)
+	resp, err := getDaemonHTTPClientForURL(baseURL, time.Second).Do(getRequest)
 	if resp != nil {
 		_ = resp.Body.Close()
 	}
@@ -200,7 +206,9 @@ func TestDaemonURLHelperDoesNotDialUnselectedURL(t *testing.T) {
 				}
 				http.DefaultTransport = transport
 				t.Cleanup(func() { http.DefaultTransport = oldTransport; transport.CloseIdleConnections() })
-				resp, err := getDaemonHTTPClientForURL(baseURL, time.Second).Get(baseURL + "/api/jobs")
+				getRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, baseURL+"/api/jobs", nil)
+				require.NoError(t, err)
+				resp, err := getDaemonHTTPClientForURL(baseURL, time.Second).Do(getRequest)
 				if resp != nil {
 					_ = resp.Body.Close()
 				}
@@ -229,7 +237,9 @@ func TestDaemonURLHelperAcceptsOtherEndpointOfSelectedDaemon(t *testing.T) {
 			AlternateAddress: strings.TrimPrefix(server.URL, "http://"),
 		}, nil
 	}
-	resp, err := getDaemonHTTPClientForURL(server.URL, time.Second).Get(server.URL + "/api/jobs")
+	getRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL+"/api/jobs", nil)
+	require.NoError(t, err)
+	resp, err := getDaemonHTTPClientForURL(server.URL, time.Second).Do(getRequest)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 	assert.Equal(t, http.StatusOK, resp.StatusCode)

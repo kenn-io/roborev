@@ -145,7 +145,7 @@ func TestReconcilerWakeCoalescesAndRunScansOnStartup(t *testing.T) {
 	}
 	assert.Len(t, r.wake, 1)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() { done <- r.Run(ctx) }()
 	require.Eventually(t, func() bool { return store.callCount() > 0 }, time.Second, time.Millisecond)
@@ -158,7 +158,7 @@ func TestReconcilerMirrorPagesAreCappedAt500(t *testing.T) {
 	store := &reconcilerStore{sources: makeSearchSources(700)}
 	r := NewReconciler(store, index, nil, ReconcilerConfig{MirrorPageSize: 900})
 
-	more, err := r.reconcileTurn(context.Background())
+	more, err := r.reconcileTurn(t.Context())
 	require.NoError(t, err)
 	assert.True(t, more)
 	require.NotEmpty(t, store.calls)
@@ -168,7 +168,7 @@ func TestReconcilerMirrorPagesAreCappedAt500(t *testing.T) {
 	assert.Nil(t, r.Health().MirrorBacklog,
 		"the remaining canonical row count is unknown during a bounded scan")
 
-	_, err = r.reconcileTurn(context.Background())
+	_, err = r.reconcileTurn(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, int64(700), r.Health().Indexed)
 	assert.True(t, r.Health().MirrorComplete)
@@ -189,7 +189,7 @@ func TestReconcilerDoesNotRescanHistoryBetweenFillTurns(t *testing.T) {
 	}
 	r := NewReconciler(store, index, embedder, ReconcilerConfig{MaxFillBatches: 9, MaxFillTime: time.Hour})
 
-	more, err := r.reconcileTurn(context.Background())
+	more, err := r.reconcileTurn(t.Context())
 	require.NoError(t, err)
 	assert.True(t, more)
 	assert.Equal(t, 4, embedder.callCount(), "a turn must yield after four provider calls")
@@ -197,7 +197,7 @@ func TestReconcilerDoesNotRescanHistoryBetweenFillTurns(t *testing.T) {
 	assert.Equal(t, int64(4), r.Health().EmbeddingBacklog)
 	assert.Empty(t, r.Health().ActiveGeneration)
 
-	_, err = r.reconcileTurn(context.Background())
+	_, err = r.reconcileTurn(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, 1, store.callCount(),
 		"continuing vector backfill must not reread unchanged review history")
@@ -207,7 +207,7 @@ func TestReconcilerDoesNotRescanHistoryBetweenFillTurns(t *testing.T) {
 }
 
 func TestReconcilerKeepsMatchingActiveGenerationAvailableDuringIncrementalFill(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index := openGenerationTestIndex(t)
 	store := &reconcilerStore{sources: makeSearchSources(1)}
 	embedder := &reconcilerEmbedder{
@@ -270,7 +270,7 @@ func TestReconcilerBoundsActualProviderCallsForOversizedDocument(t *testing.T) {
 		vector.SplitOptions{MaxRunes: searchChunkRunes, Overlap: searchChunkOverlap}))
 	r := NewReconciler(&reconcilerStore{sources: sources}, index, client, ReconcilerConfig{})
 
-	more, err := r.reconcileTurn(context.Background())
+	more, err := r.reconcileTurn(t.Context())
 	require.NoError(t, err)
 	assert.False(t, more)
 	assert.Equal(t, int64(wantProviderCalls), providerCalls.Load())
@@ -292,7 +292,7 @@ func TestReconcilerAttachesFillDeadlineToProviderContext(t *testing.T) {
 		r := NewReconciler(store, index, embedder, ReconcilerConfig{MaxFillTime: 20 * time.Millisecond})
 
 		started := time.Now()
-		_, err := r.reconcileTurn(context.Background())
+		_, err := r.reconcileTurn(t.Context())
 		require.ErrorIs(t, err, context.DeadlineExceeded)
 		assert.Equal(t, 20*time.Millisecond, time.Since(started))
 	})
@@ -350,7 +350,7 @@ func TestReconcilerWakeDoesNotBypassProviderBackoff(t *testing.T) {
 				}
 				tt.config.SweepInterval = time.Hour
 				r := NewReconciler(store, index, embedder, tt.config)
-				ctx, cancel := context.WithCancel(context.Background())
+				ctx, cancel := context.WithCancel(t.Context())
 				done := make(chan error, 1)
 				go func() { done <- r.Run(ctx) }()
 				<-firstCall
@@ -387,7 +387,7 @@ func TestReconcilerRequestDeadlineRetriesUntilParentCancellation(t *testing.T) {
 		r := NewReconciler(store, index, embedder, ReconcilerConfig{
 			MinBackoff: time.Millisecond, MaxBackoff: 2 * time.Millisecond, SweepInterval: time.Hour,
 		})
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		done := make(chan error, 1)
 		go func() { done <- r.Run(ctx) }()
 		<-second
@@ -415,7 +415,7 @@ func TestReconcilerRejectsEmbedderCardinalityMismatchWithoutPanic(t *testing.T) 
 			r := NewReconciler(&reconcilerStore{sources: makeSearchSources(1)}, index, embedder, ReconcilerConfig{})
 			var reconcileErr error
 			assert.NotPanics(t, func() {
-				_, reconcileErr = r.reconcileTurn(context.Background())
+				_, reconcileErr = r.reconcileTurn(t.Context())
 			})
 			require.Error(t, reconcileErr)
 			r.recordError(reconcileErr)
@@ -442,7 +442,7 @@ func TestReconcilerSkipsOnlyTheDocumentWithRejectedInput(t *testing.T) {
 	}
 	r := NewReconciler(store, index, embedder, ReconcilerConfig{})
 
-	_, err := r.reconcileTurn(context.Background())
+	_, err := r.reconcileTurn(t.Context())
 	require.NoError(t, err)
 	health := r.Health()
 	assert.Equal(t, int64(1), health.Skipped)
@@ -474,7 +474,7 @@ func TestReconcilerDoesNotSkipRequestWideOrAuthenticationFailures(t *testing.T) 
 			}
 			r := NewReconciler(store, index, embedder, ReconcilerConfig{})
 
-			_, err := r.reconcileTurn(context.Background())
+			_, err := r.reconcileTurn(t.Context())
 			require.Error(t, err)
 			assert.Equal(t, int64(0), r.Health().Skipped)
 			assert.Equal(t, int64(1), r.Health().EmbeddingBacklog)
@@ -489,7 +489,7 @@ func TestReconcilerHealthIsImmutableAndReportsProgressRateETA(t *testing.T) {
 	embedder := &reconcilerEmbedder{space: testSpace("model", 2), batchSize: 1}
 	r := NewReconciler(store, index, embedder, ReconcilerConfig{Now: func() time.Time { return now }, MaxFillBatches: 1})
 
-	_, err := r.reconcileTurn(context.Background())
+	_, err := r.reconcileTurn(t.Context())
 	require.NoError(t, err)
 	first := r.Health()
 	require.NotNil(t, first.MirrorBacklog)
@@ -520,7 +520,7 @@ func TestReconcilerCancellationInterruptsProviderCall(t *testing.T) {
 		return nil, ctx.Err()
 	}
 	r := NewReconciler(store, index, embedder, ReconcilerConfig{})
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() { done <- r.Run(ctx) }()
 	<-started
@@ -532,14 +532,14 @@ func TestReconcilerMirrorFailureLeavesFixedHealthCategory(t *testing.T) {
 	index := openGenerationTestIndex(t)
 	store := &reconcilerStore{err: errors.New("canonical output should not be retained")}
 	r := NewReconciler(store, index, nil, ReconcilerConfig{})
-	_, err := r.reconcileTurn(context.Background())
+	_, err := r.reconcileTurn(t.Context())
 	require.Error(t, err)
 	r.recordError(err)
 	assert.Equal(t, "mirror", r.Health().LastError)
 }
 
 func TestReconcilerErrorsPreserveMatchingActiveGeneration(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index := openGenerationTestIndex(t)
 	sources := makeSearchSources(1)
 	doc := searchdoc.Render(sources[0])
@@ -565,7 +565,7 @@ func TestReconcilerErrorsPreserveMatchingActiveGeneration(t *testing.T) {
 }
 
 func TestReconcilerErrorsPreserveDifferentActiveGenerationIdentity(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index := openGenerationTestIndex(t)
 	sources := makeSearchSources(1)
 	doc := searchdoc.Render(sources[0])
@@ -617,7 +617,7 @@ func kitKey(t *testing.T, space embedmodel.Descriptor) string {
 }
 
 func TestReconcilerFillsGenerationStoredByEarlierReleaseInPlace(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	var requests atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		requests.Add(1)

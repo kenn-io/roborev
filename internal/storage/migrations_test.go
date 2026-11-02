@@ -23,13 +23,13 @@ func openUnmigratedDB(t *testing.T) *DB {
 // migrations existed, so the next Open runs the baseline migration again.
 func forgetSchemaVersion(t *testing.T, db *DB) {
 	t.Helper()
-	_, err := db.Exec(`DROP TABLE schema_migrations`)
+	_, err := db.ExecContext(t.Context(), `DROP TABLE schema_migrations`)
 	require.NoError(t, err)
 }
 
 func appliedVersions(t *testing.T, db *DB) []int {
 	t.Helper()
-	rows, err := db.Query(`SELECT version FROM schema_migrations ORDER BY version`)
+	rows, err := db.QueryContext(t.Context(), `SELECT version FROM schema_migrations ORDER BY version`)
 	require.NoError(t, err)
 	defer rows.Close()
 	var versions []int
@@ -104,10 +104,10 @@ func TestOpenBaselinesDatabaseFromBeforeNumberedMigrations(t *testing.T) {
 	raw, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
 	previous := &DB{DB: raw}
-	_, err = previous.Exec(schema)
+	_, err = previous.ExecContext(t.Context(), schema)
 	require.NoError(t, err)
 	require.NoError(t, previous.migrate())
-	_, err = previous.Exec(`INSERT INTO repos (root_path, name) VALUES ('/synthetic/repo', 'repo')`)
+	_, err = previous.ExecContext(t.Context(), `INSERT INTO repos (root_path, name) VALUES ('/synthetic/repo', 'repo')`)
 	require.NoError(t, err)
 	require.NoError(t, raw.Close())
 
@@ -116,7 +116,7 @@ func TestOpenBaselinesDatabaseFromBeforeNumberedMigrations(t *testing.T) {
 	defer db.Close()
 	assert.Equal(t, []int{1, 2, 3}, appliedVersions(t, db))
 	var name string
-	require.NoError(t, db.QueryRow(`SELECT name FROM repos WHERE root_path = '/synthetic/repo'`).Scan(&name))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT name FROM repos WHERE root_path = '/synthetic/repo'`).Scan(&name))
 	assert.Equal(t, "repo", name)
 }
 
@@ -128,7 +128,7 @@ func TestOpenWidensAutoDesignDedupIndexAfterDuplicatesAreRemoved(t *testing.T) {
 	repoID := createRepo(t, db, "/synthetic/repo").ID
 	commitID := createCommit(t, db, repoID, "beef").ID
 	insertAutoDesign := func(db *DB, commitID any) error {
-		_, err := db.Exec(`
+		_, err := db.ExecContext(t.Context(), `
 			INSERT INTO review_jobs (repo_id, commit_id, git_ref, status, review_type, source)
 			VALUES (?, ?, 'beef', 'queued', 'design', 'auto_design')
 		`, repoID, commitID)
@@ -136,9 +136,9 @@ func TestOpenWidensAutoDesignDedupIndexAfterDuplicatesAreRemoved(t *testing.T) {
 	}
 	// Reproduce a database that reached the baseline with a commitless and a
 	// commit-backed auto-design job for one git_ref, so only the narrow index fit.
-	_, err = db.Exec(`DROP INDEX idx_review_jobs_auto_design_dedup_ref`)
+	_, err = db.ExecContext(t.Context(), `DROP INDEX idx_review_jobs_auto_design_dedup_ref`)
 	require.NoError(t, err)
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		CREATE UNIQUE INDEX idx_review_jobs_auto_design_dedup_ref
 		ON review_jobs(repo_id, git_ref, review_type)
 		WHERE source = 'auto_design' AND commit_id IS NULL
@@ -151,9 +151,9 @@ func TestOpenWidensAutoDesignDedupIndexAfterDuplicatesAreRemoved(t *testing.T) {
 	db, err = Open(path)
 	require.NoError(t, err, "duplicates must not block startup")
 	var jobs int
-	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM review_jobs`).Scan(&jobs))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM review_jobs`).Scan(&jobs))
 	assert.Equal(t, 2, jobs)
-	_, err = db.Exec(`DELETE FROM review_jobs WHERE commit_id IS NOT NULL`)
+	_, err = db.ExecContext(t.Context(), `DELETE FROM review_jobs WHERE commit_id IS NOT NULL`)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 
@@ -168,7 +168,7 @@ func TestCIPanelRetireReasonMigration(t *testing.T) {
 	t.Parallel()
 	db := openUnmigratedDB(t)
 	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:2]))
-	_, err := db.Exec(`INSERT INTO ci_pr_panels
+	_, err := db.ExecContext(t.Context(), `INSERT INTO ci_pr_panels
 		(github_repo, pr_number, head_sha, panel_run_uuid, retired_at)
 		VALUES ('acme/api', 7, 'old-head', '00000000-0000-4000-8000-000000000001', '2026-01-01 00:00:00')`)
 	require.NoError(t, err)
@@ -177,12 +177,12 @@ func TestCIPanelRetireReasonMigration(t *testing.T) {
 		require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
 		var reason sql.NullString
 		var retiredAt string
-		require.NoError(t, db.QueryRow(`SELECT CAST(retired_at AS TEXT), retire_reason FROM ci_pr_panels WHERE id = 1`).Scan(&retiredAt, &reason))
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT CAST(retired_at AS TEXT), retire_reason FROM ci_pr_panels WHERE id = 1`).Scan(&retiredAt, &reason))
 		assert.Equal(t, "2026-01-01 00:00:00", retiredAt)
 		assert.False(t, reason.Valid, "historical retirement has no inferred cause")
 		assert.Equal(t, []int{1, 2, 3}, appliedVersions(t, db))
 		// Simulate interruption after the column was added, before recording it.
-		_, err = db.Exec(`DELETE FROM schema_migrations WHERE version = 3`)
+		_, err = db.ExecContext(t.Context(), `DELETE FROM schema_migrations WHERE version = 3`)
 		require.NoError(t, err)
 	}
 }

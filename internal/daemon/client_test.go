@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -30,7 +31,7 @@ func createTestGitRepo(t *testing.T) (string, func(args ...string)) {
 	require.NoError(t, os.MkdirAll(repoDir, 0o755))
 	run := func(args ...string) {
 		t.Helper()
-		cmd := exec.Command("git", args...)
+		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = repoDir
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, "git %v\n%s", args, out)
@@ -89,7 +90,7 @@ func TestHTTPClientAddComment(t *testing.T) {
 		decodeJSON(t, r, &received)
 		w.WriteHeader(http.StatusCreated)
 	})
-	require.NoError(t, client.AddComment(42, "test-agent", "Fixed the issue"), "AddComment failed")
+	require.NoError(t, client.AddComment(t.Context(), 42, "test-agent", "Fixed the issue"), "AddComment failed")
 	assert.Equal(42, received.JobID)
 	assert.Equal("test-agent", received.Commenter)
 	assert.Equal("Fixed the issue", received.Comment)
@@ -119,7 +120,7 @@ func TestHTTPClientGetAllCommentsForJobSkipsLegacyLookupForDirtyJob(t *testing.T
 		}
 	})
 
-	got, err := client.GetAllCommentsForJob(11, 42, "dirty")
+	got, err := client.GetAllCommentsForJob(t.Context(), 11, 42, "dirty")
 	require.NoError(t, err)
 
 	require.Len(t, got, 1)
@@ -140,7 +141,7 @@ func TestHTTPClientMarkReviewClosed(t *testing.T) {
 		decodeJSON(t, r, &received)
 		w.WriteHeader(http.StatusOK)
 	})
-	require.NoError(t, client.MarkReviewClosed(99), "MarkReviewClosed failed")
+	require.NoError(t, client.MarkReviewClosed(t.Context(), 99), "MarkReviewClosed failed")
 	assert.Equal(99, received.JobID)
 	assert.True(received.Closed)
 }
@@ -174,10 +175,32 @@ func TestHTTPClientWaitForReviewUsesJobID(t *testing.T) {
 		}
 	})
 	client.SetPollInterval(1 * time.Millisecond)
-	review, err := client.WaitForReview(1)
+	review, err := client.WaitForReview(t.Context(), 1)
 	require.NoError(t, err, "WaitForReview failed")
 	assert.Equal("Review complete", review.Output)
 	assert.GreaterOrEqual(reviewCalls.Load(), int32(2), "expected review to be retried after 404")
+}
+
+func TestHTTPClientWaitForReviewStopsWhenCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var polls atomic.Int32
+	client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		assertRequest(t, r, http.MethodGet, "/api/jobs")
+		polls.Add(1)
+		// The caller gives up while the job is still running.
+		cancel()
+		writeTestJSON(t, w, map[string]any{
+			"jobs": []storage.ReviewJob{{ID: 1, Status: storage.JobStatusRunning}},
+		})
+	})
+	client.SetPollInterval(time.Hour)
+
+	review, err := client.WaitForReview(ctx, 1)
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Nil(t, review)
+	assert.Equal(t, int32(1), polls.Load())
 }
 
 func TestFindJobForCommit(t *testing.T) {

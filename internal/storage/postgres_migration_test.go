@@ -3,7 +3,6 @@
 package storage
 
 import (
-	"context"
 	_ "embed"
 	"strings"
 	"testing"
@@ -145,7 +144,7 @@ func TestPostgresMigration_SkipReasonAndClassify(t *testing.T) { //nolint:parall
 	// Bootstrap at v11 (pre skip_reason/source) so this exercises the v12
 	// migration it is named for, independent of the current schema version.
 	oldPool := openTestPgPoolRawAtVersion(t, 11)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	var repoID int
 	require.NoError(t, pgxPool(oldPool).QueryRow(ctx,
@@ -188,7 +187,7 @@ func TestPostgresMigration_SkipReasonAndClassify(t *testing.T) { //nolint:parall
 
 func TestPostgresMigration_ResponseInsertedAt(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	oldPool := openTestPgPoolRawAtVersion(t, 13)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	var repoID int
 	require.NoError(t, pgxPool(oldPool).QueryRow(ctx,
@@ -233,7 +232,7 @@ func TestPostgresMigration_ResponseInsertedAt(t *testing.T) { //nolint:parallelt
 // columns that the v15 migration has not added yet and abort the upgrade.
 func TestPostgresMigration_PanelColumns(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	oldPool := openTestPgPoolRawAtVersion(t, 13)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	var repoID int
 	require.NoError(t, pgxPool(oldPool).QueryRow(ctx,
@@ -284,7 +283,7 @@ func TestPostgresMigration_PanelColumns(t *testing.T) { //nolint:paralleltest //
 // without error and preserves existing rows.
 func TestPostgresMigration_BackupColumns(t *testing.T) { //nolint:paralleltest // shares the roborev schema in the PostgreSQL database at TEST_POSTGRES_URL
 	oldPool := openTestPgPoolRawAtVersion(t, 14)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	var repoID int
 	require.NoError(t, pgxPool(oldPool).QueryRow(ctx,

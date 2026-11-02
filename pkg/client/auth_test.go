@@ -1,7 +1,6 @@
 package client
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -28,11 +27,11 @@ func TestAuthKeyTypedAndRawClient(t *testing.T) {
 	defer server.Close()
 	api, err := NewWithAuthKey(server.URL, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	require.NoError(t, err)
-	ping, err := api.Ping(context.Background())
+	ping, err := api.Ping(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, ping)
 	// Any successful typed response proves the authorization was attached.
-	resp, err := api.GetJobLogRaw(context.Background(), &generated.GetJobLogRequestOptions{})
+	resp, err := api.GetJobLogRaw(t.Context(), &generated.GetJobLogRequestOptions{})
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)

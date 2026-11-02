@@ -58,7 +58,7 @@ func seedCompletedReview(t *testing.T, db *storage.DB, repoPath string) *storage
 
 func TestMCPEndpointIsOffByDefault(t *testing.T) {
 	server, _ := newMCPTestServer(t, false)
-	req := httptest.NewRequest(http.MethodPost, mcpserver.HTTPPath, nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, mcpserver.HTTPPath, nil)
 	w := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -185,7 +185,7 @@ func TestPingAdvertisesMCPURLOnlyForEnabledTCPListeners(t *testing.T) {
 	server.endpointMu.Lock()
 	server.endpoint = tcp
 	server.endpointMu.Unlock()
-	req := httptest.NewRequest(http.MethodGet, "/api/ping", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/ping", nil)
 	w := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(w, req)
 	require.Equal(http.StatusOK, w.Code)
@@ -417,7 +417,7 @@ func TestReviewBrowserURLsInAPIResponses(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			server.browserRuntime = tc.runtime
 			for _, path := range []string{"/api/jobs", "/api/jobs?id=1", "/api/review?job_id=1"} {
-				req := httptest.NewRequest(http.MethodGet, path, nil)
+				req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
 				w := httptest.NewRecorder()
 				server.httpServer.Handler.ServeHTTP(w, req)
 				require.Equal(t, http.StatusOK, w.Code)

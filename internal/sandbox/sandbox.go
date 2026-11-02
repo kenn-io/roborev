@@ -139,7 +139,7 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 	}
 	env = append(env, j.Env...)
 	cleanup = func() {
-		killScope(unit, env)
+		killScope(ctx, unit, env)
 		_ = os.RemoveAll(dir)
 	}
 	data, err := json.Marshal(profile)
@@ -169,8 +169,8 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 	cmd = append(cmd, "--")
 	checkUnit := filepath.Base(dir) + "-check.scope"
 	checkCmd := append([]string{cmd[0], "--unit=" + checkUnit}, cmd[1:]...)
-	err = j.check(ctx, checkCmd, env, func() { killScope(checkUnit, env) })
-	killScope(checkUnit, env)
+	err = j.check(ctx, checkCmd, env, func() { killScope(ctx, checkUnit, env) })
+	killScope(ctx, checkUnit, env)
 	if err != nil {
 		cleanup()
 		return nil, nil, nil, err
@@ -179,11 +179,12 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 	return append(cmd, argv...), env, cleanup, nil
 }
 
-func killScope(unit string, env []string) {
-	// Use the launch environment and a fresh context: the job may be cancelled.
-	// Stop sends SIGTERM so nono can remove its files, waits for the scope to
-	// exit, and escalates to SIGKILL after the scope's five-second stop timeout.
-	cmd := exec.Command("/usr/bin/systemctl", "--user", "stop", unit)
+func killScope(ctx context.Context, unit string, env []string) {
+	// Use the launch environment and an uncancelled context: the job may be
+	// cancelled. Stop sends SIGTERM so nono can remove its files, waits for the
+	// scope to exit, and escalates to SIGKILL after the scope's five-second stop
+	// timeout.
+	cmd := exec.CommandContext(context.WithoutCancel(ctx), "/usr/bin/systemctl", "--user", "stop", unit)
 	cmd.Env = env
 	_ = cmd.Run()
 }

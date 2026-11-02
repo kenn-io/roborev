@@ -46,7 +46,7 @@ func (j Job) check(ctx context.Context, wrapper, env []string, cancel func()) er
 	if err := os.WriteFile(secret, []byte("canary"), 0o600); err != nil {
 		return fmt.Errorf("sandbox self-check setup: %w", err)
 	}
-	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp4", "127.0.0.1:0")
 	if err != nil {
 		return fmt.Errorf("sandbox self-check setup: %w", err)
 	}

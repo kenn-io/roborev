@@ -1441,7 +1441,6 @@ func (m model) View() tea.View {
 
 // Config holds resolved parameters for running the TUI.
 type Config struct {
-	Context       context.Context
 	Endpoint      daemon.DaemonEndpoint
 	RepoFilter    string
 	BranchFilter  string
@@ -1454,14 +1453,11 @@ func programOptionsForModel(m model) []tea.ProgramOption {
 }
 
 // Run starts the interactive TUI.
-func Run(cfg Config) error {
+func Run(ctx context.Context, cfg Config) error {
 	// Clean up sockets from dead TUI processes before starting
-	CleanupStaleTUIRuntimes()
+	CleanupStaleTUIRuntimes(ctx)
 
-	var opts []option
-	if cfg.Context != nil {
-		opts = append(opts, withContext(cfg.Context))
-	}
+	opts := []option{withContext(ctx)}
 	if cfg.RepoFilter != "" {
 		opts = append(opts, withRepoFilter(cfg.RepoFilter))
 	}
@@ -1517,7 +1513,7 @@ func Run(cfg Config) error {
 				return
 			}
 
-			cleanup, err := startControlListener(socketPath, p)
+			cleanup, err := startControlListener(ctx, socketPath, p)
 			if err != nil {
 				log.Printf(
 					"warning: control socket disabled: %v", err,

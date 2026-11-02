@@ -286,7 +286,7 @@ func TestRunBatch(t *testing.T) {
 				AgentRegistry: tc.registry,
 			}
 
-			results := RunBatch(context.Background(), cfg)
+			results := RunBatch(t.Context(), cfg)
 			require.Len(t, results, len(tc.checks), "result count")
 
 			for i, chk := range tc.checks {
@@ -345,7 +345,7 @@ func TestRunBatch_WorkflowAwareResolution(t *testing.T) {
 		},
 	}
 
-	results := RunBatch(context.Background(), cfg)
+	results := RunBatch(t.Context(), cfg)
 	require.Len(results, 2, "expected 2 results")
 
 	// Both will fail at prompt building (no real git repo),
@@ -384,7 +384,7 @@ func TestRunBatchUsesPassedRepoConfigForCustomAgent(t *testing.T) {
 		},
 	}
 
-	results := RunBatch(context.Background(), cfg)
+	results := RunBatch(t.Context(), cfg)
 	require.Len(t, results, 1)
 	assert.Equal(t, "base-agent", results[0].Agent)
 }
@@ -400,7 +400,7 @@ func TestRunBatchUsesPassedRepoConfigForNamedACPExecution(t *testing.T) {
 		}},
 	}
 
-	results := RunBatch(context.Background(), cfg)
+	results := RunBatch(t.Context(), cfg)
 	require.Len(t, results, 1)
 	assert.Equal(t, ResultFailed, results[0].Status)
 	assert.Contains(t, results[0].Error, "build prompt")
@@ -432,7 +432,7 @@ func TestRunBatchPreservesStructuredVerdict(t *testing.T) {
 }`),
 	}
 
-	results := RunBatch(context.Background(), BatchConfig{
+	results := RunBatch(t.Context(), BatchConfig{
 		RepoPath:      repo.Root,
 		GitRef:        repo.RevParse("HEAD"),
 		Agents:        []string{structuredAgent.name},
@@ -465,7 +465,7 @@ func TestRunBatch_BlankCIAgentAutoDetectsAvailableAgent(t *testing.T) {
 		GlobalConfig: config.DefaultConfig(),
 	}
 
-	results := RunBatch(context.Background(), cfg)
+	results := RunBatch(t.Context(), cfg)
 	require.Len(results, 1)
 	assert.Equal("ci-auto-batch", results[0].Agent)
 	assert.Equal(ResultFailed, results[0].Status)
@@ -494,7 +494,7 @@ func TestRunBatch_BlankCIAgentHonorsConfiguredCommandOverride(t *testing.T) {
 		GlobalConfig: globalCfg,
 	}
 
-	results := RunBatch(context.Background(), cfg)
+	results := RunBatch(t.Context(), cfg)
 	require.Len(results, 1)
 	assert.Equal("codex", results[0].Agent)
 	assert.Equal(ResultFailed, results[0].Status)
@@ -518,7 +518,7 @@ func TestRunBatch_BlankCIAgentWithExplicitBackupStaysStrict(t *testing.T) {
 		GlobalConfig: globalCfg,
 	}
 
-	results := RunBatch(context.Background(), cfg)
+	results := RunBatch(t.Context(), cfg)
 	require.Len(results, 1)
 	assert.Empty(results[0].Agent)
 	assert.Equal(ResultFailed, results[0].Status)
@@ -555,7 +555,7 @@ func TestRunBatch_WorkflowModelResolution(t *testing.T) {
 		},
 	}
 
-	results := RunBatch(context.Background(), cfg)
+	results := RunBatch(t.Context(), cfg)
 	require.Len(results, 2, "expected 2 results")
 
 	for _, r := range results {
@@ -604,7 +604,7 @@ func TestRunBatch_GlobalExcludePatterns(t *testing.T) {
 		},
 	}
 
-	results := RunBatch(context.Background(), cfg)
+	results := RunBatch(t.Context(), cfg)
 	require.Len(results, 1)
 	require.Equal(ResultDone, results[0].Status,
 		"status=%q err=%q", results[0].Status, results[0].Error)
@@ -625,7 +625,7 @@ func TestRunBatchShowsPullRequestToAgents(t *testing.T) {
 	repo.RunGit("commit", "-m", "Add retry limit")
 
 	captureAgent := &promptCapture{name: "capture"}
-	results := RunBatch(context.Background(), BatchConfig{
+	results := RunBatch(t.Context(), BatchConfig{
 		RepoPath:      repo.Root,
 		GitRef:        base + ".." + repo.RevParse("HEAD"),
 		Agents:        []string{"capture"},
@@ -660,7 +660,7 @@ func TestRunBatch_CodexReviewSettings(t *testing.T) {
 		},
 	}
 
-	results := RunBatch(context.Background(), cfg)
+	results := RunBatch(t.Context(), cfg)
 	require.Len(t, results, 1)
 	require.Equal(t, ResultDone, results[0].Status, "status=%q err=%q", results[0].Status, results[0].Error)
 	require.NotNil(t, results[0].Structured, "codex built-in reviews use schema output")
@@ -745,7 +745,7 @@ func TestRunBatch_BackupKeepsOwnModelWhenBackupModelUnset(t *testing.T) {
 		},
 	}
 
-	results := RunBatch(context.Background(), cfg)
+	results := RunBatch(t.Context(), cfg)
 	require.Len(results, 1, "expected 1 result")
 
 	result := results[0]
@@ -779,7 +779,7 @@ func TestRunBatchIgnoresMalformedRepoConfig(t *testing.T) {
 		},
 	}
 
-	results := RunBatch(context.Background(), cfg)
+	results := RunBatch(t.Context(), cfg)
 	require.Len(t, results, 1)
 	require.Equal(t, ResultDone, results[0].Status, "status=%q err=%q", results[0].Status, results[0].Error)
 	assert.Equal(t, "batch-agent", results[0].Agent)
@@ -837,7 +837,7 @@ func TestRunBatch_NoKataContextFromUntrustedCheckout(t *testing.T) {
 		},
 	}
 
-	results := RunBatch(context.Background(), cfg)
+	results := RunBatch(t.Context(), cfg)
 	require.Len(results, 1)
 	require.Equal(ResultDone, results[0].Status,
 		"status=%q err=%q", results[0].Status, results[0].Error)

@@ -50,7 +50,11 @@ func applyRootHelp(root *cobra.Command) {
 			cmd.Long = strings.TrimSpace(before + "\n\n" + strings.Join(descriptions, "\n"))
 			cmd.Example = strings.Trim(strings.Join(examples, "\n"), "\n")
 		}
-		if help, ok := roborevCommandHelp[strings.TrimPrefix(cmd.CommandPath(), "roborev ")]; ok {
+		help, ok := roborevCommandHelp[strings.TrimPrefix(cmd.CommandPath(), "roborev ")]
+		if !ok {
+			help, ok = roborevCommandHelp[strings.TrimPrefix(stableCommandPath(cmd), "roborev ")]
+		}
+		if ok {
 			if help.long != "" {
 				if cmd.Long == "" || cmd.Long == cmd.Short {
 					cmd.Long = help.long
@@ -62,12 +66,14 @@ func applyRootHelp(root *cobra.Command) {
 				cmd.Example = help.example
 			}
 		}
-		if cmd.Name() == "list" && cmd.Parent() == root {
+		if stableCommandPath(cmd) == "roborev list" {
 			cmd.Aliases = append(cmd.Aliases, "ls")
 		}
-		if cmd.Name() == "close" && cmd.Parent() == root {
+		if stableCommandPath(cmd) == "roborev close" {
 			cmd.Aliases = append(cmd.Aliases, "resolve")
 		}
+		cmd.Long = canonicalCommandText(cmd.Long)
+		cmd.Example = canonicalCommandText(cmd.Example)
 		for _, child := range cmd.Commands() {
 			configure(child)
 		}
@@ -75,10 +81,13 @@ func applyRootHelp(root *cobra.Command) {
 	for _, child := range root.Commands() {
 		configure(child)
 	}
+	root.Long = canonicalCommandText(root.Long)
+	root.Example = canonicalCommandText(root.Example)
 	root.SetUsageTemplate(roborevUsageTemplate)
 }
 
 var roborevCommandGroups = map[string]string{
+	"job": "review", "report": "review", "hook": "setup", "agent": "setup", "signing": "setup", "storage": "maintenance",
 	"review": "review", "wait": "review", "list": "review", "show": "review", "search": "review", "analyze": "review", "insights": "review", "tui": "review", "ui": "review", "summary": "review", "cost": "review", "stream": "review", "log": "review", "enqueue": "review", "prompt": "review",
 	"fix": "fix", "refine": "fix", "run": "fix", "comment": "fix", "respond": "fix", "close": "fix", "compact": "fix",
 	"init": "setup", "doctor": "setup", "quickstart": "setup", "check-agents": "setup", "config": "setup", "install-hook": "setup", "uninstall-hook": "setup", "agent-hook": "setup", "skills": "setup", "mcp": "setup", "signing-init": "setup", "help": "setup", "completion": "setup",
@@ -107,7 +116,7 @@ func roborevGlobalFlags(cmd *cobra.Command) string {
 const roborevRootHelp = `roborev reviews git commits with AI agents and stores findings in a local daemon.
 Use the CLI directly or install optional coding-agent skills and hooks.
 
-Agent workflow (replace job 42 with the ID returned by review or list):
+Agent workflow (replace job 42 with the ID returned by review or job list):
   roborev doctor                      # 1. diagnose configuration and agents
   roborev init                        # 2. initialize this repo and its git hook
   roborev review HEAD                 # 3. enqueue a review; records a job ID
@@ -121,41 +130,42 @@ when you need fresh verification. Use fix --list to preview candidate jobs;
 refine automates repeated review and fix cycles. These agent flows can edit code.
 
 IDs and refs:
-  Job IDs are positive integers from review/list, scoped to the selected daemon.
-  show, wait and comment try an argument as a local git ref first, then as a
-  numeric job ID; use --job to force a job ID. show/wait default to HEAD.
-  fix, close and cancel take job IDs. review takes git refs, not job IDs.
+  Job IDs are positive integers from review/job list, scoped to the daemon.
+  job show, job wait and job comment try a local git ref first, then a numeric
+  job ID; use --job to force a job ID. job show/wait default to HEAD.
+  fix, job close and job cancel take job IDs. review takes git refs, not job IDs.
 
 Repository and server:
   Start in the git checkout. Commands with --repo can target another repository;
-  its meaning is command-specific (path, stored identity, or filter). list also
-  discovers repositories in immediate child directories outside a checkout.
+  its meaning is command-specific (path, stored identity, or filter). job list
+  also discovers repositories in immediate child directories outside a checkout.
   Without --server, the CLI discovers the local daemon from ROBOREV_DATA_DIR
   (default ~/.roborev) and auto-starts it for commands that require it.
   --server explicitly selects a running loopback address, unix:// socket, or
   remote HTTPS base URL; it does not start or replace that target.
-  Remote HTTPS supports list, show --job, wait --job and stream with signing
-  credentials and repository grants. Local git refs are not resolved remotely.
+  Remote HTTPS supports job list, job show --job, job wait --job and job stream
+  with signing credentials and repository grants. Remote commands do not resolve
+  local git refs.
 
 Output and errors:
   Output modes belong to individual commands: check each command's --help.
-  list/show/search/status/doctor and other commands offer --json; it is not a
-  global flag. Export subcommands emit JSON using their own --format option.
-  search --agent emits concise text; other --agent flags select an AI provider
-  or hook profile. show --json returns the review record and stored document;
-  list --json includes job status and verdict. Errors go to stderr with a hint.
-  Commands with --json emit structured errors on stderr; search --agent uses
+  job list/show/search, daemon status and doctor offer --json; it is not global.
+  Export subcommands emit JSON using their own --format option.
+  job search --agent emits concise text; other --agent flags select an AI
+  provider or hook profile. job show --json returns the stored review record;
+  job list --json includes status and verdict. Errors go to stderr with a hint.
+  Commands with --json emit structured errors on stderr; job search --agent uses
   concise errors. Quiet commands retain their existing reduced output.
   Exit codes: 0 success; 1 runtime failure or a completed FAIL review;
   2 invocation/usage error; 3 export cursor belongs to a different database
   (discard it and backfill); 4 invalid user-supplied value. Displaying a FAIL
-  with show succeeds; doctor/quickstart report failed diagnosis with exit 1.
+  with job show succeeds; doctor/quickstart report failed diagnosis with exit 1.
 
 Environment:
   ROBOREV_DATA_DIR changes the local config, runtime, database and log directory.
   ROBOREV_COLOR_MODE selects auto/dark/light/none; NO_COLOR disables color.
   ROBOREV_TELEMETRY_ENABLED=0 disables anonymous usage telemetry.
-  EDITOR chooses the editor for comment when no message is provided.
+  EDITOR chooses the editor for job comment when no message is provided.
   GH_TOKEN/GITHUB_TOKEN and GITLAB_TOKEN/GL_TOKEN authenticate CI forge access.
 Run roborev quickstart for repository-specific setup and workflow guidance.`
 

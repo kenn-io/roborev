@@ -37,7 +37,7 @@ func TestHandleJobOutput(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
 
 	t.Run("missing job_id", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/job/output", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/job/output", nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 
@@ -45,7 +45,7 @@ func TestHandleJobOutput(t *testing.T) {
 	})
 
 	t.Run("invalid job_id", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/job/output?job_id=notanumber", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/job/output?job_id=notanumber", nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 
@@ -53,7 +53,7 @@ func TestHandleJobOutput(t *testing.T) {
 	})
 
 	t.Run("nonexistent job", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/job/output?job_id=99999", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/job/output?job_id=99999", nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 
@@ -64,7 +64,7 @@ func TestHandleJobOutput(t *testing.T) {
 		job := createTestJob(t, db, filepath.Join(tmpDir, "test-repo-running"), "abc123", "test-agent")
 		setJobStatus(t, db, job.ID, storage.JobStatusRunning)
 
-		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d", job.ID), nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d", job.ID), nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 
@@ -82,7 +82,7 @@ func TestHandleJobOutput(t *testing.T) {
 		job := createTestJob(t, db, filepath.Join(tmpDir, "test-repo-done"), "abc123", "test-agent")
 		setJobStatus(t, db, job.ID, storage.JobStatusDone)
 
-		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d", job.ID), nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d", job.ID), nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 
@@ -110,7 +110,7 @@ func TestHandleJobOutput(t *testing.T) {
 		fresh := time.Now().Add(2 * time.Second)
 		require.NoError(t, os.Chtimes(JobLogPath(job.ID), fresh, fresh))
 
-		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d", job.ID), nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d", job.ID), nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 
@@ -133,7 +133,7 @@ func TestHandleJobOutput(t *testing.T) {
 		require.NoError(t, os.MkdirAll(JobLogDir(), 0o700))
 		require.NoError(t, os.WriteFile(JobLogPath(job.ID), []byte("stale attempt\n"), 0o600))
 
-		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d", job.ID), nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d", job.ID), nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 
@@ -153,7 +153,7 @@ func TestHandleJobOutput(t *testing.T) {
 		require.NoError(t, db.ReenqueueJob(job.ID, storage.ReenqueueOpts{}))
 		setJobStatus(t, db, job.ID, storage.JobStatusFailed)
 
-		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d", job.ID), nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d", job.ID), nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 
@@ -176,7 +176,7 @@ func TestHandleJobOutput(t *testing.T) {
 		fresh := time.Now().Add(2 * time.Second)
 		require.NoError(t, os.Chtimes(JobLogPath(job.ID), fresh, fresh))
 
-		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d", job.ID), nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d", job.ID), nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 
@@ -191,7 +191,7 @@ func TestHandleJobOutput(t *testing.T) {
 		job := createTestJob(t, db, filepath.Join(tmpDir, "test-repo-stream"), "abc123", "test-agent")
 		setJobStatus(t, db, job.ID, storage.JobStatusDone)
 
-		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d&stream=1", job.ID), nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d&stream=1", job.ID), nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 
@@ -241,7 +241,7 @@ func TestHandleJobLog(t *testing.T) {
 	}
 
 	t.Run("missing job_id returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/job/log", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/job/log", nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 		if w.Code != http.StatusBadRequest {
@@ -252,7 +252,7 @@ func TestHandleJobLog(t *testing.T) {
 	})
 
 	t.Run("nonexistent job returns 404", func(t *testing.T) {
-		req := httptest.NewRequest(
+		req := httptest.NewRequestWithContext(t.Context(),
 			http.MethodGet, "/api/job/log?job_id=99999", nil,
 		)
 		w := httptest.NewRecorder()
@@ -265,7 +265,7 @@ func TestHandleJobLog(t *testing.T) {
 	})
 
 	t.Run("no log file returns 404", func(t *testing.T) {
-		req := httptest.NewRequest(
+		req := httptest.NewRequestWithContext(t.Context(),
 			http.MethodGet,
 			fmt.Sprintf("/api/job/log?job_id=%d", job.ID),
 			nil,
@@ -296,7 +296,7 @@ func TestHandleJobLog(t *testing.T) {
 			}, "WriteFile: %v", err)
 		}
 
-		req := httptest.NewRequest(
+		req := httptest.NewRequestWithContext(t.Context(),
 			http.MethodGet,
 			fmt.Sprintf("/api/job/log?job_id=%d", job.ID),
 			nil,
@@ -341,7 +341,7 @@ func TestHandleJobLog(t *testing.T) {
 
 		os.Remove(JobLogPath(claimed.ID))
 
-		req := httptest.NewRequest(
+		req := httptest.NewRequestWithContext(t.Context(),
 			http.MethodGet,
 			fmt.Sprintf("/api/job/log?job_id=%d", claimed.ID),
 			nil,
@@ -367,7 +367,7 @@ func TestHandleJobLog(t *testing.T) {
 	})
 
 	t.Run("POST returns 405", func(t *testing.T) {
-		req := httptest.NewRequest(
+		req := httptest.NewRequestWithContext(t.Context(),
 			http.MethodPost,
 			fmt.Sprintf("/api/job/log?job_id=%d", job.ID),
 			nil,
@@ -425,7 +425,7 @@ func TestHandleJobLogOffset(t *testing.T) {
 	}
 
 	t.Run("offset=0 returns full content", func(t *testing.T) {
-		req := httptest.NewRequest(
+		req := httptest.NewRequestWithContext(t.Context(),
 			http.MethodGet,
 			fmt.Sprintf(
 				"/api/job/log?job_id=%d&offset=0", job.ID,
@@ -465,7 +465,7 @@ func TestHandleJobLogOffset(t *testing.T) {
 
 	t.Run("offset returns partial content", func(t *testing.T) {
 		off := len(line1)
-		req := httptest.NewRequest(
+		req := httptest.NewRequestWithContext(t.Context(),
 			http.MethodGet,
 			fmt.Sprintf(
 				"/api/job/log?job_id=%d&offset=%d",
@@ -491,7 +491,7 @@ func TestHandleJobLogOffset(t *testing.T) {
 
 	t.Run("queued agent change keeps prior log identity", func(t *testing.T) {
 		off := len(line1)
-		req := httptest.NewRequest(
+		req := httptest.NewRequestWithContext(t.Context(),
 			http.MethodGet,
 			fmt.Sprintf("/api/job/log?job_id=%d&offset=%d", job.ID, off),
 			nil,
@@ -506,13 +506,13 @@ func TestHandleJobLogOffset(t *testing.T) {
 	})
 
 	t.Run("running agent change resets offset", func(t *testing.T) {
-		_, err := db.Exec(`UPDATE review_jobs SET status = 'running' WHERE id = ?`, job.ID)
+		_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'running' WHERE id = ?`, job.ID)
 		require.NoError(t, err)
 		defer func() {
-			_, cleanupErr := db.Exec(`UPDATE review_jobs SET status = 'queued' WHERE id = ?`, job.ID)
+			_, cleanupErr := db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'queued' WHERE id = ?`, job.ID)
 			require.NoError(t, cleanupErr)
 		}()
-		req := httptest.NewRequest(
+		req := httptest.NewRequestWithContext(t.Context(),
 			http.MethodGet,
 			fmt.Sprintf("/api/job/log?job_id=%d&offset=%d", job.ID, len(line1)),
 			nil,
@@ -528,7 +528,7 @@ func TestHandleJobLogOffset(t *testing.T) {
 
 	t.Run("offset at end returns empty", func(t *testing.T) {
 		off := len(logContent)
-		req := httptest.NewRequest(
+		req := httptest.NewRequestWithContext(t.Context(),
 			http.MethodGet,
 			fmt.Sprintf(
 				"/api/job/log?job_id=%d&offset=%d",
@@ -553,7 +553,7 @@ func TestHandleJobLogOffset(t *testing.T) {
 	})
 
 	t.Run("negative offset returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(
+		req := httptest.NewRequestWithContext(t.Context(),
 			http.MethodGet,
 			fmt.Sprintf(
 				"/api/job/log?job_id=%d&offset=-1", job.ID,
@@ -571,7 +571,7 @@ func TestHandleJobLogOffset(t *testing.T) {
 	})
 
 	t.Run("offset beyond file resets to 0", func(t *testing.T) {
-		req := httptest.NewRequest(
+		req := httptest.NewRequestWithContext(t.Context(),
 			http.MethodGet,
 			fmt.Sprintf(
 				"/api/job/log?job_id=%d&offset=999999",
@@ -636,7 +636,7 @@ func TestHandleJobLogOffset(t *testing.T) {
 			}, "WriteFile: %v", err)
 		}
 
-		req := httptest.NewRequest(
+		req := httptest.NewRequestWithContext(t.Context(),
 			http.MethodGet,
 			fmt.Sprintf(
 				"/api/job/log?job_id=%d", job2.ID,
@@ -702,7 +702,7 @@ func TestHandleJobLogCanceledFailoverKeepsLogAgent(t *testing.T) {
 	require.True(t, failedOver)
 	require.NoError(t, db.CancelJob(job.ID))
 
-	req := httptest.NewRequest(
+	req := httptest.NewRequestWithContext(t.Context(),
 		http.MethodGet,
 		fmt.Sprintf("/api/job/log?job_id=%d&offset=0", job.ID),
 		nil,
@@ -731,7 +731,7 @@ func TestHandleJobLogAutoDesignUsesPromotedAgent(t *testing.T) {
 	require.NoError(t, os.WriteFile(JobLogPath(job.ID), []byte(logContent), 0o600))
 	require.NoError(t, RecordJobLogAgent(job.ID, storage.AutoDesignAgentSentinel))
 
-	req := httptest.NewRequest(
+	req := httptest.NewRequestWithContext(t.Context(),
 		http.MethodGet,
 		fmt.Sprintf("/api/job/log?job_id=%d&offset=0", job.ID),
 		nil,
@@ -772,7 +772,7 @@ func TestHandleJobLogAutoDesignFailoverSignalsReset(t *testing.T) {
 	require.NoError(t, os.WriteFile(JobLogPath(job.ID), []byte(replacement), 0o600))
 	require.NoError(t, RecordJobLogAgent(job.ID, "grok"))
 
-	req := httptest.NewRequest(
+	req := httptest.NewRequestWithContext(t.Context(),
 		http.MethodGet,
 		fmt.Sprintf("/api/job/log?job_id=%d&offset=%d", job.ID, len("old output\n")),
 		nil,
@@ -885,7 +885,7 @@ func TestHandleJobLogRunningPlainText(t *testing.T) {
 	require.NoError(t, os.MkdirAll(JobLogDir(), 0o700))
 	require.NoError(t, os.WriteFile(JobLogPath(job.ID), []byte(payload), 0o600))
 
-	req := httptest.NewRequest(
+	req := httptest.NewRequestWithContext(t.Context(),
 		http.MethodGet,
 		fmt.Sprintf("/api/job/log?job_id=%d", job.ID),
 		nil,
@@ -920,7 +920,7 @@ func TestHandleJobLogRunningLiteralBracePrefix(t *testing.T) {
 	require.NoError(t, os.MkdirAll(JobLogDir(), 0o700))
 	require.NoError(t, os.WriteFile(JobLogPath(job.ID), []byte(payload), 0o600))
 
-	req := httptest.NewRequest(
+	req := httptest.NewRequestWithContext(t.Context(),
 		http.MethodGet,
 		fmt.Sprintf("/api/job/log?job_id=%d", job.ID),
 		nil,
@@ -955,7 +955,7 @@ func TestHandleJobLogRunningJSONLStderr(t *testing.T) {
 	require.NoError(t, os.MkdirAll(JobLogDir(), 0o700))
 	require.NoError(t, os.WriteFile(JobLogPath(job.ID), []byte(payload), 0o600))
 
-	req := httptest.NewRequest(
+	req := httptest.NewRequestWithContext(t.Context(),
 		http.MethodGet,
 		fmt.Sprintf("/api/job/log?job_id=%d", job.ID),
 		nil,

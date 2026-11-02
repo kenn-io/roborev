@@ -3,7 +3,7 @@ title: Agent Hook
 description: Bring background roborev findings back into active coding-agent sessions
 ---
 
-`roborev agent-hook` connects roborev's asynchronous reviews to coding-agent
+`roborev agent hook` connects roborev's asynchronous reviews to coding-agent
 harness hooks. It records shell-tool and stop events, checks for open failed
 reviews, and reminds the active agent to fix them before the session goes cold.
 
@@ -114,11 +114,15 @@ reminder. Other sessions receive no duplicate fix instruction while that owner
 remains active. The ownership follows that worktree across branch switches and
 detached HEAD transitions. Separate worktrees remain independent.
 
-Each delivered instruction includes its exact completion command:
+Each delivered instruction includes its exact completion command. The preferred
+spelling is:
 
 ```bash
-roborev agent-hook fix-done [--roborev-server <address>] <fix-session-id>
+roborev agent hook fix-done [--roborev-server <address>] <fix-session-id>
 ```
+
+Existing hooks may emit the compatible `roborev agent-hook fix-done` spelling.
+Run the exact command the instruction provides.
 
 When the hook uses `--roborev-server` or `ROBOREV_AGENT_HOOK_ROBOREV_ADDR`, the
 emitted command includes the resolved address. Completion therefore reaches the
@@ -145,15 +149,15 @@ session.
 When a reminder triggers for a supported agent, the hook compares that agent's
 installed `roborev-fix` skill with the version embedded in the running roborev
 binary. If the skill is missing or outdated, the reminder begins with a warning
-to run `roborev skills install`. The original instruction and its exact review
-job IDs are still delivered. The hook never updates skills automatically.
+to run `roborev agent skills install`. The original instruction and its exact
+review job IDs are still delivered. The hook never updates skills automatically.
 
 ## Install
 
 Install hooks for every locally detected coding agent:
 
 ```bash
-roborev agent-hook install
+roborev agent hook install
 ```
 
 An agent is detected when its executable is on `PATH` or its config directory
@@ -164,14 +168,14 @@ Select one profile or deliberately install all ten integrations (the eight kit
 profiles plus Grok Build and ZCode):
 
 ```bash
-roborev agent-hook install --agent qwen
-roborev agent-hook install --agent all
+roborev agent hook install --agent qwen
+roborev agent hook install --agent all
 ```
 
 Use one uniform config override when selecting exactly one agent:
 
 ```bash
-roborev agent-hook install --agent hermes --config ~/.hermes/config.yaml
+roborev agent hook install --agent hermes --config ~/.hermes/config.yaml
 ```
 
 Automatic and `all` installs attempt every selected profile and report all
@@ -195,7 +199,7 @@ Agent Hook uses the same stable binary resolver as `roborev init`. Pin a shim or
 binary explicitly when needed:
 
 ```bash
-roborev agent-hook install --binary ~/.local/share/mise/shims/roborev
+roborev agent hook install --binary ~/.local/share/mise/shims/roborev
 ```
 
 For configs synced across machines, `--binary roborev` or `--binary roborev.exe`
@@ -218,17 +222,17 @@ Check the version selected by the configured hook command, not just the version
 of a newly downloaded binary. Version-manager shims may still select an older
 installation. Check the running daemon's version through `/api/status` too.
 
-Run `roborev agent-hook install --agent <profile> --dry-run` using the intended
+Run `roborev agent hook install --agent <profile> --dry-run` using the intended
 installed binary and the existing `--config`, `--binary`, and MCP options. Then
 repeat without `--dry-run` to refresh the registration and bundled skills.
-`roborev skills install` updates only skills. Reinstalling a hook that uses a
-shim does not change the version selected by that shim.
+`roborev agent skills install` updates only skills. Reinstalling a hook that
+uses a shim does not change the version selected by that shim.
 
 A daemon restart is a separate operation. Agents must follow local approval
-rules before restarting an existing daemon. `roborev status` can automatically
-replace an outdated daemon in a supported systemd user service. Responsive
-daemons in unsupported service modes stay in use with a manual restart command;
-follow local approval rules before running it.
+rules before restarting an existing daemon. `roborev daemon status` can
+automatically replace an outdated daemon in a supported systemd user service.
+Responsive daemons in unsupported service modes stay in use with a manual
+restart command; follow local approval rules before running it.
 
 ### ZCode
 
@@ -236,7 +240,7 @@ Receive reminders about open failed reviews when a ZCode session starts and when
 you submit a prompt:
 
 ```bash
-roborev agent-hook install --agent zcode
+roborev agent hook install --agent zcode
 ```
 
 Automatic installation also detects `zcode` on `PATH` or its existing
@@ -273,9 +277,9 @@ distinguish a muted reminder from a failed query.
 stdout without modifying the file:
 
 ```bash
-roborev agent-hook dump --agent codex
-roborev agent-hook dump --agent qwen
-roborev agent-hook dump --agent hermes
+roborev agent hook dump --agent codex
+roborev agent hook dump --agent qwen
+roborev agent hook dump --agent hermes
 ```
 
 JSON-backed harnesses produce JSON. Hermes produces YAML. Use `--config` to
@@ -284,8 +288,8 @@ stderr so stdout remains safe to pipe into declarative configuration tooling.
 
 ## Runtime Model
 
-Installed commands identify their profile and carry an internal ownership
-marker:
+Installers keep the compatible `agent-hook run` spelling. Installed commands
+identify their profile and carry an internal ownership marker:
 
 ```bash
 roborev agent-hook run --agent <profile>
@@ -294,7 +298,7 @@ roborev agent-hook run --agent <profile>
 `run` rejects commands without the installed ownership marker. If this happens,
 edit the agent's hook config and remove the `roborev agent-hook run` command
 that does not contain `--source=roborev-agent-hook`. Then run
-`roborev agent-hook install`. The installer does not keep rules for recognizing
+`roborev agent hook install`. The installer does not keep rules for recognizing
 or removing old registrations.
 
 Current commands require `--agent`, read one finite native hook payload from
@@ -354,9 +358,9 @@ Silence Agent Hook reminders temporarily when a session needs a longer stretch
 of implementation work:
 
 ```bash
-roborev snooze                 # defaults to eight hours
-roborev snooze on --duration 2h
-roborev snooze off             # resume immediately
+roborev agent hook snooze                 # defaults to eight hours
+roborev agent hook snooze on --duration 2h
+roborev agent hook snooze off             # resume immediately
 ```
 
 The snooze is scoped to the current linked worktree and branch. Switching
@@ -365,11 +369,11 @@ enqueue and failed reviews keep accumulating; only the coding-agent reminder is
 muted. Hook baselines advance while snoozed, avoiding a catch-up reminder for
 every commit made during the quiet period.
 
-Run `roborev status` to list every active snooze with its exact repository,
-worktree, branch, and expiry. When the TUI is launched from a snoozed checkout
-with automatic repository and branch filters enabled, its title shows the snooze
-deadline. Clearing or changing either filter hides the badge because the view no
-longer identifies that exact snooze scope.
+Run `roborev daemon status` to list every active snooze with its exact
+repository, worktree, branch, and expiry. When the TUI is launched from a
+snoozed checkout with automatic repository and branch filters enabled, its title
+shows the snooze deadline. Clearing or changing either filter hides the badge
+because the view no longer identifies that exact snooze scope.
 
 The bundled `/roborev-snooze` skill (or `$roborev-snooze` in Codex) exposes both
 the `on` and `off` operations from an agent session.
@@ -434,15 +438,15 @@ override in their `fix-done` command.
 Status includes counters and queued Hermes reminders for every profile:
 
 ```bash
-roborev agent-hook status
+roborev agent hook status
 ```
 
 Resetting a session clears its queued reminders and any fix session owned by
 that harness session. Resetting all sessions clears all fix-session state:
 
 ```bash
-roborev agent-hook reset <session-id>
-roborev agent-hook reset --all
+roborev agent hook reset <session-id>
+roborev agent hook reset --all
 ```
 
 These commands use the regular roborev daemon; there is no separate Agent Hook
