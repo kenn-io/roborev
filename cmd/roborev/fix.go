@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -105,10 +106,10 @@ Examples:
 			}
 
 			if list && (plan || planOnly) {
-				return fmt.Errorf("--list cannot be used with --plan or --plan-only")
+				return usageErr(cmd, fmt.Errorf("--list cannot be used with --plan or --plan-only"))
 			}
 			if planOnly && resume {
-				return fmt.Errorf("--resume cannot be used with --plan-only")
+				return usageErr(cmd, fmt.Errorf("--resume cannot be used with --plan-only"))
 			}
 			if allBranches && branch != "" {
 				return usageErr(cmd, fmt.Errorf("--all-branches and --branch are mutually exclusive"))
@@ -129,13 +130,13 @@ Examples:
 				return usageErr(cmd, fmt.Errorf("--list and --batch are mutually exclusive"))
 			}
 			if list && batchSize > 0 {
-				return fmt.Errorf("--list and --batch-size are mutually exclusive")
+				return usageErr(cmd, fmt.Errorf("--list and --batch-size are mutually exclusive"))
 			}
 			if batch && batchSize > 0 {
-				return fmt.Errorf("--batch and --batch-size are mutually exclusive")
+				return usageErr(cmd, fmt.Errorf("--batch and --batch-size are mutually exclusive"))
 			}
 			if cmd.Flags().Changed("batch-size") && batchSize < 1 {
-				return fmt.Errorf("--batch-size must be >= 1")
+				return validationErr(cmd, fmt.Errorf("--batch-size must be >= 1"))
 			}
 			if list {
 				roots, err := resolveCurrentRepoRoots(ctx)
@@ -175,9 +176,12 @@ Examples:
 			if batch || batchSize > 0 {
 				var jobIDs []int64
 				for _, arg := range args {
-					var id int64
-					if _, err := fmt.Sscanf(arg, "%d", &id); err != nil {
-						return fmt.Errorf("invalid job ID %q: must be a number", arg)
+					id, err := strconv.ParseInt(arg, 10, 64)
+					if err != nil {
+						return validationErr(cmd, fmt.Errorf("invalid job ID %q: must be a number", arg))
+					}
+					if id <= 0 {
+						return validationErr(cmd, fmt.Errorf("invalid job ID %q: must be a positive number", arg))
 					}
 					jobIDs = append(jobIDs, id)
 				}
@@ -207,9 +211,12 @@ Examples:
 			// Parse job IDs
 			var jobIDs []int64
 			for _, arg := range args {
-				var id int64
-				if _, err := fmt.Sscanf(arg, "%d", &id); err != nil {
-					return fmt.Errorf("invalid job ID %q: must be a number", arg)
+				id, err := strconv.ParseInt(arg, 10, 64)
+				if err != nil {
+					return validationErr(cmd, fmt.Errorf("invalid job ID %q: must be a number", arg))
+				}
+				if id <= 0 {
+					return validationErr(cmd, fmt.Errorf("invalid job ID %q: must be a positive number", arg))
 				}
 				jobIDs = append(jobIDs, id)
 			}

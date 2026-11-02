@@ -93,7 +93,7 @@ completed_at cursor pull with a separate --updated-since pull.`),
 				return usageErr(cmd, err)
 			}
 			if err := ensureDaemon(); err != nil {
-				return fmt.Errorf("daemon not running: %w", err)
+				return fmt.Errorf("connect to daemon: %w", err)
 			}
 
 			doc, err := fetchAllExportReviews(getDaemonEndpoint(), opts, limitSet)
@@ -122,14 +122,14 @@ completed_at cursor pull with a separate --updated-since pull.`),
 
 func validateExportReviewsOpts(opts exportReviewsOpts, limitSet bool) error {
 	if opts.format != "json" {
-		return fmt.Errorf("unsupported export format %q", opts.format)
+		return invalidValue(fmt.Errorf("unsupported export format %q", opts.format))
 	}
 	if opts.profile != string(storage.ExportProfileContent) &&
 		opts.profile != string(storage.ExportProfileMetadata) {
-		return fmt.Errorf("unsupported export profile %q", opts.profile)
+		return invalidValue(fmt.Errorf("unsupported export profile %q", opts.profile))
 	}
 	if limitSet && opts.limit <= 0 {
-		return fmt.Errorf("--limit must be greater than 0")
+		return invalidValue(fmt.Errorf("--limit must be greater than 0"))
 	}
 	if opts.cursor != "" && opts.since != "" {
 		return fmt.Errorf("--cursor cannot be used with --since; cursor already defines the resume position")

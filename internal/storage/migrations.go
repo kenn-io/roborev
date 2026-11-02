@@ -35,6 +35,7 @@ type schemaMigration struct {
 var schemaMigrations = []schemaMigration{
 	{1, "baseline", migrateBaseline},
 	{2, "compress job content", migrateJobContent},
+	{3, "CI panel retirement reasons", migrateCIPanelRetireReason},
 }
 
 // ErrSchemaTooNew reports a database written by a newer roborev release.
@@ -87,4 +88,15 @@ func (db *DB) runSchemaMigrations(ctx context.Context, migrations []schemaMigrat
 		}
 	}
 	return nil
+}
+
+// migrateCIPanelRetireReason leaves historical retirement causes unspecified.
+// CI panel state is local-only and is not replicated to PostgreSQL.
+func migrateCIPanelRetireReason(ctx context.Context, db *DB) error {
+	exists, err := hasColumn(ctx, db, "ci_pr_panels", "retire_reason")
+	if err != nil || exists {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `ALTER TABLE ci_pr_panels ADD COLUMN retire_reason TEXT`)
+	return err
 }

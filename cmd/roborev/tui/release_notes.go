@@ -90,14 +90,27 @@ func (m model) releaseNotesLines() []string {
 			fmt.Fprintf(&markdown, "\n\n[View on GitHub](%s)\n", sanitizeForDisplay(release.HTMLURL))
 		}
 	}
-	profile := termenv.Ascii
-	if m.mdCache != nil {
-		profile = m.mdCache.colorProfile
+	text := markdown.String()
+	// Rendering every release with glamour is slow, and this runs on each
+	// scroll key and frame, so reuse the result until text or width changes.
+	c := m.mdCache
+	if c != nil && c.releaseNotesLines != nil && c.releaseNotesText == text && c.releaseNotesWidth == m.width {
+		return c.releaseNotesLines
 	}
-	return renderMarkdownLines(
-		markdown.String(), min(max(m.width-4, 20), 100), max(m.width, 20),
+	profile := termenv.Ascii
+	if c != nil {
+		profile = c.colorProfile
+	}
+	lines := renderMarkdownLines(
+		text, min(max(m.width-4, 20), 100), max(m.width, 20),
 		m.glamourStyle, 2, profile,
 	)
+	if c != nil {
+		c.releaseNotesLines = lines
+		c.releaseNotesText = text
+		c.releaseNotesWidth = m.width
+	}
+	return lines
 }
 
 func (m model) releaseNotesMaxScroll() int {

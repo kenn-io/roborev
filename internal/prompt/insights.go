@@ -73,15 +73,17 @@ type InsightsData struct {
 
 // InsightsReview is a simplified review record for the insights prompt
 type InsightsReview struct {
-	JobID      int64
-	Agent      string
-	GitRef     string
-	Branch     string
-	FinishedAt *time.Time
-	Output     string
-	Responses  []storage.Response
-	Closed     bool
-	Verdict    string // "P" or "F"
+	JobID        int64
+	Agent        string
+	GitRef       string
+	Branch       string
+	FinishedAt   *time.Time
+	Output       string
+	Responses    []storage.Response
+	Closed       bool
+	Verdict      string // "P" or "F"
+	PanelName    string
+	PanelMembers int // Configured members, including advisory members
 }
 
 // BuildInsightsPrompt constructs the full prompt for insights analysis.
@@ -157,6 +159,13 @@ func BuildInsightsPrompt(data InsightsData) string {
 		var entry strings.Builder
 		fmt.Fprintf(&entry, "### Review %d (Job #%d)\n\n", i+1, r.JobID)
 		fmt.Fprintf(&entry, "- **Agent:** %s\n", r.Agent)
+		if r.PanelName != "" {
+			fmt.Fprintf(&entry, "- **Panel:** %s", r.PanelName)
+			if r.PanelMembers > 0 {
+				fmt.Fprintf(&entry, " (%d configured members)", r.PanelMembers)
+			}
+			entry.WriteString("\n")
+		}
 		fmt.Fprintf(&entry, "- **Git Ref:** %s\n", r.GitRef)
 		if r.Branch != "" {
 			fmt.Fprintf(&entry, "- **Branch:** %s\n", r.Branch)
@@ -222,7 +231,7 @@ func InsightsReviewFromJob(
 	if job.Verdict != nil {
 		verdict = *job.Verdict
 	}
-	return InsightsReview{
+	result := InsightsReview{
 		JobID:      job.ID,
 		Agent:      job.Agent,
 		GitRef:     job.GitRef,
@@ -233,4 +242,11 @@ func InsightsReviewFromJob(
 		Closed:     closed,
 		Verdict:    verdict,
 	}
+	if job.IsSynthesisJob() {
+		result.PanelName = job.PanelName
+		if job.PanelSummary != nil {
+			result.PanelMembers = job.PanelSummary.MembersTotal
+		}
+	}
+	return result
 }

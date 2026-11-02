@@ -64,7 +64,7 @@ export, or vice versa.`),
 				return usageErr(cmd, err)
 			}
 			if err := ensureDaemon(); err != nil {
-				return fmt.Errorf("daemon not running: %w", err)
+				return fmt.Errorf("connect to daemon: %w", err)
 			}
 
 			doc, err := fetchAllExportCIMetrics(getDaemonEndpoint(), opts, limitSet)
@@ -90,10 +90,10 @@ export, or vice versa.`),
 
 func validateExportCIMetricsOpts(opts exportCIMetricsOpts, limitSet bool) error {
 	if opts.format != "json" {
-		return fmt.Errorf("unsupported export format %q", opts.format)
+		return invalidValue(fmt.Errorf("unsupported export format %q", opts.format))
 	}
 	if limitSet && opts.limit <= 0 {
-		return fmt.Errorf("--limit must be greater than 0")
+		return invalidValue(fmt.Errorf("--limit must be greater than 0"))
 	}
 	if opts.cursor != "" && opts.since != "" {
 		return fmt.Errorf("--cursor cannot be used with --since; cursor already defines the resume position")

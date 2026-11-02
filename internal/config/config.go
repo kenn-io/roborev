@@ -124,7 +124,7 @@ type DroidHookConfig struct {
 }
 type CodexConfig struct {
 	DisableReviewSkills    bool `toml:"disable_review_skills" comment:"Disable Codex skill instructions for review jobs."`
-	IgnoreReviewUserConfig bool `toml:"ignore_review_user_config" comment:"Pass --ignore-user-config to Codex for review jobs."`
+	IgnoreReviewUserConfig bool `toml:"ignore_review_user_config" comment:"Pass --ignore-user-config to Codex for reviews and non-agentic stored-prompt jobs."`
 	// Config holds passthrough Codex options that ConfigOverrideArgs flattens
 	// into `-c key=value` overrides on every Codex job (see ConfigOverrideArgs).
 	Config map[string]any `toml:"config" comment:"Codex config injected as -c overrides on every Codex job (e.g. model_provider and [agent.codex.config.model_providers.*]). Survives --ignore-user-config."`
@@ -146,7 +146,7 @@ type AgentConfig struct {
 }
 
 type CostConfig struct {
-	Endpoint string `toml:"endpoint" comment:"HTTP usage endpoint template for cost/token lookup. Use {session_id}; set empty to use agentsview CLI lookup only."`
+	Endpoint string `toml:"endpoint" comment:"HTTP usage endpoint template for cost/token lookup. Use {session_id}; leave empty for the AgentsView URL or CLI provider."`
 	Timeout  string `toml:"timeout" comment:"Timeout for HTTP usage endpoint lookups."`
 }
 
@@ -427,7 +427,8 @@ type Config struct {
 	CI CIConfig `toml:"ci"`
 
 	// Cost/token usage lookup configuration
-	Cost CostConfig `toml:"cost"`
+	Cost       CostConfig       `toml:"cost"`
+	AgentsView AgentsViewConfig `toml:"agentsview"`
 
 	// Browser application configuration
 	Web WebConfig `toml:"web"`
@@ -728,6 +729,9 @@ func (c *Config) Validate() (err error) {
 	if _, err := parsePostCommitQuietPeriod(c.PostCommitQuietPeriod); err != nil {
 		return err
 	}
+	if err := c.AgentsView.Validate(c.Cost); err != nil {
+		return err
+	}
 	if err := c.Budget.Validate(); err != nil {
 		return err
 	}
@@ -989,13 +993,11 @@ const (
 	DefaultReviewContextCount    = 3
 	DefaultPiJSONSchemaExtension = "npm:@nqbao/pi-json-schema@0.1.1"
 	DefaultAgentQuotaCooldown    = 30 * time.Minute
-	DefaultAgentHookInstruction  = `Invoke the roborev-fix skill for only the review job IDs named in this reminder.
-Do not discover or address any other reviews. Before editing, independently validate every finding
-against the current code and the user's current task; a review finding is not proof that a problem
-exists. Never expand the scope of that task. Fix and verify valid findings only when they are clearly
-within scope. For invalid, stale, already-resolved, or inapplicable findings, make no code change,
-record the evidence, and close the review. If a valid finding is outside the task or its scope is
-unclear, leave it open and ask the user for direction. Then continue the task that this hook interrupted.`
+	DefaultAgentHookInstruction  = `Triage the review job IDs named in this reminder with the roborev-fix skill,
+and only those IDs. Fix reachable defects with the smallest change that stays
+inside the user's current task, decline or disprove the rest with a recorded
+reason, and ask the user about anything that would grow the task. Then return
+to the work this reminder interrupted.`
 
 	// DefaultHookTimeout bounds how long the post-commit hook waits for the
 	// daemon's enqueue handler before giving up so a stalled daemon never
@@ -1157,6 +1159,7 @@ func applyDaemonSections(c *Config) []error {
 		name     string
 		validate func() error
 	}{
+		{"agentsview", func() error { return c.AgentsView.Validate(c.Cost) }},
 		{"budget", c.Budget.Validate},
 		{"ci", func() error {
 			return errors.Join(c.CI.NormalizeInstallations(), validateCIPRFilters(c.CI))
@@ -1485,7 +1488,7 @@ func LoadRepoConfigWithRaw(repoPath string) (*RepoConfig, map[string]any, error)
 }
 
 func validateRepoConfigScope(md toml.MetaData) error {
-	for _, key := range []string{"search", "review_mcp_config", "review_mcp_allowed_tools"} {
+	for _, key := range []string{"agentsview", "search", "review_mcp_config", "review_mcp_allowed_tools"} {
 		if md.IsDefined(key) {
 			return fmt.Errorf(
 				"repository config key %q is global-only; move it to ~/.roborev/config.toml",
@@ -1654,7 +1657,7 @@ func ResolveDisableCodexReviewSkills(_ string, globalCfg *Config) bool {
 	return true
 }
 
-// ResolveIgnoreCodexReviewUserConfig returns whether Codex review jobs should
+// ResolveIgnoreCodexReviewUserConfig returns whether Codex non-editing jobs should
 // pass --ignore-user-config. Priority: global > default true.
 func ResolveIgnoreCodexReviewUserConfig(_ string, globalCfg *Config) bool {
 	if globalCfg != nil {

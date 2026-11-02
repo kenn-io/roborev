@@ -85,3 +85,6 @@ docs/.env*.local
 /.roborev/
 .env*
 .kata.local.toml
+
+# Property test counterexamples and local engine state
+.hegel/

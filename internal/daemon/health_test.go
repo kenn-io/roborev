@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 	"uuid"
@@ -99,11 +100,15 @@ func setupTestServer(t *testing.T) *Server {
 	return server
 }
 
-// executeHealthCheck sends a request to the health endpoint and returns the recorder.
+// executeHealthCheck sends a request to the health endpoint and returns the
+// recorder. The response can come from the last agents check while a refresh
+// runs in the background. The helper waits for that refresh, so no goroutine
+// reads the config after the request returns while a test changes it.
 func executeHealthCheck(server *Server, method string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, "/api/health", nil)
 	w := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(w, req)
+	server.agentHealth.wait()
 	return w
 }
 
@@ -413,6 +418,52 @@ func TestHealthReportsConcreteReconcilerReplacement(t *testing.T) {
 }
 
 // Helpers
+
+func TestHealthReportsUnavailableReviewAgent(t *testing.T) {
+	// The default config reviews with codex; the daemon PATH lacks it.
+	t.Setenv("PATH", t.TempDir())
+	db := testutil.OpenTestDB(t)
+	server := newServerWithLogs(db, config.DefaultConfig(), "", newTestErrorLog(), newTestActivityLog())
+	t.Cleanup(func() { server.Close() })
+	agents := func(health storage.HealthStatus) storage.ComponentHealth {
+		for _, c := range health.Components {
+			if c.Name == "agents" {
+				return c
+			}
+		}
+		require.FailNow(t, "health has no agents component")
+		return storage.ComponentHealth{}
+	}
+
+	// Before the first check finishes, health reports it is still running
+	// instead of probing in the request. The helper waits for that check.
+	health := decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
+	assert.True(t, agents(health).Healthy)
+	assert.Contains(t, agents(health).Message, "still running")
+
+	health = decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
+	assert.False(t, health.Healthy)
+	assert.False(t, health.Ready)
+	assert.False(t, agents(health).Healthy)
+	assert.Contains(t, agents(health).Message, `"codex"`)
+
+	binDir := t.TempDir()
+	codex, script := filepath.Join(binDir, "codex"), "#!/bin/sh\nexit 0\n"
+	if runtime.GOOS == "windows" {
+		codex, script = codex+".cmd", "@echo off\r\nexit /b 0\r\n"
+	}
+	require.NoError(t, os.WriteFile(codex, []byte(script), 0o755))
+	t.Setenv("PATH", binDir)
+
+	// A request returns the last result and starts a refresh; the helper
+	// waits for the refresh to finish.
+	health = decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
+	assert.False(t, agents(health).Healthy)
+
+	health = decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet))
+	assert.True(t, agents(health).Healthy)
+	assert.True(t, health.Healthy)
+}
 
 func hasComponent(components []storage.ComponentHealth, name string) bool {
 	for _, c := range components {

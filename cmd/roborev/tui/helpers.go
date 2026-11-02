@@ -490,6 +490,10 @@ type markdownCache struct {
 	promptWidth int
 	promptText  string // raw input text used to produce promptLines
 
+	releaseNotesLines []string
+	releaseNotesWidth int
+	releaseNotesText  string // raw markdown used to produce releaseNotesLines
+
 	// Max scroll positions computed during the last render.
 	// Stored here (in the shared pointer) so key handlers can clamp
 	// scroll values even though View() uses a value receiver.

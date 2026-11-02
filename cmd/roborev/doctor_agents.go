@@ -218,7 +218,7 @@ func checkDoctorPanel(env *doctorEnv, p daemon.DoctorPanel) doctorCheck {
 		c.Summary = label + " cannot be queued; those reviews will fail"
 		c.Details = []string{p.Error}
 		c.Fix = "fix the panel under [review.panels] and [review.subagents], or install the missing agent" + restart
-	case !p.Synthesis.Available:
+	case p.Synthesis.Name != "" && !p.Synthesis.Available:
 		c.Status = doctorFail
 		c.Summary = fmt.Sprintf("%s will fail: synthesis agent %s is not available", label, p.Synthesis.Name)
 		c.Details = []string{doctorFirstLine(p.Synthesis.Error)}
@@ -229,7 +229,11 @@ func checkDoctorPanel(env *doctorEnv, p daemon.DoctorPanel) doctorCheck {
 			members = append(members, fmt.Sprintf("%s uses %s", m.Name, m.Agent))
 		}
 		c.Status = doctorOK
-		c.Summary = fmt.Sprintf("%s: %s; synthesis uses %s", label, strings.Join(members, ", "), p.Synthesis.Name)
+		synthesis := "synthesis uses " + p.Synthesis.Name
+		if p.Synthesis.Name == "" {
+			synthesis = "no synthesis agent runs for one voting member"
+		}
+		c.Summary = fmt.Sprintf("%s: %s; %s", label, strings.Join(members, ", "), synthesis)
 	}
 	return c
 }

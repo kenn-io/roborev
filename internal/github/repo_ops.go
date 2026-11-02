@@ -23,6 +23,7 @@ type OpenPullRequest struct {
 	// AuthorAssociation is GitHub's author_association, such as OWNER,
 	// MEMBER, COLLABORATOR, CONTRIBUTOR, or NONE.
 	AuthorAssociation string
+	Draft             bool
 	Labels            []string
 }
 
@@ -38,6 +39,7 @@ type PullRequestInfo struct {
 	// AuthorAssociation is GitHub's author_association, such as OWNER,
 	// MEMBER, COLLABORATOR, CONTRIBUTOR, or NONE.
 	AuthorAssociation string
+	Draft             bool
 	Labels            []string
 }
 
@@ -70,6 +72,7 @@ func (c *Client) ListOpenPullRequests(ctx context.Context, ghRepo string) ([]Ope
 				Body:              pr.GetBody(),
 				AuthorLogin:       pr.GetUser().GetLogin(),
 				AuthorAssociation: pr.GetAuthorAssociation(),
+				Draft:             pr.GetDraft(),
 				Labels:            pullRequestLabelNames(pr.GetLabels()),
 			})
 		}
@@ -110,6 +113,7 @@ func (c *Client) GetPullRequest(ctx context.Context, ghRepo string, prNumber int
 		Body:              pr.GetBody(),
 		AuthorLogin:       pr.GetUser().GetLogin(),
 		AuthorAssociation: pr.GetAuthorAssociation(),
+		Draft:             pr.GetDraft(),
 		Labels:            pullRequestLabelNames(pr.GetLabels()),
 	}, nil
 }

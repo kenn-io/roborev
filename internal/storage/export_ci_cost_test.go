@@ -81,7 +81,7 @@ func TestExportCICostsIncludesMappedPanelJobWithoutSource(t *testing.T) {
 
 	panel, err := db.GetCIPanelByRunUUID(testUUID("run-mapped-panel"))
 	require.NoError(t, err)
-	require.NoError(t, db.MarkPanelRetired(panel.ID))
+	require.NoError(t, db.MarkPanelRetired(panel.ID, PanelRetireReasonCanceled))
 	page, err = db.ExportCICosts(ExportCICostOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, reviewJobUUIDs(job), costJobUUIDs(page.Jobs))
@@ -362,7 +362,7 @@ func TestExportCICostsIncludesRetiredRetryJobs(t *testing.T) {
 	require.NoError(t, err)
 	firstPanel, err := db.GetCIPanelByPRSHA("owner/project", 1, "head")
 	require.NoError(t, err)
-	require.NoError(t, db.MarkPanelRetired(firstPanel.ID))
+	require.NoError(t, db.MarkPanelRetired(firstPanel.ID, PanelRetireReasonCanceled))
 
 	created, replacementMembers, _, err := db.CreateCIPanelRun("owner/project", 1, "head", members, synthesis)
 	require.NoError(t, err)

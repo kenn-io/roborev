@@ -18,6 +18,8 @@ export interface ExportSubagent {
   /** @nullable */
   model: string | null;
   name: string;
+  /** True when the panel member is advisory and does not affect the panel verdict. */
+  non_voting: boolean;
   /** @nullable */
   resume_source_job_uuid: string | null;
   review_id: string;

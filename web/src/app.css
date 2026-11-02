@@ -262,6 +262,13 @@ main {
   padding: 2rem 1.25rem;
 }
 
+/* Reserve the scrollbar's width up front so the centered card does not shift
+   left when a taller card makes a short window scroll. The application view
+   scrolls inside its own panes, so it keeps the full width. */
+html:has(main:not(.application)) {
+  scrollbar-gutter: stable;
+}
+
 main.application {
   display: flex;
   height: 100vh;

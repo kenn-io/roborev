@@ -1971,10 +1971,22 @@ func TestApplyCodexReviewSettings(t *testing.T) {
 			wantIgnore: true,
 		},
 		{
-			name:       "task job",
+			name:       "non-agentic task job",
 			job:        storage.ReviewJob{JobType: storage.JobTypeTask},
 			wantSkills: true,
+			wantIgnore: true,
+		},
+		{
+			name:       "agentic task job",
+			job:        storage.ReviewJob{JobType: storage.JobTypeTask, Agentic: true},
+			wantSkills: true,
 			wantIgnore: false,
+		},
+		{
+			name:       "compact job",
+			job:        storage.ReviewJob{JobType: storage.JobTypeCompact},
+			wantSkills: true,
+			wantIgnore: true,
 		},
 		{
 			name:       "classify job",

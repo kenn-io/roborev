@@ -245,6 +245,8 @@ func (db *DB) RearmFailedReviewAttempts(now time.Time) (int64, error) {
 		if err != nil {
 			return 0, err
 		}
+		// This finalized failure is retired to free retry ownership. It is
+		// posted history, so it has no unposted discard reason.
 		if _, err := tx.Exec(`UPDATE ci_pr_panels SET retired_at = ?, posting_claimed_at = NULL WHERE id = ?`,
 			now.Format(time.RFC3339), panel.ID); err != nil {
 			return 0, err
@@ -361,6 +363,7 @@ func (db *DB) DeleteReviewAttemptsForPR(repo string, pr int) (int64, error) {
 // Keep attempt removal and failed-panel retirement atomic: leaving either one
 // behind can suppress the next review or lose the health failure on cleanup errors.
 // Retain any publication lease until its owner finishes skip or status delivery.
+// These posted rows are ownership cleanup, so retire_reason stays unspecified.
 func (db *DB) deleteReviewAttempts(repo string, pr int, sha *string) (int64, error) {
 	where := "github_repo = ? AND pr_number = ?"
 	args := []any{repo, pr}

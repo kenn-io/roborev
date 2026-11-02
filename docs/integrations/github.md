@@ -39,16 +39,27 @@ poller does not search that history before enqueueing jobs, so the lookup does
 not delay other PRs or deferred retries. This context can include reviews that
 completed while the job was queued.
 
+## Monitor review load
+
+Run `roborev summary --all --since 7d` to inspect panel counts, retirement
+reasons, runs per PR, posting turnaround, and recorded cost with coverage. The
+[CI run health summary](/docs/commands/#ci-run-health) explains the cohorts and
+how unavailable pricing or timing data is displayed. Use `--all` to include CI
+checkouts outside your current working repository.
+
 ## What to Expect
 
 Before enabling the CI poller, understand the following:
 
-- **The poller reviews ALL open PRs on first start.** It polls immediately on
-    startup, not after the first interval. If you have 20 open PRs, all 20 will
-    be enqueued for review right away. Subsequent polls only review PRs with new
-    commits (tracked by HEAD SHA in the local database).
-- **All open PRs are reviewed.** There is no filtering by draft status, labels,
-    or author. Draft PRs, bot PRs, and stale PRs all get reviewed.
+- **The poller reviews every eligible open PR on first start.** It polls
+    immediately on startup, not after the first interval. If you have 20
+    eligible open PRs, all 20 will be enqueued for review right away. Later
+    polls review eligible PR heads that have no review yet (tracked by HEAD SHA
+    in the local database). A head can become eligible without a new commit, for
+    example when a draft is marked ready or a skip label is removed.
+- **The poller reviews drafts by default.** Set global `[ci] skip_drafts = true`
+    to skip draft PRs, or configure `skip_labels` to skip PRs with matching
+    labels. The author and branch filters still apply to eligible PRs.
 - **CI settings are global by default, with per-repo overrides.** The `panel`,
     `agents`, `review_types`, and `model` in the global `[ci]` section apply to
     every repo unless overridden. Individual repos can override panels, agents,
@@ -239,6 +250,7 @@ repos = ["myorg/myrepo"]
 agents = ["codex"]
 review_types = ["security"]
 skip_labels = ["skip-review"]
+skip_drafts = true # Optional; defaults to false
 
 # GitHub App authentication
 github_app_id = 123456
@@ -335,13 +347,24 @@ CI poller: GitHub App authentication enabled (app_id=123456)
 
 PR comments will now appear as **`your-app-name[bot]`**.
 
-When an open PR has a label listed in `skip_labels`, the CI poller does not
-create a review. With GitHub App authentication, it creates a roborev check with
-a `skipped` conclusion and a message that names the matching label. Label
-matching is case-insensitive. Removing the label lets the poller review the
-current PR head on its next pass. GitHub does not allow personal authentication
-to create check runs, so personal-auth setups suppress the review without
-publishing the skipped check.
+Set `[ci] skip_drafts = true` to skip draft PRs. This global option defaults to
+`false` and has no repository override. The poller also skips open PRs with
+labels listed in `skip_labels`; label matching is case-insensitive. If both
+apply, the draft reason takes precedence. A draft skip message is
+`Review skipped: draft`.
+
+When the poller publishes a skipped result, it always sets a roborev success
+commit status. GitHub App authentication also creates a roborev check with a
+`skipped` conclusion; personal authentication cannot, because GitHub does not
+allow it to create check runs. GitHub attaches checks and statuses to the
+commit, so the skip also appears on any other PR with the same head commit.
+
+Marking a draft ready, or removing the matching label, makes the same PR head
+eligible on the next poll without a push, subject to the existing throttle,
+quiet-hours, author, branch, and deduplication gates. Draft skipping does not
+cancel active reviews or replace completed reviews. Explicit reruns keep their
+existing behavior. A PR marked ready can retain its previous skip status until
+the poller next observes the change.
 
 ## Setup with Personal Auth
 
@@ -418,10 +441,11 @@ The status context is `roborev` and progresses through these states:
 | `failure` | At least one member failed to run for a genuine reason while another member still produced usable review output |
 | `error` | No reviewer produced usable output and no retry remains, or no agent is available |
 
-Skipped PRs, whether from `skip_labels` or the
-[author and branch filters](#filtering-which-prs-get-reviewed), use a GitHub
-check run instead of a commit status because commit statuses do not have a
-skipped state. The roborev check run completes with a `skipped` conclusion.
+Skipped PRs, whether from `skip_drafts`, `skip_labels`, or the
+[author and branch filters](#filtering-which-prs-get-reviewed), get a `success`
+commit status that names the skip reason, because commit statuses do not have a
+skipped state. With GitHub App authentication the poller also creates a roborev
+check run that completes with a `skipped` conclusion.
 
 Status checks require **Commit statuses: Read and write**. Skipped checks also
 require **Checks: Read and write**. The setup guide above includes both
@@ -885,6 +909,7 @@ set, it takes priority over the matrix fields for that repo.
 | `repos` | array | `[]` | GitHub repos to poll in `"owner/repo"` format. Supports glob patterns (e.g. `"myorg/*"`, `"myorg/api-*"`). |
 | `exclude_repos` | array | `[]` | Glob patterns to exclude from the resolved repo list |
 | `skip_labels` | array | `[]` | GitHub PR labels that skip CI reviews (case-insensitive) |
+| `skip_drafts` | bool | `false` | Skip draft PRs; global only. Ready PRs become eligible next poll under the normal gates. |
 | `allowed_authors` | array | `[]` | GitHub logins whose PRs are reviewed (case-insensitive). See [Author filter](#author-filter). |
 | `allowed_author_associations` | array | `[]` | PR author associations that are reviewed, such as `OWNER`, `MEMBER`, `COLLABORATOR`. With `allowed_authors` also empty and `allow_codeowners` off, every author is reviewed. |
 | `allow_codeowners` | bool | `false` | Also review PRs from users the base branch's `CODEOWNERS` file names, directly or through a team. See [CODEOWNERS](#codeowners). |

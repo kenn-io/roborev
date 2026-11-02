@@ -114,7 +114,7 @@ func TestOpenBaselinesDatabaseFromBeforeNumberedMigrations(t *testing.T) {
 	db, err := Open(path)
 	require.NoError(t, err)
 	defer db.Close()
-	assert.Equal(t, []int{1, 2}, appliedVersions(t, db))
+	assert.Equal(t, []int{1, 2, 3}, appliedVersions(t, db))
 	var name string
 	require.NoError(t, db.QueryRow(`SELECT name FROM repos WHERE root_path = '/synthetic/repo'`).Scan(&name))
 	assert.Equal(t, "repo", name)
@@ -162,4 +162,27 @@ func TestOpenWidensAutoDesignDedupIndexAfterDuplicatesAreRemoved(t *testing.T) {
 	defer db.Close()
 	require.Error(t, insertAutoDesign(db, commitID),
 		"a commit-backed job must collide with the commitless job for its git_ref")
+}
+
+func TestCIPanelRetireReasonMigration(t *testing.T) {
+	t.Parallel()
+	db := openUnmigratedDB(t)
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:2]))
+	_, err := db.Exec(`INSERT INTO ci_pr_panels
+		(github_repo, pr_number, head_sha, panel_run_uuid, retired_at)
+		VALUES ('acme/api', 7, 'old-head', '00000000-0000-4000-8000-000000000001', '2026-01-01 00:00:00')`)
+	require.NoError(t, err)
+
+	for range 2 {
+		require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
+		var reason sql.NullString
+		var retiredAt string
+		require.NoError(t, db.QueryRow(`SELECT CAST(retired_at AS TEXT), retire_reason FROM ci_pr_panels WHERE id = 1`).Scan(&retiredAt, &reason))
+		assert.Equal(t, "2026-01-01 00:00:00", retiredAt)
+		assert.False(t, reason.Valid, "historical retirement has no inferred cause")
+		assert.Equal(t, []int{1, 2, 3}, appliedVersions(t, db))
+		// Simulate interruption after the column was added, before recording it.
+		_, err = db.Exec(`DELETE FROM schema_migrations WHERE version = 3`)
+		require.NoError(t, err)
+	}
 }

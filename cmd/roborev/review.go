@@ -71,7 +71,7 @@ func reviewCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "review [commit] or review [start] [end]",
+		Use:   "review [commit | start end]",
 		Short: "Review a commit, commit range, or uncommitted changes",
 		Long: `Review a commit, commit range, or uncommitted changes.
 
@@ -125,7 +125,7 @@ Examples:
 					}
 					return fmt.Errorf("%s", b.String())
 				}
-				return fmt.Errorf("not a git repository: %w", err)
+				return withHint(invalidValue(fmt.Errorf("not a git repository: %w", err)), "change into a git repository, or pass --repo <path>; then run 'roborev init' for setup")
 			}
 
 			if reviewType == config.ReviewTypeGoal {
@@ -185,12 +185,12 @@ Examples:
 				if loadErr != nil {
 					return fmt.Errorf("load repository config: %w", loadErr)
 				}
-				canonical, validationErr := config.ValidateReviewTypesFromConfig(
+				canonical, reviewTypeErr := config.ValidateReviewTypesFromConfig(
 					[]string{reviewType}, repoCfg, globalCfg,
 				)
-				if validationErr != nil {
-					return usageErr(cmd, fmt.Errorf(
-						"invalid --type %q: %w", reviewType, validationErr,
+				if reviewTypeErr != nil {
+					return validationErr(cmd, fmt.Errorf(
+						"invalid --type %q: %w", reviewType, reviewTypeErr,
 					))
 				}
 				reviewType = canonical[0]
@@ -533,13 +533,13 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, di
 		reasoning, repoCfg, cfg, reviewType,
 	)
 	if err != nil {
-		return fmt.Errorf("invalid reasoning: %w", err)
+		return invalidValue(fmt.Errorf("invalid reasoning: %w", err))
 	}
 
 	// Resolve review min-severity
 	resolvedMinSev, err := config.ResolveReviewMinSeverity(minSeverity, repoPath, cfg)
 	if err != nil {
-		return fmt.Errorf("invalid min-severity: %w", err)
+		return invalidValue(fmt.Errorf("invalid min-severity: %w", err))
 	}
 
 	// Map review_type to config workflow (matches daemon behavior)
