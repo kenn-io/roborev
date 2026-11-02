@@ -96,7 +96,7 @@ var (
 
 // armCLIUse selects human or agent activity for commands that work through the daemon.
 func armCLIUse(cmd *cobra.Command) {
-	path := cmd.CommandPath()
+	path := stableCommandPath(cmd)
 	if (!cliUseCommands[path] && !agentUseCommands[path]) || !cliTelemetryEnabled() {
 		return
 	}

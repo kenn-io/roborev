@@ -113,8 +113,8 @@ func (wp *WorkerPool) processClassifyJob(ctx context.Context, workerID string, j
 	in := autotype.Input{
 		RepoPath:     job.RepoPath,
 		GitRef:       job.GitRef,
-		Diff:         resolveClassifyDiff(workerID, job),
-		Message:      classifierCommitMessage(job.RepoPath, job.GitRef, job.CommitSubject),
+		Diff:         resolveClassifyDiff(ctx, workerID, job),
+		Message:      classifierCommitMessage(ctx, job.RepoPath, job.GitRef, job.CommitSubject),
 		ChangedFiles: changedFilesForJob(job),
 	}
 
@@ -397,7 +397,7 @@ func (wp *WorkerPool) broadcastClassifyTerminal(job *storage.ReviewJob) {
 // misleading "~0 line changes" stat. A git failure is logged and the
 // classifier proceeds with an empty diff so the worker can still
 // decide via subject/file-list heuristics.
-func resolveClassifyDiff(workerID string, job *storage.ReviewJob) string {
+func resolveClassifyDiff(ctx context.Context, workerID string, job *storage.ReviewJob) string {
 	diff := derefString(job.DiffContent)
 	if diff != "" {
 		return diff
@@ -405,7 +405,7 @@ func resolveClassifyDiff(workerID string, job *storage.ReviewJob) string {
 	if job.GitRef == "" || job.GitRef == "dirty" || job.RepoPath == "" {
 		return ""
 	}
-	fetched, err := gitpkg.GetDiff(job.RepoPath, job.GitRef)
+	fetched, err := gitpkg.GetDiffCtx(ctx, job.RepoPath, job.GitRef)
 	if err != nil {
 		log.Printf("[%s] classify job %d: git.GetDiff(%s) failed: %v",
 			workerID, job.ID, job.GitRef, err)
@@ -416,8 +416,8 @@ func resolveClassifyDiff(workerID string, job *storage.ReviewJob) string {
 
 // classifierCommitMessage returns "subject\n\nbody" for the classifier prompt.
 // Falls back to the provided subject if git is unreachable.
-func classifierCommitMessage(repoPath, ref, fallbackSubject string) string {
-	info, err := gitpkg.GetCommitInfo(repoPath, ref)
+func classifierCommitMessage(ctx context.Context, repoPath, ref, fallbackSubject string) string {
+	info, err := gitpkg.GetCommitInfoCtx(ctx, repoPath, ref)
 	if err != nil || info == nil {
 		return fallbackSubject
 	}

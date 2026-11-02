@@ -150,8 +150,8 @@ func newSearchHTTPServer(t *testing.T, search reviewSearcher) *Server {
 	return server
 }
 
-func executeSearch(server *Server, values url.Values) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodGet, "/api/search?"+values.Encode(), nil)
+func executeSearch(ctx context.Context, server *Server, values url.Values) *httptest.ResponseRecorder {
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/search?"+values.Encode(), nil)
 	recorder := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(recorder, req)
 	return recorder
@@ -218,7 +218,7 @@ func TestSearchEndpointValidatesParameters(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			server := newSearchHTTPServer(t, &recordingReviewSearcher{})
-			response := executeSearch(server, tc.values)
+			response := executeSearch(t.Context(), server, tc.values)
 			assert.Equal(t, http.StatusBadRequest, response.Code)
 			assert.Contains(t, response.Body.String(), tc.detail)
 		})
@@ -231,7 +231,7 @@ func TestSearchEndpointParsesDefaultsAndSinceForms(t *testing.T) {
 	server := newSearchHTTPServer(t, searcher)
 	server.searchNow = func() time.Time { return now }
 
-	response := executeSearch(server, url.Values{"q": {"  needle  "}, "since": {"24h"}})
+	response := executeSearch(t.Context(), server, url.Values{"q": {"  needle  "}, "since": {"24h"}})
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	params := searcher.lastParams(t)
 	assert.Equal(t, "needle", params.Query)
@@ -242,7 +242,7 @@ func TestSearchEndpointParsesDefaultsAndSinceForms(t *testing.T) {
 	assert.Equal(t, now.Add(-24*time.Hour), *params.Since)
 
 	timestamp := "2026-09-01T03:04:05Z"
-	response = executeSearch(server, url.Values{
+	response = executeSearch(t.Context(), server, url.Values{
 		"q": {"needle"}, "since": {timestamp}, "mode": {"lexical"},
 		"state": {"open"}, "verdict": {"fail"}, "branch": {"refs/heads/Main"},
 		"limit": {"7"},
@@ -270,16 +270,16 @@ func TestSearchEndpointResolvesRepositoryAndKeepsGlobalScope(t *testing.T) {
 	t.Cleanup(func() { _ = server.Close() })
 
 	for _, identifier := range []string{repo.RootPath, repo.Name, repo.Identity} {
-		response := executeSearch(server, url.Values{"q": {"needle"}, "repo": {identifier}})
+		response := executeSearch(t.Context(), server, url.Values{"q": {"needle"}, "repo": {identifier}})
 		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 		assert.Equal(t, repo.ID, searcher.lastParams(t).RepoID)
 	}
 
-	response := executeSearch(server, url.Values{"q": {"needle"}})
+	response := executeSearch(t.Context(), server, url.Values{"q": {"needle"}})
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	assert.Zero(t, searcher.lastParams(t).RepoID)
 
-	response = executeSearch(server, url.Values{"q": {"needle"}, "repo": {"missing"}})
+	response = executeSearch(t.Context(), server, url.Values{"q": {"needle"}, "repo": {"missing"}})
 	assert.Equal(t, http.StatusBadRequest, response.Code)
 	assert.Contains(t, response.Body.String(), "repository not found")
 }
@@ -324,14 +324,14 @@ func TestSearchEndpointMapsRepoLookupFailureToFixed500(t *testing.T) {
 	t.Cleanup(func() { _ = server.Close() })
 
 	// An unknown repository keeps the fixed 400 response.
-	response := executeSearch(server, url.Values{"q": {"needle"}, "repo": {"missing"}})
+	response := executeSearch(t.Context(), server, url.Values{"q": {"needle"}, "repo": {"missing"}})
 	require.Equal(http.StatusBadRequest, response.Code)
 	assert.Contains(response.Body.String(), "repository not found")
 
 	// Storage failures behind the repository lookup are logged server-side
 	// and reported as a fixed 500 without leaking database details.
 	require.NoError(db.Close())
-	response = executeSearch(server, url.Values{"q": {"needle"}, "repo": {"/src/example"}})
+	response = executeSearch(t.Context(), server, url.Values{"q": {"needle"}, "repo": {"/src/example"}})
 	require.Equal(http.StatusInternalServerError, response.Code)
 	assert.Contains(response.Body.String(), "repository lookup failed")
 	assert.NotContains(response.Body.String(), "sql: database is closed")
@@ -366,14 +366,14 @@ func TestSearchEndpointPreservesResponseAndEmptyHits(t *testing.T) {
 	searcher := &recordingReviewSearcher{result: want}
 	server := newSearchHTTPServer(t, searcher)
 
-	response := executeSearch(server, url.Values{"q": {"needle"}})
+	response := executeSearch(t.Context(), server, url.Values{"q": {"needle"}})
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	var got SearchResponse
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &got))
 	assert.Equal(t, searchResponseFromResult(want), got)
 
 	searcher.result = searchindex.SearchResult{Query: "absent", Mode: searchindex.ModeLexical}
-	response = executeSearch(server, url.Values{"q": {"absent"}})
+	response = executeSearch(t.Context(), server, url.Values{"q": {"absent"}})
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &raw))
@@ -396,7 +396,7 @@ func TestSearchEndpointMapsSanitizedModeErrors(t *testing.T) {
 				Status: tc.status, Reason: tc.reason, Err: errors.New("provider body secret-value"),
 			}}
 			server := newSearchHTTPServer(t, searcher)
-			response := executeSearch(server, url.Values{"q": {"needle"}, "mode": {"semantic"}})
+			response := executeSearch(t.Context(), server, url.Values{"q": {"needle"}, "mode": {"semantic"}})
 			assert.Equal(t, tc.status, response.Code)
 			assert.Contains(t, response.Body.String(), tc.reason)
 			assert.NotContains(t, response.Body.String(), "secret-value")
@@ -573,7 +573,7 @@ func TestSearchRejectsAmbiguousRepoName(t *testing.T) {
 	// An identity with the same spelling must not rescue an ambiguous name.
 	_, err := db.GetOrCreateRepo(filepath.Join(t.TempDir(), "identity-match"), "widgets")
 	require.NoError(t, err)
-	response := executeSearch(server, url.Values{"q": {"needle"}, "repo": {"widgets"}})
+	response := executeSearch(t.Context(), server, url.Values{"q": {"needle"}, "repo": {"widgets"}})
 	require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
 	for _, path := range paths {
 		assert.Contains(t, response.Body.String(), path)

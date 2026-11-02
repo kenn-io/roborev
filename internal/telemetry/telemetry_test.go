@@ -1,6 +1,7 @@
 package telemetry
 
 import (
+	"context"
 	"encoding/json"
 	"maps"
 	"net/http"
@@ -407,12 +408,12 @@ func TestNewReporterOrDisabledErrorFallbackAdmitsNothing(t *testing.T) {
 	reporter := NewReporterOrDisabled(Options{})
 
 	assert.False(t, reporter.Enabled())
-	recorder := postCaptureEvent((&AppOpenedLimiter{}).Handler(reporter), `{"event":"app_opened"}`)
+	recorder := postCaptureEvent(t.Context(), (&AppOpenedLimiter{}).Handler(reporter), `{"event":"app_opened"}`)
 	assert.Equal(t, http.StatusBadRequest, recorder.Code)
 }
 
-func postCaptureEvent(handler http.Handler, body string) *httptest.ResponseRecorder {
-	request := httptest.NewRequest(http.MethodPost, "/api/telemetry/events", strings.NewReader(body))
+func postCaptureEvent(ctx context.Context, handler http.Handler, body string) *httptest.ResponseRecorder {
+	request := httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/telemetry/events", strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)

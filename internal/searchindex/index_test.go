@@ -20,7 +20,7 @@ func TestSidecarCapabilitiesAndPath(t *testing.T) {
 	assert.Equal(t, "/data/reviews.search.db", PathFor("/data/reviews.db"))
 	assert.Equal(t, "/data/reviews.sqlite.search.db", PathFor("/data/reviews.sqlite"))
 
-	ctx := context.Background()
+	ctx := t.Context()
 	index, err := Open(ctx, filepath.Join(t.TempDir(), "reviews.search.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, index.Close()) })
@@ -49,7 +49,7 @@ func TestSidecarCapabilitiesAndPath(t *testing.T) {
 }
 
 func TestFTSAndVectorSmokeUsesContentHashRevision(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index, err := Open(ctx, filepath.Join(t.TempDir(), "reviews.search.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, index.Close()) })
@@ -96,7 +96,7 @@ func TestFTSAndVectorSmokeUsesContentHashRevision(t *testing.T) {
 }
 
 func TestRecoveryRecreatesSchemaMismatchAndCleansJournalFiles(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	path := filepath.Join(t.TempDir(), "reviews.search.db")
 	index, err := Open(ctx, path)
 	require.NoError(t, err)
@@ -134,7 +134,7 @@ func TestRecoveryRecreatesSchemaMismatchAndCleansJournalFiles(t *testing.T) {
 }
 
 func TestRecoveryRecreatesStructurallyIncompleteSidecar(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	path := filepath.Join(t.TempDir(), "reviews.search.db")
 	index, err := Open(ctx, path)
 	require.NoError(t, err)
@@ -160,7 +160,7 @@ func TestRecoveryRecreatesStructurallyIncompleteSidecar(t *testing.T) {
 }
 
 func TestRecoveryRecreatesSidecarWhenFTSHasOrdinaryTableShape(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	path := filepath.Join(t.TempDir(), "reviews.search.db")
 	index, err := Open(ctx, path)
 	require.NoError(t, err)
@@ -187,7 +187,7 @@ func TestRecoveryRecreatesSidecarWhenFTSHasOrdinaryTableShape(t *testing.T) {
 }
 
 func TestRecoveryRecreatesCorruptSidecarWithoutTouchingCanonicalDatabase(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	dir := t.TempDir()
 	canonicalPath := filepath.Join(dir, "reviews.db")
 	canonical := []byte("canonical review data")
@@ -210,7 +210,7 @@ func TestRecoveryRecreatesCorruptSidecarWithoutTouchingCanonicalDatabase(t *test
 }
 
 func TestRecoveryPreservesFilesForMissingRuntimeModule(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	path := filepath.Join(t.TempDir(), "reviews.search.db")
 	original := map[string][]byte{
 		path:          []byte("valid sidecar"),
@@ -241,7 +241,7 @@ func TestRecoveryPreservesFilesForMissingRuntimeModule(t *testing.T) {
 
 func TestRecoveryPreservesFilesForOperationalSchemaValidationError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "reviews.search.db")
-	index, err := Open(context.Background(), path)
+	index, err := Open(t.Context(), path)
 	require.NoError(t, err)
 	require.NoError(t, index.Close())
 
@@ -257,14 +257,14 @@ func TestRecoveryPreservesFilesForOperationalSchemaValidationError(t *testing.T)
 
 	db, err := sql.Open(sidecarDriver, path)
 	require.NoError(t, err)
-	canceled, cancel := context.WithCancel(context.Background())
+	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
 	validationErr := validateSchema(canceled, db)
 	require.NoError(t, db.Close())
 	require.ErrorIs(t, validationErr, context.Canceled)
 
 	calls := 0
-	index, err = openWithRecovery(context.Background(), path, func(context.Context, string) (*Index, error) {
+	index, err = openWithRecovery(t.Context(), path, func(context.Context, string) (*Index, error) {
 		calls++
 		return nil, validationErr
 	})
@@ -279,7 +279,7 @@ func TestRecoveryPreservesFilesForOperationalSchemaValidationError(t *testing.T)
 }
 
 func TestRecoveryRecreatesSameColumnTablesMissingRequiredKeys(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	path := filepath.Join(t.TempDir(), "reviews.search.db")
 	index, err := Open(ctx, path)
 	require.NoError(t, err)
@@ -322,7 +322,7 @@ func TestRecoveryRecreatesSameColumnTablesMissingRequiredKeys(t *testing.T) {
 func assertSidecarWasRebuilt(t *testing.T, db *sql.DB) {
 	t.Helper()
 	var obsolete int
-	err := db.QueryRowContext(context.Background(),
+	err := db.QueryRowContext(t.Context(),
 		`SELECT count(*) FROM sqlite_master WHERE name = 'obsolete_sidecar_data'`).Scan(&obsolete)
 	require.NoError(t, err)
 	assert.Zero(t, obsolete)

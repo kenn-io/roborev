@@ -14,7 +14,7 @@ import (
 )
 
 func TestCapabilityProbesRefreshAfterUpgrade(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	probes := map[string]func(context.Context, string) (bool, error){
 		"claude dangerous": claudeSupportsDangerousFlag,
 		"claude effort": func(ctx context.Context, command string) (bool, error) {
@@ -90,7 +90,7 @@ func TestCapabilityProbeRefreshesResolvedExecutable(t *testing.T) {
 				command = filepath.Base(oldCommand)
 				t.Setenv("PATH", filepath.Dir(oldCommand))
 			}
-			supported, err := copilotSupportsJSONOutput(context.Background(), command)
+			supported, err := copilotSupportsJSONOutput(t.Context(), command)
 			require.NoError(t, err)
 			assert.False(t, supported)
 			switch change {
@@ -108,11 +108,11 @@ func TestCapabilityProbeRefreshesResolvedExecutable(t *testing.T) {
 				t.Setenv("PATH", filepath.Dir(newCommand))
 			case "missing":
 				require.NoError(t, os.Remove(oldCommand))
-				_, err := copilotSupportsJSONOutput(context.Background(), command)
+				_, err := copilotSupportsJSONOutput(t.Context(), command)
 				require.Error(t, err)
 				return
 			}
-			supported, err = copilotSupportsJSONOutput(context.Background(), command)
+			supported, err = copilotSupportsJSONOutput(t.Context(), command)
 			require.NoError(t, err)
 			assert.True(t, supported)
 		})

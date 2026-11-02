@@ -51,7 +51,7 @@ func TestIntegration_SetupFinishedAfterSyncPull(t *testing.T) { //nolint:paralle
 	server.searchReconciler = reconciler
 	claimAttempts := setupclaim.InstallCounter(t, db.DB)
 	var path string
-	require.NoError(t, db.QueryRow(`SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&path))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&path))
 	claimDB, err := storage.Open(path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, claimDB.Close()) })

@@ -21,7 +21,7 @@ func TestBackfillSourceMachineID(t *testing.T) {
 
 	// Verify source_machine_id is initially NULL (simulating legacy data)
 	var sourceMachineID sql.Null[uuid.UUID]
-	err := h.db.QueryRow(`SELECT source_machine_id FROM review_jobs WHERE id = ?`, job.ID).Scan(&sourceMachineID)
+	err := h.db.QueryRowContext(t.Context(), `SELECT source_machine_id FROM review_jobs WHERE id = ?`, job.ID).Scan(&sourceMachineID)
 	require.NoError(t, err, "Query failed")
 	// After migration, backfill runs automatically, so it may already have a value
 	// Let's clear it to test the backfill
@@ -33,7 +33,7 @@ func TestBackfillSourceMachineID(t *testing.T) {
 
 	// Verify source_machine_id is now set
 	var newSourceMachineID uuid.UUID
-	err = h.db.QueryRow(`SELECT source_machine_id FROM review_jobs WHERE id = ?`, job.ID).Scan(&newSourceMachineID)
+	err = h.db.QueryRowContext(t.Context(), `SELECT source_machine_id FROM review_jobs WHERE id = ?`, job.ID).Scan(&newSourceMachineID)
 	require.NoError(t, err, "Query after backfill failed")
 
 	machineID, _ := h.db.GetMachineID()
@@ -48,8 +48,8 @@ func TestBackfillRepoIdentities_UpdatesDefaultNames(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	for _, custom := range []bool{false, true} {
 		root := filepath.Join(t.TempDir(), "feature-checkout")
-		require.NoError(t, exec.Command("git", "init", root).Run())
-		require.NoError(t, exec.Command("git", "-C", root, "remote", "add", "origin", "https://example.com/team/project-a.git").Run())
+		require.NoError(t, exec.CommandContext(t.Context(), "git", "init", root).Run())
+		require.NoError(t, exec.CommandContext(t.Context(), "git", "-C", root, "remote", "add", "origin", "https://example.com/team/project-a.git").Run())
 		repo, err := db.GetOrCreateRepo(root)
 		require.NoError(t, err)
 		want := "project-a"
@@ -75,7 +75,7 @@ func TestBackfillRepoIdentities_LocalRepoFallback(t *testing.T) {
 
 	// Create a git repo without a remote configured
 	tempDir := t.TempDir()
-	cmd := exec.Command("git", "init", tempDir)
+	cmd := exec.CommandContext(t.Context(), "git", "init", tempDir)
 	if err := cmd.Run(); err != nil {
 		t.Skipf("git init failed (git not available?): %v", err)
 	}
@@ -95,7 +95,7 @@ func TestBackfillRepoIdentities_LocalRepoFallback(t *testing.T) {
 
 	// Verify identity was set with local: prefix
 	var identity string
-	err = db.QueryRow(`SELECT identity FROM repos WHERE id = ?`, repo.ID).Scan(&identity)
+	err = db.QueryRowContext(t.Context(), `SELECT identity FROM repos WHERE id = ?`, repo.ID).Scan(&identity)
 	require.NoError(t, err, "Query identity failed: %v")
 
 	expectedPrefix := "local:"
@@ -127,7 +127,7 @@ func TestBackfillRepoIdentities_SkipsNonGitRepos(t *testing.T) {
 
 	// Verify identity is set to local:// prefix
 	var identity sql.NullString
-	err = db.QueryRow(`SELECT identity FROM repos WHERE id = ?`, repo.ID).Scan(&identity)
+	err = db.QueryRowContext(t.Context(), `SELECT identity FROM repos WHERE id = ?`, repo.ID).Scan(&identity)
 	require.NoError(t, err, "Query identity failed: %v")
 
 	assert.False(t, !identity.Valid || !strings.HasPrefix(identity.String, "local://"))
@@ -154,7 +154,7 @@ func TestBackfillRepoIdentities_SkipsReposWithIdentity(t *testing.T) {
 
 	// Verify identity unchanged
 	var identity string
-	err = db.QueryRow(`SELECT identity FROM repos WHERE id = ?`, repo.ID).Scan(&identity)
+	err = db.QueryRowContext(t.Context(), `SELECT identity FROM repos WHERE id = ?`, repo.ID).Scan(&identity)
 	require.NoError(t, err, "Query identity failed: %v")
 
 	assert.Equal(t, "https://github.com/user/existing.git", identity)
@@ -167,13 +167,13 @@ func TestBackfillRepoIdentities_SkipsMissingPaths(t *testing.T) {
 
 	// Create a repo pointing to a non-existent path (subpath of temp dir that doesn't exist)
 	nonExistentPath := filepath.ToSlash(filepath.Join(t.TempDir(), "this-subdir-does-not-exist", "nested"))
-	_, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, NULL)`,
+	_, err := db.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity) VALUES (?, ?, NULL)`,
 		nonExistentPath, "missing-repo")
 	require.NoError(t, err, "Insert repo failed: %v")
 
 	// Get the repo ID
 	var repoID int64
-	err = db.QueryRow(`SELECT id FROM repos WHERE root_path = ?`, nonExistentPath).Scan(&repoID)
+	err = db.QueryRowContext(t.Context(), `SELECT id FROM repos WHERE root_path = ?`, nonExistentPath).Scan(&repoID)
 	require.NoError(t, err, "Get repo ID failed: %v")
 
 	// Backfill should still set a local:// identity for missing paths
@@ -185,7 +185,7 @@ func TestBackfillRepoIdentities_SkipsMissingPaths(t *testing.T) {
 
 	// Verify identity is set to local:// prefix
 	var identity sql.NullString
-	err = db.QueryRow(`SELECT identity FROM repos WHERE id = ?`, repoID).Scan(&identity)
+	err = db.QueryRowContext(t.Context(), `SELECT identity FROM repos WHERE id = ?`, repoID).Scan(&identity)
 	require.NoError(t, err, "Query identity failed: %v")
 
 	assert.False(t, !identity.Valid || !strings.HasPrefix(identity.String, "local://"))
@@ -205,7 +205,7 @@ func TestUpsertPulledJob_BackfillsModel(t *testing.T) {
 	// Insert a job with NULL model using EnqueueJob (which sets model to empty string by default)
 	// We need to directly insert with NULL model to test the COALESCE behavior
 	jobUUID := testUUID("test-uuid-backfill-" + time.Now().Format("20060102150405"))
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		INSERT INTO review_jobs (uuid, repo_id, git_ref, agent, status, enqueued_at)
 		VALUES (?, ?, 'HEAD', 'test-agent', 'done', datetime('now'))
 	`, jobUUID, repo.ID)
@@ -213,7 +213,7 @@ func TestUpsertPulledJob_BackfillsModel(t *testing.T) {
 
 	// Verify model is NULL
 	var modelBefore sql.NullString
-	err = db.QueryRow(`SELECT model FROM review_jobs WHERE uuid = ?`, jobUUID).Scan(&modelBefore)
+	err = db.QueryRowContext(t.Context(), `SELECT model FROM review_jobs WHERE uuid = ?`, jobUUID).Scan(&modelBefore)
 	require.NoError(t, err, "Failed to query model before: %v")
 
 	assert.False(t, modelBefore.Valid)
@@ -235,7 +235,7 @@ func TestUpsertPulledJob_BackfillsModel(t *testing.T) {
 
 	// Verify model was backfilled
 	var modelAfter sql.NullString
-	err = db.QueryRow(`SELECT model FROM review_jobs WHERE uuid = ?`, jobUUID).Scan(&modelAfter)
+	err = db.QueryRowContext(t.Context(), `SELECT model FROM review_jobs WHERE uuid = ?`, jobUUID).Scan(&modelAfter)
 	require.NoError(t, err, "Failed to query model after: %v")
 
 	if !modelAfter.Valid {
@@ -251,7 +251,7 @@ func TestUpsertPulledJob_BackfillsModel(t *testing.T) {
 	require.NoError(t, err, "UpsertPulledJob (empty model) failed: %v")
 
 	var modelCleared sql.NullString
-	err = db.QueryRow(`SELECT model FROM review_jobs WHERE uuid = ?`, jobUUID).Scan(&modelCleared)
+	err = db.QueryRowContext(t.Context(), `SELECT model FROM review_jobs WHERE uuid = ?`, jobUUID).Scan(&modelCleared)
 	require.NoError(t, err, "Failed to query model cleared: %v")
 	assert.False(t, modelCleared.Valid)
 }
@@ -361,7 +361,7 @@ func TestUpsertPulledJob_TerminalRerunClearsStaleCost(t *testing.T) {
 
 	tokenUsage := func() string {
 		var tu string
-		require.NoError(t, db.QueryRow(
+		require.NoError(t, db.QueryRowContext(t.Context(),
 			`SELECT COALESCE(token_usage, '') FROM review_jobs WHERE uuid = ?`, jobUUID).Scan(&tu))
 		return tu
 	}
@@ -410,7 +410,7 @@ func TestUpsertPulledJob_PreservesWorktreePath(t *testing.T) {
 
 	// Verify worktree_path was stored
 	var wt string
-	err = db.QueryRow(
+	err = db.QueryRowContext(t.Context(),
 		`SELECT COALESCE(worktree_path, '') FROM review_jobs WHERE uuid = ?`, jobUUID,
 	).Scan(&wt)
 	require.NoError(t, err)
@@ -421,7 +421,7 @@ func TestUpsertPulledJob_PreservesWorktreePath(t *testing.T) {
 	err = db.UpsertPulledJob(pulledJob, repo.ID, nil)
 	require.NoError(t, err)
 
-	err = db.QueryRow(
+	err = db.QueryRowContext(t.Context(),
 		`SELECT COALESCE(worktree_path, '') FROM review_jobs WHERE uuid = ?`, jobUUID,
 	).Scan(&wt)
 	require.NoError(t, err)
@@ -451,14 +451,14 @@ func TestUpsertPulledJob_PreservesSource(t *testing.T) {
 	require.NoError(t, db.UpsertPulledJob(pulledJob, repo.ID, nil))
 
 	var source string
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(t.Context(),
 		`SELECT COALESCE(source, '') FROM review_jobs WHERE uuid = ?`, jobUUID,
 	).Scan(&source))
 	assert.Equal(t, JobSourceCI, source)
 
 	pulledJob.Source = ""
 	require.NoError(t, db.UpsertPulledJob(pulledJob, repo.ID, nil))
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(t.Context(),
 		`SELECT COALESCE(source, '') FROM review_jobs WHERE uuid = ?`, jobUUID,
 	).Scan(&source))
 	assert.Equal(t, JobSourceCI, source)
@@ -497,7 +497,7 @@ func TestUpsertPulledJob_ClearsModelAndProviderFields(t *testing.T) {
 	require.NoError(t, db.UpsertPulledJob(pulledJob, repo.ID, nil))
 
 	var model, provider, requestedModel, requestedProvider *string
-	err = db.QueryRow(`SELECT model, provider, requested_model, requested_provider FROM review_jobs WHERE uuid = ?`, jobUUID).Scan(&model, &provider, &requestedModel, &requestedProvider)
+	err = db.QueryRowContext(t.Context(), `SELECT model, provider, requested_model, requested_provider FROM review_jobs WHERE uuid = ?`, jobUUID).Scan(&model, &provider, &requestedModel, &requestedProvider)
 	require.NoError(t, err)
 	assert.Nil(t, model)
 	assert.Nil(t, provider)

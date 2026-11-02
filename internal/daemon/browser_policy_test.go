@@ -25,17 +25,17 @@ func testBrowserPolicy(t *testing.T, authentication string) BrowserPolicy {
 func TestBrowserPolicyValidatesExactHostAndOrigin(t *testing.T) {
 	policy := testBrowserPolicy(t, "token")
 	for _, host := range []string{"127.0.0.1:7374", "reviews.example.com", "127.0.0.1:5173", "REVIEWS.EXAMPLE.COM"} {
-		req := httptest.NewRequest("GET", "http://example.invalid/", nil)
+		req := httptest.NewRequestWithContext(t.Context(), "GET", "http://example.invalid/", nil)
 		req.Host = host
 		require.NoError(t, policy.ValidateHost(req), host)
 	}
 	for _, host := range []string{"", "reviews.example.com.attacker.test", "user@reviews.example.com", "reviews.example.com:bad"} {
-		req := httptest.NewRequest("GET", "http://example.invalid/", nil)
+		req := httptest.NewRequestWithContext(t.Context(), "GET", "http://example.invalid/", nil)
 		req.Host = host
 		require.Error(t, policy.ValidateHost(req), host)
 	}
 
-	req := httptest.NewRequest("POST", "http://example.invalid/", nil)
+	req := httptest.NewRequestWithContext(t.Context(), "POST", "http://example.invalid/", nil)
 	req.Header.Set("Origin", "https://reviews.example.com")
 	require.NoError(t, policy.ValidateOrigin(req))
 	for _, origin := range []string{"", "null", "https://reviews.example.com.attacker.test", "https://reviews.example.com/path"} {
@@ -46,7 +46,7 @@ func TestBrowserPolicyValidatesExactHostAndOrigin(t *testing.T) {
 
 func TestBrowserPolicyLocalSessionRequiresEveryTrustCondition(t *testing.T) {
 	policy := testBrowserPolicy(t, "local")
-	request := httptest.NewRequest("POST", "http://127.0.0.1:7374/api/ui/session/bootstrap", nil)
+	request := httptest.NewRequestWithContext(t.Context(), "POST", "http://127.0.0.1:7374/api/ui/session/bootstrap", nil)
 	request.Host = "127.0.0.1:7374"
 	request.RemoteAddr = "127.0.0.1:50000"
 	request.Header.Set("Origin", "http://127.0.0.1:5173")
@@ -63,7 +63,7 @@ func TestBrowserPolicyLocalSessionRequiresEveryTrustCondition(t *testing.T) {
 		func(req *httpRequest) { req.Header.Set("X-Forwarded-For", "192.0.2.1") },
 	}
 	for _, mutate := range mutations {
-		req := httptest.NewRequest("POST", "http://127.0.0.1:7374/", nil)
+		req := httptest.NewRequestWithContext(t.Context(), "POST", "http://127.0.0.1:7374/", nil)
 		req.Host = request.Host
 		req.RemoteAddr = request.RemoteAddr
 		req.Header = request.Header.Clone()
@@ -75,7 +75,7 @@ func TestBrowserPolicyLocalSessionRequiresEveryTrustCondition(t *testing.T) {
 
 func TestBrowserPolicyProxySessionRequiresEveryTrustCondition(t *testing.T) {
 	policy := testBrowserPolicy(t, "proxy")
-	request := httptest.NewRequest("POST", "http://127.0.0.1:7374/api/ui/session/bootstrap", nil)
+	request := httptest.NewRequestWithContext(t.Context(), "POST", "http://127.0.0.1:7374/api/ui/session/bootstrap", nil)
 	request.Host = "reviews.example.com"
 	request.RemoteAddr = "127.0.0.1:50000"
 	request.Header.Set("Origin", "https://reviews.example.com")

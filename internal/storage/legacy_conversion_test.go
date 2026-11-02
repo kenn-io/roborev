@@ -45,10 +45,10 @@ func seedLegacyMarkdownReview(t *testing.T, db *DB, repoID int64, name, markdown
 	t.Helper()
 	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repoID, GitRef: name, Agent: "test"})
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE review_jobs SET status = 'done' WHERE id = ?`, job.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'done' WHERE id = ?`, job.ID)
 	require.NoError(t, err)
 	fixture := legacyFixture{jobID: job.ID, markdown: markdown, verdict: verdict, closed: closed, createdAt: "2026-01-05 00:00:00"}
-	_, err = db.Exec(`INSERT INTO reviews (job_id, agent, output, created_at, updated_at, closed, verdict_bool, uuid, synced_at)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, output, created_at, updated_at, closed, verdict_bool, uuid, synced_at)
  VALUES (?, 'test', ?, ?, ?, ?, ?, ?, '2026-01-06T00:00:00Z')`,
 		job.ID, markdown, fixture.createdAt, "2026-01-05T00:00:00Z", closed, verdict, testUUID("legacy-"+name))
 	require.NoError(t, err)
@@ -59,11 +59,11 @@ func seedLegacyMarkdownReview(t *testing.T, db *DB, repoID int64, name, markdown
 // way the first JSON release did, before any automatic conversion existed.
 func archiveAsOlderRelease(t *testing.T, db *DB) {
 	t.Helper()
-	_, err := db.Exec(`INSERT INTO legacy_reviews (` + legacyReviewColumns + `, migration_error, resolved_at)
- SELECT ` + legacyReviewColumns + `, 'No valid review JSON document; AI conversion required', NULL
+	_, err := db.ExecContext(t.Context(), `INSERT INTO legacy_reviews (`+legacyReviewColumns+`, migration_error, resolved_at)
+ SELECT `+legacyReviewColumns+`, 'No valid review JSON document; AI conversion required', NULL
  FROM reviews WHERE structured_output IS NULL`)
 	require.NoError(t, err)
-	_, err = db.Exec(`DELETE FROM reviews WHERE structured_output IS NULL`)
+	_, err = db.ExecContext(t.Context(), `DELETE FROM reviews WHERE structured_output IS NULL`)
 	require.NoError(t, err)
 }
 
@@ -77,7 +77,7 @@ type storedLegacyReview struct {
 func readStoredReview(t *testing.T, db *DB, jobID int64) storedLegacyReview {
 	t.Helper()
 	var got storedLegacyReview
-	require.NoError(t, db.QueryRow(`SELECT output, COALESCE(structured_output, ''), created_at, updated_at, closed, verdict_bool, synced_at
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT output, COALESCE(structured_output, ''), created_at, updated_at, closed, verdict_bool, synced_at
  FROM reviews WHERE job_id = ?`, jobID).Scan(&got.output, &got.document, &got.createdAt, &got.updatedAt, &got.closed, &got.verdict, &got.synced))
 	return got
 }
@@ -148,13 +148,13 @@ func TestUpgradeConvertsMarkdownReviewsRoborevWroteAndArchivesTheRest(t *testing
 
 	t.Run("originals stay archived and a second upgrade changes nothing", func(t *testing.T) {
 		var archived int
-		require.NoError(t, env.db.QueryRow(`SELECT count(*) FROM legacy_reviews WHERE resolved_at IS NOT NULL AND output != ''`).Scan(&archived))
+		require.NoError(t, env.db.QueryRowContext(t.Context(), `SELECT count(*) FROM legacy_reviews WHERE resolved_at IS NOT NULL AND output != ''`).Scan(&archived))
 		assert.Equal(t, 4, archived)
 		before := readStoredReview(t, env.db, findings.jobID)
 		require.NoError(t, env.db.migrateLegacyReviews())
 		assert.Equal(t, before, readStoredReview(t, env.db, findings.jobID))
 		var rows int
-		require.NoError(t, env.db.QueryRow(`SELECT count(*) FROM legacy_reviews`).Scan(&rows))
+		require.NoError(t, env.db.QueryRowContext(t.Context(), `SELECT count(*) FROM legacy_reviews`).Scan(&rows))
 		assert.Equal(t, 5, rows)
 	})
 
@@ -220,14 +220,14 @@ func TestConvertLegacyReviewsRestoresArchivedReviews(t *testing.T) {
 		require.ErrorIs(t, err, ErrLegacyReviewMigration, "refused reviews stay archived")
 	}
 	var original string
-	require.NoError(t, env.db.QueryRow(`SELECT output FROM legacy_reviews WHERE job_id = ?`, findings.jobID).Scan(&original))
+	require.NoError(t, env.db.QueryRowContext(t.Context(), `SELECT output FROM legacy_reviews WHERE job_id = ?`, findings.jobID).Scan(&original))
 	assert.Equal(t, legacyFindingsMarkdown, original, "the original stays archived")
 
 	again, err := env.db.ConvertLegacyReviews(false)
 	require.NoError(t, err)
 	assert.Equal(t, LegacyConversionReport{Unresolved: 3, Converted: 0, Refused: wantRefused}, again, "a second run has nothing new to convert")
 	var active int
-	require.NoError(t, env.db.QueryRow(`SELECT count(*) FROM reviews WHERE job_id IN (?, ?)`, findings.jobID, clean.jobID).Scan(&active))
+	require.NoError(t, env.db.QueryRowContext(t.Context(), `SELECT count(*) FROM reviews WHERE job_id IN (?, ?)`, findings.jobID, clean.jobID).Scan(&active))
 	assert.Equal(t, 2, active, "a second run does not duplicate restored reviews")
 }
 
@@ -236,7 +236,7 @@ func TestConvertLegacyReviewsLeavesAJobWithAnActiveReviewAlone(t *testing.T) {
 	env := setupJobEnv(t, "/tmp/legacy-active", "active-head")
 	archived := seedLegacyMarkdownReview(t, env.db, env.repo.ID, "rerun", legacyNoIssuesMarkdown, 1, false)
 	archiveAsOlderRelease(t, env.db)
-	_, err := env.db.Exec(`INSERT INTO reviews (job_id, agent, output, structured_output, uuid) VALUES (?, 'test', '', ?, ?)`,
+	_, err := env.db.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, output, structured_output, uuid) VALUES (?, 'test', '', ?, ?)`,
 		archived.jobID, `{"schema_version":2,"summary":"Reviewed again.","verdict":"pass","findings":[]}`, testUUID("rerun-review"))
 	require.NoError(t, err)
 
@@ -256,7 +256,7 @@ func seedLegacyPanel(t *testing.T, env jobEnv, name string) int64 {
 	runID := testUUID("legacy-panel-" + name)
 	synthesis, err := env.db.EnqueueJob(EnqueueOpts{RepoID: env.repo.ID, GitRef: name, Agent: "test", PanelRunUUID: &runID, PanelRole: PanelRoleSynthesis})
 	require.NoError(t, err)
-	_, err = env.db.Exec(`UPDATE review_jobs SET job_type = 'synthesis', status = 'done' WHERE id = ?`, synthesis.ID)
+	_, err = env.db.ExecContext(t.Context(), `UPDATE review_jobs SET job_type = 'synthesis', status = 'done' WHERE id = ?`, synthesis.ID)
 	require.NoError(t, err)
 	for i, reviewType := range []string{"security", "design"} {
 		member, err := env.db.EnqueueJob(EnqueueOpts{
@@ -264,9 +264,9 @@ func seedLegacyPanel(t *testing.T, env jobEnv, name string) int64 {
 			PanelRunUUID: &runID, PanelRole: PanelRoleMember, PanelMemberIndex: i,
 		})
 		require.NoError(t, err)
-		_, err = env.db.Exec(`UPDATE review_jobs SET status = 'done' WHERE id = ?`, member.ID)
+		_, err = env.db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'done' WHERE id = ?`, member.ID)
 		require.NoError(t, err)
-		_, err = env.db.Exec(`INSERT INTO reviews (job_id, agent, output, structured_output, uuid) VALUES (?, 'test', '', ?, ?)`,
+		_, err = env.db.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, output, structured_output, uuid) VALUES (?, 'test', '', ?, ?)`,
 			member.ID, `{"schema_version":2,"summary":"Clean change.","verdict":"pass","findings":[]}`, testUUID(fmt.Sprintf("%s-member-%d", name, i)))
 		require.NoError(t, err)
 	}
@@ -277,7 +277,7 @@ func TestConvertLegacySynthesisReviews(t *testing.T) {
 	t.Parallel()
 	env := setupJobEnv(t, "/tmp/legacy-synthesis-convert", "synthesis-convert-head")
 	insert := func(jobID int64, name, markdown string, verdict int) {
-		_, err := env.db.Exec(`INSERT INTO reviews (job_id, agent, output, verdict_bool, uuid) VALUES (?, 'test', ?, ?, ?)`,
+		_, err := env.db.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, output, verdict_bool, uuid) VALUES (?, 'test', ?, ?, ?)`,
 			jobID, markdown, verdict, testUUID("synthesis-"+name))
 		require.NoError(t, err)
 	}
@@ -297,10 +297,10 @@ func TestConvertLegacySynthesisReviews(t *testing.T) {
 	require.NoError(t, env.db.migrateLegacyReviews())
 
 	var document string
-	require.NoError(t, env.db.QueryRow(`SELECT structured_output FROM reviews WHERE job_id = ?`, clean).Scan(&document))
+	require.NoError(t, env.db.QueryRowContext(t.Context(), `SELECT structured_output FROM reviews WHERE job_id = ?`, clean).Scan(&document))
 	assert.JSONEq(t, `{"schema_version":3,"summary":"No issues found.","findings":[],"source_labels":["test (security)","test (design)"]}`, document)
 
-	require.NoError(t, env.db.QueryRow(`SELECT structured_output FROM reviews WHERE job_id = ?`, attributed).Scan(&document))
+	require.NoError(t, env.db.QueryRowContext(t.Context(), `SELECT structured_output FROM reviews WHERE job_id = ?`, attributed).Scan(&document))
 	doc, err := structuredreview.Decode(jsontext.Value(document))
 	require.NoError(t, err)
 	require.Len(t, doc.Findings, 1)
@@ -309,7 +309,7 @@ func TestConvertLegacySynthesisReviews(t *testing.T) {
 	_, err = env.db.GetReviewByJobID(unattributed)
 	require.ErrorIs(t, err, ErrLegacyReviewMigration)
 	var reason string
-	require.NoError(t, env.db.QueryRow(`SELECT migration_error FROM legacy_reviews WHERE job_id = ? AND resolved_at IS NULL`, unattributed).Scan(&reason))
+	require.NoError(t, env.db.QueryRowContext(t.Context(), `SELECT migration_error FROM legacy_reviews WHERE job_id = ? AND resolved_at IS NULL`, unattributed).Scan(&reason))
 	assert.Contains(t, reason, "automatic conversion refused (unrecoverable_sources)")
 }
 
@@ -336,7 +336,7 @@ func TestConvertedReviewIsNotOverwrittenByAMarkdownOnlyPeer(t *testing.T) {
 
 	assert.Equal(t, before, readStoredReview(t, env.db, fixture.jobID))
 	var rows int
-	require.NoError(t, env.db.QueryRow(`SELECT count(*) FROM reviews WHERE job_id = ?`, fixture.jobID).Scan(&rows))
+	require.NoError(t, env.db.QueryRowContext(t.Context(), `SELECT count(*) FROM reviews WHERE job_id = ?`, fixture.jobID).Scan(&rows))
 	assert.Equal(t, 1, rows)
 }
 

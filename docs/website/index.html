@@ -96,7 +96,7 @@
           <pre><code><span class="ps1">$</span> <span class="cmd">roborev init</span>
 <span class="out">Ready! Every commit will now be automatically reviewed.</span>
 <span class="ps1">$</span> <span class="cmd">git commit -m "Add retry to payment webhook"</span>
-<span class="ps1">$</span> <span class="cmd">roborev show HEAD</span>                   <span class="out"># later, whenever you want it</span>
+<span class="ps1">$</span> <span class="cmd">roborev job show HEAD</span>                   <span class="out"># later, whenever you want it</span>
 <span class="out">Review for 8f2c1a0 (job 214, by codex)</span>
 <span class="out">------------------------------------------------------------</span>
 <span class="out">## Review Findings</span>
@@ -145,7 +145,7 @@
           <article class="proof">
             <p class="proof-tag">Layer 2 · agent hook</p>
             <h3>The fix comes back to the session.</h3>
-            <p><code>roborev agent-hook install</code> wires Claude Code, Codex, Copilot CLI, Cursor, Factory Droid, Gemini CLI, Hermes, and Qwen. After a configurable number of turns, commits, or failed reviews, the agent is told which reviews to fix, by ID, and told to verify and close them.</p>
+            <p><code>roborev agent hook install</code> wires Claude Code, Codex, Copilot CLI, Cursor, Factory Droid, Gemini CLI, Hermes, and Qwen. After a configurable number of turns, commits, or failed reviews, the agent is told which reviews to fix, by ID, and told to verify and close them.</p>
           </article>
           <article class="proof">
             <p class="proof-tag">Skills</p>
@@ -258,7 +258,7 @@
           <article class="proof">
             <p class="proof-tag">Verification</p>
             <h3>False positives get dropped before anyone reads them.</h3>
-            <p><code>roborev compact</code> re-checks open findings against the current code, drops the ones that no longer hold, and consolidates the rest into a single review before anyone spends time on them.</p>
+            <p><code>roborev job compact</code> re-checks open findings against the current code, drops the ones that no longer hold, and consolidates the rest into a single review before anyone spends time on them.</p>
           </article>
         </div>
       </section>
@@ -307,7 +307,7 @@
           <article class="proof">
             <p class="proof-tag">Analytics</p>
             <h3>Cost, latency, reliability, outcomes.</h3>
-            <p>Filter by project, source, agent, model, or time range, with the filters encoded in the URL so a view can be shared. <code>roborev cost</code>, <code>summary</code>, and <code>insights</code> give the same numbers on the command line.</p>
+            <p>Filter by project, source, agent, model, or time range, with the filters encoded in the URL so a view can be shared. <code>roborev report cost</code>, <code>roborev report summary</code>, and <code>roborev report insights</code> give the same numbers on the command line.</p>
           </article>
           <article class="proof">
             <p class="proof-tag">Exports</p>

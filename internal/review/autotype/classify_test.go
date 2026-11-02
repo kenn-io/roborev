@@ -23,7 +23,7 @@ func (s stubClassifier) Decide(ctx context.Context, in Input) (bool, string, err
 func newTestHeuristics() Heuristics { return DefaultHeuristics() }
 
 func TestClassify_TriggerPath(t *testing.T) {
-	d, err := Classify(context.Background(), Input{
+	d, err := Classify(t.Context(), Input{
 		ChangedFiles: []string{"db/migrations/001.sql"},
 		Diff:         "+CREATE TABLE foo (\n",
 		Message:      "feat: add foo table",
@@ -35,7 +35,7 @@ func TestClassify_TriggerPath(t *testing.T) {
 }
 
 func TestClassify_TriggerLargeDiff(t *testing.T) {
-	d, err := Classify(context.Background(), Input{
+	d, err := Classify(t.Context(), Input{
 		ChangedFiles: []string{"src/foo.go"},
 		Diff:         strings.Repeat("+newline\n", 600),
 		Message:      "feat: expand",
@@ -51,7 +51,7 @@ func TestClassify_TriggerFileCount(t *testing.T) {
 	for i := range files {
 		files[i] = "src/f" + string(rune('a'+i)) + ".go"
 	}
-	d, err := Classify(context.Background(), Input{
+	d, err := Classify(t.Context(), Input{
 		ChangedFiles: files,
 		Diff:         "+x\n+y\n",
 		Message:      "feat: spread",
@@ -62,7 +62,7 @@ func TestClassify_TriggerFileCount(t *testing.T) {
 }
 
 func TestClassify_TriggerMessage(t *testing.T) {
-	d, err := Classify(context.Background(), Input{
+	d, err := Classify(t.Context(), Input{
 		ChangedFiles: []string{"src/foo.go"},
 		Diff:         "+x\n+y\n+z\n+a\n+b\n+c\n+d\n+e\n+f\n+g\n+h\n+i\n+j\n+k\n+l\n+m\n",
 		Message:      "refactor: split auth module",
@@ -73,7 +73,7 @@ func TestClassify_TriggerMessage(t *testing.T) {
 }
 
 func TestClassify_SkipTrivialDiff(t *testing.T) {
-	d, err := Classify(context.Background(), Input{
+	d, err := Classify(t.Context(), Input{
 		ChangedFiles: []string{"src/foo.go"},
 		Diff:         "+x\n",
 		Message:      "fix: oneliner",
@@ -85,7 +85,7 @@ func TestClassify_SkipTrivialDiff(t *testing.T) {
 }
 
 func TestClassify_SkipAllMatchPaths(t *testing.T) {
-	d, err := Classify(context.Background(), Input{
+	d, err := Classify(t.Context(), Input{
 		ChangedFiles: []string{"README.md", "CHANGELOG.md"},
 		Diff:         strings.Repeat("+line\n", 30),
 		Message:      "feat: new section",
@@ -96,7 +96,7 @@ func TestClassify_SkipAllMatchPaths(t *testing.T) {
 }
 
 func TestClassify_SkipMessage(t *testing.T) {
-	d, err := Classify(context.Background(), Input{
+	d, err := Classify(t.Context(), Input{
 		ChangedFiles: []string{"src/foo.go"},
 		Diff:         strings.Repeat("+line\n", 30),
 		Message:      "chore: bump go.mod",
@@ -107,7 +107,7 @@ func TestClassify_SkipMessage(t *testing.T) {
 }
 
 func TestClassify_TriggerPathBeatsSkipMessage(t *testing.T) {
-	d, err := Classify(context.Background(), Input{
+	d, err := Classify(t.Context(), Input{
 		ChangedFiles: []string{"docs/superpowers/specs/new-spec.md"},
 		Diff:         "+# Spec\n+body\n+more\n+more\n+more\n+more\n+more\n+more\n+more\n+more\n+more\n",
 		Message:      "docs: add spec",
@@ -118,7 +118,7 @@ func TestClassify_TriggerPathBeatsSkipMessage(t *testing.T) {
 }
 
 func TestClassify_ClassifierYes(t *testing.T) {
-	d, err := Classify(context.Background(), Input{
+	d, err := Classify(t.Context(), Input{
 		ChangedFiles: []string{"src/foo.go"},
 		Diff:         strings.Repeat("+line\n", 50),
 		Message:      "feat: revise API",
@@ -130,7 +130,7 @@ func TestClassify_ClassifierYes(t *testing.T) {
 }
 
 func TestClassify_ClassifierNo(t *testing.T) {
-	d, err := Classify(context.Background(), Input{
+	d, err := Classify(t.Context(), Input{
 		ChangedFiles: []string{"src/foo.go"},
 		Diff:         strings.Repeat("+line\n", 50),
 		Message:      "feat: rename var",
@@ -142,7 +142,7 @@ func TestClassify_ClassifierNo(t *testing.T) {
 }
 
 func TestClassify_ClassifierNilWhenAmbiguous(t *testing.T) {
-	_, err := Classify(context.Background(), Input{
+	_, err := Classify(t.Context(), Input{
 		ChangedFiles: []string{"src/foo.go"},
 		Diff:         strings.Repeat("+line\n", 50),
 		Message:      "feat: rename var",
@@ -152,7 +152,7 @@ func TestClassify_ClassifierNilWhenAmbiguous(t *testing.T) {
 
 func TestClassify_HeuristicReasonSanitized(t *testing.T) {
 	// File path with control chars + newline — must not survive into Reason.
-	d, err := Classify(context.Background(), Input{
+	d, err := Classify(t.Context(), Input{
 		ChangedFiles: []string{"db/migrations/001\x07evil\nfoo.sql"},
 		Diff:         "+x\n",
 		Message:      "feat: x",
@@ -165,7 +165,7 @@ func TestClassify_HeuristicReasonSanitized(t *testing.T) {
 
 func TestClassify_HeuristicReasonCappedLength(t *testing.T) {
 	huge := "db/migrations/" + strings.Repeat("a", 1000) + ".sql"
-	d, err := Classify(context.Background(), Input{
+	d, err := Classify(t.Context(), Input{
 		ChangedFiles: []string{huge},
 		Diff:         "+x\n",
 		Message:      "feat: x",
@@ -176,7 +176,7 @@ func TestClassify_HeuristicReasonCappedLength(t *testing.T) {
 }
 
 func TestClassify_ClassifierError(t *testing.T) {
-	_, err := Classify(context.Background(), Input{
+	_, err := Classify(t.Context(), Input{
 		ChangedFiles: []string{"src/foo.go"},
 		Diff:         strings.Repeat("+line\n", 50),
 		Message:      "feat: rename var",

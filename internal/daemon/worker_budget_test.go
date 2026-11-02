@@ -136,13 +136,13 @@ func TestProcessJobBudgetSelection(t *testing.T) {
 			ctx.reconfigurePool(cfg)
 			prior, err := ctx.DB.EnqueueJob(storage.EnqueueOpts{RepoID: ctx.Repo.ID, GitRef: "HEAD", Agent: "test"})
 			require.NoError(t, err)
-			_, err = ctx.DB.Exec(`UPDATE review_jobs SET status='done',started_at=?,finished_at=?,agent_invoked=1,token_usage='{"has_cost":true,"cost_usd":5}' WHERE id=?`, time.Now().UTC().Format(time.RFC3339), time.Now().UTC().Format(time.RFC3339), prior.ID)
+			_, err = ctx.DB.ExecContext(t.Context(), `UPDATE review_jobs SET status='done',started_at=?,finished_at=?,agent_invoked=1,token_usage='{"has_cost":true,"cost_usd":5}' WHERE id=?`, time.Now().UTC().Format(time.RFC3339), time.Now().UTC().Format(time.RFC3339), prior.ID)
 			require.NoError(t, err)
 			sha := testutil.GetHeadSHA(t, ctx.TmpDir)
 			job := ctx.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
 			job.Model = "primary-model"
 			job.Provider = "primary-provider"
-			_, err = ctx.DB.Exec(`UPDATE review_jobs SET model=?,provider=? WHERE id=?`, job.Model, job.Provider, job.ID)
+			_, err = ctx.DB.ExecContext(t.Context(), `UPDATE review_jobs SET model=?,provider=? WHERE id=?`, job.Model, job.Provider, job.ID)
 			require.NoError(t, err)
 			if tc.mutate != nil {
 				tc.mutate(job)
@@ -172,7 +172,7 @@ func TestBudgetRoutingPreservesTestAgent(t *testing.T) {
 	cfg, _ := configureUnpricedBudgetRouting(t, tc)
 	job := tc.createAndClaimJobWithAgent(t, testutil.GetHeadSHA(t, tc.TmpDir), testWorkerID, "test")
 
-	selected, proceed := tc.Pool.selectBudgetJobAgent(context.Background(), testWorkerID, job, cfg)
+	selected, proceed := tc.Pool.selectBudgetJobAgent(t.Context(), testWorkerID, job, cfg)
 
 	require.True(t, proceed)
 	assert.Nil(t, selected)
@@ -204,7 +204,7 @@ func TestBudgetRoutingPreservesGoalReviewAgent(t *testing.T) {
 	prior, err := ctx.DB.EnqueueJob(storage.EnqueueOpts{RepoID: ctx.Repo.ID, GitRef: "HEAD", Agent: "test"})
 	require.NoError(t, err)
 	stamp := now.Format(time.RFC3339)
-	_, err = ctx.DB.Exec(`UPDATE review_jobs SET status='done',started_at=?,finished_at=?,agent_invoked=1,token_usage='{"has_cost":true,"cost_usd":5}' WHERE id=?`, stamp, stamp, prior.ID)
+	_, err = ctx.DB.ExecContext(t.Context(), `UPDATE review_jobs SET status='done',started_at=?,finished_at=?,agent_invoked=1,token_usage='{"has_cost":true,"cost_usd":5}' WHERE id=?`, stamp, stamp, prior.ID)
 	require.NoError(t, err)
 
 	queued, err := ctx.DB.EnqueueJob(storage.EnqueueOpts{
@@ -217,7 +217,7 @@ func TestBudgetRoutingPreservesGoalReviewAgent(t *testing.T) {
 	require.NotNil(t, job)
 	require.Equal(t, queued.ID, job.ID)
 
-	selected, proceed := ctx.Pool.selectBudgetJobAgent(context.Background(), testWorkerID, job, cfg)
+	selected, proceed := ctx.Pool.selectBudgetJobAgent(t.Context(), testWorkerID, job, cfg)
 
 	assert := assert.New(t)
 	require.True(t, proceed)
@@ -249,7 +249,7 @@ func TestBudgetRoutingRerunRestoresAgent(t *testing.T) {
 			job.Model = "primary-model"
 			job.BackupAgent = "gemini"
 			job.BackupModel = "backup-model"
-			_, err = tc.DB.Exec(`UPDATE review_jobs SET model=?,backup_agent=?,backup_model=? WHERE id=?`,
+			_, err = tc.DB.ExecContext(t.Context(), `UPDATE review_jobs SET model=?,backup_agent=?,backup_model=? WHERE id=?`,
 				job.Model, job.BackupAgent, job.BackupModel, job.ID)
 			require.NoError(t, err)
 			tc.Pool.processJob(testWorkerID, job)
@@ -340,7 +340,7 @@ func TestBudgetRoutingErrorsPreserveAgentAndIsolateLog(t *testing.T) {
 			if failure == "repo config" {
 				require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, ".roborev.toml"), []byte("invalid = ["), 0o600))
 			} else {
-				_, err := tc.DB.Exec(`CREATE TRIGGER reject_budget_selection BEFORE UPDATE OF budget_routing_locked ON review_jobs
+				_, err := tc.DB.ExecContext(t.Context(), `CREATE TRIGGER reject_budget_selection BEFORE UPDATE OF budget_routing_locked ON review_jobs
 					WHEN NEW.budget_routing_locked = 1 BEGIN SELECT RAISE(FAIL, 'budget selection unavailable'); END`)
 				require.NoError(t, err)
 			}
@@ -371,7 +371,7 @@ func TestBudgetReconciliationInvalidatesCachedSpend(t *testing.T) {
 	tc.Pool.tokenUsageFetcher = func(context.Context, string) (*tokens.Usage, error) {
 		return &tokens.Usage{HasCost: true, CostUSD: 5}, nil
 	}
-	updated, err := tc.Pool.reconcileTokenCostJob(context.Background(), job.ID)
+	updated, err := tc.Pool.reconcileTokenCostJob(t.Context(), job.ID)
 	require.NoError(t, err)
 	require.True(t, updated)
 	after, err := tc.Pool.budgetRouter.ResolveAgent("codex", nil, cfg, config.ReviewTypeDefault, nil)
@@ -404,12 +404,12 @@ func TestBudgetRoutingSkipsUnsupportedCustomReviewCandidates(t *testing.T) {
 			prior, err := ctx.DB.EnqueueJob(storage.EnqueueOpts{RepoID: ctx.Repo.ID, GitRef: "HEAD", Agent: "test"})
 			require.NoError(t, err)
 			now := time.Now().UTC().Format(time.RFC3339)
-			_, err = ctx.DB.Exec(`UPDATE review_jobs SET status='done',started_at=?,finished_at=?,agent_invoked=1,token_usage='{"has_cost":true,"cost_usd":5}' WHERE id=?`, now, now, prior.ID)
+			_, err = ctx.DB.ExecContext(t.Context(), `UPDATE review_jobs SET status='done',started_at=?,finished_at=?,agent_invoked=1,token_usage='{"has_cost":true,"cost_usd":5}' WHERE id=?`, now, now, prior.ID)
 			require.NoError(t, err)
 
 			job := ctx.createAndClaimJobWithAgent(t, testutil.GetHeadSHA(t, ctx.TmpDir), testWorkerID, "codex")
 			job.ReviewType = "custom"
-			selected, proceed := ctx.Pool.selectBudgetJobAgent(context.Background(), testWorkerID, job, cfg)
+			selected, proceed := ctx.Pool.selectBudgetJobAgent(t.Context(), testWorkerID, job, cfg)
 			require.True(t, proceed)
 			if tc.want == "" {
 				assert.Nil(t, selected)
@@ -456,7 +456,7 @@ func TestBudgetRoutingUsesLinkedWorktreeToolPolicy(t *testing.T) {
 	prior, err := ctx.DB.EnqueueJob(storage.EnqueueOpts{RepoID: ctx.Repo.ID, GitRef: "HEAD", Agent: "test"})
 	require.NoError(t, err)
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err = ctx.DB.Exec(`UPDATE review_jobs SET status='done',started_at=?,finished_at=?,agent_invoked=1,token_usage='{"has_cost":true,"cost_usd":5}' WHERE id=?`, now, now, prior.ID)
+	_, err = ctx.DB.ExecContext(t.Context(), `UPDATE review_jobs SET status='done',started_at=?,finished_at=?,agent_invoked=1,token_usage='{"has_cost":true,"cost_usd":5}' WHERE id=?`, now, now, prior.ID)
 	require.NoError(t, err)
 
 	job := ctx.createAndClaimJobWithAgent(t, testutil.GetHeadSHA(t, ctx.TmpDir), testWorkerID, "codex")
@@ -491,7 +491,7 @@ func TestBudgetRoutingPreservesConfiguredAgentAsFailover(t *testing.T) {
 	prior, err := tc.DB.EnqueueJob(storage.EnqueueOpts{RepoID: tc.Repo.ID, GitRef: "HEAD", Agent: "test"})
 	require.NoError(t, err)
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err = tc.DB.Exec(`UPDATE review_jobs SET status='done',started_at=?,finished_at=?,agent_invoked=1,token_usage='{"has_cost":true,"cost_usd":5}' WHERE id=?`, now, now, prior.ID)
+	_, err = tc.DB.ExecContext(t.Context(), `UPDATE review_jobs SET status='done',started_at=?,finished_at=?,agent_invoked=1,token_usage='{"has_cost":true,"cost_usd":5}' WHERE id=?`, now, now, prior.ID)
 	require.NoError(t, err)
 
 	job := tc.createAndClaimJobWithAgent(t, testutil.GetHeadSHA(t, tc.TmpDir), testWorkerID, "codex")
@@ -580,7 +580,7 @@ func TestBudgetRoutingInvalidatesSpendAfterUnpricedAgentCancellation(t *testing.
 
 	require.NoError(t, tc.DB.CancelJob(job.ID))
 	require.True(t, tc.Pool.CancelJob(job.ID))
-	tc.Pool.finishRunningJob(testWorkerID, job.ID)
+	tc.Pool.finishRunningJob(t.Context(), testWorkerID, job.ID)
 
 	spend, err := tc.DB.GetBudgetSpend(now)
 	require.NoError(t, err)

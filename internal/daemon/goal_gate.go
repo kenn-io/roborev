@@ -46,7 +46,7 @@ type goalGateOutput struct {
 }
 
 type goalGate struct {
-	ctx    context.Context
+	ctx    context.Context //nolint:containedctx // gate lifetime; stop cancels admitted goal reviews
 	cancel context.CancelFunc
 	mu     sync.Mutex
 	closed bool
@@ -197,11 +197,16 @@ func (s *Server) waitGoalReview(ctx context.Context, jobID int64, snapshot goalr
 	defer ticker.Stop()
 	for {
 		if err := ctx.Err(); err != nil {
-			_, cancelErr := s.humaCancelJob(context.Background(), &CancelJobInput{Body: CancelJobRequest{JobID: jobID}})
+			// The caller is gone, but its review job must still be canceled.
+			_, cancelErr := s.humaCancelJob(context.WithoutCancel(ctx), &CancelJobInput{Body: CancelJobRequest{JobID: jobID}})
 			return nil, errors.Join(err, cancelErr)
 		}
-		job, err := s.db.GetJobByID(jobID)
+		job, err := s.db.GetJobByIDContext(ctx, jobID)
 		if err != nil {
+			if ctx.Err() != nil {
+				// Cancel the review job at the top of the loop.
+				continue
+			}
 			return nil, err
 		}
 		switch job.Status {

@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -26,7 +25,7 @@ import (
 // run a rerun creates.
 func findOtherPanelRunUUID(t *testing.T, db *storage.DB, exclude uuid.UUID) uuid.UUID {
 	t.Helper()
-	rows, err := db.Query(
+	rows, err := db.QueryContext(t.Context(),
 		"SELECT DISTINCT panel_run_uuid FROM review_jobs WHERE panel_run_uuid != '' AND panel_run_uuid != ?",
 		exclude,
 	)
@@ -47,7 +46,7 @@ func findOtherPanelRunUUID(t *testing.T, db *storage.DB, exclude uuid.UUID) uuid
 // completed panel) before exercising rerun.
 func markJobStatus(t *testing.T, db *storage.DB, jobID int64, status storage.JobStatus) {
 	t.Helper()
-	_, err := db.Exec("UPDATE review_jobs SET status = ? WHERE id = ?", status, jobID)
+	_, err := db.ExecContext(t.Context(), "UPDATE review_jobs SET status = ? WHERE id = ?", status, jobID)
 	require.NoError(t, err)
 }
 
@@ -70,7 +69,7 @@ func rerunAndLoadNewRun(
 	t.Helper()
 	markPanelMembersStatus(t, db, oldUUID, storage.JobStatusDone)
 	markJobStatus(t, db, synthID, storage.JobStatusDone)
-	_, err := server.humaRerunJob(context.Background(), &RerunJobInput{
+	_, err := server.humaRerunJob(t.Context(), &RerunJobInput{
 		Body: RerunJobRequest{JobID: synthID},
 	})
 	require.NoError(t, err)
@@ -88,13 +87,13 @@ func TestRerunSynthesisRejectsNonTerminal(t *testing.T) {
 	runUUID, _, synth := enqueueServerPanelRun(t, db, 2)
 
 	// synth is queued + claim-blocked (members still pending), not terminal.
-	_, err := server.humaRerunJob(context.Background(), &RerunJobInput{
+	_, err := server.humaRerunJob(t.Context(), &RerunJobInput{
 		Body: RerunJobRequest{JobID: synth.ID},
 	})
 	require.Error(t, err, "rerunning a non-terminal synthesis must be rejected")
 
 	var count int
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(t.Context(),
 		"SELECT COUNT(DISTINCT panel_run_uuid) FROM review_jobs WHERE panel_run_uuid != ''",
 	).Scan(&count))
 	assert.Equal(t, 1, count, "rejected rerun must not create a second panel run")
@@ -107,13 +106,13 @@ func TestRerunPanelRejectsSelectedAgent(t *testing.T) {
 	markPanelMembersStatus(t, db, runUUID, storage.JobStatusDone)
 	markJobStatus(t, db, synth.ID, storage.JobStatusDone)
 
-	_, err := server.humaRerunJob(context.Background(), &RerunJobInput{
+	_, err := server.humaRerunJob(t.Context(), &RerunJobInput{
 		Body: RerunJobRequest{JobID: synth.ID, Agent: "test"},
 	})
 	require.ErrorContains(t, err, "panel synthesis jobs cannot change agents")
 
 	var count int
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(t.Context(),
 		"SELECT COUNT(DISTINCT panel_run_uuid) FROM review_jobs WHERE panel_run_uuid != ''",
 	).Scan(&count))
 	assert.Equal(t, 1, count)
@@ -126,19 +125,19 @@ func TestRerunPanelRejectsMemberStillStopping(t *testing.T) {
 	for _, member := range members {
 		markJobStatus(t, db, member.ID, storage.JobStatusCanceled)
 	}
-	_, err := db.Exec(
+	_, err := db.ExecContext(t.Context(),
 		"UPDATE review_jobs SET worker_id = ? WHERE id = ?",
 		"worker-still-stopping", members[0].ID,
 	)
 	require.NoError(t, err)
 
-	_, err = server.humaRerunJob(context.Background(), &RerunJobInput{
+	_, err = server.humaRerunJob(t.Context(), &RerunJobInput{
 		Body: RerunJobRequest{JobID: synth.ID},
 	})
 	require.ErrorContains(t, err, "still stopping")
 
 	var count int
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(t.Context(),
 		"SELECT COUNT(DISTINCT panel_run_uuid) FROM review_jobs WHERE panel_run_uuid != ''",
 	).Scan(&count))
 	assert.Equal(t, 1, count, "rejected rerun must not create a replacement panel")
@@ -157,13 +156,13 @@ func TestRerunPanelRejectsActiveMembers(t *testing.T) {
 			markJobStatus(t, db, members[0].ID, status)
 			markJobStatus(t, db, members[1].ID, storage.JobStatusDone)
 
-			_, err := server.humaRerunJob(context.Background(), &RerunJobInput{
+			_, err := server.humaRerunJob(t.Context(), &RerunJobInput{
 				Body: RerunJobRequest{JobID: synth.ID},
 			})
 			require.ErrorContains(t, err, "panel member is not rerunnable")
 
 			var count int
-			require.NoError(t, db.QueryRow(
+			require.NoError(t, db.QueryRowContext(t.Context(),
 				"SELECT COUNT(DISTINCT panel_run_uuid) FROM review_jobs WHERE panel_run_uuid != ''",
 			).Scan(&count))
 			assert.Equal(t, 1, count, "rejected rerun must not create a replacement panel")
@@ -182,7 +181,7 @@ func TestRerunPanelAllowsCompletedClaimedMember(t *testing.T) {
 	require.NoError(t, testutil.CompleteReviewFixture(db, claimed.ID, "test", "prompt", "P"))
 	markJobStatus(t, db, synth.ID, storage.JobStatusDone)
 
-	_, err = server.humaRerunJob(context.Background(), &RerunJobInput{
+	_, err = server.humaRerunJob(t.Context(), &RerunJobInput{
 		Body: RerunJobRequest{JobID: synth.ID},
 	})
 	require.NoError(t, err)
@@ -205,7 +204,7 @@ func TestRerunPanelRequestIsIdempotent(t *testing.T) {
 		JobID: synth.ID, RequestID: &requestID,
 	}}
 
-	first, err := server.humaRerunJob(context.Background(), input)
+	first, err := server.humaRerunJob(t.Context(), input)
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	event := <-events
@@ -215,7 +214,7 @@ func TestRerunPanelRequestIsIdempotent(t *testing.T) {
 	assert.Equal(t, source.RepoName, event.RepoName)
 	assert.Equal(t, source.GitRef, event.SHA)
 	markJobStatus(t, db, synth.ID, storage.JobStatusRunning)
-	second, err := server.humaRerunJob(context.Background(), input)
+	second, err := server.humaRerunJob(t.Context(), input)
 	require.NoError(t, err)
 	assert.Empty(t, events, "idempotent replay must not broadcast again")
 
@@ -223,7 +222,7 @@ func TestRerunPanelRequestIsIdempotent(t *testing.T) {
 	assert.NotEqual(t, synth.ID, first.Body.JobID)
 	assert.Equal(t, requestID, first.Body.RequestID)
 	var runCount int
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(t.Context(),
 		"SELECT COUNT(DISTINCT panel_run_uuid) FROM review_jobs WHERE panel_run_uuid != ''",
 	).Scan(&runCount))
 	assert.Equal(t, 2, runCount, "the duplicate request must not create another panel")
@@ -243,7 +242,7 @@ func TestRerunPanelConcurrentRequestsShareSuccessor(t *testing.T) {
 	for _, requestID := range []uuid.UUID{testUUID("panel-request-one"), testUUID("panel-request-two")} {
 		workers.Go(func() {
 			<-start
-			output, err := server.humaRerunJob(context.Background(), &RerunJobInput{
+			output, err := server.humaRerunJob(t.Context(), &RerunJobInput{
 				Body: RerunJobRequest{JobID: synth.ID, RequestID: &requestID},
 			})
 			outputs <- output
@@ -268,7 +267,7 @@ func TestRerunPanelConcurrentRequestsShareSuccessor(t *testing.T) {
 	assert.Equal(t, results[0].Body.RunUUID, results[1].Body.RunUUID)
 
 	var runCount int
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(t.Context(),
 		"SELECT COUNT(DISTINCT panel_run_uuid) FROM review_jobs WHERE panel_run_uuid != ''",
 	).Scan(&runCount))
 	assert.Equal(t, 2, runCount, "concurrent requests must create one successor panel")
@@ -280,14 +279,14 @@ func TestRerunPanelCoalescedRequestRemainsIdempotent(t *testing.T) {
 	markPanelMembersStatus(t, db, originalRunUUID, storage.JobStatusDone)
 	markJobStatus(t, db, synth.ID, storage.JobStatusDone)
 
-	first, err := server.humaRerunJob(context.Background(), &RerunJobInput{
+	first, err := server.humaRerunJob(t.Context(), &RerunJobInput{
 		Body: RerunJobRequest{JobID: synth.ID, RequestID: testUUIDPtr("panel-request-one")},
 	})
 	require.NoError(t, err)
 	coalescedInput := &RerunJobInput{Body: RerunJobRequest{
 		JobID: synth.ID, RequestID: testUUIDPtr("panel-request-two"),
 	}}
-	coalesced, err := server.humaRerunJob(context.Background(), coalescedInput)
+	coalesced, err := server.humaRerunJob(t.Context(), coalescedInput)
 	require.NoError(t, err)
 	require.Equal(t, first.Body.JobID, coalesced.Body.JobID)
 	require.Equal(t, first.Body.RunUUID, coalesced.Body.RunUUID)
@@ -295,12 +294,12 @@ func TestRerunPanelCoalescedRequestRemainsIdempotent(t *testing.T) {
 	require.NotNil(t, first.Body.RunUUID)
 	markPanelMembersStatus(t, db, *first.Body.RunUUID, storage.JobStatusDone)
 	markJobStatus(t, db, first.Body.JobID, storage.JobStatusDone)
-	replayed, err := server.humaRerunJob(context.Background(), coalescedInput)
+	replayed, err := server.humaRerunJob(t.Context(), coalescedInput)
 	require.NoError(t, err)
 	assert.Equal(t, coalesced.Body, replayed.Body)
 
 	var runCount int
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(t.Context(),
 		"SELECT COUNT(DISTINCT panel_run_uuid) FROM review_jobs WHERE panel_run_uuid != ''",
 	).Scan(&runCount))
 	assert.Equal(t, 2, runCount, "retrying a coalesced request must not create another panel")
@@ -315,25 +314,25 @@ func TestRerunPanelCompletedSuccessorAllowsFreshRequest(t *testing.T) {
 	firstInput := &RerunJobInput{Body: RerunJobRequest{
 		JobID: synth.ID, RequestID: testUUIDPtr("panel-request-one"),
 	}}
-	first, err := server.humaRerunJob(context.Background(), firstInput)
+	first, err := server.humaRerunJob(t.Context(), firstInput)
 	require.NoError(t, err)
 	require.NotNil(t, first.Body.RunUUID)
 	markPanelMembersStatus(t, db, *first.Body.RunUUID, storage.JobStatusDone)
 	markJobStatus(t, db, first.Body.JobID, storage.JobStatusDone)
 
-	second, err := server.humaRerunJob(context.Background(), &RerunJobInput{
+	second, err := server.humaRerunJob(t.Context(), &RerunJobInput{
 		Body: RerunJobRequest{JobID: synth.ID, RequestID: testUUIDPtr("panel-request-two")},
 	})
 	require.NoError(t, err)
 	assert.NotEqual(t, first.Body.JobID, second.Body.JobID)
 	assert.NotEqual(t, first.Body.RunUUID, second.Body.RunUUID)
 
-	replayedFirst, err := server.humaRerunJob(context.Background(), firstInput)
+	replayedFirst, err := server.humaRerunJob(t.Context(), firstInput)
 	require.NoError(t, err)
 	assert.Equal(t, first.Body, replayedFirst.Body)
 
 	var runCount int
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(t.Context(),
 		"SELECT COUNT(DISTINCT panel_run_uuid) FROM review_jobs WHERE panel_run_uuid != ''",
 	).Scan(&runCount))
 	assert.Equal(t, 3, runCount, "a completed successor must not block a later rerun")
@@ -344,7 +343,7 @@ func TestRerunPanelMemberRejectsDirectRerun(t *testing.T) {
 	runUUID, members, _ := enqueueServerPanelRun(t, db, 2)
 	markJobStatus(t, db, members[0].ID, storage.JobStatusDone)
 
-	_, err := server.humaRerunJob(context.Background(), &RerunJobInput{
+	_, err := server.humaRerunJob(t.Context(), &RerunJobInput{
 		Body: RerunJobRequest{JobID: members[0].ID},
 	})
 	require.Error(t, err, "panel members must not rerun independently")
@@ -354,7 +353,7 @@ func TestRerunPanelMemberRejectsDirectRerun(t *testing.T) {
 	assert.Equal(t, storage.JobStatusDone, got.Status, "member status should be unchanged")
 
 	var count int
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(t.Context(),
 		"SELECT COUNT(DISTINCT panel_run_uuid) FROM review_jobs WHERE panel_run_uuid != ''",
 	).Scan(&count))
 	assert.Equal(t, 1, count, "direct member rerun must not create a new panel run")
@@ -395,13 +394,13 @@ func TestRerunPanelRejectsStaleWorktrees(t *testing.T) {
 			markJobStatus(t, db, createdMembers[0].ID, storage.JobStatusDone)
 			markJobStatus(t, db, synthJob.ID, storage.JobStatusDone)
 
-			_, err = server.humaRerunJob(context.Background(), &RerunJobInput{
+			_, err = server.humaRerunJob(t.Context(), &RerunJobInput{
 				Body: RerunJobRequest{JobID: synthJob.ID},
 			})
 			require.ErrorContains(t, err, "worktree path is stale or invalid")
 
 			var runCount int
-			require.NoError(t, db.QueryRow(
+			require.NoError(t, db.QueryRowContext(t.Context(),
 				"SELECT COUNT(DISTINCT panel_run_uuid) FROM review_jobs WHERE panel_run_uuid != ''",
 			).Scan(&runCount))
 			assert.Equal(t, 1, runCount, "rejected rerun must not create a new panel")
@@ -467,7 +466,7 @@ func TestRerunSynthesisCreatesNewRun(t *testing.T) {
 	oldMembersBeforeFailover, err := db.GetPanelMembers(oldUUID)
 	require.NoError(t, err)
 	require.Len(t, oldMembersBeforeFailover, len(srcMembers))
-	_, err = db.Exec(`UPDATE review_jobs SET status = 'running', worker_id = ? WHERE id = ?`,
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'running', worker_id = ? WHERE id = ?`,
 		"panel-failover-worker", oldMembersBeforeFailover[0].ID)
 	require.NoError(t, err)
 	failedOver, err := db.FailoverJob(
@@ -547,7 +546,7 @@ func TestRerunCIPanelPreservesExactCheckoutSource(t *testing.T) {
 
 	oldPanel, err := db.GetCIPanelBySynthesisJobID(oldSynth.ID)
 	require.NoError(t, err)
-	_, err = db.Exec("UPDATE review_jobs SET source = NULL WHERE panel_run_uuid = ?", oldPanel.PanelRunUUID)
+	_, err = db.ExecContext(t.Context(), "UPDATE review_jobs SET source = NULL WHERE panel_run_uuid = ?", oldPanel.PanelRunUUID)
 	require.NoError(t, err)
 
 	newUUID, newMembers := rerunAndLoadNewRun(t, server, db, oldPanel.PanelRunUUID, oldSynth.ID)
@@ -844,7 +843,7 @@ func TestRerunPanelPreservesTarget(t *testing.T) {
 func TestRerunPanelPreservesNonVotingMember(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	oldRunUUID, members, synth := enqueueServerPanelRun(t, db, 2)
-	_, err := db.Exec("UPDATE review_jobs SET non_voting = 1 WHERE id = ?", members[1].ID)
+	_, err := db.ExecContext(t.Context(), "UPDATE review_jobs SET non_voting = 1 WHERE id = ?", members[1].ID)
 	require.NoError(t, err)
 
 	_, newMembers := rerunAndLoadNewRun(t, server, db, oldRunUUID, synth.ID)

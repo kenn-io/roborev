@@ -96,7 +96,7 @@ func TestExportCICostCmdAutoPaginationPreservesSince(t *testing.T) {
 			PanelRunUUID: &panelRunUUID,
 		})
 		require.NoError(t, enqueueErr)
-		_, updateErr := db.Exec(`UPDATE review_jobs
+		_, updateErr := db.ExecContext(t.Context(), `UPDATE review_jobs
 			SET status = 'done', started_at = ?, finished_at = ?,
 			    updated_at = ?, agent_invoked = 1, token_usage = '{}'
 			WHERE id = ?`, finishedAt, finishedAt, finishedAt, job.ID)
@@ -128,7 +128,7 @@ func TestExportCICostCmdAutoPaginationPreservesSince(t *testing.T) {
 			page, exportErr := db.ExportCICosts(opts)
 			require.NoError(t, exportErr)
 			if callCount == 1 {
-				_, updateErr := db.Exec(`UPDATE review_jobs
+				_, updateErr := db.ExecContext(t.Context(), `UPDATE review_jobs
 					SET token_usage = '{"has_cost":true,"cost_usd":0.75}'
 					WHERE id = ?`, oldJob.ID)
 				require.NoError(t, updateErr)

@@ -109,6 +109,7 @@ func newRootCmd() *cobra.Command {
 	rootCmd.AddCommand(versionCmd())
 	rootCmd.AddCommand(verifyWebAssetsCmd())
 
+	applyCommandGrammar(rootCmd)
 	applyRootHelp(rootCmd)
 	configureCLIErrors(rootCmd)
 	return rootCmd

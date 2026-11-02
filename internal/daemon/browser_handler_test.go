@@ -144,7 +144,7 @@ func TestBrowserHandlerRedirectsBarePrefixedPath(t *testing.T) {
 	handler, _ := newBrowserHandlerFixtureWithCoreAndTTLAndBasePath(
 		t, testBrowserAuthToken, http.NotFoundHandler(), 0, "/roborev-ci",
 	)
-	request := browserRequest(http.MethodGet, "/roborev-ci", nil)
+	request := browserRequest(t.Context(), http.MethodGet, "/roborev-ci", nil)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 	assert.Equal(t, http.StatusPermanentRedirect, recorder.Code)
@@ -157,7 +157,7 @@ func TestBrowserHandlerRejectsPathsOutsidePrefix(t *testing.T) {
 	handler, _ := newBrowserHandlerFixtureWithCoreAndTTLAndBasePath(
 		t, testBrowserAuthToken, core, 0, "/roborev-ci",
 	)
-	request := browserRequest(http.MethodGet, "/roborev-cinema/api/status", nil)
+	request := browserRequest(t.Context(), http.MethodGet, "/roborev-cinema/api/status", nil)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 	assert.Equal(t, http.StatusNotFound, recorder.Code)
@@ -170,7 +170,7 @@ func authenticatedBrowserRequest(
 	t.Helper()
 	credentials, err := sessions.Login(testBrowserAuthToken)
 	require.NoError(t, err)
-	request := browserRequest(method, path, nil)
+	request := browserRequest(t.Context(), method, path, nil)
 	request.AddCookie(sessions.Cookie(credentials.Ambient))
 	request.Header.Set(WebSessionHeader, credentials.Tab)
 	return request
@@ -182,19 +182,19 @@ func authenticatedBrowserMutationRequest(
 	t.Helper()
 	credentials, err := sessions.Login(testBrowserAuthToken)
 	require.NoError(t, err)
-	request := browserRequest(http.MethodPost, path, body)
+	request := browserRequest(t.Context(), http.MethodPost, path, body)
 	request.AddCookie(sessions.Cookie(credentials.Ambient))
 	request.Header.Set(WebSessionHeader, credentials.Tab)
 	request.Header.Set(WebCSRFHeader, credentials.CSRF)
 	return request
 }
 
-func browserRequest(method, path string, body any) *http.Request {
+func browserRequest(ctx context.Context, method, path string, body any) *http.Request {
 	var data []byte
 	if body != nil {
 		data, _ = json.Marshal(body)
 	}
-	request := httptest.NewRequest(method, "http://127.0.0.1:7374"+path, bytes.NewReader(data))
+	request := httptest.NewRequestWithContext(ctx, method, "http://127.0.0.1:7374"+path, bytes.NewReader(data))
 	request.Host = "127.0.0.1:7374"
 	request.RemoteAddr = "127.0.0.1:50000"
 	request.Header.Set("Origin", "http://127.0.0.1:7374")
@@ -204,8 +204,8 @@ func browserRequest(method, path string, body any) *http.Request {
 	return request
 }
 
-func proxyBrowserRequest(method, path string, body any) *http.Request {
-	request := browserRequest(method, path, body)
+func proxyBrowserRequest(ctx context.Context, method, path string, body any) *http.Request {
+	request := browserRequest(ctx, method, path, body)
 	request.Host = "reviews.example.com"
 	request.Header.Set("Origin", "https://reviews.example.com")
 	request.Header.Set("Sec-Fetch-Site", "same-origin")
@@ -218,6 +218,7 @@ func proxyBrowserRequest(method, path string, body any) *http.Request {
 func TestBrowserHandlerProxyBootstrapCreatesRemoteSession(t *testing.T) {
 	handler, sessions := newProxyBrowserHandlerFixture(t, "/reviews")
 	request := proxyBrowserRequest(
+		t.Context(),
 		http.MethodPost, "/reviews/api/ui/session/bootstrap", map[string]any{},
 	)
 	recorder := httptest.NewRecorder()
@@ -237,7 +238,7 @@ func TestBrowserHandlerProxyBootstrapCreatesRemoteSession(t *testing.T) {
 	assert.Equal(t, sessions.CookieName(), cookies[0].Name)
 	assert.Equal(t, "/reviews/", cookies[0].Path)
 
-	mutation := proxyBrowserRequest(http.MethodPost, "/reviews/api/comment", map[string]any{})
+	mutation := proxyBrowserRequest(t.Context(), http.MethodPost, "/reviews/api/comment", map[string]any{})
 	mutation.AddCookie(cookies[0])
 	mutation.Header.Set(WebSessionHeader, credentials.Session)
 	mutationRecorder := httptest.NewRecorder()
@@ -260,7 +261,7 @@ func TestBrowserHandlerProxyBootstrapRejectsInvalidRequestShape(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			handler, _ := newProxyBrowserHandlerFixture(t, "")
-			request := proxyBrowserRequest(http.MethodPost, "/api/ui/session/bootstrap", map[string]any{})
+			request := proxyBrowserRequest(t.Context(), http.MethodPost, "/api/ui/session/bootstrap", map[string]any{})
 			tt.mutate(request)
 			recorder := httptest.NewRecorder()
 
@@ -274,7 +275,7 @@ func TestBrowserHandlerProxyBootstrapRejectsInvalidRequestShape(t *testing.T) {
 
 func TestBrowserHandlerProxyBootstrapReplacesStaleCookie(t *testing.T) {
 	handler, sessions := newProxyBrowserHandlerFixture(t, "")
-	request := proxyBrowserRequest(http.MethodPost, "/api/ui/session/bootstrap", map[string]any{})
+	request := proxyBrowserRequest(t.Context(), http.MethodPost, "/api/ui/session/bootstrap", map[string]any{})
 	request.AddCookie(sessions.Cookie("stale-ambient-session"))
 	recorder := httptest.NewRecorder()
 
@@ -287,7 +288,7 @@ func TestBrowserHandlerProxyBootstrapReplacesStaleCookie(t *testing.T) {
 
 func TestBrowserHandlerProxySessionStatus(t *testing.T) {
 	handler, _ := newProxyBrowserHandlerFixture(t, "/reviews")
-	request := proxyBrowserRequest(http.MethodGet, "/reviews/api/ui/session", nil)
+	request := proxyBrowserRequest(t.Context(), http.MethodGet, "/reviews/api/ui/session", nil)
 	recorder := httptest.NewRecorder()
 
 	handler.ServeHTTP(recorder, request)
@@ -298,7 +299,7 @@ func TestBrowserHandlerProxySessionStatus(t *testing.T) {
 
 func TestBrowserHandlerHostRunsBeforeAuthentication(t *testing.T) {
 	handler, _ := newBrowserHandlerFixture(t, testBrowserAuthToken)
-	request := browserRequest(http.MethodGet, "/api/status", nil)
+	request := browserRequest(t.Context(), http.MethodGet, "/api/status", nil)
 	request.Host = "attacker.test"
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
@@ -308,7 +309,7 @@ func TestBrowserHandlerHostRunsBeforeAuthentication(t *testing.T) {
 
 func TestBrowserHandlerLoginBootstrapAndAuthenticatedRoutes(t *testing.T) {
 	handler, sessions := newBrowserHandlerFixture(t, testBrowserAuthToken)
-	login := browserRequest(http.MethodPost, "/api/ui/session/login", WebLoginRequest{Token: testBrowserAuthToken})
+	login := browserRequest(t.Context(), http.MethodPost, "/api/ui/session/login", WebLoginRequest{Token: testBrowserAuthToken})
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, login)
 	require.Equal(t, http.StatusOK, recorder.Code)
@@ -329,7 +330,7 @@ func TestBrowserHandlerLoginBootstrapAndAuthenticatedRoutes(t *testing.T) {
 	require.Len(t, cookies, 1)
 	assert.Equal(t, sessions.CookieName(), cookies[0].Name)
 
-	status := browserRequest(http.MethodGet, "/api/status", nil)
+	status := browserRequest(t.Context(), http.MethodGet, "/api/status", nil)
 	status.AddCookie(cookies[0])
 	status.Header.Set(WebSessionHeader, credentials.Session)
 	statusRecorder := httptest.NewRecorder()
@@ -337,7 +338,7 @@ func TestBrowserHandlerLoginBootstrapAndAuthenticatedRoutes(t *testing.T) {
 	assert.Equal(t, http.StatusOK, statusRecorder.Code)
 	assert.Equal(t, "private, no-store", statusRecorder.Header().Get("Cache-Control"))
 
-	analytics := browserRequest(http.MethodGet, "/api/ui/analytics", nil)
+	analytics := browserRequest(t.Context(), http.MethodGet, "/api/ui/analytics", nil)
 	unauthorizedAnalytics := httptest.NewRecorder()
 	handler.ServeHTTP(unauthorizedAnalytics, analytics)
 	assert.Equal(t, http.StatusUnauthorized, unauthorizedAnalytics.Code)
@@ -347,7 +348,7 @@ func TestBrowserHandlerLoginBootstrapAndAuthenticatedRoutes(t *testing.T) {
 	handler.ServeHTTP(authorizedAnalytics, analytics)
 	assert.Equal(t, http.StatusOK, authorizedAnalytics.Code)
 
-	bootstrap := browserRequest(http.MethodPost, "/api/ui/session/bootstrap", map[string]any{})
+	bootstrap := browserRequest(t.Context(), http.MethodPost, "/api/ui/session/bootstrap", map[string]any{})
 	bootstrap.AddCookie(cookies[0])
 	bootstrap.Header.Set("Sec-Fetch-Site", "same-origin")
 	bootstrap.Header.Set("Sec-Fetch-Mode", "cors")
@@ -407,9 +408,9 @@ func TestBrowserHandlerCommandLineRequiresLocalSession(t *testing.T) {
 			require.NoError(t, err)
 			handler, err := server.newBrowserHandler(server.httpServer.Handler, http.NotFoundHandler(), policy, sessions, "")
 			require.NoError(t, err)
-			login := newRequest(http.MethodPost, "/api/ui/session/bootstrap", map[string]any{})
+			login := newRequest(t.Context(), http.MethodPost, "/api/ui/session/bootstrap", map[string]any{})
 			if mode == "token" {
-				login = newRequest(http.MethodPost, "/api/ui/session/login", WebLoginRequest{Token: testBrowserAuthToken})
+				login = newRequest(t.Context(), http.MethodPost, "/api/ui/session/login", WebLoginRequest{Token: testBrowserAuthToken})
 			}
 			login.Header.Set("Sec-Fetch-Site", "same-origin")
 			login.Header.Set("Sec-Fetch-Mode", "cors")
@@ -425,7 +426,7 @@ func TestBrowserHandlerCommandLineRequiresLocalSession(t *testing.T) {
 			for _, path := range []string{"/api/jobs", fmt.Sprintf("/api/review?job_id=%d", job.ID)} {
 				t.Run(path, func(t *testing.T) {
 					assert := assert.New(t)
-					request := newRequest(http.MethodGet, path, nil)
+					request := newRequest(t.Context(), http.MethodGet, path, nil)
 					request.AddCookie(cookies[0])
 					request.Header.Set(WebSessionHeader, session.Session)
 					response := httptest.NewRecorder()
@@ -596,12 +597,12 @@ func TestBrowserHandlerProjectsSafeTokenUsage(t *testing.T) {
 func TestBrowserHandlerRateLimitsRepeatedLoginAttempts(t *testing.T) {
 	handler, _ := newBrowserHandlerFixture(t, testBrowserAuthToken)
 
-	first := browserRequest(http.MethodPost, "/api/ui/session/login", WebLoginRequest{Token: "wrong"})
+	first := browserRequest(t.Context(), http.MethodPost, "/api/ui/session/login", WebLoginRequest{Token: "wrong"})
 	firstResponse := httptest.NewRecorder()
 	handler.ServeHTTP(firstResponse, first)
 	require.Equal(t, http.StatusUnauthorized, firstResponse.Code)
 
-	second := browserRequest(http.MethodPost, "/api/ui/session/login", WebLoginRequest{Token: "wrong"})
+	second := browserRequest(t.Context(), http.MethodPost, "/api/ui/session/login", WebLoginRequest{Token: "wrong"})
 	secondResponse := httptest.NewRecorder()
 	handler.ServeHTTP(secondResponse, second)
 	assert.Equal(t, http.StatusTooManyRequests, secondResponse.Code)
@@ -613,7 +614,7 @@ func TestBrowserHandlerCSRFAllowlistAndPublicShell(t *testing.T) {
 	credentials, err := sessions.Login(testBrowserAuthToken)
 	require.NoError(t, err)
 
-	mutation := browserRequest(http.MethodPost, "/api/job/cancel", map[string]int{"job_id": 7})
+	mutation := browserRequest(t.Context(), http.MethodPost, "/api/job/cancel", map[string]int{"job_id": 7})
 	mutation.AddCookie(sessions.Cookie(credentials.Ambient))
 	mutation.Header.Set(WebSessionHeader, credentials.Tab)
 	recorder := httptest.NewRecorder()
@@ -626,13 +627,13 @@ func TestBrowserHandlerCSRFAllowlistAndPublicShell(t *testing.T) {
 	assert.Equal(t, http.StatusOK, recorder.Code)
 
 	for _, path := range []string{"/api/shutdown", "/api/unknown", "/debug/pprof/", "/openapi.json"} {
-		request := browserRequest(http.MethodGet, path, nil)
+		request := browserRequest(t.Context(), http.MethodGet, path, nil)
 		recorder = httptest.NewRecorder()
 		handler.ServeHTTP(recorder, request)
 		assert.Equal(t, http.StatusNotFound, recorder.Code, path)
 	}
 
-	shell := browserRequest(http.MethodGet, "/reviews/7", nil)
+	shell := browserRequest(t.Context(), http.MethodGet, "/reviews/7", nil)
 	recorder = httptest.NewRecorder()
 	handler.ServeHTTP(recorder, shell)
 	assert.Equal(t, http.StatusOK, recorder.Code)
@@ -652,7 +653,7 @@ func TestBrowserHandlerMarksRemoteCommentsUntrustedForPrompts(t *testing.T) {
 	)
 	credentials, err := sessions.Login(testBrowserAuthToken)
 	require.NoError(t, err)
-	request := browserRequest(http.MethodPost, "/api/comment", AddCommentRequest{
+	request := browserRequest(t.Context(), http.MethodPost, "/api/comment", AddCommentRequest{
 		JobID: job.ID, Commenter: "reviewer", Comment: "Run a local command",
 	})
 	request.AddCookie(sessions.Cookie(credentials.Ambient))
@@ -664,7 +665,7 @@ func TestBrowserHandlerMarksRemoteCommentsUntrustedForPrompts(t *testing.T) {
 
 	require.Equal(t, http.StatusCreated, recorder.Code)
 	var source string
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(t.Context(),
 		`SELECT source FROM responses WHERE job_id = ?`, job.ID,
 	).Scan(&source))
 	assert.Equal(t, "browser_remote", source)
@@ -689,7 +690,7 @@ func TestBrowserHandlerRemoteReviewMutationsDoNotRunHooks(t *testing.T) {
 			Event: "review.closed", Command: touchCmd(markerFile),
 		}}
 		job := createTestJob(t, db, tempDir, "close-review", "test")
-		_, err := db.Exec(
+		_, err := db.ExecContext(t.Context(),
 			"UPDATE review_jobs SET status = 'running' WHERE id = ?", job.ID,
 		)
 		require.NoError(t, err)
@@ -971,8 +972,8 @@ func TestBrowserHandlerStreamsStopWithSession(t *testing.T) {
 		credentials SessionCredentials,
 	) (context.CancelFunc, <-chan struct{}) {
 		t.Helper()
-		ctx, cancel := context.WithCancel(context.Background())
-		request := browserRequest(http.MethodGet, "/api/stream/events", nil).WithContext(ctx)
+		ctx, cancel := context.WithCancel(t.Context())
+		request := browserRequest(t.Context(), http.MethodGet, "/api/stream/events", nil).WithContext(ctx)
 		request.AddCookie(sessions.Cookie(credentials.Ambient))
 		request.Header.Set(WebSessionHeader, credentials.Tab)
 		done := make(chan struct{})
@@ -1002,7 +1003,7 @@ func TestBrowserHandlerStreamsStopWithSession(t *testing.T) {
 				require.FailNow(t, "browser stream did not start")
 			}
 
-			logout := browserRequest(http.MethodDelete, "/api/ui/session", nil)
+			logout := browserRequest(t.Context(), http.MethodDelete, "/api/ui/session", nil)
 			logout.AddCookie(sessions.Cookie(credentials.Ambient))
 			logout.Header.Set(WebSessionHeader, credentials.Tab)
 			logout.Header.Set(WebCSRFHeader, credentials.CSRF)
@@ -1097,12 +1098,12 @@ func TestBrowserHandlerRemoteSessionRejectsPrivilegedPanelMembers(t *testing.T) 
 
 func TestBrowserHandlerLocalBootstrapRequiresFetchMetadata(t *testing.T) {
 	handler, _ := newBrowserHandlerFixture(t, "")
-	request := browserRequest(http.MethodPost, "/api/ui/session/bootstrap", map[string]any{})
+	request := browserRequest(t.Context(), http.MethodPost, "/api/ui/session/bootstrap", map[string]any{})
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 	assert.Equal(t, http.StatusForbidden, recorder.Code)
 
-	request = browserRequest(http.MethodPost, "/api/ui/session/bootstrap", map[string]any{})
+	request = browserRequest(t.Context(), http.MethodPost, "/api/ui/session/bootstrap", map[string]any{})
 	request.Header.Set("Sec-Fetch-Site", "same-origin")
 	request.Header.Set("Sec-Fetch-Mode", "cors")
 	request.Header.Set("Sec-Fetch-Dest", "empty")
@@ -1123,7 +1124,7 @@ func TestBrowserHandlerLocalBootstrapRequiresFetchMetadata(t *testing.T) {
 
 func TestBrowserHandlerLocalBootstrapAllowsOriginlessOwnerHost(t *testing.T) {
 	handler, _ := newBrowserHandlerFixture(t, "")
-	request := browserRequest(http.MethodPost, "/api/ui/session/bootstrap", map[string]any{})
+	request := browserRequest(t.Context(), http.MethodPost, "/api/ui/session/bootstrap", map[string]any{})
 	request.Header.Del("Origin")
 	recorder := httptest.NewRecorder()
 
@@ -1162,7 +1163,7 @@ func TestBrowserHandlerOriginlessBootstrapKeepsLocalTrustBoundary(t *testing.T) 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			handler, _ := newBrowserHandlerFixture(t, tt.auth)
-			request := browserRequest(
+			request := browserRequest(t.Context(),
 				http.MethodPost, "/api/ui/session/bootstrap", map[string]any{},
 			)
 			request.Header.Del("Origin")
@@ -1181,7 +1182,7 @@ func TestBrowserHandlerOriginlessBootstrapKeepsLocalTrustBoundary(t *testing.T) 
 	for _, origin := range []string{"null", "https://attacker.example"} {
 		t.Run("explicit origin "+origin, func(t *testing.T) {
 			handler, _ := newBrowserHandlerFixture(t, "")
-			request := browserRequest(
+			request := browserRequest(t.Context(),
 				http.MethodPost, "/api/ui/session/bootstrap", map[string]any{},
 			)
 			request.Header.Set("Origin", origin)
@@ -1204,7 +1205,7 @@ func TestBrowserSessionRoutesAppearOnlyInCombinedOpenAPI(t *testing.T) {
 	server := &Server{}
 	mux := http.NewServeMux()
 	server.registerHumaAPI(mux)
-	request := httptest.NewRequest(http.MethodPost, "/api/ui/session/login", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/ui/session/login", nil)
 	recorder := httptest.NewRecorder()
 	mux.ServeHTTP(recorder, request)
 	assert.Equal(t, http.StatusNotFound, recorder.Code)
