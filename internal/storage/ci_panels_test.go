@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -11,6 +12,38 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestCIPanelHistoryLookupsUseIndex(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	for _, tc := range []struct {
+		name  string
+		query string
+		args  []any
+	}{
+		{"unposted", getUnpostedPanelsForPRQuery, []any{"acme/api", 7}},
+		{"head", getCIPanelByPRSHAQuery, []any{"acme/api", 7, "head"}},
+		{"posted", hasPostedCIReviewQuery, []any{"acme/api", 7, "head", PanelOutcomeReviewPosted}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, err := db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+tc.query, tc.args...)
+			require.NoError(t, err)
+			defer rows.Close()
+			var details []string
+			for rows.Next() {
+				var id, parent, unused int
+				var detail string
+				require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+				details = append(details, detail)
+			}
+			require.NoError(t, rows.Err())
+			plan := strings.Join(details, "\n")
+			assert.NotContains(t, plan, "SCAN ci_pr_panels")
+			assert.Contains(t, plan, "idx_ci_panels_pr_head")
+		})
+	}
+}
 
 // boolCount returns how many elements of s equal v. Used by the race test to
 // assert that exactly one concurrent CreateCIPanelRun caller wins.

@@ -36,6 +36,7 @@ var schemaMigrations = []schemaMigration{
 	{1, "baseline", migrateBaseline},
 	{2, "compress job content", migrateJobContent},
 	{3, "CI panel retirement reasons", migrateCIPanelRetireReason},
+	{4, "CI panel PR head index", migrateCIPanelPRHeadIndex},
 }
 
 // ErrSchemaTooNew reports a database written by a newer roborev release.
@@ -98,5 +99,11 @@ func migrateCIPanelRetireReason(ctx context.Context, db *DB) error {
 		return err
 	}
 	_, err = db.ExecContext(ctx, `ALTER TABLE ci_pr_panels ADD COLUMN retire_reason TEXT`)
+	return err
+}
+
+func migrateCIPanelPRHeadIndex(ctx context.Context, db *DB) error {
+	_, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_ci_panels_pr_head
+		ON ci_pr_panels(github_repo, pr_number, head_sha)`)
 	return err
 }

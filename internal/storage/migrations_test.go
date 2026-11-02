@@ -114,7 +114,7 @@ func TestOpenBaselinesDatabaseFromBeforeNumberedMigrations(t *testing.T) {
 	db, err := Open(path)
 	require.NoError(t, err)
 	defer db.Close()
-	assert.Equal(t, []int{1, 2, 3}, appliedVersions(t, db))
+	assert.Equal(t, []int{1, 2, 3, 4}, appliedVersions(t, db))
 	var name string
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT name FROM repos WHERE root_path = '/synthetic/repo'`).Scan(&name))
 	assert.Equal(t, "repo", name)
@@ -174,7 +174,7 @@ func TestCIPanelRetireReasonMigration(t *testing.T) {
 	require.NoError(t, err)
 
 	for range 2 {
-		require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
+		require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:3]))
 		var reason sql.NullString
 		var retiredAt string
 		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT CAST(retired_at AS TEXT), retire_reason FROM ci_pr_panels WHERE id = 1`).Scan(&retiredAt, &reason))
@@ -183,6 +183,35 @@ func TestCIPanelRetireReasonMigration(t *testing.T) {
 		assert.Equal(t, []int{1, 2, 3}, appliedVersions(t, db))
 		// Simulate interruption after the column was added, before recording it.
 		_, err = db.ExecContext(t.Context(), `DELETE FROM schema_migrations WHERE version = 3`)
+		require.NoError(t, err)
+	}
+}
+
+func TestCIPanelPRHeadIndexMigration(t *testing.T) {
+	t.Parallel()
+	db := openUnmigratedDB(t)
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:3]))
+	_, err := db.ExecContext(t.Context(), `INSERT INTO ci_pr_panels
+		(github_repo, pr_number, head_sha, panel_run_uuid, retired_at, posted_at, outcome)
+		VALUES ('acme/api', 7, 'old-head', '00000000-0000-4000-8000-000000000001',
+			'2026-01-01 00:00:00', '2026-01-01 00:00:00', 'review_posted')`)
+	require.NoError(t, err)
+
+	for range 2 {
+		require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
+		var indexSQL string
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT sql FROM sqlite_master
+			WHERE type = 'index' AND name = 'idx_ci_panels_pr_head'`).Scan(&indexSQL))
+		assert.Contains(t, indexSQL, "ON ci_pr_panels(github_repo, pr_number, head_sha)")
+		panel, err := db.GetCIPanelByPRSHA("acme/api", 7, "old-head")
+		require.NoError(t, err)
+		assert := assert.New(t)
+		assert.NotNil(panel.RetiredAt)
+		assert.NotNil(panel.PostedAt)
+		assert.Equal(new(PanelOutcomeReviewPosted), panel.Outcome)
+		assert.Equal([]int{1, 2, 3, 4}, appliedVersions(t, db))
+		// Simulate interruption after creating the index, before recording it.
+		_, err = db.ExecContext(t.Context(), `DELETE FROM schema_migrations WHERE version = 4`)
 		require.NoError(t, err)
 	}
 }
