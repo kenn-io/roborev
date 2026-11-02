@@ -3675,3 +3675,26 @@ func TestGitErrorsIncludeGitStderr(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "'no-such-ref'")
 }
+
+func TestResolveSHAsCtx(t *testing.T) {
+	assert := assert.New(t)
+	repo := NewTestRepoWithCommit(t)
+	head := repo.HeadSHA()
+	repo.Run("branch", "batch-ref", head)
+	repo.Run("tag", "-a", "batch-tag", "-m", "annotated tag")
+	tag, err := ResolveSHACtx(t.Context(), repo.Dir, "batch-tag")
+	require.NoError(t, err)
+	refs := []string{head, head[:12], "batch-ref", "batch-tag", "no-such-ref", "", "HEAD\nHEAD", "batch-ref"}
+	resolved, err := ResolveSHAsCtx(t.Context(), repo.Dir, refs)
+	require.NoError(t, err)
+	assert.Equal(map[string]string{
+		head:          head,
+		head[:12]:     head,
+		"batch-ref":   head,
+		"batch-tag":   tag,
+		"no-such-ref": "",
+		"":            "",
+		"HEAD\nHEAD":  "",
+	}, resolved)
+	assert.NotEqual(head, resolved["batch-tag"], "annotated tags keep their tag object ID")
+}

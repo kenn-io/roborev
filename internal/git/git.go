@@ -957,6 +957,62 @@ func ResolveSHACtx(ctx context.Context, repoPath, ref string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// ResolveSHAsCtx resolves refs to object IDs in one git process, without peeling
+// annotated tags. Empty, newline-containing, and unresolved refs map to "".
+func ResolveSHAsCtx(ctx context.Context, repoPath string, refs []string) (map[string]string, error) {
+	resolved := make(map[string]string, len(refs))
+	pending := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		if _, ok := resolved[ref]; ok {
+			continue
+		}
+		resolved[ref] = ""
+		if ref == "" || strings.Contains(ref, "\n") {
+			continue
+		}
+		pending = append(pending, ref)
+	}
+	if len(pending) == 0 {
+		return resolved, nil
+	}
+	ids, err := resolveObjectIDsCtx(ctx, repoPath, pending)
+	if err != nil {
+		return nil, err
+	}
+	for i, ref := range pending {
+		resolved[ref] = ids[i]
+	}
+	return resolved, nil
+}
+
+func resolveObjectIDsCtx(ctx context.Context, repoPath string, refs []string) ([]string, error) {
+	var input strings.Builder
+	for _, ref := range refs {
+		input.WriteString(ref)
+		input.WriteByte('\n')
+	}
+	cmd := newGitCmdContext(ctx, "cat-file", "--batch-check=%(objectname)")
+	cmd.Dir = repoPath
+	cmd.Stdin = strings.NewReader(input.String())
+	out, err := gitOutput(cmd)
+	if err != nil {
+		return nil, fmt.Errorf("git cat-file resolve refs: %w", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(out), "\r\n"), "\n")
+	if len(lines) != len(refs) {
+		return nil, fmt.Errorf("git cat-file resolve refs: got %d results for %d refs", len(lines), len(refs))
+	}
+	for i, line := range lines {
+		// Missing or ambiguous names are unresolved.
+		sha := strings.TrimSpace(line)
+		if !isFullObjectID(sha) {
+			sha = ""
+		}
+		lines[i] = sha
+	}
+	return lines, nil
+}
+
 // ResolveCommitCtx resolves ref to the SHA of the commit it names, peeling
 // an annotated tag. It resolves ref as written before peeling, because in a
 // message-search ref such as ":/fix login" git reads a ^{commit} suffix as
@@ -1100,30 +1156,16 @@ func (m *BranchLineageMatcher) ResolveRefs(ctx context.Context, refs []string) e
 	if len(pending) == 0 {
 		return nil
 	}
-	var input strings.Builder
-	for _, ref := range pending {
-		input.WriteString(ref)
-		input.WriteString("^{commit}\n")
+	names := make([]string, len(pending))
+	for i, ref := range pending {
+		names[i] = ref + "^{commit}"
 	}
-	cmd := newGitCmdContext(ctx, "cat-file", "--batch-check=%(objectname)")
-	cmd.Dir = m.repoPath
-	cmd.Stdin = strings.NewReader(input.String())
-	out, err := gitOutput(cmd)
+	resolved, err := resolveObjectIDsCtx(ctx, m.repoPath, names)
 	if err != nil {
-		return fmt.Errorf("git cat-file resolve refs: %w", err)
-	}
-	lines := strings.Split(strings.TrimRight(string(out), "\r\n"), "\n")
-	if len(lines) != len(pending) {
-		return fmt.Errorf("git cat-file resolve refs: got %d results for %d refs", len(lines), len(pending))
+		return err
 	}
 	for i, ref := range pending {
-		// Refs git cannot resolve come back as "<name> missing" or
-		// "<name> ambiguous"; cache those as unresolved.
-		commit := strings.TrimSpace(lines[i])
-		if !isFullObjectID(commit) {
-			commit = ""
-		}
-		m.resolvedCommit[ref] = commit
+		m.resolvedCommit[ref] = resolved[i]
 	}
 	return nil
 }

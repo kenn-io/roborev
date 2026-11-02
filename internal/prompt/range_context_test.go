@@ -195,3 +195,60 @@ func TestPrebuiltPriorRangeReviewsDocument_TargetAndRetry(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(snapshots)
 }
+
+func TestPriorRangeReviewViewsGitProcessesStayFlat(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	base := repo.HeadSHA()
+	first := repo.CommitFile("first.txt", "first", "first")
+	second := repo.CommitFile("second.txt", "second", "second")
+	third := repo.CommitFile("third.txt", "third", "third")
+	repo.Run("branch", "prior-end", first)
+
+	db := testutil.OpenTestDB(t)
+	dbRepo, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	createCompletedRangeReview(t, db, dbRepo.ID, base[:12]+"..prior-end", storage.JobTypeRange, "first review")
+	createCompletedRangeReview(t, db, dbRepo.ID, base+".."+second, storage.JobTypeRange, "second review")
+	builder := NewBuilder(db).ForRepo(repo.Path(), dbRepo.ID)
+	var previousViews []priorRangeReview
+	var previousCalls int
+	for _, count := range []int{10, 500} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			assert := assert.New(t)
+			_, err := db.ExecContext(t.Context(), `
+				WITH RECURSIVE sequence(n) AS (
+					SELECT 1 UNION ALL SELECT n + 1 FROM sequence WHERE n < ?
+				)
+				INSERT INTO review_jobs (repo_id, git_ref, agent, status, job_type, uuid)
+				SELECT ?, printf('start-%d..end-%d', n, n), 'test', 'done', 'range',
+				       printf('00000000-0000-4000-8000-%012d', n)
+				FROM sequence`, count, dbRepo.ID)
+			require.NoError(t, err)
+			_, err = db.ExecContext(t.Context(), `
+				INSERT INTO reviews (job_id, agent, output, uuid)
+				SELECT id, agent, 'unrelated review', uuid FROM review_jobs
+				WHERE git_ref LIKE 'start-%'`)
+			require.NoError(t, err)
+
+			gitCalls := testutil.CountGitProcesses(t)
+			views := builder.WithContext(t.Context()).priorRangeReviewsForRef(base+".."+third, 3)
+			calls := gitCalls()
+			require.Len(t, views, 2)
+			assert.Equal(base[:7]+".."+first[:7], views[0].Range)
+			assert.Contains(views[0].Output, "first review")
+			assert.Equal(base[:7]+".."+second[:7], views[1].Range)
+			assert.Contains(views[1].Output, "second review")
+			if previousViews != nil {
+				assert.Equal(previousViews, views)
+				assert.Equal(previousCalls, calls, "git process count must stay flat as history grows")
+			}
+			previousViews, previousCalls = views, calls
+			t.Logf("candidates=%d git processes=%d", count, calls)
+
+			_, err = db.ExecContext(t.Context(), "DELETE FROM reviews WHERE job_id IN (SELECT id FROM review_jobs WHERE git_ref LIKE 'start-%')")
+			require.NoError(t, err)
+			_, err = db.ExecContext(t.Context(), "DELETE FROM review_jobs WHERE git_ref LIKE 'start-%'")
+			require.NoError(t, err)
+		})
+	}
+}
