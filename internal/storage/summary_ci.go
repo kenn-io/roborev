@@ -55,7 +55,7 @@ type ciSummaryPanel struct {
 	prNumber              int
 	posted, retired       bool
 	outcome, retireReason string
-	createdAt             sql.NullFloat64 // Unix seconds
+	createdAt             sql.NullInt64 // Unix seconds
 	turnaround            sql.NullFloat64
 	cost                  CostAggregate
 }
@@ -89,7 +89,7 @@ func summaryCI(q querier, opts SummaryOptions) (*CISummary, error) {
  )
  SELECT cp.github_repo, cp.pr_number, cp.posted_at IS NOT NULL, cp.retired_at IS NOT NULL,
   COALESCE(cp.outcome,'unknown'), COALESCE(cp.retire_reason,'unknown'),
-  (julianday(cp.created_at) - 2440587.5) * 86400,
+  CAST(strftime('%s', cp.created_at) AS INTEGER),
   (julianday(cp.posted_at) - julianday(cp.first_attempt_at)) * 86400,
   COALESCE(c.eligible,0), COALESCE(c.priced,0), COALESCE(c.usd,0)
  FROM selected cp LEFT JOIN costs c ON c.panel_run_uuid = cp.panel_run_uuid`, args...)
@@ -121,7 +121,7 @@ func aggregateCIPanels(panels []ciSummaryPanel) *CISummary {
 		number int
 	}
 	prs := map[prKey]*CIPRSummary{}
-	created := map[prKey][]float64{}
+	created := map[prKey][]int64{}
 	var turnaround []float64
 	// Sort before floating point addition for reproducible aggregation regardless
 	// of query order. The caller owns this temporary row slice.
@@ -170,7 +170,7 @@ func aggregateCIPanels(panels []ciSummaryPanel) *CISummary {
 		}
 		prs[key].Runs++
 		if p.createdAt.Valid {
-			created[key] = append(created[key], p.createdAt.Float64)
+			created[key] = append(created[key], p.createdAt.Int64)
 		}
 		addCICost(&prs[key].Cost, p.cost)
 		addCICost(&s.Cost, p.cost)
@@ -202,7 +202,7 @@ func aggregateCIPanels(panels []ciSummaryPanel) *CISummary {
 
 // peakRunsWithin returns the most timestamps that fall within window seconds
 // of the earliest one in the group. It sorts times in place.
-func peakRunsWithin(times []float64, window float64) int {
+func peakRunsWithin(times []int64, window int64) int {
 	slices.Sort(times)
 	peak, start := 0, 0
 	for end, t := range times {

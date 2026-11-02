@@ -148,7 +148,7 @@ func FuzzAggregateCIPanels(f *testing.F) {
 			rows = append(rows, ciSummaryPanel{
 				githubRepo: fmt.Sprint(b % 2), prNumber: int(b % 7), posted: b&2 != 0, retired: b&1 != 0,
 				turnaround: sql.NullFloat64{Valid: b&4 != 0, Float64: float64(int8(b))},
-				createdAt:  sql.NullFloat64{Valid: true, Float64: float64(b) * 600},
+				createdAt:  sql.NullInt64{Valid: true, Int64: int64(b) * 600},
 				cost:       CostAggregate{TotalUSD: float64(b) / 100, JobsTotal: 2, JobsWithCost: 1},
 			})
 		}
@@ -212,6 +212,16 @@ func TestGetSummary_CIPeakHourRuns(t *testing.T) {
 		// one hour after the first starts a new window.
 		2: {"2026-01-03T10:00:00Z", "2026-01-03 10:20:00", "2026-01-03T10:40:00Z", "2026-01-03 10:59:59", "2026-01-03 11:00:00"},
 	}
+	// Eleven runs six minutes apart span exactly one hour, so the last one
+	// starts a new window. Midnight and noon are where day-fraction rounding
+	// would put the last run just inside the first window.
+	for pr, start := range map[int]string{3: "2026-01-03 00:00:00", 4: "2026-01-03 12:00:00"} {
+		base, err := time.Parse(time.DateTime, start)
+		require.NoError(t, err)
+		for i := range 11 {
+			stamps[pr] = append(stamps[pr], base.Add(time.Duration(i)*6*time.Minute).Format(time.DateTime))
+		}
+	}
 	for pr, list := range stamps {
 		for i, stamp := range list {
 			id := summaryPanel(t, db, "acme/api", pr, fmt.Sprint(pr, "-", i), nil)
@@ -222,14 +232,11 @@ func TestGetSummary_CIPeakHourRuns(t *testing.T) {
 	s, err := db.GetSummary(SummaryOptions{Since: ciSummarySince})
 	require.NoError(t, err)
 	require.NotNil(t, s.CI)
-	require.Len(t, s.CI.PRs, 2)
-	a := assert.New(t)
-	a.Equal(1, s.CI.PRs[0].PRNumber)
-	a.Equal(12, s.CI.PRs[0].Runs)
-	a.Equal(1, s.CI.PRs[0].PeakHourRuns)
-	a.Equal(2, s.CI.PRs[1].PRNumber)
-	a.Equal(5, s.CI.PRs[1].Runs)
-	a.Equal(4, s.CI.PRs[1].PeakHourRuns)
+	peaks := map[int][2]int{}
+	for _, pr := range s.CI.PRs {
+		peaks[pr.PRNumber] = [2]int{pr.Runs, pr.PeakHourRuns}
+	}
+	assert.Equal(t, map[int][2]int{1: {12, 1}, 2: {5, 4}, 3: {11, 10}, 4: {11, 10}}, peaks)
 }
 
 func TestGetSummary_CIPostedRetirementAndOldCosts(t *testing.T) {
