@@ -1,3 +1,43 @@
+## Direct CLI review workflow
+
+You can work from the CLI help without installing a skill. Run these in the git
+checkout, replacing job `42` with the ID returned by `review` or `list`:
+
+```bash
+roborev doctor
+roborev init
+roborev review HEAD
+roborev wait --job 42
+roborev show --job 42
+roborev fix 42
+roborev comment --job 42 "Fixed and verified the findings"
+roborev close 42
+```
+
+`doctor` reads setup state without starting the daemon. `init` configures the
+repository and git hooks. Reviews run in the background; `wait` follows an
+existing job. `fix` runs an agent in the foreground, edits and commits code,
+and closes completed jobs. Re-review the resulting commit for fresh verification.
+Use `fix --list` to preview work, or `refine` for repeated review and fix cycles.
+
+Job IDs are positive integers scoped to the selected daemon. `show`, `wait`,
+and `comment` try local git refs first; `--job` forces a numeric job ID.
+`show` and `wait` default to `HEAD`; `review` always takes git refs.
+Commands normally discover and auto-start a local daemon under
+`ROBOREV_DATA_DIR` (default `~/.roborev`). `--server` targets an existing
+loopback address, Unix socket, or remote HTTPS URL. Remote access supports only
+`list`, `show --job`, `wait --job`, and `stream`, with signing credentials and
+repository grants.
+
+Output flags are command-local. `list --json` includes job status and verdict;
+`show --json` returns the review record and stored document. Only `search`
+uses `--agent` for concise output; other commands use it to select a provider
+or integration. Errors go to stderr with a recovery hint. Exit codes are
+0 success, 1 runtime failure or a waiting command's FAIL verdict, 2 usage,
+3 export cursor database reset, and 4 invalid values. Displaying a FAIL with
+`show` succeeds. Use `roborev --help` for environment variables and command groups,
+and each command's `--help` for its flags and examples.
+
 ## How roborev works
 
 roborev gives your coding agent a second set of eyes. It reviews your code

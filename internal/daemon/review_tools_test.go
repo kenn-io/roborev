@@ -152,7 +152,7 @@ func TestProcessJobRunsStrictReviewInFreshSession(t *testing.T) {
 			agent.RegisterForTest(t, &strictWorkerTestAgent{
 				structuredWorkerTestAgent: &structuredWorkerTestAgent{
 					name:   "strict-tools-session",
-					result: jsontext.Value(`{"schema_version":2,"summary":"No findings.","verdict":"pass","findings":[]}`),
+					result: jsontext.Value(`{"schema_version":3,"summary":"No findings.","verdict":"pass","findings":[]}`),
 				},
 				err: tt.err,
 				onReview: func(path string) {
@@ -182,7 +182,7 @@ func TestProcessJobRecordsStrictClaudeUsageWithoutSavedSession(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell fake command uses POSIX permissions")
 	}
-	tc, claimed := claimStrictClaudeUsageJob(t, `{\"schema_version\":2,\"summary\":\"No findings.\",\"verdict\":\"pass\",\"findings\":[]}`)
+	tc, claimed := claimStrictClaudeUsageJob(t, `{\"schema_version\":3,\"summary\":\"No findings.\",\"verdict\":\"pass\",\"findings\":[]}`)
 
 	tc.Pool.processJob(testWorkerID, claimed)
 

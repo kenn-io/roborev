@@ -74,7 +74,7 @@ func HasRealErrors(err error) bool {
 // Bump these when the hook template changes to trigger
 // upgrade warnings and auto-upgrades.
 const (
-	PostCommitVersionMarker  = "post-commit hook v4"
+	PostCommitVersionMarker  = "post-commit hook v5"
 	PostRewriteVersionMarker = "post-rewrite hook v2"
 	PrePushVersionMarker     = "pre-push hook v3"
 	roborevHookEndMarker     = "# roborev hook end"
@@ -405,7 +405,7 @@ if [ ! -x "$ROBOREV" ]; then
     ROBOREV=$(command -v roborev 2>/dev/null)
     [ -z "$ROBOREV" ] || [ ! -x "$ROBOREV" ] && exit 0
 fi
-"$ROBOREV" post-commit 2>/dev/null
+"$ROBOREV" post-commit
 `, PostCommitVersionMarker, roborevPath)
 }
 
@@ -463,7 +463,7 @@ if [ ! -x "$ROBOREV" ]; then
     ROBOREV=$(command -v roborev 2>/dev/null)
     [ -z "$ROBOREV" ] || [ ! -x "$ROBOREV" ] && return 0
 fi
-"$ROBOREV" post-commit 2>/dev/null
+"$ROBOREV" post-commit
 }
 _roborev_hook
 `, PostCommitVersionMarker, roborevPath)

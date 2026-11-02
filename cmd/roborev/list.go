@@ -60,7 +60,7 @@ Examples:
 				return usageErr(cmd, fmt.Errorf("remote list uses server repository grants; local path filters are unavailable"))
 			}
 			if err := ensureDaemon(); err != nil {
-				return fmt.Errorf("daemon not running: %w", err)
+				return fmt.Errorf("connect to daemon: %w", err)
 			}
 			// Local startup or restart may select a new daemon address.
 			ep = getDaemonEndpoint()

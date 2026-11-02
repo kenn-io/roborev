@@ -957,6 +957,18 @@ func ResolveSHACtx(ctx context.Context, repoPath, ref string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// ResolveCommitCtx resolves ref to the SHA of the commit it names, peeling
+// an annotated tag. It resolves ref as written before peeling, because in a
+// message-search ref such as ":/fix login" git reads a ^{commit} suffix as
+// part of the search text.
+func ResolveCommitCtx(ctx context.Context, repoPath, ref string) (string, error) {
+	sha, err := ResolveSHACtx(ctx, repoPath, ref)
+	if err != nil {
+		return "", err
+	}
+	return ResolveSHACtx(ctx, repoPath, sha+"^{commit}")
+}
+
 // IsAncestor checks if ancestor is an ancestor of descendant.
 // Returns (true, nil) if ancestor is reachable from descendant via the commit graph.
 // Returns (false, nil) if ancestor is not an ancestor (git exits with status 1).
@@ -1397,6 +1409,10 @@ func ReadFile(repoPath, sha, filePath string) ([]byte, error) {
 	return stdout.Bytes(), nil
 }
 
+// ErrNotFile reports that a path names no file at a commit: it is missing,
+// or it is a directory or submodule.
+var ErrNotFile = errors.New("not a file")
+
 // RefFile is a blob read from a commit. Symlink is true when the tree entry
 // stores a link target instead of regular file contents.
 type RefFile struct {
@@ -1422,7 +1438,7 @@ func ReadRefFile(repoPath, sha, filePath string) (RefFile, error) {
 	if !ok || len(fields) != 3 || string(entryPath) != filePath ||
 		string(fields[1]) != "blob" {
 		return RefFile{}, fmt.Errorf(
-			"git path %s:%s is not a file", sha, filePath,
+			"git path %s:%s is %w", sha, filePath, ErrNotFile,
 		)
 	}
 	symlink := string(fields[0]) == "120000"

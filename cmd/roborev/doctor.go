@@ -57,16 +57,17 @@ type doctorReport struct {
 	Summary doctorSummary `json:"summary"`
 }
 
-// doctorDaemonAgents is the daemon's view of agent and hook-tool
-// availability.
+// doctorDaemonAgents is the daemon's view of agents, hook tools, and the
+// usage provider.
 type doctorDaemonAgents struct {
-	PathEnv         string               `json:"path_env"`
-	Agents          []agent.Diagnosis    `json:"agents"`
-	Requested       []agent.Diagnosis    `json:"requested"`
-	HookTools       []agent.Diagnosis    `json:"hook_tools"`
-	Panels          []daemon.DoctorPanel `json:"panels"`
-	PanelsError     string               `json:"panels_error,omitempty"`
-	RepoConfigError string               `json:"repo_config_error,omitempty"`
+	PathEnv         string                      `json:"path_env"`
+	Agents          []agent.Diagnosis           `json:"agents"`
+	Requested       []agent.Diagnosis           `json:"requested"`
+	HookTools       []agent.Diagnosis           `json:"hook_tools"`
+	Panels          []daemon.DoctorPanel        `json:"panels"`
+	PanelsError     string                      `json:"panels_error,omitempty"`
+	UsageProvider   *daemon.DoctorUsageProvider `json:"usage_provider,omitempty"`
+	RepoConfigError string                      `json:"repo_config_error,omitempty"`
 }
 
 // doctorDaemon is the read-only daemon surface the doctor uses. None of these
@@ -286,6 +287,11 @@ func doctorAgentsFromAPI(resp *generated.DoctorAgentsResponse) *doctorDaemonAgen
 		HookTools:       diagnosesFromAPI(resp.HookTools),
 		RepoConfigError: deref(resp.RepoConfigError),
 		PanelsError:     deref(resp.PanelsError),
+	}
+	if p := resp.UsageProvider; p != nil {
+		out.UsageProvider = &daemon.DoctorUsageProvider{
+			Provider: p.Provider, URL: deref(p.URL), Error: deref(p.ErrorData),
+		}
 	}
 	for _, p := range resp.Panels {
 		panel := daemon.DoctorPanel{

@@ -62,6 +62,7 @@ type Server struct {
 	searchCancel            context.CancelFunc
 	searchSubscriberID      int
 	searchWG                sync.WaitGroup
+	agentHealth             *agentHealthCache
 	searchStopped           bool
 	httpServer              *http.Server
 	remoteServer            *http.Server
@@ -114,6 +115,7 @@ type Server struct {
 	goalWatchMu             sync.Mutex
 	goalWatchCancel         context.CancelFunc
 	goalWatchDone           chan struct{}
+	postCommitScheduler     *postCommitScheduler
 	goalGate                *goalGate
 
 	// Cached machine ID to avoid INSERT on every status request
@@ -135,6 +137,15 @@ var (
 
 // ServerOption customizes a daemon server before it starts.
 type ServerOption func(*Server)
+
+// WithPinnedMaxWorkers keeps the worker pool at n workers for the daemon's
+// lifetime, ignoring max_workers changes in the config file. The --workers
+// flag uses it.
+func WithPinnedMaxWorkers(n int) ServerOption {
+	return func(s *Server) {
+		s.configWatcher.pinnedMaxWorkers = n
+	}
+}
 
 // WithWebDevelopmentOrigin adds one exact loopback origin for the disposable
 // development server. Production callers must not set this option.
@@ -205,6 +216,7 @@ func newServerWithLogs(
 		authKey:            cfg.AuthKey,
 		syncEnabledAtStart: cfg.Sync.Enabled,
 		goalGate:           newGoalGate(),
+		agentHealth:        newAgentHealthCache(),
 		daemonTLS:          cfg.DaemonTLS,
 		db:                 db,
 		appOpened:          telemetry.AppOpenedLimiter{Database: db},
@@ -225,6 +237,9 @@ func newServerWithLogs(
 	}
 	s.updateCoordinator = &updateDrainCoordinator{server: s, now: time.Now}
 	s.workerPool.captureSetupFinished = s.captureSetupFinishedTelemetry
+	configWatcher.OnReload(func(cfg *config.Config) {
+		s.workerPool.SetMaxWorkers(cfg.MaxWorkers)
+	})
 	s.agentHookState, s.agentHookStateErr = agenthook.LoadState(
 		daemonAgentHookSource{db: db, errorLog: errorLog},
 	)
@@ -252,6 +267,7 @@ func newServerWithLogs(
 	}
 	s.httpServer.RegisterOnShutdown(cancelRequests)
 
+	s.postCommitScheduler = newPostCommitScheduler(s.flushPostCommitBatch)
 	return s
 }
 
@@ -520,6 +536,20 @@ func (s *Server) Start(ctx context.Context) error {
 		)
 	}
 
+	// The first agents check runs in the background so startup and health
+	// requests never wait for an executable probe.
+	s.agentHealth.onFirst = func(agents storage.ComponentHealth) {
+		if agents.Healthy {
+			return
+		}
+		message := "reviews will be rejected until their agent can run: " + agents.Message
+		log.Printf("Warning: %s", message)
+		if s.errorLog != nil {
+			s.errorLog.LogError("agents", message, 0)
+		}
+	}
+	s.agentHealth.start(cfg)
+
 	// Repair stale roborev-managed hooks in registered repos (skip in CI
 	// mode where repos are fetch-only and don't need local hooks).
 	if s.ciPoller == nil {
@@ -531,6 +561,7 @@ func (s *Server) Start(ctx context.Context) error {
 	if err := <-serveErrCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
 		s.configWatcher.Stop()
 		s.stopGoalWatcher()
+		s.postCommitScheduler.stop()
 		s.workerPool.BeginStop()
 		s.stopPanelSweep()
 		s.workerPool.Stop()
@@ -713,6 +744,7 @@ func (s *Server) stopOnce0() error {
 	}
 	// Stop telemetry loop
 	close(s.telemetryStop)
+	s.agentHealth.stop()
 	s.setupWorkerMu.Lock()
 	if s.setupWorkerCancel != nil {
 		s.setupWorkerCancel()
@@ -747,6 +779,7 @@ func (s *Server) stopOnce0() error {
 	}
 
 	s.stopGoalWatcher()
+	s.postCommitScheduler.stop()
 
 	// Cancel gate evaluations before draining HTTP connections.
 	s.goalGate.stop()
@@ -1746,14 +1779,36 @@ func (s *Server) humaListJobs(
 	if input.Cursor != "" && input.Before > 0 {
 		return nil, huma.Error400BadRequest("cursor and before are mutually exclusive")
 	}
-	position, enqueuedAt, cursorErr := s.decodeJobListCursor(input.Cursor)
+	sortColumn, sortErr := storage.ParseJobSortColumn(input.Sort)
+	if sortErr != nil {
+		return nil, huma.Error400BadRequest(sortErr.Error())
+	}
+	sort := storage.JobSort{Column: sortColumn}
+	switch input.Direction {
+	case "", "desc":
+	case "asc":
+		sort.Ascending = true
+	default:
+		return nil, huma.Error400BadRequest(
+			fmt.Sprintf("unknown sort direction %q", input.Direction),
+		)
+	}
+	if input.Before > 0 && (sort.Column != storage.JobSortEnqueuedAt || sort.Ascending) {
+		return nil, huma.Error400BadRequest("before requires the default enqueued_at desc sort; use cursor")
+	}
+	position, asOf, cursorErr := s.decodeJobListCursor(input.Cursor, sort)
 	if cursorErr != nil {
 		return nil, huma.Error400BadRequest(cursorErr.Error())
 	}
+	if sort.Column == storage.JobSortElapsed {
+		sort.AsOf = asOf
+		if position == nil {
+			sort.AsOf = time.Now()
+		}
+	}
+	listOpts = append(listOpts, storage.WithSort(sort))
 	if position != nil {
-		listOpts = append(
-			listOpts, storage.WithBeforePosition(enqueuedAt, position.JobID),
-		)
+		listOpts = append(listOpts, storage.WithSortAfter(*position))
 	} else if input.Before > 0 {
 		listOpts = append(
 			listOpts, storage.WithBeforeCursor(input.Before),
@@ -1779,6 +1834,9 @@ func (s *Server) humaListJobs(
 	jobs, err := s.db.ListJobs(
 		input.Status, repo, fetchLimit, offset, listOpts...,
 	)
+	if errors.Is(err, storage.ErrInvalidSortPosition) {
+		return nil, huma.Error400BadRequest(fmt.Sprintf("invalid jobs cursor: %v", err))
+	}
 	if err != nil {
 		return nil, huma.Error500InternalServerError(
 			fmt.Sprintf("list jobs: %v", err),
@@ -1792,7 +1850,7 @@ func (s *Server) humaListJobs(
 	}
 	var nextCursor *string
 	if hasMore && len(jobs) > 0 {
-		encoded, cursorErr := s.encodeJobListCursor(jobs[len(jobs)-1])
+		encoded, cursorErr := s.encodeJobListCursor(jobs[len(jobs)-1], sort)
 		if cursorErr != nil {
 			return nil, huma.Error500InternalServerError(
 				fmt.Sprintf("encode jobs cursor: %v", cursorErr),
@@ -3973,6 +4031,12 @@ func (s *Server) humaGetHealth(
 		Healthy: workersHealthy,
 		Message: workersMessage,
 	})
+
+	agents := s.agentHealth.observe(s.configWatcher.Config())
+	if !agents.Healthy {
+		allHealthy = false
+	}
+	components = append(components, agents)
 
 	if s.syncWorker != nil {
 		syncHealthy, syncMessage := s.syncWorker.HealthCheck()

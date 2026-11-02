@@ -80,6 +80,19 @@ func setSynthesisAgent(t *testing.T, tc *workerTestContext, runUUID uuid.UUID, a
 	require.NoError(t, err)
 }
 
+// setSynthesisInstructions stores panel synthesis instructions on the run's
+// synthesis job in the same encoding production writes.
+func setSynthesisInstructions(t *testing.T, tc *workerTestContext, runUUID uuid.UUID, instructions string) {
+	t.Helper()
+	raw, err := synthesisJobConfig{Instructions: instructions}.encode()
+	require.NoError(t, err)
+	_, err = tc.DB.Exec(
+		"UPDATE review_jobs SET panel_member_config_json = ? WHERE panel_run_uuid = ? AND panel_role = 'synthesis'",
+		raw, runUUID,
+	)
+	require.NoError(t, err)
+}
+
 // releaseAndClaimSynthesis releases the gated synthesis job for the run and
 // claims it, asserting the claimed job is the synthesis row.
 func releaseAndClaimSynthesis(
@@ -235,7 +248,7 @@ func TestRunSynthesisAgentMarksInvokedOnlyWhenAgentRuns(t *testing.T) {
 		agent.RegisterForTest(t, &agent.FakeAgent{
 			NameStr: synthAgent,
 			ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
-				return `{"schema_version":2,"summary":"No issues found.","verdict":"pass","findings":[]}`, nil
+				return `{"schema_version":3,"summary":"No issues found.","verdict":"pass","findings":[]}`, nil
 			},
 		})
 
@@ -279,7 +292,7 @@ func (a *synthesisEntrypointTestAgent) Review(_ context.Context, _, _, prompt st
 	if a.result != "" {
 		return a.result, nil
 	}
-	return `{"schema_version":2,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","problem":"combined","fix":"fix","location":"file.go:1","sources":[1]}]}`, nil
+	return `{"schema_version":3,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"problem":"combined","fix":"fix","file":"test.txt","start_line":1,"end_line":1,"sources":[1]}]}`, nil
 }
 
 func (a *synthesisEntrypointTestAgent) WithReasoning(agent.ReasoningLevel) agent.Agent { return a }
@@ -615,6 +628,51 @@ func TestSynthesisSingleSuccessPassthrough(t *testing.T) {
 	assert.False(synthCalled, "passthrough must not invoke an agent")
 }
 
+// TestSynthesisInstructionsRunAgentForSingleSuccess verifies a panel with
+// synthesis instructions runs the synthesis agent even when only one member
+// succeeded, and that the agent receives the instructions in place of the
+// merge-only rules.
+func TestSynthesisInstructionsRunAgentForSingleSuccess(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	tc := newWorkerTestContext(t, 1)
+
+	const memberAgent = "panel-instructed-member"
+	registerPassingAgent(t, memberAgent)
+
+	var captured string
+	const synthAgent = "synth-instructed"
+	agent.RegisterForTest(t, &agent.FakeAgent{
+		NameStr: synthAgent,
+		ReviewFn: func(_ context.Context, _, _, prompt string, _ io.Writer) (string, error) {
+			captured = prompt
+			return `{"schema_version":3,"summary":"Verified","verdict":"fail","findings":[{"severity":"high","kind":"defect","confidence":0.9,"problem":"Label: just fix. Nil map write.","fix":"Initialize the map.","file":"alpha.go","start_line":3,"end_line":3,"sources":[1]}]}`, nil
+		},
+	})
+
+	runUUID, members, _ := enqueuePanelRun(t, tc, "instructed-panel", []memberSpec{
+		{name: "m0", agent: memberAgent},
+		{name: "m1", agent: memberAgent},
+	})
+	setSynthesisAgent(t, tc, runUUID, synthAgent)
+	setSynthesisInstructions(t, tc, runUUID, "Label each finding just fix or needs the user.")
+	completeMember(t, tc, members[0].ID, memberAgent, "High: nil map write in alpha.go:3")
+	failMember(t, tc, members[1].ID)
+
+	synth := releaseAndClaimSynthesis(t, tc, runUUID)
+	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+
+	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
+	review, err := tc.DB.GetReviewByJobID(synth.ID)
+	require.NoError(t, err)
+	assert.Equal(synthAgent, review.Agent, "the synthesis agent, not a passthrough, produced the review")
+	assert.Contains(review.Output, "Label: just fix. Nil map write.")
+
+	assert.Contains(captured, "## Additional synthesis instructions\nLabel each finding just fix or needs the user.\n")
+	assert.Contains(captured, "High: nil map write in alpha.go:3")
+	assert.NotContains(captured, "or inspect the repository")
+}
+
 func TestSynthesisSingleSuccessWithMinSeverityPassesThroughBelowThreshold(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
@@ -723,7 +781,7 @@ func TestSynthesisPassingMembersWithRetainedFindingsStillSynthesize(t *testing.T
 
 	synthAgent := &synthesisEntrypointTestAgent{
 		name:   "panel-retained-findings-synth",
-		result: `{"schema_version":2,"summary":"Combined.","verdict":"pass","findings":[{"severity":"low","problem":"shared nit","fix":"tidy","location":null,"sources":[1,2]}]}`,
+		result: `{"schema_version":3,"summary":"Combined.","verdict":"pass","findings":[{"severity":"low","kind":"improvement","confidence":0.6,"problem":"shared nit","fix":"tidy","file":null,"start_line":null,"end_line":null,"sources":[1,2]}]}`,
 	}
 	agent.RegisterForTest(t, synthAgent)
 
@@ -1024,7 +1082,7 @@ func TestSynthesisMultiVerifyDedupe(t *testing.T) {
 		NameStr: synthAgent,
 		ReviewFn: func(_ context.Context, _, _, prompt string, _ io.Writer) (string, error) {
 			captured = prompt
-			return `{"schema_version":2,"summary":"Combined","verdict":"pass","findings":[{"severity":"high","problem":"Consolidated finding.","fix":"Fix it.","location":"alpha.go:1","sources":[1,2]}]}`, nil
+			return `{"schema_version":3,"summary":"Combined","verdict":"pass","findings":[{"severity":"high","kind":"defect","confidence":0.9,"problem":"Consolidated finding.","fix":"Fix it.","file":"alpha.go","start_line":1,"end_line":1,"sources":[1,2]}]}`, nil
 		},
 	})
 
@@ -1252,7 +1310,7 @@ func TestSynthesisRunsAgainstWorktree(t *testing.T) {
 						require.NoError(t, err)
 						assert.Contains(string(content), strings.TrimSpace(strings.Repeat("finding ", 1000)))
 					}
-					return `{"schema_version":2,"summary":"Done.","verdict":"pass","findings":[]}`, nil
+					return `{"schema_version":3,"summary":"Done.","verdict":"pass","findings":[]}`, nil
 				},
 			})
 
@@ -1286,6 +1344,50 @@ func TestSynthesisRunsAgainstWorktree(t *testing.T) {
 	}
 }
 
+// TestInstructedSynthesisReadsReviewedCommit verifies synthesis with
+// instructions reads files at the reviewed commit even when isolate_reviews is
+// off and the working tree has since changed, so verifying a finding cannot
+// pass on code the review never saw.
+func TestInstructedSynthesisReadsReviewedCommit(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	tc := newWorkerTestContext(t, 1)
+
+	alpha := filepath.Join(tc.TmpDir, "alpha.go")
+	require.NoError(t, os.WriteFile(alpha, []byte("reviewed\n"), 0o600))
+	tc.GitRepo.Run("add", "alpha.go")
+	tc.GitRepo.Run("commit", "-m", "add alpha")
+
+	const memberAgent = "panel-commit-member"
+	registerPassingAgent(t, memberAgent)
+	var seen string
+	const synthAgent = "synth-commit"
+	agent.RegisterForTest(t, &agent.FakeAgent{
+		NameStr: synthAgent,
+		ReviewFn: func(_ context.Context, repoPath, _, _ string, _ io.Writer) (string, error) {
+			content, err := os.ReadFile(filepath.Join(repoPath, "alpha.go"))
+			require.NoError(t, err)
+			seen = string(content)
+			return `{"schema_version":3,"summary":"Done.","verdict":"pass","findings":[]}`, nil
+		},
+	})
+
+	runUUID, members, _ := enqueuePanelRun(t, tc, "commit-panel", []memberSpec{
+		{name: "m0", agent: memberAgent},
+		{name: "m1", agent: memberAgent},
+	})
+	setSynthesisAgent(t, tc, runUUID, synthAgent)
+	setSynthesisInstructions(t, tc, runUUID, "Verify each finding against the code.")
+	completeMember(t, tc, members[0].ID, memberAgent, "High: bug in alpha.go:1")
+	completeMember(t, tc, members[1].ID, memberAgent, "High: other bug in alpha.go:1")
+	require.NoError(t, os.WriteFile(alpha, []byte("edited after review\n"), 0o600))
+
+	synth := releaseAndClaimSynthesis(t, tc, runUUID)
+	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+
+	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
+	assert.Equal(t, "reviewed\n", seen)
+}
+
 func TestSynthesisStoresFindingWithoutLocation(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
@@ -1298,7 +1400,7 @@ func TestSynthesisStoresFindingWithoutLocation(t *testing.T) {
 	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: synthAgent,
 		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
-			return `{"schema_version":2,"summary":"One finding without a location.","verdict":"pass","findings":[{"severity":"medium","problem":"Missing test","fix":"Add one","location":null,"sources":[1]}]}`, nil
+			return `{"schema_version":3,"summary":"One finding without a location.","verdict":"pass","findings":[{"severity":"medium","kind":"improvement","confidence":0.7,"problem":"Missing test","fix":"Add one","file":null,"start_line":null,"end_line":null,"sources":[1]}]}`, nil
 		},
 	})
 

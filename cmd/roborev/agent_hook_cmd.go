@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	kitagenthook "go.kenn.io/kit/agenthook"
 
+	roborevagent "go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/agenthook"
 	"go.kenn.io/roborev/internal/githook"
 	"go.kenn.io/roborev/internal/version"
@@ -115,6 +117,9 @@ func runLocalAgentHook(agent kitagenthook.Agent, opts agenthook.Options, stdin i
 	displayName := "agent"
 	if profile, ok := agenthook.LocalProfileDisplayName(agent); ok {
 		displayName = profile
+	}
+	if insideRoborevAgent() {
+		return json.MarshalWrite(stdout, map[string]any{})
 	}
 	input, err := agenthook.DecodeInput(stdin)
 	if err != nil {
@@ -301,13 +306,19 @@ func runHook(
 	stdin io.Reader,
 	stdout, stderr io.Writer,
 ) error {
-	return kitagenthook.Handle(
-		context.Background(),
-		agent,
-		stdin,
-		stdout,
-		newRoborevAgentHookHandler(agent, opts, stderr),
-	)
+	var handler kitagenthook.Handler = newRoborevAgentHookHandler(agent, opts, stderr)
+	if insideRoborevAgent() {
+		handler = kitagenthook.NoopHandler{}
+	}
+	return kitagenthook.Handle(context.Background(), agent, stdin, stdout, handler)
+}
+
+// insideRoborevAgent reports whether this hook runs inside an agent that
+// roborev launched for a review, synthesis, or fix. Those sessions are
+// roborev's own work, so the hook must not record them or remind them about
+// open reviews.
+func insideRoborevAgent() bool {
+	return os.Getenv(roborevagent.HookSuppressEnv) != ""
 }
 
 func addAgentHookRunFlags(cmd *cobra.Command, opts *agenthook.Options) {

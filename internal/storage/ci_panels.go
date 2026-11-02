@@ -56,9 +56,10 @@ func rerunCIPanelTx(ctx context.Context, conn *sql.Conn, sourceJobID int64, synt
 		return ErrCIPanelActive
 	}
 	if _, err := conn.ExecContext(ctx, `UPDATE ci_pr_panels
-		SET retired_at = ?, posting_claimed_at = NULL
+		SET retired_at = ?, posting_claimed_at = NULL,
+		    retire_reason = CASE WHEN posted_at IS NULL THEN ? ELSE retire_reason END
 		WHERE github_repo = ? AND pr_number = ? AND head_sha = ? AND retired_at IS NULL`,
-		now.Format(time.RFC3339), source.GithubRepo, source.PRNumber, source.HeadSHA); err != nil {
+		now.Format(time.RFC3339), PanelRetireReasonSuperseded, source.GithubRepo, source.PRNumber, source.HeadSHA); err != nil {
 		return err
 	}
 	if _, err := conn.ExecContext(ctx, `INSERT INTO ci_pr_panels
@@ -92,6 +93,18 @@ func rerunCIPanelTx(ctx context.Context, conn *sql.Conn, sourceJobID int64, synt
 		source.GithubRepo, source.PRNumber, source.HeadSHA)
 	return err
 }
+
+// Panel retirement reasons describe the first decision to discard an unposted
+// run. Historical rows and posted history retired only to release ownership
+// keep a NULL reason.
+const (
+	PanelRetireReasonClosedPR      = "closed_pr"
+	PanelRetireReasonSuperseded    = "superseded"
+	PanelRetireReasonStaleHead     = "stale_head"
+	PanelRetireReasonDeferredRetry = "deferred_retry"
+	PanelRetireReasonRepoMismatch  = "repo_mismatch"
+	PanelRetireReasonCanceled      = "canceled"
+)
 
 // Panel terminal outcomes, persisted once at finalization. A NULL outcome
 // means the row was finalized before outcome persistence existed; exports
@@ -555,12 +568,13 @@ func (db *DB) MarkCIPanelFinalStatusSent(id int64) error {
 }
 
 // MarkPanelRetired makes an abandoned panel row non-postable while retaining its
-// created_at timestamp for throttle calculations.
-func (db *DB) MarkPanelRetired(id int64) error {
+// created_at timestamp for throttle calculations. The first retirement reason
+// is recorded atomically; subsequent cleanup leaves it unchanged.
+func (db *DB) MarkPanelRetired(id int64, reason string) error {
 	_, err := db.Exec(`
 		UPDATE ci_pr_panels
-		SET retired_at = datetime('now'), posting_claimed_at = NULL
-		WHERE id = ? AND posted_at IS NULL AND retired_at IS NULL`, id)
+		SET retired_at = datetime('now'), retire_reason = ?, posting_claimed_at = NULL
+		WHERE id = ? AND posted_at IS NULL AND retired_at IS NULL`, reason, id)
 	return err
 }
 
@@ -568,15 +582,15 @@ func (db *DB) MarkPanelRetired(id int64) error {
 // only while that run still owns the HEAD. Historical cancellation events can
 // arrive after a successor starts, so retirement and ownership-checked deletion
 // must share a transaction with respect to rerun creation.
-func (db *DB) RetirePanelAndDeleteAttempt(id int64) error {
+func (db *DB) RetirePanelAndDeleteAttempt(id int64, reason string) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.Exec(`UPDATE ci_pr_panels
-		SET retired_at = datetime('now'), posting_claimed_at = NULL
-		WHERE id = ? AND posted_at IS NULL AND retired_at IS NULL`, id); err != nil {
+		SET retired_at = datetime('now'), retire_reason = ?, posting_claimed_at = NULL
+		WHERE id = ? AND posted_at IS NULL AND retired_at IS NULL`, reason, id); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM ci_pr_review_attempts
@@ -598,12 +612,12 @@ func (db *DB) RetirePanelAndDeleteAttempt(id int64) error {
 // NULL predicate then skips the row) or the marking lands first (the
 // allow_stale_post = 0 predicate here affects zero rows and the caller posts
 // the retained snapshot). Returns whether the row was retired.
-func (db *DB) MarkPanelRetiredIfStalePostDisallowed(id int64) (bool, error) {
+func (db *DB) MarkPanelRetiredIfStalePostDisallowed(id int64, reason string) (bool, error) {
 	res, err := db.Exec(`
 		UPDATE ci_pr_panels
-		SET retired_at = datetime('now'), posting_claimed_at = NULL
+		SET retired_at = datetime('now'), retire_reason = ?, posting_claimed_at = NULL
 		WHERE id = ? AND posted_at IS NULL AND retired_at IS NULL
-		  AND allow_stale_post = 0`, id)
+		  AND allow_stale_post = 0`, reason, id)
 	if err != nil {
 		return false, fmt.Errorf("retire panel if stale post disallowed: %w", err)
 	}

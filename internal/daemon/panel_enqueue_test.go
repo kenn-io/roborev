@@ -911,6 +911,53 @@ synthesis_backup_model = "opus"
 	require.NotNil(t, synth)
 	assert.Equal("claude-code", synth.BackupAgent, "synthesis backup agent persisted")
 	assert.Equal("opus", synth.BackupModel, "synthesis backup model persisted")
+	assert.Empty(synth.PanelMemberConfigJSON, "a panel without synthesis instructions stores no synthesis config")
+}
+
+// TestEnqueuePanelSynthesisInstructionsPersisted verifies a panel's
+// synthesis_instructions are frozen on the synthesis job row, so the worker
+// and later reruns use the instructions the run was queued with.
+func TestEnqueuePanelSynthesisInstructionsPersisted(t *testing.T) {
+	server, db, _ := newTestServer(t)
+
+	const instructionsPanel = `
+[review]
+default_panel = "duo"
+
+[review.subagents.bug]
+agent = "test"
+review_type = "default"
+
+[review.subagents.security]
+agent = "test"
+review_type = "security"
+
+[review.panels.duo]
+members = ["bug", "security"]
+synthesis_agent = "test"
+synthesis_instructions = """
+Verify each finding against the code.
+Start each problem with "Label: just fix" or "Label: needs the user".
+"""
+`
+	repo := testutil.NewGitRepo(t)
+	repo.WriteFile(".roborev.toml", instructionsPanel)
+	repo.CommitFile("a.txt", "a", "add a")
+
+	resp := enqueuePanelViaHTTP(t, server, EnqueueRequest{
+		RepoPath: repo.Path(),
+		GitRef:   "HEAD",
+		Agent:    "test",
+	})
+
+	synth, err := db.GetSynthesisJob(resp.PanelRunUUID)
+	require.NoError(t, err)
+	require.NotNil(t, synth)
+	instructions, err := synthesisInstructions(synth)
+	require.NoError(t, err)
+	assert.Equal(t,
+		"Verify each finding against the code.\nStart each problem with \"Label: just fix\" or \"Label: needs the user\".",
+		instructions)
 }
 
 // TestEnqueueSingleMemberPanelSynthesisBackupPersisted verifies the single-member

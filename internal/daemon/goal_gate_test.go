@@ -286,7 +286,7 @@ func TestGoalGateClientContext(t *testing.T) {
 			Request:    request,
 		}, nil
 	})
-	client := &HTTPClient{baseURL: "http://goal-gate.test", httpClient: &http.Client{Timeout: time.Millisecond, Transport: transport}}
+	client := &HTTPClient{baseURL: "http://goal-gate.test", httpClient: &http.Client{Timeout: time.Minute, Transport: transport}}
 	deadline := time.Now().Add(15 * time.Minute)
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()

@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/stacktest"
 
 	"go.kenn.io/roborev/internal/config"
 )
@@ -92,6 +93,7 @@ func (h *configWatcherHarness) waitForReload(t *testing.T) {
 				return
 			}
 		case <-timeout:
+			stacktest.Dump(t)
 			require.Condition(t, func() bool {
 				return false
 			}, "Timeout waiting for config.reloaded event")

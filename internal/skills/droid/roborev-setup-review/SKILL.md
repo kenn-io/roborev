@@ -154,9 +154,11 @@ This mapping is for you, not the user. Use only what the conversation needs.
 | One custom check after every commit or every N commits | A type, a subagent that uses it, and a one-member panel; set `hook_review_panel` under `[review]`. Automatic reviews use this panel and carry no review type. Set `post_commit_batch_size = N` for every N commits. |
 | Several custom checks after every commit or every N commits | A type and subagent per check, a panel listing those subagents, and `hook_review_panel` under `[review]`. Set `post_commit_batch_size = N` for every N commits. |
 | Keep the usual code review after commits too | Add a subagent with `review_type = "default"` to the hook panel |
+| Combine bursts of automatic reviews across repositories | Set `post_commit_batch_size` and/or `post_commit_quiet_period = "5m"` globally. Each repo can override either value. The count threshold or quiet period queues the accumulated range, whichever happens first. Values below 2 disable the count threshold; an empty quiet period or `"0"` disables the timer. Pushes flush pending commits. Daemon restarts cancel timers but preserve pending checkpoints for the next commit or push. |
 | The whole branch each time | `post_commit_review = "branch"` |
 | Reviews on request | `[review] default_panel`, or `--type` and `--panel` |
 | Reviews on pull requests | `[ci] panel`; see <https://roborev.io/docs/advanced/subagent-review-panels/#ci-panels> |
+| PR reviews only after a draft is marked ready | Ask whether draft PRs should be skipped. For the daemon poller, global `[ci] skip_drafts = true` in `~/.roborev/config.toml` (default `false`; no repo override). Ready PRs become eligible next poll without a push, under normal throttle, quiet-hours, and dedup rules. Active reviews are not canceled. |
 | Only serious findings fail | `review_min_severity`, plus severity guidance in each rubric |
 | Passing reviews close themselves | `auto_close_passing_reviews = true` |
 | Reviewers that see the task a commit is for, from Kata | `[kata_context]` with `mode = "current"`; commits name their issue, such as `Closes: kata#abc4` |
@@ -168,6 +170,12 @@ This mapping is for you, not the user. Use only what the conversation needs.
 | A particular agent or model | `agent`, `model`, and `reasoning` in the repository, type, or subagent |
 | A reviewer on trial | `non_voting = true` on the subagent |
 | A reviewer that may flake | `allow_failure = true` and `timeout` on the subagent |
+| A combined review that checks each finding against the material, or labels findings for whoever fixes them | `synthesis_instructions` on the panel; see <https://roborev.io/docs/advanced/subagent-review-panels/#synthesis-instructions> |
+
+For a small panel that checks findings before keeping them, use the
+[precise panel recipe](https://roborev.io/docs/advanced/subagent-review-panels/#precise-panel-recipe).
+It keeps agreed findings unless disproved and requires code evidence for
+single-reviewer or contradicted findings. Silence is not disagreement.
 
 Rules that matter:
 
@@ -247,6 +255,12 @@ Rules that matter:
     they apply only after the setup is pushed there. CI reads everything from
     its trusted base ref. Commit the whole setup to the default branch so all
     three agree, and tell the user the guidelines wait on that push.
+- For GitHub Actions reviews, `roborev init gh-action` generates a workflow
+    that skips draft PRs and reviews them when marked ready. Use
+    `--include-drafts` to review drafts too. Both modes cancel overlapping runs
+    for the same workflow and PR. Existing workflows need
+    `roborev init gh-action --force` to adopt the behavior; add
+    `--include-drafts` if the user wants draft reviews.
 - A `type = "kata"` hook files an issue for each reviewer's failing review as
     well as for the combined review. With a panel of several reviewers, one
     failing commit can open several issues. Say so when proposing it.

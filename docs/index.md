@@ -18,17 +18,19 @@ documentation. For the product story, start at the
 
 ## Install
 
-=== "macOS / Linux"
+=== "macOS (Homebrew)"
+
+    ```bash
+    brew install roborev
+    ```
+
+=== "Linux"
 
     ```bash
     curl -fsSL https://roborev.io/install.sh | bash
     ```
 
-=== "Homebrew"
-
-    ```bash
-    brew install kenn-io/tap/roborev
-    ```
+    Or install a [DEB or RPM package](installation.md#linux-packages-deb-and-rpm).
 
 === "Windows"
 

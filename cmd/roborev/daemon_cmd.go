@@ -270,6 +270,7 @@ func daemonRunCmd() *cobra.Command {
 			}
 			defer func() { runErr = errors.Join(runErr, closeLogs()) }()
 			log.Printf("Starting roborev daemon (version %s)...", version.Version)
+			extendDaemonPATH()
 
 			// Silently clean up old roborevd binary if it exists (consolidated into roborev)
 			if exePath, err := os.Executable(); err == nil {
@@ -383,6 +384,9 @@ func daemonRunCmd() *cobra.Command {
 				serverOptions = append(serverOptions, daemon.WithWebDevelopmentOrigin(webDevOrigin))
 			}
 			serverOptions = append(serverOptions, daemon.WithSearch(search.service, search.reconciler))
+			if workers > 0 {
+				serverOptions = append(serverOptions, daemon.WithPinnedMaxWorkers(workers))
+			}
 			server := daemon.NewServer(db, cfg, configPath, serverOptions...)
 			server.SetTelemetry(telemetryReporter)
 			if syncWorker != nil {

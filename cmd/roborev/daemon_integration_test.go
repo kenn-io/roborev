@@ -151,7 +151,7 @@ func waitFor(t *testing.T, timeout time.Duration, check func() bool) bool {
 		if check() {
 			return true
 		}
-		time.Sleep(50 * time.Millisecond) //nolint:kennlint // daemon startup shows only through its files and HTTP endpoint
+		time.Sleep(50 * time.Millisecond) //nolint:kennlint // sleeptest: daemon startup shows only through its files and HTTP endpoint
 	}
 	return false
 }
@@ -516,7 +516,7 @@ case "$*" in
 esac
 sleep 2
 printf '%s\n' '{"type":"thread.started","thread_id":"integration-session"}'
-printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"{\"schema_version\":2,\"summary\":\"No issues found.\",\"verdict\":\"pass\",\"findings\":[]}"}}'
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"{\"schema_version\":3,\"summary\":\"No issues found.\",\"verdict\":\"pass\",\"findings\":[]}"}}'
 `
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o755))
 	return path

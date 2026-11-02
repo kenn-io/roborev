@@ -5,6 +5,19 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
+## Unreleased
+
+- Use root help as a guide to the review workflow, job IDs, target selection,
+    output modes and recovery. Commands are grouped by purpose and include
+    examples; `ls` aliases `list` and `resolve` aliases `close`.
+- Read recovery hints in CLI errors. Human errors use `hint:`, search agent
+    output uses `Hint:`, and commands supporting `--json` write an error
+    envelope to stderr. Success output stays unchanged. Usage mistakes now exit
+    2 and invalid values exit 4; runtime failures and FAIL verdicts keep exit 1,
+    and export cursor resets keep exit 3.
+- Report daemon startup failure when its child exits, with the startup log and a
+    diagnostic command, instead of waiting for the readiness timeout.
+
 ## 0.74.0
 
 <small>2026-10-27</small>
@@ -1154,7 +1167,7 @@ ______________________________________________________________________
 - Homebrew updates now come directly from official Roborev releases. The tap
     owns its formula updates, removing a duplicate publishing path and its
     cross-repository credential. See
-    [Homebrew installation](/docs/installation/#homebrew-macos-linux).
+    [Homebrew installation](/docs/installation/#homebrew-macos).
 - Building Roborev from source now requires Go 1.26.6. Go, JavaScript,
     documentation, and GitHub Actions dependencies were also refreshed,
     including fixes for known Go toolchain and `go-git` vulnerabilities.

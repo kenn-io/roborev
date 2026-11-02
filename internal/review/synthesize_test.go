@@ -69,7 +69,7 @@ func (a *capturingAgent) Review(
 	_ context.Context, _, gitRef, _ string, _ io.Writer,
 ) (string, error) {
 	a.capturedGitRef = gitRef
-	return `{"schema_version":2,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","problem":"combined","fix":"fix","location":"file.go:1","sources":[1]}]}`, nil
+	return `{"schema_version":3,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"problem":"combined","fix":"fix","file":"file.go","start_line":1,"end_line":1,"sources":[1]}]}`, nil
 }
 func (a *capturingAgent) CommandLine() string { return "capture" }
 
@@ -91,7 +91,7 @@ func (a *synthesisEntrypointAgent) Review(
 ) (string, error) {
 	a.reviewCalled = true
 	a.synthPrompt = prompt
-	return `{"schema_version":2,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","problem":"combined","fix":"fix","location":"file.go:1","sources":[1]}]}`, nil
+	return `{"schema_version":3,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"problem":"combined","fix":"fix","file":"file.go","start_line":1,"end_line":1,"sources":[1]}]}`, nil
 }
 func (a *synthesisEntrypointAgent) CommandLine() string { return "synthesis-entrypoint" }
 
@@ -125,7 +125,7 @@ func (a *structuredSynthesisAgent) ReviewWithSchema(
 ) (jsontext.Value, error) {
 	a.schema = schema
 	a.repoPath = repoPath
-	return jsontext.Value(`{"schema_version":2,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","problem":"combined","fix":"fix","location":"file.go:1","sources":[1]}]}`), nil
+	return jsontext.Value(`{"schema_version":3,"summary":"synthesized output","verdict":"pass","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"problem":"combined","fix":"fix","file":"file.go","start_line":1,"end_line":1,"sources":[1]}]}`), nil
 }
 func (a *structuredSynthesisAgent) CommandLine() string { return a.Name() }
 
@@ -721,7 +721,7 @@ func TestSuccessfulSynthesisInheritsThreshold(t *testing.T) {
 		{"unfiltered member", []string{"medium", ""}, "", true},
 	} {
 		t.Run(policy.name, func(t *testing.T) {
-			a := &structuredBatchAgent{name: "threshold-synthesis", result: []byte(`{"schema_version":2,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","problem":"Minor naming issue.","fix":"Rename it.","location":null,"sources":[1,2]}]}`)}
+			a := &structuredBatchAgent{name: "threshold-synthesis", result: []byte(`{"schema_version":3,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","confidence":0.7,"problem":"Minor naming issue.","fix":"Rename it.","file":null,"start_line":null,"end_line":null,"sources":[1,2]}]}`)}
 			agent.RegisterForTest(t, a)
 			doc := StructuredReview{SchemaVersion: 2, Summary: "Review complete.", Findings: []StructuredFinding{{Severity: "low", Problem: "Minor naming issue.", Fix: "Rename it."}}}
 			results := make([]ReviewResult, len(policy.members))
@@ -755,10 +755,12 @@ func TestSynthesisDisplayPolicyAcrossOutcomes(t *testing.T) {
 	} {
 		for _, outcome := range []string{"synthesis", "fallback"} {
 			t.Run(policy.name+"/"+outcome, func(t *testing.T) {
-				doc := StructuredReview{SchemaVersion: 2, Verdict: "fail", Summary: "Review complete.", Findings: []StructuredFinding{
-					{Severity: "low", Problem: "Low finding.", Fix: "Fix it.", Sources: []int{1}},
-					{Severity: "medium", Problem: "Medium finding.", Fix: "Fix it.", Sources: []int{1}},
-					{Severity: "high", Problem: "High finding.", Fix: "Fix it.", Sources: []int{1}},
+				// The document doubles as the synthesis agent's output, so it
+				// carries the live schema version.
+				doc := StructuredReview{SchemaVersion: storage.StructuredReviewSchemaVersion, Verdict: "fail", Summary: "Review complete.", Findings: []StructuredFinding{
+					{Severity: "low", Kind: "defect", Confidence: 0.6, Problem: "Low finding.", Fix: "Fix it.", Sources: []int{1}},
+					{Severity: "medium", Kind: "defect", Confidence: 0.7, Problem: "Medium finding.", Fix: "Fix it.", Sources: []int{1}},
+					{Severity: "high", Kind: "defect", Confidence: 0.9, Problem: "High finding.", Fix: "Fix it.", Sources: []int{1}},
 				}}
 				raw, err := json.Marshal(doc)
 				require.NoError(t, err)

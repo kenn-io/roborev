@@ -113,7 +113,9 @@ func TestSuccessfulPanelSynthesisInheritsThreshold(t *testing.T) {
 	} {
 		t.Run(policy.name, func(t *testing.T) {
 			assert := assert.New(t)
-			document := jsontext.Value(`{"schema_version":2,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","problem":"Minor naming issue.","fix":"Rename it.","location":null,"sources":[1,2]}]}`)
+			document := jsontext.Value(`{"schema_version":3,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","confidence":0.6,"problem":"Minor naming issue.","fix":"Rename it.","file":null,"start_line":null,"end_line":null,"sources":[1,2]}]}`)
+			// Storage holds the canonical encoding, which adds the derived location.
+			canonical := `{"schema_version":3,"summary":"Combined.","verdict":"fail","findings":[{"severity":"low","kind":"improvement","topic":null,"confidence":0.6,"problem":"Minor naming issue.","fix":"Rename it.","file":null,"start_line":null,"end_line":null,"location":null,"sources":[1,2]}]}`
 			a := &synthesisEntrypointTestAgent{name: "threshold-synthesis", result: string(document)}
 			agent.RegisterForTest(t, a)
 			runUUID, members, synthJob := enqueuePanelRun(t, tc, "threshold-synthesis", []memberSpec{{name: "first", agent: "test"}, {name: "second", agent: "test"}})
@@ -135,7 +137,7 @@ func TestSuccessfulPanelSynthesisInheritsThreshold(t *testing.T) {
 			delete(stored.StructuredOutput, "source_labels")
 			raw, err := json.Marshal(stored.StructuredOutput)
 			require.NoError(t, err)
-			assert.JSONEq(string(document), string(raw))
+			assert.JSONEq(canonical, string(raw))
 			rows, err := tc.DB.GetPanelMemberReviews(runUUID)
 			require.NoError(t, err)
 			p := &CIPoller{db: tc.DB, cfgGetter: NewStaticConfig(config.DefaultConfig())}
@@ -173,10 +175,10 @@ func TestPanelDisplayPolicyAcrossOutcomes(t *testing.T) {
 		for _, outcome := range []string{"synthesis", "fallback"} {
 			t.Run(policy.name+"/"+outcome, func(t *testing.T) {
 				assert := assert.New(t)
-				doc := reviewpkg.StructuredReview{SchemaVersion: 2, Verdict: "fail", Summary: "Review complete.", Findings: []reviewpkg.StructuredFinding{
-					{Severity: "low", Problem: "Low finding.", Fix: "Fix it.", Sources: []int{1}},
-					{Severity: "medium", Problem: "Medium finding.", Fix: "Fix it.", Sources: []int{1}},
-					{Severity: "high", Problem: "High finding.", Fix: "Fix it.", Sources: []int{1}},
+				doc := reviewpkg.StructuredReview{SchemaVersion: 3, Verdict: "fail", Summary: "Review complete.", Findings: []reviewpkg.StructuredFinding{
+					{Severity: "low", Kind: "defect", Confidence: 0.8, Problem: "Low finding.", Fix: "Fix it.", Sources: []int{1}},
+					{Severity: "medium", Kind: "defect", Confidence: 0.8, Problem: "Medium finding.", Fix: "Fix it.", Sources: []int{1}},
+					{Severity: "high", Kind: "defect", Confidence: 0.8, Problem: "High finding.", Fix: "Fix it.", Sources: []int{1}},
 				}}
 				raw, err := json.Marshal(doc)
 				require.NoError(t, err)

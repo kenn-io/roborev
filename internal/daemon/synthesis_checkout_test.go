@@ -56,7 +56,7 @@ func TestLocalSynthesisCheckoutSurvivesCallerRemoval(t *testing.T) {
 		if !strings.Contains(string(data), "member finding") {
 			return "", fmt.Errorf("missing member review input")
 		}
-		return `{"schema_version":2,"summary":"Done.","verdict":"pass","findings":[]}`, nil
+		return `{"schema_version":3,"summary":"Done.","verdict":"pass","findings":[]}`, nil
 	}})
 	run, members, _ := enqueuePanelRun(t, tc, "isolated-panel", []memberSpec{{name: "first", agent: "test"}, {name: "second", agent: "test"}})
 	setSynthesisAgent(t, tc, run, synthAgent)

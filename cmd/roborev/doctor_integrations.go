@@ -34,7 +34,7 @@ func (env *doctorEnv) hookToolProblem(tool string) string {
 }
 
 func checkDoctorIntegrations(env *doctorEnv) []doctorCheck {
-	var out []doctorCheck
+	out := []doctorCheck{checkDoctorUsageProvider(env)}
 
 	hooks := append([]config.HookConfig{}, env.global.Hooks...)
 	if env.repoCfg != nil {
@@ -98,4 +98,43 @@ func checkDoctorIntegrations(env *doctorEnv) []doctorCheck {
 		}
 	}
 	return out
+}
+
+func checkDoctorUsageProvider(env *doctorEnv) doctorCheck {
+	check := doctorCheck{ID: "integrations.usage", Category: "integrations", Status: doctorOK}
+	var result daemon.DoctorUsageProvider
+	source := "daemon"
+	if env.daemonAgents != nil && env.daemonAgents.UsageProvider != nil {
+		result = *env.daemonAgents.UsageProvider
+	} else {
+		source = "this shell only; daemon usage provider was not checked"
+		check.Status = doctorWarn
+		switch {
+		case env.daemonAgentsErr != nil:
+			check.Details = append(check.Details, env.daemonAgentsErr.Error())
+		case env.pingErr != nil:
+			check.Details = append(check.Details, env.pingErr.Error())
+		case env.daemonAgents != nil:
+			check.Details = append(check.Details, "the daemon did not report its usage provider; restart it to use this diagnostic")
+		}
+		if env.globalErr != nil {
+			check.Summary = "usage provider (" + source + "): configuration could not be loaded"
+			check.Details = append(check.Details, env.globalErr.Error())
+			return check
+		}
+		result = daemon.ResolveDoctorUsageProvider(env.ctx, env.global)
+	}
+	provider := "agentsview local CLI"
+	switch result.Provider {
+	case "agentsview":
+		provider = "AgentsView at " + result.URL
+	case "cost_endpoint":
+		provider = "[cost] endpoint"
+	}
+	check.Summary = "usage provider (" + source + "): " + provider
+	if result.Error != "" {
+		check.Status = doctorWarn
+		check.Details = append(check.Details, result.Error)
+	}
+	return check
 }

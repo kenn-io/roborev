@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -109,16 +110,18 @@ func TestRetryOnSQLiteBusyNilIsSuccess(t *testing.T) {
 
 func TestRetryOnSQLiteBusyReturnsSuccessAfterAttemptDeadline(t *testing.T) {
 	t.Parallel()
-	calls := 0
-	job, err := retryOnSQLiteBusy(context.Background(), 4, 5*time.Millisecond, 0, nil, func(ctx context.Context) (*ReviewJob, error) {
-		calls++
-		<-ctx.Done()
-		return &ReviewJob{ID: 7}, nil
+	synctest.Test(t, func(t *testing.T) {
+		calls := 0
+		job, err := retryOnSQLiteBusy(context.Background(), 4, 5*time.Millisecond, 0, nil, func(ctx context.Context) (*ReviewJob, error) {
+			calls++
+			<-ctx.Done()
+			return &ReviewJob{ID: 7}, nil
+		})
+		require.NoError(t, err)
+		require.NotNil(t, job)
+		assert.Equal(t, int64(7), job.ID)
+		assert.Equal(t, 1, calls)
 	})
-	require.NoError(t, err)
-	require.NotNil(t, job)
-	assert.Equal(t, int64(7), job.ID)
-	assert.Equal(t, 1, calls)
 }
 
 func TestRetryOnSQLiteBusyStopsWhenContextIsCanceled(t *testing.T) {
@@ -136,16 +139,20 @@ func TestRetryOnSQLiteBusyStopsWhenContextIsCanceled(t *testing.T) {
 
 func TestRetryOnSQLiteBusyUsesEachAttemptBudget(t *testing.T) {
 	t.Parallel()
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-	calls := 0
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		calls := 0
+		start := time.Now()
 
-	_, err := retryOnSQLiteBusy(ctx, 4, 10*time.Millisecond, 0, nil, func(attemptCtx context.Context) (*ReviewJob, error) {
-		calls++
-		<-attemptCtx.Done()
-		return nil, attemptCtx.Err()
+		_, err := retryOnSQLiteBusy(ctx, 4, 10*time.Millisecond, 0, nil, func(attemptCtx context.Context) (*ReviewJob, error) {
+			calls++
+			<-attemptCtx.Done()
+			return nil, attemptCtx.Err()
+		})
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.True(t, IsSQLiteBusy(err))
+		assert.Equal(t, 4, calls)
+		assert.Equal(t, 40*time.Millisecond, time.Since(start))
 	})
-	require.ErrorIs(t, err, context.DeadlineExceeded)
-	assert.True(t, IsSQLiteBusy(err))
-	assert.Equal(t, 4, calls)
 }

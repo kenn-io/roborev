@@ -46,7 +46,10 @@ func (s *Server) fetchInsightsReviews(
 	// Normalize to forward slashes to match how GetOrCreateRepo stores paths.
 	repoFilter := filepath.ToSlash(repoRoot)
 
-	listOpts := []storage.ListJobsOption{storage.WithoutPrompt()}
+	listOpts := []storage.ListJobsOption{
+		storage.WithoutPrompt(),
+		storage.WithExcludePanelRole(storage.PanelRoleMember),
+	}
 	if branch != "" {
 		listOpts = append(listOpts, storage.WithBranch(branch))
 	}
@@ -55,10 +58,11 @@ func (s *Server) fetchInsightsReviews(
 	if err != nil {
 		return nil, fmt.Errorf("list jobs: %w", err)
 	}
+	attachPanelSummaries(s.db, jobs)
 
 	reviews := make([]prompt.InsightsReview, 0, min(len(jobs), maxInsightsReviews))
 	for _, job := range jobs {
-		if !job.IsReviewJob() || job.IsGoalReviewJob() {
+		if !job.IsReviewJob() && !job.IsSynthesisJob() || job.IsGoalReviewJob() {
 			continue
 		}
 		if job.FinishedAt != nil && job.FinishedAt.Before(since) {

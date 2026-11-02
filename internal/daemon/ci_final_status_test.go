@@ -118,7 +118,7 @@ func TestCIPanelFinalStatusDoesNotOverwriteSkip(t *testing.T) {
 					attempt, err := h.DB.GetReviewAttempt(repo, pr.Number, sha)
 					require.NoError(t, err)
 					require.NotNil(t, attempt)
-					err = h.Poller.skipLabeledPR(repo, pr, "skip-review", attempt)
+					err = h.Poller.skipPR(repo, pr, skipReviewLabel, attempt)
 					require.ErrorIs(t, err, storage.ErrCIPanelActive)
 					return errors.New("GitHub unavailable")
 				}
@@ -132,9 +132,9 @@ func TestCIPanelFinalStatusDoesNotOverwriteSkip(t *testing.T) {
 			attempt, err := h.DB.GetReviewAttempt("acme/api", pr.Number, pr.HeadRefOid)
 			require.NoError(t, err)
 			require.NotNil(t, attempt)
-			require.ErrorContains(t, h.Poller.skipLabeledPR("acme/api", pr, "skip-review", attempt), "skip status unavailable")
+			require.ErrorContains(t, h.Poller.skipPR("acme/api", pr, skipReviewLabel, attempt), "skip status unavailable")
 			failSkip = false
-			require.NoError(t, h.Poller.skipLabeledPR("acme/api", pr, "skip-review", attempt))
+			require.NoError(t, h.Poller.skipPR("acme/api", pr, skipReviewLabel, attempt))
 			h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return nil, nil }
 			require.NoError(t, h.Poller.pollRepo(context.Background(), "acme/api", h.Cfg))
 			assert.Equal(1, finalAttempts)
@@ -158,7 +158,7 @@ func TestCIPanelFinalStatusWithoutTokenRemainsPending(t *testing.T) {
 	attempt, err := h.DB.GetReviewAttempt("acme/api", 7, "head-a")
 	require.NoError(t, err)
 	require.NotNil(t, attempt)
-	err = h.Poller.skipLabeledPR("acme/api", ghPR{Number: 7, HeadRefOid: "head-a"}, "skip-review", attempt)
+	err = h.Poller.skipPR("acme/api", ghPR{Number: 7, HeadRefOid: "head-a"}, skipReviewLabel, attempt)
 	require.ErrorContains(t, err, "GitHub token")
 	attempt, err = h.DB.GetReviewAttempt("acme/api", 7, "head-a")
 	require.NoError(t, err)

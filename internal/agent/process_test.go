@@ -88,7 +88,7 @@ func TestContextProcessErrorRunPathCancellation(t *testing.T) {
 	// The etxtbsy guard prevents Go 1.25's ETXTBSY probe from running
 	// the full script in a second child process that is never killed.
 	cmdPath := writeTempCommand(t, "#!/bin/sh\ncase \"$1\" in *etxtbsy*) exit 0;; esac\nsleep 5\n")
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the script sleeps 5s, so only the context ends it
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the script sleeps 5s, so only the context ends it
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, cmdPath)
@@ -128,6 +128,18 @@ func TestConfigureSubprocessSetsOptionalLocks(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "0\n", string(out),
 		"configureSubprocess should set GIT_OPTIONAL_LOCKS=0")
+}
+
+func TestConfigureSubprocessSuppressesAgentHook(t *testing.T) {
+	skipIfWindows(t)
+
+	cmd := exec.CommandContext(context.Background(), "sh", "-c", "echo $"+HookSuppressEnv)
+	configureSubprocess(context.Background(), cmd)
+
+	out, err := cmd.Output()
+	require.NoError(t, err)
+	require.Equal(t, "1\n", string(out),
+		"agents roborev launches must tell the user's Agent Hook to stay quiet")
 }
 
 func TestConfigureSubprocessPreservesExistingEnv(t *testing.T) {

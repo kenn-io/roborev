@@ -252,7 +252,7 @@ func TestStopKeepsBrowserAvailableUntilWorkersFinish(t *testing.T) {
 	require.NoError(t, stopErr)
 	// Wall-clock wait: real browser listener and worker shutdown.
 	assert.Eventually(t, func() bool {
-		client := &http.Client{Timeout: 50 * time.Millisecond}
+		client := &http.Client{Timeout: time.Second}
 		response, requestErr := client.Get(runtime.Origin + "/api/ping")
 		if response != nil {
 			_ = response.Body.Close()

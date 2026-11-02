@@ -157,6 +157,10 @@ type ReviewJob struct {
 	// carry their base HEAD through this field.
 	ReusableSessionTarget string `json:"-"`
 
+	// SortKey holds the values ListJobs ordered this row by, before its ID.
+	// A caller resumes the listing after the last row with JobSortPosition.
+	SortKey []any `json:"-"`
+
 	BudgetRoutingLocked       bool   `json:"-"` // Local retry/failover scheduling guard
 	BudgetOriginalAgent       string `json:"-"` // Pre-budget choice restored on manual rerun
 	BudgetOriginalBackupAgent string `json:"-"`

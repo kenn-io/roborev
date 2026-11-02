@@ -284,7 +284,7 @@ func configValidateCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			scope, err := determineScope(globalFlag, localFlag)
 			if err != nil {
-				return err
+				return usageErr(cmd, err)
 			}
 			if err := validateConfigForScope(
 				defaultRepoResolver{ctx: cmd.Context()}, scope,
@@ -382,7 +382,10 @@ func configGetCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			scope, err := determineScope(globalFlag, localFlag)
 			if err != nil {
-				return err
+				return usageErr(cmd, err)
+			}
+			if !config.IsValidKey(args[0]) {
+				return withHint(invalidValue(fmt.Errorf("unknown config key: %q", args[0])), "inspect configured keys with 'roborev config list'; see 'roborev config set --help' for key examples")
 			}
 			val, err := getValueForScope(defaultRepoResolver{ctx: cmd.Context()}, args[0], scope)
 			if err != nil {
@@ -410,10 +413,13 @@ func configSetCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			key, value := args[0], args[1]
+			if !config.IsValidKey(key) {
+				return withHint(invalidValue(fmt.Errorf("unknown config key: %q", key)), "inspect configured keys with 'roborev config list'; see 'roborev config set --help' for key examples")
+			}
 
 			scope, err := determineScope(globalFlag, localFlag)
 			if err != nil {
-				return err
+				return usageErr(cmd, err)
 			}
 
 			if scope == scopeGlobal {
@@ -448,7 +454,7 @@ func configListCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			scope, err := determineScope(globalFlag, localFlag)
 			if err != nil {
-				return err
+				return usageErr(cmd, err)
 			}
 
 			switch scope {
@@ -563,7 +569,7 @@ func printKeyValues(kvs []config.KeyValue) {
 func setConfigKey(path, key, value string, isGlobal bool) error {
 	_, err := validateKeyForScope(key, value, isGlobal)
 	if err != nil {
-		return err
+		return withHint(invalidValue(err), "run 'roborev config list' for keys; use --global for global settings")
 	}
 
 	if isGlobal {

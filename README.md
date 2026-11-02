@@ -180,15 +180,19 @@ reasoning = "fast"
 
 ## Installation
 
-**Shell Script (macOS / Linux):**
+**macOS ([Homebrew](https://formulae.brew.sh/formula/roborev)):**
+```bash
+brew install roborev
+```
+
+Homebrew manages updates with `brew upgrade roborev`.
+
+**Linux (install script):**
 ```bash
 curl -fsSL https://roborev.io/install.sh | bash
 ```
 
-**Homebrew (macOS / Linux):**
-```bash
-brew install kenn-io/tap/roborev
-```
+Linux users can also install a [DEB or RPM package](https://roborev.io/docs/installation/#linux-packages-deb-and-rpm).
 
 **Windows (PowerShell):**
 ```powershell
@@ -207,7 +211,7 @@ or build with `make install` for the embedded browser application.
 ## Developer Setup
 
 This repo uses [`prek`](https://prek.j178.dev/) for local Git hooks. Commits
-run only the Renovate config validator and actionlint, and only when
+run only the Renovate config validator and jactionlint, and only when
 `renovate.json` or a workflow file changes. The whole-repo checks run on push:
 a Git-test isolation guard, `make lint-ci` for non-mutating Go lint,
 `make markdown-ci` for Zensical Markdown formatting, and the web check and test
@@ -394,6 +398,10 @@ hook, so a configured integration never goes dark unnoticed.
 | Variable | Description |
 |----------|-------------|
 | `ROBOREV_DATA_DIR` | Override default data directory (`~/.roborev`) |
+| `ROBOREV_TELEMETRY_ENABLED` | Set to `0` to disable anonymous usage telemetry |
+| `EDITOR` | Editor used by `roborev comment` when no message is supplied |
+| `GH_TOKEN`, `GITHUB_TOKEN` | GitHub authentication for CI commands |
+| `GITLAB_TOKEN`, `GL_TOKEN` | GitLab authentication for CI commands |
 | `ROBOREV_COLOR_MODE` | TUI color theme: `auto` (default), `dark`, `light`, `none` |
 | `ROBOREV_SYNC_CURSOR_LOOKBACK` | PostgreSQL sync cursor overlap duration (default `5m`) |
 | `ROBOREV_AGENT_HOOK_TURN_THRESHOLD` | Override agent-hook Stop threshold |

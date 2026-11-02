@@ -81,7 +81,10 @@ func securityReviewSources(env *doctorEnv) []string {
 	arms, err := config.WorkflowExperimentArms(config.ExperimentWorkflowReview, env.global, env.repoCfg, env.repoRaw)
 	if err != nil {
 		// The config checks report an experiment that does not apply.
-		arms = []config.ExperimentArmConfig{{RepoConfig: env.repoCfg}}
+		arms = []config.ExperimentArmConfig{{
+			RepoConfig: env.repoCfg,
+			Review:     config.MergeReviewConfigFromConfig(env.repoCfg, env.global),
+		}}
 	}
 	var sources []string
 	// The experimental arm repeats the default selections; report each
@@ -92,7 +95,7 @@ func securityReviewSources(env *doctorEnv) []string {
 		if arm.Arm == config.ExperimentArmExperimental {
 			prefix = "experiments." + arm.ExperimentID + ": "
 		}
-		merged := config.MergeReviewConfigFromConfig(arm.RepoConfig, env.global)
+		merged := arm.Review
 		for _, sel := range []struct{ key, name string }{
 			{"review.default_panel", merged.DefaultPanel},
 			{"review.hook_review_panel", merged.HookPanel},

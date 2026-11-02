@@ -261,7 +261,7 @@ func TestCIHealthRecoveryUsesEarliestRetryDeadline(t *testing.T) {
 		_, err := h.DB.ReserveReviewAttempt("acme/api", 2, "head-b", time.Now().Add(-24*time.Hour))
 		require.NoError(t, err)
 		require.NoError(t, h.DB.DeferReviewAttempt("acme/api", 2, "head-b", "transient", "provider unavailable", nil, time.Now().Add(time.Minute), false))
-		require.NoError(t, h.Poller.reconcileRetryHealth("acme/api", []ghPR{pr, {Number: 2, HeadRefOid: "head-b"}}, h.Cfg, nil))
+		require.NoError(t, h.Poller.reconcileRetryHealth(context.Background(), "acme/api", []ghPR{pr, {Number: 2, HeadRefOid: "head-b"}}, h.Cfg, nil))
 		health, ci := readCIHealth(t, server)
 		assert.False(t, health.Healthy)
 		require.NotNil(t, ci.Recovery)

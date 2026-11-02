@@ -25,6 +25,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/stacktest"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -255,7 +256,7 @@ func TestWorkerPoolConcurrency(t *testing.T) {
 			started <- struct{}{}
 			select {
 			case <-release:
-				return `{"schema_version":2,"summary":"No issues found.","verdict":"pass","findings":[]}`, nil
+				return `{"schema_version":3,"summary":"No issues found.","verdict":"pass","findings":[]}`, nil
 			case <-ctx.Done():
 				return "", ctx.Err()
 			}
@@ -344,12 +345,12 @@ func TestWorkerStoresStructuredCustomReviewWithEveryFinding(t *testing.T) {
 	agent.RegisterForTest(t, &structuredWorkerTestAgent{
 		name: agentName,
 		result: jsontext.Value(`{
-  "schema_version":2,
+  "schema_version":3,
   "summary":"Review complete.",
   "verdict":"fail",
   "findings":[
-    {"severity":"high","problem":"State diverges.","fix":"Use one owner.","location":null},
-    {"severity":"low","problem":"Name is vague.","fix":"Rename it.","location":null}
+    {"severity":"high","kind":"defect","confidence":0.9,"problem":"State diverges.","fix":"Use one owner.","file":null,"start_line":null,"end_line":null},
+    {"severity":"low","kind":"improvement","confidence":0.5,"problem":"Name is vague.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}
   ]
 }`),
 	})
@@ -442,11 +443,11 @@ func TestWorkerUsesConfiguredSeverityForStructuredVerdict(t *testing.T) {
 	agent.RegisterForTest(t, &structuredWorkerTestAgent{
 		name: agentName,
 		result: jsontext.Value(`{
-	  "schema_version":2,
+	  "schema_version":3,
 	  "summary":"High: no actionable findings.",
 	  "verdict":"pass",
   "findings":[
-    {"severity":"low","problem":"Name is vague.","fix":"Rename it.","location":null}
+    {"severity":"low","kind":"improvement","confidence":0.5,"problem":"Name is vague.","fix":"Rename it.","file":null,"start_line":null,"end_line":null}
   ]
 }`),
 	})
@@ -961,6 +962,7 @@ func TestWorkerCIPanelMembersAtDifferentHeadsRunConcurrentlyInSeparateWorktrees(
 		select {
 		case <-workersDone:
 		case <-time.After(30 * time.Second):
+			stacktest.Dump(t)
 			t.Log("timed out waiting for concurrent CI workers to finish")
 		}
 	}()
@@ -970,6 +972,7 @@ func TestWorkerCIPanelMembersAtDifferentHeadsRunConcurrentlyInSeparateWorktrees(
 		select {
 		case <-started:
 		case <-deadline:
+			stacktest.Dump(t)
 			require.Equal(t, 2, received, "timed out waiting for concurrent CI agents to start")
 		}
 	}
@@ -1514,7 +1517,7 @@ func TestProcessJob_CIPrebuiltPromptMatchesRunningAgentOutputContract(t *testing
 
 		updated := tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
 		assert.Contains(t, capturedPrompt, "review body")
-		assert.Contains(t, capturedPrompt, `"schema_version":2`)
+		assert.Contains(t, capturedPrompt, `"schema_version":3`)
 		assert.Equal(t, body, updated.Prompt, "the stored prompt is left as enqueued")
 	})
 
@@ -1523,7 +1526,7 @@ func TestProcessJob_CIPrebuiltPromptMatchesRunningAgentOutputContract(t *testing
 		agentName := "prebuilt-structured-after-failover"
 		fake := &structuredWorkerTestAgent{
 			name:   agentName,
-			result: jsontext.Value(`{"schema_version":2,"summary":"Clean.","verdict":"pass","findings":[]}`),
+			result: jsontext.Value(`{"schema_version":3,"summary":"Clean.","verdict":"pass","findings":[]}`),
 		}
 		agent.RegisterForTest(t, fake)
 
@@ -1542,7 +1545,7 @@ func TestProcessJob_CIPrebuiltPromptMatchesRunningAgentOutputContract(t *testing
 		agentName := "prebuilt-structured-at-cap"
 		fake := &structuredWorkerTestAgent{
 			name:   agentName,
-			result: jsontext.Value(`{"schema_version":2,"summary":"Clean.","verdict":"pass","findings":[]}`),
+			result: jsontext.Value(`{"schema_version":3,"summary":"Clean.","verdict":"pass","findings":[]}`),
 			onPrompt: func(repoPath, prepared string) {
 				files, err := filepath.Glob(filepath.Join(repoPath, ".roborev", "*", "prompt.md"))
 				require.NoError(t, err)
@@ -1571,7 +1574,7 @@ func TestProcessJob_CIPromptFallbackUsesDefaultBranchReviewTypeConfig(t *testing
 	agent.RegisterForTest(t, &structuredWorkerTestAgent{
 		name: agentName,
 		result: jsontext.Value(`{
-  "schema_version":2,
+  "schema_version":3,
   "summary":"Default-branch review instructions loaded.",
   "verdict":"pass",
   "findings":[]
@@ -1628,7 +1631,7 @@ func TestProcessJob_CIPromptFallbackKeepsDefaultRefAfterConfigParseError(t *test
 	agent.RegisterForTest(t, &structuredWorkerTestAgent{
 		name: agentName,
 		result: jsontext.Value(`{
-  "schema_version":2,
+  "schema_version":3,
   "summary":"Global review instructions loaded from the default branch.",
   "verdict":"pass",
   "findings":[]
@@ -1968,10 +1971,22 @@ func TestApplyCodexReviewSettings(t *testing.T) {
 			wantIgnore: true,
 		},
 		{
-			name:       "task job",
+			name:       "non-agentic task job",
 			job:        storage.ReviewJob{JobType: storage.JobTypeTask},
 			wantSkills: true,
+			wantIgnore: true,
+		},
+		{
+			name:       "agentic task job",
+			job:        storage.ReviewJob{JobType: storage.JobTypeTask, Agentic: true},
+			wantSkills: true,
 			wantIgnore: false,
+		},
+		{
+			name:       "compact job",
+			job:        storage.ReviewJob{JobType: storage.JobTypeCompact},
+			wantSkills: true,
+			wantIgnore: true,
 		},
 		{
 			name:       "classify job",
@@ -4140,7 +4155,7 @@ func TestProcessCompactJobStoresCompactVerdict(t *testing.T) {
 	setupTestEnv(t)
 	tc := newWorkerTestContext(t, 1)
 	const agentName = "compact-verdict-agent"
-	const output = `{"schema_version":2,"summary":"1 finding remains.","verdict":"fail","findings":[{"severity":"high","problem":"A record is lost.","fix":"Retain the record.","location":"file.go:12"}]}`
+	const output = `{"schema_version":3,"summary":"1 finding remains.","verdict":"fail","findings":[{"severity":"high","kind":"defect","confidence":0.8,"problem":"A record is lost.","fix":"Retain the record.","file":"file.go","start_line":12,"end_line":12}]}`
 
 	agent.RegisterForTest(t, &agent.FakeAgent{
 		NameStr: agentName,
@@ -4508,11 +4523,9 @@ func TestServerWakesWorkerPoolWhenWorkBecomesClaimable(t *testing.T) {
 				return members[0], claimed
 			}
 			test.setup(t, f)
-			for len(server.workerPool.wakeCh) > 0 {
-				<-server.workerPool.wakeCh
-			}
+			wakeCh := server.workerPool.wakeSignal()
 			f.trigger()
-			assert.NotEmpty(t, server.workerPool.wakeCh, "claimable work must wake the worker pool")
+			assert.True(t, isClosed(wakeCh), "claimable work must wake the worker pool")
 		})
 	}
 }
@@ -4521,9 +4534,25 @@ func TestServerWakesWorkerPoolWhenWorkBecomesClaimable(t *testing.T) {
 // fan-out is checked on the wake channel alone.
 func TestWorkerPoolWakeReachesEveryIdleWorker(t *testing.T) {
 	pool := NewWorkerPool(nil, NewStaticConfig(config.DefaultConfig()), 4, NewBroadcaster(), nil, nil)
+	idle := make([]<-chan struct{}, 6)
+	for i := range idle {
+		idle[i] = pool.wakeSignal()
+	}
 	pool.wake()
 	pool.wake()
-	assert.Len(t, pool.wakeCh, 4, "one token per worker, and extra wakes don't block")
+	for i, ch := range idle {
+		assert.True(t, isClosed(ch), "idle worker %d must wake, even beyond the initial pool size", i)
+	}
+	assert.False(t, isClosed(pool.wakeSignal()), "a worker that starts waiting after the wake waits for the next one")
+}
+
+func isClosed(ch <-chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
 }
 
 func TestWorkerPoolNegativeWorkerCount(t *testing.T) {

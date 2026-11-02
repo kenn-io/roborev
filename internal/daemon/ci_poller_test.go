@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	ghpkg "go.kenn.io/roborev/internal/github"
+	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
@@ -438,7 +439,7 @@ func TestBuildSynthesisPrompt(t *testing.T) {
 		{Agent: "codex", ReviewType: "review", Status: "failed", Error: "timeout"},
 	}
 
-	prompt := review.BuildSynthesisPrompt(reviews, "", false)
+	prompt := review.BuildSynthesisPrompt(reviews, false, "")
 
 	assertContainsAll(t, prompt, "prompt",
 		"Deduplicate findings",
@@ -840,48 +841,229 @@ func TestCIPollerPollRepo_UsesPRListAndProcessesEach(t *testing.T) {
 		return []ghPR{
 			{Number: 7, HeadRefOid: "11111111aaaaaaaa", BaseRefName: "main"},
 			{Number: 8, HeadRefOid: "22222222bbbbbbbb", BaseRefName: "main"},
+			{Number: 9, HeadRefOid: "33333333cccccccc", BaseRefName: "main", Draft: true},
 		}, nil
 	}
+	h.Cfg.CI.SkipDrafts = true
 	h.stubProcessPRGit()
+	checks := h.CaptureSkippedChecks()
 
 	require.NoError(t, h.Poller.pollRepo(context.Background(), "acme/api", h.Cfg), "pollRepo")
 
 	assert.True(t, h.hasPanel(t, "acme/api", 7, "11111111aaaaaaaa"), "expected panel for PR 7")
 	assert.True(t, h.hasPanel(t, "acme/api", 8, "22222222bbbbbbbb"), "expected panel for PR 8")
+	assert.False(t, h.hasPanel(t, "acme/api", 9, "33333333cccccccc"), "draft PR 9 is skipped")
+	assert.Equal(t, []capturedSkippedCheck{{
+		Repo: "acme/api", SHA: "33333333cccccccc", Summary: "Review skipped: draft",
+	}}, *checks)
 }
 
 func TestCIPollerProcessPR_SkipsConfiguredLabel(t *testing.T) {
+	for _, tc := range []struct {
+		name                              string
+		draft, skipDrafts, backoff, label bool
+	}{
+		{name: "label"},
+		{name: "draft label default", draft: true, label: true},
+		{name: "draft", draft: true, skipDrafts: true},
+		{name: "draft default", draft: true},
+		{name: "draft backoff", draft: true, skipDrafts: true, backoff: true},
+		{name: "draft precedence", draft: true, skipDrafts: true, label: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+			h.Cfg.CI.SkipLabels = []string{"  do not review  "}
+			h.Cfg.CI.SkipDrafts = tc.skipDrafts
+			h.Cfg.CI.ReviewTypes = []string{"security"}
+			h.Cfg.CI.Agents = []string{"test"}
+			h.stubProcessPRGit()
+			fetches := 0
+			h.Poller.gitFetchFn = func(context.Context, string, []string) error { fetches++; return nil }
+			statuses := h.CaptureCommitStatuses()
+			checks := h.CaptureSkippedChecks()
+			pr := ghPR{Number: 9, HeadRefOid: "skipped-head-sha", BaseRefName: "main", Draft: tc.draft}
+			if !tc.draft || tc.label {
+				pr.Labels = []string{"Do Not Review"}
+			}
+			reason := "Review skipped: label Do Not Review"
+			if tc.draft && tc.skipDrafts {
+				reason = "Review skipped: draft"
+			}
+			if tc.backoff {
+				_, err := h.DB.ReserveReviewAttempt("acme/api", pr.Number, pr.HeadRefOid, time.Now())
+				require.NoError(t, err)
+				require.NoError(t, h.DB.DeferReviewAttempt("acme/api", pr.Number, pr.HeadRefOid,
+					"transient", "provider unavailable", nil, time.Now().Add(time.Hour), false))
+			}
+			require.NoError(t, h.Poller.processPR(t.Context(), "acme/api", pr, h.Cfg))
+			skip := !tc.draft || tc.skipDrafts || tc.label
+			assert.Equal(!skip, h.hasPanel(t, "acme/api", pr.Number, pr.HeadRefOid))
+			if skip {
+				assert.Zero(fetches, "skip before fetching or preparing agent work")
+				assert.Equal([]capturedStatus{{Repo: "acme/api", SHA: pr.HeadRefOid, State: "success", Desc: reason}}, *statuses)
+				assert.Equal([]capturedSkippedCheck{{Repo: "acme/api", SHA: pr.HeadRefOid, Summary: reason}}, *checks)
+				attempt, err := h.DB.GetReviewAttempt("acme/api", pr.Number, pr.HeadRefOid)
+				require.NoError(t, err)
+				assert.Nil(attempt)
+			} else {
+				assert.Empty(*checks)
+			}
+			pr.Draft = false
+			pr.Labels = nil
+			for range 2 {
+				require.NoError(t, h.Poller.processPR(t.Context(), "acme/api", pr, h.Cfg))
+			}
+			assert.Equal(1, fetches, "ready at the same SHA enqueues exactly once")
+			assert.True(h.hasPanel(t, "acme/api", pr.Number, pr.HeadRefOid))
+		})
+	}
+}
+
+func TestCIPollerProcessPR_AuthorAndBranchFilters(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		ci       config.CIConfig
+		pr       ghPR
+		wantSkip string // expected skip description; empty means reviewed
+	}{
+		{
+			name: "no filters reviews everyone",
+			pr:   ghPR{Author: ghPRAuthor{Login: "stranger"}, AuthorAssociation: "NONE", HeadRefName: "dependabot/npm/lodash"},
+		},
+		{
+			name:     "outside author skipped",
+			ci:       config.CIConfig{AllowedAuthors: []string{"alice"}, AllowedAuthorAssociations: []string{"OWNER", "MEMBER", "COLLABORATOR"}},
+			pr:       ghPR{Author: ghPRAuthor{Login: "stranger"}, AuthorAssociation: "FIRST_TIME_CONTRIBUTOR", HeadRefName: "patch-1"},
+			wantSkip: "Review skipped: author not in allowed authors",
+		},
+		{
+			name: "listed author reviewed",
+			ci:   config.CIConfig{AllowedAuthors: []string{"Alice"}},
+			pr:   ghPR{Author: ghPRAuthor{Login: "alice"}, AuthorAssociation: "CONTRIBUTOR", HeadRefName: "patch-1"},
+		},
+		{
+			name: "member association reviewed",
+			ci:   config.CIConfig{AllowedAuthorAssociations: []string{"MEMBER"}},
+			pr:   ghPR{Author: ghPRAuthor{Login: "bob"}, AuthorAssociation: "MEMBER", HeadRefName: "patch-1"},
+		},
+		{
+			name:     "excluded branch skipped",
+			ci:       config.CIConfig{ExcludeBranches: []string{"dependabot/*", "renovate/*"}},
+			pr:       ghPR{Author: ghPRAuthor{Login: "dependabot[bot]"}, HeadRefName: "dependabot/npm_and_yarn/lodash-4.17.21"},
+			wantSkip: "Review skipped: branch filtered",
+		},
+		{
+			name:     "branch outside include skipped",
+			ci:       config.CIConfig{IncludeBranches: []string{"feature/*", "fix/*"}},
+			pr:       ghPR{Author: ghPRAuthor{Login: "alice"}, HeadRefName: "chore/cleanup"},
+			wantSkip: "Review skipped: branch filtered",
+		},
+		{
+			name: "included branch reviewed",
+			ci:   config.CIConfig{IncludeBranches: []string{"feature/*"}, ExcludeBranches: []string{"feature/wip-*"}},
+			pr:   ghPR{Author: ghPRAuthor{Login: "alice"}, HeadRefName: "feature/login"},
+		},
+		{
+			name:     "exclude wins over include",
+			ci:       config.CIConfig{IncludeBranches: []string{"feature/*"}, ExcludeBranches: []string{"feature/wip-*"}},
+			pr:       ghPR{Author: ghPRAuthor{Login: "alice"}, HeadRefName: "feature/wip-login"},
+			wantSkip: "Review skipped: branch filtered",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+			h.Cfg.CI.AllowedAuthors = tt.ci.AllowedAuthors
+			h.Cfg.CI.AllowedAuthorAssociations = tt.ci.AllowedAuthorAssociations
+			h.Cfg.CI.IncludeBranches = tt.ci.IncludeBranches
+			h.Cfg.CI.ExcludeBranches = tt.ci.ExcludeBranches
+			h.Cfg.CI.ReviewTypes = []string{"security"}
+			h.Cfg.CI.Agents = []string{"codex"}
+			h.stubProcessPRGit()
+			statuses := h.CaptureCommitStatuses()
+			skippedChecks := h.CaptureSkippedChecks()
+
+			const headSHA = "filtered-head-sha"
+			pr := tt.pr
+			pr.Number = 9
+			pr.HeadRefOid = headSHA
+			pr.BaseRefName = "main"
+			require.NoError(t, h.Poller.processPR(context.Background(), "acme/api", pr, h.Cfg))
+
+			if tt.wantSkip == "" {
+				assert.True(h.hasPanel(t, "acme/api", 9, headSHA))
+				assert.Empty(*skippedChecks)
+				return
+			}
+			assert.False(h.hasPanel(t, "acme/api", 9, headSHA))
+			assert.Equal([]capturedStatus{{
+				Repo: "acme/api", SHA: headSHA, State: "success", Desc: tt.wantSkip,
+			}}, *statuses)
+			assert.Equal([]capturedSkippedCheck{{
+				Repo: "acme/api", SHA: headSHA, Summary: tt.wantSkip,
+			}}, *skippedChecks)
+		})
+	}
+}
+
+func TestCIPollerAllowCodeowners(t *testing.T) {
+	assert := assert.New(t)
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-	h.Cfg.CI.SkipLabels = []string{"  do not review  "}
+	h.Cfg.CI.AllowCodeowners = true
+	h.Cfg.CI.ExcludeBranches = []string{"renovate/*"}
 	h.Cfg.CI.ReviewTypes = []string{"security"}
 	h.Cfg.CI.Agents = []string{"codex"}
 	h.stubProcessPRGit()
 	statuses := h.CaptureCommitStatuses()
-	skippedChecks := h.CaptureSkippedChecks()
+	h.CaptureSkippedChecks()
 
-	pr := ghPR{
-		Number:      9,
-		HeadRefOid:  "skipped-head-sha",
-		BaseRefName: "main",
-		Labels:      []string{"Do Not Review"},
+	var reads []string
+	h.Poller.codeownersFn = func(_ context.Context, ghRepo, ref string) (map[string]struct{}, error) {
+		assert.Equal("acme/api", ghRepo)
+		reads = append(reads, ref)
+		if ref == "release" {
+			return nil, errors.New("team members unavailable")
+		}
+		return map[string]struct{}{"alice": {}}, nil
 	}
-	err := h.Poller.processPR(context.Background(), "acme/api", pr, h.Cfg)
-	require.NoError(t, err)
+	prs := []ghPR{
+		{Number: 1, HeadRefOid: "owner-head", BaseRefName: "main", Author: ghPRAuthor{Login: "Alice"}, AuthorAssociation: "CONTRIBUTOR"},
+		{Number: 2, HeadRefOid: "outsider-head", BaseRefName: "main", Author: ghPRAuthor{Login: "mallory"}, AuthorAssociation: "NONE"},
+		{Number: 3, HeadRefOid: "unreadable-head", BaseRefName: "release", Author: ghPRAuthor{Login: "alice"}, AuthorAssociation: "CONTRIBUTOR"},
+		{Number: 4, HeadRefOid: "unreadable-head-2", BaseRefName: "release", Author: ghPRAuthor{Login: "bob"}, AuthorAssociation: "NONE"},
+		{Number: 5, HeadRefOid: "excluded-head", BaseRefName: "release", HeadRefName: "renovate/lodash", Author: ghPRAuthor{Login: "renovate[bot]"}, AuthorAssociation: "NONE"},
+	}
+	h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return prs, nil }
 
-	assert.False(t, h.hasPanel(t, "acme/api", 9, "skipped-head-sha"))
-	assert.Equal(t, []capturedStatus{{
-		Repo: "acme/api", SHA: "skipped-head-sha", State: "success",
-		Desc: "Review skipped: label Do Not Review",
-	}}, *statuses)
-	assert.Equal(t, []capturedSkippedCheck{{
-		Repo: "acme/api", SHA: "skipped-head-sha",
-		Summary: "Review skipped: label Do Not Review",
-	}}, *skippedChecks)
+	err := h.Poller.pollRepo(context.Background(), "acme/api", h.Cfg)
+	require.ErrorContains(t, err, "team members unavailable")
 
-	pr.Labels = nil
-	require.NoError(t, h.Poller.processPR(
-		context.Background(), "acme/api", pr, h.Cfg))
-	assert.True(t, h.hasPanel(t, "acme/api", 9, "skipped-head-sha"))
+	assert.True(h.hasPanel(t, "acme/api", 1, "owner-head"), "code owner is reviewed")
+	assert.False(h.hasPanel(t, "acme/api", 2, "outsider-head"), "non-owner is skipped")
+	assert.False(h.hasPanel(t, "acme/api", 3, "unreadable-head"), "unreadable CODEOWNERS blocks review")
+	assert.False(h.hasPanel(t, "acme/api", 5, "excluded-head"))
+	var skipped, unreadable []capturedStatus
+	for _, status := range *statuses {
+		switch status.SHA {
+		case "outsider-head", "excluded-head":
+			skipped = append(skipped, status)
+		case "unreadable-head", "unreadable-head-2":
+			unreadable = append(unreadable, status)
+		}
+	}
+	assert.Equal([]capturedStatus{{
+		Repo: "acme/api", SHA: "outsider-head", State: "success",
+		Desc: "Review skipped: author not in allowed authors",
+	}, {
+		Repo: "acme/api", SHA: "excluded-head", State: "success",
+		Desc: "Review skipped: branch filtered",
+	}}, skipped, "an excluded branch is skipped even when CODEOWNERS is unreadable")
+	assert.Empty(unreadable, "a read failure must not mark the PR skipped")
+	assert.Equal([]string{"main", "release"}, reads, "each base branch is read once per poll, even when the read fails")
+
+	require.ErrorContains(t, h.Poller.pollRepo(context.Background(), "acme/api", h.Cfg), "team members unavailable")
+	assert.Equal([]string{"main", "release", "main", "release"}, reads, "the next poll reads CODEOWNERS again")
 }
 
 // drivePanelOutcome resolves the panel run for a PR HEAD and drives every
@@ -1348,7 +1530,7 @@ func TestCIPollerProcessPR_FallsBackWhenPromptPrebuildFails(t *testing.T) {
 			CreatedAt: time.Date(2026, time.March, 27, 12, 0, 0, 0, time.UTC),
 		}}, nil
 	}
-	h.Poller.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.RepoConfig, string, *config.Config) (string, error) {
+	h.Poller.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, prompt.PullRequest, *config.RepoConfig, string, *config.Config) (string, error) {
 		return "", errors.New("prompt prebuild exploded")
 	}
 
@@ -1410,6 +1592,32 @@ func TestCIPollerProcessPR_PrebuildsCompletePrompt(t *testing.T) {
 	assert.Contains(prompt, strings.Repeat("y", 20))
 	assert.NotContains(prompt, "inspect the commit range locally with read-only git commands")
 	assert.NotContains(prompt, "git diff --unified=80")
+}
+
+func TestCIPollerProcessPR_PromptIncludesPullRequest(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	h.Cfg.CI.ReviewTypes = []string{"review"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.Poller = NewCIPoller(h.DB, NewStaticConfig(h.Cfg), nil)
+	h.stubProcessPRGit()
+
+	repo := testutil.InitTestGitRepo(t, h.RepoPath)
+	baseSHA := repo.HeadSHA()
+	headSHA := repo.CommitFile("retry.txt", "retry", "Add retry limit")
+	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return baseSHA, nil }
+
+	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
+		Number: 80, HeadRefOid: headSHA, BaseRefName: "main",
+		Title: "Cap upload retries", Body: "Stop after three attempts <always>.",
+	}, h.Cfg)
+	require.NoError(t, err)
+
+	members := h.panelMembers(t, "acme/api", 80, headSHA)
+	require.Len(t, members, 1)
+	assert.Contains(t, members[0].Prompt, "<pull-request context-only=\"true\">\n"+
+		"**Title:** Cap upload retries\n"+
+		"**Description:**\nStop after three attempts &lt;always&gt;.\n"+
+		"</pull-request>")
 }
 
 func TestCIPollerProcessPR_InvalidReviewType(t *testing.T) {
@@ -2465,7 +2673,7 @@ func TestBuildSynthesisPrompt_SanitizesErrors(t *testing.T) {
 	reviews := []review.ReviewResult{
 		{Agent: "codex", ReviewType: "security", Status: "failed", Error: "secret-token-abc123: auth error"},
 	}
-	prompt := review.BuildSynthesisPrompt(reviews, "", false)
+	prompt := review.BuildSynthesisPrompt(reviews, false, "")
 	if strings.Contains(prompt, "secret-token-abc123") {
 		assert.Condition(t, func() bool {
 			return false
@@ -2475,18 +2683,6 @@ func TestBuildSynthesisPrompt_SanitizesErrors(t *testing.T) {
 		assert.Condition(t, func() bool {
 			return false
 		}, "expected [FAILED] marker in synthesis prompt")
-	}
-}
-
-func TestBuildSynthesisPrompt_NeverMentionsMinSeverity(t *testing.T) {
-	reviews := []review.ReviewResult{
-		{Agent: "codex", ReviewType: "security", Output: "No issues found.", Status: "done"},
-	}
-	for _, severity := range []string{"", "low", "medium", "high", "critical"} {
-		prompt := review.BuildSynthesisPrompt(reviews, severity, false)
-		assert.NotContains(t, prompt, "Severity threshold", "min_severity=%q", severity)
-		assert.NotContains(t, prompt, "Omit findings below", "min_severity=%q", severity)
-		assert.Contains(t, prompt, "No issues found.")
 	}
 }
 
@@ -2760,7 +2956,7 @@ func TestBuildSynthesisPrompt_QuotaSkippedLabel(t *testing.T) {
 		{Agent: "gemini", ReviewType: "security", Status: "failed", Error: review.QuotaErrorPrefix + "quota exhausted"},
 	}
 
-	prompt := review.BuildSynthesisPrompt(reviews, "", false)
+	prompt := review.BuildSynthesisPrompt(reviews, false, "")
 
 	assertContainsAll(t, prompt, "prompt",
 		"[SKIPPED]",
@@ -4794,6 +4990,80 @@ func TestRetryDueReviewAttemptSkipsConfiguredLabel(t *testing.T) {
 	}}, *skippedChecks)
 }
 
+// TestRetryDueReviewAttemptAppliesPRFilters checks that a deferred retry whose
+// PR is fetched directly still sees the author association and head branch.
+func TestRetryDueReviewAttemptAppliesPRFilters(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		target   panelPostTarget
+		wantSkip string // expected skip description; empty means retried
+	}{
+		{
+			name:   "member retried",
+			target: panelPostTarget{AuthorLogin: "bob", AuthorAssociation: "MEMBER", HeadRefName: "feature/retry"},
+		},
+		{
+			name:     "outside author skipped",
+			target:   panelPostTarget{AuthorLogin: "stranger", AuthorAssociation: "NONE", HeadRefName: "feature/retry"},
+			wantSkip: "Review skipped: author not in allowed authors",
+		},
+		{
+			name:     "excluded branch skipped",
+			target:   panelPostTarget{AuthorLogin: "bob", AuthorAssociation: "MEMBER", HeadRefName: "renovate/lodash-4.x"},
+			wantSkip: "Review skipped: branch filtered",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+			h.Cfg.CI.AllowedAuthorAssociations = []string{"MEMBER"}
+			h.Cfg.CI.ExcludeBranches = []string{"renovate/*"}
+			h.Cfg.CI.ReviewTypes = []string{"security"}
+			h.Cfg.CI.Agents = []string{"codex"}
+			h.stubProcessPRGit()
+			statuses := h.CaptureCommitStatuses()
+			skippedChecks := h.CaptureSkippedChecks()
+
+			const headSHA = "filtereddeferred1"
+			const prNum = 134
+			now := time.Now()
+			created, err := h.DB.ReserveReviewAttempt("acme/api", prNum, headSHA, now.Add(-time.Hour))
+			require.NoError(t, err)
+			require.True(t, created)
+			require.NoError(t, h.DB.DeferReviewAttempt(
+				"acme/api", prNum, headSHA, "transient", "provider unavailable",
+				testUUIDPtr("old-run"), now.Add(-time.Minute), false))
+
+			target := tt.target
+			target.Open = true
+			target.HeadSHA = headSHA
+			target.BaseRefName = "main"
+			h.Poller.prPostTargetFn = func(context.Context, string, int) (panelPostTarget, error) {
+				return target, nil
+			}
+			require.NoError(t, h.Poller.retryDueReviewAttempts(
+				context.Background(), "acme/api", nil, h.Cfg))
+
+			attempt, err := h.DB.GetReviewAttempt("acme/api", prNum, headSHA)
+			require.NoError(t, err)
+			if tt.wantSkip == "" {
+				require.NotNil(t, attempt)
+				assert.Equal("pending", attempt.State)
+				assert.True(h.hasPanel(t, "acme/api", prNum, headSHA))
+				return
+			}
+			assert.Nil(attempt)
+			assert.False(h.hasPanel(t, "acme/api", prNum, headSHA))
+			assert.Equal([]capturedStatus{{
+				Repo: "acme/api", SHA: headSHA, State: "success", Desc: tt.wantSkip,
+			}}, *statuses)
+			assert.Equal([]capturedSkippedCheck{{
+				Repo: "acme/api", SHA: headSHA, Summary: tt.wantSkip,
+			}}, *skippedChecks)
+		})
+	}
+}
+
 // TestReconcileStuckAttempt covers the crash/stuck reconcile: a pending attempt
 // whose latest panel run is retired+terminal-unposted (or missing) is re-deferred
 // so the retry sweep re-enqueues it, while a pending attempt with a LIVE
@@ -4858,7 +5128,7 @@ func TestReconcileStuckAttempt(t *testing.T) {
 func TestBuildPanelOpts_RecordsPRBranchOnJobs(t *testing.T) {
 	p := &CIPoller{}
 	var promptConfigRef string
-	p.buildReviewPromptFn = func(_ context.Context, _, _ string, _ int64, _ int, _, _, _, _ string, _ *config.RepoConfig, configRef string, _ *config.Config) (string, error) {
+	p.buildReviewPromptFn = func(_ context.Context, _, _ string, _ int64, _ int, _, _, _, _ string, _ prompt.PullRequest, _ *config.RepoConfig, configRef string, _ *config.Config) (string, error) {
 		promptConfigRef = configRef
 		return "prebuilt prompt", nil
 	}
@@ -4904,7 +5174,7 @@ func TestBuildPanelOptsUsesDefaultBranchReviewContextCount(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			p := &CIPoller{}
 			gotCount := -1
-			p.buildReviewPromptFn = func(_ context.Context, _, _ string, _ int64, contextCount int, _, _, _, _ string, _ *config.RepoConfig, _ string, _ *config.Config) (string, error) {
+			p.buildReviewPromptFn = func(_ context.Context, _, _ string, _ int64, contextCount int, _, _, _, _ string, _ prompt.PullRequest, _ *config.RepoConfig, _ string, _ *config.Config) (string, error) {
 				gotCount = contextCount
 				return "prebuilt prompt", nil
 			}
@@ -4927,7 +5197,7 @@ func TestBuildPanelOptsUsesDefaultBranchReviewContextCount(t *testing.T) {
 
 func TestBuildPanelOptsSnapshotsEffectiveACPExecutionConfig(t *testing.T) {
 	p := &CIPoller{}
-	p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.RepoConfig, string, *config.Config) (string, error) {
+	p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, prompt.PullRequest, *config.RepoConfig, string, *config.Config) (string, error) {
 		return "prebuilt prompt", nil
 	}
 	cfg := config.DefaultConfig()
@@ -4951,6 +5221,7 @@ func TestBuildPanelOptsSnapshotsEffectiveACPExecutionConfig(t *testing.T) {
 		}},
 		synth: config.SynthesisSpec{
 			Agent: "acp.owl", BackupAgent: "acp.goose",
+			Instructions: "Label each finding.",
 		},
 	})
 	require.NoError(t, err)
@@ -4976,6 +5247,19 @@ func TestBuildPanelOptsSnapshotsEffectiveACPExecutionConfig(t *testing.T) {
 	assert.NotContains(t, synthSnapshot.ACP, "unused")
 	assert.Equal(t, "acp.owl", synthOpts.Agent)
 	assert.Equal(t, "acp.goose", synthOpts.BackupAgent)
+
+	// The synthesis worker reads both parts of the same snapshot.
+	synthJob := &storage.ReviewJob{
+		JobType: storage.JobTypeSynthesis, Source: storage.JobSourceCI,
+		PanelMemberConfigJSON: synthOpts.PanelMemberConfigJSON,
+	}
+	instructions, err := synthesisInstructions(synthJob)
+	require.NoError(t, err)
+	assert.Equal(t, "Label each finding.", instructions)
+	acpRepoCfg, snapshotted, err := ciACPRepoConfig(synthJob)
+	require.NoError(t, err)
+	assert.True(t, snapshotted)
+	assert.Equal(t, "global-owl", acpRepoCfg.ACP["owl"].Command)
 }
 
 func TestBuildPanelOptsRejectsACPReferencesMissingFromDefaultBranch(t *testing.T) {
@@ -5025,7 +5309,7 @@ func TestBuildPanelOptsRejectsACPReferencesMissingFromDefaultBranch(t *testing.T
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := &CIPoller{}
-			p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.RepoConfig, string, *config.Config) (string, error) {
+			p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, prompt.PullRequest, *config.RepoConfig, string, *config.Config) (string, error) {
 				return "prebuilt prompt", nil
 			}
 			memberOpts, synthOpts, err := p.buildPanelOpts(
@@ -5110,7 +5394,7 @@ func TestCIPromptPrebuildNeverIncludesKataContext(t *testing.T) {
 	cfg.KataContext.Mode = config.KataModeOpen
 	p := NewCIPoller(nil, NewStaticConfig(cfg), nil)
 
-	out, err := p.callBuildReviewPrompt(context.Background(), repo.Path(), sha, 0, 0, "test", "", "", "", nil, "", cfg)
+	out, err := p.callBuildReviewPrompt(context.Background(), repo.Path(), sha, 0, 0, "test", "", "", "", prompt.PullRequest{}, nil, "", cfg)
 	require.NoError(t, err)
 	assert.NotContains(t, out, "Task Context (kata)",
 		"CI prompt prebuilds must never include kata task-ledger content")
@@ -5130,7 +5414,7 @@ func TestBuildPanelOptsAbortsOnCanceledPrebuild(t *testing.T) {
 
 	t.Run("cancellation aborts the run", func(t *testing.T) {
 		p := &CIPoller{}
-		p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.RepoConfig, string, *config.Config) (string, error) {
+		p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, prompt.PullRequest, *config.RepoConfig, string, *config.Config) (string, error) {
 			return "", fmt.Errorf("building prompt: %w", context.Canceled)
 		}
 		_, _, err := p.buildPanelOpts(context.Background(), in)
@@ -5139,7 +5423,7 @@ func TestBuildPanelOptsAbortsOnCanceledPrebuild(t *testing.T) {
 
 	t.Run("other prebuild errors still enqueue without stored prompt", func(t *testing.T) {
 		p := &CIPoller{}
-		p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.RepoConfig, string, *config.Config) (string, error) {
+		p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, prompt.PullRequest, *config.RepoConfig, string, *config.Config) (string, error) {
 			return "", errors.New("prompt prebuild exploded")
 		}
 		memberOpts, _, err := p.buildPanelOpts(context.Background(), in)
@@ -5153,7 +5437,7 @@ func TestBuildPanelOptsAbortsOnCanceledPrebuild(t *testing.T) {
 func TestRetryAttemptPRCarriesAuthor(t *testing.T) {
 	p := &CIPoller{}
 	p.prPostTargetFn = func(_ context.Context, _ string, _ int) (panelPostTarget, error) {
-		return panelPostTarget{Open: true, HeadSHA: "head000", BaseRefName: "main", AuthorLogin: "alice"}, nil
+		return panelPostTarget{Open: true, HeadSHA: "head000", BaseRefName: "main", AuthorLogin: "alice", Draft: true}, nil
 	}
 
 	pr, ok := p.retryAttemptPR(context.Background(), "acme/api",
@@ -5161,6 +5445,7 @@ func TestRetryAttemptPRCarriesAuthor(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "alice", pr.Author.Login,
 		"direct lookup must reconstruct the PR with its author preserved")
+	assert.True(t, pr.Draft, "direct lookup must preserve draft state for skip decisions")
 }
 
 func TestFormatPanelReviewerStatusLabelsNoVerdict(t *testing.T) {

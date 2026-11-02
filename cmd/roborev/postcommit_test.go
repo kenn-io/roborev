@@ -53,11 +53,30 @@ func TestPostCommitSubmitsHEAD(t *testing.T) {
 
 	repo.CommitFile("file.txt", "content", "initial commit")
 
-	_, _, err := executePostCommitCmd("--repo", repo.Dir)
+	_, stderr, err := executePostCommitCmd("--repo", repo.Dir)
 	require.NoError(t, err)
 
 	req := <-reqCh
 	assert.Equal(t, "HEAD", req.GitRef)
+	assert.Empty(t, stderr, "a queued commit prints nothing to git's output")
+}
+
+func TestPostCommitWarnsWhenDaemonRejectsCommit(t *testing.T) {
+	repo, mux := setupTestEnvironment(t)
+	mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":"no review agent available: agent not found\nmore detail"}`))
+	})
+	repo.CommitFile("file.txt", "content", "initial commit")
+
+	_, stderr, err := executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err, "a hook failure must not fail the commit")
+
+	assert.Equal(t,
+		"roborev: commit not queued for review: no review agent available: agent not found\n"+
+			"roborev: run 'roborev doctor' to diagnose\n",
+		stderr)
 }
 
 func TestPostCommitBranchReview(t *testing.T) {
@@ -1240,7 +1259,7 @@ func TestPostCommitTimesOutOnSlowDaemon(t *testing.T) {
 	orig := hookHTTPClient
 	hookHTTPClient = func(daemon.DaemonEndpoint, time.Duration) *http.Client {
 		return &http.Client{
-			Timeout:   50 * time.Millisecond,
+			Timeout:   50 * time.Millisecond, //nolint:kennlint // deadlinetest: the transport blocks until the request deadline; the hook must return without failing the commit
 			Transport: rt,
 		}
 	}
@@ -1254,7 +1273,7 @@ func TestPostCommitTimesOutOnSlowDaemon(t *testing.T) {
 	case <-rt.hit:
 		// RoundTrip was called — timeout path was exercised
 	default:
-		require.NoError(t, err, "RoundTrip was never called; timeout not exercised")
+		require.FailNow(t, "RoundTrip was never called; timeout not exercised")
 	}
 	assert.False(t, realHandlerCalled, "real handler should not be reached")
 

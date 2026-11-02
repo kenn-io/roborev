@@ -140,19 +140,26 @@ func (a *PiAgent) buildArgs(sessionPath string, agenticMode bool) []string {
 	return args
 }
 
+// structuredReviewArgs builds a structured review invocation. schemaInstalled
+// says the user's pi settings already load the schema extension, so passing it
+// again with --extension would load a second copy and pi would exit with a
+// flag conflict.
 func (a *PiAgent) structuredReviewArgs(
 	promptPath, outputPath string,
 	schema jsontext.Value,
 	agenticMode bool,
 	sessionPath string,
+	schemaInstalled bool,
 ) []string {
 	args := slices.Clone(a.LaunchArgs)
 	args = append(args, "--mode", "json")
 	if sessionPath != "" {
 		args = append(args, "--session", sessionPath)
 	}
+	if !schemaInstalled {
+		args = append(args, "--extension", a.jsonSchemaExtension())
+	}
 	args = append(args,
-		"--extension", a.jsonSchemaExtension(),
 		"--json-schema", string(schema),
 		"--json-output", outputPath,
 		"--json-fallback", "none",
@@ -314,8 +321,14 @@ func (a *PiAgent) ReviewWithSchema(
 		return nil, fmt.Errorf("pi session not found; cannot resume requested session")
 	}
 	agenticMode := effectiveAgentic(ctx, a.Agentic)
-	args := a.structuredReviewArgs(promptPath, outputPath, schema, agenticMode, sessionPath)
-	if planningReadOnly(ctx) {
+	// Planning and a --no-extensions launch argument disable discovered
+	// extensions, so either way the schema extension is loaded explicitly,
+	// even when the user installed it.
+	readOnly := planningReadOnly(ctx)
+	schemaInstalled := !readOnly && !piDisablesExtensions(a.LaunchArgs) &&
+		piSettingsInstallPackage(repoPath, a.jsonSchemaExtension())
+	args := a.structuredReviewArgs(promptPath, outputPath, schema, agenticMode, sessionPath, schemaInstalled)
+	if readOnly {
 		// Disable discovered extensions; the explicit schema extension remains enabled.
 		args = append(args, "--no-extensions")
 	}
@@ -450,6 +463,69 @@ func (a *PiAgent) Review(
 		return "No review output generated", nil
 	}
 	return parsed, nil
+}
+
+// piNpmPackageName returns the package name of an "npm:" pi package source,
+// without its version, or "" for any other kind of source.
+func piNpmPackageName(source string) string {
+	name, ok := strings.CutPrefix(strings.TrimSpace(source), "npm:")
+	if !ok {
+		return ""
+	}
+	// A scoped name starts with "@", so only a later "@" starts the version.
+	if i := strings.LastIndex(name, "@"); i > 0 {
+		name = name[:i]
+	}
+	return name
+}
+
+// piDisablesExtensions reports whether args turn off pi's extension
+// discovery. Explicit --extension paths still load when it is off.
+func piDisablesExtensions(args []string) bool {
+	return slices.Contains(args, "--no-extensions") || slices.Contains(args, "-ne")
+}
+
+// piSettingsInstallPackage reports whether the user's global pi settings, or
+// the repository's own, install the npm package that source names, at any
+// version. pi loads installed packages itself, and two copies of an extension
+// conflict over the flags they register.
+func piSettingsInstallPackage(repoPath, source string) bool {
+	name := piNpmPackageName(source)
+	if name == "" {
+		return false
+	}
+	paths := []string{filepath.Join(piDataDir(), "settings.json")}
+	if repoPath != "" {
+		paths = append(paths, filepath.Join(repoPath, ".pi", "settings.json"))
+	}
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var settings struct {
+			Packages []jsontext.Value `json:"packages"`
+		}
+		if json.Unmarshal(data, &settings) != nil {
+			continue
+		}
+		for _, raw := range settings.Packages {
+			var installed string
+			if json.Unmarshal(raw, &installed) != nil {
+				var entry struct {
+					Source string `json:"source"`
+				}
+				if json.Unmarshal(raw, &entry) != nil {
+					continue
+				}
+				installed = entry.Source
+			}
+			if piNpmPackageName(installed) == name {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func piDataDir() string {
