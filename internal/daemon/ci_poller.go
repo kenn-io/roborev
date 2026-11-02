@@ -1026,6 +1026,14 @@ func (p *CIPoller) readCodeowners(ctx context.Context, ghRepo, ref string) (map[
 	return client.CodeownerLogins(ctx, ghRepo, ref)
 }
 
+// skipPR publishes a skipped result for this PR head instead of reviewing it.
+//
+// GitHub attaches the roborev check and commit status to the commit, not the
+// PR, so a skip also appears on every other open PR with the same head commit,
+// including one whose review is pending or failed. This is accepted design for
+// every skip reason (draft, label, author, branch), not a defect: the skip path
+// does not coordinate status publication across PRs that share a commit. Do not
+// add a shared-commit guard here without the maintainers asking for one.
 func (p *CIPoller) skipPR(ghRepo string, pr ghPR, skip ciSkip, expected *storage.ReviewAttempt) error {
 	panelID, err := p.db.ClaimPanelForSkip(ghRepo, pr.Number, pr.HeadRefOid, expected)
 	if err != nil {

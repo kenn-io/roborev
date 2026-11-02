@@ -56,6 +56,16 @@ It is still valid to flag docs correctness and reproducibility issues, such as
 silently using stale ignored assets, hydrating from the wrong ref, missing
 expected files, or accidentally publishing unintended local files.
 
+## CI poller skips on shared head commits
+
+When the CI poller skips a PR (`skip_drafts`, `skip_labels`, or the author and
+branch filters), it publishes a roborev success commit status and, with GitHub
+App auth, a skipped check run. GitHub attaches both to the commit, so a skipped
+PR that shares its head commit with a reviewed PR can replace that PR's pending
+or failed roborev status. This is accepted and documented behavior, not a
+finding. Do not report it, and do not ask for a shared-commit guard or for
+draft skips to avoid publishing a status.
+
 ## Agent tool permissions
 
 Review agents run with shell access to inspect diffs and source files. Codex

@@ -868,6 +868,7 @@ func TestCIPollerProcessPR_SkipsConfiguredLabel(t *testing.T) {
 		{name: "draft", draft: true, skipDrafts: true},
 		{name: "draft default", draft: true},
 		{name: "draft backoff", draft: true, skipDrafts: true, backoff: true},
+		{name: "draft precedence", draft: true, skipDrafts: true, label: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -882,10 +883,12 @@ func TestCIPollerProcessPR_SkipsConfiguredLabel(t *testing.T) {
 			statuses := h.CaptureCommitStatuses()
 			checks := h.CaptureSkippedChecks()
 			pr := ghPR{Number: 9, HeadRefOid: "skipped-head-sha", BaseRefName: "main", Draft: tc.draft}
-			reason := "Review skipped: draft"
 			if !tc.draft || tc.label {
 				pr.Labels = []string{"Do Not Review"}
-				reason = "Review skipped: label Do Not Review"
+			}
+			reason := "Review skipped: label Do Not Review"
+			if tc.draft && tc.skipDrafts {
+				reason = "Review skipped: draft"
 			}
 			if tc.backoff {
 				_, err := h.DB.ReserveReviewAttempt("acme/api", pr.Number, pr.HeadRefOid, time.Now())

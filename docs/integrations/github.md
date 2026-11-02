@@ -51,10 +51,12 @@ checkouts outside your current working repository.
 
 Before enabling the CI poller, understand the following:
 
-- **The poller reviews ALL open PRs on first start.** It polls immediately on
-    startup, not after the first interval. If you have 20 open PRs, all 20 will
-    be enqueued for review right away. Subsequent polls only review PRs with new
-    commits (tracked by HEAD SHA in the local database).
+- **The poller reviews every eligible open PR on first start.** It polls
+    immediately on startup, not after the first interval. If you have 20
+    eligible open PRs, all 20 will be enqueued for review right away. Later
+    polls review eligible PR heads that have no review yet (tracked by HEAD SHA
+    in the local database). A head can become eligible without a new commit, for
+    example when a draft is marked ready or a skip label is removed.
 - **The poller reviews drafts by default.** Set global `[ci] skip_drafts = true`
     to skip draft PRs, or configure `skip_labels` to skip PRs with matching
     labels. The author and branch filters still apply to eligible PRs.
@@ -351,11 +353,11 @@ labels listed in `skip_labels`; label matching is case-insensitive. If both
 apply, the draft reason takes precedence. A draft skip message is
 `Review skipped: draft`.
 
-When the poller publishes a skipped result, GitHub App authentication uses a
-roborev check with a `skipped` conclusion. Personal authentication uses a
-success commit status because GitHub does not allow it to create check runs.
-GitHub attaches checks and statuses to the commit, so the skip also appears on
-any other PR with the same head commit.
+When the poller publishes a skipped result, it always sets a roborev success
+commit status. GitHub App authentication also creates a roborev check with a
+`skipped` conclusion; personal authentication cannot, because GitHub does not
+allow it to create check runs. GitHub attaches checks and statuses to the
+commit, so the skip also appears on any other PR with the same head commit.
 
 Marking a draft ready, or removing the matching label, makes the same PR head
 eligible on the next poll without a push, subject to the existing throttle,
@@ -440,9 +442,10 @@ The status context is `roborev` and progresses through these states:
 | `error` | No reviewer produced usable output and no retry remains, or no agent is available |
 
 Skipped PRs, whether from `skip_drafts`, `skip_labels`, or the
-[author and branch filters](#filtering-which-prs-get-reviewed), use a GitHub
-check run instead of a commit status because commit statuses do not have a
-skipped state. The roborev check run completes with a `skipped` conclusion.
+[author and branch filters](#filtering-which-prs-get-reviewed), get a `success`
+commit status that names the skip reason, because commit statuses do not have a
+skipped state. With GitHub App authentication the poller also creates a roborev
+check run that completes with a `skipped` conclusion.
 
 Status checks require **Commit statuses: Read and write**. Skipped checks also
 require **Checks: Read and write**. The setup guide above includes both
