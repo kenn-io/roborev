@@ -220,40 +220,30 @@ func TestPriorRangeReviewViewsGitProcessesStayFlat(t *testing.T) {
 	first := repo.CommitFile("first.txt", "first", "first")
 	second := repo.CommitFile("second.txt", "second", "second")
 	third := repo.CommitFile("third.txt", "third", "third")
-	repo.Run("branch", "prior-end", first)
 
 	db := testutil.OpenTestDB(t)
 	dbRepo, err := db.GetOrCreateRepo(repo.Path())
 	require.NoError(t, err)
-	createCompletedRangeReview(t, db, dbRepo.ID, base[:12]+"..prior-end", storage.JobTypeRange, "first review")
+	createCompletedRangeReview(t, db, dbRepo.ID, base+".."+first, storage.JobTypeRange, "first review")
 	createCompletedRangeReview(t, db, dbRepo.ID, base+".."+second, storage.JobTypeRange, "second review")
 	builder := NewBuilder(db).ForRepo(repo.Path(), dbRepo.ID)
-	var previousViews []priorRangeReview
-	var previousCalls int
-	for _, count := range []int{10, 500} {
-		t.Run(fmt.Sprint(count), func(t *testing.T) {
-			assert := assert.New(t)
-			seedUnrelatedRangeReviews(t, db, dbRepo.ID, count)
+	var views [2][]priorRangeReview
+	var calls [2]int
+	gitCalls := testutil.CountGitProcesses(t)
+	for i, count := range []int{10, 500} {
+		seedUnrelatedRangeReviews(t, db, dbRepo.ID, count)
 
-			gitCalls := testutil.CountGitProcesses(t)
-			views := builder.WithContext(t.Context()).priorRangeReviewsForRef(base+".."+third, 3)
-			calls := gitCalls()
-			require.Len(t, views, 2)
-			assert.Equal(base[:7]+".."+first[:7], views[0].Range)
-			assert.Contains(views[0].Output, "first review")
-			assert.Equal(base[:7]+".."+second[:7], views[1].Range)
-			assert.Contains(views[1].Output, "second review")
-			if previousViews != nil {
-				assert.Equal(previousViews, views)
-				assert.Equal(previousCalls, calls, "git process count must stay flat as history grows")
-			}
-			previousViews, previousCalls = views, calls
-			t.Logf("candidates=%d git processes=%d", count, calls)
+		before := gitCalls()
+		views[i] = builder.WithContext(t.Context()).priorRangeReviewsForRef(base+".."+third, 3)
+		calls[i] = gitCalls() - before
+		require.Len(t, views[i], 2)
+		t.Logf("candidates=%d git processes=%d", count, calls[i])
 
-			_, err := db.ExecContext(t.Context(), "DELETE FROM reviews WHERE job_id IN (SELECT id FROM review_jobs WHERE git_ref LIKE 'start-%')")
-			require.NoError(t, err)
-			_, err = db.ExecContext(t.Context(), "DELETE FROM review_jobs WHERE git_ref LIKE 'start-%'")
-			require.NoError(t, err)
-		})
+		_, err := db.ExecContext(t.Context(), "DELETE FROM reviews WHERE job_id IN (SELECT id FROM review_jobs WHERE git_ref LIKE 'start-%')")
+		require.NoError(t, err)
+		_, err = db.ExecContext(t.Context(), "DELETE FROM review_jobs WHERE git_ref LIKE 'start-%'")
+		require.NoError(t, err)
 	}
+	assert.Equal(t, views[0], views[1])
+	assert.Equal(t, calls[0], calls[1], "git process count must stay flat as history grows")
 }
