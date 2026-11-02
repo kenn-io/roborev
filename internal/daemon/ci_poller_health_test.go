@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -233,10 +234,12 @@ func TestHealthCIPollerSkipStatusIsNotRepeated(t *testing.T) {
 					Context: new("roborev"), State: &tc.state, Description: &tc.description,
 				}
 				var writes []googlegithub.RepoStatus
-				api := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var reads atomic.Int64
+				useCISkipAPI(t, h.Poller, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					w.Header().Set("Content-Type", "application/json")
 					switch {
 					case r.Method == http.MethodGet && r.URL.Path == "/api/v3/repos/acme/api/commits/head-a/status":
+						reads.Add(1)
 						if tc.readError {
 							http.Error(w, `{"message":"status lookup unavailable"}`, http.StatusBadGateway)
 							return
@@ -260,13 +263,16 @@ func TestHealthCIPollerSkipStatusIsNotRepeated(t *testing.T) {
 						http.NotFound(w, r)
 					}
 				}))
-				transport := http.DefaultTransport
-				http.DefaultTransport = api.Client().Transport
-				defer func() { http.DefaultTransport = transport }()
-				h.Poller.githubAPIURL = api.URL + "/api/v3"
-				h.Poller.setCommitStatusFn = nil
-				for range 2 {
+				for poll := range 2 {
 					h.Poller.poll(t.Context())
+					gotReads := reads.Swap(0)
+					if tc.readError {
+						assert.Positive(gotReads, "failed lookup must be retried")
+					} else if poll == 0 {
+						assert.Equal(int64(2), gotReads, "initial status lookup includes pagination")
+					} else {
+						assert.Zero(gotReads, "successful publication must avoid later lookups")
+					}
 					assert.Equal(!tc.readError, decodeHealthStatus(t, executeHealthCheck(t.Context(), healthServer, http.MethodGet)).Healthy)
 				}
 				require.Len(t, writes, tc.wantWrites)
@@ -319,6 +325,7 @@ func testHealthCIPollerExhaustedRetry(t *testing.T, draft bool) {
 			assert.Empty(*comments)
 			assert.False(decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet)).Healthy,
 				"giving up without a review is not recovery")
+			var skipped *[]capturedSkippedCheck
 			switch recovery {
 			case "closed":
 				h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return nil, nil }
@@ -353,7 +360,7 @@ func testHealthCIPollerExhaustedRetry(t *testing.T, draft bool) {
 				require.NoError(t, err)
 				require.NotNil(t, attempt, "publication failure retains retry state")
 				assert.Equal("done", attempt.State)
-				h.CaptureSkippedChecks()
+				skipped = h.CaptureSkippedChecks()
 				h.Poller.setCommitStatusFn = func(string, string, string, string) error {
 					return errors.New("status publishing unavailable")
 				}
@@ -365,7 +372,6 @@ func testHealthCIPollerExhaustedRetry(t *testing.T, draft bool) {
 				require.NotNil(t, attempt, "publication failure retains retry state")
 				assert.Equal("done", attempt.State)
 			}
-			skipped := h.CaptureSkippedChecks()
 			statuses := h.CaptureCommitStatuses()
 			h.Poller.poll(t.Context())
 			assert.True(decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet)).Healthy,

@@ -147,7 +147,7 @@ func MockBinaryInPath(t *testing.T, binName, scriptContent string) func() {
 
 // OpenTestDB creates a test database in a temporary directory.
 // The database is automatically closed when the test completes.
-func OpenTestDB(t *testing.T) *storage.DB {
+func OpenTestDB(t testing.TB) *storage.DB {
 	t.Helper()
 
 	db, _ := OpenTestDBWithDir(t)
@@ -184,7 +184,7 @@ var testDBTemplate = sync.OnceValues(func() ([]byte, error) {
 // temporary directory path. Useful when tests need to create repos or other
 // files in the same directory. The database is automatically closed when
 // the test completes.
-func OpenTestDBWithDir(t *testing.T) (*storage.DB, string) {
+func OpenTestDBWithDir(t testing.TB) (*storage.DB, string) {
 	t.Helper()
 
 	tmpDir := t.TempDir()
