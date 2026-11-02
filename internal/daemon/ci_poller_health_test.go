@@ -281,7 +281,21 @@ func TestHealthCIPollerSkipStatusIsNotRepeated(t *testing.T) {
 }
 
 func TestHealthCIPollerExhaustedRetry(t *testing.T) {
+	for _, draft := range []bool{false, true} {
+		t.Run(fmt.Sprintf("draft %t", draft), func(t *testing.T) { testHealthCIPollerExhaustedRetry(t, draft) })
+	}
+}
+
+func testHealthCIPollerExhaustedRetry(t *testing.T, draft bool) {
+	t.Helper()
+	reason := "Review skipped: label skip-review"
+	if draft {
+		reason = "Review skipped: draft"
+	}
 	for _, recovery := range []string{"closed", "new head", "skipped"} {
+		if draft && recovery != "skipped" {
+			continue
+		}
 		t.Run(recovery, func(t *testing.T) {
 			assert := assert.New(t)
 			h, server := newCIHealthHarness(t)
@@ -324,12 +338,21 @@ func TestHealthCIPollerExhaustedRetry(t *testing.T) {
 			case "skipped":
 				h.Cfg.CI.SkipLabels = []string{"skip-review"}
 				pr.Labels = []string{"skip-review"}
+				if draft {
+					h.Cfg.CI.SkipDrafts = true
+					pr.Labels = nil
+					pr.Draft = true
+				}
 				h.Poller.setSkippedCheckFn = func(string, string, string) error {
 					return errors.New("check publishing unavailable")
 				}
 				h.Poller.poll(context.Background())
 				assert.False(decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy,
 					"failed check publishing must retain the failure for the next poll")
+				attempt, err := h.DB.GetReviewAttempt("acme/api", pr.Number, pr.HeadRefOid)
+				require.NoError(t, err)
+				require.NotNil(t, attempt, "publication failure retains retry state")
+				assert.Equal("done", attempt.State)
 				h.CaptureSkippedChecks()
 				h.Poller.setCommitStatusFn = func(string, string, string, string) error {
 					return errors.New("status publishing unavailable")
@@ -337,6 +360,10 @@ func TestHealthCIPollerExhaustedRetry(t *testing.T) {
 				h.Poller.poll(context.Background())
 				assert.False(decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy,
 					"failed status publishing must retain the failure for the next poll")
+				attempt, err = h.DB.GetReviewAttempt("acme/api", pr.Number, pr.HeadRefOid)
+				require.NoError(t, err)
+				require.NotNil(t, attempt, "publication failure retains retry state")
+				assert.Equal("done", attempt.State)
 			}
 			skipped := h.CaptureSkippedChecks()
 			statuses := h.CaptureCommitStatuses()
@@ -344,11 +371,17 @@ func TestHealthCIPollerExhaustedRetry(t *testing.T) {
 			assert.True(decodeHealthStatus(t, executeHealthCheck(server, http.MethodGet)).Healthy,
 				"a failed review no longer needed by the PR must not hold health unhealthy")
 			if recovery == "skipped" {
+				attempt, err := h.DB.GetReviewAttempt("acme/api", pr.Number, pr.HeadRefOid)
+				require.NoError(t, err)
+				assert.Nil(attempt, "successful publication removes the failed attempt")
+				var finalStatus string
+				require.NoError(t, h.DB.QueryRow(`SELECT final_status_state FROM ci_pr_panels WHERE id = ?`, failedPanel.ID).Scan(&finalStatus))
+				assert.Empty(finalStatus, "obsolete panel status cannot overwrite the skip")
 				assert.Contains(*skipped, capturedSkippedCheck{
-					Repo: "acme/api", SHA: "head-a", Summary: "Review skipped: label skip-review",
+					Repo: "acme/api", SHA: "head-a", Summary: reason,
 				})
 				assert.Contains(*statuses, capturedStatus{
-					Repo: "acme/api", SHA: "head-a", State: "success", Desc: "Review skipped: label skip-review",
+					Repo: "acme/api", SHA: "head-a", State: "success", Desc: reason,
 				})
 			}
 
@@ -356,6 +389,7 @@ func TestHealthCIPollerExhaustedRetry(t *testing.T) {
 			// must not suppress a fresh review of that commit.
 			pr.HeadRefOid = "head-a"
 			pr.Labels = nil
+			pr.Draft = false
 			h.Poller.isPROpenFn = func(string, int) bool { return true }
 			h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return []ghPR{pr}, nil }
 			h.Poller.poll(context.Background())
@@ -370,7 +404,17 @@ func TestHealthCIPollerExhaustedRetry(t *testing.T) {
 }
 
 func TestHealthCIPollerEnqueueFailure(t *testing.T) {
+	for _, draft := range []bool{false, true} {
+		t.Run(fmt.Sprintf("draft %t", draft), func(t *testing.T) { testHealthCIPollerEnqueueFailure(t, draft) })
+	}
+}
+
+func testHealthCIPollerEnqueueFailure(t *testing.T, draft bool) {
+	t.Helper()
 	for _, recovery := range []string{"retry", "new head", "reviewed head", "active", "done", "older done", "removed", "closed", "skipped", "disabled"} {
+		if draft && recovery != "active" && recovery != "done" && recovery != "skipped" {
+			continue
+		}
 		t.Run(recovery, func(t *testing.T) {
 			h, server := newCIHealthHarness(t)
 			h.stubProcessPRGit()
@@ -413,6 +457,10 @@ func TestHealthCIPollerEnqueueFailure(t *testing.T) {
 
 			h.Poller.gitFetchFn = func(context.Context, string, []string) error { return nil }
 			skipped := h.CaptureSkippedChecks()
+			comments := h.CaptureComments()
+			statuses := h.CaptureCommitStatuses()
+			var completedPanel *storage.CIPanel
+			var completedReview *storage.Review
 			switch recovery {
 			case "new head":
 				pr.HeadRefOid = "head-b"
@@ -422,18 +470,37 @@ func TestHealthCIPollerEnqueueFailure(t *testing.T) {
 				require.NoError(t, err)
 				require.NoError(t, h.DB.MarkReviewAttemptDone("acme/api", pr.Number, pr.HeadRefOid))
 			case "active", "done":
-				h.Cfg.CI.SkipLabels = []string{"skip-review"}
-				pr.Labels = []string{"skip-review"}
 				// The retry was committed, but its caller did not observe success.
 				opts := storage.EnqueueOpts{RepoID: h.Repo.ID, GitRef: "base..head-a", Agent: "test"}
-				created, _, _, err := h.DB.CreateCIPanelRun("acme/api", pr.Number, pr.HeadRefOid,
+				created, members, synth, err := h.DB.CreateCIPanelRun("acme/api", pr.Number, pr.HeadRefOid,
 					[]storage.EnqueueOpts{opts}, opts)
 				require.NoError(t, err)
 				require.True(t, created)
 				_, err = h.DB.Exec(`UPDATE ci_pr_review_attempts SET state = 'pending', next_attempt_at = NULL`)
 				require.NoError(t, err)
 				if recovery == "done" {
-					require.NoError(t, h.DB.MarkReviewAttemptDone("acme/api", pr.Number, pr.HeadRefOid))
+					for _, member := range members {
+						h.markJobDoneWithReview(t, member.ID, "test", "No issues found.")
+						require.Equal(t, storage.JobStatusDone, h.jobStatus(t, member.ID))
+					}
+					h.completeSynthesisWithReview(t, synth.ID, "No issues found.")
+					h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
+					require.Equal(t, storage.JobStatusDone, h.jobStatus(t, synth.ID), "completed fixture must finish synthesis")
+					completedPanel, err = h.DB.GetCIPanelByPRSHA("acme/api", pr.Number, pr.HeadRefOid)
+					require.NoError(t, err)
+					require.NotNil(t, completedPanel.PostedAt, "review is delivered before applying the skip input")
+					completedReview, err = h.DB.GetReviewByJobID(synth.ID)
+					require.NoError(t, err)
+					require.NotNil(t, completedReview)
+					require.Len(t, *comments, 1)
+					require.Equal(t, []capturedStatus{{Repo: "acme/api", SHA: pr.HeadRefOid, State: "success", Desc: "Review complete"}}, *statuses)
+				}
+				h.Cfg.CI.SkipLabels = []string{"skip-review"}
+				pr.Labels = []string{"skip-review"}
+				if draft {
+					h.Cfg.CI.SkipDrafts = true
+					pr.Labels = nil
+					pr.Draft = true
 				}
 			case "closed":
 				h.Poller.isPROpenFn = func(string, int) bool { return false }
@@ -441,6 +508,11 @@ func TestHealthCIPollerEnqueueFailure(t *testing.T) {
 			case "skipped":
 				h.Cfg.CI.SkipLabels = []string{"skip-review"}
 				pr.Labels = []string{"skip-review"}
+				if draft {
+					h.Cfg.CI.SkipDrafts = true
+					pr.Labels = nil
+					pr.Draft = true
+				}
 			case "disabled":
 				h.Cfg.CI.Reviews = map[string][]string{"test": {}}
 			case "older done", "removed":
@@ -473,7 +545,18 @@ func TestHealthCIPollerEnqueueFailure(t *testing.T) {
 			}
 			if recovery == "active" || recovery == "done" {
 				assert.True(t, h.hasPanel(t, "acme/api", pr.Number, pr.HeadRefOid))
-				assert.Empty(t, *skipped, "skip labels leave active and completed reviews unchanged")
+				assert.Empty(t, *skipped, "skip inputs leave active and completed reviews unchanged")
+				if recovery == "done" {
+					panel, err := h.DB.GetActiveCIPanelByPRSHA("acme/api", pr.Number, pr.HeadRefOid)
+					require.NoError(t, err)
+					assert.Equal(t, completedPanel.ID, panel.ID)
+					review, err := h.DB.GetReviewByJobID(completedReview.JobID)
+					require.NoError(t, err)
+					require.NotNil(t, review)
+					assert.Equal(t, completedReview.ID, review.ID)
+					assert.Len(t, *comments, 1, "polling must preserve the delivered review")
+					assert.Equal(t, []capturedStatus{{Repo: "acme/api", SHA: pr.HeadRefOid, State: "success", Desc: "Review complete"}}, *statuses)
+				}
 			}
 			if recovery == "retry" || recovery == "new head" {
 				assert.True(t, h.hasPanel(t, "acme/api", pr.Number, pr.HeadRefOid))
