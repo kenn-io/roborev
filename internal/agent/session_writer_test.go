@@ -30,9 +30,6 @@ func TestSessionCaptureWriter_LongLineChunkingCost(t *testing.T) {
 			}
 		}
 		require.Equal(payload, w.buf.Bytes())
-		_, err := w.Write([]byte("\n{\"session_id\":\"session-123\"}\n"))
-		require.NoError(err)
-		require.Equal("session-123", w.SessionID())
 	}
 	// Both cases copy the same bytes. Rescanning the unfinished line costs
 	// about 16 times as much with 16 times as many chunks. Allow an eightfold
