@@ -31,6 +31,7 @@ import (
 	"go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/tokens"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 const (
@@ -50,6 +51,9 @@ type runningJobCancellation struct {
 type WorkerPool struct {
 	db                   *storage.DB
 	cfgGetter            ConfigGetter
+	ciGitEnv             func(string) []string
+	ciCheckUpstream      string
+	ciCheck              func(context.Context, *storage.ReviewJob, ciCheckConfig, structuredreview.Document, []string, io.Writer) (structuredreview.Document, error)
 	broadcaster          Broadcaster
 	errorLog             *ErrorLog
 	activityLog          *ActivityLog
@@ -2371,10 +2375,51 @@ func (wp *WorkerPool) releaseIfPanelMember(job *storage.ReviewJob) {
 
 // sessionTokenUsage is the usage gathered for one attempt before it is stored.
 type sessionTokenUsage struct {
-	capturedSession string
-	wasResumed      bool
-	logUsage        *tokens.Usage
-	providerUsage   *tokens.Usage
+	capturedSession  string
+	wasResumed       bool
+	logUsage         *tokens.Usage
+	providerUsage    *tokens.Usage
+	allowSessionless bool
+}
+
+// withUnpricedPhase includes usage from a disposable session whose cost cannot be fetched.
+func (collected *sessionTokenUsage) withUnpricedPhase(sessionRan bool, u *tokens.Usage) {
+	if u == nil {
+		return
+	}
+	collected.allowSessionless = true
+	aggregate := func(usage *tokens.Usage) *tokens.Usage {
+		var combined *tokens.Usage
+		if sessionRan && usage != nil {
+			combined = backfill.AggregateTokenUsages([]*tokens.Usage{usage, u})
+			// Count checker tokens while preserving the synthesis's known cost.
+			if combined != nil {
+				combined.CostUSD = usage.CostUSD
+				combined.HasCost = usage.HasCost
+			}
+		} else {
+			combined = backfill.AggregateTokenUsages([]*tokens.Usage{u})
+		}
+		if combined != nil {
+			var sessionID string
+			var sessionIDs []string
+			if collected.capturedSession != "" && !collected.wasResumed {
+				sessionID = collected.capturedSession
+				sessionIDs = []string{collected.capturedSession}
+			}
+			combined.ThreadID = sessionID
+			combined.ProviderSessionIDs = sessionIDs
+			combined.ExpectedProviderSessions = 1
+			if sessionRan {
+				combined.ExpectedProviderSessions = 2
+			}
+		}
+		return combined
+	}
+	if collected.providerUsage != nil {
+		collected.providerUsage = aggregate(backfill.MergeTokenUsage(tokens.ToJSON(collected.logUsage), collected.providerUsage))
+	}
+	collected.logUsage = aggregate(collected.logUsage)
 }
 
 // collectTokenUsageForSession reads usage from the job log and the usage
@@ -2435,7 +2480,7 @@ func (wp *WorkerPool) storeTokenUsageForSession(
 	if sessionID == "" {
 		sessionID = usage.ThreadID
 	}
-	if sessionID == "" {
+	if sessionID == "" && !collected.allowSessionless {
 		return
 	}
 	current, err := wp.db.GetJobByID(job.ID)

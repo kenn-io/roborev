@@ -1245,6 +1245,16 @@ func TestCaptureTokenUsageForSessionUsesCodexJobLog(t *testing.T) {
 	assert.InDelta(t, 0.42, usage.CostUSD, 1e-9)
 	assert.Equal(t, "job_log_turn_completed", usage.UsageSource)
 	assert.Equal(t, "thread-123", usage.ThreadID)
+
+	t.Run("ordinary job without session", func(t *testing.T) {
+		job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
+		require.NoError(t, testutil.CompleteReviewFixture(tc.DB, job.ID, "codex", "prompt", "No issues found."))
+		require.NoError(t, os.WriteFile(JobLogPath(job.ID), []byte(`{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":5}}`+"\n"), 0o600))
+		tc.Pool.captureTokenUsageForSession(t.Context(), testWorkerID, job, "")
+		updated, err := tc.DB.GetJobByID(job.ID)
+		require.NoError(t, err)
+		assert.Empty(t, updated.TokenUsage)
+	})
 }
 
 func TestCaptureTokenUsageForSessionRejectsReenqueuedJob(t *testing.T) {

@@ -17,6 +17,7 @@ func TestBudgetSpendCompletionDay(t *testing.T) {
 	for i, tc := range []struct{ finished, usage string }{
 		{"2026-01-02T00:00:00Z", `{"has_cost":true,"cost_usd":1.25}`},
 		{"2026-01-02 23:59:59", `{"has_cost":true,"cost_usd":0}`},
+		{"2026-01-02T12:00:00Z", `{"has_cost":true,"cost_usd":0.30,"expected_provider_sessions":2,"provider_session_ids":["synthesis-session"]}`},
 		{"2026-01-01T23:59:59Z", `{"has_cost":true,"cost_usd":9}`},
 		{"2026-01-03T00:00:00Z", `{"has_cost":true,"cost_usd":9}`},
 		{"2026-01-02T12:00:00Z", `{"has_cost":true}`},
@@ -32,8 +33,8 @@ func TestBudgetSpendCompletionDay(t *testing.T) {
 	}
 	got, err := db.GetBudgetSpend(day)
 	require.NoError(t, err)
-	assert.InDelta(t, 1.25, got.TotalUSD, 0.000001)
-	assert.Equal(t, 2, got.JobsWithCost)
+	assert.InDelta(t, 1.55, got.TotalUSD, 0.000001, "known partial costs count toward the budget")
+	assert.Equal(t, 2, got.JobsWithCost, "a missing provider session leaves cost coverage partial")
 }
 
 func TestBudgetSelectionOwnershipAndLifecycle(t *testing.T) {
