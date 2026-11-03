@@ -7,8 +7,7 @@ runs:
   steps:
     - name: Save caches
       if: >-
-        github.event_name == 'push' && github.ref == 'refs/heads/main'
-        && env.GO_CACHE_HIT != 'true'
+        github.event_name == 'push' && env.GO_CACHE_HIT != 'true'
       uses: actions/cache/save@v6.1.0
       with:
         path: ${{ env.GO_CACHE_PATHS }}
