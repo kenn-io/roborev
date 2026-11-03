@@ -135,7 +135,8 @@ Codex, contact a model, or run the live skill conformance evaluation.
 
 CI uses GitHub-hosted `ubuntu-latest`, `macos-latest`, and `windows-2025`
 runners. Test jobs restore a daily Go module and build cache saved by main's
-test legs for each OS. Other jobs use the default `actions/setup-go` cache.
+test legs for each OS. Other jobs use the default `actions/setup-go` cache. The
+lint job also restores main's custom golangci-lint binary and analysis cache.
 
 Runner selection lives in `.github/workflows/ci.yml` and
 `.github/workflows/windows-migration.yml`. The PR dispatchers call the workflow

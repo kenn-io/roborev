@@ -6,6 +6,9 @@ inputs:
   group:
     description: Cache group, such as linux-cgo or windows-amd64
     required: true
+  path:
+    description: Cache paths to use instead of the Go build and module caches
+    default: ''
 runs:
   using: composite
   steps:
@@ -14,6 +17,7 @@ runs:
       env:
         GROUP: ${{ inputs.group }}
         GO_SUM: ${{ hashFiles('go.sum') }}
+        CACHE_PATH: ${{ inputs.path }}
       run: |
         # One key per group and day: main refreshes it daily instead of freezing on go.sum.
         {
@@ -21,8 +25,12 @@ runs:
           echo "GO_CACHE_PREFIX=go-${GROUP}-${GO_SUM}-"
           echo "GO_CACHE_GROUP_PREFIX=go-${GROUP}-"
           echo "GO_CACHE_PATHS<<EOF"
-          go env GOCACHE
-          go env GOMODCACHE
+          if [ -n "$CACHE_PATH" ]; then
+            echo "$CACHE_PATH"
+          else
+            go env GOCACHE
+            go env GOMODCACHE
+          fi
           echo "EOF"
         } >> "$GITHUB_ENV"
 

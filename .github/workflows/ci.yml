@@ -71,6 +71,7 @@ jobs:
               - 'Makefile'
               - 'prek.toml'
               - '.github/workflows/ci.yml'
+              - '.github/actions/**'
             web:
               - 'package.json'
               - 'bun.lock'
@@ -594,6 +595,7 @@ jobs:
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y --no-install-recommends libsqlite3-dev
 
       - uses: actions/setup-go@v7.0.0
+        id: setup_go
         if: needs.go-changes.outputs.changed == 'true'
         with:
           go-version: '1.27.3'
@@ -603,18 +605,40 @@ jobs:
         id: golangci
         run: echo "version=v$(make -s print-golangci-lint-version)" >> "$GITHUB_OUTPUT"
 
-      - name: golangci-lint
+      - name: Restore linter cache
         if: needs.go-changes.outputs.changed == 'true'
+        uses: $/.github/actions/go-cache-restore
+        with:
+          group: lint-${{ steps.golangci.outputs.version }}-${{ hashFiles('.custom-gcl.yml') }}-${{ steps.setup_go.outputs.go-version }}
+          path: |
+            ${{ github.workspace }}/custom-gcl
+            ~/.cache/golangci-lint
+
+      # Build only on a cache miss; the key validates the custom binary.
+      - name: Build custom linter
+        if: needs.go-changes.outputs.changed == 'true' && hashFiles('custom-gcl') == ''
         uses: step-security/golangci-lint-action@v9.3.0
         with:
           version: ${{ steps.golangci.outputs.version }}
+          install-only: true
+          skip-cache: true
 
-      # Reuse the custom binary the previous step built; the action would build a Windows binary here.
+      - name: golangci-lint
+        if: needs.go-changes.outputs.changed == 'true'
+        run: |
+          ./custom-gcl config verify
+          ./custom-gcl run ./...
+
+      # Reuse the restored or freshly built custom binary for Windows analysis.
       - name: golangci-lint for Windows
         if: needs.go-changes.outputs.changed == 'true'
         env:
           GOOS: windows
         run: ./custom-gcl run ./...
+
+      - name: Save linter cache
+        if: ${{ !cancelled() && needs.go-changes.outputs.changed == 'true' }}
+        uses: $/.github/actions/go-cache-save
 
       - uses: astral-sh/setup-uv@v10.3.2
         with:
