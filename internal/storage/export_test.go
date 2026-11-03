@@ -668,8 +668,8 @@ func TestExportReviewsDefaultLimitIsBounded(t *testing.T) {
 		                     uuid, created_at, updated_at, closed)
 		SELECT j.id, 'codex', '', ?, 1,
 		       printf('00000000-0000-4000-9000-%012x', j.id), ?, ?, 0
-		FROM review_jobs j JOIN commits c ON c.id = j.commit_id AND c.sha = j.git_ref
-		WHERE c.repo_id = ?`, document, timestamp, timestamp, repo.ID)
+		FROM review_jobs j
+		WHERE j.repo_id = ?`, document, timestamp, timestamp, repo.ID)
 	require.NoError(t, err)
 
 	page, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileContent})
