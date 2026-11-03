@@ -193,7 +193,7 @@ func TestCIPanelPRHeadIndexMigration(t *testing.T) {
 	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:3]))
 
 	for range 2 {
-		require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
+		require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:4]))
 		var indexSQL string
 		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT sql FROM sqlite_master
 			WHERE type = 'index' AND name = 'idx_ci_panels_pr_head'`).Scan(&indexSQL))
@@ -201,6 +201,24 @@ func TestCIPanelPRHeadIndexMigration(t *testing.T) {
 		assert.Equal(t, []int{1, 2, 3, 4}, appliedVersions(t, db))
 		// Simulate interruption after creating the index, before recording it.
 		_, err := db.ExecContext(t.Context(), `DELETE FROM schema_migrations WHERE version = 4`)
+		require.NoError(t, err)
+	}
+}
+
+func TestTokenCostStartedIndexMigration(t *testing.T) {
+	t.Parallel()
+	db := openUnmigratedDB(t)
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:4]))
+
+	for range 2 {
+		require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
+		var indexSQL string
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT sql FROM sqlite_master
+			WHERE type = 'index' AND name = 'idx_review_jobs_source_started'`).Scan(&indexSQL))
+		assert.Contains(t, indexSQL, "ON review_jobs(source_machine_id, datetime(")
+		assert.Equal(t, []int{1, 2, 3, 4, 5}, appliedVersions(t, db))
+		// Simulate interruption after creating the index, before recording it.
+		_, err := db.ExecContext(t.Context(), `DELETE FROM schema_migrations WHERE version = 5`)
 		require.NoError(t, err)
 	}
 }

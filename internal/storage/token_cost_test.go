@@ -3,6 +3,7 @@ package storage
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 	"uuid"
@@ -10,6 +11,39 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestTokenCostCandidateQueriesSeekStartedAtIndex(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	machineID, err := db.GetMachineID()
+	require.NoError(t, err)
+	cutoff := time.Now().Add(-7 * 24 * time.Hour)
+	for _, tc := range []struct {
+		name  string
+		build func(int64, int, time.Time, uuid.UUID) (string, []any)
+	}{
+		{"costs", listTokenCostCandidatesQuery},
+		{"logs", listTokenUsageLogCandidatesQuery},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			query, args := tc.build(0, 20, cutoff, machineID)
+			rows, err := db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+query, args...)
+			require.NoError(t, err)
+			defer rows.Close()
+			var details []string
+			for rows.Next() {
+				var id, parent, unused int
+				var detail string
+				require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+				details = append(details, detail)
+				t.Log(detail)
+			}
+			require.NoError(t, rows.Err())
+			assert.Contains(t, strings.Join(details, "\n"), "SEARCH j USING INDEX idx_review_jobs_source_started (source_machine_id=? AND <expr>>?)")
+		})
+	}
+}
 
 func TestMigrationMakesLegacyLocalJobEligibleForTokenReconciliation(t *testing.T) {
 	t.Parallel()
