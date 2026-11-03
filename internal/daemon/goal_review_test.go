@@ -108,7 +108,7 @@ func TestGoalWorkerUpdateInterruptionGuardsSuccessfulCompletion(t *testing.T) {
 		defer close(done)
 		c.Pool.processJob(testWorkerID, claimed)
 	}()
-	require.True(t, waitForUpdateSignal(started, 5*time.Second), "goal review did not start")
+	require.True(t, waitForUpdateSignal(started, workerStartTimeout), "goal review did not start")
 	c.Pool.InterruptJobsForUpdate([]int64{job.ID})
 	close(finish)
 	require.True(t, waitForUpdateSignal(done, 5*time.Second), "goal review did not unwind")
@@ -192,7 +192,7 @@ func TestRunningGoalReviewCancellationBroadcastsOnce(t *testing.T) {
 	})
 
 	// Wall-clock wait: the worker must complete its SQLite claim before running the gated agent.
-	require.True(t, waitForUpdateSignal(started, 5*time.Second), "goal review did not start")
+	require.True(t, waitForUpdateSignal(started, workerStartTimeout), "goal review did not start")
 	_, events := server.broadcaster.Subscribe("")
 	_, err = server.humaCancelJob(t.Context(), &CancelJobInput{
 		Body: CancelJobRequest{JobID: job.ID},

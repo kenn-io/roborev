@@ -86,6 +86,12 @@ func (a *structuredWorkerTestAgent) CommandLine() string          { return a.nam
 
 // newWorkerTestContext creates a DB, repo, broadcaster, and worker pool with
 // the given number of workers. Pass 0 to use the config default.
+// workerStartTimeout bounds how long a test waits for processJob to reach
+// its agent. Before the agent runs, job setup starts about 30 git processes.
+// Across 623 jobs in failed Windows CI shards, setup took a median of 1.1 s,
+// 4.4 s at the 99th percentile, and up to 6.7 s, so 5 s waits flaked.
+const workerStartTimeout = 30 * time.Second
+
 func newWorkerTestContext(t *testing.T, workers int) *workerTestContext {
 	t.Helper()
 	db, tmpDir := testutil.OpenTestDBWithDir(t)

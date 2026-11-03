@@ -112,7 +112,7 @@ func TestUpdateInterruptionSuppressesCancellationSideEffects(t *testing.T) {
 		tc.Pool.processJob("worker-update", job)
 	}()
 
-	require.True(t, waitForUpdateSignal(started, 5*time.Second), "agent did not start")
+	require.True(t, waitForUpdateSignal(started, workerStartTimeout), "agent did not start")
 	tc.Pool.InterruptJobsForUpdate([]int64{job.ID})
 	require.True(t, waitForUpdateSignal(done, 5*time.Second), "worker did not unwind")
 
@@ -156,9 +156,7 @@ func TestUpdateInterruptionDoesNotReleasePanelSynthesis(t *testing.T) {
 		tc.Pool.processJob(testWorkerID, job)
 	}()
 
-	// Startup includes real Git, database, and filesystem work, which can
-	// exceed five seconds on parallel Windows CI runners.
-	require.True(t, waitForUpdateSignal(started, 30*time.Second), "panel member did not start")
+	require.True(t, waitForUpdateSignal(started, workerStartTimeout), "panel member did not start")
 	tc.Pool.InterruptJobsForUpdate([]int64{job.ID})
 	require.True(t, waitForUpdateSignal(done, 5*time.Second), "panel member did not unwind")
 
@@ -196,7 +194,7 @@ func TestUserCancelWinsUpdateInterruptionRace(t *testing.T) {
 		defer close(done)
 		tc.Pool.processJob(testWorkerID, job)
 	}()
-	require.True(t, waitForUpdateSignal(started, 5*time.Second), "panel member did not start")
+	require.True(t, waitForUpdateSignal(started, workerStartTimeout), "panel member did not start")
 
 	tc.Pool.InterruptJobsForUpdate([]int64{job.ID})
 	require.True(t, waitForUpdateSignal(cancelObserved, 5*time.Second), "agent did not observe interruption")
@@ -298,7 +296,7 @@ func TestUpdateInterruptionPreemptsClassifierBackup(t *testing.T) {
 		tc.Pool.processJob(testWorkerID, job)
 	}()
 
-	require.True(t, waitForUpdateSignal(started, 5*time.Second))
+	require.True(t, waitForUpdateSignal(started, workerStartTimeout))
 	tc.Pool.InterruptJobsForUpdate([]int64{job.ID})
 	require.True(t, waitForUpdateSignal(done, 5*time.Second))
 
