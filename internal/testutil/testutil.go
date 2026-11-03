@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -369,4 +371,34 @@ func MapKeys[K comparable, V any](m map[K]V) []K {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+// CountGitProcesses puts a counting git wrapper first on PATH for the rest of
+// the test and returns a function that reports how many git processes started.
+func CountGitProcesses(t *testing.T) func() int {
+	t.Helper()
+	gitPath, err := exec.LookPath("git")
+	require.NoError(t, err)
+	countPath := filepath.Join(t.TempDir(), "git-count")
+	require.NoError(t, os.WriteFile(countPath, nil, 0o600))
+	wrapperDir := t.TempDir()
+	wrapperPath := filepath.Join(wrapperDir, "git")
+	shellQuote := func(path string) string {
+		return "'" + strings.ReplaceAll(path, "'", "'\\''") + "'"
+	}
+	cmdQuote := func(path string) string {
+		return `"` + strings.ReplaceAll(path, `"`, `""`) + `"`
+	}
+	wrapper := fmt.Sprintf("#!/bin/sh\nprintf x >> %s\nexec %s \"$@\"\n", shellQuote(countPath), shellQuote(gitPath))
+	if runtime.GOOS == "windows" {
+		wrapperPath += ".cmd"
+		wrapper = fmt.Sprintf("@echo off\r\n<nul set /p dummy=x>>%s\r\n%s %%*\r\nexit /b %%ERRORLEVEL%%\r\n", cmdQuote(countPath), cmdQuote(gitPath))
+	}
+	require.NoError(t, os.WriteFile(wrapperPath, []byte(wrapper), 0o755))
+	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return func() int {
+		calls, err := os.ReadFile(countPath)
+		require.NoError(t, err)
+		return strings.Count(string(calls), "x")
+	}
 }

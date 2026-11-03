@@ -6,9 +6,7 @@ import (
 	"encoding/json/jsontext"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -310,7 +308,7 @@ func TestCountOpenFailedReviewsCachesBranchlessLineageContext(t *testing.T) {
 		jobs = append(jobs, storage.ReviewJob{ID: int64(i + 1), Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: ref})
 	}
 	featureHead := repo.HeadSHA()
-	gitCalls := countGitProcesses(t)
+	gitCalls := testutil.CountGitProcesses(t)
 
 	count, ok := countOpenFailedReviews(
 		t.Context(), reviewSourceWithJobs(jobs...), repo.Path(), "feature/lineage", featureHead,
@@ -334,7 +332,7 @@ func TestCountOpenFailedReviewsDetachedHeadChecksReachabilityOnce(t *testing.T) 
 	}
 	repo.CheckoutDetached()
 	head := repo.HeadSHA()
-	gitCalls := countGitProcesses(t)
+	gitCalls := testutil.CountGitProcesses(t)
 
 	count, ok := countOpenFailedReviews(
 		t.Context(), reviewSourceWithJobs(jobs...), repo.Path(), "", head,
@@ -358,7 +356,7 @@ func TestCountOpenFailedReviewsSkipsReachabilityForPassingReviews(t *testing.T) 
 	}
 	repo.CheckoutDetached()
 	head := repo.HeadSHA()
-	gitCalls := countGitProcesses(t)
+	gitCalls := testutil.CountGitProcesses(t)
 
 	count, ok := countOpenFailedReviews(
 		t.Context(), reviewSourceWithJobs(jobs...), repo.Path(), "", head,
@@ -401,36 +399,6 @@ func TestCountOpenFailedReviewsDetachedHeadPeelsAnnotatedTags(t *testing.T) {
 
 	assert.True(ok)
 	assert.Equal(reviewIDSet{1: {}, 2: {}}, ids, "reviews of reachable annotated tags count; unrelated tags do not")
-}
-
-// countGitProcesses puts a counting git wrapper first on PATH for the rest of
-// the test and returns a function that reports how many git processes started.
-func countGitProcesses(t *testing.T) func() int {
-	t.Helper()
-	gitPath, err := exec.LookPath("git")
-	require.NoError(t, err)
-	countPath := filepath.Join(t.TempDir(), "git-count")
-	require.NoError(t, os.WriteFile(countPath, nil, 0o600))
-	wrapperDir := t.TempDir()
-	wrapperPath := filepath.Join(wrapperDir, "git")
-	shellQuote := func(path string) string {
-		return "'" + strings.ReplaceAll(path, "'", "'\\''") + "'"
-	}
-	cmdQuote := func(path string) string {
-		return `"` + strings.ReplaceAll(path, `"`, `""`) + `"`
-	}
-	wrapper := fmt.Sprintf("#!/bin/sh\nprintf x >> %s\nexec %s \"$@\"\n", shellQuote(countPath), shellQuote(gitPath))
-	if runtime.GOOS == "windows" {
-		wrapperPath += ".cmd"
-		wrapper = fmt.Sprintf("@echo off\r\n<nul set /p dummy=x>>%s\r\n%s %%*\r\nexit /b %%ERRORLEVEL%%\r\n", cmdQuote(countPath), cmdQuote(gitPath))
-	}
-	require.NoError(t, os.WriteFile(wrapperPath, []byte(wrapper), 0o755))
-	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return func() int {
-		calls, err := os.ReadFile(countPath)
-		require.NoError(t, err)
-		return strings.Count(string(calls), "x")
-	}
 }
 
 func TestCountOpenFailedReviewsExcludesNonReviewJobTypes(t *testing.T) {
