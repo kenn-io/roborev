@@ -26,6 +26,9 @@ const (
 )
 
 type searchDocumentStore interface {
+	SearchChangesHead(context.Context) (int64, error)
+	ListSearchChanges(context.Context, int) ([]int64, int64, error)
+	DeleteSearchChanges(context.Context, int64) error
 	ListSearchDocuments(context.Context, int64, int) ([]storage.SearchReviewSource, error)
 	GetSearchDocumentForJob(context.Context, int64) (*storage.SearchReviewSource, error)
 }
@@ -57,6 +60,7 @@ type Reconciler struct {
 	mu                 sync.Mutex
 	health             HealthSnapshot
 	mirrorCursor       int64
+	mirrorHead         int64
 	mirrorSeen         map[string]struct{}
 	mirrorRequested    bool
 	pendingJobs        map[int64]struct{}
@@ -220,10 +224,14 @@ func (r *Reconciler) reconcileTurn(ctx context.Context) (bool, error) {
 
 func (r *Reconciler) refreshMirror(ctx context.Context) (bool, error) {
 	r.mu.Lock()
-	fullScan := r.mirrorSeen != nil || r.mirrorRequested || !r.config.Now().Before(r.nextSweep)
+	fullScan := r.mirrorSeen != nil || r.mirrorRequested
+	sweep := !r.config.Now().Before(r.nextSweep)
 	r.mu.Unlock()
 	if fullScan {
 		return r.scanMirrorPage(ctx)
+	}
+	if sweep {
+		return r.drainChanges(ctx)
 	}
 	return r.refreshJobs(ctx)
 }
@@ -231,6 +239,12 @@ func (r *Reconciler) refreshMirror(ctx context.Context) (bool, error) {
 func (r *Reconciler) scanMirrorPage(ctx context.Context) (bool, error) {
 	r.mu.Lock()
 	if r.mirrorSeen == nil {
+		head, err := r.store.SearchChangesHead(ctx)
+		if err != nil {
+			r.mu.Unlock()
+			return false, err
+		}
+		r.mirrorHead = head
 		r.mirrorSeen = make(map[string]struct{})
 		r.mirrorRequested = false
 	}
@@ -255,6 +269,9 @@ func (r *Reconciler) scanMirrorPage(ctx context.Context) (bool, error) {
 	complete := len(sources) < r.config.MirrorPageSize
 	if complete {
 		if _, err := r.index.DeleteMissing(ctx, seen); err != nil {
+			return false, err
+		}
+		if err := r.store.DeleteSearchChanges(ctx, r.mirrorHead); err != nil {
 			return false, err
 		}
 	}
@@ -320,19 +337,7 @@ func (r *Reconciler) refreshJobs(ctx context.Context) (more bool, err error) {
 		}
 	}()
 	for id := range jobs {
-		source, err := r.store.GetSearchDocumentForJob(ctx, id)
-		if err != nil {
-			return false, err
-		}
-		seen := make(map[string]struct{})
-		if source != nil {
-			if _, err := r.index.RefreshMirrorPage(ctx, []searchdoc.Document{searchdoc.Render(*source)}, seen); err != nil {
-				return false, err
-			}
-		}
-		// Remove a deleted review or an old document key after UUID assignment,
-		// without treating the rest of the corpus as missing.
-		if _, err := r.index.deleteMissing(ctx, seen, mirrorKeysForJobSQL, id); err != nil {
+		if err := r.refreshJob(ctx, id); err != nil {
 			return false, err
 		}
 	}
@@ -598,4 +603,81 @@ func (r *Reconciler) backoffFor(err error) time.Duration {
 		delay *= 2
 	}
 	return min(delay, r.config.MaxBackoff)
+}
+
+func (r *Reconciler) refreshJob(ctx context.Context, id int64) error {
+	source, err := r.store.GetSearchDocumentForJob(ctx, id)
+	if err != nil {
+		return err
+	}
+	seen := make(map[string]struct{})
+	if source != nil {
+		if _, err := r.index.RefreshMirrorPage(ctx, []searchdoc.Document{searchdoc.Render(*source)}, seen); err != nil {
+			return err
+		}
+	}
+	// Remove a deleted review or an old document key after UUID assignment,
+	// without treating the rest of the corpus as missing.
+	if _, err := r.index.deleteMissing(ctx, seen, mirrorKeysForJobSQL, id); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r *Reconciler) drainChanges(ctx context.Context) (bool, error) {
+	jobs, through, err := r.store.ListSearchChanges(ctx, r.config.MirrorPageSize)
+	if err != nil {
+		return false, err
+	}
+	for _, id := range jobs {
+		if err := r.refreshJob(ctx, id); err != nil {
+			return false, err
+		}
+	}
+	more := false
+	if through > 0 {
+		if err := r.store.DeleteSearchChanges(ctx, through); err != nil {
+			return false, err
+		}
+		// A log row can expand to many jobs, or none, so job count does not
+		// indicate whether another page remains.
+		head, err := r.store.SearchChangesHead(ctx)
+		if err != nil {
+			return false, err
+		}
+		more = head > through
+	}
+	if len(jobs) > 0 {
+		indexed, err := r.index.mirrorCount(ctx)
+		if err != nil {
+			return false, err
+		}
+		r.mu.Lock()
+		r.health.Indexed = indexed
+		r.mu.Unlock()
+	}
+	if !more {
+		if r.sharedVectors() != nil && r.embedder != nil {
+			uuids, err := r.index.mirrorReviewUUIDs(ctx)
+			if err != nil {
+				return false, err
+			}
+			r.mu.Lock()
+			if r.pendingPublish == nil {
+				r.pendingPublish = make(map[string]struct{})
+			}
+			for _, id := range uuids {
+				r.pendingPublish[id] = struct{}{}
+			}
+			r.mu.Unlock()
+		}
+		r.mu.Lock()
+		now := r.config.Now()
+		r.nextSweep = now.Add(r.config.SweepInterval)
+		r.health.LastSuccessAt = new(now)
+		clearNonAuthenticationError(&r.health)
+		more = r.mirrorRequested || len(r.pendingJobs) > 0
+		r.mu.Unlock()
+	}
+	return more, nil
 }

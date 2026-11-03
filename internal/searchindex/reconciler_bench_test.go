@@ -76,3 +76,20 @@ func seedReconcilerHistory(b *testing.B, reviews, promptSize int) (*storage.DB, 
 	}
 	return db, r
 }
+
+// BenchmarkReconcilerIdleSweep measures lexical-only sweeps with no changes.
+func BenchmarkReconcilerIdleSweep(b *testing.B) {
+	for _, count := range []int{1000, 4000, 16000} {
+		b.Run(fmt.Sprintf("reviews=%d", count), func(b *testing.B) {
+			_, r := seedReconcilerHistory(b, count, 0)
+			for b.Loop() {
+				r.nextSweep = r.config.Now().Add(-r.config.SweepInterval)
+				for more := true; more; {
+					var err error
+					more, err = r.reconcileTurn(b.Context())
+					require.NoError(b, err)
+				}
+			}
+		})
+	}
+}

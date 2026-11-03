@@ -515,3 +515,9 @@ func TestHealthCredentialAvailability(t *testing.T) {
 		})
 	}
 }
+
+func (s *replacementHealthStore) SearchChangesHead(context.Context) (int64, error) { return 0, nil }
+func (s *replacementHealthStore) ListSearchChanges(context.Context, int) ([]int64, int64, error) {
+	return nil, 0, nil
+}
+func (s *replacementHealthStore) DeleteSearchChanges(context.Context, int64) error { return nil }

@@ -226,3 +226,28 @@ func TestIndexMigrations(t *testing.T) {
 		})
 	}
 }
+
+func TestSearchChangesMigration(t *testing.T) {
+	db := openUnmigratedDB(t)
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:7]))
+	for range 2 {
+		require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
+		assert.Equal(t, []int{1, 2, 3, 4, 5, 6, 7, 8}, appliedVersions(t, db))
+		var count int
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM sqlite_master
+			WHERE type = 'trigger' AND name LIKE 'search_%'`).Scan(&count))
+		assert.Equal(t, 12, count)
+		_, err := db.ExecContext(t.Context(), `INSERT INTO search_changes(job_id) VALUES (42)`)
+		require.NoError(t, err)
+		jobs, head, err := db.ListSearchChanges(t.Context(), 10)
+		require.NoError(t, err)
+		assert.Equal(t, []int64{42}, jobs)
+		require.NoError(t, db.DeleteSearchChanges(t.Context(), head))
+		var indexSQL string
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT sql FROM sqlite_master
+			WHERE name = 'idx_review_jobs_commit_id'`).Scan(&indexSQL))
+		assert.Contains(t, indexSQL, "ON review_jobs(commit_id)")
+		_, err = db.ExecContext(t.Context(), `DELETE FROM schema_migrations WHERE version = 8`)
+		require.NoError(t, err)
+	}
+}

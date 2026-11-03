@@ -115,7 +115,8 @@ exact size is not yet known.
 
 ## Freshness and backfill
 
-The daemon scans existing reviews at startup and every five minutes. Completing,
+The daemon scans existing reviews at startup. Every five minutes, it refreshes
+only jobs recorded in the local search change log. Completing,
 closing, reopening, commenting on, or rerunning a job refreshes only that job's
 search document. Repeated updates to the same job coalesce. Embedding backfill
 continues without rereading unchanged review history between batches.

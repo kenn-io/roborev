@@ -370,3 +370,20 @@ func (index *Index) coveredSharedDocuments(
 func placeholders(n int) string {
 	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
 }
+
+func (index *Index) mirrorReviewUUIDs(ctx context.Context) ([]string, error) {
+	rows, err := index.db.QueryContext(ctx, `SELECT review_uuid FROM review_mirror WHERE review_uuid IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var uuids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		uuids = append(uuids, id)
+	}
+	return uuids, rows.Err()
+}

@@ -41,6 +41,7 @@ var schemaMigrations = []schemaMigration{
 	{5, "token cost started-at index", migrateTokenCostStartedIndex},
 	{6, "summary repo window index", migrateSummaryRepoWindowIndex},
 	{7, "review export completion index", migrateReviewExportCompletedIndex},
+	{8, "search change log", migrateSearchChanges},
 }
 
 // ErrSchemaTooNew reports a database written by a newer roborev release.
@@ -129,5 +130,60 @@ func migrateReviewExportCompletedIndex(ctx context.Context, db *DB) error {
 	// Export's ORDER BY and cursor must use the same normalized expression.
 	_, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_reviews_export_completed
 		ON reviews(`+sqliteNormalizedTimestampExpr("created_at")+`, uuid)`)
+	return err
+}
+
+// migrateSearchChanges records local search feed writes, including deletes.
+func migrateSearchChanges(ctx context.Context, db *DB) error {
+	_, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS search_changes (
+		seq INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER, repo_id INTEGER, commit_id INTEGER,
+		CHECK ((job_id IS NOT NULL) + (repo_id IS NOT NULL) + (commit_id IS NOT NULL) = 1)
+	);
+	CREATE INDEX IF NOT EXISTS idx_review_jobs_commit_id ON review_jobs(commit_id);
+	CREATE TRIGGER IF NOT EXISTS search_reviews_insert AFTER INSERT ON reviews BEGIN
+		INSERT INTO search_changes(job_id) VALUES (NEW.job_id);
+	END;
+	CREATE TRIGGER IF NOT EXISTS search_reviews_update AFTER UPDATE ON reviews BEGIN
+		INSERT INTO search_changes(job_id) VALUES (NEW.job_id);
+	END;
+	CREATE TRIGGER IF NOT EXISTS search_reviews_delete AFTER DELETE ON reviews BEGIN
+		INSERT INTO search_changes(job_id) VALUES (OLD.job_id);
+	END;
+	CREATE TRIGGER IF NOT EXISTS search_jobs_update AFTER UPDATE OF
+		uuid, repo_id, branch, git_ref, commit_id, review_type, panel_role,
+		panel_run_uuid, agent, finished_at, status, job_type ON review_jobs BEGIN
+		INSERT INTO search_changes(job_id) VALUES (NEW.id);
+	END;
+	CREATE TRIGGER IF NOT EXISTS search_jobs_delete AFTER DELETE ON review_jobs BEGIN
+		INSERT INTO search_changes(job_id) VALUES (OLD.id);
+	END;
+	CREATE TRIGGER IF NOT EXISTS search_repos_update AFTER UPDATE OF name ON repos BEGIN
+		INSERT INTO search_changes(repo_id) VALUES (NEW.id);
+	END;
+	CREATE TRIGGER IF NOT EXISTS search_responses_insert AFTER INSERT ON responses BEGIN
+		INSERT INTO search_changes(job_id) SELECT NEW.job_id WHERE NEW.job_id IS NOT NULL;
+		INSERT INTO search_changes(commit_id) SELECT NEW.commit_id WHERE NEW.job_id IS NULL AND NEW.commit_id IS NOT NULL;
+	END;
+	CREATE TRIGGER IF NOT EXISTS search_responses_update AFTER UPDATE ON responses BEGIN
+		INSERT INTO search_changes(job_id) SELECT OLD.job_id WHERE OLD.job_id IS NOT NULL;
+		INSERT INTO search_changes(commit_id) SELECT OLD.commit_id WHERE OLD.job_id IS NULL AND OLD.commit_id IS NOT NULL;
+		INSERT INTO search_changes(job_id) SELECT NEW.job_id WHERE NEW.job_id IS NOT NULL;
+		INSERT INTO search_changes(commit_id) SELECT NEW.commit_id WHERE NEW.job_id IS NULL AND NEW.commit_id IS NOT NULL;
+	END;
+	CREATE TRIGGER IF NOT EXISTS search_responses_delete AFTER DELETE ON responses BEGIN
+		INSERT INTO search_changes(job_id) SELECT OLD.job_id WHERE OLD.job_id IS NOT NULL;
+		INSERT INTO search_changes(commit_id) SELECT OLD.commit_id WHERE OLD.job_id IS NULL AND OLD.commit_id IS NOT NULL;
+	END;
+	CREATE TRIGGER IF NOT EXISTS search_job_content_insert AFTER INSERT ON job_content BEGIN
+		INSERT INTO search_changes(job_id) SELECT NEW.job_id WHERE NEW.job_id IS NOT NULL;
+	END;
+	CREATE TRIGGER IF NOT EXISTS search_job_content_update AFTER UPDATE OF diff_content ON job_content BEGIN
+		INSERT INTO search_changes(job_id) SELECT OLD.job_id WHERE OLD.job_id IS NOT NULL;
+		INSERT INTO search_changes(job_id) SELECT NEW.job_id WHERE NEW.job_id IS NOT NULL;
+	END;
+	CREATE TRIGGER IF NOT EXISTS search_job_content_delete AFTER DELETE ON job_content BEGIN
+		INSERT INTO search_changes(job_id) SELECT OLD.job_id WHERE OLD.job_id IS NOT NULL;
+	END;
+	`)
 	return err
 }

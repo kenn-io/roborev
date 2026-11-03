@@ -170,11 +170,130 @@ func TestReconcilerJobWakesDoNotPostponeSafetySweep(t *testing.T) {
 		}
 		time.Sleep(15 * time.Second)
 		synctest.Wait()
-		assert.Equal(t, int64(2), store.fullReads.Load())
+		assert.Equal(t, int64(1), store.fullReads.Load())
+		assert.Contains(t, store.jobReads, int64(2))
 		var key string
 		require.NoError(t, index.db.QueryRowContext(t.Context(), `SELECT doc_key FROM review_fts WHERE review_fts MATCH 'sweptchange'`).Scan(&key))
 		assert.Equal(t, "local:2", key)
 		cancel()
 		assert.ErrorIs(t, <-done, context.Canceled)
 	})
+}
+
+func TestReconcilerSweepFindsChangesWithoutEvents(t *testing.T) {
+	cases := []struct {
+		name    string
+		prepare string
+		change  string
+		query   string
+		want    string
+	}{
+		{"repo rename", "", "", `SELECT repo_name FROM review_mirror WHERE job_id = 1`, "renamed"},
+		{"review delete", "", `DELETE FROM reviews WHERE job_id = 1`, `SELECT CAST(count(*) AS TEXT) FROM review_fts WHERE doc_key = 'local:1'`, "0"},
+		{"uuid assignment", "", `UPDATE reviews SET uuid = '00000000-0000-4000-8000-000000000001' WHERE job_id = 1`, `SELECT doc_key FROM review_fts WHERE review_fts MATCH 'first'`, "00000000-0000-4000-8000-000000000001"},
+		{"commit comment", `INSERT INTO commits (id, repo_id, sha, author, subject, timestamp) VALUES (1, 1, 'main', 'author', 'subject', CURRENT_TIMESTAMP); UPDATE review_jobs SET commit_id = 1 WHERE id = 1`, `INSERT INTO responses (commit_id, responder, response) VALUES (1, 'author', 'commitcomment')`, `SELECT doc_key FROM review_fts WHERE review_fts MATCH 'commitcomment' AND doc_key = 'local:1'`, "local:1"},
+		{"legacy diff clear", `UPDATE review_jobs SET job_type = '' WHERE id = 1; INSERT INTO job_content (job_id, diff_content) VALUES (1, 'diff')`, `UPDATE job_content SET diff_content = NULL WHERE job_id = 1`, `SELECT CAST(count(*) AS TEXT) FROM review_mirror WHERE job_id = 1`, "0"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Now()
+			r, store, index := incrementalFixture(t, ReconcilerConfig{Now: func() time.Time { return now }})
+			if tc.prepare != "" {
+				_, err := store.ExecContext(t.Context(), tc.prepare)
+				require.NoError(t, err)
+			}
+			_, err := r.reconcileTurn(t.Context())
+			require.NoError(t, err)
+			if tc.name == "repo rename" {
+				_, err = store.RenameRepo("/synthetic/repo", "renamed")
+			} else {
+				_, err = store.ExecContext(t.Context(), tc.change)
+			}
+			require.NoError(t, err)
+			now = now.Add(2 * r.config.SweepInterval)
+			for more := true; more; {
+				more, err = r.reconcileTurn(t.Context())
+				require.NoError(t, err)
+			}
+			var got string
+			require.NoError(t, index.db.QueryRowContext(t.Context(), tc.query).Scan(&got))
+			assert.Equal(t, tc.want, got)
+			assert.Equal(t, int64(1), store.fullReads.Load())
+			key := "local:1"
+			if tc.name == "uuid assignment" {
+				key = "00000000-0000-4000-8000-000000000001"
+			}
+			count := 1
+			if tc.name == "review delete" || tc.name == "legacy diff clear" {
+				count = 0
+			}
+			for _, table := range []string{"review_mirror", "review_fts"} {
+				assert.Equal(t, count, countRowsForDoc(t, index.db, table, key), table)
+			}
+			if tc.name == "uuid assignment" {
+				assert.Zero(t, countRowsForDoc(t, index.db, "review_mirror", "local:1"))
+			}
+		})
+	}
+}
+
+func TestReconcilerSweepPreservesChangesDuringScanAndDrain(t *testing.T) {
+	now := time.Now()
+	r, store, index := incrementalFixture(t, ReconcilerConfig{MirrorPageSize: 1, Now: func() time.Time { return now }})
+	_, err := r.reconcileTurn(t.Context())
+	require.NoError(t, err)
+	_, err = store.ExecContext(t.Context(), `UPDATE reviews SET output = 'duringscan' WHERE job_id = 1`)
+	require.NoError(t, err)
+	for more := true; more; {
+		more, err = r.reconcileTurn(t.Context())
+		require.NoError(t, err)
+	}
+	head, err := store.SearchChangesHead(t.Context())
+	require.NoError(t, err)
+	assert.Positive(t, head)
+	store.afterRead = func() {
+		_, err := store.ExecContext(t.Context(), `UPDATE reviews SET output = 'duringdrain' WHERE job_id = 2`)
+		require.NoError(t, err)
+		store.afterRead = nil
+	}
+	now = now.Add(2 * r.config.SweepInterval)
+	for more := true; more; {
+		more, err = r.reconcileTurn(t.Context())
+		require.NoError(t, err)
+	}
+	for _, word := range []string{"duringscan", "duringdrain"} {
+		var count int
+		require.NoError(t, index.db.QueryRowContext(t.Context(), `SELECT count(*) FROM review_fts WHERE review_fts MATCH ?`, word).Scan(&count))
+		assert.Equal(t, 1, count)
+	}
+	head, err = store.SearchChangesHead(t.Context())
+	require.NoError(t, err)
+	assert.Zero(t, head)
+	assert.Equal(t, int64(3), store.fullReads.Load())
+}
+
+func TestReconcilerSweepDrainsChangesWithNoMatchingJobs(t *testing.T) {
+	now := time.Now()
+	r, store, index := incrementalFixture(t, ReconcilerConfig{MirrorPageSize: 1, Now: func() time.Time { return now }})
+	for more := true; more; {
+		var err error
+		more, err = r.reconcileTurn(t.Context())
+		require.NoError(t, err)
+	}
+	_, err := store.ExecContext(t.Context(), `
+		INSERT INTO repos (id, root_path, name) VALUES (2, '/synthetic/empty', 'empty');
+		UPDATE repos SET name = 'renamed' WHERE id = 2;
+		UPDATE reviews SET output = 'afterempty' WHERE job_id = 1`)
+	require.NoError(t, err)
+	now = now.Add(2 * r.config.SweepInterval)
+	for more := true; more; {
+		more, err = r.reconcileTurn(t.Context())
+		require.NoError(t, err)
+	}
+	var key string
+	require.NoError(t, index.db.QueryRowContext(t.Context(), `SELECT doc_key FROM review_fts WHERE review_fts MATCH 'afterempty'`).Scan(&key))
+	assert.Equal(t, "local:1", key)
+	head, err := store.SearchChangesHead(t.Context())
+	require.NoError(t, err)
+	assert.Zero(t, head)
 }
