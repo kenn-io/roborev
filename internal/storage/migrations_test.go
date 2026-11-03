@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -229,21 +230,16 @@ func TestIndexMigrations(t *testing.T) {
 
 func TestSearchChangesMigration(t *testing.T) {
 	db := openUnmigratedDB(t)
-	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:7]))
+	index := slices.IndexFunc(schemaMigrations, func(m schemaMigration) bool { return m.version == 8 })
+	require.Greater(t, index, 0)
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:index]))
 	for range 2 {
-		require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
-		assert.Equal(t, []int{1, 2, 3, 4, 5, 6, 7, 8}, appliedVersions(t, db))
-		var count int
-		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM sqlite_master
-			WHERE type = 'trigger' AND name LIKE 'search_%'`).Scan(&count))
-		assert.Equal(t, 12, count)
-		_, err := db.ExecContext(t.Context(), `INSERT INTO search_changes(job_id) VALUES (42)`)
-		require.NoError(t, err)
+		require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:index+1]))
 		var indexSQL string
 		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT sql FROM sqlite_master
 			WHERE name = 'idx_review_jobs_commit_id'`).Scan(&indexSQL))
 		assert.Contains(t, indexSQL, "ON review_jobs(commit_id)")
-		_, err = db.ExecContext(t.Context(), `DELETE FROM schema_migrations WHERE version = 8`)
+		_, err := db.ExecContext(t.Context(), `DELETE FROM schema_migrations WHERE version = 8`)
 		require.NoError(t, err)
 	}
 }

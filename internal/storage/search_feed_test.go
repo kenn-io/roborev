@@ -80,6 +80,22 @@ func TestSearchEligibilityAndStablePaging(t *testing.T) {
 	assert.Equal(t, PanelRoleSynthesis, all[5].PanelRole)
 	assert.Equal(t, all[4].PanelRunUUID, all[5].PanelRunUUID)
 	assert.Equal(t, "synthesis", all[5].StructuredOutput["summary"])
+
+	legacyID := seedSearchFeedReview(t, db, repoID, commitID, 100, searchFeedFixture{
+		status: JobStatusDone, gitRef: "main", output: "legacy diff", legacy: true, noCommit: true,
+	})
+	var legacyJobID int64
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT job_id FROM reviews WHERE id = ?`, legacyID).Scan(&legacyJobID))
+	_, err = db.ExecContext(t.Context(), `INSERT INTO job_content(job_id, diff_content) VALUES (?, 'diff')`, legacyJobID)
+	require.NoError(t, err)
+	legacy, err := db.GetSearchDocumentForJob(t.Context(), legacyJobID)
+	require.NoError(t, err)
+	require.NotNil(t, legacy)
+	_, err = db.ExecContext(t.Context(), `UPDATE job_content SET diff_content = NULL WHERE job_id = ?`, legacyJobID)
+	require.NoError(t, err)
+	legacy, err = db.GetSearchDocumentForJob(t.Context(), legacyJobID)
+	require.NoError(t, err)
+	assert.Nil(t, legacy)
 }
 
 func TestSearchFeedIncludesGoalReview(t *testing.T) {
@@ -353,20 +369,6 @@ func searchFeedOutputs(sources []SearchReviewSource) []string {
 }
 
 func TestSearchChangesLogsEveryFeedSource(t *testing.T) {
-	db := openTestDB(t)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	_, err := db.ExecContext(t.Context(), `
-		INSERT INTO repos (id, root_path, name) VALUES (1, '/synthetic/repo', 'repo');
-		INSERT INTO commits (id, repo_id, sha, author, subject, timestamp)
-		VALUES (1, 1, 'abc123', 'author', 'subject', CURRENT_TIMESTAMP);
-		INSERT INTO review_jobs (id, repo_id, commit_id, git_ref, agent, status, job_type)
-		VALUES (1, 1, 1, 'abc123', 'test', 'done', 'review'),
-		       (2, 1, NULL, 'abc123', 'test', 'done', '');
-		INSERT INTO reviews (job_id, agent, output) VALUES (1, 'test', 'original');
-		INSERT INTO job_content (job_id, prompt, diff_content) VALUES (1, 'prompt', 'diff');
-		INSERT INTO responses (id, job_id, responder, response) VALUES (1, 1, 'author', 'comment');
-		INSERT INTO responses (id, commit_id, responder, response) VALUES (2, 1, 'author', 'commit comment');`)
-	require.NoError(t, err)
 	type changeCase struct {
 		name string
 		sql  string
@@ -375,14 +377,15 @@ func TestSearchChangesLogsEveryFeedSource(t *testing.T) {
 	cases := []changeCase{
 		{"review insert", `INSERT INTO reviews (job_id, agent, output) VALUES (2, 'test', 'second')`, []int64{2}},
 		{"review update", `UPDATE reviews SET output = 'changed' WHERE job_id = 1`, []int64{1}},
-		{"review delete", `DELETE FROM reviews WHERE job_id = 2`, []int64{2}},
+		{"review uuid", `UPDATE reviews SET uuid = '00000000-0000-4000-8000-000000000001' WHERE job_id = 1`, []int64{1}},
+		{"review delete", `DELETE FROM reviews WHERE job_id = 1`, []int64{1}},
 		{"repo rename", `UPDATE repos SET name = 'renamed' WHERE id = 1`, []int64{1, 2}},
 		{"job comment insert", `INSERT INTO responses (id, job_id, responder, response) VALUES (3, 1, 'author', 'new')`, []int64{1}},
 		{"job comment update", `UPDATE responses SET response = 'edited' WHERE id = 1`, []int64{1}},
-		{"job comment delete", `DELETE FROM responses WHERE id = 3`, []int64{1}},
+		{"job comment delete", `DELETE FROM responses WHERE id = 1`, []int64{1}},
 		{"commit comment insert", `INSERT INTO responses (id, commit_id, responder, response) VALUES (4, 1, 'author', 'new')`, []int64{1, 2}},
 		{"commit comment update", `UPDATE responses SET response = 'edited' WHERE id = 2`, []int64{1, 2}},
-		{"commit comment delete", `DELETE FROM responses WHERE id = 4`, []int64{1, 2}},
+		{"commit comment delete", `DELETE FROM responses WHERE id = 2`, []int64{1, 2}},
 		{"diff clear", `UPDATE job_content SET diff_content = NULL WHERE job_id = 1`, []int64{1}},
 		{"content delete", `DELETE FROM job_content WHERE job_id = 1`, []int64{1}},
 		{"content insert", `INSERT INTO job_content (job_id, prompt) VALUES (1, 'prompt')`, []int64{1}},
@@ -393,11 +396,29 @@ func TestSearchChangesLogsEveryFeedSource(t *testing.T) {
 		{"comment source", `UPDATE responses SET source = 'remote' WHERE id = 1`, nil},
 	}
 	for _, column := range []string{"uuid", "repo_id", "branch", "git_ref", "commit_id", "review_type", "panel_role", "panel_run_uuid", "agent", "finished_at", "status", "job_type"} {
-		cases = append(cases, changeCase{column, fmt.Sprintf("UPDATE review_jobs SET %s = %s WHERE id = 1", column, column), []int64{1}})
+		cases = append(cases, changeCase{"job update column " + column, fmt.Sprintf("UPDATE review_jobs SET %s = %s WHERE id = 1", column, column), []int64{1}})
 	}
 	cases = append(cases, changeCase{"job delete", `DELETE FROM review_jobs WHERE id = 2`, []int64{2}})
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			db := openTestDB(t)
+			t.Cleanup(func() { require.NoError(t, db.Close()) })
+			_, err := db.ExecContext(t.Context(), `
+				INSERT INTO repos (id, root_path, name) VALUES (1, '/synthetic/repo', 'repo');
+				INSERT INTO commits (id, repo_id, sha, author, subject, timestamp)
+				VALUES (1, 1, 'abc123', 'author', 'subject', CURRENT_TIMESTAMP);
+				INSERT INTO review_jobs (id, repo_id, commit_id, git_ref, agent, status, job_type)
+				VALUES (1, 1, 1, 'abc123', 'test', 'done', 'review'),
+				       (2, 1, NULL, 'abc123', 'test', 'done', '');
+				INSERT INTO reviews (job_id, agent, output) VALUES (1, 'test', 'original');
+				INSERT INTO job_content (job_id, prompt, diff_content) VALUES (1, 'prompt', 'diff');
+				INSERT INTO responses (id, job_id, responder, response) VALUES (1, 1, 'author', 'comment');
+				INSERT INTO responses (id, commit_id, responder, response) VALUES (2, 1, 'author', 'commit comment');`)
+			require.NoError(t, err)
+			if tc.name == "content insert" {
+				_, err := db.ExecContext(t.Context(), `DELETE FROM job_content WHERE job_id = 1`)
+				require.NoError(t, err)
+			}
 			head, err := db.SearchChangesHead(t.Context())
 			require.NoError(t, err)
 			require.NoError(t, db.DeleteSearchChanges(t.Context(), head))

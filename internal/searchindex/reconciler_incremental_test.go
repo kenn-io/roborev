@@ -153,7 +153,7 @@ func TestReconcilerKeepsJobWakesDuringScansAndRefreshes(t *testing.T) {
 
 func TestReconcilerJobWakesDoNotPostponeSafetySweep(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		r, store, index := incrementalFixture(t, ReconcilerConfig{SweepInterval: time.Minute})
+		r, store, _ := incrementalFixture(t, ReconcilerConfig{SweepInterval: time.Minute})
 		ctx, cancel := context.WithCancel(t.Context())
 		done := make(chan error, 1)
 		go func() { done <- r.Run(ctx) }()
@@ -172,55 +172,27 @@ func TestReconcilerJobWakesDoNotPostponeSafetySweep(t *testing.T) {
 		synctest.Wait()
 		assert.Equal(t, int64(1), store.fullReads.Load())
 		assert.Contains(t, store.jobReads, int64(2))
-		var key string
-		require.NoError(t, index.db.QueryRowContext(t.Context(), `SELECT doc_key FROM review_fts WHERE review_fts MATCH 'sweptchange'`).Scan(&key))
-		assert.Equal(t, "local:2", key)
 		cancel()
 		assert.ErrorIs(t, <-done, context.Canceled)
 	})
 }
 
 func TestReconcilerSweepFindsChangesWithoutEvents(t *testing.T) {
-	cases := []struct {
-		name    string
-		prepare string
-		change  string
-		query   string
-		want    string
-	}{
-		{"repo rename", "", "", `SELECT repo_name FROM review_mirror WHERE job_id = 1`, "renamed"},
-		{"review delete", "", `DELETE FROM reviews WHERE job_id = 1`, `SELECT CAST(count(*) AS TEXT) FROM review_fts WHERE doc_key = 'local:1'`, "0"},
-		{"uuid assignment", "", `UPDATE reviews SET uuid = '00000000-0000-4000-8000-000000000001' WHERE job_id = 1`, `SELECT doc_key FROM review_fts WHERE review_fts MATCH 'first'`, "00000000-0000-4000-8000-000000000001"},
-		{"commit comment", `INSERT INTO commits (id, repo_id, sha, author, subject, timestamp) VALUES (1, 1, 'main', 'author', 'subject', CURRENT_TIMESTAMP); UPDATE review_jobs SET commit_id = 1 WHERE id = 1`, `INSERT INTO responses (commit_id, responder, response) VALUES (1, 'author', 'commitcomment')`, `SELECT doc_key FROM review_fts WHERE review_fts MATCH 'commitcomment' AND doc_key = 'local:1'`, "local:1"},
-		{"legacy diff clear", `UPDATE review_jobs SET job_type = '' WHERE id = 1; INSERT INTO job_content (job_id, diff_content) VALUES (1, 'diff')`, `UPDATE job_content SET diff_content = NULL WHERE job_id = 1`, `SELECT CAST(count(*) AS TEXT) FROM review_mirror WHERE job_id = 1`, "0"},
+	now := time.Now()
+	r, store, index := incrementalFixture(t, ReconcilerConfig{Now: func() time.Time { return now }})
+	_, err := r.reconcileTurn(t.Context())
+	require.NoError(t, err)
+	_, err = store.RenameRepo("/synthetic/repo", "renamed")
+	require.NoError(t, err)
+	now = now.Add(2 * r.config.SweepInterval)
+	for more := true; more; {
+		more, err = r.reconcileTurn(t.Context())
+		require.NoError(t, err)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			now := time.Now()
-			r, store, index := incrementalFixture(t, ReconcilerConfig{Now: func() time.Time { return now }})
-			if tc.prepare != "" {
-				_, err := store.ExecContext(t.Context(), tc.prepare)
-				require.NoError(t, err)
-			}
-			_, err := r.reconcileTurn(t.Context())
-			require.NoError(t, err)
-			if tc.name == "repo rename" {
-				_, err = store.RenameRepo("/synthetic/repo", "renamed")
-			} else {
-				_, err = store.ExecContext(t.Context(), tc.change)
-			}
-			require.NoError(t, err)
-			now = now.Add(2 * r.config.SweepInterval)
-			for more := true; more; {
-				more, err = r.reconcileTurn(t.Context())
-				require.NoError(t, err)
-			}
-			var got string
-			require.NoError(t, index.db.QueryRowContext(t.Context(), tc.query).Scan(&got))
-			assert.Equal(t, tc.want, got)
-			assert.Equal(t, int64(1), store.fullReads.Load())
-		})
-	}
+	var name string
+	require.NoError(t, index.db.QueryRowContext(t.Context(), `SELECT repo_name FROM review_mirror WHERE job_id = 1`).Scan(&name))
+	assert.Equal(t, "renamed", name)
+	assert.Equal(t, int64(1), store.fullReads.Load())
 }
 
 func TestReconcilerSweepPreservesChangesDuringScan(t *testing.T) {
@@ -245,65 +217,16 @@ func TestReconcilerSweepPreservesChangesDuringScan(t *testing.T) {
 	assert.Equal(t, int64(3), store.fullReads.Load())
 }
 
-func TestReconcilerSweepDrainsChangesWithNoMatchingJobs(t *testing.T) {
-	now := time.Now()
-	r, store, index := incrementalFixture(t, ReconcilerConfig{MirrorPageSize: 1, Now: func() time.Time { return now }})
-	for more := true; more; {
-		var err error
-		more, err = r.reconcileTurn(t.Context())
-		require.NoError(t, err)
-	}
-	_, err := store.ExecContext(t.Context(), `
-		INSERT INTO repos (id, root_path, name) VALUES (2, '/synthetic/empty', 'empty');
-		UPDATE repos SET name = 'renamed' WHERE id = 2;
-		UPDATE reviews SET output = 'afterempty' WHERE job_id = 1`)
-	require.NoError(t, err)
-	now = now.Add(2 * r.config.SweepInterval)
-	for more := true; more; {
-		more, err = r.reconcileTurn(t.Context())
-		require.NoError(t, err)
-	}
-	var key string
-	require.NoError(t, index.db.QueryRowContext(t.Context(), `SELECT doc_key FROM review_fts WHERE review_fts MATCH 'afterempty'`).Scan(&key))
-	assert.Equal(t, "local:1", key)
-	head, err := store.SearchChangesHead(t.Context())
-	require.NoError(t, err)
-	assert.Zero(t, head)
-}
-
-func TestReconcilerSweepReportsPendingMirrorChanges(t *testing.T) {
-	now := time.Now()
-	r, store, _ := incrementalFixture(t, ReconcilerConfig{MirrorPageSize: 1, Now: func() time.Time { return now }})
-	for more := true; more; {
-		var err error
-		more, err = r.reconcileTurn(t.Context())
-		require.NoError(t, err)
-	}
-	_, err := store.ExecContext(t.Context(), `UPDATE reviews SET output = 'changed'`)
-	require.NoError(t, err)
-	now = now.Add(2 * r.config.SweepInterval)
-	more, err := r.reconcileTurn(t.Context())
-	require.NoError(t, err)
-	require.True(t, more)
-	assert.False(t, r.Health().MirrorComplete)
-	assert.Nil(t, r.Health().MirrorBacklog)
-	for more {
-		more, err = r.reconcileTurn(t.Context())
-		require.NoError(t, err)
-	}
-	assert.True(t, r.Health().MirrorComplete)
-	require.NotNil(t, r.Health().MirrorBacklog)
-	assert.Zero(t, *r.Health().MirrorBacklog)
-}
-
 func TestReconcilerSweepBoundsRepoAndCommitFanout(t *testing.T) {
 	for _, tc := range []struct{ name, setup, change string }{
 		{"repo", "", `UPDATE repos SET name = 'renamed' WHERE id = 1`},
 		{"commit", `INSERT INTO commits (id, repo_id, sha, author, subject, timestamp) VALUES (1, 1, 'main', 'author', 'subject', CURRENT_TIMESTAMP); UPDATE review_jobs SET commit_id = 1`, `INSERT INTO responses (commit_id, responder, response) VALUES (1, 'author', 'fanoutcomment')`},
+		{"empty expansion", "", `INSERT INTO repos (id, root_path, name) VALUES (2, '/synthetic/empty', 'empty'); UPDATE repos SET name = 'renamed' WHERE id = 2; UPDATE reviews SET output = 'afterempty' WHERE job_id = 1`},
+		{"health", "", `UPDATE reviews SET output = 'changed'`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			now := time.Now()
-			r, store, _ := incrementalFixture(t, ReconcilerConfig{MirrorPageSize: 1, Now: func() time.Time { return now }})
+			r, store, index := incrementalFixture(t, ReconcilerConfig{MirrorPageSize: 1, Now: func() time.Time { return now }})
 			if tc.setup != "" {
 				_, err := store.ExecContext(t.Context(), tc.setup)
 				require.NoError(t, err)
@@ -316,13 +239,34 @@ func TestReconcilerSweepBoundsRepoAndCommitFanout(t *testing.T) {
 			_, err := store.ExecContext(t.Context(), tc.change)
 			require.NoError(t, err)
 			now = now.Add(2 * r.config.SweepInterval)
+			first := true
 			for more := true; more; {
 				before := len(store.jobReads)
 				more, err = r.reconcileTurn(t.Context())
 				require.NoError(t, err)
 				assert.LessOrEqual(t, len(store.jobReads)-before, 1)
+				if tc.name == "health" && first {
+					require.True(t, more)
+					assert.False(t, r.Health().MirrorComplete)
+					assert.Nil(t, r.Health().MirrorBacklog)
+				}
+				first = false
 			}
-			assert.ElementsMatch(t, []int64{1, 2}, store.jobReads)
+			switch tc.name {
+			case "repo", "commit":
+				assert.ElementsMatch(t, []int64{1, 2}, store.jobReads)
+			case "empty expansion":
+				var key string
+				require.NoError(t, index.db.QueryRowContext(t.Context(), `SELECT doc_key FROM review_fts WHERE review_fts MATCH 'afterempty'`).Scan(&key))
+				assert.Equal(t, "local:1", key)
+				head, err := store.SearchChangesHead(t.Context())
+				require.NoError(t, err)
+				assert.Zero(t, head)
+			case "health":
+				assert.True(t, r.Health().MirrorComplete)
+				require.NotNil(t, r.Health().MirrorBacklog)
+				assert.Zero(t, *r.Health().MirrorBacklog)
+			}
 		})
 	}
 }

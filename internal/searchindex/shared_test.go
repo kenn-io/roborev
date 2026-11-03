@@ -6,7 +6,6 @@ import (
 	"math"
 	"sync"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -251,24 +250,22 @@ func TestSharedVectorsPublishExistingGenerationOnStartup(t *testing.T) {
 	assert.Zero(t, peer.embeddedTexts(), "the peer reuses existing vectors")
 }
 
-func TestSharedVectorsRetryUnsyncedPublicationOnSweep(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		sources := makeSearchSources(1)
-		shared := newMemorySharedVectors()
-		origin := newSharingDaemon(t, sources, shared)
-		origin.reconcile(t)
-		require.Zero(t, shared.rowCount(), "the review has not reached PostgreSQL")
+func TestSharedVectorsFailedPublicationStaysQueued(t *testing.T) {
+	sources := makeSearchSources(1)
+	shared := newMemorySharedVectors()
+	origin := newSharingDaemon(t, sources, shared)
+	origin.reconcile(t)
+	require.Zero(t, shared.rowCount(), "the review has not reached PostgreSQL")
+	origin.reconcile(t)
+	require.Zero(t, shared.rowCount(), "publication remains pending while the review is unsynced")
 
-		// The failed publication remains queued until the review reaches PostgreSQL.
-		shared.push(sources[0].ReviewUUID)
-		time.Sleep(defaultSweepInterval)
-		origin.reconcile(t)
-		require.Equal(t, 1, shared.rowCount(), "the sweep publishes the already-covered review")
+	shared.push(sources[0].ReviewUUID)
+	origin.reconcile(t)
+	require.Equal(t, 1, shared.rowCount(), "the queued publication is retried")
 
-		peer := newSharingDaemon(t, sources, shared)
-		peer.reconcile(t)
-		assert.Zero(t, peer.embeddedTexts(), "the peer reuses existing vectors")
-	})
+	peer := newSharingDaemon(t, sources, shared)
+	peer.reconcile(t)
+	assert.Zero(t, peer.embeddedTexts(), "the peer reuses existing vectors")
 }
 
 func TestSharedVectorsSweepOnlyPublishesChangedReview(t *testing.T) {
