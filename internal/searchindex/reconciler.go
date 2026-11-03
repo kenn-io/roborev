@@ -363,7 +363,7 @@ func (r *Reconciler) fillGeneration(ctx context.Context) (bool, error) {
 		if err := r.publishPending(ctx, shared, space, key); err != nil {
 			return false, err
 		}
-		store = newSharingStore(store, r.index, shared, space, r.queuePublish)
+		store = newSharingStore(store, r.index, shared, space)
 	}
 	counts, err := r.index.GenerationCounts(ctx, key)
 	if err != nil {

@@ -141,9 +141,14 @@ func TestSharedVectorsLetPeersSkipTheProvider(t *testing.T) {
 	shared := newMemorySharedVectors()
 
 	origin := newSharingDaemon(t, sources, shared)
+	origin.embedder.batchSize = 1
+	origin.reconciler.config.MaxFillBatches = 1
 	origin.reconcile(t)
 	assert.Equal(3, origin.embeddedTexts())
 	assert.Zero(shared.rowCount(), "reviews that sync has not pushed are not published")
+	shared.mu.Lock()
+	assert.Equal(3, shared.publishCalls, "unsynced reviews are attempted once during backfill")
+	shared.mu.Unlock()
 
 	uuids := []string{sources[0].ReviewUUID, sources[1].ReviewUUID, sources[2].ReviewUUID}
 	shared.push(uuids...)
@@ -244,24 +249,6 @@ func TestSharedVectorsPublishExistingGenerationOnStartup(t *testing.T) {
 	calls := shared.publishCalls
 	shared.mu.Unlock()
 	assert.Equal(t, 1, calls, "matching shared content is not uploaded again")
-
-	peer := newSharingDaemon(t, sources, shared)
-	peer.reconcile(t)
-	assert.Zero(t, peer.embeddedTexts(), "the peer reuses existing vectors")
-}
-
-func TestSharedVectorsFailedPublicationStaysQueued(t *testing.T) {
-	sources := makeSearchSources(1)
-	shared := newMemorySharedVectors()
-	origin := newSharingDaemon(t, sources, shared)
-	origin.reconcile(t)
-	require.Zero(t, shared.rowCount(), "the review has not reached PostgreSQL")
-	origin.reconcile(t)
-	require.Zero(t, shared.rowCount(), "publication remains pending while the review is unsynced")
-
-	shared.push(sources[0].ReviewUUID)
-	origin.reconcile(t)
-	require.Equal(t, 1, shared.rowCount(), "the queued publication is retried")
 
 	peer := newSharingDaemon(t, sources, shared)
 	peer.reconcile(t)

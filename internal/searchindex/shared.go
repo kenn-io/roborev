@@ -115,13 +115,12 @@ func (r *Reconciler) queuePublish(reviewUUIDs ...string) bool {
 }
 
 // publishPending publishes covered reviews discovered by sync, a scan, or a
-// change. Matching shared rows are skipped. Failed publications stay queued.
+// change. Matching shared rows are skipped. A failed publication waits for the
+// next push of that review or the next full scan.
 func (r *Reconciler) publishPending(ctx context.Context, shared SharedVectors, space, generation string) error {
-	pending := r.takePendingPublish()
-	for batch := range slices.Chunk(pending, sharedLookupPage) {
+	for batch := range slices.Chunk(r.takePendingPublish(), sharedLookupPage) {
 		docs, err := r.index.coveredSharedDocuments(ctx, generation, batch)
 		if err != nil {
-			r.queuePublish(pending...)
 			return err
 		}
 		keys := make([]storage.SearchVectorKey, len(docs))
@@ -136,11 +135,7 @@ func (r *Reconciler) publishPending(ctx context.Context, shared SharedVectors, s
 			if _, ok := published[doc.key]; ok {
 				continue
 			}
-			ok, err := shared.PublishSearchVectors(ctx, space, doc.key, doc.chunks)
-			if err != nil || !ok {
-				r.queuePublish(doc.key.ReviewUUID)
-			}
-			if err != nil && ctx.Err() != nil {
+			if _, err := shared.PublishSearchVectors(ctx, space, doc.key, doc.chunks); err != nil && ctx.Err() != nil {
 				return ctx.Err()
 			}
 		}
@@ -156,13 +151,12 @@ type sharingStore struct {
 	shared SharedVectors
 	space  string
 	keys   map[string]storage.SearchVectorKey
-	queue  func(...string) bool
 }
 
-func newSharingStore(store vector.Store[string, string], index *Index, shared SharedVectors, space string, queue func(...string) bool) *sharingStore {
+func newSharingStore(store vector.Store[string, string], index *Index, shared SharedVectors, space string) *sharingStore {
 	return &sharingStore{
 		Store: store, index: index, shared: shared, space: space,
-		keys: make(map[string]storage.SearchVectorKey), queue: queue,
+		keys: make(map[string]storage.SearchVectorKey),
 	}
 }
 
@@ -200,10 +194,7 @@ func (s *sharingStore) SaveVectors(
 		return err
 	}
 	if key, ok := s.keys[doc]; ok && len(vectors) > 0 {
-		ok, err := s.shared.PublishSearchVectors(ctx, s.space, key, sharedChunks(vectors))
-		if err != nil || !ok {
-			s.queue(key.ReviewUUID)
-		}
+		_, _ = s.shared.PublishSearchVectors(ctx, s.space, key, sharedChunks(vectors))
 	}
 	return nil
 }
