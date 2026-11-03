@@ -448,10 +448,20 @@ func TestReviewerToolsShowStructuredFindingsAndRebuttals(t *testing.T) {
 	assert.NotContains(findings[1], "decisions")
 	assert.Equal([]any{map[string]any{
 		"kind": "ask", "source": "fix_comment", "by": "developer", "reason": "is a test wanted here?",
+		"target": "low calc.go",
 	}}, row["decisions"])
 	comments := row["comments"].([]any)
 	require.Len(comments, 1, "a comment with free text is kept whole")
 	assert.Contains(comments[0].(map[string]any)["text"], "Looking into the length check.")
+
+	// A rerun replaces the review under the same job ID. A re-check of the
+	// earlier review must not mark the new one's findings.
+	_, err = f.db.ExecContext(t.Context(), `UPDATE reviews SET created_at = ? WHERE job_id = ?`,
+		time.Now().UTC().Add(time.Hour).Format("2006-01-02 15:04:05"), review.ID)
+	require.NoError(err)
+	rerun, isErr := callReviewerTool(t, session, mcpserver.ReviewerToolPriorReview, map[string]any{"job_id": review.ID})
+	require.False(isErr, "%v", rerun)
+	assert.NotContains(rerun["reviews"].([]any)[0].(map[string]any)["findings"].([]any)[0], "decisions")
 
 	findingsOut, isErr := callReviewerTool(t, session, mcpserver.ReviewerToolBranchFindings, nil)
 	require.False(isErr, "%v", findingsOut)

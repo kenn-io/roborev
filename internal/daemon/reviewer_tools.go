@@ -134,14 +134,18 @@ func (b reviewerBackend) BranchReviews(
 	reviews := make([]mcpserver.BranchReview, 0, len(jobs))
 	// Rebuttal re-checks are task jobs on the same branch that name the
 	// review they re-check as their parent.
-	assessments := make(map[int64][]mcpserver.FindingAssessment)
+	type recheck struct {
+		enqueued   time.Time
+		assessment mcpserver.FindingAssessment
+	}
+	rechecks := make(map[int64][]recheck)
 	for _, job := range jobs {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		if job.Source == storage.JobSourceRebuttal && job.ParentJobID != nil {
 			if a, ok := b.assessment(job.ID); ok {
-				assessments[*job.ParentJobID] = append(assessments[*job.ParentJobID], a)
+				rechecks[*job.ParentJobID] = append(rechecks[*job.ParentJobID], recheck{job.EnqueuedAt, a})
 			}
 			continue
 		}
@@ -164,10 +168,14 @@ func (b reviewerBackend) BranchReviews(
 		})
 	}
 	for i := range reviews {
+		// A rerun replaces the review but keeps its job ID, so a re-check
+		// counts only when it was queued after the current review was written.
 		// Jobs are newest first; show each review's re-checks oldest first.
-		found := assessments[reviews[i].Job.ID]
-		slices.Reverse(found)
-		reviews[i].Assessments = found
+		for _, r := range slices.Backward(rechecks[reviews[i].Job.ID]) {
+			if !r.enqueued.Before(reviews[i].Review.CreatedAt) {
+				reviews[i].Assessments = append(reviews[i].Assessments, r.assessment)
+			}
+		}
 	}
 	return reviews, nil
 }
