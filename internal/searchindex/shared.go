@@ -115,8 +115,7 @@ func (r *Reconciler) queuePublish(reviewUUIDs ...string) bool {
 }
 
 // publishPending publishes covered reviews discovered by sync, a scan, or a
-// change. Matching shared rows are skipped. A failed publication waits for the
-// next push of that review or the next full scan.
+// change. Matching shared rows are skipped.
 func (r *Reconciler) publishPending(ctx context.Context, shared SharedVectors, space, generation string) error {
 	for batch := range slices.Chunk(r.takePendingPublish(), sharedLookupPage) {
 		docs, err := r.index.coveredSharedDocuments(ctx, generation, batch)

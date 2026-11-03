@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -284,4 +285,38 @@ func TestSharedVectorsSweepLooksUpOnlyChangedReview(t *testing.T) {
 	sweep("")
 	assert.Zero(t, sweep(""), "an idle sweep looks up no history")
 	assert.Equal(t, 1, sweep(`UPDATE reviews SET closed = 1 WHERE job_id = 1`))
+}
+
+func TestSharedVectorsRetryOutageAtSweep(t *testing.T) {
+	now := time.Now()
+	r, store, _ := incrementalFixture(t, ReconcilerConfig{
+		Now: func() time.Time { return now }, MaxFillBatches: 1,
+	})
+	_, err := store.ExecContext(t.Context(), `UPDATE reviews SET uuid = printf('00000000-0000-4000-8000-%012d', id)`)
+	require.NoError(t, err)
+	r.embedder = &reconcilerEmbedder{space: testSpace("model", 2), batchSize: 1}
+	r.ShareVectors(storage.NewSyncWorker(store.DB, config.SyncConfig{}))
+
+	more, err := r.reconcileTurn(t.Context())
+	require.NoError(t, err)
+	require.True(t, more, "one review remains to embed")
+	jobs, _, err := store.ListSearchChanges(t.Context(), 100)
+	require.NoError(t, err)
+	require.Len(t, jobs, 1, "the failed publication is queued for a sweep")
+
+	shared := newMemorySharedVectors()
+	shared.push("00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002")
+	r.ShareVectors(shared)
+	_, err = r.reconcileTurn(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, 1, shared.rowCount(), "the next fill only publishes its own review")
+	assert.Empty(t, store.jobReads, "the failed publication waits for the sweep")
+
+	now = now.Add(r.config.SweepInterval)
+	for more := true; more; {
+		more, err = r.reconcileTurn(t.Context())
+		require.NoError(t, err)
+	}
+	assert.Equal(t, 2, shared.rowCount(), "the sweep retries the failed publication")
+	assert.Equal(t, jobs, store.jobReads)
 }
