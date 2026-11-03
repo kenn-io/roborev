@@ -643,7 +643,6 @@ func TestDoctorCICommentSilenceAdvice(t *testing.T) {
 	env.global.CI.CommentWhenClean = &clean
 	got := findDoctorCheck(t, checkDoctorIntegrations(env), "integrations.ci_comments")
 	assert.Equal(t, doctorInfo, got.Status)
-	assert.Contains(t, strings.Join(got.Details, " "), "status-write")
-	assert.Contains(t, strings.Join(got.Details, " "), "personal")
+	assert.Equal(t, []string{"Requires commit status-write permission for your GitHub App or personal token."}, got.Details)
 	assert.NotContains(t, got.Summary, "App required")
 }

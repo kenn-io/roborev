@@ -96,7 +96,7 @@ func checkDoctorIntegrations(env *doctorEnv) []doctorCheck {
 			out = append(out, doctorCheck{
 				ID: "integrations.ci_comments", Category: "integrations", Status: doctorInfo,
 				Summary: "clean GitHub daemon reviews rely on commit statuses for visibility",
-				Details: []string{"Silence for GitHub daemon reviews needs commit status-write permissions. GitHub App and personal tokens can both publish statuses; failed delivery uses the normal status retry path."},
+				Details: []string{"Requires commit status-write permission for your GitHub App or personal token."},
 			})
 		}
 		if len(problems) > 0 {
