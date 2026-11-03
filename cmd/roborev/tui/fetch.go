@@ -608,7 +608,7 @@ func (m model) fetchBranchesForRepo(
 // persisting the branchNone sentinel would freeze the row at "(none)"
 // Backfill runs once per TUI session (branchBackfillDone), so the
 // repeated lookup cost for skipped rows is bounded.
-func backfillBranchValue(job storage.ReviewJob, machineID *uuid.UUID) (string, bool) {
+func backfillBranchValue(ctx context.Context, job storage.ReviewJob, machineID *uuid.UUID) (string, bool) {
 	// These jobs have no commit from which to derive a branch.
 	if job.IsTaskJob() || job.IsDirtyJob() || job.IsGoalReviewJob() {
 		return branchNone, true
@@ -629,7 +629,7 @@ func backfillBranchValue(job storage.ReviewJob, machineID *uuid.UUID) (string, b
 	if idx := strings.Index(sha, ".."); idx != -1 {
 		sha = sha[idx+2:]
 	}
-	branch := git.GetBranchName(job.RepoPath, sha)
+	branch := git.GetBranchNameCtx(ctx, job.RepoPath, sha)
 	if branch == "" {
 		if detachedBranchLabel(job) != "" {
 			return "", false
@@ -669,7 +669,9 @@ func (m model) backfillBranches() tea.Cmd {
 				if job.Branch != "" {
 					continue // Already has branch
 				}
-				branch, ok := backfillBranchValue(job, machineID)
+				ctx, cancel := context.WithTimeout(m.apiContext(), 2*time.Second)
+				branch, ok := backfillBranchValue(ctx, job, machineID)
+				cancel()
 				if !ok {
 					continue
 				}

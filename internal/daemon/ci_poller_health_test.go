@@ -319,6 +319,7 @@ func testHealthCIPollerExhaustedRetry(t *testing.T, draft bool) {
 			assert.Empty(*comments)
 			assert.False(decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet)).Healthy,
 				"giving up without a review is not recovery")
+			var skipped *[]capturedSkippedCheck
 			switch recovery {
 			case "closed":
 				h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return nil, nil }
@@ -353,7 +354,7 @@ func testHealthCIPollerExhaustedRetry(t *testing.T, draft bool) {
 				require.NoError(t, err)
 				require.NotNil(t, attempt, "publication failure retains retry state")
 				assert.Equal("done", attempt.State)
-				h.CaptureSkippedChecks()
+				skipped = h.CaptureSkippedChecks()
 				h.Poller.setCommitStatusFn = func(string, string, string, string) error {
 					return errors.New("status publishing unavailable")
 				}
@@ -365,7 +366,6 @@ func testHealthCIPollerExhaustedRetry(t *testing.T, draft bool) {
 				require.NotNil(t, attempt, "publication failure retains retry state")
 				assert.Equal("done", attempt.State)
 			}
-			skipped := h.CaptureSkippedChecks()
 			statuses := h.CaptureCommitStatuses()
 			h.Poller.poll(t.Context())
 			assert.True(decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet)).Healthy,

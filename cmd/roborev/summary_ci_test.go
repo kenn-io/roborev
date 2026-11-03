@@ -19,15 +19,14 @@ func TestPrintSummary_CI(t *testing.T) {
 		TurnaroundSamples: 1, TurnaroundP50Secs: 120, TurnaroundP90Secs: 120,
 		Cost:                storage.CostAggregate{TotalUSD: 5, JobsWithCost: 2, JobsTotal: 3},
 		RetiredUnpostedCost: storage.CostAggregate{TotalUSD: 0, JobsWithCost: 1, JobsTotal: 1, Complete: true},
-		PRs:                 []storage.CIPRSummary{{GithubRepo: "acme/api", PRNumber: 7, Runs: 8, Cost: storage.CostAggregate{TotalUSD: 5, JobsWithCost: 2, JobsTotal: 3}}, {GithubRepo: "acme/web", PRNumber: 7, Runs: 1}},
-		HotPRs:              []storage.CIPRSummary{{GithubRepo: "acme/api", PRNumber: 7, Runs: 8}},
+		PRs:                 []storage.CIPRSummary{{GithubRepo: "acme/api", PRNumber: 7, Runs: 8, PeakHourRuns: 3, Cost: storage.CostAggregate{TotalUSD: 5, JobsWithCost: 2, JobsTotal: 3}}, {GithubRepo: "acme/web", PRNumber: 7, Runs: 1, PeakHourRuns: 1}},
 	}
 	var out bytes.Buffer
 	cmd := &cobra.Command{}
 	cmd.SetOut(&out)
 	printSummary(cmd, storage.Summary{Since: time.Now(), CI: ci})
 	a := assert.New(t)
-	for _, want := range []string{"CI Run Health", "Panels: 9", "Active: 1", "Finalized: 1", "Retired unposted: 7", "review_posted: 1", "closed_pr: 2", "unknown: 5", "p50=4.5", "p90=7.3", "max=8", "acme/api#7: 8", "p50=2.0m", "1 samples", "$5.00 (2/3 eligible jobs priced)", "Retired unposted cost: $0.00 (1/1 eligible jobs priced)", "acme/web#7: 1 runs; unavailable (0/0 eligible jobs priced)"} {
+	for _, want := range []string{"CI Run Health", "Panels: 9", "Active: 1", "Finalized: 1", "Retired unposted: 7", "review_posted: 1", "closed_pr: 2", "unknown: 5", "p50=4.5", "p90=7.3", "max=8", "acme/api#7: 8 runs (3 in busiest hour); $5.00", "p50=2.0m", "1 samples", "$5.00 (2/3 eligible jobs priced)", "Retired unposted cost: $0.00 (1/1 eligible jobs priced)", "acme/web#7: 1 runs (1 in busiest hour); unavailable (0/0 eligible jobs priced)"} {
 		a.Contains(out.String(), want)
 	}
 	a.NotContains(out.String(), "No review data")

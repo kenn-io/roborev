@@ -73,20 +73,18 @@ func (w *SessionCaptureWriter) capture(p []byte) {
 		w.mu.Unlock()
 		return
 	}
-	if len(p) > 0 {
-		_, _ = w.buf.Write(p)
-	}
-	for w.sessionID == "" {
-		data := w.buf.Bytes()
-		idx := bytes.IndexByte(data, '\n')
+	for len(p) > 0 && w.sessionID == "" {
+		idx := bytes.IndexByte(p, '\n')
 		if idx < 0 {
+			_, _ = w.buf.Write(p)
 			break
 		}
-		line := string(data[:idx+1])
-		w.buf.Next(idx + 1)
+		_, _ = w.buf.Write(p[:idx+1])
+		line := w.buf.String()
+		w.buf.Reset()
+		p = p[idx+1:]
 		if sessionID := ExtractSessionID(line); sessionID != "" {
 			w.sessionID = sessionID
-			w.buf.Reset()
 			captured = sessionID
 		}
 	}

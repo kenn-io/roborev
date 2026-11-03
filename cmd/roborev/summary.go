@@ -275,12 +275,6 @@ func printCISummary(cmd *cobra.Command, ci storage.CISummary) {
 	}
 	cmd.Printf("  Runs per PR (%d PRs): p50=%.1f  p90=%.1f  max=%d\n",
 		ci.DistinctPRs, ci.RunsPerPRP50, ci.RunsPerPRP90, ci.RunsPerPRMax)
-	if len(ci.HotPRs) > 0 {
-		cmd.Println("  PRs above 5 runs:")
-		for _, pr := range ci.HotPRs {
-			cmd.Printf("    %s#%d: %d runs\n", pr.GithubRepo, pr.PRNumber, pr.Runs)
-		}
-	}
 	if ci.TurnaroundSamples == 0 {
 		cmd.Println("  Turnaround: unavailable (0 samples)")
 	} else {
@@ -291,7 +285,7 @@ func printCISummary(cmd *cobra.Command, ci storage.CISummary) {
 	if len(ci.PRs) > 0 {
 		cmd.Println("  Per PR (recorded cost):")
 		for _, pr := range ci.PRs {
-			cmd.Printf("    %s#%d: %d runs; %s\n", pr.GithubRepo, pr.PRNumber, pr.Runs, formatCICost(pr.Cost))
+			cmd.Printf("    %s#%d: %d runs (%d in busiest hour); %s\n", pr.GithubRepo, pr.PRNumber, pr.Runs, pr.PeakHourRuns, formatCICost(pr.Cost))
 		}
 	}
 	cmd.Println()
