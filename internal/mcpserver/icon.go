@@ -1,11 +1,8 @@
 package mcpserver
 
 import (
-	"bytes"
 	_ "embed"
 	"encoding/base64"
-	"net/http"
-	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -33,25 +30,4 @@ func serverImplementation(version string) *mcp.Implementation {
 			Sizes:    []string{"256x256"},
 		}},
 	}
-}
-
-// WithIconRoutes serves the public mark outside the next handler's authentication.
-// Both aliases serve the PNG declared in serverInfo, including /favicon.ico.
-func WithIconRoutes(next http.Handler) http.Handler {
-	mux := http.NewServeMux()
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			w.Header().Set("Allow", "GET, HEAD")
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		w.Header().Set("Content-Type", "image/png")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Cache-Control", "public, max-age=86400")
-		http.ServeContent(w, r, "icon.png", time.Time{}, bytes.NewReader(serverIconPNG))
-	})
-	mux.Handle("/icon.png", handler)
-	mux.Handle("/favicon.ico", handler)
-	mux.Handle("/", next)
-	return mux
 }
