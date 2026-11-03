@@ -296,12 +296,11 @@ jobs:
           # ("go: remove ...\.exe: Access is denied") even when all
           # tests pass. Only suppress that specific pattern.
           $testResultPath = "test-results/${{ matrix.shard || matrix.os }}-test.jsonl"
-          go test -json -timeout 15m -shuffle=on -tags integration @testArgs @packages > $testResultPath 2>&1
+          # Stream results to the job log as well as the artifact so each
+          # test's pass or fail is visible in the log.
+          go test -json -timeout 15m -shuffle=on -tags integration @testArgs @packages 2>&1 | Tee-Object -FilePath $testResultPath
           $exitCode = $LASTEXITCODE
           if ($exitCode -ne 0) {
-            Write-Host "go test failed; recent output:"
-            Get-Content -Path $testResultPath -Tail 200
-
             $failed = Select-String -Path $testResultPath -Pattern '"Action":"fail"'
             if ($failed) {
               Write-Host "Tests failed:"

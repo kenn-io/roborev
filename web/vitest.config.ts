@@ -10,6 +10,8 @@ export default defineConfig({
     // Svelte transforms are memory- and CPU-heavy enough that Vitest's
     // machine-sized default causes otherwise fast DOM tests to time out.
     maxWorkers: 4,
+    // CI logs name every test so a passing rerun can confirm a flaky test.
+    reporters: process.env.CI ? ["verbose"] : ["default"],
     exclude: ["tests/e2e/**", "node_modules/**"],
     environment: "jsdom",
     environmentOptions: {

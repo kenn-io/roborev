@@ -38,7 +38,7 @@
   ],
   "scripts": {
     "check": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
-    "test": "vitest run pack.test.ts"
+    "test": "vitest run --reporter=verbose pack.test.ts"
   },
   "dependencies": {
     "@kenn-io/kit-ui": "github:kenn-io/kit-ui#ed54fdbaa15a77d2543e48a48aa5a8850ec29aeb",
