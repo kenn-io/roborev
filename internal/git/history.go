@@ -84,6 +84,7 @@ func BlameLines(
 // only the first time a commit is seen, so it is cached by SHA.
 func parseBlamePorcelain(out []byte) []BlameHunk {
 	commits := make(map[string]*HistoryCommit)
+	authorTime := make(map[string]time.Time)
 	var hunks []BlameHunk
 	var current *HistoryCommit
 	var line int
@@ -120,11 +121,34 @@ func parseBlamePorcelain(out []byte) []BlameHunk {
 			current.Author = value
 		case "author-time":
 			if seconds, err := strconv.ParseInt(value, 10, 64); err == nil {
-				current.Date = time.Unix(seconds, 0).UTC().Format(time.DateOnly)
+				authorTime[current.SHA] = time.Unix(seconds, 0)
+			}
+		case "author-tz":
+			// Match git log --date=short, which shows the author's local date.
+			if when, ok := authorTime[current.SHA]; ok {
+				current.Date = when.In(blameZone(value)).Format(time.DateOnly)
 			}
 		case "summary":
 			current.Subject = value
 		}
 	}
 	return hunks
+}
+
+// blameZone parses a porcelain timezone such as "+0530". An unparsable value
+// falls back to UTC.
+func blameZone(tz string) *time.Location {
+	if len(tz) != 5 || (tz[0] != '+' && tz[0] != '-') {
+		return time.UTC
+	}
+	hours, errH := strconv.Atoi(tz[1:3])
+	minutes, errM := strconv.Atoi(tz[3:5])
+	if errH != nil || errM != nil {
+		return time.UTC
+	}
+	offset := (hours*60 + minutes) * 60
+	if tz[0] == '-' {
+		offset = -offset
+	}
+	return time.FixedZone(tz, offset)
 }

@@ -131,14 +131,20 @@ func (b reviewerBackend) BranchReviews(
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if job.JobType != storage.JobTypeReview && job.JobType != storage.JobTypeRange {
+		// A panel's canonical review is its synthesis job; members are
+		// excluded by the query.
+		if job.JobType != storage.JobTypeReview && job.JobType != storage.JobTypeRange &&
+			job.JobType != storage.JobTypeSynthesis {
 			continue
 		}
 		review, err := b.db.GetReviewByJobID(job.ID)
 		if err != nil {
 			continue
 		}
-		comments, err := b.db.GetCommentsForJob(job.ID)
+		// Decisions may be recorded on the job or, through `comment <sha>`, on
+		// its commit.
+		commitID, fallbackSHA := job.LegacyCommentLookupTarget()
+		comments, err := b.db.GetAllCommentsForJob(job.ID, commitID, fallbackSHA)
 		if err != nil {
 			return nil, mcpserver.NewError(mcpserver.ErrorCodeInternal, "load review comments failed")
 		}
