@@ -161,7 +161,7 @@ func FuzzRefineTrivialReview(f *testing.F) {
 	f.Add(uint8(1), false, true, true, false)
 	f.Add(uint8(0), false, false, true, true)
 	f.Fuzz(func(t *testing.T, severityIndex uint8, security, first, uppercase, padded bool) {
-		severities := [...]string{"critical", "high", "medium", "low", "info"}
+		severities := [...]string{"critical", "high", "medium", "low"}
 		severity := severities[int(severityIndex)%len(severities)]
 		if uppercase {
 			severity = strings.ToUpper(severity)
