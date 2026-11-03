@@ -36,5 +36,4 @@ func refineTrivialFixCommits(
 	return commits, true
 }
 
-const refineSkipNote = "Skipped individual re-review: documentation/test-only fix. " +
-	"The branch review still covers it."
+const refineSkipNote = "Skipped individual re-review: documentation/test-only fix."
