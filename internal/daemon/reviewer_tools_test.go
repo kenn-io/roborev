@@ -67,8 +67,10 @@ func newReviewerFixture(t *testing.T) *reviewerFixture {
 	f.featureJob = seedReviewerJob(t, db, repo.Root, "feature", f.featureSHA, `{"schema_version":2,"summary":"Avg panics.","verdict":"fail","findings":[`+
 		`{"severity":"high","problem":"Avg divides by zero on an empty slice. Callers pass empty input.","fix":"Guard it.","location":"calc.go:8"},`+
 		`{"severity":"low","problem":"Sum can overflow.","fix":"Use int64.","location":"calc.go:6"}]}`)
+	// The roborev-fix skill records one disposition line per finding.
 	_, err := db.AddCommentToJob(f.featureJob.ID, "roborev-fix",
-		"Fix: guarded empty input in "+f.fixSHA[:9]+". Decline: overflow is not reachable here.")
+		"- high calc.go:8: Fix: guarded empty input in "+f.fixSHA[:9]+".\n"+
+			"- low calc.go: Decline: overflow is not reachable here.")
 	require.NoError(t, err)
 	f.otherJob = seedReviewerJob(t, db, repo.Root, "other", f.otherSHA,
 		`{"schema_version":2,"summary":"other branch secret","verdict":"pass","findings":[]}`)
@@ -189,12 +191,23 @@ func TestReviewerToolsReturnOnlyThisBranchOfThisRepo(t *testing.T) {
 	assert.Equal("default", review["review_type"])
 	assert.Equal(false, review["closed"])
 	assert.Equal([]any{
-		map[string]any{"severity": "high", "location": "calc.go:8", "claim": "Avg divides by zero on an empty slice."},
-		map[string]any{"severity": "low", "location": "calc.go:6", "claim": "Sum can overflow."},
+		map[string]any{
+			"index": float64(1), "severity": "high", "location": "calc.go:8",
+			"problem": "Avg divides by zero on an empty slice. Callers pass empty input.",
+			"decisions": []any{map[string]any{
+				"kind": "fix", "source": "fix_comment", "by": "roborev-fix",
+				"reason": "guarded empty input in " + f.fixSHA[:9] + ".",
+			}},
+		},
+		map[string]any{
+			"index": float64(2), "severity": "low", "location": "calc.go:6", "problem": "Sum can overflow.",
+			"decisions": []any{map[string]any{
+				"kind": "decline", "source": "fix_comment", "by": "roborev-fix",
+				"reason": "overflow is not reachable here.",
+			}},
+		},
 	}, review["findings"])
-	comments := review["comments"].([]any)
-	require.Len(comments, 1)
-	assert.Contains(comments[0].(map[string]any)["text"], "Decline: overflow")
+	assert.NotContains(review, "comments", "a comment fully carried by decisions is not repeated")
 
 	for _, job := range []*storage.ReviewJob{f.otherJob, f.foreignJob, f.running} {
 		out, isErr := callReviewerTool(t, session, mcpserver.ReviewerToolPriorReview, map[string]any{"job_id": job.ID})
@@ -340,7 +353,7 @@ func TestReviewerToolsIncludePanelReviewsAndCommitComments(t *testing.T) {
 			`{"severity":"medium","problem":"Avg lacks a doc comment.","fix":"Add one.","location":"calc.go:3"}]}`)
 	_, err = f.db.AddCommentToJob(synthesis.ID, "roborev-fix", "Decline: the doc comment is not needed.")
 	require.NoError(err)
-	// roborev comment <sha> records a decision on the commit, which reaches
+	// roborev job comment <sha> records a decision on the commit, which reaches
 	// every canonical review of that commit, panel or not.
 	commitDecision := "Fix: added the doc comment in " + f.fixSHA[:9] + "."
 	_, err = f.db.AddComment(commit.ID, "developer", commitDecision)
@@ -360,7 +373,7 @@ func TestReviewerToolsIncludePanelReviewsAndCommitComments(t *testing.T) {
 	assert.NotContains(byJob, float64(member.ID), "panel members are summarized by their synthesis")
 	panel := byJob[float64(synthesis.ID)]
 	require.NotNil(panel, "the panel's canonical review is listed")
-	assert.Equal("Avg lacks a doc comment.", panel["findings"].([]any)[0].(map[string]any)["claim"])
+	assert.Equal("Avg lacks a doc comment.", panel["findings"].([]any)[0].(map[string]any)["problem"])
 	texts := func(review map[string]any) []any {
 		var out []any
 		for _, comment := range review["comments"].([]any) {
@@ -376,4 +389,73 @@ func TestReviewerToolsIncludePanelReviewsAndCommitComments(t *testing.T) {
 		map[string]any{"path": "calc.go", "start_line": 4})
 	require.False(isErr, "%v", blame)
 	assert.Contains(blame["hunks"].([]any)[0].(map[string]any)["fix_for_jobs"], float64(synthesis.ID))
+}
+
+func TestReviewerToolsShowStructuredFindingsAndRebuttals(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newReviewerFixture(t)
+	repo, err := f.db.GetOrCreateRepo(f.running.RepoPath)
+	require.NoError(err)
+	commit, err := f.db.GetOrCreateCommit(repo.ID, f.featureSHA, "Author", "add calc test", time.Now())
+	require.NoError(err)
+	enqueue := func(opts storage.EnqueueOpts) *storage.ReviewJob {
+		opts.RepoID, opts.CommitID, opts.GitRef, opts.Branch, opts.Agent = repo.ID, commit.ID, f.featureSHA, "feature", "test"
+		job, err := f.db.EnqueueJob(opts)
+		require.NoError(err)
+		_, err = f.db.ClaimJob("reviewer-test")
+		require.NoError(err)
+		return job
+	}
+	review := enqueue(storage.EnqueueOpts{ReviewType: "security"})
+	require.NoError(testutil.CompleteReviewFixture(f.db, review.ID, "test", "",
+		`{"schema_version":3,"summary":"two issues","verdict":"fail","findings":[`+
+			`{"severity":"medium","kind":"defect","topic":"security","confidence":0.6,"problem":"Avg trusts its input length.",`+
+			`"fix":"Check it.","file":"calc.go","start_line":3,"end_line":5,"location":"calc.go:3-5","sources":null},`+
+			`{"severity":"low","kind":"improvement","topic":"tests","confidence":0.4,"problem":"No test covers Avg.",`+
+			`"fix":"Add one.","file":null,"start_line":null,"end_line":null,"location":null,"sources":null}]}`))
+	_, err = f.db.AddCommentToJob(review.ID, "developer", "Looking into the length check.\n- low calc.go: Ask: is a test wanted here?")
+	require.NoError(err)
+
+	// A rebuttal re-check quotes the finding it re-checks and returns an outcome.
+	rebuttal := enqueue(storage.EnqueueOpts{
+		JobType: storage.JobTypeTask, Source: storage.JobSourceRebuttal, ParentJobID: review.ID,
+		Prompt: "Re-evaluate only the selected finding.\nOriginal finding: \"trusts its input length\"\nUser explanation: \"callers check it\"\n",
+	})
+	require.NoError(f.db.CompleteJob(rebuttal.ID, "test", `{"outcome":"refuted","explanation":"Every caller checks len first."}`))
+
+	token, _ := f.issue(t)
+	session, err := connectReviewer(t, f.url, token)
+	require.NoError(err)
+	out, isErr := callReviewerTool(t, session, mcpserver.ReviewerToolPriorReview, map[string]any{"job_id": review.ID})
+	require.False(isErr, "%v", out)
+	row := out["reviews"].([]any)[0].(map[string]any)
+	assert.Equal("security", row["review_type"])
+	assert.NotEmpty(row["review_uuid"])
+	assert.Contains(row["output"], "Avg trusts its input length")
+
+	findings := row["findings"].([]any)
+	require.Len(findings, 2)
+	assert.Equal(map[string]any{
+		"index": float64(1), "severity": "medium", "kind": "defect", "topic": "security",
+		"file": "calc.go", "start_line": float64(3), "end_line": float64(5),
+		"problem": "Avg trusts its input length.",
+		"decisions": []any{map[string]any{
+			"kind": "refuted", "source": "rebuttal", "reason": "Every caller checks len first.",
+		}},
+	}, findings[0])
+	// The finding has no file, so the Ask line naming calc.go matches no finding.
+	assert.NotContains(findings[1], "decisions")
+	assert.Equal([]any{map[string]any{
+		"kind": "ask", "source": "fix_comment", "by": "developer", "reason": "is a test wanted here?",
+	}}, row["decisions"])
+	comments := row["comments"].([]any)
+	require.Len(comments, 1, "a comment with free text is kept whole")
+	assert.Contains(comments[0].(map[string]any)["text"], "Looking into the length check.")
+
+	findingsOut, isErr := callReviewerTool(t, session, mcpserver.ReviewerToolBranchFindings, nil)
+	require.False(isErr, "%v", findingsOut)
+	for _, r := range findingsOut["reviews"].([]any) {
+		assert.NotEqual(float64(rebuttal.ID), r.(map[string]any)["job_id"], "rebuttal jobs are decisions, not reviews")
+	}
 }

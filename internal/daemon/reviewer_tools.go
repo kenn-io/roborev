@@ -4,6 +4,9 @@ import (
 	"context"
 	"crypto/rand"
 	"net/http"
+	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -11,6 +14,7 @@ import (
 	"go.kenn.io/roborev/internal/config"
 	gitpkg "go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/mcpserver"
+	"go.kenn.io/roborev/internal/rebuttal"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -128,9 +132,18 @@ func (b reviewerBackend) BranchReviews(
 		return nil, mcpserver.NewError(mcpserver.ErrorCodeInternal, "list branch reviews failed")
 	}
 	reviews := make([]mcpserver.BranchReview, 0, len(jobs))
+	// Rebuttal re-checks are task jobs on the same branch that name the
+	// review they re-check as their parent.
+	assessments := make(map[int64][]mcpserver.FindingAssessment)
 	for _, job := range jobs {
 		if err := ctx.Err(); err != nil {
 			return nil, err
+		}
+		if job.Source == storage.JobSourceRebuttal && job.ParentJobID != nil {
+			if a, ok := b.assessment(job.ID); ok {
+				assessments[*job.ParentJobID] = append(assessments[*job.ParentJobID], a)
+			}
+			continue
 		}
 		// A panel's canonical review is its synthesis job; members are
 		// excluded by the query.
@@ -150,11 +163,46 @@ func (b reviewerBackend) BranchReviews(
 			Job: job, Review: *review, Comments: storage.PromptTrustedResponses(comments),
 		})
 	}
+	for i := range reviews {
+		// Jobs are newest first; show each review's re-checks oldest first.
+		found := assessments[reviews[i].Job.ID]
+		slices.Reverse(found)
+		reviews[i].Assessments = found
+	}
 	return reviews, nil
 }
 
+// rebuttalFindingPrefix opens the prompt line that quotes the finding a
+// rebuttal re-checks; humaRebuttal writes it with %q.
+const rebuttalFindingPrefix = "Original finding: "
+
+// assessment reads one finished rebuttal job: the finding excerpt from its
+// prompt and the outcome from its output. Unreadable jobs are skipped.
+func (b reviewerBackend) assessment(jobID int64) (mcpserver.FindingAssessment, bool) {
+	job, err := b.db.GetJobByID(jobID)
+	if err != nil {
+		return mcpserver.FindingAssessment{}, false
+	}
+	var excerpt string
+	for line := range strings.Lines(job.Prompt) {
+		if quoted, ok := strings.CutPrefix(strings.TrimSpace(line), rebuttalFindingPrefix); ok {
+			excerpt, _ = strconv.Unquote(quoted)
+			break
+		}
+	}
+	review, err := b.db.GetReviewByJobID(jobID)
+	if err != nil {
+		return mcpserver.FindingAssessment{}, false
+	}
+	result, err := rebuttal.Parse(review.Output)
+	if err != nil {
+		return mcpserver.FindingAssessment{}, false
+	}
+	return mcpserver.FindingAssessment{Finding: excerpt, Outcome: result.Outcome, Explanation: result.Explanation}, true
+}
+
 // comments returns the decisions recorded on a review: those on the job and,
-// through `comment <sha>`, those on its commit. LegacyCommentLookupTarget
+// through `roborev job comment <sha>`, those on its commit. LegacyCommentLookupTarget
 // leaves out synthesis jobs, but a local panel review of one commit is that
 // commit's canonical review, so its commit comments belong to it too.
 func (b reviewerBackend) comments(job storage.ReviewJob) ([]storage.Response, error) {
