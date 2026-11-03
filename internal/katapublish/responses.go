@@ -98,7 +98,7 @@ func responseEnvelope(issue kata.Issue, req Request, state State) (Envelope, err
 			rootTeammate = comment.Teammate
 		}
 	}
-	receipt, ok, err := findComment(issue, selected.Body+"\n\n"+marker(parent, selected.Selector), "", "", rootTeammate, response.Root)
+	receipt, ok, err := findComment(issue, selected.Body+"\n\n"+marker(parent, selected.Selector), "", "", "", rootTeammate, response.Root)
 	if err != nil {
 		return env, err
 	}
@@ -214,7 +214,7 @@ func deliverResponse(ctx context.Context, api API, req Request, state State, che
 		return state, err
 	}
 	body := response.Body + "\n\n" + marker(req, req.OperationID)
-	receipt, ok, err := findComment(issue, body, response.Target, response.Kind, response.Teammate, env.Responses[slot].ReceiptUID)
+	receipt, ok, err := findComment(issue, body, "", response.Target, response.Kind, response.Teammate, env.Responses[slot].ReceiptUID)
 	if err != nil {
 		return state, err
 	}
@@ -265,7 +265,7 @@ func deliverResponse(ctx context.Context, api API, req Request, state State, che
 		if slot < 0 {
 			return state, pending("registered response operation missing")
 		}
-		receipt, ok, err = findComment(issue, body, response.Target, response.Kind, response.Teammate, posted.UID)
+		receipt, ok, err = findComment(issue, body, "", response.Target, response.Kind, response.Teammate, posted.UID)
 		if err != nil {
 			return state, err
 		}
