@@ -652,10 +652,10 @@ func TestBudgetRoutingSelectsEligibleGoalReviewer(t *testing.T) {
 case "$*" in
   *etxtbsy*) exit 0 ;;
   *--version*)
-    help=%q; printf '%%s\n' "$*" >> %q
-    case "$*" in
-      *--tools*) case " $help " in *" --tools "*) printf 'supported --tools\n' >> %q; echo "Claude Code"; exit 0;; esac ;;
-      *--bare*) case " $help " in *" --bare "*) printf 'supported --bare\n' >> %q; echo "Claude Code"; exit 0;; esac ;;
+    help=%q; advertised=" $help "; printf '%%s\n' "$*" >> %q
+    case "$1" in
+      --tools) case "$advertised" in *" --tools "*) printf 'supported --tools\n' >> %q; echo "Claude Code"; exit 0;; esac ;;
+      --bare) case "$advertised" in *" --bare "*) printf 'supported --bare\n' >> %q; echo "Claude Code"; exit 0;; esac ;;
     esac
     exit 1 ;;
   *--help*) printf '%%s\n' %q; printf 'help\n' >> %q; exit 0 ;;

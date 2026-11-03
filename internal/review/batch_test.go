@@ -795,7 +795,7 @@ func TestRunBatch_NoKataContextFromUntrustedCheckout(t *testing.T) {
 		[]byte("[kata_context]\nmode = \"open\"\n"), 0o644))
 	require.NoError(os.WriteFile(
 		filepath.Join(repo.Root, ".kata.toml"),
-		[]byte("[project]\nname = \"victim\"\n"), 0o644))
+		[]byte("version = 1\n[project]\nname = \"victim\"\n"), 0o644))
 	repo.RunGit("add", "-A")
 	repo.RunGit("commit", "-m", "Sneaky change\n\nCloses: kata#abc4")
 	sha := repo.RevParse("HEAD")

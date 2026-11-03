@@ -40,6 +40,7 @@ var (
 	ErrNotFound              = errors.New("kata: not found")
 	ErrPlatformSecurityLimit = errors.New("kata: platform cannot enforce the required socket security")
 	ErrProjectNotFound       = errors.New("kata: project not found")
+	ErrProjectChanged        = errors.New("kata: project identity changed")
 	ErrRedirect              = errors.New("kata: redirect rejected")
 	ErrRequestRejected       = errors.New("kata: request rejected")
 	ErrUnreachable           = errors.New("kata: server unreachable")

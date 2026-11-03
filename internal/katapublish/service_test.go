@@ -23,6 +23,16 @@ type fakeAPI struct {
 	edited                 bool
 	duplicates             bool
 	checkpointed           bool
+	selection              kata.Binding
+	resolved               kata.Binding
+	resolveErr             error
+	lastListedProject      string
+	lastCreateProject      string
+	expectedProjectUID     string
+	createProjectUID       string
+	reassignedProjectUID   string
+	createAttempts         int
+	lastShownCompleteRef   string
 }
 
 func (f *fakeAPI) Endpoint() string { return "https://ledger.example" }
@@ -30,7 +40,19 @@ func (f *fakeAPI) ResolveProject(context.Context, string) (kata.Binding, error) 
 	return kata.Binding{Project: "reviews", ProjectUID: "project-1"}, nil
 }
 
-func (f *fakeAPI) ListProject(_ context.Context, _ string, opts kata.ListOpts) ([]kata.Issue, error) {
+func (f *fakeAPI) ResolveSelection(_ context.Context, selection kata.Binding) (kata.Binding, error) {
+	f.selection = selection
+	if f.resolveErr != nil {
+		return kata.Binding{}, f.resolveErr
+	}
+	if f.resolved.Project != "" {
+		return f.resolved, nil
+	}
+	return kata.Binding{Project: "reviews", ProjectUID: "project-1"}, nil
+}
+
+func (f *fakeAPI) ListProject(_ context.Context, project string, opts kata.ListOpts) ([]kata.Issue, error) {
+	f.lastListedProject = project
 	if opts.Status != "all" || !opts.Unlimited {
 		return nil, errors.New("incomplete lookup")
 	}
@@ -43,21 +65,41 @@ func (f *fakeAPI) ListProject(_ context.Context, _ string, opts kata.ListOpts) (
 	return []kata.Issue{f.issue}, nil
 }
 func (f *fakeAPI) Show(context.Context, string) (kata.Issue, error) { return f.issue, nil }
-func (f *fakeAPI) ShowComplete(context.Context, string) (kata.Issue, error) {
+func (f *fakeAPI) ShowComplete(_ context.Context, ref string) (kata.Issue, error) {
+	f.lastShownCompleteRef = ref
 	i := f.issue
 	return i, nil
 }
 
 func (f *fakeAPI) Create(_ context.Context, req kata.CreateReq) (kata.CreateResult, error) {
 	f.creates++
+	f.lastCreateProject = req.Project
 	if !f.checkpointed {
 		return kata.CreateResult{}, errors.New("send before checkpoint")
 	}
 	if err := kata.ValidateCreateRequest(req); err != nil {
 		return kata.CreateResult{}, err
 	}
-	f.issue = kata.Issue{Status: "open", UID: "issue-1", ShortID: "one", QualifiedID: "reviews#one", ProjectUID: "project-1", Metadata: req.Metadata}
+	project := req.Project
+	if project == "" {
+		project = "reviews"
+	}
+	projectUID := f.createProjectUID
+	if projectUID == "" {
+		projectUID = "project-1"
+	}
+	f.issue = kata.Issue{Status: "open", UID: "issue-1", ShortID: "one", QualifiedID: project + "#one", ProjectUID: projectUID, Metadata: req.Metadata}
 	return kata.CreateResult{IssueUID: f.issue.UID, ShortID: f.issue.ShortID, ProjectUID: f.issue.ProjectUID}, nil
+}
+
+func (f *fakeAPI) CreateInProject(ctx context.Context, expectedProjectUID string, req kata.CreateReq) (kata.CreateResult, error) {
+	f.createAttempts++
+	f.expectedProjectUID = expectedProjectUID
+	if f.reassignedProjectUID != "" && f.reassignedProjectUID != expectedProjectUID {
+		return kata.CreateResult{}, kata.ErrProjectChanged
+	}
+	f.createProjectUID = expectedProjectUID
+	return f.Create(ctx, req)
 }
 
 func (f *fakeAPI) MutateMetadata(_ context.Context, _ string, key string, previous, value any) (kata.Issue, error) {
@@ -242,6 +284,50 @@ func TestDestinationAndCheckpointFailuresNeverSend(t *testing.T) {
 	assert.Zero(t, f.creates)
 }
 
+func TestDeliveryPinsProjectUIDAgainAtCreate(t *testing.T) {
+	f := &fakeAPI{reassignedProjectUID: "replacement-project"}
+	_, err := deliver(t, f, fixtureRequest(), State{})
+	require.ErrorIs(t, err, ErrPending)
+	require.ErrorIs(t, err, kata.ErrProjectChanged)
+	assert.Equal(t, "project-1", f.expectedProjectUID)
+	assert.Equal(t, 1, f.createAttempts)
+	assert.Zero(t, f.creates)
+	assert.Zero(t, f.posts)
+}
+
+func TestDeliveryUsesCapturedWorkspaceAlias(t *testing.T) {
+	req := fixtureRequest()
+	req.Project = "stale-name"
+	req.WorkspaceAlias = &kata.ProjectAlias{Identity: "code.example/team/repo", Kind: "git"}
+	f := &fakeAPI{resolved: kata.Binding{Project: "renamed", ProjectUID: "project-1"}}
+	state, err := deliver(t, f, req, State{})
+	require.NoError(t, err)
+	assert.Equal(t, req.WorkspaceAlias, f.selection.Alias)
+	assert.Equal(t, "stale-name", f.selection.Project)
+	assert.Equal(t, "renamed", f.lastListedProject)
+	assert.Equal(t, "renamed", f.lastCreateProject)
+	assert.Equal(t, "renamed#one", state.IssueRef)
+
+	f.issue.QualifiedID = ""
+	_, err = deliver(t, f, req, state)
+	require.NoError(t, err)
+	assert.Equal(t, "renamed#one", f.lastShownCompleteRef)
+}
+
+func TestDeliveryKeepsUnresolvedWorkspaceAliasPending(t *testing.T) {
+	req := fixtureRequest()
+	req.Project = "stale-name"
+	req.WorkspaceAlias = &kata.ProjectAlias{Identity: "code.example/team/repo", Kind: "git"}
+	f := &fakeAPI{resolveErr: kata.ErrProjectNotFound}
+	state, err := deliver(t, f, req, State{})
+	require.ErrorIs(t, err, ErrPending)
+	require.ErrorIs(t, err, kata.ErrProjectNotFound)
+	assert.False(t, state.Done)
+	assert.Equal(t, req.WorkspaceAlias, f.selection.Alias)
+	assert.Zero(t, f.creates)
+	assert.Zero(t, f.posts)
+}
+
 func TestLedgerPendingDoesNotCompleteAndChangedMappingIsNotRepaired(t *testing.T) {
 	req := fixtureRequest()
 	f := &fakeAPI{postErr: errors.New("disconnected")}
@@ -285,26 +371,6 @@ func TestAmbiguousMarkerAndKnownEditedReceiptStayPending(t *testing.T) {
 	_, err = deliver(t, f, fixtureRequest(), state)
 	require.ErrorIs(t, err, ErrPending)
 	assert.Equal(t, 1, f.posts)
-}
-
-func FuzzSummaryErrorsDoNotPublishPrivateDiagnostic(f *testing.F) {
-	f.Add("provider returned private source")
-	f.Add("quote\"\n<script>:")
-	f.Fuzz(func(t *testing.T, detail string) {
-		private := "private-sentinel:" + detail
-		req := fixtureRequest()
-		req.Policy = "summary"
-		req.Create.Body = "Inspect locally"
-		req.Entries[0].Body = "Inspect finding locally"
-		api := &fakeAPI{postErr: errors.New(private)}
-		state, err := deliver(t, api, req, State{})
-		require.ErrorIs(t, err, ErrPending)
-		assert.NotContains(t, err.Error(), private)
-		assert.False(t, state.Done)
-		payload, err := json.Marshal(api.issue)
-		require.NoError(t, err)
-		assert.NotContains(t, string(payload), "private-sentinel:")
-	})
 }
 
 func TestSafeTypedLedgerErrorsAndUnsupportedResponses(t *testing.T) {

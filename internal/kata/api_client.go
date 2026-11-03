@@ -535,12 +535,6 @@ func (c *APIClient) showIssue(ctx context.Context, ref string, complete bool) (I
 	return iss, nil
 }
 
-// show reads one issue with query, and checks Kata answered with the issue
-// that was asked for.
-func (c *APIClient) show(ctx context.Context, project, id string, query url.Values) (gen.ShowIssueResponseBody, projectRef, error) {
-	return c.readShow(ctx, project, id, query, false)
-}
-
 func (c *APIClient) readShow(ctx context.Context, project, id string, query url.Values, complete bool) (gen.ShowIssueResponseBody, projectRef, error) {
 	path, resolved, _, err := c.issuesPath(ctx, project)
 	if err != nil {
@@ -610,6 +604,20 @@ func attributionOf(author string, teammate, source, accountable *string) Attribu
 // The project is the request's, else the workspace binding, else the default.
 // A look-alike soft block is surfaced as an error, as with the kata CLI.
 func (c *APIClient) Create(ctx context.Context, req CreateReq) (CreateResult, error) {
+	return c.create(ctx, req, "")
+}
+
+// CreateInProject creates only if a fresh project resolution still matches the
+// UID captured for this delivery. The selected numeric project ID and UID come
+// from the same resolution, so a reused project name cannot receive the write.
+func (c *APIClient) CreateInProject(ctx context.Context, expectedProjectUID string, req CreateReq) (CreateResult, error) {
+	if expectedProjectUID == "" {
+		return CreateResult{}, fmt.Errorf("%w: expected project identity is required", ErrRequestRejected)
+	}
+	return c.create(ctx, req, expectedProjectUID)
+}
+
+func (c *APIClient) create(ctx context.Context, req CreateReq, expectedProjectUID string) (CreateResult, error) {
 	body, err := createRequest(req)
 	if err != nil {
 		return CreateResult{}, err
@@ -623,6 +631,9 @@ func (c *APIClient) Create(ctx context.Context, req CreateReq) (CreateResult, er
 	path, project, _, err := c.issuesPath(ctx, req.Project)
 	if err != nil {
 		return CreateResult{}, err
+	}
+	if expectedProjectUID != "" && project.UID != expectedProjectUID {
+		return CreateResult{}, ErrProjectChanged
 	}
 	var header http.Header
 	if req.IdempotencyKey != "" {

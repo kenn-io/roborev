@@ -53,6 +53,48 @@ func TestAPIClientResolveExplicitProject(t *testing.T) {
 	require.ErrorIs(t, err, ErrProjectNotFound)
 }
 
+func TestAPIClientResolveSelectionUsesRegisteredAlias(t *testing.T) {
+	f := katafake.New(t)
+	const identity = "code.example/team/repo"
+	wantProjectUID := f.Projects[1].UID
+	f.Override = func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != "/api/v1/projects/resolve" {
+			return false
+		}
+		var body map[string]any
+		assert.NoError(t, json.UnmarshalRead(r.Body, &body))
+		assert.Equal(t, map[string]any{"alias": map[string]any{"identity": identity, "kind": "git"}}, body)
+		f.Reply(w, gen.ProjectResolveBody{Project: f.Projects[1], Alias: gen.ProjectAlias{
+			AliasIdentity: identity, AliasKind: "git", ID: 1, ProjectID: f.Projects[1].ID, CreatedAt: time.Unix(0, 0).UTC(),
+		}})
+		f.Projects[1].UID = "replacement-project"
+		return true
+	}
+	c := apiClientFor(t, f, t.TempDir())
+	b, err := c.ResolveSelection(t.Context(), Binding{Project: "old-name", Alias: &ProjectAlias{Identity: identity, Kind: "git"}})
+	require.NoError(t, err)
+	assert.Equal(t, Binding{Project: "other", ProjectUID: wantProjectUID}, b)
+	for _, request := range f.AllRequests() {
+		assert.NotEqual(t, "/api/v1/projects/7/issues", request.Path)
+		assert.NotEqual(t, "/api/v1/projects", request.Path)
+	}
+}
+
+func TestAPIClientCreateInProjectRejectsReassignedName(t *testing.T) {
+	f := katafake.New(t)
+	c := apiClientFor(t, f, namedWorkspace(t, "reviews"))
+	b, err := c.ResolveProject(t.Context(), "reviews")
+	require.NoError(t, err)
+	f.Projects[0].UID = "replacement-project"
+	_, err = c.CreateInProject(t.Context(), b.ProjectUID, CreateReq{
+		Project: "reviews", Title: "Review notice", IdempotencyKey: "publication:1",
+	})
+	require.ErrorIs(t, err, ErrProjectChanged)
+	for _, request := range f.AllRequests() {
+		assert.False(t, request.Method == http.MethodPost && strings.HasSuffix(request.Path, "/issues"))
+	}
+}
+
 func TestAPIClientEndpointIdentity(t *testing.T) {
 	c, err := NewAPIClient(t.TempDir(), config.KataIntegrationConfig{Enabled: true, Endpoint: "https://KATA.example.com:443/proxy/", APIKey: testAPIKey})
 	require.NoError(t, err)

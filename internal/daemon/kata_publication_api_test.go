@@ -136,8 +136,8 @@ func mapQueryJob(id int64) url.Values { return url.Values{"job_id": {strconv.For
 // worker. The issue and metadata survive; no local issue UID is known yet.
 type lostKataCreateReceipt struct{ *kata.APIClient }
 
-func (c lostKataCreateReceipt) Create(ctx context.Context, req kata.CreateReq) (kata.CreateResult, error) {
-	if _, err := c.APIClient.Create(ctx, req); err != nil {
+func (c lostKataCreateReceipt) CreateInProject(ctx context.Context, expectedProjectUID string, req kata.CreateReq) (kata.CreateResult, error) {
+	if _, err := c.APIClient.CreateInProject(ctx, expectedProjectUID, req); err != nil {
 		return kata.CreateResult{}, err
 	}
 	return kata.CreateResult{}, errors.New("response lost")

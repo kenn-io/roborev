@@ -316,8 +316,8 @@ func TestKataSummaryFreezesPolicyAndDestination(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Integrations.Kata = config.KataIntegrationConfig{Enabled: true, Endpoint: "https://kata.example", DefaultProject: "reviews", Teammate: "reviewer"}
 	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.*", Findings: "summary"}}
-	resolver := func(_ context.Context, endpoint, project string) (kata.Binding, error) {
-		return kata.Binding{Project: project, ProjectUID: "pinned-project"}, nil
+	resolver := func(_ context.Context, _ string, selection kata.Binding) (kata.Binding, error) {
+		return kata.Binding{Project: selection.Project, ProjectUID: "pinned-project"}, nil
 	}
 	prepared, err := prepareKataPublications(t.Context(), cfg, job, kataCompletionOutcome(c), resolver)
 	require.NoError(t, err)
@@ -361,8 +361,8 @@ func TestKataDistinctHooksDoNotConflict(t *testing.T) {
 		{Type: "kata", Event: "review.*", Findings: "comments", Project: "other-project"},
 		{Type: "kata", Event: "review.*", Findings: "summary"},
 	}
-	requests, err := buildKataPublications(t.Context(), cfg, c, func(_ context.Context, _ string, project string) (kata.Binding, error) {
-		return kata.Binding{Project: project, ProjectUID: "uid-" + project}, nil
+	requests, err := buildKataPublications(t.Context(), cfg, c, func(_ context.Context, _ string, selection kata.Binding) (kata.Binding, error) {
+		return kata.Binding{Project: selection.Project, ProjectUID: "uid-" + selection.Project}, nil
 	})
 	require.NoError(t, err)
 	require.Len(t, requests, 5)
@@ -370,6 +370,48 @@ func TestKataDistinctHooksDoNotConflict(t *testing.T) {
 	for _, r := range requests {
 		assert.NotContains(t, identities, r.OperationID)
 		identities[r.OperationID] = true
+	}
+}
+
+func TestKataPublicationPreservesWorkspaceAliasAndCanonicalProject(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	repo.RunGit("remote", "add", "origin", "https://code.example/team/repo.git")
+	require.NoError(t, os.WriteFile(filepath.Join(repo.Root, ".kata.toml"), []byte("version = 1\n[project]\nname = \"old-name\"\n"), 0o600))
+	id := uuid.New()
+	job := &storage.ReviewJob{ID: 1, UUID: &id, JobType: storage.JobTypeReview, RepoPath: repo.Root}
+	cfg := config.DefaultConfig()
+	cfg.Integrations.Kata = config.KataIntegrationConfig{Enabled: true, Endpoint: "https://kata.example"}
+	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.*", Findings: "summary"}}
+
+	for _, tc := range []struct {
+		name          string
+		resolveErr    error
+		wantProject   string
+		wantProjectID string
+	}{
+		{name: "resolved alias", wantProject: "renamed", wantProjectID: "project-1"},
+		{name: "unresolved alias stays pending", resolveErr: errors.New("offline"), wantProject: "old-name"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var selected kata.Binding
+			requests, err := buildKataPublications(t.Context(), cfg, storage.KataCompletion{
+				Job: job, ReviewUUID: uuid.New().String(), Verdict: storage.VerdictFail,
+			}, func(_ context.Context, _ string, selection kata.Binding) (kata.Binding, error) {
+				selected = selection
+				if tc.resolveErr != nil {
+					return kata.Binding{}, tc.resolveErr
+				}
+				return kata.Binding{Project: "renamed", ProjectUID: "project-1"}, nil
+			})
+			require.NoError(t, err)
+			require.Len(t, requests, 1)
+			assert.Equal(t, "old-name", selected.Project)
+			require.NotNil(t, selected.Alias)
+			assert.Equal(t, kata.ProjectAlias{Identity: "code.example/team/repo", Kind: "git"}, *selected.Alias)
+			assert.Equal(t, tc.wantProject, requests[0].Project)
+			assert.Equal(t, tc.wantProjectID, requests[0].ProjectUID)
+			assert.Equal(t, selected.Alias, requests[0].WorkspaceAlias)
+		})
 	}
 }
 
@@ -397,6 +439,10 @@ func (f *restartKataAPI) ResolveProject(_ context.Context, project string) (kata
 		return kata.Binding{}, errors.New("project changed")
 	}
 	return kata.Binding{Project: project, ProjectUID: f.uid}, nil
+}
+
+func (f *restartKataAPI) ResolveSelection(ctx context.Context, selection kata.Binding) (kata.Binding, error) {
+	return f.ResolveProject(ctx, selection.Project)
 }
 
 func (f *restartKataAPI) ListProject(context.Context, string, kata.ListOpts) ([]kata.Issue, error) {
@@ -427,6 +473,13 @@ func (f *restartKataAPI) Create(_ context.Context, r kata.CreateReq) (kata.Creat
 	return kata.CreateResult{IssueUID: "issue-1", ShortID: "one", ProjectUID: f.uid}, nil
 }
 
+func (f *restartKataAPI) CreateInProject(ctx context.Context, expectedUID string, req kata.CreateReq) (kata.CreateResult, error) {
+	if expectedUID != f.uid {
+		return kata.CreateResult{}, kata.ErrProjectChanged
+	}
+	return f.Create(ctx, req)
+}
+
 func (f *restartKataAPI) Comment(_ context.Context, r kata.CommentReq) (kata.CommentResult, error) {
 	if f.failAfterRegistration {
 		return kata.CommentResult{}, errors.New("disconnected after pending registration")
@@ -448,10 +501,10 @@ func TestKataOfflineRestartUsesFrozenPublication(t *testing.T) {
 	cfg.Integrations.Kata = config.KataIntegrationConfig{Enabled: true, Endpoint: "https://kata.example", DefaultProject: "reviews", APIKey: "original-key"}
 	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.*", Findings: "summary"}}
 	repoPath := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(repoPath, ".kata.local.toml"), []byte("[project]\nname = 'reviews'\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(repoPath, ".kata.local.toml"), []byte("version = 1\n[project]\nname = 'reviews'\n"), 0o600))
 	job := createTestJob(t, db, repoPath, "abc123", "test")
 	db.SetKataHandoffBuilder(func(ctx context.Context, c storage.KataCompletion) ([]katapublish.Request, error) {
-		return buildKataPublications(ctx, cfg, c, func(context.Context, string, string) (kata.Binding, error) {
+		return buildKataPublications(ctx, cfg, c, func(context.Context, string, kata.Binding) (kata.Binding, error) {
 			return kata.Binding{}, errors.New("initial outage")
 		})
 	})
@@ -469,7 +522,7 @@ func TestKataOfflineRestartUsesFrozenPublication(t *testing.T) {
 	// Neither new hook settings, binding nor default project authorize a reroute.
 	cfg.Hooks[0].Findings = "comments"
 	cfg.Integrations.Kata.DefaultProject = "elsewhere"
-	require.NoError(t, os.WriteFile(filepath.Join(repoPath, ".kata.local.toml"), []byte("[project]\nname = 'elsewhere'\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(repoPath, ".kata.local.toml"), []byte("version = 1\n[project]\nname = 'elsewhere'\n"), 0o600))
 	api := &restartKataAPI{db: reopened, operation: saved[0].OperationID, endpoint: "https://kata.example", project: "reviews", uid: "project-1", failAfterRegistration: true}
 	watcher := NewConfigWatcher("", cfg, nil, nil)
 	publisher := &kataPublisher{db: reopened, config: watcher, newAPI: func(config.KataIntegrationConfig) (katapublish.API, error) { return api, nil }}
@@ -535,7 +588,7 @@ func TestKataReviewHookDoesNotAuthorizeGoalReview(t *testing.T) {
 	cfg.Integrations.Kata = config.KataIntegrationConfig{Enabled: true, Endpoint: "https://kata.example", DefaultProject: "reviews"}
 	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.*", Findings: "comments"}}
 	for _, failure := range []string{"", "synthetic failure"} {
-		got, err := buildKataPublications(t.Context(), cfg, storage.KataCompletion{Job: job, ReviewUUID: uuid.New().String(), Verdict: storage.VerdictFail, Error: failure}, func(context.Context, string, string) (kata.Binding, error) {
+		got, err := buildKataPublications(t.Context(), cfg, storage.KataCompletion{Job: job, ReviewUUID: uuid.New().String(), Verdict: storage.VerdictFail, Error: failure}, func(context.Context, string, kata.Binding) (kata.Binding, error) {
 			return kata.Binding{Project: "reviews", ProjectUID: "project-1"}, nil
 		})
 		require.NoError(t, err)
@@ -578,7 +631,7 @@ func TestKataPublicationAuthorizesDistinctIssueAfterMarkerLookup(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Integrations.Kata = config.KataIntegrationConfig{Enabled: true, Endpoint: "https://kata.example", DefaultProject: "reviews"}
 	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.*", Findings: "summary"}}
-	got, err := buildKataPublications(t.Context(), cfg, storage.KataCompletion{Job: job, ReviewUUID: uuid.New().String(), Verdict: storage.VerdictFail}, func(context.Context, string, string) (kata.Binding, error) {
+	got, err := buildKataPublications(t.Context(), cfg, storage.KataCompletion{Job: job, ReviewUUID: uuid.New().String(), Verdict: storage.VerdictFail}, func(context.Context, string, kata.Binding) (kata.Binding, error) {
 		return kata.Binding{Project: "reviews", ProjectUID: "project-1"}, nil
 	})
 	require.NoError(t, err)
@@ -597,7 +650,7 @@ func TestKataPublicationKeyDoesNotChangeWithCaptureTime(t *testing.T) {
 	cfg.Integrations.Kata = config.KataIntegrationConfig{Enabled: true, Endpoint: "https://kata.example", DefaultProject: "reviews"}
 	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.*", Findings: "summary"}}
 	c := storage.KataCompletion{Job: job, ReviewUUID: uuid.New().String(), Verdict: storage.VerdictFail, At: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)}
-	resolve := func(context.Context, string, string) (kata.Binding, error) {
+	resolve := func(context.Context, string, kata.Binding) (kata.Binding, error) {
 		return kata.Binding{Project: "reviews", ProjectUID: "project-1"}, nil
 	}
 	first, err := buildKataPublications(t.Context(), cfg, c, resolve)
@@ -616,7 +669,7 @@ func TestKataCommentsWithoutStructuredFindingsKeepsIssueBody(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Integrations.Kata = config.KataIntegrationConfig{Enabled: true, Endpoint: "https://kata.example", DefaultProject: "reviews"}
 	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.*", Findings: "comments"}}
-	got, err := buildKataPublications(t.Context(), cfg, storage.KataCompletion{Job: job, ReviewUUID: uuid.New().String(), Verdict: storage.VerdictFail, Output: "Historical prose finding."}, func(context.Context, string, string) (kata.Binding, error) {
+	got, err := buildKataPublications(t.Context(), cfg, storage.KataCompletion{Job: job, ReviewUUID: uuid.New().String(), Verdict: storage.VerdictFail, Output: "Historical prose finding."}, func(context.Context, string, kata.Binding) (kata.Binding, error) {
 		return kata.Binding{Project: "reviews", ProjectUID: "project-1"}, nil
 	})
 	require.NoError(t, err)
@@ -632,7 +685,7 @@ func TestKataFailedManualRunsKeepDistinctFrozenPublications(t *testing.T) {
 	cfg.Integrations.Kata = config.KataIntegrationConfig{Enabled: true, Endpoint: "https://kata.example", DefaultProject: "reviews"}
 	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.failed"}}
 	tc.DB.SetKataHandoffBuilder(func(ctx context.Context, c storage.KataCompletion) ([]katapublish.Request, error) {
-		return buildKataPublications(ctx, cfg, c, func(context.Context, string, string) (kata.Binding, error) {
+		return buildKataPublications(ctx, cfg, c, func(context.Context, string, kata.Binding) (kata.Binding, error) {
 			return kata.Binding{Project: "reviews", ProjectUID: "project-1"}, nil
 		})
 	})
@@ -693,7 +746,7 @@ func TestKataPublicationUsesValidatedCallerCheckout(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			repo := testutil.NewTestRepoWithCommit(t)
 			require.NoError(t, config.SaveRepoConfigTo(filepath.Join(repo.Root, ".roborev.toml"), &config.RepoConfig{Hooks: []config.HookConfig{{Type: "kata", Event: "review.*", Findings: "comments"}}}))
-			require.NoError(t, os.WriteFile(filepath.Join(repo.Root, ".kata.toml"), []byte("[project]\nname = \"main-project\"\n"), 0o600))
+			require.NoError(t, os.WriteFile(filepath.Join(repo.Root, ".kata.toml"), []byte("version = 1\n[project]\nname = \"main-project\"\n"), 0o600))
 			checkout := filepath.Join(t.TempDir(), "caller")
 			wantProject, wantPolicy := "worktree-project", "summary"
 			switch mode {
@@ -711,7 +764,7 @@ func TestKataPublicationUsesValidatedCallerCheckout(t *testing.T) {
 					repoConfig.Hooks = []config.HookConfig{{Type: "kata", Event: "review.*", Findings: "summary"}}
 				}
 				require.NoError(t, config.SaveRepoConfigTo(filepath.Join(checkout, ".roborev.toml"), repoConfig))
-				require.NoError(t, os.WriteFile(filepath.Join(checkout, ".kata.toml"), []byte("[project]\nname = \"worktree-project\"\n"), 0o600))
+				require.NoError(t, os.WriteFile(filepath.Join(checkout, ".kata.toml"), []byte("version = 1\n[project]\nname = \"worktree-project\"\n"), 0o600))
 			}
 			cfg := config.DefaultConfig()
 			cfg.Integrations.Kata = config.KataIntegrationConfig{Enabled: true, Endpoint: "https://kata.example", DefaultProject: "default-project"}
@@ -719,9 +772,9 @@ func TestKataPublicationUsesValidatedCallerCheckout(t *testing.T) {
 			const secret = "WORKTREE_PRIVATE_SENTINEL"
 			completion := storage.KataCompletion{Job: &storage.ReviewJob{ID: 1, UUID: &id, JobType: storage.JobTypeReview, RepoPath: repo.Root, WorktreePath: checkout}, ReviewUUID: reviewID.String(), Verdict: storage.VerdictFail, Output: secret, Snapshots: []storage.FindingSnapshot{{Selector: "f:example", ReviewUUID: reviewID, DocumentHash: strings.Repeat("a", 64), Finding: structuredreview.Finding{Severity: "high", Problem: secret, Fix: secret}}}}
 			var resolved []string
-			requests, err := buildKataPublications(t.Context(), cfg, completion, func(_ context.Context, _ string, project string) (kata.Binding, error) {
-				resolved = append(resolved, project)
-				return kata.Binding{Project: project, ProjectUID: project + "-uid"}, nil
+			requests, err := buildKataPublications(t.Context(), cfg, completion, func(_ context.Context, _ string, selection kata.Binding) (kata.Binding, error) {
+				resolved = append(resolved, selection.Project)
+				return kata.Binding{Project: selection.Project, ProjectUID: selection.Project + "-uid"}, nil
 			})
 			require.NoError(t, err)
 			if mode == "no-hook" {
@@ -757,7 +810,7 @@ func TestKataIdenticalHooksCaptureOneResolutionAtomically(t *testing.T) {
 			cfg.Hooks = []config.HookConfig{hook}
 			lookups := 0
 			db.SetKataHandoffBuilder(func(ctx context.Context, c storage.KataCompletion) ([]katapublish.Request, error) {
-				return buildKataPublications(ctx, cfg, c, func(context.Context, string, string) (kata.Binding, error) {
+				return buildKataPublications(ctx, cfg, c, func(context.Context, string, kata.Binding) (kata.Binding, error) {
 					lookups++
 					if lookups == 1 {
 						return kata.Binding{}, errors.New("initial outage")
@@ -802,7 +855,7 @@ func TestKataUnboundHooksDoNotCapturePublication(t *testing.T) {
 			cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.*"}}
 			resolved := false
 			db.SetKataHandoffBuilder(func(ctx context.Context, c storage.KataCompletion) ([]katapublish.Request, error) {
-				return buildKataPublications(ctx, cfg, c, func(context.Context, string, string) (kata.Binding, error) {
+				return buildKataPublications(ctx, cfg, c, func(context.Context, string, kata.Binding) (kata.Binding, error) {
 					resolved = true
 					return kata.Binding{}, errors.New("no project selected")
 				})
@@ -840,7 +893,7 @@ func TestKataUnreadableCredentialCaptureCanBeReauthorized(t *testing.T) {
 			cfg.Integrations.Kata = config.KataIntegrationConfig{Enabled: true, Endpoint: "https://kata.example", DefaultProject: "reviews", APIKeyFile: keyFile}
 			cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.*", Findings: "summary"}}
 			db.SetKataHandoffBuilder(func(ctx context.Context, c storage.KataCompletion) ([]katapublish.Request, error) {
-				return buildKataPublications(ctx, cfg, c, func(context.Context, string, string) (kata.Binding, error) {
+				return buildKataPublications(ctx, cfg, c, func(context.Context, string, kata.Binding) (kata.Binding, error) {
 					return kata.Binding{Project: "reviews", ProjectUID: "project-1"}, nil
 				})
 			})
@@ -889,7 +942,7 @@ func TestKataCaptureFreezesTheCredentialReadBeforeResolution(t *testing.T) {
 	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.*", Findings: "summary"}}
 	id := uuid.New()
 	c := storage.KataCompletion{Job: &storage.ReviewJob{ID: 1, UUID: &id, JobType: storage.JobTypeReview, RepoPath: t.TempDir()}, ReviewUUID: uuid.New().String(), Verdict: storage.VerdictFail}
-	requests, err := buildKataPublications(t.Context(), cfg, c, func(context.Context, string, string) (kata.Binding, error) {
+	requests, err := buildKataPublications(t.Context(), cfg, c, func(context.Context, string, kata.Binding) (kata.Binding, error) {
 		require.NoError(t, os.Remove(keyFile))
 		return kata.Binding{Project: "reviews", ProjectUID: "project-1"}, nil
 	})

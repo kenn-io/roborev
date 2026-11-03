@@ -117,6 +117,25 @@ func (c *APIClient) ResolveProject(ctx context.Context, name string) (Binding, e
 	return Binding{Project: project.Name, ProjectUID: project.UID}, nil
 }
 
+// ResolveSelection resolves the workspace selection captured with a
+// publication. A committed binding uses its registered alias, so project
+// renames do not turn the old display name into a different destination.
+func (c *APIClient) ResolveSelection(ctx context.Context, selection Binding) (Binding, error) {
+	if selection.Alias == nil {
+		return c.ResolveProject(ctx, selection.Project)
+	}
+	client := *c
+	client.workspaceAlias = selection.Alias
+	project, _, err := client.selectProjectRef(ctx, "")
+	if err != nil {
+		return Binding{}, err
+	}
+	if project.UID == "" {
+		return Binding{}, fmt.Errorf("%w: project has no UID", ErrInvalidResponse)
+	}
+	return Binding{Project: project.Name, ProjectUID: project.UID}, nil
+}
+
 // ShowComplete reads every comment belonging to the issue. Kata v0.19.0's
 // internal/commentref/graph.go:315 limits only thread selections; an
 // unfiltered show is complete without a limit or cursor. Missing/null comments

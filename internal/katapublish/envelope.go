@@ -36,17 +36,18 @@ type Request struct {
 	// preserves existing completed-publication fingerprints.
 	FailureRun string `json:"failure_run,omitempty"`
 	// IssueUID is reserved for explicit response delivery, which K2 rejects.
-	IssueUID    string
-	OperationID string
-	Endpoint    string
-	Project     string
-	ProjectUID  string
-	Policy      string
-	ReviewUUID  string
-	Teammate    string
-	Create      kata.CreateReq
-	Entries     []Entry
-	Responses   []Response
+	IssueUID       string
+	OperationID    string
+	Endpoint       string
+	Project        string
+	ProjectUID     string
+	WorkspaceAlias *kata.ProjectAlias `json:"workspace_alias,omitempty"`
+	Policy         string
+	ReviewUUID     string
+	Teammate       string
+	Create         kata.CreateReq
+	Entries        []Entry
+	Responses      []Response
 }
 
 type Entry struct {
@@ -237,8 +238,11 @@ func validateRequest(req Request) error {
 	if len(req.Responses) > 0 || req.IssueUID != "" {
 		return pending("response delivery is not enabled")
 	}
-	if req.OperationID == "" || req.Endpoint == "" || req.Project == "" || (req.ReviewUUID == "" && len(req.Entries) > 0) || req.Teammate == "" {
+	if req.OperationID == "" || req.Endpoint == "" || (req.Project == "" && req.WorkspaceAlias == nil) || (req.ReviewUUID == "" && len(req.Entries) > 0) || req.Teammate == "" {
 		return fmt.Errorf("%w: incomplete request", ErrPending)
+	}
+	if req.WorkspaceAlias != nil && (strings.TrimSpace(req.WorkspaceAlias.Identity) == "" || strings.TrimSpace(req.WorkspaceAlias.Kind) == "") {
+		return fmt.Errorf("%w: invalid workspace alias", ErrPending)
 	}
 	if req.Policy != "comments" && req.Policy != "summary" && req.Policy != "legacy" {
 		return fmt.Errorf("%w: invalid policy", ErrPending)

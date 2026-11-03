@@ -33,7 +33,7 @@ func kataCompletionOutcome(c storage.KataCompletion) kataOutcome {
 	return kataOutcome{event: "completed", verdict: c.Verdict}
 }
 
-type kataDestinationResolver func(context.Context, string, string) (kata.Binding, error)
+type kataDestinationResolver func(context.Context, string, kata.Binding) (kata.Binding, error)
 
 // buildKataPublications runs before the SQLite transition: resolve a destination
 // here, then persist these exact payloads together with the immutable findings.
@@ -65,8 +65,9 @@ func prepareKataPublications(ctx context.Context, cfg *config.Config, job *stora
 		return nil, err
 	}
 	type destinationHook struct {
-		hook                                                config.HookConfig
-		endpoint, project, projectUID, credential, teammate string
+		hook                                                             config.HookConfig
+		endpoint, project, projectUID, credential, teammate, selectionID string
+		workspaceAlias                                                   *kata.ProjectAlias
 	}
 	var captured []destinationHook
 	bindings := map[string]kata.Binding{}
@@ -81,18 +82,17 @@ func prepareKataPublications(ctx context.Context, cfg *config.Config, job *stora
 		if _, ok := kataCreateRequest(hook, event); !ok {
 			continue
 		}
-		project := hook.Project
-		if project == "" {
-			b, err := kata.NewCLIClient(effectiveRepo).Binding(ctx)
-			if err == nil {
-				project = b.Project
-			} else if !errors.Is(err, kata.ErrNoBinding) {
+		selection := kata.Binding{Project: hook.Project}
+		if selection.Project == "" {
+			var err error
+			selection, err = kata.WorkspaceBinding(ctx, effectiveRepo)
+			if errors.Is(err, kata.ErrNoBinding) {
+				selection = kata.Binding{Project: connection.DefaultProject}
+			} else if err != nil {
 				return nil, err
-			} else {
-				project = connection.DefaultProject
 			}
 		}
-		if project == "" {
+		if selection.Project == "" && selection.Alias == nil {
 			continue
 		}
 		endpoint, err := kata.NormalizeEndpoint(connection.Endpoint)
@@ -107,13 +107,28 @@ func prepareKataPublications(ctx context.Context, cfg *config.Config, job *stora
 			credentialDigest := sha256.Sum256([]byte(credential))
 			credentialFingerprint = hex.EncodeToString(credentialDigest[:])
 		}
-		binding, found := bindings[project]
+		selectionID := kataSelectionID(selection)
+		binding, found := bindings[selectionID]
 		if !found {
-			binding, err = resolve(ctx, endpoint, project)
+			binding, err = resolve(ctx, endpoint, selection)
 			if err != nil {
-				binding = kata.Binding{Project: project}
+				binding = selection
 			}
-			bindings[project] = binding
+			if binding.Project == "" {
+				binding.Project = selection.Project
+			}
+			bindings[selectionID] = binding
+		}
+		// The alias is the selection's identity, but the resolved project name
+		// is the canonical name to freeze with this publication.
+		project := binding.Project
+		if project == "" {
+			project = selection.Project
+		}
+		var alias *kata.ProjectAlias
+		if selection.Alias != nil {
+			copy := *selection.Alias
+			alias = &copy
 		}
 		// Copy slices and pointers supplied by configuration so a reload cannot
 		// alter the policy after destination preparation.
@@ -122,7 +137,11 @@ func prepareKataPublications(ctx context.Context, cfg *config.Config, job *stora
 			priority := *hook.Priority
 			hook.Priority = &priority
 		}
-		captured = append(captured, destinationHook{hook, endpoint, project, binding.ProjectUID, credentialFingerprint, connection.ResolvedTeammate()})
+		captured = append(captured, destinationHook{
+			hook: hook, endpoint: endpoint, project: project, projectUID: binding.ProjectUID,
+			credential: credentialFingerprint, teammate: connection.ResolvedTeammate(),
+			selectionID: selectionID, workspaceAlias: alias,
+		})
 	}
 	return func(_ context.Context, c storage.KataCompletion) ([]katapublish.Request, error) {
 		eventType := jobEventType(c.Job, "completed")
@@ -163,7 +182,7 @@ func prepareKataPublications(ctx context.Context, cfg *config.Config, job *stora
 				Identity, Event, Endpoint, Project, Policy string
 				Labels                                     []string
 				Priority                                   *int
-			}{identity, eventType, destination.endpoint, destination.project, policy, create.Labels, create.Priority}, json.Deterministic(true))
+			}{identity, eventType, destination.endpoint, destination.selectionID, policy, create.Labels, create.Priority}, json.Deterministic(true))
 			if err != nil {
 				return nil, err
 			}
@@ -174,7 +193,7 @@ func prepareKataPublications(ctx context.Context, cfg *config.Config, job *stora
 			}
 			seen[operationID] = struct{}{}
 			create.Project, create.ForceNew = destination.project, true
-			req := katapublish.Request{OperationID: operationID, Endpoint: destination.endpoint, Project: destination.project, ProjectUID: destination.projectUID, Policy: policy, ReviewUUID: c.ReviewUUID, Teammate: destination.teammate, CredentialFingerprint: destination.credential, Create: create}
+			req := katapublish.Request{OperationID: operationID, Endpoint: destination.endpoint, Project: destination.project, ProjectUID: destination.projectUID, WorkspaceAlias: destination.workspaceAlias, Policy: policy, ReviewUUID: c.ReviewUUID, Teammate: destination.teammate, CredentialFingerprint: destination.credential, Create: create}
 			if policy != "legacy" {
 				for _, snap := range c.Snapshots {
 					body := fmt.Sprintf("Finding %s. Inspect with roborev show %d.", snap.Selector, c.Job.ID)
@@ -188,6 +207,13 @@ func prepareKataPublications(ctx context.Context, cfg *config.Config, job *stora
 		}
 		return requests, nil
 	}, nil
+}
+
+func kataSelectionID(selection kata.Binding) string {
+	if selection.Alias != nil {
+		return "alias:" + selection.Alias.Kind + "\x00" + selection.Alias.Identity
+	}
+	return "project:" + selection.Project
 }
 
 // kataPublisher drains only saved operations. No event or CLI wake-up is needed
@@ -283,21 +309,21 @@ func (s *Server) prepareKataTransition(ctx context.Context, job *storage.ReviewJ
 	if cfg != nil && cfg.Integrations.Kata.Enabled {
 		mode = "api"
 	}
-	builder, err := prepareKataPublications(ctx, cfg, job, outcome, func(ctx context.Context, endpoint, project string) (kata.Binding, error) {
+	builder, err := prepareKataPublications(ctx, cfg, job, outcome, func(ctx context.Context, endpoint string, selection kata.Binding) (kata.Binding, error) {
 		client, err := kata.NewAPIClient("", cfg.Integrations.Kata, kata.WithoutWorkspace())
 		if err == nil {
 			var binding kata.Binding
-			binding, err = client.ResolveProject(ctx, project)
+			binding, err = client.ResolveSelection(ctx, selection)
 			if err == nil {
-				if err = s.db.RememberKataDestination(ctx, endpoint, project, binding.ProjectUID); err != nil {
+				if err = s.db.RememberKataDestination(ctx, endpoint, selection.Project, binding.ProjectUID); err != nil {
 					return kata.Binding{}, err
 				}
 				return binding, nil
 			}
 		}
-		uid, cacheErr := s.db.CachedKataDestination(ctx, endpoint, project)
+		uid, cacheErr := s.db.CachedKataDestination(ctx, endpoint, selection.Project)
 		if cacheErr == nil && uid != "" {
-			return kata.Binding{Project: project, ProjectUID: uid}, nil
+			return kata.Binding{Project: selection.Project, Alias: selection.Alias, ProjectUID: uid}, nil
 		}
 		return kata.Binding{}, err
 	})

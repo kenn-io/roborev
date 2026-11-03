@@ -20,10 +20,12 @@ const replayWindow = 7 * 24 * time.Hour
 type API interface {
 	Endpoint() string
 	ResolveProject(context.Context, string) (kata.Binding, error)
+	ResolveSelection(context.Context, kata.Binding) (kata.Binding, error)
 	ListProject(context.Context, string, kata.ListOpts) ([]kata.Issue, error)
 	Show(context.Context, string) (kata.Issue, error)
 	ShowComplete(context.Context, string) (kata.Issue, error)
 	Create(context.Context, kata.CreateReq) (kata.CreateResult, error)
+	CreateInProject(context.Context, string, kata.CreateReq) (kata.CreateResult, error)
 	Comment(context.Context, kata.CommentReq) (kata.CommentResult, error)
 	MutateMetadata(context.Context, string, string, any, any) (kata.Issue, error)
 }
@@ -33,7 +35,7 @@ func pending(reason string) error { return fmt.Errorf("%w: %s", ErrPending, reas
 // deliveryError preserves useful classification without leaking a server's
 // echoed payload into local diagnostics, logs or summary-policy metadata.
 func deliveryError(err error) error {
-	kinds := []error{kata.ErrDuplicateReply, kata.ErrIdempotencyMismatch, kata.ErrIssueClosed, kata.ErrRepliesUnsupported, kata.ErrEvidenceTooShort, kata.ErrAuthenticationRequired, kata.ErrConflict, kata.ErrIncompatible, kata.ErrInvalidResponse, kata.ErrNotFound, kata.ErrProjectNotFound, kata.ErrRequestRejected, kata.ErrUnreachable, kata.ErrRedirect}
+	kinds := []error{kata.ErrDuplicateReply, kata.ErrIdempotencyMismatch, kata.ErrIssueClosed, kata.ErrRepliesUnsupported, kata.ErrEvidenceTooShort, kata.ErrAuthenticationRequired, kata.ErrConflict, kata.ErrIncompatible, kata.ErrInvalidResponse, kata.ErrNotFound, kata.ErrProjectNotFound, kata.ErrProjectChanged, kata.ErrRequestRejected, kata.ErrUnreachable, kata.ErrRedirect}
 	var classified error
 	for _, kind := range kinds {
 		if errors.Is(err, kind) {
@@ -113,9 +115,13 @@ func Deliver(ctx context.Context, api API, req Request, state State, checkpoint 
 	if api.Endpoint() != req.Endpoint {
 		return state, pending("destination endpoint changed")
 	}
-	resolved, err := api.ResolveProject(ctx, req.Project)
+	resolved, err := api.ResolveSelection(ctx, kata.Binding{Project: req.Project, Alias: req.WorkspaceAlias})
 	if err != nil {
 		return state, deliveryError(err)
+	}
+	projectName := resolved.Project
+	if projectName == "" {
+		return state, pending("destination project is missing")
 	}
 	if resolved.ProjectUID == "" || (req.ProjectUID != "" && req.ProjectUID != resolved.ProjectUID) || (state.ProjectUID != "" && state.ProjectUID != resolved.ProjectUID) {
 		return state, pending("destination project changed")
@@ -134,7 +140,7 @@ func Deliver(ctx context.Context, api API, req Request, state State, checkpoint 
 		return state, pending("local checkpoint failed")
 	}
 	fingerprint, _ := Fingerprint(req)
-	listed, err := api.ListProject(ctx, req.Project, kata.ListOpts{Status: "all", Unlimited: true})
+	listed, err := api.ListProject(ctx, projectName, kata.ListOpts{Status: "all", Unlimited: true})
 	if err != nil {
 		return state, deliveryError(err)
 	}
@@ -145,7 +151,7 @@ func Deliver(ctx context.Context, api API, req Request, state State, checkpoint 
 		if candidate.Metadata == nil {
 			ref := candidate.QualifiedID
 			if ref == "" {
-				ref = req.Project + "#" + candidate.ShortID
+				ref = projectName + "#" + candidate.ShortID
 			}
 			candidate, err = api.Show(ctx, ref)
 			if err != nil {
@@ -171,7 +177,7 @@ func Deliver(ctx context.Context, api API, req Request, state State, checkpoint 
 		state.Attribution = issue.Attribution
 		state.IssueRef = issue.QualifiedID
 		if state.IssueRef == "" {
-			state.IssueRef = req.Project + "#" + issue.ShortID
+			state.IssueRef = projectName + "#" + issue.ShortID
 		}
 	} else {
 		if state.IssueUID != "" {
@@ -187,7 +193,7 @@ func Deliver(ctx context.Context, api API, req Request, state State, checkpoint 
 			return state, pending("local checkpoint failed")
 		}
 		create := req.Create
-		create.Project = req.Project
+		create.Project = projectName
 		create.IdempotencyKey = action(req, state.ProjectUID)
 		create.Metadata = maps.Clone(create.Metadata)
 		if create.Metadata == nil {
@@ -196,7 +202,7 @@ func Deliver(ctx context.Context, api API, req Request, state State, checkpoint 
 		create.Metadata[ActionKey] = action(req, state.ProjectUID)
 		create.Metadata[FingerprintKey] = fingerprint
 		create.Metadata[EnvelopeKey] = env
-		receipt, createErr := api.Create(ctx, create)
+		receipt, createErr := api.CreateInProject(ctx, state.ProjectUID, create)
 		if createErr != nil {
 			return state, deliveryError(createErr)
 		}
@@ -204,7 +210,7 @@ func Deliver(ctx context.Context, api API, req Request, state State, checkpoint 
 			return state, pending("invalid issue receipt")
 		}
 		state.IssueUID = receipt.IssueUID
-		state.IssueRef = req.Project + "#" + receipt.ShortID
+		state.IssueRef = projectName + "#" + receipt.ShortID
 		state.Attribution = receipt.Attribution
 	}
 	if err = checkpoint(state); err != nil {
@@ -403,7 +409,7 @@ func Lookup(ctx context.Context, api API, req Request, state State) (State, erro
 	if api.Endpoint() != req.Endpoint {
 		return state, pending("destination endpoint changed")
 	}
-	project, err := api.ResolveProject(ctx, req.Project)
+	project, err := api.ResolveSelection(ctx, kata.Binding{Project: req.Project, Alias: req.WorkspaceAlias})
 	if err != nil {
 		return state, deliveryError(err)
 	}
@@ -411,7 +417,11 @@ func Lookup(ctx context.Context, api API, req Request, state State) (State, erro
 		return state, pending("destination project changed")
 	}
 	state.ProjectUID = project.ProjectUID
-	issues, err := api.ListProject(ctx, req.Project, kata.ListOpts{Status: "all", Unlimited: true})
+	projectName := project.Project
+	if projectName == "" {
+		return state, pending("destination project is missing")
+	}
+	issues, err := api.ListProject(ctx, projectName, kata.ListOpts{Status: "all", Unlimited: true})
 	if err != nil {
 		return state, deliveryError(err)
 	}
@@ -420,7 +430,7 @@ func Lookup(ctx context.Context, api API, req Request, state State) (State, erro
 		if issue.Metadata == nil {
 			ref := issue.QualifiedID
 			if ref == "" {
-				ref = req.Project + "#" + issue.ShortID
+				ref = projectName + "#" + issue.ShortID
 			}
 			issue, err = api.Show(ctx, ref)
 			if err != nil {
@@ -444,7 +454,7 @@ func Lookup(ctx context.Context, api API, req Request, state State) (State, erro
 	state.IssueUID = issue.UID
 	state.IssueRef = issue.QualifiedID
 	if state.IssueRef == "" {
-		state.IssueRef = req.Project + "#" + issue.ShortID
+		state.IssueRef = projectName + "#" + issue.ShortID
 	}
 	state.Attribution = issue.Attribution
 	issue, err = api.ShowComplete(ctx, state.IssueRef)

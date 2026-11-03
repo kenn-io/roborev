@@ -316,6 +316,9 @@ func (f *Server) createIssue(w http.ResponseWriter, r *http.Request) {
 	short := fmt.Sprintf("n%03d", f.nextID)
 	issue := f.AddIssue(pid, short, req.Title, deref(req.Body), req.Labels...)
 	issue.Out.Author = author
+	if len(req.Metadata) > 0 {
+		issue.Out.Metadata = req.Metadata
+	}
 	issue.Out.Priority = req.Priority
 	reused := false
 	f.Reply(w, gen.MutationResponseBody{Changed: true, Issue: asIssue(issue.Out), Reused: &reused})

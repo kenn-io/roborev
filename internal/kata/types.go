@@ -66,8 +66,8 @@ type LinkPeer struct {
 
 // ProjectAlias identifies a workspace independently of its current project name.
 type ProjectAlias struct {
-	Identity string
-	Kind     string
+	Identity string `json:"identity"`
+	Kind     string `json:"kind"`
 }
 
 // Binding identifies the Kata project a workspace is bound to. Alias is set

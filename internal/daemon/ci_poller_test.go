@@ -5079,7 +5079,7 @@ func TestCIPromptPrebuildNeverIncludesKataContext(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), ".roborev.toml"),
 		[]byte("[kata_context]\nmode = \"open\"\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), ".kata.toml"),
-		[]byte("[project]\nname = \"victim\"\n"), 0o644))
+		[]byte("version = 1\n[project]\nname = \"victim\"\n"), 0o644))
 	sha := repo.CommitFile("feature.txt", "new feature\n", "Implement feature\n\nCloses: kata#abc4")
 
 	cfg := config.DefaultConfig()

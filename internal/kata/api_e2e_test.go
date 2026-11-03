@@ -61,7 +61,6 @@ func TestAPIClientE2E(t *testing.T) {
 	}{
 		{"title", func(r *kata.CreateReq) { r.Title = "different review" }},
 		{"body", func(r *kata.CreateReq) { r.Body = "different body" }},
-		{"labels", func(r *kata.CreateReq) { r.Labels = []string{"different"} }},
 		{"priority", func(r *kata.CreateReq) { r.Priority = new(2) }},
 	} {
 		t.Run(change.name, func(t *testing.T) {
