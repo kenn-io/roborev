@@ -150,9 +150,13 @@ func TestClaudeStrictReviewAddsTheReviewerServer(t *testing.T) {
 }
 
 func TestClaudeStrictReviewFailsWhenTheReviewerServerIsMissing(t *testing.T) {
+	// Every expected tool is offered, but the reviewer server never connected.
+	initLine := `{"type":"system","subtype":"init","permissionMode":"dontAsk",` +
+		`"tools":["Read","Glob","Grep","mcp__roborev_review__branch_findings","mcp__roborev_review__git_blame"],` +
+		`"mcp_servers":[]}`
 	mock := mockAgentCLI(t, MockCLIOpts{
 		HelpOutput:  claudeStrictHelp,
-		StdoutLines: []string{claudeStrictInitLine, `{"type":"result","result":"ok"}`},
+		StdoutLines: []string{initLine, `{"type":"result","result":"ok"}`},
 	})
 	strict := NewClaudeAgent(mock.CmdPath).WithStrictReview(
 		config.ReviewToolPolicy{Mode: "read-only"}, ReviewMCP{ConfigPath: "policy-mcp.json"})
@@ -160,4 +164,5 @@ func TestClaudeStrictReviewFailsWhenTheReviewerServerIsMissing(t *testing.T) {
 
 	_, err := strict.Review(ctx, t.TempDir(), "HEAD", "prompt", nil)
 	require.ErrorIs(t, err, ErrReviewToolPolicy)
+	assert.ErrorContains(t, err, `without selected MCP server "roborev_review"`)
 }

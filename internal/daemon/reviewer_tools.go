@@ -207,7 +207,8 @@ func (b reviewerBackend) assessment(jobID int64) (mcpserver.FindingAssessment, b
 // commit's canonical review, so its commit comments belong to it too.
 func (b reviewerBackend) comments(job storage.ReviewJob) ([]storage.Response, error) {
 	commitID, fallbackSHA := job.LegacyCommentLookupTarget()
-	if job.IsSynthesisJob() && job.CommitID != nil && !gitpkg.IsRange(job.GitRef) {
+	// Dirty and range panels keep a commit ID but review no single commit.
+	if job.IsSynthesisJob() && job.CommitID != nil && gitpkg.LooksLikeSHA(job.GitRef) {
 		commitID = *job.CommitID
 	}
 	return b.db.GetAllCommentsForJob(job.ID, commitID, fallbackSHA)

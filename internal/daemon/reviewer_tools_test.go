@@ -459,3 +459,37 @@ func TestReviewerToolsShowStructuredFindingsAndRebuttals(t *testing.T) {
 		assert.NotEqual(float64(rebuttal.ID), r.(map[string]any)["job_id"], "rebuttal jobs are decisions, not reviews")
 	}
 }
+
+func TestReviewerCommentsKeepDirtyPanelsOffTheirHeadCommit(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	repo, err := db.GetOrCreateRepo(t.TempDir())
+	require.NoError(t, err)
+	head, err := db.GetOrCreateCommit(repo.ID, "0123456789abcdef0123456789abcdef01234567", "Author", "head", time.Now())
+	require.NoError(t, err)
+	_, err = db.AddComment(head.ID, "developer", "Decline: a decision about the HEAD commit.")
+	require.NoError(t, err)
+
+	backend := reviewerBackend{db: db}
+	for name, ref := range map[string]string{"commit": head.SHA, "dirty": "dirty", "range": "abc1234.." + head.SHA} {
+		job, err := db.EnqueueJob(storage.EnqueueOpts{
+			RepoID: repo.ID, CommitID: head.ID, GitRef: ref, Branch: "feature", Agent: "test",
+			JobType: storage.JobTypeSynthesis, PanelRole: storage.PanelRoleSynthesis,
+		})
+		require.NoError(t, err)
+		_, err = db.AddCommentToJob(job.ID, "roborev-fix", "- low a.go: Fix: done.")
+		require.NoError(t, err)
+
+		comments, err := backend.comments(*job)
+		require.NoError(t, err)
+		var texts []string
+		for _, c := range comments {
+			texts = append(texts, c.Response)
+		}
+		assert.Contains(t, texts, "- low a.go: Fix: done.", name)
+		if name == "commit" {
+			assert.Contains(t, texts, "Decline: a decision about the HEAD commit.", name)
+		} else {
+			assert.NotContains(t, texts, "Decline: a decision about the HEAD commit.", name)
+		}
+	}
+}
