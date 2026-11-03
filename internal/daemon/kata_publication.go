@@ -209,6 +209,8 @@ func prepareKataPublications(ctx context.Context, cfg *config.Config, job *stora
 	}, nil
 }
 
+// kataSelectionID stays stable across project renames and distinguishes
+// workspace aliases that currently resolve to the same project name.
 func kataSelectionID(selection kata.Binding) string {
 	if selection.Alias != nil {
 		return "alias:" + selection.Alias.Kind + "\x00" + selection.Alias.Identity
@@ -310,27 +312,31 @@ func (s *Server) prepareKataTransition(ctx context.Context, job *storage.ReviewJ
 		mode = "api"
 	}
 	builder, err := prepareKataPublications(ctx, cfg, job, outcome, func(ctx context.Context, endpoint string, selection kata.Binding) (kata.Binding, error) {
-		client, err := kata.NewAPIClient("", cfg.Integrations.Kata, kata.WithoutWorkspace())
-		if err == nil {
-			var binding kata.Binding
-			binding, err = client.ResolveSelection(ctx, selection)
-			if err == nil {
-				if err = s.db.RememberKataDestination(ctx, endpoint, selection.Project, binding.ProjectUID); err != nil {
-					return kata.Binding{}, err
-				}
-				return binding, nil
-			}
-		}
-		uid, cacheErr := s.db.CachedKataDestination(ctx, endpoint, selection.Project)
-		if cacheErr == nil && uid != "" {
-			return kata.Binding{Project: selection.Project, Alias: selection.Alias, ProjectUID: uid}, nil
-		}
-		return kata.Binding{}, err
+		return s.resolveKataDestination(ctx, cfg.Integrations.Kata, endpoint, selection)
 	})
 	if err != nil {
 		builder = func(context.Context, storage.KataCompletion) ([]katapublish.Request, error) { return nil, err }
 	}
 	return kataTransition{builder: builder, mode: mode}
+}
+
+func (s *Server) resolveKataDestination(ctx context.Context, connection config.KataIntegrationConfig, endpoint string, selection kata.Binding) (kata.Binding, error) {
+	client, err := kata.NewAPIClient("", connection, kata.WithoutWorkspace())
+	if err == nil {
+		var binding kata.Binding
+		binding, err = client.ResolveSelection(ctx, selection)
+		if err == nil {
+			if err = s.db.RememberKataDestination(ctx, endpoint, kataSelectionID(selection), binding.ProjectUID); err != nil {
+				return kata.Binding{}, err
+			}
+			return binding, nil
+		}
+	}
+	uid, cacheErr := s.db.CachedKataDestination(ctx, endpoint, kataSelectionID(selection))
+	if cacheErr == nil && uid != "" {
+		return kata.Binding{Project: selection.Project, Alias: selection.Alias, ProjectUID: uid}, nil
+	}
+	return kata.Binding{}, err
 }
 
 func (s *Server) prepareKataPublication(ctx context.Context, c storage.KataCompletion) ([]katapublish.Request, error) {

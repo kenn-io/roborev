@@ -404,20 +404,22 @@ func kataClaimResult(result sql.Result, err error) error {
 }
 
 // CachedKataDestination is only a previously validated identity for this exact
-// endpoint and frozen project selection. It grants no publication on its own.
-func (db *DB) CachedKataDestination(ctx context.Context, endpoint, project string) (string, error) {
+// endpoint and frozen project selection. The legacy project column stores the
+// opaque selection ID, not the display name. A cache hit grants no publication
+// on its own.
+func (db *DB) CachedKataDestination(ctx context.Context, endpoint, selectionID string) (string, error) {
 	var uid string
-	err := db.QueryRowContext(ctx, `SELECT project_uid FROM kata_destinations WHERE endpoint=? AND project=?`, endpoint, project).Scan(&uid)
+	err := db.QueryRowContext(ctx, `SELECT project_uid FROM kata_destinations WHERE endpoint=? AND project=?`, endpoint, selectionID).Scan(&uid)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
 	return uid, err
 }
 
-func (db *DB) RememberKataDestination(ctx context.Context, endpoint, project, uid string) error {
+func (db *DB) RememberKataDestination(ctx context.Context, endpoint, selectionID, uid string) error {
 	if uid == "" {
 		return fmt.Errorf("project UID is required")
 	}
-	_, err := db.ExecContext(ctx, `INSERT INTO kata_destinations(endpoint,project,project_uid) VALUES(?,?,?) ON CONFLICT(endpoint,project) DO UPDATE SET project_uid=excluded.project_uid`, endpoint, project, uid)
+	_, err := db.ExecContext(ctx, `INSERT INTO kata_destinations(endpoint,project,project_uid) VALUES(?,?,?) ON CONFLICT(endpoint,project) DO UPDATE SET project_uid=excluded.project_uid`, endpoint, selectionID, uid)
 	return err
 }

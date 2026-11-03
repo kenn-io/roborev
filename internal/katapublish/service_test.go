@@ -28,6 +28,7 @@ type fakeAPI struct {
 	resolveErr             error
 	lastListedProject      string
 	lastCreateProject      string
+	lastCommentProject     string
 	expectedProjectUID     string
 	createProjectUID       string
 	reassignedProjectUID   string
@@ -121,6 +122,7 @@ func (f *fakeAPI) MutateMetadata(_ context.Context, _ string, key string, previo
 
 func (f *fakeAPI) Comment(_ context.Context, req kata.CommentReq) (kata.CommentResult, error) {
 	f.posts++
+	f.lastCommentProject = req.Project
 	if f.postErr != nil {
 		return kata.CommentResult{}, f.postErr
 	}
@@ -306,6 +308,7 @@ func TestDeliveryUsesCapturedWorkspaceAlias(t *testing.T) {
 	assert.Equal(t, "stale-name", f.selection.Project)
 	assert.Equal(t, "renamed", f.lastListedProject)
 	assert.Equal(t, "renamed", f.lastCreateProject)
+	assert.Equal(t, "renamed", f.lastCommentProject)
 	assert.Equal(t, "renamed#one", state.IssueRef)
 
 	f.issue.QualifiedID = ""

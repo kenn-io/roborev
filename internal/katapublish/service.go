@@ -255,7 +255,7 @@ func Deliver(ctx context.Context, api API, req Request, state State, checkpoint 
 			if err = checkpoint(state); err != nil {
 				return state, pending("local checkpoint failed")
 			}
-			posted, postErr := api.Comment(ctx, kata.CommentReq{Project: req.Project, Issue: state.IssueUID, Body: body, Teammate: req.Teammate, IdempotencyKey: hash(state.IssueUID + "\x00" + req.OperationID + "\x00" + operation + "\x00" + body)})
+			posted, postErr := api.Comment(ctx, kata.CommentReq{Project: projectName, Issue: state.IssueUID, Body: body, Teammate: req.Teammate, IdempotencyKey: hash(state.IssueUID + "\x00" + req.OperationID + "\x00" + operation + "\x00" + body)})
 			if postErr != nil {
 				return state, deliveryError(postErr)
 			}

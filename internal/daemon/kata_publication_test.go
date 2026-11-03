@@ -2,10 +2,12 @@ package daemon
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,6 +21,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	katagen "go.kenn.io/kata/pkg/client/generated"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -413,6 +416,210 @@ func TestKataPublicationPreservesWorkspaceAliasAndCanonicalProject(t *testing.T)
 			assert.Equal(t, selected.Alias, requests[0].WorkspaceAlias)
 		})
 	}
+}
+
+func TestKataDestinationCacheUsesSelectionIdentity(t *testing.T) {
+	server, fake := kataAPIServer(t)
+	fake.AddProject(9, "old-name")
+	cfg := server.configWatcher.Config()
+	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.completed", Findings: "summary"}}
+
+	const oldName = "old-name"
+	remotes := []string{
+		"https://code.example/team-one/repo.git",
+		"https://code.example/team-two/repo.git",
+	}
+	repoPaths := make([]string, 0, len(remotes))
+	selections := make([]kata.Binding, 0, len(remotes))
+	for _, remote := range remotes {
+		repo := testutil.NewTestRepoWithCommit(t)
+		repo.RunGit("remote", "add", "origin", remote)
+		require.NoError(t, os.WriteFile(filepath.Join(repo.Root, ".kata.toml"), []byte("version = 1\n[project]\nname = \""+oldName+"\"\n"), 0o600))
+		repo.RunGit("add", ".kata.toml")
+		repo.RunGit("commit", "-m", "Bind Kata project")
+		selection, err := kata.WorkspaceBinding(t.Context(), repo.Root)
+		require.NoError(t, err)
+		require.NotNil(t, selection.Alias)
+		assert.Equal(t, oldName, selection.Project)
+		repoPaths = append(repoPaths, repo.Root)
+		selections = append(selections, selection)
+	}
+	require.NotEqual(t, kataSelectionID(selections[0]), kataSelectionID(selections[1]))
+
+	var offline atomic.Bool
+	fake.Override = func(w http.ResponseWriter, r *http.Request) bool {
+		if offline.Load() {
+			if r.URL.Path == "/api/v1/projects/resolve" || r.URL.Path == "/api/v1/projects" {
+				fake.Fail(w, http.StatusServiceUnavailable, "synthetic_unavailable", "offline")
+				return true
+			}
+			return false
+		}
+		if r.URL.Path != "/api/v1/projects/resolve" {
+			return false
+		}
+		var request struct {
+			Alias struct {
+				Identity string `json:"identity"`
+				Kind     string `json:"kind"`
+			} `json:"alias"`
+		}
+		body, err := io.ReadAll(r.Body)
+		if !assert.NoError(t, err, "read project alias request") {
+			fake.Fail(w, http.StatusBadRequest, "invalid_request", "invalid alias request")
+			return true
+		}
+		if !assert.NoError(t, json.Unmarshal(body, &request), "decode project alias request") {
+			fake.Fail(w, http.StatusBadRequest, "invalid_request", "invalid alias request")
+			return true
+		}
+		index := -1
+		for i, selection := range selections {
+			if selection.Alias.Identity == request.Alias.Identity && selection.Alias.Kind == request.Alias.Kind {
+				index = i
+				break
+			}
+		}
+		if !assert.GreaterOrEqual(t, index, 0, "unexpected workspace alias %q", request.Alias.Identity) {
+			fake.Fail(w, http.StatusNotFound, "alias_not_found", "unknown alias")
+			return true
+		}
+		project := fake.Projects[index]
+		fake.Reply(w, katagen.ProjectResolveBody{
+			Project: project,
+			Alias: katagen.ProjectAlias{
+				AliasIdentity: request.Alias.Identity,
+				AliasKind:     request.Alias.Kind,
+				ID:            int64(index + 1),
+				ProjectID:     project.ID,
+				CreatedAt:     time.Unix(0, 0).UTC(),
+			},
+		})
+		return true
+	}
+
+	capture := func(id int64, repoPath string) katapublish.Request {
+		job := &storage.ReviewJob{ID: id, JobType: storage.JobTypeReview, RepoPath: repoPath}
+		transition := server.prepareKataTransition(t.Context(), job, kataOutcome{event: "completed", verdict: storage.VerdictFail})
+		requests, err := transition.builder(t.Context(), storage.KataCompletion{
+			Job: job, ReviewUUID: uuid.New().String(), Verdict: storage.VerdictFail,
+		})
+		require.NoError(t, err)
+		require.Len(t, requests, 1)
+		return requests[0]
+	}
+
+	for i, repoPath := range repoPaths {
+		request := capture(int64(i+1), repoPath)
+		project := fake.Projects[i]
+		assert.Equal(t, project.Name, request.Project)
+		assert.Equal(t, project.UID, request.ProjectUID)
+		cached, err := server.db.CachedKataDestination(t.Context(), fake.URL(), kataSelectionID(selections[i]))
+		require.NoError(t, err)
+		assert.Equal(t, project.UID, cached)
+	}
+
+	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.completed", Findings: "summary", Project: oldName}}
+	explicit := capture(3, t.TempDir())
+	assert.Equal(t, oldName, explicit.Project)
+	assert.Equal(t, fake.Projects[2].UID, explicit.ProjectUID)
+	explicitSelection := kata.Binding{Project: oldName}
+	cached, err := server.db.CachedKataDestination(t.Context(), fake.URL(), kataSelectionID(explicitSelection))
+	require.NoError(t, err)
+	assert.Equal(t, fake.Projects[2].UID, cached)
+
+	// A row keyed by the old ambiguous name may belong to a different
+	// destination, so offline alias lookups must use the frozen selection ID.
+	require.NoError(t, server.db.RememberKataDestination(t.Context(), fake.URL(), oldName, "legacy-wrong-project"))
+	offline.Store(true)
+	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.completed", Findings: "summary"}}
+	for i, repoPath := range repoPaths {
+		request := capture(int64(i+4), repoPath)
+		assert.Equal(t, fake.Projects[i].UID, request.ProjectUID)
+	}
+	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.completed", Findings: "summary", Project: oldName}}
+	request := capture(6, t.TempDir())
+	assert.Equal(t, fake.Projects[2].UID, request.ProjectUID)
+}
+
+func FuzzKataDestinationCacheUsesSelectionIdentity(f *testing.F) {
+	f.Add([]byte("team-one/repo"), []byte("team-two/repo"))
+	f.Fuzz(func(t *testing.T, first, second []byte) {
+		if string(first) == string(second) {
+			t.Skip("aliases must be distinct")
+		}
+
+		server, fake := kataAPIServer(t)
+		cfg := server.configWatcher.Config().Integrations.Kata
+		selections := []kata.Binding{
+			{Project: "old-name", Alias: &kata.ProjectAlias{Identity: "repo-" + hex.EncodeToString(first), Kind: "git"}},
+			{Project: "old-name", Alias: &kata.ProjectAlias{Identity: "repo-" + hex.EncodeToString(second), Kind: "git"}},
+		}
+		var offline atomic.Bool
+		fake.Override = func(w http.ResponseWriter, r *http.Request) bool {
+			if offline.Load() {
+				if r.URL.Path == "/api/v1/projects/resolve" {
+					fake.Fail(w, http.StatusServiceUnavailable, "synthetic_unavailable", "offline")
+					return true
+				}
+				return false
+			}
+			if r.URL.Path != "/api/v1/projects/resolve" {
+				return false
+			}
+			var request struct {
+				Alias struct {
+					Identity string `json:"identity"`
+					Kind     string `json:"kind"`
+				} `json:"alias"`
+			}
+			body, err := io.ReadAll(r.Body)
+			if !assert.NoError(t, err, "read project alias request") {
+				fake.Fail(w, http.StatusBadRequest, "invalid_request", "invalid alias request")
+				return true
+			}
+			if !assert.NoError(t, json.Unmarshal(body, &request), "decode project alias request") {
+				fake.Fail(w, http.StatusBadRequest, "invalid_request", "invalid alias request")
+				return true
+			}
+			index := -1
+			for i, selection := range selections {
+				if selection.Alias.Identity == request.Alias.Identity && selection.Alias.Kind == request.Alias.Kind {
+					index = i
+					break
+				}
+			}
+			if !assert.GreaterOrEqual(t, index, 0, "unexpected workspace alias %q", request.Alias.Identity) {
+				fake.Fail(w, http.StatusNotFound, "alias_not_found", "unknown alias")
+				return true
+			}
+			project := fake.Projects[index]
+			fake.Reply(w, katagen.ProjectResolveBody{
+				Project: project,
+				Alias: katagen.ProjectAlias{
+					AliasIdentity: request.Alias.Identity,
+					AliasKind:     request.Alias.Kind,
+					ID:            int64(index + 1),
+					ProjectID:     project.ID,
+					CreatedAt:     time.Unix(0, 0).UTC(),
+				},
+			})
+			return true
+		}
+
+		for i, selection := range selections {
+			resolved, err := server.resolveKataDestination(t.Context(), cfg, fake.URL(), selection)
+			require.NoError(t, err)
+			assert.Equal(t, fake.Projects[i].UID, resolved.ProjectUID)
+		}
+		require.NoError(t, server.db.RememberKataDestination(t.Context(), fake.URL(), "old-name", "legacy-wrong-project"))
+		offline.Store(true)
+		for i, selection := range selections {
+			resolved, err := server.resolveKataDestination(t.Context(), cfg, fake.URL(), selection)
+			require.NoError(t, err)
+			assert.Equal(t, fake.Projects[i].UID, resolved.ProjectUID)
+		}
+	})
 }
 
 // restartKataAPI supplies the external receipts while the real SQLite queue,
