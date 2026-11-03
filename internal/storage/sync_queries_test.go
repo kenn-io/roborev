@@ -766,11 +766,11 @@ func TestSyncQueriesSeekPastCursor(t *testing.T) {
 	t.Parallel()
 	h := newSyncTestHelper(t)
 	for _, tc := range []struct {
-		name, query string
-		args        []any
+		name, query, alias string
+		args               []any
 	}{
-		{"jobs", jobsToSyncQuery, []any{h.machineID, 25, 25}},
-		{"reviews", reviewsToSyncQuery, []any{h.machineID, 25, h.machineID, h.machineID, 25}},
+		{"jobs", jobsToSyncQuery, "j", []any{h.machineID, 25, 25}},
+		{"reviews", reviewsToSyncQuery, "r", []any{h.machineID, 25, h.machineID, h.machineID, 25}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rows, err := h.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+tc.query, tc.args...)
@@ -785,8 +785,7 @@ func TestSyncQueriesSeekPastCursor(t *testing.T) {
 			}
 			require.NoError(t, rows.Err())
 			plan := strings.Join(details, "\n")
-			assert.Contains(t, plan, "SEARCH j ")
-			assert.Contains(t, plan, "SEARCH r ")
+			assert.Contains(t, plan, "SEARCH "+tc.alias+" ")
 			assert.NotContains(t, plan, "SCAN j")
 			assert.NotContains(t, plan, "SCAN r")
 			assert.NotContains(t, plan, "TEMP B-TREE FOR ORDER BY")
