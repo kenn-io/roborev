@@ -57,19 +57,22 @@ func TestSidecarV2UpgradeRenumbersFTSAndKeepsVectors(t *testing.T) {
 	localSource := docs[0].Source
 	localSource.ReviewUUID = ""
 	local := searchdoc.Render(localSource)
-	_, err = index.RefreshMirrorPage(ctx, []searchdoc.Document{local}, nil)
-	require.NoError(t, err)
 	_, err = index.RefreshMirrorPage(ctx, docs, nil)
+	require.NoError(t, err)
+	// A stale local key can be inserted after the live UUID key.
+	_, err = index.RefreshMirrorPage(ctx, []searchdoc.Document{local}, nil)
 	require.NoError(t, err)
 	require.NoError(t, index.vectors.EnsureGeneration(ctx, "gen-1",
 		vector.Generation{Model: "test", Dimensions: 2}, sqlitevec.StateActive))
 	require.NoError(t, index.vectors.SaveVectors(ctx, "gen-1", docs[0].DocKey, docs[0].ContentHash,
 		[]vector.ChunkVector{{ChunkIndex: 0, Vector: vector.Vector{1, 0}}}))
+	require.NoError(t, index.vectors.SaveVectors(ctx, "gen-1", docs[1].DocKey, docs[1].ContentHash,
+		[]vector.ChunkVector{{ChunkIndex: 0, Vector: vector.Vector{1, 0}}}))
 	_, err = index.db.ExecContext(ctx, `
 		UPDATE review_fts SET rowid = rowid + 100;
 		INSERT INTO review_fts(rowid, doc_key, content, identifiers) VALUES (103, ?, ?, ?);
 		DROP INDEX review_mirror_job_id;
-		UPDATE search_meta SET value = '2' WHERE key = 'schema_version';`, local.DocKey, local.Content, local.Identifiers)
+		UPDATE search_meta SET value = '2' WHERE key = 'schema_version';`, docs[0].DocKey, docs[0].Content, docs[0].Identifiers)
 	require.NoError(t, err)
 	require.NoError(t, index.Close())
 
@@ -84,23 +87,41 @@ func TestSidecarV2UpgradeRenumbersFTSAndKeepsVectors(t *testing.T) {
 	err = index.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'review_mirror_job_id' AND tbl_name = 'review_mirror'`).Scan(&jobIndex)
 	require.NoError(t, err)
 	assert.Equal(t, 1, jobIndex)
-	for _, doc := range docs {
-		var rowID int64
-		err = index.db.QueryRowContext(ctx, `SELECT rowid FROM review_fts WHERE doc_key = ?`, doc.DocKey).Scan(&rowID)
+	for _, key := range []string{local.DocKey, docs[0].DocKey} {
+		var hash string
+		err = index.db.QueryRowContext(ctx, `SELECT content_hash FROM review_mirror WHERE doc_key = ?`, key).Scan(&hash)
 		require.NoError(t, err)
-		assert.Equal(t, doc.Source.ReviewID, rowID)
+		assert.Empty(t, hash)
+		assert.Equal(t, 0, countRowsForDoc(t, index.db, "review_fts", key))
 	}
-	assert.Equal(t, 1, countRowsForDoc(t, index.db, "review_mirror", local.DocKey))
-	assert.Equal(t, 0, countRowsForDoc(t, index.db, "review_fts", local.DocKey))
-	assert.Equal(t, 1, countRowsForDoc(t, index.db, "review_fts", docs[0].DocKey))
+	var rowID int64
+	err = index.db.QueryRowContext(ctx, `SELECT rowid FROM review_fts WHERE doc_key = ?`, docs[1].DocKey).Scan(&rowID)
+	require.NoError(t, err)
+	assert.Equal(t, docs[1].Source.ReviewID, rowID)
 	var ftsRows int
 	err = index.db.QueryRowContext(ctx, `SELECT count(*) FROM review_fts`).Scan(&ftsRows)
 	require.NoError(t, err)
-	assert.Equal(t, 2, ftsRows)
+	assert.Equal(t, 1, ftsRows)
 	hits, err := index.vectors.QueryGeneration(ctx, "gen-1", vector.Vector{1, 0}, 10)
 	require.NoError(t, err)
 	require.Len(t, hits, 1)
-	assert.Equal(t, docs[0].DocKey, hits[0].Doc)
+	assert.Equal(t, docs[1].DocKey, hits[0].Doc)
+
+	seen := map[string]struct{}{}
+	changed, err := index.RefreshMirrorPage(ctx, docs, seen)
+	require.NoError(t, err)
+	assert.Equal(t, 1, changed)
+	deleted, err := index.DeleteMissing(ctx, seen)
+	require.NoError(t, err)
+	assert.Equal(t, 1, deleted)
+	var key string
+	err = index.db.QueryRowContext(ctx, `SELECT doc_key FROM review_fts WHERE review_fts MATCH 'alpha'`).Scan(&key)
+	require.NoError(t, err)
+	assert.Equal(t, docs[0].DocKey, key)
+	pending, err := index.vectors.PendingForGeneration(ctx, "gen-1", 10)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	assert.Equal(t, docs[0].DocKey, pending[0].Doc)
 }
 
 func TestFTSAndVectorSmokeUsesContentHashRevision(t *testing.T) {

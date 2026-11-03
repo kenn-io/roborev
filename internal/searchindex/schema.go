@@ -174,11 +174,14 @@ func upgradeSidecar(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("begin search sidecar upgrade: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	// A UUID rekey can leave two mirror keys for one review. Keep the later row.
+	// Only the canonical feed can identify the live key for a duplicated ID.
 	if _, err := tx.ExecContext(ctx, `
 		DELETE FROM review_fts;
+		UPDATE review_mirror SET content_hash = ''
+		WHERE review_id IN (SELECT review_id FROM review_mirror GROUP BY review_id HAVING count(*) > 1);
 		INSERT OR REPLACE INTO review_fts(rowid, doc_key, content, identifiers)
-		SELECT review_id, doc_key, content, identifiers FROM review_mirror ORDER BY rowid;
+		SELECT review_id, doc_key, content, identifiers FROM review_mirror
+		WHERE review_id NOT IN (SELECT review_id FROM review_mirror GROUP BY review_id HAVING count(*) > 1);
 		CREATE INDEX review_mirror_job_id ON review_mirror(job_id);
 		UPDATE search_meta SET value = '3' WHERE key = 'schema_version';`); err != nil {
 		return fmt.Errorf("upgrade search sidecar: %w", err)
