@@ -51,6 +51,7 @@ func TestIntegration_SyncingDaemonsShareSearchVectors(t *testing.T) { //nolint:p
 	_, err = source.worker.SyncNow()
 	require.NoError(t, err)
 	source.reconciler.ShareVectors(source.worker)
+	source.reconciler.Wake()
 	waitForSearchCondition(t, "reconciliation publishes the existing source vectors", func() bool {
 		return sharedVectorRows(t, pool) == 1
 	})
