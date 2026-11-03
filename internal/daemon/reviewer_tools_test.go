@@ -8,6 +8,7 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+	"uuid"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
@@ -455,15 +456,43 @@ func TestReviewerToolsShowStructuredFindingsAndRebuttals(t *testing.T) {
 	require.Len(comments, 1, "a comment with free text is kept whole")
 	assert.Contains(comments[0].(map[string]any)["text"], "Looking into the length check.")
 
-	// A rerun replaces the review under the same job ID. Decisions on the
-	// earlier run are flagged, since its findings may differ.
+	// A re-check that recorded its review version is judged by that version,
+	// not by time: this one names an earlier run although it was queued now.
+	current, err := f.db.GetReviewByJobID(review.ID)
+	require.NoError(err)
+	earlier := enqueue(storage.EnqueueOpts{
+		JobType: storage.JobTypeTask, Source: storage.JobSourceRebuttal, ParentJobID: review.ID,
+		Prompt:         "Original finding: \"No test covers Avg\"\n",
+		RebuttalReview: &storage.ReviewVersion{ID: current.ID, UUID: uuid.New()},
+	})
+	require.NoError(f.db.CompleteJob(earlier.ID, "test", `{"outcome":"superseded","explanation":"Replaced."}`))
+	sameRun := enqueue(storage.EnqueueOpts{
+		JobType: storage.JobTypeTask, Source: storage.JobSourceRebuttal, ParentJobID: review.ID,
+		Prompt:         "Original finding: \"Avg trusts its input length\"\n",
+		RebuttalReview: &storage.ReviewVersion{ID: current.ID, UUID: *current.UUID},
+	})
+	require.NoError(f.db.CompleteJob(sameRun.ID, "test", `{"outcome":"confirmed","explanation":"Still true."}`))
+	versioned, isErr := callReviewerTool(t, session, mcpserver.ReviewerToolPriorReview, map[string]any{"job_id": review.ID})
+	require.False(isErr, "%v", versioned)
+	byKind := map[string]map[string]any{}
+	for _, d := range versioned["reviews"].([]any)[0].(map[string]any)["decisions"].([]any) {
+		byKind[d.(map[string]any)["kind"].(string)] = d.(map[string]any)
+	}
+	assert.Equal(true, byKind["superseded"]["before_rerun"], "a recorded earlier version is a rerun")
+	assert.NotContains(byKind["confirmed"], "before_rerun", "a recorded current version is not")
+
+	// Comments and re-checks that recorded no version are judged by when they
+	// were written: moving the review's write time later makes them earlier.
 	_, err = f.db.ExecContext(t.Context(), `UPDATE reviews SET created_at = ? WHERE job_id = ?`,
 		time.Now().UTC().Add(time.Hour).Format("2006-01-02 15:04:05"), review.ID)
 	require.NoError(err)
 	rerun, isErr := callReviewerTool(t, session, mcpserver.ReviewerToolPriorReview, map[string]any{"job_id": review.ID})
 	require.False(isErr, "%v", rerun)
 	for _, d := range rerun["reviews"].([]any)[0].(map[string]any)["decisions"].([]any) {
-		assert.Equal(true, d.(map[string]any)["before_rerun"], "%v", d)
+		decision := d.(map[string]any)
+		if decision["kind"] == "ask" || decision["kind"] == "refuted" {
+			assert.Equal(true, decision["before_rerun"], "%v", decision)
+		}
 	}
 
 	findingsOut, isErr := callReviewerTool(t, session, mcpserver.ReviewerToolBranchFindings, nil)

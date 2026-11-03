@@ -20,7 +20,7 @@ type FindingAssessment struct {
 	Finding     string
 	Outcome     string
 	Explanation string
-	BeforeRerun bool // queued before the review's current run was written
+	BeforeRerun bool // re-checked an earlier run of the review
 }
 
 type reviewerDecision struct {

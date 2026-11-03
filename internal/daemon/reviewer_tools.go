@@ -136,6 +136,7 @@ func (b reviewerBackend) BranchReviews(
 	// review they re-check as their parent.
 	type recheck struct {
 		enqueued   time.Time
+		version    *storage.ReviewVersion
 		assessment mcpserver.FindingAssessment
 	}
 	rechecks := make(map[int64][]recheck)
@@ -145,7 +146,11 @@ func (b reviewerBackend) BranchReviews(
 		}
 		if job.Source == storage.JobSourceRebuttal && job.ParentJobID != nil {
 			if a, ok := b.assessment(job.ID); ok {
-				rechecks[*job.ParentJobID] = append(rechecks[*job.ParentJobID], recheck{job.EnqueuedAt, a})
+				version, err := b.db.RebuttalReviewVersion(ctx, job.ID)
+				if err != nil {
+					return nil, mcpserver.NewError(mcpserver.ErrorCodeInternal, "load rebuttal review version failed")
+				}
+				rechecks[*job.ParentJobID] = append(rechecks[*job.ParentJobID], recheck{job.EnqueuedAt, version, a})
 			}
 			continue
 		}
@@ -168,11 +173,20 @@ func (b reviewerBackend) BranchReviews(
 		})
 	}
 	for i := range reviews {
-		// A rerun replaces the review but keeps its job ID, so a re-check
-		// queued before the current review was written checked an earlier run.
-		// Jobs are newest first; show each review's re-checks oldest first.
+		// A rerun replaces the review but keeps its job ID. Jobs are newest
+		// first; show each review's re-checks oldest first.
+		review := reviews[i].Review
 		for _, r := range slices.Backward(rechecks[reviews[i].Job.ID]) {
-			r.assessment.BeforeRerun = r.enqueued.Before(reviews[i].Review.CreatedAt)
+			switch {
+			case r.version != nil && review.UUID != nil:
+				r.assessment.BeforeRerun = r.version.UUID != *review.UUID
+			case r.version != nil:
+				r.assessment.BeforeRerun = r.version.ID != review.ID
+			default:
+				// Re-checks that predate the recorded version, or were synced
+				// from another machine, fall back to their queue time.
+				r.assessment.BeforeRerun = r.enqueued.Before(review.CreatedAt)
+			}
 			reviews[i].Assessments = append(reviews[i].Assessments, r.assessment)
 		}
 	}
