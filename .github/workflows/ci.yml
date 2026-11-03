@@ -637,7 +637,7 @@ jobs:
         run: ./custom-gcl run ./...
 
       - name: Save linter cache
-        if: ${{ !cancelled() && needs.go-changes.outputs.changed == 'true' && hashFiles('custom-gcl') != '' }}
+        if: needs.go-changes.outputs.changed == 'true'
         uses: $/.github/actions/go-cache-save
 
       - uses: astral-sh/setup-uv@v10.3.2
