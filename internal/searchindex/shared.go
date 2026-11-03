@@ -108,27 +108,52 @@ func pendingContentHash(doc vector.Pending[string]) string {
 	}
 }
 
-// publishPending publishes covered reviews discovered by sync or a mirror scan.
-// Matching shared rows are skipped. The next scan retries missing rows.
+func (r *Reconciler) queuePublish(reviewUUIDs ...string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.pendingPublish == nil {
+		r.pendingPublish = make(map[string]struct{})
+	}
+	for _, id := range reviewUUIDs {
+		r.pendingPublish[id] = struct{}{}
+	}
+}
+
+// publishPending retries failed publications on the next reconciliation turn.
 func (r *Reconciler) publishPending(ctx context.Context, shared SharedVectors, space, generation string) error {
-	for batch := range slices.Chunk(r.takePendingPublish(), sharedLookupPage) {
+	pending := r.takePendingPublish()
+	for offset := 0; offset < len(pending); offset += sharedLookupPage {
+		batch := pending[offset:min(offset+sharedLookupPage, len(pending))]
 		docs, err := r.index.coveredSharedDocuments(ctx, generation, batch)
 		if err != nil {
+			r.queuePublish(pending[offset:]...)
 			return err
 		}
 		keys := make([]storage.SearchVectorKey, len(docs))
 		for i, doc := range docs {
 			keys[i] = doc.key
 		}
+		if len(keys) == 0 {
+			continue
+		}
 		published, err := shared.LookupSearchVectors(ctx, space, keys)
-		if err != nil && ctx.Err() != nil {
-			return ctx.Err()
+		if err != nil {
+			r.queuePublish(pending[offset:]...)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return nil
 		}
 		for _, doc := range docs {
 			if _, ok := published[doc.key]; ok {
 				continue
 			}
-			if _, err := shared.PublishSearchVectors(ctx, space, doc.key, doc.chunks); err != nil && ctx.Err() != nil {
+			ok, err := shared.PublishSearchVectors(ctx, space, doc.key, doc.chunks)
+			if err != nil || !ok {
+				r.queuePublish(doc.key.ReviewUUID)
+			}
+			if ctx.Err() != nil {
+				r.queuePublish(pending[offset:]...)
 				return ctx.Err()
 			}
 		}
@@ -144,12 +169,13 @@ type sharingStore struct {
 	shared SharedVectors
 	space  string
 	keys   map[string]storage.SearchVectorKey
+	queue  func(...string)
 }
 
-func newSharingStore(store vector.Store[string, string], index *Index, shared SharedVectors, space string) *sharingStore {
+func newSharingStore(store vector.Store[string, string], index *Index, shared SharedVectors, space string, queue func(...string)) *sharingStore {
 	return &sharingStore{
 		Store: store, index: index, shared: shared, space: space,
-		keys: make(map[string]storage.SearchVectorKey),
+		keys: make(map[string]storage.SearchVectorKey), queue: queue,
 	}
 }
 
@@ -187,7 +213,10 @@ func (s *sharingStore) SaveVectors(
 		return err
 	}
 	if key, ok := s.keys[doc]; ok && len(vectors) > 0 {
-		_, _ = s.shared.PublishSearchVectors(ctx, s.space, key, sharedChunks(vectors))
+		ok, err := s.shared.PublishSearchVectors(ctx, s.space, key, sharedChunks(vectors))
+		if err != nil || !ok {
+			s.queue(key.ReviewUUID)
+		}
 	}
 	return nil
 }
@@ -369,21 +398,4 @@ func (index *Index) coveredSharedDocuments(
 
 func placeholders(n int) string {
 	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
-}
-
-func (index *Index) mirrorReviewUUIDs(ctx context.Context) ([]string, error) {
-	rows, err := index.db.QueryContext(ctx, `SELECT review_uuid FROM review_mirror WHERE review_uuid IS NOT NULL`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var uuids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		uuids = append(uuids, id)
-	}
-	return uuids, rows.Err()
 }

@@ -281,7 +281,7 @@ func (r *Reconciler) scanMirrorPage(ctx context.Context) (bool, error) {
 	}
 	now := r.config.Now()
 	r.mu.Lock()
-	// Startup and periodic scans revisit covered reviews, including vectors
+	// Full scans revisit covered reviews, including vectors
 	// whose earlier publication failed or preceded canonical sync.
 	if r.shared != nil && r.embedder != nil {
 		if r.pendingPublish == nil {
@@ -337,7 +337,7 @@ func (r *Reconciler) refreshJobs(ctx context.Context) (more bool, err error) {
 		}
 	}()
 	for id := range jobs {
-		if err := r.refreshJob(ctx, id); err != nil {
+		if err := r.refreshJob(ctx, id, false); err != nil {
 			return false, err
 		}
 	}
@@ -368,7 +368,7 @@ func (r *Reconciler) fillGeneration(ctx context.Context) (bool, error) {
 		if err := r.publishPending(ctx, shared, space, key); err != nil {
 			return false, err
 		}
-		store = newSharingStore(store, r.index, shared, space)
+		store = newSharingStore(store, r.index, shared, space, r.queuePublish)
 	}
 	counts, err := r.index.GenerationCounts(ctx, key)
 	if err != nil {
@@ -605,7 +605,7 @@ func (r *Reconciler) backoffFor(err error) time.Duration {
 	return min(delay, r.config.MaxBackoff)
 }
 
-func (r *Reconciler) refreshJob(ctx context.Context, id int64) error {
+func (r *Reconciler) refreshJob(ctx context.Context, id int64, publish bool) error {
 	source, err := r.store.GetSearchDocumentForJob(ctx, id)
 	if err != nil {
 		return err
@@ -621,6 +621,9 @@ func (r *Reconciler) refreshJob(ctx context.Context, id int64) error {
 	if _, err := r.index.deleteMissing(ctx, seen, mirrorKeysForJobSQL, id); err != nil {
 		return err
 	}
+	if publish && source != nil && source.ReviewUUID != "" && r.sharedVectors() != nil && r.embedder != nil {
+		r.queuePublish(source.ReviewUUID)
+	}
 	return nil
 }
 
@@ -629,8 +632,14 @@ func (r *Reconciler) drainChanges(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	if through > 0 {
+		r.mu.Lock()
+		r.health.MirrorComplete = false
+		r.health.MirrorBacklog = nil
+		r.mu.Unlock()
+	}
 	for _, id := range jobs {
-		if err := r.refreshJob(ctx, id); err != nil {
+		if err := r.refreshJob(ctx, id, true); err != nil {
 			return false, err
 		}
 	}
@@ -657,23 +666,11 @@ func (r *Reconciler) drainChanges(ctx context.Context) (bool, error) {
 		r.mu.Unlock()
 	}
 	if !more {
-		if r.sharedVectors() != nil && r.embedder != nil {
-			uuids, err := r.index.mirrorReviewUUIDs(ctx)
-			if err != nil {
-				return false, err
-			}
-			r.mu.Lock()
-			if r.pendingPublish == nil {
-				r.pendingPublish = make(map[string]struct{})
-			}
-			for _, id := range uuids {
-				r.pendingPublish[id] = struct{}{}
-			}
-			r.mu.Unlock()
-		}
 		r.mu.Lock()
 		now := r.config.Now()
 		r.nextSweep = now.Add(r.config.SweepInterval)
+		r.health.MirrorComplete = true
+		r.health.MirrorBacklog = new(int64)
 		r.health.LastSuccessAt = new(now)
 		clearNonAuthenticationError(&r.health)
 		more = r.mirrorRequested || len(r.pendingJobs) > 0

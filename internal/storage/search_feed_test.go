@@ -400,8 +400,16 @@ func TestSearchChangesLogsEveryFeedSource(t *testing.T) {
 			require.NoError(t, db.DeleteSearchChanges(t.Context(), head))
 			_, err = db.ExecContext(t.Context(), tc.sql)
 			require.NoError(t, err)
-			jobs, _, err := db.ListSearchChanges(t.Context(), 100)
-			require.NoError(t, err)
+			var jobs []int64
+			for {
+				page, through, err := db.ListSearchChanges(t.Context(), 100)
+				require.NoError(t, err)
+				jobs = append(jobs, page...)
+				if through == 0 {
+					break
+				}
+				require.NoError(t, db.DeleteSearchChanges(t.Context(), through))
+			}
 			assert.ElementsMatch(t, tc.want, jobs)
 		})
 	}
@@ -427,4 +435,23 @@ func TestSearchChangesPreservesWritesAfterPage(t *testing.T) {
 	head, err := db.SearchChangesHead(t.Context())
 	require.NoError(t, err)
 	assert.Greater(t, head, through)
+}
+
+func TestSearchChangesIgnoreSyncBookkeeping(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	_, err := db.ExecContext(t.Context(), `
+		INSERT INTO repos (id, root_path, name) VALUES (1, '/synthetic/repo', 'repo');
+		INSERT INTO review_jobs (id, repo_id, git_ref, agent, status, job_type) VALUES (1, 1, 'main', 'test', 'done', 'review');
+		INSERT INTO reviews (id, job_id, agent, output) VALUES (1, 1, 'test', 'review');
+		INSERT INTO responses (id, job_id, responder, response) VALUES (1, 1, 'author', 'comment');`)
+	require.NoError(t, err)
+	head, err := db.SearchChangesHead(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, db.DeleteSearchChanges(t.Context(), head))
+	require.NoError(t, db.MarkReviewSynced(1))
+	require.NoError(t, db.MarkCommentSynced(1))
+	jobs, _, err := db.ListSearchChanges(t.Context(), 10)
+	require.NoError(t, err)
+	assert.Empty(t, jobs)
 }

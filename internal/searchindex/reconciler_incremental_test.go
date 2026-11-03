@@ -270,3 +270,67 @@ func TestReconcilerSweepDrainsChangesWithNoMatchingJobs(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, head)
 }
+
+func TestReconcilerSweepReportsPendingMirrorChanges(t *testing.T) {
+	now := time.Now()
+	r, store, _ := incrementalFixture(t, ReconcilerConfig{MirrorPageSize: 1, Now: func() time.Time { return now }})
+	for more := true; more; {
+		var err error
+		more, err = r.reconcileTurn(t.Context())
+		require.NoError(t, err)
+	}
+	_, err := store.ExecContext(t.Context(), `UPDATE reviews SET output = 'changed'`)
+	require.NoError(t, err)
+	now = now.Add(2 * r.config.SweepInterval)
+	more, err := r.reconcileTurn(t.Context())
+	require.NoError(t, err)
+	require.True(t, more)
+	assert.False(t, r.Health().MirrorComplete)
+	assert.Nil(t, r.Health().MirrorBacklog)
+	for more {
+		more, err = r.reconcileTurn(t.Context())
+		require.NoError(t, err)
+	}
+	assert.True(t, r.Health().MirrorComplete)
+	require.NotNil(t, r.Health().MirrorBacklog)
+	assert.Zero(t, *r.Health().MirrorBacklog)
+}
+
+func TestReconcilerSweepBoundsRepoAndCommitFanout(t *testing.T) {
+	for _, tc := range []struct{ name, setup, change string }{
+		{"repo", "", `UPDATE repos SET name = 'renamed' WHERE id = 1`},
+		{"commit", `INSERT INTO commits (id, repo_id, sha, author, subject, timestamp) VALUES (1, 1, 'main', 'author', 'subject', CURRENT_TIMESTAMP); UPDATE review_jobs SET commit_id = 1`, `INSERT INTO responses (commit_id, responder, response) VALUES (1, 'author', 'fanoutcomment')`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Now()
+			r, store, index := incrementalFixture(t, ReconcilerConfig{MirrorPageSize: 1, Now: func() time.Time { return now }})
+			if tc.setup != "" {
+				_, err := store.ExecContext(t.Context(), tc.setup)
+				require.NoError(t, err)
+			}
+			for more := true; more; {
+				var err error
+				more, err = r.reconcileTurn(t.Context())
+				require.NoError(t, err)
+			}
+			_, err := store.ExecContext(t.Context(), tc.change)
+			require.NoError(t, err)
+			now = now.Add(2 * r.config.SweepInterval)
+			for more := true; more; {
+				before := len(store.jobReads)
+				more, err = r.reconcileTurn(t.Context())
+				require.NoError(t, err)
+				assert.LessOrEqual(t, len(store.jobReads)-before, 1)
+			}
+			assert.ElementsMatch(t, []int64{1, 2}, store.jobReads)
+			var count int
+			if tc.name == "repo" {
+				err = index.db.QueryRowContext(t.Context(), `SELECT count(*) FROM review_mirror WHERE repo_name = 'renamed'`).Scan(&count)
+			} else {
+				err = index.db.QueryRowContext(t.Context(), `SELECT count(*) FROM review_fts WHERE review_fts MATCH 'fanoutcomment'`).Scan(&count)
+			}
+			require.NoError(t, err)
+			assert.Equal(t, 2, count)
+		})
+	}
+}
