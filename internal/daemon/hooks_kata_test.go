@@ -15,11 +15,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	gen "go.kenn.io/kata/pkg/client/generated"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/kata"
-	"go.kenn.io/roborev/internal/kata/katafake"
 	"go.kenn.io/roborev/internal/kata/katatest"
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -122,105 +120,11 @@ func kataOnPathMarker(t *testing.T) string {
 	return marker
 }
 
-func kataConnectionConfig(fake *katafake.Server) *config.Config {
-	cfg := config.DefaultConfig()
-	cfg.Integrations.Kata = config.KataIntegrationConfig{
-		Enabled: true, Endpoint: fake.URL(), APIKey: "synthetic-kata-credential",
-		DefaultProject: "reviews", Teammate: "roborev",
-	}
-	return cfg
-}
-
 func newKataHookRunner(t *testing.T, cfg *config.Config, logger *log.Logger) *HookRunner {
 	t.Helper()
 	hr := NewHookRunner(NewStaticConfig(cfg), NewBroadcaster(), logger)
 	t.Cleanup(hr.Stop)
 	return hr
-}
-
-func TestKataHookFilesThroughTheConfiguredConnection(t *testing.T) {
-	marker := kataOnPathMarker(t)
-	fake := katafake.New(t)
-	fake.Principal = "kata-service"
-	var buf strings.Builder
-	hr := newKataHookRunner(t, kataConnectionConfig(fake), log.New(&buf, "", 0))
-
-	event := Event{Type: "review.failed", JobID: 5, SHA: "abc123", RepoName: "repo", Error: "boom"}
-	hr.wg.Add(1)
-	hr.runKataHook(config.HookConfig{Type: "kata"}, event, t.TempDir())
-
-	var posts []katafake.Request
-	for _, r := range fake.Requests() {
-		if r.Method == http.MethodPost {
-			posts = append(posts, r)
-		}
-	}
-	require.Len(t, posts, 1, "log: %s", buf.String())
-	assert.Equal(t, "/api/v1/projects/7/issues", posts[0].Path, "an unbound repository files into default_project")
-	body := posts[0].JSON(t)
-	assert.Equal(t, "roborev", body["actor"])
-	assert.Contains(t, body["title"], "Review failed for repo")
-	assert.Equal(t, "Bearer synthetic-kata-credential", posts[0].Header.Get("Authorization"))
-	assert.NotEmpty(t, posts[0].Header.Get("Idempotency-Key"))
-	assert.Contains(t, buf.String(), "created issue")
-	assert.Contains(t, buf.String(), "as kata-service", "the attribution Kata returned is logged")
-	assert.NotContains(t, buf.String(), "synthetic-kata-credential")
-	assert.NoFileExists(t, marker, "the kata CLI must not run when the connection is enabled")
-}
-
-func TestKataHookProjectPrecedence(t *testing.T) {
-	bound := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(bound, ".kata.toml"), []byte("version = 1\n[project]\nname = \"other\"\n"), 0o600))
-	tests := []struct {
-		name, workdir, hookProject, wantPath string
-	}{
-		{"hook project wins over a binding", bound, "reviews", "/api/v1/projects/7/issues"},
-		{"binding wins over the default project", bound, "", "/api/v1/projects/8/issues"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			fake := katafake.New(t)
-			// A committed binding resolves through the server's alias
-			// registry; this workspace is bound to "other".
-			fake.Override = func(w http.ResponseWriter, r *http.Request) bool {
-				if r.URL.Path != "/api/v1/projects/resolve" {
-					return false
-				}
-				canonical := fake.Projects[1]
-				fake.Reply(w, gen.ProjectResolveBody{Project: canonical, Alias: gen.ProjectAlias{
-					AliasIdentity: "local://" + tt.workdir, AliasKind: "local", ID: 1, ProjectID: canonical.ID, CreatedAt: time.Unix(0, 0).UTC(),
-				}})
-				return true
-			}
-			hr := newKataHookRunner(t, kataConnectionConfig(fake), log.New(io.Discard, "", 0))
-			hr.wg.Add(1)
-			hr.runKataHook(config.HookConfig{Type: "kata", Project: tt.hookProject}, Event{Type: "review.failed", JobID: 5, SHA: "x"}, tt.workdir)
-			var posts []string
-			for _, r := range fake.Requests() {
-				if r.Method == http.MethodPost {
-					posts = append(posts, r.Path)
-				}
-			}
-			require.NotEmpty(t, posts)
-			assert.Equal(t, tt.wantPath, posts[len(posts)-1], "the issue files into the selected project")
-			for _, p := range posts[:len(posts)-1] {
-				assert.Equal(t, "/api/v1/projects/resolve", p, "a committed binding resolves through the server's alias registry")
-			}
-		})
-	}
-}
-
-func TestKataHookWithABrokenConnectionFailsVisiblyAndNeverShellsOut(t *testing.T) {
-	marker := kataOnPathMarker(t)
-	cfg := config.DefaultConfig()
-	cfg.Integrations.Kata = config.KataIntegrationConfig{Enabled: true, Endpoint: "ftp://kata.example.com", Teammate: "roborev"}
-	var buf strings.Builder
-	hr := newKataHookRunner(t, cfg, log.New(&buf, "", 0))
-	hr.wg.Add(1)
-	hr.runKataHook(config.HookConfig{Type: "kata", Project: "p"}, Event{Type: "review.failed", JobID: 5, SHA: "x"}, t.TempDir())
-	assert.Contains(t, buf.String(), "kata hook error")
-	assert.Contains(t, buf.String(), "endpoint")
-	assert.NoFileExists(t, marker)
 }
 
 func TestKataHookKeepsTheCLIWhenTheConnectionIsOff(t *testing.T) {

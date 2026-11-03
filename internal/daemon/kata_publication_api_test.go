@@ -26,6 +26,7 @@ func TestKataPublicationMappingsExcludePayloads(t *testing.T) {
 	assert := assert.New(t)
 	assert.NotContains(string(data), "private")
 	assert.NotContains(string(data), "endpoint")
+	assert.Equal("Destination, ledger or receipt could not be validated", got.LastError)
 	require.Len(t, got.Findings, 1)
 	assert.Equal("f:example", got.Findings[0].ID)
 	assert.Equal("comment-example", got.Findings[0].Comment)

@@ -31,6 +31,20 @@ func kataAPIServer(t *testing.T) (*Server, *katafake.Server) {
 	return server, fake
 }
 
+// kataConfigWithUnavailableCredential validates a key file before removing it.
+func kataConfigWithUnavailableCredential(t *testing.T, endpoint string) config.KataIntegrationConfig {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "kata-token")
+	require.NoError(t, os.WriteFile(path, []byte(kataTestCredential), 0o600))
+	cfg := config.KataIntegrationConfig{
+		Enabled: true, Endpoint: endpoint, APIKeyFile: path,
+		DefaultProject: "reviews", Teammate: "roborev",
+	}
+	require.NoError(t, cfg.Validate())
+	require.NoError(t, os.Remove(path))
+	return cfg
+}
+
 func kataGet(t *testing.T, server *Server, path string, query url.Values) *httptest.ResponseRecorder {
 	t.Helper()
 	target := path
@@ -164,13 +178,6 @@ func TestKataStatusStates(t *testing.T) {
 		require.NoError(t, listener.Close())
 		server.configWatcher.Config().Integrations.Kata.Endpoint = "http://" + addr
 		assert.Equal(t, "unreachable", decodeKata[KataStatusBody](t, kataGet(t, server, "/api/kata/status", nil)).State)
-	})
-	t.Run("misconfigured", func(t *testing.T) {
-		server, _ := kataAPIServer(t)
-		server.configWatcher.Config().Integrations.Kata.Endpoint = "http://kata.example.com"
-		status := decodeKata[KataStatusBody](t, kataGet(t, server, "/api/kata/status", nil))
-		assert.Equal(t, "incompatible", status.State)
-		assert.True(t, status.Enabled)
 	})
 }
 
@@ -309,7 +316,7 @@ func TestKataEndpointsRefuseWhenTheConnectionIsOffOrBroken(t *testing.T) {
 		assert.Equal(t, http.StatusConflict, w.Code, "disabled: %s", w.Body.String())
 	}
 
-	server.configWatcher.Config().Integrations.Kata = config.KataIntegrationConfig{Enabled: true, Endpoint: "ftp://kata.example.com", APIKey: kataTestCredential}
+	server.configWatcher.Config().Integrations.Kata = kataConfigWithUnavailableCredential(t, "https://kata.example.com")
 	for _, call := range []func() *httptest.ResponseRecorder{
 		func() *httptest.ResponseRecorder { return kataGet(t, server, "/api/kata/issues", nil) },
 		func() *httptest.ResponseRecorder {

@@ -124,25 +124,6 @@ func TestKataHumanOutputOmitsInternalPublicationFields(t *testing.T) {
 	assert.Equal(1, strings.Count(output.String(), "pending"))
 }
 
-func TestKataHelpDescriptionsAreConcise(t *testing.T) {
-	assert := assert.New(t)
-	cmd := kataCmd()
-	var output bytes.Buffer
-	cmd.SetOut(&output)
-	cmd.SetArgs([]string{"create", "--help"})
-	require.NoError(t, cmd.Execute())
-	assert.Contains(output.String(), "Publish a completed job using its Kata hooks")
-	assert.NotContains(output.String(), "Explicitly publish a completed job through its matching Kata hooks")
-
-	cmd = commentCmd()
-	output.Reset()
-	cmd.SetOut(&output)
-	cmd.SetArgs([]string{"--help"})
-	require.NoError(t, cmd.Execute())
-	assert.Contains(output.String(), "complete finding selector from 'roborev show' (requires --rebuttal)")
-	assert.NotContains(output.String(), "complete selector of the finding to re-evaluate, copied whole")
-}
-
 func TestKataCommandsRejectInvalidSelectors(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

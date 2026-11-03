@@ -449,15 +449,10 @@ func fetchShowFindings(client *http.Client, addr string, review storage.Review) 
 	return body.Findings
 }
 
-// formatShowFinding is one line of the findings list: position, selector,
-// severity, and location when the finding has one. The numbering matches the
-// numbered findings in the review text.
+// formatShowFinding is one line of the findings list: position and selector.
+// The numbering matches the numbered findings in the review text.
 func formatShowFinding(f daemon.ReviewFinding) string {
-	line := fmt.Sprintf("%d. %s  %s", f.Index+1, f.ID, f.Severity)
-	if f.Location != "" {
-		line += "  " + f.Location
-	}
-	return line
+	return fmt.Sprintf("%d. %s", f.Index+1, f.ID)
 }
 
 // fetchShowComments retrieves comments for a review, merging legacy
