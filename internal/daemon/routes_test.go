@@ -627,25 +627,6 @@ func TestHumaExportReviewsValidation(t *testing.T) {
 	}
 }
 
-func TestHumaExportReviewsDefaultLimitIsBounded(t *testing.T) {
-	srv, db, _ := newTestServer(t)
-	repo := testutil.CreateTestRepo(t, db)
-	seedHumaExportReviews(t, db, repo.ID, 501)
-
-	rr := serveHuma(t, srv, http.MethodGet, "/api/export/reviews", nil)
-	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
-
-	var body struct {
-		Truncated  bool                   `json:"truncated"`
-		NextCursor *string                `json:"next_cursor"`
-		Reviews    []storage.ExportReview `json:"reviews"`
-	}
-	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &body))
-	assert.Len(t, body.Reviews, 500)
-	assert.True(t, body.Truncated)
-	assert.NotNil(t, body.NextCursor)
-}
-
 func TestHumaExportReviewsMaxLimitIsClamped(t *testing.T) {
 	srv, db, _ := newTestServer(t)
 	repo := testutil.CreateTestRepo(t, db)

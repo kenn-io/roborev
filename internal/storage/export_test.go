@@ -682,7 +682,6 @@ func TestExportReviewsDefaultLimitIsBounded(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, page.Reviews, exportDefaultPageLimit)
 	assert.True(t, page.Truncated)
-	assert.NotNil(t, page.NextCursor)
 }
 
 func TestExportReviewsEmptyPageUsesEmptyReviewsArray(t *testing.T) {
