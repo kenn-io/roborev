@@ -52,17 +52,8 @@ func (index *Index) RefreshMirrorPage(ctx context.Context, docs []searchdoc.Docu
 		if err := upsertMirrorRow(ctx, tx, wanted); err != nil {
 			return 0, err
 		}
-		// Mirror and FTS rows are written and deleted in the same transaction,
-		// so a document without a mirror row has no FTS row to replace. The
-		// doc_key delete scans the whole FTS table, so skip it for new documents.
-		if found {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM review_fts WHERE doc_key = ?`, doc.DocKey); err != nil {
-				return 0, fmt.Errorf("delete stale review FTS row: %w", err)
-			}
-		}
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO review_fts(doc_key, content, identifiers) VALUES (?, ?, ?)`,
-			doc.DocKey, doc.Content, doc.Identifiers); err != nil {
+		if _, err := tx.ExecContext(ctx, replaceFTSRowSQL,
+			wanted.ReviewID, doc.DocKey, doc.Content, doc.Identifiers); err != nil {
 			return 0, fmt.Errorf("insert review FTS row: %w", err)
 		}
 		changed++
@@ -96,6 +87,12 @@ func rowForDocument(doc searchdoc.Document) mirrorRow {
 		Content: doc.Content, ContentHash: doc.ContentHash, Identifiers: doc.Identifiers,
 	}
 }
+
+const replaceFTSRowSQL = `INSERT OR REPLACE INTO review_fts(rowid, doc_key, content, identifiers) VALUES (?, ?, ?, ?)`
+
+// Check the key as well as the rowid so removing a local key preserves the
+// replacement row written after the same review gains a UUID.
+const deleteFTSRowSQL = `DELETE FROM review_fts WHERE rowid = (SELECT review_id FROM review_mirror WHERE doc_key = ?) AND doc_key = ?`
 
 // readMirrorRowSQL reads only review_mirror. review_fts.doc_key is UNINDEXED,
 // so any doc_key lookup there scans every FTS row.
@@ -210,7 +207,7 @@ func (index *Index) deleteMissing(ctx context.Context, seen map[string]struct{},
 	}
 	defer func() { _ = tx.Rollback() }()
 	for _, key := range missing {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM review_fts WHERE doc_key = ?`, key); err != nil {
+		if _, err := tx.ExecContext(ctx, deleteFTSRowSQL, key, key); err != nil {
 			return 0, fmt.Errorf("delete missing FTS row: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM review_mirror WHERE doc_key = ?`, key); err != nil {

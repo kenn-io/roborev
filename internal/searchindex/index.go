@@ -104,6 +104,8 @@ func openOnce(ctx context.Context, path string) (_ *Index, err error) {
 		}
 	} else if err := validateSchema(ctx, db); err != nil {
 		return nil, err
+	} else if err := upgradeSidecar(ctx, db); err != nil {
+		return nil, err
 	}
 	vectors, err := sqlitevec.New[string, string](ctx, db, sqlitevec.Schema{
 		DocsTable:      "review_mirror",

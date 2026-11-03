@@ -48,6 +48,58 @@ func TestSidecarCapabilitiesAndPath(t *testing.T) {
 	assert.Equal(t, int64(1), rowID)
 }
 
+func TestSidecarV2UpgradeRenumbersFTSAndKeepsVectors(t *testing.T) {
+	ctx := t.Context()
+	path := filepath.Join(t.TempDir(), "reviews.search.db")
+	index, err := Open(ctx, path)
+	require.NoError(t, err)
+	docs := []searchdoc.Document{testDocument(1, "alpha search term"), testDocument(2, "beta search term")}
+	_, err = index.RefreshMirrorPage(ctx, docs, nil)
+	require.NoError(t, err)
+	require.NoError(t, index.vectors.EnsureGeneration(ctx, "gen-1",
+		vector.Generation{Model: "test", Dimensions: 2}, sqlitevec.StateActive))
+	require.NoError(t, index.vectors.SaveVectors(ctx, "gen-1", docs[0].DocKey, docs[0].ContentHash,
+		[]vector.ChunkVector{{ChunkIndex: 0, Vector: vector.Vector{1, 0}}}))
+	_, err = index.db.ExecContext(ctx, `
+		UPDATE review_fts SET rowid = rowid + 100;
+		DROP INDEX review_mirror_job_id;
+		UPDATE search_meta SET value = '2' WHERE key = 'schema_version';`)
+	require.NoError(t, err)
+	require.NoError(t, index.Close())
+
+	index, err = Open(ctx, path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, index.Close()) })
+	var version string
+	err = index.db.QueryRowContext(ctx, `SELECT value FROM search_meta WHERE key = 'schema_version'`).Scan(&version)
+	require.NoError(t, err)
+	assert.Equal(t, "3", version)
+	for _, doc := range docs {
+		var rowID int64
+		err = index.db.QueryRowContext(ctx, `SELECT rowid FROM review_fts WHERE doc_key = ?`, doc.DocKey).Scan(&rowID)
+		require.NoError(t, err)
+		assert.Equal(t, doc.Source.ReviewID, rowID)
+	}
+	hits, err := index.vectors.QueryGeneration(ctx, "gen-1", vector.Vector{1, 0}, 10)
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.Equal(t, docs[0].DocKey, hits[0].Doc)
+	var embedGen string
+	err = index.db.QueryRowContext(ctx, `SELECT embed_gen FROM review_mirror WHERE doc_key = ?`, docs[0].DocKey).Scan(&embedGen)
+	require.NoError(t, err)
+	assert.Equal(t, "gen-1", embedGen)
+
+	updated := testDocument(1, "replacement search term")
+	changed, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{updated}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, changed)
+	assert.Equal(t, 1, countRowsForDoc(t, index.db, "review_fts", updated.DocKey))
+	var key string
+	err = index.db.QueryRowContext(ctx, `SELECT doc_key FROM review_fts WHERE review_fts MATCH 'replacement'`).Scan(&key)
+	require.NoError(t, err)
+	assert.Equal(t, updated.DocKey, key)
+}
+
 func TestFTSAndVectorSmokeUsesContentHashRevision(t *testing.T) {
 	ctx := t.Context()
 	index, err := Open(ctx, filepath.Join(t.TempDir(), "reviews.search.db"))

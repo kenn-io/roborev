@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -134,22 +135,38 @@ func TestMirrorRowLookupAvoidsFullScans(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, index.Close()) })
 
-	// The mirror refresh runs this lookup once per document on every pass,
-	// so a full scan here makes each pass quadratic in the corpus size.
-	rows, err := index.db.QueryContext(ctx, "EXPLAIN QUERY PLAN "+readMirrorRowSQL, "doc")
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, rows.Close()) })
-	var details []string
-	for rows.Next() {
-		var id, parent, unused int
-		var detail string
-		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
-		details = append(details, detail)
-	}
-	require.NoError(t, rows.Err())
-	require.NotEmpty(t, details)
-	for _, detail := range details {
-		assert.NotContains(t, detail, "SCAN")
+	for _, tc := range []struct {
+		name  string
+		query string
+		args  []any
+	}{
+		{"mirror lookup", readMirrorRowSQL, []any{"doc"}},
+		{"FTS replace", replaceFTSRowSQL, []any{1, "doc", "content", "identifiers"}},
+		{"FTS delete", deleteFTSRowSQL, []any{"doc", "doc"}},
+		{"job lookup", `SELECT doc_key FROM review_mirror WHERE job_id = ?`, []any{1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, err := index.db.QueryContext(ctx, "EXPLAIN QUERY PLAN "+tc.query, tc.args...)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, rows.Close()) }()
+			var details []string
+			for rows.Next() {
+				var id, parent, unused int
+				var detail string
+				require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+				details = append(details, detail)
+			}
+			require.NoError(t, rows.Err())
+			// SQLite emits no plan steps for an INSERT with literal values.
+			if tc.name != "FTS replace" {
+				require.NotEmpty(t, details)
+			}
+			for _, detail := range details {
+				assert.NotEqual(t, "SCAN review_fts VIRTUAL TABLE INDEX 0:", strings.TrimSpace(detail))
+				assert.NotContains(t, detail, "SCAN review_mirror")
+				assert.NotContains(t, detail, "SCAN m")
+			}
+		})
 	}
 }
 
@@ -228,4 +245,32 @@ func countRowsForDoc(t *testing.T, db *sql.DB, table, docKey string) int {
 		fmt.Sprintf(`SELECT count(*) FROM %s WHERE doc_key = ?`, table), docKey).Scan(&count)
 	require.NoError(t, err)
 	return count
+}
+
+func TestMirrorRefreshKeepsFTSRowAfterReviewGainsUUID(t *testing.T) {
+	ctx := t.Context()
+	index, err := Open(ctx, filepath.Join(t.TempDir(), "reviews.search.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, index.Close()) })
+
+	source := testDocument(1, "searchable review").Source
+	source.ReviewUUID = ""
+	local := searchdoc.Render(source)
+	_, err = index.RefreshMirrorPage(ctx, []searchdoc.Document{local}, nil)
+	require.NoError(t, err)
+	source.ReviewUUID = "00000000-0000-4000-8000-000000000001"
+	updated := searchdoc.Render(source)
+	_, err = index.RefreshMirrorPage(ctx, []searchdoc.Document{updated}, nil)
+	require.NoError(t, err)
+	deleted, err := index.deleteMissing(ctx, map[string]struct{}{updated.DocKey: {}},
+		`SELECT doc_key FROM review_mirror WHERE job_id = ?`, source.JobID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, deleted)
+	assert.Equal(t, 0, countRowsForDoc(t, index.db, "review_fts", local.DocKey))
+	assert.Equal(t, 1, countRowsForDoc(t, index.db, "review_fts", updated.DocKey))
+	var key string
+	err = index.db.QueryRowContext(ctx,
+		`SELECT doc_key FROM review_fts WHERE review_fts MATCH 'searchable'`).Scan(&key)
+	require.NoError(t, err)
+	assert.Equal(t, updated.DocKey, key)
 }
