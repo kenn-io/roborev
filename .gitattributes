@@ -1,6 +1,7 @@
 *.sh text eol=lf
 *.gotmpl text eol=lf
 *.golden text eol=lf
+internal/mcpserver/assets/*.png binary
 internal/skills/*/*/SKILL.md text eol=lf
 internal/skills/*/*/agents/openai.yaml text eol=lf
 
