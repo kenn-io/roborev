@@ -761,6 +761,7 @@ roborev refine --min-severity high  # Only fix high and critical findings
 | `--reasoning <level>` | Set reasoning depth |
 | `--fast` | Shorthand for `--reasoning fast` |
 | `--max-iterations <n>` | Limit fix attempts (default: 10) |
+| `--skip-trivial-rereview` | Do not wait for re-reviews of documentation/test-only fixes (default: off) |
 | `--plan` | Produce and store a plan before each fix |
 | `--plan-only` | Print and store plans for existing failed reviews, without edits, commits, or new reviews |
 | `--since <commit>` | Refine commits since specific commit |
@@ -771,6 +772,10 @@ roborev refine --min-severity high  # Only fix high and critical findings
 | `--quiet` | Only show progress/elapsed time |
 | `--allow-unsafe-agents` | Allow agents without sandboxing |
 | `--min-severity <level>` | Only fix findings at or above this severity (`low`/`medium`/`high`/`critical`) |
+
+`--skip-trivial-rereview` stops refine from waiting for the individual re-review
+of a fix that changes only documentation and tests. See
+[skipping trivial re-reviews](/docs/guides/auto-fixing/#skipping-trivial-re-reviews).
 
 `--plan-only` snapshots completed failed reviews in the selected branch or
 `--since` range, including range reviews. Single-branch selection uses commit
