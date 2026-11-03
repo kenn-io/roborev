@@ -201,7 +201,10 @@ func (c *daemonKataClient) List(ctx context.Context, opts kata.ListOpts) ([]kata
 	if err != nil {
 		return nil, err
 	}
-	query := &generated.KataListIssuesQuery{Project: &b.Project}
+	project, aliasIdentity, aliasKind := kataSelectionFields(b)
+	query := &generated.KataListIssuesQuery{
+		Project: project, WorkspaceAliasIdentity: aliasIdentity, WorkspaceAliasKind: aliasKind,
+	}
 	if opts.Status != "" {
 		query.Status = &opts.Status
 	}
@@ -226,7 +229,7 @@ func (c *daemonKataClient) Show(ctx context.Context, ref string) (kata.Issue, er
 		if err != nil {
 			return kata.Issue{}, err
 		}
-		query.Project = &b.Project
+		query.Project, query.WorkspaceAliasIdentity, query.WorkspaceAliasKind = kataSelectionFields(b)
 	}
 	resp, err := c.api.KataShowIssue(ctx, &generated.KataShowIssueRequestOptions{Query: query})
 	if err != nil {
@@ -236,15 +239,21 @@ func (c *daemonKataClient) Show(ctx context.Context, ref string) (kata.Issue, er
 }
 
 func (c *daemonKataClient) Create(ctx context.Context, req kata.CreateReq) (kata.CreateResult, error) {
-	project := req.Project
-	if project == "" {
+	var project *string
+	var aliasIdentity, aliasKind *string
+	if req.Project != "" {
+		project = &req.Project
+	} else {
 		b, err := c.Binding(ctx)
 		if err != nil {
 			return kata.CreateResult{}, err
 		}
-		project = b.Project
+		project, aliasIdentity, aliasKind = kataSelectionFields(b)
 	}
-	body := generated.KataCreateRequest{Title: req.Title, Project: &project, Labels: req.Labels}
+	body := generated.KataCreateRequest{
+		Title: req.Title, Project: project, WorkspaceAliasIdentity: aliasIdentity,
+		WorkspaceAliasKind: aliasKind, Labels: req.Labels,
+	}
 	if req.Body != "" {
 		body.Body = &req.Body
 	}
@@ -264,11 +273,17 @@ func (c *daemonKataClient) Create(ctx context.Context, req kata.CreateReq) (kata
 	}, nil
 }
 
-// localKataBinding reads the repository's .kata.local.toml or .kata.toml
-// binding on this machine. It reads files only: it runs nothing and contacts
-// nothing.
+// localKataBinding resolves the repository's local selection and captures the
+// registered alias for committed bindings. It does not contact Kata.
 func localKataBinding(ctx context.Context, workdir string) (kata.Binding, error) {
-	return kata.NewCLIClient(workdir).Binding(ctx)
+	return kata.WorkspaceBinding(ctx, workdir)
+}
+
+func kataSelectionFields(binding kata.Binding) (project, aliasIdentity, aliasKind *string) {
+	if binding.Alias != nil {
+		return nil, &binding.Alias.Identity, &binding.Alias.Kind
+	}
+	return &binding.Project, nil, nil
 }
 
 // kataDaemonError keeps the daemon's explanation, which already carries
