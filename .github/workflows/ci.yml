@@ -48,6 +48,7 @@ jobs:
               - 'mise.toml'
               - 'mise.lock'
               - '.github/workflows/ci.yml'
+              - '.github/actions/**'
               - 'docs/screenshots/prepare-demo-db.sh'
               - '.custom-gcl.yml'
               - '.golangci.yml'
@@ -276,6 +277,12 @@ jobs:
       - uses: actions/setup-go@v7.0.0
         with:
           go-version: '1.27.3'
+          cache: false
+
+      - name: Restore Go caches
+        uses: $/.github/actions/go-cache-restore
+        with:
+          group: ${{ runner.os }}
 
       # prepare-demo-db.sh tests run the uv pinned in mise.lock.
       - uses: jdx/mise-action@v5.2.3
@@ -385,6 +392,10 @@ jobs:
         env:
           CGO_ENABLED: 0
 
+      - name: Save Go caches
+        if: ${{ !cancelled() && (runner.os != 'Windows' || matrix.shard == 'windows-remaining') }}
+        uses: $/.github/actions/go-cache-save
+
   daemon-race:
     needs: go-changes
     if: needs.go-changes.outputs.changed == 'true'
@@ -412,6 +423,12 @@ jobs:
       - uses: actions/setup-go@v7.0.0
         with:
           go-version: '1.27.3'
+          cache: false
+
+      - name: Restore Go caches
+        uses: $/.github/actions/go-cache-restore
+        with:
+          group: Linux
 
       - name: Test daemon with race detection
         env:
@@ -457,6 +474,12 @@ jobs:
       - uses: actions/setup-go@v7.0.0
         with:
           go-version: '1.27.3'
+          cache: false
+
+      - name: Restore Go caches
+        uses: $/.github/actions/go-cache-restore
+        with:
+          group: Linux
 
       # prepare-demo-db.sh tests run the uv pinned in mise.lock.
       - uses: jdx/mise-action@v5.2.3
@@ -525,6 +548,12 @@ jobs:
       - uses: actions/setup-go@v7.0.0
         with:
           go-version: '1.27.3'
+          cache: false
+
+      - name: Restore Go caches
+        uses: $/.github/actions/go-cache-restore
+        with:
+          group: Linux
 
       - name: Run integration tests
         run: make test-postgres-ci GOFLAGS=-shuffle=on
