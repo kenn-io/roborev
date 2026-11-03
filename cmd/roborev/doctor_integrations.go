@@ -171,7 +171,7 @@ func checkDoctorKata(env *doctorEnv) []doctorCheck {
 		project = fmt.Sprintf("project %q, ", status.Project)
 	}
 	if status.State != "ready" {
-		details := []string{"state: " + status.State, status.Message}
+		details := []string{status.Message}
 		if status.Project != "" {
 			details = append(details, fmt.Sprintf("project: %q", status.Project))
 		}

@@ -159,7 +159,7 @@ func prepareKataPublications(ctx context.Context, cfg *config.Config, job *stora
 			}
 			filtered := event
 			if hook.Findings == "summary" {
-				filtered.Findings = "Review findings are available locally."
+				filtered.Findings = ""
 				filtered.Error = ""
 			}
 			create, ok := kataCreateRequest(hook, filtered)
@@ -167,7 +167,7 @@ func prepareKataPublications(ctx context.Context, cfg *config.Config, job *stora
 				continue
 			}
 			if hook.Findings == "comments" && len(c.Snapshots) > 0 {
-				filtered.Findings = "Findings are recorded as comments below."
+				filtered.Findings = ""
 				create.Body = buildKataHookBody(filtered)
 			}
 			policy := hook.Findings

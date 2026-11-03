@@ -28,7 +28,7 @@ func kataPublicationCmd(publish bool) *cobra.Command {
 	var jsonOutput bool
 	name, description := "show", "Look up a job's Kata issues and finding comments"
 	if publish {
-		name, description = "create", "Explicitly publish a completed job through its matching Kata hooks"
+		name, description = "create", "Publish a completed job using its Kata hooks"
 	}
 	cmd := &cobra.Command{Use: name + " <job_id|sha>", Short: description, Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		jobID, err := resolveKataJob(cmd, args[0], forceJobID)
@@ -70,13 +70,13 @@ func kataPublicationCmd(publish bool) *cobra.Command {
 			if issue == "" {
 				issue = "issue pending"
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s  %s  %s (%s)\n", publication.OperationID, issue, publication.State, publication.Policy)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s  %s (%s)\n", issue, publication.State, publication.Policy)
 			for _, finding := range publication.Findings {
 				comment := finding.Comment
 				if comment == "" {
 					comment = "comment pending"
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "  %s  %s  %s\n", finding.ID, comment, finding.State)
+				fmt.Fprintf(cmd.OutOrStdout(), "  %s  %s\n", finding.ID, comment)
 			}
 			if publication.LastError != "" {
 				fmt.Fprintln(cmd.OutOrStdout(), "  "+publication.LastError)

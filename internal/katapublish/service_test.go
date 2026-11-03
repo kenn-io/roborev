@@ -173,6 +173,27 @@ func TestDeliveryRecoversLostReceiptWithoutReposting(t *testing.T) {
 	assert.Equal(t, 1, f.posts)
 }
 
+func TestDeliveryRecoversVisibleLegacyMarkerWithoutReposting(t *testing.T) {
+	assert := assert.New(t)
+	req := fixtureRequest()
+	f := &fakeAPI{loseReceipt: true}
+	checkpoint := func(State) error {
+		f.checkpointed = true
+		return nil
+	}
+	state, err := Deliver(t.Context(), f, req, State{}, checkpoint)
+	require.ErrorIs(t, err, ErrPending)
+	require.Len(t, f.issue.Comments, 1)
+	// Simulate a comment written by the prior version before its reply was lost.
+	f.issue.Comments[0].Body = req.Entries[0].Body + "\n\n" + legacyMarker(req, req.Entries[0].Selector)
+	f.loseReceipt = false
+	state, err = Deliver(t.Context(), f, req, state, checkpoint)
+	require.NoError(t, err)
+	assert.True(state.Done)
+	assert.Equal(1, f.posts)
+	assert.Equal("comment-1", state.Receipts["f:one"].UID)
+}
+
 func TestDeliveryRetryIgnoresQuotedReplyMarkers(t *testing.T) {
 	req := fixtureRequest()
 	req.Entries = append(req.Entries, Entry{Selector: "f:two", ReviewUUID: req.ReviewUUID, DocumentHash: "hash-1", Index: 1, Body: "Second finding"})
@@ -426,11 +447,13 @@ func TestReceiptValidationRejectsChangedImmutableFields(t *testing.T) {
 	} {
 		comment := original
 		change(&comment)
-		_, ok, err := findComment(kata.Issue{UID: "issue", Comments: []kata.Comment{comment}}, body, "", "", req.Teammate, "receipt")
+		legacyBody := req.Entries[0].Body + "\n\n" + legacyMarker(req, req.Entries[0].Selector)
+		_, ok, err := findComment(kata.Issue{UID: "issue", Comments: []kata.Comment{comment}}, body, legacyBody, "", "", req.Teammate, "receipt")
 		require.ErrorIs(t, err, ErrPending)
 		assert.False(t, ok)
 	}
-	_, _, err := findComment(kata.Issue{UID: "issue", Comments: []kata.Comment{original, original}}, body, "", "", req.Teammate, "receipt")
+	legacyBody := req.Entries[0].Body + "\n\n" + legacyMarker(req, req.Entries[0].Selector)
+	_, _, err := findComment(kata.Issue{UID: "issue", Comments: []kata.Comment{original, original}}, body, legacyBody, "", "", req.Teammate, "receipt")
 	require.ErrorIs(t, err, ErrPending)
 }
 

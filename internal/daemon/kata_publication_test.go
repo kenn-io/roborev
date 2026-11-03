@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -313,6 +312,7 @@ func TestKataEligibilityOnlyAffectsKata(t *testing.T) {
 }
 
 func TestKataSummaryFreezesPolicyAndDestination(t *testing.T) {
+	assert := assert.New(t)
 	id := uuid.New()
 	job := &storage.ReviewJob{ID: 7, UUID: &id, JobType: storage.JobTypeReview, RepoPath: t.TempDir(), RepoName: "sample", GitRef: "abc123"}
 	c := storage.KataCompletion{Job: job, ReviewUUID: uuid.New().String(), Verdict: storage.VerdictFail, Output: "SECRET_SENTINEL", At: time.Now(), Snapshots: []storage.FindingSnapshot{{Selector: "f:example", ReviewUUID: uuid.New(), DocumentHash: strings.Repeat("a", 64), Index: 0, Finding: structuredreview.Finding{Severity: "high", Problem: "SECRET_SENTINEL", Fix: "SECRET_SENTINEL", Location: "SECRET_SENTINEL"}}}}
@@ -334,21 +334,50 @@ func TestKataSummaryFreezesPolicyAndDestination(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, requests, 1)
 	r := requests[0]
-	assert.Equal(t, "https://kata.example", r.Endpoint)
-	assert.Equal(t, "pinned-project", r.ProjectUID)
-	assert.Equal(t, "reviewer", r.Teammate)
-	assert.NotContains(t, r.Create.Body, "SECRET_SENTINEL")
+	assert.Equal("https://kata.example", r.Endpoint)
+	assert.Equal("pinned-project", r.ProjectUID)
+	assert.Equal("reviewer", r.Teammate)
+	assert.Contains(r.Create.Body, "Inspect: `roborev show 7`")
+	assert.NotContains(r.Create.Body, "## Findings")
+	assert.NotContains(r.Create.Body, "Review findings are available locally.")
+	assert.NotContains(r.Create.Body, "SECRET_SENTINEL")
 	require.Len(t, r.Entries, 1)
-	assert.NotContains(t, r.Entries[0].Body, "SECRET_SENTINEL")
-	assert.Equal(t, "summary", r.Policy)
-	assert.Equal(t, "reviews", r.Project)
+	assert.NotContains(r.Entries[0].Body, "SECRET_SENTINEL")
+	assert.Equal("summary", r.Policy)
+	assert.Equal("reviews", r.Project)
 	c.Error = "SECRET_SENTINEL"
 	c.ReviewUUID = ""
 	c.Snapshots = nil
 	requests, err = failedPrepared(t.Context(), c)
 	require.NoError(t, err)
 	require.Len(t, requests, 1)
-	assert.NotContains(t, requests[0].Create.Body, "SECRET_SENTINEL")
+	assert.NotContains(requests[0].Create.Body, "SECRET_SENTINEL")
+}
+
+func TestKataCommentsWithStructuredFindingsKeepsIssueBodyCompact(t *testing.T) {
+	assert := assert.New(t)
+	id := uuid.New()
+	job := &storage.ReviewJob{ID: 1, UUID: &id, JobType: storage.JobTypeReview, RepoPath: t.TempDir()}
+	findingID := uuid.New()
+	c := storage.KataCompletion{
+		Job: job, ReviewUUID: uuid.New().String(), Verdict: storage.VerdictFail, Output: "SECRET_SENTINEL",
+		Snapshots: []storage.FindingSnapshot{{Selector: "f:example", ReviewUUID: findingID, DocumentHash: strings.Repeat("a", 64), Index: 0, Finding: structuredreview.Finding{Severity: "high", Problem: "SECRET_SENTINEL", Fix: "SECRET_SENTINEL"}}},
+	}
+	cfg := config.DefaultConfig()
+	cfg.Integrations.Kata = config.KataIntegrationConfig{Enabled: true, Endpoint: "https://kata.example", DefaultProject: "reviews"}
+	cfg.Hooks = []config.HookConfig{{Type: "kata", Event: "review.*", Findings: "comments"}}
+	got, err := buildKataPublications(t.Context(), cfg, c, func(context.Context, string, kata.Binding) (kata.Binding, error) {
+		return kata.Binding{Project: "reviews", ProjectUID: "project-1"}, nil
+	})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Contains(got[0].Create.Body, "Inspect: `roborev show 1`")
+	assert.Contains(got[0].Create.Body, "Fix: `roborev fix 1`")
+	assert.NotContains(got[0].Create.Body, "## Findings")
+	assert.NotContains(got[0].Create.Body, "Findings are recorded as comments below.")
+	assert.NotContains(got[0].Create.Body, "SECRET_SENTINEL")
+	require.Len(t, got[0].Entries, 1)
+	assert.Contains(got[0].Entries[0].Body, "SECRET_SENTINEL")
 }
 
 func TestKataDistinctHooksDoNotConflict(t *testing.T) {
@@ -542,86 +571,6 @@ func TestKataDestinationCacheUsesSelectionIdentity(t *testing.T) {
 	assert.Equal(t, fake.Projects[2].UID, request.ProjectUID)
 }
 
-func FuzzKataDestinationCacheUsesSelectionIdentity(f *testing.F) {
-	f.Add([]byte("team-one/repo"), []byte("team-two/repo"))
-	f.Fuzz(func(t *testing.T, first, second []byte) {
-		if string(first) == string(second) {
-			t.Skip("aliases must be distinct")
-		}
-
-		server, fake := kataAPIServer(t)
-		cfg := server.configWatcher.Config().Integrations.Kata
-		selections := []kata.Binding{
-			{Project: "old-name", Alias: &kata.ProjectAlias{Identity: "repo-" + hex.EncodeToString(first), Kind: "git"}},
-			{Project: "old-name", Alias: &kata.ProjectAlias{Identity: "repo-" + hex.EncodeToString(second), Kind: "git"}},
-		}
-		var offline atomic.Bool
-		fake.Override = func(w http.ResponseWriter, r *http.Request) bool {
-			if offline.Load() {
-				if r.URL.Path == "/api/v1/projects/resolve" {
-					fake.Fail(w, http.StatusServiceUnavailable, "synthetic_unavailable", "offline")
-					return true
-				}
-				return false
-			}
-			if r.URL.Path != "/api/v1/projects/resolve" {
-				return false
-			}
-			var request struct {
-				Alias struct {
-					Identity string `json:"identity"`
-					Kind     string `json:"kind"`
-				} `json:"alias"`
-			}
-			body, err := io.ReadAll(r.Body)
-			if !assert.NoError(t, err, "read project alias request") {
-				fake.Fail(w, http.StatusBadRequest, "invalid_request", "invalid alias request")
-				return true
-			}
-			if !assert.NoError(t, json.Unmarshal(body, &request), "decode project alias request") {
-				fake.Fail(w, http.StatusBadRequest, "invalid_request", "invalid alias request")
-				return true
-			}
-			index := -1
-			for i, selection := range selections {
-				if selection.Alias.Identity == request.Alias.Identity && selection.Alias.Kind == request.Alias.Kind {
-					index = i
-					break
-				}
-			}
-			if !assert.GreaterOrEqual(t, index, 0, "unexpected workspace alias %q", request.Alias.Identity) {
-				fake.Fail(w, http.StatusNotFound, "alias_not_found", "unknown alias")
-				return true
-			}
-			project := fake.Projects[index]
-			fake.Reply(w, katagen.ProjectResolveBody{
-				Project: project,
-				Alias: katagen.ProjectAlias{
-					AliasIdentity: request.Alias.Identity,
-					AliasKind:     request.Alias.Kind,
-					ID:            int64(index + 1),
-					ProjectID:     project.ID,
-					CreatedAt:     time.Unix(0, 0).UTC(),
-				},
-			})
-			return true
-		}
-
-		for i, selection := range selections {
-			resolved, err := server.resolveKataDestination(t.Context(), cfg, fake.URL(), selection)
-			require.NoError(t, err)
-			assert.Equal(t, fake.Projects[i].UID, resolved.ProjectUID)
-		}
-		require.NoError(t, server.db.RememberKataDestination(t.Context(), fake.URL(), "old-name", "legacy-wrong-project"))
-		offline.Store(true)
-		for i, selection := range selections {
-			resolved, err := server.resolveKataDestination(t.Context(), cfg, fake.URL(), selection)
-			require.NoError(t, err)
-			assert.Equal(t, fake.Projects[i].UID, resolved.ProjectUID)
-		}
-	})
-}
-
 // restartKataAPI supplies the external receipts while the real SQLite queue,
 // publisher loop, and policy builder are exercised together.
 type restartKataAPI struct {
@@ -635,6 +584,8 @@ type restartKataAPI struct {
 	offline               bool
 	failAfterRegistration bool
 	creates, comments     int
+	createBodies          []string
+	commentBodies         []string
 }
 
 func (f *restartKataAPI) Endpoint() string { return f.endpoint }
@@ -675,6 +626,7 @@ func (f *restartKataAPI) Create(_ context.Context, r kata.CreateReq) (kata.Creat
 	if state.ProjectUID != f.uid {
 		return kata.CreateResult{}, errors.New("remote write before durable UID pin")
 	}
+	f.createBodies = append(f.createBodies, r.Body)
 	f.creates++
 	f.issue = kata.Issue{Status: "open", UID: "issue-1", ShortID: "one", QualifiedID: f.project + "#one", ProjectUID: f.uid, Metadata: r.Metadata}
 	return kata.CreateResult{IssueUID: "issue-1", ShortID: "one", ProjectUID: f.uid}, nil
@@ -688,6 +640,7 @@ func (f *restartKataAPI) CreateInProject(ctx context.Context, expectedUID string
 }
 
 func (f *restartKataAPI) Comment(_ context.Context, r kata.CommentReq) (kata.CommentResult, error) {
+	f.commentBodies = append(f.commentBodies, r.Body)
 	if f.failAfterRegistration {
 		return kata.CommentResult{}, errors.New("disconnected after pending registration")
 	}
@@ -703,6 +656,7 @@ func (f *restartKataAPI) MutateMetadata(_ context.Context, _ string, key string,
 }
 
 func TestKataOfflineRestartUsesFrozenPublication(t *testing.T) {
+	assert := assert.New(t)
 	db, dir := testutil.OpenTestDBWithDir(t)
 	cfg := config.DefaultConfig()
 	cfg.Integrations.Kata = config.KataIntegrationConfig{Enabled: true, Endpoint: "https://kata.example", DefaultProject: "reviews", APIKey: "original-key"}
@@ -721,7 +675,7 @@ func TestKataOfflineRestartUsesFrozenPublication(t *testing.T) {
 	saved, err := db.KataHandoffs(t.Context(), job.ID)
 	require.NoError(t, err)
 	require.Len(t, saved, 1)
-	assert.Empty(t, saved[0].Request.ProjectUID)
+	assert.Empty(saved[0].Request.ProjectUID)
 	require.NoError(t, db.Close())
 	reopened, err := storage.Open(filepath.Join(dir, "test.db"))
 	require.NoError(t, err)
@@ -739,9 +693,9 @@ func TestKataOfflineRestartUsesFrozenPublication(t *testing.T) {
 	publisher.deliver(t.Context(), *claimed)
 	saved, err = reopened.KataHandoffs(t.Context(), job.ID)
 	require.NoError(t, err)
-	assert.Equal(t, "pending", saved[0].Status)
-	assert.Equal(t, "project-1", saved[0].State.ProjectUID)
-	assert.Equal(t, 1, api.creates)
+	assert.Equal("pending", saved[0].Status)
+	assert.Equal("project-1", saved[0].State.ProjectUID)
+	assert.Equal(1, api.creates)
 	// Simulate restart after pending registration. The startup queue must finish
 	// without a CLI or another completion event. SQLite is external to synctest.
 	api.failAfterRegistration = false
@@ -750,15 +704,23 @@ func TestKataOfflineRestartUsesFrozenPublication(t *testing.T) {
 	publisher.start(t.Context())
 	defer publisher.stop()
 	require.Eventually(t, func() bool {
-		records, e := reopened.KataHandoffs(context.Background(), job.ID)
+		records, e := reopened.KataHandoffs(t.Context(), job.ID)
 		return e == nil && len(records) == 1 && records[0].Status == "done"
 	}, 10*time.Second, 10*time.Millisecond)
 	publisher.stop()
-	assert.Equal(t, 1, api.creates)
-	assert.Equal(t, 1, api.comments)
+	assert.Equal(1, api.creates)
+	assert.Equal(1, api.comments)
 	payload, err := json.Marshal(api.issue)
 	require.NoError(t, err)
-	assert.NotContains(t, string(payload), "SECRET_SENTINEL")
+	assert.NotContains(string(payload), "SECRET_SENTINEL")
+	require.NotEmpty(t, api.createBodies)
+	require.NotEmpty(t, api.commentBodies)
+	for _, body := range api.createBodies {
+		assert.NotContains(body, "SECRET_SENTINEL")
+	}
+	for _, body := range api.commentBodies {
+		assert.NotContains(body, "SECRET_SENTINEL")
+	}
 }
 
 func TestKataActualFailedBroadcastSuppressesCIAndPanelMembers(t *testing.T) {

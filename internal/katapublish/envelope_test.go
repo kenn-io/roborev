@@ -33,15 +33,19 @@ func TestEnvelopeRefusesUnknownAndChangedMappings(t *testing.T) {
 }
 
 func TestFingerprintAndMarkersDoNotExposePayload(t *testing.T) {
+	assert := assert.New(t)
 	req := fixtureRequest()
 	first, err := Fingerprint(req)
 	require.NoError(t, err)
 	req.Entries[0].Body = "confidential-sentinel"
 	second, err := Fingerprint(req)
 	require.NoError(t, err)
-	assert.NotEqual(t, first, second)
-	assert.NotContains(t, marker(req, "f:one"), "confidential-sentinel")
-	assert.NotContains(t, marker(req, "f:one"), req.ReviewUUID)
+	assert.NotEqual(first, second)
+	got := marker(req, "f:one")
+	assert.True(strings.HasPrefix(got, "<!-- roborev:"))
+	assert.True(strings.HasSuffix(got, " -->"))
+	assert.NotContains(got, "confidential-sentinel")
+	assert.NotContains(got, req.ReviewUUID)
 }
 
 func FuzzEnvelopeStrictRoundTrip(f *testing.F) {

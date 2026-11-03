@@ -124,8 +124,17 @@ func Fingerprint(req Request) (string, error) {
 	return hash(string(data)), nil
 }
 
+func markerID(req Request, operation string) string {
+	return hash(req.Endpoint + "\x00" + req.ProjectUID + "\x00" + req.OperationID + "\x00" + operation)[:24]
+}
+
 func marker(req Request, operation string) string {
-	return "[roborev:" + hash(req.Endpoint + "\x00" + req.ProjectUID + "\x00" + req.OperationID + "\x00" + operation)[:24] + "]"
+	return "<!-- roborev:" + markerID(req, operation) + " -->"
+}
+
+// legacyMarker locates in-flight comments written before markers became HTML comments.
+func legacyMarker(req Request, operation string) string {
+	return "[roborev:" + markerID(req, operation) + "]"
 }
 
 func action(req Request, projectUID string) string {

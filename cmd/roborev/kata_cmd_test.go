@@ -92,6 +92,57 @@ func TestKataCommandsUseDaemonPublicationAPI(t *testing.T) {
 	}
 }
 
+func TestKataHumanOutputOmitsInternalPublicationFields(t *testing.T) {
+	assert := assert.New(t)
+	body := daemon.KataPublicationsBody{
+		JobID: 42,
+		Publications: []daemon.KataPublication{{
+			OperationID: "publish:internal-hash", Issue: "reviews#one", State: "pending", Policy: "summary",
+			Findings: []daemon.KataFindingPublication{
+				{ID: "f:first", Comment: "comment-1", State: "delivered"},
+				{ID: "f:second", Comment: "comment-2", State: "pending"},
+			},
+		}},
+	}
+	NewMockDaemon(t, MockRefineHooks{OnUnhandled: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+		if r.URL.Path != "/api/kata/publications" {
+			return false
+		}
+		assert.Equal(http.MethodGet, r.Method)
+		assert.Equal("42", r.URL.Query().Get("job_id"))
+		assert.NoError(json.NewEncoder(w).Encode(body))
+		return true
+	}})
+	cmd := kataCmd()
+	var output bytes.Buffer
+	cmd.SetOut(&output)
+	cmd.SetArgs([]string{"show", "--job", "42"})
+	require.NoError(t, cmd.Execute())
+
+	assert.Equal("reviews#one  pending (summary)\n  f:first  comment-1\n  f:second  comment-2\n", output.String())
+	assert.NotContains(output.String(), "publish:internal-hash")
+	assert.Equal(1, strings.Count(output.String(), "pending"))
+}
+
+func TestKataHelpDescriptionsAreConcise(t *testing.T) {
+	assert := assert.New(t)
+	cmd := kataCmd()
+	var output bytes.Buffer
+	cmd.SetOut(&output)
+	cmd.SetArgs([]string{"create", "--help"})
+	require.NoError(t, cmd.Execute())
+	assert.Contains(output.String(), "Publish a completed job using its Kata hooks")
+	assert.NotContains(output.String(), "Explicitly publish a completed job through its matching Kata hooks")
+
+	cmd = commentCmd()
+	output.Reset()
+	cmd.SetOut(&output)
+	cmd.SetArgs([]string{"--help"})
+	require.NoError(t, cmd.Execute())
+	assert.Contains(output.String(), "complete finding selector from 'roborev show' (requires --rebuttal)")
+	assert.NotContains(output.String(), "complete selector of the finding to re-evaluate, copied whole")
+}
+
 func TestKataCommandsRejectInvalidSelectors(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

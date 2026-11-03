@@ -65,18 +65,20 @@ func TestDoctorKataStatesFromTheDaemon(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
 			env := kataDoctorEnv(config.KataIntegrationConfig{Enabled: true}, tt.status)
 			got := findDoctorCheck(t, checkDoctorIntegrations(env), "integrations.kata")
-			assert.Equal(t, tt.wantStatus, got.Status)
-			assert.Equal(t, "integrations", got.Category)
+			assert.Equal(tt.wantStatus, got.Status)
+			assert.Equal("integrations", got.Category)
 			text := got.Summary + " " + strings.Join(got.Details, " ")
 			for _, want := range tt.wantIn {
-				assert.Contains(t, text, want)
+				assert.Contains(text, want)
 			}
+			assert.NotContains(strings.Join(got.Details, " "), "state:")
 			if tt.wantFix == "" {
-				assert.Empty(t, got.Fix)
+				assert.Empty(got.Fix)
 			} else {
-				assert.Contains(t, got.Fix, tt.wantFix)
+				assert.Contains(got.Fix, tt.wantFix)
 			}
 		})
 	}

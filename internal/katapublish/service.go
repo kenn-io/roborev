@@ -233,7 +233,8 @@ func Deliver(ctx context.Context, api API, req Request, state State, checkpoint 
 	for i, entry := range req.Entries {
 		operation := entry.Selector
 		body := entry.Body + "\n\n" + marker(req, operation)
-		receipt, ok, findErr := findComment(issue, body, "", "", req.Teammate, env.Entries[i].ReceiptUID)
+		legacyBody := entry.Body + "\n\n" + legacyMarker(req, operation)
+		receipt, ok, findErr := findComment(issue, body, legacyBody, "", "", req.Teammate, env.Entries[i].ReceiptUID)
 		if findErr != nil {
 			return state, findErr
 		}
@@ -276,7 +277,7 @@ func Deliver(ctx context.Context, api API, req Request, state State, checkpoint 
 			// A different writer may have updated any entry while the comment was
 			// in flight. Continue only from this latest validated envelope.
 			env = current
-			receipt, ok, err = findComment(issue, body, "", "", req.Teammate, posted.UID)
+			receipt, ok, err = findComment(issue, body, legacyBody, "", "", req.Teammate, posted.UID)
 			if err != nil {
 				return state, err
 			}
@@ -323,8 +324,14 @@ func expired(first time.Time) bool {
 	return !first.IsZero() && !time.Now().Before(first.Add(replayWindow))
 }
 
-func findComment(issue kata.Issue, body, target, kind, teammate, expectedUID string) (Receipt, bool, error) {
-	markerLine := body[strings.LastIndex(body, "\n")+1:]
+func findComment(
+	issue kata.Issue,
+	body, legacyBody, target, kind, teammate, expectedUID string,
+) (Receipt, bool, error) {
+	markerLines := []string{body[strings.LastIndex(body, "\n")+1:]}
+	if legacyBody != "" && legacyBody != body {
+		markerLines = append(markerLines, legacyBody[strings.LastIndex(legacyBody, "\n")+1:])
+	}
 	var matches []kata.Comment
 	for _, comment := range issue.Comments {
 		// A quoted marker in a reply or another teammate's comment does not
@@ -332,7 +339,16 @@ func findComment(issue kata.Issue, body, target, kind, teammate, expectedUID str
 		// including when its kind or attribution has changed.
 		knownReceipt := expectedUID != "" && comment.UID == expectedUID
 		candidate := string(comment.Kind) == kind && comment.ReplyTo == target && comment.Teammate == teammate
-		if knownReceipt || candidate && strings.Contains(comment.Body, markerLine) {
+		marked := false
+		if candidate {
+			for _, markerLine := range markerLines {
+				if strings.Contains(comment.Body, markerLine) {
+					marked = true
+					break
+				}
+			}
+		}
+		if knownReceipt || candidate && marked {
 			matches = append(matches, comment)
 		}
 	}
@@ -343,7 +359,8 @@ func findComment(issue kata.Issue, body, target, kind, teammate, expectedUID str
 		return Receipt{}, false, nil
 	}
 	comment := matches[0]
-	if comment.UID == "" || comment.IssueUID != issue.UID || comment.Body != body || string(comment.Kind) != kind || comment.ReplyTo != target || comment.Teammate != teammate || comment.Author == "" || comment.EditedAt != nil || (expectedUID != "" && comment.UID != expectedUID) {
+	bodyMatches := comment.Body == body || legacyBody != "" && comment.Body == legacyBody
+	if comment.UID == "" || comment.IssueUID != issue.UID || !bodyMatches || string(comment.Kind) != kind || comment.ReplyTo != target || comment.Teammate != teammate || comment.Author == "" || comment.EditedAt != nil || (expectedUID != "" && comment.UID != expectedUID) {
 		return Receipt{}, false, pending("comment receipt does not match frozen request")
 	}
 	return Receipt{UID: comment.UID, Attribution: comment.Attribution}, true, nil
@@ -471,7 +488,8 @@ func Lookup(ctx context.Context, api API, req Request, state State) (State, erro
 	done := true
 	for i, entry := range req.Entries {
 		body := entry.Body + "\n\n" + marker(req, entry.Selector)
-		receipt, found, findErr := findComment(issue, body, "", "", req.Teammate, env.Entries[i].ReceiptUID)
+		legacyBody := entry.Body + "\n\n" + legacyMarker(req, entry.Selector)
+		receipt, found, findErr := findComment(issue, body, legacyBody, "", "", req.Teammate, env.Entries[i].ReceiptUID)
 		if findErr != nil {
 			return state, findErr
 		}
