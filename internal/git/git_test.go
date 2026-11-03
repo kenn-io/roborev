@@ -859,6 +859,32 @@ func TestGetMainRepoRootForBareBackedWorktree(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
+func TestGetMainRepoRootForBareBackedWorktreeWithWorktreeConfig(t *testing.T) {
+	// Bare common repo with extensions.worktreeConfig=true and core.bare set
+	// only in <commonDir>/config.worktree, not in <commonDir>/config.
+	bareRepo := NewBareTestRepo(t)
+	seedRepo := NewTestRepoWithCommit(t)
+	seedRepo.Run("remote", "add", "origin", bareRepo.Dir)
+	seedRepo.Run("push", "origin", "HEAD:main")
+	bareRepo.Run("config", "extensions.worktreeConfig", "true")
+	bareRepo.Run("config", "--worktree", "core.bare", "true")
+	bareRepo.Run("config", "--file", "config", "--unset", "core.bare")
+
+	worktreeDir := t.TempDir()
+	bareRepo.Run("worktree", "add", worktreeDir, "main")
+	t.Cleanup(func() {
+		cmd := exec.Command("git", "-C", bareRepo.Dir, "worktree", "remove", worktreeDir)
+		_ = cmd.Run()
+	})
+
+	got, err := GetMainRepoRoot(worktreeDir)
+	require.NoError(t, err)
+
+	want, err := GetRepoRoot(worktreeDir)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+}
+
 func TestGetCommitInfo(t *testing.T) {
 	t.Run("commit with subject only", func(t *testing.T) {
 		repo := NewTestRepoWithAuthor(t, "Test Author")
