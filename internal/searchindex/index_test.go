@@ -54,6 +54,11 @@ func TestSidecarV2UpgradeRenumbersFTSAndKeepsVectors(t *testing.T) {
 	index, err := Open(ctx, path)
 	require.NoError(t, err)
 	docs := []searchdoc.Document{testDocument(1, "alpha search term"), testDocument(2, "beta search term")}
+	localSource := docs[0].Source
+	localSource.ReviewUUID = ""
+	local := searchdoc.Render(localSource)
+	_, err = index.RefreshMirrorPage(ctx, []searchdoc.Document{local}, nil)
+	require.NoError(t, err)
 	_, err = index.RefreshMirrorPage(ctx, docs, nil)
 	require.NoError(t, err)
 	require.NoError(t, index.vectors.EnsureGeneration(ctx, "gen-1",
@@ -62,8 +67,9 @@ func TestSidecarV2UpgradeRenumbersFTSAndKeepsVectors(t *testing.T) {
 		[]vector.ChunkVector{{ChunkIndex: 0, Vector: vector.Vector{1, 0}}}))
 	_, err = index.db.ExecContext(ctx, `
 		UPDATE review_fts SET rowid = rowid + 100;
+		INSERT INTO review_fts(rowid, doc_key, content, identifiers) VALUES (103, ?, ?, ?);
 		DROP INDEX review_mirror_job_id;
-		UPDATE search_meta SET value = '2' WHERE key = 'schema_version';`)
+		UPDATE search_meta SET value = '2' WHERE key = 'schema_version';`, local.DocKey, local.Content, local.Identifiers)
 	require.NoError(t, err)
 	require.NoError(t, index.Close())
 
@@ -80,6 +86,13 @@ func TestSidecarV2UpgradeRenumbersFTSAndKeepsVectors(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, doc.Source.ReviewID, rowID)
 	}
+	assert.Equal(t, 1, countRowsForDoc(t, index.db, "review_mirror", local.DocKey))
+	assert.Equal(t, 0, countRowsForDoc(t, index.db, "review_fts", local.DocKey))
+	assert.Equal(t, 1, countRowsForDoc(t, index.db, "review_fts", docs[0].DocKey))
+	var ftsRows int
+	err = index.db.QueryRowContext(ctx, `SELECT count(*) FROM review_fts`).Scan(&ftsRows)
+	require.NoError(t, err)
+	assert.Equal(t, 2, ftsRows)
 	hits, err := index.vectors.QueryGeneration(ctx, "gen-1", vector.Vector{1, 0}, 10)
 	require.NoError(t, err)
 	require.Len(t, hits, 1)

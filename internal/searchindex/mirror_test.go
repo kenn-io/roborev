@@ -141,7 +141,6 @@ func TestMirrorRowLookupAvoidsFullScans(t *testing.T) {
 		args  []any
 	}{
 		{"mirror lookup", readMirrorRowSQL, []any{"doc"}},
-		{"FTS replace", replaceFTSRowSQL, []any{1, "doc", "content", "identifiers"}},
 		{"FTS delete", deleteFTSRowSQL, []any{"doc", "doc"}},
 		{"job lookup", `SELECT doc_key FROM review_mirror WHERE job_id = ?`, []any{1}},
 	} {
@@ -157,10 +156,7 @@ func TestMirrorRowLookupAvoidsFullScans(t *testing.T) {
 				details = append(details, detail)
 			}
 			require.NoError(t, rows.Err())
-			// SQLite emits no plan steps for an INSERT with literal values.
-			if tc.name != "FTS replace" {
-				require.NotEmpty(t, details)
-			}
+			require.NotEmpty(t, details)
 			for _, detail := range details {
 				assert.NotEqual(t, "SCAN review_fts VIRTUAL TABLE INDEX 0:", strings.TrimSpace(detail))
 				assert.NotContains(t, detail, "SCAN review_mirror")
