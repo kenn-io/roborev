@@ -647,9 +647,36 @@ func TestExportReviewsDefaultLimitIsBounded(t *testing.T) {
 	defer db.Close()
 
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	// Seed exportable history in one transaction to keep this limit test fast.
+	tx, err := db.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+	const timestamp = "2026-06-29 00:00:00"
+	document := string(reviewFixtureJSON("No issues found."))
 	for i := range exportDefaultPageLimit + 1 {
-		seedCompletedExportReview(t, db, repo.ID, fmt.Sprintf("%040x", i+1), "2026-06-29 00:00:00", false)
+		sha := fmt.Sprintf("%040x", i+1)
+		result, err := tx.ExecContext(t.Context(), `
+			INSERT INTO commits (repo_id, sha, author, subject, timestamp)
+			VALUES (?, ?, 'Author', 'Subject', ?)`, repo.ID, sha, timestamp)
+		require.NoError(t, err)
+		commitID, err := result.LastInsertId()
+		require.NoError(t, err)
+		result, err = tx.ExecContext(t.Context(), `
+			INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, status, job_type,
+			                         uuid, enqueued_at, started_at, finished_at, updated_at)
+			VALUES (?, ?, ?, 'codex', 'done', 'review', ?, ?, ?, ?, ?)`,
+			repo.ID, commitID, sha, uuid.New(), timestamp, timestamp, timestamp, timestamp)
+		require.NoError(t, err)
+		jobID, err := result.LastInsertId()
+		require.NoError(t, err)
+		_, err = tx.ExecContext(t.Context(), `
+			INSERT INTO reviews (job_id, agent, output, structured_output, verdict_bool,
+			                     uuid, created_at, updated_at, closed)
+			VALUES (?, 'codex', '', ?, 1, ?, ?, ?, 0)`,
+			jobID, document, testUUID("review-"+sha), timestamp, timestamp)
+		require.NoError(t, err)
 	}
+	require.NoError(t, tx.Commit())
 
 	page, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileContent})
 	require.NoError(t, err)
