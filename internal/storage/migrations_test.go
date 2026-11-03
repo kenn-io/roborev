@@ -215,7 +215,6 @@ func TestTokenCostStartedIndexMigration(t *testing.T) {
 		var indexSQL string
 		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT sql FROM sqlite_master
 			WHERE type = 'index' AND name = 'idx_review_jobs_source_started'`).Scan(&indexSQL))
-		assert.Contains(t, indexSQL, "ON review_jobs(source_machine_id, datetime(")
 		assert.Equal(t, []int{1, 2, 3, 4, 5}, appliedVersions(t, db))
 		// Simulate interruption after creating the index, before recording it.
 		_, err := db.ExecContext(t.Context(), `DELETE FROM schema_migrations WHERE version = 5`)

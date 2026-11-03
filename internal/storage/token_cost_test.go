@@ -37,7 +37,6 @@ func TestTokenCostCandidateQueriesSeekStartedAtIndex(t *testing.T) {
 				var detail string
 				require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
 				details = append(details, detail)
-				t.Log(detail)
 			}
 			require.NoError(t, rows.Err())
 			assert.Contains(t, strings.Join(details, "\n"), "SEARCH j USING INDEX idx_review_jobs_source_started (source_machine_id=? AND <expr>>?)")
