@@ -26,6 +26,20 @@ import (
 	"go.kenn.io/roborev/internal/testutil"
 )
 
+func TestRefineHelpKeepsHookAndBranchReviewNote(t *testing.T) {
+	root := newRootCmd()
+	var output strings.Builder
+	root.SetOut(&output)
+	root.SetErr(&output)
+	root.SetArgs([]string{"refine", "--help"})
+
+	require.NoError(t, root.Execute())
+
+	help := output.String()
+	assert.Equal(t, 1, strings.Count(help, "--skip-trivial-rereview"))
+	assert.Contains(t, help, "Automatic hook reviews and the full branch review still run.")
+}
+
 type mockDaemonClient struct {
 	reviews   map[string]*storage.Review
 	jobs      map[int64]*storage.ReviewJob

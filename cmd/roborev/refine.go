@@ -87,9 +87,7 @@ Prerequisites:
 Use --since to specify a starting commit when on the main branch or to
 limit how far back to look for reviews to address.
 
-Use --skip-trivial-rereview to stop waiting for the individual re-review of
-a fix that changes only documentation and tests. Automatic hook reviews and
-the full branch review still run.
+Automatic hook reviews and the full branch review still run.
 
 Use --list to preview which reviews would be refined without running.
 Use --branch to validate the current branch before refining.
