@@ -172,11 +172,38 @@ jobs:
       - name: Test frontend packages
         run: bun run web:test
 
+      - name: Upload Vitest web results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: vitest-web-attempt-${{ github.run_attempt }}
+          path: web/test-results/vitest/web.json
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Upload Vitest roborev-ui results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: vitest-roborev-ui-attempt-${{ github.run_attempt }}
+          path: packages/roborev-ui/test-results/vitest/roborev-ui.json
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: Install browser test runtime
         run: kit-retry 3 5 bun run --cwd web playwright install --with-deps chromium
 
       - name: Test embedded browser application
         run: bun run web:test:e2e
+
+      - name: Upload Playwright results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: playwright-web-attempt-${{ github.run_attempt }}
+          path: web/test-results/playwright/*.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Validate embedded release assets
         run: make web-release-check
@@ -259,31 +286,38 @@ jobs:
 
       - name: Test with race detection (Linux)
         if: matrix.os == 'ubuntu-latest'
+        env:
+          SUITE: ${{ matrix.shard || matrix.os }}
         run: |
           set -o pipefail
-          mkdir -p test-results
           # The daemon package is large enough to exceed Go's package timeout
           # under the race detector, so dedicated jobs shard it below.
-          go list ./... |
-            grep -v '^go\.kenn\.io/roborev/internal/daemon$' |
-            xargs go test -json -timeout 15m -race -shuffle=on -tags integration 2>&1 |
-            tee "test-results/${{ matrix.os }}-test.jsonl"
+          packages="$(go list ./... | grep -v '^go\.kenn\.io/roborev/internal/daemon$')"
+          go tool gotestsum --format pkgname-and-test-fails --format-icons text \
+            --jsonfile "gotestsum/$SUITE.json" \
+            --rerun-fails=2 --rerun-fails-report "gotestsum/$SUITE-reruns.txt" \
+            --packages "$packages" \
+            -- -timeout 15m -race -shuffle=on -tags integration
 
       - name: Test (macOS)
         if: matrix.os == 'macos-latest'
+        env:
+          SUITE: ${{ matrix.shard || matrix.os }}
         run: |
-          set -o pipefail
-          mkdir -p test-results
           # Go's race detector can intermittently hang/crash while spawning child
           # processes on darwin/arm64; Linux keeps the race coverage for CI.
-          go test -json -timeout 15m -shuffle=on -tags integration ./... 2>&1 |
-            tee "test-results/${{ matrix.os }}-test.jsonl"
+          go tool gotestsum --format pkgname-and-test-fails --format-icons text \
+            --jsonfile "gotestsum/$SUITE.json" \
+            --rerun-fails=2 --rerun-fails-report "gotestsum/$SUITE-reruns.txt" \
+            --packages "./..." \
+            -- -timeout 15m -shuffle=on -tags integration
 
       - name: Test (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
+        env:
+          SUITE: ${{ matrix.shard || matrix.os }}
         run: |
-          New-Item -ItemType Directory -Force -Path test-results | Out-Null
           $packages = @('${{ matrix.package }}')
           if (-not '${{ matrix.package }}') {
             $packages = go list -tags integration ./...
@@ -292,23 +326,34 @@ jobs:
           }
           $testArgs = @()
           if ('${{ matrix.pattern }}') { $testArgs = @('-run', '${{ matrix.pattern }}') }
+          $jsonFile = "gotestsum/$env:SUITE.json"
           # go test on Windows can exit 1 due to temp .exe cleanup
           # ("go: remove ...\.exe: Access is denied") even when all
-          # tests pass. Only suppress that specific pattern.
-          $testResultPath = "test-results/${{ matrix.shard || matrix.os }}-test.jsonl"
-          go test -json -timeout 15m -shuffle=on -tags integration @testArgs @packages > $testResultPath 2>&1
+          # tests pass. Keep a copy of the output to recognize only that error.
+          $outputFile = "gotestsum/$env:SUITE-output.log"
+          New-Item -ItemType Directory -Force -Path gotestsum | Out-Null
+          go tool gotestsum --format pkgname-and-test-fails --format-icons text `
+            --jsonfile $jsonFile `
+            --rerun-fails=2 --rerun-fails-report "gotestsum/$env:SUITE-reruns.txt" `
+            --packages ($packages -join ' ') `
+            -- -timeout 15m -shuffle=on -tags integration @testArgs 2>&1 |
+            Tee-Object -FilePath $outputFile
           $exitCode = $LASTEXITCODE
           if ($exitCode -ne 0) {
-            Write-Host "go test failed; recent output:"
-            Get-Content -Path $testResultPath -Tail 200
-
-            $failed = Select-String -Path $testResultPath -Pattern '"Action":"fail"'
-            if ($failed) {
+            # A rerun can pass a test that failed first, so judge each test
+            # and package by its last result.
+            $results = @{}
+            Select-String -Path $jsonFile -Pattern '"Action":"(pass|fail|skip)"' | ForEach-Object {
+              $event = $_.Line | ConvertFrom-Json
+              $results["$($event.Package) $($event.Test)"] = $event
+            }
+            $failed = @($results.Values | Where-Object { $_.Action -eq 'fail' })
+            if ($failed.Count -gt 0) {
               Write-Host "Tests failed:"
-              $failed | Select-Object -First 50 | ForEach-Object { Write-Host $_.Line }
+              $failed | Select-Object -First 50 | ForEach-Object { Write-Host "$($_.Package) $($_.Test)" }
               exit 1
             }
-            $cleanup = Select-String -Path $testResultPath -Pattern "go: remove .+\.exe: Access is denied"
+            $cleanup = Select-String -Path $outputFile -Pattern "go: remove .+\.exe: Access is denied"
             if (-not $cleanup) {
               Write-Host "go test failed with unknown error"
               exit $exitCode
@@ -322,7 +367,16 @@ jobs:
         uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ matrix.shard || matrix.os }}-test-json
-          path: test-results/${{ matrix.shard || matrix.os }}-test.jsonl
+          path: gotestsum/${{ matrix.shard || matrix.os }}.json
+          if-no-files-found: ignore
+
+      - name: Upload gotestsum results
+        if: failure() || github.run_attempt > 1 || hashFiles(format('gotestsum/{0}-reruns.txt', matrix.shard || matrix.os)) != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-${{ matrix.shard || matrix.os }}-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
           if-no-files-found: ignore
 
       - name: Build with CGO disabled
@@ -360,19 +414,31 @@ jobs:
           go-version: '1.27.3'
 
       - name: Test daemon with race detection
+        env:
+          SUITE: daemon-${{ matrix.shard.name }}
         run: |
-          set -o pipefail
-          mkdir -p test-results
-          go test -json -timeout 10m -race -shuffle=on -tags integration \
-            -run '${{ matrix.shard.pattern }}' ./internal/daemon 2>&1 |
-            tee "test-results/daemon-${{ matrix.shard.name }}.jsonl"
+          go tool gotestsum --format pkgname-and-test-fails --format-icons text \
+            --jsonfile "gotestsum/$SUITE.json" \
+            --rerun-fails=2 --rerun-fails-report "gotestsum/$SUITE-reruns.txt" \
+            --packages "./internal/daemon" \
+            -- -timeout 10m -race -shuffle=on -tags integration \
+            -run '${{ matrix.shard.pattern }}'
 
       - name: Upload test JSON
         if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
           name: daemon-${{ matrix.shard.name }}-test-json
-          path: test-results/daemon-${{ matrix.shard.name }}.jsonl
+          path: gotestsum/daemon-${{ matrix.shard.name }}.json
+          if-no-files-found: ignore
+
+      - name: Upload gotestsum results
+        if: failure() || github.run_attempt > 1 || hashFiles(format('gotestsum/daemon-{0}-reruns.txt', matrix.shard.name)) != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-daemon-${{ matrix.shard.name }}-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
           if-no-files-found: ignore
 
   coverage:
@@ -398,18 +464,29 @@ jobs:
       - name: Test with coverage
         # Race coverage runs in the test and daemon-race jobs; repeating it here
         # makes the daemon package exceed its timeout without improving coverage.
+        # No reruns here: a rerun would rewrite coverage.out with only the
+        # rerun's coverage.
         run: |
-          set -o pipefail
-          mkdir -p test-results
-          go test -json -timeout 10m -shuffle=on -tags integration -coverprofile=coverage.out ./... 2>&1 |
-            tee test-results/coverage.jsonl
+          go tool gotestsum --format pkgname-and-test-fails --format-icons text \
+            --jsonfile gotestsum/coverage.json \
+            --packages "./..." \
+            -- -timeout 10m -shuffle=on -tags integration -coverprofile=coverage.out
 
       - name: Upload coverage test timings
         if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
           name: coverage-test-json
-          path: test-results/coverage.jsonl
+          path: gotestsum/coverage.json
+          if-no-files-found: ignore
+
+      - name: Upload gotestsum results
+        if: failure() || github.run_attempt > 1
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-coverage-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
           if-no-files-found: ignore
 
       - name: Upload coverage
@@ -453,6 +530,25 @@ jobs:
         run: make test-postgres-ci GOFLAGS=-shuffle=on
         env:
           TEST_POSTGRES_URL: postgres://roborev_test:roborev_test_password@localhost:5433/roborev_test
+
+      # test-postgres-ci runs two suites; give each its own artifact.
+      - name: Upload gotestsum storage results
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/postgres-storage-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-postgres-storage-attempt-${{ github.run_attempt }}
+          path: gotestsum/postgres-storage.json
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Upload gotestsum daemon results
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/postgres-daemon-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-postgres-daemon-attempt-${{ github.run_attempt }}
+          path: gotestsum/postgres-daemon.json
+          retention-days: 14
+          if-no-files-found: ignore
 
   lint:
     needs: go-changes
