@@ -70,15 +70,18 @@ func TestSidecarV2UpgradeRenumbersFTSAndKeepsVectors(t *testing.T) {
 		[]vector.ChunkVector{{ChunkIndex: 0, Vector: vector.Vector{1, 0}}}))
 	_, err = index.db.ExecContext(ctx, `
 		UPDATE review_fts SET rowid = rowid + 100;
-		INSERT INTO review_fts(rowid, doc_key, content, identifiers) VALUES (103, ?, ?, ?);
 		DROP INDEX review_mirror_job_id;
-		UPDATE search_meta SET value = '2' WHERE key = 'schema_version';`, docs[0].DocKey, docs[0].Content, docs[0].Identifiers)
+		UPDATE search_meta SET value = '2' WHERE key = 'schema_version';`)
 	require.NoError(t, err)
 	require.NoError(t, index.Close())
 
 	index, err = Open(ctx, path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, index.Close()) })
+	var liveMatches int
+	err = index.db.QueryRowContext(ctx, `SELECT count(*) FROM review_fts WHERE review_fts MATCH 'alpha' AND doc_key = ?`, docs[0].DocKey).Scan(&liveMatches)
+	require.NoError(t, err)
+	assert.Equal(t, 1, liveMatches)
 	var version string
 	err = index.db.QueryRowContext(ctx, `SELECT value FROM search_meta WHERE key = 'schema_version'`).Scan(&version)
 	require.NoError(t, err)
@@ -87,25 +90,22 @@ func TestSidecarV2UpgradeRenumbersFTSAndKeepsVectors(t *testing.T) {
 	err = index.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'review_mirror_job_id' AND tbl_name = 'review_mirror'`).Scan(&jobIndex)
 	require.NoError(t, err)
 	assert.Equal(t, 1, jobIndex)
-	for _, key := range []string{local.DocKey, docs[0].DocKey} {
-		var identifiers string
-		err = index.db.QueryRowContext(ctx, `SELECT identifiers FROM review_mirror WHERE doc_key = ?`, key).Scan(&identifiers)
+	for _, key := range []string{local.DocKey, docs[0].DocKey, docs[1].DocKey} {
+		var ftsRowID, mirrorRowID int64
+		err = index.db.QueryRowContext(ctx, `SELECT rowid FROM review_fts WHERE doc_key = ?`, key).Scan(&ftsRowID)
 		require.NoError(t, err)
-		assert.Empty(t, identifiers)
-		assert.Equal(t, 0, countRowsForDoc(t, index.db, "review_fts", key))
+		err = index.db.QueryRowContext(ctx, `SELECT rowid FROM review_mirror WHERE doc_key = ?`, key).Scan(&mirrorRowID)
+		require.NoError(t, err)
+		assert.Equal(t, mirrorRowID, ftsRowID)
 	}
-	var rowID int64
-	err = index.db.QueryRowContext(ctx, `SELECT rowid FROM review_fts WHERE doc_key = ?`, docs[1].DocKey).Scan(&rowID)
-	require.NoError(t, err)
-	assert.Equal(t, docs[1].Source.ReviewID, rowID)
 	var ftsRows int
 	err = index.db.QueryRowContext(ctx, `SELECT count(*) FROM review_fts`).Scan(&ftsRows)
 	require.NoError(t, err)
-	assert.Equal(t, 1, ftsRows)
+	assert.Equal(t, 3, ftsRows)
 	seen := map[string]struct{}{}
 	changed, err := index.RefreshMirrorPage(ctx, docs, seen)
 	require.NoError(t, err)
-	assert.Equal(t, 1, changed)
+	assert.Zero(t, changed)
 	deleted, err := index.DeleteMissing(ctx, seen)
 	require.NoError(t, err)
 	assert.Equal(t, 1, deleted)

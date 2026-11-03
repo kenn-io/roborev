@@ -158,7 +158,8 @@ func TestMirrorQueriesAvoidFullScans(t *testing.T) {
 		args  []any
 	}{
 		{"mirror lookup", readMirrorRowSQL, []any{"doc"}},
-		{"FTS delete", deleteFTSRowSQL, []any{"doc", "doc"}},
+		{"FTS replace", replaceFTSRowSQL, []any{"doc"}},
+		{"FTS delete", deleteFTSRowSQL, []any{"doc"}},
 		{"job lookup", mirrorKeysForJobSQL, []any{1}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
