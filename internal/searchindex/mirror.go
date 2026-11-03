@@ -49,6 +49,9 @@ func (index *Index) RefreshMirrorPage(ctx context.Context, docs []searchdoc.Docu
 		if found && current == wanted {
 			continue
 		}
+		if _, err := tx.ExecContext(ctx, deleteFTSRowSQL, doc.DocKey, doc.DocKey); err != nil {
+			return 0, fmt.Errorf("delete stale review FTS row: %w", err)
+		}
 		if err := upsertMirrorRow(ctx, tx, wanted); err != nil {
 			return 0, err
 		}

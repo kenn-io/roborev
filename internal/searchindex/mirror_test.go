@@ -106,7 +106,7 @@ func TestMirrorRefreshDetectsIdentifierOnlyChange(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, index.Close()) })
 
-	doc := testDocument(1, "stable content")
+	doc := testDocument(1, "obsoletecontent")
 	changed, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{doc}, nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, changed)
@@ -127,6 +127,23 @@ func TestMirrorRefreshDetectsIdentifierOnlyChange(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, updated.Identifiers, mirrorIdentifiers)
 	assert.Equal(t, 1, countRowsForDoc(t, index.db, "review_fts", doc.DocKey))
+
+	source := updated.Source
+	source.ReviewID = 2
+	source.Output = "currentcontent"
+	reimported := searchdoc.Render(source)
+	require.Equal(t, doc.DocKey, reimported.DocKey)
+	changed, err = index.RefreshMirrorPage(ctx, []searchdoc.Document{reimported}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, changed)
+	assert.Equal(t, 1, countRowsForDoc(t, index.db, "review_fts", doc.DocKey))
+	var stale, current int
+	err = index.db.QueryRowContext(ctx, `SELECT count(*) FROM review_fts WHERE review_fts MATCH 'obsoletecontent'`).Scan(&stale)
+	require.NoError(t, err)
+	err = index.db.QueryRowContext(ctx, `SELECT count(*) FROM review_fts WHERE review_fts MATCH 'currentcontent'`).Scan(&current)
+	require.NoError(t, err)
+	assert.Zero(t, stale)
+	assert.Equal(t, 1, current)
 }
 
 func TestMirrorQueriesAvoidFullScans(t *testing.T) {
