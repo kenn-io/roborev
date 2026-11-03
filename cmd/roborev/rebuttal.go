@@ -46,7 +46,7 @@ func (o rebuttalOptions) validate() error {
 	}
 	if o.replacement != "" {
 		if !o.enabled {
-			return fmt.Errorf("--replacement requires --rebuttal or --kata supersede")
+			return fmt.Errorf("--replacement requires --rebuttal")
 		}
 		if _, err := findingid.Parse(o.replacement); err != nil {
 			return fmt.Errorf("replacement: %w", err)
@@ -86,7 +86,7 @@ func selectFinding(findings []daemon.ReviewFinding, selector string) (daemon.Rev
 			return f, nil
 		}
 	}
-	return daemon.ReviewFinding{}, fmt.Errorf("%w: %s is not a finding of this review", findingid.ErrNotFound, selector)
+	return daemon.ReviewFinding{}, findingid.ErrNotFound
 }
 
 // rawDaemonCall is the shape of the generated raw client's POST methods.

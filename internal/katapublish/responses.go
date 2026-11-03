@@ -98,7 +98,9 @@ func responseEnvelope(issue kata.Issue, req Request, state State) (Envelope, err
 			rootTeammate = comment.Teammate
 		}
 	}
-	receipt, ok, err := findComment(issue, selected.Body+"\n\n"+marker(parent, selected.Selector), "", "", "", rootTeammate, response.Root)
+	rootBody := selected.Body + "\n\n" + marker(parent, selected.Selector)
+	legacyRootBody := selected.Body + "\n\n" + legacyMarker(parent, selected.Selector)
+	receipt, ok, err := findComment(issue, rootBody, legacyRootBody, "", "", rootTeammate, response.Root)
 	if err != nil {
 		return env, err
 	}
@@ -168,16 +170,16 @@ func deliverResponse(ctx context.Context, api API, req Request, state State, che
 	if api.Endpoint() != req.Endpoint {
 		return state, pending("destination endpoint changed")
 	}
-	binding, err := api.ResolveProject(ctx, req.Project)
+	binding, err := api.ResolveSelection(ctx, kata.Binding{Project: req.Project, Alias: req.WorkspaceAlias})
 	if err != nil {
 		return state, deliveryError(err)
 	}
-	if binding.ProjectUID != req.ProjectUID || (state.ProjectUID != "" && state.ProjectUID != req.ProjectUID) || (state.IssueUID != "" && state.IssueUID != req.IssueUID) {
+	if binding.Project == "" || binding.ProjectUID != req.ProjectUID || (state.ProjectUID != "" && state.ProjectUID != req.ProjectUID) || (state.IssueUID != "" && state.IssueUID != req.IssueUID) {
 		return state, pending("destination project or issue changed")
 	}
 	state.ProjectUID = req.ProjectUID
 	state.IssueUID = req.IssueUID
-	state.IssueRef = req.Project + "#" + req.IssueUID
+	state.IssueRef = binding.Project + "#" + req.IssueUID
 	if err = checkpoint(state); err != nil {
 		return state, pending("local checkpoint failed")
 	}
@@ -231,7 +233,7 @@ func deliverResponse(ctx context.Context, api API, req Request, state State, che
 		if err = checkpoint(state); err != nil {
 			return state, pending("local checkpoint failed")
 		}
-		posted, postErr := api.Comment(ctx, kata.CommentReq{Project: req.Project, Issue: req.IssueUID, Body: body, Kind: kata.CommentKind(response.Kind), ReplyTo: response.Target, Teammate: response.Teammate, IdempotencyKey: hash(req.IssueUID + "\x00" + req.OperationID + "\x00" + body)})
+		posted, postErr := api.Comment(ctx, kata.CommentReq{Project: binding.Project, Issue: req.IssueUID, Body: body, Kind: kata.CommentKind(response.Kind), ReplyTo: response.Target, Teammate: response.Teammate, IdempotencyKey: hash(req.IssueUID + "\x00" + req.OperationID + "\x00" + body)})
 		if postErr != nil {
 			var duplicate *kata.CommentError
 			if errors.As(postErr, &duplicate) && errors.Is(postErr, kata.ErrDuplicateReply) {

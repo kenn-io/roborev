@@ -22,6 +22,7 @@ type responseAPI struct {
 	loseGuardAt      int
 	appendConcurrent bool
 	duplicate        bool
+	lastGuardRef     string
 }
 
 func TestResponseCaptureFieldsPreservePublicationEncoding(t *testing.T) {
@@ -52,6 +53,7 @@ func TestResponseCaptureFieldsPreservePublicationEncoding(t *testing.T) {
 // The real metadata mutation response does not include comments. Receipt
 // validation must perform a complete read after a successful guarded write.
 func (f *responseAPI) MutateMetadata(ctx context.Context, ref, key string, previous, value any) (kata.Issue, error) {
+	f.lastGuardRef = ref
 	issue, err := f.fakeAPI.MutateMetadata(ctx, ref, key, previous, value)
 	issue.Comments = nil
 	if err == nil && f.appendConcurrent {
@@ -71,6 +73,7 @@ func (f *responseAPI) MutateMetadata(ctx context.Context, ref, key string, previ
 }
 
 func (f *responseAPI) Comment(ctx context.Context, req kata.CommentReq) (kata.CommentResult, error) {
+	f.lastCommentProject = req.Project
 	if req.Kind == "" {
 		result, err := f.fakeAPI.Comment(ctx, req)
 		if err == nil && f.posts > 1 {
@@ -145,6 +148,57 @@ func TestResponseDeliveryPreservesPublicationAndRecoversLostReceipt(t *testing.T
 	_, err = Deliver(t.Context(), api, req, state, func(State) error { return nil })
 	require.NoError(t, err)
 	assert.Equal(t, 2, api.posts)
+}
+
+func TestResponseUsesRenamedWorkspaceAlias(t *testing.T) {
+	assert := assert.New(t)
+	publication := fixtureRequest()
+	publication.WorkspaceAlias = &kata.ProjectAlias{Identity: "code.example/team/repo", Kind: "git"}
+	api, req, state := responseFixtureFrom(t, publication)
+	before, err := decodeValue(api.issue.Metadata[EnvelopeKey])
+	require.NoError(t, err)
+	api.resolved = kata.Binding{Project: "renamed-reviews", ProjectUID: req.ProjectUID}
+
+	state, err = Deliver(t.Context(), api, req, state, func(State) error { return nil })
+	require.NoError(t, err)
+	assert.True(state.Done)
+	assert.Equal(req.WorkspaceAlias, api.selection.Alias)
+	assert.Equal("renamed-reviews#issue-1", state.IssueRef)
+	assert.Equal("renamed-reviews#issue-1", api.lastShownCompleteRef)
+	assert.Equal("renamed-reviews#issue-1", api.lastGuardRef)
+	assert.Equal("renamed-reviews", api.lastCommentProject)
+
+	after, err := decodeValue(api.issue.Metadata[EnvelopeKey])
+	require.NoError(t, err)
+	assert.Equal(before.Fingerprint, after.Fingerprint, "the frozen publication fingerprint is unchanged")
+	assert.Equal(before.Entries, after.Entries)
+}
+
+func TestResponseRejectsRenamedAliasWithDifferentProjectUID(t *testing.T) {
+	publication := fixtureRequest()
+	publication.WorkspaceAlias = &kata.ProjectAlias{Identity: "code.example/team/repo", Kind: "git"}
+	api, req, state := responseFixtureFrom(t, publication)
+	api.resolved = kata.Binding{Project: "reused-reviews", ProjectUID: "replacement-project"}
+	posts, guards := api.posts, api.guards
+
+	state, err := Deliver(t.Context(), api, req, state, func(State) error { return nil })
+	require.ErrorIs(t, err, ErrPending)
+	assert.False(t, state.Done)
+	assert.Equal(t, posts, api.posts)
+	assert.Equal(t, guards, api.guards)
+}
+
+func TestResponseAcceptsLegacyPublicationMarker(t *testing.T) {
+	api, req, state := responseFixture(t)
+	parent := req
+	parent.OperationID = req.PublicationOperationID
+	parent.ProjectUID = req.PublicationProjectUID
+	api.issue.Comments[0].Body = req.Entries[0].Body + "\n\n" + legacyMarker(parent, req.Entries[0].Selector)
+
+	state, err := Deliver(t.Context(), api, req, state, func(State) error { return nil })
+	require.NoError(t, err)
+	assert.True(t, state.Done)
+	assert.Equal(t, 2, api.posts, "the legacy root is recognized and only the response is posted")
 }
 
 func TestResponseDuplicateReplyRemainsPending(t *testing.T) {

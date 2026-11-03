@@ -140,6 +140,11 @@ func TestCommentRebuttalRejectsIncompleteOptions(t *testing.T) {
 			want: "--finding, --finding-id and --close require --rebuttal",
 		},
 		{
+			name: "replacement requires rebuttal",
+			opts: rebuttalOptions{replacement: "f:selector"},
+			want: "--replacement requires --rebuttal",
+		},
+		{
 			name: "an excerpt and a selector are alternatives",
 			opts: rebuttalOptions{enabled: true, finding: "finding", findingID: "f:abc"},
 			want: "--finding and --finding-id select the finding two ways; use one",
@@ -150,6 +155,13 @@ func TestCommentRebuttalRejectsIncompleteOptions(t *testing.T) {
 			require.EqualError(t, err, tc.want)
 		})
 	}
+}
+
+func TestSelectFindingReturnsNotFoundSentinel(t *testing.T) {
+	selector := sampleFindings().Findings[0].ID
+	_, err := selectFinding(nil, selector)
+	require.ErrorIs(t, err, findingid.ErrNotFound)
+	assert.EqualError(t, err, findingid.ErrNotFound.Error())
 }
 
 func TestCommentInvalidJobIDNamesRequestedMode(t *testing.T) {

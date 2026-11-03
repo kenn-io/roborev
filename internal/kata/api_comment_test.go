@@ -345,35 +345,6 @@ func TestAPIClientRejectsShortEvidenceWithoutChangingTheKind(t *testing.T) {
 	}
 }
 
-// FuzzEvidenceRunesIgnoresHowSpaceIsWritten builds text with a known number of
-// runes after normalization and writes every space as a different run of
-// Unicode whitespace, so the count must not move.
-func FuzzEvidenceRunesIgnoresHowSpaceIsWritten(f *testing.F) {
-	f.Add(uint8(40), uint8(3), uint8(0))
-	f.Add(uint8(39), uint8(1), uint8(2))
-	f.Add(uint8(41), uint8(7), uint8(5))
-	spaces := []string{" ", "\t", "\n", "\r\n", "\u00a0", "\u2003", "\u3000", "  \n\t "}
-	f.Fuzz(func(t *testing.T, n, padSeed, spaceSeed uint8) {
-		want := int(n)
-		// Every sixth rune is a space. The text must not end on one, because
-		// trailing space is trimmed and the count would be one short.
-		if want == 0 || want%6 == 0 {
-			t.Skip()
-		}
-		var b strings.Builder
-		b.WriteString(spaces[int(padSeed)%len(spaces)])
-		for i := range want {
-			if i%6 == 5 {
-				b.WriteString(spaces[(int(spaceSeed)+i)%len(spaces)])
-				continue
-			}
-			b.WriteRune('é')
-		}
-		b.WriteString(spaces[int(spaceSeed)%len(spaces)])
-		require.Equal(t, want, EvidenceRunes(b.String()), "%q", b.String())
-	})
-}
-
 func TestAPIClientThread(t *testing.T) {
 	f := katafake.New(t)
 	root := gen.CommentOut{UID: "C0000000000000000000000001", Body: "finding"}

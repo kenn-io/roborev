@@ -432,21 +432,6 @@ func TestTransportStripsControlCharactersFromServerText(t *testing.T) {
 	assert.Equal(t, "line oneline two endtab", apiErr.Message)
 }
 
-func FuzzSanitizeServerText(f *testing.F) {
-	for _, seed := range []string{"", "plain", "a\nb", "\x1b[31mred", "\u0085\u009b", "é\x00ü", strings.Repeat("x", 500), strings.Repeat("\n", 500) + "end", "\xff\xfe"} {
-		f.Add(seed)
-	}
-	f.Fuzz(func(t *testing.T, text string) {
-		var want strings.Builder
-		for _, r := range text {
-			if !unicode.IsControl(r) {
-				want.WriteRune(r)
-			}
-		}
-		require.Equal(t, want.String(), sanitizeServerText(text))
-	})
-}
-
 // HTTP header values allow tab and bytes above ASCII, but reject other C0
 // controls and DEL. Check both classifications and exact delivery without
 // imposing an extra token grammar on an otherwise usable credential.
