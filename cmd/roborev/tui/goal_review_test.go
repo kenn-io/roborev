@@ -40,7 +40,7 @@ func TestGoalReviewBranchDisplay(t *testing.T) {
 	assert.Empty(m.getBranchForJob(job))
 	assert.Empty(reviewBranchName(&job))
 	assert.Empty(detachedBranchLabel(job))
-	branch, persist := backfillBranchValue(job, nil)
+	branch, persist := backfillBranchValue(t.Context(), job, nil)
 	assert.Equal(branchNone, branch)
 	assert.True(persist)
 
