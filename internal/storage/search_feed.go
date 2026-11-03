@@ -303,7 +303,7 @@ func (db *DB) ListSearchChanges(ctx context.Context, limit int) (jobIDs []int64,
 		return nil, 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	rows, err := tx.QueryContext(ctx, `SELECT seq, job_id, repo_id, commit_id FROM search_changes ORDER BY seq LIMIT ?`, limit)
+	rows, err := tx.QueryContext(ctx, `SELECT seq, job_id FROM search_changes ORDER BY seq LIMIT ?`, limit)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -311,8 +311,8 @@ func (db *DB) ListSearchChanges(ctx context.Context, limit int) (jobIDs []int64,
 	expand := false
 	for rows.Next() {
 		var seq int64
-		var jobID, repoID, commitID sql.NullInt64
-		if err := rows.Scan(&seq, &jobID, &repoID, &commitID); err != nil {
+		var jobID sql.NullInt64
+		if err := rows.Scan(&seq, &jobID); err != nil {
 			_ = rows.Close()
 			return nil, 0, err
 		}
