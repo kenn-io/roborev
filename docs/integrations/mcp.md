@@ -266,10 +266,13 @@ A finding's `decisions` say what happened to it:
 
 | `source` | `kind` | Read from |
 |----------|--------|-----------|
-| `fix_comment` | `fix`, `decline`, `invalid`, or `ask` | Comment lines in the roborev-fix shape `- <severity> <file>: <Kind>: <reason>`, matched to the finding with that severity and file |
-| `rebuttal` | `confirmed`, `refuted`, or `superseded` | A finished `roborev job comment --rebuttal` re-check, matched by its finding excerpt |
+| `fix_comment` | `fix`, `decline`, `invalid`, or `ask` | Comment lines in the roborev-fix shape `- <severity> <file>: <Kind>: <reason>`, matched to the one finding with that severity and file, narrowed by a `file:line` when given |
+| `rebuttal` | `confirmed`, `refuted`, or `superseded` | A finished `roborev job comment --rebuttal` re-check of the current review, matched to the finding whose section holds the quoted excerpt |
 
-A decision that matches no single finding stays on the review. A comment whose
+A decision attaches to a finding only when exactly one finding matches. Others
+stay on the review with a `target` naming the severity and file, or the excerpt.
+Lines in a comment made on the commit rather than the review also stay on the
+review, because that comment reaches every review of the commit. A comment whose
 lines all became decisions is not repeated under `comments`.
 
 `git_log` and `git_blame` mark each commit with `on_branch` and with
