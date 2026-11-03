@@ -258,13 +258,7 @@ func (c *APIClient) project(ctx context.Context, name string) (projectRef, error
 	return projectRef{}, fmt.Errorf("%w: %q", ErrProjectNotFound, name)
 }
 
-func (c *APIClient) projectID(ctx context.Context, name string) (int64, error) {
-	project, err := c.project(ctx, name)
-	return project.ID, err
-}
-
 func (c *APIClient) selectProjectRef(ctx context.Context, project string) (projectRef, ServerInfo, error) {
-	var selected workspaceProject
 	var alias *gen.AliasInput
 	if project == "" {
 		switch {
