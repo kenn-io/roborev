@@ -160,11 +160,16 @@ type CIPoller struct {
 	stopping           bool
 	pollStopping       bool
 	eventsStopping     bool
+	skipPublished      map[ciSkipKey]string             // guarded by mu
 	pollErrors         map[ciPollTarget]ciPollFailure   // guarded by mu
 	monitoredRepos     []string                         // last successful discovery; guarded by mu
 	dispatchingRetries map[ciPollTarget]int             // live retry enqueue owners; guarded by mu
 	codeowners         map[ciCodeownersKey]ciCodeowners // CODEOWNERS reads per repo and base branch for the current poll; guarded by mu
 	initialPollPending bool                             // guarded by mu; startup has not established health yet
+}
+
+type ciSkipKey struct {
+	repo, sha, channel string // channel is "check" or "status"
 }
 
 type ciCodeownersKey struct {
@@ -210,6 +215,7 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 		discordNowFn:       time.Now,
 		nowFn:              time.Now,
 		pollErrors:         make(map[ciPollTarget]ciPollFailure),
+		skipPublished:      make(map[ciSkipKey]string),
 		dispatchingRetries: make(map[ciPollTarget]int),
 		codeowners:         make(map[ciCodeownersKey]ciCodeowners),
 	}
@@ -506,6 +512,11 @@ func (p *CIPoller) poll(ctx context.Context) {
 		// Only a complete discovery can confirm a failed repository was removed.
 		p.mu.Lock()
 		p.monitoredRepos = slices.Clone(repos)
+		for key := range p.skipPublished {
+			if !slices.Contains(repos, key.repo) {
+				delete(p.skipPublished, key)
+			}
+		}
 		for target := range p.pollErrors {
 			if !slices.Contains(repos, target.repo) {
 				delete(p.pollErrors, target)
@@ -535,9 +546,18 @@ func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Conf
 
 	// Build the open-PR set for the panel lifecycle sweeps below.
 	openPRs := make(map[int]bool, len(prs))
+	openHeads := make(map[string]bool, len(prs))
 	for _, pr := range prs {
 		openPRs[pr.Number] = true
+		openHeads[pr.HeadRefOid] = true
 	}
+	p.mu.Lock()
+	for key := range p.skipPublished {
+		if key.repo == ghRepo && !openHeads[key.sha] {
+			delete(p.skipPublished, key)
+		}
+	}
+	p.mu.Unlock()
 
 	// Panel lifecycle sweeps: cancel runs whose PR has closed, and tag-and-cancel
 	// hung members of runs that exceeded the timeout so their synthesis can post
@@ -3776,13 +3796,39 @@ func (p *CIPoller) callPostPRComment(ghRepo string, prNumber int, body string) e
 }
 
 func (p *CIPoller) callSetCommitStatus(ghRepo, sha, state, description string) error {
+	p.mu.Lock()
+	delete(p.skipPublished, ciSkipKey{ghRepo, sha, "status"})
+	p.mu.Unlock()
 	if p.setCommitStatusFn != nil {
 		return p.setCommitStatusFn(ghRepo, sha, state, description)
 	}
 	return p.setCommitStatus(ghRepo, sha, state, description)
 }
 
-func (p *CIPoller) callSetSkippedCommitStatus(ghRepo, sha, description string) error {
+// startSkipPublish reports false when value is what this daemon last published
+// for key. Otherwise it forgets key until the returned func sees a nil error.
+func (p *CIPoller) startSkipPublish(key ciSkipKey, value string) (func(error), bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if published, ok := p.skipPublished[key]; ok && published == value {
+		return nil, false
+	}
+	delete(p.skipPublished, key)
+	return func(err error) {
+		if err == nil {
+			p.mu.Lock()
+			p.skipPublished[key] = value
+			p.mu.Unlock()
+		}
+	}, true
+}
+
+func (p *CIPoller) callSetSkippedCommitStatus(ghRepo, sha, description string) (err error) {
+	done, ok := p.startSkipPublish(ciSkipKey{ghRepo, sha, "status"}, description)
+	if !ok {
+		return nil
+	}
+	defer func() { done(err) }()
 	if p.setCommitStatusFn != nil {
 		return p.setCommitStatusFn(ghRepo, sha, "success", description)
 	}
@@ -3796,7 +3842,12 @@ func (p *CIPoller) callSetSkippedCommitStatus(ghRepo, sha, description string) e
 	return client.EnsureSkippedCommitStatus(context.Background(), ghRepo, sha, description)
 }
 
-func (p *CIPoller) callSetSkippedCheck(ghRepo, sha, summary string) error {
+func (p *CIPoller) callSetSkippedCheck(ghRepo, sha, summary string) (err error) {
+	done, ok := p.startSkipPublish(ciSkipKey{ghRepo, sha, "check"}, summary)
+	if !ok {
+		return nil
+	}
+	defer func() { done(err) }()
 	if p.setSkippedCheckFn != nil {
 		return p.setSkippedCheckFn(ghRepo, sha, summary)
 	}

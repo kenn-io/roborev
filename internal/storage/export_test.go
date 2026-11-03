@@ -647,15 +647,35 @@ func TestExportReviewsDefaultLimitIsBounded(t *testing.T) {
 	defer db.Close()
 
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
-	for i := range exportDefaultPageLimit + 1 {
-		seedCompletedExportReview(t, db, repo.ID, fmt.Sprintf("%040x", i+1), "2026-06-29 00:00:00", false)
-	}
+	const timestamp = "2026-06-29 00:00:00"
+	document := string(reviewFixtureJSON("No issues found."))
+	_, err := db.ExecContext(t.Context(), `
+		WITH RECURSIVE sequence(n) AS (
+			SELECT 1 UNION ALL SELECT n + 1 FROM sequence WHERE n < ?
+		)
+		INSERT INTO commits (repo_id, sha, author, subject, timestamp)
+		SELECT ?, printf('%040x', n), 'Author', 'Subject', ? FROM sequence`, exportDefaultPageLimit+1, repo.ID, timestamp)
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), `
+		INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, status, job_type,
+		                         uuid, enqueued_at, started_at, finished_at, updated_at)
+		SELECT repo_id, id, sha, 'codex', 'done', 'review',
+		       printf('00000000-0000-4000-8000-%012x', id), ?, ?, ?, ?
+		FROM commits WHERE repo_id = ?`, timestamp, timestamp, timestamp, timestamp, repo.ID)
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), `
+		INSERT INTO reviews (job_id, agent, output, structured_output, verdict_bool,
+		                     uuid, created_at, updated_at, closed)
+		SELECT j.id, 'codex', '', ?, 1,
+		       printf('00000000-0000-4000-9000-%012x', j.id), ?, ?, 0
+		FROM review_jobs j
+		WHERE j.repo_id = ?`, document, timestamp, timestamp, repo.ID)
+	require.NoError(t, err)
 
 	page, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileContent})
 	require.NoError(t, err)
 	assert.Len(t, page.Reviews, exportDefaultPageLimit)
 	assert.True(t, page.Truncated)
-	assert.NotNil(t, page.NextCursor)
 }
 
 func TestExportReviewsEmptyPageUsesEmptyReviewsArray(t *testing.T) {

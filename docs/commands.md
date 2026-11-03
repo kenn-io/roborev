@@ -967,9 +967,10 @@ repositories monitored by the daemon, including separate CI checkouts.
     `canceled`. Older rows or unspecified ownership transitions appear as
     `unknown`.
 - **Runs per PR** reports p50, p90, and maximum. A PR is identified by both its
-    GitHub repository and number. Every PR above five runs is listed, ordered by
-    descending run count, then repository and PR number. Fractional percentiles
-    use interpolation.
+    GitHub repository and number. Fractional percentiles use interpolation.
+- **Per PR** lists every PR by descending run count, then repository and PR
+    number, with its recorded cost and its busiest hour: the most runs created
+    within one hour of each other. JSON exposes this as `peak_hour_runs`.
 - **Turnaround** measures the first review attempt through finalization,
     including time spent queued, reviewing, and retrying. Only runs with valid,
     nonnegative timestamps contribute. The sample count is displayed; no samples
@@ -1501,10 +1502,26 @@ hooks, or edits config.
 | Recent failures | Failed jobs queued in the last 7 days, grouped by agent; post-commit hook runs that failed to queue a review |
 | Repository | Registered with the daemon; git hooks installed and current; `snapshot_dir` usable |
 | Review guidelines | `review_guidelines` or `REVIEW.md` exist; when security reviews are enabled, the guidelines describe security or a threat model |
-| Integrations | `[[hooks]]` entries that can never fire or whose `kata` or `bd` CLI is missing from the daemon's `PATH`, `[sync]` problems, and an empty `ci.repos` or invalid `ci.quiet_hours` when the CI poller is enabled |
+| Integrations | `[[hooks]]` entries that can never fire or whose `kata` or `bd` CLI is missing from the daemon's `PATH`, `[sync]` problems, and CI poller settings and per-PR CI run bursts |
 
 Each check reports `ok`, `info`, `warn`, or `fail`. The command exits `1` when
 any check fails and `0` otherwise, including when there are only warnings.
+
+When CI polling is enabled, doctor checks the last 7 days of CI panel runs
+across all repositories, including when `--repo` selects a repository. The
+`integrations.ci_bursts` check warns when any PR started more than 10 runs
+within one hour, and lists each such PR. The total number of runs on a PR does
+not matter: a PR that takes dozens of refinement rounds over several days is
+normal. A fast refinement loop runs a round every 5 to 10 minutes, and the
+default `ci.throttle_interval` allows one run per hour for authors who do not
+bypass it, so more than 10 in an hour usually means repeated reruns or the
+poller re-enqueuing the PR.
+
+The burst check skips disabled polling, a stopped daemon, and a summary without
+CI panel data. A summary API error produces an `info` check with the error. To
+see each PR's busiest hour, run `roborev report summary --all --since 7d`.
+Doctor also reports an empty `ci.repos` or invalid `ci.quiet_hours` when CI
+polling is enabled.
 
 Security reviews count as enabled for a repository when the panel selected by
 `review.default_panel` or `review.hook_review_panel`, in the default config or

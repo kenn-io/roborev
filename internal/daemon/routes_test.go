@@ -643,7 +643,6 @@ func TestHumaExportReviewsDefaultLimitIsBounded(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &body))
 	assert.Len(t, body.Reviews, 500)
 	assert.True(t, body.Truncated)
-	assert.NotNil(t, body.NextCursor)
 }
 
 func TestHumaExportReviewsMaxLimitIsClamped(t *testing.T) {

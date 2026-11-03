@@ -42,10 +42,11 @@ completed while the job was queued.
 ## Monitor review load
 
 Run `roborev report summary --all --since 7d` to inspect panel counts,
-retirement reasons, runs per PR, posting turnaround, and recorded cost with
-coverage. The [CI run health summary](/docs/commands/#ci-run-health) explains
-the cohorts and how unavailable pricing or timing data is displayed. Use `--all`
-to include CI checkouts outside your current working repository.
+retirement reasons, runs per PR and each PR's busiest hour, posting turnaround,
+and recorded cost with coverage. The
+[CI run health summary](/docs/commands/#ci-run-health) explains the cohorts and
+how unavailable pricing or timing data is displayed. Use `--all` to include CI
+checkouts outside your current working repository.
 
 ## What to Expect
 
@@ -357,7 +358,10 @@ When the poller publishes a skipped result, it always sets a roborev success
 commit status. GitHub App authentication also creates a roborev check with a
 `skipped` conclusion; personal authentication cannot, because GitHub does not
 allow it to create check runs. GitHub attaches checks and statuses to the
-commit, so the skip also appears on any other PR with the same head commit.
+commit, so the skip also appears on any other PR with the same head commit. An
+unchanged commit and skip reason are published once while the daemon runs, then
+checked again after a restart or a roborev status write to that commit; a skip
+changed outside roborev stays changed until then.
 
 Marking a draft ready, or removing the matching label, makes the same PR head
 eligible on the next poll without a push, subject to the existing throttle,

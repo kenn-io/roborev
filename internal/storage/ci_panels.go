@@ -222,12 +222,14 @@ func scanCIPanel(row sqlScanner) (*CIPanel, error) {
 	return &p, nil
 }
 
+const getCIPanelByPRSHAQuery = `SELECT ` + ciPanelColumns + `
+		FROM ci_pr_panels
+		WHERE github_repo = ? AND pr_number = ? AND head_sha = ? ORDER BY id DESC LIMIT 1`
+
 // GetCIPanelByPRSHA returns the latest panel mapping for a PR at a specific HEAD SHA.
 // Returns sql.ErrNoRows when no mapping exists.
 func (db *DB) GetCIPanelByPRSHA(githubRepo string, prNumber int, headSHA string) (*CIPanel, error) {
-	row := db.QueryRow(`SELECT `+ciPanelColumns+`
-		FROM ci_pr_panels
-		WHERE github_repo = ? AND pr_number = ? AND head_sha = ? ORDER BY id DESC LIMIT 1`,
+	row := db.QueryRow(getCIPanelByPRSHAQuery,
 		githubRepo, prNumber, headSHA)
 	return scanCIPanel(row)
 }
@@ -248,14 +250,16 @@ func getActiveCIPanelByPRSHA(q querier, githubRepo string, prNumber int, headSHA
 	return scanCIPanel(row)
 }
 
+const hasPostedCIReviewQuery = `SELECT EXISTS (SELECT 1 FROM ci_pr_panels
+		WHERE github_repo = ? AND pr_number = ? AND head_sha = ?
+		  AND posted_at IS NOT NULL AND outcome IN (?, ?))`
+
 // HasPostedCIReview includes retired history so canceling a rerun cannot make
 // the normal poll forget a review already delivered or intentionally suppressed
 // for this commit.
 func (db *DB) HasPostedCIReview(githubRepo string, prNumber int, headSHA string) (bool, error) {
 	var posted bool
-	err := db.QueryRow(`SELECT EXISTS (SELECT 1 FROM ci_pr_panels
-		WHERE github_repo = ? AND pr_number = ? AND head_sha = ?
-		  AND posted_at IS NOT NULL AND outcome IN (?, ?))`,
+	err := db.QueryRow(hasPostedCIReviewQuery,
 		githubRepo, prNumber, headSHA, PanelOutcomeReviewPosted, PanelOutcomeReviewSuppressed).Scan(&posted)
 	return posted, err
 }
@@ -675,12 +679,14 @@ func (db *DB) GetActivePanelsForPR(githubRepo string, prNumber int) ([]CIPanel, 
 	return panels, rows.Err()
 }
 
+const getUnpostedPanelsForPRQuery = `SELECT ` + ciPanelColumns + `
+		FROM ci_pr_panels
+		WHERE github_repo = ? AND pr_number = ? AND posted_at IS NULL`
+
 // GetUnpostedPanelsForPR includes retired runs so cleanup can retry failed
 // cancellations after retirement.
 func (db *DB) GetUnpostedPanelsForPR(githubRepo string, prNumber int) ([]CIPanel, error) {
-	rows, err := db.Query(`SELECT `+ciPanelColumns+`
-		FROM ci_pr_panels
-		WHERE github_repo = ? AND pr_number = ? AND posted_at IS NULL`,
+	rows, err := db.Query(getUnpostedPanelsForPRQuery,
 		githubRepo, prNumber)
 	if err != nil {
 		return nil, err

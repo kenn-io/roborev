@@ -98,18 +98,23 @@ func (b *Builder) priorRangeReviewViews(
 		index int
 	}
 	selectedByEnd := make(map[string]selected)
-	resolveCache := make(map[string]string)
+	var refs []string
+	for _, candidate := range candidates {
+		if candidate.GitRef == rangeRef {
+			continue
+		}
+		start, end, ok := git.ParseRange(candidate.GitRef)
+		if ok {
+			refs = append(refs, start, end)
+		}
+	}
+	resolved, err := git.ResolveSHAsCtx(b.context(), b.repoPath, refs)
+	if err != nil {
+		return nil
+	}
 	resolve := func(ref string) (string, bool) {
-		if resolved, ok := resolveCache[ref]; ok {
-			return resolved, resolved != ""
-		}
-		resolved, err := git.ResolveSHACtx(b.context(), b.repoPath, ref)
-		if err != nil {
-			resolveCache[ref] = ""
-			return "", false
-		}
-		resolveCache[ref] = resolved
-		return resolved, true
+		sha := resolved[ref]
+		return sha, sha != ""
 	}
 	for page := range slices.Chunk(candidates, priorRangeReviewPageSize) {
 		if len(selectedByEnd) >= limit {

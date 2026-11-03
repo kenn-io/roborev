@@ -448,9 +448,7 @@ func TestUpdateDrainCutoverIntegration(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the synthetic review agent is a POSIX shell script")
 	}
-	buildDir := t.TempDir()
-	oldBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-old", "v-old")
-	newBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-new", "v-new")
+	oldBinary, newBinary := versionedUpdateDaemonBinaries(t)
 
 	for _, policy := range []runningReviewPolicy{policyWait, policyInterrupt} {
 		t.Run(string(policy), func(t *testing.T) {
@@ -498,18 +496,44 @@ func TestUpdateDrainCutoverIntegration(t *testing.T) {
 	}
 }
 
-func buildVersionedUpdateDaemon(t *testing.T, dir, name, version string) string {
+var updateDaemonBinaries struct {
+	once      sync.Once
+	oldBinary string
+	newBinary string
+	err       error
+}
+
+func versionedUpdateDaemonBinaries(t *testing.T) (string, string) {
 	t.Helper()
+	updateDaemonBinaries.once.Do(func() {
+		buildDir, err := os.MkdirTemp(os.Getenv("ROBOREV_DATA_DIR"), "roborev-update-binaries-*")
+		if err != nil {
+			updateDaemonBinaries.err = err
+			return
+		}
+		updateDaemonBinaries.oldBinary, updateDaemonBinaries.err = buildVersionedUpdateDaemon(t.Context(), buildDir, "roborev-old", "v-old")
+		if updateDaemonBinaries.err != nil {
+			return
+		}
+		updateDaemonBinaries.newBinary, updateDaemonBinaries.err = buildVersionedUpdateDaemon(t.Context(), buildDir, "roborev-new", "v-new")
+	})
+	require.NoError(t, updateDaemonBinaries.err, "build versioned daemons")
+	return updateDaemonBinaries.oldBinary, updateDaemonBinaries.newBinary
+}
+
+func buildVersionedUpdateDaemon(ctx context.Context, dir, name, version string) (string, error) {
 	path := filepath.Join(dir, name)
-	cmd := exec.CommandContext(t.Context(),
+	cmd := exec.CommandContext(ctx,
 		"go", "build",
 		"-ldflags", "-X go.kenn.io/roborev/internal/version.Version="+version,
 		"-o", path, ".",
 	)
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
 	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, "build versioned daemon: %s", out)
-	return path
+	if err != nil {
+		return "", fmt.Errorf("build %s daemon: %w\n%s", version, err, out)
+	}
+	return path, nil
 }
 
 func writeSlowUpdateAgent(t *testing.T, dir string) string {
