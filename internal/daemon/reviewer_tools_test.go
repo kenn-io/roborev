@@ -83,6 +83,8 @@ func newReviewerFixture(t *testing.T) *reviewerFixture {
 		RepoID: repoRow.ID, CommitID: commit.ID, GitRef: f.fixSHA, Branch: "feature", Agent: "claude-code",
 	})
 	require.NoError(t, err)
+	_, err = db.ClaimJob("reviewer-running")
+	require.NoError(t, err)
 	f.running.RepoPath = repo.Root
 
 	httpSrv := httptest.NewServer(server.httpServer.Handler)
@@ -312,4 +314,59 @@ func TestReviewerToolsIssuedOnlyWhenEnabledAndEligible(t *testing.T) {
 	tools, _, ok := f.server.workerPool.reviewerToolsFor(f.running, claude, reviewerToolsConfig(), expires)
 	require.True(t, ok)
 	assert.True(t, strings.HasSuffix(tools.URL, mcpserver.ReviewerHTTPPath))
+}
+
+func TestReviewerToolsIncludePanelReviewsAndCommitComments(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newReviewerFixture(t)
+	repo, err := f.db.GetOrCreateRepo(f.running.RepoPath)
+	require.NoError(err)
+	commit, err := f.db.GetOrCreateCommit(repo.ID, f.featureSHA, "Author", "add calc test", time.Now())
+	require.NoError(err)
+	enqueueDone := func(opts storage.EnqueueOpts, document string) *storage.ReviewJob {
+		opts.RepoID, opts.CommitID, opts.GitRef, opts.Branch, opts.Agent = repo.ID, commit.ID, f.featureSHA, "feature", "test"
+		job, err := f.db.EnqueueJob(opts)
+		require.NoError(err)
+		_, err = f.db.ClaimJob("reviewer-test")
+		require.NoError(err)
+		require.NoError(testutil.CompleteReviewFixture(f.db, job.ID, "test", "", document))
+		return job
+	}
+	member := enqueueDone(storage.EnqueueOpts{PanelRole: storage.PanelRoleMember},
+		`{"schema_version":2,"summary":"member","verdict":"pass","findings":[]}`)
+	synthesis := enqueueDone(storage.EnqueueOpts{JobType: storage.JobTypeSynthesis, PanelRole: storage.PanelRoleSynthesis},
+		`{"schema_version":2,"summary":"panel","verdict":"fail","findings":[`+
+			`{"severity":"medium","problem":"Avg lacks a doc comment.","fix":"Add one.","location":"calc.go:3"}]}`)
+	_, err = f.db.AddCommentToJob(synthesis.ID, "roborev-fix", "Decline: the doc comment is not needed.")
+	require.NoError(err)
+	// roborev comment <sha> records a decision on the commit; it reaches the
+	// commit's ordinary reviews, as roborev_list_comments shows it.
+	_, err = f.db.AddComment(commit.ID, "developer", "Invalid: callers never pass nil.")
+	require.NoError(err)
+
+	token, _ := f.issue(t)
+	session, err := connectReviewer(t, f.url, token)
+	require.NoError(err)
+	findings, isErr := callReviewerTool(t, session, mcpserver.ReviewerToolBranchFindings, nil)
+	require.False(isErr, "%v", findings)
+
+	byJob := map[float64]map[string]any{}
+	for _, row := range findings["reviews"].([]any) {
+		review := row.(map[string]any)
+		byJob[review["job_id"].(float64)] = review
+	}
+	assert.NotContains(byJob, float64(member.ID), "panel members are summarized by their synthesis")
+	panel := byJob[float64(synthesis.ID)]
+	require.NotNil(panel, "the panel's canonical review is listed")
+	assert.Equal("Avg lacks a doc comment.", panel["findings"].([]any)[0].(map[string]any)["claim"])
+	texts := func(review map[string]any) []any {
+		var out []any
+		for _, comment := range review["comments"].([]any) {
+			out = append(out, comment.(map[string]any)["text"])
+		}
+		return out
+	}
+	assert.Contains(texts(panel), "Decline: the doc comment is not needed.")
+	assert.Contains(texts(byJob[float64(f.featureJob.ID)]), "Invalid: callers never pass nil.")
 }
