@@ -280,19 +280,14 @@ func (r *Reconciler) scanMirrorPage(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	now := r.config.Now()
-	r.mu.Lock()
 	// Full scans revisit covered reviews, including vectors
 	// whose earlier publication failed or preceded canonical sync.
-	if r.shared != nil && r.embedder != nil {
-		if r.pendingPublish == nil {
-			r.pendingPublish = make(map[string]struct{})
-		}
-		for _, source := range sources {
-			if source.ReviewUUID != "" {
-				r.pendingPublish[source.ReviewUUID] = struct{}{}
-			}
+	for _, source := range sources {
+		if source.ReviewUUID != "" {
+			r.queuePublish(source.ReviewUUID)
 		}
 	}
+	r.mu.Lock()
 	r.health.Indexed = indexed
 	r.health.MirrorComplete = complete
 	if complete {
