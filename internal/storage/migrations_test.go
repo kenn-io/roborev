@@ -299,3 +299,25 @@ func TestSyncPendingMigrationBackfill(t *testing.T) {
 		require.NoError(t, migrateSyncPendingIndexes(t.Context(), db))
 	}
 }
+
+func TestRebuttalReviewVersionMigration(t *testing.T) {
+	t.Parallel()
+	db := openUnmigratedDB(t)
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:16]))
+	_, err := db.ExecContext(t.Context(), `INSERT INTO repos (root_path, name) VALUES ('/synthetic/repo', 'repo')`)
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO review_jobs (repo_id, git_ref, agent, status, job_type)
+		VALUES (1, 'abc1234', 'test', 'done', 'task')`)
+	require.NoError(t, err)
+
+	for range 2 {
+		require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:17]))
+		version, err := db.RebuttalReviewVersion(t.Context(), 1)
+		require.NoError(t, err)
+		assert.Nil(t, version, "existing jobs recorded no review version")
+		assert.Equal(t, []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17}, appliedVersions(t, db))
+		// Simulate interruption after adding the columns, before recording it.
+		_, err = db.ExecContext(t.Context(), `DELETE FROM schema_migrations WHERE version = 17`)
+		require.NoError(t, err)
+	}
+}
