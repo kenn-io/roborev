@@ -163,7 +163,7 @@ func migrateSearchChanges(ctx context.Context, db *DB) error {
 		INSERT INTO search_changes(job_id) SELECT NEW.job_id WHERE NEW.job_id IS NOT NULL;
 		INSERT INTO search_changes(commit_id) SELECT NEW.commit_id WHERE NEW.job_id IS NULL AND NEW.commit_id IS NOT NULL;
 	END;
-	CREATE TRIGGER IF NOT EXISTS search_responses_update AFTER UPDATE OF id, job_id, commit_id, responder, response, source, created_at, uuid ON responses BEGIN
+	CREATE TRIGGER IF NOT EXISTS search_responses_update AFTER UPDATE OF id, job_id, commit_id, responder, response, created_at, uuid ON responses BEGIN
 		INSERT INTO search_changes(job_id) SELECT NEW.job_id WHERE NEW.job_id IS NOT NULL;
 		INSERT INTO search_changes(commit_id) SELECT NEW.commit_id WHERE NEW.job_id IS NULL AND NEW.commit_id IS NOT NULL;
 	END;

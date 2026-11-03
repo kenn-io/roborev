@@ -390,6 +390,7 @@ func TestSearchChangesLogsEveryFeedSource(t *testing.T) {
 		{"worker only", `UPDATE review_jobs SET worker_id = 'worker' WHERE id = 1`, nil},
 		{"review synced", `UPDATE reviews SET synced_at = CURRENT_TIMESTAMP WHERE job_id = 1`, nil},
 		{"comment synced", `UPDATE responses SET synced_at = CURRENT_TIMESTAMP WHERE id = 1`, nil},
+		{"comment source", `UPDATE responses SET source = 'remote' WHERE id = 1`, nil},
 	}
 	for _, column := range []string{"uuid", "repo_id", "branch", "git_ref", "commit_id", "review_type", "panel_role", "panel_run_uuid", "agent", "finished_at", "status", "job_type"} {
 		cases = append(cases, changeCase{column, fmt.Sprintf("UPDATE review_jobs SET %s = %s WHERE id = 1", column, column), []int64{1}})
