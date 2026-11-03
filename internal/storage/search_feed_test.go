@@ -377,7 +377,7 @@ func TestSearchChangesLogsEveryFeedSource(t *testing.T) {
 		setup string
 	}
 	cases := []changeCase{
-		{"review insert", `INSERT INTO reviews (job_id, agent, output) VALUES (2, 'test', 'second')`, []int64{2}, ""},
+		{"review insert", `INSERT INTO reviews (job_id, agent, output) VALUES (2, 'test', 'second')`, []int64{2}, `DELETE FROM reviews WHERE job_id = 2`},
 		{"review update", `UPDATE reviews SET closed = 1 WHERE job_id = 1`, []int64{1}, ""},
 		{"review uuid", `UPDATE reviews SET uuid = '00000000-0000-4000-8000-000000000001' WHERE job_id = 1`, []int64{1}, ""},
 		{"review delete", `DELETE FROM reviews WHERE job_id = 1`, []int64{1}, ""},
@@ -406,14 +406,10 @@ func TestSearchChangesLogsEveryFeedSource(t *testing.T) {
 			t.Parallel()
 			db := openTestDB(t)
 			t.Cleanup(func() { require.NoError(t, db.Close()) })
+			repoID, commitID := seedSearchFeedBase(t, db)
+			seedSearchFeedReview(t, db, repoID, commitID, 1, searchFeedFixture{jobType: JobTypeReview, status: JobStatusDone, output: "original"})
+			seedSearchFeedReview(t, db, repoID, commitID, 2, searchFeedFixture{jobType: JobTypeReview, status: JobStatusDone, output: "legacy", legacy: true, noCommit: true})
 			_, err := db.ExecContext(t.Context(), `
-				INSERT INTO repos (id, root_path, name) VALUES (1, '/synthetic/repo', 'repo');
-				INSERT INTO commits (id, repo_id, sha, author, subject, timestamp)
-				VALUES (1, 1, 'abc123', 'author', 'subject', CURRENT_TIMESTAMP);
-				INSERT INTO review_jobs (id, repo_id, commit_id, git_ref, agent, status, job_type)
-				VALUES (1, 1, 1, 'abc123', 'test', 'done', 'review'),
-				       (2, 1, NULL, 'abc123', 'test', 'done', '');
-				INSERT INTO reviews (job_id, agent, output) VALUES (1, 'test', 'original');
 				INSERT INTO job_content (job_id, prompt, diff_content) VALUES (1, 'prompt', 'diff');
 				INSERT INTO responses (id, job_id, responder, response) VALUES (1, 1, 'author', 'comment');
 				INSERT INTO responses (id, commit_id, responder, response) VALUES (2, 1, 'author', 'commit comment');`)
@@ -438,6 +434,24 @@ func TestSearchChangesLogsEveryFeedSource(t *testing.T) {
 				require.NoError(t, db.DeleteSearchChanges(t.Context(), through))
 			}
 			assert.ElementsMatch(t, tc.want, jobs)
+			switch tc.name {
+			case "commit comment insert", "commit comment update", "commit comment delete":
+				legacy, err := db.GetSearchDocumentForJob(t.Context(), 2)
+				require.NoError(t, err)
+				require.NotNil(t, legacy)
+				var comments []string
+				for _, response := range legacy.Responses {
+					comments = append(comments, response.Response)
+				}
+				switch tc.name {
+				case "commit comment insert":
+					assert.ElementsMatch(t, []string{"commit comment", "new"}, comments)
+				case "commit comment update":
+					assert.Equal(t, []string{"edited"}, comments)
+				case "commit comment delete":
+					assert.Empty(t, comments)
+				}
+			}
 		})
 	}
 }
