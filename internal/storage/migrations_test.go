@@ -228,7 +228,7 @@ func TestIndexMigrations(t *testing.T) {
 	}
 }
 
-func TestSearchChangesMigration(t *testing.T) {
+func TestSearchChangesCommitIDIndexMigrationRerun(t *testing.T) {
 	t.Parallel()
 	db := openUnmigratedDB(t)
 	index := slices.IndexFunc(schemaMigrations, func(m schemaMigration) bool { return m.version == 8 })

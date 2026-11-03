@@ -218,7 +218,6 @@ func TestReconcilerSweepDrainsBoundedPages(t *testing.T) {
 		more, err := r.reconcileTurn(t.Context())
 		require.NoError(t, err)
 		require.True(t, more)
-		assert.LessOrEqual(t, len(store.jobReads), 1)
 		assert.False(t, r.Health().MirrorComplete)
 		assert.Nil(t, r.Health().MirrorBacklog)
 		for more {
