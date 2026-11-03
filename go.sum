@@ -329,8 +329,8 @@ github.com/yuin/goldmark/v2 v2.1.11 h1:SPy9tHLsgxAZgBh+YDlx9R7LsKsykcM3nZTO8kjeS
 github.com/yuin/goldmark/v2 v2.1.11/go.mod h1:G6M4/qOFtfn01/o14BU1UR2Lo5N3S9Qo7xCuz/sHjGQ=
 github.com/yusufpapurcu/wmi v1.2.4 h1:zFUKzehAFReQwLys1b/iSMl+JQGSCSjtVqQn9bBrPo0=
 github.com/yusufpapurcu/wmi v1.2.4/go.mod h1:SBZ9tNy3G9/m5Oi98Zks0QjeHVDvuK0qfxQmPyzfmi0=
-gitlab.com/gitlab-org/api/client-go/v3 v3.39.0 h1:EkLsl0jFh0VJatoz79GyCG0O8Tc/H6fY/04KWpJIfvE=
-gitlab.com/gitlab-org/api/client-go/v3 v3.39.0/go.mod h1:jBFhGkTHLKkgeHEdS/A8yA0tQ6UHq96QVsS5muu6flM=
+gitlab.com/gitlab-org/api/client-go/v3 v3.39.1 h1:yBmlSUi5P6L354Aq3PJCWvW24zz9Ru3WnAXgNMwA9g8=
+gitlab.com/gitlab-org/api/client-go/v3 v3.39.1/go.mod h1:jBFhGkTHLKkgeHEdS/A8yA0tQ6UHq96QVsS5muu6flM=
 go.kenn.io/kit v0.47.5 h1:CSzivpLrVRo0dPPvXLhHbUPMU0l/sNWe6WoVZ8UET80=
 go.kenn.io/kit v0.47.5/go.mod h1:3mIcn0wWeb6MaG4ftwrJEHBYiN0C/mmL1m4hF+QYxZ4=
 go.yaml.in/yaml/v3 v3.0.4/go.mod h1:DhzuOOF2ATzADvBadXxruRBLzYTpT36CKvDb3+aBEFg=
