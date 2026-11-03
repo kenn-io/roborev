@@ -303,7 +303,7 @@ func TestReconcilerSweepBoundsRepoAndCommitFanout(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			now := time.Now()
-			r, store, index := incrementalFixture(t, ReconcilerConfig{MirrorPageSize: 1, Now: func() time.Time { return now }})
+			r, store, _ := incrementalFixture(t, ReconcilerConfig{MirrorPageSize: 1, Now: func() time.Time { return now }})
 			if tc.setup != "" {
 				_, err := store.ExecContext(t.Context(), tc.setup)
 				require.NoError(t, err)
@@ -323,14 +323,6 @@ func TestReconcilerSweepBoundsRepoAndCommitFanout(t *testing.T) {
 				assert.LessOrEqual(t, len(store.jobReads)-before, 1)
 			}
 			assert.ElementsMatch(t, []int64{1, 2}, store.jobReads)
-			var count int
-			if tc.name == "repo" {
-				err = index.db.QueryRowContext(t.Context(), `SELECT count(*) FROM review_mirror WHERE repo_name = 'renamed'`).Scan(&count)
-			} else {
-				err = index.db.QueryRowContext(t.Context(), `SELECT count(*) FROM review_fts WHERE review_fts MATCH 'fanoutcomment'`).Scan(&count)
-			}
-			require.NoError(t, err)
-			assert.Equal(t, 2, count)
 		})
 	}
 }

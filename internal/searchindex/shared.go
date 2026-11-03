@@ -43,19 +43,9 @@ func (r *Reconciler) ShareVectors(shared SharedVectors) {
 // just pushed. A review is usually embedded before sync pushes it, when the
 // sync database cannot accept its vectors yet.
 func (r *Reconciler) ReviewsPushed(reviewUUIDs []string) {
-	r.mu.Lock()
-	if r.shared == nil || r.embedder == nil {
-		r.mu.Unlock()
-		return
+	if r.queuePublish(reviewUUIDs...) {
+		r.Wake()
 	}
-	if r.pendingPublish == nil {
-		r.pendingPublish = make(map[string]struct{})
-	}
-	for _, reviewUUID := range reviewUUIDs {
-		r.pendingPublish[reviewUUID] = struct{}{}
-	}
-	r.mu.Unlock()
-	r.Wake()
 }
 
 func (r *Reconciler) sharedVectors() SharedVectors {
@@ -108,41 +98,39 @@ func pendingContentHash(doc vector.Pending[string]) string {
 	}
 }
 
-func (r *Reconciler) queuePublish(reviewUUIDs ...string) {
+// queuePublish schedules vectors for publication when sharing is enabled.
+func (r *Reconciler) queuePublish(reviewUUIDs ...string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.shared == nil || r.embedder == nil {
+		return false
+	}
 	if r.pendingPublish == nil {
 		r.pendingPublish = make(map[string]struct{})
 	}
-	for _, id := range reviewUUIDs {
-		r.pendingPublish[id] = struct{}{}
+	for _, reviewUUID := range reviewUUIDs {
+		r.pendingPublish[reviewUUID] = struct{}{}
 	}
+	return true
 }
 
-// publishPending retries failed publications on the next reconciliation turn.
+// publishPending publishes covered reviews discovered by sync, a scan, or a
+// change. Matching shared rows are skipped. Failed publications stay queued.
 func (r *Reconciler) publishPending(ctx context.Context, shared SharedVectors, space, generation string) error {
 	pending := r.takePendingPublish()
-	for offset := 0; offset < len(pending); offset += sharedLookupPage {
-		batch := pending[offset:min(offset+sharedLookupPage, len(pending))]
+	for batch := range slices.Chunk(pending, sharedLookupPage) {
 		docs, err := r.index.coveredSharedDocuments(ctx, generation, batch)
 		if err != nil {
-			r.queuePublish(pending[offset:]...)
+			r.queuePublish(pending...)
 			return err
 		}
 		keys := make([]storage.SearchVectorKey, len(docs))
 		for i, doc := range docs {
 			keys[i] = doc.key
 		}
-		if len(keys) == 0 {
-			continue
-		}
 		published, err := shared.LookupSearchVectors(ctx, space, keys)
-		if err != nil {
-			r.queuePublish(pending[offset:]...)
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			return nil
+		if err != nil && ctx.Err() != nil {
+			return ctx.Err()
 		}
 		for _, doc := range docs {
 			if _, ok := published[doc.key]; ok {
@@ -152,8 +140,7 @@ func (r *Reconciler) publishPending(ctx context.Context, shared SharedVectors, s
 			if err != nil || !ok {
 				r.queuePublish(doc.key.ReviewUUID)
 			}
-			if ctx.Err() != nil {
-				r.queuePublish(pending[offset:]...)
+			if err != nil && ctx.Err() != nil {
 				return ctx.Err()
 			}
 		}
@@ -169,10 +156,10 @@ type sharingStore struct {
 	shared SharedVectors
 	space  string
 	keys   map[string]storage.SearchVectorKey
-	queue  func(...string)
+	queue  func(...string) bool
 }
 
-func newSharingStore(store vector.Store[string, string], index *Index, shared SharedVectors, space string, queue func(...string)) *sharingStore {
+func newSharingStore(store vector.Store[string, string], index *Index, shared SharedVectors, space string, queue func(...string) bool) *sharingStore {
 	return &sharingStore{
 		Store: store, index: index, shared: shared, space: space,
 		keys: make(map[string]storage.SearchVectorKey), queue: queue,

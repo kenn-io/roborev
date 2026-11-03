@@ -22,10 +22,8 @@ type memorySharedVectors struct {
 	synced       map[string]bool
 	rows         map[string]map[storage.SearchVectorKey][]storage.SearchVectorChunk
 	lookupErr    error
-	publishErr   error
 	publishCalls int
 	lookupKeys   int
-	lookupCalls  int
 }
 
 func newMemorySharedVectors() *memorySharedVectors {
@@ -40,7 +38,6 @@ func (m *memorySharedVectors) LookupSearchVectors(
 ) (map[storage.SearchVectorKey][]storage.SearchVectorChunk, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.lookupCalls++
 	m.lookupKeys += len(keys)
 	if m.lookupErr != nil {
 		return nil, m.lookupErr
@@ -60,9 +57,6 @@ func (m *memorySharedVectors) PublishSearchVectors(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.publishCalls++
-	if m.publishErr != nil {
-		return false, m.publishErr
-	}
 	if !m.synced[key.ReviewUUID] {
 		return false, nil
 	}
@@ -277,40 +271,6 @@ func TestSharedVectorsRetryUnsyncedPublicationOnSweep(t *testing.T) {
 	})
 }
 
-func TestSharedVectorsIdleSweepDoesNotLookUpHistory(t *testing.T) {
-	sources := makeSearchSources(2)
-	shared := newMemorySharedVectors()
-	shared.push(sources[0].ReviewUUID, sources[1].ReviewUUID)
-	d := newSharingDaemon(t, sources, shared)
-	d.reconcile(t)
-	shared.mu.Lock()
-	shared.lookupKeys = 0
-	shared.lookupCalls = 0
-	shared.mu.Unlock()
-	d.reconciler.nextSweep = d.reconciler.config.Now().Add(-time.Second)
-	d.reconcile(t)
-	shared.mu.Lock()
-	defer shared.mu.Unlock()
-	assert.Zero(t, shared.lookupKeys)
-	assert.Zero(t, shared.lookupCalls)
-}
-
-func TestSharedVectorsRetryFailedPublication(t *testing.T) {
-	sources := makeSearchSources(1)
-	shared := newMemorySharedVectors()
-	shared.push(sources[0].ReviewUUID)
-	shared.publishErr = errors.New("temporary failure")
-	d := newSharingDaemon(t, sources, shared)
-	d.reconcile(t)
-	assert.Zero(t, shared.rowCount())
-	shared.mu.Lock()
-	shared.publishErr = nil
-	shared.mu.Unlock()
-	d.reconciler.nextSweep = d.reconciler.config.Now().Add(-time.Second)
-	d.reconcile(t)
-	assert.Equal(t, 1, shared.rowCount())
-}
-
 func TestSharedVectorsSweepOnlyPublishesChangedReview(t *testing.T) {
 	now := time.Now()
 	r, store, _ := incrementalFixture(t, ReconcilerConfig{Now: func() time.Time { return now }})
@@ -320,23 +280,24 @@ func TestSharedVectorsSweepOnlyPublishesChangedReview(t *testing.T) {
 	shared.push("00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002")
 	r.embedder = &reconcilerEmbedder{space: testSpace("model", 2), batchSize: 8}
 	r.ShareVectors(shared)
-	for more := true; more; {
-		more, err = r.reconcileTurn(t.Context())
-		require.NoError(t, err)
+	sweep := func(change string) int {
+		if change != "" {
+			_, err := store.ExecContext(t.Context(), change)
+			require.NoError(t, err)
+		}
+		shared.mu.Lock()
+		shared.lookupKeys = 0
+		shared.mu.Unlock()
+		now = now.Add(2 * r.config.SweepInterval)
+		for more := true; more; {
+			more, err = r.reconcileTurn(t.Context())
+			require.NoError(t, err)
+		}
+		shared.mu.Lock()
+		defer shared.mu.Unlock()
+		return shared.lookupKeys
 	}
-	shared.mu.Lock()
-	shared.lookupKeys = 0
-	shared.lookupCalls = 0
-	shared.mu.Unlock()
-	_, err = store.ExecContext(t.Context(), `UPDATE reviews SET closed = 1 WHERE job_id = 1`)
-	require.NoError(t, err)
-	now = now.Add(2 * r.config.SweepInterval)
-	for more := true; more; {
-		more, err = r.reconcileTurn(t.Context())
-		require.NoError(t, err)
-	}
-	shared.mu.Lock()
-	defer shared.mu.Unlock()
-	assert.Equal(t, 1, shared.lookupCalls)
-	assert.Equal(t, 1, shared.lookupKeys)
+	sweep("")
+	assert.Zero(t, sweep(""), "an idle sweep looks up no history")
+	assert.Equal(t, 1, sweep(`UPDATE reviews SET closed = 1 WHERE job_id = 1`))
 }

@@ -621,7 +621,7 @@ func (r *Reconciler) refreshJob(ctx context.Context, id int64, publish bool) err
 	if _, err := r.index.deleteMissing(ctx, seen, mirrorKeysForJobSQL, id); err != nil {
 		return err
 	}
-	if publish && source != nil && source.ReviewUUID != "" && r.sharedVectors() != nil && r.embedder != nil {
+	if publish && source != nil && source.ReviewUUID != "" {
 		r.queuePublish(source.ReviewUUID)
 	}
 	return nil
@@ -643,18 +643,12 @@ func (r *Reconciler) drainChanges(ctx context.Context) (bool, error) {
 			return false, err
 		}
 	}
-	more := false
-	if through > 0 {
+	// A log row can expand to many jobs, or none, so drain until a page is empty.
+	more := through > 0
+	if more {
 		if err := r.store.DeleteSearchChanges(ctx, through); err != nil {
 			return false, err
 		}
-		// A log row can expand to many jobs, or none, so job count does not
-		// indicate whether another page remains.
-		head, err := r.store.SearchChangesHead(ctx)
-		if err != nil {
-			return false, err
-		}
-		more = head > through
 	}
 	if len(jobs) > 0 {
 		indexed, err := r.index.mirrorCount(ctx)

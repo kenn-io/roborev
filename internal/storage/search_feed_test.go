@@ -388,6 +388,8 @@ func TestSearchChangesLogsEveryFeedSource(t *testing.T) {
 		{"content insert", `INSERT INTO job_content (job_id, prompt) VALUES (1, 'prompt')`, []int64{1}},
 		{"prompt only", `UPDATE job_content SET prompt = 'edited' WHERE job_id = 1`, nil},
 		{"worker only", `UPDATE review_jobs SET worker_id = 'worker' WHERE id = 1`, nil},
+		{"review synced", `UPDATE reviews SET synced_at = CURRENT_TIMESTAMP WHERE job_id = 1`, nil},
+		{"comment synced", `UPDATE responses SET synced_at = CURRENT_TIMESTAMP WHERE id = 1`, nil},
 	}
 	for _, column := range []string{"uuid", "repo_id", "branch", "git_ref", "commit_id", "review_type", "panel_role", "panel_run_uuid", "agent", "finished_at", "status", "job_type"} {
 		cases = append(cases, changeCase{column, fmt.Sprintf("UPDATE review_jobs SET %s = %s WHERE id = 1", column, column), []int64{1}})
@@ -435,23 +437,4 @@ func TestSearchChangesPreservesWritesAfterPage(t *testing.T) {
 	head, err := db.SearchChangesHead(t.Context())
 	require.NoError(t, err)
 	assert.Greater(t, head, through)
-}
-
-func TestSearchChangesIgnoreSyncBookkeeping(t *testing.T) {
-	db := openTestDB(t)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	_, err := db.ExecContext(t.Context(), `
-		INSERT INTO repos (id, root_path, name) VALUES (1, '/synthetic/repo', 'repo');
-		INSERT INTO review_jobs (id, repo_id, git_ref, agent, status, job_type) VALUES (1, 1, 'main', 'test', 'done', 'review');
-		INSERT INTO reviews (id, job_id, agent, output) VALUES (1, 1, 'test', 'review');
-		INSERT INTO responses (id, job_id, responder, response) VALUES (1, 1, 'author', 'comment');`)
-	require.NoError(t, err)
-	head, err := db.SearchChangesHead(t.Context())
-	require.NoError(t, err)
-	require.NoError(t, db.DeleteSearchChanges(t.Context(), head))
-	require.NoError(t, db.MarkReviewSynced(1))
-	require.NoError(t, db.MarkCommentSynced(1))
-	jobs, _, err := db.ListSearchChanges(t.Context(), 10)
-	require.NoError(t, err)
-	assert.Empty(t, jobs)
 }
