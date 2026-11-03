@@ -5,7 +5,6 @@ package storage
 import (
 	"database/sql"
 	"fmt"
-	"slices"
 	"testing"
 	"time"
 	"uuid"
@@ -549,19 +548,7 @@ func TestIntegrationMirrorResetRestoresRepairedReview(t *testing.T) { //nolint:p
 func TestIntegrationSyncNowPushesOutOfOrderReviewsInOnePass(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL schema
 	env := newIntegrationEnv(t)
 	node := env.setupNode("producer", "out-of-order-repository", "1h")
-	jobs := make([]*ReviewJob, 30)
-	for i := range jobs {
-		job, err := node.DB.EnqueueJob(EnqueueOpts{RepoID: node.Repo.ID, GitRef: fmt.Sprintf("%040x", i), Agent: "test"})
-		require.NoError(t, err)
-		claimed, err := node.DB.ClaimJob("worker")
-		require.NoError(t, err)
-		require.NotNil(t, claimed)
-		require.Equal(t, job.ID, claimed.ID)
-		jobs[i] = job
-	}
-	for _, job := range slices.Backward(jobs) {
-		require.NoError(t, completeReviewFixture(node.DB, job.ID, "test", "prompt", "Review result."))
-	}
+	createSyncHistory(t, node.DB, node.Repo.ID, 30, true)
 	stats, err := node.Worker.SyncNow()
 	require.NoError(t, err)
 	assert.Equal(t, 30, stats.PushedReviews)

@@ -774,6 +774,15 @@ type pushCursor struct {
 	job, reviewJob int64
 }
 
+func (cur *pushCursor) advanceReviews(lastJobID int64, jobsExhausted bool) {
+	// An edited review can belong to an already-synced job ahead of this
+	// batch. Keep reviews of jobs still waiting to upload within reach.
+	if !jobsExhausted {
+		lastJobID = min(lastJobID, cur.job)
+	}
+	cur.reviewJob = lastJobID
+}
+
 // pushChangesWithStats pushes local changes and returns statistics
 func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool, cur *pushCursor) (pushPullStats, error) {
 	stats := pushPullStats{}
@@ -890,7 +899,7 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool, cur
 	}
 
 	if len(reviews) > 0 {
-		cur.reviewJob = reviews[len(reviews)-1].JobID
+		cur.advanceReviews(reviews[len(reviews)-1].JobID, len(jobs) < syncBatchSize)
 		success, err := pool.BatchUpsertReviews(ctx, reviews)
 		if err != nil {
 			return stats, fmt.Errorf("batch upsert reviews: %w", &syncSourceError{err})

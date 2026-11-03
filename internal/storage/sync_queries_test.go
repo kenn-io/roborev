@@ -766,11 +766,11 @@ func TestSyncQueriesSeekPastCursor(t *testing.T) {
 	t.Parallel()
 	h := newSyncTestHelper(t)
 	for _, tc := range []struct {
-		name, query, seek string
-		args              []any
+		name, query string
+		args        []any
 	}{
-		{"jobs", jobsToSyncQuery, "SEARCH j USING INTEGER PRIMARY KEY (rowid>?)", []any{h.machineID, 25, 25}},
-		{"reviews", reviewsToSyncQuery, "SEARCH r USING INDEX sqlite_autoindex_reviews_1 (job_id>?)", []any{h.machineID, 25, h.machineID, h.machineID, 25}},
+		{"jobs", jobsToSyncQuery, []any{h.machineID, 25, 25}},
+		{"reviews", reviewsToSyncQuery, []any{h.machineID, 25, h.machineID, h.machineID, 25}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rows, err := h.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+tc.query, tc.args...)
@@ -785,7 +785,10 @@ func TestSyncQueriesSeekPastCursor(t *testing.T) {
 			}
 			require.NoError(t, rows.Err())
 			plan := strings.Join(details, "\n")
-			assert.Contains(t, plan, tc.seek)
+			assert.Contains(t, plan, "SEARCH j ")
+			assert.Contains(t, plan, "SEARCH r ")
+			assert.NotContains(t, plan, "SCAN j")
+			assert.NotContains(t, plan, "SCAN r")
 			assert.NotContains(t, plan, "TEMP B-TREE FOR ORDER BY")
 		})
 	}
@@ -799,21 +802,7 @@ func TestSyncQueriesPageHistory(t *testing.T) {
 			h := newSyncTestHelper(t)
 			assert := assert.New(t)
 			const count = 60
-			jobs := make([]*ReviewJob, count)
-			for i := range jobs {
-				jobs[i] = h.createPendingJob(fmt.Sprintf("commit-%d", i))
-				claimed, err := h.db.ClaimJob("worker")
-				require.NoError(t, err)
-				require.NotNil(t, claimed)
-				require.Equal(t, jobs[i].ID, claimed.ID)
-			}
-			for i := range jobs {
-				index := i
-				if reverse {
-					index = count - 1 - i
-				}
-				require.NoError(t, completeReviewFixture(h.db, jobs[index].ID, "test", "prompt", "output"))
-			}
+			jobs := createSyncHistory(t, h.db, h.repo.ID, count, reverse)
 			var jobCursor, reviewJobCursor int64
 			var seenJobs, seenReviewJobs []int64
 			for range 3 {
@@ -857,4 +846,62 @@ func TestSyncQueriesPageHistory(t *testing.T) {
 			assert.Empty(pendingReviews)
 		})
 	}
+}
+
+func TestSyncCursorKeepsReviewsBehindPendingJobs(t *testing.T) {
+	t.Parallel()
+	h := newSyncTestHelper(t)
+	jobs := make([]*ReviewJob, 27)
+	for i := range jobs {
+		jobs[i] = h.createPendingJob(fmt.Sprintf("commit-%d", i))
+		claimed, err := h.db.ClaimJob("worker")
+		require.NoError(t, err)
+		require.NotNil(t, claimed)
+		require.Equal(t, jobs[i].ID, claimed.ID)
+	}
+	lastJob := jobs[len(jobs)-1]
+	require.NoError(t, completeReviewFixture(h.db, lastJob.ID, "test", "prompt", "output"))
+	require.NoError(t, h.db.MarkJobSynced(lastJob.ID))
+	reviews, err := h.db.GetReviewsToSync(h.machineID, syncBatchSize)
+	require.NoError(t, err)
+	require.Len(t, reviews, 1)
+	require.NoError(t, h.db.MarkReviewsSynced(reviews))
+	require.NoError(t, h.db.CancelJob(jobs[0].ID))
+	for _, job := range jobs[1 : len(jobs)-1] {
+		require.NoError(t, completeReviewFixture(h.db, job.ID, "test", "prompt", "output"))
+	}
+	require.NoError(t, h.db.MarkReviewClosedByJobID(lastJob.ID, true))
+
+	cur := pushCursor{}
+	var pushedReviewJobs []int64
+	for {
+		batch, err := h.db.jobsToSync(h.machineID, cur.job, syncBatchSize)
+		require.NoError(t, err)
+		var marks []JobSyncMark
+		for _, job := range batch {
+			marks = append(marks, NewJobSyncMark(job))
+			cur.job = job.ID
+		}
+		require.NoError(t, h.db.MarkJobsSynced(marks))
+		reviews, err := h.db.reviewsToSync(h.machineID, cur.reviewJob, syncBatchSize)
+		require.NoError(t, err)
+		if len(reviews) > 0 {
+			cur.advanceReviews(reviews[len(reviews)-1].JobID, len(batch) < syncBatchSize)
+		}
+		for _, review := range reviews {
+			pushedReviewJobs = append(pushedReviewJobs, review.JobID)
+		}
+		require.NoError(t, h.db.MarkReviewsSynced(reviews))
+		if len(batch) == 0 && len(reviews) == 0 {
+			break
+		}
+	}
+	var want []int64
+	for _, job := range jobs[1:] {
+		want = append(want, job.ID)
+	}
+	assert.ElementsMatch(t, want, pushedReviewJobs)
+	pending, err := h.db.GetReviewsToSync(h.machineID, syncBatchSize)
+	require.NoError(t, err)
+	assert.Empty(t, pending)
 }
