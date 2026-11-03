@@ -343,7 +343,7 @@ func TestServiceKeepsPanelAlternateWhenTopCandidateWasDeleted(t *testing.T) {
 	})
 }
 
-func TestServiceSemanticCandidateCeilingIsErrorForExplicitAndBoundedForAuto(t *testing.T) {
+func TestServiceSemanticCandidateCeiling(t *testing.T) {
 	ctx := t.Context()
 	index := openQueryTestIndex(t)
 	const count = semanticDeepLimit + 1
@@ -362,21 +362,38 @@ func TestServiceSemanticCandidateCeilingIsErrorForExplicitAndBoundedForAuto(t *t
 	service := NewService(newServiceStore(docs...), index,
 		&serviceEmbedder{space: model, query: vector.Vector{1, 0}}, activeServiceRuntime(model))
 
-	_, err = service.Search(ctx, SearchParams{Query: "unseen paraphrase", Mode: ModeSemantic, Limit: 2})
-	var modeErr *ModeError
-	require.ErrorAs(t, err, &modeErr)
-	assert.Equal(t, 503, modeErr.Status)
-	assert.Equal(t, ReasonSemanticCeiling, modeErr.Reason)
+	t.Run("explicit mode errors", func(t *testing.T) {
+		_, err := service.Search(t.Context(), SearchParams{Query: "unseen paraphrase", Mode: ModeSemantic, Limit: 2})
+		var modeErr *ModeError
+		require.ErrorAs(t, err, &modeErr)
+		assert.Equal(t, 503, modeErr.Status)
+		assert.Equal(t, ReasonSemanticCeiling, modeErr.Reason)
+	})
 
-	auto, err := service.Search(ctx, SearchParams{Query: "unseen paraphrase", Mode: ModeAuto, Limit: 2})
-	require.NoError(t, err)
-	require.Len(t, auto.Hits, 1)
-	assert.Equal(t, ModeHybrid, auto.Mode)
-	assert.True(t, auto.Bounded)
-	assert.Equal(t, ReasonSemanticCeiling, auto.BoundedReason)
-	assert.True(t, auto.Degraded)
-	assert.Equal(t, ReasonSemanticCeiling, auto.DegradedReason)
-	assert.True(t, auto.Partial)
+	t.Run("auto mode is bounded", func(t *testing.T) {
+		assert := assert.New(t)
+		auto, err := service.Search(t.Context(), SearchParams{Query: "unseen paraphrase", Mode: ModeAuto, Limit: 2})
+		require.NoError(t, err)
+		require.Len(t, auto.Hits, 1)
+		assert.Equal(ModeHybrid, auto.Mode)
+		assert.True(auto.Bounded)
+		assert.Equal(ReasonSemanticCeiling, auto.BoundedReason)
+		assert.True(auto.Degraded)
+		assert.Equal(ReasonSemanticCeiling, auto.DegradedReason)
+		assert.True(auto.Partial)
+	})
+
+	t.Run("full page is partial but not bounded", func(t *testing.T) {
+		assert := assert.New(t)
+		result, err := service.Search(t.Context(), SearchParams{
+			Query: "unseen paraphrase", Mode: ModeAuto, Limit: 1,
+		})
+		require.NoError(t, err)
+		require.Len(t, result.Hits, 1)
+		assert.False(result.Bounded)
+		assert.Empty(result.BoundedReason)
+		assert.True(result.Partial)
+	})
 }
 
 func TestServiceSemanticRefillsAfterCanonicalDeletions(t *testing.T) {
@@ -416,35 +433,6 @@ func TestServiceSemanticRefillsAfterCanonicalDeletions(t *testing.T) {
 	require.Len(t, result.Hits, 1)
 	assert.Equal(t, fresh.Source.ReviewID, result.Hits[0].ReviewID)
 	assert.Positive(t, runtime.wakes, "deleted reviews still in the sidecar wake the reconciler")
-}
-
-func TestServiceFullPageAtSemanticCeilingIsPartialButNotBounded(t *testing.T) {
-	ctx := t.Context()
-	index := openQueryTestIndex(t)
-	const count = semanticDeepLimit + 1
-	docs := make([]searchdoc.Document, 0, count)
-	for i := range count {
-		docs = append(docs, queryTestDocument(int64(i+1), "one-panel", "candidate", queryDocOptions{}))
-	}
-	_, err := index.RefreshMirrorPage(ctx, docs, nil)
-	require.NoError(t, err)
-	model := testSpace("full-page-ceiling", 2)
-	vectors := make(map[string][]vector.ChunkVector, len(docs))
-	for _, doc := range docs {
-		vectors[doc.DocKey] = []vector.ChunkVector{{ChunkIndex: 0, Vector: vector.Vector{1, 0}}}
-	}
-	seedActiveGeneration(t, index, model, vectors)
-	service := NewService(newServiceStore(docs...), index,
-		&serviceEmbedder{space: model, query: vector.Vector{1, 0}}, activeServiceRuntime(model))
-
-	result, err := service.Search(ctx, SearchParams{
-		Query: "unseen paraphrase", Mode: ModeAuto, Limit: 1,
-	})
-	require.NoError(t, err)
-	require.Len(t, result.Hits, 1)
-	assert.False(t, result.Bounded)
-	assert.Empty(t, result.BoundedReason)
-	assert.True(t, result.Partial)
 }
 
 func TestSemanticCeilingRequiresShortPageAndAboveFloorProbe(t *testing.T) {
