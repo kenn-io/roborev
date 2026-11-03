@@ -358,7 +358,10 @@ When the poller publishes a skipped result, it always sets a roborev success
 commit status. GitHub App authentication also creates a roborev check with a
 `skipped` conclusion; personal authentication cannot, because GitHub does not
 allow it to create check runs. GitHub attaches checks and statuses to the
-commit, so the skip also appears on any other PR with the same head commit.
+commit, so the skip also appears on any other PR with the same head commit. An
+unchanged commit and skip reason are published once while the daemon runs, then
+checked again after a restart or a roborev status write to that commit; a skip
+changed outside roborev stays changed until then.
 
 Marking a draft ready, or removing the matching label, makes the same PR head
 eligible on the next poll without a push, subject to the existing throttle,
