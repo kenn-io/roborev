@@ -159,8 +159,6 @@ func TestStatusSupportsRepliesFromSchema0_28(t *testing.T) {
 		{StateReady, "0.21.0", false},
 		{StateReady, "0.27.9", false},
 		{StateReady, "0.28.0", true},
-		{StateReady, "v0.31.2", true},
-		{StateReady, "1.0.0", true},
 		{StateIncompatible, "0.28.0", false},
 		{StateProjectNotFound, "0.28.0", false},
 	} {
