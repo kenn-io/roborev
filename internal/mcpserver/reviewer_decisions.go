@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 
 	"go.kenn.io/roborev/internal/storage"
@@ -28,24 +29,28 @@ type reviewerDecision struct {
 	Reason string `json:"reason"`
 	Source string `json:"source" jsonschema:"fix_comment or rebuttal"`
 	By     string `json:"by,omitempty"`
+	Target string `json:"target,omitempty" jsonschema:"for a decision on the review rather than one finding: the severity and file or the excerpt it named"`
 }
 
 // fixCommentLine matches the disposition lines the roborev-fix skill writes:
-// "- <severity> <file>: <Fix|Decline|Invalid|Ask>: <reason>".
+// "- <severity> <file>: <Fix|Decline|Invalid|Ask>: <reason>". Agents often
+// write the file as file:line, which narrows the match.
 var fixCommentLine = regexp.MustCompile(
 	`(?i)^\s*[-*]\s*(critical|high|medium|low)\s+(.+?):\s*(fix|decline|invalid|ask)\s*:\s*(.*\S)\s*$`,
 )
 
-var trailingLines = regexp.MustCompile(`:\d+(-\d+)?$`)
+var trailingLines = regexp.MustCompile(`:(\d+)(?:-(\d+))?$`)
 
 type parsedDecision struct {
 	severity string
 	file     string
+	line     int // 0 when the line named no line number
+	target   string
 	decision reviewerDecision
 }
 
 // parseFixComment returns the disposition lines of a comment and whether
-// every non-empty line was one, in which case decisions carry it in full.
+// every non-empty line was one.
 func parseFixComment(comment storage.Response) ([]parsedDecision, bool) {
 	var parsed []parsedDecision
 	complete := true
@@ -58,9 +63,13 @@ func parseFixComment(comment storage.Response) ([]parsedDecision, bool) {
 			complete = false
 			continue
 		}
+		where := strings.Trim(m[2], "`")
+		file, lineNo := splitLocation(where)
 		parsed = append(parsed, parsedDecision{
 			severity: strings.ToLower(m[1]),
-			file:     trailingLines.ReplaceAllString(strings.Trim(m[2], "`"), ""),
+			file:     file,
+			line:     lineNo,
+			target:   strings.ToLower(m[1]) + " " + where,
 			decision: reviewerDecision{
 				Kind: strings.ToLower(m[3]), Reason: m[4], Source: DecisionSourceFixComment, By: comment.Responder,
 			},
@@ -69,34 +78,60 @@ func parseFixComment(comment storage.Response) ([]parsedDecision, bool) {
 	return parsed, complete && len(parsed) > 0
 }
 
-// findingFile is the file a finding names. Version 3 documents carry it
-// directly; older ones only have a display location such as "path:12".
-func findingFile(f structuredreview.Finding) string {
-	if f.File != "" {
-		return f.File
+// splitLocation splits "path:12" or "path:12-20" into the path and its first
+// line.
+func splitLocation(location string) (string, int) {
+	m := trailingLines.FindStringSubmatchIndex(location)
+	if m == nil {
+		return location, 0
 	}
-	return trailingLines.ReplaceAllString(f.Location, "")
+	line, _ := strconv.Atoi(location[m[2]:m[3]])
+	return location[:m[0]], line
 }
 
-// attachDecisions files each decision under the finding it answers. A fix
-// comment line names a severity and file; when several findings share both,
-// lines answer them in order, as the fix skill writes one line per finding.
-// An assessment names the finding by an excerpt of its text. Decisions that
-// match no finding stay on the review. It returns the comments that still
-// hold text the decisions do not carry.
+// findingSpan is the file and line range a finding names. Version 3
+// documents carry them directly; older ones only have a display location.
+func findingSpan(f structuredreview.Finding) (file string, start, end int) {
+	if f.File != "" {
+		return f.File, f.StartLine, f.EndLine
+	}
+	file, start = splitLocation(f.Location)
+	if m := trailingLines.FindStringSubmatch(f.Location); m != nil && m[2] != "" {
+		end, _ = strconv.Atoi(m[2])
+	}
+	return file, start, end
+}
+
+// attachDecisions files each decision under the finding it unambiguously
+// answers and keeps the rest on the review, with the target they named.
+//
+//   - A fix comment line matches the findings with its severity and file,
+//     narrowed by its line number when it has one. Only a single remaining
+//     finding that no earlier line of the same comment answered is a match.
+//   - A comment on the commit rather than the job reaches every review of
+//     that commit, so its lines never attach to one review's findings.
+//   - An assessment matches the finding whose rendered section holds its
+//     excerpt, when the excerpt appears in exactly one section.
+//
+// It returns the comments that still hold text the decisions do not carry.
 func attachDecisions(
 	findings []reviewerFinding, doc structuredreview.Document, review BranchReview,
 ) (unmatched []reviewerDecision, comments []storage.Response) {
-	answered := make([]bool, len(findings))
 	for _, comment := range review.Comments {
 		parsed, complete := parseFixComment(comment)
 		if !complete {
 			comments = append(comments, comment)
 		}
+		answered := make([]bool, len(findings))
 		for _, p := range parsed {
-			i := matchFixLine(doc.Findings, answered, p)
+			i := -1
+			if comment.JobID != nil {
+				i = matchFixLine(doc.Findings, answered, p)
+			}
 			if i < 0 {
-				unmatched = append(unmatched, p.decision)
+				d := p.decision
+				d.Target = p.target
+				unmatched = append(unmatched, d)
 				continue
 			}
 			answered[i] = true
@@ -105,9 +140,10 @@ func attachDecisions(
 	}
 	for _, a := range review.Assessments {
 		decision := reviewerDecision{Kind: a.Outcome, Reason: a.Explanation, Source: DecisionSourceRebuttal}
-		if i := matchExcerpt(doc.Findings, a.Finding); i >= 0 {
+		if i := matchExcerpt(review.Review.Output, len(findings), a.Finding); i >= 0 {
 			findings[i].Decisions = append(findings[i].Decisions, decision)
 		} else {
+			decision.Target = a.Finding
 			unmatched = append(unmatched, decision)
 		}
 	}
@@ -115,32 +151,65 @@ func attachDecisions(
 }
 
 func matchFixLine(findings []structuredreview.Finding, answered []bool, p parsedDecision) int {
-	first := -1
+	match := -1
 	for i, f := range findings {
-		if strings.ToLower(f.Severity) != p.severity || findingFile(f) != p.file {
+		file, start, end := findingSpan(f)
+		if strings.ToLower(f.Severity) != p.severity || file != p.file || answered[i] {
 			continue
 		}
-		if !answered[i] {
-			return i
+		if p.line > 0 && start > 0 && (p.line < start || p.line > max(start, end)) {
+			continue
 		}
-		if first < 0 {
-			first = i
+		if match >= 0 {
+			return -1
 		}
+		match = i
 	}
-	return first
+	return match
 }
 
-func matchExcerpt(findings []structuredreview.Finding, excerpt string) int {
-	needle := normalizeSpace(excerpt)
+var findingHeader = regexp.MustCompile(`### (\d+)\. `)
+
+// matchExcerpt returns the 0-based finding whose rendered section in output
+// holds excerpt, or -1 unless every occurrence falls in that one section.
+// Rebuttals accept only excerpts of the rendered review, and the renderer
+// numbers each finding's section "### <index>. <Severity>".
+func matchExcerpt(output string, count int, excerpt string) int {
+	text, needle := normalizeSpace(output), normalizeSpace(excerpt)
 	if needle == "" {
 		return -1
 	}
-	for i, f := range findings {
-		if strings.Contains(normalizeSpace(f.Problem), needle) || strings.Contains(normalizeSpace(f.Fix), needle) {
-			return i
+	headers := findingHeader.FindAllStringSubmatchIndex(text, -1)
+	match := -1
+	for from := 0; ; {
+		at := strings.Index(text[from:], needle)
+		if at < 0 {
+			break
 		}
+		at += from
+		section := -1
+		for _, h := range headers {
+			if h[0] > at {
+				break
+			}
+			section, _ = strconv.Atoi(text[h[2]:h[3]])
+			section--
+		}
+		// An excerpt before the first section, or across two, names no finding.
+		next := len(text)
+		for _, h := range headers {
+			if h[0] > at {
+				next = h[0]
+				break
+			}
+		}
+		if section < 0 || section >= count || at+len(needle) > next || (match >= 0 && match != section) {
+			return -1
+		}
+		match = section
+		from = at + 1
 	}
-	return -1
+	return match
 }
 
 func normalizeSpace(s string) string {
