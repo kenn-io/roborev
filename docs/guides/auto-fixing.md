@@ -47,17 +47,15 @@ flowchart TD
     Find --> A{Found?}
     A -->|No| Branch[Run whole-branch review]
     Branch --> C{Pass?}
-    C -->|Yes| Done([Done - branch review passes])
+    C -->|Yes| Done([Done - all reviews pass])
     C -->|No| Fix
     A -->|Yes| Fix[AI agent addresses findings]
     Fix --> Changes{Changes made?}
     Changes -->|No| Skip[Skip review, try next]
     Skip --> Find
     Changes -->|Yes| Commit[Commit fix]
-    Commit --> Trivial{Skip flag and eligible fix?}
-    Trivial -->|Yes| Record[Record skip on original review]
-    Record -->|Saved| Find
-    Record -->|Save failed| Wait
+    Commit --> Trivial{Skip flag and docs/test-only fix?}
+    Trivial -->|Yes| Find
     Trivial -->|No| Wait[Wait for re-review]
     Wait --> Pass{Pass?}
     Pass -->|Yes| Find
@@ -71,11 +69,10 @@ flowchart TD
 1. Finds the **oldest failed review** on your branch
 1. Runs an agent in an **isolated worktree** to address the findings
 1. If the agent makes changes, applies them and **commits**
-1. **Waits for re-review** of the new commit, unless an eligible re-review is
-    skipped with `--skip-trivial-rereview`
+1. **Waits for re-review** of the new commit, unless `--skip-trivial-rereview`
+    applies
 1. If the new commit fails review, addresses those findings too
-1. Once per-commit reviews pass or eligible re-reviews are skipped, runs a
-    **whole-branch review**
+1. Once all per-commit reviews pass, runs a **whole-branch review**
 1. If the branch review passes, exits successfully
 1. If the branch review fails, addresses those findings and loops back
 
@@ -124,7 +121,7 @@ review.
 | `--plan` | Run a read-only planning phase before each fix |
 | `--plan-only` | Print and store plans for existing failed reviews, without starting the fix loop |
 | `--max-iterations <n>` | Maximum fix iterations (default: 10) |
-| `--skip-trivial-rereview` | Skip eligible documentation/test fix re-reviews (default: off) |
+| `--skip-trivial-rereview` | Do not wait for re-reviews of documentation/test-only fixes (default: off) |
 | `--quiet` | Show elapsed time instead of agent output |
 | `--reasoning <level>` | Legacy or exact reasoning level; see [Reasoning Levels](/docs/configuration/#reasoning-levels) |
 | `--fast` | Shorthand for `--reasoning fast` |
@@ -154,26 +151,15 @@ precondition; see the
 
 ### Skipping trivial re-reviews
 
-Use `roborev refine --skip-trivial-rereview` to skip an individual fix re-review
-when both conditions hold:
+With `roborev refine --skip-trivial-rereview`, refine does not wait for the
+re-review of a fix commit when every path the fix changes matches `**/*.md`,
+`**/*_test.go`, `**/*.spec.*`, or `**/testdata/**`. Refine checks the committed
+diff, including commits that hooks add, and counts both sides of a rename.
 
-- Every changed path matches the existing documentation/test classification:
-    `**/*.md`, `**/*_test.go`, `**/*.spec.*`, or `**/testdata/**`.
-- The original review has valid structured findings, all Medium or Low, and is
-    neither a security review nor a panel synthesis review. A security-topic
-    finding also prevents a skip. All findings count, including those below
-    `--min-severity`.
-
-Refine checks the committed diff, including changes from commit hooks, rather
-than the agent's summary. Both sides of renames and deleted files must qualify.
-Empty diffs, executable files, symlinks, submodules, and unavailable review or
-Git data keep the normal re-review behavior.
-
-The skip reason is saved on the original review and printed even with `--quiet`.
-If saving fails, refine follows the normal re-review flow. Post-commit hooks and
-automatic reviews still run; refine neither waits on nor acts on those fix
-commits' individual reviews during this invocation. A later invocation considers
-them normally. Full branch review still runs, including the skipped commits.
+- The post-commit hook still reviews the fix. Refine ignores that review for the
+    rest of the run; a later run considers it normally.
+- The whole-branch review still runs and covers the skipped commits.
+- Refine notes the skip on the original review.
 
 ## Targeting
 

@@ -761,7 +761,7 @@ roborev refine --min-severity high  # Only fix high and critical findings
 | `--reasoning <level>` | Set reasoning depth |
 | `--fast` | Shorthand for `--reasoning fast` |
 | `--max-iterations <n>` | Limit fix attempts (default: 10) |
-| `--skip-trivial-rereview` | Skip individual re-reviews of eligible documentation/test fixes (default: off) |
+| `--skip-trivial-rereview` | Do not wait for re-reviews of documentation/test-only fixes (default: off) |
 | `--plan` | Produce and store a plan before each fix |
 | `--plan-only` | Print and store plans for existing failed reviews, without edits, commits, or new reviews |
 | `--since <commit>` | Refine commits since specific commit |
@@ -773,15 +773,9 @@ roborev refine --min-severity high  # Only fix high and critical findings
 | `--allow-unsafe-agents` | Allow agents without sandboxing |
 | `--min-severity <level>` | Only fix findings at or above this severity (`low`/`medium`/`high`/`critical`) |
 
-`--skip-trivial-rereview` skips refine's individual re-review when the committed
-fix changes only documentation/test paths and all findings in the original
-structured review are Medium or Low. Security reviews, security-topic findings,
-and panel synthesis reviews do not qualify. Automatic post-commit reviews still
-run; refine records the reason on the original review and ignores those fix
-commits' individual reviews for this invocation. Full branch review still runs.
-See
-[skipping trivial re-reviews](/docs/guides/auto-fixing/#skipping-trivial-re-reviews)
-for the path rules and exclusions.
+`--skip-trivial-rereview` stops refine from waiting for the individual re-review
+of a fix that changes only documentation and tests. See
+[skipping trivial re-reviews](/docs/guides/auto-fixing/#skipping-trivial-re-reviews).
 
 `--plan-only` snapshots completed failed reviews in the selected branch or
 `--since` range, including range reviews. Single-branch selection uses commit

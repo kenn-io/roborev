@@ -69,10 +69,10 @@ func refineCmd() *cobra.Command {
 
 Refine finds failed reviews on the current branch, runs an agent to fix
 them, commits the changes, then waits for re-review. If the new commit
-also fails review, it tries again. Once per-commit reviews pass or eligible
-re-reviews are skipped, refine runs a branch-level review over the full
-commit range and addresses any findings there too. The loop continues until
-everything passes or --max-iterations is reached.
+also fails review, it tries again. Once all per-commit reviews pass, it
+runs a branch-level review covering the full commit range and addresses
+any findings from that too. The loop continues until everything passes
+or --max-iterations is reached.
 
 Unlike 'roborev fix' (which is a single-pass fix with no re-review),
 refine is fully automated: it reviews, fixes, re-reviews, and iterates.
@@ -87,9 +87,9 @@ Prerequisites:
 Use --since to specify a starting commit when on the main branch or to
 limit how far back to look for reviews to address.
 
-Use --skip-trivial-rereview to skip individual re-reviews of documentation
-and test fixes with only Medium/Low non-security findings. Automatic hook
-reviews and the full branch review still run.
+Use --skip-trivial-rereview to stop waiting for the individual re-review of
+a fix that changes only documentation and tests. Automatic hook reviews and
+the full branch review still run.
 
 Use --list to preview which reviews would be refined without running.
 Use --branch to validate the current branch before refining.
@@ -160,7 +160,7 @@ Use --all-branches to discover and refine all branches with failed reviews.`,
 	cmd.Flags().StringVar(&opts.minSeverity, "min-severity", "", "minimum finding severity to address: critical, high, medium, or low")
 	cmd.Flags().BoolVar(
 		&opts.skipTrivialRereview, "skip-trivial-rereview", false,
-		"skip eligible docs/test re-reviews with Medium/Low, non-security findings",
+		"do not wait for re-reviews of fixes that change only docs and tests",
 	)
 	cmd.Flags().BoolVar(&opts.plan, "plan", false, "plan each fix before implementing")
 	cmd.Flags().BoolVar(&opts.planOnly, "plan-only", false, "print and store plans for existing failed reviews without edits or new reviews")
@@ -584,11 +584,7 @@ func runRefine(ctx context.Context, runCtx RunContext, opts refineOptions) error
 
 				verdict := review.Verdict()
 				if verdict == "P" {
-					if len(skippedFixes) > 0 {
-						fmt.Printf("\nBranch review passed; individual re-reviews were skipped for %s.\n", plural(len(skippedFixes), "fix commit"))
-					} else {
-						fmt.Println("\nAll reviews passed! Branch is ready.")
-					}
+					fmt.Println("\nAll reviews passed! Branch is ready.")
 					return nil
 				}
 
@@ -855,27 +851,14 @@ func runRefine(ctx context.Context, runCtx RunContext, opts refineOptions) error
 
 		// Add response recording what was done
 		responseText := fmt.Sprintf("Created commit %s to address findings\n\n%s", gitrepo.ShortSHA(newCommit), output)
-		var skippedCommitSHAs []string
-		skipRereview := false
+		var skippedCommits []string
 		if opts.skipTrivialRereview {
-			skippedCommitSHAs, skipRereview = refineTrivialFixCommits(
-				ctx, repoPath, headBefore, newCommit, currentFailedReview,
-			)
-		}
-		skipReason := ""
-		if skipRereview {
-			skipReason = fmt.Sprintf(
-				"Skipped individual re-review of %s: documentation/test-only fix; "+
-					"all findings Medium or lower in a non-security review.",
-				newCommit,
-			)
-			responseText += "\n\n" + skipReason
+			if commits, ok := refineTrivialFixCommits(ctx, repoPath, headBefore, newCommit); ok {
+				skippedCommits = commits
+				responseText += "\n\n" + refineSkipNote
+			}
 		}
 		if err := client.AddComment(ctx, currentFailedReview.JobID, "roborev-refine", responseText); err != nil {
-			if skipRereview {
-				responseText = strings.TrimSuffix(responseText, "\n\n"+skipReason)
-			}
-			skipRereview = false
 			fmt.Printf("Warning: failed to add comment to job %d: %v\n", currentFailedReview.JobID, err)
 		}
 
@@ -889,9 +872,9 @@ func runRefine(ctx context.Context, runCtx RunContext, opts refineOptions) error
 			fmt.Printf("Warning: failed to close review (job %d): %v\n", currentFailedReview.JobID, err)
 		}
 
-		if skipRereview {
-			fmt.Println(skipReason)
-			for _, sha := range skippedCommitSHAs {
+		if len(skippedCommits) > 0 {
+			fmt.Println(refineSkipNote)
+			for _, sha := range skippedCommits {
 				skippedFixes[sha] = true
 			}
 			currentFailedReview = nil
