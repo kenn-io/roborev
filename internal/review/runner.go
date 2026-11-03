@@ -3,11 +3,13 @@ package review
 import (
 	"context"
 	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"strings"
 
 	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -23,12 +25,18 @@ func invokeReview(ctx context.Context, a agent.Agent, repoPath, gitRef, prompt s
 
 // RunAgentReview validates JSON for every review, including agents without a
 // native schema mode. Markdown is a presentation of the validated document.
+// A non-nil tools policy fails before the agent runs unless a was prepared by
+// agent.PrepareReviewToolPolicy.
 func RunAgentReview(
 	ctx context.Context,
 	a agent.Agent,
 	repoPath, gitRef, reviewPrompt, reviewType, minSeverity string,
+	tools *config.ReviewToolPolicy,
 	out io.Writer,
 ) (ReviewResult, error) {
+	if err := agent.CheckStrictReviewPrepared(tools, a); err != nil {
+		return ReviewResult{}, err
+	}
 	if err := agent.ValidateStructuredReviewSelection(reviewType, a); err != nil {
 		return ReviewResult{}, err
 	}
@@ -49,6 +57,11 @@ func RunAgentReview(
 	if err := validateLiveDocument(a.Name(), structured); err != nil {
 		return ReviewResult{}, err
 	}
+	settleFindings(ctx, repoPath, gitRef, &structured)
+	document, err = json.Marshal(structured)
+	if err != nil {
+		return ReviewResult{}, fmt.Errorf("encode structured review: %w", err)
+	}
 	output := structured.Markdown(minSeverity)
 	if out != nil {
 		_, _ = fmt.Fprintln(out, output)
@@ -57,7 +70,7 @@ func RunAgentReview(
 		Output:           output,
 		Verdict:          storage.VerdictFromPassed(structured.Passed(minSeverity)),
 		Structured:       &structured,
-		StructuredOutput: append(jsontext.Value(nil), document...),
+		StructuredOutput: jsontext.Value(document),
 		MinSeverity:      minSeverity,
 	}, nil
 }

@@ -68,8 +68,8 @@ echo "==> TUI screenshots"
 # Keep daemon logs out of the pane so they cannot draw over the TUI.
 send "roborev daemon run >/tmp/roborev-daemon.log 2>&1 &" Enter
 daemon_ready=false
-for i in $(seq 1 60); do
-    status_out=$(roborev status 2>&1 || true)
+for _ in $(seq 1 60); do
+    status_out=$(roborev daemon status 2>&1 || true)
     if printf '%s' "$status_out" | grep -q 'Daemon:.*running'; then
         daemon_ready=true
         break
@@ -78,8 +78,8 @@ for i in $(seq 1 60); do
 done
 if [[ "$daemon_ready" != "true" ]]; then
     echo "ERROR: daemon did not become ready within 30s"
-    echo "  roborev status output:"
-    roborev status 2>&1 || true
+    echo "  roborev daemon status output:"
+    roborev daemon status 2>&1 || true
     exit 1
 fi
 
@@ -148,14 +148,15 @@ sleep 0.3
 send "clear" Enter
 sleep 0.5
 
-# 1. roborev status
-send "roborev status" Enter
+# 1. roborev daemon status
+send "roborev daemon status" Enter
 wait_until "Status"
 sleep 0.5
 capture "cli-status"
 
-# Clear and capture roborev help (output exceeds 40 rows, resize to fit)
-tmux resize-window -t "$SESSION" -x 120 -y 54
+# Clear and capture the complete help page, plus the command and prompt rows.
+help_rows=$(roborev help | wc -l)
+tmux resize-window -t "$SESSION" -x 120 -y "$((help_rows + 2))"
 sleep 0.5
 send "clear" Enter
 sleep 0.5

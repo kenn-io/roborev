@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -21,6 +22,7 @@ import (
 	"go.kenn.io/roborev/internal/git"
 	ghpkg "go.kenn.io/roborev/internal/github"
 	glpkg "go.kenn.io/roborev/internal/gitlab"
+	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/review"
 )
 
@@ -242,7 +244,12 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	// its relative custom-review files come from the trusted side of the
 	// reviewed range, never from the checkout under review.
 	globalCfg := loadCIGlobalConfig(root).ForRepo(root)
-	repoCfgRef, refErr := trustedCIRepoConfigRef(root, gitRef)
+	// Keep prompts, agents, synthesis, and finding locations on the same commits.
+	gitRef, refErr := freezeReviewRef(ctx, root, gitRef)
+	var repoCfgRef string
+	if refErr == nil {
+		repoCfgRef, refErr = trustedCIRepoConfigRef(ctx, root, gitRef)
+	}
 	if refErr != nil {
 		// Preserve the flag-validation diagnostic when a plainly unknown type
 		// and an invalid ref are supplied together. Repository-defined types
@@ -356,6 +363,7 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 		RepoConfig:    repoCfg,
 		RepoConfigRef: repoCfgRef,
 		MinSeverity:   reviewMinSev,
+		PullRequest:   detectCIPullRequest(forge, opts),
 	}
 
 	results := review.RunBatch(ctx, batchCfg)
@@ -612,9 +620,9 @@ func detectGitRefForForge(forge ciForge, repoPath string) (string, error) {
 // allowed to control a daemon-free CI review. Ranges use their base commit. A
 // single-commit review uses its first parent, or the empty tree for a root
 // commit, so the reviewed commit cannot alter its own gate.
-func trustedCIRepoConfigRef(repoPath, gitRef string) (string, error) {
+func trustedCIRepoConfigRef(ctx context.Context, repoPath, gitRef string) (string, error) {
 	if git.IsRange(gitRef) {
-		return git.GetRangeStart(repoPath, gitRef)
+		return git.GetRangeStartCtx(ctx, repoPath, gitRef)
 	}
 	parents, err := git.GetCommitParents(repoPath, gitRef)
 	if err != nil {
@@ -727,7 +735,7 @@ func verifyGitLabMRRange(
 	// Resolved once, here, and handed back for the review to use. Passing the
 	// original expressions on would let a revision like ":/fix" name one
 	// commit while it is checked and another while it is reviewed.
-	base, head = resolveRev(repoPath, base), resolveRev(repoPath, head)
+	base, head = resolveRev(ctx, repoPath, base), resolveRev(ctx, repoPath, head)
 	if strings.EqualFold(base, head) {
 		return "", fmt.Errorf(
 			"--comment on merge request !%d requires a non-empty range, but "+
@@ -750,7 +758,7 @@ func verifyGitLabMRRange(
 				"the current one)",
 			head, mrIID, refs.HeadSHA)
 	}
-	if err := verifyRangeCoversMR(repoPath, base, mrIID, refs.BaseSHA); err != nil {
+	if err := verifyRangeCoversMR(ctx, repoPath, base, mrIID, refs.BaseSHA); err != nil {
 		return "", err
 	}
 	return base + ".." + head, nil
@@ -771,7 +779,7 @@ func verifyGitLabMRRange(
 // not finished preparing, and accepting any base in that window would let a
 // narrowed range post a verdict covering part of the change.
 func verifyRangeCoversMR(
-	repoPath, base string, mrIID int, mrBase string,
+	ctx context.Context, repoPath, base string, mrIID int, mrBase string,
 ) error {
 	mrBase = strings.TrimSpace(mrBase)
 	if mrBase == "" {
@@ -781,7 +789,7 @@ func verifyRangeCoversMR(
 				"still be preparing the merge request — re-run once it is "+
 				"ready)", mrIID)
 	}
-	if !strings.EqualFold(resolveRev(repoPath, base), resolveRev(repoPath, mrBase)) {
+	if !strings.EqualFold(resolveRev(ctx, repoPath, base), resolveRev(ctx, repoPath, mrBase)) {
 		return fmt.Errorf(
 			"refusing to post: the reviewed range starts at %s but merge "+
 				"request !%d's diff starts at %s, so the note would not "+
@@ -794,11 +802,11 @@ func verifyRangeCoversMR(
 // resolveRev expands a ref or abbreviated SHA to a full commit SHA, returning
 // it unchanged when the clone cannot resolve it so the caller compares — and
 // reports — what was actually asked for.
-func resolveRev(repoPath, rev string) string {
+func resolveRev(ctx context.Context, repoPath, rev string) string {
 	if repoPath == "" || rev == "" {
 		return rev
 	}
-	if full, err := git.ResolveSHA(repoPath, rev+"^{commit}"); err == nil {
+	if full, err := git.ResolveSHACtx(ctx, repoPath, rev+"^{commit}"); err == nil {
 		return full
 	}
 	return rev
@@ -905,7 +913,9 @@ func postGitLabCIComment(
 // GitHub Actions event payload.
 type ghPREvent struct {
 	PullRequest struct {
-		Number int `json:"number"`
+		Number int    `json:"number"`
+		Title  string `json:"title"`
+		Body   string `json:"body"`
 		Base   struct {
 			SHA string `json:"sha"`
 		} `json:"base"`
@@ -951,6 +961,44 @@ func detectGitRef() (string, error) {
 	}
 
 	return base + ".." + head, nil
+}
+
+// detectCIPullRequest returns the title and description of the pull or merge
+// request that the CI environment describes, only when its repository, host,
+// and request number match the selected review target.
+func detectCIPullRequest(forge ciForge, opts ciReviewOpts) prompt.PullRequest {
+	if forge == ciForgeGitLab {
+		apiBase, err := glpkg.GitLabAPIBaseURL(opts.glHost)
+		if err != nil || !matchesCIRepository(opts.glRepo, detectGitLabProjectPath(),
+			glpkg.HostnameFromAPIBaseURL(apiBase), os.Getenv("CI_SERVER_URL")) {
+			return prompt.PullRequest{}
+		}
+		iid, err := detectMRIID()
+		if err != nil || (opts.pr != 0 && opts.pr != iid) {
+			return prompt.PullRequest{}
+		}
+		return prompt.PullRequest{
+			Title:       os.Getenv("CI_MERGE_REQUEST_TITLE"),
+			Description: os.Getenv("CI_MERGE_REQUEST_DESCRIPTION"),
+		}
+	}
+	apiBase, err := ghpkg.GitHubAPIBaseURL(os.Getenv("GITHUB_API_URL"))
+	if err != nil || !matchesCIRepository(opts.ghRepo, os.Getenv("GITHUB_REPOSITORY"),
+		ghpkg.HostnameFromAPIBaseURL(apiBase), os.Getenv("GITHUB_SERVER_URL")) {
+		return prompt.PullRequest{}
+	}
+	event, err := readPREvent()
+	if err != nil || event.PullRequest.Number <= 0 ||
+		(opts.pr != 0 && opts.pr != event.PullRequest.Number) {
+		return prompt.PullRequest{}
+	}
+	return prompt.PullRequest{Title: event.PullRequest.Title, Description: event.PullRequest.Body}
+}
+
+func matchesCIRepository(repoFlag, ciRepo, host, serverURL string) bool {
+	server, err := url.Parse(serverURL)
+	return err == nil && server.Host != "" && ciRepo != "" &&
+		(repoFlag == "" || repoFlag == ciRepo) && strings.EqualFold(host, server.Host)
 }
 
 // detectPRNumber attempts to auto-detect the PR number from

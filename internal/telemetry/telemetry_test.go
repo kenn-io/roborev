@@ -1,6 +1,7 @@
 package telemetry
 
 import (
+	"context"
 	"encoding/json"
 	"maps"
 	"net/http"
@@ -160,7 +161,7 @@ func TestAllowedEventOptionsConfigureRoborevDaemonEvents(t *testing.T) {
 	t.Setenv(GenericEnabledEnv, "1")
 
 	reporter, err := kittelemetry.NewReporter(kittelemetry.Options{
-		APIKey:      "test-posthog-api-key",
+		APIKey:      testutil.PostHogTestAPIKey,
 		Application: "roborev",
 		EnvPrefix:   "ROBOREV",
 		DistinctID:  "anonymous-install-id",
@@ -369,13 +370,32 @@ func TestNewReporterOptedOutKeepsAllowlist(t *testing.T) {
 	}
 }
 
+func TestNewReporterWithoutProjectKeySendsNothing(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	releaseVersion := testutil.SetTelemetryReleaseEnv(t)
+	t.Setenv(EnabledEnv, "1")
+	t.Setenv(GenericEnabledEnv, "1")
+	endpoint, messages := testutil.NewPostHogStub(t)
+
+	reporter, err := NewReporter(Options{Version: releaseVersion, Endpoint: endpoint, DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json"), Database: testutil.OpenTestDB(t)})
+	require.NoError(err)
+
+	assert.False(reporter.Enabled())
+	assert.True(reporter.EventAllowed(EventAppOpened))
+	_ = reporter.Capture(EventDaemonStarted, nil)
+	require.NoError(reporter.Close())
+	assert.Empty(messages())
+}
+
 // newPostHogStubReporter returns an enabled reporter and its captured messages.
 func newPostHogStubReporter(t *testing.T) (*Reporter, func() []testutil.PostHogMessage) {
 	t.Helper()
 	releaseVersion := testutil.SetTelemetryReleaseEnv(t)
 	endpoint, messages := testutil.NewPostHogStub(t)
 	path := filepath.Join(t.TempDir(), "daily.json")
-	reporter, err := NewReporter(Options{Version: releaseVersion, Endpoint: endpoint, DailyClaimsPath: path, Database: testutil.OpenTestDB(t)})
+	reporter, err := NewReporter(Options{Version: releaseVersion, APIKey: testutil.PostHogTestAPIKey, Endpoint: endpoint, DailyClaimsPath: path, Database: testutil.OpenTestDB(t)})
 	require.NoError(t, err)
 	return reporter, messages
 }
@@ -388,12 +408,12 @@ func TestNewReporterOrDisabledErrorFallbackAdmitsNothing(t *testing.T) {
 	reporter := NewReporterOrDisabled(Options{})
 
 	assert.False(t, reporter.Enabled())
-	recorder := postCaptureEvent((&AppOpenedLimiter{}).Handler(reporter), `{"event":"app_opened"}`)
+	recorder := postCaptureEvent(t.Context(), (&AppOpenedLimiter{}).Handler(reporter), `{"event":"app_opened"}`)
 	assert.Equal(t, http.StatusBadRequest, recorder.Code)
 }
 
-func postCaptureEvent(handler http.Handler, body string) *httptest.ResponseRecorder {
-	request := httptest.NewRequest(http.MethodPost, "/api/telemetry/events", strings.NewReader(body))
+func postCaptureEvent(ctx context.Context, handler http.Handler, body string) *httptest.ResponseRecorder {
+	request := httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/telemetry/events", strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)

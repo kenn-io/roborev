@@ -22,20 +22,20 @@ func TestWindowsProbeFixture_VersionFlagsAndPositionals(t *testing.T) {
 	bin := writeProbeScriptWithMarker(t, dir, "grok-fixture", versionLine, marker)
 
 	t.Run("--version", func(t *testing.T) {
-		out, err := exec.Command(bin, "--version").CombinedOutput()
+		out, err := exec.CommandContext(t.Context(), bin, "--version").CombinedOutput()
 		require.NoError(t, err, "stdout/stderr: %s", out)
 		assert.Contains(t, string(out), versionLine)
 	})
 
 	t.Run("-v", func(t *testing.T) {
-		out, err := exec.Command(bin, "-v").CombinedOutput()
+		out, err := exec.CommandContext(t.Context(), bin, "-v").CombinedOutput()
 		require.NoError(t, err, "stdout/stderr: %s", out)
 		assert.Contains(t, string(out), versionLine)
 	})
 
 	t.Run("positional version", func(t *testing.T) {
 		require.NoError(t, os.WriteFile(marker, nil, 0o644))
-		out, err := exec.Command(bin, "version").CombinedOutput()
+		out, err := exec.CommandContext(t.Context(), bin, "version").CombinedOutput()
 		require.Error(t, err, "positional version must fail; out=%s", out)
 		data, readErr := os.ReadFile(marker)
 		require.NoError(t, readErr)
@@ -44,7 +44,7 @@ func TestWindowsProbeFixture_VersionFlagsAndPositionals(t *testing.T) {
 
 	t.Run("positional random", func(t *testing.T) {
 		require.NoError(t, os.WriteFile(marker, nil, 0o644))
-		out, err := exec.Command(bin, "random-prompt").CombinedOutput()
+		out, err := exec.CommandContext(t.Context(), bin, "random-prompt").CombinedOutput()
 		require.Error(t, err, "positional prompt must fail; out=%s", out)
 		data, readErr := os.ReadFile(marker)
 		require.NoError(t, readErr)

@@ -25,16 +25,24 @@ type ReviewTypeSpec struct {
 	Agent     string            `toml:"agent" comment:"Structured-output agent override for this review type."`
 	Model     string            `toml:"model" comment:"Model override for this review type."`
 	Reasoning string            `toml:"reasoning" comment:"Reasoning level for this review type."`
+	Tools     *ReviewToolPolicy `toml:"tools" comment:"Strict read-only tool policy and exact MCP tools for this review type."`
+	// BinaryEvidence gives reviewers the committed bytes of changed binary
+	// files, such as PDFs and images, that a text diff cannot show.
+	BinaryEvidence bool `toml:"binary_evidence" comment:"Save committed binary files changed by the review for the reviewer to read."`
 }
 
 func (s ReviewTypeSpec) Clone() ReviewTypeSpec {
 	cloned := s
 	cloned.Includes = maps.Clone(s.Includes)
+	cloned.Tools = s.Tools.Clone()
 	return cloned
 }
 
 func (s ReviewTypeSpec) validate(name string) error {
 	var errs []error
+	if _, err := CanonicalReviewToolPolicy(s.Tools); err != nil {
+		errs = append(errs, fmt.Errorf("review type %q: %w", name, err))
+	}
 	if strings.TrimSpace(s.Template) == "" {
 		errs = append(errs, fmt.Errorf("review type %q has no template", name))
 	}

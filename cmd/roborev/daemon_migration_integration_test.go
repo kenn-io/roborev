@@ -33,7 +33,7 @@ func TestWindowsV056DaemonMigrationRefusesUnsafeReplacement(t *testing.T) {
 
 	currentBin := filepath.Join(tmpDir, "roborev-current.exe")
 
-	runMigrationCmd(t, ".", nil, "go", "build", "-tags", "kit_posthog_disabled", "-o", currentBin, ".")
+	runMigrationCmd(t, ".", nil, "go", "build", "-o", currentBin, ".")
 
 	dbPath := filepath.Join(dataDir, "reviews.db")
 	configPath := filepath.Join(dataDir, "config.toml")

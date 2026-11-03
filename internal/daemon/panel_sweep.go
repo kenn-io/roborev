@@ -90,6 +90,8 @@ func (s *Server) sweepStuckPanels(ctx context.Context) {
 		}
 		if err := s.db.MaybeReleasePanelSynthesisContext(ctx, u); err != nil {
 			log.Printf("panel sweep: release %s: %v", u, err)
+			continue
 		}
+		s.workerPool.wake()
 	}
 }

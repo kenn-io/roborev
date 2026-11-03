@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -121,4 +122,70 @@ func TestJobAttemptObservesCancelWhileWaitingForCleanup(t *testing.T) {
 	require.NoError(t, result.err)
 	result.release()
 	require.ErrorIs(t, ctx.Err(), context.Canceled)
+}
+
+// A slow completion transition must not keep a newly claimed job from timing
+// out: the job registers for cancellation and timeout only after
+// StartJobAttempt returns.
+func TestStartJobAttemptStopsWaitingForTransitionWhenContextEnds(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+		repo := createRepo(t, db, t.TempDir())
+		for _, sha := range []string{"slow-sha", "next-sha"} {
+			enqueueJob(t, db, repo.ID, createCommit(t, db, repo.ID, sha).ID, sha)
+		}
+		slow := claimJob(t, db, "worker-a")
+		next := claimJob(t, db, "worker-b")
+
+		entered, finish, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})
+		go func() {
+			defer close(finished)
+			ran, err := db.RunJobAttempt(slow, "worker-a", func() {
+				close(entered)
+				<-finish
+			})
+			assert.NoError(t, err)
+			assert.True(t, ran)
+		}()
+		<-entered
+
+		ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+		defer cancel()
+		type registration struct {
+			release func()
+			err     error
+		}
+		registered := make(chan registration, 1)
+		go func() {
+			release, err := db.StartJobAttempt(ctx, next, "worker-b", cancel)
+			registered <- registration{release, err}
+		}()
+		synctest.Wait()
+
+		// A transition queued behind the waiting attempt runs once that
+		// attempt gives up, while the slow transition still holds the lock.
+		queuedRan := make(chan bool, 1)
+		go func() {
+			ran, err := db.RunJobAttempt(next, "worker-b", func() {})
+			assert.NoError(t, err)
+			queuedRan <- ran
+		}()
+		synctest.Wait()
+		assert.Empty(t, queuedRan, "a waiting attempt must hold back new transitions")
+
+		result := <-registered
+		require.ErrorIs(t, result.err, context.DeadlineExceeded)
+		assert.Nil(t, result.release)
+		assert.True(t, <-queuedRan)
+
+		close(finish)
+		<-finished
+		ctx, cancel = context.WithCancel(t.Context())
+		defer cancel()
+		release, err := db.StartJobAttempt(ctx, next, "worker-b", cancel)
+		require.NoError(t, err)
+		release()
+	})
 }

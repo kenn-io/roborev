@@ -231,8 +231,8 @@ a hook symlink resolves inside Git metadata, upgrades preserve the symlink and
 update its target.
 
 To install or upgrade hooks in those locations, explicitly run `roborev init` or
-`roborev install-hook`. To refresh only existing roborev-managed hooks, run
-`roborev install-hook repair`. These commands may edit tracked hook files;
+`roborev hook install`. To refresh only existing roborev-managed hooks, run
+`roborev hook install repair`. These commands may edit tracked hook files;
 inspect the resulting diff before committing.
 
 ## See Also

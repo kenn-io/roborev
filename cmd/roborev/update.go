@@ -341,24 +341,25 @@ func updatedRoborevBinary(binDir string) string {
 
 type repairHookRunner func(opts repairHookOptions) error
 
-func repairHooksAfterUpdate(binDir string, noRestart bool, run repairHookRunner) {
+func repairHooksAfterUpdate(ctx context.Context, binDir string, noRestart bool, run repairHookRunner) {
 	if noRestart {
 		fmt.Println("Skipping git hook update (--no-restart)")
 		return
 	}
 
-	if err := repairHooksAfterUpdateResult(binDir, run); err != nil {
+	if err := repairHooksAfterUpdateResult(ctx, binDir, run); err != nil {
 		fmt.Printf("Updating git hooks... warning: %v\n", err)
 		return
 	}
 	fmt.Println("Updating git hooks... OK")
 }
 
-func repairHooksAfterUpdateResult(binDir string, run repairHookRunner) error {
+func repairHooksAfterUpdateResult(ctx context.Context, binDir string, run repairHookRunner) error {
 	newBinary := updatedRoborevBinary(binDir)
 	if run == nil {
 		run = func(opts repairHookOptions) error {
-			cmd := exec.Command(
+			cmd := exec.CommandContext(
+				ctx,
 				newBinary,
 				"install-hook",
 				"repair",
@@ -386,12 +387,12 @@ func installedSkillsNeedUpdate() bool {
 	return slices.ContainsFunc(skills.Agents(), skills.IsInstalled)
 }
 
-func updateSkillsAfterUpdateResult(binDir string) error {
+func updateSkillsAfterUpdateResult(ctx context.Context, binDir string) error {
 	if !installedSkillsNeedUpdate() {
 		return nil
 	}
 	newBinary := updatedRoborevBinary(binDir)
-	cmd := exec.Command(newBinary, "skills", "update")
+	cmd := exec.CommandContext(ctx, newBinary, "skills", "update")
 	output, err := cmd.CombinedOutput()
 	if err == nil {
 		return nil
@@ -689,7 +690,7 @@ func runControlledUpdate(
 		printUpdatePhase(out, "Daemon", "restarted ("+info.LatestVersion+")")
 	}
 
-	if err := repairHooksForUpdateCommand(binDir, nil); err != nil {
+	if err := repairHooksForUpdateCommand(ctx, binDir, nil); err != nil {
 		printUpdatePhase(out, "Git hooks", "warning: "+err.Error())
 	} else {
 		printUpdatePhase(out, "Git hooks", "done")
@@ -699,7 +700,7 @@ func runControlledUpdate(
 	}
 	if !installedSkillsForUpdateCommand() {
 		printUpdatePhase(out, "Skills", "not installed")
-	} else if err := updateSkillsForUpdateCommand(binDir); err != nil {
+	} else if err := updateSkillsForUpdateCommand(ctx, binDir); err != nil {
 		printUpdatePhase(out, "Skills", "warning: "+err.Error())
 	} else {
 		printUpdatePhase(out, "Skills", "done")
@@ -806,6 +807,14 @@ launchd or systemd).`,
 			out := cmd.OutOrStdout()
 			in := cmd.InOrStdin()
 
+			// Package-managed builds may check for releases but never
+			// replace themselves.
+			if !checkOnly {
+				if err := update.ManagedUpdateError(); err != nil {
+					return err
+				}
+			}
+
 			// kit already wraps check errors with "check for updates:".
 			info, err := checkForUpdateForCommand(true) // Force check, ignore cache
 			if err != nil {
@@ -814,6 +823,13 @@ launchd or systemd).`,
 
 			if info == nil {
 				fmt.Fprintf(out, "Already running latest version (%s)\n", version.Version)
+				return nil
+			}
+
+			if update.PackageManaged() {
+				fmt.Fprintln(out, "Update available")
+				fmt.Fprintf(out, "  Version  %s -> %s\n", info.CurrentVersion, info.LatestVersion)
+				fmt.Fprintf(out, "\n%s. Packages can trail GitHub releases.\n", update.UpgradeHint())
 				return nil
 			}
 

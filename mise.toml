@@ -2,4 +2,5 @@
 lockfile = true
 
 [tools]
+"github:jdx/jactionlint" = "2.3.0"
 uv = "0.13.4"

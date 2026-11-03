@@ -58,13 +58,16 @@ type Usage struct {
 
 // FetchConfig configures session usage lookup. When Endpoint is set,
 // roborev fetches usage over HTTP using a URL template containing
-// "{session_id}". An empty Endpoint preserves the agentsview CLI path.
+// "{session_id}". AgentsViewURL selects the authenticated AgentsView API.
+// With neither URL configured, lookup uses the agentsview CLI.
 type FetchConfig struct {
-	Endpoint string
-	Timeout  time.Duration
-	Client   *http.Client
+	AgentsViewURL   string
+	AgentsViewToken string
+	Endpoint        string
+	Timeout         time.Duration
+	Client          *http.Client
 	// RequireCLI reports a missing agentsview binary as an error when
-	// Endpoint is empty. By default CLI lookup is best-effort.
+	// neither HTTP provider is configured. By default CLI lookup is best-effort.
 	RequireCLI bool
 }
 
@@ -167,6 +170,14 @@ func (u Usage) FormatCost() string {
 	return fmt.Sprintf("~$%.2f", u.CostUSD)
 }
 
+// CostComplete reports whether the recorded dollars cover every expected
+// provider session. A row can carry known dollars for some phases while
+// another phase's session, and so its cost, is missing; such a row counts
+// toward spend but leaves coverage partial.
+func (u Usage) CostComplete() bool {
+	return u.HasCost && u.ExpectedProviderSessions <= len(u.ProviderSessionIDs)
+}
+
 func formatCount(n int64) string {
 	switch {
 	case n >= 1_000_000:
@@ -196,6 +207,9 @@ func FetchForSession(
 func FetchForSessionWithConfig(
 	ctx context.Context, sessionID string, cfg FetchConfig,
 ) (*Usage, error) {
+	if cfg.AgentsViewURL != "" {
+		return fetchForSessionAgentsView(ctx, sessionID, cfg)
+	}
 	if cfg.Endpoint != "" {
 		return fetchForSessionHTTP(ctx, sessionID, cfg)
 	}
@@ -271,9 +285,16 @@ func fetchForSessionCLI(
 	}, nil
 }
 
+// agentsviewWaitDelay bounds how long a lookup waits for its output pipes to
+// close after agentsview exits or is killed. Killing agentsview does not kill
+// processes it started, and a descendant that inherited the pipes would
+// otherwise keep Output blocked until that descendant exits.
+const agentsviewWaitDelay = 250 * time.Millisecond
+
 func buildAgentsviewCmd(ctx context.Context, binPath string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, binPath, args...)
 	procutil.HideConsole(cmd)
+	cmd.WaitDelay = agentsviewWaitDelay
 	return cmd
 }
 
@@ -282,7 +303,13 @@ func runAgentsviewCommand(
 ) ([]byte, error) {
 	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	return buildAgentsviewCmd(cmdCtx, binPath, args...).Output()
+	out, err := agentsviewOutput(buildAgentsviewCmd(cmdCtx, binPath, args...))
+	// ErrWaitDelay means agentsview exited successfully but a descendant kept
+	// the pipes open; the output agentsview wrote is complete.
+	if errors.Is(err, exec.ErrWaitDelay) {
+		err = nil
+	}
+	return out, err
 }
 
 func shouldFallbackToTokenUse(err error) bool {
@@ -337,23 +364,10 @@ func fetchForSessionHTTP(
 		return nil, err
 	}
 
-	timeout := cfg.Timeout
-	if timeout <= 0 {
-		timeout = 10 * time.Second
-	}
-	reqCtx, cancel := context.WithTimeout(ctx, timeout)
+	reqCtx, cancel := cfg.requestContext(ctx)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, fmt.Errorf("usage endpoint request: %w", err)
-	}
-	req.Header.Set("Accept", "application/json")
-	client := cfg.Client
-	if client == nil {
-		client = http.DefaultClient
-	}
-	resp, err := client.Do(req)
+	resp, err := cfg.request(reqCtx, endpoint)
 	if err != nil {
 		return nil, fmt.Errorf("usage endpoint request: %w", err)
 	}

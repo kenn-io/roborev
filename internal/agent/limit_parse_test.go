@@ -3,6 +3,9 @@ package agent
 import (
 	"testing"
 	"time"
+	// Embed zones as package main does: trimmed test binaries cannot
+	// fall back to the Go installation's copy.
+	_ "time/tzdata"
 
 	"github.com/stretchr/testify/assert"
 )

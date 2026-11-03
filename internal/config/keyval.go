@@ -822,14 +822,15 @@ func setFieldValue(field reflect.Value, value string) error {
 			return fmt.Errorf("unsupported slice type for key")
 		}
 	case reflect.Pointer:
-		// Handle *bool
-		if field.Type().Elem().Kind() == reflect.Bool {
-			b, err := strconv.ParseBool(value)
-			if err != nil {
-				return fmt.Errorf("invalid boolean value: %q", value)
+		// Handle *bool and *int
+		switch field.Type().Elem().Kind() {
+		case reflect.Bool, reflect.Int:
+			elem := reflect.New(field.Type().Elem())
+			if err := setFieldValue(elem.Elem(), value); err != nil {
+				return err
 			}
-			field.Set(reflect.ValueOf(&b))
-		} else {
+			field.Set(elem)
+		default:
 			return fmt.Errorf("unsupported pointer type for key")
 		}
 	default:

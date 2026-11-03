@@ -46,7 +46,7 @@ func TestGeneratePostCommit(t *testing.T) {
 
 	t.Run("post-commit line without background", func(t *testing.T) {
 		t.Parallel()
-		require.True(t, strings.Contains(content, "post-commit") && strings.Contains(content, "2>/dev/null"), "hook should call post-commit with 2>/dev/null")
+		require.Contains(t, content, "\"$ROBOREV\" post-commit\n", "hook should show post-commit warnings to the committer")
 
 		idx := strings.Index(content, "\" post-commit")
 		if idx != -1 {
@@ -129,7 +129,7 @@ func TestEmbeddablePrePushReplaysStdinToExistingHook(t *testing.T) {
 	require.NoError(t, os.WriteFile(hookPath, []byte(hook), 0o755))
 
 	input := "refs/heads/feature abc refs/heads/feature def\n"
-	cmd := exec.Command("sh", hookPath)
+	cmd := exec.CommandContext(t.Context(), "sh", hookPath)
 	cmd.Stdin = strings.NewReader(input)
 	cmd.Env = append(os.Environ(),
 		"ROBOREV_CAPTURE="+roborevCapture,
@@ -160,7 +160,7 @@ func TestPrePushHookMasksFlushFailure(t *testing.T) {
 		hookPath, []byte(GeneratePrePushWithBinary(fakeRoborev)), 0o755,
 	))
 
-	cmd := exec.Command("sh", hookPath)
+	cmd := exec.CommandContext(t.Context(), "sh", hookPath)
 	cmd.Stdin = strings.NewReader(
 		"refs/heads/feature abc refs/heads/feature def\n",
 	)
@@ -186,7 +186,7 @@ func TestEmbeddablePrePushMasksFlushFailureUnderSetE(t *testing.T) {
 	hookPath := filepath.Join(tmpDir, "pre-push")
 	require.NoError(t, os.WriteFile(hookPath, []byte(hook), 0o755))
 
-	cmd := exec.Command("sh", hookPath)
+	cmd := exec.CommandContext(t.Context(), "sh", hookPath)
 	cmd.Stdin = strings.NewReader(
 		"refs/heads/feature abc refs/heads/feature def\n",
 	)
@@ -991,7 +991,7 @@ func TestInstallWithOptionsUpdatesCurrentHookBinary(t *testing.T) {
 			string(content), "_roborev_input=$(mktemp",
 		))
 		assert.Contains(t, string(content), "cat > downstream-input")
-		cmd := exec.Command("sh", "-n", hookPath)
+		cmd := exec.CommandContext(t.Context(), "sh", "-n", hookPath)
 		assert.NoError(t, cmd.Run())
 	})
 }

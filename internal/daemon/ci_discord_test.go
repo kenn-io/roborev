@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -127,7 +126,7 @@ func TestPostDiscordWebhookPostsJSON(t *testing.T) {
 	payload := discordWebhookPayload{Embeds: []discordEmbed{{Title: "roborev CI job failed"}}}
 
 	var logs []string
-	ok := postDiscordWebhook(context.Background(), server.URL, payload, func(format string, args ...any) {
+	ok := postDiscordWebhook(t.Context(), server.URL, payload, func(format string, args ...any) {
 		logs = append(logs, fmt.Sprintf(format, args...))
 	})
 
@@ -154,7 +153,7 @@ func TestPostDiscordWebhookRedactsURLInLogs(t *testing.T) {
 	webhookURL.Fragment = "frag"
 
 	var logs []string
-	ok := postDiscordWebhook(context.Background(), webhookURL.String(), discordWebhookPayload{}, func(format string, args ...any) {
+	ok := postDiscordWebhook(t.Context(), webhookURL.String(), discordWebhookPayload{}, func(format string, args ...any) {
 		logs = append(logs, fmt.Sprintf(format, args...))
 	})
 

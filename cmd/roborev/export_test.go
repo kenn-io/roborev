@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -123,8 +122,14 @@ func TestExportReviewsCmdSendsUpdatedSinceOnEveryPage(t *testing.T) {
 }
 
 func TestExportReviewsCmdKeepsDocumentAsJSONObject(t *testing.T) {
-	const document = `{"schema_version":2,"summary":"One problem.","verdict":"fail","findings":[` +
-		`{"severity":"low","problem":"Typo in a comment.","fix":"Fix the spelling.","location":null}]}`
+	// The daemon exports every document in version 3. One finding is from a
+	// reviewing agent; the other has no kind and no location, as goal reviews
+	// and converted historical reviews may.
+	const document = `{"schema_version":3,"summary":"Two problems.","verdict":"fail","findings":[` +
+		`{"severity":"high","kind":"defect","topic":"security","confidence":0.8,"problem":"The token is logged.","fix":"Redact the token.",` +
+		`"file":"auth/login.go","start_line":42,"end_line":42,"location":"auth/login.go:42"},` +
+		`{"severity":"low","kind":null,"topic":null,"confidence":null,"problem":"Typo in a comment.","fix":"Fix the spelling.",` +
+		`"file":null,"start_line":null,"end_line":null,"location":null}]}`
 	NewMockDaemon(t, MockRefineHooks{
 		OnUnhandled: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
 			if r.URL.Path != "/api/export/reviews" {
@@ -283,39 +288,23 @@ func TestExportReviewsCmdRejectsInvalidFlags(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string
+		code int
 	}{
-		{name: "format", args: []string{"reviews", "--format", "yaml"}},
-		{name: "profile", args: []string{"reviews", "--profile", "full"}},
-		{name: "limit", args: []string{"reviews", "--limit", "0"}},
-		{name: "cursor-since", args: []string{"reviews", "--cursor", "opaque", "--since", "2026-06-29"}},
+		{name: "format", code: 4, args: []string{"reviews", "--format", "yaml"}},
+		{name: "profile", code: 4, args: []string{"reviews", "--profile", "full"}},
+		{name: "limit", code: 4, args: []string{"reviews", "--limit", "0"}},
+		{name: "cursor-since", code: 2, args: []string{"reviews", "--cursor", "opaque", "--since", "2026-06-29"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cmd := exportCmd()
 			cmd.SetArgs(tt.args)
-			err := cmd.Execute()
+			executed, err := cmd.ExecuteC()
 			require.Error(t, err)
-			assert.False(t, cmd.SilenceUsage)
+			assert.True(t, executed.SilenceUsage)
+			assert.Equal(t, tt.code, commandExitCode(err))
 		})
 	}
-}
-
-func TestRootExportReviewsCmdRejectsInvalidFlagsAsUsageError(t *testing.T) {
-	cmd := &cobra.Command{
-		Use: "roborev",
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			cmd.SilenceUsage = true
-			return nil
-		},
-	}
-	cmd.AddCommand(exportCmd())
-	cmd.SetArgs([]string{"export", "reviews", "--profile", "full"})
-
-	executed, err := cmd.ExecuteC()
-	require.Error(t, err)
-	require.NotNil(t, executed)
-	assert.Equal(t, "reviews", executed.Name())
-	assert.False(t, executed.SilenceUsage)
 }
 
 func TestExportReviewsCmdPropagatesCursorErrors(t *testing.T) {

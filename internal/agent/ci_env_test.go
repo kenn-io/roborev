@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,13 +32,13 @@ func TestCIReviewGitCapabilities(t *testing.T) {
 	t.Setenv("GIT_ASKPASS", helper)
 	t.Setenv("SSH_ASKPASS", helper)
 	t.Setenv("SSH_AUTH_SOCK", filepath.Join(t.TempDir(), "agent.sock"))
-	ciCtx, cleanup, err := WithCIReview(context.Background())
+	ciCtx, cleanup, err := WithCIReview(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(cleanup)
 	credentialInput := "protocol=https\nhost=example.com\n\n"
 	for _, ci := range []bool{false, true} {
 		name := "local"
-		ctx := context.Background()
+		ctx := t.Context()
 		if ci {
 			name = "ci"
 			ctx = ciCtx
@@ -121,7 +120,7 @@ done
 env > "$CI_ENV_CAPTURE"
 echo '> No issues found.'
 `)
-			ctx, cleanup, err := WithCIReview(context.Background())
+			ctx, cleanup, err := WithCIReview(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(cleanup)
 			_, runErr := factory(command).Review(ctx, t.TempDir(), "HEAD", "review", nil)
@@ -154,7 +153,7 @@ func TestCIProbeEnvironment(t *testing.T) {
 	t.Setenv("GIT_ASKPASS", "askpass-sentinel")
 	t.Setenv("SSH_AUTH_SOCK", "ssh-sentinel")
 	t.Setenv("OPENAI_API_KEY", "provider-sentinel")
-	ctx, cleanup, err := WithCIReview(context.Background())
+	ctx, cleanup, err := WithCIReview(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(cleanup)
 	cmd := exec.CommandContext(ctx, "sh", "-c", "env")

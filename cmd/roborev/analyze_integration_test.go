@@ -23,6 +23,7 @@ import (
 )
 
 func TestWaitForAnalysisJob(t *testing.T) {
+	setupFastPolling(t)
 	const testJobID = 42
 	tests := []struct {
 		name       string
@@ -98,7 +99,7 @@ func TestWaitForAnalysisJob(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ts, _ := newMockServer(t, tt.setupOpts)
 
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 			defer cancel()
 
 			review, err := waitForAnalysisJob(ctx, mustParseEndpoint(t, ts.URL), testJobID)
@@ -117,6 +118,7 @@ func TestWaitForAnalysisJob(t *testing.T) {
 }
 
 func TestRunAnalyzeAndFix_Integration(t *testing.T) {
+	setupFastPolling(t)
 	for _, outcome := range []string{"no change", "commit", "quiet commit"} {
 		t.Run(outcome, func(t *testing.T) {
 			committed := outcome != "no change"

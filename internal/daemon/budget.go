@@ -85,7 +85,7 @@ func (r *BudgetRouter) ResolveAgent(configuredAgent string, repoCfg *config.Repo
 	}
 	budget := cfg.Budget
 	cents := spend.TotalUSD * 100
-	if (spend.JobsTotal > 0 && spend.JobsWithCost == 0) ||
+	if (spend.JobsTotal > 0 && spend.JobsWithCost == 0 && spend.TotalUSD == 0) ||
 		!budgetBoundaryReached(cents, budget.DailyLimitCents-budget.ReserveFloorCents) {
 		return preferred()
 	}

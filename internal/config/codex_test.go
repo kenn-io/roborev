@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/BurntSushi/toml"
@@ -98,4 +100,87 @@ func TestCodexConfigSurvivesSaveLoadRoundTrip(t *testing.T) {
 		`model_providers.my-custom.base_url="https://api.example.com/v1"`,
 		`model_providers.my-custom.env_key="MY_API_KEY"`,
 	}, reloaded.Agent.Codex.ConfigOverrideArgs())
+}
+
+func writeCodexUserConfig(t *testing.T, content string) string {
+	t.Helper()
+	codexHome := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(content), 0o600))
+	return codexHome
+}
+
+func TestCodexUserAuthOverrideArgsForwardsOnlySignInKeys(t *testing.T) {
+	codexHome := writeCodexUserConfig(t, `
+model = "gpt-5-codex"
+cli_auth_credentials_store = "keyring"
+forced_login_method = "chatgpt"
+forced_chatgpt_workspace_id = "00000000-0000-0000-0000-000000000000"
+developer_instructions = "be terse"
+
+[mcp_servers.docs]
+command = "docs-mcp"
+
+[profiles.fast]
+model = "gpt-5-mini"
+`)
+
+	overrides, err := CodexUserAuthOverrideArgs(codexHome)
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		`cli_auth_credentials_store="keyring"`,
+		`forced_chatgpt_workspace_id="00000000-0000-0000-0000-000000000000"`,
+		`forced_login_method="chatgpt"`,
+	}, overrides)
+}
+
+func TestCodexUserAuthOverrideArgsWithoutSignInKeys(t *testing.T) {
+	codexHome := writeCodexUserConfig(t, "model = \"gpt-5-codex\"\n")
+
+	overrides, err := CodexUserAuthOverrideArgs(codexHome)
+	require.NoError(t, err)
+	assert.Empty(t, overrides)
+}
+
+func TestCodexUserAuthOverrideArgsSkipsTableValues(t *testing.T) {
+	codexHome := writeCodexUserConfig(t, "[cli_auth_credentials_store]\nkind = \"keyring\"\n")
+
+	overrides, err := CodexUserAuthOverrideArgs(codexHome)
+	require.NoError(t, err)
+	assert.Empty(t, overrides)
+}
+
+func TestCodexUserAuthOverrideArgsMissingConfig(t *testing.T) {
+	overrides, err := CodexUserAuthOverrideArgs(t.TempDir())
+	require.NoError(t, err)
+	assert.Nil(t, overrides)
+}
+
+func TestCodexUserAuthOverrideArgsInvalidConfig(t *testing.T) {
+	codexHome := writeCodexUserConfig(t, "cli_auth_credentials_store = \n")
+
+	overrides, err := CodexUserAuthOverrideArgs(codexHome)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), filepath.Join(codexHome, "config.toml"))
+	assert.Nil(t, overrides)
+}
+
+func TestCodexHomeDir(t *testing.T) {
+	t.Run("CODEX_HOME", func(t *testing.T) {
+		codexHome := t.TempDir()
+		t.Setenv("CODEX_HOME", codexHome)
+
+		dir, err := CodexHomeDir()
+		require.NoError(t, err)
+		assert.Equal(t, codexHome, dir)
+	})
+	t.Run("default", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("USERPROFILE", home)
+		t.Setenv("CODEX_HOME", "")
+
+		dir, err := CodexHomeDir()
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join(home, ".codex"), dir)
+	})
 }

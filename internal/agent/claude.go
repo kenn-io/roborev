@@ -14,6 +14,8 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+
+	"go.kenn.io/roborev/internal/config"
 )
 
 // ClaudeAgent runs code reviews using Claude Code CLI
@@ -23,6 +25,12 @@ type ClaudeAgent struct {
 	Reasoning ReasoningLevel // Reasoning level mapped to --effort flag
 	Agentic   bool           // Whether agentic mode is enabled (allow file edits)
 	SessionID string         // Existing session ID to resume
+
+	// Set by WithStrictReview. A strict agent never resumes a session.
+	strictPolicy *config.ReviewToolPolicy
+	strictMCP    ReviewMCP
+	// Set by PrepareReviewToolPolicy when user settings hold credential keys.
+	strictSettingsPath string
 }
 
 const (
@@ -54,13 +62,21 @@ func (a *ClaudeAgent) clone(opts ...agentCloneOption) *ClaudeAgent {
 		a.SessionID,
 		opts...,
 	)
-	return &ClaudeAgent{
-		Command:   cfg.Command,
-		Model:     cfg.Model,
-		Reasoning: cfg.Reasoning,
-		Agentic:   cfg.Agentic,
-		SessionID: cfg.SessionID,
+	clone := &ClaudeAgent{
+		Command:            cfg.Command,
+		Model:              cfg.Model,
+		Reasoning:          cfg.Reasoning,
+		Agentic:            cfg.Agentic,
+		SessionID:          cfg.SessionID,
+		strictPolicy:       a.strictPolicy.Clone(),
+		strictMCP:          a.strictMCP,
+		strictSettingsPath: a.strictSettingsPath,
 	}
+	if clone.strictPolicy != nil {
+		clone.Agentic = false
+		clone.SessionID = ""
+	}
+	return clone
 }
 
 // WithReasoning returns a copy of the agent with the specified reasoning level.
@@ -95,6 +111,9 @@ func (a *ClaudeAgent) CommandName() string {
 }
 
 func (a *ClaudeAgent) CommandLine() string {
+	if a.strictPolicy != nil {
+		return a.Command + " " + strings.Join(a.buildStrictArgs(true), " ")
+	}
 	agenticMode := a.Agentic || AllowUnsafeAgents()
 	return a.commandLine(agenticMode)
 }
@@ -228,17 +247,16 @@ func (a *ClaudeAgent) buildArgs(agenticMode, includeEffort bool) []string {
 		args = append(args, claudeDangerousFlag)
 		args = append(args, "--allowedTools", "Edit,MultiEdit,Write,Read,Glob,Grep,Bash")
 	} else {
-		// Review mode: preapprove read-only tools.
-		args = append(args, "--allowedTools", "Read,Glob,Grep")
+		// Preapproval alone leaves other tools loaded. Limit built-ins and MCP tools.
+		args = append(args, "--allowedTools", "Read,Glob,Grep", "--tools", "Read,Glob,Grep", "--disallowedTools", "mcp__*")
 	}
 	return args
 }
 
 func (a *ClaudeAgent) buildPlanningArgs(includeEffort bool) []string {
 	args := a.buildArgs(false, includeEffort)
-	// --allowedTools only preapproves tools. Limit built-ins and MCP tools
-	// separately, and override any configured default permission mode.
-	return append(args, "--permission-mode", "plan", "--tools", "Read,Glob,Grep", "--disallowedTools", "mcp__*")
+	// Override any configured default permission mode.
+	return append(args, "--permission-mode", "plan")
 }
 
 func claudeSupportsDangerousFlag(ctx context.Context, command string) (bool, error) {
@@ -310,6 +328,9 @@ func claudeSupportsBareFlag(ctx context.Context, command string) bool {
 }
 
 func (a *ClaudeAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+	if a.strictPolicy != nil {
+		return a.strictReview(ctx, repoPath, prompt, nil, output)
+	}
 	model, baseURL, err := parseModel(a.Model)
 	if err != nil {
 		return "", err
@@ -837,6 +858,13 @@ func (a *ClaudeAgent) ReviewWithSchema(
 	schema jsontext.Value,
 	out io.Writer,
 ) (jsontext.Value, error) {
+	if a.strictPolicy != nil {
+		result, err := a.strictReview(ctx, repoPath, prompt, schema, out)
+		if err != nil {
+			return nil, err
+		}
+		return jsontext.Value(result), nil
+	}
 	model, baseURL, err := parseModel(a.Model)
 	if err != nil {
 		return nil, err

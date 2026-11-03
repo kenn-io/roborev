@@ -11,8 +11,94 @@ import (
 // transitions hold the read lock through persistence and completion effects.
 // Running agents hold no lock, so a newer pull can cancel them immediately.
 type jobAttempts struct {
-	mu     sync.RWMutex
+	mu     attemptLock
 	active map[int64]*activeJobAttempt
+}
+
+// attemptLock is a reader/writer lock whose writers can stop waiting when
+// their context ends. A new attempt registers for cancellation and timeout
+// only after it takes the write lock, so with sync.RWMutex a slow transition
+// would leave every attempt claimed behind it with no timeout at all. As with
+// sync.RWMutex, a waiting writer holds back new readers. The zero value is
+// unlocked.
+type attemptLock struct {
+	mu             sync.Mutex
+	readers        int
+	writer         bool
+	waitingWriters int
+	// changed is closed, then replaced, whenever a waiter may be able to
+	// proceed.
+	changed chan struct{}
+}
+
+func (l *attemptLock) waitLocked() <-chan struct{} {
+	if l.changed == nil {
+		l.changed = make(chan struct{})
+	}
+	return l.changed
+}
+
+func (l *attemptLock) wakeLocked() {
+	if l.changed != nil {
+		close(l.changed)
+		l.changed = nil
+	}
+}
+
+func (l *attemptLock) RLock() {
+	l.mu.Lock()
+	for l.writer || l.waitingWriters > 0 {
+		wait := l.waitLocked()
+		l.mu.Unlock()
+		<-wait
+		l.mu.Lock()
+	}
+	l.readers++
+	l.mu.Unlock()
+}
+
+func (l *attemptLock) RUnlock() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.readers--
+	if l.readers == 0 {
+		l.wakeLocked()
+	}
+}
+
+func (l *attemptLock) Lock() {
+	_ = l.LockContext(context.Background())
+}
+
+// LockContext takes the write lock, or returns ctx.Err() if ctx ends first.
+func (l *attemptLock) LockContext(ctx context.Context) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.waitingWriters++
+	for l.writer || l.readers > 0 {
+		wait := l.waitLocked()
+		l.mu.Unlock()
+		select {
+		case <-wait:
+			l.mu.Lock()
+		case <-ctx.Done():
+			l.mu.Lock()
+			l.waitingWriters--
+			// Readers held back by this writer may proceed now.
+			l.wakeLocked()
+			return ctx.Err()
+		}
+	}
+	l.waitingWriters--
+	l.writer = true
+	return nil
+}
+
+func (l *attemptLock) Unlock() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.writer = false
+	l.wakeLocked()
 }
 
 type activeJobAttempt struct {
@@ -26,7 +112,9 @@ type activeJobAttempt struct {
 // A retry may already be claimed; it waits for that cleanup before starting.
 func (db *DB) StartJobAttempt(ctx context.Context, job *ReviewJob, workerID string, cancel context.CancelFunc) (func(), error) {
 	for {
-		db.attempts.mu.Lock()
+		if err := db.attempts.mu.LockContext(ctx); err != nil {
+			return nil, err
+		}
 		if previous := db.attempts.active[job.ID]; previous != nil {
 			db.attempts.mu.Unlock()
 			select {

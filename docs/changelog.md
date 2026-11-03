@@ -5,6 +5,140 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
+## Unreleased
+
+- Find review records under `job`, aggregate reports under `report`, Git hooks
+    under `hook`, and provider checks and integrations under `agent`. Queue
+    controls live under `daemon`; repair commands live under `storage` and
+    remote key creation under `signing init`. Previous spellings remain hidden
+    compatibility commands for at least one release. See the
+    [command mapping](/docs/commands/#command-groups-and-migration).
+- Use root help as a guide to the review workflow, job IDs, target selection,
+    output modes and recovery. Commands are grouped by purpose and include
+    examples; `ls` aliases `list` and `resolve` aliases `close`.
+- Read recovery hints in CLI errors. Human errors use `hint:`, search agent
+    output uses `Hint:`, and commands supporting `--json` write an error
+    envelope to stderr. Success output stays unchanged. Usage mistakes now exit
+    2 and invalid values exit 4; runtime failures and FAIL verdicts keep exit 1,
+    and export cursor resets keep exit 3.
+- Report daemon startup failure when its child exits, with the startup log and a
+    diagnostic command, instead of waiting for the readiness timeout.
+
+## 0.74.0
+
+<small>2026-10-27</small>
+
+Set up a custom review by talking it through with your agent, review documents
+and the PDFs committed with them, and limit a review type to read-only tools
+plus the MCP tools you grant. Before updating, check the
+[0.74.0 upgrade steps](/docs/installation/#upgrading-to-0740) for the Claude
+Code requirement.
+
+**New features**
+
+- Set up a specialized review by conversation with `/roborev-setup-review`
+    (`$roborev-setup-review` in Codex). Your agent asks what reviewers should
+    catch, proposes the review types, rubrics, and panel, and writes nothing
+    until you approve. It can also set up binary evidence and MCP tool grants.
+    See
+    [Set up a custom review](/docs/guides/agent-skills/#set-up-a-custom-review).
+- Limit a custom review type to read-only tools plus the exact MCP tools it
+    names, with `[review.types.<name>.tools]`. Only global config defines the
+    MCP servers and the tools reviews may request, through `review_mcp_config`
+    and `review_mcp_allowed_tools`. Strict policies require Claude Code. See
+    [Strict Review Tool Policies](/docs/configuration/#strict-review-tool-policies).
+- Strict Claude Code reviews run in a fresh, locked-down session that loads only
+    `Read`, `Glob`, `Grep`, and the granted MCP tools, ignores user and project
+    Claude settings, and fails if Claude reports any other tool or server. See
+    [Strict Claude Code Reviews](/docs/agents/#strict-claude-code-reviews).
+- Show reviewers committed PDFs, images, and other binary files with
+    `binary_evidence = true` on a custom review type. Reviews of commits and
+    ranges get a saved copy of each changed binary file. See
+    [Binary evidence](/docs/advanced/custom-review-types/#binary-evidence).
+- Review documents as well as code. Panels with a custom review type describe
+    the work as reviewed material, label each finding with its rubric, and do
+    not treat a reviewer with a different rubric as disagreeing. See the
+    [document review example](/docs/advanced/custom-review-types/#document-review-example).
+
+**Improvements**
+
+- Reviews, reruns, and fixes start as soon as they are queued, instead of up to
+    two seconds later.
+- Sync [Agent Hook](/docs/agent-hook/) configs across machines with
+    `--binary roborev` or `--binary roborev.exe`. Installation still checks
+    PATH, but keeps the bare name in hooks and the optional MCP stdio server
+    entry.
+
+**Bug fixes**
+
+- Read-only Claude reviews and panel synthesis no longer get write, shell, web,
+    subagent, or MCP tools or skills, even when Claude settings bypass
+    permissions. Reviews fail if the Claude CLI lacks `--tools`; upgrade Claude
+    to continue.
+- `roborev daemon stop` and SIGTERM stop the daemon promptly while the TUI or
+    another client holds the event stream open. Before, the daemon waited 35
+    seconds and exited with an error, which made systemd units with
+    `Restart=on-failure` restart it.
+- `review_context_count` in a repo's `.roborev.toml` now overrides the global
+    value, and `0` gives that repo's reviews no earlier reviews as context.
+    Before, every review used the global value.
+- Reviews no longer fail when a git text converter fails on a file, as Git for
+    Windows does by default for some PDF and Word files. The diff shows the file
+    as binary instead.
+- Rebasing a conflicting fix patch from the TUI Tasks view now builds the new
+    patch on the tip of the review's branch. Before, a rebase for a
+    single-commit review reused the reviewed commit, so the new patch conflicted
+    again and each rebase repeated the same failure.
+- The daemon keeps starting jobs when an agentsview token usage lookup hangs.
+    The lookup returns at its timeout even when a process agentsview started is
+    still running, and jobs no longer wait for it before they start. A job that
+    cannot start fails or retries at its job timeout instead of staying
+    `running` until it is canceled by hand.
+- On Windows, a timed-out agentsview lookup also terminates processes it
+    started, including grandchildren launched through Scoop shims. Successful
+    lookups can still start the agentsview server.
+- Codex reviews work when the Codex login is stored in the OS keyring and
+    `ignore_review_user_config = true`. roborev forwards
+    `cli_auth_credentials_store` and the other login settings from the Codex
+    user config. A missing Codex login now fails without retries and the error
+    explains how to fix it. See
+    [Codex login storage](/docs/configuration/#codex-login-storage).
+
+Thanks to everyone who contributed to this release:
+
+- [Jarek Potiuk](https://github.com/potiuk) fixed Codex reviews when the Codex
+    login is stored in the OS keyring in
+    [#1459](https://github.com/kenn-io/roborev/pull/1459).
+- [Marius van Niekerk](https://github.com/mariusvniekerk) added strict review
+    tool policies and MCP grants in
+    [#1461](https://github.com/kenn-io/roborev/pull/1461),
+    [#1462](https://github.com/kenn-io/roborev/pull/1462), and
+    [#1463](https://github.com/kenn-io/roborev/pull/1463), binary evidence in
+    [#1465](https://github.com/kenn-io/roborev/pull/1465), and document review
+    panels in [#1460](https://github.com/kenn-io/roborev/pull/1460); kept the
+    daemon starting jobs when a token usage lookup hangs in
+    [#1478](https://github.com/kenn-io/roborev/pull/1478); and fixed daemon
+    shutdown, per-repo `review_context_count`, failing text converters, and fix
+    patch rebases.
+- [Rod Boev](https://github.com/rodboev) started queued jobs immediately in
+    [#1456](https://github.com/kenn-io/roborev/pull/1456), kept daemon and TUI
+    runtime records correct inside sandboxes in
+    [#1435](https://github.com/kenn-io/roborev/pull/1435) and
+    [#1454](https://github.com/kenn-io/roborev/pull/1454), and made polling and
+    retry tests faster.
+- [Rusty Shackleford](https://github.com/salmonumbrella) added the
+    `/roborev-setup-review` skill in
+    [#1416](https://github.com/kenn-io/roborev/pull/1416), kept Claude reviewers
+    read-only when permissions are bypassed in
+    [#1406](https://github.com/kenn-io/roborev/pull/1406), and made Agent Hook
+    configs portable across machines in
+    [#1481](https://github.com/kenn-io/roborev/pull/1481).
+- [Wes McKinney](https://github.com/wesm) added package builds that turn off
+    self-update in [#1458](https://github.com/kenn-io/roborev/pull/1458),
+    documented the 0.73.0 release, and made TUI branch rendering tests reliable.
+
+______________________________________________________________________
+
 ## 0.73.0
 
 <small>2026-10-23</small>
@@ -1039,7 +1173,7 @@ ______________________________________________________________________
 - Homebrew updates now come directly from official Roborev releases. The tap
     owns its formula updates, removing a duplicate publishing path and its
     cross-repository credential. See
-    [Homebrew installation](/docs/installation/#homebrew-macos-linux).
+    [Homebrew installation](/docs/installation/#homebrew-macos).
 - Building Roborev from source now requires Go 1.26.6. Go, JavaScript,
     documentation, and GitHub Actions dependencies were also refreshed,
     including fixes for known Go toolchain and `go-git` vulnerabilities.

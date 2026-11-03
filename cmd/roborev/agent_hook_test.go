@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -19,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 	kitagenthook "go.kenn.io/kit/agenthook"
 
+	roborevagent "go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/agenthook"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/skills"
@@ -40,6 +42,69 @@ func TestAgentHookInstallSupportsExplicitQwenProfile(t *testing.T) {
 	assert.Contains(t, string(body), "--source=roborev-agent-hook")
 }
 
+func TestAgentHookInstallBareBinary(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		binary  string
+		missing bool
+		mcp     bool
+	}{
+		{name: "preserves bare roborev", binary: "roborev", mcp: true},
+		{name: "rejects missing roborev", binary: "roborev", missing: true},
+		{name: "resolves other bare binary", binary: "roborev-dev"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if !tc.missing {
+				dir = writeFakeAgentBinary(t, tc.binary)
+			}
+			t.Setenv("PATH", dir)
+			var binaryPath string
+			if tc.binary != "roborev" {
+				var err error
+				binaryPath, err = exec.LookPath(tc.binary)
+				require.NoError(t, err)
+			}
+			path := filepath.Join(t.TempDir(), "settings.json")
+			cmd := agentHookCmd()
+			cmd.SetOut(io.Discard)
+			cmd.SetErr(io.Discard)
+			args := []string{
+				"install", "--agent", "qwen", "--config", path,
+				"--binary", tc.binary,
+			}
+			if tc.mcp {
+				args = append(args, "--mcp")
+			}
+			cmd.SetArgs(args)
+
+			if tc.missing {
+				require.ErrorContains(t, cmd.Execute(), "find roborev on PATH")
+				return
+			}
+			require.NoError(t, cmd.Execute())
+			body, err := os.ReadFile(path)
+			require.NoError(t, err)
+			if tc.binary != "roborev" {
+				expectedPath, err := json.Marshal(binaryPath)
+				require.NoError(t, err)
+				assert.Contains(t, string(body), string(expectedPath[1:len(expectedPath)-1]))
+				return
+			}
+			var config struct {
+				MCPServers map[string]struct {
+					Command string `json:"command"`
+				} `json:"mcpServers"`
+			}
+			require.NoError(t, json.Unmarshal(body, &config))
+			assert := assert.New(t)
+			assert.Contains(string(body), `"roborev agent-hook run --agent qwen`)
+			assert.Equal("roborev", config.MCPServers["roborev"].Command)
+			assert.NotContains(string(body), dir)
+		})
+	}
+}
+
 func TestPostAgentHookPreservesRegularDaemonEndpointInOwnerCloseout(t *testing.T) {
 	fixSessionID := uuid.MustParse("00000000-0000-4000-8000-000000000001")
 	var gotPath string
@@ -57,7 +122,7 @@ func TestPostAgentHookPreservesRegularDaemonEndpointInOwnerCloseout(t *testing.T
 	serverAddr := strings.TrimPrefix(server.URL, "http://")
 
 	response, err := postAgentHook(
-		context.Background(), serverAddr,
+		t.Context(), serverAddr,
 		agenthook.Request{Event: agenthook.Input{SessionID: "session-1"}},
 	)
 
@@ -86,7 +151,7 @@ func TestRunAgentHookFixDoneRejectsMalformedUUIDBeforeDaemonStart(t *testing.T) 
 	}
 	t.Cleanup(func() { agentHookEnsureDaemon = originalEnsure })
 
-	err := runAgentHookFixDone(context.Background(), "not-a-uuid", "", io.Discard)
+	err := runAgentHookFixDone(t.Context(), "not-a-uuid", "", io.Discard)
 
 	require.ErrorContains(t, err, "parse fix session ID")
 	assert.False(t, ensureCalled)
@@ -182,7 +247,7 @@ func TestManualAgentHookCommandsEnsureDaemon(t *testing.T) {
 		}},
 		{name: "fix done", run: func() error {
 			return runAgentHookFixDone(
-				context.Background(), "00000000-0000-4000-8000-000000000001", "", io.Discard,
+				t.Context(), "00000000-0000-4000-8000-000000000001", "", io.Discard,
 			)
 		}},
 	}
@@ -327,6 +392,39 @@ func TestRunAgentHookFailsOpenWhenDaemonUnavailable(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, `{}`, stdout.String())
 	assert.Contains(t, stderr.String(), "daemon unavailable")
+}
+
+func TestRunAgentHookStaysQuietInsideRoborevAgents(t *testing.T) {
+	t.Setenv(roborevagent.HookSuppressEnv, "1")
+	oldPost := postAgentHook
+	posted := false
+	postAgentHook = func(context.Context, string, agenthook.Request) (agenthook.Response, error) {
+		posted = true
+		return agenthook.Response{Triggered: true, Reason: "resolve reviews"}, nil
+	}
+	t.Cleanup(func() { postAgentHook = oldPost })
+
+	tests := []struct {
+		name string
+		run  func(stdin io.Reader, stdout io.Writer) error
+	}{
+		{"kit profile", func(stdin io.Reader, stdout io.Writer) error {
+			return runAgentHook(kitagenthook.AgentClaude, agenthook.DefaultOptions(), stdin, stdout, io.Discard)
+		}},
+		{"local profile", func(stdin io.Reader, stdout io.Writer) error {
+			return runLocalAgentHook(agenthook.AgentGrok, agenthook.DefaultOptions(), stdin, stdout, io.Discard)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			err := tt.run(strings.NewReader(`{"session_id":"s1","hook_event_name":"Stop"}`), &stdout)
+
+			require.NoError(t, err)
+			assert.JSONEq(t, `{}`, stdout.String())
+			assert.False(t, posted, "a roborev-launched agent's session must not reach the daemon")
+		})
+	}
 }
 
 func TestRunAgentHookEncodesKitStopResponse(t *testing.T) {

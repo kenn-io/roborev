@@ -50,6 +50,7 @@ func (*reviewPipeListener) Addr() net.Addr {
 }
 
 func TestWaitForJobCompletionReturnsNotFoundImmediately(t *testing.T) {
+	setupFastPolling(t)
 	var jobCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -63,7 +64,7 @@ func TestWaitForJobCompletionReturnsNotFoundImmediately(t *testing.T) {
 	defer server.Close()
 	patchServerAddr(t, server.URL)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 1500*time.Millisecond)
 	defer cancel()
 
 	review, err := waitForJobCompletion(ctx, server.URL, 123, nil)
@@ -74,6 +75,7 @@ func TestWaitForJobCompletionReturnsNotFoundImmediately(t *testing.T) {
 }
 
 func TestAuthJobPollingStopsOnTerminalDenial(t *testing.T) {
+	setupFastPolling(t)
 	for _, tc := range []struct {
 		name         string
 		status       storage.JobStatus
@@ -101,7 +103,7 @@ func TestAuthJobPollingStopsOnTerminalDenial(t *testing.T) {
 			}))
 			defer server.Close()
 			patchServerAddr(t, server.URL)
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 			defer cancel()
 			review, err := waitForJobCompletion(ctx, server.URL, 23, io.Discard)
 			wantErr := daemon.ErrDaemonAccessDenied

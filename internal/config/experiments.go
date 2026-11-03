@@ -326,12 +326,30 @@ type ExperimentArmConfig struct {
 	Arm           ExperimentArm
 	RepoConfig    *RepoConfig
 	RawRepoConfig map[string]any
+	// Review is this arm's review config merged over the global config.
+	Review ReviewConfig
+	// Assignable is false only for the experimental arm at ratio 0, which no
+	// review can be assigned to. The default arm is always assignable: a
+	// review with no branch and a prompt-based task are not enrolled in the
+	// experiment, so they use it at any ratio. Checks that ask whether
+	// reviews can run should skip an arm that is not assignable; checks that
+	// validate or report configuration should still cover it.
+	Assignable bool
+}
+
+// PanelName returns the panel this arm selects for a kind of review: the
+// post-commit panel for a post-commit job source, the default panel for an
+// empty one. It is empty when the arm reviews with a single agent.
+func (a ExperimentArmConfig) PanelName(source string) string {
+	return SelectPanelName("", source, a.Review)
 }
 
 // WorkflowExperimentArms returns every repository config a workflow can run
 // with: the default arm, plus the experimental arm when an enabled
 // experiment applies to the workflow. It applies the experiment the same way
-// SelectReviewExperiment does, without assigning a branch to an arm.
+// SelectReviewExperiment does, without assigning a branch to an arm. Anything
+// that checks or reports on a workflow's configuration must iterate this list
+// rather than look at the base config alone.
 func WorkflowExperimentArms(
 	workflow ExperimentWorkflow, global *Config, repo *RepoConfig, rawRepo map[string]any,
 ) ([]ExperimentArmConfig, error) {
@@ -341,17 +359,22 @@ func WorkflowExperimentArms(
 	}
 	arms := []ExperimentArmConfig{{
 		ExperimentID: id, Arm: ExperimentArmDefault, RepoConfig: repo, RawRepoConfig: rawRepo,
+		Assignable: true,
 	}}
-	if id == "" {
-		return arms, nil
+	if id != "" {
+		cfg, raw, err := experimentalArmConfig(global, repo, rawRepo, id, definition)
+		if err != nil {
+			return nil, err
+		}
+		arms = append(arms, ExperimentArmConfig{
+			ExperimentID: id, Arm: ExperimentArmExperimental, RepoConfig: cfg, RawRepoConfig: raw,
+			Assignable: *definition.Ratio > 0,
+		})
 	}
-	cfg, raw, err := experimentalArmConfig(global, repo, rawRepo, id, definition)
-	if err != nil {
-		return nil, err
+	for i := range arms {
+		arms[i].Review = MergeReviewConfigFromConfig(arms[i].RepoConfig, global)
 	}
-	return append(arms, ExperimentArmConfig{
-		ExperimentID: id, Arm: ExperimentArmExperimental, RepoConfig: cfg, RawRepoConfig: raw,
-	}), nil
+	return arms, nil
 }
 
 // experimentForWorkflow returns the single enabled experiment that applies
@@ -621,6 +644,30 @@ func applyExperimentOverlay(global *Config, rawRepo, overlay map[string]any) (ma
 			}
 			baseMap, _ := baseEntry.(map[string]any)
 			effectiveEntries[name] = mergeExperimentMaps(baseMap, overlayMap)
+		}
+	}
+
+	// An experiment's tools replace the base policy as a whole, like a member
+	// policy. An override without tools keeps the replaced definition's policy.
+	for _, key := range []string{"types", "subagents"} {
+		overlayEntries, _ := overlayReview[key].(map[string]any)
+		repoEntries, _ := repoReview[key].(map[string]any)
+		globalEntries, _ := globalReview[key].(map[string]any)
+		for name, entryOverlay := range overlayEntries {
+			base, exists := repoEntries[name]
+			if !exists {
+				base = globalEntries[name]
+			}
+			baseMap, _ := base.(map[string]any)
+			overlayMap, _ := entryOverlay.(map[string]any)
+			tools, ok := overlayMap["tools"]
+			if !ok {
+				tools, ok = baseMap["tools"]
+			}
+			entry, _ := effectiveReview[key].(map[string]any)[name].(map[string]any)
+			if ok && entry != nil {
+				entry["tools"] = cloneExperimentValue(tools)
+			}
 		}
 	}
 

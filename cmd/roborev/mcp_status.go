@@ -23,7 +23,7 @@ type mcpListenerStatus struct {
 }
 
 var (
-	mcpStatusListRuntimes = daemon.ListAllRuntimes
+	mcpStatusListRuntimes = daemon.ListJudgedRuntimes
 	mcpStatusProbe        = daemon.ProbeDaemonPing
 	mcpStatusRuntimeStale = (*daemon.RuntimeInfo).Stale
 )

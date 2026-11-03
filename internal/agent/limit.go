@@ -98,6 +98,8 @@ var defaultLimitRules = []limitRule{
 	// Claude Code weekly limits outlast same-agent retries.
 	{Agents: []string{"claude-code"}, Substring: "you've hit your weekly limit", Kind: LimitKindQuota},
 	{Agents: []string{"codex"}, Substring: "stream disconnected before completion: access denied", Kind: LimitKindPermanent},
+	// Codex sent no credentials (401). Retrying cannot fix a missing login.
+	{Agents: []string{"codex"}, Substring: "missing bearer or basic authentication", Kind: LimitKindPermanent},
 	// Transient/outage — observed provider wording only (no speculative
 	// substrings; see the no-speculative note above). Retried with backoff.
 	{Agents: []string{"*"}, Substring: "too many requests", Kind: LimitKindTransient},

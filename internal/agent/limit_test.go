@@ -87,6 +87,12 @@ func TestClassifyLimitTransientAndUsage(t *testing.T) {
 			`stream disconnected before completion: Access denied: web search is not authorized for this identity.`,
 			LimitKindPermanent,
 		},
+		{
+			"codex missing auth reconnect", "codex",
+			`agent: codex failed: exit status 1 (parse error: codex stream reported failure: Reconnecting... 2/5 (unexpected status 401 Unauthorized: Missing bearer or basic authentication in header, url: wss://api.openai.com/v1/responses))`,
+			LimitKindPermanent,
+		},
+		{"other agent missing auth", "gemini", "401 Unauthorized: Missing bearer or basic authentication in header", LimitKindNone},
 		{"isolated denial", "codex", "Access denied", LimitKindNone},
 		{"isolated authorization", "codex", "web search is not authorized for this identity", LimitKindNone},
 		{"other agent denial", "gemini", "stream disconnected before completion: Access denied", LimitKindTransient},

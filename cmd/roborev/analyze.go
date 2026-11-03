@@ -239,7 +239,7 @@ func listAnalysisTypes(cmd *cobra.Command) error {
 func showAnalysisPrompt(cmd *cobra.Command, typeName string) error {
 	analysisType := analyze.GetType(typeName)
 	if analysisType == nil {
-		return fmt.Errorf("unknown analysis type %q (use --list to see available types)", typeName)
+		return validationErr(cmd, fmt.Errorf("unknown analysis type %q (use --list to see available types)", typeName))
 	}
 
 	prompt, err := analysisType.GetPrompt()
@@ -261,7 +261,7 @@ func runAnalysis(cmd *cobra.Command, typeName string, filePatterns []string, opt
 	// Validate analysis type
 	analysisType := analyze.GetType(typeName)
 	if analysisType == nil {
-		return fmt.Errorf("unknown analysis type %q (use --list to see available types)", typeName)
+		return validationErr(cmd, fmt.Errorf("unknown analysis type %q (use --list to see available types)", typeName))
 	}
 
 	// Get working directory and repo root
@@ -560,10 +560,9 @@ func enqueueAnalysisJob(ctx context.Context, ep daemon.DaemonEndpoint, repoRoot,
 		AnalysisType:      label,
 		AnalysisFiles:     normalizeAnalysisFileList(files),
 		AnalysisCommitSHA: opts.analysisCommitSHA,
-		Agentic:           true, // Agentic mode needed for reading files when prompt exceeds size limit
 	})
 
-	resp, err := ep.APIClient(10*time.Second).EnqueueJobRaw(context.Background(), nil, roborevclient.WithBody(reqBody))
+	resp, err := ep.APIClient(10*time.Second).EnqueueJobRaw(ctx, nil, roborevclient.WithBody(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to daemon: %w", err)
 	}
@@ -738,8 +737,8 @@ func runAnalyzeAndFix(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot str
 // The context controls the maximum wait time.
 func waitForAnalysisJob(ctx context.Context, ep daemon.DaemonEndpoint, jobID int64) (*storage.Review, error) {
 	api := newDaemonReviewAPI(ep.BaseURL(), ep.HTTPClient(30*time.Second))
-	pollInterval := 1 * time.Second
-	maxInterval := 5 * time.Second
+	pollInterval := pollStartInterval
+	maxInterval := pollMaxInterval
 
 	for {
 		// Check for cancellation/timeout
@@ -1176,7 +1175,7 @@ func getBranchFiles(ctx context.Context, cmd *cobra.Command, repoRoot string, op
 
 	// Validate has commits
 	rangeRef := mergeBase + ".." + targetSHA
-	commits, err := git.GetRangeCommits(repoRoot, rangeRef)
+	commits, err := git.GetRangeCommitsCtx(ctx, repoRoot, rangeRef)
 	if err != nil {
 		return nil, "", fmt.Errorf("cannot get commits: %w", err)
 	}
@@ -1185,7 +1184,7 @@ func getBranchFiles(ctx context.Context, cmd *cobra.Command, repoRoot string, op
 	}
 
 	// Get changed files
-	changedFiles, err := git.GetRangeFilesChanged(repoRoot, rangeRef)
+	changedFiles, err := git.GetRangeFilesChangedCtx(ctx, repoRoot, rangeRef)
 	if err != nil {
 		return nil, "", fmt.Errorf("cannot get changed files: %w", err)
 	}

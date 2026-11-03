@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"go.kenn.io/kit/atomicfile"
+	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/config"
 )
@@ -18,9 +20,10 @@ import (
 // omitted — it changes at runtime and should be queried via the
 // control socket's get-filters command.
 type TUIRuntimeInfo struct {
-	PID        int    `json:"pid"`
-	SocketPath string `json:"socket_path"`
-	ServerAddr string `json:"server_addr"`
+	PID               int                       `json:"pid"`
+	ProcessIdentityV2 kitdaemon.ProcessIdentity `json:"process_identity_v2,omitempty"`
+	SocketPath        string                    `json:"socket_path"`
+	ServerAddr        string                    `json:"server_addr"`
 }
 
 // tuiRuntimePath returns the metadata file path for a given PID.
@@ -122,7 +125,7 @@ func ListAllTUIRuntimes() ([]*TUIRuntimeInfo, error) {
 
 // CleanupStaleTUIRuntimes removes socket and metadata files for
 // TUI processes that are no longer running.
-func CleanupStaleTUIRuntimes() int {
+func CleanupStaleTUIRuntimes(ctx context.Context) int {
 	runtimes, err := ListAllTUIRuntimes()
 	if err != nil {
 		return 0
@@ -130,7 +133,9 @@ func CleanupStaleTUIRuntimes() int {
 
 	cleaned := 0
 	for _, info := range runtimes {
-		if isProcessAlive(info.PID) {
+		if kitdaemon.RuntimeProcessAlive(kitdaemon.RuntimeRecord{
+			PID: info.PID, ProcessIdentityV2: info.ProcessIdentityV2,
+		}) {
 			continue
 		}
 		// Only remove the socket if it's actually a stale
@@ -138,7 +143,7 @@ func CleanupStaleTUIRuntimes() int {
 		// at a shared custom path or a non-socket file.
 		// Errors are ignored: the metadata is still cleaned
 		// since the owning PID is dead.
-		_ = removeStaleSocket(info.SocketPath)
+		_ = removeStaleSocket(ctx, info.SocketPath)
 		os.Remove(tuiRuntimePath(info.PID))
 		cleaned++
 	}
@@ -151,10 +156,12 @@ func CleanupStaleTUIRuntimes() int {
 func buildTUIRuntimeInfo(
 	socketPath, serverAddr string,
 ) TUIRuntimeInfo {
+	record := kitdaemon.NewRuntimeRecord("roborev-tui", "", kitdaemon.Endpoint{})
 	return TUIRuntimeInfo{
-		PID:        os.Getpid(),
-		SocketPath: socketPath,
-		ServerAddr: serverAddr,
+		PID:               record.PID,
+		ProcessIdentityV2: record.ProcessIdentityV2,
+		SocketPath:        socketPath,
+		ServerAddr:        serverAddr,
 	}
 }
 

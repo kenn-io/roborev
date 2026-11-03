@@ -23,7 +23,7 @@ func TestGoalCaptureComplete(t *testing.T) {
 		client.ListResult = append(client.ListResult, kata.Issue{ShortID: fmt.Sprintf("i%03d", i), Title: "Task", Body: "Full requirement", Status: "open", Labels: []string{"roborev"}})
 	}
 	client.ListResult[0].Parent = &kata.LinkPeer{ShortID: "root", QualifiedID: "other#root", Status: "closed"}
-	snapshot, err := Capture(context.Background(), root, Selection{}, client)
+	snapshot, err := Capture(t.Context(), root, Selection{}, client)
 	require.NoError(t, err)
 	require.Len(t, snapshot.Issues, 240)
 	assert.Equal(t, "superpowers", snapshot.Source)
@@ -32,12 +32,12 @@ func TestGoalCaptureComplete(t *testing.T) {
 	assert.Equal(t, []Edge{{Type: "parent", From: "project#i000", To: "other#root"}}, snapshot.Edges)
 	assert.Equal(t, "Full requirement", snapshot.Issues[239].Body)
 	client.BindingErr = kata.ErrNoBinding
-	snapshot, err = Capture(context.Background(), root, Selection{}, client)
+	snapshot, err = Capture(t.Context(), root, Selection{}, client)
 	require.NoError(t, err)
 	assert.Empty(t, snapshot.Issues)
 	client.BindingErr = nil
 	client.ListErr = errors.New("ledger unavailable")
-	_, err = Capture(context.Background(), root, Selection{}, client)
+	_, err = Capture(t.Context(), root, Selection{}, client)
 	require.ErrorContains(t, err, "ledger unavailable")
 }
 
@@ -156,7 +156,7 @@ func TestGoalCapturePreservesQualifiedIdentities(t *testing.T) {
 		{ShortID: "aaaa", QualifiedID: "project#aaaa", Title: "A", Status: "open", Blocks: []kata.LinkPeer{{ShortID: "bbbb", QualifiedID: "project#bbbb"}}},
 		{ShortID: "bbbb", QualifiedID: "project#bbbb", Title: "B", Status: "open"},
 	}}
-	snapshot, err := Capture(context.Background(), root, Selection{}, client)
+	snapshot, err := Capture(t.Context(), root, Selection{}, client)
 	require.NoError(t, err)
 	assert.Equal(t, "project#aaaa", snapshot.Issues[0].QualifiedID)
 	assert.Equal(t, []Edge{{Type: "blocks", From: "project#aaaa", To: "project#bbbb"}}, snapshot.Edges)
@@ -188,7 +188,7 @@ func TestGoalCaptureRetriesChangingArtifacts(t *testing.T) {
 					writeArtifact(t, root, specPath, fmt.Sprintf("# Revision %d\n", calls))
 				}
 			}
-			snapshot, err := Capture(context.Background(), root, Selection{}, client)
+			snapshot, err := Capture(t.Context(), root, Selection{}, client)
 			if continual {
 				require.ErrorContains(t, err, "changed during capture")
 				assert.Equal(t, 3, calls, "changing inputs cannot retry without a bound")

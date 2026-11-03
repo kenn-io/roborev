@@ -432,7 +432,15 @@ type experimentReviewPlan struct {
 	Synthesis experimentJobPlan
 }
 
-func experimentPlanForJob(opts storage.EnqueueOpts) experimentJobPlan {
+func experimentPlanForJob(opts storage.EnqueueOpts) (experimentJobPlan, error) {
+	snapshot := opts.PanelMemberConfigJSON
+	if storage.JobTypeForEnqueue(opts) == storage.JobTypeSynthesis {
+		var err error
+		snapshot, err = synthesisExperimentConfig(snapshot)
+		if err != nil {
+			return experimentJobPlan{}, err
+		}
+	}
 	return experimentJobPlan{
 		Agent:                 opts.Agent,
 		Model:                 opts.Model,
@@ -445,23 +453,30 @@ func experimentPlanForJob(opts storage.EnqueueOpts) experimentJobPlan {
 		PanelName:             opts.PanelName,
 		PanelMemberName:       opts.PanelMemberName,
 		PanelMemberIndex:      opts.PanelMemberIndex,
-		PanelMemberConfigJSON: opts.PanelMemberConfigJSON,
+		PanelMemberConfigJSON: snapshot,
 		JobType:               storage.JobTypeForEnqueue(opts),
-	}
+	}, nil
 }
 
 func experimentPlanForPanel(
 	members []storage.EnqueueOpts,
 	synthesis storage.EnqueueOpts,
-) experimentReviewPlan {
+) (experimentReviewPlan, error) {
+	synthPlan, err := experimentPlanForJob(synthesis)
+	if err != nil {
+		return experimentReviewPlan{}, err
+	}
 	plan := experimentReviewPlan{
 		Members:   make([]experimentJobPlan, len(members)),
-		Synthesis: experimentPlanForJob(synthesis),
+		Synthesis: synthPlan,
 	}
 	for i := range members {
-		plan.Members[i] = experimentPlanForJob(members[i])
+		plan.Members[i], err = experimentPlanForJob(members[i])
+		if err != nil {
+			return experimentReviewPlan{}, err
+		}
 	}
-	return plan
+	return plan, nil
 }
 
 func applyFrozenExperimentSettings(
@@ -572,10 +587,14 @@ func planPanelRun(
 	if err != nil {
 		return panelRunPlan{}, err
 	}
+	synthOpts, err := panelSynthesisOpts(descriptor, panelName, runUUID, synth, repoCfg, cfg)
+	if err != nil {
+		return panelRunPlan{}, err
+	}
 	return panelRunPlan{
 		members:    members,
 		memberOpts: memberOpts,
-		synthOpts:  panelSynthesisOpts(descriptor, panelName, runUUID, synth, repoCfg, cfg),
+		synthOpts:  synthOpts,
 	}, nil
 }
 
@@ -587,8 +606,12 @@ func (s *Server) enqueuePanelRun(ctx context.Context, in panelRunInputs) (*RawJS
 	}
 	members, memberOpts, synthOpts := plan.members, plan.memberOpts, plan.synthOpts
 	if in.experiment != nil {
+		plan, planErr := experimentPlanForPanel(memberOpts, synthOpts)
+		if planErr != nil {
+			return rawJSONOutput(http.StatusInternalServerError, ErrorResponse{Error: planErr.Error()})
+		}
 		assignment, assignErr := storageAssignmentForExperiment(
-			in.experiment, experimentPlanForPanel(memberOpts, synthOpts),
+			in.experiment, plan,
 		)
 		if assignErr != nil {
 			return rawJSONOutput(http.StatusInternalServerError,
@@ -739,7 +762,13 @@ func resolvePanelMemberExecution(
 	if err := agent.ValidateStructuredReviewSelection(m.ReviewType, selected); err != nil {
 		return "", "", "", "", err
 	}
+	if err := agent.ValidateReviewToolSelection(m.Tools, selected, descriptor.agentic); err != nil {
+		return "", "", "", "", err
+	}
 	selectedName := agent.StorageNameFromConfig(selected.Name(), repoCfg, cfg)
+	if err := agent.ValidateReviewToolBackup(m.Tools, resolution, selectedName); err != nil {
+		return "", "", "", "", err
+	}
 	if err := agent.ValidateStructuredReviewBackup(
 		m.ReviewType, resolution, selectedName,
 	); err != nil {
@@ -763,14 +792,19 @@ func workflowForPanelReviewType(reviewType string) string {
 
 // panelSynthesisOpts overlays the synthesis spec and panel fields onto the
 // frozen base opts. The synthesis BackupAgent/BackupModel are persisted so the
-// worker can prefer them on synthesis failover.
+// worker can prefer them on synthesis failover, and the synthesis instructions
+// are frozen with the job so reruns keep them.
 // EnqueuePanelRun enforces JobTypeSynthesis/PanelRoleSynthesis/ClaimBlocked, but
 // they are set here too so the opts are self-describing.
 func panelSynthesisOpts(
 	descriptor targetDescriptor, panelName string, runUUID uuid.UUID,
 	synth config.SynthesisSpec,
 	repoCfg *config.RepoConfig, cfg *config.Config,
-) storage.EnqueueOpts {
+) (storage.EnqueueOpts, error) {
+	snapshot, err := synthesisJobConfig{Instructions: synth.Instructions}.encode()
+	if err != nil {
+		return storage.EnqueueOpts{}, fmt.Errorf("snapshot synthesis config: %w", err)
+	}
 	o := descriptor.baseOpts()
 	o.JobType = storage.JobTypeSynthesis
 	o.Agent = agent.StorageNameFromConfig(synth.Agent, repoCfg, cfg)
@@ -779,5 +813,6 @@ func panelSynthesisOpts(
 	o.BackupModel = synth.BackupModel
 	o.PanelRunUUID, o.PanelRole = &runUUID, storage.PanelRoleSynthesis
 	o.PanelName, o.ClaimBlocked = panelName, true
-	return o
+	o.PanelMemberConfigJSON = snapshot
+	return o, nil
 }

@@ -41,6 +41,9 @@ type BatchConfig struct {
 	// findings are still reported.
 	// When non-empty (and not "low"), agents are instructed to filter findings.
 	MinSeverity string
+	// PullRequest is the reviewed pull or merge request's title and
+	// description, shown to agents as the author's statement of intent.
+	PullRequest prompt.PullRequest
 }
 
 // RunBatch executes all review_type x agent combinations in
@@ -89,6 +92,12 @@ func runSingle(
 	result := ReviewResult{
 		Agent:      agentName,
 		ReviewType: reviewType,
+	}
+	settings, err := config.ResolveReviewSettings(reviewType, nil, cfg.RepoConfig, cfg.GlobalConfig)
+	if err != nil {
+		result.Status = ResultFailed
+		result.Error = fmt.Sprintf("resolve review settings: %v", err)
+		return result
 	}
 
 	// Map review type to workflow name for config
@@ -194,7 +203,9 @@ func runSingle(
 		WithContext(ctx).
 		ForRepo(cfg.RepoPath, 0).
 		WithRepoConfig(cfg.RepoConfig, cfg.RepoConfigRef).
-		WithStructuredOutput(true)
+		WithBinaryEvidence(settings.BinaryEvidence).
+		WithStructuredOutput(true).
+		WithPullRequest(cfg.PullRequest)
 
 	// Normalize review type for prompt building
 	promptReviewType := reviewType
@@ -219,6 +230,14 @@ func runSingle(
 		defer snapResult.Cleanup()
 	}
 
+	resolvedAgent, toolCleanup, err := agent.PrepareReviewToolPolicy(resolvedAgent, settings.Tools, cfg.GlobalConfig)
+	if err != nil {
+		result.Status = ResultFailed
+		result.Error = err.Error()
+		return result
+	}
+	defer toolCleanup()
+
 	// Run review
 	log.Printf(
 		"ci review: running agent=%s type=%s ref=%s",
@@ -226,7 +245,7 @@ func runSingle(
 
 	agentReview, err := RunAgentReview(
 		ctx, resolvedAgent, cfg.RepoPath, cfg.GitRef, reviewPrompt,
-		reviewType, cfg.MinSeverity, nil,
+		reviewType, cfg.MinSeverity, settings.Tools, nil,
 	)
 	if err != nil {
 		result.Status = ResultFailed

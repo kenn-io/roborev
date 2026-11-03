@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
@@ -73,6 +74,9 @@ func TestTaskCellsBranchColumn(t *testing.T) {
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Real Git subprocesses use the test deadline; rendering then uses
+			// the resolved branch without depending on the UI's two-second limit.
+			require.Equal(t, tt.wantBranch, m.getBranchForJobCtx(t.Context(), tt.job))
 			cells := m.taskCells(tt.job)
 			// taskCells omits the always-visible tcolSel selection column, so
 			// every other column constant is offset by one in the slice.

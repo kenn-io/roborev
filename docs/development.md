@@ -15,6 +15,40 @@ make install    # Installs with version info (e.g., v0.7.0-5-gabcdef)
 Or use `go install ./cmd/...` for quick iteration (version shows commit hash
 only).
 
+### Package builds
+
+Package maintainers can mark a build as owned by their package manager, so users
+upgrade through it instead of `roborev update`. Set
+`internal/version.Distribution` to the package manager's name with a linker
+flag:
+
+```bash
+go build \
+  -ldflags="-X go.kenn.io/roborev/internal/version.Distribution=homebrew" \
+  -o bin/roborev ./cmd/roborev
+```
+
+- `roborev update`, including `--force`, refuses to replace these builds. For
+    `homebrew`, the message tells users to run `brew upgrade roborev`. Other
+    names get a message naming the package.
+- `roborev update --check` still reports newer releases and says to upgrade
+    through the package manager.
+- The terminal interface skips update checks and update notifications.
+- Builds with an empty `Distribution`, the default, keep the normal update
+    behavior. So do official direct downloads, which set `Distribution` to
+    `kenn`.
+
+Homebrew formulas can use the `homebrew` make target. It runs the normal build
+with cgo enabled and `Distribution` set to `homebrew`:
+
+```bash
+make homebrew VERSION=1.2.3 BINDIR=/path/to/bin
+```
+
+Other `make` and GoReleaser builds read `Distribution` from the `DISTRIBUTION`
+variable, which is empty by default. The same value also sets kit's telemetry
+distribution.
+
 ## Project Structure
 
 ```
@@ -42,7 +76,9 @@ CLI / Agent hooks -> HTTP API -> Daemon (roborev daemon run) -> Worker Pool -> A
 ```
 
 - **Daemon**: HTTP server on port 7373 (auto-finds available port if busy)
-- **Workers**: Pool of 4 (configurable) parallel review workers
+- **Workers**: Pool of 4 (configurable) parallel review workers. The daemon
+    wakes idle workers when a job is queued, and they poll every 2 seconds as a
+    fallback
 - **Storage**: SQLite at `~/.roborev/reviews.db` with WAL mode
 - **Agent Hook state**: JSON at `~/.roborev/agent-hook/state.json`
 
@@ -170,6 +206,28 @@ therefore leave the browser listener disabled. `make build` and `make install`
 run the validated web-asset transaction when an embedded browser application is
 required.
 
+### Shared build cache and debugging
+
+`make` targets build and test Go code with `-trimpath`. Compiled code then
+records module-relative source paths instead of absolute ones, so every clone
+and git worktree shares one Go build cache. Without it, each checkout compiles
+and caches its own copy of every package.
+
+- To opt out for one command, run `make test GOFLAGS=-trimpath=false`.
+- To get the same sharing from plain `go` commands outside `make`, run
+    `go env -w GOFLAGS=-trimpath` once.
+
+Trimmed binaries do not record where their source lives, so Delve needs help
+finding it:
+
+- `dlv debug` and `dlv test` inherit `GOFLAGS`. Pass
+    `--build-flags=-trimpath=false` so Delve can show source. Debug builds turn
+    off optimizations, so they never shared cache entries anyway.
+- For `dlv exec` or `dlv attach` on a trimmed binary, start Delve from the
+    repository root and run `config substitute-path -guess` (Delve 1.24 or
+    newer). It maps the module path to your checkout, the standard library to
+    `GOROOT`, and dependencies to the module cache.
+
 ### Browser application
 
 The browser workspace uses Bun 1.4.4. Install the pinned dependency graph and
@@ -269,16 +327,16 @@ Run the docs validation checks:
 make docs-check
 ```
 
-The Vercel project should be linked from the repository root with `docs/` as its
-root directory. Use these project settings:
+Deploying needs a Vercel link in the `docs/` directory, because the deploy
+uploads that directory:
 
-| Setting | Value |
-| --- | --- |
-| Framework preset | `Other` |
-| Root directory | `docs` |
-| Install command | `uv sync --frozen --no-dev` |
-| Build command | `uv run --frozen bash ./vercel-build.sh` |
-| Output directory | `site` |
+```bash
+vercel link --cwd docs
+```
+
+`docs/vercel.json` supplies the build settings. See
+[Publishing](https://github.com/kenn-io/roborev/blob/main/docs/README.md#publishing)
+in the docs maintainer guide for the project setup.
 
 The build wrapper also copies `index.md` and every nav-listed Markdown document
 into `site/`. That keeps source-form docs available from the same deployment as
@@ -299,7 +357,7 @@ For the direct Vercel deploy step only, use:
 make docs-deploy
 ```
 
-`make docs-deploy` runs `vercel deploy --prod` from the repository root.
+`make docs-deploy` runs `vercel deploy docs --prod`.
 
 ## License
 

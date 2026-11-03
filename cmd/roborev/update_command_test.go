@@ -20,6 +20,7 @@ import (
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/update"
+	"go.kenn.io/roborev/internal/version"
 )
 
 func stubUpdateCommand(t *testing.T) *update.UpdateInfo {
@@ -62,8 +63,8 @@ func stubUpdateCommand(t *testing.T) *update.UpdateInfo {
 		reporter.Progress(got.Size, got.Size)
 		return nil
 	}
-	repairHooksForUpdateCommand = func(string, repairHookRunner) error { return nil }
-	updateSkillsForUpdateCommand = func(string) error { return nil }
+	repairHooksForUpdateCommand = func(context.Context, string, repairHookRunner) error { return nil }
+	updateSkillsForUpdateCommand = func(context.Context, string) error { return nil }
 	installedSkillsForUpdateCommand = func() bool { return true }
 	waitLegacyDaemonExitForCommand = func(context.Context, int) error { return nil }
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return nil, nil }
@@ -309,13 +310,13 @@ func TestUpdateCommandCancelDuringHookRepairSuppressesSuccess(t *testing.T) {
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		return nil, errors.New("not running")
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	repairHooksForUpdateCommand = func(string, repairHookRunner) error {
+	ctx, cancel := context.WithCancel(t.Context())
+	repairHooksForUpdateCommand = func(context.Context, string, repairHookRunner) error {
 		cancel()
 		return nil
 	}
 	var skillCalls atomic.Int32
-	updateSkillsForUpdateCommand = func(string) error {
+	updateSkillsForUpdateCommand = func(context.Context, string) error {
 		skillCalls.Add(1)
 		return nil
 	}
@@ -364,7 +365,7 @@ func TestUpdateCommandCancelAfterInstallReleasesLease(t *testing.T) {
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		return &daemon.RuntimeInfo{PID: 42, Network: endpoint.Network, Address: endpoint.Address}, nil
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	performUpdateForCommand = func(context.Context, *update.UpdateInfo, update.Reporter) error {
 		cancel()
 		return nil
@@ -393,7 +394,7 @@ func TestUpdateCommandCancelAfterShutdownReportsFinishingState(t *testing.T) {
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		return &daemon.RuntimeInfo{PID: 42, Network: endpoint.Network, Address: endpoint.Address}, nil
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	restartUpdatedDaemonForCommand = func(
 		context.Context, string, string, *daemon.RuntimeInfo,
 	) error {
@@ -517,6 +518,111 @@ func TestUpdateCheckReturnsBeforeDaemonDiscovery(t *testing.T) {
 
 	require.NoError(t, cmd.Execute())
 	assert.Equal(t, int32(0), discoverCalls.Load())
+}
+
+func stubDistribution(t *testing.T, distribution string) {
+	t.Helper()
+	original := version.Distribution
+	version.Distribution = distribution
+	t.Cleanup(func() { version.Distribution = original })
+}
+
+func TestUpdateCommandRefusesPackageManagedBuild(t *testing.T) {
+	for _, args := range [][]string{{"--yes"}, {"--yes", "--force"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			stubUpdateCommand(t)
+			stubDistribution(t, "homebrew")
+			var checks, installs atomic.Int32
+			checkForUpdateForCommand = func(bool) (*update.UpdateInfo, error) {
+				checks.Add(1)
+				return nil, errors.New("unexpected update check")
+			}
+			performUpdateForCommand = func(context.Context, *update.UpdateInfo, update.Reporter) error {
+				installs.Add(1)
+				return errors.New("unexpected install")
+			}
+			var out bytes.Buffer
+			cmd := updateCmd()
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SetArgs(args)
+
+			err := cmd.Execute()
+			require.EqualError(t, err, "self-update is disabled in this build: Homebrew manages this installation; use 'brew upgrade roborev' to update")
+			assert.Equal(t, int32(0), checks.Load())
+			assert.Equal(t, int32(0), installs.Load())
+		})
+	}
+}
+
+func TestUpdateCheckInPackageManagedBuildPointsToPackageManager(t *testing.T) {
+	stubUpdateCommand(t)
+	stubDistribution(t, "homebrew")
+	var installs atomic.Int32
+	performUpdateForCommand = func(context.Context, *update.UpdateInfo, update.Reporter) error {
+		installs.Add(1)
+		return errors.New("unexpected install")
+	}
+	var out bytes.Buffer
+	cmd := updateCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--check"})
+
+	require.NoError(t, cmd.Execute())
+	assert.Equal(t, int32(0), installs.Load())
+	assert.Contains(t, out.String(), "Version  v1.0.0 -> v1.1.0")
+	assert.Contains(t, out.String(), "use 'brew upgrade roborev' to update")
+	assert.NotContains(t, out.String(), "--force")
+}
+
+// Official direct downloads ("kenn") update themselves, like builds with no
+// Distribution.
+func TestUpdateCommandInstallsSelfUpdatingBuild(t *testing.T) {
+	for _, distribution := range []string{"", "kenn"} {
+		t.Run("distribution="+distribution, func(t *testing.T) {
+			info := stubUpdateCommand(t)
+			stubDistribution(t, distribution)
+			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+				return nil, errors.New("not running")
+			}
+			var installs atomic.Int32
+			performUpdateForCommand = func(_ context.Context, got *update.UpdateInfo, reporter update.Reporter) error {
+				installs.Add(1)
+				reporter.Progress(got.Size, got.Size)
+				return nil
+			}
+			var out bytes.Buffer
+			cmd := updateCmd()
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SetArgs([]string{"--yes"})
+
+			require.NoError(t, cmd.Execute())
+			assert.Equal(t, int32(1), installs.Load())
+			assert.Contains(t, out.String(), "Updated roborev to "+info.LatestVersion)
+		})
+	}
+}
+
+func TestUpdateCheckInSelfUpdatingBuildShowsNoPackageGuidance(t *testing.T) {
+	for _, distribution := range []string{"", "kenn"} {
+		t.Run("distribution="+distribution, func(t *testing.T) {
+			stubUpdateCommand(t)
+			stubDistribution(t, distribution)
+			var out bytes.Buffer
+			cmd := updateCmd()
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SetArgs([]string{"--check"})
+
+			require.NoError(t, cmd.Execute())
+			assert.Contains(t, out.String(), "Version  v1.0.0 -> v1.1.0")
+			assert.Contains(t, out.String(), "Install  ")
+			assert.NotContains(t, out.String(), "brew")
+			assert.NotContains(t, out.String(), "manages this installation")
+		})
+	}
 }
 
 func updateDaemonHandler(

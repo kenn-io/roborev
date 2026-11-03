@@ -15,9 +15,10 @@ import (
 
 func acpScriptsDir(t *testing.T) string {
 	t.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	require.True(t, ok, "failed to resolve test file path")
-	return filepath.Join(filepath.Dir(file), "..", "..", "scripts")
+	// go test runs from this package's directory.
+	dir, err := filepath.Abs(filepath.Join("..", "..", "scripts"))
+	require.NoError(t, err, "failed to resolve scripts directory")
+	return dir
 }
 
 func writeACPTestCommand(t *testing.T, dir, name, script string) {
@@ -30,7 +31,7 @@ func writeACPTestCommand(t *testing.T, dir, name, script string) {
 func runACPWrapperCommand(t *testing.T, commandPath string, env map[string]string, args ...string) (string, string, error) {
 	t.Helper()
 
-	cmd := exec.Command(commandPath, args...)
+	cmd := exec.CommandContext(t.Context(), commandPath, args...)
 	pathValue := os.Getenv("PATH")
 	if customPath, ok := env["PATH"]; ok {
 		pathValue = customPath

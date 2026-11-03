@@ -522,6 +522,7 @@ func TestSetConfigKey(t *testing.T) {
 		{"Integer", "max_workers", "8", int64(8)},
 		{"Boolean", "sync.enabled", "true", true},
 		{"NestedBoolean", "advanced.tasks_enabled", "true", true},
+		{"CIBoolean", "ci.allow_codeowners", "true", true},
 	}
 
 	for _, tt := range tests {
@@ -538,6 +539,25 @@ func TestSetConfigKey(t *testing.T) {
 		assertConfigValue(t, path, "sync.enabled", true)
 		assertConfigValue(t, path, "advanced.tasks_enabled", true)
 	})
+}
+
+func TestSetConfigKeyLocalReviewContextCount(t *testing.T) {
+	assert := assert.New(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".roborev.toml")
+
+	require.NoError(t, setConfigKey(path, "review_context_count", "0", false))
+	repoCfg, err := config.LoadRepoConfig(dir)
+	require.NoError(t, err)
+	require.NotNil(t, repoCfg.ReviewContextCount)
+	assert.Equal(0, *repoCfg.ReviewContextCount)
+	assert.Equal(0, config.ResolveReviewContextCount(repoCfg, config.DefaultConfig()))
+
+	got, err := config.GetConfigValue(repoCfg, "review_context_count")
+	require.NoError(t, err)
+	assert.Equal("0", got)
+
+	assert.Error(setConfigKey(path, "review_context_count", "many", false))
 }
 
 func TestSetConfigKeyNestedCreation(t *testing.T) {
@@ -638,14 +658,26 @@ func TestSetConfigKeyFixGuidelinesIsGlobalOnly(t *testing.T) {
 }
 
 func TestSetConfigKeySlice(t *testing.T) {
-	path := setupConfigFile(t)
+	for _, tt := range []struct {
+		key   string
+		value string
+		want  []any
+	}{
+		{key: "ci.repos", value: "org/repo1,org/repo2", want: []any{"org/repo1", "org/repo2"}},
+		{key: "ci.allowed_authors", value: "alice,dependabot[bot]", want: []any{"alice", "dependabot[bot]"}},
+		{key: "ci.allowed_author_associations", value: "OWNER,MEMBER", want: []any{"OWNER", "MEMBER"}},
+		{key: "ci.include_branches", value: "feature/*,fix/*", want: []any{"feature/*", "fix/*"}},
+		{key: "ci.exclude_branches", value: "dependabot/*,renovate/*", want: []any{"dependabot/*", "renovate/*"}},
+	} {
+		t.Run(tt.key, func(t *testing.T) {
+			path := setupConfigFile(t)
 
-	require.NoError(t, setConfigKey(path, "ci.repos", "org/repo1,org/repo2", true), "setConfigKey slice")
+			require.NoError(t, setConfigKey(path, tt.key, tt.value, true), "setConfigKey slice")
 
-	raw := readTOML(t, path)
-	repos, ok := getNestedValue(t, raw, "ci.repos").([]any)
-	require.True(t, ok, "ci.repos is not a slice: %v (%T)", getNestedValue(t, raw, "ci.repos"), getNestedValue(t, raw, "ci.repos"))
-	require.Len(t, repos, 2)
+			raw := readTOML(t, path)
+			assert.Equal(t, tt.want, getNestedValue(t, raw, tt.key))
+		})
+	}
 }
 
 func TestSetConfigKeySliceEmpty(t *testing.T) {

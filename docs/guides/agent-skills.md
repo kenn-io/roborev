@@ -7,7 +7,7 @@ Install slash commands that let AI agents request reviews and fix findings
 directly:
 
 ```bash
-roborev skills install
+roborev agent skills install
 ```
 
 Bundled skills support Claude Code, Codex, Factory Droid, Grok Build, Copilot,
@@ -15,7 +15,7 @@ Cursor, Gemini, Hermes, Qwen, and ZCode. Each agent uses its user configuration
 `skills/` directory, such as `~/.gemini/skills/`. Hermes honors `HERMES_HOME`.
 
 To use MCP for review data, comments, closing reviews, snoozing, and hook fix
-completion, install with `roborev skills install --mcp` and configure the
+completion, install with `roborev agent skills install --mcp` and configure the
 connection with `roborev mcp install`. Updates preserve the selected mode;
 `--mcp=false` selects CLI instructions again. Review creation still uses the
 CLI. See [MCP setup](../integrations/mcp.md) for both transports and combined
@@ -26,22 +26,22 @@ for agents such as Pi that load skills from a directory roborev does not
 auto-detect:
 
 ```bash
-roborev skills install --path ~/.pi/agent/skills/
+roborev agent skills install --path ~/.pi/agent/skills/
 ```
 
 Custom-path installs use the Claude-compatible skill variant by default. Select
 a different bundled variant with `--agent`:
 
 ```bash
-roborev skills install --path /custom/skills --agent codex
-roborev skills install --path /custom/skills --agent droid
+roborev agent skills install --path /custom/skills --agent codex
+roborev agent skills install --path /custom/skills --agent droid
 ```
 
 The supplied path is the directory that directly contains the individual skill
 directories; it is not an agent configuration root. Your shell expands `~`
 before roborev receives the path. Custom destinations are not tracked by
-`roborev skills` or refreshed by `roborev update`; rerun the same
-`roborev skills install --path ...` command to update them.
+`roborev agent skills` or refreshed by `roborev update`; rerun the same
+`roborev agent skills install --path ...` command to update them.
 
 !!! tip "Prefer the async workflow for day-to-day reviews"
 
@@ -70,6 +70,7 @@ before roborev receives the path. Custom destinations are not tracked by
 | `/roborev-respond <job_id> [message]` | Add a response to document changes |
 | `/roborev-superpowers <feature or existing spec/plan>` | Carry a feature through specification, planning, implementation, review, and verification with Superpowers and Kata |
 | `/roborev-snooze [on\|off] [duration]` | Silence or resume Agent Hook reminders for the current worktree and branch |
+| `/roborev-setup-review [what the review is for]` | Interview you about a specialized review, then write its rubrics and configuration |
 
 ## Usage
 
@@ -97,20 +98,20 @@ before roborev receives the path. Custom destinations are not tracked by
     its own. Invoke a skill by typing its slash command (`/roborev-review-branch`)
     or picking it from the `/` menu. Plugin-managed skills use the plugin namespace:
     `/roborev:roborev-review-branch`. The one exception is `/roborev-fix`, which
-    stays model-invocable so [`roborev agent-hook`](../agent-hook.md) can instruct a
+    stays model-invocable so [`roborev agent hook`](../agent-hook.md) can instruct a
     session to run it; its description still permits only explicit invocation.
 
     **Codex** explicit invocation has three supported forms:
 
-    - For skills installed by `roborev skills install`, replace the leading `/` in
-        the examples below with `$`: `$roborev-review-branch`.
+    - For skills installed by `roborev agent skills install`, replace the leading
+        `/` in the examples below with `$`: `$roborev-review-branch`.
     - For plugin-managed skills, qualify the same skill with the plugin namespace:
         `$roborev:roborev-review-branch`.
     - Select the roborev skill directly in Codex's structured skill picker.
 
     The namespace distinguishes plugin-contributed skills from personal skills that
     may have the same name. `roborev-fix` is the one model-invocable Codex exception
-    so [`roborev agent-hook`](../agent-hook.md) can start the fix workflow it names;
+    so [`roborev agent hook`](../agent-hook.md) can start the fix workflow it names;
     every other bundled Codex skill is implicit-disabled. The fix skill's
     description still requires explicit roborev invocation. See the
     [syntax table](#agent-specific-syntax) for more examples.
@@ -128,6 +129,28 @@ resume existing documents and tasks. Superpowers and Kata must be available;
 goal reviews also need a configured Pi reviewer or Claude Code with an Anthropic
 API key or proxy model. See
 [setup and workflow](/docs/integrations/goal-review/).
+
+### Set up a custom review
+
+Use `/roborev-setup-review` (`$roborev-setup-review` in Codex) from any agent
+with roborev skills installed when a repository needs its own review, such as
+fact and quotation checks for legal drafts:
+
+```text
+/roborev-setup-review
+/roborev-setup-review check our brief drafts against the exhibits
+```
+
+The agent asks one question at a time about what reviewers should catch, what
+they compare against, and what should fail. It plays each part back, then
+proposes the complete [custom review types](../advanced/custom-review-types.md),
+rubrics, panel, and post-commit batching. It writes nothing until you approve.
+After approval it validates the configuration, and with your consent runs one
+trial review to tune the rubrics. Custom review types need an agent with
+structured output: Codex, Claude Code, Pi, or Grok. Unless a type names its own
+agent, it uses the repository's `agent` or the global `default_agent`, not
+`review_agent`, so the skill checks which agent each reviewer gets and asks
+before changing it.
 
 ### Review a commit
 
@@ -228,8 +251,9 @@ instruction:
 /roborev-snooze off
 ```
 
-The skill maps a custom duration to `roborev snooze on --duration <duration>`.
-It never pauses queue processing or disables post-commit review enqueueing.
+The skill maps a custom duration to
+`roborev agent hook snooze on --duration <duration>`. It never pauses queue
+processing or disables post-commit review enqueueing.
 
 ### Fix all open reviews at once
 
@@ -304,11 +328,11 @@ which can produce better results than the CLI's isolated worktree approach.
 
 | Agent | Syntax |
 |-------|--------|
-| Claude Code, personal install | `/roborev-review`, `/roborev-review-branch`, `/roborev-design-review`, `/roborev-design-review-branch`, `/roborev-lookahead-review`, `/roborev-lookahead-review-branch`, `/roborev-fix`, `/roborev-refine`, `/roborev-respond`, `/roborev-snooze` |
-| Claude Code, plugin install | `/roborev:roborev-review`, `/roborev:roborev-review-branch`, `/roborev:roborev-design-review`, `/roborev:roborev-design-review-branch`, `/roborev:roborev-lookahead-review`, `/roborev:roborev-lookahead-review-branch`, `/roborev:roborev-fix`, `/roborev:roborev-refine`, `/roborev:roborev-respond`, `/roborev:roborev-snooze` |
-| Factory Droid | `/roborev-review`, `/roborev-review-branch`, `/roborev-design-review`, `/roborev-design-review-branch`, `/roborev-lookahead-review`, `/roborev-lookahead-review-branch`, `/roborev-fix`, `/roborev-refine`, `/roborev-respond`, `/roborev-snooze` |
-| Codex, personal install | `$roborev-review`, `$roborev-review-branch`, `$roborev-design-review`, `$roborev-design-review-branch`, `$roborev-lookahead-review`, `$roborev-lookahead-review-branch`, `$roborev-fix`, `$roborev-refine`, `$roborev-respond`, `$roborev-snooze` |
-| Codex, plugin install | `$roborev:roborev-review`, `$roborev:roborev-review-branch`, `$roborev:roborev-design-review`, `$roborev:roborev-design-review-branch`, `$roborev:roborev-lookahead-review`, `$roborev:roborev-lookahead-review-branch`, `$roborev:roborev-fix`, `$roborev:roborev-refine`, `$roborev:roborev-respond`, `$roborev:roborev-snooze` |
+| Claude Code, personal install | `/roborev-review`, `/roborev-review-branch`, `/roborev-design-review`, `/roborev-design-review-branch`, `/roborev-lookahead-review`, `/roborev-lookahead-review-branch`, `/roborev-fix`, `/roborev-refine`, `/roborev-respond`, `/roborev-snooze`, `/roborev-setup-review` |
+| Claude Code, plugin install | `/roborev:roborev-review`, `/roborev:roborev-review-branch`, `/roborev:roborev-design-review`, `/roborev:roborev-design-review-branch`, `/roborev:roborev-lookahead-review`, `/roborev:roborev-lookahead-review-branch`, `/roborev:roborev-fix`, `/roborev:roborev-refine`, `/roborev:roborev-respond`, `/roborev:roborev-snooze`, `/roborev:roborev-setup-review` |
+| Factory Droid | `/roborev-review`, `/roborev-review-branch`, `/roborev-design-review`, `/roborev-design-review-branch`, `/roborev-lookahead-review`, `/roborev-lookahead-review-branch`, `/roborev-fix`, `/roborev-refine`, `/roborev-respond`, `/roborev-snooze`, `/roborev-setup-review` |
+| Codex, personal install | `$roborev-review`, `$roborev-review-branch`, `$roborev-design-review`, `$roborev-design-review-branch`, `$roborev-lookahead-review`, `$roborev-lookahead-review-branch`, `$roborev-fix`, `$roborev-refine`, `$roborev-respond`, `$roborev-snooze`, `$roborev-setup-review` |
+| Codex, plugin install | `$roborev:roborev-review`, `$roborev:roborev-review-branch`, `$roborev:roborev-design-review`, `$roborev:roborev-design-review-branch`, `$roborev:roborev-lookahead-review`, `$roborev:roborev-lookahead-review-branch`, `$roborev:roborev-fix`, `$roborev:roborev-refine`, `$roborev:roborev-respond`, `$roborev:roborev-snooze`, `$roborev:roborev-setup-review` |
 
 Codex can also invoke either installation by selecting the skill in its
 structured skill picker. Skill descriptions intentionally state only the
@@ -324,7 +348,7 @@ or `/` menu loads it.
 See which skills are installed and whether any need updating:
 
 ```bash
-roborev skills
+roborev agent skills
 ```
 
 The output shows each skill with per-agent status. Skills are checked for both
@@ -371,11 +395,11 @@ The same resolved directories are used when installing, updating, and checking
 skill status. Agent-hook config discovery is supplied by kit and honors each
 harness's home variable, including `CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
 `COPILOT_HOME`, `GEMINI_CLI_HOME`, `HERMES_HOME`, and `QWEN_HOME`. Custom paths
-supplied with `roborev skills install --path` are direct, user-managed
+supplied with `roborev agent skills install --path` are direct, user-managed
 destinations and are not included in skill status or update operations.
 
 The review skills use `--wait` internally so the agent can present results
-inline. The fix skills call `roborev show --job <id> --json` to fetch review
+inline. The fix skills call `roborev job show --job <id> --json` to fetch review
 data, then parse and present findings to the agent in a structured format. All
 reviews (whether requested via skills or the post-commit hook) appear in the TUI
 queue.
@@ -390,10 +414,10 @@ point at the same skill trees:
 - `.codex-plugin/plugin.json` for the Codex plugin system.
 
 These let you install roborev skills through each agent's native plugin channel
-as an alternative to `roborev skills install`. The skill content is identical;
-the difference is who manages updates: `roborev skills install` is updated when
-you run `roborev update`, while plugin-managed installs follow each agent's
-plugin lifecycle.
+as an alternative to `roborev agent skills install`. The skill content is
+identical; the difference is who manages updates: `roborev agent skills install`
+is updated when you run `roborev update`, while plugin-managed installs follow
+each agent's plugin lifecycle.
 
 Codex namespaces skills supplied by plugins to avoid collisions with personal
 skills. Invoke a plugin-managed skill as `$roborev:roborev-<workflow>` (for
@@ -406,7 +430,7 @@ every other Codex skill sets `allow_implicit_invocation: false`.
 
 Claude Code likewise namespaces plugin-managed skills: invoke them as
 `/roborev:roborev-<workflow>` (for example, `/roborev:roborev-fix`). Personal
-skills installed by `roborev skills install` keep the plain
+skills installed by `roborev agent skills install` keep the plain
 `/roborev-<workflow>` form. Either way, the bundled
 `disable-model-invocation: true` policy means only you can invoke them; Claude
 never selects a roborev skill for an ordinary request. `roborev-fix` alone omits
@@ -416,16 +440,17 @@ relies on its explicit-only description instead.
 ## Waiting for Hook-Triggered Reviews
 
 When a post-commit hook already enqueues reviews, agents don't need
-`roborev review --wait` (which would create a duplicate job). Use `roborev wait`
-instead:
+`roborev review --wait` (which would create a duplicate job). Use
+`roborev job wait` instead:
 
 ```bash
 git commit -m "Fix auth validation"   # Hook triggers review
-roborev wait --quiet                  # Block until verdict (exit 0=pass, 1=fail)
+roborev job wait --quiet                  # Block until verdict (exit 0=pass, 1=fail)
 ```
 
-This is more token-efficient than polling `roborev list` or `roborev show`
-because the agent makes a single blocking call and reads the exit code. See
+This is more token-efficient than polling `roborev job list` or
+`roborev job show` because the agent makes a single blocking call and reads the
+exit code. See
 [Waiting for a Review Without Enqueuing](/docs/guides/reviewing-code/#waiting-for-a-review-without-enqueuing)
 for the full flag reference.
 

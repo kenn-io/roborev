@@ -434,7 +434,7 @@ func TestWorkerPlanUsageCaptureSkipsRequeuedAttempt(t *testing.T) {
 		return &tokens.Usage{HasCost: true, CostUSD: 0.42}, nil
 	}
 	worker.Pool.capturePlanTokenUsageForTerminalAttempt(
-		context.Background(), testWorkerID, job, []planTokenPhase{
+		t.Context(), testWorkerID, job, []planTokenPhase{
 			{invoked: true, sessionID: "planner-session", logUsage: &tokens.Usage{InputTokens: 100}},
 			{invoked: true, implementation: true, sessionID: "implementation-session", logUsage: &tokens.Usage{InputTokens: 200}},
 		},

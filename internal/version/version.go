@@ -21,6 +21,12 @@ var readBuildInfo = debug.ReadBuildInfo
 // For dev builds with git describe version, use: make install
 var Version = defaultVersion
 
+// Distribution names the channel that delivered this binary. Package builds
+// set it via -ldflags to their package manager, such as "homebrew", and do
+// not replace themselves. Official direct downloads use "kenn" and, like an
+// empty value for source builds, may replace themselves.
+var Distribution string
+
 func init() {
 	// If Version was set via ldflags, use it
 	if Version != defaultVersion {

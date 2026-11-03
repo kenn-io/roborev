@@ -27,6 +27,8 @@ type SubagentSpec struct {
 	// agent or model without letting it influence the authoritative result.
 	NonVoting bool   `toml:"non_voting"`
 	Timeout   string `toml:"timeout"`
+	// Tools, when set, replaces the review type's tool policy as a whole.
+	Tools *ReviewToolPolicy `toml:"tools"`
 }
 
 // PanelSpec is a named set of subagent members plus an optional synthesis
@@ -42,6 +44,10 @@ type PanelSpec struct {
 	SynthesisReasoning   string   `toml:"synthesis_reasoning"`
 	SynthesisBackupAgent string   `toml:"synthesis_backup_agent"`
 	SynthesisBackupModel string   `toml:"synthesis_backup_model"`
+	// SynthesisInstructions extends the synthesis prompt. When set, the
+	// synthesis agent may read the repository with its read-only tools to
+	// follow them; when empty, synthesis only merges the member reviews.
+	SynthesisInstructions string `toml:"synthesis_instructions"`
 }
 
 // ReviewConfig holds the [review] table: panel selection defaults plus the
@@ -135,6 +141,9 @@ func (rc ReviewConfig) Validate() error {
 		if err := validateSubagentTimeout(spec.Timeout); err != nil {
 			errs = append(errs, fmt.Errorf("subagent %q: %w", name, err))
 		}
+		if _, err := CanonicalReviewToolPolicy(spec.Tools); err != nil {
+			errs = append(errs, fmt.Errorf("subagent %q: %w", name, err))
+		}
 	}
 	for _, name := range slices.Sorted(maps.Keys(rc.Panels)) {
 		panel := rc.Panels[name]
@@ -218,6 +227,7 @@ func SelectPanelName(requested, source string, merged ReviewConfig) string {
 // ResolvedMember is a fully-resolved panel member. It is the value serialized
 // into the review_jobs.panel_member_config_json column for reproducibility.
 type ResolvedMember struct {
+	ReviewSettings
 	Name          string `json:"name"`
 	Index         int    `json:"index"`
 	Agent         string `json:"agent"`
@@ -237,13 +247,15 @@ type ResolvedMember struct {
 
 // SynthesisSpec is the resolved agent/model/reasoning for a panel's synthesis
 // job. BackupAgent/BackupModel are the explicit synthesis failover backup,
-// passed through verbatim from the panel spec (no resolution or fallback).
+// passed through verbatim from the panel spec (no resolution or fallback), as
+// are the panel's synthesis Instructions.
 type SynthesisSpec struct {
-	Agent       string `json:"agent"`
-	Model       string `json:"model"`
-	Reasoning   string `json:"reasoning"`
-	BackupAgent string `json:"backup_agent"`
-	BackupModel string `json:"backup_model"`
+	Agent        string `json:"agent"`
+	Model        string `json:"model"`
+	Reasoning    string `json:"reasoning"`
+	BackupAgent  string `json:"backup_agent"`
+	BackupModel  string `json:"backup_model"`
+	Instructions string `json:"instructions,omitempty"`
 }
 
 // ResolvePanel resolves a named panel into ordered members and a synthesis
@@ -401,6 +413,10 @@ func resolveMemberFromConfig(
 	if err := validateSubagentTimeout(spec.Timeout); err != nil {
 		return ResolvedMember{}, fmt.Errorf("subagent %q: %w", name, err)
 	}
+	settings, err := ResolveReviewSettings(reviewType, spec.Tools, repoCfg, globalCfg)
+	if err != nil {
+		return ResolvedMember{}, fmt.Errorf("subagent %q: %w", name, err)
+	}
 	workflow := WorkflowForReviewType(reviewType)
 	agent := spec.Agent
 	if agent == "" {
@@ -422,19 +438,20 @@ func resolveMemberFromConfig(
 		modelExplicit = true
 	}
 	return ResolvedMember{
-		Name:          name,
-		Index:         index,
-		Agent:         agent,
-		AgentExplicit: strings.TrimSpace(spec.Agent) != "",
-		Model:         model,
-		ModelExplicit: modelExplicit,
-		Provider:      spec.Provider,
-		Reasoning:     reasoning,
-		ReviewType:    reviewType,
-		Instructions:  spec.Instructions,
-		AllowFailure:  spec.AllowFailure,
-		NonVoting:     spec.NonVoting,
-		Timeout:       spec.Timeout,
+		ReviewSettings: settings,
+		Name:           name,
+		Index:          index,
+		Agent:          agent,
+		AgentExplicit:  strings.TrimSpace(spec.Agent) != "",
+		Model:          model,
+		ModelExplicit:  modelExplicit,
+		Provider:       spec.Provider,
+		Reasoning:      reasoning,
+		ReviewType:     reviewType,
+		Instructions:   spec.Instructions,
+		AllowFailure:   spec.AllowFailure,
+		NonVoting:      spec.NonVoting,
+		Timeout:        spec.Timeout,
 	}, nil
 }
 
@@ -502,8 +519,9 @@ func resolveSynthesisFromConfig(
 	}
 	return SynthesisSpec{
 		Agent: agent, Model: model, Reasoning: reasoning,
-		BackupAgent: panel.SynthesisBackupAgent,
-		BackupModel: panel.SynthesisBackupModel,
+		BackupAgent:  panel.SynthesisBackupAgent,
+		BackupModel:  panel.SynthesisBackupModel,
+		Instructions: strings.TrimSpace(panel.SynthesisInstructions),
 	}, nil
 }
 

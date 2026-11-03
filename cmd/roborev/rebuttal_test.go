@@ -18,6 +18,7 @@ import (
 )
 
 func TestCommentRebuttalRecordsBeforeClose(t *testing.T) {
+	setupFastPolling(t)
 	for _, tc := range []struct {
 		name                       string
 		valid, staleOriginalReview bool

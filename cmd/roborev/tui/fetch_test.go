@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/version"
 )
 
 func TestListJobsParamsRepeatedRepo(t *testing.T) {
@@ -128,5 +129,21 @@ func TestListFetchesRequestMetadataOnlyRows(t *testing.T) {
 		require.Contains(t, queries, key, "%s fetch should have hit /api/jobs", key)
 		assert.Equal("true", queries[key].Get("omit_prompt"),
 			"%s fetch must request metadata-only rows", key)
+	}
+}
+
+//nolint:paralleltest // sets the package-level version.Distribution
+func TestCheckForUpdateOnlyForSelfUpdatingBuilds(t *testing.T) {
+	original := version.Distribution
+	t.Cleanup(func() { version.Distribution = original })
+
+	version.Distribution = "homebrew"
+	assert.Nil(t, model{}.checkForUpdate(), "package-managed builds skip the update check")
+
+	// Official direct downloads ("kenn") update themselves, so they keep
+	// the update check and notification.
+	for _, distribution := range []string{"", "kenn"} {
+		version.Distribution = distribution
+		assert.NotNil(t, model{}.checkForUpdate(), "distribution %q", distribution)
 	}
 }

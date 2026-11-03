@@ -3,6 +3,8 @@
 package generated
 
 import (
+	"uuid"
+
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 )
 
@@ -204,7 +206,7 @@ type ListJobsQuery struct {
 	HideClassifyJobs *ListJobsQueryHideClassifyJobs `json:"hide_classify_jobs,omitempty"`
 
 	// PanelRun Return all jobs (members + synthesis) of one panel run
-	PanelRun *string `json:"panel_run,omitempty"`
+	PanelRun *uuid.UUID `json:"panel_run,omitempty"`
 
 	// IncludePanelMembers Include individual panel member jobs alongside panel synthesis jobs
 	IncludePanelMembers *ListJobsQueryIncludePanelMembers `json:"include_panel_members,omitempty"`
@@ -227,8 +229,14 @@ type ListJobsQuery struct {
 	// Before Deprecated numeric job cursor retained for compatibility
 	Before *int64 `json:"before,omitempty"`
 
-	// Cursor Opaque next_cursor from a previous page; resumes after its immutable enqueue-time position
+	// Cursor Opaque next_cursor from a previous page with the same sort; resumes after its last job
 	Cursor *string `json:"cursor,omitempty"`
+
+	// Sort Order by id, repo, agent, review_type, status, verdict, closed, elapsed, cost, or enqueued_at (default); ties break by id
+	Sort *string `json:"sort,omitempty"`
+
+	// Direction Sort direction: asc or desc (default)
+	Direction *string `json:"direction,omitempty"`
 }
 
 func (l ListJobsQuery) Validate() error {
@@ -258,6 +266,13 @@ func (l ListJobsQuery) Validate() error {
 		if v, ok := any(l.HideClassifyJobs).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append("HideClassifyJobs", err)
+			}
+		}
+	}
+	if l.PanelRun != nil {
+		if v, ok := any(l.PanelRun).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PanelRun", err)
 			}
 		}
 	}

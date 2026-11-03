@@ -64,18 +64,18 @@ func TestSynthesisReadsCompleteReviewsFromFiles(t *testing.T) {
 					require.Len(t, files, 1)
 					content, err := os.ReadFile(files[0])
 					require.NoError(t, err)
-					assert.Equal(t, BuildSynthesisPrompt(reviews, ""), string(content))
+					assert.Equal(t, BuildSynthesisPrompt(reviews, false, ""), string(content))
 
 					if fail {
 						return "", errors.New("agent failed")
 					}
-					return `{"schema_version":2,"summary":"combined","verdict":"fail","findings":[{"severity":"medium","problem":"finding at end two","fix":"fix","location":null,"sources":[2]}]}`, nil
+					return `{"schema_version":3,"summary":"combined","verdict":"fail","findings":[{"severity":"medium","kind":"defect","confidence":0.8,"problem":"finding at end two","fix":"fix","file":null,"start_line":null,"end_line":null,"sources":[2]}]}`, nil
 				}
 				var selected agent.Agent = a
 				if schema {
 					selected = &fileSchemaSynthesisAgent{a}
 				}
-				doc, err := RunSynthesisAgent(context.Background(), selected, reviews, BuildSynthesisPrompt(reviews, ""), "", nil, SynthesisHooks{
+				doc, err := RunSynthesisAgent(t.Context(), selected, reviews, BuildSynthesisPrompt(reviews, false, ""), "", nil, SynthesisHooks{
 					ConfigRepoPath: repo,
 					GlobalConfig:   &config.Config{DefaultMaxPromptSize: 4096},
 					Checkout:       func() (SynthesisCheckout, error) { return SynthesisCheckout{RepoPath: repo}, nil },
@@ -112,7 +112,7 @@ func TestSynthesisUsesConfigPathResolvedWithCheckout(t *testing.T) {
 		0o600,
 	))
 	reviews := []ReviewResult{{Status: ResultDone, Output: strings.Repeat("finding ", 100)}}
-	fullPrompt := BuildSynthesisPrompt(reviews, "")
+	fullPrompt := BuildSynthesisPrompt(reviews, false, "")
 	a := &fileSynthesisAgent{}
 	a.self = a
 	a.read = func(gotRepo, prompt string) (string, error) {
@@ -124,10 +124,10 @@ func TestSynthesisUsesConfigPathResolvedWithCheckout(t *testing.T) {
 		content, err := os.ReadFile(files[0])
 		require.NoError(t, err)
 		assert.Equal(t, fullPrompt, string(content))
-		return `{"schema_version":2,"summary":"combined","verdict":"pass","findings":[]}`, nil
+		return `{"schema_version":3,"summary":"combined","verdict":"pass","findings":[]}`, nil
 	}
 
-	_, err := RunSynthesisAgent(context.Background(), a, reviews, fullPrompt, "", nil, SynthesisHooks{
+	_, err := RunSynthesisAgent(t.Context(), a, reviews, fullPrompt, "", nil, SynthesisHooks{
 		ConfigRepoPath: caller,
 		GlobalConfig:   &config.Config{DefaultMaxPromptSize: 4096},
 		Checkout: func() (SynthesisCheckout, error) {

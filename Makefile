@@ -1,7 +1,15 @@
 # Makefile for roborev development builds
 
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
-LDFLAGS := -X go.kenn.io/roborev/internal/version.Version=$(VERSION)
+# Public PostHog ingest key. Builds without it send no telemetry.
+POSTHOG_PROJECT_KEY ?= phc_AzHd9YvuHR7M5poKzC6eW654d3SgKyBdoQPuwkWhimUf
+# Channel that delivered the binary, for update policy and telemetry.
+# Empty or kenn builds update themselves. A package manager name, such as
+# homebrew, makes the build refuse to update itself.
+DISTRIBUTION ?=
+BINDIR ?= bin
+# Recursive so a target can set DISTRIBUTION for its own build.
+LDFLAGS = -X go.kenn.io/roborev/internal/version.Version=$(VERSION) -X go.kenn.io/kit/telemetry/posthog.projectKey=$(POSTHOG_PROJECT_KEY) -X go.kenn.io/roborev/internal/version.Distribution=$(DISTRIBUTION) -X go.kenn.io/kit/telemetry/posthog.distribution=$(DISTRIBUTION)
 ACP_TEST_COMMAND ?= $(abspath scripts/acp-agent)
 ACP_TEST_ADAPTER ?= codex
 ACP_TEST_ARGS ?=
@@ -25,12 +33,33 @@ GOLANGCI_LINT_VERSION := $(shell sed -n 's/^version: v//p' .custom-gcl.yml)
 # (golangci-lint #3502). A per-checkout cache dies with its checkout.
 export GOLANGCI_LINT_CACHE := $(CURDIR)/.golangci-lint-cache
 
-.PHONY: build web-build web-dev web-test-e2e web-assets-check web-embed web-restore web-release-check release-snapshot-check install clean test test-git-isolation test-codex-skill-eval test-integration test-acp-integration test-acp-integration-codex test-acp-integration-claude test-postgres test-all postgres-up postgres-down test-postgres-ci api-generate api-check api-breaking lint lint-ci markdown markdown-ci check-golangci-lint print-golangci-lint-version check-actions check-renovate-config install-hooks docs-install docs-build docs-serve docs-preview docs-check docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy
+# Compile without absolute source paths so every checkout and worktree shares
+# one Go build cache instead of each compiling its own copy of every package.
+# Read `go env` first so flags saved with `go env -w GOFLAGS=...` survive the
+# export. GOFLAGS=-trimpath=false opts out. Debuggers need a source mapping:
+# docs/development.md#shared-build-cache-and-debugging.
+ifeq ($(origin GOFLAGS),undefined)
+GOFLAGS := $(shell go env GOFLAGS)
+endif
+ifeq ($(filter -trimpath -trimpath=%,$(GOFLAGS)),)
+override GOFLAGS += -trimpath
+endif
+export GOFLAGS
+
+.PHONY: build homebrew web-build web-dev web-test-e2e web-assets-check web-embed web-restore web-release-check release-snapshot-check install clean test test-git-isolation test-codex-skill-eval test-integration test-sandbox-integration test-acp-integration test-acp-integration-codex test-acp-integration-claude test-postgres test-all postgres-up postgres-down test-postgres-ci api-generate api-check api-breaking lint lint-ci markdown markdown-ci check-golangci-lint print-golangci-lint-version check-actions check-renovate-config install-hooks docs-install docs-build docs-serve docs-preview docs-check docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy
 
 build: web-embed
 	@set -e; trap '$(MAKE) web-restore' EXIT; \
 		mkdir -p bin; \
 		go build -ldflags="$(LDFLAGS)" -o bin/roborev ./cmd/roborev
+
+# Homebrew build profile: the normal build with cgo, owned by Homebrew.
+# Formulas run: make homebrew VERSION=<version> BINDIR=<dir>
+homebrew: DISTRIBUTION = homebrew
+homebrew: web-embed
+	@set -e; trap '$(MAKE) web-restore' EXIT; \
+		mkdir -p "$(BINDIR)"; \
+		CGO_ENABLED=1 go build -ldflags="$(LDFLAGS)" -o "$(BINDIR)/roborev" ./cmd/roborev
 
 web-build:
 	cd web && bun run build
@@ -124,15 +153,14 @@ api-check:
 		cp pkg/client/generated/config.yaml "$$tmp/pkg/client/generated/config.yaml"; \
 		cp pkg/client/generated/native_uuid_overlay.yaml "$$tmp/pkg/client/generated/native_uuid_overlay.yaml"; \
 		cp pkg/client/generated/raw_json_overlay.yaml "$$tmp/pkg/client/generated/raw_json_overlay.yaml"; \
-		cp pkg/client/generated/native_uuid_header.tmpl "$$tmp/pkg/client/generated/native_uuid_header.tmpl"; \
 		cp pkg/client/generated/raw_responses.tmpl "$$tmp/pkg/client/generated/raw_responses.tmpl"; \
 		go run ./internal/daemon_client/openapi_generate -format yaml -o "$$tmp/pkg/client/openapi.yaml"; \
 		(cd "$$tmp/pkg/client/generated" && \
-			go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.75.14 \
+			$(DOWNLOAD_RETRY) go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.76.5 \
 				-config config.yaml ../openapi.yaml); \
 		diff -u pkg/client/openapi.yaml "$$tmp/pkg/client/openapi.yaml"; \
 		diff -ru --exclude=config.yaml --exclude=generate.go --exclude=native_uuid_overlay.yaml \
-			--exclude=native_uuid_header.tmpl --exclude=raw_json_overlay.yaml --exclude=raw_responses.tmpl \
+			--exclude=raw_json_overlay.yaml --exclude=raw_responses.tmpl \
 			pkg/client/generated "$$tmp/pkg/client/generated"
 	cd web && bun run generate:check
 
@@ -154,6 +182,10 @@ test-codex-skill-eval:
 # Unit + slow integration tests (no postgres required)
 test-integration:
 	go test -tags=integration ./...
+
+test-sandbox-integration:
+	ROBOREV_RUN_SANDBOX_INTEGRATION=1 go test -tags=integration ./internal/agent ./internal/sandbox -run Sandbox -count=1 -v
+	ROBOREV_RUN_SANDBOX_INTEGRATION=1 go test -tags=integration ./internal/daemon -run 'CICheck.*SandboxIntegration' -count=1 -v
 
 # ACP adapter integration smoke test (opt-in external dependency)
 # Usage:
@@ -277,7 +309,7 @@ lint: check-golangci-lint $(CUSTOM_GCL)
 	"$(CUSTOM_GCL)" run --fix ./...
 
 # Lint Go code without fixing (for CI)
-lint-ci: check-golangci-lint $(CUSTOM_GCL)
+lint-ci: check-golangci-lint $(CUSTOM_GCL) lint-workflow-retries
 	"$(CUSTOM_GCL)" run ./...
 
 # Validate Renovate config.
@@ -290,11 +322,7 @@ check-renovate-config:
 
 # Validate GitHub Actions workflows.
 check-actions:
-	@if ! command -v actionlint >/dev/null 2>&1; then \
-		echo "actionlint not found. Install with: go install github.com/rhysd/actionlint/cmd/actionlint@latest" >&2; \
-		exit 1; \
-	fi
-	actionlint
+	mise exec -- jactionlint --profile=correctness --no-online --shellcheck= --pyflakes=
 
 # Install pre-commit and pre-push hooks via prek.
 install-hooks:
@@ -308,3 +336,36 @@ install-hooks:
 test-postgres-ci:
 	go test -tags=postgres -v ./internal/storage/... -run Integration
 	go test -tags=postgres -v ./internal/daemon/... -run '^TestIntegration'
+
+# Workflow actions run at the commits in .github/workflows/actions.lock,
+# including actions that other actions call. The organization requires
+# SHA-pinned actions, and the lockfile is what satisfies that for nested refs.
+# The version comes from constraints.ghActionsLock in renovate.json.
+# Renovate uses the same version when it regenerates the lockfile after
+# bumping an action.
+GH_ACTIONS_LOCK_VERSION ?= $(shell sed -nE "s/^[[:space:]]*\"?ghActionsLock\"?:[[:space:]]*[\"']([^\"']*)[\"'].*/\1/p" renovate.json)
+
+.PHONY: gh-actions-lock-install actions-lock actions-lock-check-local actions-lock-check
+
+gh-actions-lock-install:
+	@test -n "$(GH_ACTIONS_LOCK_VERSION)" || { echo "constraints.ghActionsLock is missing from renovate.json" >&2; exit 1; }
+	@if [ "$$(gh actions-lock --version 2>/dev/null)" != "actions-lock version $(GH_ACTIONS_LOCK_VERSION)" ]; then \
+		gh extension remove actions-lock >/dev/null 2>&1 || true; \
+		$(DOWNLOAD_RETRY) gh extension install github/gh-actions-lock --pin $(GH_ACTIONS_LOCK_VERSION); \
+	fi
+
+# Lock every workflow action after adding or bumping a `uses:` line
+actions-lock: gh-actions-lock-install
+	gh actions-lock --no-interactive
+
+# Offline check that every workflow action has a lockfile entry
+actions-lock-check-local: gh-actions-lock-install
+	gh actions-lock --verify-local
+
+# Network check that the lockfile is complete and every locked commit is still valid
+actions-lock-check: gh-actions-lock-install
+	gh actions-lock --verify
+
+.PHONY: lint-workflow-retries
+lint-workflow-retries:
+	GOOS= GOARCH= go run go.kenn.io/kit/cmd/kennlint@v0.47.3 workflow-retries

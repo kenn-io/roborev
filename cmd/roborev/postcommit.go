@@ -45,20 +45,27 @@ func postCommitCmd() *cobra.Command {
 		flushPush   bool
 		flushBranch string
 		flushHead   string
+		quietHead   string
 	)
 
 	cmd := &cobra.Command{
 		Use:   "post-commit",
 		Short: "Hook entry point: enqueue a review after commit",
 		Args:  cobra.NoArgs,
-		// Hook entrypoint: any failure must be silent (logged to the
-		// hook log file, never printed to git's stderr). Set both
-		// silences explicitly so future changes that return non-nil
-		// from RunE don't leak Cobra-formatted output to git.
+		// Hook entrypoint: every outcome goes to the hook log file. Git
+		// shows stderr to the committer, so a commit that will not be
+		// reviewed prints there (see warnNotQueued), as does any daemon
+		// start or recovery progress. Set both silences
+		// explicitly so future changes that return non-nil from RunE don't
+		// leak Cobra-formatted output to git.
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
+			notQueued := func(root, reason string) {
+				hookLog(root, "fail", reason)
+				warnNotQueued(cmd.ErrOrStderr(), reason)
+			}
 			if repoPath == "" {
 				repoPath = "."
 			}
@@ -93,6 +100,7 @@ func postCommitCmd() *cobra.Command {
 			_ = gitrepo.EnsureAbsoluteHooksPath(ctx, root)
 			var batch postCommitBatchDecision
 			batchSize := 0
+			quietPeriod := time.Duration(0)
 			unlock, err := acquirePostCommitBatchLock(ctx, root)
 			switch {
 			case err != nil && (flush || flushBranch != ""):
@@ -116,12 +124,16 @@ func postCommitCmd() *cobra.Command {
 				// response would let a concurrent hook plan from stale batch
 				// state.
 				defer func() { _ = unlock() }()
+
 				var err error
+				quietPeriod, err = config.ResolvePostCommitQuietPeriod(root)
+				if err != nil {
+					notQueued(root, fmt.Sprintf("load quiet-period config: %v", err))
+					return nil
+				}
 				batchSize, err = config.ResolvePostCommitBatchSizeWithError(root)
 				if err != nil {
-					hookLog(root, "fail", fmt.Sprintf(
-						"load batch config: %v", err,
-					))
+					notQueued(root, fmt.Sprintf("load batch config: %v", err))
 					return nil
 				}
 				if flushBranch != "" {
@@ -129,8 +141,13 @@ func postCommitCmd() *cobra.Command {
 						ctx, root, batchSize, flushBranch, flushHead,
 					)
 				} else {
-					batch = planPostCommitBatch(ctx, root, batchSize)
+					batch = planPostCommitBatch(ctx, root, batchSize, quietPeriod > 0)
 				}
+			}
+			// Compare the planned tip, rather than resolving the branch separately:
+			// git can advance the ref even while its post-commit hook waits on our lock.
+			if quietHead != "" && batch.Head != quietHead {
+				return nil
 			}
 			testHookAfterBatchPlan()
 			if flush && !batch.Enabled {
@@ -142,13 +159,20 @@ func postCommitCmd() *cobra.Command {
 					"batch pending branch=%s commits=%d threshold=%d",
 					batch.Branch, batch.Pending, batchSize,
 				))
-				return nil
+				if quietPeriod == 0 || batch.Pending == 0 {
+					return nil
+				}
+				if err := schedulePostCommitBatch(ctx, root, batch); err == nil {
+					return nil
+				} else {
+					// If the timer cannot be registered, enqueue the accumulated range
+					// now. The checkpoint still advances only after a successful enqueue.
+					hookLog(root, "fail", fmt.Sprintf("schedule quiet flush: %v", err))
+				}
 			}
 
 			if err := ensureDaemon(); err != nil {
-				hookLog(root, "fail", fmt.Sprintf(
-					"daemon unavailable: %v", err,
-				))
+				notQueued(root, fmt.Sprintf("daemon unavailable: %v", err))
 				return nil
 			}
 
@@ -196,9 +220,7 @@ func postCommitCmd() *cobra.Command {
 			ep := getDaemonEndpoint()
 			resp, err := newDaemonAPI(ep.BaseURL(), hookHTTPClient(ep, timeout)).EnqueueJobRaw(cmd.Context(), nil, roborevclient.WithBody(reqBody))
 			if err != nil {
-				hookLog(root, "fail", fmt.Sprintf(
-					"enqueue request failed: %v", err,
-				))
+				notQueued(root, fmt.Sprintf("enqueue request failed: %v", err))
 				return nil
 			}
 			defer resp.Body.Close()
@@ -210,6 +232,7 @@ func postCommitCmd() *cobra.Command {
 					resp.StatusCode,
 					truncateBytes(body, 200),
 				))
+				warnNotQueued(cmd.ErrOrStderr(), daemonErrorMessage(resp.StatusCode, body))
 				return nil
 			}
 
@@ -241,6 +264,8 @@ func postCommitCmd() *cobra.Command {
 	_ = cmd.Flags().MarkHidden("flush-push")
 	cmd.Flags().StringVar(&flushBranch, "flush-branch", "", "branch to flush")
 	_ = cmd.Flags().MarkHidden("flush-branch")
+	cmd.Flags().StringVar(&quietHead, "quiet-head", "", "flush only if the branch still has this tip")
+	_ = cmd.Flags().MarkHidden("quiet-head")
 	cmd.Flags().StringVar(&flushHead, "flush-head", "", "pushed commit to flush")
 	_ = cmd.Flags().MarkHidden("flush-head")
 	cmd.Flags().StringVar(
@@ -346,6 +371,25 @@ func postCommitLogPath() string {
 // hookLog appends a single JSONL entry to the post-commit log.
 // Best-effort: errors are silently ignored so the hook never
 // blocks a commit.
+// warnNotQueued tells the committer that this commit will not be reviewed.
+// Without it the failure would only reach the hook log.
+func warnNotQueued(w io.Writer, reason string) {
+	reason, _, _ = strings.Cut(reason, "\n")
+	fmt.Fprintf(w, "roborev: commit not queued for review: %s\nroborev: run 'roborev doctor' to diagnose\n", reason)
+}
+
+// daemonErrorMessage returns the error a daemon response reports, or the
+// status code when the body has none.
+func daemonErrorMessage(status int, body []byte) string {
+	var resp struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(body, &resp); err == nil && resp.Error != "" {
+		return resp.Error
+	}
+	return fmt.Sprintf("daemon returned %d", status)
+}
+
 func hookLog(repo, outcome, message string) {
 	logPath := postCommitLogPath()
 
@@ -385,4 +429,25 @@ func truncateBytes(b []byte, max int) string {
 		return string(b)
 	}
 	return string(b[:max]) + "..."
+}
+
+func schedulePostCommitBatch(ctx context.Context, root string, batch postCommitBatchDecision) error {
+	if err := ensureDaemon(); err != nil {
+		return err
+	}
+	body, err := json.Marshal(daemon.PostCommitScheduleRequest{RepoPath: root, Branch: batch.Branch, Head: batch.Head})
+	if err != nil {
+		return err
+	}
+	global, _ := config.LoadGlobal()
+	ep := getDaemonEndpoint()
+	response, err := newDaemonAPI(ep.BaseURL(), hookHTTPClient(ep, config.ResolveHookTimeout(root, global))).SchedulePostCommitRaw(ctx, nil, roborevclient.WithBody(body))
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("daemon returned HTTP %d", response.StatusCode)
+	}
+	return nil
 }

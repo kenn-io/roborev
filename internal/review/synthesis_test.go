@@ -145,10 +145,12 @@ func TestBuildSynthesisPrompt_Basic(t *testing.T) {
 			Output:     "No issues found.",
 		},
 	}
-	prompt := BuildSynthesisPrompt(reviews, "")
+	prompt := BuildSynthesisPrompt(reviews, false, "")
 
 	assertContainsAll(t, prompt, []string{
-		"combining multiple code review outputs",
+		"combining multiple code review outputs into a single GitHub PR comment",
+		"reviewers agree the code is clean",
+		"Do not independently review source code",
 		`"sources":[1]`,
 		"### Review N",
 		"Only combine the input review results according to these rules",
@@ -161,6 +163,8 @@ func TestBuildSynthesisPrompt_Basic(t *testing.T) {
 	assert.NotContains(t, prompt, "Type=")
 	assert.NotContains(t, prompt, "Verify each finding")
 	assert.NotContains(t, prompt, "current codebase")
+	assert.NotContains(t, prompt, "Rubric:")
+	assert.NotContains(t, prompt, "different rubric")
 }
 
 func TestDecodeSynthesisDocument(t *testing.T) {
@@ -252,7 +256,7 @@ func TestBuildSynthesisPrompt_UsesNeutralReviewerLabels(t *testing.T) {
 		},
 	}
 
-	prompt := BuildSynthesisPrompt(reviews, "")
+	prompt := BuildSynthesisPrompt(reviews, false, "")
 
 	assert.Contains(t, prompt, "### Review 1")
 	assert.Contains(t, prompt, "### Review 2")
@@ -264,34 +268,77 @@ func TestBuildSynthesisPrompt_UsesNeutralReviewerLabels(t *testing.T) {
 	assert.NotContains(t, prompt, "design")
 }
 
-func TestBuildSynthesisPrompt_Severity(t *testing.T) {
+func TestBuildSynthesisPrompt_NeutralLabelsRubrics(t *testing.T) {
+	assert := assert.New(t)
 	reviews := []ReviewResult{
-		{
-			Agent:      "codex",
-			ReviewType: "security",
-			Status:     "done",
-			Output:     "test output",
-		},
+		{ReviewType: "citations", Status: ResultDone, Output: "Claim lacks a source."},
+		{ReviewType: "review", Status: ResultDone, Output: "Finding B."},
 	}
 
-	tests := []struct {
-		name            string
-		severity        string
-		wantContains    string
-		wantNotContains string
-	}{
-		{"high severity", "high", "", "Severity threshold"},
-		{"low severity", "low", "", "Severity threshold"},
+	prompt := BuildSynthesisPrompt(reviews, true, "")
+
+	assert.Contains(prompt, "combined review of the reviewed material")
+	assert.Contains(prompt, "Silence from a different rubric is not disagreement")
+	assert.Contains(prompt, "### Review 1\nRubric: citations\nClaim lacks a source.")
+	assert.Contains(prompt, "### Review 2\nRubric: default\nFinding B.")
+	assert.NotContains(prompt, "code review")
+	assert.NotContains(prompt, "GitHub PR comment")
+	assert.NotContains(prompt, "the code is clean")
+	assert.NotContains(prompt, "source code")
+}
+
+// TestBuildSynthesisPrompt_NoInstructionsIsMergeOnly pins the complete prompt
+// a panel without synthesis_instructions gets, so adding instructions cannot
+// change that prompt.
+func TestBuildSynthesisPrompt_NoInstructionsIsMergeOnly(t *testing.T) {
+	reviews := []ReviewResult{
+		{Agent: "codex", Status: ResultDone, Output: "High: nil deref in foo.go:10"},
+		{Agent: "claude-code", Status: ResultDone, Output: "No issues found."},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			prompt := BuildSynthesisPrompt(reviews, tt.severity)
-			if tt.wantContains != "" {
-				assert.Contains(t, prompt, tt.wantContains)
-			}
-			if tt.wantNotContains != "" {
-				assert.NotContains(t, prompt, tt.wantNotContains)
-			}
+
+	prompt := BuildSynthesisPrompt(reviews, false, "")
+
+	assert.Equal(t, "You are combining multiple code review outputs into a single GitHub PR comment.\n"+
+		`Return exactly one JSON object with this shape and no code fence: {"schema_version":3,"summary":"...","verdict":"pass|fail","findings":[{"severity":"critical|high|medium|low","kind":"defect|improvement","topic":"copied from the input finding, or null","confidence":0.8,"problem":"...","fix":"...","file":"path or null","start_line":12,"end_line":14,"sources":[1]}]}`+"\n"+
+		"Put a one-line overall summary in `summary` and your overall judgment in `verdict`. List every finding that requires changes in `findings`; return an empty `findings` array if the reviewers agree the code is clean.\n"+
+		"In `sources`, list the numbers of the reviews below (### Review N) that reported the finding.\n"+
+		"Rules:\n"+
+		"- Only combine the input review results according to these rules\n"+
+		"- Do not independently review source code or inspect the repository\n"+
+		"- Do not use tools except to read referenced prompt or review-input files in full\n"+
+		"- Deduplicate findings reported by multiple reviewers and cite every source\n"+
+		"- Order findings by severity (Critical > High > Medium > Low)\n"+
+		"- Keep each finding's kind and topic; when reviewers disagree, use the value most of them gave\n"+
+		"- Set confidence to the highest confidence any source gave, or 0.5 when the sources give none\n"+
+		"- Keep the file, start_line, and end_line of the findings you combine; use null when there is none\n"+
+		"- When an input finding has a location but no file, name that location in the problem\n"+
+		"- No preamble about yourself\n"+
+		"\n---\n### Review 1\nHigh: nil deref in foo.go:10\n"+
+		"\n---\n### Review 2\nNo issues found.\n\n", prompt)
+}
+
+func TestBuildSynthesisPrompt_InstructionsAllowRepositoryReads(t *testing.T) {
+	reviews := []ReviewResult{
+		{ReviewType: "citations", Status: ResultDone, Output: "Claim lacks a source."},
+		{ReviewType: "review", Status: ResultDone, Output: "Finding B."},
+	}
+	const instructions = "Verify each finding against the code.\nStart each problem with \"Label: just fix\" or \"Label: needs the user\"."
+
+	for _, neutral := range []bool{false, true} {
+		t.Run(fmt.Sprintf("neutral=%t", neutral), func(t *testing.T) {
+			assert := assert.New(t)
+			prompt := BuildSynthesisPrompt(reviews, neutral, instructions)
+
+			assert.Contains(prompt, "Rules:\n"+
+				"- Combine the input review results according to these rules, then apply the additional synthesis instructions below\n"+
+				"- You may read the repository with your read-only tools when the additional instructions call for it; never modify files\n"+
+				"- Every finding must come from at least one input review; do not add findings of your own\n"+
+				"- Deduplicate findings")
+			assert.Contains(prompt, "- No preamble about yourself\n\n"+
+				"## Additional synthesis instructions\n"+instructions+"\n\n---\n### Review 1\n")
+			assert.NotContains(prompt, "Only combine the input review results")
+			assert.NotContains(prompt, "inspect the repository")
+			assert.NotContains(prompt, "Do not use tools")
 		})
 	}
 }
@@ -318,7 +365,7 @@ func TestBuildSynthesisPrompt_QuotaAndFailed(t *testing.T) {
 			Error:      "agent crashed",
 		},
 	}
-	prompt := BuildSynthesisPrompt(reviews, "")
+	prompt := BuildSynthesisPrompt(reviews, false, "")
 
 	assertContainsAll(t, prompt, []string{
 		"[SKIPPED]",
@@ -339,7 +386,7 @@ func TestBuildSynthesisPrompt_PreservesFullReviews(t *testing.T) {
 			Output:     longOutput,
 		},
 	}
-	prompt := BuildSynthesisPrompt(reviews, "")
+	prompt := BuildSynthesisPrompt(reviews, false, "")
 
 	assert.Contains(t, prompt, longOutput)
 }
@@ -416,7 +463,7 @@ func TestFullReviewContentPreservesUTF8(t *testing.T) {
 	})
 
 	t.Run("BuildSynthesisPrompt", func(t *testing.T) {
-		prompt := BuildSynthesisPrompt(reviews, "medium")
+		prompt := BuildSynthesisPrompt(reviews, false, "")
 		require.True(t, utf8.ValidString(prompt),
 			"synthesis prompt must not contain a split rune")
 		assert.Contains(t, prompt, oversized)
@@ -632,7 +679,7 @@ func TestBuildSynthesisPrompt_IncludesSkipped(t *testing.T) {
 			SkipReason: "trivial diff",
 		},
 	}
-	prompt := BuildSynthesisPrompt(reviews, "")
+	prompt := BuildSynthesisPrompt(reviews, false, "")
 	assertContainsAll(t, prompt, []string{
 		"Add type for foo",
 		"Review skipped: trivial diff",
@@ -652,7 +699,7 @@ func TestBuildSynthesisPrompt_TransientSkipped(t *testing.T) {
 			Error:      OutageErrorPrefix + "429",
 		},
 	}
-	prompt := BuildSynthesisPrompt(reviews, "")
+	prompt := BuildSynthesisPrompt(reviews, false, "")
 	assertContainsAll(t, prompt, []string{
 		"[SKIPPED]",
 		"provider unavailable",
@@ -671,8 +718,54 @@ func TestBuildSynthesisPromptRendersStructuredMembersWithoutThreshold(t *testing
 	}.ApplyMinSeverity("medium")
 	require.Contains(t, member.Output, "No findings at or above medium severity.")
 
-	prompt := BuildSynthesisPrompt([]ReviewResult{member}, "medium")
+	prompt := BuildSynthesisPrompt([]ReviewResult{member}, false, "")
 	assert.Contains(t, prompt, "Nit.")
 	assert.NotContains(t, prompt, "at or above")
 	assert.NotContains(t, prompt, "medium severity")
+}
+
+// A panel member that finished before a daemon update can be stored as a
+// version 2 review, whose findings have only a free-text location.
+func TestBuildSynthesisPromptAnchorsVersion2Locations(t *testing.T) {
+	structured, err := DecodeStructuredReview(jsontext.Value(`{"schema_version":2,"summary":"Two findings.","verdict":"fail","findings":[` +
+		`{"severity":"high","problem":"Ranged.","fix":"f","location":"internal/a.go:12-14"},` +
+		`{"severity":"low","problem":"Prose.","fix":"f","location":"the retry loop"}]}`))
+	require.NoError(t, err)
+	member := ReviewResult{Agent: "codex", ReviewType: "review", Status: ResultDone, Structured: &structured}
+
+	prompt := BuildSynthesisPrompt([]ReviewResult{member}, false, "")
+
+	assert := assert.New(t)
+	assert.Contains(prompt, `"file": "internal/a.go"`)
+	assert.Contains(prompt, `"start_line": 12`)
+	assert.Contains(prompt, `"end_line": 14`)
+	assert.Contains(prompt, `"location": "the retry loop"`)
+	assert.Empty(structured.Findings[0].File, "the stored member is not changed")
+}
+
+func TestParseLocation(t *testing.T) {
+	tests := []struct {
+		location   string
+		file       string
+		start, end int
+		ok         bool
+	}{
+		{"a.go:12", "a.go", 12, 12, true},
+		{" dir/a.go:12-20 ", "dir/a.go", 12, 20, true},
+		{"C:/repo/a.go:3", "C:/repo/a.go", 3, 3, true},
+		{"a.go", "", 0, 0, false},
+		{"a.go:20-12", "", 0, 0, false},
+		{"a.go:0", "", 0, 0, false},
+		{"see the retry loop: 3", "", 0, 0, false},
+		{"near line 3:x", "", 0, 0, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.location, func(t *testing.T) {
+			file, start, end, ok := parseLocation(tt.location)
+			assert.Equal(t, tt.ok, ok)
+			assert.Equal(t, tt.file, file)
+			assert.Equal(t, tt.start, start)
+			assert.Equal(t, tt.end, end)
+		})
+	}
 }

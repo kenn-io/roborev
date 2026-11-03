@@ -119,6 +119,51 @@ func TestResolveAgent(t *testing.T) {
 	}, "Expected 'codex' (explicit), got '%s'", agent)
 }
 
+func TestResolveReviewContextCount(t *testing.T) {
+	tests := []struct {
+		name   string
+		repo   *RepoConfig
+		global *Config
+		want   int
+	}{
+		{"no configs", nil, nil, DefaultReviewContextCount},
+		{"repo unset uses global", &RepoConfig{}, &Config{ReviewContextCount: 7}, 7},
+		{"nil repo uses global", nil, &Config{ReviewContextCount: 7}, 7},
+		{"global zero disables", &RepoConfig{}, &Config{ReviewContextCount: 0}, 0},
+		{"repo zero overrides positive global", &RepoConfig{ReviewContextCount: new(0)}, &Config{ReviewContextCount: 3}, 0},
+		{"repo positive overrides global", &RepoConfig{ReviewContextCount: new(10)}, &Config{ReviewContextCount: 3}, 10},
+		{"repo set with nil global", &RepoConfig{ReviewContextCount: new(5)}, nil, 5},
+		{"negative repo clamps to zero", &RepoConfig{ReviewContextCount: new(-2)}, &Config{ReviewContextCount: 3}, 0},
+		{"negative global clamps to zero", &RepoConfig{}, &Config{ReviewContextCount: -1}, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, ResolveReviewContextCount(tt.repo, tt.global))
+		})
+	}
+}
+
+func TestReviewContextCountFromRepoFile(t *testing.T) {
+	tests := []struct {
+		name string
+		toml string
+		want int
+	}{
+		{"absent inherits global", "agent = \"codex\"\n", 5},
+		{"explicit zero disables", "review_context_count = 0\n", 0},
+		{"explicit value overrides", "review_context_count = 9\n", 9},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(dir, ".roborev.toml"), []byte(tt.toml), 0o644))
+			repoCfg, err := LoadRepoConfig(dir)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, ResolveReviewContextCount(repoCfg, &Config{ReviewContextCount: 5}))
+		})
+	}
+}
+
 func TestSaveAndLoadGlobal(t *testing.T) {
 	testenv.SetDataDir(t)
 
@@ -315,35 +360,34 @@ func TestLoadGlobalConfigWithFixGuidelines(t *testing.T) {
 	assert.Equal(t, "Verify findings before editing.", cfg.FixGuidelines)
 }
 
-// If either repository loader silently accepts a global-only fix policy,
-// users can believe the policy is active while fixes still run without it.
+// Both repository loaders reject settings that only apply globally.
 func TestRepoConfigLoadersRejectGlobalOnlyFixGuidelines(t *testing.T) {
-	dir := t.TempDir()
-	writeTestFile(t, dir, ".roborev.toml", `fix_guidelines = "Repo policy"`)
-	execGit(t, dir, "init")
-	execGit(t, dir, "config", "user.email", "test@example.com")
-	execGit(t, dir, "config", "user.name", "Test")
-	execGit(t, dir, "add", ".roborev.toml")
-	execGit(t, dir, "commit", "-m", "add config")
-	sha := execGit(t, dir, "rev-parse", "HEAD")
-
-	tests := []struct {
-		name string
-		load func() (*RepoConfig, error)
-	}{
-		{name: "filesystem", load: func() (*RepoConfig, error) {
-			return LoadRepoConfig(dir)
-		}},
-		{name: "git ref", load: func() (*RepoConfig, error) {
-			return LoadRepoConfigFromRef(dir, sha)
-		}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := tt.load()
-			require.ErrorContains(t, err, "fix_guidelines")
-			assert.ErrorContains(t, err, "global")
+	for key, contents := range map[string]string{
+		"fix_guidelines":     `fix_guidelines = "Repo policy"`,
+		"ci.check_model":     "[ci]\ncheck_model = \"high\"\n",
+		"ci.check_reasoning": "[ci]\ncheck_reasoning = \"high\"\n",
+	} {
+		t.Run(key, func(t *testing.T) {
+			dir := t.TempDir()
+			writeTestFile(t, dir, ".roborev.toml", contents)
+			execGit(t, dir, "init")
+			execGit(t, dir, "config", "user.email", "test@example.com")
+			execGit(t, dir, "config", "user.name", "Test")
+			execGit(t, dir, "add", ".roborev.toml")
+			execGit(t, dir, "commit", "-m", "add config")
+			for _, loader := range []struct {
+				name string
+				load func() (*RepoConfig, error)
+			}{
+				{name: "filesystem", load: func() (*RepoConfig, error) { return LoadRepoConfig(dir) }},
+				{name: "git ref", load: func() (*RepoConfig, error) { return LoadRepoConfigFromRef(dir, "HEAD") }},
+			} {
+				t.Run(loader.name, func(t *testing.T) {
+					_, err := loader.load()
+					require.ErrorContains(t, err, key)
+					assert.ErrorContains(t, err, "global-only")
+				})
+			}
 		})
 	}
 }
@@ -2865,6 +2909,97 @@ skip_labels = ["skip-review", "dependencies"]
 	assert.Equal(t, []string{"skip-review", "dependencies"}, cfg.CI.SkipLabels)
 }
 
+func TestCIConfigPRFilters(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(configPath, []byte(`
+[ci]
+allowed_authors = ["alice"]
+allowed_author_associations = ["member", "OWNER"]
+allow_codeowners = true
+include_branches = ["feature/*"]
+exclude_branches = ["feature/wip-*"]
+`), 0o644))
+
+	cfg, err := LoadGlobalFrom(configPath)
+	require.NoError(t, err)
+	assert := assert.New(t)
+	assert.Equal([]string{"alice"}, cfg.CI.AllowedAuthors)
+	assert.Equal([]string{"member", "OWNER"}, cfg.CI.AllowedAuthorAssociations)
+	assert.True(cfg.CI.AllowCodeowners)
+	assert.Equal([]string{"feature/*"}, cfg.CI.IncludeBranches)
+	assert.Equal([]string{"feature/wip-*"}, cfg.CI.ExcludeBranches)
+}
+
+func TestCIConfigPRFiltersValidation(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		toml    string
+		wantErr string
+	}{
+		{name: "bad include pattern", toml: `include_branches = ["feature/["]`, wantErr: "[ci]: include_branches"},
+		{name: "bad exclude pattern", toml: `exclude_branches = ["x\\"]`, wantErr: "[ci]: exclude_branches"},
+		{name: "unknown association", toml: `allowed_author_associations = ["MAINTAINER"]`, wantErr: "[ci]: allowed_author_associations"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(t, os.WriteFile(configPath, []byte("[ci]\n"+tt.toml+"\n"), 0o644))
+			_, err := LoadGlobalFrom(configPath)
+			require.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
+func TestCIConfigIsPRAuthorAllowed(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		authors      []string
+		associations []string
+		codeowners   bool
+		login        string
+		association  string
+		want         bool
+	}{
+		{name: "no filter allows everyone", login: "stranger", association: "NONE", want: true},
+		{name: "listed login", authors: []string{"Alice"}, login: "alice", association: "NONE", want: true},
+		{name: "unlisted login", authors: []string{"alice"}, login: "bob", association: "MEMBER", want: false},
+		{name: "allowed association", associations: []string{"OWNER", "member"}, login: "bob", association: "MEMBER", want: true},
+		{name: "outside association", associations: []string{"OWNER", "MEMBER"}, login: "bob", association: "CONTRIBUTOR", want: false},
+		{name: "either list admits", authors: []string{"dependabot[bot]"}, associations: []string{"MEMBER"}, login: "dependabot[bot]", association: "NONE", want: true},
+		{name: "unknown association fails closed", associations: []string{"MEMBER"}, login: "bob", association: "", want: false},
+		{name: "codeowners alone leaves the decision to CODEOWNERS", codeowners: true, login: "bob", association: "OWNER", want: false},
+		{name: "codeowners with listed login", authors: []string{"bob"}, codeowners: true, login: "bob", association: "NONE", want: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ci := CIConfig{AllowedAuthors: tt.authors, AllowedAuthorAssociations: tt.associations, AllowCodeowners: tt.codeowners}
+			assert.Equal(t, tt.want, ci.IsPRAuthorAllowed(tt.login, tt.association))
+		})
+	}
+}
+
+func TestCIConfigIsPRBranchAllowed(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		include []string
+		exclude []string
+		branch  string
+		want    bool
+	}{
+		{name: "no filter allows every branch", branch: "anything/goes", want: true},
+		{name: "star crosses slashes", exclude: []string{"dependabot/*"}, branch: "dependabot/npm_and_yarn/lodash-4.17.21", want: false},
+		{name: "exclude does not match other branch", exclude: []string{"dependabot/*", "renovate/*"}, branch: "feature/login", want: true},
+		{name: "include matches", include: []string{"feature/*", "fix/*"}, branch: "fix/crash", want: true},
+		{name: "include misses", include: []string{"feature/*", "fix/*"}, branch: "chore/cleanup", want: false},
+		{name: "exclude wins over include", include: []string{"feature/*"}, exclude: []string{"feature/wip-*"}, branch: "feature/wip-login", want: false},
+		{name: "exact name", include: []string{"main"}, branch: "main", want: true},
+		{name: "empty branch fails include", include: []string{"*"}, branch: "", want: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ci := CIConfig{IncludeBranches: tt.include, ExcludeBranches: tt.exclude}
+			assert.Equal(t, tt.want, ci.IsPRBranchAllowed(tt.branch))
+		})
+	}
+}
+
 func TestCIConfigDiscordWebhookURL(t *testing.T) {
 	t.Parallel()
 
@@ -3006,6 +3141,7 @@ func TestConfigValidateRejectsInvalidReasoningAndSeverity(t *testing.T) {
 		{name: "review severity", key: "review_min_severity", set: func(cfg *Config) { cfg.ReviewMinSeverity = "urgent" }},
 		{name: "refine severity", key: "refine_min_severity", set: func(cfg *Config) { cfg.RefineMinSeverity = "urgent" }},
 		{name: "fix severity", key: "fix_min_severity", set: func(cfg *Config) { cfg.FixMinSeverity = "urgent" }},
+		{name: "ci check reasoning", key: "ci.check_reasoning", set: func(cfg *Config) { cfg.CI.CheckReasoning = "invalid" }},
 		{name: "ci severity", key: "ci.min_severity", set: func(cfg *Config) { cfg.CI.MinSeverity = "urgent" }},
 	}
 
@@ -5572,4 +5708,79 @@ auth_token = "weak"
 	cfg, err := LoadGlobalFrom(path)
 	require.NoError(t, err)
 	assert.False(t, cfg.Web.Enabled)
+}
+
+func TestPostCommitBatchGlobalDefaults(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.toml"), []byte(`post_commit_batch_size = 5`), 0o600))
+	for _, tt := range []struct {
+		name, repo string
+		want       int
+	}{
+		{"global", "", 5},
+		{"unrelated repo setting inherits", `agent = "test"`, 5},
+		{"repo overrides", `post_commit_batch_size = 3`, 3},
+		{"repo disables", `post_commit_batch_size = 1`, 1},
+		{"explicit zero disables", `post_commit_batch_size = 0`, 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newTempRepo(t, tt.repo)
+			got, err := ResolvePostCommitBatchSizeWithError(repo)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestResolvePostCommitQuietPeriod(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.toml"), []byte(`post_commit_quiet_period = "5m"`), 0o600))
+	for _, tt := range []struct {
+		name, repo string
+		want       time.Duration
+		invalid    bool
+	}{
+		{"global", "", 5 * time.Minute, false},
+		{"repo overrides", `post_commit_quiet_period = "30s"`, 30 * time.Second, false},
+		{"repo zero disables", `post_commit_quiet_period = "0"`, 0, false},
+		{"repo empty disables", `post_commit_quiet_period = ""`, 0, false},
+		{"negative rejected", `post_commit_quiet_period = "-1m"`, 0, true},
+		{"invalid rejected", `post_commit_quiet_period = "soon"`, 0, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ResolvePostCommitQuietPeriod(newTempRepo(t, tt.repo))
+			if tt.invalid {
+				require.ErrorContains(t, err, "post_commit_quiet_period")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestPostCommitQuietPeriodValidation(t *testing.T) {
+	for _, value := range []string{"-1m", "soon"} {
+		t.Run(value, func(t *testing.T) {
+			require.ErrorContains(t, (&Config{PostCommitQuietPeriod: value}).Validate(), "post_commit_quiet_period")
+			require.ErrorContains(t, (&RepoConfig{PostCommitQuietPeriod: value}).Validate(), "post_commit_quiet_period")
+		})
+	}
+}
+
+func TestPostCommitBatchingInheritsGlobalAfterRepoSave(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.toml"), []byte("post_commit_batch_size = 5\npost_commit_quiet_period = \"5m\"\n"), 0o600))
+	repo := newTempRepo(t, "")
+	require.NoError(t, SaveRepoConfigTo(filepath.Join(repo, ".roborev.toml"), &RepoConfig{Agent: "test"}))
+
+	size, err := ResolvePostCommitBatchSizeWithError(repo)
+	require.NoError(t, err)
+	assert.Equal(t, 5, size)
+	period, err := ResolvePostCommitQuietPeriod(repo)
+	require.NoError(t, err)
+	assert.Equal(t, 5*time.Minute, period)
 }

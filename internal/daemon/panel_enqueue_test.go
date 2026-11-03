@@ -67,7 +67,7 @@ func enqueuePanelViaHTTP(t *testing.T, server *Server, body EnqueueRequest) Pane
 func autoDesignRowsForSHA(t *testing.T, db *storage.DB, repoID int64, sha string) int {
 	t.Helper()
 	var n int
-	require.NoError(t, db.QueryRow(`
+	require.NoError(t, db.QueryRowContext(t.Context(), `
 		SELECT COUNT(*)
 		  FROM review_jobs j
 		  JOIN commits c ON c.id = j.commit_id
@@ -911,6 +911,53 @@ synthesis_backup_model = "opus"
 	require.NotNil(t, synth)
 	assert.Equal("claude-code", synth.BackupAgent, "synthesis backup agent persisted")
 	assert.Equal("opus", synth.BackupModel, "synthesis backup model persisted")
+	assert.Empty(synth.PanelMemberConfigJSON, "a panel without synthesis instructions stores no synthesis config")
+}
+
+// TestEnqueuePanelSynthesisInstructionsPersisted verifies a panel's
+// synthesis_instructions are frozen on the synthesis job row, so the worker
+// and later reruns use the instructions the run was queued with.
+func TestEnqueuePanelSynthesisInstructionsPersisted(t *testing.T) {
+	server, db, _ := newTestServer(t)
+
+	const instructionsPanel = `
+[review]
+default_panel = "duo"
+
+[review.subagents.bug]
+agent = "test"
+review_type = "default"
+
+[review.subagents.security]
+agent = "test"
+review_type = "security"
+
+[review.panels.duo]
+members = ["bug", "security"]
+synthesis_agent = "test"
+synthesis_instructions = """
+Verify each finding against the code.
+Start each problem with "Label: just fix" or "Label: needs the user".
+"""
+`
+	repo := testutil.NewGitRepo(t)
+	repo.WriteFile(".roborev.toml", instructionsPanel)
+	repo.CommitFile("a.txt", "a", "add a")
+
+	resp := enqueuePanelViaHTTP(t, server, EnqueueRequest{
+		RepoPath: repo.Path(),
+		GitRef:   "HEAD",
+		Agent:    "test",
+	})
+
+	synth, err := db.GetSynthesisJob(resp.PanelRunUUID)
+	require.NoError(t, err)
+	require.NotNil(t, synth)
+	instructions, err := synthesisInstructions(synth)
+	require.NoError(t, err)
+	assert.Equal(t,
+		"Verify each finding against the code.\nStart each problem with \"Label: just fix\" or \"Label: needs the user\".",
+		instructions)
 }
 
 // TestEnqueueSingleMemberPanelSynthesisBackupPersisted verifies the single-member
@@ -1257,7 +1304,7 @@ synthesis_agent = "test"
 	assert.Empty(members[1].OutputPrefix, "the banner is composed at read time, never stored in the prefix")
 
 	// The banner is composed when the review is read, so it is never lost.
-	_, err = db.Exec(`UPDATE review_jobs SET status = 'running' WHERE id = ?`, members[1].ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'running' WHERE id = ?`, members[1].ID)
 	require.NoError(t, err)
 	require.NoError(t, testutil.CompleteReviewFixture(db, members[1].ID, "test", "", "- High: bug in a.go:1"))
 	review, err := db.GetReviewByJobID(members[1].ID)

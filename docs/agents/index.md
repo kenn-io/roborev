@@ -115,6 +115,39 @@ model = "gpt-4.1"  # Override for this repo
 Model resolution priority: CLI flag > per-repo config > global config > agent
 default.
 
+## Strict Claude Code Reviews
+
+A custom review type with `tools.mode = "read-only"` runs as a strict review.
+Claude Code is the only agent that supports strict reviews; other agents fail
+before the review starts.
+
+A strict review starts a fresh, locked-down Claude session:
+
+- Only the built-in `Read`, `Glob`, and `Grep` tools are loaded, plus
+    `StructuredOutput` for schema output.
+- User, project, and local Claude settings are not loaded, so their hooks,
+    plugins, and permission rules cannot add tools. Managed settings still
+    apply.
+- To keep gateway, Bedrock, Vertex, and Foundry setups working, roborev copies
+    only the `env`, `apiKeyHelper`, `awsAuthRefresh`, `awsCredentialExport`,
+    `gcpAuthRefresh`, `forceLoginMethod`, `forceLoginOrgUUID`, and
+    `modelOverrides` keys from your user settings file
+    (`$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json`) into a
+    private settings file for the review. Hooks, permissions, and plugins are
+    never loaded.
+- MCP servers come only from a private config file that roborev writes for the
+    review and deletes afterwards. It lists only the servers the review was
+    granted, and only the granted tools are allowed.
+- Permissions use `dontAsk` mode with no prompts. Slash commands are disabled.
+- The session never resumes an earlier session, is not saved, and is never
+    reused by a later review.
+
+Before trusting the output, roborev checks Claude's startup report. If it shows
+a different tool set, a different permission mode, a missing or unconnected
+granted server, a missing granted tool, or any other MCP server, roborev stops
+Claude and fails the review. If the installed Claude Code CLI lacks a required
+flag, the review fails with an upgrade error instead of running.
+
 ## Routing Claude Code to a Proxy
 
 The `claude-code` agent accepts a model spec of the form `<model>@<base_url>`.
@@ -269,10 +302,13 @@ Install the default extension in Pi:
 pi install npm:@nqbao/pi-json-schema
 ```
 
-roborev passes the configured extension source explicitly when it invokes
-reviews or classifier jobs. Installing it in Pi makes setup visible in `pi list`
-and avoids runtime package-fetch surprises in offline or locked-down
-environments.
+When your global Pi settings or the repository's `.pi/settings.json` install
+that npm package, at any version, reviews use the installed copy. Loading a
+second copy would make Pi exit with a flag conflict. Otherwise roborev passes
+the configured extension source explicitly. Classifier jobs and planning runs
+turn off other extensions, so they always pass it explicitly. Installing it in
+Pi makes setup visible in `pi list` and avoids runtime package-fetch surprises
+in offline or locked-down environments.
 
 Override the extension source in global config if you vendor or mirror it:
 
@@ -300,7 +336,7 @@ and commands):
 | Agent | Agentic Support |
 |-------|-----------------|
 | Codex | Full (uses `--dangerously-bypass-approvals-and-sandbox`) |
-| Claude Code | Full (uses `--dangerously-skip-permissions`) |
+| Claude Code | Full (uses `--dangerously-skip-permissions`; reviews, synthesis, and planning load only `Read`, `Glob`, and `Grep`) |
 | Gemini (Antigravity) | Full (uses `--dangerously-skip-permissions`) |
 | Gemini (legacy) | Full (uses `--yolo` and `--allowed-tools`) |
 | Copilot | Limited (requires manual approval for actions) |
@@ -315,6 +351,56 @@ and commands):
 
 See [Custom Tasks & Agentic Mode](/docs/advanced/custom-tasks/) for details on
 review vs agentic modes.
+
+## Sandboxed Codex runs
+
+The Codex backend can run agentic jobs inside nono. This is an internal API for
+callers that supply a job directory, read-only paths, an explicit environment, a
+memory cap in bytes, and a host Codex login file. The CI checker uses this API
+when
+[`ci.check` is enabled](/docs/integrations/github/#checking-findings-before-posting).
+
+The job can write its work directory and read the caller's read-only paths plus
+nono's default system paths. Keep the Git directory outside the work directory
+and grant it read access, so commands can inspect history while commits and
+local configuration changes fail. Put temporary files and writable caches inside
+the work directory too. Give nono a job-private, disposable `HOME` outside the
+work directory for its session state. nono refuses grants that overlap this
+state directory.
+
+Grant read access to the Codex launcher and its runtime files, including any
+symlink targets. Codex runs through the absolute launcher path the caller
+supplies, preserving its invocation name.
+
+Host requirements:
+
+- Linux x86_64.
+- nono 0.80.0 on PATH, using the x86_64-gnu release binary with SHA-256
+    `e02d003d52b3f65e8c75358eb73e339ad952a2876529047e61183b46eff1287d`.
+- A systemd user manager reachable through `XDG_RUNTIME_DIR` and, when needed,
+    `DBUS_SESSION_BUS_ADDRESS`. Each run uses a scope with the caller's
+    `MemoryMax` and `MemorySwapMax=0`.
+- A Codex login file with `tokens.access_token`, by default in the host's
+    `CODEX_HOME` or `~/.codex`.
+- Bash, cat, touch, and rm under `/bin`, plus `/usr/bin/python3`, for the
+    self-check.
+
+Before each run, roborev verifies nono's checksum and runs a probe under the
+same policy. The probe checks work-directory writes, secret reads, network
+access, environment filtering, and access to the user D-Bus. Any mismatch or
+unenforceable policy stops the run before Codex starts.
+
+Codex runs in agentic mode with a private `CODEX_HOME` inside the job directory.
+Its provider uses nono's credential route. The nono supervisor reads the host
+login on demand and injects the access token into model requests. The job sees
+only a placeholder key and a loopback URL. Only `POST /responses` to the Codex
+upstream goes out. The configuration file contains provider settings. Web search
+is disabled. The host login and user D-Bus stay outside the sandbox. Planning
+refuses this agentic mode.
+
+Tests that start a loopback server, such as `httptest.NewServer`, fail inside
+this sandbox. Run `make test-sandbox-integration` with nono and Codex on PATH to
+exercise the policy with real binaries and a local stand-in Responses server.
 
 ## Pi
 
@@ -503,9 +589,9 @@ against the auditable pins in source (`grokToolsCLIVersion`, `grokToolsRepoRev`,
 
 ### Skills, hooks, and streaming
 
-Install roborev skills into `~/.grok/skills` with `roborev skills install` (full
-review/design/fix/refine/respond surface). Optional mid-session fix hooks:
-`roborev agent-hook install --agent grok`. Headless `streaming-json` events
+Install roborev skills into `~/.grok/skills` with `roborev agent skills install`
+(full review/design/fix/refine/respond surface). Optional mid-session fix hooks:
+`roborev agent hook install --agent grok`. Headless `streaming-json` events
 (`text`, `thought`, `tool_call`, …) render through the shared TTY formatter.
 
 ### Cursor identity note

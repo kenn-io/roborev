@@ -1,7 +1,6 @@
 package searchindex
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"path/filepath"
@@ -18,7 +17,7 @@ import (
 )
 
 func TestGenerationIsUnavailableUntilCompleteAndReplacementRequiresMatchingFingerprint(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index := openGenerationTestIndex(t)
 	first := testSpace("first", 2)
 	second := testSpace("second", 3)
@@ -59,7 +58,7 @@ func TestGenerationIsUnavailableUntilCompleteAndReplacementRequiresMatchingFinge
 }
 
 func TestGenerationStoredByEarlierReleaseKeepsServingWithoutReembedding(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index := openGenerationTestIndex(t)
 	doc := testDocument(1, "legacy generation")
 	_, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{doc}, nil)
@@ -136,7 +135,7 @@ func TestLegacyFingerprintMatchesEarlierReleases(t *testing.T) {
 }
 
 func TestNewGenerationsUseKitIdentity(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index := openGenerationTestIndex(t)
 	embeddings, err := NewEmbeddings(embedconfig.Embedder{
 		BaseURL: "https://example.test/v1", Model: "model", Dims: 2,
@@ -194,7 +193,7 @@ func TestGenerationIdentitySeparatesVectorSpaceInputs(t *testing.T) {
 }
 
 func TestGenerationCutoverReclaimsRetiredVectorTables(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index := openGenerationTestIndex(t)
 	doc := testDocument(1, "generation lifecycle")
 	_, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{doc}, nil)
@@ -249,7 +248,7 @@ func TestGenerationCutoverReclaimsRetiredVectorTables(t *testing.T) {
 }
 
 func TestGenerationSaveRejectsStaleMirrorRevision(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index := openGenerationTestIndex(t)
 	doc := testDocument(1, "before")
 	_, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{doc}, nil)
@@ -275,7 +274,7 @@ func TestGenerationSaveRejectsStaleMirrorRevision(t *testing.T) {
 }
 
 func TestGenerationCountsEmbeddedSkippedAndBacklog(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index := openGenerationTestIndex(t)
 	docs := []searchdoc.Document{
 		testDocument(1, "embedded"),
@@ -300,7 +299,7 @@ func TestGenerationCountsEmbeddedSkippedAndBacklog(t *testing.T) {
 }
 
 func TestGenerationCutoverRefusesUncoveredDocuments(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index := openGenerationTestIndex(t)
 	key, err := index.ResolveGeneration(ctx, testSpace("model", 2))
 	require.NoError(t, err)
@@ -323,7 +322,7 @@ func testSpace(model string, dims int) embedmodel.Descriptor {
 
 func openGenerationTestIndex(t *testing.T) *Index {
 	t.Helper()
-	index, err := Open(context.Background(), filepath.Join(t.TempDir(), "reviews.search.db"))
+	index, err := Open(t.Context(), filepath.Join(t.TempDir(), "reviews.search.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, index.Close()) })
 	return index
@@ -332,7 +331,7 @@ func openGenerationTestIndex(t *testing.T) *Index {
 func generationTableOrdinal(t *testing.T, db *sql.DB, key string) int64 {
 	t.Helper()
 	var ordinal int64
-	require.NoError(t, db.QueryRow(`SELECT ordinal FROM review_vectors_generations WHERE gen_key = ?`, key).Scan(&ordinal))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT ordinal FROM review_vectors_generations WHERE gen_key = ?`, key).Scan(&ordinal))
 	return ordinal
 }
 
@@ -340,6 +339,6 @@ func generationVectorCount(t *testing.T, index *Index, key string) int {
 	t.Helper()
 	var count int
 	table := fmt.Sprintf("review_vectors_v%d", generationTableOrdinal(t, index.db, key))
-	require.NoError(t, index.db.QueryRow(`SELECT count(*) FROM `+table).Scan(&count))
+	require.NoError(t, index.db.QueryRowContext(t.Context(), `SELECT count(*) FROM `+table).Scan(&count))
 	return count
 }

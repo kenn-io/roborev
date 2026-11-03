@@ -21,6 +21,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/version"
 )
 
 type archiveEntry struct {
@@ -48,6 +50,39 @@ func (r *testReporter) Stepf(format string, args ...any) {
 
 func (r *testReporter) Progress(downloaded, total int64) {
 	r.progress = append(r.progress, downloaded, total)
+}
+
+func TestUpdaterPerformUpdateRefusesPackageManagedBuild(t *testing.T) {
+	assert := assert.New(t)
+	original := version.Distribution
+	version.Distribution = "homebrew"
+	t.Cleanup(func() { version.Distribution = original })
+
+	currentBinary := filepath.Join(t.TempDir(), executableName(runtime.GOOS))
+	require.NoError(t, os.WriteFile(currentBinary, []byte("package-managed-binary"), 0o755))
+	requests := 0
+	updater := NewUpdater(Deps{
+		Executable: func() (string, error) { return currentBinary, nil },
+		CacheDir:   t.TempDir,
+		Client: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				requests++
+				return nil, fmt.Errorf("unexpected request to %s", req.URL)
+			}),
+		},
+	})
+	reporter := &testReporter{}
+	err := updater.PerformUpdateContext(t.Context(), &UpdateInfo{
+		AssetName:   "roborev.tar.gz",
+		DownloadURL: "https://downloads.example/roborev.tar.gz",
+		Checksum:    strings.Repeat("a", 64),
+	}, reporter)
+	require.EqualError(t, err, "self-update is disabled in this build: Homebrew manages this installation; use 'brew upgrade roborev' to update")
+	assert.Equal(0, requests)
+	installed, err := os.ReadFile(currentBinary)
+	require.NoError(t, err)
+	assert.Equal("package-managed-binary", string(installed))
+	assert.Empty(reporter.steps.String())
 }
 
 func TestUpdaterCheckForUpdateSkipsNetworkWithFreshCache(t *testing.T) {
@@ -362,52 +397,62 @@ func TestUpdaterCheckForUpdateSendsTokenToAPIHostOnly(t *testing.T) {
 	assert.Equal(t, checksum, info.Checksum)
 }
 
+// Official direct downloads ("kenn") update themselves, like builds with
+// no Distribution.
 func TestUpdaterPerformUpdateInstallsBinary(t *testing.T) {
-	binaryName := "roborev"
-	if runtime.GOOS == "windows" {
-		binaryName = "roborev.exe"
+	for _, distribution := range []string{"", "kenn"} {
+		t.Run("distribution="+distribution, func(t *testing.T) {
+			original := version.Distribution
+			version.Distribution = distribution
+			t.Cleanup(func() { version.Distribution = original })
+
+			binaryName := "roborev"
+			if runtime.GOOS == "windows" {
+				binaryName = "roborev.exe"
+			}
+
+			archiveData := createTestArchiveBytes(t, []archiveEntry{
+				{Name: binaryName, Content: "new-binary", Mode: 0o755},
+			})
+			sum := sha256.Sum256(archiveData)
+			expectedChecksum := hex.EncodeToString(sum[:])
+
+			binDir := t.TempDir()
+			currentBinary := filepath.Join(binDir, binaryName)
+			require.NoError(t, os.WriteFile(currentBinary, []byte("old-binary"), 0o755))
+
+			updater := NewUpdater(Deps{
+				Client: &http.Client{
+					Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+						require.Equal(t, "https://downloads.example/"+binaryName+".tar.gz", req.URL.String())
+						return newBinaryResponse(http.StatusOK, archiveData), nil
+					}),
+				},
+				Version:    "v1.2.0",
+				GOOS:       runtime.GOOS,
+				GOARCH:     runtime.GOARCH,
+				Executable: func() (string, error) { return currentBinary, nil },
+				CacheDir:   t.TempDir,
+			})
+
+			reporter := &testReporter{}
+			err := updater.PerformUpdate(&UpdateInfo{
+				AssetName:   binaryName + ".tar.gz",
+				DownloadURL: "https://downloads.example/" + binaryName + ".tar.gz",
+				Size:        int64(len(archiveData)),
+				Checksum:    expectedChecksum,
+			}, reporter)
+			require.NoError(t, err)
+
+			installed, readErr := os.ReadFile(currentBinary)
+			require.NoError(t, readErr)
+			assert.Equal(t, "new-binary", string(installed))
+			requirePathMissing(t, currentBinary+".old")
+			assert.Contains(t, reporter.steps.String(), "Downloading")
+			assert.Contains(t, reporter.steps.String(), "Installing "+binaryName+"... OK")
+			assert.NotEmpty(t, reporter.progress)
+		})
 	}
-
-	archiveData := createTestArchiveBytes(t, []archiveEntry{
-		{Name: binaryName, Content: "new-binary", Mode: 0o755},
-	})
-	sum := sha256.Sum256(archiveData)
-	expectedChecksum := hex.EncodeToString(sum[:])
-
-	binDir := t.TempDir()
-	currentBinary := filepath.Join(binDir, binaryName)
-	require.NoError(t, os.WriteFile(currentBinary, []byte("old-binary"), 0o755))
-
-	updater := NewUpdater(Deps{
-		Client: &http.Client{
-			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-				require.Equal(t, "https://downloads.example/"+binaryName+".tar.gz", req.URL.String())
-				return newBinaryResponse(http.StatusOK, archiveData), nil
-			}),
-		},
-		Version:    "v1.2.0",
-		GOOS:       runtime.GOOS,
-		GOARCH:     runtime.GOARCH,
-		Executable: func() (string, error) { return currentBinary, nil },
-		CacheDir:   t.TempDir,
-	})
-
-	reporter := &testReporter{}
-	err := updater.PerformUpdate(&UpdateInfo{
-		AssetName:   binaryName + ".tar.gz",
-		DownloadURL: "https://downloads.example/" + binaryName + ".tar.gz",
-		Size:        int64(len(archiveData)),
-		Checksum:    expectedChecksum,
-	}, reporter)
-	require.NoError(t, err)
-
-	installed, readErr := os.ReadFile(currentBinary)
-	require.NoError(t, readErr)
-	assert.Equal(t, "new-binary", string(installed))
-	requirePathMissing(t, currentBinary+".old")
-	assert.Contains(t, reporter.steps.String(), "Downloading")
-	assert.Contains(t, reporter.steps.String(), "Installing "+binaryName+"... OK")
-	assert.NotEmpty(t, reporter.progress)
 }
 
 func TestUpdaterPerformUpdateInstallsWindowsZipBinary(t *testing.T) {
@@ -479,7 +524,7 @@ func TestUpdaterPerformUpdateContextCancelsBeforeInstall(t *testing.T) {
 		Executable: func() (string, error) { return currentBinary, nil },
 		CacheDir:   t.TempDir,
 	})
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
 		done <- updater.PerformUpdateContext(ctx, &UpdateInfo{

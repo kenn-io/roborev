@@ -1,0 +1,20 @@
+name: CodeQL
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  actions: read
+  contents: read
+  packages: read
+  security-events: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  run:
+    cache-mode: read
+    uses: ./.github/workflows/codeql.yml

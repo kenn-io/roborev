@@ -170,6 +170,8 @@ func formatLocation(location Location) string {
 }
 
 // Document preserves goal findings in the canonical stored review format.
+// Goal findings can point at a Kata issue rather than a file, and have no
+// kind or confidence, so they keep free-text locations.
 func Document(findings []Finding) structuredreview.Document {
 	doc := structuredreview.Document{
 		SchemaVersion: structuredreview.SchemaVersion,

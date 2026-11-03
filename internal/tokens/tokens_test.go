@@ -317,7 +317,7 @@ echo "unexpected args: $@" >&2
 exit 99
 `)
 
-	usage, err := FetchForSession(context.Background(), "s")
+	usage, err := FetchForSession(t.Context(), "s")
 	require.NoError(t, err)
 	require.NotNil(t, usage)
 	assert.Equal(t, int64(28800), usage.OutputTokens)
@@ -341,7 +341,7 @@ func TestFetchForSessionWithConfigUsesHTTPEndpoint(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	usage, err := FetchForSessionWithConfig(
-		context.Background(), "codex:s/1",
+		t.Context(), "codex:s/1",
 		FetchConfig{
 			Endpoint: server.URL + "/api/v1/sessions/{session_id}/usage",
 			Timeout:  time.Second,
@@ -367,7 +367,7 @@ func TestFetchForSessionWithConfigHonorsUsageFlags(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	usage, err := FetchForSessionWithConfig(
-		context.Background(), "s",
+		t.Context(), "s",
 		FetchConfig{
 			Endpoint: server.URL + "/usage/{session_id}",
 			Timeout:  time.Second,
@@ -387,7 +387,7 @@ func TestFetchForSessionWithConfigHTTPNotFoundMeansNoUsage(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	usage, err := FetchForSessionWithConfig(
-		context.Background(), "missing",
+		t.Context(), "missing",
 		FetchConfig{
 			Endpoint: server.URL + "/usage/{session_id}",
 			Timeout:  time.Second,
@@ -438,7 +438,7 @@ func TestFetchForSessionWithConfigHTTPStatusErrorReportsExactStatus(t *testing.T
 			t.Cleanup(server.Close)
 
 			usage, err := FetchForSessionWithConfig(
-				context.Background(), "s",
+				t.Context(), "s",
 				FetchConfig{
 					Endpoint: server.URL + "/usage/{session_id}",
 					Timeout:  time.Second,
@@ -463,7 +463,7 @@ func TestFetchForSessionWithConfigRejectsBadSchema(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	usage, err := FetchForSessionWithConfig(
-		context.Background(), "s",
+		t.Context(), "s",
 		FetchConfig{
 			Endpoint: server.URL + "/usage/{session_id}",
 			Timeout:  time.Second,
@@ -489,7 +489,7 @@ echo "unexpected args: $@" >&2
 exit 99
 `)
 
-	usage, err := FetchForSession(context.Background(), "s")
+	usage, err := FetchForSession(t.Context(), "s")
 	require.NoError(t, err)
 	require.NotNil(t, usage)
 	assert.Equal(t, int64(28800), usage.OutputTokens)
@@ -512,7 +512,7 @@ echo "unexpected args: $@" >&2
 exit 99
 `)
 
-	usage, err := FetchForSession(context.Background(), "s")
+	usage, err := FetchForSession(t.Context(), "s")
 	require.NoError(t, err)
 	require.NotNil(t, usage)
 	assert.Equal(t, int64(28800), usage.OutputTokens)
@@ -535,7 +535,7 @@ echo "unexpected args: $@" >&2
 exit 99
 `)
 
-	usage, err := FetchForSession(context.Background(), "s")
+	usage, err := FetchForSession(t.Context(), "s")
 	require.Error(t, err)
 	assert.Nil(t, usage)
 	assert.Contains(t, err.Error(), "agentsview usage: exit 42")
@@ -561,7 +561,7 @@ echo "unexpected args: $@" >&2
 exit 99
 `)
 
-	usage, err := FetchForSession(context.Background(), "s")
+	usage, err := FetchForSession(t.Context(), "s")
 	require.NoError(t, err)
 	assert.Equal(t, &Usage{
 		OutputTokens: 1000, PeakContextTokens: 2000,
@@ -593,7 +593,7 @@ echo "unexpected args: $@" >&2
 exit 99
 `, message))
 
-			usage, err := FetchForSession(context.Background(), "s")
+			usage, err := FetchForSession(t.Context(), "s")
 			require.NoError(t, err)
 			assert.Equal(t, &Usage{OutputTokens: 1000, PeakContextTokens: 2000}, usage)
 		})
@@ -614,7 +614,7 @@ echo %q >&2
 exit 1
 `, message))
 
-			usage, err := FetchForSession(context.Background(), "s")
+			usage, err := FetchForSession(t.Context(), "s")
 			require.Error(t, err)
 			assert.Nil(t, usage)
 			assert.Contains(t, err.Error(), message)
@@ -638,7 +638,7 @@ fi
 exit %d
 `, code))
 
-			usage, err := FetchForSession(context.Background(), "missing")
+			usage, err := FetchForSession(t.Context(), "missing")
 			require.NoError(t, err)
 			assert.Nil(t, usage)
 		})
@@ -677,7 +677,7 @@ echo "unexpected args: $@" >&2
 exit 99
 `, unsupported, command, result.stderr, result.code))
 
-				usage, err := FetchForSession(context.Background(), "s")
+				usage, err := FetchForSession(t.Context(), "s")
 				assert.Nil(t, usage)
 				if result.code == 2 || result.code == 3 ||
 					(command == "token-use s" && result.code == 1 && result.stderr == "") {
@@ -699,7 +699,7 @@ func TestFetchForSessionSkipsMissingAgentsviewByDefault(t *testing.T) {
 
 	t.Setenv("PATH", t.TempDir())
 
-	usage, err := FetchForSession(context.Background(), "s")
+	usage, err := FetchForSession(t.Context(), "s")
 
 	require.NoError(t, err)
 	assert.Nil(t, usage)
@@ -713,7 +713,7 @@ func TestFetchForSessionWithConfigRequiresAgentsviewWhenRequested(t *testing.T) 
 	t.Setenv("PATH", t.TempDir())
 
 	usage, err := FetchForSessionWithConfig(
-		context.Background(), "s", FetchConfig{RequireCLI: true},
+		t.Context(), "s", FetchConfig{RequireCLI: true},
 	)
 
 	require.Error(t, err)
@@ -824,7 +824,7 @@ echo "unexpected args: $@" >&2
 exit 99
 `)
 
-	usage, err := FetchForSession(context.Background(), "s")
+	usage, err := FetchForSession(t.Context(), "s")
 	require.NoError(t, err)
 	require.NotNil(t, usage)
 	assert.Equal(t, int64(4762), usage.OutputTokens)
@@ -845,7 +845,7 @@ echo "unexpected args: $@" >&2
 exit 99
 `)
 
-	usage, err := FetchForSession(context.Background(), "s")
+	usage, err := FetchForSession(t.Context(), "s")
 	require.NoError(t, err)
 	require.NotNil(t, usage)
 	assert.Equal(t, int64(300), usage.OutputTokens)
@@ -863,7 +863,7 @@ echo "unexpected args: $@" >&2
 exit 99
 `)
 
-	usage, err := FetchForSession(context.Background(), "s")
+	usage, err := FetchForSession(t.Context(), "s")
 	require.NoError(t, err)
 	assert.Nil(t, usage)
 }
@@ -905,4 +905,57 @@ func TestToJSON(t *testing.T) {
 		assert.True(t, got.HasCost)
 		assert.InDelta(t, 1.23, got.CostUSD, 1e-9)
 	})
+}
+
+// fetchInBackground runs the lookup in a goroutine so a regression fails the
+// test instead of blocking it until the holder process exits.
+func fetchInBackground(cfg FetchConfig) <-chan fetchResult {
+	done := make(chan fetchResult, 1)
+	go func() {
+		usage, err := FetchForSessionWithConfig(context.Background(), "s", cfg)
+		done <- fetchResult{usage: usage, err: err}
+	}()
+	return done
+}
+
+type fetchResult struct {
+	usage *Usage
+	err   error
+}
+
+func waitForFetch(t *testing.T, done <-chan fetchResult) fetchResult {
+	t.Helper()
+	var result fetchResult
+	// Wall-clock wait: the fake agentsview subprocess and the background
+	// process that holds its pipes for 30 seconds.
+	require.Eventually(t, func() bool {
+		select {
+		case result = <-done:
+			return true
+		default:
+			return false
+		}
+	}, 10*time.Second, 10*time.Millisecond,
+		"usage lookup waited for a process that inherited its pipes")
+	return result
+}
+
+func TestFetchForSessionTimeoutDoesNotWaitForInheritedPipes(t *testing.T) {
+	installPipeHoldingAgentsview(t, false)
+
+	result := waitForFetch(t, fetchInBackground(FetchConfig{Timeout: 2 * time.Second}))
+
+	require.Error(t, result.err)
+	assert.Nil(t, result.usage)
+}
+
+func TestFetchForSessionReturnsUsageWhenHelperKeepsPipesOpen(t *testing.T) {
+	installPipeHoldingAgentsview(t, true)
+
+	result := waitForFetch(t, fetchInBackground(FetchConfig{Timeout: 10 * time.Second}))
+
+	require.NoError(t, result.err)
+	require.NotNil(t, result.usage)
+	assert.Equal(t, int64(42), result.usage.OutputTokens)
+	assert.InDelta(t, 0.07, result.usage.CostUSD, 1e-9)
 }

@@ -77,7 +77,7 @@ exit 1
 	require.NoError(t, os.Chdir(deletedWD))
 	require.NoError(t, os.RemoveAll(deletedWD))
 
-	supported, err := claudeSupportsDangerousFlag(context.Background(), cmdPath)
+	supported, err := claudeSupportsDangerousFlag(t.Context(), cmdPath)
 
 	require.NoError(t, err)
 	assert.True(t, supported)
@@ -93,6 +93,8 @@ func TestClaudeBuildArgs(t *testing.T) {
 			assertContainsArg(t, args, req)
 		}
 		assertNotContainsArg(t, args, claudeDangerousFlag)
+		assertArgsContain(t, strings.Join(args, " "), "--tools", "Read,Glob,Grep")
+		assertArgsContain(t, strings.Join(args, " "), "--disallowedTools", "mcp__*")
 
 		assertTools(t, args,
 			[]string{"Read", "Glob", "Grep"},
@@ -104,6 +106,8 @@ func TestClaudeBuildArgs(t *testing.T) {
 		args := a.buildArgs(true, false)
 		assertContainsArg(t, args, claudeDangerousFlag)
 		assertContainsArg(t, args, "--allowedTools")
+		assert.NotContains(t, args, "--tools")
+		assert.NotContains(t, args, "--disallowedTools")
 
 		assertTools(t, args,
 			[]string{"Edit", "Write", "Bash"},
@@ -128,7 +132,7 @@ func TestClaudePlanningCommandLine(t *testing.T) {
 	a := NewClaudeAgent("claude").WithAgentic(true).WithReasoning(ReasoningThorough).(*ClaudeAgent)
 	a.SessionID = "implementation-session"
 
-	assert.Equal(t, "claude -p --verbose --output-format stream-json --effort high --allowedTools Read,Glob,Grep --permission-mode plan --tools Read,Glob,Grep --disallowedTools mcp__*", a.PlanningCommandLine())
+	assert.Equal(t, "claude -p --verbose --output-format stream-json --effort high --allowedTools Read,Glob,Grep --tools Read,Glob,Grep --disallowedTools mcp__* --permission-mode plan", a.PlanningCommandLine())
 }
 
 func TestParseModel(t *testing.T) {
@@ -243,7 +247,7 @@ func TestClaudeReviewProxyEnv(t *testing.T) {
 	})
 
 	a := NewClaudeAgent(mock.CmdPath).WithModel("glm-5.1:cloud@http://127.0.0.1:11434").(*ClaudeAgent)
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.NoError(t, err)
 
 	env := readMockEnv(t, mock.EnvFile)
@@ -279,7 +283,7 @@ func TestClaudeReviewProxyTokenOptIn(t *testing.T) {
 	})
 
 	a := NewClaudeAgent(mock.CmdPath).WithModel("glm-5.1:cloud@https://proxy.example.com").(*ClaudeAgent)
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.NoError(t, err)
 
 	env := readMockEnv(t, mock.EnvFile)
@@ -307,7 +311,7 @@ func TestClaudeReviewProxyDoesNotForwardAPIKey(t *testing.T) {
 	})
 
 	a := NewClaudeAgent(mock.CmdPath).WithModel("glm-5.1:cloud@http://127.0.0.1:11434").(*ClaudeAgent)
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.NoError(t, err)
 
 	env := readMockEnv(t, mock.EnvFile)
@@ -342,7 +346,7 @@ func TestClaudeReviewStripsInheritedProxyEnv(t *testing.T) {
 	})
 
 	a := NewClaudeAgent(mock.CmdPath).WithModel("sonnet").(*ClaudeAgent)
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.NoError(t, err)
 
 	env := readMockEnv(t, mock.EnvFile)
@@ -384,7 +388,7 @@ func TestClaudeReviewProxyModeOverridesInheritedEnv(t *testing.T) {
 	})
 
 	a := NewClaudeAgent(mock.CmdPath).WithModel("glm-5.1:cloud@http://127.0.0.1:11434").(*ClaudeAgent)
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.NoError(t, err)
 
 	env := readMockEnv(t, mock.EnvFile)
@@ -424,7 +428,7 @@ func TestClaudeReviewProxyTokenRejectsControlChars(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("ROBOREV_CLAUDE_PROXY_TOKEN", tt.token)
 			a := NewClaudeAgent("claude").WithModel("glm-5.1:cloud@http://127.0.0.1:11434").(*ClaudeAgent)
-			_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+			_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "control characters")
 		})
@@ -433,7 +437,7 @@ func TestClaudeReviewProxyTokenRejectsControlChars(t *testing.T) {
 
 func TestClaudeReviewProxyOnlyRejected(t *testing.T) {
 	a := NewClaudeAgent("claude").WithModel("@http://localhost:4000").(*ClaudeAgent)
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no model")
 }
@@ -453,7 +457,7 @@ func TestClaudeReviewRejectsInvalidSpecs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			a := NewClaudeAgent("claude").WithModel(tt.model).(*ClaudeAgent)
-			_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+			_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.errSubstr)
 		})
@@ -469,7 +473,7 @@ func TestClaudeReviewNonProxyDoesNotSetProxyEnv(t *testing.T) {
 	})
 
 	a := NewClaudeAgent(mock.CmdPath).WithModel("sonnet").(*ClaudeAgent)
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.NoError(t, err)
 
 	env := readMockEnv(t, mock.EnvFile)
@@ -486,7 +490,7 @@ func TestClaudeDangerousFlagSupport(t *testing.T) {
 
 	cmdPath := writeTempCommand(t, "#!/bin/sh\necho \"usage "+claudeDangerousFlag+"\"; exit 1\n")
 
-	supported, err := claudeSupportsDangerousFlag(context.Background(), cmdPath)
+	supported, err := claudeSupportsDangerousFlag(t.Context(), cmdPath)
 	require.NoError(t, err)
 	assert.True(supported, "expected dangerous flag support")
 }
@@ -499,26 +503,49 @@ func TestClaudeReviewUnsafeMissingFlagErrors(t *testing.T) {
 	cmdPath := writeTempCommand(t, "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then echo \"usage\"; exit 0; fi\nexit 0\n")
 
 	a := NewClaudeAgent(cmdPath)
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.Error(t, err)
 	assert.Contains(err.Error(), "does not support")
 }
 
-func TestClaudeReviewWithSessionResumePassesResumeArgs(t *testing.T) {
-	mock := mockAgentCLI(t, MockCLIOpts{
-		CaptureArgs: true,
-		StdoutLines: []string{
-			`{"type":"result","result":"ok"}`,
-		},
-	})
+func TestClaudeReviewPassesArgs(t *testing.T) {
+	withUnsafeAgents(t, false)
 
-	a := NewClaudeAgent(mock.CmdPath).WithSessionID("session-123").(*ClaudeAgent)
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
-	require.NoError(t, err)
+	for _, tt := range []struct {
+		name   string
+		schema bool
+		resume bool
+	}{
+		{name: "Review"},
+		{name: "ReviewWithSchema", schema: true},
+		{name: "ResumeSession", resume: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := mockAgentCLI(t, MockCLIOpts{
+				CaptureArgs: true,
+				StdoutLines: []string{`{"type":"result","result":"{\"findings\":[]}"}`},
+			})
+			a := NewClaudeAgent(mock.CmdPath)
+			if tt.resume {
+				a = a.WithSessionID("session-123").(*ClaudeAgent)
+			}
+			if tt.schema {
+				_, err := a.ReviewWithSchema(t.Context(), t.TempDir(), "deadbeef", "prompt", jsontext.Value(`{"type":"object"}`), nil)
+				require.NoError(t, err)
+			} else {
+				_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
+				require.NoError(t, err)
+			}
 
-	args := readMockArgs(t, mock.ArgsFile)
-	assertContainsArg(t, args, "--resume")
-	assertContainsArg(t, args, "session-123")
+			args := readMockArgs(t, mock.ArgsFile)
+			if tt.resume {
+				assertContainsArg(t, args, "--resume")
+				assertContainsArg(t, args, "session-123")
+			} else {
+				assertArgsContain(t, strings.Join(args, " "), "--tools", "Read,Glob,Grep")
+			}
+		})
+	}
 }
 
 func TestParseStreamJSON(t *testing.T) {
@@ -773,7 +800,7 @@ exit 0
 
 	a := NewClaudeAgent(cmdPath)
 	result, err := a.Review(
-		context.Background(), t.TempDir(), "abc123", "review this", nil,
+		t.Context(), t.TempDir(), "abc123", "review this", nil,
 	)
 	require.NoError(t, err)
 	assert.Equal("No review output generated", result)
@@ -794,7 +821,7 @@ exit 0
 	a := NewClaudeAgent(cmdPath)
 	var output strings.Builder
 	result, err := a.Review(
-		context.Background(), t.TempDir(), "abc123", "review this", &output,
+		t.Context(), t.TempDir(), "abc123", "review this", &output,
 	)
 	require.NoError(t, err)
 	assert.Equal("LGTM", result)
@@ -817,7 +844,7 @@ exit 0
 
 	a := NewClaudeAgent(cmdPath)
 	_, err := a.Review(
-		context.Background(), t.TempDir(), "abc123", "review this", nil,
+		t.Context(), t.TempDir(), "abc123", "review this", nil,
 	)
 	require.Error(t, err)
 	assert.Contains(err.Error(), "Invalid API key")
@@ -838,7 +865,7 @@ exit 1
 
 	a := NewClaudeAgent(cmdPath)
 	_, err := a.Review(
-		context.Background(), t.TempDir(), "abc123", "review this", nil,
+		t.Context(), t.TempDir(), "abc123", "review this", nil,
 	)
 	require.Error(t, err)
 	errStr := err.Error()
@@ -857,7 +884,7 @@ func TestClaudeReviewWithSchemaWeeklyLimitIsQuota(t *testing.T) {
 	a := NewClaudeAgent(mock.CmdPath)
 
 	_, err := a.ReviewWithSchema(
-		context.Background(), t.TempDir(), "abc123", "review this",
+		t.Context(), t.TempDir(), "abc123", "review this",
 		jsontext.Value(`{"type":"object"}`), nil,
 	)
 	require.Error(t, err)
@@ -882,7 +909,7 @@ func TestClaudeClassifyWithSchemaKeepsStreamError(t *testing.T) {
 	a := NewClaudeAgent(mock.CmdPath)
 
 	_, err := a.ClassifyWithSchema(
-		context.Background(), t.TempDir(), "abc123", "classify this",
+		t.Context(), t.TempDir(), "abc123", "classify this",
 		jsontext.Value(`{"type":"object"}`), nil,
 	)
 	require.Error(t, err)
@@ -936,7 +963,7 @@ func TestClaudeSchemaWaitErrorKeepsStderrAndExitError(t *testing.T) {
 			name: "classify",
 			call: func(a *ClaudeAgent) error {
 				_, err := a.ClassifyWithSchema(
-					context.Background(), t.TempDir(), "abc123", "classify this",
+					t.Context(), t.TempDir(), "abc123", "classify this",
 					jsontext.Value(`{"type":"object"}`), nil,
 				)
 				return err
@@ -946,7 +973,7 @@ func TestClaudeSchemaWaitErrorKeepsStderrAndExitError(t *testing.T) {
 			name: "review",
 			call: func(a *ClaudeAgent) error {
 				_, err := a.ReviewWithSchema(
-					context.Background(), t.TempDir(), "abc123", "review this",
+					t.Context(), t.TempDir(), "abc123", "review this",
 					jsontext.Value(`{"type":"object"}`), nil,
 				)
 				return err

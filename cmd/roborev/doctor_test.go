@@ -156,7 +156,9 @@ func TestDoctorHookToolsUseDaemonView(t *testing.T) {
 	assert.Equal(t, []string{`hook 1 (event "review.failed"): the kata CLI is not on the daemon's PATH`}, got.Details)
 
 	env.daemonAgents.HookTools[0] = agent.Diagnosis{Name: "kata", Available: true}
-	assert.Empty(t, checkDoctorIntegrations(env))
+	checks := checkDoctorIntegrations(env)
+	assert.Len(t, checks, 1)
+	assert.Equal(t, "integrations.usage", checks[0].ID)
 }
 
 func TestDoctorAgentsUnknownPreferredIgnoresBackup(t *testing.T) {
@@ -373,7 +375,7 @@ func TestDoctorCommandJSONFailsOnBrokenConfig(t *testing.T) {
 
 	// Point at a port nothing listens on so the doctor never reaches a real
 	// daemon.
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	addr := listener.Addr().String()
 	require.NoError(t, listener.Close())
@@ -522,6 +524,20 @@ func TestDoctorReviewPanels(t *testing.T) {
 		checks, _ := checkDoctorReviewAgents(env)
 		require.Len(t, checks, 1)
 		assert.Equal(t, doctorFail, checks[0].Status)
+	})
+
+	t.Run("a panel with no synthesis agent passes", func(t *testing.T) {
+		lone := okPanel
+		lone.Synthesis = agent.Diagnosis{}
+		env := &doctorEnv{
+			ctx:          t.Context(),
+			global:       &config.Config{},
+			daemonAgents: &doctorDaemonAgents{Panels: []daemon.DoctorPanel{lone}},
+		}
+		checks, _ := checkDoctorReviewAgents(env)
+		require.Len(t, checks, 1)
+		assert.Equal(t, doctorOK, checks[0].Status)
+		assert.Contains(t, checks[0].Summary, "no synthesis agent runs for one voting member")
 	})
 
 	t.Run("an experimental-arm panel does not replace the single agent", func(t *testing.T) {

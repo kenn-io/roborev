@@ -24,7 +24,6 @@ const (
 	GenericEnabledEnv    = posthog.GenericEnabledEnv
 	installIDMetadataKey = "telemetry.install_id"
 	installedAtKey       = "telemetry.installed_at"
-	postHogAPIKey        = "phc_AzHd9YvuHR7M5poKzC6eW654d3SgKyBdoQPuwkWhimUf"
 
 	EventDaemonStarted      = "daemon_started"
 	EventDaemonActive       = "daemon_active"
@@ -72,8 +71,11 @@ type Client = posthog.Client
 type Reporter = posthog.Reporter
 
 type Options struct {
-	Database        *storage.DB
-	Version         string
+	Database *storage.DB
+	Version  string
+	// APIKey overrides the PostHog project key. Leave it empty to use the key
+	// that release builds set at link time; builds without one send nothing.
+	APIKey          string
 	Endpoint        string
 	DailyClaimsPath string
 }
@@ -102,7 +104,7 @@ func NewReporter(opts Options) (*Reporter, error) {
 
 	claims := posthog.NewDailyClaims(opts.DailyClaimsPath)
 	return posthog.NewReporter(posthog.Options{
-		APIKey:      postHogAPIKey,
+		APIKey:      opts.APIKey,
 		Endpoint:    opts.Endpoint,
 		Application: "roborev",
 		EnvPrefix:   "ROBOREV",

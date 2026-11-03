@@ -22,7 +22,7 @@ const controlResponseTimeout = 3 * time.Second
 // socket from a previous crash and removes it. Returns an error if
 // the path exists but is not a socket (protecting regular files from
 // accidental deletion via a mistyped --control-socket).
-func removeStaleSocket(socketPath string) error {
+func removeStaleSocket(ctx context.Context, socketPath string) error {
 	fi, err := os.Lstat(socketPath)
 	if os.IsNotExist(err) {
 		return nil
@@ -36,7 +36,8 @@ func removeStaleSocket(socketPath string) error {
 		)
 	}
 	// It's a socket — try to connect to see if it's still live.
-	conn, dialErr := net.DialTimeout("unix", socketPath, 500*time.Millisecond)
+	dialer := net.Dialer{Timeout: 500 * time.Millisecond}
+	conn, dialErr := dialer.DialContext(ctx, "unix", socketPath)
 	if dialErr == nil {
 		conn.Close()
 		return fmt.Errorf(
@@ -87,7 +88,7 @@ func ensureSocketDir(dir string) error {
 }
 
 func startControlListener(
-	socketPath string, p *tea.Program,
+	ctx context.Context, socketPath string, p *tea.Program,
 ) (func(), error) {
 	// Ensure the parent directory exists for custom socket paths.
 	// Permission tightening is handled separately by ensureSocketDir
@@ -99,11 +100,11 @@ func startControlListener(
 	// Only remove an existing path if it is a stale Unix socket.
 	// Refusing to remove regular files prevents data loss from
 	// a mistyped --control-socket path.
-	if err := removeStaleSocket(socketPath); err != nil {
+	if err := removeStaleSocket(ctx, socketPath); err != nil {
 		return nil, err
 	}
 
-	ln, err := net.Listen("unix", socketPath)
+	ln, err := (&net.ListenConfig{}).Listen(ctx, "unix", socketPath)
 	if err != nil {
 		return nil, fmt.Errorf("listen on %s: %w", socketPath, err)
 	}
@@ -114,7 +115,7 @@ func startControlListener(
 		return nil, fmt.Errorf("chmod socket: %w", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(ctx)
 
 	go acceptLoop(ctx, ln, p)
 

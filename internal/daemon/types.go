@@ -48,7 +48,7 @@ type EnqueueRequest struct {
 // always emitted and OpenAPI marks it required.
 type EnqueueCreatedResponse struct {
 	*storage.ReviewJob
-	UUID uuid.UUID `json:"uuid" format:"uuid"`
+	UUID uuid.UUID `json:"uuid"`
 }
 
 // PanelEnqueueResponse is returned when an enqueue fans out into a panel run.
@@ -60,7 +60,7 @@ type PanelEnqueueResponse struct {
 	// keeps the shallower field, so PanelRunUUID is the authoritative response
 	// key and (unlike the embedded omitempty field) is always emitted.
 	*storage.ReviewJob
-	PanelRunUUID uuid.UUID `json:"panel_run_uuid" format:"uuid"`
+	PanelRunUUID uuid.UUID `json:"panel_run_uuid"`
 	MemberJobIDs []int64   `json:"member_job_ids"`
 }
 
@@ -120,7 +120,9 @@ type ListJobsInput struct {
 	Limit               int       `query:"limit" default:"-999999" doc:"Max results (default 50, 0=unlimited, max 10000)"`
 	Offset              int       `query:"offset" default:"-1" doc:"Skip N results (requires limit>0)"`
 	Before              int64     `query:"before" default:"-1" doc:"Deprecated numeric job cursor retained for compatibility"`
-	Cursor              string    `query:"cursor" doc:"Opaque next_cursor from a previous page; resumes after its immutable enqueue-time position"`
+	Cursor              string    `query:"cursor" doc:"Opaque next_cursor from a previous page with the same sort; resumes after its last job"`
+	Sort                string    `query:"sort" doc:"Order by id, repo, agent, review_type, status, verdict, closed, elapsed, cost, or enqueued_at (default); ties break by id"`
+	Direction           string    `query:"direction" doc:"Sort direction: asc or desc (default)"`
 }
 
 // ListJobsOutput is the response for GET /api/jobs.
@@ -174,7 +176,7 @@ type ExportReviewsDocument struct {
 	Tool          string                 `json:"tool"`
 	ToolVersion   string                 `json:"tool_version"`
 	GeneratedAt   string                 `json:"generated_at"`
-	DatabaseID    uuid.UUID              `json:"database_id" format:"uuid" doc:"Stable identity for the local review database; changes when the database is recreated."`
+	DatabaseID    uuid.UUID              `json:"database_id" doc:"Stable identity for the local review database; changes when the database is recreated."`
 	Profile       string                 `json:"profile"`
 	Window        ExportReviewsWindow    `json:"window"`
 	Truncated     bool                   `json:"truncated" doc:"True when more matching rows are available immediately."`
@@ -244,7 +246,7 @@ type ExportCIMetricsDocument struct {
 	Tool          string                  `json:"tool"`
 	ToolVersion   string                  `json:"tool_version"`
 	GeneratedAt   string                  `json:"generated_at"`
-	DatabaseID    uuid.UUID               `json:"database_id" format:"uuid" doc:"Stable identity for the local review database; changes when the database is recreated."`
+	DatabaseID    uuid.UUID               `json:"database_id" doc:"Stable identity for the local review database; changes when the database is recreated."`
 	Window        ExportReviewsWindow     `json:"window"`
 	Truncated     bool                    `json:"truncated" doc:"True when more matching rows are available immediately."`
 	NextCursor    *string                 `json:"next_cursor" doc:"Opaque resume cursor emitted when panels is non-empty."`
@@ -274,7 +276,7 @@ type ExportCICostDocument struct {
 	Tool          string                    `json:"tool"`
 	ToolVersion   string                    `json:"tool_version"`
 	GeneratedAt   string                    `json:"generated_at"`
-	DatabaseID    uuid.UUID                 `json:"database_id" format:"uuid" doc:"Stable identity for the local review database; changes when the database is recreated."`
+	DatabaseID    uuid.UUID                 `json:"database_id" doc:"Stable identity for the local review database; changes when the database is recreated."`
 	Legacy        bool                      `json:"legacy"`
 	Window        ExportReviewsWindow       `json:"window"`
 	Truncated     bool                      `json:"truncated" doc:"True when more matching rows are available immediately."`
@@ -297,7 +299,7 @@ type CancelJobRequest struct {
 // RerunJobRequest is the JSON body for POST /api/job/rerun.
 type RerunJobRequest struct {
 	JobID     int64      `json:"job_id"`
-	RequestID *uuid.UUID `json:"request_id,omitempty" format:"uuid"`
+	RequestID *uuid.UUID `json:"request_id,omitempty"`
 	Agent     string     `json:"agent,omitempty"`
 }
 
@@ -307,14 +309,14 @@ type AddCommentRequest struct {
 	JobID              int64      `json:"job_id,omitempty"` // Preferred: link to job
 	Commenter          string     `json:"commenter"`
 	Comment            string     `json:"comment"`
-	ExpectedReviewUUID *uuid.UUID `json:"expected_review_uuid,omitempty" format:"uuid"`
+	ExpectedReviewUUID *uuid.UUID `json:"expected_review_uuid,omitempty"`
 }
 
 // CloseReviewRequest is the JSON body for POST /api/review/close.
 type CloseReviewRequest struct {
 	JobID              int64      `json:"job_id"`
 	Closed             bool       `json:"closed"`
-	ExpectedReviewUUID *uuid.UUID `json:"expected_review_uuid,omitempty" format:"uuid"`
+	ExpectedReviewUUID *uuid.UUID `json:"expected_review_uuid,omitempty"`
 }
 
 // JobOutputResponse is the response for GET /api/job/output.
@@ -351,8 +353,8 @@ type RerunJobOutput struct {
 	Body struct {
 		Success   bool       `json:"success"`
 		JobID     int64      `json:"job_id"`
-		RequestID uuid.UUID  `json:"request_id" format:"uuid"`
-		RunUUID   *uuid.UUID `json:"run_uuid,omitempty" format:"uuid"`
+		RequestID uuid.UUID  `json:"request_id"`
+		RunUUID   *uuid.UUID `json:"run_uuid,omitempty"`
 	}
 }
 
@@ -765,7 +767,7 @@ type SyncStatusOutput struct {
 		Message           string            `json:"message"`
 		Interval          string            `json:"interval"`
 		MachineName       string            `json:"machine_name"`
-		MachineID         *uuid.UUID        `json:"machine_id,omitempty" format:"uuid"`
+		MachineID         *uuid.UUID        `json:"machine_id,omitempty"`
 		Warnings          []string          `json:"warnings"`
 		PendingPush       SyncPendingCounts `json:"pending_push"`
 		PendingLimit      int               `json:"pending_limit"`
@@ -832,14 +834,22 @@ type DoctorAgentsInput struct {
 // differ from a user's shell when the daemon started with a different PATH.
 type DoctorAgentsOutput struct {
 	Body struct {
-		PathEnv         string            `json:"path_env" doc:"PATH environment variable of the daemon process"`
-		Agents          []agent.Diagnosis `json:"agents" doc:"Every agent the daemon knows"`
-		Requested       []agent.Diagnosis `json:"requested" doc:"The requested agent names, resolved by the daemon; unknown names report an error"`
-		HookTools       []agent.Diagnosis `json:"hook_tools" doc:"CLI tools that configured kata and beads hooks run, resolved on the daemon PATH"`
-		Panels          []DoctorPanel     `json:"panels" doc:"Review panels selected for this repository, resolved the way the daemon resolves them when queueing a panel review"`
-		PanelsError     string            `json:"panels_error,omitempty" doc:"Why the review experiment configuration could not be applied; panels were not checked"`
-		RepoConfigError string            `json:"repo_config_error,omitempty" doc:"Why the repository config could not be loaded; results use global config only"`
+		PathEnv         string               `json:"path_env" doc:"PATH environment variable of the daemon process"`
+		Agents          []agent.Diagnosis    `json:"agents" doc:"Every agent the daemon knows"`
+		Requested       []agent.Diagnosis    `json:"requested" doc:"The requested agent names, resolved by the daemon; unknown names report an error"`
+		HookTools       []agent.Diagnosis    `json:"hook_tools" doc:"CLI tools that configured kata and beads hooks run, resolved on the daemon PATH"`
+		Panels          []DoctorPanel        `json:"panels" doc:"Review panels selected for this repository, resolved the way the daemon resolves them when queueing a panel review"`
+		UsageProvider   *DoctorUsageProvider `json:"usage_provider,omitempty" doc:"Usage provider and authenticated probe result from the daemon process"`
+		PanelsError     string               `json:"panels_error,omitempty" doc:"Why the review experiment configuration could not be applied; panels were not checked"`
+		RepoConfigError string               `json:"repo_config_error,omitempty" doc:"Why the repository config could not be loaded; results use global config only"`
 	}
+}
+
+// DoctorUsageProvider is the daemon's secret-free usage provider diagnosis.
+type DoctorUsageProvider struct {
+	Provider string `json:"provider" doc:"Selected provider: local_cli, cost_endpoint, or agentsview"`
+	URL      string `json:"url,omitempty" doc:"Validated AgentsView base URL, when selected"`
+	Error    string `json:"error,omitempty" doc:"Configuration or probe failure; empty means the diagnosis succeeded"`
 }
 
 // DoctorPanel is one selected review panel as the daemon would queue it.
@@ -849,7 +859,7 @@ type DoctorPanel struct {
 	Experiment string              `json:"experiment,omitempty" doc:"ID of the review experiment whose experimental arm runs this panel; empty for the default configuration"`
 	Error      string              `json:"error,omitempty" doc:"Why queueing this panel would be rejected"`
 	Members    []DoctorPanelMember `json:"members"`
-	Synthesis  agent.Diagnosis     `json:"synthesis" doc:"The agent that combines member results"`
+	Synthesis  agent.Diagnosis     `json:"synthesis" doc:"The agent that combines member results; its name is empty when the panel has one voting member, because that member's result is passed through"`
 }
 
 // DoctorPanelMember is one panel member and the agent queueing selects for it.

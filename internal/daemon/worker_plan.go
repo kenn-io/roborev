@@ -21,7 +21,7 @@ func (wp *WorkerPool) prepareFixPlan(ctx context.Context, planningTimeout time.D
 	planCtx := ctx
 	if planningTimeout > 0 {
 		var cancel context.CancelFunc
-		planCtx, cancel = context.WithTimeout(ctx, planningTimeout)
+		planCtx, cancel = withWallClockTimeout(ctx, planningTimeout)
 		defer cancel()
 	}
 	plan, err := agent.RunPlan(planCtx, a, repoPath, "HEAD", planningPrompt, output, func(path, text string) (string, func(), error) {
@@ -101,12 +101,7 @@ func (wp *WorkerPool) capturePlanTokenUsage(
 		}
 		return
 	}
-	aggregate.ThreadID = snapshot.sessionID
-	aggregate.ProviderSessionIDs = snapshot.providerSessionIDs
-	aggregate.ExpectedProviderSessions = snapshot.expectedSessions
-	if snapshot.expectedSessions > len(snapshot.providerSessionIDs) {
-		aggregate.HasCost = false
-	}
+	setTokenUsageSessions(aggregate, snapshot.sessionID, snapshot.providerSessionIDs, snapshot.expectedSessions)
 	_, err := wp.storePlanTokenUsage(workerID, job, snapshot.sessionID, aggregate, !snapshot.wasResumed)
 	if err != nil {
 		log.Printf("[%s] Warning: save plan token usage for job %d: %v",
@@ -127,7 +122,7 @@ func (wp *WorkerPool) capturePlanTokenUsageForTerminalAttempt(
 	job *storage.ReviewJob,
 	phases []planTokenPhase,
 ) {
-	current, err := wp.db.GetJobByID(job.ID)
+	current, err := wp.db.GetJobByIDContext(ctx, job.ID)
 	if err != nil {
 		log.Printf("[%s] Warning: reload job %d before terminal plan usage capture: %v",
 			workerID, job.ID, err)
@@ -308,12 +303,7 @@ func buildPlanTokenUsageSnapshot(
 			}
 		}
 	}
-	usage.ThreadID = threadID
-	usage.ProviderSessionIDs = providerSessionIDs
-	usage.ExpectedProviderSessions = expectedSessions
-	if expectedSessions > len(providerSessionIDs) {
-		usage.HasCost = false
-	}
+	setTokenUsageSessions(usage, threadID, providerSessionIDs, expectedSessions)
 	for _, phase := range slices.Backward(resolvedPhases) {
 		if phase.logUsage != nil {
 			usage.EventOffset = phase.logUsage.EventOffset
@@ -329,4 +319,13 @@ func buildPlanTokenUsageSnapshot(
 
 func aggregateTokenUsages(usages []*tokens.Usage) *tokens.Usage {
 	return backfill.AggregateTokenUsages(usages)
+}
+
+func setTokenUsageSessions(usage *tokens.Usage, sessionID string, providerSessionIDs []string, expectedSessions int) {
+	usage.ThreadID = sessionID
+	usage.ProviderSessionIDs = providerSessionIDs
+	usage.ExpectedProviderSessions = expectedSessions
+	if expectedSessions > len(providerSessionIDs) {
+		usage.HasCost = false
+	}
 }

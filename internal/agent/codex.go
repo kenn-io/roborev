@@ -10,8 +10,12 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+
+	"go.kenn.io/roborev/internal/config"
 )
 
 // CodexAgent runs code reviews using the Codex CLI
@@ -25,6 +29,8 @@ type CodexAgent struct {
 	IgnoreUserConfig          bool           // Whether to pass --ignore-user-config
 	ConfigOverrides           []string       // Extra `-c key=value` overrides injected from roborev config
 	omitThreadSource          bool           // True when this Codex CLI rejects --thread-source
+	userAuthOverrides         []string       // Sign-in keys forwarded from the ignored user config
+	sandbox                   *CodexSandbox
 }
 
 const (
@@ -77,6 +83,7 @@ func (a *CodexAgent) clone(opts ...agentCloneOption) *CodexAgent {
 		IgnoreUserConfig:          a.IgnoreUserConfig,
 		ConfigOverrides:           a.ConfigOverrides,
 		omitThreadSource:          a.omitThreadSource,
+		sandbox:                   a.sandbox,
 	}
 }
 
@@ -220,6 +227,10 @@ type codexArgOptions struct {
 }
 
 func (a *CodexAgent) commandArgs(opts codexArgOptions, goos string) []string {
+	if a.sandbox != nil {
+		opts.agenticMode, opts.autoApprove = true, false
+	}
+	ignoreUserConfig := a.IgnoreUserConfig && a.sandbox == nil
 	args := []string{"exec"}
 	if a.SessionID != "" {
 		args = append(args, "resume")
@@ -228,19 +239,30 @@ func (a *CodexAgent) commandArgs(opts codexArgOptions, goos string) []string {
 	if !a.omitThreadSource {
 		args = append(args, codexThreadSourceFlag, codexThreadSourceRoborev)
 	}
-	if a.IgnoreUserConfig {
+	if ignoreUserConfig {
 		args = append(args, codexIgnoreUserConfigFlag)
 	}
-	if goos == "windows" && a.IgnoreUserConfig && opts.autoApprove && !opts.agenticMode && !opts.sandboxBroken {
+	if goos == "windows" && ignoreUserConfig && opts.autoApprove && !opts.agenticMode && !opts.sandboxBroken {
 		// Ignoring user config also drops the native Windows sandbox selection.
 		// Supply a default before user overrides so an explicit unelevated
 		// setting still wins. The read-only policy is set separately below.
 		args = append(args, "-c", `windows.sandbox="elevated"`)
 	}
+	if ignoreUserConfig {
+		// Ignoring user config also drops where the Codex login is stored.
+		// Like the Windows default, these go before user overrides so an
+		// explicit [agent.codex.config] setting still wins.
+		for _, override := range a.userAuthOverrides {
+			args = append(args, "-c", override)
+		}
+	}
 	// User-provided overrides go before roborev's own -c flags so roborev's
 	// safety settings (skills, sandbox, reasoning) win on any key conflict.
 	for _, override := range a.ConfigOverrides {
 		args = append(args, "-c", override)
+	}
+	if a.sandbox != nil {
+		args = append(args, "-c", `web_search="disabled"`, "-c", `model_provider="roborev-route"`)
 	}
 	if opts.agenticMode {
 		args = append(args, codexDangerousFlag)
@@ -280,6 +302,33 @@ func (a *CodexAgent) commandArgs(opts codexArgOptions, goos string) []string {
 		args = append(args, "-")
 	}
 	return args
+}
+
+// codexUserAuthWarnings holds the config problems already logged, so a broken
+// Codex config warns once instead of on every review.
+var codexUserAuthWarnings sync.Map
+
+func warnCodexUserAuthOnce(msg string) {
+	if _, seen := codexUserAuthWarnings.LoadOrStore(msg, struct{}{}); !seen {
+		log.Print(msg)
+	}
+}
+
+// codexUserAuthOverrides returns the sign-in settings from the Codex user
+// config that --ignore-user-config would otherwise drop. A config that cannot
+// be read is logged and skipped so the review still runs with Codex defaults.
+func codexUserAuthOverrides() []string {
+	codexHome, err := config.CodexHomeDir()
+	if err != nil {
+		warnCodexUserAuthOnce(fmt.Sprintf("codex: cannot locate Codex config to forward sign-in settings: %v", err))
+		return nil
+	}
+	overrides, err := config.CodexUserAuthOverrideArgs(codexHome)
+	if err != nil {
+		warnCodexUserAuthOnce(fmt.Sprintf("codex: cannot read sign-in settings from Codex config: %v", err))
+		return nil
+	}
+	return overrides
 }
 
 func codexSupportsDangerousFlag(ctx context.Context, command string, ignoreUserConfig bool) (bool, error) {
@@ -403,12 +452,24 @@ func (a *CodexAgent) review(
 	output io.Writer,
 ) (string, error) {
 	sandboxBroken := CodexSandboxDisabled()
+	if planningReadOnly(ctx) && a.sandbox != nil {
+		return "", fmt.Errorf("planning requires the Codex read-only sandbox; agentic sandbox is configured")
+	}
+	if a.sandbox != nil && a.SessionID != "" {
+		return "", fmt.Errorf("sandboxed Codex cannot resume a session with a fresh CODEX_HOME")
+	}
 	if planningReadOnly(ctx) && sandboxBroken {
 		return "", fmt.Errorf("planning requires the Codex read-only sandbox; sandbox is disabled")
 	}
 	agenticMode := effectiveAgentic(ctx, a.Agentic)
 	runAgent := a
-	if a.IgnoreUserConfig {
+	if a.sandbox != nil {
+		// The wrapped command starts in a private directory.
+		if !filepath.IsAbs(a.Command) || !filepath.IsAbs(repoPath) || !filepath.IsAbs(a.sandbox.Job.WorkDir) {
+			return "", fmt.Errorf("sandbox Codex command, repo, and work dir must be absolute")
+		}
+	}
+	if a.sandbox == nil && runAgent.IgnoreUserConfig {
 		supported, err := codexSupportsIgnoreUserConfig(ctx, a.Command)
 		if err != nil {
 			return "", err
@@ -417,22 +478,29 @@ func (a *CodexAgent) review(
 			clone := *a
 			clone.IgnoreUserConfig = false
 			runAgent = &clone
+		} else if overrides := codexUserAuthOverrides(); len(overrides) > 0 {
+			clone := *a
+			clone.userAuthOverrides = overrides
+			runAgent = &clone
 		}
 	}
 
-	threadSourceOK, err := codexSupportsThreadSource(
-		ctx, runAgent.Command, runAgent.IgnoreUserConfig,
-	)
-	if err != nil {
-		return "", err
-	}
-	if !threadSourceOK {
-		clone := *runAgent
-		clone.omitThreadSource = true
-		runAgent = &clone
+	// Sandboxed Codex skips host-side capability probes.
+	if a.sandbox == nil {
+		threadSourceOK, err := codexSupportsThreadSource(
+			ctx, runAgent.Command, runAgent.IgnoreUserConfig,
+		)
+		if err != nil {
+			return "", err
+		}
+		if !threadSourceOK {
+			clone := *runAgent
+			clone.omitThreadSource = true
+			runAgent = &clone
+		}
 	}
 
-	if agenticMode {
+	if agenticMode && a.sandbox == nil {
 		supported, err := codexSupportsDangerousFlag(ctx, a.Command, runAgent.IgnoreUserConfig)
 		if err != nil {
 			return "", MarkUnavailable(err)
@@ -442,10 +510,9 @@ func (a *CodexAgent) review(
 		}
 	}
 
-	// Non-agentic review mode uses --sandbox read-only for
-	// non-interactive sandboxed execution.
+	// Non-agentic reviews use Codex's read-only sandbox.
 	autoApprove := false
-	if !agenticMode {
+	if !agenticMode && a.sandbox == nil {
 		supported, err := codexSupportsNonInteractive(ctx, a.Command, runAgent.IgnoreUserConfig)
 		if err != nil {
 			return "", MarkUnavailable(err)
@@ -464,18 +531,41 @@ func (a *CodexAgent) review(
 	args := runAgent.buildArgsWithSchema(
 		repoPath, agenticMode, autoApprove, sandboxBroken, schemaPath,
 	)
-	var env []string
-	if tools, ok := reviewerToolsFrom(ctx); ok {
+	tools, useTools := reviewerToolsFrom(ctx)
+	if useTools {
 		args = codexReviewerArgs(args, tools)
-		env = append(os.Environ(), codexReviewerTokenEnv+"="+tools.Token)
+	}
+	command := a.Command
+	var env []string
+	var cancel func() error
+	if a.sandbox != nil {
+		job, cleanup, err := a.sandbox.prepare(repoPath)
+		if err != nil {
+			return "", err
+		}
+		defer cleanup()
+		wrapped, wrappedEnv, cleanup, err := job.Command(ctx, append([]string{"/bin/sh", "-c", `exec "$0" "$@" -c "model_providers.roborev-route.base_url=\"$CODEX_BASE_URL\""`, command}, args...))
+		if err != nil {
+			return "", err
+		}
+		defer cleanup()
+		command, args, env = wrapped[0], wrapped[1:], wrappedEnv
+		cancel = func() error { cleanup(); return nil }
+	}
+	if useTools {
+		if env == nil {
+			env = os.Environ()
+		}
+		env = append(env, codexReviewerTokenEnv+"="+tools.Token)
 	}
 	stdoutDiagnostics := newCodexDiagnosticCapture()
 
 	runResult, runErr := runStreamingCLI(ctx, streamingCLISpec{
 		Name:         "codex",
-		Command:      a.Command,
+		Command:      command,
 		Args:         args,
 		Env:          env,
+		Cancel:       cancel,
 		Dir:          repoPath,
 		Stdin:        strings.NewReader(prompt),
 		Output:       output,
@@ -639,7 +729,7 @@ func (a *CodexAgent) ReviewWithSchema(
 	schema jsontext.Value,
 	out io.Writer,
 ) (jsontext.Value, error) {
-	schemaFile, err := os.CreateTemp("", "roborev-codex-review-schema-*.json")
+	schemaFile, err := os.CreateTemp(a.schemaDir(), "roborev-codex-review-schema-*.json")
 	if err != nil {
 		return nil, fmt.Errorf("create codex review schema: %w", err)
 	}
@@ -705,26 +795,38 @@ func isCodexToolEvent(ev codexEvent) bool {
 }
 
 func codexFailureEventError(ev codexEvent) error {
+	var fallback string
 	switch ev.Type {
 	case "turn.failed":
-		if ev.Error.Message != "" {
-			return fmt.Errorf("%w: %s", errCodexStreamFailed, ev.Error.Message)
-		}
-		if ev.Message != "" {
-			return fmt.Errorf("%w: %s", errCodexStreamFailed, ev.Message)
-		}
-		return fmt.Errorf("%w: turn failed", errCodexStreamFailed)
+		fallback = "turn failed"
 	case "error":
-		if ev.Error.Message != "" {
-			return fmt.Errorf("%w: %s", errCodexStreamFailed, ev.Error.Message)
-		}
-		if ev.Message != "" {
-			return fmt.Errorf("%w: %s", errCodexStreamFailed, ev.Message)
-		}
-		return fmt.Errorf("%w: stream error", errCodexStreamFailed)
+		fallback = "stream error"
 	default:
 		return nil
 	}
+	msg := ev.Error.Message
+	if msg == "" {
+		msg = ev.Message
+	}
+	if msg == "" {
+		return fmt.Errorf("%w: %s", errCodexStreamFailed, fallback)
+	}
+	return fmt.Errorf("%w: %s%s", errCodexStreamFailed, msg, codexMissingAuthHint(msg))
+}
+
+// codexMissingAuthMarker is the wording of the 401 Codex receives when it
+// sends no credentials at all, for example because the login is stored in the
+// OS keyring but Codex is looking for ~/.codex/auth.json.
+const codexMissingAuthMarker = "missing bearer or basic authentication"
+
+func codexMissingAuthHint(msg string) string {
+	if !strings.Contains(strings.ToLower(msg), codexMissingAuthMarker) {
+		return ""
+	}
+	return " (Codex found no login for this review: check `codex login status`" +
+		" in the daemon's environment. If the login is stored in the OS" +
+		` keyring, set cli_auth_credentials_store = "keyring" in` +
+		" $CODEX_HOME/config.toml or under [agent.codex.config])"
 }
 
 // parseStreamJSON parses codex's --json JSONL output and extracts review text.

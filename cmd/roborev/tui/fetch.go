@@ -385,6 +385,11 @@ func (m *model) requestFetchStatus() tea.Cmd {
 }
 
 func (m model) checkForUpdate() tea.Cmd {
+	// Package-managed builds upgrade through their package manager, which
+	// can trail GitHub releases, so they show no update notification.
+	if update.PackageManaged() {
+		return nil
+	}
 	return func() tea.Msg {
 		info, err := update.CheckForUpdate(false) // Use cache
 		if err != nil || info == nil {
@@ -1066,7 +1071,7 @@ func (m model) fetchPanelMembers(runUUID uuid.UUID) tea.Cmd {
 	api := newDaemonAPI(m.endpoint, m.client)
 	return func() tea.Msg {
 		resp, err := api.ListJobsRaw(m.apiContext(), &daemonclient.ListJobsRequestOptions{Query: &daemonclient.ListJobsQuery{
-			PanelRun: new(runUUID.String()), Limit: new(int64(0)),
+			PanelRun: new(runUUID), Limit: new(int64(0)),
 			OmitPrompt:      new(daemonclient.ListJobsQueryOmitPromptTrue),
 			IncludeFindings: new(daemonclient.ListJobsQueryIncludeFindingsTrue),
 		}})

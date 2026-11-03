@@ -101,7 +101,7 @@ func TestHandleBatchJobs(t *testing.T) {
 	})
 
 	t.Run("wrong method fails", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/jobs/batch", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/jobs/batch", nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 		testutil.AssertStatusCode(t, w, http.StatusMethodNotAllowed)
@@ -153,7 +153,7 @@ func TestHandleRemap(t *testing.T) {
 		{"config", "user.email", "test@test.com"},
 		{"config", "user.name", "Test"},
 	} {
-		cmd := exec.Command("git", args...)
+		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = repoDir
 		if out, err := cmd.CombinedOutput(); err != nil {
 			require.Condition(t, func() bool {
@@ -255,7 +255,7 @@ func TestHandleRemap(t *testing.T) {
 				return false
 			}, err)
 		}
-		cmd := exec.Command("git", "init")
+		cmd := exec.CommandContext(t.Context(), "git", "init")
 		cmd.Dir = unregistered
 		if out, err := cmd.CombinedOutput(); err != nil {
 			require.Condition(t, func() bool {
@@ -371,7 +371,7 @@ func TestHandleRemap(t *testing.T) {
 		}
 		body = append(body[:len(body)-1], []byte(`]}`)...)
 
-		req := httptest.NewRequest(
+		req := httptest.NewRequestWithContext(t.Context(),
 			http.MethodPost, "/api/remap",
 			bytes.NewReader(body),
 		)
@@ -475,7 +475,7 @@ func TestHandleGetReviewJobIDParsing(t *testing.T) {
 			if tt.query != "" {
 				url += "?" + tt.query
 			}
-			req := httptest.NewRequest(http.MethodGet, url, nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
 			w := httptest.NewRecorder()
 
 			server.httpServer.Handler.ServeHTTP(w, req)
@@ -617,7 +617,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 
 	t.Run("fix job inherits parent worktree path", func(t *testing.T) {
 		worktreePath := filepath.Join(tmpDir, "worktrees", "feature")
-		worktreeAdd := exec.Command(
+		worktreeAdd := exec.CommandContext(t.Context(),
 			"git", "-C", fixture.repoDir,
 			"worktree", "add", "--detach", worktreePath, "HEAD",
 		)
@@ -666,7 +666,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 
 	t.Run("fix job uses worktree config when present", func(t *testing.T) {
 		worktreePath := filepath.Join(tmpDir, "worktrees", "feature-config")
-		worktreeAdd := exec.Command(
+		worktreeAdd := exec.CommandContext(t.Context(),
 			"git", "-C", fixture.repoDir,
 			"worktree", "add", "--detach", worktreePath, "HEAD",
 		)
@@ -901,7 +901,7 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 				// Set status directly to avoid ClaimJob picking
 				// a different queued job from an earlier iteration.
 				if status != storage.JobStatusQueued {
-					_, err = db.Exec(
+					_, err = db.ExecContext(t.Context(),
 						`UPDATE review_jobs SET status = ? WHERE id = ?`,
 						string(status), fixJob.ID,
 					)
@@ -1330,4 +1330,73 @@ func TestHandleFixJobMinSeverity(t *testing.T) {
 		assert.Contains(t, stored.Prompt, "Rebase Fix Request")
 		assert.NotContains(t, stored.Prompt, "Severity filter:")
 	})
+}
+
+func TestHandleFixJobRebaseTargetsBranchTip(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	server.configWatcher.Config().FixAgent = "test"
+
+	repo := testutil.InitTestGitRepo(t, filepath.Join(tmpDir, "repo-rebase-tip"))
+	branch := repo.RevParse("--abbrev-ref", "HEAD")
+	reviewedSHA := repo.HeadSHA()
+
+	storedRepo, err := db.GetOrCreateRepo(repo.Root)
+	require.NoError(t, err)
+	commit, err := db.GetOrCreateCommit(
+		storedRepo.ID, reviewedSHA, "Author", "Subject", time.Now(),
+	)
+	require.NoError(t, err)
+	reviewJob, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID:   storedRepo.ID,
+		CommitID: commit.ID,
+		GitRef:   reviewedSHA,
+		Branch:   branch,
+		Agent:    "test",
+	})
+	require.NoError(t, err)
+	setJobStatus(t, db, reviewJob.ID, storage.JobStatusRunning)
+	require.NoError(t, testutil.CompleteReviewFixture(
+		db, reviewJob.ID, "test", "prompt", "FAIL: issues found",
+	))
+
+	staleFix, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID:      storedRepo.ID,
+		CommitID:    commit.ID,
+		GitRef:      reviewedSHA,
+		Branch:      branch,
+		Agent:       "test",
+		JobType:     storage.JobTypeFix,
+		ParentJobID: reviewJob.ID,
+	})
+	require.NoError(t, err)
+	setJobStatus(t, db, staleFix.ID, storage.JobStatusRunning)
+	require.NoError(t, db.CompleteFixJob(staleFix.ID, "test", "done",
+		"diff --git a/test.txt b/test.txt\n--- a/test.txt\n+++ b/test.txt\n@@ -1 +1 @@\n-test content\n+fixed\n",
+	))
+
+	// The branch moves after the review, so the stale patch no longer applies.
+	tipSHA := repo.CommitFile("test.txt", "changed upstream", "move branch")
+
+	enqueueFix := func(req fixJobRequest) storage.ReviewJob {
+		t.Helper()
+		w := httptest.NewRecorder()
+		server.httpServer.Handler.ServeHTTP(w, testutil.MakeJSONRequest(
+			t, http.MethodPost, "/api/job/fix", req,
+		))
+		assertHandlerStatus(t, w, http.StatusCreated)
+		var fixJob storage.ReviewJob
+		testutil.DecodeJSON(t, w, &fixJob)
+		return fixJob
+	}
+
+	rebaseJob := enqueueFix(fixJobRequest{
+		ParentJobID: reviewJob.ID,
+		StaleJobID:  staleFix.ID,
+	})
+	assert.Equal(t, tipSHA, repo.RevParse(rebaseJob.GitRef),
+		"rebase must run against the branch tip the patch is applied to")
+
+	plainFix := enqueueFix(fixJobRequest{ParentJobID: reviewJob.ID})
+	assert.Equal(t, reviewedSHA, plainFix.GitRef,
+		"a plain fix still runs at the reviewed commit")
 }

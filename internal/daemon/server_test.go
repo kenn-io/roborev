@@ -21,6 +21,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -107,7 +108,7 @@ func setJobStatus(t *testing.T, db *storage.DB, jobID int64, status storage.JobS
 			return false
 		}, "unsupported status in helper: %v", status)
 	}
-	res, err := db.Exec(query, jobID)
+	res, err := db.ExecContext(t.Context(), query, jobID)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -210,7 +211,7 @@ func setShortRuntimeDir(t *testing.T) string {
 func startServerAndWaitForRuntime(t *testing.T, server *Server) (<-chan error, *RuntimeInfo) {
 	t.Helper()
 	errCh := make(chan error, 1)
-	go func() { errCh <- server.Start(context.Background()) }()
+	go func() { errCh <- server.Start(t.Context()) }()
 
 	var info *RuntimeInfo
 	var startErr error
@@ -223,7 +224,9 @@ func startServerAndWaitForRuntime(t *testing.T, server *Server) (<-chan error, *
 		}
 		var err error
 		info, err = ReadRuntime()
-		return err == nil
+		server.endpointMu.Lock()
+		defer server.endpointMu.Unlock()
+		return err == nil && info.PID == os.Getpid() && info.Address == server.endpoint.Address
 	}, 5*time.Second, 10*time.Millisecond)
 	require.NoError(t, startErr)
 	require.NotNil(t, info)
@@ -262,7 +265,7 @@ func TestServerStartRejectsNonLoopbackBindAddr(t *testing.T) {
 			cfg.ServerAddr = tt.addr
 
 			server := NewServer(db, cfg, "")
-			err := server.Start(context.Background())
+			err := server.Start(t.Context())
 			if err == nil {
 				require.Condition(t, func() bool {
 					return false
@@ -301,7 +304,7 @@ func TestWaitForServerReadySurfacesServeError(t *testing.T) {
 	wantErr := errors.New("serve failed")
 	serveErrCh <- wantErr
 
-	ready, serveExited, err := waitForServerReady(context.Background(), DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, 50*time.Millisecond, serveErrCh, config.ClientAuth{})
+	ready, serveExited, err := waitForServerReady(t.Context(), DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, time.Second, serveErrCh, config.ClientAuth{})
 	if ready {
 		require.Condition(t, func() bool {
 			return false
@@ -320,13 +323,13 @@ func TestWaitForServerReadySurfacesServeError(t *testing.T) {
 }
 
 func TestWaitForServerReadyLeavesServeExitUnreadWhenContextAlreadyCanceled(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	serveErrCh := make(chan error, 1)
 	serveErrCh <- http.ErrServerClosed
 
-	ready, serveExited, err := waitForServerReady(ctx, DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, 50*time.Millisecond, serveErrCh, config.ClientAuth{})
+	ready, serveExited, err := waitForServerReady(ctx, DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, time.Second, serveErrCh, config.ClientAuth{})
 	if ready {
 		require.Condition(t, func() bool {
 			return false
@@ -389,7 +392,7 @@ func TestServerStartReadinessFailureDoesNotLeavePanelSweep(t *testing.T) {
 
 	server.httpServer.Handler = http.NotFoundHandler()
 
-	err := server.Start(context.Background())
+	err := server.Start(t.Context())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to become ready")
 
@@ -399,8 +402,34 @@ func TestServerStartReadinessFailureDoesNotLeavePanelSweep(t *testing.T) {
 	assert.Nil(t, sweepCancel, "panel sweep must not remain active after startup readiness failure")
 }
 
+func TestServerStartRefusesLegacyLivePID(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("requires Linux process identities")
+	}
+	testenv.SetDataDir(t)
+	setShortRuntimeDir(t)
+	mockIdentifyProcess(t, func(int) processIdentity { return processUnknown })
+	rec := kitdaemon.RuntimeRecord{
+		PID: os.Getppid(), Network: "tcp", Address: "127.0.0.1:1",
+	}
+	path, err := runtimeStore().Write(rec)
+	require.NoError(t, err)
+	db, _ := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	cfg.ServerAddr = "127.0.0.1:0"
+	server := NewServer(db, cfg, "")
+	t.Cleanup(func() { _ = server.Close() })
+	// Bound a regression that starts a real listener instead of refusing.
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	stop := context.AfterFunc(ctx, func() { _ = server.Close() })
+	defer stop()
+	require.ErrorContains(t, server.Start(ctx), "daemon process still running")
+	assert.FileExists(t, path)
+}
+
 func TestServerStartSupportsIPv6LoopbackBindAddr(t *testing.T) {
-	ln, err := net.Listen("tcp", "[::1]:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "[::1]:0")
 	if err != nil {
 		t.Skipf("IPv6 loopback not available: %v", err)
 	}
@@ -468,6 +497,8 @@ func TestServerContinuesWhenAuxiliaryListenerFails(t *testing.T) {
 	assert.Len(t, info.Endpoints(), 1)
 	_, err := ProbeDaemon(info.Endpoint(), time.Second)
 	require.NoError(t, err)
+	// SetOutput waits for in-flight log writes and keeps workers from changing the buffer.
+	log.SetOutput(origLogOutput)
 	assert.Contains(t, logOutput.String(), "auxiliary Unix listener")
 	assert.Contains(t, logOutput.String(), "synthetic auxiliary bind failure")
 
@@ -478,7 +509,7 @@ func TestServerSocketActivationSkipsAuxiliaryListener(t *testing.T) {
 	testenv.SetDataDir(t)
 	setShortRuntimeDir(t)
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	endpoint := DaemonEndpoint{Network: "tcp", Address: listener.Addr().String()}
 	origSystemd := getSystemdListenerForServer
@@ -606,7 +637,7 @@ func seedRepoWithJobs(t *testing.T, db *storage.DB, repoPath string, jobCount in
 // setJobBranch directly updates a job's branch in the DB (for test setup).
 func setJobBranch(t *testing.T, db *storage.DB, jobID int64, branch string) {
 	t.Helper()
-	if _, err := db.Exec("UPDATE review_jobs SET branch = ? WHERE id = ?", branch, jobID); err != nil {
+	if _, err := db.ExecContext(t.Context(), "UPDATE review_jobs SET branch = ? WHERE id = ?", branch, jobID); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "setJobBranch failed: %v", err)
@@ -785,10 +816,10 @@ func TestServerServesPprof(t *testing.T) {
 	server, _, _ := newTestServer(t)
 
 	index := httptest.NewRecorder()
-	server.httpServer.Handler.ServeHTTP(index, httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil))
+	server.httpServer.Handler.ServeHTTP(index, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/debug/pprof/", nil))
 	assert.Equal(http.StatusOK, index.Code)
 
 	heap := httptest.NewRecorder()
-	server.httpServer.Handler.ServeHTTP(heap, httptest.NewRequest(http.MethodGet, "/debug/pprof/heap", nil))
+	server.httpServer.Handler.ServeHTTP(heap, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/debug/pprof/heap", nil))
 	assert.Equal(http.StatusOK, heap.Code)
 }

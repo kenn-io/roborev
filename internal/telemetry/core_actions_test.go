@@ -32,7 +32,7 @@ func coreActionCapture(t *testing.T) (*telemetry.Reporter, func() []testutil.Pos
 	db := testutil.OpenTestDB(t)
 	server := daemon.NewServer(db, config.DefaultConfig(), "")
 	t.Cleanup(func() { require.NoError(t, server.Close()) })
-	opts := telemetry.Options{Version: releaseVersion, Database: db, Endpoint: "http://posthog.example.com", DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json")}
+	opts := telemetry.Options{Version: releaseVersion, Database: db, APIKey: testutil.PostHogTestAPIKey, Endpoint: "http://posthog.example.com", DailyClaimsPath: filepath.Join(t.TempDir(), "daily.json")}
 	reporter, err := telemetry.NewReporter(opts)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reporter.Close()) })

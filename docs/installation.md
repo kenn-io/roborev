@@ -3,7 +3,22 @@ title: Installation
 description: Install roborev on your system
 ---
 
-## Quick Install (Recommended)
+On macOS, use [Homebrew](#homebrew-macos). On Linux, use the
+[install script](#install-script) or a
+[DEB or RPM package](#linux-packages-deb-and-rpm).
+
+## Homebrew (macOS)
+
+Install roborev from [Homebrew core](https://formulae.brew.sh/formula/roborev):
+
+```bash
+brew install roborev
+```
+
+No extra tap is needed. The package includes the CLI, terminal UI, and browser
+application. Homebrew manages [updates](#update).
+
+## Install Script
 
 The install script downloads the latest release binary for your platform:
 
@@ -31,28 +46,6 @@ The install script downloads the latest release binary for your platform:
     | `ROBOREV_INSTALL_DIR` | Custom install directory (default: `%USERPROFILE%\.roborev\bin`) |
     | `ROBOREV_NO_MODIFY_PATH` | Set to skip adding install dir to PATH |
     | `ROBOREV_SKIP_CHECKSUM` | Set to skip checksum verification (not recommended) |
-
-## Homebrew (macOS / Linux)
-
-Install via Homebrew:
-
-```bash
-brew install kenn-io/tap/roborev
-```
-
-Or tap first, then install:
-
-```bash
-brew tap kenn-io/tap
-brew install roborev
-```
-
-This also works on Linux with
-[Linuxbrew](https://docs.brew.sh/Homebrew-on-Linux).
-
-The `kenn-io/tap` repository watches official Roborev releases and manages
-formula updates from their published checksums. Roborev release jobs do not need
-a cross-repository credential to update the formula.
 
 ## Linux Packages: DEB and RPM
 
@@ -119,7 +112,17 @@ roborev version
 
 ## Update
 
-Update to the latest version:
+For Homebrew installations:
+
+```bash
+brew upgrade roborev
+```
+
+Homebrew builds do not replace themselves with `roborev update`. Use your
+package manager to upgrade other
+[package-managed builds](/docs/development/#package-builds).
+
+For installations from the install script or a direct binary download:
 
 ```bash
 roborev update
@@ -129,6 +132,14 @@ This downloads and replaces the current binary with the latest release. Read the
 [changelog](/docs/changelog/) before updating, or press `U` in the terminal
 interface to read recent release notes. The browser application also has a
 release-notes viewer in its header.
+
+### Upgrading to 0.74.0
+
+Check this item before updating from 0.73.x or earlier:
+
+| If you use... | Upgrade action |
+| --- | --- |
+| Claude Code reviews, panel synthesis, or planning | Run `claude --help` and check that it lists `--tools`. If it does not, upgrade Claude Code first. roborev now passes `--tools` so that Claude loads only `Read`, `Glob`, and `Grep`, and older Claude Code versions reject the flag. See [Strict Claude Code Reviews](/docs/agents/#strict-claude-code-reviews). |
 
 ### Upgrading to 0.73.0
 
@@ -178,9 +189,9 @@ Prompt and log cleanup stays off unless you configure `prompt_retention_days` or
 [retention guide](/docs/configuration/#stored-prompts-and-retention) explains
 what each setting removes and how sync affects cleanup.
 
-If you use ZCode, run `roborev agent-hook install --agent zcode` after upgrading
+If you use ZCode, run `roborev agent hook install --agent zcode` after upgrading
 and restarting the daemon. See [ZCode reminders](/docs/agent-hook/#zcode).
-Update bundled agent skills with `roborev skills install` to add the
+Update bundled agent skills with `roborev agent skills install` to add the
 [Superpowers and Kata workflow](/docs/integrations/goal-review/).
 
 ### Upgrading to 0.71.0
@@ -190,8 +201,8 @@ Check these items when updating from 0.70.x or earlier:
 | If you use... | Upgrade action |
 | --- | --- |
 | The TUI release-notes shortcut | Press `U` instead of `u`. `u` now pages up. See [TUI keyboard commands](/docs/integrations/tui/#keyboard-commands). |
-| `roborev log --db <path>` | Remove `--db`. To read logs from a daemon that uses a custom database, select that daemon with `--server`. See [Job Logs](/docs/commands/#job-logs). |
-| `roborev legacy-reviews` scripts | Keep the daemon running. The commands now work through the daemon, and `--db` only checks that the selected daemon owns that database. See [legacy review migration](/docs/guides/reviewing-code/#review-storage-and-legacy-migration). |
+| `roborev job log --db <path>` | Remove `--db`. To read logs from a daemon that uses a custom database, select that daemon with `--server`. See [Job Logs](/docs/commands/#job-logs). |
+| `roborev storage legacy-reviews` scripts | Keep the daemon running. The commands now work through the daemon, and `--db` only checks that the selected daemon owns that database. See [legacy review migration](/docs/guides/reviewing-code/#review-storage-and-legacy-migration). |
 | Scripts that pass `--server` | Start that daemon yourself. If it is unavailable, commands now return an error instead of starting a local daemon. |
 
 ### Upgrading to 0.70.0

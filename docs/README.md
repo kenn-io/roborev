@@ -190,13 +190,13 @@ notes are separate actions; use the publishing workflow only when requested.
 
 ## Publishing
 
-The Vercel project should be linked from the repository root with `docs/` as the
-Vercel root directory:
+`make docs-deploy` uploads the `docs/` directory as the Vercel project, so the
+project's root directory setting stays at `.`. `docs/vercel.json` sets the build
+and overrides the project's own build settings:
 
 | Setting | Value |
 | --- | --- |
 | Framework preset | `Other` |
-| Root directory | `docs` |
 | Install command | `uv sync --frozen --no-dev` |
 | Build command | `uv run --frozen bash ./vercel-build.sh` |
 | Output directory | `site` |
@@ -213,14 +213,16 @@ Docs used to be served from the site root. `vercel.json` carries a permanent
 redirect for every old page, its Markdown twin, and the `/assets/...` media
 paths, so external links and older binaries keep resolving.
 
-Link the checkout once from the repository root:
+Link the `docs/` directory once:
 
 ```bash
-vercel link
+vercel link --cwd docs
 ```
 
-When prompted, choose the roborev docs Vercel project. The generated `.vercel/`
-directory is local-only and ignored.
+When prompted, choose the roborev docs Vercel project. The Vercel CLI looks for
+the link in the directory it deploys, which is `docs/`. A link at the repository
+root is not used, and the deploy stops and asks for a team. The generated
+`docs/.vercel/` directory and `docs/.env.local` file are local-only and ignored.
 
 Deploy committed docs changes with:
 

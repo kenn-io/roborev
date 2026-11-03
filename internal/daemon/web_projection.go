@@ -23,7 +23,7 @@ type ReviewProjectionInput struct {
 
 type ReviewProjectionJob struct {
 	ID              int64                 `json:"id"`
-	UUID            *uuid.UUID            `json:"uuid,omitempty" format:"uuid"`
+	UUID            *uuid.UUID            `json:"uuid,omitempty"`
 	Project         string                `json:"project"`
 	GitRef          string                `json:"git_ref"`
 	Branch          string                `json:"branch,omitempty"`
@@ -82,7 +82,7 @@ func (s *Server) humaGetReviewProjection(
 	var job *storage.ReviewJob
 	var err error
 	if hasJob {
-		job, err = s.db.GetJobByID(input.JobID)
+		job, err = s.db.GetJobByIDContext(ctx, input.JobID)
 	} else {
 		job, err = s.db.GetLatestLogicalReviewJob(input.Repo, input.Branch)
 	}

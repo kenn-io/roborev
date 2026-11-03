@@ -34,6 +34,9 @@ type ActivityOutputBody struct {
 
 func (a ActivityOutputBody) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(a.Entries, "required"); err != nil {
+		errors = errors.Append("Entries", err)
+	}
 	for i, item := range a.Entries {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -86,12 +89,21 @@ type AgentHookFixDoneOutputBody struct {
 
 type AgentHookFixDoneRequest struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema       *string `json:"$schema,omitempty"`
-	FixSessionID string  `json:"fix_session_id" validate:"required"`
+	Schema       *string   `json:"$schema,omitempty"`
+	FixSessionID uuid.UUID `json:"fix_session_id" validate:"required"`
 }
 
 func (a AgentHookFixDoneRequest) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(a))
+	var errors runtime.ValidationErrors
+	if v, ok := any(a.FixSessionID).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("FixSessionID", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type AgentHookResetOutputBody struct {
@@ -109,25 +121,39 @@ type AgentHookResetRequest struct {
 
 type AgentHookResponse struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema                *string `json:"$schema,omitempty"`
-	CommitCount           *int64  `json:"commit_count,omitempty"`
-	CommitThreshold       *int64  `json:"commit_threshold,omitempty"`
-	Count                 int64   `json:"count"`
-	Diagnosis             *string `json:"diagnosis,omitempty"`
-	FailedReviewCount     *int64  `json:"failed_review_count,omitempty"`
-	FailedReviewThreshold *int64  `json:"failed_review_threshold,omitempty"`
-	FixSessionID          *string `json:"fix_session_id,omitempty"`
-	Reason                *string `json:"reason,omitempty"`
-	RemindCount           *int64  `json:"remind_count,omitempty"`
-	SessionID             string  `json:"session_id" validate:"required"`
-	Skipped               *bool   `json:"skipped,omitempty"`
-	Threshold             int64   `json:"threshold"`
-	Triggered             bool    `json:"triggered"`
-	TriggeredBy           *string `json:"triggered_by,omitempty"`
+	Schema                *string    `json:"$schema,omitempty"`
+	CommitCount           *int64     `json:"commit_count,omitempty"`
+	CommitThreshold       *int64     `json:"commit_threshold,omitempty"`
+	Count                 int64      `json:"count"`
+	Diagnosis             *string    `json:"diagnosis,omitempty"`
+	FailedReviewCount     *int64     `json:"failed_review_count,omitempty"`
+	FailedReviewThreshold *int64     `json:"failed_review_threshold,omitempty"`
+	FixSessionID          *uuid.UUID `json:"fix_session_id,omitempty"`
+	Reason                *string    `json:"reason,omitempty"`
+	RemindCount           *int64     `json:"remind_count,omitempty"`
+	SessionID             string     `json:"session_id" validate:"required"`
+	Skipped               *bool      `json:"skipped,omitempty"`
+	Threshold             int64      `json:"threshold"`
+	Triggered             bool       `json:"triggered"`
+	TriggeredBy           *string    `json:"triggered_by,omitempty"`
 }
 
 func (a AgentHookResponse) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(a))
+	var errors runtime.ValidationErrors
+	if a.FixSessionID != nil {
+		if v, ok := any(a.FixSessionID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("FixSessionID", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(a.SessionID, "required"); err != nil {
+		errors = errors.Append("SessionID", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type AgentHookSessionsOutputBody struct {
@@ -374,6 +400,9 @@ type AnalyticsSnapshot struct {
 
 func (a AnalyticsSnapshot) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(a.Agents, "required"); err != nil {
+		errors = errors.Append("Agents", err)
+	}
 	for i, item := range a.Agents {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -385,6 +414,9 @@ func (a AnalyticsSnapshot) Validate() error {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Filters", err)
 		}
+	}
+	if err := typesValidator.Var(a.Models, "required"); err != nil {
+		errors = errors.Append("Models", err)
 	}
 	for i, item := range a.Models {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -398,6 +430,9 @@ func (a AnalyticsSnapshot) Validate() error {
 			errors = errors.Append("Options", err)
 		}
 	}
+	if err := typesValidator.Var(a.Projects, "required"); err != nil {
+		errors = errors.Append("Projects", err)
+	}
 	for i, item := range a.Projects {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -405,12 +440,18 @@ func (a AnalyticsSnapshot) Validate() error {
 			}
 		}
 	}
+	if err := typesValidator.Var(a.Sources, "required"); err != nil {
+		errors = errors.Append("Sources", err)
+	}
 	for i, item := range a.Sources {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Sources[%d]", i), err)
 			}
 		}
+	}
+	if err := typesValidator.Var(a.SplitSeries, "required"); err != nil {
+		errors = errors.Append("SplitSeries", err)
 	}
 	for i, item := range a.SplitSeries {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -423,6 +464,9 @@ func (a AnalyticsSnapshot) Validate() error {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Summary", err)
 		}
+	}
+	if err := typesValidator.Var(a.TimeSeries, "required"); err != nil {
+		errors = errors.Append("TimeSeries", err)
 	}
 	for i, item := range a.TimeSeries {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -449,6 +493,9 @@ func (a AnalyticsSplitSeries) Validate() error {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Summary", err)
 		}
+	}
+	if err := typesValidator.Var(a.TimeSeries, "required"); err != nil {
+		errors = errors.Append("TimeSeries", err)
 	}
 	for i, item := range a.TimeSeries {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -582,6 +629,9 @@ type BackfillTokensRequest struct {
 
 func (b BackfillTokensRequest) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(b.Sessions, "required"); err != nil {
+		errors = errors.Append("Sessions", err)
+	}
 	for i, item := range b.Sessions {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -639,6 +689,88 @@ type BranchWithCount struct {
 
 func (b BranchWithCount) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(b))
+}
+
+type CIPRSummary struct {
+	Cost       CostAggregate `json:"cost"`
+	GithubRepo string        `json:"github_repo" validate:"required"`
+	PrNumber   int64         `json:"pr_number"`
+	Runs       int64         `json:"runs"`
+}
+
+func (c CIPRSummary) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(c.Cost).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Cost", err)
+		}
+	}
+	if err := typesValidator.Var(c.GithubRepo, "required"); err != nil {
+		errors = errors.Append("GithubRepo", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CISummary struct {
+	ActivePanels          int64            `json:"active_panels"`
+	ClosedBeforePost      int64            `json:"closed_before_post"`
+	Cost                  CostAggregate    `json:"cost"`
+	DistinctPrs           int64            `json:"distinct_prs"`
+	HotPrs                []CIPRSummary    `json:"hot_prs" validate:"required"`
+	Outcomes              map[string]int64 `json:"outcomes"`
+	PostedPanels          int64            `json:"posted_panels"`
+	Prs                   []CIPRSummary    `json:"prs" validate:"required"`
+	RetiredByReason       map[string]int64 `json:"retired_by_reason"`
+	RetiredUnpostedCost   CostAggregate    `json:"retired_unposted_cost"`
+	RetiredUnpostedPanels int64            `json:"retired_unposted_panels"`
+	RunsPerPrMax          int64            `json:"runs_per_pr_max"`
+	RunsPerPrP50          float64          `json:"runs_per_pr_p50"`
+	RunsPerPrP90          float64          `json:"runs_per_pr_p90"`
+	TotalPanels           int64            `json:"total_panels"`
+	TurnaroundP50Secs     float64          `json:"turnaround_p50_secs"`
+	TurnaroundP90Secs     float64          `json:"turnaround_p90_secs"`
+	TurnaroundSamples     int64            `json:"turnaround_samples"`
+}
+
+func (c CISummary) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(c.Cost).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Cost", err)
+		}
+	}
+	if err := typesValidator.Var(c.HotPrs, "required"); err != nil {
+		errors = errors.Append("HotPrs", err)
+	}
+	for i, item := range c.HotPrs {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("HotPrs[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(c.Prs, "required"); err != nil {
+		errors = errors.Append("Prs", err)
+	}
+	for i, item := range c.Prs {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Prs[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(c.RetiredUnpostedCost).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("RetiredUnpostedCost", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type CancelJobOutputBody struct {
@@ -823,6 +955,9 @@ type DaemonStatus struct {
 
 func (d DaemonStatus) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(d.ActiveSnoozes, "required"); err != nil {
+		errors = errors.Append("ActiveSnoozes", err)
+	}
 	for i, item := range d.ActiveSnoozes {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -908,11 +1043,15 @@ type DoctorAgentsOutputBody struct {
 	RepoConfigError *string `json:"repo_config_error,omitempty"`
 
 	// Requested The requested agent names, resolved by the daemon; unknown names report an error
-	Requested []Diagnosis `json:"requested" validate:"required"`
+	Requested     []Diagnosis          `json:"requested" validate:"required"`
+	UsageProvider *DoctorUsageProvider `json:"usage_provider,omitempty"`
 }
 
 func (d DoctorAgentsOutputBody) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(d.Agents, "required"); err != nil {
+		errors = errors.Append("Agents", err)
+	}
 	for i, item := range d.Agents {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -920,12 +1059,18 @@ func (d DoctorAgentsOutputBody) Validate() error {
 			}
 		}
 	}
+	if err := typesValidator.Var(d.HookTools, "required"); err != nil {
+		errors = errors.Append("HookTools", err)
+	}
 	for i, item := range d.HookTools {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("HookTools[%d]", i), err)
 			}
 		}
+	}
+	if err := typesValidator.Var(d.Panels, "required"); err != nil {
+		errors = errors.Append("Panels", err)
 	}
 	for i, item := range d.Panels {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -937,10 +1082,20 @@ func (d DoctorAgentsOutputBody) Validate() error {
 	if err := typesValidator.Var(d.PathEnv, "required"); err != nil {
 		errors = errors.Append("PathEnv", err)
 	}
+	if err := typesValidator.Var(d.Requested, "required"); err != nil {
+		errors = errors.Append("Requested", err)
+	}
 	for i, item := range d.Requested {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Requested[%d]", i), err)
+			}
+		}
+	}
+	if d.UsageProvider != nil {
+		if v, ok := any(d.UsageProvider).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("UsageProvider", err)
 			}
 		}
 	}
@@ -966,6 +1121,9 @@ type DoctorPanel struct {
 
 func (d DoctorPanel) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(d.Members, "required"); err != nil {
+		errors = errors.Append("Members", err)
+	}
 	for i, item := range d.Members {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -996,6 +1154,21 @@ type DoctorPanelMember struct {
 }
 
 func (d DoctorPanelMember) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type DoctorUsageProvider struct {
+	// ErrorData Configuration or probe failure; empty means the diagnosis succeeded
+	ErrorData *string `json:"error,omitempty"`
+
+	// Provider Selected provider: local_cli, cost_endpoint, or agentsview
+	Provider string `json:"provider" validate:"required"`
+
+	// URL Validated AgentsView base URL, when selected
+	URL *string `json:"url,omitempty"`
+}
+
+func (d DoctorUsageProvider) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(d))
 }
 
@@ -1296,7 +1469,7 @@ type ExportCICostDocument struct {
 	Legacy      bool              `json:"legacy"`
 
 	// NextCursor Opaque resume cursor emitted when jobs is non-empty.
-	NextCursor    *string `json:"next_cursor,omitempty" validate:"required"`
+	NextCursor    *string `json:"next_cursor" validate:"required"`
 	SchemaVersion int64   `json:"schema_version"`
 	Tool          string  `json:"tool" validate:"required"`
 	ToolVersion   string  `json:"tool_version" validate:"required"`
@@ -1315,6 +1488,9 @@ func (e ExportCICostDocument) Validate() error {
 	}
 	if err := typesValidator.Var(e.GeneratedAt, "required"); err != nil {
 		errors = errors.Append("GeneratedAt", err)
+	}
+	if err := typesValidator.Var(e.Jobs, "required"); err != nil {
+		errors = errors.Append("Jobs", err)
 	}
 	for i, item := range e.Jobs {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -1347,13 +1523,13 @@ func (e ExportCICostDocument) Validate() error {
 
 type ExportCICostJob struct {
 	Agent               string                 `json:"agent" validate:"required"`
-	CostUsd             *float64               `json:"cost_usd,omitempty"`
+	CostUsd             *float64               `json:"cost_usd"`
 	Experiments         []ExperimentAssignment `json:"experiments" validate:"required"`
 	FinishedAt          string                 `json:"finished_at" validate:"required"`
 	JobUUID             uuid.UUID              `json:"job_uuid" validate:"required"`
-	Model               *string                `json:"model,omitempty" validate:"required"`
-	Provider            *string                `json:"provider,omitempty" validate:"required"`
-	ResumeSourceJobUUID *uuid.UUID             `json:"resume_source_job_uuid,omitempty" validate:"required"`
+	Model               *string                `json:"model" validate:"required"`
+	Provider            *string                `json:"provider" validate:"required"`
+	ResumeSourceJobUUID *uuid.UUID             `json:"resume_source_job_uuid" validate:"required"`
 	Role                string                 `json:"role" validate:"required"`
 	Status              string                 `json:"status" validate:"required"`
 }
@@ -1362,6 +1538,9 @@ func (e ExportCICostJob) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(e.Agent, "required"); err != nil {
 		errors = errors.Append("Agent", err)
+	}
+	if err := typesValidator.Var(e.Experiments, "required"); err != nil {
+		errors = errors.Append("Experiments", err)
 	}
 	for i, item := range e.Experiments {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -1416,7 +1595,7 @@ type ExportCIMetricsDocument struct {
 	GeneratedAt string    `json:"generated_at" validate:"required"`
 
 	// NextCursor Opaque resume cursor emitted when panels is non-empty.
-	NextCursor    *string         `json:"next_cursor,omitempty" validate:"required"`
+	NextCursor    *string         `json:"next_cursor" validate:"required"`
 	Panels        []ExportCIPanel `json:"panels" validate:"required"`
 	SchemaVersion int64           `json:"schema_version"`
 	Tool          string          `json:"tool" validate:"required"`
@@ -1441,6 +1620,9 @@ func (e ExportCIMetricsDocument) Validate() error {
 		if err := typesValidator.Var(e.NextCursor, "required"); err != nil {
 			errors = errors.Append("NextCursor", err)
 		}
+	}
+	if err := typesValidator.Var(e.Panels, "required"); err != nil {
+		errors = errors.Append("Panels", err)
 	}
 	for i, item := range e.Panels {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -1467,9 +1649,9 @@ func (e ExportCIMetricsDocument) Validate() error {
 }
 
 type ExportCIPanel struct {
-	AttemptCount   *int64                 `json:"attempt_count,omitempty"`
+	AttemptCount   *int64                 `json:"attempt_count"`
 	Experiments    []ExperimentAssignment `json:"experiments" validate:"required"`
-	FirstAttemptAt *string                `json:"first_attempt_at,omitempty" validate:"required"`
+	FirstAttemptAt *string                `json:"first_attempt_at" validate:"required"`
 	GithubRepo     string                 `json:"github_repo" validate:"required"`
 	HeadSha        string                 `json:"head_sha" validate:"required"`
 	Jobs           []ExportCIPanelJob     `json:"jobs" validate:"required"`
@@ -1477,12 +1659,15 @@ type ExportCIPanel struct {
 	PanelCreatedAt string                 `json:"panel_created_at" validate:"required"`
 	PostedAt       string                 `json:"posted_at" validate:"required"`
 	PrNumber       int64                  `json:"pr_number"`
-	SynthesisAgent *string                `json:"synthesis_agent,omitempty" validate:"required"`
-	SynthesisModel *string                `json:"synthesis_model,omitempty" validate:"required"`
+	SynthesisAgent *string                `json:"synthesis_agent" validate:"required"`
+	SynthesisModel *string                `json:"synthesis_model" validate:"required"`
 }
 
 func (e ExportCIPanel) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(e.Experiments, "required"); err != nil {
+		errors = errors.Append("Experiments", err)
+	}
 	for i, item := range e.Experiments {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -1500,6 +1685,9 @@ func (e ExportCIPanel) Validate() error {
 	}
 	if err := typesValidator.Var(e.HeadSha, "required"); err != nil {
 		errors = errors.Append("HeadSha", err)
+	}
+	if err := typesValidator.Var(e.Jobs, "required"); err != nil {
+		errors = errors.Append("Jobs", err)
 	}
 	for i, item := range e.Jobs {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -1535,13 +1723,13 @@ func (e ExportCIPanel) Validate() error {
 
 type ExportCIPanelJob struct {
 	Agent               string     `json:"agent" validate:"required"`
-	FinishedAt          *string    `json:"finished_at,omitempty" validate:"required"`
+	FinishedAt          *string    `json:"finished_at" validate:"required"`
 	JobUUID             uuid.UUID  `json:"job_uuid" validate:"required"`
-	Model               *string    `json:"model,omitempty" validate:"required"`
-	Provider            *string    `json:"provider,omitempty" validate:"required"`
-	ResumeSourceJobUUID *uuid.UUID `json:"resume_source_job_uuid,omitempty" validate:"required"`
+	Model               *string    `json:"model" validate:"required"`
+	Provider            *string    `json:"provider" validate:"required"`
+	ResumeSourceJobUUID *uuid.UUID `json:"resume_source_job_uuid" validate:"required"`
 	Role                string     `json:"role" validate:"required"`
-	StartedAt           *string    `json:"started_at,omitempty" validate:"required"`
+	StartedAt           *string    `json:"started_at" validate:"required"`
 	Status              string     `json:"status" validate:"required"`
 }
 
@@ -1603,12 +1791,18 @@ type ExportLegacyReviewsOutputBody struct {
 
 func (e ExportLegacyReviewsOutputBody) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(e.PostgresRecords, "required"); err != nil {
+		errors = errors.Append("PostgresRecords", err)
+	}
 	for i, item := range e.PostgresRecords {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("PostgresRecords[%d]", i), err)
 			}
 		}
+	}
+	if err := typesValidator.Var(e.SqliteRecords, "required"); err != nil {
+		errors = errors.Append("SqliteRecords", err)
 	}
 	for i, item := range e.SqliteRecords {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -1625,26 +1819,26 @@ func (e ExportLegacyReviewsOutputBody) Validate() error {
 
 type ExportReview struct {
 	Agent  string  `json:"agent" validate:"required"`
-	Branch *string `json:"branch,omitempty" validate:"required"`
+	Branch *string `json:"branch" validate:"required"`
 
 	// Closed True when the review is marked closed.
 	Closed      bool             `json:"closed"`
-	CommitSha   *string          `json:"commit_sha,omitempty" validate:"required"`
+	CommitSha   *string          `json:"commit_sha" validate:"required"`
 	CompletedAt string           `json:"completed_at" validate:"required"`
-	Content     *string          `json:"content,omitempty" validate:"required"`
+	Content     *string          `json:"content" validate:"required"`
 	Cost        ExportReviewCost `json:"cost"`
 	CreatedAt   string           `json:"created_at" validate:"required"`
 
 	// Document The stored review document in canonical JSON. Null in the metadata profile and for reviews stored without a document. content is the Markdown rendering of this document.
 	Document            ExportReview_Document  `json:"document"`
-	DurationMs          *int64                 `json:"duration_ms,omitempty"`
+	DurationMs          *int64                 `json:"duration_ms"`
 	Experiments         []ExperimentAssignment `json:"experiments" validate:"required"`
-	Model               *string                `json:"model,omitempty" validate:"required"`
-	PrNumber            *int64                 `json:"pr_number,omitempty"`
-	PrURL               *string                `json:"pr_url,omitempty" validate:"required"`
+	Model               *string                `json:"model" validate:"required"`
+	PrNumber            *int64                 `json:"pr_number"`
+	PrURL               *string                `json:"pr_url" validate:"required"`
 	Project             string                 `json:"project" validate:"required"`
 	Repo                string                 `json:"repo" validate:"required"`
-	ResumeSourceJobUUID *uuid.UUID             `json:"resume_source_job_uuid,omitempty" validate:"required"`
+	ResumeSourceJobUUID *uuid.UUID             `json:"resume_source_job_uuid" validate:"required"`
 	ReviewID            uuid.UUID              `json:"review_id" validate:"required"`
 	Status              string                 `json:"status" validate:"required"`
 	Subagents           []ExportSubagent       `json:"subagents" validate:"required"`
@@ -1692,6 +1886,9 @@ func (e ExportReview) Validate() error {
 			errors = errors.Append("Document", err)
 		}
 	}
+	if err := typesValidator.Var(e.Experiments, "required"); err != nil {
+		errors = errors.Append("Experiments", err)
+	}
 	for i, item := range e.Experiments {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -1729,6 +1926,9 @@ func (e ExportReview) Validate() error {
 	}
 	if err := typesValidator.Var(e.Status, "required"); err != nil {
 		errors = errors.Append("Status", err)
+	}
+	if err := typesValidator.Var(e.Subagents, "required"); err != nil {
+		errors = errors.Append("Subagents", err)
 	}
 	for i, item := range e.Subagents {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -1804,9 +2004,9 @@ func (e *ExportReview_Document) UnmarshalJSON(data []byte) error {
 }
 
 type ExportReviewCost struct {
-	TokensIn  *int64   `json:"tokens_in,omitempty"`
-	TokensOut *int64   `json:"tokens_out,omitempty"`
-	Usd       *float64 `json:"usd,omitempty"`
+	TokensIn  *int64   `json:"tokens_in"`
+	TokensOut *int64   `json:"tokens_out"`
+	Usd       *float64 `json:"usd"`
 }
 
 type ExportReviewsDocument struct {
@@ -1818,7 +2018,7 @@ type ExportReviewsDocument struct {
 	GeneratedAt string    `json:"generated_at" validate:"required"`
 
 	// NextCursor Opaque resume cursor emitted when reviews is non-empty; pass as cursor to resume after the last returned review.
-	NextCursor    *string        `json:"next_cursor,omitempty" validate:"required"`
+	NextCursor    *string        `json:"next_cursor" validate:"required"`
 	Profile       string         `json:"profile" validate:"required"`
 	Reviews       []ExportReview `json:"reviews" validate:"required"`
 	SchemaVersion int64          `json:"schema_version"`
@@ -1848,6 +2048,9 @@ func (e ExportReviewsDocument) Validate() error {
 	if err := typesValidator.Var(e.Profile, "required"); err != nil {
 		errors = errors.Append("Profile", err)
 	}
+	if err := typesValidator.Var(e.Reviews, "required"); err != nil {
+		errors = errors.Append("Reviews", err)
+	}
 	for i, item := range e.Reviews {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -1874,8 +2077,8 @@ func (e ExportReviewsDocument) Validate() error {
 
 type ExportReviewsWindow struct {
 	Field string  `json:"field" validate:"required"`
-	Since *string `json:"since,omitempty" validate:"required"`
-	Until *string `json:"until,omitempty" validate:"required"`
+	Since *string `json:"since" validate:"required"`
+	Until *string `json:"until" validate:"required"`
 }
 
 func (e ExportReviewsWindow) Validate() error {
@@ -1885,17 +2088,20 @@ func (e ExportReviewsWindow) Validate() error {
 type ExportSubagent struct {
 	Agent       string           `json:"agent" validate:"required"`
 	CompletedAt string           `json:"completed_at" validate:"required"`
-	Content     *string          `json:"content,omitempty" validate:"required"`
+	Content     *string          `json:"content" validate:"required"`
 	Cost        ExportReviewCost `json:"cost"`
 
 	// Document The stored review document in canonical JSON. Null in the metadata profile and for reviews stored without a document. content is the Markdown rendering of this document.
-	Document            ExportSubagent_Document `json:"document"`
-	DurationMs          *int64                  `json:"duration_ms,omitempty"`
-	Model               *string                 `json:"model,omitempty" validate:"required"`
-	Name                string                  `json:"name" validate:"required"`
-	ResumeSourceJobUUID *uuid.UUID              `json:"resume_source_job_uuid,omitempty" validate:"required"`
-	ReviewID            uuid.UUID               `json:"review_id" validate:"required"`
-	ReviewType          *string                 `json:"review_type,omitempty" validate:"required"`
+	Document   ExportSubagent_Document `json:"document"`
+	DurationMs *int64                  `json:"duration_ms"`
+	Model      *string                 `json:"model" validate:"required"`
+	Name       string                  `json:"name" validate:"required"`
+
+	// NonVoting True when the panel member is advisory and does not affect the panel verdict.
+	NonVoting           bool       `json:"non_voting"`
+	ResumeSourceJobUUID *uuid.UUID `json:"resume_source_job_uuid" validate:"required"`
+	ReviewID            uuid.UUID  `json:"review_id" validate:"required"`
+	ReviewType          *string    `json:"review_type" validate:"required"`
 
 	// Verdict pass, fail, or unknown when a legacy review has no recorded verdict.
 	Verdict string `json:"verdict" validate:"required"`
@@ -2103,6 +2309,9 @@ type GoalGateResponse struct {
 
 func (g GoalGateResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(g.Findings, "required"); err != nil {
+		errors = errors.Append("Findings", err)
+	}
 	for i, item := range g.Findings {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -2143,12 +2352,18 @@ type HealthStatus struct {
 
 func (h HealthStatus) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(h.Components, "required"); err != nil {
+		errors = errors.Append("Components", err)
+	}
 	for i, item := range h.Components {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Components[%d]", i), err)
 			}
 		}
+	}
+	if err := typesValidator.Var(h.RecentErrors, "required"); err != nil {
+		errors = errors.Append("RecentErrors", err)
 	}
 	for i, item := range h.RecentErrors {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -2353,6 +2568,9 @@ type LegacyReviewDocument struct {
 
 func (l LegacyReviewDocument) Validate() error {
 	var errors runtime.ValidationErrors
+	if len(l.Findings) > 0 {
+		errors = errors.Add("Findings", fmt.Sprintf("must have at most 0 items, got %d", len(l.Findings)))
+	}
 	for i, item := range l.Findings {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -2424,6 +2642,9 @@ type ListBranchesOutputBody struct {
 
 func (l ListBranchesOutputBody) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(l.Branches, "required"); err != nil {
+		errors = errors.Append("Branches", err)
+	}
 	for i, item := range l.Branches {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -2445,6 +2666,9 @@ type ListCommentsOutputBody struct {
 
 func (l ListCommentsOutputBody) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(l.Responses, "required"); err != nil {
+		errors = errors.Append("Responses", err)
+	}
 	for i, item := range l.Responses {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -2466,7 +2690,7 @@ type ListJobsOutputBody struct {
 	Jobs          []ReviewJob `json:"jobs" validate:"required"`
 
 	// NextCursor Opaque resume cursor when more jobs are available
-	NextCursor *string   `json:"next_cursor,omitempty" validate:"required"`
+	NextCursor *string   `json:"next_cursor" validate:"required"`
 	Stats      *JobStats `json:"stats,omitempty"`
 }
 
@@ -2478,6 +2702,9 @@ func (l ListJobsOutputBody) Validate() error {
 				errors = errors.Append("FilteredStats", err)
 			}
 		}
+	}
+	if err := typesValidator.Var(l.Jobs, "required"); err != nil {
+		errors = errors.Append("Jobs", err)
 	}
 	for i, item := range l.Jobs {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -2513,6 +2740,9 @@ type ListReposOutputBody struct {
 
 func (l ListReposOutputBody) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(l.Repos, "required"); err != nil {
+		errors = errors.Append("Repos", err)
+	}
 	for i, item := range l.Repos {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -2811,10 +3041,22 @@ func (p PingInfo) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
+type PostCommitScheduleRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema   *string `json:"$schema,omitempty"`
+	Branch   string  `json:"branch" validate:"required,min=1"`
+	Head     string  `json:"head" validate:"required,min=1"`
+	RepoPath string  `json:"repo_path" validate:"required,min=1"`
+}
+
+func (p PostCommitScheduleRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
 type PostgresLegacyReview struct {
-	ID             string               `json:"id" validate:"required"`
+	ID             uuid.UUID            `json:"id" validate:"required"`
 	JobType        string               `json:"job_type" validate:"required"`
-	JobUUID        string               `json:"job_uuid" validate:"required"`
+	JobUUID        uuid.UUID            `json:"job_uuid" validate:"required"`
 	Markdown       string               `json:"markdown" validate:"required"`
 	MigrationError string               `json:"migration_error" validate:"required"`
 	PreviousJSON   string               `json:"previous_json" validate:"required"`
@@ -2823,14 +3065,18 @@ type PostgresLegacyReview struct {
 
 func (p PostgresLegacyReview) Validate() error {
 	var errors runtime.ValidationErrors
-	if err := typesValidator.Var(p.ID, "required"); err != nil {
-		errors = errors.Append("ID", err)
+	if v, ok := any(p.ID).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ID", err)
+		}
 	}
 	if err := typesValidator.Var(p.JobType, "required"); err != nil {
 		errors = errors.Append("JobType", err)
 	}
-	if err := typesValidator.Var(p.JobUUID, "required"); err != nil {
-		errors = errors.Append("JobUUID", err)
+	if v, ok := any(p.JobUUID).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("JobUUID", err)
+		}
 	}
 	if err := typesValidator.Var(p.Markdown, "required"); err != nil {
 		errors = errors.Append("Markdown", err)
@@ -2910,6 +3156,9 @@ func (r ReleaseNotesResponse) Validate() error {
 	if err := typesValidator.Var(r.FetchedAt, "required"); err != nil {
 		errors = errors.Append("FetchedAt", err)
 	}
+	if err := typesValidator.Var(r.Releases, "required"); err != nil {
+		errors = errors.Append("Releases", err)
+	}
 	for i, item := range r.Releases {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -2951,6 +3200,9 @@ type RemapRequest struct {
 
 func (r RemapRequest) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(r.Mappings, "required"); err != nil {
+		errors = errors.Append("Mappings", err)
+	}
 	for i, item := range r.Mappings {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -3475,12 +3727,18 @@ func (r ReviewProjection) Validate() error {
 			errors = errors.Append("Job", err)
 		}
 	}
+	if err := typesValidator.Var(r.PanelMembers, "required"); err != nil {
+		errors = errors.Append("PanelMembers", err)
+	}
 	for i, item := range r.PanelMembers {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("PanelMembers[%d]", i), err)
 			}
 		}
+	}
+	if err := typesValidator.Var(r.Responses, "required"); err != nil {
+		errors = errors.Append("Responses", err)
 	}
 	for i, item := range r.Responses {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -3602,6 +3860,9 @@ type ScanTokenUsageReport struct {
 
 func (s ScanTokenUsageReport) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(s.Jobs, "required"); err != nil {
+		errors = errors.Append("Jobs", err)
+	}
 	for i, item := range s.Jobs {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -3730,6 +3991,9 @@ func (s SearchResponse) Validate() error {
 			errors = errors.Append("Coverage", err)
 		}
 	}
+	if err := typesValidator.Var(s.Hits, "required"); err != nil {
+		errors = errors.Append("Hits", err)
+	}
 	for i, item := range s.Hits {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -3801,8 +4065,8 @@ type SessionUsagePayload struct {
 	CachedInputTokens *int64        `json:"cached_input_tokens,omitempty"`
 	Cost              *CostEnvelope `json:"cost,omitempty"`
 	CostUsd           *float64      `json:"cost_usd,omitempty"`
-	HasCost           *bool         `json:"has_cost,omitempty"`
-	HasTokenData      *bool         `json:"has_token_data,omitempty"`
+	HasCost           *bool         `json:"has_cost"`
+	HasTokenData      *bool         `json:"has_token_data"`
 	InputTokens       *int64        `json:"input_tokens,omitempty"`
 	PeakContextTokens *int64        `json:"peak_context_tokens,omitempty"`
 	Project           *string       `json:"project,omitempty"`
@@ -3842,19 +4106,22 @@ func (s ShutdownOutputBody) Validate() error {
 type StructuredReviewDocument struct {
 	Findings []StructuredReviewFinding `json:"findings" validate:"required"`
 
-	// SchemaVersion Version of the document format, separate from the export schema_version.
-	SchemaVersion int64 `json:"schema_version" validate:"gte=1,lte=2"`
+	// SchemaVersion Version of the document format, separate from the export schema_version. Export writes every document in the current version, 3.
+	SchemaVersion int64 `json:"schema_version" validate:"gte=1,lte=3"`
 
 	// SourceLabels Names of the input reviews that findings cite in sources, indexed by review number minus one.
 	SourceLabels []string `json:"source_labels,omitempty"`
 	Summary      string   `json:"summary" validate:"required"`
 
-	// Verdict The agent's own assessment: pass, fail, or unable_to_review. Omitted by version 1 documents.
+	// Verdict The agent's own assessment: pass, fail, or unable_to_review. Omitted when the review stated none, as in converted version 1 reviews.
 	Verdict *string `json:"verdict,omitempty"`
 }
 
 func (s StructuredReviewDocument) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(s.Findings, "required"); err != nil {
+		errors = errors.Append("Findings", err)
+	}
 	for i, item := range s.Findings {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -3862,7 +4129,7 @@ func (s StructuredReviewDocument) Validate() error {
 			}
 		}
 	}
-	if err := typesValidator.Var(s.SchemaVersion, "gte=1,lte=2"); err != nil {
+	if err := typesValidator.Var(s.SchemaVersion, "gte=1,lte=3"); err != nil {
 		errors = errors.Append("SchemaVersion", err)
 	}
 	if err := typesValidator.Var(s.Summary, "required"); err != nil {
@@ -3876,10 +4143,21 @@ func (s StructuredReviewDocument) Validate() error {
 
 // StructuredReviewFinding One finding in a structured review document.
 type StructuredReviewFinding struct {
-	Fix string `json:"fix" validate:"required"`
+	// Confidence The reviewer's estimate, from 0 to 1, that the problem is real. Null exactly when kind is null. Present on version 3 documents.
+	Confidence *float64 `json:"confidence,omitempty" validate:"omitempty,gte=0,lte=1"`
 
-	// Location Where the problem is, or null when the finding has no location.
-	Location *string `json:"location,omitempty" validate:"required"`
+	// EndLine Last line of the problem in the reviewed file, or null. Present on version 3 documents.
+	EndLine *int64 `json:"end_line,omitempty"`
+
+	// File Path relative to the repository root, or null. Present on version 3 documents.
+	File *string `json:"file,omitempty"`
+	Fix  string  `json:"fix" validate:"required"`
+
+	// Kind defect when the code behaves wrongly, or improvement when it works but should still change. Null when the producer did not classify the finding, as in goal reviews and converted historical reviews. Present on version 3 documents.
+	Kind *string `json:"kind,omitempty"`
+
+	// Location Where the problem is, or null when the finding has no location. Derived from file, start_line, and end_line when file is set; otherwise free text.
+	Location *string `json:"location" validate:"required"`
 	Problem  string  `json:"problem" validate:"required"`
 
 	// Severity One of critical, high, medium, or low.
@@ -3887,6 +4165,12 @@ type StructuredReviewFinding struct {
 
 	// Sources 1-based numbers of the input reviews that reported this finding. Present on synthesized documents.
 	Sources []int64 `json:"sources,omitempty"`
+
+	// StartLine First line of the problem in the reviewed file, or null. Present on version 3 documents.
+	StartLine *int64 `json:"start_line,omitempty"`
+
+	// Topic One of tests, documentation, security, performance, or design, or null when no topic applies. Present on version 3 documents.
+	Topic *string `json:"topic,omitempty"`
 }
 
 func (s StructuredReviewFinding) Validate() error {
@@ -3898,6 +4182,7 @@ type Summary struct {
 	Schema   *string        `json:"$schema,omitempty"`
 	Agents   []AgentStats   `json:"agents" validate:"required"`
 	Branch   *string        `json:"branch,omitempty"`
+	Ci       *CISummary     `json:"ci,omitempty"`
 	Cost     CostAggregate  `json:"cost"`
 	Duration DurationStats  `json:"duration"`
 	Failures FailureStats   `json:"failures"`
@@ -3911,10 +4196,20 @@ type Summary struct {
 
 func (s Summary) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(s.Agents, "required"); err != nil {
+		errors = errors.Append("Agents", err)
+	}
 	for i, item := range s.Agents {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Agents[%d]", i), err)
+			}
+		}
+	}
+	if s.Ci != nil {
+		if v, ok := any(s.Ci).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Ci", err)
 			}
 		}
 	}
@@ -3932,6 +4227,9 @@ func (s Summary) Validate() error {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Failures", err)
 		}
+	}
+	if err := typesValidator.Var(s.JobTypes, "required"); err != nil {
+		errors = errors.Append("JobTypes", err)
 	}
 	for i, item := range s.JobTypes {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -4044,6 +4342,9 @@ type TokenSummary struct {
 
 func (t TokenSummary) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(t.Results, "required"); err != nil {
+		errors = errors.Append("Results", err)
+	}
 	for i, item := range t.Results {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {

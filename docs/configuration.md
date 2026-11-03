@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-17
+last_edited: 2026-10-31
 title: Configuration
 description: Configure roborev behavior globally and per-repository
 ---
@@ -226,7 +226,7 @@ project.
 ```toml
 agent = "gemini"                  # AI agent to use
 model = "gemini-3-flash-preview"  # Model override for this repo
-review_context_count = 5   # Recent reviews to include as context
+review_context_count = 5   # Earlier reviews to include as context (0 disables)
 display_name = "backend"   # Custom name shown in TUI (optional)
 excluded_branches = ["wip", "scratch"]  # Branches to skip reviews on
 excluded_branch_patterns = ["worktree-agent-*", "release/*"]  # Branch globs to skip for automatic post-commit reviews
@@ -266,14 +266,15 @@ max_chars = 50000
 | `agent` | string | AI agent to use for this repo |
 | `model` | string | Model to use (overrides global `default_model`) |
 | `display_name` | string | Custom name shown in TUI |
-| `review_context_count` | int | Number of recent reviews to include as context |
+| `review_context_count` | int | Number of earlier reviews to include as context. Overrides the global value; `0` turns context off for this repo |
 | `isolate_reviews` | bool | Run committed reviews in daemon-owned detached checkouts. Overrides the global setting; see [Isolated Review Checkouts](#isolated-review-checkouts) |
 | `excluded_branches` | array | Branches to skip automatic reviews on |
 | `excluded_branch_patterns` | array | Whole-name branch globs to skip automatic post-commit reviews on |
 | `excluded_commit_patterns` | array | Commit message substrings to skip reviews on (case-insensitive) |
 | `exclude_patterns` | array | Filenames or glob patterns to exclude from review diffs for this repo |
 | `post_commit_review` | string | Post-commit hook behavior: `"commit"` (default) or `"branch"` |
-| `post_commit_batch_size` | int | Number of commits to accumulate before an automatic post-commit review. Values below `2` review every commit |
+| `post_commit_batch_size` | int | Number of commits to accumulate before an automatic post-commit review. Values below `2` disable the count threshold. Repo value overrides the global value |
+| `post_commit_quiet_period` | string | Time without a new commit before reviewing a pending batch, such as `"5m"`. Empty or `"0"` disables the timer. Repo value overrides the global value |
 | `hook_timeout_seconds` | int | Override the post-commit hook request timeout for this repo, in seconds. Useful for large repos where the daemon's enqueue git calls are slow. Read filesystem-only from this checkout's `.roborev.toml` (a linked worktree without its own file does not inherit the main checkout's value). Zero or negative values inherit the global / platform default |
 | `auto_close_passing_reviews` | bool | Automatically close reviews that pass, including reviews whose findings all fall below `review_min_severity` |
 | `review_reasoning` | string | Reasoning level for reviews. See [Reasoning Levels](#reasoning-levels) |
@@ -364,8 +365,8 @@ not gated on trailer support.
 ### Fix Guidelines
 
 Use the global-only `fix_guidelines` setting to tell Agent Hook and foreground
-`roborev fix` agents how to evaluate review findings instead of blindly applying
-every suggestion:
+`roborev fix` and `roborev refine` agents how to evaluate review findings
+instead of blindly applying every suggestion:
 
 ```toml
 # ~/.roborev/config.toml
@@ -375,19 +376,20 @@ project requirements. Explain findings that are intentionally not applied.
 """
 ```
 
-The value applies to direct fixes, batch fixes, and commit retries. It also
-appears at the end of triggered reminders for every Agent Hook profile. Missing
-or empty guidance preserves the existing automatic behavior. With guidance
-configured, direct `roborev fix` runs record whether changes were applied and
-preserve the agent's final explanation before closing each review. Batch runs
-record a neutral batch outcome, while the agent report gives every job ID a
-fixed or skipped disposition.
+The value applies to direct fixes, batch fixes, fix commit retries, and refine
+agents addressing findings. Fix and refine planning also receive it with
+`--plan` or `--plan-only`. It appears at the end of triggered reminders for
+every Agent Hook profile. Missing or empty guidance preserves the existing
+automatic behavior. With guidance configured, direct `roborev fix` runs record
+whether changes were applied and preserve the agent's final explanation before
+closing each review. Batch runs record a neutral batch outcome, while the agent
+report gives every job ID a fixed or skipped disposition.
 
 This key is not accepted in `.roborev.toml` and has no CLI or environment
 override. Agent Hook's `--config` option still controls profile thresholds and
 the full-replacement `instruction`, but it does not redirect `fix_guidelines`
-away from the standard global config. `roborev analyze --fix` and
-`roborev refine` keep their existing, separate prompt behavior.
+away from the standard global config. `roborev analyze --fix` keeps its
+existing, separate prompt behavior.
 
 ### Review Guidelines
 
@@ -644,6 +646,67 @@ optional agent, model, and reasoning overrides. See
 [Custom Review Types](/docs/advanced/custom-review-types/) for path rules,
 template values, structured output, and examples.
 
+### Strict Review Tool Policies
+
+A custom review type can ask for a strict tool policy. The agent then gets only
+read-only native tools plus the exact MCP tools the policy names:
+
+```toml
+[review.types.citations.tools]
+mode = "read-only"
+
+[review.types.citations.tools.mcp]
+sources = ["read", "find"]
+```
+
+- Omit `tools` to keep the agent's ordinary behavior. Omit `mcp` for a strict
+    review with no MCP tools.
+- Server and tool names are exact. Wildcards, slashes, and `__` are rejected. A
+    server name cannot end in `_` and a tool name cannot start with `_`, so two
+    grants never map to the same Claude tool name.
+- A subagent's `[review.subagents.<name>.tools]` table replaces its type's
+    policy as a whole. Grants are not merged.
+- An experiment that overrides a review type or subagent may set `tools`, which
+    replaces the base policy as a whole. Omitting `tools` keeps the base policy.
+- Only global config names the MCP servers and the tools a review may request.
+    Repository config cannot set either key. See below.
+- Panel and CI members keep the policy they were queued with, including on
+    rerun.
+- If the selected agent or its backup cannot enforce the policy, the review
+    fails before it starts. Strict policies cannot be combined with agentic
+    mode. Only Claude Code supports strict policies; see
+    [Strict Claude Code Reviews](/docs/agents/#strict-claude-code-reviews).
+
+The operator sets up MCP access in `~/.roborev/config.toml`:
+
+```toml
+review_mcp_config = "/etc/roborev/review-mcp.json"
+review_mcp_allowed_tools = ["sources/read", "sources/find"]
+```
+
+`review_mcp_config` is an absolute path to a file in Claude Code's own MCP
+format:
+
+```json
+{
+  "mcpServers": {
+    "sources": { "command": "source-reader", "args": ["--stdio"] }
+  }
+}
+```
+
+`review_mcp_allowed_tools` is the ceiling: a review type can only request
+`server/tool` pairs listed there, matched exactly. Roborev checks the current
+ceiling every time a review runs, so removing a pair also stops queued reviews
+from using it. Each review gets a private copy of the file that holds only its
+granted servers, so other servers in the file never start. Reviews without MCP
+grants never read the file.
+
+Strict reviews ignore user, project and local Claude settings, but Claude's
+managed (policy) settings still apply. A managed allow rule such as
+`mcp__sources__*` can approve tools on a granted server beyond the ones listed
+here, so keep managed rules as narrow as your grants.
+
 ### Review Panels
 
 Use `[review]` to configure subagent review panels. A panel fans one daemon
@@ -676,7 +739,9 @@ select a named panel with `[ci] panel = "branch_final"`. Use
 `allow_failure = true` for flaky or best-effort subagents whose failure should
 not fail an otherwise successful panel. Use `non_voting = true` to trial a new
 agent or model: the member runs and stores its review, but it is excluded from
-synthesis and the panel verdict.
+synthesis and the panel verdict. Use `synthesis_instructions` on a panel to have
+synthesis check findings against the code or label them; see
+[Synthesis Instructions](/docs/advanced/subagent-review-panels/#synthesis-instructions).
 
 Global and repo panel maps are merged by name, with repo entries overriding
 global entries. See
@@ -984,17 +1049,32 @@ by this option.
 
 ### Post-commit review batching
 
-By default, the post-commit hook queues a review after every commit. To combine
-several small commits into one automatic review, set a repository-local batch
-size:
+By default, the post-commit hook queues a review after every commit. Configure
+batching globally in `~/.roborev/config.toml` or per repository in
+`.roborev.toml`:
 
 ```toml
 post_commit_batch_size = 5
+post_commit_quiet_period = "5m"
 ```
 
-The hook returns without contacting the daemon until the configured number of
-commits has accumulated. It then queues one review over the accumulated range.
-Values below `2`, including the default of `1`, disable batching.
+With both settings, the hook queues one review over the accumulated range as
+soon as five commits are pending or five minutes pass without a new commit on
+that branch. Each new commit resets the quiet-period timer. The count threshold
+still queues immediately during a long burst of commits.
+
+Each repository setting overrides its global value independently. Values below
+`2` disable the count threshold. An empty quiet period or `"0"` disables the
+timer. With neither threshold enabled, every commit is reviewed immediately. Set
+only the quiet period to combine a burst of any size into one review. Durations
+use Go syntax, such as `"30s"` or `"5m"`; negative durations are invalid.
+
+Count-only batching returns without contacting the daemon until the threshold is
+reached. A quiet period starts or contacts the daemon to register a timer.
+Timers are per repository and branch, shared across linked worktrees. If timer
+registration fails, the hook attempts to enqueue the accumulated range
+immediately. Timers are canceled when the daemon stops; pending checkpoints
+remain on disk and the next commit or push retries them.
 
 Batch checkpoints are stored per branch in shared Git metadata, so linked
 worktrees use the same pending range. The pre-push hook attempts to queue a
@@ -1004,8 +1084,9 @@ rebase or amend, the next review covers everything since the last commit still
 shared with the old history. Run `roborev init` after upgrading roborev to
 install or update the pre-push hook.
 
-When `post_commit_review = "branch"` is also set, the batch size controls when a
-review is queued, while the review still covers the entire branch.
+When `post_commit_review = "branch"` is also set, the batching thresholds
+control when a review is queued, while the review still covers the entire
+branch.
 
 ### Auto-Close Passing Reviews
 
@@ -1132,17 +1213,21 @@ filter_branch = false             # Show all branches on startup (default: curre
 | `web.auth_mode` | string | - | Browser admission mode; set `proxy` to delegate admission to an external access boundary | No |
 | `web.auth_token` | string | - | Base64url-encoded 32-byte random token exchanged for a process-local browser session | No |
 | `web.auth_token_file` | string | - | Host-local file containing the browser token; mutually exclusive with `web.auth_token` | No |
-| `max_workers` | int | 4 | Number of parallel review workers | No |
-| `job_timeout_minutes` | int | 30 | Per-job timeout in minutes; plan-first background fixes add an equal planning budget | Yes |
+| `max_workers` | int | 4 | Number of parallel review workers. On reload, the daemon starts new workers right away; when the number drops, busy workers finish their current job before stopping. Starting the daemon with `--workers` fixes the count until restart | Yes |
+| `job_timeout_minutes` | int | 30 | Per-job timeout in minutes of wall-clock time, so time the machine spends asleep counts against it. Plan-first background fixes add an equal planning budget | Yes |
 | `isolate_reviews` | bool | false | Run committed reviews in daemon-owned detached checkouts; see [Isolated Review Checkouts](#isolated-review-checkouts) | Yes |
 | `hook_timeout_seconds` | int | `3` (`30` on Windows) | Post-commit hook request timeout, in seconds. Raise it on Windows or large repos where the daemon's enqueue git calls are slow. Zero or negative values are ignored and fall back to the platform default | Yes |
+| `post_commit_batch_size` | int | `1` | Number of commits to accumulate before an automatic post-commit review. Values below `2` disable the count threshold. A repo `.roborev.toml` value overrides it. See [Post-commit review batching](#post-commit-review-batching) | Yes |
+| `post_commit_quiet_period` | string | - | Time without a new commit before reviewing a pending batch, as a Go duration such as `5m`. Empty or `0` disables the timer. A repo `.roborev.toml` value overrides it. See [Post-commit review batching](#post-commit-review-batching) | Yes |
 | `prompt_retention_days` | int | `0` | Delete the stored prompts of review and range jobs this many days after they finish. Zero or negative keeps prompts forever. See [Stored prompts and retention](#stored-prompts-and-retention) | Yes |
 | `job_log_retention_days` | int | `0` | Delete job log files older than this many days. Zero or negative keeps logs forever. See [Stored prompts and retention](#stored-prompts-and-retention) | Yes |
 | `agent_quota_cooldown` | string | `30m0s` | Maximum daemon-wide cooldown after an agent quota or session-limit error, as a Go duration such as `10m`, `30m`, or `1h` | Yes |
 | `allow_unsafe_agents` | bool | false | Enable agentic mode globally | Yes |
 | `anthropic_api_key` | string | - | Anthropic API key for Claude Code | Yes |
-| `review_context_count` | int | 3 | Recent reviews to include as context | Yes |
+| `review_context_count` | int | 3 | Earlier reviews to include as context; `0` turns context off. A repo `.roborev.toml` value overrides it | Yes |
 | `review_guidelines` | string | - | Global reviewer instructions included in review prompts for every repo | Yes |
+| `review_mcp_config` | string | - | Absolute path to a Claude Code MCP config file that defines the servers strict review types may be granted. Global only; see [Strict Review Tool Policies](#strict-review-tool-policies) | Yes |
+| `review_mcp_allowed_tools` | array | `[]` | Exact `server/tool` pairs that strict review types may request. Global only; see [Strict Review Tool Policies](#strict-review-tool-policies) | Yes |
 | `reuse_review_session` | bool | false | (Experimental) Resume prior agent sessions on the same branch. See [Session Reuse](/docs/guides/reviewing-code/#session-reuse) | Yes |
 | `reuse_review_session_lookback` | int | 0 | Max recent session candidates to consider (0 = unlimited) | Yes |
 | `auto_close_passing_reviews` | bool | false | Automatically close reviews that pass, including reviews whose findings all fall below `review_min_severity` | Yes |
@@ -1263,9 +1348,13 @@ behavior, health fields, and sidecar recovery.
 The daemon automatically watches `~/.roborev/config.toml` for changes. Most
 settings take effect immediately without restarting the daemon.
 
-**Settings that require daemon restart:** `server_addr`, `max_workers`, the
-`[web]` section, the `[mcp]` section, the `[sync]` section, and the `[search]`
-section.
+**Settings that require daemon restart:** `server_addr`, the `[web]` section,
+the `[mcp]` section, the `[sync]` section, and the `[search]` section.
+
+Changing `max_workers` resizes the worker pool without a restart. Lowering it
+never cancels a running job: each busy worker above the new limit finishes its
+job, then stops. If the daemon was started with `--workers`, that flag keeps the
+pool size fixed and the daemon logs that it ignored the new file value.
 
 ### Browser Application
 
@@ -1509,7 +1598,7 @@ job_log_retention_days = 30  # remove job log files older than 30 days
     prompt that PostgreSQL lacks. Retention removes no prompts until sync has
     connected, because a new sync database resets which jobs count as pushed.
 - `job_log_retention_days` deletes log files by modification time, the same
-    files that `roborev log clean --days N` removes. Logs that a running job
+    files that `roborev job log clean --days N` removes. Logs that a running job
     still writes to are kept.
 
 ### Unix Domain Socket
@@ -1843,8 +1932,8 @@ user manager cannot answer. Otherwise recovery waits up to two minutes for a
 managed replacement.
 
 Before managed recovery drains reviews or starts the service, local
-`roborev pause` must save the pause through the current daemon, even if the
-initial version check failed. If rediscovery misses the daemon, the command
+`roborev daemon pause` must save the pause through the current daemon, even if
+the initial version check failed. If rediscovery misses the daemon, the command
 tries its last known runtime API unless ownership lookup confirms the process
 has exited. In that case, recovery returns an error without dialing an
 activation socket that could start unpaused workers. This keeps replacement
@@ -1927,16 +2016,16 @@ browser quits, crashes, or discards the tab before the page closes normally.
 
 The web UI asks the daemon to report anonymous `app_opened` once per UTC day per
 browser profile, on load or focus. `roborev tui` asks each time it starts.
-Commands that work through the daemon, such as `roborev review`, `roborev list`
-and `roborev show`, ask once their first daemon request succeeds, and they never
-start a daemon to do so. Git hook, agent hook, MCP and daemon management
-commands never report it. Commands run by the bundled agent skills pass
-`--from-skill` and count as agent activity. Unmarked eligible commands still
-count as app opens. The daemon sends `app_opened` with the same install ID,
-version, OS and architecture plus `surface`, which is `web`, `tui` or `cli` and
-nothing else. It sends at most one `app_opened` per surface per UTC day, so
-repeated loads, tabs, launches and commands on the same day count once. It
-forgets which surfaces it sent on restart. The browser, the TUI and the CLI
+Commands that work through the daemon, such as `roborev review`,
+`roborev job list` and `roborev job show`, ask once their first daemon request
+succeeds, and they never start a daemon to do so. Git hook, agent hook, MCP and
+daemon management commands never report it. Commands run by the bundled agent
+skills pass `--from-skill` and count as agent activity. Unmarked eligible
+commands still count as app opens. The daemon sends `app_opened` with the same
+install ID, version, OS and architecture plus `surface`, which is `web`, `tui`
+or `cli` and nothing else. It sends at most one `app_opened` per surface per UTC
+day, so repeated loads, tabs, launches and commands on the same day count once.
+It forgets which surfaces it sent on restart. The browser, the TUI and the CLI
 never contact PostHog. The same environment variables turn it off; the daemon
 reads them, and so do the `roborev tui` and CLI processes.
 
@@ -2042,6 +2131,10 @@ Each event carries `install_age_hours`, the whole hours since the install ID was
 created, so short-lived installs such as test sandboxes can be filtered out.
 Installs created before roborev recorded that time send events without it.
 
+Each event also carries `distribution`, the channel that built the binary, such
+as `homebrew` or `kenn` for official direct downloads. It's empty for source
+builds.
+
 Telemetry does not include repo names, paths, remotes, prompts, review output,
 provider tokens, usernames, or IP geolocation. It's always off in CI. Disable it
 with any of these environment variables:
@@ -2054,7 +2147,9 @@ ROBOREV_TELEMETRY_ENABLED=0 roborev tui
 ROBOREV_TELEMETRY_ENABLED=0 roborev review
 ```
 
-Telemetry is disabled in Go test processes.
+Release builds, `make build`, and `make install` set the PostHog project key at
+link time. Plain `go build` and `go install` builds and Go test processes have
+no key and send no telemetry.
 
 ### Color Mode
 
@@ -2101,6 +2196,51 @@ default_model = "claude-opus-4-8"
 default_model = "anthropic/claude-opus-4-8"
 ```
 
+### AgentsView
+
+Configure a local or remote AgentsView server to fetch usage and cost over HTTP,
+including subagent totals. The daemon does not need the `agentsview` CLI when
+this provider is configured.
+
+```toml
+[agentsview]
+url = "https://agentsview.example/base"
+token_file = "~/.config/roborev/agentsview-token"
+
+[cost]
+timeout = "2s"
+```
+
+These settings are global-only. Repository configuration cannot choose where
+roborev sends your token. The URL must be absolute HTTP(S) with a host. A base
+path is allowed; embedded credentials, queries, and fragments are rejected.
+`agentsview.url` and `cost.endpoint` are mutually exclusive.
+
+`token_file` takes precedence over `AGENTSVIEW_SERVER_TOKEN` in the daemon's
+environment. File contents are trimmed, and `~/` expands to the daemon user's
+home directory. An unreadable or missing configured file is an error. There is
+no inline token setting. Servers without authentication need neither token
+source. Every request uses Bearer authentication when a token is configured.
+`[cost] timeout` governs the lookup, including session ID resolution, and
+defaults to `10s`.
+
+AgentsView must already have indexed the agent's session and its subagents. With
+AgentsView v0.46.1 or later, roborev resolves a missing raw session ID through
+the server's session ID resolver and retries usage with the unique indexed ID.
+Older servers report an error instead of guessing. No matches leave the job
+unpriced for existing reconciliation to retry. Ambiguous matches and rejected
+tokens produce explicit errors. Roborev never falls back to the local CLI when
+this provider is selected. Resumed sessions remain excluded because AgentsView
+totals are cumulative.
+
+`roborev doctor` reports the running daemon's provider and probes AgentsView
+reachability and authentication using the daemon's environment. If the daemon
+cannot supply this diagnostic, doctor labels its result as shell-only and warns
+that the daemon's usage provider was not checked.
+`roborev storage backfill-tokens` uses the daemon's configured provider for
+older jobs as well. With no `agentsview.url`, the existing local CLI or
+`[cost] endpoint` behavior applies.
+
 ### Cost Usage Endpoint
 
 By default, roborev looks up token usage and cost estimates through the local
@@ -2120,9 +2260,9 @@ timeout = "2s"
 ```
 
 `endpoint` must include `{session_id}`, which roborev URL-escapes and replaces
-with the agent session ID. If `endpoint` is empty, roborev uses the `agentsview`
-CLI path. `timeout` defaults to `10s`; invalid, zero, or negative values also
-fall back to `10s`.
+with the agent session ID. If both `endpoint` and `agentsview.url` are empty,
+roborev uses the `agentsview` CLI path. `timeout` defaults to `10s`; invalid,
+zero, or negative values also fall back to `10s`.
 
 Usage indexing can lag behind job completion. The daemon retries fresh misses
 and periodically revisits terminal jobs from the past week that still lack a
@@ -2135,7 +2275,7 @@ recovers the ID and token counts from the per-job JSONL log before retrying the
 provider. Provider failures do not change the completed job result. Deleted
 sessions and sessions reused by multiple started jobs can remain unpriced; jobs
 older than the one-week scan window are reachable with
-`roborev backfill-tokens`.
+`roborev storage backfill-tokens`.
 
 The endpoint should return JSON compatible with
 `agentsview session usage --format json`:
@@ -2299,29 +2439,31 @@ launching fix jobs and managing patches. See
 
 The `[agent.codex]` section controls Codex-specific behavior for review jobs.
 Both options default to `true` so Codex reviews start from a clean state without
-skill instructions or user-level Codex config. Fix jobs are not affected.
+skill instructions or user-level Codex config. User-config isolation also
+applies to non-agentic stored-prompt jobs, including `analyze`, `run`, and
+insights. Agentic stored-prompt jobs and fix jobs keep loading user config.
 
 ```toml
 # ~/.roborev/config.toml
 [agent.codex]
 disable_review_skills = true       # Suppress Codex skill instructions on review jobs
-ignore_review_user_config = true   # Pass --ignore-user-config to Codex review jobs
+ignore_review_user_config = true   # Ignore user config for reviews and non-editing jobs
 ```
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `disable_review_skills` | bool | true | Run Codex review jobs with `skills.include_instructions=false` so model-visible skill instructions are stripped from the prompt |
-| `ignore_review_user_config` | bool | true | Pass `--ignore-user-config` to Codex review jobs so user-level Codex config is not loaded |
+| `ignore_review_user_config` | bool | true | Pass `--ignore-user-config` to Codex reviews and non-agentic stored-prompt jobs so user-level Codex config is not loaded |
 
 Set either to `false` to restore the prior behavior if you rely on Codex skill
 instructions or user-level Codex config during reviews.
 
 #### Custom Codex Config (Model Providers)
 
-`ignore_review_user_config` stops Codex review jobs from loading your
-`~/.codex/config.toml`, which also means a custom `model_provider` and its
-`[model_providers.*]` block defined there are not applied. To inject specific
-Codex options without loading your full user config, define an
+`ignore_review_user_config` stops Codex reviews and non-editing jobs from
+loading your `~/.codex/config.toml`, which also means a custom `model_provider`
+and its `[model_providers.*]` block defined there are not applied. To inject
+specific Codex options without loading your full user config, define an
 `[agent.codex.config]` table. Every key under it is passed to Codex as a
 `-c key=value` override on **every** Codex job (review, fix, refine, analyze),
 and these overrides apply even when `--ignore-user-config` is in effect.
@@ -2350,6 +2492,36 @@ one override per leaf key. Values keep their TOML type: strings stay quoted,
 numbers and booleans stay bare, and arrays stay arrays. roborev's own review
 controls (skill suppression, sandbox mode, reasoning effort) are applied after
 your overrides, so they take precedence if a key collides.
+
+#### Codex Login Storage
+
+`--ignore-user-config` also drops the settings that tell Codex where your login
+is stored. If `~/.codex/config.toml` sets
+`cli_auth_credentials_store = "keyring"`, your ChatGPT login lives in the OS
+keyring and there is no `~/.codex/auth.json`. Without that setting Codex looks
+for the file, finds no login, and every request fails with
+`401 Unauthorized: Missing bearer or basic authentication`.
+
+When a review ignores user config, roborev reads these keys from
+`$CODEX_HOME/config.toml` (default `~/.codex/config.toml`) and passes them to
+Codex as `-c` overrides:
+
+- `cli_auth_credentials_store`
+- `forced_login_method`
+- `forced_chatgpt_workspace_id`
+
+No other user setting is forwarded. A value set under `[agent.codex.config]`
+takes precedence over the forwarded one:
+
+```toml
+# ~/.roborev/config.toml
+[agent.codex.config]
+cli_auth_credentials_store = "keyring"
+```
+
+If Codex still reports the 401, the daemon may see a different `CODEX_HOME` than
+your terminal. roborev treats this error as permanent: the job goes to the
+backup agent, or fails, without retries.
 
 #### Windows Sandbox
 

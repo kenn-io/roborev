@@ -113,8 +113,8 @@ type gitConfigEntry struct {
 	value string
 }
 
-func newGitCommitCmd(repoPath string, args ...string) *exec.Cmd {
-	cmd := exec.Command("git", args...)
+func newGitCommitCmd(ctx context.Context, repoPath string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = repoPath
 	procutil.HideConsole(cmd)
 	cmd.Env = append(filterGitCommitEnv(cmd.Environ()), "GIT_TERMINAL_PROMPT=0")
@@ -847,10 +847,7 @@ func GetDiffCtx(
 	args := []string{"show", sha, "--format=", "--"}
 	args = append(args, ReviewPathspecArgs(extraExcludes...)...)
 
-	cmd := newGitCmdContext(ctx, args...)
-	cmd.Dir = repoPath
-
-	out, err := gitOutput(cmd)
+	out, err := reviewDiffOutput(ctx, repoPath, args)
 	if err != nil {
 		return "", fmt.Errorf("git show: %w", err)
 	}
@@ -872,7 +869,7 @@ func GetDiffLimitedCtx(
 ) (string, bool, error) {
 	args := []string{"show", sha, "--format=", "--"}
 	args = append(args, ReviewPathspecArgs(extraExcludes...)...)
-	return captureGitOutputLimited(ctx, repoPath, maxBytes, args...)
+	return reviewDiffLimited(ctx, repoPath, maxBytes, args)
 }
 
 // GetFilesChanged returns the list of files changed in a commit
@@ -958,6 +955,18 @@ func ResolveSHACtx(ctx context.Context, repoPath, ref string) (string, error) {
 	}
 
 	return strings.TrimSpace(string(out)), nil
+}
+
+// ResolveCommitCtx resolves ref to the SHA of the commit it names, peeling
+// an annotated tag. It resolves ref as written before peeling, because in a
+// message-search ref such as ":/fix login" git reads a ^{commit} suffix as
+// part of the search text.
+func ResolveCommitCtx(ctx context.Context, repoPath, ref string) (string, error) {
+	sha, err := ResolveSHACtx(ctx, repoPath, ref)
+	if err != nil {
+		return "", err
+	}
+	return ResolveSHACtx(ctx, repoPath, sha+"^{commit}")
 }
 
 // IsAncestor checks if ancestor is an ancestor of descendant.
@@ -1400,6 +1409,10 @@ func ReadFile(repoPath, sha, filePath string) ([]byte, error) {
 	return stdout.Bytes(), nil
 }
 
+// ErrNotFile reports that a path names no file at a commit: it is missing,
+// or it is a directory or submodule.
+var ErrNotFile = errors.New("not a file")
+
 // RefFile is a blob read from a commit. Symlink is true when the tree entry
 // stores a link target instead of regular file contents.
 type RefFile struct {
@@ -1425,7 +1438,7 @@ func ReadRefFile(repoPath, sha, filePath string) (RefFile, error) {
 	if !ok || len(fields) != 3 || string(entryPath) != filePath ||
 		string(fields[1]) != "blob" {
 		return RefFile{}, fmt.Errorf(
-			"git path %s:%s is not a file", sha, filePath,
+			"git path %s:%s is %w", sha, filePath, ErrNotFile,
 		)
 	}
 	symlink := string(fields[0]) == "120000"
@@ -1559,10 +1572,7 @@ func GetRangeDiffCtx(
 	args := []string{"diff", rangeRef, "--"}
 	args = append(args, ReviewPathspecArgs(extraExcludes...)...)
 
-	cmd := newGitCmdContext(ctx, args...)
-	cmd.Dir = repoPath
-
-	out, err := gitOutput(cmd)
+	out, err := reviewDiffOutput(ctx, repoPath, args)
 	if err != nil {
 		return "", fmt.Errorf("git diff range: %w", err)
 	}
@@ -1584,7 +1594,7 @@ func GetRangeDiffLimitedCtx(
 ) (string, bool, error) {
 	args := []string{"diff", rangeRef, "--"}
 	args = append(args, ReviewPathspecArgs(extraExcludes...)...)
-	return captureGitOutputLimited(ctx, repoPath, maxBytes, args...)
+	return reviewDiffLimited(ctx, repoPath, maxBytes, args)
 }
 
 // HasUncommittedChanges returns true if there are uncommitted changes (staged, unstaged, or untracked files)
@@ -1663,10 +1673,8 @@ func GetDirtyDiff(
 	}
 
 	// 1. Get diff of tracked files (staged + unstaged)
-	cmd := newGitCmd(diffArgs("diff", "HEAD")...)
-	cmd.Dir = repoPath
-
-	out, err := cmd.Output()
+	ctx := context.Background()
+	out, err := reviewDiffOutput(ctx, repoPath, diffArgs("diff", "HEAD"))
 	if err != nil {
 		// If HEAD doesn't exist (no commits yet), we need to combine:
 		// - git diff --cached <empty-tree>: shows staged files (index vs empty)
@@ -1674,9 +1682,7 @@ func GetDirtyDiff(
 		// This covers the edge case where a file is staged but then removed from working tree
 
 		// Get staged changes vs empty tree
-		cmd = newGitCmd(diffArgs("diff", "--cached", EmptyTreeSHA)...)
-		cmd.Dir = repoPath
-		stagedOut, err := gitOutput(cmd)
+		stagedOut, err := reviewDiffOutput(ctx, repoPath, diffArgs("diff", "--cached", EmptyTreeSHA))
 		if err != nil {
 			return "", fmt.Errorf("git diff --cached: %w", err)
 		}
@@ -1685,9 +1691,7 @@ func GetDirtyDiff(
 		}
 
 		// Get unstaged changes (working tree vs index)
-		cmd = newGitCmd(diffArgs("diff")...)
-		cmd.Dir = repoPath
-		unstagedOut, err := gitOutput(cmd)
+		unstagedOut, err := reviewDiffOutput(ctx, repoPath, diffArgs("diff"))
 		if err != nil {
 			return "", fmt.Errorf("git diff: %w", err)
 		}
@@ -1711,7 +1715,7 @@ func GetDirtyDiff(
 	// modifying it must stay visible to review).
 	lsArgs = append(lsArgs, ":(exclude,glob)**/.kata.local.toml")
 	lsArgs = append(lsArgs, extra...)
-	cmd = newGitCmd(lsArgs...)
+	cmd := newGitCmd(lsArgs...)
 	cmd.Dir = repoPath
 
 	untrackedOut, err := gitOutput(cmd)
@@ -1896,6 +1900,118 @@ func DiffPathsCtx(ctx context.Context, repoPath, gitRef string, pathspec []strin
 	}
 	slices.Sort(paths)
 	return paths, nil
+}
+
+// BinaryChange is a regular file that Git treats as binary in a committed
+// review subject. OID names the committed blob; it is empty for deletions.
+type BinaryChange struct {
+	Path   string
+	Status string // "added", "modified", or "deleted"
+	OID    string
+}
+
+// ChangedBinaryFiles lists the binary files a commit or range changes, using
+// the same refs and pathspec as the review diff. Symlinks and submodules are
+// not files and are skipped. A single merge commit reports no files because
+// its combined diff has no single old side.
+func ChangedBinaryFiles(ctx context.Context, repoPath, gitRef string, extraExcludes ...string) ([]BinaryChange, error) {
+	flags := []string{"--raw", "--numstat", "--no-renames", "--no-abbrev", "-z", "--"}
+	var args []string
+	if IsRange(gitRef) {
+		args = append([]string{"diff", gitRef}, flags...)
+	} else {
+		// A merge commit is compared with its first parent: the changes the
+		// merge brought in, including binary conflict resolutions.
+		args = append([]string{"show", gitRef, "--format=", "--diff-merges=first-parent"}, flags...)
+	}
+	args = append(args, ReviewPathspecArgs(extraExcludes...)...)
+	cmd := newGitCmdContext(ctx, args...)
+	cmd.Dir = repoPath
+	out, err := gitOutput(cmd)
+	if err != nil {
+		return nil, fmt.Errorf("git diff binary files: %w", err)
+	}
+
+	// Raw records (":<modes> <oids> <status>", path) precede numstat records
+	// ("<added>\t<deleted>\t<path>"). Numstat reports binary files as "-\t-".
+	raw := make(map[string]BinaryChange)
+	var binary []string
+	tokens := strings.Split(string(out), "\x00")
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		if header, ok := strings.CutPrefix(token, ":"); ok {
+			i++
+			fields := strings.Fields(header)
+			if len(fields) != 5 || i >= len(tokens) {
+				continue
+			}
+			oldMode, newMode, newOID, status := fields[0], fields[1], fields[3], fields[4]
+			change := BinaryChange{Path: tokens[i], Status: "modified", OID: newOID}
+			mode := newMode
+			switch status {
+			case "A":
+				change.Status = "added"
+			case "D":
+				change.Status, change.OID, mode = "deleted", "", oldMode
+			}
+			if mode == "100644" || mode == "100755" {
+				raw[change.Path] = change
+			}
+			continue
+		}
+		if path, ok := strings.CutPrefix(token, "-\t-\t"); ok {
+			binary = append(binary, path)
+		}
+	}
+	var changes []BinaryChange
+	for _, path := range binary {
+		if change, ok := raw[path]; ok {
+			changes = append(changes, change)
+		}
+	}
+	return changes, nil
+}
+
+// ReadBlob returns the contents of a blob object.
+func ReadBlob(ctx context.Context, repoPath, oid string) ([]byte, error) {
+	cmd := newGitCmdContext(ctx, "cat-file", "blob", oid)
+	cmd.Dir = repoPath
+	out, err := gitOutput(cmd)
+	if err != nil {
+		return nil, fmt.Errorf("git cat-file blob %s: %w", oid, err)
+	}
+	return out, nil
+}
+
+// runReviewDiff runs a review diff command and, when git exits with code 128,
+// retries it once with --no-textconv after the subcommand. A failing textconv
+// driver, such as Git for Windows' PDF converter on a file it does not
+// recognize, makes git exit 128; without conversion git reports the file as
+// binary instead. Working converters never trigger the retry.
+func runReviewDiff(args []string, run func(args []string) error) error {
+	err := run(args)
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok && exitErr.ExitCode() == 128 {
+		err = run(slices.Concat(args[:1], []string{"--no-textconv"}, args[1:]))
+	}
+	return err
+}
+
+func reviewDiffOutput(ctx context.Context, repoPath string, args []string) (out []byte, err error) {
+	err = runReviewDiff(args, func(args []string) error {
+		cmd := newGitCmdContext(ctx, args...)
+		cmd.Dir = repoPath
+		out, err = gitOutput(cmd)
+		return err
+	})
+	return out, err
+}
+
+func reviewDiffLimited(ctx context.Context, repoPath string, maxBytes int, args []string) (out string, truncated bool, err error) {
+	err = runReviewDiff(args, func(args []string) error {
+		out, truncated, err = captureGitOutputLimited(ctx, repoPath, maxBytes, args...)
+		return err
+	})
+	return out, truncated, err
 }
 
 func captureGitOutputLimited(ctx context.Context, repoPath string, maxBytes int, args ...string) (string, bool, error) {
@@ -2316,11 +2432,11 @@ func hasCommitHooks(repoPath string) bool {
 //     succeed, confirming the commit is otherwise viable.
 //
 // Both conditions must hold to classify the failure as hook-caused.
-func isHookCausingFailure(repoPath string) bool {
+func isHookCausingFailure(ctx context.Context, repoPath string) bool {
 	if !hasCommitHooks(repoPath) {
 		return false
 	}
-	cmd := newGitCommitCmd(repoPath, "commit", "--dry-run", "--no-verify", "-m", "probe")
+	cmd := newGitCommitCmd(ctx, repoPath, "commit", "--dry-run", "--no-verify", "-m", "probe")
 	return cmd.Run() == nil
 }
 
@@ -2705,15 +2821,15 @@ type CommitOptions struct {
 
 // CreateCommit stages all changes and creates a commit with the given message
 // Returns the SHA of the new commit
-func CreateCommit(repoPath, message string) (string, error) {
-	return CreateCommitWithOptions(repoPath, message, CommitOptions{})
+func CreateCommit(ctx context.Context, repoPath, message string) (string, error) {
+	return CreateCommitWithOptions(ctx, repoPath, message, CommitOptions{})
 }
 
 // CreateCommitWithOptions stages all changes and creates a commit with the
 // given message and optional commit metadata. Returns the SHA of the new commit.
-func CreateCommitWithOptions(repoPath, message string, opts CommitOptions) (string, error) {
+func CreateCommitWithOptions(ctx context.Context, repoPath, message string, opts CommitOptions) (string, error) {
 	// Stage all changes (respects .gitignore)
-	cmd := newGitCommitCmd(repoPath, "add", "-A")
+	cmd := newGitCommitCmd(ctx, repoPath, "add", "-A")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -2731,7 +2847,7 @@ func CreateCommitWithOptions(repoPath, message string, opts CommitOptions) (stri
 	}
 	args = append(args, "-m", message)
 	// Create commit.
-	cmd = newGitCommitCmd(repoPath, args...)
+	cmd = newGitCommitCmd(ctx, repoPath, args...)
 	stderr.Reset()
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -2740,7 +2856,7 @@ func CreateCommitWithOptions(repoPath, message string, opts CommitOptions) (stri
 			IsUnsupportedCommitTrailerError(stderrText)
 		return "", &CommitError{
 			Phase:              "commit",
-			HookFailed:         !unsupportedTrailer && isHookCausingFailure(repoPath),
+			HookFailed:         !unsupportedTrailer && isHookCausingFailure(ctx, repoPath),
 			UnsupportedTrailer: unsupportedTrailer,
 			Stderr:             stderrText,
 			Err:                err,
@@ -2748,7 +2864,7 @@ func CreateCommitWithOptions(repoPath, message string, opts CommitOptions) (stri
 	}
 
 	// Get the SHA of the new commit
-	sha, err := ResolveSHA(repoPath, "HEAD")
+	sha, err := ResolveSHACtx(ctx, repoPath, "HEAD")
 	if err != nil {
 		return "", fmt.Errorf("get new commit SHA: %w", err)
 	}

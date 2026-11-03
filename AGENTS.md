@@ -62,7 +62,7 @@ CLI (roborev) -> HTTP API -> Daemon -> Worker Pool -> Agent adapters
   database operations. Direct database opens are allowed only inside `daemon run`;
   tests may open isolated fixtures. Hold the daemon database ownership lock
   before opening SQLite until the database is closed.
-- Background daemon work must not edit tracked source files in the user's checked-out working tree or apply agent changes there. Repo metadata is different: `roborev init` may update the usually tracked `.gitignore` so the configured `snapshot_dir` (default `.roborev/`) is ignored, and daemon review work may create disposable ignored snapshot artifacts there so sandboxed agents can read oversized prompts and diffs. Runtime snapshot creation may also add a local `.git/info/exclude` fallback when an existing checkout is missing the ignore rule.
+- Background daemon work must not edit tracked source files in the user's checked-out working tree or apply agent changes there. Repo metadata is different: `roborev init` may update the usually tracked `.gitignore` so the configured `snapshot_dir` (default `.roborev/`) is ignored, and daemon review work may create disposable ignored snapshot artifacts there so sandboxed agents can read oversized prompts and diffs, or committed copies of changed binary files for review types that set `binary_evidence`. Runtime snapshot creation may also add a local `.git/info/exclude` fallback when an existing checkout is missing the ignore rule.
 - Foreground agentic flows such as `roborev fix` and `roborev refine` may modify code.
 - Isolated background fix work uses temporary git worktrees and stores patches in the DB.
 
@@ -75,6 +75,7 @@ CLI (roborev) -> HTTP API -> Daemon -> Worker Pool -> Agent adapters
 | `internal/daemon/` | HTTP server, handlers, worker pool, SSE, hooks, runtime, CI poller | `server.go`, `worker.go`, `client.go`, `runtime.go`, `ci_poller.go` |
 | `internal/storage/` | SQLite models/queries/migrations, sync logic, PostgreSQL mirror | `db.go`, `models.go`, `jobs.go`, `reviews.go`, `sync.go`, `postgres.go` |
 | `internal/agent/` | Agent interface, registry, command-backed implementations, ACP support | `agent.go`, `codex.go`, `claude.go`, `acp.go`, `test_agent.go` |
+| `internal/sandbox/` | nono command wrapping, policy self-checks, and process cleanup | `sandbox.go`, `check.go` |
 | `internal/config/` | Global config, repo config, validation, key metadata, resolve helpers | `config.go`, `keyval.go` |
 | `internal/prompt/` | Review prompt builder and template loading | `prompt.go`, `templates.go`, `prompt/analyze/` |
 | `internal/review/` | Daemon-free batch review, synthesis, comment sizing/formatting | `batch.go`, `synthesis.go`, `result.go` |
@@ -156,6 +157,7 @@ CLI (roborev) -> HTTP API -> Daemon -> Worker Pool -> Agent adapters
 - Agent changes usually touch the adapter file, `internal/agent/agent.go` registry/fallback logic, and tests that use `test_agent.go`.
 - TUI changes rarely live in one file; expect to touch fetch, handlers, render, and tests together.
 - Hook behavior spans `cmd/roborev/init_cmd.go`, `internal/githook/`, and daemon hook execution in `internal/daemon/hooks.go`.
+- Review setup changes also update the `roborev-setup-review` skill. This covers custom review types, panels, subagents, review tool policies, binary evidence, and other review settings a user would configure. The skill carries its own list of what roborev supports and never reads the docs, so a feature it does not list is a feature it will not propose. Edit `internal/skills/claude/` and `internal/skills/codex/`, then run `go generate ./internal/skills/` to regenerate the other variants.
 - CI/sync work often crosses daemon, storage, and config packages. Do not patch only one side.
 
 ## Runtime And Config Notes
@@ -177,7 +179,7 @@ CLI (roborev) -> HTTP API -> Daemon -> Worker Pool -> Agent adapters
 
 Use `testify` (`github.com/stretchr/testify`) for all test assertions. Use `require.*` for fatal preconditions and `assert.*` for non-fatal checks. Do not use raw `if`/`t.Errorf`/`t.Fatalf` patterns.
 
-- Fast test pass: `go test ./...`
+- Focused test pass: `go test ./internal/<pkg>/ -run <Name>`. CI runs the full suite (`go test -tags integration ./...`); the pre-push hooks run only the git-isolation test.
 - Integration tests: `go test -tags=integration ./...`
 - PostgreSQL tests: `go test -tags=postgres -v ./internal/storage/... -run Integration`
 - ACP smoke tests: use the `make test-acp-integration*` targets in `Makefile`
@@ -193,6 +195,11 @@ Use `testify` (`github.com/stretchr/testify`) for all test assertions. Use `requ
 Test conventions:
 
 - Prefer fast, isolated tests that use `t.TempDir()`.
+- Never locate files from a path returned by `runtime.Caller` or a stack trace;
+  builds use `-trimpath`, so those paths are module-relative. Tests run from
+  their package directory, so use paths relative to it. Trimmed test binaries
+  also cannot fall back to the Go installation's time zone database, so test
+  files that load named zones blank-import `time/tzdata`.
 - Use the shared database helpers (`testutil.OpenTestDB`,
   `testutil.OpenTestDBWithDir`, or storage's `openTestDB`) for ordinary tests.
   Build databases from scratch only for initialization or migration tests.
@@ -221,6 +228,31 @@ Test conventions:
   files, or docs for expected implementation text; those checks are usually
   tautological and should be replaced with real execution, parser/tool-native
   validation, or a documented manual release check.
+
+## Context Use
+
+- A function that runs git or another process, calls GitHub, the daemon API
+  or PostgreSQL, waits on a timer or channel, or polls takes
+  `ctx context.Context` as its first parameter. Pass the nearest caller's
+  context: `cmd.Context()` in Cobra commands, the handler's `ctx` or
+  `r.Context()` in the daemon, and the job context in workers.
+- When a caller has a context, use the helper variant that takes it, such as
+  `git.GetDiffCtx` or `db.GetJobByIDContext`, not the wrapper that starts
+  its own.
+- Most SQLite storage methods take no context yet. Give new storage methods a
+  context parameter; `noctx` skips `database/sql` calls in `internal/storage`
+  only until that API is converted.
+- Detach on purpose and say why in a comment. Use `context.WithoutCancel` for
+  cleanup that must finish after cancellation, such as worktree removal, job
+  finalization, rollbacks and canceling an abandoned review job. Hooks and
+  the detached daemon process outlive the code that starts them. Start a
+  `context.Background()` root only in `main`, in helper processes that tests
+  launch, and where no caller context exists yet; name the gap.
+- Tests use `t.Context()`. It is already canceled when `t.Cleanup` functions
+  run, so cleanups use `context.WithoutCancel(t.Context())`.
+- golangci-lint enforces the rest through `noctx`, `usetesting`,
+  `containedctx`, `fatcontext` and govet's `lostcancel`. A stored context
+  needs a `//nolint:containedctx` comment that names the lifetime it owns.
 
 ## Search Shortcuts
 
@@ -310,7 +342,7 @@ When reviewing or fixing issues:
 - Focus on correctness, concurrency safety, and error handling in daemon/worker code.
 - For storage changes, keep migrations minimal and validate schema and queries.
 - For API changes, preserve HTTP/JSON conventions.
-- For daemon changes, preserve the rule that background jobs must not edit tracked source files in the checked-out working tree or apply agent changes there. The repo metadata exception is snapshot ignore setup: `.gitignore` may be updated by `roborev init`, and daemon snapshot writes may add a local `.git/info/exclude` fallback. Ignored repo-local snapshot artifacts are allowed only for oversized prompt or diff handoff and must stay under the configured `snapshot_dir`, remain gitignored, and be cleaned up best-effort.
+- For daemon changes, preserve the rule that background jobs must not edit tracked source files in the checked-out working tree or apply agent changes there. The repo metadata exception is snapshot ignore setup: `.gitignore` may be updated by `roborev init`, and daemon snapshot writes may add a local `.git/info/exclude` fallback. Ignored repo-local snapshot artifacts are allowed only for oversized prompt or diff handoff and committed binary evidence, and must stay under the configured `snapshot_dir`, remain gitignored, and be cleaned up best-effort.
 - When addressing review feedback, update tests if behavior changes.
 - If the user pastes review findings or review text directly into the prompt, treat that as direct fix input and work from the pasted content.
 - Do not invoke review-fetching skills for pasted review text unless the user explicitly asks for that skill or provides only a review/job ID that must be fetched first.

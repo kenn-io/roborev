@@ -31,6 +31,7 @@ import (
 	"go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/tokens"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 const (
@@ -50,6 +51,9 @@ type runningJobCancellation struct {
 type WorkerPool struct {
 	db                   *storage.DB
 	cfgGetter            ConfigGetter
+	ciGitEnv             func(string) []string
+	ciCheckUpstream      string
+	ciCheck              func(context.Context, *storage.ReviewJob, ciCheckConfig, structuredreview.Document, []string, io.Writer) (structuredreview.Document, error)
 	broadcaster          Broadcaster
 	errorLog             *ErrorLog
 	activityLog          *ActivityLog
@@ -60,10 +64,17 @@ type WorkerPool struct {
 	reviewerGrants *reviewerGrants
 	reviewerURL    func() string
 
-	numWorkers    int
+	// workersMu guards numWorkers, liveWorkers, claimCancels, started, and
+	// stopped so a resize never adds to wg after Stop has begun waiting on it.
+	workersMu     sync.Mutex
+	numWorkers    int              // target pool size; workers with id >= numWorkers retire
+	liveWorkers   map[int]struct{} // worker ids whose goroutines are running
+	claimCancels  map[int]context.CancelFunc
+	started       bool
+	stopped       bool
 	activeWorkers atomic.Int32
 	stopCh        chan struct{}
-	stopCtx       context.Context
+	stopCtx       context.Context //nolint:containedctx // pool lifetime; Stop cancels blocked claims
 	stopCancel    context.CancelFunc
 	readyCh       chan struct{} // closed after wg.Add in Start
 	startOnce     sync.Once
@@ -102,6 +113,8 @@ type WorkerPool struct {
 	tokenUsageIndexRetryWindow   time.Duration
 	tokenUsageIndexRetryInterval time.Duration
 	tokenCostRetryCh             chan int64
+	wakeMu                       sync.Mutex
+	wakeCh                       chan struct{} // closed and replaced by wake
 	tokenCostScanInterval        time.Duration
 	tokenCostRetryInterval       time.Duration
 	tokenCostPageSize            int
@@ -138,6 +151,8 @@ func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broad
 		errorLog:                     errorLog,
 		activityLog:                  activityLog,
 		numWorkers:                   numWorkers,
+		liveWorkers:                  make(map[int]struct{}),
+		claimCancels:                 make(map[int]context.CancelFunc),
 		stopCh:                       make(chan struct{}),
 		stopCtx:                      stopCtx,
 		stopCancel:                   stopCancel,
@@ -154,6 +169,7 @@ func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broad
 		tokenUsageIndexRetryWindow:   tokenUsageIndexRetryWindow,
 		tokenUsageIndexRetryInterval: tokenUsageIndexRetryInterval,
 		tokenCostRetryCh:             make(chan int64, tokenCostRetryBufferSize),
+		wakeCh:                       make(chan struct{}),
 		tokenCostScanInterval:        tokenCostScanInterval,
 		tokenCostRetryInterval:       tokenCostRetryInterval,
 		tokenCostPageSize:            tokenCostPageSize,
@@ -167,21 +183,91 @@ func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broad
 	return pool
 }
 
+// wake prompts every idle worker to check for newly claimable jobs.
+func (wp *WorkerPool) wake() {
+	wp.wakeMu.Lock()
+	defer wp.wakeMu.Unlock()
+	close(wp.wakeCh)
+	wp.wakeCh = make(chan struct{})
+}
+
+// wakeSignal returns a channel that the next wake closes. Workers fetch it
+// before trying to claim so a wake during the claim is not lost.
+func (wp *WorkerPool) wakeSignal() <-chan struct{} {
+	wp.wakeMu.Lock()
+	defer wp.wakeMu.Unlock()
+	return wp.wakeCh
+}
+
 // Start begins the worker pool. Safe to call multiple times;
 // only the first call spawns workers.
 func (wp *WorkerPool) Start() {
 	wp.startOnce.Do(func() {
+		wp.workersMu.Lock()
+		defer wp.workersMu.Unlock()
 		log.Printf(
 			"Starting worker pool with %d workers",
 			wp.numWorkers,
 		)
-		wp.wg.Add(wp.numWorkers + 1)
-		close(wp.readyCh)
+		wp.started = true
+		wp.wg.Add(1)
 		go wp.runTokenCostReconciler()
-		for i := 0; i < wp.numWorkers; i++ {
-			go wp.worker(i)
-		}
+		wp.spawnWorkersLocked()
+		close(wp.readyCh)
 	})
+}
+
+// SetMaxWorkers resizes the pool. Growing starts the new workers at once.
+// Shrinking retires the highest-numbered workers: an idle worker exits right
+// away, and a busy one finishes its current job first.
+func (wp *WorkerPool) SetMaxWorkers(n int) {
+	n = max(n, 0)
+	wp.workersMu.Lock()
+	old := wp.numWorkers
+	if n == old {
+		wp.workersMu.Unlock()
+		return
+	}
+	wp.numWorkers = n
+	for id, cancel := range wp.claimCancels {
+		if id >= n {
+			cancel()
+		}
+	}
+	if wp.started && !wp.stopped {
+		wp.spawnWorkersLocked()
+	}
+	wp.workersMu.Unlock()
+	log.Printf("Worker pool resized from %d to %d workers", old, n)
+	// Idle workers above the new size are waiting for a wake; let them retire.
+	wp.wake()
+}
+
+// spawnWorkersLocked starts a goroutine for every worker id below the target
+// size that is not already running. The caller holds workersMu.
+func (wp *WorkerPool) spawnWorkersLocked() {
+	for id := range wp.numWorkers {
+		if _, ok := wp.liveWorkers[id]; ok {
+			continue
+		}
+		wp.liveWorkers[id] = struct{}{}
+		wp.wg.Go(func() { wp.worker(id) })
+	}
+}
+
+// beginClaim registers cancellation under the resize lock so shrinking can
+// interrupt pending claims and retries without canceling a running job.
+// A surplus worker retires instead of starting another claim.
+func (wp *WorkerPool) beginClaim(id int) (context.Context, context.CancelFunc) {
+	wp.workersMu.Lock()
+	defer wp.workersMu.Unlock()
+	if id >= wp.numWorkers {
+		delete(wp.liveWorkers, id)
+		return nil, nil
+	}
+	ctx, cancel := context.WithCancel(wp.stopCtx)
+	wp.claimCancels[id] = cancel
+	return ctx, cancel
 }
 
 // Stop gracefully shuts down the worker pool. Safe to call multiple times.
@@ -203,6 +289,9 @@ func (wp *WorkerPool) Stop() {
 // waiting for currently active workers to finish.
 func (wp *WorkerPool) BeginStop() {
 	wp.stopOnce.Do(func() {
+		wp.workersMu.Lock()
+		wp.stopped = true
+		wp.workersMu.Unlock()
 		wp.stopCancel()
 		close(wp.stopCh)
 	})
@@ -213,8 +302,11 @@ func (wp *WorkerPool) ActiveWorkers() int {
 	return int(wp.activeWorkers.Load())
 }
 
-// MaxWorkers returns the total number of workers in the pool
+// MaxWorkers returns the configured pool size. Right after a shrink, busy
+// workers above this size keep running until their current job ends.
 func (wp *WorkerPool) MaxWorkers() int {
+	wp.workersMu.Lock()
+	defer wp.workersMu.Unlock()
 	return wp.numWorkers
 }
 
@@ -639,7 +731,14 @@ func (wp *WorkerPool) prepareJobCheckout(
 		// IsDirtyJob only identifies the member jobs themselves.
 		committedReview := (job.IsReviewJob() || job.IsSynthesisJob()) &&
 			!job.IsDirtyJob() && job.GitRef != "dirty"
-		if !committedReview || !config.ResolveIsolateReviews(repoPath, cfg) {
+		if !committedReview {
+			return checkout, nil
+		}
+		exact, err := needsExactCheckout(job, repoPath, cfg)
+		if err != nil {
+			return preparedJobCheckout{}, err
+		}
+		if !exact {
 			return checkout, nil
 		}
 		checkout.isolatedLocalReview = true
@@ -772,7 +871,8 @@ func (wp *WorkerPool) createExactCheckout(
 		wt.Repo = commonDir
 		createErr = writeCIWorktreeMarker(wt.Dir, commonDir)
 		if createErr != nil {
-			_ = wt.Close(context.Background())
+			// Remove the checkout even when the job was canceled.
+			_ = wt.Close(context.WithoutCancel(ctx))
 			createErr = fmt.Errorf("write review worktree marker: %w", createErr)
 		}
 	}
@@ -785,7 +885,8 @@ func (wp *WorkerPool) createExactCheckout(
 	cleanup := func() {
 		unlock := lockGitMetadata(job.RepoPath)
 		defer unlock()
-		if err := wt.Close(context.Background()); err != nil {
+		// Cleanup runs after the job ends and must not inherit its cancellation.
+		if err := wt.Close(context.WithoutCancel(ctx)); err != nil {
 			log.Printf("[%s] Warning: remove review worktree for job %d: %v",
 				workerID, job.ID, err)
 		}
@@ -794,7 +895,6 @@ func (wp *WorkerPool) createExactCheckout(
 }
 
 func (wp *WorkerPool) worker(id int) {
-	defer wp.wg.Done()
 	workerID := fmt.Sprintf("worker-%d", id)
 
 	log.Printf("[%s] Started", workerID)
@@ -806,9 +906,15 @@ func (wp *WorkerPool) worker(id int) {
 			return
 		default:
 		}
+		wakeCh := wp.wakeSignal()
+		claimCtx, cancelClaim := wp.beginClaim(id)
+		if claimCtx == nil {
+			log.Printf("[%s] Retired after pool shrank", workerID)
+			return
+		}
 
-		job, err := backoff.Retry(wp.stopCtx, func() (*storage.ReviewJob, error) {
-			if err := wp.stopCtx.Err(); err != nil {
+		job, err := backoff.Retry(claimCtx, func() (*storage.ReviewJob, error) {
+			if err := claimCtx.Err(); err != nil {
 				return nil, backoff.Permanent(err)
 			}
 			paused, err := wp.db.IsQueuePaused()
@@ -825,7 +931,7 @@ func (wp *WorkerPool) worker(id int) {
 			wp.runningJobsMu.Lock()
 			wp.workerJobs[workerID] = workerClaimingJobID
 			wp.runningJobsMu.Unlock()
-			job, err := wp.db.ClaimJobContext(wp.stopCtx, workerID)
+			job, err := wp.db.ClaimJobContext(claimCtx, workerID)
 			wp.runningJobsMu.Lock()
 			if job != nil && err == nil {
 				wp.workerJobs[workerID] = job.ID
@@ -833,15 +939,20 @@ func (wp *WorkerPool) worker(id int) {
 				delete(wp.workerJobs, workerID)
 			}
 			wp.runningJobsMu.Unlock()
-			if err != nil {
+			if err != nil && claimCtx.Err() == nil {
 				wp.noteClaimError(workerID, err)
 			}
 			return job, err
 		}, backoff.WithBackOff(backoff.NewConstantBackOff(5*time.Second)),
 			backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0))
+		wp.workersMu.Lock()
+		delete(wp.claimCancels, id)
+		wp.workersMu.Unlock()
+		cancelClaim()
 		if err != nil {
-			log.Printf("[%s] Shutting down", workerID)
-			return
+			// A shrink cancels only the pending claim. Recheck the target in
+			// the next iteration, since the pool may already have grown again.
+			continue
 		}
 		if job == nil {
 			// Queue paused or no job available: poll again rather than retry a failure.
@@ -849,6 +960,7 @@ func (wp *WorkerPool) worker(id int) {
 			case <-wp.stopCh:
 				log.Printf("[%s] Shutting down", workerID)
 				return
+			case <-wakeCh:
 			case <-time.After(2 * time.Second):
 			}
 			continue
@@ -930,7 +1042,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			timeoutDuration += planningTimeout
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeoutDuration)
+	ctx, cancel := withWallClockTimeout(context.Background(), timeoutDuration)
 	defer cancel()
 	releaseAttempt, err := wp.db.StartJobAttempt(ctx, job, workerID, cancel)
 	if err != nil {
@@ -948,7 +1060,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Register for cancellation tracking
 	deadline, _ := ctx.Deadline()
 	wp.registerRunningJob(job.ID, cancel, deadline)
-	defer wp.finishRunningJob(workerID, job.ID)
+	// Cleanup must still reach the database after the job context ends.
+	defer wp.finishRunningJob(context.WithoutCancel(ctx), workerID, job.ID)
 	// Every attempt owns the lifetime of its output stream, including paths that
 	// fail before an agent starts and synthesis paths that do not invoke one.
 	defer wp.outputBuffers.CloseJob(job.ID)
@@ -1078,10 +1191,16 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		job.ResumeSourceJobUUID = nil
 	}
 	checkout = wp.refreshIsolatedReviewConfigPath(workerID, checkout, job)
+	// Settings frozen at enqueue time decide this review's tools and evidence.
+	settings, err := reviewJobSettings(job, checkout.resolvedConfigRepoPath(), cfg)
+	if err != nil {
+		wp.failOrRetryContext(ctx, workerID, job, job.Agent, err.Error())
+		return
+	}
 
 	// Prompt-independent cleanup must not force a prebuilt CI job to reload
 	// repository review configuration that it no longer needs.
-	pb := wp.basePromptBuilderForJob(ctx, checkout, job, cfg)
+	pb := wp.basePromptBuilderForJob(ctx, checkout, job, cfg).WithBinaryEvidence(settings.BinaryEvidence)
 	if err := cleanupStaleSnapshotsForJob(pb, checkout, job.RepoID); err != nil {
 		log.Printf("[%s] Warning: cleanup stale snapshots for job %d: %v", workerID, job.ID, err)
 	}
@@ -1089,6 +1208,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	var fileCoverage *storage.ReviewFileCoverage
 	var promptToPersist string
 	effectiveMinSeverity := job.MinSeverity
+	// Built prompts resolve the context count below. Prebuilt CI prompts
+	// resolve it only if they still need the prior range reviews file.
+	var contextCount int
+	var contextCountResolved bool
 	if job.IsFixJob() {
 		if planningDecodeErr != nil {
 			wp.failoverOrFailNonRetryableAgentContext(ctx, workerID, job, job.Agent, planningDecodeErr.Error())
@@ -1145,6 +1268,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("configure prompt builder: %v", err))
 			return
 		}
+		pb = pb.WithBinaryEvidence(settings.BinaryEvidence)
 
 		// Attributed jobs use the frozen plan verbatim, including an explicit
 		// empty value. Ordinary jobs keep the legacy config cascade.
@@ -1158,6 +1282,14 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			effectiveMinSeverity = resolved
 		}
 
+		contextCount, err = pb.ReviewContextCount()
+		if err != nil {
+			log.Printf("[%s] Error resolving review context count: %v", workerID, err)
+			wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("resolve review context count: %v", err))
+			return
+		}
+		contextCountResolved = true
+
 		if job.IsDirtyJob() {
 			// Dirty job - use pre-captured diff
 			diffContent := ""
@@ -1165,7 +1297,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				diffContent = *job.DiffContent
 			}
 			reviewPrompt, err = pb.BuildDirtyWithFiles(
-				diffContent, job.DirtyFiles, cfg.ReviewContextCount, job.Agent, job.ReviewType, effectiveMinSeverity,
+				diffContent, job.DirtyFiles, contextCount, job.Agent, job.ReviewType, effectiveMinSeverity,
 			)
 		} else {
 			// Build the complete prompt; preparation happens after all additions.
@@ -1173,7 +1305,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				ctx, checkout.resolvedConfigRepoPath(), cfg, job.ReviewType,
 			)
 			reviewPrompt, err = pb.Build(
-				job.GitRef, cfg.ReviewContextCount, job.Agent, job.ReviewType, effectiveMinSeverity,
+				job.GitRef, contextCount, job.Agent, job.ReviewType, effectiveMinSeverity,
 			)
 			if err == nil {
 				fileCoverage = reviewFileCoverageForJob(ctx, checkout.promptRepoPath, job, excludes)
@@ -1184,6 +1316,20 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		log.Printf("[%s] Error building prompt: %v", workerID, err)
 		wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("build prompt: %v", err))
 		return
+	}
+	// Each attempt writes fresh committed binary evidence into the agent's
+	// checkout; it is removed when the attempt ends.
+	if !job.IsDirtyJob() && !job.UsesStoredPrompt() && job.Source != storage.JobSourceRebuttal {
+		excludes := config.ResolveExcludePatterns(ctx, checkout.resolvedConfigRepoPath(), cfg, job.ReviewType)
+		var cleanup func()
+		reviewPrompt, cleanup, err = pb.AppendBinaryEvidence(reviewPrompt, job.GitRef, excludes, checkout.snapshotTarget)
+		if cleanup != nil {
+			defer cleanup()
+		}
+		if err != nil {
+			wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("prepare binary evidence: %v", err))
+			return
+		}
 	}
 	// Panel members carry trusted reviewer instructions resolved at enqueue
 	// time. Append them after every prompt path (snapshot/dirty/range/
@@ -1251,6 +1397,24 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}
 	}
 
+	// A strict tool policy must never run unrestricted. An agent that cannot
+	// enforce it fails before starting; failover may pick a capable backup.
+	tools := settings.Tools
+	if err := agent.ValidateReviewToolSelection(tools, a, job.Agentic); err != nil {
+		wp.failoverOrFailNonRetryableAgentContext(ctx, workerID, job, a.Name(), err.Error())
+		return
+	}
+	// A strict review starts a fresh session, and isolation keeps the session
+	// it captures from being resumed by later reviews.
+	if tools != nil && !checkout.isolatedLocalReview {
+		if err := wp.db.IsolateJobSession(job.ID, workerID); err != nil {
+			wp.failOrRetryContext(ctx, workerID, job, a.Name(), fmt.Sprintf("clear review session: %v", err))
+			return
+		}
+		job.SessionID = ""
+		job.ResumeSourceJobUUID = nil
+	}
+
 	// Use the actual agent name (may differ from requested if fallback occurred)
 	agentName := a.Name()
 	if agentName != job.Agent {
@@ -1265,9 +1429,9 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Reviewer tools are scoped to this attempt: the token expires with the
 	// job timeout and is revoked as soon as the attempt returns.
 	agentCtx := ctx
-	if tools, revoke, ok := wp.reviewerToolsFor(job, a, cfg, deadline); ok {
+	if reviewerTools, revoke, ok := wp.reviewerToolsFor(job, a, cfg, deadline); ok {
 		defer revoke()
-		agentCtx = agent.WithReviewerTools(ctx, tools)
+		agentCtx = agent.WithReviewerTools(ctx, reviewerTools)
 		reviewPrompt = prompt.AddReviewerToolsInstruction(reviewPrompt)
 		promptToPersist = prompt.AddReviewerToolsInstruction(promptToPersist)
 		if saved, err := wp.db.SaveJobPromptForAttempt(job, workerID, promptToPersist); err != nil {
@@ -1314,6 +1478,11 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	defer func() {
 		if err := jobLog.Close(); err != nil {
 			log.Printf("[%s] Warning: close job log for job %d: %v", workerID, job.ID, err)
+		}
+		// Strict Claude sessions are not saved, so read usage from the job log
+		// on every terminal path; failed attempts can still spend tokens.
+		if planningPrompt == "" && tools != nil && agentName == "claude-code" {
+			wp.captureSessionlessUsage(workerID, job, agentName)
 		}
 	}()
 	agentOutput := io.MultiWriter(jobLog, outputWriter)
@@ -1364,8 +1533,19 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		log.Printf("[%s] Fix job %d: running agent in worktree %s", workerID, job.ID, wt.Dir)
 	}
 
+	if !contextCountResolved && strings.Contains(reviewPrompt, prompt.PriorRangeReviewsFilePathPlaceholder) {
+		// CI jobs must read the count from the default-branch config.
+		countBuilder, countErr := wp.promptBuilderForJob(ctx, checkout, job, cfg)
+		if countErr == nil {
+			contextCount, countErr = countBuilder.ReviewContextCount()
+		}
+		if countErr != nil {
+			wp.failOrRetryContext(ctx, workerID, job, agentName, fmt.Sprintf("resolve review context count: %v", countErr))
+			return
+		}
+	}
 	priorResult, priorErr := pb.PreparePriorRangeReviewsSnapshot(
-		reviewPrompt, job.GitRef, cfg.ReviewContextCount, prompt.SnapshotTarget{
+		reviewPrompt, job.GitRef, contextCount, prompt.SnapshotTarget{
 			RepoPath: reviewRepoPath, ConfigRepoPath: checkout.resolvedConfigRepoPath(),
 		},
 	)
@@ -1433,6 +1613,13 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			defer preparedPrompt.Cleanup()
 		}
 		reviewPrompt = preparedPrompt.Prompt
+		preparedAgent, toolCleanup, toolErr := agent.PrepareReviewToolPolicy(a, tools, cfg)
+		if toolErr != nil {
+			wp.failOrRetryContext(ctx, workerID, job, agentName, fmt.Sprintf("prepare review tools: %v", toolErr))
+			return
+		}
+		defer toolCleanup()
+		a = preparedAgent
 		wp.markAgentInvoked(workerID, job, a)
 		if planningPrompt != "" {
 			implementationInvoked = true
@@ -1459,7 +1646,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	} else if err == nil {
 		agentReview, err = review.RunAgentReview(
 			agentCtx, a, reviewRepoPath, job.GitRef, reviewPrompt, job.ReviewType,
-			effectiveMinSeverity, agentOutput,
+			effectiveMinSeverity, tools, agentOutput,
 		)
 	}
 	output := agentReview.Output
@@ -1536,6 +1723,12 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}
 	}
 
+	var tokenUsage *sessionTokenUsage
+	if planningPrompt == "" && (tools == nil || agentName != "claude-code") {
+		collected := wp.collectTokenUsageForSession(context.Background(), workerID, job, sessionWriter.SessionID())
+		tokenUsage = &collected
+	}
+
 	completed := false
 	wp.runAttemptTransition(workerID, job, func() {
 		// Store the result (use actual agent name, not requested).
@@ -1599,8 +1792,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}
 		wp.autoClosePassingReview(workerID, job, verdict)
 
-		if planningPrompt == "" {
-			wp.captureTokenUsageForSession(context.Background(), workerID, job, sessionWriter.SessionID())
+		if tokenUsage != nil {
+			wp.storeTokenUsageForSession(workerID, job, *tokenUsage)
 		}
 		wp.invalidateBudgetSpend()
 
@@ -1673,7 +1866,7 @@ func (wp *WorkerPool) finishCanceledAttempt(workerID string, job *storage.Review
 	})
 }
 
-func (wp *WorkerPool) finishRunningJob(workerID string, jobID int64) {
+func (wp *WorkerPool) finishRunningJob(ctx context.Context, workerID string, jobID int64) {
 	// Remove the old cancellation handler before releasing the database row.
 	// Once worker_id becomes NULL, a rerun may be claimed and register a new
 	// handler for the same job ID.
@@ -1683,7 +1876,7 @@ func (wp *WorkerPool) finishRunningJob(workerID string, jobID int64) {
 		// A failover can be claimed before this worker finishes cleanup. A
 		// cancellation during that wait reaches this handler, but its event
 		// ownership belongs to the new claim as well.
-		err := wp.db.QueryRow(`SELECT EXISTS (
+		err := wp.db.QueryRowContext(ctx, `SELECT EXISTS (
 			SELECT 1 FROM review_jobs WHERE id = ? AND status = 'canceled'
 			AND worker_id IS NOT NULL AND worker_id != ?
 		)`, jobID, workerID).Scan(&canceledSuccessor)
@@ -1743,7 +1936,10 @@ func applyCodexReviewSettings(a agent.Agent, job *storage.ReviewJob, cfg *config
 		a,
 		config.ResolveDisableCodexReviewSkills(job.RepoPath, cfg),
 	)
-	if !job.IsReviewJob() && job.Source != storage.JobSourceRebuttal {
+	// Non-editing stored-prompt jobs (including analysis) use the same user
+	// config isolation as reviews. Explicit agentic tasks and fixes retain it.
+	if !job.IsReviewJob() && job.Source != storage.JobSourceRebuttal &&
+		(job.Agentic || job.IsFixJob()) {
 		return a
 	}
 	a = agent.WithCodexUserConfigIgnored(
@@ -2197,35 +2393,99 @@ func (wp *WorkerPool) releaseIfPanelMember(job *storage.ReviewJob) {
 	}
 }
 
-func (wp *WorkerPool) captureTokenUsageForSession(
+// sessionTokenUsage is the usage gathered for one attempt before it is stored.
+type sessionTokenUsage struct {
+	capturedSession  string
+	wasResumed       bool
+	logUsage         *tokens.Usage
+	providerUsage    *tokens.Usage
+	allowSessionless bool
+}
+
+// withUnpricedPhase includes usage from a disposable session whose cost cannot be fetched.
+func (collected *sessionTokenUsage) withUnpricedPhase(sessionRan bool, u *tokens.Usage) {
+	if u == nil {
+		return
+	}
+	collected.allowSessionless = true
+	aggregate := func(usage *tokens.Usage) *tokens.Usage {
+		var combined *tokens.Usage
+		if sessionRan && usage != nil {
+			combined = backfill.AggregateTokenUsages([]*tokens.Usage{usage, u})
+			// Count checker tokens while preserving the synthesis's known cost.
+			if combined != nil {
+				combined.CostUSD = usage.CostUSD
+				combined.HasCost = usage.HasCost
+			}
+		} else {
+			combined = backfill.AggregateTokenUsages([]*tokens.Usage{u})
+		}
+		if combined != nil {
+			var sessionID string
+			var sessionIDs []string
+			if collected.capturedSession != "" && !collected.wasResumed {
+				sessionID = collected.capturedSession
+				sessionIDs = []string{collected.capturedSession}
+			}
+			combined.ThreadID = sessionID
+			combined.ProviderSessionIDs = sessionIDs
+			combined.ExpectedProviderSessions = 1
+			if sessionRan {
+				combined.ExpectedProviderSessions = 2
+			}
+		}
+		return combined
+	}
+	if collected.providerUsage != nil {
+		collected.providerUsage = aggregate(backfill.MergeTokenUsage(tokens.ToJSON(collected.logUsage), collected.providerUsage))
+	}
+	collected.logUsage = aggregate(collected.logUsage)
+}
+
+// collectTokenUsageForSession reads usage from the job log and the usage
+// provider. The provider lookup can run an external command, so callers must
+// not hold the attempt lock: claimed jobs wait for that lock before they
+// register for cancellation and timeout.
+func (wp *WorkerPool) collectTokenUsageForSession(
 	ctx context.Context, workerID string, job *storage.ReviewJob, capturedSession string,
-) {
+) sessionTokenUsage {
 	// Only fetch agentsview usage for fresh sessions (where we captured a new
 	// session ID). Resumed-session agentsview totals are cumulative across
 	// turns, but Codex job-log turn.completed usage belongs to this job's
 	// stream and is safe to parse below.
-	wasResumed := job.SessionID != "" && capturedSession == job.SessionID
-
-	var logUsage *tokens.Usage
-	var providerUsage *tokens.Usage
+	collected := sessionTokenUsage{
+		capturedSession: capturedSession,
+		wasResumed:      job.SessionID != "" && capturedSession == job.SessionID,
+	}
 	logUsage, logErr := tokens.ParseCodexUsageFile(JobLogPath(job.ID))
 	if logErr != nil {
 		log.Printf("[%s] Warning: parse token usage from job log for job %d: %v",
 			workerID, job.ID, logErr)
 	}
+	collected.logUsage = logUsage
 
-	if capturedSession != "" && !wasResumed {
+	if capturedSession != "" && !collected.wasResumed {
 		fetched, tokenErr := wp.fetchFreshSessionUsage(
 			ctx, wp.fetchTokenUsage, capturedSession,
 		)
 		switch {
 		case tokenErr == nil:
-			providerUsage = fetched
+			collected.providerUsage = fetched
 		case !errors.Is(tokenErr, tokens.ErrUsageProviderUnavailable):
 			log.Printf("[%s] Warning: fetch token usage for job %d: %v",
 				workerID, job.ID, tokenErr)
 		}
 	}
+	return collected
+}
+
+// storeTokenUsageForSession saves collected usage on the job's terminal row.
+// Writes are pinned to the attempt that collected the usage.
+func (wp *WorkerPool) storeTokenUsageForSession(
+	workerID string, job *storage.ReviewJob, collected sessionTokenUsage,
+) {
+	capturedSession, wasResumed := collected.capturedSession, collected.wasResumed
+	logUsage, providerUsage := collected.logUsage, collected.providerUsage
 	usage := backfill.MergeTokenUsage(tokens.ToJSON(logUsage), providerUsage)
 	needsLateCost := capturedSession != "" && !wasResumed &&
 		backfill.NeedsTokenCostBackfill(tokens.ToJSON(usage))
@@ -2240,7 +2500,7 @@ func (wp *WorkerPool) captureTokenUsageForSession(
 	if sessionID == "" {
 		sessionID = usage.ThreadID
 	}
-	if sessionID == "" {
+	if sessionID == "" && !collected.allowSessionless {
 		return
 	}
 	current, err := wp.db.GetJobByID(job.ID)
@@ -2277,14 +2537,11 @@ func (wp *WorkerPool) fetchTokenUsage(
 		return wp.tokenUsageFetcher(ctx, sessionID)
 	}
 	cfg := wp.cfgGetter.Config()
-	return tokens.FetchForSessionWithConfig(
-		ctx, sessionID,
-		tokens.FetchConfig{
-			Endpoint:   cfg.Cost.Endpoint,
-			Timeout:    cfg.Cost.ResolvedTimeout(),
-			RequireCLI: true,
-		},
-	)
+	fetchConfig, err := tokens.FetchConfigFromConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return tokens.FetchForSessionWithConfig(ctx, sessionID, fetchConfig)
 }
 
 func (wp *WorkerPool) fetchFreshSessionUsage(

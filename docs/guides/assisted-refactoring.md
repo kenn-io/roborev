@@ -52,9 +52,16 @@ roborev analyze architecture internal/storage/
 ```
 
 Results appear in the TUI as jobs labeled with their analysis type (e.g.
-`test-fixtures`, `duplication`). Use `roborev show <job_id>` or the TUI to read
-findings. You can then run `roborev fix` to address open findings, or pass
+`test-fixtures`, `duplication`). Use `roborev job show <job_id>` or the TUI to
+read findings. You can then run `roborev fix` to address open findings, or pass
 specific job IDs with `roborev fix <job_id>`.
+
+Analysis jobs use the agent's non-agentic permissions, including when large
+inputs are passed as file paths. Claude Code loads only `Read`, `Glob`, and
+`Grep` and blocks MCP tools. Codex uses its read-only sandbox and, by default,
+ignores user-level Codex config. The global `allow_unsafe_agents` and
+`codex_sandbox` overrides still apply. With `--fix`, a separate foreground agent
+gets edit access after analysis finishes.
 
 ## Branch Mode
 
@@ -123,12 +130,12 @@ review. This is a one-shot fix. For an iterative loop with re-review, see
 
 To require the fix agent to verify suggestions rather than apply them blindly,
 set global [`fix_guidelines`](/docs/configuration/#fix-guidelines). The policy
-reaches direct fixes, batch fixes, and commit retries. It does not change the
-separate `analyze --fix` or `refine` workflows. When the agent intentionally
-leaves a finding unchanged, the job records the no-change outcome and the
-agent's explanation before it closes. A policy-aware batch records a neutral
-batch outcome and preserves the agent's fixed or skipped disposition for every
-job ID.
+reaches direct fixes, batch fixes, fix commit retries, and `refine`, including
+refine planning. It does not change the separate `analyze --fix` workflow. When
+the fix agent intentionally leaves a finding unchanged, the job records the
+no-change outcome and the agent's explanation before it closes. A policy-aware
+batch records a neutral batch outcome and preserves the agent's fixed or skipped
+disposition for every job ID.
 
 Use `--batch` to concatenate multiple reviews into a single prompt so the agent
 sees all findings at once. This is faster and gives the agent more context to
@@ -172,8 +179,8 @@ Run analysis first, review the results, then apply fixes for specific jobs:
 roborev analyze test-fixtures 'internal/storage/*_test.go'
 # => Job 42
 
-# Step 2: Review findings in TUI or with roborev show
-roborev show 42
+# Step 2: Review findings in TUI or with roborev job show
+roborev job show 42
 
 # Step 3: Apply fixes
 roborev fix 42

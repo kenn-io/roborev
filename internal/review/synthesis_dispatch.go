@@ -100,7 +100,12 @@ func RunSynthesisAgent(
 
 	invoke()
 	output, err := invokeReview(ctx, a, checkout.RepoPath, checkout.GitRef, prompt, SynthesisSchema, out)
-	return decodeSynthesisResult(a, reviews, jsontext.Value(output), err)
+	doc, err := decodeSynthesisResult(a, reviews, jsontext.Value(output), err)
+	if err != nil {
+		return SynthesisDocument{}, err
+	}
+	settleFindings(ctx, checkout.RepoPath, checkout.GitRef, &doc)
+	return doc, nil
 }
 
 func decodeSynthesisResult(a agent.Agent, reviews []ReviewResult, raw jsontext.Value, err error) (SynthesisDocument, error) {

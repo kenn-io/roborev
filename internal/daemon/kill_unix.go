@@ -3,6 +3,7 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -43,7 +44,9 @@ func identifyProcessImpl(pid int) processIdentity {
 	}
 
 	// Fall back to ps (macOS/BSD)
-	cmd := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=")
+	// Callers check PID identity from daemon lifecycle and update paths that
+	// do not carry a context; the probe ends on its own.
+	cmd := exec.CommandContext(context.Background(), "ps", "-p", strconv.Itoa(pid), "-o", "command=")
 	output, err := cmd.Output()
 	if err != nil {
 		// Can't determine - could be permissions, missing ps, etc.

@@ -1,9 +1,7 @@
 package prompt
 
 import (
-	"bytes"
 	"context"
-	"encoding/xml"
 	"errors"
 	"fmt"
 	"log"
@@ -23,16 +21,23 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
+// xmlEscaper escapes the characters that could close a wrapper tag or an
+// attribute. Unlike xml.EscapeText it keeps newlines and tabs, so a
+// multi-line commit message or diff still reads as lines.
+var xmlEscaper = strings.NewReplacer(
+	"&", "&amp;",
+	"<", "&lt;",
+	">", "&gt;",
+	`"`, "&#34;",
+	"'", "&#39;",
+)
+
 // escapeXML escapes XML special characters so untrusted commit metadata
 // (subject, author, body) cannot break out of the <commit-message> /
 // <commit-messages> wrapper tags and inject synthetic structure into the
 // prompt.
 func escapeXML(s string) string {
-	var buf bytes.Buffer
-	if err := xml.EscapeText(&buf, []byte(s)); err != nil {
-		return "--unescapable-xml--"
-	}
-	return buf.String()
+	return xmlEscaper.Replace(s)
 }
 
 // MaxPromptSize is the legacy maximum size of a prompt in bytes (250KB).
@@ -80,7 +85,7 @@ type Builder struct {
 	repoCfg        *config.RepoConfig
 	repoCfgSet     bool
 	repoCfgRef     string
-	ctx            context.Context
+	ctx            context.Context //nolint:containedctx // WithContext scopes one build, as http.Request.WithContext does
 	repoPath       string
 	configRepoPath string
 	planSkillRoot  string
@@ -89,6 +94,16 @@ type Builder struct {
 	// structuredOutput appends the JSON output instruction to built-in
 	// review prompts when the agent will return schema-constrained findings.
 	structuredOutput bool
+	pullRequest      PullRequest
+	// binaryEvidence hands reviewers committed copies of changed binary files.
+	binaryEvidence bool
+}
+
+// PullRequest is the title and description of the pull request whose
+// commits a range review covers.
+type PullRequest struct {
+	Title       string
+	Description string
 }
 
 // DiffFilePathPlaceholder is a sentinel path embedded in prebuilt
@@ -158,6 +173,14 @@ func (b *Builder) resolvedConfigRepoPath() string {
 func (b *Builder) WithStructuredOutput(enabled bool) *Builder {
 	next := *b
 	next.structuredOutput = enabled
+	return &next
+}
+
+// WithPullRequest returns a builder whose range reviews show the pull
+// request's title and description as the author's statement of intent.
+func (b *Builder) WithPullRequest(pr PullRequest) *Builder {
+	next := *b
+	next.pullRequest = pr
 	return &next
 }
 
@@ -285,21 +308,35 @@ func (b *Builder) BuildWithSnapshotTarget(
 	if err != nil {
 		return result, err
 	}
+	text, evidenceCleanup, err := b.AppendBinaryEvidence(text, gitRef, excludes, target)
+	if err != nil {
+		return result, err
+	}
+	result.Cleanup = joinCleanups(evidenceCleanup, result.Cleanup)
 	prepared, err := b.Prepare(text, target)
 	if err != nil {
 		return result, err
 	}
-	priorCleanup := result.Cleanup
-	result = prepared
-	if priorCleanup != nil {
-		result.Cleanup = func() {
-			if prepared.Cleanup != nil {
-				prepared.Cleanup()
-			}
-			priorCleanup()
+	prepared.Cleanup = joinCleanups(prepared.Cleanup, result.Cleanup)
+	return prepared, nil
+}
+
+// joinCleanups runs each non-nil cleanup in order. It returns nil if none is set.
+func joinCleanups(cleanups ...func()) func() {
+	var set []func()
+	for _, cleanup := range cleanups {
+		if cleanup != nil {
+			set = append(set, cleanup)
 		}
 	}
-	return result, nil
+	if len(set) == 0 {
+		return nil
+	}
+	return func() {
+		for _, cleanup := range set {
+			cleanup()
+		}
+	}
 }
 
 // WriteDiffSnapshot writes the full diff for a git ref to a repo-local temp
@@ -367,6 +404,21 @@ func writeExternalDiffSnapshot(repoPath, snapshotRoot, diff string) (string, fun
 }
 
 func writeExternalSnapshot(repoPath, snapshotRoot, filename, content string) (string, func(), error) {
+	dir, cleanup, err := createSnapshotDir(repoPath, snapshotRoot)
+	if err != nil {
+		return "", nil, err
+	}
+	snapshotFile := filepath.Join(dir, filename)
+	if err := writeSnapshotFile(snapshotFile, []byte(content)); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	return snapshotFile, cleanup, nil
+}
+
+// createSnapshotDir creates a private, ignored snapshot directory under
+// snapshotRoot. Stale cleanup skips it until the returned cleanup runs.
+func createSnapshotDir(repoPath, snapshotRoot string) (string, func(), error) {
 	if err := validateSnapshotRoot(repoPath, snapshotRoot); err != nil {
 		return "", nil, err
 	}
@@ -392,27 +444,26 @@ func writeExternalSnapshot(repoPath, snapshotRoot, filename, content string) (st
 	}
 	unregister := registerActiveSnapshot(dir)
 	snapshotLifecycleMu.Unlock()
-	snapshotFile := filepath.Join(dir, filename)
-	f, err := os.OpenFile(snapshotFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		unregister()
-		os.RemoveAll(dir)
-		return "", nil, fmt.Errorf("create snapshot: %w", err)
-	}
-	_, writeErr := f.WriteString(content)
-	closeErr := f.Close()
-	if writeErr != nil || closeErr != nil {
-		unregister()
-		os.RemoveAll(dir)
-		if writeErr != nil {
-			return "", nil, fmt.Errorf("write snapshot: %w", writeErr)
-		}
-		return "", nil, fmt.Errorf("close snapshot: %w", closeErr)
-	}
-	return snapshotFile, func() {
+	return dir, func() {
 		os.RemoveAll(dir)
 		unregister()
 	}, nil
+}
+
+func writeSnapshotFile(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("create snapshot: %w", err)
+	}
+	_, writeErr := f.Write(data)
+	closeErr := f.Close()
+	if writeErr != nil {
+		return fmt.Errorf("write snapshot: %w", writeErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close snapshot: %w", closeErr)
+	}
+	return nil
 }
 
 func writeSnapshotMarker(dir string) error {
@@ -583,6 +634,9 @@ func (b *Builder) BuildDirty(diff string, contextCount int, agentName, reviewTyp
 // dirty file names for dependency metadata summaries. The diff itself may have
 // review exclusions applied.
 func (b *Builder) BuildDirtyWithFiles(diff string, changedFiles []string, contextCount int, agentName, reviewType, minSeverity string) (string, error) {
+	if b.binaryEvidence {
+		return "", ErrBinaryEvidenceDirty
+	}
 	ctx, err := b.newPromptBuildContext(agentName, reviewType, minSeverity, "dirty", optionalSectionsView{})
 	if err != nil {
 		return "", err
@@ -776,9 +830,10 @@ func needsShellQuoting(s string) bool {
 }
 
 type rangeMetadataLoss struct {
-	RemovedEntries  int
-	BlankedSubject  int
-	TrimmedOptional int
+	RemovedEntries     int
+	BlankedSubject     int
+	DroppedPullRequest int
+	TrimmedOptional    int
 }
 
 func compareRangeMetadataLoss(a, b rangeMetadataLoss) int {
@@ -787,6 +842,8 @@ func compareRangeMetadataLoss(a, b rangeMetadataLoss) int {
 		return a.RemovedEntries - b.RemovedEntries
 	case a.BlankedSubject != b.BlankedSubject:
 		return a.BlankedSubject - b.BlankedSubject
+	case a.DroppedPullRequest != b.DroppedPullRequest:
+		return a.DroppedPullRequest - b.DroppedPullRequest
 	default:
 		return a.TrimmedOptional - b.TrimmedOptional
 	}
@@ -825,6 +882,9 @@ func measureRangeMetadataLoss(original, trimmed TemplateContext) rangeMetadataLo
 	loss := rangeMetadataLoss{
 		RemovedEntries:  len(original.Review.Subject.Range.Entries) - len(trimmed.Review.Subject.Range.Entries),
 		TrimmedOptional: measureOptionalSectionsLoss(original.Review.Optional, trimmed.Review.Optional),
+	}
+	if original.Review.Subject.Range.PullRequest != nil && trimmed.Review.Subject.Range.PullRequest == nil {
+		loss.DroppedPullRequest = 1
 	}
 	for i := range trimmed.Review.Subject.Range.Entries {
 		if i >= len(original.Review.Subject.Range.Entries) {
@@ -986,7 +1046,11 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 		short := gitrepo.ShortSHA(commitSHA)
 		info, err := git.GetCommitInfoCtx(b.context(), b.repoPath, commitSHA)
 		if err == nil {
-			entries = append(entries, commitRangeEntryView{Commit: short, Subject: escapeXML(info.Subject)})
+			entries = append(entries, commitRangeEntryView{
+				Commit:  short,
+				Subject: escapeXML(info.Subject),
+				Message: escapeXML(strings.TrimSpace(info.Body)),
+			})
 			kataMessages = append(kataMessages, info.Subject+"\n\n"+info.Body)
 			continue
 		}
@@ -997,7 +1061,7 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 		return "", err
 	}
 	ctx.optional.KataContext = kataView
-	currentView := commitRangeSectionView{Count: len(commits), Entries: entries}
+	currentView := commitRangeSectionView{Count: len(commits), PullRequest: b.pullRequestContext(), Entries: entries}
 	diff, err := git.GetRangeDiffCtx(b.context(), b.repoPath, rangeRef, b.resolveExcludes(reviewType)...)
 	if err != nil {
 		return "", fmt.Errorf("get diff: %w", err)
@@ -1014,6 +1078,28 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 		return "", err
 	}
 	return ctx.requiredPrefix + body, nil
+}
+
+// PullRequestBlock renders escaped PR metadata as context-only data.
+func PullRequestBlock(pr PullRequest) string {
+	ctx := (&Builder{pullRequest: pr}).pullRequestContext()
+	if ctx == nil {
+		return ""
+	}
+	var block strings.Builder
+	if err := promptTemplates.ExecuteTemplate(&block, "pull_request_context", ctx); err != nil {
+		panic(err) // The embedded template and its context have fixed types.
+	}
+	return block.String()
+}
+
+func (b *Builder) pullRequestContext() *PullRequestContext {
+	title := strings.TrimSpace(b.pullRequest.Title)
+	description := strings.TrimSpace(strings.ReplaceAll(b.pullRequest.Description, "\r\n", "\n"))
+	if title == "" && description == "" {
+		return nil
+	}
+	return &PullRequestContext{Title: escapeXML(title), Description: escapeXML(description)}
 }
 
 func buildProjectGuidelinesSectionView(guidelines string) *markdownSectionView {

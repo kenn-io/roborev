@@ -21,6 +21,7 @@ import (
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestMCPCmdExposesServeSubcommand(t *testing.T) {
@@ -304,4 +305,14 @@ func TestMCPServeRejectsStaleExplicitServer(t *testing.T) {
 
 	t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "1")
 	require.NoError(t, ensureMCPDaemon())
+}
+
+func TestMCPStatusSkipsUnjudgedEndpoints(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	rec := testutil.UnknownRuntimeRecord("tcp", "127.0.0.1:12345")
+	_, err := daemon.RuntimeStore().Write(rec)
+	require.NoError(t, err)
+	listeners, err := mcpStatusListRuntimes()
+	require.NoError(t, err)
+	assert.Empty(t, listeners)
 }

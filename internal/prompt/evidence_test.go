@@ -1,0 +1,143 @@
+package prompt
+
+import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"testing"
+	"unicode/utf8"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/testutil"
+)
+
+const committedPDF = "%PDF-1.7\x00committed exhibit"
+
+// diffPDFsAsBinary keeps host text converters, such as the one Git for Windows
+// configures for *.pdf, from rejecting the synthetic PDF bytes in diffs.
+func diffPDFsAsBinary(t *testing.T, repo *testutil.TestRepo) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join(repo.GitDir, "info", "attributes"), []byte("*.pdf -diff\n"), 0o644))
+}
+
+// savedEvidencePath returns the snapshot path the prompt lists for repoPath.
+func savedEvidencePath(t *testing.T, text, repoPath string) string {
+	t.Helper()
+	match := regexp.MustCompile(regexp.QuoteMeta(strconv.Quote(repoPath)) + ` \(\w+\): read ("[^"]+")`).FindStringSubmatch(text)
+	require.NotNil(t, match, "prompt lists %s", repoPath)
+	saved, err := strconv.Unquote(match[1])
+	require.NoError(t, err)
+	return saved
+}
+
+func TestBuildWithSnapshotBinaryEvidence(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	diffPDFsAsBinary(t, repo)
+	repo.CommitFiles(map[string]string{"old.png": "\x89PNG\x00"}, "add image")
+	base := repo.HeadSHA()
+	repo.RunGit("rm", "-q", "old.png")
+	head := repo.CommitFiles(map[string]string{"exhibits/brief.pdf": committedPDF, "notes.txt": "text"}, "add exhibit")
+	// An edited working copy must not replace the committed evidence.
+	repo.WriteFile("exhibits/brief.pdf", "%PDF-1.7\x00edited after commit")
+
+	for _, tc := range []struct {
+		name  string
+		limit int
+	}{
+		{name: "inline"},
+		{name: "prompt file", limit: 512},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			builder := NewBuilderWithConfig(nil, &config.Config{DefaultMaxPromptSize: tc.limit}).
+				ForRepo(repo.Path(), 0).WithBinaryEvidence(true)
+			result, err := builder.BuildWithSnapshot(base+".."+head, 0, "test", "", "", nil)
+			require.NoError(t, err)
+			require.NotNil(t, result.Cleanup)
+			text := result.Prompt
+			if tc.limit > 0 {
+				require.NotEmpty(t, result.FilePath, "oversized prompts move to a file")
+				data, err := os.ReadFile(result.FilePath)
+				require.NoError(t, err)
+				text = string(data)
+			}
+
+			assert.Contains(text, "## Committed review evidence")
+			assert.Contains(text, `- "old.png" (deleted)`)
+			assert.NotContains(text, `"notes.txt" (`)
+			saved := savedEvidencePath(t, text, "exhibits/brief.pdf")
+			assert.Equal(".pdf", filepath.Ext(saved))
+			rel, err := filepath.Rel(filepath.Join(repo.Path(), ".roborev"), saved)
+			require.NoError(t, err)
+			assert.True(filepath.IsLocal(rel), "evidence lives under snapshot_dir")
+			data, err := os.ReadFile(saved)
+			require.NoError(t, err)
+			assert.Equal(committedPDF, string(data))
+
+			result.Cleanup()
+			assert.NoFileExists(saved)
+		})
+	}
+}
+
+func TestBinaryEvidenceOffLeavesPromptUnchanged(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	diffPDFsAsBinary(t, repo)
+	head := repo.CommitFile("brief.pdf", committedPDF, "add exhibit")
+	builder := NewBuilderWithConfig(nil, &config.Config{}).ForRepo(repo.Path(), 0)
+
+	want, err := builder.Build(head, 0, "test", "", "")
+	require.NoError(t, err)
+	result, err := builder.BuildWithSnapshot(head, 0, "test", "", "", nil)
+	require.NoError(t, err)
+	assert.Equal(t, want, result.Prompt)
+	assert.NotContains(t, result.Prompt, "Committed review evidence")
+}
+
+func TestBinaryEvidenceRejectsDirtyReviews(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	builder := NewBuilderWithConfig(nil, &config.Config{}).ForRepo(repo.Path(), 0).WithBinaryEvidence(true)
+	_, err := builder.BuildDirtyWithSnapshot("diff --git a/x b/x\n", 0, "test", "", "")
+	require.ErrorIs(t, err, ErrBinaryEvidenceDirty)
+}
+
+func TestEvidenceFileNameStaysInSnapshotDir(t *testing.T) {
+	dir := t.TempDir()
+	for _, tc := range []struct{ path, want string }{
+		{path: "exhibits/brief.pdf", want: "3-brief.pdf"},
+		{path: `x\..\..\..\Users\Public\evil.lnk`, want: "3.lnk"},
+		{path: `docs/..\evil.pdf`, want: "3.pdf"},
+		{path: `C:evil.pdf`, want: "3.pdf"},
+		{path: `docs/C:\Windows\evil.exe`, want: "3.exe"},
+		{path: "brief.pdf:hidden", want: "3"},
+		{path: `evil\..`, want: "3"},
+		{path: "..", want: "3"},
+		{path: `evil\x.p\df`, want: "3"},
+	} {
+		got := evidenceFileName(3, tc.path)
+		assert.Equal(t, tc.want, got, tc.path)
+		rel, err := filepath.Rel(dir, filepath.Join(dir, got))
+		require.NoError(t, err)
+		assert.Equal(t, got, rel, "%s stays a single element of the snapshot directory", tc.path)
+	}
+}
+
+func TestEvidenceFileNameTrimsLongNames(t *testing.T) {
+	assert := assert.New(t)
+	long := strings.Repeat("a", 251) + ".pdf"
+	got := evidenceFileName(12, "exhibits/"+long)
+	assert.Len(got, 255)
+	assert.True(strings.HasPrefix(got, "12-aaa"), got)
+	assert.True(strings.HasSuffix(got, ".pdf"), got)
+
+	accented := strings.Repeat("é", 126) + ".pdf"
+	got = evidenceFileName(3, accented)
+	assert.LessOrEqual(len(got), 255)
+	assert.True(utf8.ValidString(got), "trimming must not split a character")
+	assert.True(strings.HasSuffix(got, ".pdf"), got)
+}

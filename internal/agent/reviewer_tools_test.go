@@ -5,10 +5,13 @@ import (
 	"encoding/json/v2"
 	"os"
 	"runtime"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/config"
 )
 
 var testReviewerTools = ReviewerTools{
@@ -116,4 +119,45 @@ func TestCodexReviewAddsReviewerServerAndKeepsSandbox(t *testing.T) {
 		assert.NotContains(arg, testReviewerTools.Token)
 	}
 	assert.Contains(readMockEnv(t, mock.EnvFile), "ROBOREV_REVIEW_MCP_TOKEN=reviewer-token")
+}
+
+func TestClaudeStrictReviewAddsTheReviewerServer(t *testing.T) {
+	assert := assert.New(t)
+	initLine := `{"type":"system","subtype":"init","permissionMode":"dontAsk",` +
+		`"tools":["Read","Glob","Grep","mcp__roborev_review__branch_findings","mcp__roborev_review__git_blame"],` +
+		`"mcp_servers":[{"name":"roborev_review","status":"connected"}]}`
+	mock := mockAgentCLI(t, MockCLIOpts{
+		HelpOutput:  claudeStrictHelp,
+		CaptureArgs: true,
+		StdoutLines: []string{initLine, `{"type":"result","result":"ok"}`},
+	})
+	strict := NewClaudeAgent(mock.CmdPath).WithStrictReview(
+		config.ReviewToolPolicy{Mode: "read-only"}, ReviewMCP{ConfigPath: "policy-mcp.json"})
+	ctx := WithReviewerTools(t.Context(), testReviewerTools)
+
+	_, err := strict.Review(ctx, t.TempDir(), "HEAD", "prompt", nil)
+	require.NoError(t, err)
+
+	args := readMockArgs(t, mock.ArgsFile)
+	i := slices.Index(args, "--mcp-config")
+	require.GreaterOrEqual(t, i, 0)
+	assert.Equal("policy-mcp.json", args[i+1], "the policy's own servers still load")
+	assert.Contains(args[i+2], "roborev-review-mcp-", "the reviewer config joins the same --mcp-config list")
+	assert.Equal(
+		"Glob,Grep,Read,mcp__roborev_review__branch_findings,mcp__roborev_review__git_blame",
+		argAfter(args, "--allowedTools"),
+	)
+}
+
+func TestClaudeStrictReviewFailsWhenTheReviewerServerIsMissing(t *testing.T) {
+	mock := mockAgentCLI(t, MockCLIOpts{
+		HelpOutput:  claudeStrictHelp,
+		StdoutLines: []string{claudeStrictInitLine, `{"type":"result","result":"ok"}`},
+	})
+	strict := NewClaudeAgent(mock.CmdPath).WithStrictReview(
+		config.ReviewToolPolicy{Mode: "read-only"}, ReviewMCP{ConfigPath: "policy-mcp.json"})
+	ctx := WithReviewerTools(t.Context(), testReviewerTools)
+
+	_, err := strict.Review(ctx, t.TempDir(), "HEAD", "prompt", nil)
+	require.ErrorIs(t, err, ErrReviewToolPolicy)
 }

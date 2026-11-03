@@ -41,7 +41,9 @@ as raw Markdown at /docs/<page>.md.
 - [Review event hooks](https://roborev.io/docs/guides/hooks.md): run shell
   commands, notifications, and the built-in kata and beads integrations on
   review events
-- [CLI commands](https://roborev.io/docs/commands.md): every command and flag
+- [CLI commands](https://roborev.io/docs/commands.md): direct agent workflow,
+  job IDs and refs, server selection, output modes, error recovery, exit codes,
+  environment variables, and command flags
 - [Terminal UI](https://roborev.io/docs/integrations/tui.md): the review queue
   in the terminal
 - [Browser UI](https://roborev.io/docs/web-ui.md): the review workspace and
@@ -59,7 +61,8 @@ as raw Markdown at /docs/<page>.md.
 - [Responding to reviews](https://roborev.io/docs/guides/responding-to-reviews.md):
   comments, finding reassessment, closing, and the review ledger
 - [Agent skills](https://roborev.io/docs/guides/agent-skills.md): the
-  `/roborev-fix`, `/roborev-refine`, `/roborev-superpowers`, and review skills
+  `/roborev-fix`, `/roborev-refine`, `/roborev-superpowers`,
+  `/roborev-setup-review`, and review skills
 - [Code analysis and refactoring](https://roborev.io/docs/guides/assisted-refactoring.md):
   `roborev analyze` types and `roborev fix`
 - [Auto-fix with refine](https://roborev.io/docs/guides/auto-fixing.md): the
@@ -71,7 +74,8 @@ as raw Markdown at /docs/<page>.md.
 - [Subagent review panels](https://roborev.io/docs/advanced/subagent-review-panels.md):
   multi-reviewer panels with synthesis
 - [Custom review types](https://roborev.io/docs/advanced/custom-review-types.md):
-  template-driven review rubrics
+  template-driven review rubrics, document reviews, binary evidence, and MCP
+  tool grants
 - [Custom tasks and agentic mode](https://roborev.io/docs/advanced/custom-tasks.md):
   agentic reviews and custom prompts
 - [Agent Client Protocol](https://roborev.io/docs/advanced/acp.md): ACP
