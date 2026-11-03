@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	katagen "go.kenn.io/kata/pkg/client/generated"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/kata"
@@ -73,7 +75,7 @@ func bindRepo(t *testing.T, project string) string {
 	t.Helper()
 	dir := t.TempDir()
 	if project != "" {
-		require.NoError(t, os.WriteFile(filepath.Join(dir, ".kata.toml"), []byte("version = 1\n[project]\nname = \""+project+"\"\n"), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, ".kata.local.toml"), []byte("version = 1\n[project]\nname = \""+project+"\"\n"), 0o600))
 	}
 	return dir
 }
@@ -147,6 +149,66 @@ func TestKataClientUsesTheDaemonsConnection(t *testing.T) {
 		assert.Equal(t, "roborev", post.JSON(t)["actor"])
 	})
 	assert.NoFileExists(t, marker, "the kata CLI must not run")
+}
+
+func TestKataClientCommittedBindingUsesRegisteredAliasThroughDaemon(t *testing.T) {
+	repo := testutil.NewTestRepo(t)
+	repo.WriteFile(".kata.toml", "version = 1\n[project]\nname = \"reviews\"\n")
+	repo.RunGit("remote", "add", "origin", "https://code.example/Team/Review-Repo.git")
+
+	fake := katafake.New(t)
+	fake.AddIssue(7, "stale", "Old project name reused", "")
+	fake.AddIssue(8, "current", "Renamed project", "")
+	fake.Override = func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != "/api/v1/projects/resolve" {
+			return false
+		}
+		var req struct {
+			Alias struct {
+				Identity string `json:"identity"`
+				Kind     string `json:"kind"`
+			} `json:"alias"`
+		}
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		assert.Equal(t, "code.example/Team/Review-Repo", req.Alias.Identity)
+		assert.Equal(t, "git", req.Alias.Kind)
+		fake.Reply(w, katagen.ProjectResolveBody{
+			Project: fake.Projects[1],
+			Alias: katagen.ProjectAlias{
+				AliasIdentity: req.Alias.Identity, AliasKind: req.Alias.Kind,
+				ID: 1, ProjectID: fake.Projects[1].ID, CreatedAt: time.Unix(0, 0).UTC(),
+			},
+		})
+		return true
+	}
+	ep := kataDaemon(t, enabledKata(fake))
+	c := newKataClientAt(repo.Root, config.DefaultConfig(), func() (daemon.DaemonEndpoint, error) { return ep, nil })
+
+	issues, err := c.List(t.Context(), kata.ListOpts{})
+	require.NoError(t, err)
+	require.Len(t, issues, 1)
+	assert.Equal(t, "current", issues[0].ShortID, "a reused old name cannot select the wrong project")
+
+	shown, err := c.Show(t.Context(), "current")
+	require.NoError(t, err)
+	assert.Equal(t, "other#current", shown.QualifiedID)
+
+	_, err = c.Create(t.Context(), kata.CreateReq{Title: "From the committed binding"})
+	require.NoError(t, err)
+	_, err = c.Create(t.Context(), kata.CreateReq{Title: "Explicit project", Project: "reviews"})
+	require.NoError(t, err)
+
+	var paths []string
+	for _, request := range fake.Requests() {
+		paths = append(paths, request.Method+" "+request.Path)
+	}
+	assert.Equal(t, []string{
+		"GET /api/v1/projects",
+		"POST /api/v1/projects/resolve", "GET /api/v1/projects/8/issues",
+		"POST /api/v1/projects/resolve", "GET /api/v1/projects/8/issues/current",
+		"POST /api/v1/projects/resolve", "POST /api/v1/projects/8/issues",
+		"GET /api/v1/projects", "POST /api/v1/projects/7/issues",
+	}, paths, "committed aliases resolve canonically; explicit names remain exact")
 }
 
 func TestKataClientProbesOnFirstUse(t *testing.T) {

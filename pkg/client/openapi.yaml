@@ -2441,6 +2441,12 @@ components:
         title:
           description: Issue title
           type: string
+        workspace_alias_identity:
+          description: Registered workspace alias identity; use with workspace_alias_kind instead of project
+          type: string
+        workspace_alias_kind:
+          description: "Registered workspace alias kind: git or local"
+          type: string
       required:
         - title
       type: object
@@ -6227,6 +6233,20 @@ paths:
           schema:
             description: Project for a bare ref; empty selects the default project
             type: string
+        - description: Registered workspace alias identity; use with workspace_alias_kind instead of project
+          explode: false
+          in: query
+          name: workspace_alias_identity
+          schema:
+            description: Registered workspace alias identity; use with workspace_alias_kind instead of project
+            type: string
+        - description: "Registered workspace alias kind: git or local"
+          explode: false
+          in: query
+          name: workspace_alias_kind
+          schema:
+            description: "Registered workspace alias kind: git or local"
+            type: string
       responses:
         "200":
           content:
@@ -6283,6 +6303,20 @@ paths:
           name: project
           schema:
             description: Project to read; empty selects the default project
+            type: string
+        - description: Registered workspace alias identity; use with workspace_alias_kind instead of project
+          explode: false
+          in: query
+          name: workspace_alias_identity
+          schema:
+            description: Registered workspace alias identity; use with workspace_alias_kind instead of project
+            type: string
+        - description: "Registered workspace alias kind: git or local"
+          explode: false
+          in: query
+          name: workspace_alias_kind
+          schema:
+            description: "Registered workspace alias kind: git or local"
             type: string
         - description: "Issue status filter: open (default), closed, or all"
           explode: false

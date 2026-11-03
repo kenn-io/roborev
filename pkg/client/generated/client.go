@@ -2202,8 +2202,10 @@ func (c *Client) KataShowIssue(ctx context.Context, options *KataShowIssueReques
 	var err error
 
 	queryEncoding := map[string]runtime.QueryEncoding{
-		"project": {Style: "form", Explode: &[]bool{false}[0]},
-		"ref":     {Style: "form", Explode: &[]bool{false}[0]},
+		"project":                  {Style: "form", Explode: &[]bool{false}[0]},
+		"ref":                      {Style: "form", Explode: &[]bool{false}[0]},
+		"workspace_alias_identity": {Style: "form", Explode: &[]bool{false}[0]},
+		"workspace_alias_kind":     {Style: "form", Explode: &[]bool{false}[0]},
 	}
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL:    c.apiClient.GetBaseURL() + "/api/kata/issue",
@@ -2271,9 +2273,11 @@ func (c *Client) KataListIssues(ctx context.Context, options *KataListIssuesRequ
 	var err error
 
 	queryEncoding := map[string]runtime.QueryEncoding{
-		"project":   {Style: "form", Explode: &[]bool{false}[0]},
-		"status":    {Style: "form", Explode: &[]bool{false}[0]},
-		"unlimited": {Style: "form", Explode: &[]bool{false}[0]},
+		"project":                  {Style: "form", Explode: &[]bool{false}[0]},
+		"status":                   {Style: "form", Explode: &[]bool{false}[0]},
+		"unlimited":                {Style: "form", Explode: &[]bool{false}[0]},
+		"workspace_alias_identity": {Style: "form", Explode: &[]bool{false}[0]},
+		"workspace_alias_kind":     {Style: "form", Explode: &[]bool{false}[0]},
 	}
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL:    c.apiClient.GetBaseURL() + "/api/kata/issues",

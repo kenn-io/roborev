@@ -43,9 +43,18 @@ type LinkPeer struct {
 	Status      string `json:"status,omitempty"`
 }
 
-// Binding identifies the kata project a workspace is bound to.
+// ProjectAlias identifies a workspace independently of its current project name.
+type ProjectAlias struct {
+	Identity string
+	Kind     string
+}
+
+// Binding identifies the Kata project a workspace is bound to. Alias is set
+// for a committed workspace binding so a remote daemon can resolve the
+// registered project after a rename. Local overrides remain name-based.
 type Binding struct {
 	Project string
+	Alias   *ProjectAlias
 }
 
 // ListOpts controls a List call.

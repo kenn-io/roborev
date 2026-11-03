@@ -2306,6 +2306,12 @@ type KataCreateRequest struct {
 
 	// Title Issue title
 	Title string `json:"title" validate:"required"`
+
+	// WorkspaceAliasIdentity Registered workspace alias identity; use with workspace_alias_kind instead of project
+	WorkspaceAliasIdentity *string `json:"workspace_alias_identity,omitempty"`
+
+	// WorkspaceAliasKind Registered workspace alias kind: git or local
+	WorkspaceAliasKind *string `json:"workspace_alias_kind,omitempty"`
 }
 
 func (k KataCreateRequest) Validate() error {

@@ -229,6 +229,24 @@ func TestKataCreateFilesThroughTheDaemonCredential(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func TestKataWorkspaceAliasCannotBeCombinedWithProjectName(t *testing.T) {
+	server, fake := kataAPIServer(t)
+	query := url.Values{
+		"project":                  {"reviews"},
+		"workspace_alias_identity": {"code.example/team/repo"},
+		"workspace_alias_kind":     {"git"},
+	}
+	w := kataGet(t, server, "/api/kata/issues", query)
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+
+	w = kataPost(t, server, "/api/kata/issues", KataCreateRequest{
+		Title: "ambiguous selection", Project: "reviews",
+		WorkspaceAliasIdentity: "code.example/team/repo", WorkspaceAliasKind: "git",
+	})
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	assert.Empty(t, fake.AllRequests(), "ambiguous selection never reaches Kata")
+}
+
 func TestKataEndpointsRefuseWhenTheConnectionIsOffOrBroken(t *testing.T) {
 	marker := kataOnPathMarker(t)
 	server, _, _ := newTestServer(t)
