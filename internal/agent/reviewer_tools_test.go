@@ -26,7 +26,7 @@ func TestClaudeReviewConnectsOnlyTheReviewerServer(t *testing.T) {
 		CaptureArgs: true,
 		StdoutLines: []string{`{"type":"result","result":"ok"}`},
 	})
-	ctx := WithReviewerTools(context.Background(), testReviewerTools)
+	ctx := WithReviewerTools(t.Context(), testReviewerTools)
 
 	_, err := NewClaudeAgent(mock.CmdPath).Review(ctx, t.TempDir(), "deadbeef", "prompt", nil)
 	require.NoError(t, err)
@@ -48,9 +48,9 @@ func TestClaudeReviewConnectsOnlyTheReviewerServer(t *testing.T) {
 
 func TestClaudeReviewWithoutReviewerToolsIsUnchanged(t *testing.T) {
 	for name, ctx := range map[string]context.Context{
-		"no tools": context.Background(),
+		"no tools": t.Context(),
 		"planning": context.WithValue(
-			WithReviewerTools(context.Background(), testReviewerTools), planningContextKey{}, true),
+			WithReviewerTools(t.Context(), testReviewerTools), planningContextKey{}, true),
 	} {
 		t.Run(name, func(t *testing.T) {
 			mock := mockAgentCLI(t, MockCLIOpts{
@@ -103,7 +103,7 @@ func TestCodexReviewAddsReviewerServerAndKeepsSandbox(t *testing.T) {
 		CaptureEnv:  true,
 		StdoutLines: []string{`{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}`},
 	})
-	ctx := WithReviewerTools(context.Background(), testReviewerTools)
+	ctx := WithReviewerTools(t.Context(), testReviewerTools)
 
 	_, err := a.Review(ctx, t.TempDir(), "deadbeef", "prompt", nil)
 	require.NoError(t, err)
