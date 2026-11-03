@@ -194,19 +194,19 @@ func TestReviewerToolsReturnOnlyThisBranchOfThisRepo(t *testing.T) {
 		map[string]any{
 			"index": float64(1), "severity": "high", "location": "calc.go:8",
 			"problem": "Avg divides by zero on an empty slice. Callers pass empty input.",
-			"decisions": []any{map[string]any{
-				"kind": "fix", "source": "fix_comment", "by": "roborev-fix",
-				"reason": "guarded empty input in " + f.fixSHA[:9] + ".",
-			}},
+		},
+		map[string]any{"index": float64(2), "severity": "low", "location": "calc.go:6", "problem": "Sum can overflow."},
+	}, review["findings"])
+	assert.Equal([]any{
+		map[string]any{
+			"kind": "fix", "target": "high calc.go:8", "source": "fix_comment", "by": "roborev-fix",
+			"reason": "guarded empty input in " + f.fixSHA[:9] + ".",
 		},
 		map[string]any{
-			"index": float64(2), "severity": "low", "location": "calc.go:6", "problem": "Sum can overflow.",
-			"decisions": []any{map[string]any{
-				"kind": "decline", "source": "fix_comment", "by": "roborev-fix",
-				"reason": "overflow is not reachable here.",
-			}},
+			"kind": "decline", "target": "low calc.go", "source": "fix_comment", "by": "roborev-fix",
+			"reason": "overflow is not reachable here.",
 		},
-	}, review["findings"])
+	}, review["decisions"])
 	assert.NotContains(review, "comments", "a comment fully carried by decisions is not repeated")
 
 	for _, job := range []*storage.ReviewJob{f.otherJob, f.foreignJob, f.running} {
@@ -440,28 +440,31 @@ func TestReviewerToolsShowStructuredFindingsAndRebuttals(t *testing.T) {
 		"index": float64(1), "severity": "medium", "kind": "defect", "topic": "security",
 		"file": "calc.go", "start_line": float64(3), "end_line": float64(5),
 		"problem": "Avg trusts its input length.",
-		"decisions": []any{map[string]any{
-			"kind": "refuted", "source": "rebuttal", "reason": "Every caller checks len first.",
-		}},
 	}, findings[0])
-	// The finding has no file, so the Ask line naming calc.go matches no finding.
-	assert.NotContains(findings[1], "decisions")
-	assert.Equal([]any{map[string]any{
-		"kind": "ask", "source": "fix_comment", "by": "developer", "reason": "is a test wanted here?",
-		"target": "low calc.go",
-	}}, row["decisions"])
+	assert.Equal([]any{
+		map[string]any{
+			"kind": "ask", "target": "low calc.go", "source": "fix_comment", "by": "developer",
+			"reason": "is a test wanted here?",
+		},
+		map[string]any{
+			"kind": "refuted", "target": "trusts its input length", "source": "rebuttal",
+			"reason": "Every caller checks len first.",
+		},
+	}, row["decisions"])
 	comments := row["comments"].([]any)
 	require.Len(comments, 1, "a comment with free text is kept whole")
 	assert.Contains(comments[0].(map[string]any)["text"], "Looking into the length check.")
 
-	// A rerun replaces the review under the same job ID. A re-check of the
-	// earlier review must not mark the new one's findings.
+	// A rerun replaces the review under the same job ID. Decisions on the
+	// earlier run are flagged, since its findings may differ.
 	_, err = f.db.ExecContext(t.Context(), `UPDATE reviews SET created_at = ? WHERE job_id = ?`,
 		time.Now().UTC().Add(time.Hour).Format("2006-01-02 15:04:05"), review.ID)
 	require.NoError(err)
 	rerun, isErr := callReviewerTool(t, session, mcpserver.ReviewerToolPriorReview, map[string]any{"job_id": review.ID})
 	require.False(isErr, "%v", rerun)
-	assert.NotContains(rerun["reviews"].([]any)[0].(map[string]any)["findings"].([]any)[0], "decisions")
+	for _, d := range rerun["reviews"].([]any)[0].(map[string]any)["decisions"].([]any) {
+		assert.Equal(true, d.(map[string]any)["before_rerun"], "%v", d)
+	}
 
 	findingsOut, isErr := callReviewerTool(t, session, mcpserver.ReviewerToolBranchFindings, nil)
 	require.False(isErr, "%v", findingsOut)

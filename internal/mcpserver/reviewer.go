@@ -116,16 +116,15 @@ const reviewerScopeKey = "roborev_reviewer_scope"
 type branchFindingsInput struct{}
 
 type reviewerFinding struct {
-	Index     int                `json:"index" jsonschema:"1-based position in the review; job_id and index name this finding"`
-	Severity  string             `json:"severity"`
-	Kind      string             `json:"kind,omitempty" jsonschema:"defect or improvement"`
-	Topic     string             `json:"topic,omitempty"`
-	File      string             `json:"file,omitempty"`
-	StartLine int                `json:"start_line,omitempty"`
-	EndLine   int                `json:"end_line,omitempty"`
-	Location  string             `json:"location,omitempty" jsonschema:"display location when the review predates file and line fields"`
-	Problem   string             `json:"problem"`
-	Decisions []reviewerDecision `json:"decisions,omitempty" jsonschema:"what was decided about this finding"`
+	Index     int    `json:"index" jsonschema:"1-based position in the review; job_id and index name this finding"`
+	Severity  string `json:"severity"`
+	Kind      string `json:"kind,omitempty" jsonschema:"defect or improvement"`
+	Topic     string `json:"topic,omitempty"`
+	File      string `json:"file,omitempty"`
+	StartLine int    `json:"start_line,omitempty"`
+	EndLine   int    `json:"end_line,omitempty"`
+	Location  string `json:"location,omitempty" jsonschema:"display location when the review predates file and line fields"`
+	Problem   string `json:"problem"`
 }
 
 type reviewerComment struct {
@@ -143,7 +142,7 @@ type reviewerReviewRow struct {
 	Closed     bool               `json:"closed" jsonschema:"true once the review was closed; the fix agent leaves reviews with an ask decision open"`
 	Findings   []reviewerFinding  `json:"findings"`
 	Note       string             `json:"note,omitempty"`
-	Decisions  []reviewerDecision `json:"decisions,omitempty" jsonschema:"decisions that name no single finding of this review"`
+	Decisions  []reviewerDecision `json:"decisions,omitempty" jsonschema:"what was decided about this review's findings; match each target to a finding by severity, file, and text"`
 	Comments   []reviewerComment  `json:"comments,omitempty" jsonschema:"comments with text beyond the parsed decisions"`
 }
 
@@ -205,9 +204,10 @@ func (r *Reviewer) registerTools() {
 	mcp.AddTool(r.mcp, &mcp.Tool{
 		Name:        ReviewerToolBranchFindings,
 		Annotations: reviewerToolAnnotations(),
-		Description: "List findings from earlier finished reviews of this branch, newest first. Each " +
-			"finding carries its decisions: fix, decline, invalid, or ask from the fix agent, and confirmed, " +
-			"refuted, or superseded from a rebuttal re-check. Call this before reporting a finding on code a " +
+		Description: "List findings from earlier finished reviews of this branch, newest first, with the " +
+			"decisions recorded on them: fix, decline, invalid, or ask from the fix agent, and confirmed, " +
+			"refuted, or superseded from a rebuttal re-check. Each decision names its finding by target; " +
+			"match it to the finding with that severity and file or text. Call this before reporting a finding on code a " +
 			"recent commit changed: do not raise a finding that was declined, shown invalid, or refuted " +
 			"unless the code now defeats that reason, and do not ask to undo a change that fixed an " +
 			"earlier finding. An ask decision is still open for the user.",
@@ -359,7 +359,7 @@ func newReviewerReviewRow(review BranchReview) reviewerReviewRow {
 		row.Findings = append(row.Findings, f)
 	}
 	var comments []storage.Response
-	row.Decisions, comments = attachDecisions(row.Findings, doc, review)
+	row.Decisions, comments = reviewDecisions(review)
 	row.Comments = reviewerComments(comments)
 	return row
 }
