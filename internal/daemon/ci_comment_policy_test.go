@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -91,14 +90,14 @@ func TestCIPanelCommentPolicy(t *testing.T) {
 			} else {
 				h.completeSynthesisWithReview(t, synth.ID, "No issues found.")
 				if tc.prose {
-					_, err := h.DB.Exec(`UPDATE reviews SET structured_output = ? WHERE job_id = ?`, `{"schema_version":0,"legacy":{"markdown":"No issues found.","recorded_verdict":true}}`, synth.ID)
+					_, err := h.DB.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ? WHERE job_id = ?`, `{"schema_version":0,"legacy":{"markdown":"No issues found.","recorded_verdict":true}}`, synth.ID)
 					require.NoError(t, err)
 				} else {
-					_, err := h.DB.Exec(`UPDATE reviews SET structured_output = ?, verdict_bool = 0 WHERE job_id = ?`, `{"schema_version":2,"summary":"Stored review.","verdict":"fail","findings":[{"severity":"low","problem":"Minor concern.","fix":"Fix it.","location":null}]}`, synth.ID)
+					_, err := h.DB.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ?, verdict_bool = 0 WHERE job_id = ?`, `{"schema_version":2,"summary":"Stored review.","verdict":"fail","findings":[{"severity":"low","problem":"Minor concern.","fix":"Fix it.","location":null}]}`, synth.ID)
 					require.NoError(t, err)
 				}
 			}
-			_, err := h.DB.Exec(`UPDATE review_jobs SET min_severity = 'high' WHERE id = ?`, synth.ID)
+			_, err := h.DB.ExecContext(t.Context(), `UPDATE review_jobs SET min_severity = 'high' WHERE id = ?`, synth.ID)
 			require.NoError(t, err)
 			won, err := h.DB.ClaimPanelForPosting(panel.ID, panelPostingStaleWindow)
 			require.NoError(t, err)
@@ -145,7 +144,7 @@ func TestCIPanelCommentCapReference(t *testing.T) {
 	h.Cfg.CI.CommentMaxFindings = 1
 	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a", []jobSpec{{Agent: "test", Status: "done", Output: "Review notes."}})
 	h.completeSynthesisWithReview(t, synth.ID, "Review notes.")
-	_, err := h.DB.Exec(`UPDATE reviews SET structured_output = ?, verdict_bool = 0 WHERE job_id = ?`, `{"schema_version":2,"summary":"Notes.","verdict":"fail","findings":[{"severity":"low","problem":"Minor concern.","fix":"Fix it.","location":null},{"severity":"high","problem":"State is lost.","fix":"Persist it.","location":null}]}`, synth.ID)
+	_, err := h.DB.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ?, verdict_bool = 0 WHERE job_id = ?`, `{"schema_version":2,"summary":"Notes.","verdict":"fail","findings":[{"severity":"low","problem":"Minor concern.","fix":"Fix it.","location":null},{"severity":"high","problem":"State is lost.","fix":"Persist it.","location":null}]}`, synth.ID)
 	require.NoError(t, err)
 	members, err := h.DB.GetPanelMemberReviews(panel.PanelRunUUID)
 	require.NoError(t, err)
@@ -165,22 +164,22 @@ func TestCIPanelSuppressedRerunCancellation(t *testing.T) {
 	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "head-a", "base..head-a", []jobSpec{{Agent: "test", Status: "done", Output: "No issues found."}})
 	h.completeSynthesisWithReview(t, synth.ID, "No issues found.")
 	// This fixture has a structured empty result, rather than clean-looking prose.
-	_, err := h.DB.Exec(`UPDATE reviews SET structured_output = ? WHERE job_id = ?`, `{"schema_version":2,"summary":"Clean.","verdict":"pass","findings":[]}`, synth.ID)
+	_, err := h.DB.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ? WHERE job_id = ?`, `{"schema_version":2,"summary":"Clean.","verdict":"pass","findings":[]}`, synth.ID)
 	require.NoError(t, err)
 	h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
 	assert.Empty(t, *comments)
 	// Successful suppression must clear stale attempt failures when rerunning.
-	_, err = h.DB.Exec(`UPDATE ci_pr_review_attempts SET last_error_class='genuine',last_error_excerpt='old error' WHERE github_repo='acme/api'`)
+	_, err = h.DB.ExecContext(t.Context(), `UPDATE ci_pr_review_attempts SET last_error_class='genuine',last_error_excerpt='old error' WHERE github_repo='acme/api'`)
 	require.NoError(t, err)
 	server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
 	t.Cleanup(func() { require.NoError(t, server.Close()) })
-	rerun, err := server.humaRerunJob(context.Background(), &RerunJobInput{Body: RerunJobRequest{JobID: synth.ID}})
+	rerun, err := server.humaRerunJob(t.Context(), &RerunJobInput{Body: RerunJobRequest{JobID: synth.ID}})
 	require.NoError(t, err)
 	attempt, err := h.DB.GetReviewAttempt("acme/api", 7, "head-a")
 	require.NoError(t, err)
 	assert.Empty(t, attempt.LastErrorClass)
 	assert.Empty(t, attempt.LastErrorExcerpt)
-	_, err = server.humaCancelJob(context.Background(), &CancelJobInput{Body: CancelJobRequest{JobID: rerun.Body.JobID}})
+	_, err = server.humaCancelJob(t.Context(), &CancelJobInput{Body: CancelJobRequest{JobID: rerun.Body.JobID}})
 	require.NoError(t, err)
 	reviewed, err := h.Poller.alreadyReviewedPR("acme/api", ghPR{Number: 7, HeadRefOid: "head-a"})
 	require.NoError(t, err)
@@ -221,7 +220,7 @@ func TestCIPanelCappedPublicationPreservesOmissionNotice(t *testing.T) {
 	}}
 	raw, err := json.Marshal(document)
 	require.NoError(t, err)
-	_, err = h.DB.Exec(`UPDATE reviews SET structured_output = ?, verdict_bool = 0 WHERE job_id = ?`, string(raw), synth.ID)
+	_, err = h.DB.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ?, verdict_bool = 0 WHERE job_id = ?`, string(raw), synth.ID)
 	require.NoError(t, err)
 	before, err := h.DB.GetReviewByJobID(synth.ID)
 	require.NoError(t, err)
