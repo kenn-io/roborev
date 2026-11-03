@@ -172,11 +172,38 @@ jobs:
       - name: Test frontend packages
         run: bun run web:test
 
+      - name: Upload Vitest web results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: vitest-web-attempt-${{ github.run_attempt }}
+          path: web/test-results/vitest/web.json
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Upload Vitest roborev-ui results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: vitest-roborev-ui-attempt-${{ github.run_attempt }}
+          path: packages/roborev-ui/test-results/vitest/roborev-ui.json
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: Install browser test runtime
         run: kit-retry 3 5 bun run --cwd web playwright install --with-deps chromium
 
       - name: Test embedded browser application
         run: bun run web:test:e2e
+
+      - name: Upload Playwright results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: playwright-web-attempt-${{ github.run_attempt }}
+          path: web/test-results/playwright/*.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Validate embedded release assets
         run: make web-release-check
