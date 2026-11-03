@@ -627,7 +627,7 @@ func TestDoctorDaemonTLS(t *testing.T) {
 
 func TestDoctorCICommentSilenceAdvice(t *testing.T) {
 	clean := false
-	env := &doctorEnv{global: config.DefaultConfig()}
+	env := &doctorEnv{ctx: t.Context(), global: config.DefaultConfig()}
 	env.global.CI.Enabled = true
 	env.global.CI.Repos = []string{"example/project"}
 	env.global.CI.CommentWhenClean = &clean
