@@ -19,7 +19,7 @@ type syncTestHelper struct {
 	repo      *Repo
 }
 
-func createSyncHistory(t *testing.T, db *DB, repoID int64, count int, reverse bool) []*ReviewJob {
+func createSyncJobs(t *testing.T, db *DB, repoID int64, count int) []*ReviewJob {
 	t.Helper()
 	jobs := make([]*ReviewJob, count)
 	for i := range jobs {
@@ -31,6 +31,12 @@ func createSyncHistory(t *testing.T, db *DB, repoID int64, count int, reverse bo
 		require.Equal(t, job.ID, claimed.ID)
 		jobs[i] = job
 	}
+	return jobs
+}
+
+func createSyncHistory(t *testing.T, db *DB, repoID int64, count int, reverse bool) []*ReviewJob {
+	t.Helper()
+	jobs := createSyncJobs(t, db, repoID, count)
 	for i := range jobs {
 		index := i
 		if reverse {

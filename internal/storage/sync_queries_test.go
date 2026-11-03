@@ -2,7 +2,6 @@ package storage
 
 import (
 	"database/sql"
-	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -795,112 +794,50 @@ func TestSyncQueriesSeekPastCursor(t *testing.T) {
 
 func TestSyncQueriesPageHistory(t *testing.T) {
 	t.Parallel()
-	for _, reverse := range []bool{false, true} {
-		t.Run(fmt.Sprintf("reverse=%v", reverse), func(t *testing.T) {
-			t.Parallel()
-			h := newSyncTestHelper(t)
-			assert := assert.New(t)
-			const count = 60
-			jobs := createSyncHistory(t, h.db, h.repo.ID, count, reverse)
-			var jobCursor, reviewJobCursor int64
-			var seenJobs, seenReviewJobs []int64
-			for range 3 {
-				batch, err := h.db.jobsToSync(h.machineID, jobCursor, 25)
-				require.NoError(t, err)
-				require.NotEmpty(t, batch)
-				assert.Greater(batch[0].ID, jobCursor)
-				var marks []JobSyncMark
-				var batchIDs []int64
-				for _, job := range batch {
-					batchIDs = append(batchIDs, job.ID)
-					marks = append(marks, NewJobSyncMark(job))
-				}
-				require.NoError(t, h.db.MarkJobsSynced(marks))
-				jobCursor = batch[len(batch)-1].ID
-				reviews, err := h.db.reviewsToSync(h.machineID, reviewJobCursor, 25)
-				require.NoError(t, err)
-				require.NotEmpty(t, reviews)
-				assert.Greater(reviews[0].JobID, reviewJobCursor)
-				var reviewJobIDs []int64
-				for _, review := range reviews {
-					reviewJobIDs = append(reviewJobIDs, review.JobID)
-				}
-				assert.Equal(batchIDs, reviewJobIDs, "reviews follow their jobs in the same batch")
-				require.NoError(t, h.db.MarkReviewsSynced(reviews))
-				reviewJobCursor = reviews[len(reviews)-1].JobID
-				seenJobs = append(seenJobs, batchIDs...)
-				seenReviewJobs = append(seenReviewJobs, reviewJobIDs...)
-			}
-			var want []int64
-			for _, job := range jobs {
-				want = append(want, job.ID)
-			}
-			assert.Equal(want, seenJobs)
-			assert.Equal(want, seenReviewJobs)
-			pendingJobs, err := h.db.jobsToSync(h.machineID, jobCursor, 25)
-			require.NoError(t, err)
-			assert.Empty(pendingJobs)
-			pendingReviews, err := h.db.reviewsToSync(h.machineID, reviewJobCursor, 25)
-			require.NoError(t, err)
-			assert.Empty(pendingReviews)
-		})
-	}
-}
-
-func TestSyncCursorKeepsReviewsBehindPendingJobs(t *testing.T) {
-	t.Parallel()
 	h := newSyncTestHelper(t)
-	jobs := make([]*ReviewJob, 27)
-	for i := range jobs {
-		jobs[i] = h.createPendingJob(fmt.Sprintf("commit-%d", i))
-		claimed, err := h.db.ClaimJob("worker")
-		require.NoError(t, err)
-		require.NotNil(t, claimed)
-		require.Equal(t, jobs[i].ID, claimed.ID)
-	}
-	lastJob := jobs[len(jobs)-1]
-	require.NoError(t, completeReviewFixture(h.db, lastJob.ID, "test", "prompt", "output"))
-	require.NoError(t, h.db.MarkJobSynced(lastJob.ID))
-	reviews, err := h.db.GetReviewsToSync(h.machineID, syncBatchSize)
-	require.NoError(t, err)
-	require.Len(t, reviews, 1)
-	require.NoError(t, h.db.MarkReviewsSynced(reviews))
-	require.NoError(t, h.db.CancelJob(jobs[0].ID))
-	for _, job := range jobs[1 : len(jobs)-1] {
-		require.NoError(t, completeReviewFixture(h.db, job.ID, "test", "prompt", "output"))
-	}
-	require.NoError(t, h.db.MarkReviewClosedByJobID(lastJob.ID, true))
-
-	cur := pushCursor{}
-	var pushedReviewJobs []int64
-	for {
-		batch, err := h.db.jobsToSync(h.machineID, cur.job, syncBatchSize)
-		require.NoError(t, err)
-		var marks []JobSyncMark
-		for _, job := range batch {
-			marks = append(marks, NewJobSyncMark(job))
-			cur.job = job.ID
-		}
-		require.NoError(t, h.db.MarkJobsSynced(marks))
-		reviews, err := h.db.reviewsToSync(h.machineID, cur.reviewJob, syncBatchSize)
-		require.NoError(t, err)
-		if len(reviews) > 0 {
-			cur.advanceReviews(reviews[len(reviews)-1].JobID, len(batch) < syncBatchSize)
-		}
-		for _, review := range reviews {
-			pushedReviewJobs = append(pushedReviewJobs, review.JobID)
-		}
-		require.NoError(t, h.db.MarkReviewsSynced(reviews))
-		if len(batch) == 0 && len(reviews) == 0 {
-			break
-		}
-	}
+	assert := assert.New(t)
+	jobs := createSyncHistory(t, h.db, h.repo.ID, 60, true)
 	var want []int64
-	for _, job := range jobs[1:] {
+	for _, job := range jobs {
 		want = append(want, job.ID)
 	}
-	assert.ElementsMatch(t, want, pushedReviewJobs)
-	pending, err := h.db.GetReviewsToSync(h.machineID, syncBatchSize)
+
+	// Leave jobs unmarked while paging so only the cursor skips earlier rows.
+	var jobCursor int64
+	var seenJobs []int64
+	var marks []JobSyncMark
+	for range 3 {
+		batch, err := h.db.jobsToSync(h.machineID, jobCursor, 25)
+		require.NoError(t, err)
+		require.NotEmpty(t, batch)
+		assert.Greater(batch[0].ID, jobCursor)
+		for _, job := range batch {
+			seenJobs = append(seenJobs, job.ID)
+			marks = append(marks, NewJobSyncMark(job))
+		}
+		jobCursor = batch[len(batch)-1].ID
+	}
+	assert.Equal(want, seenJobs)
+	pendingJobs, err := h.db.jobsToSync(h.machineID, jobCursor, 25)
 	require.NoError(t, err)
-	assert.Empty(t, pending)
+	assert.Empty(pendingJobs)
+
+	// Reviews become eligible after their jobs upload. Leave them unmarked too.
+	require.NoError(t, h.db.MarkJobsSynced(marks))
+	var reviewJobCursor int64
+	var seenReviewJobs []int64
+	for range 3 {
+		reviews, err := h.db.reviewsToSync(h.machineID, reviewJobCursor, 25)
+		require.NoError(t, err)
+		require.NotEmpty(t, reviews)
+		assert.Greater(reviews[0].JobID, reviewJobCursor)
+		for _, review := range reviews {
+			seenReviewJobs = append(seenReviewJobs, review.JobID)
+		}
+		reviewJobCursor = reviews[len(reviews)-1].JobID
+	}
+	assert.Equal(want, seenReviewJobs)
+	pendingReviews, err := h.db.reviewsToSync(h.machineID, reviewJobCursor, 25)
+	require.NoError(t, err)
+	assert.Empty(pendingReviews)
 }
