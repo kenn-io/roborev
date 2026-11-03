@@ -785,7 +785,7 @@ func TestBrowserHandlerRemoteReviewMutationsDoNotRunHooks(t *testing.T) {
 			default:
 				return false
 			}
-		}, 5*time.Second, 10*time.Millisecond)
+		}, workerStartTimeout, 10*time.Millisecond)
 
 		handler, sessions := newBrowserHandlerFixtureWithCore(
 			t, testBrowserAuthToken, server.httpServer.Handler,

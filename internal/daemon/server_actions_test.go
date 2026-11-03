@@ -356,7 +356,7 @@ func TestRunningJobCancellationBroadcastsOnce(t *testing.T) {
 		default:
 			return false
 		}
-	}, 5*time.Second, 10*time.Millisecond)
+	}, workerStartTimeout, 10*time.Millisecond)
 
 	_, eventCh := server.broadcaster.Subscribe("")
 	req := testutil.MakeJSONRequest(
