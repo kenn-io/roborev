@@ -589,7 +589,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v10.3.2
         with:
-          version: '0.13.5'
+          version: '0.13.6'
           enable-cache: true
           cache-dependency-glob: docs/uv.lock
 
