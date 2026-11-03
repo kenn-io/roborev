@@ -169,12 +169,11 @@ func (b reviewerBackend) BranchReviews(
 	}
 	for i := range reviews {
 		// A rerun replaces the review but keeps its job ID, so a re-check
-		// counts only when it was queued after the current review was written.
+		// queued before the current review was written checked an earlier run.
 		// Jobs are newest first; show each review's re-checks oldest first.
 		for _, r := range slices.Backward(rechecks[reviews[i].Job.ID]) {
-			if !r.enqueued.Before(reviews[i].Review.CreatedAt) {
-				reviews[i].Assessments = append(reviews[i].Assessments, r.assessment)
-			}
+			r.assessment.BeforeRerun = r.enqueued.Before(reviews[i].Review.CreatedAt)
+			reviews[i].Assessments = append(reviews[i].Assessments, r.assessment)
 		}
 	}
 	return reviews, nil
