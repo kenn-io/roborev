@@ -12,26 +12,18 @@ import (
 	"go.kenn.io/roborev/internal/testutil"
 )
 
-// Compare event refreshes with a full scan on synthetic history containing
-// 8,000 reviews, 4,000 comments, and 500 MiB of stored prompts. Run with
-// CGO_ENABLED=0 to measure the same SQLite driver used by release builds.
+// Compare event refreshes with a full scan on 8,000 reviews and 4,000 comments.
+// The full scan includes 500 MiB of prompts. Run with CGO_ENABLED=0 to measure
+// the same SQLite driver used by release builds.
 func BenchmarkReconcilerReviewEvent(b *testing.B) {
-	db, r := seedReconcilerHistory(b, 8000, 32768)
 	for _, mode := range []string{"full", "job"} {
 		b.Run(mode, func(b *testing.B) {
-			for b.Loop() {
-				_, err := db.ExecContext(b.Context(), `UPDATE reviews SET closed = NOT closed WHERE job_id = 1`)
-				require.NoError(b, err)
-				if mode == "job" {
-					r.WakeJob(1)
-				} else {
-					r.Wake()
-				}
-				for more := true; more; {
-					more, err = r.reconcileTurn(b.Context())
-					require.NoError(b, err)
-				}
+			promptSize := 0
+			if mode == "full" {
+				promptSize = 65536
 			}
+			db, r := seedReconcilerHistory(b, 8000, promptSize)
+			benchmarkReconcilerReviewEvent(b, db, r, mode == "job")
 		})
 	}
 }
@@ -40,16 +32,25 @@ func BenchmarkReconcilerReviewEventHistory(b *testing.B) {
 	for _, reviews := range []int{1000, 4000, 16000} {
 		b.Run(fmt.Sprintf("reviews=%d", reviews), func(b *testing.B) {
 			db, r := seedReconcilerHistory(b, reviews, 0)
-			for b.Loop() {
-				_, err := db.ExecContext(b.Context(), `UPDATE reviews SET closed = NOT closed WHERE job_id = 1`)
-				require.NoError(b, err)
-				r.WakeJob(1)
-				for more := true; more; {
-					more, err = r.reconcileTurn(b.Context())
-					require.NoError(b, err)
-				}
-			}
+			benchmarkReconcilerReviewEvent(b, db, r, true)
 		})
+	}
+}
+
+func benchmarkReconcilerReviewEvent(b *testing.B, db *storage.DB, r *Reconciler, job bool) {
+	b.Helper()
+	for b.Loop() {
+		_, err := db.ExecContext(b.Context(), `UPDATE reviews SET closed = NOT closed WHERE job_id = 1`)
+		require.NoError(b, err)
+		if job {
+			r.WakeJob(1)
+		} else {
+			r.Wake()
+		}
+		for more := true; more; {
+			more, err = r.reconcileTurn(b.Context())
+			require.NoError(b, err)
+		}
 	}
 }
 

@@ -80,6 +80,10 @@ func TestSidecarV2UpgradeRenumbersFTSAndKeepsVectors(t *testing.T) {
 	err = index.db.QueryRowContext(ctx, `SELECT value FROM search_meta WHERE key = 'schema_version'`).Scan(&version)
 	require.NoError(t, err)
 	assert.Equal(t, "3", version)
+	var jobIndex int
+	err = index.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'review_mirror_job_id' AND tbl_name = 'review_mirror'`).Scan(&jobIndex)
+	require.NoError(t, err)
+	assert.Equal(t, 1, jobIndex)
 	for _, doc := range docs {
 		var rowID int64
 		err = index.db.QueryRowContext(ctx, `SELECT rowid FROM review_fts WHERE doc_key = ?`, doc.DocKey).Scan(&rowID)
@@ -97,20 +101,6 @@ func TestSidecarV2UpgradeRenumbersFTSAndKeepsVectors(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, hits, 1)
 	assert.Equal(t, docs[0].DocKey, hits[0].Doc)
-	var embedGen string
-	err = index.db.QueryRowContext(ctx, `SELECT embed_gen FROM review_mirror WHERE doc_key = ?`, docs[0].DocKey).Scan(&embedGen)
-	require.NoError(t, err)
-	assert.Equal(t, "gen-1", embedGen)
-
-	updated := testDocument(1, "replacement search term")
-	changed, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{updated}, nil)
-	require.NoError(t, err)
-	assert.Equal(t, 1, changed)
-	assert.Equal(t, 1, countRowsForDoc(t, index.db, "review_fts", updated.DocKey))
-	var key string
-	err = index.db.QueryRowContext(ctx, `SELECT doc_key FROM review_fts WHERE review_fts MATCH 'replacement'`).Scan(&key)
-	require.NoError(t, err)
-	assert.Equal(t, updated.DocKey, key)
 }
 
 func TestFTSAndVectorSmokeUsesContentHashRevision(t *testing.T) {

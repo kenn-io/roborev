@@ -129,7 +129,7 @@ func TestMirrorRefreshDetectsIdentifierOnlyChange(t *testing.T) {
 	assert.Equal(t, 1, countRowsForDoc(t, index.db, "review_fts", doc.DocKey))
 }
 
-func TestMirrorRowLookupAvoidsFullScans(t *testing.T) {
+func TestMirrorQueriesAvoidFullScans(t *testing.T) {
 	ctx := t.Context()
 	index, err := Open(ctx, filepath.Join(t.TempDir(), "reviews.search.db"))
 	require.NoError(t, err)
@@ -142,7 +142,7 @@ func TestMirrorRowLookupAvoidsFullScans(t *testing.T) {
 	}{
 		{"mirror lookup", readMirrorRowSQL, []any{"doc"}},
 		{"FTS delete", deleteFTSRowSQL, []any{"doc", "doc"}},
-		{"job lookup", `SELECT doc_key FROM review_mirror WHERE job_id = ?`, []any{1}},
+		{"job lookup", mirrorKeysForJobSQL, []any{1}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rows, err := index.db.QueryContext(ctx, "EXPLAIN QUERY PLAN "+tc.query, tc.args...)
