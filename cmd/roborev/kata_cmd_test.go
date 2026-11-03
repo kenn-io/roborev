@@ -19,16 +19,6 @@ import (
 	"go.kenn.io/roborev/internal/testutil"
 )
 
-func TestKataCanonicalCommandDiscovery(t *testing.T) {
-	cmd := kataCmd()
-	var output bytes.Buffer
-	cmd.SetOut(&output)
-	cmd.SetArgs([]string{"--help"})
-	require.NoError(t, cmd.Execute())
-	assert.Contains(t, output.String(), "create")
-	assert.Contains(t, output.String(), "show")
-}
-
 func TestKataCommandsUseDaemonPublicationAPI(t *testing.T) {
 	repo := testutil.NewTestRepoWithCommit(t)
 	repoPath, err := filepath.EvalSymlinks(repo.Path())

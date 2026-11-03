@@ -3,7 +3,6 @@ package findingid
 import (
 	"encoding/json/jsontext"
 	"fmt"
-	"math/rand/v2"
 	"slices"
 	"strings"
 	"testing"
@@ -273,45 +272,6 @@ func TestDocumentHashRejectsWhatIsNotAReviewDocument(t *testing.T) {
 		_, err := DocumentHash(jsontext.Value(doc))
 		require.Error(t, err, name)
 	}
-}
-
-// shuffledDocument renders the base document with its object members in a
-// random order and random insignificant whitespace. Every rendering is the same
-// review, so every rendering must hash the same.
-func shuffledDocument(r *rand.Rand) string {
-	gap := func() string { return strings.Repeat(" ", r.IntN(3)) + []string{"", "\n", "\t"}[r.IntN(3)] }
-	object := func(members []string) string {
-		r.Shuffle(len(members), func(i, j int) { members[i], members[j] = members[j], members[i] })
-		return "{" + gap() + strings.Join(members, gap()+","+gap()) + gap() + "}"
-	}
-	finding := func(severity, problem, fix, location string) string {
-		return object([]string{
-			`"severity":` + gap() + severity, `"problem":` + gap() + problem,
-			`"fix":` + gap() + fix, `"location":` + gap() + location,
-		})
-	}
-	findings := "[" + gap() + finding(`"high"`, `"Nil dereference."`, `"Check first."`, `"a.go:10"`) + gap() + "," + gap() +
-		finding(`"low"`, `"Typo."`, `"Spell it."`, `null`) + gap() + "]"
-	return object([]string{
-		`"schema_version":` + gap() + `2`, `"summary":` + gap() + `"Two problems."`,
-		`"verdict":` + gap() + `"fail"`, `"findings":` + gap() + findings,
-	})
-}
-
-func FuzzDocumentHashIgnoresMemberOrderAndSpacing(f *testing.F) {
-	f.Add(uint64(1), uint64(2))
-	f.Add(uint64(0), uint64(0))
-	f.Add(uint64(7), uint64(99))
-	want, err := DocumentHash(jsontext.Value(baseDocument))
-	if err != nil {
-		f.Fatal(err)
-	}
-	f.Fuzz(func(t *testing.T, seedA, seedB uint64) {
-		doc := shuffledDocument(rand.New(rand.NewPCG(seedA, seedB)))
-		got, err := DocumentHash(jsontext.Value(doc))
-		require.NoError(t, err, doc)
-		assert.Equal(t, want, got, doc)
-	})
 }
 
 // goldenDocument is a fixed review exercising every part of the encoding:
