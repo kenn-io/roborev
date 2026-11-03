@@ -437,12 +437,11 @@ jobs:
       - name: Test with coverage
         # Race coverage runs in the test and daemon-race jobs; repeating it here
         # makes the daemon package exceed its timeout without improving coverage.
-        # A rerun of a failed test rewrites coverage.out with only that rerun's
-        # coverage, so a run that needed a rerun reports partial coverage.
+        # No reruns here: a rerun would rewrite coverage.out with only the
+        # rerun's coverage.
         run: |
           go tool gotestsum --format pkgname-and-test-fails --format-icons text \
             --jsonfile gotestsum/coverage.json \
-            --rerun-fails=2 --rerun-fails-report gotestsum/coverage-reruns.txt \
             --packages "./..." \
             -- -timeout 10m -shuffle=on -tags integration -coverprofile=coverage.out
 
@@ -455,7 +454,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload gotestsum results
-        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        if: failure()
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-coverage-attempt-${{ github.run_attempt }}
