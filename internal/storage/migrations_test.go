@@ -114,7 +114,7 @@ func TestOpenBaselinesDatabaseFromBeforeNumberedMigrations(t *testing.T) {
 	db, err := Open(path)
 	require.NoError(t, err)
 	defer db.Close()
-	assert.Equal(t, []int{1, 2, 3, 4}, appliedVersions(t, db))
+	assert.Equal(t, []int{1, 2, 3, 4, 5}, appliedVersions(t, db))
 	var name string
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT name FROM repos WHERE root_path = '/synthetic/repo'`).Scan(&name))
 	assert.Equal(t, "repo", name)
@@ -193,7 +193,7 @@ func TestCIPanelPRHeadIndexMigration(t *testing.T) {
 	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:3]))
 
 	for range 2 {
-		require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
+		require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:4]))
 		var indexSQL string
 		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT sql FROM sqlite_master
 			WHERE type = 'index' AND name = 'idx_ci_panels_pr_head'`).Scan(&indexSQL))
@@ -201,6 +201,28 @@ func TestCIPanelPRHeadIndexMigration(t *testing.T) {
 		assert.Equal(t, []int{1, 2, 3, 4}, appliedVersions(t, db))
 		// Simulate interruption after creating the index, before recording it.
 		_, err := db.ExecContext(t.Context(), `DELETE FROM schema_migrations WHERE version = 4`)
+		require.NoError(t, err)
+	}
+}
+
+func TestRebuttalReviewVersionMigration(t *testing.T) {
+	t.Parallel()
+	db := openUnmigratedDB(t)
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:4]))
+	_, err := db.ExecContext(t.Context(), `INSERT INTO repos (root_path, name) VALUES ('/synthetic/repo', 'repo')`)
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO review_jobs (repo_id, git_ref, agent, status, job_type)
+		VALUES (1, 'abc1234', 'test', 'done', 'task')`)
+	require.NoError(t, err)
+
+	for range 2 {
+		require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:5]))
+		version, err := db.RebuttalReviewVersion(t.Context(), 1)
+		require.NoError(t, err)
+		assert.Nil(t, version, "existing jobs recorded no review version")
+		assert.Equal(t, []int{1, 2, 3, 4, 5}, appliedVersions(t, db))
+		// Simulate interruption after adding the columns, before recording it.
+		_, err = db.ExecContext(t.Context(), `DELETE FROM schema_migrations WHERE version = 5`)
 		require.NoError(t, err)
 	}
 }

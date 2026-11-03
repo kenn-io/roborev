@@ -37,6 +37,7 @@ var schemaMigrations = []schemaMigration{
 	{2, "compress job content", migrateJobContent},
 	{3, "CI panel retirement reasons", migrateCIPanelRetireReason},
 	{4, "CI panel PR head index", migrateCIPanelPRHeadIndex},
+	{5, "rebuttal review version", migrateRebuttalReviewVersion},
 }
 
 // ErrSchemaTooNew reports a database written by a newer roborev release.
@@ -106,4 +107,29 @@ func migrateCIPanelPRHeadIndex(ctx context.Context, db *DB) error {
 	_, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_ci_panels_pr_head
 		ON ci_pr_panels(github_repo, pr_number, head_sha)`)
 	return err
+}
+
+// migrateRebuttalReviewVersion records which version of a review a rebuttal
+// re-checks. A rerun replaces the review under the same job ID, so the job ID
+// alone cannot tell a re-check of the current review from one of an earlier
+// run. The columns stay local: rows synced from other machines leave them
+// NULL.
+func migrateRebuttalReviewVersion(ctx context.Context, db *DB) error {
+	for _, column := range []struct{ name, kind string }{
+		{"rebuttal_review_id", "INTEGER"},
+		{"rebuttal_review_uuid", "TEXT"},
+	} {
+		exists, err := hasColumn(ctx, db, "review_jobs", column.name)
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		if _, err := db.ExecContext(ctx,
+			`ALTER TABLE review_jobs ADD COLUMN `+column.name+` `+column.kind); err != nil {
+			return fmt.Errorf("add review_jobs.%s: %w", column.name, err)
+		}
+	}
+	return nil
 }
