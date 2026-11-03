@@ -248,9 +248,10 @@ A finding's `decisions` say what happened to it:
 
 A decision attaches to a finding only when exactly one finding matches. Others
 stay on the review with a `target` naming the severity and file, or the excerpt.
-Lines in a comment made on the commit rather than the review also stay on the
-review, because that comment reaches every review of the commit. A comment whose
-lines all became decisions is not repeated under `comments`.
+Lines also stay on the review when their comment was made on the commit rather
+than the review, because it reaches every review of the commit, or before the
+current run of a rerun review. A comment whose lines all became decisions is not
+repeated under `comments`.
 
 `git_log` and `git_blame` mark each commit with `on_branch` and with
 `fix_for_jobs`: the earlier reviews whose comments cite that commit, which
