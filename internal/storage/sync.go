@@ -543,10 +543,7 @@ type SyncableJob struct {
 	FinishedAtRaw         string
 }
 
-// GetJobsToSync returns terminal jobs that need to be pushed to PostgreSQL.
-// These are attempts owned locally that have not been synced or were updated since last sync.
-func (db *DB) GetJobsToSync(machineID uuid.UUID, limit int) ([]SyncableJob, error) {
-	rows, err := db.Query(`
+var jobsToSyncQuery = `
 		SELECT
 			j.id, j.uuid, j.repo_id, COALESCE(r.identity, ''),
 			j.commit_id, COALESCE(c.sha, ''), COALESCE(c.author, ''), COALESCE(c.subject, ''), COALESCE(c.timestamp, ''),
@@ -556,17 +553,27 @@ func (db *DB) GetJobsToSync(machineID uuid.UUID, limit int) ([]SyncableJob, erro
 			COALESCE(j.worktree_path, ''), COALESCE(j.source, ''), COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
 			NULLIF(j.panel_run_uuid, ''), COALESCE(j.panel_role, ''), COALESCE(j.panel_name, ''), COALESCE(j.panel_member_name, ''), COALESCE(j.panel_member_index, 0), COALESCE(j.panel_member_config_json, ''), COALESCE(j.non_voting, 0),
 			j.source_machine_id, j.updated_at
-		FROM review_jobs j
+		FROM review_jobs j NOT INDEXED
 		JOIN repos r ON j.repo_id = r.id
 		LEFT JOIN commits c ON j.commit_id = c.id
 		LEFT JOIN job_content jc ON jc.job_id = j.id
 		WHERE j.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased')
 		AND j.source_machine_id = ?
+		AND j.id > ?
 		AND j.uuid IS NOT NULL
-		AND (j.synced_at IS NULL OR `+sqliteNormalizedTimestampExpr("j.updated_at")+` > `+sqliteNormalizedTimestampExpr("j.synced_at")+`)
+		AND (j.synced_at IS NULL OR ` + sqliteNormalizedTimestampExpr("j.updated_at") + ` > ` + sqliteNormalizedTimestampExpr("j.synced_at") + `)
 		ORDER BY j.id
 		LIMIT ?
-	`, machineID, limit)
+	`
+
+// GetJobsToSync returns terminal jobs that need to be pushed to PostgreSQL.
+// These are attempts owned locally that have not been synced or were updated since last sync.
+func (db *DB) GetJobsToSync(machineID uuid.UUID, limit int) ([]SyncableJob, error) {
+	return db.jobsToSync(machineID, 0, limit)
+}
+
+func (db *DB) jobsToSync(machineID uuid.UUID, afterID int64, limit int) ([]SyncableJob, error) {
+	rows, err := db.Query(jobsToSyncQuery, machineID, afterID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query jobs to sync: %w", err)
 	}
@@ -769,14 +776,7 @@ type SyncableReview struct {
 	UpdatedAt          time.Time
 }
 
-// GetReviewsToSync returns local edits and completed parent uploads whose
-// review attempt needs to follow them. Previously synced content is sent as a
-// metadata-only repair so a cached copy cannot overwrite a peer edit.
-// Local edits clear synced_at. Do not compare a pulled PostgreSQL timestamp
-// with a local acknowledgment: the server's clock can be ahead. Parent and
-// review acknowledgments both use the local clock; keep their full precision.
-func (db *DB) GetReviewsToSync(machineID uuid.UUID, limit int) ([]SyncableReview, error) {
-	rows, err := db.Query(`
+const reviewsToSyncQuery = `
 		SELECT
 			r.id, r.uuid, r.job_id, j.uuid, j.enqueued_at, COALESCE(j.source_machine_id, '00000000-0000-0000-0000-000000000000'),
 			r.agent, r.output, r.closed,
@@ -786,15 +786,29 @@ func (db *DB) GetReviewsToSync(machineID uuid.UUID, limit int) ([]SyncableReview
 		FROM reviews r
 		JOIN review_jobs j ON r.job_id = j.id
 		WHERE r.uuid IS NOT NULL
+		AND r.job_id > ?
 		AND j.uuid IS NOT NULL
 		AND j.synced_at IS NOT NULL
 		AND (r.structured_output IS NOT NULL OR j.job_type NOT IN ('review','range','dirty','synthesis','compact','goal_review'))
 		AND ((r.updated_by_machine_id = ? AND r.synced_at IS NULL)
 		 OR (j.source_machine_id = ? AND (r.synced_at IS NULL
 		 OR replace(rtrim(j.synced_at, 'Z'), ' ', 'T') > replace(rtrim(r.synced_at, 'Z'), ' ', 'T'))))
-		ORDER BY r.id
+		ORDER BY r.job_id
 		LIMIT ?
-	`, machineID, machineID, machineID, limit)
+	`
+
+// GetReviewsToSync returns local edits and completed parent uploads whose
+// review attempt needs to follow them. Previously synced content is sent as a
+// metadata-only repair so a cached copy cannot overwrite a peer edit.
+// Local edits clear synced_at. Do not compare a pulled PostgreSQL timestamp
+// with a local acknowledgment: the server's clock can be ahead. Parent and
+// review acknowledgments both use the local clock; keep their full precision.
+func (db *DB) GetReviewsToSync(machineID uuid.UUID, limit int) ([]SyncableReview, error) {
+	return db.reviewsToSync(machineID, 0, limit)
+}
+
+func (db *DB) reviewsToSync(machineID uuid.UUID, afterJobID int64, limit int) ([]SyncableReview, error) {
+	rows, err := db.Query(reviewsToSyncQuery, machineID, afterJobID, machineID, machineID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query reviews to sync: %w", err)
 	}

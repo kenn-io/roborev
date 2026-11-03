@@ -2,7 +2,9 @@ package storage
 
 import (
 	"database/sql"
+	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -758,4 +760,101 @@ func TestGetJobsToSync_IncludesSkipped(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "expected skipped job to be syncable")
+}
+
+func TestSyncQueriesSeekPastCursor(t *testing.T) {
+	t.Parallel()
+	h := newSyncTestHelper(t)
+	for _, tc := range []struct {
+		name, query, seek string
+		args              []any
+	}{
+		{"jobs", jobsToSyncQuery, "SEARCH j USING INTEGER PRIMARY KEY (rowid>?)", []any{h.machineID, 25, 25}},
+		{"reviews", reviewsToSyncQuery, "SEARCH r USING INDEX sqlite_autoindex_reviews_1 (job_id>?)", []any{h.machineID, 25, h.machineID, h.machineID, 25}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, err := h.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+tc.query, tc.args...)
+			require.NoError(t, err)
+			defer rows.Close()
+			var details []string
+			for rows.Next() {
+				var id, parent, unused int
+				var detail string
+				require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+				details = append(details, detail)
+			}
+			require.NoError(t, rows.Err())
+			plan := strings.Join(details, "\n")
+			assert.Contains(t, plan, tc.seek)
+			assert.NotContains(t, plan, "TEMP B-TREE FOR ORDER BY")
+		})
+	}
+}
+
+func TestSyncQueriesPageHistory(t *testing.T) {
+	t.Parallel()
+	for _, reverse := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reverse=%v", reverse), func(t *testing.T) {
+			t.Parallel()
+			h := newSyncTestHelper(t)
+			assert := assert.New(t)
+			const count = 60
+			jobs := make([]*ReviewJob, count)
+			for i := range jobs {
+				jobs[i] = h.createPendingJob(fmt.Sprintf("commit-%d", i))
+				claimed, err := h.db.ClaimJob("worker")
+				require.NoError(t, err)
+				require.NotNil(t, claimed)
+				require.Equal(t, jobs[i].ID, claimed.ID)
+			}
+			for i := range jobs {
+				index := i
+				if reverse {
+					index = count - 1 - i
+				}
+				require.NoError(t, completeReviewFixture(h.db, jobs[index].ID, "test", "prompt", "output"))
+			}
+			var jobCursor, reviewJobCursor int64
+			var seenJobs, seenReviewJobs []int64
+			for range 3 {
+				batch, err := h.db.jobsToSync(h.machineID, jobCursor, 25)
+				require.NoError(t, err)
+				require.NotEmpty(t, batch)
+				assert.Greater(batch[0].ID, jobCursor)
+				var marks []JobSyncMark
+				var batchIDs []int64
+				for _, job := range batch {
+					batchIDs = append(batchIDs, job.ID)
+					marks = append(marks, NewJobSyncMark(job))
+				}
+				require.NoError(t, h.db.MarkJobsSynced(marks))
+				jobCursor = batch[len(batch)-1].ID
+				reviews, err := h.db.reviewsToSync(h.machineID, reviewJobCursor, 25)
+				require.NoError(t, err)
+				require.NotEmpty(t, reviews)
+				assert.Greater(reviews[0].JobID, reviewJobCursor)
+				var reviewJobIDs []int64
+				for _, review := range reviews {
+					reviewJobIDs = append(reviewJobIDs, review.JobID)
+				}
+				assert.Equal(batchIDs, reviewJobIDs, "reviews follow their jobs in the same batch")
+				require.NoError(t, h.db.MarkReviewsSynced(reviews))
+				reviewJobCursor = reviews[len(reviews)-1].JobID
+				seenJobs = append(seenJobs, batchIDs...)
+				seenReviewJobs = append(seenReviewJobs, reviewJobIDs...)
+			}
+			var want []int64
+			for _, job := range jobs {
+				want = append(want, job.ID)
+			}
+			assert.Equal(want, seenJobs)
+			assert.Equal(want, seenReviewJobs)
+			pendingJobs, err := h.db.jobsToSync(h.machineID, jobCursor, 25)
+			require.NoError(t, err)
+			assert.Empty(pendingJobs)
+			pendingReviews, err := h.db.reviewsToSync(h.machineID, reviewJobCursor, 25)
+			require.NoError(t, err)
+			assert.Empty(pendingReviews)
+		})
+	}
 }
