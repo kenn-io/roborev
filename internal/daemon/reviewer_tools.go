@@ -9,6 +9,7 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
+	gitpkg "go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/mcpserver"
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -141,10 +142,7 @@ func (b reviewerBackend) BranchReviews(
 		if err != nil {
 			continue
 		}
-		// Decisions may be recorded on the job or, through `comment <sha>`, on
-		// its commit.
-		commitID, fallbackSHA := job.LegacyCommentLookupTarget()
-		comments, err := b.db.GetAllCommentsForJob(job.ID, commitID, fallbackSHA)
+		comments, err := b.comments(job)
 		if err != nil {
 			return nil, mcpserver.NewError(mcpserver.ErrorCodeInternal, "load review comments failed")
 		}
@@ -153,4 +151,16 @@ func (b reviewerBackend) BranchReviews(
 		})
 	}
 	return reviews, nil
+}
+
+// comments returns the decisions recorded on a review: those on the job and,
+// through `comment <sha>`, those on its commit. LegacyCommentLookupTarget
+// leaves out synthesis jobs, but a local panel review of one commit is that
+// commit's canonical review, so its commit comments belong to it too.
+func (b reviewerBackend) comments(job storage.ReviewJob) ([]storage.Response, error) {
+	commitID, fallbackSHA := job.LegacyCommentLookupTarget()
+	if job.IsSynthesisJob() && job.CommitID != nil && !gitpkg.IsRange(job.GitRef) {
+		commitID = *job.CommitID
+	}
+	return b.db.GetAllCommentsForJob(job.ID, commitID, fallbackSHA)
 }

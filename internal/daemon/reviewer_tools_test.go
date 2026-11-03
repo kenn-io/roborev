@@ -340,9 +340,10 @@ func TestReviewerToolsIncludePanelReviewsAndCommitComments(t *testing.T) {
 			`{"severity":"medium","problem":"Avg lacks a doc comment.","fix":"Add one.","location":"calc.go:3"}]}`)
 	_, err = f.db.AddCommentToJob(synthesis.ID, "roborev-fix", "Decline: the doc comment is not needed.")
 	require.NoError(err)
-	// roborev comment <sha> records a decision on the commit; it reaches the
-	// commit's ordinary reviews, as roborev_list_comments shows it.
-	_, err = f.db.AddComment(commit.ID, "developer", "Invalid: callers never pass nil.")
+	// roborev comment <sha> records a decision on the commit, which reaches
+	// every canonical review of that commit, panel or not.
+	commitDecision := "Fix: added the doc comment in " + f.fixSHA[:9] + "."
+	_, err = f.db.AddComment(commit.ID, "developer", commitDecision)
 	require.NoError(err)
 
 	token, _ := f.issue(t)
@@ -368,5 +369,11 @@ func TestReviewerToolsIncludePanelReviewsAndCommitComments(t *testing.T) {
 		return out
 	}
 	assert.Contains(texts(panel), "Decline: the doc comment is not needed.")
-	assert.Contains(texts(byJob[float64(f.featureJob.ID)]), "Invalid: callers never pass nil.")
+	assert.Contains(texts(panel), commitDecision)
+	assert.Contains(texts(byJob[float64(f.featureJob.ID)]), commitDecision)
+
+	blame, isErr := callReviewerTool(t, session, mcpserver.ReviewerToolGitBlame,
+		map[string]any{"path": "calc.go", "start_line": 4})
+	require.False(isErr, "%v", blame)
+	assert.Contains(blame["hunks"].([]any)[0].(map[string]any)["fix_for_jobs"], float64(synthesis.ID))
 }
