@@ -11,8 +11,10 @@ import (
 	"time"
 
 	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/config"
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/tokens"
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
@@ -54,7 +56,7 @@ func (wp *WorkerPool) processSynthesisJob(
 	// Decide framing from every voting member before failures are dropped.
 	neutral := reviewpkg.NeedsNeutralSynthesis(results)
 	succeeded := filterSucceeded(results)
-	instructions, err := synthesisInstructions(job)
+	cfg, err := synthesisConfig(job)
 	if err != nil {
 		wp.failOrRetryContext(ctx, workerID, job, job.Agent, err.Error())
 		return
@@ -67,7 +69,7 @@ func (wp *WorkerPool) processSynthesisJob(
 			errMsg = "all review agents failed or produced no usable output"
 		}
 		wp.failSynthesisWithoutReviewContext(ctx, workerID, job, errMsg)
-	case len(succeeded) == 1 && instructions == "":
+	case len(succeeded) == 1 && cfg.Instructions == "":
 		// Exactly one member produced output — pass it through verbatim and
 		// label the review with that member's agent. Its verdict already
 		// honors the panel threshold, so no synthesis agent is needed.
@@ -89,7 +91,7 @@ func (wp *WorkerPool) processSynthesisJob(
 			return
 		}
 		single.Output = doc.Markdown(job.MinSeverity)
-		wp.completeSynthesisContext(workerID, job, synthesisResult{review: single})
+		wp.checkAndCompleteSynthesis(ctx, workerID, job, synthesisResult{review: single}, doc, cfg.Check)
 	default:
 		if allMembersPassed(results, succeeded) && !anyRetainedFindings(succeeded) {
 			wp.completeSynthesisDocument(workerID, job, structuredreview.Document{
@@ -99,7 +101,7 @@ func (wp *WorkerPool) processSynthesisJob(
 			return
 		}
 		// Combine and deduplicate via one agent call.
-		wp.synthesizeSucceededResults(ctx, workerID, job, succeeded, neutral, instructions)
+		wp.synthesizeSucceededResults(ctx, workerID, job, succeeded, neutral, cfg.Instructions, cfg.Check)
 	}
 }
 
@@ -130,6 +132,7 @@ func (wp *WorkerPool) synthesizeSucceededResults(
 	succeeded []reviewpkg.ReviewResult,
 	neutral bool,
 	instructions string,
+	check *ciCheckConfig,
 ) {
 	// Mirror processJob's quota gate: an agent already in cooldown must fail
 	// over instead of burning another quota-exhausted call. The no-agent
@@ -140,7 +143,7 @@ func (wp *WorkerPool) synthesizeSucceededResults(
 			fmt.Sprintf("agent %s quota cooldown active", canonicalAgent))
 		return
 	}
-	prompt := reviewpkg.BuildSynthesisPrompt(succeeded, job.MinSeverity, neutral, instructions)
+	prompt := reviewpkg.BuildSynthesisPrompt(succeeded, neutral, instructions)
 	doc, resolvedAgent, capturedSession, runErr := wp.runSynthesisAgent(
 		ctx, workerID, job, succeeded, prompt,
 	)
@@ -148,21 +151,16 @@ func (wp *WorkerPool) synthesizeSucceededResults(
 		// runSynthesisAgent already handled the failure/cancel.
 		return
 	}
-	structured, err := json.Marshal(doc)
+	result, err := synthesisDocumentResult(job, doc)
 	if err != nil {
 		log.Printf("[%s] Error encoding synthesis document for job %d: %v", workerID, job.ID, err)
 	}
-	wp.completeSynthesisContext(workerID, job, synthesisResult{
-		review: reviewpkg.ReviewResult{
-			Agent:            resolvedAgent,
-			Output:           doc.Markdown(job.MinSeverity),
-			Verdict:          reviewpkg.SynthesisVerdict(doc, job.MinSeverity),
-			StructuredOutput: structured,
-			MinSeverity:      job.MinSeverity,
-		},
+	result.Agent = resolvedAgent
+	wp.checkAndCompleteSynthesis(ctx, workerID, job, synthesisResult{
+		review:          result,
 		capturedSession: capturedSession,
 		captureUsage:    true,
-	})
+	}, doc, check)
 }
 
 // synthesisJobConfig is the snapshot a panel synthesis job stores in its
@@ -170,16 +168,46 @@ func (wp *WorkerPool) synthesizeSucceededResults(
 // execution config there, which ciACPRepoConfig reads.
 type synthesisJobConfig struct {
 	ciACPExecutionConfig
-	Instructions string `json:"instructions,omitempty"`
+	Instructions string         `json:"instructions,omitempty"`
+	Check        *ciCheckConfig `json:"check,omitzero"`
+}
+
+func synthesisExperimentConfig(snapshot string) (string, error) {
+	c, err := synthesisConfig(&storage.ReviewJob{JobType: storage.JobTypeSynthesis, PanelMemberConfigJSON: snapshot})
+	if err != nil {
+		return "", err
+	}
+	if c.Check != nil {
+		c.Check.PullRequest = ""
+	}
+	return c.encode()
+}
+
+func restoreSynthesisExperimentConfig(frozen, snapshot string) (string, error) {
+	c, err := synthesisConfig(&storage.ReviewJob{JobType: storage.JobTypeSynthesis, PanelMemberConfigJSON: frozen})
+	if err != nil {
+		return "", err
+	}
+	job, err := synthesisConfig(&storage.ReviewJob{JobType: storage.JobTypeSynthesis, PanelMemberConfigJSON: snapshot})
+	if err != nil {
+		return "", err
+	}
+	if c.Check != nil {
+		c.Check.PullRequest = ""
+		if job.Check != nil {
+			c.Check.PullRequest = job.Check.PullRequest
+		}
+	}
+	return c.encode()
 }
 
 // encode returns "" when nothing is set, so a synthesis job without
-// instructions or an ACP snapshot stores no config.
+// instructions, a checker, or an ACP snapshot stores no config.
 func (c synthesisJobConfig) encode() (string, error) {
-	if c.Instructions == "" && len(c.ACP) == 0 {
+	if c.Instructions == "" && len(c.ACP) == 0 && c.Check == nil {
 		return "", nil
 	}
-	raw, err := json.Marshal(c)
+	raw, err := json.Marshal(c, json.Deterministic(true))
 	if err != nil {
 		return "", err
 	}
@@ -187,16 +215,22 @@ func (c synthesisJobConfig) encode() (string, error) {
 }
 
 // synthesisInstructions returns the panel synthesis instructions frozen with
-// the job, or "" when it has none.
+// the job, or "" when it has none. Only a synthesis job's config holds them:
+// a member's config uses the same key for its own reviewer instructions.
 func synthesisInstructions(job *storage.ReviewJob) (string, error) {
-	if job.PanelMemberConfigJSON == "" {
-		return "", nil
+	cfg, err := synthesisConfig(job)
+	return cfg.Instructions, err
+}
+
+func synthesisConfig(job *storage.ReviewJob) (synthesisJobConfig, error) {
+	if !job.IsSynthesisJob() || job.PanelMemberConfigJSON == "" {
+		return synthesisJobConfig{}, nil
 	}
 	var c synthesisJobConfig
 	if err := json.Unmarshal([]byte(job.PanelMemberConfigJSON), &c); err != nil {
-		return "", fmt.Errorf("decode synthesis config: %w", err)
+		return synthesisJobConfig{}, fmt.Errorf("decode synthesis config: %w", err)
 	}
-	return c.Instructions, nil
+	return c, nil
 }
 
 // headOf returns the head side of a git ref range: the part after the last
@@ -304,6 +338,7 @@ type synthesisResult struct {
 	review          reviewpkg.ReviewResult
 	capturedSession string
 	captureUsage    bool
+	checkerUsage    *tokens.Usage
 }
 
 // completeSynthesisContext stores the synthesis review, guards against the
@@ -313,10 +348,11 @@ func (wp *WorkerPool) completeSynthesisContext(
 	workerID string, job *storage.ReviewJob, res synthesisResult,
 ) {
 	var tokenUsage *sessionTokenUsage
-	if res.captureUsage {
+	if res.captureUsage || res.checkerUsage != nil {
 		collected := wp.collectTokenUsageForSession(
 			context.Background(), workerID, job, res.capturedSession,
 		)
+		collected.withUnpricedPhase(res.captureUsage, res.checkerUsage)
 		tokenUsage = &collected
 	}
 	wp.runAttemptTransition(workerID, job, func() {
@@ -419,10 +455,7 @@ func (wp *WorkerPool) runSynthesisAgent(
 
 	normalizer := GetNormalizer(agentName)
 	outputWriter := wp.outputBuffers.Writer(job.ID, normalizer)
-	defer func() {
-		outputWriter.Flush()
-		wp.outputBuffers.CloseJob(job.ID)
-	}()
+	defer outputWriter.Flush()
 	jobLog := newAgentJobLogWriter(job.ID, agentName)
 	defer func() {
 		if cErr := jobLog.Close(); cErr != nil {
@@ -574,17 +607,34 @@ func synthesisAgentNameMatches(selectedAgent, configuredAgent string) bool {
 }
 
 func (wp *WorkerPool) completeSynthesisDocument(workerID string, job *storage.ReviewJob, doc structuredreview.Document) {
-	raw, err := json.Marshal(doc)
+	result, err := synthesisDocumentResult(job, doc)
 	if err != nil {
 		wp.failSynthesisWithoutReviewContext(context.Background(), workerID, job, err.Error())
 		return
 	}
+	wp.completeSynthesisContext(workerID, job, synthesisResult{review: result})
+}
+
+func synthesisDocumentResult(job *storage.ReviewJob, doc structuredreview.Document) (reviewpkg.ReviewResult, error) {
+	raw, err := json.Marshal(doc)
 	verdict := storage.VerdictUnknown
 	if !doc.UnableToReview() {
-		verdict = storage.VerdictFromPassed(doc.Passed(job.MinSeverity))
+		verdict = reviewpkg.SynthesisVerdict(doc, job.MinSeverity)
 	}
-	wp.completeSynthesisContext(workerID, job, synthesisResult{review: reviewpkg.ReviewResult{
+	return reviewpkg.ReviewResult{
 		Agent: job.Agent, Output: doc.Markdown(job.MinSeverity), Verdict: verdict,
 		StructuredOutput: raw, MinSeverity: job.MinSeverity,
-	}})
+	}, err
+}
+
+// needsExactCheckout reports whether a local committed review must run in a
+// temporary checkout of the reviewed commit instead of the working tree:
+// isolate_reviews asks for it, and synthesis instructions may tell the agent
+// to read the code, which must be the code that was reviewed.
+func needsExactCheckout(job *storage.ReviewJob, repoPath string, cfg *config.Config) (bool, error) {
+	if config.ResolveIsolateReviews(repoPath, cfg) {
+		return true, nil
+	}
+	instructions, err := synthesisInstructions(job)
+	return instructions != "", err
 }

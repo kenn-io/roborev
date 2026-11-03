@@ -3,7 +3,6 @@
 package git
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -19,13 +18,13 @@ func TestNewGitCmdHidesConsole(t *testing.T) {
 	require.NotNil(t, cmd.SysProcAttr)
 	assert.NotZero(cmd.SysProcAttr.CreationFlags & testCreateNoWindow)
 
-	ctxCmd := newGitCmdContext(context.Background(), "status")
+	ctxCmd := newGitCmdContext(t.Context(), "status")
 	require.NotNil(t, ctxCmd.SysProcAttr)
 	assert.NotZero(ctxCmd.SysProcAttr.CreationFlags & testCreateNoWindow)
 }
 
 func TestNewGitCommitCmdHidesConsole(t *testing.T) {
-	cmd := newGitCommitCmd("", "commit", "-m", "test")
+	cmd := newGitCommitCmd(t.Context(), "", "commit", "-m", "test")
 	require.NotNil(t, cmd.SysProcAttr)
 	assert.NotZero(t, cmd.SysProcAttr.CreationFlags&testCreateNoWindow)
 }

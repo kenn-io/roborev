@@ -16,9 +16,9 @@ import (
 func TestStreamReconnectWaitUsesContextAndTimer(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		start := time.Now()
-		require.NoError(t, waitForStreamReconnect(context.Background(), time.Second))
+		require.NoError(t, waitForStreamReconnect(t.Context(), time.Second))
 		assert.Equal(t, time.Second, time.Since(start))
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		done := make(chan error, 1)
 		go func() { done <- waitForStreamReconnect(ctx, time.Hour) }()
 		synctest.Wait()

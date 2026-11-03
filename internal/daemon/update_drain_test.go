@@ -34,7 +34,7 @@ func postUpdateDrain(
 	t.Helper()
 	data, err := json.Marshal(body)
 	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(data))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, bytes.NewReader(data))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(w, req)
@@ -105,7 +105,7 @@ func TestInterruptPreparationLinearizesWithRetryTransition(t *testing.T) {
 	go func() {
 		defer close(transitionDone)
 		server.workerPool.failOrRetryAgentContext(
-			context.Background(), "worker-update", job, "test", "provider error",
+			t.Context(), "worker-update", job, "test", "provider error",
 		)
 	}()
 	require.True(t, waitForUpdateSignal(checked, time.Second))
@@ -202,15 +202,16 @@ func TestReleaseClearsInterruptTargetsBeforeOpeningClaimGate(t *testing.T) {
 	const targetID int64 = 42
 	server.workerPool.InterruptJobsForUpdate([]int64{targetID})
 
-	conn, err := db.Conn(context.Background())
+	conn, err := db.Conn(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, conn.Close()) })
-	_, err = conn.ExecContext(context.Background(), "BEGIN IMMEDIATE")
+	_, err = conn.ExecContext(t.Context(), "BEGIN IMMEDIATE")
 	require.NoError(t, err)
 	locked := true
 	t.Cleanup(func() {
 		if locked {
-			_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+			// t.Context is already canceled when cleanups run.
+			_, _ = conn.ExecContext(context.WithoutCancel(t.Context()), "ROLLBACK")
 		}
 	})
 
@@ -227,7 +228,7 @@ func TestReleaseClearsInterruptTargetsBeforeOpeningClaimGate(t *testing.T) {
 		return !targeted
 	}, 5*time.Second, 10*time.Millisecond)
 
-	_, err = conn.ExecContext(context.Background(), "ROLLBACK")
+	_, err = conn.ExecContext(t.Context(), "ROLLBACK")
 	require.NoError(t, err)
 	locked = false
 	require.NoError(t, <-releaseDone)
@@ -278,7 +279,7 @@ func TestInterruptDrainRetriesFailedAttemptRequeue(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, job)
 	lease := prepareUpdateDrain(t, server, "owner-requeue-retry", "interrupt")
-	_, err = db.Exec(fmt.Sprintf(`
+	_, err = db.ExecContext(t.Context(), fmt.Sprintf(`
 		CREATE TRIGGER fail_update_requeue
 		BEFORE UPDATE ON review_jobs
 		WHEN OLD.id = %d AND NEW.status = 'queued'
@@ -287,7 +288,7 @@ func TestInterruptDrainRetriesFailedAttemptRequeue(t *testing.T) {
 		END
 	`, job.ID))
 	require.NoError(t, err)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	assert.True(t, server.workerPool.handleUpdateInterruption(ctx, "worker-update", job))
@@ -295,7 +296,7 @@ func TestInterruptDrainRetriesFailedAttemptRequeue(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, storage.JobStatusRunning, stored.Status)
 
-	_, err = db.Exec(`DROP TRIGGER fail_update_requeue`)
+	_, err = db.ExecContext(t.Context(), `DROP TRIGGER fail_update_requeue`)
 	require.NoError(t, err)
 	released, err := server.updateCoordinator.release(lease.LeaseToken)
 	require.NoError(t, err)
@@ -313,7 +314,7 @@ func TestFailedAbortRollbackRemainsVisibleUntilGateRecovers(t *testing.T) {
 		claimed, err := db.ClaimJob("worker-update")
 		require.NoError(t, err)
 		require.NotNil(t, claimed)
-		_, err = db.Exec(`
+		_, err = db.ExecContext(t.Context(), `
 		CREATE TRIGGER fail_update_drain_release
 		BEFORE UPDATE ON daemon_state
 		WHEN NEW.key = 'shutdown_draining' AND NEW.value = 'false'
@@ -337,7 +338,7 @@ func TestFailedAbortRollbackRemainsVisibleUntilGateRecovers(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, draining)
 
-		_, err = db.Exec(`DROP TRIGGER fail_update_drain_release`)
+		_, err = db.ExecContext(t.Context(), `DROP TRIGGER fail_update_drain_release`)
 		require.NoError(t, err)
 		time.Sleep(updateRecoveryRetryInterval)
 		synctest.Wait()
@@ -399,7 +400,7 @@ func TestInterruptDrainWaitsUntilEveryTargetUnwinds(t *testing.T) {
 				assert.False(t, expiresAt.After(time.Now()))
 
 				if terminal == storage.JobStatusQueued {
-					_, err = db.Exec(`
+					_, err = db.ExecContext(t.Context(), `
 						UPDATE review_jobs
 						SET status = 'queued', worker_id = NULL, started_at = NULL
 						WHERE id = ?
@@ -432,7 +433,7 @@ func TestStatusReportsUpdateDrain(t *testing.T) {
 	server, _, _ := newTestServer(t)
 	lease := prepareUpdateDrain(t, server, "owner-status", "wait")
 	w := httptest.NewRecorder()
-	server.httpServer.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/status", nil))
+	server.httpServer.Handler.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/status", nil))
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
 	var status storage.DaemonStatus

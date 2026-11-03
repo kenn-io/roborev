@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -1259,7 +1258,7 @@ func TestPostCommitTimesOutOnSlowDaemon(t *testing.T) {
 	orig := hookHTTPClient
 	hookHTTPClient = func(daemon.DaemonEndpoint, time.Duration) *http.Client {
 		return &http.Client{
-			Timeout:   50 * time.Millisecond,
+			Timeout:   50 * time.Millisecond, //nolint:kennlint // deadlinetest: the transport blocks until the request deadline; the hook must return without failing the commit
 			Transport: rt,
 		}
 	}
@@ -1273,7 +1272,7 @@ func TestPostCommitTimesOutOnSlowDaemon(t *testing.T) {
 	case <-rt.hit:
 		// RoundTrip was called — timeout path was exercised
 	default:
-		require.NoError(t, err, "RoundTrip was never called; timeout not exercised")
+		require.FailNow(t, "RoundTrip was never called; timeout not exercised")
 	}
 	assert.False(t, realHandlerCalled, "real handler should not be reached")
 
@@ -1449,7 +1448,7 @@ esac
 // the ROBOREV= line patched to point at a mock binary.
 func installMockHook(t *testing.T, repoDir, mockBinDir string) {
 	t.Helper()
-	hooksDir, err := gitrepo.HooksPath(context.Background(), repoDir)
+	hooksDir, err := gitrepo.HooksPath(t.Context(), repoDir)
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(hooksDir, 0o755))
 
@@ -1524,7 +1523,7 @@ func TestPostCommitDoesNotEnqueueDuringRebase(t *testing.T) {
 			//   current: C -- D -- E (branch files)
 			gitCmd := func(args ...string) {
 				t.Helper()
-				cmd := exec.Command("git", args...)
+				cmd := exec.CommandContext(t.Context(), "git", args...)
 				cmd.Dir = r.repo.Dir
 				cmd.Env = gitEnv
 				out, err := cmd.CombinedOutput()
@@ -1556,7 +1555,7 @@ func TestPostCommitDoesNotEnqueueDuringRebase(t *testing.T) {
 				"hook must fire at least once before rebase to prove it works")
 
 			// Run a full clean rebase — all 3 feature commits replay.
-			cmd := exec.Command("git", "rebase", "rebase-base")
+			cmd := exec.CommandContext(t.Context(), "git", "rebase", "rebase-base")
 			cmd.Dir = r.repo.Dir
 			cmd.Env = gitEnv
 			out, err := cmd.CombinedOutput()

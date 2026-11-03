@@ -17,7 +17,7 @@ func TestBindingReadsKataToml(t *testing.T) {
 		[]byte("version = 1\n[project]\nname = \"myproj\"\n"), 0o644))
 
 	c := NewCLIClient(dir)
-	b, err := c.Binding(context.Background())
+	b, err := c.Binding(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, "myproj", b.Project)
 }
@@ -29,13 +29,13 @@ func TestBindingWalksUp(t *testing.T) {
 	child := filepath.Join(root, "a", "b")
 	require.NoError(t, os.MkdirAll(child, 0o755))
 
-	b, err := NewCLIClient(child).Binding(context.Background())
+	b, err := NewCLIClient(child).Binding(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, "parentproj", b.Project)
 }
 
 func TestBindingNoBinding(t *testing.T) {
-	_, err := NewCLIClient(t.TempDir()).Binding(context.Background())
+	_, err := NewCLIClient(t.TempDir()).Binding(t.Context())
 	assert.ErrorIs(t, err, ErrNoBinding)
 }
 
@@ -48,7 +48,7 @@ func TestBindingEmptyNameKeepsWalking(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(child, ".kata.toml"),
 		[]byte("[project]\n"), 0o644)) // present but no name
 
-	b, err := NewCLIClient(child).Binding(context.Background())
+	b, err := NewCLIClient(child).Binding(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, "parentproj", b.Project)
 }
@@ -62,7 +62,7 @@ func TestBindingMalformedTomlStops(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(child, ".kata.toml"),
 		[]byte("this is not valid toml ===\n"), 0o644))
 
-	b, err := NewCLIClient(child).Binding(context.Background())
+	b, err := NewCLIClient(child).Binding(t.Context())
 	require.Error(t, err)
 	require.NotErrorIs(t, err, ErrNoBinding)
 	assert.Empty(t, b.Project)
@@ -75,7 +75,7 @@ func TestBindingLocalTomlOverrides(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".kata.local.toml"),
 		[]byte("[project]\nname = \"local\"\n"), 0o644))
 
-	b, err := NewCLIClient(dir).Binding(context.Background())
+	b, err := NewCLIClient(dir).Binding(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, "local", b.Project)
 }
@@ -87,7 +87,7 @@ func TestBindingLocalServerOnlyFallsThrough(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".kata.local.toml"),
 		[]byte("[server]\nurl = \"http://x\"\n"), 0o644))
 
-	b, err := NewCLIClient(dir).Binding(context.Background())
+	b, err := NewCLIClient(dir).Binding(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, "committed", b.Project)
 }
@@ -101,7 +101,7 @@ func TestBindingMalformedLocalTomlStops(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(child, ".kata.local.toml"),
 		[]byte("this is not valid toml ===\n"), 0o644))
 
-	b, err := NewCLIClient(child).Binding(context.Background())
+	b, err := NewCLIClient(child).Binding(t.Context())
 	require.Error(t, err)
 	require.NotErrorIs(t, err, ErrNoBinding)
 	assert.Empty(t, b.Project)
@@ -123,7 +123,7 @@ func TestListParsesEnvelope(t *testing.T) {
 		{"short_id":"abc4","qualified_id":"myproj#abc4","title":"T1","body":"B1","status":"open","labels":["x"]},
 		{"short_id":"def5","title":"T2","body":"B2","status":"open"}]}`, nil)
 
-	issues, err := c.List(context.Background(), ListOpts{Status: "open"})
+	issues, err := c.List(t.Context(), ListOpts{Status: "open"})
 	require.NoError(t, err)
 	require.Len(t, issues, 2)
 	assert.Equal(t, "abc4", issues[0].ShortID)
@@ -135,7 +135,7 @@ func TestListParsesEnvelope(t *testing.T) {
 
 func TestListDefaultsStatusOpen(t *testing.T) {
 	c, args := stubClient(`{"issues":[]}`, nil)
-	_, err := c.List(context.Background(), ListOpts{})
+	_, err := c.List(t.Context(), ListOpts{})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"list", "--json", "--status", "open"}, *args)
 }
@@ -145,7 +145,7 @@ func TestShowParsesEnvelope(t *testing.T) {
 		{"short_id":"abc4","title":"Task","body":"Do the thing","status":"open"},
 		"labels":[{"label":"bug"},{"label":"p1"}]}`, nil)
 
-	iss, err := c.Show(context.Background(), "abc4")
+	iss, err := c.Show(t.Context(), "abc4")
 	require.NoError(t, err)
 	assert.Equal(t, "Task", iss.Title)
 	assert.Equal(t, "Do the thing", iss.Body)
@@ -157,7 +157,7 @@ func TestShowNoLabels(t *testing.T) {
 	c, _ := stubClient(`{"kata_api_version":1,"issue":
 		{"short_id":"abc4","title":"Task","status":"open"}}`, nil)
 
-	iss, err := c.Show(context.Background(), "abc4")
+	iss, err := c.Show(t.Context(), "abc4")
 	require.NoError(t, err)
 	assert.Empty(t, iss.Labels)
 }
@@ -171,7 +171,7 @@ func TestShowUsesProjectQualifiedLinkDirection(t *testing.T) {
 		 "to":{"short_id":"same","project":"current","qualified_id":"current#same"}}]}`, nil)
 	c.workdir = workdir
 
-	issue, err := c.Show(context.Background(), "same")
+	issue, err := c.Show(t.Context(), "same")
 	require.NoError(t, err)
 	require.Len(t, issue.BlockedBy, 1)
 	assert.Equal(t, "other#same", issue.BlockedBy[0].QualifiedID)
@@ -181,7 +181,7 @@ func TestShowUsesProjectQualifiedLinkDirection(t *testing.T) {
 func TestCreateParsesEnvelopeAndArgs(t *testing.T) {
 	c, args := stubClient(`{"kata_api_version":1,"issue":{"short_id":"zzz9"},"changed":true,"reused":true}`, nil)
 	p := 2
-	res, err := c.Create(context.Background(), CreateReq{
+	res, err := c.Create(t.Context(), CreateReq{
 		Title: "title", Body: "body", Project: "myproj",
 		Labels: []string{"roborev", "review-finding"}, Priority: &p,
 		IdempotencyKey: "roborev:7:review.completed:sha",
@@ -200,21 +200,21 @@ func TestCreateParsesEnvelopeAndArgs(t *testing.T) {
 
 func TestCreateReusedAbsentMeansFalse(t *testing.T) {
 	c, _ := stubClient(`{"issue":{"short_id":"zzz9"},"changed":true}`, nil)
-	res, err := c.Create(context.Background(), CreateReq{Title: "t"})
+	res, err := c.Create(t.Context(), CreateReq{Title: "t"})
 	require.NoError(t, err)
 	assert.False(t, res.Reused)
 }
 
 func TestListPropagatesError(t *testing.T) {
 	c, _ := stubClient("", ErrUnavailable)
-	_, err := c.List(context.Background(), ListOpts{})
+	_, err := c.List(t.Context(), ListOpts{})
 	assert.ErrorIs(t, err, ErrUnavailable)
 }
 
 func TestCreateZeroPriorityEmitted(t *testing.T) {
 	c, args := stubClient(`{"issue":{"short_id":"z0"}}`, nil)
 	p0 := 0
-	_, err := c.Create(context.Background(), CreateReq{Title: "t", Priority: &p0})
+	_, err := c.Create(t.Context(), CreateReq{Title: "t", Priority: &p0})
 	require.NoError(t, err)
 	assert.Contains(t, *args, "--priority")
 	assert.Contains(t, *args, "0")

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -16,6 +17,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/sandbox"
 )
 
 func setupMockCodex(t *testing.T, unsafe bool, opts MockCLIOpts) (*CodexAgent, *MockCLIResult) {
@@ -127,7 +130,7 @@ echo "unexpected args: $*" >&2
 exit 1
 `)
 
-	supported, err := codexSupportsThreadSource(context.Background(), cmdPath, false)
+	supported, err := codexSupportsThreadSource(t.Context(), cmdPath, false)
 	require.NoError(t, err)
 	assert.True(t, supported, "expected thread-source support")
 }
@@ -138,7 +141,7 @@ echo "unknown flag --thread-source" >&2
 exit 2
 `)
 
-	supported, err := codexSupportsThreadSource(context.Background(), cmdPath, false)
+	supported, err := codexSupportsThreadSource(t.Context(), cmdPath, false)
 	require.NoError(t, err)
 	assert.False(t, supported)
 }
@@ -324,10 +327,18 @@ func TestCodexCommandLineOmitsRuntimeOnlyArgs(t *testing.T) {
 	assert.False(t, strings.HasSuffix(cmdLine, " -"), "command line should omit stdin marker: %q", cmdLine)
 }
 
+func TestCodexSandboxCommandLine(t *testing.T) {
+	withUnsafeAgents(t, false)
+	a := NewCodexAgent("codex").WithSandbox(&CodexSandbox{})
+	a.IgnoreUserConfig = true
+
+	assert.Equal(t, `codex exec --json -c web_search="disabled" -c model_provider="roborev-route" --dangerously-bypass-approvals-and-sandbox`, a.CommandLine())
+}
+
 func TestCodexSupportsDangerousFlagAllowsNonZeroHelp(t *testing.T) {
 	cmdPath := writeTempCommand(t, "#!/bin/sh\necho \"usage "+codexDangerousFlag+"\"; exit 1\n")
 
-	supported, err := codexSupportsDangerousFlag(context.Background(), cmdPath, false)
+	supported, err := codexSupportsDangerousFlag(t.Context(), cmdPath, false)
 	require.NoError(t, err)
 	assert.True(t, supported, "expected dangerous flag support")
 }
@@ -341,7 +352,7 @@ echo "unexpected args: $*" >&2
 exit 1
 `)
 
-	supported, err := codexSupportsIgnoreUserConfig(context.Background(), cmdPath)
+	supported, err := codexSupportsIgnoreUserConfig(t.Context(), cmdPath)
 	require.NoError(t, err)
 	assert.True(t, supported, "expected ignore-user-config support")
 }
@@ -369,7 +380,7 @@ exit 1
 `, tc.errorMsg)
 			cmdPath := writeTempCommand(t, script)
 
-			supported, err := codexSupportsIgnoreUserConfig(context.Background(), cmdPath)
+			supported, err := codexSupportsIgnoreUserConfig(t.Context(), cmdPath)
 			require.NoError(t, err)
 			assert.False(t, supported, "expected %q to be treated as unsupported", tc.errorMsg)
 		})
@@ -380,7 +391,7 @@ func TestCodexReviewUnsafeMissingFlagErrors(t *testing.T) {
 	a, _ := setupMockCodex(t, true, MockCLIOpts{
 		HelpOutput: "usage",
 	})
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does not support")
 }
@@ -391,7 +402,7 @@ func TestCodexReviewMarksPropagatedCapabilityProbeErrorUnavailable(t *testing.T)
 		StderrLines: []string{"native package missing"},
 	})
 
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.Error(t, err)
 	assert.True(t, IsUnavailable(err))
 	assert.Contains(t, err.Error(), "native package missing")
@@ -407,7 +418,7 @@ func TestCodexReviewIncludesIgnoreUserConfigWhenSupported(t *testing.T) {
 	})
 	a = WithCodexUserConfigIgnored(a, true).(*CodexAgent)
 
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.NoError(t, err)
 
 	args := readMockArgs(t, mock.ArgsFile)
@@ -429,7 +440,7 @@ echo '{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}'
 `)
 	a := WithCodexUserConfigIgnored(NewCodexAgent(cmdPath), true).(*CodexAgent)
 
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.NoError(t, err)
 }
 
@@ -442,7 +453,7 @@ func TestCodexReviewPassesThreadSourceWhenSupported(t *testing.T) {
 		},
 	})
 
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.NoError(t, err)
 
 	args := readMockArgs(t, mock.ArgsFile)
@@ -460,7 +471,7 @@ func TestCodexReviewOmitsIgnoreUserConfigWhenUnsupported(t *testing.T) {
 	})
 	a = WithCodexUserConfigIgnored(a, true).(*CodexAgent)
 
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.NoError(t, err)
 
 	args := readMockArgs(t, mock.ArgsFile)
@@ -532,7 +543,7 @@ command = "docs-mcp"
 			a = WithCodexUserConfigIgnored(a, tt.ignoreConfig).(*CodexAgent)
 			a.ConfigOverrides = tt.overrides
 
-			_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+			_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 			require.NoError(t, err)
 
 			args := readMockArgs(t, mock.ArgsFile)
@@ -559,7 +570,7 @@ func TestCodexReviewRunsWhenUserConfigIsInvalid(t *testing.T) {
 	t.Cleanup(func() { log.SetOutput(prevOutput) })
 
 	for range 2 {
-		result, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+		result, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 		require.NoError(t, err)
 		assert.Equal(t, "ok", result)
 
@@ -580,7 +591,7 @@ func TestCodexReviewMissingAuthIsPermanent(t *testing.T) {
 		},
 	})
 
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.ErrorIs(t, err, errCodexStreamFailed)
 	assert.Contains(t, err.Error(), unauthorized)
 	assert.Contains(t, err.Error(), "cli_auth_credentials_store")
@@ -597,7 +608,7 @@ func TestCodexReviewUsesSandboxNone(t *testing.T) {
 		},
 	})
 
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.NoError(t, err)
 
 	args, err := os.ReadFile(mock.ArgsFile)
@@ -619,7 +630,7 @@ func TestCodexReviewWithSessionResumePassesResumeArgs(t *testing.T) {
 	})
 
 	a = a.WithSessionID("session-123").(*CodexAgent)
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.NoError(t, err)
 
 	args := readMockArgs(t, mock.ArgsFile)
@@ -644,7 +655,7 @@ exit 0
 `)
 
 	a := NewCodexAgent(cmdPath)
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the fake codex runs for 200ms, past it
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the fake codex runs for 200ms, past it
 	defer cancel()
 
 	start := time.Now()
@@ -935,7 +946,7 @@ func TestCodexReviewPipesPromptViaStdin(t *testing.T) {
 	})
 
 	testPrompt := "This is a test prompt with special chars: <>&\nand newlines"
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", testPrompt, nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", testPrompt, nil)
 	require.NoError(t, err)
 
 	received, err := os.ReadFile(mock.StdinFile)
@@ -955,7 +966,7 @@ func TestCodexReviewWithSchemaUsesFinalAgentMessage(t *testing.T) {
 		},
 	})
 
-	got, err := a.ReviewWithSchema(context.Background(), t.TempDir(), "deadbeef", "prompt", jsontext.Value(`{"type":"object"}`), nil)
+	got, err := a.ReviewWithSchema(t.Context(), t.TempDir(), "deadbeef", "prompt", jsontext.Value(`{"type":"object"}`), nil)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"schema_version":2,"summary":"s","verdict":"pass","findings":[]}`, string(got))
 }
@@ -970,7 +981,7 @@ func TestCodexReviewWithSchemaRejectsNonJSONFinalMessage(t *testing.T) {
 		},
 	})
 
-	_, err := a.ReviewWithSchema(context.Background(), t.TempDir(), "deadbeef", "prompt", jsontext.Value(`{"type":"object"}`), nil)
+	_, err := a.ReviewWithSchema(t.Context(), t.TempDir(), "deadbeef", "prompt", jsontext.Value(`{"type":"object"}`), nil)
 	require.EqualError(t, err, "codex structured review output is not a JSON object")
 }
 
@@ -984,7 +995,7 @@ func TestCodexReviewJoinsMessagesWithoutSchema(t *testing.T) {
 		},
 	})
 
-	got, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	got, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "alpha note\nbeta note", got)
 }
@@ -995,7 +1006,7 @@ func TestCodexReviewNoValidJSONReturnsError(t *testing.T) {
 		StdoutLines: []string{"plain text output"},
 	})
 
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "did not emit valid --json events")
 	require.ErrorIs(t, err, errNoCodexJSON)
@@ -1009,7 +1020,7 @@ func TestCodexReviewMarksNonzeroNoJSONUnavailable(t *testing.T) {
 		StderrLines: []string{"503 Service Unavailable"},
 	})
 
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.Error(t, err)
 	assert.True(t, IsUnavailable(err))
 	require.ErrorIs(t, err, errNoCodexJSON)
@@ -1042,7 +1053,7 @@ func TestCodexReviewNoJSONPreservesStdoutClassificationSignals(t *testing.T) {
 				StdoutLines: []string{tt.stdout},
 			})
 
-			_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+			_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 			require.Error(t, err)
 			assert.True(t, IsUnavailable(err))
 			assert.Contains(t, err.Error(), tt.stdout)
@@ -1060,7 +1071,7 @@ func TestCodexReviewPreservesNoJSONStdoutDiagnostic(t *testing.T) {
 		StdoutLines: []string{stdout},
 	})
 
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.Error(t, err)
 	assert.Equal(t, LimitKindTransient, ClassifyLimit("codex", err.Error()).Kind)
 	assert.Contains(t, err.Error(), stdout)
@@ -1096,7 +1107,7 @@ func TestCodexReviewClassifiesNoJSONSignalsAtEndOfDiagnostics(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			a, _ := setupMockCodex(t, false, tt.opts)
 
-			_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+			_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 			require.Error(t, err)
 			classification, ok := LimitClassificationFromError(err)
 			require.True(t, ok)
@@ -1150,7 +1161,7 @@ func TestCodexReviewNonzeroAfterValidJSONIsNotUnavailable(t *testing.T) {
 		},
 	})
 
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.Error(t, err)
 	assert.False(t, IsUnavailable(err))
 }
@@ -1164,7 +1175,107 @@ exit 0
 `)
 	a := NewCodexAgent(cmdPath)
 
-	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.Error(t, err)
 	assert.True(t, IsUnavailable(err))
+}
+
+func TestCodexSandboxRefusesInvalidPreconditions(t *testing.T) {
+	for _, tc := range []struct {
+		name, session, command, want string
+		planning                     bool
+	}{
+		{"resume", "test-session", "", "sandboxed Codex cannot resume a session with a fresh CODEX_HOME", false},
+		{"planning", "", "", "agentic sandbox is configured", true},
+		{"reject-relative-command", "", "./codex", "must be absolute", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := NewCodexAgent(filepath.Join(t.TempDir(), "missing-codex")).WithSandbox(&CodexSandbox{Job: sandbox.Job{WorkDir: t.TempDir()}})
+			if tc.command != "" {
+				a.Command = tc.command
+			}
+			a.SessionID = tc.session
+			ctx := context.WithValue(t.Context(), planningContextKey{}, tc.planning)
+			_, err := a.Review(ctx, t.TempDir(), "HEAD", "review", nil)
+			require.ErrorContains(t, err, tc.want)
+		})
+	}
+}
+
+func TestCodexSandboxRepoContainment(t *testing.T) {
+	skipIfWindows(t)
+	work := t.TempDir()
+	t.Setenv("CODEX_HOME", t.TempDir())
+	repo := filepath.Join(work, "repo")
+	require.NoError(t, os.Mkdir(repo, 0o700))
+	s := CodexSandbox{Job: sandbox.Job{WorkDir: work}}
+	_, _, err := s.prepare(t.TempDir())
+	require.ErrorContains(t, err, "sandbox repo must be inside job work dir")
+	for _, accepted := range []string{repo, work} {
+		_, cleanup, err := s.prepare(accepted)
+		require.NoError(t, err)
+		cleanup()
+	}
+	tmp := t.TempDir()
+	alias := filepath.Join(t.TempDir(), "tmp")
+	require.NoError(t, os.Symlink(tmp, alias))
+	t.Setenv("TMPDIR", alias)
+	read := filepath.Join(alias, "read")
+	require.NoError(t, os.Mkdir(read, 0o700))
+	readRepo := filepath.Join(read, "repo")
+	require.NoError(t, os.Mkdir(readRepo, 0o700))
+	for _, tc := range []struct {
+		name     string
+		readPath string
+	}{
+		{name: "read-only repo", readPath: readRepo},
+		{name: "repo under read path", readPath: read},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := CodexSandbox{Job: sandbox.Job{WorkDir: work, ReadPaths: []string{tc.readPath}}}
+			_, cleanup, err := s.prepare(readRepo)
+			require.NoError(t, err)
+			t.Cleanup(cleanup)
+		})
+	}
+}
+
+func TestCodexSandboxSymlinkLogin(t *testing.T) {
+	skipIfWindows(t)
+	if _, err := exec.LookPath("/usr/bin/python3"); err != nil {
+		t.Skip("requires /usr/bin/python3 for credential capture")
+	}
+	work := t.TempDir()
+	hostHome := t.TempDir()
+	child := filepath.Join(hostHome, "child")
+	require.NoError(t, os.Mkdir(child, 0o700))
+	link := filepath.Join(t.TempDir(), "login-link")
+	require.NoError(t, os.Symlink(child, link))
+	t.Setenv("CODEX_HOME", link+"/..")
+	require.NoError(t, os.WriteFile(filepath.Join(hostHome, "auth.json"), []byte(`{"tokens":{"access_token":"requested-login"}}`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(link), "auth.json"), []byte(`{"tokens":{"access_token":"other-login"}}`), 0o600))
+	s := CodexSandbox{Job: sandbox.Job{WorkDir: work}}
+	job, cleanup, err := s.prepare(work)
+	require.NoError(t, err)
+	defer cleanup()
+	out, err := exec.CommandContext(t.Context(), job.Route.Capture[0], job.Route.Capture[1:]...).Output()
+	require.NoError(t, err)
+	assert.Equal(t, "requested-login\n", string(out))
+}
+
+func TestCodexSandboxCleansHomeWhenJobCommandFails(t *testing.T) {
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "repo")
+	require.NoError(t, os.Mkdir(repo, 0o700))
+	marker := filepath.Join(dir, "executed")
+	command := writeTempCommand(t, "#!/bin/sh\ncase \"$1\" in *etxtbsy*) exit 0;; esac\n: >'"+marker+"'\n")
+	t.Setenv("PATH", dir)
+	t.Setenv("CODEX_HOME", t.TempDir())
+	a := NewCodexAgent(command).WithSandbox(&CodexSandbox{Job: sandbox.Job{WorkDir: dir, MemoryMax: 1 << 30}})
+	_, err := a.Review(t.Context(), repo, "HEAD", "review", nil)
+	require.Error(t, err)
+	assert.NoFileExists(t, marker)
+	homes, err := filepath.Glob(filepath.Join(dir, ".codex-home-*"))
+	require.NoError(t, err)
+	assert.Empty(t, homes)
 }

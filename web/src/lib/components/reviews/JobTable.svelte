@@ -27,27 +27,52 @@
     { key: "enqueued_at", label: "Queued", numeric: true },
   ];
 
-  const sortLabels: Record<SortColumn, string> = {
-    id: "ID",
-    repo: "commit",
-    closed: "closed state",
-    status: "status",
-    verdict: "verdict",
-    agent: "agent",
-    review_type: "type",
-    elapsed: "elapsed time",
-    cost: "cost",
-    enqueued_at: "queue time",
-  };
+  let scroller = $state<HTMLDivElement>();
+  let sentinel = $state<HTMLDivElement>();
 
-  const partialSort = $derived(
+  const canLoadMore = $derived(
     jobsStore !== undefined &&
-      !jobsStore.areAllJobsLoaded() &&
-      !(
-        jobsStore.getSortColumn() === "enqueued_at" &&
-        jobsStore.getSortDirection() === "desc"
-      ),
+      jobsStore.getHasMore() &&
+      jobsStore.getJobs().length > 0 &&
+      !jobsStore.isLoading() &&
+      jobsStore.getError() === null &&
+      jobsStore.getSortError() === null &&
+      jobsStore.getLoadMoreError() === null,
   );
+
+  const hitJobLimit = $derived(
+    jobsStore !== undefined &&
+      !jobsStore.getHasMore() &&
+      !jobsStore.areAllJobsLoaded(),
+  );
+
+  // A new observer reports the sentinel's position once on observe(). The
+  // effect builds one each time a load finishes, so a page that leaves the
+  // sentinel in view loads the next page until the table fills the scroll
+  // container or the daemon has no more jobs. Disconnecting before
+  // loadMore() keeps a second intersection from replacing the in-flight
+  // request.
+  $effect(() => {
+    if (!canLoadMore || !scroller || !sentinel) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        observer.disconnect();
+        jobsStore.loadMore();
+      },
+      { root: scroller, rootMargin: "0px 0px 200px 0px" },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  });
+
+  // A sort replaces the rows with the first page of the new order. Without
+  // the reset, a view scrolled past that page clamps to its end, hiding the
+  // top of the new order and pulling in further pages at once.
+  function sortBy(col: SortColumn) {
+    if (scroller) scroller.scrollTop = 0;
+    jobsStore?.setSortColumn(col);
+  }
 
   function sortDirection(col: ColumnDef) {
     return jobsStore?.getSortColumn() === col.key
@@ -58,8 +83,18 @@
 
 <!-- Scrollable regions need keyboard access. -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-<div class="table-wrapper" role="region" aria-label="Review jobs" tabindex="0">
-  <table class="job-table">
+<div
+  class="table-wrapper"
+  role="region"
+  aria-label="Review jobs"
+  tabindex="0"
+  bind:this={scroller}
+>
+  <table
+    class="job-table"
+    class:sorting={jobsStore?.isSortPending()}
+    aria-busy={jobsStore?.isSortPending() ?? false}
+  >
     <thead>
       <tr>
         {#each columns as col (col.key)}
@@ -68,11 +103,27 @@
             numeric={col.numeric ?? false}
             sortable
             sortDirection={sortDirection(col)}
-            onsort={() => jobsStore?.setSortColumn(col.key)}
+            onsort={() => sortBy(col.key)}
             class={`th-${col.key}`}
           />
         {/each}
       </tr>
+      {#if jobsStore && jobsStore.getSortError() !== null}
+        <tr class="sort-error-row">
+          <td colspan={columns.length}>
+            <div class="sort-error" role="alert">
+              Could not sort jobs.
+              <button
+                type="button"
+                class="sort-retry"
+                onclick={() => jobsStore.retrySort()}
+              >
+                Retry
+              </button>
+            </div>
+          </td>
+        </tr>
+      {/if}
     </thead>
     <tbody>
       {#if jobsStore}
@@ -143,13 +194,26 @@
     </tbody>
   </table>
 
-  {#if jobsStore?.isLoading()}
-    <div class="loading-bar">Loading...</div>
+  {#if jobsStore?.getHasMore()}
+    <div class="scroll-sentinel" aria-hidden="true" bind:this={sentinel}></div>
   {/if}
 
-  {#if jobsStore?.getError()}
-    <div class="error-bar">
-      {jobsStore.getError()}
+  {#if jobsStore?.isLoading()}
+    <div class="loading-bar" role="status">Loading...</div>
+  {/if}
+
+  <!-- Any list error stops scroll loading, so it always offers Retry. A
+       transport failure has an empty message. -->
+  {#if jobsStore && jobsStore.getError() !== null}
+    <div class="error-bar" role="alert">
+      {jobsStore.getError() || "Could not load jobs."}
+      <button
+        type="button"
+        class="list-retry"
+        onclick={() => jobsStore.loadJobs()}
+      >
+        Retry
+      </button>
     </div>
   {/if}
 
@@ -157,24 +221,23 @@
     <EmptyState title="No jobs found" />
   {/if}
 
-  {#if jobsStore?.getHasMore() || partialSort}
-    <div class="table-footer">
-      {#if partialSort && jobsStore}
-        <span class="sort-scope" role="status">
-          Sorted by {sortLabels[jobsStore.getSortColumn()]} across the
-          {jobsStore.getJobs().length} most recent jobs. Load more to include older
-          jobs.
-        </span>
-      {/if}
-      {#if jobsStore?.getHasMore()}
-        <button
-          class="load-more-btn"
-          disabled={jobsStore.isLoading()}
-          onclick={() => jobsStore.loadMore()}
-        >
-          Load more
-        </button>
-      {/if}
+  {#if jobsStore && jobsStore.getLoadMoreError() !== null}
+    <div class="error-bar" role="alert">
+      Could not load more jobs.
+      <button
+        type="button"
+        class="load-more-retry"
+        onclick={() => jobsStore.loadMore()}
+      >
+        Retry
+      </button>
+    </div>
+  {/if}
+
+  {#if hitJobLimit && jobsStore}
+    <div class="loading-bar">
+      Showing the first {jobsStore.getJobs().length.toLocaleString()} jobs in this
+      order, the most the table loads. Filter the list to reach the rest.
     </div>
   {/if}
 </div>
@@ -187,6 +250,9 @@
   .table-wrapper {
     background: var(--bg-surface);
     overflow: auto;
+    /* Reserve the scrollbar's width up front so the columns do not shift left
+       when opening a review shortens the table enough to make it scroll. */
+    scrollbar-gutter: stable;
     flex: 1;
     min-height: 0;
   }
@@ -217,6 +283,33 @@
     padding-left: 14px;
   }
 
+  /* The delay keeps a fast reload from flashing the rows. */
+  .job-table tbody {
+    transition: opacity 0.15s ease-out;
+  }
+
+  .job-table.sorting tbody {
+    opacity: 0.45;
+    transition-delay: 0.1s;
+  }
+
+  .sort-error-row td {
+    padding: 0;
+    background: var(--bg-inset);
+    box-shadow: inset 0 -1px 0 var(--border-default);
+  }
+
+  /* Sticky so the message stays in view while a wide table is scrolled
+     right. */
+  .sort-error {
+    position: sticky;
+    left: 0;
+    display: inline-block;
+    padding: 6px 14px;
+    font-size: var(--font-size-sm);
+    color: var(--accent-red);
+  }
+
   .loading-bar {
     padding: 12px;
     text-align: center;
@@ -242,7 +335,18 @@
     color: var(--accent-red);
   }
 
-  .members-retry {
+  /* Sticky so the sentinel stays inside the observed area when a wide table
+     is scrolled right by more than the wrapper's width. */
+  .scroll-sentinel {
+    position: sticky;
+    left: 0;
+    height: 1px;
+  }
+
+  .members-retry,
+  .list-retry,
+  .load-more-retry,
+  .sort-retry {
     margin-left: 8px;
     border: 0;
     padding: 0;
@@ -251,37 +355,5 @@
     font: inherit;
     text-decoration: underline;
     cursor: pointer;
-  }
-
-  .table-footer {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: var(--space-6);
-    padding: 10px 16px;
-    border-top: 1px solid var(--border-muted);
-    color: var(--text-muted);
-    font-size: var(--font-size-sm);
-  }
-
-  .load-more-btn {
-    padding: 4px 14px;
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-md);
-    background: var(--bg-surface);
-    color: var(--text-primary);
-    font-size: var(--font-size-sm);
-    font-weight: 500;
-    cursor: pointer;
-    transition: background var(--transition-fast);
-  }
-
-  .load-more-btn:hover {
-    background: var(--bg-surface-hover);
-  }
-
-  .load-more-btn:disabled {
-    opacity: var(--opacity-disabled);
-    cursor: default;
   }
 </style>

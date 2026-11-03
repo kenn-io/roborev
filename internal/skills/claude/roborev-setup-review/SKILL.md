@@ -155,9 +155,13 @@ This mapping is for you, not the user. Use only what the conversation needs.
 | One custom check after every commit or every N commits | A type, a subagent that uses it, and a one-member panel; set `hook_review_panel` under `[review]`. Automatic reviews use this panel and carry no review type. Set `post_commit_batch_size = N` for every N commits. |
 | Several custom checks after every commit or every N commits | A type and subagent per check, a panel listing those subagents, and `hook_review_panel` under `[review]`. Set `post_commit_batch_size = N` for every N commits. |
 | Keep the usual code review after commits too | Add a subagent with `review_type = "default"` to the hook panel |
+| Combine bursts of automatic reviews across repositories | Set `post_commit_batch_size` and/or `post_commit_quiet_period = "5m"` globally. Each repo can override either value. The count threshold or quiet period queues the accumulated range, whichever happens first. Values below 2 disable the count threshold; an empty quiet period or `"0"` disables the timer. Pushes flush pending commits. Daemon restarts cancel timers but preserve pending checkpoints for the next commit or push. |
 | The whole branch each time | `post_commit_review = "branch"` |
 | Reviews on request | `[review] default_panel`, or `--type` and `--panel` |
 | Reviews on pull requests | `[ci] panel`; see <https://roborev.io/docs/advanced/subagent-review-panels/#ci-panels> |
+| Verify CI findings before posting | `[ci] check = true`, off by default; Codex checks findings in a sandbox and keeps the original review if checking fails. Global `[ci] check_model` and `check_reasoning` select its model and effort. |
+| PR reviews only after a draft is marked ready | Ask whether draft PRs should be skipped. For the daemon poller, global `[ci] skip_drafts = true` in `~/.roborev/config.toml` (default `false`; no repo override). Ready PRs become eligible next poll without a push, under normal throttle, quiet-hours, and dedup rules. Active reviews are not canceled. |
+| Rewrite checked CI findings | `[ci] rewrite = true` requires `check = true`. Two additional Codex calls use stored findings and escaped PR context, without checker output, in a fresh read-only clone; failure keeps the checked text. |
 | Only serious findings fail | `review_min_severity`, plus severity guidance in each rubric |
 | Passing reviews close themselves | `auto_close_passing_reviews = true` |
 | Reviewers that see the task a commit is for, from Kata | `[kata_context]` with `mode = "current"`; commits name their issue, such as `Closes: kata#abc4` |
@@ -170,6 +174,11 @@ This mapping is for you, not the user. Use only what the conversation needs.
 | A reviewer on trial | `non_voting = true` on the subagent |
 | A reviewer that may flake | `allow_failure = true` and `timeout` on the subagent |
 | A combined review that checks each finding against the material, or labels findings for whoever fixes them | `synthesis_instructions` on the panel; see <https://roborev.io/docs/advanced/subagent-review-panels/#synthesis-instructions> |
+
+For a small panel that checks findings before keeping them, use the
+[precise panel recipe](https://roborev.io/docs/advanced/subagent-review-panels/#precise-panel-recipe).
+It keeps agreed findings unless disproved and requires code evidence for
+single-reviewer or contradicted findings. Silence is not disagreement.
 
 Rules that matter:
 
@@ -249,6 +258,12 @@ Rules that matter:
     they apply only after the setup is pushed there. CI reads everything from
     its trusted base ref. Commit the whole setup to the default branch so all
     three agree, and tell the user the guidelines wait on that push.
+- For GitHub Actions reviews, `roborev init gh-action` generates a workflow
+    that skips draft PRs and reviews them when marked ready. Use
+    `--include-drafts` to review drafts too. Both modes cancel overlapping runs
+    for the same workflow and PR. Existing workflows need
+    `roborev init gh-action --force` to adopt the behavior; add
+    `--include-drafts` if the user wants draft reviews.
 - A `type = "kata"` hook files an issue for each reviewer's failing review as
     well as for the combined review. With a panel of several reviewers, one
     failing commit can open several issues. Say so when proposing it.
@@ -345,6 +360,7 @@ Before proposing, tell the user where the material can go:
 
 - the provider behind each reviewer and synthesis agent, and the account or
     endpoint each agent CLI is signed in to; roborev does not choose it;
+- Codex when `[ci] check = true`, regardless of the review panel's agents;
 - any other agent a review can reach: the repository or machine default agent
     for reviews outside the panel, and configured backup agents;
 - every agent priced in `budget.agent_costs`, when `budget.enabled` is true;
@@ -508,10 +524,10 @@ for the cases, temporary settings, calls, and cleanup before starting.
     ```
 
     Verify the two SHAs differ while parent, tree, message, and author match.
-    Check `roborev show --from-skill "$trial_sha" --json` before enqueueing:
+    Check `roborev job show --from-skill "$trial_sha" --json` before enqueueing:
     require an explicit "no review found", not a connection error. If already
     reviewed, advance the timestamp and create another commit. Also inspect all
-    jobs with `roborev list --from-skill --all-branches --json --limit 0`
+    jobs with `roborev job list --from-skill --all-branches --json --limit 0`
     (unlimited). Reject SHAs used by any job, including queued jobs
     and range heads; a SHA lookup alone does not find range reviews.
 1. Run each required case **twice**. Resolve refs with `git rev-parse --verify`
@@ -530,14 +546,14 @@ for the cases, temporary settings, calls, and cleanup before starting.
 
     Choose one command, recording every job ID. `--wait` returns nonzero for an
     expected failing review: still read results and run cleanup. Read each
-    result with `roborev show --from-skill --job <id>` and its stored inputs with
-    `roborev show --from-skill --job <id> --prompt`. Confirm the intended rubric,
+    result with `roborev job show --from-skill --job <id>` and its stored inputs with
+    `roborev job show --from-skill --job <id> --prompt`. Confirm the intended rubric,
     sources, and absence of earlier reviews; check panel members too. If either
     verdict or expected finding flips within a pair, report calibration as
     inconclusive and investigate before judging an edit. A miss alone does not
     justify severity changes; require evidence of severity or threshold ambiguity.
 1. Read every mismatch before editing. Get session IDs from
-    `roborev show --from-skill --job <id> --json`; with agentsview installed,
+    `roborev job show --from-skill --job <id> --json`; with agentsview installed,
     open that session's transcript. Propose changes and get approval. Every
     "do not flag" line must make sense without its motivating case, change that
     case's result, and preserve the must-catch finding. After **every rubric
@@ -545,7 +561,7 @@ for the cases, temporary settings, calls, and cleanup before starting.
     where template files load, and rebuild case trees with those files and current
     sources. Rerun the **whole set**, twice per case, on fresh sibling commits.
     Rerunning an old job reuses its frozen settings.
-1. After reading each trial, run `roborev close --from-skill <id>`; for panels,
+1. After reading each trial, run `roborev job close --from-skill <id>`; for panels,
     close the synthesis parent. Closure prevents later fix discovery but cannot
     undo hooks already fired. Always restore settings and delete scratch refs
     with `git update-ref -d <ref>` unless the user keeps the set. Report verdicts,
@@ -563,7 +579,7 @@ Finish with a short summary:
     branch.
 - How reviews run: when they start, which reviewers, and which agents.
 - How to run one on request, and how to read results: `roborev tui --from-skill`,
-    `roborev list --from-skill`, or `roborev show --from-skill --job <id>`.
+    `roborev job list --from-skill`, or `roborev job show --from-skill --job <id>`.
 - Calibration results and how to tune: approve an edit, rebuild the cases,
     and rerun the whole set on fresh commits.
 - How to add a source document: commit its text where the rubric expects it,

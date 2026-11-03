@@ -101,7 +101,7 @@ func TestPatchIDSyncRoundTrip(t *testing.T) {
 
 	// Verify patch_id survived the round trip
 	var patchIDVal sql.NullString
-	err = db2.QueryRow(
+	err = db2.QueryRowContext(t.Context(),
 		`SELECT patch_id FROM review_jobs WHERE uuid = ?`, found.UUID,
 	).Scan(&patchIDVal)
 	require.NoError(t, err, "query patch_id in db2: %v")
@@ -223,7 +223,7 @@ func TestRemapTriggersResync(t *testing.T) {
 
 	// Set synced_at to a past time so remap's updated_at is guaranteed later
 	pastTime := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
-	_, err = db.Exec(
+	_, err = db.ExecContext(t.Context(),
 		`UPDATE review_jobs SET synced_at = ?, updated_at = ? WHERE id = ?`,
 		pastTime, pastTime, job.ID,
 	)

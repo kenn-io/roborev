@@ -827,7 +827,7 @@ func TestListJobsUsesStoredVerdictBoolWhenPresent(t *testing.T) {
 	err = completeReviewFixture(db, job.ID, "codex", "review prompt", "No issues found.\n## Verdict: PASS")
 	require.NoError(t, err, "CompleteJob failed: %v")
 
-	_, err = db.Exec(`UPDATE reviews SET verdict_bool = 0 WHERE job_id = ?`, job.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE reviews SET verdict_bool = 0 WHERE job_id = ?`, job.ID)
 	require.NoError(t, err, "force stored verdict_bool failed: %v")
 
 	jobs, err := db.ListJobs("", "", 50, 0)
@@ -900,7 +900,7 @@ func TestListJobsWithHideClassifyJobs(t *testing.T) {
 	// distinct commit.
 	classifyCommit := createCommit(t, db, repo.ID, "classify-sha")
 	var classifyID int64
-	require.NoError(t, db.QueryRow(`
+	require.NoError(t, db.QueryRowContext(t.Context(), `
 		INSERT INTO review_jobs
 		  (repo_id, commit_id, git_ref, status, job_type, review_type, source, worker_id, started_at, enqueued_at, updated_at)
 		VALUES (?, ?, 'classify-sha', 'running', 'classify', 'design', 'auto_design', 'w1', datetime('now'), datetime('now'), datetime('now'))
@@ -911,7 +911,7 @@ func TestListJobsWithHideClassifyJobs(t *testing.T) {
 	// review needed).
 	skippedCommit := createCommit(t, db, repo.ID, "skipped-sha")
 	var skippedID int64
-	require.NoError(t, db.QueryRow(`
+	require.NoError(t, db.QueryRowContext(t.Context(), `
 		INSERT INTO review_jobs
 		  (repo_id, commit_id, git_ref, status, job_type, review_type, source, skip_reason, enqueued_at, finished_at, updated_at)
 		VALUES (?, ?, 'skipped-sha', 'skipped', 'review', 'design', 'auto_design', 'trivial diff', datetime('now'), datetime('now'), datetime('now'))
@@ -924,7 +924,7 @@ func TestListJobsWithHideClassifyJobs(t *testing.T) {
 	// such rows alone.
 	otherSkippedCommit := createCommit(t, db, repo.ID, "other-skipped-sha")
 	var otherSkippedID int64
-	require.NoError(t, db.QueryRow(`
+	require.NoError(t, db.QueryRowContext(t.Context(), `
 		INSERT INTO review_jobs
 		  (repo_id, commit_id, git_ref, status, job_type, review_type, source, skip_reason, enqueued_at, finished_at, updated_at)
 		VALUES (?, ?, 'other-skipped-sha', 'skipped', 'review', '', '', 'unrelated reason', datetime('now'), datetime('now'), datetime('now'))
@@ -937,7 +937,7 @@ func TestListJobsWithHideClassifyJobs(t *testing.T) {
 	// rows from results.
 	nullSkippedCommit := createCommit(t, db, repo.ID, "null-skipped-sha")
 	var nullSkippedID int64
-	require.NoError(t, db.QueryRow(`
+	require.NoError(t, db.QueryRowContext(t.Context(), `
 		INSERT INTO review_jobs
 		  (repo_id, commit_id, git_ref, status, job_type, review_type, skip_reason, enqueued_at, finished_at, updated_at)
 		VALUES (?, ?, 'null-skipped-sha', 'skipped', 'review', '', 'unrelated reason', datetime('now'), datetime('now'), datetime('now'))
@@ -949,7 +949,7 @@ func TestListJobsWithHideClassifyJobs(t *testing.T) {
 	// for unrelated routing; the filter must leave such rows alone.
 	otherClassifyCommit := createCommit(t, db, repo.ID, "other-classify-sha")
 	var otherClassifyID int64
-	require.NoError(t, db.QueryRow(`
+	require.NoError(t, db.QueryRowContext(t.Context(), `
 		INSERT INTO review_jobs
 		  (repo_id, commit_id, git_ref, status, job_type, review_type, source, worker_id, started_at, enqueued_at, updated_at)
 		VALUES (?, ?, 'other-classify-sha', 'running', 'classify', 'review', '', 'w2', datetime('now'), datetime('now'), datetime('now'))
@@ -1292,7 +1292,7 @@ func TestListJobsWithBeforeCursor(t *testing.T) {
 	})
 }
 
-func TestListJobsFirstPageUsesPositionIndex(t *testing.T) {
+func TestListJobsSortsReadTheirIndexes(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		name string
@@ -1318,35 +1318,42 @@ func TestListJobsFirstPageUsesPositionIndex(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			db := test.open(t)
-			rows, err := db.Query(`
-				EXPLAIN QUERY PLAN
-				SELECT j.id, r.name, c.subject, rv.closed
-				FROM review_jobs j
-				JOIN repos r ON r.id = j.repo_id
-				LEFT JOIN commits c ON c.id = j.commit_id
-				LEFT JOIN reviews rv ON rv.job_id = j.id
-				WHERE NOT (
-					COALESCE(j.source, '') = 'auto_design'
-					AND (j.job_type = ? OR j.status = ?)
-				)
-				AND COALESCE(j.panel_role, '') != ?
-				ORDER BY `+sqliteNormalizedTimestampExpr("j.enqueued_at")+` DESC, j.id DESC
-				LIMIT 51
-			`, JobTypeClassify, string(JobStatusSkipped), PanelRoleMember)
-			require.NoError(t, err)
-			defer rows.Close()
+			// The web table's first page, a page resumed from a cursor, and a
+			// status sort, which reads idx_review_jobs_status in order.
+			for _, page := range []struct {
+				name  string
+				index string
+				extra []ListJobsOption
+			}{
+				{"first page", "idx_review_jobs_enqueued_position", nil},
+				{"cursor page", "idx_review_jobs_enqueued_position", []ListJobsOption{WithSortAfter(JobSortPosition{
+					Keys: []any{"2026-01-01 00:00:00"}, JobID: 10,
+				})}},
+				{"status sort", "idx_review_jobs_status", []ListJobsOption{WithSort(JobSort{Column: JobSortStatus})}},
+			} {
+				t.Run(page.name, func(t *testing.T) {
+					opts := append([]ListJobsOption{
+						WithoutPrompt(), WithHideClassifyJobs(), WithExcludePanelRole(PanelRoleMember),
+					}, page.extra...)
+					query, args, _, err := listJobsQuery("", "", 51, 0, collectListJobsOptions(opts...))
+					require.NoError(t, err)
+					rows, err := db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+query, args...)
+					require.NoError(t, err)
+					defer rows.Close()
 
-			var details []string
-			for rows.Next() {
-				var id, parent, unused int
-				var detail string
-				require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
-				details = append(details, detail)
+					var details []string
+					for rows.Next() {
+						var id, parent, unused int
+						var detail string
+						require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+						details = append(details, detail)
+					}
+					require.NoError(t, rows.Err())
+					plan := strings.Join(details, "\n")
+					assert.Contains(t, plan, "USING INDEX "+page.index)
+					assert.NotContains(t, plan, "USE TEMP B-TREE FOR ORDER BY")
+				})
 			}
-			require.NoError(t, rows.Err())
-			plan := strings.Join(details, "\n")
-			assert.Contains(t, plan, "USING INDEX idx_review_jobs_enqueued_position")
-			assert.NotContains(t, plan, "USE TEMP B-TREE FOR ORDER BY")
 		})
 	}
 }
@@ -1359,7 +1366,7 @@ func TestListJobsPaginatesRerunsByEnqueueTime(t *testing.T) {
 	base := time.Now().Add(-3 * time.Hour).UTC().Truncate(time.Second)
 
 	for index, job := range jobs {
-		_, err := db.Exec(
+		_, err := db.ExecContext(t.Context(),
 			`UPDATE review_jobs SET status = 'done', enqueued_at = ? WHERE id = ?`,
 			base.Add(time.Duration(index)*time.Hour).Format(time.RFC3339), job.ID,
 		)
@@ -1456,7 +1463,7 @@ func TestListJobsDoesNotParseMarkdownWhenVerdictBoolNull(t *testing.T) {
 
 	// Legacy rows (e.g. synced from an older machine) can lack verdict_bool;
 	// the listing must still fall back to parsing the output text.
-	_, err = db.Exec(`UPDATE reviews SET verdict_bool = NULL WHERE job_id = ?`, job.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE reviews SET verdict_bool = NULL WHERE job_id = ?`, job.ID)
 	require.NoError(t, err, "clear verdict_bool failed: %v")
 
 	jobs, err := db.ListJobs("", "", 50, 0)

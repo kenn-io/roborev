@@ -22,19 +22,19 @@ func TestLegacyMigrationCommitsBatchesAndResumes(t *testing.T) {
 	}
 	// Fail a write in the second batch. The first batch must already be
 	// committed, while the failing batch must retain its original active rows.
-	_, err := env.db.Exec(fmt.Sprintf(`CREATE TRIGGER stop_archive_batch BEFORE DELETE ON reviews
+	_, err := env.db.ExecContext(t.Context(), fmt.Sprintf(`CREATE TRIGGER stop_archive_batch BEFORE DELETE ON reviews
  WHEN OLD.job_id = %d BEGIN SELECT RAISE(ABORT, 'stop second batch'); END`, blockedJob))
 	require.NoError(t, err)
 	require.ErrorContains(t, env.db.migrateLegacyReviews(), "stop second batch")
 	var archived, active int
-	require.NoError(t, env.db.QueryRow(`SELECT count(*) FROM legacy_reviews`).Scan(&archived))
-	require.NoError(t, env.db.QueryRow(`SELECT count(*) FROM reviews`).Scan(&active))
+	require.NoError(t, env.db.QueryRowContext(t.Context(), `SELECT count(*) FROM legacy_reviews`).Scan(&archived))
+	require.NoError(t, env.db.QueryRowContext(t.Context(), `SELECT count(*) FROM reviews`).Scan(&active))
 	assert.Equal(t, 100, archived)
 	assert.Equal(t, 105, active)
-	_, err = env.db.Exec(`DROP TRIGGER stop_archive_batch`)
+	_, err = env.db.ExecContext(t.Context(), `DROP TRIGGER stop_archive_batch`)
 	require.NoError(t, err)
 	require.NoError(t, env.db.migrateLegacyReviews())
-	require.NoError(t, env.db.QueryRow(`SELECT count(*) FROM legacy_reviews`).Scan(&archived))
+	require.NoError(t, env.db.QueryRowContext(t.Context(), `SELECT count(*) FROM legacy_reviews`).Scan(&archived))
 	assert.Equal(t, count, archived)
 
 	first, err := env.db.unresolvedLegacyReviews(0, 100, true)
@@ -48,21 +48,21 @@ func TestLegacyMigrationCommitsBatchesAndResumes(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, last, 5)
 
-	_, err = env.db.Exec(fmt.Sprintf(`CREATE TRIGGER stop_restore_batch BEFORE INSERT ON reviews
+	_, err = env.db.ExecContext(t.Context(), fmt.Sprintf(`CREATE TRIGGER stop_restore_batch BEFORE INSERT ON reviews
  WHEN NEW.job_id = %d BEGIN SELECT RAISE(ABORT, 'stop restoration'); END`, blockedJob))
 	require.NoError(t, err)
 	require.ErrorContains(t, env.db.restoreLegacyReviews(), "stop restoration")
-	require.NoError(t, env.db.QueryRow(`SELECT count(*) FROM reviews`).Scan(&active))
+	require.NoError(t, env.db.QueryRowContext(t.Context(), `SELECT count(*) FROM reviews`).Scan(&active))
 	assert.Equal(t, 100, active)
 	missing, err := env.db.unresolvedLegacyReviews(0, 100, true)
 	require.NoError(t, err)
 	require.NotEmpty(t, missing)
 	assert.Equal(t, blockedJob, missing[0].JobID)
-	_, err = env.db.Exec(`DROP TRIGGER stop_restore_batch`)
+	_, err = env.db.ExecContext(t.Context(), `DROP TRIGGER stop_restore_batch`)
 	require.NoError(t, err)
 	require.NoError(t, env.db.restoreLegacyReviews())
 	require.NoError(t, env.db.restoreLegacyReviews())
-	require.NoError(t, env.db.QueryRow(`SELECT count(*) FROM reviews r JOIN legacy_reviews l ON r.uuid = l.uuid
+	require.NoError(t, env.db.QueryRowContext(t.Context(), `SELECT count(*) FROM reviews r JOIN legacy_reviews l ON r.uuid = l.uuid
  WHERE r.id = l.id AND r.job_id = l.job_id AND r.closed = l.closed
  AND json_extract(r.structured_output, '$.legacy.markdown') = l.output`).Scan(&active))
 	assert.Equal(t, count, active)
@@ -80,17 +80,17 @@ func TestVerdictBackfillContinuesPastUnchangedBatch(t *testing.T) {
 	env := setupJobEnv(t, t.TempDir(), "verdict-batches")
 	for i := range 105 {
 		fixture := seedLegacyMarkdownReview(t, env.db, env.repo.ID, fmt.Sprintf("unknown-%d", i), "Unknown historical verdict.", nil, false)
-		_, err := env.db.Exec(`UPDATE reviews SET output = '', structured_output = '{"schema_version":0,"legacy":{"markdown":"Unknown historical verdict.","recorded_verdict":null}}' WHERE job_id = ?`, fixture.jobID)
+		_, err := env.db.ExecContext(t.Context(), `UPDATE reviews SET output = '', structured_output = '{"schema_version":0,"legacy":{"markdown":"Unknown historical verdict.","recorded_verdict":null}}' WHERE job_id = ?`, fixture.jobID)
 		require.NoError(t, err)
 	}
 	last := seedLegacyMarkdownReview(t, env.db, env.repo.ID, "structured-last", "", nil, false)
-	_, err := env.db.Exec(`UPDATE reviews SET structured_output = '{"schema_version":2,"summary":"Clean review.","verdict":"pass","findings":[]}' WHERE job_id = ?`, last.jobID)
+	_, err := env.db.ExecContext(t.Context(), `UPDATE reviews SET structured_output = '{"schema_version":2,"summary":"Clean review.","verdict":"pass","findings":[]}' WHERE job_id = ?`, last.jobID)
 	require.NoError(t, err)
 	updated, err := env.db.BackfillVerdictBool()
 	require.NoError(t, err)
 	assert.Equal(t, 1, updated)
 	var passed bool
-	require.NoError(t, env.db.QueryRow(`SELECT verdict_bool FROM reviews WHERE job_id = ?`, last.jobID).Scan(&passed))
+	require.NoError(t, env.db.QueryRowContext(t.Context(), `SELECT verdict_bool FROM reviews WHERE job_id = ?`, last.jobID).Scan(&passed))
 	assert.True(t, passed)
 	updated, err = env.db.BackfillVerdictBool()
 	require.NoError(t, err)

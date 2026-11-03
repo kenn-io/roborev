@@ -67,14 +67,14 @@ func writeTempCommand(t *testing.T, script string) string {
 	}
 	const maxRetries = 10
 	for i := range maxRetries {
-		_, err = exec.Command(path, "--help-probe-etxtbsy").CombinedOutput()
+		_, err = exec.CommandContext(t.Context(), path, "--help-probe-etxtbsy").CombinedOutput()
 		if err == nil || !strings.Contains(err.Error(), "text file busy") {
 			break
 		}
 		if i == maxRetries-1 {
 			t.Fatalf("write temp command: ETXTBSY persisted after %d retries", maxRetries)
 		}
-		time.Sleep(time.Duration(1<<i) * time.Millisecond) //nolint:kennlint // backs off until the kernel stops reporting ETXTBSY
+		time.Sleep(time.Duration(1<<i) * time.Millisecond) //nolint:kennlint // sleeptest: backs off until the kernel stops reporting ETXTBSY
 	}
 	return path
 }

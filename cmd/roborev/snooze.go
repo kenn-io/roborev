@@ -36,13 +36,13 @@ action, snooze behaves like "on". Use "off" to resume reminders immediately.`,
 				action = strings.ToLower(strings.TrimSpace(args[0]))
 			}
 			if action != "on" && action != "off" {
-				return fmt.Errorf("action must be on or off")
+				return validationErr(cmd, fmt.Errorf("action must be on or off"))
 			}
 			if action == "off" && cmd.Flags().Changed("duration") {
-				return fmt.Errorf("--duration cannot be used with snooze off")
+				return usageErr(cmd, fmt.Errorf("--duration cannot be used with snooze off"))
 			}
 			if duration <= 0 {
-				return fmt.Errorf("snooze duration must be positive")
+				return validationErr(cmd, fmt.Errorf("snooze duration must be positive"))
 			}
 			return runSnooze(cmd, action == "on", duration)
 		},

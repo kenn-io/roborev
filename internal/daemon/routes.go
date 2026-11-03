@@ -382,6 +382,13 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Tags = []string{"daemon"}
 		})
 
+	huma.Post(api, "/api/post-commit/schedule", s.humaPostCommitSchedule,
+		func(o *huma.Operation) {
+			o.OperationID = "schedule-post-commit"
+			o.Summary = "Schedule a pending post-commit batch after its quiet period"
+			o.Tags = []string{"jobs"}
+		})
+
 	huma.Post(api, "/api/enqueue", s.humaEnqueue,
 		func(o *huma.Operation) {
 			o.OperationID = "enqueue-job"

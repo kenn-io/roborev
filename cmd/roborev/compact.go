@@ -553,7 +553,7 @@ func enqueueCompactJob(ctx context.Context, repoRoot, prompt, outputPrefix, labe
 	}
 
 	ep := getDaemonEndpoint()
-	resp, err := ep.APIClient(10*time.Second).EnqueueJobRaw(context.Background(), nil, roborevclient.WithBody(reqBody))
+	resp, err := ep.APIClient(10*time.Second).EnqueueJobRaw(ctx, nil, roborevclient.WithBody(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("connect to daemon: %w", err)
 	}

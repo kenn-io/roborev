@@ -71,7 +71,7 @@ Before creating a pull request, review your entire branch:
 git checkout feature-branch
 roborev review --branch          # Enqueue branch review (runs in background)
 roborev tui                      # Browse results as they arrive
-roborev compact                  # Consolidate findings across commits
+roborev job compact                  # Consolidate findings across commits
 roborev fix                      # Address consolidated findings
 ```
 
@@ -206,6 +206,34 @@ When unset, they fall back to your repo or global default agent and model.
 You can also define schema-constrained review types backed by local Go
 templates, then use them anywhere `--type` or `review_type` is accepted. See
 [Custom Review Types](/docs/advanced/custom-review-types/).
+
+## Commit Messages and Pull Request Descriptions
+
+Reviewers treat a commit message as the author's statement of what the change is
+meant to do. When the message describes the change, the reviewer checks that the
+diff delivers it and reports any gap at the code that falls short. Range reviews
+include every commit's full message and judge the final result against the
+series' overall goal. A vague message such as "fix" or "wip" skips this check,
+and dirty reviews have no messages to check against.
+
+Pull request reviews also show the reviewer the pull request's title and
+description. The description states the overall goal, and the commit messages
+describe the steps toward it. These reviews include the pull request text:
+
+- reviews of GitHub pull requests by the daemon's CI poller
+- `roborev ci review` runs in GitHub Actions `pull_request` jobs, read from the
+    event payload
+- `roborev ci review` runs in GitLab merge request pipelines, read from
+    `CI_MERGE_REQUEST_TITLE` and `CI_MERGE_REQUEST_DESCRIPTION`
+
+For `roborev ci review`, this text is included only when the selected
+repository, forge host, and request number match the CI environment. When a
+prompt is too large to pass inline, roborev gives the reviewer a file containing
+the complete prompt, including the pull request description and commit messages.
+
+Messages and descriptions are untrusted input. Reviewers never follow
+instructions in them, do not accept claims such as "tested" as evidence, and do
+not comment on their wording.
 
 ## Task Context from Kata
 
@@ -413,15 +441,15 @@ and distance checks already filter out stale candidates.
 ## Waiting for a Review Without Enqueuing
 
 When a post-commit hook already triggers `roborev review`, you don't need
-`review --wait` (which enqueues a duplicate job). Use `roborev wait` to block
-until the existing job completes:
+`review --wait` (which enqueues a duplicate job). Use `roborev job wait` to
+block until the existing job completes:
 
 ```bash
-roborev wait                     # Wait for most recent job for HEAD
-roborev wait abc123              # Wait for job matching a specific commit
-roborev wait --sha HEAD~1        # Explicit git ref
-roborev wait --job 42            # Wait for a specific job ID
-roborev wait --quiet             # Suppress output (exit code only)
+roborev job wait                     # Wait for most recent job for HEAD
+roborev job wait abc123              # Wait for job matching a specific commit
+roborev job wait --sha HEAD~1        # Explicit git ref
+roborev job wait --job 42            # Wait for a specific job ID
+roborev job wait --quiet             # Suppress output (exit code only)
 ```
 
 Exit codes: 0 for PASS, 1 for FAIL or no job found.
@@ -434,15 +462,15 @@ A positional argument is resolved as a git ref first (so numeric SHAs like
 
 ### Agent Review-Fix Loops
 
-`roborev wait` is designed for coding agents running review-fix refinement
+`roborev job wait` is designed for coding agents running review-fix refinement
 loops. The agent commits, the hook enqueues the review, and the agent calls
 `wait` to block until the verdict is ready. This avoids wasting tokens on
-repeated `roborev list` or `roborev show` invocations.
+repeated `roborev job list` or `roborev job show` invocations.
 
 ```bash
 # Typical agent loop
 git commit -m "Fix auth validation"   # Hook triggers review
-roborev wait --quiet                  # Block until verdict
+roborev job wait --quiet                  # Block until verdict
 # Exit code 0 = pass, 1 = fail
 ```
 
@@ -499,6 +527,11 @@ New reviews, compact reviews, and synthesis reviews store their complete JSON
 review document. Markdown is generated for display and export. Findings below
 the configured severity threshold stay in the document, and synthesis documents
 retain their source references and reviewer labels.
+
+After receiving an agent's review, roborev merges findings only when their
+nonempty problem text and recommended fixes match exactly and they cite the same
+file at nearby locations. Case, punctuation, and word order are preserved when
+comparing text.
 
 On database upgrade, roborev handles each older review in one of three ways:
 
@@ -563,7 +596,7 @@ The deterministic converter is also available through the daemon API.
 changing archived reviews:
 
 ```bash
-roborev legacy-reviews convert --dry-run
+roborev storage legacy-reviews convert --dry-run
 ```
 
 The daemon owns database access and performs automatic history recovery at
@@ -579,25 +612,29 @@ agent for this task. Your agent can read the exported input and submit a
 complete structured document. Use the daemon for the intended installation:
 
 ```bash
-roborev legacy-reviews export > migration-input.json
+roborev storage legacy-reviews export > migration-input.json
 ```
 
 Give that file to your agent. It contains the original records, the conversion
-errors, and the review and synthesis JSON schemas. Ask the agent to preserve all
-findings and to leave any record it cannot convert faithfully unresolved. Import
-each completed JSON document using the archive ID from the export:
+errors, and the JSON schemas for converted reviews and combined reviews. These
+schemas let a finding leave `kind`, `confidence`, and `file` null and keep a
+free-text `location`, so the agent never has to invent them. Ask the agent to
+preserve all findings and to leave any record it cannot convert faithfully
+unresolved. Import each completed JSON document using the archive ID from the
+export:
 
 ```bash
-roborev legacy-reviews import 1 < converted-review.json
+roborev storage legacy-reviews import 1 < converted-review.json
 ```
 
-Import sends the document to the selected daemon. It accepts the existing
-structured document versions and replaces the whole legacy body, rather than
-merging individual findings. It preserves the active review's identity,
-metadata, and open/closed state, and derives its verdict from the supplied
-findings. It rejects invalid documents and refuses to replace an already
-structured review. Synthesis findings must cite valid source reviews. Originals
-remain archived.
+Import sends the document to the selected daemon. It accepts every structured
+document version, stores the document as version 3, and replaces the whole
+legacy body, rather than merging individual findings. A converted finding may
+leave out `kind`, `confidence`, `file`, and the line numbers. It preserves the
+active review's identity, metadata, and open/closed state, and derives its
+verdict from the supplied findings. It rejects invalid documents and refuses to
+replace an already structured review. Synthesis findings must cite valid source
+reviews. Originals remain archived.
 
 An agent working with the running daemon can instead submit the same document to
 `POST /api/review/migrate` on its local API:
@@ -606,7 +643,7 @@ An agent working with the running daemon can instead submit the same document to
 {
   "review_id": 42,
   "document": {
-    "schema_version": 2,
+    "schema_version": 3,
     "summary": "The write can lose data.",
     "verdict": "fail",
     "findings": [{
@@ -634,10 +671,10 @@ automatically. Use `--postgres-url` to ask the daemon to convert, export, and
 import these records. PostgreSQL archive IDs are UUIDs:
 
 ```bash
-roborev legacy-reviews --postgres-url "$POSTGRES_URL" convert --dry-run
-roborev legacy-reviews --postgres-url "$POSTGRES_URL" convert
-roborev legacy-reviews --postgres-url "$POSTGRES_URL" export > migration-input.json
-roborev legacy-reviews --postgres-url "$POSTGRES_URL" import <archive-uuid> < converted-review.json
+roborev storage legacy-reviews --postgres-url "$POSTGRES_URL" convert --dry-run
+roborev storage legacy-reviews --postgres-url "$POSTGRES_URL" convert
+roborev storage legacy-reviews --postgres-url "$POSTGRES_URL" export > migration-input.json
+roborev storage legacy-reviews --postgres-url "$POSTGRES_URL" import <archive-uuid> < converted-review.json
 ```
 
 ## See Also

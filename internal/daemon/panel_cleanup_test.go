@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"database/sql"
 	"strings"
 	"testing"
@@ -79,7 +78,7 @@ func (h *ciPollerHarness) synthBlocked(t *testing.T, runUUID *uuid.UUID) bool {
 // the timeout sweep selects it.
 func (h *ciPollerHarness) backdatePanelCreatedAt(t *testing.T, id int64) {
 	t.Helper()
-	_, err := h.DB.Exec("UPDATE ci_pr_panels SET created_at = datetime('now','-1 hour') WHERE id = ?", id)
+	_, err := h.DB.ExecContext(t.Context(), "UPDATE ci_pr_panels SET created_at = datetime('now','-1 hour') WHERE id = ?", id)
 	require.NoError(t, err)
 }
 
@@ -87,7 +86,7 @@ func (h *ciPollerHarness) backdatePanelCreatedAt(t *testing.T, id int64) {
 // beyond the CI batch timeout.
 func (h *ciPollerHarness) backdateJobStartedAt(t *testing.T, jobID int64) {
 	t.Helper()
-	_, err := h.DB.Exec("UPDATE review_jobs SET started_at = datetime('now','-1 hour') WHERE id = ?", jobID)
+	_, err := h.DB.ExecContext(t.Context(), "UPDATE review_jobs SET started_at = datetime('now','-1 hour') WHERE id = ?", jobID)
 	require.NoError(t, err)
 }
 
@@ -110,6 +109,7 @@ func TestSupersedePriorPanels(t *testing.T) {
 			_, err := h.DB.GetActiveCIPanelByPRSHA("acme/api", 7, "oldsha")
 			synthMappingActiveAtCancel = err == nil
 			require.ErrorIs(t, err, sql.ErrNoRows, "mapping must be retired before synthesis cancel event can fire")
+			h.Poller.handleReviewCanceled(ciEvent(jobID, "review.canceled"))
 		}
 	}
 
@@ -144,7 +144,7 @@ func TestSupersedePriorPanels(t *testing.T) {
 	assert.Equal("review.canceled", memberEvent.Type)
 	assert.Equal(members[0].ID, memberEvent.JobID)
 	assert.True(memberEvent.SuppressHooks, "CI maintenance events must not introduce hook executions")
-	_ = panel
+	assertPanelRetireReason(t, h.DB, panel.ID, "superseded")
 }
 
 // TestExpireTimedOutPanelsDoesNotCancelQueuedMember verifies that panel age does
@@ -419,14 +419,17 @@ func TestCleanupClosedPRPanels(t *testing.T) {
 	h.Poller.broadcaster = broadcaster
 
 	var canceled []int64
-	h.Poller.jobCancelFn = func(jobID int64) { canceled = append(canceled, jobID) }
+	h.Poller.jobCancelFn = func(jobID int64) {
+		canceled = append(canceled, jobID)
+		h.Poller.handleReviewCanceled(ciEvent(jobID, "review.canceled"))
+	}
 
-	_, synth, members := h.seedBlockedPanelRun(t, "acme/api", 10, "headsha", "base..headsha",
+	panel, synth, members := h.seedBlockedPanelRun(t, "acme/api", 10, "headsha", "base..headsha",
 		[]jobSpec{{Agent: "test", ReviewType: "review"}})
 	require.Len(t, members, 1)
 
 	openPRs := map[int]bool{} // PR 10 absent → not open
-	h.Poller.cleanupClosedPRPanels(context.Background(), "acme/api", openPRs)
+	h.Poller.cleanupClosedPRPanels(t.Context(), "acme/api", openPRs)
 
 	assert.Equal(storage.JobStatusCanceled, h.jobStatus(t, synth.ID), "synthesis canceled")
 	assert.Equal(storage.JobStatusCanceled, h.jobStatus(t, members[0].ID), "member canceled")
@@ -435,6 +438,7 @@ func TestCleanupClosedPRPanels(t *testing.T) {
 	rows, err := h.DB.GetActivePanelsForPR("acme/api", 10)
 	require.NoError(t, err)
 	assert.Empty(rows, "closed-PR mapping retired")
+	assertPanelRetireReason(t, h.DB, panel.ID, "closed_pr")
 	require.Len(t, events, 2, "each canceled panel job should notify live clients")
 	parentEvent := <-events
 	memberEvent := <-events
@@ -456,7 +460,7 @@ func TestCleanupClosedPRPanelsKeepsOpenPR(t *testing.T) {
 		[]jobSpec{{Agent: "test", ReviewType: "review"}})
 
 	openPRs := map[int]bool{} // absent from list, but callIsPROpen confirms open
-	h.Poller.cleanupClosedPRPanels(context.Background(), "acme/api", openPRs)
+	h.Poller.cleanupClosedPRPanels(t.Context(), "acme/api", openPRs)
 
 	assert.NotEqual(t, storage.JobStatusCanceled, h.jobStatus(t, synth.ID), "open-PR synthesis kept")
 	assert.Equal(t, storage.JobStatusQueued, h.jobStatus(t, members[0].ID), "open-PR member kept")

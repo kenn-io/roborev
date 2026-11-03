@@ -18,17 +18,19 @@ documentation. For the product story, start at the
 
 ## Install
 
-=== "macOS / Linux"
+=== "macOS (Homebrew)"
+
+    ```bash
+    brew install roborev
+    ```
+
+=== "Linux"
 
     ```bash
     curl -fsSL https://roborev.io/install.sh | bash
     ```
 
-=== "Homebrew"
-
-    ```bash
-    brew install kenn-io/tap/roborev
-    ```
+    Or install a [DEB or RPM package](installation.md#linux-packages-deb-and-rpm).
 
 === "Windows"
 
@@ -49,7 +51,7 @@ See [Installation](installation.md) for upgrades, packages, and uninstall.
 ```bash
 cd your-repo
 roborev init                  # post-commit hook, daemon, repo registration
-roborev agent-hook install    # optional: wire coding-agent sessions and skills
+roborev agent hook install    # optional: wire coding-agent sessions and skills
 # do some work, generate commits
 roborev tui                   # browse reviews in the terminal
 roborev ui                    # or in the native browser application

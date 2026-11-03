@@ -120,10 +120,12 @@ func (p *PgPool) ResolveLegacyReview(ctx context.Context, id uuid.UUID, raw json
 		if err := doc.RequireSources(len(doc.SourceLabels)); err != nil {
 			return fmt.Errorf("synthesis conversion: %w", err)
 		}
-		raw, err = json.Marshal(doc)
-		if err != nil {
-			return err
-		}
+	}
+	// Store the normalized document in the current version, as the SQLite
+	// import does, whatever version the caller supplied.
+	raw, err = json.Marshal(doc)
+	if err != nil {
+		return err
 	}
 	var verdict *bool
 	if !doc.UnableToReview() {

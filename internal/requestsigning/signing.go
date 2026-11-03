@@ -277,7 +277,7 @@ func VerifyEmptyBody(r *http.Request) error {
 
 // contextReader checks cancellation between fixed-size hash reads.
 type contextReader struct {
-	context.Context
+	context.Context //nolint:containedctx // checks cancellation between reads of one request body
 	io.Reader
 }
 

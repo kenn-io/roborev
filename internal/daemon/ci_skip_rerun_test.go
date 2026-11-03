@@ -16,6 +16,12 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
+// skipReviewLabel is the skip produced by a PR labeled skip-review.
+var skipReviewLabel = ciSkip{
+	description: "Review skipped: label skip-review",
+	reason:      `it has label "skip-review"`,
+}
+
 func TestCIPanelSkipRerunOrdering(t *testing.T) {
 	for _, phase := range []string{"deferred", "done"} {
 		for _, ordering := range []string{"skip first", "skip check fails", "skip status fails", "rerun queued", "rerun posted", "rerun no review", "expired skip claim"} {
@@ -70,14 +76,14 @@ func TestCIPanelSkipRerunOrdering(t *testing.T) {
 				}
 
 				if skipFirst {
-					err = h.Poller.processPR(context.Background(), "acme/api", pr, h.Cfg)
+					err = h.Poller.processPR(t.Context(), "acme/api", pr, h.Cfg)
 					if phase == "done" {
 						require.NoError(t, err)
 						require.Zero(t, skipCalls, "completed attempts use the health reconciliation skip path")
 						h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) {
 							return []ghPR{pr}, nil
 						}
-						err = h.Poller.pollRepo(context.Background(), "acme/api", h.Cfg)
+						err = h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg)
 					}
 					if ordering == "skip first" {
 						require.NoError(t, err)
@@ -100,7 +106,7 @@ func TestCIPanelSkipRerunOrdering(t *testing.T) {
 					require.NoError(t, json.Unmarshal(response.Body.Bytes(), &rerun.Body))
 				} else {
 					if ordering == "expired skip claim" {
-						_, err := h.DB.Exec(`UPDATE ci_pr_panels SET posting_claimed_at = datetime('now', '-1 hour') WHERE id = ?`, panel.ID)
+						_, err := h.DB.ExecContext(t.Context(), `UPDATE ci_pr_panels SET posting_claimed_at = datetime('now', '-1 hour') WHERE id = ?`, panel.ID)
 						require.NoError(t, err)
 					}
 					response := serveHuma(t, server, http.MethodPost, "/api/job/rerun", request)
@@ -126,10 +132,10 @@ func TestCIPanelSkipRerunOrdering(t *testing.T) {
 					statusCount := len(*statuses)
 					// The skip decision was made from the previous attempt before
 					// the rerun transferred ownership, possibly finishing already.
-					err = h.Poller.skipLabeledPR("acme/api", pr, "skip-review", before)
+					err = h.Poller.skipPR("acme/api", pr, skipReviewLabel, before)
 					require.ErrorIs(t, err, storage.ErrCIPanelActive)
 					if ordering == "rerun queued" {
-						err = h.Poller.skipLabeledPR("acme/api", pr, "skip-review", nil)
+						err = h.Poller.skipPR("acme/api", pr, skipReviewLabel, nil)
 						require.ErrorIs(t, err, storage.ErrCIPanelActive, "a previously absent attempt cannot erase a new owner")
 					}
 					assert.Zero(skipCalls)

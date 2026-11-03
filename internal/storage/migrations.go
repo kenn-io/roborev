@@ -35,6 +35,9 @@ type schemaMigration struct {
 var schemaMigrations = []schemaMigration{
 	{1, "baseline", migrateBaseline},
 	{2, "compress job content", migrateJobContent},
+	{3, "CI panel retirement reasons", migrateCIPanelRetireReason},
+	{4, "CI panel PR head index", migrateCIPanelPRHeadIndex},
+	{5, "token cost started-at index", migrateTokenCostStartedIndex},
 }
 
 // ErrSchemaTooNew reports a database written by a newer roborev release.
@@ -87,4 +90,28 @@ func (db *DB) runSchemaMigrations(ctx context.Context, migrations []schemaMigrat
 		}
 	}
 	return nil
+}
+
+// migrateCIPanelRetireReason leaves historical retirement causes unspecified.
+// CI panel state is local-only and is not replicated to PostgreSQL.
+func migrateCIPanelRetireReason(ctx context.Context, db *DB) error {
+	exists, err := hasColumn(ctx, db, "ci_pr_panels", "retire_reason")
+	if err != nil || exists {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `ALTER TABLE ci_pr_panels ADD COLUMN retire_reason TEXT`)
+	return err
+}
+
+func migrateCIPanelPRHeadIndex(ctx context.Context, db *DB) error {
+	_, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_ci_panels_pr_head
+		ON ci_pr_panels(github_repo, pr_number, head_sha)`)
+	return err
+}
+
+func migrateTokenCostStartedIndex(ctx context.Context, db *DB) error {
+	// Token-cost queries must use the same normalized started-at expression.
+	_, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_review_jobs_source_started
+		ON review_jobs(source_machine_id, `+sqliteNormalizedTimestampExpr("started_at")+`)`)
+	return err
 }

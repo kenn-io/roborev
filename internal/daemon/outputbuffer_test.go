@@ -1,6 +1,9 @@
 package daemon
 
 import (
+	"bytes"
+	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +16,53 @@ import (
 // simpleNormalizer matches the common pattern used in Writer tests.
 func simpleNormalizer(line string) *OutputLine {
 	return &OutputLine{Text: line, Type: "text"}
+}
+
+func TestOutputWriterLongLineAllocationGrowth(t *testing.T) {
+	chunk := bytes.Repeat([]byte("x"), 4096)
+	var allocated [2]uint64
+	for i, size := range []int{256 << 10, 1 << 20} {
+		ob := NewOutputBuffer(1024, 4096)
+		w := ob.Writer(1, simpleNormalizer)
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		for offset := 0; offset < size; offset += len(chunk) {
+			_, _ = w.Write(chunk)
+		}
+		runtime.ReadMemStats(&after)
+		allocated[i] = after.TotalAlloc - before.TotalAlloc
+	}
+	// Quadrupling the input should grow allocations linearly. Allow twice
+	// that growth for buffer capacity rounding and runtime bookkeeping.
+	assert.Less(t, allocated[1], 8*allocated[0], "allocated bytes for 256KiB and 1MiB: %v", allocated)
+}
+
+func TestOutputWriterChunking(t *testing.T) {
+	const input = "first\r\n\nsecond\r\nthird\ntrailing\r"
+	for chunkSize := 1; chunkSize <= len(input); chunkSize++ {
+		t.Run(fmt.Sprintf("chunk=%d", chunkSize), func(t *testing.T) {
+			ob := NewOutputBuffer(1024, 4096)
+			w := ob.Writer(1, simpleNormalizer)
+			for offset := 0; offset < len(input); offset += chunkSize {
+				chunk := []byte(input[offset:min(offset+chunkSize, len(input))])
+				n, err := w.Write(chunk)
+				require.NoError(t, err)
+				assert.Equal(t, len(chunk), n)
+			}
+			assertLines(t, ob.GetLines(1),
+				OutputLine{Text: "first", Type: "text"},
+				OutputLine{Text: "", Type: "text"},
+				OutputLine{Text: "second", Type: "text"},
+				OutputLine{Text: "third", Type: "text"})
+			w.Flush()
+			assertLines(t, ob.GetLines(1),
+				OutputLine{Text: "first", Type: "text"},
+				OutputLine{Text: "", Type: "text"},
+				OutputLine{Text: "second", Type: "text"},
+				OutputLine{Text: "third", Type: "text"},
+				OutputLine{Text: "trailing\r", Type: "text"})
+		})
+	}
 }
 
 // assertLines verifies the count and content of lines for a job.
@@ -244,45 +294,6 @@ func TestOutputBuffer_CloseJobClosesSubscribers(t *testing.T) {
 	default:
 		require.FailNow(t, "CloseJob did not close the subscriber channel")
 	}
-}
-
-func TestOutputWriter_Write(t *testing.T) {
-	ob := NewOutputBuffer(1024, 4096)
-	w := ob.Writer(1, simpleNormalizer)
-
-	// Write with newline
-	w.Write([]byte("hello\n"))
-	w.Write([]byte("world\n"))
-
-	assertLines(t, ob.GetLines(1), OutputLine{Text: "hello", Type: "text"}, OutputLine{Text: "world", Type: "text"})
-}
-
-func TestOutputWriter_WritePartialLines(t *testing.T) {
-	ob := NewOutputBuffer(1024, 4096)
-	w := ob.Writer(1, simpleNormalizer)
-
-	// Write partial line
-	w.Write([]byte("hel"))
-	w.Write([]byte("lo\nwor"))
-	w.Write([]byte("ld\n"))
-
-	assertLines(t, ob.GetLines(1), OutputLine{Text: "hello", Type: "text"}, OutputLine{Text: "world", Type: "text"})
-}
-
-func TestOutputWriter_Flush(t *testing.T) {
-	ob := NewOutputBuffer(1024, 4096)
-	w := ob.Writer(1, simpleNormalizer)
-
-	// Write without newline
-	w.Write([]byte("incomplete"))
-
-	// Should not appear yet
-	assertLines(t, ob.GetLines(1))
-
-	// Flush should process remaining
-	w.Flush()
-
-	assertLines(t, ob.GetLines(1), OutputLine{Text: "incomplete", Type: "text"})
 }
 
 func TestOutputWriter_NormalizeFilters(t *testing.T) {

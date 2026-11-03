@@ -314,6 +314,68 @@ func TestGenerate(t *testing.T) {
 	}
 }
 
+func TestGenerate_DraftPolicy(t *testing.T) {
+	defaultGuard := "${{ !github.event.pull_request.draft }}"
+	for _, tt := range []struct {
+		name          string
+		includeDrafts bool
+		wantGuard     *string
+	}{
+		{name: "default", wantGuard: &defaultGuard},
+		{name: "include drafts", includeDrafts: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			cfg.IncludeDrafts = tt.includeDrafts
+			out, err := Generate(cfg)
+			require.NoError(t, err)
+			var workflow struct {
+				On struct {
+					PullRequest struct {
+						Types []string `yaml:"types"`
+					} `yaml:"pull_request"`
+				} `yaml:"on"`
+				Concurrency map[string]any    `yaml:"concurrency"`
+				Permissions map[string]string `yaml:"permissions"`
+				Jobs        map[string]struct {
+					If    *string `yaml:"if"`
+					Steps []struct {
+						Name string            `yaml:"name"`
+						With map[string]any    `yaml:"with"`
+						Env  map[string]string `yaml:"env"`
+						Run  string            `yaml:"run"`
+					} `yaml:"steps"`
+				} `yaml:"jobs"`
+			}
+			require.NoError(t, yaml.Unmarshal([]byte(out), &workflow))
+			assert := assert.New(t)
+			assert.Equal([]string{"opened", "synchronize", "reopened", "ready_for_review"}, workflow.On.PullRequest.Types)
+			assert.Equal(map[string]any{
+				"group":              "roborev-${{ github.workflow }}-${{ github.event.pull_request.number }}",
+				"cancel-in-progress": true,
+			}, workflow.Concurrency)
+			assert.Equal(map[string]string{"contents": "read", "pull-requests": "write"}, workflow.Permissions)
+			review, ok := workflow.Jobs["review"]
+			require.True(t, ok)
+			assert.Equal(tt.wantGuard, review.If)
+			require.Len(t, review.Steps, 4)
+			assert.Equal(false, review.Steps[0].With["persist-credentials"])
+			assert.Equal(0, review.Steps[0].With["fetch-depth"])
+			assert.Equal("${{ secrets.GITHUB_TOKEN }}", review.Steps[3].Env["GH_TOKEN"])
+			assert.Equal("${{ secrets.OPENAI_API_KEY }}", review.Steps[3].Env["OPENAI_API_KEY"])
+			assert.Equal(`set -euo pipefail
+roborev ci review \
+  --agent "codex" \
+  --synthesis-agent "codex" \
+  --ref "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" \
+  --comment \
+  --gh-repo "${{ github.repository }}" \
+  --pr "${{ github.event.pull_request.number }}"
+`, review.Steps[3].Run)
+		})
+	}
+}
+
 func TestAgentInstallCmd(t *testing.T) {
 	tests := []struct {
 		agent       string

@@ -45,6 +45,7 @@ func postCommitCmd() *cobra.Command {
 		flushPush   bool
 		flushBranch string
 		flushHead   string
+		quietHead   string
 	)
 
 	cmd := &cobra.Command{
@@ -99,6 +100,7 @@ func postCommitCmd() *cobra.Command {
 			_ = gitrepo.EnsureAbsoluteHooksPath(ctx, root)
 			var batch postCommitBatchDecision
 			batchSize := 0
+			quietPeriod := time.Duration(0)
 			unlock, err := acquirePostCommitBatchLock(ctx, root)
 			switch {
 			case err != nil && (flush || flushBranch != ""):
@@ -122,7 +124,13 @@ func postCommitCmd() *cobra.Command {
 				// response would let a concurrent hook plan from stale batch
 				// state.
 				defer func() { _ = unlock() }()
+
 				var err error
+				quietPeriod, err = config.ResolvePostCommitQuietPeriod(root)
+				if err != nil {
+					notQueued(root, fmt.Sprintf("load quiet-period config: %v", err))
+					return nil
+				}
 				batchSize, err = config.ResolvePostCommitBatchSizeWithError(root)
 				if err != nil {
 					notQueued(root, fmt.Sprintf("load batch config: %v", err))
@@ -133,8 +141,13 @@ func postCommitCmd() *cobra.Command {
 						ctx, root, batchSize, flushBranch, flushHead,
 					)
 				} else {
-					batch = planPostCommitBatch(ctx, root, batchSize)
+					batch = planPostCommitBatch(ctx, root, batchSize, quietPeriod > 0)
 				}
+			}
+			// Compare the planned tip, rather than resolving the branch separately:
+			// git can advance the ref even while its post-commit hook waits on our lock.
+			if quietHead != "" && batch.Head != quietHead {
+				return nil
 			}
 			testHookAfterBatchPlan()
 			if flush && !batch.Enabled {
@@ -146,7 +159,16 @@ func postCommitCmd() *cobra.Command {
 					"batch pending branch=%s commits=%d threshold=%d",
 					batch.Branch, batch.Pending, batchSize,
 				))
-				return nil
+				if quietPeriod == 0 || batch.Pending == 0 {
+					return nil
+				}
+				if err := schedulePostCommitBatch(ctx, root, batch); err == nil {
+					return nil
+				} else {
+					// If the timer cannot be registered, enqueue the accumulated range
+					// now. The checkpoint still advances only after a successful enqueue.
+					hookLog(root, "fail", fmt.Sprintf("schedule quiet flush: %v", err))
+				}
 			}
 
 			if err := ensureDaemon(); err != nil {
@@ -242,6 +264,8 @@ func postCommitCmd() *cobra.Command {
 	_ = cmd.Flags().MarkHidden("flush-push")
 	cmd.Flags().StringVar(&flushBranch, "flush-branch", "", "branch to flush")
 	_ = cmd.Flags().MarkHidden("flush-branch")
+	cmd.Flags().StringVar(&quietHead, "quiet-head", "", "flush only if the branch still has this tip")
+	_ = cmd.Flags().MarkHidden("quiet-head")
 	cmd.Flags().StringVar(&flushHead, "flush-head", "", "pushed commit to flush")
 	_ = cmd.Flags().MarkHidden("flush-head")
 	cmd.Flags().StringVar(
@@ -405,4 +429,25 @@ func truncateBytes(b []byte, max int) string {
 		return string(b)
 	}
 	return string(b[:max]) + "..."
+}
+
+func schedulePostCommitBatch(ctx context.Context, root string, batch postCommitBatchDecision) error {
+	if err := ensureDaemon(); err != nil {
+		return err
+	}
+	body, err := json.Marshal(daemon.PostCommitScheduleRequest{RepoPath: root, Branch: batch.Branch, Head: batch.Head})
+	if err != nil {
+		return err
+	}
+	global, _ := config.LoadGlobal()
+	ep := getDaemonEndpoint()
+	response, err := newDaemonAPI(ep.BaseURL(), hookHTTPClient(ep, config.ResolveHookTimeout(root, global))).SchedulePostCommitRaw(ctx, nil, roborevclient.WithBody(body))
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("daemon returned HTTP %d", response.StatusCode)
+	}
+	return nil
 }

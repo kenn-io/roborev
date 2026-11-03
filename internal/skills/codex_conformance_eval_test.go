@@ -323,6 +323,13 @@ var roborevCountedPaths = map[string]bool{
 	"repo move": true, "repo delete": true, "repo merge": true, "legacy-reviews convert": true,
 	"legacy-reviews export": true, "legacy-reviews import": true, "backfill-verdicts": true,
 	"backfill-tokens": true, "sync status": true,
+	"job list": true, "job show": true, "job wait": true, "job search": true,
+	"job comment": true, "job close": true, "job cancel": true, "job stream": true,
+	"job log": true, "job compact": true, "daemon status": true, "daemon pause": true,
+	"daemon resume": true, "agent hook snooze": true, "report summary": true,
+	"report cost": true, "report insights": true, "storage backfill-tokens": true,
+	"storage backfill-verdicts": true, "storage legacy-reviews convert": true,
+	"storage legacy-reviews export": true, "storage legacy-reviews import": true,
 }
 
 // unmarkedCountedRoborevTokens matches a roborev command the CLI would count as a person's use because it lacks --from-skill.
@@ -342,11 +349,12 @@ func unmarkedCountedRoborevTokens(tokens []string) bool {
 	if len(words) == 0 {
 		return false
 	}
-	path := words[0]
-	if len(words) > 1 && roborevCountedPaths[path+" "+words[1]] {
-		path += " " + words[1]
+	for end := 1; end <= len(words); end++ {
+		if roborevCountedPaths[strings.Join(words[:end], " ")] {
+			return !*fromSkill
+		}
 	}
-	return roborevCountedPaths[path] && !*fromSkill
+	return false
 }
 
 // roborevCountedCommandsMarked reports whether every counted roborev command the agent ran carries --from-skill.
@@ -832,6 +840,9 @@ func TestRoborevCountedCommandsCarryFromSkill(t *testing.T) {
 		"roborev export reviews --from-skill",
 		"roborev agent-hook fix-done --session abc",
 		"roborev skills update",
+		"roborev job show --from-skill --job 1 --json",
+		"roborev agent hook snooze --from-skill",
+		"roborev storage legacy-reviews export --from-skill",
 		"git status",
 	}
 	tests := []struct {
@@ -840,6 +851,9 @@ func TestRoborevCountedCommandsCarryFromSkill(t *testing.T) {
 		want     bool
 	}{
 		{name: "every counted command marked", commands: marked, want: true},
+		{name: "unmarked grouped show", commands: append(slices.Clone(marked), "roborev job show --job 1 --json")},
+		{name: "unmarked three-word path", commands: append(slices.Clone(marked), "roborev agent hook snooze")},
+		{name: "unmarked storage export", commands: append(slices.Clone(marked), "roborev storage legacy-reviews export")},
 		{name: "unmarked show", commands: append(slices.Clone(marked), "roborev show --job 1 --json")},
 		{name: "unmarked comment", commands: append(slices.Clone(marked), `roborev comment --job 1 -m "checked"`)},
 		{name: "unmarked close", commands: append(slices.Clone(marked), "roborev close 1")},

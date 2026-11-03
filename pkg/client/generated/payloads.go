@@ -40,6 +40,8 @@ type ImportLegacyReviewBody = ImportLegacyReviewInputBody
 
 type ScanTokenUsageBody = ScanTokenUsageInputBody
 
+type SchedulePostCommitBody = PostCommitScheduleRequest
+
 type RebuttalBody = RebuttalRequest
 
 type RemapJobsBody = RemapRequest

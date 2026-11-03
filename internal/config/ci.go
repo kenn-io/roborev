@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"path"
 	"slices"
 	"strings"
 	"time"
@@ -101,6 +102,12 @@ type AgentReviewType struct {
 
 // CIConfig holds configuration for the CI poller that watches GitHub PRs
 type CIConfig struct {
+	// Check runs a sandboxed Codex check before storing CI findings.
+	Check          bool   `toml:"check"`
+	CheckModel     string `toml:"check_model"`
+	CheckReasoning string `toml:"check_reasoning"`
+	Rewrite        bool   `toml:"rewrite"`
+
 	// Enabled enables the CI poller
 	Enabled bool `toml:"enabled"`
 
@@ -119,6 +126,29 @@ type CIConfig struct {
 	// SkipLabels is a list of GitHub PR labels that prevent CI reviews.
 	// Label matching is case-insensitive.
 	SkipLabels []string `toml:"skip_labels"`
+
+	// SkipDrafts prevents CI reviews of draft pull requests. Default: false.
+	SkipDrafts bool `toml:"skip_drafts"`
+
+	// AllowedAuthors and AllowedAuthorAssociations limit CI reviews to PRs
+	// from trusted authors. When either is set, a PR is reviewed only if its
+	// author's login is in AllowedAuthors (case-insensitive) or its GitHub
+	// author_association (OWNER, MEMBER, COLLABORATOR, ...) is in
+	// AllowedAuthorAssociations. Both empty reviews every author.
+	AllowedAuthors            []string `toml:"allowed_authors"`
+	AllowedAuthorAssociations []string `toml:"allowed_author_associations"`
+
+	// AllowCodeowners also admits PR authors that the repository's
+	// CODEOWNERS file on the PR base branch names as owners, directly or
+	// through a team. Setting it turns the author filter on.
+	AllowCodeowners bool `toml:"allow_codeowners"`
+
+	// IncludeBranches and ExcludeBranches filter PRs by head branch name
+	// using glob patterns in which * also matches "/". When IncludeBranches
+	// is set, only matching branches are reviewed. ExcludeBranches wins
+	// over IncludeBranches.
+	IncludeBranches []string `toml:"include_branches"`
+	ExcludeBranches []string `toml:"exclude_branches"`
 
 	// MaxRepos is a safety cap on the total number of expanded repos. Default: 100.
 	MaxRepos int `toml:"max_repos"`
@@ -444,6 +474,80 @@ func (c *CIConfig) IsThrottleBypassed(login string) bool {
 	return containsUsername(c.ThrottleBypassUsers, login)
 }
 
+// ciAuthorAssociations lists GitHub's author_association values.
+var ciAuthorAssociations = []string{
+	"OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR",
+	"FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER", "MANNEQUIN", "NONE",
+}
+
+// IsPRAuthorAllowed reports whether AllowedAuthors or
+// AllowedAuthorAssociations admit this author. With no author filter
+// configured, every author is allowed. When AllowCodeowners is set, an
+// author this reports as not allowed may still be a code owner; the caller
+// checks CODEOWNERS.
+func (c *CIConfig) IsPRAuthorAllowed(login, association string) bool {
+	if len(c.AllowedAuthors) == 0 && len(c.AllowedAuthorAssociations) == 0 && !c.AllowCodeowners {
+		return true
+	}
+	if login != "" && containsUsername(c.AllowedAuthors, login) {
+		return true
+	}
+	return association != "" && slices.ContainsFunc(c.AllowedAuthorAssociations, func(a string) bool {
+		return strings.EqualFold(strings.TrimSpace(a), association)
+	})
+}
+
+// IsPRBranchAllowed reports whether CI may review a PR whose head branch is
+// branch. ExcludeBranches wins over IncludeBranches; an empty
+// IncludeBranches allows every branch that is not excluded.
+func (c *CIConfig) IsPRBranchAllowed(branch string) bool {
+	if matchCIBranch(c.ExcludeBranches, branch) {
+		return false
+	}
+	return len(c.IncludeBranches) == 0 || matchCIBranch(c.IncludeBranches, branch)
+}
+
+// matchCIBranch reports whether branch matches any pattern. Patterns use
+// path.Match syntax, except that * and ? also match "/", as in
+// `git branch --list`, so "dependabot/*" matches "dependabot/npm/lodash".
+// Git forbids NUL in ref names, so it stands in for "/" on both sides.
+func matchCIBranch(patterns []string, branch string) bool {
+	if branch == "" {
+		return false
+	}
+	name := strings.ReplaceAll(branch, "/", "\x00")
+	for _, pattern := range patterns {
+		pattern = strings.ReplaceAll(strings.TrimSpace(pattern), "/", "\x00")
+		if ok, err := path.Match(pattern, name); err == nil && ok {
+			return true
+		}
+	}
+	return false
+}
+
+func validateCIPRFilters(ci CIConfig) error {
+	for _, filter := range []struct {
+		key      string
+		patterns []string
+	}{
+		{"include_branches", ci.IncludeBranches},
+		{"exclude_branches", ci.ExcludeBranches},
+	} {
+		for _, pattern := range filter.patterns {
+			if _, err := path.Match(strings.TrimSpace(pattern), ""); err != nil {
+				return fmt.Errorf("%s: invalid pattern %q: %w", filter.key, pattern, err)
+			}
+		}
+	}
+	for _, association := range ci.AllowedAuthorAssociations {
+		if !slices.Contains(ciAuthorAssociations, strings.ToUpper(strings.TrimSpace(association))) {
+			return fmt.Errorf("allowed_author_associations: unknown value %q (valid: %s)",
+				association, strings.Join(ciAuthorAssociations, ", "))
+		}
+	}
+	return nil
+}
+
 // ResolvedMaxRepos returns the maximum number of repos to poll.
 // Defaults to 100 if not set or non-positive.
 func (c *CIConfig) ResolvedMaxRepos() int {
@@ -456,6 +560,9 @@ func (c *CIConfig) ResolvedMaxRepos() int {
 // RepoCIConfig holds per-repo CI overrides (used by the CI poller for this repo).
 // These override the global [ci] settings when reviewing this specific repo.
 type RepoCIConfig struct {
+	Check   *bool `toml:"check" comment:"Check CI findings before posting."`
+	Rewrite *bool `toml:"rewrite" comment:"Rewrite checked CI findings in plain words."`
+
 	// Agents overrides the list of agents for CI reviews of this repo.
 	Agents []string `toml:"agents" comment:"Override the agents used by CI for this repo."`
 
@@ -742,4 +849,28 @@ func ResolveCIWorkflowAgents(
 		globalCIAgents,
 		globalAgent,
 	)
+}
+
+// ResolveCICheck lets the repository override the global checker switch.
+func ResolveCICheck(repoCfg *RepoConfig, globalCfg *Config) bool {
+	var repoVal, globalVal *bool
+	if repoCfg != nil {
+		repoVal = repoCfg.CI.Check
+	}
+	if globalCfg != nil {
+		globalVal = &globalCfg.CI.Check
+	}
+	return resolveBool(false, repoVal, globalVal)
+}
+
+// ResolveCIRewrite lets the repository override the global rewrite switch.
+func ResolveCIRewrite(repoCfg *RepoConfig, globalCfg *Config) bool {
+	var repoVal, globalVal *bool
+	if repoCfg != nil {
+		repoVal = repoCfg.CI.Rewrite
+	}
+	if globalCfg != nil {
+		globalVal = &globalCfg.CI.Rewrite
+	}
+	return resolveBool(false, repoVal, globalVal)
 }

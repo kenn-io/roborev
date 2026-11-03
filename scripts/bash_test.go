@@ -35,7 +35,7 @@ func bashPath(t *testing.T, path string) string {
 		filepath.ToSlash(abs),
 	}
 	for _, candidate := range candidates {
-		cmd := exec.Command("bash", "-lc", "test -e "+shellQuote(candidate))
+		cmd := exec.CommandContext(t.Context(), "bash", "-lc", "test -e "+shellQuote(candidate))
 		if err := cmd.Run(); err == nil {
 			return candidate
 		}

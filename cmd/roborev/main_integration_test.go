@@ -45,7 +45,7 @@ func TestRunRefineAgentErrorRetriesWithoutApplyingChanges(t *testing.T) {
 
 	output := captureStdout(t, func() {
 		// With 2 iterations and a failing agent, should exhaust iterations
-		err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 2, quiet: true})
+		err := runRefine(t.Context(), ctx, refineOptions{agentName: "test", maxIterations: 2, quiet: true})
 		require.Error(t, err)
 	})
 
@@ -215,7 +215,7 @@ func TestRunRefineBranchReviewUsesEmptyAgent(t *testing.T) {
 
 	ctx := defaultTestRunContext(t, repoDir)
 
-	err := runRefine(ctx, refineOptions{
+	err := runRefine(t.Context(), ctx, refineOptions{
 		agentName:     "test",
 		maxIterations: 3,
 		quiet:         true,
@@ -274,7 +274,7 @@ func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 
 	ctx := defaultTestRunContext(t, repoDir)
 
-	err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 2, quiet: true})
+	err := runRefine(t.Context(), ctx, refineOptions{agentName: "test", maxIterations: 2, quiet: true})
 	require.Error(t, err)
 
 	for _, call := range md.State.respondCalled {

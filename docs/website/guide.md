@@ -13,8 +13,13 @@ detects hook managers like Husky through `core.hooksPath` and never edits
 tracked source. Point your coding agent at `roborev quickstart` and it will
 inspect the repo and finish the setup.
 
+On Linux, use the [install script](https://roborev.io/docs/installation/#install-script)
+or a [DEB or RPM package](https://roborev.io/docs/installation/#linux-packages-deb-and-rpm).
+
+On macOS, install with Homebrew and initialize your repo:
+
 ```sh
-curl -fsSL https://roborev.io/install.sh | bash
+brew install roborev
 cd your-repo
 roborev init
 roborev quickstart --json
@@ -30,12 +35,13 @@ returns immediately; neither you nor the agent waits on it. The
 first installed agent in the fallback order reads the diff, the commit message,
 your guidelines, and recent review history, and returns a verdict with findings,
 severities, and file locations. Duplicate hook requests for the same target are
-coalesced. Small commits can be batched with `post_commit_batch_size`.
+coalesced. Bursts of small commits can be batched with `post_commit_batch_size`
+or `post_commit_quiet_period`.
 
 ```sh
 git commit -m "Add retry to payment webhook"
-roborev status                       # daemon, queue depth, running jobs
-roborev show HEAD                    # the rendered review for the latest commit
+roborev daemon status                       # daemon, queue depth, running jobs
+roborev job show HEAD                    # the rendered review for the latest commit
 roborev review --branch --type security   # or ask for one explicitly
 ```
 
@@ -66,12 +72,12 @@ that applies changes and commits; the new commit is reviewed automatically.
 
 ## 05 / Let the session fix its own reviews
 
-`roborev agent-hook install` detects Claude Code, Codex, Copilot CLI, Cursor,
+`roborev agent hook install` detects Claude Code, Codex, Copilot CLI, Cursor,
 Factory Droid, Gemini CLI, Hermes, and Qwen and installs their native lifecycle
 hooks. The daemon counts turns, commits, and failed reviews per session; when a
 threshold trips, the agent is reminded to run the fix skill for exactly the
 review IDs that are open. Reminders never run `roborev fix` on their own, and
-`roborev snooze` silences a worktree while you focus.
+`roborev agent hook snooze` silences a worktree while you focus.
 
 ```toml
 # ~/.roborev/config.toml
@@ -128,7 +134,7 @@ review type, instructions, and timeout, and a synthesis agent merges them into
 one review. Built-in `security`, `design`, `lookahead`, and `test-value` types
 swap the rubric; custom types wrap your own Go template. `roborev analyze` runs
 duplication, complexity, dead-code, refactoring, API-design, architecture,
-security, and test-fixture passes over existing code, and `roborev compact`
+security, and test-fixture passes over existing code, and `roborev job compact`
 verifies open findings against the current tree.
 
 ```toml
@@ -145,7 +151,7 @@ synthesis_agent = "codex"
 ```sh
 roborev review --branch --panel branch_final
 roborev analyze dead-code ./... --fix
-roborev compact
+roborev job compact
 ```
 
 → [Review panels](https://roborev.io/docs/advanced/subagent-review-panels/),
@@ -154,11 +160,12 @@ roborev compact
 
 ## 09 / Run the same panel on every pull request
 
-Enable the CI poller and the daemon lists open pull requests on GitHub or merge
-requests on GitLab, runs one panel per PR head against the frozen merge-base
-range, and posts one synthesized comment. Labels in `skip_labels` exempt drafts
-and generated updates. Authenticate as a GitHub App for a bot with
-repository-scoped permissions, or use your `gh` login.
+Enable the CI poller and the daemon lists open pull requests on GitHub, runs
+one panel per PR head against the frozen merge-base range, and posts one
+synthesized comment. The poller is GitHub-only; for GitLab merge requests, run
+`roborev ci review` in a GitLab CI job to post the review as an MR note. Labels
+in `skip_labels` exempt drafts and generated updates. Authenticate as a GitHub
+App for a bot with repository-scoped permissions, or use your `gh` login.
 
 ```toml
 [ci]

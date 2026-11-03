@@ -1,7 +1,6 @@
 package searchindex
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -43,7 +42,7 @@ func TestCandidateTargetHasFloorMultiplierAndCeiling(t *testing.T) {
 }
 
 func TestSearchLexicalTreatsPathsHyphensQuotesAndKeywordsLiterally(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index := openQueryTestIndex(t)
 	docs := []searchdoc.Document{
 		queryTestDocument(1, "panel-path", "Finding: high foo/bar.go:42\nProblem: retry-safe parser failed", queryDocOptions{}),
@@ -75,7 +74,7 @@ func TestSearchLexicalTreatsPathsHyphensQuotesAndKeywordsLiterally(t *testing.T)
 }
 
 func TestSearchLexicalRanksIdentifiersAndSHAPrefixesBeforeBM25(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index := openQueryTestIndex(t)
 	shaA := "abcdef0123456789abcdef0123456789abcdef01"
 	shaB := "abcdef0999999999999999999999999999999999"
@@ -115,7 +114,7 @@ func TestSearchLexicalRanksIdentifiersAndSHAPrefixesBeforeBM25(t *testing.T) {
 }
 
 func TestSearchLexicalAppliesEveryMirrorFilterBeforeLimit(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index := openQueryTestIndex(t)
 	cutoff := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
 	docs := make([]searchdoc.Document, 0, 61)
@@ -147,7 +146,7 @@ func TestSearchLexicalAppliesEveryMirrorFilterBeforeLimit(t *testing.T) {
 }
 
 func TestSemanticProbeReportsTheRawNeighborBeyondTheDeepCeiling(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index := openQueryTestIndex(t)
 	doc := queryTestDocument(1, "probe-group", "semantic chunks", queryDocOptions{})
 	_, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{doc}, nil)
@@ -180,7 +179,7 @@ func TestSemanticProbeReportsTheRawNeighborBeyondTheDeepCeiling(t *testing.T) {
 }
 
 func TestSemanticProbeObservesRawCeilingBeforeFreshnessJoin(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index := openQueryTestIndex(t)
 	stale := queryTestDocument(1, "stale", "stale raw chunks", queryDocOptions{})
 	fresh := queryTestDocument(2, "fresh", "fresh result beyond ceiling", queryDocOptions{})
@@ -228,7 +227,7 @@ func TestSemanticProbeObservesRawCeilingBeforeFreshnessJoin(t *testing.T) {
 
 func openQueryTestIndex(t *testing.T) *Index {
 	t.Helper()
-	index, err := Open(context.Background(), filepath.Join(t.TempDir(), "reviews.search.db"))
+	index, err := Open(t.Context(), filepath.Join(t.TempDir(), "reviews.search.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, index.Close()) })
 	return index
@@ -281,7 +280,7 @@ func queryTestDocument(id int64, group, output string, options queryDocOptions) 
 }
 
 func TestSemanticCandidatesApplyFiltersAfterTheCandidateWindow(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	index := openQueryTestIndex(t)
 	nearest := queryTestDocument(1, "closed-group", "closed nearest", queryDocOptions{closed: true})
 	open := queryTestDocument(2, "open-group", "open next", queryDocOptions{})

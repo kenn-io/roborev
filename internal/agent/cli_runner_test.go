@@ -34,7 +34,7 @@ printf 'complete\n'
 exit 0
 `)
 	startedAt := time.Now()
-	result, err := runStreamingCLI(context.Background(), streamingCLISpec{
+	result, err := runStreamingCLI(t.Context(), streamingCLISpec{
 		Name:    "test",
 		Command: cmdPath,
 		Parse: func(r io.Reader, sw *syncWriter) (string, error) {
@@ -59,7 +59,7 @@ func TestRunStreamingCLIPreservesOutputWhenParserIsSlow(t *testing.T) {
 case "$1" in *etxtbsy*) exit 0;; esac
 dd if=/dev/zero bs=65536 count=1 2>/dev/null
 `)
-	result, err := runStreamingCLI(context.Background(), streamingCLISpec{
+	result, err := runStreamingCLI(t.Context(), streamingCLISpec{
 		Name:    "test",
 		Command: cmdPath,
 		Parse: func(r io.Reader, sw *syncWriter) (string, error) {
@@ -83,7 +83,7 @@ func TestRunStreamingCLIPreservesLargeOutputBurst(t *testing.T) {
 case "$1" in *etxtbsy*) exit 0;; esac
 dd if=/dev/zero bs=2097152 count=1 2>/dev/null
 `)
-	result, err := runStreamingCLI(context.Background(), streamingCLISpec{
+	result, err := runStreamingCLI(t.Context(), streamingCLISpec{
 		Name:    "test",
 		Command: cmdPath,
 		Parse: func(r io.Reader, sw *syncWriter) (string, error) {
@@ -103,7 +103,7 @@ func TestRunStreamingCLIPreservesWaitErrWhenContextCancelsAfterParse(t *testing.
 	skipIfWindows(t)
 
 	cmdPath := writeTempCommand(t, "#!/bin/sh\ncase \"$1\" in *etxtbsy*) exit 0;; esac\nprintf 'ok\\n'\nexit 1\n")
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
 	result, err := runStreamingCLI(ctx, streamingCLISpec{

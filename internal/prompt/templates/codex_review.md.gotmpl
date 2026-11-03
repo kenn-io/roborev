@@ -16,9 +16,11 @@ Do NOT search or read files outside the repository checkout, except for an expli
 
 ## Review Criteria
 
-Report only findings the developer would act on. Review in sequence:
+Report only findings the developer would act on.
 
-{{template "review_passes"}}
+{{template "review_intent" .}}Review in sequence:
+
+{{template "review_intent_pass" .}}{{template "review_passes"}}
 
 {{template "review_do_not_report"}}
 
@@ -28,8 +30,6 @@ Report only findings the developer would act on. Review in sequence:
 
 {{template "review_verify"}}
 
-{{template "review_output_rules"}}
-
-Do not review the commit message. Focus only on the code changes in the diff.{{.System.NoSkillsInstruction}}{{.System.AntiTestSlopInstruction}}{{.System.ToolchainVerificationInstruction}}
+{{template "review_output_rules"}}{{.System.NoSkillsInstruction}}{{.System.AntiTestSlopInstruction}}{{.System.ToolchainVerificationInstruction}}
 
 Current date: {{.System.CurrentDate}} (UTC)

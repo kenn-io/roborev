@@ -41,15 +41,17 @@ func newContentEncoder() (*zstd.Encoder, error) {
 	return enc, nil
 }
 
-// registerContentFunctions makes the zstd SQL functions available to every
-// connection the sqlite driver opens afterwards. VolatileArgs makes the driver
-// pass TEXT arguments with their full length; without it, text is copied as a
-// C string and a prompt is cut at its first NUL byte. Neither function keeps
-// its argument after returning, which the flag requires.
+// registerContentFunctions makes the zstd SQL functions and the job list's
+// roborev_parse_verdict available to every connection the sqlite driver opens
+// afterwards. VolatileArgs makes the driver pass TEXT arguments with their
+// full length; without it, text is copied as a C string and a prompt is cut at
+// its first NUL byte. No function keeps its argument after returning, which
+// the flag requires.
 var registerContentFunctions = sync.OnceValue(func() error {
 	for name, scalar := range map[string]func(*sqlite.FunctionContext, []driver.Value) (driver.Value, error){
-		"zstd_compress":   sqlZstdCompress,
-		"zstd_decompress": sqlZstdDecompress,
+		"zstd_compress":         sqlZstdCompress,
+		"zstd_decompress":       sqlZstdDecompress,
+		"roborev_parse_verdict": sqlParseVerdict,
 	} {
 		impl := &sqlite.FunctionImpl{NArgs: 1, Deterministic: true, VolatileArgs: true, Scalar: scalar}
 		if err := sqlite.RegisterFunction(name, impl); err != nil {

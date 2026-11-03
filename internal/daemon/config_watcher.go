@@ -6,6 +6,7 @@ import (
 	"log"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sync"
 	"time"
 
@@ -39,15 +40,16 @@ func (sc *StaticConfig) Config() *config.Config {
 //
 // Hot-reloadable settings take effect immediately: default_agent, job_timeout,
 // agent_quota_cooldown, allow_unsafe_agents, anthropic_api_key,
-// review_context_count, prompt_retention_days, job_log_retention_days.
+// review_context_count, prompt_retention_days, job_log_retention_days,
+// max_workers.
 //
-// Settings requiring restart: auth_key, server_addr, max_workers, ci.github_api_url,
+// Settings requiring restart: auth_key, server_addr, ci.github_api_url,
 // [web], [sync] section.
 // These are read at startup and the running values are preserved even if the
-// config file changes. CLI flag overrides (--addr, --workers) only apply to
-// restart-required settings, so they remain in effect for the daemon's lifetime.
-// The config object may show file values after reload, but the actual running
-// server address and worker pool size are fixed at startup.
+// config file changes. The config object may show file values after reload,
+// but the actual running server address is fixed at startup. CLI flag
+// overrides (--addr, --workers) remain in effect for the daemon's lifetime;
+// with --workers, file changes to max_workers are ignored.
 //
 // Note: ConfigWatcher is not restart-safe. Once Stop() is called, Start() will
 // return an error. Create a new ConfigWatcher instance if restart is needed.
@@ -55,6 +57,7 @@ type ConfigWatcher struct {
 	configPath     string
 	cfg            *config.Config
 	cfgMu          sync.RWMutex
+	reloadMu       sync.Mutex // serialize loading, publication, and callbacks
 	broadcaster    Broadcaster
 	activityLog    *ActivityLog
 	watcher        *fsnotify.Watcher
@@ -63,6 +66,10 @@ type ConfigWatcher struct {
 	stopped        bool      // True after Stop() is called
 	lastReloadedAt time.Time // Time of last successful config reload
 	reloadCounter  uint64    // Monotonic counter for reload events (sub-second precision)
+	// pinnedMaxWorkers is the --workers flag value; 0 lets the file decide.
+	pinnedMaxWorkers int
+	// onReload callbacks apply a reloaded config to running components.
+	onReload []func(*config.Config)
 }
 
 // NewConfigWatcher creates a new config watcher
@@ -115,6 +122,14 @@ func (cw *ConfigWatcher) Start(ctx context.Context) error {
 
 	go cw.watchLoop(ctx, configFile)
 	return nil
+}
+
+// OnReload registers fn to run with the new config after each successful
+// reload.
+func (cw *ConfigWatcher) OnReload(fn func(*config.Config)) {
+	cw.cfgMu.Lock()
+	defer cw.cfgMu.Unlock()
+	cw.onReload = append(cw.onReload, fn)
 }
 
 // Stop stops the config watcher. Safe to call multiple times.
@@ -199,6 +214,9 @@ func (cw *ConfigWatcher) watchLoop(ctx context.Context, configFile string) {
 }
 
 func (cw *ConfigWatcher) reloadConfig() {
+	cw.reloadMu.Lock()
+	defer cw.reloadMu.Unlock()
+
 	newCfg, err := config.LoadGlobalFrom(cw.configPath)
 	if err != nil {
 		log.Printf("Failed to reload config: %v", err)
@@ -213,9 +231,14 @@ func (cw *ConfigWatcher) reloadConfig() {
 	newCfg.MCP = oldCfg.MCP
 	requestedSearch := newCfg.Search
 	newCfg.Search = oldCfg.Search
+	requestedMaxWorkers := newCfg.MaxWorkers
+	if cw.pinnedMaxWorkers > 0 {
+		newCfg.MaxWorkers = cw.pinnedMaxWorkers
+	}
 	cw.cfg = newCfg
 	cw.lastReloadedAt = time.Now()
 	cw.reloadCounter++
+	onReload := slices.Clone(cw.onReload)
 	cw.cfgMu.Unlock()
 
 	// Update global agent settings
@@ -233,6 +256,13 @@ func (cw *ConfigWatcher) reloadConfig() {
 	}
 	if !reflect.DeepEqual(requestedSearch, oldCfg.Search) {
 		log.Printf("Config change: [search] settings changed (requires daemon restart to take effect)")
+	}
+	if requestedMaxWorkers != newCfg.MaxWorkers {
+		log.Printf("Config change: max_workers = %d ignored because the daemon was started with --workers %d", requestedMaxWorkers, newCfg.MaxWorkers)
+	}
+
+	for _, fn := range onReload {
+		fn(newCfg)
 	}
 
 	// Broadcast config reloaded event to notify connected clients
@@ -271,7 +301,7 @@ func logConfigChanges(old, new *config.Config) {
 		log.Printf("Config change: allow_unsafe_agents %v -> %v", oldUnsafe, newUnsafe)
 	}
 	if old.MaxWorkers != new.MaxWorkers {
-		log.Printf("Config change: max_workers %d -> %d (requires daemon restart to take effect)", old.MaxWorkers, new.MaxWorkers)
+		log.Printf("Config change: max_workers %d -> %d", old.MaxWorkers, new.MaxWorkers)
 	}
 	if old.ServerAddr != new.ServerAddr {
 		log.Printf("Config change: server_addr %q -> %q (requires daemon restart to take effect)", old.ServerAddr, new.ServerAddr)

@@ -83,8 +83,7 @@ to the current branch. Use = syntax for explicit values:
 				branchFilter = resolved
 			}
 
-			return tui.Run(tui.Config{
-				Context:       cmd.Context(),
+			return tui.Run(cmd.Context(), tui.Config{
 				Endpoint:      ep,
 				RepoFilter:    repoFilter,
 				BranchFilter:  branchFilter,
