@@ -239,19 +239,19 @@ closed state. Each finding has its 1-based `index` in the review, severity,
 problem text, and, when the review recorded them, `kind`, `topic`, `file`,
 `start_line`, and `end_line`. A job ID and an index together name one finding.
 
-A finding's `decisions` say what happened to it:
+Each review's `decisions` say what happened to its findings:
 
 | `source` | `kind` | Read from |
 |----------|--------|-----------|
-| `fix_comment` | `fix`, `decline`, `invalid`, or `ask` | Comment lines in the roborev-fix shape `- <severity> <file>: <Kind>: <reason>`, matched to the one finding with that severity and file, narrowed by a `file:line` when given |
-| `rebuttal` | `confirmed`, `refuted`, or `superseded` | A finished `roborev job comment --rebuttal` re-check of the current review, matched to the finding whose section holds the quoted excerpt |
+| `fix_comment` | `fix`, `decline`, `invalid`, or `ask` | Comment lines in the roborev-fix shape `- <severity> <file>: <Kind>: <reason>` |
+| `rebuttal` | `confirmed`, `refuted`, or `superseded` | A finished `roborev job comment --rebuttal` re-check |
 
-A decision attaches to a finding only when exactly one finding matches. Others
-stay on the review with a `target` naming the severity and file, or the excerpt.
-Lines also stay on the review when their comment was made on the commit rather
-than the review, because it reaches every review of the commit, or before the
-current run of a rerun review. A comment whose lines all became decisions is not
-repeated under `comments`.
+A decision's `target` names the finding as its author did: the severity and
+file, or the excerpt a rebuttal quoted. roborev records no exact link from a
+decision to a finding, so the reviewer matches each target to a finding rather
+than the server guessing. `before_rerun` marks a decision recorded on an earlier
+run of a review that was rerun, whose findings may differ. A comment whose lines
+all became decisions is not repeated under `comments`.
 
 `git_log` and `git_blame` mark each commit with `on_branch` and with
 `fix_for_jobs`: the earlier reviews whose comments cite that commit, which
