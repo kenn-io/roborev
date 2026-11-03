@@ -353,6 +353,24 @@ enabled = false
 	assert.True(t, h.Watcher.Config().MCP.Enabled, "the mounted MCP endpoint cannot change until restart")
 }
 
+func TestConfigWatcherReloadsReviewerToolsWithoutRestart(t *testing.T) {
+	h := newConfigWatcherHarness(t, `[mcp]
+enabled = true
+`)
+
+	h.updateConfigAndWait(t, `[mcp]
+enabled = false
+reviewer_tools = true
+`)
+	assert.True(t, h.Watcher.Config().MCP.ReviewerTools, "reviewer tools apply to the next review")
+	assert.True(t, h.Watcher.Config().MCP.Enabled, "the mounted MCP endpoint cannot change until restart")
+
+	h.updateConfigAndWait(t, `[mcp]
+enabled = true
+`)
+	assert.False(t, h.Watcher.Config().MCP.ReviewerTools)
+}
+
 func TestConfigWatcherPreservesRestartRequiredEmbeddingSearchConfig(t *testing.T) {
 	h := newConfigWatcherHarness(t, `[search.embeddings]
 base_url = "https://api.example.test/v1"
