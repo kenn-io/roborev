@@ -94,7 +94,7 @@ jobs:
             -- -timeout 10m -tags "integration migration" -run TestWindowsV056DaemonMigrationRefusesUnsafeReplacement -count=1 -v
 
       - name: Upload gotestsum results
-        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/windows-migration-reruns.txt') != ''
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-windows-migration-attempt-${{ github.run_attempt }}

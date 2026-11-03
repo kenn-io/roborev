@@ -371,7 +371,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload gotestsum results
-        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        if: failure() || github.run_attempt > 1 || hashFiles(format('gotestsum/{0}-reruns.txt', matrix.shard || matrix.os)) != ''
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-${{ matrix.shard || matrix.os }}-attempt-${{ github.run_attempt }}
@@ -433,7 +433,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload gotestsum results
-        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        if: failure() || github.run_attempt > 1 || hashFiles(format('gotestsum/daemon-{0}-reruns.txt', matrix.shard.name)) != ''
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-daemon-${{ matrix.shard.name }}-attempt-${{ github.run_attempt }}
@@ -481,7 +481,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload gotestsum results
-        if: failure()
+        if: failure() || github.run_attempt > 1
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-coverage-attempt-${{ github.run_attempt }}
@@ -533,7 +533,7 @@ jobs:
 
       # test-postgres-ci runs two suites; give each its own artifact.
       - name: Upload gotestsum storage results
-        if: failure() || hashFiles('gotestsum/postgres-storage-reruns.txt') != ''
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/postgres-storage-reruns.txt') != ''
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-postgres-storage-attempt-${{ github.run_attempt }}
@@ -542,7 +542,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload gotestsum daemon results
-        if: failure() || hashFiles('gotestsum/postgres-daemon-reruns.txt') != ''
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/postgres-daemon-reruns.txt') != ''
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-postgres-daemon-attempt-${{ github.run_attempt }}
