@@ -2497,8 +2497,10 @@ func (c *Client) KataStatus(ctx context.Context, options *KataStatusRequestOptio
 	var err error
 
 	queryEncoding := map[string]runtime.QueryEncoding{
-		"project": {Style: "form", Explode: &[]bool{false}[0]},
-		"repo":    {Style: "form", Explode: &[]bool{false}[0]},
+		"project":                  {Style: "form", Explode: &[]bool{false}[0]},
+		"repo":                     {Style: "form", Explode: &[]bool{false}[0]},
+		"workspace_alias_identity": {Style: "form", Explode: &[]bool{false}[0]},
+		"workspace_alias_kind":     {Style: "form", Explode: &[]bool{false}[0]},
 	}
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL:    c.apiClient.GetBaseURL() + "/api/kata/status",

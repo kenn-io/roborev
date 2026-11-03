@@ -157,8 +157,8 @@ func TestKataClientCommittedBindingUsesRegisteredAliasThroughDaemon(t *testing.T
 	repo.RunGit("remote", "add", "origin", "https://code.example/Team/Review-Repo.git")
 
 	fake := katafake.New(t)
-	fake.AddIssue(7, "stale", "Old project name reused", "")
-	fake.AddIssue(8, "current", "Renamed project", "")
+	fake.AddIssue(7, "abc4", "Old project name reused", "")
+	fake.AddIssue(8, "abc4", "Renamed project", "")
 	fake.Override = func(w http.ResponseWriter, r *http.Request) bool {
 		if r.URL.Path != "/api/v1/projects/resolve" {
 			return false
@@ -184,14 +184,27 @@ func TestKataClientCommittedBindingUsesRegisteredAliasThroughDaemon(t *testing.T
 	ep := kataDaemon(t, enabledKata(fake))
 	c := newKataClientAt(repo.Root, config.DefaultConfig(), func() (daemon.DaemonEndpoint, error) { return ep, nil })
 
+	binding, err := c.Binding(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, "other", binding.Project, "the committed alias supplies the canonical name for reference parsing")
+	require.NotNil(t, binding.Alias)
+	assert.Equal(t, "code.example/Team/Review-Repo", binding.Alias.Identity)
+	assert.Equal(t, "git", binding.Alias.Kind)
+
+	contextResult, err := kata.ResolveContext(t.Context(), c, kata.ModeCurrent, []string{"fix other#abc4"})
+	require.NoError(t, err)
+	require.Len(t, contextResult.Issues, 1)
+	assert.Equal(t, "Renamed project", contextResult.Issues[0].Title,
+		"a reused stale project name cannot hide a reference in the renamed project")
+
 	issues, err := c.List(t.Context(), kata.ListOpts{})
 	require.NoError(t, err)
 	require.Len(t, issues, 1)
-	assert.Equal(t, "current", issues[0].ShortID, "a reused old name cannot select the wrong project")
+	assert.Equal(t, "Renamed project", issues[0].Title, "a reused old name cannot select the wrong project")
 
-	shown, err := c.Show(t.Context(), "current")
+	shown, err := c.Show(t.Context(), "abc4")
 	require.NoError(t, err)
-	assert.Equal(t, "other#current", shown.QualifiedID)
+	assert.Equal(t, "other#abc4", shown.QualifiedID)
 
 	_, err = c.Create(t.Context(), kata.CreateReq{Title: "From the committed binding"})
 	require.NoError(t, err)
@@ -204,8 +217,11 @@ func TestKataClientCommittedBindingUsesRegisteredAliasThroughDaemon(t *testing.T
 	}
 	assert.Equal(t, []string{
 		"GET /api/v1/projects",
+		"POST /api/v1/projects/resolve",
+		"POST /api/v1/projects/resolve",
+		"POST /api/v1/projects/resolve", "GET /api/v1/projects/8/issues/abc4",
 		"POST /api/v1/projects/resolve", "GET /api/v1/projects/8/issues",
-		"POST /api/v1/projects/resolve", "GET /api/v1/projects/8/issues/current",
+		"POST /api/v1/projects/resolve", "GET /api/v1/projects/8/issues/abc4",
 		"POST /api/v1/projects/resolve", "POST /api/v1/projects/8/issues",
 		"GET /api/v1/projects", "POST /api/v1/projects/7/issues",
 	}, paths, "committed aliases resolve canonically; explicit names remain exact")

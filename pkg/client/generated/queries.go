@@ -373,6 +373,12 @@ type KataStatusQuery struct {
 
 	// Project Project to check instead of the repository's binding or the default project
 	Project *string `json:"project,omitempty"`
+
+	// WorkspaceAliasIdentity Registered workspace alias identity; use with workspace_alias_kind instead of repo or project
+	WorkspaceAliasIdentity *string `json:"workspace_alias_identity,omitempty"`
+
+	// WorkspaceAliasKind Registered workspace alias kind: git or local
+	WorkspaceAliasKind *string `json:"workspace_alias_kind,omitempty"`
 }
 
 type ListReposQuery struct {
