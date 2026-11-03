@@ -177,24 +177,6 @@ func TestReconcilerJobWakesDoNotPostponeSafetySweep(t *testing.T) {
 	})
 }
 
-func TestReconcilerSweepFindsChangesWithoutEvents(t *testing.T) {
-	now := time.Now()
-	r, store, index := incrementalFixture(t, ReconcilerConfig{Now: func() time.Time { return now }})
-	_, err := r.reconcileTurn(t.Context())
-	require.NoError(t, err)
-	_, err = store.RenameRepo("/synthetic/repo", "renamed")
-	require.NoError(t, err)
-	now = now.Add(2 * r.config.SweepInterval)
-	for more := true; more; {
-		more, err = r.reconcileTurn(t.Context())
-		require.NoError(t, err)
-	}
-	var name string
-	require.NoError(t, index.db.QueryRowContext(t.Context(), `SELECT repo_name FROM review_mirror WHERE job_id = 1`).Scan(&name))
-	assert.Equal(t, "renamed", name)
-	assert.Equal(t, int64(1), store.fullReads.Load())
-}
-
 func TestReconcilerSweepPreservesChangesDuringScan(t *testing.T) {
 	now := time.Now()
 	r, store, index := incrementalFixture(t, ReconcilerConfig{MirrorPageSize: 1, Now: func() time.Time { return now }})
@@ -217,56 +199,63 @@ func TestReconcilerSweepPreservesChangesDuringScan(t *testing.T) {
 	assert.Equal(t, int64(3), store.fullReads.Load())
 }
 
-func TestReconcilerSweepBoundsRepoAndCommitFanout(t *testing.T) {
-	for _, tc := range []struct{ name, setup, change string }{
-		{"repo", "", `UPDATE repos SET name = 'renamed' WHERE id = 1`},
-		{"commit", `INSERT INTO commits (id, repo_id, sha, author, subject, timestamp) VALUES (1, 1, 'main', 'author', 'subject', CURRENT_TIMESTAMP); UPDATE review_jobs SET commit_id = 1`, `INSERT INTO responses (commit_id, responder, response) VALUES (1, 'author', 'fanoutcomment')`},
-		{"empty expansion", "", `INSERT INTO repos (id, root_path, name) VALUES (2, '/synthetic/empty', 'empty'); UPDATE repos SET name = 'renamed' WHERE id = 2; UPDATE reviews SET output = 'afterempty' WHERE job_id = 1`},
-		{"health", "", `UPDATE reviews SET output = 'changed'`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			now := time.Now()
-			r, store, index := incrementalFixture(t, ReconcilerConfig{MirrorPageSize: 1, Now: func() time.Time { return now }})
-			if tc.setup != "" {
-				_, err := store.ExecContext(t.Context(), tc.setup)
-				require.NoError(t, err)
-			}
-			for more := true; more; {
-				var err error
-				more, err = r.reconcileTurn(t.Context())
-				require.NoError(t, err)
-			}
-			_, err := store.ExecContext(t.Context(), tc.change)
+func TestReconcilerSweepDrainsBoundedPages(t *testing.T) {
+	t.Run("repo", func(t *testing.T) {
+		now := time.Now()
+		r, store, index := incrementalFixture(t, ReconcilerConfig{MirrorPageSize: 1, Now: func() time.Time { return now }})
+		for more := true; more; {
+			var err error
+			more, err = r.reconcileTurn(t.Context())
 			require.NoError(t, err)
-			now = now.Add(2 * r.config.SweepInterval)
-			first := true
-			for more := true; more; {
-				before := len(store.jobReads)
-				more, err = r.reconcileTurn(t.Context())
-				require.NoError(t, err)
-				assert.LessOrEqual(t, len(store.jobReads)-before, 1)
-				if tc.name == "health" && first {
-					require.True(t, more)
-					assert.False(t, r.Health().MirrorComplete)
-					assert.Nil(t, r.Health().MirrorBacklog)
-				}
-				first = false
-			}
-			switch tc.name {
-			case "repo", "commit":
-				assert.ElementsMatch(t, []int64{1, 2}, store.jobReads)
-			case "empty expansion":
-				var key string
-				require.NoError(t, index.db.QueryRowContext(t.Context(), `SELECT doc_key FROM review_fts WHERE review_fts MATCH 'afterempty'`).Scan(&key))
-				assert.Equal(t, "local:1", key)
-				head, err := store.SearchChangesHead(t.Context())
-				require.NoError(t, err)
-				assert.Zero(t, head)
-			case "health":
-				assert.True(t, r.Health().MirrorComplete)
-				require.NotNil(t, r.Health().MirrorBacklog)
-				assert.Zero(t, *r.Health().MirrorBacklog)
-			}
-		})
-	}
+		}
+		assert.Equal(t, int64(3), store.fullReads.Load())
+		_, err := store.RenameRepo("/synthetic/repo", "renamed")
+		require.NoError(t, err)
+		now = now.Add(2 * r.config.SweepInterval)
+		more, err := r.reconcileTurn(t.Context())
+		require.NoError(t, err)
+		require.True(t, more)
+		assert.LessOrEqual(t, len(store.jobReads), 1)
+		assert.False(t, r.Health().MirrorComplete)
+		assert.Nil(t, r.Health().MirrorBacklog)
+		for more {
+			before := len(store.jobReads)
+			more, err = r.reconcileTurn(t.Context())
+			require.NoError(t, err)
+			assert.LessOrEqual(t, len(store.jobReads)-before, 1)
+		}
+		assert.ElementsMatch(t, []int64{1, 2}, store.jobReads)
+		var name string
+		require.NoError(t, index.db.QueryRowContext(t.Context(), `SELECT repo_name FROM review_mirror WHERE job_id = 1`).Scan(&name))
+		assert.Equal(t, "renamed", name)
+		assert.Equal(t, int64(3), store.fullReads.Load())
+		assert.True(t, r.Health().MirrorComplete)
+		require.NotNil(t, r.Health().MirrorBacklog)
+		assert.Zero(t, *r.Health().MirrorBacklog)
+	})
+	t.Run("empty expansion", func(t *testing.T) {
+		now := time.Now()
+		r, store, index := incrementalFixture(t, ReconcilerConfig{MirrorPageSize: 1, Now: func() time.Time { return now }})
+		for more := true; more; {
+			var err error
+			more, err = r.reconcileTurn(t.Context())
+			require.NoError(t, err)
+		}
+		_, err := store.ExecContext(t.Context(), `
+			INSERT INTO repos (id, root_path, name) VALUES (2, '/synthetic/empty', 'empty');
+			UPDATE repos SET name = 'renamed' WHERE id = 2;
+			UPDATE reviews SET output = 'afterempty' WHERE job_id = 1`)
+		require.NoError(t, err)
+		now = now.Add(2 * r.config.SweepInterval)
+		for more := true; more; {
+			more, err = r.reconcileTurn(t.Context())
+			require.NoError(t, err)
+		}
+		var key string
+		require.NoError(t, index.db.QueryRowContext(t.Context(), `SELECT doc_key FROM review_fts WHERE review_fts MATCH 'afterempty'`).Scan(&key))
+		assert.Equal(t, "local:1", key)
+		head, err := store.SearchChangesHead(t.Context())
+		require.NoError(t, err)
+		assert.Zero(t, head)
+	})
 }

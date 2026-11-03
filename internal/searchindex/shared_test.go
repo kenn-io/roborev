@@ -255,7 +255,7 @@ func TestSharedVectorsPublishExistingGenerationOnStartup(t *testing.T) {
 	assert.Zero(t, peer.embeddedTexts(), "the peer reuses existing vectors")
 }
 
-func TestSharedVectorsSweepOnlyPublishesChangedReview(t *testing.T) {
+func TestSharedVectorsSweepLooksUpOnlyChangedReview(t *testing.T) {
 	now := time.Now()
 	r, store, _ := incrementalFixture(t, ReconcilerConfig{Now: func() time.Time { return now }})
 	_, err := store.ExecContext(t.Context(), `UPDATE reviews SET uuid = printf('00000000-0000-4000-8000-%012d', id)`)
