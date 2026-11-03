@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"uuid"
 )
 
 // TokenCostCandidate is the minimal persisted state needed to recover a late
@@ -58,6 +59,31 @@ const uniqueStartedSessionPredicate = `NOT EXISTS (
 		  AND (history.job_uuid != j.uuid OR history.started_at != j.started_at)
 	)`
 
+func listTokenCostCandidatesQuery(afterJobID int64, limit int, startedAfter time.Time, machineID uuid.UUID) (string, []any) {
+	return listTokenCandidatesQuery(
+		`j.id, j.session_id, j.agent, COALESCE(j.token_usage, ''), j.started_at`,
+		tokenCostCandidatePredicate+` AND `+uniqueStartedSessionPredicate,
+		afterJobID, limit, startedAfter, machineID,
+	)
+}
+
+func listTokenCandidatesQuery(projection, predicate string, afterJobID int64, limit int, startedAfter time.Time, machineID uuid.UUID) (string, []any) {
+	startedPredicate := ""
+	args := []any{afterJobID, machineID}
+	if !startedAfter.IsZero() {
+		startedPredicate = " AND " + sqliteNormalizedTimestampExpr("j.started_at") + " >= ?"
+		args = append(args, formatSQLiteTimestamp(startedAfter))
+	}
+	return `
+		SELECT ` + projection + `
+		FROM review_jobs j
+		WHERE j.id > ?
+		  AND j.source_machine_id = ?` + startedPredicate + `
+		  AND ` + predicate + `
+		ORDER BY j.id
+		LIMIT ?`, append(args, limit)
+}
+
 // ListTokenCostCandidates returns a bounded page ordered by job ID. afterJobID
 // is exclusive, so callers can retain a cursor while successfully priced rows
 // disappear from the candidate set. A non-zero startedAfter excludes attempts
@@ -74,21 +100,8 @@ func (db *DB) ListTokenCostCandidates(
 	if err != nil {
 		return nil, fmt.Errorf("get machine ID: %w", err)
 	}
-	startedCutoff := ""
-	if !startedAfter.IsZero() {
-		startedCutoff = formatSQLiteTimestamp(startedAfter)
-	}
-	rows, err := db.Query(`
-		SELECT j.id, j.session_id, j.agent, COALESCE(j.token_usage, ''),
-		       j.started_at
-		FROM review_jobs j
-		WHERE j.id > ?
-		  AND j.source_machine_id = ?
-		  AND (? = '' OR `+sqliteNormalizedTimestampExpr("j.started_at")+` >= ?)
-		  AND `+tokenCostCandidatePredicate+`
-		  AND `+uniqueStartedSessionPredicate+`
-		ORDER BY j.id
-		LIMIT ?`, afterJobID, machineID, startedCutoff, startedCutoff, limit)
+	query, args := listTokenCostCandidatesQuery(afterJobID, limit, startedAfter, machineID)
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list token cost candidates: %w", err)
 	}
@@ -147,6 +160,14 @@ func (db *DB) GetTokenCostCandidate(jobID int64) (*TokenCostCandidate, error) {
 	return &candidate, nil
 }
 
+func listTokenUsageLogCandidatesQuery(afterJobID int64, limit int, startedAfter time.Time, machineID uuid.UUID) (string, []any) {
+	return listTokenCandidatesQuery(
+		`j.id, COALESCE(j.token_usage, ''), j.started_at`,
+		tokenUsageLogCandidatePredicate,
+		afterJobID, limit, startedAfter, machineID,
+	)
+}
+
 // ListTokenUsageLogCandidates returns terminal missing-cost jobs whose session
 // ID was not persisted. Their per-job JSONL log may still recover the session
 // and make them eligible for normal provider reconciliation. A non-zero
@@ -163,19 +184,8 @@ func (db *DB) ListTokenUsageLogCandidates(
 	if err != nil {
 		return nil, fmt.Errorf("get machine ID: %w", err)
 	}
-	startedCutoff := ""
-	if !startedAfter.IsZero() {
-		startedCutoff = formatSQLiteTimestamp(startedAfter)
-	}
-	rows, err := db.Query(`
-		SELECT j.id, COALESCE(j.token_usage, ''), j.started_at
-		FROM review_jobs j
-		WHERE j.id > ?
-		  AND j.source_machine_id = ?
-		  AND (? = '' OR `+sqliteNormalizedTimestampExpr("j.started_at")+` >= ?)
-		  AND `+tokenUsageLogCandidatePredicate+`
-		ORDER BY j.id
-		LIMIT ?`, afterJobID, machineID, startedCutoff, startedCutoff, limit)
+	query, args := listTokenUsageLogCandidatesQuery(afterJobID, limit, startedAfter, machineID)
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list token usage log candidates: %w", err)
 	}
