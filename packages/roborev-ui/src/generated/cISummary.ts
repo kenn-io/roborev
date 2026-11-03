@@ -11,7 +11,6 @@ export interface CISummary {
   closed_before_post: number;
   cost: CostAggregate;
   distinct_prs: number;
-  hot_prs: CIPRSummary[];
   outcomes: CISummaryOutcomes;
   posted_panels: number;
   prs: CIPRSummary[];

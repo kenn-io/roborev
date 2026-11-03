@@ -42,10 +42,11 @@ completed while the job was queued.
 ## Monitor review load
 
 Run `roborev report summary --all --since 7d` to inspect panel counts,
-retirement reasons, runs per PR, posting turnaround, and recorded cost with
-coverage. The [CI run health summary](/docs/commands/#ci-run-health) explains
-the cohorts and how unavailable pricing or timing data is displayed. Use `--all`
-to include CI checkouts outside your current working repository.
+retirement reasons, runs per PR and each PR's busiest hour, posting turnaround,
+and recorded cost with coverage. The
+[CI run health summary](/docs/commands/#ci-run-health) explains the cohorts and
+how unavailable pricing or timing data is displayed. Use `--all` to include CI
+checkouts outside your current working repository.
 
 ## What to Expect
 
