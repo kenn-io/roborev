@@ -12,24 +12,17 @@ import (
 	"go.kenn.io/roborev/internal/testutil"
 )
 
-// Compare event refreshes with a full scan on 8,000 reviews and 4,000 comments.
-// The full scan includes 500 MiB of prompts. Run with CGO_ENABLED=0 to measure
-// the same SQLite driver used by release builds.
+// Measure a full scan on 8,000 reviews, 4,000 comments, and 500 MiB of prompts.
+// Run with CGO_ENABLED=0 to measure the same SQLite driver used by release builds.
 func BenchmarkReconcilerReviewEvent(b *testing.B) {
-	for _, mode := range []string{"full", "job"} {
-		b.Run(mode, func(b *testing.B) {
-			promptSize := 0
-			if mode == "full" {
-				promptSize = 65536
-			}
-			db, r := seedReconcilerHistory(b, 8000, promptSize)
-			benchmarkReconcilerReviewEvent(b, db, r, mode == "job")
-		})
-	}
+	b.Run("full", func(b *testing.B) {
+		db, r := seedReconcilerHistory(b, 8000, 65536)
+		benchmarkReconcilerReviewEvent(b, db, r, false)
+	})
 }
 
 func BenchmarkReconcilerReviewEventHistory(b *testing.B) {
-	for _, reviews := range []int{1000, 4000, 16000} {
+	for _, reviews := range []int{1000, 4000, 8000, 16000} {
 		b.Run(fmt.Sprintf("reviews=%d", reviews), func(b *testing.B) {
 			db, r := seedReconcilerHistory(b, reviews, 0)
 			benchmarkReconcilerReviewEvent(b, db, r, true)

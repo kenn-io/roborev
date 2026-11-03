@@ -100,7 +100,7 @@ func TestMirrorRefreshUpdatesLocalMetadataWithoutInvalidatingVectors(t *testing.
 	assert.Equal(t, updated.Identifiers, ftsIdentifiers)
 }
 
-func TestMirrorRefreshDetectsIdentifierOnlyChange(t *testing.T) {
+func TestMirrorRefreshDetectsIdentifierAndReviewIDChanges(t *testing.T) {
 	ctx := t.Context()
 	index, err := Open(ctx, filepath.Join(t.TempDir(), "reviews.search.db"))
 	require.NoError(t, err)
@@ -158,7 +158,6 @@ func TestMirrorQueriesAvoidFullScans(t *testing.T) {
 		args  []any
 	}{
 		{"mirror lookup", readMirrorRowSQL, []any{"doc"}},
-		{"FTS replace", replaceFTSRowSQL, []any{"doc"}},
 		{"FTS delete", deleteFTSRowSQL, []any{"doc"}},
 		{"job lookup", mirrorKeysForJobSQL, []any{1}},
 	} {

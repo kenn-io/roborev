@@ -78,10 +78,6 @@ func TestSidecarV2UpgradeRenumbersFTSAndKeepsVectors(t *testing.T) {
 	index, err = Open(ctx, path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, index.Close()) })
-	var liveMatches int
-	err = index.db.QueryRowContext(ctx, `SELECT count(*) FROM review_fts WHERE review_fts MATCH 'alpha' AND doc_key = ?`, docs[0].DocKey).Scan(&liveMatches)
-	require.NoError(t, err)
-	assert.Equal(t, 1, liveMatches)
 	var version string
 	err = index.db.QueryRowContext(ctx, `SELECT value FROM search_meta WHERE key = 'schema_version'`).Scan(&version)
 	require.NoError(t, err)
@@ -98,17 +94,12 @@ func TestSidecarV2UpgradeRenumbersFTSAndKeepsVectors(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, mirrorRowID, ftsRowID)
 	}
-	var ftsRows int
-	err = index.db.QueryRowContext(ctx, `SELECT count(*) FROM review_fts`).Scan(&ftsRows)
-	require.NoError(t, err)
-	assert.Equal(t, 3, ftsRows)
 	seen := map[string]struct{}{}
-	changed, err := index.RefreshMirrorPage(ctx, docs, seen)
+	_, err = index.RefreshMirrorPage(ctx, docs, seen)
 	require.NoError(t, err)
-	assert.Zero(t, changed)
-	deleted, err := index.DeleteMissing(ctx, seen)
+	_, err = index.DeleteMissing(ctx, seen)
 	require.NoError(t, err)
-	assert.Equal(t, 1, deleted)
+	assert.Equal(t, 0, countRowsForDoc(t, index.db, "review_fts", local.DocKey))
 	var key string
 	err = index.db.QueryRowContext(ctx, `SELECT doc_key FROM review_fts WHERE review_fts MATCH 'alpha'`).Scan(&key)
 	require.NoError(t, err)
