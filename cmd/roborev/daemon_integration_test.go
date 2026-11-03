@@ -506,15 +506,16 @@ var updateDaemonBinaries struct {
 func versionedUpdateDaemonBinaries(t *testing.T) (string, string) {
 	t.Helper()
 	updateDaemonBinaries.once.Do(func() {
-		updateDaemonBuildDir, updateDaemonBinaries.err = os.MkdirTemp("", "roborev-update-binaries-*")
+		buildDir, err := os.MkdirTemp(os.Getenv("ROBOREV_DATA_DIR"), "roborev-update-binaries-*")
+		if err != nil {
+			updateDaemonBinaries.err = err
+			return
+		}
+		updateDaemonBinaries.oldBinary, updateDaemonBinaries.err = buildVersionedUpdateDaemon(t.Context(), buildDir, "roborev-old", "v-old")
 		if updateDaemonBinaries.err != nil {
 			return
 		}
-		updateDaemonBinaries.oldBinary, updateDaemonBinaries.err = buildVersionedUpdateDaemon(t.Context(), updateDaemonBuildDir, "roborev-old", "v-old")
-		if updateDaemonBinaries.err != nil {
-			return
-		}
-		updateDaemonBinaries.newBinary, updateDaemonBinaries.err = buildVersionedUpdateDaemon(t.Context(), updateDaemonBuildDir, "roborev-new", "v-new")
+		updateDaemonBinaries.newBinary, updateDaemonBinaries.err = buildVersionedUpdateDaemon(t.Context(), buildDir, "roborev-new", "v-new")
 	})
 	require.NoError(t, updateDaemonBinaries.err, "build versioned daemons")
 	return updateDaemonBinaries.oldBinary, updateDaemonBinaries.newBinary
