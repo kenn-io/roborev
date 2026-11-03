@@ -873,7 +873,8 @@ func TestGetMainRepoRootForBareBackedWorktreeWithWorktreeConfig(t *testing.T) {
 	worktreeDir := t.TempDir()
 	bareRepo.Run("worktree", "add", worktreeDir, "main")
 	t.Cleanup(func() {
-		cmd := exec.Command("git", "-C", bareRepo.Dir, "worktree", "remove", worktreeDir)
+		// t.Context is already canceled when cleanups run.
+		cmd := exec.CommandContext(context.WithoutCancel(t.Context()), "git", "-C", bareRepo.Dir, "worktree", "remove", worktreeDir)
 		_ = cmd.Run()
 	})
 
