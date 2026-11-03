@@ -11,4 +11,12 @@ export type KataStatusParams = {
    * Project to check instead of the repository's binding or the default project
    */
   project?: string;
+  /**
+   * Registered workspace alias identity; use with workspace_alias_kind instead of repo or project
+   */
+  workspace_alias_identity?: string;
+  /**
+   * Registered workspace alias kind: git or local
+   */
+  workspace_alias_kind?: string;
 };

@@ -15,6 +15,7 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/kata"
 	"go.kenn.io/roborev/internal/streamfmt"
 	"go.kenn.io/roborev/internal/version"
 	roborevclient "go.kenn.io/roborev/pkg/client"
@@ -74,10 +75,10 @@ type doctorDaemonAgents struct {
 type doctorDaemon interface {
 	Ping() (*daemon.PingInfo, error)
 	Agents(ctx context.Context, repo string, names []string) (*doctorDaemonAgents, error)
-	// KataStatus asks for the daemon's Kata connection. project is the
-	// repository's binding as this machine sees it; empty means the daemon's
-	// default project.
-	KataStatus(ctx context.Context, project string) (*daemon.KataStatusBody, error)
+	// KataStatus asks for the daemon's Kata connection using the local binding.
+	// Committed bindings carry a workspace alias so the daemon can resolve a
+	// renamed project without trusting its stale stored name.
+	KataStatus(ctx context.Context, binding kata.Binding) (*daemon.KataStatusBody, error)
 	Status(ctx context.Context) (*generated.DaemonStatus, error)
 	Health(ctx context.Context) (*generated.HealthStatus, error)
 	FailedJobs(ctx context.Context, since time.Time) ([]generated.ReviewJob, error)
@@ -307,11 +308,9 @@ func doctorAgentsFromAPI(resp *generated.DoctorAgentsResponse) *doctorDaemonAgen
 	return out
 }
 
-func (d liveDoctorDaemon) KataStatus(ctx context.Context, project string) (*daemon.KataStatusBody, error) {
+func (d liveDoctorDaemon) KataStatus(ctx context.Context, binding kata.Binding) (*daemon.KataStatusBody, error) {
 	query := &generated.KataStatusQuery{}
-	if project != "" {
-		query.Project = &project
-	}
+	query.Project, query.WorkspaceAliasIdentity, query.WorkspaceAliasKind = kataSelectionFields(binding)
 	resp, err := d.client().KataStatus(ctx, &generated.KataStatusRequestOptions{Query: query})
 	if err != nil {
 		return nil, daemonRequestError("ask the daemon about its Kata connection", err)

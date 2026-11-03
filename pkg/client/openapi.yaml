@@ -6450,6 +6450,20 @@ paths:
           schema:
             description: Project to check instead of the repository's binding or the default project
             type: string
+        - description: Registered workspace alias identity; use with workspace_alias_kind instead of repo or project
+          explode: false
+          in: query
+          name: workspace_alias_identity
+          schema:
+            description: Registered workspace alias identity; use with workspace_alias_kind instead of repo or project
+            type: string
+        - description: "Registered workspace alias kind: git or local"
+          explode: false
+          in: query
+          name: workspace_alias_kind
+          schema:
+            description: "Registered workspace alias kind: git or local"
+            type: string
       responses:
         "200":
           content:

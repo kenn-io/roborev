@@ -58,7 +58,7 @@ func TestKataThroughTheDaemonE2E(t *testing.T) {
 	}
 	assert.True(t, found)
 
-	status, err := newDoctorDaemon(ep).KataStatus(ctx, "e2etest")
+	status, err := newDoctorDaemon(ep).KataStatus(ctx, kata.Binding{Project: "e2etest"})
 	require.NoError(t, err)
 	assert.Equal(t, "ready", status.State, status.Message)
 	assert.Equal(t, "e2etest", status.Project)
