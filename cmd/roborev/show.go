@@ -287,7 +287,7 @@ Examples:
 
 			if len(findings) > 0 {
 				fmt.Println()
-				fmt.Println("--- Findings ---")
+				fmt.Println("--- Selectors ---")
 				for _, f := range findings {
 					fmt.Println(formatShowFinding(f))
 				}

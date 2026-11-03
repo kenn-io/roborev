@@ -118,12 +118,12 @@ func TestShowListsFindingSelectors(t *testing.T) {
 	output := runShowCmd(t, "--job", "42")
 
 	assert := assert.New(t)
-	findingsStart := strings.Index(output, "--- Findings ---")
+	findingsStart := strings.Index(output, "--- Selectors ---")
 	require.NotEqual(t, -1, findingsStart)
-	assert.Equal("--- Findings ---\n1. "+findings.Findings[0].ID+"\n2. "+findings.Findings[1].ID,
+	assert.Equal("--- Selectors ---\n1. "+findings.Findings[0].ID+"\n2. "+findings.Findings[1].ID,
 		strings.TrimSpace(output[findingsStart:]))
 	assert.Equal([]string{"/api/review/findings?job_id=42"}, requests())
-	assert.Greater(strings.Index(output, "--- Findings ---"), strings.Index(output, "### 1. High"),
+	assert.Greater(strings.Index(output, "--- Selectors ---"), strings.Index(output, "### 1. High"),
 		"the selectors follow the review text")
 }
 
