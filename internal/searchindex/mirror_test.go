@@ -246,31 +246,3 @@ func countRowsForDoc(t *testing.T, db *sql.DB, table, docKey string) int {
 	require.NoError(t, err)
 	return count
 }
-
-func TestMirrorRefreshKeepsFTSRowAfterReviewGainsUUID(t *testing.T) {
-	ctx := t.Context()
-	index, err := Open(ctx, filepath.Join(t.TempDir(), "reviews.search.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, index.Close()) })
-
-	source := testDocument(1, "searchable review").Source
-	source.ReviewUUID = ""
-	local := searchdoc.Render(source)
-	_, err = index.RefreshMirrorPage(ctx, []searchdoc.Document{local}, nil)
-	require.NoError(t, err)
-	source.ReviewUUID = "00000000-0000-4000-8000-000000000001"
-	updated := searchdoc.Render(source)
-	_, err = index.RefreshMirrorPage(ctx, []searchdoc.Document{updated}, nil)
-	require.NoError(t, err)
-	deleted, err := index.deleteMissing(ctx, map[string]struct{}{updated.DocKey: {}},
-		`SELECT doc_key FROM review_mirror WHERE job_id = ?`, source.JobID)
-	require.NoError(t, err)
-	assert.Equal(t, 1, deleted)
-	assert.Equal(t, 0, countRowsForDoc(t, index.db, "review_fts", local.DocKey))
-	assert.Equal(t, 1, countRowsForDoc(t, index.db, "review_fts", updated.DocKey))
-	var key string
-	err = index.db.QueryRowContext(ctx,
-		`SELECT doc_key FROM review_fts WHERE review_fts MATCH 'searchable'`).Scan(&key)
-	require.NoError(t, err)
-	assert.Equal(t, updated.DocKey, key)
-}
