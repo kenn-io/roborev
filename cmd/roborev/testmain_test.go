@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
@@ -8,6 +9,10 @@ import (
 
 	"go.kenn.io/roborev/internal/testenv"
 )
+
+// updateDaemonBuildDir belongs to the package run, so both integration tests
+// can use its binaries after the first test finishes.
+var updateDaemonBuildDir string
 
 // TestMain isolates the entire test package from the real ~/.roborev directory
 // and disables external I/O in tests that call newTuiModel by passing
@@ -18,5 +23,12 @@ func TestMain(m *testing.M) {
 	if os.Getenv("ROBOREV_TEST_DAEMON_TELEMETRY") != "1" {
 		kittelemetry.DisableProcess()
 	}
-	os.Exit(testenv.RunIsolatedMain(m))
+	code := testenv.RunIsolatedMain(m)
+	if updateDaemonBuildDir != "" {
+		if err := os.RemoveAll(updateDaemonBuildDir); err != nil {
+			fmt.Fprintf(os.Stderr, "remove update daemon binaries: %v\n", err)
+			code = 1
+		}
+	}
+	os.Exit(code)
 }

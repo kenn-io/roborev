@@ -49,9 +49,7 @@ func TestSystemdCLIRecoveryIntegration(t *testing.T) {
 	if err := exec.CommandContext(t.Context(), "systemctl", "--user", "show-environment").Run(); err != nil {
 		t.Skip("user manager unavailable")
 	}
-	buildDir := t.TempDir()
-	oldBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-old", "v-old")
-	newBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-new", "v-new")
+	oldBinary, newBinary := versionedUpdateDaemonBinaries(t)
 	for _, scenario := range []string{"path with spaces", "pause", "restart gap", "daemon start", "simple", "missing bus environment", "selection advances", "socket responsive", "socket vanished pause"} {
 		t.Run(scenario, func(t *testing.T) {
 			dataDir := t.TempDir()
