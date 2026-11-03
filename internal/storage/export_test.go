@@ -653,29 +653,28 @@ func TestExportReviewsDefaultLimitIsBounded(t *testing.T) {
 	defer tx.Rollback()
 	const timestamp = "2026-06-29 00:00:00"
 	document := string(reviewFixtureJSON("No issues found."))
-	for i := range exportDefaultPageLimit + 1 {
-		sha := fmt.Sprintf("%040x", i+1)
-		result, err := tx.ExecContext(t.Context(), `
-			INSERT INTO commits (repo_id, sha, author, subject, timestamp)
-			VALUES (?, ?, 'Author', 'Subject', ?)`, repo.ID, sha, timestamp)
-		require.NoError(t, err)
-		commitID, err := result.LastInsertId()
-		require.NoError(t, err)
-		result, err = tx.ExecContext(t.Context(), `
-			INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, status, job_type,
-			                         uuid, enqueued_at, started_at, finished_at, updated_at)
-			VALUES (?, ?, ?, 'codex', 'done', 'review', ?, ?, ?, ?, ?)`,
-			repo.ID, commitID, sha, uuid.New(), timestamp, timestamp, timestamp, timestamp)
-		require.NoError(t, err)
-		jobID, err := result.LastInsertId()
-		require.NoError(t, err)
-		_, err = tx.ExecContext(t.Context(), `
-			INSERT INTO reviews (job_id, agent, output, structured_output, verdict_bool,
-			                     uuid, created_at, updated_at, closed)
-			VALUES (?, 'codex', '', ?, 1, ?, ?, ?, 0)`,
-			jobID, document, testUUID("review-"+sha), timestamp, timestamp)
-		require.NoError(t, err)
-	}
+	_, err = tx.ExecContext(t.Context(), `
+		WITH RECURSIVE sequence(n) AS (
+			SELECT 1 UNION ALL SELECT n + 1 FROM sequence WHERE n < 501
+		)
+		INSERT INTO commits (repo_id, sha, author, subject, timestamp)
+		SELECT ?, printf('%040x', n), 'Author', 'Subject', ? FROM sequence`, repo.ID, timestamp)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(t.Context(), `
+		INSERT INTO review_jobs (repo_id, commit_id, git_ref, agent, status, job_type,
+		                         uuid, enqueued_at, started_at, finished_at, updated_at)
+		SELECT repo_id, id, sha, 'codex', 'done', 'review',
+		       printf('00000000-0000-4000-8000-%012x', id), ?, ?, ?, ?
+		FROM commits WHERE repo_id = ?`, timestamp, timestamp, timestamp, timestamp, repo.ID)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(t.Context(), `
+		INSERT INTO reviews (job_id, agent, output, structured_output, verdict_bool,
+		                     uuid, created_at, updated_at, closed)
+		SELECT j.id, 'codex', '', ?, 1,
+		       printf('00000000-0000-4000-9000-%012x', j.id), ?, ?, 0
+		FROM review_jobs j JOIN commits c ON c.id = j.commit_id AND c.sha = j.git_ref
+		WHERE c.repo_id = ?`, document, timestamp, timestamp, repo.ID)
+	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 
 	page, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileContent})
