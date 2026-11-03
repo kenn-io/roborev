@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
-	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -204,6 +203,7 @@ func TestIndexMigrations(t *testing.T) {
 		{"token cost started", 5, "idx_review_jobs_source_started", "source_machine_id, " + sqliteNormalizedTimestampExpr("started_at")},
 		{"summary repo window", 6, "idx_review_jobs_repo_enqueued", "repo_id, " + sqliteNormalizedTimestampExpr("enqueued_at")},
 		{"review export completion", 7, "idx_reviews_export_completed", "ON reviews(" + sqliteNormalizedTimestampExpr("created_at")},
+		{"search changes", 8, "idx_review_jobs_commit_id", "ON review_jobs(commit_id)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db := openUnmigratedDB(t)
@@ -225,22 +225,5 @@ func TestIndexMigrations(t *testing.T) {
 				require.NoError(t, err)
 			}
 		})
-	}
-}
-
-func TestSearchChangesCommitIDIndexMigrationRerun(t *testing.T) {
-	t.Parallel()
-	db := openUnmigratedDB(t)
-	index := slices.IndexFunc(schemaMigrations, func(m schemaMigration) bool { return m.version == 8 })
-	require.Positive(t, index)
-	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:index]))
-	for range 2 {
-		require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:index+1]))
-		var indexSQL string
-		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT sql FROM sqlite_master
-			WHERE name = 'idx_review_jobs_commit_id'`).Scan(&indexSQL))
-		assert.Contains(t, indexSQL, "ON review_jobs(commit_id)")
-		_, err := db.ExecContext(t.Context(), `DELETE FROM schema_migrations WHERE version = 8`)
-		require.NoError(t, err)
 	}
 }

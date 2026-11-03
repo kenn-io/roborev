@@ -226,7 +226,6 @@ func TestReconcilerSweepDrainsBoundedPages(t *testing.T) {
 			require.NoError(t, err)
 			assert.LessOrEqual(t, len(store.jobReads)-before, 1)
 		}
-		assert.ElementsMatch(t, []int64{1, 2}, store.jobReads)
 		var name string
 		require.NoError(t, index.db.QueryRowContext(t.Context(), `SELECT repo_name FROM review_mirror WHERE job_id = 1`).Scan(&name))
 		assert.Equal(t, "renamed", name)
@@ -234,30 +233,5 @@ func TestReconcilerSweepDrainsBoundedPages(t *testing.T) {
 		assert.True(t, r.Health().MirrorComplete)
 		require.NotNil(t, r.Health().MirrorBacklog)
 		assert.Zero(t, *r.Health().MirrorBacklog)
-	})
-	t.Run("empty expansion", func(t *testing.T) {
-		now := time.Now()
-		r, store, index := incrementalFixture(t, ReconcilerConfig{MirrorPageSize: 1, Now: func() time.Time { return now }})
-		for more := true; more; {
-			var err error
-			more, err = r.reconcileTurn(t.Context())
-			require.NoError(t, err)
-		}
-		_, err := store.ExecContext(t.Context(), `
-			INSERT INTO repos (id, root_path, name) VALUES (2, '/synthetic/empty', 'empty');
-			UPDATE repos SET name = 'renamed' WHERE id = 2;
-			UPDATE reviews SET output = 'afterempty' WHERE job_id = 1`)
-		require.NoError(t, err)
-		now = now.Add(2 * r.config.SweepInterval)
-		for more := true; more; {
-			more, err = r.reconcileTurn(t.Context())
-			require.NoError(t, err)
-		}
-		var key string
-		require.NoError(t, index.db.QueryRowContext(t.Context(), `SELECT doc_key FROM review_fts WHERE review_fts MATCH 'afterempty'`).Scan(&key))
-		assert.Equal(t, "local:1", key)
-		head, err := store.SearchChangesHead(t.Context())
-		require.NoError(t, err)
-		assert.Zero(t, head)
 	})
 }

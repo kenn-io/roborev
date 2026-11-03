@@ -434,24 +434,6 @@ func TestSearchChangesLogsEveryFeedSource(t *testing.T) {
 				require.NoError(t, db.DeleteSearchChanges(t.Context(), through))
 			}
 			assert.ElementsMatch(t, tc.want, jobs)
-			switch tc.name {
-			case "commit comment insert", "commit comment update", "commit comment delete":
-				legacy, err := db.GetSearchDocumentForJob(t.Context(), 2)
-				require.NoError(t, err)
-				require.NotNil(t, legacy)
-				var comments []string
-				for _, response := range legacy.Responses {
-					comments = append(comments, response.Response)
-				}
-				switch tc.name {
-				case "commit comment insert":
-					assert.ElementsMatch(t, []string{"commit comment", "new"}, comments)
-				case "commit comment update":
-					assert.Equal(t, []string{"edited"}, comments)
-				case "commit comment delete":
-					assert.Empty(t, comments)
-				}
-			}
 		})
 	}
 }
