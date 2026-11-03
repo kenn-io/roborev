@@ -175,9 +175,10 @@ func upgradeSidecar(ctx context.Context, db *sql.DB) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 	// Only the canonical feed can identify the live key for a duplicated ID.
+	// Blanking identifiers forces a refresh without invalidating embeddings.
 	if _, err := tx.ExecContext(ctx, `
 		DELETE FROM review_fts;
-		UPDATE review_mirror SET content_hash = ''
+		UPDATE review_mirror SET identifiers = ''
 		WHERE review_id IN (SELECT review_id FROM review_mirror GROUP BY review_id HAVING count(*) > 1);
 		INSERT OR REPLACE INTO review_fts(rowid, doc_key, content, identifiers)
 		SELECT review_id, doc_key, content, identifiers FROM review_mirror

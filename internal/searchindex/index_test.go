@@ -88,10 +88,10 @@ func TestSidecarV2UpgradeRenumbersFTSAndKeepsVectors(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, jobIndex)
 	for _, key := range []string{local.DocKey, docs[0].DocKey} {
-		var hash string
-		err = index.db.QueryRowContext(ctx, `SELECT content_hash FROM review_mirror WHERE doc_key = ?`, key).Scan(&hash)
+		var identifiers string
+		err = index.db.QueryRowContext(ctx, `SELECT identifiers FROM review_mirror WHERE doc_key = ?`, key).Scan(&identifiers)
 		require.NoError(t, err)
-		assert.Empty(t, hash)
+		assert.Empty(t, identifiers)
 		assert.Equal(t, 0, countRowsForDoc(t, index.db, "review_fts", key))
 	}
 	var rowID int64
@@ -102,11 +102,6 @@ func TestSidecarV2UpgradeRenumbersFTSAndKeepsVectors(t *testing.T) {
 	err = index.db.QueryRowContext(ctx, `SELECT count(*) FROM review_fts`).Scan(&ftsRows)
 	require.NoError(t, err)
 	assert.Equal(t, 1, ftsRows)
-	hits, err := index.vectors.QueryGeneration(ctx, "gen-1", vector.Vector{1, 0}, 10)
-	require.NoError(t, err)
-	require.Len(t, hits, 1)
-	assert.Equal(t, docs[1].DocKey, hits[0].Doc)
-
 	seen := map[string]struct{}{}
 	changed, err := index.RefreshMirrorPage(ctx, docs, seen)
 	require.NoError(t, err)
@@ -118,10 +113,16 @@ func TestSidecarV2UpgradeRenumbersFTSAndKeepsVectors(t *testing.T) {
 	err = index.db.QueryRowContext(ctx, `SELECT doc_key FROM review_fts WHERE review_fts MATCH 'alpha'`).Scan(&key)
 	require.NoError(t, err)
 	assert.Equal(t, docs[0].DocKey, key)
+	hits, err := index.vectors.QueryGeneration(ctx, "gen-1", vector.Vector{1, 0}, 10)
+	require.NoError(t, err)
+	var hitKeys []string
+	for _, hit := range hits {
+		hitKeys = append(hitKeys, hit.Doc)
+	}
+	assert.ElementsMatch(t, []string{docs[0].DocKey, docs[1].DocKey}, hitKeys)
 	pending, err := index.vectors.PendingForGeneration(ctx, "gen-1", 10)
 	require.NoError(t, err)
-	require.Len(t, pending, 1)
-	assert.Equal(t, docs[0].DocKey, pending[0].Doc)
+	assert.Empty(t, pending)
 }
 
 func TestFTSAndVectorSmokeUsesContentHashRevision(t *testing.T) {
