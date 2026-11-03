@@ -517,16 +517,64 @@ func TestExplicitExistingIssueTargetIsReservedForK3(t *testing.T) {
 	assert.Zero(t, api.posts)
 }
 
-func TestPublicationPreflightSizesReachableReceiptTransition(t *testing.T) {
+func completedEntryForPreflightTest(entry LedgerEntry) LedgerEntry {
+	entry.Pending = ""
+	entry.ReceiptUID = strings.Repeat("Z", kata.MaxUIDBytes)
+	entry.AttributionHash = strings.Repeat("f", 64)
+	return entry
+}
+
+func reachablePreflightForTest(env Envelope) error {
+	for transitionIndex := range env.Entries {
+		previous, next := env, env
+		previous.Entries = append([]LedgerEntry(nil), env.Entries...)
+		next.Entries = append([]LedgerEntry(nil), env.Entries...)
+		for i := range transitionIndex {
+			completed := completedEntryForPreflightTest(env.Entries[i])
+			previous.Entries[i], next.Entries[i] = completed, completed
+		}
+		next.Entries[transitionIndex] = completedEntryForPreflightTest(env.Entries[transitionIndex])
+		if err := validateGuard(previous, next); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func FuzzPreflightLifecycleMatchesReceiptOrder(f *testing.F) {
+	f.Add(uint32(600_000), uint32(1))
+	f.Add(uint32(1), uint32(600_000))
+	f.Add(uint32(0), uint32(0))
+	f.Fuzz(func(t *testing.T, firstSize, secondSize uint32) {
+		firstSize %= 600_001
+		secondSize %= 600_001
+		req := fixtureRequest()
+		first, second := req.Entries[0], req.Entries[0]
+		first.Body = strings.Repeat("x", int(firstSize))
+		second.Selector, second.DocumentHash, second.Index = "f:two", "hash-2", 1
+		second.Body = strings.Repeat("x", int(secondSize))
+		req.Entries = []Entry{first, second}
+		env, err := newEnvelope(req, req.ProjectUID)
+		require.NoError(t, err)
+		assert.Equal(t, reachablePreflightForTest(env) == nil, preflightLifecycle(env) == nil)
+	})
+}
+
+func TestPublicationPreflightSizesReachableReceiptTransitions(t *testing.T) {
 	req := fixtureRequest()
-	req.Entries[0].Body = strings.Repeat("x", 600_000)
+	first, second := req.Entries[0], req.Entries[0]
+	first.Body = strings.Repeat("x", 600_000)
+	second.Selector, second.DocumentHash, second.Index, second.Body = "f:two", "hash-2", 1, "Short evidence"
+	req.Entries = []Entry{first, second}
 	api := &fakeAPI{}
 	state, err := deliver(t, api, req, State{})
 	require.NoError(t, err)
 	assert.True(t, state.Done)
 	assert.Equal(t, 1, api.creates)
-	assert.Equal(t, 1, api.posts)
-	assert.Equal(t, 1, api.guards)
+	assert.Equal(t, 2, api.posts)
+	assert.Equal(t, 2, api.guards)
+	assert.Equal(t, "comment-1", state.Receipts["f:one"].UID)
+	assert.Equal(t, "comment-2", state.Receipts["f:two"].UID)
 }
 
 func TestPublicationPreflightIncludesCompletedReceipts(t *testing.T) {

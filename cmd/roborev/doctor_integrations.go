@@ -110,7 +110,7 @@ func checkDoctorIntegrations(env *doctorEnv) []doctorCheck {
 var kataFixes = map[string]string{
 	"unreachable":             "check that Kata is running and that integrations.kata.endpoint in the daemon's config is right",
 	"authentication_required": "give roborev its own Kata credential in integrations.kata.api_key_file so its writes are not attributed to a person",
-	"incompatible":            "use a Kata with API schema 0.21.0 through 0.28.0 (Kata v0.19.0 reports 0.28.0) and an allowed endpoint: https, loopback http, or unix://",
+	"incompatible":            "use Kata v0.19.0 with an allowed endpoint: https, loopback http, or unix://",
 	"project_not_found":       "create the Kata project, bind the repository with .kata.local.toml or .kata.toml, or set integrations.kata.default_project",
 }
 

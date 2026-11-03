@@ -60,7 +60,7 @@ func TestDoctorKataStatesFromTheDaemon(t *testing.T) {
 		{"ready on an older server", oldServer, doctorInfo, []string{"typed replies are not supported", "0.27.0", "0.28.0"}, "upgrade Kata"},
 		{"unreachable", withState("unreachable", "The Kata server is unavailable."), doctorWarn, []string{"unreachable"}, "endpoint"},
 		{"authentication required", withState("authentication_required", "Kata rejected the credential."), doctorWarn, []string{"authentication_required"}, "api_key_file"},
-		{"incompatible", withState("incompatible", "not a compatible Kata API"), doctorWarn, []string{"incompatible"}, "0.21.0"},
+		{"incompatible", withState("incompatible", "not a compatible Kata API"), doctorWarn, []string{"incompatible"}, "use Kata v0.19.0 with an allowed endpoint: https, loopback http, or unix://"},
 		{"project not found", withState("project_not_found", "The Kata project was not found on the server."), doctorWarn, []string{"project_not_found", `project: "reviews"`}, "default_project"},
 	}
 	for _, tt := range tests {

@@ -518,46 +518,28 @@ func Lookup(ctx context.Context, api API, req Request, state State) (State, erro
 	return state, nil
 }
 
-// Preflight the largest reachable single-receipt transition. Every unchanged
-// entry has the same representation in both envelopes; the entry being
-// receipted loses its pending body in the new value. The quoted old JSON and
-// new object have different escaping costs, so compare their combined sizes.
+// Preflight each receipt transition in delivery order. Earlier entries have
+// receipts, the current entry is being receipted, and later entries remain
+// pending.
 func preflightLifecycle(env Envelope) error {
-	if len(env.Entries) == 0 {
-		return nil
+	completed := func(entry LedgerEntry) LedgerEntry {
+		entry.Pending = ""
+		entry.ReceiptUID = strings.Repeat("Z", kata.MaxUIDBytes)
+		entry.AttributionHash = strings.Repeat("f", 64)
+		return entry
 	}
-	previous, next := env, env
-	previous.Entries = append([]LedgerEntry(nil), env.Entries...)
-	next.Entries = append([]LedgerEntry(nil), env.Entries...)
-	completed := make([]LedgerEntry, len(env.Entries))
-	transitionIndex, largestDelta := 0, 0
-	for i, entry := range env.Entries {
-		done := entry
-		done.Pending = ""
-		done.ReceiptUID = strings.Repeat("Z", kata.MaxUIDBytes)
-		done.AttributionHash = strings.Repeat("f", 64)
-		completed[i] = done
-		pendingJSON, err := json.Marshal(entry, json.Deterministic(true))
-		if err != nil {
-			return pending("invalid ledger encoding")
+	for transitionIndex := range env.Entries {
+		previous, next := env, env
+		previous.Entries = append([]LedgerEntry(nil), env.Entries...)
+		next.Entries = append([]LedgerEntry(nil), env.Entries...)
+		for i := range transitionIndex {
+			entry := completed(env.Entries[i])
+			previous.Entries[i], next.Entries[i] = entry, entry
 		}
-		doneJSON, err := json.Marshal(done, json.Deterministic(true))
-		if err != nil {
-			return pending("invalid ledger encoding")
-		}
-		oldPending, _ := json.Marshal(string(pendingJSON))
-		oldDone, _ := json.Marshal(string(doneJSON))
-		unchangedCost := len(oldPending) + len(pendingJSON)
-		if doneCost := len(oldDone) + len(doneJSON); doneCost > unchangedCost {
-			unchangedCost = doneCost
-			previous.Entries[i], next.Entries[i] = done, done
-		}
-		delta := len(oldPending) + len(doneJSON) - unchangedCost
-		if i == 0 || delta > largestDelta {
-			transitionIndex, largestDelta = i, delta
+		next.Entries[transitionIndex] = completed(env.Entries[transitionIndex])
+		if err := validateGuard(previous, next); err != nil {
+			return err
 		}
 	}
-	previous.Entries[transitionIndex] = env.Entries[transitionIndex]
-	next.Entries[transitionIndex] = completed[transitionIndex]
-	return validateGuard(previous, next)
+	return nil
 }
