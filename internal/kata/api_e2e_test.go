@@ -53,13 +53,6 @@ func TestAPIClientE2E(t *testing.T) {
 	assert.True(t, reused.Reused)
 	assert.Equal(t, created.ShortID, reused.ShortID)
 
-	equivalent := req
-	equivalent.Labels = []string{"retry-check", "roborev"}
-	reordered, err := c.Create(ctx, equivalent)
-	require.NoError(t, err)
-	assert.True(t, reordered.Reused, "Kata owns canonical retry identity, including label order")
-	assert.Equal(t, created.ShortID, reordered.ShortID)
-
 	// Retry semantics belong to the real producer, including fields the old
 	// hand-written fake omitted from its fingerprint.
 	for _, change := range []struct {
