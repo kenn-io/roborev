@@ -84,7 +84,7 @@ func TestProcessJobRejectsStrictToolsBeforeInvokingAgent(t *testing.T) {
 func TestPanelRerunKeepsFrozenToolPolicy(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	oldRunUUID, members, synth := enqueueServerPanelRun(t, db, 1)
-	_, err := db.Exec(
+	_, err := db.ExecContext(t.Context(),
 		"UPDATE review_jobs SET review_type = 'custom', panel_member_config_json = ? WHERE id = ?",
 		`{"name":"member","tools":{"mode":"read-only","mcp":{}}}`, members[0].ID,
 	)
@@ -144,7 +144,7 @@ func TestProcessJobRunsStrictReviewInFreshSession(t *testing.T) {
 			require.NoError(t, err)
 			claimed, err := tc.DB.ClaimJob(testWorkerID)
 			require.NoError(t, err)
-			_, err = tc.DB.Exec("UPDATE review_jobs SET session_id = 'old-session' WHERE id = ?", job.ID)
+			_, err = tc.DB.ExecContext(t.Context(), "UPDATE review_jobs SET session_id = 'old-session' WHERE id = ?", job.ID)
 			require.NoError(t, err)
 			claimed.SessionID = "old-session"
 
@@ -152,7 +152,7 @@ func TestProcessJobRunsStrictReviewInFreshSession(t *testing.T) {
 			agent.RegisterForTest(t, &strictWorkerTestAgent{
 				structuredWorkerTestAgent: &structuredWorkerTestAgent{
 					name:   "strict-tools-session",
-					result: jsontext.Value(`{"schema_version":2,"summary":"No findings.","verdict":"pass","findings":[]}`),
+					result: jsontext.Value(`{"schema_version":3,"summary":"No findings.","verdict":"pass","findings":[]}`),
 				},
 				err: tt.err,
 				onReview: func(path string) {
@@ -182,7 +182,7 @@ func TestProcessJobRecordsStrictClaudeUsageWithoutSavedSession(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell fake command uses POSIX permissions")
 	}
-	tc, claimed := claimStrictClaudeUsageJob(t, `{\"schema_version\":2,\"summary\":\"No findings.\",\"verdict\":\"pass\",\"findings\":[]}`)
+	tc, claimed := claimStrictClaudeUsageJob(t, `{\"schema_version\":3,\"summary\":\"No findings.\",\"verdict\":\"pass\",\"findings\":[]}`)
 
 	tc.Pool.processJob(testWorkerID, claimed)
 

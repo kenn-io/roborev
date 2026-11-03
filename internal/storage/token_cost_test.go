@@ -3,6 +3,7 @@ package storage
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 	"uuid"
@@ -11,13 +12,45 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestTokenCostCandidateQueriesSeekStartedAtIndex(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	machineID, err := db.GetMachineID()
+	require.NoError(t, err)
+	cutoff := time.Now().Add(-7 * 24 * time.Hour)
+	for _, tc := range []struct {
+		name  string
+		build func(int64, int, time.Time, uuid.UUID) (string, []any)
+	}{
+		{"costs", listTokenCostCandidatesQuery},
+		{"logs", listTokenUsageLogCandidatesQuery},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			query, args := tc.build(0, 20, cutoff, machineID)
+			rows, err := db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+query, args...)
+			require.NoError(t, err)
+			defer rows.Close()
+			var details []string
+			for rows.Next() {
+				var id, parent, unused int
+				var detail string
+				require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+				details = append(details, detail)
+			}
+			require.NoError(t, rows.Err())
+			assert.Contains(t, strings.Join(details, "\n"), "SEARCH j USING INDEX idx_review_jobs_source_started (source_machine_id=? AND <expr>>?)")
+		})
+	}
+}
+
 func TestMigrationMakesLegacyLocalJobEligibleForTokenReconciliation(t *testing.T) {
 	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "reviews.db")
 	db, err := Open(dbPath)
 	require.NoError(t, err)
 	_, jobs := seedJobs(t, db, filepath.Join(t.TempDir(), "repo"), 1)
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		UPDATE review_jobs
 		SET status = 'done', started_at = datetime('now'),
 		    finished_at = datetime('now'), session_id = 'legacy-session',
@@ -34,12 +67,12 @@ func TestMigrationMakesLegacyLocalJobEligibleForTokenReconciliation(t *testing.T
 	machineID, err := db.GetMachineID()
 	require.NoError(t, err)
 	var sourceMachineID uuid.UUID
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(t.Context(),
 		`SELECT source_machine_id FROM review_jobs WHERE id = ?`, jobs[0].ID,
 	).Scan(&sourceMachineID))
 	assert.Equal(t, machineID, sourceMachineID)
 	var historyCount int
-	require.NoError(t, db.QueryRow(`
+	require.NoError(t, db.QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM review_job_session_history
 		WHERE source_machine_id = ? AND session_id = 'legacy-session'`,
 		machineID,
@@ -124,7 +157,7 @@ func TestListTokenCostCandidatesSelectsRecoverableTerminalJobs(t *testing.T) {
 		if seed.agentInvoked {
 			invoked = 1
 		}
-		_, err := db.Exec(`
+		_, err := db.ExecContext(t.Context(), `
 			UPDATE review_jobs
 			SET status = ?, started_at = datetime('now'),
 			    finished_at = CASE WHEN ? IN ('queued', 'running') THEN NULL ELSE datetime('now') END,
@@ -156,7 +189,7 @@ func TestListTokenCostCandidatesPagesByExclusiveJobID(t *testing.T) {
 	t.Cleanup(func() { db.Close() })
 	_, jobs := seedJobs(t, db, "/tmp/token-cost-pages", 4)
 	for i, job := range jobs {
-		_, err := db.Exec(`
+		_, err := db.ExecContext(t.Context(), `
 			UPDATE review_jobs
 			SET status = 'done', started_at = datetime('now'), finished_at = datetime('now'),
 			    session_id = ?, agent_invoked = 1, token_usage = '{}'
@@ -186,7 +219,7 @@ func TestListTokenCostCandidatesPagesByExclusiveJobID(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Equal(t, jobs[2].ID, got.JobID)
 
-	_, err = db.Exec(
+	_, err = db.ExecContext(t.Context(),
 		`UPDATE review_jobs SET token_usage = '{"has_cost":true,"cost_usd":0}' WHERE id = ?`,
 		jobs[2].ID)
 	require.NoError(t, err)
@@ -203,7 +236,7 @@ func TestListTokenCostCandidatesExcludesAttemptsBeforeCutoff(t *testing.T) {
 	for i, startedAt := range []string{
 		"datetime('now', '-30 days')", "datetime('now', '-1 hour')",
 	} {
-		_, err := db.Exec(`
+		_, err := db.ExecContext(t.Context(), `
 			UPDATE review_jobs
 			SET status = 'done', started_at = `+startedAt+`,
 			    finished_at = datetime('now'), session_id = ?,
@@ -230,7 +263,7 @@ func TestListTokenCostCandidatesIncludesSerializedUnpricedUsage(t *testing.T) {
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	_, jobs := seedJobs(t, db, "/tmp/token-cost-unpriced-json", 1)
-	_, err := db.Exec(`
+	_, err := db.ExecContext(t.Context(), `
 		UPDATE review_jobs
 		SET status = 'done', started_at = datetime('now'),
 		    finished_at = datetime('now'), session_id = 'unpriced-session',
@@ -252,7 +285,7 @@ func TestListTokenUsageLogCandidatesSelectsMissingSession(t *testing.T) {
 	_, jobs := seedJobs(t, db, "/tmp/token-log-candidates", 3)
 	tokenUsage := []string{"", "", `{"has_cost":true,"cost_usd":0.25}`}
 	for i, sessionID := range []string{"", "stored-session", ""} {
-		_, err := db.Exec(`
+		_, err := db.ExecContext(t.Context(), `
 			UPDATE review_jobs
 			SET status = 'done', started_at = datetime('now'),
 			    finished_at = datetime('now'), session_id = ?,
@@ -280,7 +313,7 @@ func TestListTokenUsageLogCandidatesExcludesAttemptsBeforeCutoff(t *testing.T) {
 	for i, startedAt := range []string{
 		"datetime('now', '-30 days')", "datetime('now', '-1 hour')",
 	} {
-		_, err := db.Exec(`
+		_, err := db.ExecContext(t.Context(), `
 			UPDATE review_jobs
 			SET status = 'done', started_at = `+startedAt+`,
 			    finished_at = datetime('now'), session_id = '',
@@ -367,7 +400,7 @@ func TestTokenUsageCandidatesExcludeImportedJobs(t *testing.T) {
 		{sourceMachineID: machineID},
 		{sourceMachineID: testUUID("remote-machine")},
 	} {
-		_, err := db.Exec(`
+		_, err := db.ExecContext(t.Context(), `
 			UPDATE review_jobs
 			SET status = 'done', started_at = datetime('now'), finished_at = datetime('now'),
 			    session_id = ?, agent_invoked = 1, token_usage = '',
@@ -398,7 +431,7 @@ func TestTokenCostCandidateRejectsSessionReusedByPriorAttempt(t *testing.T) {
 	require.Equal(t, jobs[0].ID, first.ID)
 	// Use a fixed prior-attempt time so session-history uniqueness does not
 	// depend on the host clock's resolution between two immediate claims.
-	_, err = db.Exec(
+	_, err = db.ExecContext(t.Context(),
 		`UPDATE review_jobs SET started_at = ? WHERE id = ?`,
 		"2000-01-01T00:00:00.000000000Z", first.ID,
 	)
@@ -453,7 +486,7 @@ func TestTokenCostCandidateRejectsPrepopulatedSessionReusedByLaterAttempt(t *tes
 	require.Equal(t, job.ID, first.ID)
 	// Use a fixed prior-attempt time so session-history uniqueness does not
 	// depend on the host clock's resolution between two immediate claims.
-	_, err = db.Exec(
+	_, err = db.ExecContext(t.Context(),
 		`UPDATE review_jobs SET started_at = ? WHERE id = ?`,
 		"2000-01-01T00:00:00.000000000Z", first.ID,
 	)
@@ -491,7 +524,7 @@ func TestTokenCostCandidateRejectsSessionResumedFromImportedJob(t *testing.T) {
 		Agent:    "codex",
 	})
 	require.NoError(t, err)
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		UPDATE review_jobs
 		SET status = 'done', started_at = datetime('now', '-2 minutes'),
 		    finished_at = datetime('now', '-1 minute'),
@@ -520,7 +553,7 @@ func TestTokenCostCandidateRejectsSessionResumedFromImportedJob(t *testing.T) {
 	))
 
 	var sessionResumed int
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(t.Context(),
 		`SELECT session_resumed FROM review_jobs WHERE id = ?`, resumed.ID,
 	).Scan(&sessionResumed))
 	assert.Equal(t, 1, sessionResumed)
@@ -545,7 +578,7 @@ func TestSessionResumedMigrationMarksLegacyReusedSessions(t *testing.T) {
 		RepoID: repo.ID, CommitID: commit.ID, GitRef: "second", Agent: "codex",
 	})
 	require.NoError(t, err)
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		UPDATE review_jobs
 		SET status = 'done', started_at = datetime('now', '-2 minutes'),
 		    finished_at = datetime('now', '-1 minute'), session_id = 'reused-session',
@@ -557,12 +590,12 @@ func TestSessionResumedMigrationMarksLegacyReusedSessions(t *testing.T) {
 
 	rawDB, err := openRawDB(dbPath)
 	require.NoError(t, err)
-	_, err = rawDB.Exec(`ALTER TABLE review_jobs DROP COLUMN session_resumed`)
+	_, err = rawDB.ExecContext(t.Context(), `ALTER TABLE review_jobs DROP COLUMN session_resumed`)
 	require.NoError(t, err)
 	// Include unstarted attempts, unique sessions, and unset session IDs.
 	// Duplicate detection must consider all attempts, not only the rows in
 	// the partial index for started sessions.
-	_, err = rawDB.Exec(`INSERT INTO review_jobs
+	_, err = rawDB.ExecContext(t.Context(), `INSERT INTO review_jobs
 		(repo_id, git_ref, agent, session_id, started_at)
 		VALUES (?, 'unstarted-reuse', 'test', 'reused-session', NULL),
 		       (?, 'unstarted-a', 'test', 'unstarted-session', NULL),
@@ -579,7 +612,7 @@ func TestSessionResumedMigrationMarksLegacyReusedSessions(t *testing.T) {
 	db, err = Open(dbPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	rows, err := db.Query(`
+	rows, err := db.QueryContext(t.Context(), `
 		SELECT session_resumed FROM review_jobs ORDER BY id`)
 	require.NoError(t, err)
 	defer rows.Close()
@@ -601,7 +634,7 @@ func BenchmarkSessionResumedMigration(b *testing.B) {
 			b.Cleanup(func() { require.NoError(b, db.Close()) })
 			repo, err := db.GetOrCreateRepo(b.TempDir())
 			require.NoError(b, err)
-			_, err = db.Exec(`
+			_, err = db.ExecContext(b.Context(), `
 				WITH RECURSIVE sequence(n) AS (
 					SELECT 1 UNION ALL SELECT n + 1 FROM sequence WHERE n < ?
 				)
@@ -614,7 +647,7 @@ func BenchmarkSessionResumedMigration(b *testing.B) {
 			require.NoError(b, err)
 			for b.Loop() {
 				b.StopTimer()
-				_, err := db.Exec(`ALTER TABLE review_jobs DROP COLUMN session_resumed`)
+				_, err := db.ExecContext(b.Context(), `ALTER TABLE review_jobs DROP COLUMN session_resumed`)
 				require.NoError(b, err)
 				b.StartTimer()
 				require.NoError(b, db.migrate())
@@ -673,7 +706,7 @@ func TestLocallyRerunImportedJobCapturesTokenUsage(t *testing.T) {
 	t.Cleanup(func() { db.Close() })
 	_, jobs := seedJobs(t, db, "/tmp/token-cost-imported-rerun", 1)
 	job := jobs[0]
-	_, err := db.Exec(`
+	_, err := db.ExecContext(t.Context(), `
 		UPDATE review_jobs
 		SET status = 'done', started_at = datetime('now'),
 		    finished_at = datetime('now'), source_machine_id = ?,
@@ -715,7 +748,7 @@ func TestBackfillJobTokenUsageIfCurrentRejectsReenqueuedJob(t *testing.T) {
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	_, jobs := seedJobs(t, db, "/tmp/token-cost-attempt-race", 1)
-	_, err := db.Exec(`
+	_, err := db.ExecContext(t.Context(), `
 		UPDATE review_jobs
 		SET status = 'done', started_at = '2026-08-20T16:00:00.123456789Z',
 		    finished_at = '2026-08-20T16:00:01Z', agent_invoked = 1
@@ -725,7 +758,7 @@ func TestBackfillJobTokenUsageIfCurrentRejectsReenqueuedJob(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, candidates, 1)
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		UPDATE review_jobs
 		SET started_at = '2026-08-20T16:00:00.987654321Z',
 		    finished_at = '2026-08-20T16:00:02Z'
@@ -752,7 +785,7 @@ func TestBackfillJobTokenUsageIfCurrentRejectsNewSessionReuse(t *testing.T) {
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	_, jobs := seedJobs(t, db, "/tmp/token-cost-reuse-race", 2)
-	_, err := db.Exec(`
+	_, err := db.ExecContext(t.Context(), `
 		UPDATE review_jobs
 		SET status = 'done', started_at = datetime('now'), finished_at = datetime('now'),
 		    session_id = 'shared-session', agent_invoked = 1,
@@ -763,7 +796,7 @@ func TestBackfillJobTokenUsageIfCurrentRejectsNewSessionReuse(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, candidate)
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		UPDATE review_jobs
 		SET status = 'running', started_at = datetime('now'),
 		    session_id = 'shared-session', agent_invoked = 1
@@ -790,7 +823,7 @@ func TestBackfillJobTokenUsageIfCurrentRejectsStaleUsage(t *testing.T) {
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	_, jobs := seedJobs(t, db, "/tmp/token-cost-stale-race", 1)
-	_, err := db.Exec(`
+	_, err := db.ExecContext(t.Context(), `
 		UPDATE review_jobs
 		SET status = 'done', started_at = datetime('now'), finished_at = datetime('now'),
 		    session_id = 'stale-session', agent_invoked = 1,
@@ -801,7 +834,7 @@ func TestBackfillJobTokenUsageIfCurrentRejectsStaleUsage(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, candidate)
 
-	_, err = db.Exec(
+	_, err = db.ExecContext(t.Context(),
 		`UPDATE review_jobs SET token_usage = '{"total_output_tokens":20}' WHERE id = ?`,
 		jobs[0].ID,
 	)

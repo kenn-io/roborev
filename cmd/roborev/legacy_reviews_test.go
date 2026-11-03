@@ -2,18 +2,22 @@ package main
 
 import (
 	"bytes"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"testing"
 	"uuid"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 func TestLegacyReviewCommands(t *testing.T) {
@@ -103,4 +107,65 @@ func TestLegacyReviewsResolvesDatabaseInCallerDirectory(t *testing.T) {
 	command.SetOut(&bytes.Buffer{})
 	command.SetArgs([]string{"--db", "reviews.db", "export"})
 	require.NoError(t, command.Execute())
+}
+
+func TestLegacyReviewsExportSchemasAcceptFaithfulConversions(t *testing.T) {
+	daemonFromHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, err := w.Write([]byte(`{"sqlite_records":[],"postgres_records":[]}`))
+		assert.NoError(t, err)
+	}))
+	var out bytes.Buffer
+	command := legacyReviewsCmd()
+	command.SetOut(&out)
+	command.SetArgs([]string{"export"})
+	require.NoError(t, command.Execute())
+	var exported struct {
+		Schema          jsonschema.Schema `json:"schema"`
+		SynthesisSchema jsonschema.Schema `json:"synthesis_schema"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &exported))
+
+	// A historical review states no verdict, kind, or confidence, and gives
+	// its location as free text. Converting it must not invent them.
+	finding := `{"severity":"medium","kind":null,"topic":null,"confidence":null,"problem":"Retries never stop.","fix":"Cap the retries.","file":null,"start_line":null,"end_line":null,"location":"the retry loop in worker.go"%s}`
+	single := fmt.Sprintf(`{"schema_version":3,"summary":"Historical review.","verdict":null,"findings":[`+finding+`]}`, "")
+	sourced := fmt.Sprintf(`{"schema_version":3,"summary":"Historical review.","verdict":null,"findings":[`+finding+`]}`, `,"sources":[1]`)
+	for _, tc := range []struct {
+		name     string
+		schema   *jsonschema.Schema
+		document string
+	}{
+		{"single", &exported.Schema, single},
+		{"synthesis", &exported.SynthesisSchema, sourced},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			validator, err := tc.schema.Resolve(nil)
+			require.NoError(t, err)
+			var value any
+			require.NoError(t, json.Unmarshal([]byte(tc.document), &value))
+			require.NoError(t, validator.Validate(value))
+
+			doc, err := structuredreview.Decode(jsontext.Value(tc.document))
+			require.NoError(t, err)
+			require.Len(t, doc.Findings, 1)
+			assert.Empty(t, doc.Findings[0].Kind)
+			assert.Equal(t, "the retry loop in worker.go", doc.Findings[0].Location)
+		})
+	}
+
+	// Live reviewers must still state a kind and confidence. The two
+	// documents differ only in those fields.
+	var live jsonschema.Schema
+	require.NoError(t, json.Unmarshal(structuredreview.Schema, &live))
+	validator, err := live.Resolve(nil)
+	require.NoError(t, err)
+	liveDoc := `{"schema_version":3,"summary":"Live review.","verdict":"fail","findings":[{"severity":"medium","kind":%s,"topic":null,"confidence":%s,"problem":"Retries never stop.","fix":"Cap the retries.","file":null,"start_line":null,"end_line":null}]}`
+	liveValue := func(kind, confidence string) any {
+		var value any
+		require.NoError(t, json.Unmarshal(fmt.Appendf(nil, liveDoc, kind, confidence), &value))
+		return value
+	}
+	require.NoError(t, validator.Validate(liveValue(`"defect"`, "0.8")))
+	require.Error(t, validator.Validate(liveValue("null", "null")))
 }

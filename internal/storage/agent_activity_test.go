@@ -37,7 +37,7 @@ func TestAgentActivityCorruptStateAndSaturation(t *testing.T) {
 	calls, err := db.RecordAgentCall(ctx, day)
 	require.NoError(t, err)
 	assert.Equal(uint64(101), calls)
-	_, err = db.Exec(`CREATE TABLE agent_count_writes (value TEXT); CREATE TRIGGER audit_agent_count_update AFTER UPDATE ON sync_state BEGIN INSERT INTO agent_count_writes VALUES (NEW.value); END`)
+	_, err = db.ExecContext(t.Context(), `CREATE TABLE agent_count_writes (value TEXT); CREATE TRIGGER audit_agent_count_update AFTER UPDATE ON sync_state BEGIN INSERT INTO agent_count_writes VALUES (NEW.value); END`)
 	require.NoError(t, err)
 	for range 3 {
 		calls, err := db.RecordAgentCall(ctx, day)
@@ -48,7 +48,7 @@ func TestAgentActivityCorruptStateAndSaturation(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(`{"day":"2026-01-02","calls":101}`, stored)
 	var writes int
-	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM agent_count_writes`).Scan(&writes))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM agent_count_writes`).Scan(&writes))
 	assert.Zero(writes)
 	calls, err = db.RecordAgentCall(ctx, "2026-01-03")
 	require.NoError(t, err)
@@ -87,10 +87,10 @@ func TestAgentActivityBusyWriteCancellation(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
-	writer, err := db.Begin()
+	writer, err := db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
 	defer func() { _ = writer.Rollback() }()
-	_, err = writer.Exec(`INSERT INTO sync_state (key, value) VALUES ('writer-lock', 'held')`)
+	_, err = writer.ExecContext(t.Context(), `INSERT INTO sync_state (key, value) VALUES ('writer-lock', 'held')`)
 	require.NoError(t, err)
 	done := make(chan struct{})
 	go func() {
@@ -160,7 +160,7 @@ func TestAgentActivityFailedRestoreDiscardsConnection(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 	var path string
-	require.NoError(t, db.QueryRow(`SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&path))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&path))
 	pool := sql.OpenDB(restoreFailureConnector{driver: db.Driver(), dsn: path + "?_pragma=busy_timeout(30000)"})
 	t.Cleanup(func() { require.NoError(t, pool.Close()) })
 	pool.SetMaxOpenConns(1)
@@ -181,7 +181,7 @@ func TestAgentActivityFailedRestoreDiscardsConnection(t *testing.T) {
 	assert.True(t, affected.restoreFailed)
 	assert.True(t, affected.closed)
 	var busyTimeout int
-	require.NoError(t, pool.QueryRow(`PRAGMA busy_timeout`).Scan(&busyTimeout))
+	require.NoError(t, pool.QueryRowContext(t.Context(), `PRAGMA busy_timeout`).Scan(&busyTimeout))
 	assert.Equal(t, 30000, busyTimeout)
 	require.NoError(t, db.SetSyncState("ordinary-write", "saved"))
 }

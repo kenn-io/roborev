@@ -24,7 +24,7 @@ func importedAttemptNodes(t *testing.T) (*integrationEnv, testNode, testNode, in
 	_, err = b.Worker.SyncNow()
 	require.NoError(t, err)
 	var importedID int64
-	require.NoError(t, b.DB.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&importedID))
+	require.NoError(t, b.DB.QueryRowContext(t.Context(), `SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&importedID))
 	return env, a, b, job.ID, importedID
 }
 
@@ -136,7 +136,7 @@ func TestIntegrationConcurrentRerunsWithTiedTimes(t *testing.T) { //nolint:paral
 			b := env.setupNode("rerun-one", "tied-attempt-repository", "1h")
 			c := env.setupNode("rerun-two", "tied-attempt-repository", "1h")
 			job, _ := createCompletedReview(t, a.DB, a.Repo.ID, "abc123", "Author", "Subject", "original prompt", "Original result.")
-			_, err := a.DB.Exec(`UPDATE review_jobs SET enqueued_at = ? WHERE id = ?`, preciseTimestampAt(time.Now().Add(time.Hour)), job.ID)
+			_, err := a.DB.ExecContext(t.Context(), `UPDATE review_jobs SET enqueued_at = ? WHERE id = ?`, preciseTimestampAt(time.Now().Add(time.Hour)), job.ID)
 			require.NoError(t, err)
 			for _, node := range []testNode{a, b, c} {
 				_, err := node.Worker.SyncNow()
@@ -153,7 +153,7 @@ func TestIntegrationConcurrentRerunsWithTiedTimes(t *testing.T) { //nolint:paral
 			var attempts []time.Time
 			for i, node := range []testNode{winner, loser} {
 				var id int64
-				require.NoError(t, node.DB.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&id))
+				require.NoError(t, node.DB.QueryRowContext(t.Context(), `SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&id))
 				label := []string{"Winning result.", "Losing result."}[i]
 				startImportedAttempt(t, node, id, label)
 				require.NoError(t, node.DB.CompleteJobResult(id, "test", ReviewCompletion{StructuredOutput: reviewFixtureJSON(label)}))
@@ -180,7 +180,7 @@ func TestIntegrationConcurrentRerunsWithTiedTimes(t *testing.T) { //nolint:paral
 			require.NoError(t, err)
 			for _, node := range []testNode{a, b, c} {
 				var id int64
-				require.NoError(t, node.DB.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&id))
+				require.NoError(t, node.DB.QueryRowContext(t.Context(), `SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&id))
 				current, err := node.DB.GetJobByID(id)
 				require.NoError(t, err)
 				assert.Equal(t, winnerID, *current.SourceMachineID)
@@ -201,7 +201,7 @@ func TestIntegrationPendingReviewEditSurvivesAttemptRepair(t *testing.T) { //nol
 			b := env.setupNode("editor", "repair-repository", "1h")
 			job, originalReview := createCompletedReview(t, a.DB, a.Repo.ID, "abc123", "Author", "Subject", "complete prompt", "Original review.")
 			if conversion {
-				_, err := a.DB.Exec(`UPDATE reviews SET structured_output = '{"schema_version":0,"legacy":{"markdown":"Historical finding.","recorded_verdict":null}}' WHERE id = ?`, originalReview.ID)
+				_, err := a.DB.ExecContext(t.Context(), `UPDATE reviews SET structured_output = '{"schema_version":0,"legacy":{"markdown":"Historical finding.","recorded_verdict":null}}' WHERE id = ?`, originalReview.ID)
 				require.NoError(t, err)
 			}
 			_, err := a.Worker.SyncNow()
@@ -209,10 +209,10 @@ func TestIntegrationPendingReviewEditSurvivesAttemptRepair(t *testing.T) { //nol
 			_, err = b.Worker.SyncNow()
 			require.NoError(t, err)
 			var importedID int64
-			require.NoError(t, b.DB.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&importedID))
+			require.NoError(t, b.DB.QueryRowContext(t.Context(), `SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&importedID))
 			if conversion {
 				var archiveID int64
-				require.NoError(t, b.DB.QueryRow(`SELECT archive_id FROM legacy_reviews WHERE uuid = ?`, originalReview.UUID).Scan(&archiveID))
+				require.NoError(t, b.DB.QueryRowContext(t.Context(), `SELECT archive_id FROM legacy_reviews WHERE uuid = ?`, originalReview.UUID).Scan(&archiveID))
 				require.NoError(t, b.DB.ResolveLegacyReview(archiveID, reviewFixtureJSON("Converted review.")))
 			} else {
 				require.NoError(t, b.DB.MarkReviewClosedByJobID(importedID, true))
@@ -226,7 +226,7 @@ func TestIntegrationPendingReviewEditSurvivesAttemptRepair(t *testing.T) { //nol
 			// parent's original enqueue time in PostgreSQL. The producer's
 			// upgrade republishes the real attempt without changing review UUID.
 			repaired := job.EnqueuedAt.Add(time.Hour).Truncate(time.Microsecond)
-			_, err = a.DB.Exec(`UPDATE review_jobs SET enqueued_at = ?, synced_at = NULL WHERE id = ?`, preciseTimestampAt(repaired), job.ID)
+			_, err = a.DB.ExecContext(t.Context(), `UPDATE review_jobs SET enqueued_at = ?, synced_at = NULL WHERE id = ?`, preciseTimestampAt(repaired), job.ID)
 			require.NoError(t, err)
 			producer, err := a.DB.GetMachineID()
 			require.NoError(t, err)
@@ -273,7 +273,7 @@ func TestIntegrationPendingReviewEditSurvivesAttemptRepair(t *testing.T) { //nol
 				if conversion {
 					assert.Equal(t, "Converted review.", review.StructuredOutput["summary"])
 					var unresolved int
-					require.NoError(t, node.DB.QueryRow(`SELECT COUNT(*) FROM legacy_reviews WHERE uuid = ? AND resolved_at IS NULL`, review.UUID).Scan(&unresolved))
+					require.NoError(t, node.DB.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM legacy_reviews WHERE uuid = ? AND resolved_at IS NULL`, review.UUID).Scan(&unresolved))
 					assert.Zero(t, unresolved)
 				} else {
 					assert.True(t, review.Closed)
@@ -338,7 +338,7 @@ func TestIntegrationParentUploadPreservesPeerEditWithClockSkew(t *testing.T) { /
 	require.NoError(t, err)
 	// A parent upload must repair only the review association, even though
 	// the cached review's server timestamp is later than its local sync mark.
-	_, err = a.DB.Exec(`UPDATE review_jobs SET synced_at = NULL WHERE id = ?`, sourceID)
+	_, err = a.DB.ExecContext(t.Context(), `UPDATE review_jobs SET synced_at = NULL WHERE id = ?`, sourceID)
 	require.NoError(t, err)
 	_, err = a.Worker.SyncNow()
 	require.NoError(t, err)
@@ -358,7 +358,7 @@ func TestIntegrationReviewEditAfterPushSurvivesRepairPull(t *testing.T) { //noli
 			b := env.setupNode("editor", "late-edit-repository", "1h")
 			job, review := createCompletedReview(t, a.DB, a.Repo.ID, "abc123", "Author", "Subject", "prompt", "Original review.")
 			if conversion {
-				_, err := a.DB.Exec(`UPDATE reviews SET structured_output = '{"schema_version":0,"legacy":{"markdown":"Historical finding.","recorded_verdict":null}}' WHERE id = ?`, review.ID)
+				_, err := a.DB.ExecContext(t.Context(), `UPDATE reviews SET structured_output = '{"schema_version":0,"legacy":{"markdown":"Historical finding.","recorded_verdict":null}}' WHERE id = ?`, review.ID)
 				require.NoError(t, err)
 			}
 			_, err := a.Worker.SyncNow()
@@ -366,8 +366,8 @@ func TestIntegrationReviewEditAfterPushSurvivesRepairPull(t *testing.T) { //noli
 			_, err = b.Worker.SyncNow()
 			require.NoError(t, err)
 			var importedID int64
-			require.NoError(t, b.DB.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&importedID))
-			_, err = a.DB.Exec(`UPDATE review_jobs SET enqueued_at = ?, synced_at = NULL WHERE id = ?`, preciseTimestampAt(job.EnqueuedAt.Add(time.Hour)), job.ID)
+			require.NoError(t, b.DB.QueryRowContext(t.Context(), `SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&importedID))
+			_, err = a.DB.ExecContext(t.Context(), `UPDATE review_jobs SET enqueued_at = ?, synced_at = NULL WHERE id = ?`, preciseTimestampAt(job.EnqueuedAt.Add(time.Hour)), job.ID)
 			require.NoError(t, err)
 			_, err = a.Worker.SyncNow()
 			require.NoError(t, err)
@@ -377,7 +377,7 @@ func TestIntegrationReviewEditAfterPushSurvivesRepairPull(t *testing.T) { //noli
 			// The user edits after the final upload query, before the parent pull.
 			if conversion {
 				var archiveID int64
-				require.NoError(t, b.DB.QueryRow(`SELECT archive_id FROM legacy_reviews WHERE uuid = ?`, review.UUID).Scan(&archiveID))
+				require.NoError(t, b.DB.QueryRowContext(t.Context(), `SELECT archive_id FROM legacy_reviews WHERE uuid = ?`, review.UUID).Scan(&archiveID))
 				require.NoError(t, b.DB.ResolveLegacyReview(archiveID, reviewFixtureJSON("Converted review.")))
 			} else {
 				require.NoError(t, b.DB.MarkReviewClosedByJobID(importedID, true))
@@ -420,7 +420,7 @@ func TestIntegrationReviewEditBeyondPushCapSurvivesRepairPull(t *testing.T) { //
 	}
 	_, err := b.Worker.SyncNow()
 	require.NoError(t, err)
-	_, err = a.DB.Exec(`UPDATE review_jobs SET enqueued_at = datetime(enqueued_at, '+1 hour'), synced_at = NULL`)
+	_, err = a.DB.ExecContext(t.Context(), `UPDATE review_jobs SET enqueued_at = datetime(enqueued_at, '+1 hour'), synced_at = NULL`)
 	require.NoError(t, err)
 	for range 2 {
 		_, err := a.Worker.SyncNow()
@@ -436,7 +436,7 @@ func TestIntegrationReviewEditBeyondPushCapSurvivesRepairPull(t *testing.T) { //
 	require.NoError(t, err)
 	assert.Equal(t, 500, stats.PushedReviews)
 	var closed int
-	require.NoError(t, b.DB.QueryRow(`SELECT COUNT(*) FROM reviews WHERE closed = 1`).Scan(&closed))
+	require.NoError(t, b.DB.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM reviews WHERE closed = 1`).Scan(&closed))
 	assert.Equal(t, 501, closed)
 	machine, err := b.DB.GetMachineID()
 	require.NoError(t, err)
@@ -456,7 +456,7 @@ func TestIntegrationLegacyClosureMergesWithPeerConversion(t *testing.T) { //noli
 			a := env.setupNode("producer", "conversion-repository", "1h")
 			b := env.setupNode("peer", "conversion-repository", "1h")
 			job, review := createCompletedReview(t, a.DB, a.Repo.ID, "abc123", "Author", "Subject", "prompt", "Original review.")
-			_, err := a.DB.Exec(`UPDATE reviews SET structured_output = '{"schema_version":0,"legacy":{"markdown":"Historical finding.","recorded_verdict":null}}' WHERE id = ?`, review.ID)
+			_, err := a.DB.ExecContext(t.Context(), `UPDATE reviews SET structured_output = '{"schema_version":0,"legacy":{"markdown":"Historical finding.","recorded_verdict":null}}' WHERE id = ?`, review.ID)
 			require.NoError(t, err)
 			_, err = a.Worker.SyncNow()
 			require.NoError(t, err)
@@ -467,10 +467,10 @@ func TestIntegrationLegacyClosureMergesWithPeerConversion(t *testing.T) { //noli
 				converter, closer = b, a
 			}
 			var convertedID, closedJobID int64
-			require.NoError(t, converter.DB.QueryRow(`SELECT id FROM reviews WHERE uuid = ?`, review.UUID).Scan(&convertedID))
-			require.NoError(t, closer.DB.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&closedJobID))
+			require.NoError(t, converter.DB.QueryRowContext(t.Context(), `SELECT id FROM reviews WHERE uuid = ?`, review.UUID).Scan(&convertedID))
+			require.NoError(t, closer.DB.QueryRowContext(t.Context(), `SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&closedJobID))
 			require.NoError(t, converter.DB.MigrateReview(convertedID, reviewFixtureJSON(`{"schema_version":2,"summary":"Converted review.","verdict":"pass","findings":[]}`)))
-			_, err = converter.DB.Exec(`UPDATE reviews SET reviewed_file_count = 3, excluded_file_count = 2 WHERE id = ?`, convertedID)
+			_, err = converter.DB.ExecContext(t.Context(), `UPDATE reviews SET reviewed_file_count = 3, excluded_file_count = 2 WHERE id = ?`, convertedID)
 			require.NoError(t, err)
 			_, err = converter.Worker.SyncNow()
 			require.NoError(t, err)
@@ -483,14 +483,14 @@ func TestIntegrationLegacyClosureMergesWithPeerConversion(t *testing.T) { //noli
 			require.NoError(t, err)
 			for _, node := range []testNode{a, b} {
 				var id int64
-				require.NoError(t, node.DB.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&id))
+				require.NoError(t, node.DB.QueryRowContext(t.Context(), `SELECT id FROM review_jobs WHERE uuid = ?`, job.UUID).Scan(&id))
 				current, err := node.DB.GetReviewByJobID(id)
 				require.NoError(t, err)
 				assert.True(t, current.Closed)
 				assert.Equal(t, "Converted review.", current.StructuredOutput["summary"])
 				assert.Equal(t, VerdictPass, current.Verdict())
 				var reviewed, excluded int
-				require.NoError(t, node.DB.QueryRow(`SELECT reviewed_file_count, excluded_file_count FROM reviews WHERE id = ?`, current.ID).Scan(&reviewed, &excluded))
+				require.NoError(t, node.DB.QueryRowContext(t.Context(), `SELECT reviewed_file_count, excluded_file_count FROM reviews WHERE id = ?`, current.ID).Scan(&reviewed, &excluded))
 				assert.Equal(t, 3, reviewed)
 				assert.Equal(t, 2, excluded)
 				machine, err := node.DB.GetMachineID()
@@ -511,7 +511,7 @@ func TestIntegrationMirrorResetRestoresRepairedReview(t *testing.T) { //nolint:p
 	_, err = a.Worker.SyncNow()
 	require.NoError(t, err)
 	// A parent repush produces a mirror-authored review association repair.
-	_, err = a.DB.Exec(`UPDATE review_jobs SET synced_at = NULL WHERE id = ?`, sourceID)
+	_, err = a.DB.ExecContext(t.Context(), `UPDATE review_jobs SET synced_at = NULL WHERE id = ?`, sourceID)
 	require.NoError(t, err)
 	_, err = a.Worker.SyncNow()
 	require.NoError(t, err)
@@ -522,7 +522,7 @@ func TestIntegrationMirrorResetRestoresRepairedReview(t *testing.T) { //nolint:p
 	peer, err := b.DB.GetMachineID()
 	require.NoError(t, err)
 	var editor uuid.UUID
-	require.NoError(t, a.DB.QueryRow(`SELECT updated_by_machine_id FROM reviews WHERE id = ?`, before.ID).Scan(&editor))
+	require.NoError(t, a.DB.QueryRowContext(t.Context(), `SELECT updated_by_machine_id FROM reviews WHERE id = ?`, before.ID).Scan(&editor))
 	require.NotEqual(t, owner, editor)
 	require.NotEqual(t, peer, editor)
 	a.Worker.Stop()

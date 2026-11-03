@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -61,18 +60,18 @@ func TestReleaseNotesRefreshesEditedGitHubRelease(t *testing.T) {
 		db: db, releaseNotesClient: githubClient, releaseNotesNow: func() time.Time { return now },
 	}
 
-	first, err := server.humaListReleases(context.Background(), nil)
+	first, err := server.humaListReleases(t.Context(), nil)
 	require.NoError(t, err)
 	require.Len(t, first.Body.Releases, 1)
 	assert.Equal(t, "Original notes", first.Body.Releases[0].Body)
 	assert.Equal(t, 1, requests)
 
-	_, err = server.humaListReleases(context.Background(), nil)
+	_, err = server.humaListReleases(t.Context(), nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, requests, "fresh cache avoids another GitHub request")
 
 	now = now.Add(releaseNotesFreshFor + time.Minute)
-	refreshed, err := server.humaListReleases(context.Background(), nil)
+	refreshed, err := server.humaListReleases(t.Context(), nil)
 	require.NoError(t, err)
 	require.Len(t, refreshed.Body.Releases, 1)
 	assert.Equal(t, firstETag, seenConditionalETag)

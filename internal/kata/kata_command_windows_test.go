@@ -3,7 +3,6 @@
 package kata
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -15,7 +14,7 @@ const testCreateNoWindow = 0x08000000
 
 func TestBuildKataCmdHidesConsole(t *testing.T) {
 	c := &CLIClient{bin: "kata", workdir: t.TempDir()}
-	cmd := buildKataCmd(context.Background(), c, []string{"list"}, strings.NewReader(""))
+	cmd := buildKataCmd(t.Context(), c, []string{"list"}, strings.NewReader(""))
 	require.NotNil(t, cmd.SysProcAttr)
 	assert.NotZero(t, cmd.SysProcAttr.CreationFlags&testCreateNoWindow)
 }

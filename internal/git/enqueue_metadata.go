@@ -65,7 +65,7 @@ func hasDotGitFileAncestor(path string) bool {
 }
 
 type subprocessEnqueueMetadataReader struct {
-	ctx      context.Context
+	ctx      context.Context //nolint:containedctx // opened for one enqueue request and discarded with it
 	repoPath string
 }
 

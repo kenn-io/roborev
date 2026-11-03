@@ -8,7 +8,7 @@ you already run, while you keep working.
 $ roborev init
 Ready! Every commit will now be automatically reviewed.
 $ git commit -m "Add retry to payment webhook"
-$ roborev show HEAD                   # later, whenever you want it
+$ roborev job show HEAD                   # later, whenever you want it
 Review for 8f2c1a0 (job 214, by codex)
 ------------------------------------------------------------
 ## Review Findings
@@ -52,8 +52,8 @@ working tree on its own.
 - **Layer 1, post-commit.** `roborev init` installs the hook, starts the
   daemon, and registers the repo. Each commit gets a verdict and, when it
   fails, findings with severities and file locations. `post_commit_batch_size`
-  reviews a run of small commits as one range.
-- **Layer 2, agent hook.** `roborev agent-hook install` wires Claude Code,
+  and `post_commit_quiet_period` review a run of small commits as one range.
+- **Layer 2, agent hook.** `roborev agent hook install` wires Claude Code,
   Codex, Copilot CLI, Cursor, Factory Droid, Gemini CLI, Hermes, and Qwen. After
   a configurable number of turns, commits, or failed reviews, the agent is told
   which reviews to fix, by ID, and told to verify and close them.
@@ -103,19 +103,22 @@ writer, or a local model behind a proxy.
 - **Analysis.** `roborev analyze` runs duplication, complexity, dead-code,
   refactor, api-design, architecture, security, and test-fixtures passes over
   existing code. Findings land in the same queue; `--fix` applies them.
-- **Verification.** `roborev compact` re-checks open findings against the
+- **Verification.** `roborev job compact` re-checks open findings against the
   current code, drops the ones that no longer hold, and consolidates the rest.
 
 ## 06 / Pull requests: the same panel on every PR
 
-The daemon polls GitHub and GitLab, runs one panel per PR head against the
+The daemon polls GitHub pull requests, runs one panel per PR head against the
 frozen merge-base range, and posts one synthesized comment with the member
-reviewers, runtimes, and costs in the footer.
+reviewers, runtimes, and costs in the footer. GitLab merge requests get a
+multi-agent review from a GitLab CI job instead.
 
 - **GitHub.** Install as a GitHub App for a bot with repository-scoped
   permissions and checks, or use your `gh` login for a personal project.
-- **GitLab.** Merge request notes from the same daemon, with quick-action
-  escaping.
+- **GitLab.** `roborev ci review` runs in a GitLab CI job and posts the
+  synthesized review as a merge request note, with quick-action escaping. The
+  daemon poller does not watch GitLab yet; see
+  [GitLab integration](https://roborev.io/docs/integrations/gitlab/).
 - **Control.** `[ci].skip_labels` exempts drafts and generated updates; per-repo
   `.roborev.toml` overrides the panel, agents, and reasoning for one project.
 - **Runs anywhere.** The CI poller is the roborev daemon under systemd or
@@ -125,7 +128,7 @@ reviewers, runtimes, and costs in the footer.
 
 - **Analytics.** The browser UI reports cost, latency, reliability, and
   outcomes, filtered by project, source, agent, model, or time range, with the
-  filters in the URL. `roborev cost`, `summary`, and `insights` on the CLI.
+  filters in the URL. `roborev report cost`, `summary`, and `insights` on the CLI.
 - **Exports.** `roborev export reviews`, `ci-metrics`, and `ci-costs` emit
   stable, cursor-resumable JSON for your own dashboards.
 - **Experiments.** Assign branches to a default or experimental review
@@ -152,8 +155,8 @@ for, so what reaches the PR has already been reviewed and fixed several times.
 
 ## 10 / Start
 
-- macOS / Linux: `curl -fsSL https://roborev.io/install.sh | bash`
-- Homebrew: `brew install kenn-io/tap/roborev`
+- macOS (Homebrew): `brew install roborev`
+- Linux (install script): `curl -fsSL https://roborev.io/install.sh | bash`
 - Windows: `powershell -ExecutionPolicy ByPass -c "irm https://roborev.io/install.ps1 | iex"`
 
 See [all install options](https://roborev.io/docs/installation/).

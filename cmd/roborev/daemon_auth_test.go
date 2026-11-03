@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -98,7 +97,7 @@ func TestAuthExplicitURLHelpers(t *testing.T) {
 	}))
 	defer server.Close()
 	patchServerAddr(t, server.URL)
-	ctx := context.Background()
+	ctx := t.Context()
 	review, err := fetchReview(ctx, server.URL, 23)
 	require.NoError(t, err)
 	require.NotNil(t, review)
@@ -118,7 +117,7 @@ func TestAuthConfigDenialDoesNotRecoverDaemon(t *testing.T) {
 	fixDaemonRecoveryWait = 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
 	defer server.Close()
-	_, err := fetchReview(context.Background(), server.URL, 23)
+	_, err := fetchReview(t.Context(), server.URL, 23)
 	require.Error(t, err)
 	require.ErrorIs(t, err, daemon.ErrClientConfig)
 	assert.NotContains(t, err.Error(), "access denied")
@@ -148,7 +147,7 @@ func TestAuthConfigDenialStopsEnqueueProbe(t *testing.T) {
 
 	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
 	sha := repo.Run("rev-parse", "HEAD")
-	err := enqueueIfNeeded(context.Background(), server.URL, repo.Dir, sha)
+	err := enqueueIfNeeded(t.Context(), server.URL, repo.Dir, sha)
 	require.ErrorIs(t, err, daemon.ErrClientConfig)
 	assert.True(t, daemon.IsDaemonAccessError(err))
 	assert.Zero(t, sleepCalls.Load())
@@ -162,7 +161,7 @@ func TestAuthCloseAndCancelMapUnauthorized(t *testing.T) {
 		name string
 		call func(string) error
 	}{
-		{"close", func(serverAddr string) error { return markJobClosed(context.Background(), serverAddr, 23) }},
+		{"close", func(serverAddr string) error { return markJobClosed(t.Context(), serverAddr, 23) }},
 		{"cancel", func(serverAddr string) error { return cancelJob(serverAddr, 23) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -183,7 +182,9 @@ func TestAuthOriginDenialIsNotAConnectionFailure(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	endpoint, err := daemon.ParseEndpoint("127.0.0.1:7373")
 	require.NoError(t, err)
-	_, err = endpoint.HTTPClient(time.Second).Get("http://127.0.0.1:7374/api/ping")
+	getRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://127.0.0.1:7374/api/ping", nil)
+	require.NoError(t, err)
+	_, err = endpoint.HTTPClient(time.Second).Do(getRequest)
 	require.Error(t, err)
 	assert.False(t, isConnectionError(err))
 }
@@ -326,7 +327,7 @@ func TestAuthFixStopsOnDeniedRequests(t *testing.T) {
 				cmd, _ := newTestCmd(t)
 				var err error
 				if mode == "batch" {
-					err = processFixBatch(context.Background(), cmd, currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}, []int64{23}, 0, fixOptions{agentName: "test", quiet: true}, tracker)
+					err = processFixBatch(t.Context(), cmd, currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}, []int64{23}, 0, fixOptions{agentName: "test", quiet: true}, tracker)
 				} else {
 					err = fixSingleJob(cmd, repo.Dir, 23, fixOptions{agentName: "test", quiet: true}, tracker)
 				}

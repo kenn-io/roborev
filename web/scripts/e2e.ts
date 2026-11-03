@@ -189,6 +189,7 @@ export async function runBrowserTests(): Promise<number> {
       {
         ROBOREV_E2E_CONTROL_ORIGIN: controlOrigin,
         ROBOREV_E2E_ORIGIN: origin,
+        ROBOREV_E2E_REPORT: "web",
         ROBOREV_E2E_TOKEN: browserToken,
       },
       false,
@@ -223,6 +224,7 @@ export async function runBrowserTests(): Promise<number> {
       {
         ROBOREV_E2E_CONTROL_ORIGIN: controlOrigin,
         ROBOREV_E2E_ORIGIN: localOrigin,
+        ROBOREV_E2E_REPORT: "web-local-session",
         ROBOREV_E2E_TOKEN: "",
       },
       false,

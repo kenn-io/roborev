@@ -21,7 +21,7 @@ func TestCopilotSupportsAllowAllTools(t *testing.T) {
 		mock := mockAgentCLI(t, MockCLIOpts{
 			HelpOutput: "Usage: copilot [flags]\n\n  --allow-all-tools  Auto-approve all tool calls",
 		})
-		supported, err := copilotSupportsAllowAllTools(context.Background(), mock.CmdPath)
+		supported, err := copilotSupportsAllowAllTools(t.Context(), mock.CmdPath)
 		require.NoError(t, err)
 		assert.True(t, supported)
 	})
@@ -30,7 +30,7 @@ func TestCopilotSupportsAllowAllTools(t *testing.T) {
 		mock := mockAgentCLI(t, MockCLIOpts{
 			HelpOutput: "Usage: copilot [flags]\n\n  --model  Model to use",
 		})
-		supported, err := copilotSupportsAllowAllTools(context.Background(), mock.CmdPath)
+		supported, err := copilotSupportsAllowAllTools(t.Context(), mock.CmdPath)
 		require.NoError(t, err)
 		assert.False(t, supported)
 	})
@@ -64,7 +64,7 @@ printf 'Read-only plan\n'
 	command := writeTempCommand(t, script)
 	a := NewCopilotAgent(command).WithAgentic(true)
 
-	result, err := RunPlan(context.Background(), a, repoPath, "HEAD", "plan", io.Discard, nil)
+	result, err := RunPlan(t.Context(), a, repoPath, "HEAD", "plan", io.Discard, nil)
 
 	require.NoError(t, err)
 	assert.Equal("Read-only plan", result)
@@ -83,7 +83,7 @@ func TestCopilotPlanningFailsClosedWithoutAvailableTools(t *testing.T) {
 		HelpOutput:  "--allow-all-tools\n--stream\n--output-format\n--disable-builtin-mcps",
 		CaptureArgs: true,
 	})
-	ctx := context.WithValue(context.Background(), planningContextKey{}, true)
+	ctx := context.WithValue(t.Context(), planningContextKey{}, true)
 	_, err := NewCopilotAgent(mock.CmdPath).Review(ctx, t.TempDir(), "HEAD", "plan", nil)
 
 	require.ErrorContains(t, err, "--available-tools")
@@ -98,7 +98,7 @@ func TestCopilotSupportsStreamOff(t *testing.T) {
 		mock := mockAgentCLI(t, MockCLIOpts{
 			HelpOutput: "Usage: copilot [flags]\n\n  --stream string  Control streaming output",
 		})
-		supported, err := copilotSupportsStreamOff(context.Background(), mock.CmdPath)
+		supported, err := copilotSupportsStreamOff(t.Context(), mock.CmdPath)
 		require.NoError(t, err)
 		assert.True(t, supported)
 	})
@@ -107,7 +107,7 @@ func TestCopilotSupportsStreamOff(t *testing.T) {
 		mock := mockAgentCLI(t, MockCLIOpts{
 			HelpOutput: "Usage: copilot [flags]\n\n  --model  Model to use",
 		})
-		supported, err := copilotSupportsStreamOff(context.Background(), mock.CmdPath)
+		supported, err := copilotSupportsStreamOff(t.Context(), mock.CmdPath)
 		require.NoError(t, err)
 		assert.False(t, supported)
 	})
@@ -129,7 +129,7 @@ func TestCopilotReviewParsesJSONOutput(t *testing.T) {
 	a := NewCopilotAgent(mock.CmdPath)
 
 	var output bytes.Buffer
-	res, err := a.Review(context.Background(), t.TempDir(), "HEAD", "prompt", &output)
+	res, err := a.Review(t.Context(), t.TempDir(), "HEAD", "prompt", &output)
 
 	require.NoError(t, err)
 	assert.Equal(t, "Full review output", res)
@@ -155,7 +155,7 @@ printf '%s\n%s' \
 
 	var output bytes.Buffer
 	sessionWriter := NewSessionCaptureWriter(&output, nil)
-	res, err := a.Review(context.Background(), t.TempDir(), "HEAD", "prompt", sessionWriter)
+	res, err := a.Review(t.Context(), t.TempDir(), "HEAD", "prompt", sessionWriter)
 	sessionWriter.Flush()
 
 	require.NoError(t, err)
@@ -178,7 +178,7 @@ func TestCopilotReviewJSONOutputUsesLatestMessageContentByID(t *testing.T) {
 	})
 	a := NewCopilotAgent(mock.CmdPath)
 
-	res, err := a.Review(context.Background(), t.TempDir(), "HEAD", "prompt", nil)
+	res, err := a.Review(t.Context(), t.TempDir(), "HEAD", "prompt", nil)
 
 	require.NoError(t, err)
 	assert.Equal(t, "Adds a README update.\nNo issues found.", res)
@@ -197,7 +197,7 @@ func TestCopilotReviewJSONOutputDropsToolRequestPreamble(t *testing.T) {
 	})
 	a := NewCopilotAgent(mock.CmdPath)
 
-	res, err := a.Review(context.Background(), t.TempDir(), "HEAD", "prompt", nil)
+	res, err := a.Review(t.Context(), t.TempDir(), "HEAD", "prompt", nil)
 
 	require.NoError(t, err)
 	assert.Equal(t, "No issues found.\nSummary: Updates docs.", res)
@@ -309,7 +309,7 @@ func TestCopilotReview(t *testing.T) {
 			a := NewCopilotAgent(mock.CmdPath)
 
 			res, err := a.Review(
-				context.Background(), t.TempDir(), "HEAD", tt.prompt, nil,
+				t.Context(), t.TempDir(), "HEAD", tt.prompt, nil,
 			)
 
 			if tt.wantErr {
@@ -341,7 +341,7 @@ func TestCopilotReviewPermissionFlags(t *testing.T) {
 			StdoutLines:  []string{"review output"},
 		})
 		a := NewCopilotAgent(mock.CmdPath)
-		res, err := a.Review(context.Background(), t.TempDir(), "HEAD", "prompt", nil)
+		res, err := a.Review(t.Context(), t.TempDir(), "HEAD", "prompt", nil)
 		require.NoError(t, err)
 		assert.Equal("review output\n", res)
 
@@ -362,7 +362,7 @@ func TestCopilotReviewPermissionFlags(t *testing.T) {
 			StdoutLines:  []string{"fix output"},
 		})
 		a := NewCopilotAgent(mock.CmdPath).WithAgentic(true)
-		res, err := a.Review(context.Background(), t.TempDir(), "HEAD", "prompt", nil)
+		res, err := a.Review(t.Context(), t.TempDir(), "HEAD", "prompt", nil)
 		require.NoError(t, err)
 		assert.Equal("fix output\n", res)
 
@@ -380,7 +380,7 @@ func TestCopilotReviewPermissionFlags(t *testing.T) {
 			StdoutLines: []string{"output"},
 		})
 		a := NewCopilotAgent(mock.CmdPath) // not WithAgentic(true)
-		_, err := a.Review(context.Background(), t.TempDir(), "HEAD", "prompt", nil)
+		_, err := a.Review(t.Context(), t.TempDir(), "HEAD", "prompt", nil)
 		require.NoError(t, err)
 
 		args := readFileContent(t, mock.ArgsFile)
@@ -396,7 +396,7 @@ func TestCopilotReviewPermissionFlags(t *testing.T) {
 			StdoutLines:  []string{"output"},
 		})
 		a := NewCopilotAgent(mock.CmdPath)
-		_, err := a.Review(context.Background(), t.TempDir(), "HEAD", "prompt", nil)
+		_, err := a.Review(t.Context(), t.TempDir(), "HEAD", "prompt", nil)
 		require.NoError(t, err)
 
 		args := readFileContent(t, mock.ArgsFile)

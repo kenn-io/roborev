@@ -3,6 +3,8 @@ package daemon
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 
 	"go.kenn.io/roborev/internal/testenv"
@@ -28,5 +30,27 @@ func TestMain(m *testing.M) {
 		fmt.Println(`{"issues":[{"short_id":"abc4","title":"Leaked task","body":"Secret kata body."}]}`)
 		os.Exit(0)
 	}
-	os.Exit(testenv.RunIsolatedMain(m))
+	removeStub := installStubReviewAgent()
+	code := testenv.RunIsolatedMain(m)
+	removeStub()
+	os.Exit(code)
+}
+
+// installStubReviewAgent puts a codex stub on PATH so servers built with the
+// default config report a runnable review agent, as on a machine with codex
+// installed. Tests about agent availability set PATH themselves.
+func installStubReviewAgent() func() {
+	dir, err := os.MkdirTemp("", "roborev-daemon-test-agents-")
+	if err != nil {
+		panic(err)
+	}
+	codex, script := filepath.Join(dir, "codex"), "#!/bin/sh\nexit 1\n"
+	if runtime.GOOS == "windows" {
+		codex, script = codex+".cmd", "@echo off\r\nexit /b 1\r\n"
+	}
+	if err := os.WriteFile(codex, []byte(script), 0o755); err != nil {
+		panic(err)
+	}
+	os.Setenv("PATH", os.Getenv("PATH")+string(os.PathListSeparator)+dir)
+	return func() { _ = os.RemoveAll(dir) }
 }

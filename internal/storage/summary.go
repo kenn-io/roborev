@@ -29,6 +29,7 @@ type Summary struct {
 	Failures FailureStats   `json:"failures"`
 	Repos    []RepoSummary  `json:"repos,omitempty"`
 	Cost     CostAggregate  `json:"cost"`
+	CI       *CISummary     `json:"ci,omitempty"`
 }
 
 // OverviewStats contains job counts by status.
@@ -193,6 +194,11 @@ func (db *DB) GetSummary(opts SummaryOptions) (*Summary, error) {
 		Branch:    opts.Branch,
 		Since:     opts.Since,
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	s.CI, err = summaryCI(tx, opts)
 	if err != nil {
 		return nil, err
 	}

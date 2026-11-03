@@ -216,29 +216,24 @@ type outputWriter struct {
 }
 
 func (w *outputWriter) Write(p []byte) (n int, err error) {
-	w.lineBuf.Write(p)
-
-	// Process complete lines
-	for {
-		data := w.lineBuf.String()
-		idx := strings.Index(data, "\n")
-
+	n = len(p)
+	for len(p) > 0 {
+		idx := bytes.IndexByte(p, '\n')
 		if idx < 0 {
+			w.lineBuf.Write(p)
 			break
 		}
-		// Extract line and update buffer
-		line := data[:idx]
+		w.lineBuf.Write(p[:idx])
+		line := w.lineBuf.String()
 		w.lineBuf.Reset()
-		if idx+1 < len(data) {
-			w.lineBuf.WriteString(data[idx+1:])
-		}
+		p = p[idx+1:]
 		line = strings.TrimSuffix(line, "\r")
 		if normalized := w.normalize(line); normalized != nil {
 			normalized.Timestamp = time.Now()
 			w.buffer.Append(w.jobID, *normalized)
 		}
 	}
-	return len(p), nil
+	return n, nil
 }
 
 // Flush processes any remaining buffered content.

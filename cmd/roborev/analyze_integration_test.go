@@ -99,7 +99,7 @@ func TestWaitForAnalysisJob(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ts, _ := newMockServer(t, tt.setupOpts)
 
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 			defer cancel()
 
 			review, err := waitForAnalysisJob(ctx, mustParseEndpoint(t, ts.URL), testJobID)

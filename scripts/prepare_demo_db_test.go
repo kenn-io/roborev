@@ -54,7 +54,7 @@ func TestPrepareDemoDBRedactsWindowsUserPaths(t *testing.T) {
 		insertScreenshotReview(t, db, repoID, repoID, "PUBLIC "+name, 1)
 	}
 	insertScreenshotReview(t, db, 1, 200, `Windows paths C:\Users\Alice\roborev\secret.go and C:/Users/Bob/roborev/secret.go`, 0)
-	_, err := db.Exec(`UPDATE review_jobs SET review_type = ? WHERE id = 200`, `C:\Users\Alice\roborev`)
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET review_type = ? WHERE id = 200`, `C:\Users\Alice\roborev`)
 	require.NoError(t, err)
 
 	demoDB := runPrepareDemoDB(t, tempDir, sourceDB)
@@ -80,7 +80,7 @@ func TestPrepareDemoDBPreservesSanitizedRealReviewContent(t *testing.T) {
 	}
 
 	insertScreenshotReview(t, db, 1, 300, "committed review", 0)
-	_, err := db.Exec(
+	_, err := db.ExecContext(t.Context(),
 		`UPDATE review_jobs
 		 SET prompt = 'REAL_PUBLIC_PROMPT from C:\Users\Alice\roborev',
 		     diff_content = 'REAL_PUBLIC_DIFF',
@@ -90,7 +90,7 @@ func TestPrepareDemoDBPreservesSanitizedRealReviewContent(t *testing.T) {
 		 WHERE id = 300`,
 	)
 	require.NoError(t, err)
-	_, err = db.Exec(
+	_, err = db.ExecContext(t.Context(),
 		`UPDATE reviews
 		 SET prompt = 'REAL_PUBLIC_REVIEW_PROMPT from /Users/Alice/roborev',
 		     structured_output = ?
@@ -98,20 +98,20 @@ func TestPrepareDemoDBPreservesSanitizedRealReviewContent(t *testing.T) {
 		screenshotReviewDocument(t, "REAL_PUBLIC_REVIEW_FINDING from /Users/Alice/roborev with api_key=abc123 and github_pat_1234567890ABCDEFGHIJKLMNOP"),
 	)
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE commits SET subject = 'REAL_PUBLIC_COMMIT_SUBJECT' WHERE id = 300`)
+	_, err = db.ExecContext(t.Context(), `UPDATE commits SET subject = 'REAL_PUBLIC_COMMIT_SUBJECT' WHERE id = 300`)
 	require.NoError(t, err)
-	_, err = db.Exec(
+	_, err = db.ExecContext(t.Context(),
 		`INSERT INTO responses (commit_id, job_id, responder, response)
 		 VALUES (300, 300, 'maintainer', 'REAL_PUBLIC_RESPONSE')`,
 	)
 	require.NoError(t, err)
 
 	insertScreenshotReview(t, db, 1, 301, "TASK_LOCAL_SECRET", 0)
-	_, err = db.Exec(`UPDATE review_jobs SET job_type = 'task', commit_id = NULL WHERE id = 301`)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET job_type = 'task', commit_id = NULL WHERE id = 301`)
 	require.NoError(t, err)
 
 	insertScreenshotReview(t, db, 1, 302, "DIRTY_LOCAL_SECRET", 0)
-	_, err = db.Exec(`UPDATE review_jobs SET dirty_files = '["private.txt"]' WHERE id = 302`)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET dirty_files = '["private.txt"]' WHERE id = 302`)
 	require.NoError(t, err)
 
 	demoDB := runPrepareDemoDB(t, tempDir, sourceDB)
@@ -192,7 +192,7 @@ func TestPrepareDemoDBPreservesRealCommitAndRefMetadata(t *testing.T) {
 	}
 
 	insertScreenshotReview(t, db, 1, 500, "REAL_PUBLIC_METADATA", 0)
-	_, err := db.Exec(
+	_, err := db.ExecContext(t.Context(),
 		`UPDATE commits
 		 SET sha = 'abc1234',
 		     author = 'REAL_PUBLIC_METADATA_AUTHOR',
@@ -200,7 +200,7 @@ func TestPrepareDemoDBPreservesRealCommitAndRefMetadata(t *testing.T) {
 		 WHERE id = 500`,
 	)
 	require.NoError(t, err)
-	_, err = db.Exec(
+	_, err = db.ExecContext(t.Context(),
 		`UPDATE review_jobs
 		 SET git_ref = 'abc1234',
 		     branch = 'feature/real-public-branch',
@@ -227,7 +227,7 @@ func TestPrepareDemoDBSkipsReviewsWithoutStructuredDocument(t *testing.T) {
 	insertScreenshotRepo(t, db, 1, "/public/roborev", "roborev", "git@github.com:kenn-io/roborev.git")
 	insertScreenshotReview(t, db, 1, 1, "STRUCTURED_REVIEW", 0)
 	insertScreenshotReview(t, db, 1, 2, "LEGACY_MARKDOWN_REVIEW", 0)
-	_, err := db.Exec(`UPDATE reviews SET output = 'LEGACY_MARKDOWN_REVIEW', structured_output = NULL WHERE job_id = 2`)
+	_, err := db.ExecContext(t.Context(), `UPDATE reviews SET output = 'LEGACY_MARKDOWN_REVIEW', structured_output = NULL WHERE job_id = 2`)
 	require.NoError(t, err)
 
 	demoDB := runPrepareDemoDB(t, tempDir, sourceDB)
@@ -245,7 +245,7 @@ func TestPrepareDemoDBKeepsStructuredReviewsValidJSON(t *testing.T) {
 
 	insertScreenshotRepo(t, db, 1, "/public/roborev", "roborev", "git@github.com:kenn-io/roborev.git")
 	insertScreenshotReview(t, db, 1, 1, "QUOTED_PATH", 0)
-	_, err := db.Exec(
+	_, err := db.ExecContext(t.Context(),
 		`UPDATE reviews SET structured_output = ? WHERE job_id = 1`,
 		screenshotReviewDocument(t, `Run "/Users/Alice/roborev/main.go" first`),
 	)
@@ -257,7 +257,7 @@ func TestPrepareDemoDBKeepsStructuredReviewsValidJSON(t *testing.T) {
 	defer demo.Close()
 
 	var raw string
-	require.NoError(t, demo.QueryRow(`SELECT structured_output FROM reviews`).Scan(&raw))
+	require.NoError(t, demo.QueryRowContext(t.Context(), `SELECT structured_output FROM reviews`).Scan(&raw))
 	var document map[string]string
 	require.NoError(t, json.Unmarshal([]byte(raw), &document))
 	assert.Equal(t, `Run "/home/maintainer" first`, document["summary"])
@@ -274,7 +274,7 @@ func TestPrepareDemoDBMergesCheckoutsOfOneRepository(t *testing.T) {
 	insertScreenshotReview(t, db, 1, 1, "MAIN_CHECKOUT_REVIEW", 0)
 	insertScreenshotReview(t, db, 2, 2, "WORKTREE_REVIEW", 1)
 	// Both checkouts reviewed the same commit.
-	_, err := db.Exec(`UPDATE commits SET sha = 'abc1234' WHERE id IN (1, 2)`)
+	_, err := db.ExecContext(t.Context(), `UPDATE commits SET sha = 'abc1234' WHERE id IN (1, 2)`)
 	require.NoError(t, err)
 
 	demoDB := runPrepareDemoDB(t, tempDir, sourceDB)
@@ -283,9 +283,9 @@ func TestPrepareDemoDBMergesCheckoutsOfOneRepository(t *testing.T) {
 	defer demo.Close()
 
 	var repos, commits, jobs, jobRepos int
-	require.NoError(t, demo.QueryRow(`SELECT COUNT(*) FROM repos`).Scan(&repos))
-	require.NoError(t, demo.QueryRow(`SELECT COUNT(*) FROM commits`).Scan(&commits))
-	require.NoError(t, demo.QueryRow(
+	require.NoError(t, demo.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM repos`).Scan(&repos))
+	require.NoError(t, demo.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM commits`).Scan(&commits))
+	require.NoError(t, demo.QueryRowContext(t.Context(),
 		`SELECT COUNT(*), COUNT(DISTINCT j.repo_id) FROM review_jobs j JOIN commits c ON c.id = j.commit_id`,
 	).Scan(&jobs, &jobRepos))
 	assert := assert.New(t)
@@ -309,7 +309,7 @@ func createScreenshotSourceDB(t *testing.T, path string) *sql.DB {
 	db, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 CREATE TABLE repos (
   id INTEGER PRIMARY KEY,
   root_path TEXT UNIQUE NOT NULL,
@@ -391,7 +391,7 @@ CREATE TABLE responses (
 func insertScreenshotRepo(t *testing.T, db *sql.DB, id int64, rootPath, name, identity string) {
 	t.Helper()
 
-	_, err := db.Exec(
+	_, err := db.ExecContext(t.Context(),
 		`INSERT INTO repos (id, root_path, name, identity) VALUES (?, ?, ?, ?)`,
 		id,
 		rootPath,
@@ -412,7 +412,7 @@ func insertScreenshotReviewWithStatus(t *testing.T, db *sql.DB, repoID, jobID in
 
 	commitID := jobID
 	sha := fmt.Sprintf("%07x", jobID)
-	_, err := db.Exec(
+	_, err := db.ExecContext(t.Context(),
 		`INSERT INTO commits (id, repo_id, sha, author, subject, timestamp)
 		 VALUES (?, ?, ?, 'Fixture Maintainer', ?, '2026-06-20 12:00:00')`,
 		commitID,
@@ -422,7 +422,7 @@ func insertScreenshotReviewWithStatus(t *testing.T, db *sql.DB, repoID, jobID in
 	)
 	require.NoError(t, err)
 
-	_, err = db.Exec(
+	_, err = db.ExecContext(t.Context(),
 		`INSERT INTO review_jobs
 		 (id, repo_id, commit_id, git_ref, branch, status, enqueued_at, started_at, finished_at, worker_id, prompt, diff_content, command_line, min_severity, uuid)
 		 VALUES (?, ?, ?, ?, 'main', ?, '2026-06-20 12:00:00', '2026-06-20 12:00:01', '2026-06-20 12:00:02', 'worker-1', ?, ?, ?, 'medium', ?)`,
@@ -438,7 +438,7 @@ func insertScreenshotReviewWithStatus(t *testing.T, db *sql.DB, repoID, jobID in
 	)
 	require.NoError(t, err)
 
-	_, err = db.Exec(
+	_, err = db.ExecContext(t.Context(),
 		`INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, structured_output)
 		 VALUES (?, 'codex', ?, '', ?, ?)`,
 		jobID,
@@ -454,7 +454,7 @@ func insertScreenshotJobWithoutReview(t *testing.T, db *sql.DB, repoID, jobID in
 
 	commitID := jobID
 	sha := fmt.Sprintf("%07x", jobID)
-	_, err := db.Exec(
+	_, err := db.ExecContext(t.Context(),
 		`INSERT INTO commits (id, repo_id, sha, author, subject, timestamp)
 		 VALUES (?, ?, ?, 'Fixture Maintainer', ?, '2026-06-20 12:00:00')`,
 		commitID,
@@ -464,7 +464,7 @@ func insertScreenshotJobWithoutReview(t *testing.T, db *sql.DB, repoID, jobID in
 	)
 	require.NoError(t, err)
 
-	_, err = db.Exec(
+	_, err = db.ExecContext(t.Context(),
 		`INSERT INTO review_jobs
 		 (id, repo_id, commit_id, git_ref, branch, status, enqueued_at, started_at, finished_at, worker_id, prompt, diff_content, command_line, uuid)
 		 VALUES (?, ?, ?, ?, 'main', ?, '2026-06-20 12:00:00', '2026-06-20 12:00:01', '2026-06-20 12:00:02', 'worker-1', ?, ?, ?, ?)`,
@@ -503,7 +503,7 @@ func runPrepareDemoDBWithTerms(t *testing.T, tempDir, sourceDB, termsFile string
 	if termsFile != "" {
 		environment += " KENN_PRIVATE_TERMS_FILE=" + shellQuote(bashPath(t, termsFile))
 	}
-	cmd := exec.Command(
+	cmd := exec.CommandContext(t.Context(),
 		"bash",
 		"-c",
 		environment+"; exec bash "+shellQuote(bashPath(t, scriptPath)),
@@ -534,7 +534,7 @@ func readScreenshotDemoText(t *testing.T, dbPath string) string {
 	require.NoError(t, err)
 	defer db.Close()
 
-	rows, err := db.Query(`
+	rows, err := db.QueryContext(t.Context(), `
 SELECT root_path || ' ' || name || ' ' || COALESCE(identity, '') FROM repos
 UNION ALL SELECT sha || ' ' || subject || ' ' || author FROM commits
 UNION ALL SELECT git_ref || ' ' || COALESCE(branch, '') || ' ' || COALESCE(command_line, '') || ' ' || COALESCE(prompt, '') || ' ' || COALESCE(diff_content, '') FROM review_jobs

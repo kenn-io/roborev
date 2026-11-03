@@ -96,7 +96,7 @@
           <pre><code><span class="ps1">$</span> <span class="cmd">roborev init</span>
 <span class="out">Ready! Every commit will now be automatically reviewed.</span>
 <span class="ps1">$</span> <span class="cmd">git commit -m "Add retry to payment webhook"</span>
-<span class="ps1">$</span> <span class="cmd">roborev show HEAD</span>                   <span class="out"># later, whenever you want it</span>
+<span class="ps1">$</span> <span class="cmd">roborev job show HEAD</span>                   <span class="out"># later, whenever you want it</span>
 <span class="out">Review for 8f2c1a0 (job 214, by codex)</span>
 <span class="out">------------------------------------------------------------</span>
 <span class="out">## Review Findings</span>
@@ -140,12 +140,12 @@
           <article class="proof">
             <p class="proof-tag">Layer 1 · post-commit</p>
             <h3>Every commit, any agent.</h3>
-            <p><code>roborev init</code> installs the hook, starts the daemon, and registers the repo. Each commit gets a verdict and, when it fails, findings with severities and file locations. Set <code>post_commit_batch_size</code> to review a run of small commits as one range.</p>
+            <p><code>roborev init</code> installs the hook, starts the daemon, and registers the repo. Each commit gets a verdict and, when it fails, findings with severities and file locations. Set <code>post_commit_batch_size</code> or <code>post_commit_quiet_period</code> to review a run of small commits as one range.</p>
           </article>
           <article class="proof">
             <p class="proof-tag">Layer 2 · agent hook</p>
             <h3>The fix comes back to the session.</h3>
-            <p><code>roborev agent-hook install</code> wires Claude Code, Codex, Copilot CLI, Cursor, Factory Droid, Gemini CLI, Hermes, and Qwen. After a configurable number of turns, commits, or failed reviews, the agent is told which reviews to fix, by ID, and told to verify and close them.</p>
+            <p><code>roborev agent hook install</code> wires Claude Code, Codex, Copilot CLI, Cursor, Factory Droid, Gemini CLI, Hermes, and Qwen. After a configurable number of turns, commits, or failed reviews, the agent is told which reviews to fix, by ID, and told to verify and close them.</p>
           </article>
           <article class="proof">
             <p class="proof-tag">Skills</p>
@@ -258,7 +258,7 @@
           <article class="proof">
             <p class="proof-tag">Verification</p>
             <h3>False positives get dropped before anyone reads them.</h3>
-            <p><code>roborev compact</code> re-checks open findings against the current code, drops the ones that no longer hold, and consolidates the rest into a single review before anyone spends time on them.</p>
+            <p><code>roborev job compact</code> re-checks open findings against the current code, drops the ones that no longer hold, and consolidates the rest into a single review before anyone spends time on them.</p>
           </article>
         </div>
       </section>
@@ -269,7 +269,7 @@
             <p class="section-index">06 / Pull requests</p>
             <h2 id="ci-title">The same panel on every pull request.</h2>
           </div>
-          <p>The daemon polls GitHub and GitLab for open pull and merge requests, runs one panel per PR head against the frozen merge-base range, and posts a single synthesized comment with the member reviewers, runtimes, and costs in the footer. Human discussion from trusted collaborators goes into the prompt; a fork's branch name never gets to pick which rules apply.</p>
+          <p>The daemon polls GitHub for open pull requests, runs one panel per PR head against the frozen merge-base range, and posts a single synthesized comment with the member reviewers, runtimes, and costs in the footer. GitLab merge requests get a multi-agent review from a GitLab CI job instead. Human discussion from trusted collaborators goes into the prompt; a fork's branch name never gets to pick which rules apply.</p>
         </div>
         <div class="proof-grid">
           <article class="proof">
@@ -279,8 +279,8 @@
           </article>
           <article class="proof">
             <p class="proof-tag">GitLab</p>
-            <h3>Merge request notes, same daemon.</h3>
-            <p>Point the poller at GitLab projects and the synthesized review lands as an MR note, with quick-action escaping so an agent's output cannot drive the MR.</p>
+            <h3>Merge request notes from GitLab CI.</h3>
+            <p>Run <code>roborev ci review</code> in a GitLab CI job and the synthesized review lands as an MR note, with quick-action escaping so an agent's output cannot drive the MR. The daemon poller does not watch GitLab yet; see the <a href="/docs/integrations/gitlab/">GitLab integration</a>.</p>
           </article>
           <article class="proof">
             <p class="proof-tag">Control</p>
@@ -307,7 +307,7 @@
           <article class="proof">
             <p class="proof-tag">Analytics</p>
             <h3>Cost, latency, reliability, outcomes.</h3>
-            <p>Filter by project, source, agent, model, or time range, with the filters encoded in the URL so a view can be shared. <code>roborev cost</code>, <code>summary</code>, and <code>insights</code> give the same numbers on the command line.</p>
+            <p>Filter by project, source, agent, model, or time range, with the filters encoded in the URL so a view can be shared. <code>roborev report cost</code>, <code>roborev report summary</code>, and <code>roborev report insights</code> give the same numbers on the command line.</p>
           </article>
           <article class="proof">
             <p class="proof-tag">Exports</p>
@@ -388,14 +388,14 @@
           <div>
             <p>The guide walks the loop from <code>roborev init</code> to CI panels and team-wide history. The docs carry every command, configuration key, and integration. <code>roborev quickstart</code> prints the setup guide for your coding agent to finish itself.</p>
             <div class="install-matrix">
-              <div class="install-row" data-install-command data-command="curl -fsSL https://roborev.io/install.sh | bash">
-                <span class="install-label">macOS / Linux</span>
-                <code>curl -fsSL https://roborev.io/install.sh | bash</code>
+              <div class="install-row" data-install-command data-command="brew install roborev">
+                <span class="install-label">macOS</span>
+                <code>brew install roborev</code>
                 <button class="button install-copy" type="button" data-install-copy>Copy</button>
               </div>
-              <div class="install-row" data-install-command data-command="brew install kenn-io/tap/roborev">
-                <span class="install-label">Homebrew</span>
-                <code>brew install kenn-io/tap/roborev</code>
+              <div class="install-row" data-install-command data-command="curl -fsSL https://roborev.io/install.sh | bash">
+                <span class="install-label">Linux</span>
+                <code>curl -fsSL https://roborev.io/install.sh | bash</code>
                 <button class="button install-copy" type="button" data-install-copy>Copy</button>
               </div>
               <div class="install-row" data-install-command data-command="powershell -ExecutionPolicy ByPass -c &quot;irm https://roborev.io/install.ps1 | iex&quot;">

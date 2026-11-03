@@ -542,6 +542,41 @@ func TestBuildRangeWithReviewAlias(t *testing.T) {
 	assertContains(t, prompt, "commit range", "Expected range system prompt for reviewType=review alias, got wrong prompt type")
 }
 
+func TestBuildRangePromptIncludesCommitMessageBodies(t *testing.T) {
+	r := newTestRepo(t)
+	base := r.fastCommitFile("a.txt", "a\n", "initial")
+	r.fastCommitFile("a.txt", "b\n", "Add retry limit\n\nStop retrying after three attempts.\nLog <each> failure.")
+	head := r.fastCommitFile("a.txt", "c\n", "Tidy wording")
+
+	prompt, err := NewBuilder(nil).ForRepo(r.dir, 0).Build(base+".."+head, 0, "test", "review", "")
+	require.NoError(t, err)
+
+	assert := assert.New(t)
+	assert.Contains(prompt, " Add retry limit\n\n  Stop retrying after three attempts.\n  Log &lt;each&gt; failure.\n")
+	assert.Contains(prompt, " Tidy wording\n</commit-messages>")
+}
+
+func TestBuildRangePromptIncludesPullRequest(t *testing.T) {
+	r := newTestRepo(t)
+	base := r.fastCommitFile("a.txt", "a\n", "initial")
+	head := r.fastCommitFile("a.txt", "b\n", "Add retry limit")
+	builder := NewBuilder(nil).ForRepo(r.dir, 0)
+
+	prompt, err := builder.WithPullRequest(PullRequest{
+		Title:       "Cap retries <for> uploads",
+		Description: "Stop after three attempts.\r\nLog each failure & move on.",
+	}).Build(base+".."+head, 0, "test", "review", "")
+	require.NoError(t, err)
+	assert.Contains(t, prompt, "<pull-request context-only=\"true\">\n"+
+		"**Title:** Cap retries &lt;for&gt; uploads\n"+
+		"**Description:**\nStop after three attempts.\nLog each failure &amp; move on.\n"+
+		"</pull-request>")
+
+	plain, err := builder.Build(base+".."+head, 0, "test", "review", "")
+	require.NoError(t, err)
+	assert.NotContains(t, plain, "<pull-request context-only")
+}
+
 func TestSetupLargeCommitAuthorRepoIgnoresIdentityEnv(t *testing.T) {
 	t.Setenv("GIT_AUTHOR_NAME", "env author")
 	t.Setenv("GIT_AUTHOR_EMAIL", "env-author@example.com")
@@ -731,9 +766,9 @@ func TestWriteDiffSnapshotRejectsTrackedSnapshotDir(t *testing.T) {
 	targetSHA := commits[len(commits)-1]
 	require.NoError(t, os.MkdirAll(filepath.Join(repoPath, ".roborev"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(repoPath, ".roborev", "tracked.txt"), []byte("tracked\n"), 0o644))
-	cmd := exec.Command("git", "-C", repoPath, "add", "-f", ".roborev/tracked.txt")
+	cmd := exec.CommandContext(t.Context(), "git", "-C", repoPath, "add", "-f", ".roborev/tracked.txt")
 	require.NoError(t, cmd.Run())
-	cmd = exec.Command("git", "-C", repoPath, "commit", "-m", "track snapshot dir")
+	cmd = exec.CommandContext(t.Context(), "git", "-C", repoPath, "commit", "-m", "track snapshot dir")
 	require.NoError(t, cmd.Run())
 	builder := NewBuilder(nil).ForRepo(repoPath, 0)
 
@@ -823,9 +858,9 @@ func TestCleanupStaleSnapshotsRejectsTrackedSnapshotDir(t *testing.T) {
 	require.NoError(t, os.MkdirAll(snapshotDir, 0o755))
 	require.NoError(t, writeSnapshotMarker(snapshotDir))
 	require.NoError(t, os.WriteFile(filepath.Join(snapshotDir, "tracked.txt"), []byte("tracked\n"), 0o644))
-	cmd := exec.Command("git", "-C", repoPath, "add", "-f", ".roborev/roborev-snapshot-tracked/tracked.txt")
+	cmd := exec.CommandContext(t.Context(), "git", "-C", repoPath, "add", "-f", ".roborev/roborev-snapshot-tracked/tracked.txt")
 	require.NoError(t, cmd.Run())
-	cmd = exec.Command("git", "-C", repoPath, "commit", "-m", "track snapshot-like dir")
+	cmd = exec.CommandContext(t.Context(), "git", "-C", repoPath, "commit", "-m", "track snapshot-like dir")
 	require.NoError(t, cmd.Run())
 	oldTime := time.Now().Add(-2 * time.Hour)
 	require.NoError(t, os.Chtimes(snapshotDir, oldTime, oldTime))
@@ -1484,7 +1519,7 @@ func TestBuildCanceledContextFails(t *testing.T) {
 	sha := repo.CommitFile("f.txt", "x\n", "Second commit")
 	db, _ := setupDBWithCommits(t, repo.Path(), []string{firstSHA, sha})
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	b := NewBuilder(db).WithContext(ctx).ForRepo(repo.Path(), 0)
 

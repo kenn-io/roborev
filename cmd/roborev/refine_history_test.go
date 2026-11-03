@@ -123,7 +123,7 @@ func runRefineHistoryTest(t *testing.T, repo *TestGitRepo, base string, rounds i
 	var runErr error
 	captureOutput(t, func() error {
 		runErr = runRefine(
-			RunContext{Context: t.Context(), WorkingDir: repo.Dir, PostCommitDelay: time.Millisecond},
+			t.Context(), RunContext{WorkingDir: repo.Dir, PostCommitDelay: time.Millisecond},
 			refineOptions{since: base, agentName: review.Name(), maxIterations: rounds, quiet: true, unsafeFlagChanged: true},
 		)
 		return nil

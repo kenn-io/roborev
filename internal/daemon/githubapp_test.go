@@ -299,11 +299,11 @@ func TestTokenCaching(t *testing.T) {
 	tp, _ := setupMockProvider(t, mock.ServeHTTP)
 
 	// First call should hit the server
-	token1, err := tp.TokenForInstallation(testInstallationID)
+	token1, err := tp.TokenForInstallation(t.Context(), testInstallationID)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
-		}, "first TokenForInstallation(): %v", err)
+		}, "first TokenForInstallation(t.Context()): %v", err)
 	}
 	if token1 != "ghs_test_token_123" {
 		assert.Condition(t, func() bool {
@@ -317,11 +317,11 @@ func TestTokenCaching(t *testing.T) {
 	}
 
 	// Second call should use cache
-	token2, err := tp.TokenForInstallation(testInstallationID)
+	token2, err := tp.TokenForInstallation(t.Context(), testInstallationID)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
-		}, "second TokenForInstallation(): %v", err)
+		}, "second TokenForInstallation(t.Context()): %v", err)
 	}
 	if token2 != token1 {
 		assert.Condition(t, func() bool {
@@ -358,11 +358,11 @@ func TestTokenRefreshOnExpiry(t *testing.T) {
 	tp, _ := setupMockProvider(t, mock.ServeHTTP)
 
 	// First call caches expiring token
-	token1, err := tp.TokenForInstallation(testInstallationID)
+	token1, err := tp.TokenForInstallation(t.Context(), testInstallationID)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
-		}, "first TokenForInstallation(): %v", err)
+		}, "first TokenForInstallation(t.Context()): %v", err)
 	}
 	if token1 != "ghs_old" {
 		assert.Condition(t, func() bool {
@@ -371,11 +371,11 @@ func TestTokenRefreshOnExpiry(t *testing.T) {
 	}
 
 	// Second call should refresh since token is within 5 min buffer
-	token2, err := tp.TokenForInstallation(testInstallationID)
+	token2, err := tp.TokenForInstallation(t.Context(), testInstallationID)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
-		}, "second TokenForInstallation(): %v", err)
+		}, "second TokenForInstallation(t.Context()): %v", err)
 	}
 	if token2 != "ghs_refreshed" {
 		assert.Condition(t, func() bool {
@@ -395,7 +395,7 @@ func TestTokenExchangeError(t *testing.T) {
 		w.Write([]byte(`{"message":"Bad credentials"}`))
 	})
 
-	_, err := tp.TokenForInstallation(testInstallationID)
+	_, err := tp.TokenForInstallation(t.Context(), testInstallationID)
 	if err == nil {
 		require.Condition(t, func() bool {
 			return false
@@ -431,11 +431,11 @@ func TestTokenCaching_MultipleInstallations(t *testing.T) {
 	tp, _ := setupMockProvider(t, mock.ServeHTTP)
 
 	// Get token for installation 111
-	token1, err := tp.TokenForInstallation(111)
+	token1, err := tp.TokenForInstallation(t.Context(), 111)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
-		}, "TokenForInstallation(111): %v", err)
+		}, "TokenForInstallation(t.Context(), 111): %v", err)
 	}
 	if token1 != "ghs_token_for_111" {
 		assert.Condition(t, func() bool {
@@ -449,11 +449,11 @@ func TestTokenCaching_MultipleInstallations(t *testing.T) {
 	}
 
 	// Get token for installation 222
-	token2, err := tp.TokenForInstallation(222)
+	token2, err := tp.TokenForInstallation(t.Context(), 222)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
-		}, "TokenForInstallation(222): %v", err)
+		}, "TokenForInstallation(t.Context(), 222): %v", err)
 	}
 	if token2 != "ghs_token_for_222" {
 		assert.Condition(t, func() bool {
@@ -467,11 +467,11 @@ func TestTokenCaching_MultipleInstallations(t *testing.T) {
 	}
 
 	// Re-request installation 111 — should be cached
-	token1b, err := tp.TokenForInstallation(111)
+	token1b, err := tp.TokenForInstallation(t.Context(), 111)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
-		}, "TokenForInstallation(111) cached: %v", err)
+		}, "TokenForInstallation(t.Context(), 111) cached: %v", err)
 	}
 	if token1b != "ghs_token_for_111" {
 		assert.Condition(t, func() bool {
@@ -485,11 +485,11 @@ func TestTokenCaching_MultipleInstallations(t *testing.T) {
 	}
 
 	// Re-request installation 222 — should be cached
-	token2b, err := tp.TokenForInstallation(222)
+	token2b, err := tp.TokenForInstallation(t.Context(), 222)
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
-		}, "TokenForInstallation(222) cached: %v", err)
+		}, "TokenForInstallation(t.Context(), 222) cached: %v", err)
 	}
 	if token2b != "ghs_token_for_222" {
 		assert.Condition(t, func() bool {

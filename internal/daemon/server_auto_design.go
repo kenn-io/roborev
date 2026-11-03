@@ -167,14 +167,14 @@ func (s *Server) maybeDispatchAutoDesign(ctx context.Context, parent *storage.Re
 	if diff == "" && parent.JobType == storage.JobTypeReview && parent.GitRef != "" && parent.GitRef != "dirty" {
 		inputsIncomplete := false
 		var err error
-		diff, err = git.GetDiff(parent.RepoPath, parent.GitRef)
+		diff, err = git.GetDiffCtx(ctx, parent.RepoPath, parent.GitRef)
 		if err != nil {
 			log.Printf("auto-design: git.GetDiff(%s) failed, deferring to classifier: %v", parent.GitRef, err)
 			inputsIncomplete = true
 			diff = ""
 		}
 		if !inputsIncomplete {
-			files, err = git.GetFilesChanged(parent.RepoPath, parent.GitRef)
+			files, err = git.GetFilesChangedCtx(ctx, parent.RepoPath, parent.GitRef)
 			if err != nil {
 				log.Printf("auto-design: git.GetFilesChanged(%s) failed, deferring to classifier: %v", parent.GitRef, err)
 				inputsIncomplete = true
@@ -190,7 +190,7 @@ func (s *Server) maybeDispatchAutoDesign(ctx context.Context, parent *storage.Re
 		RepoPath:     parent.RepoPath,
 		GitRef:       parent.GitRef,
 		Diff:         diff,
-		Message:      classifierCommitMessage(parent.RepoPath, parent.GitRef, parent.CommitSubject),
+		Message:      classifierCommitMessage(ctx, parent.RepoPath, parent.GitRef, parent.CommitSubject),
 		ChangedFiles: files,
 	}
 

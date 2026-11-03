@@ -34,7 +34,7 @@ provide a worker-free display daemon or copy another machine's SQLite history.
 Generate a fresh key without printing the secret:
 
 ```bash
-roborev signing-init --secret-file /run/secrets/review-reader.key
+roborev signing init --secret-file /run/secrets/review-reader.key
 ```
 
 The destination must be a new file in an existing private directory.

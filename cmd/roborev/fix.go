@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -105,10 +106,10 @@ Examples:
 			}
 
 			if list && (plan || planOnly) {
-				return fmt.Errorf("--list cannot be used with --plan or --plan-only")
+				return usageErr(cmd, fmt.Errorf("--list cannot be used with --plan or --plan-only"))
 			}
 			if planOnly && resume {
-				return fmt.Errorf("--resume cannot be used with --plan-only")
+				return usageErr(cmd, fmt.Errorf("--resume cannot be used with --plan-only"))
 			}
 			if allBranches && branch != "" {
 				return usageErr(cmd, fmt.Errorf("--all-branches and --branch are mutually exclusive"))
@@ -129,13 +130,13 @@ Examples:
 				return usageErr(cmd, fmt.Errorf("--list and --batch are mutually exclusive"))
 			}
 			if list && batchSize > 0 {
-				return fmt.Errorf("--list and --batch-size are mutually exclusive")
+				return usageErr(cmd, fmt.Errorf("--list and --batch-size are mutually exclusive"))
 			}
 			if batch && batchSize > 0 {
-				return fmt.Errorf("--batch and --batch-size are mutually exclusive")
+				return usageErr(cmd, fmt.Errorf("--batch and --batch-size are mutually exclusive"))
 			}
 			if cmd.Flags().Changed("batch-size") && batchSize < 1 {
-				return fmt.Errorf("--batch-size must be >= 1")
+				return validationErr(cmd, fmt.Errorf("--batch-size must be >= 1"))
 			}
 			if list {
 				roots, err := resolveCurrentRepoRoots(ctx)
@@ -175,9 +176,12 @@ Examples:
 			if batch || batchSize > 0 {
 				var jobIDs []int64
 				for _, arg := range args {
-					var id int64
-					if _, err := fmt.Sscanf(arg, "%d", &id); err != nil {
-						return fmt.Errorf("invalid job ID %q: must be a number", arg)
+					id, err := strconv.ParseInt(arg, 10, 64)
+					if err != nil {
+						return validationErr(cmd, fmt.Errorf("invalid job ID %q: must be a number", arg))
+					}
+					if id <= 0 {
+						return validationErr(cmd, fmt.Errorf("invalid job ID %q: must be a positive number", arg))
 					}
 					jobIDs = append(jobIDs, id)
 				}
@@ -207,9 +211,12 @@ Examples:
 			// Parse job IDs
 			var jobIDs []int64
 			for _, arg := range args {
-				var id int64
-				if _, err := fmt.Sscanf(arg, "%d", &id); err != nil {
-					return fmt.Errorf("invalid job ID %q: must be a number", arg)
+				id, err := strconv.ParseInt(arg, 10, 64)
+				if err != nil {
+					return validationErr(cmd, fmt.Errorf("invalid job ID %q: must be a number", arg))
+				}
+				if id <= 0 {
+					return validationErr(cmd, fmt.Errorf("invalid job ID %q: must be a positive number", arg))
 				}
 				jobIDs = append(jobIDs, id)
 			}
@@ -1540,7 +1547,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 		var cleanupPrompt func()
 		fixPrompt := buildBatchFixPromptWithMetadata(batch, minSev, metadata, cfg.FixGuidelines)
 		if opts.plan || opts.planOnly {
-			findings := batchPlanningContext(roots.worktreeRoot, batch)
+			findings := batchPlanningContext(ctx, roots.worktreeRoot, batch)
 			planningPrompt, planErr := prompt.BuildFixPlanPrompt(roots.worktreeRoot, cfg, findings, minSev, nil, "")
 			if planErr != nil {
 				return planErr
@@ -1668,7 +1675,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 
 const (
 	batchPromptHeader               = "# Batch Fix Request\n\nThe following reviews found issues that need to be fixed.\nAddress all findings across all reviews in a single pass.\n\n"
-	batchPromptHeaderWithGuidelines = "# Batch Fix Request\n\nThe following reviews found issues that need to be evaluated and addressed.\nEvaluate each finding against the autofix guidelines. Apply changes for findings that warrant a fix, and record any finding intentionally not applied with the reason it was skipped.\n\n"
+	batchPromptHeaderWithGuidelines = "# Batch Fix Request\n\nThe following reviews found issues that need to be evaluated and addressed.\n" + autofix.GuidelinesEvaluationInstruction + "\n\n"
 	batchPromptFooter               = "## Instructions\n\nPlease apply fixes for all the findings above.\nFocus on the highest priority items first.\nAfter making changes, verify the code compiles/passes linting,\nrun relevant tests, and create a git commit summarizing all changes.\n"
 	batchPromptFooterWithGuidelines = "## Instructions\n\nApply fixes for findings that warrant a change and record intentionally skipped findings.\nFor each job ID, state whether it was fixed or skipped and explain why.\nFocus on the highest priority items first.\nAfter making changes, verify the code compiles/passes linting,\nrun relevant tests, and create a git commit summarizing all changes.\n"
 )
@@ -1988,8 +1995,8 @@ func buildGenericFixPromptWithMetadataForRef(
 		sb.WriteString("Please apply the suggested changes from the analysis above. ")
 		sb.WriteString("Make the necessary edits to address each finding. ")
 	} else {
-		sb.WriteString("Evaluate each finding against the autofix guidelines. ")
-		sb.WriteString("Apply changes for findings that warrant a fix, and record any finding intentionally not applied with the reason it was skipped. ")
+		sb.WriteString(autofix.GuidelinesEvaluationInstruction)
+		sb.WriteString(" ")
 	}
 	sb.WriteString("Focus on the highest priority items first.\n\n")
 	sb.WriteString("After making changes:\n")

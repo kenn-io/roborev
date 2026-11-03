@@ -3,7 +3,6 @@
 package agent
 
 import (
-	"context"
 	"encoding/json"
 	"encoding/json/jsontext"
 	"fmt"
@@ -73,7 +72,7 @@ func TestKiloReviewSessionFlag(t *testing.T) {
 	})
 
 	a := NewKiloAgent(mock.CmdPath).WithSessionID("ses_123").(*KiloAgent)
-	_, err := a.Review(context.Background(), t.TempDir(), "HEAD", "prompt", nil)
+	_, err := a.Review(t.Context(), t.TempDir(), "HEAD", "prompt", nil)
 	require.NoError(t, err)
 
 	argsBytes, err := os.ReadFile(mock.ArgsFile)
@@ -121,7 +120,7 @@ func TestKiloReviewStderrOnExitZero(t *testing.T) {
 
 	a := NewKiloAgent(mock.CmdPath)
 	_, err := a.Review(
-		context.Background(), t.TempDir(), "HEAD", "prompt", nil,
+		t.Context(), t.TempDir(), "HEAD", "prompt", nil,
 	)
 	require.Error(t, err)
 
@@ -139,7 +138,7 @@ func TestKiloReviewNonZeroExitSurfacesStderr(t *testing.T) {
 
 	a := NewKiloAgent(mock.CmdPath)
 	_, err := a.Review(
-		context.Background(), t.TempDir(), "HEAD", "prompt", nil,
+		t.Context(), t.TempDir(), "HEAD", "prompt", nil,
 	)
 	require.Error(t, err)
 
@@ -159,7 +158,7 @@ func TestKiloReviewStderrStripsANSI(t *testing.T) {
 
 	a := NewKiloAgent(mock.CmdPath)
 	_, err := a.Review(
-		context.Background(), t.TempDir(), "HEAD", "prompt", nil,
+		t.Context(), t.TempDir(), "HEAD", "prompt", nil,
 	)
 	require.Error(t, err)
 
@@ -178,7 +177,7 @@ func TestKiloReviewNonZeroExitFallsBackToStdout(t *testing.T) {
 
 	a := NewKiloAgent(mock.CmdPath)
 	_, err := a.Review(
-		context.Background(), t.TempDir(), "HEAD", "prompt", nil,
+		t.Context(), t.TempDir(), "HEAD", "prompt", nil,
 	)
 	require.Error(t, err)
 
@@ -198,7 +197,7 @@ func TestKiloReviewExitZeroNonJSONStdout(t *testing.T) {
 
 	a := NewKiloAgent(mock.CmdPath)
 	_, err := a.Review(
-		context.Background(), t.TempDir(), "HEAD", "prompt", nil,
+		t.Context(), t.TempDir(), "HEAD", "prompt", nil,
 	)
 	require.Error(t, err)
 
@@ -217,7 +216,7 @@ func TestKiloReviewExitZeroJSONOnlyNoText(t *testing.T) {
 
 	a := NewKiloAgent(mock.CmdPath)
 	result, err := a.Review(
-		context.Background(), t.TempDir(), "HEAD", "prompt", nil,
+		t.Context(), t.TempDir(), "HEAD", "prompt", nil,
 	)
 	require.NoError(t, err)
 
@@ -262,7 +261,7 @@ func runKiloMockReview(
 	}
 
 	out, err := a.Review(
-		context.Background(), t.TempDir(), "HEAD", prompt, nil,
+		t.Context(), t.TempDir(), "HEAD", prompt, nil,
 	)
 	require.NoError(t, err, "Review failed: %v")
 

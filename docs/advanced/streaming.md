@@ -28,7 +28,7 @@ curl --unix-socket "$XDG_RUNTIME_DIR/roborev/daemon.sock" http://localhost/opena
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/jobs` | GET | List review jobs (supports cursor-based pagination via `before` parameter) |
+| `/api/jobs` | GET | List review jobs, newest first by default. `sort` and `direction` choose the order; pass a page's `next_cursor` as `cursor` to get the next page |
 | `/api/review` | GET | Get review by job ID or SHA |
 | `/api/comments` | GET | List comments for a job or commit |
 | `/api/repos` | GET | List repos with job counts |
@@ -51,6 +51,33 @@ enqueueing jobs, streaming job output, reading logs and patches, sync
 operations, and token backfill. Most JSON endpoints are represented in the
 generated client; endpoints that stream or return raw bytes are exposed through
 raw helper methods.
+
+### Agent health
+
+`/api/health` reports the `agents` component as unhealthy when the daemon cannot
+run the agents that the global config selects for post-commit and manual
+reviews. Enqueue would reject those reviews. While this component is unhealthy,
+the daemon reports both `healthy` and `ready` as false. The message names the
+missing agents and includes the daemon's `PATH`. A repo config can select other
+agents; `roborev doctor` checks those for the current repo.
+
+The check covers each way a review can run:
+
+- Post-commit and manual reviews are checked separately, each with its panel or
+    its single agent, at the default review reasoning level.
+- When a review experiment is enabled, its experimental arm is checked too,
+    unless its ratio is 0 and no review can be assigned to it. The base config
+    is always checked, because reviews with no branch and prompt-based tasks are
+    not enrolled in the experiment.
+- A panel needs its synthesis agent only when it has more than one voting
+    member. A single voting member's result is passed through.
+
+Checking can run an agent executable to identify it, which can be slow, so a
+health request never runs the check itself. The daemon starts the first check
+when it starts, and until that check finishes the component reports that the
+check is still running. After that, each request returns the last result and
+starts one background refresh. After you install or remove an agent, the next
+request after the refresh shows the new state.
 
 ### Worker health
 
@@ -209,8 +236,8 @@ Stream review events in real-time for integrations, notifications, or custom
 tooling:
 
 ```bash
-roborev stream              # Stream all events
-roborev stream --repo .     # Stream events for current repo only
+roborev job stream              # Stream all events
+roborev job stream --repo .     # Stream events for current repo only
 ```
 
 ## Event Format
@@ -262,16 +289,16 @@ Use `jq` to filter events:
 
 ```bash
 # Only completed reviews
-roborev stream | jq -c 'select(.type == "review.completed")'
+roborev job stream | jq -c 'select(.type == "review.completed")'
 
 # Only failures
-roborev stream | jq -c 'select(.type == "review.failed")'
+roborev job stream | jq -c 'select(.type == "review.failed")'
 
 # Specific repo
-roborev stream | jq -c 'select(.repo_name == "myproject")'
+roborev job stream | jq -c 'select(.repo_name == "myproject")'
 
 # Failed verdicts
-roborev stream | jq -c 'select(.verdict == "F")'
+roborev job stream | jq -c 'select(.verdict == "F")'
 ```
 
 ## Integration Examples
@@ -279,7 +306,7 @@ roborev stream | jq -c 'select(.verdict == "F")'
 ### Desktop Notifications (macOS)
 
 ```bash
-roborev stream | while read -r event; do
+roborev job stream | while read -r event; do
   type=$(echo "$event" | jq -r '.type')
   repo=$(echo "$event" | jq -r '.repo_name')
   if [ "$type" = "review.completed" ]; then
@@ -294,7 +321,7 @@ done
 ### Webhook
 
 ```bash
-roborev stream | while read -r event; do
+roborev job stream | while read -r event; do
   curl -X POST -H "Content-Type: application/json" \
     -d "$event" https://your-webhook.example.com/reviews
 done

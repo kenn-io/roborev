@@ -93,6 +93,7 @@ type ExportReview struct {
 type ExportSubagent struct {
 	ReviewID            uuid.UUID        `json:"review_id"`
 	Name                string           `json:"name"`
+	NonVoting           bool             `json:"non_voting" doc:"True when the panel member is advisory and does not affect the panel verdict."`
 	Agent               string           `json:"agent"`
 	Model               *string          `json:"model"`
 	ReviewType          *string          `json:"review_type"`
@@ -107,13 +108,25 @@ type ExportSubagent struct {
 
 // ExportDocument is a stored structured review document as the export emits
 // it. It always holds a document that passed structuredreview.Decode, and it
-// encodes as that document's canonical JSON rather than the stored bytes.
+// encodes as that document's canonical JSON in the current version rather
+// than the stored bytes.
 type ExportDocument struct {
 	structuredreview.Document
 }
 
 func (d ExportDocument) MarshalJSON() ([]byte, error) {
 	return json.Marshal(d.Document)
+}
+
+// UnmarshalJSON decodes and validates an exported document. The embedded
+// Document has its own MarshalJSON, so JSON cannot inline its fields.
+func (d *ExportDocument) UnmarshalJSON(raw []byte) error {
+	doc, err := structuredreview.Decode(raw)
+	if err != nil {
+		return err
+	}
+	d.Document = doc
+	return nil
 }
 
 const (
@@ -136,10 +149,16 @@ func (ExportDocument) Schema(r huma.Registry) *huma.Schema {
 		Description:          "One finding in a structured review document.",
 		AdditionalProperties: false,
 		Properties: map[string]*huma.Schema{
-			"severity": {Type: huma.TypeString, Description: "One of critical, high, medium, or low."},
-			"problem":  {Type: huma.TypeString},
-			"fix":      {Type: huma.TypeString},
-			"location": {Type: huma.TypeString, Nullable: true, Description: "Where the problem is, or null when the finding has no location."},
+			"severity":   {Type: huma.TypeString, Description: "One of critical, high, medium, or low."},
+			"kind":       {Type: huma.TypeString, Nullable: true, Description: "defect when the code behaves wrongly, or improvement when it works but should still change. Null when the producer did not classify the finding, as in goal reviews and converted historical reviews. Present on version 3 documents."},
+			"topic":      {Type: huma.TypeString, Nullable: true, Description: "One of tests, documentation, security, performance, or design, or null when no topic applies. Present on version 3 documents."},
+			"confidence": {Type: huma.TypeNumber, Format: "double", Nullable: true, Minimum: new(float64(0)), Maximum: new(float64(1)), Description: "The reviewer's estimate, from 0 to 1, that the problem is real. Null exactly when kind is null. Present on version 3 documents."},
+			"problem":    {Type: huma.TypeString},
+			"fix":        {Type: huma.TypeString},
+			"file":       {Type: huma.TypeString, Nullable: true, Description: "Path relative to the repository root, or null. Present on version 3 documents."},
+			"start_line": {Type: huma.TypeInteger, Format: "int64", Nullable: true, Description: "First line of the problem in the reviewed file, or null. Present on version 3 documents."},
+			"end_line":   {Type: huma.TypeInteger, Format: "int64", Nullable: true, Description: "Last line of the problem in the reviewed file, or null. Present on version 3 documents."},
+			"location":   {Type: huma.TypeString, Nullable: true, Description: "Where the problem is, or null when the finding has no location. Derived from file, start_line, and end_line when file is set; otherwise free text."},
 			"sources": {
 				Type:        huma.TypeArray,
 				Items:       &huma.Schema{Type: huma.TypeInteger, Format: "int64"},
@@ -153,11 +172,11 @@ func (ExportDocument) Schema(r huma.Registry) *huma.Schema {
 		Description:          "The canonical JSON review document. The Go package go.kenn.io/roborev/pkg/structuredreview decodes and renders it.",
 		AdditionalProperties: false,
 		Properties: map[string]*huma.Schema{
-			"schema_version": {Type: huma.TypeInteger, Format: "int64", Minimum: new(float64(1)), Maximum: new(float64(2)), Description: "Version of the document format, separate from the export schema_version."},
+			"schema_version": {Type: huma.TypeInteger, Format: "int64", Minimum: new(float64(1)), Maximum: new(float64(3)), Description: "Version of the document format, separate from the export schema_version. Export writes every document in the current version, 3."},
 			"summary":        {Type: huma.TypeString},
 			"verdict": {
 				Type:        huma.TypeString,
-				Description: "The agent's own assessment: pass, fail, or unable_to_review. Omitted by version 1 documents.",
+				Description: "The agent's own assessment: pass, fail, or unable_to_review. Omitted when the review stated none, as in converted version 1 reviews.",
 			},
 			"findings": {
 				Type:  huma.TypeArray,
@@ -496,7 +515,7 @@ func (db *DB) exportSubagents(panelRunUUID uuid.UUID, profile ExportProfile) ([]
 	rows, err := db.Query(`
 		SELECT rv.uuid, rv.verdict_bool, rv.created_at, `+outputExpr+`,
 		       j.agent, j.model, j.review_type, j.panel_member_name, j.started_at, j.finished_at,
-		       j.token_usage, j.resume_source_job_uuid
+		       j.token_usage, j.resume_source_job_uuid, j.non_voting
 		FROM review_jobs j
 		JOIN reviews rv ON rv.job_id = j.id
 		WHERE j.panel_run_uuid = ?
@@ -524,9 +543,10 @@ func (db *DB) exportSubagents(panelRunUUID uuid.UUID, profile ExportProfile) ([]
 		var finishedAt sql.NullString
 		var tokenUsage sql.NullString
 		var resumeSource sql.Null[uuid.UUID]
+		var nonVoting bool
 		if err := rows.Scan(&reviewID, &verdictBool, &completedAt, &output,
 			&agentName, &model, &reviewType, &memberName, &startedAt,
-			&finishedAt, &tokenUsage, &resumeSource); err != nil {
+			&finishedAt, &tokenUsage, &resumeSource, &nonVoting); err != nil {
 			return nil, err
 		}
 		name := nullStringValue(memberName)
@@ -536,6 +556,7 @@ func (db *DB) exportSubagents(panelRunUUID uuid.UUID, profile ExportProfile) ([]
 		sub := ExportSubagent{
 			ReviewID:    reviewID,
 			Name:        name,
+			NonVoting:   nonVoting,
 			Agent:       agentName,
 			Model:       stringPtrNonEmpty(nullStringValue(model)),
 			ReviewType:  stringPtrNonEmpty(nullStringValue(reviewType)),

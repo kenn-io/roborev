@@ -25,7 +25,7 @@ func seedRouteCICostJob(t *testing.T, db *storage.DB, repoID int64, gitRef, fini
 		Source: storage.JobSourceCI,
 	})
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE review_jobs
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs
 		SET status = 'done', started_at = '2026-08-01 00:00:00',
 		    finished_at = ?, agent_invoked = 1,
 		    token_usage = '{"has_cost":true,"cost_usd":0.125}'
@@ -64,7 +64,7 @@ func TestHumaExportCICosts(t *testing.T) {
 func TestHumaExportCICostsLegacy(t *testing.T) {
 	srv, db, _ := newTestServer(t)
 	repo := testutil.CreateTestRepo(t, db)
-	_, err := db.Exec(`INSERT INTO ci_pr_panels
+	_, err := db.ExecContext(t.Context(), `INSERT INTO ci_pr_panels
 		(github_repo, pr_number, head_sha, panel_run_uuid, created_at)
 		VALUES ('example/project', 99, 'era-head', 'era-run', '2026-06-01 00:00:00')`)
 	require.NoError(t, err)
@@ -74,7 +74,7 @@ func TestHumaExportCICostsLegacy(t *testing.T) {
 			Agent: fmt.Sprintf("agent-%d", i), Model: "legacy-model",
 		})
 		require.NoError(t, enqueueErr)
-		_, updateErr := db.Exec(`UPDATE review_jobs
+		_, updateErr := db.ExecContext(t.Context(), `UPDATE review_jobs
 			SET status = 'done', enqueued_at = '2026-03-01 10:00:00',
 			    started_at = '2026-03-01 10:00:00', finished_at = ?,
 			    agent_invoked = 1
@@ -150,7 +150,7 @@ func TestHumaExportCICostsCursorPreservesSince(t *testing.T) {
 	assert.Equal(t, *firstJob.UUID, first.Jobs[0].JobUUID)
 	require.NotNil(t, first.NextCursor)
 
-	_, err := db.Exec(`UPDATE review_jobs
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs
 		SET token_usage = '{"has_cost":true,"cost_usd":0.75}'
 		WHERE id = ?`, oldJob.ID)
 	require.NoError(t, err)

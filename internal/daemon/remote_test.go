@@ -51,7 +51,7 @@ func remoteFixture(t *testing.T) (*Server, config.RemoteConfig, requestsigning.K
 
 func remoteRequest(t *testing.T, key requestsigning.Key, path string) *http.Request {
 	t.Helper()
-	r, err := http.NewRequest("GET", "https://reviews.example.com/history"+path, nil)
+	r, err := http.NewRequestWithContext(t.Context(), "GET", "https://reviews.example.com/history"+path, nil)
 	require.NoError(t, err)
 	require.NoError(t, requestsigning.Sign(r, key, time.Now()))
 	// Trusted ingress strips exactly the configured prefix. Forwarded values
@@ -381,7 +381,7 @@ func TestRemoteKeyRevocationAndNewIDRotation(t *testing.T) {
 func TestRemoteListenerShutdownCancelsRequests(t *testing.T) {
 	s, cfg, _ := remoteFixture(t)
 	cfg.Listen = "127.0.0.1:0"
-	require.NoError(t, s.startRemoteServer(cfg))
+	require.NoError(t, s.startRemoteServer(t.Context(), cfg))
 	defer s.abortRemoteServer()
 	require.NotNil(t, s.remoteServer.BaseContext)
 	ctx := s.remoteServer.BaseContext(nil)
@@ -395,10 +395,10 @@ func TestRemoteRejectsUnannouncedWireTrailers(t *testing.T) {
 	handler := startedRemoteHandler(t, s, cfg)
 	server := httptest.NewServer(handler)
 	defer server.Close()
-	r, err := http.NewRequest("GET", cfg.ExternalURL+"/api/ping", nil)
+	r, err := http.NewRequestWithContext(t.Context(), "GET", cfg.ExternalURL+"/api/ping", nil)
 	require.NoError(t, err)
 	require.NoError(t, requestsigning.Sign(r, key, time.Now()))
-	conn, err := net.Dial("tcp", strings.TrimPrefix(server.URL, "http://"))
+	conn, err := (&net.Dialer{}).DialContext(t.Context(), "tcp", strings.TrimPrefix(server.URL, "http://"))
 	require.NoError(t, err)
 	defer conn.Close()
 	_, err = io.WriteString(conn, "GET /api/ping HTTP/1.1\r\nHost: reviews.example.com\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n")
@@ -573,7 +573,7 @@ func TestRemoteRechecksJobScopeAfterBody(t *testing.T) {
 		require.NoError(t, testutil.CompleteReviewFixture(s.db, job.ID, "test", "prompt", "review"))
 		r := remoteRequest(t, key, route+strconv.FormatInt(job.ID, 10))
 		r.Body = &scopeChangingBody{change: func() {
-			_, err := s.db.Exec("UPDATE review_jobs SET repo_id = ? WHERE id = ?", denied.ID, job.ID)
+			_, err := s.db.ExecContext(t.Context(), "UPDATE review_jobs SET repo_id = ? WHERE id = ?", denied.ID, job.ID)
 			require.NoError(t, err)
 		}}
 		out := httptest.NewRecorder()
