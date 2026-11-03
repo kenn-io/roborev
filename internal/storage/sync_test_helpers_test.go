@@ -23,10 +23,8 @@ func createSyncJobs(t *testing.T, db *DB, repoID int64, count int) []*ReviewJob 
 	t.Helper()
 	jobs := make([]*ReviewJob, count)
 	for i := range jobs {
-		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repoID, GitRef: fmt.Sprintf("%040x", i), Agent: "test"})
-		require.NoError(t, err)
-		claimed, err := db.ClaimJob("worker")
-		require.NoError(t, err)
+		job := mustEnqueuePromptJob(t, db, EnqueueOpts{RepoID: repoID, GitRef: fmt.Sprintf("%040x", i), Agent: "test"})
+		claimed := claimJob(t, db, "worker")
 		require.NotNil(t, claimed)
 		require.Equal(t, job.ID, claimed.ID)
 		jobs[i] = job
@@ -34,14 +32,11 @@ func createSyncJobs(t *testing.T, db *DB, repoID int64, count int) []*ReviewJob 
 	return jobs
 }
 
-func createSyncHistory(t *testing.T, db *DB, repoID int64, count int, reverse bool) []*ReviewJob {
+func createSyncHistory(t *testing.T, db *DB, repoID int64, count int) []*ReviewJob {
 	t.Helper()
 	jobs := createSyncJobs(t, db, repoID, count)
 	for i := range jobs {
-		index := i
-		if reverse {
-			index = count - 1 - i
-		}
+		index := count - 1 - i
 		require.NoError(t, completeReviewFixture(db, jobs[index].ID, "test", "prompt", "Review result."))
 	}
 	return jobs

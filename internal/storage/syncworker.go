@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net"
 	"os"
 	"strings"
@@ -774,13 +775,13 @@ type pushCursor struct {
 	job, reviewJob int64
 }
 
-func (cur *pushCursor) advanceReviews(lastJobID int64, jobsExhausted bool) {
-	// An edited review can belong to an already-synced job ahead of this
-	// batch. Keep reviews of jobs still waiting to upload within reach.
-	if !jobsExhausted {
-		lastJobID = min(lastJobID, cur.job)
+func (cur *pushCursor) advanceReviews(reviews []SyncableReview, throughJobID int64) {
+	if len(reviews) < syncBatchSize {
+		// The query examined the whole range, including jobs without reviews.
+		cur.reviewJob = throughJobID
+	} else {
+		cur.reviewJob = reviews[len(reviews)-1].JobID
 	}
-	cur.reviewJob = lastJobID
 }
 
 // pushChangesWithStats pushes local changes and returns statistics
@@ -893,13 +894,19 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool, cur
 	}
 
 	// Push reviews - batch operation
-	reviews, err := w.db.reviewsToSync(machineID, cur.reviewJob, syncBatchSize)
+	// Keep edited reviews of higher, already-synced jobs from moving the
+	// cursor past jobs that will upload later in this pass.
+	throughJobID := int64(math.MaxInt64)
+	if len(jobs) == syncBatchSize {
+		throughJobID = cur.job
+	}
+	reviews, err := w.db.reviewsToSync(machineID, cur.reviewJob, throughJobID, syncBatchSize)
 	if err != nil {
 		return stats, fmt.Errorf("get reviews to sync: %w", err)
 	}
 
+	cur.advanceReviews(reviews, throughJobID)
 	if len(reviews) > 0 {
-		cur.advanceReviews(reviews[len(reviews)-1].JobID, len(jobs) < syncBatchSize)
 		success, err := pool.BatchUpsertReviews(ctx, reviews)
 		if err != nil {
 			return stats, fmt.Errorf("batch upsert reviews: %w", &syncSourceError{err})

@@ -6,6 +6,7 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 	"uuid"
@@ -787,6 +788,7 @@ const reviewsToSyncQuery = `
 		JOIN review_jobs j ON r.job_id = j.id
 		WHERE r.uuid IS NOT NULL
 		AND r.job_id > ?
+		AND r.job_id <= ?
 		AND j.uuid IS NOT NULL
 		AND j.synced_at IS NOT NULL
 		AND (r.structured_output IS NOT NULL OR j.job_type NOT IN ('review','range','dirty','synthesis','compact','goal_review'))
@@ -804,11 +806,11 @@ const reviewsToSyncQuery = `
 // with a local acknowledgment: the server's clock can be ahead. Parent and
 // review acknowledgments both use the local clock; keep their full precision.
 func (db *DB) GetReviewsToSync(machineID uuid.UUID, limit int) ([]SyncableReview, error) {
-	return db.reviewsToSync(machineID, 0, limit)
+	return db.reviewsToSync(machineID, 0, math.MaxInt64, limit)
 }
 
-func (db *DB) reviewsToSync(machineID uuid.UUID, afterJobID int64, limit int) ([]SyncableReview, error) {
-	rows, err := db.Query(reviewsToSyncQuery, machineID, afterJobID, machineID, machineID, limit)
+func (db *DB) reviewsToSync(machineID uuid.UUID, afterJobID, throughJobID int64, limit int) ([]SyncableReview, error) {
+	rows, err := db.Query(reviewsToSyncQuery, machineID, afterJobID, throughJobID, machineID, machineID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query reviews to sync: %w", err)
 	}

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"math"
 	"slices"
 	"strings"
 	"testing"
@@ -769,7 +770,7 @@ func TestSyncQueriesSeekPastCursor(t *testing.T) {
 		args               []any
 	}{
 		{"jobs", jobsToSyncQuery, "j", []any{h.machineID, 25, 25}},
-		{"reviews", reviewsToSyncQuery, "r", []any{h.machineID, 25, h.machineID, h.machineID, 25}},
+		{"reviews", reviewsToSyncQuery, "r", []any{h.machineID, 25, 50, h.machineID, h.machineID, 25}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rows, err := h.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+tc.query, tc.args...)
@@ -788,6 +789,9 @@ func TestSyncQueriesSeekPastCursor(t *testing.T) {
 			assert.NotContains(t, plan, "SCAN j")
 			assert.NotContains(t, plan, "SCAN r")
 			assert.NotContains(t, plan, "TEMP B-TREE FOR ORDER BY")
+			if tc.name == "reviews" {
+				assert.Contains(t, plan, "job_id>? AND job_id<?")
+			}
 		})
 	}
 }
@@ -795,8 +799,8 @@ func TestSyncQueriesSeekPastCursor(t *testing.T) {
 func TestSyncQueriesPageHistory(t *testing.T) {
 	t.Parallel()
 	h := newSyncTestHelper(t)
-	assert := assert.New(t)
-	jobs := createSyncHistory(t, h.db, h.repo.ID, 60, true)
+	checks := assert.New(t)
+	jobs := createSyncHistory(t, h.db, h.repo.ID, 60)
 	var want []int64
 	for _, job := range jobs {
 		want = append(want, job.ID)
@@ -810,34 +814,97 @@ func TestSyncQueriesPageHistory(t *testing.T) {
 		batch, err := h.db.jobsToSync(h.machineID, jobCursor, 25)
 		require.NoError(t, err)
 		require.NotEmpty(t, batch)
-		assert.Greater(batch[0].ID, jobCursor)
+		checks.Greater(batch[0].ID, jobCursor)
 		for _, job := range batch {
 			seenJobs = append(seenJobs, job.ID)
 			marks = append(marks, NewJobSyncMark(job))
 		}
 		jobCursor = batch[len(batch)-1].ID
 	}
-	assert.Equal(want, seenJobs)
+	checks.Equal(want, seenJobs)
 	pendingJobs, err := h.db.jobsToSync(h.machineID, jobCursor, 25)
 	require.NoError(t, err)
-	assert.Empty(pendingJobs)
+	checks.Empty(pendingJobs)
 
 	// Reviews become eligible after their jobs upload. Leave them unmarked too.
 	require.NoError(t, h.db.MarkJobsSynced(marks))
 	var reviewJobCursor int64
 	var seenReviewJobs []int64
 	for range 3 {
-		reviews, err := h.db.reviewsToSync(h.machineID, reviewJobCursor, 25)
+		reviews, err := h.db.reviewsToSync(h.machineID, reviewJobCursor, math.MaxInt64, 25)
 		require.NoError(t, err)
 		require.NotEmpty(t, reviews)
-		assert.Greater(reviews[0].JobID, reviewJobCursor)
+		checks.Greater(reviews[0].JobID, reviewJobCursor)
 		for _, review := range reviews {
 			seenReviewJobs = append(seenReviewJobs, review.JobID)
 		}
 		reviewJobCursor = reviews[len(reviews)-1].JobID
 	}
-	assert.Equal(want, seenReviewJobs)
-	pendingReviews, err := h.db.reviewsToSync(h.machineID, reviewJobCursor, 25)
+	checks.Equal(want, seenReviewJobs)
+	pendingReviews, err := h.db.reviewsToSync(h.machineID, reviewJobCursor, math.MaxInt64, 25)
 	require.NoError(t, err)
-	assert.Empty(pendingReviews)
+	checks.Empty(pendingReviews)
+
+	t.Run("reviewless jobs and an edited later review", func(t *testing.T) {
+		h := newSyncTestHelper(t)
+		assert := assert.New(t)
+		jobs := createSyncJobs(t, h.db, h.repo.ID, 86)
+		var want []int64
+		for i, job := range jobs {
+			if i < 25 || (i+1)%5 == 0 {
+				failed, err := h.db.FailJob(job.ID, "worker", "test failure")
+				require.NoError(t, err)
+				assert.True(failed)
+			} else {
+				want = append(want, job.ID)
+			}
+		}
+		for i := len(jobs) - 1; i >= 25; i-- {
+			if (i+1)%5 != 0 {
+				require.NoError(t, completeReviewFixture(h.db, jobs[i].ID, "test", "prompt", "output"))
+			}
+		}
+		lastJob := jobs[len(jobs)-1]
+		last, err := h.db.jobsToSync(h.machineID, lastJob.ID-1, 1)
+		require.NoError(t, err)
+		require.Len(t, last, 1)
+		require.NoError(t, h.db.MarkJobsSynced([]JobSyncMark{NewJobSyncMark(last[0])}))
+		edited, err := h.db.GetReviewsToSync(h.machineID, 1)
+		require.NoError(t, err)
+		require.Len(t, edited, 1)
+		require.NoError(t, h.db.MarkReviewsSynced(edited))
+		require.NoError(t, h.db.MarkReviewClosedByJobID(lastJob.ID, true))
+
+		cur := pushCursor{}
+		var seen []int64
+		for range 4 {
+			batch, err := h.db.jobsToSync(h.machineID, cur.job, syncBatchSize)
+			require.NoError(t, err)
+			require.NotEmpty(t, batch)
+			var marks []JobSyncMark
+			for _, job := range batch {
+				marks = append(marks, NewJobSyncMark(job))
+			}
+			cur.job = batch[len(batch)-1].ID
+			require.NoError(t, h.db.MarkJobsSynced(marks))
+			through := int64(math.MaxInt64)
+			if len(batch) == syncBatchSize {
+				through = cur.job
+			}
+			reviews, err := h.db.reviewsToSync(h.machineID, cur.reviewJob, through, syncBatchSize)
+			require.NoError(t, err)
+			for _, review := range reviews {
+				assert.Greater(review.JobID, cur.reviewJob)
+				assert.LessOrEqual(review.JobID, through)
+				seen = append(seen, review.JobID)
+			}
+			cur.advanceReviews(reviews, through)
+			assert.Equal(through, cur.reviewJob, "short pages must skip the whole examined range")
+			require.NoError(t, h.db.MarkReviewsSynced(reviews))
+		}
+		assert.Equal(want, seen)
+		pending, err := h.db.GetReviewsToSync(h.machineID, syncBatchSize)
+		require.NoError(t, err)
+		assert.Empty(pending)
+	})
 }
