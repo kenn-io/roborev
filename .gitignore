@@ -10,6 +10,7 @@ bin/
 /web/coverage/
 /web/playwright-report/
 /web/test-results/
+/gotestsum/
 /packages/*/node_modules/
 /internal/web/.dist-staging-*/
 /internal/web/.dist-backup-*/

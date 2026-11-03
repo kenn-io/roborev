@@ -334,8 +334,16 @@ install-hooks:
 
 # CI target: run postgres tests without managing docker (assumes postgres is running)
 test-postgres-ci:
-	go test -tags=postgres -v ./internal/storage/... -run Integration
-	go test -tags=postgres -v ./internal/daemon/... -run '^TestIntegration'
+	go tool gotestsum --format pkgname-and-test-fails --format-icons text \
+		--jsonfile gotestsum/postgres-storage.json \
+		--rerun-fails=2 --rerun-fails-report gotestsum/postgres-storage-reruns.txt \
+		--packages "./internal/storage/..." \
+		-- -tags=postgres -v -run Integration
+	go tool gotestsum --format pkgname-and-test-fails --format-icons text \
+		--jsonfile gotestsum/postgres-daemon.json \
+		--rerun-fails=2 --rerun-fails-report gotestsum/postgres-daemon-reruns.txt \
+		--packages "./internal/daemon/..." \
+		-- -tags=postgres -v -run '^TestIntegration'
 
 # Workflow actions run at the commits in .github/workflows/actions.lock,
 # including actions that other actions call. The organization requires

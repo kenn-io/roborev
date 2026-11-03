@@ -86,4 +86,18 @@ jobs:
         shell: pwsh
         env:
           ROBOREV_MIGRATION_OLD_BINARY: ${{ steps.old.outputs.old_binary }}
-        run: go test -timeout 10m -tags "integration migration" ./cmd/roborev -run TestWindowsV056DaemonMigrationRefusesUnsafeReplacement -count=1 -v
+        run: |
+          go tool gotestsum --format pkgname-and-test-fails --format-icons text `
+            --jsonfile gotestsum/windows-migration.json `
+            --rerun-fails=2 --rerun-fails-report gotestsum/windows-migration-reruns.txt `
+            --packages "./cmd/roborev" `
+            -- -timeout 10m -tags "integration migration" -run TestWindowsV056DaemonMigrationRefusesUnsafeReplacement -count=1 -v
+
+      - name: Upload gotestsum results
+        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-windows-migration-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
