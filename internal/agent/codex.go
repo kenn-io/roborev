@@ -531,7 +531,12 @@ func (a *CodexAgent) review(
 	args := runAgent.buildArgsWithSchema(
 		repoPath, agenticMode, autoApprove, sandboxBroken, schemaPath,
 	)
+	// The nono sandbox, used by CI finding checks, drops unknown environment
+	// variables and allows only the provider route, so a sandboxed run cannot
+	// reach the reviewer endpoint. Reviewer tools are never issued to those
+	// jobs; skip them here rather than pass a token the sandbox would strip.
 	tools, useTools := reviewerToolsFrom(ctx)
+	useTools = useTools && a.sandbox == nil
 	if useTools {
 		args = codexReviewerArgs(args, tools)
 	}
@@ -553,10 +558,7 @@ func (a *CodexAgent) review(
 		cancel = func() error { cleanup(); return nil }
 	}
 	if useTools {
-		if env == nil {
-			env = os.Environ()
-		}
-		env = append(env, codexReviewerTokenEnv+"="+tools.Token)
+		env = append(os.Environ(), codexReviewerTokenEnv+"="+tools.Token)
 	}
 	stdoutDiagnostics := newCodexDiagnosticCapture()
 
