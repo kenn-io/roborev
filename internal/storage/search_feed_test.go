@@ -369,6 +369,7 @@ func searchFeedOutputs(sources []SearchReviewSource) []string {
 }
 
 func TestSearchChangesLogsEveryFeedSource(t *testing.T) {
+	t.Parallel()
 	type changeCase struct {
 		name  string
 		sql   string
@@ -402,6 +403,7 @@ func TestSearchChangesLogsEveryFeedSource(t *testing.T) {
 	cases = append(cases, changeCase{"job delete", `DELETE FROM review_jobs WHERE id = 2`, []int64{2}, ""})
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			db := openTestDB(t)
 			t.Cleanup(func() { require.NoError(t, db.Close()) })
 			_, err := db.ExecContext(t.Context(), `
@@ -441,6 +443,7 @@ func TestSearchChangesLogsEveryFeedSource(t *testing.T) {
 }
 
 func TestSearchChangesPreservesWritesAfterPage(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	_, err := db.ExecContext(t.Context(), `INSERT INTO search_changes(job_id) VALUES (1), (1), (2)`)

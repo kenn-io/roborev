@@ -229,9 +229,10 @@ func TestIndexMigrations(t *testing.T) {
 }
 
 func TestSearchChangesMigration(t *testing.T) {
+	t.Parallel()
 	db := openUnmigratedDB(t)
 	index := slices.IndexFunc(schemaMigrations, func(m schemaMigration) bool { return m.version == 8 })
-	require.Greater(t, index, 0)
+	require.Positive(t, index)
 	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:index]))
 	for range 2 {
 		require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:index+1]))

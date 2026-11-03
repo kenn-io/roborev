@@ -209,8 +209,11 @@ func TestReconcilerSweepDrainsBoundedPages(t *testing.T) {
 			require.NoError(t, err)
 		}
 		assert.Equal(t, int64(3), store.fullReads.Load())
-		_, err := store.RenameRepo("/synthetic/repo", "renamed")
+		result, err := store.ExecContext(t.Context(), `UPDATE repos SET name = 'renamed' WHERE id = 1`)
 		require.NoError(t, err)
+		changed, err := result.RowsAffected()
+		require.NoError(t, err)
+		require.Equal(t, int64(1), changed)
 		now = now.Add(2 * r.config.SweepInterval)
 		more, err := r.reconcileTurn(t.Context())
 		require.NoError(t, err)
