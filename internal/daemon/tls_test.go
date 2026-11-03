@@ -129,7 +129,7 @@ func TestAuthMutualTLSOnTCPListener(t *testing.T) {
 			TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
 		}}
 		get := func(path string) int {
-			req, err := http.NewRequest(http.MethodGet, "https://"+tcp.Address+path, nil)
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://"+tcp.Address+path, nil)
 			require.NoError(t, err)
 			// The key alone does not stand in for the client certificate.
 			req.Header.Set("Authorization", "Bearer "+key)

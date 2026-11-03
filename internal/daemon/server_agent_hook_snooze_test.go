@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -19,7 +18,7 @@ func TestAgentHookSnoozeAPIUpdatesResolveMetadata(t *testing.T) {
 	assert := assert.New(t)
 	server, db, _ := newTestServer(t)
 	repo := testutil.NewTestRepo(t)
-	mainRoot, err := gitrepo.MainRoot(context.Background(), repo.Root)
+	mainRoot, err := gitrepo.MainRoot(t.Context(), repo.Root)
 	require.NoError(t, err)
 	_, err = db.GetOrCreateRepo(mainRoot)
 	require.NoError(t, err)
@@ -94,13 +93,13 @@ func TestAgentHookSourceReportsMissingReviewGuidelines(t *testing.T) {
 			_, db, _ := newTestServer(t)
 			repo := testutil.NewTestRepo(t)
 			repo.CommitFiles(tc.files, "initial")
-			mainRoot, err := gitrepo.MainRoot(context.Background(), repo.Root)
+			mainRoot, err := gitrepo.MainRoot(t.Context(), repo.Root)
 			require.NoError(t, err)
 			_, err = db.GetOrCreateRepo(mainRoot)
 			require.NoError(t, err)
 
 			resolved, ok := daemonAgentHookSource{db: db}.ResolveTrackedRepo(
-				context.Background(), repo.Root, "main",
+				t.Context(), repo.Root, "main",
 			)
 
 			require.True(t, ok)

@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -147,7 +149,7 @@ func MockBinaryInPath(t *testing.T, binName, scriptContent string) func() {
 
 // OpenTestDB creates a test database in a temporary directory.
 // The database is automatically closed when the test completes.
-func OpenTestDB(t *testing.T) *storage.DB {
+func OpenTestDB(t testing.TB) *storage.DB {
 	t.Helper()
 
 	db, _ := OpenTestDBWithDir(t)
@@ -184,7 +186,7 @@ var testDBTemplate = sync.OnceValues(func() ([]byte, error) {
 // temporary directory path. Useful when tests need to create repos or other
 // files in the same directory. The database is automatically closed when
 // the test completes.
-func OpenTestDBWithDir(t *testing.T) (*storage.DB, string) {
+func OpenTestDBWithDir(t testing.TB) (*storage.DB, string) {
 	t.Helper()
 
 	tmpDir := t.TempDir()
@@ -279,7 +281,7 @@ func MakeJSONRequest(t *testing.T, method, path string, body any) *http.Request 
 	if err != nil {
 		t.Fatalf("Failed to marshal request body: %v", err)
 	}
-	req := httptest.NewRequest(method, path, bytes.NewReader(reqBody))
+	req := httptest.NewRequestWithContext(t.Context(), method, path, bytes.NewReader(reqBody))
 	req.Header.Set("Content-Type", "application/json")
 	return req
 }
@@ -369,4 +371,34 @@ func MapKeys[K comparable, V any](m map[K]V) []K {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+// CountGitProcesses puts a counting git wrapper first on PATH for the rest of
+// the test and returns a function that reports how many git processes started.
+func CountGitProcesses(t *testing.T) func() int {
+	t.Helper()
+	gitPath, err := exec.LookPath("git")
+	require.NoError(t, err)
+	countPath := filepath.Join(t.TempDir(), "git-count")
+	require.NoError(t, os.WriteFile(countPath, nil, 0o600))
+	wrapperDir := t.TempDir()
+	wrapperPath := filepath.Join(wrapperDir, "git")
+	shellQuote := func(path string) string {
+		return "'" + strings.ReplaceAll(path, "'", "'\\''") + "'"
+	}
+	cmdQuote := func(path string) string {
+		return `"` + strings.ReplaceAll(path, `"`, `""`) + `"`
+	}
+	wrapper := fmt.Sprintf("#!/bin/sh\nprintf x >> %s\nexec %s \"$@\"\n", shellQuote(countPath), shellQuote(gitPath))
+	if runtime.GOOS == "windows" {
+		wrapperPath += ".cmd"
+		wrapper = fmt.Sprintf("@echo off\r\n<nul set /p dummy=x>>%s\r\n%s %%*\r\nexit /b %%ERRORLEVEL%%\r\n", cmdQuote(countPath), cmdQuote(gitPath))
+	}
+	require.NoError(t, os.WriteFile(wrapperPath, []byte(wrapper), 0o755))
+	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return func() int {
+		calls, err := os.ReadFile(countPath)
+		require.NoError(t, err)
+		return strings.Count(string(calls), "x")
+	}
 }

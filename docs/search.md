@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-30
+last_edited: 2026-10-31
 title: Review History Search
 description: Search completed reviews by keyword, meaning, repository, branch, time, verdict, and state
 ---
@@ -17,13 +17,13 @@ endpoint.
 ## Search from the CLI
 
 ```bash
-roborev search "retry provider failures" --agent
-roborev search retry provider failures
-roborev search "database is locked" --lexical
-roborev search "concurrency problems during shutdown" --semantic
-roborev search "stale cache" --repo roborev --branch main --open
-roborev search "authentication" --since 720h --verdict fail --limit 10
-roborev search "deadlock" --json
+roborev job search "retry provider failures" --agent
+roborev job search retry provider failures
+roborev job search "database is locked" --lexical
+roborev job search "concurrency problems during shutdown" --semantic
+roborev job search "stale cache" --repo roborev --branch main --open
+roborev job search "authentication" --since 720h --verdict fail --limit 10
+roborev job search "deadlock" --json
 ```
 
 Search is global by default. Roborev does not infer a repository from the
@@ -45,8 +45,8 @@ The available filters are:
 Open and closed reviews are both searched when neither state flag is present.
 The mode flags `--lexical`, `--hybrid`, and `--semantic` are mutually exclusive.
 With no mode flag, the CLI requests `auto` mode. Quoted and unquoted query words
-behave the same: `roborev search retry failures` and
-`roborev search "retry failures"` search for the same text.
+behave the same: `roborev job search retry failures` and
+`roborev job search "retry failures"` search for the same text.
 
 Use `--agent` for concise agent-readable output: an `OK search` header reports
 the count, query, effective mode, and coverage warnings, followed by one
@@ -56,7 +56,7 @@ escaped. The flag changes formatting only; it does not select a search mode. Use
 exclusive.
 
 Search results identify the exact job and review that matched. Use
-`roborev show <job-id>` to read the full review and its responses.
+`roborev job show <job-id>` to read the full review and its responses.
 
 ## Search modes
 
@@ -147,12 +147,11 @@ those changes within seconds. If a returned review no longer exists or no longer
 matches the filters, Roborev shows another member of its panel instead, or drops
 the hit, and wakes reconciliation.
 
-Use `roborev daemon status` or its `roborev status` alias to watch search
-health. The Search section reports indexed lexical documents, mirror state and
-backlog, vector state, embedded and pending counts, skipped documents, rate,
-ETA, credential availability, and the latest sanitized provider error when
-available. The same data is available in the `search` object from
-`GET /api/health`.
+Use `roborev daemon status` to watch search health. The Search section reports
+indexed lexical documents, mirror state and backlog, vector state, embedded and
+pending counts, skipped documents, rate, ETA, credential availability, and the
+latest sanitized provider error when available. The same data is available in
+the `search` object from `GET /api/health`.
 
 ## Shared vectors across synced machines
 

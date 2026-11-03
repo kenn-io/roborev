@@ -236,8 +236,8 @@ Stream review events in real-time for integrations, notifications, or custom
 tooling:
 
 ```bash
-roborev stream              # Stream all events
-roborev stream --repo .     # Stream events for current repo only
+roborev job stream              # Stream all events
+roborev job stream --repo .     # Stream events for current repo only
 ```
 
 ## Event Format
@@ -289,16 +289,16 @@ Use `jq` to filter events:
 
 ```bash
 # Only completed reviews
-roborev stream | jq -c 'select(.type == "review.completed")'
+roborev job stream | jq -c 'select(.type == "review.completed")'
 
 # Only failures
-roborev stream | jq -c 'select(.type == "review.failed")'
+roborev job stream | jq -c 'select(.type == "review.failed")'
 
 # Specific repo
-roborev stream | jq -c 'select(.repo_name == "myproject")'
+roborev job stream | jq -c 'select(.repo_name == "myproject")'
 
 # Failed verdicts
-roborev stream | jq -c 'select(.verdict == "F")'
+roborev job stream | jq -c 'select(.verdict == "F")'
 ```
 
 ## Integration Examples
@@ -306,7 +306,7 @@ roborev stream | jq -c 'select(.verdict == "F")'
 ### Desktop Notifications (macOS)
 
 ```bash
-roborev stream | while read -r event; do
+roborev job stream | while read -r event; do
   type=$(echo "$event" | jq -r '.type')
   repo=$(echo "$event" | jq -r '.repo_name')
   if [ "$type" = "review.completed" ]; then
@@ -321,7 +321,7 @@ done
 ### Webhook
 
 ```bash
-roborev stream | while read -r event; do
+roborev job stream | while read -r event; do
   curl -X POST -H "Content-Type: application/json" \
     -d "$event" https://your-webhook.example.com/reviews
 done

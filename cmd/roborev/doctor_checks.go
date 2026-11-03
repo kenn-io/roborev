@@ -13,7 +13,7 @@ import (
 	"go.kenn.io/roborev/internal/daemon"
 )
 
-// doctorRecentWindow is how far back the failure checks look.
+// doctorRecentWindow is how far back the failure and CI burst checks look.
 const doctorRecentWindow = 7 * 24 * time.Hour
 
 // doctorRepeatedFailures is the count at which the same failure in the recent
@@ -23,7 +23,7 @@ const doctorRepeatedFailures = 3
 // doctorEnv is everything the checks read, loaded once up front so each
 // check is a pure function of it.
 type doctorEnv struct {
-	ctx context.Context
+	ctx context.Context //nolint:containedctx // one doctor run; every check reads it with the rest of its input
 	now time.Time
 
 	globalPath string

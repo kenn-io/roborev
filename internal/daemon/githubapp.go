@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -52,7 +53,7 @@ func NewGitHubAppTokenProvider(appID int64, pemData string) (*GitHubAppTokenProv
 
 // TokenForInstallation returns a valid access token for the given installation,
 // refreshing if needed.
-func (p *GitHubAppTokenProvider) TokenForInstallation(installationID int64) (string, error) {
+func (p *GitHubAppTokenProvider) TokenForInstallation(ctx context.Context, installationID int64) (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -68,7 +69,7 @@ func (p *GitHubAppTokenProvider) TokenForInstallation(installationID int64) (str
 		return "", fmt.Errorf("sign JWT: %w", err)
 	}
 
-	token, expires, err := p.exchangeToken(jwt, installationID)
+	token, expires, err := p.exchangeToken(ctx, jwt, installationID)
 	if err != nil {
 		return "", fmt.Errorf("exchange token: %w", err)
 	}
@@ -103,14 +104,14 @@ type installationTokenResponse struct {
 }
 
 // exchangeToken exchanges a JWT for an installation access token.
-func (p *GitHubAppTokenProvider) exchangeToken(jwt string, installationID int64) (string, time.Time, error) {
+func (p *GitHubAppTokenProvider) exchangeToken(ctx context.Context, jwt string, installationID int64) (string, time.Time, error) {
 	baseURL := p.baseURL
 	if baseURL == "" {
 		baseURL = "https://api.github.com"
 	}
 
 	url := fmt.Sprintf("%s/app/installations/%d/access_tokens", baseURL, installationID)
-	req, err := http.NewRequest("POST", url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
 	if err != nil {
 		return "", time.Time{}, err
 	}

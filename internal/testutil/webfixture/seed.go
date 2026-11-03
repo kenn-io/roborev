@@ -2,6 +2,7 @@
 package webfixture
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
@@ -49,7 +50,7 @@ type fixtureJob struct {
 
 // Seed initializes path with the production storage schema and representative
 // review data. It refuses to add fixtures to a database that already has rows.
-func Seed(path string) (returnErr error) {
+func Seed(ctx context.Context, path string) (returnErr error) {
 	db, err := storage.Open(path)
 	if err != nil {
 		return fmt.Errorf("open fixture database: %w", err)
@@ -61,37 +62,37 @@ func Seed(path string) (returnErr error) {
 	}()
 
 	var existing int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM repos`).Scan(&existing); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM repos`).Scan(&existing); err != nil {
 		return fmt.Errorf("check fixture database: %w", err)
 	}
 	if existing != 0 {
 		return errors.New("database already contains fixture data")
 	}
 
-	tx, err := db.Begin()
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin fixture transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if err := insertRepos(tx); err != nil {
+	if err := insertRepos(ctx, tx); err != nil {
 		return err
 	}
 	jobs := fixtureJobs()
-	if err := insertCommits(tx, jobs); err != nil {
+	if err := insertCommits(ctx, tx, jobs); err != nil {
 		return err
 	}
 	for _, job := range jobs {
-		if err := insertJob(tx, job); err != nil {
+		if err := insertJob(ctx, tx, job); err != nil {
 			return err
 		}
 		if job.verdict != nil {
-			if err := insertReview(tx, job); err != nil {
+			if err := insertReview(ctx, tx, job); err != nil {
 				return err
 			}
 		}
 	}
-	if err := insertComments(tx); err != nil {
+	if err := insertComments(ctx, tx); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -100,7 +101,7 @@ func Seed(path string) (returnErr error) {
 	return nil
 }
 
-func insertRepos(tx *sql.Tx) error {
+func insertRepos(ctx context.Context, tx *sql.Tx) error {
 	repos := []struct {
 		id   int
 		root string
@@ -110,7 +111,7 @@ func insertRepos(tx *sql.Tx) error {
 		{2, "/workspace/project-beta", "project-beta"},
 	}
 	for _, repo := range repos {
-		_, err := tx.Exec(`
+		_, err := tx.ExecContext(ctx, `
 			INSERT INTO repos (id, root_path, name, identity, created_at)
 			VALUES (?, ?, ?, ?, ?)`,
 			repo.id, repo.root, repo.name, "fixture:"+repo.name,
@@ -123,10 +124,10 @@ func insertRepos(tx *sql.Tx) error {
 	return nil
 }
 
-func insertCommits(tx *sql.Tx, jobs []fixtureJob) error {
+func insertCommits(ctx context.Context, tx *sql.Tx, jobs []fixtureJob) error {
 	for _, job := range jobs {
 		stamp := jobTime(job.id)
-		_, err := tx.Exec(`
+		_, err := tx.ExecContext(ctx, `
 			INSERT INTO commits
 				(id, repo_id, sha, author, subject, timestamp, created_at)
 			VALUES (?, ?, ?, 'Fixture Author', ?, ?, ?)`,
@@ -141,7 +142,7 @@ func insertCommits(tx *sql.Tx, jobs []fixtureJob) error {
 	return nil
 }
 
-func insertJob(tx *sql.Tx, job fixtureJob) error {
+func insertJob(ctx context.Context, tx *sql.Tx, job fixtureJob) error {
 	enqueued := jobTime(job.id)
 	var started, finished, failure any
 	switch job.status {
@@ -178,7 +179,7 @@ func insertJob(tx *sql.Tx, job fixtureJob) error {
 		panelIndex = *job.panelIndex
 	}
 
-	_, err := tx.Exec(`
+	_, err := tx.ExecContext(ctx, `
 		INSERT INTO review_jobs (
 			id, repo_id, commit_id, git_ref, branch, agent, model,
 			status, enqueued_at, started_at, finished_at, error,
@@ -203,7 +204,7 @@ func insertJob(tx *sql.Tx, job fixtureJob) error {
 	return nil
 }
 
-func insertReview(tx *sql.Tx, job fixtureJob) error {
+func insertReview(ctx context.Context, tx *sql.Tx, job fixtureJob) error {
 	closed := 0
 	if job.closed {
 		closed = 1
@@ -241,11 +242,11 @@ func insertReview(tx *sql.Tx, job fixtureJob) error {
 		return fmt.Errorf("encode review for job %d: %w", job.id, err)
 	}
 	created := jobTime(job.id).Add(10 * time.Minute).Format(sqliteTime)
-	_, err = tx.Exec(`INSERT INTO job_content (job_id, prompt) VALUES (?, zstd_compress('Review the fixture change'))`, job.id)
+	_, err = tx.ExecContext(ctx, `INSERT INTO job_content (job_id, prompt) VALUES (?, zstd_compress('Review the fixture change'))`, job.id)
 	if err != nil {
 		return fmt.Errorf("insert prompt for job %d: %w", job.id, err)
 	}
-	_, err = tx.Exec(`
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO reviews
 			(job_id, agent, structured_output, output, created_at, closed,
 			 verdict_bool, uuid, updated_at)
@@ -259,7 +260,7 @@ func insertReview(tx *sql.Tx, job fixtureJob) error {
 	return nil
 }
 
-func insertComments(tx *sql.Tx) error {
+func insertComments(ctx context.Context, tx *sql.Tx) error {
 	comments := []struct {
 		responder string
 		body      string
@@ -269,7 +270,7 @@ func insertComments(tx *sql.Tx) error {
 	}
 	for index, comment := range comments {
 		created := jobTime(int(CommentJobID)).Add(time.Duration(12+index) * time.Minute)
-		_, err := tx.Exec(`
+		_, err := tx.ExecContext(ctx, `
 			INSERT INTO responses
 				(job_id, responder, response, created_at, uuid)
 			VALUES (?, ?, ?, ?, ?)`,

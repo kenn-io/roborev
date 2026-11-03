@@ -72,6 +72,7 @@ type streamingCLISpec struct {
 	Args          []string
 	Dir           string
 	Env           []string
+	Cancel        func() error
 	Stdin         io.Reader
 	Output        io.Writer
 	StreamStderr  bool
@@ -92,6 +93,9 @@ func runStreamingCLI(ctx context.Context, spec streamingCLISpec) (streamingCLIRe
 	var result streamingCLIResult
 
 	cmd := exec.CommandContext(ctx, spec.Command, spec.Args...)
+	if spec.Cancel != nil {
+		cmd.Cancel = spec.Cancel
+	}
 	cmd.Dir = spec.Dir
 	if spec.Env != nil {
 		cmd.Env = append([]string(nil), spec.Env...)

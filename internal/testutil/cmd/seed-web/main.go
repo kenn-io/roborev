@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -22,7 +23,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "seed-web: resolve output path: %v\n", err)
 		os.Exit(1)
 	}
-	if err := webfixture.Seed(path); err != nil {
+	if err := webfixture.Seed(context.Background(), path); err != nil {
 		fmt.Fprintf(os.Stderr, "seed-web: %v\n", err)
 		os.Exit(1)
 	}

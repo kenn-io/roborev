@@ -83,6 +83,7 @@ type ghPR struct {
 	Author      ghPRAuthor `json:"author"`
 	// AuthorAssociation is GitHub's author_association for the PR author.
 	AuthorAssociation string   `json:"authorAssociation"`
+	Draft             bool     `json:"draft"`
 	Labels            []string `json:"labels"`
 }
 
@@ -95,6 +96,7 @@ type panelPostTarget struct {
 	Body              string
 	AuthorLogin       string
 	AuthorAssociation string
+	Draft             bool
 	Labels            []string
 }
 
@@ -158,11 +160,16 @@ type CIPoller struct {
 	stopping           bool
 	pollStopping       bool
 	eventsStopping     bool
+	skipPublished      map[ciSkipKey]string             // guarded by mu
 	pollErrors         map[ciPollTarget]ciPollFailure   // guarded by mu
 	monitoredRepos     []string                         // last successful discovery; guarded by mu
 	dispatchingRetries map[ciPollTarget]int             // live retry enqueue owners; guarded by mu
 	codeowners         map[ciCodeownersKey]ciCodeowners // CODEOWNERS reads per repo and base branch for the current poll; guarded by mu
 	initialPollPending bool                             // guarded by mu; startup has not established health yet
+}
+
+type ciSkipKey struct {
+	repo, sha, channel string // channel is "check" or "status"
 }
 
 type ciCodeownersKey struct {
@@ -208,6 +215,7 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 		discordNowFn:       time.Now,
 		nowFn:              time.Now,
 		pollErrors:         make(map[ciPollTarget]ciPollFailure),
+		skipPublished:      make(map[ciSkipKey]string),
 		dispatchingRetries: make(map[ciPollTarget]int),
 		codeowners:         make(map[ciCodeownersKey]ciCodeowners),
 	}
@@ -504,6 +512,11 @@ func (p *CIPoller) poll(ctx context.Context) {
 		// Only a complete discovery can confirm a failed repository was removed.
 		p.mu.Lock()
 		p.monitoredRepos = slices.Clone(repos)
+		for key := range p.skipPublished {
+			if !slices.Contains(repos, key.repo) {
+				delete(p.skipPublished, key)
+			}
+		}
 		for target := range p.pollErrors {
 			if !slices.Contains(repos, target.repo) {
 				delete(p.pollErrors, target)
@@ -533,9 +546,18 @@ func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Conf
 
 	// Build the open-PR set for the panel lifecycle sweeps below.
 	openPRs := make(map[int]bool, len(prs))
+	openHeads := make(map[string]bool, len(prs))
 	for _, pr := range prs {
 		openPRs[pr.Number] = true
+		openHeads[pr.HeadRefOid] = true
 	}
+	p.mu.Lock()
+	for key := range p.skipPublished {
+		if key.repo == ghRepo && !openHeads[key.sha] {
+			delete(p.skipPublished, key)
+		}
+	}
+	p.mu.Unlock()
 
 	// Panel lifecycle sweeps: cancel runs whose PR has closed, and tag-and-cancel
 	// hung members of runs that exceeded the timeout so their synthesis can post
@@ -884,8 +906,12 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 		return false, err
 	}
 	if selection.Assignment != nil {
+		plan, planErr := experimentPlanForPanel(memberOpts, synthOpts)
+		if planErr != nil {
+			return false, planErr
+		}
 		assignment, assignErr := storageAssignmentForExperiment(
-			selection.Assignment, experimentPlanForPanel(memberOpts, synthOpts),
+			selection.Assignment, plan,
 		)
 		if assignErr != nil {
 			return false, fmt.Errorf("fingerprint experiment plan: %w", assignErr)
@@ -949,10 +975,13 @@ type ciSkip struct {
 	reason      string // log detail
 }
 
-// ciPRSkip reports whether the [ci] skip_labels, author, or branch filters
+// ciPRSkip reports whether the [ci] draft, label, author, or branch filters
 // exclude this PR from review. It returns an error, and no decision, when it
 // cannot read CODEOWNERS for the allow_codeowners check.
 func (p *CIPoller) ciPRSkip(ctx context.Context, ghRepo string, pr ghPR, ci *config.CIConfig) (ciSkip, bool, error) {
+	if ci.SkipDrafts && pr.Draft {
+		return ciSkip{description: ciDraftSkipReason, reason: "it is a draft pull request"}, true, nil
+	}
 	if label, skip := matchingCISkipLabel(pr.Labels, ci.SkipLabels); skip {
 		return ciSkip{
 			description: fmt.Sprintf("Review skipped: label %s", label),
@@ -1021,6 +1050,14 @@ func (p *CIPoller) readCodeowners(ctx context.Context, ghRepo, ref string) (map[
 	return client.CodeownerLogins(ctx, ghRepo, ref)
 }
 
+// skipPR publishes a skipped result for this PR head instead of reviewing it.
+//
+// GitHub attaches the roborev check and commit status to the commit, not the
+// PR, so a skip also appears on every other open PR with the same head commit,
+// including one whose review is pending or failed. This is accepted design for
+// every skip reason (draft, label, author, branch), not a defect: the skip path
+// does not coordinate status publication across PRs that share a commit. Do not
+// add a shared-commit guard here without the maintainers asking for one.
 func (p *CIPoller) skipPR(ghRepo string, pr ghPR, skip ciSkip, expected *storage.ReviewAttempt) error {
 	panelID, err := p.db.ClaimPanelForSkip(ghRepo, pr.Number, pr.HeadRefOid, expected)
 	if err != nil {
@@ -1048,19 +1085,6 @@ func (p *CIPoller) skipPR(ghRepo string, pr ghPR, skip ciSkip, expected *storage
 	}
 	p.recordPollResult(ghRepo, pr.Number, pr.HeadRefOid, nil)
 	return nil
-}
-
-func matchingCISkipLabel(prLabels, skipLabels []string) (string, bool) {
-	for _, label := range prLabels {
-		label = strings.TrimSpace(label)
-		for _, configured := range skipLabels {
-			configured = strings.TrimSpace(configured)
-			if configured != "" && strings.EqualFold(label, configured) {
-				return label, true
-			}
-		}
-	}
-	return "", false
 }
 
 // loadCIRepoConfigFor loads typed and raw repo config through one loader. A
@@ -1622,7 +1646,7 @@ func (p *CIPoller) maybeAppendDesignMember(
 	}
 	hh := autotype.Heuristics(h)
 
-	shas, err := listCommitsInRange(repo.RootPath, mergeBase, headSHA)
+	shas, err := listCommitsInRange(ctx, repo.RootPath, mergeBase, headSHA)
 	if err != nil {
 		log.Printf("CI poller: list commits in range failed (%v); falling back to head SHA only", err)
 		shas = []string{headSHA}
@@ -1676,22 +1700,22 @@ func (p *CIPoller) maybeAppendDesignMember(
 func (p *CIPoller) commitWarrantsDesign(
 	ctx context.Context, repoPath, sha string, hh autotype.Heuristics,
 ) bool {
-	files, filesErr := gitpkg.GetFilesChanged(repoPath, sha)
-	diff, diffErr := gitpkg.GetDiff(repoPath, sha)
+	files, filesErr := gitpkg.GetFilesChangedCtx(ctx, repoPath, sha)
+	diff, diffErr := gitpkg.GetDiffCtx(ctx, repoPath, sha)
 	if filesErr != nil || diffErr != nil {
 		// Missing inputs would otherwise produce a bogus "trivial diff" skip;
 		// fail open to a design review rather than risk dropping one.
 		return true
 	}
 	subject := ""
-	if info, err := gitpkg.GetCommitInfo(repoPath, sha); err == nil && info != nil {
+	if info, err := gitpkg.GetCommitInfoCtx(ctx, repoPath, sha); err == nil && info != nil {
 		subject = info.Subject
 	}
 	in := autotype.Input{
 		RepoPath:     repoPath,
 		GitRef:       sha,
 		Diff:         diff,
-		Message:      classifierCommitMessage(repoPath, sha, subject),
+		Message:      classifierCommitMessage(ctx, repoPath, sha, subject),
 		ChangedFiles: files,
 	}
 	d, err := autotype.Classify(ctx, in, hh, autotype.ErrOnClassifier{})
@@ -1812,7 +1836,20 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 			"snapshot synthesis ACP config: %w", err,
 		)
 	}
+	var check *ciCheckConfig
+	if config.ResolveCICheck(in.repoCfg, in.cfg) {
+		reasoning, err := config.NormalizeReasoning(in.cfg.CI.CheckReasoning)
+		if err != nil {
+			return nil, storage.EnqueueOpts{}, fmt.Errorf("resolve CI checker reasoning: %w", err)
+		}
+		check = &ciCheckConfig{Model: in.cfg.CI.CheckModel, Reasoning: reasoning}
+		if config.ResolveCIRewrite(in.repoCfg, in.cfg) {
+			check.Rewrite = true
+			check.PullRequest = prompt.PullRequestBlock(in.pullRequest)
+		}
+	}
 	synthSnapshot, err := synthesisJobConfig{
+		Check:        check,
 		ACP:          synthACP,
 		Instructions: in.synth.Instructions,
 	}.encode()
@@ -1840,8 +1877,8 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 	return memberOpts, synthOpts, nil
 }
 
-func listCommitsInRange(repoPath, base, head string) ([]string, error) {
-	cmd := exec.Command("git", "rev-list", "--reverse", base+".."+head)
+func listCommitsInRange(ctx context.Context, repoPath, base, head string) ([]string, error) {
+	cmd := exec.CommandContext(ctx, "git", "rev-list", "--reverse", base+".."+head)
 	procutil.HideConsole(cmd)
 	cmd.Dir = repoPath
 	out, err := cmd.Output()
@@ -1866,7 +1903,7 @@ func listCommitsInRange(repoPath, base, head string) ([]string, error) {
 func (p *CIPoller) findOrCloneRepo(
 	ctx context.Context, ghRepo string,
 ) (*storage.Repo, error) {
-	repo, err := p.findLocalRepo(ghRepo)
+	repo, err := p.findLocalRepo(ctx, ghRepo)
 	if err == nil {
 		return repo, nil
 	}
@@ -1881,7 +1918,7 @@ func (p *CIPoller) findOrCloneRepo(
 // findLocalRepo finds the local repo that corresponds to a GitHub "owner/repo" identifier.
 // It looks for repos whose identity contains the owner/repo pattern.
 // Matching is case-insensitive since GitHub owner/repo names are case-insensitive.
-func (p *CIPoller) findLocalRepo(ghRepo string) (*storage.Repo, error) {
+func (p *CIPoller) findLocalRepo(ctx context.Context, ghRepo string) (*storage.Repo, error) {
 	// Try common identity patterns (case-insensitive via DB query):
 	// - git@github.com:owner/repo.git
 	// - https://github.com/owner/repo.git
@@ -1909,7 +1946,7 @@ func (p *CIPoller) findLocalRepo(ghRepo string) (*storage.Repo, error) {
 	}
 
 	// Fall back: search all repos and check if identity ends with owner/repo
-	return p.findRepoByPartialIdentity(ghRepo)
+	return p.findRepoByPartialIdentity(ctx, ghRepo)
 }
 
 // ensureClone clones a GitHub repo into {DataDir}/clones/{owner}/{repo}
@@ -1937,7 +1974,7 @@ func (p *CIPoller) ensureClone(
 	} else if err != nil {
 		return nil, fmt.Errorf("stat clone path %s: %w", clonePath, err)
 	} else {
-		needsClone, err = cloneNeedsReplace(clonePath, ghRepo, p.githubAPIBaseURL())
+		needsClone, err = cloneNeedsReplace(ctx, clonePath, ghRepo, p.githubAPIBaseURL())
 		if err != nil {
 			return nil, err
 		}
@@ -1974,7 +2011,7 @@ func (p *CIPoller) ensureClone(
 		)
 	}
 
-	if err := ensureCloneRemoteURL(clonePath, ghRepo, p.githubAPIBaseURL()); err != nil {
+	if err := ensureCloneRemoteURL(ctx, clonePath, ghRepo, p.githubAPIBaseURL()); err != nil {
 		return nil, fmt.Errorf("sanitize clone remote for %s: %w", ghRepo, err)
 	}
 
@@ -2003,11 +2040,16 @@ func isValidRepoSegment(s string) bool {
 // and re-cloned. Returns (true, nil) if the path is not a valid git
 // repo or has a confirmed remote mismatch. Returns (false, err) on
 // operational errors to avoid destructive action on transient failures.
-func cloneNeedsReplace(path, ghRepo, rawBaseURL string) (bool, error) {
-	if !isValidGitRepo(path) {
+func cloneNeedsReplace(ctx context.Context, path, ghRepo, rawBaseURL string) (bool, error) {
+	if !isValidGitRepo(ctx, path) {
+		// A canceled context also makes the git probe fail; that says
+		// nothing about the clone, so it must not authorize deletion.
+		if err := ctx.Err(); err != nil {
+			return false, fmt.Errorf("validate clone at %s: %w", path, err)
+		}
 		return true, nil
 	}
-	matches, err := cloneRemoteMatches(path, ghRepo, rawBaseURL)
+	matches, err := cloneRemoteMatches(ctx, path, ghRepo, rawBaseURL)
 	if err != nil {
 		return false, err
 	}
@@ -2015,8 +2057,9 @@ func cloneNeedsReplace(path, ghRepo, rawBaseURL string) (bool, error) {
 }
 
 // isValidGitRepo checks whether a path is a usable git working tree.
-func isValidGitRepo(path string) bool {
-	cmd := exec.Command(
+func isValidGitRepo(ctx context.Context, path string) bool {
+	cmd := exec.CommandContext(
+		ctx,
 		"git", "-C", path, "rev-parse", "--is-inside-work-tree",
 	)
 	procutil.HideConsole(cmd)
@@ -2033,11 +2076,12 @@ func isValidGitRepo(path string) bool {
 // Two-step approach: "git config --get" for locale-independent
 // origin-existence check (exit 1 = missing key), then
 // "git remote get-url" for the resolved URL (handles insteadOf).
-func cloneRemoteMatches(path, ghRepo, rawBaseURL string) (bool, error) {
+func cloneRemoteMatches(ctx context.Context, path, ghRepo, rawBaseURL string) (bool, error) {
 	// Step 1: check origin existence (locale-independent exit code).
 	// Use --local to avoid matching global/system config that could
 	// define remote.origin.url outside this repo.
-	cfgCmd := exec.Command(
+	cfgCmd := exec.CommandContext(
+		ctx,
 		"git", "-C", path,
 		"config", "--local", "--get", "remote.origin.url",
 	)
@@ -2072,7 +2116,8 @@ func cloneRemoteMatches(path, ghRepo, rawBaseURL string) (bool, error) {
 	}
 
 	// Step 2: get the resolved URL (expands insteadOf rewrites).
-	urlCmd := exec.Command(
+	urlCmd := exec.CommandContext(
+		ctx,
 		"git", "-C", path, "remote", "get-url", "origin",
 	)
 	procutil.HideConsole(urlCmd)
@@ -2086,13 +2131,13 @@ func cloneRemoteMatches(path, ghRepo, rawBaseURL string) (bool, error) {
 	return strings.EqualFold(got, ghRepo), nil
 }
 
-func ensureCloneRemoteURL(path, ghRepo, rawBaseURL string) error {
+func ensureCloneRemoteURL(ctx context.Context, path, ghRepo, rawBaseURL string) error {
 	want, err := ghpkg.CloneURLForBase(ghRepo, rawBaseURL)
 	if err != nil {
 		return err
 	}
 
-	cmd := exec.Command("git", "-C", path, "remote", "get-url", "origin")
+	cmd := exec.CommandContext(ctx, "git", "-C", path, "remote", "get-url", "origin")
 	procutil.HideConsole(cmd)
 	out, err := cmd.Output()
 	if err != nil {
@@ -2106,7 +2151,7 @@ func ensureCloneRemoteURL(path, ghRepo, rawBaseURL string) error {
 		return fmt.Errorf("origin %q does not match %s", redactRemoteURL(current), ghRepo)
 	}
 
-	cmd = exec.Command("git", "-C", path, "remote", "set-url", "origin", want)
+	cmd = exec.CommandContext(ctx, "git", "-C", path, "remote", "set-url", "origin", want)
 	procutil.HideConsole(cmd)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("set origin URL for %s: %w: %s", path, err, string(out))
@@ -2204,8 +2249,8 @@ func (p *CIPoller) callGitClone(
 // findRepoByPartialIdentity searches repos for a matching GitHub owner/repo pattern.
 // Matching is case-insensitive since GitHub owner/repo names are case-insensitive.
 // Returns an ambiguity error if multiple repos match.
-func (p *CIPoller) findRepoByPartialIdentity(ghRepo string) (*storage.Repo, error) {
-	rows, err := p.db.Query(`SELECT id, root_path, name, created_at, identity FROM repos WHERE identity IS NOT NULL AND identity != ''`)
+func (p *CIPoller) findRepoByPartialIdentity(ctx context.Context, ghRepo string) (*storage.Repo, error) {
+	rows, err := p.db.QueryContext(ctx, `SELECT id, root_path, name, created_at, identity FROM repos WHERE identity IS NOT NULL AND identity != ''`)
 	if err != nil {
 		return nil, err
 	}
@@ -2321,6 +2366,9 @@ func defaultPortForScheme(scheme string) string {
 }
 
 func (p *CIPoller) githubTokenForRepo(ghRepo string) string {
+	// The GitHub client helpers that call this do not carry the poll context
+	// yet, so token exchange and lookup start their own.
+	ctx := context.Background()
 	// Extract owner from "owner/repo"
 	owner, _, _ := strings.Cut(ghRepo, "/")
 	if p.tokenProvider != nil {
@@ -2328,14 +2376,14 @@ func (p *CIPoller) githubTokenForRepo(ghRepo string) string {
 		installationID := cfg.CI.InstallationIDForOwner(owner)
 		if installationID == 0 {
 			log.Printf("CI poller: no installation ID for owner %q, using fallback GitHub token", owner)
-		} else if token, err := p.tokenProvider.TokenForInstallation(installationID); err != nil {
+		} else if token, err := p.tokenProvider.TokenForInstallation(ctx, installationID); err != nil {
 			log.Printf("CI poller: WARNING: GitHub App token failed for %q, falling back to environment token: %v", owner, err)
 		} else {
 			return token
 		}
 	}
 	host, _ := gitHostForBaseURL(p.githubAPIBaseURL())
-	return ghpkg.ResolveAuthToken(context.Background(), ghpkg.EnvironmentToken(), host)
+	return ghpkg.ResolveAuthToken(ctx, ghpkg.EnvironmentToken(), host)
 }
 
 func (p *CIPoller) gitEnvForRepo(ghRepo string) []string {
@@ -2379,6 +2427,7 @@ func (p *CIPoller) listOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, erro
 			Body:              pr.Body,
 			Author:            ghPRAuthor{Login: pr.AuthorLogin},
 			AuthorAssociation: pr.AuthorAssociation,
+			Draft:             pr.Draft,
 			Labels:            pr.Labels,
 		})
 	}
@@ -2877,7 +2926,8 @@ func (p *CIPoller) panelCommentBody(row *storage.CIPanel, members []storage.Batc
 	if err != nil || rev == nil {
 		return raw(), nil // review unexpectedly missing -> raw fallback
 	}
-	includeCosts := p.resolveIncludeCosts(row.GithubRepo)
+	// Panel comment rendering has no caller context yet.
+	includeCosts := p.resolveIncludeCosts(context.Background(), row.GithubRepo)
 	verdict := rev.Verdict()
 	return formatPanelPRCommentWithHead(
 		commentConfig, rev, string(verdict), members, includeCosts, row.HeadSHA,
@@ -3317,6 +3367,7 @@ func (p *CIPoller) retryAttemptPR(
 		BaseRefName: baseRefName,
 		Title:       target.Title,
 		Body:        target.Body,
+		Draft:       target.Draft,
 		Labels:      target.Labels,
 		// Preserve the author so the [ci] author filter does not skip
 		// trusted authors on the retry path.
@@ -3719,13 +3770,39 @@ func (p *CIPoller) callPostPRComment(ghRepo string, prNumber int, body string) e
 }
 
 func (p *CIPoller) callSetCommitStatus(ghRepo, sha, state, description string) error {
+	p.mu.Lock()
+	delete(p.skipPublished, ciSkipKey{ghRepo, sha, "status"})
+	p.mu.Unlock()
 	if p.setCommitStatusFn != nil {
 		return p.setCommitStatusFn(ghRepo, sha, state, description)
 	}
 	return p.setCommitStatus(ghRepo, sha, state, description)
 }
 
-func (p *CIPoller) callSetSkippedCommitStatus(ghRepo, sha, description string) error {
+// startSkipPublish reports false when value is what this daemon last published
+// for key. Otherwise it forgets key until the returned func sees a nil error.
+func (p *CIPoller) startSkipPublish(key ciSkipKey, value string) (func(error), bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if published, ok := p.skipPublished[key]; ok && published == value {
+		return nil, false
+	}
+	delete(p.skipPublished, key)
+	return func(err error) {
+		if err == nil {
+			p.mu.Lock()
+			p.skipPublished[key] = value
+			p.mu.Unlock()
+		}
+	}, true
+}
+
+func (p *CIPoller) callSetSkippedCommitStatus(ghRepo, sha, description string) (err error) {
+	done, ok := p.startSkipPublish(ciSkipKey{ghRepo, sha, "status"}, description)
+	if !ok {
+		return nil
+	}
+	defer func() { done(err) }()
 	if p.setCommitStatusFn != nil {
 		return p.setCommitStatusFn(ghRepo, sha, "success", description)
 	}
@@ -3739,7 +3816,12 @@ func (p *CIPoller) callSetSkippedCommitStatus(ghRepo, sha, description string) e
 	return client.EnsureSkippedCommitStatus(context.Background(), ghRepo, sha, description)
 }
 
-func (p *CIPoller) callSetSkippedCheck(ghRepo, sha, summary string) error {
+func (p *CIPoller) callSetSkippedCheck(ghRepo, sha, summary string) (err error) {
+	done, ok := p.startSkipPublish(ciSkipKey{ghRepo, sha, "check"}, summary)
+	if !ok {
+		return nil
+	}
+	defer func() { done(err) }()
 	if p.setSkippedCheckFn != nil {
 		return p.setSkippedCheckFn(ghRepo, sha, summary)
 	}
@@ -3809,6 +3891,7 @@ func (p *CIPoller) panelPostTarget(
 		Body:              pr.Body,
 		AuthorLogin:       pr.AuthorLogin,
 		AuthorAssociation: pr.AuthorAssociation,
+		Draft:             pr.Draft,
 		Labels:            pr.Labels,
 	}, nil
 }
@@ -4268,9 +4351,9 @@ func formatPanelTotal(synth *storage.ReviewJob, members []storage.BatchReviewRes
 
 	if includeCosts {
 		cost, priced, total := panelTotalCost(synth, members)
-		switch priced {
-		case 0:
-		case total:
+		switch {
+		case priced == 0 && cost == 0:
+		case priced == total:
 			parts = append(parts, tokens.Usage{CostUSD: cost, HasCost: true}.FormatCost())
 		default:
 			parts = append(parts, "cost partial "+tokens.Usage{CostUSD: cost, HasCost: true}.FormatCost())
@@ -4284,23 +4367,23 @@ func formatPanelTotal(synth *storage.ReviewJob, members []storage.BatchReviewRes
 }
 
 func panelTotalCost(synth *storage.ReviewJob, members []storage.BatchReviewResult) (float64, int, int) {
-	total := len(members)
-	var cost float64
-	priced := 0
+	usages := make([]string, 0, len(members)+1)
 	if synth != nil {
-		total++
-		if usage := tokens.ParseJSON(synth.TokenUsage); usage != nil && usage.HasCost {
-			cost += usage.CostUSD
-			priced++
-		}
+		usages = append(usages, synth.TokenUsage)
 	}
 	for _, m := range members {
-		if usage := tokens.ParseJSON(m.TokenUsage); usage != nil && usage.HasCost {
+		usages = append(usages, m.TokenUsage)
+	}
+	cost, priced := 0.0, 0
+	for _, raw := range usages {
+		if usage := tokens.ParseJSON(raw); usage != nil && usage.HasCost {
 			cost += usage.CostUSD
-			priced++
+			if usage.CostComplete() {
+				priced++
+			}
 		}
 	}
-	return cost, priced, total
+	return cost, priced, len(usages)
 }
 
 func formatRuntime(startedAt, finishedAt *time.Time) string {
@@ -4357,7 +4440,7 @@ func (p *CIPoller) postPRComment(ghRepo string, prNumber int, body string) error
 	if err != nil {
 		return err
 	}
-	if p.resolveUpsertComments(ghRepo) {
+	if p.resolveUpsertComments(ctx, ghRepo) {
 		return client.UpsertPRComment(ctx, ghRepo, prNumber, body)
 	}
 	return client.CreatePRComment(ctx, ghRepo, prNumber, body)
@@ -4365,8 +4448,8 @@ func (p *CIPoller) postPRComment(ghRepo string, prNumber int, body string) error
 
 // resolveUpsertComments determines whether to upsert PR comments
 // for the given repo. Per-repo config takes priority over global.
-func (p *CIPoller) resolveUpsertComments(ghRepo string) bool {
-	repo, err := p.findLocalRepo(ghRepo)
+func (p *CIPoller) resolveUpsertComments(ctx context.Context, ghRepo string) bool {
+	repo, err := p.findLocalRepo(ctx, ghRepo)
 	if err == nil && repo != nil {
 		repoConfig, err := loadCIRepoConfig(repo.RootPath)
 		if err == nil && repoConfig.Config != nil &&
@@ -4379,9 +4462,9 @@ func (p *CIPoller) resolveUpsertComments(ghRepo string) bool {
 
 // resolveIncludeCosts determines whether CI PR comments should include token
 // cost estimates for the given repo. Per-repo config takes priority over global.
-func (p *CIPoller) resolveIncludeCosts(ghRepo string) bool {
+func (p *CIPoller) resolveIncludeCosts(ctx context.Context, ghRepo string) bool {
 	var repoCfg *config.RepoConfig
-	repo, err := p.findLocalRepo(ghRepo)
+	repo, err := p.findLocalRepo(ctx, ghRepo)
 	if err == nil && repo != nil {
 		if loaded, loadErr := loadCIRepoConfig(repo.RootPath); loadErr == nil {
 			repoCfg = loaded.Config

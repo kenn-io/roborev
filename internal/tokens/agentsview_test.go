@@ -38,7 +38,7 @@ func TestAgentsViewRawID(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	usage, err := FetchForSessionWithConfig(context.Background(), "raw-id", FetchConfig{AgentsViewURL: srv.URL + "/base", AgentsViewToken: "fixture-token"})
+	usage, err := FetchForSessionWithConfig(t.Context(), "raw-id", FetchConfig{AgentsViewURL: srv.URL + "/base", AgentsViewToken: "fixture-token"})
 	require.NoError(t, err)
 	require.NotNil(t, usage)
 	assert.InDelta(t, 1.25, usage.CostUSD, 1e-9)
@@ -88,7 +88,7 @@ func TestAgentsViewResponses(t *testing.T) {
 				}
 			}))
 			defer srv.Close()
-			usage, err := FetchForSessionWithConfig(context.Background(), "raw-id", FetchConfig{AgentsViewURL: srv.URL, AgentsViewToken: "fixture-token", RequireCLI: true})
+			usage, err := FetchForSessionWithConfig(t.Context(), "raw-id", FetchConfig{AgentsViewURL: srv.URL, AgentsViewToken: "fixture-token", RequireCLI: true})
 			if tc.want != "" {
 				require.ErrorContains(t, err, tc.want)
 				assert.NotContains(t, err.Error(), "private-server-body")

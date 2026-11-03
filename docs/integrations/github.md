@@ -41,8 +41,9 @@ completed while the job was queued.
 
 ## Monitor review load
 
-Run `roborev summary --all --since 7d` to inspect panel counts, retirement
-reasons, runs per PR, posting turnaround, and recorded cost with coverage. The
+Run `roborev report summary --all --since 7d` to inspect panel counts,
+retirement reasons, runs per PR and each PR's busiest hour, posting turnaround,
+and recorded cost with coverage. The
 [CI run health summary](/docs/commands/#ci-run-health) explains the cohorts and
 how unavailable pricing or timing data is displayed. Use `--all` to include CI
 checkouts outside your current working repository.
@@ -51,12 +52,15 @@ checkouts outside your current working repository.
 
 Before enabling the CI poller, understand the following:
 
-- **The poller reviews ALL open PRs on first start.** It polls immediately on
-    startup, not after the first interval. If you have 20 open PRs, all 20 will
-    be enqueued for review right away. Subsequent polls only review PRs with new
-    commits (tracked by HEAD SHA in the local database).
-- **All open PRs are reviewed.** There is no filtering by draft status, labels,
-    or author. Draft PRs, bot PRs, and stale PRs all get reviewed.
+- **The poller reviews every eligible open PR on first start.** It polls
+    immediately on startup, not after the first interval. If you have 20
+    eligible open PRs, all 20 will be enqueued for review right away. Later
+    polls review eligible PR heads that have no review yet (tracked by HEAD SHA
+    in the local database). A head can become eligible without a new commit, for
+    example when a draft is marked ready or a skip label is removed.
+- **The poller reviews drafts by default.** Set global `[ci] skip_drafts = true`
+    to skip draft PRs, or configure `skip_labels` to skip PRs with matching
+    labels. The author and branch filters still apply to eligible PRs.
 - **CI settings are global by default, with per-repo overrides.** The `panel`,
     `agents`, `review_types`, and `model` in the global `[ci]` section apply to
     every repo unless overridden. Individual repos can override panels, agents,
@@ -151,8 +155,8 @@ Before enabling the CI poller, you need:
     what's available with:
 
     ```bash
-    roborev check-agents             # smoke-test all installed agents
-    roborev check-agents --agent codex  # test a specific agent
+    roborev agent check             # smoke-test all installed agents
+    roborev agent check --agent codex  # test a specific agent
     ```
 
     Or set a specific agent in the `[ci]` config (see below).
@@ -247,6 +251,7 @@ repos = ["myorg/myrepo"]
 agents = ["codex"]
 review_types = ["security"]
 skip_labels = ["skip-review"]
+skip_drafts = true # Optional; defaults to false
 
 # GitHub App authentication
 github_app_id = 123456
@@ -343,13 +348,27 @@ CI poller: GitHub App authentication enabled (app_id=123456)
 
 PR comments will now appear as **`your-app-name[bot]`**.
 
-When an open PR has a label listed in `skip_labels`, the CI poller does not
-create a review. With GitHub App authentication, it creates a roborev check with
-a `skipped` conclusion and a message that names the matching label. Label
-matching is case-insensitive. Removing the label lets the poller review the
-current PR head on its next pass. GitHub does not allow personal authentication
-to create check runs, so personal-auth setups suppress the review without
-publishing the skipped check.
+Set `[ci] skip_drafts = true` to skip draft PRs. This global option defaults to
+`false` and has no repository override. The poller also skips open PRs with
+labels listed in `skip_labels`; label matching is case-insensitive. If both
+apply, the draft reason takes precedence. A draft skip message is
+`Review skipped: draft`.
+
+When the poller publishes a skipped result, it always sets a roborev success
+commit status. GitHub App authentication also creates a roborev check with a
+`skipped` conclusion; personal authentication cannot, because GitHub does not
+allow it to create check runs. GitHub attaches checks and statuses to the
+commit, so the skip also appears on any other PR with the same head commit. An
+unchanged commit and skip reason are published once while the daemon runs, then
+checked again after a restart or a roborev status write to that commit; a skip
+changed outside roborev stays changed until then.
+
+Marking a draft ready, or removing the matching label, makes the same PR head
+eligible on the next poll without a push, subject to the existing throttle,
+quiet-hours, author, branch, and deduplication gates. Draft skipping does not
+cancel active reviews or replace completed reviews. Explicit reruns keep their
+existing behavior. A PR marked ready can retain its previous skip status until
+the poller next observes the change.
 
 ## Setup with Personal Auth
 
@@ -403,7 +422,7 @@ completes, you'll see:
 CI poller: posted review comment on myorg/myrepo#42 (job 123, verdict=P)
 ```
 
-Use `roborev status` to check the daemon and queue state at any time.
+Use `roborev daemon status` to check the daemon and queue state at any time.
 
 !!! note "CI reasoning level"
 
@@ -426,10 +445,11 @@ The status context is `roborev` and progresses through these states:
 | `failure` | At least one member failed to run for a genuine reason while another member still produced usable review output |
 | `error` | No reviewer produced usable output and no retry remains, or no agent is available |
 
-Skipped PRs, whether from `skip_labels` or the
-[author and branch filters](#filtering-which-prs-get-reviewed), use a GitHub
-check run instead of a commit status because commit statuses do not have a
-skipped state. The roborev check run completes with a `skipped` conclusion.
+Skipped PRs, whether from `skip_drafts`, `skip_labels`, or the
+[author and branch filters](#filtering-which-prs-get-reviewed), get a `success`
+commit status that names the skip reason, because commit statuses do not have a
+skipped state. With GitHub App authentication the poller also creates a roborev
+check run that completes with a `skipped` conclusion.
 
 Status checks require **Commit statuses: Read and write**. Skipped checks also
 require **Checks: Read and write**. The setup guide above includes both
@@ -743,6 +763,67 @@ of the global setting:
 upsert_comments = false   # Disable upsert for this repo even if globally enabled
 ```
 
+## Checking findings before posting
+
+Enable the checker to try synthesized findings in a disposable copy of the PR
+head before roborev stores and posts the review:
+
+```toml
+[ci]
+check = true
+check_model = "gpt-6.1-sol"
+check_reasoning = "high"
+```
+
+The checker is off by default. A repository can override `check` in its
+`.roborev.toml` on the default branch. Only the global config selects the model
+and reasoning. The checker uses the Codex command selected by `codex_cmd`. The
+daemon-free `roborev ci review` command ignores these checker settings. The
+checker accepts a native Linux Codex binary or the npm `@openai/codex` layout
+installed by mise, with its sibling `@openai/codex-linux-x64` native package.
+Other launchers and package layouts post reviews unchecked.
+
+The host needs Linux on amd64, the pinned nono build, a systemd user manager,
+Codex with a host login, Bash, and Python 3 at `/usr/bin/python3`. Go is needed
+to warm Go modules. See
+[sandboxed Codex runs](/docs/agents/#sandboxed-codex-runs) for the pinned nono
+build and host requirements.
+
+The checker works in its own clone of the PR checkout. The clone borrows the
+host clone's object store and none of its Git config, so the checker can't read
+credentials stored there. It has no submodules or Git LFS files. The host warms
+only the root `go.mod` in the original disposable checkout after making the
+clone. The root `go.mod` must be a regular file. Any root `go.sum`, `go.work`,
+or `go.work.sum` must also be a regular file; otherwise the review posts
+unchecked. Warming cannot change the code being checked. Nested modules and Go
+workspaces receive no separate warming; findings that need unavailable
+dependencies post unchecked. Inside the sandbox, the checker can change its
+scratch files and read the shared object store and warmed caches. Model calls
+use nono's credential route, which reads the host's current Codex login outside
+the sandbox. Tests that start loopback servers cannot run in this sandbox; the
+checker keeps findings it cannot try.
+
+A finding drops only when one verdict supplies evidence and a reason to drop it.
+Missing or duplicate verdicts keep the finding. The job log records the
+verdicts. If every finding drops, the stored review says "No issues found." A
+checker failure or timeout posts the original review unchanged.
+
+## Rewriting checked findings
+
+Set `[ci] rewrite = true` alongside `check = true` to post checked findings in
+plain words. Rewrite is off by default. A repository can override it in its
+`.roborev.toml` on the default branch. Enabling rewrite alone leaves checking
+disabled.
+
+After checking, two additional Codex calls use the checker model and reasoning
+in a fresh clone of the committed PR head. The sandbox grants read-only access
+to this clone, outside its writable directory. The first explains the problem
+for the PR author. The second separates the fix sentence from the code names
+listed after **Where:** on the same line. Only kept findings at the publication
+severity threshold are rewritten. Both calls receive the stored finding text and
+escaped PR title and body as context, without checker output. Either rewrite
+failing preserves the checked text, including checker drops.
+
 ## PR Throttling
 
 When contributors push frequently to the same PR, the poller can generate
@@ -881,6 +962,8 @@ set, it takes priority over the matrix fields for that repo.
 | `min_severity` | string | `"low"` | Lowest severity that fails the review: `low`, `medium`, `high`, or `critical`. Lower findings remain in stored reviews but are hidden in PR comments |
 | `upsert_comments` | bool | global `upsert_comments` | Override global comment upsert setting for this repo |
 | `include_costs` | bool | global `include_costs` | Include token cost estimates in PR comment footers for this repo |
+| `check` | bool | global `check` | Try synthesized findings before posting and keep those that hold up |
+| `rewrite` | bool | global `rewrite` | Rewrite checked findings in plain words; requires `check` |
 
 ## CI Options Reference
 
@@ -893,6 +976,7 @@ set, it takes priority over the matrix fields for that repo.
 | `repos` | array | `[]` | GitHub repos to poll in `"owner/repo"` format. Supports glob patterns (e.g. `"myorg/*"`, `"myorg/api-*"`). |
 | `exclude_repos` | array | `[]` | Glob patterns to exclude from the resolved repo list |
 | `skip_labels` | array | `[]` | GitHub PR labels that skip CI reviews (case-insensitive) |
+| `skip_drafts` | bool | `false` | Skip draft PRs; global only. Ready PRs become eligible next poll under the normal gates. |
 | `allowed_authors` | array | `[]` | GitHub logins whose PRs are reviewed (case-insensitive). See [Author filter](#author-filter). |
 | `allowed_author_associations` | array | `[]` | PR author associations that are reviewed, such as `OWNER`, `MEMBER`, `COLLABORATOR`. With `allowed_authors` also empty and `allow_codeowners` off, every author is reviewed. |
 | `allow_codeowners` | bool | `false` | Also review PRs from users the base branch's `CODEOWNERS` file names, directly or through a team. See [CODEOWNERS](#codeowners). |
@@ -910,6 +994,10 @@ set, it takes priority over the matrix fields for that repo.
 | `synthesis_agent` | string | | Agent for combining implicit matrix results |
 | `synthesis_backup_agent` | string | | Backup agent for implicit matrix synthesis when the primary fails |
 | `synthesis_model` | string | | Model override for implicit matrix synthesis |
+| `check` | bool | `false` | Try synthesized findings before posting |
+| `rewrite` | bool | `false` | Rewrite checked findings in plain words; requires `check` |
+| `check_model` | string | | Model override for the checker. Global only |
+| `check_reasoning` | string | `"standard"` | Reasoning level for the checker. Global only |
 | `upsert_comments` | bool | `false` | Update existing PR comments instead of creating new ones |
 | `include_costs` | bool | `false` | Include token cost estimates in PR comment footers |
 | `discord_webhook_url` | string | | Discord webhook URL for best-effort CI job failure notifications |
@@ -983,9 +1071,9 @@ matched case-insensitively, so `wesm` and `Wesm` are equivalent.
 `~/.roborev/config.toml`. CI config is hot-reloaded; starting or stopping the
 poller may still require normal daemon lifecycle if CI was never running.
 
-**Reviews enqueue but never complete** Check `roborev status` to see if jobs are
-queued/running. The agent may be failing -- check the daemon logs for error
-messages from the agent.
+**Reviews enqueue but never complete** Check `roborev daemon status` to see if
+jobs are queued/running. The agent may be failing -- check the daemon logs for
+error messages from the agent.
 
 **Unexpected review burst on first start** This is normal. The poller reviews
 all open PRs on first startup. After the initial run, only PRs with new commits

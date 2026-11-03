@@ -26,7 +26,7 @@ func TestShutdownEndpointSignalsGracefulShutdown(t *testing.T) {
 	default:
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/shutdown", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/shutdown", nil)
 	w := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(w, req)
 
@@ -46,14 +46,14 @@ func TestShutdownEndpointSignalsGracefulShutdown(t *testing.T) {
 
 	// A second request must not panic (close-once semantics).
 	w = httptest.NewRecorder()
-	server.httpServer.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/shutdown", nil))
+	server.httpServer.Handler.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/shutdown", nil))
 	assert.Equal(http.StatusOK, w.Code)
 }
 
 func TestShutdownEndpointRejectsGet(t *testing.T) {
 	server := setupTestServer(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/shutdown", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/shutdown", nil)
 	w := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(w, req)
 
@@ -74,7 +74,7 @@ func TestShutdownBlocksClaimsWithoutChangingQueuePause(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(
-		w, httptest.NewRequest(http.MethodPost, "/api/shutdown", nil),
+		w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/shutdown", nil),
 	)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	draining, err := server.db.IsShutdownDraining()
@@ -95,13 +95,13 @@ func TestShutdownRejectsQueueMutationsWhileDraining(t *testing.T) {
 
 	shutdown := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(
-		shutdown, httptest.NewRequest(http.MethodPost, "/api/shutdown", nil),
+		shutdown, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/shutdown", nil),
 	)
 	require.Equal(t, http.StatusOK, shutdown.Code, shutdown.Body.String())
 
 	unpause := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(
-		unpause, httptest.NewRequest(http.MethodPost, "/api/queue/unpause", nil),
+		unpause, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/queue/unpause", nil),
 	)
 	assert.Equal(t, http.StatusConflict, unpause.Code)
 	draining, err := server.db.IsShutdownDraining()
@@ -112,11 +112,11 @@ func TestShutdownRejectsQueueMutationsWhileDraining(t *testing.T) {
 func TestStopRetriesDrainPreparationAfterTransientFailure(t *testing.T) {
 	server := setupTestServer(t)
 
-	_, err := server.db.Exec(`DROP TABLE daemon_state`)
+	_, err := server.db.ExecContext(t.Context(), `DROP TABLE daemon_state`)
 	require.NoError(t, err)
 	require.ErrorContains(t, server.Stop(), "block job claims for shutdown")
 
-	_, err = server.db.Exec(`
+	_, err = server.db.ExecContext(t.Context(), `
 		CREATE TABLE daemon_state (
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL,
@@ -156,7 +156,7 @@ func TestStopBoundsDrainStateCleanupWithSharedContext(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, draining)
 
-		_, err = server.db.Exec(`DROP TABLE daemon_state`)
+		_, err = server.db.ExecContext(t.Context(), `DROP TABLE daemon_state`)
 		require.NoError(t, err)
 		server.workerPool.wg.Done()
 
@@ -219,7 +219,7 @@ func TestStopKeepsBrowserAvailableUntilWorkersFinish(t *testing.T) {
 	server.allowWebCompilationStub = true
 	web := config.DefaultConfig().Web
 	web.Listen = "127.0.0.1:0"
-	runtime, err := server.startBrowserServer(web)
+	runtime, err := server.startBrowserServer(t.Context(), web)
 	require.NoError(t, err)
 	require.NotNil(t, runtime)
 
@@ -233,7 +233,9 @@ func TestStopKeepsBrowserAvailableUntilWorkersFinish(t *testing.T) {
 		draining, drainErr := server.db.IsShutdownDraining()
 		return drainErr == nil && draining
 	}, time.Second, time.Millisecond)
-	response, err := http.Get(runtime.Origin + "/api/ping")
+	pingRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, runtime.Origin+"/api/ping", nil)
+	require.NoError(t, err)
+	response, err := http.DefaultClient.Do(pingRequest)
 	require.NoError(t, err)
 	require.NoError(t, response.Body.Close())
 	assert.Equal(t, http.StatusOK, response.StatusCode)
@@ -253,7 +255,11 @@ func TestStopKeepsBrowserAvailableUntilWorkersFinish(t *testing.T) {
 	// Wall-clock wait: real browser listener and worker shutdown.
 	assert.Eventually(t, func() bool {
 		client := &http.Client{Timeout: time.Second}
-		response, requestErr := client.Get(runtime.Origin + "/api/ping")
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, runtime.Origin+"/api/ping", nil)
+		if err != nil {
+			return false
+		}
+		response, requestErr := client.Do(request)
 		if response != nil {
 			_ = response.Body.Close()
 		}

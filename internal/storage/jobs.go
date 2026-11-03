@@ -3135,7 +3135,7 @@ func (db *DB) GetPanelSummaries(runUUIDs []uuid.UUID) (map[uuid.UUID]PanelSummar
 		       COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0),
 		       COALESCE(SUM(CASE WHEN status = 'canceled' THEN 1 ELSE 0 END), 0),
 		       COALESCE(SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END), 0),
-		       COALESCE(SUM(CASE WHEN `+memberHasCost+` THEN 1 ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN `+memberHasCost+` AND COALESCE(json_extract(token_usage, '$.expected_provider_sessions'), 0) <= COALESCE(json_array_length(token_usage, '$.provider_session_ids'), 0) THEN 1 ELSE 0 END), 0),
 		       COALESCE(SUM(CASE WHEN `+memberHasCost+` THEN json_extract(token_usage, '$.cost_usd') ELSE 0 END), 0),
 		       MIN(started_at)
 		FROM review_jobs

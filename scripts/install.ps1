@@ -272,7 +272,7 @@ function Install-Roborev {
         Write-Host "  roborev init"
         Write-Host ""
         Write-Host "For AI agent skills (Claude Code, Codex):"
-        Write-Host "  roborev skills install"
+        Write-Host "  roborev agent skills install"
 
     } finally {
         # Cleanup temp directory

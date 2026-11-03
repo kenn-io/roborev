@@ -1,7 +1,6 @@
 package review
 
 import (
-	"context"
 	"encoding/json/jsontext"
 	"strings"
 	"testing"
@@ -18,7 +17,7 @@ func TestProseCommentSeverityFiltering(t *testing.T) {
 	} {
 		t.Run(strings.Split(prose, "\n")[0], func(t *testing.T) {
 			result := ReviewResult{Status: ResultDone, Output: prose}.ApplyMinSeverity("high")
-			synthesis, err := Synthesize(context.Background(), []ReviewResult{result}, SynthesizeOpts{MinSeverity: "high"})
+			synthesis, err := Synthesize(t.Context(), []ReviewResult{result}, SynthesizeOpts{MinSeverity: "high"})
 			comment := synthesis.GitHubComment
 			require.NoError(t, err)
 			assert := assert.New(t)
@@ -35,7 +34,7 @@ func TestProseCommentSeverityFiltering(t *testing.T) {
 
 func TestProseCommentAllFindingsBelowThreshold(t *testing.T) {
 	result := ReviewResult{Status: ResultDone, Output: "### Low\n\nMinor naming issue."}
-	synthesis, err := Synthesize(context.Background(), []ReviewResult{result}, SynthesizeOpts{MinSeverity: "high"})
+	synthesis, err := Synthesize(t.Context(), []ReviewResult{result}, SynthesizeOpts{MinSeverity: "high"})
 	comment := synthesis.GitHubComment
 	require.NoError(t, err)
 	assert.Contains(t, comment, "Review Passed")

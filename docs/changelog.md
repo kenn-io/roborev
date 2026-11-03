@@ -5,6 +5,25 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
+## Unreleased
+
+- Find review records under `job`, aggregate reports under `report`, Git hooks
+    under `hook`, and provider checks and integrations under `agent`. Queue
+    controls live under `daemon`; repair commands live under `storage` and
+    remote key creation under `signing init`. Previous spellings remain hidden
+    compatibility commands for at least one release. See the
+    [command mapping](/docs/commands/#command-groups-and-migration).
+- Use root help as a guide to the review workflow, job IDs, target selection,
+    output modes and recovery. Commands are grouped by purpose and include
+    examples; `ls` aliases `list` and `resolve` aliases `close`.
+- Read recovery hints in CLI errors. Human errors use `hint:`, search agent
+    output uses `Hint:`, and commands supporting `--json` write an error
+    envelope to stderr. Success output stays unchanged. Usage mistakes now exit
+    2 and invalid values exit 4; runtime failures and FAIL verdicts keep exit 1,
+    and export cursor resets keep exit 3.
+- Report daemon startup failure when its child exits, with the startup log and a
+    diagnostic command, instead of waiting for the readiness timeout.
+
 ## 0.74.0
 
 <small>2026-10-27</small>

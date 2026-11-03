@@ -6,9 +6,7 @@ import (
 	"encoding/json/jsontext"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -263,7 +261,7 @@ func TestCountOpenFailedReviewsExcludesUnreachableBranchlessReviews(t *testing.T
 		job("", reachable),   // branchless but reachable from HEAD -> counts
 		job("", unreachable), // unrelated branchless review -> must NOT count
 	}
-	count, ok := countOpenFailedReviews(context.Background(), reviewSourceWithJobs(jobs...), repo.Path(), "main", head)
+	count, ok := countOpenFailedReviews(t.Context(), reviewSourceWithJobs(jobs...), repo.Path(), "main", head)
 
 	assert.True(ok)
 	assert.Equal(4, count, "only the unreachable branchless review must be excluded on a branch query")
@@ -285,7 +283,7 @@ func TestCountOpenFailedReviewsExcludesBaseBranchBranchlessReviews(t *testing.T)
 		{ID: 3, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: featureHead},
 	}
 	count, ok := countOpenFailedReviews(
-		context.Background(), reviewSourceWithJobs(jobs...), repo.Path(), "feature/lineage", featureHead,
+		t.Context(), reviewSourceWithJobs(jobs...), repo.Path(), "feature/lineage", featureHead,
 	)
 
 	assert.True(ok)
@@ -310,10 +308,10 @@ func TestCountOpenFailedReviewsCachesBranchlessLineageContext(t *testing.T) {
 		jobs = append(jobs, storage.ReviewJob{ID: int64(i + 1), Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: ref})
 	}
 	featureHead := repo.HeadSHA()
-	gitCalls := countGitProcesses(t)
+	gitCalls := testutil.CountGitProcesses(t)
 
 	count, ok := countOpenFailedReviews(
-		context.Background(), reviewSourceWithJobs(jobs...), repo.Path(), "feature/lineage", featureHead,
+		t.Context(), reviewSourceWithJobs(jobs...), repo.Path(), "feature/lineage", featureHead,
 	)
 
 	assert.True(ok)
@@ -334,10 +332,10 @@ func TestCountOpenFailedReviewsDetachedHeadChecksReachabilityOnce(t *testing.T) 
 	}
 	repo.CheckoutDetached()
 	head := repo.HeadSHA()
-	gitCalls := countGitProcesses(t)
+	gitCalls := testutil.CountGitProcesses(t)
 
 	count, ok := countOpenFailedReviews(
-		context.Background(), reviewSourceWithJobs(jobs...), repo.Path(), "", head,
+		t.Context(), reviewSourceWithJobs(jobs...), repo.Path(), "", head,
 	)
 
 	assert.True(ok)
@@ -358,10 +356,10 @@ func TestCountOpenFailedReviewsSkipsReachabilityForPassingReviews(t *testing.T) 
 	}
 	repo.CheckoutDetached()
 	head := repo.HeadSHA()
-	gitCalls := countGitProcesses(t)
+	gitCalls := testutil.CountGitProcesses(t)
 
 	count, ok := countOpenFailedReviews(
-		context.Background(), reviewSourceWithJobs(jobs...), repo.Path(), "", head,
+		t.Context(), reviewSourceWithJobs(jobs...), repo.Path(), "", head,
 	)
 
 	assert.True(ok)
@@ -390,7 +388,7 @@ func TestCountOpenFailedReviewsDetachedHeadPeelsAnnotatedTags(t *testing.T) {
 		return storage.ReviewJob{ID: id, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: ref}
 	}
 	ids, ok := findOpenFailedReviewIDs(
-		context.Background(),
+		t.Context(),
 		reviewSourceWithJobs(
 			job(1, reachableTag),
 			job(2, base+".."+reachableTag),
@@ -401,36 +399,6 @@ func TestCountOpenFailedReviewsDetachedHeadPeelsAnnotatedTags(t *testing.T) {
 
 	assert.True(ok)
 	assert.Equal(reviewIDSet{1: {}, 2: {}}, ids, "reviews of reachable annotated tags count; unrelated tags do not")
-}
-
-// countGitProcesses puts a counting git wrapper first on PATH for the rest of
-// the test and returns a function that reports how many git processes started.
-func countGitProcesses(t *testing.T) func() int {
-	t.Helper()
-	gitPath, err := exec.LookPath("git")
-	require.NoError(t, err)
-	countPath := filepath.Join(t.TempDir(), "git-count")
-	require.NoError(t, os.WriteFile(countPath, nil, 0o600))
-	wrapperDir := t.TempDir()
-	wrapperPath := filepath.Join(wrapperDir, "git")
-	shellQuote := func(path string) string {
-		return "'" + strings.ReplaceAll(path, "'", "'\\''") + "'"
-	}
-	cmdQuote := func(path string) string {
-		return `"` + strings.ReplaceAll(path, `"`, `""`) + `"`
-	}
-	wrapper := fmt.Sprintf("#!/bin/sh\nprintf x >> %s\nexec %s \"$@\"\n", shellQuote(countPath), shellQuote(gitPath))
-	if runtime.GOOS == "windows" {
-		wrapperPath += ".cmd"
-		wrapper = fmt.Sprintf("@echo off\r\n<nul set /p dummy=x>>%s\r\n%s %%*\r\nexit /b %%ERRORLEVEL%%\r\n", cmdQuote(countPath), cmdQuote(gitPath))
-	}
-	require.NoError(t, os.WriteFile(wrapperPath, []byte(wrapper), 0o755))
-	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return func() int {
-		calls, err := os.ReadFile(countPath)
-		require.NoError(t, err)
-		return strings.Count(string(calls), "x")
-	}
 }
 
 func TestCountOpenFailedReviewsExcludesNonReviewJobTypes(t *testing.T) {
@@ -464,7 +432,7 @@ func TestCountOpenFailedReviewsExcludesNonReviewJobTypes(t *testing.T) {
 	design := job(storage.JobTypeReview, failVerdict)
 	design.ReviewType = config.ReviewTypeDesign
 	jobs = append(jobs, design)
-	count, ok := countOpenFailedReviews(context.Background(), reviewSourceWithJobs(jobs...), repo.Path(), "main", head)
+	count, ok := countOpenFailedReviews(t.Context(), reviewSourceWithJobs(jobs...), repo.Path(), "main", head)
 
 	assert.True(ok)
 	assert.Equal(1, count, "only failed code review jobs count; passed reviews, design reviews, and non-review job types are not actionable")
@@ -2518,7 +2486,7 @@ func TestDeferredReminderCancellationDoesNotConsumeCandidate(t *testing.T) {
 			"session-1": {PendingReminders: map[string]PendingReminder{key: pending}},
 		},
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	errCh := make(chan error, 1)
 	cwd := t.TempDir()
 	go func() {
@@ -2582,7 +2550,7 @@ func TestSnoozedStopCancellationDoesNotMutateSession(t *testing.T) {
 			"session-1": initial,
 		},
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	errCh := make(chan error, 1)
 	go func() {
 		_, err := store.RecordContext(ctx, Request{
@@ -2672,7 +2640,7 @@ func TestRecordCancellationDoesNotMutateAnyEvent(t *testing.T) {
 				reviews: reviews,
 				path:    filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{},
 			}
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			errCh := make(chan error, 1)
 			go func() {
 				_, err := store.RecordContext(ctx, Request{

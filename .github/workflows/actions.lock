@@ -5,12 +5,14 @@ version: 'v0.0.3'
 workflows:
     '.github/workflows/ci-pr.yml': []
     '.github/workflows/ci.yml':
+        - 'actions/cache@v6.1.0'
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
         - 'actions/setup-node@v7.1.0'
         - 'actions/upload-artifact@v7.0.2'
         - 'astral-sh/setup-uv@v10.3.2'
-        - 'jdx/mise-action@v5.2.2'
+        - 'jdx/mise-action@v5.2.3'
+        - 'kenn-io/kit@v0.47.5'
         - 'step-security/codecov-action@v7.1.1'
         - 'step-security/golangci-lint-action@v9.3.0'
         - 'step-security/paths-filter@v4.0.3'
@@ -26,11 +28,20 @@ workflows:
     '.github/workflows/windows-migration.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
+        - 'actions/upload-artifact@v7.0.2'
+        - 'kenn-io/kit@v0.47.5'
         - 'step-security/paths-filter@v4.0.3'
     '.github/workflows/workflow-validation.yml':
         - 'actions/checkout@v7.0.1'
+        - 'actions/setup-go@v7.0.0'
+        - 'kenn-io/kit@v0.47.5'
         - 'step-security/jactionlint@v2.2.0'
 dependencies:
+    'actions/cache@v6.1.0':
+        ref: 'v6.1.0'
+        commit: 'sha1-55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
+        owner_id: 44036562
+        repo_id: 215566462
     'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1':
         ref: 'v7.0.1'
         commit: 'sha1-3d3c42e5aac5ba805825da76410c181273ba90b1'
@@ -81,9 +92,9 @@ dependencies:
         commit: 'sha1-9b3254085494b55a0f7c4c2b3d2d52cc712ce370'
         owner_id: 9919
         repo_id: 259445878
-    'jdx/mise-action@v5.2.2':
-        ref: 'v5.2.2'
-        commit: 'sha1-8418fedb1110381a0d3ba51a7a415d7c1b884550'
+    'jdx/mise-action@v5.2.3':
+        ref: 'v5.2.3'
+        commit: 'sha1-82a612c5ab8bcda7cc5db6b7e81a8e7584c3dc6e'
         owner_id: 216188
         repo_id: 738284564
     'kenn-io/actions@main':
@@ -94,6 +105,11 @@ dependencies:
         uses:
             - 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1'
             - 'actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e'
+    'kenn-io/kit@v0.47.5':
+        ref: 'v0.47.5'
+        commit: 'sha1-b2c1b6f25ec8f521899e7cc0eb03d266fa9f44ba'
+        owner_id: 259885253
+        repo_id: 1238000987
     'step-security/codecov-action@v7.1.1':
         ref: 'v7.1.1'
         commit: 'sha1-367bf7e789f1b8e452a759be81c791de8d69b2f6'

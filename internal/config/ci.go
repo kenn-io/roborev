@@ -102,6 +102,12 @@ type AgentReviewType struct {
 
 // CIConfig holds configuration for the CI poller that watches GitHub PRs
 type CIConfig struct {
+	// Check runs a sandboxed Codex check before storing CI findings.
+	Check          bool   `toml:"check"`
+	CheckModel     string `toml:"check_model"`
+	CheckReasoning string `toml:"check_reasoning"`
+	Rewrite        bool   `toml:"rewrite"`
+
 	// Enabled enables the CI poller
 	Enabled bool `toml:"enabled"`
 
@@ -120,6 +126,9 @@ type CIConfig struct {
 	// SkipLabels is a list of GitHub PR labels that prevent CI reviews.
 	// Label matching is case-insensitive.
 	SkipLabels []string `toml:"skip_labels"`
+
+	// SkipDrafts prevents CI reviews of draft pull requests. Default: false.
+	SkipDrafts bool `toml:"skip_drafts"`
 
 	// AllowedAuthors and AllowedAuthorAssociations limit CI reviews to PRs
 	// from trusted authors. When either is set, a PR is reviewed only if its
@@ -551,6 +560,9 @@ func (c *CIConfig) ResolvedMaxRepos() int {
 // RepoCIConfig holds per-repo CI overrides (used by the CI poller for this repo).
 // These override the global [ci] settings when reviewing this specific repo.
 type RepoCIConfig struct {
+	Check   *bool `toml:"check" comment:"Check CI findings before posting."`
+	Rewrite *bool `toml:"rewrite" comment:"Rewrite checked CI findings in plain words."`
+
 	// Agents overrides the list of agents for CI reviews of this repo.
 	Agents []string `toml:"agents" comment:"Override the agents used by CI for this repo."`
 
@@ -837,4 +849,28 @@ func ResolveCIWorkflowAgents(
 		globalCIAgents,
 		globalAgent,
 	)
+}
+
+// ResolveCICheck lets the repository override the global checker switch.
+func ResolveCICheck(repoCfg *RepoConfig, globalCfg *Config) bool {
+	var repoVal, globalVal *bool
+	if repoCfg != nil {
+		repoVal = repoCfg.CI.Check
+	}
+	if globalCfg != nil {
+		globalVal = &globalCfg.CI.Check
+	}
+	return resolveBool(false, repoVal, globalVal)
+}
+
+// ResolveCIRewrite lets the repository override the global rewrite switch.
+func ResolveCIRewrite(repoCfg *RepoConfig, globalCfg *Config) bool {
+	var repoVal, globalVal *bool
+	if repoCfg != nil {
+		repoVal = repoCfg.CI.Rewrite
+	}
+	if globalCfg != nil {
+		globalVal = &globalCfg.CI.Rewrite
+	}
+	return resolveBool(false, repoVal, globalVal)
 }

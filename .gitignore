@@ -10,7 +10,9 @@ bin/
 /web/coverage/
 /web/playwright-report/
 /web/test-results/
+/gotestsum/
 /packages/*/node_modules/
+/packages/*/test-results/
 /internal/web/.dist-staging-*/
 /internal/web/.dist-backup-*/
 /internal/web/dist/*
@@ -85,3 +87,6 @@ docs/.env*.local
 /.roborev/
 .env*
 .kata.local.toml
+
+# Property test counterexamples and local engine state
+.hegel/

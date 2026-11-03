@@ -751,6 +751,9 @@ components:
           $ref: "#/components/schemas/CostAggregate"
         github_repo:
           type: string
+        peak_hour_runs:
+          format: int64
+          type: integer
         pr_number:
           format: int64
           type: integer
@@ -761,6 +764,7 @@ components:
         - github_repo
         - pr_number
         - runs
+        - peak_hour_runs
         - cost
       type: object
     CISummary:
@@ -777,10 +781,6 @@ components:
         distinct_prs:
           format: int64
           type: integer
-        hot_prs:
-          items:
-            $ref: "#/components/schemas/CIPRSummary"
-          type: array
         outcomes:
           additionalProperties:
             format: int64
@@ -836,7 +836,6 @@ components:
         - runs_per_pr_p50
         - runs_per_pr_p90
         - runs_per_pr_max
-        - hot_prs
         - prs
         - turnaround_samples
         - turnaround_p50_secs
@@ -2183,6 +2182,9 @@ components:
             - "null"
         name:
           type: string
+        non_voting:
+          description: True when the panel member is advisory and does not affect the panel verdict.
+          type: boolean
         resume_source_job_uuid:
           format: uuid
           type:
@@ -2201,6 +2203,7 @@ components:
       required:
         - review_id
         - name
+        - non_voting
         - agent
         - model
         - review_type

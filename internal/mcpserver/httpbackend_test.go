@@ -1,7 +1,6 @@
 package mcpserver
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -438,7 +437,7 @@ func TestHTTPBackendSearchTransportErrorDoesNotLeakURLOrQuery(t *testing.T) {
 	})}
 	backend := NewHTTPBackend("https://daemon.invalid/private", client)
 
-	_, err := backend.Search(context.Background(), SearchQuery{Query: "needle-secret", Mode: "auto"})
+	_, err := backend.Search(t.Context(), SearchQuery{Query: "needle-secret", Mode: "auto"})
 	backendErr, ok := errors.AsType[*Error](err)
 	require.True(t, ok, "expected *Error, got %T", err)
 	assert.Equal(t, ErrorCodeUnavailable, backendErr.Code)

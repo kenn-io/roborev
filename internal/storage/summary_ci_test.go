@@ -15,7 +15,7 @@ var ciSummarySince = time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 
 func summaryPanel(t *testing.T, db *DB, repo string, pr int, key string, synthesis any) int64 {
 	t.Helper()
-	result, err := db.Exec(`INSERT INTO ci_pr_panels (github_repo, pr_number, head_sha, panel_run_uuid, synthesis_job_id, created_at) VALUES (?, ?, ?, ?, ?, '2026-01-03T00:00:00Z')`, repo, pr, key, testUUID(key), synthesis)
+	result, err := db.ExecContext(t.Context(), `INSERT INTO ci_pr_panels (github_repo, pr_number, head_sha, panel_run_uuid, synthesis_job_id, created_at) VALUES (?, ?, ?, ?, ?, '2026-01-03T00:00:00Z')`, repo, pr, key, testUUID(key), synthesis)
 	require.NoError(t, err)
 	id, err := result.LastInsertId()
 	require.NoError(t, err)
@@ -32,16 +32,16 @@ func TestGetSummary_CI(t *testing.T) {
 	reasons := []string{"closed_pr", "superseded", "stale_head", "deferred_retry", "repo_mismatch", "canceled", ""}
 	for i, reason := range reasons {
 		id := summaryPanel(t, db, "acme/api", 7, fmt.Sprint("retired", i), nil)
-		_, err := db.Exec(`UPDATE ci_pr_panels SET retired_at='2026-01-04', retire_reason=NULLIF(?, '') WHERE id=?`, reason, id)
+		_, err := db.ExecContext(t.Context(), `UPDATE ci_pr_panels SET retired_at='2026-01-04', retire_reason=NULLIF(?, '') WHERE id=?`, reason, id)
 		require.NoError(t, err)
 	}
 	id := summaryPanel(t, db, "acme/api", 7, "posted", nil)
-	_, err = db.Exec(`UPDATE ci_pr_panels SET retired_at='2026-01-04', posted_at='2026-01-03 00:02:00', first_attempt_at='2026-01-03 00:00:00', outcome='review_posted' WHERE id=?`, id)
+	_, err = db.ExecContext(t.Context(), `UPDATE ci_pr_panels SET retired_at='2026-01-04', posted_at='2026-01-03 00:02:00', first_attempt_at='2026-01-03 00:00:00', outcome='review_posted' WHERE id=?`, id)
 	require.NoError(t, err)
 	// Same PR number in another repository is a separate PR.
 	summaryPanel(t, db, "acme/web", 7, "active", nil)
 	old := summaryPanel(t, db, "acme/old", 9, "old", nil)
-	_, err = db.Exec(`UPDATE ci_pr_panels SET created_at='2026-01-01' WHERE id=?`, old)
+	_, err = db.ExecContext(t.Context(), `UPDATE ci_pr_panels SET created_at='2026-01-01' WHERE id=?`, old)
 	require.NoError(t, err)
 	s, err = db.GetSummary(SummaryOptions{Since: ciSummarySince})
 	require.NoError(t, err)
@@ -58,9 +58,11 @@ func TestGetSummary_CI(t *testing.T) {
 	a.InDelta(4.5, s.CI.RunsPerPRP50, 0)
 	a.InDelta(7.3, s.CI.RunsPerPRP90, 1e-9)
 	a.Equal(8, s.CI.RunsPerPRMax)
-	require.Len(t, s.CI.HotPRs, 1)
-	a.Equal("acme/api", s.CI.HotPRs[0].GithubRepo)
-	a.Equal(8, s.CI.HotPRs[0].Runs)
+	require.Len(t, s.CI.PRs, 2)
+	a.Equal("acme/api", s.CI.PRs[0].GithubRepo)
+	a.Equal(8, s.CI.PRs[0].Runs)
+	a.Equal(8, s.CI.PRs[0].PeakHourRuns)
+	a.Equal(1, s.CI.PRs[1].PeakHourRuns)
 	a.Equal(1, s.CI.TurnaroundSamples)
 	a.InDelta(120, s.CI.TurnaroundP50Secs, 0.001)
 	a.Equal(CostAggregate{}, s.CI.Cost)
@@ -75,13 +77,13 @@ func TestGetSummary_CIFiltersAndCost(t *testing.T) {
 	addJob := func(repoID int64, branch, key, status, usage string, invoked bool) int64 {
 		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repoID, GitRef: key, Agent: "test", Branch: branch})
 		require.NoError(t, err)
-		_, err = db.Exec(`UPDATE review_jobs SET panel_run_uuid=?, status=?, token_usage=?, agent_invoked=?, started_at='2025-12-01', finished_at='2025-12-02', enqueued_at='2025-12-01' WHERE id=?`, testUUID(key), status, usage, invoked, job.ID)
+		_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET panel_run_uuid=?, status=?, token_usage=?, agent_invoked=?, started_at='2025-12-01', finished_at='2025-12-02', enqueued_at='2025-12-01' WHERE id=?`, testUUID(key), status, usage, invoked, job.ID)
 		require.NoError(t, err)
 		return job.ID
 	}
 	syn := addJob(repo.ID, "feature", "cost", "done", "", false) // passthrough
 	id := summaryPanel(t, db, "acme/api", 3, "cost", syn)
-	_, err := db.Exec(`UPDATE ci_pr_panels SET retired_at='2026-01-04', retire_reason='closed_pr' WHERE id=?`, id)
+	_, err := db.ExecContext(t.Context(), `UPDATE ci_pr_panels SET retired_at='2026-01-04', retire_reason='closed_pr' WHERE id=?`, id)
 	require.NoError(t, err)
 	addJob(repo.ID, "feature", "cost", "done", `{"has_cost":true,"cost_usd":2}`, true)
 	addJob(other.ID, "other-branch", "cost", "canceled", `{"has_cost":true,"cost_usd":3}`, true)
@@ -124,7 +126,7 @@ func TestGetSummary_CITurnaroundUnavailable(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	for i, stamp := range []string{"", "invalid", "2026-01-04"} {
 		id := summaryPanel(t, db, "acme/api", i+1, fmt.Sprint(i), nil)
-		_, err := db.Exec(`UPDATE ci_pr_panels SET posted_at='2026-01-03',first_attempt_at=NULLIF(?, '') WHERE id=?`, stamp, id)
+		_, err := db.ExecContext(t.Context(), `UPDATE ci_pr_panels SET posted_at='2026-01-03',first_attempt_at=NULLIF(?, '') WHERE id=?`, stamp, id)
 		require.NoError(t, err)
 	}
 	s, err := db.GetSummary(SummaryOptions{Since: ciSummarySince})
@@ -146,6 +148,7 @@ func FuzzAggregateCIPanels(f *testing.F) {
 			rows = append(rows, ciSummaryPanel{
 				githubRepo: fmt.Sprint(b % 2), prNumber: int(b % 7), posted: b&2 != 0, retired: b&1 != 0,
 				turnaround: sql.NullFloat64{Valid: b&4 != 0, Float64: float64(int8(b))},
+				createdAt:  sql.NullInt64{Valid: true, Int64: int64(b) * 600},
 				cost:       CostAggregate{TotalUSD: float64(b) / 100, JobsTotal: 2, JobsWithCost: 1},
 			})
 		}
@@ -167,12 +170,14 @@ func FuzzAggregateCIPanels(f *testing.F) {
 		total := 0
 		for _, pr := range got.PRs {
 			total += pr.Runs
+			assert.GreaterOrEqual(t, pr.PeakHourRuns, 1)
+			assert.LessOrEqual(t, pr.PeakHourRuns, pr.Runs)
 		}
 		assert.Equal(t, len(rows), total)
 	})
 }
 
-func TestAggregateCIPanels_AllHotPRsAndTies(t *testing.T) {
+func TestAggregateCIPanels_PRTies(t *testing.T) {
 	t.Parallel()
 	var rows []ciSummaryPanel
 	for pr := 13; pr >= 1; pr-- {
@@ -185,12 +190,55 @@ func TestAggregateCIPanels_AllHotPRsAndTies(t *testing.T) {
 	}
 	rows = append(rows, ciSummaryPanel{githubRepo: "acme/api", prNumber: 13})
 	s := aggregateCIPanels(rows)
-	require.Len(t, s.HotPRs, 13)
-	assert.Equal(t, 13, s.HotPRs[0].PRNumber)
-	assert.Equal(t, 7, s.HotPRs[0].Runs)
-	assert.Equal(t, 1, s.HotPRs[1].PRNumber)
-	assert.Equal(t, 12, s.HotPRs[12].PRNumber)
-	assert.Len(t, s.PRs, 14)
+	require.Len(t, s.PRs, 14)
+	assert.Equal(t, 13, s.PRs[0].PRNumber)
+	assert.Equal(t, 7, s.PRs[0].Runs)
+	assert.Equal(t, 1, s.PRs[1].PRNumber)
+	assert.Equal(t, 12, s.PRs[12].PRNumber)
+	assert.Equal(t, "acme/web", s.PRs[13].GithubRepo)
+}
+
+// Runs spread over a week count toward Runs but not PeakHourRuns; only runs
+// started within one hour of each other form a peak.
+func TestGetSummary_CIPeakHourRuns(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	stamps := map[int][]string{
+		// Twelve runs, one per day or more apart: no burst.
+		1: {
+			"2026-01-03 00:00:00", "2026-01-04 00:00:00", "2026-01-05 00:00:00", "2026-01-06 00:00:00", "2026-01-07 00:00:00", "2026-01-08 00:00:00",
+			"2026-01-08 02:00:00", "2026-01-08 04:00:00", "2026-01-08 06:00:00", "2026-01-08 08:00:00", "2026-01-08 10:00:00", "2026-01-08 12:00:00",
+		},
+		// Four runs inside one hour in mixed timestamp formats; a fifth exactly
+		// one hour after the first starts a new window.
+		2: {"2026-01-03T10:00:00Z", "2026-01-03 10:20:00", "2026-01-03T10:40:00Z", "2026-01-03 10:59:59", "2026-01-03 11:00:00"},
+	}
+	// Eleven runs six minutes apart span exactly one hour, so the last one
+	// starts a new window. Midnight and noon are where day-fraction rounding
+	// would put the last run just inside the first window.
+	for pr, start := range map[int]string{3: "2026-01-03 00:00:00", 4: "2026-01-03 12:00:00"} {
+		base, err := time.Parse(time.DateTime, start)
+		require.NoError(t, err)
+		for i := range 11 {
+			stamps[pr] = append(stamps[pr], base.Add(time.Duration(i)*6*time.Minute).Format(time.DateTime))
+		}
+	}
+	for pr, list := range stamps {
+		for i, stamp := range list {
+			id := summaryPanel(t, db, "acme/api", pr, fmt.Sprint(pr, "-", i), nil)
+			_, err := db.Exec(`UPDATE ci_pr_panels SET created_at=? WHERE id=?`, stamp, id)
+			require.NoError(t, err)
+		}
+	}
+	s, err := db.GetSummary(SummaryOptions{Since: ciSummarySince})
+	require.NoError(t, err)
+	require.NotNil(t, s.CI)
+	peaks := map[int][2]int{}
+	for _, pr := range s.CI.PRs {
+		peaks[pr.PRNumber] = [2]int{pr.Runs, pr.PeakHourRuns}
+	}
+	assert.Equal(t, map[int][2]int{1: {12, 1}, 2: {5, 4}, 3: {11, 10}, 4: {11, 10}}, peaks)
 }
 
 func TestGetSummary_CIPostedRetirementAndOldCosts(t *testing.T) {
@@ -201,13 +249,13 @@ func TestGetSummary_CIPostedRetirementAndOldCosts(t *testing.T) {
 	for _, key := range []string{"finalized", "outside"} {
 		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: key, Agent: "test"})
 		require.NoError(t, err)
-		_, err = db.Exec(`UPDATE review_jobs SET panel_run_uuid=?,status='done',agent_invoked=1,token_usage='{"has_cost":true,"cost_usd":2}',started_at='2026-01-04',finished_at='2026-01-04' WHERE id=?`, testUUID(key), job.ID)
+		_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET panel_run_uuid=?,status='done',agent_invoked=1,token_usage='{"has_cost":true,"cost_usd":2}',started_at='2026-01-04',finished_at='2026-01-04' WHERE id=?`, testUUID(key), job.ID)
 		require.NoError(t, err)
 		id := summaryPanel(t, db, "acme/api", 1, key, job.ID)
 		if key == "outside" {
-			_, err = db.Exec(`UPDATE ci_pr_panels SET created_at='2026-01-01' WHERE id=?`, id)
+			_, err = db.ExecContext(t.Context(), `UPDATE ci_pr_panels SET created_at='2026-01-01' WHERE id=?`, id)
 		} else {
-			_, err = db.Exec(`UPDATE ci_pr_panels SET posted_at='2026-01-04',retired_at='2026-01-05',outcome='abandoned' WHERE id=?`, id)
+			_, err = db.ExecContext(t.Context(), `UPDATE ci_pr_panels SET posted_at='2026-01-04',retired_at='2026-01-05',outcome='abandoned' WHERE id=?`, id)
 		}
 		require.NoError(t, err)
 	}

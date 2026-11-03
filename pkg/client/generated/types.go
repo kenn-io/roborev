@@ -692,10 +692,11 @@ func (b BranchWithCount) Validate() error {
 }
 
 type CIPRSummary struct {
-	Cost       CostAggregate `json:"cost"`
-	GithubRepo string        `json:"github_repo" validate:"required"`
-	PrNumber   int64         `json:"pr_number"`
-	Runs       int64         `json:"runs"`
+	Cost         CostAggregate `json:"cost"`
+	GithubRepo   string        `json:"github_repo" validate:"required"`
+	PeakHourRuns int64         `json:"peak_hour_runs"`
+	PrNumber     int64         `json:"pr_number"`
+	Runs         int64         `json:"runs"`
 }
 
 func (c CIPRSummary) Validate() error {
@@ -719,7 +720,6 @@ type CISummary struct {
 	ClosedBeforePost      int64            `json:"closed_before_post"`
 	Cost                  CostAggregate    `json:"cost"`
 	DistinctPrs           int64            `json:"distinct_prs"`
-	HotPrs                []CIPRSummary    `json:"hot_prs" validate:"required"`
 	Outcomes              map[string]int64 `json:"outcomes"`
 	PostedPanels          int64            `json:"posted_panels"`
 	Prs                   []CIPRSummary    `json:"prs" validate:"required"`
@@ -740,16 +740,6 @@ func (c CISummary) Validate() error {
 	if v, ok := any(c.Cost).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Cost", err)
-		}
-	}
-	if err := typesValidator.Var(c.HotPrs, "required"); err != nil {
-		errors = errors.Append("HotPrs", err)
-	}
-	for i, item := range c.HotPrs {
-		if v, ok := any(item).(runtime.Validator); ok {
-			if err := v.Validate(); err != nil {
-				errors = errors.Append(fmt.Sprintf("HotPrs[%d]", i), err)
-			}
 		}
 	}
 	if err := typesValidator.Var(c.Prs, "required"); err != nil {
@@ -2092,13 +2082,16 @@ type ExportSubagent struct {
 	Cost        ExportReviewCost `json:"cost"`
 
 	// Document The stored review document in canonical JSON. Null in the metadata profile and for reviews stored without a document. content is the Markdown rendering of this document.
-	Document            ExportSubagent_Document `json:"document"`
-	DurationMs          *int64                  `json:"duration_ms"`
-	Model               *string                 `json:"model" validate:"required"`
-	Name                string                  `json:"name" validate:"required"`
-	ResumeSourceJobUUID *uuid.UUID              `json:"resume_source_job_uuid" validate:"required"`
-	ReviewID            uuid.UUID               `json:"review_id" validate:"required"`
-	ReviewType          *string                 `json:"review_type" validate:"required"`
+	Document   ExportSubagent_Document `json:"document"`
+	DurationMs *int64                  `json:"duration_ms"`
+	Model      *string                 `json:"model" validate:"required"`
+	Name       string                  `json:"name" validate:"required"`
+
+	// NonVoting True when the panel member is advisory and does not affect the panel verdict.
+	NonVoting           bool       `json:"non_voting"`
+	ResumeSourceJobUUID *uuid.UUID `json:"resume_source_job_uuid" validate:"required"`
+	ReviewID            uuid.UUID  `json:"review_id" validate:"required"`
+	ReviewType          *string    `json:"review_type" validate:"required"`
 
 	// Verdict pass, fail, or unknown when a legacy review has no recorded verdict.
 	Verdict string `json:"verdict" validate:"required"`

@@ -2,7 +2,6 @@ package agent
 
 import (
 	"bytes"
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -274,7 +273,7 @@ func TestSessionUpdateValidatesSessionID(t *testing.T) {
 		SessionUpdate: "agent_message_chunk",
 	}
 
-	err := client.SessionUpdate(context.Background(), acp.SessionNotification{
+	err := client.SessionUpdate(t.Context(), acp.SessionNotification{
 		SessionId: acp.SessionId("wrong-session"),
 		Update: acp.SessionUpdate{
 			AgentMessageChunk: messageChunk,
@@ -286,7 +285,7 @@ func TestSessionUpdateValidatesSessionID(t *testing.T) {
 		assert.Empty(t, client.result.String(), "Expected no output to be appended on session mismatch, got: %q", client.result.String())
 	}
 
-	if err := client.SessionUpdate(context.Background(), acp.SessionNotification{
+	if err := client.SessionUpdate(t.Context(), acp.SessionNotification{
 		SessionId: acp.SessionId("expected-session"),
 		Update: acp.SessionUpdate{
 			AgentMessageChunk: messageChunk,
@@ -314,7 +313,7 @@ func TestSessionUpdateRejectsBeforeSessionEstablished(t *testing.T) {
 		SessionUpdate: "agent_message_chunk",
 	}
 
-	err := client.SessionUpdate(context.Background(), acp.SessionNotification{
+	err := client.SessionUpdate(t.Context(), acp.SessionNotification{
 		SessionId: acp.SessionId("attacker-session"),
 		Update: acp.SessionUpdate{
 			AgentMessageChunk: messageChunk,
@@ -330,7 +329,7 @@ func TestSessionUpdateRejectsBeforeSessionEstablished(t *testing.T) {
 	// remains rejected.
 	client.sessionID = "real-session"
 
-	err = client.SessionUpdate(context.Background(), acp.SessionNotification{
+	err = client.SessionUpdate(t.Context(), acp.SessionNotification{
 		SessionId: acp.SessionId("attacker-session"),
 		Update: acp.SessionUpdate{
 			AgentMessageChunk: messageChunk,
@@ -339,7 +338,7 @@ func TestSessionUpdateRejectsBeforeSessionEstablished(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, client.result.String(), "Stale notification for non-matching session must remain rejected")
 
-	err = client.SessionUpdate(context.Background(), acp.SessionNotification{
+	err = client.SessionUpdate(t.Context(), acp.SessionNotification{
 		SessionId: acp.SessionId("real-session"),
 		Update: acp.SessionUpdate{
 			AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
@@ -363,7 +362,7 @@ func TestSessionUpdateStreamsToolCallsToLiveLog(t *testing.T) {
 		result:    &bytes.Buffer{},
 	}
 
-	err := client.SessionUpdate(context.Background(), acp.SessionNotification{
+	err := client.SessionUpdate(t.Context(), acp.SessionNotification{
 		SessionId: "sess-1",
 		Update: acp.StartReadToolCall(
 			acp.ToolCallId("call-1"),
@@ -379,7 +378,7 @@ func TestSessionUpdateStreamsToolCallsToLiveLog(t *testing.T) {
 	assert.True(t, strings.HasSuffix(got, "\n"), "live log tool lines must end with a newline so a running job can tail them")
 	assert.Empty(t, client.result.String(), "tool calls belong in the live log, not the final review")
 
-	err = client.SessionUpdate(context.Background(), acp.SessionNotification{
+	err = client.SessionUpdate(t.Context(), acp.SessionNotification{
 		SessionId: "sess-1",
 		Update: acp.SessionUpdate{
 			AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
@@ -403,7 +402,7 @@ func TestSessionUpdateSeparatesToolLineFromPriorText(t *testing.T) {
 		result:    &bytes.Buffer{},
 	}
 
-	err := client.SessionUpdate(context.Background(), acp.SessionNotification{
+	err := client.SessionUpdate(t.Context(), acp.SessionNotification{
 		SessionId: "sess-1",
 		Update: acp.SessionUpdate{
 			AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
@@ -414,7 +413,7 @@ func TestSessionUpdateSeparatesToolLineFromPriorText(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = client.SessionUpdate(context.Background(), acp.SessionNotification{
+	err = client.SessionUpdate(t.Context(), acp.SessionNotification{
 		SessionId: "sess-1",
 		Update: acp.StartReadToolCall(
 			acp.ToolCallId("call-1"),

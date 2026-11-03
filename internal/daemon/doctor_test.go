@@ -32,7 +32,7 @@ func TestDoctorAgentsReportsDaemonView(t *testing.T) {
 	server, _, _ := newTestServer(t)
 	get := func(repo string, agents ...string) (int, DoctorAgentsOutput) {
 		query := url.Values{"repo": {repo}, "agent": agents}
-		req := httptest.NewRequest(http.MethodGet, "/api/doctor/agents?"+query.Encode(), nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/doctor/agents?"+query.Encode(), nil)
 		w := httptest.NewRecorder()
 		server.httpServer.Handler.ServeHTTP(w, req)
 		var out DoctorAgentsOutput
@@ -229,7 +229,7 @@ func TestDoctorAgentsUsageProvider(t *testing.T) {
 			server.configWatcher.cfg = cfg
 			server.configWatcher.cfgMu.Unlock()
 			w := httptest.NewRecorder()
-			server.httpServer.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/doctor/agents", nil))
+			server.httpServer.Handler.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/doctor/agents", nil))
 			require.Equal(t, http.StatusOK, w.Code)
 			var out struct {
 				UsageProvider *struct {

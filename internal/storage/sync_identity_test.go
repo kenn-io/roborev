@@ -25,7 +25,7 @@ func TestGetOrCreateRepoByIdentity(t *testing.T) {
 
 		// Verify repo has correct fields
 		var rootPath, name, identity string
-		err = db.QueryRow(`SELECT root_path, name, identity FROM repos WHERE id = ?`, repoID).Scan(&rootPath, &name, &identity)
+		err = db.QueryRowContext(t.Context(), `SELECT root_path, name, identity FROM repos WHERE id = ?`, repoID).Scan(&rootPath, &name, &identity)
 		require.NoError(t, err, "Query repo failed: %v")
 
 		assert.Equal(t, rootPath, localIdentity)
@@ -64,7 +64,7 @@ func TestGetOrCreateRepoByIdentity(t *testing.T) {
 
 		// Verify identity is set correctly and name is extracted
 		var identity, name string
-		err = db.QueryRow(`SELECT identity, name FROM repos WHERE id = ?`, repoID).Scan(&identity, &name)
+		err = db.QueryRowContext(t.Context(), `SELECT identity, name FROM repos WHERE id = ?`, repoID).Scan(&identity, &name)
 		require.NoError(t, err, "Query repo failed: %v")
 
 		assert.Equal(t, identity, gitIdentity)
@@ -76,7 +76,7 @@ func TestGetOrCreateRepoByIdentity(t *testing.T) {
 		singleIdentity := "git@github.com:org/single-clone-repo.git"
 
 		// Create one local clone with the identity
-		result, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+		result, err := db.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
 			"/home/user/single-clone", "single-clone", singleIdentity)
 		require.NoError(t, err, "Insert single clone failed: %v")
 
@@ -90,7 +90,7 @@ func TestGetOrCreateRepoByIdentity(t *testing.T) {
 
 		// Verify no placeholder was created
 		var count int
-		err = db.QueryRow(`SELECT COUNT(*) FROM repos WHERE root_path = ?`, singleIdentity).Scan(&count)
+		err = db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM repos WHERE root_path = ?`, singleIdentity).Scan(&count)
 		require.NoError(t, err, "Count query failed: %v")
 
 		assert.Equal(t, 0, count)
@@ -101,11 +101,11 @@ func TestGetOrCreateRepoByIdentity(t *testing.T) {
 		sharedIdentity := "git@github.com:org/shared-repo.git"
 
 		// Create two local clones with the same identity
-		_, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+		_, err := db.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
 			"/home/user/clone-1", "clone-1", sharedIdentity)
 		require.NoError(t, err, "Insert clone-1 failed: %v")
 
-		_, err = db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+		_, err = db.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
 			"/home/user/clone-2", "clone-2", sharedIdentity)
 		require.NoError(t, err, "Insert clone-2 failed: %v")
 
@@ -115,7 +115,7 @@ func TestGetOrCreateRepoByIdentity(t *testing.T) {
 
 		// Verify it created a placeholder (root_path == identity)
 		var rootPath, name string
-		err = db.QueryRow(`SELECT root_path, name FROM repos WHERE id = ?`, placeholderID).Scan(&rootPath, &name)
+		err = db.QueryRowContext(t.Context(), `SELECT root_path, name FROM repos WHERE id = ?`, placeholderID).Scan(&rootPath, &name)
 		require.NoError(t, err, "Query placeholder failed: %v")
 
 		assert.Equal(t, rootPath, sharedIdentity)
@@ -135,12 +135,12 @@ func TestGetOrCreateRepoByIdentity(t *testing.T) {
 		placeholderIdentity := "git@github.com:org/placeholder-then-clone.git"
 
 		// First, create a placeholder (simulates sync with no local clone)
-		_, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+		_, err := db.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
 			placeholderIdentity, "placeholder-then-clone", placeholderIdentity)
 		require.NoError(t, err, "Insert placeholder failed: %v")
 
 		// Now create a single local clone (user cloned the repo after syncing)
-		result, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
+		result, err := db.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity) VALUES (?, ?, ?)`,
 			"/home/user/new-clone", "new-clone", placeholderIdentity)
 		require.NoError(t, err, "Insert local clone failed: %v")
 
@@ -234,10 +234,10 @@ func TestGetRepoByIdentity_DuplicateError(t *testing.T) {
 	defer db.Close()
 
 	// Create two repos with same identity (simulates two clones of the same remote)
-	_, err := db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES ('/path1', 'repo1', 'same-id')`)
+	_, err := db.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity) VALUES ('/path1', 'repo1', 'same-id')`)
 	require.NoError(t, err, "Failed to insert repo1: %v")
 
-	_, err = db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES ('/path2', 'repo2', 'same-id')`)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity) VALUES ('/path2', 'repo2', 'same-id')`)
 	require.NoError(t, err, "Failed to insert repo2: %v")
 
 	// GetRepoByIdentity should return error for duplicates
@@ -260,26 +260,26 @@ func TestCommitsMigration_SameSHADifferentRepos(t *testing.T) {
 	setupLegacySchema(t, rawDB, legacySchemaV1DDL)
 
 	// Insert two repos
-	_, err = rawDB.Exec(`INSERT INTO repos (root_path, name) VALUES ('/repo1', 'repo1')`)
+	_, err = rawDB.ExecContext(t.Context(), `INSERT INTO repos (root_path, name) VALUES ('/repo1', 'repo1')`)
 	if err != nil {
 		rawDB.Close()
 		require.NoError(t, err, "Failed to insert repo1: %v")
 	}
-	_, err = rawDB.Exec(`INSERT INTO repos (root_path, name) VALUES ('/repo2', 'repo2')`)
+	_, err = rawDB.ExecContext(t.Context(), `INSERT INTO repos (root_path, name) VALUES ('/repo2', 'repo2')`)
 	if err != nil {
 		rawDB.Close()
 		require.NoError(t, err, "Failed to insert repo2: %v")
 	}
 
 	// Insert a commit in repo1
-	_, err = rawDB.Exec(`INSERT INTO commits (repo_id, sha, author, subject, timestamp) VALUES (1, 'abc123', 'Author', 'Subject', '2024-01-01T00:00:00Z')`)
+	_, err = rawDB.ExecContext(t.Context(), `INSERT INTO commits (repo_id, sha, author, subject, timestamp) VALUES (1, 'abc123', 'Author', 'Subject', '2024-01-01T00:00:00Z')`)
 	if err != nil {
 		rawDB.Close()
 		require.NoError(t, err, "Failed to insert commit in repo1: %v")
 	}
 
 	// Verify old schema prevents same SHA in different repo
-	_, err = rawDB.Exec(`INSERT INTO commits (repo_id, sha, author, subject, timestamp) VALUES (2, 'abc123', 'Author', 'Subject', '2024-01-01T00:00:00Z')`)
+	_, err = rawDB.ExecContext(t.Context(), `INSERT INTO commits (repo_id, sha, author, subject, timestamp) VALUES (2, 'abc123', 'Author', 'Subject', '2024-01-01T00:00:00Z')`)
 	if err == nil {
 		rawDB.Close()
 		require.Error(t, err, "Expected error inserting duplicate SHA in old schema, but got none")
@@ -294,18 +294,18 @@ func TestCommitsMigration_SameSHADifferentRepos(t *testing.T) {
 	defer db.Close()
 
 	// After migration, same SHA in different repo should work
-	_, err = db.Exec(`INSERT INTO commits (repo_id, sha, author, subject, timestamp) VALUES (2, 'abc123', 'Author', 'Subject', '2024-01-01T00:00:00Z')`)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO commits (repo_id, sha, author, subject, timestamp) VALUES (2, 'abc123', 'Author', 'Subject', '2024-01-01T00:00:00Z')`)
 	require.NoError(t, err, "After migration, same SHA in different repo should succeed: %v")
 
 	// Verify both commits exist
 	var count int
-	err = db.QueryRow(`SELECT COUNT(*) FROM commits WHERE sha = 'abc123'`).Scan(&count)
+	err = db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM commits WHERE sha = 'abc123'`).Scan(&count)
 	require.NoError(t, err, "Failed to count commits: %v")
 
 	assert.Equal(t, 2, count)
 
 	// Verify duplicate in same repo is still rejected
-	_, err = db.Exec(`INSERT INTO commits (repo_id, sha, author, subject, timestamp) VALUES (1, 'abc123', 'Author', 'Subject', '2024-01-01T00:00:00Z')`)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO commits (repo_id, sha, author, subject, timestamp) VALUES (1, 'abc123', 'Author', 'Subject', '2024-01-01T00:00:00Z')`)
 	require.Error(t, err, "Expected error inserting duplicate SHA in same repo, but got none")
 }
 
@@ -323,12 +323,12 @@ func TestDuplicateRepoIdentity_MigrationSuccess(t *testing.T) {
 	setupLegacySchema(t, rawDB, legacySchemaV2DDL)
 
 	// Insert two repos with the same identity (e.g., two clones of same remote)
-	_, err = rawDB.Exec(`INSERT INTO repos (root_path, name, identity) VALUES ('/repo1', 'repo1', 'git@github.com:org/repo.git')`)
+	_, err = rawDB.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity) VALUES ('/repo1', 'repo1', 'git@github.com:org/repo.git')`)
 	if err != nil {
 		rawDB.Close()
 		require.NoError(t, err, "Failed to insert repo1: %v")
 	}
-	_, err = rawDB.Exec(`INSERT INTO repos (root_path, name, identity) VALUES ('/repo2', 'repo2', 'git@github.com:org/repo.git')`)
+	_, err = rawDB.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity) VALUES ('/repo2', 'repo2', 'git@github.com:org/repo.git')`)
 	if err != nil {
 		rawDB.Close()
 		require.NoError(t, err, "Failed to insert repo2: %v")
@@ -363,7 +363,7 @@ func TestUniqueIndexMigration(t *testing.T) {
 	setupLegacySchema(t, rawDB, legacySchemaV3DDL)
 
 	// Insert one repo
-	_, err = rawDB.Exec(`INSERT INTO repos (root_path, name, identity) VALUES ('/repo1', 'repo1', 'git@github.com:org/repo.git')`)
+	_, err = rawDB.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity) VALUES ('/repo1', 'repo1', 'git@github.com:org/repo.git')`)
 	if err != nil {
 		rawDB.Close()
 		require.NoError(t, err, "Failed to insert repo1: %v")
@@ -377,7 +377,7 @@ func TestUniqueIndexMigration(t *testing.T) {
 
 	// Verify we can now insert a second repo with the same identity
 	// (this would fail if the unique index wasn't converted to non-unique)
-	_, err = db.Exec(`INSERT INTO repos (root_path, name, identity) VALUES ('/repo2', 'repo2', 'git@github.com:org/repo.git')`)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO repos (root_path, name, identity) VALUES ('/repo2', 'repo2', 'git@github.com:org/repo.git')`)
 	if err != nil {
 		db.Close()
 		require.NoError(t, err, "Inserting second repo with same identity should succeed after migration, but got: %v")

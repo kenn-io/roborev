@@ -78,7 +78,7 @@ func TestPiReviewSessionFlag(t *testing.T) {
 	})
 
 	a := NewPiAgent(mock.CmdPath).WithSessionID(sessionID).(*PiAgent)
-	result, err := a.Review(context.Background(), t.TempDir(), "HEAD", "prompt", &bytes.Buffer{})
+	result, err := a.Review(t.Context(), t.TempDir(), "HEAD", "prompt", &bytes.Buffer{})
 	require.NoError(t, err)
 	assert.Equal(t, "ok", result)
 
@@ -213,7 +213,7 @@ func TestPiReviewToolPermissions(t *testing.T) {
 			})
 
 			a := NewPiAgent(mock.CmdPath).WithAgentic(tt.agentic)
-			_, err := a.Review(context.Background(), t.TempDir(), "HEAD", "prompt", nil)
+			_, err := a.Review(t.Context(), t.TempDir(), "HEAD", "prompt", nil)
 			require.NoError(t, err)
 
 			args := readMockArgs(t, mock.ArgsFile)
@@ -294,7 +294,7 @@ printf '%%s\n' '{"design_review":false,"reason":"pi schema"}' > "$json_output"
 
 	schema := jsonRaw(`{"type":"object","additionalProperties":false,"required":["design_review","reason"],"properties":{"design_review":{"type":"boolean"},"reason":{"type":"string"}}}`)
 	var output bytes.Buffer
-	result, err := agent.ClassifyWithSchema(context.Background(), t.TempDir(), "HEAD", "classify me", schema, &output)
+	result, err := agent.ClassifyWithSchema(t.Context(), t.TempDir(), "HEAD", "classify me", schema, &output)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"design_review":false,"reason":"pi schema"}`, string(result))
 	assert.JSONEq(t, `{"type":"message_end","message":{"role":"assistant","usage":{"input":100,"output":10,"cost":{"total":0.25}}}}`, output.String())
@@ -345,7 +345,7 @@ printf '%s\n' 'not json' > "$json_output"
 `
 
 	_, err := NewPiAgent(writeTempCommand(t, script)).ClassifyWithSchema(
-		context.Background(),
+		t.Context(),
 		t.TempDir(),
 		"HEAD",
 		"classify me",
@@ -366,7 +366,7 @@ exit 12
 `
 
 	_, err := NewPiAgent(writeTempCommand(t, script)).ClassifyWithSchema(
-		context.Background(),
+		t.Context(),
 		t.TempDir(),
 		"HEAD",
 		"classify me",
@@ -388,7 +388,7 @@ exit 2
 `
 
 	_, err := NewPiAgent(writeTempCommand(t, script)).ClassifyWithSchema(
-		context.Background(),
+		t.Context(),
 		t.TempDir(),
 		"HEAD",
 		"classify me",
@@ -475,7 +475,7 @@ done
 				require.NoError(t, os.MkdirAll(filepath.Join(repoDir, ".pi"), 0o755))
 				require.NoError(t, os.WriteFile(filepath.Join(repoDir, ".pi", "settings.json"), []byte(tt.repoSettings), 0o600))
 			}
-			ctx := context.Background()
+			ctx := t.Context()
 			if tt.planning {
 				ctx = context.WithValue(ctx, planningContextKey{}, true)
 			}

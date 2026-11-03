@@ -43,29 +43,29 @@ func TestGetCostAggregate(t *testing.T) {
 	mkJob("sha-cancel-run", "feat", JobStatusCanceled, `{"cost_usd":0.50,"has_cost":true}`) // priced
 	// Eligible + priced on empty branch:
 	mkJob("sha-empty", "", JobStatusDone, `{"cost_usd":0.25,"has_cost":true}`)
+	mkJob("sha-partial", "partial", JobStatusDone, `{"cost_usd":0.30,"has_cost":true,"expected_provider_sessions":2,"provider_session_ids":["synthesis-session"]}`)
 
 	// Ineligible jobs:
 	mkJob("sha-running", "feat", JobStatusRunning, "") // no finished_at
 	mkJob("sha-queued", "feat", JobStatusQueued, "")   // never ran
 
 	skipped := mkJob("sha-skip", "feat", JobStatusDone, `{"cost_usd":9.99,"has_cost":true}`)
-	_, err := db.Exec(`UPDATE review_jobs SET status='skipped' WHERE id=?`, skipped.ID)
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET status='skipped' WHERE id=?`, skipped.ID)
 	require.NoError(t, err)
 	nonTerminal := mkJob("sha-running-finished", "feat", JobStatusDone, `{"cost_usd":8.88,"has_cost":true}`)
-	_, err = db.Exec(`UPDATE review_jobs SET status='running' WHERE id=?`, nonTerminal.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status='running' WHERE id=?`, nonTerminal.ID)
 	require.NoError(t, err)
 
 	cq := mkJob("sha-cancel-queue", "feat", JobStatusQueued, "")
-	_, err = db.Exec(`UPDATE review_jobs SET status='canceled', started_at=NULL, finished_at=datetime('now') WHERE id=?`, cq.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status='canceled', started_at=NULL, finished_at=datetime('now') WHERE id=?`, cq.ID)
 	require.NoError(t, err)
 
-	// Whole repo: 5 eligible (done, failed, cancel-run, invoked skip, empty),
-	// 4 priced, $11.74.
+	// Whole repo: 6 eligible, 4 fully priced, $12.04 including partial cost.
 	all, err := db.GetCostAggregate(CostOptions{RepoPaths: []string{repo.RootPath}})
 	require.NoError(t, err)
-	assert.Equal(5, all.JobsTotal)
+	assert.Equal(6, all.JobsTotal)
 	assert.Equal(4, all.JobsWithCost)
-	assert.InDelta(11.74, all.TotalUSD, 0.0001)
+	assert.InDelta(12.04, all.TotalUSD, 0.0001)
 	assert.False(all.Complete)
 
 	// Branch "feat": 4 eligible, 3 priced, $11.49.
@@ -388,7 +388,7 @@ func TestResetStaleJobsClearsCostMetadata(t *testing.T) {
 		t, db, repo.ID, createCommit(t, db, repo.ID, "reset-canceled-sha").ID,
 		"reset-canceled-sha",
 	)
-	_, err := db.Exec(`
+	_, err := db.ExecContext(t.Context(), `
 		UPDATE review_jobs
 		SET status = 'canceled', worker_id = 'stale-canceled-worker'
 		WHERE id = ?

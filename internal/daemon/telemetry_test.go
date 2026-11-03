@@ -82,7 +82,7 @@ func TestCaptureDaemonStartedTelemetry(t *testing.T) {
 		JobType: storage.JobTypeReview,
 	})
 	require.NoError(err)
-	_, err = db.Exec(`UPDATE review_jobs SET status = 'running' WHERE id = ?`, job.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'running' WHERE id = ?`, job.ID)
 	require.NoError(err)
 	require.NoError(testutil.CompleteReviewFixture(db, job.ID, "codex", "prompt", "No issues found."))
 	for i := range 36 {
@@ -96,7 +96,7 @@ func TestCaptureDaemonStartedTelemetry(t *testing.T) {
 	cfg.CI.Enabled = true
 	cfg.AutoDesignReview.Enabled = true
 
-	server.captureDaemonStartedTelemetry(cfg)
+	server.captureDaemonStartedTelemetry(t.Context(), cfg)
 	waitSetupFinished(t, client)
 
 	require.Equal([]string{"daemon_started", "setup_finished"}, client.recordedEvents())
@@ -133,7 +133,7 @@ func TestCaptureDaemonStartedTelemetryDisabledNoops(t *testing.T) {
 	client := &fakeTelemetryClient{enabled: false}
 	server.SetTelemetry(client)
 
-	server.captureDaemonStartedTelemetry(config.DefaultConfig())
+	server.captureDaemonStartedTelemetry(t.Context(), config.DefaultConfig())
 
 	assert.Empty(client.recordedEvents())
 	assert.Nil(client.recordedProperties())
@@ -229,16 +229,16 @@ func TestSetupFinishedTelemetryBusyWriterRetries(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, testutil.CompleteReviewFixture(db, job.ID, "test", "", "No issues found."))
 	var path string
-	require.NoError(t, db.QueryRow(`SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&path))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&path))
 	connector := &setupQueryConnector{driver: db.Driver(), dsn: path + "?_pragma=busy_timeout(30000)", busy: make(chan struct{}, 1)}
 	pool := sql.OpenDB(connector)
 	pool.SetMaxOpenConns(1)
 	t.Cleanup(func() { require.NoError(t, pool.Close()) })
 	server.db = &storage.DB{DB: pool}
-	writer, err := db.Begin()
+	writer, err := db.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
 	defer func() { _ = writer.Rollback() }()
-	_, err = writer.Exec(`INSERT INTO sync_state (key, value) VALUES ('writer-lock', 'held')`)
+	_, err = writer.ExecContext(t.Context(), `INSERT INTO sync_state (key, value) VALUES ('writer-lock', 'held')`)
 	require.NoError(t, err)
 	server.captureSetupFinishedTelemetry()
 	// Wall-clock wait: the SQLite marker write must report actual contention.
@@ -306,7 +306,7 @@ func TestSetupFinishedTelemetryCoalescesAndStops(t *testing.T) {
 			client := &fakeTelemetryClient{enabled: true}
 			server.SetTelemetry(client)
 			var path string
-			require.NoError(t, db.QueryRow(`SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&path))
+			require.NoError(t, db.QueryRowContext(t.Context(), `SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&path))
 			release := make(chan struct{})
 			connector := &setupQueryConnector{driver: db.Driver(), dsn: path, started: make(chan struct{}, 2), release: release}
 			pool := sql.OpenDB(connector)

@@ -13,12 +13,12 @@ func TestGetLatestLogicalReviewJobOrdersMixedEnqueueTimestampFormats(t *testing.
 	defer db.Close()
 	repo, jobs := seedJobs(t, db, "/tmp/mixed-projection-order", 2)
 
-	_, err := db.Exec(
+	_, err := db.ExecContext(t.Context(),
 		`UPDATE review_jobs SET branch = ?, enqueued_at = ? WHERE id = ?`,
 		"main", "2026-08-14T08:00:00Z", jobs[0].ID,
 	)
 	require.NoError(t, err)
-	_, err = db.Exec(
+	_, err = db.ExecContext(t.Context(),
 		`UPDATE review_jobs SET branch = ?, enqueued_at = ? WHERE id = ?`,
 		"main", "2026-08-14 09:00:00", jobs[1].ID,
 	)

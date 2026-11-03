@@ -1,7 +1,6 @@
 package searchindex
 
 import (
-	"context"
 	"path/filepath"
 	"testing"
 
@@ -14,7 +13,7 @@ import (
 )
 
 func TestReopenPreservesExistingGenerationAndVectors(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	path := filepath.Join(t.TempDir(), "reviews.search.db")
 	index, err := Open(ctx, path)
 	require.NoError(t, err)

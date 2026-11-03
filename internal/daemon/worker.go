@@ -31,6 +31,7 @@ import (
 	"go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/tokens"
+	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
 const (
@@ -50,6 +51,9 @@ type runningJobCancellation struct {
 type WorkerPool struct {
 	db                   *storage.DB
 	cfgGetter            ConfigGetter
+	ciGitEnv             func(string) []string
+	ciCheckUpstream      string
+	ciCheck              func(context.Context, *storage.ReviewJob, ciCheckConfig, structuredreview.Document, []string, io.Writer) (structuredreview.Document, error)
 	broadcaster          Broadcaster
 	errorLog             *ErrorLog
 	activityLog          *ActivityLog
@@ -66,7 +70,7 @@ type WorkerPool struct {
 	stopped       bool
 	activeWorkers atomic.Int32
 	stopCh        chan struct{}
-	stopCtx       context.Context
+	stopCtx       context.Context //nolint:containedctx // pool lifetime; Stop cancels blocked claims
 	stopCancel    context.CancelFunc
 	readyCh       chan struct{} // closed after wg.Add in Start
 	startOnce     sync.Once
@@ -863,7 +867,8 @@ func (wp *WorkerPool) createExactCheckout(
 		wt.Repo = commonDir
 		createErr = writeCIWorktreeMarker(wt.Dir, commonDir)
 		if createErr != nil {
-			_ = wt.Close(context.Background())
+			// Remove the checkout even when the job was canceled.
+			_ = wt.Close(context.WithoutCancel(ctx))
 			createErr = fmt.Errorf("write review worktree marker: %w", createErr)
 		}
 	}
@@ -876,7 +881,8 @@ func (wp *WorkerPool) createExactCheckout(
 	cleanup := func() {
 		unlock := lockGitMetadata(job.RepoPath)
 		defer unlock()
-		if err := wt.Close(context.Background()); err != nil {
+		// Cleanup runs after the job ends and must not inherit its cancellation.
+		if err := wt.Close(context.WithoutCancel(ctx)); err != nil {
 			log.Printf("[%s] Warning: remove review worktree for job %d: %v",
 				workerID, job.ID, err)
 		}
@@ -1050,7 +1056,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Register for cancellation tracking
 	deadline, _ := ctx.Deadline()
 	wp.registerRunningJob(job.ID, cancel, deadline)
-	defer wp.finishRunningJob(workerID, job.ID)
+	// Cleanup must still reach the database after the job context ends.
+	defer wp.finishRunningJob(context.WithoutCancel(ctx), workerID, job.ID)
 	// Every attempt owns the lifetime of its output stream, including paths that
 	// fail before an agent starts and synthesis paths that do not invoke one.
 	defer wp.outputBuffers.CloseJob(job.ID)
@@ -1839,7 +1846,7 @@ func (wp *WorkerPool) finishCanceledAttempt(workerID string, job *storage.Review
 	})
 }
 
-func (wp *WorkerPool) finishRunningJob(workerID string, jobID int64) {
+func (wp *WorkerPool) finishRunningJob(ctx context.Context, workerID string, jobID int64) {
 	// Remove the old cancellation handler before releasing the database row.
 	// Once worker_id becomes NULL, a rerun may be claimed and register a new
 	// handler for the same job ID.
@@ -1849,7 +1856,7 @@ func (wp *WorkerPool) finishRunningJob(workerID string, jobID int64) {
 		// A failover can be claimed before this worker finishes cleanup. A
 		// cancellation during that wait reaches this handler, but its event
 		// ownership belongs to the new claim as well.
-		err := wp.db.QueryRow(`SELECT EXISTS (
+		err := wp.db.QueryRowContext(ctx, `SELECT EXISTS (
 			SELECT 1 FROM review_jobs WHERE id = ? AND status = 'canceled'
 			AND worker_id IS NOT NULL AND worker_id != ?
 		)`, jobID, workerID).Scan(&canceledSuccessor)
@@ -2368,10 +2375,51 @@ func (wp *WorkerPool) releaseIfPanelMember(job *storage.ReviewJob) {
 
 // sessionTokenUsage is the usage gathered for one attempt before it is stored.
 type sessionTokenUsage struct {
-	capturedSession string
-	wasResumed      bool
-	logUsage        *tokens.Usage
-	providerUsage   *tokens.Usage
+	capturedSession  string
+	wasResumed       bool
+	logUsage         *tokens.Usage
+	providerUsage    *tokens.Usage
+	allowSessionless bool
+}
+
+// withUnpricedPhase includes usage from a disposable session whose cost cannot be fetched.
+func (collected *sessionTokenUsage) withUnpricedPhase(sessionRan bool, u *tokens.Usage) {
+	if u == nil {
+		return
+	}
+	collected.allowSessionless = true
+	aggregate := func(usage *tokens.Usage) *tokens.Usage {
+		var combined *tokens.Usage
+		if sessionRan && usage != nil {
+			combined = backfill.AggregateTokenUsages([]*tokens.Usage{usage, u})
+			// Count checker tokens while preserving the synthesis's known cost.
+			if combined != nil {
+				combined.CostUSD = usage.CostUSD
+				combined.HasCost = usage.HasCost
+			}
+		} else {
+			combined = backfill.AggregateTokenUsages([]*tokens.Usage{u})
+		}
+		if combined != nil {
+			var sessionID string
+			var sessionIDs []string
+			if collected.capturedSession != "" && !collected.wasResumed {
+				sessionID = collected.capturedSession
+				sessionIDs = []string{collected.capturedSession}
+			}
+			combined.ThreadID = sessionID
+			combined.ProviderSessionIDs = sessionIDs
+			combined.ExpectedProviderSessions = 1
+			if sessionRan {
+				combined.ExpectedProviderSessions = 2
+			}
+		}
+		return combined
+	}
+	if collected.providerUsage != nil {
+		collected.providerUsage = aggregate(backfill.MergeTokenUsage(tokens.ToJSON(collected.logUsage), collected.providerUsage))
+	}
+	collected.logUsage = aggregate(collected.logUsage)
 }
 
 // collectTokenUsageForSession reads usage from the job log and the usage
@@ -2432,7 +2480,7 @@ func (wp *WorkerPool) storeTokenUsageForSession(
 	if sessionID == "" {
 		sessionID = usage.ThreadID
 	}
-	if sessionID == "" {
+	if sessionID == "" && !collected.allowSessionless {
 		return
 	}
 	current, err := wp.db.GetJobByID(job.ID)

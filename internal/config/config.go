@@ -739,6 +739,7 @@ func (c *Config) Validate() (err error) {
 		return err
 	}
 	reasoning := []namedConfigValue{
+		{key: "ci.check_reasoning", value: c.CI.CheckReasoning},
 		{key: "review_reasoning", value: c.ReviewReasoning},
 		{key: "refine_reasoning", value: c.RefineReasoning},
 		{key: "fix_reasoning", value: c.FixReasoning},
@@ -1507,6 +1508,14 @@ func validateRepoConfigScope(md toml.MetaData) error {
 			"repository config key %q is global-only; move it to ~/.roborev/config.toml",
 			"goal_review.kata_gate",
 		)
+	}
+	for _, key := range []string{"check_model", "check_reasoning"} {
+		if md.IsDefined("ci", key) {
+			return fmt.Errorf(
+				"repository config key %q is global-only; move it to ~/.roborev/config.toml",
+				"ci."+key,
+			)
+		}
 	}
 	return nil
 }

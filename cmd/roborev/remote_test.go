@@ -71,7 +71,7 @@ func TestRemoteCLIStreamReconnectsWithFreshSignature(t *testing.T) {
 	oldAddr, oldEndpoint := serverAddr, parsedServerEndpoint
 	serverAddr, parsedServerEndpoint = server.URL+"/history", nil
 	t.Cleanup(func() { serverAddr, parsedServerEndpoint = oldAddr, oldEndpoint })
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	var delays []time.Duration
 	// Exercise real TLS signing without wall-clock backoff. Timer behavior is

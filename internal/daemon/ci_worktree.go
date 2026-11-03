@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -197,6 +198,9 @@ func isLinkedWorktree(dir string) bool {
 }
 
 func removeStaleCIWorktree(ctx context.Context, worktreeDir string) error {
+	if err := makeCICheckRootsWritable(worktreeDir); err != nil {
+		return fmt.Errorf("restore CI worktree permissions: %w", err)
+	}
 	repoPath, err := readCIWorktreeMarker(worktreeDir)
 	if err != nil || repoPath == "" {
 		repoPath, err = repoPathFromLinkedWorktree(worktreeDir)
@@ -223,6 +227,49 @@ func removeStaleCIWorktree(ctx context.Context, worktreeDir string) error {
 		return fmt.Errorf("prune stale CI worktree metadata for %s: %w", repoPath, pruneErr)
 	}
 	return nil
+}
+
+// Only checker roots contain caches and scratch files that need permission repair.
+func makeCICheckRootsWritable(worktreeDir string) error {
+	entries, err := os.ReadDir(worktreeDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), "roborev-ci-check-") {
+			if err := makeCIWorktreeWritable(filepath.Join(worktreeDir, entry.Name())); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// PR tests and Go caches can leave read-only directories. Restore owner access
+// before removal, without following symlinks into files outside the worktree.
+func makeCIWorktreeWritable(dir string) error {
+	return filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode().Perm()&0o700 != 0o700 {
+			return os.Chmod(path, info.Mode().Perm()|0o700)
+		}
+		return nil
+	})
 }
 
 func removeCIWorktreeDir(worktreeDir string) error {

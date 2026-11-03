@@ -59,7 +59,7 @@ func TestPrepareJobCheckoutIsolationPolicy(t *testing.T) {
 			if tt.dirty {
 				job.GitRef = "dirty"
 			}
-			checkout, err := pool.prepareJobCheckout(context.Background(), testWorkerID, job, cfg)
+			checkout, err := pool.prepareJobCheckout(t.Context(), testWorkerID, job, cfg)
 			require.NoError(t, err)
 			if checkout.cleanup != nil {
 				t.Cleanup(checkout.cleanup)
@@ -83,7 +83,7 @@ func TestIsolatedCheckoutFailureDoesNotUseSource(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	cfg := config.DefaultConfig()
 	cfg.IsolateReviews = true
-	checkout, err := tc.Pool.prepareJobCheckout(context.Background(), testWorkerID, &storage.ReviewJob{
+	checkout, err := tc.Pool.prepareJobCheckout(t.Context(), testWorkerID, &storage.ReviewJob{
 		RepoPath: tc.TmpDir, GitRef: "missing-ref", JobType: storage.JobTypeReview,
 	}, cfg)
 	require.Error(t, err)
@@ -111,7 +111,7 @@ func TestOnlySynthesisInstructionsForceExactCheckout(t *testing.T) {
 			job := tt.job
 			job.RepoPath, job.GitRef = tc.TmpDir, head
 			job.PanelMemberConfigJSON = `{"instructions":"Read the code."}`
-			checkout, err := tc.Pool.prepareJobCheckout(context.Background(), testWorkerID, &job, cfg)
+			checkout, err := tc.Pool.prepareJobCheckout(t.Context(), testWorkerID, &job, cfg)
 			require.NoError(t, err)
 			if checkout.cleanup != nil {
 				t.Cleanup(checkout.cleanup)
@@ -135,14 +135,14 @@ func TestBareBackedIsolatedCheckoutCleanup(t *testing.T) {
 			cfg.IsolateReviews = true
 			pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil)
 			// Enqueue registers the checkout itself for a bare-backed worktree.
-			checkout, err := pool.prepareJobCheckout(context.Background(), testWorkerID, &storage.ReviewJob{
+			checkout, err := pool.prepareJobCheckout(t.Context(), testWorkerID, &storage.ReviewJob{
 				RepoPath: source, GitRef: repo.HeadSHA(), JobType: storage.JobTypeReview,
 			}, cfg)
 			require.NoError(t, err)
 			require.NotNil(t, checkout.cleanup)
 			repo.Run("-C", bare, "worktree", "remove", source)
 			if stale {
-				require.NoError(t, cleanupStaleCIWorktrees(context.Background()))
+				require.NoError(t, cleanupStaleCIWorktrees(t.Context()))
 			} else {
 				checkout.cleanup()
 			}
@@ -308,7 +308,7 @@ func TestPrepareLocalReviewCheckout(t *testing.T) {
 			require.NotEqual(t, caller, checkout.agentRepoPath)
 			assert.Equal(t, checkout.agentRepoPath, checkout.promptRepoPath)
 			assert.Equal(t, caller, checkout.configRepoPath)
-			cmd := exec.Command("git", "rev-parse", "HEAD")
+			cmd := exec.CommandContext(t.Context(), "git", "rev-parse", "HEAD")
 			cmd.Dir = checkout.agentRepoPath
 			output, err := cmd.Output()
 			require.NoError(t, err)
@@ -524,7 +524,7 @@ func TestWorkerIsolatedReviewStartsFreshSession(t *testing.T) {
 	sha := tc.GitRepo.HeadSHA()
 	job := tc.createJob(t, sha)
 	source := uuid.New()
-	_, err := tc.DB.Exec("UPDATE review_jobs SET session_id='prior-session',session_resumed=1,resume_source_job_uuid=? WHERE id=?", source, job.ID)
+	_, err := tc.DB.ExecContext(t.Context(), "UPDATE review_jobs SET session_id='prior-session',session_resumed=1,resume_source_job_uuid=? WHERE id=?", source, job.ID)
 	require.NoError(t, err)
 	claimed, err := tc.DB.ClaimJob(testWorkerID)
 	require.NoError(t, err)
@@ -536,7 +536,7 @@ func TestWorkerIsolatedReviewStartsFreshSession(t *testing.T) {
 	assert.NotEqual(t, "prior-session", got.SessionID)
 	assert.Nil(t, got.ResumeSourceJobUUID)
 	var resumed int
-	require.NoError(t, tc.DB.QueryRow("SELECT session_resumed FROM review_jobs WHERE id=?", job.ID).Scan(&resumed))
+	require.NoError(t, tc.DB.QueryRowContext(t.Context(), "SELECT session_resumed FROM review_jobs WHERE id=?", job.ID).Scan(&resumed))
 	assert.Zero(t, resumed)
 }
 

@@ -158,6 +158,9 @@ This mapping is for you, not the user. Use only what the conversation needs.
 | The whole branch each time | `post_commit_review = "branch"` |
 | Reviews on request | `[review] default_panel`, or `--type` and `--panel` |
 | Reviews on pull requests | `[ci] panel`; see <https://roborev.io/docs/advanced/subagent-review-panels/#ci-panels> |
+| Verify CI findings before posting | `[ci] check = true`, off by default; Codex checks findings in a sandbox and keeps the original review if checking fails. Global `[ci] check_model` and `check_reasoning` select its model and effort. |
+| PR reviews only after a draft is marked ready | Ask whether draft PRs should be skipped. For the daemon poller, global `[ci] skip_drafts = true` in `~/.roborev/config.toml` (default `false`; no repo override). Ready PRs become eligible next poll without a push, under normal throttle, quiet-hours, and dedup rules. Active reviews are not canceled. |
+| Rewrite checked CI findings | `[ci] rewrite = true` requires `check = true`. Two additional Codex calls use stored findings and escaped PR context, without checker output, in a fresh read-only clone; failure keeps the checked text. |
 | Only serious findings fail | `review_min_severity`, plus severity guidance in each rubric |
 | Passing reviews close themselves | `auto_close_passing_reviews = true` |
 | Reviewers that see the task a commit is for, from Kata | `[kata_context]` with `mode = "current"`; commits name their issue, such as `Closes: kata#abc4` |
@@ -170,6 +173,11 @@ This mapping is for you, not the user. Use only what the conversation needs.
 | A reviewer on trial | `non_voting = true` on the subagent |
 | A reviewer that may flake | `allow_failure = true` and `timeout` on the subagent |
 | A combined review that checks each finding against the material, or labels findings for whoever fixes them | `synthesis_instructions` on the panel; see <https://roborev.io/docs/advanced/subagent-review-panels/#synthesis-instructions> |
+
+For a small panel that checks findings before keeping them, use the
+[precise panel recipe](https://roborev.io/docs/advanced/subagent-review-panels/#precise-panel-recipe).
+It keeps agreed findings unless disproved and requires code evidence for
+single-reviewer or contradicted findings. Silence is not disagreement.
 
 Rules that matter:
 
@@ -351,6 +359,7 @@ Before proposing, tell the user where the material can go:
 
 - the provider behind each reviewer and synthesis agent, and the account or
     endpoint each agent CLI is signed in to; roborev does not choose it;
+- Codex when `[ci] check = true`, regardless of the review panel's agents;
 - any other agent a review can reach: the repository or machine default agent
     for reviews outside the panel, and configured backup agents;
 - every agent priced in `budget.agent_costs`, when `budget.enabled` is true;
@@ -493,7 +502,7 @@ argument, or use `--since <commit>`. For a panel, the job printed at enqueue is 
 review. Read a member's own review with:
 
 ```bash
-roborev show --from-skill --job <member-job-id>
+roborev job show --from-skill --job <member-job-id>
 ```
 
 Show the user the verdict and findings, then tune together:
@@ -513,7 +522,7 @@ Finish with a short summary:
     branch.
 - How reviews run: when they start, which reviewers, and which agents.
 - How to run one on request, and how to read results: `roborev tui`,
-    `roborev list`, or `roborev show --job <id>`.
+    `roborev job list`, or `roborev job show --job <id>`.
 - How to tune: edit a rubric, commit, and review again.
 - How to add a source document: commit its text where the rubric expects it,
     and update the rubric or include when the path changes.

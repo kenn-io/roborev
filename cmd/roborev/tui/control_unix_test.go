@@ -19,7 +19,7 @@ func TestControlSocketPermissions(t *testing.T) {
 	tmpDir := t.TempDir()
 	socketPath := filepath.Join(tmpDir, "test.sock")
 
-	cleanup, err := startControlListener(
+	cleanup, err := startControlListener(t.Context(),
 		socketPath, newTestProgramUnix(t),
 	)
 	require.NoError(t, err, "startControlListener")
@@ -64,7 +64,7 @@ func TestRemoveStaleSocket_IncompatibleSocketRefused(t *testing.T) {
 		"bind dgram socket")
 	t.Cleanup(func() { os.Remove(path) })
 
-	err = removeStaleSocket(path)
+	err = removeStaleSocket(t.Context(), path)
 	require.Error(t, err,
 		"expected error for incompatible socket")
 	assert.FileExists(t, path,
@@ -76,14 +76,14 @@ func TestCleanupDoesNotUnlinkSuccessorSocket(t *testing.T) {
 	socketPath := shortSocketPath(t, "succ")
 
 	// Listener A binds.
-	lnA, err := net.Listen("unix", socketPath)
+	lnA, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", socketPath)
 	require.NoError(t, err, "bind listener A")
 	lnA.(*net.UnixListener).SetUnlinkOnClose(false)
 
 	// Simulate the race window: A's cleanup removes its own
 	// socket, then B binds to the same path before A closes.
 	require.NoError(t, os.Remove(socketPath))
-	lnB, err := net.Listen("unix", socketPath)
+	lnB, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", socketPath)
 	require.NoError(t, err, "bind listener B")
 	t.Cleanup(func() { lnB.Close() })
 

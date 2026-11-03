@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-17
+last_edited: 2026-10-31
 title: Command Cheat Sheet
 description: Quick reference for all roborev commands and flags
 ---
@@ -8,21 +8,161 @@ description: Quick reference for all roborev commands and flags
   <img src="/docs/assets/generated/cli-help.svg" alt="roborev help output" loading="lazy">
 </figure>
 
+Run `roborev --help` for a self-contained agent workflow, grouped commands,
+repository and server selection, output modes, and exit codes. Every visible
+command has an example; `roborev <command> --help` describes its local flags.
+Subcommands list inherited flags compactly; root help has full descriptions.
+
+## Command groups and migration
+
+Use `job` to find and read review jobs, wait for results, and resolve findings.
+`report` summarizes activity and costs. `daemon` controls the process and queue;
+`hook` manages Git hooks, while `agent` manages provider checks, skills and
+coding-agent harness hooks. `storage` holds repair and migration commands. The
+main workflows remain `review`, `fix`, `refine`, `analyze`, and `run`.
+
+| Previous command | Preferred command |
+| --- | --- |
+| `list` (`ls`) | `job list` (`job ls`) |
+| `show` | `job show` |
+| `wait` | `job wait` |
+| `search` | `job search` |
+| `comment`, `respond` | `job comment` |
+| `close` (`address`, `resolve`) | `job close` (`job address`, `job resolve`) |
+| `cancel` | `job cancel` |
+| `stream` | `job stream` |
+| `log`, `log clean` | `job log`, `job log clean` |
+| `compact` | `job compact` |
+| `status` | `daemon status` |
+| `pause` | `daemon pause` |
+| `unpause` | `daemon resume` |
+| `install-hook`, `install-hook repair` | `hook install`, `hook install repair` |
+| `uninstall-hook` | `hook uninstall` |
+| `check-agents` | `agent check` |
+| `skills <action>` | `agent skills <action>` |
+| `agent-hook <action>` | `agent hook <action>` |
+| `snooze` | `agent hook snooze` |
+| `summary` | `report summary` |
+| `cost` | `report cost` |
+| `insights` | `report insights` |
+| `backfill-tokens` | `storage backfill-tokens` |
+| `backfill-verdicts` | `storage backfill-verdicts` |
+| `legacy-reviews <action>` | `storage legacy-reviews <action>` |
+| `signing-init` | `signing init` |
+
+Every previous spelling remains accepted for at least one release, including its
+flags and subcommands. These compatibility commands are hidden from help and
+completion. A successful legacy invocation prints a migration notice to stderr.
+Successful stdout, JSON payloads, exit codes and daemon requests retain their
+existing contracts. Failed JSON commands keep a single error envelope; quiet
+commands and harness hook callbacks do not print migration notices. Installed
+Git and agent hooks continue to work without reinstalling them. HTTP routes, MCP
+tools and daemon protocol names have not changed.
+
+Regenerate shell completions with `roborev completion <shell>` to discover the
+new groups. Use `roborev job --help` or another group's help to find its
+actions.
+
+## Direct CLI workflow
+
+Run these from your git checkout. Replace job `42` with the job ID printed by
+`review` or `list`:
+
+```bash
+roborev doctor
+roborev init
+roborev review HEAD
+roborev job wait --job 42
+roborev job show --job 42
+roborev fix 42
+roborev job comment --job 42 "Fixed and verified the findings"
+roborev job close 42
+```
+
+`fix` runs a foreground agent that can edit and commit code and closes completed
+jobs automatically. Re-review the resulting commit for fresh verification.
+`fix --list` previews work, and `refine` automates repeated review and fix
+cycles.
+
+### IDs, repositories and servers
+
+Job IDs are positive integers scoped to the selected daemon. `show`, `wait`, and
+`comment` try a local git ref first, then a numeric job ID; add `--job` to force
+a job ID. `show` and `wait` default to `HEAD`. `fix`, `close`, and `cancel` take
+job IDs; `review` takes git refs.
+
+Start in the repository checkout. Where supported, `--repo` chooses a path,
+stored repository identity, or filter as described by that command. Outside a
+checkout, `list` also discovers repositories in immediate child directories.
+Without `--server`, commands discover the local daemon through its runtime file
+under `ROBOREV_DATA_DIR` (default `~/.roborev`) and start it when needed.
+`doctor` diagnoses setup without starting a daemon.
+
+`--server` selects an existing loopback address, `unix://` socket, or remote
+HTTPS base URL. The CLI does not start or replace explicit targets. Remote HTTPS
+supports `list`, `show --job`, `wait --job`, and `stream`, with configured
+signing credentials and repository grants; foreground fixes and daemon
+management need local access. Remote commands do not resolve local git refs.
+
+```bash
+roborev --server 127.0.0.1:7373 list
+roborev --server https://reviews.example.com list
+roborev --server https://reviews.example.com show --job 42
+```
+
+### Output, errors and exit codes
+
+Output flags belong to commands. There is no global `--json` or `--agent`. For
+example, `list --json` includes job status and verdict, while `show --json`
+returns the review record with its stored document. `search --agent` prints
+concise text; the `--agent` flags on review, fix and setup commands select an AI
+provider or integration profile. Export commands emit JSON through their own
+`--format` option.
+
+Errors go to stderr and include an actionable recovery hint. Commands supporting
+`--json` emit a JSON error envelope with `error.code`, `error.message`,
+`error.hint`, and `error.exit_code`. `search --agent` uses a separate `Hint:`
+line; human errors use `hint:`. Quiet and hook commands keep their reduced
+output.
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Success, including displaying a completed FAIL review with `show`. |
+| 1 | Runtime failure, failed diagnosis, or a completed FAIL verdict from a waiting review command. |
+| 2 | Invocation error, such as unknown flags, missing arguments, or incompatible flags. |
+| 3 | Export cursor belongs to another database; discard the cursor and backfill. |
+| 4 | Invalid user-supplied value. |
+
+### Environment
+
+| Variable | Purpose |
+| --- | --- |
+| `ROBOREV_DATA_DIR` | Local config, runtime, database and logs; default `~/.roborev`. |
+| `ROBOREV_COLOR_MODE` | Color theme: `auto`, `dark`, `light`, or `none`. |
+| `NO_COLOR` | Disable color output. |
+| `ROBOREV_TELEMETRY_ENABLED` | Set to `0` to disable anonymous usage telemetry. |
+| `EDITOR` | Editor opened by `comment` when no message is supplied. |
+| `GH_TOKEN`, `GITHUB_TOKEN` | GitHub authentication for CI commands. |
+| `GITLAB_TOKEN`, `GL_TOKEN` | GitLab authentication for CI commands. |
+
+The [configuration reference](/docs/configuration/) covers provider settings and
+the [README](https://github.com/kenn-io/roborev#environment-variables) lists
+specialized hook and sync overrides.
+
 ## Essentials
 
 ```bash
-roborev init [--agent <name>]    # Initialize repo + daemon + hook
+roborev init --agent codex    # Initialize repo + daemon + hook
                                  # --no-daemon: skip auto-starting daemon
 roborev fix                      # Fix open reviews
 roborev daemon status            # Check daemon, web UI, and queue
-roborev status                   # Backward-compatible status alias
-roborev search "query"           # Search completed review history
-roborev pause                    # Pause queue processing
-roborev unpause                  # Resume queue processing
-roborev cancel <job_id>          # Cancel one queued or running job
-roborev summary                  # Aggregate review statistics
-roborev cost                     # Approximate aggregate review cost
-roborev insights                 # Analyze review patterns
+roborev job search "query"           # Search completed review history
+roborev daemon pause                    # Pause queue processing
+roborev daemon resume                  # Resume queue processing
+roborev job cancel 42          # Cancel one queued or running job
+roborev report summary                  # Aggregate review statistics
+roborev report cost                     # Approximate aggregate review cost
+roborev report insights                 # Analyze review patterns
 roborev tui                      # Interactive terminal UI
                                  # --repo: pre-filter to repo
                                  # --branch: pre-filter to branch
@@ -64,11 +204,11 @@ Consumers should ignore additional fields so the contract can grow compatibly.
 ```bash
 # Single commits
 roborev review                   # Review HEAD
-roborev review <sha>             # Review specific commit
+roborev review HEAD~1             # Review specific commit
 
 # Commit ranges
-roborev review <start> <end>     # Review range (inclusive)
-roborev review --since <commit>  # Review since commit (exclusive)
+roborev review HEAD~2 HEAD     # Review range (inclusive)
+roborev review --since HEAD~1  # Review since commit (exclusive)
 roborev review --since HEAD~5    # Review last 5 commits
 
 # Branch reviews
@@ -119,13 +259,13 @@ support Pi and Claude Code and reject commit selectors and panels.
 ## Waiting for Reviews
 
 ```bash
-roborev wait                     # Wait for most recent job for HEAD
-roborev wait abc123              # Wait for most recent job for commit
-roborev wait 42                  # Job ID (if "42" is not a valid git ref)
-roborev wait 42 43 44            # Wait for multiple jobs
-roborev wait --job 42            # Force as job ID
-roborev wait --sha HEAD~1        # Wait for job matching HEAD~1
-roborev wait --quiet             # Suppress output (for hooks/agents)
+roborev job wait                     # Wait for most recent job for HEAD
+roborev job wait abc123              # Wait for most recent job for commit
+roborev job wait 42                  # Job ID (if "42" is not a valid git ref)
+roborev job wait 42 43 44            # Wait for multiple jobs
+roborev job wait --job 42            # Force as job ID
+roborev job wait --sha HEAD~1        # Wait for job matching HEAD~1
+roborev job wait --quiet             # Suppress output (for hooks/agents)
 ```
 
 | Flag | Description |
@@ -144,24 +284,24 @@ See: [Reviewing Code](/docs/guides/reviewing-code/)
 ## Viewing Reviews
 
 ```bash
-roborev show                     # Show review for HEAD
-roborev show <sha>               # Show review for commit
-roborev show <job_id>            # Show review by job ID
-roborev show --job <id>          # Force interpretation as job ID
-roborev show --prompt <job_id>   # Show the prompt sent to the agent
-roborev list                     # List jobs for current repo/branch
-roborev list --all-branches      # List jobs for every branch in the current repo
-roborev list --open              # List open reviews; failed and canceled
+roborev job show                     # Show review for HEAD
+roborev job show HEAD~1               # Show review for commit
+roborev job show 42            # Show review by job ID
+roborev job show --job 42          # Force interpretation as job ID
+roborev job show --prompt 42   # Show the prompt sent to the agent
+roborev job list                     # List jobs for current repo/branch
+roborev job list --all-branches      # List jobs for every branch in the current repo
+roborev job list --open              # List open reviews; failed and canceled
                                  # jobs are excluded unless --status
                                  # selects them
-roborev list --closed            # List only closed reviews
-roborev list --analysis-type refactor # List recorded refactor analyses
-roborev list --file pkg/a.go     # List analyses that recorded this file
+roborev job list --closed            # List only closed reviews
+roborev job list --analysis-type refactor # List recorded refactor analyses
+roborev job list --file pkg/a.go     # List analyses that recorded this file
 roborev tui                      # Interactive terminal UI
 roborev tui --repo --branch      # Pre-filtered to current repo+branch
 roborev ui                       # Open the browser review workspace
 roborev ui 42                    # Deep-link to browser review detail
-roborev log <job_id>             # View job log
+roborev job log 42             # View job log
 ```
 
 | Flag | Description |
@@ -172,8 +312,9 @@ roborev log <job_id>             # View job log
 | `--analysis-type <name>` | Filter by the recorded `roborev analyze` type |
 | `--file <path>` | Filter by an exact recorded repository-relative file path; repeatable |
 
-`roborev list` filters to the current branch by default. Use `--all-branches` to
-omit the branch filter. `--all-branches` and `--branch` cannot be combined.
+`roborev job list` filters to the current branch by default. Use
+`--all-branches` to omit the branch filter. `--all-branches` and `--branch`
+cannot be combined.
 
 Jobs created by `roborev analyze` record the analysis type and the files that
 were supplied to the prompt. File paths use slash separators and are relative to
@@ -189,16 +330,16 @@ exact contents of tracked files at one commit. Dirty or untracked input and a
 path-only prompt leave that field empty. An unresolved commit does not prevent
 the job from being queued.
 
-`roborev list --json` and `roborev show --json` include `web_url` when the
-daemon has an active browser listener. See
+`roborev job list --json` and `roborev job show --json` include `web_url` when
+the daemon has an active browser listener. See
 [Review links](/docs/integrations/mcp/#review-links) for how to use these URLs.
 
 When the argument is a numeric job ID, `--prompt` can display the stored prompt
 while the job is queued or running; review output does not exist until the job
 completes.
 
-`roborev show` displays review comments after the review output when comments
-exist, matching the layout in the TUI review detail view.
+`roborev job show` displays review comments after the review output when
+comments exist, matching the layout in the TUI review detail view.
 
 Failed Codex jobs report the final turn error when supplied; raw logs retain
 reconnect notices.
@@ -224,9 +365,9 @@ and terminal UI.
 See [Browser UI](/docs/web-ui/) for analytics definitions, remote HTTPS access,
 and the production Tailscale Serve setup.
 
-For panel parent reviews, `roborev show` also displays a one-line reviewer
-summary. `roborev show --json` includes an additive `panel` object with the run
-UUID, panel name, synthesis job ID, and member reviewer statuses.
+For panel parent reviews, `roborev job show` also displays a one-line reviewer
+summary. `roborev job show --json` includes an additive `panel` object with the
+run UUID, panel name, synthesis job ID, and member reviewer statuses.
 
 See: [Terminal UI](/docs/integrations/tui/)
 
@@ -237,11 +378,11 @@ See: [Terminal UI](/docs/integrations/tui/)
 ## Searching Review History
 
 ```bash
-roborev search "retry provider failures" --agent
-roborev search "database is locked" --lexical
-roborev search "shutdown race" --semantic --repo roborev
-roborev search "authentication" --branch main --since 720h --verdict fail --open
-roborev search "deadlock" --limit 10 --json
+roborev job search "retry provider failures" --agent
+roborev job search "database is locked" --lexical
+roborev job search "shutdown race" --semantic --repo roborev
+roborev job search "authentication" --branch main --since 720h --verdict fail --open
+roborev job search "deadlock" --limit 10 --json
 ```
 
 Search covers all repositories in the local review database unless `--repo` is
@@ -278,10 +419,10 @@ privacy, freshness, panel grouping, and the HTTP/MCP interfaces.
 ## Canceling a Job
 
 ```bash
-roborev cancel 42                # Cancel job 42 if it is queued or running
+roborev job cancel 42                # Cancel job 42 if it is queued or running
 ```
 
-`roborev cancel` accepts one positive numeric job ID. It asks the daemon to
+`roborev job cancel` accepts one positive numeric job ID. It asks the daemon to
 cancel that job and prints `Job 42 canceled` when successful. Jobs that have
 already reached a terminal state, including done, failed, or canceled jobs,
 cannot be canceled and return an error.
@@ -325,7 +466,9 @@ every review nested under `subagents`:
 `document` when you need the summary, verdict, or findings as data.
 
 The `metadata` profile keeps the same review metadata. Both keys stay present,
-and `document` and `content` are always `null`.
+and `document` and `content` are always `null`. Both profiles include
+`non_voting` on each panel member: `true` for advisory members and `false` for
+voting members.
 
 A `document` has these members:
 
@@ -544,13 +687,13 @@ panel-era cursors are namespaced and cannot be resumed against each other.
 ## Job Logs
 
 ```bash
-roborev log <job-id>             # Human-friendly rendered output
-roborev log --raw <job-id>       # Raw NDJSON bytes
-roborev log --path <job-id>      # Print the log file path
-roborev --server 127.0.0.1:7373 log <job-id> # Select a running daemon
+roborev job log 42             # Human-friendly rendered output
+roborev job log --raw 42       # Raw NDJSON bytes
+roborev job log --path 42      # Print the log file path
+roborev --server 127.0.0.1:7373 log 42 # Select a running daemon
 
-roborev log clean                # Remove logs older than 7 days
-roborev log clean --days 3       # Remove logs older than 3 days
+roborev job log clean                # Remove logs older than 7 days
+roborev job log clean --days 3       # Remove logs older than 3 days
 ```
 
 | Flag | Description |
@@ -559,10 +702,10 @@ roborev log clean --days 3       # Remove logs older than 3 days
 | `--path` | Print the log file path instead of contents |
 
 Job logs are persisted to `~/.roborev/logs/jobs/` so agent output remains
-available after daemon restarts. By default, `roborev log` renders NDJSON into
-compact, human-readable progress lines showing tool calls and agent text. It
-requests the log and its stored metadata through the daemon API to select that
-renderer. Use `--raw` for the original NDJSON when scripting, debugging, or
+available after daemon restarts. By default, `roborev job log` renders NDJSON
+into compact, human-readable progress lines showing tool calls and agent text.
+It requests the log and its stored metadata through the daemon API to select
+that renderer. Use `--raw` for the original NDJSON when scripting, debugging, or
 reading an orphaned log file. For a daemon using a custom database, select that
 daemon with `--server`; the CLI does not open SQLite.
 
@@ -575,10 +718,10 @@ the specified number of days (default: 7).
 ## Commenting on Reviews
 
 ```bash
-roborev comment <job_id> "message"   # Add comment with message
-roborev comment <job_id>             # Opens editor
-roborev close <job_id>               # Mark as closed
-roborev close <job_id> --reopen      # Reopen a closed review
+roborev job comment 42 "message"   # Add comment with message
+roborev job comment 42             # Opens editor
+roborev job close 42               # Mark as closed
+roborev job close 42 --reopen      # Reopen a closed review
 ```
 
 | Flag | Description |
@@ -592,7 +735,7 @@ roborev close <job_id> --reopen      # Reopen a closed review
 
 !!! note
 
-    `roborev address` is still accepted as an alias for `roborev close`.
+    `roborev address` is still accepted as an alias for `roborev job close`.
 
 See: [Responding to Reviews](/docs/guides/responding-to-reviews/)
 
@@ -742,14 +885,14 @@ See: [Assisted Refactoring](/docs/guides/assisted-refactoring/)
 ## Consolidating Reviews
 
 ```bash
-roborev compact                              # Enqueue consolidation (background)
-roborev compact --wait                       # Wait for completion
-roborev compact --branch main                # Compact jobs on main branch
-roborev compact --all-branches               # Compact jobs across all branches
-roborev compact --dry-run                    # Show what would be done
-roborev compact --limit 10                   # Process at most 10 jobs
-roborev compact --agent claude-code          # Use specific agent for verification
-roborev compact --reasoning thorough         # Use thorough reasoning level
+roborev job compact                              # Enqueue consolidation (background)
+roborev job compact --wait                       # Wait for completion
+roborev job compact --branch main                # Compact jobs on main branch
+roborev job compact --all-branches               # Compact jobs across all branches
+roborev job compact --dry-run                    # Show what would be done
+roborev job compact --limit 10                   # Process at most 10 jobs
+roborev job compact --agent claude-code          # Use specific agent for verification
+roborev job compact --reasoning thorough         # Use thorough reasoning level
 ```
 
 | Flag | Description |
@@ -785,12 +928,12 @@ verification with no remaining findings is still recorded as a review.
 ## Review Statistics
 
 ```bash
-roborev summary                     # Last 7 days, current repo
-roborev summary --all               # Last 7 days, all repos
-roborev summary --since 30d         # Last 30 days
-roborev summary --branch main       # Filter by branch
-roborev summary --repo /path/to/repo
-roborev summary --json              # Structured output for scripting
+roborev report summary                     # Last 7 days, current repo
+roborev report summary --all               # Last 7 days, all repos
+roborev report summary --since 30d         # Last 30 days
+roborev report summary --branch main       # Filter by branch
+roborev report summary --repo /path/to/repo
+roborev report summary --json              # Structured output for scripting
 ```
 
 | Flag | Description |
@@ -818,7 +961,7 @@ The summary includes:
 ### CI run health
 
 When the selected window contains CI panel runs, `summary` also shows a **CI Run
-Health** block. Use `roborev summary --all --since 7d` to inspect all
+Health** block. Use `roborev report summary --all --since 7d` to inspect all
 repositories monitored by the daemon, including separate CI checkouts.
 
 - **Panels** counts one run per panel, including reruns. Panel size does not
@@ -833,9 +976,10 @@ repositories monitored by the daemon, including separate CI checkouts.
     `canceled`. Older rows or unspecified ownership transitions appear as
     `unknown`.
 - **Runs per PR** reports p50, p90, and maximum. A PR is identified by both its
-    GitHub repository and number. Every PR above five runs is listed, ordered by
-    descending run count, then repository and PR number. Fractional percentiles
-    use interpolation.
+    GitHub repository and number. Fractional percentiles use interpolation.
+- **Per PR** lists every PR by descending run count, then repository and PR
+    number, with its recorded cost and its busiest hour: the most runs created
+    within one hour of each other. JSON exposes this as `peak_hour_runs`.
 - **Turnaround** measures the first review attempt through finalization,
     including time spent queued, reviewing, and retrying. Only runs with valid,
     nonnegative timestamps contribute. The sample count is displayed; no samples
@@ -862,12 +1006,12 @@ JSON exposes this block as `ci`, omitted when no panels match. See
 ## Aggregate Cost
 
 ```bash
-roborev cost                     # All-time, current repo
-roborev cost --all               # All-time, all repos
-roborev cost --branch main       # Filter by branch
-roborev cost --repo /path/to/repo
-roborev cost --since 30d         # Last 30 days
-roborev cost --json              # Structured output for scripting
+roborev report cost                     # All-time, current repo
+roborev report cost --all               # All-time, all repos
+roborev report cost --branch main       # Filter by branch
+roborev report cost --repo /path/to/repo
+roborev report cost --since 30d         # Last 30 days
+roborev report cost --json              # Structured output for scripting
 ```
 
 | Flag | Description |
@@ -890,13 +1034,13 @@ collected.
 ## Insights
 
 ```bash
-roborev insights                          # Analyze last 30 days
-roborev insights --since 7d              # Last 7 days
-roborev insights --branch main           # Filter to main branch
-roborev insights --repo /path/to/repo    # Specific repository
-roborev insights --agent gemini          # Use specific agent
-roborev insights --wait=false            # Enqueue without waiting
-roborev insights --json                  # Output as JSON
+roborev report insights                          # Analyze last 30 days
+roborev report insights --since 7d              # Last 7 days
+roborev report insights --branch main           # Filter to main branch
+roborev report insights --repo /path/to/repo    # Specific repository
+roborev report insights --agent gemini          # Use specific agent
+roborev report insights --wait=false            # Enqueue without waiting
+roborev report insights --json                  # Output as JSON
 ```
 
 | Flag | Description |
@@ -937,8 +1081,8 @@ with a message instead of queuing a job.
 
 Token usage is tracked automatically for completed jobs when the local
 `agentsview` CLI or a usage server is configured. Usage appears in the TUI
-review header and `roborev show` output (e.g. `118.0k ctx · 28.8k out`). When
-supported, roborev uses `session usage --no-sync` to read archived usage,
+review header and `roborev job show` output (e.g. `118.0k ctx · 28.8k out`).
+When supported, roborev uses `session usage --no-sync` to read archived usage,
 including subagents, without synchronizing source transcripts. Run AgentsView's
 watcher or synchronize separately to keep the archive current. On older CLIs,
 roborev retries without `--no-sync` or uses the legacy `token-use` command when
@@ -983,8 +1127,8 @@ URL template. It cannot be combined with `agentsview.url`. See
 To backfill token data for older jobs:
 
 ```bash
-roborev backfill-tokens             # Fetch token data for all eligible jobs
-roborev backfill-tokens --dry-run   # Preview without writing
+roborev storage backfill-tokens             # Fetch token data for all eligible jobs
+roborev storage backfill-tokens --dry-run   # Preview without writing
 ```
 
 | Flag | Description |
@@ -1159,12 +1303,12 @@ See: [Custom Agent Tasks](/docs/advanced/custom-tasks/)
 ## Configuration
 
 ```bash
-roborev config get <key>             # Get value (merged: local then global)
-roborev config get <key> --global    # Get from global config only
-roborev config get <key> --local     # Get from repo config only
+roborev config get agent             # Get value (merged: local then global)
+roborev config get default_agent --global    # Get from global config only
+roborev config get agent --local     # Get from repo config only
 
-roborev config set <key> <value>     # Set in repo config (default)
-roborev config set <key> <value> --global  # Set in global config
+roborev config set agent codex     # Set in repo config (default)
+roborev config set default_agent codex --global  # Set in global config
 
 roborev config list                  # List merged config
 roborev config list --show-origin    # Show where each value comes from
@@ -1186,11 +1330,11 @@ See: [Configuration](/docs/configuration/)
 
 ```bash
 roborev repo list                       # List all repos
-roborev repo show <name>                # Show repo details
-roborev repo rename <old> <new>         # Rename display name
-roborev repo move <name-or-path> <new>  # Update root path after a directory move
-roborev repo delete <name>              # Remove from tracking
-roborev repo merge <src> <dst>          # Merge reviews between repos
+roborev repo show example                # Show repo details
+roborev repo rename example renamed         # Rename display name
+roborev repo move example renamed  # Update root path after a directory move
+roborev repo delete example              # Remove from tracking
+roborev repo merge source target          # Merge reviews between repos
 ```
 
 See: [Repository Management](/docs/guides/repository-management/)
@@ -1213,17 +1357,16 @@ roborev daemon stop              # Stop daemon
 roborev daemon restart           # Restart daemon
 roborev daemon status            # Show daemon, web UI, and queue status
 roborev daemon run               # Run in foreground
-roborev pause                    # Pause queue processing
-roborev unpause                  # Resume queue processing
-roborev cancel <job_id>          # Cancel one queued or running job
+roborev daemon pause                    # Pause queue processing
+roborev daemon resume                  # Resume queue processing
+roborev job cancel 42          # Cancel one queued or running job
 
-roborev status                   # Backward-compatible status alias
 roborev daemon status --json     # Structured status for scripting
 
 roborev post-commit              # Hook entry point (called by git hook)
-roborev install-hook             # Install post-commit hook
-roborev install-hook --force     # Overwrite existing hook with a fresh one
-roborev uninstall-hook           # Remove hook
+roborev hook install             # Install post-commit hook
+roborev hook install --force     # Overwrite existing hook with a fresh one
+roborev hook uninstall           # Remove hook
 ```
 
 | Flag | Description |
@@ -1237,7 +1380,8 @@ they explain why when the daemon published a reason —
 `Web UI: disabled (this build has no embedded web assets; reinstall from an official release)`
 or `Web UI: disabled ([web] enabled = false)` — and print `Web UI: unavailable`
 otherwise, instead of silently omitting the application. The older
-`roborev status` command remains an alias with identical output.
+`roborev status` spelling remains a hidden compatibility command with identical
+stdout.
 
 When Agent Hook reminders are snoozed, `roborev daemon status` lists every
 active scope with its repository, exact worktree, branch, and local expiry time.
@@ -1266,7 +1410,7 @@ finish without a timeout, and only then starts the replacement daemon.
     `fi` or missing lines), run:
 
     ```bash
-    roborev install-hook --force
+    roborev hook install --force
     ```
 
     This replaces the hook entirely with a known-good version.
@@ -1319,15 +1463,15 @@ See: [Configuration](/docs/configuration/#post-commit-review-mode) and
 ## Agent Hook
 
 ```bash
-roborev agent-hook install              # Install profiles for detected agents
-roborev agent-hook install --agent all  # Install all nine integrations
-roborev agent-hook install --agent hermes --config ~/.hermes/config.yaml
-roborev agent-hook install --binary ~/.local/bin/roborev
-roborev agent-hook dump --agent qwen    # Native JSON config on stdout
-roborev agent-hook dump --agent hermes  # Native YAML config on stdout
-roborev agent-hook run ...              # Internal harness runtime installed by agent-hook install
-roborev agent-hook status               # Tracked session counters as JSON
-roborev agent-hook reset <session-id>   # Reset one session (or --all)
+roborev agent hook install              # Install profiles for detected agents
+roborev agent hook install --agent all  # Install all nine integrations
+roborev agent hook install --agent hermes --config ~/.hermes/config.yaml
+roborev agent hook install --binary ~/.local/bin/roborev
+roborev agent hook dump --agent qwen    # Native JSON config on stdout
+roborev agent hook dump --agent hermes  # Native YAML config on stdout
+roborev agent hook run --agent codex --source roborev-agent-hook              # Internal harness runtime installed by agent-hook install
+roborev agent hook status               # Tracked session counters as JSON
+roborev agent hook reset example-session   # Reset one session (or --all)
 ```
 
 | Flag | Description |
@@ -1352,7 +1496,7 @@ configuration, the exact-ID fix workflow, and declarative config details.
 ```bash
 roborev doctor                 # Check config, daemon, agents, and this repo
 roborev doctor --json          # Machine-readable report for scripts and agents
-roborev doctor --repo <path>   # Check a different repository
+roborev doctor --repo /path/to/repo   # Check a different repository
 ```
 
 `roborev doctor` reads configuration and daemon state and reports problems with
@@ -1367,10 +1511,26 @@ hooks, or edits config.
 | Recent failures | Failed jobs queued in the last 7 days, grouped by agent; post-commit hook runs that failed to queue a review |
 | Repository | Registered with the daemon; git hooks installed and current; `snapshot_dir` usable |
 | Review guidelines | `review_guidelines` or `REVIEW.md` exist; when security reviews are enabled, the guidelines describe security or a threat model |
-| Integrations | `[[hooks]]` entries that can never fire or whose `kata` or `bd` CLI is missing from the daemon's `PATH`, `[sync]` problems, and an empty `ci.repos` or invalid `ci.quiet_hours` when the CI poller is enabled |
+| Integrations | `[[hooks]]` entries that can never fire or whose `kata` or `bd` CLI is missing from the daemon's `PATH`, `[sync]` problems, and CI poller settings and per-PR CI run bursts |
 
 Each check reports `ok`, `info`, `warn`, or `fail`. The command exits `1` when
 any check fails and `0` otherwise, including when there are only warnings.
+
+When CI polling is enabled, doctor checks the last 7 days of CI panel runs
+across all repositories, including when `--repo` selects a repository. The
+`integrations.ci_bursts` check warns when any PR started more than 10 runs
+within one hour, and lists each such PR. The total number of runs on a PR does
+not matter: a PR that takes dozens of refinement rounds over several days is
+normal. A fast refinement loop runs a round every 5 to 10 minutes, and the
+default `ci.throttle_interval` allows one run per hour for authors who do not
+bypass it, so more than 10 in an hour usually means repeated reruns or the
+poller re-enqueuing the PR.
+
+The burst check skips disabled polling, a stopped daemon, and a summary without
+CI panel data. A summary API error produces an `info` check with the error. To
+see each PR's busiest hour, run `roborev report summary --all --since 7d`.
+Doctor also reports an empty `ci.repos` or invalid `ci.quiet_hours` when CI
+polling is enabled.
 
 Security reviews count as enabled for a repository when the panel selected by
 `review.default_panel` or `review.hook_review_panel`, in the default config or
@@ -1402,9 +1562,9 @@ With `--json`, the report has this shape. Check IDs are stable.
 ## Checking Agents
 
 ```bash
-roborev check-agents                # Smoke-test all installed agents
-roborev check-agents --agent codex  # Test a specific agent
-roborev check-agents --timeout 30   # Set timeout per agent (seconds)
+roborev agent check                # Smoke-test all installed agents
+roborev agent check --agent codex  # Test a specific agent
+roborev agent check --timeout 30   # Set timeout per agent (seconds)
 ```
 
 | Flag | Description |
@@ -1418,8 +1578,8 @@ or wrapper that roborev uses for review and agentic jobs.
 ## Agent Skills
 
 ```bash
-roborev skills install           # Install skills for agents
-roborev skills update            # Update installed skills
+roborev agent skills install           # Install skills for agents
+roborev agent skills update            # Update installed skills
 ```
 
 Bundled skills pass the hidden `--from-skill` flag on the roborev commands they
@@ -1448,8 +1608,8 @@ See: [MCP Server](/docs/integrations/mcp/)
 roborev sync status              # Show PostgreSQL sync status
 roborev sync now                 # Trigger immediate sync
 
-roborev stream                   # Stream all events (JSONL)
-roborev stream --repo .          # Filter to current repo
+roborev job stream                   # Stream all events (JSONL)
+roborev job stream --repo .          # Filter to current repo
 ```
 
 See: [PostgreSQL Sync](/docs/advanced/postgres-sync/),
@@ -1457,10 +1617,10 @@ See: [PostgreSQL Sync](/docs/advanced/postgres-sync/),
 
 ## Multi-Repo Workspaces
 
-`roborev list` looks in immediate child subfolders for repositories, so you can
-run it from a parent directory that contains multiple repos. `roborev review`
-suggests repo-level review commands when run from a workspace root, making it
-easy to review across projects.
+`roborev job list` looks in immediate child subfolders for repositories, so you
+can run it from a parent directory that contains multiple repos.
+`roborev review` suggests repo-level review commands when run from a workspace
+root, making it easy to review across projects.
 
 ## Global Flags
 

@@ -113,8 +113,8 @@ type gitConfigEntry struct {
 	value string
 }
 
-func newGitCommitCmd(repoPath string, args ...string) *exec.Cmd {
-	cmd := exec.Command("git", args...)
+func newGitCommitCmd(ctx context.Context, repoPath string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = repoPath
 	procutil.HideConsole(cmd)
 	cmd.Env = append(filterGitCommitEnv(cmd.Environ()), "GIT_TERMINAL_PROMPT=0")
@@ -957,6 +957,68 @@ func ResolveSHACtx(ctx context.Context, repoPath, ref string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// ResolveSHAsCtx resolves refs to object IDs in at most one git process, without peeling
+// annotated tags. Empty, newline-containing, and unresolved refs map to "".
+func ResolveSHAsCtx(ctx context.Context, repoPath string, refs []string) (map[string]string, error) {
+	resolved := make(map[string]string, len(refs))
+	pending := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		if _, ok := resolved[ref]; ok {
+			continue
+		}
+		resolved[ref] = ""
+		if ref == "" || strings.Contains(ref, "\n") {
+			continue
+		}
+		// Like rev-parse, accept full IDs without checking the object store.
+		// In partial clones, cat-file can fetch missing objects one at a time.
+		if isFullObjectID(ref) {
+			resolved[ref] = ref
+			continue
+		}
+		pending = append(pending, ref)
+	}
+	if len(pending) == 0 {
+		return resolved, nil
+	}
+	ids, err := resolveObjectIDsCtx(ctx, repoPath, pending)
+	if err != nil {
+		return nil, err
+	}
+	for i, ref := range pending {
+		resolved[ref] = ids[i]
+	}
+	return resolved, nil
+}
+
+func resolveObjectIDsCtx(ctx context.Context, repoPath string, refs []string) ([]string, error) {
+	var input strings.Builder
+	for _, ref := range refs {
+		input.WriteString(ref)
+		input.WriteByte('\n')
+	}
+	cmd := newGitCmdContext(ctx, "cat-file", "--batch-check=%(objectname)")
+	cmd.Dir = repoPath
+	cmd.Stdin = strings.NewReader(input.String())
+	out, err := gitOutput(cmd)
+	if err != nil {
+		return nil, fmt.Errorf("git cat-file resolve refs: %w", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(out), "\r\n"), "\n")
+	if len(lines) != len(refs) {
+		return nil, fmt.Errorf("git cat-file resolve refs: got %d results for %d refs", len(lines), len(refs))
+	}
+	for i, line := range lines {
+		// Missing or ambiguous names are unresolved.
+		sha := strings.TrimSpace(line)
+		if !isFullObjectID(sha) {
+			sha = ""
+		}
+		lines[i] = sha
+	}
+	return lines, nil
+}
+
 // ResolveCommitCtx resolves ref to the SHA of the commit it names, peeling
 // an annotated tag. It resolves ref as written before peeling, because in a
 // message-search ref such as ":/fix login" git reads a ^{commit} suffix as
@@ -1100,30 +1162,16 @@ func (m *BranchLineageMatcher) ResolveRefs(ctx context.Context, refs []string) e
 	if len(pending) == 0 {
 		return nil
 	}
-	var input strings.Builder
-	for _, ref := range pending {
-		input.WriteString(ref)
-		input.WriteString("^{commit}\n")
+	names := make([]string, len(pending))
+	for i, ref := range pending {
+		names[i] = ref + "^{commit}"
 	}
-	cmd := newGitCmdContext(ctx, "cat-file", "--batch-check=%(objectname)")
-	cmd.Dir = m.repoPath
-	cmd.Stdin = strings.NewReader(input.String())
-	out, err := gitOutput(cmd)
+	resolved, err := resolveObjectIDsCtx(ctx, m.repoPath, names)
 	if err != nil {
-		return fmt.Errorf("git cat-file resolve refs: %w", err)
-	}
-	lines := strings.Split(strings.TrimRight(string(out), "\r\n"), "\n")
-	if len(lines) != len(pending) {
-		return fmt.Errorf("git cat-file resolve refs: got %d results for %d refs", len(lines), len(pending))
+		return err
 	}
 	for i, ref := range pending {
-		// Refs git cannot resolve come back as "<name> missing" or
-		// "<name> ambiguous"; cache those as unresolved.
-		commit := strings.TrimSpace(lines[i])
-		if !isFullObjectID(commit) {
-			commit = ""
-		}
-		m.resolvedCommit[ref] = commit
+		m.resolvedCommit[ref] = resolved[i]
 	}
 	return nil
 }
@@ -2432,11 +2480,11 @@ func hasCommitHooks(repoPath string) bool {
 //     succeed, confirming the commit is otherwise viable.
 //
 // Both conditions must hold to classify the failure as hook-caused.
-func isHookCausingFailure(repoPath string) bool {
+func isHookCausingFailure(ctx context.Context, repoPath string) bool {
 	if !hasCommitHooks(repoPath) {
 		return false
 	}
-	cmd := newGitCommitCmd(repoPath, "commit", "--dry-run", "--no-verify", "-m", "probe")
+	cmd := newGitCommitCmd(ctx, repoPath, "commit", "--dry-run", "--no-verify", "-m", "probe")
 	return cmd.Run() == nil
 }
 
@@ -2821,15 +2869,15 @@ type CommitOptions struct {
 
 // CreateCommit stages all changes and creates a commit with the given message
 // Returns the SHA of the new commit
-func CreateCommit(repoPath, message string) (string, error) {
-	return CreateCommitWithOptions(repoPath, message, CommitOptions{})
+func CreateCommit(ctx context.Context, repoPath, message string) (string, error) {
+	return CreateCommitWithOptions(ctx, repoPath, message, CommitOptions{})
 }
 
 // CreateCommitWithOptions stages all changes and creates a commit with the
 // given message and optional commit metadata. Returns the SHA of the new commit.
-func CreateCommitWithOptions(repoPath, message string, opts CommitOptions) (string, error) {
+func CreateCommitWithOptions(ctx context.Context, repoPath, message string, opts CommitOptions) (string, error) {
 	// Stage all changes (respects .gitignore)
-	cmd := newGitCommitCmd(repoPath, "add", "-A")
+	cmd := newGitCommitCmd(ctx, repoPath, "add", "-A")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -2847,7 +2895,7 @@ func CreateCommitWithOptions(repoPath, message string, opts CommitOptions) (stri
 	}
 	args = append(args, "-m", message)
 	// Create commit.
-	cmd = newGitCommitCmd(repoPath, args...)
+	cmd = newGitCommitCmd(ctx, repoPath, args...)
 	stderr.Reset()
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -2856,7 +2904,7 @@ func CreateCommitWithOptions(repoPath, message string, opts CommitOptions) (stri
 			IsUnsupportedCommitTrailerError(stderrText)
 		return "", &CommitError{
 			Phase:              "commit",
-			HookFailed:         !unsupportedTrailer && isHookCausingFailure(repoPath),
+			HookFailed:         !unsupportedTrailer && isHookCausingFailure(ctx, repoPath),
 			UnsupportedTrailer: unsupportedTrailer,
 			Stderr:             stderrText,
 			Err:                err,
@@ -2864,7 +2912,7 @@ func CreateCommitWithOptions(repoPath, message string, opts CommitOptions) (stri
 	}
 
 	// Get the SHA of the new commit
-	sha, err := ResolveSHA(repoPath, "HEAD")
+	sha, err := ResolveSHACtx(ctx, repoPath, "HEAD")
 	if err != nil {
 		return "", fmt.Errorf("get new commit SHA: %w", err)
 	}

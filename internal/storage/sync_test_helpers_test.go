@@ -47,12 +47,12 @@ func (h *syncTestHelper) createPendingJob(sha string) *ReviewJob {
 }
 
 func (h *syncTestHelper) clearSourceMachineID(jobID int64) {
-	_, err := h.db.Exec(`UPDATE review_jobs SET source_machine_id = NULL WHERE id = ?`, jobID)
+	_, err := h.db.ExecContext(h.t.Context(), `UPDATE review_jobs SET source_machine_id = NULL WHERE id = ?`, jobID)
 	require.NoError(h.t, err, "Failed to clear source_machine_id")
 }
 
 func (h *syncTestHelper) clearRepoIdentity(repoID int64) {
-	_, err := h.db.Exec(`UPDATE repos SET identity = NULL WHERE id = ?`, repoID)
+	_, err := h.db.ExecContext(h.t.Context(), `UPDATE repos SET identity = NULL WHERE id = ?`, repoID)
 	require.NoError(h.t, err, "Failed to clear identity")
 }
 
@@ -79,9 +79,9 @@ func (h *syncTestHelper) createCompletedJob(sha string) *ReviewJob {
 func (h *syncTestHelper) setJobTimestamps(id int64, syncedAt sql.NullString, updatedAt string) {
 	var err error
 	if syncedAt.Valid {
-		_, err = h.db.Exec(`UPDATE review_jobs SET synced_at = ?, updated_at = ? WHERE id = ?`, syncedAt.String, updatedAt, id)
+		_, err = h.db.ExecContext(h.t.Context(), `UPDATE review_jobs SET synced_at = ?, updated_at = ? WHERE id = ?`, syncedAt.String, updatedAt, id)
 	} else {
-		_, err = h.db.Exec(`UPDATE review_jobs SET synced_at = NULL, updated_at = ? WHERE id = ?`, updatedAt, id)
+		_, err = h.db.ExecContext(h.t.Context(), `UPDATE review_jobs SET synced_at = NULL, updated_at = ? WHERE id = ?`, updatedAt, id)
 	}
 	require.NoError(h.t, err, "Failed to set job timestamps")
 }
@@ -153,7 +153,7 @@ const legacySchemaV3DDL = `
 	`
 
 func createLegacyCommonTables(t *testing.T, db *sql.DB) {
-	_, err := db.Exec(`
+	_, err := db.ExecContext(t.Context(), `
 		CREATE TABLE review_jobs (
 			id INTEGER PRIMARY KEY,
 			repo_id INTEGER NOT NULL REFERENCES repos(id),
@@ -194,7 +194,7 @@ func createLegacyCommonTables(t *testing.T, db *sql.DB) {
 }
 
 func setupLegacySchema(t *testing.T, db *sql.DB, ddl string) {
-	_, err := db.Exec(ddl)
+	_, err := db.ExecContext(t.Context(), ddl)
 	if err != nil { // keep explicit close path before require
 		db.Close()
 		require.NoError(t, err, "Failed to create old schema")
@@ -210,6 +210,6 @@ func openRawDB(dbPath string) (*sql.DB, error) {
 func storedJobSourceMachineID(t *testing.T, db *DB, jobID int64) uuid.UUID {
 	t.Helper()
 	var owner uuid.UUID
-	require.NoError(t, db.QueryRow(`SELECT source_machine_id FROM review_jobs WHERE id = ?`, jobID).Scan(&owner))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT source_machine_id FROM review_jobs WHERE id = ?`, jobID).Scan(&owner))
 	return owner
 }

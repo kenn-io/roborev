@@ -85,7 +85,7 @@ type Builder struct {
 	repoCfg        *config.RepoConfig
 	repoCfgSet     bool
 	repoCfgRef     string
-	ctx            context.Context
+	ctx            context.Context //nolint:containedctx // WithContext scopes one build, as http.Request.WithContext does
 	repoPath       string
 	configRepoPath string
 	planSkillRoot  string
@@ -1078,6 +1078,19 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 		return "", err
 	}
 	return ctx.requiredPrefix + body, nil
+}
+
+// PullRequestBlock renders escaped PR metadata as context-only data.
+func PullRequestBlock(pr PullRequest) string {
+	ctx := (&Builder{pullRequest: pr}).pullRequestContext()
+	if ctx == nil {
+		return ""
+	}
+	var block strings.Builder
+	if err := promptTemplates.ExecuteTemplate(&block, "pull_request_context", ctx); err != nil {
+		panic(err) // The embedded template and its context have fixed types.
+	}
+	return block.String()
 }
 
 func (b *Builder) pullRequestContext() *PullRequestContext {
