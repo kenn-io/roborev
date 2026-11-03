@@ -40,10 +40,12 @@ reserved `test-value` review type and source-build requirements.
     severity. Rename or remove any custom `[review.types.test-value]` definition
     before upgrading, because `test-value` is now reserved. See
     [Review Types](/docs/guides/reviewing-code/#review-types).
+
 - Run reviews, planning, fix, and refine with Muse Code 1.4.10 or later. Put
     `muse` on your PATH or set `muse_cmd`. For pay-as-you-go use, set
     `model = "muse-spark-1.3"`. See [Muse Code](/docs/agents/#muse-code) for
     setup and limitations.
+
 - Configure separate prefixes and suffixes for indexed text and search queries
     under `[search.embeddings]`, including those required by EmbeddingGemma 2.
     See the
