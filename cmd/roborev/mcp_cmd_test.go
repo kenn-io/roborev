@@ -82,6 +82,13 @@ func TestMCPServeSpeaksProtocolOverStdio(t *testing.T) {
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0"}, nil)
 	session, err := client.Connect(ctx, &mcp.IOTransport{Reader: stdoutR, Writer: stdinW}, nil)
 	require.NoError(err)
+	info := session.InitializeResult().ServerInfo
+	require.NotNil(info)
+	assert.Equal("https://roborev.io", info.WebsiteURL)
+	require.Len(info.Icons, 1)
+	assert.Equal("image/png", info.Icons[0].MIMEType)
+	assert.Equal([]string{"256x256"}, info.Icons[0].Sizes)
+	assert.True(strings.HasPrefix(info.Icons[0].Source, "data:image/png;base64,"))
 
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "roborev_list_jobs"})
 	require.NoError(err)

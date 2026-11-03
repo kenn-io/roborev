@@ -14,6 +14,18 @@ cannot start or cancel reviews.
 
 Two transports are available and both expose the same tools.
 
+## Server identity (unreleased)
+
+The MCP server declares roborev's website and icon in its implementation
+metadata. The icon is a PNG data URI, so stdio and HTTP clients can load it
+without an external request. Whether it appears depends on the client.
+
+With `[mcp]` enabled, the daemon API listener also serves the same PNG at
+`/icon.png` and `/favicon.ico`. These public image routes accept GET and HEAD
+without a bearer key. `/mcp` and the daemon APIs keep their configured
+authentication. On a TLS listener, the images are available without a client
+certificate, like the daemon's public liveness routes.
+
 ## Install for coding agents
 
 `roborev mcp install` configures agents whose user configuration directories

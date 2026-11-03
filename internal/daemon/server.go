@@ -258,9 +258,13 @@ func newServerWithLogs(
 	// as event streams when it begins. Stop shuts the server down only after
 	// the worker pool has drained.
 	requestContext, cancelRequests := context.WithCancel(context.Background())
+	handler := withAPIAuthentication(mux, cfg.AuthKey)
+	if cfg.MCP.Enabled {
+		handler = mcpserver.WithIconRoutes(handler)
+	}
 	s.httpServer = &http.Server{
 		Addr:    cfg.ServerAddr,
-		Handler: withAPIAuthentication(mux, cfg.AuthKey),
+		Handler: handler,
 		BaseContext: func(net.Listener) context.Context {
 			return requestContext
 		},
