@@ -697,11 +697,17 @@ func TestBudgetRoutingSelectsEligibleGoalReviewer(t *testing.T) {
 			script := fmt.Sprintf(`#!/bin/sh
 case "$*" in
   *etxtbsy*) exit 0 ;;
-  *--version*) help=%q; printf 'probe\n' >> %q; case "$* $help" in *" --tools "*) echo "Claude Code"; exit 0;; *" --bare "*) echo "Claude Code"; exit 0;; esac; exit 0 ;;
-  *--help*) printf '%%s\n' %q; printf 'probe\n' >> %q; exit 0 ;;
+  *--version*)
+    help=%q; printf '%%s\n' "$*" >> %q
+    case "$*" in
+      *--tools*) case " $help " in *" --tools "*) printf 'supported --tools\n' >> %q; echo "Claude Code"; exit 0;; esac ;;
+      *--bare*) case " $help " in *" --bare "*) printf 'supported --bare\n' >> %q; echo "Claude Code"; exit 0;; esac ;;
+    esac
+    exit 1 ;;
+  *--help*) printf '%%s\n' %q; printf 'help\n' >> %q; exit 0 ;;
   *) exit 9 ;;
 esac
-`, tc.help, probeLog, probeLog, tc.help)
+`, tc.help, probeLog, probeLog, probeLog, tc.help, probeLog)
 			require.NoError(t, os.WriteFile(command, []byte(script), 0o700))
 			cfg.PiCmd, cfg.ClaudeCodeCmd, cfg.GrokCmd = command, command, command
 			for _, a := range []agent.Agent{agent.NewPiAgent(command), agent.NewClaudeAgent(command), &budgetStructuredReviewAgent{budgetRecordingAgent: &budgetRecordingAgent{name: "grok"}}} {
@@ -741,6 +747,14 @@ esac
 			assert.Equal(tc.wantModel, stored.Model)
 			assert.Equal(tc.want == "claude-code", stored.BudgetRoutingLocked)
 			assert.FileExists(probeLog, "candidate capabilities must be checked before budget substitution")
+			if tc.name == "missing bare capability" {
+				probes, err := os.ReadFile(probeLog)
+				require.NoError(t, err)
+				assert.Contains(string(probes), "--tools default --version")
+				assert.Contains(string(probes), "supported --tools")
+				assert.Contains(string(probes), "--bare --version")
+				assert.NotContains(string(probes), "supported --bare")
+			}
 		})
 	}
 }
