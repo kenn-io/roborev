@@ -60,6 +60,14 @@ const uniqueStartedSessionPredicate = `NOT EXISTS (
 	)`
 
 func listTokenCostCandidatesQuery(afterJobID int64, limit int, startedAfter time.Time, machineID uuid.UUID) (string, []any) {
+	return listTokenCandidatesQuery(
+		`j.id, j.session_id, j.agent, COALESCE(j.token_usage, ''), j.started_at`,
+		tokenCostCandidatePredicate+` AND `+uniqueStartedSessionPredicate,
+		afterJobID, limit, startedAfter, machineID,
+	)
+}
+
+func listTokenCandidatesQuery(projection, predicate string, afterJobID int64, limit int, startedAfter time.Time, machineID uuid.UUID) (string, []any) {
 	startedPredicate := ""
 	args := []any{afterJobID, machineID}
 	if !startedAfter.IsZero() {
@@ -67,13 +75,11 @@ func listTokenCostCandidatesQuery(afterJobID int64, limit int, startedAfter time
 		args = append(args, formatSQLiteTimestamp(startedAfter))
 	}
 	return `
-		SELECT j.id, j.session_id, j.agent, COALESCE(j.token_usage, ''),
-		       j.started_at
+		SELECT ` + projection + `
 		FROM review_jobs j
 		WHERE j.id > ?
 		  AND j.source_machine_id = ?` + startedPredicate + `
-		  AND ` + tokenCostCandidatePredicate + `
-		  AND ` + uniqueStartedSessionPredicate + `
+		  AND ` + predicate + `
 		ORDER BY j.id
 		LIMIT ?`, append(args, limit)
 }
@@ -155,20 +161,11 @@ func (db *DB) GetTokenCostCandidate(jobID int64) (*TokenCostCandidate, error) {
 }
 
 func listTokenUsageLogCandidatesQuery(afterJobID int64, limit int, startedAfter time.Time, machineID uuid.UUID) (string, []any) {
-	startedPredicate := ""
-	args := []any{afterJobID, machineID}
-	if !startedAfter.IsZero() {
-		startedPredicate = " AND " + sqliteNormalizedTimestampExpr("j.started_at") + " >= ?"
-		args = append(args, formatSQLiteTimestamp(startedAfter))
-	}
-	return `
-		SELECT j.id, COALESCE(j.token_usage, ''), j.started_at
-		FROM review_jobs j
-		WHERE j.id > ?
-		  AND j.source_machine_id = ?` + startedPredicate + `
-		  AND ` + tokenUsageLogCandidatePredicate + `
-		ORDER BY j.id
-		LIMIT ?`, append(args, limit)
+	return listTokenCandidatesQuery(
+		`j.id, COALESCE(j.token_usage, ''), j.started_at`,
+		tokenUsageLogCandidatePredicate,
+		afterJobID, limit, startedAfter, machineID,
+	)
 }
 
 // ListTokenUsageLogCandidates returns terminal missing-cost jobs whose session
