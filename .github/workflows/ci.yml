@@ -393,7 +393,7 @@ jobs:
           CGO_ENABLED: 0
 
       - name: Save Go caches
-        if: runner.os != 'Windows' || matrix.shard == 'windows-remaining'
+        if: ${{ !cancelled() && (runner.os != 'Windows' || matrix.shard == 'windows-remaining') }}
         uses: $/.github/actions/go-cache-save
 
   daemon-race:
