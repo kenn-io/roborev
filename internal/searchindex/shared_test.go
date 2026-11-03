@@ -290,14 +290,26 @@ func TestSharedVectorsRetryOutageAtSweep(t *testing.T) {
 	_, err := store.ExecContext(t.Context(), `UPDATE reviews SET uuid = printf('00000000-0000-4000-8000-%012d', id)`)
 	require.NoError(t, err)
 	r.embedder = &reconcilerEmbedder{space: testSpace("model", 2), batchSize: 1}
-	r.ShareVectors(storage.NewSyncWorker(store.DB, config.SyncConfig{}))
+	worker := storage.NewSyncWorker(store.DB, config.SyncConfig{})
+	r.ShareVectors(worker)
 
 	more, err := r.reconcileTurn(t.Context())
 	require.NoError(t, err)
 	require.True(t, more, "one review remains to embed")
-	jobs, _, err := store.ListSearchChanges(t.Context(), 100)
+	jobs, through, err := store.ListSearchChanges(t.Context(), 100)
 	require.NoError(t, err)
 	require.Len(t, jobs, 1, "the failed publication is queued for a sweep")
+	require.NoError(t, store.DeleteSearchChanges(t.Context(), through))
+	var reviewUUID string
+	require.NoError(t, store.QueryRowContext(t.Context(), `SELECT uuid FROM reviews WHERE job_id = ?`, jobs[0]).Scan(&reviewUUID))
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = worker.PublishSearchVectors(canceled, "", storage.SearchVectorKey{ReviewUUID: reviewUUID}, nil)
+	require.Error(t, err)
+	var queued int
+	require.NoError(t, store.QueryRowContext(t.Context(), `SELECT count(*) FROM search_changes WHERE job_id = ?`, jobs[0]).Scan(&queued))
+	assert.Equal(t, 1, queued, "a canceled publication also queues the job")
+	require.NotErrorIs(t, err, context.Canceled, "queueing succeeds after cancellation")
 
 	shared := newMemorySharedVectors()
 	shared.push("00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002")

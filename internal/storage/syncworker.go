@@ -206,7 +206,8 @@ func (w *SyncWorker) PublishSearchVectors(
 		}
 	}
 
-	_, queueErr := w.db.ExecContext(ctx,
+	// The retry must survive cancellation of the publication attempt.
+	_, queueErr := w.db.ExecContext(context.WithoutCancel(ctx),
 		`INSERT INTO search_changes(job_id) SELECT job_id FROM reviews WHERE uuid = ?`,
 		key.ReviewUUID,
 	)
