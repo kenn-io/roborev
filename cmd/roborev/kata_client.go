@@ -186,6 +186,34 @@ type daemonKataClient struct {
 var _ kata.Client = (*daemonKataClient)(nil)
 
 func (c *daemonKataClient) Binding(ctx context.Context) (kata.Binding, error) {
+	b, err := c.selectionBinding(ctx)
+	if err != nil || b.Alias == nil {
+		return b, err
+	}
+	_, aliasIdentity, aliasKind := kataSelectionFields(b)
+	status, err := c.api.KataStatus(ctx, &generated.KataStatusRequestOptions{Query: &generated.KataStatusQuery{
+		WorkspaceAliasIdentity: aliasIdentity, WorkspaceAliasKind: aliasKind,
+	}})
+	if err != nil {
+		return kata.Binding{}, kataDaemonError("resolve the Kata workspace binding through the daemon", err)
+	}
+	if status.State == string(kata.StateProjectNotFound) {
+		return kata.Binding{}, fmt.Errorf("%w: %s", kata.ErrProjectNotFound, status.Message)
+	}
+	if status.State != string(kata.StateReady) {
+		return kata.Binding{}, fmt.Errorf("resolve the Kata workspace binding through the daemon: %s (%s)", status.Message, status.State)
+	}
+	b.Project = deref(status.Project)
+	if b.Project == "" {
+		return kata.Binding{}, kata.ErrInvalidResponse
+	}
+	return b, nil
+}
+
+// selectionBinding reads the caller's selection without contacting the daemon.
+// List, Show, and Create send its alias to their endpoint; only Binding needs a
+// canonical project name for parsing commit-message references.
+func (c *daemonKataClient) selectionBinding(ctx context.Context) (kata.Binding, error) {
 	b, err := localKataBinding(ctx, c.workdir)
 	if err == nil {
 		return b, nil
@@ -197,7 +225,7 @@ func (c *daemonKataClient) Binding(ctx context.Context) (kata.Binding, error) {
 }
 
 func (c *daemonKataClient) List(ctx context.Context, opts kata.ListOpts) ([]kata.Issue, error) {
-	b, err := c.Binding(ctx)
+	b, err := c.selectionBinding(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -225,7 +253,7 @@ func (c *daemonKataClient) List(ctx context.Context, opts kata.ListOpts) ([]kata
 func (c *daemonKataClient) Show(ctx context.Context, ref string) (kata.Issue, error) {
 	query := &generated.KataShowIssueQuery{Ref: ref}
 	if !strings.Contains(ref, "#") {
-		b, err := c.Binding(ctx)
+		b, err := c.selectionBinding(ctx)
 		if err != nil {
 			return kata.Issue{}, err
 		}
@@ -244,7 +272,7 @@ func (c *daemonKataClient) Create(ctx context.Context, req kata.CreateReq) (kata
 	if req.Project != "" {
 		project = &req.Project
 	} else {
-		b, err := c.Binding(ctx)
+		b, err := c.selectionBinding(ctx)
 		if err != nil {
 			return kata.CreateResult{}, err
 		}

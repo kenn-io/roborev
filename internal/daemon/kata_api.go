@@ -18,8 +18,10 @@ import (
 
 // KataStatusInput holds query parameters for GET /api/kata/status.
 type KataStatusInput struct {
-	Repo    string `query:"repo" doc:"Repository root on the daemon host whose .kata.local.toml or .kata.toml binding selects the project"`
-	Project string `query:"project" doc:"Project to check instead of the repository's binding or the default project"`
+	Repo                   string `query:"repo" doc:"Repository root on the daemon host whose .kata.local.toml or .kata.toml binding selects the project"`
+	Project                string `query:"project" doc:"Project to check instead of the repository's binding or the default project"`
+	WorkspaceAliasIdentity string `query:"workspace_alias_identity" doc:"Registered workspace alias identity; use with workspace_alias_kind instead of repo or project"`
+	WorkspaceAliasKind     string `query:"workspace_alias_kind" doc:"Registered workspace alias kind: git or local"`
 }
 
 // KataStatusBody is the daemon's view of its Kata connection.
@@ -115,12 +117,15 @@ type KataCreateOutput struct{ Body KataCreateResponse }
 
 // kataStatus evaluates the connection for a repository on the daemon host, or
 // for an explicit project. It never fails: a broken connection is a state.
-func (s *Server) kataStatus(ctx context.Context, repo, project string) KataStatusBody {
+func (s *Server) kataStatus(ctx context.Context, repo, project string, alias *kata.ProjectAlias) KataStatusBody {
 	cfg := s.configWatcher.Config().Integrations.Kata
 	body := KataStatusBody{Enabled: cfg.Enabled, DefaultProject: cfg.DefaultProject, Teammate: cfg.ResolvedTeammate()}
 	var opts []kata.APIOption
 	if repo == "" {
 		opts = append(opts, kata.WithoutWorkspace())
+	}
+	if alias != nil {
+		opts = append(opts, kata.WithWorkspaceAlias(*alias))
 	}
 	status := kata.EvaluateWith(ctx, repo, cfg, project, opts...)
 	body.State = string(status.State)
@@ -134,7 +139,16 @@ func (s *Server) kataStatus(ctx context.Context, repo, project string) KataStatu
 }
 
 func (s *Server) humaKataStatus(ctx context.Context, in *KataStatusInput) (*KataStatusOutput, error) {
-	return &KataStatusOutput{Body: s.kataStatus(ctx, strings.TrimSpace(in.Repo), strings.TrimSpace(in.Project))}, nil
+	repo := strings.TrimSpace(in.Repo)
+	project := strings.TrimSpace(in.Project)
+	alias, err := kataWorkspaceAlias(in.WorkspaceAliasIdentity, in.WorkspaceAliasKind, project)
+	if err != nil {
+		return nil, err
+	}
+	if alias != nil && repo != "" {
+		return nil, huma.Error400BadRequest("workspace alias cannot be combined with repository")
+	}
+	return &KataStatusOutput{Body: s.kataStatus(ctx, repo, project, alias)}, nil
 }
 
 // kataProxyClient builds the API client for a proxied call. It ignores the

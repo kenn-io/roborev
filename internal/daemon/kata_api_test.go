@@ -9,10 +9,12 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	katagen "go.kenn.io/kata/pkg/client/generated"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/kata/katafake"
 	"go.kenn.io/roborev/internal/testutil"
@@ -93,6 +95,50 @@ func TestKataStatusReportsTheConnection(t *testing.T) {
 	status = decodeKata[KataStatusBody](t, w)
 	assert.Equal(t, "project_not_found", status.State)
 	assert.Equal(t, "ghost", status.Project)
+}
+
+func TestKataStatusResolvesWorkspaceAlias(t *testing.T) {
+	server, fake := kataAPIServer(t)
+	const identity = "code.example/Team/Review-Repo"
+	fake.Override = func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != "/api/v1/projects/resolve" {
+			return false
+		}
+		fake.Reply(w, katagen.ProjectResolveBody{
+			Project: fake.Projects[1],
+			Alias: katagen.ProjectAlias{
+				AliasIdentity: identity, AliasKind: "git", ID: 1, ProjectID: fake.Projects[1].ID,
+				CreatedAt: time.Unix(0, 0).UTC(),
+			},
+		})
+		return true
+	}
+
+	query := url.Values{
+		"workspace_alias_identity": {identity},
+		"workspace_alias_kind":     {"git"},
+	}
+	w := kataGet(t, server, "/api/kata/status", query)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	status := decodeKata[KataStatusBody](t, w)
+	assert.Equal(t, "ready", status.State, status.Message)
+	assert.Equal(t, "other", status.Project, "the alias resolves to the canonical project name")
+
+	requests := fake.Requests()
+	require.Len(t, requests, 1)
+	assert.Equal(t, http.MethodPost, requests[0].Method)
+	assert.Equal(t, "/api/v1/projects/resolve", requests[0].Path)
+}
+
+func TestKataStatusRejectsAliasWithRepository(t *testing.T) {
+	server, fake := kataAPIServer(t)
+	w := kataGet(t, server, "/api/kata/status", url.Values{
+		"repo":                     {t.TempDir()},
+		"workspace_alias_identity": {"code.example/team/repo"},
+		"workspace_alias_kind":     {"git"},
+	})
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	assert.Empty(t, fake.AllRequests(), "invalid selection must not contact Kata")
 }
 
 func TestKataStatusStates(t *testing.T) {
