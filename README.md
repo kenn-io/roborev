@@ -300,15 +300,15 @@ reopen changes. See the
 [export reference](https://roborev.io/docs/commands/#exporting-reviews).
 
 Use `roborev export ci-metrics` to emit finalized CI panel runs — terminal
-outcome (`review_posted`, `no_review_posted`, `giveup_posted`, `abandoned`,
-or `unknown` for panels finalized before outcomes were recorded),
-first-attempt and posting timestamps, attempt count, and each panel's
-member/synthesis jobs — for external review turnaround tracking.
+outcome (`review_posted`, `review_suppressed`, `no_review_posted`,
+`giveup_posted`, `abandoned`, or `unknown` for panels finalized before outcomes
+were recorded), first-attempt and posting timestamps, attempt count, and each
+panel's member/synthesis jobs — for external review turnaround tracking.
 `giveup_posted` is a historical outcome; exhausted retries now finish with
 `no_review_posted` and an error status without a PR comment. The export follows
-the same cursor contract as `roborev export reviews`, ordered by
-`posted_at`, and exits with code `3` when a cursor's `database_id` no
-longer matches so callers can discard the cursor and backfill.
+the same cursor contract as `roborev export reviews`, ordered by `posted_at`,
+and exits with code `3` when a cursor's `database_id` no longer matches so
+callers can discard the cursor and backfill.
 
 Pass `--legacy` to export the frozen pre-panel CI era instead (rows with
 outcome `legacy_review`, one per reviewed PR head, from before panel runs

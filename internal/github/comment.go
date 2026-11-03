@@ -106,6 +106,26 @@ func (c *Client) UpsertPRComment(ctx context.Context, ghRepo string, prNumber in
 	return c.createPreparedComment(ctx, ghRepo, prNumber, body)
 }
 
+// UpdateExistingPRComment updates a marker comment without creating a new one.
+// Missing or concurrently deleted comments are successful no-ops. Other errors
+// retain the caller's normal delivery and retry behavior.
+func (c *Client) UpdateExistingPRComment(ctx context.Context, ghRepo string, prNumber int, body string) (bool, error) {
+	existingID, err := c.FindExistingComment(ctx, ghRepo, prNumber)
+	if err != nil {
+		return false, fmt.Errorf("find existing comment: %w", err)
+	}
+	if existingID == 0 {
+		return false, nil
+	}
+	if err := c.patchComment(ctx, ghRepo, existingID, prepareBody(body)); err != nil {
+		if isGitHubStatus(err, 404) {
+			return false, nil
+		}
+		return false, fmt.Errorf("patch comment %d: %w", existingID, err)
+	}
+	return true, nil
+}
+
 func (c *Client) patchComment(ctx context.Context, ghRepo string, commentID int64, body string) error {
 	owner, repo, err := parseRepo(ghRepo)
 	if err != nil {

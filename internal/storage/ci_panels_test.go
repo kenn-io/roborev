@@ -24,7 +24,7 @@ func TestCIPanelHistoryLookupsUseIndex(t *testing.T) {
 	}{
 		{"unposted", getUnpostedPanelsForPRQuery, []any{"acme/api", 7}},
 		{"head", getCIPanelByPRSHAQuery, []any{"acme/api", 7, "head"}},
-		{"posted", hasPostedCIReviewQuery, []any{"acme/api", 7, "head", PanelOutcomeReviewPosted}},
+		{"posted", hasPostedCIReviewQuery, []any{"acme/api", 7, "head", PanelOutcomeReviewPosted, PanelOutcomeReviewSuppressed}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rows, err := db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+tc.query, tc.args...)
