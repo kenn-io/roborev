@@ -229,10 +229,25 @@ before. The review prompt gains one sentence that names the tools.
 
 | Tool | Returns |
 |------|---------|
-| `branch_findings` | Earlier finished reviews of this branch, newest first: job ID, commit, review type, verdict, closed state, a one-line claim for each finding with severity and location, and the comments recording what was decided |
-| `prior_review` | The full text and comments of one earlier review, by `job_id` or `commit` |
+| `branch_findings` | Earlier finished reviews of this branch, newest first, including panel reviews, with each finding and the decisions recorded on it |
+| `prior_review` | The same for one earlier review, plus its full text, by `job_id` or `commit` |
 | `git_log` | Commits that changed a file or a line range, at the reviewed commit |
 | `git_blame` | The commit that last changed each line in a range, at the reviewed commit |
+
+Each review lists its job ID, review UUID, commit, review type, verdict, and
+closed state. Each finding has its 1-based `index` in the review, severity,
+problem text, and, when the review recorded them, `kind`, `topic`, `file`,
+`start_line`, and `end_line`. A job ID and an index together name one finding.
+
+A finding's `decisions` say what happened to it:
+
+| `source` | `kind` | Read from |
+|----------|--------|-----------|
+| `fix_comment` | `fix`, `decline`, `invalid`, or `ask` | Comment lines in the roborev-fix shape `- <severity> <file>: <Kind>: <reason>`, matched to the finding with that severity and file |
+| `rebuttal` | `confirmed`, `refuted`, or `superseded` | A finished `roborev job comment --rebuttal` re-check, matched by its finding excerpt |
+
+A decision that matches no single finding stays on the review. A comment whose
+lines all became decisions is not repeated under `comments`.
 
 `git_log` and `git_blame` mark each commit with `on_branch` and with
 `fix_for_jobs`: the earlier reviews whose comments cite that commit, which

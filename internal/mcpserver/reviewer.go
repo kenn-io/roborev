@@ -51,11 +51,13 @@ type ReviewerScope struct {
 // ReviewerVerifier resolves a reviewer token to its scope and expiry.
 type ReviewerVerifier func(token string) (ReviewerScope, time.Time, bool)
 
-// BranchReview is one finished review with its prompt-trusted comments.
+// BranchReview is one finished review with its prompt-trusted comments and
+// its finished rebuttal re-checks.
 type BranchReview struct {
-	Job      storage.ReviewJob
-	Review   storage.Review
-	Comments []storage.Response
+	Job         storage.ReviewJob
+	Review      storage.Review
+	Comments    []storage.Response
+	Assessments []FindingAssessment
 }
 
 // ReviewerBackend loads review data for the reviewer tools.
@@ -114,9 +116,16 @@ const reviewerScopeKey = "roborev_reviewer_scope"
 type branchFindingsInput struct{}
 
 type reviewerFinding struct {
-	Severity string `json:"severity"`
-	Location string `json:"location,omitempty"`
-	Claim    string `json:"claim"`
+	Index     int                `json:"index" jsonschema:"1-based position in the review; job_id and index name this finding"`
+	Severity  string             `json:"severity"`
+	Kind      string             `json:"kind,omitempty" jsonschema:"defect or improvement"`
+	Topic     string             `json:"topic,omitempty"`
+	File      string             `json:"file,omitempty"`
+	StartLine int                `json:"start_line,omitempty"`
+	EndLine   int                `json:"end_line,omitempty"`
+	Location  string             `json:"location,omitempty" jsonschema:"display location when the review predates file and line fields"`
+	Problem   string             `json:"problem"`
+	Decisions []reviewerDecision `json:"decisions,omitempty" jsonschema:"what was decided about this finding"`
 }
 
 type reviewerComment struct {
@@ -125,15 +134,17 @@ type reviewerComment struct {
 }
 
 type reviewerReviewRow struct {
-	JobID      int64             `json:"job_id"`
-	Commit     string            `json:"commit"`
-	Subject    string            `json:"subject,omitempty"`
-	ReviewType string            `json:"review_type"`
-	Verdict    string            `json:"verdict,omitempty"`
-	Closed     bool              `json:"closed"`
-	Findings   []reviewerFinding `json:"findings"`
-	Note       string            `json:"note,omitempty"`
-	Comments   []reviewerComment `json:"comments,omitempty"`
+	JobID      int64              `json:"job_id"`
+	ReviewUUID string             `json:"review_uuid,omitempty"`
+	Commit     string             `json:"commit"`
+	Subject    string             `json:"subject,omitempty"`
+	ReviewType string             `json:"review_type"`
+	Verdict    string             `json:"verdict,omitempty"`
+	Closed     bool               `json:"closed" jsonschema:"true once the review was closed; the fix agent leaves reviews with an ask decision open"`
+	Findings   []reviewerFinding  `json:"findings"`
+	Note       string             `json:"note,omitempty"`
+	Decisions  []reviewerDecision `json:"decisions,omitempty" jsonschema:"decisions that name no single finding of this review"`
+	Comments   []reviewerComment  `json:"comments,omitempty" jsonschema:"comments with text beyond the parsed decisions"`
 }
 
 type branchFindingsOutput struct {
@@ -147,14 +158,8 @@ type priorReviewInput struct {
 }
 
 type priorReviewRow struct {
-	JobID      int64             `json:"job_id"`
-	Commit     string            `json:"commit"`
-	Subject    string            `json:"subject,omitempty"`
-	ReviewType string            `json:"review_type"`
-	Verdict    string            `json:"verdict,omitempty"`
-	Closed     bool              `json:"closed"`
-	Output     string            `json:"output"`
-	Comments   []reviewerComment `json:"comments,omitempty"`
+	reviewerReviewRow
+	Output string `json:"output"`
 }
 
 type priorReviewOutput struct {
@@ -200,18 +205,19 @@ func (r *Reviewer) registerTools() {
 	mcp.AddTool(r.mcp, &mcp.Tool{
 		Name:        ReviewerToolBranchFindings,
 		Annotations: reviewerToolAnnotations(),
-		Description: "List findings from earlier finished reviews of this branch, newest first, with each " +
-			"review's closed state and the comments recording what was decided (fixed, declined, invalid). " +
-			"Call this before reporting a finding on code a recent commit changed: if the same issue was " +
-			"already raised and decided, do not raise it again unless the code now defeats that decision, " +
-			"and do not ask to undo a change that fixed an earlier finding.",
+		Description: "List findings from earlier finished reviews of this branch, newest first. Each " +
+			"finding carries its decisions: fix, decline, invalid, or ask from the fix agent, and confirmed, " +
+			"refuted, or superseded from a rebuttal re-check. Call this before reporting a finding on code a " +
+			"recent commit changed: do not raise a finding that was declined, shown invalid, or refuted " +
+			"unless the code now defeats that reason, and do not ask to undo a change that fixed an " +
+			"earlier finding. An ask decision is still open for the user.",
 	}, reviewerTool(r.branchFindings))
 	mcp.AddTool(r.mcp, &mcp.Tool{
 		Name:        ReviewerToolPriorReview,
 		Annotations: reviewerToolAnnotations(),
-		Description: "Return the full text and comments of an earlier review of this branch, by job_id " +
-			"from branch_findings or by commit. Use it when a one-line claim is not enough to tell " +
-			"whether your finding repeats or reverses an earlier one.",
+		Description: "Return the full text, findings, and decisions of an earlier review of this branch, " +
+			"by job_id from branch_findings or by commit. Use it when a finding's problem text is not " +
+			"enough to tell whether your finding repeats or reverses an earlier one.",
 	}, reviewerTool(r.priorReview))
 	mcp.AddTool(r.mcp, &mcp.Tool{
 		Name:        ReviewerToolGitLog,
@@ -314,30 +320,48 @@ func (r *Reviewer) branchFindings(
 	}
 	out := branchFindingsOutput{Branch: scope.Branch, Reviews: make([]reviewerReviewRow, 0, len(h.reviews))}
 	for _, review := range h.reviews {
-		row := reviewerReviewRow{
-			JobID:      review.Job.ID,
-			Commit:     shortRef(review.Job.GitRef),
-			Subject:    review.Job.CommitSubject,
-			ReviewType: reviewTypeLabel(review.Job.ReviewType),
-			Verdict:    verdictLabel(review.Job.Verdict),
-			Closed:     review.Review.Closed,
-			Findings:   []reviewerFinding{},
-			Comments:   reviewerComments(review.Comments),
-		}
-		doc, ok := decodeReviewDocument(review.Review.StructuredOutput)
-		if !ok {
-			row.Note = "findings are not structured; read this review with prior_review"
-		}
-		for _, finding := range doc.Findings {
-			row.Findings = append(row.Findings, reviewerFinding{
-				Severity: finding.Severity,
-				Location: finding.Location,
-				Claim:    shortClaim(finding.Problem),
-			})
-		}
-		out.Reviews = append(out.Reviews, row)
+		out.Reviews = append(out.Reviews, newReviewerReviewRow(review))
 	}
 	return out, nil
+}
+
+func newReviewerReviewRow(review BranchReview) reviewerReviewRow {
+	row := reviewerReviewRow{
+		JobID:      review.Job.ID,
+		Commit:     shortRef(review.Job.GitRef),
+		Subject:    review.Job.CommitSubject,
+		ReviewType: reviewTypeLabel(review.Job.ReviewType),
+		Verdict:    verdictLabel(review.Job.Verdict),
+		Closed:     review.Review.Closed,
+		Findings:   []reviewerFinding{},
+	}
+	if review.Review.UUID != nil {
+		row.ReviewUUID = review.Review.UUID.String()
+	}
+	doc, ok := decodeReviewDocument(review.Review.StructuredOutput)
+	if !ok {
+		row.Note = "findings are not structured; read this review with prior_review"
+	}
+	for i, finding := range doc.Findings {
+		f := reviewerFinding{
+			Index:     i + 1,
+			Severity:  finding.Severity,
+			Kind:      finding.Kind,
+			Topic:     finding.Topic,
+			File:      finding.File,
+			StartLine: finding.StartLine,
+			EndLine:   finding.EndLine,
+			Problem:   strings.TrimSpace(finding.Problem),
+		}
+		if f.File == "" {
+			f.Location = finding.Location
+		}
+		row.Findings = append(row.Findings, f)
+	}
+	var comments []storage.Response
+	row.Decisions, comments = attachDecisions(row.Findings, doc, review)
+	row.Comments = reviewerComments(comments)
+	return row
 }
 
 func (r *Reviewer) priorReview(
@@ -362,14 +386,8 @@ func (r *Reviewer) priorReview(
 			continue
 		}
 		out.Reviews = append(out.Reviews, priorReviewRow{
-			JobID:      review.Job.ID,
-			Commit:     shortRef(review.Job.GitRef),
-			Subject:    review.Job.CommitSubject,
-			ReviewType: reviewTypeLabel(review.Job.ReviewType),
-			Verdict:    verdictLabel(review.Job.Verdict),
-			Closed:     review.Review.Closed,
-			Output:     review.Review.Output,
-			Comments:   reviewerComments(review.Comments),
+			reviewerReviewRow: newReviewerReviewRow(review),
+			Output:            review.Review.Output,
 		})
 	}
 	if len(out.Reviews) == 0 {
@@ -485,15 +503,6 @@ func decodeReviewDocument(output storage.StructuredOutput) (structuredreview.Doc
 		return structuredreview.Document{}, false
 	}
 	return doc, true
-}
-
-// shortClaim keeps the first sentence of a finding's problem text.
-func shortClaim(problem string) string {
-	claim, _, _ := strings.Cut(strings.TrimSpace(problem), "\n")
-	if i := strings.Index(claim, ". "); i >= 0 {
-		claim = claim[:i+1]
-	}
-	return strings.TrimSpace(claim)
 }
 
 func reviewerComments(responses []storage.Response) []reviewerComment {
