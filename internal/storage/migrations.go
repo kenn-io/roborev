@@ -136,8 +136,7 @@ func migrateReviewExportCompletedIndex(ctx context.Context, db *DB) error {
 // migrateSearchChanges records local search feed writes, including deletes.
 func migrateSearchChanges(ctx context.Context, db *DB) error {
 	_, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS search_changes (
-		seq INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER, repo_id INTEGER, commit_id INTEGER,
-		CHECK ((job_id IS NOT NULL) + (repo_id IS NOT NULL) + (commit_id IS NOT NULL) = 1)
+		seq INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER, repo_id INTEGER, commit_id INTEGER
 	);
 	CREATE INDEX IF NOT EXISTS idx_review_jobs_commit_id ON review_jobs(commit_id);
 	CREATE TRIGGER IF NOT EXISTS search_reviews_insert AFTER INSERT ON reviews BEGIN
@@ -165,8 +164,6 @@ func migrateSearchChanges(ctx context.Context, db *DB) error {
 		INSERT INTO search_changes(commit_id) SELECT NEW.commit_id WHERE NEW.job_id IS NULL AND NEW.commit_id IS NOT NULL;
 	END;
 	CREATE TRIGGER IF NOT EXISTS search_responses_update AFTER UPDATE ON responses BEGIN
-		INSERT INTO search_changes(job_id) SELECT OLD.job_id WHERE OLD.job_id IS NOT NULL;
-		INSERT INTO search_changes(commit_id) SELECT OLD.commit_id WHERE OLD.job_id IS NULL AND OLD.commit_id IS NOT NULL;
 		INSERT INTO search_changes(job_id) SELECT NEW.job_id WHERE NEW.job_id IS NOT NULL;
 		INSERT INTO search_changes(commit_id) SELECT NEW.commit_id WHERE NEW.job_id IS NULL AND NEW.commit_id IS NOT NULL;
 	END;
@@ -175,14 +172,13 @@ func migrateSearchChanges(ctx context.Context, db *DB) error {
 		INSERT INTO search_changes(commit_id) SELECT OLD.commit_id WHERE OLD.job_id IS NULL AND OLD.commit_id IS NOT NULL;
 	END;
 	CREATE TRIGGER IF NOT EXISTS search_job_content_insert AFTER INSERT ON job_content BEGIN
-		INSERT INTO search_changes(job_id) SELECT NEW.job_id WHERE NEW.job_id IS NOT NULL;
+		INSERT INTO search_changes(job_id) VALUES (NEW.job_id);
 	END;
 	CREATE TRIGGER IF NOT EXISTS search_job_content_update AFTER UPDATE OF diff_content ON job_content BEGIN
-		INSERT INTO search_changes(job_id) SELECT OLD.job_id WHERE OLD.job_id IS NOT NULL;
-		INSERT INTO search_changes(job_id) SELECT NEW.job_id WHERE NEW.job_id IS NOT NULL;
+		INSERT INTO search_changes(job_id) VALUES (NEW.job_id);
 	END;
 	CREATE TRIGGER IF NOT EXISTS search_job_content_delete AFTER DELETE ON job_content BEGIN
-		INSERT INTO search_changes(job_id) SELECT OLD.job_id WHERE OLD.job_id IS NOT NULL;
+		INSERT INTO search_changes(job_id) VALUES (OLD.job_id);
 	END;
 	`)
 	return err

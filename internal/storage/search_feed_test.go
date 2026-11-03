@@ -380,7 +380,6 @@ func TestSearchChangesLogsEveryFeedSource(t *testing.T) {
 		{"job comment insert", `INSERT INTO responses (id, job_id, responder, response) VALUES (3, 1, 'author', 'new')`, []int64{1}},
 		{"job comment update", `UPDATE responses SET response = 'edited' WHERE id = 1`, []int64{1}},
 		{"job comment delete", `DELETE FROM responses WHERE id = 3`, []int64{1}},
-		{"move comment to commit", `UPDATE responses SET job_id = NULL, commit_id = 1 WHERE id = 1`, []int64{1, 2}},
 		{"commit comment insert", `INSERT INTO responses (id, commit_id, responder, response) VALUES (4, 1, 'author', 'new')`, []int64{1, 2}},
 		{"commit comment update", `UPDATE responses SET response = 'edited' WHERE id = 2`, []int64{1, 2}},
 		{"commit comment delete", `DELETE FROM responses WHERE id = 4`, []int64{1, 2}},

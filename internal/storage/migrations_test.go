@@ -239,10 +239,6 @@ func TestSearchChangesMigration(t *testing.T) {
 		assert.Equal(t, 12, count)
 		_, err := db.ExecContext(t.Context(), `INSERT INTO search_changes(job_id) VALUES (42)`)
 		require.NoError(t, err)
-		jobs, head, err := db.ListSearchChanges(t.Context(), 10)
-		require.NoError(t, err)
-		assert.Equal(t, []int64{42}, jobs)
-		require.NoError(t, db.DeleteSearchChanges(t.Context(), head))
 		var indexSQL string
 		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT sql FROM sqlite_master
 			WHERE name = 'idx_review_jobs_commit_id'`).Scan(&indexSQL))

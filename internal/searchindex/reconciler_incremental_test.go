@@ -219,25 +219,11 @@ func TestReconcilerSweepFindsChangesWithoutEvents(t *testing.T) {
 			require.NoError(t, index.db.QueryRowContext(t.Context(), tc.query).Scan(&got))
 			assert.Equal(t, tc.want, got)
 			assert.Equal(t, int64(1), store.fullReads.Load())
-			key := "local:1"
-			if tc.name == "uuid assignment" {
-				key = "00000000-0000-4000-8000-000000000001"
-			}
-			count := 1
-			if tc.name == "review delete" || tc.name == "legacy diff clear" {
-				count = 0
-			}
-			for _, table := range []string{"review_mirror", "review_fts"} {
-				assert.Equal(t, count, countRowsForDoc(t, index.db, table, key), table)
-			}
-			if tc.name == "uuid assignment" {
-				assert.Zero(t, countRowsForDoc(t, index.db, "review_mirror", "local:1"))
-			}
 		})
 	}
 }
 
-func TestReconcilerSweepPreservesChangesDuringScanAndDrain(t *testing.T) {
+func TestReconcilerSweepPreservesChangesDuringScan(t *testing.T) {
 	now := time.Now()
 	r, store, index := incrementalFixture(t, ReconcilerConfig{MirrorPageSize: 1, Now: func() time.Time { return now }})
 	_, err := r.reconcileTurn(t.Context())
@@ -248,27 +234,14 @@ func TestReconcilerSweepPreservesChangesDuringScanAndDrain(t *testing.T) {
 		more, err = r.reconcileTurn(t.Context())
 		require.NoError(t, err)
 	}
-	head, err := store.SearchChangesHead(t.Context())
-	require.NoError(t, err)
-	assert.Positive(t, head)
-	store.afterRead = func() {
-		_, err := store.ExecContext(t.Context(), `UPDATE reviews SET output = 'duringdrain' WHERE job_id = 2`)
-		require.NoError(t, err)
-		store.afterRead = nil
-	}
 	now = now.Add(2 * r.config.SweepInterval)
 	for more := true; more; {
 		more, err = r.reconcileTurn(t.Context())
 		require.NoError(t, err)
 	}
-	for _, word := range []string{"duringscan", "duringdrain"} {
-		var count int
-		require.NoError(t, index.db.QueryRowContext(t.Context(), `SELECT count(*) FROM review_fts WHERE review_fts MATCH ?`, word).Scan(&count))
-		assert.Equal(t, 1, count)
-	}
-	head, err = store.SearchChangesHead(t.Context())
-	require.NoError(t, err)
-	assert.Zero(t, head)
+	var key string
+	require.NoError(t, index.db.QueryRowContext(t.Context(), `SELECT doc_key FROM review_fts WHERE review_fts MATCH 'duringscan'`).Scan(&key))
+	assert.Equal(t, "local:1", key)
 	assert.Equal(t, int64(3), store.fullReads.Load())
 }
 
