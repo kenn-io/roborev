@@ -535,7 +535,7 @@ func (p *CIPoller) poll(ctx context.Context) {
 }
 
 func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Config) error {
-	// Read CODEOWNERS again on each poll so ownership changes apply promptly.
+	// Clear the cache so undecided heads see current ownership on each poll.
 	p.forgetCodeowners(ghRepo)
 
 	// List open PRs via the GitHub API
@@ -709,31 +709,32 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	if err := p.supersedePriorPanels(ghRepo, pr.Number, pr.HeadRefOid, false); err != nil {
 		return err
 	}
-	// Skip a deferred retry immediately, even during backoff. Active and
-	// completed reviews still belong to the normal deduplication gate below.
+	// Skip if this HEAD already has a panel run, unless its retry is deferred.
+	reviewed, err := p.alreadyReviewedPR(ghRepo, pr)
+	if err != nil {
+		return err
+	}
+	var deferred *storage.ReviewAttempt
+	if reviewed {
+		attempt, err := p.db.GetReviewAttempt(ghRepo, pr.Number, pr.HeadRefOid)
+		if err != nil {
+			return fmt.Errorf("check skipped review attempt: %w", err)
+		}
+		if attempt == nil || attempt.State != "deferred" {
+			return nil
+		}
+		// Skip a deferred retry immediately, even during backoff.
+		deferred = attempt
+	}
 	reason, skip, err := p.ciPRSkip(ctx, ghRepo, pr, &cfg.CI)
 	if err != nil {
 		return err
 	}
 	if skip {
-		attempt, err := p.db.GetReviewAttempt(ghRepo, pr.Number, pr.HeadRefOid)
-		if err != nil {
-			return fmt.Errorf("check skipped review attempt: %w", err)
-		}
-		if attempt != nil && attempt.State == "deferred" {
-			return p.skipPR(ghRepo, pr, reason, attempt)
-		}
-	}
-	// Skip if this HEAD already has a panel run.
-	reviewed, err := p.alreadyReviewedPR(ghRepo, pr)
-	if err != nil {
-		return err
+		return p.skipPR(ghRepo, pr, reason, deferred)
 	}
 	if reviewed {
 		return nil
-	}
-	if skip {
-		return p.skipPR(ghRepo, pr, reason, nil)
 	}
 
 	// Throttle: skip if this PR was reviewed recently (any SHA).
