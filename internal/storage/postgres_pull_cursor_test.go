@@ -56,6 +56,14 @@ func TestIntegration_PullCursorPlans(t *testing.T) { //nolint:paralleltest // sh
 	pool := newIntegrationEnv(t).Pool
 	seedPullHistory(t, pool, 10000)
 	ctx := t.Context()
+	for _, query := range []string{
+		`INSERT INTO commits (repo_id, sha, author, subject, timestamp) SELECT repo_id, uuid::text, 'test', 'commit', enqueued_at FROM review_jobs`,
+		`UPDATE review_jobs j SET commit_id = c.id FROM commits c WHERE c.sha = j.uuid::text`,
+		`ANALYZE`,
+	} {
+		_, err := pool.pool.Exec(ctx, query)
+		require.NoError(t, err)
+	}
 	tx, err := pool.pool.Begin(ctx)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, tx.Rollback(context.WithoutCancel(ctx))) }()
@@ -132,4 +140,54 @@ func TestIntegration_PullReviewsPagesPastUnknownJobs(t *testing.T) { //nolint:pa
 	require.Len(t, reviews, 1)
 	assert.Equal(jobs[7].UUID, reviews[0].JobUUID)
 	assert.NotEqual(cursor, next)
+}
+
+func TestIntegration_PullJobsPagesTiedTimestamps(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL schema
+	assert := assert.New(t)
+	pool := newIntegrationEnv(t).Pool
+	seedPullHistory(t, pool, 8)
+	ctx := t.Context()
+	rows, err := pool.pool.Query(ctx, `SELECT uuid FROM review_jobs ORDER BY id`)
+	require.NoError(t, err)
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		require.NoError(t, rows.Scan(&id))
+		ids = append(ids, id)
+	}
+	require.NoError(t, rows.Err())
+	rows.Close()
+	require.Len(t, ids, 8)
+	machineID := uuid.New()
+	_, err = pool.pool.Exec(ctx, `UPDATE review_jobs SET updated_at = '2026-02-01'::timestamptz`)
+	require.NoError(t, err)
+	_, err = pool.pool.Exec(ctx, `UPDATE review_jobs SET source_machine_id = $1 WHERE uuid = $2`, machineID, ids[1])
+	require.NoError(t, err)
+	_, err = pool.pool.Exec(ctx, `INSERT INTO commits (repo_id, sha, author, subject, timestamp)
+		SELECT repo_id, 'commit-sha', 'author', 'subject', enqueued_at FROM review_jobs WHERE uuid = $1`, ids[0])
+	require.NoError(t, err)
+	_, err = pool.pool.Exec(ctx, `UPDATE review_jobs SET commit_id = (SELECT id FROM commits WHERE sha = 'commit-sha') WHERE uuid = $1`, ids[0])
+	require.NoError(t, err)
+
+	var pulled []PulledJob
+	cursor := ""
+	for {
+		page, next, err := pool.PullJobs(ctx, machineID, cursor, 3)
+		require.NoError(t, err)
+		pulled = append(pulled, page...)
+		if len(page) < 3 {
+			break
+		}
+		require.NotEqual(t, cursor, next)
+		cursor = next
+	}
+	require.Len(t, pulled, 7)
+	var got []uuid.UUID
+	for _, job := range pulled {
+		got = append(got, job.UUID)
+	}
+	assert.Equal([]uuid.UUID{ids[0], ids[2], ids[3], ids[4], ids[5], ids[6], ids[7]}, got)
+	assert.Equal("commit-sha", pulled[0].CommitSHA)
+	assert.Equal("author", pulled[0].CommitAuthor)
+	assert.Empty(pulled[1].CommitSHA)
 }

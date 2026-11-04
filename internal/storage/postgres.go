@@ -1230,9 +1230,10 @@ func pgNewestReviewPrompt(filter string) string {
 		ORDER BY rv.created_at DESC, rv.id DESC LIMIT 1)`
 }
 
+// OFFSET 0 keeps the generic plan from sorting every remaining job before LIMIT.
 var pgPullJobsQuery = `
 		SELECT
-			j.uuid, r.identity, COALESCE(c.sha, ''), COALESCE(c.author, ''), COALESCE(c.subject, ''), COALESCE(c.timestamp, '1970-01-01'::timestamptz),
+			j.uuid, parent.identity, COALESCE(parent.sha, ''), COALESCE(parent.author, ''), COALESCE(parent.subject, ''), COALESCE(parent.timestamp, '1970-01-01'::timestamptz),
 			j.git_ref, COALESCE(j.branch, ''), COALESCE(j.session_id, ''), NULLIF(j.resume_source_job_uuid, '')::uuid, j.agent, COALESCE(j.model, ''), COALESCE(j.provider, ''), COALESCE(j.requested_model, ''), COALESCE(j.requested_provider, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic, COALESCE(j.agent_invoked, FALSE),
 			j.enqueued_at, j.started_at, j.finished_at,
 			` + pgPulledJobPromptExpr + `,
@@ -1244,10 +1245,15 @@ var pgPullJobsQuery = `
 			 AND rv.job_enqueued_at = j.enqueued_at AND rv.job_source_machine_id = j.source_machine_id
 			 ORDER BY rv.created_at DESC, rv.id DESC LIMIT 1)
 		FROM review_jobs j
-		JOIN repos r ON j.repo_id = r.id
-		LEFT JOIN commits c ON j.commit_id = c.id
-		WHERE (j.source_machine_id IS NULL OR j.source_machine_id != $1)
-		AND (j.updated_at, j.id) > ($2, $3)
+		CROSS JOIN LATERAL (
+			SELECT r.identity, c.sha, c.author, c.subject, c.timestamp
+			FROM repos r
+			LEFT JOIN commits c ON c.id = j.commit_id
+			WHERE r.id = j.repo_id
+			AND (j.source_machine_id IS NULL OR j.source_machine_id != $1)
+			OFFSET 0
+		) parent
+		WHERE (j.updated_at, j.id) > ($2, $3)
 		ORDER BY j.updated_at, j.id
 		LIMIT $4
 	`
