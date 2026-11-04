@@ -268,7 +268,7 @@ func TestAgentHookOpenFailedReviewBehindPassingHistory(t *testing.T) {
 	require.NoError(t, err)
 	seedAgentHookReviewHistory(t, db, storedRepo.ID, head, 1, 10001)
 
-	jobs, ok := (daemonAgentHookSource{db: db}).ListOpenFailedReviewJobs(t.Context(), repo.Path(), "main")
+	jobs, ok := (daemonAgentHookSource{db: db}).ListOpenFailedReviewJobs(t.Context(), storedRepo.RootPath, "main")
 	require.True(t, ok)
 	require.Len(t, jobs, 1)
 	assert.Equal(t, int64(1), jobs[0].ID)
