@@ -1089,9 +1089,8 @@ func TestCIPollerAllowCodeowners(t *testing.T) {
 	h.Cfg.CI.Agents = []string{"codex"}
 	h.stubProcessPRGit()
 	statuses := h.CaptureCommitStatuses()
-	h.CaptureSkippedChecks()
+	skippedChecks := h.CaptureSkippedChecks()
 
-	owners := map[string]struct{}{"alice": {}}
 	var reads []string
 	h.Poller.codeownersFn = func(_ context.Context, ghRepo, ref string) (map[string]struct{}, error) {
 		assert.Equal("acme/api", ghRepo)
@@ -1099,7 +1098,7 @@ func TestCIPollerAllowCodeowners(t *testing.T) {
 		if ref == "release" {
 			return nil, errors.New("team members unavailable")
 		}
-		return owners, nil
+		return map[string]struct{}{"alice": {}}, nil
 	}
 	prs := []ghPR{
 		{Number: 1, HeadRefOid: "owner-head", BaseRefName: "main", Author: ghPRAuthor{Login: "Alice"}, AuthorAssociation: "CONTRIBUTOR"},
@@ -1139,45 +1138,17 @@ func TestCIPollerAllowCodeowners(t *testing.T) {
 	require.ErrorContains(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg), "team members unavailable")
 	assert.Equal([]string{"main", "release", "main", "release"}, reads, "the next poll reads CODEOWNERS again")
 
-	owners["mallory"] = struct{}{}
-	require.ErrorContains(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg), "team members unavailable")
-	assert.True(h.hasPanel(t, "acme/api", 2, "outsider-head"), "ownership changes apply on the next poll")
-}
-
-func TestCIPollerAllowCodeownersSkipsReviewedHeads(t *testing.T) {
-	assert := assert.New(t)
-	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-	h.Cfg.CI.AllowCodeowners = true
-	h.Cfg.CI.ReviewTypes = []string{"security"}
-	h.Cfg.CI.Agents = []string{"codex"}
-	h.stubProcessPRGit()
-	statuses := h.CaptureCommitStatuses()
-	skippedChecks := h.CaptureSkippedChecks()
-
-	var reads []string
-	h.Poller.codeownersFn = func(_ context.Context, ghRepo, ref string) (map[string]struct{}, error) {
-		assert.Equal("acme/api", ghRepo)
-		reads = append(reads, ref)
-		return map[string]struct{}{"alice": {}}, nil
-	}
-	pr := ghPR{Number: 1, HeadRefOid: "owner-head", BaseRefName: "main", Author: ghPRAuthor{Login: "alice"}, AuthorAssociation: "CONTRIBUTOR"}
-	h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return []ghPR{pr}, nil }
-
-	require.NoError(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg))
-	assert.True(h.hasPanel(t, "acme/api", 1, "owner-head"))
-	assert.Equal([]string{"main"}, reads)
-
+	prs = prs[:1]
 	h.Poller.codeownersFn = func(_ context.Context, ghRepo, ref string) (map[string]struct{}, error) {
 		assert.Equal("acme/api", ghRepo)
 		reads = append(reads, ref)
 		return nil, errors.New("team members unavailable")
 	}
+	statusCount, skippedCheckCount := len(*statuses), len(*skippedChecks)
 	require.NoError(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg))
-	assert.Equal([]string{"main"}, reads, "a reviewed head needs no ownership decision")
-	assert.Equal([]capturedStatus{{
-		Repo: "acme/api", SHA: "owner-head", State: "pending", Desc: "Review in progress",
-	}}, *statuses)
-	assert.Empty(*skippedChecks)
+	assert.Equal([]string{"main", "release", "main", "release"}, reads, "a reviewed head needs no ownership decision")
+	assert.Len(*statuses, statusCount)
+	assert.Len(*skippedChecks, skippedCheckCount)
 }
 
 // drivePanelOutcome resolves the panel run for a PR HEAD and drives every

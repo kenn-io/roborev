@@ -336,7 +336,6 @@ func testHealthCIPollerExhaustedRetry(t *testing.T, draft bool) {
 				require.NoError(t, err)
 			case "new head":
 				pr.HeadRefOid = "head-b"
-				pr.Author.Login = "mallory"
 			case "retire without ownership lookup":
 				pr.HeadRefOid = "head-b"
 				pr.Author.Login = "mallory"
