@@ -151,11 +151,17 @@ func (s *StateStore) saveLocked() error {
 }
 
 func (s *StateStore) pruneIdleSessionsLocked() map[string]SessionState {
-	cutoff := s.currentTime().Add(-idleSessionLifetime)
+	now := s.currentTime()
+	cutoff := now.Add(-idleSessionLifetime)
 	sessions := map[string]SessionState{}
 	for id, state := range s.sessions {
 		if !state.LastSeenAt.Before(cutoff) {
 			sessions[id] = state
+		}
+	}
+	for _, fixSession := range s.fixSessions {
+		if state, ok := s.sessions[fixSession.SessionID]; ok && fixSession.Active(now) {
+			sessions[fixSession.SessionID] = state
 		}
 	}
 	return sessions
