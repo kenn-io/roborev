@@ -5,11 +5,34 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestListSearchDocumentsSeeksPastCursor(t *testing.T) {
+	t.Parallel()
+	// A fresh database has no ANALYZE statistics to guide join ordering.
+	db := openTestDB(t)
+	defer db.Close()
+
+	rows, err := db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+listSearchDocumentsQuery, 25, 50)
+	require.NoError(t, err)
+	defer rows.Close()
+	var details []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+		details = append(details, detail)
+	}
+	require.NoError(t, rows.Err())
+	plan := strings.Join(details, "\n")
+	assert.Contains(t, plan, "SEARCH rv USING INTEGER PRIMARY KEY (rowid>?)")
+	assert.NotContains(t, plan, "TEMP B-TREE FOR ORDER BY")
+}
 
 type searchFeedFixture struct {
 	jobType      string

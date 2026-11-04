@@ -58,6 +58,12 @@ const searchFeedEligibility = `
 	)
 `
 
+const listSearchDocumentsQuery = searchFeedSelect + `
+	WHERE rv.id > ?
+	` + searchFeedEligibility + `
+	ORDER BY rv.id ASC
+	LIMIT ?`
+
 // ListSearchDocuments returns one stable page of eligible canonical reviews.
 func (db *DB) ListSearchDocuments(ctx context.Context, afterReviewID int64, limit int) ([]SearchReviewSource, error) {
 	if limit <= 0 {
@@ -68,11 +74,7 @@ func (db *DB) ListSearchDocuments(ctx context.Context, afterReviewID int64, limi
 	cursor := afterReviewID
 	for len(sources) < limit {
 		batchLimit := limit - len(sources)
-		rows, err := db.QueryContext(ctx, searchFeedSelect+`
-			WHERE rv.id > ?
-			`+searchFeedEligibility+`
-			ORDER BY rv.id ASC
-			LIMIT ?`, cursor, batchLimit)
+		rows, err := db.QueryContext(ctx, listSearchDocumentsQuery, cursor, batchLimit)
 		if err != nil {
 			return nil, err
 		}
