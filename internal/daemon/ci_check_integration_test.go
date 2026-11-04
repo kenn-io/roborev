@@ -297,8 +297,14 @@ echo 'OK rewrite read-only'
 func TestCICheckToolchainsSandboxIntegration(t *testing.T) {
 	testutil.RequireSandboxIntegration(t)
 	ciCheckMiseFixture(t)
-	run, err := prepareCICheckToolchainFixture(t)
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	repo := testutil.NewTestRepoWithCommit(t)
+	sha := repo.HeadSHA()
+	command := filepath.Join(t.TempDir(), "codex")
+	require.NoError(t, os.WriteFile(command, []byte("#!/bin/sh\nexit 0\n"), 0o700))
+	run, err := (&WorkerPool{}).prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}, command, nil, io.Discard)
 	require.NoError(t, err)
+	t.Cleanup(run.cleanup)
 	server := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(server.Close)
 	run.Job.Route = sandbox.Route{Name: "test", Upstream: server.URL, Path: "/responses", EnvVar: "TEST_TOKEN", Capture: []string{"/bin/echo", "synthetic-proxy-token"}}

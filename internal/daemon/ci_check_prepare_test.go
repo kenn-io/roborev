@@ -59,6 +59,11 @@ func TestCICheckPreparation(t *testing.T) {
 	module, err := os.ReadFile(filepath.Join(run.Repo, "go.mod"))
 	require.NoError(t, err)
 	assert.Equal(t, "module example.com/check\n\ngo 1.25.0\n", string(module))
+	home := filepath.Join(miseTools, "home")
+	require.NoError(t, os.Mkdir(home, 0o700))
+	t.Setenv("HOME", home)
+	_, err = wp.prepareCICheck(t.Context(), job, command, nil, io.Discard)
+	require.ErrorContains(t, err, "read grant contains host home")
 }
 
 // Recovery restores write access inside checker roots without following symlinks.
@@ -193,25 +198,14 @@ func ciCheckMiseFixture(t *testing.T) (string, string) {
 	return tools, shims
 }
 
-func prepareCICheckToolchainFixture(t *testing.T) (ciCheckRun, error) {
-	t.Helper()
-	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	repo := testutil.NewTestRepoWithCommit(t)
-	sha := repo.HeadSHA()
-	command := filepath.Join(t.TempDir(), "codex")
-	require.NoError(t, os.WriteFile(command, []byte("#!/bin/sh\nexit 0\n"), 0o700))
-	run, err := (&WorkerPool{}).prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}, command, nil, io.Discard)
-	if err == nil {
-		t.Cleanup(run.cleanup)
-	}
-	return run, err
-}
-
 func TestCICheckMiseDiscovery(t *testing.T) {
 	tools, shims := ciCheckMiseFixture(t)
 	selected := filepath.Join(shims, "selected")
 	missing := filepath.Join(tools, "installs", "python", "system")
 	require.NoError(t, os.MkdirAll(filepath.Dir(missing), 0o700))
+	// An installation can disappear after mise lists its executable directory.
+	removedBin := filepath.Join(tools, "removed-bin")
+	require.NoError(t, os.Mkdir(removedBin, 0o700))
 	inventory := fmt.Sprintf(`{"node":[{"install_path":%q}]}`, selected)
 	// mise reports system selections as installed even though this directory doesn't exist.
 	mixedInventory := fmt.Sprintf(`{"python":[{"version":"system","install_path":%q,"installed":true,"active":true}],"node":[{"install_path":%q,"installed":true,"active":true}]}`, missing, selected)
@@ -219,10 +213,10 @@ func TestCICheckMiseDiscovery(t *testing.T) {
 [ "$(pwd -P)" = '/' ] || { printf 'mise discovery ran from unexpected directory: %%s\n' "$(pwd -P)" >&2; exit 4; }
 case "$*" in
 'ls --current --installed --json') printf '%%s' '%s';;
-'bin-paths') printf '%%s\n' '%s' '%s';;
+'bin-paths') printf '%%s\n' '%s' '%s'; /bin/rmdir '%s';;
 *) exit 3;;
 esac
-`, mixedInventory, missing, filepath.Join(selected, "bin"))
+`, mixedInventory, removedBin, filepath.Join(selected, "bin"), removedBin)
 	for _, tc := range []struct {
 		name, script, message string
 		roots, bins           []string
@@ -231,7 +225,7 @@ esac
 		{name: "malformed", script: "#!/bin/sh\nprintf 'invalid json'\n", message: "mise discovery failed"},
 		{name: "inventory failure", script: "#!/bin/sh\nexit 3\n", message: "exit status 3"},
 		{name: "bin paths failure", script: fmt.Sprintf("#!/bin/sh\n[ \"$1\" = ls ] && { printf '%%s' '%s'; exit 0; }; exit 4\n", inventory), message: "exit status 4"},
-		{name: "unresolvable entries skipped", script: mixedScript, message: missing, roots: []string{tools}, bins: []string{filepath.Join(tools, "bin")}},
+		{name: "runs from root and skips unavailable paths", script: mixedScript, message: missing, roots: []string{tools}, bins: []string{filepath.Join(tools, "bin")}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			commands := t.TempDir()
@@ -250,13 +244,4 @@ esac
 			}
 		})
 	}
-}
-
-func TestCICheckMiseCredentialOverlap(t *testing.T) {
-	tools, _ := ciCheckMiseFixture(t)
-	home := filepath.Join(tools, "home")
-	require.NoError(t, os.Mkdir(home, 0o700))
-	t.Setenv("HOME", home)
-	_, err := prepareCICheckToolchainFixture(t)
-	require.ErrorContains(t, err, "read grant contains host home")
 }
