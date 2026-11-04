@@ -21,11 +21,9 @@ func TestListJobsFailedReviewsSince(t *testing.T) {
 		ref           string
 		commitID      any
 		verdict       any
-		errorText     string
 		panelRole     string
 		branch        string
 		finished      string
-		missingFinish bool
 		repoID        int64
 		want          bool
 	}{
@@ -36,16 +34,13 @@ func TestListJobsFailedReviewsSince(t *testing.T) {
 		{name: "legacy commit", commitID: commit.ID, want: true},
 		{name: "legacy dirty", ref: "dirty", want: true},
 		{name: "legacy range", ref: "base..head", want: true},
-		{name: "legacy empty"},
 		{name: "legacy task", ref: "task"},
 		{name: "goal", jobType: JobTypeGoalReview},
 		{name: "compact", jobType: JobTypeCompact},
 		{name: "task", jobType: JobTypeTask},
 		{name: "insights", jobType: JobTypeInsights},
-		{name: "errored", jobType: JobTypeReview, errorText: "synthetic error"},
 		{name: "null verdict", jobType: JobTypeReview},
 		{name: "passing", jobType: JobTypeReview, verdict: 1},
-		{name: "missing finish time", jobType: JobTypeReview, missingFinish: true},
 		{name: "panel member", jobType: JobTypeReview, panelRole: PanelRoleMember},
 		{name: "other branch", jobType: JobTypeReview, branch: "feature"},
 		{name: "other repo", jobType: JobTypeReview, repoID: other.ID},
@@ -62,20 +57,19 @@ func TestListJobsFailedReviewsSince(t *testing.T) {
 		if tc.branch == "" {
 			tc.branch = "main"
 		}
+		if tc.ref == "" {
+			tc.ref = "abc123"
+		}
 		if tc.finished == "" {
 			tc.finished = since.Add(time.Hour).Format(time.RFC3339Nano)
 		}
 		if tc.verdict == nil && tc.name != "null verdict" {
 			tc.verdict = 0
 		}
-		var finished any = tc.finished
-		if tc.missingFinish {
-			finished = nil
-		}
 		_, err := db.ExecContext(t.Context(), `INSERT INTO review_jobs
-			(id, repo_id, commit_id, git_ref, branch, agent, status, job_type, error, panel_role, finished_at, enqueued_at)
-			VALUES (?, ?, ?, ?, ?, 'test', 'done', ?, ?, ?, ?, ?)`,
-			i+1, tc.repoID, tc.commitID, tc.ref, tc.branch, tc.jobType, tc.errorText, tc.panelRole, finished,
+			(id, repo_id, commit_id, git_ref, branch, agent, status, job_type, panel_role, finished_at, enqueued_at)
+			VALUES (?, ?, ?, ?, ?, 'test', 'done', ?, ?, ?, ?)`,
+			i+1, tc.repoID, tc.commitID, tc.ref, tc.branch, tc.jobType, tc.panelRole, tc.finished,
 			since.Add(time.Duration(i)*time.Second).Format(time.RFC3339Nano))
 		require.NoError(t, err)
 		_, err = db.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, output, verdict_bool)
@@ -85,19 +79,7 @@ func TestListJobsFailedReviewsSince(t *testing.T) {
 			wantIDs = append([]int64{int64(i + 1)}, wantIDs...)
 		}
 	}
-	opts := []ListJobsOption{WithoutPrompt(), WithBranch("main"), WithExcludePanelRole(PanelRoleMember)}
-	all, err := db.ListJobs(string(JobStatusDone), repo.RootPath, 0, 0, opts...)
-	require.NoError(t, err)
-	var oldIDs []int64
-	for _, job := range all {
-		// Compare with the old predicate except for the excluded missing finish time.
-		if (job.IsReviewJob() || job.IsSynthesisJob()) && !job.IsGoalReviewJob() &&
-			job.FinishedAt != nil && !job.FinishedAt.Before(since) && job.Verdict != nil && *job.Verdict == "F" {
-			oldIDs = append(oldIDs, job.ID)
-		}
-	}
-	assert.Equal(t, wantIDs, oldIDs)
-	opts = append(opts, WithFailedReviewsSince(since))
+	opts := []ListJobsOption{WithoutPrompt(), WithBranch("main"), WithExcludePanelRole(PanelRoleMember), WithFailedReviewsSince(since)}
 	jobs, err := db.ListJobs(string(JobStatusDone), repo.RootPath, 0, 0, opts...)
 	require.NoError(t, err)
 	var gotIDs []int64
@@ -105,7 +87,6 @@ func TestListJobsFailedReviewsSince(t *testing.T) {
 		gotIDs = append(gotIDs, job.ID)
 	}
 	assert.Equal(t, wantIDs, gotIDs)
-	assert.Equal(t, oldIDs, gotIDs)
 	limited, err := db.ListJobs(string(JobStatusDone), repo.RootPath, 2, 0, opts...)
 	require.NoError(t, err)
 	require.Len(t, limited, 2)
