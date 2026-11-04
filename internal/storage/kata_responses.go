@@ -126,6 +126,52 @@ func (db *DB) KataResponseStatuses(ctx context.Context, jobID int64, issueUID st
 	return out, nil
 }
 
+// KataResponseStatusesForReview includes response operations stored on the
+// review and on its automatic reassessment jobs. Reassessment rows and the
+// shared repository check keep unrelated child jobs out of the result.
+func (db *DB) KataResponseStatusesForReview(ctx context.Context, jobID int64, issueUID string) ([]KataResponseStatus, error) {
+	if jobID <= 0 {
+		return nil, fmt.Errorf("response statuses require a positive job ID")
+	}
+	rows, err := db.QueryContext(ctx, `
+		SELECT id FROM review_jobs WHERE id=?
+		UNION
+		SELECT child.id
+		FROM review_jobs AS parent
+		JOIN review_jobs AS child ON child.parent_job_id=parent.id AND child.repo_id=parent.repo_id
+		JOIN reassessments AS reassessment ON reassessment.job_id=child.id
+		WHERE parent.id=? AND child.source=?
+		ORDER BY 1`, jobID, jobID, JobSourceRebuttal)
+	if err != nil {
+		return nil, err
+	}
+	var jobIDs []int64
+	for rows.Next() {
+		var sourceJobID int64
+		if err := rows.Scan(&sourceJobID); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		jobIDs = append(jobIDs, sourceJobID)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	var out []KataResponseStatus
+	for _, sourceJobID := range jobIDs {
+		statuses, err := db.KataResponseStatuses(ctx, sourceJobID, issueUID)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, statuses...)
+	}
+	return out, nil
+}
+
 // KataResponseRoots reads completed local finding mappings for explicit comment
 // reference resolution. It never resolves a current project binding. Callers
 // must authorize each source job before reading its remote issue.

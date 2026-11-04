@@ -101,14 +101,32 @@ func runKataShow(cmd *cobra.Command, args []string, forceJobID, asJSON bool, iss
 	if asJSON {
 		return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  ")), view)
 	}
+	issueCounts := make(map[string]int, len(view.Publications))
+	for _, publication := range view.Publications {
+		if publication.Issue != "" {
+			issueCounts[publication.Issue]++
+		}
+	}
 	for _, publication := range view.Publications {
 		issue := publication.Issue
+		state := publication.State
 		if issue == "" {
 			issue = "issue pending"
+			if state == "pending" {
+				state = ""
+			}
 		}
-		cmd.Printf("%s  %s  %s (%s)\n", publication.OperationID, issue, publication.State, publication.Policy)
+		operationID := ""
+		if (publication.Issue == "" || issueCounts[publication.Issue] > 1) && publication.OperationID != "" {
+			operationID = publication.OperationID + "  "
+		}
+		if state == "" {
+			cmd.Printf("%s%s (%s)\n", operationID, issue, publication.Policy)
+		} else {
+			cmd.Printf("%s%s  %s (%s)\n", operationID, issue, state, publication.Policy)
+		}
 		for _, finding := range publication.Findings {
-			cmd.Printf("  %s  %s  %s\n", finding.ID, finding.Comment, finding.State)
+			cmd.Printf("  %s  %s\n", finding.ID, finding.Comment)
 		}
 		if publication.LastError != "" {
 			cmd.Println("  " + publication.LastError)
@@ -135,7 +153,9 @@ func runKataShow(cmd *cobra.Command, args []string, forceJobID, asJSON bool, iss
 			cmd.Println("  Existing comment: " + operation.ExistingComment)
 		}
 		if operation.Message != "" {
-			cmd.Println("  " + operation.Message)
+			if message := kataResponseMessage(operation.Message); message != "" {
+				cmd.Println("  " + message)
+			}
 		}
 	}
 	if len(view.Publications) == 0 && len(view.Snapshots) == 0 && len(view.Operations) == 0 {

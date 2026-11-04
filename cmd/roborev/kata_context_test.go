@@ -145,7 +145,7 @@ func TestKataShowIssueRejectsAnotherIssueContext(t *testing.T) {
 }
 
 func TestKataShowIssueKeepsPendingPublicationWithoutReplies(t *testing.T) {
-	publication := daemon.KataPublication{OperationID: "publication-example", Issue: "reviews#example", IssueUID: "issue-example", State: "pending", Policy: "summary", LastError: "Kata publication pending"}
+	publication := daemon.KataPublication{OperationID: "publication-example", IssueUID: "issue-example", State: "pending", Policy: "summary", LastError: "Kata publication pending"}
 	NewMockDaemon(t, MockRefineHooks{OnUnhandled: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
 		if r.URL.Path != "/api/kata/context" {
 			return false
@@ -158,10 +158,39 @@ func TestKataShowIssueKeepsPendingPublicationWithoutReplies(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetArgs([]string{"show", "--issue", "reviews#example"})
 	require.NoError(t, cmd.Execute())
-	assert.Contains(t, out.String(), "publication-example")
-	assert.Contains(t, out.String(), "pending (summary)")
-	assert.Contains(t, out.String(), "Kata publication pending")
+	assert.Equal(t, "publication-example  issue pending (summary)\n  Kata publication pending\nKata finding reply context is disabled\n", out.String())
 	assert.NotContains(t, out.String(), "No available saved")
+}
+
+func TestKataShowHumanOutputUsesIssueAndResponseEvidence(t *testing.T) {
+	publications := []daemon.KataPublication{
+		{
+			OperationID: "publication-unique", Issue: "reviews#unique", State: "pending", Policy: "summary",
+			Findings: []daemon.KataFindingPublication{{ID: "f:unique", Comment: "comment-unique", State: "pending"}},
+		},
+		{OperationID: "publication-duplicate-a", Issue: "reviews#duplicate", State: "done", Policy: "comments"},
+		{OperationID: "publication-duplicate-b", Issue: "reviews#duplicate", State: "done", Policy: "comments"},
+	}
+	operation := storage.KataResponseStatus{
+		OperationID: "response-operation", State: "pending", Kind: "reply",
+		Message: "kata publication remains pending: response receipt unavailable",
+	}
+	NewMockDaemon(t, MockRefineHooks{OnUnhandled: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+		if r.URL.Path != "/api/kata/publications" {
+			return false
+		}
+		assert.Equal(t, "42", r.URL.Query().Get("job_id"))
+		require.NoError(t, json.MarshalWrite(w, daemon.KataPublicationsBody{JobID: 42, Publications: publications, Operations: []storage.KataResponseStatus{operation}}))
+		return true
+	}})
+	cmd := kataCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"show", "--job", "42"})
+	require.NoError(t, cmd.Execute())
+	assert.Equal(t, "reviews#unique  pending (summary)\n  f:unique  comment-unique\npublication-duplicate-a  reviews#duplicate  done (comments)\npublication-duplicate-b  reviews#duplicate  done (comments)\nresponse-operation  pending (reply)\n  response receipt unavailable\n", out.String())
+	assert.NotContains(t, out.String(), "publication-unique")
+	assert.NotContains(t, out.String(), "kata publication remains pending")
 }
 
 func TestKataPromptReaderFreezesUnavailableFirstObservation(t *testing.T) {

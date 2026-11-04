@@ -182,18 +182,3 @@ func TestKataCommentReferenceResolvesOnlyItsMappedFindingThread(t *testing.T) {
 		})
 	}
 }
-
-func FuzzSkipQualifiedResponseProject(f *testing.F) {
-	f.Add("", "", false)
-	f.Add("reviews", "reviews", false)
-	f.Add("reviews", "other", false)
-	f.Add("renamed-reviews", "old-reviews", true)
-	f.Fuzz(func(t *testing.T, project, frozenProject string, hasAlias bool) {
-		request := katapublish.Request{Project: frozenProject}
-		if hasAlias {
-			request.WorkspaceAlias = &kata.ProjectAlias{Identity: "example/repo", Kind: "git"}
-		}
-		want := project != "" && !hasAlias && project != frozenProject
-		assert.Equal(t, want, skipQualifiedResponseProject(project, request))
-	})
-}

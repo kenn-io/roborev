@@ -53,6 +53,44 @@ func TestKataContextListsSafePendingOperations(t *testing.T) {
 	assert.Empty(t, ci.Body.Operations)
 }
 
+func TestKataContextIncludesAutomaticReassessmentResponseStatus(t *testing.T) {
+	s, db, _ := newTestServer(t)
+	parentJobID, findings := rebuttalFindingParent(t, s, db)
+	seedResponseMapping(t, s, db, parentJobID, findings[0].ID, "comments")
+	s.configWatcher.Config().Integrations.Kata.PublishReassessments = true
+	rr := serveHuma(t, s, http.MethodPost, "/api/rebuttal", rebuttalRequestBody(t, map[string]any{
+		"job_id": parentJobID, "finding_id": findings[0].ID, "commenter": "reader", "comment": "Check the current guard.",
+	}))
+	require.Equal(t, http.StatusCreated, rr.Code, rr.Body.String())
+	var reassessment storage.ReviewJob
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &reassessment))
+	_, err := db.Exec(`UPDATE review_jobs SET status='running' WHERE id=?`, reassessment.ID)
+	require.NoError(t, err)
+	require.NoError(t, db.CompleteJob(reassessment.ID, "test", `{"outcome":"confirmed","explanation":"The guard still reproduces."}`))
+	handoffs, err := db.KataHandoffs(t.Context(), reassessment.ID)
+	require.NoError(t, err)
+	require.Len(t, handoffs, 1)
+	status, err := db.KataResponseStatus(t.Context(), handoffs[0].OperationID)
+	require.NoError(t, err)
+	assert.Equal(t, "pending", status.State)
+
+	parentHandoffs, err := db.KataHandoffs(t.Context(), parentJobID)
+	require.NoError(t, err)
+	require.Len(t, parentHandoffs, 1)
+	s.configWatcher.Config().Integrations.Kata.Enabled = false
+	for _, input := range []KataContextInput{
+		{JobID: parentJobID},
+		{Ref: parentHandoffs[0].State.IssueRef},
+	} {
+		out, err := s.humaKataContext(t.Context(), &input)
+		require.NoError(t, err)
+		require.Len(t, out.Body.Operations, 1)
+		assert.Equal(t, status.OperationID, out.Body.Operations[0].OperationID)
+		assert.Equal(t, status.State, out.Body.Operations[0].State)
+		assert.Equal(t, status.Kind, out.Body.Operations[0].Kind)
+	}
+}
+
 func TestKataConsumedRunRequiresUUIDDespiteOpaqueDeliveryKeys(t *testing.T) {
 	s, fake := kataAPIServer(t)
 	before := len(fake.AllRequests())

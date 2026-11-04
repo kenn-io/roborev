@@ -198,11 +198,13 @@ func readPublication(ctx context.Context, db *storage.DB, api *kata.APIClient, h
 		candidate, _ = katapublish.Lookup(ctx, api, h.Request, state)
 	}
 	var issue kata.Issue
+	projectName := ""
 	available := false
 	if api != nil && candidate.IssueUID != "" && candidate.ProjectUID != "" {
-		binding, err := api.ResolveProject(ctx, h.Request.Project)
+		binding, err := api.ResolveSelection(ctx, kata.Binding{Project: h.Request.Project, Alias: h.Request.WorkspaceAlias})
 		if err == nil && binding.ProjectUID == candidate.ProjectUID && (h.Request.ProjectUID == "" || h.Request.ProjectUID == candidate.ProjectUID) {
-			issue, err = api.ShowComplete(ctx, h.Request.Project+"#"+candidate.IssueUID)
+			projectName = binding.Project
+			issue, err = api.ShowComplete(ctx, projectName+"#"+candidate.IssueUID)
 			available = err == nil && publicationMatches(issue, h, candidate)
 			if available {
 				state = candidate
@@ -247,7 +249,7 @@ func readPublication(ctx context.Context, db *storage.DB, api *kata.APIClient, h
 				}
 			} else {
 				finding.Root = root
-				thread, err := api.Thread(ctx, kata.ThreadReq{Issue: h.Request.Project + "#" + state.IssueUID, Root: finding.RootUID})
+				thread, err := api.Thread(ctx, kata.ThreadReq{Issue: projectName + "#" + state.IssueUID, Root: finding.RootUID})
 				if err != nil {
 					finding.Message = "Finding reply thread unavailable; no resolution inferred"
 					finding.ThreadUnavailable = true

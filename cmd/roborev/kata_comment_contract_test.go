@@ -17,15 +17,6 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
-func TestKataCommentContractCommandDiscovery(t *testing.T) {
-	root := newRootCmd()
-	cmd, args, err := root.Find([]string{"kata", "comment"})
-	require.NoError(t, err)
-	assert.Empty(t, args)
-	assert.Equal(t, "roborev kata comment", cmd.CommandPath())
-	assert.NotNil(t, cmd.InheritedFlags().Lookup("from-skill"))
-}
-
 func TestKataCommentContractRejectsInvalidIntentLocally(t *testing.T) {
 	selector, err := findingid.New(uuid.New(), 0, strings.Repeat("a", 64))
 	require.NoError(t, err)

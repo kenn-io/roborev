@@ -9,10 +9,12 @@ import (
 	"net/http"
 	"path/filepath"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	gen "go.kenn.io/kata/pkg/client/generated"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/kata"
@@ -53,6 +55,10 @@ func (a *interruptSecondRoot) Comment(ctx context.Context, req kata.CommentReq) 
 }
 
 func newReadPublicationFixture(t *testing.T, partial bool) readFixture {
+	return newReadPublicationFixtureWithAlias(t, partial, nil)
+}
+
+func newReadPublicationFixtureWithAlias(t *testing.T, partial bool, alias *kata.ProjectAlias) readFixture {
 	t.Helper()
 	f := readFixture{db: testutil.OpenTestDB(t), server: katafake.New(t)}
 	f.cfg = config.KataIntegrationConfig{Enabled: true, Endpoint: f.server.URL(), APIKey: "synthetic-kata-credential", DefaultProject: "reviews", Teammate: "roborev"}
@@ -78,10 +84,25 @@ func newReadPublicationFixture(t *testing.T, partial bool) readFixture {
 	binding, err := f.api.ResolveProject(t.Context(), "reviews")
 	require.NoError(t, err)
 	req := katapublish.Request{
-		OperationID: "publication-example", Endpoint: f.server.URL(), Project: "reviews", ProjectUID: binding.ProjectUID,
+		OperationID: "publication-example", Endpoint: f.server.URL(), Project: "reviews", ProjectUID: binding.ProjectUID, WorkspaceAlias: alias,
 		ReviewUUID: f.snapshot.ReviewUUID.String(), Policy: "comments", Teammate: "roborev", //nolint:forbidigo // Synthetic UUID at the stored or provider text boundary.
 		Create:  kata.CreateReq{Title: "Review findings", Project: "reviews"},
 		Entries: []katapublish.Entry{{Selector: f.snapshot.Selector, ReviewUUID: f.snapshot.ReviewUUID.String(), DocumentHash: f.snapshot.DocumentHash, Index: 0, Body: "Original error remains reproducible."}}, //nolint:forbidigo // Synthetic UUID at the stored or provider text boundary.
+	}
+	if alias != nil {
+		f.server.Override = func(w http.ResponseWriter, r *http.Request) bool {
+			if r.URL.Path != "/api/v1/projects/resolve" {
+				return false
+			}
+			var body map[string]any
+			assert.NoError(t, json.UnmarshalRead(r.Body, &body))
+			assert.Equal(t, map[string]any{"alias": map[string]any{"identity": alias.Identity, "kind": alias.Kind}}, body)
+			project := f.server.Projects[0]
+			f.server.Reply(w, gen.ProjectResolveBody{Project: project, Alias: gen.ProjectAlias{
+				AliasIdentity: alias.Identity, AliasKind: alias.Kind, ID: 1, ProjectID: project.ID, CreatedAt: time.Unix(0, 0).UTC(),
+			}})
+			return true
+		}
 	}
 	var deliveryAPI katapublish.API = f.api
 	if partial {
@@ -245,6 +266,36 @@ func TestReadJobKeepsFrozenDestinationAndUnavailableSnapshot(t *testing.T) {
 	assert.Equal(t, f.snapshot.Selector, got[0].Findings[0].Selector)
 	assert.Equal(t, "snapshot_unavailable", got[0].Findings[0].Availability)
 	assert.Nil(t, got[0].Findings[0].Snapshot)
+}
+
+func TestReadJobResolvesCapturedWorkspaceAliasAfterProjectRename(t *testing.T) {
+	alias := &kata.ProjectAlias{Identity: "code.example/team/repo", Kind: "git"}
+	f := newReadPublicationFixtureWithAlias(t, false, alias)
+	root := f.state.Receipts[f.snapshot.Selector].UID
+	_, err := f.api.Comment(t.Context(), kata.CommentReq{
+		Project: "reviews", Issue: f.state.IssueUID, Kind: kata.CommentReply,
+		ReplyTo: root, Body: "Evidence remains on the renamed project", Teammate: "reviewer", IdempotencyKey: "renamed-project-evidence",
+	})
+	require.NoError(t, err)
+
+	const renamed = "renamed-reviews"
+	f.server.Projects[0].Name = renamed
+
+	before := len(f.server.AllRequests())
+	got, err := ReadJob(t.Context(), f.db, f.cfg, f.job.ID, f.snapshot.ReviewUUID.String(), Run{}) //nolint:forbidigo // Synthetic review UUID at the provider boundary.
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Len(t, got[0].Findings, 1)
+	assert.Equal(t, "available", got[0].Findings[0].Availability)
+	require.Len(t, got[0].Findings[0].Replies, 1)
+	assert.Equal(t, "Evidence remains on the renamed project", got[0].Findings[0].Replies[0].Body)
+	resolvedAlias := false
+	for _, request := range f.server.AllRequests()[before:] {
+		if request.Path == "/api/v1/projects/resolve" {
+			resolvedAlias = true
+		}
+	}
+	assert.True(t, resolvedAlias, "read-back must resolve the captured workspace alias")
 }
 
 func TestReadJobRecordsExactlyTheConsumedRun(t *testing.T) {

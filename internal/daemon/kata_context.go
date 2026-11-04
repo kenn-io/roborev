@@ -50,7 +50,7 @@ func (s *Server) kataContext(ctx context.Context, jobID int64, reviewUUID, ref s
 	out := &KataContextOutput{Body: katacontext.KataReplyContext{RunID: run.ID, JobID: jobID, ReviewUUID: reviewUUID, IssueRef: ref, Snapshots: []katacontext.Snapshot{}}}
 	seenOperations := map[string]bool{}
 	appendOperations := func(sourceJobID int64, issueUID string) error {
-		statuses, err := s.db.KataResponseStatuses(ctx, sourceJobID, issueUID)
+		statuses, err := s.db.KataResponseStatusesForReview(ctx, sourceJobID, issueUID)
 		if err != nil {
 			return huma.Error503ServiceUnavailable("saved Kata response status unavailable")
 		}
