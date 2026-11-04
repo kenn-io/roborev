@@ -287,4 +287,8 @@ func TestAgentHookOpenFailedReviewBehindPassingHistory(t *testing.T) {
 	require.NoError(t, json.Unmarshal(got.Body.Bytes(), &response))
 	assert.Equal(1, response.FailedReviewCount)
 	assert.Equal("failed_reviews", response.TriggeredBy)
+	require.Len(t, jobs, 1)
+	review, err := db.GetReviewByJobID(jobs[0].ID)
+	require.NoError(t, err)
+	assert.Equal(storage.VerdictFail, review.Verdict())
 }

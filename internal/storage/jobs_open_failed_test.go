@@ -18,11 +18,12 @@ func TestListJobsOpenFailedReviews(t *testing.T) {
 		name    string
 		closed  int
 		verdict any
+		summary string
 	}{
-		{"open failed", 0, 0},
-		{"open passing", 0, 1},
-		{"closed failed", 1, 0},
-		{"unknown verdict", 0, nil},
+		{"open failed", 0, 0, "[P2] Fix the unsafe query."},
+		{"open passing", 0, 1, "No issues found."},
+		{"closed failed", 1, 0, "[P2] Fix the unsafe query."},
+		{"unknown verdict", 0, nil, ""},
 	} {
 		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: tc.name, Branch: "main", Agent: "test"})
 		require.NoError(t, err)
@@ -30,7 +31,7 @@ func TestListJobsOpenFailedReviews(t *testing.T) {
 		require.NoError(t, err)
 		_, err = db.ExecContext(t.Context(), `
 			INSERT INTO reviews (job_id, agent, output, closed, verdict_bool, structured_output)
-			VALUES (?, 'test', '', ?, ?, '{"summary":"Review complete","findings":[]}')`, job.ID, tc.closed, tc.verdict)
+			VALUES (?, 'test', '', ?, ?, ?)`, job.ID, tc.closed, tc.verdict, string(reviewFixtureJSON(tc.summary)))
 		require.NoError(t, err)
 		if tc.name == "open failed" {
 			openFailedID = job.ID
@@ -48,7 +49,7 @@ func TestListJobsOpenFailedReviewsQueryPlan(t *testing.T) {
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	query, args, _, err := listJobsQuery("done", t.TempDir(), 0, 0, collectListJobsOptions(
-		WithoutPrompt(), WithClosed(false), WithOpenFailedReviews(),
+		WithoutPrompt(), WithOpenFailedReviews(),
 		WithBranchOrEmpty("main"), WithExcludePanelRole(PanelRoleMember),
 	))
 	require.NoError(t, err)

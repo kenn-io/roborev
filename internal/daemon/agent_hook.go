@@ -86,7 +86,6 @@ func (s daemonAgentHookSource) ListOpenFailedReviewJobs(
 ) ([]storage.ReviewJob, bool) {
 	opts := []storage.ListJobsOption{
 		storage.WithoutPrompt(),
-		storage.WithClosed(false),
 		storage.WithOpenFailedReviews(),
 		storage.WithExcludePanelRole(storage.PanelRoleMember),
 	}

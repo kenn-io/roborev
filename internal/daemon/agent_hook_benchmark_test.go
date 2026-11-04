@@ -20,14 +20,17 @@ func seedAgentHookReviewHistory(t testing.TB, db *storage.DB, repoID int64, ref 
 		WITH RECURSIVE sequence(n) AS (
 			SELECT 1 UNION ALL SELECT n + 1 FROM sequence WHERE n < ?
 		)
-		INSERT INTO review_jobs (repo_id, git_ref, branch, agent, status)
-		SELECT ?, ?, 'main', 'test', 'done' FROM sequence`, failed+passing, repoID, ref)
+		INSERT INTO review_jobs (repo_id, git_ref, branch, agent, status, uuid)
+		SELECT ?, ?, 'main', 'test', 'done', printf('00000000-0000-4000-8000-%012d', n)
+		FROM sequence`, failed+passing, repoID, ref)
 	require.NoError(t, err)
 	_, err = tx.ExecContext(t.Context(), `
 		INSERT INTO reviews (job_id, agent, output, closed, verdict_bool, structured_output)
 		SELECT id, 'test', '', 0, CASE WHEN id <= ? THEN 0 ELSE 1 END,
-			'{"summary":"Review complete","findings":[]}'
-		FROM review_jobs WHERE repo_id = ?`, failed, repoID)
+			CASE WHEN id <= ? THEN ? ELSE ? END
+		FROM review_jobs WHERE repo_id = ?`, failed, failed,
+		string(testutil.ReviewFixtureJSON("[P2] Fix the unsafe query.")),
+		string(testutil.ReviewFixtureJSON("No issues found.")), repoID)
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 }
@@ -45,7 +48,10 @@ func BenchmarkAgentHookOpenFailedReviews(b *testing.B) {
 			for b.Loop() {
 				jobs, ok := source.ListOpenFailedReviewJobs(b.Context(), repo.RootPath, "main")
 				require.True(b, ok)
-				require.NotEmpty(b, jobs)
+				require.Len(b, jobs, 20)
+				for _, job := range jobs {
+					require.Equal(b, new("F"), job.Verdict)
+				}
 			}
 		})
 	}
