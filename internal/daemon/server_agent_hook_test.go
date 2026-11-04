@@ -255,3 +255,36 @@ func TestAgentHookEventAcceptsLargeToolResponse(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, got.Code, got.Body.String())
 }
+
+func TestAgentHookOpenFailedReviewBehindPassingHistory(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	head := repo.CommitFiles(map[string]string{
+		"main.go":       "package main\n",
+		".roborev.toml": "review_guidelines = \"Flag unsafe queries.\"\n",
+	}, "initial")
+	storedRepo, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	seedAgentHookReviewHistory(t, db, storedRepo.ID, head, 1, 10001)
+
+	jobs, ok := (daemonAgentHookSource{db: db}).ListOpenFailedReviewJobs(t.Context(), repo.Path(), "main")
+	require.True(t, ok)
+	assert := assert.New(t)
+	if assert.Len(jobs, 1) {
+		assert.Equal(int64(1), jobs[0].ID)
+		assert.Equal(new("F"), jobs[0].Verdict)
+	}
+
+	body, err := json.Marshal(agenthook.Request{
+		Event:     agenthook.Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: "Stop"},
+		Threshold: 100, FailedReviewThreshold: 1, Instruction: "Resolve failed reviews.",
+	})
+	require.NoError(t, err)
+	got := serveHuma(t, server, http.MethodPost, "/api/agent-hook/event", body)
+	require.Equal(t, http.StatusOK, got.Code, got.Body.String())
+	var response agenthook.Response
+	require.NoError(t, json.Unmarshal(got.Body.Bytes(), &response))
+	assert.Equal(1, response.FailedReviewCount)
+	assert.Equal("failed_reviews", response.TriggeredBy)
+}

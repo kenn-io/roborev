@@ -1941,6 +1941,7 @@ type listJobsOptions struct {
 	branchEmpty        bool
 	branchIncludeEmpty bool
 	closed             *bool
+	openFailedReviews  bool
 	jobType            string
 	excludeJobType     string
 	analysisType       string
@@ -2008,6 +2009,11 @@ func WithBranchOrEmpty(branch string) ListJobsOption {
 // WithClosed filters jobs by closed state (true/false).
 func WithClosed(closed bool) ListJobsOption {
 	return func(o *listJobsOptions) { o.closed = &closed }
+}
+
+// WithOpenFailedReviews selects jobs with an open review and a stored failed verdict.
+func WithOpenFailedReviews() ListJobsOption {
+	return func(o *listJobsOptions) { o.openFailedReviews = true }
 }
 
 // WithoutPrompt selects an empty string in place of the prompt column for
@@ -2121,6 +2127,11 @@ func findingCountsDiffContentExpr(includeFindings bool) string {
 func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (string, []any) {
 	var args []any
 	var conditions []string
+	if o.openFailedReviews {
+		conditions = append(conditions, `j.id IN (
+			SELECT job_id FROM reviews INDEXED BY idx_reviews_open_failed
+			WHERE closed = 0 AND verdict_bool = 0)`)
+	}
 
 	if statusFilter != "" {
 		conditions = append(conditions, "j.status = ?")
@@ -2267,6 +2278,12 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 // listJobsQuery builds the ListJobs query. It returns the query, its
 // arguments, and how many sort key columns follow the job columns.
 func listJobsQuery(statusFilter, repoFilter string, limit, offset int, options listJobsOptions) (string, []any, int, error) {
+	jobsTable := "review_jobs j"
+	if options.openFailedReviews {
+		// Without statistics, SQLite otherwise scans the repo's job index.
+		// NOT INDEXED keeps rowid lookups driven by the failed-review IN list.
+		jobsTable += " NOT INDEXED"
+	}
 	// Metadata-only listings skip the prompt column for terminal jobs; the
 	// scan still binds the same positional field, it just never touches the
 	// large TEXT payload. Queued/running rows keep their prompt: the active

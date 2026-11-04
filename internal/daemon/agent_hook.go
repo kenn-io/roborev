@@ -81,19 +81,20 @@ func resolveTrackedRepo(
 	return resolved, nil
 }
 
-func (s daemonAgentHookSource) ListOpenReviewJobs(
+func (s daemonAgentHookSource) ListOpenFailedReviewJobs(
 	_ context.Context, repoRoot, branch string,
 ) ([]storage.ReviewJob, bool) {
 	opts := []storage.ListJobsOption{
 		storage.WithoutPrompt(),
 		storage.WithClosed(false),
+		storage.WithOpenFailedReviews(),
 		storage.WithExcludePanelRole(storage.PanelRoleMember),
 	}
 	if branch != "" {
 		opts = append(opts, storage.WithBranchOrEmpty(branch))
 	}
 	jobs, err := s.db.ListJobs(
-		string(storage.JobStatusDone), repoRoot, 10000, 0, opts...,
+		string(storage.JobStatusDone), repoRoot, 0, 0, opts...,
 	)
 	if err != nil {
 		// The agent-hook contract reports this as ok=false and every
