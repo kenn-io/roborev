@@ -550,18 +550,21 @@ func TestWithBranchOrEmpty(t *testing.T) {
 	repo, err := db.GetOrCreateRepo("/tmp/repo-branch-empty")
 	require.NoError(t, err, "GetOrCreateRepo failed: %v")
 
-	for i, br := range []string{"main", "feature", "", "(none)"} {
+	for i, br := range []string{"main", "feature", "", "(none)", "NULL"} {
 		sha := fmt.Sprintf("sha-be-%d", i)
 		commit, err := db.GetOrCreateCommit(repo.ID, sha, "Author", "Subject", time.Now())
 		require.NoError(t, err, "GetOrCreateCommit failed: %v")
 
 		storedBranch := br
-		if br == "(none)" {
+		if br == "(none)" || br == "NULL" {
 			storedBranch = ""
 		}
 		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: sha, Branch: storedBranch, Agent: "codex"})
 		require.NoError(t, err, "EnqueueJob failed: %v")
 
+		if br == "" {
+			setJobBranch(t, db, job.ID, "")
+		}
 		if br == "(none)" {
 			updated, err := db.UpdateJobBranch(job.ID, br)
 			require.NoError(t, err)
@@ -583,18 +586,18 @@ func TestWithBranchOrEmpty(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0, WithBranchOrEmpty("main"))
 		require.NoError(t, err, "ListJobs failed: %v")
 
-		require.Len(t, jobs, 2)
-		assert.ElementsMatch(t, []string{"main", ""}, []string{jobs[0].Branch, jobs[1].Branch})
+		require.Len(t, jobs, 3)
+		assert.ElementsMatch(t, []string{"main", "", ""}, []string{jobs[0].Branch, jobs[1].Branch, jobs[2].Branch})
 	})
 
 	t.Run("WithEmptyBranch returns only branchless jobs", func(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0, WithEmptyBranch())
 		require.NoError(t, err)
-		require.Len(t, jobs, 2)
-		assert.ElementsMatch(t, []string{"", "(none)"}, []string{jobs[0].Branch, jobs[1].Branch})
+		require.Len(t, jobs, 3)
+		assert.ElementsMatch(t, []string{"", "(none)", ""}, []string{jobs[0].Branch, jobs[1].Branch, jobs[2].Branch})
 		stats, err := db.CountJobStats("", "", WithEmptyBranch())
 		require.NoError(t, err)
-		assert.Equal(t, 2, stats.Done)
+		assert.Equal(t, 3, stats.Done)
 		branches, err := db.ListBranchesWithCounts(nil)
 		require.NoError(t, err)
 		counts := make(map[string]int)
@@ -740,6 +743,31 @@ func TestListReposWithReviewCountsByBranch(t *testing.T) {
 
 		assert.Len(t, repos, 2)
 	})
+}
+
+func TestListReposWithReviewCountsPlaceholderBranch(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	assert := assert.New(t)
+
+	repo := createRepo(t, db, t.TempDir())
+	commit := createCommit(t, db, repo.ID, "abc123")
+	job := enqueueJob(t, db, repo.ID, commit.ID, "abc123")
+	updated, err := db.UpdateJobBranch(job.ID, "(none)")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), updated)
+
+	branches, err := db.ListBranchesWithCounts([]string{repo.RootPath})
+	require.NoError(t, err)
+	require.Equal(t, []BranchWithCount{{Name: "(none)", Count: 1}}, branches.Branches)
+
+	repos, total, err := db.ListReposWithReviewCounts(WithRepoBranch("(none)"))
+	require.NoError(t, err)
+	require.Len(t, repos, 1)
+	assert.Equal(repo.RootPath, repos[0].RootPath)
+	assert.Equal(branches.Branches[0].Count, repos[0].Count)
+	assert.Equal(1, total)
 }
 
 func TestListBranchesWithCounts(t *testing.T) {

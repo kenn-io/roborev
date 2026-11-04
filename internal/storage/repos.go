@@ -227,14 +227,14 @@ func (db *DB) ListReposWithReviewCounts(opts ...ListReposOption) ([]RepoWithCoun
 	}
 
 	if o.branch != "" {
-		branchFilter := o.branch
 		if o.branch == "(none)" {
-			branchFilter = ""
+			conditions = append(conditions, emptyBranchCondition("rj.branch"))
+		} else {
+			conditions = append(
+				conditions, "COALESCE(rj.branch, '') = ?",
+			)
+			args = append(args, o.branch)
 		}
-		conditions = append(
-			conditions, "COALESCE(rj.branch, '') = ?",
-		)
-		args = append(args, branchFilter)
 	}
 
 	if len(conditions) > 0 {
