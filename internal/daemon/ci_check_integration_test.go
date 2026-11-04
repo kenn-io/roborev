@@ -72,6 +72,9 @@ func TestCICheckProviderSocketSandboxIntegration(t *testing.T) {
 	sha := repo.HeadSHA()
 	command := filepath.Join(t.TempDir(), "codex")
 	require.NoError(t, os.WriteFile(command, []byte("\x7fELFnative fixture"), 0o700))
+	hostTmp := filepath.Join(t.TempDir(), "daemon-temporary-directory-with-a-long-configured-path")
+	require.NoError(t, os.Mkdir(hostTmp, 0o700))
+	t.Setenv("TMPDIR", hostTmp)
 	wp := &WorkerPool{}
 	run, err := wp.prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}, command, nil, io.Discard)
 	require.NoError(t, err)
