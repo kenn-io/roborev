@@ -48,17 +48,15 @@ func TestCICheckPreparation(t *testing.T) {
 	var log bytes.Buffer
 	run, err := wp.prepareCICheck(t.Context(), job, command, []string{"CHECKER_GIT_TOKEN=synthetic"}, &log)
 	require.NoError(t, err)
+	defer run.cleanup()
 	var tmp string
 	for _, entry := range run.Job.Env {
 		if value, ok := strings.CutPrefix(entry, "TMPDIR="); ok {
 			tmp = value
 		}
 	}
-	t.Cleanup(func() {
-		run.cleanup()
-		assert.NoDirExists(t, filepath.Dir(tmp))
-	})
 	require.NotEmpty(t, tmp)
+	t.Cleanup(func() { assert.NoDirExists(t, filepath.Dir(tmp)) })
 	require.NoError(t, os.WriteFile(filepath.Join(tmp, "temporary"), []byte("scratch"), 0o600))
 	contents, err := os.ReadFile(filepath.Join(run.Job.WorkDir, "tmp", "temporary"))
 	require.NoError(t, err)
