@@ -983,6 +983,8 @@ func TestOpenBackfillsVerdictBoolForExport(t *testing.T) {
 	require.NoError(t, completeReviewFixture(db, job.ID, "codex", "prompt", "No issues found."))
 	_, err = db.ExecContext(t.Context(), `UPDATE reviews SET verdict_bool = NULL WHERE job_id = ?`, job.ID)
 	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), `DELETE FROM sync_state WHERE key = 'historical_reviews_migrated'`)
+	require.NoError(t, err)
 	require.NoError(t, db.Close())
 
 	reopened, err := Open(dbPath)

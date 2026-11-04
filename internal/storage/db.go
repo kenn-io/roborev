@@ -283,10 +283,18 @@ func Open(dbPath string) (*DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("initialize database ID: %w", err)
 	}
-	log.Printf("Database migration: converting historical reviews")
-	if err := wrapped.migrateLegacyReviews(); err != nil {
+	const stateKey = "historical_reviews_migrated"
+	done, err := wrapped.GetSyncState(stateKey)
+	if err != nil {
 		db.Close()
-		return nil, fmt.Errorf("migrate legacy reviews: %w", err)
+		return nil, fmt.Errorf("read historical review migration state: %w", err)
+	}
+	if done != "done" {
+		log.Printf("Database migration: converting historical reviews")
+		if err := wrapped.migrateLegacyReviews(); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("migrate legacy reviews: %w", err)
+		}
 	}
 
 	log.Printf("Database migration: preserving job IDs")
@@ -300,16 +308,22 @@ func Open(dbPath string) (*DB, error) {
 		return nil, fmt.Errorf("preserve repository IDs: %w", err)
 	}
 
-	log.Printf("Database migration: restoring archived reviews")
-	if err := wrapped.restoreLegacyReviews(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("restore legacy reviews: %w", err)
-	}
+	if done != "done" {
+		log.Printf("Database migration: restoring archived reviews")
+		if err := wrapped.restoreLegacyReviews(); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("restore legacy reviews: %w", err)
+		}
 
-	log.Printf("Database migration: backfilling review verdicts")
-	if _, err := wrapped.BackfillVerdictBool(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("backfill JSON verdicts: %w", err)
+		log.Printf("Database migration: backfilling review verdicts")
+		if _, err := wrapped.BackfillVerdictBool(); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("backfill JSON verdicts: %w", err)
+		}
+		if err := wrapped.SetSyncState(stateKey, "done"); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("record historical review migration completion: %w", err)
+		}
 	}
 
 	return wrapped, nil
