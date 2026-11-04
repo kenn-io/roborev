@@ -640,7 +640,7 @@ jobs:
         if: needs.go-changes.outputs.changed == 'true'
         uses: $/.github/actions/go-cache-save
 
-      - uses: astral-sh/setup-uv@v10.3.2
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           version: '0.13.6'
           enable-cache: true
