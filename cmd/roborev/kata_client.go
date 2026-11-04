@@ -217,7 +217,7 @@ func (c *daemonKataClient) Binding(ctx context.Context) (kata.Binding, error) {
 		return kata.Binding{}, fmt.Errorf("%w: %s", kata.ErrProjectNotFound, status.Message)
 	}
 	if status.State != string(kata.StateReady) {
-		return kata.Binding{}, fmt.Errorf("resolve the Kata workspace binding through the daemon: %s (%s)", status.Message, status.State)
+		return kata.Binding{}, fmt.Errorf("could not look up the Kata project: %s", status.Message)
 	}
 	b.Project = deref(status.Project)
 	if b.Project == "" {

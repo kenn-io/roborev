@@ -241,6 +241,29 @@ func TestKataClientCommittedBindingUsesRegisteredAliasThroughDaemon(t *testing.T
 	}, paths, "committed aliases resolve canonically; explicit names remain exact")
 }
 
+func TestKataClientBindingErrorOmitsInternalStatusState(t *testing.T) {
+	repo := testutil.NewTestRepo(t)
+	repo.WriteFile(".kata.toml", "version = 1\n[project]\nname = \"reviews\"\n")
+	repo.RunGit("remote", "add", "origin", "https://code.example/Team/Review-Repo.git")
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(generated.KataStatusResponse{
+			Enabled: true,
+			State:   "unreachable",
+			Message: "The configured Kata server could not be reached.",
+		})
+	}))
+	t.Cleanup(ts.Close)
+	ep, err := daemon.ParseEndpoint(ts.URL)
+	require.NoError(t, err)
+	client := &daemonKataClient{api: ep.APIClient(0), workdir: repo.Root}
+
+	_, err = client.Binding(t.Context())
+	require.EqualError(t, err, "could not look up the Kata project: The configured Kata server could not be reached.")
+	assert.NotContains(t, err.Error(), "(unreachable)")
+}
+
 func TestKataClientProbesOnFirstUse(t *testing.T) {
 	fake := katafake.New(t)
 	var probes atomic.Int32
