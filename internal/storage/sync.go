@@ -23,6 +23,7 @@ const (
 	SyncStateLastResponseID                 = "last_response_id"   // inserted_at/id cursor of last synced response
 	SyncStateSyncTargetID                   = "sync_target_id"     // Database ID of last synced Postgres
 	SyncStateDatabaseID                     = "database_id"        // Stable identity of this local SQLite database
+	SyncStateHistoricalReviewsMigrated      = "historical_reviews_migrated"
 	SyncStateSetupFinished                  = "telemetry.setup_finished"
 )
 
