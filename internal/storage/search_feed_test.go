@@ -11,6 +11,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestListSearchDocumentsSeeksPastCursor(t *testing.T) {
+	t.Parallel()
+	// A fresh database has no ANALYZE statistics to guide join ordering.
+	db := openTestDB(t)
+	defer db.Close()
+
+	plan := queryPlan(t, db, listSearchDocumentsQuery, 25, 50)
+	assert.Contains(t, plan, "SEARCH rv USING INTEGER PRIMARY KEY (rowid>?)")
+	assert.NotContains(t, plan, "TEMP B-TREE FOR ORDER BY")
+}
+
 type searchFeedFixture struct {
 	jobType      string
 	status       JobStatus
