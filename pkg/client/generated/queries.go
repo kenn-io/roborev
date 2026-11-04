@@ -36,7 +36,7 @@ type GetCostQuery struct {
 	// Branch Filter by branch name
 	Branch *string `json:"branch,omitempty"`
 
-	// BranchEmpty Only jobs with empty/unset branch
+	// BranchEmpty Only jobs with empty/unset branch or the "(none)" placeholder stored when no branch was found
 	BranchEmpty *GetCostQueryBranchEmpty `json:"branch_empty,omitempty"`
 
 	// Since Time window (e.g. 7d); default all-time
@@ -187,7 +187,7 @@ type ListJobsQuery struct {
 	// Branch Filter by branch name
 	Branch *string `json:"branch,omitempty"`
 
-	// BranchEmpty Only jobs with empty or unset branch
+	// BranchEmpty Only jobs with empty/unset branch or the "(none)" placeholder stored when no branch was found
 	BranchEmpty *ListJobsQueryBranchEmpty `json:"branch_empty,omitempty"`
 
 	// BranchIncludeEmpty Include jobs with no branch when filtering by branch

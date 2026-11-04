@@ -13,7 +13,7 @@ export type GetCostParams = {
    */
   branch?: string;
   /**
-   * Only jobs with empty/unset branch
+   * Only jobs with empty/unset branch or the "(none)" placeholder stored when no branch was found
    */
   branch_empty?: GetCostBranchEmpty;
   /**

@@ -109,36 +109,6 @@ func TestBackfillBranchValue(t *testing.T) {
 	})
 }
 
-// TestBranchMatchesFilterDetachedGroupsUnderNone pins filter identity: jobs
-// rendered with the detached placeholder still match the (none) branch
-// filter, agreeing with the branch picker's counts (#499 follow-up).
-func TestBranchMatchesFilterDetachedGroupsUnderNone(t *testing.T) {
-	t.Parallel()
-	repo := testutil.InitTestRepo(t)
-	repo.CommitFile("a.txt", "one", "first")
-	repo.CheckoutDetached()
-	sha := repo.CommitFile("a.txt", "two", "second, on detached HEAD")
-
-	commitID := int64(9)
-	m := newModel(localhostEndpoint, withExternalIODisabled())
-	m.activeBranchFilter = branchNone
-
-	detached := storage.ReviewJob{
-		ID:       9,
-		JobType:  storage.JobTypeReview,
-		GitRef:   sha,
-		RepoPath: repo.Path(),
-		CommitID: &commitID,
-	}
-	assert.True(t, m.branchMatchesFilter(detached), "empty-branch detached job should match (none)")
-
-	// A backfilled branchNone sentinel also groups under (none).
-	detached.Branch = branchNone
-	m2 := newModel(localhostEndpoint, withExternalIODisabled())
-	m2.activeBranchFilter = branchNone
-	assert.True(t, m2.branchMatchesFilter(detached), "backfilled branchNone job should match (none)")
-}
-
 // TestGetBranchForJobReachableFromBranch ensures the existing git name-rev
 // fallback still wins over the new placeholder when the commit is in fact
 // reachable from a local branch.

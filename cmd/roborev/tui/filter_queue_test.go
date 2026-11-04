@@ -149,6 +149,29 @@ func TestTUIMultiPathFilterStatusCounts(t *testing.T) {
 	assert.Contains(t, output, "Open: 2")
 }
 
+func TestTUIQueueHasMoreScrollHint(t *testing.T) {
+	t.Parallel()
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.height = 20
+	m.daemonVersion = "test"
+	m.jobs = []storage.ReviewJob{{ID: 1, Status: storage.JobStatusDone}}
+	m.hasMore = true
+	output := m.renderQueueView()
+	assert.Contains(t, output, "scroll down to load more")
+}
+
+func TestTUIBranchFilterNoneIgnoresBranchNameCache(t *testing.T) {
+	t.Parallel()
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.jobs = []storage.ReviewJob{{ID: 1}, {ID: 2, Branch: branchNone}, {ID: 3, Branch: "main"}}
+	m.branchNames[1] = "main"
+	m.activeBranchFilter = branchNone
+	assert.Equal(t, m.jobs[:2], m.getVisibleJobs())
+	// Named branch filters use the cache, in contrast to (none).
+	m.activeBranchFilter = "main"
+	assert.Equal(t, []storage.ReviewJob{m.jobs[0], m.jobs[2]}, m.getVisibleJobs())
+}
+
 func TestTUIBranchFilterApplied(t *testing.T) {
 	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())

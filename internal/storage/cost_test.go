@@ -83,6 +83,15 @@ func TestGetCostAggregate(t *testing.T) {
 	assert.InDelta(0.25, empty.TotalUSD, 0.0001)
 	assert.True(empty.Complete)
 
+	// The backfill sentinel belongs to the same empty-branch cost scope.
+	mkJob("sha-none", "(none)", JobStatusDone, `{"cost_usd":0.50,"has_cost":true}`)
+	empty, err = db.GetCostAggregate(CostOptions{RepoPaths: []string{repo.RootPath}, BranchEmpty: true})
+	require.NoError(t, err)
+	assert.Equal(2, empty.JobsTotal)
+	assert.Equal(2, empty.JobsWithCost)
+	assert.InDelta(0.75, empty.TotalUSD, 0.0001)
+	assert.True(empty.Complete)
+
 	// Empty scope: no eligible jobs.
 	none, err := db.GetCostAggregate(CostOptions{RepoPaths: []string{"/tmp/does-not-exist"}})
 	require.NoError(t, err)

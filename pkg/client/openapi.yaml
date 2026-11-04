@@ -5291,12 +5291,12 @@ paths:
           schema:
             description: Filter by branch name
             type: string
-        - description: Only jobs with empty/unset branch
+        - description: Only jobs with empty/unset branch or the "(none)" placeholder stored when no branch was found
           explode: false
           in: query
           name: branch_empty
           schema:
-            description: Only jobs with empty/unset branch
+            description: Only jobs with empty/unset branch or the "(none)" placeholder stored when no branch was found
             enum:
               - "true"
               - "false"
@@ -6036,12 +6036,12 @@ paths:
           schema:
             description: Filter by branch name
             type: string
-        - description: Only jobs with empty or unset branch
+        - description: Only jobs with empty/unset branch or the "(none)" placeholder stored when no branch was found
           explode: false
           in: query
           name: branch_empty
           schema:
-            description: Only jobs with empty or unset branch
+            description: Only jobs with empty/unset branch or the "(none)" placeholder stored when no branch was found
             enum:
               - "true"
               - "false"

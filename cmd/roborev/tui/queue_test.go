@@ -1298,25 +1298,6 @@ func TestTUIPaginationAllowedForMultiRepoFilter(t *testing.T) {
 	assert.NotNil(t, cmd)
 }
 
-func TestTUIPaginationBlockedForNoneBranchFilter(t *testing.T) {
-	t.Parallel()
-	m := newModel(localhostEndpoint, withExternalIODisabled())
-	m.currentView = viewQueue
-	m.loadingJobs = false
-	m.hasMore = true
-	m.loadingMore = false
-	m.activeBranchFilter = branchNone
-
-	m.jobs = []storage.ReviewJob{makeJob(1)}
-	m.selectedIdx = 0
-	m.selectedJobID = 1
-
-	m2, cmd := pressKey(m, 'j')
-
-	assert.False(t, m2.loadingMore)
-	assert.Nil(t, cmd)
-}
-
 func TestTUIPageDownBlockedWhileLoadingJobs(t *testing.T) {
 	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
