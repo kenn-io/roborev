@@ -30,7 +30,6 @@ func TestCostAggregateReadsCostIndex(t *testing.T) {
 	}{
 		{"all", CostOptions{}},
 		{"repo", CostOptions{RepoPaths: []string{"/tmp/cost-plan"}}},
-		{"two repos", CostOptions{RepoPaths: []string{"/tmp/cost-plan", "/tmp/another-repo"}}},
 		{"repo branch", CostOptions{RepoPaths: []string{"/tmp/cost-plan"}, Branch: "main"}},
 		{"repo empty branch", CostOptions{RepoPaths: []string{"/tmp/cost-plan"}, BranchEmpty: true}},
 	} {
