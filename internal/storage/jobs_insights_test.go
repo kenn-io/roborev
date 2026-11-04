@@ -25,6 +25,7 @@ func TestListJobsFailedReviewsSince(t *testing.T) {
 		panelRole     string
 		branch        string
 		finished      string
+		missingFinish bool
 		repoID        int64
 		want          bool
 	}{
@@ -44,6 +45,7 @@ func TestListJobsFailedReviewsSince(t *testing.T) {
 		{name: "errored", jobType: JobTypeReview, errorText: "synthetic error"},
 		{name: "null verdict", jobType: JobTypeReview},
 		{name: "passing", jobType: JobTypeReview, verdict: 1},
+		{name: "missing finish time", jobType: JobTypeReview, missingFinish: true},
 		{name: "panel member", jobType: JobTypeReview, panelRole: PanelRoleMember},
 		{name: "other branch", jobType: JobTypeReview, branch: "feature"},
 		{name: "other repo", jobType: JobTypeReview, repoID: other.ID},
@@ -67,10 +69,14 @@ func TestListJobsFailedReviewsSince(t *testing.T) {
 			if tc.verdict == nil && tc.name != "null verdict" {
 				tc.verdict = 0
 			}
+			var finished any = tc.finished
+			if tc.missingFinish {
+				finished = nil
+			}
 			_, err := db.ExecContext(t.Context(), `INSERT INTO review_jobs
 				(id, repo_id, commit_id, git_ref, branch, agent, status, job_type, error, panel_role, finished_at, enqueued_at)
 				VALUES (?, ?, ?, ?, ?, 'test', 'done', ?, ?, ?, ?, ?)`,
-				i+1, tc.repoID, tc.commitID, tc.ref, tc.branch, tc.jobType, tc.errorText, tc.panelRole, tc.finished,
+				i+1, tc.repoID, tc.commitID, tc.ref, tc.branch, tc.jobType, tc.errorText, tc.panelRole, finished,
 				since.Add(time.Duration(i)*time.Second).Format(time.RFC3339Nano))
 			require.NoError(t, err)
 			_, err = db.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, output, verdict_bool)
@@ -86,8 +92,9 @@ func TestListJobsFailedReviewsSince(t *testing.T) {
 	require.NoError(t, err)
 	var oldIDs []int64
 	for _, job := range all {
+		// Compare with the old predicate except for the excluded missing finish time.
 		if (job.IsReviewJob() || job.IsSynthesisJob()) && !job.IsGoalReviewJob() &&
-			(job.FinishedAt == nil || !job.FinishedAt.Before(since)) && job.Verdict != nil && *job.Verdict == "F" {
+			job.FinishedAt != nil && !job.FinishedAt.Before(since) && job.Verdict != nil && *job.Verdict == "F" {
 			oldIDs = append(oldIDs, job.ID)
 		}
 	}
