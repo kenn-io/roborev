@@ -560,10 +560,9 @@ func findDaemonForStart(ctx context.Context) (*daemon.RuntimeInfo, error) {
 	return info, err
 }
 
-// daemonStartupContenderExists reports whether a competing daemon is still
-// starting. Pre-v0.57 daemons do not use the database owner lock, so also
-// honor a live legacy runtime record from the data directory root. The legacy
-// endpoint is never probed here; it only identifies the recorded process.
+// daemonStartupContenderExists reports whether a competing daemon holds a
+// startup lock. Legacy daemons cannot publish current readiness, so their
+// runtime records must not prolong the wait after a replacement exits.
 func daemonStartupContenderExists() (bool, error) {
 	// Logging starts before database setup, so check it first. Probing the
 	// database lock while another daemon owns the log lock could temporarily
@@ -572,24 +571,7 @@ func daemonStartupContenderExists() (bool, error) {
 	if err != nil || owned {
 		return owned, err
 	}
-	owned, err = daemonDatabaseOwnerExists(storage.DefaultDBPath())
-	if err != nil || owned {
-		return owned, err
-	}
-	runtimes, err := listAllRuntimes()
-	if err != nil {
-		return false, err
-	}
-	dataDir := filepath.Clean(config.DataDir())
-	for _, info := range runtimes {
-		if info == nil || info.SourcePath == "" || filepath.Clean(filepath.Dir(info.SourcePath)) != dataDir {
-			continue
-		}
-		if !info.Stale() {
-			return true, nil
-		}
-	}
-	return false, nil
+	return daemonDatabaseOwnerExists(storage.DefaultDBPath())
 }
 
 func openDetachedDaemonLogs() (*os.File, *os.File, func(), error) {
