@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	neturl "net/url"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -13,6 +14,7 @@ import (
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/version"
+	daemonclient "go.kenn.io/roborev/pkg/client/generated"
 )
 
 func TestListJobsParamsRepeatedRepo(t *testing.T) {
@@ -78,6 +80,47 @@ func TestFetchJobsMultiRepoUsesRepeatedRepoAndPaginates(t *testing.T) {
 	)
 	assert.NotEqual("0", jobsQuery.Get("limit"),
 		"multi-repo paginates instead of loading every job")
+}
+
+func TestListJobsParamsEmptyBranch(t *testing.T) {
+	t.Parallel()
+	query := listJobsQuery(neturl.Values{"branch_empty": {"true"}})
+	require.NotNil(t, query.BranchEmpty)
+	assert.Equal(t, daemonclient.ListJobsQueryBranchEmptyTrue, *query.BranchEmpty)
+}
+
+func TestFetchJobsNoneBranchFilterPaginates(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	var queries []neturl.Values
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/jobs" {
+			queries = append(queries, r.URL.Query())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"jobs": []any{}, "has_more": true})
+	}))
+	defer ts.Close()
+	m := newModel(testEndpointFromURL(ts.URL), withExternalIODisabled())
+	m.activeBranchFilter = branchNone
+	m.hideClosed = true
+	m.heightDetected = true
+	_, ok := fetchJobsMessage(t, m).(jobsMsg)
+	require.True(t, ok)
+	m.jobs = []storage.ReviewJob{{ID: 1}}
+	more, ok := m.fetchMoreJobs()().(jobsMsg)
+	require.True(t, ok)
+	assert.True(more.append)
+	require.Len(t, queries, 2)
+	assert.Equal("1", queries[1].Get("offset"))
+	assert.Equal(strconv.Itoa(m.queueVisibleRows()+queuePrefetchBuffer), queries[0].Get("limit"))
+	for _, query := range queries {
+		assert.Equal("true", query.Get("branch_empty"))
+		assert.Equal("false", query.Get("closed"))
+		assert.NotContains(query, "branch")
+		assert.NotEmpty(query.Get("limit"))
+		assert.NotEqual("0", query.Get("limit"))
+	}
 }
 
 // Queue/task/panel listings never render completed jobs' prompts, so every

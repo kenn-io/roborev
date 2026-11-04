@@ -97,7 +97,7 @@ func costAggregate(q querier, opts CostOptions) (CostAggregate, error) {
 		conditions = append(conditions, "r.root_path IN ("+strings.Join(placeholders, ",")+")")
 	}
 	if opts.BranchEmpty {
-		conditions = append(conditions, "(j.branch = '' OR j.branch IS NULL)")
+		conditions = append(conditions, "(j.branch = '' OR j.branch IS NULL OR j.branch = '(none)')")
 	} else if opts.Branch != "" {
 		conditions = append(conditions, "j.branch = ?")
 		args = append(args, opts.Branch)

@@ -149,6 +149,34 @@ func TestTUIMultiPathFilterStatusCounts(t *testing.T) {
 	assert.Contains(t, output, "Open: 2")
 }
 
+func TestTUINoneBranchFilterStatusCounts(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.height = 20
+	m.daemonVersion = "test"
+	m.activeBranchFilter = branchNone
+	m.jobs = []storage.ReviewJob{{ID: 1, Branch: branchNone, Status: storage.JobStatusDone}}
+	m.jobStats = storage.JobStats{Done: 3, Closed: 1, Open: 2}
+	m.hasMore = true
+	output := m.renderQueueView()
+	assert.Contains(output, "Completed: 3")
+	assert.Contains(output, "Closed: 1")
+	assert.Contains(output, "Open: 2")
+	assert.Contains(output, "scroll down to load more")
+}
+
+func TestTUIBranchFilterNoneUsesStoredBranch(t *testing.T) {
+	t.Parallel()
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.jobs = []storage.ReviewJob{{ID: 1}, {ID: 2, Branch: branchNone}, {ID: 3, Branch: "main"}}
+	m.branchNames[1] = "main"
+	m.activeBranchFilter = branchNone
+	assert.Equal(t, m.jobs[:2], m.getVisibleJobs())
+	m.activeBranchFilter = "main"
+	assert.Equal(t, []storage.ReviewJob{m.jobs[0], m.jobs[2]}, m.getVisibleJobs())
+}
+
 func TestTUIBranchFilterApplied(t *testing.T) {
 	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())

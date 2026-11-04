@@ -217,8 +217,7 @@ func (m model) queueVisibleRows() int {
 }
 
 func (m model) canPaginate() bool {
-	return m.hasMore && !m.loadingMore && !m.loadingJobs &&
-		m.activeBranchFilter != branchNone
+	return m.hasMore && !m.loadingMore && !m.loadingJobs
 }
 
 // visibleSelectedRowIndex returns the index of selectedJobID within the
@@ -516,36 +515,7 @@ func (m model) renderQueueView() string {
 	b.WriteString("\x1b[K\n") // Clear to end of line
 
 	if !compact {
-		// Status line - use server-side aggregate counts for paginated views
-		// (including multi-repo display names, scoped via an IN clause). Only
-		// the "(none)" branch sentinel still loads all jobs to count locally.
-		var done, closed, open int
-		if m.activeBranchFilter == branchNone {
-			// Client-side filtered views load all jobs, so count locally
-			for _, job := range m.jobs {
-				if len(m.activeRepoFilter) > 0 && !m.repoMatchesFilter(job.RepoPath) {
-					continue
-				}
-				if m.activeBranchFilter == branchNone && job.Branch != "" {
-					continue
-				}
-				if job.Status == storage.JobStatusDone {
-					done++
-					if job.Closed != nil {
-						if *job.Closed {
-							closed++
-						} else {
-							open++
-						}
-					}
-				}
-			}
-		} else {
-			done = m.jobStats.Done
-			closed = m.jobStats.Closed
-			open = m.jobStats.Open
-		}
-		b.WriteString(m.renderQueueStatusLine(done, closed, open))
+		b.WriteString(m.renderQueueStatusLine(m.jobStats.Done, m.jobStats.Closed, m.jobStats.Open))
 		b.WriteString("\x1b[K\n") // Clear status line
 
 		// Update notification on line 3 (above the table)
@@ -635,7 +605,7 @@ func (m model) renderQueueView() string {
 		if len(rows) > visibleRows || m.hasMore || m.loadingMore {
 			if m.loadingMore {
 				scrollInfo = fmt.Sprintf("[showing %d-%d of %d] Loading more...", start+1, end, len(rows))
-			} else if m.hasMore && m.activeBranchFilter != branchNone {
+			} else if m.hasMore {
 				scrollInfo = fmt.Sprintf("[showing %d-%d of %d+] scroll down to load more", start+1, end, len(rows))
 			} else if len(rows) > visibleRows {
 				scrollInfo = fmt.Sprintf("[showing %d-%d of %d]", start+1, end, len(rows))

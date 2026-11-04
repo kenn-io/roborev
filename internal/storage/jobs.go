@@ -1980,7 +1980,7 @@ func WithBranch(branch string) ListJobsOption {
 	return func(o *listJobsOptions) { o.branch = branch }
 }
 
-// WithEmptyBranch filters jobs whose branch is empty or unset.
+// WithEmptyBranch filters jobs whose branch is empty, unset, or the "(none)" backfill sentinel.
 func WithEmptyBranch() ListJobsOption {
 	return func(o *listJobsOptions) { o.branchEmpty = true }
 }
@@ -2170,7 +2170,7 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 		args = append(args, analysisFile)
 	}
 	if o.branchEmpty {
-		conditions = append(conditions, "(j.branch = '' OR j.branch IS NULL)")
+		conditions = append(conditions, "(j.branch = '' OR j.branch IS NULL OR j.branch = '(none)')")
 	} else if o.branch != "" {
 		if o.branchIncludeEmpty {
 			conditions = append(conditions, "(j.branch = ? OR j.branch = '' OR j.branch IS NULL)")

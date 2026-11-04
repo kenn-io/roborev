@@ -1298,7 +1298,7 @@ func TestTUIPaginationAllowedForMultiRepoFilter(t *testing.T) {
 	assert.NotNil(t, cmd)
 }
 
-func TestTUIPaginationBlockedForNoneBranchFilter(t *testing.T) {
+func TestTUIPaginationAllowedForNoneBranchFilter(t *testing.T) {
 	t.Parallel()
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
@@ -1313,8 +1313,8 @@ func TestTUIPaginationBlockedForNoneBranchFilter(t *testing.T) {
 
 	m2, cmd := pressKey(m, 'j')
 
-	assert.False(t, m2.loadingMore)
-	assert.Nil(t, cmd)
+	assert.True(t, m2.loadingMore)
+	assert.NotNil(t, cmd)
 }
 
 func TestTUIPageDownBlockedWhileLoadingJobs(t *testing.T) {

@@ -526,7 +526,7 @@ func (m model) queueNavDown() (model, tea.Cmd) {
 	} else if m.canPaginate() {
 		m.loadingMore = true
 		return m, m.fetchMoreJobs()
-	} else if !m.hasMore || m.activeBranchFilter == branchNone {
+	} else if !m.hasMore {
 		m.setFlash("No older review", 2*time.Second, viewQueue)
 	}
 	return m, nil

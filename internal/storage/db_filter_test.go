@@ -550,13 +550,23 @@ func TestWithBranchOrEmpty(t *testing.T) {
 	repo, err := db.GetOrCreateRepo("/tmp/repo-branch-empty")
 	require.NoError(t, err, "GetOrCreateRepo failed: %v")
 
-	for i, br := range []string{"main", "feature", ""} {
+	for i, br := range []string{"main", "feature", "", "(none)"} {
 		sha := fmt.Sprintf("sha-be-%d", i)
 		commit, err := db.GetOrCreateCommit(repo.ID, sha, "Author", "Subject", time.Now())
 		require.NoError(t, err, "GetOrCreateCommit failed: %v")
 
-		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: sha, Branch: br, Agent: "codex"})
+		storedBranch := br
+		if br == "(none)" {
+			storedBranch = ""
+		}
+		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: sha, Branch: storedBranch, Agent: "codex"})
 		require.NoError(t, err, "EnqueueJob failed: %v")
+
+		if br == "(none)" {
+			updated, err := db.UpdateJobBranch(job.ID, br)
+			require.NoError(t, err)
+			require.Equal(t, int64(1), updated)
+		}
 
 		db.ClaimJob("w")
 		completeReviewFixture(db, job.ID, "codex", "", fmt.Sprintf("output %d", i))
@@ -579,8 +589,18 @@ func TestWithBranchOrEmpty(t *testing.T) {
 	t.Run("WithEmptyBranch returns only branchless jobs", func(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0, WithEmptyBranch())
 		require.NoError(t, err)
-		require.Len(t, jobs, 1)
-		assert.Empty(t, jobs[0].Branch)
+		require.Len(t, jobs, 2)
+		assert.ElementsMatch(t, []string{"", "(none)"}, []string{jobs[0].Branch, jobs[1].Branch})
+		stats, err := db.CountJobStats("", "", WithEmptyBranch())
+		require.NoError(t, err)
+		assert.Equal(t, 2, stats.Done)
+		branches, err := db.ListBranchesWithCounts(nil)
+		require.NoError(t, err)
+		counts := make(map[string]int)
+		for _, branch := range branches.Branches {
+			counts[branch.Name] = branch.Count
+		}
+		assert.Equal(t, len(jobs), counts["(none)"])
 	})
 }
 
