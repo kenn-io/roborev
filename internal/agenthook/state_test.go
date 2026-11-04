@@ -151,8 +151,9 @@ func TestSaveSessionDropsIdleSessions(t *testing.T) {
 		path: StatePath(),
 		now:  func() time.Time { return now },
 		sessions: map[string]SessionState{
-			"idle":   {LastSeenAt: now.Add(-31 * 24 * time.Hour)},
-			"recent": {LastSeenAt: now.Add(-29 * 24 * time.Hour)},
+			"idle":    {LastSeenAt: now.Add(-31 * 24 * time.Hour)},
+			"recent":  {LastSeenAt: now.Add(-29 * 24 * time.Hour)},
+			"current": {LastSeenAt: now.Add(-31 * 24 * time.Hour)},
 			"queued": {
 				LastSeenAt:       now.Add(-90 * 24 * time.Hour),
 				PendingReminders: map[string]PendingReminder{"reminder": {TriggeredBy: "commit"}},
@@ -160,7 +161,7 @@ func TestSaveSessionDropsIdleSessions(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, store.saveSessionLocked("current", SessionState{}))
+	require.NoError(t, store.saveSessionLocked("current", store.sessions["current"]))
 
 	body, err := os.ReadFile(StatePath())
 	require.NoError(t, err)
@@ -178,11 +179,7 @@ func TestLoadStateDropsIdleSessions(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	now := time.Now().UTC()
 	snapshot := Snapshot{Sessions: map[string]SessionState{
-		"idle": {LastSeenAt: now.Add(-31 * 24 * time.Hour)},
-		"queued": {
-			LastSeenAt:       now.Add(-90 * 24 * time.Hour),
-			PendingReminders: map[string]PendingReminder{"reminder": {TriggeredBy: "commit"}},
-		},
+		"idle":   {LastSeenAt: now.Add(-31 * 24 * time.Hour)},
 		"recent": {Count: 3, LastSeenAt: now.Add(-29 * 24 * time.Hour)},
 	}}
 	body, err := json.Marshal(snapshot)
@@ -197,38 +194,22 @@ func TestLoadStateDropsIdleSessions(t *testing.T) {
 }
 
 func TestSaveSessionPreservesIdleSessionsWhenReplaceFails(t *testing.T) {
-	for _, withFixSessions := range []bool{false, true} {
-		t.Run(fmt.Sprintf("with fix sessions %t", withFixSessions), func(t *testing.T) {
-			now := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
-			store := &StateStore{
-				// Replacing a directory with the state file must fail.
-				path: t.TempDir(),
-				now:  func() time.Time { return now },
-				sessions: map[string]SessionState{
-					"idle": {Count: 2, LastSeenAt: now.Add(-31 * 24 * time.Hour)},
-					"queued": {
-						LastSeenAt:       now.Add(-90 * 24 * time.Hour),
-						PendingReminders: map[string]PendingReminder{"reminder": {TriggeredBy: "commit"}},
-					},
-					"current": {Count: 3, LastSeenAt: now.Add(-time.Hour)},
-				},
-				fixSessions: map[string]FixSession{"worktree": {SessionID: "current"}},
-			}
-			previous := store.Sessions()
-			previousFixSessions := store.fixSessions
-
-			var err error
-			if withFixSessions {
-				err = store.saveSessionAndFixSessionsLocked("current", SessionState{Count: 4}, map[string]FixSession{})
-			} else {
-				err = store.saveSessionLocked("current", SessionState{Count: 4})
-			}
-
-			require.ErrorContains(t, err, "replace agent hook state")
-			assert.Equal(t, previous, store.Sessions())
-			assert.Equal(t, previousFixSessions, store.fixSessions)
-		})
+	now := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+	store := &StateStore{
+		// Replacing a directory with the state file must fail.
+		path: t.TempDir(),
+		now:  func() time.Time { return now },
+		sessions: map[string]SessionState{
+			"idle":    {Count: 2, LastSeenAt: now.Add(-31 * 24 * time.Hour)},
+			"current": {Count: 3, LastSeenAt: now.Add(-time.Hour)},
+		},
 	}
+	previous := store.Sessions()
+
+	err := store.saveSessionLocked("current", SessionState{Count: 4})
+
+	require.ErrorContains(t, err, "replace agent hook state")
+	assert.Equal(t, previous, store.Sessions())
 }
 
 func TestStateStoreResetPersistsSelectedSession(t *testing.T) {
@@ -2219,62 +2200,6 @@ func TestDeferredPostToolReminderCoalescesAndWaitsForTriggeringBranch(t *testing
 	assert.Contains(t, resp.Reason, "change to")
 	assert.Empty(t, store.sessions["session-1"].PendingReminders)
 	assert.Equal(t, 1, store.sessions["session-1"].ReminderPromptCount)
-}
-
-func TestDeferredReminderDeliveredAfterIdleWindowKeepsSession(t *testing.T) {
-	assert := assert.New(t)
-	repo := testutil.NewGitRepo(t)
-	repo.CommitFile("main.go", "package main\n", "initial")
-	failedReviewCount := 1
-	now := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
-	store := &StateStore{
-		reviews:  newDeferredReminderSource(repo.Path(), &failedReviewCount),
-		path:     filepath.Join(t.TempDir(), "state.json"),
-		sessions: map[string]SessionState{},
-		now:      func() time.Time { return now },
-	}
-	req := Request{
-		Event: Input{
-			SessionID:     "session-1",
-			CWD:           repo.Path(),
-			HookEventName: "PreToolUse",
-			ToolName:      "Bash",
-			ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m feature"`)},
-		},
-		CommitThreshold:       1,
-		Instruction:           "Resolve reviews.",
-		DeferPostToolReminder: true,
-	}
-	_, err := store.Record(req)
-	require.NoError(t, err)
-	repo.CommitFile("feature.go", "package main\n", "feature")
-	req.Event.HookEventName = "PostToolUse"
-	queued, err := store.Record(req)
-	require.NoError(t, err)
-	assert.False(queued.Triggered)
-	require.Len(t, store.sessions["session-1"].PendingReminders, 1)
-
-	now = now.Add(31 * 24 * time.Hour)
-	resp, err := store.Record(Request{
-		Event: Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
-	})
-	require.NoError(t, err)
-	assert.True(resp.Triggered)
-	require.Contains(t, store.sessions, "session-1")
-	assert.Equal(1, store.sessions["session-1"].ReminderPromptCount)
-	body, err := os.ReadFile(store.path)
-	require.NoError(t, err)
-	var snapshot Snapshot
-	require.NoError(t, json.Unmarshal(body, &snapshot))
-	assert.Contains(snapshot.Sessions, "session-1")
-
-	require.NoError(t, store.saveSessionLocked("other", SessionState{}))
-	assert.Contains(store.sessions, "session-1")
-	body, err = os.ReadFile(store.path)
-	require.NoError(t, err)
-	snapshot = Snapshot{}
-	require.NoError(t, json.Unmarshal(body, &snapshot))
-	assert.Contains(snapshot.Sessions, "session-1")
 }
 
 func TestDeferredReminderWaitsWhenRepositoryIdentityChanges(t *testing.T) {

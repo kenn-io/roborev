@@ -24,7 +24,7 @@ func TestAgentHookSessionsLoadsExistingSnapshot(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(agenthook.StatePath()), 0o700))
 	body, err := json.Marshal(agenthook.Snapshot{
 		Sessions: map[string]agenthook.SessionState{
-			"session-1": {Count: 7, ReminderPromptCount: 2},
+			"session-1": {Count: 7, ReminderPromptCount: 2, LastSeenAt: time.Now().UTC()},
 		},
 	})
 	require.NoError(t, err)
@@ -147,8 +147,8 @@ func TestAgentHookResetPersistsSelectedSession(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	require.NoError(t, os.MkdirAll(filepath.Dir(agenthook.StatePath()), 0o700))
 	body, err := json.Marshal(agenthook.Snapshot{Sessions: map[string]agenthook.SessionState{
-		"session-1": {Count: 1},
-		"session-2": {Count: 2},
+		"session-1": {Count: 1, LastSeenAt: time.Now().UTC()},
+		"session-2": {Count: 2, LastSeenAt: time.Now().UTC()},
 	}})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(agenthook.StatePath(), body, 0o600))
