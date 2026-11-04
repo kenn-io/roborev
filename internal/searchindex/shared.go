@@ -160,28 +160,36 @@ func newSharingStore(store vector.Store[string, string], index *Index, shared Sh
 }
 
 // PendingForGeneration imports every shared hit in one lookup page and
-// returns only documents that still need the encoder. A page of hits returns
-// nothing; the reconciler continues while backlog remains.
+// returns only documents that still need the encoder, scanning past pages
+// consisting entirely of shared hits.
 func (s *sharingStore) PendingForGeneration(ctx context.Context, gen string, after *string, limit int) ([]vector.Pending[string], error) {
-	pending, err := s.Store.PendingForGeneration(ctx, gen, after, max(limit, sharedLookupPage))
-	if err != nil {
-		return nil, err
-	}
-	imported, err := s.importShared(ctx, gen, pending)
-	if err != nil {
-		return nil, err
-	}
-	misses := make([]vector.Pending[string], 0, min(limit, len(pending)))
-	for _, doc := range pending {
-		if _, ok := imported[doc.Doc]; ok {
-			continue
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-		if len(misses) == limit {
-			break
+		pending, err := s.Store.PendingForGeneration(ctx, gen, after, max(limit, sharedLookupPage))
+		if err != nil {
+			return nil, err
 		}
-		misses = append(misses, doc)
+		imported, err := s.importShared(ctx, gen, pending)
+		if err != nil {
+			return nil, err
+		}
+		misses := make([]vector.Pending[string], 0, min(limit, len(pending)))
+		for _, doc := range pending {
+			if _, ok := imported[doc.Doc]; ok {
+				continue
+			}
+			if len(misses) == limit {
+				break
+			}
+			misses = append(misses, doc)
+		}
+		if len(misses) > 0 || len(pending) == 0 {
+			return misses, nil
+		}
+		after = new(pending[len(pending)-1].Doc)
 	}
-	return misses, nil
 }
 
 // SaveVectors publishes after a successful local save. Publishing is best

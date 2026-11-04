@@ -60,6 +60,7 @@ type Reconciler struct {
 	mu                 sync.Mutex
 	health             HealthSnapshot
 	mirrorCursor       int64
+	fillAfter          *string
 	mirrorHead         int64
 	mirrorSeen         map[string]struct{}
 	mirrorRequested    bool
@@ -388,14 +389,23 @@ func (r *Reconciler) fillGeneration(ctx context.Context) (bool, error) {
 
 	fillCtx, cancel := context.WithTimeout(ctx, r.config.MaxFillTime)
 	defer cancel()
+	r.mu.Lock()
+	limiter := &turnLimitedStore{Store: store, remaining: r.config.MaxFillBatches, resume: r.fillAfter}
+	r.mu.Unlock()
 	_, err = r.index.Fill(
 		fillCtx,
-		&turnLimitedStore{Store: store, remaining: r.config.MaxFillBatches},
+		limiter,
 		key,
 		encodeDocuments(r.embedder),
 		r.embedder.Batch(),
 		nil,
 	)
+	if err == nil {
+		r.mu.Lock()
+		// An exhausted scan wraps next turn; failed fills retry the same cursor.
+		r.fillAfter = limiter.last
+		r.mu.Unlock()
+	}
 	countsAfter, countErr := r.index.GenerationCounts(ctx, key)
 	if countErr == nil {
 		counts = countsAfter
@@ -419,6 +429,8 @@ func (r *Reconciler) fillGeneration(ctx context.Context) (bool, error) {
 type turnLimitedStore struct {
 	vector.Store[string, string]
 	remaining int
+	resume    *string
+	last      *string
 }
 
 func (s *turnLimitedStore) PendingForGeneration(ctx context.Context, gen string, after *string, limit int) ([]vector.Pending[string], error) {
@@ -428,6 +440,10 @@ func (s *turnLimitedStore) PendingForGeneration(ctx context.Context, gen string,
 	if limit > s.remaining {
 		limit = s.remaining
 	}
+	if after == nil {
+		after = s.resume
+	}
+	s.resume = nil // Only the first scan resumes; kit may restart from the top.
 	pending, err := s.Store.PendingForGeneration(ctx, gen, after, limit)
 	if err != nil {
 		return nil, err
@@ -436,6 +452,9 @@ func (s *turnLimitedStore) PendingForGeneration(ctx context.Context, gen string,
 		pending = pending[:s.remaining]
 	}
 	s.remaining -= len(pending)
+	if len(pending) > 0 {
+		s.last = new(pending[len(pending)-1].Doc)
+	}
 	return pending, nil
 }
 
@@ -455,6 +474,7 @@ func (r *Reconciler) beginGeneration(key string, counts GenerationCounts, active
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.health.Generation != key || r.generationStarted.IsZero() {
+		r.fillAfter = nil
 		r.health.Generation = key
 		r.generationStarted = r.config.Now()
 		r.generationBaseline = counts.Embedded + counts.Skipped
