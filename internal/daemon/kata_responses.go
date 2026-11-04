@@ -110,9 +110,10 @@ func (s *Server) humaKataResponse(ctx context.Context, in *KataResponseInput) (*
 		response.Body += "\n\nReplacement: " + intent.Replacement
 	}
 	if intent.TargetComment != "" {
-		// Continuations are resolved once against the frozen issue, never through
-		// current repository/project bindings. Delivery checks lineage again.
-		issue, err := frozenResponseIssue(ctx, cfg, *capture)
+		// Continuations use the captured issue identity. Its captured workspace
+		// alias supplies the current project name after a rename; the frozen UID
+		// prevents retargeting. Delivery checks lineage again.
+		issue, _, err := frozenResponseIssue(ctx, cfg, *capture)
 		if err != nil {
 			return nil, err
 		}
@@ -135,24 +136,28 @@ func (s *Server) humaKataResponse(ctx context.Context, in *KataResponseInput) (*
 	return &KataResponseOutput{Body: status}, nil
 }
 
-func frozenResponseIssue(ctx context.Context, cfg config.KataIntegrationConfig, request katapublish.Request) (kata.Issue, error) {
+func frozenResponseIssue(ctx context.Context, cfg config.KataIntegrationConfig, request katapublish.Request) (kata.Issue, string, error) {
 	connection, err := kataPublicationConnection(cfg, request)
 	if err != nil {
-		return kata.Issue{}, huma.Error409Conflict("captured Kata connection unavailable")
+		return kata.Issue{}, "", huma.Error409Conflict("captured Kata connection unavailable")
 	}
 	api, err := kata.NewAPIClient("", connection, kata.WithoutWorkspace())
 	if err != nil {
-		return kata.Issue{}, huma.Error409Conflict("Kata connection unavailable")
+		return kata.Issue{}, "", huma.Error409Conflict("Kata connection unavailable")
 	}
 	defer api.CloseIdleConnections()
 	if api.Endpoint() != request.Endpoint {
-		return kata.Issue{}, huma.Error409Conflict("captured Kata endpoint changed")
+		return kata.Issue{}, "", huma.Error409Conflict("captured Kata endpoint changed")
 	}
-	issue, err := api.ShowComplete(ctx, request.Project+"#"+request.IssueUID)
+	binding, err := api.ResolveSelection(ctx, kata.Binding{Project: request.Project, Alias: request.WorkspaceAlias})
+	if err != nil || binding.Project == "" || binding.ProjectUID != request.ProjectUID {
+		return kata.Issue{}, "", huma.Error409Conflict("captured Kata project changed")
+	}
+	issue, err := api.ShowComplete(ctx, binding.Project+"#"+request.IssueUID)
 	if err != nil || issue.UID != request.IssueUID || issue.ProjectUID != request.ProjectUID {
-		return kata.Issue{}, huma.Error409Conflict("complete frozen finding thread unavailable")
+		return kata.Issue{}, "", huma.Error409Conflict("complete frozen finding thread unavailable")
 	}
-	return issue, nil
+	return issue, binding.Project, nil
 }
 
 func (s *Server) resolveKataResponseTarget(ctx context.Context, intent kataresponse.Request, cfg config.KataIntegrationConfig) (storage.FindingSnapshot, *katapublish.Request, error) {
@@ -178,12 +183,13 @@ func (s *Server) resolveKataResponseTarget(ctx context.Context, intent katarespo
 	var selected storage.FindingSnapshot
 	var capture *katapublish.Request
 	qualification, _ := kata.ParseCommentReference(intent.FindingID) // Intent validation already checked its syntax.
-	issues := map[string]kata.Issue{}
+	type resolvedIssue struct {
+		issue   kata.Issue
+		project string
+	}
+	issues := map[string]resolvedIssue{}
 	for _, root := range roots {
 		if intent.JobID != 0 && root.JobID != intent.JobID || root.State.IssueUID == "" || root.State.ProjectUID == "" {
-			continue
-		}
-		if qualification.Project != "" && qualification.Project != root.Request.Project {
 			continue
 		}
 		if qualification.Issue != "" && !strings.HasSuffix(strings.ToLower(root.State.IssueUID), qualification.Issue) {
@@ -202,15 +208,19 @@ func (s *Server) resolveKataResponseTarget(ctx context.Context, intent katarespo
 		destination := root.Request
 		destination.IssueUID, destination.ProjectUID = root.State.IssueUID, root.State.ProjectUID
 		key := destination.Endpoint + "\x00" + destination.ProjectUID + "\x00" + destination.IssueUID + "\x00" + destination.CredentialFingerprint
-		issue, ok := issues[key]
+		resolved, ok := issues[key]
 		if !ok {
-			issue, err = frozenResponseIssue(ctx, cfg, destination)
+			issue, project, err := frozenResponseIssue(ctx, cfg, destination)
 			if err != nil {
 				return selected, nil, err
 			}
-			issues[key] = issue
+			resolved = resolvedIssue{issue: issue, project: project}
+			issues[key] = resolved
 		}
-		target, err := kata.ResolveCommentReference(issue, intent.FindingID)
+		if qualification.Project != "" && qualification.Project != resolved.project {
+			continue
+		}
+		target, err := kata.ResolveCommentReference(resolved.issue, intent.FindingID)
 		if errors.Is(err, kata.ErrCommentNotFound) {
 			continue
 		}
@@ -218,7 +228,7 @@ func (s *Server) resolveKataResponseTarget(ctx context.Context, intent katarespo
 			return selected, nil, huma.Error409Conflict("comment reference is unavailable or ambiguous")
 		}
 		for _, entry := range root.Request.Entries {
-			if _, err := katapublish.ContinuationTarget(issue, root.State.Receipts[entry.Selector].UID, target); err != nil {
+			if _, err := katapublish.ContinuationTarget(resolved.issue, root.State.Receipts[entry.Selector].UID, target); err != nil {
 				continue
 			}
 			if capture != nil {

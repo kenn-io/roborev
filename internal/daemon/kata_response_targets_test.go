@@ -5,9 +5,11 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	gen "go.kenn.io/kata/pkg/client/generated"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/kata"
@@ -18,7 +20,7 @@ import (
 )
 
 func TestKataCommentReferenceResolvesOnlyItsMappedFindingThread(t *testing.T) {
-	for _, mode := range []string{"root UID", "reply handle", "uppercase handle", "qualified handle", "full issue UID", "long issue suffix", "uppercase issue suffix", "long issue suffix excludes unavailable issue", "duplicate publication mapping", "foreign root", "foreign project", "missing comment", "ambiguous handle", "qualified handle excludes unavailable project", "qualified handle excludes unavailable issue", "unqualified unavailable candidate"} {
+	for _, mode := range []string{"root UID", "reply handle", "uppercase handle", "qualified handle", "full issue UID", "long issue suffix", "uppercase issue suffix", "long issue suffix excludes unavailable issue", "duplicate publication mapping", "foreign root", "foreign project", "missing comment", "ambiguous handle", "qualified handle excludes unavailable project", "qualified handle excludes unavailable issue", "unqualified unavailable candidate", "renamed alias", "renamed alias with replaced project UID"} {
 		t.Run(mode, func(t *testing.T) {
 			s, db, _ := newTestServer(t)
 			jobID, findings := rebuttalFindingParent(t, s, db)
@@ -42,6 +44,9 @@ func TestKataCommentReferenceResolvesOnlyItsMappedFindingThread(t *testing.T) {
 			snapshot, err := db.FindingSnapshot(t.Context(), findings[0].ID)
 			require.NoError(t, err)
 			publication := katapublish.Request{OperationID: "publish:target-fixture", Endpoint: client.Endpoint(), Project: "reviews", ProjectUID: provider.Projects[0].UID, Policy: "comments", ReviewUUID: snapshot.ReviewUUID.String(), Teammate: "roborev", CredentialFingerprint: kataCredentialFingerprint(cfg), Entries: []katapublish.Entry{{Selector: snapshot.Selector, ReviewUUID: snapshot.ReviewUUID.String(), DocumentHash: snapshot.DocumentHash, Index: snapshot.Index, Body: "The original synthetic finding."}}} //nolint:forbidigo // Immutable review UUID crosses the provider publication boundary.
+			if strings.Contains(mode, "renamed alias") {
+				publication.WorkspaceAlias = &kata.ProjectAlias{Identity: "code.example/team/repo", Kind: "git"}
+			}
 			tx, err := db.BeginTx(t.Context(), nil)
 			require.NoError(t, err)
 			require.NoError(t, storage.InsertKataHandoffTx(t.Context(), tx, jobID, publication))
@@ -89,6 +94,26 @@ func TestKataCommentReferenceResolvesOnlyItsMappedFindingThread(t *testing.T) {
 				_, err = db.Exec(`UPDATE kata_handoffs SET state_json=?,status='done' WHERE operation_id=?`, string(raw), unavailable.OperationID)
 				require.NoError(t, err)
 			}
+			if strings.Contains(mode, "renamed alias") {
+				provider.Projects[0].Name = "renamed-reviews"
+				if mode == "renamed alias with replaced project UID" {
+					provider.Projects[0].UID = "replacement-project"
+				}
+				provider.Override = func(w http.ResponseWriter, r *http.Request) bool {
+					if r.URL.Path != "/api/v1/projects/resolve" {
+						return false
+					}
+					const identity = "code.example/team/repo"
+					var request map[string]any
+					assert.NoError(t, json.UnmarshalRead(r.Body, &request))
+					assert.Equal(t, map[string]any{"alias": map[string]any{"identity": identity, "kind": "git"}}, request)
+					project := provider.Projects[0]
+					provider.Reply(w, gen.ProjectResolveBody{Project: project, Alias: gen.ProjectAlias{
+						AliasIdentity: identity, AliasKind: "git", ID: 1, ProjectID: project.ID, CreatedAt: time.Unix(0, 0).UTC(),
+					}})
+					return true
+				}
+			}
 			target, want, wantRoot := root.UID, root.UID, root.UID
 			switch mode {
 			case "reply handle":
@@ -103,6 +128,8 @@ func TestKataCommentReferenceResolvesOnlyItsMappedFindingThread(t *testing.T) {
 				target, want = "reviews#"+strings.ToLower(issue.Out.UID[len(issue.Out.UID)-8:])+":"+strings.TrimPrefix(handle, "c:"), reply.UID
 			case "uppercase issue suffix":
 				target, want = "reviews#"+issue.Out.UID[len(issue.Out.UID)-8:]+":"+strings.TrimPrefix(handle, "c:"), reply.UID
+			case "renamed alias", "renamed alias with replaced project UID":
+				target, want = "renamed-reviews#ab12:"+strings.TrimPrefix(handle, "c:"), reply.UID
 			case "duplicate publication mapping":
 				target, want, wantRoot = duplicateRootUID, duplicateRootUID, duplicateRootUID
 			case "unqualified unavailable candidate":
@@ -124,7 +151,7 @@ func TestKataCommentReferenceResolvesOnlyItsMappedFindingThread(t *testing.T) {
 			raw, err = json.Marshal(intent)
 			require.NoError(t, err)
 			rr := serveHuma(t, s, http.MethodPost, "/api/kata/response", raw)
-			if mode == "foreign root" || mode == "foreign project" || mode == "missing comment" || mode == "ambiguous handle" || mode == "unqualified unavailable candidate" {
+			if mode == "foreign root" || mode == "foreign project" || mode == "missing comment" || mode == "ambiguous handle" || mode == "unqualified unavailable candidate" || mode == "renamed alias with replaced project UID" {
 				require.Equal(t, http.StatusConflict, rr.Code, rr.Body.String())
 				var count int
 				require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM kata_responses`).Scan(&count))

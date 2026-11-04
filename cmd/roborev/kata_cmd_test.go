@@ -92,6 +92,8 @@ func TestKataHumanOutputOmitsInternalPublicationFields(t *testing.T) {
 				{ID: "f:first", Comment: "comment-1", State: "delivered"},
 				{ID: "f:second", Comment: "comment-2", State: "pending"},
 			},
+		}, {
+			OperationID: "publish:missing-issue", State: "pending", Policy: "comments",
 		}},
 	}
 	NewMockDaemon(t, MockRefineHooks{OnUnhandled: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
@@ -109,9 +111,10 @@ func TestKataHumanOutputOmitsInternalPublicationFields(t *testing.T) {
 	cmd.SetArgs([]string{"show", "--job", "42"})
 	require.NoError(t, cmd.Execute())
 
-	assert.Equal("reviews#one  pending (summary)\n  f:first  comment-1\n  f:second  comment-2\n", output.String())
+	assert.Equal("reviews#one  pending (summary)\n  f:first  comment-1\n  f:second  comment-2\nissue pending (comments)\n", output.String())
 	assert.NotContains(output.String(), "publish:internal-hash")
-	assert.Equal(1, strings.Count(output.String(), "pending"))
+	assert.NotContains(output.String(), "publish:missing-issue")
+	assert.Equal(2, strings.Count(output.String(), "pending"))
 }
 
 func TestKataCommandsRejectInvalidSelectors(t *testing.T) {

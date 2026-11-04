@@ -92,7 +92,11 @@ func runKataResponse(cmd *cobra.Command, request kataresponse.Request) error {
 	if err := json.UnmarshalRead(response.Body, &status); err != nil {
 		return fmt.Errorf("read operation acknowledgement; retry with the same idempotency key: %w", err)
 	}
-	cmd.Printf("%s: %s (%s)\n", status.OperationID, status.State, status.Kind)
+	if status.OperationID == request.OperationID {
+		cmd.Printf("%s (%s)\n", status.State, status.Kind)
+	} else {
+		cmd.Printf("%s: %s (%s)\n", status.OperationID, status.State, status.Kind)
+	}
 	if status.Message != "" {
 		cmd.Println(status.Message)
 	}

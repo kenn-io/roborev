@@ -67,10 +67,14 @@ func kataPublicationCmd(publish bool) *cobra.Command {
 		}
 		for _, publication := range result.Publications {
 			issue := publication.Issue
-			if issue == "" {
-				issue = "issue pending"
+			if issue == "" && publication.State == "pending" {
+				fmt.Fprintf(cmd.OutOrStdout(), "issue pending (%s)\n", publication.Policy)
+			} else {
+				if issue == "" {
+					issue = "issue pending"
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "%s  %s (%s)\n", issue, publication.State, publication.Policy)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s  %s (%s)\n", issue, publication.State, publication.Policy)
 			for _, finding := range publication.Findings {
 				comment := finding.Comment
 				if comment == "" {

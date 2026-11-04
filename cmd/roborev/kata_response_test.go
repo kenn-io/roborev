@@ -50,6 +50,12 @@ func TestKataCommentPrintsOperationBeforeNetwork(t *testing.T) {
 	cmd.SetArgs([]string{"comment", "--reply", id.String(), "-m", "Evidence in the committed fix."})
 	require.NoError(t, cmd.Execute())
 	assert.True(t, contacted)
+	keyLine, _, found := strings.Cut(out.String(), "\n")
+	assert.True(t, found)
+	key := strings.TrimPrefix(keyLine, "Idempotency key: ")
+	assert.NotEmpty(t, key)
+	assert.Equal(t, 1, strings.Count(out.String(), key))
+	assert.Contains(t, out.String(), "pending (reply)")
 }
 
 func TestKataCommentReportsOldDaemon(t *testing.T) {
