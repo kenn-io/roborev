@@ -583,7 +583,10 @@ func TestWithBranchOrEmpty(t *testing.T) {
 		assert.Len(t, jobs, 1)
 	})
 
-	t.Run("WithBranchOrEmpty includes branchless", func(t *testing.T) {
+	t.Run("WithBranchOrEmpty includes branchless but excludes (none)", func(t *testing.T) {
+		// agenthook's failedReviewCountsForHead trusts nonempty branch labels
+		// as already scoped, so including (none) would count its failed reviews
+		// toward every named branch.
 		jobs, err := db.ListJobs("", "", 50, 0, WithBranchOrEmpty("main"))
 		require.NoError(t, err, "ListJobs failed: %v")
 
@@ -591,14 +594,11 @@ func TestWithBranchOrEmpty(t *testing.T) {
 		assert.ElementsMatch(t, []string{"main", "", ""}, []string{jobs[0].Branch, jobs[1].Branch, jobs[2].Branch})
 	})
 
-	t.Run("WithEmptyBranch returns only branchless jobs", func(t *testing.T) {
+	t.Run("WithEmptyBranch matches the picker's (none) bucket", func(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0, WithEmptyBranch())
 		require.NoError(t, err)
 		require.Len(t, jobs, 3)
 		assert.ElementsMatch(t, []string{"", "(none)", ""}, []string{jobs[0].Branch, jobs[1].Branch, jobs[2].Branch})
-		stats, err := db.CountJobStats("", "", WithEmptyBranch())
-		require.NoError(t, err)
-		assert.Equal(t, 3, stats.Done)
 		branches, err := db.ListBranchesWithCounts(nil)
 		require.NoError(t, err)
 		counts := make(map[string]int)

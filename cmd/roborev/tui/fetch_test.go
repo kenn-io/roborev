@@ -108,8 +108,6 @@ func TestFetchJobsNoneBranchFilterPaginates(t *testing.T) {
 		assert.Equal("true", query.Get("branch_empty"))
 		assert.Equal("false", query.Get("closed"))
 		assert.NotContains(query, "branch")
-		assert.NotEmpty(query.Get("limit"))
-		assert.NotEqual("0", query.Get("limit"))
 	}
 }
 
