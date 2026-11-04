@@ -185,6 +185,55 @@ exit "$failed"
 	assert.JSONEq(t, `{"error":"Forbidden"}`, string(denial))
 }
 
+func TestSandboxUnixSockets(t *testing.T) {
+	testutil.RequireSandboxIntegration(t)
+	base := t.TempDir()
+	work := filepath.Join(base, "job*")
+	host := filepath.Join(base, "job-private")
+	for _, dir := range []string{work, host} {
+		require.NoError(t, os.Mkdir(dir, 0o700))
+	}
+	hostSocket := filepath.Join(host, "host.sock")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", hostSocket)
+	require.NoError(t, err)
+	defer listener.Close()
+	control, err := (&net.Dialer{}).DialContext(t.Context(), "unix", hostSocket)
+	require.NoError(t, err)
+	require.NoError(t, control.Close())
+	require.NoError(t, os.Symlink(hostSocket, filepath.Join(work, "host.sock")))
+	job := routeJob(t, work)
+	// The host directory is readable, so socket mediation must deny the connection.
+	job.ReadPaths = []string{host}
+	const probe = `
+import os,socket,sys,tempfile
+with tempfile.TemporaryDirectory(dir=sys.argv[1]) as tmp:
+ with socket.socket(socket.AF_UNIX) as server:
+  server.settimeout(2)
+  server.bind(os.path.join(tmp,"provider.sock"))
+  server.listen(1)
+  with socket.socket(socket.AF_UNIX) as client:
+   client.settimeout(2)
+   client.connect(server.getsockname())
+   peer,_=server.accept()
+   with peer:
+    peer.settimeout(2)
+    client.sendall(b"request")
+    assert peer.recv(7)==b"request"
+    peer.sendall(b"response")
+    assert client.recv(8)==b"response"
+print("OK scratch-exchange")
+for path in sys.argv[2:]:
+ with socket.socket(socket.AF_UNIX) as client:
+  client.settimeout(2)
+  try: client.connect(path)
+  except PermissionError: pass
+  else: raise AssertionError("host socket connection allowed")
+print("OK host-denied")
+`
+	out := runInJob(t, job, "/usr/bin/python3", "-c", probe, work, hostSocket, filepath.Join(work, "host.sock"))
+	assert.Equal(t, "OK scratch-exchange\nOK host-denied\n", out)
+}
+
 func TestSandboxHostPTYIsolation(t *testing.T) {
 	testutil.RequireSandboxIntegration(t)
 	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|syscall.O_NOCTTY, 0)

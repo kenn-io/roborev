@@ -154,6 +154,7 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 	}
 	cmd = []string{"/usr/bin/systemd-run", "--working-directory=" + dir, "--user", "--scope", "-q", "-p", "MemoryMax=" + strconv.FormatInt(j.MemoryMax, 10), "-p", "MemorySwapMax=0", "-p", "TimeoutStopSec=5", "--", nono, "run", "-s", "--profile", profilePath, "--no-rollback", "--no-audit", "--allow", j.WorkDir}
 	// CLI grants are literal paths; profile paths undergo template expansion.
+	cmd = append(cmd, "--allow-unix-socket-subtree-bind", j.WorkDir)
 	for _, path := range j.ReadPaths {
 		info, err := os.Stat(path)
 		if err != nil {
