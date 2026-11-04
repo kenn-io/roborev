@@ -270,11 +270,10 @@ func TestAgentHookOpenFailedReviewBehindPassingHistory(t *testing.T) {
 
 	jobs, ok := (daemonAgentHookSource{db: db}).ListOpenFailedReviewJobs(t.Context(), repo.Path(), "main")
 	require.True(t, ok)
+	require.Len(t, jobs, 1)
 	assert := assert.New(t)
-	if assert.Len(jobs, 1) {
-		assert.Equal(int64(1), jobs[0].ID)
-		assert.Equal(new("F"), jobs[0].Verdict)
-	}
+	assert.Equal(int64(1), jobs[0].ID)
+	assert.Equal(new("F"), jobs[0].Verdict)
 
 	body, err := json.Marshal(agenthook.Request{
 		Event:     agenthook.Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: "Stop"},
@@ -287,7 +286,6 @@ func TestAgentHookOpenFailedReviewBehindPassingHistory(t *testing.T) {
 	require.NoError(t, json.Unmarshal(got.Body.Bytes(), &response))
 	assert.Equal(1, response.FailedReviewCount)
 	assert.Equal("failed_reviews", response.TriggeredBy)
-	require.Len(t, jobs, 1)
 	review, err := db.GetReviewByJobID(jobs[0].ID)
 	require.NoError(t, err)
 	assert.Equal(storage.VerdictFail, review.Verdict())
