@@ -38,6 +38,8 @@ var schemaMigrations = []schemaMigration{
 	{3, "CI panel retirement reasons", migrateCIPanelRetireReason},
 	{4, "CI panel PR head index", migrateCIPanelPRHeadIndex},
 	{5, "token cost started-at index", migrateTokenCostStartedIndex},
+	// Version 6 is reserved for the pending migration.
+	{7, "summary repo window index", migrateSummaryRepoWindowIndex},
 }
 
 // ErrSchemaTooNew reports a database written by a newer roborev release.
@@ -113,5 +115,11 @@ func migrateTokenCostStartedIndex(ctx context.Context, db *DB) error {
 	// Token-cost queries must use the same normalized started-at expression.
 	_, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_review_jobs_source_started
 		ON review_jobs(source_machine_id, `+sqliteNormalizedTimestampExpr("started_at")+`)`)
+	return err
+}
+
+func migrateSummaryRepoWindowIndex(ctx context.Context, db *DB) error {
+	_, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_review_jobs_repo_enqueued
+		ON review_jobs(repo_id, `+sqliteNormalizedTimestampExpr("enqueued_at")+`)`)
 	return err
 }

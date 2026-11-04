@@ -324,6 +324,30 @@ func TestGetSummary_RFC3339Timestamps(t *testing.T) {
 	assert.Equal(t, 0, s.Overview.Total)
 }
 
+func TestGetSummary_MixedTimestampBoundary(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	repo := createRepo(t, db, "/tmp/summary-boundary")
+	since := time.Date(2026, time.January, 1, 12, 0, 0, 0, time.UTC)
+	for _, stamp := range []string{
+		"2026-01-01 11:59:59", "2026-01-01T06:59:59-05:00",
+		"2026-01-01 12:00:00", "2026-01-01T12:00:00Z", "2026-01-01T07:00:00-05:00",
+	} {
+		commit := createCommit(t, db, repo.ID, stamp)
+		job := enqueueJob(t, db, repo.ID, commit.ID, stamp)
+		_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET enqueued_at = ?,
+			status = 'done', agent_invoked = 1, started_at = ?, finished_at = ? WHERE id = ?`, stamp, stamp, stamp, job.ID)
+		require.NoError(t, err)
+	}
+	for _, path := range []string{"", repo.RootPath} {
+		summary, err := db.GetSummary(SummaryOptions{Since: since, RepoPath: path})
+		require.NoError(t, err)
+		assert.Equal(t, 3, summary.Overview.Total)
+		assert.Equal(t, 3, summary.Cost.JobsTotal)
+	}
+}
+
 func TestGetSummary_VerdictExcludesNonReviewJobs(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)

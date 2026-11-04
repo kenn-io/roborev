@@ -42,10 +42,14 @@ func appliedVersions(t *testing.T, db *DB) []int {
 	return versions
 }
 
-func TestSchemaMigrationVersionsAreContiguous(t *testing.T) {
+func TestSchemaMigrationVersionsIncrease(t *testing.T) {
 	t.Parallel()
 	for i, m := range schemaMigrations {
-		assert.Equal(t, i+1, m.version, m.name)
+		if i > 0 {
+			assert.Greater(t, m.version, schemaMigrations[i-1].version, m.name)
+		} else {
+			assert.Equal(t, 1, m.version, m.name)
+		}
 	}
 }
 
@@ -114,7 +118,7 @@ func TestOpenBaselinesDatabaseFromBeforeNumberedMigrations(t *testing.T) {
 	db, err := Open(path)
 	require.NoError(t, err)
 	defer db.Close()
-	assert.Equal(t, []int{1, 2, 3, 4, 5}, appliedVersions(t, db))
+	assert.Equal(t, []int{1, 2, 3, 4, 5, 7}, appliedVersions(t, db))
 	var name string
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT name FROM repos WHERE root_path = '/synthetic/repo'`).Scan(&name))
 	assert.Equal(t, "repo", name)
@@ -211,13 +215,30 @@ func TestTokenCostStartedIndexMigration(t *testing.T) {
 	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:4]))
 
 	for range 2 {
-		require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
+		require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:5]))
 		var indexSQL string
 		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT sql FROM sqlite_master
 			WHERE type = 'index' AND name = 'idx_review_jobs_source_started'`).Scan(&indexSQL))
 		assert.Equal(t, []int{1, 2, 3, 4, 5}, appliedVersions(t, db))
 		// Simulate interruption after creating the index, before recording it.
 		_, err := db.ExecContext(t.Context(), `DELETE FROM schema_migrations WHERE version = 5`)
+		require.NoError(t, err)
+	}
+}
+
+func TestSummaryRepoWindowIndexMigration(t *testing.T) {
+	t.Parallel()
+	db := openUnmigratedDB(t)
+	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:5]))
+	for range 2 {
+		require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
+		var indexSQL string
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT sql FROM sqlite_master
+			WHERE type = 'index' AND name = 'idx_review_jobs_repo_enqueued'`).Scan(&indexSQL))
+		assert.Contains(t, indexSQL, "repo_id, "+sqliteNormalizedTimestampExpr("enqueued_at"))
+		assert.Equal(t, []int{1, 2, 3, 4, 5, 7}, appliedVersions(t, db))
+		// Retry after creating the index but before recording the migration.
+		_, err := db.ExecContext(t.Context(), `DELETE FROM schema_migrations WHERE version = 7`)
 		require.NoError(t, err)
 	}
 }
