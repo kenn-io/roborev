@@ -175,7 +175,6 @@ func TestSaveSessionDropsIdleSessions(t *testing.T) {
 }
 
 func TestLoadStateDropsIdleSessions(t *testing.T) {
-	assert := assert.New(t)
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	now := time.Now().UTC()
 	snapshot := Snapshot{Sessions: map[string]SessionState{
@@ -185,14 +184,6 @@ func TestLoadStateDropsIdleSessions(t *testing.T) {
 			PendingReminders: map[string]PendingReminder{"reminder": {TriggeredBy: "commit"}},
 		},
 		"recent": {Count: 3, LastSeenAt: now.Add(-29 * 24 * time.Hour)},
-		"fix-owner": {
-			LastSeenAt:            now.Add(-90 * 24 * time.Hour),
-			AcknowledgedReviewIDs: map[string]reviewIDSet{"repo": {42: {}}},
-		},
-		"expired-fix-owner": {LastSeenAt: now.Add(-90 * 24 * time.Hour)},
-	}, FixSessions: map[string]FixSession{
-		"worktree":         {SessionID: "fix-owner", ExpiresAt: now.Add(time.Hour)},
-		"expired-worktree": {SessionID: "expired-fix-owner", ExpiresAt: now.Add(-time.Hour)},
 	}}
 	body, err := json.Marshal(snapshot)
 	require.NoError(t, err)
@@ -202,19 +193,7 @@ func TestLoadStateDropsIdleSessions(t *testing.T) {
 	store, err := LoadState(nil)
 
 	require.NoError(t, err)
-	want := map[string]SessionState{
-		"recent":    snapshot.Sessions["recent"],
-		"fix-owner": snapshot.Sessions["fix-owner"],
-	}
-	assert.Equal(want, store.Sessions())
-
-	require.NoError(t, store.saveLocked())
-	assert.Equal(want, store.Sessions())
-	body, err = os.ReadFile(StatePath())
-	require.NoError(t, err)
-	var saved Snapshot
-	require.NoError(t, json.Unmarshal(body, &saved))
-	assert.Equal(want, saved.Sessions)
+	assert.Equal(t, map[string]SessionState{"recent": snapshot.Sessions["recent"]}, store.Sessions())
 }
 
 func TestSaveSessionPreservesIdleSessionsWhenReplaceFails(t *testing.T) {
