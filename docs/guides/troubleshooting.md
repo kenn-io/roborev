@@ -118,6 +118,10 @@ If the daemon is stopped, start it:
 roborev daemon start
 ```
 
+If a v0.56 daemon is still running, startup reports the replacement's exit
+without waiting for the readiness timeout. Stop the legacy daemon manually
+before retrying.
+
 `roborev init` starts the daemon automatically, but it won't survive a reboot
 unless you've set up a launchd/systemd service. If the daemon was running but
 reviews still aren't appearing, read the saved daemon diagnostics:

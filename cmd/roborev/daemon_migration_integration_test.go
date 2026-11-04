@@ -69,7 +69,7 @@ func TestWindowsV056DaemonMigrationRefusesUnsafeReplacement(t *testing.T) {
 		return err == nil && len(matches) > 0
 	}), "v0.56 daemon never published legacy runtime. Output:\n%s", legacyOutput.String())
 
-	// Let the CLI report its readiness timeout before the test kills it.
+	// Leave time for Windows process discovery and report the replacement's exit.
 	startCtx, cancelStart := context.WithTimeout(context.Background(), daemonStartTimeout+30*time.Second)
 	defer cancelStart()
 	startCmd := exec.CommandContext(startCtx, currentBin, "--verbose", "daemon", "start")
@@ -78,7 +78,7 @@ func TestWindowsV056DaemonMigrationRefusesUnsafeReplacement(t *testing.T) {
 	startOut, startErr := startCmd.CombinedOutput()
 	require.NoError(t, startCtx.Err(), "startup command exceeded the test deadline: %s", startOut)
 	require.Error(t, startErr)
-	assert.Contains(t, string(startOut), "failed to start daemon: context deadline exceeded")
+	assert.Contains(t, string(startOut), "daemon exited during startup")
 
 	legacyExited := false
 	select {
