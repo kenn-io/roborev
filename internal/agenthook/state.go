@@ -27,6 +27,11 @@ import (
 
 var agentHookGit = gitcmd.New()
 
+// idleSessionLifetime bounds whole-file hook saves, measured at 99 ms for 10k
+// sessions and 1.12 s for 100k. The 30-day window matches Claude Code's default
+// transcript cleanupPeriodDays: https://code.claude.com/docs/en/settings-reference#cleanupperioddays.
+const idleSessionLifetime = 30 * 24 * time.Hour
+
 type hookScope struct {
 	WorktreeRoot        string
 	TrackedRepoRoot     string
@@ -100,6 +105,7 @@ func LoadState(reviews ReviewSource) (*StateStore, error) {
 	if snap.FixSessions != nil {
 		s.fixSessions = snap.FixSessions
 	}
+	s.sessions = s.pruneIdleSessionsLocked()
 	return s, nil
 }
 
@@ -123,8 +129,9 @@ func (s *StateStore) saveLocked() error {
 		}
 	}()
 
+	sessions := s.pruneIdleSessionsLocked()
 	enc := jsontext.NewEncoder(tmp, jsontext.WithIndent("  "))
-	if err := json.MarshalEncode(enc, Snapshot{Sessions: s.sessions, FixSessions: s.fixSessions}); err != nil {
+	if err := json.MarshalEncode(enc, Snapshot{Sessions: sessions, FixSessions: s.fixSessions}); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("encode agent hook state: %w", err)
 	}
@@ -139,13 +146,26 @@ func (s *StateStore) saveLocked() error {
 		return fmt.Errorf("replace agent hook state: %w", err)
 	}
 	ok = true
+	s.sessions = sessions
 	return nil
+}
+
+func (s *StateStore) pruneIdleSessionsLocked() map[string]SessionState {
+	cutoff := s.currentTime().Add(-idleSessionLifetime)
+	sessions := map[string]SessionState{}
+	for id, state := range s.sessions {
+		if !state.LastSeenAt.Before(cutoff) {
+			sessions[id] = state
+		}
+	}
+	return sessions
 }
 
 // saveSessionLocked publishes a cloned session only when its atomic state-file
 // replacement succeeds. Callers must hold s.mu.
 func (s *StateStore) saveSessionLocked(sessionID string, state SessionState) error {
 	previous, existed := s.sessions[sessionID]
+	state.LastSeenAt = s.currentTime()
 	s.sessions[sessionID] = state
 	if err := s.saveLocked(); err != nil {
 		if existed {
@@ -167,6 +187,7 @@ func (s *StateStore) saveSessionAndFixSessionsLocked(
 ) error {
 	previous, existed := s.sessions[sessionID]
 	previousFixSessions := s.fixSessions
+	state.LastSeenAt = s.currentTime()
 	s.sessions[sessionID] = state
 	s.fixSessions = fixSessions
 	if err := s.saveLocked(); err != nil {
@@ -332,7 +353,6 @@ func (s *StateStore) recordUserPrompt(ctx context.Context, req Request) (Respons
 	recordSequenceHeads(&st, scope, []string{scope.WorktreeKey})
 	st.LastCWD = req.Event.CWD
 	now := s.currentTime()
-	st.LastSeenAt = now
 
 	actionableReviewIDs := unacknowledgedReviewIDs(st, lineageKey, openFailedReviewIDs)
 	failedReviewCount := len(actionableReviewIDs)
@@ -471,7 +491,6 @@ func (s *StateStore) recordStop(ctx context.Context, req Request) (Response, err
 	stopCountSincePrompt := st.StopCountsSincePrompt[lineageKey]
 	st.LastTurnID = req.Event.TurnID
 	st.LastCWD = req.Event.CWD
-	st.LastSeenAt = now
 	recordSequenceHeads(&st, scope, []string{scope.WorktreeKey})
 
 	actionableReviews := hasActionableFailedReviews(failedReviewCount, haveFailedReviewCount)
@@ -586,7 +605,6 @@ func (s *StateStore) recordPreToolUse(ctx context.Context, req Request) (Respons
 	lineageKey := ensureLineageKey(&st, scope)
 	recordSequenceHeads(&st, scope, commitSequenceKeys(scope, lineageKey))
 	st.LastCWD = req.Event.CWD
-	st.LastSeenAt = time.Now().UTC()
 	if err := ctx.Err(); err != nil {
 		return Response{}, err
 	}
@@ -717,7 +735,6 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 	recordSequenceHeads(&st, scope, sequenceKeys)
 	st.LastCWD = req.Event.CWD
 	now := s.currentTime()
-	st.LastSeenAt = now
 	if len(eventNewCommits) > 0 {
 		st.CommitCount += len(eventNewCommits)
 		st.LastCommitRepo = scope.WorktreeRoot
@@ -878,7 +895,6 @@ func applySnoozedState(st *SessionState, req Request, scope hookScope) Response 
 	}
 	st.FailedReviewCount = 0
 	st.LastCWD = req.Event.CWD
-	st.LastSeenAt = time.Now().UTC()
 	return Response{
 		SessionID:             req.Event.SessionID,
 		Count:                 st.Count,
