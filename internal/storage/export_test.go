@@ -22,6 +22,33 @@ import (
 	"go.kenn.io/roborev/pkg/structuredreview"
 )
 
+func TestExportReviewsCursorPageSeeksCompletedIndex(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	defer db.Close()
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	var cursor *exportCursor
+	for i := range 3 {
+		review := seedCompletedExportReview(t, db, repo.ID, fmt.Sprintf("%040x", i+1), "2026-06-29 00:00:00", false)
+		cursor = &exportCursor{CompletedAt: "2026-06-29 00:00:00", ReviewID: *review.UUID}
+	}
+	query, args := exportReviewRowsQuery(ExportReviewsOptions{Profile: ExportProfileMetadata, Limit: 500}, cursor)
+	rows, err := db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+query, args...)
+	require.NoError(t, err)
+	defer rows.Close()
+	var details []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+		details = append(details, detail)
+	}
+	require.NoError(t, rows.Err())
+	plan := strings.Join(details, "\n")
+	assert.Contains(t, plan, "SEARCH rv USING INDEX idx_reviews_export_completed (<expr>>?)")
+	assert.NotContains(t, plan, "USE TEMP B-TREE FOR ORDER BY")
+}
+
 func TestExportReviewsContentProfile(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)

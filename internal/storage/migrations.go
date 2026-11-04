@@ -39,6 +39,7 @@ var schemaMigrations = []schemaMigration{
 	{4, "CI panel PR head index", migrateCIPanelPRHeadIndex},
 	{5, "token cost started-at index", migrateTokenCostStartedIndex},
 	{6, "summary repo window index", migrateSummaryRepoWindowIndex},
+	{7, "review export completion index", migrateReviewExportCompletedIndex},
 }
 
 // ErrSchemaTooNew reports a database written by a newer roborev release.
@@ -120,5 +121,12 @@ func migrateTokenCostStartedIndex(ctx context.Context, db *DB) error {
 func migrateSummaryRepoWindowIndex(ctx context.Context, db *DB) error {
 	_, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_review_jobs_repo_enqueued
 		ON review_jobs(repo_id, `+sqliteNormalizedTimestampExpr("enqueued_at")+`)`)
+	return err
+}
+
+func migrateReviewExportCompletedIndex(ctx context.Context, db *DB) error {
+	// Export's ORDER BY and cursor must use the same normalized expression.
+	_, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_reviews_export_completed
+		ON reviews(`+sqliteNormalizedTimestampExpr("created_at")+`, uuid)`)
 	return err
 }
