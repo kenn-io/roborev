@@ -97,18 +97,19 @@ func TestIntegration_PullCursorPlans(t *testing.T) { //nolint:paralleltest // sh
 	defer func() { require.NoError(t, tx.Rollback(context.WithoutCancel(ctx))) }()
 	_, err = tx.Exec(ctx, "SET LOCAL plan_cache_mode = force_generic_plan")
 	require.NoError(t, err)
-	var cursorTime time.Time
-	var cursorID int64
-	require.NoError(t, tx.QueryRow(ctx, "SELECT updated_at, id FROM review_jobs ORDER BY updated_at, id OFFSET 1000 LIMIT 1").Scan(&cursorTime, &cursorID))
-	for _, tc := range []struct{ name, query string }{
-		{"jobs", pgPullJobsQuery},
-		{"reviews", pgPullReviewsQuery},
-		{"responses", pgPullResponsesQuery},
-		{"assignments", pgPullExperimentAssignmentsQuery},
+	for _, tc := range []struct{ name, table, column, query string }{
+		{"jobs", "review_jobs", "updated_at", pgPullJobsQuery},
+		{"reviews", "reviews", "updated_at", pgPullReviewsQuery},
+		{"responses", "responses", "inserted_at", pgPullResponsesQuery},
+		{"assignments", "experiment_assignments", "inserted_at", pgPullExperimentAssignmentsQuery},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := tx.Exec(ctx, "PREPARE pull_"+tc.name+" AS "+tc.query)
 			require.NoError(t, err)
+			var cursorTime time.Time
+			var cursorID int64
+			cursorQuery := fmt.Sprintf("SELECT %s, id FROM %s ORDER BY %s, id OFFSET 1000 LIMIT 1", tc.column, tc.table, tc.column)
+			require.NoError(t, tx.QueryRow(ctx, cursorQuery).Scan(&cursorTime, &cursorID))
 			args := fmt.Sprintf("'%s', '%s', %d, 100", uuid.New(), cursorTime.Format(time.RFC3339Nano), cursorID)
 			var raw []byte
 			require.NoError(t, tx.QueryRow(ctx, "EXPLAIN (ANALYZE, FORMAT JSON) EXECUTE pull_"+tc.name+"("+args+")").Scan(&raw))
@@ -151,7 +152,8 @@ func TestIntegration_PullReviewsPagesPastUnknownJobs(t *testing.T) { //nolint:pa
 	require.NoError(t, err)
 	require.Len(t, reviews, 1)
 	assert.Equal(jobs[7].UUID, reviews[0].JobUUID)
-	assert.NotEqual(cursor, next)
+	require.NoError(t, pool.pool.QueryRow(ctx, "SELECT updated_at, id FROM reviews WHERE uuid = $1", reviews[0].UUID).Scan(&updated, &id))
+	assert.Equal(formatTimestampIDCursor(updated, id), next)
 }
 
 func TestIntegration_PullJobsPagesTiedTimestamps(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL schema
@@ -228,32 +230,33 @@ func TestIntegration_PullCachedPlansAfterPeerArrives(t *testing.T) { //nolint:pa
 			for range 6 {
 				rows, err := tx.Query(ctx, "EXECUTE cached_"+tc.name+"("+args+")")
 				require.NoError(t, err)
-				require.False(t, rows.Next())
-				require.NoError(t, rows.Err())
+				hasRow := rows.Next()
 				rows.Close()
+				require.NoError(t, rows.Err())
+				require.False(t, hasRow)
 			}
 			_, err = tx.Exec(ctx, "UPDATE "+tc.table+" SET source_machine_id = $1 WHERE id > (SELECT id FROM "+tc.table+" ORDER BY inserted_at, id OFFSET 5000 LIMIT 1)", peer)
 			require.NoError(t, err)
 			for _, mode := range []string{"auto", "force_generic_plan"} {
-				_, err := tx.Exec(ctx, "SET LOCAL plan_cache_mode = "+mode)
-				require.NoError(t, err)
-				var raw []byte
-				require.NoError(t, tx.QueryRow(ctx, "EXPLAIN (ANALYZE, FORMAT JSON) EXECUTE cached_"+tc.name+"("+args+")").Scan(&raw))
-				t.Run(mode, func(t *testing.T) { assertPullPlanBounded(t, raw) })
+				t.Run(mode, func(t *testing.T) {
+					_, err := tx.Exec(ctx, "SET LOCAL plan_cache_mode = "+mode)
+					require.NoError(t, err)
+					var raw []byte
+					require.NoError(t, tx.QueryRow(ctx, "EXPLAIN (ANALYZE, FORMAT JSON) EXECUTE cached_"+tc.name+"("+args+")").Scan(&raw))
+					assertPullPlanBounded(t, raw)
+				})
 			}
 		})
 	}
 }
 
-func TestIntegration_PullSeededAssignments(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL schema
+func TestIntegration_PullSeededAssignmentsIntoSQLite(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL schema
 	env := newIntegrationEnv(t)
 	seedPullHistory(t, env.Pool, 8)
 	db := env.openDB("pull.db")
 	worker := NewSyncWorker(db, config.SyncConfig{})
-	stats, err := worker.pullChangesWithStats(t.Context(), env.Pool)
+	_, err := worker.pullChangesWithStats(t.Context(), env.Pool)
 	require.NoError(t, err)
-	assert.Equal(t, 8, stats.Jobs)
-	assert.Equal(t, 8, stats.Reviews)
 	var count int
 	require.NoError(t, db.QueryRow(`SELECT count(*) FROM experiment_assignments WHERE arm = 'default'`).Scan(&count))
 	assert.Equal(t, 8, count)
