@@ -85,15 +85,13 @@ func TestFetchJobsNoneBranchFilterPaginates(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
 	var queries []neturl.Values
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/jobs" {
 			queries = append(queries, r.URL.Query())
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{"jobs": []any{}, "has_more": true})
-	}))
-	defer ts.Close()
-	m := newModel(testEndpointFromURL(ts.URL), withExternalIODisabled())
+	})
 	m.activeBranchFilter = branchNone
 	m.hideClosed = true
 	m.heightDetected = true

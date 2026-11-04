@@ -2176,7 +2176,7 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 		conditions = append(conditions, emptyBranchCondition)
 	} else if o.branch != "" {
 		if o.branchIncludeEmpty {
-			conditions = append(conditions, "(j.branch = ? OR "+emptyBranchCondition+")")
+			conditions = append(conditions, "(j.branch = ? OR j.branch = '' OR j.branch IS NULL)")
 		} else {
 			conditions = append(conditions, "j.branch = ?")
 		}
