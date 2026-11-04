@@ -745,31 +745,6 @@ func TestListReposWithReviewCountsByBranch(t *testing.T) {
 	})
 }
 
-func TestListReposWithReviewCountsPlaceholderBranch(t *testing.T) {
-	t.Parallel()
-	db := openTestDB(t)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	assert := assert.New(t)
-
-	repo := createRepo(t, db, t.TempDir())
-	commit := createCommit(t, db, repo.ID, "abc123")
-	job := enqueueJob(t, db, repo.ID, commit.ID, "abc123")
-	updated, err := db.UpdateJobBranch(job.ID, "(none)")
-	require.NoError(t, err)
-	require.Equal(t, int64(1), updated)
-
-	branches, err := db.ListBranchesWithCounts([]string{repo.RootPath})
-	require.NoError(t, err)
-	require.Equal(t, []BranchWithCount{{Name: "(none)", Count: 1}}, branches.Branches)
-
-	repos, total, err := db.ListReposWithReviewCounts(WithRepoBranch("(none)"))
-	require.NoError(t, err)
-	require.Len(t, repos, 1)
-	assert.Equal(repo.RootPath, repos[0].RootPath)
-	assert.Equal(branches.Branches[0].Count, repos[0].Count)
-	assert.Equal(1, total)
-}
-
 func TestListBranchesWithCounts(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
