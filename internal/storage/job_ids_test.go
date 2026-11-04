@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,7 +38,7 @@ func TestMigrateJobIDsPreservesHistory(t *testing.T) {
 	// Build the schema before the forward ID migration, as a shipped database.
 	require.NoError(t, registerContentFunctions())
 	path := filepath.Join(t.TempDir(), "reviews.db")
-	conn, err := sql.Open("sqlite", path)
+	conn, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)")
 	require.NoError(t, err)
 	db := &DB{DB: conn}
 	t.Cleanup(func() { _ = db.Close() })
@@ -46,10 +48,14 @@ func TestMigrateJobIDsPreservesHistory(t *testing.T) {
 	require.NoError(t, err)
 	original := seedLegacyMarkdownReview(t, db, repo.ID, "retained", "Original text stays attached to this job.", 0, true)
 	// Exercise a copy spanning multiple batches and a partial final batch.
+	machineID, err := db.GetMachineID()
+	require.NoError(t, err)
+	tx := beginSeedTx(t, db)
 	for i := range 205 {
-		_, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: fmt.Sprintf("copy-%d", i), Agent: "test"})
+		_, err := db.insertJobTx(t.Context(), tx, EnqueueOpts{RepoID: repo.ID, GitRef: fmt.Sprintf("copy-%d", i), Agent: "test"}, uuid.New(), machineID, time.Now())
 		require.NoError(t, err)
 	}
+	require.NoError(t, tx.Commit())
 	orphan := seedLegacyMarkdownReview(t, db, repo.ID, "orphan", "An orphan archive reserves its old ID.", 0, false)
 	require.NoError(t, db.migrateLegacyReviews())
 	_, err = db.ExecContext(t.Context(), `DELETE FROM review_jobs WHERE id = ?`, orphan.jobID)

@@ -323,7 +323,7 @@ func openLegacyContentDB(t *testing.T) (string, *DB) {
 	t.Helper()
 	require.NoError(t, registerContentFunctions())
 	path := filepath.Join(t.TempDir(), "reviews.db")
-	raw, err := sql.Open("sqlite", path)
+	raw, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)")
 	require.NoError(t, err)
 	db := &DB{DB: raw}
 	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:1]))
@@ -342,8 +342,9 @@ func TestMigrateJobContentMovesLegacyPayloads(t *testing.T) {
 	t.Parallel()
 	path, db := openLegacyContentDB(t)
 	repo := createRepo(t, db, t.TempDir())
+	tx := beginSeedTx(t, db)
 	insertJob := func(gitRef, jobType, prompt string, diff, patch any) int64 {
-		result, err := db.ExecContext(t.Context(), `INSERT INTO review_jobs (repo_id, git_ref, agent, status, job_type, prompt, diff_content, patch)
+		result, err := tx.ExecContext(t.Context(), `INSERT INTO review_jobs (repo_id, git_ref, agent, status, job_type, prompt, diff_content, patch)
 			VALUES (?, ?, 'codex', 'done', ?, ?, ?, ?)`, repo.ID, gitRef, jobType, prompt, diff, patch)
 		require.NoError(t, err)
 		id, err := result.LastInsertId()
@@ -351,7 +352,7 @@ func TestMigrateJobContentMovesLegacyPayloads(t *testing.T) {
 		return id
 	}
 	insertReview := func(jobID int64, prompt string) {
-		_, err := db.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, prompt, output, structured_output)
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, prompt, output, structured_output)
 			VALUES (?, 'codex', ?, '', ?)`, jobID, prompt, string(reviewFixtureJSON("No issues found.")))
 		require.NoError(t, err)
 	}
@@ -366,23 +367,24 @@ func TestMigrateJobContentMovesLegacyPayloads(t *testing.T) {
 	// A rerun that failed before saving its prompt keeps only the archived
 	// review of its earlier attempt.
 	failedRerun := insertJob("k..l", JobTypeRange, "", nil, nil)
-	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'failed' WHERE id = ?`, failedRerun)
+	_, err := tx.ExecContext(t.Context(), `UPDATE review_jobs SET status = 'failed' WHERE id = ?`, failedRerun)
 	require.NoError(t, err)
 	// A partly finished earlier run left stale rows behind.
-	_, err = db.ExecContext(t.Context(), `CREATE TABLE job_content (job_id INTEGER PRIMARY KEY, prompt BLOB, diff_content BLOB, patch BLOB)`)
+	_, err = tx.ExecContext(t.Context(), `CREATE TABLE job_content (job_id INTEGER PRIMARY KEY, prompt BLOB, diff_content BLOB, patch BLOB)`)
 	require.NoError(t, err)
-	_, err = db.ExecContext(t.Context(), `INSERT INTO job_content (job_id, prompt) VALUES (?, zstd_compress('stale')), (?, zstd_compress('stale'))`,
+	_, err = tx.ExecContext(t.Context(), `INSERT INTO job_content (job_id, prompt) VALUES (?, zstd_compress('stale')), (?, zstd_compress('stale'))`,
 		fix, clearedSinceEarlierRun)
 	require.NoError(t, err)
-	_, err = db.ExecContext(t.Context(), `INSERT INTO legacy_reviews (job_id, agent, prompt, output, created_at, closed, migration_error)
+	_, err = tx.ExecContext(t.Context(), `INSERT INTO legacy_reviews (job_id, agent, prompt, output, created_at, closed, migration_error)
 		VALUES (?, 'codex', 'earlier attempt prompt', 'archived output', datetime('now'), 0, 'pending')`, failedRerun)
 	require.NoError(t, err)
-	_, err = db.ExecContext(t.Context(), `INSERT INTO legacy_reviews (job_id, agent, prompt, output, created_at, closed, migration_error)
+	_, err = tx.ExecContext(t.Context(), `INSERT INTO legacy_reviews (job_id, agent, prompt, output, created_at, closed, migration_error)
 		VALUES (?, 'codex', 'archived prompt', 'archived output', datetime('now'), 0, 'pending')`, withJobPrompt)
 	require.NoError(t, err)
-	_, err = db.ExecContext(t.Context(), `INSERT INTO legacy_reviews (job_id, agent, prompt, output, created_at, closed, migration_error)
+	_, err = tx.ExecContext(t.Context(), `INSERT INTO legacy_reviews (job_id, agent, prompt, output, created_at, closed, migration_error)
 		VALUES (?, 'codex', 'only the archive kept this prompt', 'archived output', datetime('now'), 0, 'pending')`, archivedOnly)
 	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
 	require.NoError(t, db.Close())
 
 	for range 2 {
@@ -426,15 +428,16 @@ func TestMigrateJobContentRestoresPanelMemberInstructions(t *testing.T) {
 	t.Parallel()
 	path, db := openLegacyContentDB(t)
 	repo := createRepo(t, db, t.TempDir())
+	tx := beginSeedTx(t, db)
 	insertMember := func(prebuilt bool, config string) int64 {
-		result, err := db.ExecContext(t.Context(), `INSERT INTO review_jobs (repo_id, git_ref, agent, status, job_type, prompt,
+		result, err := tx.ExecContext(t.Context(), `INSERT INTO review_jobs (repo_id, git_ref, agent, status, job_type, prompt,
 				prompt_prebuilt, panel_role, panel_name, panel_member_name, panel_member_config_json)
 			VALUES (?, 'a..b', 'codex', 'done', 'range', 'review the diff in {{diff_file}}', ?, 'member', 'ci', 'security', ?)`,
 			repo.ID, prebuilt, config)
 		require.NoError(t, err)
 		id, err := result.LastInsertId()
 		require.NoError(t, err)
-		_, err = db.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, prompt, output, structured_output)
+		_, err = tx.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, prompt, output, structured_output)
 			VALUES (?, 'codex', 'review the diff in /tmp/snapshot.diff plus instructions', '', ?)`,
 			id, string(reviewFixtureJSON("No issues found.")))
 		require.NoError(t, err)
@@ -443,6 +446,7 @@ func TestMigrateJobContentRestoresPanelMemberInstructions(t *testing.T) {
 	prebuilt := insertMember(true, `{"name":"security","instructions":"Focus on SQL injection."}`)
 	withoutInstructions := insertMember(true, `{"name":"security"}`)
 	unparseable := insertMember(true, `not json`)
+	require.NoError(t, tx.Commit())
 	require.NoError(t, db.Close())
 
 	for range 2 {
@@ -466,8 +470,9 @@ func TestMigrateJobContentTakesPulledJobPromptFromLatestReview(t *testing.T) {
 	t.Parallel()
 	path, db := openLegacyContentDB(t)
 	repo := createRepo(t, db, t.TempDir())
+	tx := beginSeedTx(t, db)
 	local, remote := testUUID("local-machine"), testUUID("remote-machine")
-	_, err := db.ExecContext(t.Context(), `INSERT OR REPLACE INTO sync_state (key, value) VALUES ('machine_id', ?)`, local)
+	_, err := tx.ExecContext(t.Context(), `INSERT OR REPLACE INTO sync_state (key, value) VALUES ('machine_id', ?)`, local)
 	require.NoError(t, err)
 	const handoff = "Read the complete task prompt from \"/tmp/roborev-snapshot/prompt.md\" and carry out " +
 		"its instructions. Read the file in full before starting.\n"
@@ -475,7 +480,7 @@ func TestMigrateJobContentTakesPulledJobPromptFromLatestReview(t *testing.T) {
 	// its prompt; the review, or its archived copy, belongs to the
 	// successful rerun.
 	insertRerunJob := func(machine any, jobType string) int64 {
-		result, err := db.ExecContext(t.Context(), `INSERT INTO review_jobs (repo_id, git_ref, agent, status, job_type, prompt, source_machine_id)
+		result, err := tx.ExecContext(t.Context(), `INSERT INTO review_jobs (repo_id, git_ref, agent, status, job_type, prompt, source_machine_id)
 			VALUES (?, 'a..b', 'codex', 'done', ?, 'failed attempt prompt', ?)`, repo.ID, jobType, machine)
 		require.NoError(t, err)
 		id, err := result.LastInsertId()
@@ -483,12 +488,12 @@ func TestMigrateJobContentTakesPulledJobPromptFromLatestReview(t *testing.T) {
 		return id
 	}
 	addReview := func(jobID int64, prompt string) {
-		_, err := db.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, prompt, output, structured_output)
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, prompt, output, structured_output)
 			VALUES (?, 'codex', ?, '', ?)`, jobID, prompt, string(reviewFixtureJSON("No issues found.")))
 		require.NoError(t, err)
 	}
 	addArchivedReview := func(jobID int64, prompt string) {
-		_, err := db.ExecContext(t.Context(), `INSERT INTO legacy_reviews (job_id, agent, prompt, output, created_at, closed, migration_error)
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO legacy_reviews (job_id, agent, prompt, output, created_at, closed, migration_error)
 			VALUES (?, 'codex', ?, 'archived output', datetime('now'), 0, 'pending')`, jobID, prompt)
 		require.NoError(t, err)
 	}
@@ -510,6 +515,7 @@ func TestMigrateJobContentTakesPulledJobPromptFromLatestReview(t *testing.T) {
 	addReview(pulledTask, "successful rerun prompt")
 	localRange := insertRerunJob(local, JobTypeRange)
 	addReview(localRange, "successful rerun prompt")
+	require.NoError(t, tx.Commit())
 	require.NoError(t, db.Close())
 
 	db, err = Open(path)
@@ -535,12 +541,13 @@ func TestMigrateJobContentMarksLocalPromptsForSync(t *testing.T) {
 	assert := assert.New(t)
 	path, db := openLegacyContentDB(t)
 	repo := createRepo(t, db, t.TempDir())
+	tx := beginSeedTx(t, db)
 	machine := testUUID("local-machine")
-	_, err := db.ExecContext(t.Context(), `INSERT OR REPLACE INTO sync_state (key, value) VALUES ('machine_id', ?)`, machine)
+	_, err := tx.ExecContext(t.Context(), `INSERT OR REPLACE INTO sync_state (key, value) VALUES ('machine_id', ?)`, machine)
 	require.NoError(t, err)
 	synced := "2026-09-01T12:00:00Z"
 	insertSyncedJob := func(label string, owner uuid.UUID, jobPrompt, reviewPrompt string) int64 {
-		result, err := db.ExecContext(t.Context(), `INSERT INTO review_jobs (uuid, repo_id, git_ref, agent, status, job_type, prompt,
+		result, err := tx.ExecContext(t.Context(), `INSERT INTO review_jobs (uuid, repo_id, git_ref, agent, status, job_type, prompt,
 				source_machine_id, updated_at, synced_at, finished_at)
 			VALUES (?, ?, 'a..b', 'codex', 'done', 'range', ?, ?, ?, ?, ?)`,
 			testUUID(label), repo.ID, jobPrompt, owner, synced, synced, synced)
@@ -549,7 +556,7 @@ func TestMigrateJobContentMarksLocalPromptsForSync(t *testing.T) {
 		require.NoError(t, err)
 		// This machine changed each review after the last sync, for example
 		// by closing it.
-		_, err = db.ExecContext(t.Context(), `INSERT INTO reviews (uuid, job_id, agent, prompt, output, structured_output,
+		_, err = tx.ExecContext(t.Context(), `INSERT INTO reviews (uuid, job_id, agent, prompt, output, structured_output,
 				closed, updated_by_machine_id, updated_at, synced_at)
 			VALUES (?, ?, 'codex', ?, '', ?, 1, ?, ?, ?)`, testUUID(label+"-review"), id, reviewPrompt,
 			string(reviewFixtureJSON("No issues found.")), machine, "2026-09-02T12:00:00Z", synced)
@@ -570,13 +577,14 @@ func TestMigrateJobContentMarksLocalPromptsForSync(t *testing.T) {
 	var localFixes []int64
 	for _, status := range []string{"applied", "rebased"} {
 		id := insertSyncedJob(status, machine, "fix prompt", "fix result prompt")
-		_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET job_type = 'fix', status = ? WHERE id = ?`, status, id)
+		_, err := tx.ExecContext(t.Context(), `UPDATE review_jobs SET job_type = 'fix', status = ? WHERE id = ?`, status, id)
 		require.NoError(t, err)
 		localFixes = append(localFixes, id)
 	}
 	// A job pulled from another machine takes its review's prompt, but this
 	// machine never pushes it, so its sync marker must stay.
 	pulled := insertSyncedJob("pulled", testUUID("remote-machine"), "failed attempt prompt", "rerun prompt")
+	require.NoError(t, tx.Commit())
 	require.NoError(t, db.Close())
 
 	db, err = Open(path)
