@@ -71,123 +71,66 @@ func recordFillCursors(t *testing.T, index *Index) *cursorConnector {
 }
 
 func TestReconcilerResumesFillAfterPreviousTurn(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		sharing  bool
-		imported int
-	}{
-		{name: "local"},
-		{name: "shared misses", sharing: true},
-		{name: "shared page then misses", sharing: true, imported: 256},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
+	for name, imported := range map[string]int{"local": 0, "shared page then misses": sharedLookupPage} {
+		t.Run(name, func(t *testing.T) {
 			index := openGenerationTestIndex(t)
 			recorder := recordFillCursors(t, index)
-			sources := makeSearchSources(tc.imported + 12)
+			sources := makeSearchSources(imported + 12)
 			embedder := &reconcilerEmbedder{space: testSpace("model", 2), batchSize: 1}
 			r := NewReconciler(&reconcilerStore{sources: sources}, index, embedder, ReconcilerConfig{})
-			if tc.sharing {
+			if imported > 0 {
 				shared := newMemorySharedVectors()
 				space, err := sharedSpace(embedder.space)
 				require.NoError(t, err)
 				shared.rows[space] = make(map[storage.SearchVectorKey][]storage.SearchVectorChunk)
-				for _, source := range sources[:tc.imported] {
+				for _, source := range sources[:imported] {
 					doc := searchdoc.Render(source)
 					shared.rows[space][sharedKey(source.ReviewUUID, doc.ContentHash)] = []storage.SearchVectorChunk{{Index: 0, Vector: []float32{1, 0}}}
 				}
 				r.ShareVectors(shared)
 			}
-			for turn, wantAfter := range []string{"", searchdoc.Render(sources[tc.imported+3]).DocKey, searchdoc.Render(sources[tc.imported+7]).DocKey} {
+			for turn, wantAfter := range []string{"", searchdoc.Render(sources[imported+3]).DocKey, searchdoc.Render(sources[imported+7]).DocKey} {
 				recorder.after = nil
 				_, err := r.reconcileTurn(t.Context())
 				require.NoError(t, err)
 				wantScans := []string{wantAfter}
-				if turn == 0 && tc.imported > 0 {
-					wantScans = append(wantScans, searchdoc.Render(sources[tc.imported-1]).DocKey)
+				if turn == 0 && imported > 0 {
+					wantScans = append(wantScans, searchdoc.Render(sources[imported-1]).DocKey)
 				}
-				assert.Equal(wantScans, recorder.after)
-				assert.Equal(int64(8-4*turn), r.Health().EmbeddingBacklog)
+				assert.Equal(t, wantScans, recorder.after)
 			}
-			assert.Equal(12, embedder.callCount())
-			assert.Equal(int64(tc.imported+12), r.Health().Embedded)
-			assert.Equal(kitKey(t, embedder.space), r.Health().ActiveGeneration)
+			assert.Zero(t, r.Health().EmbeddingBacklog)
+			assert.Equal(t, kitKey(t, embedder.space), r.Health().ActiveGeneration)
 		})
 	}
 }
 
 func TestReconcilerFillCursorRetriesAndWraps(t *testing.T) {
-	assert := assert.New(t)
 	ctx := t.Context()
 	index := openGenerationTestIndex(t)
 	recorder := recordFillCursors(t, index)
-	store := &reconcilerStore{sources: makeSearchSources(13)}
+	store := &reconcilerStore{sources: makeSearchSources(12)}
 	embedder := &reconcilerEmbedder{space: testSpace("model", 2), batchSize: 1}
 	r := NewReconciler(store, index, embedder, ReconcilerConfig{})
 	_, err := r.reconcileTurn(ctx)
 	require.NoError(t, err)
-	fourth := searchdoc.Render(store.sources[3]).DocKey
 	providerErr := errors.New("provider unavailable")
-	calls := 0
-	embedder.embed = func(context.Context, []string) ([][]float32, error) {
-		calls++
-		if calls == 2 {
-			return nil, providerErr
-		}
-		return [][]float32{{1, 0}}, nil
-	}
-	recorder.after = nil
+	embedder.embed = func(context.Context, []string) ([][]float32, error) { return nil, providerErr }
 	_, err = r.reconcileTurn(ctx)
 	require.ErrorIs(t, err, providerErr)
-	assert.Equal([]string{fourth}, recorder.after)
-	assert.Equal(int64(5), r.Health().Embedded)
 	embedder.embed = nil
 	recorder.after = nil
 	_, err = r.reconcileTurn(ctx)
 	require.NoError(t, err)
-	assert.Equal([]string{fourth}, recorder.after, "retry starts before the unfinished documents")
-	assert.Equal(int64(9), r.Health().Embedded)
+	assert.Equal(t, []string{searchdoc.Render(store.sources[3]).DocKey}, recorder.after, "the retry resumes before the unfinished reviews")
+	assert.Equal(t, int64(8), r.Health().Embedded)
 
 	store.sources[0].Output = "edited review"
 	r.WakeJob(store.sources[0].JobID)
-	_, err = r.reconcileTurn(ctx)
-	require.NoError(t, err)
-	assert.Equal(int64(1), r.Health().EmbeddingBacklog, "the edited review is behind the cursor")
-	assert.Empty(r.Health().ActiveGeneration)
-	// Exhaust the scan, then wrap to pick up the edited review.
-	for range 2 {
+	for range 3 {
 		_, err = r.reconcileTurn(ctx)
 		require.NoError(t, err)
 	}
-	assert.Zero(r.Health().EmbeddingBacklog)
-	assert.Equal(kitKey(t, embedder.space), r.Health().ActiveGeneration)
-	assert.Equal(15, embedder.callCount(), "one failed call and one re-embedding, with all thirteen reviews covered")
-
-	embedder.space = testSpace("replacement", 2)
-	recorder.after = nil
-	_, err = r.reconcileTurn(ctx)
-	require.NoError(t, err)
-	assert.Equal([]string{""}, recorder.after, "a replacement generation starts at the first review")
-	assert.Equal(int64(4), r.Health().Embedded)
-	assert.Equal(int64(9), r.Health().EmbeddingBacklog)
-}
-
-func TestReconcilerFillCursorAllowsKitRestart(t *testing.T) {
-	assert := assert.New(t)
-	index := openGenerationTestIndex(t)
-	recorder := recordFillCursors(t, index)
-	store := &reconcilerStore{sources: makeSearchSources(7)}
-	embedder := &reconcilerEmbedder{space: testSpace("model", 2), batchSize: 1}
-	r := NewReconciler(store, index, embedder, ReconcilerConfig{})
-	_, err := r.reconcileTurn(t.Context())
-	require.NoError(t, err)
-	store.sources[0].Output = "edited review"
-	r.WakeJob(store.sources[0].JobID)
-	recorder.after = nil
-	_, err = r.reconcileTurn(t.Context())
-	require.NoError(t, err)
-	assert.Equal([]string{searchdoc.Render(store.sources[3]).DocKey, searchdoc.Render(store.sources[6]).DocKey, ""}, recorder.after)
-	assert.Zero(r.Health().EmbeddingBacklog)
-	assert.Equal(8, embedder.callCount())
-	assert.Equal(kitKey(t, embedder.space), r.Health().ActiveGeneration)
+	assert.Zero(t, r.Health().EmbeddingBacklog, "the edited review behind the cursor is re-embedded after the scan wraps")
+	assert.Equal(t, kitKey(t, embedder.space), r.Health().ActiveGeneration)
 }

@@ -164,9 +164,6 @@ func newSharingStore(store vector.Store[string, string], index *Index, shared Sh
 // consisting entirely of shared hits.
 func (s *sharingStore) PendingForGeneration(ctx context.Context, gen string, after *string, limit int) ([]vector.Pending[string], error) {
 	for {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
 		pending, err := s.Store.PendingForGeneration(ctx, gen, after, max(limit, sharedLookupPage))
 		if err != nil {
 			return nil, err
