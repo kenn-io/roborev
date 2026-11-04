@@ -21,7 +21,7 @@ func TestOpenRetriesInterruptedHistoricalReviewMigration(t *testing.T) {
 	_, err = db.ExecContext(t.Context(), `DELETE FROM sync_state WHERE key = ?`, SyncStateHistoricalReviewsMigrated)
 	require.NoError(t, err)
 	fixture := seedLegacyMarkdownReview(t, db, repo.ID, "retry", "", nil, false)
-	_, err = db.ExecContext(t.Context(), `UPDATE reviews SET structured_output = '{"schema_version":2,"summary":"Clean review.","verdict":"pass","findings":[]}' WHERE job_id = ?`, fixture.jobID)
+	_, err = db.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ? WHERE job_id = ?`, string(reviewFixtureJSON("No issues found.")), fixture.jobID)
 	require.NoError(t, err)
 	_, err = db.ExecContext(t.Context(), `CREATE TRIGGER stop_open_backfill BEFORE UPDATE OF verdict_bool ON reviews
  BEGIN SELECT RAISE(ABORT, 'stop verdict backfill'); END`)
@@ -65,7 +65,7 @@ func TestOpenSkipsHistoricalReviewStepsAfterCompletion(t *testing.T) {
 	// Synthetic probes make each skipped step observable after completion.
 	second := seedLegacyMarkdownReview(t, db, repo.ID, "second", legacyNoIssuesMarkdown, nil, false)
 	third := seedLegacyMarkdownReview(t, db, repo.ID, "third", "", nil, false)
-	_, err = db.ExecContext(t.Context(), `UPDATE reviews SET structured_output = '{"schema_version":2,"summary":"Clean review.","verdict":"pass","findings":[]}' WHERE job_id = ?`, third.jobID)
+	_, err = db.ExecContext(t.Context(), `UPDATE reviews SET structured_output = ? WHERE job_id = ?`, string(reviewFixtureJSON("No issues found.")), third.jobID)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 	db, err = Open(path)
