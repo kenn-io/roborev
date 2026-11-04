@@ -217,7 +217,7 @@ func TestStateStoreResetPersistsSelectedSession(t *testing.T) {
 	store := &StateStore{
 		path: StatePath(),
 		sessions: map[string]SessionState{
-			"session-1": {Count: 1},
+			"session-1": {Count: 1, LastSeenAt: time.Now().UTC()},
 			"session-2": {Count: 2, LastSeenAt: time.Now().UTC()},
 		},
 		fixSessions: map[string]FixSession{
@@ -241,7 +241,7 @@ func TestStateStoreResetPersistsSelectedSession(t *testing.T) {
 func TestStateStoreResetRollsBackWhenSaveFails(t *testing.T) {
 	store := &StateStore{
 		path:     t.TempDir(),
-		sessions: map[string]SessionState{"session-1": {Count: 2}},
+		sessions: map[string]SessionState{"session-1": {Count: 2, LastSeenAt: time.Now().UTC()}},
 	}
 
 	err := store.Reset("session-1", false)
