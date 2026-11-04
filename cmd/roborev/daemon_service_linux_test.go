@@ -381,7 +381,7 @@ func TestEnsureDaemonReadsOwnershipBeforeProbe(t *testing.T) {
 		getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return discovered, nil }
 		getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
 		var events []string
-		daemonCgroupUnit = func(pid int) (string, error) {
+		daemonServiceUnit = func(pid int) (string, error) {
 			assert.Equal(t, discovered.PID, pid)
 			events = append(events, "cgroup")
 			return "", nil

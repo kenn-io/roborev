@@ -1835,9 +1835,9 @@ retrying.
 
 !!! warning "Use `--no-daemon` with system services"
 
-    If you manage the daemon with systemd or launchd, use `roborev init --no-daemon`
-    when registering repos. Otherwise, `roborev init` auto-starts a background
-    daemon that conflicts with the service-managed one.
+    Use `roborev init --no-daemon` when registering repos before a system service
+    has started. A running service-owned daemon is reused; starting a detached
+    daemon before loading the service can still create a conflict.
 
 **macOS (launchd):**
 
@@ -1877,7 +1877,7 @@ cat > ~/Library/LaunchAgents/com.roborev.daemon.plist << EOF
 </plist>
 EOF
 
-launchctl load ~/Library/LaunchAgents/com.roborev.daemon.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.roborev.daemon.plist
 ```
 
 The heredoc expands `${ROBOREV_BIN}`, `${BREW_PREFIX}`, and `${HOME}` at
@@ -1894,64 +1894,68 @@ files, enable the user-level service:
 systemctl --user enable --now roborev
 ```
 
-Ordinary CLI commands replace an outdated daemon, or one that stops responding
-after discovery, through its owning user service after active reviews finish:
+Automatic replacement supports non-transient user services with `Type=simple`,
+`Type=exec`, or `Type=notify`, without `RemainAfterExit=yes`. Other unit types
+require the manual restart command printed by the CLI. On Linux, a CLI whose
+binary was replaced after it started counts as another installation. A stable
+symlink still identifies an installation after an upgrade retargets it.
+
+### Service-managed recovery
+
+On macOS and Linux, ordinary CLI commands replace an outdated daemon, or one
+that stops responding after discovery, through its owning service after active
+reviews finish. `roborev daemon restart` and `roborev update` use the owning
+service too.
+
+| Manager | Ownership check | Start replacement | Manual restart |
+| --- | --- | --- | --- |
+| launchd | Process service label, confirmed against the job PID and ancestry in `gui`, `user` and `system` domains | `launchctl kickstart <target>` | `launchctl kickstart -k <target>` |
+| systemd | User service cgroup, confirmed against `MainPID` and ancestry | `systemctl --user start <unit>` | `systemctl --user restart <unit>` |
 
 1. Under the start lock, the command rediscovers the daemon and reuses a
     responsive replacement already running this CLI's version.
 1. The command holding the lock waits for active reviews to drain with no time
-    limit. Competing commands wait for that drain, then reuse the replacement.
-1. It runs `systemctl --user start` for the unit and waits up to two minutes
-    until a responsive daemon is the unit's `MainPID`. If socket activation
-    already started a replacement, `start` leaves it running.
+    limit. Competing recovery commands wait for that drain, then reuse the
+    replacement.
+1. It starts the service and waits up to two minutes for a responsive daemon
+    that is the service's main process. The start command leaves an already
+    running replacement alone.
 
-Automatic replacement applies when the daemon is the main process of a
-non-transient user service with `Type=simple`, `Type=exec`, or `Type=notify`,
-and its configured `ExecStart` path resolves to the CLI's executable file. A CLI
-process whose binary was replaced after it started counts as another
-installation. A stable symlink still identifies the installation after an
-upgrade retargets it and removes the old binary; atomic package replacements
-also retain their identity. For `RemainAfterExit=yes`, transient units, and
-other unsupported service types, a responsive daemon stays usable and the
-command prints a manual restart command. If that daemon stops responding,
-commands report the service failure and restart guidance; `status` reports its
-current liveness and the failure.
+Automatic replacement requires the daemon to be the service's main process and
+its configured program to resolve to the CLI's executable file. Wrapper children
+and daemons from other installations stay in use while they respond; otherwise
+the CLI reports an error and a manual restart command. Explicit restart and
+update refuse these replacements before shutting the daemon down. If ownership
+cannot be confirmed, ordinary commands retain a responsive daemon and explain
+why recovery was skipped; an unresponsive daemon reports the ownership error.
+Update stops before shutdown when ownership is uncertain.
 
-These daemons stay in use while they respond and report an error otherwise:
+On macOS, lookup uses `XPC_SERVICE_NAME` when present. If a wrapper removes it,
+the CLI matches loaded jobs against the daemon's process ancestry before
+allowing detached recovery. Wrapper children stay in use or require manual
+attention. The CLI reads the loaded job's program, rather than an on-disk plist.
+If launchd's diagnostic output cannot be read, recovery fails closed. A non-root
+caller cannot automatically replace a `system/` job; the printed manual command
+includes `sudo`. After `daemon stop`, launchd may start the job again. Use the
+printed `launchctl bootout <target>` command to unload it permanently for that
+login session.
 
-- A daemon from another installation.
-- A daemon started as a child of the unit's main process, such as by a wrapper
-    script.
-
-A daemon that only shares a unit's cgroup uses ordinary detached recovery. For
-example, `roborev daemon start` in a `Type=oneshot` unit with
-`RemainAfterExit=yes` leaves a daemon that is not the unit's main process. With
-`Type=forking`, systemd tracks the forked daemon as the main process, so it
-counts as an unsupported service type. If the user service manager is
-unavailable, a responsive daemon stays running; the command explains why
-recovery was skipped. A responsive daemon that the service cannot replace stays
-in use without waiting for another command's recovery.
-
-Commands read the daemon's cgroup when they first find it. If the original PID
-disappears before ownership lookup and no replacement responds, recovery uses
-ordinary detached startup when the daemon ran outside every user service or the
-user manager cannot answer. Otherwise recovery waits up to two minutes for a
-managed replacement.
+A detached daemon that only inherited a service label, or only shares a systemd
+cgroup without descending from the main process, uses ordinary detached
+recovery. If a PID disappears before ownership lookup, recovery waits for a
+managed replacement unless the initial lookup proved it was outside a service or
+no user manager is available.
 
 Before managed recovery drains reviews or starts the service, local
-`roborev daemon pause` must save the pause through the current daemon, even if
-the initial version check failed. If rediscovery misses the daemon, the command
-tries its last known runtime API unless ownership lookup confirms the process
-has exited. In that case, recovery returns an error without dialing an
-activation socket that could start unpaused workers. This keeps replacement
-workers from claiming queued jobs. If the pause write fails, recovery returns an
-error before draining reviews or starting the service. If recovery fails after
-saving the pause, the queue stays paused until `unpause`. Once a daemon is
-ready, the CLI applies the requested state through the API, including when a
-healthy current daemon stays running. A cold detached start applies the
-requested state before its workers start. Explicit `--server` requests stay
-API-only. Explicit `daemon restart` and the restart after `roborev update` keep
-their separate detached-start workflows.
+`roborev daemon pause` must save the pause through the current daemon. If the
+pause write fails or the process has exited, recovery returns an error before
+starting a service that might claim queued jobs. A saved pause persists across
+replacement and stays set if recovery later fails. Once a daemon is ready, the
+CLI applies the requested state through the API. A cold detached start applies
+the requested state before workers start. Explicit `--server` requests stay
+API-only.
+
+**Linux socket activation:**
 
 For on-demand startup via socket activation, enable the socket unit instead. The
 daemon starts automatically when a client connects and uses `Type=notify` to

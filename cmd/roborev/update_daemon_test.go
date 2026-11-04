@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -261,7 +262,7 @@ func TestRestartAndVerifyUpdatedDaemonStartsAndChecksVersion(t *testing.T) {
 
 	err := restartAndVerifyUpdatedDaemon(
 		t.Context(), "/tmp/bin", "0.65.0",
-		&daemon.RuntimeInfo{PID: 100},
+		&daemon.RuntimeInfo{PID: 100}, nil,
 	)
 
 	require.NoError(t, err)
@@ -303,7 +304,7 @@ func TestRestartAndVerifyUpdatedDaemonWaitsBeyondReadinessTimeoutForShutdown(
 	defer cancel()
 
 	err := restartAndVerifyUpdatedDaemon(
-		ctx, "/tmp/bin", "0.65.0", &daemon.RuntimeInfo{PID: 100},
+		ctx, "/tmp/bin", "0.65.0", &daemon.RuntimeInfo{PID: 100}, nil,
 	)
 
 	require.NoError(t, err)
@@ -318,7 +319,7 @@ func TestRestartAndVerifyUpdatedDaemonRejectsWrongVersion(t *testing.T) {
 
 	err := restartAndVerifyUpdatedDaemon(
 		t.Context(), "/tmp/bin", "v0.65.0",
-		&daemon.RuntimeInfo{PID: 100},
+		&daemon.RuntimeInfo{PID: 100}, nil,
 	)
 
 	require.Error(t, err)
@@ -351,4 +352,28 @@ func waitForUpdateTestSignal(ch <-chan struct{}, timeout time.Duration) bool {
 	case <-time.After(timeout):
 		return false
 	}
+}
+
+func TestRestartUpdatedDaemonThroughService(t *testing.T) {
+	stubServiceRecovery(t)
+	stubs := stubRestartVars(t)
+	started := false
+	replacement := &daemon.RuntimeInfo{PID: 200, Version: "v-new"}
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		if started {
+			return replacement, nil
+		}
+		return nil, os.ErrNotExist
+	}
+	getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return replacement, nil }
+	serviceMainPID = func(context.Context, string) (int, error) { return 200, nil }
+	startDaemonService = func(_ context.Context, unit string) error {
+		assert.Equal(t, "fixture.service", unit)
+		started = true
+		return nil
+	}
+	err := restartAndVerifyUpdatedDaemon(t.Context(), "/fixture/bin", "v-new", &daemon.RuntimeInfo{PID: 100}, &daemonService{unit: "fixture.service"})
+	require.NoError(t, err)
+	assert.True(t, started)
+	assert.Zero(t, stubs.startCalls, "managed updates must never spawn a detached daemon")
 }

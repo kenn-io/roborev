@@ -28,6 +28,7 @@ import (
 var (
 	daemonEnsure   = ensureDaemon
 	daemonStop     = stopDaemon
+	daemonRestart  = restartDaemon
 	daemonDiscover = uiRuntimeInfo
 )
 
@@ -174,13 +175,8 @@ func daemonCmd() *cobra.Command {
 		Use:   "restart",
 		Short: "Restart the daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			wasRunning := true
-			if err := daemonStop(); errors.Is(err, ErrDaemonNotRunning) {
-				wasRunning = false
-			} else if err != nil {
-				return err
-			}
-			if err := daemonEnsure(); err != nil {
+			wasRunning, err := daemonRestart(cmd.Context())
+			if err != nil {
 				return err
 			}
 			if wasRunning {

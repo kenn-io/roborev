@@ -119,7 +119,7 @@ func prepareLegacyUpdateDaemon(
 	return session, nil
 }
 
-func newUpdateAPI(endpoint daemon.DaemonEndpoint) (*roborevclient.Client, error) {
+var newUpdateAPI = func(endpoint daemon.DaemonEndpoint) (*roborevclient.Client, error) {
 	return roborevclient.NewWithHTTPClient(
 		endpoint.BaseURL(), endpoint.HTTPClient(5*time.Second),
 	)
@@ -363,6 +363,7 @@ func restartAndVerifyUpdatedDaemon(
 	binDir string,
 	expectedVersion string,
 	previous *daemon.RuntimeInfo,
+	owner *daemonService,
 ) error {
 	if previous == nil {
 		return nil
@@ -371,7 +372,11 @@ func restartAndVerifyUpdatedDaemon(
 	if err != nil {
 		return err
 	}
-	if replacementPID == 0 {
+	if owner != nil {
+		if err := startAndAwaitService(ctx, owner); err != nil {
+			return err
+		}
+	} else if replacementPID == 0 {
 		if err := startUpdatedDaemon(binDir); err != nil {
 			return fmt.Errorf("start updated daemon: %w", err)
 		}

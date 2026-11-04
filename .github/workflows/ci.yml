@@ -311,6 +311,7 @@ jobs:
         if: matrix.os == 'macos-latest'
         env:
           SUITE: ${{ matrix.shard || matrix.os }}
+          ROBOREV_TEST_LAUNCHD: '1'
         run: |
           # Go's race detector can intermittently hang/crash while spawning child
           # processes on darwin/arm64; Linux keeps the race coverage for CI.

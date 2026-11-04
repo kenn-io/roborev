@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -21,10 +23,14 @@ import (
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/update"
 	"go.kenn.io/roborev/internal/version"
+	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
 func stubUpdateCommand(t *testing.T) *update.UpdateInfo {
 	t.Helper()
+	stubServiceRecovery(t)
+	findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
+	getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return getAnyRunningDaemon() }
 	originalCheck := checkForUpdateForCommand
 	originalPerform := performUpdateForCommand
 	originalPrepare := prepareUpdateDaemonForCommand
@@ -230,7 +236,7 @@ func TestUpdateCommandReportsRunningReviewWait(t *testing.T) {
 		return &daemon.RuntimeInfo{PID: 42, Network: endpoint.Network, Address: endpoint.Address}, nil
 	}
 	restartUpdatedDaemonForCommand = func(
-		context.Context, string, string, *daemon.RuntimeInfo,
+		context.Context, string, string, *daemon.RuntimeInfo, *daemonService,
 	) error {
 		return nil
 	}
@@ -259,7 +265,7 @@ func TestUpdateCommandCoordinatesDaemonThatAppearsBeforeInstall(t *testing.T) {
 		return runtimeInfo, nil
 	}
 	restartUpdatedDaemonForCommand = func(
-		_ context.Context, _ string, _ string, previous *daemon.RuntimeInfo,
+		_ context.Context, _ string, _ string, previous *daemon.RuntimeInfo, _ *daemonService,
 	) error {
 		restartCalls.Add(1)
 		assert.Same(t, runtimeInfo, previous)
@@ -289,7 +295,7 @@ func TestUpdateCommandCoordinatesDaemonThatAppearsAfterInstall(t *testing.T) {
 		return runtimeInfo, nil
 	}
 	restartUpdatedDaemonForCommand = func(
-		_ context.Context, _ string, _ string, previous *daemon.RuntimeInfo,
+		_ context.Context, _ string, _ string, previous *daemon.RuntimeInfo, _ *daemonService,
 	) error {
 		restartCalls.Add(1)
 		assert.Same(t, runtimeInfo, previous)
@@ -396,7 +402,7 @@ func TestUpdateCommandCancelAfterShutdownReportsFinishingState(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	restartUpdatedDaemonForCommand = func(
-		context.Context, string, string, *daemon.RuntimeInfo,
+		context.Context, string, string, *daemon.RuntimeInfo, *daemonService,
 	) error {
 		cancel()
 		return context.Canceled
@@ -424,7 +430,7 @@ func TestUpdateCommandRestartVerificationFailureSuppressesSuccess(t *testing.T) 
 		return &daemon.RuntimeInfo{PID: 42, Network: endpoint.Network, Address: endpoint.Address}, nil
 	}
 	restartUpdatedDaemonForCommand = func(
-		context.Context, string, string, *daemon.RuntimeInfo,
+		context.Context, string, string, *daemon.RuntimeInfo, *daemonService,
 	) error {
 		return errors.New("daemon version mismatch")
 	}
@@ -466,7 +472,7 @@ func TestUpdateCommandLegacyWaitStillVerifiesReplacement(t *testing.T) {
 		return nil
 	}
 	restartUpdatedDaemonForCommand = func(
-		_ context.Context, _ string, version string, previous *daemon.RuntimeInfo,
+		_ context.Context, _ string, version string, previous *daemon.RuntimeInfo, _ *daemonService,
 	) error {
 		restartCalls.Add(1)
 		assert.Equal(t, info.LatestVersion, version)
@@ -666,4 +672,155 @@ func updateDaemonHandler(
 func readRequestBody(r *http.Request) string {
 	body, _ := io.ReadAll(r.Body)
 	return string(body)
+}
+
+func TestUpdateCommandChecksServiceBeforeShutdown(t *testing.T) {
+	for _, outcome := range []string{"managed", "lookup before install", "lookup after install", "owner lost", "owner changed", "child", "foreign", "unsupported"} {
+		t.Run(outcome, func(t *testing.T) {
+			info := stubUpdateCommand(t)
+			binDir := t.TempDir()
+			target := updatedDaemonPath(binDir)
+			require.NoError(t, os.WriteFile(target, []byte("old binary"), 0o700))
+			var releaseCalls, shutdownCalls atomic.Int32
+			endpoint := updateTestEndpoint(t, updateDaemonHandler(0, nil, &releaseCalls, &shutdownCalls))
+			current := &daemon.RuntimeInfo{PID: 42, Network: endpoint.Network, Address: endpoint.Address}
+			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return current, nil }
+			owner := &daemonService{unit: "fixture.service", executable: target, mainPID: 42, serviceType: "simple"}
+			switch outcome {
+			case "child":
+				owner.mainPID = 41
+			case "foreign":
+				owner.executable = filepath.Join(t.TempDir(), "other")
+				require.NoError(t, os.WriteFile(owner.executable, nil, 0o700))
+			case "unsupported":
+				owner.remainAfterExit = true
+			}
+			installed, lookups, restarts := false, 0, 0
+			findDaemonService = func(context.Context, int) (*daemonService, error) {
+				lookups++
+				if outcome == "lookup before install" || outcome == "lookup after install" && installed {
+					return nil, errors.New("owner unavailable")
+				}
+				if installed && outcome == "owner lost" {
+					return nil, nil
+				}
+				if installed && outcome == "owner changed" {
+					changed := *owner
+					changed.unit = "replacement.service"
+					return &changed, nil
+				}
+				return owner, nil
+			}
+			performUpdateForCommand = func(context.Context, *update.UpdateInfo, update.Reporter) error { installed = true; return nil }
+			restartUpdatedDaemonForCommand = func(_ context.Context, _ string, _ string, previous *daemon.RuntimeInfo, got *daemonService) error {
+				restarts++
+				assert.Same(t, current, previous)
+				assert.Same(t, owner, got)
+				return nil
+			}
+			var out bytes.Buffer
+			err := runControlledUpdate(t.Context(), strings.NewReader(""), &out, info, binDir, policyWait, true, false)
+			if outcome == "managed" {
+				require.NoError(t, err)
+				assert.True(t, installed)
+				assert.Equal(t, 2, lookups)
+				assert.Equal(t, int32(1), shutdownCalls.Load())
+				assert.Equal(t, 1, restarts)
+			} else {
+				require.Error(t, err)
+				assert.Zero(t, shutdownCalls.Load())
+				assert.Zero(t, restarts)
+				if outcome == "unsupported" {
+					assert.EqualError(t, err, serviceDescription(owner.unit)+": RemainAfterExit=yes requires manual restart; run "+serviceRestartHint(owner.unit))
+				}
+				if outcome == "lookup after install" || outcome == "owner lost" || outcome == "owner changed" {
+					assert.True(t, installed)
+					assert.Equal(t, int32(1), releaseCalls.Load())
+				} else {
+					assert.False(t, installed)
+				}
+			}
+		})
+	}
+}
+
+// updateCommandTransport runs the protocol in process so synctest controls all
+// lease timers without a real socket keeping virtual time from advancing.
+type updateCommandTransport struct{ handler http.Handler }
+
+func (transport updateCommandTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	response := httptest.NewRecorder()
+	transport.handler.ServeHTTP(response, r)
+	return response.Result(), nil
+}
+
+func TestUpdateKeepsLeaseDuringFinalOwnershipLookup(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		info := stubUpdateCommand(t)
+		binDir := t.TempDir()
+		target := updatedDaemonPath(binDir)
+		require.NoError(t, os.WriteFile(target, nil, 0o700))
+		current := &daemon.RuntimeInfo{PID: 42, Network: "tcp", Address: "127.0.0.1:12345"}
+		getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return current, nil }
+		var installed atomic.Bool
+		var lastRenew atomic.Int64
+		lastRenew.Store(time.Now().UnixNano())
+		var renewalsDuringLookup atomic.Int32
+		baseHandler := updateDaemonHandler(0, nil, nil, nil)
+		transport := updateCommandTransport{handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/update/renew" {
+				lastRenew.Store(time.Now().UnixNano())
+				if installed.Load() {
+					renewalsDuringLookup.Add(1)
+				}
+			}
+			baseHandler.ServeHTTP(w, r)
+		})}
+		oldAPI := newUpdateAPI
+		t.Cleanup(func() { newUpdateAPI = oldAPI })
+		newUpdateAPI = func(endpoint daemon.DaemonEndpoint) (*roborevclient.Client, error) {
+			return roborevclient.NewWithHTTPClient(endpoint.BaseURL(), &http.Client{Transport: transport})
+		}
+		owner := &daemonService{unit: "fixture.service", executable: target, mainPID: current.PID, serviceType: "simple"}
+		findDaemonService = func(context.Context, int) (*daemonService, error) {
+			if installed.Load() {
+				// The daemon expires its update lease after 60 seconds. This
+				// lookup exceeds that lifetime without changing the lookup budget.
+				time.Sleep(61 * time.Second)
+				assert.Less(t, time.Since(time.Unix(0, lastRenew.Load())), 60*time.Second, "claim gate must remain held")
+				assert.Positive(t, renewalsDuringLookup.Load())
+			}
+			return owner, nil
+		}
+		performUpdateForCommand = func(context.Context, *update.UpdateInfo, update.Reporter) error {
+			installed.Store(true)
+			return nil
+		}
+		restartUpdatedDaemonForCommand = func(context.Context, string, string, *daemon.RuntimeInfo, *daemonService) error { return nil }
+		err := runControlledUpdate(t.Context(), strings.NewReader(""), io.Discard, info, binDir, policyWait, true, false)
+		require.NoError(t, err)
+	})
+}
+
+func TestUpdateReleasesRecoveryLockBeforeHookRepair(t *testing.T) {
+	info := stubUpdateCommand(t)
+	endpoint := updateTestEndpoint(t, updateDaemonHandler(0, nil, nil, nil))
+	current := &daemon.RuntimeInfo{PID: 42, Network: endpoint.Network, Address: endpoint.Address}
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return current, nil }
+	restartUpdatedDaemonForCommand = func(context.Context, string, string, *daemon.RuntimeInfo, *daemonService) error { return nil }
+	hookCalls := 0
+	repairHooksForUpdateCommand = func(ctx context.Context, _ string, _ repairHookRunner) error {
+		hookCalls++
+		// Hook repair can ensure/recover the daemon in its subprocess. Its
+		// parent must relinquish the start lock before waiting for that work.
+		release, acquired, err := daemon.RuntimeStore().TryAcquireStartLock(ctx)
+		require.NoError(t, err)
+		assert.True(t, acquired)
+		if acquired {
+			release()
+		}
+		return nil
+	}
+	require.NoError(t, runControlledUpdate(t.Context(), strings.NewReader(""), io.Discard, info, t.TempDir(), policyWait, true, false))
+	assert.Equal(t, 1, hookCalls)
 }

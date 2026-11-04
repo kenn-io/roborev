@@ -63,14 +63,11 @@ var (
 	startDaemonDetached         = startDetachedDaemon
 	stopDaemonForUpdate         = stopDaemon
 	startUpdatedDaemon          = func(binDir string) error {
-		newBinary := filepath.Join(binDir, "roborev")
-		if runtime.GOOS == "windows" {
-			newBinary += ".exe"
-		}
+		newBinary := updatedDaemonPath(binDir)
 		return kitdaemon.StartDetached(context.Background(), kitdaemon.StartDetachedOptions{
 			Executable: newBinary,
 			Args:       []string{"daemon", "run"},
-			Env:        filterGitEnv(os.Environ()),
+			Env:        filterDaemonEnv(os.Environ()),
 		})
 	}
 
@@ -462,7 +459,7 @@ func startDaemon() error {
 			if err := startDaemonDetached(ctx, detachedDaemonOptions{
 				Executable:      exe,
 				Args:            args,
-				Env:             filterGitEnv(os.Environ()),
+				Env:             filterDaemonEnv(os.Environ()),
 				Stdout:          stdout,
 				Stderr:          stderr,
 				RefuseEphemeral: os.Getenv("ROBOREV_TEST_ALLOW_AUTOSTART") != "1",
@@ -616,7 +613,20 @@ func openDetachedDaemonLogs() (*os.File, *os.File, func(), error) {
 // stopDaemon stops any running daemons.
 // Returns ErrDaemonNotRunning if no daemon runtime files are found.
 func stopDaemon() error {
-	return stopDaemonRuntimes(listAllRuntimes, daemon.KillDaemon, os.Stderr)
+	return stopDaemonRuntimes(listAllRuntimes, func(info *daemon.RuntimeInfo) error {
+		// Explicit stop still drains even if service lookup is unavailable. The
+		// lookup is advisory here, to explain a manager's subsequent respawn.
+		ctx, cancel := context.WithTimeout(context.Background(), daemonStartTimeout)
+		owner, _ := findDaemonService(ctx, info.PID)
+		cancel()
+		if err := daemon.KillDaemon(info); err != nil {
+			return err
+		}
+		if owner != nil && serviceStopHint(owner.unit) != "" {
+			fmt.Fprintf(os.Stderr, "%s may start it again; run %s to stop it\n", serviceDescription(owner.unit), serviceStopHint(owner.unit))
+		}
+		return nil
+	}, os.Stderr)
 }
 
 func stopDaemonRuntimes(list func() ([]*daemon.RuntimeInfo, error), drain func(*daemon.RuntimeInfo) error, out io.Writer) error {
@@ -649,4 +659,12 @@ func stopDaemonRuntimes(list func() ([]*daemon.RuntimeInfo, error), drain func(*
 	}
 
 	return lastErr
+}
+
+func updatedDaemonPath(binDir string) string {
+	path := filepath.Join(binDir, "roborev")
+	if runtime.GOOS == "windows" {
+		path += ".exe"
+	}
+	return path
 }

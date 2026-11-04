@@ -500,6 +500,13 @@ func runControlledUpdate(
 ) error {
 	var runningDaemon *daemon.RuntimeInfo
 	var session *updateDaemonSession
+	var serviceOwner *daemonService
+	var recoveryRelease func()
+	defer func() {
+		if recoveryRelease != nil {
+			recoveryRelease()
+		}
+	}()
 	confirmed := yes
 
 	if !noRestart {
@@ -569,7 +576,47 @@ func runControlledUpdate(
 			_, _ = session.release(releaseCtx)
 		}
 	}()
+	snapshotOwner := func(info *daemon.RuntimeInfo) error {
+		lookupCtx, cancel := context.WithTimeout(operationCtx, daemonStartTimeout)
+		defer cancel()
+		owner, err := findDaemonService(lookupCtx, info.PID)
+		if err != nil {
+			return err
+		}
+		if serviceOwner != nil && (owner == nil || owner.unit != serviceOwner.unit || owner.mainPID != serviceOwner.mainPID) {
+			return &managedRecoveryError{serviceOwner.unit, fmt.Errorf("daemon service ownership changed; run %s", serviceRestartHint(serviceOwner.unit))}
+		}
+		if owner != nil {
+			if reason := owner.keepReasonAt(info.PID, updatedDaemonPath(binDir)); reason != "" {
+				return managedRecoveryFromKeepReason(owner.unit, reason)
+			}
+		}
+		serviceOwner = owner
+		return nil
+	}
 	prepareDaemon := func(info *daemon.RuntimeInfo) error {
+		if recoveryRelease == nil {
+			release, err := acquireRecoveryLockContext(operationCtx)
+			if err != nil {
+				return fmt.Errorf("%w: %w", errRecoveryLock, err)
+			}
+			recoveryRelease = release
+			// A competing recovery may have replaced the initial discovery while
+			// this command waited for its drain. Prepare the current daemon only.
+			current, err := findDaemonForStart(operationCtx)
+			if err != nil {
+				return err
+			}
+			if current == nil {
+				return errors.New("daemon stopped responding before update preparation")
+			}
+			info = current
+			runningDaemon = current
+		}
+		if err := snapshotOwner(info); err != nil {
+			return err
+		}
+
 		prepared, err := prepareUpdateDaemonForCommand(
 			operationCtx,
 			info.Endpoint(),
@@ -662,6 +709,9 @@ func runControlledUpdate(
 	if session == nil {
 		printUpdatePhase(out, "Daemon", "not running")
 	} else {
+		if err := snapshotOwner(runningDaemon); err != nil {
+			return installedUpdateInterruption(session, preferHeartbeatFailure(err, heartbeatFailure))
+		}
 		stopHeartbeat()
 		if err := operationCtx.Err(); err != nil {
 			return installedUpdateInterruption(session, preferHeartbeatFailure(err, heartbeatFailure))
@@ -678,7 +728,7 @@ func runControlledUpdate(
 			}
 		}
 		if err := restartUpdatedDaemonForCommand(
-			operationCtx, binDir, info.LatestVersion, runningDaemon,
+			operationCtx, binDir, info.LatestVersion, runningDaemon, serviceOwner,
 		); err != nil {
 			if errors.Is(err, context.Canceled) || operationCtx.Err() != nil {
 				return installedUpdateInterruption(session, err)
@@ -690,6 +740,12 @@ func runControlledUpdate(
 		printUpdatePhase(out, "Daemon", "restarted ("+info.LatestVersion+")")
 	}
 
+	// Hook repair can ensure/recover the daemon in a subprocess. The handoff
+	// is complete; release its lock before waiting for that subprocess.
+	if recoveryRelease != nil {
+		recoveryRelease()
+		recoveryRelease = nil
+	}
 	if err := repairHooksForUpdateCommand(ctx, binDir, nil); err != nil {
 		printUpdatePhase(out, "Git hooks", "warning: "+err.Error())
 	} else {
@@ -797,8 +853,8 @@ Requires confirmation before making changes (use --yes to skip).
 Dev builds are not replaced by default. Use --force to install the latest
 official release over a dev build.
 
-Use --no-restart when daemon lifecycle is managed externally (for example,
-launchd or systemd).`,
+Use --no-restart when an external service manager that roborev does not
+detect controls the daemon lifecycle.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			policy, err := parseRunningReviewPolicy(runningPolicy)
 			if err != nil {
@@ -867,7 +923,7 @@ launchd or systemd).`,
 	cmd.Flags().BoolVar(&checkOnly, "check", false, "only check for updates, don't install")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip confirmation prompt")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "replace dev build with latest official release")
-	cmd.Flags().BoolVar(&noRestart, "no-restart", false, "skip daemon restart after update (for launchd/systemd-managed daemons)")
+	cmd.Flags().BoolVar(&noRestart, "no-restart", false, "skip daemon restart after update")
 	cmd.Flags().StringVar(&runningPolicy, "running", "", "when reviews are running: wait, interrupt, or abort")
 
 	return cmd

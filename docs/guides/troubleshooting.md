@@ -30,6 +30,20 @@ agent works, or set the agent's `*_cmd` config key to an absolute path.
 See [Diagnosing Setup](/docs/commands/#diagnosing-setup) for the full list of
 checks.
 
+For a service-managed recovery error, `roborev status --json` includes the
+failure in `error`. Inspect the owning service to check its process and logs:
+
+```bash
+# macOS (use the target printed in the error if it differs)
+launchctl print gui/$(id -u)/com.roborev.daemon
+# Linux
+systemctl --user status roborev
+```
+
+The error prints a manual restart command when automatic replacement is not
+safe. An ownership lookup error during update leaves the running daemon in place
+instead of starting a detached copy.
+
 ## Missing or unstructured reviews after upgrade
 
 Version 0.68.0 archived historical reviews that it could not convert to JSON,

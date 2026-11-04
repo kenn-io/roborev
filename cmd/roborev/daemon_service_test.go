@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,16 +22,99 @@ func stubServiceRecovery(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	oldOut, oldVerbose := lifecycleOut, verbose
 	oldFind, oldMainPID, oldStart, oldDrain := findDaemonService, serviceMainPID, startDaemonService, drainManagedDaemon
-	oldCgroup := daemonCgroupUnit
+	oldCgroup := daemonServiceUnit
 	oldDiscovery, oldEnsure, oldDetached := getAnyRunningDaemonForStart, startDaemonForEnsure, startDaemonDetached
 	oldPause := pendingStartPause
 	t.Cleanup(func() {
 		lifecycleOut, verbose = oldOut, oldVerbose
 		findDaemonService, serviceMainPID, startDaemonService, drainManagedDaemon = oldFind, oldMainPID, oldStart, oldDrain
-		daemonCgroupUnit = oldCgroup
+		daemonServiceUnit = oldCgroup
 		getAnyRunningDaemonForStart, startDaemonForEnsure, startDaemonDetached = oldDiscovery, oldEnsure, oldDetached
 		pendingStartPause = oldPause
 	})
+}
+
+func TestRestartManagedDaemon(t *testing.T) {
+	for _, outcome := range []string{"replace", "child", "foreign", "unsupported", "lookup error", "unresponsive"} {
+		t.Run(outcome, func(t *testing.T) {
+			stubServiceRecovery(t)
+			executable, err := currentExecutable()
+			require.NoError(t, err)
+			current := &daemon.RuntimeInfo{PID: os.Getpid(), Network: "tcp", Address: "127.0.0.1:1"}
+			owner := &daemonService{unit: "fixture.service", executable: executable, mainPID: current.PID, serviceType: "simple"}
+			if outcome == "child" {
+				owner.mainPID++
+			}
+			if outcome == "foreign" {
+				owner.executable = filepath.Join(t.TempDir(), "other")
+				require.NoError(t, os.WriteFile(owner.executable, nil, 0o600))
+			}
+			if outcome == "unsupported" {
+				owner.remainAfterExit = true
+			}
+			lifecycleOut = &bytes.Buffer{}
+			findDaemonService = func(context.Context, int) (*daemonService, error) {
+				if outcome == "lookup error" {
+					return nil, errors.New("owner unavailable")
+				}
+				return owner, nil
+			}
+			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
+				if outcome == "unresponsive" {
+					return nil, os.ErrNotExist
+				}
+				return current, nil
+			}
+			oldList := listAllRuntimes
+			t.Cleanup(func() { listAllRuntimes = oldList })
+			listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return []*daemon.RuntimeInfo{current}, nil }
+			var events []string
+			drainManagedDaemon = func(*daemon.RuntimeInfo) error { events = append(events, "drain"); return nil }
+			startDaemonService = func(context.Context, string) error {
+				events = append(events, "start")
+				getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return current, nil }
+				return nil
+			}
+			serviceMainPID = func(context.Context, string) (int, error) { return current.PID, nil }
+			startDaemonForEnsure = func() error { events = append(events, "detached"); return nil }
+			wasRunning, err := restartDaemon(t.Context())
+			assert.True(t, wasRunning)
+			if outcome == "replace" || outcome == "unresponsive" {
+				require.NoError(t, err)
+				assert.Equal(t, []string{"drain", "start"}, events)
+			} else {
+				require.Error(t, err)
+				assert.Empty(t, events)
+				if outcome == "unsupported" {
+					assert.EqualError(t, err, serviceDescription(owner.unit)+": RemainAfterExit=yes requires manual restart; run "+serviceRestartHint(owner.unit))
+				}
+			}
+		})
+	}
+}
+
+func TestRestartUnmanagedReleasesStartLock(t *testing.T) {
+	stubServiceRecovery(t)
+	oldStop, oldEnsure := daemonStop, daemonEnsure
+	t.Cleanup(func() { daemonStop, daemonEnsure = oldStop, oldEnsure })
+	findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
+	getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return &daemon.RuntimeInfo{PID: 42}, nil }
+	daemonStop = func() error { return nil }
+	acquired := false
+	daemonEnsure = func() error {
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		release, err := daemon.RuntimeStore().AcquireStartLock(ctx)
+		if err == nil {
+			acquired = true
+			release()
+		}
+		return err
+	}
+	wasRunning, err := restartDaemon(t.Context())
+	require.NoError(t, err)
+	assert.True(t, wasRunning)
+	assert.True(t, acquired)
 }
 
 func TestUnmanagedRecoveryDrainsDiscoveredRuntimes(t *testing.T) {

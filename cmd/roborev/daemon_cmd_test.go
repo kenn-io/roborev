@@ -180,12 +180,23 @@ func withDaemonCommandDependencies(
 	originalEnsure := daemonEnsure
 	originalStop := daemonStop
 	originalDiscover := daemonDiscover
+	originalRestart := daemonRestart
 	daemonEnsure = ensure
 	daemonStop = stop
 	daemonDiscover = discover
+	daemonRestart = func(context.Context) (bool, error) {
+		wasRunning := true
+		if err := stop(); errors.Is(err, ErrDaemonNotRunning) {
+			wasRunning = false
+		} else if err != nil {
+			return true, err
+		}
+		return wasRunning, ensure()
+	}
 	t.Cleanup(func() {
 		daemonEnsure = originalEnsure
 		daemonStop = originalStop
 		daemonDiscover = originalDiscover
+		daemonRestart = originalRestart
 	})
 }
