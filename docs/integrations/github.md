@@ -834,6 +834,14 @@ to warm Go modules. See
 [sandboxed Codex runs](/docs/agents/#sandboxed-codex-runs) for the pinned nono
 build and host requirements.
 
+The checker discovers the host's selected, installed mise tools outside the PR
+checkout. It runs them directly, ahead of mise shims on `PATH`, and can read
+their installation directories, including runtime support files. This supports
+Node, Bun, OpenTofu, Terraform, Python, and other installed mise tools. Provision
+the required versions on the host. Installing project dependencies and starting
+providers or other services remain separate requirements. If mise discovery
+fails, the checker logs the failure and continues with its existing tools.
+
 The checker works in its own clone of the PR checkout. The clone borrows the
 host clone's object store and none of its Git config, so the checker can't read
 credentials stored there. It has no submodules or Git LFS files. The host warms

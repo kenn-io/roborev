@@ -21,6 +21,7 @@ func TestCICheckPreparation(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires shell fixtures and symlinks")
 	}
+	miseTools, _ := ciCheckMiseFixture(t)
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	repo := testutil.NewTestRepoWithCommit(t)
 	repo.CommitFile("go.mod", "module example.com/check\n\ngo 1.25.0\n", "module")
@@ -53,6 +54,7 @@ func TestCICheckPreparation(t *testing.T) {
 	assert.Contains(t, run.Job.Env, "GOMODCACHE="+moduleCache, log.String())
 	assert.Contains(t, run.Job.ReadPaths, tools)
 	assert.Contains(t, run.Job.ReadPaths, moduleCache)
+	assert.Contains(t, run.Job.Env, "PATH="+filepath.Join(tools, "bin")+string(os.PathListSeparator)+filepath.Join(miseTools, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
 	module, err := os.ReadFile(filepath.Join(run.Repo, "go.mod"))
 	require.NoError(t, err)
 	assert.Equal(t, "module example.com/check\n\ngo 1.25.0\n", string(module))
@@ -166,4 +168,94 @@ func TestCICheckCredentialOverlap(t *testing.T) {
 	require.NoError(t, os.Mkdir(home, 0o700))
 	t.Setenv("HOME", home)
 	require.ErrorContains(t, validateCICheckReadPaths([]string{tools}), "read grant contains host")
+}
+
+// The inherited shims fail under a disposable HOME; discovery must select the real tools.
+func ciCheckMiseFixture(t *testing.T) (string, string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("requires shell fixtures")
+	}
+	tools, shims := t.TempDir(), t.TempDir()
+	bin := filepath.Join(tools, "bin")
+	require.NoError(t, os.Mkdir(bin, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(tools, "runtime.txt"), []byte("runtime ready\n"), 0o600))
+	for _, name := range []string{"node", "bun", "tofu", "terraform", "python"} {
+		require.NoError(t, os.WriteFile(filepath.Join(shims, name), []byte("#!/bin/sh\nexit 126\n"), 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\ncat \"${0%/*}/../runtime.txt\"\n"), 0o700))
+	}
+	outside, err := filepath.EvalSymlinks(os.TempDir())
+	require.NoError(t, err)
+	selected := filepath.Join(t.TempDir(), "selected")
+	require.NoError(t, os.Symlink(tools, selected))
+	inventory := fmt.Sprintf(`{"node":[{"install_path":%q}]}`, selected)
+	script := fmt.Sprintf("#!/bin/sh\n[ \"$(pwd -P)\" = '%s' ] || exit 4\ncase \"$*\" in\n'ls --current --installed --json') printf '%%s' '%s';;\n'bin-paths') printf '%%s\\n' '%s';;\n*) exit 3;;\nesac\n", outside, inventory, filepath.Join(selected, "bin"))
+	require.NoError(t, os.WriteFile(filepath.Join(shims, "mise"), []byte(script), 0o700))
+	t.Setenv("PATH", shims+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return tools, shims
+}
+
+func prepareCICheckToolchainFixture(t *testing.T) ciCheckRun {
+	t.Helper()
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	repo := testutil.NewTestRepoWithCommit(t)
+	sha := repo.HeadSHA()
+	command := filepath.Join(t.TempDir(), "codex")
+	require.NoError(t, os.WriteFile(command, []byte("#!/bin/sh\nexit 0\n"), 0o700))
+	run, err := (&WorkerPool{}).prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}, command, nil, io.Discard)
+	require.NoError(t, err)
+	t.Cleanup(run.cleanup)
+	return run
+}
+
+func TestCICheckMisePreparation(t *testing.T) {
+	tools, _ := ciCheckMiseFixture(t)
+	run := prepareCICheckToolchainFixture(t)
+	assert.Contains(t, run.Job.ReadPaths, tools)
+	assert.Contains(t, run.Job.Env, "PATH="+filepath.Join(tools, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestCICheckMiseDiscoveryFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name, script, message string
+	}{
+		{"absent", "", ""},
+		{"malformed", "#!/bin/sh\nprintf 'invalid json'\n", "mise discovery failed"},
+		{"inventory failure", "#!/bin/sh\nexit 3\n", "exit status 3"},
+		{"bin paths failure", "#!/bin/sh\n[ \"$1\" = ls ] && { printf '{}'; exit 0; }; exit 4\n", "exit status 4"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if runtime.GOOS == "windows" {
+				t.Skip("requires shell fixtures")
+			}
+			tools := t.TempDir()
+			if tc.script != "" {
+				require.NoError(t, os.WriteFile(filepath.Join(tools, "mise"), []byte(tc.script), 0o700))
+			}
+			t.Setenv("PATH", tools)
+			var log bytes.Buffer
+			roots, bins := ciCheckMisePaths(t.Context(), &log)
+			assert.Empty(t, roots)
+			assert.Empty(t, bins)
+			if tc.message == "" {
+				assert.Empty(t, log.String())
+			} else {
+				assert.Contains(t, log.String(), tc.message)
+			}
+		})
+	}
+}
+
+func TestCICheckMiseCredentialOverlap(t *testing.T) {
+	tools, _ := ciCheckMiseFixture(t)
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	repo := testutil.NewTestRepoWithCommit(t)
+	sha := repo.HeadSHA()
+	command := filepath.Join(t.TempDir(), "codex")
+	require.NoError(t, os.WriteFile(command, []byte("#!/bin/sh\nexit 0\n"), 0o700))
+	home := filepath.Join(tools, "home")
+	require.NoError(t, os.Mkdir(home, 0o700))
+	t.Setenv("HOME", home)
+	_, err := (&WorkerPool{}).prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}, command, nil, io.Discard)
+	require.ErrorContains(t, err, "read grant contains host home")
 }
