@@ -1091,6 +1091,7 @@ func TestCIPollerAllowCodeowners(t *testing.T) {
 	statuses := h.CaptureCommitStatuses()
 	h.CaptureSkippedChecks()
 
+	owners := map[string]struct{}{"alice": {}}
 	var reads []string
 	h.Poller.codeownersFn = func(_ context.Context, ghRepo, ref string) (map[string]struct{}, error) {
 		assert.Equal("acme/api", ghRepo)
@@ -1098,7 +1099,7 @@ func TestCIPollerAllowCodeowners(t *testing.T) {
 		if ref == "release" {
 			return nil, errors.New("team members unavailable")
 		}
-		return map[string]struct{}{"alice": {}}, nil
+		return owners, nil
 	}
 	prs := []ghPR{
 		{Number: 1, HeadRefOid: "owner-head", BaseRefName: "main", Author: ghPRAuthor{Login: "Alice"}, AuthorAssociation: "CONTRIBUTOR"},
@@ -1138,14 +1139,7 @@ func TestCIPollerAllowCodeowners(t *testing.T) {
 	require.ErrorContains(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg), "team members unavailable")
 	assert.Equal([]string{"main", "release", "main", "release"}, reads, "the next poll reads CODEOWNERS again")
 
-	h.Poller.codeownersFn = func(_ context.Context, ghRepo, ref string) (map[string]struct{}, error) {
-		assert.Equal("acme/api", ghRepo)
-		reads = append(reads, ref)
-		if ref == "release" {
-			return nil, errors.New("team members unavailable")
-		}
-		return map[string]struct{}{"alice": {}, "mallory": {}}, nil
-	}
+	owners["mallory"] = struct{}{}
 	require.ErrorContains(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg), "team members unavailable")
 	assert.True(h.hasPanel(t, "acme/api", 2, "outsider-head"), "ownership changes apply on the next poll")
 }

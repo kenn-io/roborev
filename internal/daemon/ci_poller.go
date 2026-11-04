@@ -639,10 +639,15 @@ func (p *CIPoller) reconcileRetryHealth(
 		// Exhausted retries no longer enter the retry sweep. Retire their
 		// failure when the open PR has moved on or explicitly skips review.
 		if pr, open := openByNumber[attempt.PRNumber]; open && attempt.State == "done" {
-			reason, skip, err := p.ciPRSkip(ctx, ghRepo, pr, &cfg.CI)
-			if err != nil {
-				lookupErrors = append(lookupErrors, fmt.Errorf(
-					"check review filters for PR #%d: %w", attempt.PRNumber, err))
+			var reason ciSkip
+			var skip bool
+			if pr.HeadRefOid == attempt.HeadSHA {
+				var err error
+				reason, skip, err = p.ciPRSkip(ctx, ghRepo, pr, &cfg.CI)
+				if err != nil {
+					lookupErrors = append(lookupErrors, fmt.Errorf(
+						"check review filters for PR #%d: %w", attempt.PRNumber, err))
+				}
 			}
 			if pr.HeadRefOid != attempt.HeadSHA || skip {
 				var err error
@@ -710,16 +715,12 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		return err
 	}
 	// Skip if this HEAD already has a panel run, unless its retry is deferred.
-	reviewed, err := p.alreadyReviewedPR(ghRepo, pr)
+	reviewed, attempt, err := p.alreadyReviewedPR(ghRepo, pr)
 	if err != nil {
 		return err
 	}
 	var deferred *storage.ReviewAttempt
 	if reviewed {
-		attempt, err := p.db.GetReviewAttempt(ghRepo, pr.Number, pr.HeadRefOid)
-		if err != nil {
-			return fmt.Errorf("check skipped review attempt: %w", err)
-		}
 		if attempt == nil || attempt.State != "deferred" {
 			return nil
 		}
@@ -1119,24 +1120,24 @@ func (p *CIPoller) loadCIRepoConfigFor(repoPath, ghRepo string) (ciRepoConfigSou
 // rows are intentionally ignored: the legacy CI poster is gone, so those rows
 // cannot be allowed to suppress panel creation for in-flight upgrade leftovers.
 // A delivered panel review still counts after an explicit rerun retires it.
-func (p *CIPoller) alreadyReviewedPR(ghRepo string, pr ghPR) (bool, error) {
+func (p *CIPoller) alreadyReviewedPR(ghRepo string, pr ghPR) (bool, *storage.ReviewAttempt, error) {
 	attempt, err := p.db.GetReviewAttempt(ghRepo, pr.Number, pr.HeadRefOid)
 	if err != nil {
-		return false, fmt.Errorf("check review attempt: %w", err)
+		return false, nil, fmt.Errorf("check review attempt: %w", err)
 	}
 	if attempt != nil {
-		return true, nil
+		return true, attempt, nil
 	}
 	if _, err := p.db.GetActiveCIPanelByPRSHA(ghRepo, pr.Number, pr.HeadRefOid); err == nil {
-		return true, nil
+		return true, nil, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
-		return false, fmt.Errorf("check CI panel: %w", err)
+		return false, nil, fmt.Errorf("check CI panel: %w", err)
 	}
 	posted, err := p.db.HasPostedCIReview(ghRepo, pr.Number, pr.HeadRefOid)
 	if err != nil {
-		return false, fmt.Errorf("check posted CI review: %w", err)
+		return false, nil, fmt.Errorf("check posted CI review: %w", err)
 	}
-	return posted, nil
+	return posted, nil, nil
 }
 
 // markPanelsForStalePost flags a PR's still-active panel runs to post despite
