@@ -337,16 +337,22 @@ func testHealthCIPollerExhaustedRetry(t *testing.T, draft bool) {
 			case "new head":
 				pr.HeadRefOid = "head-b"
 				pr.Author.Login = "mallory"
-				h.Cfg.CI.AllowCodeowners = true
-				h.Poller.codeownersFn = func(context.Context, string, string) (map[string]struct{}, error) {
-					return nil, errors.New("CODEOWNERS unavailable")
-				}
-				require.NoError(t, h.Poller.reconcileRetryHealth(t.Context(), "acme/api", []ghPR{pr}, h.Cfg, nil),
-					"retiring an exhausted failure at an old head needs no ownership lookup")
-				attempt, err := h.DB.GetReviewAttempt("acme/api", pr.Number, "head-a")
-				require.NoError(t, err)
-				assert.Nil(attempt)
-				h.Cfg.CI.AllowCodeowners = false
+				t.Run("retire without ownership lookup", func(t *testing.T) {
+					allowCodeowners, codeownersFn := h.Cfg.CI.AllowCodeowners, h.Poller.codeownersFn
+					t.Cleanup(func() {
+						h.Cfg.CI.AllowCodeowners = allowCodeowners
+						h.Poller.codeownersFn = codeownersFn
+					})
+					h.Cfg.CI.AllowCodeowners = true
+					h.Poller.codeownersFn = func(context.Context, string, string) (map[string]struct{}, error) {
+						return nil, errors.New("CODEOWNERS unavailable")
+					}
+					require.NoError(t, h.Poller.reconcileRetryHealth(t.Context(), "acme/api", []ghPR{pr}, h.Cfg, nil),
+						"retiring an exhausted failure at an old head needs no ownership lookup")
+					attempt, err := h.DB.GetReviewAttempt("acme/api", pr.Number, "head-a")
+					require.NoError(t, err)
+					require.Nil(t, attempt)
+				})
 			case "skipped":
 				h.Cfg.CI.SkipLabels = []string{"skip-review"}
 				pr.Labels = []string{"skip-review"}

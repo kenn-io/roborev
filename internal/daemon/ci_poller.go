@@ -535,7 +535,8 @@ func (p *CIPoller) poll(ctx context.Context) {
 }
 
 func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Config) error {
-	// Clear the cache so undecided heads see current ownership on each poll.
+	// Clear the cache so heads not yet reviewed, including those skipped by
+	// the author filter, see current ownership on each poll.
 	p.forgetCodeowners(ghRepo)
 
 	// List open PRs via the GitHub API
@@ -719,20 +720,18 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	if err != nil {
 		return err
 	}
-	var deferred *storage.ReviewAttempt
 	if reviewed {
 		if attempt == nil || attempt.State != "deferred" {
 			return nil
 		}
-		// Skip a deferred retry immediately, even during backoff.
-		deferred = attempt
 	}
+	// Skip a deferred retry immediately, even during backoff.
 	reason, skip, err := p.ciPRSkip(ctx, ghRepo, pr, &cfg.CI)
 	if err != nil {
 		return err
 	}
 	if skip {
-		return p.skipPR(ghRepo, pr, reason, deferred)
+		return p.skipPR(ghRepo, pr, reason, attempt)
 	}
 	if reviewed {
 		return nil
