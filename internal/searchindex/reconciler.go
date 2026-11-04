@@ -60,6 +60,7 @@ type Reconciler struct {
 	mu                 sync.Mutex
 	health             HealthSnapshot
 	mirrorCursor       int64
+	fillAfter          *string
 	mirrorHead         int64
 	mirrorSeen         map[string]struct{}
 	mirrorRequested    bool
@@ -355,6 +356,7 @@ func (r *Reconciler) fillGeneration(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	var store vector.Store[string, string] = r.index.vectors
+	var sharing *sharingStore
 	if shared := r.sharedVectors(); shared != nil {
 		space, err := sharedSpace(r.embedder.Space())
 		if err != nil {
@@ -363,7 +365,8 @@ func (r *Reconciler) fillGeneration(ctx context.Context) (bool, error) {
 		if err := r.publishPending(ctx, shared, space, key); err != nil {
 			return false, err
 		}
-		store = newSharingStore(store, r.index, shared, space)
+		sharing = newSharingStore(store, r.index, shared, space)
+		store = sharing
 	}
 	counts, err := r.index.GenerationCounts(ctx, key)
 	if err != nil {
@@ -388,14 +391,26 @@ func (r *Reconciler) fillGeneration(ctx context.Context) (bool, error) {
 
 	fillCtx, cancel := context.WithTimeout(ctx, r.config.MaxFillTime)
 	defer cancel()
+	r.mu.Lock()
+	limiter := &turnLimitedStore{Store: store, remaining: r.config.MaxFillBatches, resume: r.fillAfter}
+	r.mu.Unlock()
 	_, err = r.index.Fill(
 		fillCtx,
-		&turnLimitedStore{Store: store, remaining: r.config.MaxFillBatches},
+		limiter,
 		key,
 		encodeDocuments(r.embedder),
 		r.embedder.Batch(),
 		nil,
 	)
+	if err == nil {
+		r.mu.Lock()
+		// An exhausted scan wraps next turn; failed fills retry the same cursor.
+		r.fillAfter = limiter.last
+		if sharing != nil {
+			r.fillAfter = sharing.scanned
+		}
+		r.mu.Unlock()
+	}
 	countsAfter, countErr := r.index.GenerationCounts(ctx, key)
 	if countErr == nil {
 		counts = countsAfter
@@ -419,16 +434,22 @@ func (r *Reconciler) fillGeneration(ctx context.Context) (bool, error) {
 type turnLimitedStore struct {
 	vector.Store[string, string]
 	remaining int
+	resume    *string
+	last      *string
 }
 
-func (s *turnLimitedStore) PendingForGeneration(ctx context.Context, gen string, limit int) ([]vector.Pending[string], error) {
+func (s *turnLimitedStore) PendingForGeneration(ctx context.Context, gen string, after *string, limit int) ([]vector.Pending[string], error) {
 	if s.remaining <= 0 {
 		return nil, nil
 	}
 	if limit > s.remaining {
 		limit = s.remaining
 	}
-	pending, err := s.Store.PendingForGeneration(ctx, gen, limit)
+	if after == nil {
+		after = s.resume
+	}
+	s.resume = nil // Only the first scan resumes; kit may restart from the top.
+	pending, err := s.Store.PendingForGeneration(ctx, gen, after, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -436,6 +457,9 @@ func (s *turnLimitedStore) PendingForGeneration(ctx context.Context, gen string,
 		pending = pending[:s.remaining]
 	}
 	s.remaining -= len(pending)
+	if len(pending) > 0 {
+		s.last = new(pending[len(pending)-1].Doc)
+	}
 	return pending, nil
 }
 

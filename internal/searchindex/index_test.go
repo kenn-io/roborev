@@ -111,7 +111,7 @@ func TestSidecarV2UpgradeRenumbersFTSAndKeepsVectors(t *testing.T) {
 		hitKeys = append(hitKeys, hit.Doc)
 	}
 	assert.ElementsMatch(t, []string{docs[0].DocKey, docs[1].DocKey}, hitKeys)
-	pending, err := index.vectors.PendingForGeneration(ctx, "gen-1", 10)
+	pending, err := index.vectors.PendingForGeneration(ctx, "gen-1", nil, 10)
 	require.NoError(t, err)
 	assert.Empty(t, pending)
 }
@@ -135,7 +135,7 @@ func TestFTSAndVectorSmokeUsesContentHashRevision(t *testing.T) {
 
 	require.NoError(t, index.vectors.EnsureGeneration(ctx, "gen-1",
 		vector.Generation{Model: "test", Dimensions: 2}, sqlitevec.StateActive))
-	pending, err := index.vectors.PendingForGeneration(ctx, "gen-1", 10)
+	pending, err := index.vectors.PendingForGeneration(ctx, "gen-1", nil, 10)
 	require.NoError(t, err)
 	require.Len(t, pending, 1)
 	assert.Equal(t, doc.ContentHash, pending[0].Revision)
@@ -157,7 +157,7 @@ func TestFTSAndVectorSmokeUsesContentHashRevision(t *testing.T) {
 	hits, err = index.vectors.QueryGeneration(ctx, "gen-1", vector.Vector{1, 0}, 10)
 	require.NoError(t, err)
 	assert.Empty(t, hits)
-	pending, err = index.vectors.PendingForGeneration(ctx, "gen-1", 10)
+	pending, err = index.vectors.PendingForGeneration(ctx, "gen-1", nil, 10)
 	require.NoError(t, err)
 	require.Len(t, pending, 1)
 	assert.Equal(t, updated.ContentHash, pending[0].Revision)
