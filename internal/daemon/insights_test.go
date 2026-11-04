@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -17,6 +18,57 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
+
+func TestInsightsFractionalCutoff(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	repo, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo"))
+	require.NoError(t, err)
+	since := time.Date(2026, time.January, 1, 12, 0, 0, 500_400_000, time.UTC)
+	var wantIDs []int64
+	for i, finished := range []time.Time{since.Add(-300 * time.Microsecond), since, since.Add(100 * time.Microsecond)} {
+		job := enqueueCompletedInsightsReviewJob(t, db, repo.ID, fmt.Sprintf("review-%d", i), "main", storage.JobTypeReview, failingInsightsOutput("Finding"))
+		_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET finished_at = ?, enqueued_at = ? WHERE id = ?`,
+			finished.Format(time.RFC3339Nano), since.Add(time.Duration(i)*time.Second).Format(time.RFC3339Nano), job.ID)
+		require.NoError(t, err)
+		if i > 0 {
+			wantIDs = append([]int64{job.ID}, wantIDs...)
+		}
+	}
+
+	reviews, err := server.fetchInsightsReviews(repo.RootPath, "main", since)
+	require.NoError(t, err)
+	var gotIDs []int64
+	for _, review := range reviews {
+		gotIDs = append(gotIDs, review.JobID)
+	}
+	assert.Equal(t, wantIDs, gotIDs)
+}
+
+func TestInsightsCapsReviewsNewestFirst(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	repo, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo"))
+	require.NoError(t, err)
+	since := time.Date(2026, time.January, 1, 12, 0, 0, 0, time.UTC)
+	var wantIDs []int64
+	for i := range 102 {
+		job := enqueueCompletedInsightsReviewJob(t, db, repo.ID, fmt.Sprintf("review-%d", i), "main", storage.JobTypeReview, failingInsightsOutput("Finding"))
+		_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET enqueued_at = ?, finished_at = ? WHERE id = ?`,
+			since.Add(time.Duration(i)*time.Second).Format(time.RFC3339Nano), since.Add(time.Hour).Format(time.RFC3339Nano), job.ID)
+		require.NoError(t, err)
+		if i >= 2 {
+			wantIDs = append([]int64{job.ID}, wantIDs...)
+		}
+	}
+
+	reviews, err := server.fetchInsightsReviews(repo.RootPath, "main", since)
+	require.NoError(t, err)
+	require.Len(t, reviews, 100)
+	var gotIDs []int64
+	for _, review := range reviews {
+		gotIDs = append(gotIDs, review.JobID)
+	}
+	assert.Equal(t, wantIDs, gotIDs)
+}
 
 func TestInsightsIncludesPanelParentOnce(t *testing.T) {
 	assert := assert.New(t)

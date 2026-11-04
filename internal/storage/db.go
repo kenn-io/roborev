@@ -1480,6 +1480,7 @@ func (db *DB) migrate() error {
 	// let it skip the large prompt columns stored before the values it needs;
 	// analyticsJobsIndexSQL explains the job index. analyticsRowsQuery names
 	// idx_reviews_job_verdict with INDEXED BY, so the two must stay in sync.
+	// listJobsQuery also names idx_review_jobs_analytics with INDEXED BY.
 	if _, err = db.Exec(analyticsJobsIndexSQL()); err != nil {
 		return fmt.Errorf("create idx_review_jobs_analytics: %w", err)
 	}

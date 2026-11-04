@@ -56,36 +56,34 @@ func TestListJobsFailedReviewsSince(t *testing.T) {
 	}
 	var wantIDs []int64
 	for i, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.repoID == 0 {
-				tc.repoID = repo.ID
-			}
-			if tc.branch == "" {
-				tc.branch = "main"
-			}
-			if tc.finished == "" {
-				tc.finished = since.Add(time.Hour).Format(time.RFC3339Nano)
-			}
-			if tc.verdict == nil && tc.name != "null verdict" {
-				tc.verdict = 0
-			}
-			var finished any = tc.finished
-			if tc.missingFinish {
-				finished = nil
-			}
-			_, err := db.ExecContext(t.Context(), `INSERT INTO review_jobs
-				(id, repo_id, commit_id, git_ref, branch, agent, status, job_type, error, panel_role, finished_at, enqueued_at)
-				VALUES (?, ?, ?, ?, ?, 'test', 'done', ?, ?, ?, ?, ?)`,
-				i+1, tc.repoID, tc.commitID, tc.ref, tc.branch, tc.jobType, tc.errorText, tc.panelRole, finished,
-				since.Add(time.Duration(i)*time.Second).Format(time.RFC3339Nano))
-			require.NoError(t, err)
-			_, err = db.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, output, verdict_bool)
-				VALUES (?, 'test', 'Synthetic review', ?)`, i+1, tc.verdict)
-			require.NoError(t, err)
-			if tc.want {
-				wantIDs = append([]int64{int64(i + 1)}, wantIDs...)
-			}
-		})
+		if tc.repoID == 0 {
+			tc.repoID = repo.ID
+		}
+		if tc.branch == "" {
+			tc.branch = "main"
+		}
+		if tc.finished == "" {
+			tc.finished = since.Add(time.Hour).Format(time.RFC3339Nano)
+		}
+		if tc.verdict == nil && tc.name != "null verdict" {
+			tc.verdict = 0
+		}
+		var finished any = tc.finished
+		if tc.missingFinish {
+			finished = nil
+		}
+		_, err := db.ExecContext(t.Context(), `INSERT INTO review_jobs
+			(id, repo_id, commit_id, git_ref, branch, agent, status, job_type, error, panel_role, finished_at, enqueued_at)
+			VALUES (?, ?, ?, ?, ?, 'test', 'done', ?, ?, ?, ?, ?)`,
+			i+1, tc.repoID, tc.commitID, tc.ref, tc.branch, tc.jobType, tc.errorText, tc.panelRole, finished,
+			since.Add(time.Duration(i)*time.Second).Format(time.RFC3339Nano))
+		require.NoError(t, err)
+		_, err = db.ExecContext(t.Context(), `INSERT INTO reviews (job_id, agent, output, verdict_bool)
+			VALUES (?, 'test', 'Synthetic review', ?)`, i+1, tc.verdict)
+		require.NoError(t, err)
+		if tc.want {
+			wantIDs = append([]int64{int64(i + 1)}, wantIDs...)
+		}
 	}
 	opts := []ListJobsOption{WithoutPrompt(), WithBranch("main"), WithExcludePanelRole(PanelRoleMember)}
 	all, err := db.ListJobs(string(JobStatusDone), repo.RootPath, 0, 0, opts...)

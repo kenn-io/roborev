@@ -63,6 +63,10 @@ func (s *Server) fetchInsightsReviews(
 
 	reviews := make([]prompt.InsightsReview, 0, min(len(jobs), maxInsightsReviews))
 	for _, job := range jobs {
+		// SQLite's window comparison has millisecond precision.
+		if job.FinishedAt != nil && job.FinishedAt.Before(since) {
+			continue
+		}
 		review, err := s.db.GetReviewByJobID(job.ID)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
