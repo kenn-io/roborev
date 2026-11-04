@@ -283,8 +283,7 @@ func Open(dbPath string) (*DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("initialize database ID: %w", err)
 	}
-	const stateKey = "historical_reviews_migrated"
-	done, err := wrapped.GetSyncState(stateKey)
+	done, err := wrapped.GetSyncState(SyncStateHistoricalReviewsMigrated)
 	if err != nil {
 		db.Close()
 		return nil, fmt.Errorf("read historical review migration state: %w", err)
@@ -320,7 +319,7 @@ func Open(dbPath string) (*DB, error) {
 			db.Close()
 			return nil, fmt.Errorf("backfill JSON verdicts: %w", err)
 		}
-		if err := wrapped.SetSyncState(stateKey, "done"); err != nil {
+		if err := wrapped.SetSyncState(SyncStateHistoricalReviewsMigrated, "done"); err != nil {
 			db.Close()
 			return nil, fmt.Errorf("record historical review migration completion: %w", err)
 		}

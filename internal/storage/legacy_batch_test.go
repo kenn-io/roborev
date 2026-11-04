@@ -18,7 +18,7 @@ func TestOpenRetriesInterruptedHistoricalReviewMigration(t *testing.T) {
 	t.Cleanup(func() { db.Close() })
 	repo, err := db.GetOrCreateRepo(t.TempDir())
 	require.NoError(t, err)
-	_, err = db.ExecContext(t.Context(), `DELETE FROM sync_state WHERE key = 'historical_reviews_migrated'`)
+	_, err = db.ExecContext(t.Context(), `DELETE FROM sync_state WHERE key = ?`, SyncStateHistoricalReviewsMigrated)
 	require.NoError(t, err)
 	var blockedJob int64
 	for i := range 105 {
@@ -38,7 +38,7 @@ func TestOpenRetriesInterruptedHistoricalReviewMigration(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { raw.Close() })
 	var markers, archived int
-	require.NoError(t, raw.QueryRowContext(t.Context(), `SELECT count(*) FROM sync_state WHERE key = 'historical_reviews_migrated'`).Scan(&markers))
+	require.NoError(t, raw.QueryRowContext(t.Context(), `SELECT count(*) FROM sync_state WHERE key = ?`, SyncStateHistoricalReviewsMigrated).Scan(&markers))
 	assert.Zero(t, markers)
 	require.NoError(t, raw.QueryRowContext(t.Context(), `SELECT count(*) FROM legacy_reviews`).Scan(&archived))
 	assert.Equal(t, 100, archived)
@@ -48,7 +48,7 @@ func TestOpenRetriesInterruptedHistoricalReviewMigration(t *testing.T) {
 	db, err = Open(path)
 	require.NoError(t, err)
 	defer db.Close()
-	state, err := db.GetSyncState("historical_reviews_migrated")
+	state, err := db.GetSyncState(SyncStateHistoricalReviewsMigrated)
 	require.NoError(t, err)
 	assert.Equal(t, "done", state)
 	var restored int
@@ -66,20 +66,20 @@ func TestOpenSkipsHistoricalReviewStepsAfterCompletion(t *testing.T) {
 			t.Cleanup(func() { db.Close() })
 			repo, err := db.GetOrCreateRepo(t.TempDir())
 			require.NoError(t, err)
-			_, err = db.ExecContext(t.Context(), `DELETE FROM sync_state WHERE key = 'historical_reviews_migrated'`)
+			_, err = db.ExecContext(t.Context(), `DELETE FROM sync_state WHERE key = ?`, SyncStateHistoricalReviewsMigrated)
 			require.NoError(t, err)
 			first := seedLegacyMarkdownReview(t, db, repo.ID, "first", legacyProseMarkdown, 0, false)
 			require.NoError(t, db.Close())
 			db, err = Open(path)
 			require.NoError(t, err)
 			assert.NotEmpty(t, readStoredReview(t, db, first.jobID).document)
-			state, err := db.GetSyncState("historical_reviews_migrated")
+			state, err := db.GetSyncState(SyncStateHistoricalReviewsMigrated)
 			require.NoError(t, err)
 			assert.Equal(t, "done", state)
 			_, err = db.ExecContext(t.Context(), `DELETE FROM reviews WHERE job_id = ?`, first.jobID)
 			require.NoError(t, err)
 			if !completed {
-				_, err = db.ExecContext(t.Context(), `DELETE FROM sync_state WHERE key = 'historical_reviews_migrated'`)
+				_, err = db.ExecContext(t.Context(), `DELETE FROM sync_state WHERE key = ?`, SyncStateHistoricalReviewsMigrated)
 				require.NoError(t, err)
 			}
 			second := seedLegacyMarkdownReview(t, db, repo.ID, "second", legacyNoIssuesMarkdown, nil, false)
