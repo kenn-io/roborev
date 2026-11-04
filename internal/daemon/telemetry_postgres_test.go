@@ -102,7 +102,7 @@ func TestIntegration_SetupFinishedAfterSyncPull(t *testing.T) { //nolint:paralle
 	require.NoError(t, got.err)
 	assert.Equal(t, 500, got.stats.PulledJobs)
 	assert.Equal(t, 500, got.stats.PulledReviews)
-	assert.NotEmpty(t, reconciler.wakes, "SyncNow must wake search after committed pulls")
+	assert.NotEmpty(t, reconciler.changes, "SyncNow must wake search after committed pulls")
 	assert.Zero(t, claimDB.Stats().WaitDuration, "the original setup check must still be waiting for its connection")
 	require.NoError(t, pending.Close())
 	waitSetupFinished(t, client)
