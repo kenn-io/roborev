@@ -293,3 +293,27 @@ echo 'OK rewrite read-only'
 		})
 	}
 }
+
+func TestCICheckToolchainsSandboxIntegration(t *testing.T) {
+	testutil.RequireSandboxIntegration(t)
+	ciCheckMiseFixture(t)
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	repo := testutil.NewTestRepoWithCommit(t)
+	sha := repo.HeadSHA()
+	command := filepath.Join(t.TempDir(), "codex")
+	require.NoError(t, os.WriteFile(command, []byte("#!/bin/sh\nexit 0\n"), 0o700))
+	run, err := (&WorkerPool{}).prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}, command, nil, io.Discard)
+	require.NoError(t, err)
+	t.Cleanup(run.cleanup)
+	server := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(server.Close)
+	run.Job.Route = sandbox.Route{Name: "test", Upstream: server.URL, Path: "/responses", EnvVar: "TEST_TOKEN", Capture: []string{"/bin/echo", "synthetic-proxy-token"}}
+	argv, env, cleanup, err := run.Job.Command(t.Context(), []string{"bash", "--norc", "--noprofile", "-c", "node"})
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	cmd := exec.CommandContext(t.Context(), argv[0], argv[1:]...)
+	cmd.Env = env
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	assert.Equal(t, "runtime ready\n", string(output))
+}

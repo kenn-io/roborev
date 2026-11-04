@@ -192,7 +192,7 @@ type ciCheckRun struct {
 // prepareCICheck checks out the committed input before warming can update metadata.
 // Its caller owns both checkouts until cleanup returns.
 func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob, command string, gitEnv []string, out io.Writer) (run ciCheckRun, err error) {
-	command, codexDir, err := resolveCICheckCodex(ctx, os.TempDir(), command)
+	command, codexDir, err := resolveCICheckCodex(ctx, "/", command)
 	if err != nil {
 		return
 	}
@@ -216,6 +216,11 @@ func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob
 	run.Command = command
 	readPaths := []string{codexDir}
 	toolPath := os.Getenv("PATH")
+	miseRoots, miseBins := ciCheckMisePaths(ctx, out)
+	readPaths = append(readPaths, miseRoots...)
+	if len(miseBins) > 0 {
+		toolPath = strings.Join(miseBins, string(os.PathListSeparator)) + string(os.PathListSeparator) + toolPath
+	}
 	run.Job.WorkDir = filepath.Join(root, "work")
 	var objects string
 	if run.Repo, objects, err = cloneCICheckRepo(ctx, job.RepoPath, checkout, run.Job.WorkDir); err != nil {
@@ -304,6 +309,64 @@ func validateCICheckReadPaths(paths []string) error {
 	return nil
 }
 
+// Discover host-selected tools before the sandbox substitutes a disposable HOME.
+func ciCheckMisePaths(ctx context.Context, out io.Writer) (roots, bins []string) {
+	mise, err := exec.LookPath("mise")
+	if errors.Is(err, exec.ErrNotFound) {
+		return nil, nil
+	}
+	if err == nil {
+		mise, err = sandbox.ResolvePath(mise)
+	}
+	if err != nil {
+		fmt.Fprintf(out, "CI checker mise discovery failed: %v\n", err)
+		return nil, nil
+	}
+	var results [][]byte
+	for _, args := range [][]string{{"ls", "--current", "--installed", "--json"}, {"bin-paths"}} {
+		cmd := exec.CommandContext(ctx, mise, args...)
+		// Temporary directory ancestors can contain mise config; select global host tools from /.
+		cmd.Dir = "/"
+		var stderr strings.Builder
+		cmd.Stderr = &stderr
+		data, err := cmd.Output()
+		if err != nil {
+			fmt.Fprintf(out, "CI checker mise discovery failed: %v: %s\n", err, stderr.String())
+			return nil, nil
+		}
+		results = append(results, data)
+	}
+	var inventory map[string][]struct {
+		InstallPath string `json:"install_path"`
+	}
+	if err := json.Unmarshal(results[0], &inventory); err != nil {
+		fmt.Fprintf(out, "CI checker mise discovery failed: %v\n", err)
+		return nil, nil
+	}
+	for _, versions := range inventory {
+		for _, version := range versions {
+			root, err := sandbox.ResolvePath(version.InstallPath)
+			if err != nil {
+				fmt.Fprintf(out, "CI checker mise discovery failed: %v\n", err)
+				continue
+			}
+			roots = append(roots, root)
+		}
+	}
+	for line := range strings.SplitSeq(strings.TrimSpace(string(results[1])), "\n") {
+		if line == "" {
+			continue
+		}
+		bin, err := sandbox.ResolvePath(strings.TrimSpace(line))
+		if err != nil {
+			fmt.Fprintf(out, "CI checker mise discovery failed: %v\n", err)
+			continue
+		}
+		bins = append(bins, bin)
+	}
+	return roots, bins
+}
+
 func warmGoModules(ctx context.Context, checkout string, gitEnv []string, out io.Writer) ([]string, error) {
 	info, err := os.Lstat(filepath.Join(checkout, "go.mod"))
 	if os.IsNotExist(err) {
@@ -329,8 +392,8 @@ func warmGoModules(ctx context.Context, checkout string, gitEnv []string, out io
 		}
 	}
 	goEnv := exec.CommandContext(ctx, "go", "env", "GOROOT", "GOMODCACHE")
-	// Version-manager shims must resolve Go without loading checkout config.
-	goEnv.Dir = os.TempDir()
+	// Resolve Go globally without loading checkout or temporary directory ancestor config.
+	goEnv.Dir = "/"
 	var stderr strings.Builder
 	goEnv.Stderr = &stderr
 	data, err := goEnv.Output()
