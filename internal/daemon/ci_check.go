@@ -348,7 +348,7 @@ func ciCheckMisePaths(ctx context.Context, out io.Writer) (roots, bins []string)
 			root, err := sandbox.ResolvePath(version.InstallPath)
 			if err != nil {
 				fmt.Fprintf(out, "CI checker mise discovery failed: %v\n", err)
-				return nil, nil
+				continue
 			}
 			roots = append(roots, root)
 		}
@@ -360,7 +360,7 @@ func ciCheckMisePaths(ctx context.Context, out io.Writer) (roots, bins []string)
 		bin, err := sandbox.ResolvePath(strings.TrimSpace(line))
 		if err != nil {
 			fmt.Fprintf(out, "CI checker mise discovery failed: %v\n", err)
-			return nil, nil
+			continue
 		}
 		bins = append(bins, bin)
 	}

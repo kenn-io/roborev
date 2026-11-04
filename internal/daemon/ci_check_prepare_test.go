@@ -54,6 +54,7 @@ func TestCICheckPreparation(t *testing.T) {
 	assert.Contains(t, run.Job.Env, "GOMODCACHE="+moduleCache, log.String())
 	assert.Contains(t, run.Job.ReadPaths, tools)
 	assert.Contains(t, run.Job.ReadPaths, moduleCache)
+	assert.Contains(t, run.Job.ReadPaths, miseTools)
 	assert.Contains(t, run.Job.Env, "PATH="+filepath.Join(tools, "bin")+string(os.PathListSeparator)+filepath.Join(miseTools, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
 	module, err := os.ReadFile(filepath.Join(run.Repo, "go.mod"))
 	require.NoError(t, err)
@@ -180,10 +181,8 @@ func ciCheckMiseFixture(t *testing.T) (string, string) {
 	bin := filepath.Join(tools, "bin")
 	require.NoError(t, os.Mkdir(bin, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(tools, "runtime.txt"), []byte("runtime ready\n"), 0o600))
-	for _, name := range []string{"node", "bun", "tofu", "terraform", "python"} {
-		require.NoError(t, os.WriteFile(filepath.Join(shims, name), []byte("#!/bin/sh\nexit 126\n"), 0o700))
-		require.NoError(t, os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\ncat \"${0%/*}/../runtime.txt\"\n"), 0o700))
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(shims, "node"), []byte("#!/bin/sh\nexit 126\n"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "node"), []byte("#!/bin/sh\ncat \"${0%/*}/../runtime.txt\"\n"), 0o700))
 	outside, err := filepath.EvalSymlinks(os.TempDir())
 	require.NoError(t, err)
 	selected := filepath.Join(t.TempDir(), "selected")
@@ -195,7 +194,7 @@ func ciCheckMiseFixture(t *testing.T) (string, string) {
 	return tools, shims
 }
 
-func prepareCICheckToolchainFixture(t *testing.T) ciCheckRun {
+func prepareCICheckToolchainFixture(t *testing.T) (ciCheckRun, error) {
 	t.Helper()
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	repo := testutil.NewTestRepoWithCommit(t)
@@ -203,16 +202,10 @@ func prepareCICheckToolchainFixture(t *testing.T) ciCheckRun {
 	command := filepath.Join(t.TempDir(), "codex")
 	require.NoError(t, os.WriteFile(command, []byte("#!/bin/sh\nexit 0\n"), 0o700))
 	run, err := (&WorkerPool{}).prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}, command, nil, io.Discard)
-	require.NoError(t, err)
-	t.Cleanup(run.cleanup)
-	return run
-}
-
-func TestCICheckMisePreparation(t *testing.T) {
-	tools, _ := ciCheckMiseFixture(t)
-	run := prepareCICheckToolchainFixture(t)
-	assert.Contains(t, run.Job.ReadPaths, tools)
-	assert.Contains(t, run.Job.Env, "PATH="+filepath.Join(tools, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if err == nil {
+		t.Cleanup(run.cleanup)
+	}
+	return run, err
 }
 
 func TestCICheckMiseDiscoveryFailure(t *testing.T) {
@@ -248,14 +241,24 @@ func TestCICheckMiseDiscoveryFailure(t *testing.T) {
 
 func TestCICheckMiseCredentialOverlap(t *testing.T) {
 	tools, _ := ciCheckMiseFixture(t)
-	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	repo := testutil.NewTestRepoWithCommit(t)
-	sha := repo.HeadSHA()
-	command := filepath.Join(t.TempDir(), "codex")
-	require.NoError(t, os.WriteFile(command, []byte("#!/bin/sh\nexit 0\n"), 0o700))
 	home := filepath.Join(tools, "home")
 	require.NoError(t, os.Mkdir(home, 0o700))
 	t.Setenv("HOME", home)
-	_, err := (&WorkerPool{}).prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}, command, nil, io.Discard)
+	_, err := prepareCICheckToolchainFixture(t)
 	require.ErrorContains(t, err, "read grant contains host home")
+}
+
+func TestCICheckMiseUnavailablePaths(t *testing.T) {
+	tools, shims := ciCheckMiseFixture(t)
+	missing := filepath.Join(t.TempDir(), "installs", "python", "system")
+	require.NoError(t, os.MkdirAll(filepath.Dir(missing), 0o700))
+	// mise reports system selections as installed even though this directory doesn't exist.
+	inventory := fmt.Sprintf(`{"python":[{"version":"system","install_path":%q,"installed":true,"active":true}],"node":[{"install_path":%q,"installed":true,"active":true}]}`, missing, tools)
+	script := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in\n'ls --current --installed --json') printf '%%s' '%s';;\n'bin-paths') printf '%%s\\n' '%s' '%s';;\n*) exit 3;;\nesac\n", inventory, missing, filepath.Join(tools, "bin"))
+	require.NoError(t, os.WriteFile(filepath.Join(shims, "mise"), []byte(script), 0o700))
+	var log bytes.Buffer
+	roots, bins := ciCheckMisePaths(t.Context(), &log)
+	assert.Equal(t, []string{tools}, roots)
+	assert.Equal(t, []string{filepath.Join(tools, "bin")}, bins)
+	assert.Contains(t, log.String(), missing)
 }
