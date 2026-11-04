@@ -853,10 +853,13 @@ workspaces receive no separate warming; findings that need unavailable
 dependencies post unchecked. Inside the sandbox, the checker can change its
 scratch files and read the shared object store and warmed caches. Tests can bind
 and connect to pathname Unix sockets inside the job's scratch directory,
-including its temporary directory. Host Unix sockets outside scratch remain
-blocked. Model calls use nono's credential route, which reads the host's current
-Codex login outside the sandbox. Tests that start TCP loopback servers cannot
-run in this sandbox; the checker keeps findings it cannot try.
+including its temporary directory. A short alias under `/tmp` lets provider
+plugins bind Unix sockets even with deeply nested checkout paths. Temporary
+contents stay inside the checkout for cleanup and startup recovery. Host Unix
+sockets outside scratch remain blocked. Model calls use nono's credential route,
+which reads the host's current Codex login outside the sandbox. Tests that start
+TCP loopback servers cannot run in this sandbox; the checker keeps findings it
+cannot try.
 
 A finding drops only when one verdict supplies evidence and a reason to drop it.
 Missing or duplicate verdicts keep the finding. The job log records the

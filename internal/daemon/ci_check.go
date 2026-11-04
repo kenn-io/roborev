@@ -236,7 +236,21 @@ func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob
 	if err = validateCICheckReadPaths(readPaths); err != nil {
 		return
 	}
-	env := []string{"PATH=" + toolPath, "HOME=" + filepath.Join(root, "home"), "TMPDIR=" + filepath.Join(run.Job.WorkDir, "tmp"), "GOCACHE=" + filepath.Join(run.Job.WorkDir, "gocache"), "GOPROXY=off", "LANG=C.UTF-8", "TERM=dumb"}
+	// Keep plugin socket names within Linux's 107-byte pathname capacity.
+	// /tmp stays short independently of host TMPDIR; recovery owns the linked contents.
+	tmpAlias, err := os.MkdirTemp("/tmp", "roborev-ci-tmp-*")
+	if err != nil {
+		return
+	}
+	closeCheckoutAndScratch := run.cleanup
+	run.cleanup = func() {
+		_ = os.RemoveAll(tmpAlias)
+		closeCheckoutAndScratch()
+	}
+	if err = os.Symlink(filepath.Join(run.Job.WorkDir, "tmp"), filepath.Join(tmpAlias, "t")); err != nil {
+		return
+	}
+	env := []string{"PATH=" + toolPath, "HOME=" + filepath.Join(root, "home"), "TMPDIR=" + filepath.Join(tmpAlias, "t"), "GOCACHE=" + filepath.Join(run.Job.WorkDir, "gocache"), "GOPROXY=off", "LANG=C.UTF-8", "TERM=dumb"}
 	if len(goPaths) == 2 {
 		env[0] = "PATH=" + filepath.Join(goPaths[0], "bin") + string(os.PathListSeparator) + toolPath
 		env = append(env, "GOMODCACHE="+goPaths[1])

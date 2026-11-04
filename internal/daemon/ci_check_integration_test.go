@@ -65,6 +65,61 @@ if cat "$1"; then exit 1; fi
 	assert.Contains(string(output), "checker history fixture")
 }
 
+func TestCICheckProviderSocketSandboxIntegration(t *testing.T) {
+	testutil.RequireSandboxIntegration(t)
+	t.Setenv("ROBOREV_DATA_DIR", filepath.Join(t.TempDir(), "nested", "checker-data"))
+	repo := testutil.NewTestRepoWithCommit(t)
+	sha := repo.HeadSHA()
+	command := filepath.Join(t.TempDir(), "codex")
+	require.NoError(t, os.WriteFile(command, []byte("\x7fELFnative fixture"), 0o700))
+	hostTmp := filepath.Join(t.TempDir(), "daemon-temporary-directory-with-a-long-configured-path")
+	require.NoError(t, os.Mkdir(hostTmp, 0o700))
+	t.Setenv("TMPDIR", hostTmp)
+	wp := &WorkerPool{}
+	run, err := wp.prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}, command, nil, io.Discard)
+	require.NoError(t, err)
+	t.Cleanup(run.cleanup)
+	run.Job.Route = sandbox.Route{Name: "fixture", Upstream: "https://example.com", Path: "/responses", EnvVar: "FIXTURE_TOKEN", Capture: []string{"/bin/echo", "fixture-token"}}
+	const probe = `
+import socket,subprocess,sys
+child = '''
+import os,socket,tempfile
+fd,path=tempfile.mkstemp(prefix="plugin")
+os.close(fd)
+os.unlink(path)
+with socket.socket(socket.AF_UNIX) as server:
+ server.settimeout(5)
+ server.bind(path)
+ server.listen(1)
+ print(path,flush=True)
+ peer,_=server.accept()
+ with peer:
+  peer.settimeout(5)
+  assert peer.recv(64)==b"greet fixture"
+  peer.sendall(b"hello fixture")
+os.unlink(path)
+'''
+process=subprocess.Popen([sys.executable,"-c",child],stdout=subprocess.PIPE,text=True)
+try:
+ with socket.socket(socket.AF_UNIX) as client:
+  client.settimeout(5)
+  client.connect(process.stdout.readline().strip())
+  client.sendall(b"greet fixture")
+  assert client.recv(64)==b"hello fixture"
+ assert process.wait(timeout=5)==0
+finally:
+ if process.poll() is None: process.terminate()
+ process.wait()
+`
+	argv, env, cleanup, err := run.Job.Command(t.Context(), []string{"/usr/bin/python3", "-c", probe})
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	cmd := exec.CommandContext(t.Context(), argv[0], argv[1:]...)
+	cmd.Env = env
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, "%s", output)
+}
+
 func TestCICheckSandboxIntegration(t *testing.T) {
 	testutil.RequireSandboxIntegration(t)
 	for _, name := range []string{"nono", "codex"} {
