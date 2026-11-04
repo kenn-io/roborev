@@ -131,6 +131,46 @@ func TestReconcilerResumesFillAfterPreviousTurn(t *testing.T) {
 	}
 }
 
+func TestReconcilerSharedCursorYieldsAfterMixedPage(t *testing.T) {
+	assert := assert.New(t)
+	index := openGenerationTestIndex(t)
+	recorder := recordFillCursors(t, index)
+	sources := makeSearchSources(2*sharedLookupPage + 1)
+	embedder := &reconcilerEmbedder{space: testSpace("model", 2), batchSize: 1}
+	r := NewReconciler(&reconcilerStore{sources: sources}, index, embedder, ReconcilerConfig{})
+	shared := newMemorySharedVectors()
+	space, err := sharedSpace(embedder.space)
+	require.NoError(t, err)
+	shared.rows[space] = make(map[storage.SearchVectorKey][]storage.SearchVectorChunk)
+	for _, source := range sources[1:] {
+		doc := searchdoc.Render(source)
+		shared.rows[space][sharedKey(source.ReviewUUID, doc.ContentHash)] = []storage.SearchVectorChunk{{Index: 0, Vector: []float32{1, 0}}}
+	}
+	r.ShareVectors(shared)
+	for {
+		more, err := r.refreshMirror(t.Context())
+		require.NoError(t, err)
+		if !more {
+			break
+		}
+	}
+
+	_, err = r.reconcileTurn(t.Context())
+	require.NoError(t, err)
+	assert.Equal([]string{""}, recorder.after)
+	assert.Equal(256, shared.lookupKeys, "one turn looks up one shared page")
+	assert.Len(embedder.calls, 1, "only the first review needs the provider")
+	assert.Equal(int64(256), r.Health().Embedded)
+
+	recorder.after = nil
+	_, err = r.reconcileTurn(t.Context())
+	require.NoError(t, err)
+	assert.Equal([]string{searchdoc.Render(sources[sharedLookupPage-1]).DocKey}, recorder.after)
+	assert.Equal(512, shared.lookupKeys, "the next turn looks up the next page")
+	assert.Len(embedder.calls, 1)
+	assert.Equal(int64(512), r.Health().Embedded)
+}
+
 func TestReconcilerFillCursorRetriesAndWraps(t *testing.T) {
 	ctx := t.Context()
 	index := openGenerationTestIndex(t)
