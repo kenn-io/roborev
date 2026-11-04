@@ -2127,7 +2127,7 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 		args = append(args, statusFilter)
 	}
 	if o.failedReviewsSince != nil {
-		// Keep the indexed verdict probe: removing it slows sparse-failure benchmarks by over 10%.
+		// The indexed probe lets SQLite skip non-failing reviews before the full verdict check.
 		conditions = append(conditions,
 			"j.finished_at IS NOT NULL",
 			"datetime(j.finished_at) >= datetime(?) AND julianday(j.finished_at) >= julianday(?)",
