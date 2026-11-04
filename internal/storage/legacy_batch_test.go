@@ -11,18 +11,22 @@ import (
 func TestLegacyMigrationCommitsBatchesAndResumes(t *testing.T) {
 	t.Parallel()
 	env := setupJobEnv(t, t.TempDir(), "batch-migration")
+	machineID, err := env.db.GetMachineID()
+	require.NoError(t, err)
+	tx := beginSeedTx(t, env.db)
 	// More than two batches, including a partial final batch.
 	const count = 205
 	var blockedJob int64
 	for i := range count {
-		fixture := seedLegacyMarkdownReview(t, env.db, env.repo.ID, fmt.Sprintf("batch-%d", i), "Keep this original historical text.", 0, true)
+		fixture := seedLegacyMarkdownReviewTx(t, env.db, tx, machineID, env.repo.ID, fmt.Sprintf("batch-%d", i), "Keep this original historical text.", 0, true)
 		if i == 100 {
 			blockedJob = fixture.jobID
 		}
 	}
+	require.NoError(t, tx.Commit())
 	// Fail a write in the second batch. The first batch must already be
 	// committed, while the failing batch must retain its original active rows.
-	_, err := env.db.ExecContext(t.Context(), fmt.Sprintf(`CREATE TRIGGER stop_archive_batch BEFORE DELETE ON reviews
+	_, err = env.db.ExecContext(t.Context(), fmt.Sprintf(`CREATE TRIGGER stop_archive_batch BEFORE DELETE ON reviews
  WHEN OLD.job_id = %d BEGIN SELECT RAISE(ABORT, 'stop second batch'); END`, blockedJob))
 	require.NoError(t, err)
 	require.ErrorContains(t, env.db.migrateLegacyReviews(), "stop second batch")
