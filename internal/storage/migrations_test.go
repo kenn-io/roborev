@@ -204,6 +204,7 @@ func TestIndexMigrations(t *testing.T) {
 		{"summary repo window", 6, "idx_review_jobs_repo_enqueued", "repo_id, " + sqliteNormalizedTimestampExpr("enqueued_at")},
 		{"review export completion", 7, "idx_reviews_export_completed", "ON reviews(" + sqliteNormalizedTimestampExpr("created_at")},
 		{"search changes", 8, "idx_review_jobs_commit_id", "ON review_jobs(commit_id)"},
+		{"cost aggregate", 9, "idx_review_jobs_cost", "ON review_jobs(repo_id, branch, CASE WHEN"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db := openUnmigratedDB(t)

@@ -75,6 +75,16 @@ const costTerminal = "j.started_at IS NOT NULL AND j.finished_at IS NOT NULL " +
 const costEligible = costTerminal + " " +
 	"AND (j.agent_invoked = 1 OR (" + agentRanByUsage + "))"
 
+// costJobExprs are the per-job values stored by idx_review_jobs_cost.
+// Build the index from these same strings so SQLite can read their results
+// instead of parsing token_usage JSON. Changing an expression needs a new
+// index name because CREATE INDEX IF NOT EXISTS keeps the old definition.
+var costJobExprs = []string{
+	"CASE WHEN " + costEligible + " THEN 1 ELSE 0 END",
+	"CASE WHEN " + costEligible + " AND " + costComplete + " THEN 1 ELSE 0 END",
+	"CASE WHEN " + costEligible + " AND " + hasCost + " THEN json_extract(j.token_usage, '$.cost_usd') ELSE 0 END",
+}
+
 // GetCostAggregate computes approximate agent spend for the given scope on a
 // fresh read.
 func (db *DB) GetCostAggregate(opts CostOptions) (CostAggregate, error) {
@@ -115,12 +125,9 @@ func costAggregate(q querier, opts CostOptions) (CostAggregate, error) {
 
 	query := `
 		SELECT
-			COALESCE(SUM(CASE WHEN ` + costEligible + ` THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN ` + costEligible + `
-				AND ` + costComplete + ` THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN ` + costEligible + `
-				AND ` + hasCost + `
-				THEN json_extract(j.token_usage, '$.cost_usd') ELSE 0 END), 0)
+			COALESCE(SUM(` + costJobExprs[0] + `), 0),
+			COALESCE(SUM(` + costJobExprs[1] + `), 0),
+			COALESCE(SUM(` + costJobExprs[2] + `), 0)
 		` + from + `
 		` + where
 

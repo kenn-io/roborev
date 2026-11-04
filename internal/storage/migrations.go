@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 )
 
@@ -42,6 +43,13 @@ var schemaMigrations = []schemaMigration{
 	{6, "summary repo window index", migrateSummaryRepoWindowIndex},
 	{7, "review export completion index", migrateReviewExportCompletedIndex},
 	{8, "search change log", migrateSearchChanges},
+	{9, "cost aggregate index", migrateCostAggregateIndex},
+}
+
+func migrateCostAggregateIndex(ctx context.Context, db *DB) error {
+	_, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_review_jobs_cost
+		ON review_jobs(repo_id, branch, `+strings.ReplaceAll(strings.Join(costJobExprs, ", "), "j.", "")+`)`)
+	return err
 }
 
 // ErrSchemaTooNew reports a database written by a newer roborev release.
