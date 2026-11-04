@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -253,9 +254,12 @@ func TestCICheckMiseUnavailablePaths(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "installs", "python", "system")
 	require.NoError(t, os.MkdirAll(filepath.Dir(missing), 0o700))
 	// mise reports system selections as installed even though this directory doesn't exist.
-	inventory := fmt.Sprintf(`{"python":[{"version":"system","install_path":%q,"installed":true,"active":true}],"node":[{"install_path":%q,"installed":true,"active":true}]}`, missing, tools)
-	script := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in\n'ls --current --installed --json') printf '%%s' '%s';;\n'bin-paths') printf '%%s\\n' '%s' '%s';;\n*) exit 3;;\nesac\n", inventory, missing, filepath.Join(tools, "bin"))
-	require.NoError(t, os.WriteFile(filepath.Join(shims, "mise"), []byte(script), 0o700))
+	mise := filepath.Join(shims, "mise")
+	script, err := os.ReadFile(mise)
+	require.NoError(t, err)
+	response := strings.Replace(string(script), `{"node":`, fmt.Sprintf(`{"python":[{"version":"system","install_path":%q,"installed":true,"active":true}],"node":`, missing), 1)
+	response = strings.Replace(response, "'bin-paths') ", fmt.Sprintf("'bin-paths') printf '%%s\\n' '%s'; ", missing), 1)
+	require.NoError(t, os.WriteFile(mise, []byte(response), 0o700))
 	var log bytes.Buffer
 	roots, bins := ciCheckMisePaths(t.Context(), &log)
 	assert.Equal(t, []string{tools}, roots)
