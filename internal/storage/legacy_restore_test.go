@@ -14,6 +14,8 @@ func TestRestoreLegacyHistoryAndImport(t *testing.T) {
 	for _, archived := range []bool{false, true} {
 		t.Run(map[bool]string{false: "direct upgrade", true: "already archived"}[archived], func(t *testing.T) {
 			env := setupJobEnv(t, t.TempDir(), "legacy-head")
+			_, err := env.db.ExecContext(t.Context(), `DELETE FROM sync_state WHERE key = ?`, SyncStateHistoricalReviewsMigrated)
+			require.NoError(t, err)
 			legacy := seedLegacyMarkdownReview(t, env.db, env.repo.ID, "prose", "  The write loses data.\nKeep the old file until rename.\n", 0, true)
 			unknown := seedLegacyMarkdownReview(t, env.db, env.repo.ID, "unknown", "Cannot infer a verdict from this historical text.", nil, false)
 			convertible := seedLegacyMarkdownReview(t, env.db, env.repo.ID, "convertible", legacyFindingsMarkdown, 0, false)
