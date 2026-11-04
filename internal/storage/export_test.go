@@ -26,12 +26,7 @@ func TestExportReviewsCursorPageSeeksCompletedIndex(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
-	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
-	var cursor *exportCursor
-	for i := range 3 {
-		review := seedCompletedExportReview(t, db, repo.ID, fmt.Sprintf("%040x", i+1), "2026-06-29 00:00:00", false)
-		cursor = &exportCursor{CompletedAt: "2026-06-29 00:00:00", ReviewID: *review.UUID}
-	}
+	cursor := &exportCursor{CompletedAt: "2026-06-29 00:00:00", ReviewID: uuid.MustParse("00000000-0000-4000-8000-000000000001")}
 	query, args := exportReviewRowsQuery(ExportReviewsOptions{Profile: ExportProfileMetadata, Limit: 500}, cursor)
 	rows, err := db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+query, args...)
 	require.NoError(t, err)
