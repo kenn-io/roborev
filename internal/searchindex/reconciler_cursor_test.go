@@ -89,15 +89,16 @@ func TestReconcilerResumesFillAfterPreviousTurn(t *testing.T) {
 				}
 				r.ShareVectors(shared)
 			}
-			for turn, wantAfter := range []string{"", searchdoc.Render(sources[imported+3]).DocKey, searchdoc.Render(sources[imported+7]).DocKey} {
+			wantCursors := []string{"", searchdoc.Render(sources[imported+3]).DocKey, searchdoc.Render(sources[imported+7]).DocKey}
+			if imported > 0 {
+				// An all-hit page ends the first turn without saving a cursor.
+				wantCursors = append([]string{""}, wantCursors...)
+			}
+			for _, wantAfter := range wantCursors {
 				recorder.after = nil
 				_, err := r.reconcileTurn(t.Context())
 				require.NoError(t, err)
-				wantScans := []string{wantAfter}
-				if turn == 0 && imported > 0 {
-					wantScans = append(wantScans, searchdoc.Render(sources[imported-1]).DocKey)
-				}
-				assert.Equal(t, wantScans, recorder.after)
+				assert.Equal(t, []string{wantAfter}, recorder.after)
 			}
 			assert.Zero(t, r.Health().EmbeddingBacklog)
 			assert.Equal(t, kitKey(t, embedder.space), r.Health().ActiveGeneration)
