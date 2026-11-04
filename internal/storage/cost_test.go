@@ -1,12 +1,44 @@
 package storage
 
 import (
+	"database/sql"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type costPlanQuerier struct {
+	querier
+	t *testing.T
+}
+
+func (q costPlanQuerier) QueryRow(query string, args ...any) *sql.Row {
+	q.t.Helper()
+	assert.Contains(q.t, queryPlan(q.t, q.querier, query, args...), "USING COVERING INDEX idx_review_jobs_cost", query)
+	return q.querier.QueryRow(query, args...)
+}
+
+func TestCostAggregateReadsCostIndex(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	for _, tc := range []struct {
+		name string
+		opts CostOptions
+	}{
+		{"all", CostOptions{}},
+		{"repo", CostOptions{RepoPaths: []string{"/tmp/cost-plan"}}},
+		{"repo branch", CostOptions{RepoPaths: []string{"/tmp/cost-plan"}, Branch: "main"}},
+		{"repo empty branch", CostOptions{RepoPaths: []string{"/tmp/cost-plan"}, BranchEmpty: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := costAggregate(costPlanQuerier{querier: db, t: t}, tc.opts)
+			require.NoError(t, err)
+		})
+	}
+}
 
 func TestGetCostAggregate(t *testing.T) {
 	t.Parallel()

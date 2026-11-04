@@ -42,6 +42,16 @@ var schemaMigrations = []schemaMigration{
 	{6, "summary repo window index", migrateSummaryRepoWindowIndex},
 	{7, "review export completion index", migrateReviewExportCompletedIndex},
 	{8, "search change log", migrateSearchChanges},
+	{9, "cost aggregate index", migrateCostAggregateIndex},
+}
+
+func migrateCostAggregateIndex(ctx context.Context, db *DB) error {
+	_, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_review_jobs_cost
+		ON review_jobs(repo_id, branch, CASE WHEN started_at IS NOT NULL AND finished_at IS NOT NULL AND status IN ('done','applied','rebased','failed','canceled','skipped') AND (agent_invoked = 1 OR (json_valid(token_usage) AND (json_extract(token_usage, '$.has_cost') OR json_extract(token_usage, '$.total_output_tokens') > 0 OR json_extract(token_usage, '$.peak_context_tokens') > 0 OR json_extract(token_usage, '$.cache_creation_tokens') > 0 OR json_extract(token_usage, '$.cost_usd') > 0))) THEN 1 ELSE 0 END,
+			CASE WHEN started_at IS NOT NULL AND finished_at IS NOT NULL AND status IN ('done','applied','rebased','failed','canceled','skipped') AND (agent_invoked = 1 OR (json_valid(token_usage) AND (json_extract(token_usage, '$.has_cost') OR json_extract(token_usage, '$.total_output_tokens') > 0 OR json_extract(token_usage, '$.peak_context_tokens') > 0 OR json_extract(token_usage, '$.cache_creation_tokens') > 0 OR json_extract(token_usage, '$.cost_usd') > 0))) AND json_valid(token_usage) AND COALESCE(json_extract(token_usage, '$.has_cost'), 0) AND json_extract(token_usage, '$.cost_usd') IS NOT NULL AND COALESCE(json_extract(token_usage, '$.expected_provider_sessions'), 0) <= COALESCE(json_array_length(token_usage, '$.provider_session_ids'), 0) THEN 1 ELSE 0 END,
+			CASE WHEN started_at IS NOT NULL AND finished_at IS NOT NULL AND status IN ('done','applied','rebased','failed','canceled','skipped') AND (agent_invoked = 1 OR (json_valid(token_usage) AND (json_extract(token_usage, '$.has_cost') OR json_extract(token_usage, '$.total_output_tokens') > 0 OR json_extract(token_usage, '$.peak_context_tokens') > 0 OR json_extract(token_usage, '$.cache_creation_tokens') > 0 OR json_extract(token_usage, '$.cost_usd') > 0))) AND json_valid(token_usage) AND COALESCE(json_extract(token_usage, '$.has_cost'), 0) AND json_extract(token_usage, '$.cost_usd') IS NOT NULL THEN json_extract(token_usage, '$.cost_usd') ELSE 0 END
+		)`)
+	return err
 }
 
 // ErrSchemaTooNew reports a database written by a newer roborev release.
