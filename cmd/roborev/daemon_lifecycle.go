@@ -364,6 +364,29 @@ func ensureDaemon() (err error) {
 		return nil
 	}
 
+	// A live managed daemon can miss the first HTTP discovery too. Inspect
+	// identity-checked records before legacy cleanup can terminate it.
+	records, listErr := listAllRuntimes()
+	if listErr != nil && !errors.Is(listErr, os.ErrNotExist) {
+		return listErr
+	}
+	for _, record := range records {
+		if record == nil || record.PID <= 0 || record.Stale() {
+			continue
+		}
+		// This legacy entry point has no caller context yet. Bound only the
+		// ownership lookup; a responsive old daemon may still need to drain.
+		ctx, cancel := context.WithTimeout(context.Background(), daemonStartTimeout)
+		owner, lookupErr := findDaemonService(ctx, record.PID)
+		cancel()
+		if lookupErr != nil {
+			return preserveRuntimeLiveness(record, lookupErr)
+		}
+		if owner != nil {
+			return recoverDaemon(record, discoveryErr, false)
+		}
+	}
+
 	// Legacy pre-kit daemons are invisible to kit discovery because they do
 	// not serve /api/ping, but they can still hold the default port and DB.
 	// Cleanup uses only this data directory's runtime records. Never adopt

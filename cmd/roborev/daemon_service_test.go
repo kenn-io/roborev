@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"os"
 	"path/filepath"
@@ -32,6 +33,69 @@ func stubServiceRecovery(t *testing.T) {
 		getAnyRunningDaemonForStart, startDaemonForEnsure, startDaemonDetached = oldDiscovery, oldEnsure, oldDetached
 		pendingStartPause = oldPause
 	})
+}
+
+func TestUnresponsiveManagedDaemonStaysAlive(t *testing.T) {
+	for _, discovery := range []string{"missed under lock", "failed reprobe", "missed initially"} {
+		t.Run(discovery, func(t *testing.T) {
+			stubServiceRecovery(t)
+			oldDiscover, oldProbe, oldList, oldCleanup := getAnyRunningDaemon, probeDaemonForEnsure, listAllRuntimes, cleanupZombieDaemons
+			t.Cleanup(func() {
+				getAnyRunningDaemon, probeDaemonForEnsure, listAllRuntimes, cleanupZombieDaemons = oldDiscover, oldProbe, oldList, oldCleanup
+			})
+			info := &daemon.RuntimeInfo{PID: os.Getpid(), Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}
+			executable, err := currentExecutable()
+			require.NoError(t, err)
+			owner := &daemonService{unit: "fixture.service", executable: executable, mainPID: info.PID, serviceType: "simple"}
+			findDaemonService = func(context.Context, int) (*daemonService, error) { return owner, nil }
+			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
+			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
+				if discovery == "failed reprobe" {
+					return info, nil
+				}
+				return nil, os.ErrNotExist
+			}
+			probeErr := errors.New("probe timed out")
+			probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) { return nil, probeErr }
+			listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return []*daemon.RuntimeInfo{info}, nil }
+			var events []string
+			cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { events = append(events, "cleanup"); return 0 }
+			startDaemonForEnsure = func() error { events = append(events, "detached"); return nil }
+			drainManagedDaemon = func(*daemon.RuntimeInfo) error { events = append(events, "drain"); return nil }
+			startDaemonService = func(context.Context, string) error {
+				events = append(events, "start")
+				getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return info, nil }
+				return nil
+			}
+			serviceMainPID = func(context.Context, string) (int, error) { return info.PID, nil }
+			paused := true
+			pendingStartPause = &paused
+			if discovery == "missed initially" {
+				err = ensureDaemon()
+			} else {
+				err = recoverDaemon(info, probeErr, false)
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "alive but not responding")
+			assert.Contains(t, err.Error(), serviceRestartHint(owner.unit))
+			assert.Empty(t, events, "refuse before pause, drain, cleanup or service start")
+
+			withStatusWebRuntime(t, func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist })
+			oldEnsure := statusEnsureDaemon
+			t.Cleanup(func() { statusEnsureDaemon = oldEnsure })
+			recoveryErr := err
+			statusEnsureDaemon = func() error { return recoveryErr }
+			cmd := statusCmd()
+			cmd.SetArgs([]string{"--json"})
+			output := captureStdout(t, func() { require.NoError(t, cmd.Execute()) })
+			var result statusJSONResult
+			require.NoError(t, json.Unmarshal([]byte(output), &result))
+			assert.True(t, result.Running, "report the specific live runtime even while HTTP is unavailable")
+			assert.Nil(t, result.Daemon)
+			assert.Nil(t, result.Health)
+			assert.Empty(t, result.Jobs)
+		})
+	}
 }
 
 func TestRestartManagedDaemon(t *testing.T) {
@@ -199,4 +263,75 @@ func TestRecoverDaemonLockFilesystemFailure(t *testing.T) {
 	require.ErrorAs(t, err, &pathErr)
 	assert.NotContains(t, err.Error(), "running reviews")
 	assert.NotContains(t, err.Error(), "2m0s")
+}
+
+func TestRecoverVanishedManagedDaemonCanStart(t *testing.T) {
+	stubServiceRecovery(t)
+	info := &daemon.RuntimeInfo{PID: os.Getpid(), Network: "tcp", Address: "127.0.0.1:1"}
+	executable, err := currentExecutable()
+	require.NoError(t, err)
+	owner := &daemonService{unit: "fixture.service", executable: executable, mainPID: info.PID, serviceType: "simple"}
+	lookups := 0
+	findDaemonService = func(context.Context, int) (*daemonService, error) {
+		lookups++
+		if lookups == 1 {
+			return owner, nil
+		}
+		return nil, os.ErrNotExist
+	}
+	getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
+	var events []string
+	drainManagedDaemon = func(*daemon.RuntimeInfo) error { events = append(events, "drain"); return nil }
+	startDaemonForEnsure = func() error { events = append(events, "detached"); return nil }
+	startDaemonService = func(context.Context, string) error {
+		events = append(events, "start")
+		getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return info, nil }
+		return nil
+	}
+	serviceMainPID = func(context.Context, string) (int, error) { return info.PID, nil }
+	require.NoError(t, recoverDaemon(info, errors.New("probe failed"), false))
+	assert.Equal(t, []string{"start"}, events)
+}
+
+func TestEnsureUnresponsiveOwnershipFailure(t *testing.T) {
+	for _, stage := range []string{"initial discovery", "recovery lookup"} {
+		t.Run(stage, func(t *testing.T) {
+			stubServiceRecovery(t)
+			oldDiscover, oldList, oldCleanup := getAnyRunningDaemon, listAllRuntimes, cleanupZombieDaemons
+			t.Cleanup(func() { getAnyRunningDaemon, listAllRuntimes, cleanupZombieDaemons = oldDiscover, oldList, oldCleanup })
+			info := &daemon.RuntimeInfo{PID: os.Getpid()}
+			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
+			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
+			listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return []*daemon.RuntimeInfo{info}, nil }
+			ownerErr := &managedRecoveryError{"fixture.service", errors.New("owner unavailable")}
+			findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, ownerErr }
+			var events []string
+			cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { events = append(events, "cleanup"); return 0 }
+			startDaemonForEnsure = func() error { events = append(events, "detached"); return nil }
+			var err error
+			if stage == "initial discovery" {
+				err = ensureDaemon()
+			} else {
+				err = recoverDaemon(info, errors.New("probe unavailable"), false)
+			}
+			require.ErrorIs(t, err, ownerErr)
+			assert.Empty(t, events)
+			withStatusWebRuntime(t, func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist })
+			oldEnsure := statusEnsureDaemon
+			t.Cleanup(func() { statusEnsureDaemon = oldEnsure })
+			statusEnsureDaemon = func() error { return err }
+			cmd := statusCmd()
+			cmd.SetArgs([]string{"--json"})
+			output := captureStdout(t, func() { require.NoError(t, cmd.Execute()) })
+			var result statusJSONResult
+			require.NoError(t, json.Unmarshal([]byte(output), &result))
+			assert.True(t, result.Running)
+			assert.Contains(t, result.Error, "owner unavailable")
+			assert.Nil(t, result.Daemon)
+			assert.Nil(t, result.Health)
+			assert.Empty(t, result.Jobs)
+			info.PID = 1 << 30
+			assert.False(t, managedRecoveryStatus(err).Running, "recheck process exit before rendering status")
+		})
+	}
 }

@@ -18,6 +18,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 
 	"go.kenn.io/roborev/internal/daemon"
 )
@@ -232,4 +233,25 @@ func TestLaunchdInheritedLabelIntegration(t *testing.T) {
 		assert.Nil(t, owner, "an inherited label without job ancestry is unmanaged")
 		shutdownIsolatedUpdateDaemon(t, detached)
 	})
+}
+
+func TestLaunchdUnresponsiveIntegration(t *testing.T) {
+	if os.Getenv("ROBOREV_TEST_LAUNCHD") != "1" {
+		t.Skip("set ROBOREV_TEST_LAUNCHD=1 to bootstrap isolated LaunchAgents")
+	}
+	oldBinary, newBinary := versionedUpdateDaemonBinaries(t)
+	f := newLaunchdFixture(t, oldBinary, true, false)
+	original := f.runtime(t)
+	installLaunchdFixtureBinary(t, newBinary, f.binary)
+	require.NoError(t, unix.Kill(original.PID, unix.SIGSTOP))
+	t.Cleanup(func() { _ = unix.Kill(original.PID, unix.SIGCONT) })
+	output := f.command(t, "status", "--json")
+	assert.Contains(t, string(output), `"running": true`)
+	assert.Contains(t, string(output), "alive but not responding")
+	assert.Contains(t, string(output), serviceRestartHint(f.unit))
+	pid, err := userServiceMainPID(t.Context(), f.unit)
+	require.NoError(t, err)
+	assert.Equal(t, original.PID, pid, "an HTTP timeout must preserve the exact managed process")
+	require.NoError(t, unix.Kill(original.PID, unix.SIGCONT))
+	assert.Equal(t, original.PID, f.runtime(t).PID)
 }

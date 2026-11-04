@@ -44,6 +44,14 @@ The error prints a manual restart command when automatic replacement is not
 safe. An ownership lookup error during update leaves the running daemon in place
 instead of starting a detached copy.
 
+### Managed daemon is alive but not responding
+
+Automatic recovery leaves an alive launchd or systemd daemon in place when HTTP
+probes time out. `roborev status --json` reports `running: true` and an `error`
+without fabricating queue or health information. Check the service logs and host
+load, then use the manual restart command in the error if needed. Explicit
+`roborev daemon restart` still requests a drain and service restart.
+
 ## Missing or unstructured reviews after upgrade
 
 Version 0.68.0 archived historical reviews that it could not convert to JSON,

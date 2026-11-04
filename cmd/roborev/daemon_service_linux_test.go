@@ -32,6 +32,7 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 		stops, starts  int
 		queueCommand   bool
 		paused         bool
+		wantPause      bool
 		failPause      bool
 		pauseNotFound  bool
 		failDiscovery  bool
@@ -39,16 +40,16 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 	}{
 		{outcome: "replacement current"},
 		{outcome: "live current after probe failure", probeErr: probeErr, recheckCurrent: true},
-		{outcome: "pause write failure", queueCommand: true, paused: true, failPause: true, wantError: "pause queue before shutdown"},
-		{outcome: "pause unsupported by old daemon", queueCommand: true, paused: true, pauseNotFound: true, wantError: "daemon lacks queue-pause support; recovery stopped before shutdown; wait for active reviews to finish, then run systemctl --user restart fixture.service and retry roborev pause"},
-		{outcome: "failed version probe", queueCommand: true, paused: true, probeErr: probeErr, stops: 1, starts: 1},
-		{outcome: "failed rediscovery", queueCommand: true, paused: true, failDiscovery: true, stops: 1, starts: 1},
+		{outcome: "pause write failure", queueCommand: true, paused: true, wantPause: true, failPause: true, wantError: "pause queue before shutdown"},
+		{outcome: "pause unsupported by old daemon", queueCommand: true, paused: true, wantPause: true, pauseNotFound: true, wantError: "daemon lacks queue-pause support; recovery stopped before shutdown; wait for active reviews to finish, then run systemctl --user restart fixture.service and retry roborev pause"},
+		{outcome: "failed version probe", queueCommand: true, paused: true, wantPause: true, probeErr: probeErr, stops: 1, starts: 1},
+		{outcome: "failed rediscovery", queueCommand: true, paused: true, failDiscovery: true, wantError: "alive but not responding"},
 		{outcome: "unpause", queueCommand: true, stops: 1, starts: 1},
 		{outcome: "child responsive"},
 		{outcome: "child failed", probeErr: probeErr, wantError: "service child requires attention: probe failed; run systemctl --user restart fixture.service"},
 		{outcome: "replacement outdated", stops: 1, starts: 1},
 		{outcome: "vanished owned", starts: 1},
-		{outcome: "failed", probeErr: probeErr, stops: 1, starts: 1},
+		{outcome: "failed", probeErr: probeErr, wantError: "alive but not responding"},
 		{outcome: "foreign responsive"},
 		{outcome: "foreign failed", probeErr: probeErr, wantError: "probe failed; run systemctl --user restart fixture.service"},
 		{outcome: "remain after exit"},
@@ -67,7 +68,7 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 			stubServiceRecovery(t)
 			var progress bytes.Buffer
 			lifecycleOut, verbose = &progress, false
-			original := &daemon.RuntimeInfo{PID: 1234, Version: version.Version, Network: "tcp", Address: "127.0.0.1:1"}
+			original := &daemon.RuntimeInfo{PID: os.Getpid(), Version: version.Version, Network: "tcp", Address: "127.0.0.1:1"}
 			var events []string
 			if tc.queueCommand {
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -202,7 +203,7 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 			}
 			if tc.queueCommand {
 				var want []string
-				if tc.paused {
+				if tc.wantPause {
 					want = append(want, "/api/queue/pause")
 				}
 				if tc.stops != 0 {

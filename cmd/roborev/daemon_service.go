@@ -44,6 +44,23 @@ func managedRecoveryFromKeepReason(unit, reason string) *managedRecoveryError {
 	return &managedRecoveryError{unit, errors.New(reason)}
 }
 
+// unresponsiveDaemonError retains the runtime whose liveness was checked.
+// Status can report that process without inventing a successful API response.
+type unresponsiveDaemonError struct {
+	runtime *daemon.RuntimeInfo
+	cause   error
+}
+
+func (e *unresponsiveDaemonError) Error() string { return e.cause.Error() }
+func (e *unresponsiveDaemonError) Unwrap() error { return e.cause }
+
+func preserveRuntimeLiveness(info *daemon.RuntimeInfo, err error) error {
+	if info != nil && info.PID > 0 && !info.Stale() {
+		return &unresponsiveDaemonError{runtime: info, cause: err}
+	}
+	return err
+}
+
 var (
 	errRecoveryLock = errors.New("wait for daemon recovery lock")
 
@@ -219,6 +236,9 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 		if err == nil && probe.Version == version.Version {
 			return nil
 		}
+		if err != nil {
+			responsive = false
+		}
 	}
 	if responsive && current.PID != info.PID && current.Version == version.Version {
 		return nil
@@ -242,7 +262,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 			fmt.Fprintf(lifecycleOut, "Daemon recovery skipped; %v\n", err)
 			return nil
 		}
-		return err
+		return preserveRuntimeLiveness(current, err)
 	}
 	if owner == nil {
 		if err := stopDaemonRuntimes(listAllRuntimes, drainManagedDaemon, lifecycleOut); err != nil && !errors.Is(err, ErrDaemonNotRunning) {
@@ -252,7 +272,13 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 		release = nil
 		return startDaemonForEnsure()
 	}
-	fail := func(err error) error { return &managedRecoveryError{owner.unit, err} }
+	unresponsive := !responsive && !vanished && current.PID > 0 && !current.Stale()
+	fail := func(err error) error {
+		if unresponsive {
+			err = &unresponsiveDaemonError{runtime: current, cause: err}
+		}
+		return &managedRecoveryError{owner.unit, err}
+	}
 	if responsive {
 		if reason := owner.keepReason(current.PID); reason != "" {
 			fmt.Fprintf(lifecycleOut, "Daemon recovery skipped; %s\n", reason)
@@ -272,6 +298,9 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 		if err := owner.supported(); err != nil {
 			return fail(err)
 		}
+	}
+	if unresponsive {
+		return fail(fmt.Errorf("daemon PID %d is alive but not responding: %w; run %s", current.PID, probeErr, serviceRestartHint(owner.unit)))
 	}
 	// Recovery's discovery timeout must not bound the accepted review drain.
 	// This legacy entry point has no caller context; restart/update pass theirs.

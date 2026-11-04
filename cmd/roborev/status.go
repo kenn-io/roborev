@@ -35,9 +35,12 @@ type statusJSONResult struct {
 	Error             string                `json:"error,omitempty"`
 }
 
-// managedRecoveryStatus keeps the service error and reports whether a daemon still answers.
+// managedRecoveryStatus keeps the service error and the known process liveness.
 func managedRecoveryStatus(err error) statusJSONResult {
 	info, discoverErr := statusDiscover()
+	if live, ok := errors.AsType[*unresponsiveDaemonError](err); discoverErr != nil && ok && live.runtime.PID > 0 && !live.runtime.Stale() {
+		info, discoverErr = live.runtime, nil
+	}
 	web := discoverWebUI(func() (*daemon.RuntimeInfo, error) { return info, discoverErr })
 	return unavailableStatus(err, discoverErr == nil, web)
 }

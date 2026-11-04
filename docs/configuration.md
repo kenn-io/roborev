@@ -1902,10 +1902,12 @@ symlink still identifies an installation after an upgrade retargets it.
 
 ### Service-managed recovery
 
-On macOS and Linux, ordinary CLI commands replace an outdated daemon, or one
-that stops responding after discovery, through its owning service after active
-reviews finish. `roborev daemon restart` and `roborev update` use the owning
-service too.
+On macOS and Linux, ordinary CLI commands replace a responsive outdated daemon
+through its owning service after active reviews finish. A managed daemon that is
+still alive but stops responding stays running. The CLI reports a manual restart
+command instead of treating an HTTP timeout as a crash. This also applies when
+the first discovery probe times out. `roborev daemon restart` and
+`roborev update` use the owning service too.
 
 | Manager | Ownership check | Start replacement | Manual restart |
 | --- | --- | --- | --- |
