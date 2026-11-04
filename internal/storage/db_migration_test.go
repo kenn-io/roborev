@@ -659,25 +659,12 @@ func TestCommentsForCommitUseCommitIDIndex(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			db := test.open(t)
-			rows, err := db.QueryContext(t.Context(), `
-				EXPLAIN QUERY PLAN
+			plan := queryPlan(t, db, `
 				SELECT id, commit_id, job_id, responder, response, source, created_at, uuid
 				FROM responses
 				WHERE commit_id = ?
 				ORDER BY created_at ASC
 			`, 1)
-			require.NoError(t, err)
-			defer rows.Close()
-
-			var details []string
-			for rows.Next() {
-				var id, parent, unused int
-				var detail string
-				require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
-				details = append(details, detail)
-			}
-			require.NoError(t, rows.Err())
-			plan := strings.Join(details, "\n")
 			assert.Contains(t, plan, "USING INDEX idx_responses_commit_id")
 			assert.NotContains(t, plan, "SCAN responses")
 		})

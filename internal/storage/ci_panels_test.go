@@ -3,7 +3,6 @@ package storage
 import (
 	"database/sql"
 	"sort"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -27,18 +26,7 @@ func TestCIPanelHistoryLookupsUseIndex(t *testing.T) {
 		{"posted", hasPostedCIReviewQuery, []any{"acme/api", 7, "head", PanelOutcomeReviewPosted, PanelOutcomeReviewSuppressed}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			rows, err := db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+tc.query, tc.args...)
-			require.NoError(t, err)
-			defer rows.Close()
-			var details []string
-			for rows.Next() {
-				var id, parent, unused int
-				var detail string
-				require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
-				details = append(details, detail)
-			}
-			require.NoError(t, rows.Err())
-			plan := strings.Join(details, "\n")
+			plan := queryPlan(t, db, tc.query, tc.args...)
 			assert.Contains(t, plan, "idx_ci_panels_pr_head")
 		})
 	}

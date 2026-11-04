@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -36,18 +35,7 @@ func TestJobStatsQueryReadsMetadataIndexes(t *testing.T) {
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					query, args := jobStatsQuery(tc.status, "", tc.opts...)
-					rows, err := db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+query, args...)
-					require.NoError(t, err)
-					var details []string
-					for rows.Next() {
-						var id, parent, unused int
-						var detail string
-						require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
-						details = append(details, detail)
-					}
-					require.NoError(t, rows.Err())
-					require.NoError(t, rows.Close())
-					plan := strings.Join(details, "\n")
+					plan := queryPlan(t, db, query, args...)
 					assert.Contains(t, plan, "j USING COVERING INDEX", "queue counts must skip job payloads")
 					assert.Contains(t, plan, "rv USING COVERING INDEX", "queue counts must skip review payloads")
 				})
