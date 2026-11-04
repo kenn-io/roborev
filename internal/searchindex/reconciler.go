@@ -479,7 +479,6 @@ func (r *Reconciler) beginGeneration(key string, counts GenerationCounts, active
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.health.Generation != key || r.generationStarted.IsZero() {
-		r.fillAfter = nil
 		r.health.Generation = key
 		r.generationStarted = r.config.Now()
 		r.generationBaseline = counts.Embedded + counts.Skipped

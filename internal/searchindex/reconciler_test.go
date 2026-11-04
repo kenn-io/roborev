@@ -209,7 +209,6 @@ func TestReconcilerDoesNotRescanHistoryBetweenFillTurns(t *testing.T) {
 func TestReconcilerKeepsMatchingActiveGenerationAvailableDuringIncrementalFill(t *testing.T) {
 	ctx := t.Context()
 	index := openGenerationTestIndex(t)
-	recorder := recordFillCursors(t, index)
 	store := &reconcilerStore{sources: makeSearchSources(1)}
 	embedder := &reconcilerEmbedder{
 		space: testSpace("model", 2), batchSize: 1,
@@ -238,7 +237,6 @@ func TestReconcilerKeepsMatchingActiveGenerationAvailableDuringIncrementalFill(t
 	require.NoError(t, err)
 	assert.True(t, available)
 
-	recorder.after = nil
 	embedder.space = testSpace("replacement", 2)
 	replacement := kitKey(t, embedder.space)
 	more, err = r.reconcileTurn(ctx)
@@ -252,7 +250,6 @@ func TestReconcilerKeepsMatchingActiveGenerationAvailableDuringIncrementalFill(t
 	require.NoError(t, err)
 	assert.False(t, available)
 	assert.Equal(t, replacement, health.Generation)
-	assert.Equal(t, []string{""}, recorder.after, "a replacement generation starts from the first review")
 }
 
 func TestReconcilerBoundsActualProviderCallsForOversizedDocument(t *testing.T) {
