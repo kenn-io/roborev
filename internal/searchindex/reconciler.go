@@ -236,12 +236,21 @@ func (r *Reconciler) refreshMirror(ctx context.Context) (bool, error) {
 	r.mu.Lock()
 	fullScan := r.mirrorSeen != nil || r.mirrorRequested
 	sweep := r.changesRequested || !r.config.Now().Before(r.nextSweep)
+	if !fullScan && sweep {
+		r.changesRequested = false
+	}
 	r.mu.Unlock()
 	if fullScan {
 		return r.scanMirrorPage(ctx)
 	}
 	if sweep {
-		return r.drainChanges(ctx)
+		more, err := r.drainChanges(ctx)
+		if more || err != nil {
+			r.mu.Lock()
+			r.changesRequested = true
+			r.mu.Unlock()
+		}
+		return more, err
 	}
 	return r.refreshJobs(ctx)
 }
@@ -666,14 +675,13 @@ func (r *Reconciler) drainChanges(ctx context.Context) (bool, error) {
 	}
 	if !more {
 		r.mu.Lock()
-		r.changesRequested = false
 		now := r.config.Now()
 		r.nextSweep = now.Add(r.config.SweepInterval)
 		r.health.MirrorComplete = true
 		r.health.MirrorBacklog = new(int64)
 		r.health.LastSuccessAt = new(now)
 		clearNonAuthenticationError(&r.health)
-		more = r.mirrorRequested || len(r.pendingJobs) > 0
+		more = r.mirrorRequested || r.changesRequested || len(r.pendingJobs) > 0
 		r.mu.Unlock()
 	}
 	return more, nil

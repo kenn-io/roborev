@@ -18,10 +18,19 @@ import (
 
 type observedSearchStore struct {
 	*storage.DB
-	fullReads atomic.Int64
-	jobReads  []int64
-	afterRead func()
-	readErr   error
+	fullReads             atomic.Int64
+	jobReads              []int64
+	afterRead             func()
+	readErr               error
+	afterEmptyChangesRead func()
+}
+
+func (s *observedSearchStore) ListSearchChanges(ctx context.Context, limit int) ([]int64, int64, error) {
+	jobs, through, err := s.DB.ListSearchChanges(ctx, limit)
+	if err == nil && through == 0 && s.afterEmptyChangesRead != nil {
+		s.afterEmptyChangesRead()
+	}
+	return jobs, through, err
 }
 
 func (s *observedSearchStore) ListSearchDocuments(ctx context.Context, after int64, limit int) ([]storage.SearchReviewSource, error) {
@@ -56,6 +65,78 @@ func incrementalFixture(t *testing.T, config ReconcilerConfig) (*Reconciler, *ob
 	store := &observedSearchStore{DB: db}
 	index := openGenerationTestIndex(t)
 	return NewReconciler(store, index, nil, config), store, index
+}
+
+func TestReconcilerKeepsChangeWakeDuringEmptyRead(t *testing.T) {
+	now := time.Now()
+	r, store, index := incrementalFixture(t, ReconcilerConfig{SweepInterval: time.Hour, Now: func() time.Time { return now }})
+	for more := true; more; {
+		var err error
+		more, err = r.reconcileTurn(t.Context())
+		require.NoError(t, err)
+	}
+	store.afterEmptyChangesRead = func() {
+		store.afterEmptyChangesRead = nil
+		_, err := store.ExecContext(t.Context(), `
+			INSERT INTO review_jobs (id, repo_id, git_ref, agent, status, job_type)
+			VALUES (3, 1, 'main', 'test', 'done', 'review');
+			INSERT INTO reviews (job_id, agent, output)
+			VALUES (3, 'test', 'pulledafteremptyread');`)
+		require.NoError(t, err)
+		r.WakeChanges()
+	}
+	r.WakeChanges()
+	for more := true; more; {
+		var err error
+		more, err = r.reconcileTurn(t.Context())
+		require.NoError(t, err)
+	}
+	// Run the buffered wake too, as the daemon does after this turn settles.
+	select {
+	case <-r.wake:
+		_, err := r.reconcileTurn(t.Context())
+		require.NoError(t, err)
+	default:
+	}
+	var jobID int64
+	require.NoError(t, index.db.QueryRowContext(t.Context(), `SELECT job_id FROM review_mirror JOIN review_fts USING (doc_key) WHERE review_fts MATCH 'pulledafteremptyread'`).Scan(&jobID))
+	assert.Equal(t, int64(3), jobID)
+	assert.Equal(t, int64(1), store.fullReads.Load())
+}
+
+func TestReconcilerChangeWakeDrainsMultiplePages(t *testing.T) {
+	now := time.Now()
+	r, store, index := incrementalFixture(t, ReconcilerConfig{MirrorPageSize: 1, SweepInterval: time.Hour, Now: func() time.Time { return now }})
+	_, err := store.ExecContext(t.Context(), `
+		INSERT INTO review_jobs (id, repo_id, git_ref, agent, status, job_type)
+		VALUES (3, 1, 'main', 'test', 'done', 'review');
+		INSERT INTO reviews (job_id, agent, output)
+		VALUES (3, 'test', 'third original');`)
+	require.NoError(t, err)
+	for more := true; more; {
+		more, err = r.reconcileTurn(t.Context())
+		require.NoError(t, err)
+	}
+	_, err = store.ExecContext(t.Context(), `UPDATE reviews SET output = 'multipagechange'`)
+	require.NoError(t, err)
+	r.WakeChanges()
+	for more := true; more; {
+		more, err = r.reconcileTurn(t.Context())
+		require.NoError(t, err)
+	}
+	var jobIDs []int64
+	rows, err := index.db.QueryContext(t.Context(), `SELECT job_id FROM review_mirror JOIN review_fts USING (doc_key) WHERE review_fts MATCH 'multipagechange' ORDER BY job_id`)
+	require.NoError(t, err)
+	defer rows.Close()
+	for rows.Next() {
+		var jobID int64
+		require.NoError(t, rows.Scan(&jobID))
+		jobIDs = append(jobIDs, jobID)
+	}
+	require.NoError(t, rows.Err())
+	assert.Equal(t, []int64{1, 2, 3}, jobIDs)
+	assert.Equal(t, []int64{1, 2, 3}, store.jobReads)
+	assert.Equal(t, int64(4), store.fullReads.Load())
 }
 
 func TestReconcilerPullWriteRefreshesOnlyPulledReview(t *testing.T) {
