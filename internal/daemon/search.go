@@ -35,6 +35,7 @@ type reviewSearcher interface {
 type searchReconciler interface {
 	Run(context.Context) error
 	Wake()
+	WakeChanges()
 	WakeJob(int64)
 	Health() searchindex.HealthSnapshot
 }

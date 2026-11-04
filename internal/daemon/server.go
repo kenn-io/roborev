@@ -1080,7 +1080,7 @@ func (s *Server) SetSyncWorker(sw *storage.SyncWorker) {
 
 func (s *Server) afterSyncPullWrite() {
 	if s.searchReconciler != nil {
-		s.searchReconciler.Wake()
+		s.searchReconciler.WakeChanges()
 	}
 }
 

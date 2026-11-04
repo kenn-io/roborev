@@ -3,6 +3,7 @@ package searchindex
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -55,6 +56,60 @@ func incrementalFixture(t *testing.T, config ReconcilerConfig) (*Reconciler, *ob
 	store := &observedSearchStore{DB: db}
 	index := openGenerationTestIndex(t)
 	return NewReconciler(store, index, nil, config), store, index
+}
+
+func TestReconcilerPullWriteRefreshesOnlyPulledReview(t *testing.T) {
+	var readCounts []int
+	for _, reviews := range []int{1000, 10000} {
+		t.Run(fmt.Sprintf("reviews=%d", reviews), func(t *testing.T) {
+			db, r := seedReconcilerHistory(t, reviews, 0)
+			store := &observedSearchStore{DB: db}
+			r.store = store
+			r.config.SweepInterval = time.Hour
+			r.nextSweep = r.config.Now().Add(time.Hour)
+			fullReads := store.fullReads.Load()
+			jobID := int64(reviews + 1)
+			_, err := db.ExecContext(t.Context(), `
+				INSERT INTO review_jobs (id, repo_id, git_ref, agent, status, job_type)
+				VALUES (?, 1, 'main', 'test', 'done', 'review');
+				INSERT INTO reviews (job_id, agent, output)
+				VALUES (?, 'test', 'pulleduniqueword');`, jobID, jobID)
+			require.NoError(t, err)
+			r.WakeChanges()
+			for more := true; more; {
+				more, err = r.reconcileTurn(t.Context())
+				require.NoError(t, err)
+			}
+			assert.Equal(t, fullReads, store.fullReads.Load())
+			assert.Equal(t, []int64{jobID}, store.jobReads)
+			var got int64
+			require.NoError(t, r.index.db.QueryRowContext(t.Context(), `SELECT job_id FROM review_mirror JOIN review_fts USING (doc_key) WHERE review_fts MATCH 'pulleduniqueword'`).Scan(&got))
+			assert.Equal(t, jobID, got)
+			readCounts = append(readCounts, len(store.jobReads))
+		})
+	}
+	require.Len(t, readCounts, 2)
+	assert.Equal(t, readCounts[0], readCounts[1])
+}
+
+func TestReconcilerPullWriteDuringFullScan(t *testing.T) {
+	r, store, index := incrementalFixture(t, ReconcilerConfig{MirrorPageSize: 1, SweepInterval: time.Hour})
+	more, err := r.reconcileTurn(t.Context())
+	require.NoError(t, err)
+	require.True(t, more)
+	// The scan has already read this review, so only the log can refresh it.
+	_, err = store.ExecContext(t.Context(), `UPDATE reviews SET output = 'pulledduringfullscan' WHERE job_id = 1`)
+	require.NoError(t, err)
+	r.WakeChanges()
+	for more {
+		more, err = r.reconcileTurn(t.Context())
+		require.NoError(t, err)
+	}
+	assert.Equal(t, int64(3), store.fullReads.Load())
+	assert.Equal(t, []int64{1}, store.jobReads)
+	var key string
+	require.NoError(t, index.db.QueryRowContext(t.Context(), `SELECT doc_key FROM review_fts WHERE review_fts MATCH 'pulledduringfullscan'`).Scan(&key))
+	assert.Equal(t, "local:1", key)
 }
 
 func TestReconcilerJobUpdatesDoNotReadUnrelatedHistory(t *testing.T) {

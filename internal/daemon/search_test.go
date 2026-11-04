@@ -83,6 +83,8 @@ func (r *countingSearchReconciler) Run(ctx context.Context) error {
 
 func (r *countingSearchReconciler) Wake() {}
 
+func (r *countingSearchReconciler) WakeChanges() {}
+
 func (r *countingSearchReconciler) WakeJob(int64) {}
 
 func (r *countingSearchReconciler) Health() searchindex.HealthSnapshot {
@@ -130,6 +132,8 @@ func (r *recordingSearchReconciler) Wake() {
 	default:
 	}
 }
+
+func (r *recordingSearchReconciler) WakeChanges() {}
 
 func (r *recordingSearchReconciler) WakeJob(jobID int64) {
 	r.jobs <- jobID
