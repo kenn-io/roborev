@@ -34,7 +34,7 @@ func (f fakeReviewSource) ResolveTrackedRepo(
 	return f.resolve(ctx, path, branch)
 }
 
-func (f fakeReviewSource) ListOpenReviewJobs(
+func (f fakeReviewSource) ListOpenFailedReviewJobs(
 	ctx context.Context, repoRoot, branch string,
 ) ([]storage.ReviewJob, bool) {
 	if f.list == nil {

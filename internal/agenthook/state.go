@@ -393,7 +393,7 @@ func (s *StateStore) recordUserPrompt(ctx context.Context, req Request) (Respons
 		ReminderPromptCount:   st.ReminderPromptCount,
 		Triggered:             failedReviewTriggered,
 		// The evaluation summary makes an empty result distinguishable from
-		// a failed query: unavailable means ListOpenReviewJobs errored.
+		// a failed query: unavailable means ListOpenFailedReviewJobs errored.
 		Diagnosis: userPromptDiagnosis(
 			haveFailedReviewCount, len(openFailedJobs), failedReviewCount,
 			req.FailedReviewThreshold, scope),
@@ -2125,7 +2125,7 @@ func findOpenFailedReviewJobs(
 	if repoRoot == "" || reviews == nil {
 		return nil, false
 	}
-	jobs, ok := reviews.ListOpenReviewJobs(ctx, repoRoot, branch)
+	jobs, ok := reviews.ListOpenFailedReviewJobs(ctx, repoRoot, branch)
 	if !ok {
 		return nil, false
 	}

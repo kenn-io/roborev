@@ -43,6 +43,7 @@ var schemaMigrations = []schemaMigration{
 	{7, "review export completion index", migrateReviewExportCompletedIndex},
 	{8, "search change log", migrateSearchChanges},
 	{9, "cost aggregate index", migrateCostAggregateIndex},
+	{10, "open failed reviews index", migrateOpenFailedReviewsIndex},
 }
 
 func migrateCostAggregateIndex(ctx context.Context, db *DB) error {
@@ -114,6 +115,12 @@ func migrateCIPanelRetireReason(ctx context.Context, db *DB) error {
 		return err
 	}
 	_, err = db.ExecContext(ctx, `ALTER TABLE ci_pr_panels ADD COLUMN retire_reason TEXT`)
+	return err
+}
+
+func migrateOpenFailedReviewsIndex(ctx context.Context, db *DB) error {
+	_, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_reviews_open_failed
+		ON reviews(job_id) WHERE closed = 0 AND verdict_bool = 0`)
 	return err
 }
 
