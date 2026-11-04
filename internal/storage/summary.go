@@ -199,7 +199,7 @@ func (db *DB) GetSummary(opts SummaryOptions) (*Summary, error) {
 func summaryWhere(opts SummaryOptions) (string, string, []any) {
 	from := "FROM review_jobs j"
 	// Unscoped windows must seek by time even with competing status indexes.
-	if opts.RepoPath == "" {
+	if opts.RepoPath == "" && opts.Branch == "" {
 		from += " INDEXED BY idx_review_jobs_enqueued_position"
 	}
 	from += " JOIN repos r ON r.id = j.repo_id"

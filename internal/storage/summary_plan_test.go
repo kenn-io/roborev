@@ -2,7 +2,6 @@ package storage
 
 import (
 	"database/sql"
-	"strings"
 	"testing"
 	"time"
 
@@ -20,20 +19,13 @@ type sincePlanQuerier struct {
 
 func (q sincePlanQuerier) check(query string, args []any) {
 	q.t.Helper()
-	rows, err := q.querier.Query("EXPLAIN QUERY PLAN "+query, args...)
-	require.NoError(q.t, err)
-	defer rows.Close()
-	var details []string
-	for rows.Next() {
-		var id, parent, unused int
-		var detail string
-		require.NoError(q.t, rows.Scan(&id, &parent, &unused, &detail))
-		details = append(details, detail)
-	}
-	require.NoError(q.t, rows.Err())
-	plan := strings.Join(details, "\n")
+	plan := queryPlan(q.t, q.querier, query, args...)
 	assert.Contains(q.t, plan, "SEARCH j USING INDEX "+q.index, query)
-	assert.Contains(q.t, plan, "<expr>>?", query)
+	if q.index == "idx_review_jobs_branch" {
+		assert.NotContains(q.t, plan, "idx_review_jobs_enqueued_position", query)
+	} else {
+		assert.Contains(q.t, plan, "<expr>>?", query)
+	}
 	assert.NotContains(q.t, plan, "SCAN j", query)
 }
 
@@ -56,6 +48,7 @@ func TestSummaryAndCostSinceUseEnqueuedIndex(t *testing.T) {
 		branch string
 	}{
 		{name: "all"},
+		{name: "branch", branch: "selective"},
 		{name: "repo", repo: "/tmp/summary-plan"},
 		{name: "repo-branch", repo: "/tmp/summary-plan", branch: "main"},
 	} {
@@ -65,6 +58,20 @@ func TestSummaryAndCostSinceUseEnqueuedIndex(t *testing.T) {
 			index := "idx_review_jobs_enqueued_position"
 			if scope.repo != "" {
 				index = "idx_review_jobs_repo_enqueued"
+			}
+			if scope.repo == "" && scope.branch != "" {
+				index = "idx_review_jobs_branch"
+				// Give the planner statistics for a branch matching one of 1,000 jobs.
+				_, err := db.ExecContext(t.Context(), `INSERT INTO repos(id, root_path, name) VALUES (1, '/tmp/branch-plan', 'branch-plan')`)
+				require.NoError(t, err)
+				_, err = db.ExecContext(t.Context(), `WITH RECURSIVE jobs(n) AS (
+					VALUES(1) UNION ALL SELECT n+1 FROM jobs WHERE n < 1000
+				) INSERT INTO review_jobs(repo_id, git_ref, branch, status, error)
+				SELECT 1, 'head', CASE WHEN n = 1 THEN 'selective' ELSE 'main' END,
+					'failed', 'provider error' FROM jobs`)
+				require.NoError(t, err)
+				_, err = db.ExecContext(t.Context(), `ANALYZE`)
+				require.NoError(t, err)
 			}
 			q := sincePlanQuerier{querier: db, t: t, index: index}
 			from, where, args := summaryWhere(SummaryOptions{Since: since, RepoPath: scope.repo, Branch: scope.branch})
@@ -91,11 +98,19 @@ func TestSummaryAndCostSinceUseEnqueuedIndex(t *testing.T) {
 			}
 			_, err = costAggregate(q, opts)
 			require.NoError(t, err)
-			opts.RepoPaths = append(opts.RepoPaths, "/tmp/another-repo")
-			q.index = "idx_review_jobs_repo_enqueued"
-			opts.BranchEmpty = true
-			_, err = costAggregate(q, opts)
-			require.NoError(t, err)
+			if scope.repo == "" {
+				opts.BranchEmpty = true
+				q.index = "idx_review_jobs_branch"
+				_, err = costAggregate(q, opts)
+				require.NoError(t, err)
+			}
+			if scope.repo != "" || scope.branch == "" {
+				opts.RepoPaths = append(opts.RepoPaths, "/tmp/another-repo")
+				q.index = "idx_review_jobs_repo_enqueued"
+				opts.BranchEmpty = true
+				_, err = costAggregate(q, opts)
+				require.NoError(t, err)
+			}
 		})
 	}
 }

@@ -3,7 +3,6 @@ package storage
 import (
 	"fmt"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 	"uuid"
@@ -28,18 +27,8 @@ func TestTokenCostCandidateQueriesSeekStartedAtIndex(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			query, args := tc.build(0, 20, cutoff, machineID)
-			rows, err := db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+query, args...)
-			require.NoError(t, err)
-			defer rows.Close()
-			var details []string
-			for rows.Next() {
-				var id, parent, unused int
-				var detail string
-				require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
-				details = append(details, detail)
-			}
-			require.NoError(t, rows.Err())
-			assert.Contains(t, strings.Join(details, "\n"), "SEARCH j USING INDEX idx_review_jobs_source_started (source_machine_id=? AND <expr>>?)")
+			plan := queryPlan(t, db, query, args...)
+			assert.Contains(t, plan, "SEARCH j USING INDEX idx_review_jobs_source_started (source_machine_id=? AND <expr>>?)")
 		})
 	}
 }

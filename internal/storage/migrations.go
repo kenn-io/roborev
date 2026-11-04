@@ -38,8 +38,7 @@ var schemaMigrations = []schemaMigration{
 	{3, "CI panel retirement reasons", migrateCIPanelRetireReason},
 	{4, "CI panel PR head index", migrateCIPanelPRHeadIndex},
 	{5, "token cost started-at index", migrateTokenCostStartedIndex},
-	// Version 6 is reserved for the pending migration.
-	{7, "summary repo window index", migrateSummaryRepoWindowIndex},
+	{6, "summary repo window index", migrateSummaryRepoWindowIndex},
 }
 
 // ErrSchemaTooNew reports a database written by a newer roborev release.

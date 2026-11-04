@@ -119,8 +119,8 @@ func costAggregateQuery(opts CostOptions) (string, []any) {
 	}
 
 	from := "FROM review_jobs j"
-	// Repo-scoped and all-time costs retain the planner's index choices.
-	if !opts.Since.IsZero() && len(opts.RepoPaths) == 0 {
+	// Scoped and all-time costs retain the planner's index choices.
+	if !opts.Since.IsZero() && len(opts.RepoPaths) == 0 && opts.Branch == "" && !opts.BranchEmpty {
 		from += " INDEXED BY idx_review_jobs_enqueued_position"
 	}
 	from += " JOIN repos r ON r.id = j.repo_id"
