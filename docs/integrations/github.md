@@ -568,8 +568,9 @@ repository's `CODEOWNERS` file names as an owner, on any line.
 - A repository without a `CODEOWNERS` file has no code owners.
 - The poller reads `CODEOWNERS` only for authors that the other author options
     do not already admit, for heads awaiting review, deferred retries, or
-    exhausted failures at the current head. Author-filtered heads stay unreviewed,
-    so they trigger a read on every poll, at most once per base branch.
+    exhausted failures at the current head. Author-filtered heads stay
+    unreviewed, so they trigger a read on every poll, at most once per base
+    branch.
 - Expanding a team needs permission to read organization members. Give the
     GitHub App the **Members: Read-only** organization permission. Personal `gh`
     logins need the `read:org` scope, which `gh auth login` requests by default.
