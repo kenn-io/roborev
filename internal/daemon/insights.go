@@ -49,12 +49,13 @@ func (s *Server) fetchInsightsReviews(
 	listOpts := []storage.ListJobsOption{
 		storage.WithoutPrompt(),
 		storage.WithExcludePanelRole(storage.PanelRoleMember),
+		storage.WithFailedReviewsSince(since),
 	}
 	if branch != "" {
 		listOpts = append(listOpts, storage.WithBranch(branch))
 	}
 
-	jobs, err := s.db.ListJobs(string(storage.JobStatusDone), repoFilter, 0, 0, listOpts...)
+	jobs, err := s.db.ListJobs(string(storage.JobStatusDone), repoFilter, maxInsightsReviews, 0, listOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("list jobs: %w", err)
 	}
@@ -62,16 +63,10 @@ func (s *Server) fetchInsightsReviews(
 
 	reviews := make([]prompt.InsightsReview, 0, min(len(jobs), maxInsightsReviews))
 	for _, job := range jobs {
-		if !job.IsReviewJob() && !job.IsSynthesisJob() || job.IsGoalReviewJob() {
-			continue
-		}
+		// SQLite's window comparison has millisecond precision.
 		if job.FinishedAt != nil && job.FinishedAt.Before(since) {
 			continue
 		}
-		if job.Verdict == nil || *job.Verdict != "F" {
-			continue
-		}
-
 		review, err := s.db.GetReviewByJobID(job.ID)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -91,9 +86,6 @@ func (s *Server) fetchInsightsReviews(
 			storage.PromptTrustedResponses(responses),
 			review.Closed,
 		))
-		if len(reviews) >= maxInsightsReviews {
-			break
-		}
 	}
 
 	return reviews, nil

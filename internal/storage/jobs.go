@@ -1957,6 +1957,14 @@ type listJobsOptions struct {
 	excludePanelRole   string
 	omitPrompt         bool
 	includeFindings    bool
+	failedReviewsSince *time.Time
+}
+
+// WithFailedReviewsSince selects completed review, range, dirty, or synthesis
+// jobs with a failed verdict, finished at or after since at millisecond resolution.
+// Done jobs without a finish time are excluded.
+func WithFailedReviewsSince(since time.Time) ListJobsOption {
+	return func(o *listJobsOptions) { o.failedReviewsSince = &since }
 }
 
 // WithGitRef filters jobs by git ref.
@@ -2118,6 +2126,18 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 		conditions = append(conditions, "j.status = ?")
 		args = append(args, statusFilter)
 	}
+	if o.failedReviewsSince != nil {
+		// The indexed probe lets SQLite skip non-failing reviews before the full verdict check.
+		conditions = append(conditions,
+			"j.finished_at IS NOT NULL",
+			"datetime(j.finished_at) >= datetime(?) AND julianday(j.finished_at) >= julianday(?)",
+			"rv.verdict_bool = 0 AND "+jobVerdictSortExpr(false)+" = 'F'",
+			"(j.job_type IN ('"+strings.Join([]string{JobTypeReview, JobTypeRange, JobTypeDirty, JobTypeSynthesis}, "', '")+"') OR "+
+				"(COALESCE(j.job_type, '') = '' AND (j.commit_id IS NOT NULL OR j.git_ref = 'dirty' OR instr(j.git_ref, '..') > 0)))")
+		since := o.failedReviewsSince.Format(time.RFC3339Nano)
+		args = append(args, since, since)
+	}
+
 	// Repo scoping precedence: a single positional repoFilter wins, then a
 	// multi-repo IN set (display names spanning repos), then a path prefix.
 	// At most one applies so the clauses never compound into an empty result.
@@ -2271,6 +2291,12 @@ func listJobsQuery(statusFilter, repoFilter string, limit, offset int, options l
 	for i, expr := range sortKeys {
 		fmt.Fprintf(&sortKeyColumns, ",\n\t\t       %s AS sort_key_%d", expr, i)
 	}
+	jobsTable := "review_jobs j"
+	if options.failedReviewsSince != nil {
+		// Like analyticsRowsQuery, seek the finished window through the covering
+		// analytics index instead of scanning the repo in enqueue order.
+		jobsTable += " INDEXED BY idx_review_jobs_analytics"
+	}
 	// Stored verdicts avoid loading a result body in queue listings. Review
 	// verdicts come from JSON at write time; only free-form job types may
 	// still need their output here. Keep the large text expressions lazy.
@@ -2278,7 +2304,7 @@ func listJobsQuery(statusFilter, repoFilter string, limit, offset int, options l
 		SELECT ` + jobWithReviewSelectColumns(
 		jobTextColumns{Prompt: promptExpr, Diff: diffContentExpr, Patch: "NULL"}, structuredOutputExpr,
 	) + sortKeyColumns.String() + `
-		FROM review_jobs j
+		FROM ` + jobsTable + `
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
 		LEFT JOIN job_content jc ON jc.job_id = j.id

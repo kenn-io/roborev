@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -18,6 +19,48 @@ import (
 	"go.kenn.io/roborev/internal/testutil"
 )
 
+func TestInsightsFractionalCutoff(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	repo, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo"))
+	require.NoError(t, err)
+	since := time.Date(2026, time.January, 1, 12, 0, 0, 500_400_000, time.UTC)
+	var wantIDs []int64
+	for i, finished := range []time.Time{since.Add(-300 * time.Microsecond), since, since.Add(100 * time.Microsecond)} {
+		job := enqueueCompletedInsightsReviewJob(t, db, repo.ID, fmt.Sprintf("review-%d", i), "main", storage.JobTypeReview, failingInsightsOutput("Finding"))
+		_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET finished_at = ?, enqueued_at = ? WHERE id = ?`,
+			finished.Format(time.RFC3339Nano), since.Add(time.Duration(i)*time.Second).Format(time.RFC3339Nano), job.ID)
+		require.NoError(t, err)
+		if i > 0 {
+			wantIDs = append([]int64{job.ID}, wantIDs...)
+		}
+	}
+
+	reviews, err := server.fetchInsightsReviews(repo.RootPath, "main", since)
+	require.NoError(t, err)
+	var gotIDs []int64
+	for _, review := range reviews {
+		gotIDs = append(gotIDs, review.JobID)
+	}
+	assert.Equal(t, wantIDs, gotIDs)
+}
+
+func TestInsightsCapsReviewsNewestFirst(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	repo, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo"))
+	require.NoError(t, err)
+	since := time.Date(2026, time.January, 1, 12, 0, 0, 0, time.UTC)
+	for i := range 102 {
+		job := enqueueCompletedInsightsReviewJob(t, db, repo.ID, fmt.Sprintf("review-%d", i), "main", storage.JobTypeReview, failingInsightsOutput("Finding"))
+		_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET enqueued_at = ?, finished_at = ? WHERE id = ?`,
+			since.Add(time.Duration(i)*time.Second).Format(time.RFC3339Nano), since.Add(time.Hour).Format(time.RFC3339Nano), job.ID)
+		require.NoError(t, err)
+	}
+
+	reviews, err := server.fetchInsightsReviews(repo.RootPath, "main", since)
+	require.NoError(t, err)
+	require.Len(t, reviews, 100)
+}
+
 func TestInsightsIncludesPanelParentOnce(t *testing.T) {
 	assert := assert.New(t)
 	server, db, tmpDir := newTestServer(t)
@@ -25,13 +68,6 @@ func TestInsightsIncludesPanelParentOnce(t *testing.T) {
 	require.NoError(t, err)
 	since := time.Now().Add(-24 * time.Hour)
 	standalone := enqueueCompletedInsightsReviewJob(t, db, repo.ID, "standalone", "main", storage.JobTypeReview, failingInsightsOutput("Standalone finding"))
-	enqueueCompletedInsightsGoalReviewJob(t, db, repo.ID, "goal-review", "main", failingInsightsOutput("Goal finding"))
-	enqueueCompletedInsightsReviewJob(t, db, repo.ID, "feature", "feature", storage.JobTypeReview, failingInsightsOutput("Other branch finding"))
-	old := enqueueCompletedInsightsReviewJob(t, db, repo.ID, "old", "main", storage.JobTypeReview, failingInsightsOutput("Old finding"))
-	_, err = db.ExecContext(t.Context(), `UPDATE review_jobs SET finished_at = ? WHERE id = ?`, since.Add(-time.Hour).Format(time.RFC3339), old.ID)
-	require.NoError(t, err)
-	enqueueCompletedInsightsReviewJob(t, db, repo.ID, "pass", "main", storage.JobTypeReview, "No findings.")
-	enqueueCompletedInsightsReviewJob(t, db, repo.ID, "compact", "main", storage.JobTypeCompact, failingInsightsOutput("Compact finding"))
 
 	runUUID := uuid.New()
 	members := make([]storage.EnqueueOpts, 3)

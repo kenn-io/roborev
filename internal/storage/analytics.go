@@ -249,6 +249,7 @@ func (q analyticsQuerier) Query(query string, args ...any) (*sql.Rows, error) {
 // only substitutes an indexed expression that matches exactly. Changing an
 // expression therefore needs a new index name: CREATE INDEX IF NOT EXISTS
 // keeps an existing index's old definition.
+// Update the INDEXED BY in listJobsQuery when renaming the index too.
 var analyticsJobExprs = []string{
 	"COALESCE(CAST((julianday(j.finished_at) - julianday(j.enqueued_at)) * 86400 AS REAL), 0)",
 	"COALESCE(CAST((julianday(j.finished_at) - julianday(j.started_at)) * 86400 AS REAL), 0)",
