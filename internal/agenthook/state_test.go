@@ -143,6 +143,36 @@ func TestStateStoreSessionsReturnsDeepSnapshot(t *testing.T) {
 	assert.Equal(t, 3, current.StopCountsSincePrompt["repo-a"])
 }
 
+func TestSaveSessionDropsIdleSessions(t *testing.T) {
+	assert := assert.New(t)
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	now := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+	store := &StateStore{
+		path: StatePath(),
+		now:  func() time.Time { return now },
+		sessions: map[string]SessionState{
+			"idle":   {LastSeenAt: now.Add(-31 * 24 * time.Hour)},
+			"recent": {LastSeenAt: now.Add(-29 * 24 * time.Hour)},
+			"queued": {
+				LastSeenAt:       now.Add(-90 * 24 * time.Hour),
+				PendingReminders: map[string]PendingReminder{"reminder": {TriggeredBy: "commit"}},
+			},
+		},
+	}
+
+	require.NoError(t, store.saveSessionLocked("current", SessionState{}))
+
+	body, err := os.ReadFile(StatePath())
+	require.NoError(t, err)
+	var snapshot Snapshot
+	require.NoError(t, json.Unmarshal(body, &snapshot))
+	assert.NotContains(snapshot.Sessions, "idle")
+	assert.Contains(snapshot.Sessions, "recent")
+	assert.Contains(snapshot.Sessions, "queued")
+	assert.Contains(snapshot.Sessions, "current")
+	assert.NotContains(store.sessions, "idle")
+}
+
 func TestStateStoreResetPersistsSelectedSession(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	store := &StateStore{
@@ -2131,6 +2161,62 @@ func TestDeferredPostToolReminderCoalescesAndWaitsForTriggeringBranch(t *testing
 	assert.Contains(t, resp.Reason, "change to")
 	assert.Empty(t, store.sessions["session-1"].PendingReminders)
 	assert.Equal(t, 1, store.sessions["session-1"].ReminderPromptCount)
+}
+
+func TestDeferredReminderDeliveredAfterIdleWindowKeepsSession(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("main.go", "package main\n", "initial")
+	failedReviewCount := 1
+	now := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+	store := &StateStore{
+		reviews:  newDeferredReminderSource(repo.Path(), &failedReviewCount),
+		path:     filepath.Join(t.TempDir(), "state.json"),
+		sessions: map[string]SessionState{},
+		now:      func() time.Time { return now },
+	}
+	req := Request{
+		Event: Input{
+			SessionID:     "session-1",
+			CWD:           repo.Path(),
+			HookEventName: "PreToolUse",
+			ToolName:      "Bash",
+			ToolInput:     map[string]jsontext.Value{"command": jsontext.Value(`"git commit -m feature"`)},
+		},
+		CommitThreshold:       1,
+		Instruction:           "Resolve reviews.",
+		DeferPostToolReminder: true,
+	}
+	_, err := store.Record(req)
+	require.NoError(t, err)
+	repo.CommitFile("feature.go", "package main\n", "feature")
+	req.Event.HookEventName = "PostToolUse"
+	queued, err := store.Record(req)
+	require.NoError(t, err)
+	assert.False(queued.Triggered)
+	require.Len(t, store.sessions["session-1"].PendingReminders, 1)
+
+	now = now.Add(31 * 24 * time.Hour)
+	resp, err := store.Record(Request{
+		Event: Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
+	})
+	require.NoError(t, err)
+	assert.True(resp.Triggered)
+	require.Contains(t, store.sessions, "session-1")
+	assert.Equal(1, store.sessions["session-1"].ReminderPromptCount)
+	body, err := os.ReadFile(store.path)
+	require.NoError(t, err)
+	var snapshot Snapshot
+	require.NoError(t, json.Unmarshal(body, &snapshot))
+	assert.Contains(snapshot.Sessions, "session-1")
+
+	require.NoError(t, store.saveSessionLocked("other", SessionState{}))
+	assert.Contains(store.sessions, "session-1")
+	body, err = os.ReadFile(store.path)
+	require.NoError(t, err)
+	snapshot = Snapshot{}
+	require.NoError(t, json.Unmarshal(body, &snapshot))
+	assert.Contains(snapshot.Sessions, "session-1")
 }
 
 func TestDeferredReminderWaitsWhenRepositoryIdentityChanges(t *testing.T) {

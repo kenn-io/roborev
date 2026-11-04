@@ -27,6 +27,8 @@ import (
 
 var agentHookGit = gitcmd.New()
 
+const idleSessionLifetime = 30 * 24 * time.Hour
+
 type hookScope struct {
 	WorktreeRoot        string
 	TrackedRepoRoot     string
@@ -142,11 +144,22 @@ func (s *StateStore) saveLocked() error {
 	return nil
 }
 
+func (s *StateStore) pruneIdleSessionsLocked() {
+	cutoff := s.currentTime().Add(-idleSessionLifetime)
+	for id, state := range s.sessions {
+		if state.LastSeenAt.Before(cutoff) && len(state.PendingReminders) == 0 {
+			delete(s.sessions, id)
+		}
+	}
+}
+
 // saveSessionLocked publishes a cloned session only when its atomic state-file
 // replacement succeeds. Callers must hold s.mu.
 func (s *StateStore) saveSessionLocked(sessionID string, state SessionState) error {
 	previous, existed := s.sessions[sessionID]
+	state.LastSeenAt = s.currentTime()
 	s.sessions[sessionID] = state
+	s.pruneIdleSessionsLocked()
 	if err := s.saveLocked(); err != nil {
 		if existed {
 			s.sessions[sessionID] = previous
@@ -167,8 +180,10 @@ func (s *StateStore) saveSessionAndFixSessionsLocked(
 ) error {
 	previous, existed := s.sessions[sessionID]
 	previousFixSessions := s.fixSessions
+	state.LastSeenAt = s.currentTime()
 	s.sessions[sessionID] = state
 	s.fixSessions = fixSessions
+	s.pruneIdleSessionsLocked()
 	if err := s.saveLocked(); err != nil {
 		if existed {
 			s.sessions[sessionID] = previous

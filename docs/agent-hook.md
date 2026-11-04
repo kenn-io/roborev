@@ -312,6 +312,9 @@ IDs at:
 ${ROBOREV_DATA_DIR:-~/.roborev}/agent-hook/state.json
 ```
 
+Sessions idle for 30 days with no queued reminder are dropped when a hook event
+saves state.
+
 The same process reads repository registration, review jobs, verdicts, and
 workspace snoozes from the review database. Hook communication fails open: a
 diagnostic goes to stderr and the harness receives an empty native response.
