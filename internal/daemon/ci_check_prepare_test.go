@@ -178,7 +178,9 @@ func ciCheckMiseFixture(t *testing.T) (string, string) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires shell fixtures")
 	}
-	tools, shims := t.TempDir(), t.TempDir()
+	tools, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	shims := t.TempDir()
 	bin := filepath.Join(tools, "bin")
 	require.NoError(t, os.Mkdir(bin, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(tools, "runtime.txt"), []byte("runtime ready\n"), 0o600))
@@ -251,7 +253,7 @@ func TestCICheckMiseCredentialOverlap(t *testing.T) {
 
 func TestCICheckMiseUnavailablePaths(t *testing.T) {
 	tools, shims := ciCheckMiseFixture(t)
-	missing := filepath.Join(t.TempDir(), "installs", "python", "system")
+	missing := filepath.Join(tools, "installs", "python", "system")
 	require.NoError(t, os.MkdirAll(filepath.Dir(missing), 0o700))
 	// mise reports system selections as installed even though this directory doesn't exist.
 	mise := filepath.Join(shims, "mise")
