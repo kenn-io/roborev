@@ -347,7 +347,6 @@ func (s *StateStore) recordUserPrompt(ctx context.Context, req Request) (Respons
 	recordSequenceHeads(&st, scope, []string{scope.WorktreeKey})
 	st.LastCWD = req.Event.CWD
 	now := s.currentTime()
-	st.LastSeenAt = now
 
 	actionableReviewIDs := unacknowledgedReviewIDs(st, lineageKey, openFailedReviewIDs)
 	failedReviewCount := len(actionableReviewIDs)
@@ -486,7 +485,6 @@ func (s *StateStore) recordStop(ctx context.Context, req Request) (Response, err
 	stopCountSincePrompt := st.StopCountsSincePrompt[lineageKey]
 	st.LastTurnID = req.Event.TurnID
 	st.LastCWD = req.Event.CWD
-	st.LastSeenAt = now
 	recordSequenceHeads(&st, scope, []string{scope.WorktreeKey})
 
 	actionableReviews := hasActionableFailedReviews(failedReviewCount, haveFailedReviewCount)
@@ -601,7 +599,6 @@ func (s *StateStore) recordPreToolUse(ctx context.Context, req Request) (Respons
 	lineageKey := ensureLineageKey(&st, scope)
 	recordSequenceHeads(&st, scope, commitSequenceKeys(scope, lineageKey))
 	st.LastCWD = req.Event.CWD
-	st.LastSeenAt = time.Now().UTC()
 	if err := ctx.Err(); err != nil {
 		return Response{}, err
 	}
@@ -732,7 +729,6 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 	recordSequenceHeads(&st, scope, sequenceKeys)
 	st.LastCWD = req.Event.CWD
 	now := s.currentTime()
-	st.LastSeenAt = now
 	if len(eventNewCommits) > 0 {
 		st.CommitCount += len(eventNewCommits)
 		st.LastCommitRepo = scope.WorktreeRoot
@@ -893,7 +889,6 @@ func applySnoozedState(st *SessionState, req Request, scope hookScope) Response 
 	}
 	st.FailedReviewCount = 0
 	st.LastCWD = req.Event.CWD
-	st.LastSeenAt = time.Now().UTC()
 	return Response{
 		SessionID:             req.Event.SessionID,
 		Count:                 st.Count,
