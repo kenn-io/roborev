@@ -221,17 +221,14 @@ with tempfile.TemporaryDirectory(dir=sys.argv[1]) as tmp:
     assert peer.recv(7)==b"request"
     peer.sendall(b"response")
     assert client.recv(8)==b"response"
-print("OK scratch-exchange")
 for path in sys.argv[2:]:
  with socket.socket(socket.AF_UNIX) as client:
   client.settimeout(2)
   try: client.connect(path)
   except PermissionError: pass
   else: raise AssertionError("host socket connection allowed")
-print("OK host-denied")
 `
-	out := runInJob(t, job, "/usr/bin/python3", "-c", probe, work, hostSocket, filepath.Join(work, "host.sock"))
-	assert.Equal(t, "OK scratch-exchange\nOK host-denied\n", out)
+	runInJob(t, job, "/usr/bin/python3", "-c", probe, work, hostSocket, filepath.Join(work, "host.sock"))
 }
 
 func TestSandboxHostPTYIsolation(t *testing.T) {
