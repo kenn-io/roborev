@@ -41,6 +41,17 @@
       "groupSlug": "kenn-io-dependencies",
       "minimumReleaseAge": null,
       "schedule": ["at any time"]
+    },
+    {
+      "description": [
+        "Show the kit action under the Go module path go.kenn.io/kit in PR tables, so both kit updates read as one package.",
+        "overrideDepName cannot do this: the github-actions manager writes `uses:` lines from depName, so it would write go.kenn.io/kit/... into workflows."
+      ],
+      "matchManagers": ["github-actions"],
+      "matchPackageNames": ["kenn-io/kit"],
+      "prBodyDefinitions": {
+        "Package": "{{{replace '^\\[kenn-io/kit\\]' '[go.kenn.io/kit]' depNameLinked}}}{{#if newName}}{{#unless (equals depName newName)}} \u2192 {{{newNameLinked}}}{{/unless}}{{/if}}"
+      }
     }
   ]
 }
