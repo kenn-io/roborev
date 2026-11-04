@@ -312,10 +312,10 @@ IDs at:
 ${ROBOREV_DATA_DIR:-~/.roborev}/agent-hook/state.json
 ```
 
-Sessions idle for 30 days with no queued reminder are dropped when a hook event
-saves state. Resuming a dropped session starts its counts and acknowledged
-reviews fresh, so it can receive reminders again about reviews still open and
-failed.
+Sessions idle for 30 days, including their queued reminders, are dropped when
+the daemon loads or saves state. Resuming a dropped session starts its counts
+and acknowledged reviews fresh, so it can receive reminders again about reviews
+still open and failed.
 
 The same process reads repository registration, review jobs, verdicts, and
 workspace snoozes from the review database. Hook communication fails open: a

@@ -168,9 +168,67 @@ func TestSaveSessionDropsIdleSessions(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &snapshot))
 	assert.NotContains(snapshot.Sessions, "idle")
 	assert.Contains(snapshot.Sessions, "recent")
-	assert.Contains(snapshot.Sessions, "queued")
+	assert.NotContains(snapshot.Sessions, "queued")
 	assert.Contains(snapshot.Sessions, "current")
 	assert.NotContains(store.sessions, "idle")
+	assert.NotContains(store.sessions, "queued")
+}
+
+func TestLoadStateDropsIdleSessions(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	now := time.Now().UTC()
+	snapshot := Snapshot{Sessions: map[string]SessionState{
+		"idle": {LastSeenAt: now.Add(-31 * 24 * time.Hour)},
+		"queued": {
+			LastSeenAt:       now.Add(-90 * 24 * time.Hour),
+			PendingReminders: map[string]PendingReminder{"reminder": {TriggeredBy: "commit"}},
+		},
+		"recent": {Count: 3, LastSeenAt: now.Add(-29 * 24 * time.Hour)},
+	}}
+	body, err := json.Marshal(snapshot)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(StatePath()), 0o700))
+	require.NoError(t, os.WriteFile(StatePath(), body, 0o600))
+
+	store, err := LoadState(nil)
+
+	require.NoError(t, err)
+	assert.Equal(t, map[string]SessionState{"recent": snapshot.Sessions["recent"]}, store.Sessions())
+}
+
+func TestSaveSessionPreservesIdleSessionsWhenReplaceFails(t *testing.T) {
+	for _, withFixSessions := range []bool{false, true} {
+		t.Run(fmt.Sprintf("with fix sessions %t", withFixSessions), func(t *testing.T) {
+			now := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+			store := &StateStore{
+				// Replacing a directory with the state file must fail.
+				path: t.TempDir(),
+				now:  func() time.Time { return now },
+				sessions: map[string]SessionState{
+					"idle": {Count: 2, LastSeenAt: now.Add(-31 * 24 * time.Hour)},
+					"queued": {
+						LastSeenAt:       now.Add(-90 * 24 * time.Hour),
+						PendingReminders: map[string]PendingReminder{"reminder": {TriggeredBy: "commit"}},
+					},
+					"current": {Count: 3, LastSeenAt: now.Add(-time.Hour)},
+				},
+				fixSessions: map[string]FixSession{"worktree": {SessionID: "current"}},
+			}
+			previous := store.Sessions()
+			previousFixSessions := store.fixSessions
+
+			var err error
+			if withFixSessions {
+				err = store.saveSessionAndFixSessionsLocked("current", SessionState{Count: 4}, map[string]FixSession{})
+			} else {
+				err = store.saveSessionLocked("current", SessionState{Count: 4})
+			}
+
+			require.ErrorContains(t, err, "replace agent hook state")
+			assert.Equal(t, previous, store.Sessions())
+			assert.Equal(t, previousFixSessions, store.fixSessions)
+		})
+	}
 }
 
 func TestStateStoreResetPersistsSelectedSession(t *testing.T) {
@@ -179,7 +237,7 @@ func TestStateStoreResetPersistsSelectedSession(t *testing.T) {
 		path: StatePath(),
 		sessions: map[string]SessionState{
 			"session-1": {Count: 1},
-			"session-2": {Count: 2},
+			"session-2": {Count: 2, LastSeenAt: time.Now().UTC()},
 		},
 		fixSessions: map[string]FixSession{
 			"worktree-1": {SessionID: "session-1"},
