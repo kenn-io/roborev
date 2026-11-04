@@ -76,9 +76,9 @@ const costEligible = costTerminal + " " +
 	"AND (j.agent_invoked = 1 OR (" + agentRanByUsage + "))"
 
 // costJobExprs are the per-job values stored by idx_review_jobs_cost.
-// Build the index from these same strings so SQLite can read their results
-// instead of parsing token_usage JSON. Expression changes need a new migration
-// to create an index under a new name and drop the old one.
+// Migration 9's index is a frozen copy of these expressions so SQLite can read
+// their results instead of parsing token_usage JSON. Expression changes need a
+// new migration to create an index under a new name and drop the old one.
 var costJobExprs = []string{
 	"CASE WHEN " + costEligible + " THEN 1 ELSE 0 END",
 	"CASE WHEN " + costEligible + " AND " + costComplete + " THEN 1 ELSE 0 END",
