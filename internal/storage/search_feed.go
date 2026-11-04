@@ -42,8 +42,8 @@ const searchFeedSelect = `
 	LEFT JOIN job_content jc ON jc.job_id = j.id
 `
 
-// Unary + excludes the status index so paging can seek by review ID even
-// without ANALYZE statistics, instead of scanning and sorting all done jobs.
+// Unary + lets paging seek by review ID without ANALYZE statistics,
+// excluding the status index at no cost to keyed lookups.
 const searchFeedEligibility = `
 	AND +j.status IN ('done', 'applied', 'rebased')
 	AND (COALESCE(rv.output, '') != '' OR COALESCE(rv.structured_output, '') != '')

@@ -9,7 +9,7 @@ import (
 )
 
 func BenchmarkSearchFeedPagingScaling(b *testing.B) {
-	var costs []float64
+	costs := make(map[int]float64)
 	for _, historySize := range []int{5000, 50000} {
 		b.Run(fmt.Sprintf("reviews=%d", historySize), func(b *testing.B) {
 			db, err := Open(filepath.Join(b.TempDir(), "reviews.db"))
@@ -17,19 +17,7 @@ func BenchmarkSearchFeedPagingScaling(b *testing.B) {
 			b.Cleanup(func() { require.NoError(b, db.Close()) })
 			repo, err := db.GetOrCreateRepo(b.TempDir())
 			require.NoError(b, err)
-			_, err = db.ExecContext(b.Context(), `
-				WITH RECURSIVE sequence(n) AS (
-					SELECT 1 UNION ALL SELECT n + 1 FROM sequence WHERE n < ?
-				)
-				INSERT INTO review_jobs (repo_id, git_ref, agent, status, job_type, uuid)
-				SELECT ?, 'base..head', 'test', 'done', 'range',
-				       printf('00000000-0000-4000-8000-%012d', n)
-				FROM sequence`, historySize, repo.ID)
-			require.NoError(b, err)
-			_, err = db.ExecContext(b.Context(), `
-				INSERT INTO reviews (job_id, agent, output, uuid)
-				SELECT id, agent, 'No issues found.', uuid FROM review_jobs`)
-			require.NoError(b, err)
+			seedRangeReviews(b.Context(), b, db, repo.ID, historySize, "No issues found.")
 
 			// Fresh installs have no ANALYZE statistics to guide SQLite.
 			var statsTables int
@@ -51,14 +39,15 @@ func BenchmarkSearchFeedPagingScaling(b *testing.B) {
 				}
 				require.Equal(b, historySize, count)
 			}
-			costs = append(costs, float64(b.Elapsed())/float64(b.N))
+			costs[historySize] = float64(b.Elapsed()) / float64(b.N)
+			small, haveSmall := costs[5000]
+			large, haveLarge := costs[50000]
+			if haveSmall && haveLarge {
+				// Ten times the history should cost about ten times as much. Allow
+				// 2x timing noise while rejecting the observed ~30x growth without +.
+				ratio := large / small
+				require.Less(b, ratio, 20.0, "paging cost should grow linearly with review history; measured cost ratio: %.2f", ratio)
+			}
 		})
-	}
-	if len(costs) == 2 {
-		// Ten times the history should cost about ten times as much. Allow
-		// 2x timing noise while rejecting the quadratic 100x growth.
-		ratio := costs[1] / costs[0]
-		b.ReportMetric(ratio, "cost_ratio")
-		require.Less(b, ratio, 20.0, "paging cost should grow linearly with review history")
 	}
 }
