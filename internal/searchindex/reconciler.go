@@ -294,6 +294,8 @@ func (r *Reconciler) scanMirrorPage(ctx context.Context) (bool, error) {
 	return more, nil
 }
 
+const mirrorKeysForJobSQL = `SELECT doc_key FROM review_mirror WHERE job_id = ?`
+
 func (r *Reconciler) refreshJobs(ctx context.Context) (more bool, err error) {
 	r.mu.Lock()
 	jobs := make(map[int64]struct{})
@@ -330,8 +332,7 @@ func (r *Reconciler) refreshJobs(ctx context.Context) (more bool, err error) {
 		}
 		// Remove a deleted review or an old document key after UUID assignment,
 		// without treating the rest of the corpus as missing.
-		if _, err := r.index.deleteMissing(ctx, seen,
-			`SELECT doc_key FROM review_mirror WHERE job_id = ?`, id); err != nil {
+		if _, err := r.index.deleteMissing(ctx, seen, mirrorKeysForJobSQL, id); err != nil {
 			return false, err
 		}
 	}

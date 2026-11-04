@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -99,13 +100,13 @@ func TestMirrorRefreshUpdatesLocalMetadataWithoutInvalidatingVectors(t *testing.
 	assert.Equal(t, updated.Identifiers, ftsIdentifiers)
 }
 
-func TestMirrorRefreshDetectsIdentifierOnlyChange(t *testing.T) {
+func TestMirrorRefreshDetectsIdentifierAndReviewIDChanges(t *testing.T) {
 	ctx := t.Context()
 	index, err := Open(ctx, filepath.Join(t.TempDir(), "reviews.search.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, index.Close()) })
 
-	doc := testDocument(1, "stable content")
+	doc := testDocument(1, "obsoletecontent")
 	changed, err := index.RefreshMirrorPage(ctx, []searchdoc.Document{doc}, nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, changed)
@@ -126,30 +127,59 @@ func TestMirrorRefreshDetectsIdentifierOnlyChange(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, updated.Identifiers, mirrorIdentifiers)
 	assert.Equal(t, 1, countRowsForDoc(t, index.db, "review_fts", doc.DocKey))
+
+	source := updated.Source
+	source.ReviewID = 2
+	source.Output = "currentcontent"
+	reimported := searchdoc.Render(source)
+	require.Equal(t, doc.DocKey, reimported.DocKey)
+	changed, err = index.RefreshMirrorPage(ctx, []searchdoc.Document{reimported}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, changed)
+	assert.Equal(t, 1, countRowsForDoc(t, index.db, "review_fts", doc.DocKey))
+	var stale, current int
+	err = index.db.QueryRowContext(ctx, `SELECT count(*) FROM review_fts WHERE review_fts MATCH 'obsoletecontent'`).Scan(&stale)
+	require.NoError(t, err)
+	err = index.db.QueryRowContext(ctx, `SELECT count(*) FROM review_fts WHERE review_fts MATCH 'currentcontent'`).Scan(&current)
+	require.NoError(t, err)
+	assert.Zero(t, stale)
+	assert.Equal(t, 1, current)
 }
 
-func TestMirrorRowLookupAvoidsFullScans(t *testing.T) {
+func TestMirrorQueriesAvoidFullScans(t *testing.T) {
 	ctx := t.Context()
 	index, err := Open(ctx, filepath.Join(t.TempDir(), "reviews.search.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, index.Close()) })
 
-	// The mirror refresh runs this lookup once per document on every pass,
-	// so a full scan here makes each pass quadratic in the corpus size.
-	rows, err := index.db.QueryContext(ctx, "EXPLAIN QUERY PLAN "+readMirrorRowSQL, "doc")
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, rows.Close()) })
-	var details []string
-	for rows.Next() {
-		var id, parent, unused int
-		var detail string
-		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
-		details = append(details, detail)
-	}
-	require.NoError(t, rows.Err())
-	require.NotEmpty(t, details)
-	for _, detail := range details {
-		assert.NotContains(t, detail, "SCAN")
+	for _, tc := range []struct {
+		name  string
+		query string
+		args  []any
+	}{
+		{"mirror lookup", readMirrorRowSQL, []any{"doc"}},
+		{"FTS delete", deleteFTSRowSQL, []any{"doc"}},
+		{"job lookup", mirrorKeysForJobSQL, []any{1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, err := index.db.QueryContext(ctx, "EXPLAIN QUERY PLAN "+tc.query, tc.args...)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, rows.Close()) }()
+			var details []string
+			for rows.Next() {
+				var id, parent, unused int
+				var detail string
+				require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+				details = append(details, detail)
+			}
+			require.NoError(t, rows.Err())
+			require.NotEmpty(t, details)
+			for _, detail := range details {
+				assert.NotEqual(t, "SCAN review_fts VIRTUAL TABLE INDEX 0:", strings.TrimSpace(detail))
+				assert.NotContains(t, detail, "SCAN review_mirror")
+				assert.NotContains(t, detail, "SCAN m")
+			}
+		})
 	}
 }
 
