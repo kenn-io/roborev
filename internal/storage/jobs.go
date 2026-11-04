@@ -2278,12 +2278,6 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 // listJobsQuery builds the ListJobs query. It returns the query, its
 // arguments, and how many sort key columns follow the job columns.
 func listJobsQuery(statusFilter, repoFilter string, limit, offset int, options listJobsOptions) (string, []any, int, error) {
-	jobsTable := "review_jobs j"
-	if options.openFailedReviews {
-		// Without statistics, SQLite otherwise scans the repo's job index.
-		// NOT INDEXED keeps rowid lookups driven by the failed-review IN list.
-		jobsTable += " NOT INDEXED"
-	}
 	// Metadata-only listings skip the prompt column for terminal jobs; the
 	// scan still binds the same positional field, it just never touches the
 	// large TEXT payload. Queued/running rows keep their prompt: the active
@@ -2309,7 +2303,11 @@ func listJobsQuery(statusFilter, repoFilter string, limit, offset int, options l
 		fmt.Fprintf(&sortKeyColumns, ",\n\t\t       %s AS sort_key_%d", expr, i)
 	}
 	jobsTable := "review_jobs j"
-	if options.failedReviewsSince != nil {
+	if options.openFailedReviews {
+		// Without statistics, SQLite otherwise scans the repo's job index.
+		// NOT INDEXED keeps rowid lookups driven by the failed-review IN list.
+		jobsTable += " NOT INDEXED"
+	} else if options.failedReviewsSince != nil {
 		// Like analyticsRowsQuery, seek the finished window through the covering
 		// analytics index instead of scanning the repo in enqueue order.
 		jobsTable += " INDEXED BY idx_review_jobs_analytics"
