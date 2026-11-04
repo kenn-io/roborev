@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -186,12 +185,10 @@ func ciCheckMiseFixture(t *testing.T) (string, string) {
 	require.NoError(t, os.WriteFile(filepath.Join(tools, "runtime.txt"), []byte("runtime ready\n"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(shims, "node"), []byte("#!/bin/sh\nexit 126\n"), 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "node"), []byte("#!/bin/sh\ncat \"${0%/*}/../runtime.txt\"\n"), 0o700))
-	outside, err := filepath.EvalSymlinks(os.TempDir())
-	require.NoError(t, err)
-	selected := filepath.Join(t.TempDir(), "selected")
+	selected := filepath.Join(shims, "selected")
 	require.NoError(t, os.Symlink(tools, selected))
 	inventory := fmt.Sprintf(`{"node":[{"install_path":%q}]}`, selected)
-	script := fmt.Sprintf("#!/bin/sh\n[ \"$(pwd -P)\" = '%s' ] || exit 4\ncase \"$*\" in\n'ls --current --installed --json') printf '%%s' '%s';;\n'bin-paths') printf '%%s\\n' '%s';;\n*) exit 3;;\nesac\n", outside, inventory, filepath.Join(selected, "bin"))
+	script := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in\n'ls --current --installed --json') printf '%%s' '%s';;\n'bin-paths') printf '%%s\\n' '%s';;\n*) exit 3;;\nesac\n", inventory, filepath.Join(selected, "bin"))
 	require.NoError(t, os.WriteFile(filepath.Join(shims, "mise"), []byte(script), 0o700))
 	t.Setenv("PATH", shims+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return tools, shims
@@ -211,28 +208,44 @@ func prepareCICheckToolchainFixture(t *testing.T) (ciCheckRun, error) {
 	return run, err
 }
 
-func TestCICheckMiseDiscoveryFailure(t *testing.T) {
+func TestCICheckMiseDiscovery(t *testing.T) {
+	tools, shims := ciCheckMiseFixture(t)
+	selected := filepath.Join(shims, "selected")
+	missing := filepath.Join(tools, "installs", "python", "system")
+	require.NoError(t, os.MkdirAll(filepath.Dir(missing), 0o700))
+	outside, err := filepath.EvalSymlinks(os.TempDir())
+	require.NoError(t, err)
+	inventory := fmt.Sprintf(`{"node":[{"install_path":%q}]}`, selected)
+	// mise reports system selections as installed even though this directory doesn't exist.
+	mixedInventory := fmt.Sprintf(`{"python":[{"version":"system","install_path":%q,"installed":true,"active":true}],"node":[{"install_path":%q,"installed":true,"active":true}]}`, missing, selected)
+	mixedScript := fmt.Sprintf(`#!/bin/sh
+[ "$(pwd -P)" = '%s' ] || { printf 'mise discovery ran from unexpected directory: %%s\n' "$(pwd -P)" >&2; exit 4; }
+case "$*" in
+'ls --current --installed --json') printf '%%s' '%s';;
+'bin-paths') printf '%%s\n' '%s' '%s';;
+*) exit 3;;
+esac
+`, outside, mixedInventory, missing, filepath.Join(selected, "bin"))
 	for _, tc := range []struct {
 		name, script, message string
+		roots, bins           []string
 	}{
-		{"absent", "", ""},
-		{"malformed", "#!/bin/sh\nprintf 'invalid json'\n", "mise discovery failed"},
-		{"inventory failure", "#!/bin/sh\nexit 3\n", "exit status 3"},
-		{"bin paths failure", "#!/bin/sh\n[ \"$1\" = ls ] && { printf '{}'; exit 0; }; exit 4\n", "exit status 4"},
+		{name: "absent"},
+		{name: "malformed", script: "#!/bin/sh\nprintf 'invalid json'\n", message: "mise discovery failed"},
+		{name: "inventory failure", script: "#!/bin/sh\nexit 3\n", message: "exit status 3"},
+		{name: "bin paths failure", script: fmt.Sprintf("#!/bin/sh\n[ \"$1\" = ls ] && { printf '%%s' '%s'; exit 0; }; exit 4\n", inventory), message: "exit status 4"},
+		{name: "unresolvable entries skipped", script: mixedScript, message: missing, roots: []string{tools}, bins: []string{filepath.Join(tools, "bin")}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if runtime.GOOS == "windows" {
-				t.Skip("requires shell fixtures")
-			}
-			tools := t.TempDir()
+			commands := t.TempDir()
 			if tc.script != "" {
-				require.NoError(t, os.WriteFile(filepath.Join(tools, "mise"), []byte(tc.script), 0o700))
+				require.NoError(t, os.WriteFile(filepath.Join(commands, "mise"), []byte(tc.script), 0o700))
 			}
-			t.Setenv("PATH", tools)
+			t.Setenv("PATH", commands)
 			var log bytes.Buffer
 			roots, bins := ciCheckMisePaths(t.Context(), &log)
-			assert.Empty(t, roots)
-			assert.Empty(t, bins)
+			assert.Equal(t, tc.roots, roots, log.String())
+			assert.Equal(t, tc.bins, bins, log.String())
 			if tc.message == "" {
 				assert.Empty(t, log.String())
 			} else {
@@ -249,22 +262,4 @@ func TestCICheckMiseCredentialOverlap(t *testing.T) {
 	t.Setenv("HOME", home)
 	_, err := prepareCICheckToolchainFixture(t)
 	require.ErrorContains(t, err, "read grant contains host home")
-}
-
-func TestCICheckMiseUnavailablePaths(t *testing.T) {
-	tools, shims := ciCheckMiseFixture(t)
-	missing := filepath.Join(tools, "installs", "python", "system")
-	require.NoError(t, os.MkdirAll(filepath.Dir(missing), 0o700))
-	// mise reports system selections as installed even though this directory doesn't exist.
-	mise := filepath.Join(shims, "mise")
-	script, err := os.ReadFile(mise)
-	require.NoError(t, err)
-	response := strings.Replace(string(script), `{"node":`, fmt.Sprintf(`{"python":[{"version":"system","install_path":%q,"installed":true,"active":true}],"node":`, missing), 1)
-	response = strings.Replace(response, "'bin-paths') ", fmt.Sprintf("'bin-paths') printf '%%s\\n' '%s'; ", missing), 1)
-	require.NoError(t, os.WriteFile(mise, []byte(response), 0o700))
-	var log bytes.Buffer
-	roots, bins := ciCheckMisePaths(t.Context(), &log)
-	assert.Equal(t, []string{tools}, roots)
-	assert.Equal(t, []string{filepath.Join(tools, "bin")}, bins)
-	assert.Contains(t, log.String(), missing)
 }
