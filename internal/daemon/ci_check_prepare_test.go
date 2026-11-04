@@ -21,7 +21,7 @@ func TestCICheckPreparation(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires shell fixtures and symlinks")
 	}
-	miseTools, _ := ciCheckMiseFixture(t)
+	miseTools, miseShims := ciCheckMiseFixture(t)
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	repo := testutil.NewTestRepoWithCommit(t)
 	repo.CommitFile("go.mod", "module example.com/check\n\ngo 1.25.0\n", "module")
@@ -44,7 +44,7 @@ func TestCICheckPreparation(t *testing.T) {
 	job := &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}
 	wp := &WorkerPool{}
 	command := filepath.Join(t.TempDir(), "codex")
-	require.NoError(t, os.WriteFile(command, []byte("\x7fELFnative fixture"), 0o700))
+	require.NoError(t, os.Symlink(filepath.Join(miseShims, "mise"), command))
 	var log bytes.Buffer
 	run, err := wp.prepareCICheck(t.Context(), job, command, []string{"CHECKER_GIT_TOKEN=synthetic"}, &log)
 	require.NoError(t, err)
@@ -137,11 +137,9 @@ func TestCICheckWarming(t *testing.T) {
 		cache := filepath.Join(t.TempDir(), "missing", "mod")
 		tools := t.TempDir()
 		require.NoError(t, os.Mkdir(filepath.Join(tools, "bin"), 0o700))
-		// Version-manager shims must resolve outside the checkout.
-		outside, err := filepath.EvalSymlinks(os.TempDir())
-		require.NoError(t, err)
+		// Version-manager shims must resolve globally, outside temporary directory ancestry.
 		tokenFile := filepath.Join(t.TempDir(), "download-token")
-		script := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = env ]; then [ \"$(pwd -P)\" = '%s' ] || exit 4; printf '%%s\\n' '%s' '%s'; else [ \"$1\" = mod ] && [ \"$2\" = download ] || exit 3; printf '%%s' \"$CHECKER_GIT_TOKEN\" > '%s'; fi\n", outside, tools, cache, tokenFile)
+		script := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = env ]; then [ \"$(pwd -P)\" = '/' ] || exit 4; printf '%%s\\n' '%s' '%s'; else [ \"$1\" = mod ] && [ \"$2\" = download ] || exit 3; printf '%%s' \"$CHECKER_GIT_TOKEN\" > '%s'; fi\n", tools, cache, tokenFile)
 		require.NoError(t, os.WriteFile(filepath.Join(tools, "bin", "go"), []byte(script), 0o700))
 		t.Setenv("PATH", filepath.Join(tools, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
 		checkout := t.TempDir()
@@ -185,10 +183,11 @@ func ciCheckMiseFixture(t *testing.T) (string, string) {
 	require.NoError(t, os.WriteFile(filepath.Join(tools, "runtime.txt"), []byte("runtime ready\n"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(shims, "node"), []byte("#!/bin/sh\nexit 126\n"), 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "node"), []byte("#!/bin/sh\ncat \"${0%/*}/../runtime.txt\"\n"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "codex"), []byte("\x7fELFnative fixture"), 0o700))
 	selected := filepath.Join(shims, "selected")
 	require.NoError(t, os.Symlink(tools, selected))
 	inventory := fmt.Sprintf(`{"node":[{"install_path":%q}]}`, selected)
-	script := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in\n'ls --current --installed --json') printf '%%s' '%s';;\n'bin-paths') printf '%%s\\n' '%s';;\n*) exit 3;;\nesac\n", inventory, filepath.Join(selected, "bin"))
+	script := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in\n'which codex') [ \"$(pwd -P)\" = '/' ] || exit 4; printf '%%s\\n' '%s';;\n'ls --current --installed --json') printf '%%s' '%s';;\n'bin-paths') printf '%%s\\n' '%s';;\n*) exit 3;;\nesac\n", filepath.Join(bin, "codex"), inventory, filepath.Join(selected, "bin"))
 	require.NoError(t, os.WriteFile(filepath.Join(shims, "mise"), []byte(script), 0o700))
 	t.Setenv("PATH", shims+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return tools, shims
@@ -213,19 +212,17 @@ func TestCICheckMiseDiscovery(t *testing.T) {
 	selected := filepath.Join(shims, "selected")
 	missing := filepath.Join(tools, "installs", "python", "system")
 	require.NoError(t, os.MkdirAll(filepath.Dir(missing), 0o700))
-	outside, err := filepath.EvalSymlinks(os.TempDir())
-	require.NoError(t, err)
 	inventory := fmt.Sprintf(`{"node":[{"install_path":%q}]}`, selected)
 	// mise reports system selections as installed even though this directory doesn't exist.
 	mixedInventory := fmt.Sprintf(`{"python":[{"version":"system","install_path":%q,"installed":true,"active":true}],"node":[{"install_path":%q,"installed":true,"active":true}]}`, missing, selected)
 	mixedScript := fmt.Sprintf(`#!/bin/sh
-[ "$(pwd -P)" = '%s' ] || { printf 'mise discovery ran from unexpected directory: %%s\n' "$(pwd -P)" >&2; exit 4; }
+[ "$(pwd -P)" = '/' ] || { printf 'mise discovery ran from unexpected directory: %%s\n' "$(pwd -P)" >&2; exit 4; }
 case "$*" in
 'ls --current --installed --json') printf '%%s' '%s';;
 'bin-paths') printf '%%s\n' '%s' '%s';;
 *) exit 3;;
 esac
-`, outside, mixedInventory, missing, filepath.Join(selected, "bin"))
+`, mixedInventory, missing, filepath.Join(selected, "bin"))
 	for _, tc := range []struct {
 		name, script, message string
 		roots, bins           []string

@@ -192,7 +192,7 @@ type ciCheckRun struct {
 // prepareCICheck checks out the committed input before warming can update metadata.
 // Its caller owns both checkouts until cleanup returns.
 func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob, command string, gitEnv []string, out io.Writer) (run ciCheckRun, err error) {
-	command, codexDir, err := resolveCICheckCodex(ctx, os.TempDir(), command)
+	command, codexDir, err := resolveCICheckCodex(ctx, "/", command)
 	if err != nil {
 		return
 	}
@@ -325,8 +325,8 @@ func ciCheckMisePaths(ctx context.Context, out io.Writer) (roots, bins []string)
 	var results [][]byte
 	for _, args := range [][]string{{"ls", "--current", "--installed", "--json"}, {"bin-paths"}} {
 		cmd := exec.CommandContext(ctx, mise, args...)
-		// Repository config must not select tools for host-side discovery.
-		cmd.Dir = os.TempDir()
+		// Temporary directory ancestors can contain mise config; select global host tools from /.
+		cmd.Dir = "/"
 		var stderr strings.Builder
 		cmd.Stderr = &stderr
 		data, err := cmd.Output()
@@ -392,8 +392,8 @@ func warmGoModules(ctx context.Context, checkout string, gitEnv []string, out io
 		}
 	}
 	goEnv := exec.CommandContext(ctx, "go", "env", "GOROOT", "GOMODCACHE")
-	// Version-manager shims must resolve Go without loading checkout config.
-	goEnv.Dir = os.TempDir()
+	// Resolve Go globally without loading checkout or temporary directory ancestor config.
+	goEnv.Dir = "/"
 	var stderr strings.Builder
 	goEnv.Stderr = &stderr
 	data, err := goEnv.Output()
