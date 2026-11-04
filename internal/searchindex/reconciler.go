@@ -64,6 +64,7 @@ type Reconciler struct {
 	mirrorHead         int64
 	mirrorSeen         map[string]struct{}
 	mirrorRequested    bool
+	changesRequested   bool
 	pendingJobs        map[int64]struct{}
 	nextSweep          time.Time
 	generationStarted  time.Time
@@ -133,6 +134,15 @@ func normalizeReconcilerConfig(config ReconcilerConfig) ReconcilerConfig {
 func (r *Reconciler) Wake() {
 	r.mu.Lock()
 	r.mirrorRequested = true
+	r.mu.Unlock()
+	r.signalWake()
+}
+
+// WakeChanges refreshes jobs recorded in the change log for writes without a
+// job ID, such as a sync pull.
+func (r *Reconciler) WakeChanges() {
+	r.mu.Lock()
+	r.changesRequested = true
 	r.mu.Unlock()
 	r.signalWake()
 }
@@ -226,13 +236,22 @@ func (r *Reconciler) reconcileTurn(ctx context.Context) (bool, error) {
 func (r *Reconciler) refreshMirror(ctx context.Context) (bool, error) {
 	r.mu.Lock()
 	fullScan := r.mirrorSeen != nil || r.mirrorRequested
-	sweep := !r.config.Now().Before(r.nextSweep)
+	sweep := r.changesRequested || !r.config.Now().Before(r.nextSweep)
+	if !fullScan && sweep {
+		r.changesRequested = false
+	}
 	r.mu.Unlock()
 	if fullScan {
 		return r.scanMirrorPage(ctx)
 	}
 	if sweep {
-		return r.drainChanges(ctx)
+		more, err := r.drainChanges(ctx)
+		if err != nil {
+			r.mu.Lock()
+			r.changesRequested = true
+			r.mu.Unlock()
+		}
+		return more, err
 	}
 	return r.refreshJobs(ctx)
 }
@@ -302,7 +321,7 @@ func (r *Reconciler) scanMirrorPage(ctx context.Context) (bool, error) {
 	}
 	r.health.LastSuccessAt = new(now)
 	clearNonAuthenticationError(&r.health)
-	more := !complete || r.mirrorRequested || len(r.pendingJobs) > 0
+	more := !complete || r.mirrorRequested || r.changesRequested || len(r.pendingJobs) > 0
 	r.mu.Unlock()
 	return more, nil
 }
@@ -345,7 +364,7 @@ func (r *Reconciler) refreshJobs(ctx context.Context) (more bool, err error) {
 	r.health.Indexed = indexed
 	r.health.LastSuccessAt = new(r.config.Now())
 	clearNonAuthenticationError(&r.health)
-	more = r.mirrorRequested || len(r.pendingJobs) > 0
+	more = r.mirrorRequested || r.changesRequested || len(r.pendingJobs) > 0
 	r.mu.Unlock()
 	return more, nil
 }
@@ -653,6 +672,7 @@ func (r *Reconciler) drainChanges(ctx context.Context) (bool, error) {
 	}
 	if through > 0 {
 		r.mu.Lock()
+		r.changesRequested = true
 		r.health.MirrorComplete = false
 		r.health.MirrorBacklog = nil
 		r.mu.Unlock()
@@ -686,7 +706,7 @@ func (r *Reconciler) drainChanges(ctx context.Context) (bool, error) {
 		r.health.MirrorBacklog = new(int64)
 		r.health.LastSuccessAt = new(now)
 		clearNonAuthenticationError(&r.health)
-		more = r.mirrorRequested || len(r.pendingJobs) > 0
+		more = r.mirrorRequested || r.changesRequested || len(r.pendingJobs) > 0
 		r.mu.Unlock()
 	}
 	return more, nil

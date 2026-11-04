@@ -44,7 +44,7 @@ func (r *Reconciler) ShareVectors(shared SharedVectors) {
 // sync database cannot accept its vectors yet.
 func (r *Reconciler) ReviewsPushed(reviewUUIDs []string) {
 	if r.queuePublish(reviewUUIDs...) {
-		r.Wake()
+		r.signalWake()
 	}
 }
 
@@ -346,7 +346,7 @@ func (index *Index) coveredSharedDocuments(
 	}
 	rows, err := snapshot.CoveredDocs(ctx, sqlitevec.DocQuery{
 		Columns: []string{"review_uuid", "content_hash"},
-		Where:   "d.review_uuid IN (" + placeholders(len(reviewUUIDs)) + ")",
+		Where:   "d.doc_key IN (" + placeholders(len(reviewUUIDs)) + ")",
 		Args:    args,
 	})
 	if err != nil {

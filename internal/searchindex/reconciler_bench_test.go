@@ -47,7 +47,7 @@ func benchmarkReconcilerReviewEvent(b *testing.B, db *storage.DB, r *Reconciler,
 	}
 }
 
-func seedReconcilerHistory(b *testing.B, reviews, promptSize int) (*storage.DB, *Reconciler) {
+func seedReconcilerHistory(b testing.TB, reviews, promptSize int) (*storage.DB, *Reconciler) {
 	b.Helper()
 	db := testutil.OpenTestDB(b)
 	_, err := db.ExecContext(b.Context(), `

@@ -52,6 +52,7 @@ type recordingSearchReconciler struct {
 	started chan struct{}
 	stopped chan struct{}
 	wakes   chan struct{}
+	changes chan struct{}
 	jobs    chan int64
 	health  searchindex.HealthSnapshot
 }
@@ -83,6 +84,8 @@ func (r *countingSearchReconciler) Run(ctx context.Context) error {
 
 func (r *countingSearchReconciler) Wake() {}
 
+func (r *countingSearchReconciler) WakeChanges() {}
+
 func (r *countingSearchReconciler) WakeJob(int64) {}
 
 func (r *countingSearchReconciler) Health() searchindex.HealthSnapshot {
@@ -113,6 +116,7 @@ func newRecordingSearchReconciler() *recordingSearchReconciler {
 		started: make(chan struct{}),
 		stopped: make(chan struct{}),
 		wakes:   make(chan struct{}, 8),
+		changes: make(chan struct{}, 8),
 		jobs:    make(chan int64, 8),
 	}
 }
@@ -127,6 +131,13 @@ func (r *recordingSearchReconciler) Run(ctx context.Context) error {
 func (r *recordingSearchReconciler) Wake() {
 	select {
 	case r.wakes <- struct{}{}:
+	default:
+	}
+}
+
+func (r *recordingSearchReconciler) WakeChanges() {
+	select {
+	case r.changes <- struct{}{}:
 	default:
 	}
 }
