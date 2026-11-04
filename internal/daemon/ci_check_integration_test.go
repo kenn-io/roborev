@@ -78,7 +78,7 @@ func TestCICheckProviderSocketSandboxIntegration(t *testing.T) {
 	t.Cleanup(run.cleanup)
 	run.Job.Route = sandbox.Route{Name: "fixture", Upstream: "https://example.com", Path: "/responses", EnvVar: "FIXTURE_TOKEN", Capture: []string{"/bin/echo", "fixture-token"}}
 	const probe = `
-import os,socket,subprocess,sys
+import socket,subprocess,sys
 child = '''
 import os,socket,tempfile
 fd,path=tempfile.mkstemp(prefix="plugin")

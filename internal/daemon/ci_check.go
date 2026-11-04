@@ -231,17 +231,6 @@ func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob
 	if err = validateCICheckReadPaths(readPaths); err != nil {
 		return
 	}
-	env := []string{"PATH=" + toolPath, "HOME=" + filepath.Join(root, "home"), "TMPDIR=" + filepath.Join(run.Job.WorkDir, "tmp"), "GOCACHE=" + filepath.Join(run.Job.WorkDir, "gocache"), "GOPROXY=off", "LANG=C.UTF-8", "TERM=dumb"}
-	if len(goPaths) == 2 {
-		env[0] = "PATH=" + filepath.Join(goPaths[0], "bin") + string(os.PathListSeparator) + toolPath
-		env = append(env, "GOMODCACHE="+goPaths[1])
-	}
-	// nono protects HOME/.nono, so HOME sits outside its writable grant.
-	for _, dir := range []string{filepath.Join(root, "home"), filepath.Join(run.Job.WorkDir, "tmp"), filepath.Join(run.Job.WorkDir, "gocache")} {
-		if err = os.Mkdir(dir, 0o700); err != nil {
-			return
-		}
-	}
 	// Keep plugin socket names within Linux's 107-byte pathname capacity.
 	// The alias shortens TMPDIR while checkout recovery still owns its contents.
 	tmpAlias, err := os.MkdirTemp("", "roborev-ci-tmp-*")
@@ -256,7 +245,17 @@ func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob
 	if err = os.Symlink(filepath.Join(run.Job.WorkDir, "tmp"), filepath.Join(tmpAlias, "t")); err != nil {
 		return
 	}
-	env[2] = "TMPDIR=" + filepath.Join(tmpAlias, "t")
+	env := []string{"PATH=" + toolPath, "HOME=" + filepath.Join(root, "home"), "TMPDIR=" + filepath.Join(tmpAlias, "t"), "GOCACHE=" + filepath.Join(run.Job.WorkDir, "gocache"), "GOPROXY=off", "LANG=C.UTF-8", "TERM=dumb"}
+	if len(goPaths) == 2 {
+		env[0] = "PATH=" + filepath.Join(goPaths[0], "bin") + string(os.PathListSeparator) + toolPath
+		env = append(env, "GOMODCACHE="+goPaths[1])
+	}
+	// nono protects HOME/.nono, so HOME sits outside its writable grant.
+	for _, dir := range []string{filepath.Join(root, "home"), filepath.Join(run.Job.WorkDir, "tmp"), filepath.Join(run.Job.WorkDir, "gocache")} {
+		if err = os.Mkdir(dir, 0o700); err != nil {
+			return
+		}
+	}
 	run.Job.ReadPaths = readPaths
 	// Matches the checker evaluation's 8 GiB process budget.
 	run.Job.MemoryMax = 8 << 30
