@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 	"uuid"
@@ -16,6 +17,29 @@ type syncTestHelper struct {
 	db        *DB
 	machineID uuid.UUID
 	repo      *Repo
+}
+
+func createSyncJobs(t *testing.T, db *DB, repoID int64, count int) []*ReviewJob {
+	t.Helper()
+	jobs := make([]*ReviewJob, count)
+	for i := range jobs {
+		job := mustEnqueuePromptJob(t, db, EnqueueOpts{RepoID: repoID, GitRef: fmt.Sprintf("%040x", i), Agent: "test"})
+		claimed := claimJob(t, db, "worker")
+		require.NotNil(t, claimed)
+		require.Equal(t, job.ID, claimed.ID)
+		jobs[i] = job
+	}
+	return jobs
+}
+
+func createSyncHistory(t *testing.T, db *DB, repoID int64, count int) []*ReviewJob {
+	t.Helper()
+	jobs := createSyncJobs(t, db, repoID, count)
+	for i := range jobs {
+		index := count - 1 - i
+		require.NoError(t, completeReviewFixture(db, jobs[index].ID, "test", "prompt", "Review result."))
+	}
+	return jobs
 }
 
 func storedJobEnqueuedAt(t *testing.T, db *DB, jobID int64) time.Time {

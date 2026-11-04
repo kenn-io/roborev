@@ -371,7 +371,7 @@ func TestIntegrationReviewEditAfterPushSurvivesRepairPull(t *testing.T) { //noli
 			require.NoError(t, err)
 			_, err = a.Worker.SyncNow()
 			require.NoError(t, err)
-			pushed, err := b.Worker.pushChangesWithStats(t.Context(), env.Pool)
+			pushed, err := b.Worker.pushChangesWithStats(t.Context(), env.Pool, &pushCursor{})
 			require.NoError(t, err)
 			require.Zero(t, pushed.Reviews)
 			// The user edits after the final upload query, before the parent pull.
@@ -541,6 +541,32 @@ func TestIntegrationMirrorResetRestoresRepairedReview(t *testing.T) { //nolint:p
 	assert.True(t, closed)
 	assert.Equal(t, "Original review.", document)
 	pending, err := a.DB.GetReviewsToSync(owner, 10)
+	require.NoError(t, err)
+	assert.Empty(t, pending)
+}
+
+func TestIntegrationSyncCursorKeepsReviewsBehindPendingJobs(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL schema
+	env := newIntegrationEnv(t)
+	node := env.setupNode("producer", "cursor-repository", "1h")
+	jobs := createSyncJobs(t, node.DB, node.Repo.ID, 27)
+	lastJob := jobs[len(jobs)-1]
+	require.NoError(t, completeReviewFixture(node.DB, lastJob.ID, "test", "prompt", "output"))
+	_, err := node.Worker.SyncNow()
+	require.NoError(t, err)
+	require.NoError(t, node.DB.CancelJob(jobs[0].ID))
+	for _, job := range jobs[1 : len(jobs)-1] {
+		require.NoError(t, completeReviewFixture(node.DB, job.ID, "test", "prompt", "output"))
+	}
+	require.NoError(t, node.DB.MarkReviewClosedByJobID(lastJob.ID, true))
+
+	stats, err := node.Worker.SyncNow()
+	require.NoError(t, err)
+	assert.Equal(t, 26, stats.PushedJobs)
+	assert.Equal(t, 26, stats.PushedReviews)
+	env.assertPgCount("reviews", 26)
+	machineID, err := node.DB.GetMachineID()
+	require.NoError(t, err)
+	pending, err := node.DB.GetReviewsToSync(machineID, syncBatchSize)
 	require.NoError(t, err)
 	assert.Empty(t, pending)
 }
