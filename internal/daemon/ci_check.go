@@ -242,6 +242,21 @@ func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob
 			return
 		}
 	}
+	// Keep plugin socket names within Linux's 107-byte pathname capacity.
+	// The alias shortens TMPDIR while checkout recovery still owns its contents.
+	tmpAlias, err := os.MkdirTemp("", "roborev-ci-tmp-*")
+	if err != nil {
+		return
+	}
+	closeCheckoutAndScratch := run.cleanup
+	run.cleanup = func() {
+		_ = os.RemoveAll(tmpAlias)
+		closeCheckoutAndScratch()
+	}
+	if err = os.Symlink(filepath.Join(run.Job.WorkDir, "tmp"), filepath.Join(tmpAlias, "t")); err != nil {
+		return
+	}
+	env[2] = "TMPDIR=" + filepath.Join(tmpAlias, "t")
 	run.Job.ReadPaths = readPaths
 	// Matches the checker evaluation's 8 GiB process budget.
 	run.Job.MemoryMax = 8 << 30
