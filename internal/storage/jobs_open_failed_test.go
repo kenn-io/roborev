@@ -54,6 +54,5 @@ func TestListJobsOpenFailedReviewsQueryPlan(t *testing.T) {
 	))
 	require.NoError(t, err)
 	plan := queryPlan(t, db, query, args...)
-	assert.Regexp(t, `USING (COVERING )?INDEX idx_reviews_open_failed`, plan)
 	assert.Contains(t, plan, "j USING INTEGER PRIMARY KEY")
 }

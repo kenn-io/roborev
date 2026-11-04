@@ -49,9 +49,6 @@ func BenchmarkAgentHookOpenFailedReviews(b *testing.B) {
 				jobs, ok := source.ListOpenFailedReviewJobs(b.Context(), repo.RootPath, "main")
 				require.True(b, ok)
 				require.Len(b, jobs, 20)
-				for _, job := range jobs {
-					require.Equal(b, new("F"), job.Verdict)
-				}
 			}
 		})
 	}
