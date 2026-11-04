@@ -83,7 +83,7 @@ func TestPostgresMigrationReviewAttempts(t *testing.T) { //nolint:paralleltest /
 	var restoredOwner uuid.UUID
 	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT job_source_machine_id FROM reviews WHERE uuid = $1`, archivedReview).Scan(&restoredOwner))
 	assert.Equal(defaultTestMachineID, restoredOwner)
-	pulled, _, err := pool.PullReviews(ctx, uuid.New(), []uuid.UUID{completed, failed, archived}, "", 10)
+	pulled, _, err := pool.PullReviews(ctx, uuid.New(), map[uuid.UUID]struct{}{completed: {}, failed: {}, archived: {}}, "", 10)
 	require.NoError(t, err)
 	assert.Empty(pulled)
 	assert.Empty(pulledJobPrompt(t, pool, archived), "obsolete archive cannot supply a new attempt's prompt")

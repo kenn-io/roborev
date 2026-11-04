@@ -1397,20 +1397,20 @@ func (db *DB) upsertPulledResponse(r PulledResponse) (bool, error) {
 
 // GetKnownJobUUIDs returns UUIDs of all jobs that have a UUID.
 // Used to filter reviews when pulling from PostgreSQL.
-func (db *DB) GetKnownJobUUIDs() ([]uuid.UUID, error) {
+func (db *DB) GetKnownJobUUIDs() (map[uuid.UUID]struct{}, error) {
 	rows, err := db.Query(`SELECT uuid FROM review_jobs WHERE uuid IS NOT NULL`)
 	if err != nil {
 		return nil, fmt.Errorf("query job UUIDs: %w", err)
 	}
 	defer rows.Close()
 
-	var uuids []uuid.UUID
+	uuids := make(map[uuid.UUID]struct{})
 	for rows.Next() {
 		var id uuid.UUID
 		if err := rows.Scan(&id); err != nil {
 			return nil, fmt.Errorf("scan UUID: %w", err)
 		}
-		uuids = append(uuids, id)
+		uuids[id] = struct{}{}
 	}
 	return uuids, rows.Err()
 }

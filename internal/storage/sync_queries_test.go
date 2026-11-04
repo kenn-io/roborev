@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -30,10 +31,7 @@ func TestGetKnownJobUUIDs(t *testing.T) {
 		uuids, err := h.db.GetKnownJobUUIDs()
 		require.NoError(t, err, "GetKnownJobUUIDs failed: %v")
 
-		assert.Len(t, uuids, 2)
-
-		assert.Contains(t, uuids, *job1.UUID)
-		assert.Contains(t, uuids, *job2.UUID)
+		assert.Equal(t, map[uuid.UUID]struct{}{*job1.UUID: {}, *job2.UUID: {}}, uuids)
 	})
 }
 
