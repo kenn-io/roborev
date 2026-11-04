@@ -115,9 +115,10 @@ exact size is not yet known.
 
 ## Freshness and backfill
 
-The daemon scans existing reviews at startup and every five minutes. Completing,
-closing, reopening, commenting on, or rerunning a job refreshes only that job's
-search document. Repeated updates to the same job coalesce. Embedding backfill
+The daemon scans existing reviews at startup. Every five minutes, it refreshes
+only jobs recorded in the local search change log. Completing, closing,
+reopening, commenting on, or rerunning a job refreshes only that job's search
+document. Repeated updates to the same job coalesce. Embedding backfill
 continues without rereading unchanged review history between batches.
 
 Changes that span multiple jobs, such as commit-level comments and repository
@@ -165,9 +166,9 @@ There is no setting.
 - After embedding a review, the daemon publishes its vectors. A daemon only
     publishes vectors for a review that sync has already stored in PostgreSQL. A
     review embedded before sync pushes it is published right after the push.
-- Startup and periodic safety sweeps also publish existing local vectors.
-    Matching shared entries are skipped, and missing entries are retried on the
-    next sweep.
+- Startup and full rescans, such as after sync pulls changes from another
+    machine, publish existing local vectors. Sweeps publish vectors for changed
+    reviews. Matching shared entries are skipped.
 - Only daemons with the same `base_url`, `model`, `dims`, `request_dimensions`,
     `input_type_mode`, role prefixes and suffixes, `fingerprint_salt`, and
     document recipe share vectors. Other daemons embed for themselves.

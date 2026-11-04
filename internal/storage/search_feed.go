@@ -287,3 +287,77 @@ func searchVerdict(job ReviewJob, verdictBool sql.NullInt64, output string) stri
 		return ""
 	}
 }
+
+// SearchChangesHead returns the last queued search change, or zero.
+func (db *DB) SearchChangesHead(ctx context.Context) (int64, error) {
+	var head int64
+	err := db.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) FROM search_changes`).Scan(&head)
+	return head, err
+}
+
+// ListSearchChanges returns distinct jobs from the oldest limit log rows.
+// through acknowledges only those rows, preserving writes made during refresh.
+func (db *DB) ListSearchChanges(ctx context.Context, limit int) (jobIDs []int64, through int64, err error) {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	rows, err := tx.QueryContext(ctx, `SELECT seq, job_id FROM search_changes ORDER BY seq LIMIT ?`, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	seen := make(map[int64]struct{})
+	expand := false
+	for rows.Next() {
+		var seq int64
+		var jobID sql.NullInt64
+		if err := rows.Scan(&seq, &jobID); err != nil {
+			_ = rows.Close()
+			return nil, 0, err
+		}
+		through = seq
+		if jobID.Valid {
+			if _, ok := seen[jobID.Int64]; !ok {
+				jobIDs = append(jobIDs, jobID.Int64)
+				seen[jobID.Int64] = struct{}{}
+			}
+		} else {
+			expand = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, 0, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, 0, err
+	}
+	if expand {
+		_, err = tx.ExecContext(ctx, `INSERT INTO search_changes(job_id)
+			SELECT j.id FROM search_changes p CROSS JOIN review_jobs j
+			WHERE p.seq <= ? AND p.repo_id = j.repo_id
+			UNION
+			SELECT j.id FROM search_changes p CROSS JOIN review_jobs j
+			WHERE p.seq <= ? AND p.commit_id = j.commit_id
+			UNION
+			SELECT j.id FROM search_changes p CROSS JOIN commits c CROSS JOIN review_jobs j
+			WHERE p.seq <= ? AND c.id = p.commit_id AND j.git_ref = c.sha AND j.commit_id IS NULL`, through, through, through)
+		if err != nil {
+			return nil, 0, err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM search_changes WHERE seq <= ? AND job_id IS NULL`, through); err != nil {
+			return nil, 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, 0, err
+	}
+	return jobIDs, through, nil
+}
+
+// DeleteSearchChanges acknowledges successfully refreshed log rows.
+func (db *DB) DeleteSearchChanges(ctx context.Context, through int64) error {
+	_, err := db.ExecContext(ctx, `DELETE FROM search_changes WHERE seq <= ?`, through)
+	return err
+}

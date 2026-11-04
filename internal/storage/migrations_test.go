@@ -203,6 +203,7 @@ func TestIndexMigrations(t *testing.T) {
 		{"token cost started", 5, "idx_review_jobs_source_started", "source_machine_id, " + sqliteNormalizedTimestampExpr("started_at")},
 		{"summary repo window", 6, "idx_review_jobs_repo_enqueued", "repo_id, " + sqliteNormalizedTimestampExpr("enqueued_at")},
 		{"review export completion", 7, "idx_reviews_export_completed", "ON reviews(" + sqliteNormalizedTimestampExpr("created_at")},
+		{"search changes", 8, "idx_review_jobs_commit_id", "ON review_jobs(commit_id)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db := openUnmigratedDB(t)

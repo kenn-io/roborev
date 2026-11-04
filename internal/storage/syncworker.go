@@ -198,10 +198,20 @@ func (w *SyncWorker) PublishSearchVectors(
 	ctx context.Context, space string, key SearchVectorKey, chunks []SearchVectorChunk,
 ) (bool, error) {
 	pool, err := w.currentPool()
-	if err != nil {
-		return false, err
+	if err == nil {
+		var published bool
+		published, err = pool.PublishSearchVectors(ctx, space, key, chunks)
+		if err == nil {
+			return published, nil
+		}
 	}
-	return pool.PublishSearchVectors(ctx, space, key, chunks)
+
+	// The retry must survive cancellation of the publication attempt.
+	_, queueErr := w.db.ExecContext(context.WithoutCancel(ctx),
+		`INSERT INTO search_changes(job_id) SELECT job_id FROM reviews WHERE uuid = ?`,
+		key.ReviewUUID,
+	)
+	return false, errors.Join(err, queueErr)
 }
 
 // NewSyncWorker creates a new sync worker

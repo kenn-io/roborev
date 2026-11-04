@@ -43,19 +43,9 @@ func (r *Reconciler) ShareVectors(shared SharedVectors) {
 // just pushed. A review is usually embedded before sync pushes it, when the
 // sync database cannot accept its vectors yet.
 func (r *Reconciler) ReviewsPushed(reviewUUIDs []string) {
-	r.mu.Lock()
-	if r.shared == nil || r.embedder == nil {
-		r.mu.Unlock()
-		return
+	if r.queuePublish(reviewUUIDs...) {
+		r.Wake()
 	}
-	if r.pendingPublish == nil {
-		r.pendingPublish = make(map[string]struct{})
-	}
-	for _, reviewUUID := range reviewUUIDs {
-		r.pendingPublish[reviewUUID] = struct{}{}
-	}
-	r.mu.Unlock()
-	r.Wake()
 }
 
 func (r *Reconciler) sharedVectors() SharedVectors {
@@ -108,8 +98,24 @@ func pendingContentHash(doc vector.Pending[string]) string {
 	}
 }
 
-// publishPending publishes covered reviews discovered by sync or a mirror scan.
-// Matching shared rows are skipped. The next scan retries missing rows.
+// queuePublish schedules vectors for publication when sharing is enabled.
+func (r *Reconciler) queuePublish(reviewUUIDs ...string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.shared == nil || r.embedder == nil {
+		return false
+	}
+	if r.pendingPublish == nil {
+		r.pendingPublish = make(map[string]struct{})
+	}
+	for _, reviewUUID := range reviewUUIDs {
+		r.pendingPublish[reviewUUID] = struct{}{}
+	}
+	return true
+}
+
+// publishPending publishes covered reviews discovered by sync, a scan, or a
+// change. Matching shared rows are skipped.
 func (r *Reconciler) publishPending(ctx context.Context, shared SharedVectors, space, generation string) error {
 	for batch := range slices.Chunk(r.takePendingPublish(), sharedLookupPage) {
 		docs, err := r.index.coveredSharedDocuments(ctx, generation, batch)
