@@ -12,6 +12,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/config"
 )
 
 // seedPullHistory gives each cursor a distinct timestamp and every job a review.
@@ -21,10 +23,11 @@ func seedPullHistory(t *testing.T, pool *PgPool, n int) uuid.UUID {
 	machineID := uuid.New()
 	require.NoError(t, pool.RegisterMachine(ctx, machineID, "remote"))
 	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{})
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	for i, query := range []string{
 		`INSERT INTO review_jobs (uuid, repo_id, git_ref, agent, status, prompt, enqueued_at, updated_at, source_machine_id)
 		 SELECT md5('job-' || i)::uuid, $2, 'main', 'test', 'done', 'review prompt',
-		 '2026-01-01'::timestamptz + i * interval '1 second', '2026-01-01'::timestamptz + i * interval '1 second', $3
+		 $4::timestamptz + i * interval '1 second', $4::timestamptz + i * interval '1 second', $3
 		 FROM generate_series(1, $1::int) i`,
 		`INSERT INTO reviews (uuid, job_uuid, agent, prompt, output, structured_output, job_enqueued_at, job_source_machine_id, updated_by_machine_id, created_at, updated_at)
 		 SELECT md5('review-' || i)::uuid, j.uuid, 'test', '', 'No issues found.', $2::jsonb, j.enqueued_at, $3, $3, j.updated_at, j.updated_at
@@ -34,22 +37,47 @@ func seedPullHistory(t *testing.T, pool *PgPool, n int) uuid.UUID {
 		 FROM generate_series(1, $1::int) i`,
 		`INSERT INTO experiment_definitions SELECT 'test-experiment', 'hash', '{}', $2::timestamptz, $3::uuid, NULL FROM generate_series(1, $1::int) LIMIT 1`,
 		`INSERT INTO experiment_assignments (review_unit_kind, review_unit_uuid, experiment_id, arm, subject_hash, effective_config_hash, effective_config_json, assigned_at, inserted_at, source_machine_id)
-		 SELECT 'job', md5('job-' || i), 'test-experiment', 'control', 'subject', 'config', '{}', $2::timestamptz, $2::timestamptz + i * interval '1 second', $3
+		 SELECT 'job', md5('job-' || i), 'test-experiment', 'default', 'subject', 'config', '{}', $2::timestamptz, $2::timestamptz + i * interval '1 second', $3
 		 FROM generate_series(1, $1::int) i`,
 	} {
-		var arg any = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		args := []any{n, base, machineID}
 		switch i {
 		case 0:
-			arg = repoID
+			args = []any{n, repoID, machineID, base}
 		case 1:
-			arg = string(reviewFixtureJSON("No issues found."))
+			args = []any{n, string(reviewFixtureJSON("No issues found.")), machineID}
 		}
-		_, err := pool.pool.Exec(ctx, query, n, arg, machineID)
+		_, err := pool.pool.Exec(ctx, query, args...)
 		require.NoError(t, err)
 	}
 	_, err := pool.pool.Exec(ctx, "ANALYZE")
 	require.NoError(t, err)
 	return machineID
+}
+
+func assertPullPlanBounded(t *testing.T, raw []byte) {
+	t.Helper()
+	type node struct {
+		Type         string  `json:"Node Type"`
+		Rows         float64 `json:"Actual Rows"`
+		Loops        float64 `json:"Actual Loops"`
+		Filtered     float64 `json:"Rows Removed by Filter"`
+		JoinFiltered float64 `json:"Rows Removed by Join Filter"`
+		Rechecked    float64 `json:"Rows Removed by Index Recheck"`
+		Plans        []node  `json:"Plans"`
+	}
+	var plans []struct{ Plan node }
+	require.NoError(t, json.Unmarshal(raw, &plans))
+	require.Len(t, plans, 1)
+	assert.InDelta(t, 100, plans[0].Plan.Rows, 0, "probe must return a full page")
+	var visit func(node)
+	visit = func(n node) {
+		assert.LessOrEqual(t, (n.Rows+n.Filtered+n.JoinFiltered+n.Rechecked)*n.Loops, float64(500), "%s processed too many rows", n.Type)
+		for _, child := range n.Plans {
+			visit(child)
+		}
+	}
+	visit(plans[0].Plan)
 }
 
 func TestIntegration_PullCursorPlans(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL schema
@@ -84,23 +112,7 @@ func TestIntegration_PullCursorPlans(t *testing.T) { //nolint:paralleltest // sh
 			args := fmt.Sprintf("'%s', '%s', %d, 100", uuid.New(), cursorTime.Format(time.RFC3339Nano), cursorID)
 			var raw []byte
 			require.NoError(t, tx.QueryRow(ctx, "EXPLAIN (ANALYZE, FORMAT JSON) EXECUTE pull_"+tc.name+"("+args+")").Scan(&raw))
-			type node struct {
-				Type  string  `json:"Node Type"`
-				Rows  float64 `json:"Actual Rows"`
-				Loops float64 `json:"Actual Loops"`
-				Plans []node  `json:"Plans"`
-			}
-			var plans []struct{ Plan node }
-			require.NoError(t, json.Unmarshal(raw, &plans))
-			require.Len(t, plans, 1)
-			var visit func(node)
-			visit = func(n node) {
-				assert.LessOrEqual(t, n.Rows*n.Loops, float64(500), "%s processed too many rows", n.Type)
-				for _, child := range n.Plans {
-					visit(child)
-				}
-			}
-			visit(plans[0].Plan)
+			assertPullPlanBounded(t, raw)
 		})
 	}
 }
@@ -190,4 +202,59 @@ func TestIntegration_PullJobsPagesTiedTimestamps(t *testing.T) { //nolint:parall
 	assert.Equal("commit-sha", pulled[0].CommitSHA)
 	assert.Equal("author", pulled[0].CommitAuthor)
 	assert.Empty(pulled[1].CommitSHA)
+}
+
+func TestIntegration_PullCachedPlansAfterPeerArrives(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL schema
+	pool := newIntegrationEnv(t).Pool
+	owner := seedPullHistory(t, pool, 10000)
+	ctx := t.Context()
+	tx, err := pool.pool.Begin(ctx)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, tx.Rollback(context.WithoutCancel(ctx))) }()
+	peer := uuid.New()
+	for _, tc := range []struct{ name, table, query string }{
+		{"responses", "responses", pgPullResponsesQuery},
+		{"assignments", "experiment_assignments", pgPullExperimentAssignmentsQuery},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := tx.Exec(ctx, "SET LOCAL plan_cache_mode = auto")
+			require.NoError(t, err)
+			_, err = tx.Exec(ctx, "PREPARE cached_"+tc.name+" AS "+tc.query)
+			require.NoError(t, err)
+			var cursorTime time.Time
+			var cursorID int64
+			require.NoError(t, tx.QueryRow(ctx, "SELECT inserted_at, id FROM "+tc.table+" ORDER BY inserted_at, id OFFSET 5100 LIMIT 1").Scan(&cursorTime, &cursorID))
+			args := fmt.Sprintf("'%s', '%s', %d, 100", owner, cursorTime.Format(time.RFC3339Nano), cursorID)
+			for range 6 {
+				rows, err := tx.Query(ctx, "EXECUTE cached_"+tc.name+"("+args+")")
+				require.NoError(t, err)
+				require.False(t, rows.Next())
+				require.NoError(t, rows.Err())
+				rows.Close()
+			}
+			_, err = tx.Exec(ctx, "UPDATE "+tc.table+" SET source_machine_id = $1 WHERE id > (SELECT id FROM "+tc.table+" ORDER BY inserted_at, id OFFSET 5000 LIMIT 1)", peer)
+			require.NoError(t, err)
+			for _, mode := range []string{"auto", "force_generic_plan"} {
+				_, err := tx.Exec(ctx, "SET LOCAL plan_cache_mode = "+mode)
+				require.NoError(t, err)
+				var raw []byte
+				require.NoError(t, tx.QueryRow(ctx, "EXPLAIN (ANALYZE, FORMAT JSON) EXECUTE cached_"+tc.name+"("+args+")").Scan(&raw))
+				t.Run(mode, func(t *testing.T) { assertPullPlanBounded(t, raw) })
+			}
+		})
+	}
+}
+
+func TestIntegration_PullSeededAssignments(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL schema
+	env := newIntegrationEnv(t)
+	seedPullHistory(t, env.Pool, 8)
+	db := env.openDB("pull.db")
+	worker := NewSyncWorker(db, config.SyncConfig{})
+	stats, err := worker.pullChangesWithStats(t.Context(), env.Pool)
+	require.NoError(t, err)
+	assert.Equal(t, 8, stats.Jobs)
+	assert.Equal(t, 8, stats.Reviews)
+	var count int
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM experiment_assignments WHERE arm = 'default'`).Scan(&count))
+	assert.Equal(t, 8, count)
 }

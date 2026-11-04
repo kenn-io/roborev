@@ -1098,14 +1098,18 @@ func (p *PgPool) PullExperimentDefinitions(ctx context.Context, excludeMachineID
 	return definitions, rows.Err()
 }
 
+// OFFSET 0 keeps cached plans from sorting every remaining assignment.
 const pgPullExperimentAssignmentsQuery = `
-		SELECT review_unit_kind, review_unit_uuid::uuid, experiment_id, arm, subject_hash,
-		       effective_config_hash, effective_config_json, assigned_at, source_machine_id,
-		       inserted_at, id
-		FROM experiment_assignments
-		WHERE source_machine_id != $1
-		  AND (inserted_at, id) > ($2, $3)
-		ORDER BY inserted_at, id
+		SELECT a.review_unit_kind, a.review_unit_uuid::uuid, a.experiment_id, a.arm, a.subject_hash,
+		       a.effective_config_hash, a.effective_config_json, a.assigned_at, a.source_machine_id,
+		       a.inserted_at, a.id
+		FROM experiment_assignments a
+		CROSS JOIN LATERAL (
+			SELECT 1 WHERE a.source_machine_id != $1
+			OFFSET 0
+		) peer
+		WHERE (a.inserted_at, a.id) > ($2, $3)
+		ORDER BY a.inserted_at, a.id
 		LIMIT $4`
 
 func (p *PgPool) PullExperimentAssignments(
