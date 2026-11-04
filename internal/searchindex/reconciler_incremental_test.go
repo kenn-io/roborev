@@ -139,6 +139,38 @@ func TestReconcilerChangeWakeDrainsMultiplePages(t *testing.T) {
 	assert.Equal(t, int64(4), store.fullReads.Load())
 }
 
+func TestReconcilerEmptyChangeWakeRefreshesPendingJob(t *testing.T) {
+	now := time.Now()
+	r, store, index := incrementalFixture(t, ReconcilerConfig{SweepInterval: time.Hour, Now: func() time.Time { return now }})
+	more, err := r.reconcileTurn(t.Context())
+	require.NoError(t, err)
+	require.False(t, more)
+
+	_, err = store.ExecContext(t.Context(), `UPDATE reviews SET output = 'pendingjobrefresh' WHERE job_id = 1`)
+	require.NoError(t, err)
+	// Leave the update to the job wake, with an empty change log.
+	head, err := store.SearchChangesHead(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, store.DeleteSearchChanges(t.Context(), head))
+	r.WakeChanges()
+	r.WakeJob(1)
+
+	// One turn drains the empty log; the next refreshes the pending job.
+	for range 2 {
+		more, err = r.reconcileTurn(t.Context())
+		require.NoError(t, err)
+		if !more {
+			break
+		}
+	}
+	assert.False(t, more, "change and job wakes must settle within two turns")
+	assert.Equal(t, []int64{1}, store.jobReads)
+	var jobID int64
+	require.NoError(t, index.db.QueryRowContext(t.Context(), `SELECT job_id FROM review_mirror JOIN review_fts USING (doc_key) WHERE review_fts MATCH 'pendingjobrefresh'`).Scan(&jobID))
+	assert.Equal(t, int64(1), jobID)
+	assert.Equal(t, int64(1), store.fullReads.Load())
+}
+
 func TestReconcilerPullWriteRefreshesOnlyPulledReview(t *testing.T) {
 	var readCounts []int
 	for _, reviews := range []int{1000, 10000} {

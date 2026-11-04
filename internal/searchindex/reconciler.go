@@ -245,7 +245,7 @@ func (r *Reconciler) refreshMirror(ctx context.Context) (bool, error) {
 	}
 	if sweep {
 		more, err := r.drainChanges(ctx)
-		if more || err != nil {
+		if err != nil {
 			r.mu.Lock()
 			r.changesRequested = true
 			r.mu.Unlock()
@@ -648,6 +648,7 @@ func (r *Reconciler) drainChanges(ctx context.Context) (bool, error) {
 	}
 	if through > 0 {
 		r.mu.Lock()
+		r.changesRequested = true
 		r.health.MirrorComplete = false
 		r.health.MirrorBacklog = nil
 		r.mu.Unlock()
