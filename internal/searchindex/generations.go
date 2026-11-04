@@ -131,7 +131,7 @@ func (index *Index) ServingGeneration(ctx context.Context, space embedmodel.Desc
 
 // PendingGeneration returns a stable page of documents awaiting a generation.
 func (index *Index) PendingGeneration(ctx context.Context, key string, limit int) ([]vector.Pending[string], error) {
-	return index.vectors.PendingForGeneration(ctx, key, limit)
+	return index.vectors.PendingForGeneration(ctx, key, nil, limit)
 }
 
 // SaveGenerationVectors atomically saves vectors for the revision that was read.

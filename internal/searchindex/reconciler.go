@@ -421,14 +421,14 @@ type turnLimitedStore struct {
 	remaining int
 }
 
-func (s *turnLimitedStore) PendingForGeneration(ctx context.Context, gen string, limit int) ([]vector.Pending[string], error) {
+func (s *turnLimitedStore) PendingForGeneration(ctx context.Context, gen string, after *string, limit int) ([]vector.Pending[string], error) {
 	if s.remaining <= 0 {
 		return nil, nil
 	}
 	if limit > s.remaining {
 		limit = s.remaining
 	}
-	pending, err := s.Store.PendingForGeneration(ctx, gen, limit)
+	pending, err := s.Store.PendingForGeneration(ctx, gen, after, limit)
 	if err != nil {
 		return nil, err
 	}

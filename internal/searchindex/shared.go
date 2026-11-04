@@ -161,9 +161,9 @@ func newSharingStore(store vector.Store[string, string], index *Index, shared Sh
 
 // PendingForGeneration imports every shared hit in one lookup page and
 // returns only documents that still need the encoder. A page of hits returns
-// nothing, which ends this Fill; the reconciler continues while backlog remains.
-func (s *sharingStore) PendingForGeneration(ctx context.Context, gen string, limit int) ([]vector.Pending[string], error) {
-	pending, err := s.Store.PendingForGeneration(ctx, gen, max(limit, sharedLookupPage))
+// nothing; the reconciler continues while backlog remains.
+func (s *sharingStore) PendingForGeneration(ctx context.Context, gen string, after *string, limit int) ([]vector.Pending[string], error) {
+	pending, err := s.Store.PendingForGeneration(ctx, gen, after, max(limit, sharedLookupPage))
 	if err != nil {
 		return nil, err
 	}
