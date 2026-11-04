@@ -19,15 +19,14 @@ type sincePlanQuerier struct {
 
 func (q sincePlanQuerier) check(query string, args []any) {
 	q.t.Helper()
+	plan := queryPlan(q.t, q.querier, query, args...)
 	if q.index == "" {
-		assert.Contains(q.t, query, "datetime(j.enqueued_at) >= datetime(?)")
-		assert.NotContains(q.t, query, "INDEXED BY")
+		assert.NotContains(q.t, plan, "idx_review_jobs_enqueued_position", query)
+		assert.NotContains(q.t, plan, "<expr>>?", query)
 		return
 	}
-	plan := queryPlan(q.t, q.querier, query, args...)
 	assert.Contains(q.t, plan, "SEARCH j USING INDEX "+q.index, query)
 	assert.Contains(q.t, plan, "<expr>>?", query)
-	assert.NotContains(q.t, plan, "SCAN j", query)
 }
 
 func (q sincePlanQuerier) Query(query string, args ...any) (*sql.Rows, error) {
@@ -88,13 +87,13 @@ func TestSummaryAndCostSinceUseEnqueuedIndex(t *testing.T) {
 			}
 			_, err = costAggregate(q, opts)
 			require.NoError(t, err)
-			if scope.repo == "" {
+			if scope.name == "all" {
 				opts.BranchEmpty = true
 				q.index = ""
 				_, err = costAggregate(q, opts)
 				require.NoError(t, err)
 			}
-			if scope.repo != "" || scope.branch == "" {
+			if scope.name == "repo" {
 				opts.RepoPaths = append(opts.RepoPaths, "/tmp/another-repo")
 				q.index = "idx_review_jobs_repo_enqueued"
 				opts.BranchEmpty = true

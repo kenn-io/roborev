@@ -3,7 +3,6 @@ package storage
 import (
 	"fmt"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -1337,19 +1336,7 @@ func TestListJobsSortsReadTheirIndexes(t *testing.T) {
 					}, page.extra...)
 					query, args, _, err := listJobsQuery("", "", 51, 0, collectListJobsOptions(opts...))
 					require.NoError(t, err)
-					rows, err := db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+query, args...)
-					require.NoError(t, err)
-					defer rows.Close()
-
-					var details []string
-					for rows.Next() {
-						var id, parent, unused int
-						var detail string
-						require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
-						details = append(details, detail)
-					}
-					require.NoError(t, rows.Err())
-					plan := strings.Join(details, "\n")
+					plan := queryPlan(t, db, query, args...)
 					assert.Contains(t, plan, "USING INDEX "+page.index)
 					assert.NotContains(t, plan, "USE TEMP B-TREE FOR ORDER BY")
 				})

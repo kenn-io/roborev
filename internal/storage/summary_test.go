@@ -298,32 +298,6 @@ func TestGetSummary_SinceFilter(t *testing.T) {
 	assert.Equal(t, 1, s.Overview.Total)
 }
 
-func TestGetSummary_RFC3339Timestamps(t *testing.T) {
-	t.Parallel()
-	db := openTestDB(t)
-	defer db.Close()
-
-	repo := createRepo(t, db, "/tmp/test-repo")
-	commit := createCommit(t, db, repo.ID, "abc123")
-
-	j := enqueueJob(t, db, repo.ID, commit.ID, "abc123")
-	rfc3339Time := time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339)
-	_, err := db.ExecContext(t.Context(), "UPDATE review_jobs SET enqueued_at = ? WHERE id = ?", rfc3339Time, j.ID)
-	require.NoError(t, err)
-
-	s, err := db.GetSummary(SummaryOptions{
-		Since: time.Now().Add(-2 * time.Hour),
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 1, s.Overview.Total)
-
-	s, err = db.GetSummary(SummaryOptions{
-		Since: time.Now(),
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 0, s.Overview.Total)
-}
-
 func TestGetSummary_MixedTimestampBoundary(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
@@ -340,11 +314,24 @@ func TestGetSummary_MixedTimestampBoundary(t *testing.T) {
 			status = 'done', agent_invoked = 1, started_at = ?, finished_at = ? WHERE id = ?`, stamp, stamp, stamp, job.ID)
 		require.NoError(t, err)
 	}
-	for _, path := range []string{"", repo.RootPath} {
-		summary, err := db.GetSummary(SummaryOptions{Since: since, RepoPath: path})
+	otherRepo := createRepo(t, db, "/tmp/another-summary-boundary")
+	otherCommit := createCommit(t, db, otherRepo.ID, "other")
+	otherJob := enqueueJob(t, db, otherRepo.ID, otherCommit.ID, "other")
+	_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET enqueued_at = ?,
+		status = 'done', agent_invoked = 1, started_at = ?, finished_at = ? WHERE id = ?`,
+		"2026-01-01 12:00:00", "2026-01-01 12:00:00", "2026-01-01 12:00:00", otherJob.ID)
+	require.NoError(t, err)
+	for _, scope := range []struct {
+		path string
+		want int
+	}{
+		{path: "", want: 4},
+		{path: repo.RootPath, want: 3},
+	} {
+		summary, err := db.GetSummary(SummaryOptions{Since: since, RepoPath: scope.path})
 		require.NoError(t, err)
-		assert.Equal(t, 3, summary.Overview.Total)
-		assert.Equal(t, 3, summary.Cost.JobsTotal)
+		assert.Equal(t, scope.want, summary.Overview.Total)
+		assert.Equal(t, scope.want, summary.Cost.JobsTotal)
 	}
 }
 

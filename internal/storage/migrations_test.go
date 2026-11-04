@@ -114,7 +114,11 @@ func TestOpenBaselinesDatabaseFromBeforeNumberedMigrations(t *testing.T) {
 	db, err := Open(path)
 	require.NoError(t, err)
 	defer db.Close()
-	assert.Equal(t, []int{1, 2, 3, 4, 5, 6}, appliedVersions(t, db))
+	var versions []int
+	for _, migration := range schemaMigrations {
+		versions = append(versions, migration.version)
+	}
+	assert.Equal(t, versions, appliedVersions(t, db))
 	var name string
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT name FROM repos WHERE root_path = '/synthetic/repo'`).Scan(&name))
 	assert.Equal(t, "repo", name)
@@ -187,54 +191,37 @@ func TestCIPanelRetireReasonMigration(t *testing.T) {
 	}
 }
 
-func TestCIPanelPRHeadIndexMigration(t *testing.T) {
+func TestIndexMigrations(t *testing.T) {
 	t.Parallel()
-	db := openUnmigratedDB(t)
-	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:3]))
-
-	for range 2 {
-		require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:4]))
-		var indexSQL string
-		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT sql FROM sqlite_master
-			WHERE type = 'index' AND name = 'idx_ci_panels_pr_head'`).Scan(&indexSQL))
-		assert.Contains(t, indexSQL, "ON ci_pr_panels(github_repo, pr_number, head_sha)")
-		assert.Equal(t, []int{1, 2, 3, 4}, appliedVersions(t, db))
-		// Simulate interruption after creating the index, before recording it.
-		_, err := db.ExecContext(t.Context(), `DELETE FROM schema_migrations WHERE version = 4`)
-		require.NoError(t, err)
-	}
-}
-
-func TestTokenCostStartedIndexMigration(t *testing.T) {
-	t.Parallel()
-	db := openUnmigratedDB(t)
-	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:4]))
-
-	for range 2 {
-		require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
-		var indexSQL string
-		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT sql FROM sqlite_master
-			WHERE type = 'index' AND name = 'idx_review_jobs_source_started'`).Scan(&indexSQL))
-		assert.Equal(t, []int{1, 2, 3, 4, 5, 6}, appliedVersions(t, db))
-		// Simulate interruption after creating the index, before recording it.
-		_, err := db.ExecContext(t.Context(), `DELETE FROM schema_migrations WHERE version >= 5`)
-		require.NoError(t, err)
-	}
-}
-
-func TestSummaryRepoWindowIndexMigration(t *testing.T) {
-	t.Parallel()
-	db := openUnmigratedDB(t)
-	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations[:5]))
-	for range 2 {
-		require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
-		var indexSQL string
-		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT sql FROM sqlite_master
-			WHERE type = 'index' AND name = 'idx_review_jobs_repo_enqueued'`).Scan(&indexSQL))
-		assert.Contains(t, indexSQL, "repo_id, "+sqliteNormalizedTimestampExpr("enqueued_at"))
-		assert.Equal(t, []int{1, 2, 3, 4, 5, 6}, appliedVersions(t, db))
-		// Retry after creating the index but before recording the migration.
-		_, err := db.ExecContext(t.Context(), `DELETE FROM schema_migrations WHERE version = 6`)
-		require.NoError(t, err)
+	for _, tc := range []struct {
+		name     string
+		version  int
+		index    string
+		fragment string
+	}{
+		{"CI panel PR head", 4, "idx_ci_panels_pr_head", "ON ci_pr_panels(github_repo, pr_number, head_sha)"},
+		{"token cost started", 5, "idx_review_jobs_source_started", "source_machine_id, " + sqliteNormalizedTimestampExpr("started_at")},
+		{"summary repo window", 6, "idx_review_jobs_repo_enqueued", "repo_id, " + sqliteNormalizedTimestampExpr("enqueued_at")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := openUnmigratedDB(t)
+			migrations := schemaMigrations[:tc.version]
+			require.NoError(t, db.runSchemaMigrations(t.Context(), migrations[:len(migrations)-1]))
+			var versions []int
+			for _, migration := range migrations {
+				versions = append(versions, migration.version)
+			}
+			for range 2 {
+				require.NoError(t, db.runSchemaMigrations(t.Context(), migrations))
+				var indexSQL string
+				require.NoError(t, db.QueryRowContext(t.Context(), `SELECT sql FROM sqlite_master
+					WHERE type = 'index' AND name = ?`, tc.index).Scan(&indexSQL))
+				assert.Contains(t, indexSQL, tc.fragment)
+				assert.Equal(t, versions, appliedVersions(t, db))
+				// Retry after creating the index but before recording the migration.
+				_, err := db.ExecContext(t.Context(), `DELETE FROM schema_migrations WHERE version = ?`, tc.version)
+				require.NoError(t, err)
+			}
+		})
 	}
 }
