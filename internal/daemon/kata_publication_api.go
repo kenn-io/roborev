@@ -60,7 +60,7 @@ type KataPublishInput struct{ Body KataPublishRequest }
 func kataPublicationMapping(h storage.KataHandoff) KataPublication {
 	diagnostic := ""
 	if h.LastError != "" {
-		diagnostic = "Destination, ledger or receipt could not be validated"
+		diagnostic = "Could not verify Kata delivery."
 	}
 	out := KataPublication{ReviewUUID: h.ReviewUUID, OperationID: h.OperationID, State: h.Status, Policy: h.Request.Policy, Issue: h.State.IssueRef, IssueUID: h.State.IssueUID, LastError: diagnostic, Findings: []KataFindingPublication{}}
 	for _, entry := range h.Request.Entries {

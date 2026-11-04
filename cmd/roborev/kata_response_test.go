@@ -35,7 +35,10 @@ func TestKataCommentPrintsOperationBeforeNetwork(t *testing.T) {
 		assert.Contains(t, out.String(), request.OperationID)
 		assert.NoError(t, kataresponse.ValidateOperationID(request.OperationID), "an omitted key generates a UUID")
 		w.WriteHeader(http.StatusAccepted)
-		assert.NoError(t, json.NewEncoder(w).Encode(storage.KataResponseStatus{OperationID: request.OperationID, State: "pending", Kind: request.Kind}))
+		assert.NoError(t, json.NewEncoder(w).Encode(storage.KataResponseStatus{
+			OperationID: request.OperationID, State: "pending", Kind: request.Kind,
+			Message: "kata publication remains pending: response receipt unavailable",
+		}))
 	})
 	probe := func(_ http.ResponseWriter, _ *http.Request, _ *mockRefineState) bool {
 		assert.Contains(t, out.String(), "Idempotency key:", "operation must be printed before daemon discovery probes")
@@ -56,6 +59,8 @@ func TestKataCommentPrintsOperationBeforeNetwork(t *testing.T) {
 	assert.NotEmpty(t, key)
 	assert.Equal(t, 1, strings.Count(out.String(), key))
 	assert.Contains(t, out.String(), "pending (reply)")
+	assert.Contains(t, out.String(), "response receipt unavailable")
+	assert.NotContains(t, out.String(), "kata publication remains pending")
 }
 
 func TestKataCommentReportsOldDaemon(t *testing.T) {

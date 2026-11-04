@@ -330,8 +330,7 @@ func TestAPIClientRejectsShortEvidenceWithoutChangingTheKind(t *testing.T) {
 		_, err := c.Comment(t.Context(), CommentReq{Issue: "abc4", Body: evidence(39), Kind: kind, ReplyTo: root.UID, IdempotencyKey: "short-" + string(kind)})
 		require.ErrorIs(t, err, ErrEvidenceTooShort, kind)
 		require.ErrorIs(t, err, ErrRequestRejected)
-		assert.Contains(t, err.Error(), "a "+string(kind)+" needs at least 40 characters", "the message says what is missing")
-		assert.Contains(t, err.Error(), "this has 39", "and how much there was")
+		assert.Equal(t, "a "+string(kind)+" needs at least 40 characters after whitespace is normalized, and this has 39", err.Error())
 	}
 	assert.Len(t, f.AllRequests(), before, "a short message is rejected before anything is sent")
 

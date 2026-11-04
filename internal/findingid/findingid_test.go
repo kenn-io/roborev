@@ -149,6 +149,27 @@ func TestParseRejectsPartsNewWouldNotAccept(t *testing.T) {
 	}
 }
 
+func TestParseDoesNotExposeInternalSelectorParts(t *testing.T) {
+	hash := make([]byte, hashPrefixLen)
+	id := reviewUUID(t)
+	raw := func(parts ...[]byte) string {
+		return Prefix + encoding.EncodeToString(slices.Concat(parts...))
+	}
+	tests := map[string]string{
+		"empty review UUID":       raw(make([]byte, 16), []byte{0}, hash),
+		"malformed finding index": raw(id[:], slices.Concat(slices.Repeat([]byte{0xff}, 10), []byte{0x7f}), hash),
+		"malformed document hash": raw(id[:], []byte{0}, hash[:hashPrefixLen-1]),
+		"noncanonical spelling":   raw(id[:], []byte{0x80, 0}, hash),
+	}
+	for name, selector := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := Parse(selector)
+			require.ErrorIs(t, err, ErrInvalid)
+			assert.Equal(t, ErrInvalid.Error(), err.Error())
+		})
+	}
+}
+
 func TestParseAcceptsUppercase(t *testing.T) {
 	good, err := New(reviewUUID(t), 2, hashA)
 	require.NoError(t, err)

@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"go.kenn.io/roborev/internal/katapublish"
 	"go.kenn.io/roborev/internal/kataresponse"
 	"go.kenn.io/roborev/internal/storage"
 	roborevclient "go.kenn.io/roborev/pkg/client"
@@ -97,11 +98,23 @@ func runKataResponse(cmd *cobra.Command, request kataresponse.Request) error {
 	} else {
 		cmd.Printf("%s: %s (%s)\n", status.OperationID, status.State, status.Kind)
 	}
-	if status.Message != "" {
-		cmd.Println(status.Message)
+	if message := kataResponseMessage(status.Message); message != "" {
+		cmd.Println(message)
 	}
 	if status.ExistingComment != "" {
 		cmd.Printf("Existing comment: %s\n", status.ExistingComment)
 	}
 	return nil
+}
+
+func kataResponseMessage(message string) string {
+	prefix := katapublish.ErrPending.Error()
+	if message == prefix {
+		return ""
+	}
+	reason, ok := strings.CutPrefix(message, prefix+": ")
+	if ok {
+		return reason
+	}
+	return message
 }

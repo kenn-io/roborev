@@ -95,6 +95,10 @@ func TestKataHumanOutputOmitsInternalPublicationFields(t *testing.T) {
 		}, {
 			OperationID: "publish:missing-issue", State: "pending", Policy: "comments",
 		}},
+		Operations: []storage.KataResponseStatus{{
+			OperationID: "reply:example", State: "pending", Kind: "confirm",
+			Message: "kata publication remains pending: response receipt unavailable",
+		}},
 	}
 	NewMockDaemon(t, MockRefineHooks{OnUnhandled: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
 		if r.URL.Path != "/api/kata/publications" {
@@ -111,10 +115,11 @@ func TestKataHumanOutputOmitsInternalPublicationFields(t *testing.T) {
 	cmd.SetArgs([]string{"show", "--job", "42"})
 	require.NoError(t, cmd.Execute())
 
-	assert.Equal("reviews#one  pending (summary)\n  f:first  comment-1\n  f:second  comment-2\nissue pending (comments)\n", output.String())
+	assert.Equal("reviews#one  pending (summary)\n  f:first  comment-1\n  f:second  comment-2\nissue pending (comments)\nreply:example  pending (confirm)\n  response receipt unavailable\n", output.String())
 	assert.NotContains(output.String(), "publish:internal-hash")
 	assert.NotContains(output.String(), "publish:missing-issue")
-	assert.Equal(2, strings.Count(output.String(), "pending"))
+	assert.Equal(3, strings.Count(output.String(), "pending"))
+	assert.NotContains(output.String(), "kata publication remains pending")
 }
 
 func TestKataCommandsRejectInvalidSelectors(t *testing.T) {

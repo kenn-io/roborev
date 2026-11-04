@@ -58,7 +58,7 @@ type CommentError struct {
 func (e *CommentError) Error() string {
 	switch {
 	case e.detail != "":
-		return e.Kind.Error() + ": " + e.detail
+		return e.detail
 	case e.cause != nil:
 		return e.cause.Error()
 	}

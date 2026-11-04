@@ -155,7 +155,7 @@ func frozenResponseIssue(ctx context.Context, cfg config.KataIntegrationConfig, 
 	}
 	issue, err := api.ShowComplete(ctx, binding.Project+"#"+request.IssueUID)
 	if err != nil || issue.UID != request.IssueUID || issue.ProjectUID != request.ProjectUID {
-		return kata.Issue{}, "", huma.Error409Conflict("complete frozen finding thread unavailable")
+		return kata.Issue{}, "", huma.Error409Conflict("Could not load all Kata comments.")
 	}
 	return issue, binding.Project, nil
 }
@@ -207,6 +207,9 @@ func (s *Server) resolveKataResponseTarget(ctx context.Context, intent katarespo
 		}
 		destination := root.Request
 		destination.IssueUID, destination.ProjectUID = root.State.IssueUID, root.State.ProjectUID
+		if skipQualifiedResponseProject(qualification.Project, destination) {
+			continue
+		}
 		key := destination.Endpoint + "\x00" + destination.ProjectUID + "\x00" + destination.IssueUID + "\x00" + destination.CredentialFingerprint
 		resolved, ok := issues[key]
 		if !ok {
@@ -251,14 +254,20 @@ func (s *Server) resolveKataResponseTarget(ctx context.Context, intent katarespo
 	return selected, capture, nil
 }
 
+// An unaliased project name is frozen, so a different qualified name cannot
+// match. Resolve aliases first because a rename can change their current name.
+func skipQualifiedResponseProject(project string, request katapublish.Request) bool {
+	return project != "" && request.WorkspaceAlias == nil && project != request.Project
+}
+
 func frozenFindingResponseFromHandoff(handoff storage.KataHandoff, entry katapublish.Entry, teammate string) (*katapublish.Request, error) {
 	root := handoff.State.Receipts[entry.Selector].UID
 	if root == "" || handoff.State.IssueUID == "" || handoff.State.ProjectUID == "" || !handoff.State.Done {
-		return nil, huma.Error409Conflict("completed publication root manifest unavailable")
+		return nil, huma.Error409Conflict("Could not verify published findings.")
 	}
 	entries, err := katapublish.PublicationManifest(handoff.Request, handoff.State)
 	if err != nil {
-		return nil, huma.Error409Conflict("completed publication root manifest unavailable")
+		return nil, huma.Error409Conflict("Could not verify published findings.")
 	}
 	request := handoff.Request
 	request.PublicationEntries = entries

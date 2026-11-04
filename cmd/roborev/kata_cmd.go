@@ -91,8 +91,8 @@ func kataPublicationCmd(publish bool) *cobra.Command {
 			if operation.ExistingComment != "" {
 				cmd.Printf("  Existing comment: %s\n", operation.ExistingComment)
 			}
-			if operation.Message != "" {
-				cmd.Println("  " + operation.Message)
+			if message := kataResponseMessage(operation.Message); message != "" {
+				cmd.Println("  " + message)
 			}
 		}
 		return nil

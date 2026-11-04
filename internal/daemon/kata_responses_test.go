@@ -11,7 +11,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/kata"
+	"go.kenn.io/roborev/internal/kata/katafake"
 	"go.kenn.io/roborev/internal/katapublish"
 	"go.kenn.io/roborev/internal/kataresponse"
 	"go.kenn.io/roborev/internal/storage"
@@ -35,6 +37,27 @@ func seedResponseMapping(t *testing.T, s *Server, db *storage.DB, jobID int64, s
 	require.NoError(t, err)
 	_, err = db.Exec(`UPDATE kata_handoffs SET state_json=?,status='done' WHERE operation_id=?`, string(raw), req.OperationID)
 	require.NoError(t, err)
+}
+
+func TestFrozenResponseIssueUsesPublicCommentDiagnostic(t *testing.T) {
+	provider := katafake.New(t)
+	provider.Token = "test-credential"
+	cfg := config.KataIntegrationConfig{Enabled: true, Endpoint: provider.URL(), APIKey: provider.Token}
+	request := katapublish.Request{
+		Endpoint: provider.URL(), Project: "reviews", ProjectUID: provider.Projects[0].UID,
+		IssueUID: "missing-issue", CredentialFingerprint: kataCredentialFingerprint(cfg),
+	}
+	_, _, err := frozenResponseIssue(t.Context(), cfg, request)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Could not load all Kata comments.")
+	assert.NotContains(t, err.Error(), "complete frozen finding thread")
+}
+
+func TestFrozenFindingResponseUsesPublicManifestDiagnostic(t *testing.T) {
+	_, err := frozenFindingResponseFromHandoff(storage.KataHandoff{}, katapublish.Entry{Selector: "f:fixture"}, "reader")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Could not verify published findings.")
+	assert.NotContains(t, err.Error(), "publication root manifest unavailable")
 }
 
 func TestKataResponseSummaryRetryAndStatus(t *testing.T) {

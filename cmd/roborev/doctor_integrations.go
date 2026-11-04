@@ -171,7 +171,7 @@ func checkDoctorKata(env *doctorEnv) []doctorCheck {
 		project = fmt.Sprintf("project %q, ", status.Project)
 	}
 	if status.State != "ready" {
-		details := []string{status.Message}
+		details := []string{}
 		if status.Project != "" {
 			details = append(details, fmt.Sprintf("project: %q", status.Project))
 		}
@@ -183,7 +183,7 @@ func checkDoctorKata(env *doctorEnv) []doctorCheck {
 		}
 		return append(out, doctorCheck{
 			ID: id, Category: "integrations", Status: doctorWarn,
-			Summary: "the Kata connection is not usable (" + status.State + ")",
+			Summary: status.Message,
 			Details: details, Fix: kataFixes[status.State],
 		})
 	}

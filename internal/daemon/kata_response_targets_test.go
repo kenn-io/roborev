@@ -88,7 +88,12 @@ func TestKataCommentReferenceResolvesOnlyItsMappedFindingThread(t *testing.T) {
 				require.NoError(t, err)
 				require.NoError(t, storage.InsertKataHandoffTx(t.Context(), tx, otherJob, unavailable))
 				require.NoError(t, tx.Commit())
-				otherState := katapublish.State{Done: true, IssueUID: "01M00000000000000000000999", IssueRef: unavailable.Project + "#zzzz", ProjectUID: unavailable.ProjectUID, Receipts: map[string]katapublish.Receipt{otherSnapshot.Selector: {UID: "01M00000000000000000000888"}}}
+				unavailableIssueUID := "01M00000000000000000000999"
+				if mode == "qualified handle excludes unavailable project" {
+					unavailableIssueUID = issue.Out.UID
+					provider.Projects[1].Active = false
+				}
+				otherState := katapublish.State{Done: true, IssueUID: unavailableIssueUID, IssueRef: unavailable.Project + "#zzzz", ProjectUID: unavailable.ProjectUID, Receipts: map[string]katapublish.Receipt{otherSnapshot.Selector: {UID: "01M00000000000000000000888"}}}
 				raw, err := json.Marshal(otherState)
 				require.NoError(t, err)
 				_, err = db.Exec(`UPDATE kata_handoffs SET state_json=?,status='done' WHERE operation_id=?`, string(raw), unavailable.OperationID)
@@ -176,4 +181,19 @@ func TestKataCommentReferenceResolvesOnlyItsMappedFindingThread(t *testing.T) {
 			assert.Equal(t, intent, saved)
 		})
 	}
+}
+
+func FuzzSkipQualifiedResponseProject(f *testing.F) {
+	f.Add("", "", false)
+	f.Add("reviews", "reviews", false)
+	f.Add("reviews", "other", false)
+	f.Add("renamed-reviews", "old-reviews", true)
+	f.Fuzz(func(t *testing.T, project, frozenProject string, hasAlias bool) {
+		request := katapublish.Request{Project: frozenProject}
+		if hasAlias {
+			request.WorkspaceAlias = &kata.ProjectAlias{Identity: "example/repo", Kind: "git"}
+		}
+		want := project != "" && !hasAlias && project != frozenProject
+		assert.Equal(t, want, skipQualifiedResponseProject(project, request))
+	})
 }

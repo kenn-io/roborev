@@ -121,22 +121,22 @@ func Parse(selector string) (ID, error) {
 	}
 	copy(id.ReviewUUID[:], raw)
 	if id.ReviewUUID == uuid.Nil() {
-		return ID{}, fmt.Errorf("%w: the review UUID is empty", ErrInvalid)
+		return ID{}, ErrInvalid
 	}
 	raw = raw[len(id.ReviewUUID):]
 	index, n := binary.Uvarint(raw)
 	if n <= 0 || index > math.MaxInt {
-		return ID{}, fmt.Errorf("%w: the finding index is malformed", ErrInvalid)
+		return ID{}, ErrInvalid
 	}
 	id.Index = int(index)
 	if len(raw)-n != hashPrefixLen {
-		return ID{}, fmt.Errorf("%w: the document hash is malformed", ErrInvalid)
+		return ID{}, ErrInvalid
 	}
 	copy(id.hashPrefix[:], raw[n:])
 	// Reject a second spelling of a valid selector: a base32 tail with spare
 	// bits set, or an index written with redundant varint bytes.
 	if id.String() != Prefix+body {
-		return ID{}, fmt.Errorf("%w: it is not spelled canonically", ErrInvalid)
+		return ID{}, ErrInvalid
 	}
 	return id, nil
 }
