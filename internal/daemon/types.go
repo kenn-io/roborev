@@ -106,7 +106,7 @@ type ListJobsInput struct {
 	AnalysisType        string    `query:"analysis_type" doc:"Filter by recorded analysis type"`
 	AnalysisFile        []string  `query:"analysis_file,explode" doc:"Filter by recorded analysis file (repeatable)"`
 	Branch              string    `query:"branch" doc:"Filter by branch name"`
-	BranchEmpty         string    `query:"branch_empty" doc:"Only jobs with empty or unset branch" enum:"true,false,"`
+	BranchEmpty         string    `query:"branch_empty" doc:"Only jobs with empty/unset branch or the \"(none)\" placeholder stored when no branch was found" enum:"true,false,"`
 	BranchIncludeEmpty  string    `query:"branch_include_empty" doc:"Include jobs with no branch when filtering by branch" enum:"true,false,"`
 	Closed              string    `query:"closed" doc:"Filter by review closed state" enum:"true,false,"`
 	JobType             string    `query:"job_type" doc:"Filter by job type"`
@@ -610,7 +610,7 @@ type GetSummaryOutput struct {
 type GetCostInput struct {
 	Repo        []string `query:"repo,explode" doc:"Repo root paths (repeatable)"`
 	Branch      string   `query:"branch" doc:"Filter by branch name"`
-	BranchEmpty string   `query:"branch_empty" doc:"Only jobs with empty/unset branch" enum:"true,false"`
+	BranchEmpty string   `query:"branch_empty" doc:"Only jobs with empty/unset branch or the \"(none)\" placeholder stored when no branch was found" enum:"true,false"`
 	Since       string   `query:"since" doc:"Time window (e.g. 7d); default all-time"`
 }
 

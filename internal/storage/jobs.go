@@ -1932,6 +1932,9 @@ func (db *DB) GetJobRetryCount(jobID int64) (int, error) {
 // ListJobsOption configures optional filters for ListJobs.
 type ListJobsOption func(*listJobsOptions)
 
+// emptyBranchCondition matches branchless jobs. Requires review_jobs aliased as "j".
+const emptyBranchCondition = "(j.branch = '' OR j.branch IS NULL OR j.branch = '(none)')"
+
 type listJobsOptions struct {
 	gitRef             string
 	branch             string
@@ -2170,10 +2173,10 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 		args = append(args, analysisFile)
 	}
 	if o.branchEmpty {
-		conditions = append(conditions, "(j.branch = '' OR j.branch IS NULL OR j.branch = '(none)')")
+		conditions = append(conditions, emptyBranchCondition)
 	} else if o.branch != "" {
 		if o.branchIncludeEmpty {
-			conditions = append(conditions, "(j.branch = ? OR j.branch = '' OR j.branch IS NULL)")
+			conditions = append(conditions, "(j.branch = ? OR "+emptyBranchCondition+")")
 		} else {
 			conditions = append(conditions, "j.branch = ?")
 		}

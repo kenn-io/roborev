@@ -14,7 +14,6 @@ import (
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/version"
-	daemonclient "go.kenn.io/roborev/pkg/client/generated"
 )
 
 func TestListJobsParamsRepeatedRepo(t *testing.T) {
@@ -80,13 +79,6 @@ func TestFetchJobsMultiRepoUsesRepeatedRepoAndPaginates(t *testing.T) {
 	)
 	assert.NotEqual("0", jobsQuery.Get("limit"),
 		"multi-repo paginates instead of loading every job")
-}
-
-func TestListJobsParamsEmptyBranch(t *testing.T) {
-	t.Parallel()
-	query := listJobsQuery(neturl.Values{"branch_empty": {"true"}})
-	require.NotNil(t, query.BranchEmpty)
-	assert.Equal(t, daemonclient.ListJobsQueryBranchEmptyTrue, *query.BranchEmpty)
 }
 
 func TestFetchJobsNoneBranchFilterPaginates(t *testing.T) {

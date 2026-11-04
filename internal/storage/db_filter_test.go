@@ -583,7 +583,8 @@ func TestWithBranchOrEmpty(t *testing.T) {
 		jobs, err := db.ListJobs("", "", 50, 0, WithBranchOrEmpty("main"))
 		require.NoError(t, err, "ListJobs failed: %v")
 
-		assert.Len(t, jobs, 2)
+		require.Len(t, jobs, 3)
+		assert.ElementsMatch(t, []string{"main", "", "(none)"}, []string{jobs[0].Branch, jobs[1].Branch, jobs[2].Branch})
 	})
 
 	t.Run("WithEmptyBranch returns only branchless jobs", func(t *testing.T) {
