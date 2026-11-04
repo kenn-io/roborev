@@ -43,9 +43,9 @@ Work in a scratch copy (cp -a . ../check-$$). Leave this worktree unchanged.
 For each finding:
 1. Make it fail. Write a test or command that shows the failure, starting from a state the product, its users, or an outside system can create: a file a user imports, a config value they type, and a server's reply all count. For an order of events, force that order.
 2. Keep it if it fails that way and either a user on a normal workflow hits it, or the harm is lost data, a silently saved wrong result, or a security hole. Keep a finding about the project's own tests or CI when a test can't catch the bug it exists for and the fix is small.
-3. Drop it if it doesn't fail, if nothing but a hand-built state reaches it, or if only rare timing or unusual input reaches it and the fix would add new machinery. Count everyone the failure reaches: in a library, a rare input in one consumer is still a broken build or wrong result in every repo that uses it. A bug that predates this PR still counts when the PR's code runs into it.
+3. Drop it if it doesn't fail, if nothing but a hand-built state reaches it, or if only rare timing or unusual input reaches it and the fix would add new machinery. Count everyone the failure reaches: in a library, a rare input in one consumer is still a broken build or wrong result in every repo that uses it. A bug that predates this PR still counts when the PR's code runs into it. Keep a finding that a test is redundant or tests code the project doesn't own only when no change to the project's code fails that test alone.
 
-If the sandbox stops a finding from running, or the code it needs can't build or run here, keep it.
+If the sandbox stops a finding from running, or the code it needs can't build or run here, keep it, unless it asks to remove a test.
 Return a JSON object with verdicts: [{"finding": 1, "keep": true, "evidence": "the command and its output, or what refutes it", "reason": "one sentence"}].
 Work alone: no sub-agents or background jobs.`
 
