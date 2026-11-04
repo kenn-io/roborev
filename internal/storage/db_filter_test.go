@@ -562,8 +562,9 @@ func TestWithBranchOrEmpty(t *testing.T) {
 		job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: sha, Branch: storedBranch, Agent: "codex"})
 		require.NoError(t, err, "EnqueueJob failed: %v")
 
-		if br == "" {
-			setJobBranch(t, db, job.ID, "")
+		if br == "NULL" {
+			_, err := db.ExecContext(t.Context(), `UPDATE review_jobs SET branch = NULL WHERE id = ?`, job.ID)
+			require.NoError(t, err)
 		}
 		if br == "(none)" {
 			updated, err := db.UpdateJobBranch(job.ID, br)

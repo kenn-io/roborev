@@ -19,7 +19,7 @@ type CostAggregate struct {
 type CostOptions struct {
 	RepoPaths   []string  // empty = all repos; multiple = OR over repos.root_path
 	Branch      string    // exact branch; ignored when BranchEmpty is true
-	BranchEmpty bool      // true = only jobs with empty/NULL branch
+	BranchEmpty bool      // true = only jobs with empty/NULL branch or the "(none)" backfill sentinel
 	Since       time.Time // zero = all time; else enqueued_at >= Since
 }
 
