@@ -152,7 +152,7 @@ func (j Job) Command(ctx context.Context, argv []string) (cmd, env []string, cle
 		cleanup()
 		return nil, nil, nil, fmt.Errorf("write sandbox profile: %w", err)
 	}
-	cmd = []string{"/usr/bin/systemd-run", "--working-directory=" + dir, "--user", "--scope", "-q", "-p", "MemoryMax=" + strconv.FormatInt(j.MemoryMax, 10), "-p", "MemorySwapMax=0", "-p", "TimeoutStopSec=5", "--", nono, "run", "-s", "--profile", profilePath, "--no-rollback", "--no-audit", "--allow", j.WorkDir}
+	cmd = []string{"/usr/bin/systemd-run", "--working-directory=" + dir, "--user", "--scope", "-q", "-p", "MemoryMax=" + strconv.FormatInt(j.MemoryMax, 10), "-p", "MemorySwapMax=0", "-p", "TimeoutStopSec=5", "--", nono, "run", "-s", "--profile", profilePath, "--no-rollback", "--no-audit", "--allow-unix-socket-subtree-bind", j.WorkDir}
 	// CLI grants are literal paths; profile paths undergo template expansion.
 	for _, path := range j.ReadPaths {
 		info, err := os.Stat(path)
