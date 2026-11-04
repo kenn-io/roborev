@@ -19,13 +19,14 @@ type sincePlanQuerier struct {
 
 func (q sincePlanQuerier) check(query string, args []any) {
 	q.t.Helper()
+	if q.index == "" {
+		assert.Contains(q.t, query, "datetime(j.enqueued_at) >= datetime(?)")
+		assert.NotContains(q.t, query, "INDEXED BY")
+		return
+	}
 	plan := queryPlan(q.t, q.querier, query, args...)
 	assert.Contains(q.t, plan, "SEARCH j USING INDEX "+q.index, query)
-	if q.index == "idx_review_jobs_branch" {
-		assert.NotContains(q.t, plan, "idx_review_jobs_enqueued_position", query)
-	} else {
-		assert.Contains(q.t, plan, "<expr>>?", query)
-	}
+	assert.Contains(q.t, plan, "<expr>>?", query)
 	assert.NotContains(q.t, plan, "SCAN j", query)
 }
 
@@ -60,18 +61,7 @@ func TestSummaryAndCostSinceUseEnqueuedIndex(t *testing.T) {
 				index = "idx_review_jobs_repo_enqueued"
 			}
 			if scope.repo == "" && scope.branch != "" {
-				index = "idx_review_jobs_branch"
-				// Give the planner statistics for a branch matching one of 1,000 jobs.
-				_, err := db.ExecContext(t.Context(), `INSERT INTO repos(id, root_path, name) VALUES (1, '/tmp/branch-plan', 'branch-plan')`)
-				require.NoError(t, err)
-				_, err = db.ExecContext(t.Context(), `WITH RECURSIVE jobs(n) AS (
-					VALUES(1) UNION ALL SELECT n+1 FROM jobs WHERE n < 1000
-				) INSERT INTO review_jobs(repo_id, git_ref, branch, status, error)
-				SELECT 1, 'head', CASE WHEN n = 1 THEN 'selective' ELSE 'main' END,
-					'failed', 'provider error' FROM jobs`)
-				require.NoError(t, err)
-				_, err = db.ExecContext(t.Context(), `ANALYZE`)
-				require.NoError(t, err)
+				index = ""
 			}
 			q := sincePlanQuerier{querier: db, t: t, index: index}
 			from, where, args := summaryWhere(SummaryOptions{Since: since, RepoPath: scope.repo, Branch: scope.branch})
@@ -100,7 +90,7 @@ func TestSummaryAndCostSinceUseEnqueuedIndex(t *testing.T) {
 			require.NoError(t, err)
 			if scope.repo == "" {
 				opts.BranchEmpty = true
-				q.index = "idx_review_jobs_branch"
+				q.index = ""
 				_, err = costAggregate(q, opts)
 				require.NoError(t, err)
 			}

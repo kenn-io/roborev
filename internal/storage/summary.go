@@ -196,20 +196,30 @@ func (db *DB) GetSummary(opts SummaryOptions) (*Summary, error) {
 	return s, nil
 }
 
-func summaryWhere(opts SummaryOptions) (string, string, []any) {
-	from := "FROM review_jobs j"
+// aggregateJobScope shares the summary and cost index policy. Branch-only
+// queries retain the plain timestamp predicate to keep historical scans cheap.
+func aggregateJobScope(hasSince, hasRepo, hasBranch bool) (from, sincePredicate string) {
+	from = "FROM review_jobs j"
 	// Unscoped windows must seek by time even with competing status indexes.
-	if opts.RepoPath == "" && opts.Branch == "" {
+	if hasSince && !hasRepo && !hasBranch {
 		from += " INDEXED BY idx_review_jobs_enqueued_position"
 	}
-	from += " JOIN repos r ON r.id = j.repo_id"
+	from += "\n\t\tJOIN repos r ON r.id = j.repo_id"
+	sincePredicate = "datetime(j.enqueued_at) >= datetime(?)"
+	if hasRepo || !hasBranch {
+		sincePredicate = sqliteNormalizedTimestampExpr("j.enqueued_at") + " >= datetime(?)"
+	}
+	return from, sincePredicate
+}
+
+func summaryWhere(opts SummaryOptions) (string, string, []any) {
+	from, sincePredicate := aggregateJobScope(true, opts.RepoPath != "", opts.Branch != "")
 
 	sinceStr := opts.Since.UTC().Format("2006-01-02 15:04:05")
 
-	// Match the enqueue index expression while normalizing local and synced timestamps.
 	var conditions []string
 	var args []any
-	conditions = append(conditions, sqliteNormalizedTimestampExpr("j.enqueued_at")+" >= datetime(?)")
+	conditions = append(conditions, sincePredicate)
 	args = append(args, sinceStr)
 	if opts.RepoPath != "" {
 		conditions = append(conditions, "r.root_path = ?")

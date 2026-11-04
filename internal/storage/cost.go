@@ -85,17 +85,7 @@ func (db *DB) GetCostAggregate(opts CostOptions) (CostAggregate, error) {
 // can share a read snapshot (e.g. GetSummary's transaction). Panel member rows
 // are included — spend is per-row, not row-count.
 func costAggregate(q querier, opts CostOptions) (CostAggregate, error) {
-	query, args := costAggregateQuery(opts)
-
-	var c CostAggregate
-	if err := q.QueryRow(query, args...).Scan(&c.JobsTotal, &c.JobsWithCost, &c.TotalUSD); err != nil {
-		return CostAggregate{}, err
-	}
-	c.Complete = c.JobsTotal > 0 && c.JobsWithCost == c.JobsTotal
-	return c, nil
-}
-
-func costAggregateQuery(opts CostOptions) (string, []any) {
+	from, sincePredicate := aggregateJobScope(!opts.Since.IsZero(), len(opts.RepoPaths) > 0, opts.Branch != "" || opts.BranchEmpty)
 	var conditions []string
 	var args []any
 
@@ -114,16 +104,9 @@ func costAggregateQuery(opts CostOptions) (string, []any) {
 		args = append(args, opts.Branch)
 	}
 	if !opts.Since.IsZero() {
-		conditions = append(conditions, sqliteNormalizedTimestampExpr("j.enqueued_at")+" >= datetime(?)")
+		conditions = append(conditions, sincePredicate)
 		args = append(args, opts.Since.UTC().Format("2006-01-02 15:04:05"))
 	}
-
-	from := "FROM review_jobs j"
-	// Scoped and all-time costs retain the planner's index choices.
-	if !opts.Since.IsZero() && len(opts.RepoPaths) == 0 && opts.Branch == "" && !opts.BranchEmpty {
-		from += " INDEXED BY idx_review_jobs_enqueued_position"
-	}
-	from += " JOIN repos r ON r.id = j.repo_id"
 
 	where := ""
 	if len(conditions) > 0 {
@@ -138,7 +121,13 @@ func costAggregateQuery(opts CostOptions) (string, []any) {
 			COALESCE(SUM(CASE WHEN ` + costEligible + `
 				AND ` + hasCost + `
 				THEN json_extract(j.token_usage, '$.cost_usd') ELSE 0 END), 0)
-		` + from + " " + where
+		` + from + `
+		` + where
 
-	return query, args
+	var c CostAggregate
+	if err := q.QueryRow(query, args...).Scan(&c.JobsTotal, &c.JobsWithCost, &c.TotalUSD); err != nil {
+		return CostAggregate{}, err
+	}
+	c.Complete = c.JobsTotal > 0 && c.JobsWithCost == c.JobsTotal
+	return c, nil
 }
