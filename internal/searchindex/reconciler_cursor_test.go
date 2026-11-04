@@ -71,7 +71,7 @@ func recordFillCursors(t *testing.T, index *Index) *cursorConnector {
 }
 
 func TestReconcilerResumesFillAfterPreviousTurn(t *testing.T) {
-	for name, imported := range map[string]int{"local": 0, "shared page then misses": sharedLookupPage} {
+	for name, imported := range map[string]int{"local": 0, "shared pages then misses": 3*sharedLookupPage + 4} {
 		t.Run(name, func(t *testing.T) {
 			index := openGenerationTestIndex(t)
 			recorder := recordFillCursors(t, index)
@@ -89,19 +89,44 @@ func TestReconcilerResumesFillAfterPreviousTurn(t *testing.T) {
 				}
 				r.ShareVectors(shared)
 			}
+			for {
+				more, err := r.refreshMirror(t.Context())
+				require.NoError(t, err)
+				if !more {
+					break
+				}
+			}
 			wantCursors := []string{"", searchdoc.Render(sources[imported+3]).DocKey, searchdoc.Render(sources[imported+7]).DocKey}
 			if imported > 0 {
-				// An all-hit page ends the first turn without saving a cursor.
-				wantCursors = append([]string{""}, wantCursors...)
+				wantCursors[0] = searchdoc.Render(sources[3*sharedLookupPage-1]).DocKey
+				wantCursors = append([]string{
+					"",
+					searchdoc.Render(sources[sharedLookupPage-1]).DocKey,
+					searchdoc.Render(sources[2*sharedLookupPage-1]).DocKey,
+				}, wantCursors...)
 			}
-			for _, wantAfter := range wantCursors {
+			for turn, wantAfter := range wantCursors {
 				recorder.after = nil
 				_, err := r.reconcileTurn(t.Context())
 				require.NoError(t, err)
 				assert.Equal(t, []string{wantAfter}, recorder.after)
+				if imported > 0 && turn < 3 {
+					assert.Empty(t, embedder.calls, "shared pages skip the provider")
+					assert.Equal(t, int64((turn+1)*sharedLookupPage), r.Health().Embedded, "each turn imports one shared page")
+				}
 			}
 			assert.Zero(t, r.Health().EmbeddingBacklog)
 			assert.Equal(t, kitKey(t, embedder.space), r.Health().ActiveGeneration)
+			if imported > 0 {
+				sources[0].Output = "edited shared review"
+				r.WakeJob(sources[0].JobID)
+				for range 2 {
+					_, err := r.reconcileTurn(t.Context())
+					require.NoError(t, err)
+				}
+				assert.Len(t, embedder.calls, 13, "the edited shared review is embedded after the cursor wraps")
+				assert.Zero(t, r.Health().EmbeddingBacklog)
+			}
 		})
 	}
 }

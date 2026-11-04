@@ -356,6 +356,7 @@ func (r *Reconciler) fillGeneration(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	var store vector.Store[string, string] = r.index.vectors
+	var sharing *sharingStore
 	if shared := r.sharedVectors(); shared != nil {
 		space, err := sharedSpace(r.embedder.Space())
 		if err != nil {
@@ -364,7 +365,8 @@ func (r *Reconciler) fillGeneration(ctx context.Context) (bool, error) {
 		if err := r.publishPending(ctx, shared, space, key); err != nil {
 			return false, err
 		}
-		store = newSharingStore(store, r.index, shared, space)
+		sharing = newSharingStore(store, r.index, shared, space)
+		store = sharing
 	}
 	counts, err := r.index.GenerationCounts(ctx, key)
 	if err != nil {
@@ -404,6 +406,9 @@ func (r *Reconciler) fillGeneration(ctx context.Context) (bool, error) {
 		r.mu.Lock()
 		// An exhausted scan wraps next turn; failed fills retry the same cursor.
 		r.fillAfter = limiter.last
+		if sharing != nil {
+			r.fillAfter = sharing.scanned
+		}
 		r.mu.Unlock()
 	}
 	countsAfter, countErr := r.index.GenerationCounts(ctx, key)

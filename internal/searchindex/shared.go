@@ -146,10 +146,11 @@ func (r *Reconciler) publishPending(ctx context.Context, shared SharedVectors, s
 // anything, and publishes the vectors Fill embeds.
 type sharingStore struct {
 	vector.Store[string, string]
-	index  *Index
-	shared SharedVectors
-	space  string
-	keys   map[string]storage.SearchVectorKey
+	index   *Index
+	shared  SharedVectors
+	space   string
+	keys    map[string]storage.SearchVectorKey
+	scanned *string
 }
 
 func newSharingStore(store vector.Store[string, string], index *Index, shared SharedVectors, space string) *sharingStore {
@@ -171,12 +172,16 @@ func (s *sharingStore) PendingForGeneration(ctx context.Context, gen string, aft
 	if err != nil {
 		return nil, err
 	}
+	if len(pending) > 0 {
+		s.scanned = new(pending[len(pending)-1].Doc)
+	}
 	misses := make([]vector.Pending[string], 0, min(limit, len(pending)))
 	for _, doc := range pending {
 		if _, ok := imported[doc.Doc]; ok {
 			continue
 		}
 		if len(misses) == limit {
+			s.scanned = new(misses[len(misses)-1].Doc)
 			break
 		}
 		misses = append(misses, doc)
