@@ -145,6 +145,8 @@ const entry = [path.resolve(path.dirname(npm), '../lib/node_modules/npm/package.
 const npmRequire = require('node:module').createRequire(entry);
 const npa = npmRequire('npm-package-arg');
 const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+if (input.rejected.includes('git') && !npmRequire('@npmcli/config/lib/definitions').definitions['allow-git'])
+ throw new Error('npm lacks the required Git fetch policy');
 const member = Object.entries(input.workspaces).some(([relative, workspaces]) =>
  npmRequire('@npmcli/map-workspaces').virtual({cwd: '/', lockfile: {packages: {'': {workspaces}, [relative]: {name: 'candidate'}}}}).size > 0);
 const local = input.sources.some(spec => {
@@ -208,10 +210,12 @@ func prepareCICheckJS(ctx context.Context, project, stage string, metadata map[s
 		return
 	}
 	sources := []string{}
-	manager := "npm"
-	args := []string{"ci", "--ignore-scripts", "--include=dev", "--no-audit", "--no-fund"}
+	manager, lockName := "npm", filepath.Base(ciCheckNpmLock(stage, metadata))
+	rejected := []string{"file", "directory", "git"}
+	args := []string{"ci", "--ignore-scripts", "--include=dev", "--no-audit", "--no-fund", "--allow-git=none"}
 	if metadata["bun.lock"] != nil {
-		manager = "bun"
+		manager, lockName = "bun", "bun.lock"
+		rejected = rejected[:2]
 		args = []string{"install", "--ignore-scripts", "--backend=copyfile", "--frozen-lockfile"}
 	}
 	command, err := resolveCICheckCommand(ctx, "/", manager)
@@ -220,7 +224,7 @@ func prepareCICheckJS(ctx context.Context, project, stage string, metadata map[s
 		return
 	}
 
-	for _, name := range []string{"package.json", "package-lock.json", "npm-shrinkwrap.json", "bun.lock"} {
+	for _, name := range []string{"package.json", lockName} {
 		if data := metadata[name]; data != nil {
 			var locked []string
 			switch name {
@@ -242,13 +246,13 @@ func prepareCICheckJS(ctx context.Context, project, stage string, metadata map[s
 			}
 		}
 	}
-	local, err := ciCheckLocalJSSources(ctx, stage, sources, []string{"file", "directory"}, ancestors, env)
+	local, err := ciCheckLocalJSSources(ctx, stage, sources, rejected, ancestors, env)
 	if err != nil {
 		fmt.Fprintf(out, "CI checker source classification failed: %v\n", err)
 		return
 	}
 	if local {
-		fmt.Fprintln(out, "CI checker skips JavaScript local dependencies or workspace members")
+		fmt.Fprintln(out, "CI checker skips JavaScript local dependencies, Git sources, or workspace members")
 		return
 	}
 	if manager == "npm" {
