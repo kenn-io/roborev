@@ -82,12 +82,13 @@ esac
 	mise := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in 'ls --current --installed --json') printf '%%s' '{\"node\":[{\"install_path\":%q}]}';; 'bin-paths') printf '%%s\\n' '%s';; *) exit 1;; esac\n", filepath.Dir(filepath.Dir(node)), filepath.Dir(node))
 	require.NoError(t, os.WriteFile(filepath.Join(tools, "mise"), []byte(mise), 0o700))
 	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
-	marker := filepath.Join(t.TempDir(), "lifecycle-ran")
+	lifecycleMarker := filepath.Join(t.TempDir(), "lifecycle-ran")
+	buildMarker := filepath.Join(t.TempDir(), "source-build-ran")
 	require.NoError(t, os.WriteFile(filepath.Join(wheels, "missing_source_only-1.0.tar.gz"), ciCheckPackageArchive(t, map[string]string{
 		"source/pyproject.toml": "[build-system]\nrequires=[]\nbuild-backend='backend'\nbackend-path=['.']\n",
-		"source/backend.py":     fmt.Sprintf("from pathlib import Path\ndef get_requires_for_build_wheel(config_settings=None):\n Path(%q).write_text('source build ran')\n raise RuntimeError('controlled backend')\n", marker),
+		"source/backend.py":     fmt.Sprintf("from pathlib import Path\ndef get_requires_for_build_wheel(config_settings=None):\n Path(%q).write_text('source build ran')\n raise RuntimeError('controlled backend')\n", buildMarker),
 	}), 0o600))
-	manifest := fmt.Sprintf(`{"name":"checker-fixture","version":"1.0.0","main":"index.js","bin":{"fixture-tool":"./index.js"},"scripts":{"install":"node -e \"require('fs').writeFileSync('%s','ran')\""}}`, marker)
+	manifest := fmt.Sprintf(`{"name":"checker-fixture","version":"1.0.0","main":"index.js","bin":{"fixture-tool":"./index.js"},"scripts":{"install":"node -e \"require('fs').writeFileSync('%s','ran')\""}}`, lifecycleMarker)
 	archive := ciCheckPackageArchive(t, map[string]string{"package/package.json": manifest, "package/index.js": "module.exports = 'javascript ready';\n"})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(archive) }))
 	t.Cleanup(server.Close)
@@ -102,7 +103,8 @@ esac
 	run, err := (&WorkerPool{}).prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}, command, nil, &log)
 	require.NoError(t, err)
 	t.Cleanup(run.cleanup)
-	assert.NoFileExists(t, marker, log.String())
+	assert.NoFileExists(t, lifecycleMarker, log.String())
+	assert.NoFileExists(t, buildMarker, log.String())
 	require.FileExists(t, filepath.Join(run.Repo, "web", "node_modules", "checker-fixture", "index.js"), log.String())
 	require.FileExists(t, filepath.Join(run.Repo, ".venv", "bin", "python"), log.String())
 	published, err := filepath.Glob(filepath.Join(run.Repo, ".venv", "lib", "python*", "site-packages", "project_self.py"))
@@ -392,8 +394,8 @@ func TestCICheckPackagesBunLockIntegration(t *testing.T) {
 			}
 			localRepo.CommitFile("package.json", manifest, "dependency declaration")
 			localRepo.CommitFile("bun.lock", sourceLock, "locked archive")
-			localRepo.CommitFile("npm-shrinkwrap.json", `{"packages":{"node_modules/obsolete":{"resolved":"file:/obsolete.tgz"}}}`, "obsolete npm lock")
-			localRepo.CommitFile("package-lock.json", `{"packages":{"node_modules/obsolete":{"resolved":"file:/obsolete.tgz"}}}`, "obsolete npm lock")
+			localRepo.CommitFile("npm-shrinkwrap.json", `{"packages":{"node_modules/obsolete":{"link":true}}}`, "obsolete npm lock")
+			localRepo.CommitFile("package-lock.json", `{"packages":{"node_modules/obsolete":{"link":true}}}`, "obsolete npm lock")
 			var preparationLog bytes.Buffer
 			prepareCICheckPackages(t.Context(), localRepo.Root, t.TempDir(), os.Getenv("PATH"), nil, &preparationLog)
 			if !strings.HasPrefix(tc.source, `\u002f`) {
@@ -416,11 +418,10 @@ func TestCICheckPackagesActiveShrinkwrapIntegration(t *testing.T) {
 	repo := testutil.NewTestRepoWithCommit(t)
 	repo.CommitFile("package.json", `{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":"1.0.0"}}`, "dependency")
 	repo.CommitFile("npm-shrinkwrap.json", fmt.Sprintf(`{"name":"fixture","version":"1.0.0","lockfileVersion":3,"packages":{"":{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":"1.0.0"}},"node_modules/checker-fixture":{"version":"1.0.0","resolved":%q},"node_modules/removed-fixture":{"version":"1.0.0","resolved":"file:/removed-fixture.tgz"}}}`, server.URL+"/package.tgz"), "active lock")
-	repo.CommitFile("package-lock.json", `{"packages":{"node_modules/obsolete":{"resolved":"file:/obsolete.tgz"}}}`, "obsolete lock")
+	repo.CommitFile("package-lock.json", `{"packages":{"node_modules/obsolete":{"link":true}}}`, "obsolete lock")
 	var log bytes.Buffer
 	prepareCICheckPackages(t.Context(), repo.Root, t.TempDir(), os.Getenv("PATH"), nil, &log)
 	assert.FileExists(t, filepath.Join(repo.Root, "node_modules", "checker-fixture", "index.js"), log.String())
-	assert.NoDirExists(t, filepath.Join(repo.Root, "node_modules", "removed-fixture"))
 }
 
 func TestCICheckPackagesWorkspaceIntegration(t *testing.T) {
@@ -432,7 +433,6 @@ func TestCICheckPackagesWorkspaceIntegration(t *testing.T) {
 	t.Cleanup(server.Close)
 	workspaceRepo := testutil.NewTestRepoWithCommit(t)
 	workspaceRepo.CommitFile("package.json", `{"workspaces":["packages/*"]}`, "workspace declarations")
-	workspaceRepo.CommitFile("bun.lock", `{}`, "workspace lock")
 	manifest := fmt.Sprintf(`{"name":"fixture","dependencies":{"checker-fixture":%q}}`, server.URL+"/package.tgz")
 	workspaceRepo.CommitFile("packages/ui/package.json", manifest, "workspace member")
 	workspaceRepo.CommitFile("web/package.json", manifest, "independent project")

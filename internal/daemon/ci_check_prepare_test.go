@@ -369,7 +369,6 @@ func TestCICheckPackagesPythonPreparation(t *testing.T) {
 		assert.Contains(t, log.String(), "-m pip --isolated download")
 	})
 	t.Run("compatible batch", func(t *testing.T) {
-		require.NoError(t, os.WriteFile(filepath.Join(tools, "python3"), []byte(script), 0o700))
 		project, stage := t.TempDir(), t.TempDir()
 		var preparationLog bytes.Buffer
 		prepared := prepareCICheckPython(t.Context(), project, stage, []byte("[project]\ndependencies = ['test-package', 'compatible']\n"), ciCheckPackageEnv(stage, os.Getenv("PATH"), nil), &preparationLog)
