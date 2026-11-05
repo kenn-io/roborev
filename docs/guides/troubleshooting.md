@@ -122,6 +122,13 @@ If a v0.56 daemon is still running, startup reports the replacement's exit
 without waiting for the readiness timeout. Stop the legacy daemon manually
 before retrying.
 
+If a launchd or systemd daemon is alive but stops answering HTTP, ordinary
+commands leave it running and report the availability error.
+`roborev status --json` checks the recorded process and reports `running: true`
+while it is alive, with the error and without queue or health data. Retry later,
+or use the manual restart command in the error when you're ready to interrupt
+it.
+
 `roborev init` starts the daemon automatically, but it won't survive a reboot
 unless you've set up a launchd/systemd service. If the daemon was running but
 reviews still aren't appearing, read the saved daemon diagnostics:

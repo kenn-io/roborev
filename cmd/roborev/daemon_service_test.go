@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -14,6 +15,15 @@ import (
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/version"
 )
+
+func exitedDaemonPID(t *testing.T) int {
+	t.Helper()
+	binary, err := os.Executable()
+	require.NoError(t, err)
+	child := exec.CommandContext(t.Context(), binary, "-test.run=^$")
+	require.NoError(t, child.Run())
+	return child.Process.Pid
+}
 
 // stubServiceRecovery restores the recovery seams each test replaces.
 func stubServiceRecovery(t *testing.T) {

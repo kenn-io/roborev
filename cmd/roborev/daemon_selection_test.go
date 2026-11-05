@@ -81,6 +81,53 @@ func TestEnsureDaemonPropagatesDiscoveryIOError(t *testing.T) {
 	assert.Zero(t, services)
 }
 
+func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
+	for _, ownership := range []string{"managed", "unmanaged", "lookup failure"} {
+		t.Run(ownership, func(t *testing.T) {
+			isolateDaemonSelection(t)
+			stubServiceRecovery(t)
+			getAnyRunningDaemon = daemon.GetAnyRunningDaemon
+			require.NoError(t, daemon.WriteRuntime(daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, nil, version.Version, nil))
+			lookups := 0
+			findDaemonService = func(ctx context.Context, pid int) (*daemonService, error) {
+				lookups++
+				assert.Equal(t, os.Getpid(), pid)
+				_, bounded := ctx.Deadline()
+				assert.True(t, bounded)
+				if ownership == "lookup failure" {
+					return nil, errors.New("ownership unavailable")
+				}
+				if ownership == "unmanaged" {
+					return nil, nil
+				}
+				return &daemonService{unit: "fixture.service"}, nil
+			}
+			var mutations []string
+			cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { mutations = append(mutations, "cleanup"); return 0 }
+			startDaemonForEnsure = func() error { mutations = append(mutations, "detached start"); return nil }
+			drainManagedDaemon = func(*daemon.RuntimeInfo) error { mutations = append(mutations, "drain"); return nil }
+			startDaemonService = func(context.Context, string) error { mutations = append(mutations, "service start"); return nil }
+			paused := true
+			pendingStartPause = &paused
+			err := ensureDaemon()
+			if ownership == "unmanaged" {
+				require.NoError(t, err)
+				assert.Equal(t, []string{"cleanup", "detached start"}, mutations)
+				assert.Equal(t, 1, lookups)
+				return
+			}
+			require.Error(t, err)
+			if ownership == "lookup failure" {
+				require.ErrorContains(t, err, "ownership unavailable")
+			} else {
+				require.ErrorContains(t, err, "fixture.service")
+			}
+			assert.Equal(t, 1, lookups)
+			assert.Empty(t, mutations)
+		})
+	}
+}
+
 func TestEnsureDaemonPropagatesDiscoveryTLSConfigError(t *testing.T) {
 	isolateDaemonSelection(t)
 	getAnyRunningDaemon = daemon.GetAnyRunningDaemon

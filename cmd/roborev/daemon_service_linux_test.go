@@ -25,19 +25,22 @@ import (
 func TestRecoverDaemonServiceRecovery(t *testing.T) {
 	probeErr := errors.New("probe failed")
 	for _, tc := range []struct {
-		outcome        string
-		probeErr       error
-		wantError      string
-		stops, starts  int
-		queueCommand   bool
-		paused         bool
-		failPause      bool
-		pauseNotFound  bool
-		failDiscovery  bool
-		recheckCurrent bool
+		outcome            string
+		probeErr           error
+		wantError          string
+		stops, starts      int
+		queueCommand       bool
+		paused             bool
+		failPause          bool
+		pauseNotFound      bool
+		failDiscovery      bool
+		recheckCurrent     bool
+		live, reprobeFails bool
 	}{
 		{outcome: "replacement current"},
 		{outcome: "live current after probe failure", probeErr: probeErr, recheckCurrent: true},
+		{outcome: "live failed rediscovery", live: true, probeErr: probeErr, failDiscovery: true, wantError: "daemon is unresponsive: probe failed; run systemctl --user restart fixture.service"},
+		{outcome: "live failed repeat probe", live: true, probeErr: probeErr, reprobeFails: true, queueCommand: true, paused: true, wantError: "daemon is unresponsive: repeat probe failed; run systemctl --user restart fixture.service"},
 		{outcome: "pause write failure", queueCommand: true, paused: true, failPause: true, wantError: "pause queue before shutdown"},
 		{outcome: "pause unsupported by old daemon", queueCommand: true, paused: true, pauseNotFound: true, wantError: "daemon lacks queue-pause support; recovery stopped before shutdown; wait for active reviews to finish, then run systemctl --user restart fixture.service and retry roborev pause"},
 		{outcome: "failed version probe", queueCommand: true, paused: true, probeErr: probeErr, stops: 1, starts: 1},
@@ -67,6 +70,11 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 			var progress bytes.Buffer
 			lifecycleOut, verbose = &progress, false
 			original := &daemon.RuntimeInfo{PID: 1234, Version: version.Version, Network: "tcp", Address: "127.0.0.1:1"}
+			if tc.live {
+				original.PID = os.Getpid()
+			} else {
+				original.PID = exitedDaemonPID(t)
+			}
 			var events []string
 			if tc.queueCommand {
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -90,6 +98,9 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 			t.Cleanup(func() { probeDaemonForEnsure = oldProbe })
 			probeDaemonForEnsure = func(ep daemon.DaemonEndpoint, _ time.Duration) (*daemon.PingInfo, error) {
 				assert.Equal(t, original.Endpoint(), ep)
+				if tc.reprobeFails {
+					return nil, errors.New("repeat probe failed")
+				}
 				liveVersion := "v-old"
 				if tc.recheckCurrent {
 					liveVersion = version.Version
@@ -201,7 +212,7 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 			}
 			if tc.queueCommand {
 				var want []string
-				if tc.paused {
+				if tc.paused && !tc.live {
 					want = append(want, "/api/queue/pause")
 				}
 				if tc.stops != 0 {

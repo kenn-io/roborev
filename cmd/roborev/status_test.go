@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -557,7 +558,7 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 				}
 				return nil, os.ErrNotExist
 			})
-			original := &daemon.RuntimeInfo{PID: 1234, Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}
+			original := &daemon.RuntimeInfo{PID: exitedDaemonPID(t), Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}
 			findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
 			var recoveryErr error
 			if tc.lockFailure {
@@ -616,5 +617,48 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 				assert.Contains(t, output, cause)
 			}
 		})
+	}
+}
+
+func TestStatusUnresponsiveProcessLiveness(t *testing.T) {
+	for _, exited := range []bool{false, true} {
+		for _, ownershipFailure := range []bool{false, true} {
+			t.Run(fmt.Sprintf("exited=%t/ownership-failure=%t", exited, ownershipFailure), func(t *testing.T) {
+				isolateDaemonSelection(t)
+				stubServiceRecovery(t)
+				original := &daemon.RuntimeInfo{PID: os.Getpid()}
+				serviceType := "notify"
+				if exited {
+					original.PID = exitedDaemonPID(t)
+					serviceType = "forking"
+				}
+				binary, err := os.Executable()
+				require.NoError(t, err)
+				findDaemonService = func(context.Context, int) (*daemonService, error) {
+					if ownershipFailure {
+						return nil, errors.New("ownership unavailable")
+					}
+					return &daemonService{unit: "fixture.service", mainPID: original.PID, executable: binary, serviceType: serviceType}, nil
+				}
+				getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
+				oldEnsure := statusEnsureDaemon
+				t.Cleanup(func() { statusEnsureDaemon = oldEnsure })
+				err = recoverDaemon(original, errors.New("HTTP unavailable"), false)
+				require.Error(t, err)
+				statusEnsureDaemon = func() error { return err }
+				withStatusWebRuntime(t, func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist })
+				cmd := statusCmd()
+				cmd.SetArgs([]string{"--json"})
+				output := captureStdout(t, func() { require.NoError(t, cmd.Execute()) })
+				var result map[string]any
+				require.NoError(t, json.Unmarshal([]byte(output), &result))
+				assert.Equal(t, !exited, result["running"])
+				assert.Equal(t, err.Error(), result["error"])
+				assert.Equal(t, "", result["web_url"])
+				for _, field := range []string{"daemon", "health", "jobs"} {
+					assert.NotContains(t, result, field)
+				}
+			})
+		}
 	}
 }

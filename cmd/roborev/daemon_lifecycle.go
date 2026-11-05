@@ -367,6 +367,25 @@ func ensureDaemon() (err error) {
 		return nil
 	}
 
+	runtimes, err := listAllRuntimes()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), daemonStartTimeout)
+	defer cancel()
+	for _, runtime := range runtimes {
+		if !liveDaemon(runtime) {
+			continue
+		}
+		owner, err := findDaemonService(ctx, runtime.PID)
+		if err != nil {
+			return &unresponsiveDaemonError{runtime, err}
+		}
+		if owner != nil {
+			return &unresponsiveDaemonError{runtime, &managedRecoveryError{owner.unit, fmt.Errorf("daemon is unresponsive: %w; run %s %s", discoveryErr, serviceRestartCommand, owner.unit)}}
+		}
+	}
+
 	// Legacy pre-kit daemons are invisible to kit discovery because they do
 	// not serve /api/ping, but they can still hold the default port and DB.
 	// Cleanup uses only this data directory's runtime records. Never adopt

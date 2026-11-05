@@ -88,6 +88,7 @@ func TestLaunchctlCLIRecoveryIntegration(t *testing.T) {
 			} else {
 				check.Equal(original.PID, owner.mainPID)
 			}
+			assertSuspendedManagedDaemon(t, original, unit, owner.mainPID)
 			installRoborev(t, newBinary, link)
 			// The test executable represents the new CLI installation at this seam.
 			findDaemonService = func(ctx context.Context, pid int) (*daemonService, error) {

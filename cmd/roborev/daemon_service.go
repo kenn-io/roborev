@@ -134,7 +134,13 @@ func discoveredOutsideService(pid int) bool {
 	return err == nil && unit == ""
 }
 
-func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool) error {
+func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool) (result error) {
+	defer func() {
+		if result != nil {
+			result = &unresponsiveDaemonError{info, result}
+		}
+	}()
+	probeFailed := probeErr != nil
 	ctx, cancel := context.WithTimeout(context.Background(), daemonStartTimeout)
 	snapshot, snapshotErr := snapshotDaemonService(ctx, info.PID, outsideService)
 	cancel()
@@ -188,6 +194,10 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 		if err == nil && probe.Version == version.Version {
 			return nil
 		}
+		if err != nil {
+			responsive = false
+			probeErr = err
+		}
 	}
 	if responsive && current.PID != info.PID && current.Version == version.Version {
 		return nil
@@ -200,6 +210,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 			probeErr = os.ErrNotExist
 		}
 	}
+	info = current
 	owner, err := findDaemonService(ctx, current.PID)
 	vanished := !responsive && errors.Is(err, os.ErrNotExist)
 	if vanished {
@@ -240,6 +251,9 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 		}
 		if err := owner.supported(); err != nil {
 			return fail(err)
+		}
+		if probeFailed && liveDaemon(current) {
+			return fail(fmt.Errorf("daemon is unresponsive: %w; run %s %s", probeErr, serviceRestartCommand, owner.unit))
 		}
 	}
 	// Discovery can miss a daemon that later answers shutdown retries.
