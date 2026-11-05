@@ -157,17 +157,15 @@ func (index *Index) lexicalLeg(query string, filters SearchFilters, groupLimit, 
 	finished := finishedTime("d.finished_at")
 	lexOrder := `score DESC, finished_key DESC, job_id DESC, doc_key ASC`
 	order := `identifier DESC, ` + lexOrder
-	hit := `SELECT d.rowid AS rid, d.doc_key, d.group_key, d.job_id, ` + finished + ` AS finished_key,
+	hit := `SELECT d.doc_key, d.group_key, d.job_id, ` + finished + ` AS finished_key,
 	               -bm25(review_fts) AS score
 	          FROM review_fts JOIN review_mirror AS d ON d.rowid = review_fts.rowid
 	         WHERE review_fts MATCH ? AND (` + predicate.SQL + `)
 	         ORDER BY score DESC, finished_key DESC, d.job_id DESC, d.doc_key ASC`
-	// Unary + on the snippet rowid filter keeps FTS5 from recalculating BM25
-	// statistics for each member through separate rowid lookups.
 	var args []any
 	statement := `
 	WITH ident AS MATERIALIZED (
-		SELECT d.rowid AS rid, d.doc_key, d.group_key, d.job_id, ` + finished + ` AS finished_key
+		SELECT d.doc_key, d.group_key, d.job_id, ` + finished + ` AS finished_key
 		  FROM review_fts JOIN review_mirror AS d ON d.rowid = review_fts.rowid
 		 WHERE review_fts MATCH ? AND (` + exact + `) AND (` + predicate.SQL + `)
 		 ORDER BY finished_key DESC, d.job_id DESC, d.doc_key ASC LIMIT ?
@@ -199,7 +197,7 @@ func (index *Index) lexicalLeg(query string, filters SearchFilters, groupLimit, 
 		       CASE WHEN NOT mates.identifier THEN -bm25(review_fts) END AS score,
 		       CASE WHEN NOT mates.identifier THEN snippet(review_fts, 1, char(57344), char(57345), ' … ', 32) END AS excerpt
 		  FROM review_fts JOIN mates ON mates.rid = review_fts.rowid
-		 WHERE review_fts MATCH ? AND +review_fts.rowid IN (SELECT rid FROM mates)
+		 WHERE review_fts MATCH ?
 	),
 	members AS MATERIALIZED (
 		SELECT mates.group_key, mates.doc_key, mates.job_id, mates.finished_key, mates.group_rank,
