@@ -1941,6 +1941,7 @@ type listJobsOptions struct {
 	branchEmpty        bool
 	branchIncludeEmpty bool
 	closed             *bool
+	closedByPosition   bool
 	openFailedReviews  bool
 	jobType            string
 	excludeJobType     string
@@ -2215,8 +2216,11 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 	}
 	if o.closed != nil {
 		if *o.closed {
-			// The closed flag has two values, so let the queue's position index drive the scan.
-			conditions = append(conditions, "+rv.closed = 1")
+			if o.closedByPosition {
+				conditions = append(conditions, "+rv.closed = 1")
+			} else {
+				conditions = append(conditions, "rv.closed = 1")
+			}
 		} else {
 			conditions = append(conditions, "(rv.closed IS NULL OR rv.closed = 0)")
 			// Failed and canceled jobs never produce a review to resolve, so
@@ -2366,9 +2370,29 @@ func listJobsQuery(statusFilter, repoFilter string, limit, offset int, options l
 	return query, args, len(sortKeys), nil
 }
 
+// At 100k jobs, sorting fewer than 1,000 closed reviews took at most 13ms;
+// walking the position index reached a page in 4ms with 1,000 closed reviews.
+const closedByPositionMin = 1000
+
+func (db *DB) closedReviewsMany(ctx context.Context) (bool, error) {
+	var count int
+	err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM (SELECT 1 FROM reviews WHERE closed = 1 LIMIT ?)
+	`, closedByPositionMin).Scan(&count)
+	return count >= closedByPositionMin, err
+}
+
 // ListJobs returns jobs with optional status, repo, branch, and closed filters.
 func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int, opts ...ListJobsOption) ([]ReviewJob, error) {
 	options := collectListJobsOptions(opts...)
+	if options.closed != nil && *options.closed {
+		// ListJobs has no caller context yet.
+		many, err := db.closedReviewsMany(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		options.closedByPosition = many
+	}
 	query, args, sortKeyCount, err := listJobsQuery(statusFilter, repoFilter, limit, offset, options)
 	if err != nil {
 		return nil, err
