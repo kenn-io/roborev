@@ -114,6 +114,7 @@ type CIPoller struct {
 	broadcaster   Broadcaster
 	tokenProvider *GitHubAppTokenProvider
 	githubAPIURL  string // Startup value; changing hosts requires a daemon restart.
+	prListHTTP    *http.Client
 
 	// Test seams for mocking side effects (gh/git/LLM) in unit tests.
 	// Nil means use the real implementation.
@@ -211,6 +212,7 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 		cfgGetter:          cfgGetter,
 		broadcaster:        broadcaster,
 		githubAPIURL:       githubAPIURL,
+		prListHTTP:         ghpkg.NewConditionalHTTPClient(),
 		discordQuotaDedupe: make(map[string]time.Time),
 		discordNowFn:       time.Now,
 		nowFn:              time.Now,
@@ -2394,12 +2396,12 @@ func (p *CIPoller) gitEnvForRepo(ghRepo string) []string {
 	return ghpkg.GitAuthEnvForBase(os.Environ(), token, p.githubAPIBaseURL())
 }
 
-func (p *CIPoller) githubClientForRepo(ghRepo string) (*ghpkg.Client, error) {
+func (p *CIPoller) githubClientForRepo(ghRepo string, opts ...ghpkg.ClientOption) (*ghpkg.Client, error) {
 	apiBaseURL, err := ghpkg.GitHubAPIBaseURL(p.githubAPIBaseURL())
 	if err != nil {
 		return nil, err
 	}
-	return ghpkg.NewClient(p.githubTokenForRepo(ghRepo), ghpkg.WithBaseURL(apiBaseURL))
+	return ghpkg.NewClient(p.githubTokenForRepo(ghRepo), append([]ghpkg.ClientOption{ghpkg.WithBaseURL(apiBaseURL)}, opts...)...)
 }
 
 func (p *CIPoller) githubAPIBaseURL() string {
@@ -2408,7 +2410,7 @@ func (p *CIPoller) githubAPIBaseURL() string {
 
 // listOpenPRs uses go-github to list open PRs for a GitHub repo.
 func (p *CIPoller) listOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, error) {
-	client, err := p.githubClientForRepo(ghRepo)
+	client, err := p.githubClientForRepo(ghRepo, ghpkg.WithHTTPClient(p.prListHTTP))
 	if err != nil {
 		return nil, err
 	}

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	ghtransport "github.com/bored-engineer/github-conditional-http-transport"
+	"github.com/bored-engineer/github-conditional-http-transport/memory"
 	googlegithub "github.com/google/go-github/v93/github"
 
 	"go.kenn.io/roborev/internal/procutil"
@@ -27,6 +29,11 @@ type Client struct {
 }
 
 const defaultHTTPTimeout = 30 * time.Second
+
+// NewConditionalHTTPClient revalidates unchanged GETs with quota-free 304 responses.
+func NewConditionalHTTPClient() *http.Client {
+	return &http.Client{Timeout: defaultHTTPTimeout, Transport: ghtransport.NewTransport(memory.NewStorage(), nil)}
+}
 
 var ghAuthTokenFn = func(ctx context.Context, hostname string) (string, error) {
 	if ctx == nil {

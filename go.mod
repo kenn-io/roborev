@@ -10,6 +10,7 @@ require (
 	github.com/atotto/clipboard v0.1.4
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1
 	github.com/bmatcuk/doublestar/v4 v4.10.4
+	github.com/bored-engineer/github-conditional-http-transport v0.0.8
 	github.com/cenkalti/backoff/v7 v7.0.2
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/x/ansi v0.11.9
