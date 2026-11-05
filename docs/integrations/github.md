@@ -844,12 +844,14 @@ to warm Go modules. See
 build and host requirements.
 
 The checker discovers the host's globally selected, installed mise tools outside
-the PR checkout. It runs them directly, ahead of mise shims on `PATH`, and can
-read their installation directories, including runtime support files. This
+the PR checkout and runs them ahead of mise shims on `PATH`. It can read their
+installation directories and mise's default managed installs directory. This
 supports Node, Bun, OpenTofu, Terraform, Python, and other installed mise tools.
-Provision the required versions on the host. Installing project dependencies and
-starting providers or other services remain separate requirements. The checker
-logs failed mise queries and keeps its existing tools.
+It can also run `mise exec` when the mise executable links outside those
+directories. It reads the repository's mise config without loading host or
+parent checkout config. Provision the required versions on the host. Installing
+project dependencies and starting providers or other services remain separate
+requirements. The checker logs failed mise queries and keeps its existing tools.
 
 The checker works in its own clone of the PR checkout. The clone borrows the
 host clone's object store and none of its Git config, so the checker can't read
