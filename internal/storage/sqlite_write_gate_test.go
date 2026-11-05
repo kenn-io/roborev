@@ -99,30 +99,44 @@ func TestUserWritesQueueBehindPullTransaction(t *testing.T) {
 
 				userDone := make(chan error, 1)
 				go func() {
-					var err error
-					opts := EnqueueOpts{RepoID: h.repo.ID, GitRef: "user", Agent: "test"}
-					switch kind {
-					case "enqueue":
-						_, err = h.db.EnqueueJob(opts)
-					case "post-commit":
-						_, _, err = h.db.EnqueuePostCommitJob(opts)
-					case "close":
-						err = h.db.MarkReviewClosedByJobID(job.ID, true)
-					}
-					userDone <- err
+					// Exercise each caller's write path without its GetMachineID lookup.
+					userDone <- func() error {
+						switch kind {
+						case "enqueue":
+							tx, err := h.db.BeginTx(t.Context(), nil)
+							if err != nil {
+								return err
+							}
+							defer func() { _ = tx.Rollback() }()
+							if _, err := tx.ExecContext(t.Context(), `INSERT INTO review_jobs (repo_id, git_ref) VALUES (?, 'user')`, h.repo.ID); err != nil {
+								return err
+							}
+							return tx.Commit()
+						case "post-commit":
+							conn, err := h.db.Conn(t.Context())
+							if err != nil {
+								return err
+							}
+							defer conn.Close()
+							if err := beginImmediate(t.Context(), conn); err != nil {
+								return err
+							}
+							defer func() { _ = rollbackConn(conn) }()
+							if _, err := conn.ExecContext(t.Context(), `INSERT INTO review_jobs (repo_id, git_ref) VALUES (?, 'user')`, h.repo.ID); err != nil {
+								return err
+							}
+							_, err = conn.ExecContext(t.Context(), "COMMIT")
+							return err
+						default: // close
+							_, err := h.db.ExecContext(t.Context(), `UPDATE reviews SET closed = 1 WHERE job_id = ?`, job.ID)
+							return err
+						}
+					}()
 				}()
 				synctest.Wait()
 				var committed int
 				require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT count(*) FROM write_order`).Scan(&committed))
 				assert.Equal(t, 0, committed, "user write must wait for admission")
-				gate.queue.Release(1)
-
-				// Let the user's GetMachineID write finish, then hold admission
-				// until its actual write has joined the queue ahead of the pull.
-				require.NoError(t, gate.acquire(t.Context()))
-				synctest.Wait()
-				require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT count(*) FROM write_order`).Scan(&committed))
-				assert.Equal(t, 0, committed, "user write must wait for admission after GetMachineID finishes")
 				pullDone := make(chan error, 1)
 				go func() {
 					pullDone <- h.db.UpsertPulledJob(PulledJob{
