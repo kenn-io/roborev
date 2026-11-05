@@ -363,6 +363,7 @@ func restartAndVerifyUpdatedDaemon(
 	binDir string,
 	expectedVersion string,
 	previous *daemon.RuntimeInfo,
+	owner *daemonService,
 ) error {
 	if previous == nil {
 		return nil
@@ -371,12 +372,17 @@ func restartAndVerifyUpdatedDaemon(
 	if err != nil {
 		return err
 	}
-	if replacementPID == 0 {
-		if err := startUpdatedDaemon(binDir); err != nil {
-			return fmt.Errorf("start updated daemon: %w", err)
+	var info *daemon.RuntimeInfo
+	if owner != nil {
+		info, err = startServiceReplacement(ctx, owner)
+	} else {
+		if replacementPID == 0 {
+			if err := startUpdatedDaemon(binDir); err != nil {
+				return fmt.Errorf("start updated daemon: %w", err)
+			}
 		}
+		info, err = waitForResponsiveUpdatedDaemon(ctx, updateRestartWaitTimeout)
 	}
-	info, err := waitForResponsiveUpdatedDaemon(ctx, updateRestartWaitTimeout)
 	if err != nil {
 		return err
 	}

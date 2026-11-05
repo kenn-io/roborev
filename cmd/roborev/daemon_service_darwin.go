@@ -15,6 +15,7 @@ import (
 var runLaunchctl = runUserLaunchctl
 
 func init() {
+	restartThroughService = true
 	serviceDescription = "launchd job"
 	serviceRestartCommand = "launchctl kickstart -k"
 	serviceStartCommand = "launchctl kickstart"

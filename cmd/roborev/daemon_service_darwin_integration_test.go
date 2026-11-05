@@ -130,6 +130,33 @@ func TestLaunchctlCLIRecoveryIntegration(t *testing.T) {
 				require.NoError(t, err)
 				check.Len(runtimes, 1)
 			}
+			previousPID := replacement.PID
+			withDaemonCommandDependencies(t,
+				func() error { detached++; return nil }, daemonStop,
+				func() (*daemon.RuntimeInfo, error) { return daemon.GetAnyRunningDaemonContext(t.Context()) },
+			)
+			cmd := daemonCmd()
+			cmd.SetArgs([]string{"restart"})
+			err = cmd.ExecuteContext(t.Context())
+			if wrapper {
+				require.ErrorContains(t, err, "child process")
+			} else {
+				require.NoError(t, err)
+			}
+			replacement, err = daemon.GetAnyRunningDaemonContext(t.Context())
+			require.NoError(t, err)
+			if wrapper {
+				check.Equal(previousPID, replacement.PID)
+			} else {
+				check.NotEqual(previousPID, replacement.PID)
+				pid, err := userServiceMainPID(t.Context(), unit)
+				require.NoError(t, err)
+				check.Equal(replacement.PID, pid)
+				runtimes, err := daemon.ListJudgedRuntimes()
+				require.NoError(t, err)
+				check.Len(runtimes, 1)
+			}
+			check.Zero(detached)
 		})
 	}
 }

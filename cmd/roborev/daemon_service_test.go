@@ -15,6 +15,24 @@ import (
 	"go.kenn.io/roborev/internal/version"
 )
 
+func ownedDaemonService(t *testing.T) *daemonService {
+	t.Helper()
+	path, err := os.Executable()
+	require.NoError(t, err)
+	cliExecutableInfo = func() (os.FileInfo, error) { return os.Stat(path) }
+	return &daemonService{unit: "gui/501/com.example.roborev", mainPID: os.Getpid(), executable: path, serviceType: "exec"}
+}
+
+func assertRecoveryLock(t *testing.T, wantAcquired bool) {
+	t.Helper()
+	release, acquired, err := daemon.RuntimeStore().TryAcquireStartLock(t.Context())
+	require.NoError(t, err)
+	if release != nil {
+		release()
+	}
+	assert.Equal(t, wantAcquired, acquired)
+}
+
 // stubServiceRecovery restores the recovery seams each test replaces.
 func stubServiceRecovery(t *testing.T) {
 	t.Helper()
@@ -24,12 +42,14 @@ func stubServiceRecovery(t *testing.T) {
 	oldCgroup := daemonCgroupUnit
 	oldDiscovery, oldEnsure, oldDetached := getAnyRunningDaemonForStart, startDaemonForEnsure, startDaemonDetached
 	oldPause := pendingStartPause
+	oldRestart, oldCommand, oldIdentity := restartThroughService, serviceRestartCommand, cliExecutableInfo
 	t.Cleanup(func() {
 		lifecycleOut, verbose = oldOut, oldVerbose
 		findDaemonService, serviceMainPID, startDaemonService, drainManagedDaemon = oldFind, oldMainPID, oldStart, oldDrain
 		daemonCgroupUnit = oldCgroup
 		getAnyRunningDaemonForStart, startDaemonForEnsure, startDaemonDetached = oldDiscovery, oldEnsure, oldDetached
 		pendingStartPause = oldPause
+		restartThroughService, serviceRestartCommand, cliExecutableInfo = oldRestart, oldCommand, oldIdentity
 	})
 }
 
