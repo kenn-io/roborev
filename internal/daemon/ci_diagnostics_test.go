@@ -80,8 +80,9 @@ func TestCIHealthSafeReadDiagnosticsAndRecovery(t *testing.T) {
 }
 
 func TestCIHealthSafeDiscoveryDiagnosticsAndRecovery(t *testing.T) {
-	var readErr error
 	synctest.Test(t, func(t *testing.T) {
+		var readErr error
+
 		client, err := ghpkg.NewClient("", ghpkg.WithHTTPClient(&http.Client{Transport: diagnosticTransport(func(r *http.Request) (*http.Response, error) {
 			assert.Equal(t, "/orgs/acme/repos", r.URL.Path)
 			return &http.Response{StatusCode: 503, Request: r, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"message":"sensitive-provider-text"}`))}, nil
@@ -89,30 +90,29 @@ func TestCIHealthSafeDiscoveryDiagnosticsAndRecovery(t *testing.T) {
 		require.NoError(t, err)
 		_, readErr = client.ListOwnerRepos(t.Context(), "acme", 100)
 		require.Error(t, readErr)
+		h, server := newCIHealthHarness(t)
+		h.Cfg.CI.Repos = []string{"acme/*"}
+		h.Poller.repoResolver.listReposFn = func(context.Context, string, string) ([]string, error) { return nil, readErr }
+		h.Poller.poll(t.Context())
+		health := decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet))
+		assert.False(t, health.Healthy)
+		assert.Contains(t, health.Components, storage.ComponentHealth{Name: "ci", Healthy: false, Message: "repository discovery failed: list organization repositories: HTTP 503"})
+		require.NotEmpty(t, health.RecentErrors)
+		assert.Contains(t, health.RecentErrors[0].Message, "list organization repositories: HTTP 503")
+		assert.NotContains(t, health.RecentErrors[0].Message, "sensitive-provider-text")
+		h.Poller.repoResolver.listReposFn = func(context.Context, string, string) ([]string, error) { return []string{"acme/api"}, nil }
+		h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return nil, nil }
+		time.Sleep(15 * time.Minute)
+		h.Poller.poll(t.Context())
+		assert.True(t, decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet)).Healthy)
+		time.Sleep(time.Hour)
+		h.Poller.repoResolver.listReposFn = func(context.Context, string, string) ([]string, error) { return nil, readErr }
+		repos, err := h.Poller.repoResolver.Resolve(t.Context(), &h.Cfg.CI, nil)
+		require.ErrorIs(t, err, errRepoDiscoveryIncomplete)
+		assert.Equal(t, []string{"acme/api"}, repos)
+		responseError, ok := errors.AsType[*googlegithub.ErrorResponse](err)
+		require.True(t, ok)
+		assert.Equal(t, 503, responseError.Response.StatusCode)
+		assert.Equal(t, "list organization repositories: HTTP 503", ghpkg.ReadErrorSummary(err))
 	})
-	h, server := newCIHealthHarness(t)
-	h.Cfg.CI.Repos = []string{"acme/*"}
-	h.Poller.repoResolver.listReposFn = func(context.Context, string, string) ([]string, error) { return nil, readErr }
-	h.Poller.poll(t.Context())
-	health := decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet))
-	assert.False(t, health.Healthy)
-	assert.Contains(t, health.Components, storage.ComponentHealth{Name: "ci", Healthy: false, Message: "repository discovery failed: list organization repositories: HTTP 503"})
-	require.NotEmpty(t, health.RecentErrors)
-	assert.Contains(t, health.RecentErrors[0].Message, "list organization repositories: HTTP 503")
-	assert.NotContains(t, health.RecentErrors[0].Message, "sensitive-provider-text")
-	h.Poller.repoResolver.listReposFn = func(context.Context, string, string) ([]string, error) { return []string{"acme/api"}, nil }
-	h.Poller.listOpenPRsFn = func(context.Context, string) ([]ghPR, error) { return nil, nil }
-	h.Poller.poll(t.Context())
-	assert.True(t, decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet)).Healthy)
-	h.Poller.repoResolver.mu.Lock()
-	h.Poller.repoResolver.cachedAt = time.Now().Add(-2 * time.Hour)
-	h.Poller.repoResolver.mu.Unlock()
-	h.Poller.repoResolver.listReposFn = func(context.Context, string, string) ([]string, error) { return nil, readErr }
-	repos, err := h.Poller.repoResolver.Resolve(t.Context(), &h.Cfg.CI, nil)
-	require.ErrorIs(t, err, errRepoDiscoveryIncomplete)
-	assert.Equal(t, []string{"acme/api"}, repos)
-	responseError, ok := errors.AsType[*googlegithub.ErrorResponse](err)
-	require.True(t, ok)
-	assert.Equal(t, 503, responseError.Response.StatusCode)
-	assert.Equal(t, "list organization repositories: HTTP 503", ghpkg.ReadErrorSummary(err))
 }

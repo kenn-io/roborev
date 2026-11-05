@@ -1048,37 +1048,40 @@ func TestHealthCIPollerStuckAttemptFailure(t *testing.T) {
 func TestHealthCIPollerDiscoveryFailureAndRecovery(t *testing.T) {
 	for _, discovery := range []string{"wildcard", "canonical name"} {
 		t.Run(discovery, func(t *testing.T) {
-			h, server := newCIHealthHarness(t)
-			discoveryErr := errors.New("provider unavailable")
-			h.Cfg.CI.Repos = []string{"acme/api"}
-			if discovery == "wildcard" {
-				h.Cfg.CI.Repos = append(h.Cfg.CI.Repos, "acme/*")
-				h.Poller.repoResolver.listReposFn = func(context.Context, string, string) ([]string, error) {
-					return []string{"acme/api"}, discoveryErr
+			synctest.Test(t, func(t *testing.T) {
+				h, server := newCIHealthHarness(t)
+				discoveryErr := errors.New("provider unavailable")
+				h.Cfg.CI.Repos = []string{"acme/api"}
+				if discovery == "wildcard" {
+					h.Cfg.CI.Repos = append(h.Cfg.CI.Repos, "acme/*")
+					h.Poller.repoResolver.listReposFn = func(context.Context, string, string) ([]string, error) {
+						return []string{"acme/api"}, discoveryErr
+					}
+				} else {
+					h.Poller.repoResolver.canonicalRepoFn = func(context.Context, string, string) (string, error) {
+						return "acme/api", discoveryErr
+					}
 				}
-			} else {
-				h.Poller.repoResolver.canonicalRepoFn = func(context.Context, string, string) (string, error) {
-					return "acme/api", discoveryErr
+				var visited []string
+				h.Poller.listOpenPRsFn = func(_ context.Context, repo string) ([]ghPR, error) {
+					visited = append(visited, repo)
+					return nil, nil
 				}
-			}
-			var visited []string
-			h.Poller.listOpenPRsFn = func(_ context.Context, repo string) ([]ghPR, error) {
-				visited = append(visited, repo)
-				return nil, nil
-			}
 
-			h.Poller.poll(t.Context())
-			health := decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet))
-			assert.False(t, health.Healthy)
-			assert.Contains(t, health.Components, storage.ComponentHealth{
-				Name: "ci", Healthy: false, Message: "repository discovery failed",
+				h.Poller.poll(t.Context())
+				health := decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet))
+				assert.False(t, health.Healthy)
+				assert.Contains(t, health.Components, storage.ComponentHealth{
+					Name: "ci", Healthy: false, Message: "repository discovery failed",
+				})
+				assert.Equal(t, []string{"acme/api"}, visited, "fallback repositories still poll")
+
+				discoveryErr = nil
+				time.Sleep(15 * time.Minute)
+				h.Poller.poll(t.Context())
+				health = decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet))
+				assert.True(t, health.Healthy)
 			})
-			assert.Equal(t, []string{"acme/api"}, visited, "fallback repositories still poll")
-
-			discoveryErr = nil
-			h.Poller.poll(t.Context())
-			health = decodeHealthStatus(t, executeHealthCheck(t.Context(), server, http.MethodGet))
-			assert.True(t, health.Healthy)
 		})
 	}
 }

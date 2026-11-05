@@ -13,11 +13,23 @@ import (
 
 	"go.kenn.io/roborev/internal/config"
 	ghpkg "go.kenn.io/roborev/internal/github"
+	"go.kenn.io/roborev/internal/review"
 )
 
 // repoRefreshInterval is the fixed interval between wildcard repo
 // re-discovery calls to the GitHub API.
 const repoRefreshInterval = time.Hour
+
+// Retry failed discovery sooner than the normal hourly refresh.
+const repoRetryInterval = 15 * time.Minute
+
+type lookupUnit struct {
+	val      []string
+	ok       bool
+	err      error
+	at       time.Time
+	failures int
+}
 
 var errRepoDiscoveryIncomplete = errors.New("repository discovery incomplete")
 
@@ -26,11 +38,8 @@ var errRepoDiscoveryIncomplete = errors.New("repository discovery incomplete")
 // are cached for the refresh interval and automatically invalidated when
 // the config changes.
 type RepoResolver struct {
-	mu       sync.Mutex
-	cached   []string
-	hasCache bool // separate from nil check — empty results are valid cache entries
-	cachedAt time.Time
-	cacheKey string // derived from pattern+exclusion lists+max_repos for invalidation
+	mu    sync.Mutex
+	units map[string]*lookupUnit
 
 	// baseURL is the raw GitHub API base URL for Enterprise support.
 	// Empty means public GitHub. Used when building the API client
@@ -52,64 +61,81 @@ type RepoResolver struct {
 type githubTokenFn func(owner string) string
 
 // Resolve returns the list of concrete "owner/repo" entries to poll.
-// It uses a cached result when the TTL has not expired and the config
-// has not changed, otherwise it re-expands wildcard patterns.
+// Successful lookups refresh hourly; failures retry with backoff.
 // A discovery failure returns available repositories along with an error, so
 // polling can continue without reporting the incomplete discovery as healthy.
 func (r *RepoResolver) Resolve(ctx context.Context, ci *config.CIConfig, tokenFn githubTokenFn) ([]string, error) {
-	key := r.buildCacheKey(ci)
-	ttl := repoRefreshInterval
-
 	r.mu.Lock()
-	if r.hasCache && r.cacheKey == key && time.Since(r.cachedAt) < ttl {
-		result := make([]string, len(r.cached))
-		copy(result, r.cached)
-		r.mu.Unlock()
-		return result, nil
-	}
-	r.mu.Unlock()
-
-	repos, degraded, err := r.expand(ctx, ci, tokenFn)
-	if err != nil && !degraded {
+	defer r.mu.Unlock()
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-
-	if degraded {
-		// API failure during wildcard expansion — prefer stale cache
-		// (which has the complete set) over the degraded partial result.
-		r.mu.Lock()
-		if r.hasCache && r.cacheKey == key {
-			stale := make([]string, len(r.cached))
-			copy(stale, r.cached)
-			r.mu.Unlock()
-			log.Printf("CI repo resolver: API degraded, using stale cache (%d repos)", len(stale))
-			return stale, errors.Join(errRepoDiscoveryIncomplete, err)
+	if r.units == nil {
+		r.units = make(map[string]*lookupUnit)
+	}
+	active := make(map[string]bool)
+	for _, entry := range ci.Repos {
+		owner, pattern, ok := strings.Cut(entry, "/")
+		if !ok || owner == "" {
+			continue
 		}
-		r.mu.Unlock()
-		// No stale cache for this key — return partial result.
-	} else {
-		r.mu.Lock()
-		r.cached = repos
-		r.hasCache = true
-		r.cachedAt = time.Now()
-		r.cacheKey = key
-		r.mu.Unlock()
+		kind, name := "exact", entry
+		if isGlobPattern(pattern) {
+			kind, name = "owner", owner
+		}
+		active[repoLookupKey(ci, kind, name, owner)] = true
 	}
-
-	result := make([]string, len(repos))
-	copy(result, repos)
+	for key := range r.units {
+		if !active[key] {
+			delete(r.units, key)
+		}
+	}
+	repos, degraded, err := r.expand(ctx, ci, tokenFn)
 	if degraded {
-		return result, errors.Join(errRepoDiscoveryIncomplete, err)
+		err = errors.Join(errRepoDiscoveryIncomplete, err)
 	}
-	return result, nil
+	return repos, err
 }
 
-// buildCacheKey creates a string that changes whenever the repo lists,
-// exclusion lists, or max_repos change, forcing a cache miss.
-func (r *RepoResolver) buildCacheKey(ci *config.CIConfig) string {
-	return strings.Join(ci.Repos, "\x00") + "\x01" +
-		strings.Join(ci.ExcludeRepos, "\x00") + "\x02" +
-		fmt.Sprintf("%d", ci.ResolvedMaxRepos())
+func repoLookupKey(ci *config.CIConfig, kind, name, owner string) string {
+	return fmt.Sprintf("%s:%s:%d", kind, strings.ToLower(name), ci.InstallationIDForOwner(owner))
+}
+
+// lookup keeps the last successful value available while a refresh fails.
+// The caller holds mu. Token resolution happens only when a lookup is due.
+func (r *RepoResolver) lookup(ctx context.Context, key, owner string, tokenFn githubTokenFn, fetch func(context.Context, string) ([]string, error)) ([]string, error) {
+	unit := r.units[key]
+	if unit != nil {
+		ttl := repoRefreshInterval
+		if unit.err != nil {
+			ttl = (review.RetrySchedule{Base: repoRetryInterval, Cap: repoRefreshInterval}).NextDelay(unit.failures)
+		}
+		if time.Since(unit.at) < ttl {
+			return unit.val, unit.err
+		}
+	}
+	var token string
+	if tokenFn != nil {
+		token = tokenFn(owner)
+	}
+	val, err := fetch(ctx, token)
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	if unit == nil {
+		unit = &lookupUnit{}
+		r.units[key] = unit
+	}
+	unit.at, unit.err = time.Now(), err
+	if err == nil {
+		unit.val, unit.ok, unit.failures = val, true, 0
+	} else {
+		unit.failures++
+	}
+	if !unit.ok {
+		return nil, err
+	}
+	return unit.val, err
 }
 
 // expand separates exact entries from wildcard patterns, calls the
@@ -117,8 +143,7 @@ func (r *RepoResolver) buildCacheKey(ci *config.CIConfig) string {
 // exclusions, deduplicates, and enforces max_repos.
 //
 // The returned degraded flag is true when one or more GitHub API calls failed
-// during exact-repo canonicalization or wildcard expansion. The caller should
-// avoid caching degraded results so that the next poll retries the failed calls.
+// during exact-repo canonicalization or wildcard expansion, including cached errors.
 func (r *RepoResolver) expand(ctx context.Context, ci *config.CIConfig, tokenFn githubTokenFn) ([]string, bool, error) {
 	var exact []string
 	var degraded bool
@@ -149,15 +174,29 @@ func (r *RepoResolver) expand(ctx context.Context, ci *config.CIConfig, tokenFn 
 		if repoMatchesExclusionPatterns(e, exclusionPatterns) {
 			continue
 		}
-		canonical, canonicalErr := r.canonicalizeExactRepo(ctx, e, tokenFn)
+		owner, _, _ := strings.Cut(e, "/")
+		exactTokenFn := tokenFn
+		if r.canonicalRepoFn == nil {
+			exactTokenFn = nil
+		}
+		values, canonicalErr := r.lookup(ctx, repoLookupKey(ci, "exact", e, owner), owner, exactTokenFn, func(ctx context.Context, token string) ([]string, error) {
+			canonical, err := r.canonicalizeExactRepo(ctx, e, token)
+			if err != nil {
+				return nil, err
+			}
+			return []string{canonical}, nil
+		})
+		canonical := e
+		if len(values) > 0 {
+			canonical = values[0]
+		}
 		if canonicalErr != nil {
 			if ctx.Err() != nil {
 				return nil, false, ctx.Err()
 			}
-			log.Printf("CI repo resolver: failed to canonicalize repo %q: %v (using configured name)", e, canonicalErr)
+			log.Printf("CI repo resolver: failed to canonicalize repo %q: %v (using last known or configured name)", e, canonicalErr)
 			degraded = true
 			discoveryErrors = append(discoveryErrors, canonicalErr)
-			canonical = e
 		}
 		lower := strings.ToLower(canonical)
 		if !seen[lower] {
@@ -173,20 +212,16 @@ func (r *RepoResolver) expand(ctx context.Context, ci *config.CIConfig, tokenFn 
 			return nil, false, ctx.Err()
 		}
 
-		var token string
-		if tokenFn != nil {
-			token = tokenFn(owner)
-		}
-
-		repos, err := r.callListRepos(ctx, owner, token)
+		repos, err := r.lookup(ctx, repoLookupKey(ci, "owner", owner, owner), owner, tokenFn, func(ctx context.Context, token string) ([]string, error) {
+			return r.callListRepos(ctx, owner, token)
+		})
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, false, ctx.Err()
 			}
-			log.Printf("CI repo resolver: failed to list repos for %q: %v (skipping wildcards for this owner)", owner, err)
+			log.Printf("CI repo resolver: failed to list repos for %q: %v (using last known repos)", owner, err)
 			degraded = true
 			discoveryErrors = append(discoveryErrors, err)
-			continue
 		}
 
 		for _, repo := range repos {
@@ -252,17 +287,9 @@ func (r *RepoResolver) callListRepos(ctx context.Context, owner, token string) (
 	return ghListRepos(ctx, owner, token, r.baseURL)
 }
 
-func (r *RepoResolver) canonicalizeExactRepo(ctx context.Context, ghRepo string, tokenFn githubTokenFn) (string, error) {
+func (r *RepoResolver) canonicalizeExactRepo(ctx context.Context, ghRepo, token string) (string, error) {
 	if r.canonicalRepoFn == nil {
 		return ghRepo, nil
-	}
-	owner, _, ok := strings.Cut(ghRepo, "/")
-	if !ok || owner == "" {
-		return ghRepo, nil
-	}
-	var token string
-	if tokenFn != nil {
-		token = tokenFn(owner)
 	}
 	canonical, err := r.canonicalRepoFn(ctx, ghRepo, token)
 	if err != nil {

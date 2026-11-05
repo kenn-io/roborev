@@ -508,6 +508,13 @@ Repos remain eligible when the API omits the pull-request setting. If you enable
 pull requests later, the next discovery refresh includes the repo again.
 Explicit (non-wildcard) repos always take priority when `max_repos` is reached.
 
+Failed repository lookups retry on the first poll after 15 minutes, then after
+30 minutes, and then hourly. Other lookups keep their hourly cache, and the
+poller keeps polling known repositories while discovery is incomplete. Config
+edits, including GitHub App installations, take effect on the next poll. Token
+or access fixes take effect on the first poll after the failed lookup's retry
+window.
+
 Exclusion patterns in `exclude_repos` apply to both exact entries and
 wildcard-expanded entries.
 

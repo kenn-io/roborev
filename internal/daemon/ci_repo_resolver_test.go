@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -304,54 +305,55 @@ func TestRepoResolver_CacheHit(t *testing.T) {
 }
 
 func TestRepoResolver_CacheInvalidationOnConfigChange(t *testing.T) {
-	var calls int
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ string) ([]string, error) {
-			calls++
-			return []string{"acme/api"}, nil
-		},
-	}
-
-	ctx := t.Context()
-
-	_, err := r.Resolve(ctx, &config.CIConfig{Repos: []string{"acme/*"}}, nil)
+	calls := make(map[string]int)
+	r := &RepoResolver{canonicalRepoFn: func(_ context.Context, repo, _ string) (string, error) {
+		calls[repo]++
+		return repo, nil
+	}}
+	ci := &config.CIConfig{Repos: []string{"acme/api", "acme/old"}}
+	repos, err := r.Resolve(t.Context(), ci, nil)
 	require.NoError(t, err)
-	require.Equal(t, 1, calls)
-
-	_, err = r.Resolve(ctx, &config.CIConfig{Repos: []string{"acme/*", "other/repo"}}, nil)
+	assert.Equal(t, []string{"acme/api", "acme/old"}, repos)
+	ci.Repos = []string{"acme/api", "acme/new"}
+	repos, err = r.Resolve(t.Context(), ci, nil)
 	require.NoError(t, err)
-	assert.Equal(t, 2, calls, "expected cache miss on config change")
+	assert.Equal(t, []string{"acme/api", "acme/new"}, repos)
+	assert.Equal(t, map[string]int{"acme/api": 1, "acme/old": 1, "acme/new": 1}, calls)
+	ci.Repos = []string{"acme/old"}
+	repos, err = r.Resolve(t.Context(), ci, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"acme/old"}, repos)
+	assert.Equal(t, 2, calls["acme/old"], "removed entries lose their cached result")
 }
 
 func TestRepoResolver_CacheInvalidationOnTTLExpiry(t *testing.T) {
-	var calls int
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ string) ([]string, error) {
-			calls++
-			return []string{"acme/api"}, nil
-		},
-	}
+	synctest.Test(t, func(t *testing.T) {
+		var calls int
+		r := &RepoResolver{
+			listReposFn: func(_ context.Context, _ string, _ string) ([]string, error) {
+				calls++
+				return []string{"acme/api"}, nil
+			},
+		}
 
-	ci := &config.CIConfig{
-		Repos: []string{"acme/*"},
-	}
+		ci := &config.CIConfig{
+			Repos: []string{"acme/*"},
+		}
 
-	ctx := t.Context()
-	_, err := r.Resolve(ctx, ci, nil)
-	require.NoError(t, err)
+		ctx := t.Context()
+		_, err := r.Resolve(ctx, ci, nil)
+		require.NoError(t, err)
 
-	_, err = r.Resolve(ctx, ci, nil)
-	require.NoError(t, err)
-	assert.Equal(t, 1, calls, "expected cache hit within TTL floor")
+		_, err = r.Resolve(ctx, ci, nil)
+		require.NoError(t, err)
+		assert.Equal(t, 1, calls, "expected cache hit within TTL floor")
 
-	// Force cache miss by backdating cachedAt past the TTL
-	r.mu.Lock()
-	r.cachedAt = time.Now().Add(-2 * time.Hour)
-	r.mu.Unlock()
+		time.Sleep(time.Hour)
 
-	_, err = r.Resolve(ctx, ci, nil)
-	require.NoError(t, err)
-	assert.Equal(t, 2, calls, "expected cache miss after TTL expiry")
+		_, err = r.Resolve(ctx, ci, nil)
+		require.NoError(t, err)
+		assert.Equal(t, 2, calls, "expected cache miss after TTL expiry")
+	})
 }
 
 func TestRepoResolver_CacheInvalidationOnMaxReposChange(t *testing.T) {
@@ -376,35 +378,97 @@ func TestRepoResolver_CacheInvalidationOnMaxReposChange(t *testing.T) {
 
 	repos2, err := r.Resolve(ctx, &config.CIConfig{Repos: []string{"acme/*"}, MaxRepos: 10}, nil)
 	require.NoError(t, err)
-	assert.Equal(t, 2, calls, "expected cache miss on max_repos change")
+	assert.Equal(t, 1, calls, "max_repos reapplies to cached discovery")
 	assert.Len(t, repos2, 10, "expected 10 repos after max_repos increase")
 }
 
 func TestRepoResolver_APIFailureFallback(t *testing.T) {
-	var calls int
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		calls := make(map[string]int)
+		tokens := 0
+		failing := true
+		r := &RepoResolver{
+			canonicalRepoFn: func(_ context.Context, repo, token string) (string, error) {
+				assert.Equal("synthetic-token", token)
+				calls[repo]++
+				if repo == "other/missing" && failing {
+					return "", fmt.Errorf("repository unavailable")
+				}
+				if repo == "other/missing" {
+					return "other/recovered", nil
+				}
+				return repo, nil
+			},
+			listReposFn: func(_ context.Context, owner, token string) ([]string, error) {
+				assert.Equal("acme", owner)
+				assert.Equal("synthetic-token", token)
+				calls[owner]++
+				return []string{"acme/web"}, nil
+			},
+		}
+		tokenFn := func(string) string { tokens++; return "synthetic-token" }
+		ci := &config.CIConfig{Repos: []string{"acme/api", "acme/docs", "acme/tools", "other/missing", "acme/*"}}
+		want := []string{"acme/api", "acme/docs", "acme/tools", "acme/web", "other/missing"}
+		repos, err := r.Resolve(t.Context(), ci, tokenFn)
+		require.ErrorIs(t, err, errRepoDiscoveryIncomplete)
+		assert.Equal(want, repos)
+		assert.Equal(5, tokens)
+		start := time.Now()
+		for _, step := range []struct {
+			minute       int
+			failedCalls  int
+			healthyCalls int
+		}{
+			{5, 1, 1}, {14, 1, 1}, {15, 2, 1},
+			{20, 2, 1}, {44, 2, 1}, {45, 3, 1},
+			{59, 3, 1}, {60, 3, 2}, {104, 3, 2}, {105, 4, 2},
+			{119, 4, 2}, {120, 4, 3}, {164, 4, 3}, {165, 5, 3},
+		} {
+			time.Sleep(time.Duration(step.minute)*time.Minute - time.Since(start))
+			repos, err = r.Resolve(t.Context(), ci, tokenFn)
+			require.ErrorIs(t, err, errRepoDiscoveryIncomplete)
+			assert.Equal(want, repos)
+			assert.Equal(map[string]int{"acme/api": step.healthyCalls, "acme/docs": step.healthyCalls, "acme/tools": step.healthyCalls, "other/missing": step.failedCalls, "acme": step.healthyCalls}, calls)
+			assert.Equal(step.healthyCalls*4+step.failedCalls, tokens, "token resolution only accompanies discovery calls")
+		}
+		failing = false
+		time.Sleep(time.Hour)
+		repos, err = r.Resolve(t.Context(), ci, tokenFn)
+		require.NoError(t, err)
+		assert.Equal([]string{"acme/api", "acme/docs", "acme/tools", "acme/web", "other/recovered"}, repos)
+		failing = true
+		time.Sleep(time.Hour)
+		repos, err = r.Resolve(t.Context(), ci, tokenFn)
+		require.ErrorIs(t, err, errRepoDiscoveryIncomplete)
+		assert.Equal([]string{"acme/api", "acme/docs", "acme/tools", "acme/web", "other/recovered"}, repos)
+		before := calls["other/missing"]
+		time.Sleep(15 * time.Minute)
+		_, err = r.Resolve(t.Context(), ci, tokenFn)
+		require.ErrorIs(t, err, errRepoDiscoveryIncomplete)
+		assert.Equal(before+1, calls["other/missing"], "recovery resets backoff")
+	})
+}
+
+func TestRepoResolver_InstallationChange(t *testing.T) {
+	calls := make(map[string]int)
 	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ string) ([]string, error) {
-			calls++
-			return nil, fmt.Errorf("network error")
+		canonicalRepoFn: func(_ context.Context, repo, _ string) (string, error) {
+			calls[repo]++
+			return "", fmt.Errorf("repository unavailable")
+		},
+		listReposFn: func(_ context.Context, owner, _ string) ([]string, error) {
+			calls[owner]++
+			return nil, fmt.Errorf("owner unavailable")
 		},
 	}
-
-	ci := &config.CIConfig{
-		Repos: []string{"acme/*", "acme/explicit-repo"},
-	}
-
-	ctx := t.Context()
-
-	repos, err := r.Resolve(ctx, ci, nil)
+	ci := &config.CIConfig{Repos: []string{"acme/api", "acme/*", "other/*"}}
+	_, err := r.Resolve(t.Context(), ci, nil)
 	require.ErrorIs(t, err, errRepoDiscoveryIncomplete)
-	assert.Equal(t, []string{"acme/explicit-repo"}, repos, "expected only explicit repo on API failure")
-	require.Equal(t, 1, calls)
-
-	// Degraded results must NOT be cached — next call should retry the API
-	repos2, err := r.Resolve(ctx, ci, nil)
+	ci.GitHubAppInstallations = map[string]int64{"acme": 42}
+	_, err = r.Resolve(t.Context(), ci, nil)
 	require.ErrorIs(t, err, errRepoDiscoveryIncomplete)
-	assert.Equal(t, 2, calls, "expected degraded result to NOT be cached")
-	assert.Equal(t, []string{"acme/explicit-repo"}, repos2)
+	assert.Equal(t, map[string]int{"acme/api": 2, "acme": 2, "other": 1}, calls)
 }
 
 func TestRepoResolver_EmptyResultsCached(t *testing.T) {
@@ -435,35 +499,35 @@ func TestRepoResolver_EmptyResultsCached(t *testing.T) {
 }
 
 func TestRepoResolver_DegradedFallsBackToStaleCache(t *testing.T) {
-	callCount := 0
-	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ string) ([]string, error) {
-			callCount++
-			if callCount == 1 {
+	synctest.Test(t, func(t *testing.T) {
+		calls := make(map[string]int)
+		r := &RepoResolver{listReposFn: func(_ context.Context, owner, _ string) ([]string, error) {
+			calls[owner]++
+			if owner == "acme" {
+				if calls[owner] > 1 {
+					return nil, fmt.Errorf("owner unavailable")
+				}
 				return []string{"acme/api", "acme/web"}, nil
 			}
-			return nil, fmt.Errorf("transient API error")
-		},
-	}
-
-	ci := &config.CIConfig{
-		Repos: []string{"acme/*"},
-	}
-	ctx := t.Context()
-
-	repos1, err := r.Resolve(ctx, ci, nil)
-	require.NoError(t, err)
-	require.Len(t, repos1, 2)
-
-	// Force TTL expiry so next call re-expands
-	r.mu.Lock()
-	r.cachedAt = time.Now().Add(-2 * time.Hour)
-	r.mu.Unlock()
-
-	// Second call fails API but should return stale cache
-	repos2, err := r.Resolve(ctx, ci, nil)
-	require.ErrorIs(t, err, errRepoDiscoveryIncomplete)
-	assert.Len(t, repos2, 2, "expected stale cache (2 repos) on degraded")
+			if calls[owner] == 1 {
+				return []string{"other/old"}, nil
+			}
+			return []string{"other/new"}, nil
+		}}
+		ci := &config.CIConfig{Repos: []string{"acme/*", "other/*"}}
+		repos, err := r.Resolve(t.Context(), ci, nil)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"acme/api", "acme/web", "other/old"}, repos)
+		time.Sleep(time.Hour)
+		repos, err = r.Resolve(t.Context(), ci, nil)
+		require.ErrorIs(t, err, errRepoDiscoveryIncomplete)
+		assert.Equal(t, []string{"acme/api", "acme/web", "other/new"}, repos)
+		time.Sleep(15 * time.Minute)
+		repos, err = r.Resolve(t.Context(), ci, nil)
+		require.ErrorIs(t, err, errRepoDiscoveryIncomplete)
+		assert.Equal(t, []string{"acme/api", "acme/web", "other/new"}, repos)
+		assert.Equal(t, map[string]int{"acme": 3, "other": 2}, calls)
+	})
 }
 
 func TestRepoResolver_CancelledContextReturnsError(t *testing.T) {
