@@ -1,12 +1,96 @@
 package storage
 
 import (
+	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestUserWritesQueueBehindPullTransaction(t *testing.T) {
+	t.Parallel()
+	h := newSyncTestHelper(t)
+	job := h.createCompletedJob("user-write")
+	pulled := PulledJob{
+		UUID: testUUID("continuous-pull"), GitRef: "pulled-ref", Agent: "test",
+		JobType: JobTypeReview, Status: string(JobStatusDone),
+		EnqueuedAt: time.Now().UTC(), SourceMachineID: testUUID("peer"),
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	var commits atomic.Int64
+	started := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		for ctx.Err() == nil {
+			pulled.UpdatedAt = time.Now().UTC()
+			if err := h.db.UpsertPulledJob(pulled, h.repo.ID, nil); err != nil {
+				done <- err
+				return
+			}
+			if commits.Add(1) == 1 {
+				close(started)
+			}
+		}
+		done <- nil
+	}()
+	defer func() {
+		cancel()
+		require.NoError(t, <-done)
+	}()
+	select {
+	case <-started:
+	case err := <-done:
+		// Leave the result for cleanup, including if the pull fails at startup.
+		done <- err
+		require.NoError(t, err)
+	}
+	for i := range 20 {
+		before := commits.Load()
+		switch i % 3 {
+		case 0:
+			_, err := h.db.EnqueueJob(EnqueueOpts{RepoID: h.repo.ID, GitRef: "queued", Agent: "test"})
+			require.NoError(t, err)
+		case 1:
+			_, err := h.db.AddCommentToJob(job.ID, "user", "comment during pull")
+			require.NoError(t, err)
+		case 2:
+			require.NoError(t, h.db.MarkReviewClosedByJobID(job.ID, true))
+		}
+		// Each call queues GetMachineID and its own write. Allow the pull
+		// completing before either write and after the final release.
+		require.LessOrEqual(t, commits.Load()-before, int64(4), "user write %d waited behind the pull", i)
+	}
+}
+
+func TestReadTransactionDoesNotHoldWriters(t *testing.T) {
+	t.Parallel()
+	h := newSyncTestHelper(t)
+	job := h.createCompletedJob("read-transaction")
+	tx, err := h.db.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	var count int
+	require.NoError(t, tx.QueryRowContext(t.Context(), `SELECT count(*) FROM reviews`).Scan(&count))
+	done := make(chan error, 1)
+	go func() {
+		_, err := h.db.AddCommentToJob(job.ID, "user", "comment beside reader")
+		done <- err
+	}()
+	// Wall-clock wait: the writer uses a separate real SQLite connection.
+	timedOut := false
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second): //nolint:kennlint // deadlinetest: real SQLite reader and writer
+		timedOut = true
+		require.NoError(t, tx.Rollback())
+		require.NoError(t, <-done)
+	}
+	assert.False(t, timedOut, "read transaction blocked the writer")
+}
 
 func TestPulledWritesWaitForWriter(t *testing.T) {
 	t.Parallel()
