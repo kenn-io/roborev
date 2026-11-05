@@ -245,7 +245,7 @@ esac
 		{name: "malformed", script: "#!/bin/sh\nprintf 'invalid json'\n", message: "mise discovery failed"},
 		{name: "inventory failure", script: "#!/bin/sh\nexit 3\n", message: "exit status 3"},
 		{name: "bin paths failure", script: fmt.Sprintf("#!/bin/sh\n[ \"$1\" = ls ] && { printf '%%s' '%s'; exit 0; }; exit 4\n", inventory), message: "exit status 4"},
-		{name: "runs from root and skips unavailable paths", script: mixedScript, message: missing, roots: []string{tools}, bins: []string{filepath.Join(tools, "bin")}},
+		{name: "runs from root and skips unavailable paths", script: mixedScript, message: missing, roots: []string{tools, shims}, bins: []string{filepath.Join(tools, "bin")}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			commands := t.TempDir()

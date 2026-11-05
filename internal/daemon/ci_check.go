@@ -165,9 +165,6 @@ func (wp *WorkerPool) runCICheck(ctx context.Context, job *storage.ReviewJob, cf
 				if err := os.Mkdir(rewriteJob.WorkDir, 0o700); err != nil {
 					return nil, err
 				}
-				if err := os.Mkdir(filepath.Join(rewriteJob.WorkDir, "mise-system"), 0o700); err != nil {
-					return nil, err
-				}
 				rewriteJob.ReadPaths = append(slices.Clone(run.Job.ReadPaths), repo)
 				rewriteAgent = a.WithSandbox(&agent.CodexSandbox{Job: rewriteJob, Upstream: wp.ciCheckUpstream})
 			}
@@ -262,7 +259,7 @@ func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob
 		env = append(env, "GOMODCACHE="+goPaths[1])
 	}
 	// nono protects HOME/.nono, so HOME sits outside its writable grant.
-	for _, dir := range []string{filepath.Join(root, "home"), filepath.Join(run.Job.WorkDir, "tmp"), filepath.Join(run.Job.WorkDir, "gocache"), filepath.Join(run.Job.WorkDir, "mise-system")} {
+	for _, dir := range []string{filepath.Join(root, "home"), filepath.Join(run.Job.WorkDir, "tmp"), filepath.Join(run.Job.WorkDir, "gocache")} {
 		if err = os.Mkdir(dir, 0o700); err != nil {
 			return
 		}
@@ -383,6 +380,12 @@ func ciCheckMisePaths(ctx context.Context, out io.Writer) (roots, bins []string,
 				continue
 			}
 			roots = append(roots, root)
+			parent, err := sandbox.ResolvePath(filepath.Dir(version.InstallPath))
+			if err != nil {
+				fmt.Fprintf(out, "CI checker mise discovery failed: %v\n", err)
+				continue
+			}
+			roots = append(roots, parent)
 		}
 	}
 	for line := range strings.SplitSeq(strings.TrimSpace(string(results[1])), "\n") {

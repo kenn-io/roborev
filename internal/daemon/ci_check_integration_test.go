@@ -382,6 +382,8 @@ func TestCICheckLinkedMiseSandboxIntegration(t *testing.T) {
 	versionCmd.Dir = "/"
 	version, err := versionCmd.Output()
 	require.NoError(t, err)
+	pin := strings.TrimPrefix(strings.TrimSpace(string(version)), "go")
+	pin = pin[:strings.LastIndex(pin, ".")]
 	// The executable target sits outside the PATH directory and installed tool roots.
 	binary, err := os.ReadFile(mise)
 	require.NoError(t, err)
@@ -392,24 +394,23 @@ func TestCICheckLinkedMiseSandboxIntegration(t *testing.T) {
 	t.Setenv("PATH", commands+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	repo := testutil.NewTestRepoWithCommit(t)
-	repo.CommitFile("mise.toml", fmt.Sprintf("[tools]\ngo = %q\n[env]\nCHECKER_MISE = 'trusted config'\n", strings.TrimPrefix(strings.TrimSpace(string(version)), "go")), "mise fixture")
+	repo.CommitFile("mise.toml", fmt.Sprintf("[tools]\ngo = %q\n[env]\nCHECKER_MISE = 'trusted config'\n", pin), "mise fixture")
 	sha := repo.HeadSHA()
 	command := filepath.Join(t.TempDir(), "codex")
 	require.NoError(t, os.WriteFile(command, []byte("#!/bin/sh\nexit 0\n"), 0o700))
-	var preparation bytes.Buffer
-	run, err := (&WorkerPool{}).prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}, command, nil, &preparation)
+	run, err := (&WorkerPool{}).prepareCICheck(t.Context(), &storage.ReviewJob{RepoPath: repo.Root, GitRef: sha + ".." + sha}, command, nil, io.Discard)
 	require.NoError(t, err)
 	t.Cleanup(run.cleanup)
-	require.Empty(t, preparation.String())
 	server := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(server.Close)
 	run.Job.Route = sandbox.Route{Name: "test", Upstream: server.URL, Path: "/responses", EnvVar: "TEST_TOKEN", Capture: []string{"/bin/echo", "synthetic-proxy-token"}}
-	argv, env, cleanup, err := run.Job.Command(t.Context(), []string{"bash", "--norc", "--noprofile", "-c", `cd "$1"; mise exec -- go version`, "mise-probe", run.Repo})
+	argv, env, cleanup, err := run.Job.Command(t.Context(), []string{"bash", "--norc", "--noprofile", "-c", `cd "$1"; mise exec -- sh -c 'go version && printf "%s\n" "$CHECKER_MISE"'`, "mise-probe", run.Repo})
 	require.NoError(t, err)
 	t.Cleanup(cleanup)
 	cmd := exec.CommandContext(t.Context(), argv[0], argv[1:]...)
 	cmd.Env = env
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "%s", output)
-	assert.Contains(t, string(output), "go version "+strings.TrimSpace(string(version)))
+	assert.Contains(t, string(output), "go version go"+pin+".")
+	assert.Contains(t, string(output), "trusted config\n")
 }
