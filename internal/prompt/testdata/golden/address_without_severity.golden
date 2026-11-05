@@ -7,6 +7,15 @@ Make the minimal changes necessary to address these findings:
 - Don't add unnecessary abstractions or comments
 - Don't make cosmetic changes
 
+For each finding, establish the triggering condition and incorrect behavior
+against the current code or reviewed material before choosing a fix. Use the
+expected behavior and any stated preservation constraints to guide the change.
+For example, rejecting another tenant's invoice must still allow the caller's
+own invoices. For documentation or improvements, use the stated desired outcome
+without inventing a runtime defect. If details are uncertain, inspect the
+relevant context and report what remains unknown. Treat reproduction and test
+suggestions as proposed until you actually run them.
+
 After making changes:
 1. Run the build command to verify the code compiles
 2. Run tests to verify nothing is broken

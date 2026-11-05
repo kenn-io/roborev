@@ -31,21 +31,14 @@ func FormatPlans(plans []storage.Response) string {
 	return body.String()
 }
 
-// WithFixPlan adds strategy before the findings, leaving unplanned prompts intact.
+// WithFixPlan prepends strategy without splitting the implementation prompt.
+// Findings and prior context may themselves quote any Markdown heading, so the
+// flat prompt cannot safely be searched for an insertion point.
 func WithFixPlan(implementationPrompt, plan string) string {
 	if plan == "" {
 		return implementationPrompt
 	}
-	section := "## Plan\n\n" + plan + "\n\n"
-	if index := strings.LastIndex(implementationPrompt, "## Review Findings to Address"); index >= 0 {
-		return implementationPrompt[:index] + section + implementationPrompt[index:]
-	}
-	for _, heading := range []string{"## Analysis Findings", "## Review Findings", "## Review 1"} {
-		if index := strings.Index(implementationPrompt, heading); index >= 0 {
-			return implementationPrompt[:index] + section + implementationPrompt[index:]
-		}
-	}
-	return section + implementationPrompt
+	return "## Plan\n\n" + plan + "\n\n" + implementationPrompt
 }
 
 // BuildFixPlanPrompt assembles read-only analysis context shared by fix flows.

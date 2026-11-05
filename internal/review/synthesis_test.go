@@ -309,6 +309,10 @@ func TestBuildSynthesisPrompt_NoInstructionsIsMergeOnly(t *testing.T) {
 		"- Deduplicate findings reported by multiple reviewers and cite every source\n"+
 		"- Order findings by severity (Critical > High > Medium > Low)\n"+
 		"- Keep each finding's kind and topic; when reviewers disagree, use the value most of them gave\n"+
+		"- Preserve the known trigger, actual wrong behavior, expected outcome, and legitimate behavior to preserve in each finding's problem and fix\n"+
+		"- When merging duplicates, keep all distinct behavior and preservation constraints; sharing a location alone does not make two findings duplicates\n"+
+		"- Keep uncertainty and the distinction between proposed checks and observed results; do not invent evidence, reproduction steps, or test results\n"+
+		"- For document, improvement, or custom-rubric findings, preserve the problem and desired outcome in that material without inventing runtime behavior\n"+
 		"- Set confidence to the highest confidence any source gave, or 0.5 when the sources give none\n"+
 		"- Keep the file, start_line, and end_line of the findings you combine; use null when there is none\n"+
 		"- When an input finding has a location but no file, name that location in the problem\n"+
