@@ -69,6 +69,11 @@ case "$*" in
 esac
 `, python, wheels, python)
 	require.NoError(t, os.WriteFile(filepath.Join(tools, "python3"), []byte(wrapper), 0o700))
+	if mise, err := exec.LookPath("mise"); err == nil {
+		// The controlled download tool must also lead mise's selected runtime paths.
+		wrapper := fmt.Sprintf("#!/bin/sh\n[ \"$1\" != bin-paths ] || printf '%%s\\n' '%s'\nexec '%s' \"$@\"\n", tools, mise)
+		require.NoError(t, os.WriteFile(filepath.Join(tools, "mise"), []byte(wrapper), 0o700))
+	}
 	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
 	marker := filepath.Join(t.TempDir(), "lifecycle-ran")
 	require.NoError(t, os.WriteFile(filepath.Join(wheels, "missing_source_only-1.0.tar.gz"), ciCheckPackageArchive(t, map[string]string{
@@ -424,11 +429,26 @@ func TestCICheckPackagesShrinkwrapPrecedenceIntegration(t *testing.T) {
 	t.Cleanup(server.Close)
 	repo := testutil.NewTestRepoWithCommit(t)
 	repo.CommitFile("package.json", `{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":"1.0.0"}}`, "dependency")
-	repo.CommitFile("npm-shrinkwrap.json", fmt.Sprintf(`{"name":"fixture","version":"1.0.0","lockfileVersion":3,"packages":{"":{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":"1.0.0"}},"node_modules/checker-fixture":{"version":"1.0.0","resolved":%q}}}`, server.URL+"/package.tgz"), "active lock")
+	repo.CommitFile("npm-shrinkwrap.json", fmt.Sprintf(`{"name":"fixture","version":"1.0.0","lockfileVersion":3,"packages":{"":{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":"1.0.0"}},"node_modules/checker-fixture":{"version":"1.0.0","resolved":%q},"node_modules/removed-fixture":{"version":"1.0.0","resolved":"file:/removed-fixture.tgz"}}}`, server.URL+"/package.tgz"), "active lock")
 	repo.CommitFile("package-lock.json", `{"packages":{"node_modules/obsolete":{"resolved":"file:/obsolete.tgz"}}}`, "obsolete lock")
+	npm, err := resolveCICheckCommand(t.Context(), "/", "npm")
+	require.NoError(t, err)
+	control := t.TempDir()
+	for _, name := range []string{"package.json", "npm-shrinkwrap.json", "package-lock.json"} {
+		data, err := os.ReadFile(filepath.Join(repo.Root, name))
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(control, name), data, 0o600))
+	}
+	install := exec.CommandContext(t.Context(), npm, "install", "--ignore-scripts", "--include=dev", "--no-audit", "--no-fund", "--allow-file=none", "--allow-directory=none", "--allow-git=none")
+	install.Dir, install.Env = control, ciCheckPackageEnv(control, os.Getenv("PATH"), nil)
+	output, err := install.CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	require.FileExists(t, filepath.Join(control, "node_modules", "checker-fixture", "index.js"))
+	require.NoDirExists(t, filepath.Join(control, "node_modules", "removed-fixture"))
 	var log bytes.Buffer
 	prepareCICheckPackages(t.Context(), repo.Root, t.TempDir(), os.Getenv("PATH"), nil, &log)
 	assert.FileExists(t, filepath.Join(repo.Root, "node_modules", "checker-fixture", "index.js"), log.String())
+	assert.NoDirExists(t, filepath.Join(repo.Root, "node_modules", "removed-fixture"))
 }
 
 func TestCICheckPackagesWorkspaceIntegration(t *testing.T) {

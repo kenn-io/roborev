@@ -303,11 +303,11 @@ func TestCICheckPackagesPreparation(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires shell fixtures")
 	}
-	_, shims := ciCheckMiseFixture(t)
+	selected, shims := ciCheckMiseFixture(t)
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	tools, _ := ciCheckPackagePythonFixture(t)
+	tools, pythonScript := ciCheckPackagePythonFixture(t)
 	require.NoError(t, os.WriteFile(filepath.Join(tools, "node"), []byte("#!/bin/sh\nprintf false\n"), 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(tools, "bun"), []byte(`#!/bin/sh
+	bunScript := `#!/bin/sh
 [ ! -e .npmrc ] || exit 7
 case "$*" in
 *--eval*) /bin/cat;;
@@ -315,7 +315,11 @@ case "$*" in
  /bin/mkdir -p node_modules/test-package
  printf 'package ready' > node_modules/test-package/index.js;;
 esac
-`), 0o700))
+`
+	require.NoError(t, os.WriteFile(filepath.Join(tools, "bun"), []byte(strings.ReplaceAll(bunScript, "package ready", "system package")), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(selected, "bin", "bun"), []byte(bunScript), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(selected, "bin", "python3"), []byte(pythonScript), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(selected, "bin", "node"), []byte("#!/bin/sh\nprintf false\n"), 0o700))
 	repo := testutil.NewTestRepoWithCommit(t)
 	repo.CommitFile("web/package.json", `{"dependencies":{"test-package":"1"}}`, "javascript dependencies")
 	repo.CommitFile("web/bun.lock", `{"packages":{"test-package":["test-package@1"]}}`, "bun lock")
@@ -429,15 +433,6 @@ func TestCICheckPackagesGitAuthentication(t *testing.T) {
 }
 
 func TestCICheckPackagesLockedSources(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		lock   map[string]any
-		source string
-	}{
-		{"link", map[string]any{"packages": map[string]any{"node_modules/pkg": map[string]any{"link": true, "resolved": "node_modules/fixture"}}}, "file:."},
-		{"resolved path", map[string]any{"packages": map[string]any{"node_modules/pkg": map[string]any{"resolved": "/synthetic/package.tgz"}}}, "/synthetic/package.tgz"},
-		{"nested version", map[string]any{"dependencies": map[string]any{"parent": map[string]any{"dependencies": map[string]any{"pkg": map[string]any{"version": "file:/synthetic/package.tgz"}}}}}, "file:/synthetic/package.tgz"},
-	} {
-		t.Run(tc.name, func(t *testing.T) { assert.Contains(t, ciCheckNpmSources(tc.lock), tc.source) })
-	}
+	lock := map[string]any{"packages": map[string]any{"node_modules/pkg": map[string]any{"link": true, "resolved": "node_modules/fixture"}}}
+	assert.Contains(t, ciCheckNpmSources(lock), "file:.")
 }

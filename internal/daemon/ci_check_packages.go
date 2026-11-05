@@ -105,19 +105,33 @@ func runCICheckInstaller(ctx context.Context, command, dir string, env, args []s
 	return true
 }
 
+// Installers use the job's selected tools rather than the daemon's PATH order.
+func resolveCICheckPackageTool(ctx context.Context, env []string, name string) (string, error) {
+	var path string
+	for _, entry := range env {
+		if value, ok := strings.CutPrefix(entry, "PATH="); ok {
+			path = value
+		}
+	}
+	for _, dir := range filepath.SplitList(path) {
+		if command, err := exec.LookPath(filepath.Join(dir, name)); err == nil && filepath.IsAbs(dir) {
+			return resolveCICheckCommand(ctx, "/", command)
+		}
+	}
+	return "", exec.ErrNotFound
+}
+
 func ciCheckNpmSources(lock map[string]any) []string {
 	var sources []string
 	for _, field := range []string{"packages", "dependencies"} {
 		packages, _ := lock[field].(map[string]any)
 		for _, value := range packages {
 			if pkg, ok := value.(map[string]any); ok {
-				// Link records install directories regardless of the resolved path's spelling.
+				// npm's source policies skip link records, which install directories
+				// regardless of the resolved path's spelling; it enforces every other source.
 				if pkg["link"] == true {
 					sources = append(sources, "file:.")
 				}
-				resolved, _ := pkg["resolved"].(string)
-				version, _ := pkg["version"].(string)
-				sources = append(sources, resolved, version)
 				sources = append(sources, ciCheckNpmSources(pkg)...)
 			}
 		}
@@ -127,11 +141,11 @@ func ciCheckNpmSources(lock map[string]any) []string {
 
 // Use npm's own source and workspace semantics from its trusted installation.
 func ciCheckLocalJSSources(ctx context.Context, stage string, sources, rejected []string, ancestors map[string]any, env []string) (bool, error) {
-	npm, err := resolveCICheckCommand(ctx, "/", "npm")
+	npm, err := resolveCICheckPackageTool(ctx, env, "npm")
 	if err != nil {
 		return false, err
 	}
-	node, err := resolveCICheckCommand(ctx, "/", "node")
+	node, err := resolveCICheckPackageTool(ctx, env, "node")
 	if err != nil {
 		return false, err
 	}
@@ -213,7 +227,7 @@ func prepareCICheckJS(ctx context.Context, project, stage string, metadata map[s
 		rejected = rejected[:2]
 		args = []string{"install", "--ignore-scripts", "--backend=copyfile", "--frozen-lockfile"}
 	}
-	command, err := resolveCICheckCommand(ctx, "/", manager)
+	command, err := resolveCICheckPackageTool(ctx, env, manager)
 	if err != nil {
 		fmt.Fprintf(out, "CI checker package tool unavailable: %s\n", manager)
 		return
@@ -290,7 +304,7 @@ func prepareCICheckPython(ctx context.Context, project, stage string, data []byt
 	if len(requirements) == 0 {
 		return false
 	}
-	python, err := resolveCICheckCommand(ctx, "/", "python3")
+	python, err := resolveCICheckPackageTool(ctx, env, "python3")
 	if err != nil {
 		fmt.Fprintln(out, "CI checker package tool unavailable: python3")
 		return false
