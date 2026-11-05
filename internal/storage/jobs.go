@@ -1961,6 +1961,14 @@ type listJobsOptions struct {
 	failedReviewsSince *time.Time
 }
 
+// selective reports whether a filter can seek jobs through its own index
+// instead of walking every closed job in enqueue order.
+func (o listJobsOptions) selective(statusFilter, repoFilter string) bool {
+	return statusFilter != "" || repoFilter != "" || len(o.repoPaths) > 0 || o.repoPrefix != "" || o.repoIDsSet ||
+		o.branch != "" || o.branchEmpty || o.gitRef != "" || o.panelRun != uuid.Nil() ||
+		o.openFailedReviews || o.failedReviewsSince != nil
+}
+
 // WithFailedReviewsSince selects completed review, range, dirty, or synthesis
 // jobs with a failed verdict, finished at or after since at millisecond resolution.
 // Done jobs without a finish time are excluded.
@@ -2304,10 +2312,9 @@ func listJobsQuery(statusFilter, repoFilter string, limit, offset int, options l
 	}
 	jobsTable := "review_jobs j"
 	if options.closed != nil && *options.closed && (options.sort.Column == "" || options.sort.Column == JobSortEnqueuedAt) &&
-		repoFilter == "" && len(options.repoPaths) == 0 && options.repoPrefix == "" && !options.repoIDsSet &&
-		options.branch == "" && !options.branchEmpty && !options.openFailedReviews {
-		// Unscoped pages skip open history. Scoped pages keep selective access
-		// through the existing repo, branch, or failed-review indexes.
+		!options.selective(statusFilter, repoFilter) {
+		// Unscoped pages skip open history. Selectively filtered pages keep
+		// their own repo, branch, ref, panel, status, or finished-time index.
 		jobsTable += " INDEXED BY idx_review_jobs_closed_position"
 	} else if options.openFailedReviews {
 		// Without statistics, SQLite otherwise scans the repo's job index.

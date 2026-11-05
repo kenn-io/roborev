@@ -47,6 +47,7 @@ var schemaMigrations = []schemaMigration{
 	{11, "queue list position indexes", migrateQueueListPositionIndexes},
 }
 
+// migrateQueueListPositionIndexes's triggers keep review_jobs.review_closed equal to the job's reviews.closed.
 func migrateQueueListPositionIndexes(ctx context.Context, db *DB) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
