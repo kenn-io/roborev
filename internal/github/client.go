@@ -148,9 +148,15 @@ func NewClient(token string, opts ...ClientOption) (*Client, error) {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: defaultHTTPTimeout}
 	}
+	next := httpClient.Transport
+	if next == nil {
+		next = http.DefaultTransport
+	}
+	transport := &limitTransport{next: next, key: cooldownKey{token: strings.TrimSpace(token)}}
 
 	apiOpts := []googlegithub.ClientOptionsFunc{
 		googlegithub.WithHTTPClient(httpClient),
+		googlegithub.WithTransport(transport),
 	}
 	if cfg.baseURL != nil {
 		base := cfg.baseURL.String()
@@ -164,6 +170,7 @@ func NewClient(token string, opts ...ClientOption) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	transport.key.base = api.BaseURL()
 	return &Client{api: api}, nil
 }
 

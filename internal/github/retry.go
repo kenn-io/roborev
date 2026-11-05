@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -16,6 +17,55 @@ import (
 	googlegithub "github.com/google/go-github/v93/github"
 	"golang.org/x/net/http2"
 )
+
+var errSecondaryCooldown = errors.New("rate limit cooldown")
+
+var secondaryCooldowns = struct {
+	sync.Mutex
+	until map[cooldownKey]time.Time
+}{until: make(map[cooldownKey]time.Time)}
+
+type cooldownKey struct{ base, token string }
+
+type limitTransport struct {
+	next http.RoundTripper
+	key  cooldownKey
+}
+
+func (t *limitTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	secondaryCooldowns.Lock()
+	until := secondaryCooldowns.until[t.key]
+	if time.Now().Before(until) {
+		secondaryCooldowns.Unlock()
+		return nil, errSecondaryCooldown
+	}
+	delete(secondaryCooldowns.until, t.key)
+	secondaryCooldowns.Unlock()
+
+	resp, err := t.next.RoundTrip(req)
+	if err == nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests) {
+		body := resp.Body
+		failure := googlegithub.CheckResponse(resp)
+		// CheckResponse replaces the body with a readable copy.
+		body.Close()
+		if _, ok := errors.AsType[*googlegithub.AbuseRateLimitError](failure); ok {
+			response := &googlegithub.Response{Response: resp}
+			delay, ok := readRetryAfter(nil, response)
+			if !ok {
+				// GitHub requires at least one minute without Retry-After.
+				// https://github.com/github/docs/blob/29d8e509cb8d1d94269e27f3a23d8fc364c14e82/content/rest/using-the-rest-api/best-practices-for-using-the-rest-api.md#handle-rate-limit-errors-appropriately
+				delay = time.Minute
+			}
+			until := time.Now().Add(delay)
+			secondaryCooldowns.Lock()
+			if until.After(secondaryCooldowns.until[t.key]) {
+				secondaryCooldowns.until[t.key] = until
+			}
+			secondaryCooldowns.Unlock()
+		}
+	}
+	return resp, err
+}
 
 // readFailure retains typed SDK errors for callers while keeping provider text,
 // URLs, and credentials out of daemon diagnostics.
@@ -95,7 +145,8 @@ func retryableRead(err error, resp *googlegithub.Response) bool {
 		return true
 	}
 	if _, ok := errors.AsType[*googlegithub.AbuseRateLimitError](err); ok {
-		return true
+		_, hasDelay := readRetryAfter(err, resp)
+		return hasDelay
 	}
 	if resp != nil {
 		switch resp.StatusCode {
@@ -109,6 +160,8 @@ func retryableRead(err error, resp *googlegithub.Response) bool {
 func readFailureDetail(err error, resp *googlegithub.Response) string {
 	var networkError net.Error
 	switch {
+	case errors.Is(err, errSecondaryCooldown):
+		return "rate limit cooldown"
 	case errors.Is(err, context.Canceled):
 		return "canceled"
 	case errors.Is(err, context.DeadlineExceeded):
@@ -151,9 +204,6 @@ func readRetryAfter(err error, resp *googlegithub.Response) (time.Duration, bool
 	}
 	if rate, ok := errors.AsType[*googlegithub.RateLimitError](err); ok {
 		return max(time.Until(rate.Rate.Reset.Time), 0), true
-	}
-	if rate, ok := errors.AsType[*googlegithub.AbuseRateLimitError](err); ok && rate.RetryAfter != nil {
-		return *rate.RetryAfter, true
 	}
 	return 0, false
 }
