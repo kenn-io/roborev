@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -96,19 +97,47 @@ func runCICheckInstaller(ctx context.Context, command, dir string, env, args []s
 	return true
 }
 
-var ciCheckLocalJS = regexp.MustCompile(`(?i)(file:|link:|workspace:|"\.?\.?/)`)
+var (
+	ciCheckLocalJS     = regexp.MustCompile(`(?i)^(file:|link:|workspace:|\.?\.?/|~/|[A-Z]:[\\/])`)
+	ciCheckLocalJSLock = regexp.MustCompile(`(?i)(file:|link:|workspace:|"link"\s*:\s*true)`)
+)
+
+func ciCheckLocalJSDependency(value any) bool {
+	switch value := value.(type) {
+	case string:
+		return ciCheckLocalJS.MatchString(value)
+	case map[string]any:
+		for _, dependency := range value {
+			if ciCheckLocalJSDependency(dependency) {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 func prepareCICheckJS(ctx context.Context, project, stage string, metadata map[string][]byte, env []string, out io.Writer) {
-	var manifest struct {
-		Workspaces jsontext.Value `json:"workspaces"`
-	}
+	var manifest map[string]jsontext.Value
 	if err := json.Unmarshal(metadata["package.json"], &manifest); err != nil {
 		fmt.Fprintf(out, "CI checker invalid package.json: %v\n", err)
 		return
 	}
-	if len(manifest.Workspaces) > 0 {
+	if len(manifest["workspaces"]) > 0 {
 		fmt.Fprintln(out, "CI checker skips JavaScript workspaces requiring local packages")
 		return
+	}
+	for _, field := range []string{"dependencies", "devDependencies", "optionalDependencies", "peerDependencies", "overrides", "resolutions"} {
+		if data := manifest[field]; data != nil {
+			var dependencies any
+			if err := json.Unmarshal(data, &dependencies); err != nil {
+				fmt.Fprintf(out, "CI checker invalid dependency declarations: %v\n", err)
+				return
+			}
+			if ciCheckLocalJSDependency(dependencies) {
+				fmt.Fprintln(out, "CI checker skips JavaScript local dependencies")
+				return
+			}
+		}
 	}
 	manager := "npm"
 	args := []string{"install", "--ignore-scripts", "--include=dev", "--no-audit", "--no-fund"}
@@ -120,7 +149,7 @@ func prepareCICheckJS(ctx context.Context, project, stage string, metadata map[s
 	}
 	for _, name := range []string{"package.json", "package-lock.json", "npm-shrinkwrap.json", "bun.lock"} {
 		if data := metadata[name]; data != nil {
-			if ciCheckLocalJS.Match(data) {
+			if name != "package.json" && ciCheckLocalJSLock.Match(data) {
 				fmt.Fprintln(out, "CI checker skips JavaScript local dependencies")
 				return
 			}
@@ -148,6 +177,12 @@ func prepareCICheckJS(ctx context.Context, project, stage string, metadata map[s
 var ciCheckRegistryRequirement = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*(\[[A-Za-z0-9_,. -]+\])?\s*([<>=!~(].*)?$`)
 
 func prepareCICheckPython(ctx context.Context, project, stage string, data []byte, env []string, out io.Writer) bool {
+	venv := filepath.Join(project, ".venv")
+	if _, err := os.Lstat(venv); !os.IsNotExist(err) {
+		fmt.Fprintln(out, "CI checker skips existing .venv")
+		return false
+	}
+
 	var manifest struct {
 		Project struct {
 			Dependencies         []string
@@ -160,11 +195,11 @@ func prepareCICheckPython(ctx context.Context, project, stage string, data []byt
 		return false
 	}
 	requirements := slices.Clone(manifest.Project.Dependencies)
-	for _, group := range manifest.Project.OptionalDependencies {
-		requirements = append(requirements, group...)
+	for _, name := range slices.Sorted(maps.Keys(manifest.Project.OptionalDependencies)) {
+		requirements = append(requirements, manifest.Project.OptionalDependencies[name]...)
 	}
-	for _, group := range manifest.DependencyGroups {
-		for _, item := range group {
+	for _, name := range slices.Sorted(maps.Keys(manifest.DependencyGroups)) {
+		for _, item := range manifest.DependencyGroups[name] {
 			if requirement, ok := item.(string); ok {
 				requirements = append(requirements, requirement)
 			}
@@ -185,16 +220,12 @@ func prepareCICheckPython(ctx context.Context, project, stage string, data []byt
 	wheels := filepath.Join(stage, "wheels")
 	var accepted []string
 	for _, requirement := range requirements {
-		if runCICheckInstaller(ctx, python, stage, env, []string{"-I", "-m", "pip", "--isolated", "download", "--only-binary=:all:", "--dest", wheels, requirement}, out) {
+		args := append([]string{"-I", "-m", "pip", "--isolated", "download", "--only-binary=:all:", "--dest", wheels}, accepted...)
+		if runCICheckInstaller(ctx, python, stage, env, append(args, requirement), out) {
 			accepted = append(accepted, requirement)
 		}
 	}
 	if len(accepted) == 0 {
-		return false
-	}
-	venv := filepath.Join(project, ".venv")
-	if _, err := os.Lstat(venv); !os.IsNotExist(err) {
-		fmt.Fprintln(out, "CI checker skips existing .venv")
 		return false
 	}
 	if !runCICheckInstaller(ctx, python, stage, env, []string{"-I", "-m", "venv", venv}, out) {
@@ -202,6 +233,6 @@ func prepareCICheckPython(ctx context.Context, project, stage string, data []byt
 	}
 	// This is the only host startup of the empty venv. Installed .pth files and
 	// sitecustomize must never run on the host after pip populates it.
-	args := append([]string{"-I", "-m", "pip", "--isolated", "install", "--only-binary=:all:", "--no-compile", "--find-links", wheels}, accepted...)
+	args := append([]string{"-I", "-m", "pip", "--isolated", "install", "--only-binary=:all:", "--no-index", "--no-compile", "--find-links", wheels}, accepted...)
 	return runCICheckInstaller(ctx, filepath.Join(venv, "bin", "python"), stage, env, args, out)
 }

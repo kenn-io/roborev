@@ -36,23 +36,25 @@ func TestCICheckPackagesSandboxIntegration(t *testing.T) {
 	python, err := resolveCICheckCommand(t.Context(), "/", "python3")
 	require.NoError(t, err)
 	wheels := t.TempDir()
-	wheel, err := os.Create(filepath.Join(wheels, "checker_fixture-1.0-py3-none-any.whl"))
-	require.NoError(t, err)
-	zw := zip.NewWriter(wheel)
-	for name, data := range map[string]string{
-		"checker_fixture.py":                     "value = 'python ready'\n",
-		"checker_fixture.pth":                    "import sys,pathlib; pathlib.Path(sys.prefix, 'pth-ran').write_text('started')\n",
-		"checker_fixture-1.0.dist-info/METADATA": "Metadata-Version: 2.1\nName: checker-fixture\nVersion: 1.0\n",
-		"checker_fixture-1.0.dist-info/WHEEL":    "Wheel-Version: 1.0\nGenerator: fixture\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
-		"checker_fixture-1.0.dist-info/RECORD":   "",
-	} {
-		w, err := zw.Create(name)
+	for _, version := range []string{"1.0", "2.0"} {
+		wheel, err := os.Create(filepath.Join(wheels, "checker_fixture-"+version+"-py3-none-any.whl"))
 		require.NoError(t, err)
-		_, err = io.WriteString(w, data)
-		require.NoError(t, err)
+		zw := zip.NewWriter(wheel)
+		for name, data := range map[string]string{
+			"checker_fixture.py":  fmt.Sprintf("value = 'python %s ready'\n", version),
+			"checker_fixture.pth": "import sys,pathlib; pathlib.Path(sys.prefix, 'pth-ran').write_text('started')\n",
+			"checker_fixture-" + version + ".dist-info/METADATA": "Metadata-Version: 2.1\nName: checker-fixture\nVersion: " + version + "\nProvides-Extra: test\n",
+			"checker_fixture-" + version + ".dist-info/WHEEL":    "Wheel-Version: 1.0\nGenerator: fixture\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+			"checker_fixture-" + version + ".dist-info/RECORD":   "",
+		} {
+			w, err := zw.Create(name)
+			require.NoError(t, err)
+			_, err = io.WriteString(w, data)
+			require.NoError(t, err)
+		}
+		require.NoError(t, zw.Close())
+		require.NoError(t, wheel.Close())
 	}
-	require.NoError(t, zw.Close())
-	require.NoError(t, wheel.Close())
 	tools := t.TempDir()
 	// The trusted tool fixture redirects registry downloads to our controlled wheel.
 	wrapper := fmt.Sprintf(`#!/bin/sh
@@ -79,10 +81,10 @@ esac
 	t.Cleanup(server.Close)
 	repo := testutil.NewTestRepoWithCommit(t)
 	repo.CommitFile("setup.py", fmt.Sprintf("from pathlib import Path\nPath(%q).write_text('build ran')\n", marker), "source build sentinel")
-	repo.CommitFile("pyproject.toml", fmt.Sprintf("[project]\ndependencies = ['checker-fixture==1.0', 'source-fixture @ file://%s']\n", repo.Root), "python dependencies")
+	repo.CommitFile("pyproject.toml", fmt.Sprintf("[project]\ndependencies = ['checker-fixture[test]>=1; python_version >= \"3\"', 'source-fixture @ file://%s', 'missing-source-only']\n[project.optional-dependencies]\na = ['checker-fixture==1.0']\nb = ['checker-fixture==2.0']\n", repo.Root), "python dependencies")
 	repo.CommitFile("project_module.py", "value = 'project ready'\n", "project import")
-	repo.CommitFile("web/package.json", `{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":"1.0.0"}}`, "javascript dependencies")
-	repo.CommitFile("web/package-lock.json", fmt.Sprintf(`{"name":"fixture","version":"1.0.0","lockfileVersion":3,"packages":{"":{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":"1.0.0"}},"node_modules/checker-fixture":{"version":"1.0.0","resolved":%q,"hasInstallScript":true}}}`, server.URL+"/package.tgz"), "javascript lock")
+	repo.CommitFile("web/package.json", `{"name":"fixture","version":"1.0.0","main":"./index.js","exports":"./index.js","dependencies":{"checker-fixture":"1.0.0"}}`, "javascript dependencies")
+	repo.CommitFile("web/package-lock.json", fmt.Sprintf(`{"name":"fixture","version":"1.0.0","lockfileVersion":3,"packages":{"":{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":"1.0.0"}},"node_modules/checker-fixture":{"version":"1.0.0","resolved":%q,"hasInstallScript":true,"bin":{"fixture-tool":"./index.js"}}}}`, server.URL+"/package.tgz"), "javascript lock")
 	sha := repo.HeadSHA()
 	command := filepath.Join(t.TempDir(), "codex")
 	require.NoError(t, os.WriteFile(command, []byte("#!/bin/sh\nexit 0\n"), 0o700))
@@ -107,7 +109,7 @@ node -e "console.log(require('./web/node_modules/checker-fixture'))"
 	cmd.Env = env
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "%s\n%s", output, log.String())
-	assert.Contains(t, string(output), "python ready\nproject ready\n")
+	assert.Contains(t, string(output), "python 1.0 ready\nproject ready\n")
 	assert.Contains(t, string(output), "javascript ready\n")
 	assert.FileExists(t, filepath.Join(run.Repo, ".venv", "pth-ran"))
 	assert.NoFileExists(t, marker)

@@ -855,17 +855,20 @@ Before starting the sandbox, the checker prepares committed JavaScript and
 Python package declarations, including nested projects such as `web/`.
 JavaScript uses installed npm or Bun, honors their supported lockfiles, includes
 development dependencies, and disables lifecycle scripts. Projects without a
-lockfile use `package.json`. JavaScript workspaces and local dependencies are
+supported npm or Bun lockfile use `package.json` through npm, including projects
+with other lockfile formats. JavaScript workspaces and local dependencies are
 skipped.
 
 Python uses installed `python3` with venv and pip. It reads static dependencies
 and optional dependencies from `[project]`, plus string entries in
 `[dependency-groups]` in `pyproject.toml`. It preserves version constraints and
 markers, downloads wheels only, and skips requirements whose dependencies need
-source builds. Requirements files, editable installs, direct URLs, and local
-packages are unsupported. These declarations do not apply Python lockfile pins.
-The root `.venv/bin` leads the sandbox's `PATH`; nested projects can use their
-own `.venv/bin/python`. An existing committed `.venv` is left alone.
+source builds or conflict with accepted requirements. Required dependencies come
+first, followed by optional groups and dependency groups in sorted name order.
+Requirements files, editable installs, direct URLs, and local packages are
+unsupported. These declarations do not apply Python lockfile pins. The root
+`.venv/bin` leads the sandbox's `PATH`; nested projects can use their own
+`.venv/bin/python`. An existing committed `.venv` is left alone.
 
 Installers run from private copies of dependency metadata, with private caches
 and without repository package-manager settings. Prepared packages live in the

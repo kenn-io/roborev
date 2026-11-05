@@ -291,7 +291,7 @@ case "$*" in
  ;;
 esac
 `
-	for _, tool := range []string{"npm", "python3"} {
+	for _, tool := range []string{"npm", "bun", "python3"} {
 		require.NoError(t, os.WriteFile(filepath.Join(tools, tool), []byte(script), 0o700))
 	}
 	// Mise still resolves the fixture Codex, while installers use selected tools.
@@ -300,6 +300,7 @@ esac
 	t.Setenv("NODE_OPTIONS", "--require=/untrusted/module")
 	repo := testutil.NewTestRepoWithCommit(t)
 	repo.CommitFile("web/package.json", `{"dependencies":{"test-package":"1"}}`, "javascript dependencies")
+	repo.CommitFile("web/bun.lock", `{"packages":{"test-package":["test-package@1", "", {"bin":{"tool":"./bin/tool.mjs"}}]}}`, "bun executable metadata")
 	repo.CommitFile("web/.npmrc", "onload-script=./untrusted.js", "repository settings")
 	repo.CommitFile("sitecustomize.py", "raise RuntimeError('untrusted')", "repository module")
 	repo.CommitFile("pyproject.toml", "[project]\ndependencies = ['test-package>=1', 'source-only', 'unsafe @ https://example.com/source.tar.gz']\n[project.optional-dependencies]\ntest = ['optional-fixture==2']\n[dependency-groups]\ndev = ['group-fixture; python_version >= \"3.10\"']\n", "python dependencies")
@@ -335,6 +336,9 @@ esac
 func TestCICheckPackagesSkipped(t *testing.T) {
 	for _, tc := range []struct{ name, manifest string }{
 		{"local", `{"dependencies":{"local":"file:../local"}}`},
+		{"relative", `{"devDependencies":{"local":"../local"}}`},
+		{"override", `{"overrides":{"pkg":{"nested":"link:../local"}}}`},
+		{"resolution", `{"resolutions":{"pkg/nested":"workspace:*"}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := testutil.NewTestRepoWithCommit(t)
@@ -345,6 +349,22 @@ func TestCICheckPackagesSkipped(t *testing.T) {
 			assert.Contains(t, log.String(), "skips")
 		})
 	}
+	t.Run("existing venv", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("requires shell fixtures")
+		}
+		repo := testutil.NewTestRepoWithCommit(t)
+		repo.CommitFile("pyproject.toml", "[project]\ndependencies = ['fixture']\n", "dependency")
+		repo.CommitFile(".venv/marker", "existing", "existing environment")
+		tools := t.TempDir()
+		marker := filepath.Join(tools, "python-ran")
+		require.NoError(t, os.WriteFile(filepath.Join(tools, "python3"), []byte(fmt.Sprintf("#!/bin/sh\nprintf 'ran' > '%s'\n", marker)), 0o700))
+		t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
+		var log bytes.Buffer
+		prepareCICheckPackages(t.Context(), repo.Root, t.TempDir(), os.Getenv("PATH"), nil, &log)
+		assert.Contains(t, log.String(), "skips existing .venv")
+		assert.NoFileExists(t, marker)
+	})
 	t.Run("unavailable", func(t *testing.T) {
 		if runtime.GOOS == "windows" {
 			t.Skip("requires symlinks")
