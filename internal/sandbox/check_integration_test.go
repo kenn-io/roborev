@@ -196,13 +196,18 @@ done < /proc/self/cgroup
 # Without CPU controller delegation, cpu.max is absent and this probe is skipped.
 if [ -f "$scope/cpu.max" ]; then
   check cpu-limit allow cat "$scope/cpu.max"
+else
+  echo "SKIP cpu-limit: CPU controller is not delegated"
 fi
 check memory-usage deny cat "$scope/memory.current"
-check parent-limit deny cat "${scope%/*}/memory.max"
+parent=$(dirname "$scope")
+check parent-limit-exists allow test -f "$parent/memory.max"
+check parent-limit deny cat "$parent/memory.max"
 cat "$scope/memory.max"
 exit "$failed"
 `
 	out := runInJob(t, job, "bash", "-c", script)
+	t.Log(out)
 	assert.Contains(t, out, "\n1073741824\n")
 }
 
