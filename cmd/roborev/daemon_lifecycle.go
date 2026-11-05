@@ -310,6 +310,8 @@ func ensureDaemon() (err error) {
 		hint := "start the local daemon with 'roborev daemon start', or run 'roborev doctor' to diagnose setup"
 		if serverAddr != "" {
 			hint = "check the --server address and that daemon's availability, or omit --server to use the local daemon"
+		} else if managed, ok := errors.AsType[*managedRecoveryError](err); ok {
+			hint = fmt.Sprintf("run %s %s, or run 'roborev doctor' to diagnose setup", serviceRestartCommand, managed.unit)
 		}
 		if exit, ok := errors.AsType[*exitError](err); ok && exit.hint != "" {
 			hint = exit.hint
@@ -367,21 +369,18 @@ func ensureDaemon() (err error) {
 		return nil
 	}
 
-	runtimes, err := listAllRuntimes()
+	runtimes, err := liveDaemonRuntimes()
 	if err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), daemonStartTimeout)
 	defer cancel()
 	for _, info := range runtimes {
-		if info.Stale() {
-			continue
-		}
 		owner, err := findDaemonService(ctx, info.PID)
 		if errors.Is(err, os.ErrNotExist) || err == nil && owner == nil {
 			continue
 		}
-		return recoverDaemon(info, discoveryErr, false)
+		return recoverDaemonWithSnapshot(info, errors.New("HTTP probe failed for live daemon process"), owner, err)
 	}
 
 	// Legacy pre-kit daemons are invisible to kit discovery because they do
@@ -392,6 +391,20 @@ func ensureDaemon() (err error) {
 
 	// Start daemon in background
 	return startDaemonForEnsure()
+}
+
+func liveDaemonRuntimes() ([]*daemon.RuntimeInfo, error) {
+	runtimes, err := listAllRuntimes()
+	if err != nil {
+		return nil, err
+	}
+	var live []*daemon.RuntimeInfo
+	for _, info := range runtimes {
+		if !info.Stale() {
+			live = append(live, info)
+		}
+	}
+	return live, nil
 }
 
 func startDaemon() error {

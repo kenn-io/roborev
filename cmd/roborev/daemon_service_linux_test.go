@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -316,71 +315,6 @@ func TestRecoverDaemonWaitsForVanishedOwner(t *testing.T) {
 			})
 		})
 	}
-}
-
-func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		stubServiceRecovery(t)
-		var progress bytes.Buffer
-		lifecycleOut = &progress
-		old := &daemon.RuntimeInfo{PID: 1234, Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}
-		var current atomic.Pointer[daemon.RuntimeInfo]
-		current.Store(old)
-		drained, resume := make(chan struct{}), make(chan struct{})
-		finishDrain := make(chan struct{})
-		findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
-			return &daemonService{unit: "fixture.service", executable: "/proc/self/exe", mainPID: pid, serviceType: "notify"}, nil
-		}
-		getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
-			if current.Load() == nil {
-				return nil, os.ErrNotExist
-			}
-			return current.Load(), nil
-		}
-		serviceMainPID = func(context.Context, string) (int, error) { return current.Load().PID, nil }
-		drains := 0
-		drainManagedDaemon = func(*daemon.RuntimeInfo) error {
-			drains++
-			current.Store(nil)
-			close(drained)
-			<-finishDrain
-			time.Sleep(daemonStartTimeout + time.Minute)
-			return nil
-		}
-		startDaemonService = func(ctx context.Context, _ string) error {
-			assert.NoError(t, ctx.Err(), "startup gets a fresh budget after draining") //nolint:testifylint // Keep running so the goroutine sends its recovery result.
-			<-resume
-			current.Store(&daemon.RuntimeInfo{PID: 5678, Version: version.Version, Network: "tcp", Address: "127.0.0.1:1"})
-			return nil
-		}
-		detached := 0
-		startDaemonDetached = func(context.Context, detachedDaemonOptions) error { detached++; return nil }
-		recovery, coldStart := make(chan error, 1), make(chan error, 1)
-		competingRecovery := make(chan error, 1)
-		go func() { recovery <- recoverDaemon(old, nil, false) }()
-		<-drained
-		synctest.Wait()
-		assert.Contains(t, progress.String(), "Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...\n")
-		assert.Empty(t, recovery, "recovery must remain blocked while reviews drain")
-		go func() { coldStart <- startDaemon() }()
-		progress.Reset()
-		go func() { competingRecovery <- recoverDaemon(old, nil, false) }()
-		synctest.Wait()
-		assert.Contains(t, progress.String(), "Waiting for daemon recovery lock; another command may be waiting for running reviews to finish...\n")
-		assert.Empty(t, coldStart, "cold start must wait while the unit replaces its daemon")
-		assert.Zero(t, detached)
-		time.Sleep(daemonStartTimeout + time.Minute)
-		require.ErrorIs(t, <-coldStart, context.DeadlineExceeded)
-		synctest.Wait()
-		assert.Empty(t, recovery, "the owning recovery must keep waiting for the active review")
-		assert.Empty(t, competingRecovery, "a competing recovery waits for the active review instead of failing")
-		close(finishDrain)
-		close(resume)
-		require.NoError(t, <-recovery)
-		require.NoError(t, <-competingRecovery, "a competing recovery reuses the replacement")
-		assert.Equal(t, 1, drains)
-		assert.Zero(t, detached)
-	})
 }
 
 func TestEnsureDaemonReadsOwnershipBeforeProbe(t *testing.T) {

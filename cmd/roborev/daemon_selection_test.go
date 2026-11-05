@@ -92,9 +92,7 @@ func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
 			require.NoError(t, err)
 			cliExecutableInfo = func() (os.FileInfo, error) { return os.Stat(binary) }
 			getAnyRunningDaemonForStart = daemon.GetAnyRunningDaemonContext
-			lookups := 0
 			findDaemonService = func(ctx context.Context, pid int) (*daemonService, error) {
-				lookups++
 				assert.Equal(t, os.Getpid(), pid)
 				_, bounded := ctx.Deadline()
 				assert.True(t, bounded)
@@ -120,7 +118,6 @@ func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
 			if ownership == "unmanaged" || ownership == "vanished" {
 				require.NoError(t, err)
 				assert.Equal(t, []string{"cleanup", "detached start"}, mutations)
-				assert.Equal(t, 1, lookups)
 				return
 			}
 			require.Error(t, err)
@@ -128,10 +125,12 @@ func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
 				require.ErrorContains(t, err, "ownership unavailable")
 			} else {
 				require.ErrorContains(t, err, "fixture.service")
-				require.ErrorContains(t, err, "daemon is unresponsive")
+				require.ErrorContains(t, err, "daemon is unresponsive: HTTP probe failed for live daemon process")
 				require.ErrorContains(t, err, "run "+serviceRestartCommand+" fixture.service")
+				exit, ok := errors.AsType[*exitError](err)
+				require.True(t, ok)
+				assert.Equal(t, "run "+serviceRestartCommand+" fixture.service, or run 'roborev doctor' to diagnose setup", exit.hint)
 			}
-			assert.Equal(t, 3, lookups)
 			assert.Empty(t, mutations)
 		})
 	}

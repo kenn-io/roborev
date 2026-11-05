@@ -41,13 +41,8 @@ func managedRecoveryStatus(err error) statusJSONResult {
 	web := discoverWebUI(func() (*daemon.RuntimeInfo, error) { return info, discoverErr })
 	running := discoverErr == nil
 	if !running {
-		runtimes, _ := listAllRuntimes()
-		for _, runtime := range runtimes {
-			if !runtime.Stale() {
-				running = true
-				break
-			}
-		}
+		runtimes, _ := liveDaemonRuntimes()
+		running = len(runtimes) > 0
 	}
 	return unavailableStatus(err, running, web)
 }

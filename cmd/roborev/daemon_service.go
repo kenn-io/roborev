@@ -135,10 +135,14 @@ func discoveredOutsideService(pid int) bool {
 }
 
 func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool) error {
-	probeFailed := probeErr != nil
 	ctx, cancel := context.WithTimeout(context.Background(), daemonStartTimeout)
 	snapshot, snapshotErr := snapshotDaemonService(ctx, info.PID, outsideService)
 	cancel()
+	return recoverDaemonWithSnapshot(info, probeErr, snapshot, snapshotErr)
+}
+
+func recoverDaemonWithSnapshot(info *daemon.RuntimeInfo, probeErr error, snapshot *daemonService, snapshotErr error) error {
+	probeFailed := probeErr != nil
 	if probeErr == nil && snapshotErr == nil && snapshot != nil {
 		// Keeping a responsive daemon changes nothing, so it needs no lock.
 		if reason := snapshot.keepReason(info.PID); reason != "" {
@@ -155,7 +159,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 			release()
 		}
 	}()
-	ctx, cancel = context.WithTimeout(context.Background(), daemonStartTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), daemonStartTimeout)
 	defer cancel()
 	current, err := findDaemonForStart(ctx)
 	if err != nil {
@@ -247,7 +251,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 			return fail(err)
 		}
 		if probeFailed && !current.Stale() {
-			return managedUnresponsiveError(owner, probeErr)
+			return fail(fmt.Errorf("daemon is unresponsive: %w; run %s %s", probeErr, serviceRestartCommand, owner.unit))
 		}
 	}
 	// Discovery can miss a daemon that later answers shutdown retries.
