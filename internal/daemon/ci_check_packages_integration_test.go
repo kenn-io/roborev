@@ -30,9 +30,9 @@ import (
 // them. Lifecycle and interpreter startup sentinels distinguish host execution.
 func TestCICheckPackagesSandboxIntegration(t *testing.T) {
 	testutil.RequireSandboxIntegration(t)
-	for _, name := range []string{"npm", "python3"} {
-		_, err := exec.LookPath(name)
-		require.NoError(t, err)
+	requireCICheckNpm(t, true)
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("requires installed Python")
 	}
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	python, err := resolveCICheckCommand(t.Context(), "/", "python3")
@@ -44,16 +44,20 @@ func TestCICheckPackagesSandboxIntegration(t *testing.T) {
 	python = filepath.Join(runtime, "bin", "python3")
 	wheels := t.TempDir()
 	for _, pkg := range []struct{ name, version string }{
-		{"checker_fixture", "1.0"}, {"driver_fixture", "1.0"}, {"driver_fixture", "2.0"}, {"project_self", "1.0"},
+		{"checker_fixture", "1.0"}, {"driver_fixture", "1.0"}, {"driver_fixture", "2.0"}, {"project_self", "1.0"}, {"transitive_fixture", "1.0"},
 	} {
 		name, version := pkg.name, pkg.version
 		wheel, err := os.Create(filepath.Join(wheels, name+"-"+version+"-py3-none-any.whl"))
 		require.NoError(t, err)
 		zw := zip.NewWriter(wheel)
+		metadata := "Metadata-Version: 2.1\nName: " + strings.ReplaceAll(name, "_", "-") + "\nVersion: " + version + "\nProvides-Extra: test\n"
+		if name == "transitive_fixture" {
+			metadata += "Requires-Dist: PROJECT.self==1.0\n"
+		}
 		for name, data := range map[string]string{
 			name + ".py":  fmt.Sprintf("value = 'python %s ready'\n", version),
 			name + ".pth": "import sys,pathlib; pathlib.Path(sys.prefix, 'pth-ran').write_text('started')\n",
-			name + "-" + version + ".dist-info/METADATA": "Metadata-Version: 2.1\nName: " + strings.ReplaceAll(name, "_", "-") + "\nVersion: " + version + "\nProvides-Extra: test\n",
+			name + "-" + version + ".dist-info/METADATA": metadata,
 			name + "-" + version + ".dist-info/WHEEL":    "Wheel-Version: 1.0\nGenerator: fixture\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
 			name + "-" + version + ".dist-info/RECORD":   "",
 		} {
@@ -93,7 +97,7 @@ esac
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(archive) }))
 	t.Cleanup(server.Close)
 	repo := testutil.NewTestRepoWithCommit(t)
-	repo.CommitFile("pyproject.toml", "[project]\nname = 'Project.Self'\ndependencies = ['checker-fixture [test] >=1; python_version >= \"3\"', 'missing-source-only']\n[project.optional-dependencies]\na = ['driver-fixture==1.0']\nb = ['driver-fixture==2.0']\nall = ['PROJECT_self[dev]']\n", "python dependencies")
+	repo.CommitFile("pyproject.toml", "[project]\nname = 'Project.Self'\ndependencies = ['checker-fixture [test] >=1; python_version >= \"3\"', 'missing-source-only']\n[project.optional-dependencies]\na = ['driver-fixture==1.0']\nb = ['driver-fixture==2.0']\nall = ['PROJECT_self[dev]']\nc = ['transitive-fixture']\n", "python dependencies")
 	repo.CommitFile("web/package.json", `{"name":"fixture","version":"1.0.0","main":"./index.js","exports":"./index.js","overrides":{"checker-fixture":"$checker-fixture"},"dependencies":{"checker-fixture":"1.0.0"}}`, "javascript dependencies")
 	repo.CommitFile("web/package-lock.json", fmt.Sprintf(`{"name":"fixture","version":"1.0.0","lockfileVersion":3,"packages":{"":{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":"1.0.0"}},"node_modules/checker-fixture":{"version":"1.0.0","resolved":%q,"hasInstallScript":true,"bin":{"fixture-tool":"./index.js"}}}}`, server.URL+"/package.tgz"), "javascript lock")
 	sha := repo.HeadSHA()
@@ -130,10 +134,7 @@ node -e "console.log(require('./web/node_modules/checker-fixture'))"
 }
 
 func TestCICheckPackagesDependencySourcesIntegration(t *testing.T) {
-	for _, name := range []string{"npm", "node"} {
-		_, err := exec.LookPath(name)
-		require.NoError(t, err)
-	}
+	requireCICheckNpm(t, true)
 	hostArchive := filepath.Join(t.TempDir(), "host-fixture.tgz")
 	require.NoError(t, os.WriteFile(hostArchive, ciCheckPackageArchive(t, map[string]string{
 		"package/package.json": `{"name":"host-fixture","version":"1.0.0"}`,
@@ -305,6 +306,28 @@ dependencies = ['colorama; python_version < "0"', 'numpy=>1', 'fixture @ https:/
 	assert.NotContains(t, log.String(), "package preparation failed")
 }
 
+func requireCICheckNpm(t *testing.T, policies bool) {
+	t.Helper()
+	for _, name := range []string{"npm", "node"} {
+		if _, err := exec.LookPath(name); err != nil {
+			t.Skipf("requires installed %s", name)
+		}
+	}
+	if policies {
+		command := exec.CommandContext(t.Context(), "npm", "config", "get", "allow-file", "allow-directory", "allow-git")
+		command.Dir = t.TempDir()
+		output, err := command.CombinedOutput()
+		if err != nil {
+			t.Skipf("requires npm source policies: %s", output)
+		}
+		for _, name := range []string{"allow-file", "allow-directory", "allow-git"} {
+			if !strings.Contains(string(output), name+"=all") {
+				t.Skipf("requires npm source policy %s", name)
+			}
+		}
+	}
+}
+
 func ciCheckPackageArchive(t *testing.T, files map[string]string) []byte {
 	t.Helper()
 	var archive bytes.Buffer
@@ -325,10 +348,7 @@ func ciCheckPackageArchive(t *testing.T, files map[string]string) []byte {
 }
 
 func TestCICheckPackagesSourceClassificationIntegration(t *testing.T) {
-	for _, name := range []string{"npm", "node"} {
-		_, err := exec.LookPath(name)
-		require.NoError(t, err)
-	}
+	requireCICheckNpm(t, false)
 	t.Run("separate global prefix", func(t *testing.T) {
 		stage := t.TempDir()
 		env := append(ciCheckPackageEnv(stage, os.Getenv("PATH"), nil), "npm_config_prefix="+t.TempDir())
@@ -346,6 +366,7 @@ func TestCICheckPackagesSourceClassificationIntegration(t *testing.T) {
 }
 
 func TestCICheckPackagesBunLockIntegration(t *testing.T) {
+	requireCICheckNpm(t, false)
 	if _, err := exec.LookPath("bun"); err != nil {
 		t.Skip("requires installed Bun")
 	}
@@ -409,6 +430,7 @@ func TestCICheckPackagesBunLockIntegration(t *testing.T) {
 }
 
 func TestCICheckPackagesActiveShrinkwrapIntegration(t *testing.T) {
+	requireCICheckNpm(t, true)
 	archive := ciCheckPackageArchive(t, map[string]string{
 		"package/package.json": `{"name":"checker-fixture","version":"1.0.0"}`,
 		"package/index.js":     "module.exports = 'ready';\n",
@@ -425,6 +447,7 @@ func TestCICheckPackagesActiveShrinkwrapIntegration(t *testing.T) {
 }
 
 func TestCICheckPackagesWorkspaceIntegration(t *testing.T) {
+	requireCICheckNpm(t, true)
 	archive := ciCheckPackageArchive(t, map[string]string{
 		"package/package.json": `{"name":"checker-fixture","version":"1.0.0","bin":{"fixture-tool":"./index.js"}}`,
 		"package/index.js":     "module.exports = 'javascript ready';\n",

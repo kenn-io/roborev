@@ -322,6 +322,8 @@ func prepareCICheckPython(ctx context.Context, project, stage string, data []byt
 	const script = `import json, sys
 from pip._vendor.packaging.requirements import Requirement, InvalidRequirement
 from pip._vendor.packaging.utils import canonicalize_name
+with open('project-constraint.txt', 'w') as constraint:
+ if sys.argv[1]: constraint.write(f'{Requirement(sys.argv[1]).name}<0\n')
 accepted = []
 for index, value in enumerate(sys.argv[2:], 1):
  try:
@@ -341,7 +343,7 @@ json.dump(accepted, sys.stdout)`
 		return false
 	}
 	wheels := filepath.Join(stage, "wheels")
-	args := []string{"-I", "-m", "pip", "--isolated", "download", "--only-binary=:all:", "--dest", wheels}
+	args := []string{"-I", "-m", "pip", "--isolated", "download", "--only-binary=:all:", "--constraint", filepath.Join(stage, "project-constraint.txt"), "--dest", wheels}
 	accepted := requirements
 	if !runCICheckInstaller(ctx, python, stage, env, append(slices.Clone(args), requirements...), out) {
 		accepted = nil
@@ -356,7 +358,7 @@ json.dump(accepted, sys.stdout)`
 	}
 	// This is the only host startup of the empty venv. Installed .pth files and
 	// sitecustomize must never run on the host after pip populates it.
-	args = append([]string{"-I", "-m", "pip", "--isolated", "install", "--only-binary=:all:", "--no-index", "--no-compile", "--find-links", wheels}, accepted...)
+	args = append([]string{"-I", "-m", "pip", "--isolated", "install", "--only-binary=:all:", "--constraint", filepath.Join(stage, "project-constraint.txt"), "--no-index", "--no-compile", "--find-links", wheels}, accepted...)
 	if runCICheckInstaller(ctx, python, stage, env, []string{"-I", "-m", "venv", venv}, out) &&
 		runCICheckInstaller(ctx, filepath.Join(venv, "bin", "python"), stage, env, args, out) {
 		return true
