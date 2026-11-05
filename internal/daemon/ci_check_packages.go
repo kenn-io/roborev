@@ -285,6 +285,7 @@ func prepareCICheckPython(ctx context.Context, project, stage string, data []byt
 
 	var manifest struct {
 		Project struct {
+			Name                 string
 			Dependencies         []string
 			OptionalDependencies map[string][]string `toml:"optional-dependencies"`
 		}
@@ -315,14 +316,16 @@ func prepareCICheckPython(ctx context.Context, project, stage string, data []byt
 	}
 	const script = `import json, sys
 from pip._vendor.packaging.requirements import Requirement, InvalidRequirement
+from pip._vendor.packaging.utils import canonicalize_name
 accepted = []
-for index, value in enumerate(sys.argv[1:], 1):
+for index, value in enumerate(sys.argv[2:], 1):
  try:
-  if Requirement(value).url is None: accepted.append(value)
+  requirement = Requirement(value)
+  if requirement.url is None and canonicalize_name(requirement.name) != canonicalize_name(sys.argv[1]): accepted.append(value)
  except InvalidRequirement:
   print(f"CI checker invalid requirement in pyproject.toml dependency declaration {index}: invalid requirement syntax", file=sys.stderr)
 json.dump(accepted, sys.stdout)`
-	parse := exec.CommandContext(ctx, python, append([]string{"-I", "-c", script}, requirements...)...)
+	parse := exec.CommandContext(ctx, python, append([]string{"-I", "-c", script, manifest.Project.Name}, requirements...)...)
 	parse.Dir, parse.Env, parse.Stderr = stage, env, out
 	data, err = parse.Output()
 	if err == nil {

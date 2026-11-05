@@ -268,7 +268,7 @@ func ciCheckPackagePythonFixture(t *testing.T) (string, string) {
 [ -z "$GIT_CONFIG_COUNT" ] || exit 10
 case "$*" in
 *pip._vendor.packaging.requirements*)
- shift 3
+ shift 4
  printf '['
  separator=''
  for arg do

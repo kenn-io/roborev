@@ -862,9 +862,9 @@ their declared members, and local dependencies are skipped, as are npm projects
 with Git sources. npm must support its native `allow-file`, `allow-directory`,
 and `allow-git` fetch policies; older installations skip npm preparation. Only
 the selected installer's active lockfile is used, with npm shrinkwrap taking
-precedence over package-lock. npm checks committed lock sources before
-installation, then applies its native source policies during dependency
-resolution and installation while preserving valid lock pins.
+precedence over package-lock. Preparation rejects committed directory-link
+records before installation, then npm applies its native source policies during
+dependency resolution and installation while preserving valid lock pins.
 
 Python uses installed `python3` with venv and pip. Downloads use PyPI and ignore
 pip configuration files. It reads static dependencies and optional dependencies
@@ -873,10 +873,11 @@ from `[project]`, plus string entries in `[dependency-groups]` in
 only, and skips requirements whose dependencies need source builds or conflict
 with accepted requirements. Required dependencies come first, followed by
 optional groups and dependency groups in sorted name order. Requirements files,
-editable installs, direct URLs, and local packages are unsupported. These
-declarations do not apply Python lockfile pins. The root `.venv/bin` leads the
-sandbox's `PATH`; nested projects can use their own `.venv/bin/python`. An
-existing committed `.venv` is left alone.
+editable installs, direct URLs, and local packages are unsupported. References
+to the project's own distribution name are excluded. These declarations do not
+apply Python lockfile pins. The root `.venv/bin` leads the sandbox's `PATH`;
+nested projects can use their own `.venv/bin/python`. An existing committed
+`.venv` is left alone.
 
 Installers run from private copies of dependency metadata, with private caches
 and without repository package-manager settings. Downloads run on the host and

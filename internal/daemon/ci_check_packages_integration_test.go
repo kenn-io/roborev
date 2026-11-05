@@ -39,7 +39,7 @@ func TestCICheckPackagesSandboxIntegration(t *testing.T) {
 	require.NoError(t, err)
 	wheels := t.TempDir()
 	for _, pkg := range []struct{ name, version string }{
-		{"checker_fixture", "1.0"}, {"driver_fixture", "1.0"}, {"driver_fixture", "2.0"},
+		{"checker_fixture", "1.0"}, {"driver_fixture", "1.0"}, {"driver_fixture", "2.0"}, {"project_self", "1.0"},
 	} {
 		name, version := pkg.name, pkg.version
 		wheel, err := os.Create(filepath.Join(wheels, name+"-"+version+"-py3-none-any.whl"))
@@ -85,7 +85,7 @@ esac
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(archive) }))
 	t.Cleanup(server.Close)
 	repo := testutil.NewTestRepoWithCommit(t)
-	repo.CommitFile("pyproject.toml", "[project]\ndependencies = ['checker-fixture [test] >=1; python_version >= \"3\"', 'missing-source-only']\n[project.optional-dependencies]\na = ['driver-fixture==1.0']\nb = ['driver-fixture==2.0']\n", "python dependencies")
+	repo.CommitFile("pyproject.toml", "[project]\nname = 'Project.Self'\ndependencies = ['checker-fixture [test] >=1; python_version >= \"3\"', 'missing-source-only']\n[project.optional-dependencies]\na = ['driver-fixture==1.0']\nb = ['driver-fixture==2.0']\nall = ['PROJECT_self[dev]']\n", "python dependencies")
 	repo.CommitFile("web/package.json", `{"name":"fixture","version":"1.0.0","main":"./index.js","exports":"./index.js","overrides":{"checker-fixture":"$checker-fixture"},"dependencies":{"checker-fixture":"1.0.0"}}`, "javascript dependencies")
 	repo.CommitFile("web/package-lock.json", fmt.Sprintf(`{"name":"fixture","version":"1.0.0","lockfileVersion":3,"packages":{"":{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":"1.0.0"}},"node_modules/checker-fixture":{"version":"1.0.0","resolved":%q,"hasInstallScript":true,"bin":{"fixture-tool":"./index.js"}}}}`, server.URL+"/package.tgz"), "javascript lock")
 	sha := repo.HeadSHA()
@@ -98,6 +98,9 @@ esac
 	assert.NoFileExists(t, marker, log.String())
 	require.FileExists(t, filepath.Join(run.Repo, "web", "node_modules", "checker-fixture", "index.js"), log.String())
 	require.FileExists(t, filepath.Join(run.Repo, ".venv", "bin", "python"), log.String())
+	published, err := filepath.Glob(filepath.Join(run.Repo, ".venv", "lib", "python*", "site-packages", "project_self.py"))
+	require.NoError(t, err)
+	assert.Empty(t, published, "self-referencing extras must leave the PR's package uninstalled")
 	assert.NoFileExists(t, filepath.Join(run.Repo, ".venv", "pth-ran"), "populated Python must first start inside the sandbox")
 	run.Job.Route = sandbox.Route{Name: "fixture", Upstream: server.URL, Path: "/responses", EnvVar: "FIXTURE_TOKEN", Capture: []string{"/bin/echo", "fixture-token"}}
 	probe := fmt.Sprintf(`set -e
