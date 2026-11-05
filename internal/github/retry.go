@@ -48,17 +48,11 @@ func (t *limitTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		failure := googlegithub.CheckResponse(resp)
 		// CheckResponse replaces the body with a readable copy.
 		body.Close()
-		_, secondary := errors.AsType[*googlegithub.AbuseRateLimitError](failure)
-		_, primary := errors.AsType[*googlegithub.RateLimitError](failure)
-		if secondary || primary {
+		if _, ok := errors.AsType[*googlegithub.AbuseRateLimitError](failure); ok {
 			response := &googlegithub.Response{Response: resp}
 			delay, ok := readRetryAfter(nil, response)
-			if !ok && resp.Header.Get("X-RateLimit-Remaining") == "0" {
-				// The SDK's secondary delay can include the primary reset time.
-				delay, ok = readRetryAfter(failure, response)
-			}
 			if !ok {
-				// GitHub requires at least one minute when neither delay applies.
+				// GitHub requires at least one minute without Retry-After.
 				// https://github.com/github/docs/blob/29d8e509cb8d1d94269e27f3a23d8fc364c14e82/content/rest/using-the-rest-api/best-practices-for-using-the-rest-api.md#handle-rate-limit-errors-appropriately
 				delay = time.Minute
 			}

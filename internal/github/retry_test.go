@@ -63,7 +63,7 @@ func TestGitHubSecondaryCooldownAcrossClients(t *testing.T) {
 }
 
 func TestGitHubSecondaryCooldownDelays(t *testing.T) {
-	for _, header := range []string{"none", "seconds", "date", "reset", "reset with budget", "short reset with budget"} {
+	for _, header := range []string{"none", "seconds", "date", "reset with budget", "short reset with budget"} {
 		t.Run(header, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				assert := assert.New(t)
@@ -86,9 +86,6 @@ func TestGitHubSecondaryCooldownDelays(t *testing.T) {
 							resp.Header.Set("Retry-After", "3")
 						case "date":
 							resp.Header.Set("Retry-After", time.Now().Add(delay).UTC().Format(http.TimeFormat))
-						case "reset":
-							resp.Header.Set("X-RateLimit-Remaining", "0")
-							resp.Header.Set("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(delay).Unix(), 10))
 						case "reset with budget", "short reset with budget":
 							reset := 30 * time.Minute
 							if header == "short reset with budget" {
@@ -103,13 +100,8 @@ func TestGitHubSecondaryCooldownDelays(t *testing.T) {
 				client, err := NewClient(token, WithBaseURL(base), WithHTTPClient(httpClient))
 				require.NoError(t, err)
 				err = client.SetCommitStatus(t.Context(), "acme/api", "head", "pending", "queued")
-				if header == "reset" {
-					var rate *googlegithub.RateLimitError
-					require.ErrorAs(t, err, &rate)
-				} else {
-					var rate *googlegithub.AbuseRateLimitError
-					require.ErrorAs(t, err, &rate)
-				}
+				var rate *googlegithub.AbuseRateLimitError
+				require.ErrorAs(t, err, &rate)
 				fresh, err := NewClient(token, WithBaseURL(base), WithHTTPClient(httpClient))
 				require.NoError(t, err)
 				time.Sleep(delay - time.Second)
@@ -176,7 +168,7 @@ func (b *interruptedBody) Read([]byte) (int, error) { return 0, io.ErrUnexpected
 func (b *interruptedBody) Close() error             { b.closed = true; return nil }
 
 func TestGitHubReadRetries(t *testing.T) {
-	for _, failure := range []string{"status", "body", "network", "timeout", "body timeout", "rate limit", "retry after date", "secondary seconds", "secondary date", "secondary reset"} {
+	for _, failure := range []string{"status", "body", "network", "timeout", "body timeout", "rate limit", "retry after date", "secondary seconds", "secondary date"} {
 		t.Run(failure, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				var attempts int
@@ -215,7 +207,7 @@ func TestGitHubReadRetries(t *testing.T) {
 						case "retry after date":
 							resp.StatusCode = 503
 							resp.Header.Set("Retry-After", time.Now().Add(3*time.Second).UTC().Format(http.TimeFormat))
-						case "secondary seconds", "secondary date", "secondary reset":
+						case "secondary seconds", "secondary date":
 							resp.StatusCode = 403
 							resp.Body = io.NopCloser(strings.NewReader(secondaryLimitBody))
 							switch failure {
@@ -223,9 +215,6 @@ func TestGitHubReadRetries(t *testing.T) {
 								resp.Header.Set("Retry-After", "3")
 							case "secondary date":
 								resp.Header.Set("Retry-After", time.Now().Add(3*time.Second).UTC().Format(http.TimeFormat))
-							case "secondary reset":
-								resp.Header.Set("X-RateLimit-Remaining", "0")
-								resp.Header.Set("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(3*time.Second).Unix(), 10))
 							}
 						}
 					}

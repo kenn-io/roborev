@@ -160,9 +160,8 @@ the failure without retrying early. Writes such as comments and commit statuses
 are not retried.
 
 Secondary rate limits pause reads and writes across clients for the same
-credential and GitHub server. `Retry-After` takes precedence. Otherwise,
-`X-RateLimit-Reset` sets the pause only when `X-RateLimit-Remaining` is `0`;
-in other cases, the pause lasts one minute. Requests during the pause fail with
+credential and GitHub server. `Retry-After` takes precedence; otherwise, the
+pause lasts one minute. Requests during the pause fail with
 `rate limit cooldown` without contacting GitHub.
 
 Retry messages appear in `daemon.log`, including transient failures that
