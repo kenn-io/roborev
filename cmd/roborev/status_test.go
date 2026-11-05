@@ -594,6 +594,8 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 			assert.Equal(t, tc.webOrigin, result.WebURL)
 			assert.Equal(t, tc.disabledReason, result.WebDisabledReason)
 			assert.Nil(t, result.Daemon)
+			assert.Nil(t, result.Health)
+			assert.Empty(t, result.Jobs)
 			assert.Empty(t, stderr.String())
 			textCmd := statusCmd()
 			var textErr error
@@ -625,7 +627,7 @@ func TestStatusUnresponsiveProcessLiveness(t *testing.T) {
 		t.Run(fmt.Sprintf("exited=%t", exited), func(t *testing.T) {
 			isolateDaemonSelection(t)
 			stubServiceRecovery(t)
-			original := &daemon.RuntimeInfo{PID: os.Getpid()}
+			original := &daemon.RuntimeInfo{PID: os.Getpid(), Version: version.Version, Network: "tcp", Address: "127.0.0.1:1"}
 			serviceType := "notify"
 			if exited {
 				original.PID = exitedDaemonPID(t)

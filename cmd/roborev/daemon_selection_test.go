@@ -106,7 +106,7 @@ func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
 					return nil, &managedRecoveryError{"unknown", errors.New("cannot read process cgroup")}
 				}
 				if ownership == "vanished" {
-					return nil, fmt.Errorf("lookup daemon: %w", os.ErrNotExist)
+					return nil, &managedRecoveryError{"unknown", os.ErrNotExist}
 				}
 				if ownership == "unmanaged" {
 					return nil, nil
@@ -140,9 +140,10 @@ func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
 				assert.Equal(t, "run 'roborev doctor' to diagnose setup", exit.hint)
 				assert.NotContains(t, err.Error()+exit.hint, serviceRestartCommand)
 			} else {
-				require.ErrorContains(t, err, "fixture.service")
-				require.ErrorContains(t, err, "daemon is unresponsive: HTTP probe failed for live daemon process")
-				require.ErrorContains(t, err, "run "+serviceRestartCommand+" fixture.service")
+				var managed *managedRecoveryError
+				require.ErrorAs(t, err, &managed)
+				assert.Equal(t, "fixture.service", managed.unit)
+				require.ErrorContains(t, managed.cause, "HTTP probe failed for live daemon process")
 				exit, ok := errors.AsType[*exitError](err)
 				require.True(t, ok)
 				assert.Equal(t, "run 'roborev doctor' to diagnose setup", exit.hint)

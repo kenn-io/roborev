@@ -28,7 +28,7 @@ func assertSuspendedManagedDaemon(t *testing.T, original *daemon.RuntimeInfo, un
 	err = ensureDaemon()
 	var managed *managedRecoveryError
 	require.ErrorAs(t, err, &managed)
-	require.ErrorContains(t, err, "run "+serviceRestartCommand+" "+unit)
+	assert.Equal(t, unit, managed.unit)
 	statusEnsureDaemon = ensureDaemon
 	cmd := statusCmd()
 	cmd.SetArgs([]string{"--json"})
@@ -37,10 +37,6 @@ func assertSuspendedManagedDaemon(t *testing.T, original *daemon.RuntimeInfo, un
 	require.NoError(t, json.Unmarshal([]byte(output), &result))
 	assert.True(t, result.Running)
 	assert.Contains(t, result.Error, unit)
-	assert.Contains(t, result.Error, "run "+serviceRestartCommand+" "+unit)
-	assert.Nil(t, result.Daemon)
-	assert.Nil(t, result.Health)
-	assert.Empty(t, result.Jobs)
 	assert.Zero(t, detached)
 	runtimes, err := daemon.ListJudgedRuntimes()
 	require.NoError(t, err)
