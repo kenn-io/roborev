@@ -64,10 +64,11 @@ func TestIntegration_FirstPullGrowth(t *testing.T) { //nolint:paralleltest // me
 
 // PostgreSQL paging gets its own bound because SQLite writes dominate the
 // complete pull and can hide repeated scans of earlier remote pages.
+// Seek to the last full page so earlier pages cannot dilute the cursor cost.
 func TestIntegration_PullPagingGrowth(t *testing.T) { //nolint:paralleltest // measures wall time and shares the PostgreSQL schema
 	growthtest.Run(t, growthtest.Check{
-		Small: 1000, Large: 10000,
-		MaxRatio: 20,
+		Small: 1000, Large: 100000,
+		MaxRatio: 3,
 		Floor:    float64(time.Millisecond),
 		Measure:  growthtest.Fastest(3),
 		Build: func(_ testing.TB, size int) (func(), func()) {
@@ -85,31 +86,35 @@ func TestIntegration_PullPagingGrowth(t *testing.T) { //nolint:paralleltest // m
 			rows.Close()
 			require.NoError(t, rows.Err())
 			require.Len(t, known, size)
+			// Start as a real first pull does, allowing PostgreSQL to choose its
+			// cached plan from the early pages before measuring a late page.
+			jobCursor, reviewCursor := "", ""
+			for range 6 {
+				_, next, err := pool.PullJobs(t.Context(), machineID, jobCursor, 100)
+				require.NoError(t, err)
+				jobCursor = next
+				_, next, err = pool.PullReviews(t.Context(), machineID, known, reviewCursor, 100)
+				require.NoError(t, err)
+				reviewCursor = next
+			}
+			cursors := make(map[string]string)
+			for _, table := range []string{"review_jobs", "reviews"} {
+				var updated time.Time
+				var id int64
+				require.NoError(t, pool.pool.QueryRow(t.Context(), "SELECT updated_at, id FROM "+table+" ORDER BY updated_at, id OFFSET $1 LIMIT 1", size-101).Scan(&updated, &id))
+				cursors[table] = formatTimestampIDCursor(updated, id)
+			}
 			return func() {
-				cursor, jobs := "", 0
-				for {
-					page, next, err := pool.PullJobs(t.Context(), machineID, cursor, 100)
+				for range 20 {
+					jobs, next, err := pool.PullJobs(t.Context(), machineID, cursors["review_jobs"], 100)
 					require.NoError(t, err)
-					jobs += len(page)
-					if len(page) < 100 {
-						break
-					}
-					require.NotEqual(t, cursor, next)
-					cursor = next
-				}
-				require.Equal(t, size, jobs)
-				cursor, reviews := "", 0
-				for {
-					page, next, err := pool.PullReviews(t.Context(), machineID, known, cursor, 100)
+					require.Len(t, jobs, 100)
+					require.NotEqual(t, cursors["review_jobs"], next)
+					reviews, next, err := pool.PullReviews(t.Context(), machineID, known, cursors["reviews"], 100)
 					require.NoError(t, err)
-					reviews += len(page)
-					if len(page) < 100 {
-						break
-					}
-					require.NotEqual(t, cursor, next)
-					cursor = next
+					require.Len(t, reviews, 100)
+					require.NotEqual(t, cursors["reviews"], next)
 				}
-				require.Equal(t, size, reviews)
 			}, nil
 		},
 	})
