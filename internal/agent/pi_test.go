@@ -47,6 +47,25 @@ func TestResolvePiSessionPath(t *testing.T) {
 	assert.Equal(t, sessionPath, NewPiAgent("pi").resolveSessionPath(t.TempDir(), sessionID))
 }
 
+func TestPiResolveSessionPathFollowsSymlinkedBucket(t *testing.T) {
+	skipIfWindows(t)
+	dataDir := t.TempDir()
+	t.Setenv("PI_CODING_AGENT_DIR", dataDir)
+
+	const sessionID = "46109439-3160-40f0-81e7-7dfa4f3647b3"
+	target := t.TempDir()
+	sessionPath := filepath.Join(target, "2026-03-08T18-44-39-718Z_"+sessionID+".jsonl")
+	require.NoError(t, os.WriteFile(sessionPath, []byte("{}\n"), 0o600))
+	require.NoError(t, os.MkdirAll(filepath.Join(dataDir, "sessions"), 0o700))
+	bucket := filepath.Join(dataDir, "sessions", "--repo--")
+	require.NoError(t, os.Symlink(target, bucket))
+
+	assert.Equal(t,
+		filepath.Join(bucket, filepath.Base(sessionPath)),
+		NewPiAgent("pi").resolveSessionPath(t.TempDir(), sessionID),
+	)
+}
+
 func TestPiResolveSessionPathLooksInSessionDir(t *testing.T) {
 	const sessionID = "46109439-3160-40f0-81e7-7dfa4f3647b3"
 	repoPath := t.TempDir()

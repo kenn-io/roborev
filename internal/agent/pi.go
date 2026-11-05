@@ -584,10 +584,9 @@ func (a *PiAgent) resolveSessionPath(repoPath, sessionID string) string {
 		return path
 	}
 	buckets, _ := os.ReadDir(filepath.Join(piDataDir(), "sessions"))
+	// Buckets may be symlinks, which DirEntry.IsDir reports as files, so
+	// try every entry and let ReadDir skip the ones that are not directories.
 	for _, bucket := range buckets {
-		if !bucket.IsDir() {
-			continue
-		}
 		path := findPiSession(filepath.Join(piDataDir(), "sessions", bucket.Name()), sessionID)
 		if path != "" {
 			return path
