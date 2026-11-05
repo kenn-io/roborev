@@ -382,6 +382,7 @@ Host requirements:
     `MemoryMax` and `MemorySwapMax=0`.
 - A Codex login file with `tokens.access_token`, by default in the host's
     `CODEX_HOME` or `~/.codex`.
+- `/bin/sh` for the scope launcher.
 - Bash, cat, touch, and rm under `/bin`, plus `/usr/bin/python3`, for the
     self-check.
 
