@@ -43,6 +43,15 @@ func TestMigrateJobIDsPreservesHistory(t *testing.T) {
 	db := &DB{DB: conn}
 	t.Cleanup(func() { _ = db.Close() })
 	require.NoError(t, db.runSchemaMigrations(t.Context(), schemaMigrations))
+	// Numbered migrations install cross-table triggers before Open rebuilds
+	// the old, non-AUTOINCREMENT job table.
+	var definition string
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT sql FROM sqlite_master WHERE name = 'review_jobs'`).Scan(&definition))
+	require.NotContains(t, definition, "AUTOINCREMENT")
+	var triggers int
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM sqlite_master WHERE type = 'trigger'
+		AND name IN ('review_closed_insert', 'review_closed_update', 'review_closed_delete')`).Scan(&triggers))
+	require.Equal(t, 3, triggers)
 	require.NoError(t, db.migrateLegacyReviews())
 	repo, err := db.GetOrCreateRepo(t.TempDir())
 	require.NoError(t, err)
@@ -65,11 +74,23 @@ func TestMigrateJobIDsPreservesHistory(t *testing.T) {
 	require.NoError(t, db.Close())
 	db, err = Open(path)
 	require.NoError(t, err)
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM sqlite_master WHERE type = 'trigger'
+		AND name IN ('review_closed_insert', 'review_closed_update', 'review_closed_delete')`).Scan(&triggers))
+	assert.Equal(t, 3, triggers)
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT sql FROM sqlite_master WHERE name = 'review_jobs'`).Scan(&definition))
+	assert.Contains(t, definition, "AUTOINCREMENT")
 	review, err := db.GetReviewByJobID(original.jobID)
 	require.NoError(t, err)
 	assert.Equal(t, original.jobID, review.JobID)
 	assert.Contains(t, review.Output, original.markdown)
 	assert.True(t, review.Closed)
+	reviewClosed := func(jobID int64) (flag int) {
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT review_closed FROM review_jobs WHERE id = ?`, jobID).Scan(&flag))
+		return flag
+	}
+	assert.Equal(t, 1, reviewClosed(original.jobID))
+	require.NoError(t, db.MarkReviewClosedByJobID(original.jobID, false))
+	assert.Equal(t, 0, reviewClosed(original.jobID))
 	var copied int
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM review_jobs WHERE git_ref LIKE 'copy-%'`).Scan(&copied))
 	assert.Equal(t, 205, copied)

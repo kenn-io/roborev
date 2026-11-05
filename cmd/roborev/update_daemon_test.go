@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -261,7 +262,7 @@ func TestRestartAndVerifyUpdatedDaemonStartsAndChecksVersion(t *testing.T) {
 
 	err := restartAndVerifyUpdatedDaemon(
 		t.Context(), "/tmp/bin", "0.65.0",
-		&daemon.RuntimeInfo{PID: 100},
+		&daemon.RuntimeInfo{PID: 100}, nil,
 	)
 
 	require.NoError(t, err)
@@ -303,7 +304,7 @@ func TestRestartAndVerifyUpdatedDaemonWaitsBeyondReadinessTimeoutForShutdown(
 	defer cancel()
 
 	err := restartAndVerifyUpdatedDaemon(
-		ctx, "/tmp/bin", "0.65.0", &daemon.RuntimeInfo{PID: 100},
+		ctx, "/tmp/bin", "0.65.0", &daemon.RuntimeInfo{PID: 100}, nil,
 	)
 
 	require.NoError(t, err)
@@ -318,7 +319,7 @@ func TestRestartAndVerifyUpdatedDaemonRejectsWrongVersion(t *testing.T) {
 
 	err := restartAndVerifyUpdatedDaemon(
 		t.Context(), "/tmp/bin", "v0.65.0",
-		&daemon.RuntimeInfo{PID: 100},
+		&daemon.RuntimeInfo{PID: 100}, nil,
 	)
 
 	require.Error(t, err)
@@ -350,5 +351,42 @@ func waitForUpdateTestSignal(ch <-chan struct{}, timeout time.Duration) bool {
 		return true
 	case <-time.After(timeout):
 		return false
+	}
+}
+
+func TestRestartAndVerifyUpdatedDaemonThroughLaunchdJob(t *testing.T) {
+	for _, respawned := range []bool{false, true} {
+		t.Run(fmt.Sprintf("respawned=%t", respawned), func(t *testing.T) {
+			stubServiceRecovery(t)
+			stubs := stubRestartVars(t)
+			started := respawned
+			ready := false
+			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+				assert.False(t, ready, "reuse the service readiness result for version verification")
+				if !started {
+					return nil, os.ErrNotExist
+				}
+				return &daemon.RuntimeInfo{PID: 200, Version: "v0.65.0"}, nil
+			}
+			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
+				return &daemon.RuntimeInfo{PID: 200, Version: "v0.65.0"}, nil
+			}
+			calls := 0
+			startDaemonService = func(_ context.Context, unit string) error {
+				assert.Equal(t, "gui/501/com.example.roborev", unit)
+				calls++
+				started = true
+				return nil
+			}
+			serviceMainPID = func(_ context.Context, unit string) (int, error) {
+				assert.Equal(t, "gui/501/com.example.roborev", unit)
+				ready = true
+				return 200, nil
+			}
+			err := restartAndVerifyUpdatedDaemon(t.Context(), "/tmp/bin", "0.65.0", &daemon.RuntimeInfo{PID: 100}, &daemonService{unit: "gui/501/com.example.roborev"})
+			require.NoError(t, err)
+			assert.Equal(t, 1, calls)
+			assert.Zero(t, stubs.startCalls)
+		})
 	}
 }

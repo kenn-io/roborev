@@ -569,7 +569,38 @@ func runControlledUpdate(
 			_, _ = session.release(releaseCtx)
 		}
 	}()
-	prepareDaemon := func(info *daemon.RuntimeInfo) error {
+	var serviceOwner *daemonService
+	var releaseRecovery func()
+	defer func() {
+		if releaseRecovery != nil {
+			releaseRecovery()
+		}
+	}()
+	prepareDaemon := func(info *daemon.RuntimeInfo, installed bool) error {
+		if restartThroughService {
+			var err error
+			serviceOwner, _, releaseRecovery, err = restartService(operationCtx, func() ([]*daemon.RuntimeInfo, error) {
+				current, err := discoverDaemonForUpdate()
+				if err != nil {
+					return nil, err
+				}
+				info, runningDaemon = current, current
+				if current == nil {
+					return nil, nil
+				}
+				return []*daemon.RuntimeInfo{current}, nil
+			})
+			if err != nil {
+				if installed {
+					return err
+				}
+				return fmt.Errorf("update stopped before install: %w; use --no-restart to install without restarting", err)
+			}
+		}
+		if info == nil {
+			return nil
+		}
+
 		prepared, err := prepareUpdateDaemonForCommand(
 			operationCtx,
 			info.Endpoint(),
@@ -611,7 +642,7 @@ func runControlledUpdate(
 		}
 	}
 	if runningDaemon != nil {
-		if err := prepareDaemon(runningDaemon); err != nil {
+		if err := prepareDaemon(runningDaemon, false); err != nil {
 			return err
 		}
 	}
@@ -644,10 +675,22 @@ func runControlledUpdate(
 			if policy == "" {
 				policy = policyWait
 			}
-			if err := prepareDaemon(runningDaemon); err != nil {
+			if restartThroughService {
+				// The install replaced the binary after the CLI captured its identity.
+				installed, err := os.Stat(updatedRoborevBinary(binDir))
+				if err != nil {
+					return installedUpdateInterruption(session, err)
+				}
+				previousIdentity := cliExecutableInfo
+				cliExecutableInfo = func() (os.FileInfo, error) { return installed, nil }
+				defer func() { cliExecutableInfo = previousIdentity }()
+			}
+			if err := prepareDaemon(runningDaemon, true); err != nil {
 				return installedUpdateInterruption(session, err)
 			}
-			session.Installed = true
+			if session != nil {
+				session.Installed = true
+			}
 		}
 	}
 
@@ -678,7 +721,7 @@ func runControlledUpdate(
 			}
 		}
 		if err := restartUpdatedDaemonForCommand(
-			operationCtx, binDir, info.LatestVersion, runningDaemon,
+			operationCtx, binDir, info.LatestVersion, runningDaemon, serviceOwner,
 		); err != nil {
 			if errors.Is(err, context.Canceled) || operationCtx.Err() != nil {
 				return installedUpdateInterruption(session, err)
@@ -690,6 +733,10 @@ func runControlledUpdate(
 		printUpdatePhase(out, "Daemon", "restarted ("+info.LatestVersion+")")
 	}
 
+	if releaseRecovery != nil {
+		releaseRecovery()
+		releaseRecovery = nil
+	}
 	if err := repairHooksForUpdateCommand(ctx, binDir, nil); err != nil {
 		printUpdatePhase(out, "Git hooks", "warning: "+err.Error())
 	} else {
@@ -797,8 +844,10 @@ Requires confirmation before making changes (use --yes to skip).
 Dev builds are not replaced by default. Use --force to install the latest
 official release over a dev build.
 
-Use --no-restart when daemon lifecycle is managed externally (for example,
-launchd or systemd).`,
+Use --no-restart when daemon lifecycle is managed externally, such as by
+systemd or launchd. On macOS, an owned LaunchAgent daemon restarts through its
+job automatically. Use --no-restart to install when the daemon is a wrapper
+child, belongs to another installation, or its job is unreadable.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			policy, err := parseRunningReviewPolicy(runningPolicy)
 			if err != nil {
@@ -867,7 +916,7 @@ launchd or systemd).`,
 	cmd.Flags().BoolVar(&checkOnly, "check", false, "only check for updates, don't install")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip confirmation prompt")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "replace dev build with latest official release")
-	cmd.Flags().BoolVar(&noRestart, "no-restart", false, "skip daemon restart after update (for launchd/systemd-managed daemons)")
+	cmd.Flags().BoolVar(&noRestart, "no-restart", false, "skip daemon restart for externally managed daemons (systemd/launchd)")
 	cmd.Flags().StringVar(&runningPolicy, "running", "", "when reviews are running: wait, interrupt, or abort")
 
 	return cmd

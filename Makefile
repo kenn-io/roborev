@@ -173,6 +173,11 @@ api-breaking:
 test:
 	go test ./...
 
+.PHONY: test-search-mirror-growth
+# The growth tag keeps full builds and feed paging out of ordinary/race tests.
+test-search-mirror-growth:
+	CGO_ENABLED=0 go test -p 1 -tags=growth ./internal/searchindex ./internal/storage -run '^Test(ReconcilerInitialMirrorGrowth|SearchFeedPagingGrowth)$$' -timeout=10m -count=1 -v
+
 test-git-isolation:
 	go test -run '^TestGitUsingTestPackagesUseIsolatedTestMain$$' .
 
@@ -271,6 +276,13 @@ test-postgres: postgres-up
 	@sleep 2
 	TEST_POSTGRES_URL="postgres://roborev_test:roborev_test_password@localhost:5433/roborev_test" \
 		$(MAKE) test-postgres-ci
+
+.PHONY: test-postgres-growth
+test-postgres-growth:
+	go tool gotestsum --format pkgname-and-test-fails --format-icons text \
+		--jsonfile gotestsum/postgres-growth.json \
+		--packages "./internal/storage/..." \
+		-- -tags=postgres -v -run '^TestIntegration_(FirstPullGrowth|FirstPullQueryGrowth|PullCursorPlans|PullCachedPlansAfterPeerArrives)$$'
 
 # Run all tests (unit + integration + postgres)
 test-all: test-integration test-postgres

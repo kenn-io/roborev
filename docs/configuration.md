@@ -1880,6 +1880,15 @@ EOF
 launchctl load ~/Library/LaunchAgents/com.roborev.daemon.plist
 ```
 
+On macOS, recovery finds the daemon's LaunchAgent by matching the daemon or an
+ancestor against the jobs listed by `launchctl print` in the user's domains. An
+outdated daemon owned by that job is replaced with `launchctl kickstart` after
+running reviews finish. A wrapper child or another installation stays in use. An
+unreadable job stops recovery before shutdown. `roborev daemon restart` and
+`roborev update` replace the daemon through its job too. They stop before
+shutdown for a wrapper child, another installation, or an unreadable job. Use
+`roborev update --no-restart` to install without restarting.
+
 The heredoc expands `${ROBOREV_BIN}`, `${BREW_PREFIX}`, and `${HOME}` at
 generation time so the plist contains absolute paths. Launchd does not expand
 `~` or environment variables in plist values.

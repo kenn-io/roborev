@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -212,6 +211,12 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 			}
 			assert.Equal(t, tc.stops, stops)
 			assert.Equal(t, tc.starts, starts)
+			if tc.pauseNotFound {
+				oldRestart := serviceRestartCommand
+				t.Cleanup(func() { serviceRestartCommand = oldRestart })
+				serviceRestartCommand = "launchctl kickstart -k"
+				require.ErrorContains(t, pauseServiceBeforeRecovery(t.Context(), original, "gui/501/com.example.daemon"), "run launchctl kickstart -k gui/501/com.example.daemon and retry roborev pause")
+			}
 			if reason := map[string]string{
 				"uncertain":          "properties unavailable",
 				"unreadable":         "cannot confirm executable",
@@ -231,10 +236,7 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 				assert.Contains(t, progress.String(), "systemctl --user restart fixture.service")
 			}
 			assert.Zero(t, detached)
-			release, acquired, err := daemon.RuntimeStore().TryAcquireStartLock(t.Context())
-			require.NoError(t, err)
-			require.True(t, acquired, "recovery must release the start lock on every outcome")
-			release()
+			assertRecoveryLock(t, true)
 		})
 	}
 }
@@ -519,28 +521,32 @@ func TestUserServiceCommandsNeverRestart(t *testing.T) {
 	assert.Equal(t, [][]string{{"start", "--", "fixture.service"}, {"show", "--property=MainPID", "--", "fixture.service"}}, *calls)
 }
 
-// A CLI whose own binary was replaced after it started runs a different
-// version than the service would start, so it must not drain the daemon.
-func TestDaemonServiceReplacedCLIIsAnotherInstallation(t *testing.T) {
-	path, err := os.Executable()
-	require.NoError(t, err)
-	if os.Getenv("ROBOREV_TEST_EXECUTABLE_REPLACEMENT") == "1" {
-		same, err := (&daemonService{executable: path}).sameInstallation()
-		require.NoError(t, err)
-		require.True(t, same)
-		require.NoError(t, os.WriteFile(path+".next", []byte("replacement executable"), 0o700))
-		require.NoError(t, os.Rename(path+".next", path))
-		same, err = (&daemonService{executable: path}).sameInstallation()
-		require.NoError(t, err)
-		assert.False(t, same)
-		return
+func TestSystemdRestartKeepsDetachedWorkflow(t *testing.T) {
+	stubServiceRecovery(t)
+	oldList := listAllRuntimes
+	t.Cleanup(func() { listAllRuntimes = oldList })
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+		return []*daemon.RuntimeInfo{{PID: os.Getpid()}}, nil
 	}
-	data, err := os.ReadFile(path)
-	require.NoError(t, err)
-	copyPath := filepath.Join(t.TempDir(), "roborev-test")
-	require.NoError(t, os.WriteFile(copyPath, data, 0o700))
-	cmd := exec.CommandContext(t.Context(), copyPath, "-test.run=^TestDaemonServiceReplacedCLIIsAnotherInstallation$")
-	cmd.Env = append(os.Environ(), "ROBOREV_TEST_EXECUTABLE_REPLACEMENT=1")
-	output, err := cmd.CombinedOutput()
-	require.NoError(t, err, "%s", output)
+	lookups, starts := 0, 0
+	findDaemonService = func(context.Context, int) (*daemonService, error) {
+		lookups++
+		return &daemonService{unit: "fixture.service", serviceType: "exec", mainPID: os.Getpid()}, nil
+	}
+	startDaemonService = func(context.Context, string) error {
+		starts++
+		return nil
+	}
+	var calls []string
+	withDaemonCommandDependencies(t,
+		func() error { calls = append(calls, "ensure"); return nil },
+		func() error { calls = append(calls, "stop"); return nil },
+		func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist },
+	)
+	cmd := daemonCmd()
+	cmd.SetArgs([]string{"restart"})
+	require.NoError(t, cmd.ExecuteContext(t.Context()))
+	assert.Equal(t, []string{"stop", "ensure"}, calls)
+	assert.Zero(t, lookups)
+	assert.Zero(t, starts)
 }

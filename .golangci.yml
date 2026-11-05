@@ -4,6 +4,7 @@ run:
   go: "1.27"
   build-tags:
     - postgres
+    - growth
 linters:
   default: none
   enable:

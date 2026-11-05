@@ -28,7 +28,7 @@ func BenchmarkRangeReviewCandidates(b *testing.B) {
 	}
 }
 
-func seedRangeReviews(ctx context.Context, b *testing.B, db *DB, repoID int64, count int, output string) {
+func seedRangeReviews(ctx context.Context, b testing.TB, db *DB, repoID int64, count int, output string) {
 	b.Helper()
 	_, err := db.ExecContext(ctx, `
 		WITH RECURSIVE sequence(n) AS (
