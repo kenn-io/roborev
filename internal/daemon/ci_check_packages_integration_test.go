@@ -113,4 +113,15 @@ node -e "console.log(require('./web/node_modules/checker-fixture'))"
 	assert.Contains(t, string(output), "javascript ready\n")
 	assert.FileExists(t, filepath.Join(run.Repo, ".venv", "pth-ran"))
 	assert.NoFileExists(t, marker)
+	t.Run("absolute npm lock", func(t *testing.T) {
+		archivePath := filepath.Join(t.TempDir(), "package.tgz")
+		require.NoError(t, os.WriteFile(archivePath, archive.Bytes(), 0o600))
+		localRepo := testutil.NewTestRepoWithCommit(t)
+		localRepo.CommitFile("package.json", `{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":"1.0.0"}}`, "registry dependency")
+		localRepo.CommitFile("package-lock.json", fmt.Sprintf(`{"name":"fixture","version":"1.0.0","lockfileVersion":3,"packages":{"":{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":"1.0.0"}},"node_modules/checker-fixture":{"version":"1.0.0","resolved":%q}}}`, archivePath), "local resolved archive")
+		var preparationLog bytes.Buffer
+		prepareCICheckPackages(t.Context(), localRepo.Root, t.TempDir(), os.Getenv("PATH"), nil, &preparationLog)
+		assert.NoDirExists(t, filepath.Join(localRepo.Root, "node_modules"), preparationLog.String())
+		assert.Contains(t, preparationLog.String(), "skips JavaScript local dependencies")
+	})
 }

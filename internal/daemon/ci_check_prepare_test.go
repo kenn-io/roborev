@@ -334,15 +334,21 @@ esac
 }
 
 func TestCICheckPackagesSkipped(t *testing.T) {
-	for _, tc := range []struct{ name, manifest string }{
-		{"local", `{"dependencies":{"local":"file:../local"}}`},
-		{"relative", `{"devDependencies":{"local":"../local"}}`},
-		{"override", `{"overrides":{"pkg":{"nested":"link:../local"}}}`},
-		{"resolution", `{"resolutions":{"pkg/nested":"workspace:*"}}`},
+	for _, tc := range []struct{ name, manifest, lock string }{
+		{"local", `{"dependencies":{"local":"file:../local"}}`, ""},
+		{"relative", `{"devDependencies":{"local":"../local"}}`, ""},
+		{"override", `{"overrides":{"pkg":{"nested":"link:../local"}}}`, ""},
+		{"resolution", `{"resolutions":{"pkg/nested":"workspace:*"}}`, ""},
+		{"npm link", `{}`, `{"packages":{"node_modules/pkg":{"link":true,"resolved":"node_modules/fixture"}}}`},
+		{"npm escaped path", `{}`, `{"packages":{"node_modules/pkg":{"resolved":"\u002fsynthetic/package.tgz"}}}`},
+		{"npm nested dependency", `{}`, `{"dependencies":{"parent":{"dependencies":{"pkg":{"version":"file:/synthetic/package.tgz"}}}}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := testutil.NewTestRepoWithCommit(t)
 			repo.CommitFile("package.json", tc.manifest, "dependencies")
+			if tc.lock != "" {
+				repo.CommitFile("package-lock.json", tc.lock, "dependency lock")
+			}
 			var log bytes.Buffer
 			assert.Empty(t, prepareCICheckPackages(t.Context(), repo.Root, t.TempDir(), os.Getenv("PATH"), nil, &log))
 			assert.NoDirExists(t, filepath.Join(repo.Root, "node_modules"))

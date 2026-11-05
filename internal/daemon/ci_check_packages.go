@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
 	"io"
@@ -116,27 +115,33 @@ func ciCheckLocalJSDependency(value any) bool {
 	return false
 }
 
+func ciCheckLocalNpmLock(lock map[string]any) bool {
+	for _, field := range []string{"packages", "dependencies"} {
+		packages, _ := lock[field].(map[string]any)
+		for _, value := range packages {
+			pkg, ok := value.(map[string]any)
+			if ok && (pkg["link"] == true || ciCheckLocalJSDependency(pkg["resolved"]) || ciCheckLocalJSDependency(pkg["version"]) || ciCheckLocalNpmLock(pkg)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func prepareCICheckJS(ctx context.Context, project, stage string, metadata map[string][]byte, env []string, out io.Writer) {
-	var manifest map[string]jsontext.Value
+	var manifest map[string]any
 	if err := json.Unmarshal(metadata["package.json"], &manifest); err != nil {
 		fmt.Fprintf(out, "CI checker invalid package.json: %v\n", err)
 		return
 	}
-	if len(manifest["workspaces"]) > 0 {
+	if manifest["workspaces"] != nil {
 		fmt.Fprintln(out, "CI checker skips JavaScript workspaces requiring local packages")
 		return
 	}
 	for _, field := range []string{"dependencies", "devDependencies", "optionalDependencies", "peerDependencies", "overrides", "resolutions"} {
-		if data := manifest[field]; data != nil {
-			var dependencies any
-			if err := json.Unmarshal(data, &dependencies); err != nil {
-				fmt.Fprintf(out, "CI checker invalid dependency declarations: %v\n", err)
-				return
-			}
-			if ciCheckLocalJSDependency(dependencies) {
-				fmt.Fprintln(out, "CI checker skips JavaScript local dependencies")
-				return
-			}
+		if ciCheckLocalJSDependency(manifest[field]) {
+			fmt.Fprintln(out, "CI checker skips JavaScript local dependencies")
+			return
 		}
 	}
 	manager := "npm"
@@ -149,7 +154,16 @@ func prepareCICheckJS(ctx context.Context, project, stage string, metadata map[s
 	}
 	for _, name := range []string{"package.json", "package-lock.json", "npm-shrinkwrap.json", "bun.lock"} {
 		if data := metadata[name]; data != nil {
-			if name != "package.json" && ciCheckLocalJSLock.Match(data) {
+			local := name == "bun.lock" && ciCheckLocalJSLock.Match(data)
+			if name == "package-lock.json" || name == "npm-shrinkwrap.json" {
+				var lock map[string]any
+				if err := json.Unmarshal(data, &lock); err != nil {
+					fmt.Fprintf(out, "CI checker invalid npm lockfile: %v\n", err)
+					return
+				}
+				local = ciCheckLocalNpmLock(lock)
+			}
+			if local {
 				fmt.Fprintln(out, "CI checker skips JavaScript local dependencies")
 				return
 			}
