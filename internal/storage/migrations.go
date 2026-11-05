@@ -44,6 +44,7 @@ var schemaMigrations = []schemaMigration{
 	{8, "search change log", migrateSearchChanges},
 	{9, "cost aggregate index", migrateCostAggregateIndex},
 	{10, "open failed reviews index", migrateOpenFailedReviewsIndex},
+	{11, "CI panel run index", migrateCIPanelRunIndex},
 }
 
 func migrateCostAggregateIndex(ctx context.Context, db *DB) error {
@@ -127,6 +128,12 @@ func migrateOpenFailedReviewsIndex(ctx context.Context, db *DB) error {
 func migrateCIPanelPRHeadIndex(ctx context.Context, db *DB) error {
 	_, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_ci_panels_pr_head
 		ON ci_pr_panels(github_repo, pr_number, head_sha)`)
+	return err
+}
+
+func migrateCIPanelRunIndex(ctx context.Context, db *DB) error {
+	_, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_ci_panels_panel_run
+		ON ci_pr_panels(panel_run_uuid)`)
 	return err
 }
 
