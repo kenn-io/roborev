@@ -15,6 +15,16 @@ import (
 	"go.kenn.io/roborev/internal/version"
 )
 
+func assertRecoveryLock(t *testing.T, wantAcquired bool) {
+	t.Helper()
+	release, acquired, err := daemon.RuntimeStore().TryAcquireStartLock(t.Context())
+	require.NoError(t, err)
+	if release != nil {
+		release()
+	}
+	assert.Equal(t, wantAcquired, acquired)
+}
+
 // stubServiceRecovery restores the recovery seams each test replaces.
 func stubServiceRecovery(t *testing.T) {
 	t.Helper()

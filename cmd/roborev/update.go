@@ -579,21 +579,26 @@ func runControlledUpdate(
 	prepareDaemon := func(info *daemon.RuntimeInfo, installed bool) error {
 		if restartThroughService {
 			var err error
-			releaseRecovery, err = acquireRecoveryLock()
-			if err != nil {
-				return fmt.Errorf("%w: %w", errRecoveryLock, err)
-			}
-			serviceOwner, err = restartService(operationCtx, []*daemon.RuntimeInfo{info})
+			serviceOwner, releaseRecovery, err = restartService(operationCtx, func() ([]*daemon.RuntimeInfo, error) {
+				current, err := discoverDaemonForUpdate()
+				if err != nil {
+					return nil, err
+				}
+				info, runningDaemon = current, current
+				if current == nil {
+					return nil, nil
+				}
+				return []*daemon.RuntimeInfo{current}, nil
+			})
 			if err != nil {
 				if installed {
 					return err
 				}
 				return fmt.Errorf("update stopped before install: %w; use --no-restart to install without restarting", err)
 			}
-			if serviceOwner == nil {
-				releaseRecovery()
-				releaseRecovery = nil
-			}
+		}
+		if info == nil {
+			return nil
 		}
 
 		prepared, err := prepareUpdateDaemonForCommand(
@@ -683,7 +688,9 @@ func runControlledUpdate(
 			if err := prepareDaemon(runningDaemon, true); err != nil {
 				return installedUpdateInterruption(session, err)
 			}
-			session.Installed = true
+			if session != nil {
+				session.Installed = true
+			}
 		}
 	}
 

@@ -178,23 +178,12 @@ func daemonCmd() *cobra.Command {
 			var release func()
 			if restartThroughService {
 				var err error
-				release, err = acquireRecoveryLock()
-				if err != nil {
-					return fmt.Errorf("%w: %w", errRecoveryLock, err)
-				}
-				defer func() {
-					if release != nil {
-						release()
-					}
-				}()
-				runtimes, _ := listAllRuntimes() // daemonStop reports list errors.
-				owner, err = restartService(cmd.Context(), runtimes)
+				owner, release, err = restartService(cmd.Context(), listAllRuntimes)
 				if err != nil {
 					return err
 				}
-				if owner == nil {
-					release()
-					release = nil
+				if release != nil {
+					defer release()
 				}
 			}
 			wasRunning := true
@@ -204,7 +193,7 @@ func daemonCmd() *cobra.Command {
 				return err
 			}
 			if owner != nil {
-				if err := startServiceReplacement(cmd.Context(), owner); err != nil {
+				if _, err := startServiceReplacement(cmd.Context(), owner); err != nil {
 					return err
 				}
 			} else if err := daemonEnsure(); err != nil {

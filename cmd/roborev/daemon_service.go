@@ -107,14 +107,14 @@ func (s *daemonService) sameInstallation() (bool, error) {
 // acquireRecoveryLock lets waiting commands share the active review drain.
 // The holder drains without a deadline, so waiters wait as long as it does
 // and then reuse its replacement instead of failing mid-drain.
-func acquireRecoveryLock() (func(), error) {
+func acquireRecoveryLock(ctx context.Context) (func(), error) {
 	store := daemon.RuntimeStore()
-	release, acquired, err := store.TryAcquireStartLock(context.Background())
+	release, acquired, err := store.TryAcquireStartLock(ctx)
 	if err != nil || acquired {
 		return release, err
 	}
 	fmt.Fprintln(lifecycleOut, "Waiting for daemon recovery lock; another command may be waiting for running reviews to finish...")
-	return store.AcquireStartLock(context.Background())
+	return store.AcquireStartLock(ctx)
 }
 
 // snapshotDaemonService treats a vanished PID as unmanaged when it ran
@@ -147,7 +147,7 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 			return nil
 		}
 	}
-	release, err := acquireRecoveryLock()
+	release, err := acquireRecoveryLock(context.Background())
 	if err != nil {
 		return fmt.Errorf("%w: %w", errRecoveryLock, err)
 	}
@@ -260,76 +260,90 @@ func recoverDaemon(info *daemon.RuntimeInfo, probeErr error, outsideService bool
 			return fail(err)
 		}
 	}
-	return startServiceReplacement(context.Background(), owner)
+	_, err = startServiceReplacement(context.Background(), owner)
+	return err
 }
 
-func startServiceReplacement(ctx context.Context, owner *daemonService) error {
+func startServiceReplacement(ctx context.Context, owner *daemonService) (*daemon.RuntimeInfo, error) {
 	fail := func(err error) error { return &managedRecoveryError{owner.unit, err} }
 	// Reviews may take longer than startup. Give the replacement a fresh budget.
 	readyCtx, readyCancel := context.WithTimeout(ctx, daemonStartTimeout)
 	defer readyCancel()
 	// Start leaves a socket-activated replacement running.
 	if err := startDaemonService(readyCtx, owner.unit); err != nil {
-		return fail(err)
+		return nil, fail(err)
 	}
-	if err := awaitServiceReplacement(readyCtx, owner.unit); err != nil {
-		return fail(err)
+	info, err := awaitServiceReplacement(readyCtx, owner.unit)
+	if err != nil {
+		return nil, fail(err)
 	}
-	return nil
+	return info, nil
 }
 
 // awaitServiceReplacement polls until a responsive daemon is the unit's main
 // process. Unit startup can precede runtime publication.
-func awaitServiceReplacement(ctx context.Context, unit string) error {
-	_, err := backoff.Retry(ctx, func() (struct{}, error) {
+func awaitServiceReplacement(ctx context.Context, unit string) (*daemon.RuntimeInfo, error) {
+	return backoff.Retry(ctx, func() (*daemon.RuntimeInfo, error) {
 		replacement, err := getAnyRunningDaemonForStart(ctx)
 		if err != nil {
 			err = fmt.Errorf("replacement readiness: %w", err)
 			if !errors.Is(err, os.ErrNotExist) {
 				err = backoff.Permanent(err)
 			}
-			return struct{}{}, err
+			return nil, err
 		}
 		mainPID, err := serviceMainPID(ctx, unit)
 		if err != nil {
-			return struct{}{}, backoff.Permanent(err)
+			return nil, backoff.Permanent(err)
 		}
 		if mainPID != replacement.PID {
-			return struct{}{}, fmt.Errorf("replacement is outside service %s", unit)
+			return nil, fmt.Errorf("replacement is outside service %s", unit)
 		}
-		return struct{}{}, nil
+		return replacement, nil
 	}, backoff.WithBackOff(backoff.NewConstantBackOff(50*time.Millisecond)),
 		backoff.WithMaxElapsedTime(0))
-	return err
 }
 
 // restartService checks ownership before an explicit restart shuts down a daemon.
-func restartService(ctx context.Context, runtimes []*daemon.RuntimeInfo) (*daemonService, error) {
-	if !restartThroughService {
-		return nil, nil
+func restartService(ctx context.Context, discover func() ([]*daemon.RuntimeInfo, error)) (owner *daemonService, release func(), err error) {
+	release, err = acquireRecoveryLock(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: %w", errRecoveryLock, err)
+	}
+	defer func() {
+		if err != nil || owner == nil {
+			release()
+			release = nil
+		}
+	}()
+	runtimes, err := discover()
+	if err != nil {
+		return nil, release, err
 	}
 	for _, info := range runtimes {
 		if info.PID <= 0 || info.Stale() {
 			continue
 		}
-		owner, err := findDaemonService(ctx, info.PID)
+		candidate, err := findDaemonService(ctx, info.PID)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
 		if err != nil {
-			return nil, err
+			return nil, release, err
 		}
-		if owner == nil {
+		if candidate == nil {
 			continue
 		}
-		if reason := owner.keepReason(info.PID); reason != "" {
-			hint := fmt.Sprintf("run %s %s", serviceRestartCommand, owner.unit)
+		if reason := candidate.keepReason(info.PID); reason != "" {
+			hint := fmt.Sprintf("run %s %s", serviceRestartCommand, candidate.unit)
 			if strings.Contains(reason, hint) {
-				return nil, errors.New(reason)
+				return nil, release, errors.New(reason)
 			}
-			return nil, fmt.Errorf("%s; %s", reason, hint)
+			return nil, release, fmt.Errorf("%s; %s", reason, hint)
 		}
-		return owner, nil
+		if owner == nil {
+			owner = candidate
+		}
 	}
-	return nil, nil
+	return owner, release, nil
 }

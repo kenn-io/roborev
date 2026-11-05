@@ -360,13 +360,17 @@ func TestRestartAndVerifyUpdatedDaemonThroughLaunchdJob(t *testing.T) {
 			stubServiceRecovery(t)
 			stubs := stubRestartVars(t)
 			started := respawned
+			ready := false
 			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+				assert.False(t, ready, "reuse the service readiness result for version verification")
 				if !started {
 					return nil, os.ErrNotExist
 				}
 				return &daemon.RuntimeInfo{PID: 200, Version: "v0.65.0"}, nil
 			}
-			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return getAnyRunningDaemon() }
+			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
+				return &daemon.RuntimeInfo{PID: 200, Version: "v0.65.0"}, nil
+			}
 			calls := 0
 			startDaemonService = func(_ context.Context, unit string) error {
 				assert.Equal(t, "gui/501/com.example.roborev", unit)
@@ -376,6 +380,7 @@ func TestRestartAndVerifyUpdatedDaemonThroughLaunchdJob(t *testing.T) {
 			}
 			serviceMainPID = func(_ context.Context, unit string) (int, error) {
 				assert.Equal(t, "gui/501/com.example.roborev", unit)
+				ready = true
 				return 200, nil
 			}
 			err := restartAndVerifyUpdatedDaemon(t.Context(), "/tmp/bin", "0.65.0", &daemon.RuntimeInfo{PID: 100}, &daemonService{unit: "gui/501/com.example.roborev"})

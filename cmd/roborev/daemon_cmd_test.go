@@ -239,18 +239,10 @@ func TestDaemonRestartThroughLaunchdJob(t *testing.T) {
 				}
 				return owner, nil
 			}
-			assertLocked := func() {
-				release, acquired, err := daemon.RuntimeStore().TryAcquireStartLock(t.Context())
-				require.NoError(t, err)
-				if release != nil {
-					release()
-				}
-				assert.False(t, acquired)
-			}
 			var calls []string
 			startDaemonService = func(_ context.Context, unit string) error {
 				assert.Equal(t, owner.unit, unit)
-				assertLocked()
+				assertRecoveryLock(t, false)
 				calls = append(calls, "kickstart")
 				return nil
 			}
@@ -262,9 +254,7 @@ func TestDaemonRestartThroughLaunchdJob(t *testing.T) {
 			withDaemonCommandDependencies(t,
 				func() error { calls = append(calls, "ensure"); return nil },
 				func() error {
-					if !tc.unmanaged && !tc.vanished && !tc.stale {
-						assertLocked()
-					}
+					assertRecoveryLock(t, tc.unmanaged || tc.vanished || tc.stale)
 					calls = append(calls, "stop")
 					return nil
 				},
@@ -276,6 +266,7 @@ func TestDaemonRestartThroughLaunchdJob(t *testing.T) {
 				cmd.SetArgs([]string{"restart"})
 				commandErr = cmd.ExecuteContext(t.Context())
 			})
+			assertRecoveryLock(t, true)
 			if tc.wantError != "" {
 				require.ErrorContains(t, commandErr, tc.wantError)
 				assert.Empty(t, calls)
@@ -291,6 +282,58 @@ func TestDaemonRestartThroughLaunchdJob(t *testing.T) {
 			} else {
 				assert.Equal(t, []string{"stop", "kickstart"}, calls)
 			}
+		})
+	}
+}
+
+func TestDaemonRestartChecksEveryRuntime(t *testing.T) {
+	for _, reason := range []string{"child process", "another installation", "job unreadable"} {
+		t.Run(reason, func(t *testing.T) {
+			stubServiceRecovery(t)
+			restartThroughService = true
+			path, err := os.Executable()
+			require.NoError(t, err)
+			cliExecutableInfo = func() (os.FileInfo, error) { return os.Stat(path) }
+			owner := &daemonService{unit: "gui/501/com.example.roborev", mainPID: os.Getpid(), executable: path, serviceType: "exec"}
+			second := *owner
+			second.mainPID = os.Getppid()
+			switch reason {
+			case "child process":
+				second.mainPID = os.Getpid()
+			case "another installation":
+				second.executable = filepath.Join(t.TempDir(), "roborev")
+				require.NoError(t, os.WriteFile(second.executable, nil, 0o600))
+			}
+			oldList := listAllRuntimes
+			t.Cleanup(func() { listAllRuntimes = oldList })
+			listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+				return []*daemon.RuntimeInfo{{PID: os.Getpid()}, {PID: os.Getppid()}}, nil
+			}
+			findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
+				if pid == os.Getpid() {
+					return owner, nil
+				}
+				assert.Equal(t, os.Getppid(), pid)
+				if reason == "job unreadable" {
+					return nil, errors.New(reason)
+				}
+				return &second, nil
+			}
+			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return &daemon.RuntimeInfo{PID: 200}, nil }
+			serviceMainPID = func(context.Context, string) (int, error) { return 200, nil }
+			stops, starts := 0, 0
+			startDaemonService = func(context.Context, string) error { starts++; return nil }
+			withDaemonCommandDependencies(t,
+				func() error { starts++; return nil },
+				func() error { stops++; return nil },
+				func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist },
+			)
+			cmd := daemonCmd()
+			cmd.SetArgs([]string{"restart"})
+			err = cmd.ExecuteContext(t.Context())
+			require.ErrorContains(t, err, reason)
+			assert.Zero(t, stops)
+			assert.Zero(t, starts)
 		})
 	}
 }

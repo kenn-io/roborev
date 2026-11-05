@@ -372,16 +372,17 @@ func restartAndVerifyUpdatedDaemon(
 	if err != nil {
 		return err
 	}
+	var info *daemon.RuntimeInfo
 	if owner != nil {
-		if err := startServiceReplacement(ctx, owner); err != nil {
-			return err
+		info, err = startServiceReplacement(ctx, owner)
+	} else {
+		if replacementPID == 0 {
+			if err := startUpdatedDaemon(binDir); err != nil {
+				return fmt.Errorf("start updated daemon: %w", err)
+			}
 		}
-	} else if replacementPID == 0 {
-		if err := startUpdatedDaemon(binDir); err != nil {
-			return fmt.Errorf("start updated daemon: %w", err)
-		}
+		info, err = waitForResponsiveUpdatedDaemon(ctx, updateRestartWaitTimeout)
 	}
-	info, err := waitForResponsiveUpdatedDaemon(ctx, updateRestartWaitTimeout)
 	if err != nil {
 		return err
 	}
