@@ -24,15 +24,15 @@ func parseLaunchctlDomain(output []byte) (map[int]string, error) {
 		if line == "\t}" {
 			return jobs, nil
 		}
-		if !strings.HasPrefix(line, "\t\t") {
-			continue
-		}
 		fields := strings.Fields(line)
-		if len(fields) != 3 {
-			continue
+		if !strings.HasPrefix(line, "\t\t") || len(fields) != 3 {
+			return nil, errors.New("cannot read launchd jobs")
 		}
 		pid, err := strconv.Atoi(fields[0])
-		if err == nil && pid > 0 {
+		if err != nil || strings.ContainsAny(fields[0], "+-") {
+			return nil, errors.New("cannot read launchd jobs")
+		}
+		if pid > 0 {
 			jobs[pid] = fields[2]
 		}
 	}
@@ -103,7 +103,10 @@ func lookupLaunchdService(ctx context.Context, pid int, deps launchdDeps) (*daem
 			if err != nil {
 				return fail(unit, err)
 			}
-			if owner.mainPID != ancestor || jobType != "LaunchAgent" {
+			if owner.mainPID != ancestor {
+				return fail(unit, errors.New("launchd job pid changed"))
+			}
+			if jobType != "LaunchAgent" {
 				continue
 			}
 			owner.unit = unit

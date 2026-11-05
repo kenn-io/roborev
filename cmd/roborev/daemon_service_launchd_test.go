@@ -47,6 +47,12 @@ func TestParseLaunchctlDomain(t *testing.T) {
 	}{
 		{name: "running jobs", output: "domain = {\n\tservices = {\n\t\t42 0 com.example.daemon\n\t\t43 -15 application.example.daemon\n\t}\n}\n", want: map[int]string{42: "com.example.daemon", 43: "application.example.daemon"}},
 		{name: "empty", output: "\tservices = {\n\t}\n", want: map[int]string{}},
+		{name: "inactive", output: "\tservices = {\n\t\t0 0 com.example.daemon\n\t}\n", want: map[int]string{}},
+		{name: "malformed row", output: "\tservices = {\n\t\tinvalid row\n\t}\n", wantErr: true},
+		{name: "extra column", output: "\tservices = {\n\t\t42 0 com.example.daemon extra\n\t}\n", wantErr: true},
+		{name: "invalid pid", output: "\tservices = {\n\t\tinvalid 0 com.example.daemon\n\t}\n", wantErr: true},
+		{name: "negative pid", output: "\tservices = {\n\t\t-42 0 com.example.daemon\n\t}\n", wantErr: true},
+		{name: "signed pid", output: "\tservices = {\n\t\t+42 0 com.example.daemon\n\t}\n", wantErr: true},
 		{name: "missing", output: "domain = {}", wantErr: true},
 		{name: "unclosed", output: "\tservices = {\n\t\t42 0 example\n", wantErr: true},
 	} {

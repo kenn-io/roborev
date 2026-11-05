@@ -70,8 +70,9 @@ func TestLookupLaunchdService(t *testing.T) {
 		{name: "domain print fails", chain: []int{42, 1}, guiErr: errors.New("domain unreadable"), wantErr: true},
 		{name: "domain table missing", chain: []int{42, 1}, gui: "domain = {}", wantErr: true},
 		{name: "job print fails", chain: []int{42, 1}, jobErr: errors.New("job unreadable"), wantErr: true},
+		{name: "job vanished", chain: []int{42, 1}, jobErr: exits[113], wantErr: true},
 		{name: "job type missing", chain: []int{42, 1}, job: "\tpid = 42\n", wantErr: true},
-		{name: "job pid changed", chain: []int{42, 1}, job: "\ttype = LaunchAgent\n\tpid = 99\n"},
+		{name: "job pid changed", chain: []int{42, 1}, job: "\ttype = LaunchAgent\n\tpid = 99\n", wantErr: true},
 		{name: "vanished pid", chain: []int{43}, ancestryErr: os.ErrNotExist, wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
