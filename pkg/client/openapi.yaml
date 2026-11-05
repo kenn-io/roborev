@@ -6113,6 +6113,17 @@ paths:
               - "false"
               - ""
             type: string
+        - description: Skip the queue counts (stats and filtered_stats) for callers that only read jobs
+          explode: false
+          in: query
+          name: omit_stats
+          schema:
+            description: Skip the queue counts (stats and filtered_stats) for callers that only read jobs
+            enum:
+              - "true"
+              - "false"
+              - ""
+            type: string
         - description: Omit prompt and diff content from returned jobs (metadata-only listing; queued/running jobs keep their prompt)
           explode: false
           in: query

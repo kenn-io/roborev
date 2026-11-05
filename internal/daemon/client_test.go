@@ -320,6 +320,7 @@ func TestFindJobForCommit(t *testing.T) {
 
 			handler := tc.setupMock(t)
 			client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal("true", r.URL.Query().Get("omit_stats"))
 				handler(t, w, r)
 			})
 			job, err := client.FindJobForCommit(t.Context(), tc.queryRepo, sha)
@@ -391,6 +392,7 @@ func TestFindPendingJobForRef(t *testing.T) {
 				assertRequest(t, r, http.MethodGet, "/api/jobs")
 
 				assertQuery(t, r, "git_ref", "abc123..def456")
+				assertQuery(t, r, "omit_stats", "true")
 
 				expectedRepo, err := filepath.Abs("/test/repo")
 				assert.NoError(err, "filepath.Abs failed: %v", err)

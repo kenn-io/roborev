@@ -211,6 +211,9 @@ type ListJobsQuery struct {
 	// IncludePanelMembers Include individual panel member jobs alongside panel synthesis jobs
 	IncludePanelMembers *ListJobsQueryIncludePanelMembers `json:"include_panel_members,omitempty"`
 
+	// OmitStats Skip the queue counts (stats and filtered_stats) for callers that only read jobs
+	OmitStats *ListJobsQueryOmitStats `json:"omit_stats,omitempty"`
+
 	// OmitPrompt Omit prompt and diff content from returned jobs (metadata-only listing; queued/running jobs keep their prompt)
 	OmitPrompt *ListJobsQueryOmitPrompt `json:"omit_prompt,omitempty"`
 
@@ -280,6 +283,13 @@ func (l ListJobsQuery) Validate() error {
 		if v, ok := any(l.IncludePanelMembers).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append("IncludePanelMembers", err)
+			}
+		}
+	}
+	if l.OmitStats != nil {
+		if v, ok := any(l.OmitStats).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("OmitStats", err)
 			}
 		}
 	}

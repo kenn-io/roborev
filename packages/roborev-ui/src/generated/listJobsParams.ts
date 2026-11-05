@@ -8,6 +8,7 @@ import type { ListJobsHideClassifyJobs } from "./listJobsHideClassifyJobs";
 import type { ListJobsIncludeFindings } from "./listJobsIncludeFindings";
 import type { ListJobsIncludePanelMembers } from "./listJobsIncludePanelMembers";
 import type { ListJobsOmitPrompt } from "./listJobsOmitPrompt";
+import type { ListJobsOmitStats } from "./listJobsOmitStats";
 
 export type ListJobsParams = {
   /**
@@ -70,6 +71,10 @@ export type ListJobsParams = {
    * Include individual panel member jobs alongside panel synthesis jobs
    */
   include_panel_members?: ListJobsIncludePanelMembers;
+  /**
+   * Skip the queue counts (stats and filtered_stats) for callers that only read jobs
+   */
+  omit_stats?: ListJobsOmitStats;
   /**
    * Omit prompt and diff content from returned jobs (metadata-only listing; queued/running jobs keep their prompt)
    */

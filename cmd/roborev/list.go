@@ -99,7 +99,7 @@ Examples:
 			}
 
 			// Build query URL
-			params := generated.ListJobsQuery{}
+			params := generated.ListJobsQuery{OmitStats: new(generated.ListJobsQueryOmitStatsTrue)}
 			if repoPrefix != "" {
 				params.RepoPrefix = new(repoPrefix)
 			} else if repoPath != "" {

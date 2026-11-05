@@ -160,7 +160,7 @@ func TestTUIFindingsSplitWidthAndNoColor(t *testing.T) { //nolint:paralleltest /
 	assert.NotContains(t, buf.String(), "\x1b[38;")
 }
 
-func TestTUIFindingsRequestOption(t *testing.T) {
+func TestTUIJobsRequestOptions(t *testing.T) {
 	t.Parallel()
 	queries := map[string]url.Values{}
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -196,4 +196,7 @@ func TestTUIFindingsRequestOption(t *testing.T) {
 	assert.Equal(t, "true", queries["more"].Get("include_findings"))
 	assert.Equal(t, "true", queries["panel"].Get("include_findings"))
 	assert.Empty(t, queries["fix"].Get("include_findings"))
+	assert.Equal(t, "true", queries["more"].Get("omit_stats"))
+	assert.Equal(t, "true", queries["fix"].Get("omit_stats"))
+	assert.Empty(t, queries["list"].Get("omit_stats"))
 }

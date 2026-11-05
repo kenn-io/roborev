@@ -20,6 +20,7 @@ func TestFetchPanelMembersRequestsFullRun(t *testing.T) {
 	var gotLimit, gotPanelRun string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/jobs", r.URL.Path)
+		assert.Equal("true", r.URL.Query().Get("omit_stats"))
 		gotLimit = r.URL.Query().Get("limit")
 		gotPanelRun = r.URL.Query().Get("panel_run")
 		writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{

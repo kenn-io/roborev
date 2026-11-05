@@ -2458,6 +2458,7 @@ func TestEnqueueIfNeededSkipsWhenJobExists(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/jobs":
+			assert.Equal(t, "true", r.URL.Query().Get("omit_stats"))
 			// Return an existing job — hook already fired
 			json.NewEncoder(w).Encode(map[string]any{
 				"jobs": []map[string]any{{"id": 42}},
@@ -2513,7 +2514,8 @@ func TestEnqueueIfNeededReturnsAuthDeniedDuringJobProbe(t *testing.T) {
 }
 
 func TestVerifyJobForSHAContextReturnsAccessDeniedOnUnauthorized(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "true", r.URL.Query().Get("omit_stats"))
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer ts.Close()
