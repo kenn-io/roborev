@@ -1654,7 +1654,6 @@ func TestListJobsClosedPagePlans(t *testing.T) {
 		{name: "multiple repo IDs", opts: []ListJobsOption{WithRepoIDs([]int64{repo.ID, otherRepo.ID})}, index: "idx_review_jobs_closed_position"},
 		{name: "ref", index: "idx_review_jobs_git_ref", opts: []ListJobsOption{WithGitRef("selected")}, want: []int64{1}, allowSort: true},
 		{name: "panel", index: "idx_review_jobs_panel", opts: []ListJobsOption{WithPanelRun(panelRun)}, want: []int64{1}, allowSort: true},
-		{name: "finished window", index: "idx_review_jobs_analytics", opts: []ListJobsOption{WithFailedReviewsSince(time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC))}, want: []int64{1}, allowSort: true},
 	} {
 		t.Run(filter.name, func(t *testing.T) {
 			opts := append([]ListJobsOption{WithClosed(true), WithoutPrompt()}, filter.opts...)

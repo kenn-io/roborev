@@ -1968,8 +1968,7 @@ func (o listJobsOptions) selective(statusFilter, repoFilter string) bool {
 	// range in enqueue order, so closed pages need the closed-position index.
 	// Done status does not narrow closed reviews, which belong to done jobs.
 	return (statusFilter != "" && statusFilter != string(JobStatusDone)) || repoFilter != "" || len(o.repoPaths) == 1 || len(o.repoIDs) == 1 ||
-		(o.branch != "" && !o.branchEmpty && !o.branchIncludeEmpty) || o.gitRef != "" || o.panelRun != uuid.Nil() ||
-		o.openFailedReviews || o.failedReviewsSince != nil
+		(o.branch != "" && !o.branchEmpty && !o.branchIncludeEmpty) || o.gitRef != "" || o.panelRun != uuid.Nil()
 }
 
 // WithFailedReviewsSince selects completed review, range, dirty, or synthesis
