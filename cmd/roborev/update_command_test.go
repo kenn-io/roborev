@@ -829,7 +829,7 @@ func TestUpdateCancellationWhileWaitingForRecovery(t *testing.T) {
 	select {
 	case err = <-done:
 		interrupted = true
-		assert.ErrorIs(t, err, context.Canceled)
+		require.ErrorIs(t, err, context.Canceled)
 	case <-time.After(5 * time.Second):
 		release()
 		release = nil

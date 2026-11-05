@@ -373,7 +373,7 @@ func TestDaemonRestartChecksEveryRuntime(t *testing.T) {
 					assert.Equal(t, 1, strings.Count(err.Error(), "run launchctl kickstart -k "+second.unit))
 				}
 				if tc.wantError == "2 live daemons" {
-					assert.ErrorContains(t, err, "stop the others or restart through each job")
+					require.ErrorContains(t, err, "stop the others or restart through each job")
 				}
 			} else {
 				require.NoError(t, err)
