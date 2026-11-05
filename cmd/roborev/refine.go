@@ -671,7 +671,7 @@ func runRefine(ctx context.Context, runCtx RunContext, opts refineOptions) error
 		addressPrompt = appendRefineFixGuidelines(addressPrompt, cfg.FixGuidelines)
 
 		// Create temp worktree to isolate agent from user's working tree
-		wt, err := createRefineWorktreeAtRef(ctx, repoPath, headBefore)
+		wt, err := createRefineWorktreeAtRef(ctx, repoPath, headBefore, headBefore)
 		if err != nil {
 			return fmt.Errorf("create worktree: %w", err)
 		}
@@ -1493,11 +1493,12 @@ func refineGitRunner() gitcmd.Runner {
 
 // createRefineWorktree creates the detached worktree refine runs the agent in.
 func createRefineWorktree(ctx context.Context, repoPath string) (*gitworktree.Worktree, error) {
-	return createRefineWorktreeAtRef(ctx, repoPath, "HEAD")
+	return createRefineWorktreeAtRef(ctx, repoPath, "HEAD", "")
 }
 
-func createRefineWorktreeAtRef(ctx context.Context, repoPath, ref string) (*gitworktree.Worktree, error) {
+func createRefineWorktreeAtRef(ctx context.Context, repoPath, ref, baseSHA string) (*gitworktree.Worktree, error) {
 	return gitworktree.Create(ctx, repoPath, ref, gitworktree.Options{
+		BaseSHA:        baseSHA,
 		Prefix:         "roborev-worktree-",
 		InitSubmodules: true,
 		PullLFS:        true,

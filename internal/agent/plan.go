@@ -32,7 +32,8 @@ func RunPlan(ctx context.Context, a Agent, repoPath, ref, planningPrompt string,
 		return "", fmt.Errorf("resolve planning revision: %w", err)
 	}
 	wt, err := gitworktree.Create(ctx, repoPath, sha, gitworktree.Options{
-		Prefix: "roborev-plan-", InitSubmodules: true, PullLFS: true,
+		BaseSHA: sha,
+		Prefix:  "roborev-plan-", InitSubmodules: true, PullLFS: true,
 		// Preserve user URL rewrites and credentials, while disabling hooks
 		// for every setup command, including nested submodule checkouts.
 		Runner: gitcmd.Runner{

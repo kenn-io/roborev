@@ -186,7 +186,8 @@ func planRefineReviewAtTarget(
 	planningRepoPath := repoPath
 	if opts.allBranches {
 		worktree, createErr := gitworktree.Create(ctx, repoPath, target, gitworktree.Options{
-			Prefix: "roborev-refine-plan-context-",
+			Prefix:  "roborev-refine-plan-context-",
+			BaseSHA: target,
 		})
 		if createErr != nil {
 			return fmt.Errorf("create target branch planning context: %w", createErr)
