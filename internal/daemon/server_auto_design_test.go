@@ -458,7 +458,9 @@ func TestAutoDesignStatusForResponse_WorktreeInheritedConfigSurfacesAfterTTL(t *
 
 	enableAutoDesignReviewForRepo(t, repo.Path())
 	assert.Nil(t, srv.autoDesignStatusForResponse())
-	srv.refreshAutoDesignRepoScan()
+	srv.autoDesignScanAt = time.Now().Add(-autoDesignRepoScanTTL - time.Second)
+	assert.Nil(t, srv.autoDesignStatusForResponse())
+	srv.agentHealth.wait()
 	got := srv.autoDesignStatusForResponse()
 	require.NotNil(t, got)
 	assert.True(t, got.Enabled)
