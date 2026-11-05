@@ -905,9 +905,9 @@ plugins bind Unix sockets even with deeply nested checkout paths. Temporary
 contents stay inside the checkout for cleanup and startup recovery. Host Unix
 sockets outside scratch remain blocked. Tests can read their own scope's CPU and
 memory limits, which DuckDB needs at startup. Model calls use nono's credential
-route, which reads the host's current Codex login outside the sandbox. Tests that
-start TCP loopback servers cannot run in this sandbox; the checker keeps findings
-it cannot try.
+route, which reads the host's current Codex login outside the sandbox. Tests
+that start TCP loopback servers cannot run in this sandbox; the checker keeps
+findings it cannot try.
 
 A finding drops only when one verdict supplies evidence and a reason to drop it.
 Missing or duplicate verdicts keep the finding. The job log records the
