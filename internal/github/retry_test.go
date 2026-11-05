@@ -63,14 +63,14 @@ func TestGitHubSecondaryCooldownAcrossClients(t *testing.T) {
 }
 
 func TestGitHubSecondaryCooldownDelays(t *testing.T) {
-	for _, header := range []string{"none", "seconds", "date", "reset"} {
+	for _, header := range []string{"none", "seconds", "date", "reset", "reset with budget", "short reset with budget"} {
 		t.Run(header, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				assert := assert.New(t)
 				token := rand.Text()
 				base := "https://" + token + ".example.com/"
 				delay := 3 * time.Second
-				if header == "none" {
+				if header == "none" || strings.HasSuffix(header, "with budget") {
 					delay = time.Minute
 				}
 				attempts := 0
@@ -87,7 +87,15 @@ func TestGitHubSecondaryCooldownDelays(t *testing.T) {
 						case "date":
 							resp.Header.Set("Retry-After", time.Now().Add(delay).UTC().Format(http.TimeFormat))
 						case "reset":
+							resp.Header.Set("X-RateLimit-Remaining", "0")
 							resp.Header.Set("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(delay).Unix(), 10))
+						case "reset with budget", "short reset with budget":
+							reset := 30 * time.Minute
+							if header == "short reset with budget" {
+								reset = 3 * time.Second
+							}
+							resp.Header.Set("X-RateLimit-Remaining", "4000")
+							resp.Header.Set("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(reset).Unix(), 10))
 						}
 					}
 					return resp, nil
@@ -95,8 +103,13 @@ func TestGitHubSecondaryCooldownDelays(t *testing.T) {
 				client, err := NewClient(token, WithBaseURL(base), WithHTTPClient(httpClient))
 				require.NoError(t, err)
 				err = client.SetCommitStatus(t.Context(), "acme/api", "head", "pending", "queued")
-				var rate *googlegithub.AbuseRateLimitError
-				require.ErrorAs(t, err, &rate)
+				if header == "reset" {
+					var rate *googlegithub.RateLimitError
+					require.ErrorAs(t, err, &rate)
+				} else {
+					var rate *googlegithub.AbuseRateLimitError
+					require.ErrorAs(t, err, &rate)
+				}
 				fresh, err := NewClient(token, WithBaseURL(base), WithHTTPClient(httpClient))
 				require.NoError(t, err)
 				time.Sleep(delay - time.Second)
@@ -211,6 +224,7 @@ func TestGitHubReadRetries(t *testing.T) {
 							case "secondary date":
 								resp.Header.Set("Retry-After", time.Now().Add(3*time.Second).UTC().Format(http.TimeFormat))
 							case "secondary reset":
+								resp.Header.Set("X-RateLimit-Remaining", "0")
 								resp.Header.Set("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(3*time.Second).Unix(), 10))
 							}
 						}
