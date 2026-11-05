@@ -388,7 +388,7 @@ func ensureDaemon() (err error) {
 		if err == nil && owner == nil {
 			continue
 		}
-		return recoverDaemonWithSnapshot(info, errDaemonUnresponsive, owner, err)
+		return recoverDaemonWithSnapshot(info, kitdaemon.ErrDaemonUnreachable, owner, err)
 	}
 
 	// Start daemon in background

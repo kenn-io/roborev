@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v7"
+	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/version"
@@ -40,8 +41,7 @@ var (
 	serviceStartCommand   = "systemctl --user start"
 	cliExecutableInfo     = func() (os.FileInfo, error) { return os.Stat("/proc/self/exe") }
 
-	errRecoveryLock       = errors.New("wait for daemon recovery lock")
-	errDaemonUnresponsive = errors.New("daemon is unresponsive")
+	errRecoveryLock = errors.New("wait for daemon recovery lock")
 
 	findDaemonService  = lookupDaemonService
 	daemonCgroupUnit   = serviceCgroup
@@ -256,9 +256,9 @@ func recoverDaemonWithSnapshot(info *daemon.RuntimeInfo, probeErr error, snapsho
 			return fail(err)
 		}
 		if probeFailed && !current.Stale() {
-			cause := errDaemonUnresponsive
-			if !errors.Is(probeErr, errDaemonUnresponsive) {
-				cause = fmt.Errorf("%w: %w", cause, probeErr)
+			cause := probeErr
+			if !errors.Is(probeErr, kitdaemon.ErrDaemonUnreachable) {
+				cause = fmt.Errorf("daemon is unresponsive: %w", probeErr)
 			}
 			return fail(fmt.Errorf("%w; run %s %s", cause, serviceRestartCommand, owner.unit))
 		}
