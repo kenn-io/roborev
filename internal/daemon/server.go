@@ -62,6 +62,8 @@ type Server struct {
 	autoDesignScanAt        time.Time
 	autoDesignScanEnabled   bool
 	autoDesignScanRunning   bool
+	autoDesignScanStopped   bool
+	autoDesignScanDBWG      sync.WaitGroup
 	searchMu                sync.Mutex
 	searchCancel            context.CancelFunc
 	searchSubscriberID      int
@@ -734,6 +736,8 @@ func (s *Server) Stop() error {
 }
 
 func (s *Server) stopOnce0() error {
+	s.stopAutoDesignRepoScan()
+
 	// Log daemon stop before shutting down components
 	if s.activityLog != nil {
 		uptime := time.Since(s.startTime)
