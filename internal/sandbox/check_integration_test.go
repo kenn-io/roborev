@@ -209,6 +209,9 @@ exit "$failed"
 	out := runInJob(t, job, "bash", "-c", script)
 	t.Log(out)
 	assert.Contains(t, out, "\n1073741824\n")
+	if strings.Contains(out, "SKIP cpu-limit:") {
+		t.Skip("CPU controller is not delegated")
+	}
 }
 
 func TestSandboxUnixSockets(t *testing.T) {
