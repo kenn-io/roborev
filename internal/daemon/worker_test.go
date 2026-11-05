@@ -4406,6 +4406,10 @@ func TestWorkerPoolWakesIdleWorkersOnNewJob(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				db := testutil.OpenTestDB(t)
+				// Serialize SQLite operations through database/sql. On macOS, a
+				// busy-handler sleep cannot advance while another goroutine
+				// waits on the machine-ID mutex inside this synctest bubble.
+				db.SetMaxOpenConns(1)
 				cfg := config.DefaultConfig()
 				cfg.MaxWorkers = 1
 				server := newServerWithLogs(db, cfg, "", newTestErrorLog(), newTestActivityLog())
