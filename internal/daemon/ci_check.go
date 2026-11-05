@@ -253,9 +253,6 @@ func (wp *WorkerPool) prepareCICheck(ctx context.Context, job *storage.ReviewJob
 	env := []string{"PATH=" + toolPath, "HOME=" + filepath.Join(root, "home"), "TMPDIR=" + filepath.Join(tmpAlias, "t"), "GOCACHE=" + filepath.Join(run.Job.WorkDir, "gocache"), "GOPROXY=off", "LANG=C.UTF-8", "TERM=dumb"}
 	if miseData != "" {
 		env = append(env, "MISE_DATA_DIR="+miseData, "MISE_STATE_DIR="+filepath.Join(run.Job.WorkDir, "mise-state"), "MISE_SYSTEM_DIR="+filepath.Join(run.Job.WorkDir, "mise-system"), "MISE_CEILING_PATHS="+root)
-		if installs := os.Getenv("MISE_INSTALLS_DIR"); installs != "" {
-			env = append(env, "MISE_INSTALLS_DIR="+installs)
-		}
 	}
 	if len(goPaths) == 2 {
 		env[0] = "PATH=" + filepath.Join(goPaths[0], "bin") + string(os.PathListSeparator) + toolPath
@@ -376,11 +373,7 @@ func ciCheckMisePaths(ctx context.Context, out io.Writer) (roots, bins []string,
 	}
 	roots = append(roots, mise)
 	if doctor.Dirs.Data != "" {
-		installsDir := os.Getenv("MISE_INSTALLS_DIR")
-		if installsDir == "" {
-			installsDir = filepath.Join(doctor.Dirs.Data, "installs")
-		}
-		installs, err := sandbox.ResolvePath(installsDir)
+		installs, err := sandbox.ResolvePath(filepath.Join(doctor.Dirs.Data, "installs"))
 		if err != nil {
 			fmt.Fprintf(out, "CI checker mise discovery failed: %v\n", err)
 		} else {

@@ -198,7 +198,6 @@ func ciCheckMiseFixture(t *testing.T) (string, string, string) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires shell fixtures")
 	}
-	t.Setenv("MISE_INSTALLS_DIR", "")
 	tools, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	shims := t.TempDir()

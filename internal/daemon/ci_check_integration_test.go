@@ -353,7 +353,7 @@ echo 'OK rewrite read-only'
 
 func TestCICheckToolchainsSandboxIntegration(t *testing.T) {
 	testutil.RequireSandboxIntegration(t)
-	for _, name := range []string{"direct runtime", "linked mise", "linked mise custom installs"} {
+	for _, name := range []string{"direct runtime", "linked mise"} {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 			repo := testutil.NewTestRepoWithCommit(t)
@@ -376,18 +376,6 @@ func TestCICheckToolchainsSandboxIntegration(t *testing.T) {
 					t.Skip("requires a released Go version")
 				}
 				pin := strings.TrimPrefix(language, "go")
-				if name == "linked mise custom installs" {
-					pin = strings.TrimPrefix(strings.TrimSpace(string(version)), "go")
-					whereCmd := exec.CommandContext(t.Context(), mise, "where", "go")
-					whereCmd.Dir = "/"
-					installed, err := whereCmd.Output()
-					require.NoError(t, err)
-					installs := t.TempDir()
-					require.NoError(t, os.Mkdir(filepath.Join(installs, "go"), 0o700))
-					require.NoError(t, os.Symlink(strings.TrimSpace(string(installed)), filepath.Join(installs, "go", pin)))
-					t.Setenv("MISE_DATA_DIR", t.TempDir())
-					t.Setenv("MISE_INSTALLS_DIR", installs)
-				}
 				// The executable target sits outside the PATH directory and installed tool roots.
 				binary, err := os.ReadFile(mise)
 				require.NoError(t, err)
