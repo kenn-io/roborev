@@ -83,7 +83,7 @@ esac
 	require.NoError(t, err)
 	node, err = filepath.EvalSymlinks(node)
 	require.NoError(t, err)
-	mise := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in 'ls --current --installed --json') printf '%%s' '{\"node\":[{\"install_path\":%q}]}';; 'bin-paths') printf '%%s\\n' '%s';; *) exit 1;; esac\n", filepath.Dir(filepath.Dir(node)), filepath.Dir(node))
+	mise := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in 'ls --current --installed --json') printf '%%s' '{\"node\":[{\"install_path\":%q}]}';; 'bin-paths') printf '%%s\\n' '%s' '%s';; *) exit 1;; esac\n", filepath.Dir(filepath.Dir(node)), tools, filepath.Dir(node))
 	require.NoError(t, os.WriteFile(filepath.Join(tools, "mise"), []byte(mise), 0o700))
 	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
 	lifecycleMarker := filepath.Join(t.TempDir(), "lifecycle-ran")
