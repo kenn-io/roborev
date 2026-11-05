@@ -862,16 +862,17 @@ their declared members, and local dependencies are skipped. For npm projects
 without a supported lockfile, preparation resolves a private lockfile and checks
 its complete source graph before installing packages.
 
-Python uses installed `python3` with venv and pip. It reads static dependencies
-and optional dependencies from `[project]`, plus string entries in
-`[dependency-groups]` in `pyproject.toml`. It preserves version constraints and
-markers, downloads wheels only, and skips requirements whose dependencies need
-source builds or conflict with accepted requirements. Required dependencies come
-first, followed by optional groups and dependency groups in sorted name order.
-Requirements files, editable installs, direct URLs, and local packages are
-unsupported. These declarations do not apply Python lockfile pins. The root
-`.venv/bin` leads the sandbox's `PATH`; nested projects can use their own
-`.venv/bin/python`. An existing committed `.venv` is left alone.
+Python uses installed `python3` with venv and pip. Downloads use PyPI and ignore
+pip configuration files. It reads static dependencies and optional dependencies
+from `[project]`, plus string entries in `[dependency-groups]` in
+`pyproject.toml`. It preserves version constraints and markers, downloads wheels
+only, and skips requirements whose dependencies need source builds or conflict
+with accepted requirements. Required dependencies come first, followed by
+optional groups and dependency groups in sorted name order. Requirements files,
+editable installs, direct URLs, and local packages are unsupported. These
+declarations do not apply Python lockfile pins. The root `.venv/bin` leads the
+sandbox's `PATH`; nested projects can use their own `.venv/bin/python`. An
+existing committed `.venv` is left alone.
 
 Installers run from private copies of dependency metadata, with private caches
 and without repository package-manager settings. Prepared packages live in the

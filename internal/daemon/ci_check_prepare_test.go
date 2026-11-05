@@ -276,13 +276,16 @@ case "$*" in
 'root --global') printf '/trusted/npm-root\n';;
 *--eval*) /bin/cat;;
 *pip._vendor.packaging.requirements*)
- case "$(/bin/cat)" in
- '["test-package"]') printf '%s' '["test-package"]';;
+ case "$*" in
+ *compatible*) printf '%s' '["test-package","compatible"]';;
+ *test-package) printf '%s' '["test-package"]';;
  *) printf '%s' '["test-package>=1","source-only","optional-fixture==2","group-fixture; python_version >= \"3.10\""]';;
  esac
  ;;
-*download*source-only*) exit 2;;
-*download*) exit 0;;
+*download*)
+ printf 'download\n' >> download-calls
+ case "$*" in *source-only*) exit 2;; esac
+ exit 0;;
 *venv*)
  for arg do dest="$arg"; done
  /bin/mkdir -p "$dest/bin"
@@ -340,6 +343,16 @@ esac
 	assert.Equal(t, filepath.Join(run.Repo, ".venv", "bin"), strings.Split(path, string(os.PathListSeparator))[0])
 	assert.NoDirExists(t, filepath.Join(repo.Root, "web", "node_modules"))
 	assert.NoDirExists(t, filepath.Join(repo.Root, ".venv"))
+	t.Run("compatible batch", func(t *testing.T) {
+		project, stage := t.TempDir(), t.TempDir()
+		var preparationLog bytes.Buffer
+		prepared := prepareCICheckPython(t.Context(), project, stage, []byte("[project]\ndependencies = ['test-package', 'compatible']\n"), ciCheckPackageEnv(stage, os.Getenv("PATH"), nil), &preparationLog)
+		require.True(t, prepared, preparationLog.String())
+		calls, err := os.ReadFile(filepath.Join(stage, "download-calls"))
+		require.NoError(t, err)
+		assert.Equal(t, "download\n", string(calls))
+	})
+
 	for _, tc := range []struct{ name, line string }{
 		{"venv creation fails", ` /bin/cp "$0" "$dest/bin/python"`},
 		{"package install fails", ` printf '%s\n' "$@" > "${0%/bin/python}/lib/installed"`},

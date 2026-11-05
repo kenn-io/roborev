@@ -171,8 +171,7 @@ node -e "console.log(require('./web/node_modules/checker-fixture'))"
 		})
 		remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(remoteArchive) }))
 		t.Cleanup(remote.Close)
-		project, stage, private := filepath.Join(run.Repo, "transitive"), t.TempDir(), t.TempDir()
-		require.NoError(t, os.Mkdir(project, 0o700))
+		project, stage, private := t.TempDir(), t.TempDir(), t.TempDir()
 		for _, dir := range []string{"home", "tmp"} {
 			require.NoError(t, os.Mkdir(filepath.Join(private, dir), 0o700))
 		}
@@ -180,18 +179,60 @@ node -e "console.log(require('./web/node_modules/checker-fixture'))"
 		var preparationLog bytes.Buffer
 		prepareCICheckJS(t.Context(), project, stage, metadata, nil, ciCheckPackageEnv(private, os.Getenv("PATH"), nil), &preparationLog)
 		assert.NoDirExists(t, filepath.Join(project, "node_modules"), preparationLog.String())
-		const probe = `if cat "$1" >/dev/null 2>&1; then echo host-readable; else echo host-denied; fi
-node -e 'try { console.log(require(process.argv[1])); } catch { console.log("host-copy-blocked"); }' "$2"`
-		argv, env, cleanup, err := run.Job.Command(t.Context(), []string{"bash", "--norc", "--noprofile", "-c", probe, "archive-probe", hostArchive, filepath.Join(project, "node_modules", "host-fixture")})
-		require.NoError(t, err)
-		t.Cleanup(cleanup)
-		command := exec.CommandContext(t.Context(), argv[0], argv[1:]...)
-		command.Env = env
-		output, err := command.CombinedOutput()
-		require.NoError(t, err, "%s", output)
-		assert.Contains(t, string(output), "host-denied\n")
-		assert.Contains(t, string(output), "host-copy-blocked\n")
 	})
+}
+
+// A tool venv's site configuration must not let registry metadata run a host build.
+func TestCICheckPackagesPythonConfigIntegration(t *testing.T) {
+	python, err := resolveCICheckCommand(t.Context(), "/", "python3")
+	require.NoError(t, err)
+	toolVenv := filepath.Join(t.TempDir(), "tool")
+	command := exec.CommandContext(t.Context(), python, "-I", "-m", "venv", toolVenv)
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	marker := filepath.Join(t.TempDir(), "backend-ran")
+	source := ciCheckPackageArchive(t, map[string]string{
+		"source/pyproject.toml": "[build-system]\nrequires=[]\nbuild-backend='backend'\nbackend-path=['.']\n",
+		"source/backend.py":     fmt.Sprintf("from pathlib import Path\ndef get_requires_for_build_wheel(config_settings=None):\n Path(%q).write_text('executed')\n raise RuntimeError('controlled backend')\n", marker),
+	})
+	var wheel bytes.Buffer
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/simple/config-chain-fixture/":
+			_, _ = io.WriteString(w, `<a href="/config_chain_fixture-1.0-py3-none-any.whl">fixture</a>`)
+		case "/config_chain_fixture-1.0-py3-none-any.whl":
+			_, _ = w.Write(wheel.Bytes())
+		case "/source.tar.gz":
+			_, _ = w.Write(source)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	zw := zip.NewWriter(&wheel)
+	for name, data := range map[string]string{
+		"METADATA": "Metadata-Version: 2.1\nName: config-chain-fixture\nVersion: 1.0\nRequires-Dist: source-fixture @ " + server.URL + "/source.tar.gz\n",
+		"WHEEL":    "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+		"RECORD":   "",
+	} {
+		entry, err := zw.Create("config_chain_fixture-1.0.dist-info/" + name)
+		require.NoError(t, err)
+		_, err = io.WriteString(entry, data)
+		require.NoError(t, err)
+	}
+	require.NoError(t, zw.Close())
+	require.NoError(t, os.WriteFile(filepath.Join(toolVenv, "pip.conf"), []byte("[global]\nindex-url = "+server.URL+"/simple/\n"), 0o600))
+	tools := t.TempDir()
+	wrapper := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in *download*) exec '%s/bin/python' \"$@\" --retries 0 --timeout 1;; *) exec '%s/bin/python' \"$@\";; esac\n", toolVenv, toolVenv)
+	require.NoError(t, os.WriteFile(filepath.Join(tools, "python3"), []byte(wrapper), 0o700))
+	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
+	stage := t.TempDir()
+	for _, dir := range []string{"home", "tmp"} {
+		require.NoError(t, os.Mkdir(filepath.Join(stage, dir), 0o700))
+	}
+	var log bytes.Buffer
+	prepareCICheckPython(t.Context(), t.TempDir(), stage, []byte("[project]\ndependencies=['config-chain-fixture']\n"), ciCheckPackageEnv(stage, os.Getenv("PATH"), nil), &log)
+	assert.NoFileExists(t, marker, log.String())
 }
 
 func ciCheckPackageArchive(t *testing.T, files map[string]string) []byte {

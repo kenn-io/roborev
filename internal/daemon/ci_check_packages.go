@@ -85,7 +85,7 @@ func prepareCICheckPackages(ctx context.Context, repo, root, toolPath string, gi
 }
 
 func ciCheckPackageEnv(private, toolPath string, gitEnv []string) []string {
-	env := []string{"PATH=" + toolPath, "HOME=" + filepath.Join(private, "home"), "TMPDIR=" + filepath.Join(private, "tmp"), "LANG=C.UTF-8", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_TERMINAL_PROMPT=0", "GIT_ALLOW_PROTOCOL=https", "npm_config_ignore_scripts=true"}
+	env := []string{"PATH=" + toolPath, "HOME=" + filepath.Join(private, "home"), "TMPDIR=" + filepath.Join(private, "tmp"), "LANG=C.UTF-8", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_TERMINAL_PROMPT=0", "GIT_ALLOW_PROTOCOL=https", "npm_config_ignore_scripts=true", "PIP_CONFIG_FILE=" + os.DevNull}
 	for _, entry := range gitEnv {
 		if strings.HasPrefix(entry, "GIT_CONFIG_COUNT=") || strings.HasPrefix(entry, "GIT_CONFIG_KEY_") || strings.HasPrefix(entry, "GIT_CONFIG_VALUE_") {
 			env = append(env, entry)
@@ -115,11 +115,9 @@ func ciCheckNpmSources(lock map[string]any) []string {
 				if pkg["link"] == true {
 					sources = append(sources, "file:.")
 				}
-				for _, field := range []string{"resolved", "version"} {
-					if source, ok := pkg[field].(string); ok {
-						sources = append(sources, source)
-					}
-				}
+				resolved, _ := pkg["resolved"].(string)
+				version, _ := pkg["version"].(string)
+				sources = append(sources, resolved, version)
 				sources = append(sources, ciCheckNpmSources(pkg)...)
 			}
 		}
@@ -151,12 +149,10 @@ func ciCheckLocalJSSources(ctx context.Context, stage string, sources []string, 
 const npmRequire = require('node:module').createRequire(fs.realpathSync(process.argv[1]));
 const npa = npmRequire('npm-package-arg');
 const input = JSON.parse(fs.readFileSync(0, 'utf8'));
-const member = Object.entries(input.workspaces || {}).some(([relative, workspaces]) =>
+const member = Object.entries(input.workspaces).some(([relative, workspaces]) =>
  npmRequire('@npmcli/map-workspaces').virtual({cwd: '/', lockfile: {packages: {'': {workspaces}, [relative]: {name: 'candidate'}}}}).size > 0);
-const local = (input.sources || []).some(spec => {
- try {
-  return ['file', 'directory'].includes(npa.resolve('checker', spec).type);
- }
+const local = input.sources.some(spec => {
+ try { return ['file', 'directory'].includes(npa.resolve('checker', spec).type); }
  catch { return true; }
 });
 process.stdout.write(JSON.stringify(member || local));`
@@ -256,12 +252,9 @@ func prepareCICheckJS(ctx context.Context, project, stage string, metadata map[s
 		if !runCICheckInstaller(ctx, command, stage, env, append([]string{"install", "--package-lock-only"}, args[1:]...), out) {
 			return
 		}
-		generated, err := os.ReadFile(filepath.Join(stage, "package-lock.json"))
+		generated, _ := os.ReadFile(filepath.Join(stage, "package-lock.json"))
 		var lock map[string]any
-		if err == nil {
-			err = json.Unmarshal(generated, &lock)
-		}
-		if err == nil {
+		if err = json.Unmarshal(generated, &lock); err == nil {
 			local, err = ciCheckLocalJSSources(ctx, stage, ciCheckNpmSources(lock), nil, env)
 		}
 		if err != nil {
@@ -321,19 +314,14 @@ func prepareCICheckPython(ctx context.Context, project, stage string, data []byt
 	const script = `import json, sys
 from pip._vendor.packaging.requirements import Requirement, InvalidRequirement
 accepted = []
-for value in json.load(sys.stdin):
+for value in sys.argv[1:]:
  try:
   if Requirement(value).url is None: accepted.append(value)
  except InvalidRequirement:
   pass
 json.dump(accepted, sys.stdout)`
-	data, err = json.Marshal(requirements)
-	if err != nil {
-		fmt.Fprintf(out, "CI checker requirement encoding failed: %v\n", err)
-		return false
-	}
-	parse := exec.CommandContext(ctx, python, "-I", "-c", script)
-	parse.Dir, parse.Env, parse.Stdin = stage, env, bytes.NewReader(data)
+	parse := exec.CommandContext(ctx, python, append([]string{"-I", "-c", script}, requirements...)...)
+	parse.Dir, parse.Env = stage, env
 	data, err = parse.Output()
 	if err == nil {
 		err = json.Unmarshal(data, &requirements)
@@ -342,30 +330,27 @@ json.dump(accepted, sys.stdout)`
 		fmt.Fprintf(out, "CI checker requirement parsing failed: %v\n", err)
 		return false
 	}
-	if len(requirements) == 0 {
-		return false
-	}
 	wheels := filepath.Join(stage, "wheels")
-	var accepted []string
-	for _, requirement := range requirements {
-		args := append([]string{"-I", "-m", "pip", "--isolated", "download", "--only-binary=:all:", "--dest", wheels}, accepted...)
-		if runCICheckInstaller(ctx, python, stage, env, append(args, requirement), out) {
-			accepted = append(accepted, requirement)
+	args := []string{"-I", "-m", "pip", "--isolated", "download", "--only-binary=:all:", "--dest", wheels}
+	accepted := requirements
+	if !runCICheckInstaller(ctx, python, stage, env, append(slices.Clone(args), requirements...), out) {
+		accepted = nil
+		for _, requirement := range requirements {
+			if runCICheckInstaller(ctx, python, stage, env, append(append(slices.Clone(args), accepted...), requirement), out) {
+				accepted = append(accepted, requirement)
+			}
 		}
 	}
 	if len(accepted) == 0 {
 		return false
 	}
-	if !runCICheckInstaller(ctx, python, stage, env, []string{"-I", "-m", "venv", venv}, out) {
-		_ = os.RemoveAll(venv)
-		return false
-	}
 	// This is the only host startup of the empty venv. Installed .pth files and
 	// sitecustomize must never run on the host after pip populates it.
-	args := append([]string{"-I", "-m", "pip", "--isolated", "install", "--only-binary=:all:", "--no-index", "--no-compile", "--find-links", wheels}, accepted...)
-	if !runCICheckInstaller(ctx, filepath.Join(venv, "bin", "python"), stage, env, args, out) {
-		_ = os.RemoveAll(venv)
-		return false
+	args = append([]string{"-I", "-m", "pip", "--isolated", "install", "--only-binary=:all:", "--no-index", "--no-compile", "--find-links", wheels}, accepted...)
+	if runCICheckInstaller(ctx, python, stage, env, []string{"-I", "-m", "venv", venv}, out) &&
+		runCICheckInstaller(ctx, filepath.Join(venv, "bin", "python"), stage, env, args, out) {
+		return true
 	}
-	return true
+	_ = os.RemoveAll(venv)
+	return false
 }
