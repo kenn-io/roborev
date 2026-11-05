@@ -22,12 +22,14 @@ var errSecondaryCooldown = errors.New("rate limit cooldown")
 
 var secondaryCooldowns = struct {
 	sync.Mutex
-	until map[key]time.Time
-}{until: make(map[key]time.Time)}
+	until map[cooldownKey]time.Time
+}{until: make(map[cooldownKey]time.Time)}
+
+type cooldownKey struct{ base, token string }
 
 type limitTransport struct {
 	next http.RoundTripper
-	key  key
+	key  cooldownKey
 }
 
 func (t *limitTransport) RoundTrip(req *http.Request) (*http.Response, error) {
