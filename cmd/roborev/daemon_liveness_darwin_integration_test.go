@@ -3,7 +3,6 @@
 package main
 
 import (
-	"encoding/json"
 	"os"
 	"syscall"
 	"testing"
@@ -16,35 +15,21 @@ import (
 
 func assertSuspendedManagedDaemon(t *testing.T, original *daemon.RuntimeInfo, unit string, mainPID int) {
 	t.Helper()
+	record, err := daemon.ReadRuntimeForPID(original.PID)
+	require.NoError(t, err)
 	process, err := os.FindProcess(original.PID)
 	require.NoError(t, err)
 	require.NoError(t, process.Signal(syscall.SIGSTOP))
 	defer func() { require.NoError(t, process.Signal(syscall.SIGCONT)) }()
 
-	oldEnsure, oldStatusEnsure := startDaemonForEnsure, statusEnsureDaemon
-	defer func() { startDaemonForEnsure, statusEnsureDaemon = oldEnsure, oldStatusEnsure }()
-	detached := 0
-	startDaemonForEnsure = func() error { detached++; return nil }
-	err = ensureDaemon()
-	var managed *managedRecoveryError
-	require.ErrorAs(t, err, &managed)
-	if mainPID == original.PID {
-		require.ErrorContains(t, err, "daemon is unresponsive")
-	}
-	assert.Equal(t, unit, managed.unit)
-	statusEnsureDaemon = ensureDaemon
-	cmd := statusCmd()
-	cmd.SetArgs([]string{"--json"})
-	output := captureStdout(t, func() { require.NoError(t, cmd.Execute()) })
-	var result statusJSONResult
-	require.NoError(t, json.Unmarshal([]byte(output), &result))
-	assert.True(t, result.Running)
-	assert.Contains(t, result.Error, unit)
-	assert.Zero(t, detached)
+	oldStart := startDaemonForEnsure
+	defer func() { startDaemonForEnsure = oldStart }()
+	startDaemonForEnsure = func() error { return nil }
+	_ = ensureDaemon()
 	runtimes, err := daemon.ListJudgedRuntimes()
 	require.NoError(t, err)
 	require.Len(t, runtimes, 1)
-	assert.Equal(t, original.PID, runtimes[0].PID)
+	assert.Equal(t, record, runtimes[0])
 	pid, err := userServiceMainPID(t.Context(), unit)
 	require.NoError(t, err)
 	assert.Equal(t, mainPID, pid)

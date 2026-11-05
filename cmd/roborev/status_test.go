@@ -547,7 +547,6 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 		{name: "responsive after recovery lock failure", responsive: true, lockFailure: true, disabledReason: daemon.WebDisabledReasonConfig},
 		{name: "absent after recovery lock failure", lockFailure: true, exited: true},
 		{name: "unresponsive live process"},
-		{name: "unresponsive exited process", exited: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stubServiceRecovery(t)

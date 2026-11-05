@@ -324,6 +324,26 @@ func TestDaemonSignalCleanup(t *testing.T) {
 
 }
 
+// syncBuffer is a goroutine-safe bytes.Buffer for capturing subprocess
+// output: the exec stdout-copy goroutine writes while assertion message
+// arguments read, and those arguments are evaluated even on success.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 // TestDaemonLifecycleEndToEnd exercises the real daemon binary on every OS,
 // including Windows: spawn, runtime publication, liveness probe, a
 // DB-backed API endpoint, and HTTP shutdown (the production stop path).

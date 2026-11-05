@@ -82,15 +82,10 @@ func TestEnsureDaemonPropagatesDiscoveryIOError(t *testing.T) {
 }
 
 func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
-	for _, ownership := range []string{"managed", "unmanaged", "unknown owner", "vanished ancestor", "replacement became ready", "vanished"} {
+	for _, ownership := range []string{"managed", "unmanaged", "unknown owner", "vanished"} {
 		t.Run(ownership, func(t *testing.T) {
 			isolateDaemonSelection(t)
 			stubServiceRecovery(t)
-			if ownership == "vanished ancestor" {
-				oldTimeout := daemonStartTimeout
-				t.Cleanup(func() { daemonStartTimeout = oldTimeout })
-				daemonStartTimeout = time.Millisecond
-			}
 			getAnyRunningDaemon = daemon.GetAnyRunningDaemon
 			require.NoError(t, daemon.WriteRuntime(daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}, nil, version.Version, nil))
 			info, err := daemon.ReadRuntime()
@@ -108,17 +103,9 @@ func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
 			require.NoError(t, err)
 			cliExecutableInfo = func() (os.FileInfo, error) { return os.Stat(binary) }
 			getAnyRunningDaemonForStart = daemon.GetAnyRunningDaemonContext
-			if ownership == "replacement became ready" {
-				getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
-					return &daemon.RuntimeInfo{PID: info.PID + 1, Version: version.Version, Network: "tcp", Address: "127.0.0.1:2"}, nil
-				}
-			}
 			findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
 				if ownership == "unknown owner" {
 					return nil, &managedRecoveryError{"unknown", errors.New("cannot read process cgroup")}
-				}
-				if ownership == "vanished ancestor" || ownership == "replacement became ready" {
-					return nil, &managedRecoveryError{"unknown", os.ErrNotExist}
 				}
 				if ownership == "unmanaged" {
 					return nil, nil
@@ -130,8 +117,6 @@ func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
 			startDaemonForEnsure = func() error { mutations = append(mutations, "detached start"); return nil }
 			drainManagedDaemon = func(*daemon.RuntimeInfo) error { mutations = append(mutations, "drain"); return nil }
 			startDaemonService = func(context.Context, string) error { mutations = append(mutations, "service start"); return nil }
-			paused := true
-			pendingStartPause = &paused
 			err = ensureDaemon()
 			if ownership == "unmanaged" || ownership == "vanished" {
 				require.NoError(t, err)
@@ -139,16 +124,10 @@ func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
 				return
 			}
 			assert.Equal(t, []string{"cleanup"}, mutations)
-			if ownership == "replacement became ready" {
-				require.NoError(t, err)
-				return
-			}
 			require.Error(t, err)
 			switch ownership {
 			case "unknown owner":
 				require.ErrorContains(t, err, "cannot read process cgroup")
-			case "vanished ancestor":
-				require.ErrorContains(t, err, "ownership uncertain")
 			default:
 				var managed *managedRecoveryError
 				require.ErrorAs(t, err, &managed)
