@@ -858,9 +858,9 @@ npm to classify sources and workspace membership. It honors supported lockfiles,
 includes development dependencies, and disables lifecycle scripts. Projects
 without a supported npm or Bun lockfile use `package.json` through npm,
 including projects with other lockfile formats. JavaScript workspace roots,
-their declared members, and local dependencies are skipped. For npm projects
-without a supported lockfile, preparation resolves a private lockfile and checks
-its complete source graph before installing packages.
+their declared members, and local dependencies are skipped. For npm projects,
+preparation refreshes the staged dependency graph while preserving valid lock
+pins, then checks every resolved source before installing packages.
 
 Python uses installed `python3` with venv and pip. Downloads use PyPI and ignore
 pip configuration files. It reads static dependencies and optional dependencies

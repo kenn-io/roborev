@@ -167,6 +167,14 @@ process.stdout.write(JSON.stringify(member || local));`
 	return local, err
 }
 
+// npm reads and rewrites a shrinkwrap in preference to package-lock.json.
+func ciCheckNpmLock(stage string, metadata map[string][]byte) string {
+	if metadata["npm-shrinkwrap.json"] != nil {
+		return filepath.Join(stage, "npm-shrinkwrap.json")
+	}
+	return filepath.Join(stage, "package-lock.json")
+}
+
 func ciCheckBunSources(ctx context.Context, command, stage string, data []byte, env []string) ([]string, error) {
 	// Bun's JSONC parser handles comments, trailing commas, and escaped source paths.
 	parse := exec.CommandContext(ctx, command, "--no-env-file", "--eval", `process.stdout.write(JSON.stringify(Bun.JSONC.parse(await Bun.stdin.text())))`)
@@ -247,12 +255,12 @@ func prepareCICheckJS(ctx context.Context, project, stage string, metadata map[s
 		fmt.Fprintln(out, "CI checker skips JavaScript local dependencies or workspace members")
 		return
 	}
-	if manager == "npm" && metadata["package-lock.json"] == nil && metadata["npm-shrinkwrap.json"] == nil {
-		// Resolve into private metadata first; transitive sources can add host-local archives.
+	if manager == "npm" {
+		// Resolve into private metadata first; npm re-resolves lock records its manifests contradict.
 		if !runCICheckInstaller(ctx, command, stage, env, append([]string{"install", "--package-lock-only"}, args[1:]...), out) {
 			return
 		}
-		generated, _ := os.ReadFile(filepath.Join(stage, "package-lock.json"))
+		generated, _ := os.ReadFile(ciCheckNpmLock(stage, metadata))
 		var lock map[string]any
 		if err = json.Unmarshal(generated, &lock); err == nil {
 			local, err = ciCheckLocalJSSources(ctx, stage, ciCheckNpmSources(lock), nil, env)

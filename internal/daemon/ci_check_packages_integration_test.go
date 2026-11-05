@@ -182,6 +182,34 @@ node -e "console.log(require('./web/node_modules/checker-fixture'))"
 	})
 }
 
+func TestCICheckPackagesNpmManifestLocalArchiveIntegration(t *testing.T) {
+	hostArchive := filepath.Join(t.TempDir(), "host-fixture.tgz")
+	require.NoError(t, os.WriteFile(hostArchive, ciCheckPackageArchive(t, map[string]string{
+		"package/package.json": `{"name":"host-fixture","version":"1.0.0"}`,
+		"package/index.js":     "module.exports = 'host-only fixture';\n",
+	}), 0o600))
+	for _, shrinkwrap := range []bool{false, true} {
+		t.Run(fmt.Sprintf("shrinkwrap=%t", shrinkwrap), func(t *testing.T) {
+			project, stage, private := t.TempDir(), t.TempDir(), t.TempDir()
+			for _, dir := range []string{"home", "tmp"} {
+				require.NoError(t, os.Mkdir(filepath.Join(private, dir), 0o700))
+			}
+			metadata := map[string][]byte{
+				"package.json":      []byte(fmt.Sprintf(`{"name":"fixture","version":"1.0.0","dependencies":{"host-fixture":%q}}`, "file:"+hostArchive)),
+				"package-lock.json": []byte(fmt.Sprintf(`{"name":"fixture","version":"1.0.0","lockfileVersion":3,"packages":{"":{"name":"fixture","version":"1.0.0","dependencies":{"host-fixture":%q}},"node_modules/host-fixture":{"version":"1.0.0"}}}`, "file:"+hostArchive)),
+			}
+			if shrinkwrap {
+				metadata["npm-shrinkwrap.json"] = metadata["package-lock.json"]
+			}
+			var log bytes.Buffer
+			prepareCICheckJS(t.Context(), project, stage, metadata, nil, ciCheckPackageEnv(private, os.Getenv("PATH"), nil), &log)
+			contents, _ := os.ReadFile(filepath.Join(project, "node_modules", "host-fixture", "index.js"))
+			assert.Empty(t, string(contents), "host-only archive contents must stay outside the checker clone")
+			assert.NoDirExists(t, filepath.Join(project, "node_modules"), log.String())
+		})
+	}
+}
+
 // A tool venv's site configuration must not let registry metadata run a host build.
 func TestCICheckPackagesPythonConfigIntegration(t *testing.T) {
 	python, err := resolveCICheckCommand(t.Context(), "/", "python3")
