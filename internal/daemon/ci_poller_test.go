@@ -1156,7 +1156,7 @@ func TestCIPollerAllowCodeowners(t *testing.T) {
 	h.Cfg.CI.Agents = []string{"codex"}
 	h.stubProcessPRGit()
 	statuses := h.CaptureCommitStatuses()
-	h.CaptureSkippedChecks()
+	skippedChecks := h.CaptureSkippedChecks()
 
 	var reads []string
 	h.Poller.codeownersFn = func(_ context.Context, ghRepo, ref string) (map[string]struct{}, error) {
@@ -1204,6 +1204,18 @@ func TestCIPollerAllowCodeowners(t *testing.T) {
 
 	require.ErrorContains(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg), "team members unavailable")
 	assert.Equal([]string{"main", "release", "main", "release"}, reads, "the next poll reads CODEOWNERS again")
+
+	prs = prs[:1]
+	h.Poller.codeownersFn = func(_ context.Context, ghRepo, ref string) (map[string]struct{}, error) {
+		assert.Equal("acme/api", ghRepo)
+		reads = append(reads, ref)
+		return nil, errors.New("team members unavailable")
+	}
+	statusCount, skippedCheckCount := len(*statuses), len(*skippedChecks)
+	require.NoError(t, h.Poller.pollRepo(t.Context(), "acme/api", h.Cfg))
+	assert.Equal([]string{"main", "release", "main", "release"}, reads, "a reviewed head needs no ownership decision")
+	assert.Len(*statuses, statusCount)
+	assert.Len(*skippedChecks, skippedCheckCount)
 }
 
 // drivePanelOutcome resolves the panel run for a PR HEAD and drives every

@@ -519,7 +519,7 @@ func TestPanelClosedPRPostsNothing(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(panel.RetiredAt, "closed PR retains a non-postable delivery target")
 	assertPanelRetireReason(t, h.DB, panel.ID, "closed_pr")
-	reviewed, err := h.Poller.alreadyReviewedPR("acme/api", ghPR{Number: 7, HeadRefOid: "headsha333"})
+	reviewed, _, err := h.Poller.alreadyReviewedPR("acme/api", ghPR{Number: 7, HeadRefOid: "headsha333"})
 	require.NoError(t, err)
 	assert.False(reviewed, "same-HEAD reopen must be reviewable")
 }

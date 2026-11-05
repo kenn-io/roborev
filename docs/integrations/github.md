@@ -573,8 +573,10 @@ repository's `CODEOWNERS` file names as an owner, on any line.
     team's members, including members of child teams. Email owners are ignored
     because they do not identify a GitHub login.
 - A repository without a `CODEOWNERS` file has no code owners.
-- The poller reads `CODEOWNERS` only for authors that the other author options
-    do not already admit, and at most once per base branch on each poll.
+- The poller reads `CODEOWNERS` only for authors the other author options do not
+    already admit, at most once per base branch per poll. PRs already reviewed
+    at their current commit cost no reads. Non-owners, deferred retries, and
+    exhausted failures at the current commit are re-checked every poll.
 - Expanding a team needs permission to read organization members. Give the
     GitHub App the **Members: Read-only** organization permission. Personal `gh`
     logins need the `read:org` scope, which `gh auth login` requests by default.
