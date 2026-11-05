@@ -868,7 +868,8 @@ checker failure or timeout posts the original review unchanged.
 
 The checker posts a recommendation to remove a test as redundant or as testing
 external code only when no plausible mistake in the project's code fails that
-test alone.
+test alone; shared line coverage or one mutation caught by both tests does not
+establish redundancy.
 
 ## Rewriting checked findings
 
