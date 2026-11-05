@@ -537,6 +537,45 @@ func TestStatusCmdShowsMissingSearchCredential(t *testing.T) {
 	assert.Contains(t, output, "no embedding API key (env EMBEDDING_KEY is unset)")
 }
 
+func TestStatusLockFailureKeepsLiveness(t *testing.T) {
+	isolateDaemonSelection(t)
+	stubServiceRecovery(t)
+	t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
+	md := NewMockDaemon(t, MockRefineHooks{
+		OnPing: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+			assert.NoError(t, json.NewEncoder(w).Encode(daemon.PingInfo{OK: true, Service: "roborev", Version: "v-old", PID: os.Getpid()}))
+			return true
+		},
+	})
+	defer md.Close()
+	serverAddr, parsedServerEndpoint = "", nil
+	getAnyRunningDaemon = daemon.GetAnyRunningDaemon
+	executable, err := os.Executable()
+	require.NoError(t, err)
+	findDaemonService = func(context.Context, int) (*daemonService, error) {
+		return &daemonService{unit: "fixture.service", mainPID: os.Getpid(), executable: executable, serviceType: "simple"}, nil
+	}
+	lockPath, err := daemon.RuntimeStore().LockPath()
+	require.NoError(t, err)
+	// A directory at the lock path prevents opening it while discovery still works.
+	require.NoError(t, os.Mkdir(lockPath, 0o700))
+	oldEnsure := statusEnsureDaemon
+	t.Cleanup(func() { statusEnsureDaemon = oldEnsure })
+	statusEnsureDaemon = ensureDaemon
+
+	cmd := statusCmd()
+	cmd.SetArgs([]string{"--json"})
+	output := captureStdout(t, func() { require.NoError(t, cmd.Execute()) })
+	var result statusJSONResult
+	require.NoError(t, json.Unmarshal([]byte(output), &result))
+	assert := assert.New(t)
+	assert.True(result.Running)
+	assert.Contains(result.Error, "wait for daemon recovery lock")
+	assert.Nil(result.Daemon)
+	assert.Nil(result.Health)
+	assert.Empty(result.Jobs)
+}
+
 func TestStatusManagedRecoveryFailure(t *testing.T) {
 	for _, tc := range []struct {
 		name                      string
@@ -584,18 +623,13 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 			stdout := captureStdout(t, func() { require.NoError(t, cmd.Execute()) })
 			var result statusJSONResult
 			require.NoError(t, json.Unmarshal([]byte(stdout), &result))
-			if tc.lockFailure {
-				assert.False(t, result.Running)
-				assert.Empty(t, result.Error)
-				assert.Empty(t, result.WebURL)
-				output := captureStdout(t, func() { require.NoError(t, statusCmd().Execute()) })
-				assert.Contains(t, output, "Daemon: not running\n")
-				assert.NotContains(t, output, "Status: unavailable:")
-				return
-			}
 			assert.Equal(t, tc.responsive, result.Running, "running must reflect a daemon that still answers after recovery fails")
-			assert.Contains(t, result.Error, "fixture.service")
-			assert.Contains(t, result.Error, cause)
+			if tc.lockFailure {
+				assert.Contains(t, result.Error, "wait for daemon recovery lock")
+			} else {
+				assert.Contains(t, result.Error, "fixture.service")
+				assert.Contains(t, result.Error, cause)
+			}
 			assert.Equal(t, tc.webOrigin, result.WebURL)
 			assert.Equal(t, tc.disabledReason, result.WebDisabledReason)
 			assert.Nil(t, result.Daemon)
@@ -616,7 +650,11 @@ func TestStatusManagedRecoveryFailure(t *testing.T) {
 			if tc.disabledReason != "" {
 				assert.Contains(t, output, "Web UI: disabled ([web] enabled = false)\n")
 			}
-			assert.Contains(t, output, cause)
+			if tc.lockFailure {
+				assert.Contains(t, output, "wait for daemon recovery lock")
+			} else {
+				assert.Contains(t, output, cause)
+			}
 		})
 	}
 }

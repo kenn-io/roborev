@@ -82,7 +82,7 @@ func TestEnsureDaemonPropagatesDiscoveryIOError(t *testing.T) {
 }
 
 func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
-	for _, ownership := range []string{"managed", "unmanaged", "lookup failure"} {
+	for _, ownership := range []string{"managed", "unmanaged", "lookup failure", "vanished"} {
 		t.Run(ownership, func(t *testing.T) {
 			isolateDaemonSelection(t)
 			stubServiceRecovery(t)
@@ -97,6 +97,9 @@ func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
 				if ownership == "lookup failure" {
 					return nil, errors.New("ownership unavailable")
 				}
+				if ownership == "vanished" {
+					return nil, fmt.Errorf("lookup daemon: %w", os.ErrNotExist)
+				}
 				if ownership == "unmanaged" {
 					return nil, nil
 				}
@@ -110,7 +113,7 @@ func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
 			paused := true
 			pendingStartPause = &paused
 			err := ensureDaemon()
-			if ownership == "unmanaged" {
+			if ownership == "unmanaged" || ownership == "vanished" {
 				require.NoError(t, err)
 				assert.Equal(t, []string{"cleanup", "detached start"}, mutations)
 				assert.Equal(t, 1, lookups)

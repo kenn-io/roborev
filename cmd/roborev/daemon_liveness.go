@@ -17,5 +17,5 @@ func managedUnresponsiveError(owner *daemonService, cause error) error {
 }
 
 func liveDaemon(info *daemon.RuntimeInfo) bool {
-	return info != nil && info.PID > 0 && !info.Stale()
+	return !info.Stale()
 }

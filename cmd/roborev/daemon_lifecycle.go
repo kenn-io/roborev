@@ -373,16 +373,19 @@ func ensureDaemon() (err error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), daemonStartTimeout)
 	defer cancel()
-	for _, runtime := range runtimes {
-		if !liveDaemon(runtime) {
+	for _, info := range runtimes {
+		if !liveDaemon(info) {
 			continue
 		}
-		owner, err := findDaemonService(ctx, runtime.PID)
+		owner, err := findDaemonService(ctx, info.PID)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
 		if err != nil {
-			return runtime.UnreachableError(err)
+			return info.UnreachableError(err)
 		}
 		if owner != nil {
-			return runtime.UnreachableError(managedUnresponsiveError(owner, nil))
+			return info.UnreachableError(managedUnresponsiveError(owner, nil))
 		}
 	}
 
