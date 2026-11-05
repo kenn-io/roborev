@@ -242,6 +242,30 @@ func TestGitHubReadRetries(t *testing.T) {
 	}
 }
 
+func TestGitHubReadSecondaryResetWithoutRetryAfter(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		attempts := 0
+		started := time.Now()
+		client, err := NewClient(rand.Text(), WithHTTPClient(&http.Client{Transport: retryTransport(func(r *http.Request) (*http.Response, error) {
+			attempts++
+			assert.Equal(http.MethodGet, r.Method)
+			assert.Equal("/repos/acme/api/pulls", r.URL.Path)
+			header := make(http.Header)
+			header.Set("X-RateLimit-Remaining", "10")
+			header.Set("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(3*time.Second).Unix(), 10))
+			return &http.Response{StatusCode: 403, Request: r, Header: header, Body: io.NopCloser(strings.NewReader(secondaryLimitBody))}, nil
+		})}))
+		require.NoError(t, err)
+		_, err = client.ListOpenPullRequests(t.Context(), "acme/api")
+		assert.Equal("list pull requests: rate limit (HTTP 403)", ReadErrorSummary(err))
+		assert.Zero(time.Since(started))
+		var rate *googlegithub.AbuseRateLimitError
+		assert.ErrorAs(err, &rate)
+		assert.Equal(1, attempts)
+	})
+}
+
 func TestGitHubReadFailureBudget(t *testing.T) {
 	for _, tc := range []struct{ status, wantAttempts int }{{503, 4}, {408, 4}, {429, 4}, {401, 1}, {403, 1}, {404, 1}, {422, 1}} {
 		t.Run(http.StatusText(tc.status), func(t *testing.T) {

@@ -205,9 +205,6 @@ func readRetryAfter(err error, resp *googlegithub.Response) (time.Duration, bool
 	if rate, ok := errors.AsType[*googlegithub.RateLimitError](err); ok {
 		return max(time.Until(rate.Rate.Reset.Time), 0), true
 	}
-	if rate, ok := errors.AsType[*googlegithub.AbuseRateLimitError](err); ok && rate.RetryAfter != nil {
-		return *rate.RetryAfter, true
-	}
 	return 0, false
 }
 
