@@ -2223,7 +2223,9 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 	}
 	if o.closed != nil {
 		if *o.closed {
-			conditions = append(conditions, "j.review_closed = 1")
+			// Keep both predicates so enqueue ordering can use the closed job
+			// index and other sorts can seek through idx_reviews_closed.
+			conditions = append(conditions, "j.review_closed = 1", "rv.closed = 1")
 		} else {
 			conditions = append(conditions, "(rv.closed IS NULL OR rv.closed = 0)")
 			// Failed and canceled jobs never produce a review to resolve, so

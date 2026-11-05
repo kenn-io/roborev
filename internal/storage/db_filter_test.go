@@ -1396,6 +1396,48 @@ func TestListJobsSortsReadTheirIndexes(t *testing.T) {
 	}
 }
 
+func TestListJobsSparseClosedIDPages(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	seedJobs(t, db, "/synthetic/repo", 1000)
+	_, err := db.ExecContext(t.Context(), `
+		UPDATE review_jobs SET status = 'done';
+		INSERT INTO reviews (job_id, agent, output, closed)
+		SELECT id, 'test', '', id <= 3 FROM review_jobs
+	`)
+	require.NoError(t, err)
+
+	for _, tc := range []struct {
+		name      string
+		ascending bool
+		first     []int64
+		resumed   []int64
+	}{
+		{"descending", false, []int64{3, 2}, []int64{1}},
+		{"ascending", true, []int64{1, 2}, []int64{3}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			opts := []ListJobsOption{WithClosed(true), WithSort(JobSort{Column: JobSortID, Ascending: tc.ascending})}
+			for _, want := range [][]int64{tc.first, tc.resumed} {
+				query, args, _, err := listJobsQuery("", "", 2, 0, collectListJobsOptions(opts...))
+				require.NoError(t, err)
+				plan := queryPlan(t, db, query, args...)
+				assert.Contains(plan, "SEARCH rv USING INDEX idx_reviews_closed (closed=?)")
+				assert.Contains(plan, "SEARCH j USING INTEGER PRIMARY KEY (rowid=?)")
+
+				page, err := db.ListJobs("", "", 2, 0, opts...)
+				require.NoError(t, err)
+				assert.Equal(want, jobIDs(page))
+				require.NotEmpty(t, page)
+				cursor := page[len(page)-1]
+				opts = append(opts, WithSortAfter(JobSortPosition{Keys: cursor.SortKey, JobID: cursor.ID}))
+			}
+		})
+	}
+}
+
 func TestListJobsClosedPages(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
