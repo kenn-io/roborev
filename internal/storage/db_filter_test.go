@@ -1367,7 +1367,9 @@ func TestListJobsSortsReadTheirIndexes(t *testing.T) {
 					require.NoError(t, err)
 					plan := queryPlan(t, db, query, args...)
 					assert.Contains(t, plan, "USING INDEX "+page.index)
-					if page.name != "sparse closed filter" {
+					if page.name == "sparse closed filter" {
+						assert.Contains(t, plan, "USE TEMP B-TREE FOR ORDER BY")
+					} else {
 						assert.NotContains(t, plan, "USE TEMP B-TREE FOR ORDER BY")
 					}
 				})
@@ -1380,9 +1382,10 @@ func TestListJobsClosedPageMatchesBothPlans(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
 	defer db.Close()
-	seedJobs(t, db, "/tmp/closed-page-repo", closedByPositionMin+10)
+	repo, _ := seedJobs(t, db, "/tmp/closed-page-repo", 76)
+	seedJobs(t, db, "/tmp/other-closed-page-repo", 4)
 	_, err := db.ExecContext(t.Context(), `
-		UPDATE review_jobs SET status = 'done', enqueued_at = '2026-01-01 00:00:00';
+		UPDATE review_jobs SET status = 'done', enqueued_at = datetime('2026-01-01', '+' || id || ' minutes');
 		INSERT INTO reviews (job_id, agent, output, closed)
 		SELECT id, 'test', 'No issues found.', 0 FROM review_jobs
 	`)
@@ -1390,26 +1393,28 @@ func TestListJobsClosedPageMatchesBothPlans(t *testing.T) {
 
 	for _, test := range []struct {
 		name    string
-		closed  int
-		many    bool
+		closed  string
+		dense   bool
+		repo    string
 		first   []int64
 		resumed []int64
 	}{
-		{"empty", 0, false, []int64{}, []int64{}},
-		{"sparse old reviews", 3, false, []int64{3, 2}, []int64{1}},
-		{"below threshold", 999, false, []int64{999, 998}, []int64{997, 996}},
-		{"at threshold", 1000, true, []int64{1000, 999}, []int64{998, 997}},
-		{"dense", 1001, true, []int64{1001, 1000}, []int64{999, 998}},
+		{"empty", "0", false, "", []int64{}, []int64{}},
+		{"sparse newest", "job_id >= 78", false, "", []int64{80, 79}, []int64{78}},
+		{"below line", "job_id <= 40", false, "", []int64{40, 39}, []int64{38, 37}},
+		{"at line oldest", "job_id <= 41", true, "", []int64{41, 40}, []int64{39, 38}},
+		{"all closed", "1", true, "", []int64{80, 79}, []int64{78, 77}},
+		{"repo filtered mix", "job_id <= 41 OR job_id >= 77", true, repo.RootPath, []int64{41, 40}, []int64{39, 38}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			assert := assert.New(t)
-			_, err := db.ExecContext(t.Context(), `UPDATE reviews SET closed = (job_id <= ?)`, test.closed)
+			_, err := db.ExecContext(t.Context(), `UPDATE reviews SET closed = (`+test.closed+`)`)
 			require.NoError(t, err)
-			many, err := db.closedReviewsMany(t.Context())
+			dense, err := db.closedReviewsDense(t.Context())
 			require.NoError(t, err)
-			assert.Equal(test.many, many)
+			assert.Equal(test.dense, dense)
 
-			page, err := db.ListJobs("", "", 2, 0, WithClosed(true))
+			page, err := db.ListJobs("", test.repo, 2, 0, WithClosed(true))
 			require.NoError(t, err)
 			ids := make([]int64, 0, len(page))
 			for _, job := range page {
@@ -1419,7 +1424,7 @@ func TestListJobsClosedPageMatchesBothPlans(t *testing.T) {
 			if len(page) == 0 {
 				return
 			}
-			page, err = db.ListJobs("", "", 2, 0, WithClosed(true), WithBeforeCursor(page[len(page)-1].ID))
+			page, err = db.ListJobs("", test.repo, 2, 0, WithClosed(true), WithBeforeCursor(page[len(page)-1].ID))
 			require.NoError(t, err)
 			ids = ids[:0]
 			for _, job := range page {
