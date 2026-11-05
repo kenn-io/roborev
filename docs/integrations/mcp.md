@@ -274,9 +274,11 @@ file, or the excerpt a rebuttal quoted. roborev records no exact link from a
 decision to a finding, so the reviewer matches each target to a finding rather
 than the server guessing. `before_rerun` marks a decision recorded on an earlier
 run of a review that was rerun, whose findings may differ. A rebuttal records
-the review version it re-checks; comments, and rebuttals synced from another
-machine, are dated against the current run instead. A comment whose lines all
-became decisions is not repeated under `comments`.
+the review version it re-checks; comments and older rebuttals are dated against
+the current run instead. Only rebuttals recorded on the daemon's own machine
+appear: sync does not carry the link from a rebuttal to its review, so rebuttals
+synced from another machine are left out. A comment whose lines all became
+decisions is not repeated under `comments`.
 
 `git_log` and `git_blame` mark each commit with `on_branch` and with
 `fix_for_jobs`: the earlier reviews whose comments cite that commit, which
