@@ -2303,8 +2303,11 @@ func listJobsQuery(statusFilter, repoFilter string, limit, offset int, options l
 		fmt.Fprintf(&sortKeyColumns, ",\n\t\t       %s AS sort_key_%d", expr, i)
 	}
 	jobsTable := "review_jobs j"
-	if options.closed != nil && *options.closed && (options.sort.Column == "" || options.sort.Column == JobSortEnqueuedAt) {
-		// Repo and branch indexes walk open history when closed reviews are sparse.
+	if options.closed != nil && *options.closed && (options.sort.Column == "" || options.sort.Column == JobSortEnqueuedAt) &&
+		repoFilter == "" && len(options.repoPaths) == 0 && options.repoPrefix == "" && !options.repoIDsSet &&
+		options.branch == "" && !options.branchEmpty && !options.openFailedReviews {
+		// Unscoped pages skip open history. Scoped pages keep selective access
+		// through the existing repo, branch, or failed-review indexes.
 		jobsTable += " INDEXED BY idx_review_jobs_closed_position"
 	} else if options.openFailedReviews {
 		// Without statistics, SQLite otherwise scans the repo's job index.
