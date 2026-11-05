@@ -81,17 +81,9 @@ func TestUserWritesQueueBehindPullTransaction(t *testing.T) {
 				require.NoError(t, <-userDone)
 				require.NoError(t, <-pullDone)
 
-				rows, err := h.db.QueryContext(t.Context(), `SELECT writer FROM write_order ORDER BY id`)
-				require.NoError(t, err)
-				defer rows.Close()
-				var order []string
-				for rows.Next() {
-					var writer string
-					require.NoError(t, rows.Scan(&writer))
-					order = append(order, writer)
-				}
-				require.NoError(t, rows.Err())
-				assert.Equal(t, []string{"user", "pull"}, order)
+				var order string
+				require.NoError(t, h.db.QueryRowContext(t.Context(), `SELECT group_concat(writer, ',') FROM (SELECT writer FROM write_order ORDER BY id)`).Scan(&order))
+				assert.Equal(t, "user,pull", order)
 			})
 		})
 	}
@@ -99,29 +91,18 @@ func TestUserWritesQueueBehindPullTransaction(t *testing.T) {
 
 func TestReadTransactionDoesNotHoldWriters(t *testing.T) {
 	t.Parallel()
-	h := newSyncTestHelper(t)
-	job := h.createCompletedJob("read-transaction")
-	tx, err := h.db.BeginTx(t.Context(), nil)
-	require.NoError(t, err)
-	defer func() { _ = tx.Rollback() }()
-	var count int
-	require.NoError(t, tx.QueryRowContext(t.Context(), `SELECT count(*) FROM reviews`).Scan(&count))
-	done := make(chan error, 1)
-	go func() {
-		_, err := h.db.AddCommentToJob(job.ID, "user", "comment beside reader")
-		done <- err
-	}()
-	// Wall-clock wait: the writer uses a separate real SQLite connection.
-	timedOut := false
-	select {
-	case err := <-done:
+	synctest.Test(t, func(t *testing.T) {
+		h := newSyncTestHelper(t)
+		job := h.createCompletedJob("read-transaction")
+		tx, err := h.db.BeginTx(t.Context(), nil)
 		require.NoError(t, err)
-	case <-time.After(5 * time.Second): //nolint:kennlint // deadlinetest: real SQLite reader and writer
-		timedOut = true
-		require.NoError(t, tx.Rollback())
-		require.NoError(t, <-done)
-	}
-	assert.False(t, timedOut, "read transaction blocked the writer")
+		defer func() { _ = tx.Rollback() }()
+		var count int
+		require.NoError(t, tx.QueryRowContext(t.Context(), `SELECT count(*) FROM reviews`).Scan(&count))
+		// A gated reader would leave this write to time out on the fake clock.
+		_, err = h.db.AddCommentToJob(job.ID, "user", "comment beside reader")
+		require.NoError(t, err)
+	})
 }
 
 func TestPulledWritesWaitForWriter(t *testing.T) {

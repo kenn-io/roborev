@@ -122,27 +122,35 @@ func leadingSQLKeyword(query string) (string, string) {
 	return query, ""
 }
 
-func (c *writeGateConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+func (c *writeGateConn) gatedExec(ctx context.Context, query string, exec func() (driver.Result, error)) (driver.Result, error) {
 	finish, err := c.start(ctx, query)
 	if err != nil {
 		return nil, err
 	}
-	result, err := c.sqliteGateConn.ExecContext(ctx, query, args)
+	result, err := exec()
 	finish(err)
 	return result, err
 }
 
-func (c *writeGateConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+func (c *writeGateConn) gatedQuery(ctx context.Context, query string, run func() (driver.Rows, error)) (driver.Rows, error) {
 	finish, err := c.start(ctx, query)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := c.sqliteGateConn.QueryContext(ctx, query, args)
+	rows, err := run()
 	if err != nil {
 		finish(err)
 		return nil, err
 	}
 	return &writeGateRows{Rows: rows, finish: finish}, nil
+}
+
+func (c *writeGateConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	return c.gatedExec(ctx, query, func() (driver.Result, error) { return c.sqliteGateConn.ExecContext(ctx, query, args) })
+}
+
+func (c *writeGateConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	return c.gatedQuery(ctx, query, func() (driver.Rows, error) { return c.sqliteGateConn.QueryContext(ctx, query, args) })
 }
 
 func (c *writeGateConn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
@@ -168,24 +176,19 @@ func (c *writeGateConn) Close() error {
 	return err
 }
 
+func (c *writeGateConn) endTx(err error) error {
+	c.inTx = false
+	c.release()
+	return err
+}
+
 type writeGateTx struct {
 	driver.Tx
 	conn *writeGateConn
 }
 
-func (t *writeGateTx) Commit() error {
-	err := t.Tx.Commit()
-	t.conn.inTx = false
-	t.conn.release()
-	return err
-}
-
-func (t *writeGateTx) Rollback() error {
-	err := t.Tx.Rollback()
-	t.conn.inTx = false
-	t.conn.release()
-	return err
-}
+func (t *writeGateTx) Commit() error   { return t.conn.endTx(t.Tx.Commit()) }
+func (t *writeGateTx) Rollback() error { return t.conn.endTx(t.Tx.Rollback()) }
 
 type writeGateStmt struct {
 	driver.Stmt
@@ -194,28 +197,14 @@ type writeGateStmt struct {
 }
 
 func (s *writeGateStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
-	finish, err := s.conn.start(ctx, s.query)
-	if err != nil {
-		return nil, err
-	}
-	result, err := s.Stmt.(driver.StmtExecContext).ExecContext(ctx, args)
-	finish(err)
-	return result, err
+	return s.conn.gatedExec(ctx, s.query, func() (driver.Result, error) { return s.Stmt.(driver.StmtExecContext).ExecContext(ctx, args) })
 }
 
 func (s *writeGateStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
-	finish, err := s.conn.start(ctx, s.query)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := s.Stmt.(driver.StmtQueryContext).QueryContext(ctx, args)
-	if err != nil {
-		finish(err)
-		return nil, err
-	}
-	return &writeGateRows{Rows: rows, finish: finish}, nil
+	return s.conn.gatedQuery(ctx, s.query, func() (driver.Rows, error) { return s.Stmt.(driver.StmtQueryContext).QueryContext(ctx, args) })
 }
 
+// database/sql closes driver rows once.
 type writeGateRows struct {
 	driver.Rows
 	finish func(error)
@@ -223,9 +212,6 @@ type writeGateRows struct {
 
 func (r *writeGateRows) Close() error {
 	err := r.Rows.Close()
-	if r.finish != nil {
-		r.finish(err)
-		r.finish = nil
-	}
+	r.finish(err)
 	return err
 }
