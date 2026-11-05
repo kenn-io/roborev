@@ -1950,9 +1950,9 @@ managed replacement.
 Before managed recovery drains reviews or starts the service, local
 `roborev daemon pause` must save the pause through the current daemon. A live
 managed daemon that fails HTTP probes stays running, and the command reports the
-error with manual restart guidance. If rediscovery misses the daemon, the command
-tries its last known runtime API unless ownership lookup confirms the process
-has exited. In that case, recovery returns an error without dialing an
+error with manual restart guidance. If rediscovery misses the daemon, the
+command tries its last known runtime API unless ownership lookup confirms the
+process has exited. In that case, recovery returns an error without dialing an
 activation socket that could start unpaused workers. This keeps replacement
 workers from claiming queued jobs. If the pause write fails, recovery returns an
 error before draining reviews or starting the service. If recovery fails after
