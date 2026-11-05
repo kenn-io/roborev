@@ -371,14 +371,14 @@ func TestCICheckPackagesSourceClassificationIntegration(t *testing.T) {
 	t.Run("separate global prefix", func(t *testing.T) {
 		stage := t.TempDir()
 		env := append(ciCheckPackageEnv(stage, os.Getenv("PATH"), nil), "npm_config_prefix="+t.TempDir())
-		local, err := ciCheckLocalJSSources(t.Context(), stage, []string{"file:../local"}, []string{"file", "directory"}, nil, env)
+		local, err := ciCheckLocalJSSources(t.Context(), stage, []string{"file:../local"}, []string{"file", "directory"}, nil, nil, env)
 		require.NoError(t, err)
 		assert.True(t, local)
 	})
 
 	t.Run("workspace:*", func(t *testing.T) {
 		stage := t.TempDir()
-		local, err := ciCheckLocalJSSources(t.Context(), stage, []string{"workspace:*"}, []string{"file", "directory"}, nil, ciCheckPackageEnv(stage, os.Getenv("PATH"), nil))
+		local, err := ciCheckLocalJSSources(t.Context(), stage, []string{"workspace:*"}, []string{"file", "directory"}, nil, nil, ciCheckPackageEnv(stage, os.Getenv("PATH"), nil))
 		require.NoError(t, err)
 		assert.True(t, local)
 	})
@@ -456,6 +456,14 @@ func TestCICheckPackagesActiveShrinkwrapIntegration(t *testing.T) {
 	})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(archive) }))
 	t.Cleanup(server.Close)
+	t.Run("legacy ignores from", func(t *testing.T) {
+		repo := testutil.NewTestRepoWithCommit(t)
+		repo.CommitFile("package.json", `{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":"1.0.0"}}`, "dependency")
+		repo.CommitFile("npm-shrinkwrap.json", fmt.Sprintf(`{"name":"fixture","version":"1.0.0","lockfileVersion":1,"dependencies":{"checker-fixture":{"version":"1.0.0","from":"file:/removed-unused-directory","resolved":%q}}}`, server.URL+"/package.tgz"), "legacy lock")
+		var log bytes.Buffer
+		prepareCICheckPackages(t.Context(), repo.Root, t.TempDir(), os.Getenv("PATH"), nil, &log)
+		assert.FileExists(t, filepath.Join(repo.Root, "node_modules", "checker-fixture", "index.js"), log.String())
+	})
 	t.Run("2", func(t *testing.T) {
 		repo := testutil.NewTestRepoWithCommit(t)
 		repo.CommitFile("package.json", `{"name":"fixture","version":"1.0.0","dependencies":{"checker-fixture":"1.0.0"}}`, "dependency")

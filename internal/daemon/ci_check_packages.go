@@ -148,34 +148,8 @@ func ciCheckNpmSources(lock map[string]any) []string {
 	return sources
 }
 
-// npm converts a lock without a packages map from its legacy dependency records,
-// turning a directory spec in version, from, or resolved into a link.
-func ciCheckNpmLegacySources(lock map[string]any) []string {
-	if _, ok := lock["packages"].(map[string]any); ok {
-		return nil
-	}
-	var sources []string
-	dependencies, _ := lock["dependencies"].(map[string]any)
-	for _, value := range dependencies {
-		if dep, ok := value.(map[string]any); ok {
-			fields := []string{"version", "from", "resolved"}
-			if integrity, _ := dep["integrity"].(string); integrity != "" {
-				// npm takes version as the spec once integrity is recorded.
-				fields = fields[:1]
-			}
-			for _, field := range fields {
-				if source, ok := dep[field].(string); ok {
-					sources = append(sources, source)
-				}
-			}
-			sources = append(sources, ciCheckNpmLegacySources(dep)...)
-		}
-	}
-	return sources
-}
-
 // Use npm's own source and workspace semantics from its trusted installation.
-func ciCheckLocalJSSources(ctx context.Context, stage string, sources, rejected []string, ancestors map[string]any, env []string) (bool, error) {
+func ciCheckLocalJSSources(ctx context.Context, stage string, sources, rejected []string, lock, ancestors map[string]any, env []string) (bool, error) {
 	npm, err := resolveCICheckPackageTool(ctx, env, "npm")
 	if err != nil {
 		return false, err
@@ -184,7 +158,7 @@ func ciCheckLocalJSSources(ctx context.Context, stage string, sources, rejected 
 	if err != nil {
 		return false, err
 	}
-	input, err := json.Marshal(map[string]any{"sources": sources, "rejected": rejected, "workspaces": ancestors})
+	input, err := json.Marshal(map[string]any{"sources": sources, "rejected": rejected, "lock": lock, "workspaces": ancestors})
 	if err != nil {
 		return false, err
 	}
@@ -193,6 +167,7 @@ const npm = fs.realpathSync(process.argv[1]);
 const entry = [path.resolve(path.dirname(npm), '../lib/node_modules/npm/package.json'), npm].find(fs.existsSync);
 const npmRequire = require('node:module').createRequire(entry);
 const npa = npmRequire('npm-package-arg');
+const specFromLock = npmRequire('@npmcli/arborist/lib/spec-from-lock.js');
 const input = JSON.parse(fs.readFileSync(0, 'utf8'));
 if (input.rejected.includes('git') && !['allow-file', 'allow-directory', 'allow-git'].every(name => npmRequire('@npmcli/config/lib/definitions').definitions[name]))
  throw new Error('npm lacks the required source fetch policies');
@@ -202,7 +177,9 @@ const local = input.sources.some(spec => {
  try { return input.rejected.includes(npa.resolve('checker', spec).type); }
  catch { return true; }
 });
-process.stdout.write(JSON.stringify(member || local));`
+const legacyLocal = lock => !lock?.packages && Object.entries(lock?.dependencies || {}).some(([name, dep]) =>
+ input.rejected.includes(specFromLock(name, dep, process.cwd()).type) || legacyLocal(dep));
+process.stdout.write(JSON.stringify(member || local || legacyLocal(input.lock)));`
 	parse := exec.CommandContext(ctx, node, "--input-type=commonjs", "--eval", script, npm)
 	parse.Dir, parse.Env, parse.Stdin = stage, env, bytes.NewReader(input)
 	output, err := parse.Output()
@@ -241,7 +218,7 @@ func ciCheckBunSources(ctx context.Context, command, stage string, data []byte, 
 }
 
 func prepareCICheckJS(ctx context.Context, project, stage string, metadata map[string][]byte, ancestors map[string]any, env []string, out io.Writer) {
-	var manifest map[string]any
+	var manifest, npmLock map[string]any
 	if err := json.Unmarshal(metadata["package.json"], &manifest); err != nil {
 		fmt.Fprintf(out, "CI checker invalid package.json: %v\n", err)
 		return
@@ -275,9 +252,8 @@ func prepareCICheckJS(ctx context.Context, project, stage string, metadata map[s
 			case "bun.lock":
 				locked, err = ciCheckBunSources(ctx, command, stage, data, env)
 			case "package-lock.json", "npm-shrinkwrap.json":
-				var lock map[string]any
-				err = json.Unmarshal(data, &lock)
-				locked = append(ciCheckNpmSources(lock), ciCheckNpmLegacySources(lock)...)
+				err = json.Unmarshal(data, &npmLock)
+				locked = ciCheckNpmSources(npmLock)
 			}
 			if err != nil {
 				fmt.Fprintf(out, "CI checker invalid %s: %v\n", name, err)
@@ -290,7 +266,7 @@ func prepareCICheckJS(ctx context.Context, project, stage string, metadata map[s
 			}
 		}
 	}
-	local, err := ciCheckLocalJSSources(ctx, stage, sources, rejected, ancestors, env)
+	local, err := ciCheckLocalJSSources(ctx, stage, sources, rejected, npmLock, ancestors, env)
 	if err != nil {
 		fmt.Fprintf(out, "CI checker source classification failed: %v\n", err)
 		return
