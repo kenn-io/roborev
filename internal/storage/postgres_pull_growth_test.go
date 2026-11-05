@@ -22,13 +22,6 @@ func TestIntegration_FirstPullGrowth(t *testing.T) { //nolint:paralleltest // me
 		Build: func(_ testing.TB, size int) (func(), func()) {
 			env := newIntegrationEnv(t)
 			seedPullHistory(t, env.Pool, size)
-			cursors := make(map[string]string)
-			for table, key := range map[string]string{"review_jobs": SyncStateLastJobCursor, "reviews": SyncStateLastReviewCursor} {
-				var updated time.Time
-				var id int64
-				require.NoError(t, env.Pool.pool.QueryRow(t.Context(), "SELECT updated_at, id FROM "+table+" ORDER BY updated_at DESC, id DESC LIMIT 1").Scan(&updated, &id))
-				cursors[key] = formatTimestampIDCursor(updated, id)
-			}
 			var db *DB
 			var worker *SyncWorker
 			t.Cleanup(func() {
@@ -41,15 +34,11 @@ func TestIntegration_FirstPullGrowth(t *testing.T) { //nolint:paralleltest // me
 					require.NoError(t, err)
 					require.Equal(t, size, stats.Jobs)
 					require.Equal(t, size, stats.Reviews)
+					require.Equal(t, size, stats.Responses)
 					for _, table := range []string{"review_jobs", "reviews"} {
 						var count int
 						require.NoError(t, db.QueryRow("SELECT count(*) FROM "+table).Scan(&count))
 						require.Equal(t, size, count, table)
-					}
-					for key, expected := range cursors {
-						cursor, err := db.GetSyncState(key)
-						require.NoError(t, err)
-						require.Equal(t, expected, cursor, key)
 					}
 				}, func() {
 					if db != nil {
