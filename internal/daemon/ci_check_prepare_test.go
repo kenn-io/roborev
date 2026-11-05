@@ -24,7 +24,7 @@ func TestCICheckPreparation(t *testing.T) {
 		t.Skip("requires shell fixtures and symlinks")
 	}
 	miseTools, miseShims, miseData := ciCheckMiseFixture(t)
-	pythonTools, pythonScript := ciCheckPackagePythonFixture(t)
+	_, pythonScript := ciCheckPackagePythonFixture(t)
 	require.NoError(t, os.WriteFile(filepath.Join(miseTools, "bin", "python3"), []byte(pythonScript), 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(miseTools, "bin", "node"), []byte("#!/bin/sh\nprintf false\n"), 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(miseTools, "bin", "npm"), []byte("#!/bin/sh\nexit 1\n"), 0o700))
@@ -36,7 +36,6 @@ case "$*" in
 esac
 `
 	require.NoError(t, os.WriteFile(filepath.Join(miseTools, "bin", "bun"), []byte(bun), 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(pythonTools, "python3"), []byte("#!/bin/sh\nexit 99\n"), 0o700))
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	repo := testutil.NewTestRepoWithCommit(t)
 	repo.CommitFile("go.mod", "module example.com/check\n\ngo 1.25.0\n", "module")

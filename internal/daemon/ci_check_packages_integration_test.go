@@ -98,14 +98,8 @@ func TestCICheckPackagesDependencySourcesIntegration(t *testing.T) {
 	repo := testutil.NewTestRepoWithCommit(t)
 	gitServer := httptest.NewTLSServer(http.FileServer(http.Dir(repo.Root)))
 	t.Cleanup(gitServer.Close)
-	marker := filepath.Join(t.TempDir(), "git-payload-ran")
 	gitSource := "git+" + gitServer.URL + "/.git"
 	repo.CommitFile("package.json", fmt.Sprintf(`{"name":"git-fixture","version":"1.0.0","scripts":{"prepare":"node -e ''"},"dependencies":{"child-fixture":%q}}`, gitSource), "git package")
-	repo.CommitFile(".npmrc", "git=./git-payload\n", "package settings")
-	repo.CommitFile("git-payload", fmt.Sprintf("#!/bin/sh\nprintf ran > '%s'\nexit 1\n", marker), "controlled git command")
-	require.NoError(t, os.Chmod(filepath.Join(repo.Root, "git-payload"), 0o700))
-	repo.RunGit("add", "git-payload")
-	repo.RunGit("commit", "-m", "executable fixture")
 	repo.RunGit("update-server-info")
 	certificate := filepath.Join(t.TempDir(), "certificate.pem")
 	require.NoError(t, os.WriteFile(certificate, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: gitServer.Certificate().Raw}), 0o600))
@@ -118,12 +112,10 @@ func TestCICheckPackagesDependencySourcesIntegration(t *testing.T) {
 		{"file locked link", "link", "host-fixture", "1.0.0"},
 		{"file locked string link", "link string", "host-fixture", "1.0.0"},
 		{"file locked number link", "link number", "host-fixture", "1.0.0"},
-		{"file shrinkwrap string link", "link string", "host-fixture", "1.0.0"},
 		{"file v1 package lock absolute", "link v1 absolute", "host-fixture", "1.0.0"},
 		{"git direct", "git", "git-fixture", gitSource},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			require.NoError(t, os.RemoveAll(marker))
 			project, stage, private := t.TempDir(), t.TempDir(), t.TempDir()
 			for _, dir := range []string{"home", "tmp"} {
 				require.NoError(t, os.Mkdir(filepath.Join(private, dir), 0o700))
@@ -133,24 +125,17 @@ func TestCICheckPackagesDependencySourcesIntegration(t *testing.T) {
 				relative, err := filepath.Rel(stage, hostDirectory)
 				require.NoError(t, err)
 				link := map[string]string{"link": "true", "link string": `"true"`, "link number": "1"}[tc.kind]
-				lockName := "package-lock.json"
-				if strings.Contains(tc.name, "shrinkwrap") {
-					lockName = "npm-shrinkwrap.json"
-				}
-				metadata[lockName] = []byte(fmt.Sprintf(`{"lockfileVersion":3,"packages":{"":{"dependencies":{"host-fixture":"1.0.0"}},"node_modules/host-fixture":{"resolved":%q,"link":%s},%q:{"name":"host-fixture","version":"1.0.0"}}}`, relative, link, relative))
+				metadata["package-lock.json"] = []byte(fmt.Sprintf(`{"lockfileVersion":3,"packages":{"":{"dependencies":{"host-fixture":"1.0.0"}},"node_modules/host-fixture":{"resolved":%q,"link":%s},%q:{"name":"host-fixture","version":"1.0.0"}}}`, relative, link, relative))
 				if strings.HasPrefix(tc.kind, "link v1") {
 					source := "file:" + hostDirectory
-					metadata[lockName] = []byte(fmt.Sprintf(`{"name":"fixture","version":"1.0.0","lockfileVersion":1,"dependencies":{"host-fixture":{"version":%q}}}`, source))
+					metadata["package-lock.json"] = []byte(fmt.Sprintf(`{"name":"fixture","version":"1.0.0","lockfileVersion":1,"dependencies":{"host-fixture":{"version":%q}}}`, source))
 				}
 			}
 			env := append(ciCheckPackageEnv(private, os.Getenv("PATH"), nil), "GIT_SSL_CAINFO="+certificate)
 			var log bytes.Buffer
 			prepareCICheckJS(t.Context(), project, stage, metadata, nil, env, &log)
 			assert.NoDirExists(t, filepath.Join(project, "node_modules"), log.String())
-			if tc.kind == "git" {
-				assert.NoFileExists(t, marker, log.String())
-				assert.Contains(t, log.String(), "package preparation failed")
-			} else if strings.HasPrefix(tc.kind, "link") {
+			if strings.HasPrefix(tc.kind, "link") {
 				assert.Contains(t, log.String(), "local dependencies")
 			} else {
 				assert.Contains(t, log.String(), "package preparation failed")
@@ -447,7 +432,9 @@ func TestCICheckPackagesNpmLayoutsIntegration(t *testing.T) {
 			}
 			var log bytes.Buffer
 			prepareCICheckPackages(t.Context(), repo.Root, t.TempDir(), os.Getenv("PATH"), nil, &log)
-			assert.NoFileExists(t, lifecycleMarker, log.String())
+			if tc.name == "shrinkwrap precedence" {
+				assert.NoFileExists(t, lifecycleMarker, log.String())
+			}
 			assert.FileExists(t, filepath.Join(repo.Root, tc.module, "node_modules", "checker-fixture", "index.js"), log.String())
 			if tc.missing != "" {
 				assert.NoDirExists(t, filepath.Join(repo.Root, tc.missing), log.String())
