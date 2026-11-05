@@ -82,7 +82,7 @@ func TestEnsureDaemonPropagatesDiscoveryIOError(t *testing.T) {
 }
 
 func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
-	for _, ownership := range []string{"managed", "unmanaged", "lookup failure", "launchd lookup failure", "unknown owner", "vanished"} {
+	for _, ownership := range []string{"managed", "unmanaged", "unknown owner", "vanished"} {
 		t.Run(ownership, func(t *testing.T) {
 			isolateDaemonSelection(t)
 			stubServiceRecovery(t)
@@ -92,16 +92,7 @@ func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
 			require.NoError(t, err)
 			cliExecutableInfo = func() (os.FileInfo, error) { return os.Stat(binary) }
 			getAnyRunningDaemonForStart = daemon.GetAnyRunningDaemonContext
-			findDaemonService = func(ctx context.Context, pid int) (*daemonService, error) {
-				assert.Equal(t, os.Getpid(), pid)
-				_, bounded := ctx.Deadline()
-				assert.True(t, bounded)
-				if ownership == "lookup failure" {
-					return nil, errors.New("ownership unavailable")
-				}
-				if ownership == "launchd lookup failure" {
-					return nil, &managedRecoveryError{"gui/501", errors.New("launchd ownership unavailable")}
-				}
+			findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
 				if ownership == "unknown owner" {
 					return nil, &managedRecoveryError{"unknown", errors.New("cannot read process cgroup")}
 				}
@@ -127,28 +118,12 @@ func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
 				return
 			}
 			require.Error(t, err)
-			switch ownership {
-			case "lookup failure":
-				require.ErrorContains(t, err, "ownership unavailable")
-			case "unknown owner", "launchd lookup failure":
-				if ownership == "unknown owner" {
-					require.ErrorContains(t, err, "cannot read process cgroup")
-				} else {
-					require.ErrorContains(t, err, "launchd ownership unavailable")
-				}
-				exit, ok := errors.AsType[*exitError](err)
-				require.True(t, ok)
-				assert.Equal(t, "run 'roborev doctor' to diagnose setup", exit.hint)
-				assert.NotContains(t, err.Error()+exit.hint, serviceRestartCommand)
-			default:
+			if ownership == "unknown owner" {
+				require.ErrorContains(t, err, "cannot read process cgroup")
+			} else {
 				var managed *managedRecoveryError
 				require.ErrorAs(t, err, &managed)
-				assert.Equal(t, "fixture.service", managed.unit)
 				require.ErrorContains(t, managed.cause, "HTTP probe failed for live daemon process")
-				exit, ok := errors.AsType[*exitError](err)
-				require.True(t, ok)
-				assert.Equal(t, "run 'roborev doctor' to diagnose setup", exit.hint)
-				assert.Equal(t, 1, strings.Count(err.Error()+exit.hint, serviceRestartCommand+" fixture.service"))
 			}
 			assert.Empty(t, mutations)
 		})

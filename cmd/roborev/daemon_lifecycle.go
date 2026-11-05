@@ -310,8 +310,6 @@ func ensureDaemon() (err error) {
 		hint := "start the local daemon with 'roborev daemon start', or run 'roborev doctor' to diagnose setup"
 		if serverAddr != "" {
 			hint = "check the --server address and that daemon's availability, or omit --server to use the local daemon"
-		} else if _, ok := errors.AsType[*managedRecoveryError](err); ok {
-			hint = "run 'roborev doctor' to diagnose setup"
 		}
 		if exit, ok := errors.AsType[*exitError](err); ok && exit.hint != "" {
 			hint = exit.hint

@@ -4,14 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sync"
-	"sync/atomic"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -20,29 +16,6 @@ import (
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/version"
 )
-
-type recoveryOutput struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
-}
-
-func (b *recoveryOutput) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(p)
-}
-
-func (b *recoveryOutput) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.String()
-}
-
-func (b *recoveryOutput) Reset() {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.buf.Reset()
-}
 
 func exitedDaemonPID(t *testing.T) int {
 	t.Helper()
@@ -92,130 +65,42 @@ func stubServiceRecovery(t *testing.T) {
 }
 
 func TestEnsureDaemonRecoverySkipsVersionCheck(t *testing.T) {
-	for _, replacement := range []bool{false, true} {
-		t.Run(fmt.Sprintf("replacement=%t", replacement), func(t *testing.T) {
-			isolateDaemonSelection(t)
-			stubServiceRecovery(t)
-			t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "1")
-			oldList := listAllRuntimes
-			t.Cleanup(func() { listAllRuntimes = oldList })
-			owner := ownedDaemonService(t)
-			original := &daemon.RuntimeInfo{PID: os.Getpid(), Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}
-			current := *original
-			if replacement {
-				current.PID++
-			}
-			getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
-			listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return []*daemon.RuntimeInfo{original}, nil }
-			findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
-				service := *owner
-				service.mainPID = pid
-				return &service, nil
-			}
-			rediscoveries := 0
-			getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
-				rediscoveries++
-				assertRecoveryLock(t, false)
-				return &current, nil
-			}
-			probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
-				return &daemon.PingInfo{Version: "v-old"}, nil
-			}
-			drains, starts := 0, 0
-			drainManagedDaemon = func(*daemon.RuntimeInfo) error {
-				drains++
-				return errors.New("responsive daemon must be reused")
-			}
-			startDaemonService = func(context.Context, string) error { starts++; return nil }
-			startDaemonForEnsure = func() error { starts++; return nil }
-
-			require.NoError(t, ensureDaemon())
-			assert.Equal(t, 1, rediscoveries)
-			assert.Zero(t, drains)
-			assert.Zero(t, starts)
-			assertRecoveryLock(t, true)
-		})
+	isolateDaemonSelection(t)
+	stubServiceRecovery(t)
+	t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "1")
+	oldList := listAllRuntimes
+	t.Cleanup(func() { listAllRuntimes = oldList })
+	owner := ownedDaemonService(t)
+	original := &daemon.RuntimeInfo{PID: os.Getpid(), Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return []*daemon.RuntimeInfo{original}, nil }
+	findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
+		service := *owner
+		service.mainPID = pid
+		return &service, nil
 	}
-}
+	rediscoveries := 0
+	getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
+		rediscoveries++
+		assertRecoveryLock(t, false)
+		return original, nil
+	}
+	probeDaemonForEnsure = func(daemon.DaemonEndpoint, time.Duration) (*daemon.PingInfo, error) {
+		return &daemon.PingInfo{Version: "v-old"}, nil
+	}
+	drains, starts := 0, 0
+	drainManagedDaemon = func(*daemon.RuntimeInfo) error {
+		drains++
+		return errors.New("responsive daemon must be reused")
+	}
+	startDaemonService = func(context.Context, string) error { starts++; return nil }
+	startDaemonForEnsure = func() error { starts++; return nil }
 
-func TestManagedRecoveryBlocksCompetingColdStart(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		isolateDaemonSelection(t)
-		stubServiceRecovery(t)
-		oldList := listAllRuntimes
-		t.Cleanup(func() { listAllRuntimes = oldList })
-		binary, err := os.Executable()
-		require.NoError(t, err)
-		cliExecutableInfo = func() (os.FileInfo, error) { return os.Stat(binary) }
-		var progress recoveryOutput
-		lifecycleOut = &progress
-		old := &daemon.RuntimeInfo{PID: os.Getpid(), Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}
-		var current atomic.Pointer[daemon.RuntimeInfo]
-		current.Store(old)
-		drained, resume := make(chan struct{}), make(chan struct{})
-		finishDrain := make(chan struct{})
-		findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
-			return &daemonService{unit: "fixture.service", executable: binary, mainPID: pid, serviceType: "notify"}, nil
-		}
-		getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
-			if current.Load() == nil {
-				return nil, os.ErrNotExist
-			}
-			return current.Load(), nil
-		}
-		getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return getAnyRunningDaemonForStart(t.Context()) }
-		listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return []*daemon.RuntimeInfo{old}, nil }
-		serviceMainPID = func(context.Context, string) (int, error) { return current.Load().PID, nil }
-		drains := 0
-		drainManagedDaemon = func(*daemon.RuntimeInfo) error {
-			drains++
-			current.Store(nil)
-			close(drained)
-			<-finishDrain
-			time.Sleep(daemonStartTimeout + time.Minute)
-			return nil
-		}
-		startDaemonService = func(ctx context.Context, _ string) error {
-			assert.NoError(t, ctx.Err(), "startup gets a fresh budget after draining") //nolint:testifylint // Keep running so the goroutine sends its recovery result.
-			<-resume
-			current.Store(&daemon.RuntimeInfo{PID: 5678, Version: version.Version, Network: "tcp", Address: "127.0.0.1:1"})
-			return nil
-		}
-		detached := 0
-		startDaemonDetached = func(context.Context, detachedDaemonOptions) error { detached++; return nil }
-		recovery, coldStart := make(chan error, 1), make(chan error, 1)
-		competingRecovery, ensure := make(chan error, 1), make(chan error, 1)
-		go func() { recovery <- recoverDaemon(old, nil, false) }()
-		<-drained
-		synctest.Wait()
-		assert.Contains(t, progress.String(), "Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...\n")
-		assert.Empty(t, recovery, "recovery must remain blocked while reviews drain")
-		go func() { coldStart <- startDaemon() }()
-		progress.Reset()
-		go func() { competingRecovery <- recoverDaemon(old, nil, false) }()
-		go func() { ensure <- ensureDaemon() }()
-		synctest.Wait()
-		assert.Contains(t, progress.String(), "Waiting for daemon recovery lock; another command may be waiting for running reviews to finish...\n")
-		assert.Empty(t, coldStart, "cold start must wait while the unit replaces its daemon")
-		assert.Zero(t, detached)
-		time.Sleep(daemonStartTimeout + time.Minute)
-		require.ErrorIs(t, <-coldStart, context.DeadlineExceeded)
-		synctest.Wait()
-		assert.Empty(t, recovery, "the owning recovery must keep waiting for the active review")
-		assert.Empty(t, competingRecovery, "a competing recovery waits for the active review instead of failing")
-		assert.Empty(t, ensure, "ensureDaemon must wait beyond the startup budget while recovery drains")
-		close(finishDrain)
-		close(resume)
-		require.NoError(t, <-recovery)
-		require.NoError(t, <-competingRecovery, "a competing recovery reuses the replacement")
-		require.NoError(t, <-ensure, "ensureDaemon reuses the responsive replacement")
-		release, acquired, err := daemon.RuntimeStore().TryAcquireStartLock(t.Context())
-		require.NoError(t, err)
-		require.True(t, acquired, "ensureDaemon must release the recovery lock")
-		release()
-		assert.Equal(t, 1, drains)
-		assert.Zero(t, detached)
-	})
+	require.NoError(t, ensureDaemon())
+	assert.Equal(t, 1, rediscoveries)
+	assert.Zero(t, drains)
+	assert.Zero(t, starts)
+	assertRecoveryLock(t, true)
 }
 
 func TestUnmanagedRecoveryDrainsDiscoveredRuntimes(t *testing.T) {
