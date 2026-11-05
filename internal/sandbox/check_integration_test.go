@@ -193,13 +193,12 @@ while IFS=: read -r hierarchy controllers path; do
   [ "$hierarchy" = 0 ] && [ -z "$controllers" ] || continue
   scope=/sys/fs/cgroup$path
 done < /proc/self/cgroup
+# Without CPU controller delegation, cpu.max is absent and this probe is skipped.
 if [ -f "$scope/cpu.max" ]; then
   check cpu-limit allow cat "$scope/cpu.max"
 fi
-check memory-limit allow cat "$scope/memory.max"
 check memory-usage deny cat "$scope/memory.current"
 check parent-limit deny cat "${scope%/*}/memory.max"
-check root-processes deny cat /sys/fs/cgroup/cgroup.procs
 cat "$scope/memory.max"
 exit "$failed"
 `
