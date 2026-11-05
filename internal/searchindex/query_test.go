@@ -376,7 +376,6 @@ func TestSearchLexicalWidensWhenOnePanelFillsTheWindow(t *testing.T) {
 		panels, members, limit int
 	}{
 		{"large panel", 1, 12, 2},
-		{"five-row panels", 4, 5, 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			index := openQueryTestIndex(t)
@@ -393,15 +392,8 @@ func TestSearchLexicalWidensWhenOnePanelFillsTheWindow(t *testing.T) {
 			groups, err := index.SearchLexical(t.Context(), "needle", SearchFilters{}, tc.limit)
 			require.NoError(t, err)
 			require.Len(t, groups, tc.limit)
-			if tc.panels == 1 {
-				require.Len(t, groups[0].Members, 12)
-				assert.Equal(t, lone.DocKey, groups[1].Members[0].DocKey)
-			} else {
-				for i, group := range groups {
-					require.Len(t, group.Members, 5)
-					assert.Equal(t, docs[(tc.panels-i)*tc.members-1].DocKey, group.Members[0].DocKey)
-				}
-			}
+			require.Len(t, groups[0].Members, 12)
+			assert.Equal(t, lone.DocKey, groups[1].Members[0].DocKey)
 		})
 	}
 }

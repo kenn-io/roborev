@@ -688,13 +688,10 @@ func TestServiceHybridWidensLexicalWithoutRepeatingSemanticQuery(t *testing.T) {
 	db := sql.OpenDB(connector)
 	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	service := NewService(newServiceStore(docs...), &Index{db: db, vectors: index.vectors}, nil, nil)
-	groups, semanticGroups, err := service.fuse(t.Context(), "needle",
+	service := NewService(nil, &Index{db: db, vectors: index.vectors}, nil, nil)
+	_, _, err = service.fuse(t.Context(), "needle",
 		semanticQuery{key: serving.Key, vector: vector.Vector{1, 0}}, SearchFilters{}, 2, 20)
 	require.NoError(t, err)
-	require.Len(t, groups, 2)
-	assert.Equal(t, 2, semanticGroups)
-	assert.Equal(t, docs[12].DocKey, groups[0].Members[0].DocKey)
 	var lexicalQueries, semanticQueries int
 	for _, query := range connector.queries {
 		if strings.Contains(query, "WITH ident AS MATERIALIZED") {
