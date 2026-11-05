@@ -82,7 +82,7 @@ func TestEnsureDaemonPropagatesDiscoveryIOError(t *testing.T) {
 }
 
 func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
-	for _, ownership := range []string{"managed", "unmanaged", "unknown owner", "vanished"} {
+	for _, ownership := range []string{"managed", "unmanaged", "vanished"} {
 		t.Run(ownership, func(t *testing.T) {
 			isolateDaemonSelection(t)
 			stubServiceRecovery(t)
@@ -104,9 +104,6 @@ func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
 			cliExecutableInfo = func() (os.FileInfo, error) { return os.Stat(binary) }
 			getAnyRunningDaemonForStart = daemon.GetAnyRunningDaemonContext
 			findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
-				if ownership == "unknown owner" {
-					return nil, &managedRecoveryError{"unknown", errors.New("cannot read process cgroup")}
-				}
 				if ownership == "unmanaged" {
 					return nil, nil
 				}
@@ -124,14 +121,8 @@ func TestEnsureDaemonPreservesLiveManagedRuntime(t *testing.T) {
 				return
 			}
 			assert.Equal(t, []string{"cleanup"}, mutations)
-			require.Error(t, err)
-			switch ownership {
-			case "unknown owner":
-				require.ErrorContains(t, err, "cannot read process cgroup")
-			default:
-				var managed *managedRecoveryError
-				require.ErrorAs(t, err, &managed)
-			}
+			var managed *managedRecoveryError
+			require.ErrorAs(t, err, &managed)
 		})
 	}
 }

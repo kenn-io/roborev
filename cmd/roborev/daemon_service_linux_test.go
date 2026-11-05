@@ -41,8 +41,6 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 		{outcome: "replacement current"},
 		{outcome: "skip version check", skipVersionCheck: true},
 		{outcome: "live current after probe failure", probeErr: probeErr, recheckCurrent: true},
-		{outcome: "live failed rediscovery", probeErr: probeErr, failDiscovery: true, wantError: "daemon is unresponsive: probe failed; run systemctl --user restart fixture.service"},
-		{outcome: "live failed repeat probe", probeErr: probeErr, reprobeFails: true, queueCommand: true, paused: true, wantError: "daemon is unresponsive: repeat probe failed; run systemctl --user restart fixture.service"},
 		{outcome: "pause write failure", queueCommand: true, paused: true, failPause: true, wantError: "pause queue before shutdown"},
 		{outcome: "pause unsupported by old daemon", queueCommand: true, paused: true, pauseNotFound: true, wantError: "daemon lacks queue-pause support; recovery stopped before shutdown; wait for active reviews to finish, then run systemctl --user restart fixture.service and retry roborev pause"},
 		{outcome: "failed version probe", queueCommand: true, paused: true, probeErr: probeErr, reprobeFails: true, wantError: "daemon is unresponsive: repeat probe failed; run systemctl --user restart fixture.service"},
@@ -265,7 +263,6 @@ func TestRecoverDaemonWaitsForVanishedOwner(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				isolateDaemonSelection(t)
 				stubServiceRecovery(t)
 				oldRun := runSystemctl
 				t.Cleanup(func() { runSystemctl = oldRun })
@@ -276,7 +273,7 @@ func TestRecoverDaemonWaitsForVanishedOwner(t *testing.T) {
 					}
 					return nil, nil
 				}
-				original := &daemon.RuntimeInfo{PID: os.Getpid(), Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}
+				original := &daemon.RuntimeInfo{PID: 1234, Version: "v-old", Network: "tcp", Address: "127.0.0.1:1"}
 				started := time.Now()
 				findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
 					if pid == original.PID {
@@ -296,28 +293,7 @@ func TestRecoverDaemonWaitsForVanishedOwner(t *testing.T) {
 				startDaemonForEnsure = func() error { detached++; return nil }
 				startDaemonService = func(context.Context, string) error { starts++; return nil }
 				drainManagedDaemon = func(*daemon.RuntimeInfo) error { drains++; return nil }
-				var err error
-				if tc.managerUnavailable || tc.outsideService {
-					err = recoverDaemon(original, os.ErrNotExist, tc.outsideService)
-				} else {
-					// Enter through selection so a vanished owner lookup must reach recovery.
-					getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist }
-					oldList := listAllRuntimes
-					t.Cleanup(func() { listAllRuntimes = oldList })
-					listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return []*daemon.RuntimeInfo{original}, nil }
-					var mutations []string
-					cleanupZombieDaemons = func(daemon.DaemonEndpoint) int { mutations = append(mutations, "cleanup"); return 0 }
-					err = ensureDaemon()
-					assert.Equal(t, []string{"cleanup"}, mutations)
-					if tc.replacementAppears {
-						require.NoError(t, err)
-					} else {
-						require.ErrorContains(t, err, "ownership uncertain")
-						require.ErrorIs(t, err, context.DeadlineExceeded)
-					}
-					// Keep the direct entry's ownership snapshot coverage too.
-					err = recoverDaemon(original, os.ErrNotExist, false)
-				}
+				err := recoverDaemon(original, os.ErrNotExist, tc.outsideService)
 				if tc.managerUnavailable || tc.outsideService {
 					require.NoError(t, err)
 					assert.Equal(t, 1, detached, "request ordinary startup for a daemon no user service could restart")

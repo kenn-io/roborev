@@ -24,8 +24,11 @@ func assertSuspendedManagedDaemon(t *testing.T, original *daemon.RuntimeInfo, un
 
 	oldStart := startDaemonForEnsure
 	defer func() { startDaemonForEnsure = oldStart }()
-	startDaemonForEnsure = func() error { return nil }
-	_ = ensureDaemon()
+	starts := 0
+	startDaemonForEnsure = func() error { starts++; return nil }
+	var managed *managedRecoveryError
+	require.ErrorAs(t, ensureDaemon(), &managed)
+	assert.Zero(t, starts)
 	runtimes, err := daemon.ListJudgedRuntimes()
 	require.NoError(t, err)
 	require.Len(t, runtimes, 1)
