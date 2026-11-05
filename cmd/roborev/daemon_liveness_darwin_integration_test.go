@@ -28,6 +28,9 @@ func assertSuspendedManagedDaemon(t *testing.T, original *daemon.RuntimeInfo, un
 	err = ensureDaemon()
 	var managed *managedRecoveryError
 	require.ErrorAs(t, err, &managed)
+	if mainPID == original.PID {
+		require.ErrorContains(t, err, "daemon is unresponsive")
+	}
 	assert.Equal(t, unit, managed.unit)
 	statusEnsureDaemon = ensureDaemon
 	cmd := statusCmd()
