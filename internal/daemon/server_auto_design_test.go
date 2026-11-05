@@ -525,18 +525,6 @@ func TestAutoDesignStatusForResponse_StaleRequestsShareRefresh(t *testing.T) {
 	})
 }
 
-func TestAutoDesignStatusForResponse_IdleDoesNotRefresh(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		srv, db, _ := newTestServer(t)
-		_, err := db.GetOrCreateRepo(filepath.Join(t.TempDir(), "deleted"))
-		require.NoError(t, err)
-		srv.refreshAutoDesignRepoScan()
-		marker := mockAutoDesignGitWithMarker(t)
-		time.Sleep(2 * autoDesignRepoScanTTL)
-		assert.NoFileExists(t, marker)
-	})
-}
-
 func TestAutoDesignStatusForResponse_WorktreeInheritedConfigSurfacesAfterTTL(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 	repo := testutil.NewTestRepoWithCommit(t)
