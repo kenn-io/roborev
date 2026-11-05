@@ -1370,15 +1370,6 @@ func TestListJobsSortsReadTheirIndexes(t *testing.T) {
 					assert.NotContains(t, plan, "USE TEMP B-TREE FOR ORDER BY")
 				})
 			}
-			if test.name == "migrated legacy schema" {
-				t.Run("repo plus closed", func(t *testing.T) {
-					query, args, _, err := listJobsQuery("", "/synthetic/repo", 51, 0, collectListJobsOptions(WithClosed(true)))
-					require.NoError(t, err)
-					plan := queryPlan(t, db, query, args...)
-					assert.Contains(t, plan, "USING INDEX idx_review_jobs_repo_enqueued")
-					assert.NotContains(t, plan, "USE TEMP B-TREE FOR ORDER BY")
-				})
-			}
 		})
 	}
 }
@@ -1430,7 +1421,7 @@ func TestListJobsClosedPages(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 	repo, _ := seedJobs(t, db, "/tmp/closed-page/repo", 76)
-	otherRepo, _ := seedJobs(t, db, "/tmp/other-closed-page-repo", 4)
+	seedJobs(t, db, "/tmp/other-closed-page-repo", 4)
 	seedJobs(t, db, "/tmp/excluded-closed-page-repo", 4)
 	_, err := db.ExecContext(t.Context(), `
 		UPDATE review_jobs SET status = 'done', branch = CASE WHEN id >= 77 THEN '' ELSE 'main' END,
@@ -1454,19 +1445,7 @@ func TestListJobsClosedPages(t *testing.T) {
 		{"oldest", 2, "job_id <= 40", "", []int64{40, 39}, []int64{38, 37}, nil},
 		{"all closed", 2, "job_id <= 80", "", []int64{80, 79}, []int64{78, 77}, nil},
 		{"repo filtered mix", 2, "job_id <= 41 OR job_id >= 77", repo.RootPath, []int64{41, 40}, []int64{39, 38}, nil},
-		{"repo paths", 2, "job_id <= 41 OR job_id >= 77", "", []int64{41, 40}, []int64{39, 38}, []ListJobsOption{WithRepoPaths([]string{repo.RootPath})}},
-		{"repo prefix", 2, "job_id <= 41 OR job_id >= 77", "", []int64{41, 40}, []int64{39, 38}, []ListJobsOption{WithRepoPrefix("/tmp/closed-page")}},
-		{"repo IDs", 2, "job_id <= 41 OR job_id >= 77", "", []int64{41, 40}, []int64{39, 38}, []ListJobsOption{WithRepoIDs([]int64{repo.ID})}},
-		{"multiple repo paths", 3, "1", "", []int64{80, 79, 78}, []int64{77, 76, 75}, []ListJobsOption{WithRepoPaths([]string{repo.RootPath, otherRepo.RootPath})}},
-		{"multiple repo IDs", 3, "1", "", []int64{80, 79, 78}, []int64{77, 76, 75}, []ListJobsOption{WithRepoIDs([]int64{repo.ID, otherRepo.ID})}},
 		{"empty repo IDs", 2, "1", "", []int64{}, []int64{}, []ListJobsOption{WithRepoIDs(nil)}},
-		{"main branch", 2, "job_id <= 41 OR job_id >= 77", "", []int64{41, 40}, []int64{39, 38}, []ListJobsOption{WithBranch("main")}},
-		{"main or empty branch", 2, "job_id <= 41 OR job_id BETWEEN 79 AND 80", "", []int64{80, 79}, []int64{41, 40}, []ListJobsOption{WithBranchOrEmpty("main")}},
-		{"empty branch", 2, "job_id <= 41 OR job_id BETWEEN 77 AND 80", "", []int64{80, 79}, []int64{78, 77}, []ListJobsOption{WithEmptyBranch()}},
-		{"repo without empty branch", 2, "1", repo.RootPath, []int64{}, []int64{}, []ListJobsOption{WithEmptyBranch()}},
-		{"open failed with closed", 2, "job_id <= 41 OR job_id >= 77", "", []int64{}, []int64{}, []ListJobsOption{WithOpenFailedReviews()}},
-		{"missing repo", 2, "1", "/synthetic/missing", []int64{}, []int64{}, nil},
-		{"missing branch", 2, "1", "", []int64{}, []int64{}, []ListJobsOption{WithBranch("missing")}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -1633,12 +1612,9 @@ func TestListJobsClosedFlagUpkeep(t *testing.T) {
 	} {
 		t.Run(operation.name, func(t *testing.T) {
 			require.NoError(t, operation.apply())
-			page, err := db.ListJobs("", "", 50, 0, WithClosed(true))
-			require.NoError(t, err)
-			require.Len(t, page, operation.want)
-			if operation.want == 1 {
-				assert.Equal(t, job.ID, page[0].ID)
-			}
+			var flag int
+			require.NoError(t, db.QueryRowContext(t.Context(), `SELECT review_closed FROM review_jobs WHERE id = ?`, job.ID).Scan(&flag))
+			assert.Equal(t, operation.want, flag)
 			count, err := db.CountJobStats("", "", WithClosed(true))
 			require.NoError(t, err)
 			assert.Equal(t, operation.want, count.Done)

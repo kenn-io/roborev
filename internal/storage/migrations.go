@@ -50,25 +50,20 @@ var schemaMigrations = []schemaMigration{
 
 // migrateQueueListPositionIndexes's triggers keep review_jobs.review_closed equal to the job's reviews.closed.
 func migrateQueueListPositionIndexes(ctx context.Context, db *DB) error {
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_review_jobs_branch_position
+	if _, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_review_jobs_branch_position
 		ON review_jobs(branch, `+sqliteNormalizedTimestampExpr("enqueued_at")+` DESC, id DESC)`); err != nil {
 		return err
 	}
-	exists, err := hasColumn(ctx, tx, "review_jobs", "review_closed")
+	exists, err := hasColumn(ctx, db, "review_jobs", "review_closed")
 	if err != nil {
 		return err
 	}
 	if !exists {
-		if _, err := tx.ExecContext(ctx, `ALTER TABLE review_jobs ADD COLUMN review_closed INTEGER NOT NULL DEFAULT 0`); err != nil {
+		if _, err := db.ExecContext(ctx, `ALTER TABLE review_jobs ADD COLUMN review_closed INTEGER NOT NULL DEFAULT 0`); err != nil {
 			return err
 		}
 	}
-	_, err = tx.ExecContext(ctx, `
+	_, err = db.ExecContext(ctx, `
 		UPDATE review_jobs SET review_closed = 1 WHERE id IN (SELECT job_id FROM reviews WHERE closed = 1);
 		CREATE TRIGGER IF NOT EXISTS review_closed_insert AFTER INSERT ON reviews BEGIN
 			UPDATE review_jobs SET review_closed = NEW.closed WHERE id = NEW.job_id AND review_closed <> NEW.closed;
@@ -82,10 +77,7 @@ func migrateQueueListPositionIndexes(ctx context.Context, db *DB) error {
 		CREATE INDEX IF NOT EXISTS idx_review_jobs_closed_position
 		ON review_jobs(`+sqliteNormalizedTimestampExpr("enqueued_at")+` DESC, id DESC) WHERE review_closed = 1;
 	`)
-	if err != nil {
-		return err
-	}
-	return tx.Commit()
+	return err
 }
 
 func migrateCostAggregateIndex(ctx context.Context, db *DB) error {
