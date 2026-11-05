@@ -579,7 +579,8 @@ func runControlledUpdate(
 	prepareDaemon := func(info *daemon.RuntimeInfo, installed bool) error {
 		if restartThroughService {
 			var err error
-			serviceOwner, releaseRecovery, err = restartService(operationCtx, func() ([]*daemon.RuntimeInfo, error) {
+			var owners []*daemonService
+			owners, _, releaseRecovery, err = restartService(operationCtx, func() ([]*daemon.RuntimeInfo, error) {
 				current, err := discoverDaemonForUpdate()
 				if err != nil {
 					return nil, err
@@ -595,6 +596,9 @@ func runControlledUpdate(
 					return err
 				}
 				return fmt.Errorf("update stopped before install: %w; use --no-restart to install without restarting", err)
+			}
+			if len(owners) > 0 {
+				serviceOwner = owners[0]
 			}
 		}
 		if info == nil {

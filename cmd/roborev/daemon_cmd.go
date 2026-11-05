@@ -174,27 +174,32 @@ func daemonCmd() *cobra.Command {
 		Use:   "restart",
 		Short: "Restart the daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var owner *daemonService
+			var owners []*daemonService
+			var runtimes []*daemon.RuntimeInfo
+			stop := daemonStop
 			var release func()
 			if restartThroughService {
 				var err error
-				owner, release, err = restartService(cmd.Context(), listAllRuntimes)
+				owners, runtimes, release, err = restartService(cmd.Context(), listAllRuntimes)
 				if err != nil {
 					return err
 				}
 				if release != nil {
 					defer release()
 				}
+				stop = func() error { return stopDaemonSnapshot(runtimes, drainManagedDaemon, os.Stderr) }
 			}
 			wasRunning := true
-			if err := daemonStop(); errors.Is(err, ErrDaemonNotRunning) {
+			if err := stop(); errors.Is(err, ErrDaemonNotRunning) {
 				wasRunning = false
 			} else if err != nil {
 				return err
 			}
-			if owner != nil {
-				if _, err := startServiceReplacement(cmd.Context(), owner); err != nil {
-					return err
+			if len(owners) > 0 {
+				for _, owner := range owners {
+					if _, err := startServiceReplacement(cmd.Context(), owner); err != nil {
+						return err
+					}
 				}
 			} else if err := daemonEnsure(); err != nil {
 				return err

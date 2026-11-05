@@ -236,10 +236,7 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 				assert.Contains(t, progress.String(), "systemctl --user restart fixture.service")
 			}
 			assert.Zero(t, detached)
-			release, acquired, err := daemon.RuntimeStore().TryAcquireStartLock(t.Context())
-			require.NoError(t, err)
-			require.True(t, acquired, "recovery must release the start lock on every outcome")
-			release()
+			assertRecoveryLock(t, true)
 		})
 	}
 }

@@ -240,6 +240,12 @@ func TestDaemonRestartThroughLaunchdJob(t *testing.T) {
 				return owner, nil
 			}
 			var calls []string
+			drainManagedDaemon = func(info *daemon.RuntimeInfo) error {
+				assert.Same(t, runtimeInfo, info)
+				assertRecoveryLock(t, tc.unmanaged || tc.vanished || tc.stale)
+				calls = append(calls, "stop")
+				return nil
+			}
 			startDaemonService = func(_ context.Context, unit string) error {
 				assert.Equal(t, owner.unit, unit)
 				assertRecoveryLock(t, false)
@@ -336,4 +342,102 @@ func TestDaemonRestartChecksEveryRuntime(t *testing.T) {
 			assert.Zero(t, starts)
 		})
 	}
+}
+
+func TestDaemonRestartOnlyStopsValidatedRuntimes(t *testing.T) {
+	stubServiceRecovery(t)
+	restartThroughService = true
+	path, err := os.Executable()
+	require.NoError(t, err)
+	cliExecutableInfo = func() (os.FileInfo, error) { return os.Stat(path) }
+	owner := &daemonService{unit: "gui/501/com.example.roborev", mainPID: os.Getpid(), executable: path, serviceType: "exec"}
+	validated := &daemon.RuntimeInfo{PID: os.Getpid()}
+	late := &daemon.RuntimeInfo{PID: os.Getppid()}
+	oldList := listAllRuntimes
+	t.Cleanup(func() { listAllRuntimes = oldList })
+	listCalls := 0
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+		listCalls++
+		if listCalls == 1 {
+			return []*daemon.RuntimeInfo{validated}, nil
+		}
+		return []*daemon.RuntimeInfo{late}, nil
+	}
+	findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
+		assert.Equal(t, validated.PID, pid)
+		return owner, nil
+	}
+	var stopped []*daemon.RuntimeInfo
+	drainManagedDaemon = func(info *daemon.RuntimeInfo) error {
+		stopped = append(stopped, info)
+		return nil
+	}
+	startDaemonService = func(context.Context, string) error { return nil }
+	serviceMainPID = func(context.Context, string) (int, error) { return 200, nil }
+	getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) { return &daemon.RuntimeInfo{PID: 200}, nil }
+	withDaemonCommandDependencies(t,
+		func() error { return errors.New("unexpected detached start") },
+		func() error { return stopDaemonRuntimes(listAllRuntimes, drainManagedDaemon, os.Stderr) },
+		func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist },
+	)
+	cmd := daemonCmd()
+	cmd.SetArgs([]string{"restart"})
+	require.NoError(t, cmd.ExecuteContext(t.Context()))
+	assert.Equal(t, []*daemon.RuntimeInfo{validated}, stopped)
+	assert.Equal(t, 1, listCalls)
+	assertRecoveryLock(t, true)
+}
+
+func TestDaemonRestartRestartsEveryDistinctOwner(t *testing.T) {
+	stubServiceRecovery(t)
+	restartThroughService = true
+	path, err := os.Executable()
+	require.NoError(t, err)
+	cliExecutableInfo = func() (os.FileInfo, error) { return os.Stat(path) }
+	first := &daemonService{unit: "gui/501/com.example.first", mainPID: os.Getpid(), executable: path, serviceType: "exec"}
+	second := &daemonService{unit: "gui/501/com.example.second", mainPID: os.Getppid(), executable: path, serviceType: "exec"}
+	runtimes := []*daemon.RuntimeInfo{{PID: first.mainPID}, {PID: second.mainPID}, {PID: first.mainPID}}
+	oldList := listAllRuntimes
+	t.Cleanup(func() { listAllRuntimes = oldList })
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return runtimes, nil }
+	findDaemonService = func(_ context.Context, pid int) (*daemonService, error) {
+		if pid == first.mainPID {
+			return first, nil
+		}
+		assert.Equal(t, second.mainPID, pid)
+		return second, nil
+	}
+	var stopped []*daemon.RuntimeInfo
+	drainManagedDaemon = func(info *daemon.RuntimeInfo) error { stopped = append(stopped, info); return nil }
+	var started []string
+	startDaemonService = func(_ context.Context, unit string) error {
+		assertRecoveryLock(t, false)
+		assert.Equal(t, runtimes, stopped)
+		started = append(started, unit)
+		return nil
+	}
+	serviceMainPID = func(_ context.Context, unit string) (int, error) {
+		if unit == first.unit {
+			return 200, nil
+		}
+		assert.Equal(t, second.unit, unit)
+		return 300, nil
+	}
+	getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {
+		pid := 200
+		if len(started) == 2 {
+			pid = 300
+		}
+		return &daemon.RuntimeInfo{PID: pid}, nil
+	}
+	withDaemonCommandDependencies(t,
+		func() error { return errors.New("unexpected detached start") },
+		func() error { return stopDaemonRuntimes(listAllRuntimes, drainManagedDaemon, os.Stderr) },
+		func() (*daemon.RuntimeInfo, error) { return nil, os.ErrNotExist },
+	)
+	cmd := daemonCmd()
+	cmd.SetArgs([]string{"restart"})
+	require.NoError(t, cmd.ExecuteContext(t.Context()))
+	assert.Equal(t, []string{first.unit, second.unit}, started)
+	assertRecoveryLock(t, true)
 }

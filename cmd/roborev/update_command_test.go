@@ -276,7 +276,14 @@ func TestUpdateCommandCoordinatesDaemonThatAppearsBeforeInstall(t *testing.T) {
 }
 
 func TestUpdateCommandCoordinatesDaemonThatAppearsAfterInstall(t *testing.T) {
-	stubUpdateCommand(t)
+	info := stubUpdateCommand(t)
+	stubServiceRecovery(t)
+	restartThroughService = true
+	findDaemonService = func(context.Context, int) (*daemonService, error) { return nil, nil }
+	binDir := t.TempDir()
+	performUpdateForCommand = func(context.Context, *update.UpdateInfo, update.Reporter) error {
+		return os.WriteFile(updatedRoborevBinary(binDir), nil, 0o755)
+	}
 	var discoveries atomic.Int32
 	var prepareCalls atomic.Int32
 	var restartCalls atomic.Int32
@@ -295,12 +302,7 @@ func TestUpdateCommandCoordinatesDaemonThatAppearsAfterInstall(t *testing.T) {
 		assert.Same(t, runtimeInfo, previous)
 		return nil
 	}
-	cmd := updateCmd()
-	cmd.SetOut(io.Discard)
-	cmd.SetErr(io.Discard)
-	cmd.SetArgs([]string{"--yes"})
-
-	require.NoError(t, cmd.Execute())
+	require.NoError(t, runControlledUpdate(t.Context(), strings.NewReader(""), io.Discard, info, binDir, policyWait, true, false))
 	assert.Equal(t, int32(1), prepareCalls.Load())
 	assert.Equal(t, int32(1), restartCalls.Load())
 }

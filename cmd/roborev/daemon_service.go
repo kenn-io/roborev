@@ -305,21 +305,22 @@ func awaitServiceReplacement(ctx context.Context, unit string) (*daemon.RuntimeI
 }
 
 // restartService checks ownership before an explicit restart shuts down a daemon.
-func restartService(ctx context.Context, discover func() ([]*daemon.RuntimeInfo, error)) (owner *daemonService, release func(), err error) {
+func restartService(ctx context.Context, discover func() ([]*daemon.RuntimeInfo, error)) (owners []*daemonService, runtimes []*daemon.RuntimeInfo, release func(), err error) {
 	release, err = acquireRecoveryLock(ctx)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %w", errRecoveryLock, err)
+		return nil, nil, nil, fmt.Errorf("%w: %w", errRecoveryLock, err)
 	}
 	defer func() {
-		if err != nil || owner == nil {
+		if err != nil || len(owners) == 0 {
 			release()
 			release = nil
 		}
 	}()
-	runtimes, err := discover()
+	runtimes, err = discover()
 	if err != nil {
-		return nil, release, err
+		return nil, nil, release, err
 	}
+	seen := make(map[string]bool)
 	for _, info := range runtimes {
 		if info.PID <= 0 || info.Stale() {
 			continue
@@ -329,7 +330,7 @@ func restartService(ctx context.Context, discover func() ([]*daemon.RuntimeInfo,
 			continue
 		}
 		if err != nil {
-			return nil, release, err
+			return nil, nil, release, err
 		}
 		if candidate == nil {
 			continue
@@ -337,13 +338,14 @@ func restartService(ctx context.Context, discover func() ([]*daemon.RuntimeInfo,
 		if reason := candidate.keepReason(info.PID); reason != "" {
 			hint := fmt.Sprintf("run %s %s", serviceRestartCommand, candidate.unit)
 			if strings.Contains(reason, hint) {
-				return nil, release, errors.New(reason)
+				return nil, nil, release, errors.New(reason)
 			}
-			return nil, release, fmt.Errorf("%s; %s", reason, hint)
+			return nil, nil, release, fmt.Errorf("%s; %s", reason, hint)
 		}
-		if owner == nil {
-			owner = candidate
+		if !seen[candidate.unit] {
+			owners = append(owners, candidate)
+			seen[candidate.unit] = true
 		}
 	}
-	return owner, release, nil
+	return owners, runtimes, release, nil
 }
