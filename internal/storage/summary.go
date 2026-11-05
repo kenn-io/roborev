@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json/jsontext"
 	"sort"
@@ -124,7 +125,8 @@ func (db *DB) GetSummary(opts SummaryOptions) (*Summary, error) {
 		opts.RepoPath = normalizeRepoPathBestEffort(opts.RepoPath)
 	}
 
-	tx, err := db.Begin()
+	// This storage API has no caller context yet.
+	tx, err := db.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, err
 	}

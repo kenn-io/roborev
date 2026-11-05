@@ -28,7 +28,7 @@ func IsSQLiteBusy(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, errSQLiteBusyAttemptTimeout) {
+	if errors.Is(err, errSQLiteBusyAttemptTimeout) || errors.Is(err, errWriteGateTimeout) {
 		return true
 	}
 	if se, ok := errors.AsType[*sqlite.Error](err); ok {

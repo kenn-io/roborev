@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 )
@@ -19,7 +20,8 @@ type FailedReviewAttemptState struct {
 // transaction keeps delivery or retry finalization from producing an impossible
 // combination of an old failed attempt and its newly posted or retired panel.
 func (db *DB) GetFailedReviewAttemptStates(repos []string) ([]FailedReviewAttemptState, error) {
-	tx, err := db.Begin()
+	// This storage API has no caller context yet.
+	tx, err := db.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, err
 	}
