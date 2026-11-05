@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const sidecarSchemaVersion = "4"
+const sidecarSchemaVersion = "3"
 
 const sidecarSchema = `
 CREATE TABLE search_meta (
@@ -40,7 +40,7 @@ CREATE TABLE review_mirror (
 );
 
 CREATE INDEX review_mirror_job_id ON review_mirror(job_id);
-CREATE INDEX review_mirror_group_key ON review_mirror(group_key);
+CREATE INDEX IF NOT EXISTS review_mirror_group_key ON review_mirror(group_key);
 
 CREATE VIRTUAL TABLE review_fts USING fts5(
   doc_key UNINDEXED,
@@ -49,7 +49,7 @@ CREATE VIRTUAL TABLE review_fts USING fts5(
   tokenize = 'unicode61'
 );
 
-INSERT INTO search_meta(key, value) VALUES ('schema_version', '4');
+INSERT INTO search_meta(key, value) VALUES ('schema_version', '3');
 `
 
 type columnDefinition struct {
@@ -147,7 +147,7 @@ func validateSchema(ctx context.Context, db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("read search sidecar schema version: %w", err)
 	}
-	if version != "2" && version != "3" && version != sidecarSchemaVersion {
+	if version != "2" && version != sidecarSchemaVersion {
 		return &schemaMismatchError{reason: fmt.Sprintf("version %q, expected %q", version, sidecarSchemaVersion)}
 	}
 
@@ -161,13 +161,13 @@ func validateSchema(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
-// upgradeSidecar updates lexical indexes without discarding stored embeddings.
+// upgradeSidecar renumbers lexical rows without discarding stored embeddings.
 func upgradeSidecar(ctx context.Context, db *sql.DB) error {
 	var version string
 	if err := db.QueryRowContext(ctx, `SELECT value FROM search_meta WHERE key = 'schema_version'`).Scan(&version); err != nil {
 		return fmt.Errorf("read search sidecar upgrade version: %w", err)
 	}
-	if version == sidecarSchemaVersion {
+	if version != "2" {
 		return nil
 	}
 	tx, err := db.BeginTx(ctx, nil)
@@ -175,20 +175,13 @@ func upgradeSidecar(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("begin search sidecar upgrade: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if version == "2" {
-		if _, err := tx.ExecContext(ctx, `
-			DELETE FROM review_fts;
-			INSERT INTO review_fts(rowid, doc_key, content, identifiers)
-			SELECT rowid, doc_key, content, identifiers FROM review_mirror;
-			CREATE INDEX review_mirror_job_id ON review_mirror(job_id);
-			UPDATE search_meta SET value = '3' WHERE key = 'schema_version';`); err != nil {
-			return fmt.Errorf("upgrade search sidecar: %w", err)
-		}
-	}
 	if _, err := tx.ExecContext(ctx, `
-		CREATE INDEX review_mirror_group_key ON review_mirror(group_key);
-		UPDATE search_meta SET value = '4' WHERE key = 'schema_version';`); err != nil {
-		return fmt.Errorf("upgrade search sidecar group index: %w", err)
+		DELETE FROM review_fts;
+		INSERT INTO review_fts(rowid, doc_key, content, identifiers)
+		SELECT rowid, doc_key, content, identifiers FROM review_mirror;
+		CREATE INDEX review_mirror_job_id ON review_mirror(job_id);
+		UPDATE search_meta SET value = '3' WHERE key = 'schema_version';`); err != nil {
+		return fmt.Errorf("upgrade search sidecar: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit search sidecar upgrade: %w", err)

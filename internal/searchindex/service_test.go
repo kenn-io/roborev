@@ -3,7 +3,6 @@ package searchindex
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"errors"
 	"fmt"
 	"html"
@@ -662,32 +661,6 @@ func TestServiceHybridBreaksEqualFusedScoresByRecencyAndLoadsThePageOnce(t *test
 	assert.Equal(t, 1, store.lookups, "one canonical query loads the whole page")
 }
 
-type searchCountingConnector struct {
-	driver  driver.Driver
-	path    string
-	queries []string
-}
-
-func (connector *searchCountingConnector) Driver() driver.Driver { return connector.driver }
-
-func (connector *searchCountingConnector) Connect(context.Context) (driver.Conn, error) {
-	conn, err := connector.driver.Open(connector.path)
-	if err != nil {
-		return nil, err
-	}
-	return &searchCountingConn{Conn: conn, connector: connector}, nil
-}
-
-type searchCountingConn struct {
-	driver.Conn
-	connector *searchCountingConnector
-}
-
-func (conn *searchCountingConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
-	conn.connector.queries = append(conn.connector.queries, query)
-	return conn.Conn.(driver.QueryerContext).QueryContext(ctx, query, args)
-}
-
 func TestServiceHybridWidensLexicalWithoutRepeatingSemanticQuery(t *testing.T) {
 	index := openQueryTestIndex(t)
 	var docs []searchdoc.Document
@@ -711,7 +684,7 @@ func TestServiceHybridWidensLexicalWithoutRepeatingSemanticQuery(t *testing.T) {
 	var sequence int
 	var name, path string
 	require.NoError(t, index.db.QueryRowContext(t.Context(), "PRAGMA database_list").Scan(&sequence, &name, &path))
-	connector := &searchCountingConnector{driver: index.db.Driver(), path: path}
+	connector := &cursorConnector{base: index.db.Driver(), path: path}
 	db := sql.OpenDB(connector)
 	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })

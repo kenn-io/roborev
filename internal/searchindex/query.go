@@ -195,9 +195,11 @@ func (index *Index) lexicalLeg(query string, filters SearchFilters, groupLimit, 
 		 WHERE (` + predicate.SQL + `)
 	),
 	hits AS MATERIALIZED (
-		SELECT review_fts.rowid AS rid, -bm25(review_fts) AS score,
-		       snippet(review_fts, 1, char(57344), char(57345), ' … ', 32) AS excerpt
-		  FROM review_fts WHERE review_fts MATCH ? AND +review_fts.rowid IN (SELECT rid FROM mates)
+		SELECT review_fts.rowid AS rid,
+		       CASE WHEN NOT mates.identifier THEN -bm25(review_fts) END AS score,
+		       CASE WHEN NOT mates.identifier THEN snippet(review_fts, 1, char(57344), char(57345), ' … ', 32) END AS excerpt
+		  FROM review_fts JOIN mates ON mates.rid = review_fts.rowid
+		 WHERE review_fts MATCH ? AND +review_fts.rowid IN (SELECT rid FROM mates)
 	),
 	members AS MATERIALIZED (
 		SELECT mates.group_key, mates.doc_key, mates.job_id, mates.finished_key, mates.group_rank,

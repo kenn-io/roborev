@@ -124,7 +124,9 @@ func TestSearchLexicalRanksIdentifiersAndSHAPrefixesBeforeBM25(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, repoHits, 1)
 	assert.Equal(t, exactRepo.DocKey, repoHits[0].DocKey)
-	assert.Contains(t, repoHits[0].MatchedIn(), MatchIdentifier)
+	assert.ElementsMatch(t, []string{MatchIdentifier, MatchLexical}, repoHits[0].MatchedIn())
+	assert.InDelta(t, 1.0, repoHits[0].Score, 1e-15)
+	assert.Equal(t, exactRepo.Content, repoHits[0].Excerpt)
 }
 
 func TestSearchLexicalAppliesEveryMirrorFilterBeforeLimit(t *testing.T) {
@@ -439,7 +441,7 @@ func TestSearchLexicalBoundsIdentifiersAndKeepsMembersPastTheWindow(t *testing.T
 			for i, member := range groups[0].Members {
 				assert.Equal(t, docs[12-i].DocKey, member.DocKey)
 				assert.True(t, member.Identifier)
-				assert.Equal(t, 1.0, member.Score)
+				assert.InDelta(t, 1.0, member.Score, 1e-15)
 				assert.Equal(t, docs[12-i].Content, member.Excerpt)
 			}
 			if limit == 2 {

@@ -3,6 +3,7 @@ package searchindex
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -18,7 +19,11 @@ func BenchmarkSearchLexicalHistory(b *testing.B) {
 			b.Cleanup(func() { require.NoError(b, index.Close()) })
 			docs := make([]searchdoc.Document, reviews)
 			for i := range docs {
-				docs[i] = queryTestDocument(int64(i+1), fmt.Sprintf("group-%d", i), "needle in every review", queryDocOptions{})
+				body := fmt.Sprintf("## Review %d\n\n", i+1) + strings.Repeat(
+					"Finding: the needle lookup uses the previous request's cached result. "+
+						"When the caller switches repositories, the handler can return a review from the previous repository. "+
+						"Include the repository key in the cache lookup and cover two consecutive requests for different repositories.\n\n", 8)
+				docs[i] = queryTestDocument(int64(i+1), fmt.Sprintf("group-%d", i), body, queryDocOptions{})
 			}
 			_, err = index.RefreshMirrorPage(b.Context(), docs, nil)
 			require.NoError(b, err)
