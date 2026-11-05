@@ -133,7 +133,8 @@ func (b reviewerBackend) BranchReviews(
 	}
 	reviews := make([]mcpserver.BranchReview, 0, len(jobs))
 	// Rebuttal re-checks are task jobs on the same branch that name the
-	// review they re-check as their parent.
+	// review they re-check as their parent. Sync does not carry the parent
+	// link, so only re-checks recorded on this machine are found.
 	type recheck struct {
 		enqueued   time.Time
 		version    *storage.ReviewVersion
@@ -183,8 +184,8 @@ func (b reviewerBackend) BranchReviews(
 			case r.version != nil:
 				r.assessment.BeforeRerun = r.version.ID != review.ID
 			default:
-				// Re-checks that predate the recorded version, or were synced
-				// from another machine, fall back to their queue time.
+				// Re-checks that predate the recorded version fall back to
+				// their queue time.
 				r.assessment.BeforeRerun = r.enqueued.Before(review.CreatedAt)
 			}
 			reviews[i].Assessments = append(reviews[i].Assessments, r.assessment)
