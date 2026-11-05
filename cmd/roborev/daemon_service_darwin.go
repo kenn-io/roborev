@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
 
 	"golang.org/x/sys/unix"
 
@@ -57,7 +56,7 @@ func processServiceUnit(int) (string, error) { return "", errors.ErrUnsupported 
 func runUserLaunchctl(ctx context.Context, args ...string) ([]byte, error) {
 	output, err := exec.CommandContext(ctx, "launchctl", args...).Output()
 	if err != nil {
-		return nil, fmt.Errorf("launchctl %s: %w", strings.Join(args, " "), procutil.WithStderr(err))
+		return nil, fmt.Errorf("launchctl %s: %w", args[0], procutil.WithStderr(err))
 	}
 	return output, nil
 }

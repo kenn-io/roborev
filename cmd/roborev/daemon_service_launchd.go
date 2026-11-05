@@ -36,7 +36,7 @@ func parseLaunchctlDomain(output []byte) (map[int]string, error) {
 			jobs[pid] = fields[2]
 		}
 	}
-	return nil, errors.New("launchd domain services table unavailable or unclosed")
+	return nil, errors.New("cannot read launchd jobs")
 }
 
 // parseLaunchctlService reads job fields indented by exactly one tab followed by a non-whitespace character.
