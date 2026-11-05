@@ -17,7 +17,7 @@ var runLaunchctl = runUserLaunchctl
 
 func init() {
 	serviceDescription = "launchd job"
-	serviceRestartCommand = "launchctl kickstart"
+	serviceRestartCommand = "launchctl kickstart -k"
 	serviceStartCommand = "launchctl kickstart"
 	// Preserve the running CLI's identity if its installed path is replaced.
 	path, err := os.Executable()

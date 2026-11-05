@@ -211,6 +211,12 @@ func TestRecoverDaemonServiceRecovery(t *testing.T) {
 			}
 			assert.Equal(t, tc.stops, stops)
 			assert.Equal(t, tc.starts, starts)
+			if tc.pauseNotFound {
+				oldRestart := serviceRestartCommand
+				t.Cleanup(func() { serviceRestartCommand = oldRestart })
+				serviceRestartCommand = "launchctl kickstart -k"
+				require.ErrorContains(t, pauseServiceBeforeRecovery(t.Context(), original, "gui/501/com.example.daemon"), "run launchctl kickstart -k gui/501/com.example.daemon and retry roborev pause")
+			}
 			if reason := map[string]string{
 				"uncertain":          "properties unavailable",
 				"unreadable":         "cannot confirm executable",
