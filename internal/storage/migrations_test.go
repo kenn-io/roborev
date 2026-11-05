@@ -208,6 +208,7 @@ func TestIndexMigrations(t *testing.T) {
 		{"open failed reviews", 10, "idx_reviews_open_failed", "ON reviews(job_id) WHERE closed = 0 AND verdict_bool = 0"},
 		{"CI panel run", 11, "idx_ci_panels_panel_run", "ON ci_pr_panels(panel_run_uuid)"},
 		{"branch list position", 12, "idx_review_jobs_branch_position", "branch, " + sqliteNormalizedTimestampExpr("enqueued_at") + " DESC, id DESC"},
+		{"queue stats closed state", 13, "idx_review_jobs_queue_stats", "panel_role, review_closed)"},
 		{"closed list position", 12, "idx_review_jobs_closed_position", "DESC, id DESC) WHERE review_closed = 1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

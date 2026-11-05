@@ -46,6 +46,13 @@ var schemaMigrations = []schemaMigration{
 	{10, "open failed reviews index", migrateOpenFailedReviewsIndex},
 	{11, "CI panel run index", migrateCIPanelRunIndex},
 	{12, "queue list position indexes", migrateQueueListPositionIndexes},
+	{13, "queue stats closed state", migrateQueueStatsClosedState},
+}
+
+func migrateQueueStatsClosedState(ctx context.Context, db *DB) error {
+	_, err := db.ExecContext(ctx, `DROP INDEX IF EXISTS idx_review_jobs_queue_stats;
+		CREATE INDEX idx_review_jobs_queue_stats ON review_jobs(status, repo_id, job_type, source, panel_role, review_closed)`)
+	return err
 }
 
 // migrateQueueListPositionIndexes's triggers keep review_jobs.review_closed equal to the job's reviews.closed.

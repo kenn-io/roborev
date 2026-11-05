@@ -504,6 +504,7 @@ describe("createJobsStore sorting", () => {
       direction: "desc",
       cursor: "cost:desc:1",
       limit: 50,
+      omit_stats: "true",
     });
     expect(store.getLoadMoreError()).toBeNull();
     expect(ids(store)).toEqual([3, 8, 1, 6]);
@@ -1573,6 +1574,29 @@ describe("createJobsStore auto-design filter", () => {
     >;
     expect(lastQuery).not.toHaveProperty("hide_classify_jobs");
   });
+
+  it("keeps stats for filtered requests and omits them for unfiltered requests", async () => {
+    const api = makeApi();
+    const store = createJobsStore({
+      api: api as never,
+      navigate: vi.fn(),
+    });
+
+    await loadJobs(store);
+
+    expect(api.listJobs.mock.calls[0]?.[0]).not.toHaveProperty("omit_stats");
+
+    store.setFilter("showAutoDesign", true);
+    await vi.waitFor(() => {
+      expect(api.listJobs.mock.calls.length).toBeGreaterThan(1);
+    });
+
+    const lastQuery = api.listJobs.mock.calls.at(-1)?.[0] as Record<
+      string,
+      unknown
+    >;
+    expect(lastQuery).toHaveProperty("omit_stats", "true");
+  });
 });
 
 describe("createJobsStore filtered status counts", () => {
@@ -1890,7 +1914,12 @@ describe("createJobsStore panel expansion", () => {
     });
     expect(store.getPanelMembers("run-10")?.map((j) => j.id)).toEqual([11, 12]);
     expect(api.listJobs).toHaveBeenCalledWith(
-      { panel_run: "run-10", limit: 0, omit_prompt: "true" },
+      {
+        panel_run: "run-10",
+        limit: 0,
+        omit_prompt: "true",
+        omit_stats: "true",
+      },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
 

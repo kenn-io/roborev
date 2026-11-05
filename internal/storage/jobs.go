@@ -1941,6 +1941,7 @@ type listJobsOptions struct {
 	branchEmpty        bool
 	branchIncludeEmpty bool
 	closed             *bool
+	closedJobColumn    bool
 	openFailedReviews  bool
 	jobType            string
 	excludeJobType     string
@@ -2231,9 +2232,17 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions, en
 	}
 	if o.closed != nil {
 		if *o.closed {
-			conditions = append(conditions, "rv.closed = 1")
+			if o.closedJobColumn {
+				conditions = append(conditions, "j.review_closed = 1")
+			} else {
+				conditions = append(conditions, "rv.closed = 1")
+			}
 		} else {
-			conditions = append(conditions, "(rv.closed IS NULL OR rv.closed = 0)")
+			if o.closedJobColumn {
+				conditions = append(conditions, "j.review_closed = 0")
+			} else {
+				conditions = append(conditions, "(rv.closed IS NULL OR rv.closed = 0)")
+			}
 			// Failed and canceled jobs never produce a review to resolve, so
 			// they are not open. An explicit status filter wins: asking for
 			// failed jobs with the open filter on must still list them.
@@ -2459,8 +2468,8 @@ func (db *DB) CountJobStats(statusFilter, repoFilter string, opts ...ListJobsOpt
 }
 
 func jobStatsQuery(statusFilter, repoFilter string, opts ...ListJobsOption) (string, []any) {
-	// The unique job_id index still reads closed past each review's prompt.
-	// Use the covering metadata index, as the analytics query does.
+	o := collectListJobsOptions(opts...)
+	o.closedJobColumn = true
 	query := `
 		SELECT
 			COALESCE(SUM(CASE WHEN j.status = 'queued' THEN 1 ELSE 0 END), 0),
@@ -2469,13 +2478,14 @@ func jobStatsQuery(statusFilter, repoFilter string, opts ...ListJobsOption) (str
 			COALESCE(SUM(CASE WHEN j.status = 'failed' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN j.status = 'canceled' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN j.status = 'skipped' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN j.status = 'done' AND rv.closed = 1 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN j.status = 'done' AND (rv.closed IS NULL OR rv.closed = 0) THEN 1 ELSE 0 END), 0)
+			COALESCE(SUM(CASE WHEN j.status = 'done' AND j.review_closed = 1 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN j.status = 'done' AND j.review_closed = 0 THEN 1 ELSE 0 END), 0)
 		FROM review_jobs j
-		JOIN repos r ON r.id = j.repo_id
-		LEFT JOIN reviews rv INDEXED BY idx_reviews_job_verdict ON rv.job_id = j.id
 	`
-	queryFilters, args := buildJobFilterClause(statusFilter, repoFilter, collectListJobsOptions(opts...), false)
+	if repoFilter != "" || len(o.repoPaths) > 0 || o.repoPrefix != "" {
+		query += " JOIN repos r ON r.id = j.repo_id"
+	}
+	queryFilters, args := buildJobFilterClause(statusFilter, repoFilter, o, false)
 	return query + queryFilters, args
 }
 

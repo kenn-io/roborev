@@ -79,6 +79,7 @@ func (b *HTTPBackend) ListBranches(ctx context.Context, repoPath string) ([]stor
 func (b *HTTPBackend) ListJobs(ctx context.Context, q JobsQuery) (JobsPage, error) {
 	params := url.Values{}
 	params.Set("omit_prompt", "true")
+	params.Set("omit_stats", "true")
 	params.Set("include_findings", "true")
 	if q.ID > 0 {
 		params.Set("id", strconv.FormatInt(q.ID, 10))

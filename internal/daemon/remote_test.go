@@ -104,7 +104,7 @@ func TestRemoteScopesIDListAndReplay(t *testing.T) {
 		cfg.Keys[0].AllRepos = false
 		cfg.Keys[0].RepoIDs = []int64{repo.ID}
 		remote := startedRemoteHandler(t, s, cfg)
-		r := remoteRequest(t, key, "/api/jobs")
+		r := remoteRequest(t, key, "/api/jobs?omit_stats=true")
 		replay := r.Clone(r.Context())
 		out := httptest.NewRecorder()
 		remote.ServeHTTP(out, r)

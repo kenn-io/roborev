@@ -1922,28 +1922,31 @@ func (s *Server) humaListJobs(
 		statsOpts,
 		storage.WithExcludePanelRole(storage.PanelRoleMember),
 	)
-	stats, statsErr := s.db.CountJobStats(input.Status, repo, statsOpts...)
-	if statsErr != nil {
-		log.Printf(
-			"Warning: failed to count job stats: %v", statsErr,
-		)
-	}
-	var filteredStats *storage.JobStats
-	if input.Closed == "true" || input.Closed == "false" {
-		filteredOpts := append(
-			append([]storage.ListJobsOption(nil), statsOpts...),
-			storage.WithClosed(input.Closed == "true"),
-		)
-		filtered, filteredErr := s.db.CountJobStats(
-			input.Status, repo, filteredOpts...,
-		)
-		if filteredErr != nil {
+	var stats, filteredStats *storage.JobStats
+	if input.OmitStats != "true" {
+		counted, statsErr := s.db.CountJobStats(input.Status, repo, statsOpts...)
+		if statsErr != nil {
 			log.Printf(
-				"Warning: failed to count closed-filtered job stats: %v",
-				filteredErr,
+				"Warning: failed to count job stats: %v", statsErr,
 			)
-		} else {
-			filteredStats = &filtered
+		}
+		stats = &counted
+		if input.Closed == "true" || input.Closed == "false" {
+			filteredOpts := append(
+				append([]storage.ListJobsOption(nil), statsOpts...),
+				storage.WithClosed(input.Closed == "true"),
+			)
+			filtered, filteredErr := s.db.CountJobStats(
+				input.Status, repo, filteredOpts...,
+			)
+			if filteredErr != nil {
+				log.Printf(
+					"Warning: failed to count closed-filtered job stats: %v",
+					filteredErr,
+				)
+			} else {
+				filteredStats = &filtered
+			}
 		}
 	}
 
@@ -1954,7 +1957,7 @@ func (s *Server) humaListJobs(
 	resp.Body.Jobs = jobs
 	resp.Body.HasMore = hasMore
 	resp.Body.NextCursor = nextCursor
-	resp.Body.Stats = &stats
+	resp.Body.Stats = stats
 	resp.Body.FilteredStats = filteredStats
 	return resp, nil
 }

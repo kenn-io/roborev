@@ -286,7 +286,9 @@ export function createJobsStore(opts: JobsStoreOptions) {
     const filtered = queryHasActiveFilters(query);
     const countScope = JSON.stringify(query);
     const result = yield* executeRoborevRequest("list Roborev jobs", (signal) =>
-      api.listJobs(query, { signal }),
+      api.listJobs(filtered ? query : { ...query, omit_stats: "true" }, {
+        signal,
+      }),
     ).pipe(
       Effect.catchTag("RoborevHTTPError", (cause) =>
         Effect.fail(
@@ -443,6 +445,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
       query.limit = DEFAULT_PAGE_LIMIT;
       if (nextCursor === undefined) return;
       query.cursor = nextCursor;
+      query.omit_stats = "true";
       // Live updates reload the list under their own owner, so they never
       // cancel this request. A page fetched for a list that a newer load has
       // since replaced would skip the rows between the two, so its result
@@ -815,7 +818,12 @@ export function createJobsStore(opts: JobsStoreOptions) {
         }),
         read: executeRoborevRequest("load Roborev panel members", (signal) =>
           api.listJobs(
-            { panel_run: runUuid, limit: 0, omit_prompt: "true" },
+            {
+              panel_run: runUuid,
+              limit: 0,
+              omit_prompt: "true",
+              omit_stats: "true",
+            },
             { signal },
           ),
         ).pipe(

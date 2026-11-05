@@ -253,7 +253,7 @@ func (h *remoteHandler) authorize(r *http.Request, q url.Values, g remoteGrant) 
 		if !g.read {
 			return false
 		}
-		allowed = " id status git_ref analysis_type branch branch_empty branch_include_empty closed job_type exclude_job_type hide_classify_jobs omit_prompt include_findings limit offset before cursor "
+		allowed = " id status git_ref analysis_type branch branch_empty branch_include_empty closed job_type exclude_job_type hide_classify_jobs omit_prompt omit_stats include_findings limit offset before cursor "
 	case "/api/review", "/api/comments":
 		if !g.read {
 			return false
