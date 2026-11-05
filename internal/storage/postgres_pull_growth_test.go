@@ -3,6 +3,8 @@
 package storage
 
 import (
+	"context"
+	"fmt"
 	"testing"
 	"time"
 	"uuid"
@@ -61,59 +63,75 @@ func TestIntegration_FirstPullGrowth(t *testing.T) { //nolint:paralleltest // me
 	})
 }
 
-// PostgreSQL paging gets its own bound because SQLite writes dominate the
-// complete pull and can hide repeated scans of earlier remote pages.
-// Seek to the last full page so earlier pages cannot dilute the cursor cost.
-func TestIntegration_PullPagingGrowth(t *testing.T) { //nolint:paralleltest // measures wall time and shares the PostgreSQL schema
+// Count executed PostgreSQL work across every page of a first pull. This
+// isolates repeated cursor scans from the SQLite writes in the full pull.
+func TestIntegration_FirstPullQueryGrowth(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL schema
+	var cost float64
 	growthtest.Run(t, growthtest.Check{
-		Small: 1000, Large: 100000,
-		MaxRatio: 3,
-		Floor:    float64(time.Millisecond),
-		Measure:  growthtest.Fastest(3),
+		Small: 1000, Large: 10000,
+		MaxRatio: 20,
+		Floor:    1000,
+		Measure: func(run, _ func()) float64 {
+			run()
+			return cost
+		},
 		Build: func(_ testing.TB, size int) (func(), func()) {
 			pool := newIntegrationEnv(t).Pool
 			seedPullHistory(t, pool, size)
-			machineID := uuid.New()
-			known := make(map[uuid.UUID]struct{}, size)
-			rows, err := pool.pool.Query(t.Context(), "SELECT uuid FROM review_jobs")
+			ctx := t.Context()
+			tx, err := pool.pool.Begin(ctx)
 			require.NoError(t, err)
-			for rows.Next() {
-				var id uuid.UUID
-				require.NoError(t, rows.Scan(&id))
-				known[id] = struct{}{}
+			t.Cleanup(func() { _ = tx.Rollback(context.WithoutCancel(ctx)) })
+			_, err = tx.Exec(ctx, "SET LOCAL plan_cache_mode = force_generic_plan")
+			require.NoError(t, err)
+			probes := []struct {
+				name, table, column, query string
+				cursors                    []string
+			}{
+				{name: "jobs", table: "review_jobs", column: "updated_at", query: pgPullJobsQuery},
+				{name: "reviews", table: "reviews", column: "updated_at", query: pgPullReviewsQuery},
+				{name: "responses", table: "responses", column: "inserted_at", query: pgPullResponsesQuery},
+				{name: "assignments", table: "experiment_assignments", column: "inserted_at", query: pgPullExperimentAssignmentsQuery},
 			}
-			rows.Close()
-			require.NoError(t, rows.Err())
-			require.Len(t, known, size)
-			// Start as a real first pull does, allowing PostgreSQL to choose its
-			// cached plan from the early pages before measuring a late page.
-			jobCursor, reviewCursor := "", ""
-			for range 6 {
-				_, next, err := pool.PullJobs(t.Context(), machineID, jobCursor, 100)
+			for i := range probes {
+				probe := &probes[i]
+				_, err := tx.Exec(ctx, "PREPARE growth_"+probe.name+" AS "+probe.query)
 				require.NoError(t, err)
-				jobCursor = next
-				_, next, err = pool.PullReviews(t.Context(), machineID, known, reviewCursor, 100)
+				probe.cursors = []string{"'1970-01-01T00:00:00Z', 0"}
+				rows, err := tx.Query(ctx, fmt.Sprintf("SELECT %s, id FROM %s ORDER BY %s, id", probe.column, probe.table, probe.column))
 				require.NoError(t, err)
-				reviewCursor = next
-			}
-			cursors := make(map[string]string)
-			for _, table := range []string{"review_jobs", "reviews"} {
-				var updated time.Time
-				var id int64
-				require.NoError(t, pool.pool.QueryRow(t.Context(), "SELECT updated_at, id FROM "+table+" ORDER BY updated_at, id OFFSET $1 LIMIT 1", size-101).Scan(&updated, &id))
-				cursors[table] = formatTimestampIDCursor(updated, id)
-			}
-			return func() {
-				for range 20 {
-					jobs, next, err := pool.PullJobs(t.Context(), machineID, cursors["review_jobs"], 100)
-					require.NoError(t, err)
-					require.Len(t, jobs, 100)
-					require.NotEqual(t, cursors["review_jobs"], next)
-					reviews, next, err := pool.PullReviews(t.Context(), machineID, known, cursors["reviews"], 100)
-					require.NoError(t, err)
-					require.Len(t, reviews, 100)
-					require.NotEqual(t, cursors["reviews"], next)
+				count := 0
+				for rows.Next() {
+					var updated time.Time
+					var id int64
+					require.NoError(t, rows.Scan(&updated, &id))
+					count++
+					if count%100 == 0 && count < size {
+						probe.cursors = append(probe.cursors, fmt.Sprintf("'%s', %d", updated.Format(time.RFC3339Nano), id))
+					}
 				}
+				rows.Close()
+				require.NoError(t, rows.Err())
+				require.Equal(t, size, count, probe.name)
+			}
+			machineID := uuid.New()
+			return func() {
+				defer func() { require.NoError(t, tx.Rollback(context.WithoutCancel(ctx))) }()
+				var totalWork float64
+				for _, probe := range probes {
+					var returned float64
+					for _, cursor := range probe.cursors {
+						query := fmt.Sprintf("EXPLAIN (ANALYZE, TIMING OFF, FORMAT JSON) EXECUTE growth_%s('%s', %s, 100)", probe.name, machineID, cursor)
+						var raw []byte
+						require.NoError(t, tx.QueryRow(ctx, query).Scan(&raw))
+						rows, work := pullPlanWork(t, raw)
+						require.InDelta(t, 100, rows, 0, probe.name)
+						returned += rows
+						totalWork += work
+					}
+					require.InDelta(t, size, returned, 0, probe.name)
+				}
+				cost = totalWork
 			}, nil
 		},
 	})

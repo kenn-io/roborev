@@ -277,7 +277,7 @@ test-postgres-growth:
 	go tool gotestsum --format pkgname-and-test-fails --format-icons text \
 		--jsonfile gotestsum/postgres-growth.json \
 		--packages "./internal/storage/..." \
-		-- -tags=postgres -v -run '^TestIntegration_(FirstPullGrowth|PullPagingGrowth|PullCursorPlans)$$'
+		-- -tags=postgres -v -run '^TestIntegration_(FirstPullGrowth|FirstPullQueryGrowth|PullCursorPlans|PullCachedPlansAfterPeerArrives)$$'
 
 # Run all tests (unit + integration + postgres)
 test-all: test-integration test-postgres

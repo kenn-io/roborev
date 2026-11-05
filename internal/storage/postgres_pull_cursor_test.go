@@ -55,7 +55,7 @@ func seedPullHistory(t *testing.T, pool *PgPool, n int) uuid.UUID {
 	return machineID
 }
 
-func assertPullPlanBounded(t *testing.T, raw []byte) {
+func pullPlanWork(t *testing.T, raw []byte) (rows, work float64) {
 	t.Helper()
 	type node struct {
 		Type         string  `json:"Node Type"`
@@ -69,15 +69,22 @@ func assertPullPlanBounded(t *testing.T, raw []byte) {
 	var plans []struct{ Plan node }
 	require.NoError(t, json.Unmarshal(raw, &plans))
 	require.Len(t, plans, 1)
-	assert.InDelta(t, 100, plans[0].Plan.Rows, 0, "probe must return a full page")
 	var visit func(node)
 	visit = func(n node) {
-		assert.LessOrEqual(t, (n.Rows+n.Filtered+n.JoinFiltered+n.Rechecked)*n.Loops, float64(500), "%s processed too many rows", n.Type)
+		work = max(work, (n.Rows+n.Filtered+n.JoinFiltered+n.Rechecked)*n.Loops)
 		for _, child := range n.Plans {
 			visit(child)
 		}
 	}
 	visit(plans[0].Plan)
+	return plans[0].Plan.Rows, work
+}
+
+func assertPullPlanBounded(t *testing.T, raw []byte) {
+	t.Helper()
+	rows, work := pullPlanWork(t, raw)
+	assert.InDelta(t, 100, rows, 0, "probe must return a full page")
+	assert.LessOrEqual(t, work, float64(500), "plan processed too many rows")
 }
 
 func TestIntegration_PullCursorPlans(t *testing.T) { //nolint:paralleltest // shares the PostgreSQL schema
